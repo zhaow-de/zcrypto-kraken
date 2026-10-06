@@ -1074,6 +1074,7 @@ class ProbeExecutor:
         self._state_dir = Path(config.journal_dir).parent
         self._plan = None
         self._plan_cycle_ts: datetime | None = None
+        self._plan_window_close: datetime | None = None
         self._index = 0
         self._active: _ActiveIntent | None = None
         # intent index -> the EUR notional a `qty` intent only acquired at sizing time. Kept for the
@@ -1718,7 +1719,7 @@ class ProbeExecutor:
         requests race nothing of the execution client's: `_active` None alone leaves the startup
         pass's cancels of adopted orders, and a trip's, PENDING_CANCEL with no intent live. A Cache
         that cannot be read holds the pass, and under the cache the pickup of a plan with an opening
-        intent (`_pickup`) until the read answers, when its expiry refuses the file; never a plan otherwise."""
+        intent (`_accept_plan`) until the read answers, when its expiry refuses the file; never a plan otherwise."""
         try:
             return self._active is None and not list(self._cache.orders_inflight(venue=_VENUE))
         except Exception:
@@ -2491,7 +2492,6 @@ class ProbeExecutor:
             logger.warning("probe plan %s cannot be stat'd -- no pickup this tick", path, exc_info=True)
             return
 
-        verdict = self._evaluate(now)
         cycle_ts = _boundary(now)
 
         try:
@@ -2501,6 +2501,7 @@ class ProbeExecutor:
             # is -- and still deleted, or the next tick re-reads the same broken file forever. The
             # builtins join ProbePlanError because a malformed document can leave the parser as one
             # of them, and the reason carries the class: str(exc) alone never says which refused.
+            verdict = self._evaluate(now)
             if self._journal_plan(
                 cycle_ts,
                 verdict,
@@ -2513,6 +2514,15 @@ class ProbeExecutor:
                 self._delete(path)
             return
 
+        self._accept_plan(plan, cycle_ts=cycle_ts, now=now, path=path)
+
+    def _accept_plan(self, plan, *, cycle_ts: datetime, now: datetime, path: Path | None = None) -> str:
+        """The pickup's walls over a parsed plan, its entry journaled under `cycle_ts` with the verdict
+        this call evaluates: `"accepted"` sets it running; `"waiting"` is the in-flight wait, nothing
+        journaled; `"refused"` is every other exit, an entry the journal could not take among them, and
+        the plan does not run. `path` is the drill file's, deleted once its entry is journaled; a plan
+        handed in memory has none."""
+        verdict = self._evaluate(now)
         if self._kill_tripped:
             # A trip stops THIS plan through `_halt_plan`; without this it would stop nothing else,
             # and a plan dropped afterwards would be picked up and run whenever the kill file could
@@ -2523,7 +2533,7 @@ class ProbeExecutor:
                 cycle_ts, verdict, now, plan_id=plan.plan_id, plan=plan.raw, disposition="refused", reasons=(_TRIPPED_REFUSAL,)
             ):
                 self._delete(path)
-            return
+            return "refused"
 
         if self._reconciliation_refusal is not None:
             # The startup pass could not read the venue's orders, so ledgered rows were never compared
@@ -2542,7 +2552,7 @@ class ProbeExecutor:
                 reasons=(self._reconciliation_refusal,),
             ):
                 self._delete(path)
-            return
+            return "refused"
 
         try:
             state = venue_state_from_cache(self._cache, clock=self._now)
@@ -2552,7 +2562,7 @@ class ProbeExecutor:
                 cycle_ts, verdict, now, plan_id=plan.plan_id, plan=plan.raw, disposition="refused", reasons=("no venue truth",)
             ):
                 self._delete(path)
-            return
+            return "refused"
 
         if self._cache_enabled and any(intent.action == "open" for intent in plan.intents) and not self._nothing_in_flight():
             # The mixed-inventory check's venue read (`_mixed_inventory_refusals`) is a signed read on
@@ -2561,7 +2571,7 @@ class ProbeExecutor:
             logger.info(
                 "probe plan %s waits for a tick with nothing in flight -- its opening intents take a venue read", plan.plan_id
             )
-            return
+            return "waiting"
         # Live balances spell the free-cash currency `EUR`, so this resolves on its SECOND arm in
         # production; the `ZEUR` arm stays first because the adapter's instrument quote currency spells
         # the euro `ZEUR`. Both absent reads 0.0, which refuses any margin intent.
@@ -2592,15 +2602,16 @@ class ProbeExecutor:
             reasons=reasons,
             intents=[] if reasons else intents,
         ):
-            return
+            return "refused"
         self._delete(path)
         if reasons:
             logger.warning("probe plan %s refused: %s", plan.plan_id, "; ".join(reasons))
-            return
+            return "refused"
         self._plan = plan
         self._plan_cycle_ts = cycle_ts
         self._index = 0
         self._resolved_notional = {}
+        return "accepted"
 
     def _mixed_inventory_refusals(self, plan, state) -> list[str]:
         """Spec 00120 D12's refusal of an opening intent that would put a spot lot beside a margin lot on
@@ -4475,7 +4486,9 @@ class ProbeExecutor:
             f"not run -- intent {active.index} ended ambiguous, so the venue state this plan was authorized against is unknown",
         )
 
-    def _delete(self, path: Path) -> None:
+    def _delete(self, path: Path | None) -> None:
+        if path is None:
+            return
         try:
             path.unlink()
         except FileNotFoundError:
