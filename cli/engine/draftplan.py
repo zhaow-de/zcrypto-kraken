@@ -319,7 +319,8 @@ def refuse_open_margin_positions(doc: object) -> None:
 
 
 def venue_balance(balances: dict, base: str) -> float:
-    # `executor._spot_balance`'s rule, so b is the figure the engine's own sell refusal reads.
+    # `executor._spot_balance`'s rule, so b is the figure the sell refusal of the engine image the box runs
+    # on reads; the tree's engine reads the venue's own book instead.
     from cli.engine.flatten import resolve_base
 
     for code, value in balances.items():
@@ -401,7 +402,8 @@ def decide_leg(
         qty = _floor_to_step(kraken_held, constraints.lot_step)
         reason = "the whole leg" if exiting else "the whole leg: the remainder would be under ordermin"
     if 0 < venue_b < qty:
-        # `executor._classify_spot_close`'s refusal; it admits a sell of no more than b.
+        # The box's engine image refuses a sell over any positive b, dust included; it admits a sell of no
+        # more than b.
         capped = _floor_to_step(venue_b, constraints.lot_step)
         if capped < constraints.ordermin:
             return replace(

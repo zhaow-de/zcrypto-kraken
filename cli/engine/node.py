@@ -559,8 +559,9 @@ def _cache_password() -> str | None:
 
 
 def _exec_client_config(credentials: tuple[str, str]) -> KrakenExecutionClientConfig:
-    """Both currency fields read ZEUR for different reasons: margin summary figures are denominated in it, and
-    spot position reports cover the ZEUR-quoted instruments."""
+    """Both currency fields read ZEUR: margin summary figures are denominated in it, and
+    `spot_positions_quote_currency` is unread under `spot_account_type=MARGIN`, where the adapter takes the
+    OpenPositions branch and builds no spot position report."""
     api_key, api_secret = credentials
     return KrakenExecutionClientConfig(
         account_id=AccountId(_ACCOUNT_ID),

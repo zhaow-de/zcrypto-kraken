@@ -1111,9 +1111,12 @@ def test_the_exit_caps_a_leg_a_reward_lifted_over_the_venue_records_b_and_the_en
     assert (intent.symbol, intent.qty) == ("SOL/EUR", 0.12)
     balances = venue["state"]["balances"]
     for level in (GateLevel.FULL, GateLevel.REDUCE_ONLY):
-        decision = _classify_spot_close(intent, balances=balances, level=level)
+        decision = _classify_spot_close(intent, balances=balances, level=level, ordermin=0.06)
         assert (decision.refusal, decision.qty) == (None, 0.12)
-    assert _classify_spot_close(replace(intent, qty=0.12000001), balances=balances, level=GateLevel.FULL).refusal is not None
+    assert (
+        _classify_spot_close(replace(intent, qty=0.12000001), balances=balances, level=GateLevel.FULL, ordermin=0.06).refusal
+        is not None
+    )
 
 
 # ---- the box's calendar ------------------------------------------------------------------------------

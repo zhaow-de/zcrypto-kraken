@@ -763,9 +763,8 @@ def _held(**by_symbol):
 
 
 def _venue_record(tmp_path: Path, *, balances, positions=None, when: datetime = NOW) -> Path:
-    """A REAL schema-2 `venue-<HH>.json` through `write_venue_record`. The executor
-    `validate_venue_record`-checks what it reads, so a hand-built dict would prove nothing about the
-    shape the engine actually writes."""
+    """A REAL schema-2 `venue-<HH>.json` through `write_venue_record`, the shape the engine writes: the
+    record whose balances, the Cache's stored account, the sell check never takes for the venue's."""
     state = VenueState(snapshot_at=when, instruments={}, positions=positions or {}, balances=balances)
     return write_venue_record(
         tmp_path / "journal",
@@ -1096,13 +1095,17 @@ def _intent_outcome(tmp_path, index: int = 0, when: datetime = NOW) -> str:
     return _intent_entry(tmp_path, index, when)["outcome"]
 
 
-def _resting_executor(tmp_path, *, intents=None, bid=30000.0, ask=30001.0, client=None, venue_orders=None, venue_cancel=None):
+def _resting_executor(
+    tmp_path, *, intents=None, bid=30000.0, ask=30001.0, client=None, venue_orders=None, venue_cancel=None, venue_holdings=None
+):
     """A plan accepted and its first intent resting: exactly one order at the venue. The trailing
     assert is the point -- a helper that quietly submitted nothing would hand every ladder test
     below a green it never earned."""
     clock = _Clock()
     client = client if client is not None else StubClient()
-    ex = _executor(tmp_path, client=client, clock=clock, venue_orders=venue_orders, venue_cancel=venue_cancel)
+    ex = _executor(
+        tmp_path, client=client, clock=clock, venue_orders=venue_orders, venue_cancel=venue_cancel, venue_holdings=venue_holdings
+    )
     _drop_plan(tmp_path, _plan_dict(intents=intents))
     ex.on_timer(clock.now)
     ex.on_quote(_quote(bid=bid, ask=ask))
@@ -1364,7 +1367,6 @@ def test_a_submitted_order_carries_the_floored_price_and_quantity_as_venue_value
     answer differently -- the raw touch and the raw quantity each round UP where the floor sends them
     down -- so a `_place` that lost the floor, or that priced off the raw touch, submits a different
     order and this test says which."""
-    _venue_record(tmp_path, balances={"ZEUR": 1000.0})
     client = StubClient()
     ex = _executor(tmp_path, client=client)
     _drop_plan(tmp_path, _plan_dict(intents=[_intent(side="sell", action="close", notional_eur=None, qty=0.001000015)]))
@@ -1395,7 +1397,6 @@ def test_the_floor_is_what_keeps_make_qty_away_from_the_quantity_it_refuses(tmp_
     assert isinstance(below, BelowMinimum) and "ordermin" in below.reason
 
     # And end to end: the refusal is the intent's, never a ValueError out of the order factory.
-    _venue_record(tmp_path, balances={"ZEUR": 1000.0})
     client = StubClient()
     ex = _executor(tmp_path, client=client)
     _drop_plan(tmp_path, _plan_dict(intents=[_intent(side="sell", action="close", notional_eur=None, qty=4.9e-09)]))
@@ -1524,12 +1525,13 @@ def test_reduce_only_refuses_an_open_intent(tmp_path):
 
 def test_reduce_only_permits_a_close_intent(tmp_path):
     """The other half of the level rule: a `_level_permits` that refused everything at REDUCE_ONLY
-    would pass the test above. Both the 0.001 qty and the venue record are load-bearing -- a larger
-    qty is refused by the plan cap and a missing record by the disposal classification (spec 00090
+    would pass the test above. Both the 0.001 qty and the venue's balance are load-bearing -- a larger
+    qty is refused by the plan cap and a missing balance by the disposal classification (spec 00090
     D10), either of which greens this test for the wrong reason."""
     client = StubClient()
-    _venue_record(tmp_path, balances={"XXBT": 0.002, "ZEUR": 1000.0})
-    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY))
+    ex = _executor(
+        tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_holdings=_VenueHoldings({"BTC/EUR": 0.002})
+    )
     _drop_plan(
         tmp_path, _plan_dict(intents=[{"symbol": "BTC/EUR", "side": "sell", "action": "close", "mode": "execute", "qty": 0.001}])
     )
@@ -3758,12 +3760,11 @@ def test_a_margin_closer_that_does_not_reduce_is_refused(tmp_path, signed_qty, r
     assert intent["reasons"] == [reason]  # WHICH branch refused, not merely that one did
 
 
-def test_the_venue_record_refutes_a_disposal_larger_than_the_balance_it_shows(tmp_path):
-    """The refutation half of D10: a POSITIVE balance smaller than the signed qty is the venue
-    record contradicting the plan, and a contradiction refuses."""
-    _venue_record(tmp_path, balances={"XXBT": 0.0005, "ZEUR": 1000.0})
+def test_the_venues_balance_refutes_a_disposal_larger_than_itself(tmp_path):
+    """The refutation half of D10: a POSITIVE balance smaller than the signed qty is the venue's
+    balance contradicting the plan, and a contradiction refuses."""
     client = StubClient()
-    ex = _executor(tmp_path, client=client)
+    ex = _executor(tmp_path, client=client, venue_holdings=_VenueHoldings({"BTC/EUR": 0.0005}))
     _drop_plan(tmp_path, _plan_dict(intents=[_intent(side="sell", action="close", notional_eur=None, qty=0.0006)]))
 
     ex.on_timer(NOW)
@@ -3772,15 +3773,14 @@ def test_the_venue_record_refutes_a_disposal_larger_than_the_balance_it_shows(tm
     assert client.submitted == [] and client.subscribed == []
     intent = _intent_entry(tmp_path, 0)
     assert intent["outcome"] == "refused"
-    assert intent["reasons"] == ["the venue record refutes the signed qty"]
+    assert intent["reasons"] == ["the venue's balance refutes the signed qty"]
 
 
-def test_a_disposal_within_the_recorded_balance_submits_a_plain_spot_sell(tmp_path):
+def test_a_disposal_within_the_venues_balance_submits_a_plain_spot_sell(tmp_path):
     """No venue-side `reduce_only` on a spot order -- Kraken's flag is a margin concept, so the
     executor-side quantity bound plus the venue's insufficient-funds rejection is the whole guard."""
-    _venue_record(tmp_path, balances={"XXBT": 0.0005, "ZEUR": 1000.0})
     client = StubClient()
-    ex = _executor(tmp_path, client=client)
+    ex = _executor(tmp_path, client=client, venue_holdings=_VenueHoldings({"BTC/EUR": 0.0005}))
     _drop_plan(tmp_path, _plan_dict(intents=[_intent(side="sell", action="close", notional_eur=None, qty=0.0004)]))
 
     ex.on_timer(NOW)
@@ -3795,38 +3795,19 @@ def test_a_disposal_within_the_recorded_balance_submits_a_plain_spot_sell(tmp_pa
     assert _record(tmp_path)["submitted"][0]["order"]["reduce_only"] is False
 
 
-@pytest.mark.parametrize("balances", [{"ZEUR": 1000.0}, {"XXBT": 0.0, "ZEUR": 1000.0}])
-def test_a_zero_or_absent_recorded_balance_cannot_refute_the_signed_qty(tmp_path, balances):
-    """The pre-restart record's balances come from the connect-time account read, so it CANNOT see a
-    manually-created balance: zero-or-absent proves nothing and the intent proceeds on the G2-signed
-    figure, with the venue's own rejection as the backstop. A bound that read absence as 0.0 here
-    would refuse the one disposal the probe exists to run."""
-    _venue_record(tmp_path, balances=balances)
-    client = StubClient()
-    ex = _executor(tmp_path, client=client)
-    _drop_plan(tmp_path, _plan_dict(intents=[_intent(side="sell", action="close", notional_eur=None, qty=0.0006)]))
-
-    ex.on_timer(NOW)
-    ex.on_quote(_quote())
-
-    assert len(client.submitted) == 1
-    assert client.submitted[0][0].quantity == 0.0006
-
-
 @pytest.mark.parametrize(
-    "qty, balances, submits",
+    "qty, held, submits",
     [
-        (0.0004, {"XXBT": 0.0005}, True),
-        (0.0006, {"XXBT": 0.0005}, False),  # the full qty <= balance bound, not merely refutation
-        (0.0004, {"ZEUR": 1000.0}, False),  # absent reads 0.0 once the record is fresh
+        (0.0004, {"BTC/EUR": 0.0005}, True),
+        (0.0006, {"BTC/EUR": 0.0005}, False),  # the full qty <= balance bound, not merely refutation
+        (0.0004, {}, False),  # absent reads 0.0
     ],
 )
-def test_the_post_restart_disposal_takes_the_full_balance_bound(tmp_path, qty, balances, submits):
-    """`reduce_only` implies the restart hold, which implies a fresh startup account read -- so the
-    record CAN confirm and the whole `qty <= balance` bound applies, in both directions."""
-    _venue_record(tmp_path, balances={**balances, "ZEUR": 1000.0})
+def test_the_post_restart_disposal_takes_the_full_balance_bound(tmp_path, qty, held, submits):
+    """At `reduce_only`, the restart hold's level, the whole `qty <= balance` bound applies over the
+    venue's balance, in both directions."""
     client = StubClient()
-    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY))
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_holdings=_VenueHoldings(held))
     _drop_plan(tmp_path, _plan_dict(intents=[_intent(side="sell", action="close", notional_eur=None, qty=qty)]))
 
     ex.on_timer(NOW)
@@ -3839,15 +3820,14 @@ def test_the_post_restart_disposal_takes_the_full_balance_bound(tmp_path, qty, b
     assert client.submitted == [] and client.subscribed == []
     intent = _intent_entry(tmp_path, 0)
     assert intent["outcome"] == "refused"
-    assert intent["reasons"] == ["the venue record's balance does not cover the signed qty"]
+    assert intent["reasons"] == ["the venue's balance does not cover the signed qty"]
 
 
 def test_a_spot_close_that_is_not_a_sell_is_refused(tmp_path):
     """A `close` that BUYS spot grows exposure whatever it is labelled -- the classification judges
     the order, never the label."""
-    _venue_record(tmp_path, balances={"XXBT": 0.002, "ZEUR": 1000.0})
     client = StubClient()
-    ex = _executor(tmp_path, client=client)
+    ex = _executor(tmp_path, client=client, venue_holdings=_VenueHoldings({"BTC/EUR": 0.002}))
     _drop_plan(tmp_path, _plan_dict(intents=[_intent(side="buy", action="close", notional_eur=None, qty=0.0004)]))
 
     ex.on_timer(NOW)
@@ -3858,7 +3838,7 @@ def test_a_spot_close_that_is_not_a_sell_is_refused(tmp_path):
 
 
 def test_a_spot_close_without_an_explicit_qty_is_refused(tmp_path):
-    """Neither closer shape: no leverage to size against a position, no `qty` for the venue record to
+    """Neither closer shape: no leverage to size against a position, no `qty` for the venue's balance to
     bound. Nothing here is a reducer this process can vouch for, so it refuses."""
     client = StubClient()
     ex = _executor(tmp_path, client=client)
@@ -3871,21 +3851,43 @@ def test_a_spot_close_without_an_explicit_qty_is_refused(tmp_path):
     assert _intent_entry(tmp_path, 0)["reasons"] == ["a spot close needs an explicit qty"]
 
 
-def test_an_unreadable_venue_record_refuses_the_disposal(tmp_path):
-    """A malformed record is not an absent one: absence proves nothing (and proceeds), but a record
-    this process cannot read leaves it unable to say whether the venue refutes the qty."""
-    day_dir = tmp_path / "journal" / f"{_boundary(NOW):%Y-%m-%d}"
-    day_dir.mkdir(parents=True, exist_ok=True)
-    (day_dir / "venue-12.json").write_text('{"schema_version": 99}')
-    client = StubClient()
-    ex = _executor(tmp_path, client=client)
-    _drop_plan(tmp_path, _plan_dict(intents=[_intent(side="sell", action="close", notional_eur=None, qty=0.0004)]))
+def test_a_dust_balance_under_ordermin_reads_as_absent_in_both_arms():
+    close = ProbeIntent(symbol="BTC/EUR", side="sell", action="close", mode="execute", notional_eur=None, qty=0.001, leverage=None)
+    full = executor_module._classify_spot_close(close, balances={"BTC": 1e-08}, level=GateLevel.FULL, ordermin=5e-05)
+    held = executor_module._classify_spot_close(close, balances={"BTC": 1e-08}, level=GateLevel.REDUCE_ONLY, ordermin=5e-05)
+    assert full.refusal is None and full.qty == 0.001
+    assert held.refusal == "the venue's balance does not cover the signed qty"
 
+
+def test_the_disposal_is_bounded_by_the_venues_book_and_not_by_the_record_it_refused_under(tmp_path):
+    _venue_record(tmp_path, balances={"XXBT": 0.0005})
+    ex, client, clock = _resting_executor(
+        tmp_path,
+        intents=[_intent(symbol="BTC/EUR", side="sell", action="close", notional_eur=None, qty=0.001)],
+        client=StubClient(StubCache(balances={"ZEUR": 1000.0, "XXBT": 0.0005})),  # the stored account, the record's source
+        venue_holdings=_VenueHoldings({"BTC/EUR": 0.001}),
+    )
+    assert len(client.submitted) == 1 and client.submitted[0][0].order_side == OrderSide.SELL
+
+
+def test_a_process_that_has_read_no_book_refuses_the_disposal(tmp_path):
+    client = StubClient()
+    ex = _executor(tmp_path, client=client, venue_holdings=_VenueHoldings(raises=RuntimeError("down")))
+    _drop_plan(tmp_path, _plan_dict(intents=[_intent(symbol="BTC/EUR", side="sell", action="close", notional_eur=None, qty=0.001)]))
     ex.on_timer(NOW)
     ex.on_quote(_quote())
+    assert client.submitted == [] and _intent_outcome(tmp_path) == "refused"
+    assert "have not been read in this process" in _intent_entry(tmp_path, 0)["reasons"][0]
 
-    assert client.submitted == [] and client.subscribed == []
-    assert _intent_entry(tmp_path, 0)["reasons"] == ["the venue record could not be read"]
+
+def test_a_process_that_has_read_no_book_refuses_an_opening_plan_with_the_same_sentence(tmp_path):
+    client = StubClient()
+    ex = _executor(
+        tmp_path, client=client, config=_cache_config(tmp_path), venue_holdings=_VenueHoldings(raises=RuntimeError("down"))
+    )
+    _drop_plan(tmp_path, _plan_dict(intents=[_intent(symbol="BTC/EUR", side="buy", action="open", notional_eur=20.0)]))
+    ex.on_timer(NOW)
+    assert client.submitted == [] and "have not been read in this process" in _plan_entry(tmp_path)["reasons"][0]
 
 
 # --- D10: the startup ledger-attach/cancel pass ---------------------------------------------------
@@ -10121,24 +10123,29 @@ _MARGIN_CLOSE = _intent(side="sell", action="close", leverage=2)
 
 
 @pytest.mark.parametrize(
-    "intent, margin, balances, refused",
+    "intent, margin, spot, refused",
     [
         (_intent(), {"BTC/EUR": 0.001}, {}, "a spot open on BTC/EUR beside a margin position of 0.001 there"),
-        (_MARGIN_OPEN, {}, {"XXBT": 0.01}, "a margin open on BTC/EUR beside 0.01 BTC spot inventory"),
-        (_MARGIN_OPEN, {}, {"XXBT": 0.0001}, "a margin open on BTC/EUR beside 0.0001 BTC spot inventory"),
-        (_MARGIN_OPEN, {}, {"XXBT": 0.00005}, None),
-        (_intent(symbol="DOGE/EUR", leverage=2), {}, {"XDG": 12.5}, "a margin open on DOGE/EUR beside 12.5 DOGE spot inventory"),
-        (_intent(), {}, {"XXBT": 0.01}, None),
+        (_MARGIN_OPEN, {}, {"BTC/EUR": 0.01}, "a margin open on BTC/EUR beside 0.01 BTC spot inventory"),
+        (_MARGIN_OPEN, {}, {"BTC/EUR": 0.0001}, "a margin open on BTC/EUR beside 0.0001 BTC spot inventory"),
+        (_MARGIN_OPEN, {}, {"BTC/EUR": 0.00005}, None),
+        (
+            _intent(symbol="DOGE/EUR", leverage=2),
+            {},
+            {"DOGE/EUR": 12.5},
+            "a margin open on DOGE/EUR beside 12.5 DOGE spot inventory",
+        ),
+        (_intent(), {}, {"BTC/EUR": 0.01}, None),
         (_MARGIN_OPEN, {"BTC/EUR": 0.001}, {}, None),
-        (_SPOT_CLOSE, {"BTC/EUR": 0.001}, {"XXBT": 0.001}, None),
-        (_MARGIN_CLOSE, {"BTC/EUR": 0.001}, {"XXBT": 0.001}, None),
+        (_SPOT_CLOSE, {"BTC/EUR": 0.001}, {"BTC/EUR": 0.001}, None),
+        (_MARGIN_CLOSE, {"BTC/EUR": 0.001}, {"BTC/EUR": 0.001}, None),
     ],
     ids=[
         "spot-open-beside-margin",
         "margin-open-beside-spot",
         "margin-open-beside-spot-at-ordermin",
         "margin-open-beside-spot-dust",
-        "margin-open-beside-spot-spelled-xdg",
+        "margin-open-beside-spot-on-doge",
         "spot-beside-spot",
         "margin-beside-margin",
         "spot-close",
@@ -10146,20 +10153,20 @@ _MARGIN_CLOSE = _intent(side="sell", action="close", leverage=2)
     ],
 )
 def test_an_opening_intent_that_would_mix_spot_and_margin_inventory_on_its_pair_is_refused_and_a_close_never_is(
-    tmp_path, intent, margin, balances, refused
+    tmp_path, intent, margin, spot, refused
 ):
     """The refusal 00118 D11 carries into spec 00120 D12, on what can create the mixed shape alone: a
-    spot open where the venue's margin positions hold the pair, a margin open where the base has spot
-    inventory at or above the pair's `ordermin` (0.0001 on the stub's BTC/EUR) -- a lot under it is
-    dust the engine cannot sell -- the base read under Kraken's spellings of it, DOGE's `XDG` among
-    them. The same kind beside itself, and a close of either kind beside both,
-    are admitted -- the Cache's own position would read a spot lot as the margin one, so the margin
-    figure is the venue's, and a close takes inventory off."""
+    spot open where the venue's margin positions hold the pair, a margin open where the venue's book
+    holds spot inventory of the base at or above the pair's `ordermin` (0.0001 on the stub's BTC/EUR)
+    -- a lot under it is dust the engine cannot sell. The same kind beside itself, and a close of
+    either kind beside both, are admitted -- the Cache's own position would read a spot lot as the
+    margin one, so the margin figure is the venue's, and a close takes inventory off."""
     positions = _VenuePositions(margin)
     ex = _executor(
         tmp_path,
-        client=StubClient(StubCache(balances={"ZEUR": 1000.0, **balances})),
+        client=StubClient(),
         config=_cache_config(tmp_path),
+        venue_holdings=_VenueHoldings(spot),
         venue_positions=positions,
     )
     _drop_plan(tmp_path, _plan_dict(intents=[intent]))

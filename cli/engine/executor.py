@@ -67,7 +67,6 @@ from cli.engine.journal import CycleRecord, from_json, require_comparable_cycle_
 from cli.engine.probeplan import MODES, PLAN_FILENAME, ProbeIntent, ProbePlanError, parse_plan, plan_refusals
 from cli.engine.store import BASKET
 from cli.engine.tracking import extract_fills, realized_drift
-from cli.engine.venueledger import read_venue_record, validate_venue_record
 from cli.engine.venuestate import InstrumentConstraints, venue_state_from_cache
 from cli.logging import get_logger
 
@@ -203,6 +202,8 @@ _GATE_REFRESH = timedelta(seconds=60)
 # Why a row that names no venue order cannot be matched after a restart: written into the row as the
 # `what` of its `ambiguous` event, and compared there so a later restart does not append it again.
 _NO_VENUE_ORDER_ID = "no Kraken order id is recorded for it, so a restart cannot match it to a venue order"
+# The spot sell check's and the mixed-inventory check's one refusal while `_venue_book` is None.
+_BALANCES_UNREAD = "the venue's balances have not been read in this process"
 
 # Module-level, None-safe, installed by command.run() -- the `cycle.set_metrics_sink` pattern. Left
 # unset (the default), every call below is a no-op, so a one-shot subcommand or a test that never
@@ -403,7 +404,7 @@ def _level_permits(level: str, intent: ProbeIntent) -> bool:
 
 
 def _spot_balance(balances: dict, base: str) -> float:
-    """What the venue record says is held of `base`, or 0.0 when no spelling of it is present: a
+    """What `balances` holds of `base`, or 0.0 when no spelling of it is present: a
     code is `base`'s when `resolve_base` maps it there, the rule `read_venue_holdings` reads the
     balances by, so Kraken's `XDG` is DOGE and `XBT` BTC. Raises on a present-but-unreadable value --
     the caller turns that into a refusal, because a balance this process cannot parse is not a
@@ -782,23 +783,6 @@ def read_venue_positions(*, base_url: str | None = None) -> dict[str, float]:
     return _margin_positions(asyncio.run(asyncio.wait_for(_read(), timeout=_VENUE_READ_TIMEOUT_SECONDS)))
 
 
-def _newest_venue_balances(journal_dir: Path) -> dict:
-    """`state.balances` from the newest `ok`, schema-2 `venue-<HH>.json`, or `{}` when the journal
-    holds none. Mirrors `command._seed_exec_positions`: every record is `validate_venue_record`-
-    checked BEFORE its `status` is consulted, and a malformed one raises rather than being skipped
-    -- silently reading past a broken record would make the disposal bound fail open."""
-    newest: tuple[datetime, dict] | None = None
-    for path in sorted(Path(journal_dir).glob("*/venue-*.json")):
-        doc = read_venue_record(path)
-        validate_venue_record(doc)
-        if doc.get("status") != "ok" or doc.get("schema_version") != 2:
-            continue
-        cycle_ts = datetime.fromisoformat(doc["cycle_ts"])
-        if newest is None or cycle_ts > newest[0]:
-            newest = (cycle_ts, doc)
-    return {} if newest is None else dict(newest[1]["state"]["balances"])
-
-
 def _cycle_records_through(journal_dir: Path, until: datetime) -> dict[datetime, CycleRecord]:
     """Every success record stamped at or before `until`, keyed by the boundary it names.
 
@@ -890,33 +874,35 @@ def _classify_margin_close(intent: ProbeIntent, held: float) -> _CloseDecision:
     return _CloseDecision(qty=abs(held), reduce_only=True)
 
 
-def _classify_spot_close(intent: ProbeIntent, *, balances: dict, level: str) -> _CloseDecision:
-    """The D7 disposal: a sell of coin a manual venue action created, whose `qty` came through the
-    owner's sign-off from the ledger export.
+def _classify_spot_close(intent: ProbeIntent, *, balances: dict, level: str, ordermin: float) -> _CloseDecision:
+    """The spot sell, bounded by `balances`: the spot totals of the newest venue book this process has
+    read (`ProbeExecutor._venue_book`), Kraken's own figure and never the Cache's stored account, which
+    a restart adds to and never drops from. A balance under the pair's `ordermin` reads 0.0 in both
+    arms: it is dust no order can sell, so at `full` it refutes no sell and at `reduce_only` it covers
+    none.
 
-    Before the restart the venue record can REFUTE but not confirm that figure -- its balances come
-    from the connect-time account read, so no pre-restart record can see the settle; a positive
-    balance smaller than `qty` is a contradiction and refuses, while zero-or-absent proves nothing
-    and the intent proceeds on the signed figure with the venue's own insufficient-funds rejection
-    as the enforcing backstop. At `reduce_only` -- which implies the hold, which implies a restart,
-    which implies a fresh startup account read -- the record CAN confirm, so the full `qty <=
-    balance` bound applies and an absent balance reads 0.0.
+    At `full` a positive balance smaller than `qty` refuses, while a zero balance proves nothing -- a
+    coin that lands after the book's `read_at` is in none of its balances -- and the intent proceeds on
+    the signed figure with the venue's own insufficient-funds rejection as the enforcing backstop. At
+    `reduce_only` the full `qty <= balance` bound applies, so a zero balance refuses.
 
     NO venue-side flag either way: Kraken's `reduce_only` is a margin-order concept a spot order
     cannot carry, so this bound plus the venue backstop IS the whole guard.
     """
     if intent.qty is None:
-        # Neither closer shape: nothing to size against a position, nothing for the record to bound.
+        # Neither closer shape: nothing to size against a position, nothing for the balance to bound.
         return _CloseDecision(refusal="a spot close needs an explicit qty")
     if intent.side != "sell":
         return _CloseDecision(refusal="a spot close must be a sell")
     balance = _spot_balance(balances, intent.symbol.split("/")[0])
+    if balance < ordermin:
+        balance = 0.0
     if level == GateLevel.REDUCE_ONLY:
         if intent.qty > balance:
-            return _CloseDecision(refusal="the venue record's balance does not cover the signed qty")
+            return _CloseDecision(refusal="the venue's balance does not cover the signed qty")
         return _CloseDecision(qty=intent.qty)
     if 0.0 < balance < intent.qty:
-        return _CloseDecision(refusal="the venue record refutes the signed qty")
+        return _CloseDecision(refusal="the venue's balance refutes the signed qty")
     return _CloseDecision(qty=intent.qty)
 
 
@@ -2528,12 +2514,15 @@ class ProbeExecutor:
 
     def _mixed_inventory_refusals(self, plan, state) -> list[str]:
         """Spec 00120 D12's refusal of an opening intent that would put a spot lot beside a margin lot on
-        one pair, the margin figure the venue's (`read_venue_positions`); the spot floor is the pair's
-        `ordermin`, since a lot under it is dust the engine cannot sell and would refuse every margin open
-        on the pair while the cache is enabled."""
+        one pair, the margin figure the venue's (`read_venue_positions`) and the spot figure the newest
+        venue book's balances (`_venue_book`), a process that has read none refusing every opening intent
+        before the margin read; the spot floor is the pair's `ordermin`, since a lot under it is dust the
+        engine cannot sell and would refuse every margin open on the pair while the cache is enabled."""
         opens = [(index, intent) for index, intent in enumerate(plan.intents) if intent.action == "open"]
         if not opens:
             return []
+        if self._venue_book is None:
+            return [f"intent {index}: {_BALANCES_UNREAD}" for index, _ in opens]
         try:
             margin = (self._venue_positions or read_venue_positions)()
         except Exception as exc:
@@ -2546,7 +2535,7 @@ class ProbeExecutor:
         for index, intent in opens:
             base = intent.symbol.split("/")[0]
             try:
-                spot = _spot_balance(state.balances, base)
+                spot = _spot_balance(self._venue_book.balances, base)
             except Exception as exc:
                 out.append(f"intent {index}: {intent.symbol} spot inventory could not be read -- {type(exc).__name__}: {exc}")
                 continue
@@ -2721,20 +2710,20 @@ class ProbeExecutor:
         """D10's classification, taken at intent start off the venue truth this intent was resolved
         against. A margin closer (leverage present) reads the Cache's live position -- the same
         `sum(signed_qty)` the frozen snapshot already computed, so the sizing and the venue-truth
-        artifact can never disagree; a spot disposal reads the newest venue record's balances, and a
-        record it cannot read is a refusal rather than a bound that fails open."""
+        artifact can never disagree; a spot disposal reads the spot balances of the newest venue book this
+        process has read (`_venue_book`), and a process that has read none refuses: an empty book would read
+        every balance as zero, which at `full` admits the sell on the signed figure alone."""
         if intent.leverage is not None:
             return _classify_margin_close(intent, state.positions.get(intent.symbol, 0.0))
+        if self._venue_book is None:
+            return _CloseDecision(refusal=_BALANCES_UNREAD)
         try:
-            balances = _newest_venue_balances(self._journal_dir)
+            return _classify_spot_close(
+                intent, balances=self._venue_book.balances, level=level, ordermin=state.instruments[intent.symbol].ordermin
+            )
         except Exception:
-            logger.warning("the newest venue record could not be read -- refusing the disposal", exc_info=True)
-            return _CloseDecision(refusal="the venue record could not be read")
-        try:
-            return _classify_spot_close(intent, balances=balances, level=level)
-        except Exception:
-            logger.warning("the venue record's balance for %s is unreadable -- refusing", intent.symbol, exc_info=True)
-            return _CloseDecision(refusal="the venue record could not be read")
+            logger.warning("the venue's balance for %s is unreadable -- refusing", intent.symbol, exc_info=True)
+            return _CloseDecision(refusal="the venue's balance could not be read")
 
     # --- quotes --------------------------------------------------------------------------------
 
@@ -2877,7 +2866,7 @@ class ProbeExecutor:
             self._finish_active("refused", (f"no usable touch price for {active.intent.symbol}",))
             return
         # A close intent's quantity is D10's, not the plan's: a margin closer is sized from the live
-        # position, and a disposal from the qty the venue record did not refute.
+        # position, and a disposal from the qty the venue's balance did not refute.
         if active.close_qty is not None:
             target_qty = active.close_qty
         elif active.intent.qty is not None:
