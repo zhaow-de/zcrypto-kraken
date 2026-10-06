@@ -57,9 +57,7 @@ case "${push_host}" in
 esac
 export GRAFANA_SKIP_RULE_GROUPS="${GRAFANA_SKIP_RULE_GROUPS-${skip_default}}"
 echo "grafana-push: stack=$GRAFANA_URL prom=$GRAFANA_PROM_DS_UID loki=$GRAFANA_LOKI_DS_UID folder=$GRAFANA_ALERT_FOLDER_UID skip-groups=${GRAFANA_SKIP_RULE_GROUPS:-<none>}" >&2
-# Grafana Cloud takes none of the node's groups: a rule of one that fires on no data would page the main
-# channel. The default above skips them only while the variable is unset, so a push addressed to Grafana
-# Cloud whose list does not name each of them is refused here, before any call.
+# Grafana Cloud takes none of these groups: a rule of one that fires on no data would page the main channel.
 case "${push_host}" in
   *.grafana.net)
     for group in ${skip_default}; do

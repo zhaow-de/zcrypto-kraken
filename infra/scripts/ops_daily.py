@@ -331,7 +331,7 @@ def _a_month_after(d: date) -> date:
 HEALABLE_COUNTER = "zcrypto_reconcile_healable_gap_seconds_total"
 REFDATA_RUNBOOK = "infra/runbooks/reference-data.md#refdata-sweep-due"
 HEALABLE_RUNBOOK = "infra/runbooks/ops.md#healable-threshold-rederivation-due"
-# (host, runbook): each row's reminder is named `<ssh alias> patch pass`, the name its runbook section reads.
+# (host, runbook)
 PATCH_PASSES = (("zcrypto-mon", "infra/runbooks/mon.md#mon-patch-pass"),)
 
 
@@ -374,10 +374,7 @@ def read_reminders(
     deploy_log: Path = DEPLOY_LOG,
 ) -> RemindersRead:
     """Due-ness computed from state the pass can read, so a Slack reminder that never arrives costs
-    nothing (spec 00107 D1). Each reminder comes from the source that actually knows: the sweep from
-    the register's last re-confirmation row plus the monthly cadence, each node's patch pass in
-    PATCH_PASSES from its last full converge in the deploy log plus the same cadence, the healable
-    re-derivation from whether its counter moved in the window.
+    nothing (spec 00107 D1); each reminder comes from the source that actually knows.
 
     An owed reminder reports and never blocks; a source that could not be read is `unreadable`, like
     every other read here.
@@ -406,7 +403,6 @@ def read_reminders(
         try:
             patched = last_full_converge(deploy_log, host)
         except _UNREACHABLE as exc:
-            # A malformed row fails its own host's read alone; a log that cannot be opened fails each host's alike, noted once.
             failure = f"the deploy log could not be read: {exc}"
             if failure not in log_failures:
                 log_failures.add(failure)
