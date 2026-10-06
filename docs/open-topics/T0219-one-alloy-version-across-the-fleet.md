@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: "the owner has answered spec 00123's open questions — check: every row of the `## Open questions` table in `docs/specs/00123-one-alloy-version-design.md` carries an answer in its last cell"
+ripe_when: the pull request from `feat/t0219-one-alloy-version` is merged into `develop` — check `git fetch -q origin && git log origin/develop --first-parent --merges --oneline --grep='from zhaow-de/feat/t0219-one-alloy-version'` prints its merge commit
 ---
 
 # One Alloy version across the fleet
@@ -17,9 +17,8 @@ The fleet runs three Alloy versions: v1.19.2 on the containers, `1.20.0-1` on th
 
 - The apt hosts follow apt today and are never held: the access role clears a `dpkg` hold since commit 2b54bd236 (2026-08-20), after a forced version refused a downgrade, dropped the bridgehead from the play and took the client-certificate revocation path with it; the mon role follows the same stance and `tests/test_infra_mon_role.py` holds it. The owner reversed that stance on 2026-10-05: it was taken while Alloy was not a separately deployable object, and now it is.
 - The capture role's share of the tag is built on branch `feat/t0217-capture-alloy-tag` and the NAS's Alloy-only apply form on `feat/t0217-phase-2-nas`; both move onto this topic's branch, which also carries plan 00121's Tasks 7 and 8, the NAS and the capture pair shipping to the observability node.
-- The design is `docs/specs/00123-one-alloy-version-design.md`.
+- The design is `docs/specs/00123-one-alloy-version-design.md`; the owner ruled its seven open questions on 2026-10-06, each as recommended, which discharged the trigger that waited on them. The plan is `docs/plans/00123-one-alloy-version.md`, and the package's one pull request resolves this topic, so the trigger now names that pull request's merge.
 
 ## Suggested next steps
 
-- The owner reads the `## Open questions` table of `docs/specs/00123-one-alloy-version-design.md` and gives an answer for each row, written into its last cell.
 - Plan 00123 on this branch, reviewed by `zcrypto-plan-review`; the task loop; one pull request for the whole package; then the first wave, host by host under `--tags alloy`, its records on branch `docs/t0217-phase-2-records`.
