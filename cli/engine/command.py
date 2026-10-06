@@ -564,8 +564,8 @@ _EXEC_ORDER_OUTCOMES = ("submitted", "accepted", "rejected", "venue_canceled", "
 _EXEC_LIQUIDITY_SIDES = ("maker", "taker", "no_liquidity_side")
 # Every disposition `cli/engine/executor.py`'s `_inc_external` can emit, pinned against that module's
 # own call sites by tests/test_engine_metrics.py. `unmatched` is the load-bearing one: an order event
-# belonging to no order this engine's ledger vouches for is counted and ignored, and this counter is
-# the only trace it leaves.
+# belonging to no order this engine's ledger vouches for reaches no row, cancel or trip -- a fill arms
+# the executor's re-read pass alone -- and this counter is the only count of it.
 _EXEC_EXTERNAL_DISPOSITIONS = ("matched", "unmatched")
 # The ten model EUR legs the gap is published for, restated from BASKET rather than imported from the executor, whose
 # module import would put nautilus-trader on `zcrypto --help`; tests/test_engine_metrics.py pins it to the executor's

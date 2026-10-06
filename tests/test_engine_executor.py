@@ -4288,9 +4288,9 @@ def test_a_dust_fill_on_a_completed_adopted_row_is_journaled_without_recounting_
 
 def test_an_external_event_the_ledger_does_not_vouch_for_reaches_nothing_at_all(tmp_path):
     """The operator's hand settle, and the whole reason this subscription is safe to have: an event
-    on the external topic naming an order no ledgered row vouches for is COUNTED and ignored -- no
-    trip, no row write anywhere, no cancel. The unknown-order trip stays scoped to this strategy's
-    own topic, where every order arriving IS one this engine submitted."""
+    on the external topic naming an order no ledgered row vouches for is COUNTED and reaches no trip,
+    no row write anywhere, no cancel -- a fill arms the re-read pass alone. The unknown-order trip
+    stays scoped to this strategy's own topic, where every order arriving IS one this engine submitted."""
     ex, client, earlier = _adopted_executor(tmp_path)
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
@@ -7198,6 +7198,26 @@ def test_the_settle_keeps_the_book_it_read_and_reads_with_no_metrics_hook_instal
     ex = _executor(tmp_path, venue_holdings=holdings)
     ex.on_timer(NOW)  # the startup pass's settle
     assert holdings.calls == 1 and ex._venue_book.eur_free == 850.0 and ex._venue_book.held["BTC/EUR"] == 0.001
+
+
+def test_an_unmatched_external_fill_arms_the_re_read_pass_and_the_next_tick_settles_the_holdings(tmp_path):
+    holdings = _VenueHoldings({"BTC/EUR": 0.5})
+    ex, client, _ = _idle_executor(tmp_path)
+    ex._venue_holdings = holdings
+    ex.on_timer(NOW)  # the startup pass: one read
+    _hold_in_cache(client, _resting_limit_order("O-hand"))  # the delivery helper reads the order from the Cache
+    _deliver_external_event(ex, client, _fill("O-hand", 0.5, symbol="BTC/EUR", side="buy"))
+    assert ex._reread_tries == 3
+    ex.on_timer(NOW + timedelta(seconds=5))
+    assert holdings.calls == 2 and ex._reread_tries == 0
+
+
+def test_an_unmatched_external_cancel_arms_nothing(tmp_path):
+    ex, client, _ = _idle_executor(tmp_path)
+    ex.on_timer(NOW)
+    _hold_in_cache(client, _resting_limit_order("O-hand"))
+    _deliver_external_event(ex, client, _canceled("O-hand"))
+    assert ex._reread_tries == 0
 
 
 # --- D11: the first automatic kill trips ----------------------------------------------------------
