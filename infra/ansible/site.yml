@@ -16,7 +16,7 @@
           effect of converging the secondary. Pass `-e converge_primary=true` if you mean it (this
           gates the engine play too — `--tags engine` needs it as well), and re-read
           .claude/rules/fleet-deploys.md first. To converge ONLY the secondary: `--limit zcrypto-red`.
-        success_msg: "converge_primary=true — this run WILL restart the primary's live capture and/or engine."
+        success_msg: "converge_primary=true — this run converges the live primary, and its tags decide whether its live capture and/or engine restart."
       when: inventory_hostname in groups['engine_host'] | default([])
       tags: [always]
 
