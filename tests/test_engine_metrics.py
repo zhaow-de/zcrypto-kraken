@@ -57,10 +57,10 @@ NOW = datetime(2026, 7, 10, 8, 3, tzinfo=UTC)
 
 @pytest.fixture(autouse=True)
 def _no_production_venue_read(monkeypatch):
-    """The executor's default venue read and holdings read are a real client on the trade credentials,
-    and a developer's shell may hold them; a case here that ticks an executor runs its startup pass.
-    Reaching either fails the test through every `except Exception` on the way, because `pytest.fail`
-    raises a BaseException."""
+    """The executor's default venue read, holdings read and status read are a real client on the trade
+    credentials, and a developer's shell may hold them; a case here that ticks an executor runs its
+    startup pass. Reaching one fails the test through every `except Exception` on the way, because
+    `pytest.fail` raises a BaseException."""
 
     def _refuse(*args, **kwargs):
         pytest.fail("a test reached the production venue read -- pass venue_orders")
@@ -68,9 +68,13 @@ def _no_production_venue_read(monkeypatch):
     def _refuse_holdings(*args, **kwargs):
         pytest.fail("a test reached the production venue holdings read -- pass venue_holdings")
 
+    def _refuse_statuses(*args, **kwargs):
+        pytest.fail("a test reached the production instrument status read -- pass instrument_statuses")
+
     monkeypatch.setattr(executor_module, "read_venue_orders", _refuse)
     monkeypatch.setattr(executor_module, "read_venue_holdings", _refuse_holdings)
     monkeypatch.setattr(executor_module, "read_venue_book", _refuse_holdings)
+    monkeypatch.setattr(executor_module, "read_instrument_statuses", _refuse_statuses)
 
 
 def _base(asset: str) -> float:
@@ -1846,6 +1850,8 @@ def test_a_production_venue_read_is_refused_here_before_any_client_is_built(monk
         executor_module.read_venue_holdings()
     with pytest.raises(pytest.fail.Exception, match="the production venue holdings read"):
         executor_module.read_venue_book()
+    with pytest.raises(pytest.fail.Exception, match="the production instrument status read"):
+        executor_module.read_instrument_statuses()
 
 
 # --- run(): the execution metrics, their seed, and the executor hooks ---------------------------

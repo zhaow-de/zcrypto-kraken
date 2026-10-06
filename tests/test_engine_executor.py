@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import dataclasses
 import json
 import logging
 import re
@@ -60,7 +61,17 @@ import cli.engine.execledger as execledger_module
 import cli.engine.executor as executor_module
 import cli.engine.venuestate as venuestate_module
 from cli.config import CacheSettings, EngineConfig
+from cli.engine.accumledger import ACCUM_SCHEMA_VERSION, accum_record_path, read_accum_record, write_accum_record
 from cli.engine.command import _ExecGauges, _ExecutionMetrics, _make_exec_sink, _seed_exec_positions
+from cli.engine.draftplan import (
+    LEGS,
+    Constraints,
+    DraftPlanError,
+    assemble_plans,
+    decide_leg,
+    parse_balance_export,
+    venue_balance,
+)
 from cli.engine.errors import EngineError, EngineJournalError
 from cli.engine.execgate import ARM_FILE, KILL_FILE, RESTART_HOLD_FILE, ExecutionGate, GateLevel, GateVerdict, exec_dir
 from cli.engine.execledger import (
@@ -74,7 +85,7 @@ from cli.engine.execledger import (
 )
 from cli.engine.executor import ProbeExecutor, read_venue_orders, restored_fill_state, set_executor_hooks, size_probe_order
 from cli.engine.instruments import INSTRUMENT_IDS, BelowMinimum, SizedOrder, size_order
-from cli.engine.journal import CycleRecord, SnapshotEntry, to_json
+from cli.engine.journal import CycleRecord, SnapshotEntry, from_json, to_json
 from cli.engine.node import ShadowStrategy
 from cli.engine.probeplan import MODES, PLAN_FILENAME, ProbeIntent, parse_plan
 from cli.engine.venue import VenueStatus
@@ -640,6 +651,7 @@ def _executor(
     venue_holdings=None,
     venue_fills=None,
     venue_positions=None,
+    instrument_statuses=None,
 ) -> ProbeExecutor:
     client = client if client is not None else StubClient()
     return ProbeExecutor(
@@ -657,7 +669,13 @@ def _executor(
         venue_holdings=venue_holdings if venue_holdings is not None else _VenueHoldings(),
         # No margin position unless a case hands one in: the mixed-inventory check then refuses nothing.
         venue_positions=venue_positions if venue_positions is not None else _VenuePositions(),
+        # Every leg listed TRADING unless a case hands in its own: a case that drafts reaches no status read.
+        instrument_statuses=instrument_statuses if instrument_statuses is not None else _all_trading,
     )
+
+
+def _all_trading() -> dict[str, str]:
+    return dict.fromkeys(INSTRUMENT_IDS, "TRADING")
 
 
 @pytest.fixture(autouse=True)
@@ -665,11 +683,11 @@ def _no_production_venue_read(monkeypatch):
     """The executor's default venue read, venue cancel and holdings read are a real client on the
     trade credentials, and a developer's shell may hold them. A test that needs the venue's orders
     hands the executor its own reader, one that needs the re-cancel its own canceller, and `_executor`
-    hands every case an empty holdings answer; reaching a default fails the test through every
-    `except Exception` on the way, because `pytest.fail` raises a BaseException. The cancel's wrap and
-    the two holdings reads' -- `read_venue_book`, the seam's default, and `read_venue_holdings`, which
-    answers through it -- let a call with a `base_url` through, the loopback cases' own, since those
-    reach the real client on purpose."""
+    hands every case an empty holdings answer and every leg `TRADING`; reaching a default fails the
+    test through every `except Exception` on the way, because `pytest.fail` raises a BaseException. The
+    cancel's wrap, the two holdings reads' -- `read_venue_book`, the seam's default, and
+    `read_venue_holdings`, which answers through it -- and the status read's let a call with a
+    `base_url` through, the loopback cases' own, since those reach the real client on purpose."""
 
     def _refuse(since, **kwargs):
         pytest.fail(f"a test reached the production venue read (since {since.isoformat()}) -- pass venue_orders")
@@ -695,6 +713,13 @@ def _no_production_venue_read(monkeypatch):
             pytest.fail("a test reached the production venue book read -- pass venue_holdings")
         return book(base_url=base_url)
 
+    statuses = executor_module.read_instrument_statuses
+
+    def _refuse_statuses(*, base_url=None):
+        if base_url is None:
+            pytest.fail("a test reached the production instrument status read -- pass instrument_statuses")
+        return statuses(base_url=base_url)
+
     def _refuse_fills(since, **kwargs):
         pytest.fail(f"a test reached the production venue fills read (since {since.isoformat()}) -- pass venue_fills")
 
@@ -705,6 +730,7 @@ def _no_production_venue_read(monkeypatch):
     monkeypatch.setattr(executor_module, "cancel_venue_order", _refuse_cancel)
     monkeypatch.setattr(executor_module, "read_venue_holdings", _refuse_holdings)
     monkeypatch.setattr(executor_module, "read_venue_book", _refuse_book)
+    monkeypatch.setattr(executor_module, "read_instrument_statuses", _refuse_statuses)
     # `raising=False`: the two reads land with their source fence, and the cases fail on their own terms before it.
     monkeypatch.setattr(executor_module, "read_venue_fills", _refuse_fills, raising=False)
     monkeypatch.setattr(executor_module, "read_venue_positions", _refuse_positions, raising=False)
@@ -10566,3 +10592,681 @@ def test_the_trade_history_is_read_once_per_pass_from_the_earliest_rows_boundary
 
     assert fills.calls == [_boundary(NOW - timedelta(hours=8)) - timedelta(hours=1)]
     assert _kill_file(tmp_path).exists()
+
+
+# --- the boundary's cycle plan: the book read, the table, the window, the carry, the record, the gap gauge ---
+
+RUNG2 = Path(__file__).parent / "fixtures" / "rung2"
+_RUNG2_12Z = datetime(2026, 10, 5, 12, 0, tzinfo=timezone.utc)  # the fixture's cycle_ts
+_TEN_EUR_LEGS = sorted(executor_module._SPOT_SYMBOL_BY_BASE.values())
+
+
+def _rung2_venue() -> dict:
+    return json.loads((RUNG2 / "venue-12.json").read_text())
+
+
+def _rung2_holdings() -> dict[str, float]:
+    """`balance.json`'s nine coins under their EUR pairs, read by the rung-2 helper's own parse."""
+    export = parse_balance_export(json.loads((RUNG2 / "balance.json").read_text()))
+    return {f"{base}/EUR": qty for base, qty in export.held.items()}
+
+
+def _rung2_record(tmp_path: Path, **changes) -> Path:
+    """The fixture's cycle record with `changes`, written beside the case: a later `cycle_ts` moves the 4-hourly
+    snapshots with it and re-dates the daily ones, so the copy still validates."""
+    record = from_json((RUNG2 / "cycle-12.json").read_text())
+    if "cycle_ts" in changes:
+        at = changes["cycle_ts"]
+        shift = at - record.cycle_ts
+        daily_last = at.replace(hour=0) - timedelta(days=1)
+        changes["snapshots"] = tuple(
+            dataclasses.replace(s, first_ts=s.first_ts + shift, last_ts=s.last_ts + shift)
+            if s.grid == "240"
+            else dataclasses.replace(s, first_ts=daily_last - (s.last_ts - s.first_ts), last_ts=daily_last)
+            for s in record.snapshots
+        )
+        changes.setdefault("started_at", record.started_at + shift)
+        changes.setdefault("completed_at", record.completed_at + shift)
+    record = dataclasses.replace(record, **changes)
+    path = tmp_path / "records" / f"cycle-{record.cycle_ts:%Y%m%d%H}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(to_json(record))
+    return path
+
+
+def _journal_cycle_record(tmp_path: Path, record_path: Path) -> CycleRecord:
+    record = from_json(record_path.read_text())
+    day = tmp_path / "journal" / f"{record.cycle_ts:%Y-%m-%d}"
+    day.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(record_path, day / f"cycle-{record.cycle_ts:%H}.json")
+    return record
+
+
+def _accum_doc(at: datetime, status: str, **fields) -> dict:
+    doc = dict.fromkeys(("nav", "eur_total", "eur_free", "equity_eur", "hwm_eur", "drawdown_bps", "day_loss_bps"))
+    return (
+        doc
+        | {
+            "schema_version": ACCUM_SCHEMA_VERSION,
+            "cycle_ts": at.isoformat(),
+            "drafted_at": at.isoformat(),
+            "status": status,
+            "day_loss_hold": False,
+            "plan_id": None,
+            "legs": [],
+        }
+        | fields
+    )
+
+
+def _boundary_executor(
+    tmp_path, *, record_path, holdings, eur_total, eur_free, now, statuses=None, earn=None, series=(), plan_cap=1000.0
+):
+    """An executor at a boundary whose cycle record is `record_path`'s, journaled under its own day: the venue truth
+    is `venue-12.json`'s instruments, the book every `INSTRUMENT_IDS` symbol -- 0.0 where `holdings` names none, as
+    `read_venue_book` answers all twelve -- and every leg `TRADING` but the ones `statuses` names. `series` is the
+    equities of the boundaries before it, oldest first, journaled as their `ok` draft records."""
+    record = _journal_cycle_record(tmp_path, record_path)
+    for i, equity in enumerate(series):
+        at = record.cycle_ts - timedelta(hours=4 * (len(series) - i))
+        write_accum_record(tmp_path / "journal", at, _accum_doc(at, "ok", equity_eur=equity))
+    venue = _rung2_venue()["state"]
+    instruments = {
+        entry["instrument_id"]: _fake_instrument(
+            entry["instrument_id"], ordermin=entry["ordermin"], lot_step=entry["lot_step"], tick_size=entry["tick_size"]
+        )
+        for entry in venue["instruments"].values()
+    }
+    client = StubClient(StubCache(instruments=instruments, balances=venue["balances"]))
+    clock = _Clock(now)
+    listed = dict.fromkeys(INSTRUMENT_IDS, "TRADING") | dict(statuses or {})
+    ex = _executor(
+        tmp_path,
+        client=client,
+        clock=clock,
+        config=_config(tmp_path, exec_max_plan_notional_eur=plan_cap),
+        venue_holdings=_VenueHoldings(
+            dict.fromkeys(INSTRUMENT_IDS, 0.0) | dict(holdings), eur_total=eur_total, eur_free=eur_free, earn=earn
+        ),
+        instrument_statuses=lambda: dict(listed),
+    )
+    return ex, client, clock
+
+
+def _accum(tmp_path: Path, when: datetime = _RUNG2_12Z) -> dict:
+    return read_accum_record(accum_record_path(tmp_path / "journal", when))
+
+
+def _legs(tmp_path: Path, when: datetime = _RUNG2_12Z) -> dict[str, dict]:
+    return {leg["symbol"]: leg for leg in _accum(tmp_path, when)["legs"]}
+
+
+def _ticks(ex, clock, n: int) -> None:
+    for _ in range(n):
+        ex.on_timer(clock.now)
+        clock.now += timedelta(seconds=5)
+
+
+def _only(*symbols: str) -> dict[str, float]:
+    """The fixture's targets with every leg but `symbols` at 0.0."""
+    targets = from_json((RUNG2 / "cycle-12.json").read_text()).final_targets
+    return {symbol: weight if symbol in symbols else 0.0 for symbol, weight in targets.items()}
+
+
+def _the_ten_at(weight: float) -> dict[str, float]:
+    return {symbol: weight if symbol.endswith("/EUR") else 0.0 for symbol in INSTRUMENT_IDS}
+
+
+def test_rung_twos_entry_day_drafts_the_ten_legs_at_nav_1000_with_the_notionals_the_floor_arithmetic_gives(tmp_path):
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=RUNG2 / "cycle-12.json",
+        holdings={},
+        eur_total=1500.0,
+        eur_free=1500.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+    )
+    ex.on_boundary(_RUNG2_12Z)
+    ex.on_timer(clock.now)
+    plan = _plan_entry(tmp_path, when=_RUNG2_12Z)
+    assert plan["plan_id"] == "r3-20261005-12" and plan["disposition"] == "accepted"
+    intents = {i["symbol"]: i for i in plan["plan"]["intents"]}
+    assert set(intents) == set(_TEN_EUR_LEGS) and "LINK/EUR" in intents
+    # targets 38.6427 and 15.3318, a buy floored to the cent
+    assert intents["BTC/EUR"]["notional_eur"] == pytest.approx(38.64, abs=0.005)
+    assert intents["LINK/EUR"]["notional_eur"] == pytest.approx(15.33, abs=0.005)
+    record = _accum(tmp_path)
+    assert record["status"] == "ok" and record["nav"] == 1000.0 and record["eur_free"] == 1500.0
+    assert record["plan_id"] == "r3-20261005-12" and all(leg["outcome"] == "placed" for leg in record["legs"])
+
+
+def test_the_loops_rows_at_eur_720_on_the_nine_legs_equal_the_helpers_decision_rows(tmp_path, monkeypatch):
+    """The helper's rows are recomputed here -- `decide_leg` at its hand-window defaults over the same fixtures, the
+    box's own decision log being gitignored -- and the loop's are its table's, as `decide_leg` returns them before the
+    cash trim and the plan, where the two differ by design: the reserve, the split and the cap."""
+    rows: list = []
+    real = executor_module.decide_leg
+    monkeypatch.setattr(executor_module, "decide_leg", lambda *args, **kwargs: rows.append(real(*args, **kwargs)) or rows[-1])
+    holdings = _rung2_holdings()
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=_rung2_record(tmp_path, nav=720.0),
+        holdings=holdings,
+        eur_total=1500.0,
+        eur_free=1500.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+    )
+    ex.on_boundary(_RUNG2_12Z)
+    ex.on_timer(clock.now)
+
+    record = from_json((RUNG2 / "cycle-12.json").read_text())
+    venue = _rung2_venue()["state"]
+    helper = [
+        decide_leg(
+            symbol,
+            weight=record.final_targets[symbol],
+            price=record.closes[symbol.split("/")[0]],
+            constraints=Constraints(
+                ordermin=venue["instruments"][symbol]["ordermin"], lot_step=venue["instruments"][symbol]["lot_step"]
+            ),
+            kraken_held=holdings[symbol],
+            engine_held=None,
+            venue_b=venue_balance(venue["balances"], symbol.split("/")[0]),
+        )
+        for symbol in LEGS
+    ]
+
+    def _row(leg):
+        return (leg.symbol, leg.outcome, leg.side, leg.notional_eur, leg.qty, leg.reason)
+
+    loop = {leg.symbol: _row(leg) for leg in rows}
+    assert sorted(loop) == _TEN_EUR_LEGS
+    assert [loop[leg.symbol] for leg in helper] == [_row(leg) for leg in helper]
+    assert {leg.outcome for leg in helper} == {"placed", "carried"}
+
+
+def test_a_sidecar_boundary_writes_no_cycle_and_drafts_nothing(tmp_path):
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=RUNG2 / "cycle-12.json",
+        holdings={},
+        eur_total=1500.0,
+        eur_free=1500.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+    )
+    (tmp_path / "journal" / f"{_RUNG2_12Z:%Y-%m-%d}" / "failed-cycle-12.json").write_text("{}")
+    ex.on_boundary(_RUNG2_12Z)
+    _ticks(ex, clock, 2)
+    record = _accum(tmp_path)
+    assert record["status"] == "no-cycle" and record["legs"] == [] and record["plan_id"] is None
+    assert _record(tmp_path, _RUNG2_12Z)["plans"] == [] and metrics.not_drafted == [True]
+
+
+def test_a_book_read_that_fails_three_ticks_writes_book_unread_and_the_next_boundary_absorbs_the_gap(tmp_path):
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=RUNG2 / "cycle-12.json",
+        holdings={},
+        eur_total=1500.0,
+        eur_free=1500.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+    )
+    holdings = ex._venue_holdings
+    holdings._raises = RuntimeError("EAPI:Invalid nonce")
+    ex.on_boundary(_RUNG2_12Z)
+    _ticks(ex, clock, 3)
+    assert accum_record_path(tmp_path / "journal", _RUNG2_12Z).exists()
+    record = _accum(tmp_path)
+    assert record["status"] == "book-unread" and record["legs"] == [] and record["eur_free"] is None
+    assert _record(tmp_path, _RUNG2_12Z)["plans"] == [] and holdings.calls == 4  # the startup pass's, then three
+
+    later = _RUNG2_12Z + timedelta(hours=4)
+    _journal_cycle_record(tmp_path, _rung2_record(tmp_path, cycle_ts=later))
+    holdings._raises = None
+    clock.now = later + timedelta(minutes=2)
+    ex.on_boundary(later)
+    ex.on_timer(clock.now)
+    plan = _plan_entry(tmp_path, when=later)
+    assert plan["plan_id"] == "r3-20261005-16" and plan["disposition"] == "accepted"
+    assert {i["symbol"] for i in plan["plan"]["intents"]} == set(_TEN_EUR_LEGS)
+
+
+def test_an_earn_coded_basket_coin_refuses_the_drafts_held_and_three_ticks_write_book_unread(tmp_path):
+    """`SOL.F` holding 2.0 beside a spot 0.5 (`earn={"SOL": 2.0}`): the book answers, the draft refuses `held` at
+    WARNING with `2 SOL is held outside the spot wallet` three ticks running, and the third writes `book-unread` with
+    no plan entry; the probe skips the refusal and SOL/EUR is drafted against its spot 0.5."""
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=RUNG2 / "cycle-12.json",
+        holdings={"SOL/EUR": 0.5},
+        eur_total=1500.0,
+        eur_free=1500.0,
+        earn={"SOL": 2.0},
+        now=_RUNG2_12Z + timedelta(minutes=2),
+    )
+    ex.on_boundary(_RUNG2_12Z)
+    with _executor_errors(level=logging.WARNING) as records:
+        _ticks(ex, clock, 3)
+    assert accum_record_path(tmp_path / "journal", _RUNG2_12Z).exists()
+    record = _accum(tmp_path)
+    assert record["status"] == "book-unread" and record["legs"] == [] and record["eur_free"] == 1500.0
+    assert _record(tmp_path, _RUNG2_12Z)["plans"] == []
+    assert sum("2 SOL is held outside the spot wallet" in r.getMessage() for r in records) == 3
+
+
+def _left_pending_cancel():
+    """An order the startup pass cancels and the venue has not answered: PENDING_CANCEL, in flight in the Cache's
+    terms."""
+    order = _open_order("O-left-by-the-last-process", venue_order_id="OLEFT-AAAAA-BBBBBB")
+    order.is_inflight = True
+    return order
+
+
+def test_the_whole_draft_waits_on_a_tick_with_nothing_in_flight_and_created_at_is_that_ticks_now(tmp_path):
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=RUNG2 / "cycle-12.json",
+        holdings={},
+        eur_total=1500.0,
+        eur_free=1500.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+    )
+    client.cache._open_orders.append(_left_pending_cancel())
+    ex.on_boundary(_RUNG2_12Z)
+    _ticks(ex, clock, 2)
+    assert _record(tmp_path, _RUNG2_12Z)["plans"] == [] and ex._venue_holdings.calls == 1  # the startup pass's alone
+
+    client.cache._open_orders.clear()
+    clock.now = _RUNG2_12Z + timedelta(minutes=7)
+    ex.on_timer(clock.now)
+    plans = _record(tmp_path, _RUNG2_12Z)["plans"]
+    assert len(plans) == 1 and plans[0]["disposition"] == "accepted"
+    assert plans[0]["plan"]["created_at"] == plans[0]["received_at"] == clock.now.isoformat()
+
+
+def test_a_draft_still_waiting_past_the_window_writes_window_closed(tmp_path):
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=RUNG2 / "cycle-12.json",
+        holdings={},
+        eur_total=1500.0,
+        eur_free=1500.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+    )
+    client.cache._open_orders.append(_left_pending_cancel())
+    ex.on_boundary(_RUNG2_12Z)
+    ex.on_timer(clock.now)
+    clock.now = _RUNG2_12Z + timedelta(hours=3, minutes=31)
+    ex.on_timer(clock.now)
+    assert accum_record_path(tmp_path / "journal", _RUNG2_12Z).exists()
+    record = _accum(tmp_path)
+    assert record["status"] == "window-closed" and record["legs"] == [] and metrics.not_drafted == [True]
+    assert _record(tmp_path, _RUNG2_12Z)["evaluated_at"] == clock.now.isoformat() and ex._pending_draft is None
+
+
+@pytest.mark.parametrize(
+    ("ends", "starts"), [(timedelta(hours=3, minutes=29), True), (timedelta(hours=3, minutes=31), False)], ids=["3h29", "3h31"]
+)
+def test_an_intent_does_not_start_past_the_windows_close_and_is_journaled_carried(tmp_path, ends, starts):
+    """An intent whose predecessor ends at B+3h31 is carried with `the submission window closed`; at B+3h29 it starts.
+    The probe deletes the close and the B+3h31 start then happens."""
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=_rung2_record(tmp_path, final_targets=_only("BTC/EUR", "ETH/EUR")),
+        holdings={},
+        eur_total=1500.0,
+        eur_free=1500.0,
+        now=_RUNG2_12Z + ends - timedelta(minutes=5),
+    )
+    ex.on_boundary(_RUNG2_12Z)
+    ex.on_timer(clock.now)
+    ex.on_quote(_quote(bid=98250.0, ask=98250.1))
+    order = client.submitted[-1][0]
+    ex.on_order_event(_accepted(str(order.client_order_id)))
+    _advance_with_quotes(ex, client, clock, minutes=5, bid=98250.0, ask=98250.1)
+    assert clock.now == _RUNG2_12Z + ends and not client.canceled
+    _deliver_fill(ex, client, str(order.client_order_id), float(order.quantity), px=98250.0)
+    ex.on_timer(clock.now)
+
+    second = _intent_entry(tmp_path, 1, when=_RUNG2_12Z)
+    if starts:
+        assert second["outcome"] == "pending" and client.subscribed == ["BTC/EUR.KRAKEN", "ETH/EUR.KRAKEN"]
+    else:
+        assert second["outcome"] == "carried" and second["reasons"] == ["the submission window closed"]
+        assert client.subscribed == ["BTC/EUR.KRAKEN"]
+
+
+def test_a_leg_with_an_open_ledger_row_is_carried_until_the_venue_has_answered_it(tmp_path):
+    """A BTC/EUR row `ambiguous` inside the window: the draft carries BTC/EUR with the open-row reason and drafts no
+    second sell; with the row closed the next draft sells."""
+    earlier = _RUNG2_12Z - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-ambiguous", reduce_only=True, when=earlier)
+    update_submitted_row(tmp_path / "journal", earlier, "O-ambiguous", state="ambiguous")
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=_rung2_record(tmp_path, final_targets=_only("BTC/EUR")),
+        holdings={"BTC/EUR": 0.001},
+        eur_total=1500.0,
+        eur_free=1500.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+    )
+    ex.on_boundary(_RUNG2_12Z)
+    ex.on_timer(clock.now)
+    assert _record(tmp_path, _RUNG2_12Z)["plans"] == []
+    btc = _legs(tmp_path)["BTC/EUR"]
+    assert btc["outcome"] == "carried" and btc["reason"] == "an order of this symbol may still rest at the venue"
+
+    update_submitted_row(tmp_path / "journal", earlier, "O-ambiguous", state="canceled")
+    later = _RUNG2_12Z + timedelta(hours=4)
+    _journal_cycle_record(tmp_path, _rung2_record(tmp_path, final_targets=_only("BTC/EUR"), cycle_ts=later))
+    clock.now = later + timedelta(minutes=2)
+    ex.on_boundary(later)
+    ex.on_timer(clock.now)
+    intents = _plan_entry(tmp_path, when=later)["plan"]["intents"]
+    assert [(i["symbol"], i["side"]) for i in intents] == [("BTC/EUR", "sell")]
+
+
+def test_a_re_armed_draft_after_a_restart_inside_the_window_is_refused_by_the_dedup_wall(tmp_path):
+    """The previous process journaled the boundary's plan and ended before its draft record was written: the first
+    tick after the restart arms the boundary again, and the plan it drafts is refused `plan_id already ledgered`. A
+    third process finds the record naming the plan and arms nothing."""
+    kwargs = dict(record_path=RUNG2 / "cycle-12.json", holdings={}, eur_total=1500.0, eur_free=1500.0)
+    ex, client, clock = _boundary_executor(tmp_path, now=_RUNG2_12Z + timedelta(minutes=2), **kwargs)
+    ex.on_boundary(_RUNG2_12Z)
+    ex.on_timer(clock.now)
+    assert _plan_entry(tmp_path, when=_RUNG2_12Z)["disposition"] == "accepted"
+    accum_record_path(tmp_path / "journal", _RUNG2_12Z).unlink()
+
+    restarted, _, restart_clock = _boundary_executor(tmp_path, now=_RUNG2_12Z + timedelta(minutes=10), **kwargs)
+    restarted.on_timer(restart_clock.now)
+    assert accum_record_path(tmp_path / "journal", _RUNG2_12Z).exists()
+    record = _accum(tmp_path)
+    entry = _plan_entry(tmp_path, when=_RUNG2_12Z, index=1)
+    assert record["status"] == "refused" and record["plan_id"] == "r3-20261005-12"
+    assert entry["plan_id"] == "r3-20261005-12" and entry["reasons"] == ["plan_id already ledgered"]
+    carried = {leg["symbol"] for leg in record["legs"] if leg["reason"] == "plan_id already ledgered"}
+    assert carried and carried == {i["symbol"] for i in entry["plan"]["intents"]}
+
+    third, _, third_clock = _boundary_executor(tmp_path, now=_RUNG2_12Z + timedelta(minutes=20), **kwargs)
+    third.on_timer(third_clock.now)
+    assert _accum(tmp_path) == record and len(_record(tmp_path, _RUNG2_12Z)["plans"]) == 2
+
+
+def test_a_drill_plan_dropped_during_a_cycle_plan_waits_in_its_file(tmp_path):
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=_rung2_record(tmp_path, final_targets=_only("BTC/EUR", "ETH/EUR")),
+        holdings={},
+        eur_total=1500.0,
+        eur_free=1500.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+    )
+    ex.on_boundary(_RUNG2_12Z)
+    ex.on_timer(clock.now)
+    drill = _drop_plan(tmp_path, _plan_dict(plan_id="drill-1", created_at=clock.now))
+    _ticks(ex, clock, 2)
+    assert drill.exists() and [e["plan_id"] for e in _record(tmp_path, _RUNG2_12Z)["plans"]] == ["r3-20261005-12"]
+
+    _ticks(ex, clock, 20)  # each intent of the cycle plan ends with no quote inside its wait
+    assert not drill.exists()
+    assert [e["plan_id"] for e in _record(tmp_path, _RUNG2_12Z)["plans"]] == ["r3-20261005-12", "drill-1"]
+
+
+def test_a_eur_160_leg_at_nav_1000_is_drafted_into_the_boundarys_one_plan(tmp_path):
+    """A synthetic record with BTC/EUR at weight 0.16: the loop drafts the leg where the helper's `assemble_plans`
+    raises at the 95 EUR cap; the helper's own tests' assertions are untouched."""
+    targets = {**_only(*_TEN_EUR_LEGS), "BTC/EUR": 0.16}
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=_rung2_record(tmp_path, final_targets=targets),
+        holdings={},
+        eur_total=1500.0,
+        eur_free=1500.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+    )
+    ex.on_boundary(_RUNG2_12Z)
+    ex.on_timer(clock.now)
+    plans = _record(tmp_path, _RUNG2_12Z)["plans"]
+    assert len(plans) == 1 and plans[0]["disposition"] == "accepted"
+    assert {i["symbol"]: i["notional_eur"] for i in plans[0]["plan"]["intents"]}["BTC/EUR"] == 160.0
+    leg = decide_leg(
+        "BTC/EUR",
+        weight=0.16,
+        price=98250.0,
+        constraints=Constraints(ordermin=5e-05, lot_step=1e-08),
+        kraken_held=0.0,
+        engine_held=None,
+        venue_b=0.0,
+        eur_per_weight=1000.0,
+    )
+    with pytest.raises(DraftPlanError, match="over the 95 EUR plan cap on its own"):
+        assemble_plans([leg])
+
+
+def test_a_long_book_over_the_cap_from_a_flat_book_drafts_one_plan_at_the_cap_and_carries_the_rest(tmp_path):
+    """A synthetic record with the ten EUR legs at 0.12 (long gross 1.2) from a flat book with `eur_free` 1,500 and
+    `plan_cap=500.0`, a cap under the sleeve's free cash: the cash trim takes the buys to EUR 990, the sleeve's free
+    cash less the reserve, then the table trims them from the smallest until the plan fits
+    `exec_max_plan_notional_eur` 500.0, the plan is `accepted` with Σ `notional_eur` ≤ 500 and the legs the cap
+    carries name it."""
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=_rung2_record(tmp_path, final_targets=_the_ten_at(0.12)),
+        holdings={},
+        eur_total=1500.0,
+        eur_free=1500.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+        plan_cap=500.0,
+    )
+    ex.on_boundary(_RUNG2_12Z)
+    ex.on_timer(clock.now)
+    plans = _record(tmp_path, _RUNG2_12Z)["plans"]
+    assert len(plans) == 1 and plans[0]["disposition"] == "accepted"
+    intents = {i["symbol"]: i["notional_eur"] for i in plans[0]["plan"]["intents"]}
+    assert intents == dict.fromkeys(("LINK/EUR", "LTC/EUR", "SOL/EUR", "XRP/EUR"), 120.0)  # 480, the cap's fit
+    capped = {s for s, leg in _legs(tmp_path).items() if leg["reason"] == "over the plan cap 500 EUR; carries to the next boundary"}
+    assert capped == {"AVAX/EUR", "BTC/EUR", "DOGE/EUR", "DOT/EUR", "ETH/EUR"}
+
+
+def test_the_buys_are_bounded_by_the_sleeves_free_cash_and_never_by_the_accounts(tmp_path):
+    """A synthetic record with the ten EUR legs at 0.12, the book holding each leg at EUR 60 at the record's close
+    (EUR 600 of coin) on an account whose `eur_free` is 1,500: the sleeve's free cash is 400, so the buys, about EUR 60
+    a leg, trim to Σ `notional_eur` ≤ 390 with the cash trim's reason on the legs it carries; a second build with
+    `eur_free` 200 trims them to ≤ 190, the account's cash the bound."""
+    closes = from_json((RUNG2 / "cycle-12.json").read_text()).closes
+    holdings = {f"{base}/EUR": 60.0 / close for base, close in closes.items()}
+    for eur_free, bound in ((1500.0, 390.0), (200.0, 190.0)):
+        case = tmp_path / f"free-{eur_free:.0f}"
+        case.mkdir()
+        ex, client, clock = _boundary_executor(
+            case,
+            record_path=_rung2_record(case, final_targets=_the_ten_at(0.12)),
+            holdings=holdings,
+            eur_total=eur_free,
+            eur_free=eur_free,
+            now=_RUNG2_12Z + timedelta(minutes=2),
+        )
+        ex.on_boundary(_RUNG2_12Z)
+        ex.on_timer(clock.now)
+        plans = _record(case, _RUNG2_12Z)["plans"]
+        assert len(plans) == 1 and plans[0]["disposition"] == "accepted"
+        total = sum(i["notional_eur"] for i in plans[0]["plan"]["intents"])
+        assert 0.0 < total <= bound + 1e-9, (eur_free, total)
+        assert any(leg["reason"] == "buys beyond free EUR - 10 trim from the smallest" for leg in _legs(case).values())
+
+
+def test_a_closed_week_holding_an_undrafted_boundary_is_refused_naming_it(tmp_path):
+    """42 `full` exec records with a `book-unread` record at one boundary: `_score_closed_week` refuses the week at
+    that boundary; with the record `ok` it scores. The probe deletes the accum read and the week scores either way."""
+    _journal_week(tmp_path, fills=_HEALTHY_FILLS, lead=6)
+    undrafted = _IN_WEEK
+    write_accum_record(tmp_path / "journal", undrafted, _accum_doc(undrafted, "book-unread"))
+    with _executor_errors(level=logging.WARNING) as records:
+        tripped, states = _tracking_states(tmp_path)
+    assert not tripped and states == [executor_module._TRACKING_UNSCORED]
+    assert any(f"below the full level or undrafted (first at {undrafted.isoformat()})" in r.getMessage() for r in records)
+
+    write_accum_record(tmp_path / "journal", undrafted, _accum_doc(undrafted, "ok"))
+    tripped, states = _tracking_states(tmp_path)
+    assert not tripped and states == [executor_module._TRACKING_WITHIN_BAND]
+
+
+def test_an_intent_of_the_cycle_plan_re_sets_its_legs_gap_by_what_it_filled_and_a_refused_one_reads_its_whole_delta(
+    tmp_path,
+):
+    """The draft reads each leg's whole delta; BTC's intent fills and its leg reads the delta less the fill at the
+    close, about 0, and ETH's, refused at its start under a gate disarmed meanwhile, reads its whole delta."""
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=_rung2_record(tmp_path, final_targets=_only("BTC/EUR", "ETH/EUR")),
+        holdings={},
+        eur_total=1500.0,
+        eur_free=1500.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+    )
+    ex.on_boundary(_RUNG2_12Z)
+    ex.on_timer(clock.now)
+    legs = _legs(tmp_path)
+    assert dict(metrics.gaps) == {symbol: leg["delta_eur"] for symbol, leg in legs.items()}
+
+    ex.on_quote(_quote(bid=98250.0, ask=98250.1))
+    order = client.submitted[-1][0]
+    ex.on_order_event(_accepted(str(order.client_order_id)))
+    _deliver_fill(ex, client, str(order.client_order_id), float(order.quantity), px=98250.0)
+    (exec_dir(tmp_path) / ARM_FILE).unlink()
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+
+    assert _intent_outcome(tmp_path, 0, when=_RUNG2_12Z) == "filled" and _intent_outcome(tmp_path, 1, when=_RUNG2_12Z) == "refused"
+    gaps = dict(metrics.gaps)
+    assert gaps["BTC/EUR"] == pytest.approx(legs["BTC/EUR"]["delta_eur"] - float(order.quantity) * 98250.0)
+    assert abs(gaps["BTC/EUR"]) < 0.01 and gaps["ETH/EUR"] == legs["ETH/EUR"]["delta_eur"]
+
+
+def test_the_cross_check_logs_the_venue_holds_warning_and_drafts_from_the_venues_figure(tmp_path):
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=RUNG2 / "cycle-12.json",
+        holdings={"BTC/EUR": 0.0002},
+        eur_total=1500.0,
+        eur_free=1500.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+    )
+    ex.on_boundary(_RUNG2_12Z)
+    with _executor_errors(level=logging.WARNING) as records:
+        ex.on_timer(clock.now)
+    assert (
+        "the venue holds 0.0002 BTC/EUR where the Cache reads 0 -- the position gauge takes the venue's figure at the boundary read"
+    ) in [r.getMessage() for r in records]
+    btc = _legs(tmp_path)["BTC/EUR"]
+    assert btc["held_qty"] == 0.0002 and btc["cache_net"] == 0.0
+    assert btc["delta_eur"] == pytest.approx(38.6427 - 0.0002 * 98250.0) and btc["notional_eur"] == 18.99
+
+
+def test_the_gap_gauge_reads_each_legs_delta_at_the_draft_placed_or_carried(tmp_path):
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=RUNG2 / "cycle-12.json",
+        holdings={"BTC/EUR": 0.0002},
+        eur_total=1500.0,
+        eur_free=1500.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+        statuses={"SOL/EUR": "PAUSE"},
+    )
+    ex.on_boundary(_RUNG2_12Z)
+    ex.on_timer(clock.now)
+    legs = _legs(tmp_path)
+    assert legs["SOL/EUR"]["outcome"] == "carried" and legs["BTC/EUR"]["outcome"] == "placed"
+    assert sorted(metrics.gaps) == sorted((symbol, leg["delta_eur"]) for symbol, leg in legs.items())
+
+
+def test_a_leg_whose_instrument_is_not_online_at_the_boundary_is_carried_with_the_status_in_its_reason(tmp_path):
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=RUNG2 / "cycle-12.json",
+        holdings={},
+        eur_total=1500.0,
+        eur_free=1500.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+        statuses={"SOL/EUR": "HALT"},
+    )
+    ex.on_boundary(_RUNG2_12Z)
+    with _executor_errors(level=logging.WARNING) as records:
+        ex.on_timer(clock.now)
+    plan = _plan_entry(tmp_path, when=_RUNG2_12Z)
+    assert plan["disposition"] == "accepted"
+    assert {i["symbol"] for i in plan["plan"]["intents"]} == set(_TEN_EUR_LEGS) - {"SOL/EUR"}
+    sol = _legs(tmp_path)["SOL/EUR"]
+    assert sol["outcome"] == "carried" and sol["side"] is None and "HALT, not TRADING" in sol["reason"]
+    assert sol["delta_eur"] == pytest.approx(24.71, abs=0.01)
+    assert "the venue lists SOL/EUR HALT, not TRADING -- the leg carries to the next boundary" in [r.getMessage() for r in records]
+
+
+def test_a_status_read_that_raises_spends_the_book_reads_try_and_three_write_book_unread(tmp_path):
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=RUNG2 / "cycle-12.json",
+        holdings={},
+        eur_total=1500.0,
+        eur_free=1500.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+    )
+
+    def _unanswered():
+        raise RuntimeError("EService:Unavailable")
+
+    ex._instrument_statuses = _unanswered
+    ex.on_boundary(_RUNG2_12Z)
+    _ticks(ex, clock, 3)
+    assert accum_record_path(tmp_path / "journal", _RUNG2_12Z).exists()
+    assert _accum(tmp_path)["status"] == "book-unread" and _record(tmp_path, _RUNG2_12Z)["plans"] == []
+
+
+def test_a_boundary_armed_before_the_startup_pass_has_run_drafts_nothing_until_it_has(tmp_path):
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=RUNG2 / "cycle-12.json",
+        holdings={},
+        eur_total=1500.0,
+        eur_free=1500.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+    )
+
+    unread = [True]
+    orders_open = client.cache.orders_open
+
+    def _orders_open(**kwargs):
+        if unread[0]:
+            raise RuntimeError("cache read failed")
+        return orders_open(**kwargs)
+
+    client.cache.orders_open = _orders_open
+    ex.on_boundary(_RUNG2_12Z)
+    with _executor_errors(level=logging.CRITICAL):
+        ex.on_timer(clock.now)
+    assert not ex._adopted and _record(tmp_path, _RUNG2_12Z)["plans"] == []
+
+    unread[0] = False
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+    assert ex._adopted and _plan_entry(tmp_path, when=_RUNG2_12Z)["disposition"] == "accepted"
+
+
+def test_read_instrument_statuses_reads_the_action_per_symbol_from_the_loopback(_loopback_credentials):
+    pairs = json.loads(kraken_loopback.ASSET_PAIRS_FIXTURE.read_text())
+    pairs["SOLEUR"]["status"] = "cancel_only"
+    with kraken_loopback.serve(pairs) as venue:
+        statuses = executor_module.read_instrument_statuses(base_url=venue.base_url)
+        assert statuses["SOL/EUR"] == "HALT" and statuses["BTC/EUR"] == "TRADING" and statuses["ADA/EUR"] == "absent"
+        assert venue.private_calls == []
+        venue.errors["AssetPairs"] = "EService:Unavailable"
+        with pytest.raises(RuntimeError, match="EService:Unavailable"):
+            executor_module.read_instrument_statuses(base_url=venue.base_url)
