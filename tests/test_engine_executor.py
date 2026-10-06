@@ -448,6 +448,13 @@ class StubCache:
         reads scoped to this engine's own strategy must not."""
         self._external[INSTRUMENT_IDS[symbol]] = [SimpleNamespace(signed_qty=signed_qty, realized_pnl=None)]
 
+    def hold_strategy_order(self, client_order_id, *, strategy_id, venue_order_id=None):
+        """A REAL resting order under `strategy_id`, which `order` serves by `client_order_id` and the
+        venue-order-id index by `venue_order_id` -- the Cache copy whose strategy a late fill's netting
+        reads. `StubClient.submit_order` holds nothing here, so an order this process placed is absent
+        from the Cache until a test holds it."""
+        self._open_orders.append(_resting_limit_order(client_order_id, venue_order_id=venue_order_id, strategy_id=strategy_id))
+
     def close_position(self, symbol, realized_pnl):
         """A CLOSED position carrying realized PnL -- what `positions_closed` serves once a round
         trip is done, and the half a sum over open positions alone would silently lose."""
@@ -948,19 +955,22 @@ def _submitted_row(
     index: int = 0,
     venue_order_id: str | None = None,
     qty: float | None = 0.001,
+    plan_id: str = "p-before-the-restart",
+    symbol: str = "BTC/EUR",
+    side: str = "sell",
 ) -> dict:
     """A write-ahead row a previous process left behind, through the real `append_submitted_row` --
     `state` is one of `_OPEN_ORDER_STATES`, so the row is in the re-attach set. With `venue_order_id`
     it carries the acceptance record `_on_order_event` writes; without one it is a row written before
     that record existed, or one whose order never got an acceptance."""
     row = {
-        "plan_id": "p-before-the-restart",
+        "plan_id": plan_id,
         "intent_index": index,
         "client_order_id": client_order_id,
-        "intent": {"symbol": "BTC/EUR", "side": "sell", "action": "close", "mode": "execute", "notional_eur": 30.0},
+        "intent": {"symbol": symbol, "side": side, "action": "close", "mode": "execute", "notional_eur": 30.0},
         "order": {
-            "symbol": "BTC/EUR",
-            "side": "sell",
+            "symbol": symbol,
+            "side": side,
             "qty": qty,
             "price": 30000.0,
             "notional": 30.0,
@@ -8093,6 +8103,110 @@ def test_reconcile_terminal_baselines_against_our_own_holding_not_the_instrument
     )
 
 
+def test_a_late_fill_of_an_earlier_intent_on_the_same_instrument_does_not_trip_the_terminal_reconciliation(tmp_path):
+    """Cycle N's sell of BTC/EUR, its row open, fills while cycle N+1's buy of BTC/EUR runs: the
+    strategy-scoped position moves by the sell, which is in `actual` and not in the intent's own
+    fills. Netted, the terminal reads clean; un-netted it latches the kill file."""
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(symbol="BTC/EUR", side="buy", notional_eur=30.0)])
+    earlier = _submitted_row(
+        tmp_path,
+        "O-earlier",
+        reduce_only=False,
+        when=NOW - timedelta(hours=4),
+        plan_id="r3-20261109-00",
+        symbol="BTC/EUR",
+        side="sell",
+        qty=0.001,
+    )
+    ex._attach((_boundary(NOW - timedelta(hours=4)), earlier), "O-earlier", venue_order_id=None)
+    client.cache.hold_strategy_order("O-earlier", strategy_id=client.strategy_id)
+    _deliver_fill(ex, client, "O-earlier", 0.001, symbol="BTC/EUR", side="sell")
+    _deliver_fill(ex, client, client.last_order_id, 0.001, symbol="BTC/EUR", side="buy")  # the active buy fills whole
+    assert not _kill_file(tmp_path).exists()
+    assert _intent_outcome(tmp_path) == "filled"
+
+
+def test_a_late_fill_of_an_earlier_intent_on_another_instrument_is_not_netted(tmp_path):
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(symbol="BTC/EUR", side="buy", notional_eur=30.0)])
+    earlier = _submitted_row(
+        tmp_path,
+        "O-earlier",
+        reduce_only=False,
+        when=NOW - timedelta(hours=4),
+        plan_id="r3-20261109-00",
+        symbol="ETH/EUR",
+        side="sell",
+        qty=0.01,
+    )
+    ex._attach((_boundary(NOW - timedelta(hours=4)), earlier), "O-earlier", venue_order_id=None)
+    client.cache.hold_strategy_order("O-earlier", strategy_id=client.strategy_id)  # so the instrument alone keeps it out
+    _deliver_fill(ex, client, "O-earlier", 0.01, symbol="ETH/EUR", side="sell")
+    _deliver_fill(ex, client, client.last_order_id, 0.001, symbol="BTC/EUR", side="buy")
+    assert not _kill_file(tmp_path).exists()
+    assert _intent_outcome(tmp_path) == "filled"
+
+
+def test_a_fill_on_a_restored_external_copy_is_not_netted(tmp_path):
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(symbol="BTC/EUR", side="buy", notional_eur=30.0)])
+    earlier = _submitted_row(
+        tmp_path,
+        "O-earlier",
+        reduce_only=False,
+        when=NOW - timedelta(hours=4),
+        plan_id="r3-20261109-00",
+        symbol="BTC/EUR",
+        side="sell",
+        qty=0.001,
+        venue_order_id=_TXID,
+    )
+    ex._attach((_boundary(NOW - timedelta(hours=4)), earlier), _TXID, venue_order_id=_TXID)
+    client.cache.hold_strategy_order(_TXID, strategy_id=StrategyId("EXTERNAL"), venue_order_id=_TXID)
+    client.cache.set_external_position("BTC/EUR", -0.001)  # the copy's fill books under EXTERNAL, not this strategy
+    ex.on_external_order_event(
+        _fill(_TXID, 0.001, side="sell", venue_order_id=VenueOrderId(_TXID), strategy_id=StrategyId("EXTERNAL"))
+    )
+    _deliver_fill(ex, client, client.last_order_id, 0.001, symbol="BTC/EUR", side="buy")
+    assert not _kill_file(tmp_path).exists()
+    assert _intent_outcome(tmp_path) == "filled"
+
+
+def test_a_late_fill_of_the_running_intents_superseded_order_is_credited_once_and_not_netted(tmp_path):
+    ex, client, clock = _resting_executor(tmp_path, bid=30.0, ask=30.05)
+    client.cache.hold_strategy_order("O-1", strategy_id=client.strategy_id)  # so `_claims` alone keeps its late fill out
+    ex.on_order_event(_accepted("O-1"))
+    _deliver_fill(ex, client, "O-1", 0.4, px=30.0)
+    ex.on_order_event(_canceled("O-1"))
+    _deliver_fill(ex, client, "O-1", 0.6, px=30.0)
+
+    ex.on_quote(_quote(bid=30.0, ask=30.05))
+
+    intent = _intent_entry(tmp_path, 0)
+    assert (intent["outcome"], intent["filled_qty"]) == ("filled", 1.0)
+    assert not _kill_file(tmp_path).exists()
+
+
+def test_a_late_fill_of_an_earlier_intent_whose_cache_order_cannot_be_read_is_not_netted_and_trips_the_terminal(
+    tmp_path, kill_trip_expected
+):
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(symbol="BTC/EUR", side="buy", notional_eur=30.0)])
+    earlier = _submitted_row(
+        tmp_path,
+        "O-earlier",
+        reduce_only=False,
+        when=NOW - timedelta(hours=4),
+        plan_id="r3-20261109-00",
+        symbol="BTC/EUR",
+        side="sell",
+        qty=0.001,
+    )
+    ex._attach((_boundary(NOW - timedelta(hours=4)), earlier), "O-earlier", venue_order_id=None)
+    with _executor_errors(logging.WARNING) as records:
+        _deliver_fill(ex, client, "O-earlier", 0.001, symbol="BTC/EUR", side="sell")
+        _deliver_fill(ex, client, client.last_order_id, 0.001, symbol="BTC/EUR", side="buy")
+    assert [r.getMessage() for r in records if r.levelno == logging.WARNING and "O-earlier" in r.getMessage()] != []
+    assert _kill_file(tmp_path).exists()
+
+
 # --- the client handle is the real Strategy, and this file's stub is only a restatement of it ----
 
 
@@ -8257,6 +8371,7 @@ _STUB_CACHE_PLUMBING = frozenset(
         "_position_key",
         "set_position",
         "set_external_position",
+        "hold_strategy_order",
         "close_position",
         "move_position",
         "apply_fill",
@@ -9433,6 +9548,10 @@ _ONE_DOOR_CALLERS = {
     ("_venue_terminal_state", "copy.status"): "the event path: the status the venue's event put on the order",
     ("_fill_credit", "_cache.order"): "the event path: the replay cap on a row outside the restored set",
     ("_fill_credit", "copy.filled_qty"): "the event path: what the Cache's order holds beyond a row the pass repaired",
+    (
+        "_net_foreign_fill",
+        "_cache_lookup",
+    ): "whose strategy a late-filling row's Cache order carries, deciding the netting and no row's figure",
 }
 # Every writer of a plan intent, per function: a restored row's intent is written only from `_answered`.
 _INTENT_WRITER = "update_plan_intent"

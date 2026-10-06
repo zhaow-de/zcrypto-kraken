@@ -962,6 +962,10 @@ class _ActiveIntent:
     # external fill lands in a separate position and a scoped read excludes it by construction.
     # The two baselines are never compared to each other, so they need not be simultaneous.
     own_position_before: float = 0.0
+    # Signed fills of THIS strategy's other orders on this instrument since the baseline -- an earlier
+    # intent's row still open, filling late (`_net_foreign_fill`). They move the strategy-scoped
+    # position the post-terminal reconciliation reads, so its expectation carries them.
+    foreign_filled: float = 0.0
     order: object | None = None
     order_payload: dict | None = None
     client_order_id: str | None = None
@@ -3449,6 +3453,28 @@ class ProbeExecutor:
         cumulative quantity."""
         return self._plan is not None and row.get("plan_id") == self._plan.plan_id and row.get("intent_index") == active.index
 
+    def _net_foreign_fill(self, active: _ActiveIntent, row: dict, event, qty: float) -> None:
+        """Net a fill of a row the running intent does not claim into its `foreign_filled`, signed by
+        the row's own side, when the fill is on the intent's instrument and the row's Cache order
+        carries this strategy's id -- the two things that put it in the strategy-scoped position
+        `_reconcile_terminal` reads. An `EXTERNAL` copy the startup pass adopted books its fill under
+        `EXTERNAL`, outside that position, so it nets nothing. A Cache order that cannot be found
+        is no evidence of the strategy's id: it nets nothing and logs WARNING naming the order, and a
+        position the fill did move then trips the reconciliation, on the side of stopping."""
+        if str(getattr(event, "instrument_id", "")) != str(active.instrument_id):
+            return
+        order = self._cache_lookup(row, self._read_id(row))
+        if order is None:
+            logger.warning(
+                "a fill of order %s on %s landed while intent %d runs, and the Cache holds no order for it -- "
+                "it is not netted into that intent's expected position, and the reconciliation at its end may trip",
+                row["client_order_id"],
+                active.intent.symbol,
+                active.index,
+            )
+        elif str(order.strategy_id) == str(self._strategy_id):
+            active.foreign_filled += qty if row["intent"]["side"] == "buy" else -qty
+
     def _mirror_row_fill(self, client_order_id: str, qty: float) -> None:
         """`update_submitted_row` mutates the STORED document, never the row dict this process holds
         in `_attached`. Without this mirror the per-order overfill trip would compare every fill
@@ -3472,6 +3498,10 @@ class ProbeExecutor:
         never saw or one it saw and mis-accounted, and both are reasons to stop rather than to place
         the next order against a position it cannot describe.
 
+        The expectation nets `foreign_filled`: an earlier intent's order of this strategy, its row still
+        open, can fill on this instrument while this intent runs, and that fill is in the scoped
+        position and in none of this intent's own fills (`_net_foreign_fill`).
+
         DELIBERATELY NOT reached from the five ambiguous exits (a raising submit, an unclassifiable
         rejection, a cancel the venue rejected, a cancel or IOC it never answered, and a terminal
         this engine minted for itself rather than received): each of those
@@ -3482,7 +3512,8 @@ class ProbeExecutor:
         away. What covers it instead is that an ambiguous outcome already stops the whole plan and
         leaves an open row for the attended operator, which is the state that path exists to produce.
         """
-        expected = active.own_position_before + (active.filled if active.intent.side == "buy" else -active.filled)
+        own_delta = active.filled if active.intent.side == "buy" else -active.filled
+        expected = active.own_position_before + own_delta + active.foreign_filled
         try:
             actual = sum(
                 float(p.signed_qty)
@@ -4134,6 +4165,11 @@ class ProbeExecutor:
         with a row adopted from that window. The boundary is that `_attached` outlives the window:
         a process still running two days past an adopted row's boundary could accept a plan reusing
         its plan_id, and that fill would then be credited to the running intent.
+
+        A fill on an order the running intent does not claim -- an earlier intent's row, still open and
+        filling late -- is netted into that intent's `foreign_filled` when it is this strategy's order on
+        the intent's instrument (`_net_foreign_fill`), so the post-terminal reconciliation expects the
+        position the fill moved.
         """
         attached = self._attached_for(event)
         if attached is None:
@@ -4160,6 +4196,8 @@ class ProbeExecutor:
             active = self._active
             if active is not None and self._claims(row, active):
                 active.filled += qty
+            elif active is not None:
+                self._net_foreign_fill(active, row, event, qty)
         if self._restored_row(row):
             if is_fill:
                 if row.get("state") != "filled" and row["filled_qty"] >= _ordered_qty(row) - _OVERFILL_TOLERANCE:
