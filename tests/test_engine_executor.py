@@ -1881,10 +1881,12 @@ def test_a_plan_handed_in_memory_runs_through_the_pickups_refusals_and_journals_
     ex, client, _ = _idle_executor(tmp_path)
     ex.on_timer(NOW)
     plan = parse_plan(json.dumps(_plan_dict(plan_id="r3-20261109-00")))
-    assert ex._accept_plan(plan, cycle_ts=_boundary(NOW), now=NOW) == "accepted"
-    assert ex._plan is plan and _plan_entry(tmp_path)["plan_id"] == "r3-20261109-00"
-    assert ex._accept_plan(plan, cycle_ts=_boundary(NOW), now=NOW) == "refused"
-    assert _plan_entry(tmp_path, index=1)["reasons"] == ["plan_id already ledgered"]
+    boundary = _boundary(NOW) - timedelta(hours=4)
+    assert ex._accept_plan(plan, cycle_ts=boundary, now=NOW) == "accepted"
+    assert not exec_record_path(tmp_path / "journal", _boundary(NOW)).exists()
+    assert ex._plan is plan and _plan_entry(tmp_path, boundary)["plan_id"] == "r3-20261109-00"
+    assert ex._accept_plan(plan, cycle_ts=boundary, now=NOW) == "refused"
+    assert _plan_entry(tmp_path, boundary, index=1)["reasons"] == ["plan_id already ledgered"]
     assert not _plan_path(tmp_path).exists()
 
 
