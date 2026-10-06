@@ -81,8 +81,15 @@ def alloy_dir(role: str) -> str:
     return "{{ " + f"{role}_alloy_dir" + " }}"
 
 
+# A role's own verbatim task beside the three every container role shares: the cache role's Alloy block probes the digest
+# its recreate replaces, for the pins-recording refusal that follows.
+ROLE_VERBATIM = {
+    "cache": [("ansible.builtin.command", """docker inspect --format '{{ "{{" }}.Config.Image{{ "}}" }}' grafana-alloy""")],
+}
+
+
 def verbatim(role: str) -> list[tuple[str, object]]:
-    return [
+    return ROLE_VERBATIM.get(role, []) + [
         (
             "ansible.builtin.user",
             {"name": "zcrypto-alloy", "system": True, "shell": "/usr/sbin/nologin", "create_home": False, "state": "present"},

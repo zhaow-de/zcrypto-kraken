@@ -482,6 +482,42 @@ PUBLISHED = [
         "alloy",
         {"ops_alloy_digest": DIGEST, "alloy_override": "1.20.1 drops the ops timers' journal lines, back while the owner reads it"},
     ),
+    (
+        ["--limit", "zcrypto-valkey1", "--tags", "alloy", "-e", f"cache_alloy_digest={DIGEST}"],
+        "zcrypto-valkey1",
+        "alloy",
+        {"cache_alloy_digest": DIGEST},
+    ),
+    (
+        ["--limit", "zcrypto-valkey2", "--tags", "alloy", "-e", f"cache_alloy_digest={DIGEST}"],
+        "zcrypto-valkey2",
+        "alloy",
+        {"cache_alloy_digest": DIGEST},
+    ),
+    (
+        ["--limit", "zcrypto-valkey3", "--tags", "alloy", "-e", f"cache_alloy_digest={DIGEST}"],
+        "zcrypto-valkey3",
+        "alloy",
+        {"cache_alloy_digest": DIGEST},
+    ),
+    (
+        [
+            "--limit",
+            "zcrypto-valkey2",
+            "--tags",
+            "alloy",
+            "-e",
+            f"cache_alloy_digest={DIGEST}",
+            "-e",
+            json.dumps({"alloy_override": "1.20.1 drops the Sentinel scrape's series, back while the owner reads it"}),
+        ],
+        "zcrypto-valkey2",
+        "alloy",
+        {
+            "cache_alloy_digest": DIGEST,
+            "alloy_override": "1.20.1 drops the Sentinel scrape's series, back while the owner reads it",
+        },
+    ),
     (["--limit", "zcrypto-mon"], "zcrypto-mon", "", {}),
     (["--limit", "zcrypto-mon", "--tags", "mon"], "zcrypto-mon", "mon", {}),
     (
