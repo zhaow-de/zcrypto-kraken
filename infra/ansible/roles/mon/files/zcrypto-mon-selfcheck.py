@@ -19,7 +19,6 @@ import urllib.request
 try:
     import zcrypto_selfcheck
 except ModuleNotFoundError:
-    # The unit's PYTHONPATH names the module's directory; a hand run of the installed script carries none.
     sys.path.append("/usr/local/lib/zcrypto")
     import zcrypto_selfcheck
 

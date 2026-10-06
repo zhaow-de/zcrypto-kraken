@@ -531,8 +531,7 @@ NOT_A_PUBLISHED_METRIC = {
 }
 
 # Published by a node that ships unfiltered to the observability node and never to Grafana Cloud, so no Cloud keep-regex
-# admits it. Each maps to the node_common task file that installs its one publisher; every role including that file is
-# held to an Alloy config that ships to the node alone, below.
+# admits it. Each maps to the node_common task file that installs its one publisher.
 PUBLISHED_TO_A_NODE_ALONE = {
     "zcrypto_sqlite_backup_last_success_timestamp_seconds": "sqlite-backup",
 }
@@ -650,7 +649,6 @@ def test_the_node_alone_reading_tells_each_cloud_config_from_the_nodes_own(confi
 @pytest.mark.parametrize("metric", sorted(PUBLISHED_TO_A_NODE_ALONE))
 def test_every_role_publishing_a_metric_to_a_node_alone_ships_to_the_node_alone(metric):
     tasks_from = PUBLISHED_TO_A_NODE_ALONE[metric]
-    # The roles including the task file are the metric's publishers only while no other source file spells its name.
     spelled, installed = _tokens_in_tree().get(metric, set()), _copied_by(tasks_from)
     assert spelled <= installed, (
         f"{metric} is spelled in {sorted(spelled - installed)}, outside what node_common's {tasks_from} installs: a "
@@ -663,8 +661,8 @@ def test_every_role_publishing_a_metric_to_a_node_alone_ships_to_the_node_alone(
         config = REPO / f"infra/ansible/roles/{role}/files/config.alloy"
         assert config.is_file() and _ships_to_the_node_alone(config), (
             f"the {role} role includes node_common's {tasks_from}, so it publishes {metric}, and "
-            f"{'its Alloy config ships to Grafana Cloud or filters' if config.is_file() else 'it owns no files/config.alloy'}: "
-            f"no Cloud keep-regex admits the name, so a Cloud write drops it silently"
+            f"{'its config.alloy writes elsewhere, filters or nowhere' if config.is_file() else 'it owns no files/config.alloy'}: "
+            f"no Cloud keep-regex admits the name"
         )
 
 
