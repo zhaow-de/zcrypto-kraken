@@ -7935,8 +7935,30 @@ def _mint_birth(tmp_path, at=_MINT_AT, **kwargs):
     """Run the boundary the live engine would have DATED ITSELF at -- the first one after its first
     fill. Every fixture below is a journal the engine lived through boundary by boundary, so a test
     that jumped straight to the scoring boundary a week later would be asking the recorder to date a
-    week-old fill, which is the one thing it refuses."""
+    week-old fill, which is the one thing it refuses. The owner's opening holdings then follow the
+    birth it minted, ten zero rows -- the book held nothing before its first fill."""
     _tracking_executor(tmp_path, at=at, **kwargs).on_boundary(at)
+    birth = exec_dir(tmp_path) / executor_module.FIRST_FILL_FILE
+    if birth.exists():
+        _write_opening_holdings(tmp_path, datetime.fromisoformat(birth.read_text().strip()))
+
+
+def _write_birth(tmp_path, at):
+    """The birth record written by hand, as the entry's re-date writes it."""
+    path = exec_dir(tmp_path) / executor_module.FIRST_FILL_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"{at.isoformat()}\n")
+
+
+def _write_opening_holdings(tmp_path, birth, **held):
+    """The opening holdings stamped at `birth`: one row per basket base, `held`'s balance or 0.0, at the fixture's close."""
+    rows = [
+        {"base": base, "codes": [base], "balance": held.get(base, 0.0), "close": close} for base, close in _TRACK_CLOSES.items()
+    ]
+    # Spelled as the owner's procedures spell it, never through the module's constant: the owner installs it by hand.
+    path = exec_dir(tmp_path) / "opening-holdings.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"schema_version": 1, "birth": birth.isoformat(), "rows": rows}))
 
 
 def _tracking_states(tmp_path, boundary=_TRACK_EVAL, mint_at=_MINT_AT, **kwargs):
@@ -8262,6 +8284,65 @@ def test_a_pruned_head_is_refused_when_no_birth_record_survives(tmp_path):
     assert not tripped
     assert states == [executor_module._TRACKING_UNSCORED]
     assert not (exec_dir(tmp_path) / executor_module.FIRST_FILL_FILE).exists()
+
+
+def test_a_re_dated_birth_scores_the_series_from_it_and_reads_an_earlier_fill_as_a_prior_series(tmp_path):
+    """`_journal_week(tmp_path, fills=..., lead=12)` with the healthy fixture's fills and, before them,
+    a prior series' lone BTC/EUR sell of 0.01 at `_TRACK_MONDAY - timedelta(hours=40)` -- the shape the
+    journal holds once the prune has taken a prior series' buys and not yet its sells -- and the birth
+    record and its opening holdings, ten zero rows, written by hand at `_OPENING`, as the entry's
+    re-date writes them, with no mint (`mint_at=None`): the week scores within the band. Read into
+    `held`, the prior sell latches the kill at about 6046 bps against the 120 bps band; the base
+    refuses the week on `birth != first_fill`."""
+    prior = _TRACK_MONDAY - timedelta(hours=40)
+    _journal_week(tmp_path, fills={prior: [("BTC/EUR", "sell", 0.01)], **_HEALTHY_FILLS}, lead=12)
+    _write_birth(tmp_path, _OPENING)
+    _write_opening_holdings(tmp_path, _OPENING)
+
+    tripped, states = _tracking_states(tmp_path, mint_at=None)
+
+    assert not tripped
+    assert states == [executor_module._TRACKING_WITHIN_BAND]
+
+
+def test_the_opening_holdings_start_held_at_the_birth_and_a_residual_held_there_is_not_drift(tmp_path):
+    """The healthy build-out alone, `_journal_week(tmp_path, fills={_BUILD_OUT: _HEALTHY_FILLS[_BUILD_OUT]},
+    lead=6)`, the birth written by hand at `_OPENING` and the opening holdings beside it carrying BTC 0.00042 --
+    the residual Kraken held at the re-date, the slice the healthy fixture fills at `_OPENING`: the
+    week scores within the band. Read from zero, the book is BTC 25.2 EUR short at every cycle, 298.4
+    bps against the 120 bps band, and the kill latches -- the probe's reading."""
+    _journal_week(tmp_path, fills={_BUILD_OUT: _HEALTHY_FILLS[_BUILD_OUT]}, lead=6)
+    _write_birth(tmp_path, _OPENING)
+    _write_opening_holdings(tmp_path, _OPENING, BTC=0.00042)
+
+    tripped, states = _tracking_states(tmp_path, mint_at=None)
+
+    assert not tripped
+    assert states == [executor_module._TRACKING_WITHIN_BAND]
+
+
+def test_an_absent_opening_holdings_record_or_one_stamped_for_another_birth_refuses_the_week(tmp_path):
+    """The healthy journal with the birth written by hand at `_OPENING`: no record refuses the week
+    naming the birth, and a record stamped four hours earlier refuses naming both instants; stamped
+    at the birth, the week scores within the band."""
+    _journal_week(tmp_path, fills=_HEALTHY_FILLS, lead=6)
+    _write_birth(tmp_path, _OPENING)
+    earlier = _OPENING - timedelta(hours=4)
+    refusals = {
+        None: f"no opening holdings are recorded for the series born at {_OPENING.isoformat()} -- the owner records them with the birth",
+        earlier: f"the opening holdings were taken for the series born at {earlier.isoformat()}, not {_OPENING.isoformat()}",
+    }
+    for stamp, refusal in refusals.items():
+        if stamp is not None:
+            _write_opening_holdings(tmp_path, stamp)
+        with _executor_errors(logging.WARNING) as records:
+            tripped, states = _tracking_states(tmp_path, mint_at=None)
+        assert not tripped and states == [executor_module._TRACKING_UNSCORED], stamp
+        assert f"the most recently closed week is not scored: {refusal}" in [r.getMessage() for r in records]
+
+    _write_opening_holdings(tmp_path, _OPENING)
+    tripped, states = _tracking_states(tmp_path, mint_at=None)
+    assert not tripped and states == [executor_module._TRACKING_WITHIN_BAND]
 
 
 # --- _reconcile_terminal is scoped to this engine's own position (the operator's hand settle) ----
@@ -10665,11 +10746,14 @@ def _boundary_executor(
     """An executor at a boundary whose cycle record is `record_path`'s, journaled under its own day: the venue truth
     is `venue-12.json`'s instruments, the book every `INSTRUMENT_IDS` symbol -- 0.0 where `holdings` names none, as
     `read_venue_book` answers all twelve -- and every leg `TRADING` but the ones `statuses` names. `series` is the
-    equities of the boundaries before it, oldest first, journaled as their `ok` draft records."""
+    equities of the boundaries before it, oldest first, journaled as their `ok` draft records, the equity series
+    started at the first of them; with none, the boundary's mark starts it."""
     record = _journal_cycle_record(tmp_path, record_path)
     for i, equity in enumerate(series):
         at = record.cycle_ts - timedelta(hours=4 * (len(series) - i))
         write_accum_record(tmp_path / "journal", at, _accum_doc(at, "ok", equity_eur=equity))
+    if series:
+        _start_series(tmp_path, record.cycle_ts - timedelta(hours=4 * len(series)))
     venue = _rung2_venue()["state"]
     instruments = {
         entry["instrument_id"]: _fake_instrument(
@@ -10691,6 +10775,16 @@ def _boundary_executor(
         instrument_statuses=lambda: dict(listed),
     )
     return ex, client, clock
+
+
+def _series_start_path(tmp_path: Path) -> Path:
+    # Spelled as the owner's procedures spell it, never through the module's constant: the re-mint is a hand `rm`.
+    return exec_dir(tmp_path) / "equity-series-start"
+
+
+def _start_series(tmp_path: Path, at: datetime) -> None:
+    _series_start_path(tmp_path).parent.mkdir(parents=True, exist_ok=True)
+    _series_start_path(tmp_path).write_text(f"{at.isoformat()}\n")
 
 
 def _accum(tmp_path: Path, when: datetime = _RUNG2_12Z) -> dict:
@@ -11270,3 +11364,381 @@ def test_read_instrument_statuses_reads_the_action_per_symbol_from_the_loopback(
         venue.errors["AssetPairs"] = "EService:Unavailable"
         with pytest.raises(RuntimeError, match="EService:Unavailable"):
             executor_module.read_instrument_statuses(base_url=venue.base_url)
+
+
+# --- the equity mark and the two drawdown trips over the NAV -------------------------------------
+
+
+def _boundary_drafts(ex, clock, boundary: datetime, record_path: Path | None = None) -> None:
+    """A later boundary of the same process: its cycle record journaled, the alert, and the tick that drafts it."""
+    if record_path is not None:
+        _journal_cycle_record(ex._journal_dir.parent, record_path)
+    clock.now = boundary + timedelta(minutes=2)
+    ex.on_boundary(boundary)
+    ex.on_timer(clock.now)
+
+
+def _carried_under_the_entrys_reason(record: dict, entry: dict) -> set[str]:
+    reason = "; ".join(entry["reasons"])
+    carried = {leg["symbol"] for leg in record["legs"] if leg["reason"] == reason}
+    assert carried and carried == {i["symbol"] for i in entry["plan"]["intents"]}, (carried, reason)
+    return carried
+
+
+def test_equity_is_marked_at_the_eur_balances_total_and_a_resting_bid_on_hold_trips_nothing(tmp_path):
+    """total 1,000, free 850, nothing lost: the mark at `total` reads no drawdown; the probe marks
+    at `free` and the 15 % floor trips on a book that lost nothing."""
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=RUNG2 / "cycle-12.json",
+        holdings={},
+        eur_total=1000.0,
+        eur_free=850.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+        series=[1000.0],
+    )
+    ex.on_boundary(_RUNG2_12Z)
+    ex.on_timer(clock.now)
+    record = _accum(tmp_path)
+    assert record["status"] == "ok" and record["equity_eur"] == 1000.0 and record["hwm_eur"] == 1000.0
+    assert not _kill_file(tmp_path).exists() and record["drawdown_bps"] == 0.0
+
+
+def test_a_fifteen_percent_fall_from_the_high_water_mark_latches_the_kill_file_with_the_figures(tmp_path, kill_trip_expected):
+    """The series' high-water mark at EUR 1,000 and this boundary's equity at 850, 1500 bps of the NAV 1,000: the
+    mark latches the kill file with the figures, ahead of the table; the plan the draft still assembles meets the
+    in-process backstop, and the boundary's record reads `refused`, every placed leg carried under the plan entry's
+    reason. The probe trips only past the floor, and 1500 bps trips nothing."""
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=RUNG2 / "cycle-12.json",
+        holdings={},
+        eur_total=850.0,
+        eur_free=850.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+        series=[1000.0],
+    )
+    ex.on_boundary(_RUNG2_12Z)
+    ex.on_timer(clock.now)
+    kill = _kill_file(tmp_path)
+    assert kill.exists() and kill.read_text().split(" ", 1)[1] == (
+        "equity 850.00 EUR is 150.00 EUR under the series' high-water mark of 1000.00 EUR, 1500 bps of the 1000 EUR NAV\n"
+    )
+    record = _accum(tmp_path)
+    entry = _plan_entry(tmp_path, when=_RUNG2_12Z)
+    assert record["status"] == "refused" and record["drawdown_bps"] == 1500.0 and record["hwm_eur"] == 1000.0
+    assert entry["disposition"] == "refused" and entry["reasons"] == [executor_module._TRIPPED_REFUSAL]
+    _carried_under_the_entrys_reason(record, entry)
+    assert metrics.equity == [850.0] and metrics.drawdowns == [1500.0]
+
+
+def test_the_hwm_scan_is_bounded_by_the_series_start_and_an_older_drawdown_trips_nothing(tmp_path):
+    """A record at equity 1,300 at the boundary before `equity-series-start`'s instant, the same UTC
+    day, and this boundary's at 1,000: the bounded scan reads an HWM of 1,000; the probe deletes the
+    bound and the kill latches."""
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=RUNG2 / "cycle-12.json",
+        holdings={},
+        eur_total=1000.0,
+        eur_free=1000.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+        series=[1300.0],
+    )
+    _start_series(tmp_path, _RUNG2_12Z)
+    ex.on_boundary(_RUNG2_12Z)
+    ex.on_timer(clock.now)
+    record = _accum(tmp_path)
+    assert record["hwm_eur"] == 1000.0 and record["drawdown_bps"] == 0.0 and not _kill_file(tmp_path).exists()
+
+
+def test_a_same_day_re_mint_puts_the_days_earlier_records_outside_the_day_loss_base(tmp_path):
+    """EUR 160 withdrawn paused at 10Z from a book of 1,000 and the file re-minted at the 12Z boundary:
+    the 12Z base is its own equity (840, a loss of 0) and the 16Z base is 12Z's; the probe bounds the
+    base by the day instead of the instant and the hold latches on the withdrawal."""
+    flat = _the_ten_at(0.0)
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=_rung2_record(tmp_path, final_targets=flat),
+        holdings={},
+        eur_total=840.0,
+        eur_free=840.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+        series=[1000.0, 1000.0, 1000.0],
+    )
+    _series_start_path(tmp_path).unlink()  # the owner's re-mint, after the withdrawal
+    ex.on_boundary(_RUNG2_12Z)
+    ex.on_timer(clock.now)
+    noon = _accum(tmp_path)
+    assert _series_start_path(tmp_path).read_text() == f"{_RUNG2_12Z.isoformat()}\n"
+    assert noon["equity_eur"] == 840.0 and noon["drawdown_bps"] == 0.0
+    assert noon["day_loss_bps"] == 0.0 and noon["day_loss_hold"] is False
+
+    later = _RUNG2_12Z + timedelta(hours=4)
+    ex._venue_holdings.eur_total = 830.0
+    _boundary_drafts(ex, clock, later, _rung2_record(tmp_path, final_targets=flat, cycle_ts=later))
+    afternoon = _accum(tmp_path, later)
+    assert afternoon["day_loss_bps"] == 100.0 and afternoon["day_loss_hold"] is False and not ex._day_loss_hold
+
+
+def test_a_three_percent_day_loss_latches_the_hold_for_the_date_and_a_recovery_does_not_lift_it(tmp_path):
+    """The date's 00Z record at EUR 1,000 and the 12Z mark at 970, 300 bps of the NAV: the hold latches and the 12Z
+    record carries it; the 16Z mark back at 1,000 reads a loss of 0, and the hold stands on the 12Z record, in the
+    16Z draft record and the 16Z exec record. The probe keeps the hold as the boundary's own loss alone and the
+    recovery lifts it."""
+    flat = _the_ten_at(0.0)
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=_rung2_record(tmp_path, final_targets=flat),
+        holdings={},
+        eur_total=970.0,
+        eur_free=970.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+        series=[1000.0, 1000.0, 1000.0],
+    )
+    ex.on_boundary(_RUNG2_12Z)
+    ex.on_timer(clock.now)
+    noon = _accum(tmp_path)
+    assert noon["day_loss_bps"] == 300.0 and noon["day_loss_hold"] is True and not _kill_file(tmp_path).exists()
+
+    later = _RUNG2_12Z + timedelta(hours=4)
+    ex._venue_holdings.eur_total = 1000.0
+    _boundary_drafts(ex, clock, later, _rung2_record(tmp_path, final_targets=flat, cycle_ts=later))
+    afternoon = _accum(tmp_path, later)
+    assert afternoon["day_loss_bps"] == 0.0 and afternoon["day_loss_hold"] is True
+    exec_16 = _record(tmp_path, later)
+    assert exec_16["level"] == GateLevel.REDUCE_ONLY and "daily_loss_hold" in exec_16["reasons"]
+
+
+def test_the_hold_is_derived_after_a_restart_from_the_dates_records(tmp_path):
+    """The date's 04Z record latched the hold at 400 bps: a process started at 06Z holds opens from its first tick,
+    its verdict `reduce_only` with `daily_loss_hold`, before any boundary of its own; the probe deletes the first
+    tick's derivation and the restart reads `full`."""
+    day = _RUNG2_12Z.replace(hour=0)
+    journal = tmp_path / "journal"
+    write_accum_record(journal, day, _accum_doc(day, "ok", equity_eur=1000.0, day_loss_bps=0.0))
+    dawn = day + timedelta(hours=4)
+    write_accum_record(journal, dawn, _accum_doc(dawn, "ok", equity_eur=960.0, day_loss_bps=400.0, day_loss_hold=True))
+    clock = _Clock(day + timedelta(hours=6))
+    ex = _executor(tmp_path, clock=clock)
+    _start_series(tmp_path, day)
+    assert ex._day_loss_hold is False
+
+    ex.on_timer(clock.now)
+
+    verdict = ex._evaluate(clock.now)
+    assert verdict.level == GateLevel.REDUCE_ONLY and "daily_loss_hold" in verdict.reasons
+
+
+def test_a_hold_latched_yesterday_is_dropped_at_the_new_dates_first_boundary_whether_or_not_it_marks(tmp_path):
+    """The hold latched at 20Z; the 00Z cycle a sidecar (`no-cycle`, no mark): 00Z's exec record reads
+    `full` with no `daily_loss_hold`, and the 04Z mark derives afresh."""
+    flat = _the_ten_at(0.0)
+    evening = _RUNG2_12Z + timedelta(hours=8)
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=_rung2_record(tmp_path, final_targets=flat, cycle_ts=evening),
+        holdings={},
+        eur_total=960.0,
+        eur_free=960.0,
+        now=evening + timedelta(minutes=2),
+        series=[1000.0] * 5,
+    )
+    ex.on_boundary(evening)
+    ex.on_timer(clock.now)
+    assert _accum(tmp_path, evening)["day_loss_hold"] is True
+    assert _record(tmp_path, evening)["level"] == GateLevel.REDUCE_ONLY
+
+    midnight = evening + timedelta(hours=4)
+    day = tmp_path / "journal" / f"{midnight:%Y-%m-%d}"
+    day.mkdir(parents=True, exist_ok=True)
+    (day / "failed-cycle-00.json").write_text("{}")
+    _boundary_drafts(ex, clock, midnight)
+    exec_00 = _record(tmp_path, midnight)
+    assert exec_00["level"] == GateLevel.FULL and "daily_loss_hold" not in exec_00["reasons"]
+    assert exec_00["inputs"]["daily_loss_hold"] is False
+    assert _accum(tmp_path, midnight)["status"] == "no-cycle" and _accum(tmp_path, midnight)["day_loss_hold"] is False
+
+    dawn = midnight + timedelta(hours=4)
+    _boundary_drafts(ex, clock, dawn, _rung2_record(tmp_path, final_targets=flat, cycle_ts=dawn))
+    record = _accum(tmp_path, dawn)
+    assert record["day_loss_bps"] == 0.0 and record["day_loss_hold"] is False
+
+
+def test_under_the_hold_the_boundarys_sells_run_and_its_buys_are_refused_with_the_reason(tmp_path):
+    """The boundary whose mark latches the hold: its sells run, its buys are refused with the reason,
+    and its own `exec-<HH>.json` reads `reduce_only` with `daily_loss_hold` — journaled with the plan
+    entry, whose verdict `_accept_plan` evaluated after the mark latched."""
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=_rung2_record(tmp_path, final_targets=_only("BTC/EUR", "ETH/EUR")),
+        holdings={"SOL/EUR": 0.1},
+        eur_total=930.0,
+        eur_free=930.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+        series=[1000.0, 1000.0, 1000.0],
+    )
+    ex.on_boundary(_RUNG2_12Z)
+    ex.on_timer(clock.now)
+    assert _accum(tmp_path)["day_loss_hold"] is True
+    entry = _plan_entry(tmp_path, when=_RUNG2_12Z)
+    assert [(i["symbol"], i["side"]) for i in entry["plan"]["intents"]] == [
+        ("SOL/EUR", "sell"),
+        ("BTC/EUR", "buy"),
+        ("ETH/EUR", "buy"),
+    ]
+    exec_12 = _record(tmp_path, _RUNG2_12Z)
+    assert exec_12["level"] == GateLevel.REDUCE_ONLY and "daily_loss_hold" in exec_12["reasons"]
+
+    ex.on_quote(_quote("SOL/EUR.KRAKEN", bid=186.4, ask=186.41))
+    order = client.submitted[-1][0]
+    assert str(order.instrument_id) == "SOL/EUR.KRAKEN" and order.order_side == OrderSide.SELL
+    ex.on_order_event(_accepted(str(order.client_order_id)))
+    _deliver_fill(ex, client, str(order.client_order_id), float(order.quantity), symbol="SOL/EUR", side="sell", px=186.41)
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+
+    assert _intent_outcome(tmp_path, 0, when=_RUNG2_12Z) == "filled"
+    for index in (1, 2):
+        intent = _intent_entry(tmp_path, index, when=_RUNG2_12Z)
+        assert intent["outcome"] == "refused" and "daily_loss_hold" in intent["reasons"], intent
+    assert len(client.submitted) == 1
+
+
+def test_a_day_loss_hold_latched_at_a_boundary_that_places_nothing_reads_in_its_own_exec_record(tmp_path):
+    """The mark latches the hold at a boundary whose free EUR is under the reserve, every buy carried
+    and no sell owed: the record is `ok` with `plan_id: None` and no plan entry is journaled, so the
+    draft's terminal re-journal alone puts `reduce_only` with `daily_loss_hold` in the boundary's own
+    exec record, over the first act's `full`."""
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=RUNG2 / "cycle-12.json",
+        holdings={},
+        eur_total=950.0,
+        eur_free=5.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+        series=[1000.0, 1000.0, 1000.0],
+    )
+    ex.on_boundary(_RUNG2_12Z)
+    assert _record(tmp_path, _RUNG2_12Z)["level"] == GateLevel.FULL
+    ex.on_timer(clock.now)
+    record = _accum(tmp_path)
+    assert record["status"] == "ok" and record["plan_id"] is None and record["day_loss_hold"] is True
+    assert {leg["outcome"] for leg in record["legs"]} == {"carried"}
+    exec_12 = _record(tmp_path, _RUNG2_12Z)
+    assert exec_12["plans"] == [] and exec_12["level"] == GateLevel.REDUCE_ONLY and "daily_loss_hold" in exec_12["reasons"]
+
+
+def test_the_series_file_is_written_once_at_the_first_mark_and_never_rewritten(tmp_path):
+    """No series file before the first mark: the 12Z mark writes its own `cycle_ts`, and the 16Z mark reads it and
+    leaves it, its high-water mark reaching back to 12Z's equity; the probe writes the file at every mark and it
+    reads 16Z."""
+    flat = _the_ten_at(0.0)
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=_rung2_record(tmp_path, final_targets=flat),
+        holdings={},
+        eur_total=1000.0,
+        eur_free=1000.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+    )
+    assert not _series_start_path(tmp_path).exists()
+    ex.on_boundary(_RUNG2_12Z)
+    ex.on_timer(clock.now)
+    assert _series_start_path(tmp_path).read_text() == f"{_RUNG2_12Z.isoformat()}\n"
+
+    later = _RUNG2_12Z + timedelta(hours=4)
+    ex._venue_holdings.eur_total = 990.0
+    _boundary_drafts(ex, clock, later, _rung2_record(tmp_path, final_targets=flat, cycle_ts=later))
+    assert _series_start_path(tmp_path).read_text() == f"{_RUNG2_12Z.isoformat()}\n"
+    assert _accum(tmp_path, later)["hwm_eur"] == 1000.0
+
+
+def test_a_150_eur_fall_from_the_high_water_mark_latches_the_kill_at_nav_1000_on_an_account_of_1443(tmp_path, kill_trip_expected):
+    """Rung 2's deposit reused: the series' high-water mark at EUR 1,443 and this boundary's equity at
+    1,293, the book sized at the record's NAV 1,000. 150 EUR is 1500 bps of the NAV and latches the
+    kill; over the account's equity it reads about 1040 bps and trips nothing, the probe's reading."""
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=RUNG2 / "cycle-12.json",
+        holdings={},
+        eur_total=1293.0,
+        eur_free=1293.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+        series=[1443.0],
+    )
+    ex.on_boundary(_RUNG2_12Z)
+    ex.on_timer(clock.now)
+    record = _accum(tmp_path)
+    assert _kill_file(tmp_path).exists() and record["drawdown_bps"] == 1500.0
+    assert "1500 bps of the 1000 EUR NAV" in _kill_file(tmp_path).read_text()
+    entry = _plan_entry(tmp_path, when=_RUNG2_12Z)
+    assert record["status"] == "refused" and entry["reasons"] == [executor_module._TRIPPED_REFUSAL]
+    _carried_under_the_entrys_reason(record, entry)
+
+
+def test_a_30_eur_day_loss_latches_the_hold_at_nav_1000_on_an_account_of_1443(tmp_path):
+    """The date's 00Z record at EUR 1,443 and this boundary's equity at 1,413: 300 bps of the NAV
+    latches the hold, and 300 bps under the high-water mark trips no kill; over the base's equity the
+    loss reads about 208 bps and latches nothing, the probe's reading."""
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=RUNG2 / "cycle-12.json",
+        holdings={},
+        eur_total=1413.0,
+        eur_free=1413.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+        series=[1443.0, 1443.0, 1443.0],
+    )
+    ex.on_boundary(_RUNG2_12Z)
+    ex.on_timer(clock.now)
+    record = _accum(tmp_path)
+    assert record["day_loss_bps"] == 300.0 and record["day_loss_hold"] is True
+    assert record["drawdown_bps"] == 300.0 and not _kill_file(tmp_path).exists()
+
+
+def test_equity_counts_an_earn_coded_basket_coin_at_its_close_and_a_move_into_earn_reads_no_loss(tmp_path):
+    """SOL 0.5 under `SOL.F` and none spot (`earn={"SOL": 0.5}`), the series' high-water mark the
+    equity that counts it: the draft refuses `held`, and the third tick's `book-unread` record carries
+    `equity_eur` with SOL's 0.5 x close in it and `drawdown_bps` 0.0; the probe leaves `earn` out of
+    the mark and the move into Auto Earn reads as a loss of 0.5 x close."""
+    sol = from_json((RUNG2 / "cycle-12.json").read_text()).closes["SOL"]
+    equity = 1000.0 + 0.5 * sol
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=RUNG2 / "cycle-12.json",
+        holdings={},
+        eur_total=1000.0,
+        eur_free=1000.0,
+        earn={"SOL": 0.5},
+        now=_RUNG2_12Z + timedelta(minutes=2),
+        series=[equity],
+    )
+    ex.on_boundary(_RUNG2_12Z)
+    _ticks(ex, clock, 3)
+    record = _accum(tmp_path)
+    assert record["status"] == "book-unread" and record["equity_eur"] == equity and record["drawdown_bps"] == 0.0
+
+
+def test_a_cycle_record_missing_a_close_marks_no_equity_and_names_the_base(tmp_path):
+    """A record whose closes lack SOL: the mark's figures read None, at WARNING naming the base, and no trip is
+    evaluated -- the draft refuses on the same absence."""
+    closes = {base: close for base, close in from_json((RUNG2 / "cycle-12.json").read_text()).closes.items() if base != "SOL"}
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=_rung2_record(tmp_path, closes=closes),
+        holdings={},
+        eur_total=100.0,
+        eur_free=100.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+        series=[1000.0],
+    )
+    ex.on_boundary(_RUNG2_12Z)
+    with _executor_errors(logging.WARNING) as records:
+        ex.on_timer(clock.now)
+    record = _accum(tmp_path)
+    assert record["status"] == "refused" and record["equity_eur"] is None and record["drawdown_bps"] is None
+    assert not _kill_file(tmp_path).exists()
+    assert any("marks no equity: the cycle record carries no close for SOL" in r.getMessage() for r in records)

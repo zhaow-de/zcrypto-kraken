@@ -6,6 +6,7 @@ can stand behind, because that number will be read as a gate input."""
 from __future__ import annotations
 
 import csv
+import json
 import math
 from datetime import UTC, datetime
 from pathlib import Path
@@ -30,6 +31,11 @@ _SIDES = frozenset({"buy", "sell"})
 # symbol with none, so it maps to base None -- counted, but excluded from drift.
 _BASE_BY_SYMBOL = {s: (s.split("/")[0] if s.endswith("/EUR") else None) for s in BASKET}
 _GATE_MIN_WEEKS = 3
+# The opening holdings record's shape: one row per basket base, the ten the drift half reads.
+_OPENING_SCHEMA_VERSION = 1
+_OPENING_KEYS = frozenset({"schema_version", "birth", "rows"})
+_OPENING_ROW_KEYS = frozenset({"base", "codes", "balance", "close"})
+_OPENING_BASES = tuple(sorted(base for base in _BASE_BY_SYMBOL.values() if base is not None))
 
 
 class Fill(NamedTuple):
@@ -45,6 +51,74 @@ class Fill(NamedTuple):
     # What the fill moved its row's `filled_qty` by (`execledger.credited_qty`), the figure `held` sums, where `qty` stays
     # the blend's weight and the venue's figure; None on a Fill built by hand, which moved its row by `qty`.
     credited: float | None = None
+
+
+class OpeningHoldings(NamedTuple):
+    """A tracking series' opening holdings: the instant the series was born and, per basket base, the spot balance the
+    account held then, in base units -- where `held` starts at the birth instead of at zero."""
+
+    birth: datetime
+    held: dict[str, float]
+
+
+def _finite(value: object) -> bool:
+    return not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(value)
+
+
+def parse_opening_holdings(doc: object) -> OpeningHoldings:
+    """The record's birth and per-base balances, or EngineError naming the field it refuses -- never a value read from
+    the record: a schema other than 1, a key set other than the schema's, rows other than one per basket base, a
+    balance not finite or negative, a close not finite and positive, `codes` not a list of strings, and a `birth` that
+    is not an aware instant on a 4-hourly boundary."""
+    if not isinstance(doc, dict) or doc.get("schema_version") != _OPENING_SCHEMA_VERSION:
+        raise EngineError(f"the opening holdings record's schema_version is not {_OPENING_SCHEMA_VERSION}")
+    if frozenset(doc) != _OPENING_KEYS:
+        raise EngineError(f"the opening holdings record's keys are not {', '.join(sorted(_OPENING_KEYS))}")
+    rows = doc["rows"]
+    tabular = isinstance(rows, list) and all(isinstance(row, dict) for row in rows)
+    if not tabular or sorted(str(row.get("base")) for row in rows) != list(_OPENING_BASES):
+        raise EngineError(f"the opening holdings record's rows are not one per basket base, {', '.join(_OPENING_BASES)}")
+    by_base = {row["base"]: row for row in rows}
+    held: dict[str, float] = {}
+    for base in _OPENING_BASES:
+        row = by_base[base]
+        if frozenset(row) != _OPENING_ROW_KEYS:
+            raise EngineError(f"the opening holdings row for {base} has keys other than {', '.join(sorted(_OPENING_ROW_KEYS))}")
+        codes = row["codes"]
+        if not isinstance(codes, list) or not all(isinstance(code, str) for code in codes):
+            raise EngineError(f"the opening holdings row for {base} carries codes that are not a list of strings")
+        if not _finite(row["balance"]) or row["balance"] < 0:
+            raise EngineError(f"the opening holdings row for {base} carries a balance that is not a finite, non-negative number")
+        if not _finite(row["close"]) or row["close"] <= 0:
+            raise EngineError(f"the opening holdings row for {base} carries a close that is not a finite, positive number")
+        held[base] = float(row["balance"])
+    try:
+        birth = datetime.fromisoformat(doc["birth"])
+    except TypeError, ValueError:
+        birth = None
+    if birth is None or birth.utcoffset() is None or _off_the_4h_grid(birth.astimezone(UTC)):
+        raise EngineError("the opening holdings record's birth is not an aware instant on a 4-hourly boundary")
+    return OpeningHoldings(birth=birth.astimezone(UTC), held=held)
+
+
+def _off_the_4h_grid(at: datetime) -> bool:
+    return bool(at.hour % 4) or (at.minute, at.second, at.microsecond) != (0, 0, 0)
+
+
+def read_opening_holdings(path: Path) -> OpeningHoldings:
+    """`parse_opening_holdings` over the record at `path`. An absent record raises FileNotFoundError, so a caller tells
+    a series no one has recorded from one whose record will not read, which raises EngineError."""
+    try:
+        text = Path(path).read_text()
+    except FileNotFoundError:
+        raise
+    except (OSError, UnicodeDecodeError) as exc:
+        raise EngineError(f"the opening holdings record {path} could not be read: {type(exc).__name__}") from exc
+    try:
+        doc = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise EngineError(f"the opening holdings record {path} is not JSON") from exc
+    return parse_opening_holdings(doc)
 
 
 def extract_fills(records: list[dict]) -> tuple[list[Fill], list[str]]:
@@ -162,10 +236,11 @@ def drift_bps(final: dict[str, float], closes: dict[str, float], held: dict[str,
     return drift_eur / nav * 10_000
 
 
-def realized_drift(stages: list[CycleStages], fills: list[Fill], nav: float) -> dict:
+def realized_drift(stages: list[CycleStages], fills: list[Fill], nav: float, *, opening: dict[str, float] | None = None) -> dict:
     """Per-cycle drift with `held` taken from REAL fills instead of the modelled policy.
 
-    `held` is SIGNED base units, and a fill counts at the BOUNDARY its row was journaled under -- the decision that produced it."""
+    `held` is SIGNED base units, and a fill counts at the BOUNDARY its row was journaled under -- the decision that produced it.
+    `opening`, the series' opening holdings per base, is `held` before the first stage; None starts it at zero."""
     if not math.isfinite(nav) or nav <= 0:
         raise EngineError(f"NAV must be finite and positive, got {nav!r} -- a negative one signs every drift_bps")
     ordered = sorted(stages, key=lambda s: s.cycle_ts)
@@ -193,7 +268,7 @@ def realized_drift(stages: list[CycleStages], fills: list[Fill], nav: float) -> 
             f"({[b.isoformat() for b in orphans[:3]]}) -- a truncated window: widen it rather than "
             "report a drift that omits their position"
         )
-    held: dict[str, float] = {}
+    held: dict[str, float] = dict(opening or {})
     rows: list[dict] = []
     for s in ordered:
         for f in by_boundary.get(s.cycle_ts, []):

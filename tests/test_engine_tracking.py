@@ -21,6 +21,7 @@ import polars as pl
 import pytest
 from typer.testing import CliRunner
 
+import cli.engine.tracking as tracking_module
 from cli.__main__ import app
 from cli.config import load_config
 from cli.engine.errors import EngineError
@@ -257,6 +258,75 @@ def test_realized_drift_sums_what_a_fill_credited_the_row_not_the_streams_quanti
     b = "2026-08-31T00:00:00+00:00"
     out = realized_drift([_stage(b)], [_mk(b, 0.02), _mk(b, 0.02, credited=0.0)], 1000.0)
     assert out["cycles"][0]["drift_bps"] == pytest.approx(0.0)
+
+
+def test_realized_drift_seeds_held_from_the_opening_holdings():
+    """One stage and no fill: an opening of 0.02 BTC reads the drift a 0.02 BTC fill at that stage reads."""
+    b = "2026-08-31T00:00:00+00:00"
+    seeded = tracking_module.realized_drift([_stage(b, weight=0.25)], [], 1000.0, opening={"BTC": 0.02})
+    filled = realized_drift([_stage(b, weight=0.25)], [_mk(b, 0.02)], 1000.0)
+    # NAV 1000 at 50k and weight 0.25 -> target 0.005 BTC: 0.02 held is 0.015 over, 7500 bps, where none held is 2500.
+    assert seeded["cycles"][0]["drift_bps"] == filled["cycles"][0]["drift_bps"] == pytest.approx(7500.0)
+
+
+_OPENING_BIRTH = "2026-11-09T00:00:00+00:00"
+
+
+def _opening_doc() -> dict:
+    return {
+        "schema_version": 1,
+        "birth": _OPENING_BIRTH,
+        "rows": [
+            {
+                "base": base,
+                "codes": [f"X{base}" if base == "BTC" else base],
+                "balance": 0.25 if base == "BTC" else 0.0,
+                "close": 100.0,
+            }
+            for base in ("ADA", "AVAX", "BTC", "DOGE", "DOT", "ETH", "LINK", "LTC", "SOL", "XRP")
+        ],
+    }
+
+
+def _flipped(field: str, value) -> dict:
+    """The valid record with one field set or added: a top-level key, `rows.<i>.<key>`, or `rows` mapped by a
+    function."""
+    doc = _opening_doc()
+    if field.startswith("rows."):
+        _, index, key = field.split(".")
+        doc["rows"][int(index)][key] = value
+    elif field == "rows":
+        doc["rows"] = value(doc["rows"])
+    else:
+        doc[field] = value
+    return doc
+
+
+_OPENING_REFUSALS = [
+    ("schema_version", lambda: _flipped("schema_version", 2), "schema_version", "2"),
+    ("an extra key", lambda: _flipped("written_by", "hand"), "keys", "written_by"),
+    ("a duplicated row", lambda: _flipped("rows", lambda rows: [*rows, dict(rows[0])]), "one per basket base", None),
+    ("a row's extra key", lambda: _flipped("rows.2.note", "residual"), "has keys other than", "residual"),
+    ("codes a string", lambda: _flipped("rows.2.codes", "XXBT"), "codes", "XXBT"),
+    ("codes holding a number", lambda: _flipped("rows.2.codes", [7]), "codes", "7"),
+    ("a negative balance", lambda: _flipped("rows.2.balance", -0.125), "balance", "-0.125"),
+    ("a balance not finite", lambda: _flipped("rows.2.balance", math.nan), "balance", "nan"),
+    ("a close at zero", lambda: _flipped("rows.2.close", 0.0), "close", None),
+    ("a close not finite", lambda: _flipped("rows.2.close", math.inf), "close", "inf"),
+    ("a birth off the 4-hourly grid", lambda: _flipped("birth", "2026-11-09T01:00:00+00:00"), "birth", "01:00"),
+    ("a naive birth", lambda: _flipped("birth", "2026-11-09T00:00:00"), "birth", "2026-11-09"),
+]
+
+
+def test_parse_opening_holdings_refuses_a_record_it_cannot_stand_behind():
+    """Each refusal above, one flipped field of a valid record at a time."""
+    parsed = tracking_module.parse_opening_holdings(_opening_doc())
+    assert parsed.birth == datetime.fromisoformat(_OPENING_BIRTH) and parsed.held["BTC"] == 0.25
+    assert sorted(parsed.held) == ["ADA", "AVAX", "BTC", "DOGE", "DOT", "ETH", "LINK", "LTC", "SOL", "XRP"]
+    for what, build, names, value in _OPENING_REFUSALS:
+        with pytest.raises(EngineError, match=names) as refused:
+            tracking_module.parse_opening_holdings(build())
+        assert value is None or value not in str(refused.value), (what, str(refused.value))
 
 
 def test_a_price_move_moves_realized_drift_and_that_is_the_signal():

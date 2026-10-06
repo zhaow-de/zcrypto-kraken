@@ -48,6 +48,7 @@ from cli.config import EngineConfig
 from cli.engine.accumledger import (
     ACCUM_SCHEMA_VERSION,
     accum_record_path,
+    accum_records_since,
     read_accum_record,
     validate_accum_record,
     write_accum_record,
@@ -85,7 +86,7 @@ from cli.engine.instruments import EUR_CODES, INSTRUMENT_IDS, BelowMinimum, Size
 from cli.engine.journal import CycleRecord, from_json, require_comparable_cycle_ts, validate_record
 from cli.engine.probeplan import MODES, PLAN_FILENAME, ProbeIntent, ProbePlanError, parse_plan, plan_refusals
 from cli.engine.store import BASKET
-from cli.engine.tracking import extract_fills, realized_drift
+from cli.engine.tracking import extract_fills, read_opening_holdings, realized_drift
 from cli.engine.venuestate import InstrumentConstraints, venue_state_from_cache
 from cli.logging import get_logger
 
@@ -129,14 +130,30 @@ _OVERFILL_TOLERANCE = 1e-12
 _TRIPPED_REFUSAL = "the kill switch tripped in this process"
 # The write-once record of when this engine's realized series began, in the control-file directory
 # beside the arm and kill files. Named HERE and not in `execgate` because it is not a gate input:
-# nothing about it can permit or refuse an order. It exists because `held` is cumulative from the
-# first fill ever while the journal prune deletes whole day-dirs at a fixed retention -- so once the
-# day holding the first fill ages out, the journal alone can no longer tell "this engine has always
-# tracked its targets" from "everything it bought before the horizon was deleted", and those two
-# read as 46 bps and 298 bps against the same 120 bps band. Write-once, and only ever read to
-# DISAGREE and refuse: unlike a rolling checkpoint, a stale value here cannot reinforce itself into
-# a wrong `held`, it can only stop a week from being scored.
+# nothing about it can permit or refuse an order. The tracking trip's `held` is bounded by it: the
+# fills at or after it, starting from the opening holdings recorded with it (`OPENING_HOLDINGS_FILE`),
+# every earlier fill a prior series'. So a date later than the series' start with no record of what
+# was held at it reads `held` short -- 46 bps and 298 bps against the same 120 bps band -- which is why
+# the engine writes it once, at the first boundary after its first fill, and the hand writes are rung
+# 3's entry re-date and its re-births, each with the opening holdings beside it. The journal prune
+# deletes whole day-dirs, so the trip also refuses once the record's own boundary has left the journal.
 FIRST_FILL_FILE = "first-fill"
+# The series' opening holdings beside the birth record: per basket base, the spot balance the account
+# held at the birth, stamped with that birth (`tracking.parse_opening_holdings`). The owner writes it;
+# this engine only reads it, so a series the engine dates itself is not scored until the owner has
+# recorded what it held.
+OPENING_HOLDINGS_FILE = "opening-holdings.json"
+# The write-once record of when the equity series began, the `cycle_ts` of the first boundary that
+# marked equity, written by that mark. It bounds both the high-water mark's scan and the day-loss base,
+# so the owner re-mints the series by removing it -- after a deposit or a withdrawal taken with the loop
+# paused, or a drawdown trip's post-mortem -- and the next mark writes it again; nothing here rewrites it.
+EQUITY_SERIES_FILE = "equity-series-start"
+# The two drawdown trips, in basis points of the cycle record's NAV, the book the draft sizes, never of
+# the account's equity, whose EUR above the book would dilute every loss: a fall from the series'
+# high-water mark that latches the kill switch, and a UTC day's loss that holds opens for the rest of
+# that date.
+_DRAWDOWN_KILL_BPS = 1500
+_DAY_LOSS_HOLD_BPS = 300
 _KRAKEN_ERROR_MARKERS = ("EOrder:", "EGeneral:", "EAccount:")
 _POST_ONLY_MARKER = "POST_ONLY_REJECTED:"
 # The terminal order events the execution engine can MINT rather than receive. Past
@@ -783,6 +800,29 @@ def _book_coin_eur(book: VenueBook, closes: dict[str, float]) -> float:
     return sum((book.held[symbol] + book.earn.get(base, 0.0)) * closes[base] for base, symbol in _SPOT_SYMBOL_BY_BASE.items())
 
 
+def _record_ts(doc: dict) -> datetime:
+    return datetime.fromisoformat(doc["cycle_ts"])
+
+
+def _day_loss_held(records) -> bool:
+    return any(r["day_loss_bps"] is not None and r["day_loss_bps"] >= _DAY_LOSS_HOLD_BPS for r in records)
+
+
+def _day_base(records: list[dict], boundary: datetime, equity: float) -> float:
+    """The equity `boundary`'s day loss is taken from: the date's 00Z mark, else the previous date's last, else the
+    date's earliest -- the series having started on the date -- else `equity`, this boundary's own, a loss of 0.
+    `records` are the series' draft records before `boundary`, oldest first; one that marked no equity is passed over."""
+    day = boundary.replace(hour=0, minute=0, second=0, microsecond=0)
+    marks = [(_record_ts(r), r["equity_eur"]) for r in records if r["equity_eur"] is not None] + [(boundary, equity)]
+    opening = [e for at, e in marks if at == day]
+    if opening:
+        return opening[0]
+    previous = [e for at, e in marks if day - timedelta(days=1) <= at < day]
+    if previous:
+        return previous[-1]
+    return next(e for at, e in marks if at >= day)
+
+
 def _margin_positions(reports) -> dict[str, float]:
     held = dict.fromkeys(INSTRUMENT_IDS, 0.0)
     for report in reports:
@@ -1154,8 +1194,11 @@ class ProbeExecutor:
         self._reconciliation_refusal: str | None = None
         # The other two holds `_fold_holds` publishes into the gate's level: `socket_down` while the
         # watchdog's `_frozen` stands (`_watch_sockets`), `daily_loss_hold` while `_day_loss_hold` does.
+        # The day-loss hold is derived, never stored (`_derive_day_loss_hold`): at each boundary, at each
+        # equity mark, and on the first tick, which `_day_loss_hold_derived` marks done.
         self._frozen = False
         self._day_loss_hold = False
+        self._day_loss_hold_derived = False
         self._journal_dir = Path(config.journal_dir)
         # The 00088 convention: the control-file tree sits beside the journal, not inside it.
         self._state_dir = Path(config.journal_dir).parent
@@ -1396,6 +1439,11 @@ class ProbeExecutor:
     def on_timer(self, now: datetime) -> None:
         try:
             now = _aware_utc(now)
+            if not self._day_loss_hold_derived:
+                # Ahead of the startup pass, so a restart inside a date that latched the hold refuses
+                # opens from its first evaluation.
+                self._day_loss_hold_derived = True
+                self._derive_day_loss_hold(now)
             if not self._adopted:
                 self._adopt_resting_orders(now)
             self._watch_sockets(now)
@@ -3246,8 +3294,10 @@ class ProbeExecutor:
         Its first act journals the folded verdict (`_fold_holds`) into the boundary's exec record,
         over the gate's bare one the boundary sink wrote there: the merge replaces the verdict fields
         alone, so the record's `level` is the one `held_back` reads, and a boundary whose cycle raised
-        and wrote no record gets one. Its publish leaves the heartbeat to the sink, so a failing sink
-        write still starves the staleness rule.
+        and wrote no record gets one. The day-loss hold it folds is re-derived for the boundary's date
+        first (`_derive_day_loss_hold`), so a hold latched on the previous date is dropped at the date's
+        first boundary whether or not that boundary marks equity. Its publish leaves the heartbeat to
+        the sink, so a failing sink write still starves the staleness rule.
 
         Its second act scores the most recently closed week (`_evaluate_tracking`), and this is THE
         call site of that trip: the alert chain fires once per boundary, after the cycle has
@@ -3264,6 +3314,7 @@ class ProbeExecutor:
         """
         try:
             now = self._now()
+            self._derive_day_loss_hold(_aware_utc(boundary))
             verdict = self._evaluate(now, heartbeat=False)
             write_exec_record(self._journal_dir, boundary, verdict, evaluated_at=now)
             self._record_series_birth()
@@ -3359,15 +3410,98 @@ class ProbeExecutor:
         self._arm_cycle_draft(boundary)
 
     def _mark_equity(self, book: VenueBook, record: CycleRecord, now: datetime) -> dict:
-        """The equity mark's figures for the boundary's draft record: none marked yet, and the day-loss hold as it
-        stands."""
+        """The boundary's equity mark, the figures its draft record carries. `equity_eur` is the book's EUR total -- the
+        spot row and `EUR.M` -- and its basket coin, spot and earn-coded, at the record's closes (`_book_coin_eur`), so a
+        move into Auto Earn or into `EUR.M` reads as no loss. The series' records since its start (`_series_start`,
+        written by the series' first mark) are the one set both figures read: the high-water mark is their highest
+        equity and this mark's, the day's base is `_day_base`'s, and the drawdown and the day's loss are each taken in
+        bps of the record's NAV. The day-loss hold is re-derived with this boundary's loss in it. A drawdown of
+        `_DRAWDOWN_KILL_BPS` latches the kill switch here, ahead of the table, so the plan the draft still assembles
+        meets the backstop.
+
+        A record whose closes lack a base, or that carries no NAV, marks nothing: the figures read None, at WARNING,
+        and neither trip is evaluated -- an unpriced coin is not a total loss. A series start or a draft record that
+        will not read raises, and the draft spends a try."""
+        boundary = record.cycle_ts
+        unpriced = sorted(base for base in _SPOT_SYMBOL_BY_BASE if record.closes is None or base not in record.closes)
+        if unpriced or record.nav is None:
+            logger.warning(
+                "the boundary %s marks no equity: the cycle record carries %s -- neither drawdown trip is evaluated",
+                boundary.isoformat(),
+                f"no close for {', '.join(unpriced)}" if unpriced else "no NAV",
+            )
+            return dict.fromkeys(("equity_eur", "hwm_eur", "drawdown_bps", "day_loss_bps")) | {"day_loss_hold": self._day_loss_hold}
+        nav = record.nav
+        equity = book.eur_total + _book_coin_eur(book, record.closes)
+        start = self._series_start()
+        if start is None:
+            self._mint_series_start(boundary)
+            start = boundary
+        # This boundary's own record, left by an earlier process, is the one this mark replaces.
+        records = [r for r in accum_records_since(self._journal_dir, start, boundary) if _record_ts(r) != boundary]
+        hwm = max([r["equity_eur"] for r in records if r["equity_eur"] is not None] + [equity])
+        drawdown_bps = (hwm - equity) * 10_000 / nav
+        day_loss_bps = (_day_base(records, boundary, equity) - equity) * 10_000 / nav
+        day = boundary.replace(hour=0, minute=0, second=0, microsecond=0)
+        self._day_loss_hold = day_loss_bps >= _DAY_LOSS_HOLD_BPS or _day_loss_held(r for r in records if _record_ts(r) >= day)
+        _set_equity(equity)
+        _set_drawdown(drawdown_bps)
+        # A kill file already latched keeps its first reason, as the tracking trip's does.
+        if drawdown_bps >= _DRAWDOWN_KILL_BPS and not (exec_dir(self._state_dir) / KILL_FILE).exists():
+            self._trip_kill(
+                f"equity {equity:.2f} EUR is {hwm - equity:.2f} EUR under the series' high-water mark of {hwm:.2f} EUR, "
+                f"{drawdown_bps:.0f} bps of the {nav:.0f} EUR NAV"
+            )
         return {
-            "equity_eur": None,
-            "hwm_eur": None,
-            "drawdown_bps": None,
-            "day_loss_bps": None,
+            "equity_eur": equity,
+            "hwm_eur": hwm,
+            "drawdown_bps": drawdown_bps,
+            "day_loss_bps": day_loss_bps,
             "day_loss_hold": self._day_loss_hold,
         }
+
+    def _series_start(self) -> datetime | None:
+        """The equity series' start (`EQUITY_SERIES_FILE`), or None while there is no record. A record that does not read
+        as an aware instant raises: a series is never re-dated over a record this process cannot read."""
+        path = exec_dir(self._state_dir) / EQUITY_SERIES_FILE
+        try:
+            text = path.read_text()
+        except FileNotFoundError:
+            return None
+        try:
+            start = datetime.fromisoformat(text.strip())
+        except ValueError as exc:
+            raise EngineJournalError(f"the equity series' start record {path} is not an ISO 8601 instant") from exc
+        if start.utcoffset() is None:
+            raise EngineJournalError(f"the equity series' start record {path} names no UTC offset")
+        return start
+
+    def _mint_series_start(self, cycle_ts: datetime) -> None:
+        """Write the equity series' start, `cycle_ts`, through a temporary sibling renamed over it, so a reader never
+        meets a partial record. The caller writes only an absent one."""
+        path = exec_dir(self._state_dir) / EQUITY_SERIES_FILE
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_suffix(".tmp")
+        tmp_path.write_text(f"{cycle_ts.isoformat()}\n")
+        os.replace(tmp_path, path)
+        logger.info("the equity series starts at %s", cycle_ts.isoformat())
+
+    def _derive_day_loss_hold(self, at: datetime) -> None:
+        """`_day_loss_hold` from the draft records of `at`'s UTC date at or after the equity series' start, through `at`:
+        any whose `day_loss_bps` reaches `_DAY_LOSS_HOLD_BPS` holds it, so a recovery inside the date never lifts it and
+        the date's first boundary drops the previous date's. With no series, nothing holds it. A read that fails holds
+        it, at WARNING: the date's opens wait until its records read."""
+        try:
+            start = self._series_start()
+            day = at.replace(hour=0, minute=0, second=0, microsecond=0)
+            records = [] if start is None else accum_records_since(self._journal_dir, max(start, day), at)
+            self._day_loss_hold = _day_loss_held(records)
+        except Exception:
+            logger.warning(
+                "the date's draft records could not be read -- the daily loss hold refuses opens until they can be",
+                exc_info=True,
+            )
+            self._day_loss_hold = True
 
     def _draft_cycle_plan(self, now: datetime) -> None:
         """Draft the armed boundary's plan, `target - held` over the ten EUR legs, and hand it to the pickup's walls
@@ -3377,7 +3511,9 @@ class ProbeExecutor:
         `held` is the venue's own book, read here with the per-instrument statuses and the venue truth; a read that
         raises spends one of `_REREAD_ATTEMPTS` tries, and so does a book holding a basket coin under an earn code,
         which the draft refuses as `held` (`VenueBook.earn_refusal`); past the tries the boundary's record reads
-        `book-unread`. The book settles the position gauge (`_settle_from_book`) and is the sell check's newest.
+        `book-unread`. The book settles the position gauge (`_settle_from_book`) and is the sell check's newest, and its
+        equity is marked (`_mark_equity`) ahead of the earn refusal and the table, so a book the draft refuses is still
+        marked and a drawdown trip leaves the plan the table drafts to the kill switch's backstop.
 
         The table is the rung-2 helper's (`decide_leg`), at the record's targets, closes and NAV; a leg with an open
         ledger row is carried, since its order may still rest at the venue, and so is one whose instrument the venue
@@ -3619,14 +3755,14 @@ class ProbeExecutor:
         truth.
 
         TWO preconditions, and the second is not redundant. The first -- a journal whose oldest
-        boundary carries no fill -- is the same evidence the pruned-head check uses, and it is the
+        boundary carries no fill -- is what a journal with its head intact shows, and it is the
         one this method is gated on being able to ask honestly. But the gate above is
         `path.exists()`, which is "no record yet", NOT "the series has not started": whenever the
         file is absent while fills already exist -- it was lost, or the state directory was rebuilt
         -- this runs against a journal whose head may be long gone, and a prune that happened to cut
         at a QUIET boundary satisfies the first precondition perfectly. The scorer would then agree
-        with a record that is a reconstruction, and the false kill this whole file exists to prevent
-        comes back through the missing-file path.
+        with a record that is a reconstruction once opening holdings are recorded for it, and the
+        false kill this whole file exists to prevent comes back through the missing-file path.
 
         So the second: on the healthy path the record lands at the first boundary AFTER the first
         fill, hours later. A candidate older than `_BIRTH_MINT_WINDOW` is therefore not a birth
@@ -3704,10 +3840,13 @@ class ProbeExecutor:
         gate left at `full`, and one that drafted nothing holds its week back as a level below `full`
         does.
 
+        The series is the birth record's (`FIRST_FILL_FILE`): the fills at or after it, `held`
+        starting from the opening holdings stamped for that birth (`OPENING_HOLDINGS_FILE`).
+
         Every other exit is a refusal, never a guess: a week short of its full boundary count, a
-        week whose first fill falls inside it, a week the journal cannot price, and a span whose
-        oldest boundary already carries a fill (the prune may have taken the position that explains
-        it) all decline to decide. Refusing costs a week of coverage; guessing halts live trading.
+        week whose series' first fill falls inside it, a week the journal cannot price, a series
+        whose birth boundary the prune has taken, and one with no opening holdings recorded for its
+        birth all decline to decide. Refusing costs a week of coverage; guessing halts live trading.
         """
         band = self._config.tracking_band_bps
         if band is None:
@@ -3747,7 +3886,7 @@ class ProbeExecutor:
         expected = [week_start + timedelta(hours=_H4 * i) for i in range(_WEEK_BOUNDARIES)]
 
         # Everything through the week's last boundary, never just the week: `held` is cumulative
-        # from the first fill ever, so a week-scoped read would report the book bought earlier as
+        # from the series' birth, so a week-scoped read would report the book bought earlier as
         # drift it never had.
         exec_docs = exec_records_through(self._journal_dir, last)
         cycles = _cycle_records_through(self._journal_dir, last)
@@ -3767,24 +3906,54 @@ class ProbeExecutor:
             return
 
         fills, _notes = extract_fills([exec_docs[b] for b in sorted(exec_docs)])
-        first_fill = min((f.boundary for f in fills if f.base is not None), default=None)
-        if first_fill is None:
-            self._refuse_tracking("no model-leg fill has been journaled yet -- the realized series has not started")
-            return
         birth = self._series_birth()
-        if birth != first_fill:
+        if birth is None:
+            earliest = min((f.boundary for f in fills if f.base is not None), default=None)
+            if earliest is None:
+                self._refuse_tracking("no model-leg fill has been journaled yet -- the realized series has not started")
+            else:
+                self._refuse_tracking(
+                    f"the journal's earliest fill is {earliest.isoformat()} but this engine's realized "
+                    "series began at (no record) -- the position bought before that is not on this host, "
+                    "so no week can be scored against it"
+                )
+            return
+        if birth not in exec_docs:
             # NOT "does the oldest surviving boundary carry a fill". That question passes whenever
             # the prune happens to have cut at a quiet boundary, and then `held` silently omits
             # everything bought before the horizon: the true positive's own fixture reads 298.4 bps
             # against a 120 bps band and latches the kill file on a perfectly healthy engine. The
-            # birth record answers the question that is actually being asked -- is the head of this
-            # series still on disk -- and when it is not, there is nothing to score with, ever
-            # again, because those fills are gone from this host. That refusal is permanent by
-            # design and loud; see the runbook.
+            # head check is the birth's own boundary: the prune deletes whole day-dirs oldest first,
+            # so while it is on disk every fill since it is too. Once the prune has taken it, the
+            # refusal is permanent for the series that birth dates -- loud by design; see the runbook.
             self._refuse_tracking(
-                f"the journal's earliest fill is {first_fill.isoformat()} but this engine's realized "
-                f"series began at {birth.isoformat() if birth is not None else '(no record)'} -- the "
-                "position bought before that is not on this host, so no week can be scored against it"
+                f"the realized series began at {birth.isoformat()}, a boundary the journal through {label} "
+                "holds no exec record of -- either the prune has taken it, and the fills since it are no "
+                "longer all on this host, or it falls after the week, which is then not that series'"
+            )
+            return
+        path = exec_dir(self._state_dir) / OPENING_HOLDINGS_FILE
+        try:
+            opening = read_opening_holdings(path)
+        except FileNotFoundError:
+            self._refuse_tracking(
+                f"no opening holdings are recorded for the series born at {birth.isoformat()} -- the owner records "
+                "them with the birth"
+            )
+            return
+        if opening.birth != birth:
+            self._refuse_tracking(
+                f"the opening holdings were taken for the series born at {opening.birth.isoformat()}, not {birth.isoformat()}"
+            )
+            return
+        # Every fill before the birth is a prior series': outside `held`, and outside the span
+        # `realized_drift` is handed, which would refuse it as a truncated window.
+        fills = [f for f in fills if f.boundary >= birth]
+        first_fill = min((f.boundary for f in fills if f.base is not None), default=None)
+        if first_fill is None:
+            self._refuse_tracking(
+                f"no model-leg fill has been journaled since the series' birth at {birth.isoformat()} -- the "
+                "realized series has not started"
             )
             return
         if first_fill >= week_start:
@@ -3812,7 +3981,7 @@ class ProbeExecutor:
         # closed under the OLD value against the new one. Each record now journals the NAV it was
         # priced against and is scored under THAT; the scalar below is the fallback for records
         # written before the field existed, which age out with the journal's retention.
-        rows = realized_drift(stages, fills, self._config.shadow_nav_eur)["cycles"]
+        rows = realized_drift(stages, fills, self._config.shadow_nav_eur, opening=opening.held)["cycles"]
         scored = set(week)
         # The straddle refusal above is what guarantees every one of the week's boundaries is in the
         # span, and so what makes this a mean over the WHOLE week rather than over its tail.
