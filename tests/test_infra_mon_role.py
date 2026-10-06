@@ -13,6 +13,9 @@ import yaml
 from ansible.template import trust_as_template
 
 from tests import role_render
+from tests.alloy_part import module_entry
+from tests.test_alloy_version import alloy_version
+from tests.test_infra_alloy_apt import ALLOY_APT_VERBATIM
 from tests.test_infra_converge_guards import assert_that, find_task, iter_tasks, load_tasks, set_facts, truthy, when_conditions
 
 REPO = Path(__file__).resolve().parents[1]
@@ -300,7 +303,7 @@ def test_the_folder_is_anchored_under_the_uid_the_push_defaults_to_and_nothing_i
     assert not (ROLE / "files").exists() or not list((ROLE / "files").glob("*.json"))
 
 
-# --- packages: followed from apt, loki from Grafana's repository alone -------------------------------------------
+# --- packages: followed from apt but Alloy, loki from Grafana's repository alone ---------------------------------
 _POLICY_GRAFANA = """loki:
   Installed: (none)
   Candidate: 3.7.8
@@ -345,15 +348,27 @@ def test_loki_is_installed_only_when_apts_candidate_is_grafanas(policy, admitted
     assert truthy(assert_that(task), variables) is admitted
 
 
-def test_no_package_is_forced_held_or_pinned_to_a_version():
-    installs = [task["ansible.builtin.apt"] for task, _ in iter_tasks(load_tasks(TASKS)) if "ansible.builtin.apt" in task]
-    names = sorted(name for task, _ in iter_tasks(load_tasks(TASKS)) for name in _apt_names(task))
-    assert names == ["alloy", "curl", "grafana", "loki", "prometheus"], names
-    for apt in installs:
-        assert apt.get("state", "present") == "present" and "allow_downgrade" not in apt and "force" not in apt, apt
+def _shared(module: str) -> tuple[str, object]:
+    (entry,) = [entry for entry in ALLOY_APT_VERBATIM if entry[0] == module]
+    return entry
+
+
+def test_alloy_alone_is_held_and_pinned_and_the_other_packages_followed():
+    leaves = [task for task, _, _ in alloy_version.walk(load_tasks(TASKS))]
+    entries = [module_entry(task) for task in leaves]
+    install = _shared("ansible.builtin.apt")
+    followed = [task for task in leaves if "ansible.builtin.apt" in task and module_entry(task) != install]
+    names = sorted(name for task in followed for name in _apt_names(task))
+    assert names == ["curl", "grafana", "loki", "prometheus"], names
+    for apt in (task["ansible.builtin.apt"] for task in followed):
+        assert apt.get("state", "present") == "present", apt
+        assert not {"allow_downgrade", "allow_change_held_packages", "force"} & set(apt), apt
     assert all("=" not in name for name in names)
-    modules = {key for task, _ in iter_tasks(load_tasks(TASKS)) for key in task}
-    assert "ansible.builtin.dpkg_selections" not in modules, "a hold makes `apt upgrade` skip a package silently"
+    assert entries.count(install) == 1, "Alloy is installed by the shared role alone, at the fleet's version"
+    holds = [entry for entry in entries if entry[0] == "ansible.builtin.dpkg_selections"]
+    assert holds == [_shared("ansible.builtin.dpkg_selections")], "a hold makes `apt upgrade` skip a package silently"
+    pins = [entry for entry in entries if "/etc/apt/preferences.d/" in str(entry[1])]
+    assert pins == [_shared("ansible.builtin.copy")], pins
     recommends = find_task(load_tasks(TASKS), "prometheus present, from Debian main, without the node exporter it recommends")
     assert recommends["ansible.builtin.apt"]["install_recommends"] is False
 
@@ -376,7 +391,7 @@ _CHANGED, _UNCHANGED, _SKIPPED = {"changed": True}, {"changed": False}, {"change
 )
 def test_the_two_preview_facts_are_true_only_where_a_preview_has_no_package_to_find(check, grafana_repo, debian, grafana, expected):
     tasks = load_tasks(TASKS)
-    variables = {"ansible_check_mode": check, "mon_grafana_repo": grafana_repo}
+    variables = {"ansible_check_mode": check, "alloy_apt_grafana_repo": grafana_repo}
     first = set_facts(find_task(tasks, "note a preview that runs before the repositories exist"), variables)
     variables |= first | {"mon_debian_install": debian, "mon_grafana_install": grafana}
     second = set_facts(find_task(tasks, "note a preview that runs before the packages are installed"), variables)
@@ -388,6 +403,11 @@ def _apt_names(task: dict) -> set[str]:
     return {name} if isinstance(name, str) else set(name)
 
 
+def _unit_gate(name: str) -> str:
+    # Alloy's unit comes from the shared install, whose own preview fact says whether a preview has it.
+    return "not alloy_apt_previewed" if name in ("alloy enabled + started", "restart alloy") else "not mon_units_previewed"
+
+
 def test_what_needs_a_repository_or_a_unit_skips_the_preview_that_has_neither():
     tasks = iter_tasks(load_tasks(TASKS))
     units = [(task["name"], gates) for task, gates in tasks if "ansible.builtin.systemd_service" in task]
@@ -395,14 +415,14 @@ def test_what_needs_a_repository_or_a_unit_skips_the_preview_that_has_neither():
     for name, gates in units:
         # Held whole: an inverted gate names the fact too, and it would skip every real converge.
         timer = len(gates) == 1 and re.fullmatch(r"not \(ansible_check_mode and mon_[a-z_]+_timer_install is changed\)", gates[0])
-        assert gates == ("not mon_units_previewed",) or timer, (name, gates)
-    third_party = [gates for task, gates in tasks if _apt_names(task) & {"grafana", "loki", "alloy"}]
-    assert len(third_party) == 1 and all(gates == ("not mon_repos_previewed",) for gates in third_party), third_party
+        assert gates == (_unit_gate(name),) or timer, (name, gates)
+    third_party = [(sorted(_apt_names(task)), gates) for task, gates in tasks if _apt_names(task) & {"grafana", "loki", "alloy"}]
+    assert third_party == [(["grafana", "loki"], ("not mon_repos_previewed",))], third_party
     origin = find_task(load_tasks(TASKS), "refuse a loki candidate that does not come from apt.grafana.com")
     assert when_conditions(origin) == ["not mon_repos_previewed"]
     for handler in yaml.safe_load(HANDLERS.read_text()):
         if "name" in handler.get("ansible.builtin.systemd_service", {}):
-            assert when_conditions(handler) == ["not mon_units_previewed"], handler["name"]
+            assert when_conditions(handler) == [_unit_gate(handler["name"])], handler["name"]
 
 
 # --- the vaulted secrets: refused by name when missing or misshapen ----------------------------------------------

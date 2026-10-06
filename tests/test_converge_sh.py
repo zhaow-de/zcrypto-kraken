@@ -520,6 +520,25 @@ PUBLISHED = [
         },
     ),
     (["--limit", "zcrypto-mon"], "zcrypto-mon", "", {}),
+    (["--limit", "zcrypto-mon", "--tags", "alloy"], "zcrypto-mon", "alloy", {}),
+    (
+        [
+            "--limit",
+            "zcrypto-mon",
+            "--tags",
+            "alloy",
+            "-e",
+            "alloy_deb_version=1.19.2-1",
+            "-e",
+            json.dumps({"alloy_override": "1.20.1 drops the node's own journal lines, back while the owner reads it"}),
+        ],
+        "zcrypto-mon",
+        "alloy",
+        {
+            "alloy_deb_version": "1.19.2-1",
+            "alloy_override": "1.20.1 drops the node's own journal lines, back while the owner reads it",
+        },
+    ),
     (["--limit", "zcrypto-mon", "--tags", "mon"], "zcrypto-mon", "mon", {}),
     (
         ["--limit", "zcrypto-mon", "--tags", "mon", "-e", "mon_grafana_token_rotate=true"],

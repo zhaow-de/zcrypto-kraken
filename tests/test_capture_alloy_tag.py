@@ -125,6 +125,7 @@ def test_only_the_roles_that_joined_the_tag_carry_it_and_no_play_does():
         ROLES / "access" / "tasks" / "main.yml",
         ROLES / "cache" / "tasks" / "main.yml",
         CAPTURE,
+        ROLES / "mon" / "tasks" / "main.yml",
         ROLES / "nas" / "tasks" / "main.yml",
         ROLES / "ops" / "tasks" / "main.yml",
     ], carriers
