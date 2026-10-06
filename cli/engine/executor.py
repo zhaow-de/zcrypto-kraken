@@ -1459,9 +1459,9 @@ class ProbeExecutor:
             self._frozen = True
             _set_frozen(True)
             logger.critical(
-                "the execution watchdog froze the loop -- socket %s down past the %ds grace: the active intent is revoked "
-                "with socket_down, each order the Cache holds open is cancelled, and every new intent is refused until the "
-                "sockets are back and the re-read pass has settled",
+                "the execution watchdog froze the loop -- socket %s down past the %ds grace: a cancel is sent for the "
+                "active intent's order and each order the Cache holds open, a resting intent revoked with socket_down, "
+                "and every new intent is refused until the sockets are back and the re-read pass has settled",
                 ", ".join(stale),
                 int(_SOCKET_DOWN_GRACE.total_seconds()),
             )
@@ -1478,7 +1478,8 @@ class ProbeExecutor:
         the return that emptied the set -- its reads answered and its settle with them, so the loop resumes
         on the venue's own account of the cut. Called by `_watch_sockets` and again after the tick's pass;
         a pass whose budget is spent stamps nothing, so the freeze stands. Returns at once unless frozen:
-        once both moments are set the condition holds for the life of the process."""
+        once the condition holds it keeps holding on every quiet tick after, so without the guard the lift
+        would log on each."""
         if not self._frozen:
             return
         emptied, completed = self._sockets_emptied_at, self._reread_completed_at
@@ -1752,8 +1753,8 @@ class ProbeExecutor:
         orders when the population is not empty -- ends by settling the position gauge from the
         venue's holdings (`_settle_positions_from_venue`), so an opposing hand trade the state machine
         refused settles at the next such arm; a run whose read fails returns before the settle. A settle
-        that fails spends one try as a failed read does, so the next tick runs the pass again under the
-        same budget over the rows still open; a run whose settle answers closes the arm and stamps
+        that fails spends one try whether or not an endpoint is held down, so the next tick runs the pass
+        again under the same budget over the rows still open; a run whose settle answers closes the arm and stamps
         `_reread_completed_at`, the completion the watchdog's freeze lifts on (`_lift_freeze`).
         Wrapped whole: a raise here may never drop a plan."""
         self._reread_armed_by = None  # a return's arm is consumed by this run, whatever it reads

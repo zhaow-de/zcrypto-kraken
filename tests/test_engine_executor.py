@@ -5605,8 +5605,9 @@ def test_a_returns_arm_pending_behind_a_live_intent_is_cleared_by_the_cut_and_th
     assert venue.calls == [] and [str(cid) for cid in client.canceled] == ["O-1"]
     assert [r.getMessage() for r in records if r.levelno >= logging.ERROR] == [
         "the execution watchdog froze the loop -- socket kraken-spot-data-streams, kraken-spot-user-streams down past "
-        "the 30s grace: the active intent is revoked with socket_down, each order the Cache holds open is cancelled, "
-        "and every new intent is refused until the sockets are back and the re-read pass has settled"
+        "the 30s grace: a cancel is sent for the active intent's order and each order the Cache holds open, a resting "
+        "intent revoked with socket_down, and every new intent is refused until the sockets are back and the re-read "
+        "pass has settled"
     ]
 
     ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-data-streams"))
