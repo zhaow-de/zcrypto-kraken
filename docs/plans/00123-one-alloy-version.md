@@ -65,13 +65,13 @@ Five classes, each held by the tests of the tasks named beside it.
 
 ### Before Task 1: the branch merges `develop`
 
-Tasks 9 and 12 are written against `develop` at `414097c23`, whose mon role includes Caddy from a shared `edge` role and its secret refusal, reboot check and self-check from `node_common` task files, and whose alert-rule test holds the node-only rule groups in `NODE_ONLY_GROUPS`; the branch holds none of it until it merges `develop`, so it merges first, and Task 1's probes and consumers run on the merged tree.
+Tasks 9 and 12 are written against `develop` at `414097c23`, whose mon role includes Caddy from a shared `edge` role and its secret refusal, reboot check and self-check from `node_common` task files, and whose alert-rule test holds the node-only rule groups in `NODE_ONLY_GROUPS`; the branch merged `develop` at `a12c85d1d`, which holds it, and Step 1 merges any later move of `develop`, so Task 1's probes and consumers run on the merged tree.
 
-- [ ] **Step 1: Merge** — `git fetch origin`, then `git merge origin/develop`, its message `Merge origin/develop into feat/t0219-one-alloy-version` and the trailer; a merge and never a rebase, so the twelve commits Task 1 reads keep their hashes. Expected: no conflict.
-- [ ] **Step 2: The consumers of both sides** — the test files the merge changed, beside Task 1's Step 3 list:
+- [ ] **Step 1: Merge** — `git rev-parse HEAD` first, the tip before the merge, `PRE` in Step 2's command; then `git fetch origin`, then `git merge origin/develop`, its message `Merge origin/develop into feat/t0219-one-alloy-version` and the trailer; a merge and never a rebase, so the twelve commits Task 1 reads keep their hashes. Expected: no conflict, and `Already up to date`, with no commit, while `develop` has not moved since `a12c85d1d`.
+- [ ] **Step 2: The consumers of both sides** — the test files the merge changed, `PRE` to the merged tip, none when Step 1 merged nothing, beside Task 1's Step 3 list:
 
 ```bash
-uv run pytest $(git diff --name-only --diff-filter=d HEAD^1 HEAD -- 'tests/test_*.py') tests/test_capture_alloy_tag.py tests/test_nas_alloy_tag.py tests/test_pins_converged.py tests/test_converge_sh.py tests/test_count_list.py tests/test_deploy_log_audit.py tests/test_infra_alloy_series.py tests/test_infra_converge_guards.py tests/test_ops_daily.py tests/test_internal_terms_not_operator_visible.py tests/test_runbook_internal_tokens.py tests/test_runbook_triggers.py tests/test_code_prose_citations.py -q -p no:cacheprovider
+uv run pytest $(git diff --name-only --diff-filter=d PRE HEAD -- 'tests/test_*.py') tests/test_capture_alloy_tag.py tests/test_nas_alloy_tag.py tests/test_pins_converged.py tests/test_converge_sh.py tests/test_count_list.py tests/test_deploy_log_audit.py tests/test_infra_alloy_series.py tests/test_infra_converge_guards.py tests/test_ops_daily.py tests/test_internal_terms_not_operator_visible.py tests/test_runbook_internal_tokens.py tests/test_runbook_triggers.py tests/test_code_prose_citations.py -q -p no:cacheprovider
 ```
 
 Expected: no failure. A failure is the two sides disagreeing in meaning, fixed in a commit of its own before Task 1, its guard's probe recorded as the Global Constraints say.
