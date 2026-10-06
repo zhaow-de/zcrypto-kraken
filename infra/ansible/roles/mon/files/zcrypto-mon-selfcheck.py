@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """The observability node's self-check, installed by the `mon` role at /usr/local/sbin/zcrypto-mon-selfcheck.
 
-A rule cannot page the death of the node it runs on, so this pings the node's dead-man check only while the node
-does its job: Grafana's rule scheduler is ticking, a fleet host's sample is fresh in Prometheus, and Loki answers
-ready. A failing check sends nothing and exits 0: the missing ping is the page.
+It pings the node's dead-man check through zcrypto_selfcheck while the node does its job: Grafana's rule scheduler is
+ticking, a fleet host's sample is fresh in Prometheus, and Loki answers ready.
 tests/test_mon_selfcheck.py drives this file.
 """
 

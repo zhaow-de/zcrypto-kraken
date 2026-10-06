@@ -27,8 +27,7 @@ dest=$4
 keep_days=$5
 out=$6
 
-# One run of a backup at a time, through flock(1) whatever the SQLite version: the file a run finds already staged is
-# then never one another run is still writing. A second run fails here, touching nothing.
+# One run of a backup at a time: the file a run finds already staged is then never one another run is still writing.
 lock="$(dirname -- "$out")/zcrypto-sqlite-backup-$name.lock"
 exec {lock_fd}>>"$lock" || fail "cannot open $lock"
 flock -n "$lock_fd" || fail "another run of the $name backup holds $lock"
@@ -41,10 +40,10 @@ now=$(date -u +%s)
 staged="$staging/$name-$(date -u -d "@$now" +%Y-%m-%dT%H%M%SZ).sqlite"
 cutoff=$(date -u -d "@$((now - 10#$keep_days * 86400))" +%Y-%m-%d)
 
-# A run stopped part-way leaves no file of its own under a backup's name. systemd signals the unit's whole control
-# group, so a child dies with the script at the signal's default: a Python handler runs only between bytecodes, so it
-# would wait out SQLite's VACUUM before removing what this trap removes at once. A runner's staged file is out of the
-# host's reach; it is never copied, and the prune removes it past the keep-days.
+# systemd signals the unit's whole control group, so a child dies with the script at the signal's default: a Python
+# handler runs only between bytecodes and would wait out SQLite's VACUUM before removing what this trap removes at
+# once. A runner's VACUUM runs on in its container, out of the host's reach; its file is never copied, and the prune
+# removes it past the keep-days.
 stopped() {
   rm -f -- "$dest/${staged##*/}" || true
   if [ ${#runner[@]} -eq 0 ]; then
@@ -56,10 +55,7 @@ stopped() {
 trap 'stopped SIGTERM 143' TERM
 trap 'stopped SIGINT 130' INT
 
-# Both paths are arguments, never SQL text: VACUUM INTO takes its file as a bound parameter. The staging directory
-# is made by the same process, so the runner's uid owns it and the file. mode=ro, since a connect to a path that names
-# no file creates an empty database there. A VACUUM that fails part-way leaves its file under a backup's name, so the
-# file and its journal go before the error is raised; a file already there is one this run did not write, and stays.
+# One process makes the staging directory and runs the VACUUM, so the runner's uid owns both.
 vacuum=$(
   cat <<'PY'
 import contextlib, os, sqlite3, sys, urllib.parse
@@ -94,7 +90,7 @@ PY
 
 "${runner[@]}" python3 -c "$vacuum" "$db" "$staged" || fail "VACUUM INTO $staged from $db failed"
 
-# 0700, since the copies carry the database; an existing destination keeps its own mode.
+# 0700, since the copies carry the database.
 [ -d "$dest" ] || install -d -m 0700 -- "$dest" || fail "cannot create $dest"
 # The prefix's last word takes the staged path whole, `web:` becoming `web:<staged>`; a prefix ending in a space, as
 # the host's `cp ` does, takes it as a word of its own.

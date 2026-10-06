@@ -1,6 +1,5 @@
 ---
-# The Caddy edge (spec 00122 D15): Caddy from the cloudsmith repository, followed from apt, never forced or
-# held, and the node's one public listener. tests/test_infra_edge_role.py holds what it renders and gates.
+# The Caddy edge (spec 00122 D15), the node's one public listener; tests/test_infra_edge_role.py holds what it renders and gates.
 - name: add the Caddy apt repository
   ansible.builtin.deb822_repository:
     name: caddy
@@ -18,7 +17,6 @@
   ansible.builtin.set_fact:
     edge_repo_previewed: "{{ ansible_check_mode and edge_caddy_repo is changed }}"
 
-# The repository task refreshes no apt cache, so the install refreshes it.
 - name: caddy present — version FOLLOWED from apt, never forced or held
   ansible.builtin.apt:
     name: caddy
