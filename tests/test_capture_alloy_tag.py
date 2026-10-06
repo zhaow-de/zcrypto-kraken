@@ -4,20 +4,25 @@ reach every task of the role, and `always` runs whatever was asked."""
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import pytest
-import yaml
-from ansible.playbook.task import Task
 
+from tests.alloy_part import (
+    ROLES,
+    SITE,
+    TAG,
+    module_and_args,
+    notified,
+    play_selection,
+    read_text,
+    refusal_of,
+    tagged,
+    unproduced_reads,
+)
 from tests.test_alloy_version import alloy_version
 from tests.test_infra_converge_guards import ANSIBLE, CAPTURE, assert_that, find_task, load_tasks, truthy, when_conditions
 
-TAG = "alloy"
-ROLES = ANSIBLE / "roles"
-CAPTURE_ROLE = ROLES / "capture"
-SITE = ANSIBLE / "site.yml"
 FAIL_FAST = "fail fast if an alloy run was not handed the capture host's Alloy digest"
 
 ALLOY_PART = [
@@ -53,121 +58,29 @@ ALWAYS_PRE_TASKS = [
 ]
 
 
-def _tagged() -> list[tuple[dict, set, tuple]]:
-    return [leaf for leaf in alloy_version.walk(load_tasks(CAPTURE)) if TAG in leaf[1]]
-
-
-def _notify(task: dict) -> list[str]:
-    raw = task.get("notify") or []
-    return [raw] if isinstance(raw, str) else list(raw)
-
-
-def _module(task: dict) -> tuple[str, dict]:
-    return next((k, v if isinstance(v, dict) else {}) for k, v in task.items() if k.startswith("ansible."))
-
-
-def _produced(task: dict) -> set[str]:
-    names = {task["register"]} if task.get("register") else set()
-    names |= set(task.get("ansible.builtin.set_fact") or {})
-    if "ansible.builtin.getent" in task:
-        names.add(f"getent_{task['ansible.builtin.getent']['database']}")
-    return names
-
-
-def _read_text(task: dict, gates: tuple[str, ...]) -> str:
-    body = yaml.safe_dump({k: v for k, v in task.items() if k not in ("name", "register")})
-    module, args = _module(task)
-    if module == "ansible.builtin.template":
-        body += (CAPTURE_ROLE / "templates" / args["src"]).read_text()
-    return body + "\n".join(gates)
-
-
 def test_the_capture_roles_tagged_tasks_are_exactly_its_alloy_part():
-    tagged = _tagged()
-    assert [task["name"] for task, _, _ in tagged] == ALLOY_PART
-    assert {handler for task, _, _ in tagged for handler in _notify(task)} == {"reload alloy"}
+    leaves = tagged("capture")
+    assert [task["name"] for task, _, _ in leaves] == ALLOY_PART
+    assert {handler for task, _, _ in leaves for handler in notified(task)} == {"reload alloy"}
 
 
 def test_every_name_a_tagged_task_reads_is_produced_by_an_earlier_tagged_task():
-    """A register, `set_fact` or getent fact read in a gate, an argument or a rendered template: the narrow run skips
-    every untagged producer, so a read of one fails that run on an undefined variable or, behind `is defined`, skips its
-    task silently."""
-    leaves = alloy_version.walk(load_tasks(CAPTURE))
-    handlers = load_tasks(CAPTURE_ROLE / "handlers" / "main.yml")
-    every = set().union(*(_produced(task) for task, _, _ in leaves), *(_produced(handler) for handler in handlers))
-    tagged = [(task, gates) for task, tags, gates in leaves if TAG in tags]
-    notified = {handler for task, _ in tagged for handler in _notify(task)}
-    available: set[str] = set()
-    unproduced = []
-    for task, gates in tagged + [(handler, ()) for handler in handlers if handler["name"] in notified]:
-        text = _read_text(task, gates)
-        reads = {name for name in every if re.search(rf"(?<!\w){re.escape(name)}(?!\w)", text)}
-        unproduced += [(task["name"], name) for name in sorted(reads - available - _produced(task))]
-        available |= _produced(task)
+    unproduced = unproduced_reads("capture")
     assert not unproduced, unproduced
 
 
 CAPTURE_DAEMON_FILES = {"/opt/zcrypto-capture/compose.yaml", "/etc/systemd/system/zcrypto-capture.service"}
 CAPTURE_DAEMON_SOURCES = {"compose.yaml.j2", "zcrypto-capture.service"}
 
-# A task the Alloy part takes later joins these lists in that change: the lists, beside the four refusals, are what
-# refuse a shape no refusal names.
-FREE_MODULES = {f"ansible.builtin.{m}" for m in ("assert", "debug", "stat", "getent", "set_fact")}
-WRITERS = {f"ansible.builtin.{m}" for m in ("file", "copy", "template")}
-ALLOY_DIR = "{{ capture_alloy_dir }}"
-VERBATIM = [
-    (
-        "ansible.builtin.user",
-        {"name": "zcrypto-alloy", "system": True, "shell": "/usr/sbin/nologin", "create_home": False, "state": "present"},
-    ),
-    (
-        "ansible.builtin.command",
-        {"cmd": "docker compose up -d{{ ' --force-recreate' if capture_alloy_secrets is changed else '' }}", "chdir": ALLOY_DIR},
-    ),
-    ("ansible.builtin.command", """docker inspect grafana-alloy --format '{{ "{{" }}.Config.Image{{ "}}" }}'"""),
-]
-# Two keywords reach the module past the module key the lists read: `args` merges into its arguments, and `environment`
-# into the command's process, where a COMPOSE_FILE retargets the recreate. No tagged task carries either.
-ARGUMENT_KEYWORDS = ("args", "environment")
-
-
-def _module_entry(task: dict) -> tuple[str, object] | None:
-    keys = [key for key in task if key not in Task.fattributes and not key.startswith("with_")]
-    return (keys[0], task[keys[0]]) if len(keys) == 1 else None
-
-
-def _on_alloy_paths(path) -> bool:
-    return isinstance(path, str) and (path == ALLOY_DIR or path.startswith(ALLOY_DIR + "/")) and ".." not in path.split("/")
-
-
-def _admitted(task: dict) -> bool:
-    entry = _module_entry(task)
-    if entry is None:
-        return False
-    module, value = entry
-    if module in FREE_MODULES:
-        return True
-    if module in WRITERS and isinstance(value, dict):
-        written = [value[key] for key in ("path", "dest", "name") if key in value]
-        return bool(written) and all(_on_alloy_paths(path) for path in written)
-    return entry in VERBATIM
-
-
-def _refusal(task: dict) -> str | None:
-    carried = [key for key in ARGUMENT_KEYWORDS if key in task]
-    if carried:
-        return f"{task['name']}: carries {' and '.join(carried)}"
-    return None if _admitted(task) else f"{task['name']}: not on the Alloy part's allowlist"
-
 
 def test_no_tagged_task_reaches_the_capture_daemon():
-    for task, _, gates in _tagged():
-        assert (refusal := _refusal(task)) is None, refusal
-        module, args = _module(task)
-        assert "restart capture service" not in _notify(task), task["name"]
+    for task, _, gates in tagged("capture"):
+        assert (refusal := refusal_of(task, "capture")) is None, refusal
+        module, args = module_and_args(task)
+        assert "restart capture service" not in notified(task), task["name"]
         assert args.get("dest") not in CAPTURE_DAEMON_FILES and args.get("src") not in CAPTURE_DAEMON_SOURCES, task["name"]
         assert not module.endswith(("systemd", "systemd_service", "service")), task["name"]
-        assert "capture_image_digest" not in _read_text(task, gates), task["name"]
+        assert "capture_image_digest" not in read_text("capture", task, gates), task["name"]
 
 
 @pytest.mark.parametrize(
@@ -188,7 +101,7 @@ def test_no_tagged_task_reaches_the_capture_daemon():
     ],
 )
 def test_a_tagged_task_carrying_args_or_environment_is_refused_by_the_keyword(name, keyword, value):
-    refusal = _refusal({**find_task(load_tasks(CAPTURE), name), keyword: value})
+    refusal = refusal_of({**find_task(load_tasks(CAPTURE), name), keyword: value}, "capture")
     assert refusal is not None and keyword in refusal and name in refusal, refusal
 
 
@@ -211,28 +124,10 @@ def test_only_the_roles_that_joined_the_tag_carry_it_and_no_play_does():
     assert carriers == [CAPTURE, ROLES / "nas" / "tasks" / "main.yml"], carriers
 
 
-def _selected(tags: set[str]) -> bool:
-    return "always" in tags or TAG in tags
-
-
 def test_an_alloy_run_on_the_capture_and_engine_plays_runs_the_alloy_part_beside_the_always_pre_tasks():
     """Ansible's selection over every play that reaches a capture host: an `always` task in any of their roles would
     run on the primary beside the Alloy part, and only the four pre_tasks below may."""
-    pre_tasks, role_tasks = [], []
-    for play in load_tasks(SITE):
-        if play["hosts"] not in ("capture_host", "engine_host"):
-            continue
-        play_tags = alloy_version.tags_of(play)
-        pre_tasks += [
-            (play["hosts"], t["name"])
-            for t, tags, _ in alloy_version.walk(play.get("pre_tasks"), frozenset(play_tags))
-            if _selected(tags)
-        ]
-        for entry in play["roles"]:
-            inherited = frozenset(play_tags | alloy_version.tags_of(entry))
-            for task, tags, _ in alloy_version.walk(load_tasks(ROLES / entry["role"] / "tasks" / "main.yml"), inherited):
-                if _selected(tags):
-                    role_tasks.append((entry["role"], task["name"]))
+    pre_tasks, role_tasks = play_selection("capture_host", "engine_host")
     assert pre_tasks == ALWAYS_PRE_TASKS
     assert role_tasks == [("capture", name) for name in ALLOY_PART]
 
