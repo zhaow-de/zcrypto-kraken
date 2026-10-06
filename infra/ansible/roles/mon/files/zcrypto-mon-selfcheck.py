@@ -16,7 +16,12 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-import zcrypto_selfcheck
+try:
+    import zcrypto_selfcheck
+except ModuleNotFoundError:
+    # The unit's PYTHONPATH names the module's directory; a hand run of the installed script carries none.
+    sys.path.append("/usr/local/lib/zcrypto")
+    import zcrypto_selfcheck
 
 TICK = "grafana_alerting_ticker_last_consumed_tick_timestamp_seconds"
 SCHEDULED = "grafana_alerting_schedule_alert_rules"

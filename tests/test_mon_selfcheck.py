@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import configparser
 import json
+import os
 import re
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -128,6 +132,45 @@ def test_a_ping_that_fails_is_reported_and_the_unit_still_exits_clean():
 def test_the_ping_url_never_reaches_the_output():
     for kwargs in ({}, {"broken": (PING,)}, {"fleet": 0}):
         assert PING not in _run(**kwargs)[2]
+
+
+# The module's install directory exists on the node alone, so the run seeds that path entry with a finder over a copy of
+# the module. Nothing else on the run's path holds the module, so the script's first import fails and its fallback's
+# import is the one that finds it.
+_HAND_RUN = """
+import runpy, sys
+from importlib.machinery import FileFinder, SourceFileLoader
+script, installed, copy = sys.argv[1:]
+sys.path_importer_cache[installed] = FileFinder(copy, (SourceFileLoader, [".py"]))
+runpy.run_path(script, run_name="__main__")
+"""
+
+
+def test_a_hand_run_without_the_units_pythonpath_imports_the_module_from_where_the_role_installs_it(tmp_path):
+    (made,) = [task["ansible.builtin.file"]["path"] for task in load_tasks(SELFCHECK_TASKS) if "ansible.builtin.file" in task]
+    (tmp_path / "copy").mkdir()
+    shutil.copy(SHARED, tmp_path / "copy")
+    unreadable = (tmp_path / "absent").as_uri()
+    env = {name: value for name, value in os.environ.items() if name != "PYTHONPATH"} | {
+        "MON_SELFCHECK_GRAFANA": unreadable,
+        "MON_SELFCHECK_PROMETHEUS": unreadable,
+        "MON_SELFCHECK_LOKI": unreadable,
+        "MON_SELFCHECK_HEALTHCHECK_URL": "",
+    }
+    run = subprocess.run(
+        [sys.executable, "-c", _HAND_RUN, str(SCRIPT), made, str(tmp_path / "copy")],
+        env=env,
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert (run.returncode, run.stdout, run.stderr) == (
+        0,
+        "selfcheck: rules=FAIL (unreadable: URLError) fleet=FAIL (unreadable: URLError) loki=FAIL (unreadable: URLError)"
+        " -> not pinging\n",
+        "",
+    )
 
 
 # --- the unit, its environment file and its timer: node_common's, rendered through the role's include -------------
