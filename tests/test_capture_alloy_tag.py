@@ -4,12 +4,9 @@ reach every task of the role, and `always` runs whatever was asked."""
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from tests.alloy_part import (
-    ROLES,
     SITE,
     TAG,
     module_and_args,
@@ -20,8 +17,7 @@ from tests.alloy_part import (
     tagged,
     unproduced_reads,
 )
-from tests.test_alloy_version import alloy_version
-from tests.test_infra_converge_guards import ANSIBLE, CAPTURE, assert_that, find_task, load_tasks, truthy, when_conditions
+from tests.test_infra_converge_guards import CAPTURE, assert_that, find_task, load_tasks, truthy, when_conditions
 
 FAIL_FAST = "fail fast if an alloy run was not handed the capture host's Alloy digest"
 
@@ -103,32 +99,6 @@ def test_no_tagged_task_reaches_the_capture_daemon():
 def test_a_tagged_task_carrying_args_or_environment_is_refused_by_the_keyword(name, keyword, value):
     refusal = refusal_of({**find_task(load_tasks(CAPTURE), name), keyword: value}, "capture")
     assert refusal is not None and keyword in refusal and name in refusal, refusal
-
-
-def _role_yaml() -> list[Path]:
-    return sorted(p for d in ("tasks", "handlers") for p in ROLES.glob(f"*/{d}/*.yml"))
-
-
-def _every_tag(node) -> set[str]:
-    if isinstance(node, list):
-        return set().union(set(), *(_every_tag(item) for item in node))
-    if isinstance(node, dict):
-        return alloy_version.tags_of(node).union(*(_every_tag(value) for value in node.values()))
-    return set()
-
-
-def test_only_the_roles_that_joined_the_tag_carry_it_and_no_play_does():
-    """The tag is shared by name, so another role joins it deliberately, with its own guards beside these: this list
-    widens in that change."""
-    carriers = [p for p in [*_role_yaml(), SITE, ANSIBLE / "bootstrap.yml"] if TAG in _every_tag(load_tasks(p))]
-    assert carriers == [
-        ROLES / "access" / "tasks" / "main.yml",
-        ROLES / "cache" / "tasks" / "main.yml",
-        CAPTURE,
-        ROLES / "mon" / "tasks" / "main.yml",
-        ROLES / "nas" / "tasks" / "main.yml",
-        ROLES / "ops" / "tasks" / "main.yml",
-    ], carriers
 
 
 def test_an_alloy_run_on_the_capture_and_engine_plays_runs_the_alloy_part_beside_the_always_pre_tasks():

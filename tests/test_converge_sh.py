@@ -549,6 +549,10 @@ PUBLISHED = [
 ]
 
 
+# The harness's copy of the script sits outside any repository, so an `alloy` run's walk is pointed at this checkout.
+THIS_TREE = {"ZCRYPTO_REPO": str(SCRIPT.parents[3]), "ZCRYPTO_ANSIBLE_DIR": str(SCRIPT.parents[1])}
+
+
 @pytest.mark.parametrize("args,limit,tags,extra", PUBLISHED)
 def test_every_invocation_this_fleet_publishes_records_its_operands(tmp_path, args, limit, tags, extra):
     """The grammar is a whitelist, so its floor is every shape the fleet actually converges with.
@@ -556,10 +560,62 @@ def test_every_invocation_this_fleet_publishes_records_its_operands(tmp_path, ar
     Drawn from the recorded runs and the published ones: the four-operand engine leg, the NAS
     render, the ops roll, the bridgehead, `--limit=`, and `--skip-tags engine`.
     """
-    rc, _out, log = run_recording(tmp_path, ["site.yml", *args], reply=limit)
+    rc, _out, log = run_recording(tmp_path, ["site.yml", *args], reply=limit, env=THIS_TREE)
     assert rc == 0
     rec = json.loads(log.read_text().splitlines()[0])
     assert (rec["limit"], rec["tags"], rec["extra_vars"]) == (limit, tags, extra), rec
+
+
+def _a_tree_whose_one_play_carries_no_tag(tmp_path) -> Path:
+    ansible = tmp_path / "infra" / "ansible"
+    (ansible / "inventory").mkdir(parents=True)
+    (ansible / "inventory" / "hosts.yml").write_text(
+        json.dumps({"all": {"children": {"ops_host": {"hosts": {"zcrypto-ops": {}}}}}})
+    )
+    play = {
+        "name": "converge the ops node",
+        "hosts": "ops_host",
+        "tasks": [{"name": "a task", "ansible.builtin.debug": {"msg": "x"}}],
+    }
+    (ansible / "site.yml").write_text(json.dumps([play]))
+    return ansible
+
+
+def _refusal(stderr: str) -> str:
+    return next((line for line in stderr.splitlines() if line.startswith("converge.sh:")), "")
+
+
+def test_an_alloy_run_on_a_host_no_play_reaches_with_an_alloy_task_is_refused_before_the_preview(tmp_path):
+    script = make_harness(tmp_path)
+    tree = {**THIS_TREE, "ZCRYPTO_ANSIBLE_DIR": str(_a_tree_whose_one_play_carries_no_tag(tmp_path))}
+    r = run_no_tty(script, ["site.yml", "--limit", "zcrypto-ops", "--tags", "alloy"], env=tree)
+    assert r.returncode == 2, (r.returncode, r.stderr)
+    assert invocations(tmp_path) == []
+    assert "--tags alloy on zcrypto-ops" in _refusal(r.stderr), r.stderr
+    assert "no play that reaches zcrypto-ops runs an alloy-tagged task" in r.stderr, r.stderr
+
+
+def test_an_alloy_run_whose_walk_cannot_run_is_refused(tmp_path):
+    script = make_harness(tmp_path)
+    (tmp_path / "empty").mkdir()
+    r = run_no_tty(
+        script,
+        ["site.yml", "--limit", "zcrypto-ops", "--tags", "alloy"],
+        env={**THIS_TREE, "ZCRYPTO_ANSIBLE_DIR": str(tmp_path / "empty")},
+    )
+    assert r.returncode == 2, (r.returncode, r.stderr)
+    assert invocations(tmp_path) == []
+    assert "--tags alloy on zcrypto-ops" in _refusal(r.stderr), r.stderr
+
+
+def test_a_run_without_the_tag_never_runs_the_walk(tmp_path):
+    script = make_harness(tmp_path)
+    (tmp_path / "empty").mkdir()
+    r = run_no_tty(
+        script, ["site.yml", "--limit", "zcrypto-red", "--tags", "capture"], env={"ZCRYPTO_REPO": str(tmp_path / "empty")}
+    )
+    assert r.returncode == 3, (r.returncode, r.stderr)
+    assert len(invocations(tmp_path)) == 1
 
 
 def test_the_json_override_operand_is_recorded_whole(tmp_path):

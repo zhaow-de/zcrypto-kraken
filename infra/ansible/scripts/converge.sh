@@ -6,10 +6,12 @@
 # Usage: converge.sh site.yml --limit <host> (or --limit=<host>) [--tags <list> | --skip-tags engine]
 #        [--check]
 #        [-e KEY=VALUE | -e '{"KEY": "<reason>"}'] ...   (the braced form is JSON, spanning lines or not)
-# rc 2 usage, or an argument outside that grammar | rc 3 confirm-abort / no tty
-# | rc 4 preview failed | else the real pass's own exit.
+# rc 2 usage, an argument outside that grammar, or an `alloy` run that would land nothing
+# | rc 3 confirm-abort / no tty | rc 4 preview failed | else the real pass's own exit.
 set -euo pipefail
 SD="$(cd "$(dirname "$0")" && pwd)"
+REPO="${ZCRYPTO_REPO:-$SD/../../..}"
+ADIR="${ZCRYPTO_ANSIBLE_DIR:-$SD/..}"
 
 # A WHITELIST, not a parser. This fleet's converges are enumerable, and every argument outside the
 # grammar is refused before the preview, so no spelling can reach a host recorded as something it is
@@ -182,6 +184,16 @@ each_operand note_alloy_operand
 [ "$has_deb" -eq 0 ] || [ "$has_override" -eq 1 ] \
   || refuse "alloy_deb_version moves an apt host off the fleet's version: pass it beside -e '{\"alloy_override\": \"<why>\"}'"
 
+# An `alloy` run on a host no play reaches with an Alloy task lands nothing, and its row would
+# still record the digest it was handed as converged. The walk needs `yaml`, which the system
+# python3 the checks above use lacks, hence uv.
+case ",$TAGS," in
+  *,alloy,*)
+    why="$(uv run --project "$REPO" python "$REPO/infra/scripts/alloy-version.py" reaches --ansible-dir "$ADIR" "$LIMIT" 2>&1)" \
+      || refuse "--tags alloy on $LIMIT: ${why:-the tag walk did not run}"
+    ;;
+esac
+
 # Absolute, because run.sh plays from infra/ansible and ansible resolves a relative `dest` against it.
 WREC="$(mktemp -t zcrypto-window.XXXXXX)"
 case "$WREC" in /*) : ;; *) WREC="$PWD/$WREC" ;; esac
@@ -220,7 +232,6 @@ set +e
 rc=$?
 set -e
 LOG="${ZCRYPTO_DEPLOY_LOG:-$SD/../../../docs/reference/deploy-log.jsonl}"
-ADIR="${ZCRYPTO_ANSIBLE_DIR:-$SD/..}"
 REV="$(git -C "$SD" rev-parse HEAD 2>/dev/null || echo unknown)"
 # `dirty` answers "does REV fully describe what was deployed?" -- ansible renders from the working
 # tree. The deploy log is excluded because THIS SCRIPT writes it and would otherwise dirty itself.
