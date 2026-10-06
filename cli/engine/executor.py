@@ -59,6 +59,7 @@ from cli.engine.execledger import (
     pending_plan_intents,
     update_plan_intent,
     update_submitted_row,
+    write_exec_record,
 )
 from cli.engine.feeders import CycleStages
 from cli.engine.instruments import EUR_CODES, INSTRUMENT_IDS, BelowMinimum, SizedOrder, size_order
@@ -213,8 +214,9 @@ _metrics = None
 def set_executor_hooks(*, publish_verdict=None, metrics=None) -> None:
     """Install (or clear, with the defaults) the executor's telemetry hooks: `publish_verdict` is
     called `(verdict, evaluated_at=..., heartbeat=...)` after EVERY gate evaluation, `heartbeat`
-    False on the idle refresh alone, `metrics` is a `command._ExecutionMetrics` or an object with its
-    methods. Neither can affect an order -- both are wrapped."""
+    False on the idle refresh and the boundary's re-journal (`on_boundary`) alone, `metrics` is a
+    `command._ExecutionMetrics` or an object with its methods. Neither can affect an order -- both
+    are wrapped."""
     global _publish_verdict, _metrics
     _publish_verdict = publish_verdict
     _metrics = metrics
@@ -1060,6 +1062,10 @@ class ProbeExecutor:
         # be read at construction (`_read_restored`), and never cleared: every plan is refused with it for
         # the life of this process, and a restart is the retry.
         self._reconciliation_refusal: str | None = None
+        # The other two holds `_fold_holds` publishes into the gate's level: `socket_down` while
+        # `_frozen` stands, `daily_loss_hold` while `_day_loss_hold` does.
+        self._frozen = False
+        self._day_loss_hold = False
         self._journal_dir = Path(config.journal_dir)
         # The 00088 convention: the control-file tree sits beside the journal, not inside it.
         self._state_dir = Path(config.journal_dir).parent
@@ -1174,16 +1180,45 @@ class ProbeExecutor:
     # --- the gate ------------------------------------------------------------------------------
 
     def _evaluate(self, now: datetime, *, heartbeat: bool = True) -> GateVerdict:
-        """The ONE gate read. Every evaluation reaches the publish hook (D4's cadence ruling), so
-        the gate's published state is seconds-fresh for as long as a plan is running and at most
+        """The ONE gate read, its verdict folded with the executor's own holds (`_fold_holds`): the
+        level every caller decides on and every publish and journal write carries, the startup pass's
+        keep-or-cancel alone reading the gate's own level beside it (`_adopt_resting_orders` says
+        why). Every evaluation reaches the publish hook (D4's cadence ruling), so the gate's
+        published state is seconds-fresh for as long as a plan is running and at most
         `_GATE_REFRESH` old while none is (`_refresh_gate`), since the board's kill-switch rule reads
         the gauge and a switch removed on an idle engine would otherwise page until the boundary.
-        `heartbeat` False, the refresh's, publishes the readings and not the staleness rule's
-        series, which stays the boundary path's."""
-        verdict = self._gate.evaluate(now)
+        `heartbeat` False, the refresh's and the boundary re-journal's, publishes the readings and
+        not the staleness rule's series, which stays the boundary sink's."""
+        verdict = self._fold_holds(self._gate.evaluate(now))
         self._gate_evaluated_at = now
         _publish(verdict, now, heartbeat=heartbeat)
         return verdict
+
+    def _fold_holds(self, verdict: GateVerdict) -> GateVerdict:
+        """The gate's verdict with the three holds the executor applies outside the gate's enumeration
+        folded in, each reason appended after the gate's in this order: `socket_down` and
+        `reconciliation_unread` lower the level to `none`, `daily_loss_hold` to `reduce_only` unless it
+        reads `none` already. Unfolded, the gauge, the board and the exec record's `level` -- the one
+        the tracking trip's eligibility reads -- would read the gate's `full` while every intent is
+        refused. `inputs` keeps the gate's keys and gains the three as booleans under the reasons'
+        names."""
+        frozen = self._frozen
+        unread = self._reconciliation_refusal is not None
+        day_loss = self._day_loss_hold
+        level = verdict.level
+        reasons = list(verdict.reasons)
+        if frozen:
+            reasons.append("socket_down")
+            level = GateLevel.NONE
+        if unread:
+            reasons.append("reconciliation_unread")
+            level = GateLevel.NONE
+        if day_loss:
+            reasons.append("daily_loss_hold")
+            if level != GateLevel.NONE:
+                level = GateLevel.REDUCE_ONLY
+        inputs = {**verdict.inputs, "socket_down": frozen, "reconciliation_unread": unread, "daily_loss_hold": day_loss}
+        return GateVerdict(level=level, reasons=tuple(reasons), inputs=inputs)
 
     # --- the chokepoint ------------------------------------------------------------------------
 
@@ -1312,7 +1347,8 @@ class ProbeExecutor:
         -- the tick a plan runs on evaluates anyway and stamps it. What it publishes is what the gate
         reads, its own fail-closed readings included, and not the heartbeat, which stays the boundary
         path's so the staleness rule keeps watching the sink and its exec record; it journals
-        nothing, since the exec record's verdict is the boundary sink's alone. Wrapped as
+        nothing: the exec record's verdict is the boundary's, the sink's bare one re-journaled
+        folded by `on_boundary`. Wrapped as
         `_publish_resting_age` is: telemetry may never end a plan."""
         try:
             if now - self._gate_evaluated_at >= _GATE_REFRESH:
@@ -1405,12 +1441,16 @@ class ProbeExecutor:
         justifies nothing, so it cancels everything rather than keeping what it cannot vouch for.
         A canceled close leg is re-dropped as a new signed-off plan.
 
-        At level NONE the pass cancels EVERYTHING, ledgered reducers included: a trip cancels
-        resting orders, `_poll` already revokes even a resting close when the level drops there, and
-        "nothing is working at the venue" must not have a restart-shaped hole -- a kill file that
-        survived the restart is exactly the state the operator pulled the switch for. "EVERYTHING" is
-        everything the Cache holds, which at startup is every order resting at the venue that
-        reconciliation did not drop: `_cancel_resting` says why, and what it drops.
+        At the gate's own level NONE the pass cancels EVERYTHING, ledgered reducers included: a trip
+        cancels resting orders, `_poll` already revokes even a resting close when the level drops
+        there, and "nothing is working at the venue" must not have a restart-shaped hole -- a kill file
+        that survived the restart is exactly the state the operator pulled the switch for.
+        "EVERYTHING" is everything the Cache holds, which at startup is every order resting at the
+        venue that reconciliation did not drop: `_cancel_resting` says why, and what it drops. The
+        gate's own level, never the folded one (`_fold_holds`): the pass's own `_read_venue_orders`
+        sets `_reconciliation_refusal` before the level is read, and folded, an unread reconciliation
+        would cancel every adopted order, ledgered reducers included -- unread, a ledgered reducer
+        stays resting, its row open for the next restart's read.
 
         EVERY matched row is attached, canceled ones included, before any cancel goes out: a cancel
         is a request, not an outcome, and an order can still fill between it and the venue's answer.
@@ -1481,11 +1521,12 @@ class ProbeExecutor:
             return  # nothing adopted -- and no gate read, so an idle startup stays the cheap path
 
         # Read AFTER both sweeps: a repair or a withdrawal that latched the kill switch above makes
-        # this `none`, and then the pass cancels everything, ledgered reducers included. A kill file
-        # is only one of the reasons the gate reads `none` -- a disarmed engine reads it too -- so the
-        # cancel line names the verdict's own reasons rather than assuming one.
+        # the gate's own level `none`, and then the pass cancels everything, ledgered reducers
+        # included. A kill file is only one of the reasons the gate reads `none` -- a disarmed engine
+        # reads it too -- so the cancel line names the published verdict's reasons rather than
+        # assuming one. The second evaluation, at the same `now`, reuses the venue snapshot the first took.
         verdict = self._evaluate(now)
-        cancel_all = verdict.level == GateLevel.NONE
+        cancel_all = self._gate.evaluate(now).level == GateLevel.NONE
 
         # A resting order a previous process placed is named by its Kraken txid in the Cache, so the
         # row it belongs to is found by the txid the row recorded when its own id misses.
@@ -2987,6 +3028,12 @@ class ProbeExecutor:
         """The 4-hourly boundary alert's one call into the executor, made after that boundary's
         cycle has journaled.
 
+        Its first act journals the folded verdict (`_fold_holds`) into the boundary's exec record,
+        over the gate's bare one the boundary sink wrote there: the merge replaces the verdict fields
+        alone, so the record's `level` is the one `held_back` reads, and a boundary whose cycle raised
+        and wrote no record gets one. Its publish leaves the heartbeat to the sink, so a failing sink
+        write still starves the staleness rule.
+
         THE call site, and the whole reason this is not on the timer: every `_evaluate` on the tick
         path sits behind an operator-written plan file, so a trip hooked there could only fire while
         a plan was running -- never in the stopped-placing state it exists to catch. The alert chain
@@ -2997,6 +3044,9 @@ class ProbeExecutor:
         exception from the cycle with one from a measurement.
         """
         try:
+            now = self._now()
+            verdict = self._evaluate(now, heartbeat=False)
+            write_exec_record(self._journal_dir, boundary, verdict, evaluated_at=now)
             self._record_series_birth()
             self._evaluate_tracking(boundary)
         except Exception:

@@ -1212,6 +1212,7 @@ class RecordingMetrics:
         self.drawdowns = []
         self.frozen = []
         self.not_drafted = []
+        self.verdicts = []
 
     def set_gap(self, symbol, eur):
         self.gaps.append((symbol, eur))
@@ -6607,6 +6608,42 @@ def test_a_failed_venue_read_leaves_the_rows_and_refuses_every_plan_for_the_life
     entry = _plan_entry(tmp_path)
     assert (entry["disposition"], entry["reasons"]) == ("refused", [reason])
     assert client.submitted == [] and not _plan_path(tmp_path).exists()
+
+
+# --- the executor's own holds, folded into the verdict it publishes -------------------------------
+
+
+def _verdict(*, level):
+    return GateVerdict(
+        level=level,
+        reasons=(),
+        inputs={"armed_in_config": True, "arm_file": True, "kill_file": False, "restart_hold": False, "venue_status": "online"},
+    )
+
+
+def _unreconciled_executor(tmp_path):
+    _submitted_row(tmp_path, "O-open", reduce_only=True, when=NOW - timedelta(hours=4), venue_order_id=_TXID)
+    ex = _executor(tmp_path, venue_orders=_VenueOrders(raises=RuntimeError("down")))
+    with _executor_errors(level=logging.CRITICAL):
+        ex.on_timer(NOW)
+    return ex
+
+
+def test_an_unread_startup_reconciliation_reads_none_with_its_reason_in_the_published_verdict(tmp_path):
+    metrics = RecordingMetrics()
+    set_executor_hooks(publish_verdict=lambda verdict, **_: metrics.verdicts.append(verdict), metrics=metrics)
+    ex = _unreconciled_executor(tmp_path)
+    verdict = ex._evaluate(NOW)
+    assert verdict.level == GateLevel.NONE and verdict.reasons[-1] == "reconciliation_unread"
+    assert verdict.inputs["reconciliation_unread"] is True and metrics.verdicts[-1] is verdict
+
+
+def test_the_boundary_re_journals_the_folded_verdict_over_the_sinks_bare_one(tmp_path):
+    ex = _unreconciled_executor(tmp_path)
+    write_exec_record(ex._journal_dir, _boundary(NOW), _verdict(level=GateLevel.FULL), evaluated_at=NOW)
+    ex.on_boundary(_boundary(NOW))
+    doc = read_exec_record(exec_record_path(ex._journal_dir, _boundary(NOW)))
+    assert doc["level"] == "none" and "reconciliation_unread" in doc["reasons"]
 
 
 # --- a row no venue order matches is marked ambiguous ---------------------------------------------

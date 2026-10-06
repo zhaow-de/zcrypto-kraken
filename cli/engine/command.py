@@ -532,8 +532,8 @@ class _ExecGauges:
 
     def update(self, verdict: GateVerdict, *, evaluated_at: datetime, heartbeat: bool = True) -> None:
         """`heartbeat` False publishes the five readings and leaves `last_evaluation` where it was: the executor's idle
-        refresh, whose evaluation is not the boundary path's, so the staleness rule keeps watching the sink and the exec
-        record it writes before it."""
+        refresh and its boundary re-journal, neither of them the sink's, so the staleness rule keeps watching the sink and
+        the exec record it writes before it."""
         i = verdict.inputs
         self.gate_level.set(LEVEL_CODE[verdict.level])
         self.armed.set(1 if (i["armed_in_config"] and i["arm_file"]) else 0)
