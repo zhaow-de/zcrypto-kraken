@@ -756,11 +756,11 @@ T0218 is resolved by R-records-2. What this plan leaves: the capture, ops and ca
 ## Slots the rollout fills
 
 - `[[ROLLOUT: the box's closing date, 2026-11-01 or a week later …]]` (Global Constraints; R14).
-- `[[ROLLOUT: R-X's reading …]]` (R-X) — the extraction's `changed=0`.
-- `[[ROLLOUT: a slot the base role's collision assert admits …]]` (Task 8).
+- R-X's reading (R-X) — filled 2026-10-06: the first pass `changed=11`, the ten named files and the Caddy reload; the second `changed=0 failed=0`.
+- The dead-man node's reboot slot (Task 8) — filled 2026-10-06: `10:25`, an hour from every taken slot.
 - `[[ROLLOUT: the six ops units' `User=` as deployed]]` (Task 12's precondition) — the runner scripts' `0700 root`, or its hold for the owner.
 - `[[ROLLOUT: the four counts of `grafana-server`'s lines …]]` (Task 14's precondition) — the spec's measured basis by amendment.
-- `[[ROLLOUT: the SES region's SMTP endpoint …]]` (P3) — `hc_email_host`.
+- The SES region's SMTP endpoint (P3) — filled 2026-10-06: `email-smtp.eu-west-1.amazonaws.com`, `hc_email_host`.
 - `[[ROLLOUT: the `v6.1.0` manifest read without credentials …]]` (R0) — R3's pull, into R-records-1.
 - `[[ROLLOUT: R1's readings …]]`, `[[ROLLOUT: the node's host-key fingerprint]]`, `[[ROLLOUT: R4's package versions]]`, `[[ROLLOUT: R5's reading of /admin/ …]]` (R1 to R5) — into R-records-1.
 - `[[ROLLOUT: the ping key's measured shape …]]` (P5) — the spec's D4 and the two preflights by amendment.
