@@ -11867,3 +11867,31 @@ def test_a_drawdown_under_a_latched_kill_file_keeps_its_first_reason_and_trips_a
     kill = _kill_file(tmp_path)
     assert kill.exists() and kill.read_text().split(" ", 1)[1] == f"{figures}\n"
     assert _accum(tmp_path, later)["status"] == "refused"
+
+
+def test_a_boundary_re_marked_after_a_restart_keeps_the_hold_its_replaced_record_latched(tmp_path):
+    """The 12Z record an earlier process wrote latched the hold at 400 bps and named no plan; a process started at 12:30
+    re-arms the boundary and re-marks it at a loss of 100 bps: the record it writes in its place carries the hold, and
+    the 16Z boundary, back at the 00Z equity, still holds the date. The probe drops the replaced record from the
+    mark's hold and the replacing record reads no hold."""
+    flat = _the_ten_at(0.0)
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=_rung2_record(tmp_path, final_targets=flat),
+        holdings={},
+        eur_total=990.0,
+        eur_free=990.0,
+        now=_RUNG2_12Z + timedelta(minutes=30),
+        series=[1000.0, 1000.0, 1000.0],
+    )
+    replaced = _accum_doc(_RUNG2_12Z, "ok", equity_eur=960.0, day_loss_bps=400.0, day_loss_hold=True)
+    write_accum_record(tmp_path / "journal", _RUNG2_12Z, replaced)
+    ex.on_timer(clock.now)
+    noon = _accum(tmp_path)
+    assert noon["drafted_at"] == clock.now.isoformat() and noon["day_loss_bps"] == 100.0 and noon["day_loss_hold"] is True
+
+    later = _RUNG2_12Z + timedelta(hours=4)
+    ex._venue_holdings.eur_total = 1000.0
+    _boundary_drafts(ex, clock, later, _rung2_record(tmp_path, final_targets=flat, cycle_ts=later))
+    assert _accum(tmp_path, later)["day_loss_hold"] is True
+    assert _record(tmp_path, later)["level"] == GateLevel.REDUCE_ONLY

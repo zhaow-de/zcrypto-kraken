@@ -805,7 +805,14 @@ def _record_ts(doc: dict) -> datetime:
 
 
 def _day_loss_held(records) -> bool:
-    return any(r["day_loss_bps"] is not None and r["day_loss_bps"] >= _DAY_LOSS_HOLD_BPS for r in records)
+    """Whether `records` hold the date: one at `_DAY_LOSS_HOLD_BPS` or more, or a mark that carried the hold forward --
+    a boundary re-marked after a restart writes its record over the one that latched. A record that marked no equity
+    is not read for its hold, which a failed derivation may have written."""
+    return any(
+        (r["day_loss_bps"] is not None and r["day_loss_bps"] >= _DAY_LOSS_HOLD_BPS)
+        or (r["equity_eur"] is not None and r["day_loss_hold"])
+        for r in records
+    )
 
 
 def _day_base(records: list[dict], boundary: datetime, equity: float) -> float:
@@ -3438,13 +3445,15 @@ class ProbeExecutor:
         if start is None:
             self._mint_series_start(boundary)
             start = boundary
-        # This boundary's own record, left by an earlier process, is the one this mark replaces.
-        records = [r for r in accum_records_since(self._journal_dir, start, boundary) if _record_ts(r) != boundary]
+        scan = accum_records_since(self._journal_dir, start, boundary)
+        # This boundary's own record, left by an earlier process, is the one this mark replaces: out of the high-water
+        # mark and the base, and in the hold, which a recovery inside the date never lifts.
+        records = [r for r in scan if _record_ts(r) != boundary]
         hwm = max([r["equity_eur"] for r in records if r["equity_eur"] is not None] + [equity])
         drawdown_bps = (hwm - equity) * 10_000 / nav
         day_loss_bps = (_day_base(records, boundary, equity) - equity) * 10_000 / nav
         day = boundary.replace(hour=0, minute=0, second=0, microsecond=0)
-        self._day_loss_hold = day_loss_bps >= _DAY_LOSS_HOLD_BPS or _day_loss_held(r for r in records if _record_ts(r) >= day)
+        self._day_loss_hold = day_loss_bps >= _DAY_LOSS_HOLD_BPS or _day_loss_held(r for r in scan if _record_ts(r) >= day)
         _set_equity(equity)
         _set_drawdown(drawdown_bps)
         if drawdown_bps >= _DRAWDOWN_KILL_BPS:
@@ -3492,10 +3501,10 @@ class ProbeExecutor:
         logger.info("the equity series starts at %s", cycle_ts.isoformat())
 
     def _derive_day_loss_hold(self, at: datetime) -> None:
-        """`_day_loss_hold` from the draft records of `at`'s UTC date at or after the equity series' start, through `at`:
-        any whose `day_loss_bps` reaches `_DAY_LOSS_HOLD_BPS` holds it, so a recovery inside the date never lifts it and
-        the date's first boundary drops the previous date's. With no series, nothing holds it. A read that fails holds
-        it, at WARNING: the date's opens wait until its records read."""
+        """`_day_loss_hold` from the draft records of `at`'s UTC date at or after the equity series' start, through `at`
+        (`_day_loss_held`): any whose `day_loss_bps` reaches `_DAY_LOSS_HOLD_BPS`, or a mark that carried the hold, holds
+        it, so a recovery inside the date never lifts it and the date's first boundary drops the previous date's. With no
+        series, nothing holds it. A read that fails holds it, at WARNING: the date's opens wait until its records read."""
         try:
             start = self._series_start()
             day = at.replace(hour=0, minute=0, second=0, microsecond=0)
