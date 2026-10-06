@@ -1,0 +1,70 @@
+---
+# copy creates no parent directory.
+- name: the shared self-check module's directory
+  ansible.builtin.file:
+    path: /usr/local/lib/zcrypto
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: install the shared self-check module
+  ansible.builtin.copy:
+    src: zcrypto_selfcheck.py
+    dest: /usr/local/lib/zcrypto/zcrypto_selfcheck.py
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: render the self-check's ping URL, read by systemd alone
+  ansible.builtin.template:
+    src: selfcheck.env.j2
+    dest: "/etc/default/{{ node_common_selfcheck_name }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  diff: false
+
+- name: render the self-check systemd unit
+  ansible.builtin.template:
+    src: selfcheck.service.j2
+    dest: "/etc/systemd/system/{{ node_common_selfcheck_name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+
+# The script imports the module through the unit's PYTHONPATH, so systemd holds that unit before the script lands: a
+# converge stopped in between leaves an old script under a new unit, never the reverse, and on a fresh node the timer
+# starts only once its script exists. Ungated, since a converge stopped after the render finds the unit unchanged; a
+# bare reload reports no change, and a preview skips it.
+- name: reload systemd, so the unit puts the shared module on the script's path before the script lands
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+# The including role's own script, which a copy finds in that role's files/.
+- name: install the self-check script
+  ansible.builtin.copy:
+    src: "{{ node_common_selfcheck_script }}"
+    dest: "/usr/local/sbin/{{ node_common_selfcheck_name }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: render the self-check systemd timer
+  ansible.builtin.template:
+    src: selfcheck.timer.j2
+    dest: "/etc/systemd/system/{{ node_common_selfcheck_name }}.timer"
+    owner: root
+    group: root
+    mode: "0644"
+  register: node_common_selfcheck_timer_install
+
+# A first-install preview never wrote the timer, so systemd cannot find it there.
+- name: enable + start the self-check timer
+  ansible.builtin.systemd_service:
+    name: "{{ node_common_selfcheck_name }}.timer"
+    daemon_reload: true
+    enabled: true
+    state: started
+  when: not (ansible_check_mode and node_common_selfcheck_timer_install is changed)

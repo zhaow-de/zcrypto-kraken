@@ -370,3 +370,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #657 | 2026-10-04 | feat(infra): 00121 — ops dual-ships, the node pings its own dead-man | — | 00121 | T0217 |
 | #658 | 2026-10-04 | feat(infra): 00121 — the cache nodes dual-ship to the node | — | 00121 | T0217 |
 | #659 | 2026-10-04 | fix(infra): the node lets unattended upgrades restart Prometheus | — | 00121 | T0217 |
+| #663 | 2026-10-06 | feat(infra): 00122 — the dead-man spec and plan, the shared node code | — | 00122 | T0218 |

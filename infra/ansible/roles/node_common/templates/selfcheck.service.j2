@@ -1,0 +1,22 @@
+# Rendered by the `{{ node_common_role_name }}` Ansible role at /etc/systemd/system/{{ node_common_selfcheck_name }}.service; edit
+# infra/ansible/roles/node_common/templates/selfcheck.service.j2 and re-converge.
+[Unit]
+Description={{ node_common_selfcheck_description }}
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+{% for name, value in node_common_selfcheck_environment.items() %}
+Environment={{ name }}={{ value }}
+{% endfor %}
+# Where the script imports zcrypto_selfcheck from.
+Environment=PYTHONPATH=/usr/local/lib/zcrypto
+# The ping URL, {{ node_common_selfcheck_env_var }}, in a root-only file systemd reads before it drops privileges.
+EnvironmentFile=/etc/default/{{ node_common_selfcheck_name }}
+ExecStart=/usr/bin/python3 /usr/local/sbin/{{ node_common_selfcheck_name }}
+DynamicUser=true
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict

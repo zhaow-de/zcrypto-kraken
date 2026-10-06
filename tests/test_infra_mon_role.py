@@ -10,9 +10,9 @@ from pathlib import Path
 
 import pytest
 import yaml
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar, trust_as_template
+from ansible.template import trust_as_template
 
+from tests import role_render
 from tests.test_infra_converge_guards import assert_that, find_task, iter_tasks, load_tasks, set_facts, truthy, when_conditions
 
 REPO = Path(__file__).resolve().parents[1]
@@ -20,6 +20,10 @@ ANSIBLE = REPO / "infra/ansible"
 ROLE = ANSIBLE / "roles/mon"
 TASKS = ROLE / "tasks/main.yml"
 HANDLERS = ROLE / "handlers/main.yml"
+EDGE = ANSIBLE / "roles/edge"
+EDGE_INCLUDE = "the edge in front of Grafana on loopback and the two ingest paths"
+NODE_COMMON = ANSIBLE / "roles/node_common"
+PREFLIGHT_NAME = "refuse a missing or misshapen secret, naming the key and never the value"
 DEFAULTS = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
 PUSH = REPO / "infra/scripts/grafana-push.sh"
 # Shaped like what the generator writes; none is a credential.
@@ -33,18 +37,9 @@ SECRETS = {
 }
 
 
-def _variables(**extra) -> dict:
-    # A default that templates another variable is trusted, so it resolves the way the play resolves it; the one
-    # that looks up the controller's environment is left out, since no template here reads it.
-    defaults = {
-        k: trust_as_template(v) if isinstance(v, str) and "{{" in v else v for k, v in DEFAULTS.items() if k != "mon_token_cache"
-    }
-    return {**defaults, **SECRETS, **extra}
-
-
 def _render(name: str, **extra) -> str:
-    text = (ROLE / "templates" / name).read_text()
-    return Templar(loader=DataLoader(), variables=_variables(**extra)).template(trust_as_template(text))
+    # The default that looks up the controller's environment is left out, since no template here reads it.
+    return role_render.render(ROLE, name, SECRETS, exclude=("mon_token_cache",), **extra)
 
 
 def _ini() -> configparser.ConfigParser:
@@ -110,64 +105,32 @@ def test_the_ini_names_the_secret_files_and_carries_none_of_their_values():
 
 
 # --- the Caddyfile: one public name and the routes it answers ----------------------------------------------------
-def _blocks(lines: list[str]) -> list[tuple[str, list]]:
-    """A Caddyfile body as (line, children) pairs: a line ending in `{` opens a block its `}` closes."""
-    out: list[tuple[str, list]] = []
-    stack = [out]
-    for raw in lines:
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line == "}":
-            stack.pop()
-        elif line.endswith("{"):
-            children: list = []
-            stack[-1].append((line[:-1].strip(), children))
-            stack.append(children)
-        else:
-            stack[-1].append((line, []))
-    assert len(stack) == 1, "unbalanced braces"
-    return out
+def _caddyfile_text() -> str:
+    # The include's vars as the play resolves them: over the role's own defaults, the vault, and the edge's defaults.
+    include = find_task(load_tasks(TASKS), EDGE_INCLUDE)
+    assert include["ansible.builtin.include_role"] == {"name": "edge"}, include
+    node = role_render.variables(ROLE, {}, exclude=("mon_token_cache",))
+    return role_render.render(EDGE, "Caddyfile.j2", SECRETS, **node, **role_render.trusted(include["vars"]))
 
 
 def _caddyfile() -> dict[str, list]:
-    return dict(_blocks(_render("Caddyfile.j2").splitlines()))
+    return dict(role_render.blocks(_caddyfile_text().splitlines()))
 
 
 def _site() -> dict[str, list]:
-    caddyfile = _caddyfile()
-    assert set(caddyfile) == {"", DEFAULTS["mon_hostname"]}, f"one global block and one site: {sorted(caddyfile)}"
-    site = caddyfile[DEFAULTS["mon_hostname"]]
-    lines = [line for line, _ in site]
-    assert len(lines) == len(set(lines)), "a repeated line: Caddy routes a handle by the first, this dict by the last"
-    return dict(site)
-
-
-def _users(handle: list) -> list[str]:
-    (auth,) = [children for line, children in handle if line == "basic_auth"]
-    for _user, children in auth:
-        assert children == []
-    users = [line.split() for line, _ in auth]
-    for user, hashed in users:
-        assert re.fullmatch(r"\$2[aby]\$\d\d\$[./A-Za-z0-9]{53}", hashed), f"{user} carries something that is not a bcrypt hash"
-    return [user for user, _ in users]
-
-
-def _upstream(handle: list) -> str:
-    (proxy,) = [line for line, _ in handle if line.startswith("reverse_proxy ")]
-    return proxy.split()[1]
+    return role_render.site(_caddyfile(), DEFAULTS["mon_hostname"])
 
 
 def test_remote_write_takes_the_fleet_user_alone_and_reaches_prometheus():
     handle = _site()["handle /api/v1/write"]
-    assert _users(handle) == ["fleet"]
-    assert _upstream(handle) == "127.0.0.1:9090"
+    assert role_render.users(handle) == ["fleet"]
+    assert role_render.upstream(handle) == "127.0.0.1:9090"
 
 
 def test_the_loki_push_takes_both_ingest_users_and_reaches_loki():
     handle = _site()["handle /loki/api/v1/push"]
-    assert _users(handle) == ["fleet", "logship"]
-    assert _upstream(handle) == "127.0.0.1:3100"
+    assert role_render.users(handle) == ["fleet", "logship"]
+    assert role_render.upstream(handle) == "127.0.0.1:3100"
 
 
 def test_the_two_paths_grafana_serves_without_a_login_answer_404_at_the_edge():
@@ -208,11 +171,11 @@ def test_the_edge_listens_on_443_alone_and_takes_its_certificate_there():
     caddyfile = _caddyfile()
     assert ("auto_https disable_redirects", []) in caddyfile[""], "the redirect listener would bind port 80"
     assert dict(_site())["tls"] == [("issuer acme", [("disable_http_challenge", [])])]
-    assert not re.search(r"(?m)^\s*(http://|:80\b)", _render("Caddyfile.j2"))
+    assert not re.search(r"(?m)^\s*(http://|:80\b)", _caddyfile_text())
 
 
 def test_the_caddyfile_is_validated_before_it_replaces_the_live_one_and_never_shown():
-    task = find_task(load_tasks(TASKS), "Caddyfile — the one public listener's routes")
+    task = find_task(load_tasks(EDGE / "tasks/main.yml"), "Caddyfile — the one public listener's routes")
     template = task["ansible.builtin.template"]
     assert template["validate"] == "caddy validate --adapter caddyfile --config %s"
     assert (template["owner"], template["group"], template["mode"]) == ("root", "caddy", "0640")
@@ -308,6 +271,7 @@ def test_the_stores_are_running_their_rendered_configs_before_grafana_is_started
         "the two datasources, file-provisioned read-only under the uids the rule file names",
         "the folder the push writes into, anchored under its uid",
         "grafana-server drop-in — after its stores, waiting for both to be ready",
+        EDGE_INCLUDE,
     ]
     assert all(names.index(name) < flush for name in rendered_before)
 
@@ -384,7 +348,7 @@ def test_loki_is_installed_only_when_apts_candidate_is_grafanas(policy, admitted
 def test_no_package_is_forced_held_or_pinned_to_a_version():
     installs = [task["ansible.builtin.apt"] for task, _ in iter_tasks(load_tasks(TASKS)) if "ansible.builtin.apt" in task]
     names = sorted(name for task, _ in iter_tasks(load_tasks(TASKS)) for name in _apt_names(task))
-    assert names == ["alloy", "caddy", "curl", "grafana", "loki", "prometheus"], names
+    assert names == ["alloy", "curl", "grafana", "loki", "prometheus"], names
     for apt in installs:
         assert apt.get("state", "present") == "present" and "allow_downgrade" not in apt and "force" not in apt, apt
     assert all("=" not in name for name in names)
@@ -400,25 +364,21 @@ _CHANGED, _UNCHANGED, _SKIPPED = {"changed": True}, {"changed": False}, {"change
 
 # Each disjunct of the two facts has a case in which it alone is true.
 @pytest.mark.parametrize(
-    ("check", "grafana_repo", "caddy_repo", "debian", "grafana", "caddy", "expected"),
+    ("check", "grafana_repo", "debian", "grafana", "expected"),
     [
-        (True, _CHANGED, _CHANGED, _CHANGED, _SKIPPED, _SKIPPED, (True, True)),  # a fresh node's preview
-        (True, _CHANGED, _UNCHANGED, _UNCHANGED, _SKIPPED, _SKIPPED, (True, True)),  # Grafana's repository alone still to write
-        (True, _UNCHANGED, _CHANGED, _UNCHANGED, _SKIPPED, _SKIPPED, (True, True)),  # Caddy's repository alone still to write
-        (True, _UNCHANGED, _UNCHANGED, _CHANGED, _UNCHANGED, _UNCHANGED, (False, True)),  # prometheus alone still to install
-        (True, _UNCHANGED, _UNCHANGED, _UNCHANGED, _CHANGED, _UNCHANGED, (False, True)),  # a Grafana package alone
-        (True, _UNCHANGED, _UNCHANGED, _UNCHANGED, _UNCHANGED, _CHANGED, (False, True)),  # caddy alone
-        (True, _UNCHANGED, _UNCHANGED, _UNCHANGED, _UNCHANGED, _UNCHANGED, (False, False)),  # an established node's preview
-        (False, _CHANGED, _CHANGED, _CHANGED, _CHANGED, _CHANGED, (False, False)),  # the real first converge
+        (True, _CHANGED, _CHANGED, _SKIPPED, (True, True)),  # a fresh node's preview
+        (True, _CHANGED, _UNCHANGED, _SKIPPED, (True, True)),  # Grafana's repository alone still to write
+        (True, _UNCHANGED, _CHANGED, _UNCHANGED, (False, True)),  # prometheus alone still to install
+        (True, _UNCHANGED, _UNCHANGED, _CHANGED, (False, True)),  # a Grafana package alone
+        (True, _UNCHANGED, _UNCHANGED, _UNCHANGED, (False, False)),  # an established node's preview
+        (False, _CHANGED, _CHANGED, _CHANGED, (False, False)),  # the real first converge
     ],
 )
-def test_the_two_preview_facts_are_true_only_where_a_preview_has_no_package_to_find(
-    check, grafana_repo, caddy_repo, debian, grafana, caddy, expected
-):
+def test_the_two_preview_facts_are_true_only_where_a_preview_has_no_package_to_find(check, grafana_repo, debian, grafana, expected):
     tasks = load_tasks(TASKS)
-    variables = {"ansible_check_mode": check, "mon_grafana_repo": grafana_repo, "mon_caddy_repo": caddy_repo}
+    variables = {"ansible_check_mode": check, "mon_grafana_repo": grafana_repo}
     first = set_facts(find_task(tasks, "note a preview that runs before the repositories exist"), variables)
-    variables |= first | {"mon_debian_install": debian, "mon_grafana_install": grafana, "mon_caddy_install": caddy}
+    variables |= first | {"mon_debian_install": debian, "mon_grafana_install": grafana}
     second = set_facts(find_task(tasks, "note a preview that runs before the packages are installed"), variables)
     assert (bool(first["mon_repos_previewed"]), bool(second["mon_units_previewed"])) == expected
 
@@ -436,8 +396,8 @@ def test_what_needs_a_repository_or_a_unit_skips_the_preview_that_has_neither():
         # Held whole: an inverted gate names the fact too, and it would skip every real converge.
         timer = len(gates) == 1 and re.fullmatch(r"not \(ansible_check_mode and mon_[a-z_]+_timer_install is changed\)", gates[0])
         assert gates == ("not mon_units_previewed",) or timer, (name, gates)
-    third_party = [gates for task, gates in tasks if _apt_names(task) & {"grafana", "loki", "alloy", "caddy"}]
-    assert len(third_party) == 2 and all(gates == ("not mon_repos_previewed",) for gates in third_party), third_party
+    third_party = [gates for task, gates in tasks if _apt_names(task) & {"grafana", "loki", "alloy"}]
+    assert len(third_party) == 1 and all(gates == ("not mon_repos_previewed",) for gates in third_party), third_party
     origin = find_task(load_tasks(TASKS), "refuse a loki candidate that does not come from apt.grafana.com")
     assert when_conditions(origin) == ["not mon_repos_previewed"]
     for handler in yaml.safe_load(HANDLERS.read_text()):
@@ -481,18 +441,17 @@ def test_what_needs_a_repository_or_a_unit_skips_the_preview_that_has_neither():
     ],
 )
 def test_a_missing_or_misshapen_secret_is_refused_by_its_key(override, refused):
-    task = load_tasks(TASKS)[0]
-    assert task["name"] == "refuse a missing or misshapen secret, naming the key and never the value"
-    values = {k: v for k, v in {**SECRETS, **override}.items() if v is not None}
-    templar = Templar(loader=DataLoader(), variables=values)
-    faults = templar.template(trust_as_template(task["vars"]["mon_secret_faults"]))
-    assert faults == ([refused] if refused else [])
-    assert truthy(assert_that(task), {"mon_secret_faults": faults}) is (refused is None)
-    rendered = Templar(loader=DataLoader(), variables={"mon_secret_faults": faults}).template(
-        trust_as_template(task["ansible.builtin.assert"]["fail_msg"])
-    )
-    assert all(str(value) not in rendered for value in values.values()), "the refusal printed a value"
-    assert (refused or "") in rendered
+    include = load_tasks(TASKS)[0]
+    assert include["name"] == PREFLIGHT_NAME
+    assert include["ansible.builtin.include_role"] == {"name": "node_common", "tasks_from": "secrets-preflight"}
+    assert set(include["vars"]) == {
+        "node_common_secrets_preflight",
+        "node_common_secrets_preflight_file",
+        "node_common_secrets_preflight_runbook",
+    }
+    (task,) = load_tasks(NODE_COMMON / "tasks/secrets-preflight.yml")
+    assert task["name"] == PREFLIGHT_NAME
+    role_render.assert_preflight(task, SECRETS, override, refused, include["vars"])
 
 
 def test_the_play_runs_the_role_under_its_own_tag_with_no_container_runtime():
@@ -514,7 +473,7 @@ ALLOY = ROLE / "files/config.alloy"
 
 def _alloy_blocks() -> dict[str, list]:
     lines = [line for line in ALLOY.read_text().splitlines() if not line.strip().startswith("//")]
-    return dict(_blocks(lines))
+    return dict(role_render.blocks(lines))
 
 
 def _assigned(block: list, key: str) -> str:
@@ -552,11 +511,22 @@ def test_the_node_scrapes_its_host_itself_and_its_three_services():
             assert _assigned(block, "scrape_interval") == '"60s"', name
 
 
+def _included_timers() -> set[str]:
+    timers = set()
+    for task, _ in iter_tasks(load_tasks(TASKS)):
+        include = task.get("ansible.builtin.include_role", {})
+        if include == {"name": "node_common", "tasks_from": "reboot-check"}:
+            timers.add("zcrypto-reboot-check")
+        if include == {"name": "node_common", "tasks_from": "selfcheck"}:
+            timers.add(task["vars"]["node_common_selfcheck_name"])
+    return timers
+
+
 def test_the_journal_keep_rule_names_the_units_this_role_runs():
     relabel = _alloy_blocks()['loki.relabel "journal_units"']
     (keep,) = [rule for line, rule in relabel if line == "rule" and ('action        = "keep"', []) in rule]
     (pattern,) = re.findall(r'^"\((.*)\)\\\\\.service"$', _assigned(keep, "regex"))
-    timers = {p.name.removesuffix(".timer") for p in (ROLE / "files").glob("*.timer")}
+    timers = {p.name.removesuffix(".timer") for p in (ROLE / "files").glob("*.timer")} | _included_timers()
     assert set(pattern.split("|")) == {"grafana-server", "prometheus", "loki", "caddy", "alloy"} | timers
     assert ('replacement  = "zcrypto-mon"', []) in [entry for line, rule in relabel if line == "rule" for entry in rule]
 
@@ -583,4 +553,4 @@ def test_the_fleets_ingest_names_are_the_nodes_public_name_its_two_authenticated
     site = _site()
     for url in (observed["mon_ingest_prom_url"], observed["mon_ingest_loki_url"]):
         path = url.removeprefix(f"https://{DEFAULTS['mon_hostname']}")
-        assert observed["mon_ingest_fleet_user"] in _users(site[f"handle {path}"]), path
+        assert observed["mon_ingest_fleet_user"] in role_render.users(site[f"handle {path}"]), path

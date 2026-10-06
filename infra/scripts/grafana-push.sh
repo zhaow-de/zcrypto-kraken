@@ -22,8 +22,8 @@
 # installing PyYAML into the system python, where a second copy drifts unseen.
 #
 # Two stacks take this push until the Grafana Cloud leg retires. With no GRAFANA_URL it goes to Grafana
-# Cloud and leaves out the observability node's own rule group, which has no data there; the node's push
-# is `infra/runbooks/mon.md#mon-push`.
+# Cloud and leaves out the rule groups the observability node alone evaluates, which have no data there;
+# the node's push is `infra/runbooks/mon.md#mon-push`.
 #
 # Rules go one per call through Grafana's Alerting Provisioning HTTP API; the `apiVersion: 1` /
 # `groups:` file-provisioning shape is not accepted here and is not available on Grafana Cloud SaaS.
@@ -52,23 +52,23 @@ export GRAFANA_ALERT_FOLDER_UID="${GRAFANA_ALERT_FOLDER_UID:-bfrxdfoybx98gb}"
 # reported as an orphan, which a prune deletes. `-`, never `:-`: set and empty skips no group whatever the host.
 push_host="${GRAFANA_URL#*://}"; push_host="${push_host%%/*}"; push_host="${push_host##*@}"; push_host="${push_host%%:*}"; push_host="${push_host%.}"; push_host="${push_host,,}"
 case "${push_host}" in
-  *.grafana.net) skip_default="zcrypto-mon" ;;
+  *.grafana.net) skip_default="zcrypto-mon zcrypto-hc" ;;
   *) skip_default="" ;;
 esac
 export GRAFANA_SKIP_RULE_GROUPS="${GRAFANA_SKIP_RULE_GROUPS-${skip_default}}"
 echo "grafana-push: stack=$GRAFANA_URL prom=$GRAFANA_PROM_DS_UID loki=$GRAFANA_LOKI_DS_UID folder=$GRAFANA_ALERT_FOLDER_UID skip-groups=${GRAFANA_SKIP_RULE_GROUPS:-<none>}" >&2
-# Grafana Cloud never takes the observability node's group: a rule of it that fires on no data would page the
-# main channel. The default above skips the group only while the variable is unset, so a push addressed to
-# Grafana Cloud whose list does not name the group is refused here, before any call.
+# Grafana Cloud takes none of these groups: a rule of one that fires on no data would page the main channel.
 case "${push_host}" in
   *.grafana.net)
-    case " ${GRAFANA_SKIP_RULE_GROUPS} " in
-      *" zcrypto-mon "*) ;;
-      *)
-        echo "grafana-push: refusing to push to Grafana Cloud without skipping the zcrypto-mon rule group -- GRAFANA_SKIP_RULE_GROUPS is set and does not name it: unset it for a Grafana Cloud push, or name the node in GRAFANA_URL" >&2
-        exit 1
-        ;;
-    esac
+    for group in ${skip_default}; do
+      case " ${GRAFANA_SKIP_RULE_GROUPS} " in
+        *" ${group} "*) ;;
+        *)
+          echo "grafana-push: refusing to push to Grafana Cloud without skipping the ${group} rule group -- GRAFANA_SKIP_RULE_GROUPS is set and does not name it: unset it for a Grafana Cloud push, or name the node in GRAFANA_URL" >&2
+          exit 1
+          ;;
+      esac
+    done
     ;;
 esac
 
