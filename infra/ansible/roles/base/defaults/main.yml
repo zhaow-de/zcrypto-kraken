@@ -7,10 +7,9 @@ base_packages:
   - aptitude
 
 # This governs only the reboot; security patches install regardless. "true" keeps the cache nodes
-# and the bridgehead automatic; group_vars/capture_host flips the two capture VPSes to attended
-# (T0027, spec 00071 D4), host_vars/zcrypto-ops flips the ops node, host_vars/zcrypto-mon the
-# observability node and host_vars/zcrypto-hc the dead-man node. MUST be a QUOTED string: a bare YAML
-# false renders as Python's "False", which apt reads as not-true.
+# and the bridgehead automatic; an attended host sets "false" in its host_vars or its group's
+# (T0027, spec 00071 D4). MUST be a QUOTED string: a bare YAML false renders as Python's "False",
+# which apt reads as not-true.
 base_unattended_upgrades_automatic_reboot: "true"
 
 # Packages unattended-upgrades leaves alone on this host, each a Python regex matched from the start
@@ -18,9 +17,8 @@ base_unattended_upgrades_automatic_reboot: "true"
 base_unattended_upgrades_package_blacklist: []
 
 # The slot is spec 00050's measured book-row trough: at least an hour from any 4h bar boundary, off
-# the hour, lowest book traffic. `zcrypto-red` declares 22:25, so no two hosts share one; on the
-# capture pair, ops, the observability node and the dead-man node, where Automatic-Reboot is
-# "false", it is the attended window rather than a reboot.
+# the hour, lowest book traffic. `zcrypto-red` declares 22:25, so no two hosts share one; on a host
+# where Automatic-Reboot is "false", it is the attended window rather than a reboot.
 base_unattended_upgrades_reboot_time: "21:25"
 # `root` NOTIFIES NOTHING, deliberately: no fleet host installs an MTA, so unattended-upgrades'
 # MailOnlyOnError would shell out to a mailer that does not exist.

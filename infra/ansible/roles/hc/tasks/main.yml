@@ -1,7 +1,5 @@
 ---
-# The dead-man node (spec 00122): the owner's healthchecks clone as one container pinned by version tag, on loopback
-# behind the shared edge, with the shared preflight, reboot check, self-check and backup, and the node's own Alloy.
-# tests/test_infra_hc_role.py holds what it renders and gates.
+# The dead-man node (spec 00122), the owner's healthchecks clone; tests/test_infra_hc_role.py holds what it renders and gates.
 
 # First, so a missing or misshapen value fails here by name and not inside a no_log task.
 - name: refuse a missing or misshapen secret, naming the key and never the value
@@ -38,7 +36,6 @@
     mode: "0755"
 
 # ---- The pinned image: the cache role's three guards, over a version tag ---------------------------------------
-# Ungated: `hc_image_tag` has no default, so a converge that names none is refused, never skipped.
 - name: refuse an hc_image_tag that is not a version tag
   ansible.builtin.assert:
     that: hc_image_tag | default('') | string is match('v[0-9]+\\.[0-9]+\\.[0-9]+\\Z')
@@ -183,7 +180,6 @@
       HC_SELFCHECK_HOST: "{{ hc_hostname }}"
     node_common_selfcheck_env_var: HC_SELFCHECK_HEALTHCHECK_URL
     node_common_selfcheck_env_value: "{{ hc_selfcheck_healthcheck_url }}"
-    # Every five minutes, off the minute boundary.
     node_common_selfcheck_on_calendar: "*:0/5:23"
 
 - name: the nightly backup

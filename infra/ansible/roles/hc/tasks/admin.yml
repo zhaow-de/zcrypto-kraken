@@ -1,8 +1,7 @@
 ---
-# The superuser, created when absent and its password kept equal to the vault's. The email and the password travel on
-# the command module's stdin, inside the module's payload: a task's environment: is prepended to the remote command,
-# where sudo logs it. `--no-imports`, since Django 6.1 otherwise prints its count of auto-imported objects before a
-# `-c` program runs, and the probe's output is the one word the write reads.
+# The email and the password travel on the command module's stdin, inside the module's payload: a task's environment: is
+# prepended to the remote command, where sudo logs it. `--no-imports`, since Django 6.1 otherwise prints its count of
+# auto-imported objects before a `-c` program runs, and the probe's output is the one word the write reads.
 
 # The unit's start returns before the container exists, and the image runs its migrate as it starts.
 - name: wait for the image's own health check to read healthy

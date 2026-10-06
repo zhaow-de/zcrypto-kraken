@@ -3,15 +3,14 @@
 # behind the shared edge. Its vaulted values are host_vars/zcrypto-hc/vault.yml's and its plain ones
 # host_vars/zcrypto-hc/vars.yml's: the role's first two tasks name them.
 
-# The one public name: Caddy's site address, the clone's SITE_ROOT and ALLOWED_HOSTS, and the self-check's Host.
+# The one public name; the ping URL's preflight shape in tasks/main.yml spells it again.
 hc_hostname: zcrypto-hc.zhaow.me
 hc_acme_email: zhaow.km@gmail.com
 
-# The image's tag has no default: every converge names it, `-e hc_image_tag=v<major>.<minor>.<patch>`, pulled on
-# the node first, and the role refuses one that is missing, malformed or not pulled.
+# `hc_image_tag` has no default: every converge names it with `-e`.
 hc_image: ghcr.io/zhaow-de/healthchecks
 hc_compose_dir: /opt/zcrypto-hc
-# The container's port, published on loopback alone; Caddy proxies to it.
+# The loopback port the container is published on; Caddy proxies to it.
 hc_port: 8000
 hc_volume: hc-data
 

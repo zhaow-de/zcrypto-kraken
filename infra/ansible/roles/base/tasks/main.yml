@@ -1,12 +1,12 @@
 # Fleet policy, pinned in config (spec 00050, spec 00051, spec 00118, spec 00121, spec 00122): no
-# two hosts in the capture, ops, cache, observability and dead-man fleet may share an
-# unattended-upgrades slot, because a same-night kernel reboot would take several down at once: a
-# book gap with no surviving witness is permanent, two cache nodes down leave one Sentinel, below its
-# quorum of two, and the observability or the dead-man node down leaves the other reboot unwatched.
-# The slots come from `hostvars`, which resolves inventory, group and host vars but NOT role
-# defaults, so a host relying on this role's default reads `UNDECLARED` and is checked explicitly
-# rather than skipped -- and reading inventory rather than a set_fact is what makes the check
-# survive `--limit`, exactly when a single-host converge could otherwise collide the fleet unseen.
+# two hosts of `base_fleet_hosts` may share an unattended-upgrades slot, because a same-night kernel
+# reboot would take several down at once: a book gap with no surviving witness is permanent, two
+# cache nodes down leave one Sentinel, below its quorum of two, and the observability or the
+# dead-man node down leaves the other reboot unwatched. The slots come from `hostvars`, which
+# resolves inventory, group and host vars but NOT role defaults, so a host relying on this role's
+# default reads `UNDECLARED` and is checked explicitly rather than skipped -- and reading inventory
+# rather than a set_fact is what makes the check survive `--limit`, exactly when a single-host
+# converge could otherwise collide the fleet unseen.
 - name: assert the fleet's maintenance windows do not collide
   ansible.builtin.assert:
     that:

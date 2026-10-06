@@ -3,7 +3,7 @@
 //
 // Native Alloy, the apt package under systemd: it reads the host's real /proc, /sys and journal, and writes to the
 // observability node alone, through that node's edge with the fleet credential /etc/default/alloy carries, with no
-// filter. Nothing here reaches Grafana Cloud.
+// filter.
 //
 // EDITING NOTE -- tests read assignments out of this file: keep every config key the first non-space token on
 // exactly one line.
@@ -57,8 +57,7 @@ loki.relabel "journal_units" {
     action        = "keep"
   }
 
-  // Unit name minus ".service" -> `container`; the container-name rule below overwrites it for the clone's stream,
-  // whose unit is docker.service. The order is load-bearing.
+  // The container-name rule below overwrites this label for the clone's stream, whose unit is docker.service: keep it after this one.
   rule {
     source_labels = ["__journal__systemd_unit"]
     regex         = "(.+)\\.service"
@@ -92,7 +91,7 @@ loki.process "parse" {
   // The clone writes one JSON object per record. Before anything else reads a line, the path segment after each
   // `/ping/` is written over: a server error's record names its request's path, and with it the project's ping key,
   // or a check's UUID in the other ping form. A check's UUID in any other path is kept. The parse alone sets no
-  // label, so the labels stage lifts `level`; a line that is not JSON ships with none.
+  // label, so the labels stage lifts `level`.
   stage.match {
     selector = "{container=\"hc\"}"
 

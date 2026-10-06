@@ -1,12 +1,8 @@
-# The dead-man node: a Linode in a region apart from the fleet's.
 ansible_host: zcrypto-hc.zhaow.me
 # The base role defaults to "zcrypto"; without this the node would converge to the primary's hostname.
 base_hostname: zcrypto-hc
-# 10:25 is 145 min past a 4 h bar boundary and an hour from zcrypto-valkey1's 09:25, the nearest slot.
-# The node reboots by hand, so this is the attended window; the base role's collision assert reads it.
 base_unattended_upgrades_reboot_time: "10:25"
-# A reboot stops the clone, and with it every dead-man check, for its duration. Patches install; the
-# reboot is a human act, and the node's pending-reboot rule fires until it is taken.
+# A reboot stops the clone, and with it every dead-man check, for its duration.
 base_unattended_upgrades_automatic_reboot: "false"
 deploy_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/deploy_zcrypto-hc_ed25519.pub') }}"
 # The superuser's mailbox, where the clone's sudo-mode codes land, and the sender verified in SES.

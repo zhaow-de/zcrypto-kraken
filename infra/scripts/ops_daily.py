@@ -1629,9 +1629,8 @@ _TELEMETRY_HOSTS = frozenset(
 # object the pass may take is Alloy's container. An allowlist, because a container id names nothing a denylist matches.
 _CACHE_HOSTS = frozenset({"zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3"})
 _CACHE_AUTONOMOUS_OBJECTS = frozenset({"grafana-alloy"})
-# The observability node carries the evaluator, its two stores and the ingest edge, and the dead-man node the clone's
-# container and its edge, each restarted in an order the node's runbook gives: the one unit the pass may take on
-# either is the node's own Alloy.
+# The observability node's evaluator, stores and edge, and the dead-man node's clone and edge, serve the
+# whole fleet: the one unit the pass may take on either is the node's own Alloy.
 _SERVICE_NODES = frozenset({"zcrypto-mon", "zcrypto-hc"})
 _SERVICE_NODE_AUTONOMOUS_OBJECTS = frozenset({"alloy", "alloy.service"})
 # The `docker inspect` guard exists because a READ can surface the trade key; `cat` and `grep` on
