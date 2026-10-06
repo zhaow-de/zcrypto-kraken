@@ -73,6 +73,13 @@ class GateVerdict:
     reasons: tuple[str, ...]
     inputs: dict = field(default_factory=dict)
 
+    @property
+    def armed(self) -> bool:
+        """Both arming keys present at this evaluation, the config flag and the arm file: the reading
+        `zcrypto_exec_armed` publishes and the executor's unmatched-fill arm reads. A verdict without the
+        two inputs reads unarmed."""
+        return bool(self.inputs.get("armed_in_config") and self.inputs.get("arm_file"))
+
 
 class ExecutionGate:
     """The single predicate every submission must pass.

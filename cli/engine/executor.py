@@ -1062,6 +1062,10 @@ class ProbeExecutor:
         # When the gate was last evaluated, for the idle refresh: the process's startup evaluation
         # published moments before this construction.
         self._gate_evaluated_at: datetime = self._now()
+        # Whether that newest evaluation read both arming keys (`GateVerdict.armed`), which an unmatched
+        # fill's arm reads (`_on_external_event`); False until this process's first `_evaluate`, the idle
+        # refresh's a minute after construction at the latest.
+        self._gate_armed = False
         # Set once, when the startup pass could not read the venue's orders or the restored set could not
         # be read at construction (`_read_restored`), and never cleared: every plan is refused with it for
         # the life of this process, and a restart is the retry.
@@ -1195,6 +1199,7 @@ class ProbeExecutor:
         not the staleness rule's series, which stays the boundary sink's."""
         verdict = self._fold_holds(self._gate.evaluate(now))
         self._gate_evaluated_at = now
+        self._gate_armed = verdict.armed
         _publish(verdict, now, heartbeat=heartbeat)
         return verdict
 
@@ -1412,13 +1417,13 @@ class ProbeExecutor:
         """The re-read pass's second trigger: a terminal this engine minted -- on the plan's own order, on
         one no intent holds any more (`_on_detached_event`), or on one the startup pass adopted, whose
         cancel's ack goes unapplied on this wheel -- a fill on a restored row, whose credit is nothing
-        until the pass reads the venue (`_fill_credit`), or a hand act's own fill (`_on_external_event`'s
-        unmatched branch), which the pass's settle reads into the position gauge. A trigger while a socket
-        is held down arms nothing: the socket's return does (`on_socket_state`), so a mint inside a cut
-        reads at most once, on a tick inside the mint-to-`DISCONNECTED` gap, one try spent at WARNING and
-        the tick held up to `_VENUE_READ_TIMEOUT_SECONDS`. The cost is a stale entry, an endpoint whose
-        `CONNECTED` never comes under its `DISCONNECTED`'s string, holding every later mint's settlement
-        off until a startup inside the re-attach window."""
+        until the pass reads the venue (`_fill_credit`), or a hand act's own fill while the engine is armed
+        (`_on_external_event`'s unmatched branch), which the pass's settle reads into the position gauge. A
+        trigger while a socket is held down arms nothing: the socket's return does (`on_socket_state`), so a
+        mint inside a cut reads at most once, on a tick inside the mint-to-`DISCONNECTED` gap, one try spent
+        at WARNING and the tick held up to `_VENUE_READ_TIMEOUT_SECONDS`. The cost is a stale entry, an
+        endpoint whose `CONNECTED` never comes under its `DISCONNECTED`'s string, holding every later mint's
+        settlement off until a startup inside the re-attach window."""
         if not self._sockets_down:
             self._reread_tries = _REREAD_ATTEMPTS
 
@@ -1440,7 +1445,7 @@ class ProbeExecutor:
         order's does. The claim list stays
         empty, so a genuinely external act -- the owner's sanctioned hand settle -- still matches no
         ledgered row and is counted and dropped before any row write, cancel or trip, its fill arming the
-        re-read pass alone. Everything else is canceled: a
+        re-read pass alone and that only while the engine is armed. Everything else is canceled: a
         resting opener is a pending widening the hold exists to forbid, and an order with no row
         would fill with no appender.
         Cancelling is always available to this pass; keeping is not -- an unreadable ledger
@@ -3863,11 +3868,15 @@ class ProbeExecutor:
         on both paths.
 
         Unmatched (the operator's hand settle, any genuinely external act): counted, logged, and for an
-        `OrderFilled` the re-read pass armed (`_arm_reread_after_mint`), which holds no row for the hand
-        act and settles the holdings at the first tick with nothing in flight, the position gauge taking
-        the venue's figure there; a cancel or any other event moves no holding and arms nothing. NOTHING
-        else -- it must never reach `_trip_on_fill`, a row write, or a cancel. That filter is what keeps
-        the unknown-order trip scoped while this second stream exists at all.
+        `OrderFilled` while the engine is armed (`_gate_armed`) the re-read pass armed
+        (`_arm_reread_after_mint`), which holds no row for the hand act and settles the holdings at the
+        first tick with nothing in flight, the position gauge taking the venue's figure there; a cancel or
+        any other event moves no holding and arms nothing. A fill while disarmed arms nothing either: it
+        is the operator's, a later pass's read settles the gauge, and the attended passes that sign on the
+        engine's key, the order-semantics harness's, run with the engine disarmed, where a holdings read
+        beside their fills would race their nonce (`read_venue_orders`). NOTHING else -- it must never
+        reach `_trip_on_fill`, a row write, or a cancel. That filter is what keeps the unknown-order trip
+        scoped while this second stream exists at all.
         The set is wider than "no ledgered row" by the rows the startup pass could not match to an
         order: a row that recorded no single txid names an order the Cache holds only under its
         txid, so it was never attached, and a fill on it lands here -- no row write, no counters, no
@@ -3884,7 +3893,7 @@ class ProbeExecutor:
                 client_order_id,
                 getattr(event, "instrument_id", "?"),
             )
-            if name == "OrderFilled":
+            if name == "OrderFilled" and self._gate_armed:
                 self._arm_reread_after_mint()
             return
         _inc_external("matched")

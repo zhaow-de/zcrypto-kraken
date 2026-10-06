@@ -536,7 +536,7 @@ class _ExecGauges:
         the exec record it writes before it."""
         i = verdict.inputs
         self.gate_level.set(LEVEL_CODE[verdict.level])
-        self.armed.set(1 if (i["armed_in_config"] and i["arm_file"]) else 0)
+        self.armed.set(1 if verdict.armed else 0)
         self.kill_tripped.set(1 if i["kill_file"] else 0)
         self.restart_hold.set(1 if i["restart_hold"] else 0)
         self.venue_ok.set(1 if i["venue_status"] == "online" else 0)

@@ -7205,18 +7205,30 @@ def test_an_unmatched_external_fill_arms_the_re_read_pass_and_the_next_tick_sett
     ex, client, _ = _idle_executor(tmp_path)
     ex._venue_holdings = holdings
     ex.on_timer(NOW)  # the startup pass: one read
+    ex.on_timer(NOW + executor_module._GATE_REFRESH)  # the idle refresh reads the gate armed
     _hold_in_cache(client, _resting_limit_order("O-hand"))  # the delivery helper reads the order from the Cache
     _deliver_external_event(ex, client, _fill("O-hand", 0.5, symbol="BTC/EUR", side="buy"))
     assert ex._reread_tries == 3
-    ex.on_timer(NOW + timedelta(seconds=5))
+    ex.on_timer(NOW + executor_module._GATE_REFRESH + timedelta(seconds=5))
     assert holdings.calls == 2 and ex._reread_tries == 0
 
 
 def test_an_unmatched_external_cancel_arms_nothing(tmp_path):
     ex, client, _ = _idle_executor(tmp_path)
     ex.on_timer(NOW)
+    ex.on_timer(NOW + executor_module._GATE_REFRESH)  # armed, so only the event's kind keeps the pass unarmed
     _hold_in_cache(client, _resting_limit_order("O-hand"))
     _deliver_external_event(ex, client, _canceled("O-hand"))
+    assert ex._reread_tries == 0
+
+
+def test_an_unmatched_external_fill_arms_nothing_while_the_engine_is_disarmed(tmp_path):
+    ex, client, _ = _idle_executor(tmp_path)
+    (exec_dir(tmp_path) / ARM_FILE).unlink()  # disarmed, as the attended passes on the engine's key run it
+    ex.on_timer(NOW)
+    ex.on_timer(NOW + executor_module._GATE_REFRESH)  # the idle refresh reads the gate disarmed
+    _hold_in_cache(client, _resting_limit_order("O-hand"))
+    _deliver_external_event(ex, client, _fill("O-hand", 0.5, symbol="BTC/EUR", side="buy"))
     assert ex._reread_tries == 0
 
 
