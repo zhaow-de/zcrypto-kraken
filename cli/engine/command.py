@@ -601,9 +601,11 @@ class _ExecutionMetrics:
             "zcrypto_exec_external_events_total",
             "Order events arriving on the external strategy topic, by disposition: matched means the "
             "event belonged to a restart-adopted order this engine's ledger vouches for; unmatched "
-            "means it belonged to no such order and was acted on nowhere -- the account owner's own "
-            "hand settle, activity nobody sanctioned, or a fill on an order the startup pass could "
-            "not see.",
+            "means it belonged to no such order -- the account owner's own hand settle, activity "
+            "nobody sanctioned, or a fill on an order the startup pass could not see. An unmatched "
+            "fill makes the engine re-read the venue's holdings at its next tick with no order of its "
+            "own in flight and its sockets up, so the position gauge takes the venue's figure; any "
+            "other unmatched event is counted and logged, nothing more.",
             ["disposition"],
             registry=registry,
         )
