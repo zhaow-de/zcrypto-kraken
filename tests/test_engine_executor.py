@@ -76,7 +76,7 @@ from cli.engine.executor import ProbeExecutor, read_venue_orders, restored_fill_
 from cli.engine.instruments import INSTRUMENT_IDS, BelowMinimum, SizedOrder, size_order
 from cli.engine.journal import CycleRecord, SnapshotEntry, to_json
 from cli.engine.node import ShadowStrategy
-from cli.engine.probeplan import MODES, PLAN_FILENAME, ProbeIntent
+from cli.engine.probeplan import MODES, PLAN_FILENAME, ProbeIntent, parse_plan
 from cli.engine.venue import VenueStatus
 from cli.engine.venueledger import write_venue_record
 from cli.engine.venuestate import ConcordanceVerdict, InstrumentConstraints, VenueState
@@ -1875,6 +1875,17 @@ def test_the_dedup_window_is_computed_in_utc_not_the_callers_offset(tmp_path):
     assert client.subscribed == [] and client.submitted == []
     entry = _record(tmp_path, now)["plans"][-1]
     assert entry["reasons"] == ["plan_id already ledgered"]
+
+
+def test_a_plan_handed_in_memory_runs_through_the_pickups_refusals_and_journals_under_the_boundary_it_is_given(tmp_path):
+    ex, client, _ = _idle_executor(tmp_path)
+    ex.on_timer(NOW)
+    plan = parse_plan(json.dumps(_plan_dict(plan_id="r3-20261109-00")))
+    assert ex._accept_plan(plan, cycle_ts=_boundary(NOW), now=NOW) == "accepted"
+    assert ex._plan is plan and _plan_entry(tmp_path)["plan_id"] == "r3-20261109-00"
+    assert ex._accept_plan(plan, cycle_ts=_boundary(NOW), now=NOW) == "refused"
+    assert _plan_entry(tmp_path, index=1)["reasons"] == ["plan_id already ledgered"]
+    assert not _plan_path(tmp_path).exists()
 
 
 # --- the per-intent dedup belt ------------------------------------------------------------------
