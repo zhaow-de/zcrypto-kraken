@@ -3420,7 +3420,7 @@
       "id": 925,
       "type": "timeseries",
       "title": "Dead-man node — age of the last backup",
-      "description": "How long since the dead-man node last backed up its database: a VACUUM INTO copy, copied into the host's backup directory, old copies pruned from both places. It runs nightly, so a healthy line climbs to a day and drops; a failed run leaves it climbing. The red line is 26 hours: one night's run and two hours' grace. The node ships its metrics to the observability node alone, so this panel draws on that node's Grafana and stays empty on Grafana Cloud. On the observability node's Grafana, no line means one of two things: no backup has succeeded since the node was built, or the node's telemetry is not arriving.",
+      "description": "How long since the dead-man node last backed up its database. It runs nightly, so a healthy line climbs to a day and drops; the red line is 26 hours, one night's run and two hours' grace. The node ships its metrics to the observability node alone, so this panel stays empty on Grafana Cloud; on the observability node's Grafana, no line means no backup has succeeded since the node was built, or the node's telemetry is not arriving.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
