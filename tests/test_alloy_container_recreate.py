@@ -9,7 +9,7 @@ from ansible.template import Templar, trust_as_template
 
 from tests.test_infra_converge_guards import ANSIBLE, assert_that, find_task, load_tasks, truthy, when_conditions
 
-ROLES = ["capture"]
+ROLES = ["capture", "ops"]
 REFUSAL = "refuse an Alloy digest that is not the one committed for this host, unless an alloy_override gives the reason"
 ECHO = "the alloy_override's reason, on the record"
 SECRETS_RENDER = "render the alloy secrets env file"

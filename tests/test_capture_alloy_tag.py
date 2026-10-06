@@ -121,7 +121,7 @@ def test_only_the_roles_that_joined_the_tag_carry_it_and_no_play_does():
     """The tag is shared by name, so another role joins it deliberately, with its own guards beside these: this list
     widens in that change."""
     carriers = [p for p in [*_role_yaml(), SITE, ANSIBLE / "bootstrap.yml"] if TAG in _every_tag(load_tasks(p))]
-    assert carriers == [CAPTURE, ROLES / "nas" / "tasks" / "main.yml"], carriers
+    assert carriers == [CAPTURE, ROLES / "nas" / "tasks" / "main.yml", ROLES / "ops" / "tasks" / "main.yml"], carriers
 
 
 def test_an_alloy_run_on_the_capture_and_engine_plays_runs_the_alloy_part_beside_the_always_pre_tasks():

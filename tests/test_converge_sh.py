@@ -462,6 +462,12 @@ PUBLISHED = [
         },
     ),
     (
+        ["--limit", "zcrypto-ops", "--tags", "alloy", "-e", f"ops_alloy_digest={DIGEST}"],
+        "zcrypto-ops",
+        "alloy",
+        {"ops_alloy_digest": DIGEST},
+    ),
+    (
         [
             "--limit",
             "zcrypto-ops",
