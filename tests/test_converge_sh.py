@@ -443,6 +443,39 @@ PUBLISHED = [
         "cache",
         {"cache_image_digest": DIGEST, "cache_alloy_digest": DIGEST, "pins_override": "a first pin, recorded after this run"},
     ),
+    (
+        [
+            "--limit",
+            "zaccess",
+            "--tags",
+            "alloy",
+            "-e",
+            "alloy_deb_version=1.20.0-1",
+            "-e",
+            json.dumps({"alloy_override": "1.20.1 drops journal lines on the edge, back while the owner reads it"}),
+        ],
+        "zaccess",
+        "alloy",
+        {
+            "alloy_deb_version": "1.20.0-1",
+            "alloy_override": "1.20.1 drops journal lines on the edge, back while the owner reads it",
+        },
+    ),
+    (
+        [
+            "--limit",
+            "zcrypto-ops",
+            "--tags",
+            "alloy",
+            "-e",
+            f"ops_alloy_digest={DIGEST}",
+            "-e",
+            json.dumps({"alloy_override": "1.20.1 drops the ops timers' journal lines, back while the owner reads it"}),
+        ],
+        "zcrypto-ops",
+        "alloy",
+        {"ops_alloy_digest": DIGEST, "alloy_override": "1.20.1 drops the ops timers' journal lines, back while the owner reads it"},
+    ),
     (["--limit", "zcrypto-mon"], "zcrypto-mon", "", {}),
     (["--limit", "zcrypto-mon", "--tags", "mon"], "zcrypto-mon", "mon", {}),
     (
@@ -468,7 +501,7 @@ def test_every_invocation_this_fleet_publishes_records_its_operands(tmp_path, ar
 
 
 def test_the_json_override_operand_is_recorded_whole(tmp_path):
-    """A reason is prose and `k=v` truncates it at the first space, so the four names travel as JSON.
+    """A reason is prose and `k=v` truncates it at the first space, so an override travels as JSON.
 
     `count-list.sh canary-bypasses-on-the-primary` counts the row this operand writes.
     """
@@ -513,6 +546,8 @@ OUTSIDE = [
     (["-e", "ansible_user=root"], "a variable ansible reads but no converge here has passed", "not in this script's key set"),
     (["-e", "rebootstrap=true"], "a variable only a bootstrap run would carry", "not in this script's key set"),
     (["-e", "canary_override=why this cannot wait"], "an override as k=v, which truncates at the space", "an override is a reason"),
+    (["-e", "alloy_override=a reason"], "the Alloy override as k=v, which truncates at the space", "an override is a reason"),
+    (["-e", "alloy_deb_version=1.20.0-1"], "an apt host's Alloy version with no reason beside it", "beside"),
     (["-e", '{canary_override: "why this cannot wait"}'], "the YAML-flow dialect ansible reads and this cannot", "not JSON"),
     (["-e", '{"capture_image_digest": "sha256:a reason"}'], "a braced operand that is not an override", "is not an override name"),
     (["-e", '{"canary_override": "a b", "pins_override": "c d"}'], "two overrides in one operand", "exactly one override"),
