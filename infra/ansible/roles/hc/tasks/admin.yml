@@ -1,0 +1,55 @@
+---
+# The superuser, created when absent and its password kept equal to the vault's. The email and the password travel on
+# the command module's stdin, inside the module's payload: a task's environment: is prepended to the remote command,
+# where sudo logs it. `--no-imports`, since Django 6.1 otherwise prints its count of auto-imported objects before a
+# `-c` program runs, and the probe's output is the one word the write reads.
+
+# The unit's start returns before the container exists, and the image runs its migrate as it starts.
+- name: wait for the image's own health check to read healthy
+  ansible.builtin.command: docker inspect zcrypto-hc --format '{{ "{{" }}.State.Health.Status{{ "}}" }}'
+  register: hc_health
+  until: hc_health.stdout == 'healthy'
+  retries: 60
+  delay: 5
+  changed_when: false
+
+- name: probe — whether the superuser exists with the vaulted password
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - -f
+      - "{{ hc_compose_dir }}/compose.yaml"
+      - exec
+      - -T
+      - web
+      - ./manage.py
+      - shell
+      - --no-imports
+      - -c
+      - "import sys; from django.contrib.auth.models import User; e, p = sys.stdin.read().splitlines()[:2]; u = User.objects.filter(email=e).first(); print('absent' if u is None else 'ok' if u.check_password(p) else 'drifted')"
+    stdin: "{{ hc_admin_email }}\n{{ hc_admin_password }}"
+  register: hc_admin_probe
+  changed_when: false
+  failed_when: hc_admin_probe.rc != 0 or hc_admin_probe.stdout not in ['absent', 'ok', 'drifted']
+  no_log: true
+
+- name: create the superuser, or set its password to the vaulted one
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - -f
+      - "{{ hc_compose_dir }}/compose.yaml"
+      - exec
+      - -T
+      - web
+      - ./manage.py
+      - shell
+      - --no-imports
+      - -c
+      - "import sys, uuid; from django.contrib.auth.models import User; e, p = sys.stdin.read().splitlines()[:2]; u = User.objects.filter(email=e).first(); User.objects.create_superuser(str(uuid.uuid4())[:30], e, p) if u is None else (u.set_password(p), u.save())"
+    stdin: "{{ hc_admin_email }}\n{{ hc_admin_password }}"
+  changed_when: true
+  when: hc_admin_probe.stdout in ['absent', 'drifted']
+  no_log: true

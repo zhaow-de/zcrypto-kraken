@@ -1,0 +1,32 @@
+---
+# Defaults for the `hc` role (spec 00122): the dead-man service, the owner's healthchecks clone, as one container
+# behind the shared edge. Its vaulted values are host_vars/zcrypto-hc/vault.yml's and its plain ones
+# host_vars/zcrypto-hc/vars.yml's: the role's first two tasks name them.
+
+# The one public name: Caddy's site address, the clone's SITE_ROOT and ALLOWED_HOSTS, and the self-check's Host.
+hc_hostname: zcrypto-hc.zhaow.me
+hc_acme_email: zhaow.km@gmail.com
+
+# The image's tag has no default: every converge names it, `-e hc_image_tag=v<major>.<minor>.<patch>`, pulled on
+# the node first, and the role refuses one that is missing, malformed or not pulled.
+hc_image: ghcr.io/zhaow-de/healthchecks
+hc_compose_dir: /opt/zcrypto-hc
+# The container's port, published on loopback alone; Caddy proxies to it.
+hc_port: 8000
+hc_volume: hc-data
+
+# SES's SMTP endpoint and its verified sender, empty here so a converge refuses them by name until
+# host_vars/zcrypto-hc/vars.yml carries them. 587 is SES's STARTTLS port.
+hc_email_host: ""
+hc_email_port: 587
+hc_email_from: ""
+
+hc_backup_dir: /var/backups/zcrypto-hc
+hc_backup_keep_days: 14
+# The directory the node's Alloy textfile collector reads.
+hc_textfile_dir: /var/lib/zcrypto-node-textfile
+
+# The superuser's mailbox, where the clone's sudo-mode codes land.
+hc_admin_email: ""
+# The ping URL of the node's own check. Empty, the self-check runs and pings nothing.
+hc_selfcheck_healthcheck_url: ""

@@ -1,0 +1,259 @@
+---
+# The dead-man node (spec 00122): the owner's healthchecks clone as one container pinned by version tag, on loopback
+# behind the shared edge, with the shared preflight, reboot check, self-check and backup, and the node's own Alloy.
+# tests/test_infra_hc_role.py holds what it renders and gates.
+
+# First, so a missing or misshapen value fails here by name and not inside a no_log task.
+- name: refuse a missing or misshapen secret, naming the key and never the value
+  ansible.builtin.include_role: {name: node_common, tasks_from: secrets-preflight}
+  vars:
+    node_common_role_name: hc
+    node_common_secrets_preflight_file: host_vars/zcrypto-hc/vault.yml
+    node_common_secrets_preflight_runbook: infra/runbooks/hc.md's hc-secrets procedure
+    # The two SES shapes are re-trued from the credential's own form when it is issued.
+    node_common_secrets_preflight:
+      - {key: hc_secret_key, shape: '[0-9a-f]{64}\Z'}
+      - {key: hc_admin_password, shape: '[0-9a-f]{48}\Z'}
+      - {key: hc_email_host_user, shape: '[A-Z0-9]{16,}\Z'}
+      - {key: hc_email_host_password, shape: '[A-Za-z0-9+/=]{40,}\Z'}
+
+# The empty ping URL is admitted until the clone holds the node's own check.
+- name: the plain values the env file and the self-check read, refused by shape
+  ansible.builtin.include_role: {name: node_common, tasks_from: secrets-preflight}
+  vars:
+    node_common_role_name: hc
+    node_common_secrets_preflight_file: host_vars/zcrypto-hc/vars.yml
+    node_common_secrets_preflight_runbook: infra/runbooks/hc.md's hc-secrets procedure
+    node_common_secrets_preflight:
+      - {key: hc_email_host, shape: 'email-smtp\.[a-z0-9-]+\.amazonaws\.com\Z'}
+      - {key: hc_email_from, shape: '[^@\s]+@[^@\s]+\Z'}
+      - {key: hc_admin_email, shape: '[^@\s]+@[^@\s]+\Z'}
+      - {key: hc_selfcheck_healthcheck_url, shape: '(https://zcrypto-hc\.zhaow\.me/ping/[A-Za-z0-9_-]{16,}/[a-z0-9-]+)?\Z'}
+
+- name: ensure the compose directory exists (root-owned)
+  ansible.builtin.file:
+    path: "{{ hc_compose_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# ---- The pinned image: the cache role's three guards, over a version tag ---------------------------------------
+# Ungated: the role has no tag of its own, so a converge without one is refused, never skipped.
+- name: refuse an hc_image_tag that is not a version tag
+  ansible.builtin.assert:
+    that: hc_image_tag | default('') | string is match('v[0-9]+\\.[0-9]+\\.[0-9]+\\Z')
+    fail_msg: >-
+      hc_image_tag is missing or not v<major>.<minor>.<patch>. Pass the release the pins file records, pulled on
+      this node first, e.g. -e hc_image_tag=v6.1.0.
+
+- name: probe — is the pinned tag already on this host
+  ansible.builtin.command: docker image inspect "{{ hc_image }}:{{ hc_image_tag }}"
+  register: hc_tag_probe
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: preflight — refuse a tag the host has not pulled
+  ansible.builtin.assert:
+    that: hc_tag_probe.rc == 0
+    fail_msg: >-
+      {{ hc_image }}:{{ hc_image_tag }} is not on {{ inventory_hostname }}, and the compose file never pulls.
+      Pull it first: sudo docker pull {{ hc_image }}:{{ hc_image_tag }}
+
+- name: probe — the currently-running tag this converge would replace (pins recording)
+  ansible.builtin.command: docker inspect --format '{{ "{{" }}.Config.Image{{ "}}" }}' zcrypto-hc
+  register: hc_running_tag_probe
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: read fleet-pins.md from the controller tree
+  ansible.builtin.set_fact:
+    hc_fleet_pins_text: "{{ lookup('file', playbook_dir ~ '/../../docs/reference/fleet-pins.md') }}"
+  when: hc_running_tag_probe.rc == 0
+
+# A running image named by no version tag yields the needle 'None', which no backticked tag in the file is: it fails
+# closed.
+- name: pins recording — refuse to replace a tag fleet-pins.md does not record
+  ansible.builtin.assert:
+    that: >-
+      ((hc_running_tag_probe.stdout | default('') | regex_search('(?<=:)v[0-9]+\\.[0-9]+\\.[0-9]+$') | string)
+       in (hc_fleet_pins_text | regex_findall('`(v[0-9]+\\.[0-9]+\\.[0-9]+)`')))
+      or ((pins_override | default('') | string | length > 8)
+          and (pins_override | default('') | string | lower not in ['true', 'false', '1', 'yes']))
+    fail_msg: >-
+      The tag this converge replaces ({{ hc_running_tag_probe.stdout }}) is not recorded in
+      docs/reference/fleet-pins.md, and an unrecorded pin is one image prune from an unrecoverable rollback.
+      Record the running tag there first, or pass -e '{"pins_override": "<reason>"}' and record it immediately after.
+  when: hc_running_tag_probe.rc == 0 and hc_fleet_pins_text is defined
+
+- name: pins override accepted — the reason, on the record
+  ansible.builtin.debug:
+    msg: "pins_override accepted: {{ pins_override }}"
+  when: >-
+    hc_running_tag_probe.rc == 0 and hc_fleet_pins_text is defined
+    and not ((hc_running_tag_probe.stdout | default('') | regex_search('(?<=:)v[0-9]+\\.[0-9]+\\.[0-9]+$') | string)
+     in (hc_fleet_pins_text | regex_findall('`(v[0-9]+\\.[0-9]+\\.[0-9]+)`')))
+    and (pins_override | default('') | string | length > 8)
+    and (pins_override | default('') | string | lower not in ['true', 'false', '1', 'yes'])
+
+# ---- The container --------------------------------------------------------------------------------------------
+- name: render the clone's env file, read by compose alone
+  ansible.builtin.template:
+    src: hc.env.j2
+    dest: "{{ hc_compose_dir }}/hc.env"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  diff: false
+  notify: restart hc service
+
+- name: render the compose file
+  ansible.builtin.template:
+    src: compose.yaml.j2
+    dest: "{{ hc_compose_dir }}/compose.yaml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart hc service
+
+- name: render the dead-man service's systemd unit
+  ansible.builtin.template:
+    src: zcrypto-hc.service.j2
+    dest: /etc/systemd/system/zcrypto-hc.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: hc_unit_install
+  notify: restart hc service
+
+# A first-install preview never wrote the unit, so systemd cannot find it.
+- name: enable + start the dead-man service (boot resume)
+  ansible.builtin.systemd_service:
+    name: zcrypto-hc.service
+    daemon_reload: true
+    enabled: true
+    state: started
+  register: hc_service_start
+  when: not (ansible_check_mode and hc_unit_install is changed)
+
+# Every task in it acts on the running container, so a preview skips it whole.
+- name: the superuser, created or reset from the vault
+  ansible.builtin.include_tasks: admin.yml
+  when: not ansible_check_mode
+
+- name: ensure the node-exporter textfile directory exists
+  ansible.builtin.file:
+    path: "{{ hc_textfile_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# ---- The shared edge, reboot check, self-check and backup ------------------------------------------------------
+- name: the edge in front of the service on loopback
+  ansible.builtin.include_role: {name: edge}
+  vars:
+    edge_role_name: hc
+    edge_hostname: "{{ hc_hostname }}"
+    edge_acme_email: "{{ hc_acme_email }}"
+    edge_basic_auth_routes: []
+    edge_paths_404: []
+    edge_head_paths: []
+    edge_session_cookie: ""
+    edge_upstream_port: "{{ hc_port }}"
+
+- name: the reboot check
+  ansible.builtin.include_role: {name: node_common, tasks_from: reboot-check}
+  vars:
+    node_common_role_name: hc
+    node_common_reboot_check_textfile_dir: "{{ hc_textfile_dir }}"
+
+- name: the self-check
+  ansible.builtin.include_role: {name: node_common, tasks_from: selfcheck}
+  vars:
+    node_common_role_name: hc
+    node_common_selfcheck_name: zcrypto-hc-selfcheck
+    node_common_selfcheck_script: zcrypto-hc-selfcheck.py
+    node_common_selfcheck_description: Ping the dead-man service's own check while its web answers and a ping is stored
+    node_common_selfcheck_timer_description: Every-5-minutes self-check of the dead-man service
+    node_common_selfcheck_environment:
+      HC_SELFCHECK_STATUS: "http://127.0.0.1:{{ hc_port }}/api/v3/status/"
+      HC_SELFCHECK_HOST: "{{ hc_hostname }}"
+    node_common_selfcheck_env_var: HC_SELFCHECK_HEALTHCHECK_URL
+    node_common_selfcheck_env_value: "{{ hc_selfcheck_healthcheck_url }}"
+    # Every five minutes, off the minute boundary.
+    node_common_selfcheck_on_calendar: "*:0/5:23"
+
+- name: the nightly backup
+  ansible.builtin.include_role: {name: node_common, tasks_from: sqlite-backup}
+  vars:
+    node_common_role_name: hc
+    node_common_sqlite_backup_name: hc
+    node_common_sqlite_backup_db: /data/hc.sqlite
+    node_common_sqlite_backup_staging: /data/backups
+    node_common_sqlite_backup_dest: "{{ hc_backup_dir }}"
+    node_common_sqlite_backup_keep_days: "{{ hc_backup_keep_days }}"
+    node_common_sqlite_backup_runner: "docker compose -f {{ hc_compose_dir }}/compose.yaml exec -T web"
+    node_common_sqlite_backup_copy: "docker compose -f {{ hc_compose_dir }}/compose.yaml cp web:"
+    node_common_sqlite_backup_textfile: "{{ hc_textfile_dir }}/sqlite-backup.prom"
+
+# ---- The node's own telemetry ------------------------------------------------------------------------------------
+- name: add the Grafana apt repository (alloy)
+  ansible.builtin.deb822_repository:
+    name: grafana
+    types: [deb]
+    uris: https://apt.grafana.com
+    suites: [stable]
+    components: [main]
+    signed_by: https://apt.grafana.com/gpg.key
+    install_python_debian: true
+  register: hc_grafana_repo
+
+# A preview on a node that never had the repository cannot see alloy: apt fails on a name its cache does not hold,
+# and converge.sh stops on a failed preview. What needs the package or its unit skips exactly that case.
+- name: note a preview that runs before the Grafana repository exists
+  ansible.builtin.set_fact:
+    hc_repo_previewed: "{{ ansible_check_mode and hc_grafana_repo is changed }}"
+
+- name: alloy present — version FOLLOWED from apt, never forced or held
+  ansible.builtin.apt:
+    name: alloy
+    state: present
+    update_cache: true
+  register: hc_alloy_install
+  when: not hc_repo_previewed
+
+- name: note a preview that runs before alloy is installed
+  ansible.builtin.set_fact:
+    hc_units_previewed: "{{ ansible_check_mode and (hc_repo_previewed or hc_alloy_install is changed) }}"
+
+- name: alloy env — the observability node's two ingest URLs and the fleet credential
+  ansible.builtin.template:
+    src: alloy-env.j2
+    dest: /etc/default/alloy
+    owner: root
+    group: alloy
+    mode: "0640"
+  no_log: true
+  diff: false
+  notify: restart alloy
+
+- name: alloy config — the node's metrics, its units' journals and the container's records, to the observability node
+  ansible.builtin.copy:
+    src: config.alloy
+    dest: /etc/alloy/config.alloy
+    owner: root
+    group: alloy
+    mode: "0640"
+    validate: alloy validate %s
+  notify: restart alloy
+
+- name: alloy enabled + started
+  ansible.builtin.systemd_service:
+    name: alloy
+    enabled: true
+    state: started
+  when: not hc_units_previewed

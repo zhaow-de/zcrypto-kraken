@@ -354,3 +354,5 @@
       tags: [chrony]
     - role: docker
       tags: [docker]
+    - role: hc
+      tags: [hc]

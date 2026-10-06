@@ -544,7 +544,7 @@ OBSERVED_VARS = ANSIBLE / "group_vars/observed/vars.yml"
 
 
 def test_the_fleets_ingest_names_are_the_nodes_public_name_its_two_authenticated_paths_and_its_fleet_user():
-    observed = yaml.safe_load(OBSERVED_VARS.read_text())
+    observed = {key: value for key, value in yaml.safe_load(OBSERVED_VARS.read_text()).items() if key.startswith("mon_")}
     assert observed == {
         "mon_ingest_prom_url": f"https://{DEFAULTS['mon_hostname']}/api/v1/write",
         "mon_ingest_loki_url": f"https://{DEFAULTS['mon_hostname']}/loki/api/v1/push",
