@@ -11742,3 +11742,45 @@ def test_a_cycle_record_missing_a_close_marks_no_equity_and_names_the_base(tmp_p
     assert record["status"] == "refused" and record["equity_eur"] is None and record["drawdown_bps"] is None
     assert not _kill_file(tmp_path).exists()
     assert any("marks no equity: the cycle record carries no close for SOL" in r.getMessage() for r in records)
+
+
+def test_a_00z_that_marked_nothing_takes_the_previous_dates_last_mark_as_the_days_base(tmp_path):
+    """The previous date's 20Z mark at EUR 1,000, the date's 00Z a sidecar's `no-cycle` record with no equity, and the
+    04Z mark at 970: the day's base is the 20Z mark, 300 bps of the NAV, and the hold latches. The probe deletes the
+    previous-date branch, the base falls to the 04Z mark itself and the loss reads 0."""
+    dawn = _RUNG2_12Z + timedelta(hours=16)
+    midnight = dawn - timedelta(hours=4)
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=_rung2_record(tmp_path, final_targets=_the_ten_at(0.0), cycle_ts=dawn),
+        holdings={},
+        eur_total=970.0,
+        eur_free=970.0,
+        now=dawn + timedelta(minutes=2),
+        series=[1000.0, 1000.0],
+    )
+    write_accum_record(tmp_path / "journal", midnight, _accum_doc(midnight, "no-cycle"))
+    ex.on_boundary(dawn)
+    ex.on_timer(clock.now)
+    record = _accum(tmp_path, dawn)
+    assert record["day_loss_bps"] == 300.0 and record["day_loss_hold"] is True
+
+
+def test_the_dates_00z_mark_is_the_days_base_ahead_of_the_previous_dates_last(tmp_path):
+    """The previous date's 20Z mark at EUR 1,000, the date's 00Z mark at 960 and the 04Z mark at 940: the day's base is
+    the 00Z mark, 200 bps of the NAV, and nothing holds. The probe takes the previous date's last ahead of the 00Z
+    mark, and the loss reads 600 bps and holds."""
+    dawn = _RUNG2_12Z + timedelta(hours=16)
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=_rung2_record(tmp_path, final_targets=_the_ten_at(0.0), cycle_ts=dawn),
+        holdings={},
+        eur_total=940.0,
+        eur_free=940.0,
+        now=dawn + timedelta(minutes=2),
+        series=[1000.0, 960.0],
+    )
+    ex.on_boundary(dawn)
+    ex.on_timer(clock.now)
+    record = _accum(tmp_path, dawn)
+    assert record["day_loss_bps"] == 200.0 and record["day_loss_hold"] is False
