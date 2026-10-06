@@ -631,9 +631,7 @@ def _alloy_config(role: str) -> Path:
     return REPO / f"infra/ansible/roles/{role}/files/config.alloy"
 
 
-# Each carrier of an include, mapped to the roles whose Alloy config its hosts ship through: a role's tasks or handlers
-# carry it to that role's hosts, and a play's task lists to the play's hosts, which ship through whichever of the
-# play's roles owns a config.
+# A play's hosts ship through the files/config.alloy of whichever of the play's roles owns one.
 def _carriers_including(tasks_from: str) -> dict[str, set[str]]:
     carriers = {}
     for kind in ("tasks", "handlers"):
