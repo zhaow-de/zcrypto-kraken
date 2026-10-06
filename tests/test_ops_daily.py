@@ -3365,14 +3365,15 @@ def test_the_ops_host_answers_both_kinds_of_step_under_either_of_its_names(host)
 
 def test_the_ssh_aliases_are_the_fleet_tables_and_the_label_is_alloys():
     """The mapping is hand-kept: `fleet.md`'s bare-name rows are where a host or its destination
-    changes -- `zaccess` has none and is unmapped -- and the ops role's Alloy sets the `ops` label."""
+    changes, and the ops role's Alloy sets the `ops` label."""
     repo = Path(__file__).resolve().parents[1]
     table = (repo / "docs/reference/fleet.md").read_text()
     rows = dict(re.findall(r"^\| `([^`]+)` \| `ssh ([a-z0-9-]+)` \|", table, re.M))
     nodes = {"zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3", "zcrypto-mon", "zcrypto-hc"}
-    assert set(rows) == {"zcrypto", "zcrypto-red", "zcrypto-ops", "nas"} | nodes, rows
+    assert set(rows) == {"zcrypto", "zcrypto-red", "zcrypto-ops", "nas", "zaccess"} | nodes, rows
     for fleet_host, destination in rows.items():
         assert ops_daily.ssh_alias(fleet_host) == destination, (fleet_host, destination)
+        assert ops_daily.host_label(destination) == ops_daily.host_label(fleet_host), (fleet_host, destination)
     assert set(ops_daily._SSH_ALIASES) == {ops_daily.host_label(h) for h in rows if ops_daily.ssh_alias(h) != h}
     alloy = (repo / "infra/ansible/roles/ops/files/config.alloy").read_text()
     assert any(line.strip().startswith('host = "ops"') for line in alloy.splitlines())
