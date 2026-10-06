@@ -11895,3 +11895,17 @@ def test_a_boundary_re_marked_after_a_restart_keeps_the_hold_its_replaced_record
     _boundary_drafts(ex, clock, later, _rung2_record(tmp_path, final_targets=flat, cycle_ts=later))
     assert _accum(tmp_path, later)["day_loss_hold"] is True
     assert _record(tmp_path, later)["level"] == GateLevel.REDUCE_ONLY
+
+
+def test_the_hold_reads_no_record_before_a_series_re_minted_inside_the_date(tmp_path):
+    """The date's 04Z record latched the hold at 400 bps and the owner re-minted the series at 08Z: the 12Z boundary's
+    exec record reads `full`. The probe reads the date's records unbounded by the series' start and the hold stands."""
+    boundary = _boundary(NOW)
+    dawn = boundary.replace(hour=4)
+    latched = _accum_doc(dawn, "ok", equity_eur=960.0, day_loss_bps=400.0, day_loss_hold=True)
+    write_accum_record(tmp_path / "journal", dawn, latched)
+    ex = _executor(tmp_path)
+    _start_series(tmp_path, boundary.replace(hour=8))
+    ex.on_boundary(boundary)
+    exec_12 = _record(tmp_path, boundary)
+    assert exec_12["level"] == GateLevel.FULL and exec_12["inputs"]["daily_loss_hold"] is False
