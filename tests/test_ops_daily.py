@@ -1,10 +1,8 @@
-"""TDD for `infra/scripts/ops_daily.py` — the daily pass's instrument — and, at the end of the file, for
-its CLI entry point `infra/scripts/ops-daily.py`, which `tests/test_scripts_have_tests.py` names as the
-test file for both scripts.
+"""TDD for `infra/scripts/ops_daily.py` — the daily pass's instrument — and for its CLI entry point
+`infra/scripts/ops-daily.py`, which `tests/test_scripts_have_tests.py` maps to this file as well.
 
-A standalone script, not a package module, so it loads via `spec_from_file_location`; a canned source
-reply here — an API body, an ssh answer, a file under `fixtures/` — is shaped to what the live source
-returns, never to what the parser expects."""
+A canned source reply here — an API body, an ssh answer, a file under `fixtures/` — is shaped to what the
+live source returns, never to what the parser expects."""
 
 from __future__ import annotations
 
