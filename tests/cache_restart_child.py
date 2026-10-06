@@ -223,6 +223,21 @@ class _Recorder:
     def set_tracking_state(self, state):
         pass
 
+    def set_gap(self, symbol, eur):
+        pass
+
+    def set_equity(self, value):
+        pass
+
+    def set_drawdown(self, bps):
+        pass
+
+    def set_watchdog_frozen(self, flag):
+        pass
+
+    def set_boundary_not_drafted(self, flag):
+        pass
+
 
 METRICS = _Recorder()
 

@@ -79,7 +79,8 @@ ENGINE_APP_SERIES = [
     # The execution safety envelope's published state (cli/engine/command.py's `_ExecGauges`).
     # Three are alert-bearing (zcrypto-engine-exec-armed-too-long, -exec-kill-tripped,
     # -exec-not-evaluated); dropping any of the six from the keep-regex leaves its dashboard panel
-    # permanently NoData and, for the alerted three, the rule unable to ever fire.
+    # permanently NoData, the armed and kill-tripped rules quiet forever (`noDataState: OK`) and the
+    # not-evaluated rule firing forever (`noDataState: Alerting`).
     "zcrypto_exec_gate_level",
     "zcrypto_exec_armed",
     "zcrypto_exec_kill_tripped",

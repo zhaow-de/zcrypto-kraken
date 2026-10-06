@@ -2023,13 +2023,16 @@ def test_a_gap_for_a_symbol_outside_the_ten_raises_nothing_and_mints_no_series()
     assert _exposed(registry) == before
 
 
-def test_the_accumulation_hooks_are_a_noop_without_metrics_and_reach_the_installed_families_with_them():
+def test_the_accumulation_hooks_are_a_noop_without_metrics_and_reach_the_installed_families_with_them(caplog):
     assert executor_module._metrics is None
-    executor_module._set_gap("BTC/EUR", 1.0)
-    executor_module._set_equity(1000.0)
-    executor_module._set_drawdown(10.0)
-    executor_module._set_frozen(True)
-    executor_module._set_boundary_not_drafted(True)
+    with _zcrypto_caplog_attached(caplog), caplog.at_level(logging.ERROR, logger="zcrypto"):
+        executor_module._set_gap("BTC/EUR", 1.0)
+        executor_module._set_equity(1000.0)
+        executor_module._set_drawdown(10.0)
+        executor_module._set_frozen(True)
+        executor_module._set_boundary_not_drafted(True)
+    # Without the None-guard each call reaches `None.<setter>` inside the wrapper, which raises nothing and logs.
+    assert [r for r in caplog.records if r.getMessage() == "executor metrics hook raised -- continuing"] == []
 
     registry = CollectorRegistry()
     executor_module.set_executor_hooks(metrics=command._ExecutionMetrics(registry))
