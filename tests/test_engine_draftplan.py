@@ -482,6 +482,7 @@ def test_trim_buys_to_cash_takes_the_reserve_it_is_handed_and_names_it_in_the_re
     assert [d.outcome for d in trimmed] == ["placed", "carried"]
     assert "free EUR - 10" in trimmed[1].reason
     assert trim_buys_to_cash(buys, 40.0)[0].notional_eur == 30.0 and trim_buys_to_cash(buys, 40.0)[1].notional_eur == 5.0
+    assert "free EUR - 10" in trim_buys_to_cash([_placed("SOL/EUR", "buy", notional=35.0)], 40.0, cash_reserve_eur=10.0)[0].reason
 
 
 def test_assemble_plans_with_no_cap_and_no_split_returns_one_plan_carrying_every_placed_leg():
@@ -518,6 +519,21 @@ def test_trim_to_plan_cap_carries_sells_then_buys_from_the_smallest_until_the_pl
         [_placed("BTC/EUR", "sell", qty=0.008, price=100000.0), _placed("ETH/EUR", "sell", qty=0.1, price=3000.0)], 1000.0
     )
     assert [(d.symbol, d.outcome) for d in sells_over] == [("BTC/EUR", "placed"), ("ETH/EUR", "carried")]
+    assert sells_over[1].qty is None
+
+
+def test_trim_to_plan_cap_keeps_a_sell_ahead_of_a_larger_buy_and_passes_unplaced_legs_through():
+    cash_carried = replace(
+        _placed("ADA/EUR", "buy", notional=5.0),
+        outcome="carried",
+        notional_eur=None,
+        reason="buys beyond free EUR - 10 trim from the smallest",
+    )
+    trimmed = draftplan.trim_to_plan_cap(
+        [_placed("ETH/EUR", "sell", qty=0.01, price=3000.0), _placed("SOL/EUR", "buy", notional=990.0), cash_carried], 1000.0
+    )
+    assert [(d.symbol, d.outcome) for d in trimmed] == [("ETH/EUR", "placed"), ("SOL/EUR", "carried"), ("ADA/EUR", "carried")]
+    assert trimmed[2] == cash_carried
 
 
 # ---- the ruling's refusals on a plan -----------------------------------------------------------------
