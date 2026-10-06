@@ -39,7 +39,7 @@
     mode: "0755"
 
 # ---- The pinned image: the cache role's three guards, over a version tag ---------------------------------------
-# Ungated: the role has no tag of its own, so a converge without one is refused, never skipped.
+# Ungated: `hc_image_tag` has no default, so a converge that names none is refused, never skipped.
 - name: refuse an hc_image_tag that is not a version tag
   ansible.builtin.assert:
     that: hc_image_tag | default('') | string is match('v[0-9]+\\.[0-9]+\\.[0-9]+\\Z')
