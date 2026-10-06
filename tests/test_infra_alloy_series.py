@@ -8,6 +8,7 @@ import pytest
 
 from tests.alloy_text import live_alloy_text as _live_alloy_text
 from tests.alloy_text import live_j2_text as _live_j2_text
+from tests.test_infra_converge_guards import iter_tasks, load_tasks
 
 REPO = Path(__file__).resolve().parents[1]
 NAS_ALLOY = REPO / "infra/nas/config.alloy"
@@ -17,6 +18,7 @@ OPS_ALLOY = REPO / "infra/ansible/roles/ops/files/config.alloy"
 CAPTURE_ALLOY = REPO / "infra/ansible/roles/capture/files/config.alloy"
 ACCESS_ALLOY = REPO / "infra/ansible/roles/access/files/config.alloy"
 CACHE_ALLOY = REPO / "infra/ansible/roles/cache/files/config.alloy"
+MON_ALLOY = REPO / "infra/ansible/roles/mon/files/config.alloy"
 CACHE_SECRETS = REPO / "infra/ansible/roles/cache/templates/alloy-secrets.env.j2"
 OPS_SECRETS = REPO / "infra/ansible/roles/ops/templates/alloy-secrets.env.j2"
 ACCESS_SECRETS = REPO / "infra/ansible/roles/access/templates/alloy-env.j2"
@@ -529,9 +531,10 @@ NOT_A_PUBLISHED_METRIC = {
 }
 
 # Published by a node that ships unfiltered to the observability node and never to Grafana Cloud, so no Cloud keep-regex
-# admits it. Each states its one publisher.
+# admits it. Each maps to the node_common task file that installs its one publisher; every role including that file is
+# held to an Alloy config that ships to the node alone, below.
 PUBLISHED_TO_A_NODE_ALONE = {
-    "zcrypto_sqlite_backup_last_success_timestamp_seconds",  # node_common's backup script, on the dead-man node alone
+    "zcrypto_sqlite_backup_last_success_timestamp_seconds": "sqlite-backup",
 }
 
 
@@ -588,8 +591,81 @@ def test_the_not_a_published_metric_list_has_not_gone_stale():
 
 
 def test_the_published_to_a_node_alone_list_has_not_gone_stale():
-    stale = PUBLISHED_TO_A_NODE_ALONE - set(_tokens_in_tree())
+    stale = PUBLISHED_TO_A_NODE_ALONE.keys() - set(_tokens_in_tree())
     assert not stale, f"admitted as published to a node alone but no longer in the tree (rename? removal?): {sorted(stale)}"
+
+
+_NODE_COMMON = REPO / "infra/ansible/roles/node_common"
+_INCLUDE_KEYS = ("ansible.builtin.include_role", "include_role", "ansible.builtin.import_role", "import_role")
+# The observability node's receivers as the tree writes them: a fleet host's endpoint reads the node's URL from its env
+# file (_MON_PROM_LINES), and the node's own Alloy writes to its loopback.
+_NODE_PROM_URLS = {'sys.env("MON_PROM_URL")', '"http://127.0.0.1:9090/api/v1/write"'}
+
+
+def _roles_including(tasks_from: str) -> set[str]:
+    roles = set()
+    for path in sorted((REPO / "infra/ansible/roles").glob("*/tasks/*.yml")):
+        for task, _ in iter_tasks(load_tasks(path) or []):
+            for include in (task.get(key) for key in _INCLUDE_KEYS):
+                if (
+                    isinstance(include, dict)
+                    and include.get("name") == "node_common"
+                    and str(include.get("tasks_from")).removesuffix(".yml") == tasks_from
+                ):
+                    roles.add(path.parts[-3])
+    return roles
+
+
+def _copied_by(tasks_from: str) -> set[str]:
+    return {
+        str((_NODE_COMMON / "files" / task["ansible.builtin.copy"]["src"]).relative_to(REPO))
+        for task, _ in iter_tasks(load_tasks(_NODE_COMMON / f"tasks/{tasks_from}.yml"))
+        if "ansible.builtin.copy" in task
+    }
+
+
+def _ships_to_the_node_alone(config: Path) -> bool:
+    components = re.findall(r'^prometheus\.remote_write "\w+" \{\n(.*?)^\}', _live_alloy_text(config), re.M | re.S)
+    urls = {url for component in components for url in re.findall(r"^\s*url\s*=\s*(.+?)\s*$", component, re.M)}
+    filtered = any("write_relabel_config" in component for component in components)
+    return bool(urls) and urls <= _NODE_PROM_URLS and not filtered
+
+
+@pytest.mark.parametrize(
+    ("config", "node_alone"),
+    [
+        (NAS_ALLOY, False),
+        (OPS_ALLOY, False),
+        (CAPTURE_ALLOY, False),
+        (ACCESS_ALLOY, False),
+        (CACHE_ALLOY, False),
+        (MON_ALLOY, True),
+    ],
+    ids=["nas", "ops", "capture", "access", "cache", "mon"],
+)
+def test_the_node_alone_reading_tells_each_cloud_config_from_the_nodes_own(config, node_alone):
+    assert _ships_to_the_node_alone(config) is node_alone
+
+
+@pytest.mark.parametrize("metric", sorted(PUBLISHED_TO_A_NODE_ALONE))
+def test_every_role_publishing_a_metric_to_a_node_alone_ships_to_the_node_alone(metric):
+    tasks_from = PUBLISHED_TO_A_NODE_ALONE[metric]
+    # The roles including the task file are the metric's publishers only while no other source file spells its name.
+    spelled, installed = _tokens_in_tree().get(metric, set()), _copied_by(tasks_from)
+    assert spelled <= installed, (
+        f"{metric} is spelled in {sorted(spelled - installed)}, outside what node_common's {tasks_from} installs: a "
+        f"publisher this exemption does not hold to the observability node"
+    )
+    assert "mon" in _roles_including("selfcheck"), (
+        "the walk finds mon's self-check include nowhere: it is broken, not the tree clean"
+    )
+    for role in sorted(_roles_including(tasks_from)):
+        config = REPO / f"infra/ansible/roles/{role}/files/config.alloy"
+        assert config.is_file() and _ships_to_the_node_alone(config), (
+            f"the {role} role includes node_common's {tasks_from}, so it publishes {metric}, and "
+            f"{'its Alloy config ships to Grafana Cloud or filters' if config.is_file() else 'it owns no files/config.alloy'}: "
+            f"no Cloud keep-regex admits the name, so a Cloud write drops it silently"
+        )
 
 
 @pytest.mark.parametrize("metric", PUBLISHED_METRIC_NAMES)
@@ -600,7 +676,7 @@ def test_every_published_metric_is_admitted_by_some_hosts_keep_regex(metric):
         f"dropped silently at remote_write and any rule watching it reads no data forever. Add it "
         f"to the keep-regex of the host that publishes it, or -- if it is not a metric -- to "
         f"NOT_A_PUBLISHED_METRIC with the reason, or -- if its one publisher ships to the "
-        f"observability node alone -- to PUBLISHED_TO_A_NODE_ALONE with that publisher."
+        f"observability node alone -- to PUBLISHED_TO_A_NODE_ALONE with the node_common task file that installs it."
     )
 
 
