@@ -45,8 +45,9 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 # success. Delete the `archive-pull-*.prom` textfiles on the way out, or their gauges stay frozen
 # and keep feeding the dashboard.
 # The pinned image MUST accept `--slice` (T0198): `pull-entrypoint.sh` passes it to `gate-export`
-# every cycle from the bind mount, so any nas-tagged converge (an Alloy bump included) pairs the
-# tree's entrypoint with whatever image runs, and a roll back to an image built before that merge
+# every cycle from the bind mount, so any nas-tagged converge pairs the tree's entrypoint with
+# whatever image runs (an Alloy bump, a `--tags alloy` run, deploys no entrypoint), and a roll back
+# to an image built before that merge
 # breaks it. The signature is `gate-export` exiting 2 on `No such option: --slice` on every cycle:
 # `NAS · archive-pull ERROR logs` inside 15 min, `zcrypto-gate-exporter-stale` at 2 h, and the hc.io
 # `zcrypto-gate-verify` dead-man stops pinging; the gate metrics freeze and the re-verification

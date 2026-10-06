@@ -1,6 +1,6 @@
-"""The nas role's `alloy` tag: a converge that lands the NAS's Alloy config and secrets file and recreates Alloy alone,
-never archive-pull, read off the YAML the way Ansible selects by tag -- a block's tags and `when` reach its children, a
-role entry's tags reach every task of the role, and `always` runs whatever was asked."""
+"""The nas role's `alloy` tag: a converge that lands the NAS's Alloy config, its secrets file and the stack .env's Alloy
+pin line and recreates Alloy alone, never archive-pull, read off the YAML the way Ansible selects by tag -- a block's tags
+and `when` reach its children, a role entry's tags reach every task of the role, and `always` runs whatever was asked."""
 
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ import re
 import pytest
 import yaml
 
+from tests.alloy_part import ARGUMENT_KEYWORDS, module_entry
+from tests.alloy_part import WRITERS as ALLOY_WRITERS
 from tests.test_alloy_version import alloy_version
 from tests.test_infra_converge_guards import ANSIBLE, NAS, assert_that, find_task, load_tasks, truthy, when_conditions
 from tests.test_pins_converged import pins
@@ -29,9 +31,14 @@ RENDERS = [
     "remove the pre-conf layout's stale alloy config",
     "render the alloy secrets env file",
 ]
+LINE_EDIT = "write the stack .env's Alloy pin line, the line templates/env.j2 renders"
 NARROW_REPORT = "report which Alloy files this converge changed"
-NARROW_APPLY_PATH = ["read whether the stack .env names the committed Alloy pin", PIN_ASSERT, NARROW_APPLY]
-ALLOY_PART = [*RENDERS, NARROW_REPORT, *NARROW_APPLY_PATH]
+PIN_READ = "read whether the stack .env names the committed Alloy pin"
+IMAGE_READ = "read which image the running alloy container was created from"
+IMAGE_ASSERT = "refuse a converge whose alloy container does not run the committed Alloy pin"
+NARROW_APPLY_PATH = [PIN_READ, PIN_ASSERT, NARROW_APPLY, IMAGE_READ, IMAGE_ASSERT]
+ALLOY_PART = [*RENDERS, LINE_EDIT, NARROW_REPORT, *NARROW_APPLY_PATH]
+ENV_RENDER = "render the stack .env (image pins, pull sources, the vaulted gate dead-man URL)"
 
 # The whole apply as it stood before the tag: every task, in order, and the three apply commands verbatim.
 WHOLE_RENDER = [
@@ -42,7 +49,7 @@ WHOLE_RENDER = [
     "deploy the alloy pipeline config",
     "remove the pre-conf layout's stale alloy config",
     "refuse an archive-pull hash scope the CLI would reject",
-    "render the stack .env (image pins, pull sources, the vaulted gate dead-man URL)",
+    ENV_RENDER,
     "render the alloy secrets env file",
     "ensure the hot/ hub directory exists (setgid so both writers' children inherit group zcrypto)",
     "deploy the vendored rrsync jailer (the NAS ships no rrsync -- rsync 3.4.1's python3 rrsync)",
@@ -65,6 +72,23 @@ PULLER_SOURCES = {"env.j2"}
 WRITERS = ("copy", "template", "file", "lineinfile", "blockinfile", "replace")
 SCOPED_COMPOSE = "compose up -d --no-deps --force-recreate alloy"
 
+# The allowlist beside the puller refusals, which read a writer's target by its last component alone: a module that
+# changes nothing, a writer whose written path is one of Alloy's, or one of the four tasks admitted verbatim. A task the
+# Alloy part takes later joins these lists in that change.
+FREE_MODULES = {"ansible.builtin.debug", "ansible.builtin.assert"}
+STACK = "{{ nas_stack_dir }}"
+ALLOY_FILES = (f"{STACK}/config.alloy", f"{STACK}/alloy-secrets.env")
+LINE_EDIT_ENTRY = (
+    "ansible.builtin.lineinfile",
+    {"path": f"{STACK}/.env", "regexp": "^ALLOY_IMAGE=", "line": "ALLOY_IMAGE={{ nas_alloy_image }}", "create": False},
+)
+VERBATIM = [
+    ("ansible.builtin.command", {"argv": ["grep", "-qxF", "ALLOY_IMAGE={{ nas_alloy_image }}", f"{STACK}/.env"]}),
+    LINE_EDIT_ENTRY,
+    ("ansible.builtin.command", """{{ nas_docker }} inspect grafana-alloy --format '{{ "{{" }}.Config.Image{{ "}}" }}'"""),
+    ("ansible.builtin.shell", f"cd {STACK} && {{{{ nas_docker }}}} {SCOPED_COMPOSE}"),
+]
+
 
 def _leaves() -> list[tuple[dict, set, tuple]]:
     return alloy_version.walk(load_tasks(NAS), frozenset({"nas"}))
@@ -76,7 +100,12 @@ def _selected(tags: set[str], run_tags: list[str]) -> bool:
 
 
 def _executed(run_tags: list[str], apply: bool) -> list[str]:
-    facts = {"ansible_run_tags": run_tags, "nas_apply_compose": apply}
+    facts = {
+        "ansible_run_tags": run_tags,
+        "nas_apply_compose": apply,
+        "ansible_check_mode": False,
+        "nas_env_alloy_line": {"changed": True},
+    }
     return [task["name"] for task, tags, gates in _leaves() if _selected(tags, run_tags) and truthy(list(gates), facts)]
 
 
@@ -128,13 +157,33 @@ def _compose_calls(task: dict) -> list[str]:
     return re.findall(r"(?<![\w-])compose\s.*", line)
 
 
+def _on_alloy_paths(path) -> bool:
+    conf = f"{STACK}/conf"
+    return isinstance(path, str) and ".." not in path.split("/") and (path in (conf, *ALLOY_FILES) or path.startswith(conf + "/"))
+
+
+def _admitted(task: dict) -> bool:
+    entry = module_entry(task)
+    if entry is None:
+        return False
+    module, value = entry
+    if module in FREE_MODULES:
+        return True
+    if module in ALLOY_WRITERS and isinstance(value, dict):
+        written = [value[key] for key in ("path", "dest", "name") if key in value]
+        return bool(written) and all(_on_alloy_paths(path) for path in written)
+    return entry in VERBATIM
+
+
 def test_no_tagged_task_reaches_the_puller():
     for task, tags, gates in _leaves():
         if TAG not in tags:
             continue
         module, args = _module(task)
+        assert not [key for key in ARGUMENT_KEYWORDS if key in task], task["name"]
+        assert _admitted(task), f"{task['name']}: not on the NAS Alloy part's allowlist"
         assert "archive-pull" not in _read_text(task, gates), task["name"]
-        if module.rsplit(".", 1)[-1] in WRITERS:
+        if module.rsplit(".", 1)[-1] in WRITERS and module_entry(task) != LINE_EDIT_ENTRY:
             target = str(args.get("dest") or args.get("path") or "")
             assert target.rsplit("/", 1)[-1] not in PULLER_PIECES, task["name"]
             assert str(args.get("src") or "").rsplit("/", 1)[-1] not in PULLER_PIECES | PULLER_SOURCES, task["name"]
@@ -158,7 +207,62 @@ def test_a_whole_converge_runs_the_tasks_it_ran_before_the_tag_and_never_the_all
 
 @pytest.mark.parametrize(("apply", "tail"), [(False, []), (True, NARROW_APPLY_PATH)])
 def test_an_alloy_run_renders_alloys_files_reports_and_recreates_alloy_alone_under_the_flag(apply, tail):
-    assert _executed([TAG], apply) == [*ALWAYS, *RENDERS, NARROW_REPORT, *tail]
+    assert _executed([TAG], apply) == [*ALWAYS, *RENDERS, LINE_EDIT, NARROW_REPORT, *tail]
+
+
+def test_the_alloy_pin_line_is_the_templates_own_line():
+    edit = find_task(load_tasks(NAS), LINE_EDIT)["ansible.builtin.lineinfile"]
+    template = (NAS_ROLE / "templates" / "env.j2").read_text().splitlines()
+    rendered = [line for line in template if line.startswith("ALLOY_IMAGE=")]
+    assert rendered == [edit["line"]]
+    assert [line for line in template if re.search(edit["regexp"], line)] == rendered
+
+
+COMMITTED = "grafana/alloy@sha256:" + "a" * 64
+
+
+@pytest.mark.parametrize(
+    ("running", "passes"),
+    [
+        pytest.param(COMMITTED, True, id="the-committed-pin"),
+        pytest.param("grafana/alloy@sha256:" + "b" * 64, False, id="another-digest"),
+        pytest.param("", False, id="empty"),
+        pytest.param("grafana/alloy:v1.19.2@sha256:" + "a" * 64, False, id="behind-a-tag"),
+    ],
+)
+def test_the_narrow_image_assert_admits_only_the_committed_pin(running, passes):
+    variables = {"nas_alloy_image": COMMITTED, "nas_alloy_running_image": {"stdout": running}}
+    assert truthy(assert_that(find_task(load_tasks(NAS), IMAGE_ASSERT)), variables) is passes
+
+
+@pytest.mark.parametrize(
+    ("check_mode", "pending", "runs"),
+    [
+        pytest.param(True, True, False, id="preview-edit-pending"),
+        pytest.param(True, False, True, id="preview-no-edit"),
+        pytest.param(False, True, True, id="real-pass-edit-written"),
+        pytest.param(False, False, True, id="real-pass-no-edit"),
+    ],
+)
+def test_the_pin_read_and_its_refusal_stand_down_in_a_preview_while_the_line_edit_is_pending(check_mode, pending, runs):
+    tasks = load_tasks(NAS)
+    facts = {"nas_apply_compose": True, "ansible_check_mode": check_mode, "nas_env_alloy_line": {"changed": pending}}
+    for name in (PIN_READ, PIN_ASSERT):
+        assert truthy(when_conditions(find_task(tasks, name)), facts) is runs, name
+
+
+def test_the_narrow_image_read_and_assert_skip_the_preview():
+    tasks = load_tasks(NAS)
+    for name in (IMAGE_READ, IMAGE_ASSERT):
+        task = find_task(tasks, name)
+        assert truthy(when_conditions(task), {"nas_apply_compose": True, "ansible_check_mode": False}), name
+        assert not truthy(when_conditions(task), {"nas_apply_compose": True, "ansible_check_mode": True}), name
+
+
+@pytest.mark.parametrize("name", [LINE_EDIT, ENV_RENDER], ids=["line-edit", "render"])
+def test_both_writers_of_the_stack_env_are_never_logged_or_diffed(name):
+    task = find_task(load_tasks(NAS), name)
+    assert task.get("no_log") is True and task.get("diff") is False, name
 
 
 @pytest.mark.parametrize("seq", [tuple, list])
@@ -184,7 +288,7 @@ def test_the_alloy_only_block_engages_on_a_run_that_selects_alloy_without_the_wh
 def test_the_recreate_refuses_a_stack_env_that_does_not_name_the_committed_alloy_pin(rc, passes):
     tasks = load_tasks(NAS)
     assert truthy(assert_that(find_task(tasks, PIN_ASSERT)), {"nas_env_alloy_pin": {"rc": rc}}) is passes
-    read = find_task(tasks, NARROW_APPLY_PATH[0])
+    read = find_task(tasks, PIN_READ)
     assert read["ansible.builtin.command"]["argv"] == [
         "grep",
         "-qxF",
