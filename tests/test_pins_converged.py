@@ -71,7 +71,7 @@ def test_a_committed_pin_on_a_render_only_run_is_not(tmp_path):
     assert _owed(tmp_path, log, [PIN]) == [("engine", "zcrypto", "ac6172b9ffb2")]
 
 
-def test_a_committed_pin_on_a_run_that_skipped_the_nas_role_is_not(tmp_path):
+def test_a_committed_pin_other_than_alloys_on_a_run_that_skipped_the_nas_role_is_not(tmp_path):
     log = [_row(digest="ac6172b9ffb2", key="committed_pins", applied=True)]
     log[0]["tags"] = "alloy"
     assert _owed(tmp_path, log, [PIN]) == [("engine", "zcrypto", "ac6172b9ffb2")]

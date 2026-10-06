@@ -62,7 +62,8 @@ def converged_digests(log_path: pathlib.Path, groups: dict[str, set[str]]) -> di
 
     `rc != 0` is out: `converge.sh` records a pass whatever its `rc`, so an interrupted one (the log's `rc 99`)
     lands like a clean one. An extra var counts on any such run. `committed_pins` counts only on a run that
-    applied the rendered stack (`-e nas_apply_compose=true`, the nas role or `all` in its tags, or un-tagged): the field is read
+    applied the rendered stack (`-e nas_apply_compose=true`, the nas role or `all` in its tags, or un-tagged), and its
+    `grafana/alloy@` pins alone on an applied run tagged `alloy` without the role: the field is read
     from `host_vars/<limit>/vars.yml` at record time, and the nas role's `compose up -d` and restarts are
     flag-gated, so a render-only run lands the pin in the row having restarted nothing. An applied run tagged
     `alloy` without the role recreates Alloy alone, from a stack .env the role first proves names the committed

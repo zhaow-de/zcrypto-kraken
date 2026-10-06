@@ -103,7 +103,8 @@ def test_the_capture_roles_tagged_tasks_are_exactly_its_alloy_part():
 
 def test_every_name_a_tagged_task_reads_is_produced_by_an_earlier_tagged_task():
     """A register, `set_fact` or getent fact read in a gate, an argument or a rendered template: the narrow run skips
-    every untagged producer, so a read of one fails that run on an undefined variable."""
+    every untagged producer, so a read of one fails that run on an undefined variable or, behind `is defined`, skips its
+    task silently."""
     leaves = _walk(load_tasks(CAPTURE))
     handlers = load_tasks(CAPTURE_ROLE / "handlers" / "main.yml")
     every = set().union(*(_produced(task) for task, _, _ in leaves), *(_produced(handler) for handler in handlers))
