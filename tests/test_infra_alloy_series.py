@@ -596,23 +596,54 @@ def test_the_published_to_a_node_alone_list_has_not_gone_stale():
 
 _NODE_COMMON = REPO / "infra/ansible/roles/node_common"
 _INCLUDE_KEYS = ("ansible.builtin.include_role", "include_role", "ansible.builtin.import_role", "import_role")
+_PATH_INCLUDE_KEYS = ("ansible.builtin.include_tasks", "include_tasks", "ansible.builtin.import_tasks", "import_tasks")
+_PLAYBOOKS = (REPO / "infra/ansible/site.yml", REPO / "infra/ansible/bootstrap.yml")
+_PLAY_TASK_LISTS = ("pre_tasks", "tasks", "post_tasks", "handlers")
 # The observability node's receivers as the tree writes them: a fleet host's endpoint reads the node's URL from its env
 # file (_MON_PROM_LINES), and the node's own Alloy writes to its loopback.
 _NODE_PROM_URLS = {'sys.env("MON_PROM_URL")', '"http://127.0.0.1:9090/api/v1/write"'}
 
 
-def _roles_including(tasks_from: str) -> set[str]:
-    roles = set()
-    for path in sorted((REPO / "infra/ansible/roles").glob("*/tasks/*.yml")):
-        for task, _ in iter_tasks(load_tasks(path) or []):
-            for include in (task.get(key) for key in _INCLUDE_KEYS):
-                if (
-                    isinstance(include, dict)
-                    and include.get("name") == "node_common"
-                    and str(include.get("tasks_from")).removesuffix(".yml") == tasks_from
-                ):
-                    roles.add(path.parts[-3])
-    return roles
+def _includes(tasks: list[dict] | None, tasks_from: str) -> bool:
+    for task, _ in iter_tasks(tasks or []):
+        for include in (task.get(key) for key in _INCLUDE_KEYS):
+            if (
+                isinstance(include, dict)
+                and include.get("name") == "node_common"
+                and str(include.get("tasks_from")).removesuffix(".yml") == tasks_from
+            ):
+                return True
+        for include in (task.get(key) for key in _PATH_INCLUDE_KEYS):
+            if str(include.get("file") if isinstance(include, dict) else include).endswith(f"node_common/tasks/{tasks_from}.yml"):
+                return True
+    return False
+
+
+def _play_roles(play: dict) -> set[str]:
+    return {entry if isinstance(entry, str) else entry.get("role", entry.get("name")) for entry in play.get("roles") or []}
+
+
+def _plays() -> list[tuple[str, dict]]:
+    return [(f"{path.name}'s play over {play.get('hosts')}", play) for path in _PLAYBOOKS for play in load_tasks(path) or []]
+
+
+def _alloy_config(role: str) -> Path:
+    return REPO / f"infra/ansible/roles/{role}/files/config.alloy"
+
+
+# Each carrier of an include, mapped to the roles whose Alloy config its hosts ship through: a role's tasks or handlers
+# carry it to that role's hosts, and a play's task lists to the play's hosts, which ship through whichever of the
+# play's roles owns a config.
+def _carriers_including(tasks_from: str) -> dict[str, set[str]]:
+    carriers = {}
+    for kind in ("tasks", "handlers"):
+        for path in sorted((REPO / "infra/ansible/roles").glob(f"*/{kind}/*.yml")):
+            if _includes(load_tasks(path), tasks_from):
+                carriers[str(path.relative_to(REPO))] = {path.parts[-3]}
+    for where, play in _plays():
+        if any(_includes(play.get(key), tasks_from) for key in _PLAY_TASK_LISTS):
+            carriers[where] = {role for role in _play_roles(play) if _alloy_config(role).is_file()}
+    return carriers
 
 
 def _copied_by(tasks_from: str) -> set[str]:
@@ -654,16 +685,24 @@ def test_every_role_publishing_a_metric_to_a_node_alone_ships_to_the_node_alone(
         f"{metric} is spelled in {sorted(spelled - installed)}, outside what node_common's {tasks_from} installs: a "
         f"publisher this exemption does not hold to the observability node"
     )
-    assert "mon" in _roles_including("selfcheck"), (
+    assert any("mon" in roles for roles in _carriers_including("selfcheck").values()), (
         "the walk finds mon's self-check include nowhere: it is broken, not the tree clean"
     )
-    for role in sorted(_roles_including(tasks_from)):
-        config = REPO / f"infra/ansible/roles/{role}/files/config.alloy"
-        assert config.is_file() and _ships_to_the_node_alone(config), (
-            f"the {role} role includes node_common's {tasks_from}, so it publishes {metric}, and "
-            f"{'its config.alloy writes elsewhere, filters or nowhere' if config.is_file() else 'it owns no files/config.alloy'}: "
-            f"no Cloud keep-regex admits the name"
+    assert any("mon" in _play_roles(play) for _, play in _plays()), (
+        "the play walk resolves no play to the mon role: it is broken, not the tree clean"
+    )
+    for carrier, roles in sorted(_carriers_including(tasks_from).items()):
+        assert roles, (
+            f"{carrier} includes node_common's {tasks_from}, so its hosts publish {metric}, and none of the play's "
+            f"roles owns a files/config.alloy: no Cloud keep-regex admits the name"
         )
+        for role in sorted(roles):
+            config = _alloy_config(role)
+            assert config.is_file() and _ships_to_the_node_alone(config), (
+                f"{carrier} includes node_common's {tasks_from}, so the {role} role's hosts publish {metric}, and "
+                f"{'its config.alloy writes elsewhere, filters or nowhere' if config.is_file() else 'it owns no files/config.alloy'}: "
+                f"no Cloud keep-regex admits the name"
+            )
 
 
 @pytest.mark.parametrize("metric", PUBLISHED_METRIC_NAMES)
