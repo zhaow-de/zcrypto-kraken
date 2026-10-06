@@ -67,7 +67,7 @@ df -h
 
 Append the following lines to `~/.ssh/config` for some shortcuts to ease the remote connection. Assumptions:
 
-- Each node has its own deploy SSH key: locally `~/.ssh/zcrypto-deploy-{zcrypto,red,ops,nas}_ed25519` and, for the bridgehead, the three cache nodes, the observability node and the dead-man node, `~/.ssh/deploy_zaccess_ed25519`, `~/.ssh/deploy_zcrypto-valkey{1,2,3}_ed25519`, `~/.ssh/deploy_zcrypto-mon_ed25519` and `~/.ssh/deploy_zcrypto-hc_ed25519`, pubkeys recorded in `infra/ansible/files/` (see its `README.md`) — for the deployment user (`zcrypto-deploy`)
+- Each node has its own deploy SSH key, at the `IdentityFile` its stanza below names, pubkeys recorded in `infra/ansible/files/` (see its `README.md`) — for the deployment user (`zcrypto-deploy`)
 - Except for NAS, the `zcrypto-deploy` user is provisioned by the Ansible play
 - User `zcrypto-deploy` on every node is passwordless sudo enabled
 
