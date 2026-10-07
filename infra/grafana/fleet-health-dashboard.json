@@ -3404,6 +3404,50 @@
       }
     },
     {
+      "id": 910,
+      "type": "timeseries",
+      "title": "Monitor — Alloy versions across the fleet",
+      "description": "Which Alloy versions does the fleet run? One line per version, its value the number of Alloys shipping here that report it. One line is the healthy state; a second one appears while a bump moves the hosts one after another, and the alert pages when two or more have stood for a day. A host whose Alloy is dark drops out of the count, which is its Alloy-dark alert's.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 128
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "count by (version) (alloy_build_info{job=\"integrations/self\"})",
+          "refId": "A",
+          "legendFormat": "{{version}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
       "id": 920,
       "type": "row",
       "title": "Dead-man node",

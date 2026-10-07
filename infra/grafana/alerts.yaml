@@ -6043,3 +6043,45 @@ rules:
       severity: warning
     notification_settings:
       receiver: metrics
+
+  - uid: zcrypto-mon-alloy-versions-split
+    title: "Monitor · Alloy versions split across the fleet"
+    ruleGroup: zcrypto-mon
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: >-
+            count(count by (version) (alloy_build_info{job="integrations/self"}))
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [1]}
+    noDataState: OK
+    execErrState: Alerting
+    # Longer than a whole wave of an Alloy bump, whose hosts follow one another as each one's
+    # verification reads green: a wave in progress does not page, one stalled for a day does.
+    for: 24h
+    annotations:
+      summary: "The Alloys shipping to the observability node have reported more than one version for a day: a bump stalled between hosts, or a host it did not reach. Runbook: infra/runbooks/mon.md#zcrypto-mon-alloy-versions-split"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "910"
+      unit: "Alloy versions running across the fleet"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics

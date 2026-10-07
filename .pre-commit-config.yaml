@@ -44,12 +44,16 @@ repos:
         args: ["--allow-multiple-documents", "--unsafe"]
         exclude: '^infra/ansible/(group_vars/.*/vault\.yml|host_vars/.*/vault\.yml|vault-password\.sops\.yaml)$'
       - id: debug-statements
+      # A recorded registry index keeps the registry's bytes: its sha256 is the digest file beside it.
       - id: end-of-file-fixer
         stages: [pre-commit]
+        exclude: &recorded-index '^tests/fixtures/alloy_version/index-[^/]*\.json$'
       - id: mixed-line-ending
         args: ["--fix=lf"]
+        exclude: *recorded-index
       - id: trailing-whitespace
         stages: [pre-commit]
+        exclude: *recorded-index
 
   # Local (not the upstream mirror) so there is ONE ruff: the one pinned in pyproject/uv.lock, which
   # dependabot's `uv` ecosystem already tracks -- same reasoning as ansible-lint below. The mirror
@@ -99,7 +103,10 @@ repos:
     hooks:
       - id: ansible-lint
         name: ansible-lint
-        entry: uv run ansible-lint
+        # The hook runs from the repository root, where infra/ansible/ansible.cfg's `roles_path = roles` is
+        # not read, and ansible-lint syntax-checks each role alone from a temporary playbook, so a role's
+        # static `import_role` of another fails as "The role ... was not found" without this.
+        entry: env ANSIBLE_ROLES_PATH=infra/ansible/roles uv run ansible-lint
         args: ["infra/ansible/"]
         language: system
         # `.ansible-lint` is in the pattern so a skip_list/config edit re-lints; without it a

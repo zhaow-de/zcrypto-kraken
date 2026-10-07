@@ -10,10 +10,8 @@
 # ops runs several independent services, not two in one file).
 #
 # Modeled on infra/nas/compose.yaml's `alloy` service; see config.alloy for the two
-# deliberate divergences from the NAS's pipeline (cadvisor, user/rootfs). Deliberately NOT started
-# here -- first start is an attended step, same rationale as the liquidations poller
-# in compose.yaml.j2: this task's job is to make the render correct, not to restart anything as a
-# converge side effect.
+# deliberate divergences from the NAS's pipeline (cadvisor, user/rootfs). The role brings this
+# project's container to the pinned digest after rendering it.
 services:
   alloy:
     # Pin this to a digest at deploy time -- ops_alloy_digest has NO default
