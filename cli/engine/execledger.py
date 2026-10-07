@@ -286,8 +286,7 @@ def ledgered_intent_keys(journal_dir: Path, now: datetime) -> frozenset[tuple[st
 
 
 def pending_plan_intents(journal_dir: Path, now: datetime, since: datetime | None = None) -> list[tuple[datetime, str, int]]:
-    """Every (boundary, plan_id, index) whose intent still reads `pending`, over the window `open_submitted_rows` reads
-    for the same `now` and `since`."""
+    """Every (boundary, plan_id, index) whose intent still reads `pending`."""
     out: list[tuple[datetime, str, int]] = []
     for doc in _exec_records_in_window(journal_dir, now, since):
         boundary = datetime.fromisoformat(doc["cycle_ts"])

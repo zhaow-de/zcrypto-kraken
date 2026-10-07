@@ -1188,8 +1188,8 @@ class ProbeExecutor:
         # watchdog's `_frozen` stands (`_watch_sockets`), `daily_loss_hold` while `_day_loss_hold` does,
         # re-derived from the date's draft records at each boundary, each equity mark and the first tick.
         self._frozen = False
-        # The cut's moment while the freeze stands, None otherwise: `_stranded_rows`, the re-read pass and
-        # `_settle_restored_intent` read the ledger back to the day before its own.
+        # The freeze's moment while it stands, None otherwise: the `since` its ledger reads take, back to the
+        # day before its own, so no UTC day roll drops a row the freeze holds.
         self._frozen_at: datetime | None = None
         # The rows the standing freeze's CRITICAL last named (`_lift_freeze`), so each set logs once.
         self._stranded_named: str | None = None
