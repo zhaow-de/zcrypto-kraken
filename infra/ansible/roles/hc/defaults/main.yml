@@ -21,6 +21,8 @@ hc_email_host: ""
 hc_email_port: 587
 hc_email_from: ""
 
+# The NAS's pull key forces `rrsync -ro` over this path, and rrsync-shell's unquoted `exec $2` splits that command at
+# its spaces: the path stays free of spaces and globs.
 hc_backup_dir: /var/backups/zcrypto-hc
 hc_backup_keep_days: 14
 # The account the NAS's backup pull logs in as, whose group reads the backup directory, and its rrsync-only shell.

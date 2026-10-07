@@ -2379,7 +2379,7 @@ def test_both_hash_scope_consumers_substitute_full_for_an_empty_assignment(path,
 
 
 # --- The dead-man node's backups: a raw rsync, as the hot channel's, run only once its source is set.
-HC_BACKUP_BLOCK = re.compile(r'^\tif \[ -n "\$\{HC_BACKUP_SOURCE:-\}" \]; then\n.*?^\tfi\n', re.M | re.S)
+HC_BACKUP_BLOCK = re.compile(r"^\tif [^\n]*\bHC_BACKUP_SOURCE\b[^\n]*; then\n.*?^\tfi\n", re.M | re.S)
 HC_BACKUP_SOURCE = "zcrypto-data@zcrypto-hc.invalid:"
 RSYNC_STUB = """#!/usr/bin/env python3
 import json, os, sys
@@ -2436,8 +2436,9 @@ def test_a_failed_hc_backup_pull_logs_an_error_naming_its_source_and_the_loop_go
     ), line
 
 
-def test_an_unset_hc_backup_source_skips_the_pull(tmp_path):
-    run, calls = _hc_backup_pull(tmp_path, source=None)
+@pytest.mark.parametrize("source", [None, ""], ids=["unset", "empty, as compose passes it"])
+def test_an_unset_hc_backup_source_skips_the_pull(tmp_path, source):
+    run, calls = _hc_backup_pull(tmp_path, source=source)
     assert (run.returncode, run.stderr, calls) == (0, "", [])
 
 

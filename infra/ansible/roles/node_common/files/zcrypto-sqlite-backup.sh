@@ -24,6 +24,8 @@ name=$1
 db=$2
 staging=$3
 dest=$4
+# A sibling of the destination on its filesystem, outside every reader's root, where a copy is written before its rename.
+incoming="${dest%/}.incoming"
 keep_days=$5
 out=$6
 
@@ -46,7 +48,7 @@ cutoff=$(date -u -d "@$((now - 10#$keep_days * 86400))" +%Y-%m-%d)
 # once. A runner's VACUUM runs on in its container, out of the host's reach; its file is never copied, and the prune
 # removes it past the keep-days.
 stopped() {
-  rm -f -- "$dest/${staged##*/}" || true
+  rm -f -- "$incoming/${staged##*/}" || true
   if [ ${#runner[@]} -eq 0 ]; then
     rm -f -- "$staged" "$staged-journal" || true
   fi
@@ -93,6 +95,7 @@ PY
 
 # 0700, since the copies carry the database.
 [ -d "$dest" ] || install -d -m 0700 -- "$dest" || fail "cannot create $dest"
+[ -d "$incoming" ] || install -d -m 0700 -- "$incoming" || fail "cannot create $incoming"
 # The prefix's last word takes the staged path whole, `web:` becoming `web:<staged>`; a prefix ending in a space, as
 # the host's `cp ` does, takes it as a word of its own.
 read -r -a copy_command <<<"$copy"
@@ -101,25 +104,37 @@ if [[ $copy == *[[:space:]] ]]; then
 else
   copy_command[-1]+=$staged
 fi
-# A copy that fails part-way leaves its file under a backup's name, which the destination's readers would keep.
-"${copy_command[@]}" "$dest/" || {
-  rm -f -- "$dest/${staged##*/}" || true
-  fail "copying $staged into $dest failed"
+# The copy is written and held in the sibling and renamed into the destination whole, so a reader of the destination,
+# the NAS's pull among them, never lists a file being written; a copy that fails part-way is removed there.
+copied="$incoming/${staged##*/}"
+"${copy_command[@]}" "$incoming/" || {
+  rm -f -- "$copied" || true
+  fail "copying $staged into $incoming failed"
 }
+if [ -n "$group" ]; then
+  { chgrp -- "$group" "$copied" && chmod 0640 -- "$copied"; } || {
+    rm -f -- "$copied" || true
+    fail "cannot hold $copied at 0640 under the group $group"
+  }
+fi
+mv -- "$copied" "$dest/" || {
+  rm -f -- "$copied" || true
+  fail "renaming $copied into $dest failed"
+}
+
+# The run's file is complete in the destination: a stop from here leaves it, and the gauge as it was.
+trap - TERM INT
 
 "${runner[@]}" python3 -c "$prune" "$staging" "$name" "$cutoff" || fail "pruning $staging failed"
 python3 -c "$prune" "$dest" "$name" "$cutoff" || fail "pruning $dest failed"
 
-# Every file kept, an earlier run's among them, so a pull reads them all; the files first, so the directory opens to
-# the group over files already held.
+# The files an earlier run left, one written before the group was set among them, then the directory: a directory
+# open to the group lists no file the group cannot read.
 if [ -n "$group" ]; then
   find "$dest" -mindepth 1 -maxdepth 1 -type f -exec chgrp -- "$group" {} + -exec chmod 0640 -- {} + ||
     fail "cannot hold the files in $dest at 0640 under the group $group"
   { chgrp -- "$group" "$dest" && chmod 0750 -- "$dest"; } || fail "cannot hold $dest at 0750 under the group $group"
 fi
-
-# The run's files are complete: a stop from here leaves them, and the gauge as it was.
-trap - TERM INT
 
 # Atomic publish, as the reboot check's: the collector globs the directory, and mktemp as a sibling makes the mv a
 # same-filesystem rename.

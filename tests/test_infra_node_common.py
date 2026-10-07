@@ -288,8 +288,18 @@ if argv[3:6] == ["exec", "-T", "web"]:
     os.execvp(command[0], command)
 if argv[3:4] == ["cp"] and len(argv) == 6 and argv[4].startswith("web:"):
     shutil.copy(mapped(argv[4].removeprefix("web:")), argv[5])
+    with open(os.environ["DOCKER_STUB_SEEN"], "w") as seen:
+        json.dump(sorted(os.listdir(os.environ["DOCKER_STUB_WATCHED"])), seen)
     sys.exit(0)
 sys.exit(f"docker stub: unexpected call: {argv}")
+"""
+# Records each call, then runs the real chgrp.
+CHGRP_STUB = """#!/usr/bin/env python3
+import json, os, sys
+
+with open(os.environ["CHGRP_STUB_LOG"], "a") as log:
+    print(json.dumps(sys.argv[1:]), file=log)
+os.execv("REAL_CHGRP", ["REAL_CHGRP", *sys.argv[1:]])
 """
 # Answers the script's one clock read, `date -u +%s`, with DATE_STUB_NOW, so a test sets the run's time; every other
 # call reaches the real date.
@@ -473,6 +483,8 @@ def _through_docker(node: Node) -> list[list[str]]:
         "DOCKER_STUB_LOG": str(node.bin / "docker.log"),
         "DOCKER_STUB_INSIDE": INSIDE,
         "DOCKER_STUB_OUTSIDE": str(node.db.parent),
+        "DOCKER_STUB_WATCHED": str(node.dest),
+        "DOCKER_STUB_SEEN": str(node.bin / "seen.json"),
     }
     result = _backup(
         node,
@@ -504,17 +516,25 @@ def test_a_backup_is_a_valid_copy_of_the_source_staged_and_copied_into_a_new_070
 
 def test_a_group_holds_the_destination_at_0750_and_every_file_in_it_at_0640_an_earlier_runs_among_them(node):
     gid = os.getgid()
+    group = grp.getgrgid(gid).gr_name
+    _stub(node, "chgrp", CHGRP_STUB.replace("REAL_CHGRP", shutil.which("chgrp")))
     node.dest.mkdir(parents=True)
     node.dest.chmod(0o700)
     earlier = node.dest / _named(_today(), 1)
     earlier.write_bytes(b"")
     earlier.chmod(0o600)
-    result = _backup(node, group=grp.getgrgid(gid).gr_name)
+    result = _backup(node, group=group, env={"CHGRP_STUB_LOG": str(node.bin / "chgrp.log")})
     assert result.returncode == 0, result.stderr
     (written,) = _written_by_the_run(node.dest, {earlier.name})
     assert (stat.S_IMODE(node.dest.stat().st_mode), node.dest.stat().st_gid) == (0o750, gid)
     held = {path.name: (stat.S_IMODE(path.stat().st_mode), path.stat().st_gid) for path in node.dest.iterdir()}
     assert held == {earlier.name: (0o640, gid), written.name: (0o640, gid)}
+    # The files already carry the test user's group, so the gids above hold without a chgrp: its calls are the proof.
+    calls = [json.loads(line) for line in (node.bin / "chgrp.log").read_text().splitlines()]
+    assert all(call[:2] == ["--", group] for call in calls), calls
+    paths = [path for call in calls for path in call[2:]]
+    assert paths[0] == f"{node.dest}.incoming/{written.name}" and paths[-1] == str(node.dest), paths
+    assert sorted(paths[1:-1]) == sorted([str(earlier), str(node.dest / written.name)]), paths
 
 
 def test_the_prune_reads_the_date_in_the_name_and_keeps_the_keep_days_in_both_directories(node):
@@ -574,7 +594,7 @@ def test_a_copy_that_fails_part_way_after_a_clean_vacuum_leaves_the_gauge_and_no
     assert result.returncode != 0
     (staged,) = _written_by_the_run(node.staging)
     assert _content(staged) == _content(node.db)
-    assert list(node.dest.iterdir()) == []
+    assert list(node.dest.iterdir()) == [] and list(Path(f"{node.dest}.incoming").iterdir()) == []
     assert node.prom.read_text() == PREVIOUS
     assert any(ERROR_LINE.match(line) for line in result.stderr.splitlines()), result.stderr
 
@@ -650,7 +670,7 @@ def _stopped_part_way(node: Node, run: subprocess.Popen[str], started: Path) -> 
     _, stderr = run.communicate(timeout=30)
     assert run.returncode == 143, stderr
     assert any(ERROR_LINE.match(line) and "stopped by SIGTERM" in line for line in stderr.splitlines()), stderr
-    for directory in (node.staging, node.dest):
+    for directory in (node.staging, node.dest, Path(f"{node.dest}.incoming")):
         left = sorted(p.name for p in directory.iterdir()) if directory.exists() else []
         assert not [name for name in left if STAMPED.fullmatch(name) or name.endswith("-journal")], (directory, left)
     assert node.prom.read_text() == PREVIOUS
@@ -725,8 +745,18 @@ def test_the_copy_prefix_takes_the_staged_path_on_its_last_word(node):
     calls = _through_docker(node)
     (staged,) = _written_by_the_run(node.staging)
     (copy,) = [call for call in calls if call[3:4] == ["cp"]]
-    assert copy[3:] == ["cp", f"web:{INSIDE}/backups/{staged.name}", f"{node.dest}/"]
+    assert copy[3:] == ["cp", f"web:{INSIDE}/backups/{staged.name}", f"{node.dest}.incoming/"]
     assert _content(node.dest / staged.name) == _content(node.db)
+
+
+def test_the_copy_is_written_beside_the_destination_and_renamed_into_it_whole(node):
+    calls = _through_docker(node)
+    (staged,) = _written_by_the_run(node.staging)
+    (copy,) = [call for call in calls if call[3:4] == ["cp"]]
+    incoming = Path(f"{node.dest}.incoming")
+    assert copy[5] == f"{incoming}/"
+    assert json.loads((node.bin / "seen.json").read_text()) == [], "the destination listed the run's file while it was written"
+    assert [p.name for p in node.dest.iterdir()] == [staged.name] and list(incoming.iterdir()) == []
 
 
 @pytest.mark.parametrize(
