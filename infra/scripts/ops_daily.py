@@ -669,8 +669,7 @@ REBOOT_PACKAGES = "/var/run/reboot-required.pkgs"
 UPGRADE_CHECK = f"unattended upgrades on {UPGRADE_HOST}"
 
 # The ops host has three names -- the `host` label its rules carry, the fleet name its check rows
-# print and the ssh destination -- and every other host in the map two; `zaccess` has no bare-name
-# destination.
+# print and the ssh destination -- and every other host in the map two.
 _SSH_ALIASES = {
     "ops": "hp",
     "zcrypto-red": "red",
@@ -678,6 +677,7 @@ _SSH_ALIASES = {
     "zcrypto-valkey2": "db2",
     "zcrypto-valkey3": "db3",
     "zcrypto-mon": "mon",
+    "zaccess": "access",
 }
 _HOST_LABELS = {
     "hp": "ops",
