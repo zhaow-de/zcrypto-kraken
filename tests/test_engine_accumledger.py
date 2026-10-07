@@ -18,7 +18,7 @@ from cli.engine.errors import EngineJournalError
 CYCLE_TS = datetime(2026, 11, 9, 12, 0, tzinfo=timezone.utc)
 
 _RECORD_FIGURES = ("nav", "eur_total", "eur_free", "equity_eur", "hwm_eur", "drawdown_bps", "day_loss_bps")
-_LEG_FIGURES = ("weight", "target_eur", "close", "held_qty", "cache_net", "delta_eur", "qty", "notional_eur")
+_LEG_NUMERIC_FIELDS = ("weight", "target_eur", "close", "held_qty", "cache_net", "delta_eur", "qty", "notional_eur")
 _LEG_FIGURES_ALWAYS_SET = ("weight", "target_eur", "close", "held_qty", "cache_net", "delta_eur")
 
 
@@ -124,6 +124,42 @@ def test_a_record_carrying_a_stray_key_is_refused():
         validate_accum_record(doc)
 
 
+def test_a_status_that_is_not_a_string_is_refused_as_a_journal_error():
+    with pytest.raises(Exception) as caught:
+        validate_accum_record(_ok_doc(CYCLE_TS) | {"status": ["ok"]})
+    assert caught.type is EngineJournalError
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("cycle_ts", 1791460800),
+        ("cycle_ts", "not-an-instant"),
+        ("cycle_ts", "2026-11-09T12:00:00"),
+        ("drafted_at", None),
+        ("drafted_at", "2026-11-09T12:01:00"),
+    ],
+)
+def test_an_instant_that_is_not_an_iso_8601_string_with_an_offset_is_refused(field, value):
+    with pytest.raises(EngineJournalError, match=field):
+        validate_accum_record(_ok_doc(CYCLE_TS) | {field: value})
+
+
+def test_a_record_that_is_not_utf_8_is_refused_as_a_journal_error(tmp_path):
+    path = accum_record_path(tmp_path, CYCLE_TS)
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"\xff\xfe{}")
+    with pytest.raises(Exception) as caught:
+        read_accum_record(path)
+    assert caught.type is EngineJournalError
+
+
+def test_a_document_naming_another_boundary_than_its_path_is_refused_and_nothing_lands(tmp_path):
+    with pytest.raises(EngineJournalError, match="names the boundary"):
+        write_accum_record(tmp_path, CYCLE_TS, _ok_doc(CYCLE_TS + timedelta(hours=4)))
+    assert not accum_record_path(tmp_path, CYCLE_TS).exists()
+
+
 def test_a_status_outside_the_five_is_refused():
     doc = _ok_doc(CYCLE_TS)
     doc["status"] = "pending"
@@ -161,7 +197,7 @@ def test_a_non_finite_record_figure_is_refused(field):
         validate_accum_record(doc)
 
 
-@pytest.mark.parametrize("field", _LEG_FIGURES)
+@pytest.mark.parametrize("field", _LEG_NUMERIC_FIELDS)
 def test_a_non_finite_leg_figure_is_refused(field):
     doc = _ok_doc(CYCLE_TS)
     doc["legs"][1][field] = float("inf")

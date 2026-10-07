@@ -12053,9 +12053,14 @@ def test_a_boundary_re_armed_after_a_restart_whose_draft_marks_nothing_keeps_the
     replaced = _accum_doc(_RUNG2_12Z, "ok", equity_eur=960.0, day_loss_bps=400.0, day_loss_hold=True)
     write_accum_record(tmp_path / "journal", _RUNG2_12Z, replaced)
     ex._venue_holdings._raises = RuntimeError("down")
-    _ticks(ex, clock, 3)
+    with _executor_errors(logging.INFO) as records:
+        _ticks(ex, clock, 3)
     noon = _accum(tmp_path)
     assert (noon["status"], noon["equity_eur"], noon["day_loss_bps"], noon["day_loss_hold"]) == ("book-unread", 960.0, 400.0, True)
+    assert (
+        f"the boundary {_RUNG2_12Z.isoformat()}'s draft marked no equity -- its record keeps the mark an earlier process "
+        f"wrote at {_RUNG2_12Z.isoformat()}"
+    ) in [r.getMessage() for r in records]
 
     later = _RUNG2_12Z + timedelta(hours=4)
     ex._venue_holdings._raises = None
@@ -12100,3 +12105,30 @@ def test_a_record_that_marked_no_equity_is_not_read_for_the_hold_a_failed_deriva
     ex.on_boundary(boundary)
     exec_12 = _record(tmp_path, boundary)
     assert exec_12["level"] == GateLevel.FULL and exec_12["inputs"]["daily_loss_hold"] is False
+
+
+def test_a_minting_mark_whose_scan_raises_starts_no_series_and_its_retry_reads_no_hold_from_the_record_it_replaces(tmp_path):
+    """The re-mint above with the date's 08Z record unreadable for one tick: the minting mark's scan raises and spends a
+    try, no series is started, and the retry, the record repaired, mints 12Z and writes no hold. The probe mints before
+    the scan, so the retry reads the replaced record, an earlier series', into a series that mark started."""
+    flat = _the_ten_at(0.0)
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=_rung2_record(tmp_path, final_targets=flat),
+        holdings={},
+        eur_total=990.0,
+        eur_free=990.0,
+        now=_RUNG2_12Z + timedelta(minutes=30),
+    )
+    replaced = _accum_doc(_RUNG2_12Z, "ok", equity_eur=960.0, day_loss_bps=400.0, day_loss_hold=True)
+    write_accum_record(tmp_path / "journal", _RUNG2_12Z, replaced)
+    broken = accum_record_path(tmp_path / "journal", _RUNG2_12Z - timedelta(hours=4))
+    broken.write_text("{}")
+    ex.on_timer(clock.now)  # the minting mark's scan meets the 08Z record and raises
+    assert not _series_start_path(tmp_path).exists()
+    broken.unlink()
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+    noon = _accum(tmp_path)
+    assert noon["drafted_at"] == clock.now.isoformat() and noon["day_loss_hold"] is False
+    assert _series_start_path(tmp_path).read_text() == f"{_RUNG2_12Z.isoformat()}\n"
