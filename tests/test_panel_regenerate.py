@@ -331,6 +331,18 @@ def test_happy_path_order_and_checklist(tmp_path):
     assert "NAS" in out and "Un-pause" in out and "ops_panel_timer_hold" in out
 
 
+def test_the_pause_and_the_unpause_name_the_dead_man_services_panel_check(tmp_path):
+    script, env, panel, log = render(tmp_path, STUB_DU_SMALL)
+    rc, out = run_tty(script, env, ["paused"])
+    assert rc == 0, out
+    lines = [line.strip() for line in out.splitlines()]
+    pause = [line for line in lines if line.startswith("Pause it now")]
+    unpause = [line for line in lines if line.startswith("1. Un-pause")]
+    assert len(pause) == 1 and len(unpause) == 1, out
+    for line in pause + unpause:
+        assert "the dead-man service" in line and "zcrypto-panel" in line and "healthchecks.io" not in line, line
+
+
 def test_failed_rebuild_leaves_timer_stopped(tmp_path):
     script, env, panel, log = render(tmp_path, STUB_DU_SMALL)
     env["FAKE_UNIT_RC"] = "1"

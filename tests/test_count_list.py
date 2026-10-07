@@ -651,6 +651,31 @@ def test_the_topic_only_arm_counts_a_merge_only_when_every_file_it_brought_in_is
     assert _topic_only_merges(repo) == "1"
 
 
+def _readonly_key_in_a_role(repo: pathlib.Path, files: dict[str, str]) -> str:
+    for rel, text in files.items():
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text(text)
+        _git(repo, "add", rel)
+    script = f'source "{SCRIPT}"; cd "{repo}"; c_hc_readonly_key_in_a_role'
+    return subprocess.run(["bash", "-c", script], capture_output=True, text=True).stdout.strip()
+
+
+def test_the_readonly_key_count_excludes_the_ops_alloy_secrets_template_and_no_other_file(repo):
+    roles = "infra/ansible/roles"
+    assert (
+        _readonly_key_in_a_role(
+            repo,
+            {
+                f"{roles}/ops/templates/alloy-secrets.env.j2": "HC_READONLY_KEY={{ hc_readonly_api_key }}\n",
+                f"{roles}/ops/defaults/main.yml": "# hc_readonly_api_key is rendered by alloy-secrets.env.j2 alone\n",
+            },
+        )
+        == "0"
+    )
+    assert _readonly_key_in_a_role(repo, {f"{roles}/cache/templates/alloy-secrets.env.j2": "K={{ hc_readonly_api_key }}\n"}) == "1"
+    assert _readonly_key_in_a_role(repo, {f"{roles}/ops/templates/grafana-watchdog.sh.j2": "K={{ hc_readonly_api_key }}\n"}) == "2"
+
+
 @pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
 def test_a_dependabot_bump_is_exempt_and_one_carrying_a_fix_commit_is_not(tmp_path):
     """The gate exempts a dependabot PR whose every commit is the bot's, so the counter has to fetch those commits

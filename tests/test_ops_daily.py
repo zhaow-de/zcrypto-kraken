@@ -459,7 +459,60 @@ def test_the_deadmen_are_read_both_through_grafana_and_directly(monkeypatch):
 def test_a_missing_readonly_key_is_named_never_silently_skipped(monkeypatch):
     monkeypatch.setattr(ops_daily, "_readonly_key", lambda: None)
     read = ops_daily.read_deadmen("tok", opener=_canned({"data": {"result": []}}))
-    assert read.unreadable and "healthchecks_readonly_api_key" in read.unreadable
+    assert read.unreadable and "hc_readonly_api_key" in read.unreadable, read.unreadable
+    assert "group_vars/observed/vault.yml" in read.unreadable, read.unreadable
+
+
+_HC_DEFAULTS = Path(__file__).resolve().parents[1] / "infra/ansible/roles/hc/defaults/main.yml"
+
+
+def test_the_direct_read_is_the_services_checks_listing_on_the_hc_roles_hostname():
+    url = urllib.parse.urlsplit(ops_daily.DEADMAN_API)
+    assert (url.scheme, url.path) == ("https", "/api/v3/checks/"), ops_daily.DEADMAN_API
+    assert url.hostname == yaml.safe_load(_HC_DEFAULTS.read_text())["hc_hostname"], ops_daily.DEADMAN_API
+
+
+def test_the_read_only_key_is_read_from_the_observed_vault(monkeypatch):
+    seen = []
+    monkeypatch.setattr(
+        ops_daily.grafana_auth,
+        "vault_var",
+        lambda name, vault_file=ops_daily.grafana_auth.VAULT_FILE: seen.append((name, vault_file)) or "hcr_fake",
+    )
+    assert ops_daily._readonly_key() == "hcr_fake"
+    assert seen == [("hc_readonly_api_key", "group_vars/observed/vault.yml")]
+
+
+def test_the_direct_read_presents_the_read_only_key_to_the_service(monkeypatch):
+    monkeypatch.setattr(ops_daily, "_readonly_key", lambda: "hcr_fake")
+    requests = []
+
+    @contextlib.contextmanager
+    def opener(request, timeout=None):
+        requests.append(request)
+        body = {"checks": []} if request.full_url == ops_daily.DEADMAN_API else {"data": {"result": []}}
+        yield io.BytesIO(json.dumps(body).encode())
+
+    ops_daily.read_deadmen("tok", opener=opener)
+    direct = [r for r in requests if r.full_url == ops_daily.DEADMAN_API]
+    assert len(direct) == 1, [r.full_url for r in requests]
+    assert direct[0].get_header("X-api-key") == "hcr_fake"
+
+
+def test_an_unreachable_service_is_named_as_the_dead_man_service(monkeypatch):
+    monkeypatch.setattr(ops_daily, "_readonly_key", lambda: "hcr_fake")
+    prom = {"data": {"result": [{"metric": {}, "value": [1, "0"]}]}}
+    answers = iter([prom])
+
+    @contextlib.contextmanager
+    def opener(request, timeout=None):
+        if request.full_url == ops_daily.DEADMAN_API:
+            raise urllib.error.URLError("refused")
+        yield io.BytesIO(json.dumps(next(answers)).encode())
+
+    read = ops_daily.read_deadmen("tok", opener=opener)
+    assert read.unreadable and "the dead-man service could not be read directly" in read.unreadable, read.unreadable
+    assert "healthchecks.io" not in read.unreadable, read.unreadable
 
 
 def test_no_series_is_a_verdict_failure_never_a_pass():
@@ -1926,7 +1979,7 @@ def test_every_endpoint_the_instrument_builds_is_pinned(monkeypatch):
     deadmen = _recording({"data": {"result": []}}, {"checks": []})
     ops_daily.read_deadmen("tok", opener=deadmen)
     assert any("/uid/%s/api/v1/query" % ops_daily.PROM_DS_UID in u for u in deadmen.urls), deadmen.urls
-    assert any(u == "https://healthchecks.io/api/v3/checks/" for u in deadmen.urls), deadmen.urls
+    assert any(u == "https://zcrypto-hc.zhaow.me/api/v3/checks/" for u in deadmen.urls), deadmen.urls
     assert not any("/loki/" in u for u in deadmen.urls), deadmen.urls
 
     reminders = _recording(_counter(0))

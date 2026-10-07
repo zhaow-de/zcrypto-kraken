@@ -821,6 +821,21 @@ def test_a_vanished_prune_gauge_pages_while_a_daily_run_stays_quiet():
     )
 
 
+_DEAD_MAN_WATCHDOG = "zcrypto-hcio-watchdog"
+
+
+def test_the_dead_man_watchdog_names_the_service_and_keeps_its_uid_and_expression():
+    """The uid stays, so the rule is updated in place and no prune is owed; the scrape it reads is the service's."""
+    rule = _rule(_DEAD_MAN_WATCHDOG)
+    assert rule["title"] == "Fleet · dead-man watchdog (check down, or the service dark)"
+    assert [d["model"]["expr"].strip() for d in rule["data"] if d["refId"] == "A"] == [
+        "max(hc_checks_down_total) or on() vector(999)"
+    ]
+    texts = [rule["title"], rule["annotations"]["summary"], rule["annotations"]["unit"]]
+    assert not [t for t in texts if re.search(r"healthchecks\.io|hc\.io", t)], texts
+    assert all("the dead-man service" in t for t in texts[1:]), texts
+
+
 # --- the runbook link an alert sends an operator to must actually exist ---------------------------
 # `grafana-push.sh` ships the summary verbatim, so a renamed or never-written anchor renders as a
 # plain `#fragment` that scrolls nowhere -- worth exactly as much as no runbook at all to a
