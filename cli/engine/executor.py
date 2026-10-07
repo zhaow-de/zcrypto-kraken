@@ -1188,6 +1188,9 @@ class ProbeExecutor:
         # watchdog's `_frozen` stands (`_watch_sockets`), `daily_loss_hold` while `_day_loss_hold` does,
         # re-derived from the date's draft records at each boundary, each equity mark and the first tick.
         self._frozen = False
+        # The rows the CRITICAL of a disarmed engine's freeze that stands last named (`_lift_freeze`), so
+        # each set is logged once and not on every tick.
+        self._stranded_named: str | None = None
         self._day_loss_hold = False
         self._day_loss_hold_derived = False
         self._journal_dir = Path(config.journal_dir)
@@ -1609,18 +1612,34 @@ class ProbeExecutor:
     def _lift_freeze(self) -> None:
         """Lift the watchdog's freeze once no endpoint is held down and a re-read pass has completed since
         the return that emptied the set, so the loop resumes on the venue's own account of the cut; a
-        disarmed engine whose return left the pass owed lifts with no pass, as it refuses every intent
-        until it is armed again. Returns at once unless frozen: once the condition holds it keeps holding
-        on every quiet tick after, so without the guard the lift would log on each."""
+        disarmed engine whose pass waits owed lifts with no pass, as it refuses every intent until it is
+        armed again, unless the ledger holds a row open or `ambiguous` (`_stranded_rows`), an order the cut
+        may have left resting at Kraken that only that pass re-cancels: the freeze then stands, and pages,
+        its CRITICAL naming the rows. Returns at once unless frozen: once the condition holds it keeps
+        holding on every quiet tick after, so without the guard the lift would log on each."""
         if not self._frozen:
             return
         emptied, completed = self._sockets_emptied_at, self._reread_completed_at
         if self._sockets_down or emptied is None:
             return
         owed = self._reread_owed and not self._gate_armed
-        if not owed and (completed is None or completed < emptied):
+        if owed:
+            stranded = self._stranded_rows()
+            if stranded:
+                if stranded != self._stranded_named:
+                    self._stranded_named = stranded
+                    logger.critical(
+                        "the execution watchdog's freeze stands -- the sockets are back and the engine is disarmed, but "
+                        "the cut may have left an order resting at Kraken unread, the ledger's open or ambiguous rows: "
+                        "%s; the first armed tick's re-read pass re-cancels and settles them, and while the engine stays "
+                        "disarmed, cancel each by hand on Kraken's open-orders page",
+                        stranded,
+                    )
+                return
+        elif completed is None or completed < emptied:
             return
         self._frozen = False
+        self._stranded_named = None
         _set_frozen(False)
         logger.info(
             "the execution watchdog's freeze lifted -- the sockets are back and %s",
@@ -1628,6 +1647,18 @@ class ProbeExecutor:
             if owed
             else "the re-read pass has settled",
         )
+
+    def _stranded_rows(self) -> str:
+        """The rows a disarmed engine's lift waits on, named as the re-read pass's lines name them: every row
+        the ledger's own predicate reads open (`open_submitted_rows`, `ambiguous` among its states), less the
+        rows this process marked unmatched, which the pass leaves out too. Wider than the pass's population,
+        which keeps to the rows a mint closed: an order whose cancel the cut swallowed rests at Kraken before
+        its mint lands as after. A ledger that cannot be read holds the freeze."""
+        try:
+            rows = open_submitted_rows(self._journal_dir, self._now())
+        except Exception:
+            return "the exec ledger could not be read"
+        return ", ".join(_row_label(row, self._read_id(row)) for _, row in rows if not self._marked_here(row))
 
     def _adopt_resting_orders(self, now: datetime) -> None:
         """The startup pass (D10), run once on the first tick: decide, per resting order this
