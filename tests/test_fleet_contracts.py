@@ -1,4 +1,4 @@
-"""The two fleet contracts are state files, held to shape: no date outside a `since` column, no table cell, bullet or paragraph past its cap, no heading below the fixed section set, a digest glossary that mirrors the pins table with no digest outside the digest cells and the glossary, and NAS rows that agree with the committed pins. Beside them, the fleet's one Alloy version is held to its three shapes and the NAS's Alloy literal to its committed digest.
+"""The two fleet contracts are state files, held to shape: no date outside a `since` column, no table cell, bullet or paragraph past its cap, no heading below the fixed section set, a digest glossary that mirrors the pins table with no digest outside the digest cells and the glossary, and NAS rows that agree with the committed pins.
 
 Twice the two files grew a change history inside their state -- dated readings, incident narratives, cells three kilobytes long -- and each time a cleanup commit removed it by hand. A refusal in CI, and at the next `uv run pytest`, ends the class; an undated narrative that fits inside a block's cap is what the caps leave to the reader.
 """
@@ -186,7 +186,7 @@ def _hex12(ref: str) -> str:
 
 
 def _nas_rows_agree(pins: Path, nas_vars: Path, fleet: Path, host_vars: Path) -> bool:
-    """`archive-pull` on `nas_capture_image`; the `alloy` row on `nas_alloy_image`, or behind it while that literal is the fleet file's and either the wave is open -- another host's `alloy` row off the fleet's digest, that host holding no `alloy.yml` hold file -- or the row carries `held` and its reason, which a hold's end leaves until the NAS converges."""
+    """The `alloy` row may sit behind `nas_alloy_image` only while that literal is the fleet file's: in an open wave, or with the row `held` after a hold's end, until the NAS converges."""
     literals = dict(re.findall(r"^(nas_capture_image|nas_alloy_image): (\S+@sha256:[0-9a-f]{64})", nas_vars.read_text(), re.M))
     assert set(literals) == {"nas_capture_image", "nas_alloy_image"}, literals
     fleet_digest = yaml.safe_load(fleet.read_text())["alloy_image_digest"]
@@ -220,8 +220,8 @@ def _nas_literals() -> list[str]:
 
 def test_the_nas_rows_agree_with_the_committed_pins():
     assert _nas_rows_agree(PINS, NAS_VARS, ALLOY_FILE, HOST_VARS), (
-        "fleet-pins.md's NAS rows disagree with host_vars/nas/vars.yml: archive-pull is on nas_capture_image, and alloy on "
-        "nas_alloy_image or, while that literal is the fleet file's, behind it with the wave open or the row `held`: "
+        "fleet-pins.md's NAS rows disagree with host_vars/nas/vars.yml: archive-pull on nas_capture_image, alloy on "
+        "nas_alloy_image or, while that literal is the fleet file's, behind it with the wave open or `held` with a reason: "
         f"{_nas_pins()} against {_nas_literals()}"
     )
 

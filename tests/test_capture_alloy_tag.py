@@ -1,7 +1,3 @@
-"""The capture role's share of the fleet-wide `alloy` tag: a converge that lands the Alloy part on a capture host and nothing
-of the capture daemon, read off the YAML the way Ansible selects by tag -- a block's tags reach its children, a role entry's
-reach every task of the role, and `always` runs whatever was asked."""
-
 from __future__ import annotations
 
 import pytest
@@ -45,7 +41,6 @@ ALLOY_PART = [
     "refuse a converge whose alloy container does not run the digest it converged",
 ]
 
-# The pre_tasks a `--tags alloy` run executes on the capture and engine plays: every one tagged `always`.
 ALWAYS_PRE_TASKS = [
     ("capture_host", "refuse to converge the live primary unless explicitly asked"),
     ("capture_host", "refuse an un-tagged run on the live primary"),
@@ -103,7 +98,7 @@ def test_a_tagged_task_carrying_args_or_environment_is_refused_by_the_keyword(na
 
 def test_an_alloy_run_on_the_capture_and_engine_plays_runs_the_alloy_part_beside_the_always_pre_tasks():
     """Ansible's selection over every play that reaches a capture host: an `always` task in any of their roles would
-    run on the primary beside the Alloy part, and only the four pre_tasks below may."""
+    run on the primary beside the Alloy part, and only ALWAYS_PRE_TASKS may."""
     pre_tasks, role_tasks = play_selection("capture_host", "engine_host")
     assert pre_tasks == ALWAYS_PRE_TASKS
     assert role_tasks == [("capture", name) for name in ALLOY_PART]

@@ -1,7 +1,4 @@
-"""The fleet-wide `alloy` tag over every play: each host of the inventory's `observed` group has a play that reaches it and
-runs an Alloy task, so converge.sh's refusal of an `alloy` run that would land nothing never meets a fleet host; an `alloy`
-run on any play runs its `always` tasks and its role's Alloy part and nothing else; and the apt hosts' Alloy package is
-installed and held by the shared role alone, which each apt role imports and never includes."""
+"""The fleet-wide `alloy` tag over every play, which converge.sh's refusal of an `alloy` run that would land nothing reads."""
 
 from __future__ import annotations
 
@@ -45,7 +42,6 @@ def test_an_alloy_run_runs_each_plays_always_tasks_and_its_alloy_part_and_nothin
         roles = {where for where, _ in selected if where not in reaching}
         assert not roles & NO_ALLOY_TASK, (host, sorted(roles & NO_ALLOY_TASK))
         assert roles == {ALLOY_ROLE[hosts] for hosts in reaching} - {None}, (host, sorted(roles))
-        # A play's own task the run selects carries `always`: the run selects exactly those a run of `always` alone does.
         play_tasks = [leaf for leaf in selected if leaf[0] in reaching]
         assert play_tasks == [leaf for leaf in alloy_version.selection(host, ["always"]) if leaf[0] in reaching], host
 

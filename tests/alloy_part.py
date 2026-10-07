@@ -1,7 +1,4 @@
-"""A container role's Alloy part under the fleet-wide `alloy` tag, read off its YAML the way Ansible selects by tag -- a
-block's tags reach its children, a role entry's reach every task of the role, and `always` runs whatever was asked: the
-tagged leaves, the names they read before a tagged task produces them, the allowlist every role's exclusion holds them
-to beside its own named refusals, and what a play runs under the tag."""
+"""A role's Alloy part under the fleet-wide `alloy` tag, read through `alloy-version.py`'s walk: the tagged leaves, the names they read before a tagged task produces them, the allowlists the roles' exclusions hold them to beside their own named refusals, and what a play runs under the tag."""
 
 from __future__ import annotations
 
@@ -73,8 +70,7 @@ def unproduced_reads(role: str) -> list[tuple[str, str]]:
 # what refuse a shape no refusal names.
 FREE_MODULES = {f"ansible.builtin.{m}" for m in ("assert", "debug", "stat", "getent", "set_fact")}
 WRITERS = {f"ansible.builtin.{m}" for m in ("file", "copy", "template")}
-# Two keywords reach the module past the module key the lists read: `args` merges into its arguments, and `environment`
-# into the command's process, where a COMPOSE_FILE retargets the recreate. No tagged task carries either.
+# `args` merges into the module's arguments and `environment` into the command's process, past the module key the lists read.
 ARGUMENT_KEYWORDS = ("args", "environment")
 
 

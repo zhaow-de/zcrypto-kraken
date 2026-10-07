@@ -1,6 +1,4 @@
-"""The nas role's `alloy` tag: a converge that lands the NAS's Alloy config, its secrets file and the stack .env's Alloy
-pin line and recreates Alloy alone, never archive-pull, read off the YAML the way Ansible selects by tag -- a block's tags
-and `when` reach its children, a role entry's tags reach every task of the role, and `always` runs whatever was asked."""
+"""The nas role's `alloy` tag: Alloy's files and the .env's pin line land and Alloy alone is recreated, never archive-pull."""
 
 from __future__ import annotations
 
@@ -72,8 +70,7 @@ PULLER_SOURCES = {"env.j2"}
 WRITERS = ("copy", "template", "file", "lineinfile", "blockinfile", "replace")
 SCOPED_COMPOSE = "compose up -d --no-deps --force-recreate alloy"
 
-# The allowlist beside the puller refusals, which read a writer's target by its last component alone. A task the Alloy
-# part takes later joins these lists in that change.
+# The allowlist beside the puller refusals, which read a writer's target by its last component alone.
 FREE_MODULES = {"ansible.builtin.debug", "ansible.builtin.assert"}
 STACK = "{{ nas_stack_dir }}"
 ALLOY_FILES = (f"{STACK}/config.alloy", f"{STACK}/alloy-secrets.env")

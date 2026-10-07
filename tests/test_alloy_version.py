@@ -537,8 +537,6 @@ PACKAGE_HEADER = "| package | host | version | since (UTC) | notes |\n| --- | --
 
 
 def _pins_text(image: dict[str, str], package: dict[str, str], tables=("image", "package"), other=()) -> str:
-    """A pins file with the tables `tables` names, each `alloy` row naming its host; `other` adds rows of another service
-    to the image table."""
     image_rows = "".join(
         f"| alloy | {host} | `{hex12}` — v1.20.1 | 2026-10-06 10:00:00 | first pin |\n" for host, hex12 in image.items()
     )

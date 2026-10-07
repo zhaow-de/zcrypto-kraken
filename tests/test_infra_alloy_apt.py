@@ -1,5 +1,4 @@
-"""The shared apt Alloy role, `alloy_apt`: its install and its post-condition, read off their YAML and evaluated through
-Ansible's templar over constructed variables, and its share of each importer's exclusion allowlist."""
+"""The shared apt Alloy role, `alloy_apt`: its install and its post-condition, read off their YAML and evaluated through Ansible's templar over constructed variables."""
 
 from __future__ import annotations
 

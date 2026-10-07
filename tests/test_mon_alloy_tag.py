@@ -25,9 +25,7 @@ STARTED = "alloy enabled + started"
 
 ALLOY_PART = [*ALLOY_APT_MAIN, CONFIG, STARTED, *ALLOY_APT_POSTCONDITION]
 
-# Bounded on letters and digits alone, never `\b`, which joins `_` to a word: the role names its stores and its token
-# through `_`-joined variables, `mon_loki_dir` and `mon_token_cache` among them, and those are read as the reach they
-# are. The shared role's own names, `alloy_apt_grafana_repo` among them, are blanked before the read instead.
+# Never `\b`, which joins `_` to a word and so misses `mon_loki_dir`; the shared role's names are blanked before the read.
 REFUSED_NAMES = re.compile(
     r"(?<![A-Za-z0-9])(grafana|loki|prometheus|caddy|edge|token|selfcheck|reboot)(?![A-Za-z0-9])", re.IGNORECASE
 )
