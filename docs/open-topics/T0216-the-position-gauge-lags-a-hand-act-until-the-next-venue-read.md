@@ -22,7 +22,7 @@ It is the quiet direction of the gauge's error: a hand-opened position the engin
 ## Done so far
 
 - **The read on each unmatched external fill — spec `00092` D12, its plan's Task 7 (iter-174, PR #666)**: `_on_external_event`'s unmatched branch in `cli/engine/executor.py` arms the re-read pass (`_arm_reread_after_mint`) for an `OrderFilled` alone, so the pass runs at the first tick with nothing in flight, holds no row for the hand act and settles the holdings: the gauge takes the venue's figure within a tick of the act plus the pass's one read, where it waited for the next socket return (commit `0824f5360`). A cancel or any other unmatched event arms nothing.
-- **Only while the engine is armed** (`_gate_armed`, both keys up at the newest gate evaluation): a fill while disarmed is the operator's — the attended passes that sign on the engine's key run disarmed, and a holdings read beside their fills would race their nonce — and a later pass's read settles the gauge (commit `1c6ca1613`); the orchestrator's ruling, recorded in `[iter-174]` as provisional, pending the owner's word. Under rung 3 the boundary's book read settles the gauge every four hours besides (`00092` D2).
+- **Only while the engine is armed** (`_gate_armed`, both keys up at the newest gate evaluation): a fill while disarmed is the operator's — the attended passes that sign on the engine's key run disarmed, and a holdings read beside their fills would race their nonce — and a later pass's read settles the gauge (commit `1c6ca1613`); the owner's ruling of 2026-10-07, recorded in `[iter-174]` and in `00092` D12. Under rung 3 the boundary's book read settles the gauge every four hours besides (`00092` D2).
 
 ## Suggested next steps
 
