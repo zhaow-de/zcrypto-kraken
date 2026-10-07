@@ -30,6 +30,7 @@ ALLOY_ROLE = {
     "access_host": "access",
     "cache_host": "cache",
     "mon_host": "mon",
+    "hc_host": "hc",
 }
 NO_ALLOY_TASK = {"base", "hardening", "firewall", "fail2ban", "chrony", "docker", "cache_link", "access_ops", "engine"}
 
@@ -69,6 +70,7 @@ def test_only_the_roles_that_joined_the_tag_carry_it_and_no_play_does():
         ROLES / "access" / "tasks" / "main.yml",
         ROLES / "cache" / "tasks" / "main.yml",
         ROLES / "capture" / "tasks" / "main.yml",
+        ROLES / "hc" / "tasks" / "main.yml",
         ROLES / "mon" / "tasks" / "main.yml",
         ROLES / "nas" / "tasks" / "main.yml",
         ROLES / "ops" / "tasks" / "main.yml",

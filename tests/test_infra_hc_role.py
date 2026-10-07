@@ -13,13 +13,13 @@ import pytest
 import yaml
 
 from tests import role_render
+from tests.alloy_part import ALLOY_APT_VERBATIM, module_entry
+from tests.test_alloy_version import alloy_version
 from tests.test_infra_alloy_stages import _alloy_string, _hc_match, _stage_blocks
 from tests.test_infra_converge_guards import (
     assert_that,
     find_task,
-    iter_tasks,
     load_tasks,
-    set_facts,
     task_index,
     truthy,
     when_conditions,
@@ -464,7 +464,7 @@ def test_the_unit_runs_the_compose_project_and_never_pulls():
 
 
 # --- the preview gates ----------------------------------------------------------------------------------------------
-_CHANGED, _UNCHANGED, _SKIPPED = {"changed": True}, {"changed": False}, {"changed": False, "skipped": True}
+_CHANGED, _UNCHANGED = {"changed": True}, {"changed": False}
 
 
 @pytest.mark.parametrize(
@@ -519,41 +519,23 @@ def test_the_restart_stands_down_on_a_first_install_preview_and_after_a_start_th
     assert truthy(when_conditions(handler), variables) is expected
 
 
-# Each disjunct of the two facts has a case in which it alone is true.
-@pytest.mark.parametrize(
-    ("check", "repository", "install", "expected"),
-    [
-        (True, _CHANGED, _SKIPPED, (True, True)),
-        (True, _UNCHANGED, _CHANGED, (False, True)),
-        (True, _UNCHANGED, _UNCHANGED, (False, False)),
-        (False, _CHANGED, _CHANGED, (False, False)),
-    ],
-    ids=["a fresh node's preview", "alloy alone still to install", "an established node's preview", "the real first converge"],
-)
-def test_the_two_alloy_preview_facts_are_true_only_where_a_preview_has_no_package_to_find(check, repository, install, expected):
-    tasks = _tasks()
-    variables = {"ansible_check_mode": check, "hc_grafana_repo": repository}
-    first = set_facts(find_task(tasks, "note a preview that runs before the Grafana repository exists"), variables)
-    variables |= first | {"hc_alloy_install": install}
-    second = set_facts(find_task(tasks, "note a preview that runs before alloy is installed"), variables)
-    assert (bool(first["hc_repo_previewed"]), bool(second["hc_units_previewed"])) == expected
+def _shared(module: str) -> tuple[str, object]:
+    (entry,) = [entry for entry in ALLOY_APT_VERBATIM if entry[0] == module]
+    return entry
 
 
-def test_alloy_is_followed_from_apt_and_what_needs_it_skips_the_preview_that_has_none():
-    tasks = _tasks()
-    (install,) = [(task, gates) for task, gates in iter_tasks(tasks) if "ansible.builtin.apt" in task]
-    assert install[0]["ansible.builtin.apt"] == {"name": "alloy", "state": "present", "update_cache": True}
-    assert install[1] == ("not hc_repo_previewed",)
-    assert install[0]["register"] == "hc_alloy_install"
-    repository = find_task(tasks, "add the Grafana apt repository (alloy)")
-    assert repository["ansible.builtin.deb822_repository"]["uris"] == "https://apt.grafana.com"
-    assert repository["register"] == "hc_grafana_repo"
-    alloy = find_task(tasks, "alloy enabled + started")
+def test_alloy_is_installed_held_and_pinned_by_the_shared_role_alone_and_its_unit_skips_the_preview_that_has_none():
+    entries = [module_entry(task) for task, _, _ in alloy_version.role_leaves("hc", frozenset())]
+    packages = [entry for entry in entries if entry[0] in ("ansible.builtin.apt", "ansible.builtin.dpkg_selections")]
+    assert packages == [_shared("ansible.builtin.apt"), _shared("ansible.builtin.dpkg_selections")], packages
+    pins = [entry for entry in entries if "/etc/apt/preferences.d/" in str(entry[1])]
+    assert pins == [_shared("ansible.builtin.copy")], pins
+    alloy = find_task(_tasks(), "alloy enabled + started")
     assert alloy["ansible.builtin.systemd_service"] == {"name": "alloy", "enabled": True, "state": "started"}
-    assert when_conditions(alloy) == ["not hc_units_previewed"]
+    assert when_conditions(alloy) == ["not alloy_apt_previewed"]
     restart = _handlers()["restart alloy"]
     assert restart["ansible.builtin.systemd_service"] == {"name": "alloy", "state": "restarted"}
-    assert when_conditions(restart) == ["not hc_units_previewed"]
+    assert when_conditions(restart) == ["not alloy_apt_previewed"]
 
 
 # --- the superuser --------------------------------------------------------------------------------------------------
