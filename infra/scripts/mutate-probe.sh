@@ -26,8 +26,8 @@ done
 # ONE handler for both temporaries: a second `trap ... EXIT` would REPLACE this one rather than add
 # to it, leaking whichever it displaced. It restores BEFORE it cleans and runs on INT/TERM as well
 # as EXIT, because a signal delivered while the probe runs lands with the mutation applied, and
-# cleaning first would delete the only way back; a signal landing inside it is ignored, so the
-# restore's own exit code stands.
+# cleaning first would delete the only way back; INT/TERM inside it are ignored, so the restore's
+# exit code stands.
 work=""; pristine=""; mutated=0; cleaned=0
 cleanup() {
   trap '' INT TERM
