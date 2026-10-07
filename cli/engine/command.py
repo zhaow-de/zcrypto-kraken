@@ -545,8 +545,8 @@ class _ExecGauges:
         )
         self.venue_read_failed = Gauge(
             "zcrypto_exec_venue_read_failed",
-            "Whether the engine's last read of the venue's system status failed: 1 when the request did not reach the"
-            " exchange or its answer could not be read, 0 when the exchange answered with a status of its own.",
+            "Whether the engine's last read of the venue's system status failed: 1 when the request failed or its"
+            " answer could not be read, 0 when the exchange answered with a status of its own.",
             registry=registry,
         )
         # The envelope's heartbeat, the series that answers "is the boundary path still evaluating the gate": it moves at startup,

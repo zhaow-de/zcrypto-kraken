@@ -679,8 +679,6 @@ def _bare_client(base_url: str | None):
 
 @dataclass(frozen=True)
 class VenueBook:
-    """The venue's own book, as one `read_venue_book` answered it."""
-
     held: dict[str, float]  # per INSTRUMENT_IDS symbol, read_venue_holdings' figure: spot plus signed margin
     balances: dict[str, float]  # per basket base, the CASH read's spot totals alone: the sell check's figure
     earn: dict[str, float]  # per basket base held under an earn or staking code, its total: the mark's, never held
@@ -789,7 +787,6 @@ def read_venue_book(*, base_url: str | None = None) -> VenueBook:
 
 
 def read_venue_holdings(*, base_url: str | None = None) -> dict[str, float]:
-    """`read_venue_book`'s `held`, on its terms."""
     return read_venue_book(base_url=base_url).held
 
 
@@ -4229,8 +4226,8 @@ class ProbeExecutor:
             attached[1]["filled_qty"] = attached[1]["filled_qty"] + qty
 
     def _reconcile_terminal(self, active: _ActiveIntent) -> None:
-        """The post-terminal reconciliation: what this intent's fills say this engine's OWN position
-        should now be, against what the Cache says it is.
+        """The post-terminal reconciliation: what this intent's fills, and the late fills it nets, say this
+        engine's OWN position should now be, against what the Cache says it is.
 
         Scoped to this engine's strategy on BOTH ends, never to the instrument: an instrument-scoped
         read carries holdings this engine never ordered, and an operator's hand settle must reach no
@@ -4918,11 +4915,6 @@ class ProbeExecutor:
         with a row adopted from that window. The boundary is that `_attached` outlives the window:
         a process still running two days past an adopted row's boundary could accept a plan reusing
         its plan_id, and that fill would then be credited to the running intent.
-
-        A fill on an order the running intent does not claim -- an earlier intent's row, still open and
-        filling late -- is netted into that intent's `foreign_filled` when it is this strategy's order on
-        the intent's instrument (`_net_foreign_fill`), so the post-terminal reconciliation expects the
-        position the fill moved.
         """
         attached = self._attached_for(event)
         if attached is None:
@@ -5029,7 +5021,8 @@ class ProbeExecutor:
         self._index += 1
 
     def _journal_intent(self, index: int, outcome: str, reasons, filled_qty: float = 0.0) -> bool:
-        """Every terminal of an intent passes through here, so it is where a cycle-plan intent re-sets its gap."""
+        """Every terminal of an intent of the running plan passes through here, so it is where a cycle-plan intent
+        re-sets its gap."""
         self._set_cycle_gap(index, filled_qty)
         try:
             update_plan_intent(

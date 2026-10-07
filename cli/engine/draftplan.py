@@ -402,8 +402,7 @@ def decide_leg(
         qty = _floor_to_step(kraken_held, constraints.lot_step)
         reason = "the whole leg" if exiting else "the whole leg: the remainder would be under ordermin"
     if 0 < venue_b < qty:
-        # The box's engine image refuses a sell over any positive b, dust included; it admits a sell of no
-        # more than b.
+        # The box's engine image refuses a sell over any positive b, dust included.
         capped = _floor_to_step(venue_b, constraints.lot_step)
         if capped < constraints.ordermin:
             return replace(
