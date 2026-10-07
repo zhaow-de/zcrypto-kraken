@@ -355,9 +355,8 @@ def test_signal_during_probe_restores_the_target_before_cleaning(tmp_path):
 @pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses file permissions")
 @pytest.mark.parametrize("sig", [pytest.param(signal.SIGINT, id="INT"), pytest.param(signal.SIGTERM, id="TERM")])
 def test_cleanup_cp_failure_is_rc9_and_keeps_pristine(tmp_path, sig):
-    """Signal mid-mutation with the TARGET FILE read-only, so the cleanup cp fails: rc must be 9, the
-    stderr must say KEPT, and the pristine copy must SURVIVE (it is the only way back). `chmod 0444`
-    goes on the FILE — overwriting needs write permission on the file, not its directory."""
+    """`chmod 0444` goes on the target FILE so cleanup's cp fails — overwriting needs write permission on the
+    file, not its directory."""
     # The repo is nested one level down so the marker and the captured stderr live OUTSIDE it: both
     # are created before the script starts, and an untracked file in the repo trips the dirty-worktree
     # refusal (rc 3) before anything is ever mutated.
@@ -370,8 +369,7 @@ def test_cleanup_cp_failure_is_rc9_and_keeps_pristine(tmp_path, sig):
     subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "slow"], check=True)
     # The restoring cp sleeps first, so the signals streamed below land inside cleanup on every run: a
-    # bare cp's window is a few milliseconds, and a re-entered handler's 130 or 143 then shows only on
-    # a slow runner.
+    # bare cp's window is a few milliseconds, and a re-entered handler then shows only on a slow runner.
     inside = tmp_path / "cleanup-cp-started"
     stubs = tmp_path / "bin"
     stubs.mkdir()
