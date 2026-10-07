@@ -35,6 +35,7 @@ flock -n "$lock_fd" || fail "another run of the $name backup holds $lock"
 # A command prefix the database and the staging directory are read through, empty where the host holds them itself.
 read -r -a runner <<<"${SQLITE_BACKUP_RUNNER:-}"
 copy=${SQLITE_BACKUP_COPY:-cp }
+group=${SQLITE_BACKUP_GROUP:-}
 
 now=$(date -u +%s)
 staged="$staging/$name-$(date -u -d "@$now" +%Y-%m-%dT%H%M%SZ).sqlite"
@@ -108,6 +109,14 @@ fi
 
 "${runner[@]}" python3 -c "$prune" "$staging" "$name" "$cutoff" || fail "pruning $staging failed"
 python3 -c "$prune" "$dest" "$name" "$cutoff" || fail "pruning $dest failed"
+
+# Every file kept, an earlier run's among them, so a pull reads them all; the files first, so the directory opens to
+# the group over files already held.
+if [ -n "$group" ]; then
+  find "$dest" -mindepth 1 -maxdepth 1 -type f -exec chgrp -- "$group" {} + -exec chmod 0640 -- {} + ||
+    fail "cannot hold the files in $dest at 0640 under the group $group"
+  { chgrp -- "$group" "$dest" && chmod 0750 -- "$dest"; } || fail "cannot hold $dest at 0750 under the group $group"
+fi
 
 # The run's files are complete: a stop from here leaves them, and the gauge as it was.
 trap - TERM INT

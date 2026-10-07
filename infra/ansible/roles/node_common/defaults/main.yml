@@ -34,5 +34,8 @@ node_common_sqlite_backup_dest: "{{ undef(hint='the including role sets node_com
 node_common_sqlite_backup_keep_days: 14
 node_common_sqlite_backup_runner: ""
 node_common_sqlite_backup_copy: ""
+# The group every run holds the destination (0750) and each copy in it (0640) readable by; empty, the destination is
+# created 0700 and nothing but root reads it.
+node_common_sqlite_backup_group: ""
 node_common_sqlite_backup_on_calendar: "*-*-* 02:47:00"
 node_common_sqlite_backup_textfile: "{{ undef(hint='the including role sets node_common_sqlite_backup_textfile, the gauge path its textfile collector reads') }}"

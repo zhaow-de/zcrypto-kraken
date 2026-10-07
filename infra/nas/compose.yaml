@@ -67,6 +67,10 @@ services:
       HOT_DEST: ${HOT_DEST:-/archive/hot}
       HOT_SSH_KEY: /keys/sync_hot
       HOT_SSH_PORT: ${HOT_SSH_PORT:-22}
+      # The dead-man node's nightly backups, a raw rsync like the hot pull's.
+      HC_BACKUP_SOURCE: ${HC_BACKUP_SOURCE:-}
+      HC_BACKUP_DEST: /hc-backups
+      HC_BACKUP_SSH_KEY: /keys/sync_hc_backup
       CAPTURE_SSH_KEY: /keys/sync_capture
       JOURNAL_SSH_KEY: /keys/sync_journal
       ARCHIVE_SSH_KNOWN_HOSTS: /keys/known_hosts
@@ -88,6 +92,9 @@ services:
       - ./keys:/keys:ro
       - ./zcrypto.toml:/app/zcrypto.toml:ro
       - /volume1/docker/zcrypto-archive/textfile:/textfile
+      # In the stack directory, off /archive, the custody share the ops node mounts over NFS: a backup carries the
+      # dead-man service's keys and its Slack webhook.
+      - ./hc-backups:/hc-backups
     # journald, not json-file (00068 D6/T8): this container's stdout now reaches Grafana Cloud and
     # the observability node through the host journal + `loki.source.journal` (config.alloy),
     # alongside Alloy's own stream -- so its stdout has no json.log to rotate any more.

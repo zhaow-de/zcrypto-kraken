@@ -183,6 +183,42 @@
     node_common_selfcheck_env_value: "{{ hc_selfcheck_healthcheck_url }}"
     node_common_selfcheck_on_calendar: "*:0/5:23"
 
+# ---- The NAS's pull of the backups, in the ops role's shape for its pull channels ----------------------------------
+- name: install rsync, which ships /usr/bin/rrsync, the forced command of the NAS's backup pull
+  ansible.builtin.apt:
+    name: rsync
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# sshd runs a forced command through the account's login shell, so a nologin shell refuses every pull; this one runs
+# rrsync alone, and is in place before the account names it.
+- name: install the rrsync-only login shell for zcrypto-data
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/files/rrsync-shell"
+    dest: "{{ hc_rrsync_shell }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: create zcrypto-data, the account the NAS's backup pull logs in as (no password; the rrsync-only shell)
+  ansible.builtin.user:
+    name: "{{ hc_data_user }}"
+    system: true
+    shell: "{{ hc_rrsync_shell }}"
+    create_home: true
+    state: present
+  register: hc_data_user_install
+
+# A check pass creates no account, and the module fails on a user that does not exist.
+- name: install the NAS's backup pull key (rrsync -ro) on zcrypto-data
+  ansible.posix.authorized_key:
+    user: "{{ hc_data_user }}"
+    exclusive: false
+    key: "{{ hc_sync_backup_authorized_key }}"
+    key_options: 'command="/usr/bin/rrsync -ro {{ hc_backup_dir }}",restrict'
+  when: not (ansible_check_mode and hc_data_user_install is changed)
+
 - name: the nightly backup
   ansible.builtin.include_role: {name: node_common, tasks_from: sqlite-backup}
   vars:
@@ -194,6 +230,7 @@
     node_common_sqlite_backup_keep_days: "{{ hc_backup_keep_days }}"
     node_common_sqlite_backup_runner: "docker compose -f {{ hc_compose_dir }}/compose.yaml exec -T web"
     node_common_sqlite_backup_copy: "docker compose -f {{ hc_compose_dir }}/compose.yaml cp web:"
+    node_common_sqlite_backup_group: "{{ hc_data_user }}"
     node_common_sqlite_backup_textfile: "{{ hc_textfile_dir }}/sqlite-backup.prom"
 
 # ---- The node's own telemetry ------------------------------------------------------------------------------------

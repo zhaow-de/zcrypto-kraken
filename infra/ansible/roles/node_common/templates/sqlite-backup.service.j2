@@ -10,4 +10,5 @@ Type=oneshot
 # makes read-only. Each line is quoted whole, since its value carries spaces.
 Environment="SQLITE_BACKUP_RUNNER={{ node_common_sqlite_backup_runner }}"
 Environment="SQLITE_BACKUP_COPY={{ node_common_sqlite_backup_copy }}"
+Environment="SQLITE_BACKUP_GROUP={{ node_common_sqlite_backup_group }}"
 ExecStart=/usr/local/sbin/zcrypto-sqlite-backup {{ node_common_sqlite_backup_name }} {{ node_common_sqlite_backup_db }} {{ node_common_sqlite_backup_staging }} {{ node_common_sqlite_backup_dest }} {{ node_common_sqlite_backup_keep_days }} {{ node_common_sqlite_backup_textfile }}

@@ -5,6 +5,9 @@ base_unattended_upgrades_reboot_time: "10:25"
 # A reboot stops the clone, and with it every dead-man check, for its duration.
 base_unattended_upgrades_automatic_reboot: "false"
 deploy_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/deploy_zcrypto-hc_ed25519.pub') }}"
+# The NAS's backup pull key, installed on zcrypto-data as `rrsync -ro` over the backup directory; its private half
+# lives on the NAS alone.
+hc_sync_backup_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/sync_hc_backup_ed25519.pub') }}"
 # The superuser's mailbox, where the clone's sudo-mode codes land, and the sender verified in SES.
 hc_admin_email: zhaow.km@gmail.com
 hc_email_from: z-no-reply@zhaow.pro

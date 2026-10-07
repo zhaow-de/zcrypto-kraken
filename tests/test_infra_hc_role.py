@@ -142,6 +142,7 @@ INCLUDES = yaml.safe_load(
     node_common_sqlite_backup_keep_days: "{{ hc_backup_keep_days }}"
     node_common_sqlite_backup_runner: "docker compose -f {{ hc_compose_dir }}/compose.yaml exec -T web"
     node_common_sqlite_backup_copy: "docker compose -f {{ hc_compose_dir }}/compose.yaml cp web:"
+    node_common_sqlite_backup_group: "{{ hc_data_user }}"
     node_common_sqlite_backup_textfile: "{{ hc_textfile_dir }}/sqlite-backup.prom"
 """
 )
@@ -530,7 +531,8 @@ def _shared(module: str) -> tuple[str, object]:
 def test_alloy_is_installed_held_and_pinned_by_the_shared_role_alone_and_its_unit_skips_the_preview_that_has_none():
     entries = [module_entry(task) for task, _, _ in alloy_version.role_leaves("hc", frozenset())]
     packages = [entry for entry in entries if entry[0] in ("ansible.builtin.apt", "ansible.builtin.dpkg_selections")]
-    assert packages == [_shared("ansible.builtin.apt"), _shared("ansible.builtin.dpkg_selections")], packages
+    rsync = module_entry(find_task(_tasks(), RSYNC))
+    assert packages == [rsync, _shared("ansible.builtin.apt"), _shared("ansible.builtin.dpkg_selections")], packages
     pins = [entry for entry in entries if "/etc/apt/preferences.d/" in str(entry[1])]
     assert pins == [_shared("ansible.builtin.copy")], pins
     alloy = find_task(_tasks(), "alloy enabled + started")
@@ -744,6 +746,55 @@ def test_the_reboot_check_writes_into_the_directory_the_nodes_alloy_reads():
     assert "textfile" in json.loads(_assigned(unix, "set_collectors"))
     assert dict(unix)["textfile"] == [(f'directory = "{written}"', [])]
     assert written == DEFAULTS["hc_textfile_dir"]
+
+
+# --- the NAS's pull of the backups ---------------------------------------------------------------------------------
+RSYNC = "install rsync, which ships /usr/bin/rrsync, the forced command of the NAS's backup pull"
+RRSYNC_SHELL = "install the rrsync-only login shell for zcrypto-data"
+DATA_USER = "create zcrypto-data, the account the NAS's backup pull logs in as (no password; the rrsync-only shell)"
+PULL_KEY = "install the NAS's backup pull key (rrsync -ro) on zcrypto-data"
+BACKUP = "the nightly backup"
+
+
+def _resolved(value):
+    return role_render.resolve(ROLE, value, {})
+
+
+def test_the_pull_key_runs_rrsync_read_only_pinned_to_the_backup_directory():
+    key = find_task(_tasks(), PULL_KEY)["ansible.posix.authorized_key"]
+    assert _resolved(key["key_options"]) == f'command="/usr/bin/rrsync -ro {DEFAULTS["hc_backup_dir"]}",restrict'
+    assert (key["key"], key["exclusive"]) == ("{{ hc_sync_backup_authorized_key }}", False)
+    host_vars = yaml.safe_load((ANSIBLE / "host_vars/zcrypto-hc/vars.yml").read_text())
+    assert host_vars["hc_sync_backup_authorized_key"] == "{{ lookup('file', playbook_dir ~ '/files/sync_hc_backup_ed25519.pub') }}"
+    assert (ANSIBLE / "files/sync_hc_backup_ed25519.pub").read_text().startswith("ssh-ed25519 ")
+
+
+def test_the_pull_keys_user_is_created_before_it_with_the_wrapper_the_role_installs_as_its_shell():
+    tasks = _tasks()
+    shell = find_task(tasks, RRSYNC_SHELL)["ansible.builtin.copy"]
+    creation = find_task(tasks, DATA_USER)
+    user = creation["ansible.builtin.user"]
+    key = find_task(tasks, PULL_KEY)["ansible.posix.authorized_key"]
+    assert _resolved(user["name"]) == _resolved(key["user"]) == DEFAULTS["hc_data_user"] == "zcrypto-data"
+    assert _resolved(user["shell"]) == _resolved(shell["dest"]) == DEFAULTS["hc_rrsync_shell"]
+    assert shell["src"] == "{{ playbook_dir }}/files/rrsync-shell" and (ANSIBLE / "files/rrsync-shell").is_file()
+    assert (shell["owner"], shell["mode"]) == ("root", "0755")
+    assert (user["system"], user["create_home"], "password" in user) == (True, True, False)
+    assert creation["register"] == "hc_data_user_install"
+    rsync = find_task(tasks, RSYNC)["ansible.builtin.apt"]
+    assert (rsync["name"], rsync["state"]) == ("rsync", "present")
+    order = [task_index(tasks, name) for name in (RSYNC, RRSYNC_SHELL, DATA_USER, PULL_KEY, BACKUP)]
+    assert order == sorted(order), [task["name"] for task in tasks]
+
+
+def test_the_backup_hands_its_files_to_the_pull_users_group():
+    group = find_task(_tasks(), BACKUP)["vars"]["node_common_sqlite_backup_group"]
+    assert _resolved(group) == _resolved(find_task(_tasks(), DATA_USER)["ansible.builtin.user"]["name"])
+
+
+def test_the_hardening_role_leaves_the_pull_users_shell_alone():
+    ignored = yaml.safe_load((ANSIBLE / "group_vars/hc_host/vars.yml").read_text())["os_ignore_users"]
+    assert DEFAULTS["hc_data_user"] in ignored
 
 
 # --- the fleet's ping URLs: one vaulted project key, one base, each check's slug ----------------------------------

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import configparser
+import grp
 import json
 import os
 import re
@@ -258,6 +259,7 @@ BACKUP = {
     "node_common_sqlite_backup_dest": "/var/backups/probe",
     "node_common_sqlite_backup_runner": "docker compose -f /opt/probe/compose.yaml exec -T web",
     "node_common_sqlite_backup_copy": "docker compose -f /opt/probe/compose.yaml cp web:",
+    "node_common_sqlite_backup_group": "probe-data",
     "node_common_sqlite_backup_textfile": "/var/lib/probe-textfile/sqlite-backup.prom",
 }
 STAMPED = re.compile(r"probe-(\d{4}-\d{2}-\d{2})T\d{6}Z\.sqlite")
@@ -379,9 +381,10 @@ def _argv(node: Node, *, db=None, staging=None, keep_days="14") -> list[str]:
     return ["probe", str(db or node.db), str(staging or node.staging), str(node.dest), keep_days, str(node.prom)]
 
 
-def _environment(node: Node, *, runner="", copy="", env=None, now=None) -> dict[str, str]:
+def _environment(node: Node, *, runner="", copy="", group="", env=None, now=None) -> dict[str, str]:
     path = f"{node.bin}{os.pathsep}{os.environ['PATH']}"
-    environment = os.environ | {"PATH": path, "SQLITE_BACKUP_RUNNER": runner, "SQLITE_BACKUP_COPY": copy} | (env or {})
+    prefixes = {"SQLITE_BACKUP_RUNNER": runner, "SQLITE_BACKUP_COPY": copy, "SQLITE_BACKUP_GROUP": group}
+    environment = os.environ | {"PATH": path} | prefixes | (env or {})
     if now is not None:
         _stub(node, "date", DATE_STUB.replace("REAL_DATE", shutil.which("date")))
         environment["DATE_STUB_NOW"] = str(now)
@@ -497,6 +500,21 @@ def test_a_backup_is_a_valid_copy_of_the_source_staged_and_copied_into_a_new_070
     assert _content(staged) == _content(node.db) == _content(node.dest / staged.name)
     assert len(_content(staged)) > 12, "the rows the live connection left in the -wal are missing"
     assert stat.S_IMODE(node.dest.stat().st_mode) == 0o700
+
+
+def test_a_group_holds_the_destination_at_0750_and_every_file_in_it_at_0640_an_earlier_runs_among_them(node):
+    gid = os.getgid()
+    node.dest.mkdir(parents=True)
+    node.dest.chmod(0o700)
+    earlier = node.dest / _named(_today(), 1)
+    earlier.write_bytes(b"")
+    earlier.chmod(0o600)
+    result = _backup(node, group=grp.getgrgid(gid).gr_name)
+    assert result.returncode == 0, result.stderr
+    (written,) = _written_by_the_run(node.dest, {earlier.name})
+    assert (stat.S_IMODE(node.dest.stat().st_mode), node.dest.stat().st_gid) == (0o750, gid)
+    held = {path.name: (stat.S_IMODE(path.stat().st_mode), path.stat().st_gid) for path in node.dest.iterdir()}
+    assert held == {earlier.name: (0o640, gid), written.name: (0o640, gid)}
 
 
 def test_the_prune_reads_the_date_in_the_name_and_keeps_the_keep_days_in_both_directories(node):
@@ -748,7 +766,7 @@ def _unit_environment(unit: list[str]) -> dict[str, str]:
     return dict(words[0].split("=", 1) for words in assignments)
 
 
-def test_the_backup_unit_runs_the_script_as_root_over_the_includes_arguments_and_its_two_prefixes():
+def test_the_backup_unit_runs_the_script_as_root_over_the_includes_arguments_its_two_prefixes_and_its_group():
     unit = _backup_render("sqlite-backup.service.j2")
     assert unit[0].startswith("# Rendered by the `probe` Ansible role at /etc/systemd/system/zcrypto-sqlite-backup.service;")
     (exec_start,) = [line.removeprefix("ExecStart=").split() for line in unit if line.startswith("ExecStart=")]
@@ -764,7 +782,11 @@ def test_the_backup_unit_runs_the_script_as_root_over_the_includes_arguments_and
     assert _unit_environment(unit) == {
         "SQLITE_BACKUP_RUNNER": BACKUP["node_common_sqlite_backup_runner"],
         "SQLITE_BACKUP_COPY": BACKUP["node_common_sqlite_backup_copy"],
+        "SQLITE_BACKUP_GROUP": BACKUP["node_common_sqlite_backup_group"],
     }
+    ungrouped = {k: v for k, v in BACKUP.items() if k != "node_common_sqlite_backup_group"}
+    default = role_render.render(ROLE, "sqlite-backup.service.j2", {}, **ungrouped).splitlines()
+    assert _unit_environment(default)["SQLITE_BACKUP_GROUP"] == "", "an include naming no group holds its copies root-only"
     keys = {line.split("=", 1)[0] for line in unit if "=" in line and not line.startswith("#")}
     assert not keys & {"User", "DynamicUser", "ProtectSystem"}, keys
 

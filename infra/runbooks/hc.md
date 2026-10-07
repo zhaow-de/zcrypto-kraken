@@ -44,7 +44,7 @@ The two figures the drills measured: a thirty-minute power-off read `[[ROLLOUT: 
    infra/ansible/scripts/converge.sh site.yml --limit zcrypto-hc -e hc_image_tag=<tag>
    ```
 
-   `<tag>` is the pinned tag, the `hc` row of `docs/reference/fleet-pins.md`; the first converge acknowledges the Docker daemon's new `daemon.json`, absent on a fresh node. Then remove the firewall's TCP `22` rule, and put the database back by `hc-restore` from the newest backup file that survives the disk, or by `hc-lost-database` when none does.
+   `<tag>` is the pinned tag, the `hc` row of `docs/reference/fleet-pins.md`; the first converge acknowledges the Docker daemon's new `daemon.json`, absent on a fresh node. Then remove the firewall's TCP `22` rule, and put the database back by `hc-restore` from the newest backup file that survives the disk, the NAS's copy among them, or by `hc-lost-database` when none does; the NAS's pull of the backups refuses the rebuilt node's new host key until `hc-backup` step 6 replaces its line.
 
 6. **Change nothing on the fleet for it.** The pingers keep pinging, and their pings land again once the service answers; no host is converged for the outage.
 
@@ -155,11 +155,13 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-Nothing fired. A backup is wanted before a step that rewrites the database, a release with a migration or a restore, or the node's backups are to be read; or `zcrypto-hc-backup-stale` sent you here.
+Nothing fired. A backup is wanted before a step that rewrites the database, a release with a migration or a restore, or the node's backups or the NAS's copy of them are to be read; or `zcrypto-hc-backup-stale` sent you here, or `zcrypto-nas-archive-pull-errors` paged an `hc backup pull failed` line.
 
 ### What it means
 
 The timer `zcrypto-sqlite-backup` runs nightly at 02:47 UTC. It runs `VACUUM INTO` inside the service's container, through Compose's `exec`, into `/data/backups/hc-<UTC date and time>.sqlite` inside the volume, so the container's own uid writes the file and nothing is created by root beside the live database; it copies that file out of the container, through Compose's `cp`, into `/var/backups/zcrypto-hc/` on the node; it prunes both directories past 14 days, by the date in each file's name; and it writes the gauge `zcrypto_sqlite_backup_last_success_timestamp_seconds{db="hc"}` into the node's textfile directory, which the node's Alloy ships. A run writes the gauge only when each of those steps succeeded, so the gauge's age is a failed run's signal, `zcrypto-hc-backup-stale` below. A backup file is a closed, consistent database: Linode Backups carry the node's disk, the backup files among them, while their snapshot of the live database can catch it mid-write, so a restore reads a backup file, by `hc-restore`. One run at a time: a run started while another holds the lock exits naming it. The files carry the project's keys, its ping key and the Slack integration's webhook.
+
+The NAS keeps a copy off the node. Its `zcrypto-archive-pull` loop pulls `/var/backups/zcrypto-hc/` each hour into `/volume1/docker/zcrypto-archive/hc-backups/`, logging in as the node's `zcrypto-data` account with the key `sync_hc_backup`, which the node admits as `rrsync -ro` pinned at that directory: the NAS reads the backups and nothing else, and the node holds no key to the NAS. Each run holds the directory at `0750` and every file in it at `0640`, root's with the group `zcrypto-data`, so that account reads them. The pull deletes nothing on the NAS, which keeps every file it has pulled, those the node has pruned and those a rebuilt node never had among them. A failed pull logs `hc backup pull failed (source=… dest=…), continuing` at `ERROR` in the NAS's pull log, its one record, since a raw `rsync` writes no `pull complete` line, and pages `zcrypto-nas-archive-pull-errors` (`nas.md#zcrypto-nas-archive-pull-errors`).
 
 ### What to do
 
@@ -167,6 +169,8 @@ The timer `zcrypto-sqlite-backup` runs nightly at 02:47 UTC. It runs `VACUUM INT
 2. **Read what is kept**: `sudo ls -l /var/backups/zcrypto-hc/`, one file per run of the last 14 days, each named for its UTC date and time, and `sudo cat /var/lib/zcrypto-node-textfile/sqlite-backup.prom`, the gauge with the last completed run's time.
 3. **A run that failed** logs an `ERROR` line naming its step and leaves the gauge as it was: `zcrypto-hc-backup-stale` step 1 reads which.
 4. **Confirm by value**, from the workstation: `uv run python infra/scripts/grafana-query.py --stack mon 'time() - max(zcrypto_sqlite_backup_last_success_timestamp_seconds{host="zcrypto-hc"})'` reads the seconds since step 1's run, within a minute or two of it.
+5. **Read the NAS's copy**, on the NAS, once a pull cycle has passed since the run: `sudo ls -l /volume1/docker/zcrypto-archive/hc-backups/` names each file step 2 names, and `sudo /usr/local/bin/docker logs --since 3h zcrypto-archive-pull 2>&1 | grep -B5 'hc backup pull failed'` prints nothing. A failure's cause is in the `rsync` and `ssh` lines before it: `Host key verification failed.` after a rebuild is step 6's; a refused login is the node's `zcrypto-data` account or its key, which the node's `--tags hc` converge puts back.
+6. **After the node is rebuilt**, its host key is new, and the NAS's pull refuses it until the line for `[zcrypto-hc.zhaow.me]:10022` in the NAS's `/volume1/docker/zcrypto-archive/keys/known_hosts` is replaced: on the workstation, `ssh-keyscan -t ed25519 -p 10022 zcrypto-hc.zhaow.me`, its `ssh-keygen -lf` fingerprint read equal to the one the node's LISH console prints for `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`; then on the NAS that line in the file replaced by the new one, the file staying root's at `0644` (`infra/nas/README.md`, bootstrap step 4). Step 5 reads the next pull.
 
 ### Retire when
 
@@ -190,7 +194,13 @@ A restored database brings back the superuser, the project, its three keys, its 
 
 ### What to do
 
-1. **Stage the file on the node**, two copies in a directory the container's uid owns, one for the read and one for the swap, `f` set to the file to restore — a file under `/var/backups/zcrypto-hc/`, or one copied onto the node from where it is kept:
+1. **Stage the file on the node**, two copies in a directory the container's uid owns, one for the read and one for the swap, `f` set to the file to restore — a file under `/var/backups/zcrypto-hc/`, or, with the node and its Linode Backups gone, the newest file the NAS's copy holds (`hc-backup`), listed on the NAS by `sudo ls -l /volume1/docker/zcrypto-archive/hc-backups/` and piped onto the node from the workstation, `f` then naming it under `/tmp`:
+
+   ```bash
+   ssh nas 'sudo cat /volume1/docker/zcrypto-archive/hc-backups/hc-<UTC date and time>.sqlite' | ssh hc 'umask 077 && cat >/tmp/hc-<UTC date and time>.sqlite'
+   ```
+
+   Then, on the node:
 
    ```bash
    f=/var/backups/zcrypto-hc/hc-<UTC date and time>.sqlite
@@ -220,7 +230,7 @@ A restored database brings back the superuser, the project, its three keys, its 
 
 5. **Confirm by value**, from the workstation: `uv run python infra/scripts/hc-provision.py status` reads each check's `last_ping` moving past the restore as its pinger's next ping lands, and the self-check's next line, `ssh hc 'sudo journalctl -u zcrypto-hc-selfcheck --no-pager -o cat | grep -E "^selfcheck:" | tail -1'`, reads `-> pinged`. A self-check reading `-> ping failed: HTTPError` and no check moving is a ping key rotated after the backup: `hc-lost-database` step 3 sets it back. `status` refused on a key is an API key re-minted after the backup: `hc-keys` steps 6 and 7.
 
-6. **Remove the copies**, on the node, once step 5 reads green, since they carry the project's keys and the Slack webhook: `sudo rm -rf /tmp/hc-restore`, then the replaced database, `sudo docker run --rm --network none -v zcrypto-hc_hc-data:/data --entrypoint rm ghcr.io/zhaow-de/healthchecks:<tag> -r /data/replaced`.
+6. **Remove the copies**, on the node, once step 5 reads green, since they carry the project's keys and the Slack webhook: `sudo rm -rf /tmp/hc-restore` and a file step 1 piped in under `/tmp`, then the replaced database, `sudo docker run --rm --network none -v zcrypto-hc_hc-data:/data --entrypoint rm ghcr.io/zhaow-de/healthchecks:<tag> -r /data/replaced`.
 
 ### Retire when
 
@@ -418,7 +428,7 @@ The backup runs nightly at 02:47 UTC and writes its gauge only when the run comp
 
 ### What to do
 
-1. **Read the last runs**, on the node: `systemctl list-timers zcrypto-sqlite-backup.timer`, then `sudo journalctl -u zcrypto-sqlite-backup --no-pager -n 20`. The `ERROR` line names the step that failed: `VACUUM INTO … failed` is the container not running, `zcrypto-hc-service-down` above, or a full disk, `zcrypto-hc-disk-low` above; `copying … failed` and `pruning … failed` are the host-side directory; `another run of the hc backup holds …` is a run still going.
+1. **Read the last runs**, on the node: `systemctl list-timers zcrypto-sqlite-backup.timer`, then `sudo journalctl -u zcrypto-sqlite-backup --no-pager -n 20`. The `ERROR` line names the step that failed: `VACUUM INTO … failed` is the container not running, `zcrypto-hc-service-down` above, or a full disk, `zcrypto-hc-disk-low` above; `copying … failed` and `pruning … failed` are the host-side directory; `cannot hold … under the group zcrypto-data` is that account missing, which the node's `--tags hc` converge creates; `another run of the hc backup holds …` is a run still going.
 2. **Take one by hand** once the cause is cleared: `hc-backup` step 1.
 3. **Confirm by value**, from the workstation: `uv run python infra/scripts/grafana-query.py --stack mon 'time() - max(zcrypto_sqlite_backup_last_success_timestamp_seconds{host="zcrypto-hc"})'` reads under 93600, and the rule is back to **Normal**.
 
