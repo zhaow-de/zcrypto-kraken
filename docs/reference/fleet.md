@@ -6,8 +6,8 @@ What runs where: hosts, services, data paths, mounts, replication, telemetry lab
 
 | host | ssh | ansible groups | role | trust boundary |
 | --- | --- | --- | --- | --- |
-| `zcrypto` | `ssh zcrypto` | `capture_host`, `engine_host` | L2 capture **primary**; the trade engine | holds the live Kraken trade key as container env (CLAUDE.md `## Secrets`) |
-| `zcrypto-red` | `ssh red` | `capture_host` | L2 capture **secondary** | no trade key; not in `engine_host` |
+| `zcrypto` | `ssh zcrypto` | `capture_host`, `engine_host`, `observed` | L2 capture **primary**; the trade engine | holds the live Kraken trade key as container env (CLAUDE.md `## Secrets`) |
+| `zcrypto-red` | `ssh red` | `capture_host`, `observed` | L2 capture **secondary** | no trade key; not in `engine_host` |
 | `zcrypto-ops` | `ssh hp` | `ops_host`, `observed` | compute tier (spec `00051`): archive reconcile and backfill, liquidations poller, panel materialize | no trade key; no `uv` — it runs containers, not the repo CLI |
 | `nas` | `ssh nas` | `nas_host`, `observed` | archive and custody (spec `00048` Role A), gate export, NFS server | DSM owns the OS; ansible manages the zcrypto payload alone. sftp chroots at `/volume1`; `nas-hot:` is an rrsync endpoint into `hot/` (`infra/runbooks/nas.md`'s `nas-file-transfer`) |
 | `zaccess` | `ssh -p 10022 zcrypto-deploy@zaccess.zhaow.me` | `access_host`, `observed` | internet bridgehead (spec `00075`): WireGuard tunnel head, Caddy mTLS edge, SSH and NAS socket-proxyd relays | Linode VPS; no trade key, no capture data, no containers — all of it re-issuable. Holds the Grafana Cloud push creds and the public half of the mTLS CA; the CA key stays in the vault |
