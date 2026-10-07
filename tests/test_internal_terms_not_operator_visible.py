@@ -630,9 +630,8 @@ def _rendered_help() -> list[tuple[str, str]]:
         result = runner.invoke(app, [*path, "--help"])
         if result.exit_code != 0:
             continue
-        # CI forces a styled terminal (`GITHUB_ACTIONS`, `FORCE_COLOR`, `PY_COLORS`), and a styled
-        # Commands row opens with an escape the row match cannot read past: the walk and the scan
-        # both read the unstyled text.
+        # CI forces a styled terminal, and a styled Commands row opens with an escape the row match
+        # cannot read past.
         text = _ANSI_RE.sub("", result.stdout)
         seen.append((" ".join(["zcrypto", *path]), text))
         if "Commands" in text and len(path) < 3:
@@ -653,9 +652,8 @@ def test_rendered_cli_help_carries_no_internal_vocabulary():
 
 
 def _walk_under(monkeypatch, **env: str | None) -> tuple[int, bool]:
-    """The walker's screen count with `env` applied (None removes a name), and whether the root screen
-    rendered styled. typer reads `GITHUB_ACTIONS` once, when `typer.rich_utils` is imported, so a
-    setenv alone changes nothing: the module is reloaded under `env` and again once it is restored."""
+    """typer reads `GITHUB_ACTIONS` once, when `typer.rich_utils` is imported, so a setenv alone changes
+    nothing: the module is reloaded under `env` and again once it is restored."""
     import typer.rich_utils
     from typer.testing import CliRunner
 
@@ -681,7 +679,7 @@ def test_the_help_walker_reads_every_screen_under_ci_colour(monkeypatch):
     # would then compare two unstyled walks.
     forced, styled = _walk_under(monkeypatch, GITHUB_ACTIONS="true", TERM="xterm-256color")
     assert styled, "GITHUB_ACTIONS=true did not style the help -- this case is not reading what CI renders"
-    assert plain > 1, f"the walker read {plain} screen(s) with no colour variable -- it is broken, not the CLI small"
+    assert plain > 1, f"the walker read {plain} screen(s) without GITHUB_ACTIONS -- it is broken, not the CLI small"
     assert forced == plain, f"the walker read {forced} screen(s) under GITHUB_ACTIONS=true and {plain} without"
 
 
