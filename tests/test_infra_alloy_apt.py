@@ -33,55 +33,6 @@ RESTART = "restart alloy when its process predates the installed binary or none 
 ALLOY_APT_MAIN = [REFUSAL, ECHO, REPOSITORY, PIN, INSTALL, PREVIEWED, HOLD]
 ALLOY_APT_POSTCONDITION = [FLUSH, READ, RESTART]
 
-# The shared role's share of each importer's exclusion allowlist, written out and never read from the role, so an edit
-# to the role fails every importer's exclusion case until these move with it.
-ALLOY_APT_FREE = {f"ansible.builtin.{m}" for m in ("assert", "debug", "set_fact")}
-ALLOY_APT_VERBATIM = [
-    (
-        "ansible.builtin.deb822_repository",
-        {
-            "name": "grafana",
-            "types": ["deb"],
-            "uris": "https://apt.grafana.com",
-            "suites": ["stable"],
-            "components": ["main"],
-            "signed_by": "https://apt.grafana.com/gpg.key",
-            "install_python_debian": True,
-        },
-    ),
-    (
-        "ansible.builtin.copy",
-        {
-            "content": "Package: alloy\nPin: version {{ alloy_deb_version }}\nPin-Priority: 1001\n",
-            "dest": "/etc/apt/preferences.d/alloy",
-            "owner": "root",
-            "group": "root",
-            "mode": "0644",
-        },
-    ),
-    (
-        "ansible.builtin.apt",
-        {
-            "name": "alloy={{ alloy_deb_version }}",
-            "state": "present",
-            "update_cache": True,
-            "allow_downgrade": True,
-            "allow_change_held_packages": True,
-        },
-    ),
-    ("ansible.builtin.dpkg_selections", {"name": "alloy", "selection": "hold"}),
-    ("ansible.builtin.meta", "flush_handlers"),
-    (
-        "ansible.builtin.shell",
-        {
-            "cmd": "set -o pipefail\n"
-            "pid=$(systemctl show -p MainPID --value alloy)\n"
-            'if [ -z "$pid" ] || [ "$pid" = "0" ]; then echo __not_running__; else readlink "/proc/$pid/exe"; fi\n',
-            "executable": "/bin/bash",
-        },
-    ),
-    ("ansible.builtin.systemd_service", {"name": "alloy", "state": "restarted"}),
-]
 
 HOST = "zaccess"
 FLEET = "1.20.1-1"

@@ -13,9 +13,8 @@ import yaml
 from ansible.template import trust_as_template
 
 from tests import role_render
-from tests.alloy_part import module_entry
+from tests.alloy_part import ALLOY_APT_VERBATIM, module_entry
 from tests.test_alloy_version import alloy_version
-from tests.test_infra_alloy_apt import ALLOY_APT_VERBATIM
 from tests.test_infra_converge_guards import assert_that, find_task, iter_tasks, load_tasks, set_facts, truthy, when_conditions
 
 REPO = Path(__file__).resolve().parents[1]
@@ -354,7 +353,7 @@ def _shared(module: str) -> tuple[str, object]:
 
 
 def test_alloy_alone_is_held_and_pinned_and_the_other_packages_followed():
-    leaves = [task for task, _, _ in alloy_version.walk(load_tasks(TASKS))]
+    leaves = [task for task, _, _ in alloy_version.role_leaves("mon", frozenset())]
     entries = [module_entry(task) for task in leaves]
     install = _shared("ansible.builtin.apt")
     followed = [task for task in leaves if "ansible.builtin.apt" in task and module_entry(task) != install]

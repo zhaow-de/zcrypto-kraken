@@ -7,8 +7,18 @@ import re
 
 import pytest
 
-from tests.alloy_part import ARGUMENT_KEYWORDS, module_entry, notified, play_selection, tagged, task_text, unproduced_reads
-from tests.test_infra_alloy_apt import ALLOY_APT_FREE, ALLOY_APT_MAIN, ALLOY_APT_POSTCONDITION, ALLOY_APT_VERBATIM
+from tests.alloy_part import (
+    ALLOY_APT_VERBATIM,
+    ARGUMENT_KEYWORDS,
+    apt_admitted,
+    module_entry,
+    notified,
+    play_selection,
+    tagged,
+    task_text,
+    unproduced_reads,
+)
+from tests.test_infra_alloy_apt import ALLOY_APT_MAIN, ALLOY_APT_POSTCONDITION
 
 CONFIG = "alloy config — the node's own metrics and journals, written to its stores on loopback"
 STARTED = "alloy enabled + started"
@@ -32,16 +42,7 @@ def _under_alloy_config_dir(path) -> bool:
 
 
 def _admitted(task: dict) -> bool:
-    entry = module_entry(task)
-    if entry is None:
-        return False
-    module, value = entry
-    if module in ALLOY_APT_FREE or entry in ALLOY_APT_VERBATIM or entry in MON_VERBATIM:
-        return True
-    if module == "ansible.builtin.copy" and isinstance(value, dict):
-        written = [value[key] for key in ("path", "dest", "name") if key in value]
-        return bool(written) and all(_under_alloy_config_dir(path) for path in written)
-    return False
+    return apt_admitted(task, {"ansible.builtin.copy"}, _under_alloy_config_dir, MON_VERBATIM)
 
 
 def _reach(task: dict, gates: tuple[str, ...]) -> str | None:

@@ -5,14 +5,9 @@ from __future__ import annotations
 
 import re
 
-from tests.alloy_part import ARGUMENT_KEYWORDS, ROLES, module_entry, notified, tagged, task_text, unproduced_reads
+from tests.alloy_part import ARGUMENT_KEYWORDS, ROLES, apt_admitted, notified, tagged, task_text, unproduced_reads
 from tests.test_alloy_version import alloy_version
-from tests.test_infra_alloy_apt import (
-    ALLOY_APT_FREE,
-    ALLOY_APT_MAIN,
-    ALLOY_APT_POSTCONDITION,
-    ALLOY_APT_VERBATIM,
-)
+from tests.test_infra_alloy_apt import ALLOY_APT_MAIN, ALLOY_APT_POSTCONDITION
 from tests.test_infra_converge_guards import find_task, load_tasks, task_index, when_conditions
 
 ACCESS = ROLES / "access" / "tasks" / "main.yml"
@@ -44,16 +39,7 @@ def _on_alloy_paths(path) -> bool:
 
 
 def _admitted(task: dict) -> bool:
-    entry = module_entry(task)
-    if entry is None:
-        return False
-    module, value = entry
-    if module in ALLOY_APT_FREE or entry in ALLOY_APT_VERBATIM or entry in ACCESS_VERBATIM:
-        return True
-    if module in ACCESS_WRITERS and isinstance(value, dict):
-        written = [value[key] for key in ("path", "dest", "name") if key in value]
-        return bool(written) and all(_on_alloy_paths(path) for path in written)
-    return False
+    return apt_admitted(task, ACCESS_WRITERS, _on_alloy_paths, ACCESS_VERBATIM)
 
 
 def _imported(task: dict) -> dict | None:

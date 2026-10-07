@@ -210,10 +210,19 @@ def _nas_rows_agree(pins: Path, nas_vars: Path, fleet: Path, host_vars: Path) ->
     return pull_agrees and alloy_agrees
 
 
+def _nas_pins() -> list[tuple[str, str]]:
+    return [(service, cell) for _, service, host, _, _, cell in _pins_rows(PINS) if "nas" in [h.strip() for h in host.split(",")]]
+
+
+def _nas_literals() -> list[str]:
+    return re.findall(r"^nas_(?:capture|alloy)_image: \S+$", NAS_VARS.read_text(), re.M)
+
+
 def test_the_nas_rows_agree_with_the_committed_pins():
     assert _nas_rows_agree(PINS, NAS_VARS, ALLOY_FILE, HOST_VARS), (
         "fleet-pins.md's NAS rows disagree with host_vars/nas/vars.yml: archive-pull is on nas_capture_image, and alloy on "
-        "nas_alloy_image or, while that literal is the fleet file's, behind it with the wave open or the row `held`"
+        "nas_alloy_image or, while that literal is the fleet file's, behind it with the wave open or the row `held`: "
+        f"{_nas_pins()} against {_nas_literals()}"
     )
 
 
@@ -242,7 +251,8 @@ def _constructed(
     for host in held:
         (host_vars / host).mkdir(parents=True, exist_ok=True)
         (host_vars / host / "alloy.yml").write_text(f"# the reason\nalloy_image_digest: {PREVIOUS}\n")
-    rows = [("archive-pull", "nas", _cell(pull, "revision x")), ("alloy", "nas", nas_alloy)]
+    rows = [("archive-pull", "nas", _cell(pull, "revision x")), ("capture", "zcrypto", _cell(CAPTURE, "revision x"))]
+    rows += [("alloy", "nas", nas_alloy)]
     rows += [("alloy", host, _cell(digest)) for host, digest in others.items()]
     pins = tmp_path / "fleet-pins.md"
     pins.write_text(
@@ -262,6 +272,7 @@ def _constructed(
         (FLEET_DIGEST, _cell(PREVIOUS), {"zcrypto": FLEET_DIGEST, "zcrypto-red": FLEET_DIGEST}, (), CAPTURE, False),
         (FLEET_DIGEST, _cell(PREVIOUS), {"zcrypto": FLEET_DIGEST, "zcrypto-red": PREVIOUS}, ("zcrypto-red",), CAPTURE, False),
         (FLEET_DIGEST, _cell(PREVIOUS, "v1.19.2, held: 1.20.1 drops lines here"), {"zcrypto": FLEET_DIGEST}, (), CAPTURE, True),
+        (FLEET_DIGEST, _cell(PREVIOUS, "v1.19.2, held"), {"zcrypto": FLEET_DIGEST}, (), CAPTURE, False),
         (ELSEWHERE, _cell(PREVIOUS), {"zcrypto": FLEET_DIGEST, "zcrypto-red": PREVIOUS}, (), CAPTURE, False),
         (FLEET_DIGEST, _cell(FLEET_DIGEST), {"zcrypto": FLEET_DIGEST, "zcrypto-red": PREVIOUS}, (), PREVIOUS, False),
     ],
@@ -271,6 +282,7 @@ def _constructed(
         "alloy-behind-the-fleet-literal-with-every-other-row-on",
         "alloy-behind-the-fleet-literal-with-only-a-held-hosts-row-off",
         "alloy-behind-the-fleet-literal-with-the-row-held-and-its-reason",
+        "alloy-behind-the-fleet-literal-with-the-row-held-and-no-reason",
         "alloy-behind-a-literal-off-the-fleet-file",
         "archive-pull-behind-its-literal-while-the-wave-is-open",
     ],
@@ -303,7 +315,8 @@ def _nas_literal_is_committed(nas_vars: Path, hold: Path, fleet: Path) -> bool:
 def test_the_nas_alloy_literal_is_the_nas_committed_digest():
     assert _nas_literal_is_committed(NAS_VARS, NAS_HOLD, ALLOY_FILE), (
         "nas_alloy_image in host_vars/nas/vars.yml is not grafana/alloy@ the NAS's committed alloy_image_digest: "
-        "host_vars/nas/alloy.yml's while the NAS is held, else group_vars/observed/alloy.yml's"
+        "host_vars/nas/alloy.yml's while the NAS is held, else group_vars/observed/alloy.yml's: "
+        f"{_nas_literals()} against {yaml.safe_load((NAS_HOLD if NAS_HOLD.exists() else ALLOY_FILE).read_text())}"
     )
 
 

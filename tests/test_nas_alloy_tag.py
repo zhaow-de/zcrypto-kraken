@@ -72,9 +72,8 @@ PULLER_SOURCES = {"env.j2"}
 WRITERS = ("copy", "template", "file", "lineinfile", "blockinfile", "replace")
 SCOPED_COMPOSE = "compose up -d --no-deps --force-recreate alloy"
 
-# The allowlist beside the puller refusals, which read a writer's target by its last component alone: a module that
-# changes nothing, a writer whose written path is one of Alloy's, or one of the four tasks admitted verbatim. A task the
-# Alloy part takes later joins these lists in that change.
+# The allowlist beside the puller refusals, which read a writer's target by its last component alone. A task the Alloy
+# part takes later joins these lists in that change.
 FREE_MODULES = {"ansible.builtin.debug", "ansible.builtin.assert"}
 STACK = "{{ nas_stack_dir }}"
 ALLOY_FILES = (f"{STACK}/config.alloy", f"{STACK}/alloy-secrets.env")
@@ -91,7 +90,7 @@ VERBATIM = [
 
 
 def _leaves() -> list[tuple[dict, set, tuple]]:
-    return alloy_version.walk(load_tasks(NAS), frozenset({"nas"}))
+    return alloy_version.role_leaves("nas", frozenset({"nas"}))
 
 
 def _selected(tags: set[str], run_tags: list[str]) -> bool:
@@ -311,10 +310,9 @@ def test_an_alloy_run_on_the_nas_runs_the_alloy_part_beside_the_always_tasks_and
         play_tags = frozenset(alloy_version.tags_of(play))
         pre_tasks += [t["name"] for t, tags, _ in alloy_version.walk(play.get("pre_tasks"), play_tags) if _selected(tags, [TAG])]
         for entry in play["roles"]:
-            role = load_tasks(ANSIBLE / "roles" / entry["role"] / "tasks" / "main.yml")
             role_tasks += [
                 (entry["role"], t["name"])
-                for t, tags, _ in alloy_version.walk(role, play_tags | alloy_version.tags_of(entry))
+                for t, tags, _ in alloy_version.role_leaves(entry["role"], play_tags | alloy_version.tags_of(entry))
                 if _selected(tags, [TAG])
             ]
     assert pre_tasks == ["note — the NAS play's charter"]

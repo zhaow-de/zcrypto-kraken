@@ -6,6 +6,7 @@ to beside its own named refusals, and what a play runs under the tag."""
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 
 import yaml
 from ansible.playbook.task import Task
@@ -19,7 +20,7 @@ SITE = ANSIBLE / "site.yml"
 
 
 def tagged(role: str) -> list[tuple[dict, set, tuple]]:
-    return [leaf for leaf in alloy_version.walk(load_tasks(ROLES / role / "tasks" / "main.yml")) if TAG in leaf[1]]
+    return [leaf for leaf in alloy_version.role_leaves(role, frozenset()) if TAG in leaf[1]]
 
 
 def notified(task: dict) -> list[str]:
@@ -53,7 +54,7 @@ def unproduced_reads(role: str) -> list[tuple[str, str]]:
     """A register, `set_fact` or getent fact read in a gate, an argument or a rendered template: the narrow run skips
     every untagged producer, so a read of one fails that run on an undefined variable or, behind `is defined`, skips its
     task silently."""
-    leaves = alloy_version.walk(load_tasks(ROLES / role / "tasks" / "main.yml"))
+    leaves = alloy_version.role_leaves(role, frozenset())
     handlers = load_tasks(ROLES / role / "handlers" / "main.yml")
     every = set().union(*(produced(task) for task, _, _ in leaves), *(produced(handler) for handler in handlers))
     tagged_leaves = [(task, gates) for task, tags, gates in leaves if TAG in tags]
@@ -106,6 +107,57 @@ def verbatim(role: str) -> list[tuple[str, object]]:
     ]
 
 
+# The shared role's share of each apt importer's exclusion allowlist, written out and never read from the role, so an
+# edit to the role fails every importer's exclusion case until these move with it.
+ALLOY_APT_FREE = {f"ansible.builtin.{m}" for m in ("assert", "debug", "set_fact")}
+ALLOY_APT_VERBATIM = [
+    (
+        "ansible.builtin.deb822_repository",
+        {
+            "name": "grafana",
+            "types": ["deb"],
+            "uris": "https://apt.grafana.com",
+            "suites": ["stable"],
+            "components": ["main"],
+            "signed_by": "https://apt.grafana.com/gpg.key",
+            "install_python_debian": True,
+        },
+    ),
+    (
+        "ansible.builtin.copy",
+        {
+            "content": "Package: alloy\nPin: version {{ alloy_deb_version }}\nPin-Priority: 1001\n",
+            "dest": "/etc/apt/preferences.d/alloy",
+            "owner": "root",
+            "group": "root",
+            "mode": "0644",
+        },
+    ),
+    (
+        "ansible.builtin.apt",
+        {
+            "name": "alloy={{ alloy_deb_version }}",
+            "state": "present",
+            "update_cache": True,
+            "allow_downgrade": True,
+            "allow_change_held_packages": True,
+        },
+    ),
+    ("ansible.builtin.dpkg_selections", {"name": "alloy", "selection": "hold"}),
+    ("ansible.builtin.meta", "flush_handlers"),
+    (
+        "ansible.builtin.shell",
+        {
+            "cmd": "set -o pipefail\n"
+            "pid=$(systemctl show -p MainPID --value alloy)\n"
+            'if [ -z "$pid" ] || [ "$pid" = "0" ]; then echo __not_running__; else readlink "/proc/$pid/exe"; fi\n',
+            "executable": "/bin/bash",
+        },
+    ),
+    ("ansible.builtin.systemd_service", {"name": "alloy", "state": "restarted"}),
+]
+
+
 def module_entry(task: dict) -> tuple[str, object] | None:
     keys = [key for key in task if key not in Task.fattributes and not key.startswith("with_")]
     return (keys[0], task[keys[0]]) if len(keys) == 1 else None
@@ -127,6 +179,19 @@ def admitted(task: dict, role: str) -> bool:
         written = [value[key] for key in ("path", "dest", "name") if key in value]
         return bool(written) and all(on_alloy_paths(path, role) for path in written)
     return entry in verbatim(role)
+
+
+def apt_admitted(task: dict, writers: set[str], on_paths: Callable[[object], bool], own_verbatim: list) -> bool:
+    entry = module_entry(task)
+    if entry is None:
+        return False
+    module, value = entry
+    if module in ALLOY_APT_FREE or entry in ALLOY_APT_VERBATIM or entry in own_verbatim:
+        return True
+    if module in writers and isinstance(value, dict):
+        written = [value[key] for key in ("path", "dest", "name") if key in value]
+        return bool(written) and all(on_paths(path) for path in written)
+    return False
 
 
 def refusal_of(task: dict, role: str) -> str | None:
@@ -155,7 +220,7 @@ def play_selection(*hosts: str) -> tuple[list[tuple[str, str]], list[tuple[str, 
         ]
         for entry in play["roles"]:
             inherited = frozenset(play_tags | alloy_version.tags_of(entry))
-            for task, tags, _ in alloy_version.walk(load_tasks(ROLES / entry["role"] / "tasks" / "main.yml"), inherited):
+            for task, tags, _ in alloy_version.role_leaves(entry["role"], inherited):
                 if _selected(tags):
                     role_tasks.append((entry["role"], task["name"]))
     return pre_tasks, role_tasks

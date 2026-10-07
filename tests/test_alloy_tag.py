@@ -102,8 +102,6 @@ def _task_statements() -> list[tuple[Path, dict]]:
 
 
 def _calls(task: dict, *modules: str) -> list[tuple[str, object]]:
-    """The module entries among these, each read by its last dotted name: `ansible.builtin.`, `ansible.legacy.` and the
-    bare name are one."""
     return [(key, value) for key, value in task.items() if key.rsplit(".", 1)[-1] in modules]
 
 
