@@ -2178,6 +2178,7 @@ _MON_RULES = {
     "zcrypto-mon-series-high": ("warning", "907"),
     "zcrypto-mon-retention-by-size": ("warning", "908"),
     "zcrypto-mon-shipper-loss": ("warning", "909"),
+    "zcrypto-mon-alloy-versions-split": ("warning", "910"),
 }
 
 
@@ -2228,7 +2229,7 @@ def test_a_rule_reads_the_node_exactly_when_it_is_in_the_nodes_group():
             admits = [(op, value) for op, value in matchers if _admits(op, value, host)]
             if rule["ruleGroup"] != group:
                 assert not admits, f"{rule['uid']} is outside {group} and its matcher {admits} admits {host}"
-        if rule["uid"] == "zcrypto-mon-shipper-loss":
+        if rule["uid"] in ("zcrypto-mon-shipper-loss", "zcrypto-mon-alloy-versions-split"):
             assert matchers == [], f"it reads each shipper the node holds, and names none: {matchers}"
         elif rule["ruleGroup"] in NODE_ONLY_GROUPS:
             assert matchers and set(matchers) == {("=", NODE_ONLY_GROUPS[rule["ruleGroup"]])}, (rule["uid"], matchers)
@@ -2304,3 +2305,15 @@ def test_the_shipper_loss_rule_reads_alloys_two_loss_counters_and_keeps_the_logs
     assert "prometheus.exporter.self.alloy.targets" in scraped.split(", "), (
         "the node's Alloy no longer scrapes itself, so on the node this rule would read nothing"
     )
+
+
+def test_the_split_rule_counts_versions_across_every_host_for_a_day():
+    rule = _rule("zcrypto-mon-alloy-versions-split")
+    assert _prom_exprs(rule) == ['count(count by (version) (alloy_build_info{job="integrations/self"}))']
+    assert _evaluator(rule) == {"type": "gt", "params": [1]}
+    assert (rule["for"], rule["noDataState"], rule["execErrState"]) == ("24h", "OK", "Alerting")
+    board = json.loads((REPO / "infra/grafana/fleet-health-dashboard.json").read_text())
+    charted = {p.get("id"): [t["expr"] for t in p.get("targets", [])] for p in board["panels"]}
+    assert charted.get(int(rule["annotations"]["__panelId__"])) == [
+        'count by (version) (alloy_build_info{job="integrations/self"})'
+    ]

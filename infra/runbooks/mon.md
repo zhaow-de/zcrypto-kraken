@@ -475,3 +475,28 @@ Each Alloy counts what it failed to deliver and ships the counts with its other 
 ### Retire when
 
 `zcrypto-mon-shipper-loss` is absent from `infra/grafana/alerts.yaml`.
+
+______________________________________________________________________
+
+<a name="zcrypto-mon-alloy-versions-split"></a>
+
+## zcrypto-mon-alloy-versions-split — ALERT
+
+### What you are seeing
+
+A **warning** Grafana alert from the node, `Monitor · Alloy versions split across the fleet`: the Alloys that ship to the node have reported more than one version for a day. The Fleet health board's *Monitor — Alloy versions across the fleet* panel (910) draws one line per version, its value the number of Alloys reporting it.
+
+### What it means
+
+The fleet runs one Alloy version, the one `infra/ansible/group_vars/observed/alloy.yml` names as `alloy_version`. Its hosts differ while a bump moves them to a new version in a wave, one host after another as each host's verification reads green, which takes hours and not a day. Two versions for a day are one of two things: a wave that has run longer than a day, stopped between two hosts, or a host the wave did not reach — its converge failed or was left out, or it is held at its previous version on purpose. The alert reads what each Alloy reports of itself, `alloy_build_info`, and not the records, so it also sees a host whose record names the fleet's version while its Alloy runs another. A host whose Alloy is dark drops out of the count and is its Alloy-dark alert's; a host that does not ship to the node is not in the count.
+
+### What to do
+
+1. **Read which host runs which version**, from the workstation: `uv run python infra/scripts/grafana-query.py --stack mon 'count by (host, version) (alloy_build_info{job="integrations/self"})'`. The label carries a leading `v`; the hosts whose version is not the fleet file's `alloy_version` are the ones off it.
+2. **Read the record**: each such host's `alloy` row in `docs/reference/fleet-pins.md`, then `infra/scripts/count-list.sh hosts-off-the-fleets-alloy-version`, which prints how many hosts of the inventory's `observed` group have an `alloy` row off the fleet's version, or none, and names each on stderr. A row whose notes read `held` and a reason is a host held on purpose, by its hold file `infra/ansible/host_vars/<host>/alloy.yml`: this alert keeps firing while the hold stands, and the hold is the owner's to end. A row that agrees with step 1 and does not read `held` is a host the wave has not reached; a row that disagrees with step 1 is a record the wave did not re-true.
+3. **A host off the fleet's version and not held** is brought to it by the bump skill, `.claude/skills/zcrypto-bump-alloy/SKILL.md`: the host's step in its Step 2 order, verified by its Step 3. When the fleet's version fails on that host, the held-host step in its Step 2 holds the host at the version it runs, with its row and the reason; take the held host to the owner.
+4. **Confirm by value**: step 1's query names one version, and the rule is back to **Normal**.
+
+### Retire when
+
+`zcrypto-mon-alloy-versions-split` is absent from `infra/grafana/alerts.yaml`.
