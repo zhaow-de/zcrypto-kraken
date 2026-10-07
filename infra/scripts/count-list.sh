@@ -462,10 +462,10 @@ c_deploy_rows_with_an_empty_digest_var() { jq -s '[.[] | select((.extra_vars // 
 # `group_vars/all/` copy is read from the workstation by file path. A role naming the key is the finding.
 c_hc_readonly_key_in_a_role() { git grep -nE 'healthchecks_readonly_api_key' -- infra/ansible/roles | grep -vcE '^[^:]+:[0-9]+:[[:space:]]*#'; }
 
-# A write to one of the six gate gauges from outside `_ExecGauges.update`, whose one call publishes the
-# five readings at every gate evaluation and the heartbeat at each but the executor's idle refresh: a
+# A write to one of the seven gate gauges from outside `_ExecGauges.update`, whose one call publishes the
+# six readings at every gate evaluation and the heartbeat at each but the executor's idle refresh: a
 # write elsewhere is a gauge moving with no evaluation behind it. The awk excises that method's body alone.
-c_gate_gauge_writes_outside_the_publish_call() { [ -f cli/engine/command.py ] || return 2; { awk '/^    def update\(self, verdict/{i=1;next} i&&(/^    (def |@)/||/^[^ ]/){i=0} !i' cli/engine/command.py; git grep -h -E '\.(gate_level|armed|kill_tripped|restart_hold|venue_ok|last_evaluation)\.set\(' -- cli ':!cli/engine/command.py'; } | grep -cE '\.(gate_level|armed|kill_tripped|restart_hold|venue_ok|last_evaluation)\.set\('; }
+c_gate_gauge_writes_outside_the_publish_call() { [ -f cli/engine/command.py ] || return 2; { awk '/^    def update\(self, verdict/{i=1;next} i&&(/^    (def |@)/||/^[^ ]/){i=0} !i' cli/engine/command.py; git grep -h -E '\.(gate_level|armed|kill_tripped|restart_hold|venue_ok|venue_read_failed|last_evaluation)\.set\(' -- cli ':!cli/engine/command.py'; } | grep -cE '\.(gate_level|armed|kill_tripped|restart_hold|venue_ok|venue_read_failed|last_evaluation)\.set\('; }
 
 # `--delete` anywhere in the archive pull's module: the mirror keeps every day it ever fetched, which is
 # what makes a mismatch count span days and an empty tree mean the pull has never succeeded.

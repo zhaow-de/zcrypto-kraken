@@ -543,14 +543,20 @@ class _ExecGauges:
         self.venue_ok = Gauge(
             "zcrypto_exec_venue_ok", "Whether the last venue reading said the exchange is online.", registry=registry
         )
+        self.venue_read_failed = Gauge(
+            "zcrypto_exec_venue_read_failed",
+            "Whether the engine's last read of the venue's system status failed: 1 when the request did not reach the"
+            " exchange or its answer could not be read, 0 when the exchange answered with a status of its own.",
+            registry=registry,
+        )
         # The envelope's heartbeat, the series that answers "is the boundary path still evaluating the gate": it moves at startup,
-        # in the boundary sink, on a running plan's evaluations and on a kill trip's, and the idle refresh moves the five readings
+        # in the boundary sink, on a running plan's evaluations and on a kill trip's, and the idle refresh moves the six readings
         # and leaves it alone (`update`'s `heartbeat`). An age gauge was rejected: evaluations are a minute apart while idle and the
         # snapshot bound is 30 s, so every one re-reads and the age would publish ~0 forever -- a constant in measurement's clothes.
         self.last_evaluation: Gauge | None = None
 
     def update(self, verdict: GateVerdict, *, evaluated_at: datetime, heartbeat: bool = True) -> None:
-        """`heartbeat` False publishes the five readings and leaves `last_evaluation` where it was: the executor's idle
+        """`heartbeat` False publishes the six readings and leaves `last_evaluation` where it was: the executor's idle
         refresh and its boundary re-journal, neither of them the sink's, so the staleness rule keeps watching the sink and
         the exec record it writes before it."""
         i = verdict.inputs
@@ -559,13 +565,16 @@ class _ExecGauges:
         self.kill_tripped.set(1 if i["kill_file"] else 0)
         self.restart_hold.set(1 if i["restart_hold"] else 0)
         self.venue_ok.set(1 if i["venue_status"] == "online" else 0)
+        # The two words `read_system_status` (cli/engine/venue.py) and the gate's own fallback mint for a failed read;
+        # every other word is the venue's own answer, a maintenance among them.
+        self.venue_read_failed.set(1 if i["venue_status"] in ("unreachable", "unreadable") else 0)
         if not heartbeat:
             return
         if self.last_evaluation is None:
             self.last_evaluation = Gauge(
                 "zcrypto_exec_last_evaluation_timestamp_seconds",
                 "Unix timestamp the execution gate was last evaluated at startup, in the boundary sink, on a running plan's"
-                " evaluations or on a kill trip's; the idle refresh moves the other five gate gauges and leaves this one.",
+                " evaluations or on a kill trip's; the idle refresh moves the other six gate gauges and leaves this one.",
                 registry=self._registry,
             )
         self.last_evaluation.set(evaluated_at.timestamp())

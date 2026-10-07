@@ -732,9 +732,9 @@ rules:
       receiver: metrics
 
   # The execution safety envelope (cli/engine/execgate.py, `_ExecGauges` in cli/engine/command.py):
-  # the next three rules, over its six `zcrypto_exec_*` gauges. `reasons` never reaches Grafana and
+  # the next four rules, over its seven `zcrypto_exec_*` gauges. `reasons` never reaches Grafana and
   # `zcrypto_exec_armed` deliberately conflates its two arming keys into one gauge, so each of the
-  # three runbook sections sends the responder to `zcrypto engine exec-status` on the engine host for
+  # four runbook sections sends the responder to `zcrypto engine exec-status` on the engine host for
   # the breakdown remote telemetry cannot show. The three gauges carrying no rule are recorded with
   # their reason in NOT_A_FAULT_SIGNAL (tests/test_infra_alert_rules.py).
   - uid: zcrypto-engine-exec-armed-too-long
@@ -827,7 +827,7 @@ rules:
     orgId: 1
     # The rule that catches the one failure nothing else can see: a regression that drops the
     # gate evaluation from the cycle path, or a ledger write failing at every boundary, freezes
-    # this heartbeat while the idle refresh keeps the five readings moving and cycle telemetry
+    # this heartbeat while the idle refresh keeps the six readings moving and cycle telemetry
     # stays healthy, so every dashboard reads green while the envelope's record is gone.
     # Follows zcrypto-gate-exporter-stale's shape. Threshold = one cycle interval plus slack.
     condition: C
@@ -860,6 +860,49 @@ rules:
       summary: "The execution safety gate's heartbeat has not moved for more than four and three quarter hours: the engine's boundary path has stopped evaluating the gate and writing the exec record beside that evaluation, or that record's write has been failing at every boundary. The gate readings on this board keep moving on the executor's idle refresh while the process ticks, so they do not show this, and cycle telemetry can look perfectly healthy through it. Check that cycles are still completing, then read the engine journal on the host for the boundary's exec record and the engine log for a `metrics sink raised` line, and read the current state directly on the engine host with the exec-status command before trusting a gate tile. Runbook: infra/runbooks/engine.md#zcrypto-engine-exec-not-evaluated"
       __dashboardUid__: "zcrypto-engine"
       __panelId__: "56"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-engine-exec-venue-diverged
+    title: "Engine · the engine's read of Kraken's system status has failed for fifteen minutes"
+    ruleGroup: zcrypto-gate
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    # The read failing, never `zcrypto_exec_venue_ok` at 0: a maintenance is a word Kraken answered,
+    # which zcrypto-capture-venue-not-online pages from the capture side, and a rule on the engine's
+    # copy of that word would page every maintenance twice.
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'zcrypto_exec_venue_read_failed{host="zcrypto"}'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0.5]}  # stands in for == 1 -- this file's evaluators are gt/lt only
+    # OK, not Alerting: the series is absent until an engine publishing it is deployed, and its
+    # absence after that means the engine itself is down (owned by zcrypto-engine-cycle-stale).
+    noDataState: OK
+    execErrState: Alerting
+    for: 15m
+    annotations:
+      summary: "The engine's REST read of Kraken's SystemStatus has failed for fifteen minutes: the request did not reach Kraken (unreachable), or Kraken's answer could not be read (unreadable, its error envelope among them). The venue's own word is unknown to the engine, so its gate reads the venue not online and refuses to submit while Kraken, by its own word, may be trading. A Kraken maintenance is a word Kraken answered and pages from the capture side, not here. Read the gate's venue_status input with the exec-status command on the engine host, then the host's egress and DNS. Runbook: infra/runbooks/engine.md#zcrypto-engine-exec-venue-diverged"
+      __dashboardUid__: "zcrypto-engine"
+      __panelId__: "55"
     labels:
       severity: warning
     notification_settings:
