@@ -366,6 +366,24 @@ def _alloy_package_rows_agree(pins_path: Path, apt_hosts: set[str]) -> bool:
     return True
 
 
+def _alloy_package_rows() -> list[list[str]]:
+    return [
+        cells
+        for header, rows in _tables(PINS)
+        if "package" in header
+        for _, cells in rows
+        if cells[header.index("package")] == "alloy"
+    ]
+
+
+def test_the_alloy_package_rows_agree_with_the_apt_hosts():
+    assert _alloy_package_rows_agree(PINS, _package_alloy_hosts()), (
+        "fleet-pins.md's `alloy` package rows must name only hosts that run Alloy from apt, each version cell opening with a backticked "
+        "`<x.y.z>-<revision>`, which `alloy-version.py off-fleet` compares with the fleet file's `alloy_deb_version`: "
+        f"{_alloy_package_rows()} against {sorted(_package_alloy_hosts())}"
+    )
+
+
 @pytest.mark.parametrize(
     ("host", "version", "agrees"),
     [
