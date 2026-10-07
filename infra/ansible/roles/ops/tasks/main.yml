@@ -557,7 +557,7 @@
 # its units install on every converge. The check itself tolerates a missing pinger by staleness
 # (that IS the dead-man), but a timer without its runner script would fail every slot — install
 # script before units, same discipline as the archive-pull block above.
-- name: install the grafana-watchdog pinger (mutual watchdog, hc.io half)
+- name: install the grafana-watchdog pinger (mutual watchdog, the dead-man service's half)
   block:
     # 0700: the script carries the dead-man ping URL, and its unit runs as root.
     - name: install the grafana-watchdog runner script

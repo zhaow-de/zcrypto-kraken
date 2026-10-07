@@ -4819,16 +4819,17 @@ rules:
     notification_settings:
       receiver: metrics
 
-  # T0083 mutual watchdog, Grafana half. Owns two failures in one rule: (a) any healthchecks.io
-  # check is DOWN -- a dead-man fired, and hc.io's own notification channel may itself be the
-  # broken part, so Grafana pages too (the deliberate double-page is the cross-watchdog); (b) the
-  # hc.io scrape is DARK (endpoint unreachable, read-only key revoked, Alloy scrape broken) -- the
+  # T0083 mutual watchdog, Grafana half, over the dead-man service (spec 00122 D7; the uid predates
+  # the service and stays, so the rule updates in place). Owns two failures in one rule: (a) any
+  # check is DOWN -- a dead-man fired, and the service's own notification may itself be the broken
+  # part, so Grafana pages too (the deliberate double-page is the cross-watchdog); (b) the scrape is
+  # DARK (the service unreachable, the read-only key revoked, Alloy scrape broken) -- the
   # or-on()-vector(999) fallback makes silence read as 999, far over the threshold, so
   # green-when-blind is impossible; a value of 999 in the page means "the watchdog's own eyes went
-  # dark", not "a check is down". The reverse direction (Grafana down -> hc.io pages) is the ops
-  # grafana-watchdog pinger, NOT this rule.
+  # dark", not "a check is down". The reverse direction (Grafana down -> the service pages) is the
+  # ops grafana-watchdog pinger, NOT this rule.
   - uid: zcrypto-hcio-watchdog
-    title: "Fleet · healthchecks.io watchdog (check down, or hc.io dark)"
+    title: "Fleet · dead-man watchdog (check down, or the service dark)"
     ruleGroup: zcrypto-fleet
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
@@ -4858,14 +4859,14 @@ rules:
             - evaluator: {type: gt, params: [0]}
     noDataState: Alerting
     execErrState: Alerting
-    # 5m rides out a single scrape blip; hc.io's own grace periods already buffer check lateness,
+    # 5m rides out a single scrape blip; the checks' own grace periods already buffer check lateness,
     # so a `down` state here is post-grace and real.
     for: 5m
     annotations:
-      summary: "Either a healthchecks.io dead-man check is DOWN (value = how many), or the hc.io scrape itself went dark (value 999 — endpoint unreachable, read-only key revoked, or the ops Alloy scrape broken). hc.io's own notification may be the broken half — check https://healthchecks.io first, then the ops Alloy. The Grafana-down direction is covered by the zcrypto-grafana-watchdog check on hc.io, not this rule. Runbook: infra/runbooks/observability.md#zcrypto-hcio-watchdog"
+      summary: "Either a check on the dead-man service is DOWN (value = how many), or the scrape of the dead-man service itself went dark (value 999 — the service unreachable, the read-only key revoked, or the ops Alloy scrape broken). The service's own notification may be the broken half — check the dead-man service at https://zcrypto-hc.zhaow.me first, then the ops Alloy. The Grafana-down direction is covered by the zcrypto-grafana-watchdog check on the service, not this rule. Runbook: infra/runbooks/observability.md#zcrypto-hcio-watchdog"
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "103"
-      unit: "checks down -- 999 means healthchecks.io itself is unreachable"
+      unit: "checks down -- 999 means the dead-man service itself is unreachable"
     labels:
       severity: critical
     notification_settings:

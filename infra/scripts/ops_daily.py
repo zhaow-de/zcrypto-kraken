@@ -299,7 +299,7 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
 
 
 LOKI_DS_UID_DEFAULT = "grafanacloud-logs"
-HEALTHCHECKS_API = "https://healthchecks.io/api/v3/checks/"
+DEADMAN_API = "https://zcrypto-hc.zhaow.me/api/v3/checks/"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEPLOY_LOG = REPO_ROOT / "docs/reference/deploy-log.jsonl"
 REGISTER = REPO_ROOT / "docs/reference/kraken-snapshot-register.md"
@@ -468,10 +468,10 @@ _INTERNAL_TOKEN = re.compile(r"\bPhase[ -]\d|\bT\d{4}\b|\biter-\d+|\bspec\s+`?\d
 def check_descriptions(checks: list[dict], runbooks: Path = RUNBOOKS) -> list[str]:
     """One line per defect in a dead-man check's description, named per check (spec 00107 D5).
 
-    The descriptions are hand-written in healthchecks.io and read from a phone with nothing open.
+    The descriptions are hand-written in the dead-man service and read from a phone with nothing open.
     Two assertions each: at least one `Runbook: infra/runbooks/<file>#<anchor>` citation, every one
     resolving against a real `<a name=…>` tag in the file it names, and no internal token. Detects,
-    never repairs -- they live in the SaaS, so a finding is a line for a human.
+    never repairs -- they live in the service, so a finding is a line for a human.
     """
     out = []
     for check in checks:
@@ -507,7 +507,7 @@ class LogsRead:
 class DeadmenRead:
     via_prometheus: float | None = None
     via_healthchecks: list[dict] = field(default_factory=list)
-    # Three states, not two: `None` is "the check did not run" (healthchecks unreadable, or the
+    # Three states, not two: `None` is "the check did not run" (the service unreadable, or the
     # runbooks were), `[]` is "ran, found nothing". Defaulting to `[]` would print the all-clear
     # description line under a report that never looked.
     description_findings: list[str] | None = None
@@ -567,7 +567,7 @@ def _log_counts(result) -> list[LogCount]:
 
 def _readonly_key() -> str | None:
     try:
-        return grafana_auth.vault_var("healthchecks_readonly_api_key")
+        return grafana_auth.vault_var("hc_readonly_api_key", "group_vars/observed/vault.yml")
     except Exception:
         return None
 
@@ -585,21 +585,21 @@ def read_deadmen(token: str, *, opener=urllib.request.urlopen) -> DeadmenRead:
 
     key = _readonly_key()
     if not key:
-        note("healthchecks_readonly_api_key could not be read from the vault, so the direct dead-man read did not run")
+        note("hc_readonly_api_key could not be read from group_vars/observed/vault.yml, so the direct dead-man read did not run")
         return read
     try:
-        request = urllib.request.Request(HEALTHCHECKS_API, headers={"X-Api-Key": key})
+        request = urllib.request.Request(DEADMAN_API, headers={"X-Api-Key": key})
         with opener(request, timeout=_TIMEOUT) as response:
             read.via_healthchecks = json.load(response).get("checks", [])
     except _UNREACHABLE as exc:
-        note(f"healthchecks.io could not be read directly: {exc}")
+        note(f"the dead-man service could not be read directly: {exc}")
         return read
     # The check reads runbook FILES, so it gets its own `try` and its own note: inside the
-    # healthchecks `try`, an `OSError` from a runbook would be reported as healthchecks.io unreadable.
+    # listing's `try`, an `OSError` from a runbook would be reported as the service unreadable.
     try:
         read.description_findings = check_descriptions(read.via_healthchecks)
     # `AttributeError` beside `_UNREACHABLE`: this is the module's first content-dependent parse of
-    # the healthchecks payload, and a `checks` element that is not an object would otherwise
+    # the listing's payload, and a `checks` element that is not an object would otherwise
     # traceback out at exit 1 -- ATTENTION, the inverted contract this module's docstring names.
     except (*_UNREACHABLE, AttributeError) as exc:
         note(f"the dead-man descriptions could not be checked (the runbooks are read here): {exc}")

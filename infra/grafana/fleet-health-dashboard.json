@@ -278,8 +278,8 @@
     {
       "id": 103,
       "type": "stat",
-      "title": "healthchecks.io — checks down",
-      "description": "Are any of the dead-man checks down, and is the healthchecks.io scrape itself still alive? Carries the alert's own fallback, so an unreachable endpoint reads 999 rather than going blank — 999 means the watchdog's eyes went dark, not that 999 checks are down. Published by the ops machine, which is the only scraper of this endpoint; that is why the expression carries no machine matcher. The alert fires after `for: 5m` above zero.",
+      "title": "Dead-man service — checks down",
+      "description": "Are any of the dead-man checks down, and is the scrape of the dead-man service itself still alive? Carries the alert's own fallback, so an unreachable endpoint reads 999 rather than going blank — 999 means the watchdog's eyes went dark, not that 999 checks are down. Published by the ops machine, which is the only scraper of this endpoint; that is why the expression carries no machine matcher. The alert fires after `for: 5m` above zero.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -356,8 +356,8 @@
     {
       "id": 104,
       "type": "table",
-      "title": "healthchecks.io — per check",
-      "description": "WHICH check is down. Closes the \"log in to healthchecks.io to find out which one\" gap that the aggregate above cannot answer. Rendered as an instant table with no column renaming, so every label the endpoint publishes appears as its own column. Published by the ops machine. Context panel — the page pointer sits on the aggregate beside it.",
+      "title": "Dead-man service — per check",
+      "description": "WHICH check is down. Closes the \"log in to the dead-man service to find out which one\" gap that the aggregate above cannot answer. A check never pinged reads 1 here, as an up one does. Rendered as an instant table with no column renaming, so every label the endpoint publishes appears as its own column. Published by the ops machine. Context panel — the page pointer sits on the aggregate beside it.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
