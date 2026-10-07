@@ -353,7 +353,8 @@ def test_signal_during_probe_restores_the_target_before_cleaning(tmp_path):
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses file permissions")
-def test_cleanup_cp_failure_is_rc9_and_keeps_pristine(tmp_path):
+@pytest.mark.parametrize("sig", [pytest.param(signal.SIGINT, id="INT"), pytest.param(signal.SIGTERM, id="TERM")])
+def test_cleanup_cp_failure_is_rc9_and_keeps_pristine(tmp_path, sig):
     """Signal mid-mutation with the TARGET FILE read-only, so the cleanup cp fails: rc must be 9, the
     stderr must say KEPT, and the pristine copy must SURVIVE (it is the only way back). `chmod 0444`
     goes on the FILE — overwriting needs write permission on the file, not its directory."""
@@ -368,9 +369,9 @@ def test_cleanup_cp_failure_is_rc9_and_keeps_pristine(tmp_path):
     probe.chmod(0o755)
     subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "slow"], check=True)
-    # The restoring cp sleeps first, so the TERMs streamed below land inside cleanup on every run: a
-    # bare cp's window is a few milliseconds, and a re-entered handler's 143 then shows only on a
-    # slow runner.
+    # The restoring cp sleeps first, so the signals streamed below land inside cleanup on every run: a
+    # bare cp's window is a few milliseconds, and a re-entered handler's 130 or 143 then shows only on
+    # a slow runner.
     inside = tmp_path / "cleanup-cp-started"
     stubs = tmp_path / "bin"
     stubs.mkdir()
@@ -410,12 +411,12 @@ def test_cleanup_cp_failure_is_rc9_and_keeps_pristine(tmp_path):
                 if proc.poll() is not None:
                     break
                 landed += inside.exists()
-                os.killpg(proc.pid, signal.SIGTERM)
+                os.killpg(proc.pid, sig)
                 time.sleep(0.05)
             rc = proc.wait(timeout=5)
         finally:
             os.chmod(target, 0o644)
-    assert landed, "no TERM was sent while cleanup's cp ran -- this run did not reach the re-entry it guards"
+    assert landed, f"no {sig.name} was sent while cleanup's cp ran -- this run did not reach the re-entry it guards"
     assert rc == 9
     err_text = stderr_file.read_text()
     assert "KEPT" in err_text
