@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from pathlib import Path
 
 import yaml
 from ansible.playbook.handler import Handler
@@ -50,7 +51,30 @@ def read_text(role: str, task: dict, gates: tuple[str, ...]) -> str:
 
 def topics(handler: dict) -> set[str]:
     raw = handler.get("listen") or []
-    return {handler["name"], *([raw] if isinstance(raw, str) else raw)}
+    return {topic for topic in (handler.get("name"), *([raw] if isinstance(raw, str) else raw)) if topic}
+
+
+INCLUDE_TASKS = ("ansible.builtin.include_tasks", "ansible.legacy.include_tasks", "include_tasks")
+
+
+def _spliced(path: Path, directory: Path) -> list[dict]:
+    handlers = []
+    for entry in load_tasks(path) or []:
+        imported = next((key for key in alloy_version.IMPORT_TASKS if key in entry), None)
+        if imported is None:
+            handlers.append(entry)
+            continue
+        target = entry[imported]
+        handlers += _spliced(directory / (target["file"] if isinstance(target, dict) else target), directory)
+    return handlers
+
+
+def role_handlers(role: str) -> list[dict]:
+    """The role's handlers as Ansible loads them: the first of `main.yml`, `main.yaml`, `main.json` and `main` under
+    `handlers/`, each static `import_tasks` spliced in from that directory; an `include_tasks` stays one entry."""
+    directory = ROLES / role / "handlers"
+    found = [directory / f"main{ext}" for ext in (".yml", ".yaml", ".json", "") if (directory / f"main{ext}").is_file()]
+    return _spliced(found[0], directory) if found else []
 
 
 def play_handlers(role: str) -> list[dict]:
@@ -60,8 +84,7 @@ def play_handlers(role: str) -> list[dict]:
     for play in load_tasks(SITE):
         roles = [entry["role"] for entry in play.get("roles") or []]
         if role in roles:
-            files = [ROLES / name / "handlers" / "main.yml" for name in roles]
-            handlers += (play.get("handlers") or []) + [h for f in files if f.is_file() for h in load_tasks(f)]
+            handlers += (play.get("handlers") or []) + [handler for name in roles for handler in role_handlers(name)]
     return handlers
 
 
@@ -76,7 +99,7 @@ def unproduced_reads(role: str) -> list[tuple[str, str]]:
     task silently."""
     leaves = alloy_version.role_leaves(role, frozenset())
     reached = reached_handlers(role)
-    handlers = load_tasks(ROLES / role / "handlers" / "main.yml") + reached
+    handlers = role_handlers(role) + reached
     every = set().union(*(produced(task) for task, _, _ in leaves), *(produced(handler) for handler in handlers))
     tagged_leaves = [(task, gates) for task, tags, gates in leaves if TAG in tags]
     available: set[str] = set()
@@ -238,13 +261,18 @@ def apt_admitted(task: dict, writers: set[str], on_paths: Callable[[object], boo
     return False
 
 
-def refusal_of(task: dict, role: str) -> str | None:
+def carried(task: dict) -> list[str]:
+    """A task keyword off `TASK_KEYS`, then a writer's argument off its module's set."""
     module, value = module_entry(task) or (None, None)
-    carried = off_keys(task, TASK_KEYS)
+    off = off_keys(task, TASK_KEYS)
     if module in WRITER_ARGUMENTS and isinstance(value, dict):
-        carried += sorted(set(value) - WRITER_ARGUMENTS[module])
-    if carried:
-        return f"{task['name']}: carries {' and '.join(carried)}"
+        off += sorted(set(value) - WRITER_ARGUMENTS[module])
+    return off
+
+
+def refusal_of(task: dict, role: str) -> str | None:
+    if off := carried(task):
+        return f"{task['name']}: carries {' and '.join(off)}"
     return None if admitted(task, role) else f"{task['name']}: not on the Alloy part's allowlist"
 
 
@@ -283,12 +311,16 @@ def scope_refusals(role: str) -> list[str]:
 
 
 def handler_refusals(role: str) -> list[str]:
-    refusals = []
+    """An `include_tasks` in a handlers file of the play, whose handlers this read cannot see, beside each handler an
+    Alloy notify reaches that is not Alloy's own or carries a keyword off `HANDLER_KEYS`."""
+    refusals = [
+        f"{handler.get('name')}: carries {key}" for handler in play_handlers(role) for key in INCLUDE_TASKS if key in handler
+    ]
     for handler in reached_handlers(role):
         if module_entry(handler, Handler.fattributes) not in ALLOY_HANDLERS:
-            refusals.append(f"{handler['name']}: answers an Alloy notify and is not an Alloy handler")
+            refusals.append(f"{handler.get('name')}: answers an Alloy notify and is not an Alloy handler")
         elif off := off_keys(handler, HANDLER_KEYS, Handler.fattributes):
-            refusals.append(f"{handler['name']}: carries {' and '.join(off)}")
+            refusals.append(f"{handler.get('name')}: carries {' and '.join(off)}")
     return refusals
 
 

@@ -7,8 +7,8 @@ import re
 import pytest
 import yaml
 
-from tests.alloy_part import TASK_KEYS, module_entry, off_keys, scope_refusals
 from tests.alloy_part import WRITERS as ALLOY_WRITERS
+from tests.alloy_part import carried, module_entry, scope_refusals
 from tests.test_alloy_version import alloy_version
 from tests.test_infra_converge_guards import ANSIBLE, NAS, assert_that, find_task, load_tasks, truthy, when_conditions
 from tests.test_pins_converged import pins
@@ -176,7 +176,7 @@ def test_no_tagged_task_reaches_the_puller():
         if TAG not in tags:
             continue
         module, args = _module(task)
-        assert not (off := off_keys(task, TASK_KEYS)), (task["name"], off)
+        assert not (off := carried(task)), (task["name"], off)
         assert _admitted(task), f"{task['name']}: not on the NAS Alloy part's allowlist"
         assert "archive-pull" not in _read_text(task, gates), task["name"]
         if module.rsplit(".", 1)[-1] in WRITERS and module_entry(task) != LINE_EDIT_ENTRY:
