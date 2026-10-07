@@ -794,6 +794,7 @@ def test_the_backup_hands_its_files_to_the_pull_users_group():
 
 def test_the_hardening_role_leaves_the_pull_users_shell_alone():
     ignored = yaml.safe_load((ANSIBLE / "group_vars/hc_host/vars.yml").read_text())["os_ignore_users"]
+    # config-selector-ok: the parsed YAML list, so `in` is membership of a name, not a substring of the file
     assert DEFAULTS["hc_data_user"] in ignored
 
 
