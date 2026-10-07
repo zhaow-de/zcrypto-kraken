@@ -462,8 +462,9 @@ class StubCache:
     def hold_strategy_order(self, client_order_id, *, strategy_id, venue_order_id=None):
         """A REAL resting order under `strategy_id`, which `order` serves by `client_order_id` and the
         venue-order-id index by `venue_order_id` -- the Cache copy whose strategy a late fill's netting
-        reads. `StubClient.submit_order` holds nothing here, so an order this process placed is absent
-        from the Cache until a test holds it."""
+        reads. Its ids and its strategy alone are the row's: it is `_resting_limit_order`'s BTC/EUR buy of
+        1.0 whatever the row's instrument, side and quantity. `StubClient.submit_order` holds nothing here,
+        so an order this process placed is absent from the Cache until a test holds it."""
         self._open_orders.append(_resting_limit_order(client_order_id, venue_order_id=venue_order_id, strategy_id=strategy_id))
 
     def close_position(self, symbol, realized_pnl):
@@ -984,10 +985,11 @@ def _submitted_row(
     symbol: str = "BTC/EUR",
     side: str = "sell",
 ) -> dict:
-    """A write-ahead row a previous process left behind, through the real `append_submitted_row` --
-    `state` is one of `_OPEN_ORDER_STATES`, so the row is in the re-attach set. With `venue_order_id`
-    it carries the acceptance record `_on_order_event` writes; without one it is a row written before
-    that record existed, or one whose order never got an acceptance."""
+    """A write-ahead row an earlier intent left behind, in this process or a previous one, through the
+    real `append_submitted_row` -- `state` is one of `_OPEN_ORDER_STATES`, so the row is in the
+    re-attach set. With `venue_order_id` it carries the acceptance record `_on_order_event` writes;
+    without one it is a row written before that record existed, or one whose order never got an
+    acceptance."""
     row = {
         "plan_id": plan_id,
         "intent_index": index,
