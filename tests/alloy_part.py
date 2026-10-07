@@ -1,4 +1,4 @@
-"""A role's Alloy part under the fleet-wide `alloy` tag, read through `alloy-version.py`'s walk: the tagged leaves, the names they read before a tagged task produces them, the allowlists the roles' exclusions hold them, the levels above them and the handlers their notifies reach to beside their own named refusals, and what a play runs under the tag."""
+"""A role's Alloy part under the fleet-wide `alloy` tag, read through `alloy-version.py`'s walk, and the sets its exclusions hold it to."""
 
 from __future__ import annotations
 
@@ -70,8 +70,8 @@ def _spliced(path: Path, directory: Path) -> list[dict]:
 
 
 def role_handlers(role: str) -> list[dict]:
-    """The role's handlers as Ansible loads them: the first of `main.yml`, `main.yaml`, `main.json` and `main` under
-    `handlers/`, each static `import_tasks` spliced in from that directory; an `include_tasks` stays one entry."""
+    """The role's handlers file and its static imports, where Ansible's `Role._load_role_yaml` and
+    `path_dwim_relative` look first."""
     directory = ROLES / role / "handlers"
     found = [directory / f"main{ext}" for ext in (".yml", ".yaml", ".json", "") if (directory / f"main{ext}").is_file()]
     return _spliced(found[0], directory) if found else []
@@ -262,7 +262,6 @@ def apt_admitted(task: dict, writers: set[str], on_paths: Callable[[object], boo
 
 
 def carried(task: dict) -> list[str]:
-    """A task keyword off `TASK_KEYS`, then a writer's argument off its module's set."""
     module, value = module_entry(task) or (None, None)
     off = off_keys(task, TASK_KEYS)
     if module in WRITER_ARGUMENTS and isinstance(value, dict):
@@ -310,11 +309,14 @@ def scope_refusals(role: str) -> list[str]:
     return [f"{name}: carries {' and '.join(off)}" for name, node, keys in nodes if (off := sorted(set(node) - keys))]
 
 
+INCLUDE_ROLE = ("ansible.builtin.include_role", "ansible.legacy.include_role", "include_role")
+NOT_HANDLERS = (*STRUCTURE, *INCLUDE_TASKS, *INCLUDE_ROLE, *alloy_version.IMPORT_ROLE)
+
+
 def handler_refusals(role: str) -> list[str]:
-    """An `include_tasks` in a handlers file of the play, whose handlers this read cannot see, beside each handler an
-    Alloy notify reaches that is not Alloy's own or carries a keyword off `HANDLER_KEYS`."""
+    """A top-level `include_tasks` among the play's handlers is refused: this read cannot see what it brings."""
     refusals = [
-        f"{handler.get('name')}: carries {key}" for handler in play_handlers(role) for key in INCLUDE_TASKS if key in handler
+        f"{handler.get('name')}: carries {key}" for handler in play_handlers(role) for key in NOT_HANDLERS if key in handler
     ]
     for handler in reached_handlers(role):
         if module_entry(handler, Handler.fattributes) not in ALLOY_HANDLERS:

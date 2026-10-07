@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from tests import alloy_part
 from tests.alloy_part import (
     SITE,
     TAG,
@@ -111,6 +112,29 @@ def test_a_tagged_writer_carrying_an_argument_off_its_modules_set_is_refused_by_
     task = find_task(load_tasks(CAPTURE), "install the alloy pipeline config")
     refusal = refusal_of({**task, "ansible.builtin.copy": {**task["ansible.builtin.copy"], argument: value}}, "capture")
     assert refusal is not None and argument in refusal and task["name"] in refusal, refusal
+
+
+LISTENER = {
+    "name": "restart chronyd",
+    "ansible.builtin.systemd": {"name": "chronyd", "state": "restarted"},
+    "listen": ["reload alloy"],
+}
+
+
+@pytest.mark.parametrize(
+    ("keyword", "value"),
+    [
+        ("block", [LISTENER]),
+        ("ansible.builtin.include_tasks", "more.yml"),
+        ("ansible.builtin.include_role", {"name": "chrony"}),
+        ("ansible.builtin.import_role", {"name": "chrony"}),
+    ],
+    ids=["block", "include_tasks", "include_role", "import_role"],
+)
+def test_an_entry_among_the_plays_handlers_that_is_no_handler_is_refused_by_the_keyword(monkeypatch, keyword, value):
+    handlers = [*alloy_part.play_handlers("capture"), {"name": "more chrony handlers", keyword: value}]
+    monkeypatch.setattr(alloy_part, "play_handlers", lambda role: handlers)
+    assert handler_refusals("capture") == [f"more chrony handlers: carries {keyword}"]
 
 
 def test_an_alloy_run_on_the_capture_and_engine_plays_runs_the_alloy_part_beside_the_always_pre_tasks():
