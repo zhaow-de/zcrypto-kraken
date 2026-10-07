@@ -1386,16 +1386,22 @@ def _parse_day(raw: str | None, flag: str) -> date | None:
         raise _abort(f"{flag} {raw!r} is not a YYYY-MM-DD date") from exc
 
 
-def _window_records(journal_root: Path, since: str | None, until: str | None) -> list[CycleRecord]:
+def _window_records(journal_root: Path, since: str | None, until: str | None, birth: datetime | None = None) -> list[CycleRecord]:
     """Every journaled success record whose boundary falls in the inclusive [--since, --until] UTC day
     window. An unreadable record ABORTS rather than being skipped: both measurements aggregate across
     the whole window, so a quietly dropped cycle biases every number below it with nothing on the page
-    to say so, and --since/--until are the escape hatch for a journal carrying a known-bad day."""
+    to say so, and --since/--until are the escape hatch for a journal carrying a known-bad day. With a
+    series' `birth`, a record whose path's boundary is before it is an earlier series' and is never
+    opened, so one that will not read there stops nothing: `--since` cannot exclude the birth's own day."""
     since_day = _parse_day(since, "--since")
     until_day = _parse_day(until, "--until")
     records: list[CycleRecord] = []
     for boundary, path in _journal_artifacts(journal_root, "*", "cycle-*.json"):
-        if (since_day is not None and boundary.date() < since_day) or (until_day is not None and boundary.date() > until_day):
+        if (
+            (since_day is not None and boundary.date() < since_day)
+            or (until_day is not None and boundary.date() > until_day)
+            or (birth is not None and boundary < birth)
+        ):
             continue
         try:
             record = from_json(path.read_text())
@@ -1544,15 +1550,20 @@ def accum_replay(
 # --- the weekly tracking comparison: what the book held against the floor, and what it cost -------
 
 
-def _window_exec_records(journal_root: Path, since: str | None, until: str | None) -> list[dict]:
-    """Every journaled execution record in the same inclusive UTC day window `_window_records` uses.
-    An unreadable or schema-invalid record ABORTS rather than being skipped: the fills it carries move
-    `held` for every LATER cycle, so dropping one quietly overstates the drift of the whole window."""
+def _window_exec_records(journal_root: Path, since: str | None, until: str | None, birth: datetime | None = None) -> list[dict]:
+    """Every journaled execution record in the same inclusive UTC day window `_window_records` uses,
+    and past a series' `birth` as it reads it. An unreadable or schema-invalid record ABORTS rather
+    than being skipped: the fills it carries move `held` for every LATER cycle, so dropping one
+    quietly overstates the drift of the whole window."""
     since_day = _parse_day(since, "--since")
     until_day = _parse_day(until, "--until")
     out: list[dict] = []
     for boundary, path in _journal_artifacts(journal_root, "*", "exec-*.json"):
-        if (since_day is not None and boundary.date() < since_day) or (until_day is not None and boundary.date() > until_day):
+        if (
+            (since_day is not None and boundary.date() < since_day)
+            or (until_day is not None and boundary.date() > until_day)
+            or (birth is not None and boundary < birth)
+        ):
             continue
         try:
             doc = read_exec_record(path)
@@ -1856,8 +1867,9 @@ def tracking_report(
         None,
         "--ledger-export",
         help="A Kraken ledger export (CSV, from History -> Export -> Ledgers) to reconcile the window's fills "
-        "against. It is the only place a margin position's rollover fee appears -- the venue charges it against "
-        "the POSITION, so no fill carries it and a cost basis built from fills alone omits it. Absent, the report "
+        "against -- with --opening-holdings, the series' fills against the export's rows from its birth. It is "
+        "the only place a margin position's rollover fee appears -- the venue charges it against the POSITION, so "
+        "no fill carries it and a cost basis built from fills alone omits it. Absent, the report "
         "simply omits the reconciliation: the export is a hand-made artifact and most runs will not have one.",
     ),
     json_out: bool = typer.Option(
@@ -1876,10 +1888,10 @@ def tracking_report(
     config = _load_engine_config()
     journal_root = journal_dir if journal_dir is not None else config.journal_dir
     opening = _read_opening(opening_holdings, since)
-    # With a record the read is the series': every block below starts at its birth, and the cycles and fills before it
-    # are an earlier series'.
+    # With a record the read is the series': every block below starts at its birth, and the cycles, fills and ledger
+    # rows before it are an earlier series'.
     birth = None if opening is None else opening.birth
-    records = [record for record in _window_records(journal_root, since, until) if birth is None or record.cycle_ts >= birth]
+    records = [record for record in _window_records(journal_root, since, until, birth) if birth is None or record.cycle_ts >= birth]
     minimums_path = _resolve_minimums(minimums)
     try:
         floors, fetched_at = load_minimums(minimums_path)
@@ -1908,7 +1920,7 @@ def tracking_report(
         if simulated_fills:
             fills = _simulated_fills(stages, floor["cycles"], floors)
         else:
-            exec_docs = _window_exec_records(journal_root, since, until)
+            exec_docs = _window_exec_records(journal_root, since, until, birth)
             fills, notes = extract_fills(
                 [doc for doc in exec_docs if birth is None or datetime.fromisoformat(doc["cycle_ts"]) >= birth]
             )
@@ -1921,7 +1933,8 @@ def tracking_report(
     reconciliation = None
     if ledger_export is not None:
         try:
-            reconciliation = reconcile_ledger(read_ledger_export(ledger_export), fills)
+            rows = [row for row in read_ledger_export(ledger_export) if birth is None or row.at >= birth]
+            reconciliation = reconcile_ledger(rows, fills)
         except (OSError, EngineError) as exc:
             raise _abort(f"could not read the ledger export {ledger_export}: {exc}") from exc
 

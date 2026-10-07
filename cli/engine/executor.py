@@ -154,6 +154,8 @@ EQUITY_SERIES_FILE = "equity-series-start"
 # that date.
 _DRAWDOWN_KILL_BPS = 1500
 _DAY_LOSS_HOLD_BPS = 300
+# The draft record's figures a boundary's equity mark writes (`_mark_equity`).
+_MARK_FIGURES = ("equity_eur", "hwm_eur", "drawdown_bps", "day_loss_bps", "day_loss_hold")
 _KRAKEN_ERROR_MARKERS = ("EOrder:", "EGeneral:", "EAccount:")
 _POST_ONLY_MARKER = "POST_ONLY_REJECTED:"
 # The terminal order events the execution engine can MINT rather than receive. Past
@@ -869,16 +871,19 @@ def read_instrument_statuses(*, base_url: str | None = None) -> dict[str, str]:
     the `MarketStatusAction` the client reads Kraken's per-pair `status` as -- `TRADING` for `online`, `HALT` for
     `cancel_only`, `PAUSE` for `post_only`, `limit_only` and `reduce_only` -- and `absent` for a symbol the answer does
     not name. The client asks two public listings, the currency pairs and the tokenized ones, and sends no private
-    call. A Kraken error answer, a status word the client cannot parse and anything short of an answer inside
-    `_VENUE_READ_TIMEOUT_SECONDS` raise."""
+    call. A Kraken error answer, a status word the client cannot parse, an answer of `None` and anything short of an
+    answer inside `_VENUE_READ_TIMEOUT_SECONDS` raise: `None` is a venue that answered nothing, never every
+    instrument absent, which would carry every leg under an `ok` record."""
     client = _bare_client(base_url)
 
     async def _read():
         return await client.request_instrument_statuses()
 
     answer = asyncio.run(asyncio.wait_for(_read(), timeout=_VENUE_READ_TIMEOUT_SECONDS))
+    if answer is None:
+        raise EngineError("the venue answered nothing for the instrument statuses -- it is never read as every one absent")
     statuses = dict.fromkeys(INSTRUMENT_IDS, "absent")
-    for instrument_id, action in (answer or {}).items():
+    for instrument_id, action in answer.items():
         symbol = _SYMBOL_BY_INSTRUMENT_ID.get(str(instrument_id))
         if symbol is not None:
             statuses[symbol] = action.name
@@ -3439,18 +3444,21 @@ class ProbeExecutor:
         nav = record.nav
         equity = book.eur_total + _book_coin_eur(book, record.closes)
         start = self._series_start()
-        if start is None:
+        minted = start is None
+        if minted:
             self._mint_series_start(boundary)
             start = boundary
         scan = accum_records_since(self._journal_dir, start, boundary)
         # This boundary's own record, left by an earlier process, is the one this mark replaces: out of the high-water
-        # mark and the base, and in the hold, which a recovery inside the date never lifts.
+        # mark and the base, and in the hold, which a recovery inside the date never lifts -- unless this mark minted the
+        # series, which that record, an earlier series', predates.
         records = [r for r in scan if _record_ts(r) != boundary]
         hwm = max([r["equity_eur"] for r in records if r["equity_eur"] is not None] + [equity])
         drawdown_bps = (hwm - equity) * 10_000 / nav
         day_loss_bps = (_day_base(records, boundary, equity) - equity) * 10_000 / nav
         day = boundary.replace(hour=0, minute=0, second=0, microsecond=0)
-        self._day_loss_hold = day_loss_bps >= _DAY_LOSS_HOLD_BPS or _day_loss_held(r for r in scan if _record_ts(r) >= day)
+        held = records if minted else scan
+        self._day_loss_hold = day_loss_bps >= _DAY_LOSS_HOLD_BPS or _day_loss_held(r for r in held if _record_ts(r) >= day)
         _set_equity(equity)
         _set_drawdown(drawdown_bps)
         if drawdown_bps >= _DRAWDOWN_KILL_BPS:
@@ -3711,10 +3719,17 @@ class ProbeExecutor:
     def _write_draft_record(
         self, boundary: datetime, now: datetime, status: str, figures: dict, decisions, plan_id: str | None
     ) -> None:
-        """The boundary's `accum-<HH>.json`, and the not-drafted gauge at 1 for any status but `ok`. Wrapped: a record
-        that cannot be written logs, and the draft goes on."""
+        """The boundary's `accum-<HH>.json`, and the not-drafted gauge at 1 for any status but `ok`. A draft that marked no
+        equity over a record that did -- a boundary re-armed after a restart -- keeps that record's mark, its hold with it:
+        `_day_loss_held` reads a hold only beside its equity, so the latch would otherwise lift for the rest of its date.
+        Wrapped: a record that cannot be written logs, and the draft goes on."""
         _set_boundary_not_drafted(status != "ok")
         try:
+            path = accum_record_path(self._journal_dir, boundary)
+            if figures.get("equity_eur") is None and path.exists():
+                replaced = read_accum_record(path)
+                if replaced["equity_eur"] is not None:
+                    figures = figures | {key: replaced[key] for key in _MARK_FIGURES}
             write_accum_record(
                 self._journal_dir,
                 boundary,
@@ -4199,19 +4214,24 @@ class ProbeExecutor:
         the row's own side, when the fill is on the intent's instrument and the row's Cache order
         carries this strategy's id -- the two things that put it in the strategy-scoped position
         `_reconcile_terminal` reads. An `EXTERNAL` copy the startup pass adopted books its fill under
-        `EXTERNAL`, outside that position, so it nets nothing. A Cache order that cannot be found
-        is no evidence of the strategy's id: it nets nothing and logs WARNING naming the order, and a
-        position the fill did move then trips the reconciliation, on the side of stopping."""
+        `EXTERNAL`, outside that position, so it nets nothing. A Cache order that cannot be found or
+        read is no evidence of the strategy's id: it nets nothing and logs WARNING naming the order, the
+        read's error under it where it raised, and a position the fill did move then trips the
+        reconciliation, on the side of stopping."""
         if str(getattr(event, "instrument_id", "")) != str(active.instrument_id):
             return
-        order = self._cache_lookup(row, self._read_id(row))
+        try:
+            order, unread = self._cache_lookup(row, self._read_id(row)), None
+        except Exception as exc:
+            order, unread = None, exc
         if order is None:
             logger.warning(
-                "a fill of order %s on %s landed while intent %d runs, and the Cache holds no order for it -- "
+                "a fill of order %s on %s landed while intent %d runs, and the Cache answers no order for it -- "
                 "it is not netted into that intent's expected position, and the reconciliation at its end may trip",
                 row["client_order_id"],
                 active.intent.symbol,
                 active.index,
+                exc_info=unread,
             )
         elif str(order.strategy_id) == str(self._strategy_id):
             active.foreign_filled += qty if row["intent"]["side"] == "buy" else -qty
@@ -4271,9 +4291,10 @@ class ProbeExecutor:
             )
             return
         if abs(actual - expected) > active.constraints.lot_step:
+            netted = f", {active.foreign_filled:+.10g} of it another order's late fills" if active.foreign_filled else ""
             self._trip_kill(
                 f"{active.intent.symbol} holds {actual:.10g} in this engine's own position after intent "
-                f"{active.index}, not the {expected:.10g} its fills account for"
+                f"{active.index}, not the {expected:.10g} its fills account for{netted}"
             )
 
     # --- order events --------------------------------------------------------------------------
@@ -4717,10 +4738,8 @@ class ProbeExecutor:
                         cache_qty,
                         moment,
                     )
-            if _metrics is None:
-                return
-            for symbol, venue_qty in sorted(book.held.items()):
-                _metrics.set_position(symbol, venue_qty)
+                if _metrics is not None:
+                    _metrics.set_position(symbol, venue_qty)
         except Exception:
             logger.exception("executor position settle raised -- continuing")
 
