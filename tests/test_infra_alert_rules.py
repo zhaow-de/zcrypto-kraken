@@ -377,8 +377,9 @@ NOT_A_FAULT_SIGNAL = {
     "zcrypto_engine_journal_prune_deleted_days",
     "zcrypto_engine_journal_prune_kept_days",
     "zcrypto_engine_journal_prune_oldest_day_age_seconds",
-    # The execution safety envelope's unwatched families; armed, kill_tripped and
-    # last_evaluation_timestamp_seconds are watched, and this list is what keeps that true.
+    # The execution safety envelope's unwatched families; armed, kill_tripped,
+    # last_evaluation_timestamp_seconds and venue_read_failed are watched, and this list is what
+    # keeps that true.
     #   gate_level is the SUMMARY its inputs (armed, kill switch, restart hold, venue) already reduce
     #   to -- every value is legitimate depending on which input is active -- and the two worth
     #   paging on have their own rules.
@@ -391,8 +392,8 @@ NOT_A_FAULT_SIGNAL = {
     # capture side via zcrypto-capture-venue-not-online, which reads the daemon's own
     # zcrypto_capture_venue_status_total, so a second rule on this engine-side cached copy would
     # double-page the same event. The divergence that rule cannot see -- an engine-side REST read
-    # failing CLOSED parks this gauge at 0 while the venue is online -- is a deferred alert in
-    # docs/open-topics/T0018-phase6-build-sequence.md.
+    # failing CLOSED parks this gauge at 0 while the venue is online -- is watched through
+    # zcrypto_exec_venue_read_failed, which zcrypto-engine-exec-venue-diverged reads.
     "zcrypto_exec_venue_ok",
     # The execution instruments (spec 00090 D12). Attended-window instruments: arming is episodic, so
     # between windows these are legitimately flat and any rule on them is alarm fatigue, while inside
@@ -2363,3 +2364,30 @@ def test_two_consecutive_undrafted_boundaries_page_and_one_followed_by_an_ok_bou
     assert fire_minute([(0, 0), (3600, 1), (3600 + h4, 0)]) is None
     assert fire_minute([(0, 0)]) is None
     assert rule["data"][0]["relativeTimeRange"]["from"] == window
+
+
+# --- the engine's own read of the venue's status -------------------------------------------------
+
+
+def test_the_engines_venue_read_failing_for_fifteen_minutes_pages_and_a_venue_maintenance_does_not():
+    rule = _rule("zcrypto-engine-exec-venue-diverged")
+    hold_for = _duration_seconds(rule["for"])
+    assert _evaluator(rule) == {"type": "gt", "params": [0.5]}
+    (family,) = re.fullmatch(r'(\w+)\{host="zcrypto"\}', rule["data"][0]["model"]["expr"]).groups()
+
+    def fires(series):
+        samples = series.get(family, [])
+        run = 0
+        for t in range(0, 3 * 3600, 60):
+            if next((v for at, v in reversed(samples) if at <= t), 0) > 0.5:
+                run += 60
+                if run >= hold_for:
+                    return True
+            else:
+                run = 0
+        return False
+
+    assert fires({"zcrypto_exec_venue_read_failed": [(0, 1), (16 * 60, 0)]})
+    assert not fires({"zcrypto_exec_venue_read_failed": [(0, 1), (14 * 60, 0)]})
+    maintenance = {"zcrypto_exec_venue_ok": [(0, 0), (2 * 3600, 1)], "zcrypto_exec_venue_read_failed": [(0, 0)]}
+    assert not fires(maintenance)

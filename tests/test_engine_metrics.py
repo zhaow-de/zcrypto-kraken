@@ -1095,6 +1095,31 @@ def test_exec_gauges_publish_the_verdict():
     assert reg.get_sample_value("zcrypto_exec_last_evaluation_timestamp_seconds") == NOW.timestamp()
 
 
+@pytest.mark.parametrize(
+    "venue_status,failed",
+    [("unreachable", 1), ("unreadable", 1), ("online", 0), ("maintenance", 0), ("cancel_only", 0), ("post_only", 0)],
+)
+def test_the_venue_read_failure_reads_1_on_a_failed_read_and_0_on_a_word_the_venue_answered(venue_status, failed):
+    reg = CollectorRegistry()
+    _ExecGauges(reg).update(
+        GateVerdict(
+            level=GateLevel.FULL if venue_status == "online" else GateLevel.NONE,
+            reasons=() if venue_status == "online" else ("venue_not_online",),
+            inputs={
+                "armed_in_config": True,
+                "arm_file": True,
+                "kill_file": False,
+                "restart_hold": False,
+                "venue_status": venue_status,
+                "venue_snapshot_age_seconds": 0.0,
+            },
+        ),
+        evaluated_at=NOW,
+    )
+    assert reg.get_sample_value("zcrypto_exec_venue_read_failed") == failed
+    assert reg.get_sample_value("zcrypto_exec_venue_ok") == (1 if venue_status == "online" else 0)
+
+
 def test_armed_requires_BOTH_keys():
     for cfg_armed, file_armed in ((True, False), (False, True), (False, False)):
         reg = CollectorRegistry()
