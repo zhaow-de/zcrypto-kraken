@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import pathlib
@@ -283,6 +284,11 @@ FLEETS = {
 }
 TARGET = f"target: 1.20.1 {RECORDED_DIGEST} 1.20.1-1"
 NO_TARGET = "target: none — the fleet runs the newest version present in both"
+
+
+def test_the_recorded_index_hashes_to_the_recorded_digest():
+    index = (FIXTURES / "index-v1.20.1.json").read_bytes()
+    assert f"sha256:{hashlib.sha256(index).hexdigest()}" == RECORDED_DIGEST
 
 
 def _manifest(version: str) -> str:
