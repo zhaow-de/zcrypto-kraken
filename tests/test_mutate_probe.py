@@ -2,6 +2,7 @@
 
 import os
 import re
+import shutil
 import signal
 import subprocess
 import time
@@ -367,6 +368,15 @@ def test_cleanup_cp_failure_is_rc9_and_keeps_pristine(tmp_path):
     probe.chmod(0o755)
     subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "slow"], check=True)
+    # The restoring cp sleeps first, so the TERMs streamed below land inside cleanup on every run: a
+    # bare cp's window is a few milliseconds, and a re-entered handler's 143 then shows only on a
+    # slow runner.
+    inside = tmp_path / "cleanup-cp-started"
+    stubs = tmp_path / "bin"
+    stubs.mkdir()
+    cp_stub = stubs / "cp"
+    cp_stub.write_text(f'#!/bin/sh\nif [ "$2" = mod.py ]; then touch {inside}; sleep 0.3; fi\nexec {shutil.which("cp")} "$@"\n')
+    cp_stub.chmod(0o755)
     stderr_file = tmp_path / "stderr.txt"
     with stderr_file.open("w") as err:
         proc = subprocess.Popen(
@@ -384,6 +394,7 @@ def test_cleanup_cp_failure_is_rc9_and_keeps_pristine(tmp_path):
             cwd=repo,
             stderr=err,
             start_new_session=True,
+            env={**os.environ, "PATH": f"{stubs}:{os.environ['PATH']}"},
         )
         for _ in range(200):
             if marker.exists():
@@ -393,15 +404,18 @@ def test_cleanup_cp_failure_is_rc9_and_keeps_pristine(tmp_path):
             proc.kill()
             raise AssertionError("mutation phase never observed")
         os.chmod(target, 0o444)  # the cleanup cp to $file now fails
+        landed = 0
         try:
             for _ in range(100):
                 if proc.poll() is not None:
                     break
+                landed += inside.exists()
                 os.killpg(proc.pid, signal.SIGTERM)
                 time.sleep(0.05)
             rc = proc.wait(timeout=5)
         finally:
             os.chmod(target, 0o644)
+    assert landed, "no TERM was sent while cleanup's cp ran -- this run did not reach the re-entry it guards"
     assert rc == 9
     err_text = stderr_file.read_text()
     assert "KEPT" in err_text
