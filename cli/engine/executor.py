@@ -1525,7 +1525,8 @@ class ProbeExecutor:
         (`_on_external_event`): the attended passes that sign on the engine's key run with it disarmed, and
         the pass's holdings read is signed. A return while `_gate_armed` reads False -- disarmed, or before
         this process's first evaluation -- leaves the pass owed, and the first tick that reads the engine
-        armed arms it, so a watchdog freeze a disarmed engine holds lifts on that pass, or at a restart.
+        armed arms it; it lifts a watchdog freeze the engine holds once no endpoint is held down, with no
+        pass (`_lift_freeze`).
         Bookkeeping, never a submission: log and continue."""
         try:
             endpoint = str(getattr(event, "endpoint", "?"))
@@ -1559,6 +1560,8 @@ class ProbeExecutor:
                     if self._gate_armed
                     else "the engine is disarmed, so the re-read pass waits for the first tick that reads it armed",
                 )
+                if not self._gate_armed:
+                    self._lift_freeze()
         except Exception:
             logger.exception("executor socket-state handling raised -- continuing")
 
@@ -1604,17 +1607,27 @@ class ProbeExecutor:
 
     def _lift_freeze(self) -> None:
         """Lift the watchdog's freeze once no endpoint is held down and a re-read pass has completed since
-        the return that emptied the set, so the loop resumes on the venue's own account of the cut.
-        Returns at once unless frozen: once the condition holds it keeps holding on every quiet tick
-        after, so without the guard the lift would log on each."""
+        the return that emptied the set, so the loop resumes on the venue's own account of the cut. A
+        disarmed engine whose return left the pass owed (`on_socket_state`) lifts with no pass: it refuses
+        every intent until it is armed again, and its first armed tick runs the owed pass ahead of that
+        tick's draft and pickup. Returns at once unless frozen: once the condition holds it keeps holding
+        on every quiet tick after, so without the guard the lift would log on each."""
         if not self._frozen:
             return
         emptied, completed = self._sockets_emptied_at, self._reread_completed_at
-        if self._sockets_down or emptied is None or completed is None or completed < emptied:
+        if self._sockets_down or emptied is None:
+            return
+        owed = self._reread_owed and not self._gate_armed
+        if not owed and (completed is None or completed < emptied):
             return
         self._frozen = False
         _set_frozen(False)
-        logger.info("the execution watchdog's freeze lifted -- the sockets are back and the re-read pass has settled")
+        logger.info(
+            "the execution watchdog's freeze lifted -- the sockets are back and %s",
+            "the engine is disarmed, so the re-read pass waits for the first tick that reads it armed"
+            if owed
+            else "the re-read pass has settled",
+        )
 
     def _adopt_resting_orders(self, now: datetime) -> None:
         """The startup pass (D10), run once on the first tick: decide, per resting order this
