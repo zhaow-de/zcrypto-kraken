@@ -6126,6 +6126,76 @@ def test_a_disarmed_hold_over_a_stranded_row_stands_across_two_utc_day_rolls_and
     assert not ex._frozen and ex._frozen_at is None
 
 
+def test_a_restored_row_a_fill_reached_and_a_terminal_closed_before_the_cut_is_repaired_by_the_first_armed_pass_two_day_rolls_on(
+    tmp_path,
+):
+    clock = _Clock()
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=2)
+    _submitted_row(tmp_path, "O-reducer", reduce_only=True, when=earlier, venue_order_id=_TXID)
+    _submitted_row(tmp_path, "O-other", reduce_only=True, when=earlier, index=1, venue_order_id=_OTHER_TXID)
+    order, other = _restored_order("O-reducer"), _resting_limit_order("O-other", venue_order_id=_OTHER_TXID)
+    client = StubClient(StubCache(open_orders=[order, other]))
+    venue = _VenueOrders(_report(_TXID, OrderStatus.ACCEPTED), _report(_OTHER_TXID, OrderStatus.ACCEPTED))
+    cancel, holdings = _VenueCancel(), _VenueHoldings({})
+    ex = _executor(
+        tmp_path,
+        client=client,
+        gate=_gate(tmp_path, GateLevel.REDUCE_ONLY),
+        clock=clock,
+        venue_orders=venue,
+        venue_cancel=cancel,
+        venue_holdings=holdings,
+        config=_cache_config(tmp_path),
+    )
+    ex.on_timer(clock.now)  # the startup pass keeps both reducers
+    arm = exec_dir(tmp_path) / ARM_FILE
+    arm.unlink()
+    clock.now += executor_module._GATE_REFRESH
+    ex.on_timer(clock.now)  # the idle refresh reads the gate disarmed
+    fill = _fill("O-reducer", 0.0004, venue_order_id=VenueOrderId(_TXID), trade_id="T-race")
+    order.apply(fill)
+    ex.on_order_event(fill)
+    canceled = _event(OrderCanceled, client_order_id="O-reducer")
+    order.apply(canceled)
+    client.cache._open_orders.remove(order)
+    client.cache._closed_orders.append(order)
+    ex.on_order_event(canceled)
+    assert (_record(tmp_path, earlier)["submitted"][0]["state"], ex._restored_fills) == ("canceled", {"O-reducer"})
+    ex.on_socket_state(_socket(SocketState.DISCONNECTED, "kraken-spot-data-streams"))
+    ex.on_socket_state(_socket(SocketState.DISCONNECTED, "kraken-spot-user-streams"))
+    clock.now += timedelta(seconds=31)
+    ex.on_timer(clock.now)
+    assert ex._frozen
+    reads = (len(venue.calls), holdings.calls)
+    until = datetime(2026, 8, 16, 6, tzinfo=timezone.utc)  # the rows' record, filed on the 14th, is outside the two-day window
+    with _executor_errors(level=logging.CRITICAL) as records:
+        ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-data-streams"))
+        ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-user-streams"))
+        while clock.now < until:
+            clock.now += timedelta(hours=1)
+            ex.on_timer(clock.now)
+            assert ex._frozen, clock.now
+    assert (len(venue.calls), holdings.calls, cancel.calls) == (*reads, [])
+    assert [r.getMessage() for r in records] == [
+        "the execution watchdog's freeze stands -- the sockets are back and the engine is disarmed, but the cut may "
+        "have left an order resting at Kraken unread, the ledger's open or ambiguous rows: "
+        f"O-other (Kraken {_OTHER_TXID}); while the engine stays disarmed, cancel each by hand on Kraken's open-orders page"
+    ]
+    venue.reports = [_report(_TXID, OrderStatus.CANCELED, filled_qty="0.0004"), _report(_OTHER_TXID, OrderStatus.ACCEPTED)]
+    arm.touch()
+    clock.now += executor_module._GATE_REFRESH
+    ex.on_timer(clock.now)  # the idle refresh at this tick's end reads the gate armed
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+    assert venue.calls[reads[0] :] == [_boundary(earlier) - executor_module._VENUE_READ_MARGIN]
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert (row["state"], row["filled_qty"], row["events"][-1]["event"]) == ("canceled", 0.0004, "reconciled")
+    entry = _intent_entry(tmp_path, 0, earlier)
+    assert (entry["outcome"], entry["filled_qty"]) == ("revoked", 0.0004)
+    assert ex._restored_fills == set() and not ex._frozen
+
+
 def test_a_disarmed_return_with_no_open_row_lifts_the_freeze_with_no_read_and_the_first_armed_tick_runs_the_owed_pass(tmp_path):
     holdings = _VenueHoldings({})
     clock = _Clock()
