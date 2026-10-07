@@ -6080,8 +6080,7 @@ def test_a_disarmed_return_over_a_row_the_cut_stranded_leaves_the_freeze_standin
     assert [r.getMessage() for r in records] == [
         "the execution watchdog's freeze stands -- the sockets are back and the engine is disarmed, but the cut may "
         "have left an order resting at Kraken unread, the ledger's open or ambiguous rows: "
-        f"O-1 (Kraken {_TXID}); the first armed tick's re-read pass re-cancels and settles them, and while the engine "
-        "stays disarmed, cancel each by hand on Kraken's open-orders page"
+        f"O-1 (Kraken {_TXID}); while the engine stays disarmed, cancel each by hand on Kraken's open-orders page"
     ]
     arm.touch()
     clock.now += executor_module._GATE_REFRESH
@@ -6128,7 +6127,7 @@ def test_an_owed_pass_is_cleared_by_its_endpoints_next_drop_so_the_first_armed_t
     ex.on_timer(clock.now)  # the startup pass: its one book read
     clock.now += executor_module._GATE_REFRESH
     ex.on_timer(clock.now)  # the idle refresh reads the gate disarmed
-    _reconnect(ex)  # the data socket down and back while disarmed: the pass owed
+    _reconnect(ex)  # the data socket down and back while disarmed
     assert ex._reread_owed
     ex.on_socket_state(_socket(SocketState.DISCONNECTED, "kraken-spot-data-streams"))
     assert not ex._reread_owed
