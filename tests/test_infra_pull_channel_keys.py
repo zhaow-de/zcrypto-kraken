@@ -1,15 +1,11 @@
 from pathlib import Path
 
-import pytest
-
 FILES = Path(__file__).resolve().parents[1] / "infra/ansible/files"
 VAULT_PREFIX = "$ANSIBLE_VAULT;"
-# A sync channel's NAS file is named as infra/nas/compose.yaml mounts it: its key's name, the engine journal's apart.
+# A sync channel's NAS file is keys/<its key's name>, unless infra/nas/compose.yaml mounts it under another.
 NAS_NAMES = {"sync": "sync_journal"}
 VAULTED = "$ANSIBLE_VAULT;1.1;AES256\n6162636465666768\n"
-
-PUBLIC = sorted(FILES.glob("*_ed25519.pub"))
-PRIVATE = sorted(FILES.glob("*_ed25519"))
+CLEAR = "-----BEGIN OPENSSH PRIVATE KEY-----\nnot-a-key\n"
 
 
 def _channel(path):
@@ -30,66 +26,65 @@ def _vault_shaped(path):
         return f.readline().startswith(VAULT_PREFIX)
 
 
-def _clear_text(private):
-    channel = _channel(private)
-    return (
-        f"{channel}: {private.name} is in clear text (it does not begin {VAULT_PREFIX}); "
-        f"replace it with the vaulted form, {_remedy(channel)}"
-    )
-
-
 def _defects(files_dir: Path) -> list[str]:
-    defects = []
-    for pub in sorted(files_dir.glob("*_ed25519.pub")):
+    publics = sorted(files_dir.glob("*_ed25519.pub"))
+    defects = [] if publics else [f"no *_ed25519.pub under {files_dir}: nothing was checked"]
+    for pub in publics:
         channel = _channel(pub)
         private = pub.with_suffix("")
         if not private.is_file():
             defects.append(f"{channel}: {pub.name} has no private sibling {private.name} here; {_remedy(channel)}")
     for private in sorted(files_dir.glob("*_ed25519")):
+        channel = _channel(private)
         if not _vault_shaped(private):
-            defects.append(_clear_text(private))
+            defects.append(
+                f"{channel}: {private.name} is in clear text (it does not begin {VAULT_PREFIX}); "
+                f"replace it with the vaulted form, {_remedy(channel)}"
+            )
     return defects
 
 
-def _plant_vaulted_pair(files_dir, channel):
+def _plant(files_dir, channel, private=VAULTED):
     (files_dir / f"{channel}_ed25519.pub").write_text(f"ssh-ed25519 AAAA {channel}\n")
-    (files_dir / f"{channel}_ed25519").write_text(VAULTED)
+    (files_dir / f"{channel}_ed25519").write_text(private)
 
 
-def test_a_vault_shaped_pair_is_no_defect(tmp_path):
-    _plant_vaulted_pair(tmp_path, "sync_good")
+def _the_one_defect(files_dir, channel, phrase):
+    defects = _defects(files_dir)
+    assert len(defects) == 1 and defects[0].startswith(f"{channel}: "), defects
+    assert phrase in defects[0], defects
+
+
+def test_vault_shaped_pairs_are_no_defect(tmp_path):
+    for channel in ("sync", "sync_capture", "deploy_x"):
+        _plant(tmp_path, channel)
     assert _defects(tmp_path) == []
 
 
 def test_an_orphan_public_half_is_a_defect(tmp_path):
-    _plant_vaulted_pair(tmp_path, "sync_good")
-    (tmp_path / "sync_orphan_ed25519.pub").write_text("ssh-ed25519 AAAA sync_orphan\n")
-    defects = _defects(tmp_path)
-    assert len(defects) == 1 and defects[0].startswith("sync_orphan: "), defects
-    assert "no private sibling" in defects[0], defects
+    _plant(tmp_path, "deploy_x")
+    (tmp_path / "sync_ed25519.pub").write_text("ssh-ed25519 AAAA sync\n")
+    _the_one_defect(tmp_path, "sync", "no private sibling")
 
 
 def test_a_clear_text_private_half_is_a_defect(tmp_path):
-    _plant_vaulted_pair(tmp_path, "sync_good")
-    (tmp_path / "sync_planted_ed25519.pub").write_text("ssh-ed25519 AAAA sync_planted\n")
-    (tmp_path / "sync_planted_ed25519").write_text("-----BEGIN OPENSSH PRIVATE KEY-----\nnot-a-key\n")
+    _plant(tmp_path, "deploy_x")
+    _plant(tmp_path, "sync", private=CLEAR)
+    _the_one_defect(tmp_path, "sync", "in clear text")
+
+
+def test_a_deploy_key_in_clear_is_a_defect(tmp_path):
+    _plant(tmp_path, "sync")
+    _plant(tmp_path, "deploy_x", private=CLEAR)
+    _the_one_defect(tmp_path, "deploy_x", "in clear text")
+
+
+def test_a_directory_without_public_halves_is_a_defect(tmp_path):
+    (tmp_path / "sync_hc_backup_ed25519").write_text(VAULTED)
     defects = _defects(tmp_path)
-    assert len(defects) == 1 and defects[0].startswith("sync_planted: "), defects
-    assert "in clear text" in defects[0], defects
+    assert len(defects) == 1 and defects[0].startswith("no *_ed25519.pub under "), defects
 
 
-def test_the_glob_finds_channels():
-    assert PUBLIC, f"no *_ed25519.pub under {FILES}: the public-half cases are an empty parameter set, which pytest skips"
-    assert PRIVATE, f"no *_ed25519 under {FILES}: the private-half cases are an empty parameter set, which pytest skips"
-
-
-@pytest.mark.parametrize("pub", PUBLIC, ids=_channel)
-def test_public_half_has_a_private_sibling(pub):
-    channel = _channel(pub)
-    private = pub.with_suffix("")
-    assert private.is_file(), f"{channel}: {pub.name} has no private sibling {private.name} here; {_remedy(channel)}"
-
-
-@pytest.mark.parametrize("private", PRIVATE, ids=_channel)
-def test_private_half_is_vaulted(private):
-    assert _vault_shaped(private), _clear_text(private)
+def test_the_tree_has_no_defects():
+    defects = _defects(FILES)
+    assert defects == [], "\n".join(defects)
