@@ -961,13 +961,16 @@ def _stage(record: CycleRecord) -> CycleStages:
 
 @dataclass
 class _PendingDraft:
-    """A boundary's cycle plan armed and not yet drafted: its validated record, the tries its book read has left, and the
-    moment past which it drafts nothing."""
+    """A boundary's cycle plan armed and not yet drafted: its validated record, the tries its book read has left, the
+    moment past which it drafts nothing, whether one of its ticks' marks minted the equity series, and its last mark's
+    figures, which a terminal tick that marks nothing writes."""
 
     boundary: datetime
     record: CycleRecord
     tries: int
     window_close: datetime
+    minted_series: bool = False
+    marked: dict | None = None
 
 
 def _accum_leg(leg: LegDecision) -> dict:
@@ -3418,7 +3421,7 @@ class ProbeExecutor:
             return
         self._arm_cycle_draft(boundary)
 
-    def _mark_equity(self, book: VenueBook, record: CycleRecord, now: datetime) -> dict:
+    def _mark_equity(self, book: VenueBook, record: CycleRecord, now: datetime, *, draft: _PendingDraft) -> dict:
         """The boundary's equity mark, the figures its draft record carries. `equity_eur` is the book's EUR total -- the
         spot row and `EUR.M` -- and its basket coin, spot and earn-coded, at the record's closes (`_book_coin_eur`), so a
         move into Auto Earn or into `EUR.M` reads as no loss. The series' records since its start (`_series_start`,
@@ -3444,11 +3447,11 @@ class ProbeExecutor:
         nav = record.nav
         equity = book.eur_total + _book_coin_eur(book, record.closes)
         start = self._series_start()
-        minted = start is None
+        minted = start is None or draft.minted_series
         scan = accum_records_since(self._journal_dir, boundary if minted else start, boundary)
         # This boundary's own record, left by an earlier process, is the one this mark replaces: out of the high-water
-        # mark and the base, and in the hold, which a recovery inside the date never lifts -- unless this mark minted the
-        # series, which that record, an earlier series', predates.
+        # mark and the base, and in the hold, which a recovery inside the date never lifts -- unless this mark, or an
+        # earlier tick's of the same draft, minted the series, which that record, an earlier series', predates.
         records = [r for r in scan if _record_ts(r) != boundary]
         hwm = max([r["equity_eur"] for r in records if r["equity_eur"] is not None] + [equity])
         drawdown_bps = (hwm - equity) * 10_000 / nav
@@ -3456,10 +3459,11 @@ class ProbeExecutor:
         day = boundary.replace(hour=0, minute=0, second=0, microsecond=0)
         held = records if minted else scan
         hold = day_loss_bps >= _DAY_LOSS_HOLD_BPS or _day_loss_held(r for r in held if _record_ts(r) >= day)
-        if minted:
-            # Minted once the mark's figures stand: a scan that raises leaves no series, so the retry, or a later
-            # boundary's mark, mints again and never reads the record this boundary replaces into a series it started.
+        if start is None:
+            # Minted once the mark's figures stand, so a scan that raises leaves no series and the retry mints again;
+            # the draft keeps the mint, so its later ticks' marks read the record this boundary replaces as the mint did.
             self._mint_series_start(boundary)
+            draft.minted_series = True
         self._day_loss_hold = hold
         _set_equity(equity)
         _set_drawdown(drawdown_bps)
@@ -3568,7 +3572,14 @@ class ProbeExecutor:
                 return
             self._venue_book = book
             self._settle_from_book(book, "the boundary read")
-            figures = {**figures, "eur_total": book.eur_total, "eur_free": book.eur_free, **self._mark_equity(book, record, now)}
+            figures = {
+                **figures,
+                "eur_total": book.eur_total,
+                "eur_free": book.eur_free,
+                **self._mark_equity(book, record, now, draft=draft),
+            }
+            if figures["equity_eur"] is not None:
+                draft.marked = figures
             refusal = book.earn_refusal()
             if refusal is not None:
                 self._spend_draft_try(now, refusal, "book-unread", figures)
@@ -3700,6 +3711,9 @@ class ProbeExecutor:
         boundary ends at -- the merge keeps its plan entries -- and the draft cleared. Each part is wrapped: telemetry
         and records never drop a plan the walls accepted."""
         draft, self._pending_draft = self._pending_draft, None
+        if (figures is None or figures.get("equity_eur") is None) and draft.marked is not None:
+            # A terminal tick that marked nothing writes the draft's own last mark, never the replaced record's.
+            figures = draft.marked
         try:
             if decisions:
                 self._cycle_legs = {d.symbol: (d.delta_eur, d.price) for d in decisions}
@@ -3721,10 +3735,10 @@ class ProbeExecutor:
     def _write_draft_record(
         self, boundary: datetime, now: datetime, status: str, figures: dict, decisions, plan_id: str | None
     ) -> None:
-        """The boundary's `accum-<HH>.json`, and the not-drafted gauge at 1 for any status but `ok`. A draft that marked no
-        equity over a record that did -- a boundary re-armed after a restart -- keeps that record's mark, its hold with it:
-        `_day_loss_held` reads a hold only beside its equity, so the latch would otherwise lift for the rest of its date.
-        Wrapped: a record that cannot be written logs, and the draft goes on."""
+        """The boundary's `accum-<HH>.json`, and the not-drafted gauge at 1 for any status but `ok`. A draft no tick of
+        which marked equity, over a record that did -- a boundary re-armed after a restart -- keeps that record's mark,
+        its hold with it: `_day_loss_held` reads a hold only beside its equity, so the latch would otherwise lift for the
+        rest of its date. Wrapped: a record that cannot be written logs, and the draft goes on."""
         _set_boundary_not_drafted(status != "ok")
         try:
             path = accum_record_path(self._journal_dir, boundary)
