@@ -927,7 +927,7 @@ infra/ansible/scripts/converge.sh site.yml --limit <apt host> --tags alloy -e al
 ### Task 21: T0219 resolved
 
 **Files:**
-- Modify: `docs/open-topics/T0219-one-alloy-version-across-the-fleet.md` and `docs/open-topics/README.md`, by the `topic-ops` skill: `status: resolved`, the findings carrying the package's delivery, the wave left to the fleet as `CLAUDE.md` places a converge a solution still needs.
+- Modify: `docs/open-topics/T0219-one-alloy-version-across-the-fleet.md`, moved by the close to `docs/open-topics/archive/T0219-one-alloy-version-across-the-fleet.md`, and `docs/open-topics/README.md`, by the `topic-ops` skill: `status: resolved`, the findings carrying the package's delivery, the wave left to the fleet as `CLAUDE.md` places a converge a solution still needs.
 
 - [ ] **Step 1: Load `topic-ops`** and follow its resolve mechanics, the index re-rendered by `uv run python infra/scripts/topics-index.py`.
 - [ ] **Step 2: The consumers** — `uv run pytest tests/test_open_topics_frontmatter.py tests/test_internal_terms_not_operator_visible.py -q -p no:cacheprovider`; Expected: no failure.
