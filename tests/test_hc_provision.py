@@ -39,6 +39,12 @@ KEYS = {
 HCIO_KEYS = ("healthchecks_readonly_api_key", "healthchecks_api_key")
 GIT_SHOW = ["git", "-C", str(REPO), "show", "HEAD:tests/fixtures/healthchecks_descriptions.json"]
 
+
+def test_the_services_read_only_key_is_the_daily_passs_constant():
+    assert hp.SERVICE_READ is hp.ops_daily.DEADMAN_READONLY_KEY
+    assert hp.SERVICE_READ == ("hc_readonly_api_key", "group_vars/observed/vault.yml")
+
+
 # The tree's fixture names the fleet's checks; the definitions below are this file's own.
 _TREE = [
     row for row in json.loads((REPO / "tests/fixtures/healthchecks_descriptions.json").read_text()) if row["name"] != "zcrypto-hc"
