@@ -351,8 +351,9 @@ def test_a_cron_source_is_written_with_its_schedule_and_tz_and_no_timeout(fleet,
         ("zcrypto-panel", lambda f: {"channels": ""}, "channels"),
         ("zcrypto-panel", lambda f: {"channels": f"{f.slack},{f.email}"}, "channels"),
         (SELF, lambda f: {"manual_resume": True}, "manual_resume"),
+        ("zcrypto-capture", lambda f: {"slug": "zcrypto-capture-1"}, "slug"),
     ],
-    ids=["grace", "timeout", "schedule", "tz", "no channel", "a second channel", "manual_resume"],
+    ids=["grace", "timeout", "schedule", "tz", "no channel", "a second channel", "manual_resume", "slug"],
 )
 def test_a_read_back_differing_from_its_source_ends_the_run_naming_the_check(fleet, capsys, name, read_as, field):
     fleet.clone.read_as[name] = read_as(fleet)
@@ -491,6 +492,33 @@ def test_retire_refuses_naming_the_check_and_deletes_nothing(retiring, capsys, s
     spoil(retiring)
     rc, out, err = _run(capsys, "retire")
     assert rc == 2 and named in err
+    assert retiring.deletes() == []
+
+
+def test_status_reads_the_service_alone_when_healthchecks_io_refuses_its_listing(fleet, capsys):
+    assert _run(capsys, "apply")[0] == 0
+    fleet.hcio.refuse[("GET", "checks/")] = 401
+    rc, out, err = _run(capsys, "status")
+    assert rc == 0, err
+    rows = [line for line in out.splitlines() if line.split() and line.split()[0] in TWELVE]
+    assert len(rows) == 12 and not [line for line in rows if "healthchecks.io" in line], out
+    assert "healthchecks.io left out: healthchecks.io's checks listing answered HTTP 401" in out
+
+
+def test_retire_names_the_check_whose_healthchecks_io_last_ping_is_no_time(retiring, capsys):
+    retiring.hcio.by_name("zcrypto-panel").update(last_ping="yesterday")
+    rc, out, err = _run(capsys, "retire")
+    assert rc == 2 and "for zcrypto-panel answered a last_ping" in err, err
+    assert retiring.deletes() == []
+
+
+def test_retire_with_no_git_to_run_is_refused_naming_the_committed_fixture(retiring, capsys, monkeypatch):
+    def absent(argv, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory", "git")
+
+    monkeypatch.setattr(hp.subprocess, "run", absent)
+    rc, out, err = _run(capsys, "retire")
+    assert rc == 2 and "HEAD:tests/fixtures/healthchecks_descriptions.json, does not read (git could not run" in err, err
     assert retiring.deletes() == []
 
 

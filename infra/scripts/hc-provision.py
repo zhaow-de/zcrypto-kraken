@@ -163,7 +163,10 @@ def _on_disk() -> list[dict]:
 
 def _committed() -> list[dict]:
     where = f"the committed fixture, HEAD:{FIXTURE_PATH}"
-    shown = subprocess.run(["git", "-C", str(REPO), "show", f"HEAD:{FIXTURE_PATH}"], capture_output=True, encoding="utf-8")
+    try:
+        shown = subprocess.run(["git", "-C", str(REPO), "show", f"HEAD:{FIXTURE_PATH}"], capture_output=True, encoding="utf-8")
+    except OSError as exc:
+        raise Refusal(f"{where}, does not read (git could not run: {type(exc).__name__})") from None
     if shown.returncode != 0:
         raise Refusal(f"{where}, does not read (git exited {shown.returncode})")
     return _named(shown.stdout, where)
@@ -239,6 +242,8 @@ def _body(definition: dict, channel: str) -> dict:
 
 def _differences(definition: dict, back: dict, channel: str) -> list[str]:
     out = [k for k in ("timeout", "grace", "schedule", "tz") if back.get(k) != definition.get(k)]
+    if back.get("slug") != definition["name"]:
+        out.append("slug")
     channels = back.get("channels")
     if not isinstance(channels, str) or channels.split(",") != [channel]:
         out.append("channels")
@@ -323,12 +328,10 @@ def status() -> None:
     listing = _listing(SERVICE, _key(SERVICE_READ), SERVICE_LISTING)
     on_service = _on_service(fleet, listing)
     try:
-        hcio_key = _key(HCIO_READ)
+        hcio = {row.get("name"): row.get("last_ping") for row in _listing(HCIO, _key(HCIO_READ), HCIO_LISTING)}
     except Refusal as refusal:
         print(f"healthchecks.io left out: {refusal}")
         hcio = None
-    else:
-        hcio = {row.get("name"): row.get("last_ping") for row in _listing(HCIO, hcio_key, HCIO_LISTING)}
     for name, check in on_service:
         if check is None:
             print(f"{name:<26} absent")
@@ -391,7 +394,7 @@ def retire() -> None:
         failing.append(f"the fixture differs from {SERVICE_LISTING} in {', '.join(differ)}: run fixture and merge it first")
     since = datetime.now(timezone.utc) - timedelta(hours=24)
     for row in targets:
-        at = _when(row.get("last_ping"), HCIO_LISTING)
+        at = _when(row.get("last_ping"), f"{HCIO_LISTING} for {row['name']}")
         if at is not None and at > since:
             failing.append(f"{row['name']}: pinged on healthchecks.io at {row['last_ping']}, within 24 hours")
     doomed = [(row["name"], _uuid(row, f"{HCIO_LISTING} for {row['name']}"), row.get("status")) for row in targets]
