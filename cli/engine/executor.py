@@ -1188,8 +1188,8 @@ class ProbeExecutor:
         # watchdog's `_frozen` stands (`_watch_sockets`), `daily_loss_hold` while `_day_loss_hold` does,
         # re-derived from the date's draft records at each boundary, each equity mark and the first tick.
         self._frozen = False
-        # The cut's moment while the freeze stands, None otherwise: `_stranded_rows` and the re-read pass
-        # read the ledger back to the day before its own.
+        # The cut's moment while the freeze stands, None otherwise: `_stranded_rows`, the re-read pass and
+        # `_settle_restored_intent` read the ledger back to the day before its own.
         self._frozen_at: datetime | None = None
         # The rows the standing freeze's CRITICAL last named (`_lift_freeze`), so each set logs once.
         self._stranded_named: str | None = None
@@ -2367,7 +2367,10 @@ class ProbeExecutor:
             return
         key = (row.get("plan_id"), row.get("intent_index"))
         try:
-            pending = {(plan_id, index) for _, plan_id, index in pending_plan_intents(self._journal_dir, self._now())}
+            pending = {
+                (plan_id, index)
+                for _, plan_id, index in pending_plan_intents(self._journal_dir, self._now(), since=self._frozen_at)
+            }
         except Exception:
             logger.critical(
                 "the plan entries could not be read -- the intent of restored row %s keeps the state it has",
