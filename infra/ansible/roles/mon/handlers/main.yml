@@ -34,14 +34,8 @@
   listen: [restart prometheus, restart loki]
   when: not mon_units_previewed
 
-- name: reload caddy
-  ansible.builtin.systemd_service:
-    name: caddy
-    state: reloaded
-  when: not mon_units_previewed
-
 - name: restart alloy
   ansible.builtin.systemd_service:
     name: alloy
     state: restarted
-  when: not mon_units_previewed
+  when: not alloy_apt_previewed

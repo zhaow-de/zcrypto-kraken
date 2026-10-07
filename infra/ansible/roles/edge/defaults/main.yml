@@ -1,0 +1,15 @@
+---
+# Defaults for the `edge` role (spec 00122 D15): Caddy as a node's one public listener. No play lists the role:
+# a role includes it, its tasks taking that role's tag, and sets the four values below that have no default.
+edge_role_name: "{{ undef(hint='the including role names itself in edge_role_name') }}"
+edge_hostname: "{{ undef(hint='the including role sets edge_hostname, the site address') }}"
+edge_acme_email: "{{ undef(hint='the including role sets edge_acme_email') }}"
+edge_upstream_port: "{{ undef(hint='the including role sets edge_upstream_port, its service on loopback') }}"
+
+# A list of {path, port, users: [{name, hash}]}: each path answered, behind basic auth, by its port on loopback.
+edge_basic_auth_routes: []
+# Paths answered 404 at the edge.
+edge_paths_404: []
+# Page paths whose cookieless HEAD the edge answers 200; a HEAD carrying the session cookie goes upstream.
+edge_head_paths: []
+edge_session_cookie: ""

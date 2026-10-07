@@ -1,57 +1,38 @@
 ---
 # The observability node (spec 00121): Grafana on SQLite, one Prometheus as the remote_write receiver,
 # single-binary Loki, Caddy as the one public listener, and the node's own Alloy. Packages followed from
-# apt, never forced or held; tests/test_infra_mon_role.py holds what the public login rests on.
+# apt, never forced or held, but Alloy, held and pinned at the fleet's version; tests/test_infra_mon_role.py
+# holds what the public login rests on.
 
 # First, so a missing or misshapen vault value fails here by name and not inside a no_log task.
 - name: refuse a missing or misshapen secret, naming the key and never the value
-  ansible.builtin.assert:
-    that: mon_secret_faults | length == 0
-    fail_msg: >-
-      {{ mon_secret_faults | join(', ') }} in host_vars/zcrypto-mon/vault.yml: missing, or not the shape
-      its source writes (no trailing newline): infra/runbooks/mon.md's mon-secrets procedure.
+  ansible.builtin.include_role:
+    name: node_common
+    tasks_from: secrets-preflight
   vars:
-    mon_secret_faults: >-
-      {{ ([['mon_grafana_admin_password', mon_grafana_admin_password | default('')],
-           ['mon_grafana_secret_key', mon_grafana_secret_key | default('')]]
-          | rejectattr('1', 'match', '[A-Za-z0-9]{32,}\Z') | map('first') | list)
-         + ([['mon_grafana_admin_user', mon_grafana_admin_user | default('')]]
-            | rejectattr('1', 'match', 'u[0-9a-f]{16}\Z') | map('first') | list)
-         + ([['mon_ingest_fleet_password_hash', mon_ingest_fleet_password_hash | default('')],
-             ['mon_ingest_logship_password_hash', mon_ingest_logship_password_hash | default('')]]
-            | rejectattr('1', 'match', '\$2[aby]\$\d\d\$[./A-Za-z0-9]{53}\Z') | map('first') | list)
-         + ([['selfcheck_healthcheck_url', selfcheck_healthcheck_url | default('')]]
-            | rejectattr('1', 'match', 'https://hc-ping\.com/\S+\Z') | map('first') | list) }}
+    node_common_secrets_preflight:
+      - {key: mon_grafana_admin_password, shape: '[A-Za-z0-9]{32,}\Z'}
+      - {key: mon_grafana_secret_key, shape: '[A-Za-z0-9]{32,}\Z'}
+      - {key: mon_grafana_admin_user, shape: 'u[0-9a-f]{16}\Z'}
+      - {key: mon_ingest_fleet_password_hash, shape: '\$2[aby]\$\d\d\$[./A-Za-z0-9]{53}\Z'}
+      - {key: mon_ingest_logship_password_hash, shape: '\$2[aby]\$\d\d\$[./A-Za-z0-9]{53}\Z'}
+      - {key: selfcheck_healthcheck_url, shape: 'https://hc-ping\.com/\S+\Z'}
+    node_common_secrets_preflight_file: host_vars/zcrypto-mon/vault.yml
+    node_common_secrets_preflight_runbook: infra/runbooks/mon.md's mon-secrets procedure
 
 # ---- Packages and their sources ------------------------------------------------------------------
-- name: add the Grafana apt repository (grafana, loki, alloy)
-  ansible.builtin.deb822_repository:
-    name: grafana
-    types: [deb]
-    uris: https://apt.grafana.com
-    suites: [stable]
-    components: [main]
-    signed_by: https://apt.grafana.com/gpg.key
-    install_python_debian: true
-  register: mon_grafana_repo
-
-- name: add the Caddy apt repository
-  ansible.builtin.deb822_repository:
-    name: caddy
-    types: [deb]
-    uris: https://dl.cloudsmith.io/public/caddy/stable/deb/debian
-    suites: [any-version]
-    components: [main]
-    signed_by: https://dl.cloudsmith.io/public/caddy/stable/gpg.key
-    install_python_debian: true
-  register: mon_caddy_repo
+# The shared install adds the Grafana apt repository, which Grafana and Loki install from as well.
+- name: install, pin and hold alloy at the version committed for this host
+  ansible.builtin.import_role:
+    name: alloy_apt
+  tags: [alloy]
 
 # A preview on a node that never had the repositories cannot see their packages: apt fails on a name its
 # cache does not hold, and converge.sh stops on a failed preview. Every task below that needs an installed
 # package or its unit skips exactly that case, and every real converge runs it.
 - name: note a preview that runs before the repositories exist
   ansible.builtin.set_fact:
-    mon_repos_previewed: "{{ ansible_check_mode and (mon_grafana_repo is changed or mon_caddy_repo is changed) }}"
+    mon_repos_previewed: "{{ ansible_check_mode and alloy_apt_grafana_repo is changed }}"
 
 # Unconditional: a converge that added a repository and failed before this would otherwise never see it.
 - name: refresh the apt cache, so the candidates below are the repositories' own
@@ -84,18 +65,11 @@
     install_recommends: false
   register: mon_debian_install
 
-- name: grafana, loki and alloy present — versions FOLLOWED from apt, never forced or held
+- name: grafana and loki present — versions FOLLOWED from apt, never forced or held
   ansible.builtin.apt:
-    name: [grafana, loki, alloy]
+    name: [grafana, loki]
     state: present
   register: mon_grafana_install
-  when: not mon_repos_previewed
-
-- name: caddy present — version FOLLOWED from apt, never forced or held
-  ansible.builtin.apt:
-    name: caddy
-    state: present
-  register: mon_caddy_install
   when: not mon_repos_previewed
 
 # A preview that would install a package has no unit of it for systemd to find, the fail2ban role's case.
@@ -103,7 +77,7 @@
   ansible.builtin.set_fact:
     mon_units_previewed: >-
       {{ ansible_check_mode and (mon_repos_previewed or mon_debian_install is changed
-         or mon_grafana_install is changed or mon_caddy_install is changed) }}
+         or mon_grafana_install is changed) }}
 
 # ---- Prometheus: the remote_write receiver --------------------------------------------------------
 - name: prometheus flags — loopback, the receiver, the retention
@@ -217,19 +191,21 @@
     - restart grafana
 
 # ---- Caddy: the one public listener ----------------------------------------------------------------
-# Validated by the installed binary before it replaces the live file, so a Caddyfile this Caddy cannot
-# parse fails the converge and the edge keeps serving the old one. It carries the ingest users' hashes.
-- name: Caddyfile — the one public listener's routes
-  ansible.builtin.template:
-    src: Caddyfile.j2
-    dest: /etc/caddy/Caddyfile
-    owner: root
-    group: caddy
-    mode: "0640"
-    validate: caddy validate --adapter caddyfile --config %s
-  no_log: true
-  diff: false
-  notify: reload caddy
+# Ahead of the flush below, so a changed Caddyfile's reload runs there, not at the play's end where any failure strands it.
+- name: the edge in front of Grafana on loopback and the two ingest paths
+  ansible.builtin.include_role:
+    name: edge
+  vars:
+    edge_role_name: mon
+    edge_hostname: "{{ mon_hostname }}"
+    edge_acme_email: "{{ mon_acme_email }}"
+    edge_basic_auth_routes:
+      - {path: /api/v1/write, port: "{{ mon_prometheus_port }}", users: [{name: "{{ mon_ingest_fleet_user }}", hash: "{{ mon_ingest_fleet_password_hash }}"}]}
+      - {path: /loki/api/v1/push, port: "{{ mon_loki_port }}", users: [{name: "{{ mon_ingest_fleet_user }}", hash: "{{ mon_ingest_fleet_password_hash }}"}, {name: "{{ mon_ingest_logship_user }}", hash: "{{ mon_ingest_logship_password_hash }}"}]}
+    edge_paths_404: [/metrics, /metrics/*, /swagger*]
+    edge_head_paths: [/d/*, /alerting/*]
+    edge_session_cookie: grafana_session
+    edge_upstream_port: "{{ mon_grafana_port }}"
 
 # ---- Services --------------------------------------------------------------------------------------
 - name: prometheus and loki enabled + started
@@ -253,13 +229,6 @@
     daemon_reload: true
   when: not mon_units_previewed
 
-- name: caddy enabled + started
-  ansible.builtin.systemd_service:
-    name: caddy
-    enabled: true
-    state: started
-  when: not mon_units_previewed
-
 # ---- The tools' credential -------------------------------------------------------------------------
 # Every task in it calls Grafana's API or acts on what one returned, so a preview skips it whole.
 - name: the tools' service account and its one token
@@ -276,13 +245,21 @@
     mode: "0640"
     validate: alloy validate %s
   notify: restart alloy
+  tags: [alloy]
 
 - name: alloy enabled + started
   ansible.builtin.systemd_service:
     name: alloy
     enabled: true
     state: started
-  when: not mon_units_previewed
+  when: not alloy_apt_previewed
+  tags: [alloy]
+
+- name: restart alloy when its process does not run the installed binary
+  ansible.builtin.import_role:
+    name: alloy_apt
+    tasks_from: postcondition
+  tags: [alloy]
 
 - name: ensure the node-exporter textfile directory exists
   ansible.builtin.file:
@@ -293,81 +270,30 @@
     mode: "0755"
 
 # The node reboots by hand, so it publishes the pending-reboot flag the way the capture pair and ops
-# do: a copy of the capture role's check.
-- name: install the reboot-check script
-  ansible.builtin.copy:
-    src: zcrypto-reboot-check.sh
-    dest: /usr/local/sbin/zcrypto-reboot-check
-    owner: root
-    group: root
-    mode: "0755"
+# do: the shared copy of the capture role's check.
+- name: publish the pending-reboot flag as a node-exporter textfile
+  ansible.builtin.include_role:
+    name: node_common
+    tasks_from: reboot-check
+  vars:
+    node_common_reboot_check_textfile_dir: "{{ mon_textfile_dir }}"
+    node_common_role_name: mon
 
-- name: render the reboot-check systemd unit
-  ansible.builtin.template:
-    src: zcrypto-reboot-check.service.j2
-    dest: /etc/systemd/system/zcrypto-reboot-check.service
-    owner: root
-    group: root
-    mode: "0644"
-
-- name: install the reboot-check systemd timer
-  ansible.builtin.copy:
-    src: zcrypto-reboot-check.timer
-    dest: /etc/systemd/system/zcrypto-reboot-check.timer
-    owner: root
-    group: root
-    mode: "0644"
-  register: mon_reboot_timer_install
-
-# A first-install preview never wrote the timer, so systemd cannot find it there.
-- name: enable + start the reboot-check timer
-  ansible.builtin.systemd_service:
-    name: zcrypto-reboot-check.timer
-    daemon_reload: true
-    enabled: true
-    state: started
-  when: not (ansible_check_mode and mon_reboot_timer_install is changed)
-
-- name: install the self-check script
-  ansible.builtin.copy:
-    src: zcrypto-mon-selfcheck.py
-    dest: /usr/local/sbin/zcrypto-mon-selfcheck
-    owner: root
-    group: root
-    mode: "0755"
-
-- name: render the self-check's ping URL, read by systemd alone
-  ansible.builtin.template:
-    src: zcrypto-mon-selfcheck.env.j2
-    dest: /etc/default/zcrypto-mon-selfcheck
-    owner: root
-    group: root
-    mode: "0600"
-  no_log: true
-  diff: false
-
-- name: render the self-check systemd unit
-  ansible.builtin.template:
-    src: zcrypto-mon-selfcheck.service.j2
-    dest: /etc/systemd/system/zcrypto-mon-selfcheck.service
-    owner: root
-    group: root
-    mode: "0644"
-
-- name: install the self-check systemd timer
-  ansible.builtin.copy:
-    src: zcrypto-mon-selfcheck.timer
-    dest: /etc/systemd/system/zcrypto-mon-selfcheck.timer
-    owner: root
-    group: root
-    mode: "0644"
-  register: mon_selfcheck_timer_install
-
-# A first-install preview never wrote the timer, so systemd cannot find it there.
-- name: enable + start the self-check timer
-  ansible.builtin.systemd_service:
-    name: zcrypto-mon-selfcheck.timer
-    daemon_reload: true
-    enabled: true
-    state: started
-  when: not (ansible_check_mode and mon_selfcheck_timer_install is changed)
+- name: ping the node's dead-man check while rules evaluate, fleet samples arrive and Loki is ready
+  ansible.builtin.include_role:
+    name: node_common
+    tasks_from: selfcheck
+  vars:
+    node_common_selfcheck_name: zcrypto-mon-selfcheck
+    node_common_selfcheck_script: zcrypto-mon-selfcheck.py
+    node_common_selfcheck_description: Ping the observability node's dead-man while rules evaluate, fleet samples arrive and Loki is ready
+    node_common_selfcheck_timer_description: Every-5-minutes self-check of the observability node
+    node_common_selfcheck_environment:
+      MON_SELFCHECK_GRAFANA: "http://127.0.0.1:{{ mon_grafana_port }}"
+      MON_SELFCHECK_PROMETHEUS: "http://127.0.0.1:{{ mon_prometheus_port }}"
+      MON_SELFCHECK_LOKI: "http://127.0.0.1:{{ mon_loki_port }}"
+    node_common_selfcheck_env_var: MON_SELFCHECK_HEALTHCHECK_URL
+    node_common_selfcheck_env_value: "{{ mon_selfcheck_healthcheck_url }}"
+    # Every five minutes, off the minute boundary.
+    node_common_selfcheck_on_calendar: "*:0/5:23"
+    node_common_role_name: mon

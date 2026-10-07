@@ -31,7 +31,9 @@ Reading rules:
 | ops (timers + liquidations) | zcrypto-ops | `3f291f3cee57` — revision `77df6273` | 2026-09-24 20:04:48 | `7d4c6066d71e` |
 | archive-pull | nas | `d914dad91536` — revision `7ab4fc1a`, the `-compat` build | 2026-09-30 19:17:40 | `c4135ac75b72` |
 
-**Non-image pins.** `zaccess`'s `caddy` and `alloy` are apt packages the access role installs unversioned, clearing a `dpkg` hold, so they have no row and no rollback operand here; read the installed versions off the host: `dpkg-query -W alloy caddy`.
+**Non-image pins.** `zaccess`'s `caddy` is an apt package the access role installs unversioned, clearing a `dpkg` hold, so it has no row and no rollback operand here; read its installed version off the host: `dpkg-query -W caddy`. Alloy on the hosts that run it as a package, `zaccess` and `zcrypto-mon`, is installed at `alloy_deb_version` in `infra/ansible/group_vars/observed/alloy.yml`, held and pinned, and takes an `alloy` row in the table below: its version the host's `dpkg-query -W alloy` read after its first `--tags alloy` converge, its notes `dpkg hold; pinned at 1001`; the word `held` in the notes, its reason after it, marks a host a wave left behind.
+
+Every host's Alloy runs the fleet's version outside a wave (set: the hosts of the inventory's `observed` group, each by its `alloy` row in either table here, a host with no row counted as off; count: `infra/scripts/count-list.sh hosts-off-the-fleets-alloy-version`).
 
 | package | host | version | since (UTC) | notes |
 | --- | --- | --- | --- | --- |

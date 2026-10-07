@@ -1,0 +1,38 @@
+---
+# Defaults for the `node_common` role (spec 00122 D15): task files a node role includes by `tasks_from`, each taking
+# its variables from the include. No play lists the role.
+
+# secrets-preflight: the including role's vaulted keys as {key, shape}. A missing key reads as the empty string, so
+# a shape that matches it admits a missing key; a shape ends in \Z, since `$` also matches before a trailing newline.
+node_common_secrets_preflight: []
+node_common_secrets_preflight_file: "{{ undef(hint='the including role names the file its secrets live in, in node_common_secrets_preflight_file') }}"
+node_common_secrets_preflight_runbook: "{{ undef(hint='the including role names the procedure that writes them, in node_common_secrets_preflight_runbook') }}"
+
+# reboot-check
+node_common_reboot_check_textfile_dir: "{{ undef(hint='the including role sets node_common_reboot_check_textfile_dir, the directory its textfile collector reads') }}"
+node_common_role_name: "{{ undef(hint='the including role names itself in node_common_role_name') }}"
+
+# selfcheck: the including role's script over the shared zcrypto_selfcheck loop; the unit's Environment= lines as a
+# {name: value} map; the ping URL in a root-only env file.
+node_common_selfcheck_name: "{{ undef(hint='the including role names the self-check in node_common_selfcheck_name, which names its script, env file, unit and timer') }}"
+node_common_selfcheck_script: "{{ undef(hint='the including role names its self-check script under its files/ in node_common_selfcheck_script') }}"
+node_common_selfcheck_description: "{{ undef(hint='the including role sets node_common_selfcheck_description, the unit Description=') }}"
+node_common_selfcheck_timer_description: "{{ undef(hint='the including role sets node_common_selfcheck_timer_description, the timer Description=') }}"
+node_common_selfcheck_environment: {}
+node_common_selfcheck_env_var: "{{ undef(hint='the including role names the ping URL variable its script reads in node_common_selfcheck_env_var') }}"
+node_common_selfcheck_env_value: "{{ undef(hint='the including role sets node_common_selfcheck_env_value, the ping URL, empty to ping nothing') }}"
+node_common_selfcheck_on_calendar: "{{ undef(hint='the including role sets node_common_selfcheck_on_calendar, the timer OnCalendar=') }}"
+
+# sqlite-backup: a nightly VACUUM INTO of one SQLite database, staged inside the database's own tree, where the runner
+# writes. The runner is the prefix the database is read through, `docker compose -f <compose> exec -T web` for a
+# container, and the copy the prefix the staged path is appended to, `docker compose -f <compose> cp web:`; both are
+# empty where the host holds the database itself.
+node_common_sqlite_backup_name: "{{ undef(hint='the including role names the backup in node_common_sqlite_backup_name, which names its files and its gauge') }}"
+node_common_sqlite_backup_db: "{{ undef(hint='the including role sets node_common_sqlite_backup_db, the database path as the runner sees it') }}"
+node_common_sqlite_backup_staging: "{{ undef(hint='the including role sets node_common_sqlite_backup_staging, the staging directory as the runner sees it') }}"
+node_common_sqlite_backup_dest: "{{ undef(hint='the including role sets node_common_sqlite_backup_dest, the host directory the copies land in') }}"
+node_common_sqlite_backup_keep_days: 14
+node_common_sqlite_backup_runner: ""
+node_common_sqlite_backup_copy: ""
+node_common_sqlite_backup_on_calendar: "*-*-* 02:47:00"
+node_common_sqlite_backup_textfile: "{{ undef(hint='the including role sets node_common_sqlite_backup_textfile, the gauge path its textfile collector reads') }}"

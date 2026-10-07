@@ -1,8 +1,7 @@
 # Grafana Alloy compose file for a cache node, rendered by the `cache` role at
 # {{ cache_alloy_dir }}/compose.yaml; edit infra/ansible/roles/cache/templates/alloy-compose.yaml.j2.
 # Its own compose project, apart from Valkey's and Sentinel's, so an Alloy redeploy never restarts
-# either. The role renders it and never starts it: `sudo docker compose up -d` in this directory is
-# the operator's step.
+# either. The role brings this project's container to the pinned digest after rendering it.
 services:
   alloy:
     image: "{{ cache_alloy_image }}@{{ cache_alloy_digest }}"

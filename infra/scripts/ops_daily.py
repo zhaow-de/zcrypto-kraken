@@ -331,8 +331,8 @@ def _a_month_after(d: date) -> date:
 HEALABLE_COUNTER = "zcrypto_reconcile_healable_gap_seconds_total"
 REFDATA_RUNBOOK = "infra/runbooks/reference-data.md#refdata-sweep-due"
 HEALABLE_RUNBOOK = "infra/runbooks/ops.md#healable-threshold-rederivation-due"
-MON_PATCH_RUNBOOK = "infra/runbooks/mon.md#mon-patch-pass"
-MON_NODE = "zcrypto-mon"
+# (host, runbook)
+PATCH_PASSES = (("zcrypto-mon", "infra/runbooks/mon.md#mon-patch-pass"),)
 
 
 def last_full_converge(log: Path, host: str) -> date | None:
@@ -374,10 +374,7 @@ def read_reminders(
     deploy_log: Path = DEPLOY_LOG,
 ) -> RemindersRead:
     """Due-ness computed from state the pass can read, so a Slack reminder that never arrives costs
-    nothing (spec 00107 D1). Each reminder comes from the source that actually knows: the sweep from
-    the register's last re-confirmation row plus the monthly cadence, the observability node's patch
-    pass from its last full converge in the deploy log plus the same cadence, the healable
-    re-derivation from whether its counter moved in the window.
+    nothing (spec 00107 D1); each reminder comes from the source that actually knows.
 
     An owed reminder reports and never blocks; a source that could not be read is `unreadable`, like
     every other read here.
@@ -401,17 +398,22 @@ def read_reminders(
                 Reminder("refdata sweep", f"{status} (last sweep {last.isoformat()})", owed=days <= 0, runbook=REFDATA_RUNBOOK)
             )
 
-    try:
-        patched = last_full_converge(deploy_log, MON_NODE)
-    except _UNREACHABLE as exc:
-        note(f"the deploy log could not be read: {exc}")
-    else:
+    log_failures = set()
+    for host, runbook in PATCH_PASSES:
+        try:
+            patched = last_full_converge(deploy_log, host)
+        except _UNREACHABLE as exc:
+            failure = f"the deploy log could not be read: {exc}"
+            if failure not in log_failures:
+                log_failures.add(failure)
+                note(failure)
+            continue
         # No full converge on record is a node that is not built: nothing is owed on it.
         if patched is not None:
             days = (_a_month_after(patched) - now.date()).days
             status = f"due in {days} days" if days >= 0 else f"OVERDUE by {-days} days"
             last_pass = f"{status} (last full converge {patched.isoformat()})"
-            read.reminders.append(Reminder("mon patch pass", last_pass, owed=days <= 0, runbook=MON_PATCH_RUNBOOK))
+            read.reminders.append(Reminder(f"{ssh_alias(host)} patch pass", last_pass, owed=days <= 0, runbook=runbook))
 
     hours = max(1, int(window.total_seconds() // 3600))
     try:
@@ -667,8 +669,7 @@ REBOOT_PACKAGES = "/var/run/reboot-required.pkgs"
 UPGRADE_CHECK = f"unattended upgrades on {UPGRADE_HOST}"
 
 # The ops host has three names -- the `host` label its rules carry, the fleet name its check rows
-# print and the ssh destination -- and every other host in the map two; `zaccess` has no bare-name
-# destination.
+# print and the ssh destination -- and every other host in the map two.
 _SSH_ALIASES = {
     "ops": "hp",
     "zcrypto-red": "red",
@@ -676,6 +677,7 @@ _SSH_ALIASES = {
     "zcrypto-valkey2": "db2",
     "zcrypto-valkey3": "db3",
     "zcrypto-mon": "mon",
+    "zaccess": "access",
 }
 _HOST_LABELS = {
     "hp": "ops",

@@ -16,6 +16,8 @@ from typing import NamedTuple
 import pytest
 import yaml
 
+from tests.test_dashboards_cover_metrics import node_only_groups
+
 _REPO = Path(__file__).resolve().parents[1]
 _SCRIPT = _REPO / "infra" / "scripts" / "grafana-compare.py"
 _ALERTS = _REPO / "infra" / "grafana" / "alerts.yaml"
@@ -437,19 +439,20 @@ def test_the_listing_reads_a_container_matcher_of_either_form_for_a_direct_shipp
     assert _selects_a_direct_shipper(expr) is selects
 
 
-def test_the_direct_shipped_rules_are_the_measured_basis_listing_and_the_other_two_exclusions_are_one_name_each():
+def test_the_direct_shipped_rules_are_the_measured_basis_listing_and_the_other_two_exclusions_are_the_node_only_groups():
     assert sorted(_listing()) == sorted(DIRECT_SHIPPED)
     assert sorted(gc.DIRECT_SHIPPED_RULES) == sorted(DIRECT_SHIPPED)
-    assert gc.EXCLUDED_GROUPS == ("zcrypto-mon",)
-    assert gc.EXCLUDED_HOSTS == ("zcrypto-mon",)
+    # Each node-only group is named for the host its rules read, so the push's list is both exclusions.
+    assert set(gc.EXCLUDED_GROUPS) == node_only_groups()
+    assert set(gc.EXCLUDED_HOSTS) == node_only_groups()
 
 
 def test_the_walk_sends_every_query_node_but_the_three_exclusions(monkeypatch, capsys):
     """The (expression, path) pairs each stack is sent at each instant, with their repeats, against the pairs the rule
-    file itself holds less the group `zcrypto-mon` and the listed rules -- both written here, never the script's."""
+    file itself holds less every group of the push's node-only list and the listed rules -- never the script's."""
     expected: Counter[tuple[str, str]] = Counter()
     for rule in _rules():
-        if rule["ruleGroup"] == "zcrypto-mon" or rule["uid"] in DIRECT_SHIPPED:
+        if rule["ruleGroup"] in node_only_groups() or rule["uid"] in DIRECT_SHIPPED:
             continue
         for node in rule["data"]:
             if node["datasourceUid"] == PROM:

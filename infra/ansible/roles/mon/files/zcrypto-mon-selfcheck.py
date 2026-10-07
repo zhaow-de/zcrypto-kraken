@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """The observability node's self-check, installed by the `mon` role at /usr/local/sbin/zcrypto-mon-selfcheck.
 
-A rule cannot page the death of the node it runs on, so this pings a healthchecks.io check only while the node
-does its job: Grafana's rule scheduler is ticking, a fleet host's sample is fresh in Prometheus, and Loki answers
-ready. A failing check sends nothing and exits 0: the missing ping is the page.
+It pings the node's dead-man check through zcrypto_selfcheck while the node does its job: Grafana's rule scheduler is
+ticking, a fleet host's sample is fresh in Prometheus, and Loki answers ready.
 tests/test_mon_selfcheck.py drives this file.
 """
 
@@ -17,6 +16,12 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+try:
+    import zcrypto_selfcheck
+except ModuleNotFoundError:
+    sys.path.append("/usr/local/lib/zcrypto")
+    import zcrypto_selfcheck
+
 TICK = "grafana_alerting_ticker_last_consumed_tick_timestamp_seconds"
 SCHEDULED = "grafana_alerting_schedule_alert_rules"
 # The scheduler ticks every ten seconds, so a minute without one is six missed.
@@ -26,21 +31,9 @@ FLEET_QUERY = 'count(count by (host) (up{host!="zcrypto-mon"}))'
 TIMEOUT_SECONDS = 10
 
 
-def _get(url: str, opener) -> str:
-    with opener(urllib.request.Request(url), timeout=TIMEOUT_SECONDS) as response:
-        return response.read().decode()
-
-
-def _sample(text: str, name: str) -> float | None:
-    for line in text.splitlines():
-        if line.startswith(name + " "):
-            return float(line.split()[1])
-    return None
-
-
 def rules_fresh(base: str, *, opener, now: float) -> tuple[bool, str]:
-    text = _get(f"{base}/metrics", opener)
-    tick, scheduled = _sample(text, TICK), _sample(text, SCHEDULED)
+    text = zcrypto_selfcheck.get(f"{base}/metrics", opener, TIMEOUT_SECONDS)
+    tick, scheduled = zcrypto_selfcheck.sample(text, TICK), zcrypto_selfcheck.sample(text, SCHEDULED)
     if tick is None or scheduled is None:
         return False, f"Grafana's /metrics carries no {TICK if tick is None else SCHEDULED}"
     age = now - tick
@@ -52,7 +45,9 @@ def rules_fresh(base: str, *, opener, now: float) -> tuple[bool, str]:
 
 
 def fleet_fresh(base: str, *, opener) -> tuple[bool, str]:
-    reply = json.loads(_get(f"{base}/api/v1/query?" + urllib.parse.urlencode({"query": FLEET_QUERY}), opener))
+    reply = json.loads(
+        zcrypto_selfcheck.get(f"{base}/api/v1/query?" + urllib.parse.urlencode({"query": FLEET_QUERY}), opener, TIMEOUT_SECONDS)
+    )
     result = reply["data"]["result"]
     hosts = int(float(result[0]["value"][1])) if result else 0
     if hosts < 1:
@@ -62,7 +57,7 @@ def fleet_fresh(base: str, *, opener) -> tuple[bool, str]:
 
 def loki_ready(base: str, *, opener) -> tuple[bool, str]:
     try:
-        body = _get(f"{base}/ready", opener).strip()
+        body = zcrypto_selfcheck.get(f"{base}/ready", opener, TIMEOUT_SECONDS).strip()
     except urllib.error.HTTPError as refused:
         # Loki answers a not-ready ingester with a 503 whose body is the reason.
         return False, f"answered {refused.code}: {refused.read().decode().strip()[:60]!r}"
@@ -75,27 +70,7 @@ def main(env=os.environ, *, opener=urllib.request.urlopen, now=time.time) -> int
         ("fleet", lambda: fleet_fresh(env["MON_SELFCHECK_PROMETHEUS"], opener=opener)),
         ("loki", lambda: loki_ready(env["MON_SELFCHECK_LOKI"], opener=opener)),
     )
-    healthy, parts = True, []
-    for name, check in checks:
-        try:
-            ok, detail = check()
-        except Exception as exc:  # noqa: BLE001 -- an endpoint that cannot be read is the finding, whatever it raised
-            ok, detail = False, f"unreadable: {type(exc).__name__}"
-        healthy = healthy and ok
-        parts.append(f"{name}={'ok' if ok else 'FAIL'} ({detail})")
-    url = env.get("MON_SELFCHECK_HEALTHCHECK_URL", "")
-    if not healthy:
-        verdict = "not pinging"
-    elif not url:
-        verdict = "healthy, and no ping URL is set"
-    else:
-        try:
-            _get(url, opener)
-            verdict = "pinged"
-        except Exception as exc:  # noqa: BLE001 -- a ping that fails is reported; the next run sends another
-            verdict = f"ping failed: {type(exc).__name__}"
-    print(f"selfcheck: {' '.join(parts)} -> {verdict}")
-    return 0
+    return zcrypto_selfcheck.run(checks, env, ping_var="MON_SELFCHECK_HEALTHCHECK_URL", opener=opener)
 
 
 if __name__ == "__main__":
