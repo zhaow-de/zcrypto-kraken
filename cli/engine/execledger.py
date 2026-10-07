@@ -227,19 +227,23 @@ def credited_qty(event: dict) -> float:
     return float(event.get("credited", event["qty"]))
 
 
-def _day_dirs(journal_dir: Path, now: datetime) -> list[Path]:
-    """`now` must be UTC: its date names the day dir."""
+def _day_dirs(journal_dir: Path, now: datetime, since: datetime | None = None) -> list[Path]:
+    """`now` and `since` must be UTC: their dates name the day dirs, newest first -- today's and the day before's, or,
+    with `since`, every day from the one before the earlier of the two through today."""
     today = now.date()
-    return [Path(journal_dir) / d.isoformat() for d in (today, today - timedelta(days=1))]
+    first = (today if since is None else min(since, now).date()) - timedelta(days=1)
+    return [Path(journal_dir) / (today - timedelta(days=k)).isoformat() for k in range((today - first).days + 1)]
 
 
-def _exec_records_in_window(journal_dir: Path, now: datetime) -> list[dict]:
+def _exec_records_in_window(journal_dir: Path, now: datetime, since: datetime | None = None) -> list[dict]:
     """Every `exec-*.json` under the current and previous UTC day dirs -- two days being the horizon over which a
-    duplicate submission is possible, so this is both the dedup and the re-attach window -- each
-    validate_exec_record-checked: a corrupt or unreadable record's raise propagates, refusing the whole scan rather than
-    silently skipping it."""
+    duplicate submission is possible, so this is both the dedup and the re-attach window -- or, with `since`, under
+    every day dir from the one before `since`'s through today's: the watchdog's freeze passes its cut, so the rows the
+    cut may have left resting at Kraken stay in its stranded-row hold and its re-read pass however many day rolls the
+    freeze stands through. Each record is validate_exec_record-checked: a corrupt or unreadable record's raise
+    propagates, refusing the whole scan rather than silently skipping it."""
     docs = []
-    for day_dir in _day_dirs(journal_dir, now):
+    for day_dir in _day_dirs(journal_dir, now, since):
         if not day_dir.is_dir():
             continue
         for path in sorted(day_dir.glob(f"{_PREFIX}-*.json")):
@@ -285,7 +289,7 @@ def ledgered_intent_keys(journal_dir: Path, now: datetime) -> frozenset[tuple[st
 
 
 def pending_plan_intents(journal_dir: Path, now: datetime) -> list[tuple[datetime, str, int]]:
-    """Every (boundary, plan_id, index) whose intent still reads `pending`, over the same window as `open_submitted_rows`."""
+    """Every (boundary, plan_id, index) whose intent still reads `pending`, over `open_submitted_rows`' two-day window."""
     out: list[tuple[datetime, str, int]] = []
     for doc in _exec_records_in_window(journal_dir, now):
         boundary = datetime.fromisoformat(doc["cycle_ts"])
@@ -294,21 +298,21 @@ def pending_plan_intents(journal_dir: Path, now: datetime) -> list[tuple[datetim
     return out
 
 
-def open_submitted_rows(journal_dir: Path, now: datetime) -> list[tuple[datetime, dict]]:
+def open_submitted_rows(journal_dir: Path, now: datetime, since: datetime | None = None) -> list[tuple[datetime, dict]]:
     out: list[tuple[datetime, dict]] = []
-    for doc in _exec_records_in_window(journal_dir, now):
+    for doc in _exec_records_in_window(journal_dir, now, since):
         boundary = datetime.fromisoformat(doc["cycle_ts"])
         out.extend((boundary, row) for row in doc["submitted"] if row["state"] in _OPEN_ORDER_STATES)
     return out
 
 
-def closed_submitted_rows(journal_dir: Path, now: datetime) -> list[tuple[datetime, dict]]:
-    """The rows `open_submitted_rows` leaves behind, over the same window -- written as the complement of the same
-    predicate rather than as its own state list, so the two are total over `submitted` by construction: a state that
-    moves sides, or one added to `_ROW_STATES`, lands in exactly one of them and never in neither, and a row in neither
-    is one nothing ever compares against venue truth."""
+def closed_submitted_rows(journal_dir: Path, now: datetime, since: datetime | None = None) -> list[tuple[datetime, dict]]:
+    """The rows `open_submitted_rows` leaves behind, over the window the same `now` and `since` give it -- written as the
+    complement of the same predicate rather than as its own state list, so the two are total over `submitted` by
+    construction: a state that moves sides, or one added to `_ROW_STATES`, lands in exactly one of them and never in
+    neither, and a row in neither is one nothing ever compares against venue truth."""
     out: list[tuple[datetime, dict]] = []
-    for doc in _exec_records_in_window(journal_dir, now):
+    for doc in _exec_records_in_window(journal_dir, now, since):
         boundary = datetime.fromisoformat(doc["cycle_ts"])
         out.extend((boundary, row) for row in doc["submitted"] if row["state"] not in _OPEN_ORDER_STATES)
     return out
