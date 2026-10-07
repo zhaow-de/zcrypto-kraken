@@ -196,34 +196,10 @@
     node_common_sqlite_backup_textfile: "{{ hc_textfile_dir }}/sqlite-backup.prom"
 
 # ---- The node's own telemetry ------------------------------------------------------------------------------------
-- name: add the Grafana apt repository (alloy)
-  ansible.builtin.deb822_repository:
-    name: grafana
-    types: [deb]
-    uris: https://apt.grafana.com
-    suites: [stable]
-    components: [main]
-    signed_by: https://apt.grafana.com/gpg.key
-    install_python_debian: true
-  register: hc_grafana_repo
-
-# A preview on a node that never had the repository cannot see alloy: apt fails on a name its cache does not hold,
-# and converge.sh stops on a failed preview. What needs the package or its unit skips exactly that case.
-- name: note a preview that runs before the Grafana repository exists
-  ansible.builtin.set_fact:
-    hc_repo_previewed: "{{ ansible_check_mode and hc_grafana_repo is changed }}"
-
-- name: alloy present — version FOLLOWED from apt, never forced or held
-  ansible.builtin.apt:
-    name: alloy
-    state: present
-    update_cache: true
-  register: hc_alloy_install
-  when: not hc_repo_previewed
-
-- name: note a preview that runs before alloy is installed
-  ansible.builtin.set_fact:
-    hc_units_previewed: "{{ ansible_check_mode and (hc_repo_previewed or hc_alloy_install is changed) }}"
+- name: install, pin and hold alloy at the version committed for this host
+  ansible.builtin.import_role:
+    name: alloy_apt
+  tags: [alloy]
 
 - name: alloy env — the observability node's two ingest URLs and the fleet credential
   ansible.builtin.template:
@@ -235,6 +211,7 @@
   no_log: true
   diff: false
   notify: restart alloy
+  tags: [alloy]
 
 - name: alloy config — the node's metrics, its units' journals and the container's records, to the observability node
   ansible.builtin.copy:
@@ -245,10 +222,18 @@
     mode: "0640"
     validate: alloy validate %s
   notify: restart alloy
+  tags: [alloy]
 
 - name: alloy enabled + started
   ansible.builtin.systemd_service:
     name: alloy
     enabled: true
     state: started
-  when: not hc_units_previewed
+  when: not alloy_apt_previewed
+  tags: [alloy]
+
+- name: restart alloy when its process does not run the installed binary
+  ansible.builtin.import_role:
+    name: alloy_apt
+    tasks_from: postcondition
+  tags: [alloy]
