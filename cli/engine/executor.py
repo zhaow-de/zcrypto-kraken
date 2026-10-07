@@ -1160,11 +1160,13 @@ class ProbeExecutor:
         # does: a read that fails leaves the previous book standing, its `read_at` its age.
         self._venue_book: VenueBook | None = None
         # The socket endpoints the client has reported down and not yet back, each with the moment its
-        # first `DISCONNECTED` arrived, which the watchdog's grace reads (`_watch_sockets`); and the
-        # re-read pass's tries left and the endpoint whose return set them (`on_socket_state`, `_reread_pass`).
+        # first `DISCONNECTED` arrived, which the watchdog's grace reads (`_watch_sockets`); the re-read
+        # pass's tries left and the endpoint whose return set them (`on_socket_state`, `_reread_pass`); and
+        # whether a return while the engine was disarmed left the pass owed to the first tick that reads it armed.
         self._sockets_down: dict[str, datetime] = {}
         self._reread_tries = 0
         self._reread_armed_by: str | None = None
+        self._reread_owed = False
         # The two moments the watchdog's freeze lifts on (`_lift_freeze`): when a return last emptied
         # `_sockets_down`, and when a re-read pass last completed with its reads and its settle answered.
         self._sockets_emptied_at: datetime | None = None
@@ -1176,8 +1178,8 @@ class ProbeExecutor:
         # published moments before this construction.
         self._gate_evaluated_at: datetime = self._now()
         # Whether that newest evaluation read both arming keys (`GateVerdict.armed`), which an unmatched
-        # fill's arm reads (`_on_external_event`); False until this process's first `_evaluate`, the idle
-        # refresh's a minute after construction at the latest.
+        # fill's arm and a socket return's arm read (`_on_external_event`, `on_socket_state`); False until
+        # this process's first `_evaluate`, the idle refresh's a minute after construction at the latest.
         self._gate_armed = False
         # Set once, when the startup pass could not read the venue's orders or the restored set could not
         # be read at construction (`_read_restored`), and never cleared: every plan is refused with it for
@@ -1431,6 +1433,9 @@ class ProbeExecutor:
             if not self._adopted:
                 self._adopt_resting_orders(now)
             self._watch_sockets(now)
+            if self._reread_owed and self._gate_armed:
+                self._reread_owed = False
+                self._reread_tries = _REREAD_ATTEMPTS
             # Before the pickup and the pump, so a plan dropped during a cut starts behind the re-cancel
             # on this tick and never ahead of it, where the pass would wait behind its every intent;
             # with nothing in flight, `read_venue_orders`' nonce terms.
@@ -1516,6 +1521,11 @@ class ProbeExecutor:
         set aside: it rests on the execution client reporting `CONNECTED` under the string its
         `DISCONNECTED` carried, unmeasured offline, and an entry whose return never comes under that
         string would hold the pass off for the life of the process.
+        A return arms the pass only while the engine is armed (`_gate_armed`), as an unmatched fill does
+        (`_on_external_event`): the attended passes that sign on the engine's key run with it disarmed, and
+        the pass's holdings read is signed. A return while `_gate_armed` reads False -- disarmed, or before
+        this process's first evaluation -- leaves the pass owed, and the first tick that reads the engine
+        armed arms it, so a watchdog freeze a disarmed engine holds lifts on that pass, or at a restart.
         Bookkeeping, never a submission: log and continue."""
         try:
             endpoint = str(getattr(event, "endpoint", "?"))
@@ -1536,12 +1546,18 @@ class ProbeExecutor:
                 del self._sockets_down[endpoint]
                 if not self._sockets_down:
                     self._sockets_emptied_at = self._now()
-                self._reread_tries = _REREAD_ATTEMPTS
-                self._reread_armed_by = endpoint
+                if self._gate_armed:
+                    self._reread_tries = _REREAD_ATTEMPTS
+                    self._reread_armed_by = endpoint
+                else:
+                    self._reread_owed = True
                 logger.warning(
-                    "socket %s is back%s -- the re-read pass runs on the next tick with nothing in flight",
+                    "socket %s is back%s -- %s",
                     endpoint,
                     f" ({', '.join(sorted(self._sockets_down))} still down)" if self._sockets_down else " and none is down",
+                    "the re-read pass runs on the next tick with nothing in flight"
+                    if self._gate_armed
+                    else "the engine is disarmed, so the re-read pass waits for the first tick that reads it armed",
                 )
         except Exception:
             logger.exception("executor socket-state handling raised -- continuing")
