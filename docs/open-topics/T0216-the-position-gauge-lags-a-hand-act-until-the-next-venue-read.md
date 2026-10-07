@@ -7,7 +7,7 @@ ripe_when: 'any one arm: rung 2''s exit report is recorded with spec `00092`''s 
 
 ## Context — what
 
-`zcrypto_exec_position` carries a position the engine did not trade — a hand trade or settle on Kraken's page while the engine runs, or a fill while the engine is down — only from spec `00119`'s D28 venue read on: the startup pass's first tick, or the re-read pass a socket's return or a mint arms, about hourly on this wheel. Between the act and that read the gauge shows the engine's own figure, so `zcrypto-engine-dark-with-exposure` reads that figure, not the account's, if the engine goes dark inside the span.
+`zcrypto_exec_position` carries a position the engine did not trade — a hand trade or settle on Kraken's page while the engine runs, or a fill while the engine is down — only from spec `00119`'s D28 venue read on: the startup pass's first tick, or the re-read pass a socket's return or a mint arms, about hourly on this wheel; a return arms it only while the engine is armed, and one while disarmed leaves it owed to the first armed tick (spec `00092` D12). Between the act and that read the gauge shows the engine's own figure, so `zcrypto-engine-dark-with-exposure` reads that figure, not the account's, if the engine goes dark inside the span.
 
 ## Why this matters
 
