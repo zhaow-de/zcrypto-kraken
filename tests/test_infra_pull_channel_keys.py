@@ -37,12 +37,12 @@ def _remedy(channel):
 
 def _rotation(channel):
     nas = _nas(channel)
-    drop = f", drop the new private half on the NAS at keys/{nas}" if nas else ""
+    drop = f" (on the NAS, keys/{nas})" if nas else ""
     return (
-        "a key committed and pushed in clear is compromised, so rotate it, never re-vault it: generate a new pair, "
-        "commit its public half, re-converge the hosts that authorize it, remove the old line wherever an "
-        f"authorized_keys still carries it (an exclusive: false install never removes one){drop}, then from "
-        f"infra/ansible/ pipe the new private half into: {_encrypt(channel)}"
+        "a key committed and pushed in clear is compromised, so rotate it: generate a new pair, commit its public half, "
+        f"install it wherever the old one is authorized, replace every copy of the old private half{drop}, remove the old "
+        "line from every authorized_keys that carries it, then from infra/ansible/ pipe the new private half into: "
+        f"{_encrypt(channel)}"
     )
 
 
@@ -60,7 +60,6 @@ def _defects(files_dir: Path) -> list[str]:
         private = pub.with_suffix("")
         if not private.is_file():
             defects.append(f"{channel}: {pub.name} has no private sibling {private.name} here; {_remedy(channel)}")
-    # zaccess_ca.key.vault, the one vaulted key here that is no *_ed25519 pair, is outside these globs.
     for private in sorted(files_dir.glob("*_ed25519")):
         channel = _channel(private)
         if not _vault_shaped(private):
