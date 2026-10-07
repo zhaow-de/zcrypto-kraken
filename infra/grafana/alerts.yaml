@@ -945,7 +945,7 @@ rules:
     execErrState: Alerting
     for: 15m
     annotations:
-      summary: "The engine's stale-socket watchdog has held the accumulation loop frozen for fifteen minutes: a venue socket stayed down past its grace, so the engine revoked its active intent, sent a cancel for each order it holds open and refuses every new intent. The freeze lifts on its own once the sockets are back and the re-read pass has run; a freeze that outlasts the socket's return is a re-read pass whose tries are spent, or a socket the engine still counts as down after it came back, and either needs a restart inside the inter-cycle gap. Read the engine log on the host for the CRITICAL line naming the endpoint and the grace. Runbook: infra/runbooks/engine.md#zcrypto-engine-exec-watchdog-frozen"
+      summary: "The engine's stale-socket watchdog has held the accumulation loop frozen for fifteen minutes: a venue socket stayed down past its grace, so the engine revoked its active intent, sent a cancel for each order it holds open and refuses every new intent. The freeze lifts on its own once the sockets are back and the re-read pass has run; a freeze that outlasts the socket's return is a re-read pass whose tries are spent, which lifts at a later socket return whose pass completes, the execution socket's hourly reconnect among them, or a socket the engine still counts as down after it came back, which needs a restart inside the inter-cycle gap. Read the engine log on the host for the CRITICAL line naming the endpoint and the grace. Runbook: infra/runbooks/engine.md#zcrypto-engine-exec-watchdog-frozen"
       __dashboardUid__: "zcrypto-engine"
       __panelId__: "84"
     labels:
@@ -990,7 +990,7 @@ rules:
     execErrState: Alerting
     for: 10m
     annotations:
-      summary: "Two consecutive 4-hourly boundaries passed with no accumulation record reading `ok`, the second writing a non-`ok` record too or none yet, while the execution gate stayed `full`, so the engine placed nothing at either: no cycle record to draft from, the book read failing at every try or a basket coin held under an earn or staking code, the submission window closing before the draft could run, or the plan refused. Read the two newest accumulation records on the engine host for their status, and the engine log for the cause. Runbook: infra/runbooks/engine.md#zcrypto-engine-exec-boundary-not-drafted"
+      summary: "Two consecutive 4-hourly boundaries passed with no accumulation record reading `ok`, the second writing a non-`ok` record too or none yet, so the engine placed nothing at either: no cycle record to draft from, the book read failing at every try or a basket coin held under an earn or staking code, the submission window closing before the draft could run, or the plan refused, a kill switch's refusal among them. A failed draft moves no gate gauge, so this rule pages whatever the execution gate reads. Read the two newest accumulation records on the engine host for their status, the gate's level and reasons in each boundary's exec record, and the engine log for the cause. Runbook: infra/runbooks/engine.md#zcrypto-engine-exec-boundary-not-drafted"
       __dashboardUid__: "zcrypto-engine"
       __panelId__: "84"
     labels:
