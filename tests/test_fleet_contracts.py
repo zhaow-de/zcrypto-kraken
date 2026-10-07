@@ -11,6 +11,9 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests.test_alloy_version import alloy_version
+from tests.test_pins_converged import pins
+
 REPO = Path(__file__).resolve().parents[1]
 FLEET = REPO / "docs" / "reference" / "fleet.md"
 PINS = REPO / "docs" / "reference" / "fleet-pins.md"
@@ -18,6 +21,7 @@ NAS_VARS = REPO / "infra" / "ansible" / "host_vars" / "nas" / "vars.yml"
 ALLOY_FILE = REPO / "infra" / "ansible" / "group_vars" / "observed" / "alloy.yml"
 HOST_VARS = REPO / "infra" / "ansible" / "host_vars"
 NAS_HOLD = HOST_VARS / "nas" / "alloy.yml"
+SITE = REPO / "infra" / "ansible" / "site.yml"
 
 CELL_MAX = 200  # an identifier and one clause; the cells that carried a saga ran past three thousand
 BLOCK_MAX = 700  # a bullet or a paragraph holds one fact and its pointers
@@ -313,3 +317,57 @@ def test_a_held_nas_s_literal_is_read_against_its_hold_file(tmp_path, hold, lite
     if hold is not None:
         (host_vars / "nas" / "alloy.yml").write_text(f"# the reason\nalloy_image_digest: {hold}\n")
     assert _nas_literal_is_committed(nas_vars, host_vars / "nas" / "alloy.yml", fleet) is committed
+
+
+def _package_alloy_hosts() -> set[str]:
+    """The hosts a play reaches with a role whose tasks install the `alloy` package: the hosts that run Alloy from apt."""
+    groups = pins.inventory_groups(REPO)
+    return {
+        host
+        for play in yaml.safe_load(SITE.read_text())
+        for entry in play.get("roles") or []
+        if any(
+            str((task.get("ansible.builtin.apt") or {}).get("name", "")).startswith("alloy=")
+            for task, _, _ in alloy_version.role_leaves(entry["role"], frozenset())
+        )
+        for host in groups.get(play["hosts"], {play["hosts"]})
+    }
+
+
+def _alloy_package_rows_agree(pins_path: Path, apt_hosts: set[str]) -> bool:
+    """Each `alloy` row of the package table names hosts that run Alloy from apt, its version cell opening with a
+    backticked deb version, `<x.y.z>-<revision>`, the way `alloy-version.py off-fleet` reads it."""
+    for header, rows in _tables(pins_path):
+        if "package" not in header:
+            continue
+        i_package, i_host, i_version = header.index("package"), header.index("host"), header.index("version")
+        for _, cells in rows:
+            if cells[i_package] != "alloy":
+                continue
+            if not {host.strip() for host in cells[i_host].split(",")} <= apt_hosts:
+                return False
+            m = re.match(r"`([^`]+)`", cells[i_version])
+            version = m.group(1) if m else ""
+            if not re.fullmatch(r"\d+\.\d+\.\d+-\d+", version):
+                return False
+    return True
+
+
+@pytest.mark.parametrize(
+    ("host", "version", "agrees"),
+    [
+        ("zaccess", "`1.20.1-1`", True),
+        ("zcrypto-ops", "`1.20.1-1`", False),
+        ("zaccess", "1.20.1-1", False),
+        ("zaccess", "`1.20.1`", False),
+    ],
+    ids=["an-apt-host-at-a-deb-version", "a-container-host", "a-version-without-backticks", "a-version-without-its-revision"],
+)
+def test_the_alloy_package_rows_name_apt_hosts_at_a_deb_version(tmp_path, host, version, agrees):
+    pins_path = tmp_path / "fleet-pins.md"
+    pins_path.write_text(
+        "| package | host | version | since (UTC) | notes |\n| --- | --- | --- | --- | --- |\n"
+        "| agentboard | zcrypto-ops | `0.5.3` (npm global) | 2026-09-17 | re-pins attended |\n"
+        f"| alloy | {host} | {version} | 2026-10-06 | dpkg hold; pinned at 1001 |\n"
+    )
+    assert _alloy_package_rows_agree(pins_path, _package_alloy_hosts()) is agrees
