@@ -64,9 +64,9 @@ engine_journal_retention_days: 60
 # [zcrypto.engine] knobs rendered into /opt/zcrypto-engine/zcrypto.toml. exec_armed has none: the
 # template renders it from the literal line `engine_exec_armed: true` in the host's vars.yml in the
 # tree, through the fact the arming backstop derives, so engine_exec_armed has no default and no -e
-# reaches it. tracking_band_bps renders only when engine_tracking_band_bps is defined (the arm PR
-# sets it in the host's vars.yml); absent, the tracking trip is disarmed. An armed host's vars.yml
-# sets the plan cap below as well.
+# through converge.sh reaches it. tracking_band_bps renders only when engine_tracking_band_bps is
+# defined (the arm PR sets it in the host's vars.yml); absent, the tracking trip is disarmed. An armed
+# host's vars.yml sets the plan cap below as well.
 engine_shadow_nav_eur: 1000.0
 engine_settle_delay_secs: 90
 engine_exec_max_plan_notional_eur: 100.0

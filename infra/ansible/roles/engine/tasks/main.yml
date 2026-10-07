@@ -360,10 +360,12 @@
 # key is absent or the literal `false`; any other form -- `true`, a templated value, the key twice --
 # counts as ARMED and must clear the gate. Ansible ranks an extra var above set_fact, and a set_fact
 # to a name an extra var holds is ignored, so every other condition pins one name this assert or the
-# template reads, by exact equality on the value its reader takes: the three texts to their lookups,
-# the two arming facts to the file's own lines (the rendered one as the string the template
-# renders), and the pin and the list to their set_fact's own expression over the pinned texts. An
-# `-e` on any of those names fails the converge before the render, and the fail_msg names it.
+# template reads, by exact equality: on the string the template renders for the rendered fact, and
+# on the raw value for every other. The two texts and the record's list are pinned to their lookups,
+# the two arming facts to the file's own lines, and the pin and the list to their set_fact's own
+# expression over the pinned inputs. No `-e` through converge.sh reaches any of those names, since it
+# refuses their keys; a constant one from a raw ansible-playbook fails the converge before the
+# render, and the fail_msg names it.
 - name: arming backstop — read the tree's arming intent, nautilus pin, and verified-version record
   ansible.builtin.set_fact:
     engine_host_vars_text: "{{ lookup('file', playbook_dir ~ '/host_vars/' ~ inventory_hostname ~ '/vars.yml') }}"
@@ -423,7 +425,7 @@
       {{ disagreeing | join(', ') }}. An extra var (-e) on one of those names outranks the set_fact
       that derives it. Drop it: arming is the reviewed line `engine_exec_armed: true` in
       host_vars/{{ inventory_hostname }}/vars.yml beside a pin that
-      cli/engine/order-semantics-verified.json records, and no -e reaches either.
+      cli/engine/order-semantics-verified.json records, and no -e through converge.sh reaches either.
       {%- else -%}
       This converge renders the engine ARMED on nautilus-trader
       {{ engine_pinned_nautilus | default('(unparseable pin)', true) }},
