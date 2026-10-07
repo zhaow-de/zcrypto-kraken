@@ -546,6 +546,67 @@ PUBLISHED = [
         "mon",
         {"mon_grafana_token_rotate": "true"},
     ),
+    # The bump skill's one-host rollbacks of a container host, each its own line there.
+    (
+        [
+            "--limit",
+            "zcrypto-red",
+            "--tags",
+            "alloy",
+            "-e",
+            f"capture_alloy_digest={DIGEST}",
+            "-e",
+            json.dumps({"alloy_override": "1.20.1 drops the secondary's journal lines, back while the owner reads it"}),
+        ],
+        "zcrypto-red",
+        "alloy",
+        {
+            "capture_alloy_digest": DIGEST,
+            "alloy_override": "1.20.1 drops the secondary's journal lines, back while the owner reads it",
+        },
+    ),
+    (
+        [
+            "--limit",
+            "zcrypto",
+            "--tags",
+            "alloy",
+            "-e",
+            "converge_primary=true",
+            "-e",
+            f"capture_alloy_digest={DIGEST}",
+            "-e",
+            json.dumps({"alloy_override": "1.20.1 drops the primary's journal lines, back while the owner reads it"}),
+        ],
+        "zcrypto",
+        "alloy",
+        {
+            "converge_primary": "true",
+            "capture_alloy_digest": DIGEST,
+            "alloy_override": "1.20.1 drops the primary's journal lines, back while the owner reads it",
+        },
+    ),
+    (
+        [
+            "--limit",
+            "zcrypto-valkey3",
+            "--tags",
+            "alloy",
+            "-e",
+            f"cache_alloy_digest={DIGEST}",
+            "-e",
+            json.dumps({"alloy_override": "1.20.1 drops the Valkey scrape's series, back while the owner reads it"}),
+            "-e",
+            json.dumps({"pins_override": "the node runs a digest fleet-pins.md does not yet record"}),
+        ],
+        "zcrypto-valkey3",
+        "alloy",
+        {
+            "cache_alloy_digest": DIGEST,
+            "alloy_override": "1.20.1 drops the Valkey scrape's series, back while the owner reads it",
+            "pins_override": "the node runs a digest fleet-pins.md does not yet record",
+        },
+    ),
 ]
 
 
