@@ -423,10 +423,10 @@ PUBLISHED = [
     (["--limit", "zcrypto-hc"], "zcrypto-hc", "", {}),
     (["--limit", "zcrypto-hc", "--tags", "hc"], "zcrypto-hc", "hc", {}),
     (
-        ["--limit", "zcrypto-hc", "--tags", "hc", "-e", "hc_image_tag=v6.1.0"],
+        ["--limit", "zcrypto-hc", "--tags", "hc", "-e", "hc_image_tag=v6.2.0"],
         "zcrypto-hc",
         "hc",
-        {"hc_image_tag": "v6.1.0"},
+        {"hc_image_tag": "v6.2.0"},
     ),
     (
         ["--limit", "zcrypto-hc", "--tags", "base,hardening,firewall,fail2ban,chrony,docker", "-e", "daemon_json_ack=true"],
