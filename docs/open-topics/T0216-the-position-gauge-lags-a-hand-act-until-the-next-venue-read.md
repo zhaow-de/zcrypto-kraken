@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: 'any one arm: rung 2''s exit report is recorded with spec `00092`''s slot S4 read — check: `docs/research/14.phase6-decisions.md` carries the exit report entry, due by Fri 2026-11-06 (`engine-rung-2-box` step 9 in `infra/runbooks/engine-procedures.md`); or the first hand act on a basket coin under rung 3 — check: `uv run python infra/scripts/grafana-query.py ''increase(zcrypto_exec_external_events_total{host="zcrypto",disposition="unmatched"}[7d])''` reads above 0 over a week after rung 3''s entry'
+ripe_when: 'any one arm: rung 2''s exit report is recorded with spec `00092`''s slot S4 read — check: `docs/research/14.phase6-decisions.md` carries the exit report entry, due by Fri 2026-11-06 (`engine-rung-2-box` step 9 in `infra/runbooks/engine-procedures.md`); or the first hand act on a basket coin under rung 3 — check: `uv run python infra/scripts/grafana-query.py ''increase(zcrypto_exec_external_events_total{host="zcrypto",disposition="unmatched"}[7d])''` reads above 0 over a week after rung 3''s entry — a coarse proxy, which a cancel, a non-basket coin or an attended pass moves too, read against the engine''s log line `external order event ignored: OrderFilled for … on <basket>/EUR.KRAKEN`; or `zcrypto-engine-cycle-stale` stops covering darkness on its own — `grep -c "uid: zcrypto-engine-cycle-stale" infra/grafana/alerts.yaml` reads 0, its `severity:` is no longer `critical`, or it gains a `zcrypto_exec_position` reference'
 ---
 
 # The position gauge lags a hand act until the next venue read

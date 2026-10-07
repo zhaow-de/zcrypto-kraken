@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: 'a milestone: rung 3 is entered — `00092`''s rollout R4, the first Monday 00Z boundary its loop drafts armed; check: `uv run python infra/scripts/grafana-query.py ''zcrypto_exec_gate_level{host="zcrypto"} == 2 and on() zcrypto_exec_equity_eur{host="zcrypto"}''` prints a series — the gate at `full` on an image that marks equity, which no image before `00092`''s does'
+ripe_when: 'a milestone: rung 3''s entry sitting arms the loop — `00092`''s rollout R3, the arm file placed on the Sunday before R4''s Monday 00Z entry; check: `uv run python infra/scripts/grafana-query.py ''zcrypto_exec_gate_level{host="zcrypto"} == 2 and on() zcrypto_exec_equity_eur{host="zcrypto"}''` prints a series — the gate at `full` on an image that marks equity, which no image before `00092`''s does'
 ---
 
 # Phase-6 build sequence and its cross-iteration constraints
