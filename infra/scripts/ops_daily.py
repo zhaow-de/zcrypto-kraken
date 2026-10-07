@@ -1558,6 +1558,7 @@ _FIRST_STAGE_SHAPES = (
     # The repo's own read-only instruments. Their operands are PromQL and paths, so the class is a
     # literal: the scanner has already refused every metacharacter that was active where it stood.
     _Shape(("grafana-query.py",), {"--since": _SINCE, "--step": _NAME, "--stack": _NAME}, arity=(1, 6), classes=(_QUOTED,)),
+    _Shape(("grafana-query.py",), {"--loki": None, "--stack": _NAME}, arity=(1, 6), classes=(_QUOTED,)),
     _Shape(("continuity.py",), {"--root": _PATH, "--since": _SINCE, "--until": _SINCE}, arity=(0, 3), classes=(_PATH,)),
     _Shape(("ops-postverify.sh",), {"--since": _SINCE}, arity=(0, 3), classes=(_QUOTED,)),
     _Shape(("id",), arity=(0, 1), classes=(_NAME,)),

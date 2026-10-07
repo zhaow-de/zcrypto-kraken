@@ -961,13 +961,22 @@ def test_the_round_three_escapes_are_refused(cmd):
         ("sudo docker exec zcrypto-engine zcrypto engine exec-status", "zcrypto"),
         ("uv run python infra/scripts/grafana-query.py 'up{job=\"capture_app\"}'", "ops"),
         ("uv run python infra/scripts/grafana-query.py --stack mon 'count(up{host=\"zcrypto-mon\"})'", "ops"),
+        (
+            'uv run python infra/scripts/grafana-query.py --loki \'sum(count_over_time({host="ops", container!="liquidations"}[2h]))\'',
+            "ops",
+        ),
+        (
+            "uv run python infra/scripts/grafana-query.py --stack mon --loki "
+            '\'sum by (level) (count_over_time({host="zcrypto-hc", container="hc"} |= "is now running" [1h]))\'',
+            "ops",
+        ),
         ("sudo docker logs --since 5h zcrypto-engine | grep 'not scored'", "zcrypto"),
     ],
 )
 def test_the_wrappers_and_quoting_the_runbooks_really_use(cmd, host):
     """The runbooks' own spellings stay AUTONOMOUS: the NAS's absolute `/usr/local/bin/docker`, a
     `--format` body or grep pattern holding spaces (so a stage must be tokenised quote-aware),
-    `docker exec` fronting a genuine read, and PromQL full of braces and quotes."""
+    `docker exec` fronting a genuine read, PromQL full of braces and quotes, and LogQL whose `|=` sits inside them."""
     assert ops_daily.classify_action(cmd, host=host, resolve=_identity) is ops_daily.Tier.AUTONOMOUS
 
 
