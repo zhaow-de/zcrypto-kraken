@@ -49,9 +49,10 @@ KEEP_REGEX_FILES = {
     "zcrypto-valkey2": REPO / "infra/ansible/roles/cache/files/config.alloy",
     "zcrypto-valkey3": REPO / "infra/ansible/roles/cache/files/config.alloy",
     "zcrypto-mon": REPO / "infra/ansible/roles/mon/files/config.alloy",
+    "zcrypto-hc": REPO / "infra/ansible/roles/hc/files/config.alloy",
 }
 # The hosts whose config ships with no keep and no drop list, so every family they publish exists.
-UNFILTERED_HOSTS = frozenset({"zcrypto-mon"})
+UNFILTERED_HOSTS = frozenset({"zcrypto-mon", "zcrypto-hc"})
 
 # Where a producer LIVES -> the hosts that run it, so an unscoped rule over an app family can still
 # be pinned per host. Ansible roles carry the deployment target in their path, which makes this

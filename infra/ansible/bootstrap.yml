@@ -1,5 +1,5 @@
-- name: Bootstrap capture, cache and observability hosts — deploy user + SSH lockdown (keep 22 until converge proves 10022)
-  hosts: capture_host:cache_host:mon_host
+- name: Bootstrap — deploy user + SSH lockdown (keep 22 until converge proves 10022)
+  hosts: capture_host:cache_host:mon_host:hc_host
   gather_facts: false
   vars:
     ansible_user: root

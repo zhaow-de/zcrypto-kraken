@@ -30,6 +30,7 @@ ALLOY_ROLE = {
     "access_host": "access",
     "cache_host": "cache",
     "mon_host": "mon",
+    "hc_host": "hc",
 }
 NO_ALLOY_TASK = {"base", "hardening", "firewall", "fail2ban", "chrony", "docker", "cache_link", "access_ops", "engine"}
 
@@ -69,6 +70,7 @@ def test_only_the_roles_that_joined_the_tag_carry_it_and_no_play_does():
         ROLES / "access" / "tasks" / "main.yml",
         ROLES / "cache" / "tasks" / "main.yml",
         ROLES / "capture" / "tasks" / "main.yml",
+        ROLES / "hc" / "tasks" / "main.yml",
         ROLES / "mon" / "tasks" / "main.yml",
         ROLES / "nas" / "tasks" / "main.yml",
         ROLES / "ops" / "tasks" / "main.yml",
@@ -150,7 +152,7 @@ def test_the_alloy_package_is_installed_and_held_by_alloy_apt_alone_and_each_imp
     assert not [role for role, files in imported.items() if "postcondition" not in files], imported
 
 
-@pytest.mark.parametrize("importer", ["access", "mon"])
+@pytest.mark.parametrize("importer", ["access", "mon", "hc"])
 def test_a_listening_handler_a_role_imported_in_the_importers_tasks_brings_is_refused(monkeypatch, importer):
     listener = {
         "name": "restart caddy too",

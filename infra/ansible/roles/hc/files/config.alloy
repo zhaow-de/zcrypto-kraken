@@ -1,0 +1,122 @@
+// Grafana Alloy config for the dead-man node (zcrypto-hc). Installed by the `hc` role with `ansible.builtin.copy`
+// at /etc/alloy/config.alloy, so edit this file, never the host's copy.
+//
+// Native Alloy, the apt package under systemd: it reads the host's real /proc, /sys and journal, and writes to the
+// observability node alone, through that node's edge with the fleet credential /etc/default/alloy carries, with no
+// filter.
+//
+// EDITING NOTE -- tests read assignments out of this file: keep every config key the first non-space token on
+// exactly one line.
+
+// ---- Host metrics -------------------------------------------------------------------------------
+// The textfile directory is where the reboot check writes reboot.prom and the backup its gauge.
+prometheus.exporter.unix "host" {
+  set_collectors = ["cpu", "loadavg", "meminfo", "filesystem", "netdev", "textfile"]
+
+  textfile {
+    directory = "/var/lib/zcrypto-node-textfile"
+  }
+}
+
+prometheus.exporter.self "alloy" {}
+
+// No `job_name` here: exporter targets carry their own `job` label (integrations/unix, integrations/self).
+prometheus.scrape "host" {
+  targets         = array.concat(prometheus.exporter.unix.host.targets, prometheus.exporter.self.alloy.targets)
+  forward_to      = [prometheus.remote_write.mon.receiver]
+  scrape_interval = "60s"
+}
+
+// ---- remote_write -------------------------------------------------------------------------------
+prometheus.remote_write "mon" {
+  external_labels = {
+    host = "zcrypto-hc",
+  }
+
+  endpoint {
+    url = sys.env("MON_PROM_URL")
+
+    basic_auth {
+      username = sys.env("MON_PROM_USERNAME")
+      password = sys.env("MON_PROM_PASSWORD")
+    }
+  }
+}
+
+// ---- Logs: the node's units and the container ---------------------------------------------------
+// The clone logs through the journald driver, so its lines are keyed by the container's name, never by the
+// zcrypto-hc unit, whose attached `docker compose up` copies the same lines. Caddy is left out: its lines carry a
+// request's URI, and with it the ping key.
+loki.relabel "journal_units" {
+  forward_to = []
+
+  rule {
+    source_labels = ["__journal__systemd_unit", "__journal_container_name"]
+    separator     = ";"
+    regex         = "(alloy|zcrypto-hc-selfcheck|zcrypto-sqlite-backup|zcrypto-reboot-check)\\.service;.*|.*;zcrypto-hc"
+    action        = "keep"
+  }
+
+  // The container-name rule below overwrites this label for the clone's stream, whose unit is docker.service: keep it after this one.
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    regex         = "(.+)\\.service"
+    target_label  = "container"
+    replacement   = "$1"
+  }
+
+  rule {
+    source_labels = ["__journal_container_name"]
+    regex         = "zcrypto-hc"
+    target_label  = "container"
+    replacement   = "hc"
+  }
+
+  rule {
+    target_label = "host"
+    replacement  = "zcrypto-hc"
+  }
+}
+
+loki.source.journal "hc_units" {
+  relabel_rules = loki.relabel.journal_units.rules
+  forward_to    = [loki.process.parse.receiver]
+  // Unset, an outage longer than 7h skips the journal between the cursor and now-7h for good.
+  max_age       = "48h"
+}
+
+loki.process "parse" {
+  forward_to = [loki.write.mon.receiver]
+
+  // The clone writes one JSON object per record. Before anything else reads a line, the path segment after each
+  // `/ping/` is written over: a server error's record names its request's path, and with it the project's ping key,
+  // or a check's UUID in the other ping form. A check's UUID in any other path is kept. The parse alone sets no
+  // label, so the labels stage lifts `level`.
+  stage.match {
+    selector = "{container=\"hc\"}"
+
+    stage.replace {
+      expression = "/ping/([A-Za-z0-9_-]+)"
+      replace    = "REDACTED"
+    }
+
+    stage.json {
+      expressions = { level = "level" }
+    }
+
+    stage.labels {
+      values = { level = "level" }
+    }
+  }
+}
+
+loki.write "mon" {
+  endpoint {
+    url = sys.env("MON_LOKI_URL")
+
+    basic_auth {
+      username = sys.env("MON_LOKI_USERNAME")
+      password = sys.env("MON_LOKI_PASSWORD")
+    }
+  }
+}

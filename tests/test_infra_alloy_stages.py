@@ -1,10 +1,10 @@
 """The Alloy log stages, read from the configs' own expressions and driven over the line shapes the
-journals carry: the primary's engine-unit stage keeps nautilus's [WARN]/[ERROR] lines alone, under a
-label no paging rule selects, and the timestamp stages keep a journal's time on a miss. Where an
-`alloy` binary is on PATH, the engine stage also runs through Alloy itself over the same sample."""
+journals carry. Where an `alloy` binary is on PATH, the engine and container stages also run through Alloy itself over
+the same samples."""
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import socket
@@ -19,6 +19,7 @@ from tests.skip_gates import no_binary
 
 REPO = Path(__file__).resolve().parents[1]
 CAPTURE_ALLOY = REPO / "infra/ansible/roles/capture/files/config.alloy"
+HC_ALLOY = REPO / "infra/ansible/roles/hc/files/config.alloy"
 ALERTS = REPO / "infra/grafana/alerts.yaml"
 
 ESC = "\x1b"
@@ -204,21 +205,28 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-def _run_alloy(alloy: str, tmp_path: Path) -> list[tuple[str, str]]:
-    """Feed the sample through `loki.source.file` -> the two engine blocks as committed -> `loki.echo`,
-    and read the survivors and their labels off Alloy's stdout after a fixed window."""
-    stage, drop = _engine_blocks()
+_LOGFMT_ESCAPES = {"n": "\n", "t": "\t", "r": "\r"}
+
+
+def _unquoted(value: str) -> str:
+    return re.sub(r"\\(.)", lambda m: _LOGFMT_ESCAPES.get(m.group(1), m.group(1)), value)
+
+
+def _run_alloy(
+    alloy: str, tmp_path: Path, lines: list[str], blocks: list[str], labels: dict[str, str], carried: str
+) -> list[tuple[str | None, str]]:
+    """Feed `lines` through `loki.source.file` under `labels` -> `blocks` as committed -> `loki.echo`, and read each
+    survivor's `level` label and entry off Alloy's stdout after a fixed window; every survivor carries `carried`."""
     sample = tmp_path / "sample.log"
-    sample.write_text("".join(line + "\n" for line, _ in SAMPLE))
+    sample.write_text("".join(line + "\n" for line in lines))
+    targets = "".join(f', {name} = "{value}"' for name, value in labels.items())
     (tmp_path / "harness.alloy").write_text(
         'loki.source.file "sample" {\n'
-        f'  targets    = [{{__path__ = "{sample}", container = "zcrypto-engine", host = "zcrypto"}}]\n'
+        f'  targets    = [{{__path__ = "{sample}"{targets}}}]\n'
         "  forward_to = [loki.process.parse.receiver]\n"
         "}\n\n"
         'loki.process "parse" {\n'
-        "  forward_to = [loki.echo.out.receiver]\n\n"
-        f"{stage}\n{drop}"
-        "}\n\n"
+        "  forward_to = [loki.echo.out.receiver]\n\n" + "\n".join(blocks) + "}\n\n"
         'loki.echo "out" {}\n'
     )
     cmd = [
@@ -241,17 +249,148 @@ def _run_alloy(alloy: str, tmp_path: Path) -> list[tuple[str, str]]:
     for line in out.splitlines():
         if "component_id=loki.echo.out" not in line:
             continue
-        entry = re.search(r' entry="((?:[^"\\]|\\.)*)"', line).group(1).replace('\\"', '"')
-        labels = re.search(r' labels="((?:[^"\\]|\\.)*)"', line).group(1)
-        assert 'container=\\"engine-nautilus\\"' in labels, labels
-        survivors.append((re.search(r'level=\\"([A-Z]+)\\"', labels).group(1), entry))
+        entry = _unquoted(re.search(r' entry="((?:[^"\\]|\\.)*)"', line).group(1))
+        echoed = re.search(r' labels="((?:[^"\\]|\\.)*)"', line).group(1)
+        assert carried in echoed, echoed
+        level = re.search(r'level=\\"([A-Z]+)\\"', echoed)
+        survivors.append((level.group(1) if level else None, entry))
     return survivors
 
 
 def test_alloy_itself_agrees_with_the_model(tmp_path):
     if no_binary("alloy"):
         pytest.skip("no alloy binary on PATH; the model above is the guard, this is its check against the real stage engine")
-    assert _run_alloy(shutil.which("alloy"), tmp_path) == EXPECTED
+    lines = [line for line, _ in SAMPLE]
+    labels = {"container": "zcrypto-engine", "host": "zcrypto"}
+    assert (
+        _run_alloy(shutil.which("alloy"), tmp_path, lines, list(_engine_blocks()), labels, 'container=\\"engine-nautilus\\"')
+        == EXPECTED
+    )
+
+
+# --- the dead-man node's container stage: the ping path's key written over, each JSON record's level lifted --------
+PING_KEY = "abcdefghijklmnopqrstuv"
+CHECK_UUID = "0b1c2d3e-4f50-4617-8293-a4b5c6d7e8f9"
+STAMP = "2026-10-05T18:01:02.345678+00:00"
+# The clone's JSON formatter writes `time`, `level`, `logger` and `message`, and `exception` beside a traceback.
+HC_DISPATCH_FAILURE = json.dumps(
+    {
+        "time": STAMP,
+        "level": "ERROR",
+        "logger": "hc.api.models",
+        "message": "Notification failed: check 'zcrypto-capture', slack channel 1a2b3c4d: Received status code 404",
+    }
+)
+HC_SAMPLE = [
+    json.dumps(
+        {
+            "time": STAMP,
+            "level": "ERROR",
+            "logger": "django.request",
+            "message": f"Internal Server Error: /ping/{PING_KEY}/zcrypto-capture",
+            "exception": 'Traceback (most recent call last):\n  File "/opt/healthchecks/hc/api/views.py", line 201, in _ping\n'
+            "django.db.utils.OperationalError: database is locked",
+        }
+    ),
+    # A line the JSON formatter did not write, in the text formatter's shape.
+    f"2026-10-05 18:01:02,345 ERROR django.request Internal Server Error: /ping/{PING_KEY}/zcrypto-capture",
+    json.dumps(
+        {"time": STAMP, "level": "ERROR", "logger": "django.request", "message": f"Internal Server Error: /ping/{CHECK_UUID}/fail"}
+    ),
+    json.dumps(
+        {"time": STAMP, "level": "INFO", "logger": "hc", "message": "'zcrypto-capture' goes down\n  1a2b3c4d (slack) OK in 0.3s"}
+    ),
+    HC_DISPATCH_FAILURE,
+]
+HC_EXPECTED = [
+    ("ERROR", HC_SAMPLE[0].replace(PING_KEY, "REDACTED")),
+    (None, HC_SAMPLE[1].replace(PING_KEY, "REDACTED")),
+    ("ERROR", HC_SAMPLE[2].replace(CHECK_UUID, "REDACTED")),
+    ("INFO", HC_SAMPLE[3]),
+    ("ERROR", HC_DISPATCH_FAILURE),
+]
+
+
+def _hc_match() -> str:
+    blocks = _blocks(_parse_body(live_alloy_text(HC_ALLOY)), "stage.match")
+    matches = [b for b in blocks if _assigned(b, "selector") == '{container="hc"}']
+    assert len(matches) == 1, f'expected one {{container="hc"}} match, found {len(matches)}'
+    return matches[0]
+
+
+def _stage_blocks(match: str) -> list[str]:
+    """The stages inside a `stage.match`, in the order the pipeline runs them."""
+    return _blocks("".join(match.splitlines(keepends=True)[1:-1]), "stage.")
+
+
+def _map(stage: str, key: str) -> dict[str, str]:
+    m = re.search(rf"^\s*{key}\s*=\s*\{{(.*?)\}}\s*$", stage, re.M)
+    assert m, f"no {key} map in {stage!r}"
+    return dict(re.findall(r'(\w+)\s*=\s*"([^"]*)"', m.group(1)))
+
+
+def _replaced(line: str, expression: str, replace: str) -> str:
+    """Every capture group of every match written over with `replace`, as the engine's replace stage does."""
+    out, last = [], 0
+    for m in re.finditer(expression, line):
+        for group in range(1, m.re.groups + 1):
+            start, end = m.span(group)
+            if start >= 0:
+                out += [line[last:start], replace]
+                last = end
+    return "".join(out) + line[last:]
+
+
+def hc_model(line: str) -> tuple[str | None, str]:
+    """The container's match as Python reads its stages: the replace, the JSON extract, and a label lifted only where
+    a `stage.labels` names it."""
+    extracted, labels = {}, {}
+    for stage in _stage_blocks(_hc_match()):
+        kind = stage.split("{", 1)[0].strip()
+        if kind == "stage.replace":
+            line = _replaced(line, _assigned(stage, "expression"), _assigned(stage, "replace") or "")
+        elif kind == "stage.json":
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            extracted |= {
+                name: str(record[path or name]) for name, path in _map(stage, "expressions").items() if (path or name) in record
+            }
+        elif kind == "stage.labels":
+            labels |= {
+                name: extracted[source or name] for name, source in _map(stage, "values").items() if (source or name) in extracted
+            }
+        else:
+            raise AssertionError(f"the model does not read {kind}")
+    return labels.get("level"), line
+
+
+def test_the_sample_carries_the_clones_record_shapes():
+    assert [json.loads(line)["level"] for line in HC_SAMPLE if line.startswith("{")] == ["ERROR", "ERROR", "INFO", "ERROR"]
+    assert sum(f"/ping/{PING_KEY}/zcrypto-capture" in line for line in HC_SAMPLE) == 2
+    assert sum(f"/ping/{CHECK_UUID}/fail" in line for line in HC_SAMPLE) == 1
+    assert list(json.loads(HC_DISPATCH_FAILURE)) == ["time", "level", "logger", "message"]
+
+
+def test_the_container_stage_writes_over_the_ping_key_and_lifts_each_json_records_level():
+    assert [hc_model(line) for line in HC_SAMPLE] == HC_EXPECTED
+    for _, line in map(hc_model, HC_SAMPLE):
+        assert PING_KEY not in line and CHECK_UUID not in line, line
+
+
+def test_the_container_stage_keeps_the_slug_and_passes_the_summary_and_the_dispatch_failure_unchanged():
+    out = [line for _, line in map(hc_model, HC_SAMPLE)]
+    assert [line.count("/ping/REDACTED/zcrypto-capture") for line in out[:2]] == [1, 1]
+    assert out[3:] == HC_SAMPLE[3:]
+
+
+def test_alloy_itself_agrees_with_the_container_model(tmp_path):
+    if no_binary("alloy"):
+        pytest.skip("no alloy binary on PATH; the model above is the guard, this is its check against the real stage engine")
+    labels = {"container": "hc", "host": "zcrypto-hc"}
+    survivors = _run_alloy(shutil.which("alloy"), tmp_path, HC_SAMPLE, [_hc_match()], labels, 'container=\\"hc\\"')
+    assert survivors == [hc_model(line) for line in HC_SAMPLE]
 
 
 # --- every timestamp stage keeps the journal's time on a miss --------------------------------------

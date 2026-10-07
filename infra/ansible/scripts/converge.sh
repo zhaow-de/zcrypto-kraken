@@ -22,14 +22,15 @@ ADIR="${ZCRYPTO_ANSIBLE_DIR:-$SD/..}"
 # The four the deploy log records, plus `zaccess`: `infra/runbooks/zaccess.md` publishes its two
 # converges, `--limit zaccess` with `--tags access` or `--tags alloy`; plus the three cache nodes,
 # whose rollout (spec 00118 D14) converges one node per run, so `cache_host` is not a host here; plus
-# the observability node (spec 00121).
-HOSTS="zcrypto zcrypto-red zcrypto-ops nas zaccess zcrypto-valkey1 zcrypto-valkey2 zcrypto-valkey3 zcrypto-mon"
+# the observability node (spec 00121) and the dead-man node (spec 00122).
+HOSTS="zcrypto zcrypto-red zcrypto-ops nas zaccess zcrypto-valkey1 zcrypto-valkey2 zcrypto-valkey3 zcrypto-mon zcrypto-hc"
 # The five converged, plus `chrony`: `infra/runbooks/capture.md` prescribes re-converging that role
 # as the repair for a stopped or hand-edited chrony on a capture host; plus the cache nodes' converges
 # spec 00118 names: a node's first under the six base roles, the mesh's `firewall,cache-link` on a
-# node or the engine host, and `cache` on a node; plus `mon`, the observability node's own role; plus
-# `alloy`, the Alloy tasks' tag: the narrow form of an Alloy bump or a config.alloy or secrets change.
-TAGNAMES="base hardening firewall fail2ban chrony docker capture alloy engine ops nas access cache cache-link mon"
+# node or the engine host, and `cache` on a node; plus `mon`, the observability node's own role, and
+# `hc`, the dead-man node's, which carries the shared edge role's tasks too; plus `alloy`, the Alloy
+# tasks' tag: the narrow form of an Alloy bump or a config.alloy or secrets change.
+TAGNAMES="base hardening firewall fail2ban chrony docker capture alloy engine ops nas access cache cache-link mon hc"
 # The keys converges have carried, minus `nas_capture_image_digest` -- no role reads it, so the one
 # row that passed it re-pinned nothing -- plus the ones a live page publishes as an `-e`:
 # `daemon_json_ack` and `ops_panel_timer_hold` (the rollout skill), `ops_reconcile_mint` (the ops
@@ -37,13 +38,14 @@ TAGNAMES="base hardening firewall fail2ban chrony docker capture alloy engine op
 # spec 00118's three: the cache role's two digests and its deliberate config re-render (D9); spec
 # 00120's two: the engine host's cache proxy digest, and the cache table's switch, the way back;
 # spec 00121's one: the observability node's deliberate re-mint of its tools' Grafana token (D7);
+# spec 00122's one: the dead-man node's image tag, which every converge running its role names (D3);
 # spec 00123's one: an apt host's previous Alloy version in its one-host rollback (D16).
 EVKEYS="capture_image_digest capture_alloy_digest engine_image_digest converge_primary \
 ops_image_digest ops_alloy_digest ops_panel_timer_hold ops_grafana_watchdog_probe_url \
 ops_reconcile_mint liquidations_decision nas_apply_compose daemon_json_ack \
 docker_apt_distribution access_ops_agentboard_live cache_image_digest cache_alloy_digest \
 cache_config_reset cache_proxy_image_digest engine_cache_enabled mon_grafana_token_rotate \
-alloy_deb_version"
+hc_image_tag alloy_deb_version"
 # A reason is prose, and `k=v` truncates it at the first space, so an override travels as JSON alone.
 OVERRIDES="canary_override pins_override engine_window_override arming_override alloy_override"
 OWNKEY="zcrypto_window_record"

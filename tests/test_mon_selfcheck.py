@@ -134,18 +134,6 @@ def test_the_ping_url_never_reaches_the_output():
         assert PING not in _run(**kwargs)[2]
 
 
-# The module's install directory exists on the node alone, so the run seeds that path entry with a finder over a copy of
-# the module. Nothing else on the run's path holds the module, so the script's first import fails and its fallback's
-# import is the one that finds it.
-_HAND_RUN = """
-import runpy, sys
-from importlib.machinery import FileFinder, SourceFileLoader
-script, installed, copy = sys.argv[1:]
-sys.path_importer_cache[installed] = FileFinder(copy, (SourceFileLoader, [".py"]))
-runpy.run_path(script, run_name="__main__")
-"""
-
-
 def test_a_hand_run_without_the_units_pythonpath_imports_the_module_from_where_the_role_installs_it(tmp_path):
     (made,) = [task["ansible.builtin.file"]["path"] for task in load_tasks(SELFCHECK_TASKS) if "ansible.builtin.file" in task]
     (tmp_path / "copy").mkdir()
@@ -158,7 +146,7 @@ def test_a_hand_run_without_the_units_pythonpath_imports_the_module_from_where_t
         "MON_SELFCHECK_HEALTHCHECK_URL": "",
     }
     run = subprocess.run(
-        [sys.executable, "-c", _HAND_RUN, str(SCRIPT), made, str(tmp_path / "copy")],
+        [sys.executable, "-c", selfcheck_driver.HAND_RUN, str(SCRIPT), made, str(tmp_path / "copy")],
         env=env,
         cwd=tmp_path,
         capture_output=True,

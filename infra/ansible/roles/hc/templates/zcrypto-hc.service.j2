@@ -1,0 +1,20 @@
+# Rendered by the `hc` Ansible role at /etc/systemd/system/zcrypto-hc.service; edit
+# infra/ansible/roles/hc/templates/zcrypto-hc.service.j2 and re-converge instead.
+[Unit]
+Description=zcrypto dead-man service: the healthchecks clone (Docker Compose)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory={{ hc_compose_dir }}
+# No ExecStartPre fetching the image: over a version tag it would run whatever image the tag then names, past every
+# guard that reads the tag.
+ExecStart=/usr/bin/docker compose -f {{ hc_compose_dir }}/compose.yaml up
+ExecStop=/usr/bin/docker compose -f {{ hc_compose_dir }}/compose.yaml down
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
