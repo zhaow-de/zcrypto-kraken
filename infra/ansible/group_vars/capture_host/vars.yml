@@ -4,6 +4,9 @@ capture_depth: 100
 capture_pairs: [ADA/EUR, AVAX/EUR, BTC/EUR, DOGE/EUR, DOT/EUR, ETH/EUR, LINK/EUR, LTC/EUR, SOL/EUR, XRP/EUR, ETH/BTC, SOL/BTC]
 capture_data_dir: /var/lib/zcrypto-capture
 capture_image: ghcr.io/zhaow-de/zcrypto-capture
+# The daemon's dead-man ping URL: the project ping key's base (group_vars/observed/vars.yml) and the check's slug;
+# host_vars/zcrypto-red/vars.yml overrides it with its own check's.
+capture_healthcheck_url: "{{ hc_ping_base }}/zcrypto-capture"
 healthchecks_project_id: "32eaee6f-cb82-4773-9471-4b802136adc1"
 sync_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/sync_ed25519.pub') }}"
 sync_capture_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/sync_capture_ed25519.pub') }}"

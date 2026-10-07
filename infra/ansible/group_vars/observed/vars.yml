@@ -8,3 +8,9 @@ mon_ingest_fleet_user: fleet
 # The dead-man service's project on the clone (spec 00122 D4): the uuid its project settings page shows, plain, read by
 # infra/scripts/hc-provision.py and the pingers' URL scheme; the keys beside it live in vault.yml.
 hc_project_uuid: a613c0be-ad8a-4c32-8c47-bffc6b294f4b
+# Every pinger's URL is this base and its check's slug, the check's name, set in the pinging host's vars.yml; the base
+# carries the vaulted project ping key, so a render of one is no_log with diff false. The hostname equals the hc role's
+# default.
+hc_hostname: zcrypto-hc.zhaow.me
+hc_ping_base: "https://{{ hc_hostname }}/ping/{{ hc_ping_key }}"
+hc_metrics_path: "/projects/{{ hc_project_uuid }}/metrics/"

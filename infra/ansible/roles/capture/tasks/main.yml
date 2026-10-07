@@ -48,6 +48,7 @@
       the capture gap. Pre-stage it first:
       sudo docker pull {{ capture_image }}@{{ capture_image_digest }}
 
+# no_log on both pair-list probes: the file carries the dead-man ping URL.
 - name: probe — this host's own deployed pair list (does this converge ADD a pair?)
   ansible.builtin.slurp:
     src: /opt/zcrypto-capture/compose.yaml
@@ -56,6 +57,7 @@
   failed_when: false
   changed_when: false
   check_mode: false
+  no_log: true
 
 - name: derive whether new pairs are being added (guard engages only then — I1)
   ansible.builtin.set_fact:
@@ -83,6 +85,7 @@
     inventory_hostname not in groups['engine_host']
     and capture_pairs | difference(capture_deployed_pairs | default([])) | length > 0
   check_mode: false
+  no_log: true
 
 - name: derive the primary's pair list
   ansible.builtin.set_fact:
@@ -224,13 +227,16 @@
   no_log: true
   diff: false
 
+# no_log with diff false and root-only: the file carries the dead-man ping URL, which holds the project ping key.
 - name: render the capture compose file
   ansible.builtin.template:
     src: compose.yaml.j2
     dest: /opt/zcrypto-capture/compose.yaml
     owner: root
     group: root
-    mode: "0644"
+    mode: "0600"
+  no_log: true
+  diff: false
   notify: restart capture service
 
 - name: install the capture systemd unit

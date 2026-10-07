@@ -20,17 +20,17 @@ base_unattended_upgrades_reboot_time: "02:25"
 # taken. The slot above stays, as the attended window and for the collision assert.
 base_unattended_upgrades_automatic_reboot: "false"
 
-# Wire the vaulted dead-man ping URLs (vault.yml beside this file) into the role vars the rendered
-# compose and the timers read.
-ops_liquidations_healthcheck_url: "{{ liquidations_healthcheck_url }}"
-ops_verify_replay_healthcheck_url: "{{ verify_replay_healthcheck_url }}"
-ops_verified_replay_healthcheck_url: "{{ verified_replay_healthcheck_url }}"
+# The dead-man ping URLs the rendered compose and the timers read: the project ping key's base
+# (group_vars/observed/vars.yml) and each check's slug.
+ops_liquidations_healthcheck_url: "{{ hc_ping_base }}/zcrypto-liquidations"
+ops_verify_replay_healthcheck_url: "{{ hc_ping_base }}/zcrypto-verify-replay"
+ops_verified_replay_healthcheck_url: "{{ hc_ping_base }}/zcrypto-verified-replay"
 # Do NOT pause or remove the `zcrypto-archive-pull` check — it is this unit's independent failure
 # domain, and it once went DOWN silently while Grafana stayed green on fresh metrics (T0058). The
 # overlay writer pings on rc=0 INCLUDING gate-skips: a skip means alive and refusing stale input.
-ops_archive_pull_healthcheck_url: "{{ archive_pull_healthcheck_url }}"
-ops_panel_healthcheck_url: "{{ panel_healthcheck_url }}"
-ops_grafana_watchdog_healthcheck_url: "{{ grafana_watchdog_healthcheck_url }}"
+ops_archive_pull_healthcheck_url: "{{ hc_ping_base }}/zcrypto-archive-pull"
+ops_panel_healthcheck_url: "{{ hc_ping_base }}/zcrypto-panel"
+ops_grafana_watchdog_healthcheck_url: "{{ hc_ping_base }}/zcrypto-grafana-watchdog"
 
 # The operator's fleet-wide deploy pubkey, from the same files/ dir group_vars/capture_host reads —
 # a key rotation edits the .pub once. The bootstrap play installs it for zcrypto-deploy.

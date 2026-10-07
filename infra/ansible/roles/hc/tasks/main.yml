@@ -14,7 +14,8 @@
       - {key: hc_email_host_user, shape: '[A-Z0-9]{16,}\Z'}
       - {key: hc_email_host_password, shape: '[A-Za-z0-9+/=]{40,}\Z'}
 
-# The empty ping URL is admitted until the clone holds the node's own check.
+# The ping URL's key part, [A-Za-z0-9_-]{16,}, admits the minted project ping key, measured at 22 to 29 characters of
+# that alphabet.
 - name: the plain values the env file and the self-check read, refused by shape
   ansible.builtin.include_role: {name: node_common, tasks_from: secrets-preflight}
   vars:
@@ -25,7 +26,7 @@
       - {key: hc_email_host, shape: 'email-smtp\.[a-z0-9-]+\.amazonaws\.com\Z'}
       - {key: hc_email_from, shape: '[^@\s]+@[^@\s]+\Z'}
       - {key: hc_admin_email, shape: '[^@\s]+@[^@\s]+\Z'}
-      - {key: hc_selfcheck_healthcheck_url, shape: '(https://zcrypto-hc\.zhaow\.me/ping/[A-Za-z0-9_-]{16,}/[a-z0-9-]+)?\Z'}
+      - {key: hc_selfcheck_healthcheck_url, shape: 'https://zcrypto-hc\.zhaow\.me/ping/[A-Za-z0-9_-]{16,}/[a-z0-9-]+\Z'}
 
 - name: ensure the compose directory exists (root-owned)
   ansible.builtin.file:

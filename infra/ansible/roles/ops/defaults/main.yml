@@ -62,13 +62,14 @@ ops_textfile_dir: "{{ ops_data_dir }}/textfile"
 # Deleting it costs one full re-verification.
 ops_verify_replay_state_subdir: verify-replay-state
 
-# healthchecks.io dead-man ping URLs, one per timer that pings -- not every timer has one
-# (`grep -l healthcheck_url infra/ansible/roles/ops/templates/*.sh.j2`). Empty means the ping is
-# simply skipped (mirroring the CLI's optional `ping_healthcheck` semantics).
+# Dead-man ping URLs, one per timer that pings -- not every timer has one
+# (`grep -l healthcheck_url infra/ansible/roles/ops/templates/*.sh.j2`) -- set from the project ping
+# key in host_vars/zcrypto-ops/vars.yml. Empty means the ping is simply skipped (mirroring the CLI's
+# optional `ping_healthcheck` semantics).
 ops_verify_replay_healthcheck_url: ""
 ops_verified_replay_healthcheck_url: ""
 
-# T0083 mutual watchdog: the zcrypto-grafana-watchdog check's ping URL (vaulted per host) and the
+# T0083 mutual watchdog: the zcrypto-grafana-watchdog check's ping URL (set per host) and the
 # Grafana health endpoint the pinger probes. Empty URL skips the ping, same semantics as above.
 ops_grafana_watchdog_healthcheck_url: ""
 ops_grafana_watchdog_probe_url: "https://zcrypto2026.grafana.net/api/health"
@@ -124,7 +125,7 @@ ops_reconcile_window_hours: 48
 # correlated-loss detectors run regardless and are never minted from.
 ops_reconcile_mint: false
 
-# The writer cycle's dead-man ping (healthchecks.io), deliberately a SEPARATE failure domain from
+# The writer cycle's dead-man ping, deliberately a SEPARATE failure domain from
 # the Grafana stack per CLAUDE.md: losing it halves the writer's failure domains silently, with
 # Grafana still reading healthy metrics throughout. Empty skips the ping, per the CLI's optional
 # semantics.

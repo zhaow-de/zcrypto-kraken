@@ -1,7 +1,7 @@
 # host_vars/nas — SECRETS. Per-VALUE vault encryption; read/write mechanics:
 # see group_vars/capture_host/vault.yml. NEVER run ansible-inventory --host/--list.
 
-nas_gate_healthcheck_url: !vault |
+hcio_nas_gate_healthcheck_url: !vault |
           $ANSIBLE_VAULT;1.1;AES256
           30306636363333363561343835363731336363626666396234396236386262656533363261613934
           6535656534363363323434323238666262353430653433620a353964643263616364343738353232

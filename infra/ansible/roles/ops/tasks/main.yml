@@ -522,13 +522,16 @@
 - name: install the overlay-writer runner + timer (needs the pinned image digest — historical archive-pull name)
   when: ops_image_digest is defined
   block:
+    # no_log with diff false and 0700: the script carries the dead-man ping URL, and its unit runs as root.
     - name: install the archive-pull runner script
       ansible.builtin.template:
         src: archive-pull.sh.j2
         dest: /usr/local/sbin/zcrypto-archive-pull
         owner: root
         group: root
-        mode: "0755"
+        mode: "0700"
+      no_log: true
+      diff: false
 
     - name: render the archive-pull systemd service + timer
       ansible.builtin.template:
@@ -556,13 +559,14 @@
 # script before units, same discipline as the archive-pull block above.
 - name: install the grafana-watchdog pinger (mutual watchdog, hc.io half)
   block:
+    # 0700: the script carries the dead-man ping URL, and its unit runs as root.
     - name: install the grafana-watchdog runner script
       ansible.builtin.template:
         src: grafana-watchdog.sh.j2
         dest: /usr/local/sbin/zcrypto-grafana-watchdog
         owner: root
         group: root
-        mode: "0755"
+        mode: "0700"
       no_log: true
       diff: false
 
@@ -642,8 +646,8 @@
     # every deliberate restart) is an attended step (`docker compose up -d`): the
     # liquidations stream is not backfillable, so restarting it is never a converge side effect.
     #
-    # mode 0600 (not 0644): the rendered file now carries COINALYZE_API_KEY in plaintext (
-    # spec 00051 OPS-2) — zcrypto-deploy-only readable, matching the vault's own secrecy expectation.
+    # mode 0600, no_log and diff false: the rendered file carries COINALYZE_API_KEY and the dead-man ping URL in
+    # plaintext — zcrypto-deploy-only readable, matching the vault's own secrecy expectation.
     - name: render the ops compose file (liquidations poller)
       ansible.builtin.template:
         src: compose.yaml.j2
@@ -651,15 +655,20 @@
         owner: zcrypto-deploy
         group: zcrypto-deploy
         mode: "0600"
+      no_log: true
+      diff: false
 
+    # no_log with diff false and 0700: three of the four carry a dead-man ping URL, and their units run as root.
     - name: install the replay + panel + tape-bars runner scripts
       ansible.builtin.template:
         src: "{{ item }}.sh.j2"
         dest: "/usr/local/sbin/zcrypto-{{ item }}"
         owner: root
         group: root
-        mode: "0755"
+        mode: "0700"
       loop: [verify-replay, verified-replay, panel-materialize, tape-bars]
+      no_log: true
+      diff: false
 
     - name: render the replay + panel + tape-bars systemd services + timers
       ansible.builtin.template:

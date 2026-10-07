@@ -22,7 +22,7 @@ The `zcrypto liquidations-poll` daemon runs as the single service in `{{ ops_com
 ### Deploy
 
 1. Converge with the digest: `./scripts/converge.sh site.yml --limit zcrypto-ops -e ops_image_digest=sha256:<...>` — the documented converge path (spec 00083 D1), and what appends the `deploy-log.jsonl` line; `run.sh` deploys but records nothing (from `infra/ansible/`; read the **default AVX** digest from the capture-image workflow's job summary, and confirm `zcrypto liquidations-poll --help` exists in that image before pinning).
-2. Secrets, both vaulted in `host_vars/zcrypto-ops/vault.yml` and wired via `vars.yml`: `coinalyze_api_key` (free key from coinalyze.net → account → API key) and `liquidations_healthcheck_url` (a healthchecks.io check, e.g. `zcrypto-liquidations`; the dead-man alerts by **missed** pings, so an attached notification channel is what pages). The rendered compose is mode `0600` because it carries the API key.
+2. Secrets: `coinalyze_api_key` (free key from coinalyze.net → account → API key), vaulted in `host_vars/zcrypto-ops/vault.yml` and wired via `vars.yml`, and the dead-man ping URL, `ops_liquidations_healthcheck_url` in `host_vars/zcrypto-ops/vars.yml`, rendered from the project ping key `hc_ping_key` (`group_vars/observed/vault.yml`) and the slug of the dead-man service's check `zcrypto-liquidations` (the dead-man alerts by **missed** pings, so an attached notification channel is what pages). The rendered compose is mode `0600`, never logged or diffed, because it carries both.
 3. Start it (attended): `ssh hp`, then `docker compose -f /etc/zcrypto-ops/compose.yaml up -d`.
 4. Verify by outcome within a minute: the first cycle back-fills the ~30 h catch-up window, so hour finals appear immediately at `/var/lib/zcrypto-ops/liquidations/<COIN>/liquidations-1m/<YYYY>/<MM>/<DD>/<HH>.parquet` with valid `.sha256` sidecars, for all 10 coins. The dead-man pings after each fully-successful cycle. Sparse hours (no liquidation for a coin) simply have no bucket; the open hour lingers as `.part` files until a later bucket closes it ([T0046]).
 
@@ -32,7 +32,7 @@ The `zcrypto liquidations-poll` daemon runs as the single service in `{{ ops_com
 | -- | -- | -- |
 | `COINALYZE_API_KEY` | The Coinalyze API credential (required; header-only, never in URLs or logs). | vaulted `coinalyze_api_key` → rendered into the `0600` compose |
 | `ZCRYPTO_LIQUIDATIONS_DATA_DIR` | Segment output base in the container: `/data/liquidations`. | fixed in `compose.yaml.j2`, matching its `{{ ops_data_dir }}:/data` mount |
-| `LIQUIDATIONS_HEALTHCHECK_URL` | Dead-man ping URL; pinged on a clean cycle, disk watermark healthy. Empty skips it. | `ops_liquidations_healthcheck_url` ← vaulted `liquidations_healthcheck_url` |
+| `LIQUIDATIONS_HEALTHCHECK_URL` | Dead-man ping URL; pinged on a clean cycle, disk watermark healthy. Empty skips it. | `ops_liquidations_healthcheck_url` ← the vaulted project ping key `hc_ping_key` |
 | `COINALYZE_POLL_SECONDS` | Poll cadence: one batched 10-symbol call per cycle. | unset in the rendered compose — the 300 s default is `DEFAULT_POLL_SECONDS` in `cli/liquidations/coinalyze.py` |
 | `ZCRYPTO_METRICS_PORT` | The poller's `/metrics` port, `9103`, published on host loopback only. | fixed in `compose.yaml.j2`, scraped by `files/config.alloy`'s `liquidations_app` job |
 | `ZCRYPTO_LOG_HOST` | Direct-ship label: the literal `ops`. | fixed in `compose.yaml.j2`, guarded by `logship_loki_token is defined` |

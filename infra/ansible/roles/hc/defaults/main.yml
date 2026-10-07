@@ -3,7 +3,8 @@
 # behind the shared edge. Its vaulted values are host_vars/zcrypto-hc/vault.yml's and its plain ones
 # host_vars/zcrypto-hc/vars.yml's: the role's first two tasks name them.
 
-# The one public name; the ping URL's preflight shape in tasks/main.yml spells it again.
+# The one public name; group_vars/observed/vars.yml, which the pingers' URLs render from, and the ping URL's
+# preflight shapes in tasks/main.yml and the mon role spell it again.
 hc_hostname: zcrypto-hc.zhaow.me
 hc_acme_email: zhaow.km@gmail.com
 
@@ -27,5 +28,5 @@ hc_textfile_dir: /var/lib/zcrypto-node-textfile
 
 # The superuser's mailbox, where the clone's sudo-mode codes land.
 hc_admin_email: ""
-# The ping URL of the node's own check. Empty, the self-check runs and pings nothing.
+# The ping URL of the node's own check, set in host_vars/zcrypto-hc/vars.yml; the role's second task refuses it empty.
 hc_selfcheck_healthcheck_url: ""

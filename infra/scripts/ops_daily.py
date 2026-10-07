@@ -1851,9 +1851,10 @@ def _inspect_format_is_scoped(tokens: list[str]) -> bool:
 
 
 def _curl_is_read(tokens: list[str]) -> bool:
-    """A plain GET to a healthchecks ping URL marks a dead-man alive -- a read that silences an alarm."""
+    """A plain GET to a ping URL, healthchecks.io's or the dead-man service's, marks a dead-man alive -- a read that
+    silences an alarm."""
     joined = " ".join(tokens).lower()
-    return "hc-ping" not in joined and "healthchecks.io/ping" not in joined
+    return not any(host in joined for host in ("hc-ping", "healthchecks.io/ping", "zcrypto-hc.zhaow.me/ping"))
 
 
 _POSTCHECKS = {"inspect": _inspect_format_is_scoped, "curl": _curl_is_read}

@@ -232,7 +232,7 @@ The engine is **disarmed** for the window.
 
 ### Induce
 
-Read `engine_healthcheck_url` from `group_vars/engine_host/vault.yml` through the vault resolver **on the workstation**, and issue the `<url>/fail` GET **from that same Python process**.
+Until `uv run python infra/scripts/hc-provision.py status` reads `zcrypto-engine-shadow` moved, read `hcio_engine_healthcheck_url` from `group_vars/engine_host/vault.yml` through the vault resolver **on the workstation**; from then, read `hc_ping_key` from `group_vars/observed/vault.yml` the same way, the url being `https://zcrypto-hc.zhaow.me/ping/<key>/zcrypto-engine-shadow`. Issue the `<url>/fail` GET **from that same Python process**.
 
 - **Never issue that GET with `curl`** (no count command: a one-off workstation call during the drill leaves nothing in the tree). The URL *is* the ping secret and `ps` shows argv.
 - **Never from the engine host** (no count command: a drill-time call leaves no trace; `roles/engine/templates/engine.env.j2` is the one render). Its only copies sit beside the live trade key, in `engine.env` and the container environment.
@@ -254,7 +254,7 @@ Entry `J′`. It records the two green precondition readings taken **before** th
 
 ### Retire when
 
-`_ping_healthcheck` in `cli/engine/cycle.py` no longer appends `/fail`, or `engine_healthcheck_url` is absent from `group_vars/engine_host/vault.yml`. The alert that reads the same check's silence is [`engine.md#zcrypto-engine-cycle-stale`](engine.md#zcrypto-engine-cycle-stale).
+`_ping_healthcheck` in `cli/engine/cycle.py` no longer appends `/fail`, or `engine_healthcheck_url` is absent from `group_vars/engine_host/vars.yml`. The alert that reads the same check's silence is [`engine.md#zcrypto-engine-cycle-stale`](engine.md#zcrypto-engine-cycle-stale).
 
 <a name="drill-k"></a>
 
@@ -330,7 +330,7 @@ uv run python infra/scripts/grafana-query.py 'hc_check_up{name="zcrypto-panel"}'
 
 `hc_check_up{name="zcrypto-panel"} == 1` with its last ping inside one timer period, **and** `max(hc_checks_down_total) == 0`. An unset or paused check has been down independently of this drill and its page predates it, and a native healthchecks.io page carries no rule `activeAt` to separate the two afterwards; the aggregate is the second half because the only rule `activeAt` this drill produces is the watchdog's.
 
-**Not green is diagnosed, never guessed at.** Whether the url is configured at all is a repo read: ask the vault resolver for **`panel_healthcheck_url`** in `host_vars/zcrypto-ops/vault.yml`. **Do not ask it for `ops_panel_healthcheck_url`**: that is the plain, unvaulted indirection the role template reads (`host_vars/zcrypto-ops/vars.yml`, over an empty role default), the resolver is a dict lookup, and the name raises `KeyError`, which reads exactly like "the variable is not defined" when it is. Whether the live host is *pinging* it is what the green read answers.
+**Not green is diagnosed, never guessed at.** Whether the url is configured at all is a repo read: the `ops_panel_healthcheck_url` line of `host_vars/zcrypto-ops/vars.yml`, the project ping key's base and the slug `zcrypto-panel`, and `hc_ping_key` present in `group_vars/observed/vault.yml`, `grep -c '^hc_ping_key: !vault' infra/ansible/group_vars/observed/vault.yml` printing `1`. Whether the live host is *pinging* it is what the green read answers.
 
 Not green ⇒ **`blocked`** with the reason, never `pass`. A `pass` here would close a recorded gap on evidence that predates the induction, after which a panel timer that stops firing trips nothing at all.
 

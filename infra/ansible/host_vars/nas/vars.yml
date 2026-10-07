@@ -1,7 +1,7 @@
 # host_vars/nas — the Synology NAS: the archive/custody tier (spec 00048 Role A), Ansible-managed
 # since T0056. DSM owns the OS; the nas role manages ONLY the zcrypto payload under nas_stack_dir.
-# The secrets sibling (vault.yml) holds nas_gate_healthcheck_url. Deploy background and the
-# image-identifier pitfalls live in infra/nas/README.md.
+# The gate's dead-man ping URL renders from the project ping key, nas_gate_healthcheck_url below. Deploy
+# background and the image-identifier pitfalls live in infra/nas/README.md.
 
 ansible_host: z-home-storage.zhaow.pro
 ansible_user: zcrypto-deploy
@@ -62,8 +62,9 @@ nas_alloy_image: grafana/alloy@sha256:2aa2099af76c0098d4af7a4d6e48f86cb66dc1a000
 nas_archive_pull_hash_scope: incremental
 
 # Pull sources + per-channel SSH ports, rendered into {{ nas_stack_dir }}/.env by the nas role
-# (roles/nas/templates/env.j2; the env-var contract is in infra/nas/README.md). GATE_HEALTHCHECK_URL
-# is deliberately absent — it is a secret, vaulted as nas_gate_healthcheck_url in vault.yml.
+# (roles/nas/templates/env.j2; the env-var contract is in infra/nas/README.md). GATE_HEALTHCHECK_URL is the
+# project ping key's base (group_vars/observed/vars.yml) and the check's slug, so the .env render is no_log.
+nas_gate_healthcheck_url: "{{ hc_ping_base }}/zcrypto-gate-verify"
 nas_capture_source: "zcrypto-data@zcrypto.zhaow.me:"
 nas_archive_ssh_port: 10022
 nas_journal_source: "zcrypto-data@zcrypto.zhaow.me:"
