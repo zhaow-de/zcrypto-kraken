@@ -6060,7 +6060,7 @@ def test_a_pass_completed_before_the_cut_lifts_nothing_until_both_endpoints_are_
     assert not ex._frozen
 
 
-def test_a_freeze_held_while_disarmed_stands_across_the_return_and_lifts_on_the_first_armed_ticks_pass(tmp_path):
+def test_a_disarmed_return_lifts_the_freeze_with_no_read_and_the_first_armed_tick_runs_the_owed_pass(tmp_path):
     venue, holdings = _VenueOrders(_report(_TXID, OrderStatus.CANCELED)), _VenueHoldings({})
     ex, client, clock = _frozen_executor(tmp_path, venue_orders=venue, venue_holdings=holdings)
     arm = exec_dir(tmp_path) / ARM_FILE
@@ -6069,17 +6069,18 @@ def test_a_freeze_held_while_disarmed_stands_across_the_return_and_lifts_on_the_
     ex.on_timer(clock.now)  # the idle refresh reads the gate disarmed
     reads = (len(venue.calls), holdings.calls)
     ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-data-streams"))
+    assert ex._frozen  # one endpoint still down
     ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-user-streams"))
+    assert not ex._frozen  # the return that empties the set lifts it, with no pass
     clock.now += executor_module._GATE_REFRESH
-    ex.on_timer(clock.now)  # still disarmed: the return armed no pass, so nothing is read and the freeze stands
-    assert ex._frozen and (len(venue.calls), holdings.calls) == reads
+    ex.on_timer(clock.now)  # still disarmed: the owed pass waits, and nothing is read
+    assert (ex._reread_tries, len(venue.calls), holdings.calls) == (0, *reads)
     arm.touch()
     clock.now += executor_module._GATE_REFRESH
     ex.on_timer(clock.now)  # the idle refresh at this tick's end reads the gate armed
-    assert ex._frozen
     clock.now += timedelta(seconds=5)
     ex.on_timer(clock.now)  # the first tick after it runs the owed pass over the minted row
-    assert not ex._frozen and (len(venue.calls), holdings.calls) == (reads[0] + 1, reads[1] + 1)
+    assert (len(venue.calls), holdings.calls) == (reads[0] + 1, reads[1] + 1)
     assert _record(tmp_path)["submitted"][0]["state"] == "canceled"
 
 
