@@ -445,6 +445,24 @@ def test_ledger_scans_include_yesterday_and_exclude_the_day_before(tmp_path):
     assert open_coids == {"coid-today", "coid-yesterday"}
 
 
+def test_a_since_three_days_back_reaches_the_day_before_it_and_no_since_keeps_the_two_day_window(tmp_path):
+    now, since = CYCLE_TS + timedelta(days=3), CYCLE_TS
+    for days in range(-2, 4):
+        when = CYCLE_TS + timedelta(days=days)
+        for state in ("ambiguous", "canceled"):
+            row = _row(plan_id=f"plan{days}", client_order_id=f"{state}{days}", state=state)
+            append_submitted_row(tmp_path, when, row, verdict=_verdict(), evaluated_at=when)
+    assert execledger_module._day_dirs(tmp_path, now, since) == [tmp_path / f"{now - timedelta(days=k):%Y-%m-%d}" for k in range(5)]
+    assert execledger_module._day_dirs(tmp_path, now) == [tmp_path / f"{now - timedelta(days=k):%Y-%m-%d}" for k in range(2)]
+    assert {row["client_order_id"] for _, row in open_submitted_rows(tmp_path, now, since)} == {
+        f"ambiguous{days}" for days in range(-1, 4)
+    }
+    assert {row["client_order_id"] for _, row in closed_submitted_rows(tmp_path, now, since)} == {
+        f"canceled{days}" for days in range(-1, 4)
+    }
+    assert {row["client_order_id"] for _, row in open_submitted_rows(tmp_path, now)} == {"ambiguous2", "ambiguous3"}
+
+
 def test_the_re_attach_set_is_every_state_a_possibly_live_order_can_wear(tmp_path):
     """`open_submitted_rows` is D10's re-attach input: it returns every state a possibly-live order
     can wear and nothing else, `ambiguous` included -- the honest state for a submission whose venue

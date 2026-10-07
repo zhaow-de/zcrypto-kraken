@@ -6091,6 +6091,41 @@ def test_a_disarmed_return_over_a_row_the_cut_stranded_leaves_the_freeze_standin
     assert _record(tmp_path)["submitted"][0]["state"] == "canceled" and not ex._frozen
 
 
+def test_a_disarmed_hold_over_a_stranded_row_stands_across_two_utc_day_rolls_and_the_first_armed_pass_reads_it_from_the_cuts_day(
+    tmp_path,
+):
+    venue, cancel, holdings = _VenueOrders(_report(_TXID, OrderStatus.ACCEPTED)), _VenueCancel(), _VenueHoldings({})
+    ex, client, clock = _frozen_executor(tmp_path, venue_orders=venue, venue_cancel=cancel, venue_holdings=holdings)
+    arm = exec_dir(tmp_path) / ARM_FILE
+    arm.unlink()
+    clock.now += executor_module._GATE_REFRESH
+    ex.on_timer(clock.now)  # the idle refresh reads the gate disarmed
+    reads = (len(venue.calls), holdings.calls)
+    until = datetime(2026, 8, 16, 6, tzinfo=timezone.utc)  # the row's record, filed on the 14th, is outside the two-day window
+    with _executor_errors(level=logging.CRITICAL) as records:
+        ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-data-streams"))
+        ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-user-streams"))
+        while clock.now < until:
+            clock.now += timedelta(hours=1)
+            ex.on_timer(clock.now)
+            assert ex._frozen, clock.now
+    assert (len(venue.calls), holdings.calls, cancel.calls) == (*reads, [])
+    assert [r.getMessage() for r in records] == [
+        "the execution watchdog's freeze stands -- the sockets are back and the engine is disarmed, but the cut may "
+        "have left an order resting at Kraken unread, the ledger's open or ambiguous rows: "
+        f"O-1 (Kraken {_TXID}); while the engine stays disarmed, cancel each by hand on Kraken's open-orders page"
+    ]
+    arm.touch()
+    clock.now += executor_module._GATE_REFRESH
+    ex.on_timer(clock.now)  # the idle refresh at this tick's end reads the gate armed
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+    assert (len(venue.calls), holdings.calls, cancel.calls) == (reads[0] + 1, reads[1] + 1, [(_TXID, "BTC/EUR.KRAKEN")])
+    assert venue.calls[-1] == _boundary(NOW) - executor_module._VENUE_READ_MARGIN
+    assert _record(tmp_path)["submitted"][0]["state"] == "canceled" and _intent_outcome(tmp_path) == "ambiguous"
+    assert not ex._frozen and ex._frozen_at is None
+
+
 def test_a_disarmed_return_with_no_open_row_lifts_the_freeze_with_no_read_and_the_first_armed_tick_runs_the_owed_pass(tmp_path):
     holdings = _VenueHoldings({})
     clock = _Clock()
