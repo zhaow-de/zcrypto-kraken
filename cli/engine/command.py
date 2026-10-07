@@ -1667,8 +1667,8 @@ def _render_tracking(payload: dict) -> str:
     ]
     if payload["opening_birth"] is not None:
         lines.append(
-            f"The series was born at {payload['opening_birth']}: held starts from its opening holdings there, and the "
-            "weeks below leave out the cycles and fills before it."
+            f"The series was born at {payload['opening_birth']}: held starts from its opening holdings there, and every "
+            "figure below leaves out the cycles and fills before it."
         )
     if payload["simulated"]:
         lines += [
@@ -1867,7 +1867,10 @@ def tracking_report(
     config = _load_engine_config()
     journal_root = journal_dir if journal_dir is not None else config.journal_dir
     opening = _read_opening(opening_holdings, since)
-    records = _window_records(journal_root, since, until)
+    # With a record the read is the series': every block below starts at its birth, and the cycles and fills before it
+    # are an earlier series'.
+    birth = None if opening is None else opening.birth
+    records = [record for record in _window_records(journal_root, since, until) if birth is None or record.cycle_ts >= birth]
     minimums_path = _resolve_minimums(minimums)
     try:
         floors, fetched_at = load_minimums(minimums_path)
@@ -1896,7 +1899,10 @@ def tracking_report(
         if simulated_fills:
             fills = _simulated_fills(stages, floor["cycles"], floors)
         else:
-            fills, notes = extract_fills(_window_exec_records(journal_root, since, until))
+            exec_docs = _window_exec_records(journal_root, since, until)
+            fills, notes = extract_fills(
+                [doc for doc in exec_docs if birth is None or datetime.fromisoformat(doc["cycle_ts"]) >= birth]
+            )
         tracking = weekly_tracking(stages, fills, floors, nav_value, rung_by_week=_rung_by_week(stages, gate_week), opening=opening)
     except EngineError as exc:
         raise _abort(str(exc)) from exc
@@ -2315,7 +2321,9 @@ def record_opening_holdings(
     try:
         parse_balance_export(doc, bases=bases)
     except DraftPlanError as exc:
-        raise _abort(f"the balance export {balance_path} cannot open a series: {exc}") from exc
+        raise _abort(
+            f"the balance export {balance_path} cannot open a series, refused by draft-plan's balance check: {exc}"
+        ) from exc
     closes = record.closes or {}
     missing = [base for base in _OPENING_BASES if base not in closes]
     if missing:
