@@ -1474,6 +1474,53 @@ def test_tracking_report_with_an_opening_record_leaves_the_earlier_series_out_of
     assert (payload["cost"]["n_fills"], payload["cost"]["realized_fee_per_side"]) == (1, pytest.approx(0.001))
 
 
+def test_tracking_report_with_an_opening_record_reconciles_the_export_from_the_birth(tmp_path):
+    # The earlier series' 16Z fill and the birth's 20Z fill, each with its trade row in the export: the row before the
+    # birth is neither matched nor unmatched, and the reconciliation reads ok on the birth's row alone.
+    sliced = _synth_slice(tmp_path / "earlier", (2, 2, 2, 2), start=_SERIES_BIRTH - timedelta(hours=4))
+    symbol = "BTC/EUR"
+    close = basket_fixture.grids(_SERIES_BIRTH)[240][1][symbol][-1]
+    rows = []
+    for at in (_SERIES_BIRTH - timedelta(hours=4), _SERIES_BIRTH):
+        fill = _fill(
+            at=(at + timedelta(minutes=1)).isoformat(), qty=0.001, px=close, fee=0.001 * 0.001 * close, trade_id=f"T-{at:%H}"
+        )
+        (sliced.journal / f"{at:%Y-%m-%d}" / f"exec-{at:%H}.json").write_text(
+            json.dumps(_rec([fill], symbol=symbol, cycle_ts=at.isoformat()))
+        )
+        rows.append(
+            f'"L-{at:%H}","T-{at:%H}","{at + timedelta(minutes=1):%Y-%m-%d %H:%M:%S}","trade","","currency","XXBT","0.001","0","0.001"'
+        )
+    export = _export(tmp_path, rows)
+    doc = _opening_doc()
+    doc["birth"] = _SERIES_BIRTH.isoformat()
+    record = tmp_path / "opening-holdings.json"
+    record.write_text(json.dumps(doc))
+
+    run = _invoke(sliced, _tracking_argv(sliced, "--opening-holdings", str(record), "--ledger-export", str(export), "--json"))
+    assert run.exit_code == 0, run.stdout
+    reconciliation = json.loads(run.stdout)["reconciliation"]
+    assert (reconciliation["status"], reconciliation["matched"], reconciliation["unmatched"]) == ("ok", 1, [])
+
+
+def test_tracking_report_with_an_opening_record_opens_no_record_before_the_birth(tmp_path):
+    # A cycle record and an execution record at 16Z, the earlier series', that will not read: handed the opening record,
+    # the read never opens them and exits 0 over the birth's three cycles.
+    sliced = _synth_slice(tmp_path / "earlier", (2, 2, 2, 2), start=_SERIES_BIRTH - timedelta(hours=4))
+    before = _SERIES_BIRTH - timedelta(hours=4)
+    day = sliced.journal / f"{before:%Y-%m-%d}"
+    (day / f"cycle-{before:%H}.json").write_text("not json")
+    (day / f"exec-{before:%H}.json").write_text("not json")
+    doc = _opening_doc()
+    doc["birth"] = _SERIES_BIRTH.isoformat()
+    record = tmp_path / "opening-holdings.json"
+    record.write_text(json.dumps(doc))
+
+    run = _invoke(sliced, _tracking_argv(sliced, "--opening-holdings", str(record), "--json"))
+    assert run.exit_code == 0, run.stdout
+    assert json.loads(run.stdout)["n_cycles"] == 3
+
+
 # --- the journaled per-cycle NAV (T0150) ----------------------------------------------------------
 
 
