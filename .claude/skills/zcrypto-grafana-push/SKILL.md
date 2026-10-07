@@ -35,7 +35,7 @@ The script pushes the working tree it runs from, whole, and its prune deletes th
 
 ## Step 3 — verify
 
-- Read each new or changed rule's first sample by value with `grafana-query.py`, `--loki` for a Loki rule, and each new panel's query the same way; `(no series)` is a fail, not a zero. A rule the push skipped, and a panel of the Fleet health board's `Observability node` row, read the node's series, which Grafana Cloud does not hold: they are read the same way with `--stack mon`, after the node's push.
+- Read each new or changed rule's first sample by value with `grafana-query.py`, `--loki` for a Loki rule, and each new panel's query the same way; `(no series)` is a fail, not a zero. A rule the push skipped, and a panel of the Fleet health board's `Observability node` or `Dead-man node` row, read series the observability node holds and Grafana Cloud does not: they are read the same way with `--stack mon`, after the node's push.
 - Render each new or changed dashboard as the script's header says, the narrowed-variable case included; `GRAFANA_URL` is `https://zcrypto2026.grafana.net`, the script's default, which the rendering shell does not hold.
 
 ## Step 4 — the prune
