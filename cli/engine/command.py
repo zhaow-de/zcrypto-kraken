@@ -638,11 +638,7 @@ class _ExecutionMetrics:
             "Order events arriving on the external strategy topic, by disposition: matched means the "
             "event belonged to a restart-adopted order this engine's ledger vouches for; unmatched "
             "means it belonged to no such order -- the account owner's own hand settle, activity "
-            "nobody sanctioned, or a fill on an order the startup pass could not see. While the "
-            "engine is armed, an unmatched fill makes it re-read the venue's holdings at its first "
-            "tick with no intent of its own working, once its connection to the venue is back if one "
-            "dropped, so the position gauge takes the venue's figure; any other unmatched event, and "
-            "a fill while the engine is disarmed, is counted and logged, nothing more.",
+            "nobody sanctioned, or a fill on an order the startup pass could not see.",
             ["disposition"],
             registry=registry,
         )
