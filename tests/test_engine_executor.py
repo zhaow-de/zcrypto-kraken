@@ -12050,7 +12050,10 @@ def test_a_boundary_re_armed_after_a_restart_whose_draft_marks_nothing_keeps_the
         now=_RUNG2_12Z + timedelta(minutes=30),
         series=[1000.0, 1000.0, 1000.0],
     )
-    replaced = _accum_doc(_RUNG2_12Z, "ok", equity_eur=960.0, day_loss_bps=400.0, day_loss_hold=True)
+    written = _RUNG2_12Z + timedelta(minutes=2)
+    replaced = _accum_doc(
+        _RUNG2_12Z, "ok", equity_eur=960.0, day_loss_bps=400.0, day_loss_hold=True, drafted_at=written.isoformat()
+    )
     write_accum_record(tmp_path / "journal", _RUNG2_12Z, replaced)
     ex._venue_holdings._raises = RuntimeError("down")
     with _executor_errors(logging.INFO) as records:
@@ -12059,7 +12062,7 @@ def test_a_boundary_re_armed_after_a_restart_whose_draft_marks_nothing_keeps_the
     assert (noon["status"], noon["equity_eur"], noon["day_loss_bps"], noon["day_loss_hold"]) == ("book-unread", 960.0, 400.0, True)
     assert (
         f"the boundary {_RUNG2_12Z.isoformat()}'s draft marked no equity -- its record keeps the mark an earlier process "
-        f"wrote at {_RUNG2_12Z.isoformat()}"
+        f"wrote at {written.isoformat()}"
     ) in [r.getMessage() for r in records]
 
     later = _RUNG2_12Z + timedelta(hours=4)
@@ -12132,3 +12135,63 @@ def test_a_minting_mark_whose_scan_raises_starts_no_series_and_its_retry_reads_n
     noon = _accum(tmp_path)
     assert noon["drafted_at"] == clock.now.isoformat() and noon["day_loss_hold"] is False
     assert _series_start_path(tmp_path).read_text() == f"{_RUNG2_12Z.isoformat()}\n"
+
+
+def test_a_re_armed_draft_that_mints_the_series_and_spends_its_tries_on_an_earn_coded_coin_reads_no_hold_from_the_record_it_replaces(
+    tmp_path,
+):
+    """The re-mint case's premise with a basket coin under an earn code: each of the draft's three ticks marks 990 EUR and
+    spends a try on the refusal, the first minting 12Z. The `book-unread` record reads no hold and the 16Z exec record
+    reads `full`. The probe keys the mint's bound on the minting tick alone, and the second tick reads the replaced
+    record, an earlier series', into the hold."""
+    flat = _the_ten_at(0.0)
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=_rung2_record(tmp_path, final_targets=flat),
+        holdings={},
+        eur_total=990.0,
+        eur_free=990.0,
+        now=_RUNG2_12Z + timedelta(minutes=30),
+        earn={"SOL": 0.0001},
+    )
+    replaced = _accum_doc(_RUNG2_12Z, "ok", equity_eur=960.0, day_loss_bps=400.0, day_loss_hold=True)
+    write_accum_record(tmp_path / "journal", _RUNG2_12Z, replaced)
+    _ticks(ex, clock, 3)
+    noon = _accum(tmp_path)
+    assert (noon["status"], noon["day_loss_bps"], noon["day_loss_hold"]) == ("book-unread", 0.0, False)
+
+    later = _RUNG2_12Z + timedelta(hours=4)
+    ex._venue_holdings.earn = {}
+    _boundary_drafts(ex, clock, later, _rung2_record(tmp_path, final_targets=flat, cycle_ts=later))
+    assert _record(tmp_path, later)["level"] == GateLevel.FULL
+
+
+def test_a_re_armed_draft_that_minted_the_series_and_ends_on_a_tick_that_marks_nothing_writes_its_own_mark(tmp_path):
+    """The earlier series' 12Z record at 1500 EUR, a withdrawal taken since: the draft's first tick marks 990 EUR, mints
+    12Z and spends a try on an earn-coded coin, and its last two ticks' book reads fail. The `book-unread` record keeps
+    the draft's own mark, and the 16Z mark reads no drawdown. The probe drops the kept mark: the record carries 1500 EUR
+    into the series 12Z started, and the 16Z mark trips the kill switch on the withdrawn amount."""
+    flat = _the_ten_at(0.0)
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=_rung2_record(tmp_path, final_targets=flat),
+        holdings={},
+        eur_total=990.0,
+        eur_free=990.0,
+        now=_RUNG2_12Z + timedelta(minutes=30),
+        earn={"SOL": 0.0001},
+    )
+    replaced = _accum_doc(_RUNG2_12Z, "ok", equity_eur=1500.0, hwm_eur=1500.0, day_loss_bps=400.0, day_loss_hold=True)
+    write_accum_record(tmp_path / "journal", _RUNG2_12Z, replaced)
+    _ticks(ex, clock, 1)  # marks 990, mints 12Z, and spends a try on the earn-coded coin
+    ex._venue_holdings._raises = RuntimeError("down")
+    _ticks(ex, clock, 2)
+    noon = _accum(tmp_path)
+    assert noon["status"] == "book-unread" and noon["equity_eur"] == pytest.approx(990.0, abs=0.1)
+    assert noon["day_loss_hold"] is False
+
+    later = _RUNG2_12Z + timedelta(hours=4)
+    ex._venue_holdings._raises = None
+    ex._venue_holdings.earn = {}
+    _boundary_drafts(ex, clock, later, _rung2_record(tmp_path, final_targets=flat, cycle_ts=later))
+    assert not _kill_file(tmp_path).exists() and _accum(tmp_path, later)["drawdown_bps"] == pytest.approx(0.0, abs=1.0)
