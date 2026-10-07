@@ -2,7 +2,7 @@
 
 You are here because **an alert fired in Slack** — find the section whose anchor matches the alert `uid` — or because you mean to revoke a client certificate, ship its Alloy config or cut the public SSH relay: the procedures at the top, found by heading. Each section is written to be actioned without opening any other document.
 
-One Linode VPS, `zaccess`, reached as `ssh -p 10022 zcrypto-deploy@zaccess.zhaow.me`; its WireGuard tunnel ends on `zcrypto-ops`, `ssh hp`. It runs no containers — Alloy, Caddy and WireGuard are apt packages — and holds no capture data: everything on it is re-issuable.
+One Linode VPS, `zaccess`, reached as `ssh access`; its WireGuard tunnel ends on `zcrypto-ops`, `ssh hp`. It runs no containers — Alloy, Caddy and WireGuard are apt packages — and holds no capture data: everything on it is re-issuable.
 
 `README.md` beside this file states what belongs in a runbook at all; an alert or a guard names a section by file and anchor, and a procedure is found by its file and heading.
 
