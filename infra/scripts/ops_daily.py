@@ -668,25 +668,28 @@ REBOOT_FLAG = "/var/run/reboot-required"
 REBOOT_PACKAGES = "/var/run/reboot-required.pkgs"
 UPGRADE_CHECK = f"unattended upgrades on {UPGRADE_HOST}"
 
-# The ops host has three names -- the `host` label its rules carry, the fleet name its check rows
-# print and the ssh destination -- and every other host in the map two.
+# Every host in the map has a `host` label its rules carry, a fleet name its check rows print and an
+# ssh destination; the label and the fleet name differ for the ops host alone.
 _SSH_ALIASES = {
     "ops": "hp",
     "zcrypto-red": "red",
+    "zaccess": "access",
     "zcrypto-valkey1": "db1",
     "zcrypto-valkey2": "db2",
     "zcrypto-valkey3": "db3",
     "zcrypto-mon": "mon",
-    "zaccess": "access",
+    "zcrypto-hc": "hc",
 }
 _HOST_LABELS = {
     "hp": "ops",
     "zcrypto-ops": "ops",
     "red": "zcrypto-red",
+    "access": "zaccess",
     "db1": "zcrypto-valkey1",
     "db2": "zcrypto-valkey2",
     "db3": "zcrypto-valkey3",
     "mon": "zcrypto-mon",
+    "hc": "zcrypto-hc",
 }
 
 
@@ -1619,15 +1622,20 @@ _PROTECTED_OBJECTS = (
     "grafana-push.sh",
     "@sha256:",
 )
-_TELEMETRY_HOSTS = frozenset({"ops", "nas", "zaccess", "zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3", "zcrypto-mon"})
+_TELEMETRY_HOSTS = frozenset(
+    {"ops", "nas", "zaccess", "zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3", "zcrypto-mon", "zcrypto-hc"}
+)
 # A cache node's Docker daemon carries Valkey and Sentinel, so any other restart there can be a failover: the one
 # object the pass may take is Alloy's container. An allowlist, because a container id names nothing a denylist matches.
 _CACHE_HOSTS = frozenset({"zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3"})
 _CACHE_AUTONOMOUS_OBJECTS = frozenset({"grafana-alloy"})
-# The observability node carries the evaluator, its two stores and the ingest edge, each restarted in an order its
-# runbook gives: the one unit the pass may take is the node's own Alloy.
-_MON_HOSTS = frozenset({"zcrypto-mon"})
-_MON_AUTONOMOUS_OBJECTS = frozenset({"alloy", "alloy.service"})
+# The observability node's evaluator, stores and edge, and the dead-man node's clone and edge, serve the
+# whole fleet: the one unit the pass may take on either is the node's own Alloy.
+_SERVICE_NODES = frozenset({"zcrypto-mon", "zcrypto-hc"})
+_SERVICE_NODE_AUTONOMOUS_OBJECTS = frozenset({"alloy", "alloy.service"})
+# The bridgehead carries the ops tunnel and the mTLS edge.
+_BRIDGEHEAD_HOSTS = frozenset({"zaccess"})
+_BRIDGEHEAD_AUTONOMOUS_OBJECTS = frozenset({"alloy", "alloy.service"})
 # The `docker inspect` guard exists because a READ can surface the trade key; `cat` and `grep` on
 # the same host reach the same secrets through the filesystem, so they get the same treatment.
 # Scoped to the heads that print file CONTENT: `ls`, `stat`, `find` and `sha256sum` still answer
@@ -1952,6 +1960,8 @@ def _classify_one(command: str, host: str | None, *, resolve, text: str | None =
             operands = _matches(_TELEMETRY_SHAPES, tokens, first_stage=True, host=alias, resolve=resolve)
             if host_label(lands_on) in _CACHE_HOSTS and not (operands and _CACHE_AUTONOMOUS_OBJECTS.issuperset(operands)):
                 operands = None
-            if host_label(lands_on) in _MON_HOSTS and not (operands and _MON_AUTONOMOUS_OBJECTS.issuperset(operands)):
+            if host_label(lands_on) in _SERVICE_NODES and not (operands and _SERVICE_NODE_AUTONOMOUS_OBJECTS.issuperset(operands)):
+                operands = None
+            if host_label(lands_on) in _BRIDGEHEAD_HOSTS and not (operands and _BRIDGEHEAD_AUTONOMOUS_OBJECTS.issuperset(operands)):
                 operands = None
     return Tier.AUTONOMOUS if operands is not None else Tier.PREPARED

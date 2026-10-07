@@ -546,6 +546,20 @@ PUBLISHED = [
         "mon",
         {"mon_grafana_token_rotate": "true"},
     ),
+    (["--limit", "zcrypto-hc"], "zcrypto-hc", "", {}),
+    (["--limit", "zcrypto-hc", "--tags", "hc"], "zcrypto-hc", "hc", {}),
+    (
+        ["--limit", "zcrypto-hc", "--tags", "hc", "-e", "hc_image_tag=v6.2.0"],
+        "zcrypto-hc",
+        "hc",
+        {"hc_image_tag": "v6.2.0"},
+    ),
+    (
+        ["--limit", "zcrypto-hc", "--tags", "base,hardening,firewall,fail2ban,chrony,docker", "-e", "daemon_json_ack=true"],
+        "zcrypto-hc",
+        "base,hardening,firewall,fail2ban,chrony,docker",
+        {"daemon_json_ack": "true"},
+    ),
     # The bump skill's one-host rollbacks of a container host, each its own line there.
     (
         [
@@ -745,6 +759,13 @@ OUTSIDE = [
     (
         ["--limit", "zcrypto-mon", "-e", "mon_grafana_token=x"],
         "a token as an operand, which the row would record",
+        "not in this script's key set",
+    ),
+    (["--limit", "hc_host"], "the dead-man group where its one host belongs", "unknown host"),
+    (["--limit", "zcrypto-hc", "--tags", "edge"], "the shared edge role, whose tasks take the node's own tag", "unknown tag"),
+    (
+        ["--limit", "zcrypto-hc", "-e", "hc_secret_key=x"],
+        "a secret as an operand, which the row would record",
         "not in this script's key set",
     ),
 ]
