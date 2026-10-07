@@ -2373,6 +2373,7 @@ def test_the_engines_venue_read_failing_for_fifteen_minutes_pages_and_a_venue_ma
     rule = _rule("zcrypto-engine-exec-venue-diverged")
     hold_for = _duration_seconds(rule["for"])
     assert _evaluator(rule) == {"type": "gt", "params": [0.5]}
+    assert rule["noDataState"] == "OK", "the gauge is absent until the engine that publishes it is converged; NoData must not page"
     (family,) = re.fullmatch(r'(\w+)\{host="zcrypto"\}', rule["data"][0]["model"]["expr"]).groups()
 
     def fires(series):
