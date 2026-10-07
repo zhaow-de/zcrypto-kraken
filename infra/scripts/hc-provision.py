@@ -20,6 +20,7 @@ import http.client
 import importlib.util
 import json
 import re
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -35,10 +36,12 @@ grafana_auth = ops_daily.grafana_auth
 
 HCIO = "https://healthchecks.io/api/v3/"
 SERVICE = "https://zcrypto-hc.zhaow.me/api/v3/"
-FIXTURE = REPO / "tests" / "fixtures" / "healthchecks_descriptions.json"
+FIXTURE_PATH = "tests/fixtures/healthchecks_descriptions.json"
+FIXTURE = REPO / FIXTURE_PATH
 TIMEOUT = 30
-# `retire` deletes exactly this many on healthchecks.io: a check the service holds outside the fleet, once fetched
-# into the fixture, would otherwise count among them.
+# The fleet's size beside zcrypto-hc, which `retire` holds the fixture to, so a check the service holds outside the
+# fleet, once fetched into the fixture, cannot join the checks it deletes; a rerun after a partial delete deletes
+# fewer, printing the rest as already deleted.
 FLEET_CHECKS = 11
 
 HCIO_READ = ("healthchecks_readonly_api_key", "group_vars/all/vault.yml")
@@ -137,14 +140,35 @@ def _definition(row: dict, where: str) -> dict:
     return {k: row[k] for k in keys}
 
 
+def _named(text: str, where: str) -> list[dict]:
+    try:
+        rows = json.loads(text)
+    except ValueError:
+        rows = None
+    if not isinstance(rows, list) or not all(isinstance(row, dict) and isinstance(row.get("name"), str) for row in rows):
+        raise Refusal(f"{where} is not a list of named checks")
+    return rows
+
+
 def _on_disk() -> list[dict]:
     try:
-        rows = json.loads(FIXTURE.read_text())
-    except (OSError, ValueError) as exc:
+        text = FIXTURE.read_text()
+    except OSError as exc:
         raise Refusal(f"the fixture {FIXTURE.name} does not read ({type(exc).__name__})") from None
-    if not isinstance(rows, list) or not all(isinstance(row, dict) and isinstance(row.get("name"), str) for row in rows):
-        raise Refusal(f"the fixture {FIXTURE.name} is not a list of named checks")
-    return rows
+    return _named(text, f"the fixture {FIXTURE.name}")
+
+
+def _committed() -> list[dict]:
+    where = f"the committed fixture, HEAD:{FIXTURE_PATH}"
+    shown = subprocess.run(["git", "-C", str(REPO), "show", f"HEAD:{FIXTURE_PATH}"], capture_output=True, encoding="utf-8")
+    if shown.returncode != 0:
+        raise Refusal(f"{where}, does not read (git exited {shown.returncode})")
+    return _named(shown.stdout, where)
+
+
+def _differing(mine: list[dict], theirs: list[dict]) -> list[str]:
+    a, b = {row["name"]: row for row in mine}, {row["name"]: row for row in theirs}
+    return sorted(n for n in a.keys() | b.keys() if a.get(n) != b.get(n)) or ([] if mine == theirs else ["their order"])
 
 
 def _fleet() -> set[str]:
@@ -219,11 +243,27 @@ def _period(d: dict) -> str:
     return f"timeout {d['timeout']}" if "timeout" in d else f"schedule {d['schedule']!r} tz {d['tz']}"
 
 
+def _own_check(listing: list[dict]) -> str | None:
+    row = _by_name(listing, {ZCRYPTO_HC["name"]}, SERVICE_LISTING).get(ZCRYPTO_HC["name"])
+    if row is None:
+        return None
+    service = _definition(row, SERVICE_LISTING)
+    if fields := sorted(k for k in service.keys() | ZCRYPTO_HC.keys() if service.get(k) != ZCRYPTO_HC.get(k)):
+        return (
+            f"zcrypto-hc on the service differs from this script's definition in {', '.join(fields)}: apply restores "
+            "the script's, so a deliberate change is made here first"
+        )
+    return None
+
+
 def plan() -> None:
     definitions = _twelve(_listing(HCIO, _key(HCIO_READ), HCIO_LISTING), HCIO_LISTING)
+    own = _own_check(_listing(SERVICE, _key(SERVICE_READ), SERVICE_LISTING))
     print(f"{len(definitions)} checks: {HCIO_LISTING} restricted to the fixture's names, and zcrypto-hc")
     for d in definitions:
         print(f"{d['name']:<26} slug {d['name']:<26} {_period(d)}  grace {d['grace']}")
+    if own:
+        print(own)
     findings = ops_daily.check_descriptions(definitions)
     print("\n".join(f"descriptions: {finding}" for finding in findings) if findings else "descriptions: no finding")
 
@@ -272,7 +312,8 @@ def _moved(check: dict) -> bool:
 def status() -> None:
     _slack(_key(SERVICE_WRITE))
     twelve = _fleet() | {ZCRYPTO_HC["name"]}
-    service = _by_name(_listing(SERVICE, _key(SERVICE_READ), SERVICE_LISTING), twelve, SERVICE_LISTING)
+    listing = _listing(SERVICE, _key(SERVICE_READ), SERVICE_LISTING)
+    service = _by_name(listing, twelve, SERVICE_LISTING)
     try:
         hcio_key = _key(HCIO_READ)
     except Refusal as refusal:
@@ -291,6 +332,8 @@ def status() -> None:
         if hcio is not None:
             line += f"  healthchecks.io last_ping {hcio.get(name) or '-'}"
         print(line + ("  moved" if _moved(check) else ""))
+    if own := _own_check(listing):
+        print(own)
 
 
 def _when(value: object, what: str) -> datetime | None:
@@ -321,15 +364,26 @@ def retire() -> None:
             failing.append(
                 f"{name}: not moved, the dead-man service reads it {check.get('status')} at {check.get('n_pings')} pings"
             )
-    on_disk, fetched = _on_disk(), _fixture_rows(listing)
-    if len(names) != FLEET_CHECKS:
+    on_disk, fetched, committed = _on_disk(), _fixture_rows(listing), _committed()
+    if differ := _differing(on_disk, committed):
         failing.append(
-            f"the fixture names {', '.join(sorted({row['name'] for row in on_disk}))}, where retire reads "
-            f"{FLEET_CHECKS} fleet checks beside zcrypto-hc: delete any other on the service and run fixture again"
+            f"the fixture differs from the committed one at HEAD in {', '.join(differ)}: the committed one is the fleet, "
+            "so merge a change to it first, or restore the service and run fixture again"
         )
-    if on_disk != fetched:
-        mine, theirs = {row["name"]: row for row in on_disk}, {row["name"]: row for row in fetched}
-        differ = sorted(n for n in mine.keys() | theirs.keys() if mine.get(n) != theirs.get(n)) or ["their order"]
+    if len(names) != FLEET_CHECKS:
+        if len(names) < FLEET_CHECKS:
+            missing = sorted({row["name"] for row in committed} - {ZCRYPTO_HC["name"]} - names)
+            failing.append(
+                f"the fixture names {len(names)} fleet checks beside zcrypto-hc, short of {FLEET_CHECKS}, missing "
+                f"{', '.join(missing) or 'none the committed fixture names'}: run apply to create them on the service, "
+                "then fixture, never a delete"
+            )
+        else:
+            failing.append(
+                f"the fixture names {', '.join(sorted(names))} beside zcrypto-hc, more than {FLEET_CHECKS}: delete any "
+                "other on the service and run fixture again"
+            )
+    if differ := _differing(on_disk, fetched):
         failing.append(f"the fixture differs from {SERVICE_LISTING} in {', '.join(differ)}: run fixture and merge it first")
     since = datetime.now(timezone.utc) - timedelta(hours=24)
     for row in targets:

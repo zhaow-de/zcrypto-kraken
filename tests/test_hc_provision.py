@@ -9,6 +9,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import subprocess
 import urllib.error
 import uuid as uuidlib
 from datetime import datetime, timedelta, timezone
@@ -36,6 +37,7 @@ KEYS = {
     ("hc_readonly_api_key", "group_vars/observed/vault.yml"): CLONE_RO,
 }
 HCIO_KEYS = ("healthchecks_readonly_api_key", "healthchecks_api_key")
+GIT_SHOW = ["git", "-C", str(REPO), "show", "HEAD:tests/fixtures/healthchecks_descriptions.json"]
 
 # The tree's fixture names the fleet's checks; the definitions below are this file's own.
 _TREE = [
@@ -189,9 +191,17 @@ class _Fleet:
         self.unreadable: set[str] = set()
         self.fixture = tmp_path / "healthchecks_descriptions.json"
         self.fixture.write_text(json.dumps([{"name": r["name"], "tags": r["tags"], "desc": r["desc"]} for r in _TREE], indent=2))
+        self.committed: str | None = None
+        self.git: list[list[str]] = []
         monkeypatch.setattr(hp, "FIXTURE", self.fixture)
+        monkeypatch.setattr(hp.subprocess, "run", self._git)
         monkeypatch.setattr(hp.grafana_auth, "vault_var", self._vault_var)
         monkeypatch.setattr(hp.urllib.request, "urlopen", self._urlopen)
+
+    def _git(self, argv, **kwargs):
+        self.git.append(list(argv))
+        assert list(argv) == GIT_SHOW and self.committed is not None, argv
+        return subprocess.CompletedProcess(argv, 0, stdout=self.committed, stderr="")
 
     def _vault_var(self, name: str, vault_file: str) -> str:
         self.vault.append((name, vault_file))
@@ -253,10 +263,11 @@ def fleet(monkeypatch, tmp_path) -> _Fleet:
 
 @pytest.fixture
 def retiring(fleet, capsys) -> _Fleet:
-    """The move done: twelve checks on the service, each pinged and up, the fixture fetched from it."""
+    """The move done: twelve checks on the service, each pinged and up, the fixture fetched from it and committed."""
     assert _run(capsys, "apply")[0] == 0
     fleet.moved()
     assert _run(capsys, "fixture")[0] == 0
+    fleet.committed = fleet.fixture.read_text()
     return fleet
 
 
@@ -434,6 +445,19 @@ def test_plan_reads_no_finding_as_one_line(fleet, capsys, monkeypatch):
     assert rc == 0 and out.splitlines()[-1] == "descriptions: no finding"
 
 
+def test_plan_and_status_name_a_zcrypto_hc_the_service_holds_otherwise_than_defined_here(fleet, capsys):
+    assert _run(capsys, "apply")[0] == 0
+    assert "differs" not in _run(capsys, "plan")[1]
+    fleet.clone.by_name(SELF).update(timeout=900, desc="Edited in the UI.")
+    for verb in ("plan", "status"):
+        rc, out, err = _run(capsys, verb)
+        assert rc == 0, (verb, err)
+        (line,) = [line for line in out.splitlines() if line.startswith("zcrypto-hc on the service differs")]
+        assert "desc, timeout" in line and "apply" in line, line
+    rc, out, err = _run(capsys, "fixture")
+    assert rc == 0 and "differs" not in out + err
+
+
 def test_status_reads_a_new_check_unmoved_and_a_pinged_up_one_moved(fleet, capsys):
     assert _run(capsys, "apply")[0] == 0
     fleet.moved("zcrypto-capture")
@@ -476,8 +500,33 @@ def test_retire_refuses_a_fixture_naming_a_check_beside_the_twelve(retiring, cap
     retiring.clone.add(**{**_source_row(99, _TREE[0]), "name": "drill-throwaway", "status": "up", "n_pings": 3})
     assert _run(capsys, "fixture")[0] == 0
     rc, out, err = _run(capsys, "retire")
-    assert rc == 2 and "drill-throwaway" in err and "11 fleet checks" in err, err
+    assert rc == 2 and [line for line in err.splitlines() if "drill-throwaway" in line and "more than 11" in line], err
     assert retiring.deletes() == []
+
+
+def test_retire_names_a_fleet_check_the_fixture_lacks_and_points_at_apply(retiring, capsys):
+    retiring.clone.checks.pop(retiring.clone.by_name("zcrypto-panel")["uuid"])
+    assert _run(capsys, "fixture")[0] == 0
+    rc, out, err = _run(capsys, "retire")
+    assert rc == 2 and [line for line in err.splitlines() if "zcrypto-panel" in line and "run apply" in line], err
+    assert retiring.deletes() == []
+
+
+def test_retire_refuses_a_working_fixture_the_commit_does_not_hold_a_swap_among_them(retiring, capsys):
+    retiring.clone.checks.pop(retiring.clone.by_name("zcrypto-panel")["uuid"])
+    retiring.clone.add(**{**_source_row(99, _TREE[0]), "name": "drill-throwaway", "status": "up", "n_pings": 3})
+    assert _run(capsys, "fixture")[0] == 0
+    rc, out, err = _run(capsys, "retire")
+    assert rc == 2, err
+    (line,) = [line for line in err.splitlines() if "HEAD" in line]
+    assert "drill-throwaway" in line and "zcrypto-panel" in line, line
+    assert retiring.deletes() == []
+
+
+def test_retire_reads_the_committed_fixture_and_passes_while_the_working_one_equals_it(retiring, capsys):
+    rc, out, err = _run(capsys, "retire")
+    assert rc == 0, err
+    assert retiring.git == [GIT_SHOW]
 
 
 def test_retire_deletes_the_eleven_by_name_each_read_back_404_and_leaves_any_other(retiring, capsys):
@@ -534,7 +583,10 @@ def test_with_neither_healthchecks_io_key_reading_the_service_alone_still_runs(r
 
 def test_each_verb_reads_the_keys_it_names_and_no_other(retiring, capsys):
     expected = {
-        ("plan",): [("healthchecks_readonly_api_key", "group_vars/all/vault.yml")],
+        ("plan",): [
+            ("healthchecks_readonly_api_key", "group_vars/all/vault.yml"),
+            ("hc_readonly_api_key", "group_vars/observed/vault.yml"),
+        ],
         ("apply",): [
             ("healthchecks_readonly_api_key", "group_vars/all/vault.yml"),
             ("hc_readwrite_api_key", "group_vars/all/vault.yml"),
