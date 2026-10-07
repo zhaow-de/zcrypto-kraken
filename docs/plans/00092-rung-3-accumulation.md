@@ -1042,16 +1042,16 @@ Every case whose expected record is `refused` under a plan entry — the two kil
 - Test: `tests/test_engine_node.py`, `tests/test_nautilus_interface_pin.py`
 
 **What this task decides, where the spec leaves it open:**
-- The stand-in test at `tests/test_engine_node.py` line 1301 cannot tell a stated `None` from an inherited one, so the pin is textual: `test_the_engine_config_states_the_two_polling_fields_as_none` reads `inspect.getsource(node._exec_engine_config)` and asserts both `open_check_interval_secs=None` and `position_check_interval_secs=None` appear in the call; `test_nautilus_interface_pin.py::test_the_polling_defaults_we_state_explicitly_are_unchanged` holds the library's defaults at `None` for both, the `inflight` test's shape — so a bump's flip of either is a decision.
+- The stand-in test `test_the_engine_config_states_each_exec_knob_rather_than_inheriting_it` in `tests/test_engine_node.py` cannot tell a stated `None` from an inherited one, so the pin is textual: `test_the_engine_config_states_the_two_polling_fields_as_none` parses `inspect.getsource(node._exec_engine_config)` and asserts the `LiveExecutionEngineConfig(...)` call carries both `open_check_interval_secs` and `position_check_interval_secs` as `None` — the call's keywords, never a substring of the source, so the docstring cannot satisfy it; `test_nautilus_interface_pin.py::test_the_polling_defaults_we_state_explicitly_are_unchanged` compares `_exec_engine_config()`'s two fields with `LiveExecutionEngineConfig()`'s defaults, field by field, and does not restate `EXEC_ENGINE_DEFAULTS`' two `None` rows, which `test_every_exec_engine_default_is_the_one_we_measured` already holds and no probe can reach — each of its assertions is probe-reachable through `cli/engine/node.py`, and it stays red after a bump's flip is re-measured into the map, so the flip is a decision.
 
-- [ ] **Step 1: Write the failing tests** — the two above.
-- [ ] **Step 2: Run them and read the failure** — `uv run pytest tests/test_engine_node.py tests/test_nautilus_interface_pin.py -q -p no:cacheprovider -k polling`; Expected: the source read lacks both names.
+- [ ] **Step 1: Write the tests** — the two above.
+- [ ] **Step 2: Run them and read the failure** — `uv run pytest tests/test_engine_node.py tests/test_nautilus_interface_pin.py -q -p no:cacheprovider -k polling`; Expected: the source read lacks both names; the interface pin passes, since an inherited `None` equals the default.
 - [ ] **Step 3: The two keywords and the docstring**
 - [ ] **Step 4: Run the tests** — `uv run pytest tests/test_engine_node.py tests/test_nautilus_interface_pin.py -q -p no:cacheprovider`; Expected: no failure; `test_every_exec_engine_default_is_the_one_we_measured` unchanged, since the library's defaults are `None`.
 - [ ] **Step 5: The commit gate**
-- [ ] **Step 6: Commit** — `feat(engine): the venue discrepancy polls are stated off, with the arithmetic that keeps them so`, with `PROBE_VERDICT` and the trailer.
-- [ ] **Step 7: The tree is clean**
-- [ ] **Step 8: Prove the guard with one probe, then record its verdict by a message-only amend** — the mutation sets `open_check_interval_secs=60.0`; the control removes the keyword. Expected: `KILLED (control proven, …)`.
+- [ ] **Step 6: Commit the node by itself** — `feat(engine): the venue discrepancy polls are stated off, with the arithmetic that keeps them so`, the arithmetic in its message, and the trailer; the commits are by file kind, so the node-only tree passes the consumers apart (checked in a scratch worktree) and carries no guard.
+- [ ] **Step 7: Prove each guard with one probe, on a throwaway commit whose tree is the test commit's** — `infra/scripts/mutate-probe.sh --file cli/engine/node.py`, the control and the mutation reaching one field each: the textual test, the control removes the `position_check_interval_secs` keyword and the mutation sets `open_check_interval_secs=60.0`; the interface pin, the control sets `position_check_interval_secs=120.0` and the mutation sets `open_check_interval_secs=60.0`. Expected: `KILLED (control proven, …)` for both.
+- [ ] **Step 8: Commit the tests, the verdicts in the message** — `test(engine): the two venue polls are held stated off in the call's text, and held to the library's default`, both probe verdicts in its message naming `mutate-probe`, no amend, and the trailer; the tree is clean.
 
 ---
 
