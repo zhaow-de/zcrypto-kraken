@@ -18,7 +18,9 @@ exec_armed = {{ engine_exec_armed_in_tree | lower }}
 exec_max_plan_notional_eur = {{ engine_exec_max_plan_notional_eur }}
 shadow_nav_eur = {{ engine_shadow_nav_eur }}
 settle_delay_secs = {{ engine_settle_delay_secs }}
-{% if engine_tracking_band_bps is defined %}tracking_band_bps = {{ engine_tracking_band_bps }}{% endif %}
+{% if engine_tracking_band_bps is defined %}
+tracking_band_bps = {{ engine_tracking_band_bps }}
+{% endif %}
 
 {% if engine_cache_enabled | bool %}
 # The engine's cache: enabled from the first boot, every value explicit so a converge diff shows it.

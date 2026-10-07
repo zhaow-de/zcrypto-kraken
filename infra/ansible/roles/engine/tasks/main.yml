@@ -351,17 +351,19 @@
 # semantics pass had not run was prevented only by prose.
 #
 # The arming intent is read from this host's vars.yml in the TREE, where arming is a reviewed line
-# in git: the template and this assert read one fact set derived from that file's text, never the
-# variable namespace an extra var reaches, and the role has no default for engine_exec_armed and
-# reads no variable of that name. `engine_exec_armed_in_tree` is true only on the literal line
-# `engine_exec_armed: true`, and the template renders exec_armed from it alone, so a templated or
-# garbled value renders false. The test is inverted on purpose: a converge counts as DISARMED only
-# when it renders false and the key is absent or the literal `false`; any other form -- `true`, a
-# templated value, the key twice -- counts as ARMED and must clear the gate. The second and third
-# conditions recompute both facts from the file inside the assert itself: Ansible ranks an extra var
-# above set_fact, and a set_fact to a name an extra var holds is ignored, so `-e` on a fact's name or
-# on the text they derive from would otherwise reach the render; a disagreement fails the converge
-# before it.
+# in git, and the pin from pyproject.toml and the verified-version record beside it. The template and
+# this assert read one fact set derived from those files, never the variable namespace an extra var
+# reaches; the role has no default for engine_exec_armed and reads no variable of that name.
+# `engine_exec_armed_in_tree` is true only on the literal line `engine_exec_armed: true`, and the
+# template renders exec_armed from it alone, so a templated or garbled value renders false. The first
+# condition is inverted on purpose: a converge counts as DISARMED only when it renders false and the
+# key is absent or the literal `false`; any other form -- `true`, a templated value, the key twice --
+# counts as ARMED and must clear the gate. Ansible ranks an extra var above set_fact, and a set_fact
+# to a name an extra var holds is ignored, so every other condition pins one name this assert or the
+# template reads, by exact equality on the value its reader takes: the three texts to their lookups,
+# the two arming facts to the file's own lines (the rendered one as the string the template
+# renders), and the pin and the list to their set_fact's own expression over the pinned texts. An
+# `-e` on any of those names fails the converge before the render, and the fail_msg names it.
 - name: arming backstop — read the tree's arming intent, nautilus pin, and verified-version record
   ansible.builtin.set_fact:
     engine_host_vars_text: "{{ lookup('file', playbook_dir ~ '/host_vars/' ~ inventory_hostname ~ '/vars.yml') }}"
@@ -390,20 +392,38 @@
         or ((arming_override | default('') | string | length > 8)
             and (arming_override | default('') | string | lower not in ['true', 'false', '1', 'yes']))
       - >-
-        (engine_exec_armed_in_tree | bool) == ((lookup('file', playbook_dir ~ '/host_vars/' ~ inventory_hostname ~ '/vars.yml') | regex_search('(?m)^engine_exec_armed: *true *$')) is not none)
+        engine_host_vars_text == (lookup('file', playbook_dir ~ '/host_vars/' ~ inventory_hostname ~ '/vars.yml'))
       - >-
-        (engine_exec_armed_declared | bool) == ((lookup('file', playbook_dir ~ '/host_vars/' ~ inventory_hostname ~ '/vars.yml') | regex_search('(?m)^engine_exec_armed:')) is not none)
+        (engine_exec_armed_in_tree | lower) == (((lookup('file', playbook_dir ~ '/host_vars/' ~ inventory_hostname ~ '/vars.yml') | regex_search('(?m)^engine_exec_armed: *true *$')) is not none) | lower)
+      - >-
+        engine_exec_armed_declared == ((lookup('file', playbook_dir ~ '/host_vars/' ~ inventory_hostname ~ '/vars.yml') | regex_search('(?m)^engine_exec_armed:')) is not none)
+      - >-
+        engine_pyproject_text == (lookup('file', playbook_dir ~ '/../../pyproject.toml'))
+      - >-
+        engine_pinned_nautilus == (engine_pyproject_text | regex_search('nautilus-trader=+[^"= ;]+') | default('', true) | regex_replace('^nautilus-trader=+', ''))
+      - >-
+        engine_verified_nautilus == ((lookup('file', playbook_dir ~ '/../../cli/engine/order-semantics-verified.json') | from_json).verified_nautilus_versions | default([]))
+      - >-
+        engine_verified_list == (engine_verified_nautilus if (engine_verified_nautilus is sequence
+            and engine_verified_nautilus is not string
+            and engine_verified_nautilus is not mapping
+            and (engine_verified_nautilus | reject('string') | list | length == 0)) else [])
     fail_msg: >-
-      {%- set file_text = lookup('file', playbook_dir ~ '/host_vars/' ~ inventory_hostname ~ '/vars.yml') -%}
-      {%- set file_in_tree = (file_text | regex_search('(?m)^engine_exec_armed: *true *$')) is not none -%}
-      {%- set file_declared = (file_text | regex_search('(?m)^engine_exec_armed:')) is not none -%}
-      {%- if (engine_exec_armed_in_tree | bool) != file_in_tree or (engine_exec_armed_declared | bool) != file_declared -%}
-      This converge's arming facts disagree with host_vars/{{ inventory_hostname }}/vars.yml in the tree:
-      engine_exec_armed_in_tree reads {{ engine_exec_armed_in_tree }} and engine_exec_armed_declared
-      reads {{ engine_exec_armed_declared }}, where the file's own lines give {{ file_in_tree }} and
-      {{ file_declared }}. An extra var (-e) on one of those names, or on engine_host_vars_text,
-      outranks the set_fact that derives it. Drop it: arming is the reviewed line
-      `engine_exec_armed: true` in that file, and no -e reaches it.
+      {%- set disagreeing = [
+        'engine_host_vars_text' if not (engine_host_vars_text == (lookup('file', playbook_dir ~ '/host_vars/' ~ inventory_hostname ~ '/vars.yml'))) else '',
+        'engine_exec_armed_in_tree' if not ((engine_exec_armed_in_tree | lower) == (((lookup('file', playbook_dir ~ '/host_vars/' ~ inventory_hostname ~ '/vars.yml') | regex_search('(?m)^engine_exec_armed: *true *$')) is not none) | lower)) else '',
+        'engine_exec_armed_declared' if not (engine_exec_armed_declared == ((lookup('file', playbook_dir ~ '/host_vars/' ~ inventory_hostname ~ '/vars.yml') | regex_search('(?m)^engine_exec_armed:')) is not none)) else '',
+        'engine_pyproject_text' if not (engine_pyproject_text == (lookup('file', playbook_dir ~ '/../../pyproject.toml'))) else '',
+        'engine_pinned_nautilus' if not (engine_pinned_nautilus == (engine_pyproject_text | regex_search('nautilus-trader=+[^"= ;]+') | default('', true) | regex_replace('^nautilus-trader=+', ''))) else '',
+        'engine_verified_nautilus' if not (engine_verified_nautilus == ((lookup('file', playbook_dir ~ '/../../cli/engine/order-semantics-verified.json') | from_json).verified_nautilus_versions | default([]))) else '',
+        'engine_verified_list' if not (engine_verified_list == (engine_verified_nautilus if (engine_verified_nautilus is sequence and engine_verified_nautilus is not string and engine_verified_nautilus is not mapping and (engine_verified_nautilus | reject('string') | list | length == 0)) else [])) else ''
+        ] | select | list -%}
+      {%- if disagreeing -%}
+      This converge's arming facts disagree with the files in the tree they are derived from:
+      {{ disagreeing | join(', ') }}. An extra var (-e) on one of those names outranks the set_fact
+      that derives it. Drop it: arming is the reviewed line `engine_exec_armed: true` in
+      host_vars/{{ inventory_hostname }}/vars.yml beside a pin that
+      cli/engine/order-semantics-verified.json records, and no -e reaches either.
       {%- else -%}
       This converge renders the engine ARMED on nautilus-trader
       {{ engine_pinned_nautilus | default('(unparseable pin)', true) }},

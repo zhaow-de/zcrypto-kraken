@@ -361,6 +361,8 @@ def test_the_engine_role_template_renders_the_tracking_band_only_when_the_host_s
     rendered = _render_engine_toml(**({} if band is None else {"engine_tracking_band_bps": band}))
     assert ("tracking_band_bps" in rendered) is (band is not None), rendered
     assert load_config(_write(tmp_path, rendered)).engine.tracking_band_bps == band
+    # Setting the band inserts its one line and moves no other, so a converge diff shows that line alone.
+    assert rendered.replace(f"tracking_band_bps = {band}\n", "", 1) == _render_engine_toml(), rendered
 
 
 def test_committed_zcrypto_toml_has_no_engine_table():
