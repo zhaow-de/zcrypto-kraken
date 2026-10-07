@@ -77,13 +77,24 @@ def _require_figure(what: str, value: object, *, nullable: bool) -> None:
         raise EngineJournalError(f"{what} must be {allowed}, got {value!r}")
 
 
+def _require_instant(what: str, value: object) -> None:
+    try:
+        at = datetime.fromisoformat(value) if isinstance(value, str) else None
+    except ValueError:
+        at = None
+    if at is None or at.utcoffset() is None:
+        raise EngineJournalError(f"{what} must be an ISO 8601 instant with a UTC offset, got {value!r}")
+
+
 def validate_accum_record(doc: dict) -> None:
     schema_version = doc.get("schema_version") if isinstance(doc, dict) else None
     if schema_version != ACCUM_SCHEMA_VERSION:
         raise EngineJournalError(f"unsupported accum schema_version {schema_version!r} (expected {ACCUM_SCHEMA_VERSION})")
     if frozenset(doc.keys()) != _RECORD_KEYS:
         raise _key_error("accum record", doc, _RECORD_KEYS)
-    if doc["status"] not in ACCUM_STATUSES:
+    _require_instant("accum record 'cycle_ts'", doc["cycle_ts"])
+    _require_instant("accum record 'drafted_at'", doc["drafted_at"])
+    if not isinstance(doc["status"], str) or doc["status"] not in ACCUM_STATUSES:
         raise EngineJournalError(f"accum record 'status' must be one of {sorted(ACCUM_STATUSES)}, got {doc['status']!r}")
     if not isinstance(doc["day_loss_hold"], bool):
         raise EngineJournalError(f"accum record 'day_loss_hold' must be a bool, got {doc['day_loss_hold']!r}")
@@ -101,9 +112,12 @@ def validate_accum_record(doc: dict) -> None:
 
 
 def write_accum_record(journal_dir: Path, cycle_ts: datetime, doc: dict) -> Path:
-    """Validates first, so a malformed record never lands, then replaces the boundary's record whole -- nothing is
-    merged -- through a tmp sibling renamed over it, so a reader never sees a partial one."""
+    """Validates first, so a malformed record never lands, and refuses a document naming another boundary than
+    `cycle_ts`, the one its path is filed under; then replaces the boundary's record whole -- nothing is merged --
+    through a tmp sibling renamed over it, so a reader never sees a partial one."""
     validate_accum_record(doc)
+    if datetime.fromisoformat(doc["cycle_ts"]) != cycle_ts:
+        raise EngineJournalError(f"accum record names the boundary {doc['cycle_ts']}, not {cycle_ts.isoformat()}, its path's")
     path = accum_record_path(journal_dir, cycle_ts)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(path.suffix + ".tmp")
@@ -113,16 +127,15 @@ def write_accum_record(journal_dir: Path, cycle_ts: datetime, doc: dict) -> Path
 
 
 def read_accum_record(path: Path) -> dict:
-    """The record as stored, unvalidated; a file that is not JSON raises EngineJournalError naming it."""
+    """The record as stored, unvalidated; a file that is not UTF-8 JSON raises EngineJournalError naming it."""
     try:
         return json.loads(Path(path).read_text())
-    except json.JSONDecodeError as exc:
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise EngineJournalError(f"accum record unreadable: {path}: {exc}") from exc
 
 
 def _day_dirs(journal_dir: Path, since: datetime) -> list[Path]:
-    """The day dirs dated `since`'s date or later, oldest first; a name that does not parse as `%Y-%m-%d` is skipped,
-    this engine writing only that form."""
+    """A name that does not parse as `%Y-%m-%d` is skipped, this engine writing only that form."""
     root = Path(journal_dir)
     if not root.is_dir():
         return []

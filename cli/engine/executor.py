@@ -3445,10 +3445,7 @@ class ProbeExecutor:
         equity = book.eur_total + _book_coin_eur(book, record.closes)
         start = self._series_start()
         minted = start is None
-        if minted:
-            self._mint_series_start(boundary)
-            start = boundary
-        scan = accum_records_since(self._journal_dir, start, boundary)
+        scan = accum_records_since(self._journal_dir, boundary if minted else start, boundary)
         # This boundary's own record, left by an earlier process, is the one this mark replaces: out of the high-water
         # mark and the base, and in the hold, which a recovery inside the date never lifts -- unless this mark minted the
         # series, which that record, an earlier series', predates.
@@ -3458,7 +3455,12 @@ class ProbeExecutor:
         day_loss_bps = (_day_base(records, boundary, equity) - equity) * 10_000 / nav
         day = boundary.replace(hour=0, minute=0, second=0, microsecond=0)
         held = records if minted else scan
-        self._day_loss_hold = day_loss_bps >= _DAY_LOSS_HOLD_BPS or _day_loss_held(r for r in held if _record_ts(r) >= day)
+        hold = day_loss_bps >= _DAY_LOSS_HOLD_BPS or _day_loss_held(r for r in held if _record_ts(r) >= day)
+        if minted:
+            # Minted once the mark's figures stand: a scan that raises leaves no series, so the retry, or a later
+            # boundary's mark, mints again and never reads the record this boundary replaces into a series it started.
+            self._mint_series_start(boundary)
+        self._day_loss_hold = hold
         _set_equity(equity)
         _set_drawdown(drawdown_bps)
         if drawdown_bps >= _DRAWDOWN_KILL_BPS:
@@ -3730,6 +3732,11 @@ class ProbeExecutor:
                 replaced = read_accum_record(path)
                 if replaced["equity_eur"] is not None:
                     figures = figures | {key: replaced[key] for key in _MARK_FIGURES}
+                    logger.info(
+                        "the boundary %s's draft marked no equity -- its record keeps the mark an earlier process wrote at %s",
+                        boundary.isoformat(),
+                        replaced["drafted_at"],
+                    )
             write_accum_record(
                 self._journal_dir,
                 boundary,
