@@ -322,17 +322,16 @@ def test_the_inflight_defaults_we_now_state_explicitly_are_unchanged():
 
 
 def test_the_polling_defaults_we_state_explicitly_are_unchanged():
-    """`cli/engine/node.py` states both venue polls at the library's default, off, rather than
-    inheriting them. A bump that moves either default turns that statement from a restatement into a
-    divergence: a red here re-opens the polls' decision on the reasons `_exec_engine_config` gives,
-    and re-measuring `EXEC_ENGINE_DEFAULTS` does not answer it."""
+    """`cli/engine/node.py` states both venue polls as `None`, off, but the library reads an explicit
+    `None` as its own default, so that statement holds nothing against a bump that flips either: the
+    flipped default polls the venue in production. This pin is the red that re-measuring
+    `EXEC_ENGINE_DEFAULTS` does not answer -- the flip re-opens the polls' decision on the reasons
+    `_exec_engine_config` gives, and stating `None` will not keep them off."""
     from nautilus_trader.config import LiveExecutionEngineConfig
 
-    from cli.engine.node import _exec_engine_config
-
-    stated, default = _exec_engine_config(), LiveExecutionEngineConfig()
-    assert stated.open_check_interval_secs == default.open_check_interval_secs
-    assert stated.position_check_interval_secs == default.position_check_interval_secs
+    config = LiveExecutionEngineConfig()
+    assert config.open_check_interval_secs is None
+    assert config.position_check_interval_secs is None
 
 
 def test_the_cache_config_defaults_we_state_are_unchanged():
