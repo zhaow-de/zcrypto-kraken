@@ -88,7 +88,7 @@ DSM's own jobs — a RAID scrub, media indexing, snapshot replication — share 
 1. **Ask the only question that matters — is the loop still completing?** (no count command: a triage priority, not a set anything in the tree can hold; the bare-clock parse is `docker logs --since`'s own; the channels are `infra/nas/pull-entrypoint.sh`'s `--channel` calls)
    ```
    ssh nas
-   sudo /usr/local/bin/docker logs --since 6h zcrypto-archive-pull | grep -E 'pull complete|gate-export'
+   sudo /usr/local/bin/docker logs --since 6h zcrypto-archive-pull 2>&1 | grep -E 'pull complete|gate-export'
    ```
    Use a **duration** (`--since 6h`), never a bare `HH:MM`: `docker logs --since` takes a duration or a full timestamp, and a bare clock time fails to parse into empty output that reads as a clean bill. Print the line count before trusting a negative result. Healthy: one `pull complete … failed=0` per verified channel per pass (five with every channel wired), passes spaced roughly `ARCHIVE_PULL_INTERVAL` + work apart. If those keep landing, high load is the loop working and there is nothing to fix.
 2. **Read the cost by value**, from the workstation:
@@ -199,7 +199,7 @@ Downstream, if the stall persists: the `.pull-status` file this loop writes ages
    ```
    sudo /usr/local/bin/docker ps -a --format '{{.Names}} {{.Status}}'
    sudo /usr/local/bin/docker inspect --format '{{.State.Status}} restarts={{.RestartCount}}' zcrypto-archive-pull
-   sudo /usr/local/bin/docker logs --since 6h zcrypto-archive-pull | tail -40
+   sudo /usr/local/bin/docker logs --since 6h zcrypto-archive-pull 2>&1 | tail -40
    ```
    The last log line says where it stopped: an rsync with no `pull complete` after it is a hung transport (the loop has no per-step timeout); `received TERM/INT, exiting loop` means something stopped it; a completed pass followed by nothing means it is in its `sleep` and the fault is upstream in the log path; `Illegal instruction` above each step's `failed …, continuing`, right after a re-pin, is the wrong image build for this CPU (`.claude/rules/fleet-deploys.md`).
 4. **Restart the loop** when the container is gone or wedged:
@@ -208,7 +208,7 @@ Downstream, if the stall persists: the `.pull-status` file this loop writes ages
    cd /volume1/docker/zcrypto-archive && sudo /usr/local/bin/docker compose restart archive-pull
    ```
    The entrypoint traps TERM/INT, so the stop is graceful. **Know the cost**: a recreate discards `/tmp/gate-cache.json` and buys one cold gate replay, well over an hour and growing, with the capture pulls waiting behind it. A restart is a deliberate act, not a reflex; a converge or an image re-pin is attended and goes through the rollout skill on the user's word.
-5. **Log path only** (loop healthy, lines missing) (no count command: step 1's third branch, an inference from the two rules' exprs): `sudo /usr/local/bin/docker logs --since 1h grafana-alloy | tail`, then `cd /volume1/docker/zcrypto-archive && sudo /usr/local/bin/docker compose restart alloy`. Confirm by reading `{host="nas", container="archive-pull"}` back in Loki — a non-empty result, not an absent error.
+5. **Log path only** (loop healthy, lines missing) (no count command: step 1's third branch, an inference from the two rules' exprs): `sudo /usr/local/bin/docker logs --since 1h grafana-alloy 2>&1 | tail`, then `cd /volume1/docker/zcrypto-archive && sudo /usr/local/bin/docker compose restart alloy`. Confirm by reading `{host="nas", container="archive-pull"}` back in Loki — a non-empty result, not an absent error.
 6. **Confirm by value, then by outcome.** The rule clears when one `pull complete … failed=0` lands: watch for it directly (`sudo /usr/local/bin/docker logs -f zcrypto-archive-pull`), and confirm the capture channels specifically — the dead-man would go green on any single verified channel (no count command: `infra/grafana/alerts.yaml`'s `zcrypto-nas-archive-pull-stalled` expr names no channel).
 7. **If the stall ran long, ask whether anything was lost.** Under 14 days, the capture hosts still hold their segments and the next passes catch the mirror up; beyond that, segments were pruned at the source and the loss is permanent. Read it from the reconcile ledger (`infra/runbooks/ops.md#zcrypto-reconcile-residual-gap`) and from `uv run python infra/scripts/continuity.py` over the **pulled** mirror. An hour is only bookable at H+2 h and at the next `:12`/`:42` tick, so a read taken too early answers *pending*, never *clean* (no count command: `SETTLE_HOURS` in `cli/archive/settle.py` and ops' `archive-pull.timer.j2` hold the clock; a ledger fix is an operator act). A ledger record a classifier wrote wrongly is corrected on the **writer host** — the ops node, never the NAS copy, which the next pull overwrites — by the procedure in `infra/nas/README.md`, *Correcting the reconcile ledger*.
 
