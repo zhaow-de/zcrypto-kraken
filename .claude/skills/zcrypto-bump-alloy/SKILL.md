@@ -91,9 +91,9 @@ ssh mon 'systemctl show -p ActiveEnterTimestamp --value grafana-server prometheu
 infra/ansible/scripts/converge.sh site.yml --limit zcrypto-mon --tags alloy
 ssh mon 'systemctl show -p ActiveEnterTimestamp --value grafana-server prometheus loki caddy'   # the same four lines
 
-ssh -p 10022 zcrypto-deploy@zaccess.zhaow.me 'systemctl show -p ActiveEnterTimestamp --value caddy wg-quick@zaccess0 zaccess-ssh-proxy.socket'
+ssh access 'systemctl show -p ActiveEnterTimestamp --value caddy wg-quick@zaccess0 zaccess-ssh-proxy.socket'
 infra/ansible/scripts/converge.sh site.yml --limit zaccess --tags alloy
-ssh -p 10022 zcrypto-deploy@zaccess.zhaow.me 'systemctl show -p ActiveEnterTimestamp --value caddy wg-quick@zaccess0 zaccess-ssh-proxy.socket'   # the same three lines
+ssh access 'systemctl show -p ActiveEnterTimestamp --value caddy wg-quick@zaccess0 zaccess-ssh-proxy.socket'   # the same three lines
 ```
 
 Then the dead-man node's `--tags alloy` converge, once it exists. No operand: the role reads `alloy_deb_version` from the host's hold file, else the fleet file, on the controller. While the pin file `/etc/apt/preferences.d/alloy` would change, the preview skips the install, the hold and `alloy enabled + started`, since the apt module refuses a version below the pin file on disk or one the host's unrefreshed lists lack, and it names nothing of Caddy, Grafana, Loki, Prometheus, WireGuard, the relay or the probe; it fetches the Grafana repository's signing key, so a source that does not answer refuses the converge. The real pass installs the version, holds it and writes the pin; its post-condition then restarts Alloy where the process predates the installed binary — on the bridgehead after a version move, its `/etc/default/alloy` rendered without `RESTART_ON_UPGRADE` — and restarts nothing where the package already did, as on the node.
@@ -156,7 +156,7 @@ On an apt host: a run that failed after it changed `/etc/default/alloy` (the bri
 
 ```bash
 ssh mon 'sudo systemctl restart alloy'      # the observability node
-ssh -p 10022 zcrypto-deploy@zaccess.zhaow.me 'sudo systemctl restart alloy'   # the bridgehead
+ssh access 'sudo systemctl restart alloy'   # the bridgehead
 ```
 
 ### The wave's close
