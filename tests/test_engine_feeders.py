@@ -486,6 +486,28 @@ def test_accumulation_raises_when_a_traded_asset_has_no_floor():
         accumulation_payload(stages, {"ETH": (0.001, 0.45)}, [1000.0])
 
 
+def test_floor_shorts_reads_a_short_the_venue_cannot_place_as_no_drift():
+    # A target of -0.05 BTC at NAV 1000 and close 1000: under an ordermin of 0.1 the short cannot place, and its
+    # EUR 50 is 500 bps of drift; floored, the target is 0 and nothing is owed. At 0.005 the short places.
+    stages = [_stage(datetime(2026, 8, 1, 0, tzinfo=UTC), -0.05, 1000.0)]
+    for ordermin, unflagged_bps, unflagged_placed in ((0.1, 500.0, False), (0.005, 0.0, True)):
+        minimums = {"BTC": (ordermin, 0.45)}
+        unflagged = accumulation_payload(stages, minimums, [1000.0])["by_nav"][1000.0]["cycles"][0]
+        flagged = accumulation_payload(stages, minimums, [1000.0], floor_shorts=True)["by_nav"][1000.0]["cycles"][0]
+        assert (unflagged["drift_bps"], unflagged["placed"]) == (pytest.approx(unflagged_bps), unflagged_placed)
+        assert (flagged["drift_bps"], flagged["placed"], flagged["target_qty"]) == (0.0, False, {"BTC": 0.0})
+
+
+def test_floor_shorts_leaves_a_window_with_no_negative_leg_byte_identical():
+    stages = [_stage(datetime(2026, 8, 1, h, tzinfo=UTC), 0.001 * (i + 1), 1000.0) for i, h in enumerate((0, 4, 8, 12, 16, 20))]
+    minimums = {"BTC": (0.005, 0.45)}
+    unflagged = accumulation_payload(stages, minimums, [1000.0])
+    flagged = accumulation_payload(stages, minimums, [1000.0], floor_shorts=True)
+    assert json.dumps(flagged["by_nav"], sort_keys=True) == json.dumps(unflagged["by_nav"], sort_keys=True)
+    assert flagged["header"].endswith(", targets floored at 0 for every shorting leg")
+    assert "floored" not in unflagged["header"]
+
+
 # --- accumulation: the weekly aggregation --------------------------------------------------------
 
 # 2026-07-13 00:00 is the Monday of ISO week 2026-W29 -- the journal's own first full week (spec
@@ -770,6 +792,34 @@ def test_accum_replay_json_keys_the_drift_table_by_nav_string(tmp_path, monkeypa
     # parse the key back into a float.
     assert payload["by_nav"]["2500.0"]["nav"] == 2500.0
     assert payload["by_nav"]["2500.0"]["median_drift_bps"] is None  # NaN over an empty window
+
+
+def test_accum_replay_floor_shorts_reaches_the_report_and_its_header_names_the_flooring(tmp_path, monkeypatch):
+    _patch_config(monkeypatch, tmp_path)
+    journal = tmp_path / "pulled-journal"
+    _write_unreplayable_record(journal)
+    snapshot = _write_snapshot(tmp_path, TRAP_UNIVERSE)
+    handed: list[object] = []
+    real_report = command.accumulation_report
+
+    def recording(*args, **kwargs):
+        handed.append(kwargs.get("floor_shorts"))
+        return real_report(*args, **kwargs)
+
+    monkeypatch.setattr(command, "accumulation_report", recording)
+    argv = ["engine", "accum-replay", "--journal-dir", str(journal), "--minimums", str(snapshot)]
+    plain, floored = runner.invoke(app, argv), runner.invoke(app, [*argv, "--floor-shorts"])
+
+    # 1, never 2: both runs read the report, which counts the record that cannot replay; 2 is a usage error.
+    assert (plain.exit_code, floored.exit_code) == (1, 1), floored.output
+    assert handed == [False, True]
+    header = [line for line in floored.output.splitlines() if line.startswith("Accumulation drift floor")]
+    assert header == [
+        "Accumulation drift floor: what the venue's order minimums cost at each portfolio size, targets floored at 0 for every shorting leg"
+    ]
+    assert "floored" not in plain.output
+    help_text = runner.invoke(app, ["engine", "accum-replay", "--help"])
+    assert help_text.exit_code == 0 and "--floor-shorts" in help_text.output
 
 
 def test_the_day_window_excludes_a_cycle_outside_it(tmp_path, monkeypatch):

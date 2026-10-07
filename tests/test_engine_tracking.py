@@ -29,6 +29,7 @@ from cli.engine.feeders import CycleStages
 from cli.engine.journal import to_json
 from cli.engine.tracking import (
     Fill,
+    OpeningHoldings,
     cost_blend,
     extract_fills,
     read_ledger_export,
@@ -427,6 +428,18 @@ def test_no_data_means_the_series_never_started_not_a_quiet_week():
 def test_before_any_fill_the_series_has_not_started():
     out = weekly_tracking([_stage("2026-08-31T00:00:00+00:00")], [], _MINIMUMS, 1000.0)
     assert out["weeks"][0]["realized_mean_bps"] is None
+
+
+def test_weekly_tracking_starts_the_series_at_the_opening_window_and_seeds_held_from_it():
+    # NAV 1000 at 50k and weight 1: a target of 0.02 BTC. The series is born at 08Z holding 0.015 and its first fill buys
+    # the 0.005 left, so 08Z sits on target; 12Z's close of 60k re-prices the 0.02 held against a target of 0.01667, EUR 200
+    # or 2000 bps -- a mean of 1000 over the series' two cycles. The 00Z fill is an earlier series'.
+    stages = [_stage(f"2026-08-31T{h:02d}:00:00+00:00") for h in (0, 4, 8)] + [_stage("2026-08-31T12:00:00+00:00", close=60000.0)]
+    fills = [_mk("2026-08-31T00:00:00+00:00", 0.01), _mk("2026-08-31T08:00:00+00:00", 0.005)]
+    opening = OpeningHoldings(birth=datetime.fromisoformat("2026-08-31T08:00:00+00:00"), held={"BTC": 0.015})
+    (week,) = weekly_tracking(stages, fills, _MINIMUMS, 1000.0, opening=opening)["weeks"]
+    assert week["realized_mean_bps"] == pytest.approx(1000.0)
+    assert week["cycles"] == 2
 
 
 def _full_week(monday="2026-08-31", **kw):
@@ -1395,6 +1408,43 @@ def test_an_export_whose_header_cannot_be_mapped_aborts_the_command(tmp_path, mi
     run = _invoke(mixed_schema_fixture, _tracking_argv(mixed_schema_fixture, "--simulated-fills", "--ledger-export", str(p)))
     assert run.exit_code != 0
     assert "fee" in run.stdout
+
+
+_SERIES_BIRTH = datetime(2026, 7, 10, 20, tzinfo=UTC)
+
+
+def test_tracking_report_reads_the_opening_window_and_refuses_one_that_starts_after_the_birth(tmp_path):
+    # Three identical synthetic cycles from the birth, Friday 20Z to Saturday 04Z. The series opens holding three
+    # quarters of its heaviest leg's target and its first fill buys the last quarter: with the record that leg sits on
+    # target, and without it the opening's three quarters, 7500 bps per unit of weight, are drift in every cycle.
+    sliced = _synth_slice(tmp_path / "opening", (2, 2, 2), start=_SERIES_BIRTH)
+    targets = json.loads((sliced.journal / "2026-07-10" / "cycle-20.json").read_text())["final_targets"]
+    symbol = max((s for s in targets if s.endswith("/EUR")), key=lambda s: targets[s])
+    base, weight = symbol.split("/")[0], targets[symbol]
+    close = basket_fixture.grids(_SERIES_BIRTH)[240][1][symbol][-1]
+    target = weight * 1000.0 / close
+    fill = _fill(at="2026-07-10T20:01:00+00:00", qty=target / 4, px=close, trade_id="T-open")
+    (sliced.journal / "2026-07-10" / "exec-20.json").write_text(
+        json.dumps(_rec([fill], symbol=symbol, cycle_ts=_SERIES_BIRTH.isoformat()))
+    )
+    doc = _opening_doc()
+    doc["birth"] = _SERIES_BIRTH.isoformat()
+    for row in doc["rows"]:
+        row["balance"] = 3 * target / 4 if row["base"] == base else 0.0
+    record = tmp_path / "opening-holdings.json"
+    record.write_text(json.dumps(doc))
+
+    without = _invoke(sliced, _tracking_argv(sliced, "--json"))
+    opened = _invoke(sliced, _tracking_argv(sliced, "--opening-holdings", str(record), "--json"))
+    assert without.exit_code == 0 and opened.exit_code == 0, without.stdout + opened.stdout
+    (plain_week,) = json.loads(without.stdout)["tracking"]["weeks"]
+    (opened_week,) = json.loads(opened.stdout)["tracking"]["weeks"]
+    assert opened_week["realized_mean_bps"] == pytest.approx(plain_week["realized_mean_bps"] - 7500.0 * weight)
+    assert json.loads(opened.stdout)["opening_birth"] == _SERIES_BIRTH.isoformat()
+
+    late = _invoke(sliced, _tracking_argv(sliced, "--opening-holdings", str(record), "--since", "2026-07-11"))
+    assert late.exit_code != 0
+    assert "--since 2026-07-11 starts after the series' birth at 2026-07-10T20:00:00+00:00" in late.stdout
 
 
 # --- the journaled per-cycle NAV (T0150) ----------------------------------------------------------
