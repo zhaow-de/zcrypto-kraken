@@ -198,12 +198,14 @@ def test_the_selfcheck_installs_what_its_unit_runs_imports_and_reads_and_enables
         if "src" in args and args["src"] != SELFCHECK["node_common_selfcheck_script"]:
             assert (ROLE / ("templates" if module == "ansible.builtin.template" else "files") / args["src"]).is_file(), args
     by_dest = {args["dest"]: (task, args) for task, _, args in steps if "dest" in args}
-    assert by_dest[service["ExecStart"].split()[1]][1]["src"] == SELFCHECK["node_common_selfcheck_script"]
+    script = by_dest[service["ExecStart"].split()[1]][1]
     env_task, env_args = by_dest[service["EnvironmentFile"]]
     assert (env_args["mode"], env_task["no_log"], env_task["diff"]) == ("0600", True, False)
     (made,) = [index for index, (_, module, _) in enumerate(steps) if module == "ansible.builtin.file"]
     (copied,) = [index for index, (_, _, args) in enumerate(steps) if args.get("src") == "zcrypto_selfcheck.py"]
-    # DynamicUser runs the script as a user that owns nothing, so the module and its directory are world-readable.
+    # DynamicUser runs the script as a user that owns nothing, so the script, the module and its directory are
+    # world-readable.
+    assert (script["src"], script["mode"]) == (SELFCHECK["node_common_selfcheck_script"], "0755")
     assert (steps[made][2]["path"], steps[made][2]["mode"], steps[copied][2]["dest"], steps[copied][2]["mode"]) == (
         "/usr/local/lib/zcrypto",
         "0755",
