@@ -132,9 +132,12 @@ def _uuid(check: object, what: str) -> str:
     return uuid
 
 
+def _period_keys(row: dict) -> tuple[str, ...]:
+    return ("timeout",) if "timeout" in row else ("schedule", "tz")
+
+
 def _definition(row: dict, where: str) -> dict:
-    period = ("timeout",) if "timeout" in row else ("schedule", "tz")
-    keys = ("name", "tags", "desc", "grace", "manual_resume", *period)
+    keys = ("name", "tags", "desc", "grace", "manual_resume", *_period_keys(row))
     if missing := [k for k in keys if k not in row]:
         raise Refusal(f"{where} carries {row.get('name', 'a check')} without {', '.join(missing)}")
     return {k: row[k] for k in keys}
@@ -186,6 +189,12 @@ def _by_name(rows: list[dict], names: set[str], where: str) -> dict[str, dict]:
     return found
 
 
+def _on_service(fleet: set[str], listing: list[dict]) -> list[tuple[str, dict | None]]:
+    twelve = fleet | {ZCRYPTO_HC["name"]}
+    service = _by_name(listing, twelve, SERVICE_LISTING)
+    return [(name, service.get(name)) for name in sorted(twelve)]
+
+
 def _twelve(rows: list[dict], where: str) -> list[dict]:
     names = _fleet()
     found = _by_name(rows, names, where)
@@ -220,9 +229,8 @@ def _slack(key: str) -> str:
 
 
 def _body(definition: dict, channel: str) -> dict:
-    period = ("timeout",) if "timeout" in definition else ("schedule", "tz")
     body = {"name": definition["name"], "slug": definition["name"]}
-    body |= {k: definition[k] for k in ("tags", "desc", "grace", *period)}
+    body |= {k: definition[k] for k in ("tags", "desc", "grace", *_period_keys(definition))}
     # `channels` assigns exactly the integrations it lists, so a check keeps no email or other integration; and a
     # paused check must resume at its next ping, whatever the source holds, which the key rotation and the rollback
     # rest on.
@@ -311,9 +319,9 @@ def _moved(check: dict) -> bool:
 
 def status() -> None:
     _slack(_key(SERVICE_WRITE))
-    twelve = _fleet() | {ZCRYPTO_HC["name"]}
+    fleet = _fleet()
     listing = _listing(SERVICE, _key(SERVICE_READ), SERVICE_LISTING)
-    service = _by_name(listing, twelve, SERVICE_LISTING)
+    on_service = _on_service(fleet, listing)
     try:
         hcio_key = _key(HCIO_READ)
     except Refusal as refusal:
@@ -321,8 +329,7 @@ def status() -> None:
         hcio = None
     else:
         hcio = {row.get("name"): row.get("last_ping") for row in _listing(HCIO, hcio_key, HCIO_LISTING)}
-    for name in sorted(twelve):
-        check = service.get(name)
+    for name, check in on_service:
         if check is None:
             print(f"{name:<26} absent")
             continue
@@ -350,14 +357,11 @@ def _when(value: object, what: str) -> datetime | None:
 
 def retire() -> None:
     names = _fleet()
-    twelve = names | {ZCRYPTO_HC["name"]}
     listing = _listing(SERVICE, _key(SERVICE_READ), SERVICE_LISTING)
     hcio_key = _key(HCIO_DELETE)
     targets = [row for row in _listing(HCIO, hcio_key, HCIO_LISTING) if row.get("name") in names]
     failing = []
-    service = _by_name(listing, twelve, SERVICE_LISTING)
-    for name in sorted(twelve):
-        check = service.get(name)
+    for name, check in _on_service(names, listing):
         if check is None:
             failing.append(f"{name}: absent from the dead-man service")
         elif not _moved(check):
