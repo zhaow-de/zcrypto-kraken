@@ -1447,6 +1447,33 @@ def test_tracking_report_reads_the_opening_window_and_refuses_one_that_starts_af
     assert "--since 2026-07-11 starts after the series' birth at 2026-07-10T20:00:00+00:00" in late.stdout
 
 
+def test_tracking_report_with_an_opening_record_leaves_the_earlier_series_out_of_every_block(tmp_path):
+    # Four synthetic cycles, Friday 16Z to Saturday 04Z, the series born at 20Z: a fill at 16Z, an earlier series', at
+    # 0.5 % of its notional, and one at the birth at 0.1 %. Only the birth's cycles and its fill reach the payload.
+    sliced = _synth_slice(tmp_path / "earlier", (2, 2, 2, 2), start=_SERIES_BIRTH - timedelta(hours=4))
+    symbol = "BTC/EUR"
+    close = basket_fixture.grids(_SERIES_BIRTH)[240][1][symbol][-1]
+    for at, fee in ((_SERIES_BIRTH - timedelta(hours=4), 0.005), (_SERIES_BIRTH, 0.001)):
+        fill = _fill(
+            at=(at + timedelta(minutes=1)).isoformat(), qty=0.001, px=close, fee=fee * 0.001 * close, trade_id=f"T-{at:%H}"
+        )
+        (sliced.journal / f"{at:%Y-%m-%d}" / f"exec-{at:%H}.json").write_text(
+            json.dumps(_rec([fill], symbol=symbol, cycle_ts=at.isoformat()))
+        )
+    doc = _opening_doc()
+    doc["birth"] = _SERIES_BIRTH.isoformat()
+    record = tmp_path / "opening-holdings.json"
+    record.write_text(json.dumps(doc))
+
+    run = _invoke(sliced, _tracking_argv(sliced, "--opening-holdings", str(record), "--json"))
+    assert run.exit_code == 0, run.stdout
+    payload = json.loads(run.stdout)
+    assert payload["n_cycles"] == 3
+    series = [(_SERIES_BIRTH + timedelta(hours=4 * i)).isoformat() for i in range(3)]
+    assert [cycle["cycle_ts"] for cycle in payload["floor"]["cycles"]] == series
+    assert (payload["cost"]["n_fills"], payload["cost"]["realized_fee_per_side"]) == (1, pytest.approx(0.001))
+
+
 # --- the journaled per-cycle NAV (T0150) ----------------------------------------------------------
 
 
