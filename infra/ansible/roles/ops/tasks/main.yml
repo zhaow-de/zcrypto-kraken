@@ -712,9 +712,7 @@
     owner: root
     group: root
 
-# `--tags alloy` runs the tasks from this one to the end of the Alloy block and nothing else of the
-# role; a task the Alloy part comes to read carries the tag too (tests/test_ops_alloy_tag.py holds
-# the set). Without the digest that run would skip the block and exit 0 having landed nothing.
+# Without the digest an `alloy` run would skip the block below and exit 0 having landed nothing.
 - name: fail fast if an alloy run was not handed the ops host's Alloy digest
   ansible.builtin.assert:
     that: ops_alloy_digest | default('') | length > 0
@@ -729,7 +727,7 @@
 # it -- the container binds `conf/`, not its parent -- so it is inert, but it is NOT harmless: a
 # stale file at the path an operator would guess returns plausible DATA instead of an error.
 # Ungated for the same reason the drift check below is: inside the Alloy block it would be skipped
-# by every converge that does not carry a digest. Tagged so the Alloy-only run removes it as well.
+# by every converge that does not carry a digest.
 - name: remove the pre-conf layout's stale alloy config
   ansible.builtin.file:
     path: "{{ ops_alloy_dir }}/config.alloy"
@@ -740,8 +738,7 @@
 # so a host can serve a stale config indefinitely while the repo is correct. This check lives
 # OUTSIDE that gate on purpose -- inside, it would be skipped by exactly the converge that causes
 # the drift. It asserts only when a config is already deployed, so a host that has never had Alloy
-# passes and the first real deploy creates it. It carries the `alloy` tag with the rest of the Alloy
-# part, and an `alloy` run always carries the digest, so there the assert stands down.
+# passes and the first real deploy creates it.
 - name: read the deployed alloy config's checksum (drift check — never gated on the digest)
   ansible.builtin.stat:
     path: "{{ ops_alloy_dir }}/conf/config.alloy"

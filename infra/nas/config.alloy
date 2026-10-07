@@ -1,10 +1,8 @@
 // Grafana Alloy config for the NAS telemetry stack (spec 00049, Role B / Task 3), adapted from
 // the VPS design in docs/specs/00043-observability-design.md for plain `docker compose` under
 // Container Manager -- no ansible/systemd rendering here, this file is committed and mounted
-// read-only as-is (infra/nas/compose.yaml). Grafana Cloud's and the node's credentials are NOT in
-// this file: they arrive as environment variables from the 0600, never-committed alloy-secrets.env
-// the `nas` role renders into the stack directory (see infra/nas/README.md), read here via the
-// `sys.env(...)` stdlib function.
+// read-only as-is (infra/nas/compose.yaml). Credentials arrive as `sys.env(...)` reads of the
+// role-rendered alloy-secrets.env (infra/nas/README.md).
 
 // ---- Host metrics -------------------------------------------------------------------------
 // The three alternate-path RO mounts (compose.yaml: /proc->/host/proc, /sys->/host/sys,
@@ -41,20 +39,14 @@ prometheus.exporter.unix "host" {
 // requested telemetry) come from the unix exporter above.
 
 // ---- Scrape -> remote_write ------------------------------------------------------------------
-// T0048 defect 1's SD-wedge detection RETIRED with `discovery.docker` (00068 D6/D8): the alert it
-// fed (zcrypto-alloy-docker-sd-wedged) watched prometheus_sd_refresh_duration_seconds_count /
-// _failures_total, which only this self-scrape ever produced -- with no discovery.* component left
-// on this host, neither series exists any more, and both are gone from the keep-regex below too (a
-// keep-list entry for a series that cannot exist is the T0051 trap). The drop rule below no longer
-// discards process_* (00069 T7): that family moved to the keep-list below, admitted explicitly --
-// the same six names the app daemons' own endpoints publish elsewhere on the fleet (spec D4/D5),
-// widened uniformly to every host rather than trimmed per-job. Alloy's own `client_golang`
-// ProcessCollector on Linux is a SUPERSET of `prometheus_client`'s six (it also publishes at least
-// `process_virtual_memory_max_bytes`), so the six-name keep-list is a deliberate SUBSET FILTER on
-// Alloy's own self-scrape: all six Python names exist in client_golang too (no
-// admitted-but-unpublishable gap), and the extras it drops (e.g. `process_virtual_memory_max_bytes`)
-// are unwanted in Grafana Cloud. On the Cloud leg this target's surviving contribution is its own
-// `up` plus those six process_* names; the node's leg ships it whole.
+// The keep-list below admits Alloy's own self-scrape through the six process_* names the app
+// daemons publish elsewhere on the fleet (00069 T7, spec D4/D5). Alloy's `client_golang`
+// ProcessCollector publishes a superset of `prometheus_client`'s six (e.g.
+// `process_virtual_memory_max_bytes`), so the list is a deliberate SUBSET FILTER, and the extras
+// it drops are unwanted in Grafana Cloud. On the Cloud leg this target's surviving contribution is
+// its own `up` plus those six process_* names; the node's leg ships it whole. No discovery.*
+// component runs on this host, so no prometheus_sd_* series exists for the keep-list to name (a
+// keep-list entry for a series that cannot exist is the T0051 trap).
 prometheus.exporter.self "alloy" {}
 
 prometheus.scrape "host" {

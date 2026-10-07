@@ -330,9 +330,7 @@
   when: not (ansible_check_mode and cache_clock_timer_install is changed)
 
 # ---- The node's telemetry ---------------------------------------------------------------------------
-# `--tags alloy` runs the tasks from this one to the end of the Alloy block and nothing else of the
-# role; a task the Alloy part comes to read carries the tag too (tests/test_cache_alloy_tag.py holds
-# the set). Without the digest that run would skip the block and exit 0 having landed nothing.
+# Without the digest an `alloy` run would skip the block below and exit 0 having landed nothing.
 - name: fail fast if an alloy run was not handed the cache node's Alloy digest
   ansible.builtin.assert:
     that: cache_alloy_digest | default('') | length > 0

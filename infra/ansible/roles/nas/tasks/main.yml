@@ -104,10 +104,7 @@
   diff: false
   register: nas_deploy_env
 
-# Grafana Cloud's and the node's creds for the NAS's Alloy, rendered from group_vars/observed/:
-# vault.yml, and vars.yml for the node's URLs and user — the NAS joined the `observed` group when it
-# came under Ansible (T0056), so the hand-placed out-of-band credentials file is dead. no_log +
-# diff: false keep the values out of the converge's output.
+# no_log + diff: false keep the credentials out of the converge's output.
 - name: render the alloy secrets env file
   ansible.builtin.template:
     src: alloy-secrets.env.j2
@@ -204,8 +201,7 @@
 # recreates on a service-config-hash change and a bind-mounted file's CONTENT is not in that hash.
 # So the flag itself is the trigger: under it these tasks run on every converge that selects the
 # whole role, applying everything currently rendered rather than what changed. Restarting an
-# already-current container costs a few seconds on best-effort loops. `--tags alloy` selects none of
-# them; its own apply is the block at the end.
+# already-current container costs a few seconds on best-effort loops.
 - name: apply — converge the containers onto the rendered files
   ansible.builtin.shell: cd {{ nas_stack_dir }} && {{ nas_docker }} compose up -d
   when: nas_apply_compose | default(false) | bool
@@ -229,13 +225,8 @@
   when: nas_apply_compose | default(false) | bool
   changed_when: true
 
-# `--tags alloy`, the fleet's Alloy-only converge: the tasks carrying the tag land Alloy's config and
-# secrets file, and this block writes the stack .env's one ALLOY_IMAGE line, reports, and applies
-# them. archive-pull's files -- the entrypoint, compose.yaml, the rest of the .env -- are never
-# written under it, and archive-pull is never restarted or recreated; tests/test_nas_alloy_tag.py
-# holds the set. A run that also selects the whole role renders and applies through the tasks above,
-# so this block stands down there rather than recreate Alloy twice.
-- name: the Alloy-only form — write the .env's Alloy pin line and report, then recreate Alloy alone under the apply flag
+# Stands down beside a whole-role run, which applies through the tasks above, so Alloy is never recreated twice.
+- name: the Alloy-only form
   when: >-
     'alloy' in ansible_run_tags and 'nas' not in ansible_run_tags
     and 'all' not in ansible_run_tags and 'tagged' not in ansible_run_tags
@@ -268,11 +259,7 @@
               '.env': nas_env_alloy_line}
              | dict2items | selectattr('value.changed') | map(attribute='key') | list }}
 
-    # The recreate takes ALLOY_IMAGE from the stack .env, and the deploy-log row's committed_pins names
-    # nas_alloy_image: this read proves the line edit's write before anything recreates from it. A
-    # preview's edit writes nothing, so while one is pending the read stands down rather than find the
-    # old line and fail the preview of every run that moves the pin. A fixed whole-line match, quiet:
-    # the file also holds the vaulted gate URL.
+    # -qxF and never printed: the file also holds the vaulted gate dead-man URL.
     - name: read whether the stack .env names the committed Alloy pin
       ansible.builtin.command:
         argv: [grep, -qxF, "ALLOY_IMAGE={{ nas_alloy_image }}", "{{ nas_stack_dir }}/.env"]

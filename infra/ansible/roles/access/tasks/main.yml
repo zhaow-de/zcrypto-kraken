@@ -163,9 +163,9 @@
     tasks_from: postcondition
   tags: [alloy]
 
-# The relay drift gate, LAST IN THE ROLE, and skipped under `--check`: an assert that fails takes the rest
-# of the play with it, so it runs after the pinned-leaves and Caddyfile tasks that ARE the client-cert
-# revocation path, and after the Alloy part.
+# The relay drift gate, LAST IN THE ROLE: an assert that fails takes the rest of the play with it, so it runs
+# after the pinned-leaves and Caddyfile tasks that ARE the client-cert revocation path, and after the Alloy
+# part.
 #
 # The relay is Accept=no with no --exit-idle-time, so one long-lived systemd-socket-proxyd holds the
 # listener. Rewriting the unit does not replace its target -- no ExecReload, the target is a

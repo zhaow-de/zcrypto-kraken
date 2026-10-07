@@ -11,8 +11,7 @@
 #
 # Modeled on infra/nas/compose.yaml's `alloy` service; see config.alloy for the two
 # deliberate divergences from the NAS's pipeline (cadvisor, user/rootfs). The role brings this
-# project's container to the pinned digest after rendering it, with `docker compose up -d` in this
-# directory, forced when the secrets file changed.
+# project's container to the pinned digest after rendering it.
 services:
   alloy:
     # Pin this to a digest at deploy time -- ops_alloy_digest has NO default

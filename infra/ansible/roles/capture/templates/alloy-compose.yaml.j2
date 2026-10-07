@@ -10,8 +10,7 @@
 #
 # Modeled on infra/ansible/roles/ops/templates/alloy-compose.yaml.j2; see config.alloy for the
 # capture-specific pipeline (no textfile/gate scrape, host label from the runtime hostname).
-# The role brings this project's container to the pinned digest after rendering it, with
-# `docker compose up -d` in this directory, forced when the secrets file changed.
+# The role brings this project's container to the pinned digest after rendering it.
 services:
   alloy:
     # Pin this to a digest at deploy time (plan Tasks 5/7) -- capture_alloy_digest has NO default
@@ -41,9 +40,8 @@ services:
       GOMEMLIMIT: 460MiB
     env_file:
       # Grafana Cloud's and the node's remote_write + Loki creds (alloy-secrets.env.j2) -- 0600,
-      # never committed, rendered by this role with no_log: true + diff: false so a converge never
-      # prints the values, owned by the `zcrypto-alloy` user (Alloy's container `user:` above) so it
-      # can read a 0600 file it does not own by default.
+      # never committed, rendered by this role, owned by the `zcrypto-alloy` user (Alloy's container
+      # `user:` above) so it can read a 0600 file it does not own by default.
       - ./alloy-secrets.env
     command:
       - run

@@ -392,10 +392,6 @@
 # converge without one skips the whole block. The block ends by bringing the Alloy container to that
 # digest (spec 00123 D6), in Alloy's own compose project, which holds nothing of the capture daemon's.
 
-# `alloy` is the tag every role's Alloy tasks share. Here `--tags alloy` runs the tasks from this one
-# to the end of the block and nothing of the capture daemon; a task the Alloy part comes to need
-# carries the tag too (tests/test_capture_alloy_tag.py holds the set). Without the digest that run
-# would skip the block and exit 0 having landed nothing.
 - name: fail fast if an alloy run was not handed the capture host's Alloy digest
   ansible.builtin.assert:
     that: capture_alloy_digest | default('') | length > 0
@@ -572,11 +568,8 @@
         mode: "0644"
       notify: reload alloy
 
-    # Renders from group_vars/observed/vault.yml, and group_vars/observed/vars.yml for the node's URLs
-    # and user, whose values resolve here because capture_host is in the `observed` group. no_log with
-    # diff false: without both, a converge prints every credential the file holds to the terminal and
-    # to any log capturing the run. Owned by the Alloy user so it can read a 0600 file it does not own
-    # by default.
+    # no_log with diff false: without both, a converge prints every credential the file holds to the terminal and
+    # to any log capturing the run. Owned by the Alloy user so it can read a 0600 file it does not own by default.
     - name: render the alloy secrets env file
       ansible.builtin.template:
         src: alloy-secrets.env.j2

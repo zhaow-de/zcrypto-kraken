@@ -6077,7 +6077,7 @@ rules:
     # verification reads green: a wave in progress does not page, one stalled for a day does.
     for: 24h
     annotations:
-      summary: "The Alloys shipping to the observability node have reported more than one version for a day. The fleet runs the one version its fleet file names, and its hosts differ while a bump moves them one after another, which takes hours: more than one version for a day is a bump stalled between hosts, or a host it did not reach. Runbook: infra/runbooks/mon.md#zcrypto-mon-alloy-versions-split"
+      summary: "The Alloys shipping to the observability node have reported more than one version for a day: a bump stalled between hosts, or a host it did not reach. Runbook: infra/runbooks/mon.md#zcrypto-mon-alloy-versions-split"
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "910"
       unit: "Alloy versions running across the fleet"
