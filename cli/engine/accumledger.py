@@ -13,8 +13,7 @@ ACCUM_STATUSES = frozenset({"ok", "no-cycle", "book-unread", "window-closed", "r
 
 # Deliberately not `cycle-<HH>.json` and not a `failed-cycle-*` sidecar: the Stage-6a streak is scored off those two
 # names, and what the loop drafted at a boundary, or that it drafted nothing, says nothing of the research cycle's day --
-# the same rationale as `execledger.py`'s `_PREFIX`. Every `_journal_artifacts` call in `cli/engine/command.py` names
-# its glob, and none names `accum-*`.
+# the same rationale as `execledger.py`'s `_PREFIX`.
 _PREFIX = "accum"
 
 _RECORD_KEYS = frozenset(
@@ -53,8 +52,7 @@ _LEG_KEYS = frozenset(
 )
 
 # Each of the record's figures is null where its boundary never reached it, whatever the status; a leg's `qty` is a
-# placed or queued sell's and its `notional_eur` a placed or queued buy's, null on any other leg. Every other figure is
-# a finite number.
+# placed or queued sell's and its `notional_eur` a placed or queued buy's, null on any other leg.
 _RECORD_FIGURES = ("nav", "eur_total", "eur_free", "equity_eur", "hwm_eur", "drawdown_bps", "day_loss_bps")
 _LEG_FIGURES = ("weight", "target_eur", "close", "held_qty", "cache_net", "delta_eur")
 _LEG_NULLABLE_FIGURES = ("qty", "notional_eur")
@@ -112,9 +110,8 @@ def validate_accum_record(doc: dict) -> None:
 
 
 def write_accum_record(journal_dir: Path, cycle_ts: datetime, doc: dict) -> Path:
-    """Validates first, so a malformed record never lands, and refuses a document naming another boundary than
-    `cycle_ts`, the one its path is filed under; then replaces the boundary's record whole -- nothing is merged --
-    through a tmp sibling renamed over it, so a reader never sees a partial one."""
+    """Validates first, so a malformed record never lands, then replaces the boundary's record whole -- nothing is
+    merged -- through a tmp sibling renamed over it, so a reader never sees a partial one."""
     validate_accum_record(doc)
     if datetime.fromisoformat(doc["cycle_ts"]) != cycle_ts:
         raise EngineJournalError(f"accum record names the boundary {doc['cycle_ts']}, not {cycle_ts.isoformat()}, its path's")

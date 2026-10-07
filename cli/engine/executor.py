@@ -132,11 +132,10 @@ _TRIPPED_REFUSAL = "the kill switch tripped in this process"
 # beside the arm and kill files. Named HERE and not in `execgate` because it is not a gate input:
 # nothing about it can permit or refuse an order. The tracking trip's `held` is bounded by it: the
 # fills at or after it, starting from the opening holdings recorded with it (`OPENING_HOLDINGS_FILE`),
-# every earlier fill a prior series'. So a date later than the series' start with no record of what
-# was held at it reads `held` short -- 46 bps and 298 bps against the same 120 bps band -- which is why
-# the engine writes it once, at the first boundary after its first fill, and the hand writes are rung
-# 3's entry re-date and its re-births, each with the opening holdings beside it. The journal prune
-# deletes whole day-dirs, so the trip also refuses once the record's own boundary has left the journal.
+# every earlier fill a prior series'. A date later than the series' start with no record of what was
+# held at it reads `held` short, so the engine writes it once, at the first boundary after its first
+# fill, and the hand writes are rung 3's entry re-date and its re-births, each with the opening
+# holdings beside it.
 FIRST_FILL_FILE = "first-fill"
 # The series' opening holdings beside the birth record: per basket base, the spot balance the account
 # held at the birth, stamped with that birth (`tracking.parse_opening_holdings`). The owner writes it;
@@ -263,8 +262,7 @@ _metrics = None
 
 def set_executor_hooks(*, publish_verdict=None, metrics=None) -> None:
     """Install (or clear, with the defaults) the executor's telemetry hooks: `publish_verdict` is
-    called `(verdict, evaluated_at=..., heartbeat=...)` after EVERY gate evaluation, `heartbeat`
-    False on the idle refresh and the boundary's re-journal (`on_boundary`) alone, `metrics` is a
+    called `(verdict, evaluated_at=..., heartbeat=...)` after EVERY gate evaluation, `metrics` is a
     `command._ExecutionMetrics` or an object with its methods. Neither can affect an order -- both
     are wrapped."""
     global _publish_verdict, _metrics
@@ -681,11 +679,11 @@ def _bare_client(base_url: str | None):
 
 @dataclass(frozen=True)
 class VenueBook:
-    held: dict[str, float]  # per INSTRUMENT_IDS symbol, read_venue_holdings' figure: spot plus signed margin
+    held: dict[str, float]  # per INSTRUMENT_IDS symbol: spot plus signed margin
     balances: dict[str, float]  # per basket base, the CASH read's spot totals alone: the sell check's figure
     earn: dict[str, float]  # per basket base held under an earn or staking code, its total: the mark's, never held
     eur_total: float  # the spot EUR row's total and EUR.M's, no other EUR row: the equity mark's figure
-    eur_free: float  # the spot EUR row's free, net of hold_trade: the cash budget's
+    eur_free: float  # the spot EUR row's free, net of hold_trade: one bound of the cash budget
     read_at: datetime
 
     def earn_refusal(self) -> str | None:
@@ -720,13 +718,6 @@ def read_venue_book(*, base_url: str | None = None) -> VenueBook:
     the account holds until it is sold. A margin position on a pair outside the basket, and a coin
     outside it, are not read: the gauge's children are the basket's. A symbol within `FLAT_TOLERANCE` of
     zero reads 0.0, the seed's own snap.
-
-    Every CASH row is resolved through `wallet_base`. A basket coin's spot total lands in `balances`
-    too, apart from any margin position on its pair, 0.0 for a coin the account does not hold; its
-    earn- or staking-coded total lands in `earn` alone, never in `held` or `balances`
-    (`VenueBook.earn_refusal`). The spot EUR row's total and `EUR.M`'s land in `eur_total`
-    (`_MARKED_EUR_EARN_CODES`), and the spot row's free, net of what rests on the book, in `eur_free`;
-    an account holding no EUR reads 0.0 for both and is still a book.
 
     The listing is cached first because the position read resolves its rows through it. Anything short
     of both answers inside `_VENUE_READ_TIMEOUT_SECONDS` raises, and so does a position side that is
@@ -815,8 +806,7 @@ def _day_loss_held(records) -> bool:
 
 
 def _day_base(records: list[dict], boundary: datetime, equity: float) -> float:
-    """The equity `boundary`'s day loss is taken from: the date's 00Z mark, else the previous date's last, else the
-    date's earliest -- the series having started on the date -- else `equity`, this boundary's own, a loss of 0.
+    """The equity `boundary`'s day loss is taken from -- the date's earliest mark where the series started on the date.
     `records` are the series' draft records before `boundary`, oldest first; one that marked no equity is passed over."""
     day = boundary.replace(hour=0, minute=0, second=0, microsecond=0)
     marks = [(_record_ts(r), r["equity_eur"]) for r in records if r["equity_eur"] is not None] + [(boundary, equity)]
@@ -872,8 +862,8 @@ def read_instrument_statuses(*, base_url: str | None = None) -> dict[str, str]:
     `cancel_only`, `PAUSE` for `post_only`, `limit_only` and `reduce_only` -- and `absent` for a symbol the answer does
     not name. The client asks two public listings, the currency pairs and the tokenized ones, and sends no private
     call. A Kraken error answer, a status word the client cannot parse, an answer of `None` and anything short of an
-    answer inside `_VENUE_READ_TIMEOUT_SECONDS` raise: `None` is a venue that answered nothing, never every
-    instrument absent, which would carry every leg under an `ok` record."""
+    answer inside `_VENUE_READ_TIMEOUT_SECONDS` raise: `None` read as every instrument absent would carry every leg
+    under an `ok` record."""
     client = _bare_client(base_url)
 
     async def _read():
@@ -961,9 +951,7 @@ def _stage(record: CycleRecord) -> CycleStages:
 
 @dataclass
 class _PendingDraft:
-    """A boundary's cycle plan armed and not yet drafted: its validated record, the tries its book read has left, the
-    moment past which it drafts nothing, whether one of its ticks' marks minted the equity series, and its last mark's
-    figures, which a terminal tick that marks nothing writes."""
+    """A boundary's cycle plan armed and not yet drafted."""
 
     boundary: datetime
     record: CycleRecord
@@ -974,8 +962,6 @@ class _PendingDraft:
 
 
 def _accum_leg(leg: LegDecision) -> dict:
-    """One leg of the boundary's draft record: the decision's fields, the Cache's net it was decided beside as
-    `cache_net`."""
     return {
         "symbol": leg.symbol,
         "weight": leg.weight,
@@ -1015,16 +1001,13 @@ def _classify_margin_close(intent: ProbeIntent, held: float) -> _CloseDecision:
 
 
 def _classify_spot_close(intent: ProbeIntent, *, balances: dict, level: str, ordermin: float) -> _CloseDecision:
-    """The spot sell, bounded by `balances`: the spot totals of the newest venue book this process has
-    read (`ProbeExecutor._venue_book`), Kraken's own figure and never the Cache's stored account, which
-    a restart adds to and never drops from. A balance under the pair's `ordermin` reads 0.0 in both
-    arms: it is dust no order can sell, so at `full` it refutes no sell and at `reduce_only` it covers
-    none.
+    """The spot sell, bounded by `balances`: the newest venue book's spot totals (`ProbeExecutor._venue_book`),
+    never the Cache's stored account, which a restart adds to and never drops from. A balance under the
+    pair's `ordermin` is dust no order can sell, so it reads 0.0.
 
-    At `full` a positive balance smaller than `qty` refuses, while a zero balance proves nothing -- a
-    coin that lands after the book's `read_at` is in none of its balances -- and the intent proceeds on
-    the signed figure with the venue's own insufficient-funds rejection as the enforcing backstop. At
-    `reduce_only` the full `qty <= balance` bound applies, so a zero balance refuses.
+    At `full` a zero balance proves nothing -- a coin that lands after the book's `read_at` is in none of its
+    balances -- so the sell proceeds on the signed figure, the venue's own insufficient-funds rejection its
+    backstop; at `reduce_only` it refuses.
 
     NO venue-side flag either way: Kraken's `reduce_only` is a margin-order concept a spot order
     cannot carry, so this bound plus the venue backstop IS the whole guard.
@@ -1178,11 +1161,7 @@ class ProbeExecutor:
         self._venue_book: VenueBook | None = None
         # The socket endpoints the client has reported down and not yet back, each with the moment its
         # first `DISCONNECTED` arrived, which the watchdog's grace reads (`_watch_sockets`); and the
-        # re-read pass's tries left, set by an endpoint's return and by a mint with no endpoint down:
-        # the pass runs on the next tick with nothing in flight, and a read or a settle that fails
-        # spends one try, or a read closes the arm while an endpoint is held down (`_reread_pass`). A
-        # `DISCONNECTED` clears a mint's arm, and a return's the pass has not run on when it is the drop
-        # of the endpoint whose return set it, `_reread_armed_by` (`on_socket_state`).
+        # re-read pass's tries left and the endpoint whose return set them (`on_socket_state`, `_reread_pass`).
         self._sockets_down: dict[str, datetime] = {}
         self._reread_tries = 0
         self._reread_armed_by: str | None = None
@@ -1205,9 +1184,8 @@ class ProbeExecutor:
         # the life of this process, and a restart is the retry.
         self._reconciliation_refusal: str | None = None
         # The other two holds `_fold_holds` publishes into the gate's level: `socket_down` while the
-        # watchdog's `_frozen` stands (`_watch_sockets`), `daily_loss_hold` while `_day_loss_hold` does.
-        # The day-loss hold is derived, never stored (`_derive_day_loss_hold`): at each boundary, at each
-        # equity mark, and on the first tick, which `_day_loss_hold_derived` marks done.
+        # watchdog's `_frozen` stands (`_watch_sockets`), `daily_loss_hold` while `_day_loss_hold` does,
+        # re-derived from the date's draft records at each boundary, each equity mark and the first tick.
         self._frozen = False
         self._day_loss_hold = False
         self._day_loss_hold_derived = False
@@ -1341,8 +1319,7 @@ class ProbeExecutor:
         published state is seconds-fresh for as long as a plan is running and at most
         `_GATE_REFRESH` old while none is (`_refresh_gate`), since the board's kill-switch rule reads
         the gauge and a switch removed on an idle engine would otherwise page until the boundary.
-        `heartbeat` False, the refresh's and the boundary re-journal's, publishes the readings and
-        not the staleness rule's series, which stays the boundary sink's."""
+        `heartbeat` False publishes the readings and not the staleness rule's series."""
         verdict = self._fold_holds(self._gate.evaluate(now))
         self._gate_evaluated_at = now
         self._gate_armed = verdict.armed
@@ -1350,13 +1327,8 @@ class ProbeExecutor:
         return verdict
 
     def _fold_holds(self, verdict: GateVerdict) -> GateVerdict:
-        """The gate's verdict with the three holds the executor applies outside the gate's enumeration
-        folded in, each reason appended after the gate's in this order: `socket_down` and
-        `reconciliation_unread` lower the level to `none`, `daily_loss_hold` to `reduce_only` unless it
-        reads `none` already. Unfolded, the gauge, the board and the exec record's `level` -- the one
-        the tracking trip's eligibility reads -- would read the gate's `full` while the executor
-        refuses every intent, or under the day-loss hold every opening one. `inputs` keeps the gate's
-        keys and gains the three as booleans under the reasons' names."""
+        """The gate's verdict with the executor's own holds folded in, so the gauge, the board and the
+        exec record's `level` never read the gate's `full` while the executor refuses intents."""
         frozen = self._frozen
         unread = self._reconciliation_refusal is not None
         day_loss = self._day_loss_hold
@@ -1513,11 +1485,9 @@ class ProbeExecutor:
     def _refresh_gate(self, now: datetime) -> None:
         """The idle refresh: one evaluation, published, once `_GATE_REFRESH` has passed since the last
         -- the tick a plan runs on evaluates anyway and stamps it. What it publishes is what the gate
-        reads, its own fail-closed readings included, and not the heartbeat, which stays the boundary
-        path's so the staleness rule keeps watching the sink and its exec record; it journals
-        nothing: the exec record's verdict is the boundary's, the sink's bare one re-journaled
-        folded by `on_boundary`. Wrapped as
-        `_publish_resting_age` is: telemetry may never end a plan."""
+        reads, its own fail-closed readings included, and not the heartbeat; it journals nothing, the
+        exec record's verdict being the boundary's (`on_boundary`). Wrapped as `_publish_resting_age`
+        is: telemetry may never end a plan."""
         try:
             if now - self._gate_evaluated_at >= _GATE_REFRESH:
                 self._evaluate(now, heartbeat=False)
@@ -1528,11 +1498,7 @@ class ProbeExecutor:
 
     def on_socket_state(self, event) -> None:
         """The client's socket-state stream, the strategy's `on_socket_state` once it subscribed:
-        `DISCONNECTED` names an endpoint down, kept in `_sockets_down` with the moment its first drop
-        arrived, which the watchdog's grace reads (`_watch_sockets`), and `CONNECTED` one back, the return
-        that empties the set stamping `_sockets_emptied_at`, which the freeze's lift reads (`_lift_freeze`).
-        A drop while the watchdog's freeze stands freezes nothing again -- the freeze is one state -- and
-        holds its lift until that endpoint's return too. The re-read pass is owed on each
+        `DISCONNECTED` names an endpoint down, `CONNECTED` one back. The re-read pass is owed on each
         return of an endpoint held down -- the data socket's, whatever the execution socket reports, and
         a second socket's later return owes it again, an empty population consuming that arm with the
         holdings read alone -- and runs on the tick, never here: it reads the Cache and the venue, which
@@ -1549,8 +1515,7 @@ class ProbeExecutor:
         `CONNECTED` under its own string. Arming once the set empties, both sockets resubscribed, was
         set aside: it rests on the execution client reporting `CONNECTED` under the string its
         `DISCONNECTED` carried, unmeasured offline, and an entry whose return never comes under that
-        string would hold the pass off for the life of the process; such an entry holds the set non-empty,
-        so the watchdog's freeze stands on it until a restart, the freeze's page the operator's read of it.
+        string would hold the pass off for the life of the process.
         Bookkeeping, never a submission: log and continue."""
         try:
             endpoint = str(getattr(event, "endpoint", "?"))
@@ -1582,34 +1547,21 @@ class ProbeExecutor:
             logger.exception("executor socket-state handling raised -- continuing")
 
     def _arm_reread_after_mint(self) -> None:
-        """The re-read pass's second trigger: a terminal this engine minted -- on the plan's own order, on
-        one no intent holds any more (`_on_detached_event`), or on one the startup pass adopted, whose
-        cancel's ack goes unapplied on this wheel -- a fill on a restored row, whose credit is nothing
-        until the pass reads the venue (`_fill_credit`), or a hand act's own fill while the engine is armed
-        (`_on_external_event`'s unmatched branch), which the pass's settle reads into the position gauge. A
-        trigger while a socket is held down arms nothing: the socket's return does (`on_socket_state`), so a
-        mint inside a cut reads at most once, on a tick inside the mint-to-`DISCONNECTED` gap, one try spent
-        at WARNING and the tick held up to `_VENUE_READ_TIMEOUT_SECONDS`. The cost is a stale entry, an
-        endpoint whose `CONNECTED` never comes under its `DISCONNECTED`'s string, holding every later mint's
-        settlement off, and the watchdog's freeze standing with it, which pages, until a restart, whose
-        startup reads the rows inside the re-attach window."""
+        """Arm the re-read pass unless a socket is held down, whose return arms it instead (`on_socket_state`).
+        The cost is a stale entry, an endpoint whose `CONNECTED` never comes under its `DISCONNECTED`'s
+        string, holding every later arm off, and the watchdog's freeze with it, which pages, until a
+        restart, whose startup reads the rows inside the re-attach window."""
         if not self._sockets_down:
             self._reread_tries = _REREAD_ATTEMPTS
 
     def _watch_sockets(self, now: datetime) -> None:
-        """The account-wide stale-socket watchdog, first on every tick after the startup pass. Frozen, it
-        asks for the lift (`_lift_freeze`). Not frozen, an endpoint held down past `_SOCKET_DOWN_GRACE`
-        freezes the loop: `_frozen`, which `_fold_holds` publishes as `socket_down` at `none` so that
-        every new intent is refused, the gauge, the CRITICAL, and the cancels in `_trip_kill`'s order --
-        `_cancel_resting(active)`, one cancel of the active intent's order and one for every other order
-        the Cache holds open -- and a resting active intent then takes the two lines of `_revoke` the
-        sweep lacks, so the cancel's ack ends it `revoked` with `socket_down` and the tick's `_poll`
-        waits on that ack. `_revoke` itself, or the sweep with the level path left to revoke, would send
-        the active's cancel twice: the sweep cancels the active itself and skips only what it has just
-        requested. Under a cut of both endpoints the ack never comes: the intent ends `ambiguous` on the
-        terminal the library mints or at `_ACK_WAIT`, the plan halted, and the re-read pass on the return
-        re-cancels at the venue what still rests. Wrapped whole: `_frozen` is set before the cancels, so
-        a raise in them leaves the level path to revoke the intent, and no plan is dropped."""
+        """The account-wide stale-socket watchdog. Frozen, it asks for the lift (`_lift_freeze`); not
+        frozen, an endpoint held down past `_SOCKET_DOWN_GRACE` freezes the loop and cancels in
+        `_trip_kill`'s order (`_cancel_resting`). A resting active intent then takes only the two lines of
+        `_revoke` the sweep lacks: `_revoke` itself, or the sweep with the level path left to revoke, would
+        send the active's cancel twice, since the sweep cancels the active itself and skips only what it
+        has just requested. Wrapped whole: `_frozen` is set before the cancels, so a raise in them leaves
+        the level path to revoke the intent, and no plan is dropped."""
         try:
             self._lift_freeze()
             if self._frozen:
@@ -1636,11 +1588,9 @@ class ProbeExecutor:
 
     def _lift_freeze(self) -> None:
         """Lift the watchdog's freeze once no endpoint is held down and a re-read pass has completed since
-        the return that emptied the set -- its reads answered and its settle with them, so the loop resumes
-        on the venue's own account of the cut. Called by `_watch_sockets` and again after the tick's pass;
-        a pass whose budget is spent stamps nothing, so the freeze stands. Returns at once unless frozen:
-        once the condition holds it keeps holding on every quiet tick after, so without the guard the lift
-        would log on each."""
+        the return that emptied the set, so the loop resumes on the venue's own account of the cut.
+        Returns at once unless frozen: once the condition holds it keeps holding on every quiet tick
+        after, so without the guard the lift would log on each."""
         if not self._frozen:
             return
         emptied, completed = self._sockets_emptied_at, self._reread_completed_at
@@ -1667,8 +1617,7 @@ class ProbeExecutor:
         appends to the row, moves the counters, and latches the overfill trip exactly as an own
         order's does. The claim list stays
         empty, so a genuinely external act -- the owner's sanctioned hand settle -- still matches no
-        ledgered row and is counted and dropped before any row write, cancel or trip, its fill arming the
-        re-read pass alone and that only while the engine is armed. Everything else is canceled: a
+        ledgered row and takes `_on_external_event`'s unmatched branch. Everything else is canceled: a
         resting opener is a pending widening the hold exists to forbid, and an order with no row
         would fill with no appender.
         Cancelling is always available to this pass; keeping is not -- an unreadable ledger
@@ -3303,13 +3252,11 @@ class ProbeExecutor:
         """The 4-hourly boundary alert's one call into the executor, made after that boundary's
         cycle has journaled.
 
-        Its first act journals the folded verdict (`_fold_holds`) into the boundary's exec record,
-        over the gate's bare one the boundary sink wrote there: the merge replaces the verdict fields
-        alone, so the record's `level` is the one `held_back` reads, and a boundary whose cycle raised
-        and wrote no record gets one. The day-loss hold it folds is re-derived for the boundary's date
-        first (`_derive_day_loss_hold`), so a hold latched on the previous date is dropped at the date's
-        first boundary whether or not that boundary marks equity. Its publish leaves the heartbeat to
-        the sink, so a failing sink write still starves the staleness rule.
+        Its first act journals the folded verdict (`_fold_holds`) into the boundary's exec record, over
+        the gate's bare one the boundary sink wrote there: the merge replaces the verdict fields alone,
+        so the record's `level` is the one `held_back` reads, and a boundary whose cycle raised and
+        wrote no record gets one. Its publish leaves the heartbeat to the sink, so a failing sink write
+        still starves the staleness rule.
 
         Its second act scores the most recently closed week (`_evaluate_tracking`), and this is THE
         call site of that trip: the alert chain fires once per boundary, after the cycle has
@@ -3424,17 +3371,10 @@ class ProbeExecutor:
     def _mark_equity(self, book: VenueBook, record: CycleRecord, now: datetime, *, draft: _PendingDraft) -> dict:
         """The boundary's equity mark, the figures its draft record carries. `equity_eur` is the book's EUR total -- the
         spot row and `EUR.M` -- and its basket coin, spot and earn-coded, at the record's closes (`_book_coin_eur`), so a
-        move into Auto Earn or into `EUR.M` reads as no loss. The series' records since its start (`_series_start`,
-        written by the series' first mark) are the one set both figures read: the high-water mark is their highest
-        equity and this mark's, the day's base is `_day_base`'s, and the drawdown and the day's loss are each taken in
-        bps of the record's NAV. The day-loss hold is re-derived with this boundary's loss in it. A drawdown of
-        `_DRAWDOWN_KILL_BPS` latches the kill switch here, ahead of the table, so the plan the draft still assembles
-        meets the backstop; under a kill file already latched it is logged at WARNING with the figures, and the file
-        keeps its first reason.
+        move into Auto Earn or into `EUR.M` reads as no loss. A drawdown of `_DRAWDOWN_KILL_BPS` latches the kill switch
+        here, ahead of the table, so the plan the draft still assembles meets the backstop.
 
-        A record whose closes lack a base, or that carries no NAV, marks nothing: the figures read None, at WARNING,
-        and neither trip is evaluated -- an unpriced coin is not a total loss. A series start or a draft record that
-        will not read raises, and the draft spends a try."""
+        A record whose closes lack a base, or that carries no NAV, marks nothing: an unpriced coin is not a total loss."""
         boundary = record.cycle_ts
         unpriced = sorted(base for base in _SPOT_SYMBOL_BY_BASE if record.closes is None or base not in record.closes)
         if unpriced or record.nav is None:
@@ -3449,9 +3389,7 @@ class ProbeExecutor:
         start = self._series_start()
         minted = start is None or draft.minted_series
         scan = accum_records_since(self._journal_dir, boundary if minted else start, boundary)
-        # This boundary's own record, left by an earlier process, is the one this mark replaces: out of the high-water
-        # mark and the base, and in the hold, which a recovery inside the date never lifts -- unless this mark, or an
-        # earlier tick's of the same draft, minted the series, which that record, an earlier series', predates.
+        # The replaced record: out of the HWM and the base, in the hold unless this draft minted the series it predates.
         records = [r for r in scan if _record_ts(r) != boundary]
         hwm = max([r["equity_eur"] for r in records if r["equity_eur"] is not None] + [equity])
         drawdown_bps = (hwm - equity) * 10_000 / nav
@@ -3460,8 +3398,7 @@ class ProbeExecutor:
         held = records if minted else scan
         hold = day_loss_bps >= _DAY_LOSS_HOLD_BPS or _day_loss_held(r for r in held if _record_ts(r) >= day)
         if start is None:
-            # Minted once the mark's figures stand, so a scan that raises leaves no series and the retry mints again;
-            # the draft keeps the mint, so its later ticks' marks read the record this boundary replaces as the mint did.
+            # Once the mark's figures stand, so a scan that raises starts no series and the retry mints again.
             self._mint_series_start(boundary)
             draft.minted_series = True
         self._day_loss_hold = hold
@@ -3512,10 +3449,7 @@ class ProbeExecutor:
         logger.info("the equity series starts at %s", cycle_ts.isoformat())
 
     def _derive_day_loss_hold(self, at: datetime) -> None:
-        """`_day_loss_hold` from the draft records of `at`'s UTC date at or after the equity series' start, through `at`
-        (`_day_loss_held`): any whose `day_loss_bps` reaches `_DAY_LOSS_HOLD_BPS`, or a mark that carried the hold, holds
-        it, so a recovery inside the date never lifts it and the date's first boundary drops the previous date's. With no
-        series, nothing holds it. A read that fails holds it, at WARNING: the date's opens wait until its records read."""
+        """`_day_loss_held` over `at`'s UTC date from the series' start, through `at`; a read that fails holds it."""
         try:
             start = self._series_start()
             day = at.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -3533,20 +3467,13 @@ class ProbeExecutor:
         (`_accept_plan`) -- on the tick after the startup pass, with no plan running and nothing of this process in
         flight, the venue book read's nonce terms. Past the submission window it drafts nothing.
 
-        `held` is the venue's own book, read here with the per-instrument statuses and the venue truth; a read that
-        raises spends one of `_REREAD_ATTEMPTS` tries, and so does a book holding a basket coin under an earn code,
-        which the draft refuses as `held` (`VenueBook.earn_refusal`); past the tries the boundary's record reads
-        `book-unread`. The book settles the position gauge (`_settle_from_book`) and is the sell check's newest, and its
-        equity is marked (`_mark_equity`) ahead of the earn refusal and the table, so a book the draft refuses is still
-        marked and a drawdown trip leaves the plan the table drafts to the kill switch's backstop.
+        `held` is the venue's own book, never the Cache's. Its equity is marked (`_mark_equity`) ahead of the earn
+        refusal and the table, so a book the draft refuses is still marked and a drawdown trip leaves the plan the table
+        drafts to the kill switch's backstop.
 
-        The table is the rung-2 helper's (`decide_leg`), at the record's targets, closes and NAV; a leg with an open
-        ledger row is carried, since its order may still rest at the venue, and so is one whose instrument the venue
-        does not list `TRADING`. The buys are trimmed to the sleeve's free cash -- the NAV less the book's coin at the
-        closes, never more than the account's free EUR -- less `_LOOP_CASH_RESERVE_EUR`, then the plan to the cap it is
-        judged by, so the walls never refuse it whole for its size. Any other raise on the way spends a try too, and
-        past them the record reads `refused`, as it does when the table lacks a leg or the walls refuse the plan; a
-        plan the walls leave waiting is drafted again on a later tick."""
+        The buys are trimmed to the sleeve's free cash, never more than the account's free EUR, then the plan to the cap
+        the walls judge it by, so the walls never refuse it whole for its size; a plan they leave waiting is drafted
+        again on a later tick."""
         draft = self._pending_draft
         if now > draft.window_close:
             logger.warning(
@@ -3735,10 +3662,7 @@ class ProbeExecutor:
     def _write_draft_record(
         self, boundary: datetime, now: datetime, status: str, figures: dict, decisions, plan_id: str | None
     ) -> None:
-        """The boundary's `accum-<HH>.json`, and the not-drafted gauge at 1 for any status but `ok`. A draft no tick of
-        which marked equity, over a record that did -- a boundary re-armed after a restart -- keeps that record's mark,
-        its hold with it: `_day_loss_held` reads a hold only beside its equity, so the latch would otherwise lift for the
-        rest of its date. Wrapped: a record that cannot be written logs, and the draft goes on."""
+        """The boundary's `accum-<HH>.json`; a draft that marked nothing keeps the replaced record's mark, its hold with it."""
         _set_boundary_not_drafted(status != "ok")
         try:
             path = accum_record_path(self._journal_dir, boundary)
@@ -3878,22 +3802,15 @@ class ProbeExecutor:
         its ORDER was filed under, so a fill can land in an already-scored boundary days later,
         which a checkpoint loses permanently and a re-derivation folds in at the next boundary.
 
-        Eligibility is each boundary's JOURNALED level and its draft record, never live config:
-        `restart_hold` is written unconditionally at every engine start and cleared only by hand, so a
-        week spent under it reads as fully armed while the engine never traded -- `held` frozen,
-        targets moving, and the kill file latched on a perfectly healthy engine. The journaled level is
-        the one field that reduces arm file, kill file, restart hold, config and venue status
-        together; the draft record (`accum-<HH>.json`) says whether the loop drafted at a boundary the
-        gate left at `full`, and one that drafted nothing holds its week back as a level below `full`
-        does.
+        Eligibility is each boundary's JOURNALED level and its draft record (`_undrafted`), never live
+        config: `restart_hold` is written unconditionally at every engine start and cleared only by
+        hand, so a week spent under it reads as fully armed while the engine never traded -- `held`
+        frozen, targets moving, and the kill file latched on a perfectly healthy engine. The journaled
+        level is the one field that reduces arm file, kill file, restart hold, config and venue status
+        together.
 
-        The series is the birth record's (`FIRST_FILL_FILE`): the fills at or after it, `held`
-        starting from the opening holdings stamped for that birth (`OPENING_HOLDINGS_FILE`).
-
-        Every other exit is a refusal, never a guess: a week short of its full boundary count, a
-        week whose series' first fill falls inside it, a week the journal cannot price, a series
-        whose birth boundary the prune has taken, and one with no opening holdings recorded for its
-        birth all decline to decide. Refusing costs a week of coverage; guessing halts live trading.
+        Every other exit is a refusal, never a guess: refusing costs a week of coverage; guessing halts
+        live trading.
         """
         band = self._config.tracking_band_bps
         if band is None:
@@ -3966,13 +3883,12 @@ class ProbeExecutor:
                 )
             return
         if birth not in exec_docs:
-            # NOT "does the oldest surviving boundary carry a fill". That question passes whenever
-            # the prune happens to have cut at a quiet boundary, and then `held` silently omits
-            # everything bought before the horizon: the true positive's own fixture reads 298.4 bps
-            # against a 120 bps band and latches the kill file on a perfectly healthy engine. The
-            # head check is the birth's own boundary: the prune deletes whole day-dirs oldest first,
-            # so while it is on disk every fill since it is too. Once the prune has taken it, the
-            # refusal is permanent for the series that birth dates -- loud by design; see the runbook.
+            # NOT "does the oldest surviving boundary carry a fill": that passes whenever the prune happens to
+            # have cut at a quiet boundary, and then `held` silently omits everything bought before the horizon
+            # and latches the kill file on a perfectly healthy engine. The head check is the birth's own boundary:
+            # the prune deletes whole day-dirs oldest first, so while it is on disk every fill since it is too.
+            # Once the prune has taken it, the refusal is permanent for the series that birth dates -- loud by
+            # design; see the runbook.
             self._refuse_tracking(
                 f"the realized series began at {birth.isoformat()}, a boundary the journal through {label} "
                 "holds no exec record of -- either the prune has taken it, and the fills since it are no "
@@ -4279,10 +4195,6 @@ class ProbeExecutor:
         express, so nothing tradeable hides under it. Anything larger is either a fill this engine
         never saw or one it saw and mis-accounted, and both are reasons to stop rather than to place
         the next order against a position it cannot describe.
-
-        The expectation nets `foreign_filled`: an earlier intent's order of this strategy, its row still
-        open, can fill on this instrument while this intent runs, and that fill is in the scoped
-        position and in none of this intent's own fills (`_net_foreign_fill`).
 
         DELIBERATELY NOT reached from the five ambiguous exits (a raising submit, an unclassifiable
         rejection, a cancel the venue rejected, a cancel or IOC it never answered, and a terminal
@@ -4643,16 +4555,12 @@ class ProbeExecutor:
         ledgered quantity and latches the overfill trip when it does not: the own path's semantics,
         on both paths.
 
-        Unmatched (the operator's hand settle, any genuinely external act): counted, logged, and for an
-        `OrderFilled` while the engine is armed (`_gate_armed`) the re-read pass armed
-        (`_arm_reread_after_mint`), which holds no row for the hand act and settles the holdings at the
-        first tick with nothing in flight, the position gauge taking the venue's figure there; a cancel or
-        any other event moves no holding and arms nothing. A fill while disarmed arms nothing either: it
-        is the operator's, a later pass's read settles the gauge, and the attended passes that sign on the
-        engine's key, the order-semantics harness's, run with the engine disarmed, where a holdings read
-        beside their fills would race their nonce (`read_venue_orders`). NOTHING else -- it must never
-        reach `_trip_on_fill`, a row write, or a cancel. That filter is what keeps the unknown-order trip
-        scoped while this second stream exists at all.
+        Unmatched (the operator's hand settle, any genuinely external act): counted, logged, and a fill
+        arms the re-read pass only while the engine is armed (`_gate_armed`): the attended passes that sign
+        on the engine's key run with it disarmed, where a holdings read beside their fills would race
+        their nonce (`read_venue_orders`). NOTHING else -- it must never reach `_trip_on_fill`, a row
+        write, or a cancel. That filter is what keeps the unknown-order trip scoped while this second
+        stream exists at all.
         The set is wider than "no ledgered row" by the rows the startup pass could not match to an
         order: a row that recorded no single txid names an order the Cache holds only under its
         txid, so it was never attached, and a fill on it lands here -- no row write, no counters, no
@@ -4722,8 +4630,7 @@ class ProbeExecutor:
         cancels, and at the end of every re-read pass whose reads answered -- on the two passes' nonce
         terms, nothing of this process sent or in flight. A read that fails logs WARNING and returns False,
         the previous book and the gauge's reading standing until the next pass, the seed's fold at the
-        first; a read that answers returns True. The read is made with no metrics hook installed too, the
-        exporter off: the book it keeps is not the gauge's alone."""
+        first; a read that answers returns True."""
         try:
             book = (self._venue_holdings or read_venue_book)()
         except Exception:
@@ -4744,9 +4651,8 @@ class ProbeExecutor:
         margin open or a fill made while the engine was down, reads here; what it never let go, a hand
         close it refused or a settled lot it holds as a margin position, reads here too, the settled lot by
         the coin's spot balance. A disagreement logs WARNING per symbol, since it names a hand act or a
-        fill this engine never saw; the WARNING and the difference stand with no metrics hook installed,
-        and the publish alone waits on one. Wrapped as `_publish_fill` is: telemetry never alters what this
-        engine does."""
+        fill this engine never saw. Wrapped as `_publish_fill` is: telemetry never alters what this engine
+        does."""
         try:
             for symbol, venue_qty in sorted(book.held.items()):
                 cache_qty = self._cache_net(symbol)

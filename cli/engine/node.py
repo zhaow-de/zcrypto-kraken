@@ -512,9 +512,8 @@ def _exec_engine_config() -> LiveExecutionEngineConfig:
     `reconciliation=True`, and `_on_order_event` and `_venue_terminal_state` read a flagged terminal
     as one this engine minted, stranding the intent `ambiguous`; and its own
     `request_order_status_reports` on the execution client would race the executor's bare-client
-    reads for the key's nonce (`read_venue_orders`). The go/no-go reads its zero unreconciled states
-    from the engine's own three reconciliations instead -- the startup pass, the re-read pass and the
-    boundary's venue book read, each journaled."""
+    reads for the key's nonce (`read_venue_orders`). Their `None` reads as the library's default, so
+    it holds neither off against a flip; the interface pin on the defaults does."""
     return LiveExecutionEngineConfig(
         reconciliation=True,
         load_cache=True,

@@ -601,9 +601,7 @@ _EXEC_ORDER_OUTCOMES = (
 # fill the venue did not attribute is still a fill, and counting it as taker would fake the split.
 _EXEC_LIQUIDITY_SIDES = ("maker", "taker", "no_liquidity_side")
 # Every disposition `cli/engine/executor.py`'s `_inc_external` can emit, pinned against that module's
-# own call sites by tests/test_engine_metrics.py. `unmatched` is the load-bearing one: an order event
-# belonging to no order this engine's ledger vouches for reaches no row, cancel or trip -- a fill, while
-# the engine is armed, arms the executor's re-read pass alone -- and this counter is the only count of it.
+# own call sites by tests/test_engine_metrics.py.
 _EXEC_EXTERNAL_DISPOSITIONS = ("matched", "unmatched")
 # The ten model EUR legs the gap is published for, restated from BASKET rather than imported from the executor, whose
 # module import would put nautilus-trader on `zcrypto --help`; tests/test_engine_metrics.py pins it to the executor's
@@ -1811,8 +1809,6 @@ def _share(value: float | None) -> str:
 
 
 def _read_opening(path: Path | None, since: str | None) -> OpeningHoldings | None:
-    """The opening holdings record at `path`, or None without one. A `--since` day after the record's birth is refused:
-    the window would start inside the series and miss its head."""
     if path is None:
         return None
     try:

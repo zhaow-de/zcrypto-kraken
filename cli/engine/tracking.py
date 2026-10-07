@@ -67,9 +67,7 @@ def _finite(value: object) -> bool:
 
 def parse_opening_holdings(doc: object) -> OpeningHoldings:
     """The record's birth and per-base balances, or EngineError naming the field it refuses -- never a value read from
-    the record: a schema other than 1, a key set other than the schema's, rows other than one per basket base, a
-    balance not finite or negative, a close not finite and positive, `codes` not a list of strings, and a `birth` that
-    is not an aware instant on a 4-hourly boundary."""
+    the record."""
     if not isinstance(doc, dict) or doc.get("schema_version") != _OPENING_SCHEMA_VERSION:
         raise EngineError(f"the opening holdings record's schema_version is not {_OPENING_SCHEMA_VERSION}")
     if frozenset(doc) != _OPENING_KEYS:
