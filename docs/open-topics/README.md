@@ -9,7 +9,6 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 - [T0214 — The deployable record's cost basis is re-priced from rung 2's measured blend, as a new registry record](T0214-cost-basis-re-priced-at-rung-2.md) — ripe when: `uv run zcrypto engine tracking-report --journal-dir <pulled journal> --since <first day of rung 2> --until <the last Sunday>` reports a realized maker share on at least 30 euro-denominated fills — the count the `basis:` line names
 - [T0215 — The Blockpit T3 fallback: a deterministic pre-transform of Kraken's exports into the manual-import CSV](T0215-blockpit-fallback-pre-transform.md) — ripe when: a milestone: rung 2 is entered, its time box fixed (master plan §12); check: `docs/research/14.phase6-decisions.md` carries the entry
 - [T0216 — The position gauge lags a hand act until the next venue read](T0216-the-position-gauge-lags-a-hand-act-until-the-next-venue-read.md) — ripe when: any one arm: RUNG 2 starts — the memo's `**RUNG 2 — concentrated, time-boxed` entry records a start and not only its `DependsOn`; or an engine restart is planned while a position is open with nobody attending it; or `zcrypto-engine-cycle-stale` stops covering darkness on its own — `grep -c "uid: zcrypto-engine-cycle-stale" infra/grafana/alerts.yaml` reads 0, its `severity:` is no longer `critical`, or it gains a `zcrypto_exec_position` reference.
-- [T0219 — One Alloy version across the fleet](T0219-one-alloy-version-across-the-fleet.md) — ripe when: the pull request from `feat/t0219-one-alloy-version` is merged into `develop` — check `git fetch -q origin && git log origin/develop --first-parent --merges --oneline --grep='from zhaow-de/feat/t0219-one-alloy-version'` prints its merge commit
 
 ## Partially done
 
@@ -226,3 +225,4 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 - [T0210 — soak-check's gating verdicts have no scheduled reader, so an inconsistent one reaches nobody](archive/T0210-soak-check-gating-verdicts-have-no-scheduled-reader.md)
 - [T0212 — The engine-gap counter infers the floor it cannot read](archive/T0212-the-engine-gap-counter-infers-the-floor-it-cannot-read.md)
 - [T0213 — The engine's cache — the engine-side half of spec 00118](archive/T0213-engine-cache-engine-half.md)
+- [T0219 — One Alloy version across the fleet](archive/T0219-one-alloy-version-across-the-fleet.md)
