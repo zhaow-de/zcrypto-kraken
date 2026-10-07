@@ -23,7 +23,14 @@ from prometheus_client import Counter, Gauge
 from cli.config import AppConfig, ConfigError, EngineConfig, load_config, resolve_data_dir
 from cli.engine.concordance import CycleOutcome, GateStatus, HashMismatchError, compare_targets, evaluate_gate, replay_cycle
 from cli.engine.cycle import CycleResult, run_cycle, set_metrics_sink
-from cli.engine.draftplan import DraftPlanError, draft, fetch_maintenance_feed, fetch_ticker, parse_decision_log
+from cli.engine.draftplan import (
+    DraftPlanError,
+    draft,
+    fetch_maintenance_feed,
+    fetch_ticker,
+    parse_balance_export,
+    parse_decision_log,
+)
 from cli.engine.errors import EngineError, EngineJournalError
 from cli.engine.execgate import LEVEL_CODE, ExecutionGate, GateVerdict, write_restart_hold
 from cli.engine.execledger import ledgered_plan_ids, read_exec_record, validate_exec_record, write_exec_record
@@ -49,7 +56,19 @@ from cli.engine.journal import CycleRecord, SnapshotEntry, from_json, validate_r
 from cli.engine.probeplan import ProbePlanError, parse_plan, plan_refusals
 from cli.engine.soak import soak_report
 from cli.engine.store import _HOST_REDELIVERY, BASKET, GRID_INTERVALS, PAIR_KEYS, _store_path, seed_store
-from cli.engine.tracking import Fill, cost_blend, extract_fills, read_ledger_export, reconcile_ledger, weekly_tracking
+from cli.engine.tracking import (
+    _OPENING_BASES,
+    _OPENING_SCHEMA_VERSION,
+    Fill,
+    OpeningHoldings,
+    cost_blend,
+    extract_fills,
+    parse_opening_holdings,
+    read_ledger_export,
+    read_opening_holdings,
+    reconcile_ledger,
+    weekly_tracking,
+)
 from cli.engine.venue import read_system_status
 from cli.logging import get_logger
 from cli.logging.redact import ping_failure
@@ -1481,6 +1500,12 @@ def accum_replay(
         help="Emit the full payload as JSON on stdout instead of the tables. A non-finite value is emitted as "
         "null, and the per-size drift table's keys are strings.",
     ),
+    floor_shorts: bool = typer.Option(
+        False,
+        "--floor-shorts",
+        help="Clamp every negative target to 0 before measuring, the book rung 3 realizes long-only; the p95 it quotes is the "
+        "band's edge for that book.",
+    ),
 ) -> None:
     """Measure the position drift the venue's order minimums impose at each portfolio size."""
     config = _load_engine_config()
@@ -1500,6 +1525,7 @@ def accum_replay(
             floors,
             list(nav) if nav else list(DEFAULT_NAVS),
             fetched_at=fetched_at,
+            floor_shorts=floor_shorts,
         )
     except EngineError as exc:
         raise _abort(str(exc)) from exc
@@ -1639,6 +1665,11 @@ def _render_tracking(payload: dict) -> str:
         "older table is stale, not conservative.",
         f"Portfolio size {payload['nav']:,.0f} EUR, held constant across the window.",
     ]
+    if payload["opening_birth"] is not None:
+        lines.append(
+            f"The series was born at {payload['opening_birth']}: held starts from its opening holdings there, and the "
+            "weeks below leave out the cycles and fills before it."
+        )
     if payload["simulated"]:
         lines += [
             "",
@@ -1759,6 +1790,24 @@ def _share(value: float | None) -> str:
     return "no data" if value is None else f"{100 * value:.1f}%"
 
 
+def _read_opening(path: Path | None, since: str | None) -> OpeningHoldings | None:
+    """The opening holdings record at `path`, or None without one. A `--since` day after the record's birth is refused:
+    the window would start inside the series and miss its head."""
+    if path is None:
+        return None
+    try:
+        opening = read_opening_holdings(path)
+    except (OSError, EngineError) as exc:
+        raise _abort(f"could not read the opening holdings record {path}: {exc}") from exc
+    since_day = _parse_day(since, "--since")
+    if since_day is not None and since_day > opening.birth.date():
+        raise _abort(
+            f"--since {since} starts after the series' birth at {opening.birth.isoformat()}, so the window would miss the "
+            f"series' head -- pass --since {opening.birth:%Y-%m-%d} or earlier"
+        )
+    return opening
+
+
 @engine_app.command(name="tracking-report")
 def tracking_report(
     journal_dir: Optional[Path] = typer.Option(
@@ -1807,10 +1856,17 @@ def tracking_report(
         "--json",
         help="Emit the full payload as JSON on stdout instead of the tables. A non-finite value is emitted as null.",
     ),
+    opening_holdings: Optional[Path] = typer.Option(
+        None,
+        "--opening-holdings",
+        help="The series' opening holdings record, the balances held at its birth: held starts from them there, and the "
+        "cycles and fills before the birth belong to an earlier series and are left out.",
+    ),
 ) -> None:
     """Compare each ISO week's realized drift against the venue-minimum floor, and reprice the cost."""
     config = _load_engine_config()
     journal_root = journal_dir if journal_dir is not None else config.journal_dir
+    opening = _read_opening(opening_holdings, since)
     records = _window_records(journal_root, since, until)
     minimums_path = _resolve_minimums(minimums)
     try:
@@ -1841,7 +1897,7 @@ def tracking_report(
             fills = _simulated_fills(stages, floor["cycles"], floors)
         else:
             fills, notes = extract_fills(_window_exec_records(journal_root, since, until))
-        tracking = weekly_tracking(stages, fills, floors, nav_value, rung_by_week=_rung_by_week(stages, gate_week))
+        tracking = weekly_tracking(stages, fills, floors, nav_value, rung_by_week=_rung_by_week(stages, gate_week), opening=opening)
     except EngineError as exc:
         raise _abort(str(exc)) from exc
 
@@ -1864,6 +1920,7 @@ def tracking_report(
         "reconciliation": reconciliation,
         "schema_versions": sorted({record.schema_version for record in records}),
         "simulated": simulated_fills,
+        "opening_birth": None if opening is None else opening.birth.isoformat(),
         "minimums_fetched_at": fetched_at,
         "notes": notes,
         # A failed reconciliation joins the exit-code count -- the only thing a script reading this
@@ -2200,3 +2257,97 @@ def draft_plan(
             f"plan written to {plan_path} -- copy it to the engine host, run `zcrypto engine probe-plan <path> --check` there"
         )
     typer.echo(f"{len(result.rows)} decision row(s) appended to {decisions_path}")
+
+
+@engine_app.command(name="opening-holdings")
+def record_opening_holdings(
+    balance_path: Path = typer.Option(
+        ...,
+        "--balance",
+        help="Kraken's extended balance (BalanceEx) as JSON, exported on this workstation for the series' birth; the file's "
+        "modification time dates it. Refused when it lists an order resting on a basket coin or on EUR, or a basket coin "
+        "under an earn or staking code with a non-zero balance.",
+    ),
+    cycle_path: Path = typer.Option(
+        ...,
+        "--cycle",
+        help="The newest cycle-<HH>.json; each coin's close is read from it. Refused when it carries no close for a basket coin.",
+    ),
+    birth: str = typer.Option(
+        ...,
+        "--birth",
+        metavar="ISO_TS",
+        help="The series' birth, an aware ISO-8601 instant: the first 4-hourly boundary after the balance export was "
+        "written, and refused as any other.",
+    ),
+    out: Path = typer.Option(
+        ...,
+        "--out",
+        help="Where the record is written, through a temporary sibling renamed over it.",
+    ),
+) -> None:
+    """Record a tracking series' opening holdings: each basket coin's spot balance at the series' birth.
+
+    Workstation-only, read-only towards the venue: it reads the balance export and the cycle record and writes one
+    record, one row per basket coin -- its spot balance, the export's codes for it, and the cycle record's close --
+    printing each coin's EUR at that close and their sum. Exits non-zero on any refusal, writing nothing."""
+    # Lazy: both import nautilus-trader; `zcrypto --help` must never pay it.
+    from cli.engine.flatten import wallet_base
+    from cli.engine.node import next_boundary
+
+    record = _read_draft_record(cycle_path)
+    doc, written_at = _read_draft_export(balance_path, "balance")
+    try:
+        born = datetime.fromisoformat(birth)
+    except ValueError as exc:
+        raise _abort(f"--birth {birth!r} is not an ISO-8601 instant") from exc
+    if born.utcoffset() is None:
+        raise _abort(f"--birth {birth!r} is naive -- pass an aware instant, e.g. 2026-11-09T00:00:00+00:00")
+    born = born.astimezone(timezone.utc)
+    first_boundary = next_boundary(written_at)
+    if born != first_boundary:
+        raise _abort(
+            f"--birth {born.isoformat()} is not {first_boundary.isoformat()}, the first 4-hourly boundary after the balance "
+            f"export {balance_path} was written ({written_at.isoformat()}) -- a birth at or before the export can count again "
+            "a fill the export already holds, and a later one can leave a fill between the two in neither"
+        )
+    bases = frozenset(_OPENING_BASES)
+    try:
+        parse_balance_export(doc, bases=bases)
+    except DraftPlanError as exc:
+        raise _abort(f"the balance export {balance_path} cannot open a series: {exc}") from exc
+    closes = record.closes or {}
+    missing = [base for base in _OPENING_BASES if base not in closes]
+    if missing:
+        raise _abort(f"the cycle record {cycle_path} carries no close for {', '.join(missing)}")
+
+    rows = {base: {"base": base, "codes": [], "balance": 0.0, "close": closes[base]} for base in _OPENING_BASES}
+    for code, entry in doc.items():
+        resolved = wallet_base(code, bases)
+        if resolved is None or resolved[1]:
+            continue
+        rows[resolved[0]]["codes"].append(code)
+        rows[resolved[0]]["balance"] += float(entry["balance"])
+    document = {"schema_version": _OPENING_SCHEMA_VERSION, "birth": born.isoformat(), "rows": list(rows.values())}
+    try:
+        parse_opening_holdings(document)
+    except EngineError as exc:
+        raise _abort(f"the opening holdings would not read back: {exc}") from exc
+
+    tmp_path = out.with_name(out.name + ".tmp")
+    try:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path.write_text(json.dumps(document, indent=2) + "\n")
+        os.replace(tmp_path, out)
+    except OSError as exc:
+        tmp_path.unlink(missing_ok=True)
+        raise _abort(f"could not write the opening holdings record {out}: {exc}") from exc
+
+    total = 0.0
+    for row in document["rows"]:
+        eur = row["balance"] * row["close"]
+        total += eur
+        codes = ", ".join(row["codes"]) or "-"
+        typer.echo(f"{row['base']:<5} {row['balance']:>18.10g}  {codes:<12} {eur:>12.2f} EUR at {row['close']:g}")
+    typer.echo(f"total {total:.2f} EUR at the closes of {record.cycle_ts.isoformat()}, the series born at {born.isoformat()}")
+    typer.echo(f"opening holdings written to {out}")

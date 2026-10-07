@@ -209,7 +209,7 @@ def _amount(value: object, what: str) -> float:
     return number
 
 
-def parse_balance_export(doc: object) -> BalanceExport:
+def parse_balance_export(doc: object, *, bases: frozenset[str] = _BASES) -> BalanceExport:
     # flatten imports nautilus; at module level every `zcrypto engine --help` would pay for it.
     from cli.engine.flatten import earn_wallet_base, resolve_base
 
@@ -231,9 +231,9 @@ def parse_balance_export(doc: object) -> BalanceExport:
             )
         balance = _amount(row["balance"], f"{code} balance")
         hold = _amount(row.get("hold_trade", 0), f"{code} hold_trade")
-        asset = resolve_base(code, _BASES | {"EUR"})
+        asset = resolve_base(code, bases | {"EUR"})
         if asset is None:
-            wallet_base = earn_wallet_base(code, _BASES)
+            wallet_base = earn_wallet_base(code, bases)
             if balance and wallet_base is not None:
                 raise DraftPlanError(
                     f"{code} holds {balance:.10g} {wallet_base} outside the spot wallet -- the leg would be drafted against "
@@ -252,7 +252,7 @@ def parse_balance_export(doc: object) -> BalanceExport:
         found[asset] = (code, balance)
     if "EUR" not in found:
         raise DraftPlanError("the balance export carries no EUR row")
-    held = {base: found[base][1] if base in found else 0.0 for base in sorted(_BASES)}
+    held = {base: found[base][1] if base in found else 0.0 for base in sorted(bases)}
     return BalanceExport(held=held, free_eur=found["EUR"][1], outside=outside)
 
 

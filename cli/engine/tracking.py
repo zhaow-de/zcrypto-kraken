@@ -301,16 +301,22 @@ def weekly_tracking(
     nav: float,
     *,
     rung_by_week: dict[str, int] | None = None,
+    opening: OpeningHoldings | None = None,
 ) -> dict:
-    """That week's floor p95 against that week's realized MEAN drift."""
+    """That week's floor p95 against that week's realized MEAN drift. With `opening`, the series starts at its birth:
+    the stages and fills before it are a prior series' and are left out of both halves, and `held` starts from its
+    balances there."""
     rung_by_week = rung_by_week or {}
     ordered = sorted(stages, key=lambda s: s.cycle_ts)
+    if opening is not None:
+        ordered = [s for s in ordered if s.cycle_ts >= opening.birth]
+        fills = [f for f in fills if f.boundary >= opening.birth]
     # Deliberate asymmetry: the floor is present tense, measured at the caller's scalar NAV that `accumulation_payload` holds
     # constant by design -- one moving with NAV would fold return into a venue-minimum measurement -- while realized drift is
     # past tense and scored per journaled cycle, so do NOT thread per-cycle NAV into the floor. Across a `shadow_nav_eur` change
     # the two are quoted at different NAVs, so that week's `within_band` is advisory; `--simulated-fills` shares the seam.
     floor = accumulation_payload(ordered, minimums, [nav])["by_nav"][nav]
-    real = realized_drift(ordered, fills, nav)
+    real = realized_drift(ordered, fills, nav, opening=None if opening is None else opening.held)
     floor_weeks = {(w["iso_year"], w["iso_week"]): w for w in _weekly_drift(ordered, floor["cycles"])}
     real_weeks = {(w["iso_year"], w["iso_week"]): w for w in _weekly_drift(ordered, real["cycles"])}
     floor_cycles: dict[tuple[int, int], list[float]] = {}
@@ -328,8 +334,9 @@ def weekly_tracking(
         # fills but a non-zero `held` is fully measured, and is what a tracking-error trip catches.
         started = first_fill is not None and any(t >= first_fill for t in week_cycles)
         # A week holding cycles on BOTH sides of the first fill averages a cycle-level series over a
-        # week-level flag -- every pre-fill cycle contributes an undeployed book, biasing the first
-        # live week toward `fail` -- so it is measured and reported but excluded, like a partial week.
+        # week-level flag -- every pre-fill cycle contributes a book not yet traded toward its targets,
+        # nothing or the opening holdings, biasing the first live week toward `fail` -- so it is
+        # measured and reported but excluded, like a partial week.
         straddles = started and any(t < first_fill for t in week_cycles)
         # `rung == 3`, never `rung != 2`: an absent rung must read INELIGIBLE, and the inverted form
         # is a false `pass` on a live-trading gate. `rung_by_week` fails closed -- a caller that

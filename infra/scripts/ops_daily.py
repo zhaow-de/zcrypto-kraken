@@ -1558,8 +1558,15 @@ _ZCRYPTO_READ_FLAGS: dict[str, dict[str, str | None]] = {
     "exec-status": {"--state-dir": _PATH},
     "report": {"--journal-dir": _PATH},
     "decompose": {**_ENGINE_WINDOW, "--json": None},
-    "accum-replay": {**_ENGINE_WINDOW, **_ENGINE_SIZING, "--json": None},
-    "tracking-report": {**_ENGINE_WINDOW, **_ENGINE_SIZING, "--gate-from": _ISOWEEK, "--simulated-fills": None, "--json": None},
+    "accum-replay": {**_ENGINE_WINDOW, **_ENGINE_SIZING, "--floor-shorts": None, "--json": None},
+    "tracking-report": {
+        **_ENGINE_WINDOW,
+        **_ENGINE_SIZING,
+        "--gate-from": _ISOWEEK,
+        "--simulated-fills": None,
+        "--opening-holdings": _PATH,
+        "--json": None,
+    },
     "soak-check": {
         "--journal-dir": _PATH,
         "--store-dir": _PATH,
