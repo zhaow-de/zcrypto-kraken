@@ -159,7 +159,7 @@ The wave closes when the last `observed` host's `alloy` row in `fleet-pins.md` r
 
 ## Step 3 — Per-host verification
 
-Inside the run: a run that ends `rc` 0 has passed the role's own read — a container role's `refuse a converge whose alloy container does not run the digest it converged`, the NAS's `refuse a converge whose alloy container does not run the committed Alloy pin`, an apt role's `restart alloy when its process does not run the installed binary`. Then on the host — a container host:
+Inside the run: a run that ends `rc` 0 has passed the role's own read — a container role's `refuse a converge whose alloy container does not run the digest it converged`, the NAS's `refuse a converge whose alloy container does not run the committed Alloy pin` — or, on an apt host, run its post-condition, `read whether the running alloy process runs the installed binary` and then `restart alloy when its process predates the installed binary or none runs`, which reports `changed` when it restarted Alloy. Then on the host — a container host:
 
 ```bash
 ssh <alias> "sudo docker inspect grafana-alloy --format 'img={{.Config.Image}} restarts={{.RestartCount}} started={{.State.StartedAt}}'"
