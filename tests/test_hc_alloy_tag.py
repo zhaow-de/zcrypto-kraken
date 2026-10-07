@@ -27,9 +27,9 @@ STARTED = "alloy enabled + started"
 
 ALLOY_PART = [*ALLOY_APT_MAIN, ENV, CONFIG, STARTED, *ALLOY_APT_POSTCONDITION]
 
-# Never `\b`, which joins `_` to a word and so misses `hc_compose_dir`.
+# Never `\b`, which joins `_` to a word and so misses `edge_hostname`.
 REFUSED_NAMES = re.compile(
-    r"(?<![A-Za-z0-9])(zcrypto-hc|hc_image|compose|docker|caddy|edge|backup|sqlite|selfcheck|reboot|admin)(?![A-Za-z0-9])",
+    r"(?<![A-Za-z0-9])(zcrypto-hc|hc_\w+|compose|docker|caddy|edge|backup|sqlite|selfcheck|reboot|admin)(?![A-Za-z0-9])",
     re.IGNORECASE,
 )
 SHARED_NAMES = re.compile(r"\balloy_apt_\w+")
@@ -78,9 +78,17 @@ def test_no_tagged_task_reaches_the_container_caddy_the_backup_or_the_self_check
     [
         ("validate", "docker compose -f {{ hc_compose_dir }}/compose.yaml restart web && alloy validate %s", "docker"),
         ("validate", "systemctl start zcrypto-hc-selfcheck.service && alloy validate %s", "zcrypto-hc"),
-        ("src", "{{ hc_backup_dir }}/hc.sqlite", "backup"),
+        ("src", "{{ hc_backup_dir }}/hc.sqlite", "hc_backup_dir"),
+        ("validate", "curl -fsS -XPOST http://127.0.0.1:{{ hc_port }}/api/v3/checks/ && alloy validate %s", "hc_port"),
+        ("validate", "podman volume rm {{ hc_volume }} && alloy validate %s", "hc_volume"),
     ],
-    ids=["container-restart-in-validate", "selfcheck-start-in-validate", "backup-as-src"],
+    ids=[
+        "container-restart-in-validate",
+        "selfcheck-start-in-validate",
+        "backup-as-src",
+        "api-port-in-validate",
+        "volume-in-validate",
+    ],
 )
 def test_a_tagged_alloy_copy_reaching_the_container_or_a_timer_through_a_role_variable_is_refused_by_the_word(
     argument, value, word

@@ -152,7 +152,7 @@ def test_the_alloy_package_is_installed_and_held_by_alloy_apt_alone_and_each_imp
     assert not [role for role, files in imported.items() if "postcondition" not in files], imported
 
 
-@pytest.mark.parametrize("importer", ["access", "mon"])
+@pytest.mark.parametrize("importer", ["access", "mon", "hc"])
 def test_a_listening_handler_a_role_imported_in_the_importers_tasks_brings_is_refused(monkeypatch, importer):
     listener = {
         "name": "restart caddy too",
