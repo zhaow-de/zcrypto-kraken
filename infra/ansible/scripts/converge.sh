@@ -28,8 +28,7 @@ HOSTS="zcrypto zcrypto-red zcrypto-ops nas zaccess zcrypto-valkey1 zcrypto-valke
 # as the repair for a stopped or hand-edited chrony on a capture host; plus the cache nodes' converges
 # spec 00118 names: a node's first under the six base roles, the mesh's `firewall,cache-link` on a
 # node or the engine host, and `cache` on a node; plus `mon`, the observability node's own role; plus
-# `alloy`, the Alloy tasks' tag the roles share, which `infra/scripts/alloy-version.py reaches` reads:
-# the narrow form of the Alloy bump and of a config.alloy or secrets change on a host.
+# `alloy`, the Alloy tasks' tag: the narrow form of an Alloy bump or a config.alloy or secrets change.
 TAGNAMES="base hardening firewall fail2ban chrony docker capture alloy engine ops nas access cache cache-link mon"
 # The keys converges have carried, minus `nas_capture_image_digest` -- no role reads it, so the one
 # row that passed it re-pinned nothing -- plus the ones a live page publishes as an `-e`:
@@ -38,15 +37,14 @@ TAGNAMES="base hardening firewall fail2ban chrony docker capture alloy engine op
 # spec 00118's three: the cache role's two digests and its deliberate config re-render (D9); spec
 # 00120's two: the engine host's cache proxy digest, and the cache table's switch, the way back;
 # spec 00121's one: the observability node's deliberate re-mint of its tools' Grafana token (D7);
-# spec 00123's one: an apt host's previous Alloy version in its one-host rollback (D16), admitted
-# only beside `alloy_override`.
+# spec 00123's one: an apt host's previous Alloy version in its one-host rollback (D16).
 EVKEYS="capture_image_digest capture_alloy_digest engine_image_digest converge_primary \
 ops_image_digest ops_alloy_digest ops_panel_timer_hold ops_grafana_watchdog_probe_url \
 ops_reconcile_mint liquidations_decision nas_apply_compose daemon_json_ack \
 docker_apt_distribution access_ops_agentboard_live cache_image_digest cache_alloy_digest \
 cache_config_reset cache_proxy_image_digest engine_cache_enabled mon_grafana_token_rotate \
 alloy_deb_version"
-# A reason is prose, and `k=v` truncates it at the first space, so these five travel as JSON alone.
+# A reason is prose, and `k=v` truncates it at the first space, so an override travels as JSON alone.
 OVERRIDES="canary_override pins_override engine_window_override arming_override alloy_override"
 OWNKEY="zcrypto_window_record"
 
@@ -151,9 +149,7 @@ if key == own:
     raise SystemExit(f"{own} is this script's own: it names the file the engine play records its window in")
 if key not in names:
     raise SystemExit(f"{key} is not an override name; they are: {' '.join(names)}")
-# What the reason SAYS is the roles' gate, not this script's: each of the gates asserts
-# `| string | length > 8` and refuses a boolean word, and that refusal is the one an operator must
-# meet. Here it only has to parse and name an override, or the row cannot record it.
+# The reason's length is the roles' gate; here it only has to parse and name an override.
 PYCHK
 )" || refuse "$why: $op"
       ;;
@@ -296,8 +292,7 @@ if text.strip():
 rec = {
     "ts": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     "playbook": playbook, "limit": limit, "tags": tags, "extra_vars": extra,
-    # `skip_tags` is its own cell, not an empty `tags`: `un-tagged-primary-runs` reads both, and
-    # `--skip-tags engine` is infra/README.md's published primary form, not the violation.
+    # `skip_tags` is its own cell, not an empty `tags`: `un-tagged-primary-runs` reads both.
     "skip_tags": skip, "argv": argv_words, "committed_pins": committed,
     "revision": rev, "dirty": dirty == "true", "rc": int(rc),
 }

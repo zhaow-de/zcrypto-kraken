@@ -6,12 +6,7 @@
 `import_tasks` hands its tags and `when` to every task inside, a role entry's tags reach every task of its role, and
 an `include_role` or `include_tasks` is one task, the tasks it brings in at run time unread.
 
-`gate` prints the fleet file's version; the newest version above it that both Docker Hub, by a `v<x.y.z>` tag whose
-registry index carries a linux/amd64 image, and apt.grafana.com's index carry, with the registry's index digest and
-the index's own deb version string; and each newer version one source alone carries. A source that fails is exit 2.
-
-`off-fleet` prints how many hosts of the inventory's `observed` group have an `alloy` row in `fleet-pins.md` off the
-fleet file, or none, and names each on stderr.
+`gate` prints the fleet file's version, then the newest version above it that both Docker Hub, by a `v<x.y.z>` tag whose registry index carries a linux/amd64 image, and apt.grafana.com's index carry, and each newer version one source alone carries.
 """
 
 from __future__ import annotations
@@ -70,8 +65,7 @@ def when_of(task: dict) -> tuple[str, ...]:
 
 
 def _role_tasks(roles_dir: Path, args: dict) -> Path:
-    """The tasks file an `import_role` brings in, found the way Ansible finds it: a `tasks_from` as written, then with
-    each extension; `main` with each extension, then bare."""
+    """The tasks file an `import_role` brings in, in the order Ansible's `Role._load_role_yaml` tries."""
     stem = args.get("tasks_from")
     extensions = ("", ".yml", ".yaml", ".json") if stem else (".yml", ".yaml", ".json", "")
     tasks = roles_dir / args["name"] / "tasks"
@@ -117,7 +111,7 @@ def plays_reaching(host: str, *, ansible_dir: Path = ANSIBLE_DIR) -> list[dict]:
 
 
 def _run_leaves(host: str, ansible_dir: Path):
-    """`(where, task, tags)` in run order: a play's `pre_tasks`, its roles, its `tasks`, its `post_tasks`."""
+    """`(where, task, tags)` for each leaf of the plays reaching the host, in Ansible's run order."""
     for play in plays_reaching(host, ansible_dir=ansible_dir):
         play_tags = tags_of(play)
         for section in ("pre_tasks", "roles", "tasks", "post_tasks"):
@@ -303,8 +297,7 @@ def main(argv: list[str] | None = None, *, fetch: Fetch = fetch) -> int:
         if command == "reaches":
             sub.add_argument("host", metavar="HOST")
     args = parser.parse_args(argv)
-    # Every failure from here exits 2: uncaught, it would exit 1, the answer that the host is not reached. The module's
-    # own load, `yaml` and `pins-converged.py`, runs before it, and its failure is a traceback.
+    # Every failure from here exits 2: uncaught, it would exit 1, the answer that the host is not reached.
     try:
         if args.command == "gate":
             print("\n".join(gate(fetch, ansible_dir=args.ansible_dir)))
