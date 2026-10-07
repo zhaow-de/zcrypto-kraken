@@ -141,9 +141,9 @@ A host the wave cannot reach — down or unreachable, its preview naming more th
 
 A hold ends by a change that deletes the host's hold file — the NAS's also moving `nas_alloy_image` to the fleet's digest — merged before the host converges from it; the row keeps `held` and its reason until that converge re-trues it, which the NAS-row contract admits. A held host keeps the wave open, and keeps `Monitor · Alloy versions split across the fleet` firing once its day has passed: both are the hold's, and the hold is the owner's to end.
 
-### A container on its old environment
+### Alloy left on its old files after a failed run
 
-A run on ops, a cache node or a capture host that failed after `render the alloy secrets env file` changed the file and before `bring the alloy container to the digest, recreated when its secrets file changed` ran leaves the new file on disk and the container on the environment it was created with. The re-run finds the file unchanged, so its `up -d` is not forced, and where the container already runs the run's digest it recreates nothing; a config the failed run copied is stranded the same way, its reload never sent. Remove the host's Alloy secrets file, then re-run the host's `--tags alloy` converge above: the render writes the file again, changed, and the recreate is forced, the new container starting on both files. The running container keeps its environment while the file is gone.
+On a container host: a run on ops, a cache node or a capture host that failed after `render the alloy secrets env file` changed the file and before `bring the alloy container to the digest, recreated when its secrets file changed` ran leaves the new file on disk and the container on the environment it was created with. The re-run finds the file unchanged, so its `up -d` is not forced, and where the container already runs the run's digest it recreates nothing; a config the failed run copied is stranded the same way, its reload never sent. Remove the host's Alloy secrets file, then re-run the host's `--tags alloy` converge above: the render writes the file again, changed, and the recreate is forced, the new container starting on both files. The running container keeps its environment while the file is gone.
 
 ```bash
 ssh hp 'sudo rm /etc/zcrypto-ops/alloy/alloy-secrets.env'
@@ -152,6 +152,13 @@ ssh red 'sudo rm /etc/zcrypto-capture/alloy/alloy-secrets.env'   # the primary: 
 ```
 
 The NAS's narrow run forces its recreate on each applied run, so it takes no such step.
+
+On an apt host: a run that failed after it changed `/etc/default/alloy` (the bridgehead's) or the config, and before its `restart alloy` handler flushed, leaves Alloy running on the files it started with. The re-run finds the files unchanged and notifies nothing, and its post-condition restarts Alloy only when the running process's binary was replaced or no process runs, so where the binary was not replaced it restarts nothing and the run ends `rc` 0 with the new files unread. Once the host's `--tags alloy` converge has ended `rc` 0, restart Alloy on the host, then read it by *Step 3 — Per-host verification*:
+
+```bash
+ssh mon 'sudo systemctl restart alloy'      # the observability node
+ssh access 'sudo systemctl restart alloy'   # the bridgehead
+```
 
 ### The wave's close
 
