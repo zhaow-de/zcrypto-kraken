@@ -7,7 +7,7 @@ import re
 import pytest
 import yaml
 
-from tests.alloy_part import ARGUMENT_KEYWORDS, module_entry
+from tests.alloy_part import TASK_KEYS, module_entry, off_keys, scope_refusals
 from tests.alloy_part import WRITERS as ALLOY_WRITERS
 from tests.test_alloy_version import alloy_version
 from tests.test_infra_converge_guards import ANSIBLE, NAS, assert_that, find_task, load_tasks, truthy, when_conditions
@@ -176,7 +176,7 @@ def test_no_tagged_task_reaches_the_puller():
         if TAG not in tags:
             continue
         module, args = _module(task)
-        assert not [key for key in ARGUMENT_KEYWORDS if key in task], task["name"]
+        assert not (off := off_keys(task, TASK_KEYS)), (task["name"], off)
         assert _admitted(task), f"{task['name']}: not on the NAS Alloy part's allowlist"
         assert "archive-pull" not in _read_text(task, gates), task["name"]
         if module.rsplit(".", 1)[-1] in WRITERS and module_entry(task) != LINE_EDIT_ENTRY:
@@ -184,6 +184,7 @@ def test_no_tagged_task_reaches_the_puller():
             assert target.rsplit("/", 1)[-1] not in PULLER_PIECES, task["name"]
             assert str(args.get("src") or "").rsplit("/", 1)[-1] not in PULLER_PIECES | PULLER_SOURCES, task["name"]
         assert all(call.strip() == SCOPED_COMPOSE for call in _compose_calls(task)), (task["name"], _compose_calls(task))
+    assert not (refused := scope_refusals("nas")), refused
 
 
 def test_the_narrow_apply_is_the_one_tagged_compose_call():

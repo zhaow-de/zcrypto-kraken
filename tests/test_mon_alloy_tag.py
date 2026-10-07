@@ -9,11 +9,14 @@ import pytest
 
 from tests.alloy_part import (
     ALLOY_APT_VERBATIM,
-    ARGUMENT_KEYWORDS,
+    TASK_KEYS,
     apt_admitted,
+    handler_refusals,
     module_entry,
     notified,
+    off_keys,
     play_selection,
+    scope_refusals,
     tagged,
     task_text,
     unproduced_reads,
@@ -63,10 +66,12 @@ def test_every_name_a_tagged_task_reads_is_produced_by_an_earlier_tagged_task():
 
 def test_no_tagged_task_reaches_grafana_its_stores_or_caddy():
     for task, _, gates in tagged("mon"):
-        assert not [key for key in ARGUMENT_KEYWORDS if key in task], task["name"]
+        assert not (off := off_keys(task, TASK_KEYS)), (task["name"], off)
         assert _admitted(task), f"{task['name']}: not on the mon Alloy part's allowlist"
         assert set(notified(task)) <= {"restart alloy"}, task["name"]
         assert _reach(task, gates) is None, task["name"]
+    assert not (refused := scope_refusals("mon")), refused
+    assert not (refused := handler_refusals("mon")), refused
 
 
 @pytest.mark.parametrize(
@@ -81,7 +86,7 @@ def test_no_tagged_task_reaches_grafana_its_stores_or_caddy():
 def test_a_tagged_alloy_copy_reaching_a_store_or_the_token_through_a_role_variable_is_refused_by_the_word(argument, value, word):
     copy = {"src": "config.alloy", "dest": "/etc/alloy/extra.alloy", "validate": "alloy validate %s"} | {argument: value}
     task = {"name": "another alloy config", "ansible.builtin.copy": copy, "tags": ["alloy"]}
-    assert _admitted(task) and not [key for key in ARGUMENT_KEYWORDS if key in task] and not notified(task)
+    assert _admitted(task) and not off_keys(task, TASK_KEYS) and not notified(task)
     assert _reach(task, ()) == word
 
 

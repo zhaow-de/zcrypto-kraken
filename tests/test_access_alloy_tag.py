@@ -5,7 +5,18 @@ from __future__ import annotations
 
 import re
 
-from tests.alloy_part import ARGUMENT_KEYWORDS, ROLES, apt_admitted, notified, tagged, task_text, unproduced_reads
+from tests.alloy_part import (
+    ROLES,
+    TASK_KEYS,
+    apt_admitted,
+    handler_refusals,
+    notified,
+    off_keys,
+    scope_refusals,
+    tagged,
+    task_text,
+    unproduced_reads,
+)
 from tests.test_alloy_version import alloy_version
 from tests.test_infra_alloy_apt import ALLOY_APT_MAIN, ALLOY_APT_POSTCONDITION
 from tests.test_infra_converge_guards import find_task, load_tasks, task_index, when_conditions
@@ -62,10 +73,12 @@ def test_every_name_a_tagged_task_reads_is_produced_by_an_earlier_tagged_task():
 
 def test_no_tagged_task_reaches_caddy_wireguard_the_relay_or_the_probe():
     for task, _, gates in tagged("access"):
-        assert not [key for key in ARGUMENT_KEYWORDS if key in task], task["name"]
+        assert not (off := off_keys(task, TASK_KEYS)), (task["name"], off)
         assert _admitted(task), f"{task['name']}: not on the access Alloy part's allowlist"
         assert set(notified(task)) <= {"restart alloy"}, task["name"]
         assert not REFUSED_READS.search(task_text(task, gates)), task["name"]
+    assert not (refused := scope_refusals("access")), refused
+    assert not (refused := handler_refusals("access")), refused
 
 
 def test_the_alloy_part_runs_after_the_revocation_path_and_before_the_relay_gate():

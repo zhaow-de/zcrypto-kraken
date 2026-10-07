@@ -5,11 +5,13 @@ import pytest
 from tests.alloy_part import (
     SITE,
     TAG,
+    handler_refusals,
     module_and_args,
     notified,
     play_selection,
     read_text,
     refusal_of,
+    scope_refusals,
     tagged,
     unproduced_reads,
 )
@@ -72,6 +74,8 @@ def test_no_tagged_task_reaches_the_capture_daemon():
         assert args.get("dest") not in CAPTURE_DAEMON_FILES and args.get("src") not in CAPTURE_DAEMON_SOURCES, task["name"]
         assert not module.endswith(("systemd", "systemd_service", "service")), task["name"]
         assert "capture_image_digest" not in read_text("capture", task, gates), task["name"]
+    assert not (refused := scope_refusals("capture")), refused
+    assert not (refused := handler_refusals("capture")), refused
 
 
 @pytest.mark.parametrize(
@@ -89,11 +93,24 @@ def test_no_tagged_task_reaches_the_capture_daemon():
             {"COMPOSE_FILE": "/opt/zcrypto-capture/compose.yaml"},
             id="environment",
         ),
+        pytest.param(
+            "create the zcrypto-alloy system user (nologin, non-key-owning, dedicated to Alloy)",
+            "module_defaults",
+            {"ansible.builtin.user": {"groups": ["docker"], "append": True}},
+            id="module_defaults",
+        ),
     ],
 )
-def test_a_tagged_task_carrying_args_or_environment_is_refused_by_the_keyword(name, keyword, value):
+def test_a_tagged_task_carrying_a_keyword_off_the_set_is_refused_by_the_keyword(name, keyword, value):
     refusal = refusal_of({**find_task(load_tasks(CAPTURE), name), keyword: value}, "capture")
     assert refusal is not None and keyword in refusal and name in refusal, refusal
+
+
+@pytest.mark.parametrize(("argument", "value"), [("validate", "/usr/bin/test -f %s"), ("remote_src", True)])
+def test_a_tagged_writer_carrying_an_argument_off_its_modules_set_is_refused_by_the_argument(argument, value):
+    task = find_task(load_tasks(CAPTURE), "install the alloy pipeline config")
+    refusal = refusal_of({**task, "ansible.builtin.copy": {**task["ansible.builtin.copy"], argument: value}}, "capture")
+    assert refusal is not None and argument in refusal and task["name"] in refusal, refusal
 
 
 def test_an_alloy_run_on_the_capture_and_engine_plays_runs_the_alloy_part_beside_the_always_pre_tasks():

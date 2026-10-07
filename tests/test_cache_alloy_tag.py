@@ -9,9 +9,11 @@ import pytest
 
 from tests.alloy_part import (
     TAG,
+    handler_refusals,
     notified,
     play_selection,
     refusal_of,
+    scope_refusals,
     tagged,
     task_text,
     unproduced_reads,
@@ -72,6 +74,8 @@ def test_no_tagged_task_reaches_valkey_sentinel_or_the_sysctl():
         assert (refusal := refusal_of(task, "cache")) is None, refusal
         assert set(notified(task)) <= {"reload alloy"}, task["name"]
         assert not REFUSED_READS.search(task_text(task, gates)), task["name"]
+    assert not (refused := scope_refusals("cache")), refused
+    assert not (refused := handler_refusals("cache")), refused
 
 
 @pytest.mark.parametrize("seq", [tuple, list])

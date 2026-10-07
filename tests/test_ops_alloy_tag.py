@@ -9,9 +9,11 @@ import pytest
 
 from tests.alloy_part import (
     TAG,
+    handler_refusals,
     notified,
     play_selection,
     refusal_of,
+    scope_refusals,
     tagged,
     task_text,
     unproduced_reads,
@@ -65,6 +67,8 @@ def test_no_tagged_task_reaches_the_poller_the_timers_or_the_nas_paths():
         assert (refusal := refusal_of(task, "ops")) is None, refusal
         assert set(notified(task)) <= {"reload alloy"}, task["name"]
         assert not REFUSED_READS.search(task_text(task, gates)), task["name"]
+    assert not (refused := scope_refusals("ops")), refused
+    assert not (refused := handler_refusals("ops")), refused
 
 
 @pytest.mark.parametrize("seq", [tuple, list])
