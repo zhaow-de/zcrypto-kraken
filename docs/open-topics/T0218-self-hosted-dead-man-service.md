@@ -17,7 +17,7 @@ The dead-man checks are the fleet's last line: they page when a host, a daemon o
 
 - The surface and the command that reads each part of it are spec 00122's measured basis.
 - T0085 names the eleven ping URLs as in scope for the pre-go-live rotation and the two API keys' shapes; T0083 (archived) set the mutual watchdog between Grafana and healthchecks.io.
-- Spec 00123 (one Alloy version across the fleet, T0219; on `feat/t0219-one-alloy-version` until it merges) asks of Task 9, under *What this asks of plans 00121 and 00122*: the node's Alloy installed at the fleet file's version, held and pinned, dry-started at that version, under the `alloy` tag, with a `fleet-pins.md` row.
+- Spec 00123 (one Alloy version across the fleet, T0219; merged as #670 on 2026-10-07) asks of Task 9, under *What this asks of plans 00121 and 00122*: the node's Alloy installed at the fleet file's version, held and pinned, dry-started at that version, under the `alloy` tag, with a `fleet-pins.md` row.
 
 ## Done so far
 
@@ -44,6 +44,7 @@ The second pull request is from `feat/t0218-dead-man-tasks-8-10`; the first merg
 - P2, 2026-10-06, the two generated vault values: 16079f87b.
 - P3, 2026-10-06, the SES SMTP credential, vaulted, and its endpoint: 0fbd2df88.
 - The release the node deploys moved from `v6.1.0` to `v6.2.0`, the clone's newest, 2026-10-07, the owner's word; its static reads are the spec's measured-basis amendment: e06b8719f, 8bdd8927e, 5eda879f1, ca2cf8e2f.
+- `develop` merged in with spec 00123, 2026-10-07: b2360bbb9; the node's Alloy on the shared `alloy_apt` role under the `alloy` tag, as spec 00123 asks of Task 9, its `fleet-pins.md` `alloy` row left to the node's build: 0ea1e3ec0, 6adb02892, cfd10c59b, d08734d02.
 
 ## Suggested next steps
 
