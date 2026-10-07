@@ -1433,13 +1433,17 @@ class ProbeExecutor:
             if not self._adopted:
                 self._adopt_resting_orders(now)
             self._watch_sockets(now)
-            if self._reread_owed and self._gate_armed:
+            # The pass signs its reads, so it runs only while the gate reads armed: disarmed, a pass already
+            # armed waits owed with the tries it has left, and the first armed tick resumes it.
+            if not self._gate_armed:
+                self._reread_owed = self._reread_owed or self._reread_tries > 0
+            elif self._reread_owed:
                 self._reread_owed = False
-                self._reread_tries = _REREAD_ATTEMPTS
+                self._reread_tries = self._reread_tries or _REREAD_ATTEMPTS
             # Before the pickup and the pump, so a plan dropped during a cut starts behind the re-cancel
             # on this tick and never ahead of it, where the pass would wait behind its every intent;
             # with nothing in flight, `read_venue_orders`' nonce terms.
-            if self._reread_tries and self._nothing_in_flight():
+            if self._gate_armed and self._reread_tries and self._nothing_in_flight():
                 self._reread_pass(now)
                 # The watcher ran ahead of the pass, so the tick whose pass completes lifts a freeze here.
                 self._lift_freeze()
