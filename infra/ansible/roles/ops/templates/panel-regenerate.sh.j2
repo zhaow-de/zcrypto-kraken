@@ -101,7 +101,7 @@ if ! { : < /dev/tty; } 2>/dev/null; then
 fi
 echo "== step 3: pause the dead-man check =="
 echo "The panel healthcheck pings only on a clean run and is this timer's only liveness signal."
-echo "Pause it now, TIME-BOXED, on the dead-man service (the zcrypto-panel check)."
+echo "Pause it now, TIME-BOXED, on the dead-man service, https://zcrypto-hc.zhaow.me (the zcrypto-panel check)."
 printf 'Type "paused" to continue (anything else aborts, nothing deleted): ' > /dev/tty
 IFS= read -r reply < /dev/tty || reply=""
 if [ "$reply" != "paused" ]; then
@@ -151,8 +151,9 @@ systemctl start zcrypto-panel-materialize.timer
 echo "timer restarted."
 
 echo "== step 6: your remaining checklist =="
-echo "1. Un-pause the dead-man service's zcrypto-panel check (paused time-boxed in step 3). Do this FIRST: it is"
-echo "   the materialize timer's only liveness signal, and every run until you do is unwatched."
+echo "1. Un-pause the zcrypto-panel check on the dead-man service, https://zcrypto-hc.zhaow.me"
+echo "   (paused time-boxed in step 3). Do this FIRST: it is the materialize timer's only liveness"
+echo "   signal, and every run until you do is unwatched."
 echo "2. The NAS copy of {{ ops_panel_subdir }}. A deletion is owed ONLY when this rebuild wrote to"
 echo "   DIFFERENT paths than the old tree. Exactly two things do that, and a schema bump is NOT one:"
 echo "     - the grid directory name changed (the path carries it as a literal); or"
