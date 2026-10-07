@@ -19,10 +19,10 @@ ADIR="${ZCRYPTO_ANSIBLE_DIR:-$SD/..}"
 # plus what a skill or runbook publishes as a procedure to run. A tag, host or variable that exists
 # but has never been converged is not here: when a new case arises, this is where it is added, and
 # until then passing it refuses loudly instead of converging while ansible ignores it.
-# The four the deploy log records, plus `zaccess`: `infra/runbooks/zaccess.md` publishes its only
-# converge, `--limit zaccess --tags access`; plus the three cache nodes, whose rollout (spec 00118
-# D14) converges one node per run, so `cache_host` is not a host here; plus the observability node
-# (spec 00121).
+# The four the deploy log records, plus `zaccess`: `infra/runbooks/zaccess.md` publishes its two
+# converges, `--limit zaccess` with `--tags access` or `--tags alloy`; plus the three cache nodes,
+# whose rollout (spec 00118 D14) converges one node per run, so `cache_host` is not a host here; plus
+# the observability node (spec 00121).
 HOSTS="zcrypto zcrypto-red zcrypto-ops nas zaccess zcrypto-valkey1 zcrypto-valkey2 zcrypto-valkey3 zcrypto-mon"
 # The five converged, plus `chrony`: `infra/runbooks/capture.md` prescribes re-converging that role
 # as the repair for a stopped or hand-edited chrony on a capture host; plus the cache nodes' converges
