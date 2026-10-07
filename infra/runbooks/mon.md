@@ -88,7 +88,7 @@ The node is unreachable, powered off or being rebuilt: `https://zcrypto-mon.zhao
 
 ### What it means
 
-The fleet is still watched: Grafana Cloud's rules page the main channel throughout. What is gone is the node's own evaluation, so the rules the node alone carries, the `zcrypto-mon` group, are not evaluated, and the node's history for those minutes. Per plane, from the shippers' side: metrics scraped while the node is down are held in each shipper's WAL, up to eight hours, and replayed when it returns; log lines bound for the node are retried about ten times, some seven minutes, then dropped and counted, and `zcrypto-mon-shipper-loss` below follows for each host that ships logs to it, once the node takes that host's metrics again. An outage of the node's ingest past about seven minutes brings Grafana Cloud's `Ops · ERROR logs` page too, from ops' own Alloy stream: `loki.write "mon"` logs the batch it gives up on at `level=error`, which the parse stage labels `ERROR` (`ops-node.md#zcrypto-ops-error-logs`). A store outage with the node up drops the alert history of its minutes, `zcrypto-mon-store-down` below: a transition in that time is in no history read afterwards, although its message was sent. A rebuild starts the stores empty, since the node's history is on its one disk, and the comparison's seven consecutive days (`mon-compare` above) count again from the first day whose 00:00 UTC is at least 50 h after the rebuilt node's converge.
+The fleet is still watched: Grafana Cloud's rules page the main channel throughout. What is gone is the node's own evaluation, so the rules the node alone carries, the `zcrypto-mon` and `zcrypto-hc` groups, are not evaluated, and the node's history for those minutes. Per plane, from the shippers' side: metrics scraped while the node is down are held in each shipper's WAL, up to eight hours, and replayed when it returns; log lines bound for the node are retried about ten times, some seven minutes, then dropped and counted, and `zcrypto-mon-shipper-loss` below follows for each host that ships logs to it, once the node takes that host's metrics again. An outage of the node's ingest past about seven minutes brings Grafana Cloud's `Ops · ERROR logs` page too, from ops' own Alloy stream: `loki.write "mon"` logs the batch it gives up on at `level=error`, which the parse stage labels `ERROR` (`ops-node.md#zcrypto-ops-error-logs`). A store outage with the node up drops the alert history of its minutes, `zcrypto-mon-store-down` below: a transition in that time is in no history read afterwards, although its message was sent. A rebuild starts the stores empty, since the node's history is on its one disk, and the comparison's seven consecutive days (`mon-compare` above) count again from the first day whose 00:00 UTC is at least 50 h after the rebuilt node's converge.
 
 The two figures the drills measured: a thirty-minute power-off lost `[[ROLLOUT: R3's W2 reading — the log lines a 30-minute outage lost]]` (`drills-telemetry.md#drill-w2`), and a rebuild from nothing leaves the node's rules unevaluated for `[[ROLLOUT: R3's W3 reading — the time from the rebuild to the first evaluated rule]]`, from the loss to the first evaluated rule (`drills-telemetry.md#drill-w3`).
 
@@ -117,7 +117,7 @@ Nothing fired, or the `mon` role's first task refused a converge, naming a key i
 
 ### What it means
 
-The role reads from that file `mon_grafana_admin_user`, the admin login's name, `u` and 16 hex digits; `mon_grafana_admin_password` and `mon_grafana_secret_key`, 48 hex characters each; and `mon_ingest_fleet_password_hash` and `mon_ingest_logship_password_hash`, the bcrypt hashes Caddy checks the two ingest users against. The node's ping URL is no value of this file: `mon_selfcheck_healthcheck_url` in `infra/ansible/host_vars/zcrypto-mon/vars.yml` renders from the dead-man service's project ping key, and the role's second task, which refuses it off the service's shape, names the procedure that rotates that key. The two ingest passwords themselves are `mon_ingest_fleet_password` and `mon_ingest_logship_password` in `infra/ansible/group_vars/observed/vault.yml`, which the fleet's shippers present. A hash and its password are generated together or they do not match. Each other value is generated and encrypted in one pipe and is neither typed nor printed. The admin's name is a generated one because Grafana locks an account by its name after a run of failed sign-ins, so a name a stranger can guess is one a stranger can keep locked.
+The role reads from that file `mon_grafana_admin_user`, the admin login's name, `u` and 16 hex digits; `mon_grafana_admin_password` and `mon_grafana_secret_key`, 48 hex characters each; and `mon_ingest_fleet_password_hash` and `mon_ingest_logship_password_hash`, the bcrypt hashes Caddy checks the two ingest users against. The node's ping URL is no value of this file: `mon_selfcheck_healthcheck_url` in `infra/ansible/host_vars/zcrypto-mon/vars.yml` renders from the dead-man service's project ping key, and the role's second task, which refuses it off the service's shape, names the procedure that rotates that key, `hc.md#hc-keys`. The two ingest passwords themselves are `mon_ingest_fleet_password` and `mon_ingest_logship_password` in `infra/ansible/group_vars/observed/vault.yml`, which the fleet's shippers present. A hash and its password are generated together or they do not match. Each other value is generated and encrypted in one pipe and is neither typed nor printed. The admin's name is a generated one because Grafana locks an account by its name after a run of failed sign-ins, so a name a stranger can guess is one a stranger can keep locked.
 
 ### What to do
 
@@ -500,3 +500,33 @@ The fleet runs one Alloy version, the one `infra/ansible/group_vars/observed/all
 ### Retire when
 
 `zcrypto-mon-alloy-versions-split` is absent from `infra/grafana/alerts.yaml`.
+
+______________________________________________________________________
+
+<a name="zcrypto-mon-grafana-error-logs"></a>
+
+## zcrypto-mon-grafana-error-logs — ALERT
+
+### What you are seeing
+
+A **warning** Grafana alert from the node, `Monitor · Grafana ERROR logs`, on the `logs` receiver, `for: 0s`, `noDataState: OK`: Grafana logged an `ERROR` or `CRITICAL` line in the last fifteen minutes. **The line is on the page**, its first 200 characters — read it before opening anything.
+
+The rule reads `{host="zcrypto-mon", container="grafana-server", level=~"ERROR|CRITICAL"} != "database is locked"` over a 15 m window, wrapped in `topk(5, …)`. The Fleet health board's *Monitor — Grafana's own ERROR lines* panel (911) draws them.
+
+### What it means
+
+Grafana logs logfmt lines, `logger=<component> … level=error msg=…`, and the node's Alloy lifts each line's `level` to the label this rule selects. The lines `zcrypto-mon-sqlite-locked` counts are left out, so a locked database pages that rule alone. The `logger` names what failed: a line from Grafana's alert notifier is a notification it failed to deliver; a line from its rule evaluation is a rule it could not evaluate, which that rule's own error state pages too; a line from its provisioning API is a call it refused, which the push that made it names in its exit status.
+
+The node's self-check reads the rules' evaluation, the fleet's samples and Loki's readiness, and no delivery: a Grafana that evaluates its rules and fails to deliver their notifications is paged by this rule and by no other. Its limit is its own page, which leaves through the node's two contact points, `metrics` and `logs`, both minted from the one shadow webhook. It reaches the channel through a partial failure — one contact point or one message failing while another delivers — and a total failure of the node's Slack delivery silences it with the rest: its firing is then read in the node's rule state, `ops-daily.py report --stack mon`'s `## Alerts firing`.
+
+### What to do
+
+1. **Act on the line on the page first.** Its `logger=` names the component, and its `msg=` and `error=` what failed.
+2. **Get the full set out of the node** — `topk(5, …)` truncates a storm, so five instances is a floor, not a count. Read the set with `uv run python infra/scripts/grafana-query.py --stack mon --loki 'sum by (logger, msg, error) (count_over_time({host="zcrypto-mon", container="grafana-server", level=~"ERROR|CRITICAL"} != "database is locked" | logfmt | drop __error__, __error_details__ [24h]))'`.
+3. **A notification Grafana failed to deliver**: in the node's UI, under Alerting, Contact points, read the contact point's last delivery attempt and its error against the line. Both contact points carry the one shadow webhook. A webhook Slack refuses for good, its `404` or `invalid_token`, is minted again in Slack, vaulted over the old one by `(cd infra/ansible && ../scripts/vault-append-secret.sh group_vars/all/vault.yml slack_shadow_webhook_url 'https://hooks\.slack\.com/services/[A-Za-z0-9/]+' --replace)`, and written to both contact points by `mon-push` step 2.
+4. **A shadow channel that stays silent** is read in the rule state instead: `uv run python infra/scripts/ops-daily.py report --stack mon --since 1h` lists this rule under `## Alerts firing` while it fires, whatever Slack received.
+5. **Then follow the section that owns what the line named**: a rule's own section for its evaluation, `zcrypto-mon-store-down` for a store, `mon-push` for a push's call.
+
+### Retire when
+
+`zcrypto-mon-grafana-error-logs` is absent from `infra/grafana/alerts.yaml`.
