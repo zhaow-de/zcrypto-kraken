@@ -784,11 +784,34 @@ def _vault_keys(path: Path) -> set[str]:
     return set(re.findall(r"^([A-Za-z_][A-Za-z0-9_]*):", path.read_text(), re.M))
 
 
+def _vaulted() -> set[str]:
+    return set().union(*(_vault_keys(path) for path in _var_files("vault.yml")))
+
+
+def _assert_rolled_back(value: str, name: str) -> None:
+    assert value == "{{ " + name + " }}"
+    assert name in _vaulted(), f"{name} is no vault key: the rolled-back line would render undefined at the converge"
+
+
 def _clone_shape() -> str:
     (entry,) = [
         e for e in _include(PLAIN_PREFLIGHT)["vars"]["node_common_secrets_preflight"] if e["key"] == "hc_selfcheck_healthcheck_url"
     ]
     return entry["shape"]
+
+
+def test_the_mon_roles_ping_url_shape_is_this_roles():
+    mon = find_task(load_tasks(ANSIBLE / "roles/mon/tasks/main.yml"), "the self-check's ping URL, refused by shape")
+    (entry,) = mon["vars"]["node_common_secrets_preflight"]
+    assert (entry["key"], entry["shape"]) == ("mon_selfcheck_healthcheck_url", _clone_shape())
+
+
+def test_a_rolled_back_row_names_a_vaulted_key_and_its_line_reads_it():
+    _assert_rolled_back("{{ hcio_capture_healthcheck_url }}", "hcio_capture_healthcheck_url")
+    with pytest.raises(AssertionError, match="no vault key"):
+        _assert_rolled_back("{{ hcio_capture_healthcheck_uri }}", "hcio_capture_healthcheck_uri")
+    with pytest.raises(AssertionError):
+        _assert_rolled_back("{{ hc_ping_base }}/zcrypto-capture", "hcio_capture_healthcheck_url")
 
 
 def test_the_ping_url_variables_are_the_twelve_rows_and_their_slugs_the_fixtures_names_with_zcrypto_hc():
@@ -802,7 +825,7 @@ def test_the_ping_url_variables_are_the_twelve_rows_and_their_slugs_the_fixtures
 def test_each_ping_url_renders_from_the_project_key_to_its_own_checks_slug(row):
     value = _ping_url_vars()[row]
     if row in ROLLED_BACK:
-        assert value == "{{ " + ROLLED_BACK[row] + " }}"
+        _assert_rolled_back(value, ROLLED_BACK[row])
         return
     observed = role_render.trusted(yaml.safe_load(OBSERVED_VARS.read_text()))
     rendered = Templar(loader=DataLoader(), variables={**observed, "hc_ping_key": DUMMY_PING_KEY}).template(
@@ -815,8 +838,7 @@ def test_each_ping_url_renders_from_the_project_key_to_its_own_checks_slug(row):
 
 def test_no_ping_url_name_is_a_key_of_both_a_vars_file_and_a_vault_file():
     # A directory's vault.yml loads after its vars.yml and wins, so a shared name would render the vaulted value.
-    vaulted = set().union(*(_vault_keys(path) for path in _var_files("vault.yml")))
-    shadowed = sorted({key for _, key in _ping_url_vars()} & vaulted)
+    shadowed = sorted({key for _, key in _ping_url_vars()} & _vaulted())
     assert shadowed == [], f"vaulted under the name a vars file renders: {shadowed}"
 
 
