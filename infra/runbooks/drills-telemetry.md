@@ -722,7 +722,7 @@ That the node's dead-men agree with Grafana Cloud's on a real host: with the sec
 
 ### Preconditions
 
-- An attended window; standing rules above; after the box, once `zcrypto-red` ships to the node: `uv run python infra/scripts/grafana-query.py --stack mon 'count(up{host="zcrypto-red"})'` reads above 0, and the same query on Grafana Cloud without `--stack`. Both counts are written down; the restore is read against them.
+- An attended window; standing rules above; after the Alloy wave (`.claude/skills/zcrypto-bump-alloy/SKILL.md`) and its verifications, on a later day than its last converge, inside rung 2's box and outside its day's window ([`engine-procedures.md#engine-rung-2-box`](engine-procedures.md#engine-rung-2-box), [`engine-procedures.md#rung-2-the-day-s-window`](engine-procedures.md#rung-2-the-day-s-window)), once `zcrypto-red` ships to the node: `uv run python infra/scripts/grafana-query.py --stack mon 'count(up{host="zcrypto-red"})'` reads above 0, and the same query on Grafana Cloud without `--stack`. Both counts are written down; the restore is read against them.
 - **The secondary is a venue-facing host**: the Kraken maintenance feed read at planning time and again immediately before the stop (standing rules above).
 - **The secondary only** (set: the rule's, `.claude/rules/fleet-deploys.md`; count: `infra/scripts/count-list.sh drills-on-the-primary`). The capture daemon keeps running, as drill C's *Induce* states; the primary is not touched.
 - `max(hc_checks_down_total) == 0` on Grafana Cloud, read by value immediately before: `zcrypto-hcio-watchdog` must stay quiet here, and a check left down makes that unverifiable. Not 0 ⇒ clear the down check first, or record **`blocked`** with the reason.
@@ -752,7 +752,7 @@ sudo docker stop grafana-alloy
 sudo docker restart grafana-alloy
 ```
 
-Read the recovery by value: `sudo docker ps --format '{{.Names}} {{.Status}}'`; `count(up{host="zcrypto-red"})` back to the precondition's reading on both stacks; both copies of the rule back to **Normal**. **Re-true the `since` cell of the secondary's `alloy` row in [`fleet-pins.md`](../../docs/reference/fleet-pins.md) in the same step** (standing rules above): `sudo docker inspect grafana-alloy --format '{{.State.StartedAt}}'`.
+The restore restarts the same container on the same image; a recreate is the host's `--tags alloy` converge, attended, and not this restore. Read the recovery by value: `sudo docker ps --format '{{.Names}} {{.Status}}'`; `count(up{host="zcrypto-red"})` back to the precondition's reading on both stacks; both copies of the rule back to **Normal**. **Re-true the `since` cell of the secondary's `alloy` row in [`fleet-pins.md`](../../docs/reference/fleet-pins.md) in the same step** (standing rules above): `sudo docker inspect grafana-alloy --format '{{.State.StartedAt}}'`.
 
 ### Record
 

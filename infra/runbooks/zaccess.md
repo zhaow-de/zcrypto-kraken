@@ -2,7 +2,7 @@
 
 You are here because **an alert fired in Slack** — find the section whose anchor matches the alert `uid` — or because you mean to revoke a client certificate, ship its Alloy config or cut the public SSH relay: the procedures at the top, found by heading. Each section is written to be actioned without opening any other document.
 
-Everything here is one Linode VPS, `zaccess`, reached as `ssh -p 10022 zcrypto-deploy@zaccess.zhaow.me`; the other end of its WireGuard tunnel is `zcrypto-ops`, `ssh hp`. It runs no containers — Alloy, Caddy and WireGuard are apt packages under systemd — and holds no capture data: everything on it is re-issuable.
+Everything here is one Linode VPS, `zaccess`, reached as `ssh access`; the other end of its WireGuard tunnel is `zcrypto-ops`, `ssh hp`. It runs no containers — Alloy, Caddy and WireGuard are apt packages under systemd — and holds no capture data: everything on it is re-issuable.
 
 `README.md` beside this file states what belongs in a runbook at all; an alert or a guard names a section by file and anchor, and a procedure is found by its file and heading.
 
@@ -18,7 +18,7 @@ Nothing fired. A client certificate is to lose its access to the mTLS edge.
 
 ### What it means
 
-The pins are PEMs in `infra/ansible/roles/access/files/pinned-leaves/`: `access_pinned_leaves` globs that directory and the Caddyfile template renders one `file /etc/caddy/pinned-leaves/<name>.pem` line per PEM inside its `verifier leaf` block, so deleting a PEM and converging drops the pin, and the `reload caddy` handler makes the running edge refuse that leaf at its next handshake. The role ships the directory with `ansible.builtin.copy`, which has no delete, so the host keeps a PEM the repo no longer has — inert, the Caddyfile no longer names it. A task failing after the Caddyfile is written strands that reload (`force_handlers` is off): the file is revoked and the running Caddy is not, which is why the confirm is a handshake, not a grep. The edge gates `:443` alone; SSH on `:10022` and the relay on `:20022` do not pass through it. Deleting the last PEM renders an empty `verifier leaf { }` block, and what Caddy does with that is recorded nowhere in this tree — the procedure assumes another pin remains.
+The pins are PEMs in `infra/ansible/roles/access/files/pinned-leaves/`: `access_pinned_leaves` globs that directory and the Caddyfile template renders one `file /etc/caddy/pinned-leaves/<name>.pem` line per PEM inside its `verifier leaf` block, so deleting a PEM and converging drops the pin, and the `reload caddy` handler makes the running edge refuse that leaf at its next handshake. The role ships the directory with `ansible.builtin.copy`, which has no delete, so the host keeps a PEM the repo no longer has — inert, the Caddyfile no longer names it. A task failing after the Caddyfile is written strands that reload (`force_handlers` is off): the file is revoked and the running Caddy is not, which is why the confirm is a handshake, not a grep. The edge gates `:443` alone; SSH on `:10022` and the relay on `:20022` do not pass through it. Deleting the last PEM renders an empty `verifier leaf { }` block, and what Caddy does with that is recorded nowhere in this tree — the procedure assumes another pin remains. The converge also runs the bridgehead's Alloy part, after the Caddyfile and its reload, and its preview fetches the Grafana and Caddy repositories' signing keys: a key source that does not answer fails the preview, `converge.sh` refuses the whole converge, and the revocation waits until the source answers.
 
 ### What to do
 
@@ -39,20 +39,20 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-Nothing fired. You are changing the bridgehead's `config.alloy` and looking for the digest operand and the bake gate the other Alloys make you satisfy.
+Nothing fired. You are changing the bridgehead's `config.alloy` and looking for the digest operand the container Alloys take.
 
 ### What it means
 
-There is none: **the bridgehead's Alloy takes no digest operand and owes no bake.** It is a native deb whose version is FOLLOWED from apt — the `access` role installs it `state: present` with no version and clears any `dpkg` hold, because a hold makes `apt upgrade` skip it silently and a forced version turns an upstream bump into a failed task that drops the host from the play, and the pinned-leaves and Caddyfile tasks below it — the revocation path — with it. Its `config.alloy` is an ungated `copy`: every converge ships it, so a hand edit cannot outlive the next run and there is no drift assert. There is no `zaccess_alloy_digest` and no pins row, deliberately — do not add one. Caddy is on the same footing.
+There is none: **the bridgehead's Alloy takes no digest operand and owes no bake.** It is the apt package, which the `access` role installs through the shared role `alloy_apt` under the `alloy` tag at the fleet's version — `alloy_deb_version` in `infra/ansible/group_vars/observed/alloy.yml`, or while the bridgehead is held, the version `infra/ansible/host_vars/zaccess/alloy.yml` names — held in `dpkg` and pinned at priority 1001, so an `apt upgrade` leaves it where it is; the version moves only through the bump skill, `.claude/skills/zcrypto-bump-alloy/SKILL.md`, its rollback included. `--limit zaccess --tags alloy` runs that install, renders `/etc/default/alloy`, copies `config.alloy` once `alloy validate` has read the new file with the installed binary, restarts Alloy on a change, and then restarts it when no process runs or the running one is not the installed binary; it runs nothing of Caddy, WireGuard, the SSH relay or the probe (`tests/test_access_alloy_tag.py`). The copy is ungated: every converge of the role ships it, so a hand edit cannot outlive the next run and there is no drift assert. The preview fetches the Grafana repository's signing key, and a key source that does not answer refuses the converge.
 
 ### What to do
 
-1. Edit `infra/ansible/roles/access/files/config.alloy`, then `infra/ansible/scripts/converge.sh site.yml --limit zaccess --tags access` from the workstation.
-2. Read the installed versions off the host: `dpkg-query -W alloy caddy`.
+1. Edit `infra/ansible/roles/access/files/config.alloy`, then `infra/ansible/scripts/converge.sh site.yml --limit zaccess --tags alloy` from the workstation.
+2. Read the version and the hold off the host: `ssh access 'dpkg-query -W alloy; apt-mark showhold'` names the version the converge installed and lists `alloy`.
 
 ### Retire when
 
-`infra/ansible/roles/access/tasks/main.yml` installs Alloy at a pinned version, or stops clearing the `dpkg` hold, or ships `config.alloy` behind a `when:` — any one of those makes the bridgehead owe an operand like every other host, and this section stops being the exception it exists to record.
+`infra/ansible/roles/access/tasks/main.yml` no longer imports the shared Alloy install, `alloy_apt`: the bridgehead's Alloy then installs some other way, which this section does not describe.
 
 ______________________________________________________________________
 
@@ -72,7 +72,7 @@ The relay is `zaccess-ssh-proxy.socket`, listening on `:20022`, and the `zaccess
 
 1. On the bridgehead, stop both: `sudo systemctl stop zaccess-ssh-proxy.socket zaccess-ssh-proxy.service`.
 2. Confirm: `systemctl status zaccess-ssh-proxy.socket` reads `inactive (dead)`, and a connection to `zaccess.zhaow.me:20022` is refused.
-3. A converge that runs the `access` role reopens it, un-tagged included, the two procedures above too, and so does a reboot, through `sockets.target`. To reopen: `infra/ansible/scripts/converge.sh site.yml --limit zaccess --tags access` from the workstation.
+3. A converge that runs the whole `access` role reopens it — `--tags access`, as `zaccess-revoke-client-cert` above runs it, or un-tagged — and so does a reboot, through `sockets.target`; `--tags alloy` runs none of the relay's tasks and leaves it closed. To reopen: `infra/ansible/scripts/converge.sh site.yml --limit zaccess --tags access` from the workstation.
 
 ### Retire when
 
@@ -90,13 +90,13 @@ A critical-severity Grafana alert (`zcrypto-alloy-dark-zaccess`): the internet b
 
 ### What it means
 
-The bridgehead runs Alloy **natively** (an apt package, no docker) — the only host in the fleet where that is true — and nothing on the host reacts to that unit dying: no container to restart, one systemd unit. While it is dark, `zaccess-disk-high` — the only other rule scoped to `host="zaccess"` — reads no data, and `noDataState: OK` renders that identically to healthy. The two `zaccess_*` rules keep their ops-side half: `zaccess-tunnel-stale` still watches the tunnel from `host="ops"` and `zaccess-cert-expiring` still watches `target="nas-dsm"`. What goes unwatched are the `tmux` and `nas` edge certificates — only this host's probe writes those two targets.
+The bridgehead runs Alloy **natively** (an apt package, no docker), as the observability node does, and nothing on the host reacts to that unit dying: no container to restart, one systemd unit. While it is dark, `zaccess-disk-high` — the only other rule scoped to `host="zaccess"` — reads no data, and `noDataState: OK` renders that identically to healthy. The two `zaccess_*` rules keep their ops-side half: `zaccess-tunnel-stale` still watches the tunnel from `host="ops"` and `zaccess-cert-expiring` still watches `target="nas-dsm"`. What goes unwatched are the `tmux` and `nas` edge certificates — only this host's probe writes those two targets.
 
 ### What to do
 
 1. On the bridgehead: `systemctl status alloy` — is the unit running at all?
-2. `journalctl -u alloy --no-pager -n 100` — a config parse failure is the usual cause here: a hand edit the last converge overwrote, or a credentials rotation that never reached `/etc/default/alloy`. The config copy is ungated — every converge ships it, and no drift assert catches a bad render before it lands (no count command: the copy task in `infra/ansible/roles/access/tasks/main.yml` is ungated by design and its own task name says so; the digest-gated copies the asserts exist for are the other tiers').
-3. `systemctl restart alloy` is the usual fix. If it will not stay up, `sudo grep -c '^GRAFANA_' /etc/default/alloy` — 6 means the credentials file is populated; fewer, or no file, means re-converge (`infra/ansible/scripts/converge.sh site.yml --limit zaccess --tags access`) to re-render it. Count that file, never print it — it carries the Grafana Cloud push passwords (no count command: the file is rendered on the bridgehead, and its contents are secrets nothing in the tree reads).
+2. `journalctl -u alloy --no-pager -n 100` — a config parse failure is the usual cause here: a hand edit the last converge overwrote, or a credentials rotation that never reached `/etc/default/alloy`. The config copy is ungated — every converge ships it, with no drift assert — and runs `alloy validate` on the new file first, so a config the installed binary cannot load fails the converge before it lands (no count command: the copy task in `infra/ansible/roles/access/tasks/main.yml` is ungated by design and its own task name says so; `tests/test_access_alloy_tag.py` holds its validate).
+3. `systemctl restart alloy` is the usual fix. If it will not stay up, `sudo grep -c '^GRAFANA_' /etc/default/alloy` — 6 means the credentials file is populated; fewer, or no file, means re-converge (`infra/ansible/scripts/converge.sh site.yml --limit zaccess --tags alloy`) to re-render it. Count that file, never print it — it carries the Grafana Cloud push passwords (no count command: the file is rendered on the bridgehead, and its contents are secrets nothing in the tree reads).
 4. Confirm recovery from the workstation: `uv run python infra/scripts/grafana-query.py 'up{host="zaccess"}'` → `1`.
 
 ### Retire when
