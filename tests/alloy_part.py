@@ -211,7 +211,7 @@ def play_selection(*hosts: str) -> tuple[list[tuple[str, str]], list[tuple[str, 
         play_tags = alloy_version.tags_of(play)
         pre_tasks += [
             (play["hosts"], t["name"])
-            for t, tags, _ in alloy_version.walk(play.get("pre_tasks"), frozenset(play_tags))
+            for t, tags, _ in alloy_version.walk(play.get("pre_tasks"), frozenset(play_tags), base=ANSIBLE)
             if _selected(tags)
         ]
         for entry in play["roles"]:

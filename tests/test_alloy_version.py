@@ -145,6 +145,17 @@ def test_an_import_role_finds_its_tasks_file_as_ansible_does(tmp_path, tasks_fro
     assert _named(alloy_version.role_leaves("r", frozenset(), ansible_dir=ansible)) == [(found, {"alloy"}, ())]
 
 
+def test_a_play_role_whose_tasks_file_is_main_yaml_is_read_as_ansible_reads_it(tmp_path, capsys):
+    ansible = _tree(
+        tmp_path,
+        {
+            "site.yml": [{"name": "the box's play", "hosts": "box_host", "roles": [{"role": "r"}]}],
+            "roles/r/tasks/main.yaml": [_task("render", "alloy")],
+        },
+    )
+    assert (alloy_version.main(["reaches", "--ansible-dir", str(ansible), "box"]), capsys.readouterr().err) == (0, "")
+
+
 def test_an_include_role_under_the_tag_stays_one_leaf(tmp_path):
     ansible = _tree(
         tmp_path,

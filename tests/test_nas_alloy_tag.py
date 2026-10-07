@@ -305,7 +305,9 @@ def test_an_alloy_run_on_the_nas_runs_the_alloy_part_beside_the_always_tasks_and
     pre_tasks, role_tasks = [], []
     for play in _plays_reaching("nas"):
         play_tags = frozenset(alloy_version.tags_of(play))
-        pre_tasks += [t["name"] for t, tags, _ in alloy_version.walk(play.get("pre_tasks"), play_tags) if _selected(tags, [TAG])]
+        pre_tasks += [
+            t["name"] for t, tags, _ in alloy_version.walk(play.get("pre_tasks"), play_tags, base=ANSIBLE) if _selected(tags, [TAG])
+        ]
         for entry in play["roles"]:
             role_tasks += [
                 (entry["role"], t["name"])

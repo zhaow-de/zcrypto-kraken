@@ -100,7 +100,7 @@ def walk(tasks, tags=frozenset(), gates=(), *, roles_dir: Path = ROLES_DIR, base
 
 
 def role_leaves(role: str, inherited: frozenset[str], *, ansible_dir: Path = ANSIBLE_DIR):
-    path = ansible_dir / "roles" / role / "tasks" / "main.yml"
+    path = _role_tasks(ansible_dir / "roles", {"name": role})
     return walk(load(path), inherited, roles_dir=ansible_dir / "roles", base=path.parent)
 
 
