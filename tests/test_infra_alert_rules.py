@@ -377,9 +377,7 @@ NOT_A_FAULT_SIGNAL = {
     "zcrypto_engine_journal_prune_deleted_days",
     "zcrypto_engine_journal_prune_kept_days",
     "zcrypto_engine_journal_prune_oldest_day_age_seconds",
-    # The execution safety envelope's unwatched families; armed, kill_tripped,
-    # last_evaluation_timestamp_seconds and venue_read_failed are watched, and this list is what
-    # keeps that true.
+    # The execution safety envelope's unwatched families; every other one carries a rule, and this list is what keeps that true.
     #   gate_level is the SUMMARY its inputs (armed, kill switch, restart hold, venue) already reduce
     #   to -- every value is legitimate depending on which input is active -- and the two worth
     #   paging on have their own rules.
@@ -415,14 +413,13 @@ NOT_A_FAULT_SIGNAL = {
     "zcrypto_exec_resting_order_age_seconds",
     # The external-events counter is a forensic instrument: `matched` rising is a restart-adopted
     # order filling, and `unmatched` says an order event no entry in this engine's ledger vouches for
-    # arrived and reached no row, cancel or trip, a fill arming the re-read pass alone while the engine
-    # is armed. NO rule, deliberately and not by omission: the candidate -- `unmatched` rising while
+    # arrived. NO rule, deliberately and not by omission: the candidate -- `unmatched` rising while
     # `zcrypto_exec_armed` is 0 -- pages on the owner's own account activity, since a hand-placed order
     # while the engine is disarmed is exactly an unmatched external event, and a rule on a forensic
-    # counter is a decision of its own. `zcrypto_exec_armed` itself is not the obstacle: it is published at every
-    # gate evaluation, the executor's idle refresh once a minute included, so it follows an arm or a
-    # disarm within that minute. The silent failure no rule could catch either way -- an adopted order
-    # whose events fail to key into `_attached` -- is a by-value reading in T0018.
+    # counter is a decision of its own. `zcrypto_exec_armed` itself is not the obstacle: it is published
+    # at every gate evaluation, the executor's idle refresh once a minute included, so it follows an arm
+    # or a disarm within that minute. The silent failure no rule could catch either way -- an adopted
+    # order whose events fail to key into `_attached` -- is a by-value reading in T0018.
     "zcrypto_exec_external_events_total",
     # The weekly tracking-error verdict. NO rule, deliberately and not by omission: the only value
     # that is a fault -- the band breached -- latches the kill file, which
@@ -431,8 +428,7 @@ NOT_A_FAULT_SIGNAL = {
     "zcrypto_exec_tracking_state",
     # The accumulation loop's readings. NO rule on these three, deliberately: the gap per leg and the
     # equity are readings the tracking trip and the drawdown kill already act on, and the drawdown's
-    # fault value latches the kill file, which zcrypto-engine-exec-kill-tripped pages on. The
-    # watchdog's freeze and the undrafted boundary beside them are watched, and are not listed here.
+    # fault value latches the kill file, which zcrypto-engine-exec-kill-tripped pages on.
     "zcrypto_exec_gap_eur",
     "zcrypto_exec_equity_eur",
     "zcrypto_exec_drawdown_bps",

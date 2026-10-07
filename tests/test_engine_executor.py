@@ -8322,13 +8322,11 @@ def test_a_pruned_head_is_refused_when_no_birth_record_survives(tmp_path):
 
 
 def test_a_re_dated_birth_scores_the_series_from_it_and_reads_an_earlier_fill_as_a_prior_series(tmp_path):
-    """`_journal_week(tmp_path, fills=..., lead=12)` with the healthy fixture's fills and, before them,
-    a prior series' lone BTC/EUR sell of 0.01 at `_TRACK_MONDAY - timedelta(hours=40)` -- the shape the
-    journal holds once the prune has taken a prior series' buys and not yet its sells -- and the birth
-    record and its opening holdings, ten zero rows, written by hand at `_OPENING`, as the entry's
-    re-date writes them, with no mint (`mint_at=None`): the week scores within the band. Read into
-    `held`, the prior sell latches the kill at about 6046 bps against the 120 bps band; the base
-    refuses the week on `birth != first_fill`."""
+    """`_journal_week(tmp_path, fills=..., lead=12)` with the healthy fixture's fills and, before them, a prior series'
+    lone BTC/EUR sell of 0.01 at `_TRACK_MONDAY - timedelta(hours=40)` -- the shape the journal holds once the prune has
+    taken a prior series' buys and not yet its sells -- and the birth record and its opening holdings, ten zero rows,
+    written by hand at `_OPENING`, as the entry's re-date writes them, with no mint (`mint_at=None`): the week scores
+    within the band."""
     prior = _TRACK_MONDAY - timedelta(hours=40)
     _journal_week(tmp_path, fills={prior: [("BTC/EUR", "sell", 0.01)], **_HEALTHY_FILLS}, lead=12)
     _write_birth(tmp_path, _OPENING)
@@ -8341,11 +8339,9 @@ def test_a_re_dated_birth_scores_the_series_from_it_and_reads_an_earlier_fill_as
 
 
 def test_the_opening_holdings_start_held_at_the_birth_and_a_residual_held_there_is_not_drift(tmp_path):
-    """The healthy build-out alone, `_journal_week(tmp_path, fills={_BUILD_OUT: _HEALTHY_FILLS[_BUILD_OUT]},
-    lead=6)`, the birth written by hand at `_OPENING` and the opening holdings beside it carrying BTC 0.00042 --
-    the residual Kraken held at the re-date, the slice the healthy fixture fills at `_OPENING`: the
-    week scores within the band. Read from zero, the book is BTC 25.2 EUR short at every cycle, 298.4
-    bps against the 120 bps band, and the kill latches -- the probe's reading."""
+    """The healthy build-out alone, `_journal_week(tmp_path, fills={_BUILD_OUT: _HEALTHY_FILLS[_BUILD_OUT]}, lead=6)`,
+    the birth written by hand at `_OPENING` and the opening holdings beside it carrying BTC 0.00042 -- the residual
+    Kraken held at the re-date, the slice the healthy fixture fills at `_OPENING`: the week scores within the band."""
     _journal_week(tmp_path, fills={_BUILD_OUT: _HEALTHY_FILLS[_BUILD_OUT]}, lead=6)
     _write_birth(tmp_path, _OPENING)
     _write_opening_holdings(tmp_path, _OPENING, BTC=0.00042)
@@ -8357,9 +8353,6 @@ def test_the_opening_holdings_start_held_at_the_birth_and_a_residual_held_there_
 
 
 def test_an_absent_opening_holdings_record_or_one_stamped_for_another_birth_refuses_the_week(tmp_path):
-    """The healthy journal with the birth written by hand at `_OPENING`: no record refuses the week
-    naming the birth, and a record stamped four hours earlier refuses naming both instants; stamped
-    at the birth, the week scores within the band."""
     _journal_week(tmp_path, fills=_HEALTHY_FILLS, lead=6)
     _write_birth(tmp_path, _OPENING)
     earlier = _OPENING - timedelta(hours=4)
@@ -11010,8 +11003,8 @@ def test_a_book_read_that_fails_three_ticks_writes_book_unread_and_the_next_boun
 
 def test_an_earn_coded_basket_coin_refuses_the_drafts_held_and_three_ticks_write_book_unread(tmp_path):
     """`SOL.F` holding 2.0 beside a spot 0.5 (`earn={"SOL": 2.0}`): the book answers, the draft refuses `held` at
-    WARNING with `2 SOL is held outside the spot wallet` three ticks running, and the third writes `book-unread` with
-    no plan entry; the probe skips the refusal and SOL/EUR is drafted against its spot 0.5."""
+    WARNING with `2 SOL is held outside the spot wallet` three ticks running, and the third writes `book-unread` with no
+    plan entry."""
     ex, client, clock = _boundary_executor(
         tmp_path,
         record_path=RUNG2 / "cycle-12.json",
@@ -11087,8 +11080,8 @@ def test_a_draft_still_waiting_past_the_window_writes_window_closed(tmp_path):
     ("ends", "starts"), [(timedelta(hours=3, minutes=29), True), (timedelta(hours=3, minutes=31), False)], ids=["3h29", "3h31"]
 )
 def test_an_intent_does_not_start_past_the_windows_close_and_is_journaled_carried(tmp_path, ends, starts):
-    """An intent whose predecessor ends at B+3h31 is carried with `the submission window closed`; at B+3h29 it starts.
-    The probe deletes the close and the B+3h31 start then happens."""
+    """An intent whose predecessor ends at B+3h31 is carried with `the submission window closed`; at B+3h29 it
+    starts."""
     ex, client, clock = _boundary_executor(
         tmp_path,
         record_path=_rung2_record(tmp_path, final_targets=_only("BTC/EUR", "ETH/EUR")),
@@ -11193,7 +11186,7 @@ def test_a_drill_plan_dropped_during_a_cycle_plan_waits_in_its_file(tmp_path):
 
 def test_a_eur_160_leg_at_nav_1000_is_drafted_into_the_boundarys_one_plan(tmp_path):
     """A synthetic record with BTC/EUR at weight 0.16: the loop drafts the leg where the helper's `assemble_plans`
-    raises at the 95 EUR cap; the helper's own tests' assertions are untouched."""
+    raises at the 95 EUR cap."""
     targets = {**_only(*_TEN_EUR_LEGS), "BTC/EUR": 0.16}
     ex, client, clock = _boundary_executor(
         tmp_path,
@@ -11275,8 +11268,8 @@ def test_the_buys_are_bounded_by_the_sleeves_free_cash_and_never_by_the_accounts
 
 
 def test_a_closed_week_holding_an_undrafted_boundary_is_refused_naming_it(tmp_path):
-    """42 `full` exec records with a `book-unread` record at one boundary: `_score_closed_week` refuses the week at
-    that boundary; with the record `ok` it scores. The probe deletes the accum read and the week scores either way."""
+    """42 `full` exec records with a `book-unread` record at one boundary: `_score_closed_week` refuses the week at that
+    boundary; with the record `ok` it scores."""
     _journal_week(tmp_path, fills=_HEALTHY_FILLS, lead=6)
     undrafted = _IN_WEEK
     write_accum_record(tmp_path / "journal", undrafted, _accum_doc(undrafted, "book-unread"))
@@ -11510,8 +11503,7 @@ def _carried_under_the_entrys_reason(record: dict, entry: dict) -> set[str]:
 
 
 def test_equity_is_marked_at_the_eur_balances_total_and_a_resting_bid_on_hold_trips_nothing(tmp_path):
-    """total 1,000, free 850, nothing lost: the mark at `total` reads no drawdown; the probe marks
-    at `free` and the 15 % floor trips on a book that lost nothing."""
+    """total 1,000, free 850, nothing lost: the mark at `total` reads no drawdown."""
     ex, client, clock = _boundary_executor(
         tmp_path,
         record_path=RUNG2 / "cycle-12.json",
@@ -11529,10 +11521,9 @@ def test_equity_is_marked_at_the_eur_balances_total_and_a_resting_bid_on_hold_tr
 
 
 def test_a_fifteen_percent_fall_from_the_high_water_mark_latches_the_kill_file_with_the_figures(tmp_path, kill_trip_expected):
-    """The series' high-water mark at EUR 1,000 and this boundary's equity at 850, 1500 bps of the NAV 1,000: the
-    mark latches the kill file with the figures, ahead of the table; the plan the draft still assembles meets the
-    in-process backstop, and the boundary's record reads `refused`, every placed leg carried under the plan entry's
-    reason. The probe trips only past the floor, and 1500 bps trips nothing."""
+    """The series' high-water mark at EUR 1,000 and this boundary's equity at 850, 1500 bps of the NAV 1,000: the mark
+    latches the kill file with the figures, ahead of the table; the plan the draft still assembles meets the in-process
+    backstop, and the boundary's record reads `refused`, every placed leg carried under the plan entry's reason."""
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
     ex, client, clock = _boundary_executor(
@@ -11559,9 +11550,8 @@ def test_a_fifteen_percent_fall_from_the_high_water_mark_latches_the_kill_file_w
 
 
 def test_the_hwm_scan_is_bounded_by_the_series_start_and_an_older_drawdown_trips_nothing(tmp_path):
-    """A record at equity 1,300 at the boundary before `equity-series-start`'s instant, the same UTC
-    day, and this boundary's at 1,000: the bounded scan reads an HWM of 1,000; the probe deletes the
-    bound and the kill latches."""
+    """A record at equity 1,300 at the boundary before `equity-series-start`'s instant, the same UTC day, and this
+    boundary's at 1,000: the bounded scan reads an HWM of 1,000."""
     ex, client, clock = _boundary_executor(
         tmp_path,
         record_path=RUNG2 / "cycle-12.json",
@@ -11579,9 +11569,8 @@ def test_the_hwm_scan_is_bounded_by_the_series_start_and_an_older_drawdown_trips
 
 
 def test_a_same_day_re_mint_puts_the_days_earlier_records_outside_the_day_loss_base(tmp_path):
-    """EUR 160 withdrawn paused at 10Z from a book of 1,000 and the file re-minted at the 12Z boundary:
-    the 12Z base is its own equity (840, a loss of 0) and the 16Z base is 12Z's; the probe bounds the
-    base by the day instead of the instant and the hold latches on the withdrawal."""
+    """EUR 160 withdrawn paused at 10Z from a book of 1,000 and the file re-minted at the 12Z boundary: the 12Z base is
+    its own equity (840, a loss of 0) and the 16Z base is 12Z's."""
     flat = _the_ten_at(0.0)
     ex, client, clock = _boundary_executor(
         tmp_path,
@@ -11609,9 +11598,8 @@ def test_a_same_day_re_mint_puts_the_days_earlier_records_outside_the_day_loss_b
 
 def test_a_three_percent_day_loss_latches_the_hold_for_the_date_and_a_recovery_does_not_lift_it(tmp_path):
     """The date's 00Z record at EUR 1,000 and the 12Z mark at 970, 300 bps of the NAV: the hold latches and the 12Z
-    record carries it; the 16Z mark back at 1,000 reads a loss of 0, and the hold stands on the 12Z record, in the
-    16Z draft record and the 16Z exec record. The probe keeps the hold as the boundary's own loss alone and the
-    recovery lifts it."""
+    record carries it; the 16Z mark back at 1,000 reads a loss of 0, and the hold stands on the 12Z record, in the 16Z
+    draft record and the 16Z exec record."""
     flat = _the_ten_at(0.0)
     ex, client, clock = _boundary_executor(
         tmp_path,
@@ -11637,9 +11625,8 @@ def test_a_three_percent_day_loss_latches_the_hold_for_the_date_and_a_recovery_d
 
 
 def test_the_hold_is_derived_after_a_restart_from_the_dates_records(tmp_path):
-    """The date's 04Z record latched the hold at 400 bps: a process started at 06Z holds opens from its first tick,
-    its verdict `reduce_only` with `daily_loss_hold`, before any boundary of its own; the probe deletes the first
-    tick's derivation and the restart reads `full`."""
+    """The date's 04Z record latched the hold at 400 bps: a process started at 06Z holds opens from its first tick, its
+    verdict `reduce_only` with `daily_loss_hold`, before any boundary of its own."""
     day = _RUNG2_12Z.replace(hour=0)
     journal = tmp_path / "journal"
     write_accum_record(journal, day, _accum_doc(day, "ok", equity_eur=1000.0, day_loss_bps=0.0))
@@ -11757,8 +11744,7 @@ def test_a_day_loss_hold_latched_at_a_boundary_that_places_nothing_reads_in_its_
 
 def test_the_series_file_is_written_once_at_the_first_mark_and_never_rewritten(tmp_path):
     """No series file before the first mark: the 12Z mark writes its own `cycle_ts`, and the 16Z mark reads it and
-    leaves it, its high-water mark reaching back to 12Z's equity; the probe writes the file at every mark and it
-    reads 16Z."""
+    leaves it, its high-water mark reaching back to 12Z's equity."""
     flat = _the_ten_at(0.0)
     ex, client, clock = _boundary_executor(
         tmp_path,
@@ -11781,9 +11767,8 @@ def test_the_series_file_is_written_once_at_the_first_mark_and_never_rewritten(t
 
 
 def test_a_150_eur_fall_from_the_high_water_mark_latches_the_kill_at_nav_1000_on_an_account_of_1443(tmp_path, kill_trip_expected):
-    """Rung 2's deposit reused: the series' high-water mark at EUR 1,443 and this boundary's equity at
-    1,293, the book sized at the record's NAV 1,000. 150 EUR is 1500 bps of the NAV and latches the
-    kill; over the account's equity it reads about 1040 bps and trips nothing, the probe's reading."""
+    """Rung 2's deposit reused: the series' high-water mark at EUR 1,443 and this boundary's equity at 1,293, the book
+    sized at the record's NAV 1,000. 150 EUR is 1500 bps of the NAV and latches the kill."""
     ex, client, clock = _boundary_executor(
         tmp_path,
         record_path=RUNG2 / "cycle-12.json",
@@ -11804,9 +11789,8 @@ def test_a_150_eur_fall_from_the_high_water_mark_latches_the_kill_at_nav_1000_on
 
 
 def test_a_30_eur_day_loss_latches_the_hold_at_nav_1000_on_an_account_of_1443(tmp_path):
-    """The date's 00Z record at EUR 1,443 and this boundary's equity at 1,413: 300 bps of the NAV
-    latches the hold, and 300 bps under the high-water mark trips no kill; over the base's equity the
-    loss reads about 208 bps and latches nothing, the probe's reading."""
+    """The date's 00Z record at EUR 1,443 and this boundary's equity at 1,413: 300 bps of the NAV latches the hold, and
+    300 bps under the high-water mark trips no kill."""
     ex, client, clock = _boundary_executor(
         tmp_path,
         record_path=RUNG2 / "cycle-12.json",
@@ -11824,10 +11808,9 @@ def test_a_30_eur_day_loss_latches_the_hold_at_nav_1000_on_an_account_of_1443(tm
 
 
 def test_equity_counts_an_earn_coded_basket_coin_at_its_close_and_a_move_into_earn_reads_no_loss(tmp_path):
-    """SOL 0.5 under `SOL.F` and none spot (`earn={"SOL": 0.5}`), the series' high-water mark the
-    equity that counts it: the draft refuses `held`, and the third tick's `book-unread` record carries
-    `equity_eur` with SOL's 0.5 x close in it and `drawdown_bps` 0.0; the probe leaves `earn` out of
-    the mark and the move into Auto Earn reads as a loss of 0.5 x close."""
+    """SOL 0.5 under `SOL.F` and none spot (`earn={"SOL": 0.5}`), the series' high-water mark the equity that counts it:
+    the draft refuses `held`, and the third tick's `book-unread` record carries `equity_eur` with SOL's 0.5 x close in
+    it and `drawdown_bps` 0.0."""
     sol = from_json((RUNG2 / "cycle-12.json").read_text()).closes["SOL"]
     equity = 1000.0 + 0.5 * sol
     ex, client, clock = _boundary_executor(
@@ -11870,8 +11853,7 @@ def test_a_cycle_record_missing_a_close_marks_no_equity_and_names_the_base(tmp_p
 
 def test_a_00z_that_marked_nothing_takes_the_previous_dates_last_mark_as_the_days_base(tmp_path):
     """The previous date's 20Z mark at EUR 1,000, the date's 00Z a sidecar's `no-cycle` record with no equity, and the
-    04Z mark at 970: the day's base is the 20Z mark, 300 bps of the NAV, and the hold latches. The probe deletes the
-    previous-date branch, the base falls to the 04Z mark itself and the loss reads 0."""
+    04Z mark at 970: the day's base is the 20Z mark, 300 bps of the NAV, and the hold latches."""
     dawn = _RUNG2_12Z + timedelta(hours=16)
     midnight = dawn - timedelta(hours=4)
     ex, client, clock = _boundary_executor(
@@ -11892,8 +11874,7 @@ def test_a_00z_that_marked_nothing_takes_the_previous_dates_last_mark_as_the_day
 
 def test_the_dates_00z_mark_is_the_days_base_ahead_of_the_previous_dates_last(tmp_path):
     """The previous date's 20Z mark at EUR 1,000, the date's 00Z mark at 960 and the 04Z mark at 940: the day's base is
-    the 00Z mark, 200 bps of the NAV, and nothing holds. The probe takes the previous date's last ahead of the 00Z
-    mark, and the loss reads 600 bps and holds."""
+    the 00Z mark, 200 bps of the NAV, and nothing holds."""
     dawn = _RUNG2_12Z + timedelta(hours=16)
     ex, client, clock = _boundary_executor(
         tmp_path,
@@ -11913,7 +11894,7 @@ def test_the_dates_00z_mark_is_the_days_base_ahead_of_the_previous_dates_last(tm
 def test_a_day_loss_hold_whose_records_will_not_read_holds_opens_and_lets_closes_run(tmp_path):
     """The date's 08Z draft record will not validate: the 12Z boundary's derivation fails at WARNING and holds -- its
     exec record `reduce_only` with `daily_loss_hold` -- and a plan of an open and a close refuses the open with the
-    reason and starts the close. The probe fails the derivation open and the boundary reads `full`."""
+    reason and starts the close."""
     boundary = _boundary(NOW)
     _start_series(tmp_path, boundary.replace(hour=0))
     broken = accum_record_path(tmp_path / "journal", boundary - timedelta(hours=4))
@@ -11940,8 +11921,7 @@ def test_a_day_loss_hold_whose_records_will_not_read_holds_opens_and_lets_closes
 def test_an_unreadable_series_start_refuses_the_draft_and_is_never_minted_over(tmp_path):
     """`equity-series-start` reading `not-a-date` under a 15 % drawdown against the series' record: the mark raises on
     each of the draft's three tries, the record reads `refused` with no figure, the file is byte-identical and nothing
-    trips. The probe reads the record as absent, mints the boundary over it -- hiding the drawdown -- and the draft
-    runs."""
+    trips."""
     ex, client, clock = _boundary_executor(
         tmp_path,
         record_path=RUNG2 / "cycle-12.json",
@@ -11966,7 +11946,7 @@ def test_a_drawdown_under_a_latched_kill_file_keeps_its_first_reason_and_trips_a
 ):
     """A kill file an earlier trip latched and a 15 % drawdown: the mark leaves the file's text as it was and logs the
     figures at WARNING; the file cleared and the series not re-minted, the next boundary's mark trips again with the
-    figures. The probe drops the latch check and the first mark rewrites the reason."""
+    figures."""
     ex, client, clock = _boundary_executor(
         tmp_path,
         record_path=RUNG2 / "cycle-12.json",
@@ -11996,8 +11976,7 @@ def test_a_drawdown_under_a_latched_kill_file_keeps_its_first_reason_and_trips_a
 def test_a_boundary_re_marked_after_a_restart_keeps_the_hold_its_replaced_record_latched(tmp_path):
     """The 12Z record an earlier process wrote latched the hold at 400 bps and named no plan; a process started at 12:30
     re-arms the boundary and re-marks it at a loss of 100 bps: the record it writes in its place carries the hold, and
-    the 16Z boundary, back at the 00Z equity, still holds the date. The probe drops the replaced record from the
-    mark's hold and the replacing record reads no hold."""
+    the 16Z boundary, back at the 00Z equity, still holds the date."""
     flat = _the_ten_at(0.0)
     ex, client, clock = _boundary_executor(
         tmp_path,
@@ -12023,7 +12002,7 @@ def test_a_boundary_re_marked_after_a_restart_keeps_the_hold_its_replaced_record
 
 def test_the_hold_reads_no_record_before_a_series_re_minted_inside_the_date(tmp_path):
     """The date's 04Z record latched the hold at 400 bps and the owner re-minted the series at 08Z: the 12Z boundary's
-    exec record reads `full`. The probe reads the date's records unbounded by the series' start and the hold stands."""
+    exec record reads `full`."""
     boundary = _boundary(NOW)
     dawn = boundary.replace(hour=4)
     latched = _accum_doc(dawn, "ok", equity_eur=960.0, day_loss_bps=400.0, day_loss_hold=True)
@@ -12038,8 +12017,7 @@ def test_the_hold_reads_no_record_before_a_series_re_minted_inside_the_date(tmp_
 def test_a_boundary_re_armed_after_a_restart_whose_draft_marks_nothing_keeps_the_hold_its_replaced_record_latched(tmp_path):
     """The 12Z record an earlier process wrote latched the hold at 400 bps and named no plan; a process started at 12:30
     re-arms the boundary and its book read fails on all three tries: the `book-unread` record written in its place keeps
-    the replaced record's mark, and the 16Z boundary, back at the 00Z equity, still holds the date. The probe writes
-    that record with no mark and the 16Z exec record reads `full`."""
+    the replaced record's mark, and the 16Z boundary, back at the 00Z equity, still holds the date."""
     flat = _the_ten_at(0.0)
     ex, client, clock = _boundary_executor(
         tmp_path,
@@ -12074,8 +12052,7 @@ def test_a_boundary_re_armed_after_a_restart_whose_draft_marks_nothing_keeps_the
 def test_a_re_armed_boundary_whose_mark_mints_the_series_reads_no_hold_from_the_record_it_replaces(tmp_path):
     """The 12Z record an earlier series wrote latched the hold at 400 bps and named no plan, and the series' start was
     removed before a process started at 12:30: the re-armed boundary's mark mints the series at 12Z, the record it writes
-    in the old one's place reads no hold, and the 16Z exec record reads `full`. The probe reads the replaced record into
-    the minting mark's hold."""
+    in the old one's place reads no hold, and the 16Z exec record reads `full`."""
     flat = _the_ten_at(0.0)
     ex, client, clock = _boundary_executor(
         tmp_path,
@@ -12099,7 +12076,7 @@ def test_a_re_armed_boundary_whose_mark_mints_the_series_reads_no_hold_from_the_
 
 def test_a_record_that_marked_no_equity_is_not_read_for_the_hold_a_failed_derivation_wrote_into_it(tmp_path):
     """The date's 08Z `no-cycle` record carries `day_loss_hold` with no equity, what a derivation that failed writes: the
-    12Z boundary's exec record reads `full`. The probe reads a record's hold whatever its equity and the date holds."""
+    12Z boundary's exec record reads `full`."""
     boundary = _boundary(NOW)
     _start_series(tmp_path, boundary.replace(hour=0))
     eight = boundary - timedelta(hours=4)
@@ -12112,8 +12089,7 @@ def test_a_record_that_marked_no_equity_is_not_read_for_the_hold_a_failed_deriva
 
 def test_a_minting_mark_whose_scan_raises_starts_no_series_and_its_retry_reads_no_hold_from_the_record_it_replaces(tmp_path):
     """The re-mint above with the date's 08Z record unreadable for one tick: the minting mark's scan raises and spends a
-    try, no series is started, and the retry, the record repaired, mints 12Z and writes no hold. The probe mints before
-    the scan, so the retry reads the replaced record, an earlier series', into a series that mark started."""
+    try, no series is started, and the retry, the record repaired, mints 12Z and writes no hold."""
     flat = _the_ten_at(0.0)
     ex, client, clock = _boundary_executor(
         tmp_path,
@@ -12140,10 +12116,6 @@ def test_a_minting_mark_whose_scan_raises_starts_no_series_and_its_retry_reads_n
 def test_a_re_armed_draft_that_mints_the_series_and_spends_its_tries_on_an_earn_coded_coin_reads_no_hold_from_the_record_it_replaces(
     tmp_path,
 ):
-    """The re-mint case's premise with a basket coin under an earn code: each of the draft's three ticks marks 990 EUR and
-    spends a try on the refusal, the first minting 12Z. The `book-unread` record reads no hold and the 16Z exec record
-    reads `full`. The probe keys the mint's bound on the minting tick alone, and the second tick reads the replaced
-    record, an earlier series', into the hold."""
     flat = _the_ten_at(0.0)
     ex, client, clock = _boundary_executor(
         tmp_path,
@@ -12167,10 +12139,6 @@ def test_a_re_armed_draft_that_mints_the_series_and_spends_its_tries_on_an_earn_
 
 
 def test_a_re_armed_draft_that_minted_the_series_and_ends_on_a_tick_that_marks_nothing_writes_its_own_mark(tmp_path):
-    """The earlier series' 12Z record at 1500 EUR, a withdrawal taken since: the draft's first tick marks 990 EUR, mints
-    12Z and spends a try on an earn-coded coin, and its last two ticks' book reads fail. The `book-unread` record keeps
-    the draft's own mark, and the 16Z mark reads no drawdown. The probe drops the kept mark: the record carries 1500 EUR
-    into the series 12Z started, and the 16Z mark trips the kill switch on the withdrawn amount."""
     flat = _the_ten_at(0.0)
     ex, client, clock = _boundary_executor(
         tmp_path,

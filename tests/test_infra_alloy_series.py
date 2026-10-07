@@ -77,10 +77,8 @@ ENGINE_APP_SERIES = [
     "zcrypto_engine_sleeve_gross",
     "zcrypto_engine_active_sleeves",
     # The execution safety envelope's published state (cli/engine/command.py's `_ExecGauges`).
-    # Four are alert-bearing (zcrypto-engine-exec-armed-too-long, -exec-kill-tripped,
-    # -exec-not-evaluated, -exec-venue-diverged); dropping any of the seven from the keep-regex leaves
-    # its dashboard panel permanently NoData, the armed, kill-tripped and venue-diverged rules quiet
-    # forever (`noDataState: OK`) and the not-evaluated rule firing forever (`noDataState: Alerting`).
+    # Dropping one from the keep-regex leaves its dashboard panel permanently NoData and any rule
+    # over it quiet or firing forever, as its `noDataState` reads.
     "zcrypto_exec_gate_level",
     "zcrypto_exec_armed",
     "zcrypto_exec_kill_tripped",

@@ -322,11 +322,7 @@ def test_the_inflight_defaults_we_now_state_explicitly_are_unchanged():
 
 
 def test_the_polling_defaults_we_state_explicitly_are_unchanged():
-    """`cli/engine/node.py` states both venue polls as `None`, off, but the library reads an explicit
-    `None` as its own default, so that statement holds nothing against a bump that flips either: the
-    flipped default polls the venue in production. This pin is the red that re-measuring
-    `EXEC_ENGINE_DEFAULTS` does not answer -- the flip re-opens the polls' decision on the reasons
-    `_exec_engine_config` gives, and stating `None` will not keep them off."""
+    """A flip re-opens the polls' decision: the node's `None` reads as the library's default, so re-pinning here turns them on."""
     from nautilus_trader.config import LiveExecutionEngineConfig
 
     config = LiveExecutionEngineConfig()

@@ -512,9 +512,6 @@ def _write_week(journal_dir, *, start, n=42):
 
 
 def test_exec_records_through_returns_the_whole_week_and_ignores_its_neighbours(tmp_path):
-    """`exec_records_through` is deliberately unbounded below, unlike `_exec_records_in_window`'s two
-    UTC days: `held` is cumulative from the tracking series' birth, which can lie anywhere before the
-    week, so a windowed read understates it and reads as drift the book never had."""
     _write_week(tmp_path, start=_MONDAY - timedelta(days=7))  # the week before
     _write_week(tmp_path, start=_MONDAY)  # the week under test
     _write_week(tmp_path, start=_MONDAY + timedelta(days=7))  # the week after
