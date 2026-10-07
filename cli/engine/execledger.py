@@ -228,20 +228,17 @@ def credited_qty(event: dict) -> float:
 
 
 def _day_dirs(journal_dir: Path, now: datetime, since: datetime | None = None) -> list[Path]:
-    """`now` and `since` must be UTC: their dates name the day dirs, newest first -- today's and the day before's, or,
-    with `since`, every day from the one before the earlier of the two through today."""
+    """`now` and `since` must be UTC: their dates name the day dirs."""
     today = now.date()
     first = (today if since is None else min(since, now).date()) - timedelta(days=1)
     return [Path(journal_dir) / (today - timedelta(days=k)).isoformat() for k in range((today - first).days + 1)]
 
 
 def _exec_records_in_window(journal_dir: Path, now: datetime, since: datetime | None = None) -> list[dict]:
-    """Every `exec-*.json` under the current and previous UTC day dirs -- two days being the horizon over which a
-    duplicate submission is possible, so this is both the dedup and the re-attach window -- or, with `since`, under
-    every day dir from the one before `since`'s through today's: the watchdog's freeze passes its cut, so the rows the
-    cut may have left resting at Kraken stay in its stranded-row hold and its re-read pass however many day rolls the
-    freeze stands through. Each record is validate_exec_record-checked: a corrupt or unreadable record's raise
-    propagates, refusing the whole scan rather than silently skipping it."""
+    """Every `exec-*.json` under `_day_dirs` -- without `since`, the current and previous UTC day dirs, two days
+    being the horizon over which a duplicate submission is possible, so this is both the dedup and the re-attach
+    window; with it, back to the day before `since`'s, the watchdog's cut. Each record is validate_exec_record-checked:
+    a corrupt or unreadable record's raise propagates, refusing the whole scan rather than silently skipping it."""
     docs = []
     for day_dir in _day_dirs(journal_dir, now, since):
         if not day_dir.is_dir():

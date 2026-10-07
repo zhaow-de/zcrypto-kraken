@@ -16,9 +16,8 @@ established -- that is `ambiguous`, and saying "refused" there would be a claim 
 make. An ambiguous intent's ROW says `ambiguous` too, which is one of
 `execledger._OPEN_ORDER_STATES`: the record has to keep pointing at a possibly-live order.
 
-Every ledger scanner call site is handed an aware-UTC `now` (`_aware_utc`), and the watchdog's
-freeze an aware-UTC cut (`_frozen_at`): `execledger._day_dirs` takes its window from `now.date()`,
-and from the cut's date while a freeze stands, so a caller-tz `now` would slide the dedup window off
+Every ledger scanner call site is handed an aware-UTC `now` (`_aware_utc`): `execledger._day_dirs`
+takes its window from `now.date()`, so a caller-tz `now` would slide the dedup window off
 the day the records are actually filed under.
 """
 
@@ -1619,9 +1618,8 @@ class ProbeExecutor:
         the return that emptied the set, so the loop resumes on the venue's own account of the cut; a
         disarmed engine whose pass waits owed lifts with no pass, as it refuses every intent until it is
         armed again, unless the ledger holds a row open or `ambiguous` (`_stranded_rows`), an order the cut
-        may have left resting at Kraken, read back to the cut, so no day roll lifts it. Returns at once
-        unless frozen: once the condition holds it keeps holding on every quiet tick after, so without the
-        guard the lift would log on each."""
+        may have left resting at Kraken. Returns at once unless frozen: once the condition holds it keeps
+        holding on every quiet tick after, so without the guard the lift would log on each."""
         if not self._frozen:
             return
         emptied, completed = self._sockets_emptied_at, self._reread_completed_at
@@ -1903,9 +1901,8 @@ class ProbeExecutor:
 
     def _reread_pass(self, now: datetime) -> None:
         """The startup sweep at one more moment -- after the sockets come back, or after a terminal this
-        engine minted with no socket held down -- over every open row of the window, reaching back to the
-        day before the cut's while the watchdog's freeze stands (`_frozen_at`), whose Cache order was
-        closed by a terminal this engine minted: the cancel the venue never acknowledged, on the
+        engine minted with no socket held down -- over every open row of the window whose Cache order
+        was closed by a terminal this engine minted: the cancel the venue never acknowledged, on the
         plan's own order (drill F2's shape: the REST cancel fails in the cut and the engine mints
         `OrderCanceled` while the order rests at Kraken) or on one the startup pass adopted (drills G's
         and A1's: the venue cancels at the second asked and answers nothing this engine applies, the
