@@ -1162,7 +1162,8 @@ class ProbeExecutor:
         # The socket endpoints the client has reported down and not yet back, each with the moment its
         # first `DISCONNECTED` arrived, which the watchdog's grace reads (`_watch_sockets`); the re-read
         # pass's tries left and the endpoint whose return set them (`on_socket_state`, `_reread_pass`); and
-        # whether a return while the engine was disarmed left the pass owed to the first tick that reads it armed.
+        # whether the pass waits owed to the first tick that reads the engine armed, each tick's pass running
+        # only while the gate reads armed (`on_timer`).
         self._sockets_down: dict[str, datetime] = {}
         self._reread_tries = 0
         self._reread_armed_by: str | None = None
@@ -1435,8 +1436,7 @@ class ProbeExecutor:
             if not self._adopted:
                 self._adopt_resting_orders(now)
             self._watch_sockets(now)
-            # The pass signs its reads, so it runs only while the gate reads armed: disarmed, a pass already
-            # armed waits owed with the tries it has left, and the first armed tick resumes it.
+            # The pass signs its reads, so it runs only on a tick whose gate reads armed.
             if not self._gate_armed:
                 self._reread_owed = self._reread_owed or self._reread_tries > 0
             elif self._reread_owed:
@@ -1599,7 +1599,7 @@ class ProbeExecutor:
                 "the execution watchdog froze the loop -- socket %s down past the %ds grace: a cancel is sent for the "
                 "active intent's order and each order the Cache holds open, a resting intent revoked with socket_down, "
                 "and every new intent is refused until the sockets are back and the re-read pass has settled, or on a "
-                "disarmed engine until the sockets are back, the pass then owed to its first armed tick",
+                "disarmed engine whose ledger holds no open or ambiguous row until the sockets are back",
                 ", ".join(stale),
                 int(_SOCKET_DOWN_GRACE.total_seconds()),
             )
