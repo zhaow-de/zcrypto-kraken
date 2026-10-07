@@ -1,5 +1,5 @@
-"""The hc role's share of the fleet-wide `alloy` tag: a converge that lands the dead-man node's Alloy through the shared
-apt role, and nothing of the clone's container, Caddy, the backup timer, the self-check or the reboot check."""
+"""The hc role's share of the fleet-wide `alloy` tag: the dead-man node's Alloy through the shared apt role, and nothing
+else of the role."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ STARTED = "alloy enabled + started"
 
 ALLOY_PART = [*ALLOY_APT_MAIN, ENV, CONFIG, STARTED, *ALLOY_APT_POSTCONDITION]
 
-# Never `\b`, which joins `_` to a word and so misses `hc_compose_dir`; the shared role's names are blanked before the read.
+# Never `\b`, which joins `_` to a word and so misses `hc_compose_dir`.
 REFUSED_NAMES = re.compile(
     r"(?<![A-Za-z0-9])(zcrypto-hc|hc_image|compose|docker|caddy|edge|backup|sqlite|selfcheck|reboot|admin)(?![A-Za-z0-9])",
     re.IGNORECASE,
