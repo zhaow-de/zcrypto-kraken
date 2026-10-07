@@ -1162,8 +1162,7 @@ class ProbeExecutor:
         # The socket endpoints the client has reported down and not yet back, each with the moment its
         # first `DISCONNECTED` arrived, which the watchdog's grace reads (`_watch_sockets`); the re-read
         # pass's tries left and the endpoint whose return set them (`on_socket_state`, `_reread_pass`); and
-        # whether the pass waits owed to the first tick that reads the engine armed, each tick's pass running
-        # only while the gate reads armed (`on_timer`).
+        # whether the pass waits owed to the first tick that reads the engine armed (`on_timer`).
         self._sockets_down: dict[str, datetime] = {}
         self._reread_tries = 0
         self._reread_armed_by: str | None = None
@@ -1189,8 +1188,7 @@ class ProbeExecutor:
         # watchdog's `_frozen` stands (`_watch_sockets`), `daily_loss_hold` while `_day_loss_hold` does,
         # re-derived from the date's draft records at each boundary, each equity mark and the first tick.
         self._frozen = False
-        # The rows the CRITICAL of a disarmed engine's freeze that stands last named (`_lift_freeze`), so
-        # each set is logged once and not on every tick.
+        # The rows the standing freeze's CRITICAL last named (`_lift_freeze`), so each set logs once.
         self._stranded_named: str | None = None
         self._day_loss_hold = False
         self._day_loss_hold_derived = False
@@ -1516,9 +1514,9 @@ class ProbeExecutor:
         the tick does on the main thread with no loop running (`read_venue_orders`). A `CONNECTED` for
         no endpoint held down, the connect itself, owes nothing; a `DISCONNECTED` holds off a pass a
         mint armed (`_arm_reread_after_mint`), so a mint inside a cut reads at most once, on a tick inside the
-        mint-to-`DISCONNECTED` gap, and the return arms it again; a pass a return armed that has not run
-        yet, its tries or the owe a tick whose gate reads disarmed leaves of them (`_reread_owed`), it
-        clears only when the endpoint whose return set it (`_reread_armed_by`) drops again -- a
+        mint-to-`DISCONNECTED` gap, and the return arms it again; a pass a return armed or owed
+        (`_reread_owed`) that has not run yet it clears only when the endpoint whose return set it
+        (`_reread_armed_by`) drops again -- a
         cut drops both endpoints, so an arm left pending behind a live intent goes with the cut; where
         the other endpoint's drop leads and the mint has ended the intent, the arm stands until the
         first read that fails with an endpoint held down closes it (`_reread_pass`) -- and never on
@@ -1616,8 +1614,7 @@ class ProbeExecutor:
         the return that emptied the set, so the loop resumes on the venue's own account of the cut; a
         disarmed engine whose pass waits owed lifts with no pass, as it refuses every intent until it is
         armed again, unless the ledger holds a row open or `ambiguous` (`_stranded_rows`), an order the cut
-        may have left resting at Kraken that only that pass re-cancels: the freeze then stands, and pages,
-        its CRITICAL naming the rows. Returns at once unless frozen: once the condition holds it keeps
+        may have left resting at Kraken. Returns at once unless frozen: once the condition holds it keeps
         holding on every quiet tick after, so without the guard the lift would log on each."""
         if not self._frozen:
             return
@@ -1633,8 +1630,7 @@ class ProbeExecutor:
                     logger.critical(
                         "the execution watchdog's freeze stands -- the sockets are back and the engine is disarmed, but "
                         "the cut may have left an order resting at Kraken unread, the ledger's open or ambiguous rows: "
-                        "%s; the first armed tick's re-read pass re-cancels and settles them, and while the engine stays "
-                        "disarmed, cancel each by hand on Kraken's open-orders page",
+                        "%s; while the engine stays disarmed, cancel each by hand on Kraken's open-orders page",
                         stranded,
                     )
                 return
@@ -1651,11 +1647,10 @@ class ProbeExecutor:
         )
 
     def _stranded_rows(self) -> str:
-        """The rows a disarmed engine's lift waits on, named as the re-read pass's lines name them: every row
-        the ledger's own predicate reads open (`open_submitted_rows`, `ambiguous` among its states), less the
-        rows this process marked unmatched, which the pass leaves out too. Wider than the pass's population,
-        which keeps to the rows a mint closed: an order whose cancel the cut swallowed rests at Kraken before
-        its mint lands as after. A ledger that cannot be read holds the freeze."""
+        """The rows a disarmed engine's lift waits on: the open rows less those this process marked unmatched,
+        which the pass leaves out too. Wider than the pass's population, the rows a mint closed: an order whose
+        cancel the cut swallowed rests at Kraken before its mint lands as after. A ledger that cannot be read
+        holds the freeze."""
         try:
             rows = open_submitted_rows(self._journal_dir, self._now())
         except Exception:
