@@ -26,6 +26,7 @@ EDGE = ANSIBLE / "roles/edge"
 EDGE_INCLUDE = "the edge in front of Grafana on loopback and the two ingest paths"
 NODE_COMMON = ANSIBLE / "roles/node_common"
 PREFLIGHT_NAME = "refuse a missing or misshapen secret, naming the key and never the value"
+PING_PREFLIGHT_NAME = "the self-check's ping URL, refused by shape"
 DEFAULTS = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
 PUSH = REPO / "infra/scripts/grafana-push.sh"
 # Shaped like what the generator writes; none is a credential.
@@ -35,7 +36,7 @@ SECRETS = {
     "mon_grafana_secret_key": "B" * 48,
     "mon_ingest_fleet_password_hash": "$2b$10$" + "f" * 53,
     "mon_ingest_logship_password_hash": "$2b$10$" + "l" * 53,
-    "selfcheck_healthcheck_url": "https://hc-ping.com/" + "0" * 8 + "-0000-4000-8000-" + "0" * 12,
+    "mon_selfcheck_healthcheck_url": "https://zcrypto-hc.zhaow.me/ping/" + "k" * 22 + "/zcrypto-mon",
 }
 
 
@@ -439,13 +440,9 @@ def test_what_needs_a_repository_or_a_unit_skips_the_preview_that_has_neither():
             {"mon_ingest_logship_password_hash": SECRETS["mon_ingest_logship_password_hash"] + "\n"},
             "mon_ingest_logship_password_hash",
         ),
-        ({"selfcheck_healthcheck_url": None}, "selfcheck_healthcheck_url"),
-        ({"selfcheck_healthcheck_url": "https://hc-ping.invalid/abc"}, "selfcheck_healthcheck_url"),
-        ({"selfcheck_healthcheck_url": "https://hc-ping.com/"}, "selfcheck_healthcheck_url"),
-        ({"selfcheck_healthcheck_url": SECRETS["selfcheck_healthcheck_url"] + "\n"}, "selfcheck_healthcheck_url"),
     ],
     ids=[
-        "all six",
+        "all five",
         "a name a stranger tries",
         "a long name a stranger tries",
         "one missing",
@@ -453,15 +450,15 @@ def test_what_needs_a_repository_or_a_unit_skips_the_preview_that_has_neither():
         "not letters and digits",
         "a password where a hash belongs",
         "a trailing newline",
-        "the ping URL missing",
-        "a ping URL off healthchecks.io",
-        "a ping URL naming no check",
-        "a ping URL with a trailing newline",
     ],
 )
 def test_a_missing_or_misshapen_secret_is_refused_by_its_key(override, refused):
     include = load_tasks(TASKS)[0]
     assert include["name"] == PREFLIGHT_NAME
+    _assert_preflight(include, override, refused)
+
+
+def _assert_preflight(include: dict, override: dict, refused: str | None) -> None:
     assert include["ansible.builtin.include_role"] == {"name": "node_common", "tasks_from": "secrets-preflight"}
     assert set(include["vars"]) == {
         "node_common_secrets_preflight",
@@ -471,6 +468,40 @@ def test_a_missing_or_misshapen_secret_is_refused_by_its_key(override, refused):
     (task,) = load_tasks(NODE_COMMON / "tasks/secrets-preflight.yml")
     assert task["name"] == PREFLIGHT_NAME
     role_render.assert_preflight(task, SECRETS, override, refused, include["vars"])
+
+
+PING_URL = SECRETS["mon_selfcheck_healthcheck_url"]
+
+
+@pytest.mark.parametrize(
+    ("override", "refused"),
+    [
+        ({}, None),
+        ({"mon_selfcheck_healthcheck_url": None}, "mon_selfcheck_healthcheck_url"),
+        (
+            {"mon_selfcheck_healthcheck_url": PING_URL.replace("zcrypto-hc.zhaow.me", "zcrypto-hc.zhaow.me.example.invalid")},
+            "mon_selfcheck_healthcheck_url",
+        ),
+        ({"mon_selfcheck_healthcheck_url": PING_URL.removesuffix("/zcrypto-mon")}, "mon_selfcheck_healthcheck_url"),
+        ({"mon_selfcheck_healthcheck_url": PING_URL + "\n"}, "mon_selfcheck_healthcheck_url"),
+        (
+            {"mon_selfcheck_healthcheck_url": "https://hc-ping.com/" + "0" * 8 + "-0000-4000-8000-" + "0" * 12},
+            "mon_selfcheck_healthcheck_url",
+        ),
+    ],
+    ids=[
+        "the ping URL on the clone",
+        "the ping URL missing",
+        "a ping URL off the clone",
+        "a ping URL naming no check",
+        "a ping URL with a trailing newline",
+        "a healthchecks.io ping URL",
+    ],
+)
+def test_the_self_checks_ping_url_is_refused_off_the_clones_shape(override, refused):
+    tasks = load_tasks(TASKS)
+    assert [task["name"] for task in tasks[:2]] == [PREFLIGHT_NAME, PING_PREFLIGHT_NAME], "a no_log task would run first"
+    _assert_preflight(tasks[1], override, refused)
 
 
 def test_the_play_runs_the_role_under_its_own_tag_with_no_container_runtime():

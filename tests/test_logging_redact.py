@@ -38,3 +38,11 @@ def test_an_unparseable_url_still_yields_a_line_without_it():
     line = ping_failure(f"https://[bad/{UUID}/fail", OSError("x"))
     assert UUID not in line
     assert line == "healthcheck ping failed target=?/fail error=x"
+
+
+@pytest.mark.parametrize("suffix", ["", "/fail"], ids=["success", "fail"])
+def test_a_clone_ping_url_logs_its_host_and_never_the_project_key_or_the_slug(suffix):
+    key = "aB3_-" * 4 + "x9"
+    line = ping_failure(f"https://zcrypto-hc.zhaow.me/ping/{key}/zcrypto-capture{suffix}", OSError("timed out"))
+    assert line == f"healthcheck ping failed target=zcrypto-hc.zhaow.me{suffix} error=timed out"
+    assert key not in line and "zcrypto-capture" not in line and "/ping" not in line

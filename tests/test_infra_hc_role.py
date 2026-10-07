@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 import yaml
+from ansible.parsing.dataloader import DataLoader
+from ansible.template import Templar, trust_as_template
 
 from tests import role_render
 from tests.alloy_part import ALLOY_APT_VERBATIM, module_entry
@@ -19,6 +21,7 @@ from tests.test_infra_alloy_stages import _alloy_string, _hc_match, _stage_block
 from tests.test_infra_converge_guards import (
     assert_that,
     find_task,
+    iter_tasks,
     load_tasks,
     task_index,
     truthy,
@@ -42,13 +45,13 @@ SECRETS = {
     "hc_email_host_user": "AKIA" + "Q" * 16,
     "hc_email_host_password": "S" * 44,
 }
+PING_URL = "https://zcrypto-hc.zhaow.me/ping/" + "k" * 22 + "/zcrypto-hc"
 PLAIN = {
     "hc_email_host": "email-smtp.eu-central-1.amazonaws.com",
     "hc_email_from": "z-no-reply@example.test",
     "hc_admin_email": "owner@example.test",
-    "hc_selfcheck_healthcheck_url": "",
+    "hc_selfcheck_healthcheck_url": PING_URL,
 }
-PING_URL = "https://zcrypto-hc.zhaow.me/ping/" + "k" * 22 + "/zcrypto-hc"
 VAULT_PREFLIGHT = "refuse a missing or misshapen secret, naming the key and never the value"
 PLAIN_PREFLIGHT = "the plain values the env file and the self-check read, refused by shape"
 # The names the clone's docker/.env.example and hc/settings.py read at v6.1.0 that this node sets.
@@ -97,7 +100,7 @@ INCLUDES = yaml.safe_load(
       - {key: hc_email_host, shape: 'email-smtp\.[a-z0-9-]+\.amazonaws\.com\Z'}
       - {key: hc_email_from, shape: '[^@\s]+@[^@\s]+\Z'}
       - {key: hc_admin_email, shape: '[^@\s]+@[^@\s]+\Z'}
-      - {key: hc_selfcheck_healthcheck_url, shape: '(https://zcrypto-hc\.zhaow\.me/ping/[A-Za-z0-9_-]{16,}/[a-z0-9-]+)?\Z'}
+      - {key: hc_selfcheck_healthcheck_url, shape: 'https://zcrypto-hc\.zhaow\.me/ping/[A-Za-z0-9_-]{16,}/[a-z0-9-]+\Z'}
 - name: the edge in front of the service on loopback
   ansible.builtin.include_role: {name: edge}
   vars:
@@ -236,7 +239,7 @@ def test_a_missing_or_misshapen_vaulted_value_is_refused_by_its_key(override, re
     ("override", "refused"),
     [
         ({}, None),
-        ({"hc_selfcheck_healthcheck_url": PING_URL}, None),
+        ({"hc_selfcheck_healthcheck_url": ""}, "hc_selfcheck_healthcheck_url"),
         ({"hc_email_host": ""}, "hc_email_host"),
         ({"hc_email_host": None}, "hc_email_host"),
         ({"hc_email_host": "smtp.example.test"}, "hc_email_host"),
@@ -255,8 +258,8 @@ def test_a_missing_or_misshapen_vaulted_value_is_refused_by_its_key(override, re
         ({"hc_selfcheck_healthcheck_url": PING_URL + "\n"}, "hc_selfcheck_healthcheck_url"),
     ],
     ids=[
-        "all four, the ping URL empty",
-        "the ping URL set",
+        "all four",
+        "the ping URL empty",
         "the SES endpoint not yet written",
         "the SES endpoint missing",
         "an SMTP host off SES",
@@ -741,3 +744,152 @@ def test_the_reboot_check_writes_into_the_directory_the_nodes_alloy_reads():
     assert "textfile" in json.loads(_assigned(unix, "set_collectors"))
     assert dict(unix)["textfile"] == [(f'directory = "{written}"', [])]
     assert written == DEFAULTS["hc_textfile_dir"]
+
+
+# --- the fleet's ping URLs: one vaulted project key, one base, each check's slug ----------------------------------
+OBSERVED_VARS = ANSIBLE / "group_vars/observed/vars.yml"
+FIXTURE = REPO / "tests/fixtures/healthchecks_descriptions.json"
+# Shaped like the minted key; not a credential.
+DUMMY_PING_KEY = "aB3_-" * 4 + "x9"
+OPS_CHECKS = ("liquidations", "verify_replay", "verified_replay", "archive_pull", "panel", "grafana_watchdog")
+SLUGS = {
+    ("group_vars/capture_host/vars.yml", "capture_healthcheck_url"): "zcrypto-capture",
+    ("host_vars/zcrypto-red/vars.yml", "capture_healthcheck_url"): "zcrypto-capture-red",
+    ("group_vars/engine_host/vars.yml", "engine_healthcheck_url"): "zcrypto-engine-shadow",
+    ("host_vars/nas/vars.yml", "nas_gate_healthcheck_url"): "zcrypto-gate-verify",
+    ("host_vars/zcrypto-mon/vars.yml", "mon_selfcheck_healthcheck_url"): "zcrypto-mon",
+    ("host_vars/zcrypto-hc/vars.yml", "hc_selfcheck_healthcheck_url"): "zcrypto-hc",
+    **{("host_vars/zcrypto-ops/vars.yml", f"ops_{x}_healthcheck_url"): "zcrypto-" + x.replace("_", "-") for x in OPS_CHECKS},
+}
+# A row a rollback in the sitting points back at its healthchecks.io value: (file, variable) -> the name its vars line
+# reads, e.g. "hcio_capture_healthcheck_url". The row's slug stays in the set.
+ROLLED_BACK: dict[tuple[str, str], str] = {}
+
+
+def _var_files(name: str) -> list[Path]:
+    return sorted([*ANSIBLE.glob(f"group_vars/*/{name}"), *ANSIBLE.glob(f"host_vars/*/{name}")])
+
+
+def _ping_url_vars() -> dict[tuple[str, str], str]:
+    found = {}
+    for path in _var_files("vars.yml"):
+        for key, value in (yaml.safe_load(path.read_text()) or {}).items():
+            if key.endswith("_healthcheck_url"):
+                found[(str(path.relative_to(ANSIBLE)), key)] = value
+    return found
+
+
+def _vault_keys(path: Path) -> set[str]:
+    # Key lines alone: a value line is indented ciphertext and is never read into a message.
+    return set(re.findall(r"^([A-Za-z_][A-Za-z0-9_]*):", path.read_text(), re.M))
+
+
+def _clone_shape() -> str:
+    (entry,) = [
+        e for e in _include(PLAIN_PREFLIGHT)["vars"]["node_common_secrets_preflight"] if e["key"] == "hc_selfcheck_healthcheck_url"
+    ]
+    return entry["shape"]
+
+
+def test_the_ping_url_variables_are_the_twelve_rows_and_their_slugs_the_fixtures_names_with_zcrypto_hc():
+    assert set(_ping_url_vars()) == set(SLUGS)
+    names = {check["name"] for check in json.loads(FIXTURE.read_text())}
+    assert set(SLUGS.values()) == names | {"zcrypto-hc"}
+    assert len(set(SLUGS.values())) == len(SLUGS) == 12
+
+
+@pytest.mark.parametrize("row", sorted(SLUGS), ids=lambda row: f"{row[0]}:{row[1]}")
+def test_each_ping_url_renders_from_the_project_key_to_its_own_checks_slug(row):
+    value = _ping_url_vars()[row]
+    if row in ROLLED_BACK:
+        assert value == "{{ " + ROLLED_BACK[row] + " }}"
+        return
+    observed = role_render.trusted(yaml.safe_load(OBSERVED_VARS.read_text()))
+    rendered = Templar(loader=DataLoader(), variables={**observed, "hc_ping_key": DUMMY_PING_KEY}).template(
+        trust_as_template(value)
+    )
+    assert re.match(_clone_shape(), rendered), f"{row}: off the clone's shape"
+    assert rendered.rsplit("/", 1)[1] == SLUGS[row]
+    assert rendered.startswith(f"https://{DEFAULTS['hc_hostname']}/ping/{DUMMY_PING_KEY}/")
+
+
+def test_no_ping_url_name_is_a_key_of_both_a_vars_file_and_a_vault_file():
+    # A directory's vault.yml loads after its vars.yml and wins, so a shared name would render the vaulted value.
+    vaulted = set().union(*(_vault_keys(path) for path in _var_files("vault.yml")))
+    shadowed = sorted({key for _, key in _ping_url_vars()} & vaulted)
+    assert shadowed == [], f"vaulted under the name a vars file renders: {shadowed}"
+
+
+def test_the_pingers_hostname_is_the_roles_own():
+    assert yaml.safe_load(OBSERVED_VARS.read_text())["hc_hostname"] == DEFAULTS["hc_hostname"]
+
+
+PING_NAMES = re.compile(r"\b\w+_healthcheck_url\b|\bnode_common_selfcheck_env_value\b|\bhc_ping_base\b|\bhc_ping_key\b")
+PING_RENDERS = {
+    ("capture", "render the capture compose file"),
+    ("engine", "render the engine secrets env file (0600 root-only; never logged, never diffed)"),
+    ("nas", "render the stack .env (image pins, pull sources, the vaulted gate dead-man URL)"),
+    ("ops", "render the ops compose file (liquidations poller)"),
+    ("ops", "install the archive-pull runner script"),
+    ("ops", "install the replay + panel + tape-bars runner scripts"),
+    ("ops", "install the grafana-watchdog runner script"),
+    ("node_common", "render the self-check's ping URL, read by systemd alone"),
+}
+PAIR_LIST_PROBES = {
+    ("capture", "probe — this host's own deployed pair list (does this converge ADD a pair?)"),
+    ("capture", "probe — the primary's deployed pair list (pair-add order; fail-CLOSED on unreachable, a new pair is the hazard)"),
+}
+
+
+def _role_tasks() -> list[tuple[Path, dict, dict]]:
+    out = []
+    for path in sorted((ANSIBLE / "roles").glob("*/tasks/*.yml")):
+        role_dir = path.parents[1]
+        variables = role_render.variables(role_dir, {}) if (role_dir / "defaults/main.yml").exists() else {}
+        out.extend((role_dir, task, variables) for task, _ in iter_tasks(load_tasks(path) or []))
+    return out
+
+
+def _templated(value, variables: dict):
+    try:
+        return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(value))
+    except Exception:
+        return value
+
+
+def _expanded(task: dict, field: str, module: dict, variables: dict) -> set[str]:
+    loop = task.get("loop", [None])
+    items = _templated(loop, variables) if isinstance(loop, str) else loop
+    return {_templated(module[field], variables | {"item": item}) for item in items}
+
+
+def _ping_renders() -> list[tuple[str, dict, set[str]]]:
+    found = []
+    for role_dir, task, variables in _role_tasks():
+        module = task.get("ansible.builtin.template")
+        if module is None:
+            continue
+        sources = _expanded(task, "src", module, variables)
+        if any(PING_NAMES.search((role_dir / "templates" / src).read_text()) for src in sources):
+            found.append((role_dir.name, task, _expanded(task, "dest", module, variables)))
+    return found
+
+
+def test_every_render_that_carries_a_ping_url_is_never_logged_never_diffed_and_read_by_its_owner_alone():
+    renders = _ping_renders()
+    assert {(role, task["name"]) for role, task, _ in renders} == PING_RENDERS
+    for role, task, _ in renders:
+        mode = int(task["ansible.builtin.template"]["mode"], 8)
+        assert (task.get("no_log"), task.get("diff"), mode & 0o077) == (True, False, 0), (role, task["name"])
+
+
+def test_every_slurp_of_a_rendered_ping_url_is_never_logged():
+    dests = set().union(*(dest for _, _, dest in _ping_renders()))
+    slurps = [
+        (role_dir.name, task)
+        for role_dir, task, variables in _role_tasks()
+        if "ansible.builtin.slurp" in task and _templated(task["ansible.builtin.slurp"]["src"], variables) in dests
+    ]
+    assert {(role, task["name"]) for role, task in slurps} == PAIR_LIST_PROBES
+    for role, task in slurps:
+        assert task.get("no_log") is True, (role, task["name"])

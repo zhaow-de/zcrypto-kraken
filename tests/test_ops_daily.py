@@ -853,6 +853,7 @@ def test_the_cli_names_both_subcommands_when_misused(capsys):
         "curl -X DELETE https://healthchecks.io/api/v3/checks/abc",
         "curl -X POST https://example.invalid/api/annotations -d '{}'",
         "curl https://hc-ping.com/some-uuid",
+        "curl -fsS https://zcrypto-hc.zhaow.me/ping/aB3_-aB3_-aB3_-aB3_-x9/zcrypto-capture",
         "docker inspect --format '{{json .Config}}' zcrypto-engine",
         "docker inspect --format '{{.Config.Env}}' zcrypto-engine",
         "docker inspect zcrypto-engine",
