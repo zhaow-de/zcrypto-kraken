@@ -287,7 +287,7 @@ ssh mon 'dpkg-query -W alloy; apt-mark showhold; apt-cache policy alloy | sed -n
 - **The bridgehead's package, the owner's read of 2026-10-06.** `dpkg-query -W alloy` prints `1.20.0-1`; `apt-mark showhold` prints nothing, so no hold; installed `1.20.0-1`, candidate `1.20.1-1`, an upgrade available and not taken; the package's postinst restarts Alloy on an upgrade only when `RESTART_ON_UPGRADE` is `true` (its lines 44 to 46), and `/etc/default/alloy`, which the access role renders, carries no `RESTART_ON_UPGRADE` line (count 0), so on the bridgehead a version change does not restart Alloy by itself. The count alone is read, since that file holds the ingest credentials.
 
 ```
-ssh -p 10022 zcrypto-deploy@zaccess.zhaow.me 'dpkg-query -W alloy; apt-mark showhold; apt-cache policy alloy | sed -n 1,3p; grep -n -A2 RESTART_ON_UPGRADE /var/lib/dpkg/info/alloy.postinst; sudo grep -c "^RESTART_ON_UPGRADE" /etc/default/alloy'
+ssh access 'dpkg-query -W alloy; apt-mark showhold; apt-cache policy alloy | sed -n 1,3p; grep -n -A2 RESTART_ON_UPGRADE /var/lib/dpkg/info/alloy.postinst; sudo grep -c "^RESTART_ON_UPGRADE" /etc/default/alloy'
 ```
 
 - **Compose on the container hosts, read 2026-10-05.** `5.5.1` on `hp`, `red`, `zcrypto`, `db1`, `db2` and `db3`; `2.20.1-6047-g6817716` on the NAS. Whether either recreates a service on a changed `env_file` alone is not read; D6's `--force-recreate` on a changed secrets file makes the answer irrelevant.
