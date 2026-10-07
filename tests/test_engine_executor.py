@@ -6032,6 +6032,8 @@ def test_a_pass_completed_before_the_cut_lifts_nothing_until_both_endpoints_are_
     clock = _Clock()
     ex = _executor(tmp_path, clock=clock, venue_holdings=holdings)
     ex.on_timer(clock.now)  # the startup pass
+    clock.now += executor_module._GATE_REFRESH
+    ex.on_timer(clock.now)  # the idle refresh reads the gate armed, which a return's arm reads
     _reconnect(ex)  # a blip before the cut: its return arms the pass
     clock.now += timedelta(seconds=5)
     ex.on_timer(clock.now)  # the pass completes, so both moments the lift reads are set before the cut
@@ -6056,6 +6058,29 @@ def test_a_pass_completed_before_the_cut_lifts_nothing_until_both_endpoints_are_
     clock.now += timedelta(seconds=5)
     ex.on_timer(clock.now)  # the pass after the last return completes
     assert not ex._frozen
+
+
+def test_a_freeze_held_while_disarmed_stands_across_the_return_and_lifts_on_the_first_armed_ticks_pass(tmp_path):
+    venue, holdings = _VenueOrders(_report(_TXID, OrderStatus.CANCELED)), _VenueHoldings({})
+    ex, client, clock = _frozen_executor(tmp_path, venue_orders=venue, venue_holdings=holdings)
+    arm = exec_dir(tmp_path) / ARM_FILE
+    arm.unlink()
+    clock.now += executor_module._GATE_REFRESH
+    ex.on_timer(clock.now)  # the idle refresh reads the gate disarmed
+    reads = (len(venue.calls), holdings.calls)
+    ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-data-streams"))
+    ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-user-streams"))
+    clock.now += executor_module._GATE_REFRESH
+    ex.on_timer(clock.now)  # still disarmed: the return armed no pass, so nothing is read and the freeze stands
+    assert ex._frozen and (len(venue.calls), holdings.calls) == reads
+    arm.touch()
+    clock.now += executor_module._GATE_REFRESH
+    ex.on_timer(clock.now)  # the idle refresh at this tick's end reads the gate armed
+    assert ex._frozen
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)  # the first tick after it runs the owed pass over the minted row
+    assert not ex._frozen and (len(venue.calls), holdings.calls) == (reads[0] + 1, reads[1] + 1)
+    assert _record(tmp_path)["submitted"][0]["state"] == "canceled"
 
 
 def test_a_repeated_drop_of_one_endpoint_keeps_the_grace_running_from_its_first_drop(tmp_path):
@@ -7412,10 +7437,11 @@ def test_an_opposing_hand_trade_the_running_engine_refused_settles_from_the_venu
     holdings = _VenueHoldings({"BTC/EUR": 0.0})
     ex = _executor(tmp_path, client=StubClient(cache), venue_holdings=holdings)
     ex.on_timer(NOW)
+    ex.on_timer(NOW + executor_module._GATE_REFRESH)  # the idle refresh reads the gate armed, which a return's arm reads
     cache.set_position("BTC/EUR", 0.001)  # the engine's own long, which the hand trade then closes at the venue
     _reconnect(ex)
     with _executor_errors(logging.WARNING) as warnings:
-        ex.on_timer(NOW + timedelta(seconds=5))
+        ex.on_timer(NOW + executor_module._GATE_REFRESH + timedelta(seconds=5))
     assert (metrics.positions, holdings.calls) == ([("BTC/EUR", 0.0), ("BTC/EUR", 0.0)], 2)
     assert [r.getMessage() for r in warnings if "the venue holds" in r.getMessage()] == [
         "the venue holds 0.0 BTC/EUR where the Cache reads 0.001 -- the position gauge takes the venue's figure at the re-read pass"
@@ -7458,9 +7484,10 @@ def test_a_settle_whose_read_fails_leaves_the_book_an_earlier_pass_kept(tmp_path
     ex.on_timer(NOW)  # the startup pass keeps the book it read
     book = ex._venue_book
     assert book is not None and book.held["BTC/EUR"] == 0.001
+    ex.on_timer(NOW + executor_module._GATE_REFRESH)  # the idle refresh reads the gate armed, which a return's arm reads
     holdings._raises = RuntimeError("dns")
     _reconnect(ex)
-    ex.on_timer(NOW + timedelta(seconds=5))  # the re-read pass's settle fails its read
+    ex.on_timer(NOW + executor_module._GATE_REFRESH + timedelta(seconds=5))  # the re-read pass's settle fails its read
     assert holdings.calls == 2 and ex._venue_book is book
 
 
@@ -7494,6 +7521,18 @@ def test_an_unmatched_external_fill_arms_nothing_while_the_engine_is_disarmed(tm
     _hold_in_cache(client, _resting_limit_order("O-hand"))
     _deliver_external_event(ex, client, _fill("O-hand", 0.5, symbol="BTC/EUR", side="buy"))
     assert ex._reread_tries == 0
+
+
+def test_a_socket_return_arms_nothing_while_the_engine_is_disarmed_and_signs_no_read(tmp_path):
+    venue, holdings = _VenueOrders(), _VenueHoldings({})
+    ex = _executor(tmp_path, venue_orders=venue, venue_holdings=holdings)
+    (exec_dir(tmp_path) / ARM_FILE).unlink()  # disarmed, as the attended passes on the engine's key run it
+    ex.on_timer(NOW)  # the startup pass: its one book read
+    ex.on_timer(NOW + executor_module._GATE_REFRESH)  # the idle refresh reads the gate disarmed
+    _reconnect(ex, "kraken-spot-data-streams", "kraken-spot-user-streams")
+    assert ex._reread_tries == 0
+    ex.on_timer(NOW + executor_module._GATE_REFRESH + timedelta(seconds=5))
+    assert (holdings.calls, venue.calls) == (1, [])
 
 
 # --- D11: the first automatic kill trips ----------------------------------------------------------
@@ -9681,6 +9720,7 @@ def test_a_restored_row_is_read_by_its_read_id_and_the_venues_report_alone_decid
                 copy.apply(canceled)
                 ex.on_order_event(canceled)
         if pass_ == "reconnect":
+            ex._evaluate(NOW)  # the gate read armed, as the idle refresh reads it: a return's arm reads it
             _reconnect(ex)
         if pass_ in ("re-read", "reconnect"):
             venue.reports = reports
