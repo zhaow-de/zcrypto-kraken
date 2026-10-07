@@ -374,7 +374,7 @@ Entry `F2`: how long the order rested at the venue, whether the intent journaled
 
 ### Rung-3 form
 
-On rung 3's armed loop the resting order is a boundary's own cycle intent, its maker order at the touch, and no `rest-hold` plan is placed: cut the container while the plan's first intent rests, the induction above unchanged. The account-wide stale-socket watchdog answers ahead of the quote silence: the cancel its CRITICAL announces goes out within 35 s of the cut, with `socket_down` as the reason, the line `the execution watchdog froze the loop -- socket <endpoint> down past the 30s grace …` naming the endpoint and the grace. The row ends `ambiguous` — on the terminal the library mints, or at the ack wait, `no venue answer within 30s of the cancelling` — the cut's own terminal; `revoked` with `socket_down` is a partial cut's, the data socket alone down. The freeze refuses each new intent from that CRITICAL to `the execution watchdog's freeze lifted -- the sockets are back and the re-read pass has settled`, the span `zcrypto_exec_watchdog_frozen` reads 1; Cloud's scrape is cut with the container, so it shows the 1 only where a scrape fell between the reconnect and the lift. After the reconnect the re-read pass re-cancels the order by its txid, operator action step 3's line, and the freeze lifts. The entry adds the cancel's time from the cut against 35 s, the reason its line names, the freeze's span, and the string on the execution socket's `socket <endpoint> is down` line against the one on its `socket <endpoint> is back` line: a return under another string is the stale entry that holds the freeze ([`engine.md#zcrypto-engine-exec-watchdog-frozen`](engine.md#zcrypto-engine-exec-watchdog-frozen)). A fill during the cut is the book's, and the re-read pass's holdings read takes it in.
+On rung 3's armed loop the resting order is a boundary's own cycle intent, its maker order at the touch, and no `rest-hold` plan is placed: cut the container while the plan's first intent rests, the induction above unchanged. Two 30 s clocks then run against the resting intent: the quote silence's from the last quote before the cut, and the account-wide stale-socket watchdog's from the `socket <endpoint> is down` line, when the client reports the drop, at the cut or after it. The quote silence's crosses first or on the same tick, so the revoke normally names `quote_silence`; the watchdog, checked ahead of it on each tick, names `socket_down` when both cross on the same one. Either way the watchdog freezes the loop when its own clock crosses, its CRITICAL `the execution watchdog froze the loop -- socket <endpoint> down past the 30s grace …` naming the endpoint and the grace, and sends a cancel for each order the Cache holds open; the CRITICAL's text names `socket_down` whichever clock revoked the intent. The row ends `ambiguous` — on the terminal the library mints, or at the ack wait, the CRITICAL `intent <n> of plan <id>: no venue answer within 30s of the cancelling -- the plan stops here` — the cut's own terminal; `revoked` is a partial cut's, the data socket alone down and the cancel's ack still reaching the engine. The freeze refuses each new intent from its CRITICAL to `the execution watchdog's freeze lifted -- the sockets are back and the re-read pass has settled`, the span `zcrypto_exec_watchdog_frozen` reads 1; Cloud's scrape is cut with the container, so it shows the 1 only where a scrape fell between the reconnect and the lift. After the reconnect the re-read pass re-cancels the order by its txid, operator action step 3's line, and the freeze lifts. The entry records which reason the revoke named, read rather than predicted: an intent ending `revoked` journals it among its `reasons`, and one ending `ambiguous` journals the ambiguity's reason alone, the revoke then read from the log's times — a `socket_down` revoke is the freeze CRITICAL's own tick, its ack-wait CRITICAL about 30 s after it, and a `quote_silence` revoke an earlier tick, its ack-wait CRITICAL sooner after the freeze's or ahead of it. Beside it go the cut's time, the `socket <endpoint> is down` line's time, the freeze's span, and the string on the execution socket's `socket <endpoint> is down` line against the one on its `socket <endpoint> is back` line: a return under another string is the stale entry that holds the freeze ([`engine.md#zcrypto-engine-exec-watchdog-frozen`](engine.md#zcrypto-engine-exec-watchdog-frozen)). A fill during the cut is the book's, and the re-read pass's holdings read takes it in.
 
 ### Retire when
 
@@ -453,7 +453,7 @@ uv run python infra/scripts/grafana-query.py 'zcrypto_exec_external_events_total
 
 ### Rung-3 form
 
-On rung 3's armed loop the restart is [`engine-procedures.md#rung-3-after-a-restart`](engine-procedures.md#rung-3-after-a-restart)'s, inside a gap once the boundary's plan has ended, the book held and the arm file left in place; no order rests, so deliverable 1 and the adopt pass's lines are not this form's. Its reads: the boot's `cache restore: position <instrument> <quantity> @ <entry price> (ShadowStrategy-000)` line per held leg at Kraken's quantity, against `kraken extended-balance -o json` on the workstation, with no `(EXTERNAL)` line — the restore the build's spot-lot fix gives; the gate at `level=reduce_only`, `reasons=restart_hold`; the hold left standing through the next boundary, whose plan places its sells and journals each buy `refused` with `restart_hold`, the buys' legs carried; then the hold cleared, the gate at `level=full`, once that plan has ended and inside four hours and twenty minutes of the restart — past that the disarmed rule, which reads `reduce_only` as below `full`, pages. `zcrypto-fleet-daemon-restarted` pages on the restart as above.
+On rung 3's armed loop the restart is [`engine-procedures.md#rung-3-after-a-restart`](engine-procedures.md#rung-3-after-a-restart)'s, inside a gap once the boundary's plan has ended, the book held and the arm file left in place; no order rests, so deliverable 1 and the adopt pass's lines are not this form's. Its reads: the boot's `cache restore: position <instrument> <quantity> @ <entry price> (ShadowStrategy-000)` line per held leg at Kraken's quantity, against `kraken extended-balance -o json` on the workstation, with no `(EXTERNAL)` line — the restore the build's spot-lot fix gives; the gate at `level=reduce_only`, `reasons=restart_hold`; the hold left standing through the next boundary, whose plan places its sells and journals each buy `refused` with `restart_hold`, the buys' legs carried; then the hold cleared, the gate at `level=full`, once that plan has ended and inside about four and a half hours of the restart: the disarmed rule, which reads `reduce_only` as below `full`, pages at the restart's last `full` sample + `[4h30m]` + `for: 10m`, about 4h40m on, and a clear reaches Cloud a gate evaluation and a scrape after it is made, a minute each. `zcrypto-fleet-daemon-restarted` pages on the restart as above.
 
 ### Retire when
 
@@ -465,12 +465,12 @@ On rung 3's armed loop the restart is [`engine-procedures.md#rung-3-after-a-rest
 
 ### What this proves
 
-That a boundary the engine reaches disarmed carries its legs and pages: its plan is drafted and accepted, each intent refused where it would start, each leg's gap left standing for the next armed boundary to draft again, and `zcrypto-engine-exec-disarmed-across-a-boundary` pages on the hours the loop could not trade. An engine disarmed unnoticed, carrying each cycle while the targets move, is continuous arming's own failure.
+That a boundary the engine reaches disarmed carries its legs and pages: its plan is drafted and accepted, each intent refused where it would start, each leg's gap left standing for the next boundary to draft again armed, and `zcrypto-engine-exec-disarmed-across-a-boundary` pages on the hours the loop could not trade. An engine disarmed unnoticed, carrying each cycle while the targets move, is continuous arming's own failure.
 
 ### Preconditions
 
 - Rung 3 armed, in its first attended week ([`engine-procedures.md#engine-rung-3`](engine-procedures.md#engine-rung-3)): the gate reads `level=full`, `reasons=-`.
-- No plan running: [`engine-procedures.md#rung-3-re-birth`](engine-procedures.md#rung-3-re-birth) item 1's plan read.
+- **No plan running**, the previous boundary's plan ended: [`engine-procedures.md#rung-3-re-birth`](engine-procedures.md#rung-3-re-birth) item 1's plan read.
 - **The disarmed rule quiet by value**, from the workstation, and no silence standing on it — a pause's left in place swallows the page this drill measures:
   ```
   uv run python infra/scripts/grafana-query.py 'max_over_time(zcrypto_exec_gate_level{host="zcrypto"}[4h30m])' 'zcrypto_exec_kill_tripped{host="zcrypto"}'
@@ -479,29 +479,29 @@ That a boundary the engine reaches disarmed carries its legs and pages: its plan
 
 ### Induce
 
-At least 10 minutes before a boundary, on the engine host:
+Between one and three hours before a boundary, on the engine host:
 
 ```
 sudo rm /var/lib/zcrypto-engine/exec/armed
 ```
 
-The gate reads `level=none`, `reasons=arm_file_absent`. Leave the file out until the page has landed: the boundary after the induced one falls about thirty minutes before the page, so it is reached disarmed too.
+The gate reads `level=none`, `reasons=arm_file_absent`. The file stays out across that one boundary until the page has landed, about 1h40m to 3h40m after it and before the next one.
 
 ### Must fire
 
-- **At each boundary reached disarmed**, its plan entry in `exec-<HH>.json` reads `accepted` with each intent `refused` under `arm_file_absent` — the walls that accept a plan judge no level, and each intent is refused where it would start — and its `accum-<HH>.json` reads `status: ok` with the plan's id and its legs `placed`, `zcrypto_exec_gap_eur` holding each leg's whole delta.
-- [`zcrypto-engine-exec-disarmed-across-a-boundary`](engine.md) (warning, `metrics`) at about 4h40m after the file's removal, about 4h30m from the induced boundary when the removal came 10 minutes before it. Derived: the gate publishes the removal at its next evaluation, within a minute, and a scrape later the window's last `full` sample is in; the window holds none 4h30m on, its `[4h30m]`, + `for: 10m` + the group's 60 s.
-- **Nothing else.** `zcrypto-engine-exec-boundary-not-drafted` reads each boundary's `ok` record and stays quiet, and `zcrypto-engine-exec-kill-tripped` has no kill file to read.
+- **At the boundary reached disarmed**, its plan entry in `exec-<HH>.json` reads `accepted` with each intent `refused` under `arm_file_absent` — the walls that accept a plan judge no level, and each intent is refused where it would start — and its `accum-<HH>.json` reads `status: ok` with the plan's id and its legs `placed`, `zcrypto_exec_gap_eur` holding each leg's whole delta.
+- [`zcrypto-engine-exec-disarmed-across-a-boundary`](engine.md) (warning, `metrics`) at about 4h40m after the file's removal: about 1h40m to 3h40m after the boundary, before the next one. Derived: the gate publishes the removal at its next evaluation, within a minute, and a scrape later the window's last `full` sample is in; the window holds none 4h30m on, its `[4h30m]`, + `for: 10m` + the group's 60 s.
+- **Nothing else.** `zcrypto-engine-exec-boundary-not-drafted` reads the boundary's `ok` record and stays quiet, and `zcrypto-engine-exec-kill-tripped` has no kill file to read.
 
 ### Operator action
 
-1. **Read each disarmed boundary's records by value** on the host, `sudo cat` of its `accum-<HH>.json` and its `exec-<HH>.json` under `/var/lib/zcrypto-engine/journal/<YYYY-MM-DD>/`, as *Must fire* reads them.
-2. **After the page, re-place the file**: `sudo touch /var/lib/zcrypto-engine/exec/armed`. The gate reads `level=full`, `reasons=-`, and the page clears once the window holds a `full` sample again, within about three minutes — the gate's next evaluation, a scrape and the rule's evaluation, a minute each.
-3. **The next boundary drafts the legs again as its own `target − held`**: its `accum-<HH>.json` reads `status: ok`, the carried legs `placed` at its own targets, and its plan's intents run at `full`.
+1. **Read the disarmed boundary's records by value** on the host, `sudo cat` of its `accum-<HH>.json` and its `exec-<HH>.json` under `/var/lib/zcrypto-engine/journal/<YYYY-MM-DD>/`, as *Must fire* reads them.
+2. **After the page and before the next boundary, re-place the file**: `sudo touch /var/lib/zcrypto-engine/exec/armed`. The gate reads `level=full`, `reasons=-` by the time that boundary drafts, and the page clears once the window holds a `full` sample again, within about three minutes — the gate's next evaluation, a scrape and the rule's evaluation, a minute each.
+3. **The next boundary drafts the legs again as its own `target − held`**: its `accum-<HH>.json` reads `status: ok`, the legs the disarmed boundary carried `placed` again at its own targets, and its plan's intents run at `full`.
 
 ### Record
 
-Entry `H`: the removal's time, each boundary reached disarmed with its records' readings, the page's `activeAt` and the Slack message's time against the ≈4h40m bound, the re-placement's time, and the next boundary's draft.
+Entry `H`: the removal's time, the boundary reached disarmed with its records' readings, the page's `activeAt` and the Slack message's time against the ≈4h40m bound, the re-placement's time before the next boundary, and that boundary's draft.
 
 ### Retire when
 
