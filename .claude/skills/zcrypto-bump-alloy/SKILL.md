@@ -95,9 +95,13 @@ ssh mon 'systemctl show -p ActiveEnterTimestamp --value grafana-server prometheu
 ssh access 'systemctl show -p ActiveEnterTimestamp --value caddy wg-quick@zaccess0 zaccess-ssh-proxy.socket'
 infra/ansible/scripts/converge.sh site.yml --limit zaccess --tags alloy
 ssh access 'systemctl show -p ActiveEnterTimestamp --value caddy wg-quick@zaccess0 zaccess-ssh-proxy.socket'   # the same three lines
+
+ssh hc "sudo docker inspect zcrypto-hc --format '{{.RestartCount}} {{.State.StartedAt}}'; systemctl show -p ActiveEnterTimestamp --value caddy"
+infra/ansible/scripts/converge.sh site.yml --limit zcrypto-hc --tags alloy
+ssh hc "sudo docker inspect zcrypto-hc --format '{{.RestartCount}} {{.State.StartedAt}}'; systemctl show -p ActiveEnterTimestamp --value caddy"   # the same two lines
 ```
 
-Then the dead-man node's, `infra/ansible/scripts/converge.sh site.yml --limit zcrypto-hc --tags alloy`. No operand: the role reads `alloy_deb_version` from the host's hold file, else the fleet file, on the controller. While the pin file `/etc/apt/preferences.d/alloy` would change, the preview skips the install, the hold and `alloy enabled + started`, since the apt module refuses a version below the pin file on disk or one the host's unrefreshed lists lack, and it names nothing of Caddy, Grafana, Loki, Prometheus, WireGuard, the relay, the probe or the dead-man service; it fetches the Grafana repository's signing key, so a source that does not answer refuses the converge. The real pass installs the version, holds it and writes the pin; its post-condition then restarts Alloy where the process predates the installed binary — on the bridgehead and the dead-man node after a version move, each one's `/etc/default/alloy` rendered without `RESTART_ON_UPGRADE` — and restarts nothing where the package already did, as on the observability node.
+No operand: the role reads `alloy_deb_version` from the host's hold file, else the fleet file, on the controller. While the pin file `/etc/apt/preferences.d/alloy` would change, the preview skips the install, the hold and `alloy enabled + started`, since the apt module refuses a version below the pin file on disk or one the host's unrefreshed lists lack, and it names nothing of Caddy, Grafana, Loki, Prometheus, WireGuard, the relay, the probe or the dead-man service; it fetches the Grafana repository's signing key, so a source that does not answer refuses the converge. The real pass installs the version, holds it and writes the pin; its post-condition then restarts Alloy where the process predates the installed binary — on the bridgehead and the dead-man node after a version move, each one's `/etc/default/alloy` rendered without `RESTART_ON_UPGRADE` — and restarts nothing where the package already did, as on the observability node.
 
 ### The NAS
 
@@ -208,8 +212,8 @@ Host-specific additions:
 
 - **ops**: `zcrypto-hcio-watchdog` back to Normal (it races you); `up{job="liquidations_app"} == 1`; the leg's two liquidations reads the same.
 - **the observability node**: `zcrypto-alloy-dark-mon` Normal on the node's rules endpoint; the leg's two `systemctl` reads the same.
-- **the dead-man node**: `zcrypto-alloy-dark-hc` Normal on the observability node's rules endpoint.
 - **the bridgehead**: `count(up{host="zaccess"})` read on Cloud and on the node; the leg's two `systemctl` reads the same.
+- **the dead-man node**: `zcrypto-alloy-dark-hc` Normal on the observability node's rules endpoint; the leg's two reads the same.
 - **NAS**: the next `archive-pull` cycle logs `pull complete … failed=0` for each verified channel, and the leg's two `zcrypto-archive-pull` reads are the same — the narrow run left it running; `zcrypto_gate_*` series still arriving (the NAS unix exporter's textfile collector scrapes `/textfile/gate.prom`).
 - **capture hosts**: `up{job="capture_app"} == 1`; the leg's two capture reads the same and its newest parquet still advancing (`sudo find /var/lib/zcrypto-capture -name '*.parquet' -mmin -3 | wc -l` > 0) — proving the bump did not touch the daemon. On the primary `up{job="engine_app"} == 1` and the engine's read the same; on the secondary `up{job="engine_app"}` reads 0 by design.
 - **cache nodes**: the node's series list is `CACHE_REQUIRED`; `redis_up{host="<host>"}` reads 1 on two series, `job="valkey"` and `job="sentinel"`; the leg's two `docker inspect` reads print the same lines, proving the bump did not touch Valkey or Sentinel.
