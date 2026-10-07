@@ -536,6 +536,8 @@ c_pinned_leaves_the_edge_renders() { git ls-files ':(glob)infra/ansible/roles/ac
 
 c_pins_not_yet_converged() { uv run python infra/scripts/pins-converged.py; }
 
+c_hosts_off_the_fleets_alloy_version() { uv run python infra/scripts/alloy-version.py off-fleet; }
+
 main() {
   wanted=("$@")
   cd "$(git rev-parse --show-toplevel)" || exit 2
@@ -591,6 +593,7 @@ main() {
   emit "unscoped-docker-inspects-invoked" c_unscoped_docker_inspects_invoked
   emit "pins-not-yet-converged" c_pins_not_yet_converged
   emit "pinned-leaves-the-edge-renders" c_pinned_leaves_the_edge_renders
+  emit "hosts-off-the-fleets-alloy-version" c_hosts_off_the_fleets_alloy_version
 
   local w
   for w in "${wanted[@]}"; do

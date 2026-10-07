@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -264,3 +266,268 @@ def test_the_cli_exits_0_1_and_2_with_its_lines(tmp_path):
     (ansible / "site.yml").write_text("- name: [an unclosed list\n")
     broken = _cli("reaches", "--ansible-dir", str(ansible), "box")
     assert (broken.returncode, broken.stdout, broken.stderr.startswith("reaches: ")) == (2, "", True), broken.stderr
+
+
+FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures" / "alloy_version"
+HUB_TAGS = "https://hub.docker.com/v2/repositories/grafana/alloy/tags?page_size=100&ordering=last_updated"
+TOKEN = "https://auth.docker.io/token?service=registry.docker.io&scope=repository:grafana/alloy:pull"
+APT_INDEX = "https://apt.grafana.com/dists/stable/main/binary-amd64/Packages"
+INDEX_ACCEPT = "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json"
+PULL = {"Authorization": "Bearer anonymous", "Accept": INDEX_ACCEPT}
+RECORDED_DIGEST = (FIXTURES / "index-v1.20.1.digest").read_text().strip()
+LISTED_1_20_0 = "sha256:f111cce835516c5f99166342be7038496b52ced16667be5a11e19258a3e4cd30"
+FLEETS = {
+    "1.19.2": ("sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839", "1.19.2-1"),
+    "1.20.0": (LISTED_1_20_0, "1.20.0-1"),
+    "1.20.1": (RECORDED_DIGEST, "1.20.1-1"),
+}
+TARGET = f"target: 1.20.1 {RECORDED_DIGEST} 1.20.1-1"
+NO_TARGET = "target: none — the fleet runs the newest version present in both"
+
+
+def _manifest(version: str) -> str:
+    return f"https://registry-1.docker.io/v2/grafana/alloy/manifests/v{version}"
+
+
+def _fleet_line(version: str) -> str:
+    digest, deb = FLEETS[version]
+    return f"fleet: {version} {digest} {deb}"
+
+
+def _hub(**digests: str) -> bytes:
+    """The recorded listing, each named tag's digest set or, for a tag it lacks, the tag added."""
+    listing = json.loads((FIXTURES / "hub-tags.json").read_text())
+    for tag in listing["results"]:
+        tag["digest"] = digests.pop(tag["name"], tag["digest"])
+    listing["results"] += [{"name": name, "digest": digest} for name, digest in digests.items()]
+    return json.dumps(listing).encode()
+
+
+def _packages(*stanzas: str, replace: tuple[str, str] = ("", "")) -> bytes:
+    recorded = (FIXTURES / "Packages").read_text().replace(*replace).rstrip("\n")
+    return "\n\n".join([recorded, *stanzas]).encode() + b"\n"
+
+
+def _index(amd64: bool = True) -> bytes:
+    index = json.loads((FIXTURES / "index-v1.20.1.json").read_text())
+    linux_amd64 = {"architecture": "amd64", "os": "linux"}
+    index["manifests"] = [entry for entry in index["manifests"] if amd64 or entry["platform"] != linux_amd64]
+    return json.dumps(index).encode()
+
+
+def _upstream(changed: dict[str, object] | None = None) -> dict[str, object]:
+    """Each URL the gate may ask, answered as P1 recorded it unless the case changes it; a URL left out goes unanswered."""
+    return {
+        HUB_TAGS: (_hub(), {}),
+        APT_INDEX: (_packages(), {}),
+        TOKEN: (json.dumps({"token": "anonymous"}).encode(), {}),
+        _manifest("1.20.1"): (_index(), {"Docker-Content-Digest": RECORDED_DIGEST}),
+        **(changed or {}),
+    }
+
+
+def _stub(answers: dict[str, object]):
+    def fetch(url, headers):
+        if url.startswith(_manifest("")) and dict(headers) != PULL:
+            raise PermissionError(f"{url} asked without the anonymous pull token and the index media types")
+        answer = answers.get(url, OSError(f"nothing answers {url}"))
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    return fetch
+
+
+def _fleet_file(fleet: str) -> str:
+    digest, deb = FLEETS[fleet]
+    return f'alloy_version: "{fleet}"\nalloy_image_digest: {digest}\nalloy_deb_version: "{deb}"\n'
+
+
+def _gate(tmp_path, capsys, fleet: str, answers: dict[str, object]) -> tuple[int, list[str], str]:
+    ansible = _tree(tmp_path, {"group_vars/observed/alloy.yml": _fleet_file(fleet)})
+    code = alloy_version.main(["gate", "--ansible-dir", str(ansible)], fetch=_stub(answers))
+    out, err = capsys.readouterr()
+    return code, out.splitlines(), err
+
+
+@pytest.mark.parametrize("fleet", ["1.20.0", "1.19.2"], ids=["one-version-above", "two-versions-above-in-both"])
+def test_the_newest_version_in_both_is_the_target_with_its_index_digest_and_deb_version(tmp_path, capsys, fleet):
+    answers = _upstream({_manifest("1.20.0"): (_index(), {"docker-content-digest": LISTED_1_20_0})})
+    assert _gate(tmp_path, capsys, fleet, answers) == (0, [_fleet_line(fleet), TARGET], "")
+
+
+def test_a_version_in_one_source_alone_is_named_and_never_the_target(tmp_path, capsys):
+    answers = _upstream(
+        {
+            HUB_TAGS: (_hub(**{"v1.21.0": "sha256:" + "1" * 64}), {}),
+            APT_INDEX: (_packages("Package: alloy\nVersion: 1.20.2-1\nArchitecture: amd64"), {}),
+            _manifest("1.21.0"): (_index(), {"Docker-Content-Digest": "sha256:" + "1" * 64}),
+        }
+    )
+    assert _gate(tmp_path, capsys, "1.20.0", answers) == (
+        0,
+        [_fleet_line("1.20.0"), TARGET, "image only: v1.21.0", "apt only: 1.20.2-1"],
+        "",
+    )
+
+
+def test_an_index_without_linux_amd64_is_never_the_target(tmp_path, capsys):
+    answers = _upstream({_manifest("1.20.1"): (_index(amd64=False), {"Docker-Content-Digest": RECORDED_DIGEST})})
+    assert _gate(tmp_path, capsys, "1.20.0", answers) == (0, [_fleet_line("1.20.0"), NO_TARGET, "apt only: 1.20.1-1"], "")
+
+
+def test_the_deb_version_is_the_indexs_own_string(tmp_path, capsys):
+    answers = _upstream({APT_INDEX: (_packages(replace=("Version: 1.20.1-1", "Version: 1.20.1-2")), {})})
+    assert _gate(tmp_path, capsys, "1.20.0", answers) == (
+        0,
+        [_fleet_line("1.20.0"), f"target: 1.20.1 {RECORDED_DIGEST} 1.20.1-2"],
+        "",
+    )
+
+
+def test_no_newer_version_in_both_prints_none(tmp_path, capsys):
+    assert _gate(tmp_path, capsys, "1.20.1", _upstream()) == (0, [_fleet_line("1.20.1"), NO_TARGET], "")
+
+
+@pytest.mark.parametrize(
+    ("url", "source"),
+    [(HUB_TAGS, "docker hub"), (APT_INDEX, "apt index"), (TOKEN, "registry"), (_manifest("1.20.1"), "registry")],
+    ids=["the-tag-listing", "the-apt-index", "the-pull-token", "the-index"],
+)
+def test_a_source_that_fails_ends_gate_failed_naming_it(tmp_path, capsys, url, source):
+    answers = _upstream({url: OSError("the source does not answer")})
+    assert _gate(tmp_path, capsys, "1.20.0", answers) == (2, [], f"gate: failed: {source}: OSError: the source does not answer\n")
+
+
+class _Response:
+    def __init__(self, body: bytes, headers: dict[str, str]):
+        self.body, self.headers = body, headers
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self) -> bytes:
+        return self.body
+
+
+def test_every_request_carries_its_timeout(tmp_path, capsys, monkeypatch):
+    answers = _upstream()
+    asked = []
+
+    def urlopen(request, timeout=None):
+        asked.append((request.full_url, timeout))
+        return _Response(*answers[request.full_url])
+
+    monkeypatch.setattr(alloy_version.urllib.request, "urlopen", urlopen)
+    ansible = _tree(tmp_path, {"group_vars/observed/alloy.yml": _fleet_file("1.20.0")})
+    assert alloy_version.main(["gate", "--ansible-dir", str(ansible)]) == 0, capsys.readouterr()
+    assert sorted(asked) == sorted((url, 30) for url in answers), asked
+
+
+def test_the_digest_is_the_registrys_answer_and_not_the_listings(tmp_path, capsys):
+    answers = _upstream({HUB_TAGS: (_hub(**{"v1.20.1": "sha256:" + "0" * 64}), {})})
+    assert _gate(tmp_path, capsys, "1.20.0", answers) == (0, [_fleet_line("1.20.0"), TARGET], "")
+
+
+def test_a_package_named_like_alloy_is_not_alloy(tmp_path, capsys):
+    decoy = "Package: alloy-boringcrypto\nVersion: 1.21.0-1\nArchitecture: amd64"
+    answers = _upstream({APT_INDEX: (_packages(decoy), {})})
+    assert _gate(tmp_path, capsys, "1.20.0", answers) == (0, [_fleet_line("1.20.0"), TARGET], "")
+
+
+OBSERVED_INVENTORY = {
+    "all": {
+        "children": {
+            "observed": {"children": {"container_host": {}, "apt_host": {}}},
+            "container_host": {"hosts": {"box": {}, "crate": {}}},
+            "apt_host": {"hosts": {"edge": {}, "node": {}}},
+            "outside_host": {"hosts": {"outside": {}}},
+        }
+    }
+}
+FLEET_HEX = RECORDED_DIGEST.removeprefix("sha256:")[:12]
+ON = {"box": FLEET_HEX, "crate": FLEET_HEX, "edge": "1.20.1-1", "node": "1.20.1-1"}
+IMAGE_HEADER = (
+    "| service | host | digest (sha256, first 12) | since (UTC) | rollback operand (resident on the host at the re-pin) |\n"
+    "| --- | --- | --- | --- | --- |\n"
+)
+PACKAGE_HEADER = "| package | host | version | since (UTC) | notes |\n| --- | --- | --- | --- | --- |\n"
+
+
+def _pins_text(image: dict[str, str], package: dict[str, str], tables=("image", "package"), other=()) -> str:
+    """A pins file with an image table and a package table, each `alloy` row naming its host; `other` adds rows of
+    another service to the image table."""
+    image_rows = "".join(
+        f"| alloy | {host} | `{hex12}` — v1.20.1 | 2026-10-06 10:00:00 | first pin |\n" for host, hex12 in image.items()
+    )
+    image_rows += "".join(
+        f"| valkey + sentinel | {host} | `{'4' * 12}` — Valkey | 2026-10-06 10:00:00 | first pin |\n" for host in other
+    )
+    package_rows = "".join(
+        f"| alloy | {host} | {version} | 2026-10-06 | dpkg hold; pinned at 1001 |\n" for host, version in package.items()
+    )
+    parts = {"image": IMAGE_HEADER + image_rows, "package": PACKAGE_HEADER + package_rows}
+    return "# Fleet pins\n\n## Current pins\n\n" + "\n**Non-image pins.**\n\n".join(parts[t] for t in tables) + "\n"
+
+
+def _off_fleet(tmp_path, capsys, pins: str) -> tuple[int, str, str]:
+    ansible = _tree(
+        tmp_path,
+        {
+            "inventory/hosts.yml": OBSERVED_INVENTORY,
+            "group_vars/observed/alloy.yml": _fleet_file("1.20.1"),
+        },
+    )
+    (tmp_path / "docs" / "reference").mkdir(parents=True)
+    (tmp_path / "docs" / "reference" / "fleet-pins.md").write_text(pins)
+    code = alloy_version.main(["off-fleet", "--ansible-dir", str(ansible)])
+    out, err = capsys.readouterr()
+    return code, out, err
+
+
+def _image(**hosts: str) -> dict[str, str]:
+    return {host: hosts.get(host, ON[host]) for host in ("box", "crate")}
+
+
+def _package(**hosts: str) -> dict[str, str]:
+    return {host: hosts.get(host, f"`{ON[host]}`") for host in ("edge", "node")}
+
+
+def test_an_image_row_off_the_fleets_digest_is_off(tmp_path, capsys):
+    pins = _pins_text(_image(crate="b8ec653c4423"), _package())
+    assert _off_fleet(tmp_path, capsys, pins) == (0, "1\n", f"  crate: image row at b8ec653c4423, the fleet's is {FLEET_HEX}\n")
+
+
+def test_an_apt_row_at_the_fleets_deb_version_is_on_and_another_is_off(tmp_path, capsys):
+    pins = _pins_text(_image(), _package(node="`1.20.0-1`"))
+    assert _off_fleet(tmp_path, capsys, pins) == (0, "1\n", "  node: package row at 1.20.0-1, the fleet's is 1.20.1-1\n")
+
+
+def test_an_observed_host_with_no_alloy_row_is_off(tmp_path, capsys):
+    image = _image()
+    del image["crate"]
+    pins = _pins_text(image, _package(), other=("crate",))
+    assert _off_fleet(tmp_path, capsys, pins) == (0, "1\n", "  crate: no alloy row\n")
+
+
+def test_a_host_outside_observed_is_not_read(tmp_path, capsys):
+    pins = _pins_text({**_image(), "outside": "b8ec653c4423"}, _package())
+    assert _off_fleet(tmp_path, capsys, pins) == (0, "0\n", "")
+
+
+@pytest.mark.parametrize("tables", [(), ("image",), ("package",)], ids=["neither-table", "no-package-table", "no-image-table"])
+def test_a_pins_file_without_its_tables_exits_2(tmp_path, capsys, tables):
+    code, out, err = _off_fleet(tmp_path, capsys, _pins_text(_image(), _package(), tables=tables))
+    assert (code, out, err.startswith("off-fleet: ValueError: ")) == (2, "", True), err
+
+
+def test_the_real_tree_prints_one_count():
+    done = _cli("off-fleet")
+    assert done.returncode == 0 and re.fullmatch(r"\d+\n", done.stdout), done.stdout + done.stderr
+    observed = alloy_version._pins.inventory_groups(_SCRIPT.parents[2])["observed"]
+    named = [re.fullmatch(r"  (\S+): .+", line) for line in done.stderr.splitlines()]
+    assert all(named) and len(named) == int(done.stdout), done.stderr
+    assert {m.group(1) for m in named} <= observed, done.stderr

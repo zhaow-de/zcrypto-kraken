@@ -7,6 +7,7 @@ import pathlib
 import re
 import shutil
 import subprocess
+import sys
 
 import pytest
 
@@ -741,6 +742,18 @@ def test_drills_on_the_primary_reports_a_log_it_cannot_read_as_an_error(tmp_path
         timeout=120,
     )
     assert "ERROR" in done.stdout and not done.stdout.strip().endswith("\t0"), done.stdout + done.stderr
+
+
+@pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+def test_the_alloy_version_count_runs_the_scripts_off_fleet():
+    script = subprocess.run(
+        [sys.executable, "infra/scripts/alloy-version.py", "off-fleet"], cwd=REPO, capture_output=True, text=True, timeout=120
+    )
+    assert script.returncode == 0 and re.fullmatch(r"\d+\n", script.stdout), script.stdout + script.stderr
+    done = subprocess.run(
+        ["bash", str(SCRIPT), "hosts-off-the-fleets-alloy-version"], cwd=REPO, capture_output=True, text=True, timeout=120
+    )
+    assert (done.returncode, done.stdout) == (0, f"hosts-off-the-fleets-alloy-version\t{script.stdout}"), done.stdout + done.stderr
 
 
 ROUND_CLOSED = "2026-09-24T18:01:00+02:00"  # 16:01:00Z, 61 s past a 4-hourly boundary

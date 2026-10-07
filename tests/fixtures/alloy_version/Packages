@@ -1,0 +1,125 @@
+Package: alloy
+Priority: optional
+Section: default
+Installed-Size: 558175
+Maintainer: <@2dd708ad9e33>
+Architecture: amd64
+Version: 1.20.1-1
+Filename: pool/main/a/alloy/alloy-1.20.1-1.amd64.deb
+Size: 165811334
+MD5sum: 97761a217bf89ddab7ad01bfaf47c03b
+SHA1: 423fa831154e0551b8b130e6da44f50502ac4d0a
+SHA256: 3faed6cc381ad9886903c33ac27c5b443200684b447a9b25cc637b92422d55df
+SHA512: 079956765b21f0c64c7fd6c87f6ec640f7beef601bc394b92b0013b187d0a2436512029053dc0a302026f3b939404d35a49f472555c19e3266aa4e5805eefda6
+Description: Grafana Alloy is an OpenTelemetry Collector distribution with programmable pipelines.
+Homepage: https://github.com/grafana/alloy
+License: Apache 2.0
+Vendor: Grafana Labs
+
+Package: alloy
+Priority: optional
+Section: default
+Installed-Size: 558175
+Maintainer: <@443eb2da0f00>
+Architecture: amd64
+Version: 1.20.0-1
+Filename: pool/main/a/alloy/alloy-1.20.0-1.amd64.deb
+Size: 165816924
+MD5sum: 914f67cd81022e039bbfa87dfcedcc9f
+SHA1: e3cfe3195892428e49f887dee0684d10fb401fa6
+SHA256: c0994473ef41498ac37392baef22081d6b7f6c4d45632600e93d202a3c34d661
+SHA512: 748a91b8b7537fac969c79604cce59c88c2751cfe3874859508319548421380ae986a3d261bf2cbbe434b18dd02db5657e545287ffbf4d4f478bd99110063f10
+Description: Grafana Alloy is an OpenTelemetry Collector distribution with programmable pipelines.
+Homepage: https://github.com/grafana/alloy
+License: Apache 2.0
+Vendor: Grafana Labs
+
+Package: alloy
+Priority: optional
+Section: default
+Installed-Size: 538626
+Maintainer: <@6e82bcbc397d>
+Architecture: amd64
+Version: 1.19.2-1
+Filename: pool/main/a/alloy/alloy-1.19.2-1.amd64.deb
+Size: 160325358
+MD5sum: 8f10dc7f1554cd973401a8777ab6185e
+SHA1: dcee36bbecc361aecce219c129a7221ab527849d
+SHA256: 9872732d43c6d14996e1ad5a075086a93381ea6375c8c756820da68b85422eea
+SHA512: 609fb2f2404a826e6612223122be6b501884a0b79c17ade989a3a107169e271966b3951f4bc09045787cae7092b0ef92eb4c64ed6f205734a82b0ae607dc0bf2
+Description: Grafana Alloy is an OpenTelemetry Collector distribution with programmable pipelines.
+Homepage: https://github.com/grafana/alloy
+License: Apache 2.0
+Vendor: Grafana Labs
+
+Package: alloy
+Priority: optional
+Section: default
+Installed-Size: 538626
+Maintainer: <@f9e6350ad613>
+Architecture: amd64
+Version: 1.19.1-1
+Filename: pool/main/a/alloy/alloy-1.19.1-1.amd64.deb
+Size: 160325252
+MD5sum: aa0c134ba0b5a6059c1f4afd3512c211
+SHA1: 4e3e18112120479a8dcf77fa58e98a3ce722f9ba
+SHA256: 96bcdc0cbdfed9d6292f9b241241d493749e1d592dd93027446a11c79b5b59e3
+SHA512: 769ab4bd699fab1bce3781d8b1466d265567ef00b89c01e9e63bae41cf54ed1ce3c4a91e1325988c2db6f251da356db19d5230ecdb08e174bdefd9ade105e814
+Description: Grafana Alloy is an OpenTelemetry Collector distribution with programmable pipelines.
+Homepage: https://github.com/grafana/alloy
+License: Apache 2.0
+Vendor: Grafana Labs
+
+Package: alloy
+Priority: optional
+Section: default
+Installed-Size: 538626
+Maintainer: <@6c613f3a0547>
+Architecture: amd64
+Version: 1.19.0-1
+Filename: pool/main/a/alloy/alloy-1.19.0-1.amd64.deb
+Size: 160325096
+MD5sum: 4ecd4ee24103199da5068a0a95330c08
+SHA1: 712aa8980a19d55c8feb1cd1f5ddf454e7491bfe
+SHA256: 841d817b976fdb072e07ea4ae7a773d20f7fd939c994afe17d7d1568ef59a631
+SHA512: ba76c672dd1a68f8ffff30ba347629e3f60537d743fee200d8211584e0bede75832be26573fc6687186db405277ead8c6ab9bce5166f6876d9f39b9f80cdd3f1
+Description: Grafana Alloy is an OpenTelemetry Collector distribution with programmable pipelines.
+Homepage: https://github.com/grafana/alloy
+License: Apache 2.0
+Vendor: Grafana Labs
+
+Package: loki
+Priority: optional
+Section: default
+Installed-Size: 152982
+Maintainer: Grafana Labs <support@grafana.com>
+Architecture: amd64
+Version: 3.7.8
+Provides: loki
+Filename: pool/main/l/loki/loki_3.7.8_amd64.deb
+Size: 46918928
+MD5sum: 01603cdae56843669208c2c423906838
+SHA1: 2380123683d2530caa5f4a8fbf9a455ac785057b
+SHA256: f6b0dcf22e08342dafc11c559e988c62279c570e2246ef887ee18329d2b53afb
+SHA512: ad94d72e6770a54a009c9f07c9b4fbfea88381a65900de92720684c83558d47dcabc6818efde8d0458352068c5bf1a25e66a34cc50496bde6ef2cc2237c3d342
+Description: Loki is a horizontally-scalable, highly-available, multi-tenant log aggregation system inspired by Prometheus.
+ It is designed to be very cost effective and easy to operate.
+ It does not index the contents of the logs, but rather a set of labels for each log stream.
+Homepage: https://grafana.com/loki
+
+Package: loki-canary
+Priority: optional
+Section: default
+Installed-Size: 35920
+Maintainer: Grafana Labs <support@grafana.com>
+Architecture: amd64
+Version: 3.7.8
+Provides: loki-canary
+Filename: pool/main/l/loki-canary/loki-canary_3.7.8_amd64.deb
+Size: 13289386
+MD5sum: 6f5a65f6f26a4fd5c99daa5b8eb2d76f
+SHA1: 79d6c33d485f3ab14fe61eaef19ad6a4b6a98800
+SHA256: ce852e40aaee4b570c65a03f41be7a53cd12c3d350f2ae491db91da7c3c8d2b6
+SHA512: 16ff1c8f53ffcbea5353b33091d62615e6000efbc5eb5a04d003e2f5dd557f097672d6a6cdc92ba33de63220ea2b14837c24de540eaef2b382d4f2e8a9d66752
+Description: Loki Canary is a standalone app that audits the log-capturing performance of a Grafana Loki cluster.
+Homepage: https://grafana.com/loki
