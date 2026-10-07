@@ -133,8 +133,9 @@ Read 2026-10-07 at develop `8a4945a17`; the read-only pass's detail is the branc
 - The rung-2 entry record's item-5 amendment and the bump skill's Step 6 item 2, which are 00092's.
 - A replay-based behavioural check of the candidate against the recorded journal (a mismatch is expected on a behaviour change; the disarmed proving cycle is that proof).
 
-## Open questions
+## Rulings on the open questions
 
-1. The override's name: `engine_preflight_override`, its own count set, rather than reusing `canary_override` whose count reads the capture re-pin on the primary. Recommended: the new name.
-2. D4's provenance arm: in, with the override covering a hotfix image built off a branch; or out, leaving "CI green on the tag" to the rollout skill's Phase 0 hand read. Recommended: in.
-3. The preflight container's memory cap, 512m under a 4 GB host where capture holds 2g and the engine 1g; or no cap. Recommended: 512m.
+The three questions put to the owner with the spec's recommendations were ruled on 2026-10-07 ("agree to all the three recommendations"):
+1. The override is `engine_preflight_override`, with its own count set — not a reuse of `canary_override`, whose count reads the capture re-pin on the primary.
+2. D4's provenance arm is in: the role refuses an image whose revision label is not an ancestor of the controller's `origin/develop`, the override covering a hotfix image built off a branch.
+3. The preflight container keeps `--memory 512m`.
