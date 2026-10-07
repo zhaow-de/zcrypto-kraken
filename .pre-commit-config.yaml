@@ -105,8 +105,7 @@ repos:
         name: ansible-lint
         # The hook runs from the repository root, where infra/ansible/ansible.cfg's `roles_path = roles` is
         # not read, and ansible-lint syntax-checks each role alone from a temporary playbook, so a role's
-        # static `import_role` of another (the access role's of `alloy_apt`) fails as "The role ... was not
-        # found" without this. The relative path resolves against the root the hook runs from.
+        # static `import_role` of another fails as "The role ... was not found" without this.
         entry: env ANSIBLE_ROLES_PATH=infra/ansible/roles uv run ansible-lint
         args: ["infra/ansible/"]
         language: system
