@@ -1177,9 +1177,8 @@ class ProbeExecutor:
         # When the gate was last evaluated, for the idle refresh: the process's startup evaluation
         # published moments before this construction.
         self._gate_evaluated_at: datetime = self._now()
-        # Whether that newest evaluation read both arming keys (`GateVerdict.armed`), which an unmatched
-        # fill's arm and a socket return's arm read (`_on_external_event`, `on_socket_state`); False until
-        # this process's first `_evaluate`, the idle refresh's a minute after construction at the latest.
+        # Whether that newest evaluation read both arming keys (`GateVerdict.armed`); False until this
+        # process's first `_evaluate`, the idle refresh's a minute after construction at the latest.
         self._gate_armed = False
         # Set once, when the startup pass could not read the venue's orders or the restored set could not
         # be read at construction (`_read_restored`), and never cleared: every plan is refused with it for
@@ -1525,12 +1524,9 @@ class ProbeExecutor:
         set aside: it rests on the execution client reporting `CONNECTED` under the string its
         `DISCONNECTED` carried, unmeasured offline, and an entry whose return never comes under that
         string would hold the pass off for the life of the process.
-        A return arms the pass only while the engine is armed (`_gate_armed`), as an unmatched fill does
-        (`_on_external_event`): the attended passes that sign on the engine's key run with it disarmed, and
-        the pass's holdings read is signed. A return while `_gate_armed` reads False -- disarmed, or before
-        this process's first evaluation -- leaves the pass owed, and the first tick that reads the engine
-        armed arms it; it lifts a watchdog freeze the engine holds once no endpoint is held down, with no
-        pass (`_lift_freeze`).
+        A return arms the pass only while the engine is armed (`_gate_armed`), as an unmatched fill does:
+        the attended passes that sign on the engine's key run with it disarmed, and the pass's holdings
+        read is signed.
         Bookkeeping, never a submission: log and continue."""
         try:
             endpoint = str(getattr(event, "endpoint", "?"))
@@ -1597,7 +1593,8 @@ class ProbeExecutor:
             logger.critical(
                 "the execution watchdog froze the loop -- socket %s down past the %ds grace: a cancel is sent for the "
                 "active intent's order and each order the Cache holds open, a resting intent revoked with socket_down, "
-                "and every new intent is refused until the sockets are back and the re-read pass has settled",
+                "and every new intent is refused until the sockets are back and the re-read pass has settled, or on a "
+                "disarmed engine until the sockets are back, the pass then owed to its first armed tick",
                 ", ".join(stale),
                 int(_SOCKET_DOWN_GRACE.total_seconds()),
             )
@@ -1611,10 +1608,9 @@ class ProbeExecutor:
 
     def _lift_freeze(self) -> None:
         """Lift the watchdog's freeze once no endpoint is held down and a re-read pass has completed since
-        the return that emptied the set, so the loop resumes on the venue's own account of the cut. A
-        disarmed engine whose return left the pass owed (`on_socket_state`) lifts with no pass: it refuses
-        every intent until it is armed again, and its first armed tick runs the owed pass ahead of that
-        tick's draft and pickup. Returns at once unless frozen: once the condition holds it keeps holding
+        the return that emptied the set, so the loop resumes on the venue's own account of the cut; a
+        disarmed engine whose return left the pass owed lifts with no pass, as it refuses every intent
+        until it is armed again. Returns at once unless frozen: once the condition holds it keeps holding
         on every quiet tick after, so without the guard the lift would log on each."""
         if not self._frozen:
             return
