@@ -384,6 +384,21 @@ def test_the_alloy_package_rows_agree_with_the_apt_hosts():
     )
 
 
+def test_the_alloy_image_rows_name_no_apt_host():
+    apt_hosts = _package_alloy_hosts()
+    named = [
+        (n, host)
+        for n, service, hosts, _, _, _ in _pins_rows(PINS)
+        if service == "alloy"
+        for host in (h.strip() for h in hosts.split(","))
+        if host in apt_hosts
+    ]
+    assert named == [], (
+        "fleet-pins.md's image table has an `alloy` row for a host that runs Alloy from apt, whose version is its package row's; "
+        f"`alloy-version.py off-fleet` compares that row with the fleet's image digest as though the host ran the container: (line, host) {named}"
+    )
+
+
 @pytest.mark.parametrize(
     ("host", "version", "agrees"),
     [
