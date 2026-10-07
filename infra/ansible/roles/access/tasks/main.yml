@@ -50,11 +50,11 @@
     components: [main]
     signed_by: https://dl.cloudsmith.io/public/caddy/stable/gpg.key
 # Caddy follows apt, the one third-party package here that does (Alloy is held at the fleet's version
-# below), and a version pin was never what protected the mTLS edge: the Caddyfile
-# task below runs `validate: caddy validate` -- the INSTALLED binary against the NEW config, before
-# writing it -- so a version whose client-auth syntax moved fails the converge loudly and version-
-# independently. A Caddy that cannot parse its config does not start, so the failure direction is
-# CLOSED: the edge goes dark, never serving without mTLS.
+# below), and a version pin was never what protected the mTLS edge: the Caddyfile task below runs
+# `validate: caddy validate` -- the INSTALLED binary against the NEW config, before writing it -- so a
+# version whose client-auth syntax moved fails the converge loudly and version-independently. A Caddy
+# that cannot parse its config does not start, so the failure direction is CLOSED: the edge goes dark,
+# never serving without mTLS.
 - name: caddy present — version FOLLOWED from apt, never forced (the Caddyfile validate is the guard)
   ansible.builtin.apt:
     name: caddy
@@ -115,30 +115,8 @@
 - name: caddy enabled + started
   ansible.builtin.systemd: {name: caddy, enabled: true, state: started}
 
-# LAST IN THE ROLE, and skipped under `--check`, because an assert that fails takes the rest of the
-# play with it and below it are the pinned-leaves and Caddyfile tasks that ARE the client-cert
-# revocation path. `flush_handlers` runs before it, and before the Alloy part between the two, for the
-# same reason: force_handlers defaults to False, so a failure in either would strand `reload caddy`, the
-# handler that makes a deleted pinned leaf take effect.
-#
-# The relay is Accept=no with no --exit-idle-time, so one long-lived systemd-socket-proxyd holds the
-# listener. Rewriting the unit does not replace its target -- no ExecReload, the target is a
-# command-line argument rather than config, `daemon-reload` refreshes only systemd's view of the
-# FILE, and `state: started` is a no-op on a running unit -- so a converge that rewrites this unit
-# reports `changed` and reaches nothing. What DOES restart it is `restart wg-quick@zaccess0`, which
-# the relay service inherits through `Requires=`, so a tunnel-conf change bounces the relay and the
-# gate then passes.
-#
-# It REPORTS drift and does not prevent it: by the time this can fail, every task above has applied.
-# Skipped under --check, where the template does not write, so the assert would judge the OLD file
-# and converge.sh -- which aborts the whole run on a failed preview -- would let one drifted relay
-# block every other host.
-# Read a failure as "the converge landed and the relay still needs a hand", never as "the converge
-# was refused". Asserted rather than restarted because a restart drops every SSH session traversing
-# the relay into the ops node, including the shell a remote operator may be driving this play from;
-# this converge reaches zaccess's own sshd directly on :10022, so it cannot cut its own transport.
-# The sibling relay in roles/access_ops takes restart handlers instead: it carries DSM traffic, not
-# an operator's session.
+# Before the Alloy part and the relay drift gate below: force_handlers defaults to False, so a failure in
+# either would strand `reload caddy`, the handler that makes a deleted pinned leaf take effect.
 - name: apply pending handlers before the relay drift gate
   ansible.builtin.meta: flush_handlers
 
@@ -185,6 +163,29 @@
     tasks_from: postcondition
   tags: [alloy]
 
+# The relay drift gate, LAST IN THE ROLE, and skipped under `--check`: an assert that fails takes the rest
+# of the play with it, so it runs after the pinned-leaves and Caddyfile tasks that ARE the client-cert
+# revocation path, and after the Alloy part.
+#
+# The relay is Accept=no with no --exit-idle-time, so one long-lived systemd-socket-proxyd holds the
+# listener. Rewriting the unit does not replace its target -- no ExecReload, the target is a
+# command-line argument rather than config, `daemon-reload` refreshes only systemd's view of the
+# FILE, and `state: started` is a no-op on a running unit -- so a converge that rewrites this unit
+# reports `changed` and reaches nothing. What DOES restart it is `restart wg-quick@zaccess0`, which
+# the relay service inherits through `Requires=`, so a tunnel-conf change bounces the relay and the
+# gate then passes.
+#
+# It REPORTS drift and does not prevent it: by the time this can fail, every task above has applied.
+# Skipped under --check, where the template does not write, so the assert would judge the OLD file
+# and converge.sh -- which aborts the whole run on a failed preview -- would let one drifted relay
+# block every other host.
+# Read a failure as "the converge landed and the relay still needs a hand", never as "the converge
+# was refused". Asserted rather than restarted because a restart drops every SSH session traversing
+# the relay into the ops node, including the shell a remote operator may be driving this play from;
+# this converge reaches zaccess's own sshd directly on :10022, so it cannot cut its own transport.
+# The sibling relay in roles/access_ops takes restart handlers instead: it carries DSM traffic, not
+# an operator's session.
+#
 # Read the RUNNING process's argv, never `systemctl show`: after a daemon-reload that reports the NEW
 # value while the process keeps the old one -- the same trap the deploy skills'
 # shared converge mechanics record for the Alloy drift assert, which compares the deployed FILE

@@ -67,8 +67,7 @@ def converged_digests(log_path: pathlib.Path, groups: dict[str, set[str]]) -> di
     from `host_vars/<limit>/vars.yml` at record time, and the nas role's `compose up -d` and restarts are
     flag-gated, so a render-only run lands the pin in the row having restarted nothing. An applied run tagged
     `alloy` without the role recreates Alloy alone, from a stack .env the role first proves names the committed
-    Alloy pin, so its Alloy image counts and nothing else of the field. Matched on the digest, not the var's
-    name, which differs per role.
+    Alloy pin. Matched on the digest, not the var's name, which differs per role.
     """
     out: dict[str, set[str]] = {}
     for n, line in enumerate(log_path.read_text().splitlines(), 1):

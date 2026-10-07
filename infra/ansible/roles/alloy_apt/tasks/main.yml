@@ -10,8 +10,9 @@
       or (alloy_override | default('') | string | length > 8)
     fail_msg: >-
       alloy_deb_version is {{ alloy_deb_version }}, the version committed for this host is
-      {{ alloy_apt_committed.alloy_deb_version }}: a version off it moves this host alone, so it takes
-      -e '{"alloy_override": "<why>"}' beside it, a reason longer than 8 characters.
+      {{ alloy_apt_committed.alloy_deb_version }}: infra/ansible/host_vars/{{ inventory_hostname }}/alloy.yml's
+      while the host is held, else infra/ansible/group_vars/observed/alloy.yml's. A version off it moves this
+      host alone, so it takes -e '{"alloy_override": "<why>"}' beside it, a reason longer than 8 characters.
   vars: &alloy_apt_committed_vars
     alloy_apt_committed: "{{ lookup('ansible.builtin.file', lookup('ansible.builtin.first_found', [playbook_dir ~ '/host_vars/' ~ inventory_hostname ~ '/alloy.yml', playbook_dir ~ '/group_vars/observed/alloy.yml'])) | from_yaml }}"
 

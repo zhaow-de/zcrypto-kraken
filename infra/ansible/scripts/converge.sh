@@ -6,7 +6,7 @@
 # Usage: converge.sh site.yml --limit <host> (or --limit=<host>) [--tags <list> | --skip-tags engine]
 #        [--check]
 #        [-e KEY=VALUE | -e '{"KEY": "<reason>"}'] ...   (the braced form is JSON, spanning lines or not)
-# rc 2 usage, an argument outside that grammar, or an `alloy` run that would land nothing
+# rc 2 usage, an argument outside that grammar, or an `alloy` run the walk does not show landing an Alloy task
 # | rc 3 confirm-abort / no tty | rc 4 preview failed | else the real pass's own exit.
 set -euo pipefail
 SD="$(cd "$(dirname "$0")" && pwd)"

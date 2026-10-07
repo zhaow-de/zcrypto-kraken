@@ -235,7 +235,7 @@
 # written under it, and archive-pull is never restarted or recreated; tests/test_nas_alloy_tag.py
 # holds the set. A run that also selects the whole role renders and applies through the tasks above,
 # so this block stands down there rather than recreate Alloy twice.
-- name: the Alloy-only form — report, then recreate Alloy alone under the apply flag
+- name: the Alloy-only form — write the .env's Alloy pin line and report, then recreate Alloy alone under the apply flag
   when: >-
     'alloy' in ansible_run_tags and 'nas' not in ansible_run_tags
     and 'all' not in ansible_run_tags and 'tagged' not in ansible_run_tags

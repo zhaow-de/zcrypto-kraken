@@ -192,7 +192,8 @@ prometheus.remote_write "grafana" {
 // zcrypto-capture.service (the daemon's own systemd wrapper) is deliberately NOT kept here: that
 // unit runs `docker compose up` ATTACHED, so the capture container's stdout also flows into ITS
 // journal -- and the capture daemon now ships its OWN logs straight to Grafana Cloud (--ship-logs,
-// D3) rather than through Alloy at all, so admitting it here would double-ingest for no reason.
+// D3) rather than through Alloy at all, so admitting it here would double-ingest them in Grafana
+// Cloud; the node receives the daemon's logs from neither path.
 //
 // zcrypto-engine.service IS kept, for one writer the engine's --ship-logs never sees: nautilus's
 // Rust logger writes straight to stdout, not through Python logging, so its [WARN]/[ERROR] lines
