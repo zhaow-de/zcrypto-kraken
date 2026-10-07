@@ -305,23 +305,32 @@ def test_the_engine_role_template_renders_the_plan_cap_explicitly():
     assert defaults["engine_exec_max_plan_notional_eur"] == 100.0, defaults.get("engine_exec_max_plan_notional_eur")
 
 
-@pytest.mark.parametrize("switch", [True, False], ids=["enabled-by-default", "off-by-the-operand"])
-def test_the_engine_role_template_renders_the_cache_table_enabled_at_the_proxys_address_unless_switched_off(tmp_path, switch):
+def _render_engine_toml(**values) -> str:
     import jinja2
 
     text = Path("infra/ansible/roles/engine/templates/zcrypto.toml.j2").read_text()
-    defaults = yaml.safe_load(Path("infra/ansible/roles/engine/defaults/main.yml").read_text())
-    assert defaults["engine_cache_enabled"] is True
-    values = {
+    context = {
         "engine_state_dir": "/var/lib/zcrypto-engine",
+        "engine_exec_armed_in_tree": False,  # the arming backstop's fact, a native bool
         "engine_exec_max_plan_notional_eur": "100.0",
         "engine_shadow_nav_eur": "1000.0",
         "engine_settle_delay_secs": "90",
-        "engine_cache_enabled": "true" if switch else "false",  # `-e k=v` hands the role a string
-    }
+        "engine_cache_enabled": "true",
+    } | values
     env = jinja2.Environment(trim_blocks=True, undefined=jinja2.StrictUndefined)
     env.filters["bool"] = lambda value: str(value).lower() in ("true", "1", "yes")  # Ansible's own filter, absent from jinja2
-    rendered = env.from_string(text).render(**values)
+    try:
+        return env.from_string(text).render(**context)
+    except jinja2.UndefinedError as exc:
+        pytest.fail(f"the engine template reads a name this host does not set, which fails the converge at the render: {exc}")
+
+
+@pytest.mark.parametrize("switch", [True, False], ids=["enabled-by-default", "off-by-the-operand"])
+def test_the_engine_role_template_renders_the_cache_table_enabled_at_the_proxys_address_unless_switched_off(tmp_path, switch):
+    text = Path("infra/ansible/roles/engine/templates/zcrypto.toml.j2").read_text()
+    defaults = yaml.safe_load(Path("infra/ansible/roles/engine/defaults/main.yml").read_text())
+    assert defaults["engine_cache_enabled"] is True
+    rendered = _render_engine_toml(engine_cache_enabled="true" if switch else "false")  # `-e k=v` hands the role a string
     assert "password" not in rendered.lower().replace("the password is zcrypto_cache_password in engine.env, never here.", "")
     cfg = load_config(_write(tmp_path, rendered))
     assert cfg.engine.cache == (
@@ -332,6 +341,26 @@ def test_the_engine_role_template_renders_the_cache_table_enabled_at_the_proxys_
         "enabled = true",
         "port = 6379",
     ]
+
+
+def test_the_engine_role_template_renders_exec_armed_from_the_backstops_fact_alone():
+    text = Path("infra/ansible/roles/engine/templates/zcrypto.toml.j2").read_text()
+    assert [ln.strip() for ln in text.splitlines() if ln.strip().startswith("exec_armed")] == [
+        "exec_armed = {{ engine_exec_armed_in_tree | lower }}"
+    ]
+
+
+@pytest.mark.parametrize("in_tree", [False, True])
+def test_the_engine_role_template_renders_exec_armed_as_the_backstops_fact_reads(tmp_path, in_tree):
+    rendered = _render_engine_toml(engine_exec_armed_in_tree=in_tree)
+    assert load_config(_write(tmp_path, rendered)).engine.exec_armed is in_tree
+
+
+@pytest.mark.parametrize("band", [None, 120.0], ids=["unset", "set"])
+def test_the_engine_role_template_renders_the_tracking_band_only_when_the_host_sets_it(tmp_path, band):
+    rendered = _render_engine_toml(**({} if band is None else {"engine_tracking_band_bps": band}))
+    assert ("tracking_band_bps" in rendered) is (band is not None), rendered
+    assert load_config(_write(tmp_path, rendered)).engine.tracking_band_bps == band
 
 
 def test_committed_zcrypto_toml_has_no_engine_table():
