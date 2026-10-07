@@ -301,6 +301,8 @@ PUBLISHED = [
     ),
     (["--limit=zcrypto-red", "-e", f"capture_image_digest={DIGEST}"], "zcrypto-red", "", {"capture_image_digest": DIGEST}),
     (["--limit", "nas", "--tags", "nas", "-e", "nas_apply_compose=true"], "nas", "nas", {"nas_apply_compose": "true"}),
+    (["--limit", "nas", "--tags", "alloy"], "nas", "alloy", {}),
+    (["--limit", "nas", "--tags", "alloy", "-e", "nas_apply_compose=true"], "nas", "alloy", {"nas_apply_compose": "true"}),
     (
         [
             "--limit",
@@ -317,6 +319,7 @@ PUBLISHED = [
         {"ops_image_digest": DIGEST, "ops_alloy_digest": DIGEST, "liquidations_decision": "roll-after"},
     ),
     (["--limit", "zaccess", "--tags", "access"], "zaccess", "access", {}),
+    (["--limit", "zaccess", "--tags", "alloy"], "zaccess", "alloy", {}),
     (["--limit", "zcrypto", "--tags", "chrony"], "zcrypto", "chrony", {}),
     (["--limit", "zcrypto-ops", "-e", "ops_reconcile_mint=false"], "zcrypto-ops", "", {"ops_reconcile_mint": "false"}),
     (
@@ -330,6 +333,35 @@ PUBLISHED = [
         "zcrypto",
         "",
         {"capture_alloy_digest": DIGEST},
+    ),
+    (
+        ["--limit", "zcrypto-red", "--tags", "alloy", "-e", f"capture_alloy_digest={DIGEST}"],
+        "zcrypto-red",
+        "alloy",
+        {"capture_alloy_digest": DIGEST},
+    ),
+    (
+        ["--limit", "zcrypto", "--tags", "alloy", "-e", "converge_primary=true", "-e", f"capture_alloy_digest={DIGEST}"],
+        "zcrypto",
+        "alloy",
+        {"converge_primary": "true", "capture_alloy_digest": DIGEST},
+    ),
+    (
+        [
+            "--limit",
+            "zcrypto",
+            "--tags",
+            "alloy,engine",
+            "-e",
+            "converge_primary=true",
+            "-e",
+            f"engine_image_digest={DIGEST}",
+            "-e",
+            f"capture_alloy_digest={DIGEST}",
+        ],
+        "zcrypto",
+        "alloy,engine",
+        {"converge_primary": "true", "engine_image_digest": DIGEST, "capture_alloy_digest": DIGEST},
     ),
     (
         [
@@ -412,7 +444,101 @@ PUBLISHED = [
         "cache",
         {"cache_image_digest": DIGEST, "cache_alloy_digest": DIGEST, "pins_override": "a first pin, recorded after this run"},
     ),
+    (
+        [
+            "--limit",
+            "zaccess",
+            "--tags",
+            "alloy",
+            "-e",
+            "alloy_deb_version=1.20.0-1",
+            "-e",
+            json.dumps({"alloy_override": "1.20.1 drops journal lines on the edge, back while the owner reads it"}),
+        ],
+        "zaccess",
+        "alloy",
+        {
+            "alloy_deb_version": "1.20.0-1",
+            "alloy_override": "1.20.1 drops journal lines on the edge, back while the owner reads it",
+        },
+    ),
+    (
+        ["--limit", "zcrypto-ops", "--tags", "alloy", "-e", f"ops_alloy_digest={DIGEST}"],
+        "zcrypto-ops",
+        "alloy",
+        {"ops_alloy_digest": DIGEST},
+    ),
+    (
+        [
+            "--limit",
+            "zcrypto-ops",
+            "--tags",
+            "alloy",
+            "-e",
+            f"ops_alloy_digest={DIGEST}",
+            "-e",
+            json.dumps({"alloy_override": "1.20.1 drops the ops timers' journal lines, back while the owner reads it"}),
+        ],
+        "zcrypto-ops",
+        "alloy",
+        {"ops_alloy_digest": DIGEST, "alloy_override": "1.20.1 drops the ops timers' journal lines, back while the owner reads it"},
+    ),
+    (
+        ["--limit", "zcrypto-valkey1", "--tags", "alloy", "-e", f"cache_alloy_digest={DIGEST}"],
+        "zcrypto-valkey1",
+        "alloy",
+        {"cache_alloy_digest": DIGEST},
+    ),
+    (
+        ["--limit", "zcrypto-valkey2", "--tags", "alloy", "-e", f"cache_alloy_digest={DIGEST}"],
+        "zcrypto-valkey2",
+        "alloy",
+        {"cache_alloy_digest": DIGEST},
+    ),
+    (
+        ["--limit", "zcrypto-valkey3", "--tags", "alloy", "-e", f"cache_alloy_digest={DIGEST}"],
+        "zcrypto-valkey3",
+        "alloy",
+        {"cache_alloy_digest": DIGEST},
+    ),
+    (
+        [
+            "--limit",
+            "zcrypto-valkey2",
+            "--tags",
+            "alloy",
+            "-e",
+            f"cache_alloy_digest={DIGEST}",
+            "-e",
+            json.dumps({"alloy_override": "1.20.1 drops the Sentinel scrape's series, back while the owner reads it"}),
+        ],
+        "zcrypto-valkey2",
+        "alloy",
+        {
+            "cache_alloy_digest": DIGEST,
+            "alloy_override": "1.20.1 drops the Sentinel scrape's series, back while the owner reads it",
+        },
+    ),
     (["--limit", "zcrypto-mon"], "zcrypto-mon", "", {}),
+    (["--limit", "zcrypto-mon", "--tags", "alloy"], "zcrypto-mon", "alloy", {}),
+    (
+        [
+            "--limit",
+            "zcrypto-mon",
+            "--tags",
+            "alloy",
+            "-e",
+            "alloy_deb_version=1.19.2-1",
+            "-e",
+            json.dumps({"alloy_override": "1.20.1 drops the node's own journal lines, back while the owner reads it"}),
+        ],
+        "zcrypto-mon",
+        "alloy",
+        {
+            "alloy_deb_version": "1.19.2-1",
+            "alloy_override": "1.20.1 drops the node's own journal lines, back while the owner reads it",
+        },
+    ),
     (["--limit", "zcrypto-mon", "--tags", "mon"], "zcrypto-mon", "mon", {}),
     (
         ["--limit", "zcrypto-mon", "--tags", "mon", "-e", "mon_grafana_token_rotate=true"],
@@ -434,7 +560,72 @@ PUBLISHED = [
         "base,hardening,firewall,fail2ban,chrony,docker",
         {"daemon_json_ack": "true"},
     ),
+    # The bump skill's one-host rollbacks of a container host, each its own line there.
+    (
+        [
+            "--limit",
+            "zcrypto-red",
+            "--tags",
+            "alloy",
+            "-e",
+            f"capture_alloy_digest={DIGEST}",
+            "-e",
+            json.dumps({"alloy_override": "1.20.1 drops the secondary's journal lines, back while the owner reads it"}),
+        ],
+        "zcrypto-red",
+        "alloy",
+        {
+            "capture_alloy_digest": DIGEST,
+            "alloy_override": "1.20.1 drops the secondary's journal lines, back while the owner reads it",
+        },
+    ),
+    (
+        [
+            "--limit",
+            "zcrypto",
+            "--tags",
+            "alloy",
+            "-e",
+            "converge_primary=true",
+            "-e",
+            f"capture_alloy_digest={DIGEST}",
+            "-e",
+            json.dumps({"alloy_override": "1.20.1 drops the primary's journal lines, back while the owner reads it"}),
+        ],
+        "zcrypto",
+        "alloy",
+        {
+            "converge_primary": "true",
+            "capture_alloy_digest": DIGEST,
+            "alloy_override": "1.20.1 drops the primary's journal lines, back while the owner reads it",
+        },
+    ),
+    (
+        [
+            "--limit",
+            "zcrypto-valkey3",
+            "--tags",
+            "alloy",
+            "-e",
+            f"cache_alloy_digest={DIGEST}",
+            "-e",
+            json.dumps({"alloy_override": "1.20.1 drops the Valkey scrape's series, back while the owner reads it"}),
+            "-e",
+            json.dumps({"pins_override": "the node runs a digest fleet-pins.md does not yet record"}),
+        ],
+        "zcrypto-valkey3",
+        "alloy",
+        {
+            "cache_alloy_digest": DIGEST,
+            "alloy_override": "1.20.1 drops the Valkey scrape's series, back while the owner reads it",
+            "pins_override": "the node runs a digest fleet-pins.md does not yet record",
+        },
+    ),
 ]
+
+
+# The harness's copy of the script sits outside any repository, so an `alloy` run's walk is pointed at this checkout.
+THIS_TREE = {"ZCRYPTO_REPO": str(SCRIPT.parents[3]), "ZCRYPTO_ANSIBLE_DIR": str(SCRIPT.parents[1])}
 
 
 @pytest.mark.parametrize("args,limit,tags,extra", PUBLISHED)
@@ -444,14 +635,66 @@ def test_every_invocation_this_fleet_publishes_records_its_operands(tmp_path, ar
     Drawn from the recorded runs and the published ones: the four-operand engine leg, the NAS
     render, the ops roll, the bridgehead, `--limit=`, and `--skip-tags engine`.
     """
-    rc, _out, log = run_recording(tmp_path, ["site.yml", *args], reply=limit)
+    rc, _out, log = run_recording(tmp_path, ["site.yml", *args], reply=limit, env=THIS_TREE)
     assert rc == 0
     rec = json.loads(log.read_text().splitlines()[0])
     assert (rec["limit"], rec["tags"], rec["extra_vars"]) == (limit, tags, extra), rec
 
 
+def _a_tree_whose_one_play_carries_no_tag(tmp_path) -> Path:
+    ansible = tmp_path / "infra" / "ansible"
+    (ansible / "inventory").mkdir(parents=True)
+    (ansible / "inventory" / "hosts.yml").write_text(
+        json.dumps({"all": {"children": {"ops_host": {"hosts": {"zcrypto-ops": {}}}}}})
+    )
+    play = {
+        "name": "converge the ops node",
+        "hosts": "ops_host",
+        "tasks": [{"name": "a task", "ansible.builtin.debug": {"msg": "x"}}],
+    }
+    (ansible / "site.yml").write_text(json.dumps([play]))
+    return ansible
+
+
+def _refusal(stderr: str) -> str:
+    return next((line for line in stderr.splitlines() if line.startswith("converge.sh:")), "")
+
+
+def test_an_alloy_run_on_a_host_no_play_reaches_with_an_alloy_task_is_refused_before_the_preview(tmp_path):
+    script = make_harness(tmp_path)
+    tree = {**THIS_TREE, "ZCRYPTO_ANSIBLE_DIR": str(_a_tree_whose_one_play_carries_no_tag(tmp_path))}
+    r = run_no_tty(script, ["site.yml", "--limit", "zcrypto-ops", "--tags", "alloy"], env=tree)
+    assert r.returncode == 2, (r.returncode, r.stderr)
+    assert invocations(tmp_path) == []
+    assert "--tags alloy on zcrypto-ops" in _refusal(r.stderr), r.stderr
+    assert "no play that reaches zcrypto-ops runs an alloy-tagged task" in r.stderr, r.stderr
+
+
+def test_an_alloy_run_whose_walk_cannot_run_is_refused(tmp_path):
+    script = make_harness(tmp_path)
+    (tmp_path / "empty").mkdir()
+    r = run_no_tty(
+        script,
+        ["site.yml", "--limit", "zcrypto-ops", "--tags", "alloy"],
+        env={**THIS_TREE, "ZCRYPTO_ANSIBLE_DIR": str(tmp_path / "empty")},
+    )
+    assert r.returncode == 2, (r.returncode, r.stderr)
+    assert invocations(tmp_path) == []
+    assert "--tags alloy on zcrypto-ops" in _refusal(r.stderr), r.stderr
+
+
+def test_a_run_without_the_tag_never_runs_the_walk(tmp_path):
+    script = make_harness(tmp_path)
+    (tmp_path / "empty").mkdir()
+    r = run_no_tty(
+        script, ["site.yml", "--limit", "zcrypto-red", "--tags", "capture"], env={"ZCRYPTO_REPO": str(tmp_path / "empty")}
+    )
+    assert r.returncode == 3, (r.returncode, r.stderr)
+    assert len(invocations(tmp_path)) == 1
+
+
 def test_the_json_override_operand_is_recorded_whole(tmp_path):
-    """A reason is prose and `k=v` truncates it at the first space, so the four names travel as JSON.
+    """A reason is prose and `k=v` truncates it at the first space, so an override travels as JSON.
 
     `count-list.sh canary-bypasses-on-the-primary` counts the row this operand writes.
     """
@@ -496,6 +739,8 @@ OUTSIDE = [
     (["-e", "ansible_user=root"], "a variable ansible reads but no converge here has passed", "not in this script's key set"),
     (["-e", "rebootstrap=true"], "a variable only a bootstrap run would carry", "not in this script's key set"),
     (["-e", "canary_override=why this cannot wait"], "an override as k=v, which truncates at the space", "an override is a reason"),
+    (["-e", "alloy_override=a reason"], "the Alloy override as k=v, which truncates at the space", "an override is a reason"),
+    (["-e", "alloy_deb_version=1.20.0-1"], "an apt host's Alloy version with no reason beside it", "beside"),
     (["-e", '{canary_override: "why this cannot wait"}'], "the YAML-flow dialect ansible reads and this cannot", "not JSON"),
     (["-e", '{"capture_image_digest": "sha256:a reason"}'], "a braced operand that is not an override", "is not an override name"),
     (["-e", '{"canary_override": "a b", "pins_override": "c d"}'], "two overrides in one operand", "exactly one override"),
@@ -574,12 +819,6 @@ def test_an_unknown_key_is_refused_by_naming_the_whitelist_not_the_role(tmp_path
 
 
 def test_a_skip_tags_run_is_not_booked_as_an_un_tagged_one(tmp_path):
-    """`--skip-tags engine` is the Alloy bump's published primary form, and it is not un-tagged.
-
-    `count-list.sh un-tagged-primary-runs` counts the rule "never run site.yml un-tagged on the
-    primary" over rows whose tags cell is empty; the skip goes in its own cell so that count stays
-    the violations it is named for.
-    """
     rc, _out, log = run_recording(
         tmp_path,
         ["site.yml", "--limit", "zcrypto", "--skip-tags", "engine", "-e", f"capture_alloy_digest={DIGEST}"],

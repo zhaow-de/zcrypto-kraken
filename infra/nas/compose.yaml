@@ -88,17 +88,17 @@ services:
       - ./keys:/keys:ro
       - ./zcrypto.toml:/app/zcrypto.toml:ro
       - /volume1/docker/zcrypto-archive/textfile:/textfile
-    # journald, not json-file (00068 D6/T8): this container's stdout now reaches Grafana Cloud
-    # through the host journal + `loki.source.journal` (config.alloy), alongside Alloy's own
-    # stream -- so its stdout has no json.log to rotate any more.
+    # journald, not json-file (00068 D6/T8): this container's stdout now reaches Grafana Cloud and
+    # the observability node through the host journal + `loki.source.journal` (config.alloy),
+    # alongside Alloy's own stream -- so its stdout has no json.log to rotate any more.
     logging:
       driver: journald
 
   # NAS telemetry stack (spec 00049 Role B): Grafana Alloy ships host metrics and both containers'
-  # logs to Grafana Cloud, under plain `docker compose` with no ansible or systemd here. Both
-  # containers log through the journald driver and Alloy reads the host journal, so nothing in this
-  # stack holds Docker API access -- which is what keeps T0042's docker-socket residual closed. See
-  # infra/nas/config.alloy and infra/nas/README.md.
+  # logs to Grafana Cloud and the observability node, under plain `docker compose` with no ansible
+  # or systemd here. Both containers log through the journald driver and Alloy reads the host
+  # journal, so nothing in this stack holds Docker API access -- which is what keeps T0042's
+  # docker-socket residual closed. See infra/nas/config.alloy and infra/nas/README.md.
   alloy:
     # The Alloy digest pin arrives the same way, with the same `:?` refuse-to-start trap: a
     # committed `:latest` only HAPPENED to resolve to the deployed digest (T0056).
@@ -125,10 +125,8 @@ services:
       # Go's GC otherwise overshoots a small `memory` cap under default behavior (00043).
       GOMEMLIMIT: 460MiB
     env_file:
-      # Grafana Cloud remote_write + Loki creds (GRAFANA_PROM_URL/USERNAME/PASSWORD,
-      # GRAFANA_LOKI_URL/USERNAME/PASSWORD) -- rendered by the nas role from
-      # group_vars/observed/vault.yml since T0056 (0600, never committed; rotate in the vault and
-      # re-converge, never hand-place). See infra/nas/README.md.
+      # Grafana Cloud's and the node's creds, rendered by the nas role (0600, never committed):
+      # rotate in the vault and re-converge, never hand-place. See infra/nas/README.md.
       - ./alloy-secrets.env
     command:
       - run
@@ -168,8 +166,8 @@ services:
           # No `cpus:`/`cpu_shares:` -- the Synology DSM kernel has no CPU cgroup; `GOMEMLIMIT`
           # above bounds Alloy's Go heap regardless.
           memory: 512m
-    # journald, not json-file (00068 D6/T8): Alloy's own logs now reach Grafana Cloud through the
-    # same journal + `loki.source.journal` pipeline (config.alloy) that carries archive-pull's
-    # lines too -- so its stdout has no json.log to rotate any more.
+    # journald, not json-file (00068 D6/T8): Alloy's own logs now reach Grafana Cloud and the
+    # observability node through the same journal + `loki.source.journal` pipeline (config.alloy)
+    # that carries archive-pull's lines too -- so its stdout has no json.log to rotate any more.
     logging:
       driver: journald

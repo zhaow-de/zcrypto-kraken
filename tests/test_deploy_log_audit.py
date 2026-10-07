@@ -140,6 +140,15 @@ def test_venue_facing_keeps_every_host_that_speaks_to_the_venue(tmp_path, capsys
     assert out[1].endswith(f"{host} Beeks Maintenance")
 
 
+@pytest.mark.parametrize("host", ["zcrypto", "zcrypto-red"])
+def test_an_alloy_row_is_a_venue_facing_converge_of_its_limit_and_no_engine_row(tmp_path, capsys, host):
+    log = _log(tmp_path, [_row("2026-08-28T23:40:17Z", limit=host, tags="alloy", extra_vars={"capture_alloy_digest": "sha256:x"})])
+    assert audit.main(["maintenance", "--venue-facing", "--log", log, "--from-snapshot", str(FEED)]) == 0
+    assert capsys.readouterr().out.splitlines()[0] == "rows inside an API-impacting window 1 of 1 venue-facing"
+    assert audit.main(["engine-window", "--log", log]) == 0
+    assert capsys.readouterr().out.startswith("engine rows 0 ")
+
+
 def test_maintenance_counts_none_when_every_row_sits_outside(tmp_path, capsys):
     log = _log(tmp_path, [_row("2026-08-29T03:00:00Z"), _row("2026-09-01T02:00:00Z")])
     assert audit.main(["maintenance", "--log", log, "--from-snapshot", str(FEED)]) == 0

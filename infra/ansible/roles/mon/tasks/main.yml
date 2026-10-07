@@ -1,7 +1,8 @@
 ---
 # The observability node (spec 00121): Grafana on SQLite, one Prometheus as the remote_write receiver,
 # single-binary Loki, Caddy as the one public listener, and the node's own Alloy. Packages followed from
-# apt, never forced or held; tests/test_infra_mon_role.py holds what the public login rests on.
+# apt, never forced or held, but Alloy, held and pinned at the fleet's version; tests/test_infra_mon_role.py
+# holds what the public login rests on.
 
 # First, so a missing or misshapen vault value fails here by name and not inside a no_log task.
 - name: refuse a missing or misshapen secret, naming the key and never the value
@@ -20,23 +21,18 @@
     node_common_secrets_preflight_runbook: infra/runbooks/mon.md's mon-secrets procedure
 
 # ---- Packages and their sources ------------------------------------------------------------------
-- name: add the Grafana apt repository (grafana, loki, alloy)
-  ansible.builtin.deb822_repository:
-    name: grafana
-    types: [deb]
-    uris: https://apt.grafana.com
-    suites: [stable]
-    components: [main]
-    signed_by: https://apt.grafana.com/gpg.key
-    install_python_debian: true
-  register: mon_grafana_repo
+# The shared install adds the Grafana apt repository, which Grafana and Loki install from as well.
+- name: install, pin and hold alloy at the version committed for this host
+  ansible.builtin.import_role:
+    name: alloy_apt
+  tags: [alloy]
 
 # A preview on a node that never had the repositories cannot see their packages: apt fails on a name its
 # cache does not hold, and converge.sh stops on a failed preview. Every task below that needs an installed
 # package or its unit skips exactly that case, and every real converge runs it.
 - name: note a preview that runs before the repositories exist
   ansible.builtin.set_fact:
-    mon_repos_previewed: "{{ ansible_check_mode and mon_grafana_repo is changed }}"
+    mon_repos_previewed: "{{ ansible_check_mode and alloy_apt_grafana_repo is changed }}"
 
 # Unconditional: a converge that added a repository and failed before this would otherwise never see it.
 - name: refresh the apt cache, so the candidates below are the repositories' own
@@ -69,9 +65,9 @@
     install_recommends: false
   register: mon_debian_install
 
-- name: grafana, loki and alloy present — versions FOLLOWED from apt, never forced or held
+- name: grafana and loki present — versions FOLLOWED from apt, never forced or held
   ansible.builtin.apt:
-    name: [grafana, loki, alloy]
+    name: [grafana, loki]
     state: present
   register: mon_grafana_install
   when: not mon_repos_previewed
@@ -249,13 +245,21 @@
     mode: "0640"
     validate: alloy validate %s
   notify: restart alloy
+  tags: [alloy]
 
 - name: alloy enabled + started
   ansible.builtin.systemd_service:
     name: alloy
     enabled: true
     state: started
-  when: not mon_units_previewed
+  when: not alloy_apt_previewed
+  tags: [alloy]
+
+- name: restart alloy when its process does not run the installed binary
+  ansible.builtin.import_role:
+    name: alloy_apt
+    tasks_from: postcondition
+  tags: [alloy]
 
 - name: ensure the node-exporter textfile directory exists
   ansible.builtin.file:

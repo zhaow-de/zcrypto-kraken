@@ -6,10 +6,12 @@
 # Usage: converge.sh site.yml --limit <host> (or --limit=<host>) [--tags <list> | --skip-tags engine]
 #        [--check]
 #        [-e KEY=VALUE | -e '{"KEY": "<reason>"}'] ...   (the braced form is JSON, spanning lines or not)
-# rc 2 usage, or an argument outside that grammar | rc 3 confirm-abort / no tty
-# | rc 4 preview failed | else the real pass's own exit.
+# rc 2 usage, an argument outside that grammar, or an `alloy` run the walk does not show landing an Alloy task
+# | rc 3 confirm-abort / no tty | rc 4 preview failed | else the real pass's own exit.
 set -euo pipefail
 SD="$(cd "$(dirname "$0")" && pwd)"
+REPO="${ZCRYPTO_REPO:-$SD/../../..}"
+ADIR="${ZCRYPTO_ANSIBLE_DIR:-$SD/..}"
 
 # A WHITELIST, not a parser. This fleet's converges are enumerable, and every argument outside the
 # grammar is refused before the preview, so no spelling can reach a host recorded as something it is
@@ -17,17 +19,18 @@ SD="$(cd "$(dirname "$0")" && pwd)"
 # plus what a skill or runbook publishes as a procedure to run. A tag, host or variable that exists
 # but has never been converged is not here: when a new case arises, this is where it is added, and
 # until then passing it refuses loudly instead of converging while ansible ignores it.
-# The four the deploy log records, plus `zaccess`: `infra/runbooks/zaccess.md` publishes its only
-# converge, `--limit zaccess --tags access`; plus the three cache nodes, whose rollout (spec 00118
-# D14) converges one node per run, so `cache_host` is not a host here; plus the observability node
-# (spec 00121) and the dead-man node (spec 00122).
+# The four the deploy log records, plus `zaccess`: `infra/runbooks/zaccess.md` publishes its two
+# converges, `--limit zaccess` with `--tags access` or `--tags alloy`; plus the three cache nodes,
+# whose rollout (spec 00118 D14) converges one node per run, so `cache_host` is not a host here; plus
+# the observability node (spec 00121) and the dead-man node (spec 00122).
 HOSTS="zcrypto zcrypto-red zcrypto-ops nas zaccess zcrypto-valkey1 zcrypto-valkey2 zcrypto-valkey3 zcrypto-mon zcrypto-hc"
 # The five converged, plus `chrony`: `infra/runbooks/capture.md` prescribes re-converging that role
 # as the repair for a stopped or hand-edited chrony on a capture host; plus the cache nodes' converges
 # spec 00118 names: a node's first under the six base roles, the mesh's `firewall,cache-link` on a
 # node or the engine host, and `cache` on a node; plus `mon`, the observability node's own role, and
-# `hc`, the dead-man node's, which carries the shared edge role's tasks too.
-TAGNAMES="base hardening firewall fail2ban chrony docker capture engine ops nas access cache cache-link mon hc"
+# `hc`, the dead-man node's, which carries the shared edge role's tasks too; plus `alloy`, the Alloy
+# tasks' tag: the narrow form of an Alloy bump or a config.alloy or secrets change.
+TAGNAMES="base hardening firewall fail2ban chrony docker capture alloy engine ops nas access cache cache-link mon hc"
 # The keys converges have carried, minus `nas_capture_image_digest` -- no role reads it, so the one
 # row that passed it re-pinned nothing -- plus the ones a live page publishes as an `-e`:
 # `daemon_json_ack` and `ops_panel_timer_hold` (the rollout skill), `ops_reconcile_mint` (the ops
@@ -35,15 +38,16 @@ TAGNAMES="base hardening firewall fail2ban chrony docker capture engine ops nas 
 # spec 00118's three: the cache role's two digests and its deliberate config re-render (D9); spec
 # 00120's two: the engine host's cache proxy digest, and the cache table's switch, the way back;
 # spec 00121's one: the observability node's deliberate re-mint of its tools' Grafana token (D7);
-# spec 00122's one: the dead-man node's image tag, which every converge running its role names (D3).
+# spec 00122's one: the dead-man node's image tag, which every converge running its role names (D3);
+# spec 00123's one: an apt host's previous Alloy version in its one-host rollback (D16).
 EVKEYS="capture_image_digest capture_alloy_digest engine_image_digest converge_primary \
 ops_image_digest ops_alloy_digest ops_panel_timer_hold ops_grafana_watchdog_probe_url \
 ops_reconcile_mint liquidations_decision nas_apply_compose daemon_json_ack \
 docker_apt_distribution access_ops_agentboard_live cache_image_digest cache_alloy_digest \
 cache_config_reset cache_proxy_image_digest engine_cache_enabled mon_grafana_token_rotate \
-hc_image_tag"
-# A reason is prose, and `k=v` truncates it at the first space, so these four travel as JSON alone.
-OVERRIDES="canary_override pins_override engine_window_override arming_override"
+hc_image_tag alloy_deb_version"
+# A reason is prose, and `k=v` truncates it at the first space, so an override travels as JSON alone.
+OVERRIDES="canary_override pins_override engine_window_override arming_override alloy_override"
 OWNKEY="zcrypto_window_record"
 
 # EXACT, word by word: a substring test answers true for `zcrypto zcrypto-red`, which is two hosts
@@ -112,11 +116,23 @@ if [ -n "$TAGS" ]; then
   done
   IFS="$OLDIFS"
 fi
+# The callee runs with the caller's IFS, never RS: `in_set` splits its set on it.
+each_operand() {
+  local op oldifs="$IFS"
+  IFS=$'\x1e'
+  for op in $EV; do
+    IFS="$oldifs"
+    "$1" "$op"
+    IFS=$'\x1e'
+  done
+  IFS="$oldifs"
+}
+
 # Each operand, before the preview: the only two forms the fleet uses, checked where the operator is
 # still standing at the terminal rather than in a row read weeks later.
-OLDIFS="$IFS"; IFS=$'\x1e'
-for op in $EV; do
-  IFS="$OLDIFS"
+# shellcheck disable=SC2329  # called through each_operand
+check_operand() {
+  local op="$1"
   case "$op" in
     '{'*)
       # The check prints its own one-line reason; a traceback at the terminal reads as a crash.
@@ -135,9 +151,7 @@ if key == own:
     raise SystemExit(f"{own} is this script's own: it names the file the engine play records its window in")
 if key not in names:
     raise SystemExit(f"{key} is not an override name; they are: {' '.join(names)}")
-# What the reason SAYS is the roles' gate, not this script's: each of the four asserts
-# `| string | length > 8` and refuses a boolean word, and that refusal is the one an operator must
-# meet. Here it only has to parse and name an override, or the row cannot record it.
+# The reason's length is the roles' gate; here it only has to parse and name an override.
 PYCHK
 )" || refuse "$why: $op"
       ;;
@@ -153,9 +167,30 @@ PYCHK
       ;;
     *) refuse "an -e operand is KEY=VALUE or a braced JSON override: $op" ;;
   esac
-  IFS=$'\x1e'
-done
-IFS="$OLDIFS"
+}
+each_operand check_operand
+
+has_deb=0; has_override=0
+# shellcheck disable=SC2329  # called through each_operand
+note_alloy_operand() {
+  case "$1" in
+    alloy_deb_version=*) has_deb=1 ;;
+    '{'*'"alloy_override"'*) has_override=1 ;;
+  esac
+}
+each_operand note_alloy_operand
+[ "$has_deb" -eq 0 ] || [ "$has_override" -eq 1 ] \
+  || refuse "alloy_deb_version moves an apt host off the fleet's version: pass it beside -e '{\"alloy_override\": \"<why>\"}'"
+
+# An `alloy` run on a host no play reaches with an Alloy task lands nothing, and its row would
+# still record the digest it was handed as converged. The walk needs `yaml`, which the system
+# python3 the checks above use lacks, hence uv.
+case ",$TAGS," in
+  *,alloy,*)
+    why="$(uv run --project "$REPO" python "$REPO/infra/scripts/alloy-version.py" reaches --ansible-dir "$ADIR" "$LIMIT" 2>&1)" \
+      || refuse "--tags alloy on $LIMIT: ${why:-the tag walk did not run}"
+    ;;
+esac
 
 # Absolute, because run.sh plays from infra/ansible and ansible resolves a relative `dest` against it.
 WREC="$(mktemp -t zcrypto-window.XXXXXX)"
@@ -195,7 +230,6 @@ set +e
 rc=$?
 set -e
 LOG="${ZCRYPTO_DEPLOY_LOG:-$SD/../../../docs/reference/deploy-log.jsonl}"
-ADIR="${ZCRYPTO_ANSIBLE_DIR:-$SD/..}"
 REV="$(git -C "$SD" rev-parse HEAD 2>/dev/null || echo unknown)"
 # `dirty` answers "does REV fully describe what was deployed?" -- ansible renders from the working
 # tree. The deploy log is excluded because THIS SCRIPT writes it and would otherwise dirty itself.
@@ -260,8 +294,7 @@ if text.strip():
 rec = {
     "ts": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     "playbook": playbook, "limit": limit, "tags": tags, "extra_vars": extra,
-    # `skip_tags` is its own cell, not an empty `tags`: `un-tagged-primary-runs` reads both, and
-    # `--skip-tags engine` is the Alloy bump's published primary form, not the violation.
+    # `skip_tags` is its own cell, not an empty `tags`: `un-tagged-primary-runs` reads both.
     "skip_tags": skip, "argv": argv_words, "committed_pins": committed,
     "revision": rev, "dirty": dirty == "true", "rc": int(rc),
 }

@@ -1,9 +1,9 @@
 ---
 - name: reload alloy
-  # A reload, never `--force-recreate`: the DIRECTORY mount lands the new file in place and this role
-  # never owned the stack's lifecycle. It does not re-read alloy-secrets.env (process-level), so a
-  # rotated credential needs a recreate. `-1` is fetch_url's connection failure, so Alloy DOWN passes;
-  # a 4xx/5xx from a RUNNING one must fail, or `copy` reports `ok` and nothing re-notifies.
+  # A reload, never a recreate: the DIRECTORY mount lands the new file in place. A reload re-reads
+  # neither the image nor alloy-secrets.env (process-level); the role's recreate task takes a changed
+  # digest or secrets file. `-1` is fetch_url's connection failure, so Alloy DOWN passes; a 4xx/5xx
+  # from a RUNNING one must fail, or `copy` reports `ok` and nothing re-notifies.
   ansible.builtin.uri:
     url: http://127.0.0.1:12345/-/reload
     method: POST
