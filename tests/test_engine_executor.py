@@ -5665,7 +5665,7 @@ def test_a_returns_arm_pending_behind_a_live_intent_is_cleared_by_the_cut_and_th
         "the execution watchdog froze the loop -- socket kraken-spot-data-streams, kraken-spot-user-streams down past "
         "the 30s grace: a cancel is sent for the active intent's order and each order the Cache holds open, a resting "
         "intent revoked with socket_down, and every new intent is refused until the sockets are back and the re-read "
-        "pass has settled"
+        "pass has settled, or on a disarmed engine until the sockets are back, the pass then owed to its first armed tick"
     ]
 
     ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-data-streams"))
@@ -6082,6 +6082,36 @@ def test_a_disarmed_return_lifts_the_freeze_with_no_read_and_the_first_armed_tic
     ex.on_timer(clock.now)  # the first tick after it runs the owed pass over the minted row
     assert (len(venue.calls), holdings.calls) == (reads[0] + 1, reads[1] + 1)
     assert _record(tmp_path)["submitted"][0]["state"] == "canceled"
+
+
+def test_a_pass_an_armed_return_set_waits_owed_while_the_gate_reads_disarmed_and_resumes_on_the_tries_it_kept(tmp_path):
+    holdings = _VenueHoldings({})
+    clock = _Clock()
+    ex = _executor(tmp_path, clock=clock, venue_holdings=holdings)
+    ex.on_timer(clock.now)  # the startup pass: its one book read
+    clock.now += executor_module._GATE_REFRESH
+    ex.on_timer(clock.now)  # the idle refresh reads the gate armed
+    _reconnect(ex)  # the armed return arms the pass
+    holdings._raises = RuntimeError("down")
+    arm = exec_dir(tmp_path) / ARM_FILE
+    arm.unlink()
+    clock.now += executor_module._GATE_REFRESH
+    ex.on_timer(clock.now)  # the pass's settle fails, one try spent; the idle refresh at the tick's end reads disarmed
+    assert (holdings.calls, ex._reread_tries) == (2, 2)
+    for _ in range(3):
+        clock.now += timedelta(seconds=5)
+        ex.on_timer(clock.now)
+    assert (holdings.calls, ex._reread_tries, ex._reread_owed) == (2, 2, True)
+    arm.touch()
+    clock.now += executor_module._GATE_REFRESH
+    ex.on_timer(clock.now)  # the idle refresh at this tick's end reads the gate armed
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)  # the first armed tick resumes the pass on the two tries it kept: one more fails
+    assert (holdings.calls, ex._reread_tries, ex._reread_owed) == (3, 1, False)
+    holdings._raises = None
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+    assert (holdings.calls, ex._reread_tries) == (4, 0)
 
 
 def test_a_repeated_drop_of_one_endpoint_keeps_the_grace_running_from_its_first_drop(tmp_path):
