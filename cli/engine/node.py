@@ -506,7 +506,15 @@ def _exec_engine_config() -> LiveExecutionEngineConfig:
     three of them decide how often an attended probe window stops on a slow venue rather than on a
     real one. They are stated at the values they already hold: no Kraken REST ack latency has been
     measured, so there is nothing to derive a different number from, and what an explicit statement
-    buys is that an upstream default flip cannot move the live trade path silently."""
+    buys is that an upstream default flip cannot move the live trade path silently.
+
+    The library's two venue polls stay off. Its reconciler's events reach the executor flagged
+    `reconciliation=True`, and `_on_order_event` and `_venue_terminal_state` read a flagged terminal
+    as one this engine minted, stranding the intent `ambiguous`; and its own
+    `request_order_status_reports` on the execution client would race the executor's bare-client
+    reads for the key's nonce (`read_venue_orders`). The go/no-go reads its zero unreconciled states
+    from the engine's own three reconciliations instead -- the startup pass, the re-read pass and the
+    boundary's venue book read, each journaled."""
     return LiveExecutionEngineConfig(
         reconciliation=True,
         load_cache=True,
@@ -514,6 +522,8 @@ def _exec_engine_config() -> LiveExecutionEngineConfig:
         inflight_check_interval_ms=2000,
         inflight_check_threshold_ms=5000,
         inflight_check_retries=5,
+        open_check_interval_secs=None,
+        position_check_interval_secs=None,
     )
 
 
