@@ -103,7 +103,7 @@ Every new or changed guard carries its `infra/scripts/mutate-probe.sh` verdict; 
 ## Invariants
 
 - Through the box, Grafana Cloud's rules, receivers, watchdog URL and vault values are untouched, and nothing from this work converges `zcrypto`.
-  - **AMENDED by spec 00123 D13 (2026-10-06).** Through the box the primary's one converge of this work is spec 00123's `--tags alloy -e converge_primary=true` in its wave, attended and with the fleet's digest, reaching neither the engine nor the capture daemon; the invariant's first clause stands.
+  - **AMENDED by spec 00123 D13 (2026-10-06).** Through the box the primary's converges of this work are spec 00123's `--tags alloy -e converge_primary=true`: the wave's, attended and with the fleet's digest, and D16's attended one-host rollback under `alloy_override` should that fail, each reaching neither the engine nor the capture daemon; the invariant's first clause stands.
 - No existing vault value is repointed; the node is reached through new names alone, until retirement removes the old ones.
 - The Cloud endpoint keeps its drop and keep pair until the leg is removed, and the node's endpoint never carries one.
 - The primary's capture daemon and its Alloy are never a drill's subject, and every change on `zcrypto` is an attended converge under `.claude/rules/fleet-deploys.md`.
