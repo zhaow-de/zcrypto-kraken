@@ -326,7 +326,7 @@ mkdir -- "$2${1##*/}"
 exit 1
 """
 # sqlite3 shims, found ahead of the standard library on PYTHONPATH: a VACUUM that fails with its file and its journal on
-# disk, and one that holds there until it is stopped.
+# disk, one that holds there until it is stopped, and an import that holds there, before the VACUUM checks its name.
 JOURNAL_SHIM = """def connect(*args, **kwargs):
     return Source()
 
@@ -353,6 +353,12 @@ class Source:
         open(os.environ["SLOW_STARTED"], "wb").close()
         while True:
             time.sleep(0.05)
+"""
+IMPORT_SHIM = """import os, time
+
+open(os.environ["SLOW_STARTED"], "wb").close()
+while True:
+    time.sleep(0.05)
 """
 
 
@@ -556,6 +562,17 @@ def test_the_prune_reads_the_date_in_the_name_and_keeps_the_keep_days_in_both_di
         assert left == {_named(today, 14), _named(today, 13), _named(today, 15, name="other")}, directory
 
 
+def test_the_prune_removes_a_file_past_the_keep_days_left_in_the_sibling(node):
+    today = _today()
+    incoming = Path(f"{node.dest}.incoming")
+    incoming.mkdir(parents=True)
+    for days in (15, 13):
+        (incoming / _named(today, days)).write_bytes(b"")
+    result = _backup(node, now=_noon(today))
+    assert result.returncode == 0, result.stderr
+    assert [p.name for p in incoming.iterdir()] == [_named(today, 13)]
+
+
 def test_the_gauge_carries_the_backups_time_under_its_name(node):
     before = int(time.time())
     assert _backup(node).returncode == 0
@@ -664,32 +681,60 @@ def test_a_run_while_another_holds_the_lock_fails_and_touches_nothing(node, back
     assert _content(node.dest / expected[0]) == _content(node.db)
 
 
-def _stopped_part_way(node: Node, run: subprocess.Popen[str], started: Path) -> None:
+STOPS = pytest.mark.parametrize(("signum", "rc"), [(signal.SIGTERM, 143), (signal.SIGINT, 130)], ids=["SIGTERM", "SIGINT"])
+
+
+def _stopped_part_way(node: Node, run: subprocess.Popen[str], started: Path, signum: signal.Signals, rc: int) -> None:
     _wait_for(started, run)
-    os.killpg(run.pid, signal.SIGTERM)
+    os.killpg(run.pid, signum)
     _, stderr = run.communicate(timeout=30)
-    assert run.returncode == 143, stderr
-    assert any(ERROR_LINE.match(line) and "stopped by SIGTERM" in line for line in stderr.splitlines()), stderr
+    assert run.returncode == rc, stderr
+    assert any(ERROR_LINE.match(line) and f"stopped by {signum.name}" in line for line in stderr.splitlines()), stderr
     for directory in (node.staging, node.dest, Path(f"{node.dest}.incoming")):
         left = sorted(p.name for p in directory.iterdir()) if directory.exists() else []
         assert not [name for name in left if STAMPED.fullmatch(name) or name.endswith("-journal")], (directory, left)
     assert node.prom.read_text() == PREVIOUS
 
 
-def test_a_run_stopped_during_a_slow_copy_leaves_no_file_under_a_backups_name(node, background):
+@STOPS
+def test_a_run_stopped_during_a_slow_copy_leaves_no_file_under_a_backups_name(node, background, signum, rc):
     _stub(node, "slow-cp", SLOW_COPY)
     started = node.bin / "started"
     node.prom.write_text(PREVIOUS)
     env = {"SLOW_STARTED": str(started), "SLOW_RELEASE": str(node.bin / "never")}
-    _stopped_part_way(node, _start(node, background, copy="slow-cp ", env=env), started)
+    _stopped_part_way(node, _start(node, background, copy="slow-cp ", env=env), started, signum, rc)
 
 
-def test_a_run_stopped_during_a_slow_vacuum_leaves_no_file_under_a_backups_name(node, background):
+@STOPS
+def test_a_run_stopped_during_a_slow_vacuum_leaves_no_file_under_a_backups_name(node, background, signum, rc):
     shim = _shim(node, "slow-shim", SLOW_SHIM)
     started = node.bin / "started"
     node.prom.write_text(PREVIOUS)
     env = {"SLOW_STARTED": str(started), "PYTHONPATH": str(shim)}
-    _stopped_part_way(node, _start(node, background, env=env), started)
+    _stopped_part_way(node, _start(node, background, env=env), started, signum, rc)
+
+
+@pytest.mark.parametrize("taken", ["staged", "journal", "sibling"])
+def test_a_name_an_earlier_run_of_the_same_second_left_fails_the_run_before_a_stop_could_remove_it(node, background, taken):
+    today = _today()
+    name = f"probe-{today:%Y-%m-%d}T120000Z.sqlite"
+    incoming = Path(f"{node.dest}.incoming")
+    earlier = {"staged": node.staging / name, "journal": node.staging / f"{name}-journal", "sibling": incoming / name}[taken]
+    earlier.parent.mkdir(parents=True)
+    earlier.write_bytes(b"an earlier run's")
+    started = node.bin / "started"
+    env = {"SLOW_STARTED": str(started), "PYTHONPATH": str(_shim(node, "import-shim", IMPORT_SHIM))}
+    run = _start(node, background, env=env, now=_noon(today))
+    deadline = time.monotonic() + 30
+    while run.poll() is None and not started.exists():
+        assert time.monotonic() < deadline, "the run neither ended nor reached its VACUUM"
+        time.sleep(0.02)
+    if run.poll() is None:
+        os.killpg(run.pid, signal.SIGTERM)
+    _, stderr = run.communicate(timeout=30)
+    assert earlier.read_bytes() == b"an earlier run's"
+    assert (run.returncode, started.exists()) == (1, False), stderr
+    assert any(ERROR_LINE.match(line) and f"{earlier} already exists" in line for line in stderr.splitlines()), stderr
 
 
 def test_a_file_already_under_the_runs_name_fails_the_run_and_stays(node):

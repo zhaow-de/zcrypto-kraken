@@ -43,15 +43,22 @@ now=$(date -u +%s)
 staged="$staging/$name-$(date -u -d "@$now" +%Y-%m-%dT%H%M%SZ).sqlite"
 cutoff=$(date -u -d "@$((now - 10#$keep_days * 86400))" +%Y-%m-%d)
 
+# What a stop removes: the copy in the sibling and, where the host holds the staging directory, the staged file and its
+# journal. A name already taken there is an earlier run's of the same second, refused before the trap could remove it.
+mine=("$incoming/${staged##*/}")
+[ ${#runner[@]} -gt 0 ] || mine+=("$staged" "$staged-journal")
+for path in "${mine[@]}"; do
+  if [ -e "$path" ] || [ -L "$path" ]; then
+    fail "$path already exists, an earlier run's under this run's name"
+  fi
+done
+
 # systemd signals the unit's whole control group, so a child dies with the script at the signal's default: a Python
 # handler runs only between bytecodes and would wait out SQLite's VACUUM before removing what this trap removes at
 # once. A runner's VACUUM runs on in its container, out of the host's reach; its file is never copied, and the prune
 # removes it past the keep-days.
 stopped() {
-  rm -f -- "$incoming/${staged##*/}" || true
-  if [ ${#runner[@]} -eq 0 ]; then
-    rm -f -- "$staged" "$staged-journal" || true
-  fi
+  rm -f -- "${mine[@]}" || true
   log ERROR "stopped by $1 before the backup completed; this run's files are removed"
   exit "$2"
 }
@@ -127,6 +134,7 @@ trap - TERM INT
 
 "${runner[@]}" python3 -c "$prune" "$staging" "$name" "$cutoff" || fail "pruning $staging failed"
 python3 -c "$prune" "$dest" "$name" "$cutoff" || fail "pruning $dest failed"
+python3 -c "$prune" "$incoming" "$name" "$cutoff" || fail "pruning $incoming failed"
 
 # The files an earlier run left, one written before the group was set among them, then the directory: a directory
 # open to the group lists no file the group cannot read.
