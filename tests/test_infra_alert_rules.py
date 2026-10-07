@@ -2321,6 +2321,7 @@ def test_a_freeze_past_fifteen_minutes_pages_and_the_hourly_three_second_blip_do
     rule = _rule("zcrypto-engine-exec-watchdog-frozen")
     hold_for = _duration_seconds(rule["for"])
     assert _evaluator(rule) == {"type": "gt", "params": [0.5]}
+    assert rule["noDataState"] == "OK", "the gauge is absent until the engine that publishes it is converged; NoData must not page"
 
     def fires(samples):
         run = 0
@@ -2342,6 +2343,7 @@ def test_two_consecutive_undrafted_boundaries_page_and_one_followed_by_an_ok_bou
     rule = _rule("zcrypto-engine-exec-boundary-not-drafted")
     hold_for = _duration_seconds(rule["for"])
     assert _evaluator(rule) == {"type": "gt", "params": [0.5]}
+    assert rule["noDataState"] == "OK", "the gauge is absent until the engine that publishes it is converged; NoData must not page"
     expr = rule["data"][0]["model"]["expr"]
     window = sum(int(n) * {"h": 3600, "m": 60}[u] for n, u in re.findall(r"(\d+)([hm])", re.search(r"\[(\w+)\]", expr).group(1)))
     h4 = 4 * 3600
