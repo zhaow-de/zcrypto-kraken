@@ -5665,7 +5665,7 @@ def test_a_returns_arm_pending_behind_a_live_intent_is_cleared_by_the_cut_and_th
         "the execution watchdog froze the loop -- socket kraken-spot-data-streams, kraken-spot-user-streams down past "
         "the 30s grace: a cancel is sent for the active intent's order and each order the Cache holds open, a resting "
         "intent revoked with socket_down, and every new intent is refused until the sockets are back and the re-read "
-        "pass has settled, or on a disarmed engine until the sockets are back, the pass then owed to its first armed tick"
+        "pass has settled, or on a disarmed engine whose ledger holds no open or ambiguous row until the sockets are back"
     ]
 
     ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-data-streams"))
@@ -6060,28 +6060,88 @@ def test_a_pass_completed_before_the_cut_lifts_nothing_until_both_endpoints_are_
     assert not ex._frozen
 
 
-def test_a_disarmed_return_lifts_the_freeze_with_no_read_and_the_first_armed_tick_runs_the_owed_pass(tmp_path):
-    venue, holdings = _VenueOrders(_report(_TXID, OrderStatus.CANCELED)), _VenueHoldings({})
-    ex, client, clock = _frozen_executor(tmp_path, venue_orders=venue, venue_holdings=holdings)
+def test_a_disarmed_return_over_a_row_the_cut_stranded_leaves_the_freeze_standing_with_no_read_until_the_first_armed_pass_re_cancels_it(
+    tmp_path,
+):
+    venue, cancel, holdings = _VenueOrders(_report(_TXID, OrderStatus.ACCEPTED)), _VenueCancel(), _VenueHoldings({})
+    ex, client, clock = _frozen_executor(tmp_path, venue_orders=venue, venue_cancel=cancel, venue_holdings=holdings)
     arm = exec_dir(tmp_path) / ARM_FILE
     arm.unlink()
     clock.now += executor_module._GATE_REFRESH
     ex.on_timer(clock.now)  # the idle refresh reads the gate disarmed
     reads = (len(venue.calls), holdings.calls)
-    ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-data-streams"))
-    assert ex._frozen  # one endpoint still down
-    ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-user-streams"))
-    assert not ex._frozen  # the return that empties the set lifts it, with no pass
-    clock.now += executor_module._GATE_REFRESH
-    ex.on_timer(clock.now)  # still disarmed: the owed pass waits, and nothing is read
-    assert (ex._reread_tries, len(venue.calls), holdings.calls) == (0, *reads)
+    with _executor_errors(level=logging.CRITICAL) as records:
+        ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-data-streams"))
+        ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-user-streams"))
+        for _ in range(50):
+            clock.now += timedelta(seconds=5)
+            ex.on_timer(clock.now)
+    assert ex._frozen and (len(venue.calls), holdings.calls, cancel.calls) == (*reads, [])
+    assert [r.getMessage() for r in records] == [
+        "the execution watchdog's freeze stands -- the sockets are back and the engine is disarmed, but the cut may "
+        "have left an order resting at Kraken unread, the ledger's open or ambiguous rows: "
+        f"O-1 (Kraken {_TXID}); the first armed tick's re-read pass re-cancels and settles them, and while the engine "
+        "stays disarmed, cancel each by hand on Kraken's open-orders page"
+    ]
     arm.touch()
     clock.now += executor_module._GATE_REFRESH
     ex.on_timer(clock.now)  # the idle refresh at this tick's end reads the gate armed
     clock.now += timedelta(seconds=5)
-    ex.on_timer(clock.now)  # the first tick after it runs the owed pass over the minted row
-    assert (len(venue.calls), holdings.calls) == (reads[0] + 1, reads[1] + 1)
-    assert _record(tmp_path)["submitted"][0]["state"] == "canceled"
+    ex.on_timer(clock.now)
+    assert (len(venue.calls), holdings.calls, cancel.calls) == (reads[0] + 1, reads[1] + 1, [(_TXID, "BTC/EUR.KRAKEN")])
+    assert _record(tmp_path)["submitted"][0]["state"] == "canceled" and not ex._frozen
+
+
+def test_a_disarmed_return_with_no_open_row_lifts_the_freeze_with_no_read_and_the_first_armed_tick_runs_the_owed_pass(tmp_path):
+    holdings = _VenueHoldings({})
+    clock = _Clock()
+    ex = _executor(tmp_path, clock=clock, venue_holdings=holdings)
+    arm = exec_dir(tmp_path) / ARM_FILE
+    arm.unlink()
+    ex.on_timer(clock.now)  # the startup pass: its one book read
+    ex.on_socket_state(_socket(SocketState.DISCONNECTED, "kraken-spot-data-streams"))
+    ex.on_socket_state(_socket(SocketState.DISCONNECTED, "kraken-spot-user-streams"))
+    clock.now += executor_module._GATE_REFRESH
+    ex.on_timer(clock.now)  # past the grace the watchdog freezes; the idle refresh reads the gate disarmed
+    assert ex._frozen
+    ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-data-streams"))
+    assert ex._frozen  # one endpoint still down
+    ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-user-streams"))
+    assert not ex._frozen  # no row open: the return that empties the set lifts it, with no pass
+    clock.now += executor_module._GATE_REFRESH
+    ex.on_timer(clock.now)
+    assert (ex._reread_tries, holdings.calls) == (0, 1)
+    arm.touch()
+    clock.now += executor_module._GATE_REFRESH
+    ex.on_timer(clock.now)  # the idle refresh at this tick's end reads the gate armed
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)  # the first armed tick runs the owed pass
+    assert (ex._reread_tries, holdings.calls) == (0, 2)
+
+
+def test_an_owed_pass_is_cleared_by_its_endpoints_next_drop_so_the_first_armed_tick_reads_nothing_inside_the_cut(tmp_path):
+    holdings = _VenueHoldings({})
+    clock = _Clock()
+    ex = _executor(tmp_path, clock=clock, venue_holdings=holdings)
+    arm = exec_dir(tmp_path) / ARM_FILE
+    arm.unlink()
+    ex.on_timer(clock.now)  # the startup pass: its one book read
+    clock.now += executor_module._GATE_REFRESH
+    ex.on_timer(clock.now)  # the idle refresh reads the gate disarmed
+    _reconnect(ex)  # the data socket down and back while disarmed: the pass owed
+    assert ex._reread_owed
+    ex.on_socket_state(_socket(SocketState.DISCONNECTED, "kraken-spot-data-streams"))
+    assert not ex._reread_owed
+    arm.touch()
+    clock.now += executor_module._GATE_REFRESH
+    ex.on_timer(clock.now)  # the idle refresh at this tick's end reads the gate armed
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+    assert holdings.calls == 1
+    ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-data-streams"))  # the armed return arms it
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+    assert holdings.calls == 2
 
 
 def test_a_pass_an_armed_return_set_waits_owed_while_the_gate_reads_disarmed_and_resumes_on_the_tries_it_kept(tmp_path):
@@ -6096,7 +6156,7 @@ def test_a_pass_an_armed_return_set_waits_owed_while_the_gate_reads_disarmed_and
     arm = exec_dir(tmp_path) / ARM_FILE
     arm.unlink()
     clock.now += executor_module._GATE_REFRESH
-    ex.on_timer(clock.now)  # the pass's settle fails, one try spent; the idle refresh at the tick's end reads disarmed
+    ex.on_timer(clock.now)  # the pass's settle fails; the idle refresh at the tick's end reads disarmed
     assert (holdings.calls, ex._reread_tries) == (2, 2)
     for _ in range(3):
         clock.now += timedelta(seconds=5)
@@ -6106,7 +6166,7 @@ def test_a_pass_an_armed_return_set_waits_owed_while_the_gate_reads_disarmed_and
     clock.now += executor_module._GATE_REFRESH
     ex.on_timer(clock.now)  # the idle refresh at this tick's end reads the gate armed
     clock.now += timedelta(seconds=5)
-    ex.on_timer(clock.now)  # the first armed tick resumes the pass on the two tries it kept: one more fails
+    ex.on_timer(clock.now)
     assert (holdings.calls, ex._reread_tries, ex._reread_owed) == (3, 1, False)
     holdings._raises = None
     clock.now += timedelta(seconds=5)
