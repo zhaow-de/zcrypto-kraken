@@ -352,8 +352,8 @@
 #
 # The arming intent is read from this host's vars.yml in the TREE, where arming is a reviewed line
 # in git, and the pin from pyproject.toml and the verified-version record beside it. The template and
-# this assert read one fact set derived from those files, never the variable namespace an extra var
-# reaches; the role has no default for engine_exec_armed and reads no variable of that name.
+# this assert read one fact set derived from those files; the role has no default for
+# engine_exec_armed and reads no variable of that name.
 # `engine_exec_armed_in_tree` is true only on the literal line `engine_exec_armed: true`, and the
 # template renders exec_armed from it alone, so a templated or garbled value renders false. The first
 # condition is inverted on purpose: a converge counts as DISARMED only when it renders false and the
@@ -364,8 +364,8 @@
 # on the raw value for every other. The two texts and the record's list are pinned to their lookups,
 # the two arming facts to the file's own lines, and the pin and the list to their set_fact's own
 # expression over the pinned inputs. No `-e` through converge.sh reaches any of those names, since it
-# refuses their keys; a constant one from a raw ansible-playbook fails the converge before the
-# render, and the fail_msg names it.
+# refuses their keys; on a raw ansible-playbook that runs this assert, a constant one that disagrees
+# with the tree fails it before the render, and the fail_msg names it.
 - name: arming backstop — read the tree's arming intent, nautilus pin, and verified-version record
   ansible.builtin.set_fact:
     engine_host_vars_text: "{{ lookup('file', playbook_dir ~ '/host_vars/' ~ inventory_hostname ~ '/vars.yml') }}"
