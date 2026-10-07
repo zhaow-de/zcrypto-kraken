@@ -47,7 +47,7 @@ FLEET_CHECKS = 11
 HCIO_READ = ("healthchecks_readonly_api_key", "group_vars/all/vault.yml")
 HCIO_DELETE = ("healthchecks_api_key", "group_vars/capture_host/vault.yml")
 SERVICE_WRITE = ("hc_readwrite_api_key", "group_vars/all/vault.yml")
-SERVICE_READ = ("hc_readonly_api_key", "group_vars/observed/vault.yml")
+SERVICE_READ = ops_daily.DEADMAN_READONLY_KEY
 
 HCIO_LISTING = "healthchecks.io's checks listing"
 SERVICE_LISTING = "the dead-man service's checks listing"

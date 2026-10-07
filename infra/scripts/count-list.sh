@@ -459,7 +459,8 @@ c_ambient_bytes() { uv run python infra/scripts/guidance-guard.py --ambient-byte
 c_deploy_rows_with_an_empty_digest_var() { jq -s '[.[] | select((.extra_vars // {}) | to_entries | any((.key | endswith("_digest")) and ((.value | tostring) | test("^[[:space:]]*$"))))] | length' docs/reference/deploy-log.jsonl; }
 
 # The dead-man service's read-only key reaching a host: the ops Alloy's secrets template is its one render, the
-# workstation reading the same vault line by file path. Another role's line naming the key is the finding.
+# workstation reading the same vault line by file path. Any other non-comment line under the roles naming the key,
+# another file of the ops role's included, is the finding.
 c_hc_readonly_key_in_a_role() { git grep -nE 'hc_readonly_api_key' -- infra/ansible/roles ':!infra/ansible/roles/ops/templates/alloy-secrets.env.j2' | grep -vcE '^[^:]+:[0-9]+:[[:space:]]*#'; }
 
 # A write to one of the six gate gauges from outside `_ExecGauges.update`, whose one call publishes the

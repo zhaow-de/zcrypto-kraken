@@ -300,6 +300,8 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
 
 LOKI_DS_UID_DEFAULT = "grafanacloud-logs"
 DEADMAN_API = "https://zcrypto-hc.zhaow.me/api/v3/checks/"
+# The service's read-only key, by name and vault file; infra/scripts/hc-provision.py reads it through this constant.
+DEADMAN_READONLY_KEY = ("hc_readonly_api_key", "group_vars/observed/vault.yml")
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEPLOY_LOG = REPO_ROOT / "docs/reference/deploy-log.jsonl"
 REGISTER = REPO_ROOT / "docs/reference/kraken-snapshot-register.md"
@@ -567,7 +569,7 @@ def _log_counts(result) -> list[LogCount]:
 
 def _readonly_key() -> str | None:
     try:
-        return grafana_auth.vault_var("hc_readonly_api_key", "group_vars/observed/vault.yml")
+        return grafana_auth.vault_var(*DEADMAN_READONLY_KEY)
     except Exception:
         return None
 
@@ -585,7 +587,8 @@ def read_deadmen(token: str, *, opener=urllib.request.urlopen) -> DeadmenRead:
 
     key = _readonly_key()
     if not key:
-        note("hc_readonly_api_key could not be read from group_vars/observed/vault.yml, so the direct dead-man read did not run")
+        name, vault_file = DEADMAN_READONLY_KEY
+        note(f"{name} could not be read from {vault_file}, so the direct dead-man read did not run")
         return read
     try:
         request = urllib.request.Request(DEADMAN_API, headers={"X-Api-Key": key})
