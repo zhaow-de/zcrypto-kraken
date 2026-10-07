@@ -4,3 +4,7 @@
 mon_ingest_prom_url: https://zcrypto-mon.zhaow.me/api/v1/write
 mon_ingest_loki_url: https://zcrypto-mon.zhaow.me/loki/api/v1/push
 mon_ingest_fleet_user: fleet
+
+# The dead-man service's project on the clone (spec 00122 D4): the uuid its project settings page shows, plain, read by
+# infra/scripts/hc-provision.py and the pingers' URL scheme; the keys beside it live in vault.yml.
+hc_project_uuid: a613c0be-ad8a-4c32-8c47-bffc6b294f4b
