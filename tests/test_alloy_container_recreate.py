@@ -80,8 +80,8 @@ def test_the_override_echo_fires_only_on_an_accepted_override(role, operand, ove
 def test_the_recreate_forces_only_when_the_secrets_file_changed(role):
     args = find_task(_tasks(role), RECREATE)["ansible.builtin.command"]
     secrets = f"{role}_alloy_secrets"
-    assert _render(args["cmd"], {secrets: {"changed": True}}) == "docker compose up -d --force-recreate"
-    assert _render(args["cmd"], {secrets: {"changed": False}}) == "docker compose up -d"
+    assert _render(args["cmd"], {secrets: {"changed": True}}) == "docker compose -f compose.yaml up -d --force-recreate"
+    assert _render(args["cmd"], {secrets: {"changed": False}}) == "docker compose -f compose.yaml up -d"
     assert args["chdir"] == "{{ " + f"{role}_alloy_dir" + " }}"
 
 

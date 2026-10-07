@@ -97,7 +97,8 @@ def verbatim(role: str) -> list[tuple[str, object]]:
         (
             "ansible.builtin.command",
             {
-                "cmd": "docker compose up -d{{ ' --force-recreate' if " + f"{role}_alloy_secrets" + " is changed else '' }}",
+                "cmd": "docker compose -f compose.yaml up -d"
+                f"{{{{ ' --force-recreate' if {role}_alloy_secrets is changed else '' }}}}",
                 "chdir": alloy_dir(role),
             },
         ),

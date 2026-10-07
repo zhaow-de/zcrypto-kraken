@@ -538,12 +538,12 @@
         mode: "0644"
 
     # The fleet's digest reaches the container only through a recreate, and a changed env file reaches it
-    # only through a forced one: Compose's recreate on an env file alone is version-dependent. This
-    # directory sits inside Valkey and Sentinel's project directory, whose compose file is the one
-    # Compose's upward search would find were this directory ever without its own when the recreate runs.
+    # only through a forced one: Compose's recreate on an env file alone is version-dependent. `-f` names
+    # this directory's own file, so a missing one fails the run where a bare `up -d` would search the
+    # parent directories and find Valkey and Sentinel's project.
     - name: bring the alloy container to the digest, recreated when its secrets file changed
       ansible.builtin.command:
-        cmd: "docker compose up -d{{ ' --force-recreate' if cache_alloy_secrets is changed else '' }}"
+        cmd: "docker compose -f compose.yaml up -d{{ ' --force-recreate' if cache_alloy_secrets is changed else '' }}"
         chdir: "{{ cache_alloy_dir }}"
       register: cache_alloy_up
       changed_when: cache_alloy_up.stderr is search('Recreated|Created|Started')
