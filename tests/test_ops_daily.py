@@ -2666,10 +2666,11 @@ def test_each_bounded_verdict_check_agrees_with_the_rule_it_mirrors():
 
 
 def test_the_healthchecks_fixture_carries_no_key_the_read_only_fetch_never_returns():
-    """The fixture's keys stay inside the trio the read-only key returns, so it cannot vouch for a
-    payload shape production never sends."""
+    """The fixture's keys stay inside the check definitions, each a key the read-only listing returns, so it
+    cannot vouch for a payload shape production never sends."""
     fixture = Path(__file__).resolve().parent / "fixtures" / "healthchecks_descriptions.json"
-    extra = sorted({key for check in json.loads(fixture.read_text()) for key in check} - {"name", "tags", "desc"})
+    definitions = {"name", "tags", "desc", "grace", "manual_resume", "timeout", "schedule", "tz"}
+    extra = sorted({key for check in json.loads(fixture.read_text()) for key in check} - definitions)
     assert not extra, f"the fixture grew {extra}, which the read-only fetch does not return"
 
 
