@@ -38,6 +38,7 @@ Every host's Alloy runs the fleet's version outside a wave (set: the hosts of th
 | package | host | version | since (UTC) | notes |
 | --- | --- | --- | --- | --- |
 | agentboard | zcrypto-ops | `0.5.3` (`@gbasin/agentboard`, npm global as `zhaow`) | 2026-09-17 | restarted by a tunnel-conf converge (`Requires=wg-quick@zaccess0`), not by a role task; re-pins attended, no bake; read-back and upgrade: `infra/runbooks/ops-node.md`'s `agentboard-node-upgrade` |
+| hc (the healthchecks clone, `ghcr.io/zhaow-de/healthchecks`, by tag) | zcrypto-hc | `v6.2.0` | 2026-10-07 15:56:59 | first pin; rolled back by `-e hc_image_tag=<previous tag>` on a converge, the previous tag resident on the node |
 
 ## Standing constraints
 
