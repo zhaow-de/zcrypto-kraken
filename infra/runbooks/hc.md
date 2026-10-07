@@ -30,7 +30,7 @@ The two figures the drills measured: a thirty-minute power-off read `[[ROLLOUT: 
 
 2. **Read the fleet without the dead-man domain**: `uv run python infra/scripts/ops-daily.py report --since 24h` reads Grafana Cloud as on a quiet day, and names `the dead-man service could not be read directly` under its unreadable sources. The node's own telemetry, while its Alloy ships: `uv run python infra/scripts/grafana-query.py --stack mon 'count(up{host="zcrypto-hc"})'` reads 2.
 
-3. **A node that answers ssh**: `ssh hc 'sudo journalctl -u zcrypto-hc-selfcheck --no-pager -o cat | grep -E "^selfcheck:" | tail -3'`. `web=FAIL` is the service failing its status read: `zcrypto-hc-service-down` below, from its step 2. `web=ok` with `-> ping failed:` is the ping refused: a `404` names a ping key the service does not hold, which `hc-lost-database` step 3 sets back to the vault's, and another error is the database refusing the ping's write. `web=ok … -> pinged` with the watchdog still at `999` is the ops node's scrape, `observability.md#zcrypto-hcio-watchdog` step 4.
+3. **A node that answers ssh**: `ssh hc 'sudo journalctl -u zcrypto-hc-selfcheck --no-pager -o cat | grep -E "^selfcheck:" | tail -3'`. `web=FAIL` is the service failing its status read: `zcrypto-hc-service-down` below, from its step 2. `web=ok` with `-> ping failed: HTTPError` is the ping refused: with `zcrypto-hc-error-logs` paging `Internal Server Error` records on `/ping/` paths, the database refusing the ping's write; with that rule quiet, a ping key the service does not hold, which `hc-lost-database` step 3 sets back to the vault's. `web=ok … -> pinged` with the watchdog still at `999` is the ops node's scrape, `observability.md#zcrypto-hcio-watchdog` step 4.
 
 4. **A node that does not answer**: in the Cloud Manager, a Linode reading offline is powered on from its page; one reading running and answering nothing on ssh or in LISH is rebooted from its page.
 
@@ -190,7 +190,7 @@ A restored database brings back the superuser, the project, its three keys, its 
 
 ### What to do
 
-1. **Stage the file on the node**, two copies in a directory the container's uid owns, one for the read and one for the swap, `f` set to the file to restore — one of `/var/backups/zcrypto-hc/`, or a file copied onto the node from where it is kept:
+1. **Stage the file on the node**, two copies in a directory the container's uid owns, one for the read and one for the swap, `f` set to the file to restore — a file under `/var/backups/zcrypto-hc/`, or one copied onto the node from where it is kept:
 
    ```bash
    f=/var/backups/zcrypto-hc/hc-<UTC date and time>.sqlite
@@ -364,7 +364,7 @@ A **warning** Grafana alert from the observability node, `Dead-man · reboot pen
 
 ### What it means
 
-The node installs Debian's security patches by itself and does not reboot itself: a reboot stops the service, and with it each dead-man check, for its duration, so it is taken by hand, in the node's 10:25 UTC slot. While the node is down the fleet's pings are lost and no check is evaluated; a reboot of a few minutes ends inside each check's `timeout` + `grace`, so no check pages for it, and the service is back before `zcrypto-hcio-watchdog`'s five minutes at `999` have run. Until the observability node pages the main channel, this alert reaches the shadow channel alone, and the reboot flag comes to a person through `hc-patch-pass` step 7.
+The node installs Debian's security patches by itself and does not reboot itself: a reboot stops the service, and with it each dead-man check, for its duration, so it is taken by hand, in the node's 10:25 UTC slot. While the node is down the fleet's pings are lost and no check is evaluated; a reboot of a few minutes ends inside each check's `timeout` + `grace`, so no check pages for it, and one back within `zcrypto-hcio-watchdog`'s five minutes at `999` pages nothing in the main channel. Until the observability node pages the main channel, this alert reaches the shadow channel alone, and the reboot flag comes to a person through `hc-patch-pass` step 7.
 
 ### What to do
 
@@ -392,7 +392,7 @@ The self-check runs every five minutes on the node. It reads the service's statu
 
 ### What to do
 
-1. **Read the self-check's lines**, on the node: `sudo journalctl -u zcrypto-hc-selfcheck --no-pager -o cat | grep -E "^selfcheck:" | tail -3`. `answered 5xx` is the service failing; `unreadable: URLError` is nothing listening on its port; `answered 400` is a request naming another host than the service's, the unit's `HC_SELFCHECK_HOST`. No line in fifteen minutes is the timer: `systemctl list-timers zcrypto-hc-selfcheck.timer`, and a converge of the node, `--tags hc`, puts its unit back.
+1. **Read the self-check's lines**, on the node: `sudo journalctl -u zcrypto-hc-selfcheck --no-pager -o cat | grep -E "^selfcheck:" | tail -3`. `answered 5xx` is the service failing; `unreadable: URLError` is nothing listening on its port; `answered 400` is a request naming another host than the service's, the unit's `HC_SELFCHECK_HOST`. No line in fifteen minutes is the timer: `systemctl list-timers zcrypto-hc-selfcheck.timer`, and `infra/ansible/scripts/converge.sh site.yml --limit zcrypto-hc --tags hc -e hc_image_tag=<the pinned tag>` from the workstation puts its unit back.
 2. **Read the container**: `systemctl is-active zcrypto-hc caddy docker`, then `sudo docker inspect zcrypto-hc --format '{{.State.Status}} {{.State.Health.Status}} {{.RestartCount}} {{.State.StartedAt}}'`.
 3. **Read its records** on the observability node, where the ping key in a path is already written over, from the workstation: `uv run python infra/scripts/grafana-query.py --stack mon --loki 'sum by (level, message) (count_over_time({host="zcrypto-hc", container="hc", level=~"ERROR|CRITICAL|WARNING"} | json message="message" | drop __error__, __error_details__ [1h]))' 'sum(count_over_time({host="zcrypto-hc", container="hc", level=""} [1h]))'`. The second counts lines that are not the service's JSON records, uWSGI's own among them.
 4. **Bring it back**: `sudo systemctl restart zcrypto-hc.service`, which keeps the volume. A start that fails again is a full disk, `zcrypto-hc-disk-low` above, or a database the release fails to open, which step 3's records name: `hc-restore` from the newest backup file.
