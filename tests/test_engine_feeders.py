@@ -1,5 +1,6 @@
 import json
 import math
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -819,7 +820,9 @@ def test_accum_replay_floor_shorts_reaches_the_report_and_its_header_names_the_f
     ]
     assert "floored" not in plain.output
     help_text = runner.invoke(app, ["engine", "accum-replay", "--help"])
-    assert help_text.exit_code == 0 and "--floor-shorts" in help_text.output
+    # CI forces colour, and rich then styles the option name in pieces: read the help with its escapes stripped.
+    plain_help = re.sub(r"\x1b\[[0-9;]*m", "", help_text.output)
+    assert help_text.exit_code == 0 and "--floor-shorts" in plain_help
 
 
 def test_the_day_window_excludes_a_cycle_outside_it(tmp_path, monkeypatch):
