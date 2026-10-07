@@ -5,6 +5,9 @@ from __future__ import annotations
 import re
 from pathlib import Path, PurePosixPath
 
+import pytest
+
+from tests import alloy_part
 from tests.alloy_part import ROLES, SITE, TAG
 from tests.test_alloy_version import alloy_version
 from tests.test_infra_converge_guards import ANSIBLE, REPO, load_tasks
@@ -145,3 +148,17 @@ def test_the_alloy_package_is_installed_and_held_by_alloy_apt_alone_and_each_imp
             imported.setdefault(path.relative_to(ROLES).parts[0], set()).add(task[key].get("tasks_from", "main"))
     assert imported, "no role imports alloy_apt"
     assert not [role for role, files in imported.items() if "postcondition" not in files], imported
+
+
+@pytest.mark.parametrize("importer", ["access", "mon"])
+def test_a_listening_handler_a_role_imported_in_the_importers_tasks_brings_is_refused(monkeypatch, importer):
+    listener = {
+        "name": "restart caddy too",
+        "ansible.builtin.systemd": {"name": "caddy", "state": "restarted"},
+        "listen": ["restart alloy"],
+    }
+    role_handlers = alloy_part.role_handlers
+    monkeypatch.setattr(
+        alloy_part, "role_handlers", lambda role, stem=None: [listener] if role == "alloy_apt" else role_handlers(role, stem)
+    )
+    assert alloy_part.handler_refusals(importer) == ["restart caddy too: answers an Alloy notify and is not an Alloy handler"]

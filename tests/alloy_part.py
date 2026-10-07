@@ -69,22 +69,47 @@ def _spliced(path: Path, directory: Path) -> list[dict]:
     return handlers
 
 
-def role_handlers(role: str) -> list[dict]:
+def role_handlers(role: str, stem: str | None = None) -> list[dict]:
     """The role's handlers file and its static imports, where Ansible's `Role._load_role_yaml` and
     `path_dwim_relative` look first."""
     directory = ROLES / role / "handlers"
-    found = [directory / f"main{ext}" for ext in (".yml", ".yaml", ".json", "") if (directory / f"main{ext}").is_file()]
+    extensions = ("", ".yml", ".yaml", ".json") if stem else (".yml", ".yaml", ".json", "")
+    found = [directory / f"{stem or 'main'}{ext}" for ext in extensions if (directory / f"{stem or 'main'}{ext}").is_file()]
     return _spliced(found[0], directory) if found else []
 
 
+def _role_imports(tasks, base: Path, seen: set) -> list[tuple[str, str | None]]:
+    imports = []
+    for task in tasks or []:
+        role = next((key for key in alloy_version.IMPORT_ROLE if key in task), None)
+        imported = next((key for key in alloy_version.IMPORT_TASKS if key in task), None)
+        if role:
+            entry = (task[role]["name"], task[role].get("handlers_from"))
+            path = alloy_version._role_tasks(ROLES, task[role])
+            if (entry, path) not in seen:
+                seen.add((entry, path))
+                imports += [entry, *_role_imports(load_tasks(path), path.parent, seen)]
+        elif imported:
+            path = base / task[imported]
+            imports += _role_imports(load_tasks(path), path.parent, seen)
+        else:
+            imports += [entry for key in STRUCTURE for entry in _role_imports(task.get(key), base, seen)]
+    return imports
+
+
 def play_handlers(role: str) -> list[dict]:
-    """Each handler of a play that runs the role: Ansible puts every role entry's handlers in its play's scope, where a
-    notify reaches one by its name or a `listen` topic."""
+    """Each handler of a play that runs the role: Ansible puts every role entry's handlers in its play's scope, and
+    those of each role a static `import_role` in their tasks brings, where a notify reaches one by its name or a
+    `listen` topic."""
     handlers = []
     for play in load_tasks(SITE):
         roles = [entry["role"] for entry in play.get("roles") or []]
         if role in roles:
-            handlers += (play.get("handlers") or []) + [handler for name in roles for handler in role_handlers(name)]
+            sources = dict.fromkeys((name, None) for name in roles)
+            for name in roles:
+                path = alloy_version._role_tasks(ROLES, {"name": name})
+                sources |= dict.fromkeys(_role_imports(load_tasks(path), path.parent, set()))
+            handlers += (play.get("handlers") or []) + [h for name, stem in sources for h in role_handlers(name, stem)]
     return handlers
 
 
@@ -314,7 +339,8 @@ NOT_HANDLERS = (*STRUCTURE, *INCLUDE_TASKS, *INCLUDE_ROLE, *alloy_version.IMPORT
 
 
 def handler_refusals(role: str) -> list[str]:
-    """A top-level `include_tasks` among the play's handlers is refused: this read cannot see what it brings."""
+    """An entry among the play's handlers that is no handler — a block, `rescue` or `always`, an `include_tasks`, an
+    `include_role` or an `import_role`, at any level the read loads — is refused: this read cannot see what it brings."""
     refusals = [
         f"{handler.get('name')}: carries {key}" for handler in play_handlers(role) for key in NOT_HANDLERS if key in handler
     ]
