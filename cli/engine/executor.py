@@ -1517,7 +1517,8 @@ class ProbeExecutor:
         no endpoint held down, the connect itself, owes nothing; a `DISCONNECTED` holds off a pass a
         mint armed (`_arm_reread_after_mint`), so a mint inside a cut reads at most once, on a tick inside the
         mint-to-`DISCONNECTED` gap, and the return arms it again; a pass a return armed that has not run
-        yet it clears only when the endpoint whose return set it (`_reread_armed_by`) drops again -- a
+        yet, its tries or the owe a tick whose gate reads disarmed leaves of them (`_reread_owed`), it
+        clears only when the endpoint whose return set it (`_reread_armed_by`) drops again -- a
         cut drops both endpoints, so an arm left pending behind a live intent goes with the cut; where
         the other endpoint's drop leads and the mint has ended the intent, the arm stands until the
         first read that fails with an endpoint held down closes it (`_reread_pass`) -- and never on
@@ -1540,6 +1541,7 @@ class ProbeExecutor:
                 self._sockets_down.setdefault(endpoint, self._now())
                 if self._reread_armed_by in (None, endpoint):
                     self._reread_tries = 0  # a mint's arm, or this endpoint's own return's: a return arms the pass again
+                    self._reread_owed = False
                     self._reread_armed_by = None
                 logger.warning(
                     "socket %s is down -- an order whose terminal this engine mints meanwhile is re-read at the venue "
@@ -1550,9 +1552,9 @@ class ProbeExecutor:
                 del self._sockets_down[endpoint]
                 if not self._sockets_down:
                     self._sockets_emptied_at = self._now()
+                self._reread_armed_by = endpoint
                 if self._gate_armed:
                     self._reread_tries = _REREAD_ATTEMPTS
-                    self._reread_armed_by = endpoint
                 else:
                     self._reread_owed = True
                 logger.warning(
