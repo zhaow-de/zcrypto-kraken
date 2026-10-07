@@ -20,7 +20,7 @@ def _remedy(channel):
     return f"from infra/ansible/, pipe the private half into: {encrypt}"
 
 
-# Only the first line is read, inside this helper, so a failing assertion's introspection shows a bool, never key bytes.
+# Only the first line is read, inside this helper, so no defect line or failure output carries key bytes.
 def _vault_shaped(path):
     with path.open() as f:
         return f.readline().startswith(VAULT_PREFIX)
@@ -28,7 +28,7 @@ def _vault_shaped(path):
 
 def _defects(files_dir: Path) -> list[str]:
     publics = sorted(files_dir.glob("*_ed25519.pub"))
-    defects = [] if publics else [f"no *_ed25519.pub under {files_dir}: nothing was checked"]
+    defects = [] if publics else [f"no *_ed25519.pub under {files_dir}"]
     for pub in publics:
         channel = _channel(pub)
         private = pub.with_suffix("")
@@ -65,6 +65,12 @@ def test_an_orphan_public_half_is_a_defect(tmp_path):
     _plant(tmp_path, "deploy_x")
     (tmp_path / "sync_ed25519.pub").write_text("ssh-ed25519 AAAA sync\n")
     _the_one_defect(tmp_path, "sync", "no private sibling")
+
+
+def test_an_orphan_deploy_public_half_is_a_defect(tmp_path):
+    _plant(tmp_path, "sync")
+    (tmp_path / "deploy_y_ed25519.pub").write_text("ssh-ed25519 AAAA deploy_y\n")
+    _the_one_defect(tmp_path, "deploy_y", "no private sibling")
 
 
 def test_a_clear_text_private_half_is_a_defect(tmp_path):
