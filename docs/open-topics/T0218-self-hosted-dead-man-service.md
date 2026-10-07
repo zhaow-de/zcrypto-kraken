@@ -43,6 +43,7 @@ The second pull request is from `feat/t0218-dead-man-tasks-8-10`; the first merg
 - The final fix over Tasks 8 to 10, 2026-10-06: 32e65f036, 69d27943f, cdf501fc6; the owner's rider, the bridgehead reached as `ssh access`: 0a4314b16, 362a299f6.
 - P2, 2026-10-06, the two generated vault values: 16079f87b.
 - P3, 2026-10-06, the SES SMTP credential, vaulted, and its endpoint: 0fbd2df88.
+- The release the node deploys moved from `v6.1.0` to `v6.2.0`, the clone's newest, 2026-10-07, the owner's word; its static reads are the spec's measured-basis amendment: e06b8719f, 8bdd8927e, 5eda879f1, ca2cf8e2f.
 
 ## Suggested next steps
 
