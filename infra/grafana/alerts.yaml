@@ -732,10 +732,10 @@ rules:
       receiver: metrics
 
   # The execution safety envelope (cli/engine/execgate.py, `_ExecGauges` in cli/engine/command.py):
-  # the next four rules, over its seven `zcrypto_exec_*` gauges. `reasons` never reaches Grafana and
-  # `zcrypto_exec_armed` deliberately conflates its two arming keys into one gauge, so each of the
-  # four runbook sections sends the responder to `zcrypto engine exec-status` on the engine host for
-  # the breakdown remote telemetry cannot show. The three gauges carrying no rule are recorded with
+  # the next rules, over its `zcrypto_exec_*` gauges. `reasons` never reaches Grafana and
+  # `zcrypto_exec_armed` deliberately conflates its two arming keys into one gauge, so each rule's
+  # runbook section sends the responder to `zcrypto engine exec-status` on the engine host for
+  # the breakdown remote telemetry cannot show. The gauges carrying no rule are recorded with
   # their reason in NOT_A_FAULT_SIGNAL (tests/test_infra_alert_rules.py).
   - uid: zcrypto-engine-exec-armed-too-long
     title: "Engine · order submission has been armed for over six hours"
