@@ -24,5 +24,5 @@ Public halves (`*.pub`) are the plaintext record of what is authorized where; a 
 | `sync_panel_ed25519.pub` | NAS | ops l2-panel pull channel; installed on `zcrypto-data` by the ops role |
 | `sync_reconciled_ed25519.pub` | NAS | ops capture-reconciled pull channel; installed on `zcrypto-data` by the ops role |
 | `sync_hot_ed25519.pub` | NAS | ops hot-out pull channel (spec 00056 D2); installed on `zcrypto-data` by the ops role |
-| `sync_hc_backup_ed25519.pub` | NAS | the dead-man node's backup pull channel; installed on `zcrypto-data` by the hc role as `rrsync -ro` (`host_vars/zcrypto-hc`) |
+| `sync_hc_backup_ed25519.pub` | NAS + vaulted here | the dead-man node's backup pull channel; installed on `zcrypto-data` by the hc role as `rrsync -ro` (`host_vars/zcrypto-hc`) |
 | `zcrypto_hot_push_ed25519{,.pub}` | vaulted here (+ operator `~/.ssh/zcrypto-hot-push_ed25519`) | the workstation's `zcrypto data push` via the `nas-hot` ssh alias; installed by the nas role, jailed to `hot/`. The **only** write channel into custody (spec 00056 D2). |
