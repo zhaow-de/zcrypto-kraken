@@ -15,6 +15,8 @@ import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
 
+from tests.test_alloy_version import alloy_version
+
 REPO = Path(__file__).resolve().parents[1]
 ANSIBLE = REPO / "infra" / "ansible"
 
@@ -3278,7 +3280,8 @@ PREVIEW_GUARDED_ROLES = sorted(
 def test_every_register_a_preview_guard_reads_is_set_in_its_own_role(role):
     registered, read = set(), set()
     for path in _role_files(ROLES / role):
-        for task, gates in iter_tasks(load_tasks(path) or []):
+        # Through the walk, so a register an `import_role` brings in counts for the importing role.
+        for task, _, gates in alloy_version.walk(load_tasks(path), base=path.parent):
             if task.get("register"):
                 registered.add(task["register"])
             # A fact whose value names check mode is a preview guard too: the gates read it by the fact's name.

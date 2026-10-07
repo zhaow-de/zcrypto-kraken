@@ -3365,12 +3365,12 @@ def test_the_ops_host_answers_both_kinds_of_step_under_either_of_its_names(host)
 
 def test_the_ssh_aliases_are_the_fleet_tables_and_the_label_is_alloys():
     """The mapping is hand-kept: `fleet.md`'s bare-name rows are where a host or its destination
-    changes -- `zaccess` has none and is unmapped -- and the ops role's Alloy sets the `ops` label."""
+    changes, and the ops role's Alloy sets the `ops` label."""
     repo = Path(__file__).resolve().parents[1]
     table = (repo / "docs/reference/fleet.md").read_text()
     rows = dict(re.findall(r"^\| `([^`]+)` \| `ssh ([a-z0-9-]+)` \|", table, re.M))
     nodes = {"zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3", "zcrypto-mon"}
-    assert set(rows) == {"zcrypto", "zcrypto-red", "zcrypto-ops", "nas"} | nodes, rows
+    assert set(rows) == {"zcrypto", "zcrypto-red", "zcrypto-ops", "nas", "zaccess"} | nodes, rows
     for fleet_host, destination in rows.items():
         assert ops_daily.ssh_alias(fleet_host) == destination, (fleet_host, destination)
     assert set(ops_daily._SSH_ALIASES) == {ops_daily.host_label(h) for h in rows if ops_daily.ssh_alias(h) != h}
@@ -3407,6 +3407,7 @@ def test_every_published_ssh_destination_has_a_stanza_and_the_linode_nodes_match
         "zcrypto-valkey2": "cache_host",
         "zcrypto-valkey3": "cache_host",
         "zcrypto-mon": "mon_host",
+        "zaccess": "access_host",
     }
     for node, group_name in groups.items():
         group = yaml.safe_load((ansible / f"group_vars/{group_name}/vars.yml").read_text())

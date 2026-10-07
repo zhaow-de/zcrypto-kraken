@@ -14,10 +14,10 @@
 // on both hosts with no Jinja. Under `network_mode: host` (alloy-compose.yaml.j2) the container
 // shares the host UTS namespace -- Docker even refuses `--hostname` in that mode -- so
 // `constants.hostname` returns the host's own name, which the base role sets distinctly per host
-// (`zcrypto` / `zcrypto-red`, host_vars/zcrypto-red overrides base_hostname). Grafana Cloud
-// credentials are NOT in this file: they arrive as environment variables from a rendered, 0600,
-// never-committed secrets file (alloy-secrets.env.j2), read here via the `sys.env(...)` stdlib
-// function -- the same six names the ops and nas Alloy copies read.
+// (`zcrypto` / `zcrypto-red`, host_vars/zcrypto-red overrides base_hostname). Grafana Cloud's and
+// the node's credentials are NOT in this file: they arrive as environment variables from a
+// rendered, 0600, never-committed secrets file (alloy-secrets.env.j2), read here via the
+// `sys.env(...)` stdlib function.
 
 // ---- Host metrics -------------------------------------------------------------------------
 // The three alternate-path RO mounts (alloy-compose.yaml.j2: /proc->/host/proc, /sys->/host/sys,
@@ -50,6 +50,12 @@
 // line, so those selectors stay unambiguous.
 prometheus.exporter.unix "host" {
   set_collectors = ["cpu", "loadavg", "meminfo", "filesystem", "netdev", "textfile"]
+
+  // Docker's per-container veth and bridge devices stay at the source, on both legs: no rule reads
+  // them, and the network panels would plot each one.
+  netdev {
+    device_exclude = "^(veth|br-)"
+  }
 
   procfs_path = "/host/proc"
   sysfs_path  = "/host/sys"
@@ -105,19 +111,10 @@ prometheus.scrape "cache_proxy" {
 }
 
 // ---- Scrape -> remote_write ------------------------------------------------------------------
-// T0048 defect 1's SD-wedge detection RETIRED with `discovery.docker` (D6/D8): the alert it fed
-// (zcrypto-alloy-docker-sd-wedged) watched prometheus_sd_refresh_duration_seconds_count /
-// _failures_total, which only this self-scrape ever produced -- with no discovery.* component left
-// on this host, neither series exists any more, and both are gone from the keep-regex below too (a
-// keep-list entry for a series that cannot exist is the T0051 trap). The drop rule below no longer
-// discards process_* (00069 T6): that family moved to the keep-list below, admitted explicitly
-// alongside the app endpoints' own six process_* names (spec D4/D5) -- Alloy's own
-// `client_golang` ProcessCollector on Linux is a SUPERSET of `prometheus_client`'s six (it also
-// publishes at least `process_virtual_memory_max_bytes`), so the six-name keep-list is a deliberate
-// SUBSET FILTER on Alloy's own self-scrape: all six Python names exist in client_golang too (no
-// admitted-but-unpublishable gap), and the extras it drops (e.g.
-// `process_virtual_memory_max_bytes`) are unwanted here. This target's surviving contribution is
-// therefore its own `up` plus those six process_* names, nothing more.
+// Alloy's own `client_golang` ProcessCollector on Linux is a SUPERSET of `prometheus_client`'s six
+// process_* names (it also publishes `process_virtual_memory_max_bytes`), so the keep-list's six
+// names are a deliberate SUBSET FILTER on Alloy's own self-scrape: all six exist in client_golang
+// too, and the extras are unwanted in Grafana Cloud. The node's leg ships the self-scrape whole.
 prometheus.exporter.self "alloy" {}
 
 prometheus.scrape "host" {
@@ -147,7 +144,7 @@ prometheus.remote_write "grafana" {
     // Series minimization (00043): drop Alloy's own `go_*`/`alloy_*` self-metrics, then keep-only
     // the series this stack wants; the keep alone already excludes the self-metrics, so the drop is
     // parity, not load. A `keep` action drops everything it does not list, so a series missing here
-    // does not merely go undashboarded -- it does not exist (T0051); CAPTURE_REQUIRED in
+    // does not merely go undashboarded -- it does not exist in Grafana Cloud; CAPTURE_REQUIRED in
     // tests/test_infra_alloy_series.py names the series it must admit. The six ProcessCollector
     // families come from the app endpoints and from Alloy's own self-scrape alike.
     write_relabel_config {
@@ -162,6 +159,17 @@ prometheus.remote_write "grafana" {
       action        = "keep"
     }
   }
+
+  // The node's leg, unfiltered: its own queue, so a dead endpoint does not hold the other.
+  endpoint {
+    name = "mon"
+    url  = sys.env("MON_PROM_URL")
+
+    basic_auth {
+      username = sys.env("MON_PROM_USERNAME")
+      password = sys.env("MON_PROM_PASSWORD")
+    }
+  }
 }
 
 // ---- Logs: the host journal -- host-side units AND Alloy's own container ---------------------
@@ -174,7 +182,8 @@ prometheus.remote_write "grafana" {
 // zcrypto-capture.service (the daemon's own systemd wrapper) is deliberately NOT kept here: that
 // unit runs `docker compose up` ATTACHED, so the capture container's stdout also flows into ITS
 // journal -- and the capture daemon now ships its OWN logs straight to Grafana Cloud (--ship-logs,
-// D3) rather than through Alloy at all, so admitting it here would double-ingest for no reason.
+// D3) rather than through Alloy at all, so admitting it here would double-ingest them in Grafana
+// Cloud; the node receives the daemon's logs from neither path.
 //
 // zcrypto-engine.service IS kept, for one writer the engine's --ship-logs never sees: nautilus's
 // Rust logger writes straight to stdout, not through Python logging, so its [WARN]/[ERROR] lines
@@ -249,7 +258,7 @@ loki.source.journal "capture_units" {
 // fall through this component unmatched (no selector here admits them), keeping their journal
 // capture time and no level label.
 loki.process "parse" {
-  forward_to = [loki.write.grafana.receiver]
+  forward_to = [loki.write.grafana.receiver, loki.write.mon.receiver]
 
   // The cache proxy's lines share the unit's journal with the engine's, under the compose prefix of
   // their own container: the prefix comes off, HAProxy's own level word is read where a line carries
@@ -378,6 +387,19 @@ loki.write "grafana" {
     basic_auth {
       username = sys.env("GRAFANA_LOKI_USERNAME")
       password = sys.env("GRAFANA_LOKI_PASSWORD")
+    }
+  }
+}
+
+// The node's leg is its own component, fed by the parse stage beside the Cloud one: a second
+// endpoint inside loki.write "grafana" would be fed in succession and could stall it.
+loki.write "mon" {
+  endpoint {
+    url = sys.env("MON_LOKI_URL")
+
+    basic_auth {
+      username = sys.env("MON_LOKI_USERNAME")
+      password = sys.env("MON_LOKI_PASSWORD")
     }
   }
 }

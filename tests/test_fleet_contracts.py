@@ -9,11 +9,19 @@ import re
 from pathlib import Path
 
 import pytest
+import yaml
+
+from tests.test_alloy_version import alloy_version
+from tests.test_pins_converged import pins
 
 REPO = Path(__file__).resolve().parents[1]
 FLEET = REPO / "docs" / "reference" / "fleet.md"
 PINS = REPO / "docs" / "reference" / "fleet-pins.md"
 NAS_VARS = REPO / "infra" / "ansible" / "host_vars" / "nas" / "vars.yml"
+ALLOY_FILE = REPO / "infra" / "ansible" / "group_vars" / "observed" / "alloy.yml"
+HOST_VARS = REPO / "infra" / "ansible" / "host_vars"
+NAS_HOLD = HOST_VARS / "nas" / "alloy.yml"
+SITE = REPO / "infra" / "ansible" / "site.yml"
 
 CELL_MAX = 200  # an identifier and one clause; the cells that carried a saga ran past three thousand
 BLOCK_MAX = 700  # a bullet or a paragraph holds one fact and its pointers
@@ -97,14 +105,14 @@ def _leading(cell: str) -> str:
     return m.group(1) if m else ""
 
 
-def _pins_rows() -> list[tuple[int, str, str, str, str]]:
-    """The `## Current pins` table's rows as (line, service, host cell, leading digest, leading operand digest or '')."""
-    header, rows = _tables(PINS)[0]
+def _pins_rows(path: Path = PINS) -> list[tuple[int, str, str, str, str, str]]:
+    """The `## Current pins` table's rows as (line, service, host cell, leading digest, leading operand digest or '', digest cell)."""
+    header, rows = _tables(path)[0]
     i_service = header.index("service")
     i_host = header.index("host")
     i_digest = next(i for i, h in enumerate(header) if h.startswith("digest"))
     i_operand = next(i for i, h in enumerate(header) if h.startswith("rollback operand"))
-    return [(n, c[i_service], c[i_host], _leading(c[i_digest]), _leading(c[i_operand])) for n, c in rows]
+    return [(n, c[i_service], c[i_host], _leading(c[i_digest]), _leading(c[i_operand]), c[i_digest]) for n, c in rows]
 
 
 def test_the_topology_file_carries_no_date():
@@ -146,7 +154,7 @@ def test_the_sections_are_the_fixed_set_and_nothing_nests_below_them(path: Path,
 
 
 def test_the_glossary_mirrors_the_pins_table():
-    table = {d for _, _, _, digest, operand in _pins_rows() for d in (digest, operand) if d}
+    table = {d for _, _, _, digest, operand, _ in _pins_rows() for d in (digest, operand) if d}
     glossary: dict[str, int] = {}
     for i, line in _sections(PINS)["Full digests"]:
         fulls = FULL.findall(line)
@@ -173,12 +181,238 @@ def test_the_glossary_mirrors_the_pins_table():
     assert stray == [], f"a digest outside the pins table's digest cells and the glossary, at lines {sorted(stray)}"
 
 
+def _hex12(ref: str) -> str:
+    return ref.rsplit("sha256:", 1)[1][:12]
+
+
+def _nas_rows_agree(pins: Path, nas_vars: Path, fleet: Path, host_vars: Path) -> bool:
+    """The `alloy` row may sit behind `nas_alloy_image` only while that literal is the fleet file's: in an open wave, or with the row `held` after a hold's end, until the NAS converges."""
+    literals = dict(re.findall(r"^(nas_capture_image|nas_alloy_image): (\S+@sha256:[0-9a-f]{64})", nas_vars.read_text(), re.M))
+    assert set(literals) == {"nas_capture_image", "nas_alloy_image"}, literals
+    fleet_digest = yaml.safe_load(fleet.read_text())["alloy_image_digest"]
+    rows = [(service, [h.strip() for h in host.split(",")], digest, cell) for _, service, host, digest, _, cell in _pins_rows(pins)]
+    nas = {service: (digest, cell) for service, hosts, digest, cell in rows if "nas" in hosts}
+    others_off = [
+        hosts
+        for service, hosts, digest, _ in rows
+        if service == "alloy"
+        and "nas" not in hosts
+        and not any((host_vars / host / "alloy.yml").exists() for host in hosts)
+        and digest != _hex12(fleet_digest)
+    ]
+    pull_digest, _ = nas.get("archive-pull", ("", ""))
+    alloy_digest, alloy_cell = nas.get("alloy", ("", ""))
+    held = re.search(r"\bheld\b\W+\w", alloy_cell) is not None
+    pull_agrees = pull_digest == _hex12(literals["nas_capture_image"])
+    alloy_agrees = alloy_digest == _hex12(literals["nas_alloy_image"]) or (
+        literals["nas_alloy_image"] == f"grafana/alloy@{fleet_digest}" and (bool(others_off) or held)
+    )
+    return pull_agrees and alloy_agrees
+
+
+def _nas_pins() -> list[tuple[str, str]]:
+    return [(service, cell) for _, service, host, _, _, cell in _pins_rows(PINS) if "nas" in [h.strip() for h in host.split(",")]]
+
+
+def _nas_literals() -> list[str]:
+    return re.findall(r"^nas_(?:capture|alloy)_image: \S+$", NAS_VARS.read_text(), re.M)
+
+
 def test_the_nas_rows_agree_with_the_committed_pins():
-    committed = {
-        k: v[:12]
-        for k, v in re.findall(r"^(nas_capture_image|nas_alloy_image): \S+@sha256:([0-9a-f]{64})", NAS_VARS.read_text(), re.M)
+    assert _nas_rows_agree(PINS, NAS_VARS, ALLOY_FILE, HOST_VARS), (
+        "fleet-pins.md's NAS rows disagree with host_vars/nas/vars.yml: archive-pull on nas_capture_image, alloy on "
+        "nas_alloy_image or, while that literal is the fleet file's, behind it with the wave open or `held` with a reason: "
+        f"{_nas_pins()} against {_nas_literals()}"
+    )
+
+
+FLEET_DIGEST = "sha256:" + "a" * 64
+PREVIOUS = "sha256:" + "b" * 64
+CAPTURE = "sha256:" + "c" * 64
+ELSEWHERE = "sha256:" + "e" * 64
+
+
+def _cell(digest: str, note: str = "v1.x") -> str:
+    return f"`{_hex12(digest)}` — {note}"
+
+
+def _constructed(
+    tmp_path: Path, *, literal: str, nas_alloy: str, others: dict[str, str], held: tuple[str, ...] = (), pull: str = CAPTURE
+):
+    fleet = tmp_path / "group_vars" / "observed" / "alloy.yml"
+    fleet.parent.mkdir(parents=True)
+    fleet.write_text(f'alloy_version: "1.20.1"\nalloy_image_digest: {FLEET_DIGEST}\nalloy_deb_version: "1.20.1-1"\n')
+    host_vars = tmp_path / "host_vars"
+    nas_vars = host_vars / "nas" / "vars.yml"
+    nas_vars.parent.mkdir(parents=True)
+    nas_vars.write_text(
+        f"nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@{CAPTURE}\nnas_alloy_image: grafana/alloy@{literal}\n"
+    )
+    for host in held:
+        (host_vars / host).mkdir(parents=True, exist_ok=True)
+        (host_vars / host / "alloy.yml").write_text(f"# the reason\nalloy_image_digest: {PREVIOUS}\n")
+    rows = [("archive-pull", "nas", _cell(pull, "revision x")), ("capture", "zcrypto", _cell(CAPTURE, "revision x"))]
+    rows += [("alloy", "nas", nas_alloy)]
+    rows += [("alloy", host, _cell(digest)) for host, digest in others.items()]
+    pins = tmp_path / "fleet-pins.md"
+    pins.write_text(
+        "## Current pins\n\n"
+        "| service | host | digest (sha256, first 12) | since (UTC) | rollback operand (resident on the host at the re-pin) |\n"
+        "| --- | --- | --- | --- | --- |\n"
+        + "".join(f"| {s} | {h} | {c} | 2026-10-06 10:00:00 | first pin |\n" for s, h, c in rows)
+    )
+    return pins, nas_vars, fleet, host_vars
+
+
+@pytest.mark.parametrize(
+    ("literal", "nas_alloy", "others", "held", "pull", "agrees"),
+    [
+        (FLEET_DIGEST, _cell(FLEET_DIGEST), {"zcrypto": FLEET_DIGEST}, (), CAPTURE, True),
+        (FLEET_DIGEST, _cell(PREVIOUS), {"zcrypto": FLEET_DIGEST, "zcrypto-red": PREVIOUS}, (), CAPTURE, True),
+        (FLEET_DIGEST, _cell(PREVIOUS), {"zcrypto": FLEET_DIGEST, "zcrypto-red": FLEET_DIGEST}, (), CAPTURE, False),
+        (FLEET_DIGEST, _cell(PREVIOUS), {"zcrypto": FLEET_DIGEST, "zcrypto-red": PREVIOUS}, ("zcrypto-red",), CAPTURE, False),
+        (FLEET_DIGEST, _cell(PREVIOUS, "v1.19.2, held: 1.20.1 drops lines here"), {"zcrypto": FLEET_DIGEST}, (), CAPTURE, True),
+        (FLEET_DIGEST, _cell(PREVIOUS, "v1.19.2, held"), {"zcrypto": FLEET_DIGEST}, (), CAPTURE, False),
+        (ELSEWHERE, _cell(PREVIOUS), {"zcrypto": FLEET_DIGEST, "zcrypto-red": PREVIOUS}, (), CAPTURE, False),
+        (FLEET_DIGEST, _cell(FLEET_DIGEST), {"zcrypto": FLEET_DIGEST, "zcrypto-red": PREVIOUS}, (), PREVIOUS, False),
+    ],
+    ids=[
+        "both-rows-on-their-literals",
+        "alloy-behind-the-fleet-literal-while-another-row-is-off",
+        "alloy-behind-the-fleet-literal-with-every-other-row-on",
+        "alloy-behind-the-fleet-literal-with-only-a-held-hosts-row-off",
+        "alloy-behind-the-fleet-literal-with-the-row-held-and-its-reason",
+        "alloy-behind-the-fleet-literal-with-the-row-held-and-no-reason",
+        "alloy-behind-a-literal-off-the-fleet-file",
+        "archive-pull-behind-its-literal-while-the-wave-is-open",
+    ],
+)
+def test_the_nas_alloy_row_is_admitted_behind_its_literal_only_in_a_wave_or_a_hold_s_end(
+    tmp_path, literal, nas_alloy, others, held, pull, agrees
+):
+    assert (
+        _nas_rows_agree(*_constructed(tmp_path, literal=literal, nas_alloy=nas_alloy, others=others, held=held, pull=pull))
+        is agrees
+    )
+
+
+def test_the_fleet_file_carries_three_values_in_their_shapes():
+    fleet = yaml.safe_load(ALLOY_FILE.read_text())
+    assert sorted(fleet) == ["alloy_deb_version", "alloy_image_digest", "alloy_version"], fleet
+    assert all(isinstance(value, str) for value in fleet.values()), fleet
+    assert re.fullmatch(r"\d+\.\d+\.\d+", fleet["alloy_version"]), fleet
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", fleet["alloy_image_digest"]), fleet
+    assert re.fullmatch(r"\d+\.\d+\.\d+-\d+", fleet["alloy_deb_version"]), fleet
+    assert fleet["alloy_deb_version"].startswith(fleet["alloy_version"] + "-"), fleet
+
+
+def _nas_literal_is_committed(nas_vars: Path, hold: Path, fleet: Path) -> bool:
+    committed = yaml.safe_load((hold if hold.exists() else fleet).read_text())
+    (literal,) = re.findall(r"^nas_alloy_image:\s*(\S+@sha256:[0-9a-f]{64})\s*$", nas_vars.read_text(), re.M)
+    return literal == f"grafana/alloy@{committed['alloy_image_digest']}"
+
+
+def test_the_nas_alloy_literal_is_the_nas_committed_digest():
+    assert _nas_literal_is_committed(NAS_VARS, NAS_HOLD, ALLOY_FILE), (
+        "nas_alloy_image in host_vars/nas/vars.yml is not grafana/alloy@ the NAS's committed alloy_image_digest: "
+        "host_vars/nas/alloy.yml's while the NAS is held, else group_vars/observed/alloy.yml's: "
+        f"{_nas_literals()} against {yaml.safe_load((NAS_HOLD if NAS_HOLD.exists() else ALLOY_FILE).read_text())}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("hold", "literal", "committed"),
+    [(PREVIOUS, PREVIOUS, True), (PREVIOUS, FLEET_DIGEST, False), (None, FLEET_DIGEST, True)],
+    ids=["held-literal-on-the-hold", "held-literal-on-the-fleet", "unheld-literal-on-the-fleet"],
+)
+def test_a_held_nas_s_literal_is_read_against_its_hold_file(tmp_path, hold, literal, committed):
+    _, nas_vars, fleet, host_vars = _constructed(tmp_path, literal=literal, nas_alloy=_cell(literal), others={})
+    if hold is not None:
+        (host_vars / "nas" / "alloy.yml").write_text(f"# the reason\nalloy_image_digest: {hold}\n")
+    assert _nas_literal_is_committed(nas_vars, host_vars / "nas" / "alloy.yml", fleet) is committed
+
+
+def _package_alloy_hosts() -> set[str]:
+    """The hosts a play reaches with a role whose tasks install the `alloy` package: the hosts that run Alloy from apt."""
+    groups = pins.inventory_groups(REPO)
+    return {
+        host
+        for play in yaml.safe_load(SITE.read_text())
+        for entry in play.get("roles") or []
+        if any(
+            str((task.get("ansible.builtin.apt") or {}).get("name", "")).startswith("alloy=")
+            for task, _, _ in alloy_version.role_leaves(entry["role"], frozenset())
+        )
+        for host in groups.get(play["hosts"], {play["hosts"]})
     }
-    assert set(committed) == {"nas_capture_image", "nas_alloy_image"}, committed
-    by_service = {service: digest for _, service, host, digest, _ in _pins_rows() if "nas" in [h.strip() for h in host.split(",")]}
-    assert by_service.get("archive-pull") == committed["nas_capture_image"], (by_service, committed)
-    assert by_service.get("alloy") == committed["nas_alloy_image"], (by_service, committed)
+
+
+def _alloy_package_rows_agree(pins_path: Path, apt_hosts: set[str]) -> bool:
+    """Each `alloy` row of the package table names hosts that run Alloy from apt, its version cell opening with a
+    backticked deb version, `<x.y.z>-<revision>`, the way `alloy-version.py off-fleet` reads it."""
+    for header, rows in _tables(pins_path):
+        if "package" not in header:
+            continue
+        i_package, i_host, i_version = header.index("package"), header.index("host"), header.index("version")
+        for _, cells in rows:
+            if cells[i_package] != "alloy":
+                continue
+            if not {host.strip() for host in cells[i_host].split(",")} <= apt_hosts:
+                return False
+            m = re.match(r"`([^`]+)`", cells[i_version])
+            version = m.group(1) if m else ""
+            if not re.fullmatch(r"\d+\.\d+\.\d+-\d+", version):
+                return False
+    return True
+
+
+def _alloy_package_rows() -> list[list[str]]:
+    return [
+        cells
+        for header, rows in _tables(PINS)
+        if "package" in header
+        for _, cells in rows
+        if cells[header.index("package")] == "alloy"
+    ]
+
+
+def test_the_alloy_package_rows_agree_with_the_apt_hosts():
+    assert _alloy_package_rows_agree(PINS, _package_alloy_hosts()), (
+        "fleet-pins.md's `alloy` package rows must name only hosts that run Alloy from apt, each version cell opening with a backticked "
+        "`<x.y.z>-<revision>`, which `alloy-version.py off-fleet` compares with the fleet file's `alloy_deb_version`: "
+        f"{_alloy_package_rows()} against {sorted(_package_alloy_hosts())}"
+    )
+
+
+def test_the_alloy_image_rows_name_no_apt_host():
+    apt_hosts = _package_alloy_hosts()
+    named = [
+        (n, host)
+        for n, service, hosts, _, _, _ in _pins_rows(PINS)
+        if service == "alloy"
+        for host in sorted({h.strip() for h in hosts.split(",")} & apt_hosts)
+    ]
+    assert named == [], (
+        "fleet-pins.md's image table has an `alloy` row for a host that runs Alloy from apt, whose version is its package row's; "
+        f"`alloy-version.py off-fleet` compares that row with the fleet's image digest as though the host ran the container: (line, host) {named}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("host", "version", "agrees"),
+    [
+        ("zaccess", "`1.20.1-1`", True),
+        ("zcrypto-ops", "`1.20.1-1`", False),
+        ("zaccess", "1.20.1-1", False),
+        ("zaccess", "`1.20.1`", False),
+    ],
+    ids=["an-apt-host-at-a-deb-version", "a-container-host", "a-version-without-backticks", "a-version-without-its-revision"],
+)
+def test_the_alloy_package_rows_name_apt_hosts_at_a_deb_version(tmp_path, host, version, agrees):
+    pins_path = tmp_path / "fleet-pins.md"
+    pins_path.write_text(
+        "| package | host | version | since (UTC) | notes |\n| --- | --- | --- | --- | --- |\n"
+        "| agentboard | zcrypto-ops | `0.5.3` (npm global) | 2026-09-17 | re-pins attended |\n"
+        f"| alloy | {host} | {version} | 2026-10-06 | dpkg hold; pinned at 1001 |\n"
+    )
+    assert _alloy_package_rows_agree(pins_path, _package_alloy_hosts()) is agrees

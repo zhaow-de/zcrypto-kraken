@@ -1,0 +1,73 @@
+---
+# The apt hosts' Alloy at the fleet's version (spec 00123 D3, D5): imported statically by each apt role under the
+# `alloy` tag, so the tag reaches every task here. A hold and an exact-version pin, because each covers what the
+# other leaves: the hold is the floor dpkg enforces, the pin makes the held version the candidate.
+# The committed version is read from the files, never from `alloy_deb_version`, which an extra-var outranks.
+- name: refuse an alloy_deb_version that is not the one committed for this host, unless an alloy_override gives the reason
+  ansible.builtin.assert:
+    that: >-
+      alloy_deb_version == alloy_apt_committed.alloy_deb_version
+      or (alloy_override | default('') | string | length > 8)
+    fail_msg: >-
+      alloy_deb_version is {{ alloy_deb_version }}, the version committed for this host is
+      {{ alloy_apt_committed.alloy_deb_version }}: infra/ansible/host_vars/{{ inventory_hostname }}/alloy.yml's
+      while the host is held, else infra/ansible/group_vars/observed/alloy.yml's. A version off it moves this
+      host alone, so it takes -e '{"alloy_override": "<why>"}' beside it, a reason longer than 8 characters.
+  vars: &alloy_apt_committed_vars
+    alloy_apt_committed: "{{ lookup('ansible.builtin.file', lookup('ansible.builtin.first_found', [playbook_dir ~ '/host_vars/' ~ inventory_hostname ~ '/alloy.yml', playbook_dir ~ '/group_vars/observed/alloy.yml'])) | from_yaml }}"
+
+# Reached only past the refusal above, so a version off the committed one here is an accepted override.
+- name: the alloy_override's reason, on the record
+  ansible.builtin.debug:
+    msg: "alloy_override accepted: {{ alloy_override }}"
+  vars: *alloy_apt_committed_vars
+  when: alloy_deb_version != alloy_apt_committed.alloy_deb_version
+
+- name: add the Grafana apt repository (deb822; the module fetches and stores the signing key)
+  ansible.builtin.deb822_repository:
+    name: grafana
+    types: [deb]
+    uris: https://apt.grafana.com
+    suites: [stable]
+    components: [main]
+    signed_by: https://apt.grafana.com/gpg.key
+    install_python_debian: true
+  register: alloy_apt_grafana_repo
+
+- name: pin alloy at the version committed for this host, above every other candidate
+  ansible.builtin.copy:
+    content: |
+      Package: alloy
+      Pin: version {{ alloy_deb_version }}
+      Pin-Priority: 1001
+    dest: /etc/apt/preferences.d/alloy
+    owner: root
+    group: root
+    mode: "0644"
+  register: alloy_apt_pin
+
+# allow_downgrade, or a host ahead of the fleet's version is a refused downgrade that drops it from the play;
+# allow_change_held_packages, or the hold below refuses every later move. Skipped in a preview whose repository
+# or pin file would change: the module refuses a version below the pin file on disk and one the unrefreshed
+# package lists lack, so a rollback's preview, or a move to a version those lists do not yet carry, would fail
+# here and refuse the whole converge; every version move changes the pin file.
+- name: install alloy at the version committed for this host, moving a newer or held one
+  ansible.builtin.apt:
+    name: "alloy={{ alloy_deb_version }}"
+    state: present
+    update_cache: true
+    allow_downgrade: true
+    allow_change_held_packages: true
+  register: alloy_apt_install
+  when: not (ansible_check_mode and (alloy_apt_grafana_repo is changed or alloy_apt_pin is changed))
+
+- name: note a preview that runs before alloy is installed and pinned at the version committed for this host
+  ansible.builtin.set_fact:
+    alloy_apt_previewed: "{{ ansible_check_mode and (alloy_apt_grafana_repo is changed or alloy_apt_pin is changed or alloy_apt_install is changed) }}"
+
+# After the install: dpkg_selections hard-fails on a package dpkg has never seen.
+- name: hold alloy, so no apt upgrade moves it
+  ansible.builtin.dpkg_selections:
+    name: alloy
+    selection: hold
+  when: not alloy_apt_previewed

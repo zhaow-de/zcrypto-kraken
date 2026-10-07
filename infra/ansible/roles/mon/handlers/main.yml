@@ -38,4 +38,4 @@
   ansible.builtin.systemd_service:
     name: alloy
     state: restarted
-  when: not mon_units_previewed
+  when: not alloy_apt_previewed

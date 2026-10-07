@@ -22,6 +22,8 @@ MON_ALLOY = REPO / "infra/ansible/roles/mon/files/config.alloy"
 CACHE_SECRETS = REPO / "infra/ansible/roles/cache/templates/alloy-secrets.env.j2"
 OPS_SECRETS = REPO / "infra/ansible/roles/ops/templates/alloy-secrets.env.j2"
 ACCESS_SECRETS = REPO / "infra/ansible/roles/access/templates/alloy-env.j2"
+NAS_SECRETS = REPO / "infra/ansible/roles/nas/templates/alloy-secrets.env.j2"
+CAPTURE_SECRETS = REPO / "infra/ansible/roles/capture/templates/alloy-secrets.env.j2"
 
 # Named constants only so the retired-pair exclusion test below can reference them.
 _SD_SERIES = "prometheus_sd_refresh_duration_seconds_count"
@@ -936,7 +938,9 @@ def _endpoint_blocks(path: Path) -> list[str]:
     return re.findall(r"\n  endpoint \{(.*?)\n  \}", component, re.S)
 
 
-@pytest.mark.parametrize("path", [ACCESS_ALLOY, OPS_ALLOY, CACHE_ALLOY], ids=["access", "ops", "cache"])
+@pytest.mark.parametrize(
+    "path", [ACCESS_ALLOY, OPS_ALLOY, CACHE_ALLOY, NAS_ALLOY, CAPTURE_ALLOY], ids=["access", "ops", "cache", "nas", "capture"]
+)
 def test_the_nodes_endpoint_carries_no_relabel_block_and_the_cloud_one_keeps_its_pair(path):
     cloud, mon = _endpoint_blocks(path)
     assert len(re.findall(r"^\s*write_relabel_config\s*\{\s*$", cloud, re.M)) == 2 and "MON_" not in cloud
@@ -994,8 +998,10 @@ _MON_LOKI_LINES = [
         (ACCESS_SECRETS, _MON_PROM_LINES),
         (OPS_SECRETS, _MON_PROM_LINES + _MON_LOKI_LINES),
         (CACHE_SECRETS, _MON_PROM_LINES + _MON_LOKI_LINES),
+        (NAS_SECRETS, _MON_PROM_LINES + _MON_LOKI_LINES),
+        (CAPTURE_SECRETS, _MON_PROM_LINES + _MON_LOKI_LINES),
     ],
-    ids=["access", "ops", "cache"],
+    ids=["access", "ops", "cache", "nas", "capture"],
 )
 def test_the_secrets_lines_are_held_by_literal(template, mon_lines):
     lines = _live_j2_text(template).splitlines()
@@ -1014,8 +1020,10 @@ def test_the_secrets_lines_are_held_by_literal(template, mon_lines):
             {"CONFIG_FILE", "CUSTOM_ARGS", "GRAFANA_LOKI_URL", "GRAFANA_LOKI_USERNAME", "GRAFANA_LOKI_PASSWORD"},
         ),
         (OPS_ALLOY, OPS_SECRETS, set()),
+        (NAS_ALLOY, NAS_SECRETS, set()),
+        (CAPTURE_ALLOY, CAPTURE_SECRETS, set()),
     ],
-    ids=["access", "ops"],
+    ids=["access", "ops", "nas", "capture"],
 )
 def test_each_secrets_template_renders_the_names_its_config_reads(config, template, unread):
     read, rendered = _env_names_read(config), _env_names_rendered(template)
@@ -1036,7 +1044,7 @@ def _one_endpoint_reading(block: str, names: tuple[str, str, str]) -> None:
         assert re.search(rf'^\s*{key}\s*=\s*sys\.env\("{name}"\)\s*$', block, re.M), (name, block)
 
 
-@pytest.mark.parametrize("path", [OPS_ALLOY, CACHE_ALLOY], ids=["ops", "cache"])
+@pytest.mark.parametrize("path", [OPS_ALLOY, CACHE_ALLOY, NAS_ALLOY, CAPTURE_ALLOY], ids=["ops", "cache", "nas", "capture"])
 def test_the_parse_stage_feeds_both_loki_writes_and_each_reads_its_own_names(path):
     parse = re.search(r'^loki\.process "parse" \{\n(.*?)\n\}', _live_alloy_text(path), re.M | re.S)
     assert parse, f'{path}: no loki.process "parse"'
@@ -1059,14 +1067,14 @@ def _unix_exporter_block(path: Path) -> str:
 _NETDEV_EXCLUSION = r'^\s*device_exclude\s*=\s*"\^\(veth\|br-\)"\s*$'
 
 
-@pytest.mark.parametrize("path", [OPS_ALLOY], ids=["ops"])
+@pytest.mark.parametrize("path", [OPS_ALLOY, NAS_ALLOY, CAPTURE_ALLOY], ids=["ops", "nas", "capture"])
 def test_the_unix_exporter_excludes_the_container_and_bridge_devices(path):
     netdev = re.search(r"^\s*netdev\s*\{\s*$(.*?)^\s*\}\s*$", _unix_exporter_block(path), re.M | re.S)
     assert netdev, f"{path}: the unix exporter has no netdev block"
     assert re.search(_NETDEV_EXCLUSION, netdev.group(1), re.M), netdev.group(1)
 
 
-@pytest.mark.parametrize("path", [CAPTURE_ALLOY, NAS_ALLOY, ACCESS_ALLOY, CACHE_ALLOY], ids=["capture", "nas", "access", "cache"])
+@pytest.mark.parametrize("path", [ACCESS_ALLOY, CACHE_ALLOY], ids=["access", "cache"])
 def test_the_unix_exporter_has_no_netdev_block_where_none_is_prescribed(path):
     assert not re.search(r"^\s*netdev\s*\{", _unix_exporter_block(path), re.M), (
         f"{path}: the unix exporter gained a netdev block; a config that takes the exclusion moves to the "

@@ -225,3 +225,4 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 - [T0210 — soak-check's gating verdicts have no scheduled reader, so an inconsistent one reaches nobody](archive/T0210-soak-check-gating-verdicts-have-no-scheduled-reader.md)
 - [T0212 — The engine-gap counter infers the floor it cannot read](archive/T0212-the-engine-gap-counter-infers-the-floor-it-cannot-read.md)
 - [T0213 — The engine's cache — the engine-side half of spec 00118](archive/T0213-engine-cache-engine-half.md)
+- [T0219 — One Alloy version across the fleet](archive/T0219-one-alloy-version-across-the-fleet.md)

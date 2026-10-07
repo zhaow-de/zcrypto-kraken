@@ -1,0 +1,504 @@
+{
+  "results": [
+    {
+      "name": "windowsservercore-ltsc2022",
+      "digest": "sha256:eefed20472654af766a48d572529a44ed8f67f5159803afd44cacce366dbda68",
+      "last_updated": "2026-09-28T17:40:02.977767Z"
+    },
+    {
+      "name": "v1.20.1-windowsservercore-ltsc2022",
+      "digest": "sha256:eefed20472654af766a48d572529a44ed8f67f5159803afd44cacce366dbda68",
+      "last_updated": "2026-09-28T17:40:00.472114Z"
+    },
+    {
+      "name": "latest-distroless",
+      "digest": "sha256:fb2da4bd12e17f07d5a2cc2d3fa69d34f37afb291d96daf373ba9633def62b94",
+      "last_updated": "2026-09-28T17:05:49.56875Z"
+    },
+    {
+      "name": "v1.20.1",
+      "digest": "sha256:2aa2099af76c0098d4af7a4d6e48f86cb66dc1a000222ad927a1c67c6542d13f",
+      "last_updated": "2026-09-28T17:04:05.291355Z"
+    },
+    {
+      "name": "latest",
+      "digest": "sha256:2aa2099af76c0098d4af7a4d6e48f86cb66dc1a000222ad927a1c67c6542d13f",
+      "last_updated": "2026-09-28T17:02:10.361514Z"
+    },
+    {
+      "name": "v1.20.1-distroless",
+      "digest": "sha256:fb2da4bd12e17f07d5a2cc2d3fa69d34f37afb291d96daf373ba9633def62b94",
+      "last_updated": "2026-09-28T17:01:46.972461Z"
+    },
+    {
+      "name": "boringcrypto-distroless",
+      "digest": "sha256:5877caf0f0e88dc589094d30b345f641a88b0deb944c2e30a8c3932ee2ed3524",
+      "last_updated": "2026-09-28T16:50:41.679813Z"
+    },
+    {
+      "name": "v1.20.1-boringcrypto-distroless",
+      "digest": "sha256:5877caf0f0e88dc589094d30b345f641a88b0deb944c2e30a8c3932ee2ed3524",
+      "last_updated": "2026-09-28T16:46:36.295321Z"
+    },
+    {
+      "name": "v1.20.1-boringcrypto",
+      "digest": "sha256:d5d291b3c87cbe69ecf1e9756a21fd5ab1b2dd342106ecc67c938070adb22399",
+      "last_updated": "2026-09-28T16:46:30.611947Z"
+    },
+    {
+      "name": "boringcrypto",
+      "digest": "sha256:d5d291b3c87cbe69ecf1e9756a21fd5ab1b2dd342106ecc67c938070adb22399",
+      "last_updated": "2026-09-28T16:46:23.330704Z"
+    },
+    {
+      "name": "v1.20.0-windowsservercore-ltsc2022",
+      "digest": "sha256:202ef2a494c1501643f2a2d4edc016669c9ea5b6faaaa8f96054a6914930c2b8",
+      "last_updated": "2026-09-25T13:48:50.714237Z"
+    },
+    {
+      "name": "v1.20.0",
+      "digest": "sha256:f111cce835516c5f99166342be7038496b52ced16667be5a11e19258a3e4cd30",
+      "last_updated": "2026-09-25T13:07:32.796125Z"
+    },
+    {
+      "name": "v1.20.0-distroless",
+      "digest": "sha256:c4f1e299df7a15a1eead42d563aef3c8a647fd0a74561c2948e8756a9c05b558",
+      "last_updated": "2026-09-25T13:04:24.815874Z"
+    },
+    {
+      "name": "v1.20.0-boringcrypto",
+      "digest": "sha256:3c660ea7583e31a239e0e924adbf33d65c253b1f3fe8fdef2f4a34df65865c06",
+      "last_updated": "2026-09-25T12:54:58.086415Z"
+    },
+    {
+      "name": "v1.20.0-boringcrypto-distroless",
+      "digest": "sha256:fcdf6aa98477daa1a5587efbc0c2ce733220ae3ebbe8ad8525bdea2460d779cc",
+      "last_updated": "2026-09-25T12:54:37.799362Z"
+    },
+    {
+      "name": "v1.20.0-rc.0-windowsservercore-ltsc2022",
+      "digest": "sha256:acf28203eabe700dcdf6485ad60425205ba8544931bf79043ff28e63ad76fd8f",
+      "last_updated": "2026-09-22T16:08:36.244083Z"
+    },
+    {
+      "name": "v1.20.0-rc.0",
+      "digest": "sha256:7d4c01cddbec5cea9bb1c8ad5b0cc5752a5389f46fe24cc8c97236d83c706a10",
+      "last_updated": "2026-09-22T15:38:20.927321Z"
+    },
+    {
+      "name": "v1.20.0-rc.0-distroless",
+      "digest": "sha256:565106576a1042bad7800a333665a448436e4e6af6a3405c23a14f4ed1cd5a10",
+      "last_updated": "2026-09-22T15:32:56.934382Z"
+    },
+    {
+      "name": "v1.20.0-rc.0-boringcrypto",
+      "digest": "sha256:5c3b0ea86ab0dd85165e032a81f19e0db274ffc248e2be0a9ec63743a4ac3394",
+      "last_updated": "2026-09-22T15:20:42.570909Z"
+    },
+    {
+      "name": "v1.20.0-rc.0-boringcrypto-distroless",
+      "digest": "sha256:a870c0f19eae07f03ed3f80881b9c16d033cb527af0acd278696bb088f1ab23e",
+      "last_updated": "2026-09-22T15:20:31.864579Z"
+    },
+    {
+      "name": "v1.19.2-windowsservercore-ltsc2022",
+      "digest": "sha256:4e59ce26be1f29a0b79c99d89e9068009bf9efa6d5735caf996ccc6c3b11b901",
+      "last_updated": "2026-08-26T21:13:49.867944Z"
+    },
+    {
+      "name": "v1.19.2",
+      "digest": "sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839",
+      "last_updated": "2026-08-26T20:46:54.558772Z"
+    },
+    {
+      "name": "v1.19.2-boringcrypto",
+      "digest": "sha256:f72680fccd6ea1921d6a3649e21b111189967538acc40e6167dae96c3da44b67",
+      "last_updated": "2026-08-26T20:34:12.348215Z"
+    },
+    {
+      "name": "v1.19.1-windowsservercore-ltsc2022",
+      "digest": "sha256:4d917cc55b0705c4fa85ccab72dd561ebdc034a08458d11b4d16b02fef43f80f",
+      "last_updated": "2026-08-25T21:12:03.204321Z"
+    },
+    {
+      "name": "v1.19.1",
+      "digest": "sha256:7a3b03064dcea51f2e867ee8a8b26ece6d1007ec37dbea26f7e3b71966d87bc9",
+      "last_updated": "2026-08-25T20:37:22.069609Z"
+    },
+    {
+      "name": "v1.19.1-boringcrypto",
+      "digest": "sha256:639badc5a3260b0fe70a9e5568bdebb0231dccd944ececd9ad6d52d57ca7dd42",
+      "last_updated": "2026-08-25T20:20:53.870157Z"
+    },
+    {
+      "name": "v1.19.0-windowsservercore-ltsc2022",
+      "digest": "sha256:bd958e5d8b7cbeeaad45f83e9b4caa8ce3c0a82900939349431aaf01bd69b445",
+      "last_updated": "2026-08-24T14:58:50.594062Z"
+    },
+    {
+      "name": "v1.19.0",
+      "digest": "sha256:c958aef7294bc40c67caadb2bcecc93b95ab7961ff8afae3abee170d77426193",
+      "last_updated": "2026-08-24T14:35:52.816195Z"
+    },
+    {
+      "name": "v1.19.0-boringcrypto",
+      "digest": "sha256:1b0ba39b0a9d5d5e0ab35f55a5edd70aef2ea5232b64d78c7c6421203f1d683b",
+      "last_updated": "2026-08-24T14:23:16.126151Z"
+    },
+    {
+      "name": "v1.19.0-rc.3-windowsservercore-ltsc2022",
+      "digest": "sha256:1335cae7d24c969e2c9ba7ae42080c273bb76c7392f65b51496f6f1121231f0d",
+      "last_updated": "2026-08-20T13:39:01.103508Z"
+    },
+    {
+      "name": "v1.19.0-rc.3",
+      "digest": "sha256:86510d8dc08b1c844bcded34b319449ee116694024d6b6c4ffeb37986bc6c465",
+      "last_updated": "2026-08-20T12:59:34.258145Z"
+    },
+    {
+      "name": "v1.19.0-rc.3-boringcrypto",
+      "digest": "sha256:41ca4e94656d8f382969f78a3cd59fad988fa55bc8e75325e6b69544596633a7",
+      "last_updated": "2026-08-20T12:47:58.887503Z"
+    },
+    {
+      "name": "v1.19.0-rc.2-windowsservercore-ltsc2022",
+      "digest": "sha256:f890e97325501bfcc06809d7b403a826591b9b8b8d885da9528a1d55b1436d60",
+      "last_updated": "2026-08-19T15:46:27.27739Z"
+    },
+    {
+      "name": "v1.19.0-rc.2",
+      "digest": "sha256:b478f4755721aead10fad32f8d9d07c59dc242644b9210578e930fcf4fb2dd42",
+      "last_updated": "2026-08-19T15:02:28.27658Z"
+    },
+    {
+      "name": "v1.19.0-rc.2-boringcrypto",
+      "digest": "sha256:36aa89b639fd094a7741a909b1add6557652de70c9384f265e9c40dba82f027e",
+      "last_updated": "2026-08-19T14:55:02.540605Z"
+    },
+    {
+      "name": "v1.19.0-rc.1-windowsservercore-ltsc2022",
+      "digest": "sha256:b6c3cdedfc659a829ba06e4464abeb80c25deee7e18106214358031f84def6a1",
+      "last_updated": "2026-08-19T12:49:06.081661Z"
+    },
+    {
+      "name": "v1.19.0-rc.1",
+      "digest": "sha256:3788185f2cedba63e72c307d9a5b0314a72768054a1d12a2d09652e23d22f582",
+      "last_updated": "2026-08-19T12:13:37.877347Z"
+    },
+    {
+      "name": "v1.19.0-rc.1-boringcrypto",
+      "digest": "sha256:7a2b2b6b018e0eae0f89d431c50c9e18c5960b047738180dfe81785355f570dc",
+      "last_updated": "2026-08-19T12:03:04.761484Z"
+    },
+    {
+      "name": "v1.19.0-rc.0-windowsservercore-ltsc2022",
+      "digest": "sha256:7c027fa7088475974d592b2a574930c763bcf64fbb46a87e0f22371325d10e1d",
+      "last_updated": "2026-08-18T22:09:32.989218Z"
+    },
+    {
+      "name": "v1.19.0-rc.0",
+      "digest": "sha256:75dd87b5519b97f68928b8d48cc62875a0d0c1ecfe357053ddcf4a16a6599f22",
+      "last_updated": "2026-08-18T21:30:22.178759Z"
+    },
+    {
+      "name": "v1.19.0-rc.0-boringcrypto",
+      "digest": "sha256:db631507a528545718b339ed9972717f3e7e07ce6ce91a05f9afb9ffc475f25e",
+      "last_updated": "2026-08-18T21:16:23.266706Z"
+    },
+    {
+      "name": "v1.18.1-windowsservercore-ltsc2022",
+      "digest": "sha256:b5e102b896a04394e4b4959cd7343bacd00f9b1ed1ed5011e42b2343f95163e4",
+      "last_updated": "2026-08-06T14:06:59.228506Z"
+    },
+    {
+      "name": "v1.18.1",
+      "digest": "sha256:0f4434c92b3e6cdac38bb129b344e1790c246f7b6e2eaffcc16a5fa363240e33",
+      "last_updated": "2026-08-06T13:38:09.071288Z"
+    },
+    {
+      "name": "v1.18.1-boringcrypto",
+      "digest": "sha256:51b0df1b2c8152f82f360db896eb1294b9fe20ec58eb269218daa871ea268e64",
+      "last_updated": "2026-08-06T13:29:20.468176Z"
+    },
+    {
+      "name": "v1.18.0-windowsservercore-ltsc2022",
+      "digest": "sha256:e946eca424374de27fef75218800ea29d5fcfd5dda4d0584e6743b68758e3148",
+      "last_updated": "2026-07-20T10:00:57.115523Z"
+    },
+    {
+      "name": "v1.18.0",
+      "digest": "sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308",
+      "last_updated": "2026-07-20T09:23:46.930809Z"
+    },
+    {
+      "name": "v1.18.0-boringcrypto",
+      "digest": "sha256:7b1488f3c97859c35a5e514839f1e60a39b0cee915cacef8ca8c444b644e2297",
+      "last_updated": "2026-07-20T09:13:32.501759Z"
+    },
+    {
+      "name": "v1.18.0-rc.0-windowsservercore-ltsc2022",
+      "digest": "sha256:ab0298959ab47c7a01fce9569638ef85d74073e5c01abaf90e2bbbe5ba6efbfa",
+      "last_updated": "2026-07-15T09:34:27.979541Z"
+    },
+    {
+      "name": "v1.18.0-rc.0",
+      "digest": "sha256:fd8507f34db6cdac9cbfe8d904bec19a00ee77970a5a601e4a9d4ffacca85180",
+      "last_updated": "2026-07-15T09:05:43.176133Z"
+    },
+    {
+      "name": "v1.18.0-rc.0-boringcrypto",
+      "digest": "sha256:8ccd6c7f2a987c10110cd715b35ad9db8879ae5412dcd441176b9cf4cd709776",
+      "last_updated": "2026-07-15T08:49:29.421182Z"
+    },
+    {
+      "name": "v1.17.1-windowsservercore-ltsc2022",
+      "digest": "sha256:ec78b693569fc202e4c52e30dca5bdfaf213567b58c24c150034b7d4aa6c7cdf",
+      "last_updated": "2026-06-30T11:32:23.499035Z"
+    },
+    {
+      "name": "v1.17.1",
+      "digest": "sha256:4f6ddc56ffdcf8a6316748fc5162972e20cb301523cac1bb4a31957df733ae9b",
+      "last_updated": "2026-06-29T22:24:14.893111Z"
+    },
+    {
+      "name": "v1.17.1-boringcrypto",
+      "digest": "sha256:594a1590f4c1fad71aa6379349c0e21ba22ed30c6aec9162fccd5be6e59da8be",
+      "last_updated": "2026-06-29T22:10:31.918049Z"
+    },
+    {
+      "name": "v1.17.0-windowsservercore-ltsc2022",
+      "digest": "sha256:11b3d9a756cebb1cf6b5c98abd988bfa8e90a14eec329c4e55ca7c4b283254f1",
+      "last_updated": "2026-06-12T11:51:25.108582Z"
+    },
+    {
+      "name": "v1.17.0",
+      "digest": "sha256:41c41849989b7e054ccbadc17938ee1e5592fe26bfbc56ef3ffc109c0b0b2739",
+      "last_updated": "2026-06-12T11:25:39.249925Z"
+    },
+    {
+      "name": "v1.17.0-boringcrypto",
+      "digest": "sha256:0f1f0beabf1443bf9e58093219a80e6e970dfb903fb5c0299a3bc101339a3749",
+      "last_updated": "2026-06-12T11:14:38.831162Z"
+    },
+    {
+      "name": "v1.17.0-rc.1-windowsservercore-ltsc2022",
+      "digest": "sha256:22781cebb3a6f864447877e597c1075a1344c361534d58813ecc6cda1f331fac",
+      "last_updated": "2026-06-09T15:07:01.514609Z"
+    },
+    {
+      "name": "v1.17.0-rc.1",
+      "digest": "sha256:1175f17edaea7883059b9d5183db907a368248128be1a3d83203182617ce4955",
+      "last_updated": "2026-06-09T14:37:53.470866Z"
+    },
+    {
+      "name": "v1.17.0-rc.1-boringcrypto",
+      "digest": "sha256:4c37493a44b49ace058442d98dadcc3b13f9fa8da82af0d3586387657fe35047",
+      "last_updated": "2026-06-09T14:27:48.853564Z"
+    },
+    {
+      "name": "v1.17.0-rc.0-windowsservercore-ltsc2022",
+      "digest": "sha256:f53ac9e24af15be7919bdfb1418c05eebb9c1f3eb606116b720bb34e80062720",
+      "last_updated": "2026-06-08T20:32:12.579215Z"
+    },
+    {
+      "name": "v1.17.0-rc.0",
+      "digest": "sha256:4dc6c0ff1610a57e92262ba70dc62ac545c64742f2177a86e9f17332ebd35e5f",
+      "last_updated": "2026-06-08T20:13:31.280326Z"
+    },
+    {
+      "name": "v1.17.0-rc.0-boringcrypto",
+      "digest": "sha256:277d7dccadedc71161821a2db18de96aa5975c1342e8cbc6af5eae645bdb7ff9",
+      "last_updated": "2026-06-08T20:02:31.669046Z"
+    },
+    {
+      "name": "v1.16.3-windowsservercore-ltsc2022",
+      "digest": "sha256:60781813c1330da6e4c1af71fdbf91d6261741b80eac10955b734ae16252c639",
+      "last_updated": "2026-06-08T13:41:55.365916Z"
+    },
+    {
+      "name": "v1.16.3",
+      "digest": "sha256:84b76d56c5943025515438fd45cbb5995386a0260d072c9b671dfd7f539f9c01",
+      "last_updated": "2026-06-08T13:17:10.904453Z"
+    },
+    {
+      "name": "v1.16.3-boringcrypto",
+      "digest": "sha256:6e157f702201ae6e7d24fd6ffc4efe3b00ce186ef1921f359e84144517d6d1e4",
+      "last_updated": "2026-06-08T13:06:23.071041Z"
+    },
+    {
+      "name": "v1.16.2-windowsservercore-ltsc2022",
+      "digest": "sha256:a18b386e56be217056821e8521df297a3f9af39c00376bc09f24797b8b7e30ba",
+      "last_updated": "2026-06-02T18:55:14.90659Z"
+    },
+    {
+      "name": "v1.16.2",
+      "digest": "sha256:32913cbfac652d15fa84d256a74e5ee3f71575961bb19d34796ce3838bfba693",
+      "last_updated": "2026-06-02T18:34:59.909709Z"
+    },
+    {
+      "name": "v1.16.2-boringcrypto",
+      "digest": "sha256:85f9016bb9bd6a9f4faf3fdbe4d02e0295a51baf0b22d1861d73e4c0a5c69520",
+      "last_updated": "2026-06-02T18:23:00.922656Z"
+    },
+    {
+      "name": "v1.16.1-windowsservercore-ltsc2022",
+      "digest": "sha256:63f15e131074df3af0cad57c120177c38962017b882a65acd485054ed66b3f32",
+      "last_updated": "2026-05-05T21:11:31.085064Z"
+    },
+    {
+      "name": "v1.16.1",
+      "digest": "sha256:51aeb9d829239345070619dad3edd6873186f913c84f45b365b74574fcb38ec0",
+      "last_updated": "2026-05-05T20:43:46.980747Z"
+    },
+    {
+      "name": "v1.16.1-boringcrypto",
+      "digest": "sha256:34b0d83af89a008901543ff2010b3442af44e1898d046db58fe2996d7aac6545",
+      "last_updated": "2026-05-05T20:33:33.662807Z"
+    },
+    {
+      "name": "v1.16.0-windowsservercore-ltsc2022",
+      "digest": "sha256:6b48503b39ab768d72b9655fbab7f13fff965c75c039dcf891fc4863106220ee",
+      "last_updated": "2026-04-23T15:09:28.749903Z"
+    },
+    {
+      "name": "v1.16.0",
+      "digest": "sha256:6e00cf7c5a692ff5f24844529416ed017d76fce922f8199004e73d5eca46b6b8",
+      "last_updated": "2026-04-23T14:46:41.747599Z"
+    },
+    {
+      "name": "v1.16.0-boringcrypto",
+      "digest": "sha256:1aa310f6bbc7e8cef2ecd46a170bca5f3f56fbfa7cc04ec821c67f944485cdb8",
+      "last_updated": "2026-04-23T14:36:17.28872Z"
+    },
+    {
+      "name": "v1.16.0-rc.0-windowsservercore-ltsc2022",
+      "digest": "sha256:2ff183b6e564c3f13c3b72f0f7545611acd8e5c9e5c56c968701e6bbc7cf9bb9",
+      "last_updated": "2026-04-20T12:23:48.098514Z"
+    },
+    {
+      "name": "v1.16.0-rc.0",
+      "digest": "sha256:25db2c490cc894adce08e21923ce65b5e45e259b6848300855f59b9cc77b43ae",
+      "last_updated": "2026-04-20T11:49:56.546006Z"
+    },
+    {
+      "name": "v1.16.0-rc.0-boringcrypto",
+      "digest": "sha256:ba53d54db0bca284495e2b3222d347d14f33956a2143f00734bc6ba09d2f4e7a",
+      "last_updated": "2026-04-20T11:40:10.263424Z"
+    },
+    {
+      "name": "v1.15.1-windowsservercore-ltsc2022",
+      "digest": "sha256:e25761476b77b8cb3338f5f03bc1fd1970bfe08dd0040dca672d90ece2496f4a",
+      "last_updated": "2026-04-13T21:38:11.122443Z"
+    },
+    {
+      "name": "v1.15.1",
+      "digest": "sha256:1f40cf52adda8fab3e058f9347a5d165624ecb9fbc1527769cb744748961940d",
+      "last_updated": "2026-04-13T21:12:48.91278Z"
+    },
+    {
+      "name": "v1.15.1-boringcrypto",
+      "digest": "sha256:ea4a8c392719ced18f7e1e4aa39f800ec21bd8788bc114ecc15827d510bc4c56",
+      "last_updated": "2026-04-13T21:03:05.261919Z"
+    },
+    {
+      "name": "v1.15.0-windowsservercore-ltsc2022",
+      "digest": "sha256:4166a2438ea9db70591ab2695edc84e1a820cfe258c178957fe2f0bc4f89803e",
+      "last_updated": "2026-03-30T16:32:07.722578Z"
+    },
+    {
+      "name": "v1.15.0",
+      "digest": "sha256:579582bce40049f2e27bd1e445000689c907a41f0495cb0d0c7f65609316ba7c",
+      "last_updated": "2026-03-30T16:03:13.028873Z"
+    },
+    {
+      "name": "v1.15.0-boringcrypto",
+      "digest": "sha256:6368ebfb1c39a10a1577a27ed0048d64e5b4790de85d047e5d8a10f31307320e",
+      "last_updated": "2026-03-30T15:52:38.890785Z"
+    },
+    {
+      "name": "v1.15.0-rc.1-windowsservercore-ltsc2022",
+      "digest": "sha256:29e4886366095cc3a44dbbe72cdf4cad81c7564d66534f503cdc3fcfd7db0e49",
+      "last_updated": "2026-03-26T11:10:17.118384Z"
+    },
+    {
+      "name": "v1.15.0-rc.1",
+      "digest": "sha256:5013d12b08a5adac20c53155a955a36a2ee4a1815203bebac4e582527e5f3f6f",
+      "last_updated": "2026-03-26T10:46:00.955291Z"
+    },
+    {
+      "name": "v1.15.0-rc.1-boringcrypto",
+      "digest": "sha256:9394d8e85abbb9e14176d83864df0c3c7094ecb9e41910e7f24a7776ef6e6936",
+      "last_updated": "2026-03-26T10:36:42.776691Z"
+    },
+    {
+      "name": "v1.15.0-rc.0-windowsservercore-ltsc2022",
+      "digest": "sha256:50a3a055848620736b9188a8b399f0d4a442c6be82c5bca0af21e0e9f1c990ee",
+      "last_updated": "2026-03-25T17:00:34.189653Z"
+    },
+    {
+      "name": "v1.15.0-rc.0",
+      "digest": "sha256:41ab2668e054d13087bfac003f7f0e911f342e8152c3ba82a8d7b4f22734390e",
+      "last_updated": "2026-03-25T16:34:31.560651Z"
+    },
+    {
+      "name": "v1.15.0-rc.0-boringcrypto",
+      "digest": "sha256:b6b3b2d4bec4d59f0d21a4cad268bf4386c170c58c26f3c2bbbba2892ba29e04",
+      "last_updated": "2026-03-25T16:24:33.042343Z"
+    },
+    {
+      "name": "v1.14.2-windowsservercore-ltsc2022",
+      "digest": "sha256:6494fa0d02b096bb9cb2f9f296578b78bd39e79fcb794fe9c428670311117284",
+      "last_updated": "2026-03-24T18:22:43.813682Z"
+    },
+    {
+      "name": "v1.14.2",
+      "digest": "sha256:eadfe35ea52b26cbec4d4d780fbcc31edb31108c1c9e537ca59557a5a102c712",
+      "last_updated": "2026-03-24T17:57:14.41552Z"
+    },
+    {
+      "name": "v1.14.2-boringcrypto",
+      "digest": "sha256:97591d44f6ab226fe5d82a603192830fac2354defb7595f9d22513d4d59b8e59",
+      "last_updated": "2026-03-24T17:48:00.903865Z"
+    },
+    {
+      "name": "v1.14.1-windowsservercore-ltsc2022",
+      "digest": "sha256:b32227203b20cdd98ed7beb54bf0a11992e5b51c536caa534a2689fa09400e8b",
+      "last_updated": "2026-03-17T17:37:12.000321Z"
+    },
+    {
+      "name": "v1.14.1",
+      "digest": "sha256:8f5666aebb871ba43ee2d65159c5d1c26c903720efafaf2d9ed4e237afc3bc88",
+      "last_updated": "2026-03-17T15:48:00.049218Z"
+    },
+    {
+      "name": "v1.14.1-boringcrypto",
+      "digest": "sha256:746552385f9b639482d3591546dae8e30f4331ebbfb66796b26b391deac3d865",
+      "last_updated": "2026-03-17T15:36:54.83285Z"
+    },
+    {
+      "name": "v1.14.0-windowsservercore-ltsc2022",
+      "digest": "sha256:820b9ec1044c2fd89de2b18d10bdcaa331691239f23727ab1e078786e69d4fbc",
+      "last_updated": "2026-03-09T19:24:15.024446Z"
+    },
+    {
+      "name": "v1.14.0",
+      "digest": "sha256:f50931848bd8178774521767bb46b905e1a081301950ff28d7623c9db7c01076",
+      "last_updated": "2026-03-09T17:41:28.548196Z"
+    },
+    {
+      "name": "v1.14.0-boringcrypto",
+      "digest": "sha256:ea75771fa0f25e2b5485735661931e55ae5ade32f5722bf274b63606d1b8ca4f",
+      "last_updated": "2026-03-09T17:32:12.827547Z"
+    },
+    {
+      "name": "v1.14.0-rc.1-windowsservercore-ltsc2022",
+      "digest": "sha256:00c68d52126adf8ab8d817d229b7c1f684477b9465820a129b0409e23bc1a639",
+      "last_updated": "2026-03-02T20:31:26.305631Z"
+    },
+    {
+      "name": "v1.14.0-rc.1",
+      "digest": "sha256:dad9980c6aab1ebbf84906d45574737e3f2111ec3ca39ad2af11a36253735b49",
+      "last_updated": "2026-03-02T20:04:07.890621Z"
+    }
+  ]
+}

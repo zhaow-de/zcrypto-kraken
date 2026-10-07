@@ -372,3 +372,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #659 | 2026-10-04 | fix(infra): the node lets unattended upgrades restart Prometheus | — | 00121 | T0217 |
 | #663 | 2026-10-06 | feat(infra): 00122 — the dead-man spec and plan, the shared node code | — | 00122 | T0218 |
 | #666 | 2026-10-06 | docs(engine): 00092 — rung-3 accumulation: submit target − held, armed | — | 00092 | T0018, T0119, T0120 |
+| #670 | 2026-10-07 | feat(infra): 00123 — one Alloy version across the fleet under one tag | — | 00123 | T0219 |
