@@ -14,10 +14,10 @@
 // on both hosts with no Jinja. Under `network_mode: host` (alloy-compose.yaml.j2) the container
 // shares the host UTS namespace -- Docker even refuses `--hostname` in that mode -- so
 // `constants.hostname` returns the host's own name, which the base role sets distinctly per host
-// (`zcrypto` / `zcrypto-red`, host_vars/zcrypto-red overrides base_hostname). Grafana Cloud
-// credentials are NOT in this file: they arrive as environment variables from a rendered, 0600,
-// never-committed secrets file (alloy-secrets.env.j2), read here via the `sys.env(...)` stdlib
-// function -- the same six names the ops and nas Alloy copies read.
+// (`zcrypto` / `zcrypto-red`, host_vars/zcrypto-red overrides base_hostname). Grafana Cloud's and
+// the node's credentials are NOT in this file: they arrive as environment variables from a
+// rendered, 0600, never-committed secrets file (alloy-secrets.env.j2), read here via the
+// `sys.env(...)` stdlib function.
 
 // ---- Host metrics -------------------------------------------------------------------------
 // The three alternate-path RO mounts (alloy-compose.yaml.j2: /proc->/host/proc, /sys->/host/sys,
@@ -50,6 +50,12 @@
 // line, so those selectors stay unambiguous.
 prometheus.exporter.unix "host" {
   set_collectors = ["cpu", "loadavg", "meminfo", "filesystem", "netdev", "textfile"]
+
+  // Docker's per-container veth and bridge devices stay at the source, on both legs: no rule reads
+  // them, and the network panels would plot each one.
+  netdev {
+    device_exclude = "^(veth|br-)"
+  }
 
   procfs_path = "/host/proc"
   sysfs_path  = "/host/sys"
@@ -116,8 +122,9 @@ prometheus.scrape "cache_proxy" {
 // publishes at least `process_virtual_memory_max_bytes`), so the six-name keep-list is a deliberate
 // SUBSET FILTER on Alloy's own self-scrape: all six Python names exist in client_golang too (no
 // admitted-but-unpublishable gap), and the extras it drops (e.g.
-// `process_virtual_memory_max_bytes`) are unwanted here. This target's surviving contribution is
-// therefore its own `up` plus those six process_* names, nothing more.
+// `process_virtual_memory_max_bytes`) are unwanted in Grafana Cloud. On the Cloud leg this target's
+// surviving contribution is its own `up` plus those six process_* names; the node's leg ships it
+// whole.
 prometheus.exporter.self "alloy" {}
 
 prometheus.scrape "host" {
@@ -147,7 +154,7 @@ prometheus.remote_write "grafana" {
     // Series minimization (00043): drop Alloy's own `go_*`/`alloy_*` self-metrics, then keep-only
     // the series this stack wants; the keep alone already excludes the self-metrics, so the drop is
     // parity, not load. A `keep` action drops everything it does not list, so a series missing here
-    // does not merely go undashboarded -- it does not exist (T0051); CAPTURE_REQUIRED in
+    // does not merely go undashboarded -- it does not exist in Grafana Cloud; CAPTURE_REQUIRED in
     // tests/test_infra_alloy_series.py names the series it must admit. The six ProcessCollector
     // families come from the app endpoints and from Alloy's own self-scrape alike.
     write_relabel_config {
@@ -160,6 +167,17 @@ prometheus.remote_write "grafana" {
       source_labels = ["__name__"]
       regex         = "up|node_load1|node_load5|node_load15|node_memory_MemTotal_bytes|node_memory_MemAvailable_bytes|node_memory_MemFree_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_free_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_cpu_seconds_total|node_scrape_collector_success|node_scrape_collector_duration_seconds|zcrypto_capture_reconnects_total|zcrypto_capture_resubscribes_total|zcrypto_capture_resubscribe_errors_total|zcrypto_capture_resubscribe_ack_timeouts_total|zcrypto_capture_segments_written_total|zcrypto_capture_segment_bytes_total|zcrypto_capture_rows_held_total|zcrypto_capture_rows_quarantined_total|zcrypto_capture_gap_seconds_total|zcrypto_capture_seconds_since_last_book_message|zcrypto_capture_venue_status_total|zcrypto_capture_book_desynced|zcrypto_capture_disk_watermark_breached|zcrypto_capture_hour_finalized_early_total|zcrypto_capture_ts_past_dated_hour_total|zcrypto_engine_target_weight|zcrypto_engine_orders_total|zcrypto_engine_order_notional_eur|zcrypto_engine_cycle_success|zcrypto_engine_cycle_completed_at_seconds|zcrypto_engine_cycle_duration_seconds|zcrypto_engine_sleeve_gross|zcrypto_engine_active_sleeves|zcrypto_exec_gate_level|zcrypto_exec_armed|zcrypto_exec_kill_tripped|zcrypto_exec_venue_ok|zcrypto_exec_last_evaluation_timestamp_seconds|zcrypto_exec_restart_hold|zcrypto_exec_orders_total|zcrypto_exec_fills_total|zcrypto_exec_fees_eur_total|zcrypto_exec_position|zcrypto_exec_resting_order_age_seconds|zcrypto_exec_realized_pnl_eur|zcrypto_exec_external_events_total|zcrypto_exec_tracking_state|zcrypto_engine_limit_bound_total|zcrypto_venue_snapshot_timestamp_seconds|zcrypto_venue_instruments_loaded|zcrypto_venue_instruments_expected|zcrypto_venue_concordance_failures|zcrypto_logship_dropped_lines_total|zcrypto_logship_shipped_lines_total|zcrypto_logship_last_cycle_timestamp_seconds|zcrypto_logship_last_success_timestamp_seconds|process_cpu_seconds_total|process_max_fds|process_open_fds|process_resident_memory_bytes|process_start_time_seconds|process_virtual_memory_bytes|node_reboot_required|node_textfile_scrape_error|node_textfile_mtime_seconds|zcache_wireguard_handshake_age_seconds|zcrypto_engine_journal_prune_deleted_days|zcrypto_engine_journal_prune_kept_days|zcrypto_engine_journal_prune_oldest_day_age_seconds|zcrypto_engine_journal_prune_last_run_timestamp_seconds|zcrypto_clock_offset_seconds|zcrypto_clock_synchronised|haproxy_backend_status|haproxy_backend_active_servers|haproxy_backend_current_sessions|haproxy_server_status|haproxy_server_check_status|haproxy_server_check_failures_total"
       action        = "keep"
+    }
+  }
+
+  // The node's leg, unfiltered: its own queue, so a dead endpoint does not hold the other.
+  endpoint {
+    name = "mon"
+    url  = sys.env("MON_PROM_URL")
+
+    basic_auth {
+      username = sys.env("MON_PROM_USERNAME")
+      password = sys.env("MON_PROM_PASSWORD")
     }
   }
 }
@@ -249,7 +267,7 @@ loki.source.journal "capture_units" {
 // fall through this component unmatched (no selector here admits them), keeping their journal
 // capture time and no level label.
 loki.process "parse" {
-  forward_to = [loki.write.grafana.receiver]
+  forward_to = [loki.write.grafana.receiver, loki.write.mon.receiver]
 
   // The cache proxy's lines share the unit's journal with the engine's, under the compose prefix of
   // their own container: the prefix comes off, HAProxy's own level word is read where a line carries
@@ -378,6 +396,19 @@ loki.write "grafana" {
     basic_auth {
       username = sys.env("GRAFANA_LOKI_USERNAME")
       password = sys.env("GRAFANA_LOKI_PASSWORD")
+    }
+  }
+}
+
+// The node's leg is its own component, fed by the parse stage beside the Cloud one: a second
+// endpoint inside loki.write "grafana" would be fed in succession and could stall it.
+loki.write "mon" {
+  endpoint {
+    url = sys.env("MON_LOKI_URL")
+
+    basic_auth {
+      username = sys.env("MON_LOKI_USERNAME")
+      password = sys.env("MON_LOKI_PASSWORD")
     }
   }
 }

@@ -40,11 +40,10 @@ services:
       # Go's GC otherwise overshoots a small `memory` cap under default behavior (00043).
       GOMEMLIMIT: 460MiB
     env_file:
-      # Grafana Cloud remote_write + Loki creds (GRAFANA_PROM_URL/USERNAME/PASSWORD,
-      # GRAFANA_LOKI_URL/USERNAME/PASSWORD) -- 0600, never committed, rendered by this role
-      # (tasks/main.yml, from group_vars/observed/vault.yml) with no_log: true + diff: false so a
-      # converge never prints the values, owned by the `zcrypto-alloy` user (Alloy's container
-      # `user:` above) so it can read a 0600 file it does not own by default.
+      # Grafana Cloud's and the node's remote_write + Loki creds (alloy-secrets.env.j2) -- 0600,
+      # never committed, rendered by this role with no_log: true + diff: false so a converge never
+      # prints the values, owned by the `zcrypto-alloy` user (Alloy's container `user:` above) so it
+      # can read a 0600 file it does not own by default.
       - ./alloy-secrets.env
     command:
       - run

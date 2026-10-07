@@ -572,10 +572,11 @@
         mode: "0644"
       notify: reload alloy
 
-    # Renders straight from the vault, which resolves because capture_host is in the `observed`
-    # group. no_log with diff false: without both, a converge prints the Grafana Cloud credentials
-    # to the terminal and to any log capturing the run. Owned by the Alloy user so it can read a
-    # 0600 file it does not own by default.
+    # Renders from group_vars/observed/vault.yml, and group_vars/observed/vars.yml for the node's URLs
+    # and user, whose values resolve here because capture_host is in the `observed` group. no_log with
+    # diff false: without both, a converge prints every credential the file holds to the terminal and
+    # to any log capturing the run. Owned by the Alloy user so it can read a 0600 file it does not own
+    # by default.
     - name: render the alloy secrets env file
       ansible.builtin.template:
         src: alloy-secrets.env.j2
