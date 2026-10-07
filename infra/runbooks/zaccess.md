@@ -2,7 +2,7 @@
 
 You are here because **an alert fired in Slack** — find the section whose anchor matches the alert `uid` — or because you mean to revoke a client certificate, ship its Alloy config or cut the public SSH relay: the procedures at the top, found by heading. Each section is written to be actioned without opening any other document.
 
-Everything here is one Linode VPS, `zaccess`, reached as `ssh access`; the other end of its WireGuard tunnel is `zcrypto-ops`, `ssh hp`. It runs no containers — Alloy, Caddy and WireGuard are apt packages under systemd — and holds no capture data: everything on it is re-issuable.
+One Linode VPS, `zaccess`, reached as `ssh -p 10022 zcrypto-deploy@zaccess.zhaow.me`; its WireGuard tunnel ends on `zcrypto-ops`, `ssh hp`. It runs no containers — Alloy, Caddy and WireGuard are apt packages — and holds no capture data: everything on it is re-issuable.
 
 `README.md` beside this file states what belongs in a runbook at all; an alert or a guard names a section by file and anchor, and a procedure is found by its file and heading.
 
@@ -43,12 +43,12 @@ Nothing fired. You are changing the bridgehead's `config.alloy` and looking for 
 
 ### What it means
 
-There is none: **the bridgehead's Alloy takes no digest operand and owes no bake.** It is the apt package, which the `access` role installs through the shared role `alloy_apt` under the `alloy` tag at the fleet's version — `alloy_deb_version` in `infra/ansible/group_vars/observed/alloy.yml`, or while the bridgehead is held, the version `infra/ansible/host_vars/zaccess/alloy.yml` names — held in `dpkg` and pinned at priority 1001, so an `apt upgrade` leaves it where it is; the version moves only through the bump skill, `.claude/skills/zcrypto-bump-alloy/SKILL.md`, its rollback included. `--limit zaccess --tags alloy` runs that install, renders `/etc/default/alloy`, copies `config.alloy` once `alloy validate` has read the new file with the installed binary, restarts Alloy on a change, and then restarts it when no process runs or the running one is not the installed binary; it runs nothing of Caddy, WireGuard, the SSH relay or the probe (`tests/test_access_alloy_tag.py`). The copy is ungated: every converge of the role ships it, so a hand edit cannot outlive the next run and there is no drift assert. The preview fetches the Grafana repository's signing key, and a key source that does not answer refuses the converge.
+There is none: **the bridgehead's Alloy takes no digest operand and owes no bake.** It is the apt package, installed at the fleet's version — `alloy_deb_version` in `infra/ansible/group_vars/observed/alloy.yml`, or while the bridgehead is held, the version `infra/ansible/host_vars/zaccess/alloy.yml` names — held in `dpkg` and pinned at priority 1001, so an `apt upgrade` leaves it where it is; the version moves only through the bump skill, `.claude/skills/zcrypto-bump-alloy/SKILL.md`, its rollback included. `--limit zaccess --tags alloy` runs the role's Alloy part alone, nothing of Caddy, WireGuard, the SSH relay or the probe (`tests/test_access_alloy_tag.py`), and copies `config.alloy` only once `alloy validate` has read it with the installed binary. The copy is ungated: every converge of the role ships it, so a hand edit cannot outlive the next run. The preview fetches the Grafana repository's signing key, and a key source that does not answer refuses the converge.
 
 ### What to do
 
 1. Edit `infra/ansible/roles/access/files/config.alloy`, then `infra/ansible/scripts/converge.sh site.yml --limit zaccess --tags alloy` from the workstation.
-2. Read the version and the hold off the host: `ssh access 'dpkg-query -W alloy; apt-mark showhold'` names the version the converge installed and lists `alloy`.
+2. Read the version and the hold on the host: `dpkg-query -W alloy; apt-mark showhold` names the version the converge installed and lists `alloy`.
 
 ### Retire when
 
