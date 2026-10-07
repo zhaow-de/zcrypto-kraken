@@ -365,6 +365,23 @@ def test_two_slack_integrations_are_refused_before_any_write(fleet, capsys):
     assert fleet.creates() == []
 
 
+def test_no_slack_integration_is_refused_before_any_write(fleet, capsys):
+    fleet.clone.integrations = [row for row in fleet.clone.integrations if row["kind"] != "slack"]
+    rc, out, err = _run(capsys, "apply")
+    assert rc == 2 and "0 Slack integrations" in err, err
+    assert fleet.creates() == []
+
+
+def test_an_integrations_listing_without_the_disabled_flag_stops_apply_and_status(fleet, capsys):
+    for row in fleet.clone.integrations:
+        del row["disabled"]
+    for verb in ("apply", "status"):
+        rc, out, err = _run(capsys, verb)
+        assert rc == 2 and "v6.2.0" in err and fleet.slack[:8] in err and fleet.slack not in err + out, (verb, err)
+        assert not [name for name in TWELVE if name in out], (verb, out)
+    assert fleet.creates() == []
+
+
 def test_a_disabled_slack_integration_stops_apply_and_status_naming_its_kind_and_id_prefix(fleet, capsys):
     assert _run(capsys, "apply")[0] == 0
     fleet.requests.clear()
@@ -434,15 +451,32 @@ def test_status_reads_a_new_check_unmoved_and_a_pinged_up_one_moved(fleet, capsy
     [
         (lambda f: f.clone.by_name("zcrypto-panel").update(status="new", n_pings=0, last_ping=None), "zcrypto-panel"),
         (lambda f: f.clone.by_name(SELF).update(status="down"), SELF),
+        (lambda f: f.clone.by_name("zcrypto-liquidations").update(status="up", n_pings=0), "zcrypto-liquidations"),
         (lambda f: f.hcio.by_name("zcrypto-capture-red").update(last_ping=_ago(hours=1)), "zcrypto-capture-red"),
         (lambda f: f.clone.by_name("zcrypto-mon").update(desc="Rewritten in the UI."), "zcrypto-mon"),
     ],
-    ids=["one new", "one pinged and down", "one pinged on healthchecks.io an hour ago", "the fixture differs"],
+    ids=["one new", "one pinged and down", "one up at 0 pings", "one pinged on healthchecks.io an hour ago", "the fixture differs"],
 )
 def test_retire_refuses_naming_the_check_and_deletes_nothing(retiring, capsys, spoil, named):
     spoil(retiring)
     rc, out, err = _run(capsys, "retire")
     assert rc == 2 and named in err
+    assert retiring.deletes() == []
+
+
+@pytest.mark.parametrize(("hours", "refused"), [(23, True), (25, False)], ids=["23 h ago", "25 h ago"])
+def test_retire_gates_on_a_healthchecks_io_ping_inside_24_hours(retiring, capsys, hours, refused):
+    retiring.hcio.by_name("zcrypto-archive-pull").update(last_ping=_ago(hours=hours))
+    rc, out, err = _run(capsys, "retire")
+    assert (rc, "zcrypto-archive-pull" in err) == ((2, True) if refused else (0, False)), err
+    assert len(retiring.deletes()) == (0 if refused else len(NAMES))
+
+
+def test_retire_refuses_a_fixture_naming_a_check_beside_the_twelve(retiring, capsys):
+    retiring.clone.add(**{**_source_row(99, _TREE[0]), "name": "drill-throwaway", "status": "up", "n_pings": 3})
+    assert _run(capsys, "fixture")[0] == 0
+    rc, out, err = _run(capsys, "retire")
+    assert rc == 2 and "drill-throwaway" in err and "11 fleet checks" in err, err
     assert retiring.deletes() == []
 
 

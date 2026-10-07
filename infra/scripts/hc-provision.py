@@ -37,6 +37,9 @@ HCIO = "https://healthchecks.io/api/v3/"
 SERVICE = "https://zcrypto-hc.zhaow.me/api/v3/"
 FIXTURE = REPO / "tests" / "fixtures" / "healthchecks_descriptions.json"
 TIMEOUT = 30
+# `retire` deletes exactly this many on healthchecks.io: a check the service holds outside the fleet, once fetched
+# into the fixture, would otherwise count among them.
+FLEET_CHECKS = 11
 
 HCIO_READ = ("healthchecks_readonly_api_key", "group_vars/all/vault.yml")
 HCIO_DELETE = ("healthchecks_api_key", "group_vars/capture_host/vault.yml")
@@ -179,7 +182,12 @@ def _slack(key: str) -> str:
     ident = slack[0].get("id")
     if not isinstance(ident, str) or not _UUID.fullmatch(ident):
         raise Refusal(f"{INTEGRATIONS} answered its Slack integration without an id")
-    if slack[0].get("disabled") is True:
+    if "disabled" not in slack[0]:
+        raise Refusal(
+            f"the slack integration {ident[:8]} carries no disabled flag: {INTEGRATIONS} predates the service's "
+            "v6.2.0, so whether a check on it pages cannot be read"
+        )
+    if slack[0]["disabled"] is not False:
         raise Refusal(
             f"the slack integration {ident[:8]} is disabled, so a check on it pages nobody: "
             "remove it and add it again in the service's UI, then run apply"
@@ -314,6 +322,11 @@ def retire() -> None:
                 f"{name}: not moved, the dead-man service reads it {check.get('status')} at {check.get('n_pings')} pings"
             )
     on_disk, fetched = _on_disk(), _fixture_rows(listing)
+    if len(names) != FLEET_CHECKS:
+        failing.append(
+            f"the fixture names {', '.join(sorted({row['name'] for row in on_disk}))}, where retire reads "
+            f"{FLEET_CHECKS} fleet checks beside zcrypto-hc: delete any other on the service and run fixture again"
+        )
     if on_disk != fetched:
         mine, theirs = {row["name"]: row for row in on_disk}, {row["name"]: row for row in fetched}
         differ = sorted(n for n in mine.keys() | theirs.keys() if mine.get(n) != theirs.get(n)) or ["their order"]
