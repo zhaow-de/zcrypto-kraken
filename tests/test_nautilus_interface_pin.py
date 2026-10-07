@@ -527,8 +527,11 @@ def test_the_exec_engine_config_accepts_the_arguments_we_pass():
 
     LiveExecutionEngineConfig(
         reconciliation=True,
+        load_cache=True,
         filter_unclaimed_external_orders=False,
         inflight_check_interval_ms=2000,
         inflight_check_threshold_ms=5000,
         inflight_check_retries=5,
+        open_check_interval_secs=None,
+        position_check_interval_secs=None,
     )
