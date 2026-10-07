@@ -321,6 +321,20 @@ def test_the_inflight_defaults_we_now_state_explicitly_are_unchanged():
     assert config.inflight_check_retries == 5
 
 
+def test_the_polling_defaults_we_state_explicitly_are_unchanged():
+    """`cli/engine/node.py` states both venue polls at the library's default, off, rather than
+    inheriting them. A bump that moves either default turns that statement from a restatement into a
+    divergence: a red here re-opens the polls' decision on the reasons `_exec_engine_config` gives,
+    and re-measuring `EXEC_ENGINE_DEFAULTS` does not answer it."""
+    from nautilus_trader.config import LiveExecutionEngineConfig
+
+    from cli.engine.node import _exec_engine_config
+
+    stated, default = _exec_engine_config(), LiveExecutionEngineConfig()
+    assert stated.open_check_interval_secs == default.open_check_interval_secs
+    assert stated.position_check_interval_secs == default.position_check_interval_secs
+
+
 def test_the_cache_config_defaults_we_state_are_unchanged():
     """`cli/engine/node.py`'s `_cache_config` states every field at these values; a field a bump adds
     or removes fails here, so it is stated there before the bump lands."""
