@@ -11,6 +11,9 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests.alloy_text import live_alloy_text
+from tests.test_infra_alloy_stages import HC_ALLOY, HC_DISPATCH_FAILURE, hc_model
+
 REPO = Path(__file__).resolve().parents[1]
 ALERTS = REPO / "infra/grafana/alerts.yaml"
 
@@ -2180,7 +2183,7 @@ def test_the_ops_inode_rule_pages_with_an_hour_left_on_tmp_at_the_fastest_fill_s
     assert left_at_page >= _FILL_PER_HOUR, f"{left_at_page:.0f} inodes left at the page, under an hour at {_FILL_PER_HOUR}/h"
 
 
-# --- the observability node's own group: evaluated on the node alone -----------------------------
+# --- the node-only groups: evaluated on the observability node alone ----------------------------
 # The groups the push leaves off Grafana Cloud, each to the host its rules name.
 NODE_ONLY_GROUPS = {"zcrypto-mon": "zcrypto-mon", "zcrypto-hc": "zcrypto-hc"}
 _MON_RULES = {
@@ -2194,33 +2197,57 @@ _MON_RULES = {
     "zcrypto-mon-retention-by-size": ("warning", "908"),
     "zcrypto-mon-shipper-loss": ("warning", "909"),
     "zcrypto-mon-alloy-versions-split": ("warning", "910"),
+    "zcrypto-mon-grafana-error-logs": ("warning", "911"),
 }
+_HC_RULES = {
+    "zcrypto-alloy-dark-hc": ("critical", "921"),
+    "zcrypto-hc-disk-low": ("warning", "922"),
+    "zcrypto-hc-reboot-pending": ("warning", "923"),
+    "zcrypto-hc-service-down": ("critical", "924"),
+    "zcrypto-hc-backup-stale": ("warning", "925"),
+    "zcrypto-hc-error-logs": ("warning", "926"),
+}
+_NODE_GROUP_RULES = {"zcrypto-mon": ("mon.md", _MON_RULES), "zcrypto-hc": ("hc.md", _HC_RULES)}
+
+
+def _group_rules(group: str) -> list[dict]:
+    return [r for r in _rules() if r["ruleGroup"] == group]
 
 
 def _mon_rules() -> list[dict]:
-    return [r for r in _rules() if r["ruleGroup"] == "zcrypto-mon"]
+    return _group_rules("zcrypto-mon")
 
 
 def _evaluator(rule: dict) -> dict:
     return next(q for q in rule["data"] if q["model"].get("type") == "threshold")["model"]["conditions"][0]["evaluator"]
 
 
-def test_the_mon_group_is_its_rules_each_with_its_own_section_and_panel():
+@pytest.mark.parametrize("group", sorted(_NODE_GROUP_RULES))
+def test_a_node_group_is_its_rules_each_with_its_own_section_and_panel(group):
+    page, expected = _NODE_GROUP_RULES[group]
+    rules = _group_rules(group)
     found = {
         r["uid"]: (r["labels"]["severity"], r["annotations"]["__panelId__"])
-        for r in _mon_rules()
+        for r in rules
         if r["annotations"]["__dashboardUid__"] == "zcrypto-fleet"
     }
-    assert found == _MON_RULES
-    for rule in _mon_rules():
-        assert rule["annotations"]["summary"].endswith(f"Runbook: infra/runbooks/mon.md#{rule['uid']}"), rule["uid"]
+    assert found == expected
+    anchors = _runbook_anchors()
+    for rule in rules:
+        assert rule["annotations"]["summary"].endswith(f"Runbook: infra/runbooks/{page}#{rule['uid']}"), rule["uid"]
+        assert anchors.get(rule["uid"]) == [page], f"{page} defines no section for {rule['uid']}"
 
 
-def test_the_push_keeps_the_mon_group_off_grafana_cloud_by_default():
+def test_the_push_keeps_the_node_groups_off_grafana_cloud_by_default():
     (skipped,) = re.findall(r'^  \*\.grafana\.net\) skip_default="([^"]*)" ;;$', PUSH.read_text(), re.M)
     assert sorted(skipped.split()) == sorted(NODE_ONLY_GROUPS)
-    dead_men = sorted(r["uid"] for r in _mon_rules() if r["noDataState"] == "Alerting")
-    assert dead_men == ["zcrypto-alloy-dark-mon", "zcrypto-mon-ingest-dark"], dead_men
+    dead_men = {
+        group: sorted(r["uid"] for r in _group_rules(group) if r["noDataState"] == "Alerting") for group in NODE_ONLY_GROUPS
+    }
+    assert dead_men == {
+        "zcrypto-mon": ["zcrypto-alloy-dark-mon", "zcrypto-mon-ingest-dark"],
+        "zcrypto-hc": ["zcrypto-alloy-dark-hc", "zcrypto-hc-backup-stale", "zcrypto-hc-service-down"],
+    }, dead_men
 
 
 def _admits(op: str, value: str, host: str) -> bool:
@@ -2332,3 +2359,64 @@ def test_the_split_rule_counts_versions_across_every_host_for_a_day():
     assert charted.get(int(rule["annotations"]["__panelId__"])) == [
         'count by (version) (alloy_build_info{job="integrations/self"})'
     ]
+
+
+def _log_expr(uid: str) -> str:
+    (query,) = [q for q in _rule(uid)["data"] if q["datasourceUid"] == "${GRAFANA_LOKI_DS_UID}"]
+    return query["model"]["expr"]
+
+
+def _log_rule_shape(expr: str) -> str:
+    """The expression with its host and container matchers and a line filter after the selector taken out."""
+    shape = re.sub(r'\{host="[^"]+", container=~?"[^"]+", ', "{", expr)
+    shape = re.sub(r'\} != "[^"]+"', "}", shape)
+    assert shape != expr, f"no host and container matchers to take out of {expr!r}"
+    return shape
+
+
+@pytest.mark.parametrize("uid", ["zcrypto-hc-error-logs", "zcrypto-mon-grafana-error-logs"])
+def test_a_node_log_rule_keeps_the_ops_error_rules_shape(uid):
+    ours, theirs = _rule(uid), _rule("zcrypto-ops-error-logs")
+    assert _log_rule_shape(_log_expr(uid)) == _log_rule_shape(_log_expr(theirs["uid"]))
+    fields = ("for", "noDataState", "execErrState", "labels", "notification_settings")
+    assert [ours[f] for f in fields] == [theirs[f] for f in fields]
+    assert [q["relativeTimeRange"] for q in ours["data"]] == [q["relativeTimeRange"] for q in theirs["data"]]
+
+
+def test_the_grafana_error_rule_leaves_out_the_lines_the_lock_rule_counts():
+    (counted,) = re.findall(r'\|= "([^"]+)"', _log_expr("zcrypto-mon-sqlite-locked"))
+    expr = _log_expr("zcrypto-mon-grafana-error-logs")
+    assert expr.count('{host="zcrypto-mon", container="grafana-server", level=~"ERROR|CRITICAL"}') == 1, expr
+    assert f'level=~"ERROR|CRITICAL"}} != "{counted}"' in expr, f"a line {counted!r} would be counted by both rules"
+
+
+def _container_label_of_the_clones_stream() -> str:
+    """The `container` value hc's journal relabel writes for an entry the clone's container wrote."""
+    blocks = re.findall(r"^\s*rule \{\n(.*?)^\s*\}$", live_alloy_text(HC_ALLOY), re.M | re.S)
+    written = [
+        block
+        for block in blocks
+        if re.search(r'^\s*source_labels\s*=\s*\["__journal_container_name"\]\s*$', block, re.M)
+        and re.search(r'^\s*target_label\s*=\s*"container"\s*$', block, re.M)
+    ]
+    assert len(written) == 1, f"expected one rule writing the container's label, found {len(written)}"
+    (label,) = re.findall(r'^\s*replacement\s*=\s*"([^"]*)"\s*$', written[0], re.M)
+    return label
+
+
+def test_the_dead_man_error_rule_selects_the_record_a_refused_dispatch_writes():
+    expr = _log_expr("zcrypto-hc-error-logs")
+    (container,) = re.findall(r'\{host="zcrypto-hc", container="([^"]+)"', expr)
+    assert container == _container_label_of_the_clones_stream()
+    level, line = hc_model(HC_DISPATCH_FAILURE)
+    (levels,) = re.findall(r'level=~"([^"]+)"', expr)
+    assert level is not None and re.fullmatch(levels, level), (levels, level)
+    (key,) = re.findall(r'\| json message="([^"]+)"', expr)
+    assert json.loads(line)[key].startswith("Notification failed: check "), key
+
+
+def test_the_backup_rule_pages_a_gauge_older_than_26_hours_or_none_at_all():
+    rule = _rule("zcrypto-hc-backup-stale")
+    assert _prom_exprs(rule) == ['time() - max(zcrypto_sqlite_backup_last_success_timestamp_seconds{host="zcrypto-hc"})']
+    assert _evaluator(rule) == {"type": "gt", "params": [26 * 3600]}
+    assert rule["noDataState"] == "Alerting", "a node whose backup never succeeded publishes no gauge at all"

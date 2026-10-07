@@ -2203,6 +2203,13 @@ _PATCH_PASS_HOSTS = [host for host, _ in ops_daily.PATCH_PASSES]
 _PATCH_PASS_NAMES = {host: f"{ops_daily.ssh_alias(host)} patch pass" for host in _PATCH_PASS_HOSTS}
 
 
+def test_both_nodes_owe_a_monthly_patch_pass():
+    assert ops_daily.PATCH_PASSES == (
+        ("zcrypto-mon", "infra/runbooks/mon.md#mon-patch-pass"),
+        ("zcrypto-hc", "infra/runbooks/hc.md#hc-patch-pass"),
+    )
+
+
 def _converge(ts: str, *, limit, tags="", skip_tags="", rc=0, playbook="site.yml") -> dict:
     return {"ts": ts, "limit": limit, "tags": tags, "skip_tags": skip_tags, "rc": rc, "playbook": playbook}
 

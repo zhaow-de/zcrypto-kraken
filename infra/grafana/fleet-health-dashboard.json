@@ -3448,6 +3448,68 @@
       }
     },
     {
+      "id": 911,
+      "type": "timeseries",
+      "title": "Monitor — Grafana's own ERROR lines",
+      "description": "Is Grafana on the node logging errors of its own? One line per distinct ERROR or CRITICAL line in the fifteen minutes before each point, at most five, each named by its first 200 characters; the locked-database lines are left to their own panel (905). The alert pages on the first one. A notification Grafana failed to deliver shows here as its notifier's line, and its contact point's last attempt in the node's Alerting UI says why.",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 136
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "expr": "topk(5, sum by (host, container, level, msg) (count_over_time({host=\"zcrypto-mon\", container=\"grafana-server\", level=~\"ERROR|CRITICAL\"} != \"database is locked\" | json message=\"message\" | drop __error__, __error_details__ | label_format msg=`{{ if .message }}{{ printf \"%.200s\" .message }}{{ else }}{{ printf \"%.200s\" __line__ }}{{ end }}` [15m]))) or on() vector(0)",
+          "refId": "A",
+          "legendFormat": "{{level}} {{msg}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
       "id": 920,
       "type": "row",
       "title": "Dead-man node",
@@ -3457,7 +3519,256 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 136
+        "y": 144
+      }
+    },
+    {
+      "id": 921,
+      "type": "timeseries",
+      "title": "Dead-man node — its Alloy shipping",
+      "description": "Is the dead-man node's own Alloy shipping? The count of scrape targets it reports, 0 when it reports none: the alert pages below the green line at 1, held for ten minutes. The node ships to the observability node alone, so this row is empty on Grafana Cloud: read it on the observability node's Grafana. A dark Alloy blinds this row and not the service, which Grafana Cloud reads through the ops node's scrape.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 145
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "count(up{host=\"zcrypto-hc\"}) or on() vector(0)",
+          "refId": "A",
+          "legendFormat": "scrape targets the node's Alloy reports"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 922,
+      "type": "timeseries",
+      "title": "Dead-man node — root filesystem free",
+      "description": "How much of the node's one disk is left? The service's database, its nightly backups, Docker's images and the journal share it. The alert pages below the green line at 15% free, held for thirty minutes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 6,
+        "y": 145
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "node_filesystem_avail_bytes{host=\"zcrypto-hc\", mountpoint=\"/\"} / node_filesystem_size_bytes{host=\"zcrypto-hc\", mountpoint=\"/\"}",
+          "refId": "A",
+          "legendFormat": "free"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0.15
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 923,
+      "type": "timeseries",
+      "title": "Dead-man node — reboot pending",
+      "description": "Does the node need its reboot by hand? It installs patches and does not reboot itself, so a flag at 1 stays until someone reboots it, and the alert pages once the flag has been up for fifteen minutes. A flat zero is the healthy state.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 145
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "node_reboot_required{host=\"zcrypto-hc\"}",
+          "refId": "A",
+          "legendFormat": "reboot pending"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineInterpolation": "stepAfter",
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 924,
+      "type": "timeseries",
+      "title": "Dead-man node — status reads that answered OK",
+      "description": "Does the service answer its own status read? Each point counts the node's self-check runs in the fifteen minutes before it whose read of the service's status endpoint answered OK, three on a healthy node, since the self-check runs every five minutes. The alert pages below the green line at 1: every run failing its read, or no run logged.",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 145
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "expr": "sum(count_over_time({host=\"zcrypto-hc\", container=\"zcrypto-hc-selfcheck\"} |= \"web=ok\" [15m])) or on() vector(0)",
+          "refId": "A",
+          "legendFormat": "status reads that answered OK, last 15 minutes"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
       }
     },
     {
@@ -3473,7 +3784,7 @@
         "h": 8,
         "w": 6,
         "x": 0,
-        "y": 137
+        "y": 153
       },
       "targets": [
         {
@@ -3504,6 +3815,68 @@
               {
                 "color": "red",
                 "value": 93600
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 926,
+      "type": "timeseries",
+      "title": "Dead-man node — the service's ERROR records",
+      "description": "Is the service logging errors? One line per distinct ERROR or CRITICAL record in the fifteen minutes before each point, at most five, each named by its message's first 200 characters, the path segment after each /ping/ written over before the record left the node. The alert pages on the first one. A record reading Notification failed is a check's page the service did not deliver.",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 18,
+        "x": 6,
+        "y": 153
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "expr": "topk(5, sum by (host, container, level, msg) (count_over_time({host=\"zcrypto-hc\", container=\"hc\", level=~\"ERROR|CRITICAL\"} | json message=\"message\" | drop __error__, __error_details__ | label_format msg=`{{ if .message }}{{ printf \"%.200s\" .message }}{{ else }}{{ printf \"%.200s\" __line__ }}{{ end }}` [15m]))) or on() vector(0)",
+          "refId": "A",
+          "legendFormat": "{{level}} {{msg}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
               }
             ]
           }

@@ -6086,3 +6086,327 @@ rules:
       severity: warning
     notification_settings:
       receiver: metrics
+
+  - uid: zcrypto-mon-grafana-error-logs
+    title: "Monitor · Grafana ERROR logs"
+    ruleGroup: zcrypto-mon
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # zcrypto-ops-error-logs' shape over Grafana's own logfmt lines, whose `level` the node's Alloy lifts. The lines
+      # zcrypto-mon-sqlite-locked counts are left out, so a locked database pages that rule alone. A logfmt line is no
+      # JSON object, so `msg` falls back to the line itself.
+      - refId: A
+        queryType: instant
+        relativeTimeRange: {from: 900, to: 0}
+        datasourceUid: "${GRAFANA_LOKI_DS_UID}"
+        model:
+          expr: >-
+            topk(5, sum by (host, container, level, msg) (count_over_time({host="zcrypto-mon", container="grafana-server", level=~"ERROR|CRITICAL"} != "database is locked" | json message="message" | drop __error__, __error_details__ | label_format msg=`{{ if .message }}{{ printf "%.200s" .message }}{{ else }}{{ printf "%.200s" __line__ }}{{ end }}` [15m]))) or on() vector(0)
+          queryType: instant
+          refId: A
+      - refId: B
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: reduce
+          reducer: last
+          expression: "A"
+          refId: B
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "B"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    noDataState: OK  # `or on() vector(0)` makes a clean window evaluate to 0, not NoData
+    execErrState: Alerting
+    for: 0s
+    annotations:
+      summary: "Grafana on the observability node logged an ERROR or CRITICAL line in the last 15 minutes, its locked-database lines left to their own rule: a notification it failed to deliver, a rule it could not evaluate, a call it refused. One alert instance per distinct line, at most 5 of them, each the line's first 200 characters. This page leaves through the node's two contact points, both on one Slack webhook, so a failure of that webhook silences it with the rest. Runbook: infra/runbooks/mon.md#zcrypto-mon-grafana-error-logs"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "911"
+      unit: "ERROR or CRITICAL lines in the last 15 minutes"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: logs
+
+  # ---- zcrypto-hc: the dead-man node's rules, evaluated on the observability node ---------------------------------
+  # The node ships its telemetry to the observability node alone, so grafana-push.sh leaves this group out of a push
+  # that names no stack, as it does zcrypto-mon: Grafana Cloud holds no `host="zcrypto-hc"` series, and the three rules
+  # whose noDataState is Alerting would page there for good.
+  - uid: zcrypto-alloy-dark-hc
+    title: "Fleet · Alloy dark — Dead-man"
+    ruleGroup: zcrypto-hc
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: >-
+            count(up{host="zcrypto-hc"}) or on() vector(0)
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [1]}
+    noDataState: Alerting
+    execErrState: Alerting
+    for: 10m
+    annotations:
+      summary: "The dead-man node's Alloy has shipped no metrics to the observability node for >10m. The node's host series, its backup gauge, its units' journals and the service's records are dark there, so the node's other rules are blind, or page the absence, until this clears. The service itself is not read through this Alloy: Grafana Cloud's dead-man watchdog reads it through the ops node's scrape. First checks on the node: `systemctl status alloy`, then `journalctl -u alloy -n 50`; a restart is the usual fix. Runbook: infra/runbooks/hc.md#zcrypto-alloy-dark-hc"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "921"
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-hc-disk-low
+    title: "Dead-man · root filesystem low"
+    ruleGroup: zcrypto-hc
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          # The threshold and the duration are zcrypto-mon-disk-low's.
+          expr: >-
+            node_filesystem_avail_bytes{host="zcrypto-hc", mountpoint="/"} / node_filesystem_size_bytes{host="zcrypto-hc", mountpoint="/"}
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [0.15]}  # < 15% free
+    noDataState: OK
+    execErrState: Alerting
+    for: 30m
+    annotations:
+      summary: "The dead-man node's root filesystem has been below 15% free for 30+ minutes. The service's database, its nightly backups, Docker's images and the journal share it: a full disk stops the database's writes, so the service stores no ping, and stops the backups. Runbook: infra/runbooks/hc.md#zcrypto-hc-disk-low"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "922"
+      unit: "of the root filesystem still free (a fraction, not a percent)"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-hc-reboot-pending
+    title: "Dead-man · reboot pending, reboot by hand"
+    ruleGroup: zcrypto-hc
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 3600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'node_reboot_required{host="zcrypto-hc"}'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0.5]}  # == 1, pending
+    noDataState: OK
+    execErrState: Alerting
+    # zcrypto-capture-reboot-pending's duration: one failed publish does not page.
+    for: 15m
+    annotations:
+      summary: "The dead-man node has a pending reboot (/run/reboot-required) and does not reboot itself. Reboot it by hand in its 10:25 UTC slot: the service, and with it every dead-man check, stops for the reboot's duration. Runbook: infra/runbooks/hc.md#zcrypto-hc-reboot-pending"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "923"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-hc-service-down
+    title: "Dead-man · service not answering its status read"
+    ruleGroup: zcrypto-hc
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The node's self-check logs `web=ok` or `web=FAIL` on each five-minute run. No `web=ok` in the window is every
+      # run in it failing its status read, or no run logging at all, and the rule pages both.
+      - refId: A
+        queryType: instant
+        relativeTimeRange: {from: 900, to: 0}
+        datasourceUid: "${GRAFANA_LOKI_DS_UID}"
+        model:
+          expr: >-
+            sum(count_over_time({host="zcrypto-hc", container="zcrypto-hc-selfcheck"} |= "web=ok" [15m])) or on() vector(0)
+          queryType: instant
+          refId: A
+      - refId: B
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: reduce
+          reducer: last
+          expression: "A"
+          refId: B
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "B"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [1]}
+    # Alerting, as the capture log-dead rules: it fires on silence.
+    noDataState: Alerting
+    execErrState: Alerting
+    for: 0s
+    annotations:
+      summary: "The dead-man service's own self-check has logged no `web=ok` for 15 minutes: the service's status endpoint answered something other than OK on each run, or the self-check logged nothing. While the service fails, the fleet's pings to it are lost. With the dead-man node's Alloy-dark alert firing beside this, the lines are absent because that Alloy is dark: that alert first. Runbook: infra/runbooks/hc.md#zcrypto-hc-service-down"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "924"
+      unit: "status reads that answered OK in the last 15 minutes"
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-hc-backup-stale
+    title: "Dead-man · backup stale"
+    ruleGroup: zcrypto-hc
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # zcrypto-reconcile-exporter-stale's last-success shape: only a run that completed writes the gauge, so its age
+      # is a failed run's signal.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: >-
+            time() - max(zcrypto_sqlite_backup_last_success_timestamp_seconds{host="zcrypto-hc"})
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [93600]}  # 26h: one night's run and two hours' grace
+    noDataState: Alerting  # a node whose backup never succeeded publishes no gauge at all
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "The dead-man node's last completed database backup is more than 26 hours old, or the node publishes no backup gauge at all: the newest backup file a restore reads is more than a day old. Runbook: infra/runbooks/hc.md#zcrypto-hc-backup-stale"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "925"
+      unit: "seconds since the node's last completed backup"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-hc-error-logs
+    title: "Dead-man · ERROR records"
+    ruleGroup: zcrypto-hc
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # zcrypto-ops-error-logs' shape over the service's JSON records, whose `level` the node's Alloy lifts after it has
+      # written over the path segment after each `/ping/`. The record that matters most is a notification the service
+      # failed to dispatch, an ERROR from `hc.api.models` reading `Notification failed: check '<name>', ...`.
+      - refId: A
+        queryType: instant
+        relativeTimeRange: {from: 900, to: 0}
+        datasourceUid: "${GRAFANA_LOKI_DS_UID}"
+        model:
+          expr: >-
+            topk(5, sum by (host, container, level, msg) (count_over_time({host="zcrypto-hc", container="hc", level=~"ERROR|CRITICAL"} | json message="message" | drop __error__, __error_details__ | label_format msg=`{{ if .message }}{{ printf "%.200s" .message }}{{ else }}{{ printf "%.200s" __line__ }}{{ end }}` [15m]))) or on() vector(0)
+          queryType: instant
+          refId: A
+      - refId: B
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: reduce
+          reducer: last
+          expression: "A"
+          refId: B
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "B"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    noDataState: OK  # `or on() vector(0)` makes a clean window evaluate to 0, not NoData
+    execErrState: Alerting
+    for: 0s
+    annotations:
+      summary: "The dead-man service logged an ERROR or CRITICAL record in the last 15 minutes. A `Notification failed` record is a check's page the service did not deliver, the check named in it; one whose Slack error reads 404 or invalid_token has disabled the integration, which then sends nothing until it is added again. One alert instance per distinct record, at most 5 of them, each the message's first 200 characters. Runbook: infra/runbooks/hc.md#zcrypto-hc-error-logs"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "926"
+      unit: "ERROR or CRITICAL records in the last 15 minutes"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: logs

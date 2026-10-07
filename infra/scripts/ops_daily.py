@@ -106,6 +106,13 @@ _UID_HOST = {
     "zcrypto-mon-sqlite-locked": "zcrypto-mon",
     "zcrypto-mon-series-high": "zcrypto-mon",
     "zcrypto-mon-retention-by-size": "zcrypto-mon",
+    "zcrypto-mon-grafana-error-logs": "zcrypto-mon",
+    "zcrypto-alloy-dark-hc": "zcrypto-hc",
+    "zcrypto-hc-disk-low": "zcrypto-hc",
+    "zcrypto-hc-reboot-pending": "zcrypto-hc",
+    "zcrypto-hc-service-down": "zcrypto-hc",
+    "zcrypto-hc-backup-stale": "zcrypto-hc",
+    "zcrypto-hc-error-logs": "zcrypto-hc",
 }
 
 
@@ -334,7 +341,10 @@ HEALABLE_COUNTER = "zcrypto_reconcile_healable_gap_seconds_total"
 REFDATA_RUNBOOK = "infra/runbooks/reference-data.md#refdata-sweep-due"
 HEALABLE_RUNBOOK = "infra/runbooks/ops.md#healable-threshold-rederivation-due"
 # (host, runbook)
-PATCH_PASSES = (("zcrypto-mon", "infra/runbooks/mon.md#mon-patch-pass"),)
+PATCH_PASSES = (
+    ("zcrypto-mon", "infra/runbooks/mon.md#mon-patch-pass"),
+    ("zcrypto-hc", "infra/runbooks/hc.md#hc-patch-pass"),
+)
 
 
 def last_full_converge(log: Path, host: str) -> date | None:
