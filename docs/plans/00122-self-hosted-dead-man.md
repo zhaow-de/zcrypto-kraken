@@ -761,6 +761,7 @@ T0218 is resolved by R-records-2. What this plan leaves: the capture, ops and ca
 - `[[ROLLOUT: the six ops units' `User=` as deployed]]` (Task 12's precondition) — the runner scripts' `0700 root`, or its hold for the owner.
 - `[[ROLLOUT: the four counts of `grafana-server`'s lines …]]` (Task 14's precondition) — the spec's measured basis by amendment.
 - The SES region's SMTP endpoint (P3) — filled 2026-10-06.
+- The dry-start of `files/config.alloy` at the fleet's version (Task 9's Step 5) — filled 2026-10-07: v1.20.1, revision 95e12cf, `/-/ready` 200 at 75 s and no `level=error` line before the stop.
 - `[[ROLLOUT: the `v6.2.0` manifest read without credentials …]]` (R0) — R3's pull, into R-records-1.
 - `[[ROLLOUT: R1's readings …]]`, `[[ROLLOUT: the node's host-key fingerprint]]`, `[[ROLLOUT: R4's package versions]]`, `[[ROLLOUT: R5's reading of /admin/ …]]` (R1 to R5) — into R-records-1.
 - `[[ROLLOUT: the ping key's measured shape …]]` (P5) — the spec's D4 and the two preflights by amendment.
