@@ -41,7 +41,7 @@
     that: hc_image_tag | default('') | string is match('v[0-9]+\\.[0-9]+\\.[0-9]+\\Z')
     fail_msg: >-
       hc_image_tag is missing or not v<major>.<minor>.<patch>. Pass the release the pins file records, pulled on
-      this node first, e.g. -e hc_image_tag=v6.1.0.
+      this node first, e.g. -e hc_image_tag=v6.2.0.
 
 - name: probe — is the pinned tag already on this host
   ansible.builtin.command: docker image inspect "{{ hc_image }}:{{ hc_image_tag }}"
