@@ -69,6 +69,18 @@ def when_of(task: dict) -> tuple[str, ...]:
     return tuple(str(c) for c in (when if isinstance(when, list) else [when]))
 
 
+def _role_tasks(roles_dir: Path, args: dict) -> Path:
+    """The tasks file an `import_role` brings in, found the way Ansible finds it: a `tasks_from` as written, then with
+    each extension; `main` with each extension, then bare."""
+    stem = args.get("tasks_from")
+    extensions = ("", ".yml", ".yaml", ".json") if stem else (".yml", ".yaml", ".json", "")
+    tasks = roles_dir / args["name"] / "tasks"
+    found = [tasks / f"{stem or 'main'}{ext}" for ext in extensions if (tasks / f"{stem or 'main'}{ext}").is_file()]
+    if not found:
+        raise FileNotFoundError(f"{tasks}: no tasks file named {stem or 'main'}")
+    return found[0]
+
+
 def walk(tasks, tags=frozenset(), gates=(), *, roles_dir: Path = ROLES_DIR, base: Path | None = None):
     """Each task leaf as `(task, tags, gates)`; `base` is the importing file's directory an `import_tasks` resolves in."""
     out = []
@@ -78,8 +90,7 @@ def walk(tasks, tags=frozenset(), gates=(), *, roles_dir: Path = ROLES_DIR, base
         role = next((key for key in IMPORT_ROLE if key in task), None)
         imported = next((key for key in IMPORT_TASKS if key in task), None)
         if role:
-            args = task[role]
-            path = roles_dir / args["name"] / "tasks" / f"{args.get('tasks_from', 'main')}.yml"
+            path = _role_tasks(roles_dir, task[role])
             out += walk(load(path), own, conds, roles_dir=roles_dir, base=path.parent)
         elif imported:
             if base is None:
@@ -200,14 +211,18 @@ def index_digests(fetch: Fetch, versions: list[str]) -> dict[str, str]:
     return out
 
 
+def _fleet(ansible_dir: Path) -> tuple[str, str, str, tuple[int, ...]]:
+    fleet = fleet_version(ansible_dir)
+    return fleet["alloy_version"], fleet["alloy_image_digest"], fleet["alloy_deb_version"], _key(fleet["alloy_version"])
+
+
 def gate(fetch: Fetch = fetch, *, ansible_dir: Path = ANSIBLE_DIR) -> list[str]:
-    fleet = _read("fleet file", lambda: fleet_version(ansible_dir))
-    floor = _key(fleet["alloy_version"])
+    version, digest, deb_version, floor = _read("fleet file", lambda: _fleet(ansible_dir))
     images = _read("docker hub", lambda: {v for v in hub_versions(fetch) if _key(v) > floor})
     debs = _read("apt index", lambda: {v: deb for v, deb in apt_versions(fetch).items() if _key(v) > floor})
     indexed = _read("registry", lambda: index_digests(fetch, sorted(images, key=_key)))
     both = sorted(set(indexed) & set(debs), key=_key)
-    lines = [f"fleet: {fleet['alloy_version']} {fleet['alloy_image_digest']} {fleet['alloy_deb_version']}"]
+    lines = [f"fleet: {version} {digest} {deb_version}"]
     if both:
         target = both[-1]
         lines.append(f"target: {target} {indexed[target]} {debs[target]}")
@@ -259,7 +274,7 @@ def off_fleet(*, ansible_dir: Path = ANSIBLE_DIR) -> list[tuple[str, str]]:
     want = {"image": fleet["alloy_image_digest"].removeprefix("sha256:")[:12], "package": fleet["alloy_deb_version"]}
     rows = alloy_rows(root.joinpath(*PINS_FILE))
     off = []
-    for host in sorted(_pins.inventory_groups(root).get("observed") or ()):
+    for host in sorted(_pins.inventory_groups(root)["observed"]):
         mine = [(table, value) for name, table, value in rows if name == host]
         wrong = [
             f"{table} row at {value or 'no readable version'}, the fleet's is {want[table]}"
@@ -288,7 +303,8 @@ def main(argv: list[str] | None = None, *, fetch: Fetch = fetch) -> int:
         if command == "reaches":
             sub.add_argument("host", metavar="HOST")
     args = parser.parse_args(argv)
-    # Every failure exits 2: uncaught, it would exit 1, the answer that the host is not reached.
+    # Every failure from here exits 2: uncaught, it would exit 1, the answer that the host is not reached. The module's
+    # own load, `yaml` and `pins-converged.py`, runs before it, and its failure is a traceback.
     try:
         if args.command == "gate":
             print("\n".join(gate(fetch, ansible_dir=args.ansible_dir)))

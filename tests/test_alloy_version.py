@@ -1,4 +1,5 @@
-"""`infra/scripts/alloy-version.py` — what an `alloy` run selects, read off `site.yml`, the inventory and the roles."""
+"""`infra/scripts/alloy-version.py` — what an `alloy` run selects, read off `site.yml`, the inventory and the roles; the
+bump gate, read from the sources' recorded answers; and the `observed` hosts off the fleet's version."""
 
 from __future__ import annotations
 
@@ -122,6 +123,28 @@ def test_an_import_tasks_under_the_tag_hands_it_to_every_imported_task(tmp_path,
         alloy_version.walk([{"name": "unanchored", module: "alloy.yml"}])
 
 
+@pytest.mark.parametrize(
+    ("tasks_from", "files", "found"),
+    [
+        ("install", {"install": "bare", "install.yml": "yml"}, "bare"),
+        ("install.yml", {"install.yml": "yml", "install.yml.yml": "doubled"}, "yml"),
+        ("install", {"install.yaml": "yaml"}, "yaml"),
+    ],
+    ids=["the-name-as-written-first", "an-extension-written-in-the-name", "the-yaml-extension"],
+)
+def test_an_import_role_finds_its_tasks_file_as_ansible_does(tmp_path, tasks_from, files, found):
+    ansible = _tree(
+        tmp_path,
+        {
+            **{f"roles/shared/tasks/{name}": [_task(task)] for name, task in files.items()},
+            "roles/r/tasks/main.yml": [
+                {"name": "bring in", "ansible.builtin.import_role": {"name": "shared", "tasks_from": tasks_from}, "tags": ["alloy"]}
+            ],
+        },
+    )
+    assert _named(alloy_version.role_leaves("r", frozenset(), ansible_dir=ansible)) == [(found, {"alloy"}, ())]
+
+
 def test_an_include_role_under_the_tag_stays_one_leaf(tmp_path):
     ansible = _tree(
         tmp_path,
@@ -188,6 +211,7 @@ SELECTION_SITE = [
         "hosts": "box_host",
         "pre_tasks": [_task("note", "always"), _task("check")],
         "roles": [{"role": "capture", "tags": ["capture"]}, {"role": "docker", "tags": ["docker"]}],
+        "tasks": [_task("own task", "alloy")],
         "post_tasks": [_task("wrap up", "alloy")],
     },
     {"name": "another host's play", "hosts": "other_host", "pre_tasks": [_task("elsewhere", "always")]},
@@ -210,6 +234,7 @@ SELECTED_BY_ALL = [
     ("capture", "daemon"),
     ("capture", "clock"),
     ("docker", "install docker"),
+    ("box_host", "own task"),
     ("box_host", "wrap up"),
 ]
 
@@ -217,7 +242,16 @@ SELECTED_BY_ALL = [
 @pytest.mark.parametrize(
     ("run_tags", "expected"),
     [
-        (["alloy"], [("box_host", "note"), ("capture", "fail fast"), ("capture", "clock"), ("box_host", "wrap up")]),
+        (
+            ["alloy"],
+            [
+                ("box_host", "note"),
+                ("capture", "fail fast"),
+                ("capture", "clock"),
+                ("box_host", "own task"),
+                ("box_host", "wrap up"),
+            ],
+        ),
         (["debug"], [("box_host", "note"), ("capture", "dump"), ("capture", "clock")]),
         (["all"], SELECTED_BY_ALL),
         ([], SELECTED_BY_ALL),
@@ -229,6 +263,7 @@ SELECTED_BY_ALL = [
                 ("capture", "daemon"),
                 ("capture", "clock"),
                 ("docker", "install docker"),
+                ("box_host", "own task"),
                 ("box_host", "wrap up"),
             ],
         ),
@@ -322,7 +357,8 @@ def _index(amd64: bool = True) -> bytes:
 
 
 def _upstream(changed: dict[str, object] | None = None) -> dict[str, object]:
-    """Each URL the gate may ask, answered as P1 recorded it unless the case changes it; a URL left out goes unanswered."""
+    """Each URL the gate may ask, answered as the fixtures recorded it unless the case changes it; a URL left out goes
+    unanswered."""
     return {
         HUB_TAGS: (_hub(), {}),
         APT_INDEX: (_packages(), {}),
@@ -391,6 +427,28 @@ def test_the_deb_version_is_the_indexs_own_string(tmp_path, capsys):
     )
 
 
+@pytest.mark.parametrize(
+    "packages",
+    [
+        _packages("Package: alloy\nVersion: 1.20.1-2\nArchitecture: amd64"),
+        _packages("Package: alloy\nVersion: 1.20.1-1\nArchitecture: amd64", replace=("Version: 1.20.1-1", "Version: 1.20.1-2")),
+    ],
+    ids=["the-higher-revision-last", "the-higher-revision-first"],
+)
+def test_the_deb_version_is_the_highest_revision_of_its_upstream_version(tmp_path, capsys, packages):
+    answers = _upstream({APT_INDEX: (packages, {})})
+    assert _gate(tmp_path, capsys, "1.20.0", answers) == (
+        0,
+        [_fleet_line("1.20.0"), f"target: 1.20.1 {RECORDED_DIGEST} 1.20.1-2"],
+        "",
+    )
+
+
+def test_a_tag_that_is_not_a_release_is_not_a_version(tmp_path, capsys):
+    answers = _upstream({HUB_TAGS: (_hub(**{"v1.21.0-rc.0": "sha256:" + "1" * 64}), {})})
+    assert _gate(tmp_path, capsys, "1.20.0", answers) == (0, [_fleet_line("1.20.0"), TARGET], "")
+
+
 def test_no_newer_version_in_both_prints_none(tmp_path, capsys):
     assert _gate(tmp_path, capsys, "1.20.1", _upstream()) == (0, [_fleet_line("1.20.1"), NO_TARGET], "")
 
@@ -403,6 +461,21 @@ def test_no_newer_version_in_both_prints_none(tmp_path, capsys):
 def test_a_source_that_fails_ends_gate_failed_naming_it(tmp_path, capsys, url, source):
     answers = _upstream({url: OSError("the source does not answer")})
     assert _gate(tmp_path, capsys, "1.20.0", answers) == (2, [], f"gate: failed: {source}: OSError: the source does not answer\n")
+
+
+@pytest.mark.parametrize(
+    ("fleet_file", "failed"),
+    [
+        ('alloy_version: "1.20.0"\nalloy_image_digest: sha256:' + "a" * 64 + "\n", "KeyError: 'alloy_deb_version'"),
+        (_fleet_file("1.20.0").replace('"1.20.0"', '"1.20.x"', 1), "ValueError: invalid literal for int() with base 10: 'x'"),
+    ],
+    ids=["a-key-missing", "a-version-that-is-not-one"],
+)
+def test_a_fleet_file_the_gate_cannot_read_ends_gate_failed_naming_it(tmp_path, capsys, fleet_file, failed):
+    ansible = _tree(tmp_path, {"group_vars/observed/alloy.yml": fleet_file})
+    code = alloy_version.main(["gate", "--ansible-dir", str(ansible)], fetch=_stub(_upstream()))
+    out, err = capsys.readouterr()
+    assert (code, out, err) == (2, "", f"gate: failed: fleet file: {failed}\n")
 
 
 class _Response:
@@ -464,8 +537,8 @@ PACKAGE_HEADER = "| package | host | version | since (UTC) | notes |\n| --- | --
 
 
 def _pins_text(image: dict[str, str], package: dict[str, str], tables=("image", "package"), other=()) -> str:
-    """A pins file with an image table and a package table, each `alloy` row naming its host; `other` adds rows of
-    another service to the image table."""
+    """A pins file with the tables `tables` names, each `alloy` row naming its host; `other` adds rows of another service
+    to the image table."""
     image_rows = "".join(
         f"| alloy | {host} | `{hex12}` — v1.20.1 | 2026-10-06 10:00:00 | first pin |\n" for host, hex12 in image.items()
     )
@@ -479,11 +552,11 @@ def _pins_text(image: dict[str, str], package: dict[str, str], tables=("image", 
     return "# Fleet pins\n\n## Current pins\n\n" + "\n**Non-image pins.**\n\n".join(parts[t] for t in tables) + "\n"
 
 
-def _off_fleet(tmp_path, capsys, pins: str) -> tuple[int, str, str]:
+def _off_fleet(tmp_path, capsys, pins: str, inventory: dict = OBSERVED_INVENTORY) -> tuple[int, str, str]:
     ansible = _tree(
         tmp_path,
         {
-            "inventory/hosts.yml": OBSERVED_INVENTORY,
+            "inventory/hosts.yml": inventory,
             "group_vars/observed/alloy.yml": _fleet_file("1.20.1"),
         },
     )
@@ -528,6 +601,11 @@ def test_a_host_outside_observed_is_not_read(tmp_path, capsys):
 def test_a_pins_file_without_its_tables_exits_2(tmp_path, capsys, tables):
     code, out, err = _off_fleet(tmp_path, capsys, _pins_text(_image(), _package(), tables=tables))
     assert (code, out, err.startswith("off-fleet: ValueError: ")) == (2, "", True), err
+
+
+def test_an_inventory_without_the_observed_group_exits_2(tmp_path, capsys):
+    code, out, err = _off_fleet(tmp_path, capsys, _pins_text(_image(), _package()), inventory=INVENTORY)
+    assert (code, out, err) == (2, "", "off-fleet: KeyError: 'observed'\n")
 
 
 def test_the_real_tree_prints_one_count():
