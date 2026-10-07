@@ -390,8 +390,7 @@ def test_the_alloy_image_rows_name_no_apt_host():
         (n, host)
         for n, service, hosts, _, _, _ in _pins_rows(PINS)
         if service == "alloy"
-        for host in (h.strip() for h in hosts.split(","))
-        if host in apt_hosts
+        for host in sorted({h.strip() for h in hosts.split(",")} & apt_hosts)
     ]
     assert named == [], (
         "fleet-pins.md's image table has an `alloy` row for a host that runs Alloy from apt, whose version is its package row's; "
