@@ -733,8 +733,8 @@ class _ExecutionMetrics:
         if self.equity_eur is None:
             self.equity_eur = Gauge(
                 "zcrypto_exec_equity_eur",
-                "The account's equity in EUR at each boundary: its EUR and the ten model coins it holds, spot and "
-                "earn-coded, marked at the cycle's closes.",
+                "The account's equity in EUR at each boundary: the spot EUR row and EUR.M, and the ten model coins "
+                "it holds, spot and earn-coded, marked at the cycle's closes.",
                 registry=self._registry,
             )
         self.equity_eur.set(value)
