@@ -99,7 +99,7 @@ git branch -d <headRefName>
 
 Run git from the repo root. `-d` needs only that the current branch is another one; when Step 4 left you on `<headRefName>` (a dirty tree), the delete waits with the switch. Because the PR merged with a merge commit (Step 3), the branch is fully integrated and `-d` succeeds. (If `-d` ever errors "not fully merged" **and** the PR shows merged **and** the remote branch is gone, the work IS integrated — `git branch -D <headRefName>` is then safe.)
 
-Before `git branch -d`, a worktree the branch had is removed — after its `.superpowers/sdd/<plan>/` and `.tmp/` are copied whole into the main checkout's `.tmp/<headRefName>-archive/`: `git worktree remove` deletes both, and the round that harvests lessons reads the ledger there.
+Before `git branch -d`, a worktree the branch had is removed — after its `.superpowers/sdd/<plan>/` and the reports of its `.tmp/reads/<name>/` (`*.md` and `ledger.jsonl`, never a `wt-*` directory, which is a reader's checkout with every vault file in it) are copied into the main checkout's `.local/reads-archive/<headRefName>/`, a kept path where `.tmp/` is disposable; a `wt-*` a read left behind is `git worktree remove --force`d first, once `git worktree list` and the read's task show it is not running. `git worktree remove` deletes both, and the round that harvests lessons reads the ledger there.
 
 ## Step 6 — Confirm the remote branch is gone
 
