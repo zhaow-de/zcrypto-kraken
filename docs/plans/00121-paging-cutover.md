@@ -6,11 +6,11 @@
 
 **Goal:** Paging moves from Grafana Cloud to the observability node `zcrypto-mon` in the spec's order. Once the gate holds, the node's four direct-stream dead-men are silenced and its two contact points move to the main channel, so both stacks page there. After rung 2's box, each direct-shipped log stream moves to the node's Loki in a sitting of its own, the engine's at the box's deferred disarm converge. Once every stream has moved and the node has paged the main channel for seven days, Grafana Cloud's receivers move to the shadow channel, the ops watchdog probes the node, and the tools' default stack becomes the node. Grafana Cloud keeps evaluating every shared rule until phase 4 retires its leg.
 
-**Architecture:** Nine build tasks in three pull requests, with attended runsheets between them and two records pull requests. The first pull request is the cutover pull request the spec names: the gate, read from the tree and the ops journal and recorded (Task 1); the operator surfaces that say the node pages the shadow channel alone (Task 2); and the push skill's one sentence on the node's webhook (Task 3). The node's silences and its push to the main webhook follow. The second pull request merges on the hand-over day, after the box. It points both logship templates at the node's `logship` user and moves the guards that read Grafana Cloud's logship token, so the capture and ops compose files change by one comment line and the engine's renders byte-identical (Task 4). It also re-trues the direct-ship surfaces and adds the hand-over procedure (Task 5). The four sittings of that day follow. The third pull request flips the tools' default stack and the push script's default (Task 6), points the ops watchdog's probe at the node (Task 7), turns `grafana-cloud-dark` into the node-dark procedure and re-trues the surfaces that name Grafana Cloud as the pager (Task 8), and takes the skills to the node (Task 9). Grafana Cloud's push to the shadow webhook and the ops converge then follow.
+**Architecture:** Nine build tasks in three pull requests, with attended runsheets between them and two records pull requests. The first pull request is the cutover pull request the spec names: the gate, read from the tree and the ops journal and recorded (Task 1); the operator surfaces that say the node pages the shadow channel alone or carries its webhook (Task 2); and the push skill's one sentence on the node's webhook (Task 3). The node's silences and its push to the main webhook follow. The second pull request merges on the hand-over day, after the box. It points both logship templates at the node's `logship` user and moves the guards that read Grafana Cloud's logship token, so the capture and ops compose files change by one comment line and the engine's renders byte-identical (Task 4). It also re-trues the direct-ship surfaces and adds the hand-over procedure (Task 5). The four sittings of that day follow. The third pull request flips the tools' default stack and the push script's default (Task 6), points the ops watchdog's probe at the node (Task 7), turns `grafana-cloud-dark` into the node-dark procedure and re-trues the surfaces that name Grafana Cloud as the pager (Task 8), and takes the skills to the node (Task 9). Grafana Cloud's push to the shadow webhook and the ops converge then follow.
 
 **Tech Stack:** Grafana OSS on the node and Grafana Cloud, `infra/scripts/grafana-push.sh`, `grafana_auth.py`'s stack table, `grafana-query.py`, `ops_daily.py` and `grafana-compare.py`; Ansible (ansible-core 2.21, the `capture`, `ops`, `engine` and `mon` roles) through `infra/ansible/scripts/converge.sh`; the application log shipper `cli/logging/ship.py`, unchanged; pytest; `infra/scripts/mutate-probe.sh` for guard verdicts; Python 3.14 through `uv run`.
 
-**Spec:** `docs/specs/00121-self-hosted-observability-design.md`, phase 3. It covers D19 (the gate), D22 (the sequence and its gate), D24 (the node-dark procedure), D25 (the rollback), D16's cutover clause (the ops watchdog's probe), D9's render clause, D20's ingest-dark and lost-lines proofs, the "Phase 3, the cutover" lines of "What changes in the repo, by phase" and "Proofs each phase owes", the invariants, and "What stays manual" (the silences in each stack's UI). Two owner rulings of 2026-10-08 settle the two points the spec left to this plan: the engine's hand-over converge and the dead-men's silences (Global Constraints). The measured basis this plan reads is the spec's, with phase 2's amendments on the records branch `docs/t0217-phase-2-records` (the log fan-out, the fleet on the node, the boundary reading). The plan's base is `develop` at `888d1d89e`, with the records branch at `71e1c9a37`, 26 commits ahead and unmerged. Phase 1 is `docs/plans/00121-mon-node.md` and phase 2 is `docs/plans/00121-dual-shipping.md`. Spec 00122's plan `docs/plans/00122-self-hosted-dead-man.md` shares this plan's engine converge (its R14). Phase 4 takes a plan of its own under the same serial. Every pull request's change-index row is keyed `00121` with no `iter`, as phases 1 and 2 were.
+**Spec:** `docs/specs/00121-self-hosted-observability-design.md`, phase 3. It covers D19 (the gate), D22 (the sequence and its gate), D24 (the node-dark procedure), D25 (the rollback), D16's cutover clause (the ops watchdog's probe), D9's render clause, D20's ingest-dark and lost-lines proofs, the "Phase 3, the cutover" lines of "What changes in the repo, by phase" and "Proofs each phase owes", the invariants, and "What stays manual" (the silences in each stack's UI). Two owner rulings of 2026-10-08 settle the two points the spec left to this plan: the engine's hand-over converge and the dead-men's silences (Global Constraints). The measured basis this plan reads is the spec's, with phase 2's amendments on the records branch `docs/t0217-phase-2-records` (the log fan-out, the fleet on the node, the boundary reading). The plan's base is `develop` at `888d1d89e`. The records branch is unmerged and still moving, so every reading this plan gives at its base was taken on `develop` at `888d1d89e` alone, and the records reach `develop` before Task 1 (its Step 1). Phase 1 is `docs/plans/00121-mon-node.md` and phase 2 is `docs/plans/00121-dual-shipping.md`. Spec 00122's plan `docs/plans/00122-self-hosted-dead-man.md` shares this plan's engine converge (its R14). Phase 4 takes a plan of its own under the same serial. Every pull request's change-index row is keyed `00121` with no `iter`, as phases 1 and 2 were.
 
 ## Global Constraints
 
@@ -31,15 +31,16 @@
   - At the hand-over, each is read back through the node's Alertmanager API and the instant it ended is recorded (R6 to R9, then R-records-2), so no silence outlives its stream.
   - A sitting that moves re-dates its silence's end in the node's UI before the old end passes, read back the same way.
   - A sitting that runs past its silence's end takes that dead-man's page from the node in the main channel. The page is read as the overrun, not as a fault.
-- **Grafana Cloud's silences.** At each hand-over, Grafana Cloud's rules that read the moved stream are silenced in Grafana Cloud's UI (D22(3)), scoped to that stream. The dead-man is matched by `__alert_rule_uid__`. The burst rule is matched by its `__alert_rule_uid__` plus the stream's `host` and `container`, so its instances on a host or container not yet moved still page. Each ends at [[ROLLOUT: the Grafana Cloud silences' end — a day past retirement's planned start]]. The reason: after its receivers move, a dead-man Grafana Cloud fires reaches the shadow channel, and retirement's gate reads that channel for pages the node did not also send (D23).
-- **The capture pair are restarted attended, one host at a time** (`.claude/rules/fleet-deploys.md`; `infra/runbooks/capture-daemon.md` step 4). The secondary goes first and the primary an hour later. The secondary's form is `-e capture_image_digest=<running> -e capture_alloy_digest=<running>`. The primary's is `--tags capture -e converge_primary=true` with the same two digests, never `--skip-tags engine` and never un-tagged. Both are the forms the dead-man cutover sitting ran on 2026-10-08 (plan 00122's R12). The capture restart is the converge's own `restart capture service` handler, which runs because Task 4 changes the rendered compose file. If the capture compose render reads `changed=false`, the restart is `sudo systemctl restart zcrypto-capture` by hand, in the same sitting.
+  - A rebuild of the node between R2 and S4 starts its Grafana with no silence. Before the rebuild's push with the main webhook (`mon.md#mon-push` step 2), the owner sets again each of R2's silences whose sitting has not run, read back by `silences`.
+- **Grafana Cloud's silences.** At each hand-over, Grafana Cloud's rules that read the moved stream are silenced in Grafana Cloud's UI (D22(3)), scoped to that stream. The dead-man is matched by `__alert_rule_uid__`. The burst rule is matched by its `__alert_rule_uid__` plus the stream's `host` and `container`, so its instances on a host or container not yet moved still page. Each ends at [[ROLLOUT: the Grafana Cloud silences' end — a day past retirement's planned start]]. The reason: after its receivers move, a dead-man Grafana Cloud fires reaches the shadow channel, and retirement's gate reads that channel for pages the node did not also send (D23). A slip of retirement's planned start, R10's own slip among its causes, re-dates these silences in Grafana Cloud's UI before their end passes; from R-records-2 on, T0217's next steps carry that end.
+- **The capture pair are restarted attended, one host at a time** (`.claude/rules/fleet-deploys.md`; `infra/runbooks/capture-daemon.md` step 4). The secondary goes first and the primary an hour after the secondary's deploy-log row (R8). The secondary's form is `-e capture_image_digest=<running> -e capture_alloy_digest=<running>`. The primary's is `--tags capture -e converge_primary=true` with the same two digests, never `--skip-tags engine` and never un-tagged. Both are the forms the dead-man cutover sitting ran on 2026-10-08 (plan 00122's R12). The capture restart is the converge's own `restart capture service` handler, which runs because Task 4 changes the rendered compose file. If the capture compose render reads `changed=false`, the restart is `sudo systemctl restart zcrypto-capture` by hand, in the same sitting.
 - **The engine converges only inside the inter-cycle gap that `site.yml` computes from the boundary cycle's journal, under `infra/runbooks/engine-procedures.md`'s restart rules.** `-e '{"engine_window_override": …}'` is never passed without the owner's explicit approval, and a failed boundary is never retried.
 - **`KRAKEN`, the whole-feed read of `https://status.kraken.com/api/v2/scheduled-maintenances.json`, is never piped through `head` or `tail`.** It is taken at planning and again immediately before every converge of `zcrypto-ops`, `zcrypto-red` and `zcrypto`. An empty or truncated feed is never evidence the window is clear. `zcrypto-mon` speaks to no venue, and its pushes and silences owe no read (`.claude/rules/fleet-deploys.md`; the invariant).
 - **Each step's rollback stands beside it** (D25):
   - A receiver move is undone by one push per stack with the earlier webhook. Until a stream has moved, that is the whole rollback.
-  - A moved stream returns only by reverting Task 4's commit, merging the revert, converging the stream's host in its hand-over form and restarting its shipper (the engine's inside a gap). The node's silence is then set again and Grafana Cloud's silences are ended.
+  - A moved stream returns only with every other stream already moved, so no single-stream rollback exists: the capture template serves both capture daemons and the engine, and the rollback is Task 4's commit reverted on a branch and merged, after which each host's next render returns its logship file to Grafana Cloud whichever stream was meant. Each stream already moved then takes its sitting again: its host converged in its hand-over form (on a capture host the handler restarts capture), its shipper restarted (the poller by `docker compose up -d`, the engine inside a gap under `engine-procedures.md`'s restart rules), the node's silence on its dead-man set again, and Grafana Cloud's two silences on it expired. On `zcrypto` the one file serves both shippers, so the primary's capture converge returns the engine's stream too at the engine's next start.
   - The probe's re-point is undone by an ops converge with the admitted key `-e ops_grafana_watchdog_probe_url=https://zcrypto2026.grafana.net/api/health` until a revert merges.
-  - The default flip is undone by reverting Task 6's commit.
+  - The default flip is undone by reverting Task 7's commit and Task 6's in one pull request, since Task 7's test holds the probe to the default stack; an ops converge then renders the reverted probe on the host. The probe alone is undone by reverting Task 7's.
 - **Every push goes through `.claude/skills/zcrypto-grafana-push/SKILL.md`.** It starts from merged `develop` in a checkout that passes the skill's Step 2, after its open-PR hold. The node's push takes `infra/runbooks/mon.md#mon-push`'s form, and a push that moves a stack's contact points carries that stack's webhook in `GRAFANA_SLACK_WEBHOOK_URL`.
 - **No secret appears in a command line, a log, a diff or a plan step, and no task prints one.**
   - A webhook or token reaches a command as an environment value read through `grafana_auth`, and a token reaches `curl` as a header on stdin (`-H @-`).
@@ -53,9 +54,13 @@
 - **A guard change records its `infra/scripts/mutate-probe.sh` verdict on the commit that makes it.**
   - The verdict is earned after the commit exists: the commit is made with the placeholder line `PROBE_VERDICT` in its message, and a message-only amend with the tree clean replaces that line with each probe's verdict.
   - The branch is unpushed while its tasks run, so the amend rewrites nothing a reader holds.
-  - No entry of `infra/scripts/count-list.sh` counts a stack, a channel, a contact point, a webhook, `DEFAULT_STACK` or `COMPARISON_FROM` (the measured basis's read of its 49 entries), so no count moves in this phase.
+  - No entry of `infra/scripts/count-list.sh` counts a stack, a channel, a contact point, a webhook, `DEFAULT_STACK` or `COMPARISON_FROM` (read at this plan's base over its 48 entries, `grep -cE '^\s+emit "' infra/scripts/count-list.sh`), so no count moves in this phase.
+- **The pager sweep** is this plan's own read, `git grep -n -i -E 'main channel|shadow channel|\bcloud\b' -- infra/runbooks .claude docs/reference/fleet.md docs/reference/fleet-pins.md infra/grafana/alerts.yaml infra/scripts/ops_daily.py`, which printed 135 lines at this plan's base. `\bcloud\b` takes a line that says "Cloud" alone beside a read with no `--stack`, which Task 6's flip moves to the node without a word changing. Task 8 runs it outside `.claude/` and Task 9 under it. Each hit falls in one of two classes:
+  - (a) It says which stack evaluates or pages a rule the reader is working, which channel a stack's page reaches, which URL the watchdog probes, or which stack a read with no `--stack` means. It is re-trued in the task that makes it false: a read that means Grafana Cloud takes `--stack cloud`, and one that means the stack that pages stays as it is.
+  - (b) It is about the Grafana Cloud leg's shipping, its keep-lists, its keep-alive, its retention, a past event, or why a rule's `execErrState` is `OK`, or it names no Grafana stack (the Linode Cloud Manager, its Cloud Firewall). It is left to phase 4 or to history.
+  - At this plan's base the hits that carry a read with no `--stack` are `drills-telemetry.md` lines 535, 606, 632 and 634, `engine-procedures.md` 388, `hc.md` 31, 51 and 144, `mon.md` 71, 98 and 101, `observability.md` 377, the push skill's 38 and the rollout-image skill's 107, with the bump-alloy skill's 205 and 215, whose reads sit in the list under 205 and in 215's words. Each is classed by what its read means.
 - **Every commit is green over its changed files' consumers: the tests each task's consumer step names, never the full suite locally, which is CI's.**
-  - A task that edits a page under `infra/runbooks/` also runs the runbook walkers: `tests/test_internal_terms_not_operator_visible.py`, `tests/test_runbook_internal_tokens.py`, `tests/test_runbook_triggers.py` and `tests/test_infra_alert_rules.py`, the last of which holds `test_every_runbook_cross_reference_resolves`.
+  - A task that edits a page under `infra/runbooks/` also runs `WALKERS`, the tests that read every top-level page there: `uv run pytest tests/test_internal_terms_not_operator_visible.py tests/test_runbook_internal_tokens.py tests/test_runbook_triggers.py tests/test_infra_alert_rules.py tests/test_ops_daily.py tests/test_guidance_guard.py tests/test_count_list.py -q -p no:cacheprovider`. `tests/test_infra_alert_rules.py` holds `test_every_runbook_cross_reference_resolves`, `tests/test_ops_daily.py` classifies every runbook command, and `tests/test_guidance_guard.py` and `tests/test_count_list.py` read each page's universals and count names. A test that reads one page by name runs beside them in the task that edits that page: `tests/test_engine_draftplan.py` reads `engine-procedures.md`'s `engine-rung-2-box` section.
   - A task that edits a skill runs `tests/test_guidance_guard.py` and `tests/test_guidance_refs_resolve.py`.
 - **The commit gate runs before every commit.** The commit's files are staged by path, and then `uv run pre-commit run -a` runs clean. A run that rewrites files is re-run until clean, and the rewrites are staged.
 - A new Markdown paragraph or list item is one line, with no column wrap and no filler blank lines. A universal word in a new runbook bullet (every, never, always, only, any, cannot) carries its `(set: …; count: …)` or `(no count command: …)` clause, or the bullet is worded without it.
@@ -73,27 +78,29 @@ Co-Authored-By: Claude <actual executing model> <noreply@anthropic.com>
 
 - `docs/open-topics/T0217-self-hosted-observability-stack.md`: the gate's findings bullet (Task 1); the readings, the state and the `ripe_when` the two records pull requests write (R-records-1, R-records-2).
 - `infra/runbooks/mon.md`:
-  - Task 2: `mon-push`'s *What it means* and step 2, where the node's webhook is the main channel's and the rollback's is the shadow channel's; `mon-patch-pass` step 6; `zcrypto-mon-reboot-pending`; `zcrypto-mon-grafana-error-logs`; `mon-dark`'s *What you are seeing*.
-  - Task 5: a new `mon-stream-handover` procedure.
-  - Task 8: `mon-dark`, `mon-push` step 1 and `mon-compare` step 3 after the flip.
-- `infra/runbooks/hc.md`: the header and the sections whose sentences say the node's `zcrypto-hc` group pages the shadow channel (Task 2); `hc-dark` and `zcrypto-hc-service-down` once Grafana Cloud pages the shadow channel (Task 8).
-- `infra/runbooks/engine.md`: `#zcrypto-engine-dark-with-exposure` step 1 gains the read of `zcrypto-mon-ingest-dark` first (Task 2), with its stack names re-trued after the flip (Task 8); `#zcrypto-engine-log-dead` step 4 (Task 5).
-- `infra/runbooks/drills-telemetry.md`: the `W1` to `W4` sections' channel sentences (Task 2); drills C and C′ and the sections' Grafana Cloud lines once the node pages alone (Task 8).
+  - Task 2: `mon-push`'s *What it means* and step 2, where the node's webhook is the main channel's, with its rollback; `mon-secrets` step 1; `mon-patch-pass` step 6; `zcrypto-mon-reboot-pending`; `zcrypto-mon-grafana-error-logs`; `mon-dark`'s *What you are seeing*.
+  - Task 5: a new `mon-stream-handover` procedure; `mon-secrets` step 4; `mon-compare`'s clause on the seven direct-stream rules.
+  - Task 8: `mon-dark`, `mon-push` step 1 and `mon-compare` steps 2 to 4 after the flip; the planned stops of the node's Grafana, its edge or the node.
+- `infra/runbooks/hc.md`: the header and the sections whose sentences say the node's `zcrypto-hc` group or its Alloy-dark rule pages the shadow channel (Task 2); `hc-dark` and `zcrypto-hc-service-down` once Grafana Cloud pages the shadow channel (Task 8).
+- `infra/runbooks/engine.md`: `#zcrypto-engine-dark-with-exposure` step 1 gains the read of `zcrypto-mon-ingest-dark` first (Task 2), with its stack names re-trued after the flip (Task 8); `#zcrypto-engine-log-dead`'s early case, step 4 and step 6 (Task 5).
+- `infra/runbooks/drills-telemetry.md`: the `W1` to `W4` sections' channel sentences and drill W3's push step (Task 2); drills C and C′, the sections' Grafana Cloud lines once the node pages alone, and the W1 to W3 announcements of the watchdog's page (Task 8).
 - `infra/runbooks/engine-procedures.md`: step 8 item 6 names the hand-over the deferred disarm converge carries (Task 5).
-- `infra/runbooks/observability.md`: the direct-ship sections `#zcrypto-logship`, `#zcrypto-capture-log-dead` and `#zcrypto-ops-log-plane` (Task 5); `grafana-cloud-dark` becomes `grafana-dark`, the node-dark procedure, with `#zcrypto-hcio-watchdog`, the header and the alloy-dark sections re-trued (Task 8).
-- The other operator pages whose lines name Grafana Cloud as the stack a rule pages from, found by Task 8's sweep (`cache.md`, `zaccess.md` and the rest the sweep prints), and `infra/grafana/alerts.yaml`'s text where it says so (Task 8).
+- `infra/runbooks/observability.md`: the direct-ship sections, by heading `zcrypto-logship`, `zcrypto-capture-log-dead` and `zcrypto-ops-log-plane` (Task 5); `grafana-cloud-dark` becomes `grafana-dark`, the node-dark procedure, with `#zcrypto-hcio-watchdog`, the header and the alloy-dark sections re-trued (Task 8).
+- `infra/runbooks/ops-node.md`: the keep-alive section's link to `grafana-cloud-dark` and its sentence on what pages a dark Grafana Cloud (Task 8).
+- The other operator pages whose lines the pager sweep classes (a), and `infra/grafana/alerts.yaml`'s text where it says Grafana Cloud pages (Task 8).
+- `docs/open-topics/T0085-final-pre-golive-steps.md`: the two Slack webhook entries (Task 2); the ingest pairs' entry on the `logship` password (Task 5).
 - `infra/ansible/group_vars/observed/vars.yml`: `mon_ingest_logship_user` (Task 4).
 - The logship and compose files (Task 4):
   - `infra/ansible/roles/capture/templates/logship-secrets.env.j2` and `infra/ansible/roles/ops/templates/logship-secrets.env.j2`: the three `ZCRYPTO_LOKI_*` lines and their headers.
   - `roles/capture/tasks/main.yml` and `roles/ops/tasks/main.yml`: the render tasks' guards and the comments that name the old token.
   - `roles/capture/templates/compose.yaml.j2`, `roles/ops/templates/compose.yaml.j2` and `roles/engine/templates/compose.yaml.j2`: the guards, plus the capture and ops comment lines that name the token.
-  - `infra/ops/README.md`: the guard's name.
+  - `infra/ops/README.md`: the guard's name (Task 4); the poller's direct-ship destination (Task 5).
 - `infra/scripts/grafana-compare.py`: the comment on the seven direct-shipped rules (Task 5).
-- The default flip (Task 6): `infra/scripts/grafana_auth.py` (`DEFAULT_STACK`); `infra/scripts/grafana-push.sh` (`GRAFANA_URL`'s default, the header and the render paragraph); `infra/scripts/ops_daily.py` (the comparison section's comment).
+- The default flip (Task 6): `infra/scripts/grafana_auth.py` (`DEFAULT_STACK`); `infra/scripts/grafana-push.sh` (`GRAFANA_URL`'s default, the header's two paragraphs, the render paragraph and the comment above the refusal); `infra/scripts/ops_daily.py` (the comparison section's comment); `infra/grafana/alerts.yaml` (the comments over the two node-only groups).
 - The ops watchdog (Task 7): `infra/ansible/roles/ops/defaults/main.yml` (`ops_grafana_watchdog_probe_url`); `roles/ops/templates/grafana-watchdog.sh.j2` (the header); `roles/ops/templates/grafana-watchdog.timer.j2` (the description).
-- `.claude/skills/zcrypto-grafana-push/SKILL.md`: line 20's webhook sentence (Task 3); Step 0, Steps 1, 3 and 4 and the description after the flip (Task 9). `.claude/skills/zcrypto-daily-ops/SKILL.md` and the other skills Task 9's sweep names (Task 9).
+- `.claude/skills/zcrypto-grafana-push/SKILL.md`: line 20's webhook sentence (Task 3); Step 0, Steps 1, 3 and 4 and the description after the flip (Task 9). `.claude/skills/zcrypto-daily-ops/SKILL.md` and the other skills the pager sweep names (Task 9).
 - Tests:
-  - `tests/test_infra_compose_templates.py`: the guards' two branches under the new name, the logship files' literal lines, and no role reading Grafana Cloud's logship token (Task 4).
+  - `tests/test_infra_compose_templates.py`: each logship guard's whole branch under the new name, the render tasks' `when:`, the logship files' literal lines, and no role reading Grafana Cloud's logship token (Task 4).
   - `tests/test_infra_mon_role.py`: the group vars' logship user (Task 4).
   - `tests/test_infra_converge_guards.py`: one comment (Task 4).
   - `tests/test_grafana_auth.py`, `tests/test_grafana_query.py`, `tests/test_ops_daily.py` and `tests/test_grafana_push_sh.py`: the default stack (Task 6).
@@ -104,22 +111,22 @@ Co-Authored-By: Claude <actual executing model> <noreply@anthropic.com>
 
 Six classes, each held by the tests or reads of the tasks named beside it.
 
-- **A stream pushed with a credential the edge refuses, or a guard keyed on a name the vault lacks.** Either way, the shipper's push fails and its lines are dropped and counted, or the compose renders without `--ship-logs`. The literal case holds both logship templates to `mon_ingest_loki_url`, `mon_ingest_logship_user` and `mon_ingest_logship_password`. The group-vars case holds `mon_ingest_logship_user` equal to the `mon` role's default and admitted on the Loki path alone. Task 4's Step 1 reads the vault key's name present. The sweep case holds no file under `infra/ansible/roles/` naming `logship_loki_token` (Task 4).
+- **A stream pushed with a credential the edge refuses, or a guard keyed on a name the vault lacks.** Either way, the shipper's push fails and its lines are dropped and counted, or the compose renders without `--ship-logs`. The literal case holds both logship templates to `mon_ingest_loki_url`, `mon_ingest_logship_user` and `mon_ingest_logship_password`. The group-vars case holds `mon_ingest_logship_user` equal to the `mon` role's default and admitted on the Loki path alone. Task 4's Step 1 reads the vault key's name present. The branch case renders the capture, ops and engine compose templates, eight guards between them, with `mon_ingest_logship_password` alone defined and reads each service's whole true branch, then with nothing defined its whole false branch; the render-task case holds both `render the logship secrets env file` tasks' `when:` to that name; Step 10 renames each of the ten to a name no context defines. The sweep case holds no file under `infra/ansible/roles/` naming `logship_loki_token` (Task 4).
 - **The engine restarted for its hand-over by anything but the deferred disarm converge, or a capture restart outside its attended sitting.**
   - The engine's compose renders byte-identical across Task 4, read in its Step 4, so no engine-tagged converge restarts the engine for this change.
   - The capture compose's one changed comment line makes its restart the hand-over converge's handler, in the sitting the rule licenses, and the merge waits for the hand-over day after the box.
   - The primary's capture converge is `--tags capture`, which renders the engine's file and reaches no engine task (Task 4, R8, R9).
 - **A default that flips alone.** `DEFAULT_STACK`, the push script's `GRAFANA_URL` default and the ops watchdog's probe default are held to one value by tests. The push tests' Grafana Cloud URL is read from `grafana_auth.STACKS["cloud"]`, never from the script's default, which is the node's from Task 6, so the refusal and skip cases keep addressing Grafana Cloud (Tasks 6, 7).
 - **A rule of the node-only groups reaching Grafana Cloud after the flip.** The host-keyed skip default and the refusal are unchanged and keep holding on every Grafana Cloud spelling. A push naming no stack now goes to the node and sends both node groups (Task 6).
-- **A silence that outlives its stream, ends before it, or blinds a stream not yet moved.** The node's four end at their sittings and are read back expired with their instants. Grafana Cloud's are scoped to the moved stream's `host` and `container` (R2, R6 to R9, R-records-2).
-- **An operator surface left saying the old pager, or a phase-4 line re-trued early.** Task 2 and Task 8 each run their sweep and class every hit. A line that says which stack pages, which channel a stack's page reaches, which URL the watchdog probes or which stack a tool reads by default is re-trued in the task that makes it false. A line on the Grafana Cloud leg's shipping, its keep-lists, its keep-alive, its retention or a past event is left to phase 4 or to history (Tasks 2, 5, 8, 9).
+- **A silence that outlives its stream, ends before it, or blinds a stream not yet moved.** The node's four end at their sittings and are read back expired with their instants. Grafana Cloud's take the matchers the Global Constraints' *Grafana Cloud's silences* bullet names (R2, R6 to R9, R-records-2).
+- **An operator surface left saying the old pager, or a phase-4 line re-trued early.** Task 2 runs its sweep, and Tasks 8 and 9 the pager sweep, each hit classed. A line that says which stack pages, which channel a stack's page reaches, which URL the watchdog probes or which stack a tool reads by default is re-trued in the task that makes it false. A line on the Grafana Cloud leg's shipping, its keep-lists, its keep-alive, its retention or a past event is left to phase 4 or to history (Tasks 2, 5, 8, 9).
 
 ---
 
 ### Task 1: The gate — seven clean comparison days, four drills and the boundary reading, read and recorded
 
 **Files:**
-- Modify: `docs/open-topics/T0217-self-hosted-observability-stack.md` (one `## Findings so far` bullet: the gate as read, the seven entries by date with their `compare:` lines, each difference with its class, the four drill entries, and the boundary bullet)
+- Modify: `docs/open-topics/T0217-self-hosted-observability-stack.md` (one `## Findings so far` bullet: the gate as read, the seven entries by date, each beside the day it compared, with their `compare:` lines, each difference with its class, the four drill entries, and the boundary bullet)
 
 **Interfaces:**
 - Consumes:
@@ -128,7 +135,7 @@ Six classes, each held by the tests or reads of the tasks named beside it.
   - the spec's measured-basis bullet `The range-selector boundary, read on 2026-10-07`, which reads 5 on Grafana Cloud and 6 on the node;
   - `ops_daily.COMPARISON_FROM`;
   - `docs/reference/deploy-log.jsonl`'s `zcrypto-mon` rows;
-  - R1's difference files under `.tmp/cutover/`.
+  - R0 and R1, run before this task's Step 4 in the workstation checkout at the repository root (the Rollout's conventions), where R1's difference files `.tmp/cutover/compare-<compared day>.txt` sit; Step 4 reads them there.
 - Produces: the gate's bullet in T0217, which the cutover pull request's body cites, and [[ROLLOUT: the gate's day — the seventh consecutive journal entry from 2026-10-10 whose compare line reads 0 differences or differences the pull request explains]].
 
 **What this task decides, where the spec leaves it open:**
@@ -141,7 +148,7 @@ Six classes, each held by the tests or reads of the tasks named beside it.
   - A difference in none of the three holds the pull request for the owner, to be fixed (a rule change with its dual push, which restarts no count) or explained in words the owner accepts.
 - **What refuses:** fewer than seven; any of `W1` to `W4` without a `— pass` heading; the boundary bullet absent from the spec on `develop`; `COMPARISON_FROM` not set to 2026-10-10; or a difference no class admits. Each is a stop. Tasks 2 and 3 may be built on the branch ahead of the gate's day, but the pull request opens only after this task's commit.
 
-- [ ] **Step 1: The preconditions on `develop`.** The records branch and R12's `COMPARISON_FROM` pull request are merged.
+- [ ] **Step 1: The preconditions on `develop`.** The records branch and plan 00123's R12 pull request, which sets `COMPARISON_FROM`, are merged.
 
 ```bash
 git fetch origin develop ops-journal
@@ -152,10 +159,10 @@ git show origin/develop:infra/scripts/ops_daily.py | grep -cE '^COMPARISON_FROM.
 
 Expected: one line ending `:1`, then `4`, then `1`. Any other reading is a stop: the phase-2 records are not on `develop` yet.
 
-- [ ] **Step 2: The journal.** `git show origin/ops-journal:docs/reference/ops-journal/2026-10.md | grep -E '^## 2026-10-|^compare:|compare: '` — Expected: from `## 2026-10-10` on, each entry heading followed by one `compare: <n> nodes × 24 instants, <k> differences` line. The seven consecutive ones are listed by date, and each `<k>` above 0 names a day R1 reads.
+- [ ] **Step 2: The journal.** `git show origin/ops-journal:docs/reference/ops-journal/2026-10.md | grep -E '^## 2026-10-|^compare:|compare: '` — Expected: from `## 2026-10-10` on, each entry heading followed by one `compare: <n> nodes × 24 instants, <k> differences` line. The seven consecutive ones are listed by date. An entry dated D carries the comparison of D − 1, the day the pass hands its runner (`ops_daily.read_comparison`, `now.date() - timedelta(days=1)`), so each `<k>` above 0 names its compared day, D − 1, which R1 reads.
 - [ ] **Step 3: The rebuild read.** `uv run python -c "import json; [print(r['ts'], r['tags'] or '<un-tagged>') for r in map(json.loads, open('docs/reference/deploy-log.jsonl')) if r.get('limit') == 'zcrypto-mon' and r['ts'] > '2026-10-07T12:14:42Z' and not r.get('tags') and r.get('playbook') == 'site.yml']"` — Expected: no line, or lines whose day's journal entry names no rebuild.
-- [ ] **Step 4: R1's files.** For each day Step 2 named, `.tmp/cutover/compare-<day>.txt` exists and each difference line in it carries R1's class. Expected: every line classed. A line without a class is the stop above.
-- [ ] **Step 5: The bullet.** One line in `## Findings so far`: the seven days and their lines, each difference and its class, the four drill headings with their dates, the boundary bullet's two readings, and R0's instant.
+- [ ] **Step 4: R1's files.** For each compared day Step 2 named, `.tmp/cutover/compare-<compared day>.txt` exists in R1's checkout and each difference line in it carries R1's class. Expected: every line classed. A line without a class is the stop above.
+- [ ] **Step 5: The bullet.** One line in `## Findings so far`: the seven entries, each beside the day it compared and its line, each difference and its class, the four drill headings with their dates, and the boundary bullet's two readings; R0's instant is R-records-1's.
 - [ ] **Step 6: The consumers** — `uv run pytest tests/test_open_topics_frontmatter.py tests/test_topics_index.py -q -p no:cacheprovider`; Expected: no failure.
 - [ ] **Step 7: The commit gate.**
 - [ ] **Step 8: Commit** — `docs(topics): T0217 records the cutover's gate — seven clean comparison days, the four drills and the boundary reading`, with the trailer; no guard changes, so no probe.
@@ -168,27 +175,29 @@ Expected: one line ending `:1`, then `4`, then `1`. Any other reading is a stop:
 **Files:**
 - Modify: `infra/runbooks/mon.md`:
   - `mon-push`'s *What it means* sentence on a shell that exported the other stack's webhook.
-  - Step 2: the push that moves the node's contact points carries `slack_webhook_url`, the main channel's, read through `grafana_auth.vault_var`, and the same push with `slack_shadow_webhook_url` is its rollback.
+  - Step 2: the push that moves the node's contact points carries `slack_webhook_url`, the main channel's, read through `grafana_auth.vault_var`. Its rollback is the same push with `slack_shadow_webhook_url` while Grafana Cloud's receivers are on the main channel; once they are on the shadow channel, Grafana Cloud's push with `slack_webhook_url` comes first, so that one stack pages the main channel throughout.
   - `mon-patch-pass` step 6 and `zcrypto-mon-reboot-pending`'s clause: "Until the node pages the main channel, that alert reaches the shadow channel alone, and this read is the one that brings a pending reboot to a person". The alert now pages the main channel, and the read stays as the pass's own.
-  - `zcrypto-mon-grafana-error-logs`'s "A shadow channel that stays silent".
+  - `zcrypto-mon-grafana-error-logs`: *What it means*' "both minted from the one shadow webhook"; step 3's "Both contact points carry the one shadow webhook" and its re-mint command, which vaults `slack_webhook_url`, the key step 2 names; and step 4's "A shadow channel that stays silent".
+  - `mon-secrets` step 1's test of the `metrics` contact point, which reaches the main channel.
   - `mon-dark`'s *What you are seeing*: the node's copies in the main channel stop while Grafana Cloud's continue, in place of "the shadow channel is silent".
-- Modify: `infra/runbooks/hc.md` (the header's "an alert fired in the shadow channel" and its sentence that the `zcrypto-hc` group pages the shadow channel; `hc-patch-pass` step 7's and `zcrypto-hc-reboot-pending`'s "Until the observability node pages the main channel" clauses; `zcrypto-hc-error-logs`'s channel lines)
-- Modify: `infra/runbooks/engine.md`, `#zcrypto-engine-dark-with-exposure` step 1. A first read is added (D16, D20): when the page's links are under `https://zcrypto-mon.zhaow.me/`, read `zcrypto-mon-ingest-dark` there first. `uv run python infra/scripts/grafana-query.py --stack mon 'count(up{host!="zcrypto-mon"}) or on() vector(0)'` reading 0 is the node's edge or certificate, with every host absent at once (`mon.md#zcrypto-mon-ingest-dark`). The page's two halves are then read on Grafana Cloud's copy, `grafana-query.py` with no `--stack`, before the route split that follows.
-- Modify: `infra/runbooks/drills-telemetry.md` (the `W1` to `W4` sections' sentences on the channel the node's pages reach in a re-run: the main channel, beside Grafana Cloud's copies until its receivers move)
-- Test: none new; the runbook walkers.
+- Modify: `infra/runbooks/hc.md` (the header's "an alert fired in the shadow channel" and its sentence that the `zcrypto-hc` group pages the shadow channel; `hc-dark`'s "`zcrypto-alloy-dark-hc` pages the shadow channel"; `hc-patch-pass` step 7's and `zcrypto-hc-reboot-pending`'s "Until the observability node pages the main channel" clauses)
+- Modify: `infra/runbooks/engine.md`, `#zcrypto-engine-dark-with-exposure` step 1. A first read is added (D16, D20): when the page's links are under `https://zcrypto-mon.zhaow.me/`, read `zcrypto-mon-ingest-dark` there first. `uv run python infra/scripts/grafana-query.py --stack mon 'count(up{host!="zcrypto-mon"}) or on() vector(0)'` reading 0, or failing with a TLS error or a timeout, since the read travels the same edge, is the node's edge or certificate, with every host absent at once (`mon.md#zcrypto-mon-ingest-dark` step 1). The page's two halves are then read on Grafana Cloud's copy, `grafana-query.py` with no `--stack`, before the route split that follows.
+- Modify: `infra/runbooks/drills-telemetry.md` (the `W1` to `W4` sections' sentences on the channel the node's pages reach in a re-run: the main channel, beside Grafana Cloud's copies until its receivers move; drill W3's *Induce* step 4, whose "with the shadow webhook" goes, so that it cites `mon-push` step 2 and names no webhook of its own)
+- Modify: `docs/open-topics/T0085-final-pre-golive-steps.md`'s two Slack webhook entries: `slack_webhook_url`, re-minted, reaches the node's contact points by `mon-push`'s *A push that mints or moves the node's two contact points*; `slack_shadow_webhook_url` reaches the contact points of whichever stack pages the shadow channel, by that stack's push carrying it.
+- Test: none new; `WALKERS`.
 
 **Interfaces:**
-- Consumes: R3's push, which this task's text describes and which follows the pull request's merge; `zcrypto-mon-ingest-dark`, `for: 5m`, which W1's edge stop read paging at +11:24, ahead of the alloy-dark pair at +15:59 (T0217's W1 finding); the vault key names `slack_webhook_url` and `slack_shadow_webhook_url`.
+- Consumes: R3's push, which this task's text describes and which follows the pull request's merge; `zcrypto-mon-ingest-dark`, `for: 5m`, which W1's edge stop read paging at +11:24, ahead of the alloy-dark pair at +15:59 (`docs/reference/drill-log.md`'s W1 entry); the vault key names `slack_webhook_url` and `slack_shadow_webhook_url`.
 - Produces: `mon.md#mon-push` step 2 in the form R3 runs.
 
 **What this task decides, where the spec leaves it open:**
-- **The sweep that finds the lines is `git grep -n -i -E 'shadow channel|until (the )?(observability )?node pages' -- infra/runbooks .claude infra/grafana infra/scripts docs/reference/fleet.md`.** At this plan's base it prints 26 runbook lines (15 in `drills-telemetry.md`, 6 in `mon.md`, 5 in `hc.md`). The push skill's line 20, which names the node's shadow webhook rather than the channel, is Task 3's. Each hit that says the node, or a group it alone evaluates, pages the shadow channel is re-trued here. A hit that says Grafana Cloud pages the main channel stays true until R10 and is Task 8's. The drill log is history and is not edited.
+- **The sweep that finds the lines is `git grep -n -i -E 'shadow channel|shadow webhook|slack_shadow_webhook_url|until (the )?(observability )?node pages' -- infra/runbooks .claude infra/grafana infra/scripts docs/reference/fleet.md docs/open-topics/T0085-final-pre-golive-steps.md`.** At this plan's base it prints 31 lines: 16 in `drills-telemetry.md`, 8 in `mon.md`, 5 in `hc.md`, the push skill's line 20, which is Task 3's, and T0085's `slack_shadow_webhook_url` entry. Each hit that says the node, or a group it alone evaluates, pages the shadow channel, or that names the shadow webhook as the node's, is re-trued here. A hit that says Grafana Cloud pages the main channel stays true until R10 and is Task 8's. The drill log is history and is not edited.
 - **The exposure page's read is the node's because, from R3, both stacks send that page.** The node's copy is the one an ingest outage can raise, and its links name its host. After Task 6's flip, Task 8 swaps the stack names in the step.
 
 - [ ] **Step 1: Load `zcrypto-refine-rules`** and read its *Before you write guidance*.
 - [ ] **Step 2: The sweep**, kept as `.tmp/cutover/task2-sweep`, each hit classed.
 - [ ] **Step 3: The edits.**
-- [ ] **Step 4: The consumers** — `uv run pytest tests/test_internal_terms_not_operator_visible.py tests/test_runbook_internal_tokens.py tests/test_runbook_triggers.py tests/test_infra_alert_rules.py tests/test_ops_daily.py tests/test_drill_log.py tests/test_infra_hc_role.py tests/test_infra_mon_role.py -q -p no:cacheprovider`; Expected: no failure.
+- [ ] **Step 4: The consumers** — `WALKERS`, then `uv run pytest tests/test_drill_log.py tests/test_infra_hc_role.py tests/test_infra_mon_role.py tests/test_open_topics_frontmatter.py tests/test_topics_index.py -q -p no:cacheprovider`; Expected: no failure from either.
 - [ ] **Step 5: The commit gate.**
 - [ ] **Step 6: Commit** — `docs(runbooks): the node pages the main channel — its push's webhook, the node-only groups' channel, and the exposure page reads ingest-dark first`, with the trailer; no guard changes.
 - [ ] **Step 7: The tree is clean.**
@@ -227,9 +236,10 @@ Then the cutover pull request opens through the `open-pr` skill over Tasks 1 to 
 - Modify: `infra/ansible/roles/capture/templates/compose.yaml.j2`: its two `{% if logship_loki_token is defined %}` guards become `{% if mon_ingest_logship_password is defined %}`, and the comment line "Guarded by the SAME `logship_loki_token is defined`" is re-trued. The rendered file then differs by that one comment line, and the converge's `restart capture service` handler is the attended restart.
 - Modify: `infra/ansible/roles/ops/templates/compose.yaml.j2`: the three guards and the comment's "`logship_loki_token is defined` condition", re-trued. The render notifies nothing, and the recreate is by hand.
 - Modify: `infra/ansible/roles/engine/templates/compose.yaml.j2`: the three guards alone. No comment there names the token, so the rendered file is byte-identical.
-- Modify: `infra/ops/README.md` (line 38's "guarded by `logship_loki_token is defined`")
+- Modify: `infra/ops/README.md` (the guard's name, `logship_loki_token`, in the `ZCRYPTO_LOG_HOST` row's "guarded by `logship_loki_token is defined`" and in the *Two log paths* paragraph's "when `logship_loki_token` is vaulted")
 - Test: `tests/test_infra_compose_templates.py`:
-  - The guard's two branches render under `mon_ingest_logship_password`: `test_renders_valid_yaml_without_logship_token`, `test_renders_valid_yaml_with_logship_token` and `test_engine_logship_guard_moves_environment_and_entrypoint_together`, the variable and the comments re-trued.
+  - `test_renders_valid_yaml_without_logship_token`, `test_renders_valid_yaml_with_logship_token` and `test_engine_logship_guard_moves_environment_and_entrypoint_together` take `mon_ingest_logship_password`, the variable and the comments re-trued. The two valid-YAML families read only that a render parses, which either branch does, so they hold no guard's name.
+  - New: the branch case and the render-task case below. A guard or a `when:` that reads any other name renders its false branch with the node's password defined, and fails them.
   - New: `test_the_logship_files_push_to_the_nodes_loki_as_its_logship_user`, which holds each template's three `ZCRYPTO_LOKI_*` lines to the literal below and reads no `grafana_loki_` or `logship_loki_token` name in either template.
   - New: `test_no_role_reads_grafana_clouds_logship_token`, under which no file below `infra/ansible/roles/` names `logship_loki_token`.
 - Test: `tests/test_infra_mon_role.py`: `test_the_fleets_ingest_names_are_the_nodes_public_name_its_two_authenticated_paths_and_its_fleet_user` holds the group vars' `mon_` keys to a dict gaining `mon_ingest_logship_user` equal to the role default. A new assertion reads that user admitted on `/loki/api/v1/push` and absent from `/api/v1/write`, through `role_render.users`.
@@ -268,12 +278,52 @@ The group var:
 mon_ingest_logship_user: logship
 ```
 
+The branch case and the render-task case, in `tests/test_infra_compose_templates.py`. The capture service ships through its image's own ENTRYPOINT, which reads `ZCRYPTO_SHIP_LOGS` from the logship file, so its true branch carries no `--ship-logs` of its own:
+
+```python
+_LOGSHIP_GUARDS = [
+    (CAPTURE_TEMPLATE, CAPTURE_CONTEXT, "capture", "/opt/zcrypto-capture/logship-secrets.env", False),
+    (OPS_TEMPLATE, OPS_CONTEXT, "liquidations", "/etc/zcrypto-ops/logship-secrets.env", True),
+    (ENGINE_TEMPLATE, ENGINE_CONTEXT, "engine", "/opt/zcrypto-capture/logship-secrets.env", True),
+]
+
+
+def _logship_branch(service: dict, logship_file: str) -> tuple[bool, bool, bool]:
+    paths = [e["path"] if isinstance(e, dict) else e for e in service.get("env_file", [])]
+    return (
+        "ZCRYPTO_LOG_HOST" in service["environment"],
+        logship_file in paths,
+        "--ship-logs" in service.get("entrypoint", []),
+    )
+
+
+@pytest.mark.parametrize(
+    ("template", "context", "service", "logship_file", "ships_by_entrypoint"), _LOGSHIP_GUARDS, ids=["capture", "ops", "engine"]
+)
+def test_every_logship_guard_renders_its_whole_branch_on_the_nodes_password(
+    template, context, service, logship_file, ships_by_entrypoint
+):
+    on = _render(template, {**context, "mon_ingest_logship_password": "x"})["services"][service]
+    off = _render(template, context)["services"][service]
+    assert _logship_branch(on, logship_file) == (True, True, ships_by_entrypoint)
+    assert _logship_branch(off, logship_file) == (False, False, False)
+
+
+@pytest.mark.parametrize("role", ["capture", "ops"])
+def test_the_logship_file_renders_on_the_nodes_password(role):
+    tasks = yaml.safe_load((REPO / f"infra/ansible/roles/{role}/tasks/main.yml").read_text())
+    (render,) = [t for t in tasks if t.get("name") == "render the logship secrets env file"]
+    assert render["when"] == "mon_ingest_logship_password is defined"
+```
+
 - [ ] **Step 1: The vault key's name, then the failing tests.** `grep -c '^mon_ingest_logship_password:' infra/ansible/group_vars/observed/vault.yml`, a key name alone; Expected: `1`. A `0` is a stop for the owner, since no executor writes a vault line. Then the cases above.
 - [ ] **Step 2: Run them and read the failure** — `uv run pytest tests/test_infra_compose_templates.py tests/test_infra_mon_role.py -q -p no:cacheprovider`. Expected:
   - the literal case fails on both templates;
   - the sweep case fails, naming the seven files that read the token (the two logship templates, the three compose templates and the two render tasks' files);
   - the group-vars case fails on the missing key;
-  - the guard-branch cases fail, since the renamed variable is not yet what the templates read.
+  - the branch case fails on capture, ops and engine, and the render-task case on both roles, each still reading `logship_loki_token`;
+  - `test_engine_logship_guard_moves_environment_and_entrypoint_together` fails, its true branch unrendered;
+  - the two valid-YAML families pass, since either branch parses.
 - [ ] **Step 3: The group var, the two templates, the two tasks, the three compose templates, the README line and the comments the Files entries quote.**
 - [ ] **Step 4: The engine's render, unchanged; the capture's, one comment line.** Before the commit, against `HEAD`'s copy:
 
@@ -293,24 +343,34 @@ PY
 git diff -U0 -- infra/ansible/roles/capture/templates/compose.yaml.j2 infra/ansible/roles/ops/templates/compose.yaml.j2
 ```
 
-Expected: `identical`; the diff shows each file's guards and one comment line, and nothing else. `differs` is a stop: the deferred disarm converge's preview would name the compose file, so item 6's preview line is re-trued in Task 5 before the pull request opens, and the engine restart is unchanged either way.
+Expected: `identical`; the diff shows each file's guards and one comment line, and nothing else. `differs` is the engine template changed beyond its three guards, a guard reading another name or a line the render carries edited: the template is put right and Step 4 is run again, and item 6's preview line is never re-trued for it.
 
 - [ ] **Step 5: Run the tests** — Expected: no failure.
 - [ ] **Step 6: The consumers** — every test file `grep -rl --exclude='*vault*' 'logship\|compose.yaml.j2\|group_vars/observed' tests/ | sort` names: `tests/test_infra_compose_templates.py`, `tests/test_infra_converge_guards.py`, `tests/test_infra_mon_role.py`, `tests/test_infra_alloy_series.py`, `tests/test_logging_ship_handler.py` and `tests/test_obs_metrics.py` among them at this plan's base.
 - [ ] **Step 7: The commit gate.**
 - [ ] **Step 8: Commit** — `feat(infra): the applications' own log push goes to the node's Loki as its logship user, and no role reads Grafana Cloud's logship token`, with `PROBE_VERDICT` and the trailer.
 - [ ] **Step 9: The tree is clean.**
-- [ ] **Step 10: Prove the guards with one probe per guard, then record their verdicts by a message-only amend.** Mutations:
-  - the capture template's URL line back to `{{ grafana_loki_url }}`;
-  - the ops template's user line bound to `mon_ingest_fleet_user`;
-  - the password line back to `logship_loki_token`;
-  - the ops compose template's first guard back to `logship_loki_token`;
-  - the engine compose's second guard back to `logship_loki_token`;
-  - the group var's value `fleet`;
-  - the group var removed;
-  - the capture render task's `when:` back to the old name.
+- [ ] **Step 10: Prove the guards with one probe per guard, then record their verdicts by a message-only amend.** Each run's control is `'1,$d'`, the file emptied, and each mutation is anchored to one line. A renamed guard or `when:` takes `logship_probe_unset`, a name no context defines, so the branch and render-task cases kill it and the sweep case cannot:
 
-  Each run ends `mutate-probe: KILLED (control proven, tree restored byte-identically)`.
+```bash
+probe() { infra/scripts/mutate-probe.sh --file "$1" --control '1,$d' --mutation "$2" -- uv run pytest tests/test_infra_compose_templates.py tests/test_infra_mon_role.py -q -p no:cacheprovider; }
+probe infra/ansible/roles/capture/templates/logship-secrets.env.j2 's/^ZCRYPTO_LOKI_URL={{ mon_ingest_loki_url }}$/ZCRYPTO_LOKI_URL={{ grafana_loki_url }}/'
+probe infra/ansible/roles/ops/templates/logship-secrets.env.j2 's/^ZCRYPTO_LOKI_USERNAME={{ mon_ingest_logship_user }}$/ZCRYPTO_LOKI_USERNAME={{ mon_ingest_fleet_user }}/'
+probe infra/ansible/roles/ops/templates/logship-secrets.env.j2 's/^ZCRYPTO_LOKI_PASSWORD={{ mon_ingest_logship_password }}$/ZCRYPTO_LOKI_PASSWORD={{ logship_loki_token }}/'
+probe infra/ansible/group_vars/observed/vars.yml 's/^mon_ingest_logship_user: logship$/mon_ingest_logship_user: fleet/'
+probe infra/ansible/group_vars/observed/vars.yml '/^mon_ingest_logship_user: logship$/d'
+for role in capture ops engine; do
+  t="infra/ansible/roles/$role/templates/compose.yaml.j2"
+  for n in $(grep -n '^{% if mon_ingest_logship_password is defined %}$' "$t" | cut -d: -f1); do
+    probe "$t" "${n}s/mon_ingest_logship_password/logship_probe_unset/"
+  done
+done
+for role in capture ops; do
+  probe "infra/ansible/roles/$role/tasks/main.yml" 's/^  when: mon_ingest_logship_password is defined$/  when: logship_probe_unset is defined/'
+done
+```
+
+  Expected: fifteen runs, the guards' eight among them, two in the capture template and three in each of the ops and engine templates, each ending `mutate-probe: KILLED (control proven, tree restored byte-identically)`.
 
 ---
 
@@ -320,31 +380,36 @@ Expected: `identical`; the diff shows each file's guards and one comment line, a
 - Modify: `infra/runbooks/mon.md`, a new section `mon-stream-handover — PROCEDURE: handing a direct-shipped log stream to the node`, in the page's procedure shape:
   - *What you are seeing*: nothing fired, and a sitting moves one stream; or Grafana Cloud's dead-man for a stream pages because an unplanned restart moved it early.
   - *What it means*: each shipper reads its push credentials from its logship file when its container starts, so a start after the change reaches the host moves its stream. The engine reads the primary's capture file. The node's dead-man for each stream is silenced until its sitting, and Grafana Cloud's dead-man for a moved stream pages within its six-hour range unless silenced.
-  - *What to do*, per stream: the converge and restart form of its host; the stream read by value on the node, the rule's own query; the shipper's two counters; the stream gone from Grafana Cloud; the node's dead-man `inactive`, then its silence ended and read back; Grafana Cloud's rules that read the stream silenced, scoped to its `host` and `container`.
-  - *Rollback*.
+  - *What to do*, per stream: the converge and restart form of its host; the stream read by value on the node, the rule's own query; the shipper's two counters; the stream gone from Grafana Cloud; the node's dead-man `inactive`, then its silence ended and read back; Grafana Cloud's rules that read the stream silenced with the matchers the Global Constraints' *Grafana Cloud's silences* bullet names; the burst rule's pipeline read on the node.
+  - *Rollback*: the Global Constraints' rollback of a moved stream, every moved stream returning together.
   - *Retire when*: `grafana_auth.py`'s `STACKS` holds one stack.
-- Modify: `infra/runbooks/engine-procedures.md`, step 8 item 6. The converge's restart starts the engine on the logship file the primary's capture converge rendered earlier that day, which hands the engine's log stream to the node; its reads are `mon.md#mon-stream-handover`'s, taken after disarm step 3's. The preview line stands unless Task 4's Step 4 read `differs`.
-- Modify: `infra/runbooks/observability.md`:
+- Modify: `infra/runbooks/engine-procedures.md`, step 8 item 6. The converge's restart starts the engine on the logship file the primary's capture converge rendered earlier that day, which hands the engine's log stream to the node; its reads are `mon.md#mon-stream-handover`'s, taken after disarm step 3's.
+- Modify: `infra/runbooks/mon.md`:
+  - `mon-secrets` step 4: a changed `logship` password reaches the three application shippers through `mon-stream-handover`'s per-stream forms, their logship files rendered by the role converges and their containers recreated, since `--tags alloy` renders neither logship file and `env_file` is read at create. Its rotation is a sitting shaped like the hand-over day's.
+  - `mon-compare`'s *What it means* clause that the seven direct-stream rules' stream "reaches the node at the cutover and not before", re-trued as the script's comment is.
+- Modify: `infra/runbooks/observability.md`. Its direct-ship sections are named here by heading, and none of the three headings is an anchor: a link to one takes one of its anchors (`zcrypto-logship-lines-dropped`, `zcrypto-capture-log-dead-primary`, `zcrypto-ops-poller-log-dead` and their siblings).
   - The header's sentence on the direct-ship path, "push their own logs to Loki", which names the node's Loki once each stream has moved.
-  - `#zcrypto-logship` step 6's "a fresh Loki line", read on the node once the stream has moved.
-  - `#zcrypto-capture-log-dead`.
-  - `#zcrypto-ops-log-plane` steps 3 and 4: "A rotated Loki token" becomes the node's `logship` password, and the converge re-renders the file.
-  - In each of those sections, a Grafana Cloud dead-man for a stream already moved routes to `mon.md#mon-stream-handover`.
-- Modify: `infra/runbooks/engine.md` (`#zcrypto-engine-log-dead` step 4's "the host's push path or Grafana Cloud", re-trued to the node's edge and Loki)
+  - `zcrypto-logship` step 3's "`logship_loki_token`, vaulted, rendered into `logship-secrets.env`", which becomes `mon_ingest_logship_password`, and step 6's "a fresh Loki line", read on the node once the stream has moved.
+  - `zcrypto-capture-log-dead`, its step 5's primary form among it: `--tags capture -e converge_primary=true` with both running digests, in place of `--skip-tags engine`.
+  - `zcrypto-ops-log-plane` steps 3 and 4: "A rotated Loki token" becomes the node's `logship` password, and the converge re-renders the file.
+  - The early case, in each of the four dead-men's sections (`zcrypto-capture-log-dead` for two, `zcrypto-ops-log-plane` for the poller's, and `engine.md`'s below): the rule's own query read with `--stack mon` above 0 is a stream already moved, and a Grafana Cloud page for it routes to `mon.md#mon-stream-handover`.
+- Modify: `infra/runbooks/engine.md`, `#zcrypto-engine-log-dead`: the early case ahead of step 1, so that a Grafana Cloud page after the engine's stream moved reaches `mon.md#mon-stream-handover` before step 4 reads the silenced capture dead-man as "engine alone"; step 4's "the host's push path or Grafana Cloud", re-trued to the node's edge and Loki; step 6's all-clear read with `--stack mon` once the stream has moved.
+- Modify: `infra/ops/README.md`'s two sentences that name Grafana Cloud Loki as the poller's direct-ship destination, in the *Two log paths* paragraph and the *Ops log streams* paragraph, which name the node's Loki once the poller's stream has moved.
+- Modify: `docs/open-topics/T0085-final-pre-golive-steps.md`'s ingest-pairs entry: the `logship` password reaches the application shippers by `mon-secrets` step 4's per-stream forms, beside the node's converge.
 - Modify: `infra/scripts/grafana-compare.py` (the comment above `DIRECT_SHIPPED_RULES`, "which reaches the node only at the cutover", re-trued: the seven read a stream that reached the node at its hand-over and Grafana Cloud no longer, so they stay outside the comparison)
-- Test: none new; the runbook walkers, and `tests/test_grafana_compare.py` for the comment.
+- Test: none new; `WALKERS`, `tests/test_engine_draftplan.py` for item 6's section, and `tests/test_grafana_compare.py` for the comment.
 
 **Interfaces:**
 - Consumes:
   - Task 4's files.
   - The seven rules and their selectors (`infra/grafana/alerts.yaml`). Each dead-man is `sum by (host) (count_over_time({host=…, container=…, level=~".+"} [6h])) or on() vector(0)` with `for: 0s` and `noDataState: Alerting`; each burst rule is `sum by (host, container, level, msg)` over the same stream's `ERROR|CRITICAL` lines.
-  - The shipper's counters `zcrypto_logship_shipped_lines_total` and `zcrypto_logship_dropped_lines_total`, under the jobs `liquidations_app`, `capture_app` and `engine_app` (the read `observability.md#zcrypto-logship` step 6 already uses).
+  - The shipper's counters `zcrypto_logship_shipped_lines_total` and `zcrypto_logship_dropped_lines_total`, under the jobs `liquidations_app`, `capture_app` and `engine_app` (the read the `zcrypto-logship` section's step 6 already uses).
 - Produces: `mon.md#mon-stream-handover`, which R6 to R9 follow and engine-procedures' item 6 cites.
 
 - [ ] **Step 1: Load `zcrypto-refine-rules`.**
 - [ ] **Step 2: The sweep** — `git grep -n -i -E 'logship|ship-logs|direct-ship|push their own logs' -- infra/runbooks infra/ops/README.md`, each hit read for a sentence that names Grafana Cloud's Loki or its token as the push's destination; kept as `.tmp/cutover/task5-sweep`.
 - [ ] **Step 3: The section, item 6's clause, the re-trued lines and the comment.**
-- [ ] **Step 4: The consumers** — `uv run pytest tests/test_internal_terms_not_operator_visible.py tests/test_runbook_internal_tokens.py tests/test_runbook_triggers.py tests/test_infra_alert_rules.py tests/test_grafana_compare.py tests/test_code_prose_citations.py tests/test_prose_chars.py -q -p no:cacheprovider`; Expected: no failure.
+- [ ] **Step 4: The consumers** — `WALKERS`, then `uv run pytest tests/test_engine_draftplan.py tests/test_grafana_compare.py tests/test_code_prose_citations.py tests/test_prose_chars.py tests/test_open_topics_frontmatter.py tests/test_topics_index.py -q -p no:cacheprovider`; Expected: no failure from either.
 - [ ] **Step 5: The commit gate.**
 - [ ] **Step 6: Commit** — `docs(runbooks): a direct-shipped stream's hand-over to the node, one sitting each, and the engine's at the box's deferred disarm converge`, with the trailer.
 - [ ] **Step 7: The tree is clean.**
@@ -360,20 +425,23 @@ Then the second pull request opens over Tasks 4 and 5, is read by a different ag
 - Modify: `infra/scripts/grafana-push.sh`:
   - `export GRAFANA_URL="${GRAFANA_URL:-https://zcrypto-mon.zhaow.me}"`.
   - The header's "With no GRAFANA_URL it goes to Grafana Cloud and leaves out the rule groups the observability node alone evaluates" is re-trued: with none it goes to the node, which takes every group, and a push addressed to Grafana Cloud leaves those groups out.
+  - The header's token sentence, "Obtain it with `grafana_auth.py`'s `vault_var("grafana_sa_token")`", re-trued to the token of the stack the push addresses: `grafana_auth.token("mon")` for the node, the default, and `token("cloud")` for Grafana Cloud.
   - The render paragraph (D9): the node runs no image renderer, so a dashboard is verified by reading each panel's query by value and looking at the panel.
+  - The comment above the refusal, "a rule of one that fires on no data would page the main channel", re-trued: it would page from Grafana Cloud for good, wherever its receivers point.
   - The host-keyed skip default and the refusal are unchanged.
+- Modify: `infra/grafana/alerts.yaml`'s comments over the `zcrypto-mon` and `zcrypto-hc` groups, "grafana-push.sh leaves this group out of a push that names no stack", re-trued to a push addressed to Grafana Cloud; comments alone, which no push carries.
 - Modify: `infra/scripts/ops_daily.py` (the comment above the `## Comparison` section, "a difference is a finding for the cutover pull request", cut to what stays true: the line is not a verdict and `exit_code` never reads it)
-- Test: `tests/test_grafana_auth.py` (the table test renamed `test_the_table_holds_the_two_stacks_and_reads_the_node_when_none_is_named`, asserting `DEFAULT_STACK == "mon"`, `stack() is STACKS["mon"]` and `GRAFANA_URL == STACKS["mon"].url`, and Grafana Cloud's row unchanged)
+- Test: `tests/test_grafana_auth.py` (the table test renamed `test_the_table_holds_the_two_stacks_and_reads_the_node_when_none_is_named`, asserting `DEFAULT_STACK == "mon"`, `stack() is STACKS["mon"]` and `GRAFANA_URL == STACKS["mon"].url`, and Grafana Cloud's row unchanged; `test_token_reads_the_named_stacks_token_var_from_its_own_file` reads `ga.token("cloud")` and then `ga.token()`, expecting `("grafana_sa_token", ga.VAULT_FILE)` and then the node's `(token_var, vault_file)`)
 - Test: `tests/test_grafana_query.py` (`test_no_stack_named_reads_grafana_cloud_with_its_token` becomes `test_no_stack_named_reads_the_node_with_its_token`; a case `--stack cloud` reads Grafana Cloud's URL with `grafana_sa_token`; the usage string unchanged)
-- Test: `tests/test_ops_daily.py` (`test_the_pass_reads_grafana_cloud_when_no_stack_is_named` becomes `test_the_pass_reads_the_node_when_no_stack_is_named`; the named case reads `--stack cloud`; the comparison's due-ness cases unchanged, since they read the table's length)
+- Test: `tests/test_ops_daily.py` (`test_the_pass_reads_grafana_cloud_when_no_stack_is_named` becomes `test_the_pass_reads_the_node_when_no_stack_is_named`; the named case reads `--stack cloud`; the due-ness case `one stack in the table` patches the table to `{"mon": STACKS["mon"]}`, the table retirement leaves, since a one-stack table that lacks the default stack makes `main` refuse the unnamed default; the other due-ness cases unchanged)
 - Test: `tests/test_grafana_push_sh.py`:
-  - `_cloud_url()` reads `grafana_auth.STACKS["cloud"].url`, loaded as `tests/test_grafana_auth.py` loads the module, in place of the script's default.
-  - `_cloud_url_forms()` loses its `"the default"` entry, which no longer spells Grafana Cloud.
+  - `_cloud_url()`'s body is the one line `return _GA.STACKS["cloud"].url`, `_GA` being the module loaded as `tests/test_grafana_auth.py` loads it, in place of the script's default.
+  - `_cloud_url_forms()`'s `"the default"` entry, now Grafana Cloud's plain URL, is renamed `"the plain URL"`, and `_RUNNABLE_SPELLINGS`' filter names the new key, so the refusal keeps its plainest spelling.
   - `test_a_push_that_names_no_stack_sends_no_rule_of_the_observability_node` becomes `test_a_push_that_names_no_stack_goes_to_the_node_and_sends_both_of_its_groups`: `GRAFANA_URL=""` sends `r3` and `r4`, and the first line ends `skip-groups=<none>`.
   - New: `test_the_scripts_default_stack_is_the_tools_default_stack`, holding the script's `GRAFANA_URL` default equal to `grafana_auth.STACKS[grafana_auth.DEFAULT_STACK].url`.
 
 **Interfaces:**
-- Consumes: the stack table and its two rows; the push script's host-keyed `skip_default` and its refusal (`grafana-push.sh:53-73`); every importer of `grafana_auth.GRAFANA_URL` and `DEFAULT_STACK` (`grafana-query.py`, `ops_daily.py`, `grafana-compare.py`, `ops-postverify.sh` through `grafana-query.py`).
+- Consumes: the stack table and its two rows; the push script's host-keyed `skip_default` and its refusal (`grafana-push.sh:53-73`); every importer of `grafana_auth.GRAFANA_URL` and `DEFAULT_STACK` (`grafana-query.py` and `ops_daily.py`, and `ops-postverify.sh` through `grafana-query.py`); `grafana-compare.py` reads the table's rows alone and is unmoved by the default.
 - Produces: a workstation whose unnamed reads and pushes go to the node, which Task 9's skills and R10 rely on.
 
 **What this task decides, where the spec leaves it open:**
@@ -382,21 +450,27 @@ Then the second pull request opens over Tasks 4 and 5, is read by a different ag
 
 - [ ] **Step 1: Write the failing tests.**
 - [ ] **Step 2: Run them and read the failure** — `uv run pytest tests/test_grafana_auth.py tests/test_grafana_query.py tests/test_ops_daily.py tests/test_grafana_push_sh.py -q -p no:cacheprovider`. Expected:
-  - the default cases fail on `cloud`;
+  - the default cases fail on `cloud`: the table, token, query and pass cases and the one-stack due-ness case;
   - the new equality case passes, both defaults still naming Grafana Cloud;
   - the rewired `_cloud_url()` cases pass unchanged.
-- [ ] **Step 3: The constant, the script's default, its header and render paragraph, and the comment.**
+- [ ] **Step 3: The constant; the script's default, its header's two paragraphs, its render paragraph and the comment above its refusal; the two `alerts.yaml` comments; and the `ops_daily.py` comment.**
 - [ ] **Step 4: Run the tests** — Expected: no failure.
 - [ ] **Step 5: The consumers** — every test file `grep -rl --include='test_*.py' 'grafana_auth\|grafana-query\|grafana-push\|ops_daily\|ops-daily\|grafana-compare\|ops-postverify' tests/ | sort` names, with `tests/test_scripts_have_tests.py`, `tests/test_code_prose_citations.py` and `tests/test_prose_chars.py`.
 - [ ] **Step 6: The commit gate.**
 - [ ] **Step 7: Commit** — `feat(grafana): the tools read and push to the observability node when no stack is named`, with `PROBE_VERDICT` and the trailer.
 - [ ] **Step 8: The tree is clean.**
-- [ ] **Step 9: Prove the guards, then record their verdicts by a message-only amend.** Mutations:
-  - `DEFAULT_STACK` back to `"cloud"`;
-  - the script's default back to Grafana Cloud's URL, with `DEFAULT_STACK` `"mon"`;
-  - the `*.grafana.net)` skip default emptied;
-  - the refusal's `exit 1` removed;
-  - `_cloud_url()`'s source back to the script's default, which the push cases then read as the node's and fail.
+- [ ] **Step 9: Prove the guards, then record their verdicts by a message-only amend.** Each mutation is anchored to one line: the refusal's `exit 1` is the script's one at ten spaces of indent, and the skip default's value appears once. Each run's control is `'1,$d'`, the file emptied, but the test file's, which collects nothing emptied and passes, so its control appends a failing module line:
+
+```bash
+probe() { infra/scripts/mutate-probe.sh --file "$1" --control "$2" --mutation "$3" -- uv run pytest tests/test_grafana_auth.py tests/test_grafana_query.py tests/test_ops_daily.py tests/test_grafana_push_sh.py -q -p no:cacheprovider; }
+probe infra/scripts/grafana_auth.py '1,$d' 's/^DEFAULT_STACK = "mon"$/DEFAULT_STACK = "cloud"/'
+probe infra/scripts/grafana-push.sh '1,$d' 's|^export GRAFANA_URL="${GRAFANA_URL:-https://zcrypto-mon.zhaow.me}"$|export GRAFANA_URL="${GRAFANA_URL:-https://zcrypto2026.grafana.net}"|'
+probe infra/scripts/grafana-push.sh '1,$d' 's/skip_default="zcrypto-mon zcrypto-hc"/skip_default=""/'
+probe infra/scripts/grafana-push.sh '1,$d' '/^          exit 1$/d'
+probe tests/test_grafana_push_sh.py '$a assert False' 's/^    return _GA.STACKS\["cloud"\].url$/    return _GA.STACKS["mon"].url/'
+```
+
+  Expected: five runs, each ending `mutate-probe: KILLED (control proven, tree restored byte-identically)`. The last points `_cloud_url()` at the node's row, the URL the script's default now names, so the push cases address the node and fail.
 
 ---
 
@@ -423,7 +497,15 @@ Then the second pull request opens over Tasks 4 and 5, is read by a different ag
 - [ ] **Step 6: The commit gate.**
 - [ ] **Step 7: Commit** — `feat(infra): the ops watchdog probes the observability node's health, the stack that pages`, with `PROBE_VERDICT` and the trailer.
 - [ ] **Step 8: The tree is clean.**
-- [ ] **Step 9: Prove the guard** — mutations: the default back to Grafana Cloud's URL; its path changed to `/api/search`. Each is KILLED, and the verdict is recorded by a message-only amend.
+- [ ] **Step 9: Prove the guard, then record the verdicts by a message-only amend:**
+
+```bash
+probe() { infra/scripts/mutate-probe.sh --file infra/ansible/roles/ops/defaults/main.yml --control '1,$d' --mutation "$1" -- uv run pytest tests/test_grafana_auth.py -q -p no:cacheprovider; }
+probe 's|^ops_grafana_watchdog_probe_url: "https://zcrypto-mon.zhaow.me/api/health"$|ops_grafana_watchdog_probe_url: "https://zcrypto2026.grafana.net/api/health"|'
+probe 's|^ops_grafana_watchdog_probe_url: "https://zcrypto-mon.zhaow.me/api/health"$|ops_grafana_watchdog_probe_url: "https://zcrypto-mon.zhaow.me/api/search"|'
+```
+
+  Expected: two runs, each ending `mutate-probe: KILLED (control proven, tree restored byte-identically)`.
 
 ---
 
@@ -439,34 +521,32 @@ Then the second pull request opens over Tasks 4 and 5, is read by a different ag
   - *What to do*: step 1's probe URL; step 2's dead-man read; step 5 gains D20's check after an outage, that a lost nightly `pull complete` line can fire the archive-pull dead-men for a day.
   - *Retire when* re-trued.
   - The page header (lines 3 and 5) and `#zcrypto-hcio-watchdog`'s probe target, its `/fail` route lines and its link are re-trued. The alloy-dark sections' "absent from Grafana Cloud" lines become absent on the stack that paged.
-  - The `grafana-cloud-dark` citations in `drills-telemetry.md` are re-pointed in the same commit.
+  - Each link to `grafana-cloud-dark` outside history is re-pointed in the same commit: `drills-telemetry.md`'s two, the page's own two (its header and `#zcrypto-hcio-watchdog`), and `ops-node.md`'s in `zcrypto-ops-grafana-keepalive-stale`'s *What it means*, whose "what reaches you is the healthchecks.io dead-man" is class (a), since from R10 the dead-man probes the node and no check probes Grafana Cloud.
+  - `#zcrypto-hcio-watchdog`, the runbook the clone's `zcrypto-grafana-watchdog` check names, reads a `/fail` page inside an announced stop of the node as that stop's.
 - Modify: `infra/runbooks/mon.md`:
   - `mon-dark`: "The fleet is still watched: Grafana Cloud's rules page the main channel throughout" becomes the shadow channel until the leg retires; Grafana Cloud's `zcrypto-hcio-watchdog` is in the shadow channel and the clone's `zcrypto-grafana-watchdog` in the main channel; steps 2 and 5's reads take `--stack cloud`.
   - `mon-push`: a push naming no stack goes to the node; step 1's line keeps its explicit URL; *What it means* names Grafana Cloud's push as the second.
-  - `mon-compare` step 3's re-read takes `--stack cloud` second.
+  - `mon-compare` step 3's re-read takes `--stack cloud` second. Steps 2 and 4 and *What it means*' last sentence, which send a difference to the cutover pull request and read the seven days for it, are re-trued in Task 9's words for the daily-ops skill: the comparison's line is recorded until the table holds one stack, and nothing waits on it.
 - Modify: `infra/runbooks/hc.md` (`hc-dark`'s "Grafana Cloud's rules page the main channel throughout" and the service's death through Grafana Cloud's `zcrypto-hcio-watchdog`, which now reaches the main channel from the node's copy; `zcrypto-hc-service-down`)
-- Modify: `infra/runbooks/engine.md` (`#zcrypto-engine-dark-with-exposure` step 1's stack names after the flip: the ingest-dark read with no `--stack`, the halves on Grafana Cloud with `--stack cloud`)
-- Modify: `infra/runbooks/drills-telemetry.md` (drill C′, "Grafana Cloud dark", re-pointed at the Grafana that pages, with its probe override's restore reading the new default; drill C's and the `W` sections' Grafana Cloud lines by the cut below)
-- Modify: the other hits of the sweep below in class (a), and `infra/grafana/alerts.yaml`'s summaries or comments where they say Grafana Cloud pages
-- Test: none new; the runbook walkers, and `tests/test_infra_alert_rules.py` and `tests/test_ops_daily.py` (the fixture's `Runbook:` anchors, of which none names `grafana-cloud-dark` at this plan's base).
+- Modify: `infra/runbooks/engine.md` (`#zcrypto-engine-dark-with-exposure` step 1's stack names after the flip: the ingest-dark read with no `--stack`, reading 0 or failing with a TLS error or a timeout for the edge, as Task 2 wrote it; with the edge clear, the halves read on the node with no `--stack`, and with it dark, on Grafana Cloud with `--stack cloud`)
+- Modify: `infra/runbooks/drills-telemetry.md` (drill C′, "Grafana Cloud dark", re-pointed at the Grafana that pages, with its probe override's restore reading the new default; drill C's and the `W` sections' Grafana Cloud lines by the cut below, drill W2's two reads of Grafana Cloud among them, the Cloud leg's `count_over_time` and the lines-lost count's first, each taking `--stack cloud`)
+- Modify, for the clone's `zcrypto-grafana-watchdog`, which from R10 probes the node's `/api/health` every five minutes and pings `/fail` on a failed probe: each procedure that stops the node's Grafana, its edge or the node itself announces that page in the main channel beforehand. At this plan's base they are `mon.md`'s `mon-store-restart` step 1, `mon-patch-pass` step 3 and `zcrypto-mon-reboot-pending` step 1, and the announcements of drills W1 (legs 3 and 4), W2 and W3 in `drills-telemetry.md`, W1's count of the pages its announcement names among them.
+- Modify: the pager sweep's other class (a) hits outside `.claude/`, and `infra/grafana/alerts.yaml`'s summaries or comments where they say Grafana Cloud pages
+- Test: none new; `WALKERS`, among them `tests/test_infra_alert_rules.py` and `tests/test_ops_daily.py` (the fixture's `Runbook:` anchors, of which none names `grafana-cloud-dark` at this plan's base).
 
 **Interfaces:**
 - Consumes: Tasks 6 and 7; D24; the measured W2 and W3 figures in `mon-dark`; the clone's checks `zcrypto-mon` and `zcrypto-grafana-watchdog` (spec 00122 D8).
 - Produces: `observability.md#grafana-dark`, the node-dark procedure phase 4 narrows by its Grafana Cloud clause.
 
 **What this task decides, where the spec leaves it open:**
-- **The cut between this phase and phase 4.** The sweep is the measured basis's: `git grep -n -i -E 'main channel|shadow channel|grafana cloud' -- infra/runbooks .claude docs/reference/fleet.md docs/reference/fleet-pins.md infra/grafana/alerts.yaml infra/scripts/ops_daily.py`. It printed 107 lines at this plan's base, and Task 2 and Task 5 have re-trued some since. Each hit falls in one of two classes:
-  - (a) It says which stack evaluates or pages a rule the reader is working, which channel a stack's page reaches, which URL the watchdog probes, or which stack a tool reads with no `--stack`. It is re-trued here.
-  - (b) It is about the Grafana Cloud leg's shipping, its keep-lists, its keep-alive, its retention, a past event, or why a rule's `execErrState` is `OK`. It is left to phase 4 or to history.
-
-  The commit message gives each class's count.
-- **The anchor is renamed,** since a heading that names Grafana Cloud over a procedure for the node is false. History (the drill log, archived topics, the specs and plans) keeps the old anchor in its text.
-- **A rule summary the sweep changes takes the dual push after the merge** (R10's last step). None is expected: the summaries the measured basis lists (`zcrypto-alloy-dark-hc`, `zcrypto-mon-ingest-dark`, `zcrypto-hcio-watchdog`) describe what reads a series, not where the page goes.
+- **The cut between this phase and phase 4** is the pager sweep's two classes (Global Constraints), run over its paths outside `.claude/`; Task 2 and Task 5 have re-trued some of its hits by then. The commit message gives each class's count.
+- **The anchor is renamed,** since a heading that names Grafana Cloud over a procedure for the node is false. History (the drill log, T0158's record of what landed, archived topics, the specs and plans) keeps the old anchor in its text.
+- **A rule summary the sweep changes takes the dual push after the merge** (R10's last step). None is expected: at this plan's base the sweep's one summary hit is `zcrypto-alloy-dark-hc`'s, which names what reads the service, not where the page goes.
 
 - [ ] **Step 1: Load `zcrypto-refine-rules`.**
-- [ ] **Step 2: The sweep**, kept as `.tmp/cutover/task8-sweep`, each hit classed (a) or (b).
+- [ ] **Step 2: The pager sweep**, kept as `.tmp/cutover/task8-sweep`, each hit outside `.claude/` classed (a) or (b).
 - [ ] **Step 3: The procedure, the rename and its citations, and the class (a) lines.**
-- [ ] **Step 4: The consumers** — `uv run pytest tests/test_internal_terms_not_operator_visible.py tests/test_runbook_internal_tokens.py tests/test_runbook_triggers.py tests/test_infra_alert_rules.py tests/test_ops_daily.py tests/test_drill_log.py tests/test_code_prose_citations.py -q -p no:cacheprovider`; Expected: no failure, `test_every_runbook_cross_reference_resolves` among them.
+- [ ] **Step 4: The consumers** — `WALKERS`, then `uv run pytest tests/test_drill_log.py tests/test_code_prose_citations.py -q -p no:cacheprovider`; Expected: no failure from either, `test_every_runbook_cross_reference_resolves` among them.
 - [ ] **Step 5: The commit gate.**
 - [ ] **Step 6: Commit** — `docs(runbooks): the node-dark procedure, and the pages that named Grafana Cloud as the pager name the node`, with the trailer.
 - [ ] **Step 7: The tree is clean.**
@@ -484,7 +564,7 @@ Then the second pull request opens over Tasks 4 and 5, is read by a different ag
   - Step 4's prune is unchanged in substance.
   - The `description` reads "to the observability node and, until its leg retires, Grafana Cloud".
 - Modify: `.claude/skills/zcrypto-daily-ops/SKILL.md` (the pass reads the node, the stack that pages, and `--stack cloud` reads Grafana Cloud's state; the clauses that name "the cutover" as ahead, its step 1 paragraph on the seven days and the rationalisation row's "a finding for the cutover pull request", re-trued: the comparison's line is still recorded until the table holds one stack, and nothing waits on it)
-- Modify: the other skills' lines in class (a) of Task 8's sweep (`.claude/skills/zcrypto-bump-alloy/SKILL.md` line 43, "Grafana Cloud holds no `host="zcrypto-mon"` … series: the two nodes' are read with … `--stack mon`", becomes a read with no stack named), each found by the same sweep over `.claude/`
+- Modify: the pager sweep's (Global Constraints) class (a) hits under `.claude/` in the other skills. At this plan's base they are the bump-alloy skill's line 43, "Grafana Cloud holds no `host="zcrypto-mon"` … series: the two nodes' are read with … `--stack mon`", which becomes a read with no stack named; its per-host reads under line 205's "In Cloud" and line 215's "read on Cloud and on the node", each taken on both stacks while the table holds two, the node with no `--stack` and Grafana Cloud with `--stack cloud`; and the rollout-image skill's line 107, whose read of a new family on the Grafana Cloud leg's keep-list takes `--stack cloud`.
 
 **Interfaces:**
 - Consumes: Tasks 6 to 8.
@@ -521,12 +601,13 @@ Then the third pull request opens over Tasks 6 to 9, once S4 is read and seven d
 3. **The stream gone from Grafana Cloud**, from five minutes after the restart: `--loki 'sum(count_over_time({host="<host>", container="<container>"}[5m]))'`; Expected: `(no series)`.
 4. **The node's dead-man inactive, then its silence ended:** `rules | jq -r '.data.groups[].rules[] | select(.uid == "<uid>") | "\(.uid) \(.state) \(.health)"'`; Expected: `<uid> inactive ok`. Then, where the silence's end is still ahead, the owner expires it in the node's UI. Then `silences | jq -c '.[] | select(any(.matchers[]; .name == "__alert_rule_uid__" and .value == "<uid>")) | {id, state: .status.state, endsAt}' | tee .tmp/cutover/silence-<uid>.json`; Expected: `"state":"expired"`, with `endsAt` the instant it ended.
 5. **Grafana Cloud's silences:** the owner silences, in Grafana Cloud's UI, the dead-man by `__alert_rule_uid__=<its uid>` and the burst rule by `__alert_rule_uid__=<its uid>`, `host="<host>"` and `container="<container>"`, each ending at [[ROLLOUT: the Grafana Cloud silences' end …]], and copies each silence's id into `.tmp/cutover/cloud-silences`.
+6. **The burst rule's pipeline on the node:** the burst rule's expression as `infra/grafana/alerts.yaml` holds it under its uid, with `level=~"ERROR|CRITICAL"` widened to `level=~".+"`, its selector narrowed to `host="<host>"` and `container="<container>"`, and its `or on() vector(0)` dropped, read by `uv run python infra/scripts/grafana-query.py --stack mon --loki '<that expression>'`; Expected: rows, each carrying a `msg` label, read inside the expression's 15-minute range once the shipper has logged after its restart.
 
-**The rollback of a moved stream** is `mon.md#mon-stream-handover`'s: Task 4's commit reverted on a branch and merged; the host converged in its sitting's form, which renders the old file and, on a capture host, restarts capture through the handler; the shipper restarted (the poller by `docker compose up -d`, the engine inside a gap under `engine-procedures.md`'s restart rules); the node's silence set again; Grafana Cloud's silences expired. On `zcrypto` the one file serves both shippers, so the revert returns the capture daemon's stream as well at its restart.
+**The rollback of a moved stream** is the Global Constraints' and `mon.md#mon-stream-handover`'s *Rollback*: Task 4's commit reverted returns every stream already moved, and each of them takes its sitting again.
 
 **Preconditions.** On `develop`:
 - the records branch `docs/t0217-phase-2-records`, with the drill-log entries `W1` to `W4`, the boundary bullet, T0217's phase-2 state and the `hc` edge's cookieless-`HEAD` route (`/checks/*`, `/cloaked/*`, cookie `sessionid`, its commit `276301e95`);
-- R12's pull request (`COMPARISON_FROM = date(2026, 10, 10)`).
+- plan 00123's R12 pull request (`COMPARISON_FROM = date(2026, 10, 10)`).
 
 **R0. The operands, read once.**
 - `git switch develop && git pull --ff-only && git status --porcelain` reads empty.
@@ -534,7 +615,13 @@ Then the third pull request opens over Tasks 6 to 9, once S4 is read and seven d
 - `KRAKEN` at planning.
 - `uv run python infra/scripts/ops-daily.py report --stack mon --since 24h | tee .tmp/cutover/r0-mon-report`. Its `## Alerts firing` lists the four direct-stream dead-men, firing on the node by design. Every other row there is resolved first, or named in R3's announcement as a page the main channel will take from the node at its policy's repeat interval.
 
-**R1. The differences, if the seven entries count any** (before Task 1's Step 4). For each day Task 1's Step 2 names, `W$ uv run python infra/scripts/grafana-compare.py --day <day> | tee .tmp/cutover/compare-<day>.txt` runs while both stacks still hold that day (Grafana Cloud keeps 14). Each difference line is re-read by `mon.md#mon-compare` step 3 at its instant, on both stacks, and its class is written beside it in the file: [[ROLLOUT: R1's differences — each line's rule, instant and class, or none]]. A run outside a pass counts for no day of the seven; this one reads the lines a pass prints only as a count.
+**R1. The differences, if the seven entries count any** (before Task 1's Step 4). An entry dated D carries the comparison of D − 1, the day the pass hands its runner (`ops_daily.read_comparison`). For each entry Task 1's Step 2 names, its compared day is run again while both stacks still hold it (Grafana Cloud keeps 14):
+
+```
+W$ day="$(date -u -d '<entry date> -1 day' +%F)" && uv run python infra/scripts/grafana-compare.py --day "$day" | tee ".tmp/cutover/compare-$day.txt"
+```
+
+Each difference line is re-read by `mon.md#mon-compare` step 3 at its instant, on both stacks, and its class is written beside it in the file: [[ROLLOUT: R1's differences — each line's rule, instant and class, or none]]. A run outside a pass counts for no day of the seven; this one reads the lines a pass prints only as a count.
 
 **R2. The node's four silences, before its receivers move** (the owner's ruling of 2026-10-08; spec D22(1)). The owner, signed in on the node, opens each dead-man's silence form at `https://zcrypto-mon.zhaow.me/alerting/silence/new` with the one matcher `__alert_rule_uid__=<uid>`. Each silence ends at its sitting's planned instant: [[ROLLOUT: the four sittings' planned instants on the hand-over day — S1 the poller, S2 the secondary's capture, S3 the primary's an hour after S2, S4 the engine's gap]]. Its comment names the sitting.
 
@@ -616,7 +703,7 @@ The reading is [[ROLLOUT: R4's page — its rule, its time and where its three l
 4. The capture gap the restart books is read on the pulled copy by the rollout-image skill's verify-by-outcome.
 5. The hand-over reads over `zcrypto-red`, `capture`, `capture_app`, `zcrypto-capture-log-dead-secondary`, and Grafana Cloud's `zcrypto-capture-log-dead-secondary` and `zcrypto-capture-error-logs` scoped to `host="zcrypto-red"`.
 
-**R8. S3 — the primary's capture daemon**, an hour after S2, away from a 4-hourly boundary and from any engine restart.
+**R8. S3 — the primary's capture daemon**, its converge started no earlier than an hour after R7's deploy-log row was written, away from a 4-hourly boundary and from any engine restart. A row's `ts` is stamped at its run's end, and `capture-daemon.md` step 4's count pairs capture rows on the two hosts 3600 s apart or less.
 1. `KRAKEN` immediately before.
 2. `W$ infra/ansible/scripts/converge.sh site.yml --limit zcrypto --tags capture -e converge_primary=true -e capture_image_digest=sha256:<running-capture> -e capture_alloy_digest=sha256:<running-alloy>`, never `--skip-tags engine`. The same preview and reads as S2, on `zcrypto-capture`. `zcrypto-engine`'s `StartedAt` is unmoved.
 3. `H$ sudo grep -c 'zcrypto-mon.zhaow.me' /opt/zcrypto-capture/logship-secrets.env` reads `1`, a count: the file the engine reads at its next start names the node.
@@ -657,7 +744,7 @@ W$ GRAFANA_URL=https://zcrypto2026.grafana.net \
 - **The daily pass reads the node.**
   - `W$ uv run python -c 'import sys; sys.path.insert(0, "infra/scripts"); import grafana_auth as g; print(g.DEFAULT_STACK, g.GRAFANA_URL)'` reads `mon https://zcrypto-mon.zhaow.me`.
   - `W$ uv run python infra/scripts/ops-daily.py report --since 1h` prints no `## Sources that could not be read` naming a Grafana source, and its `## Alerts firing` equals `--stack mon`'s.
-  - Rollback: Task 6's commit reverted.
+  - Rollback: the Global Constraints' revert of the default flip, Task 7's commit with Task 6's.
 - **The dual push:** where Task 8 changed `infra/grafana/alerts.yaml`'s text, the dual push of Task 9's skill follows, the node's first.
 
 The day is [[ROLLOUT: R10's day — Grafana Cloud's receivers moved to the shadow channel]].
@@ -670,7 +757,7 @@ The day is [[ROLLOUT: R10's day — Grafana Cloud's receivers moved to the shado
   - `## Findings so far` gains each sitting's readings and the four silences as read back, each uid with its `expired` state and the instant it ended. They come from `.tmp/cutover/silence-<uid>.json`, read in the sitting, since how long the node lists an expired silence is unread.
   - It also gains Grafana Cloud's silences' ids and ends, and R10's readings.
   - `## Done so far` gains this phase: the plan, the three pull requests, R3, the four sittings and R10.
-  - `## Suggested next steps` is cut to phase 4.
+  - `## Suggested next steps` is cut to phase 4 and lists the Resolution's phase-4 items, the hole first: from R10 the observability node and the dead-man node dark together page nothing in the main channel. Grafana Cloud's silences' end is named there, for retirement to start before it or re-date it.
   - `status: partial` stays.
   - `ripe_when` becomes the date [[ROLLOUT: R10's day …]] plus seven days, retirement's earliest day under D23, the check `date -u +%F`. The gate's second half, nothing in the shadow channel that the node did not also page, is named in the next steps.
 - `uv run python infra/scripts/topics-index.py`.
@@ -690,11 +777,11 @@ It settles what the spec left to this phase:
 - the line between the operator surfaces this phase re-trues and phase 4's.
 
 It does not deliver phase 4, which takes from this plan:
-- `logship_loki_token`, read by no role after Task 4, free to leave the vault with the other Grafana Cloud values;
+- `logship_loki_token`, read by no role after Task 4, free to leave the vault with the other Grafana Cloud values, and with them the comment in `group_vars/observed/vault.yml` that names `logship-secrets.env.j2` as the reader of `grafana_loki_url` and `grafana_loki_user`, false from Task 4 and left there because no executor prints that file;
 - Grafana Cloud's silences, deleted with its rules;
 - the shadow channel's read for retirement's gate;
 - `observability.md#grafana-dark`'s clause on Grafana Cloud's shadow-channel pages, and the hole it states while both nodes are dark, which that phase's plan answers or carries;
-- the class (b) lines of Task 8's sweep;
+- the class (b) lines of the pager sweep;
 - the skills' dual-period clauses, `GRAFANA_SKIP_RULE_GROUPS`, the stack table's second row and `mon.md`'s `mon-compare`, `mon-push` dual wording and `mon-stream-handover`, each of which retires with the table.
 
 ## Slots the rollout fills
