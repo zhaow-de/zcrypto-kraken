@@ -131,6 +131,16 @@ def test_preflight_refuses_a_config_whose_dirs_lie_outside_the_state_dir(host, t
     assert line["journal"] is None
 
 
+def test_preflight_refuses_a_relative_store_dir_outside_a_dot_state_dir(host):
+    _, work = host
+    _write_config(work, "../elsewhere/store", "../elsewhere/journal")
+    code, line = _preflight(Path("."))
+    assert code == 1
+    assert "store_dir" in line["config"]
+    assert line["stores_missing"] is None
+    assert line["journal"] is None
+
+
 def test_preflight_refuses_an_unverified_library_version(host, monkeypatch):
     state, _ = host
     monkeypatch.setattr("cli.engine.preflight._verified_nautilus_versions", lambda: frozenset({"0.0.0"}))
@@ -177,6 +187,18 @@ def test_preflight_refuses_an_unloadable_newest_cycle_record(host):
     code, line = _preflight(state)
     assert code == 1
     assert "invalid journal JSON" in line["journal"]
+
+
+def test_preflight_refuses_an_unreadable_newest_cycle_record(host):
+    state, _ = host
+    newest = state / "journal" / "2026-10-08" / "cycle-0.json"
+    newest.mkdir(parents=True)
+    with pytest.raises(IsADirectoryError) as refused:
+        newest.read_text()
+    code, line = _preflight(state)
+    assert code == 1
+    assert line["journal"] == f"{newest}: {refused.value}"
+    assert line["ok"] is False
 
 
 def test_preflight_reports_journal_none_without_a_record(host):

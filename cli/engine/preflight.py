@@ -32,7 +32,7 @@ class PreflightResult:
 
 
 def _under(path: Path, root: Path) -> bool:
-    return Path(os.path.normpath(path)).is_relative_to(os.path.normpath(root))
+    return Path(os.path.normpath(path)).is_relative_to(os.path.abspath(root))
 
 
 def _check_config(state_dir: Path) -> tuple[str, EngineConfig | None]:
