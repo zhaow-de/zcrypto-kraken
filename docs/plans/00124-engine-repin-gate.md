@@ -6,7 +6,7 @@
 
 **Goal:** An engine re-pin is refused unless the candidate image's own `zcrypto engine preflight` passed on the engine host against a candidate render of its configuration and the image's revision is a merge on the first-parent line of `develop` or `main`, or a reason-bearing `engine_preflight_override` is on the record; the capture bake no longer gates the engine (spec 00124).
 
-**Architecture:** Six tasks on `feat/00124-engine-repin-gate`, one pull request. The subcommand first, because the role's tests describe the command the role runs and the rule names the subcommand; then the role, the wrapper, the counts, the prose, and the final sweep. The first image to carry the preflight is the one built from the merged tree; the rollout slots below are read at that rollout, by the rollout skill's engine lines Task 5 adds.
+**Architecture:** Seven tasks on `feat/00124-engine-repin-gate`, one pull request. The subcommand first, because the role's tests describe the command the role runs and the rule names the subcommand; then the role, the wrapper, the counts, the prose, and the final sweep. The first image to carry the preflight is the one built from the merged tree; the rollout slots below are read at that rollout, by the rollout skill's engine lines Task 5 adds.
 
 **Tech Stack:** Typer (`cli/engine/command.py`), the exec gate's readers (`cli/engine/execgate.py`), Ansible 2.x with the Templar test substrate (`tests/test_infra_converge_guards.py`), bash (`infra/ansible/scripts/converge.sh` and its python3 row writer, `infra/scripts/count-list.sh`), jq (the counts), `infra/scripts/mutate-probe.sh`.
 
@@ -111,7 +111,21 @@
 - [ ] `fleet-pins.md:44` per D7; `engine-procedures.md`'s dry-run section (:768-790) gains D7's sentence. Commit `docs(reference): fleet-pins names the engine's preflight gate` and `docs(runbooks): the dry run owes only the account read now that the converge runs the preflight`.
 - [ ] Run: `uv run pytest tests/test_internal_terms_not_operator_visible.py tests/test_guidance_refs_resolve.py tests/test_guidance_guard.py tests/test_count_list.py tests/test_ops_daily.py tests/test_fleet_contracts.py tests/test_message_citations.py -q -p no:cacheprovider` → `Expected: all passed`; `uv run python infra/scripts/guidance-guard.py --range develop..HEAD` → `Expected: every commit states its ambient growth`; `infra/scripts/count-list.sh ambient-bytes` and the ratio again, the deltas recorded in the PR body.
 
-### Task 6: The sweep and the body
+### Task 6: The merge gate refuses a behind pull request that touches an image path
+
+**Files:** `infra/scripts/merge-gate.py`, `tests/test_merge_gate.py`, `.claude/skills/merge-pr/SKILL.md`.
+
+**Steps:**
+
+- [ ] Read `infra/scripts/merge-gate.py`'s gate arms (the `fails.append(...)` sites near :459) and how `tests/test_merge_gate.py` drives each arm with a stubbed pull request; read `.github/workflows/capture-image.yml:3-13` for the four path filters.
+- [ ] Tests first: `test_a_behind_pr_touching_an_image_path_is_refused` (a stubbed PR with `mergeStateStatus == "BEHIND"` whose changed files include one of `cli/engine/x.py`, `pyproject.toml`, `uv.lock`, `infra/docker/Dockerfile` — parametrised over the four — fails the gate with a line naming the path and the remedy "merge develop into the branch"); `test_a_behind_pr_touching_no_image_path_passes` (the same PR changing `docs/x.md` alone passes the arm); `test_a_clean_pr_touching_an_image_path_passes` (`mergeStateStatus == "CLEAN"`, an image path changed: the arm is silent).
+- [ ] Implement the arm in `merge-gate.py`: when `mergeStateStatus == "BEHIND"`, the changed files are read the way the gate already reads the diff (or `gh pr diff <n> --name-only` through the existing GitHub call site), and any path matching `cli/**`, `pyproject.toml`, `uv.lock` or `infra/docker/**` appends a failure line: `mergeStateStatus=BEHIND and the diff touches <path>, an input of the engine image — merge develop into the branch so the suite runs on the tree that merges (the merge is admitted past the read line)`.
+- [ ] `.claude/skills/merge-pr/SKILL.md` gate item 3: after "being behind `develop` is reconciled by the merge", the exception — a behind pull request that touches an image path is refused by the gate's own arm — one clause; a `claude(skills)` commit alone, with its `Ambient grows by` line only if the description line changed (it does not).
+- [ ] Run: `uv run pytest tests/test_merge_gate.py -q -p no:cacheprovider` → `Expected: all passed`; the gate on a real PR, read-only: `uv run python infra/scripts/merge-gate.py <an open PR number> 2>&1 | tail -3` prints its verdict without a traceback.
+- [ ] Probe: the path match narrowed to `pyproject.toml` alone against `-k touching_an_image_path_is_refused` → `Expected: KILLED (control proven …)`.
+- [ ] Commit `feat(infra): the merge gate refuses a behind pull request whose diff touches an engine-image path` with the verdict, then the skill commit.
+
+### Task 7: The sweep and the body
 
 **Files:** none new.
 
