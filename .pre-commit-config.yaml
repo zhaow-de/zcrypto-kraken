@@ -44,6 +44,7 @@ repos:
         args: ["--allow-multiple-documents", "--unsafe"]
         exclude: '^infra/ansible/(group_vars/.*/vault\.yml|host_vars/.*/vault\.yml|vault-password\.sops\.yaml)$'
       - id: debug-statements
+      - id: detect-private-key
       # A recorded registry index keeps the registry's bytes: its sha256 is the digest file beside it.
       - id: end-of-file-fixer
         stages: [pre-commit]
