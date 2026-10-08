@@ -329,6 +329,7 @@ def _render_engine_toml(**values) -> str:
     context = {
         "engine_state_dir": "/var/lib/zcrypto-engine",
         "engine_exec_armed_in_tree": False,  # the arming backstop's fact, a native bool
+        "engine_accumulation_enabled": False,
         "engine_exec_max_plan_notional_eur": "100.0",
         "engine_shadow_nav_eur": "1000.0",
         "engine_settle_delay_secs": "90",
@@ -380,6 +381,21 @@ def test_the_engine_role_template_renders_the_tracking_band_only_when_the_host_s
     assert load_config(_write(tmp_path, rendered)).engine.tracking_band_bps == band
     # Setting the band inserts its one line and moves no other, so a converge diff shows that line alone.
     assert rendered.replace(f"tracking_band_bps = {band}\n", "", 1) == _render_engine_toml(), rendered
+
+
+@pytest.mark.parametrize(
+    "enabled", [None, "false", "true", True], ids=["the-role-default", "false-by-an-extra-var", "true-by-an-extra-var", "true"]
+)
+def test_the_engine_role_template_renders_the_accumulation_switch_only_when_the_host_turns_it_on(tmp_path, enabled):
+    defaults = yaml.safe_load(Path("infra/ansible/roles/engine/defaults/main.yml").read_text())
+    assert defaults["engine_accumulation_enabled"] is False
+    value = defaults["engine_accumulation_enabled"] if enabled is None else enabled
+    on = str(value).lower() == "true"
+    rendered = _render_engine_toml(engine_accumulation_enabled=value)
+    assert load_config(_write(tmp_path, rendered)).engine.accumulation_enabled is on
+    # Off renders no line an image built before the key would refuse; on inserts its one line and moves no other.
+    assert ("accumulation_enabled" in rendered) is on, rendered
+    assert rendered.replace("accumulation_enabled = true\n", "", 1) == _render_engine_toml(), rendered
 
 
 def test_committed_zcrypto_toml_has_no_engine_table():

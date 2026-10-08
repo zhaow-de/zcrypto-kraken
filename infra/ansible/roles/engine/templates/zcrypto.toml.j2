@@ -10,6 +10,10 @@ journal_dir = "{{ engine_state_dir }}/journal"
 exec_enabled = true
 # Rendered explicitly so a converge diff shows it, from the backstop's fact over this host's vars.yml; arming also needs the exec/armed file on the host.
 exec_armed = {{ engine_exec_armed_in_tree | lower }}
+{# The accumulation loop's own switch, rendered only when on: an image built before the key refuses a config that carries it, and an absent key reads false. #}
+{% if engine_accumulation_enabled | bool %}
+accumulation_enabled = true
+{% endif %}
 # Rendered explicitly, like exec_armed above, so a converge diff shows it — the blast-radius
 # bound on a single plan's total notional.
 exec_max_plan_notional_eur = {{ engine_exec_max_plan_notional_eur }}
