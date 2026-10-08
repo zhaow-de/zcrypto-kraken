@@ -14,22 +14,22 @@ Reading rules:
 
 | service | host | digest (sha256, first 12) | since (UTC) | rollback operand (resident on the host at the re-pin) |
 | --- | --- | --- | --- | --- |
-| capture | zcrypto | `f102ca375382` — revision `7ab4fc1a` | 2026-09-30 18:21:10 | `3f291f3cee57` |
-| capture | zcrypto-red | `f102ca375382` — revision `7ab4fc1a` | 2026-09-30 14:06:03 | `3f291f3cee57` |
+| capture | zcrypto | `f102ca375382` — revision `7ab4fc1a` | 2026-10-08 15:24:21 | `3f291f3cee57` |
+| capture | zcrypto-red | `f102ca375382` — revision `7ab4fc1a` | 2026-10-08 15:21:15 | `3f291f3cee57` |
 | engine | zcrypto | `f102ca375382` — revision `7ab4fc1a` | 2026-09-30 18:22:02 | `3f291f3cee57` |
 | cache-proxy | zcrypto | `76928c0d6b39` — HAProxy 3.4.5, upstream `haproxy` | 2026-09-30 18:22:02 | first pin |
 | alloy | zcrypto | `2aa2099af76c` — v1.20.1 | 2026-10-07 12:14:42 | `b8ec653c4423` — v1.19.2 |
 | alloy | zcrypto-red | `2aa2099af76c` — v1.20.1 | 2026-10-07 11:18:55 | `b8ec653c4423` — v1.19.2 |
-| alloy | zcrypto-ops | `2aa2099af76c` — v1.20.1 | 2026-10-07 10:51:17 | `b8ec653c4423` — v1.19.2 |
-| alloy | nas | `2aa2099af76c` — v1.20.1, upstream `grafana/alloy`, no `-compat` variant | 2026-10-07 11:02:40 | `b8ec653c4423` — v1.19.2 |
+| alloy | zcrypto-ops | `2aa2099af76c` — v1.20.1 | 2026-10-08 15:03:26 | `b8ec653c4423` — v1.19.2 |
+| alloy | nas | `2aa2099af76c` — v1.20.1, upstream `grafana/alloy`, no `-compat` variant | 2026-10-08 15:08:39 | `b8ec653c4423` — v1.19.2 |
 | valkey + sentinel | zcrypto-valkey1 | `418652cfb58e` — Valkey 9.1.2, upstream `valkey/valkey` | 2026-09-26 21:20:54 | first pin |
 | alloy | zcrypto-valkey1 | `2aa2099af76c` — v1.20.1 | 2026-10-07 11:05:54 | `b8ec653c4423` — v1.19.2 |
 | valkey + sentinel | zcrypto-valkey2 | `418652cfb58e` — Valkey 9.1.2, upstream `valkey/valkey` | 2026-09-26 21:24:03 | first pin |
 | alloy | zcrypto-valkey2 | `2aa2099af76c` — v1.20.1 | 2026-10-07 11:10:11 | `b8ec653c4423` — v1.19.2 |
 | valkey + sentinel | zcrypto-valkey3 | `418652cfb58e` — Valkey 9.1.2, upstream `valkey/valkey` | 2026-09-26 21:28:18 | first pin |
 | alloy | zcrypto-valkey3 | `2aa2099af76c` — v1.20.1 | 2026-10-07 11:14:05 | `b8ec653c4423` — v1.19.2 |
-| ops (timers + liquidations) | zcrypto-ops | `3f291f3cee57` — revision `77df6273` | 2026-09-24 20:04:48 | `7d4c6066d71e` |
-| archive-pull | nas | `d914dad91536` — revision `7ab4fc1a`, the `-compat` build | 2026-09-30 19:17:40 | `c4135ac75b72` |
+| ops (timers + liquidations) | zcrypto-ops | `3f291f3cee57` — revision `77df6273` | 2026-10-08 15:03:44 | `7d4c6066d71e` |
+| archive-pull | nas | `d914dad91536` — revision `7ab4fc1a`, the `-compat` build | 2026-10-08 15:08:37 | `c4135ac75b72` |
 
 **Non-image pins.** `zaccess`'s `caddy` is an apt package the access role installs unversioned, clearing a `dpkg` hold, so it has no row and no rollback operand here; read its installed version off the host: `dpkg-query -W caddy`. Alloy on the hosts that run it as a package, `zaccess` and `zcrypto-mon`, is installed at `alloy_deb_version` in `infra/ansible/group_vars/observed/alloy.yml`, held and pinned, and takes an `alloy` row in the table below: its version the host's `dpkg-query -W alloy` read after its first `--tags alloy` converge, its notes `dpkg hold; pinned at 1001`; the word `held` in the notes, its reason after it, marks a host a wave left behind.
 
