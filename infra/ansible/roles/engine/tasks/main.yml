@@ -222,7 +222,7 @@
     and (pins_override | default('') | string | lower not in ['true', 'false', '1', 'yes'])
 
 # The cache proxy's image takes the engine image's residency and pins guards; its upstream image carries no
-# `zcrypto` command, so it takes neither the engine's preflight nor a bake.
+# `zcrypto` command, so it takes no preflight.
 - name: fail fast if the pinned cache proxy image digest was not supplied
   ansible.builtin.assert:
     that: engine_cache_proxy_image_digest | length > 0
@@ -394,20 +394,9 @@
 # after the workstation's `zcrypto engine seed` has returned, never beside it: a mid-write copy could
 # deliver a truncated parquet.
 #
-# VPS store repair, since `zcrypto engine seed` is workstation-only and the image carries no
-# canonical dataset (infra/runbooks/engine.md, zcrypto-engine-cycle-stale, holds the procedure):
-# repair the leg in the workstation's data/engine-store/ first, since that is the source this copy
-# delivers and a re-run delivers it again; then stop the unit, move the store dir aside beside
-# itself rather than deleting it (unversioned data has no undo), re-run the engine-tagged converge
-# with `-e converge_primary=true`, the digest and `-e '{"engine_preflight_override": "<reason>"}'` with
-# the user's approval (the stopped unit's preview finds the store aside and the preflight refuses on its
-# missing files), inside the inter-cycle gap and outside a published Kraken maintenance window -- the
-# flag is required or the guard drops this host and the engine play silently skips -- so the
-# only-when-absent copy re-delivers the workstation's data/engine-store/ and
-# this play starts the unit; the aside dir is purged once the refused file has been read and the
-# runbook's all-clear by value has landed. A seed or a boundary that refuses naming the REST fetch
-# rather than a file is a row the venue itself carries: it is the venue's to answer, nothing was
-# written, and no store repair or converge reaches it.
+# VPS store repair: `zcrypto engine seed` is workstation-only and the image carries no canonical dataset, so the
+# repair goes through this only-when-absent copy; infra/runbooks/engine.md's zcrypto-engine-cycle-stale section
+# holds the procedure, and the store assert's fail_msg below names the converge it re-runs, the preflight bypass included.
 - name: probe whether the store was already delivered (BTC subtree present)
   ansible.builtin.stat:
     path: "{{ engine_state_dir }}/store/BTC"
@@ -463,12 +452,9 @@
     group: root
     mode: "0755"
 
-# The engine's re-pin gate: the candidate image's own preflight, offline and read-only against this host's state dir
-# and a candidate render of the configuration, and its revision label a first-parent merge of the controller's develop
-# or main. It runs on every converge, the running digest's included: a read of what runs or of what the compose file
-# pins would skip a candidate staged on the host before the converge. No `rescue` on the block and no `ignore_errors`,
-# `failed_when` or `when` on either assert: each turns a refusal into a pass and the play renders the refused digest.
-# No `no_log`, `success_msg`, `quiet` or `verbosity` either: the rollout's preview reads their default output.
+# The engine's re-pin gate, run on every converge, the running digest's included: a read of what runs or of what the
+# compose file pins would skip a candidate the rollout staged in the compose pin before the converge. Nothing here may
+# turn a refusal into a pass or hide the default output the rollout's preview reads; the tests list the keys that would.
 - name: engine preflight — run the candidate image's own preflight on this host
   block:
     - name: engine preflight — render the candidate configuration beside the live one
@@ -569,7 +555,6 @@
       check_mode: false
       changed_when: false
 
-# The file site.yml's window task wrote: read back and written with `preflight` merged in, so the window's keys stay.
 - name: engine preflight — this run's preflight, for the deploy-log row
   ansible.builtin.copy:
     dest: "{{ zcrypto_window_record }}"

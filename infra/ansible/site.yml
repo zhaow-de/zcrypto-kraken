@@ -159,9 +159,8 @@
       tags: [engine, cache-link]
 
     # converge.sh names this file and books the window's keys in the run's deploy-log row as `window`, which the
-    # deploy-log audit judges an engine row on; the `preflight` the engine role merges into the same file lands in the
-    # row beside `window`, not inside it. `engine_window_floor` and `engine_window_journal` mirror the assert's floor
-    # and its journal test character-for-character, as the echo mirrors the window.
+    # deploy-log audit judges an engine row on. `engine_window_floor` and `engine_window_journal` mirror the assert's
+    # floor and its journal test character-for-character, as the echo mirrors the window.
     # `noqa: run-once[task]`: the rule warns of the `free` strategy, and this play runs under the default linear one.
     - name: engine window — the floor this run was admitted on, for the deploy-log row  # noqa: run-once[task]
       ansible.builtin.copy:
