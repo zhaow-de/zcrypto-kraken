@@ -2442,6 +2442,22 @@ def test_an_unset_hc_backup_source_skips_the_pull(tmp_path, source):
     assert (run.returncode, run.stderr, calls) == (0, "", [])
 
 
+def test_the_hc_backup_source_the_env_renders_reaches_the_pull_through_compose(tmp_path):
+    rendered = [line for line in _render_nas_env("incremental").splitlines() if line.startswith("HC_BACKUP_SOURCE=")]
+    assert rendered == ["HC_BACKUP_SOURCE=<nas_hc_backup_source>"], rendered
+    value = rendered[0].partition("=")[2]
+    passed = yaml.safe_load(NAS_COMPOSE.read_text())["services"]["archive-pull"]["environment"].get("HC_BACKUP_SOURCE", "")
+    seen = subprocess.run(
+        ["bash", "-c", f'echo "{passed}"'],
+        capture_output=True,
+        text=True,
+        env={"HC_BACKUP_SOURCE": value, "PATH": os.environ["PATH"]},
+    ).stdout.strip()
+    assert seen == value, f"compose passes {passed!r}, which the container reads as {seen!r}"
+    run, calls = _hc_backup_pull(tmp_path, source=seen)
+    assert [call[-2] for call in calls] == [value], run.stderr
+
+
 # --- A6: the echo's negated clause and the assert's first disjunct must stay the same expression;
 # both are extracted from the committed YAML, because retyping either here would only move the drift.
 OPS_PINS_ECHO = "pins override accepted — the reason, on the record"
