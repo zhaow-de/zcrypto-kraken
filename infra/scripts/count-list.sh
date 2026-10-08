@@ -127,9 +127,25 @@ floor = os.environ["COUNT_LIST_FLOOR"]
 
 heads = json.loads(pathlib.Path(os.environ["COUNT_LIST_HEADS_SNAPSHOT"]).read_text()) if os.environ.get(
     "COUNT_LIST_HEADS_SNAPSHOT") else None
+GH_TIMEOUT = float(os.environ.get("COUNT_LIST_GH_TIMEOUT") or 120)
 
 
-def commit_of(sha):
+def gh(*args):
+    """`gh <args>` run under GH_TIMEOUT, or None when it gave no answer in time."""
+    try:
+        return subprocess.run(["gh", *args], capture_output=True, text=True, timeout=GH_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return None
+
+
+def refuse(what, done):
+    # Exit 2, not 1: this entry's other refusals exit 2, and `emit` reads 1 as a zero COUNT.
+    why = f"no answer in {GH_TIMEOUT:g}s" if done is None else f"exit {done.returncode}: {done.stderr.strip()[:200]}"
+    print(f"count-list: {what}: {why}", file=sys.stderr)
+    raise SystemExit(2)
+
+
+def commit_of(sha, number):
     """The commit object the change-index-row exception reads -- a head that is the row commit over the tip the
     body names -- and the full sha of the read the clone arm fetches by, asked for only by a row that fails on
     nothing else. COUNT_LIST_HEADS_SNAPSHOT names a recorded `{oid: commit}` map, keyed by full oid and matched by
@@ -140,10 +156,10 @@ def commit_of(sha):
         return next((c for oid, c in heads.items() if oid.startswith(sha)), None)
     if offline:
         return None
-    done = subprocess.run(
-        ["gh", "api", f"repos/{gate.REPO}/commits/{sha}"],
-        capture_output=True, text=True, timeout=60,
-    )
+    done = gh("api", f"repos/{gate.REPO}/commits/{sha}")
+    if done is None:
+        refuse(f"PR #{number}'s commit {sha} could not be fetched -- whether the read covers the head cannot be decided", done)
+    # A failed run answers None, not a refusal: the body may name a tip GitHub never saw.
     return json.loads(done.stdout) if done.returncode == 0 and done.stdout.strip() else None
 
 
@@ -153,7 +169,6 @@ def read_sha(pr):
 
 files_snapshot = json.loads(pathlib.Path(os.environ["COUNT_LIST_FILES_SNAPSHOT"]).read_text()) if os.environ.get(
     "COUNT_LIST_FILES_SNAPSHOT") else None
-FILES_TIMEOUT = float(os.environ.get("COUNT_LIST_FILES_TIMEOUT") or 120)
 
 
 def file_paths(pr):
@@ -167,22 +182,9 @@ def file_paths(pr):
     elif offline:
         return paths
     else:
-        try:
-            done = subprocess.run(
-                ["gh", "api", "--paginate", f"repos/{gate.REPO}/pulls/{pr.get('number')}/files", "--jq", gate.PR_FILES_JQ],
-                capture_output=True, text=True, timeout=FILES_TIMEOUT,
-            )
-            why = None if done.returncode == 0 else f"exit {done.returncode}: {done.stderr.strip()[:200]}"
-        except subprocess.TimeoutExpired:
-            why = f"no answer in {FILES_TIMEOUT:g}s"
-        if why is not None:
-            # `return 2`, not 1: this entry's other refusals exit 2, and `emit` reads 1 as a zero COUNT.
-            print(
-                f"count-list: PR #{pr.get('number')}'s file list could not be fetched -- the Fable-path arm cannot "
-                f"be decided: {why}",
-                file=sys.stderr,
-            )
-            raise SystemExit(2)
+        done = gh("api", "--paginate", f"repos/{gate.REPO}/pulls/{pr.get('number')}/files", "--jq", gate.PR_FILES_JQ)
+        if done is None or done.returncode != 0:
+            refuse(f"PR #{pr.get('number')}'s file list could not be fetched -- the Fable-path arm cannot be decided", done)
         fetched = [line for line in done.stdout.splitlines() if line.strip()]
     return fetched + [p for p in paths if p not in fetched]
 
@@ -203,17 +205,13 @@ def with_commits(pr):
         return {**pr, "commits": commits_snapshot.get(number, [])}
     if offline:
         return pr
-    done = subprocess.run(
-        ["gh", "pr", "view", number, "--json", "commits"],
-        capture_output=True, text=True, timeout=60,
-    )
-    if done.returncode != 0:
-        print(
-            f"count-list: PR #{number} is a dependabot branch whose commits could not be fetched, so the "
-            f"no-fix-commit exemption cannot be decided: {done.stderr.strip()[:200]}",
-            file=sys.stderr,
+    done = gh("pr", "view", number, "--json", "commits")
+    if done is None or done.returncode != 0:
+        refuse(
+            f"PR #{number} is a dependabot branch whose commits could not be fetched, so the no-fix-commit exemption "
+            "cannot be decided",
+            done,
         )
-        raise SystemExit(2)
     return {**pr, "commits": (json.loads(done.stdout) or {}).get("commits") or []}
 
 
@@ -233,7 +231,7 @@ def kept(pr):
     merge = (pr.get("mergeCommit") or {}).get("oid")
     if offline or not merge:
         return None
-    read = (commit_of(read_sha(pr)) or {}).get("sha") or read_sha(pr)
+    read = (commit_of(read_sha(pr), pr.get("number")) or {}).get("sha") or read_sha(pr)
     return gate.head_is_the_read(read, head, f"{merge}^", cwd=root)
 
 
@@ -246,7 +244,7 @@ for pr in json.loads(pathlib.Path(sys.argv[2]).read_text()):
     fails = gate.read_line_fails(pr, None, files)
     head_commit = None
     if fails and all("not the head" in f for f in fails):
-        head_commit = commit_of(pr.get("headRefOid"))
+        head_commit = commit_of(pr.get("headRefOid"), pr.get("number"))
         fails = gate.read_line_fails(pr, head_commit, files)
     if fails and all("not the head" in f for f in fails):
         fails = gate.read_line_fails(pr, head_commit, files, kept(pr))  # the clone is asked only where the row arm did not admit

@@ -483,29 +483,30 @@ def test_a_truncated_file_list_is_refetched_before_the_fable_arm_decides(tmp_pat
 
 _FAKE_GH = """#!/usr/bin/env bash
 dir="$(dirname "$0")"
-if [ "$1 $2" = "pr list" ]; then exec cat "$dir/prs.json"; fi
-if [ "$1 $2 $4" = "api --paginate --jq" ]; then
-  n="${3%/files}"
-  n="${n##*/}"
-  [ -e "$dir/hang-$n" ] && exec sleep 10
-  [ -f "$dir/files-$n.json" ] || { echo "HTTP 502: Bad Gateway" >&2; exit 1; }
-  exec jq -r "$5" "$dir/files-$n.json"
-fi
-echo "fake gh: $*" >&2
-exit 64
+case "$1 $2" in
+  "pr list") exec cat "$dir/prs.json" ;;
+  "api --paginate") n="${3%/files}"; key="files-${n##*/}" ;;
+  "pr view") key="commits-$3" ;;
+  api\\ repos/*/commits/*) key="commit-${2##*/}" ;;
+  *) echo "fake gh: $*" >&2; exit 64 ;;
+esac
+[ -e "$dir/hang-$key" ] && exec sleep 10
+[ -f "$dir/$key.json" ] || { echo "HTTP 502: Bad Gateway" >&2; exit 1; }
+[ "$4" = "--jq" ] && exec jq -r "$5" "$dir/$key.json"
+exec cat "$dir/$key.json"
 """
 
 
 def _live_count(
-    tmp_path: pathlib.Path, rows: list[dict], entries: dict[int, list[dict]], hang: tuple[int, ...] = (), **env: str
+    tmp_path: pathlib.Path, rows: list[dict], entries: dict[int, list[dict]], hang: tuple[str, ...] = (), **env: str
 ) -> subprocess.CompletedProcess:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "prs.json").write_text(json.dumps(rows))
     for number, listed in entries.items():
         (bin_dir / f"files-{number}.json").write_text(json.dumps(listed))
-    for number in hang:
-        (bin_dir / f"hang-{number}").touch()
+    for key in hang:
+        (bin_dir / f"hang-{key}").touch()
     (bin_dir / "gh").write_text(_FAKE_GH)
     (bin_dir / "git").write_text(f'#!/usr/bin/env bash\n[ "$1" = fetch ] && exit 0\nexec "{shutil.which("git")}" "$@"\n')
     for name in ("gh", "git"):
@@ -566,9 +567,34 @@ def test_a_failed_files_fetch_is_an_error_naming_the_pr_rather_than_a_count(tmp_
 @pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
 def test_a_hung_files_fetch_is_the_same_error_and_no_traceback(tmp_path):
     rows = [_live_row(14, "feat/hung", ["docs/a.md"]), _OLD_ROW]
-    done = _live_count(tmp_path, rows, {}, hang=(14,), COUNT_LIST_FILES_TIMEOUT="0.5")
+    done = _live_count(tmp_path, rows, {}, hang=("files-14",), COUNT_LIST_GH_TIMEOUT="0.5")
     assert done.returncode == 2 and done.stdout == "merged-prs-without-a-floor-read-30d\tERROR\n", done.stdout + done.stderr
     assert "PR #14's file list could not be fetched -- the Fable-path arm cannot be decided: no answer in 0.5s" in done.stderr
+    assert "Traceback" not in done.stderr, done.stderr
+
+
+@pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+def test_a_hung_commits_fetch_for_a_dependabot_row_is_the_same_error_and_no_traceback(tmp_path):
+    rows = [_live_row(15, "dependabot/uv/develop/polars-1.44.2", ["uv.lock"], "Bumps polars.\n"), _OLD_ROW]
+    done = _live_count(tmp_path, rows, {}, hang=("commits-15",), COUNT_LIST_GH_TIMEOUT="0.5")
+    assert done.returncode == 2 and done.stdout == "merged-prs-without-a-floor-read-30d\tERROR\n", done.stdout + done.stderr
+    assert (
+        "PR #15 is a dependabot branch whose commits could not be fetched, so the no-fix-commit exemption cannot be "
+        "decided: no answer in 0.5s"
+    ) in done.stderr
+    assert "Traceback" not in done.stderr, done.stderr
+
+
+@pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+def test_a_hung_head_commit_fetch_is_the_same_error_and_no_traceback(tmp_path):
+    head = "99887766554433221100ffeeddccbbaa99887766"
+    rows = [{**_live_row(16, "feat/past-the-read", ["docs/a.md"]), "headRefOid": head}, _OLD_ROW]
+    entries = {16: [{"filename": "docs/a.md", "status": "modified"}]}
+    done = _live_count(tmp_path, rows, entries, hang=(f"commit-{head}",), COUNT_LIST_GH_TIMEOUT="0.5")
+    assert done.returncode == 2 and done.stdout == "merged-prs-without-a-floor-read-30d\tERROR\n", done.stdout + done.stderr
+    assert (
+        f"PR #16's commit {head} could not be fetched -- whether the read covers the head cannot be decided: no answer in 0.5s"
+    ) in done.stderr
     assert "Traceback" not in done.stderr, done.stderr
 
 
