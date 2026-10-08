@@ -27,6 +27,9 @@ def _repo(tmp_path: pathlib.Path) -> pathlib.Path:
         'import pathlib\nFILES = sorted(pathlib.Path(__file__).resolve().parent.glob("test_*.py"))\n'
     )
     (repo / "tests" / "test_vault_pass_guard.py").write_text("SCRIPT = 'infra/scripts/thing.sh'\n")
+    (repo / "tests" / "test_parent_glob_sq.py").write_text(
+        "import pathlib\nFILES = sorted(pathlib.Path(__file__).resolve().parent.glob('test_*.py'))\n"
+    )
     (repo / _SKILL_DIR / "SKILL.md").write_text("run infra/scripts/thing.sh first\n")
     (repo / "infra" / "ansible" / "group_vars" / "all" / "vault.yml").write_text("thing.sh: secret\n")
     (repo / "infra" / "scripts" / "lonely.py").write_text("print(1)\n")
@@ -60,7 +63,7 @@ def test_tree_walkers_follow_and_a_test_globbing_its_own_fixtures_is_not_one(tmp
     repo = _repo(tmp_path)
     r = _run(repo, "infra/scripts/thing.sh")
     walkers = r.stdout.split("# tree walkers", 1)[1].splitlines()[1:]
-    assert walkers == ["tests/test_lsfiles.py", "tests/test_parent_glob.py", "tests/test_walker.py"]
+    assert walkers == ["tests/test_lsfiles.py", "tests/test_parent_glob.py", "tests/test_parent_glob_sq.py", "tests/test_walker.py"]
 
 
 def test_an_empty_reader_list_is_printed_as_a_finding_never_as_nothing(tmp_path):
@@ -76,7 +79,7 @@ def test_no_argument_is_usage(tmp_path):
     assert r.returncode == 2 and "usage" in r.stderr
 
 
-def test_the_tree_names_the_script_with_the_walker_tests_the_lessons_named():
+def test_the_tree_names_the_script_with_its_walker_tests():
     out = subprocess.run(
         [str(SCRIPT), "infra/scripts/consumers.sh"], cwd=SCRIPT.parents[2], capture_output=True, text=True, check=True
     ).stdout
