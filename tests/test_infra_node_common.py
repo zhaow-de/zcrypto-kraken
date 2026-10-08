@@ -295,7 +295,6 @@ if argv[3:4] == ["cp"] and len(argv) == 6 and argv[4].startswith("web:"):
     sys.exit(0)
 sys.exit(f"docker stub: unexpected call: {argv}")
 """
-# Records each call, then runs the real chgrp.
 CHGRP_STUB = """#!/usr/bin/env python3
 import json, os, sys
 
@@ -327,9 +326,7 @@ STUCK_COPY = """#!/usr/bin/env bash
 mkdir -- "$2${1##*/}"
 exit 1
 """
-# sqlite3 shims, found ahead of the standard library on PYTHONPATH: a VACUUM that fails with its file and its journal on
-# disk, one that holds there until it is stopped, and one whose import holds until it is stopped, before the VACUUM's
-# program checks its staged name.
+# sqlite3 shims, found ahead of the standard library on PYTHONPATH.
 JOURNAL_SHIM = """def connect(*args, **kwargs):
     return Source()
 

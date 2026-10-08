@@ -828,7 +828,6 @@ _DEAD_MAN_WATCHDOG = "zcrypto-hcio-watchdog"
 
 
 def test_the_dead_man_watchdog_names_the_service_and_keeps_its_uid_and_expression():
-    """The uid stays, so the rule is updated in place and no prune is owed; the scrape it reads is the service's."""
     rule = _rule(_DEAD_MAN_WATCHDOG)
     assert rule["title"] == "Fleet · dead-man watchdog (check down, or the service dark)"
     assert [d["model"]["expr"].strip() for d in rule["data"] if d["refId"] == "A"] == [
@@ -2367,7 +2366,6 @@ def _log_expr(uid: str) -> str:
 
 
 def _log_rule_shape(expr: str) -> str:
-    """The expression with its host and container matchers and a line filter after the selector taken out."""
     shape = re.sub(r'\{host="[^"]+", container=~?"[^"]+", ', "{", expr)
     shape = re.sub(r'\} != "[^"]+"', "}", shape)
     assert shape != expr, f"no host and container matchers to take out of {expr!r}"
@@ -2391,7 +2389,6 @@ def test_the_grafana_error_rule_leaves_out_the_lines_the_lock_rule_counts():
 
 
 def _container_label_of_the_clones_stream() -> str:
-    """The `container` value hc's journal relabel writes for an entry the clone's container wrote."""
     blocks = re.findall(r"^\s*rule \{\n(.*?)^\s*\}$", live_alloy_text(HC_ALLOY), re.M | re.S)
     written = [
         block

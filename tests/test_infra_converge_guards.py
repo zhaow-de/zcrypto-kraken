@@ -2378,7 +2378,7 @@ def test_both_hash_scope_consumers_substitute_full_for_an_empty_assignment(path,
         assert out == expected, f"{path.name}'s {expansion} yields {out!r} for {value!r}, not {expected!r}"
 
 
-# --- The dead-man node's backups: a raw rsync, as the hot channel's, run only once its source is set.
+# --- The dead-man node's backups.
 HC_BACKUP_BLOCK = re.compile(r"^\tif [^\n]*\bHC_BACKUP_SOURCE\b[^\n]*; then\n.*?^\tfi\n", re.M | re.S)
 HC_BACKUP_SOURCE = "zcrypto-data@zcrypto-hc.invalid:"
 RSYNC_STUB = """#!/usr/bin/env python3

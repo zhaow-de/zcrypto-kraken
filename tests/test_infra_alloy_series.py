@@ -986,7 +986,6 @@ _MON_LOKI_LINES = [
 ]
 
 
-# The scrape's two names on ops: the plain project path, and the read-only key the scrape sends as its bearer token.
 _HC_LINES = [
     "HC_METRICS_PATH={{ hc_metrics_path }}",
     "HC_READONLY_KEY={{ hc_readonly_api_key }}",

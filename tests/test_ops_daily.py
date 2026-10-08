@@ -974,9 +974,8 @@ def test_the_round_three_escapes_are_refused(cmd):
     ],
 )
 def test_the_wrappers_and_quoting_the_runbooks_really_use(cmd, host):
-    """The runbooks' own spellings stay AUTONOMOUS: the NAS's absolute `/usr/local/bin/docker`, a
-    `--format` body or grep pattern holding spaces (so a stage must be tokenised quote-aware),
-    `docker exec` fronting a genuine read, PromQL full of braces and quotes, and LogQL whose `|=` sits inside them."""
+    """The runbooks' own spellings stay AUTONOMOUS: a stage is tokenised quote-aware, since an argument's quotes hold
+    spaces, braces and `|`."""
     assert ops_daily.classify_action(cmd, host=host, resolve=_identity) is ops_daily.Tier.AUTONOMOUS
 
 
@@ -2736,8 +2735,6 @@ def test_each_bounded_verdict_check_agrees_with_the_rule_it_mirrors():
 
 
 def test_the_healthchecks_fixture_carries_no_key_the_read_only_fetch_never_returns():
-    """The fixture's keys stay inside the check definitions, each a key the read-only listing returns, so it
-    cannot vouch for a payload shape production never sends."""
     fixture = Path(__file__).resolve().parent / "fixtures" / "healthchecks_descriptions.json"
     definitions = {"name", "tags", "desc", "grace", "manual_resume", "timeout", "schedule", "tz"}
     extra = sorted({key for check in json.loads(fixture.read_text()) for key in check} - definitions)
