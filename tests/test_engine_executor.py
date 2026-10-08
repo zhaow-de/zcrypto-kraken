@@ -11208,8 +11208,9 @@ def test_a_sidecar_boundary_writes_no_cycle_and_drafts_nothing(tmp_path):
     assert _record(tmp_path, _RUNG2_12Z)["plans"] == [] and metrics.not_drafted == [True]
 
 
+@pytest.mark.parametrize("sidecar", [False, True], ids=["a-cycle-record", "a-failed-cycle-sidecar"])
 @pytest.mark.parametrize("enter", ["the-boundary-alert", "the-first-ticks-re-arm"])
-def test_with_the_loop_switched_off_no_boundary_drafts_marks_mints_or_submits_though_both_keys_are_up(tmp_path, enter):
+def test_with_the_loop_switched_off_no_boundary_drafts_marks_mints_or_submits_though_both_keys_are_up(tmp_path, enter, sidecar):
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
     ex, client, clock = _boundary_executor(
@@ -11223,6 +11224,9 @@ def test_with_the_loop_switched_off_no_boundary_drafts_marks_mints_or_submits_th
         exec_armed=True,
     )
     assert (exec_dir(tmp_path) / ARM_FILE).exists() and ex._gate.evaluate(clock.now).level == GateLevel.FULL
+    if sidecar:
+        # A boundary with no record to draft from writes `no-cycle` when switched on; off, it writes nothing either.
+        (tmp_path / "journal" / f"{_RUNG2_12Z:%Y-%m-%d}" / "failed-cycle-12.json").write_text("{}")
     with _executor_errors(logging.INFO) as records:
         if enter == "the-boundary-alert":
             ex.on_boundary(_RUNG2_12Z)
