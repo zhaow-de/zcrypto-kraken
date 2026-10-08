@@ -539,11 +539,11 @@ It does not deliver phases 3 and 4. Phase 3's plan takes from this one: the per-
 ## Slots the rollout fills
 
 - `[[ROLLOUT: the box's closing date, 2026-11-01 or a week later …]]` (Global Constraints; Task 7; R5) — the box's own rule, read from the owner's word at its close.
-- The per-host proof's readings, filled: R1's, R2's and the three cache nodes' of R4, and R5's and R6's as plan 00123's wave read them, the NAS and the capture pair on 2026-10-08, a day after its converges.
+- The per-host proof's readings, filled in it: R1's, R2's, R4's three cache nodes', and R5's and R6's as plan 00123's wave read them.
 - R3's W1 reading, filled: four bare Prometheus restarts and one Loki restart, each silent; `prometheus$` left the blacklist in PR #659.
 - R3's W2 reading, filled: 23 lines lost by the thirty-minute outage, `mon-dark`'s first figure.
 - R3's W3 reading, filled: 38 min 59 s from the rebuild to the first evaluated rule, `mon-dark`'s second figure.
-- R4's day read of `zcrypto-valkey1`'s Alloy headroom, filled: 0.171 against the bar of 0.9 on 2026-10-05; `db2` followed.
-- R6's head-series reading with every host shipping, filled: 25,189 on 2026-10-07 and 26,373 on 2026-10-08, above R0's 10,222 plus the fleet's figures, 21,022 to 22,222, and under the bar of 40,000.
-- R8's two readings, filled: Cloud 5 and the node 6 at `t` = 1791376478.413, off by the boundary sample; the spec's measured basis carries them.
-- The comparison's earliest day, filled: 2026-10-10, the primary's Alloy recreate at 2026-10-07T12:14:42Z plus 50 h; `COMPARISON_FROM` takes it in R9's own pull request, T0217's `ripe_when` on the records branch.
+- R4's day read of `zcrypto-valkey1`'s Alloy headroom, filled in R4.
+- R6's head-series reading with every host shipping, filled in R6.
+- R8's two readings, filled: the spec's measured basis carries them.
+- The comparison's earliest day, filled in R9: 2026-10-10; `COMPARISON_FROM` and T0217's `ripe_when` take it in R9's own pull request.
