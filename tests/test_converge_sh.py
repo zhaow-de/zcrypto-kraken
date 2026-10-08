@@ -860,6 +860,37 @@ def test_a_refused_override_operand_prints_a_reason_not_a_traceback(tmp_path):
     assert "not JSON" in refusal, refusal
 
 
+def test_engine_preflight_override_is_admitted_only_as_braced_json(tmp_path):
+    script = make_harness(tmp_path)
+    r = run_no_tty(
+        script, ["site.yml", "--limit", "zcrypto", "-e", "engine_preflight_override=a store repair, the store set aside"]
+    )
+    assert r.returncode == 2
+    assert invocations(tmp_path) == []
+    refusal = next(line for line in r.stderr.splitlines() if line.startswith("converge.sh:"))
+    assert "an override is a reason" in refusal, refusal
+
+    reason = "a store repair: the preview finds the store set aside and refuses on stores_missing"
+    rc, _out, log = run_recording(
+        tmp_path,
+        [
+            "site.yml",
+            "--limit",
+            "zcrypto",
+            "--tags",
+            "engine",
+            "-e",
+            f"engine_image_digest={DIGEST}",
+            "-e",
+            json.dumps({"engine_preflight_override": reason}),
+        ],
+        reply="zcrypto",
+    )
+    assert rc == 0
+    rec = json.loads(log.read_text().splitlines()[0])
+    assert rec["extra_vars"] == {"engine_image_digest": DIGEST, "engine_preflight_override": reason}
+
+
 def test_two_tag_flags_book_both_because_ansible_runs_both(tmp_path):
     """`--tags` is `action="append"` to ansible, so a second flag adds rather than replaces.
 
@@ -1103,7 +1134,55 @@ def test_a_pass_whose_play_wrote_no_record_books_no_window(tmp_path):
     rc, _out, log = run_recording(tmp_path, ["site.yml", "--limit", "zcrypto", "--tags", "capture"], reply="zcrypto")
     assert rc == 0
     assert len(_record_files(tmp_path)) == 2, invocations(tmp_path)
-    assert "window" not in json.loads(log.read_text().splitlines()[0])
+    rec = json.loads(log.read_text().splitlines()[0])
+    assert "window" not in rec and "preflight" not in rec, rec
+
+
+PREFLIGHT = {
+    "engaged": True,
+    "digest": DIGEST,
+    "rc": 0,
+    "revision": "0123456789abcdef0123456789abcdef01234567",
+    "first_parent": True,
+    "line": json.dumps(
+        {
+            "config": "ok",
+            "verified": True,
+            "stores_missing": [],
+            "journal": "ok",
+            "version": "0.1.0",
+            "nautilus": "1.220.0",
+            "ok": True,
+        }
+    ),
+}
+
+
+def test_the_preflight_merged_into_the_record_lands_in_the_row_beside_the_window(tmp_path):
+    rc, _out, log = run_recording(
+        tmp_path,
+        ["site.yml", "--limit", "zcrypto", "--tags", "engine", "-e", f"engine_image_digest={DIGEST}"],
+        reply="zcrypto",
+        env={"FAKE_WINDOW": json.dumps({**WINDOW, "preflight": PREFLIGHT})},
+        run_sh=WRITES_THE_RECORD,
+    )
+    assert rc == 0
+    rec = json.loads(log.read_text().splitlines()[0])
+    _booked_as_the_audit_reads(rec)
+    assert rec["preflight"] == PREFLIGHT, rec
+
+
+def test_a_record_holding_only_the_preflight_books_no_window(tmp_path):
+    rc, _out, log = run_recording(
+        tmp_path,
+        ["site.yml", "--limit", "zcrypto", "--tags", "engine", "-e", f"engine_image_digest={DIGEST}"],
+        reply="zcrypto",
+        env={"FAKE_WINDOW": json.dumps({"preflight": PREFLIGHT})},
+        run_sh=WRITES_THE_RECORD,
+    )
+    assert rc == 0
+    rec = json.loads(log.read_text().splitlines()[0])
+    assert rec["preflight"] == PREFLIGHT and "window" not in rec, rec
 
 
 def test_an_unreadable_record_is_loud_and_still_books_the_row(tmp_path):

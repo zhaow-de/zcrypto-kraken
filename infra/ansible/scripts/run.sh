@@ -6,7 +6,7 @@ VPF="${ANSIBLE_VAULT_PASSWORD_FILE:-$SD/vault-pass.sh}"
 # Every fleet key, the --limit host's first when --limit names one host with a key. The hardened hosts' sshd
 # offers `MaxAuthTries 2` (roles/hardening leaves devsec's `ssh_max_auth_retries` default), so a key the agent
 # presents third is refused before it is tried; and a play's ssh reaches more than its --limit host — the
-# capture and engine roles probe the other capture host by delegate_to — so no key is left out, only moved.
+# capture role probes the other capture host by delegate_to — so no key is left out, only moved.
 # A group, a comma list or no --limit keeps the listed order; every key from the bridgehead's on is a host
 # that converges under its own --limit only.
 LIMIT=""; prev=""

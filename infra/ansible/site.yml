@@ -158,7 +158,7 @@
         and (engine_window_override | default('') | string | lower not in ['true', 'false', '1', 'yes'])
       tags: [engine, cache-link]
 
-    # converge.sh names this file and copies what lands in it into the run's deploy-log row as `window`, which the
+    # converge.sh names this file and books the window's keys in the run's deploy-log row as `window`, which the
     # deploy-log audit judges an engine row on. `engine_window_floor` and `engine_window_journal` mirror the assert's
     # floor and its journal test character-for-character, as the echo mirrors the window.
     # `noqa: run-once[task]`: the rule warns of the `free` strategy, and this play runs under the default linear one.
