@@ -1331,6 +1331,18 @@ def test_the_engine_config_states_each_exec_knob_rather_than_inheriting_it(monke
     assert getattr(node._exec_engine_config(), field) == stated
 
 
+# The stand-in above cannot tell these two stated from inherited -- `None` is the library's own
+# spelling of an unnamed field -- so they are read off the call's text.
+def test_the_engine_config_states_the_two_polling_fields_as_none():
+    import inspect
+
+    tree = ast.parse(inspect.getsource(node._exec_engine_config))
+    (call,) = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "LiveExecutionEngineConfig"]
+    stated = {keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords}
+    polls = ("open_check_interval_secs", "position_check_interval_secs")
+    assert {name: stated.get(name, "unstated") for name in polls} == dict.fromkeys(polls, "None")
+
+
 _CACHE_CONFIG_STATED = [
     ("use_instance_id", False, True),
     ("flush_on_start", False, True),

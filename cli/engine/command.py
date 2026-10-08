@@ -23,7 +23,14 @@ from prometheus_client import Counter, Gauge
 from cli.config import AppConfig, ConfigError, EngineConfig, load_config, resolve_data_dir
 from cli.engine.concordance import CycleOutcome, GateStatus, HashMismatchError, compare_targets, evaluate_gate, replay_cycle
 from cli.engine.cycle import CycleResult, run_cycle, set_metrics_sink
-from cli.engine.draftplan import DraftPlanError, draft, fetch_maintenance_feed, fetch_ticker, parse_decision_log
+from cli.engine.draftplan import (
+    DraftPlanError,
+    draft,
+    fetch_maintenance_feed,
+    fetch_ticker,
+    parse_balance_export,
+    parse_decision_log,
+)
 from cli.engine.errors import EngineError, EngineJournalError
 from cli.engine.execgate import LEVEL_CODE, ExecutionGate, GateVerdict, write_restart_hold
 from cli.engine.execledger import ledgered_plan_ids, read_exec_record, validate_exec_record, write_exec_record
@@ -50,7 +57,19 @@ from cli.engine.preflight import run_preflight
 from cli.engine.probeplan import ProbePlanError, parse_plan, plan_refusals
 from cli.engine.soak import soak_report
 from cli.engine.store import _HOST_REDELIVERY, BASKET, GRID_INTERVALS, PAIR_KEYS, _store_path, seed_store
-from cli.engine.tracking import Fill, cost_blend, extract_fills, read_ledger_export, reconcile_ledger, weekly_tracking
+from cli.engine.tracking import (
+    _OPENING_BASES,
+    _OPENING_SCHEMA_VERSION,
+    Fill,
+    OpeningHoldings,
+    cost_blend,
+    extract_fills,
+    parse_opening_holdings,
+    read_ledger_export,
+    read_opening_holdings,
+    reconcile_ledger,
+    weekly_tracking,
+)
 from cli.engine.venue import read_system_status
 from cli.logging import get_logger
 from cli.logging.redact import ping_failure
@@ -525,29 +544,38 @@ class _ExecGauges:
         self.venue_ok = Gauge(
             "zcrypto_exec_venue_ok", "Whether the last venue reading said the exchange is online.", registry=registry
         )
+        self.venue_read_failed = Gauge(
+            "zcrypto_exec_venue_read_failed",
+            "Whether the engine's last read of the venue's system status failed: 1 when the request failed or its"
+            " answer could not be read, 0 when the exchange answered with a status of its own.",
+            registry=registry,
+        )
         # The envelope's heartbeat, the series that answers "is the boundary path still evaluating the gate": it moves at startup,
-        # in the boundary sink, on a running plan's evaluations and on a kill trip's, and the idle refresh moves the five readings
+        # in the boundary sink, on a running plan's evaluations and on a kill trip's, and the idle refresh moves the six readings
         # and leaves it alone (`update`'s `heartbeat`). An age gauge was rejected: evaluations are a minute apart while idle and the
         # snapshot bound is 30 s, so every one re-reads and the age would publish ~0 forever -- a constant in measurement's clothes.
         self.last_evaluation: Gauge | None = None
 
     def update(self, verdict: GateVerdict, *, evaluated_at: datetime, heartbeat: bool = True) -> None:
-        """`heartbeat` False publishes the five readings and leaves `last_evaluation` where it was: the executor's idle
-        refresh, whose evaluation is not the boundary path's, so the staleness rule keeps watching the sink and the exec
-        record it writes before it."""
+        """`heartbeat` False publishes the six readings and leaves `last_evaluation` where it was: the executor's idle
+        refresh and its boundary re-journal, neither of them the sink's, so the staleness rule keeps watching the sink and
+        the exec record it writes before it."""
         i = verdict.inputs
         self.gate_level.set(LEVEL_CODE[verdict.level])
-        self.armed.set(1 if (i["armed_in_config"] and i["arm_file"]) else 0)
+        self.armed.set(1 if verdict.armed else 0)
         self.kill_tripped.set(1 if i["kill_file"] else 0)
         self.restart_hold.set(1 if i["restart_hold"] else 0)
         self.venue_ok.set(1 if i["venue_status"] == "online" else 0)
+        # The two words `read_system_status` (cli/engine/venue.py) and the gate's own fallback mint for a failed read;
+        # every other word is the venue's own answer, a maintenance among them.
+        self.venue_read_failed.set(1 if i["venue_status"] in ("unreachable", "unreadable") else 0)
         if not heartbeat:
             return
         if self.last_evaluation is None:
             self.last_evaluation = Gauge(
                 "zcrypto_exec_last_evaluation_timestamp_seconds",
                 "Unix timestamp the execution gate was last evaluated at startup, in the boundary sink, on a running plan's"
-                " evaluations or on a kill trip's; the idle refresh moves the other five gate gauges and leaves this one.",
+                " evaluations or on a kill trip's; the idle refresh moves the other six gate gauges and leaves this one.",
                 registry=self._registry,
             )
         self.last_evaluation.set(evaluated_at.timestamp())
@@ -557,17 +585,29 @@ class _ExecGauges:
 # call sites by tests/test_engine_metrics.py. `ambiguous` must never be folded into `refused`:
 # "refused" asserts that no order exists, and after a submission whose venue outcome was never
 # established that claim is unavailable.
-_EXEC_ORDER_OUTCOMES = ("submitted", "accepted", "rejected", "venue_canceled", "canceled", "filled", "refused", "ambiguous")
+_EXEC_ORDER_OUTCOMES = (
+    "submitted",
+    "accepted",
+    "rejected",
+    "venue_canceled",
+    "canceled",
+    "filled",
+    "refused",
+    "ambiguous",
+    "carried",
+)
 # Every name the venue's own `LiquiditySide` can produce, lower-cased -- pinned against the real enum
 # by tests/test_engine_metrics.py rather than derived here, since importing nautilus-trader at module
 # level would put ~1 s on `zcrypto --help`. `no_liquidity_side` is deliberate and pre-registered: a
 # fill the venue did not attribute is still a fill, and counting it as taker would fake the split.
 _EXEC_LIQUIDITY_SIDES = ("maker", "taker", "no_liquidity_side")
 # Every disposition `cli/engine/executor.py`'s `_inc_external` can emit, pinned against that module's
-# own call sites by tests/test_engine_metrics.py. `unmatched` is the load-bearing one: an order event
-# belonging to no order this engine's ledger vouches for is counted and ignored, and this counter is
-# the only trace it leaves.
+# own call sites by tests/test_engine_metrics.py.
 _EXEC_EXTERNAL_DISPOSITIONS = ("matched", "unmatched")
+# The ten model EUR legs the gap is published for, restated from BASKET rather than imported from the executor, whose
+# module import would put nautilus-trader on `zcrypto --help`; tests/test_engine_metrics.py pins it to the executor's
+# `_SPOT_SYMBOL_BY_BASE`. A symbol outside it publishes nothing: the series budget counts these ten.
+_EXEC_GAP_SYMBOLS = tuple(symbol for symbol in BASKET if symbol.endswith("/EUR"))
 
 
 class _ExecutionMetrics:
@@ -598,9 +638,8 @@ class _ExecutionMetrics:
             "zcrypto_exec_external_events_total",
             "Order events arriving on the external strategy topic, by disposition: matched means the "
             "event belonged to a restart-adopted order this engine's ledger vouches for; unmatched "
-            "means it belonged to no such order and was acted on nowhere -- the account owner's own "
-            "hand settle, activity nobody sanctioned, or a fill on an order the startup pass could "
-            "not see.",
+            "means it belonged to no such order -- the account owner's own hand settle, activity "
+            "nobody sanctioned, or a fill on an order the startup pass could not see.",
             ["disposition"],
             registry=registry,
         )
@@ -608,12 +647,42 @@ class _ExecutionMetrics:
         # existed before the first boundary was scored could only publish 0 -- a code outside that
         # alphabet, read as a legitimate verdict rather than as "nothing has been scored yet".
         self.tracking_state: Gauge | None = None
+        # Eager on the ten legs, unlike the position's lazy children: the help text names the 0 a leg reads before the
+        # first draft.
+        self.gap_eur = Gauge(
+            "zcrypto_exec_gap_eur",
+            "The EUR gap per model leg, target minus held: the draft's delta at each boundary, and for a leg the boundary's "
+            "plan ran, that delta less the filled quantity valued at the cycle's close, from its intent's end. 0 until the "
+            "first boundary drafts.",
+            ["symbol"],
+            registry=registry,
+        )
+        # Registered on first use, as `tracking_state` is: a seeded 0 equity reads as a total loss beside any
+        # high-water mark, and a seeded 0 drawdown as a measured one.
+        self.equity_eur: Gauge | None = None
+        self.drawdown_bps: Gauge | None = None
+        self.watchdog_frozen = Gauge(
+            "zcrypto_exec_watchdog_frozen",
+            "Whether the stale-socket watchdog holds the loop frozen: 1 = a venue socket stayed down past its grace, so no "
+            "new intent starts until the sockets are back and the re-read pass has run; 0 = not frozen.",
+            registry=registry,
+        )
+        # Eager at 0, so a restarted engine publishes 0 ahead of its first boundary's write: without those samples, a
+        # series new to the not-drafted rule's `min_over_time` window would page ten minutes after one undrafted boundary.
+        self.boundary_not_drafted = Gauge(
+            "zcrypto_exec_boundary_not_drafted",
+            "Whether the newest boundary drafted nothing: 1 from the write of an accumulation record whose status is not "
+            "ok until the next ok record's; 0 otherwise, and at start.",
+            registry=registry,
+        )
         for outcome in _EXEC_ORDER_OUTCOMES:
             self.orders.labels(outcome=outcome)
         for liquidity in _EXEC_LIQUIDITY_SIDES:
             self.fills.labels(liquidity=liquidity)
         for disposition in _EXEC_EXTERNAL_DISPOSITIONS:
             self.external_events.labels(disposition=disposition)
+        for symbol in _EXEC_GAP_SYMBOLS:
+            self.gap_eur.labels(symbol=symbol)
 
     def inc_order(self, outcome: str) -> None:
         self.orders.labels(outcome=outcome).inc()
@@ -650,6 +719,35 @@ class _ExecutionMetrics:
                 registry=self._registry,
             )
         self.tracking_state.set(state)
+
+    def set_gap(self, symbol: str, eur: float) -> None:
+        if symbol in _EXEC_GAP_SYMBOLS:
+            self.gap_eur.labels(symbol=symbol).set(eur)
+
+    def set_equity(self, value: float) -> None:
+        if self.equity_eur is None:
+            self.equity_eur = Gauge(
+                "zcrypto_exec_equity_eur",
+                "The account's equity in EUR at each boundary: the spot EUR row and EUR.M, and the ten model coins "
+                "it holds, spot and earn-coded, marked at the cycle's closes.",
+                registry=self._registry,
+            )
+        self.equity_eur.set(value)
+
+    def set_drawdown(self, bps: float) -> None:
+        if self.drawdown_bps is None:
+            self.drawdown_bps = Gauge(
+                "zcrypto_exec_drawdown_bps",
+                "The fall of equity from its high-water mark, in basis points of the cycle's NAV, at each boundary.",
+                registry=self._registry,
+            )
+        self.drawdown_bps.set(bps)
+
+    def set_watchdog_frozen(self, flag: bool) -> None:
+        self.watchdog_frozen.set(1 if flag else 0)
+
+    def set_boundary_not_drafted(self, flag: bool) -> None:
+        self.boundary_not_drafted.set(1 if flag else 0)
 
 
 class _VenueGauges:
@@ -1283,16 +1381,22 @@ def _parse_day(raw: str | None, flag: str) -> date | None:
         raise _abort(f"{flag} {raw!r} is not a YYYY-MM-DD date") from exc
 
 
-def _window_records(journal_root: Path, since: str | None, until: str | None) -> list[CycleRecord]:
+def _window_records(journal_root: Path, since: str | None, until: str | None, birth: datetime | None = None) -> list[CycleRecord]:
     """Every journaled success record whose boundary falls in the inclusive [--since, --until] UTC day
     window. An unreadable record ABORTS rather than being skipped: both measurements aggregate across
     the whole window, so a quietly dropped cycle biases every number below it with nothing on the page
-    to say so, and --since/--until are the escape hatch for a journal carrying a known-bad day."""
+    to say so, and --since/--until are the escape hatch for a journal carrying a known-bad day. With a
+    series' `birth`, a record whose path's boundary is before it is an earlier series' and is never
+    opened, so one that will not read there stops nothing: `--since` cannot exclude the birth's own day."""
     since_day = _parse_day(since, "--since")
     until_day = _parse_day(until, "--until")
     records: list[CycleRecord] = []
     for boundary, path in _journal_artifacts(journal_root, "*", "cycle-*.json"):
-        if (since_day is not None and boundary.date() < since_day) or (until_day is not None and boundary.date() > until_day):
+        if (
+            (since_day is not None and boundary.date() < since_day)
+            or (until_day is not None and boundary.date() > until_day)
+            or (birth is not None and boundary < birth)
+        ):
             continue
         try:
             record = from_json(path.read_text())
@@ -1406,6 +1510,12 @@ def accum_replay(
         help="Emit the full payload as JSON on stdout instead of the tables. A non-finite value is emitted as "
         "null, and the per-size drift table's keys are strings.",
     ),
+    floor_shorts: bool = typer.Option(
+        False,
+        "--floor-shorts",
+        help="Clamp every negative target to 0 before measuring, the book rung 3 realizes long-only; the p95 it quotes is the "
+        "band's edge for that book.",
+    ),
 ) -> None:
     """Measure the position drift the venue's order minimums impose at each portfolio size."""
     config = _load_engine_config()
@@ -1425,6 +1535,7 @@ def accum_replay(
             floors,
             list(nav) if nav else list(DEFAULT_NAVS),
             fetched_at=fetched_at,
+            floor_shorts=floor_shorts,
         )
     except EngineError as exc:
         raise _abort(str(exc)) from exc
@@ -1434,15 +1545,20 @@ def accum_replay(
 # --- the weekly tracking comparison: what the book held against the floor, and what it cost -------
 
 
-def _window_exec_records(journal_root: Path, since: str | None, until: str | None) -> list[dict]:
-    """Every journaled execution record in the same inclusive UTC day window `_window_records` uses.
-    An unreadable or schema-invalid record ABORTS rather than being skipped: the fills it carries move
-    `held` for every LATER cycle, so dropping one quietly overstates the drift of the whole window."""
+def _window_exec_records(journal_root: Path, since: str | None, until: str | None, birth: datetime | None = None) -> list[dict]:
+    """Every journaled execution record in the same inclusive UTC day window `_window_records` uses,
+    and past a series' `birth` as it reads it. An unreadable or schema-invalid record ABORTS rather
+    than being skipped: the fills it carries move `held` for every LATER cycle, so dropping one
+    quietly overstates the drift of the whole window."""
     since_day = _parse_day(since, "--since")
     until_day = _parse_day(until, "--until")
     out: list[dict] = []
     for boundary, path in _journal_artifacts(journal_root, "*", "exec-*.json"):
-        if (since_day is not None and boundary.date() < since_day) or (until_day is not None and boundary.date() > until_day):
+        if (
+            (since_day is not None and boundary.date() < since_day)
+            or (until_day is not None and boundary.date() > until_day)
+            or (birth is not None and boundary < birth)
+        ):
             continue
         try:
             doc = read_exec_record(path)
@@ -1564,6 +1680,11 @@ def _render_tracking(payload: dict) -> str:
         "older table is stale, not conservative.",
         f"Portfolio size {payload['nav']:,.0f} EUR, held constant across the window.",
     ]
+    if payload["opening_birth"] is not None:
+        lines.append(
+            f"The series was born at {payload['opening_birth']}: held starts from its opening holdings there, and every "
+            "figure below leaves out the cycles and fills before it."
+        )
     if payload["simulated"]:
         lines += [
             "",
@@ -1684,6 +1805,22 @@ def _share(value: float | None) -> str:
     return "no data" if value is None else f"{100 * value:.1f}%"
 
 
+def _read_opening(path: Path | None, since: str | None) -> OpeningHoldings | None:
+    if path is None:
+        return None
+    try:
+        opening = read_opening_holdings(path)
+    except (OSError, EngineError) as exc:
+        raise _abort(f"could not read the opening holdings record {path}: {exc}") from exc
+    since_day = _parse_day(since, "--since")
+    if since_day is not None and since_day > opening.birth.date():
+        raise _abort(
+            f"--since {since} starts after the series' birth at {opening.birth.isoformat()}, so the window would miss the "
+            f"series' head -- pass --since {opening.birth:%Y-%m-%d} or earlier"
+        )
+    return opening
+
+
 @engine_app.command(name="tracking-report")
 def tracking_report(
     journal_dir: Optional[Path] = typer.Option(
@@ -1723,8 +1860,9 @@ def tracking_report(
         None,
         "--ledger-export",
         help="A Kraken ledger export (CSV, from History -> Export -> Ledgers) to reconcile the window's fills "
-        "against. It is the only place a margin position's rollover fee appears -- the venue charges it against "
-        "the POSITION, so no fill carries it and a cost basis built from fills alone omits it. Absent, the report "
+        "against -- with --opening-holdings, the series' fills against the export's rows from its birth. It is "
+        "the only place a margin position's rollover fee appears -- the venue charges it against the POSITION, so "
+        "no fill carries it and a cost basis built from fills alone omits it. Absent, the report "
         "simply omits the reconciliation: the export is a hand-made artifact and most runs will not have one.",
     ),
     json_out: bool = typer.Option(
@@ -1732,11 +1870,21 @@ def tracking_report(
         "--json",
         help="Emit the full payload as JSON on stdout instead of the tables. A non-finite value is emitted as null.",
     ),
+    opening_holdings: Optional[Path] = typer.Option(
+        None,
+        "--opening-holdings",
+        help="The series' opening holdings record, the balances held at its birth: held starts from them there, and the "
+        "cycles and fills before the birth belong to an earlier series and are left out.",
+    ),
 ) -> None:
     """Compare each ISO week's realized drift against the venue-minimum floor, and reprice the cost."""
     config = _load_engine_config()
     journal_root = journal_dir if journal_dir is not None else config.journal_dir
-    records = _window_records(journal_root, since, until)
+    opening = _read_opening(opening_holdings, since)
+    # With a record the read is the series': every block below starts at its birth, and the cycles, fills and ledger
+    # rows before it are an earlier series'.
+    birth = None if opening is None else opening.birth
+    records = [record for record in _window_records(journal_root, since, until, birth) if birth is None or record.cycle_ts >= birth]
     minimums_path = _resolve_minimums(minimums)
     try:
         floors, fetched_at = load_minimums(minimums_path)
@@ -1765,8 +1913,11 @@ def tracking_report(
         if simulated_fills:
             fills = _simulated_fills(stages, floor["cycles"], floors)
         else:
-            fills, notes = extract_fills(_window_exec_records(journal_root, since, until))
-        tracking = weekly_tracking(stages, fills, floors, nav_value, rung_by_week=_rung_by_week(stages, gate_week))
+            exec_docs = _window_exec_records(journal_root, since, until, birth)
+            fills, notes = extract_fills(
+                [doc for doc in exec_docs if birth is None or datetime.fromisoformat(doc["cycle_ts"]) >= birth]
+            )
+        tracking = weekly_tracking(stages, fills, floors, nav_value, rung_by_week=_rung_by_week(stages, gate_week), opening=opening)
     except EngineError as exc:
         raise _abort(str(exc)) from exc
 
@@ -1775,7 +1926,8 @@ def tracking_report(
     reconciliation = None
     if ledger_export is not None:
         try:
-            reconciliation = reconcile_ledger(read_ledger_export(ledger_export), fills)
+            rows = [row for row in read_ledger_export(ledger_export) if birth is None or row.at >= birth]
+            reconciliation = reconcile_ledger(rows, fills)
         except (OSError, EngineError) as exc:
             raise _abort(f"could not read the ledger export {ledger_export}: {exc}") from exc
 
@@ -1789,6 +1941,7 @@ def tracking_report(
         "reconciliation": reconciliation,
         "schema_versions": sorted({record.schema_version for record in records}),
         "simulated": simulated_fills,
+        "opening_birth": None if opening is None else opening.birth.isoformat(),
         "minimums_fetched_at": fetched_at,
         "notes": notes,
         # A failed reconciliation joins the exit-code count -- the only thing a script reading this
@@ -2139,3 +2292,99 @@ def draft_plan(
             f"plan written to {plan_path} -- copy it to the engine host, run `zcrypto engine probe-plan <path> --check` there"
         )
     typer.echo(f"{len(result.rows)} decision row(s) appended to {decisions_path}")
+
+
+@engine_app.command(name="opening-holdings")
+def record_opening_holdings(
+    balance_path: Path = typer.Option(
+        ...,
+        "--balance",
+        help="Kraken's extended balance (BalanceEx) as JSON, exported on this workstation for the series' birth; the file's "
+        "modification time dates it. Refused when it lists an order resting on a basket coin or on EUR, or a basket coin "
+        "under an earn or staking code with a non-zero balance.",
+    ),
+    cycle_path: Path = typer.Option(
+        ...,
+        "--cycle",
+        help="The newest cycle-<HH>.json; each coin's close is read from it. Refused when it carries no close for a basket coin.",
+    ),
+    birth: str = typer.Option(
+        ...,
+        "--birth",
+        metavar="ISO_TS",
+        help="The series' birth, an aware ISO-8601 instant: the first 4-hourly boundary after the balance export was "
+        "written, and refused as any other.",
+    ),
+    out: Path = typer.Option(
+        ...,
+        "--out",
+        help="Where the record is written, through a temporary sibling renamed over it.",
+    ),
+) -> None:
+    """Record a tracking series' opening holdings: each basket coin's spot balance at the series' birth.
+
+    Workstation-only, read-only towards the venue: it reads the balance export and the cycle record and writes one
+    record, one row per basket coin -- its spot balance, the export's codes for it, and the cycle record's close --
+    printing each coin's EUR at that close and their sum. Exits non-zero on any refusal, writing nothing."""
+    # Lazy: both import nautilus-trader; `zcrypto --help` must never pay it.
+    from cli.engine.flatten import wallet_base
+    from cli.engine.node import next_boundary
+
+    record = _read_draft_record(cycle_path)
+    doc, written_at = _read_draft_export(balance_path, "balance")
+    try:
+        born = datetime.fromisoformat(birth)
+    except ValueError as exc:
+        raise _abort(f"--birth {birth!r} is not an ISO-8601 instant") from exc
+    if born.utcoffset() is None:
+        raise _abort(f"--birth {birth!r} is naive -- pass an aware instant, e.g. 2026-11-09T00:00:00+00:00")
+    born = born.astimezone(timezone.utc)
+    first_boundary = next_boundary(written_at)
+    if born != first_boundary:
+        raise _abort(
+            f"--birth {born.isoformat()} is not {first_boundary.isoformat()}, the first 4-hourly boundary after the balance "
+            f"export {balance_path} was written ({written_at.isoformat()}) -- a birth at or before the export can count again "
+            "a fill the export already holds, and a later one can leave a fill between the two in neither"
+        )
+    bases = frozenset(_OPENING_BASES)
+    try:
+        parse_balance_export(doc, bases=bases)
+    except DraftPlanError as exc:
+        raise _abort(
+            f"the balance export {balance_path} cannot open a series, refused by draft-plan's balance check: {exc}"
+        ) from exc
+    closes = record.closes or {}
+    missing = [base for base in _OPENING_BASES if base not in closes]
+    if missing:
+        raise _abort(f"the cycle record {cycle_path} carries no close for {', '.join(missing)}")
+
+    rows = {base: {"base": base, "codes": [], "balance": 0.0, "close": closes[base]} for base in _OPENING_BASES}
+    for code, entry in doc.items():
+        resolved = wallet_base(code, bases)
+        if resolved is None or resolved[1]:
+            continue
+        rows[resolved[0]]["codes"].append(code)
+        rows[resolved[0]]["balance"] += float(entry["balance"])
+    document = {"schema_version": _OPENING_SCHEMA_VERSION, "birth": born.isoformat(), "rows": list(rows.values())}
+    try:
+        parse_opening_holdings(document)
+    except EngineError as exc:
+        raise _abort(f"the opening holdings would not read back: {exc}") from exc
+
+    tmp_path = out.with_name(out.name + ".tmp")
+    try:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path.write_text(json.dumps(document, indent=2) + "\n")
+        os.replace(tmp_path, out)
+    except OSError as exc:
+        tmp_path.unlink(missing_ok=True)
+        raise _abort(f"could not write the opening holdings record {out}: {exc}") from exc
+
+    total = 0.0
+    for row in document["rows"]:
+        eur = row["balance"] * row["close"]
+        total += eur
+        codes = ", ".join(row["codes"]) or "-"
+        typer.echo(f"{row['base']:<5} {row['balance']:>18.10g}  {codes:<12} {eur:>12.2f} EUR at {row['close']:g}")
+    typer.echo(f"total {total:.2f} EUR at the closes of {record.cycle_ts.isoformat()}, the series born at {born.isoformat()}")
+    typer.echo(f"opening holdings written to {out}")

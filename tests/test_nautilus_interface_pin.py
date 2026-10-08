@@ -321,6 +321,15 @@ def test_the_inflight_defaults_we_now_state_explicitly_are_unchanged():
     assert config.inflight_check_retries == 5
 
 
+def test_the_polling_defaults_we_state_explicitly_are_unchanged():
+    """A flip re-opens the polls' decision: the node's `None` reads as the library's default, so re-pinning here turns them on."""
+    from nautilus_trader.config import LiveExecutionEngineConfig
+
+    config = LiveExecutionEngineConfig()
+    assert config.open_check_interval_secs is None
+    assert config.position_check_interval_secs is None
+
+
 def test_the_cache_config_defaults_we_state_are_unchanged():
     """`cli/engine/node.py`'s `_cache_config` states every field at these values; a field a bump adds
     or removes fails here, so it is stated there before the bump lands."""
@@ -514,8 +523,11 @@ def test_the_exec_engine_config_accepts_the_arguments_we_pass():
 
     LiveExecutionEngineConfig(
         reconciliation=True,
+        load_cache=True,
         filter_unclaimed_external_orders=False,
         inflight_check_interval_ms=2000,
         inflight_check_threshold_ms=5000,
         inflight_check_retries=5,
+        open_check_interval_secs=None,
+        position_check_interval_secs=None,
     )

@@ -2,7 +2,7 @@
   "id": null,
   "uid": "zcrypto-engine",
   "title": "Engine",
-  "description": "What the trading engine is doing. Cycle liveness and outcome, the intent it emitted, the book composition behind that intent, and the journal retention the next cycle's deltas depend on. Every number here is INTENDED state — what the engine decided, never what the market did; realized state lives in the engine journal on the capture primary.",
+  "description": "What the trading engine is doing. The Cycle health and Journal retention rows are the engine's own liveness and bookkeeping. The Intent and Composition rows are INTENDED state — what the engine decided, never what the market did. The Execution safety envelope row is what the engine may submit, and the Execution, Venue truth and Accumulation rows are the venue side: what the executor did there, what the exchange said, and the loop's gap, equity and drawdown read against Kraken's own holdings. The engine journal on the capture primary is the record behind all of them.",
   "tags": [],
   "schemaVersion": 39,
   "version": 0,
@@ -24,7 +24,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "**Two kinds of numbers live on this board.** The Intent and Composition rows are the engine's *decisions* — target weights and intended orders, computed every cycle whether or not anything may trade. The Execution row is what actually *happened* at the venue — orders, fills, fees, positions, realized PnL — published by the execution path and reading flat zero, not absent, outside an attended trading window. The Venue truth row is what the exchange said we could trade and held at each cycle. An intended order with no fill beside it is the normal shadow state, not a failure. A resting order is one execution number that can appear without any trading: the `rest-hold` mode places a real order at the venue on purpose and leaves it there for a drill to act on. Read the mode label before reading activity as trading."
+        "content": "**Two kinds of numbers live on this board.** The Intent and Composition rows are the engine's *decisions* — target weights and intended orders, computed every cycle whether or not anything may trade. The Execution row is what actually *happened* at the venue — orders, fills, fees, positions, realized PnL — published by the execution path and reading flat zero, not absent, while the loop is disarmed. The Venue truth row is what the exchange said we could trade and held at each cycle. An intended order with no fill beside it is the normal shadow state, not a failure. A resting order is one execution number that can appear without any trading: the `rest-hold` mode places a real order at the venue on purpose and leaves it there for a drill to act on. Read the mode label before reading activity as trading."
       }
     },
     {
@@ -1690,7 +1690,7 @@
       "id": 55,
       "type": "stat",
       "title": "Venue status — last evaluated reading",
-      "description": "Whether the engine's own last read of the Kraken system status said the venue is online. It moves when the execution gate is evaluated -- at process start, after each cycle, on every tick while a plan is running, and once a minute on the executor's idle refresh -- so it is at most about a minute old while the engine ticks, in EITHER direction: ONLINE briefly through a venue outage the capture side is already paging on, or NOT ONLINE briefly after the venue came back. The gate evaluation heartbeat beside it moves on the boundary's evaluation and not on that refresh, so it is not this tile's age: a frozen heartbeat beside a moving tile is the boundary path stopped, not this reading gone stale. A stale tile is never a stale gate: every submission evaluates the gate itself first, on a venue read cached at most 30 seconds, before any order goes out. NOT ONLINE forces the gate level to 0 regardless of arming. This is a gating INPUT, not the venue alert itself: `Capture · Kraken reports the venue is not online` already pages on the underlying condition from the capture side, so this tile carries no alert of its own -- one would only double-page the same event. Published only by the trading engine on the capture primary.",
+      "description": "Whether the engine's own last read of the Kraken system status said the venue is online, and beside it whether that read failed. It moves when the execution gate is evaluated -- at process start, after each cycle, on every tick while a plan is running, and once a minute on the executor's idle refresh -- so it is at most about a minute old while the engine ticks, in EITHER direction: ONLINE briefly through a venue outage the capture side is already paging on, or NOT ONLINE briefly after the venue came back. The gate evaluation heartbeat beside it moves on the boundary's evaluation and not on that refresh, so it is not this tile's age: a frozen heartbeat beside a moving tile is the boundary path stopped, not this reading gone stale. A stale tile is never a stale gate: every submission evaluates the gate itself first, on a venue read cached at most 30 seconds, before any order goes out. NOT ONLINE forces the gate level to 0 regardless of arming. The venue's word is a gating INPUT, not the venue alert itself: `Capture · Kraken reports the venue is not online` already pages on a word other than online from the capture side, so that reading carries no alert of its own -- one would only double-page the same event. READ FAILED is the engine's own read failing, so NOT ONLINE beside it says the engine does not know the venue's word while Kraken may be trading; the capture side cannot see that, and the engine's own rule pages after 15 minutes at READ FAILED. READ OK is any word Kraken answered, a maintenance among them. Runbook: infra/runbooks/engine.md#zcrypto-engine-exec-venue-diverged. Published only by the trading engine on the capture primary.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1710,6 +1710,16 @@
           "expr": "zcrypto_exec_venue_ok{host=~\"$host\"}",
           "refId": "A",
           "legendFormat": "{{host}} · venue ok",
+          "instant": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_exec_venue_read_failed{host=~\"$host\"}",
+          "refId": "B",
+          "legendFormat": "{{host}} · venue read",
           "instant": true
         }
       ],
@@ -1744,7 +1754,52 @@
           },
           "noValue": "NO VENUE DATA"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "READ OK",
+                        "color": "green",
+                        "index": 0
+                      },
+                      "1": {
+                        "text": "READ FAILED",
+                        "color": "red",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.5
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "reduceOptions": {
@@ -1830,7 +1885,7 @@
       "id": 57,
       "type": "stat",
       "title": "Weekly tracking error — last verdict",
-      "description": "What the engine decided about the most recently closed week, re-derived at every 4-hourly boundary from the journal alone. DISARMED means no band is configured, so nothing is measured against one -- the resting state, and the state to confirm after a deploy that was not meant to arm anything. NOT SCORED means the week could not be judged: short of its full 42 boundaries, spent below the full gate level, straddling the first fill ever, or missing the prices it was traded at -- all deliberate refusals, never a pass. WITHIN BAND is the healthy reading. OUTSIDE BAND means the week's mean drift from target exceeded the band and the kill switch has latched, which pages through the kill-switch alert beside it rather than through a rule of its own. The series is absent until the first boundary after a start, because before that there is no verdict to state. Runbook: infra/runbooks/engine-procedures.md#engine-tracking-band. Published only by the trading engine on the capture primary.",
+      "description": "What the engine decided about the most recently closed week, re-derived at every 4-hourly boundary from the journal, the birth record and its opening holdings. DISARMED means no band is configured, so nothing is measured against one -- the resting state, and the state to confirm after a deploy that was not meant to arm anything. NOT SCORED means the week could not be judged -- a deliberate refusal, never a pass; the engine's WARNING `the most recently closed week is not scored: <reason>` names why. WITHIN BAND is the healthy reading. OUTSIDE BAND means the week's mean drift from target exceeded the band and the kill switch has latched, which pages through the kill-switch alert beside it rather than through a rule of its own. The series is absent until the first boundary after a start, because before that there is no verdict to state. Runbook: infra/runbooks/engine-procedures.md#engine-tracking-band. Published only by the trading engine on the capture primary.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1927,7 +1982,7 @@
       "id": 61,
       "type": "timeseries",
       "title": "Orders by outcome, and external order events",
-      "description": "Orders the executor submitted to the venue, split by what happened to each: submitted, accepted, rejected, venue_canceled (the exchange canceled it), canceled (we canceled it), filled, refused (the engine declined to submit it), or ambiguous (the venue outcome could not be established). The two `external event` series count order events arriving for orders this engine did not submit in this process: matched means the event belonged to an order adopted at restart that the engine ledger vouches for; unmatched means it belonged to no such order and was counted and acted on nowhere. Unmatched is not restart-specific and not by itself benign: it counts ANY order event that matches no row the startup pass attached — the account owner's own hand settle in the venue UI, activity nobody sanctioned, and a fill on an order whose ledger row the startup pass could not match to it, which the pass marks `ambiguous` in the ledger unless a read or write it needed failed, a failure it logs at CRITICAL. A rise you cannot attribute to something you did is worth investigating. Note also that a restart-adopted order completing counts under filled with no submitted behind it, because these counters reset with the process that submitted them. No alert reads this panel directly. Published only by the trading engine on the capture primary.",
+      "description": "Orders the executor submitted to the venue, split by what happened to each: submitted, accepted, rejected, venue_canceled (the exchange canceled it), canceled (we canceled it), filled, refused (the engine declined to submit it), ambiguous (the venue outcome could not be established), or carried (the boundary's submission window closed before the intent could start, so its leg is drafted again at the next boundary). The two `external event` series count order events arriving for orders this engine did not submit in this process: matched means the event belonged to an order adopted at restart that the engine ledger vouches for; unmatched means it belonged to no such order. While the engine is armed, an unmatched fill makes it re-read Kraken's holdings, so the Position by symbol panel takes Kraken's figure; any other unmatched event, and a fill while the engine is disarmed, is counted and logged, nothing more. Unmatched is not restart-specific and not by itself benign: it counts ANY order event that matches no row the startup pass attached — the account owner's own hand settle in the venue UI, activity nobody sanctioned, and a fill on an order whose ledger row the startup pass could not match to it, which the pass marks `ambiguous` in the ledger unless a read or write it needed failed, a failure it logs at CRITICAL. A rise you cannot attribute to something you did is worth investigating. Note also that a restart-adopted order completing counts under filled with no submitted behind it, because these counters reset with the process that submitted them. No alert reads this panel directly. Published only by the trading engine on the capture primary.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -2531,6 +2586,331 @@
             ]
           }
         ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 80,
+      "type": "row",
+      "title": "Accumulation — the loop's gap, equity and window",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 97
+      }
+    },
+    {
+      "id": 81,
+      "type": "timeseries",
+      "title": "Gap per leg (EUR) — target minus held, after each intent's terminal",
+      "description": "The EUR still to trade on each model leg. At each 4-hourly boundary the draft sets it to the leg's target minus what Kraken holds, at the cycle's close; for a leg the boundary's plan ran, it then moves toward zero by what that leg's intent filled, valued at the same close, once the intent has ended. Above zero is EUR still to buy, below zero EUR still to sell. A leg that stays away from zero across boundaries is one the venue's minimums keep carrying, or one whose intents end unfilled: the boundary's accumulation record on the engine host names each leg's outcome and reason. Every leg reads 0 from an engine start until its first boundary drafts. Published only by the trading engine on the capture primary.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 98
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_exec_gap_eur{host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{symbol}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyEUR",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 82,
+      "type": "timeseries",
+      "title": "Equity (EUR) against its maximum over the 14 days the metrics store keeps",
+      "description": "The account's equity at each 4-hourly boundary: its spot EUR row and `EUR.M`, and the ten model coins it holds, spot and earn-coded, marked at the cycle's closes. The second line is this gauge's own maximum over the last 14 days, about as far back as the metrics store keeps it: a reading of this series alone, which re-minting the equity series after a deposit or a withdrawal does not reset. The series' true high-water mark, the one the drawdown kill measures from, is the accumulation record's `hwm_eur` on the engine host, never a window of this store, so the second line shows that mark only while it was set inside the last 14 days and no re-mint has moved it since. Absent from an engine start until its first boundary marks equity, because a seeded zero would read as a total loss. Published only by the trading engine on the capture primary.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 98
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_exec_equity_eur{host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "equity"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "max_over_time(zcrypto_exec_equity_eur{host=~\"$host\"}[14d])",
+          "refId": "B",
+          "legendFormat": "14-day maximum"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyEUR",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 83,
+      "type": "timeseries",
+      "title": "Drawdown from the high-water mark (bps of NAV)",
+      "description": "How far equity sits below its high-water mark at each 4-hourly boundary, in basis points of the cycle's NAV: the book's size, never the account's equity. At 1500, 15 % of the NAV, the engine latches the kill switch, which pages through the kill-switch alert rather than through a rule on this series. The daily loss hold, 300 basis points of the NAV lost inside one UTC day, has no series of its own: the accumulation record carries it. Absent from an engine start until its first boundary marks equity. Published only by the trading engine on the capture primary.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 104
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_exec_drawdown_bps{host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "drawdown (bps of NAV)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 84,
+      "type": "timeseries",
+      "title": "Watchdog frozen · boundary not drafted",
+      "description": "Two 0/1 readings, both 0 from an engine start. Watchdog frozen reads 1 while the stale-socket watchdog holds the loop: a venue socket stayed down past its grace, so the engine revoked its active intent, sent a cancel for each order it holds open and starts no intent until the sockets are back and its re-read pass has run. It pages after 15 minutes at 1. Boundary not drafted reads 1 from the write of a boundary's accumulation record whose status is not `ok` until the next `ok` record's, and pages once it has read 1 for 4h30m, which is two consecutive boundaries that drafted nothing, after a further 10 minutes. Runbooks: infra/runbooks/engine.md#zcrypto-engine-exec-watchdog-frozen and infra/runbooks/engine.md#zcrypto-engine-exec-boundary-not-drafted. Published only by the trading engine on the capture primary.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 8,
+        "y": 104
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_exec_watchdog_frozen{host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "watchdog frozen"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_exec_boundary_not_drafted{host=~\"$host\"}",
+          "refId": "B",
+          "legendFormat": "boundary not drafted"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 85,
+      "type": "timeseries",
+      "title": "Intents by outcome over the last window",
+      "description": "How many of the engine's orders reached each outcome over the trailing four hours, one boundary's span, by the outcomes the orders panel above counts: an increase rather than a running total, so each boundary's plan reads as its own step. A span holding refusals alone is the gate or one of the engine's holds refusing; an empty span is a boundary that placed nothing, and the tile beside this one says whether it drafted at all. Published only by the trading engine on the capture primary.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 16,
+        "y": 104
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(zcrypto_exec_orders_total{host=~\"$host\"}[4h])",
+          "refId": "A",
+          "legendFormat": "{{outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
       },
       "options": {
         "legend": {

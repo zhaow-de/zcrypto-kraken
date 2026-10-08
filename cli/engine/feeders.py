@@ -329,6 +329,8 @@ def decompose_report(
 # One ISO week of 4-hourly cycles: 6 per day x 7 days. A week holding fewer is incomplete, and its
 # mean is not comparable to a full week's -- derived from the count, never from a week number.
 _CYCLES_PER_FULL_WEEK = 6 * 7
+_ACCUMULATION_HEADER = "Accumulation drift floor: what the venue's order minimums cost at each portfolio size"
+_FLOORED_SHORTS = "targets floored at 0 for every shorting leg"
 
 
 def _p95(values: list[float]) -> float:
@@ -377,11 +379,14 @@ def _weekly_drift(stages: list[CycleStages], rows: list[dict]) -> list[dict]:
     ]
 
 
-def accumulation_payload(stages: list[CycleStages], minimums: dict[str, tuple[float, float]], navs: list[float]) -> dict:
+def accumulation_payload(
+    stages: list[CycleStages], minimums: dict[str, tuple[float, float]], navs: list[float], *, floor_shorts: bool = False
+) -> dict:
     """Replay the accumulate-until-placeable policy at each NAV -- pure, no I/O and no replay. Held state
     is in BASE UNITS (spec 00081 D4), since in EUR a pure price move would report zero drift; the two
     floors are INDEPENDENT gates, a quantity and euros, never a max over mixed units; and each NAV prices
-    the whole window, so a drifting one cannot fold return into a venue-minimum measurement."""
+    the whole window, so a drifting one cannot fold return into a venue-minimum measurement. `floor_shorts`
+    reads every negative target as 0, the long-only book the engine realizes, and the header says so."""
     bad_navs = [n for n in navs if not math.isfinite(n) or n <= 0]
     if bad_navs:
         raise EngineError(
@@ -406,7 +411,8 @@ def accumulation_payload(stages: list[CycleStages], minimums: dict[str, tuple[fl
             target_qty: dict[str, float] = {}
             drift_eur = 0.0
             placed = False
-            for a, weight in s.final.items():
+            for a, journaled in s.final.items():
+                weight = max(journaled, 0.0) if floor_shorts else journaled
                 close = s.closes[a]
                 target = (weight * nav) / close
                 delta = target - held_qty[a]
@@ -438,7 +444,8 @@ def accumulation_payload(stages: list[CycleStages], minimums: dict[str, tuple[fl
             "p95_drift_bps": _p95(drift_bps),
             "weeks": _weekly_drift(ordered, rows),
         }
-    return {"n_cycles": len(ordered), "navs": list(navs), "by_nav": by_nav}
+    header = f"{_ACCUMULATION_HEADER}, {_FLOORED_SHORTS}" if floor_shorts else _ACCUMULATION_HEADER
+    return {"header": header, "n_cycles": len(ordered), "navs": list(navs), "by_nav": by_nav}
 
 
 def _bps(value: float) -> str:
@@ -448,7 +455,7 @@ def _bps(value: float) -> str:
 def _render_accumulation(payload: dict) -> str:
     navs = payload["navs"]
     lines = [
-        "Accumulation drift floor: what the venue's order minimums cost at each portfolio size",
+        payload["header"],
         f"Venue minimums read {payload['minimums_fetched_at']} -- these floors move, so a band "
         "quoted from an older table is stale, not conservative.",
         "",
@@ -497,6 +504,7 @@ def accumulation_report(
     *,
     fetched_at: str,
     config: CrossfreqSystemConfig | None = None,
+    floor_shorts: bool = False,
 ) -> tuple[str, dict]:
     """Replay every record and render the drift the venue minimums impose, as a function of NAV.
 
@@ -509,7 +517,7 @@ def accumulation_report(
             stages.append(replay_stages(record, reader, config=config))
         except EngineError as exc:
             failures.append({"cycle_ts": record.cycle_ts.isoformat(), "error": str(exc)})
-    payload = accumulation_payload(stages, minimums, navs)
+    payload = accumulation_payload(stages, minimums, navs, floor_shorts=floor_shorts)
     payload["minimums_fetched_at"] = fetched_at
     payload["n_failed"] = len(failures)
     payload["failures"] = failures

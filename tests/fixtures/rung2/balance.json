@@ -1,0 +1,54 @@
+{
+  "ADA": {
+    "balance": 41.0,
+    "hold_trade": 0.0
+  },
+  "AVAX": {
+    "balance": 0.663,
+    "hold_trade": 0.0
+  },
+  "BNB": {
+    "balance": 0.0,
+    "hold_trade": 0.0
+  },
+  "BTC": {
+    "balance": 0.00039512,
+    "hold_trade": 0.0
+  },
+  "DOT": {
+    "balance": 4.18,
+    "hold_trade": 0.0
+  },
+  "ETH": {
+    "balance": 0.00788,
+    "hold_trade": 0.0
+  },
+  "EUR": {
+    "balance": 1500.0,
+    "hold_trade": 0.0
+  },
+  "EURC": {
+    "balance": 0.0,
+    "hold_trade": 0.0
+  },
+  "LINK": {
+    "balance": 0.0,
+    "hold_trade": 0.0
+  },
+  "LTC": {
+    "balance": 0.11,
+    "hold_trade": 0.0
+  },
+  "SOL": {
+    "balance": 0.1325,
+    "hold_trade": 0.0
+  },
+  "XDG": {
+    "balance": 81.0,
+    "hold_trade": 0.0
+  },
+  "XRP": {
+    "balance": 3.0,
+    "hold_trade": 0.0
+  }
+}

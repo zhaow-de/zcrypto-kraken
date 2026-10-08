@@ -898,9 +898,9 @@ def test_a_restored_spot_lot_is_offset_by_an_external_short_until_sold_and_resta
     )
 
     stale = (
-        "The engine's spot-sell check (`_classify_spot_close`) and `draft-plan`'s cap on a sell read the venue record's "
-        "balances as a figure taken at a start, raised by a later start and never lowered -- re-read both, and the "
-        "clearing of the stored account before an entry, against what the account carries now"
+        "`draft-plan`'s cap on a sell reads the venue record's balances as a figure taken at a start, raised by a later "
+        "start and never lowered -- re-read it, and the clearing of the stored account before an entry, against what the "
+        "account carries now"
     )
     assert "SOL" not in bought["venue_state_at_end"]["balances"], (
         f"{_BUMP}: the account the venue record is built from now carries a coin inside the process that bought it. "

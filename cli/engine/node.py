@@ -506,7 +506,14 @@ def _exec_engine_config() -> LiveExecutionEngineConfig:
     three of them decide how often an attended probe window stops on a slow venue rather than on a
     real one. They are stated at the values they already hold: no Kraken REST ack latency has been
     measured, so there is nothing to derive a different number from, and what an explicit statement
-    buys is that an upstream default flip cannot move the live trade path silently."""
+    buys is that an upstream default flip cannot move the live trade path silently.
+
+    The library's two venue polls stay off. Its reconciler's events reach the executor flagged
+    `reconciliation=True`, and `_on_order_event` and `_venue_terminal_state` read a flagged terminal
+    as one this engine minted, stranding the intent `ambiguous`; and its own
+    `request_order_status_reports` on the execution client would race the executor's bare-client
+    reads for the key's nonce (`read_venue_orders`). Their `None` reads as the library's default, so
+    it holds neither off against a flip; the interface pin on the defaults does."""
     return LiveExecutionEngineConfig(
         reconciliation=True,
         load_cache=True,
@@ -514,6 +521,8 @@ def _exec_engine_config() -> LiveExecutionEngineConfig:
         inflight_check_interval_ms=2000,
         inflight_check_threshold_ms=5000,
         inflight_check_retries=5,
+        open_check_interval_secs=None,
+        position_check_interval_secs=None,
     )
 
 
@@ -559,8 +568,9 @@ def _cache_password() -> str | None:
 
 
 def _exec_client_config(credentials: tuple[str, str]) -> KrakenExecutionClientConfig:
-    """Both currency fields read ZEUR for different reasons: margin summary figures are denominated in it, and
-    spot position reports cover the ZEUR-quoted instruments."""
+    """Both currency fields read ZEUR: margin summary figures are denominated in it, and
+    `spot_positions_quote_currency` is unread under `spot_account_type=MARGIN`, where the adapter takes the
+    OpenPositions branch and builds no spot position report."""
     api_key, api_secret = credentials
     return KrakenExecutionClientConfig(
         account_id=AccountId(_ACCOUNT_ID),

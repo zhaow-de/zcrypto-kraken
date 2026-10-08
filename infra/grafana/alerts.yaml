@@ -732,11 +732,11 @@ rules:
       receiver: metrics
 
   # The execution safety envelope (cli/engine/execgate.py, `_ExecGauges` in cli/engine/command.py):
-  # three rules over the six `zcrypto_exec_*` gauges. `reasons` never reaches Grafana and
-  # `zcrypto_exec_armed` deliberately conflates its two arming keys into one gauge, so every summary
-  # below sends the responder to `zcrypto engine exec-status` on the engine host for the breakdown
-  # remote telemetry cannot show. The three gauges carrying no rule are recorded with their reason in
-  # NOT_A_FAULT_SIGNAL (tests/test_infra_alert_rules.py).
+  # the next rules, over its `zcrypto_exec_*` gauges. `reasons` never reaches Grafana and
+  # `zcrypto_exec_armed` deliberately conflates its two arming keys into one gauge, so each rule's
+  # runbook section sends the responder to `zcrypto engine exec-status` on the engine host for
+  # the breakdown remote telemetry cannot show. The gauges carrying no rule are recorded with
+  # their reason in NOT_A_FAULT_SIGNAL (tests/test_infra_alert_rules.py).
   - uid: zcrypto-engine-exec-armed-too-long
     title: "Engine · order submission has been armed for over six hours"
     ruleGroup: zcrypto-gate
@@ -827,7 +827,7 @@ rules:
     orgId: 1
     # The rule that catches the one failure nothing else can see: a regression that drops the
     # gate evaluation from the cycle path, or a ledger write failing at every boundary, freezes
-    # this heartbeat while the idle refresh keeps the five readings moving and cycle telemetry
+    # this heartbeat while the idle refresh keeps the six readings moving and cycle telemetry
     # stays healthy, so every dashboard reads green while the envelope's record is gone.
     # Follows zcrypto-gate-exporter-stale's shape. Threshold = one cycle interval plus slack.
     condition: C
@@ -860,6 +860,139 @@ rules:
       summary: "The execution safety gate's heartbeat has not moved for more than four and three quarter hours: the engine's boundary path has stopped evaluating the gate and writing the exec record beside that evaluation, or that record's write has been failing at every boundary. The gate readings on this board keep moving on the executor's idle refresh while the process ticks, so they do not show this, and cycle telemetry can look perfectly healthy through it. Check that cycles are still completing, then read the engine journal on the host for the boundary's exec record and the engine log for a `metrics sink raised` line, and read the current state directly on the engine host with the exec-status command before trusting a gate tile. Runbook: infra/runbooks/engine.md#zcrypto-engine-exec-not-evaluated"
       __dashboardUid__: "zcrypto-engine"
       __panelId__: "56"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-engine-exec-venue-diverged
+    title: "Engine · the engine's read of Kraken's system status has failed for fifteen minutes"
+    ruleGroup: zcrypto-gate
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    # The read failing, never `zcrypto_exec_venue_ok` at 0: a maintenance is a word Kraken answered,
+    # which zcrypto-capture-venue-not-online pages from the capture side, and a rule on the engine's
+    # copy of that word would page every maintenance twice.
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'zcrypto_exec_venue_read_failed{host="zcrypto"}'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0.5]}  # stands in for == 1 -- this file's evaluators are gt/lt only
+    # OK, not Alerting: the series is absent until an engine publishing it is deployed, and its
+    # absence after that means the engine itself is down (owned by zcrypto-engine-cycle-stale).
+    noDataState: OK
+    execErrState: Alerting
+    for: 15m
+    annotations:
+      summary: "The engine's REST read of Kraken's SystemStatus has failed for fifteen minutes: the request failed, with no answer or with an HTTP error status (unreachable), or Kraken's answer could not be read (unreadable, its error envelope among them). The venue's own word is unknown to the engine, so its gate reads the venue not online and refuses to submit while Kraken, by its own word, may be trading. A Kraken maintenance is a word Kraken answered and pages from the capture side, not here. Read the gate's venue_status input with the exec-status command on the engine host, then the host's egress and DNS. Runbook: infra/runbooks/engine.md#zcrypto-engine-exec-venue-diverged"
+      __dashboardUid__: "zcrypto-engine"
+      __panelId__: "55"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  # The accumulation loop's two rules, over gauges `_ExecutionMetrics` publishes (cli/engine/command.py).
+  # `exec-status` builds its own gate in a fresh process and shows neither the watchdog's freeze nor a
+  # boundary's draft, so these summaries send the responder to the engine's log and the boundary's
+  # accumulation record instead.
+  - uid: zcrypto-engine-exec-watchdog-frozen
+    title: "Engine · the execution watchdog has frozen the loop"
+    ruleGroup: zcrypto-gate
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'zcrypto_exec_watchdog_frozen{host="zcrypto"}'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0.5]}  # stands in for == 1 -- this file's evaluators are gt/lt only
+    # OK, not Alerting: absence means the engine itself is down (owned by zcrypto-engine-cycle-stale),
+    # and this eager gauge carries a real 0/1 sample once the engine has started. `for: 15m` is past
+    # the hourly reconnect of the execution socket, which reports back within seconds.
+    noDataState: OK
+    execErrState: Alerting
+    for: 15m
+    annotations:
+      summary: "The engine's stale-socket watchdog has held the accumulation loop frozen for fifteen minutes: a venue socket stayed down past its grace, so the engine revoked its active intent, sent a cancel for each order it holds open and refuses every new intent. The freeze lifts on its own once the sockets are back and the re-read pass has run, or, on an engine disarmed at the return, at the return itself unless the ledger holds an order row the cut left open, which holds it until the engine is armed again and which the engine log's CRITICAL names for a hand cancel on Kraken's open-orders page meanwhile; a freeze that outlasts the socket's return is a re-read pass whose tries are spent, which lifts at a later socket return whose pass completes, the execution socket's hourly reconnect among them, or a socket the engine still counts as down after it came back, which needs a restart inside the inter-cycle gap. Read the engine log on the host for the CRITICAL line naming the endpoint and the grace. Runbook: infra/runbooks/engine.md#zcrypto-engine-exec-watchdog-frozen"
+      __dashboardUid__: "zcrypto-engine"
+      __panelId__: "84"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-engine-exec-boundary-not-drafted
+    title: "Engine · two consecutive boundaries drafted nothing"
+    ruleGroup: zcrypto-gate
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    # min_over_time over the 0/1 gauge: the window clears of 0 samples about 4h30m after the first
+    # undrafted boundary's write, so the rule fires about 4h40m after it only when no `ok` record came
+    # in between: the boundary 4h later wrote a non-`ok` record too, or none yet. An `ok` record puts
+    # a 0 back in the window, and so does a restarted engine, which publishes 0 until its first
+    # boundary's write whatever the cause. A book read failing at every boundary leaves the gate at
+    # `full`, so no rule on the gate's gauges sees what this one does.
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 16200, to: 0}  # 4h30m, matching the min_over_time window below
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'min_over_time(zcrypto_exec_boundary_not_drafted{host="zcrypto"}[4h30m])'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0.5]}  # stands in for == 1 -- this file's evaluators are gt/lt only
+    # OK, not Alerting: absence means the engine itself is down (owned by zcrypto-engine-cycle-stale).
+    noDataState: OK
+    execErrState: Alerting
+    for: 10m
+    annotations:
+      summary: "Two consecutive 4-hourly boundaries passed with no accumulation record reading `ok`, the second writing a non-`ok` record too or none yet, so the engine placed nothing at either: no cycle record to draft from, the book read failing at every try or a basket coin held under an earn or staking code, the submission window closing before the draft could run, or the plan refused, a kill switch's refusal among them. A failed draft moves no gate gauge, so this rule pages whatever the execution gate reads. Read the two newest accumulation records on the engine host for their status, the gate's level and reasons in each boundary's exec record, and the engine log for the cause. Runbook: infra/runbooks/engine.md#zcrypto-engine-exec-boundary-not-drafted"
+      __dashboardUid__: "zcrypto-engine"
+      __panelId__: "84"
     labels:
       severity: warning
     notification_settings:
