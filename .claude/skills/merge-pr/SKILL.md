@@ -41,7 +41,7 @@ What each gate covers:
 
 1. **`state == "OPEN"`** and **`isDraft == false`** — not already merged/closed, not a draft.
 2. **`mergeable == "MERGEABLE"`** — GitHub computed a clean (conflict-free) merge. `CONFLICTING` is a hard stop; `UNKNOWN` means GitHub is still computing — wait a few seconds and re-run (the gate refuses it).
-3. **`mergeStateStatus != "BLOCKED"`** — `BLOCKED` means branch protection is unsatisfied (required review missing or a required check failing). `CLEAN`, `UNSTABLE`, `BEHIND`, and `HAS_HOOKS` are all fine for a merge commit (being behind `develop` is reconciled by the merge; non-required checks don't block).
+3. **`mergeStateStatus != "BLOCKED"`** — `BLOCKED` means branch protection is unsatisfied (required review missing or a required check failing). `CLEAN`, `UNSTABLE`, `BEHIND`, and `HAS_HOOKS` are all fine for a merge commit (being behind `develop` is reconciled by the merge, except that a head lacking `develop`'s tip whose diff touches a path whose push builds the engine image is refused by the gate's own read of the clone, GitHub reporting it `CLEAN` here; non-required checks don't block).
 4. **`reviewDecision != "CHANGES_REQUESTED"`** — if reviews aren't required by the repo, `reviewDecision` comes back empty and the user's go-ahead (why this skill was invoked) is the approval. If reviews ARE required, gate 3 (`BLOCKED`) enforces them.
 5. **No failing and no still-running CI** — the gate blocks both: `develop` requires the **`Full test suite`** check (`.github/settings.yml`), so GitHub now refuses a red or unfinished run by itself — this evaluator is defense in depth, not the only gate, and it still catches what GitHub does not: an unchecked checklist, a wrong base, a draft. Do not relax it on the strength of the branch rule; the rule lives in a file one PR can change. `test-suite.yml` runs the suite on **`pull_request` into `develop`/`main`** (only — no `push` trigger, so no redundant post-merge run), and a failing suite fails that check; an empty rollup means it has not registered yet, which is also a wait. CI is the only place the whole suite runs.
 6. **Checklist complete** — the PR description has no unchecked task-list item, `- [ ]`, `* [ ]` or `1. [ ]`, read as a reader sees the page: a marker in a code span or a fenced block is text, a box inside `<details>` or a quote is still a box (GitHub does not enforce these, so the gate parses the body).
@@ -61,6 +61,12 @@ Gate 6 reads a box's state, never its text: a `- [x]` checked with a false `N/A`
 - **Tests pass.** Gate 5 reads the run itself; nothing to add.
 
 ## Step 3 — Merge
+
+Run Step 2's command again immediately before the merge — `develop` can move during Step 2b's reads — and merge only on `GATE PASSED`; a failure is Step 2's STOP:
+
+```bash
+uv run python infra/scripts/merge-gate.py <number>
+```
 
 ```bash
 gh pr merge <number> --merge --delete-branch

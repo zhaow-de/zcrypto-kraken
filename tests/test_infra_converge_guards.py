@@ -5,9 +5,11 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
 import time
 import tomllib
+from itertools import chain
 from pathlib import Path
 
 import pytest
@@ -781,119 +783,407 @@ def test_engine_pins_override_echo_fires_only_on_an_accepted_override(pins_text,
     assert truthy(when_conditions(task), variables) is expected
 
 
-# --- engine canary parity (spec 00083 D5): the capture parity assert, mirrored ------------------
-# The engine has no secondary; the secondary's CAPTURE bake is the engine's canary gate. The mirror
-# engages only when engine_image_digest differs from the running engine digest, fails CLOSED on an
-# unreachable secondary (empty stdout -> refuse via the override path), and shares canary_override.
+# --- engine preflight and provenance (spec 00124)
+PREFLIGHT_BLOCK = "engine preflight — run the candidate image's own preflight on this host"
+PREFLIGHT_RENDER = "engine preflight — render the candidate configuration beside the live one"
+PREFLIGHT_RUN = "engine preflight — run the candidate image's preflight, offline and read-only"
+PREFLIGHT_ASSERT = "engine preflight — refuse an engine re-pin the candidate image has not passed on this host"
+PREFLIGHT_ECHO = "engine preflight override — print the reason where it bypassed a refusal"
+PREFLIGHT_REMOVE = "engine preflight — remove the candidate configuration"
+PREFLIGHT_RECORD = "engine preflight — this run's preflight, for the deploy-log row"
+PROVENANCE_LABEL = "engine provenance — read the candidate image's revision label"
+PROVENANCE_MERGES = "engine provenance — list the first-parent merges of the controller's develop and main"
+PROVENANCE_ASSERT = "engine provenance — refuse an image whose revision is not a merge on develop or main"
+PREFLIGHT_CANDIDATE = "/opt/zcrypto-engine/zcrypto.toml.candidate"
+
+PREFLIGHT_DIGEST = "sha256:" + "ab" * 32
+PREFLIGHT_VARS = {
+    "engine_image": "ghcr.io/x/y",
+    "engine_image_digest": PREFLIGHT_DIGEST,
+    "engine_uid": 999,
+    "engine_gid": 998,
+    "engine_state_dir": "/var/lib/zcrypto-engine",
+}
+D3_COMMAND = (
+    "docker run --rm --network none --user {{ engine_uid }}:{{ engine_gid }} --memory 512m"
+    " -v {{ engine_state_dir }}:{{ engine_state_dir }}:ro -v /opt/zcrypto-engine/zcrypto.toml.candidate:/app/zcrypto.toml:ro"
+    " --entrypoint zcrypto {{ engine_image }}@{{ engine_image_digest }} engine preflight --state-dir {{ engine_state_dir }}"
+)
+MERGES = ["a1" * 20, "b2" * 20]
+MEMBER, NON_MEMBER = MERGES[1], "c3" * 20
+MERGES_READ = {"rc": 0, "stdout": "\n".join(MERGES), "stdout_lines": MERGES, "stderr": ""}
+PREFLIGHT_REASON = "hotfix!!!"  # nine characters, one past the grammar's bound
+BYPASS = """-e '{"engine_preflight_override": """
+NO_PREFLIGHT = "carries no preflight"
+NOT_RUN = "could not be run"
 
 
-def test_engine_parity_refuses_unbaked_digest():
+def _render(text: str, variables: dict):
+    from ansible.template import trust_as_template
+
+    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(text))
+
+
+def _flat_text(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _argv(task: dict) -> list[str]:
+    module = task["ansible.builtin.command"]
+    return shlex.split(_render(module["cmd"] if isinstance(module, dict) else module, PREFLIGHT_VARS))
+
+
+def _preflight_run(rc: int, stdout: str = "", stderr: str = "") -> dict:
+    return {"rc": rc, "stdout": stdout, "stdout_lines": stdout.splitlines(), "stderr": stderr}
+
+
+def _disjunct(task: dict) -> str:
+    return _flat_text(_first_balanced_group(" ".join(assert_that(task))))
+
+
+def _every_task(tasks: list[dict]):
+    for task in tasks:
+        yield task
+        for key in ("block", "rescue", "always"):
+            yield from _every_task(task.get(key, []))
+
+
+def test_engine_preflight_runs_the_candidate_image_isolated():
+    run = find_task(load_tasks(ENGINE), PREFLIGHT_RUN)
+    assert _argv(run) == shlex.split(_render(D3_COMMAND, PREFLIGHT_VARS))
+    assert (run["check_mode"], run["failed_when"], run["changed_when"]) == (False, False, False), run
+    assert run["register"] == "engine_preflight_run"
+
+
+def test_engine_preflight_runs_on_every_converge():
+    block = find_task(load_tasks(ENGINE), PREFLIGHT_BLOCK)
+    assert "block" in block and "when" not in block, block
+
+
+def test_engine_preflight_sits_after_the_account_the_store_and_the_project_dir():
     tasks = load_tasks(ENGINE)
-    guard = find_task(tasks, "engine canary parity — refuse an engine re-pin the secondary has not baked")
-    v = {
-        "engine_image_digest": "sha256:" + "ab" * 32,
-        "engine_secondary_digest_probe": {"stdout": "ghcr.io/x/y@sha256:" + "cd" * 32},
-        "canary_override": "",
+    block, record = task_index(tasks, PREFLIGHT_BLOCK), task_index(tasks, PREFLIGHT_RECORD)
+    assert record == block + 1, (block, record)
+    for before in (
+        "derive the zcrypto-engine uid/gid for the container's user mapping",
+        "assert the delivered store is readable and non-empty",
+        "ensure the compose project directory exists",
+    ):
+        assert task_index(tasks, before) < block, before
+    assert record < task_index(
+        tasks, "render the cache proxy config beside its live copy (0600 root-only; never logged, never diffed)"
+    )
+    assert [t["name"] for t in tasks[block]["block"]] == [
+        PREFLIGHT_RENDER,
+        PREFLIGHT_RUN,
+        PROVENANCE_LABEL,
+        PROVENANCE_MERGES,
+        PREFLIGHT_ASSERT,
+        PROVENANCE_ASSERT,
+        PREFLIGHT_ECHO,
+    ]
+
+
+def test_engine_preflight_renders_the_candidate_without_a_handler():
+    render = find_task(load_tasks(ENGINE), PREFLIGHT_RENDER)
+    assert render["ansible.builtin.template"] == {
+        "src": "zcrypto.toml.j2",
+        "dest": PREFLIGHT_CANDIDATE,
+        "owner": "root",
+        "group": "root",
+        "mode": "0644",
     }
-    assert not truthy(assert_that(guard), v)
+    assert render.get("diff") is False and render.get("check_mode") is False and "notify" not in render, render
 
 
-def test_engine_parity_passes_when_secondary_runs_it():
+def test_engine_preflight_candidate_is_removed_on_every_path():
+    block = find_task(load_tasks(ENGINE), PREFLIGHT_BLOCK)
+    assert block.get("always") == [
+        {
+            "name": PREFLIGHT_REMOVE,
+            "ansible.builtin.file": {"path": PREFLIGHT_CANDIDATE, "state": "absent"},
+            "check_mode": False,
+            "changed_when": False,
+        }
+    ], block.get("always")
+    assert not {"rescue", "ignore_errors", "no_log"} & block.keys(), sorted(block)
+
+
+def _bare(task: dict, module: str) -> None:
+    assert not {"ignore_errors", "failed_when", "when", "no_log"} & task.keys(), sorted(task)
+    assert not {"success_msg", "quiet"} & task[module].keys(), sorted(task[module])
+
+
+@pytest.mark.parametrize(
+    ("run", "override", "passes"),
+    [
+        (_preflight_run(0, '{"ok": true}'), None, True),
+        (_preflight_run(1, '{"ok": false}'), None, False),
+        (_preflight_run(2, "", "Error: No such command 'preflight'."), None, False),
+        (_preflight_run(125, "", "docker: Error response from daemon"), None, False),
+        ({}, None, False),
+        ({"skipped": True}, None, False),
+        (_preflight_run(1, '{"ok": false}'), PREFLIGHT_REASON, True),
+        (_preflight_run(1, '{"ok": false}'), "hotfix!!", False),
+        (_preflight_run(1, '{"ok": false}'), "true", False),
+    ],
+)
+def test_engine_preflight_refuses_every_rc_but_0_and_admits_a_reason(run, override, passes):
+    task = find_task(load_tasks(ENGINE), PREFLIGHT_ASSERT)
+    _bare(task, "ansible.builtin.assert")
+    variables = {"engine_preflight_run": run, **({} if override is None else {"engine_preflight_override": override})}
+    assert truthy(assert_that(task), variables) is passes
+
+
+CRASH_LOG = (
+    "2026-10-08T07:00:01Z ERROR main unhandled exception -- aborting\n"
+    "Traceback (most recent call last):\n"
+    '  File "/app/cli/engine/preflight.py", line 90, in run_preflight\n'
+    "RuntimeError: boom"
+)
+IMPORT_TRACEBACK = (
+    "Traceback (most recent call last):\n"
+    '  File "/app/.venv/bin/zcrypto", line 4, in <module>\n'
+    "ModuleNotFoundError: No module named 'cli'"
+)
+
+
+@pytest.mark.parametrize(
+    ("run", "says", "quotes", "never"),
+    [
+        (_preflight_run(1, 'INFO engine preflight starting\n{"ok": false}'), [], ['{"ok": false}'], ["engine preflight starting"]),
+        (_preflight_run(1, "", IMPORT_TRACEBACK), ["(no output)"], [IMPORT_TRACEBACK], []),
+        (_preflight_run(1, CRASH_LOG, ""), [], ["RuntimeError: boom"], ["unhandled exception"]),
+        (_preflight_run(2, "", "Error: No such command 'preflight'."), [NO_PREFLIGHT], [], [NOT_RUN]),
+        (_preflight_run(2, "", "Error: No such option: --state-dir"), [NOT_RUN], ["No such option: --state-dir"], [NO_PREFLIGHT]),
+        (
+            _preflight_run(125, "", "docker: invalid reference format."),
+            [NOT_RUN],
+            ["docker: invalid reference format."],
+            [NO_PREFLIGHT],
+        ),
+    ],
+)
+def test_engine_preflight_fail_msg_names_what_the_run_said(run, says, quotes, never):
+    task = find_task(load_tasks(ENGINE), PREFLIGHT_ASSERT)
+    text = _flat_text(_render(task["ansible.builtin.assert"]["fail_msg"], {**PREFLIGHT_VARS, "engine_preflight_run": run}))
+    for phrase in [*says, *quotes, BYPASS]:
+        assert _flat_text(phrase) in text, (phrase, text)
+    for phrase in never:
+        assert phrase not in text, (phrase, text)
+
+
+def test_engine_provenance_reads_one_label_field_and_lists_the_merges_on_the_controller():
     tasks = load_tasks(ENGINE)
-    guard = find_task(tasks, "engine canary parity — refuse an engine re-pin the secondary has not baked")
-    d = "sha256:" + "ab" * 32
-    v = {
-        "engine_image_digest": d,
-        "engine_secondary_digest_probe": {"stdout": f"ghcr.io/x/y@{d}"},
-        "canary_override": "",
+    label = find_task(tasks, PROVENANCE_LABEL)
+    assert """'{{ "{{" }}index .Config.Labels "org.opencontainers.image.revision"{{ "}}" }}'""" in label["ansible.builtin.command"]
+    assert _argv(label) == [
+        "docker",
+        "image",
+        "inspect",
+        "--format",
+        '{{index .Config.Labels "org.opencontainers.image.revision"}}',
+        f"ghcr.io/x/y@{PREFLIGHT_DIGEST}",
+    ]
+    assert (label["register"], label["check_mode"], label["failed_when"], label["changed_when"]) == (
+        "engine_preflight_label",
+        False,
+        False,
+        False,
+    )
+    merges = find_task(tasks, PROVENANCE_MERGES)
+    assert _argv(merges) == ["git", "rev-list", "--first-parent", "origin/develop", "origin/main"]
+    assert merges["ansible.builtin.command"]["chdir"] == "{{ playbook_dir }}"
+    assert (merges["delegate_to"], merges["become"], merges["run_once"]) == ("localhost", False, True), merges
+    assert (merges["check_mode"], merges["failed_when"], merges["changed_when"]) == (False, False, False), merges
+    assert merges["register"] == "engine_preflight_merges"
+
+
+@pytest.mark.parametrize(
+    ("label", "merges", "override", "passes"),
+    [
+        ({"rc": 0, "stdout": MEMBER}, MERGES_READ, None, True),
+        ({"rc": 0, "stdout": MEMBER + "\n"}, MERGES_READ, None, True),
+        ({"rc": 0, "stdout": ""}, MERGES_READ, None, False),
+        ({"rc": 1, "stderr": "Error: No such image"}, MERGES_READ, None, False),
+        ({"rc": 0, "stdout": "origin/develop"}, MERGES_READ, None, False),
+        ({"rc": 0, "stdout": NON_MEMBER}, MERGES_READ, None, False),
+        ({"rc": 0, "stdout": MEMBER}, {"rc": 128, "stderr": "fatal: not a git repository"}, None, False),
+        ({"rc": 0, "stdout": NON_MEMBER}, MERGES_READ, PREFLIGHT_REASON, True),
+        ({"rc": 0, "stdout": NON_MEMBER}, MERGES_READ, "hotfix!!", False),
+        ({"rc": 0, "stdout": NON_MEMBER}, MERGES_READ, "true", False),
+    ],
+)
+def test_engine_provenance_admits_only_a_first_parent_merge(label, merges, override, passes):
+    task = find_task(load_tasks(ENGINE), PROVENANCE_ASSERT)
+    _bare(task, "ansible.builtin.assert")
+    variables = {
+        "engine_preflight_label": label,
+        "engine_preflight_merges": merges,
+        **({} if override is None else {"engine_preflight_override": override}),
     }
-    assert truthy(assert_that(guard), v)
+    assert truthy(assert_that(task), variables) is passes
 
 
-def test_engine_parity_fails_closed_on_unreachable_secondary():
+@pytest.mark.parametrize(
+    ("label", "merges", "quotes"),
+    [
+        (NON_MEMBER, MERGES_READ, [NON_MEMBER, "git fetch origin"]),
+        (
+            MEMBER,
+            {"rc": 128, "stdout": "", "stdout_lines": [], "stderr": "fatal: bad revision 'origin/main'"},
+            ["128", "fatal: bad revision 'origin/main'", "git fetch origin"],
+        ),
+    ],
+)
+def test_engine_provenance_fail_msg_names_the_label_and_the_fetch(label, merges, quotes):
+    task = find_task(load_tasks(ENGINE), PROVENANCE_ASSERT)
+    variables = {**PREFLIGHT_VARS, "engine_preflight_label": {"rc": 0, "stdout": label}, "engine_preflight_merges": merges}
+    text = _flat_text(_render(task["ansible.builtin.assert"]["fail_msg"], variables))
+    for phrase in [*quotes, BYPASS]:
+        assert phrase in text, (phrase, text)
+
+
+@pytest.mark.parametrize(
+    ("rc", "last_line", "label", "override", "msg"),
+    [
+        (
+            1,
+            '{"ok": false}',
+            MEMBER,
+            PREFLIGHT_REASON,
+            f'engine preflight override accepted: hotfix for the boundary — preflight rc 1: {{"ok": false}}; revision {MEMBER}, first-parent merge: True',
+        ),
+        (
+            0,
+            '{"ok": true}',
+            NON_MEMBER,
+            PREFLIGHT_REASON,
+            f'engine preflight override accepted: hotfix for the boundary — preflight rc 0: {{"ok": true}}; revision {NON_MEMBER}, first-parent merge: False',
+        ),
+        (
+            1,
+            None,
+            MEMBER,
+            PREFLIGHT_REASON,
+            f"engine preflight override accepted: hotfix for the boundary — preflight rc 1: (no output); revision {MEMBER}, first-parent merge: True",
+        ),
+        (0, '{"ok": true}', MEMBER, PREFLIGHT_REASON, None),
+        (1, '{"ok": false}', MEMBER, "true", None),
+        (1, '{"ok": false}', MEMBER, "hotfix!!", None),
+    ],
+)
+def test_engine_preflight_override_echo_fires_only_on_an_accepted_override(rc, last_line, label, override, msg):
     tasks = load_tasks(ENGINE)
-    guard = find_task(tasks, "engine canary parity — refuse an engine re-pin the secondary has not baked")
-    v = {"engine_image_digest": "sha256:" + "ab" * 32, "engine_secondary_digest_probe": {}, "canary_override": ""}
-    assert not truthy(assert_that(guard), v)  # no stdout at all -> default('') -> refuse
-
-
-def test_engine_parity_reason_override_is_accepted_and_boolean_is_not():
-    tasks = load_tasks(ENGINE)
-    guard = find_task(tasks, "engine canary parity — refuse an engine re-pin the secondary has not baked")
-    v = {"engine_image_digest": "sha256:" + "ab" * 32, "engine_secondary_digest_probe": {"stdout": ""}}
-    assert truthy(assert_that(guard), {**v, "canary_override": "rollback to the only digest carrying the fix"})
-    assert not truthy(assert_that(guard), {**v, "canary_override": "true"})
-
-
-def test_engine_parity_probe_skips_when_digest_already_running():
-    tasks = load_tasks(ENGINE)
-    probe = find_task(tasks, "probe — the secondary's running capture digest (engine canary parity)")
-    d = "sha256:" + "ab" * 32
-    v = {"engine_image_digest": d, "engine_running_parity_probe": {"stdout": f"ghcr.io/x/y@{d}"}}
-    assert not truthy(" and ".join("(%s)" % c for c in when_conditions(probe)), v)
-
-
-def test_engine_parity_probe_is_unreachable_tolerant_and_delegated():
-    tasks = load_tasks(ENGINE)
-    probe = find_task(tasks, "probe — the secondary's running capture digest (engine canary parity)")
-    assert probe.get("ignore_unreachable") is True
-    assert "difference(groups['engine_host'])" in probe["delegate_to"]
-
-
-def test_engine_parity_echo_mirrors_the_negated_assert():
-    tasks = load_tasks(ENGINE)
-    echo = find_task(tasks, "engine canary override accepted — the reason, on the record")
-    v_overridden = {
-        "engine_image_digest": "sha256:" + "ab" * 32,
-        "engine_secondary_digest_probe": {"stdout": ""},
-        "canary_override": "rollback to the only digest carrying the fix",
+    echo = find_task(tasks, PREFLIGHT_ECHO)
+    assert "verbosity" not in echo["ansible.builtin.debug"] and "no_log" not in echo, echo
+    when = _flat_text(" ".join(when_conditions(echo)))
+    for name in (PREFLIGHT_ASSERT, PROVENANCE_ASSERT):
+        disjunct = _disjunct(find_task(tasks, name))
+        assert f"not {disjunct}" in when, (name, disjunct, when)
+    variables = {
+        "engine_preflight_run": _preflight_run(rc, "" if last_line is None else f"INFO engine preflight\n{last_line}"),
+        "engine_preflight_label": {"rc": 0, "stdout": label + "\n"},
+        "engine_preflight_merges": MERGES_READ,
+        "engine_preflight_override": override,
     }
-    conds = " and ".join("(%s)" % c for c in when_conditions(echo))
-    # a dict fixture is `not skipped` under Templar
-    assert truthy(conds, v_overridden)
-    assert not truthy(conds, {**v_overridden, "canary_override": "true"})
-    # The third case every sibling echo test carries: the gate is ACCEPTANCE, not presence. Parity
-    # PASSES here, so the reason overrode nothing and printing a "why" would be a false record.
-    d = "sha256:" + "ab" * 32
-    baked = {**v_overridden, "engine_secondary_digest_probe": {"stdout": f"ghcr.io/x/y@{d}"}}
-    assert not truthy(conds, baked)
+    assert truthy(when_conditions(echo), variables) is (msg is not None)
+    if msg is not None:
+        rendered = _render(
+            echo["ansible.builtin.debug"]["msg"], {**variables, "engine_preflight_override": "hotfix for the boundary"}
+        )
+        assert _flat_text(rendered) == msg
 
 
-# --- the engine mirror's when-side, mirroring test_canary_parity_refuses_an_unreachable_secondary
-# and test_canary_probe_activates_only_on_an_actual_repin for the capture block: a fail-open rewrite
-# of `is not skipped`, or a typo'd register name, stands the gate down silently.
-ENGINE_UNREACHABLE = {"unreachable": True, "msg": "Failed to connect to the host via ssh"}
-
-
-def test_engine_parity_when_reaches_the_refusal_on_an_unreachable_secondary():
+@pytest.mark.parametrize(
+    ("window", "run", "label", "override", "preflight"),
+    [
+        (
+            {"at": BOUNDARY + 1900, "floor": BOUNDARY + 1800, "arm": "fixed", "override": False},
+            _preflight_run(0, 'INFO engine preflight\n{"ok": true}'),
+            MEMBER + "\n",
+            None,
+            {
+                "engaged": True,
+                "digest": PREFLIGHT_DIGEST,
+                "rc": 0,
+                "revision": MEMBER,
+                "first_parent": True,
+                "line": '{"ok": true}',
+            },
+        ),
+        (
+            {"at": BOUNDARY + 500, "floor": BOUNDARY + 408, "arm": "journal", "override": False},
+            {"rc": 2, "stdout": "", "stdout_lines": [], "stderr": "Error: No such command 'preflight'."},
+            MEMBER + "\n",
+            PREFLIGHT_REASON,
+            {"engaged": True, "digest": PREFLIGHT_DIGEST, "rc": 2, "revision": MEMBER, "first_parent": True, "line": None},
+        ),
+        (
+            None,
+            _preflight_run(0, '{"ok": true}'),
+            MEMBER + "\n",
+            None,
+            {
+                "engaged": True,
+                "digest": PREFLIGHT_DIGEST,
+                "rc": 0,
+                "revision": MEMBER,
+                "first_parent": True,
+                "line": '{"ok": true}',
+            },
+        ),
+        (
+            {"at": BOUNDARY + 1900, "floor": BOUNDARY + 1800, "arm": "fixed", "override": False},
+            _preflight_run(0, '{"ok": true}'),
+            "",
+            PREFLIGHT_REASON,
+            {"engaged": True, "digest": PREFLIGHT_DIGEST, "rc": 0, "revision": None, "first_parent": False, "line": '{"ok": true}'},
+        ),
+    ],
+)
+def test_engine_preflight_record_carries_the_six_keys(tmp_path, window, run, label, override, preflight):
     tasks = load_tasks(ENGINE)
-    guard = find_task(tasks, "engine canary parity — refuse an engine re-pin the secondary has not baked")
-    v = {
-        "engine_image_digest": "sha256:" + "ab" * 32,
-        "engine_secondary_digest_probe": ENGINE_UNREACHABLE,
-        "canary_override": "",
+    task = find_task(tasks, PREFLIGHT_RECORD)
+    copy = task["ansible.builtin.copy"]
+    assert (copy["dest"], copy["mode"]) == ("{{ zcrypto_window_record }}", "0600"), copy
+    assert (task["delegate_to"], task["become"], task["run_once"]) == ("localhost", False, True), task
+    for gate, writes in [
+        ({"ansible_check_mode": False, "zcrypto_window_record": "/tmp/zcrypto-window.abc123"}, True),
+        ({"ansible_check_mode": True, "zcrypto_window_record": "/tmp/zcrypto-window.abc123"}, False),
+        ({"ansible_check_mode": False}, False),
+        ({"ansible_check_mode": False, "zcrypto_window_record": ""}, False),
+    ]:
+        assert truthy(when_conditions(task), gate) is writes, gate
+    assert f"'first_parent': {_disjunct(find_task(tasks, PROVENANCE_ASSERT))}" in _flat_text(copy["content"])
+
+    record = tmp_path / "zcrypto-window.abc123"
+    record.write_text("" if window is None else json.dumps(window))
+    variables = {
+        **PREFLIGHT_VARS,
+        "zcrypto_window_record": str(record),
+        "engine_preflight_run": run,
+        "engine_preflight_label": {"rc": 0, "stdout": label},
+        "engine_preflight_merges": MERGES_READ,
+        **({} if override is None else {"engine_preflight_override": override}),
     }
-    assert truthy(when_conditions(guard), v), "the probe RAN (unreachable is not skipped) -- the assert must evaluate"
-    # pins the fail-closed MECHANISM textually: `stdout is defined` would also reach a "true" when
-    # here (wrongly) once the unreachable fixture happens to lack `stdout` -- the mechanism, not just
-    # the outcome, must be `is not skipped`.
-    assert "is not skipped" in guard["when"]
+    written = json.loads(_render(copy["content"], variables))
+    assert written == {**(window or {}), "preflight": preflight}
+    # `==` holds for 1 == True and 0 == False.
+    assert written["preflight"]["engaged"] is True and written["preflight"]["first_parent"] is preflight["first_parent"]
+    assert type(written["preflight"]["rc"]) is int
 
 
-def test_engine_parity_probe_engages_on_an_actual_repin():
-    tasks = load_tasks(ENGINE)
-    probe = find_task(tasks, "probe — the secondary's running capture digest (engine canary parity)")
-    v = {
-        "engine_image_digest": "sha256:" + "ab" * 32,
-        "engine_running_parity_probe": {"stdout": "ghcr.io/x/y@sha256:" + "cd" * 32},
-    }
-    assert truthy(when_conditions(probe), v)
-
-
-def test_engine_parity_when_references_the_correct_probe_register_name():
-    tasks = load_tasks(ENGINE)
-    guard = find_task(tasks, "engine canary parity — refuse an engine re-pin the secondary has not baked")
-    assert "engine_secondary_digest_probe" in guard["when"]
+def test_engine_canary_parity_is_gone():
+    names = [str(task.get("name", "")) for task in _every_task(load_tasks(ENGINE))]
+    assert not [name for name in names if "canary parity" in name], names
+    readers = [
+        path.relative_to(REPO).as_posix()
+        for path in sorted(chain(ANSIBLE.rglob("*.yml"), ANSIBLE.rglob("*.yaml")))
+        if "vault" not in path.relative_to(REPO).as_posix()
+        and re.search(r"engine_secondary_digest_probe|engine_running_parity_probe", path.read_text())
+    ]
+    assert readers == [], readers
 
 
 # --- the arming backstop. The one guard here whose subject is real money rather than a digest: it

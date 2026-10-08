@@ -147,60 +147,6 @@
       window must hold only stop → migration-if-any → start inside the inter-cycle gap. Pre-stage it
       first: sudo docker pull {{ engine_image }}@{{ engine_image_digest }}
 
-# spec 00083 D5, the capture role's canary parity mirrored. There is no engine secondary -- the
-# secondary's CAPTURE bake IS the engine's canary gate -- so an engine re-pin is refused until the
-# new digest runs as capture on the secondary. This play targets the engine host only, so the mirror
-# drops the capture block's host scoping. `canary_override` is deliberately SHARED with the capture
-# assert: one gate concept, one override.
-- name: probe — the running engine digest (canary scope)
-  ansible.builtin.command: docker inspect --format '{{ "{{" }}.Config.Image{{ "}}" }}' zcrypto-engine
-  register: engine_running_parity_probe
-  failed_when: false
-  changed_when: false
-  check_mode: false
-  when: engine_image_digest is defined
-
-- name: probe — the secondary's running capture digest (engine canary parity)
-  ansible.builtin.command: docker inspect --format '{{ "{{" }}.Config.Image{{ "}}" }}' zcrypto-capture
-  register: engine_secondary_digest_probe
-  delegate_to: "{{ (groups['capture_host'] | difference(groups['engine_host'])) | first }}"
-  failed_when: false
-  ignore_unreachable: true  # mirror of the capture probe: an unreachable secondary must reach the assert (empty stdout -> refuse via override), never abort or silently pass
-  changed_when: false
-  check_mode: false
-  when: >-
-    engine_image_digest is defined
-    and engine_running_parity_probe.stdout is defined
-    and engine_image_digest not in engine_running_parity_probe.stdout
-
-- name: engine canary parity — refuse an engine re-pin the secondary has not baked
-  ansible.builtin.assert:
-    that: >-
-      (engine_image_digest in engine_secondary_digest_probe.stdout | default(''))
-      or ((canary_override | default('') | string | length > 8)
-          and (canary_override | default('') | string | lower not in ['true', 'false', '1', 'yes']))
-    fail_msg: >-
-      The secondary does not run {{ engine_image_digest }} as capture — there is no engine
-      secondary, so that bake IS the engine's canary gate. Converge the secondary's capture first
-      and let it bake, or pass the reason as JSON: -e '{"canary_override": "<why this cannot
-      wait>"}' (a reason, not a boolean). JSON, because -e canary_override=... truncates at the
-      first space.
-  when: >-
-    engine_image_digest is defined
-    and engine_secondary_digest_probe is not skipped
-
-# An ACCEPTED override lands its reason in the play log — gated on acceptance (the parity check
-# failing AND the fragment true), never on mere presence, same as every wave-1 echo.
-- name: engine canary override accepted — the reason, on the record
-  ansible.builtin.debug:
-    msg: "canary_override accepted: {{ canary_override }}"
-  when: >-
-    engine_image_digest is defined
-    and engine_secondary_digest_probe is not skipped
-    and not (engine_image_digest in engine_secondary_digest_probe.stdout | default(''))
-    and (canary_override | default('') | string | length > 8)
-    and (canary_override | default('') | string | lower not in ['true', 'false', '1', 'yes'])
-
 - name: probe — the logship secrets file the engine's compose reads at start
   ansible.builtin.stat:
     path: /opt/zcrypto-capture/logship-secrets.env
@@ -275,8 +221,8 @@
     and (pins_override | default('') | string | length > 8)
     and (pins_override | default('') | string | lower not in ['true', 'false', '1', 'yes'])
 
-# The cache proxy's image takes the engine image's guards but not its canary parity: there is no capture
-# bake of an upstream proxy image.
+# The cache proxy's image takes the engine image's residency and pins guards; its upstream image carries no
+# `zcrypto` command, so it takes no preflight.
 - name: fail fast if the pinned cache proxy image digest was not supplied
   ansible.builtin.assert:
     that: engine_cache_proxy_image_digest | length > 0
@@ -448,18 +394,9 @@
 # after the workstation's `zcrypto engine seed` has returned, never beside it: a mid-write copy could
 # deliver a truncated parquet.
 #
-# VPS store repair, since `zcrypto engine seed` is workstation-only and the image carries no
-# canonical dataset (infra/runbooks/engine.md, zcrypto-engine-cycle-stale, holds the procedure):
-# repair the leg in the workstation's data/engine-store/ first, since that is the source this copy
-# delivers and a re-run delivers it again; then stop the unit, move the store dir aside beside
-# itself rather than deleting it (unversioned data has no undo), re-run the engine-tagged converge
-# with `-e converge_primary=true` and the digest, inside the inter-cycle gap and outside a published
-# Kraken maintenance window -- the flag is required or the guard drops this host and the engine play
-# silently skips -- so the only-when-absent copy re-delivers the workstation's data/engine-store/ and
-# this play starts the unit; the aside dir is purged once the refused file has been read and the
-# runbook's all-clear by value has landed. A seed or a boundary that refuses naming the REST fetch
-# rather than a file is a row the venue itself carries: it is the venue's to answer, nothing was
-# written, and no store repair or converge reaches it.
+# VPS store repair: `zcrypto engine seed` is workstation-only and the image carries no canonical dataset, so the
+# repair goes through this only-when-absent copy; infra/runbooks/engine.md's zcrypto-engine-cycle-stale section
+# holds the procedure, and the store assert's fail_msg below names the converge it re-runs, the preflight bypass included.
 - name: probe whether the store was already delivered (BTC subtree present)
   ansible.builtin.stat:
     path: "{{ engine_state_dir }}/store/BTC"
@@ -497,8 +434,10 @@
       carries, which is the venue's to answer and no store repair reaches. Then stop the unit, move
       this delivered copy aside too (a second store.aside-<stamp> if the repair already made one,
       purged with it), and re-run this converge with --tags engine, -e converge_primary=true,
-      -e engine_image_digest=sha256:<full digest> and -e cache_proxy_image_digest=sha256:<the running
-      proxy digest>, inside the inter-cycle gap and outside a published
+      -e engine_image_digest=sha256:<full digest>, -e cache_proxy_image_digest=sha256:<the running
+      proxy digest> and -e '{"engine_preflight_override": "<reason>"}' with the user's approval, since the
+      stopped unit's preview finds the store aside and the preflight refuses on its missing files,
+      inside the inter-cycle gap and outside a published
       Kraken maintenance window checked immediately before: infra/runbooks/engine.md's
       zcrypto-engine-cycle-stale section holds the whole repair.
   when: engine_store_delivery is changed and not ansible_check_mode
@@ -512,6 +451,126 @@
     owner: root
     group: root
     mode: "0755"
+
+# The engine's re-pin gate, run on every converge, the running digest's included: a read of what runs or of what the
+# compose file pins would skip a candidate the rollout staged in the compose pin before the converge. Nothing here may
+# turn a refusal into a pass or hide the default output the rollout's preview reads; the tests list the keys that would.
+- name: engine preflight — run the candidate image's own preflight on this host
+  block:
+    - name: engine preflight — render the candidate configuration beside the live one
+      ansible.builtin.template:
+        src: zcrypto.toml.j2
+        dest: /opt/zcrypto-engine/zcrypto.toml.candidate
+        owner: root
+        group: root
+        mode: "0644"
+      diff: false
+      check_mode: false
+
+    - name: engine preflight — run the candidate image's preflight, offline and read-only
+      ansible.builtin.command: >-
+        docker run --rm --network none --user {{ engine_uid }}:{{ engine_gid }} --memory 512m
+        -v {{ engine_state_dir }}:{{ engine_state_dir }}:ro
+        -v /opt/zcrypto-engine/zcrypto.toml.candidate:/app/zcrypto.toml:ro
+        --entrypoint zcrypto {{ engine_image }}@{{ engine_image_digest }}
+        engine preflight --state-dir {{ engine_state_dir }}
+      register: engine_preflight_run
+      check_mode: false
+      failed_when: false
+      changed_when: false
+
+    - name: engine provenance — read the candidate image's revision label
+      ansible.builtin.command: >-
+        docker image inspect --format '{{ "{{" }}index .Config.Labels "org.opencontainers.image.revision"{{ "}}" }}'
+        {{ engine_image }}@{{ engine_image_digest }}
+      register: engine_preflight_label
+      check_mode: false
+      failed_when: false
+      changed_when: false
+
+    # The git module lists no first-parent line.
+    - name: engine provenance — list the first-parent merges of the controller's develop and main  # noqa: command-instead-of-module
+      ansible.builtin.command:
+        cmd: git rev-list --first-parent origin/develop origin/main
+        chdir: "{{ playbook_dir }}"
+      register: engine_preflight_merges
+      delegate_to: localhost
+      become: false
+      run_once: true
+      check_mode: false
+      failed_when: false
+      changed_when: false
+
+    - name: engine preflight — refuse an engine re-pin the candidate image has not passed on this host
+      ansible.builtin.assert:
+        that: >-
+          (engine_preflight_run.rc | default(none) == 0)
+          or ((engine_preflight_override | default('') | string | length > 8)
+              and (engine_preflight_override | default('') | string | lower not in ['true', 'false', '1', 'yes']))
+        fail_msg: >-
+          {% if (engine_preflight_run.rc | default(none)) == 1 %}The preflight of {{ engine_image }}@{{ engine_image_digest }}
+          refused on this host (rc 1): {{ engine_preflight_run.stdout_lines | default([]) | last | default('(no output)', true) }};
+          stderr: {{ engine_preflight_run.stderr | default('') | trim }}.
+          {% elif (engine_preflight_run.rc | default(none)) == 2
+          and "No such command 'preflight'" in (engine_preflight_run.stderr | default('')) %}{{ engine_image }}@{{ engine_image_digest }}
+          carries no preflight: it was built before the engine image carried one (rc 2).
+          {% else %}The preflight of {{ engine_image }}@{{ engine_image_digest }} could not be run
+          (rc {{ engine_preflight_run.rc | default(none) }}): {{ engine_preflight_run.stderr | default('') | trim }}.
+          {% endif %}No engine file was rewritten. Fix what the line names, or pass the reason as JSON:
+          -e '{"engine_preflight_override": "<why this cannot wait>"}' (a reason, not a boolean), with the user's explicit approval.
+
+    - name: engine provenance — refuse an image whose revision is not a merge on develop or main
+      ansible.builtin.assert:
+        that: >-
+          ((engine_preflight_label.stdout | default('') | trim) in (engine_preflight_merges.stdout_lines | default([])))
+          or ((engine_preflight_override | default('') | string | length > 8)
+              and (engine_preflight_override | default('') | string | lower not in ['true', 'false', '1', 'yes']))
+        fail_msg: >-
+          The revision label of {{ engine_image }}@{{ engine_image_digest }},
+          '{{ engine_preflight_label.stdout | default('') | trim }}', is not a commit on the first-parent line of the
+          controller's origin/develop or origin/main{% if (engine_preflight_merges.stdout_lines | default([])) | length == 0 %}
+          (the controller listed none: git rev-list rc {{ engine_preflight_merges.rc | default(none) }},
+          stderr: {{ engine_preflight_merges.stderr | default('') | trim }}){% endif %}.
+          A stale controller refuses a fresh image: run git fetch origin, then re-run this converge.
+          An image built off a branch, or with no label, passes only with a reason, as JSON:
+          -e '{"engine_preflight_override": "<why this cannot wait>"}' (a reason, not a boolean), with the user's explicit approval.
+
+    - name: engine preflight override — print the reason where it bypassed a refusal
+      ansible.builtin.debug:
+        msg: >-
+          engine preflight override accepted: {{ engine_preflight_override }} — preflight rc {{ engine_preflight_run.rc | default(none) }}:
+          {{ engine_preflight_run.stdout_lines | default([]) | last | default('(no output)', true) }};
+          revision {{ engine_preflight_label.stdout | default('') | trim }},
+          first-parent merge: {{ ((engine_preflight_label.stdout | default('') | trim) in (engine_preflight_merges.stdout_lines | default([]))) }}
+      when: >-
+        (not (engine_preflight_run.rc | default(none) == 0)
+         or not ((engine_preflight_label.stdout | default('') | trim) in (engine_preflight_merges.stdout_lines | default([]))))
+        and (engine_preflight_override | default('') | string | length > 8)
+        and (engine_preflight_override | default('') | string | lower not in ['true', 'false', '1', 'yes'])
+  always:
+    - name: engine preflight — remove the candidate configuration
+      ansible.builtin.file:
+        path: /opt/zcrypto-engine/zcrypto.toml.candidate
+        state: absent
+      check_mode: false
+      changed_when: false
+
+- name: engine preflight — this run's preflight, for the deploy-log row
+  ansible.builtin.copy:
+    dest: "{{ zcrypto_window_record }}"
+    content: >-
+      {{ (lookup('file', zcrypto_window_record) or '{}') | from_json
+         | combine({'preflight': {'engaged': true, 'digest': engine_image_digest,
+                                  'rc': engine_preflight_run.rc | default(none),
+                                  'revision': engine_preflight_label.stdout | default('') | trim | default(none, true),
+                                  'first_parent': ((engine_preflight_label.stdout | default('') | trim) in (engine_preflight_merges.stdout_lines | default([]))),
+                                  'line': engine_preflight_run.stdout_lines | default([]) | last | default(none)}})
+         | to_json }}
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  when: not ansible_check_mode and (zcrypto_window_record | default('') | length > 0)
 
 # --- 5a. The cache proxy's config, ahead of the engine's three files: a refused render stops before any
 # is rewritten, and the file exists before compose.yaml bind-mounts it, whose missing source Docker
