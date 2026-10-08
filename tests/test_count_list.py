@@ -442,10 +442,10 @@ def test_the_row_commit_and_a_message_amend_are_the_heads_the_read_line_need_not
 @pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
 def test_a_truncated_file_list_is_refetched_before_the_fable_arm_decides(tmp_path):
     """`gh pr list --json files` returns the first page only, so a PR whose Fable path falls outside it reads as
-    touching none — the counter would book it compliant where the gate refuses it. `changedFiles` is the exact
-    truncation test, and the re-fetch has to happen BEFORE `read_line_fails` sees the list. The row below carries
-    an Opus read, two innocuous paths and `changedFiles: 3`; the recorded full list adds `cli/engine/soak.py`, so
-    it must count. Without the re-fetch it reads as touching nothing and does not."""
+    touching none — the counter would book it compliant where the gate refuses it. The re-fetch has to happen
+    BEFORE `read_line_fails` sees the list. The row below carries an Opus read and two innocuous paths; the
+    recorded full list adds `cli/engine/soak.py`, so it must count. Without the re-fetch it reads as touching
+    nothing and does not."""
     stamp = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     head = "abcdef1234567aaaaaaaaaaaaaaaaaaaaaaaaaaa"
     prs = [
@@ -454,7 +454,6 @@ def test_a_truncated_file_list_is_refetched_before_the_fable_arm_decides(tmp_pat
             "headRefName": "feat/truncated",
             "mergedAt": stamp,
             "headRefOid": head,
-            "changedFiles": 3,
             "files": [{"path": "docs/a.md"}, {"path": "docs/b.md"}],
             "body": "Read before push by: Claude Opus at abcdef1234567\n",
         },
@@ -463,7 +462,6 @@ def test_a_truncated_file_list_is_refetched_before_the_fable_arm_decides(tmp_pat
             "headRefName": "feat/old",
             "mergedAt": "2026-01-01T00:00:00Z",
             "headRefOid": head,
-            "changedFiles": 0,
             "files": [],
             "body": "## Summary\n",
         },
@@ -471,6 +469,49 @@ def test_a_truncated_file_list_is_refetched_before_the_fable_arm_decides(tmp_pat
     snapshot, files_snapshot = tmp_path / "prs.json", tmp_path / "files.json"
     snapshot.write_text(json.dumps(prs))
     files_snapshot.write_text(json.dumps({"4242": ["docs/a.md", "docs/b.md", "cli/engine/soak.py"]}))
+    done = subprocess.run(
+        ["bash", str(SCRIPT), "merged-prs-without-a-floor-read-30d"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "COUNT_LIST_PRS_SNAPSHOT": str(snapshot),
+            "COUNT_LIST_FILES_SNAPSHOT": str(files_snapshot),
+        },
+        timeout=120,
+    )
+    assert done.returncode == 0 and done.stdout.strip().endswith("\t1"), done.stdout + done.stderr
+
+
+@pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+def test_a_file_renamed_out_of_a_fable_path_is_counted_by_its_old_path(tmp_path):
+    """The bulk list names a rename by its new path alone, so a complete one is re-read too. The row below moved
+    `cli/engine/retired.py` to `cli/costs/retired.py` under an Opus read with no substitution line, so it must count."""
+    stamp = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    head = "abcdef1234567aaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    prs = [
+        {
+            "number": 4244,
+            "headRefName": "feat/renamed",
+            "mergedAt": stamp,
+            "headRefOid": head,
+            "files": [{"path": "cli/costs/retired.py"}],
+            "body": "Read before push by: Claude Opus at abcdef1234567\n",
+        },
+        {
+            "number": 4245,
+            "headRefName": "feat/old",
+            "mergedAt": "2026-01-01T00:00:00Z",
+            "headRefOid": head,
+            "files": [],
+            "body": "## Summary\n",
+        },
+    ]
+    snapshot, files_snapshot = tmp_path / "prs.json", tmp_path / "files.json"
+    snapshot.write_text(json.dumps(prs))
+    # The recorded list as `PR_FILES_JQ` prints the endpoint's entry: its `filename`, then its `previous_filename`.
+    files_snapshot.write_text(json.dumps({"4244": ["cli/costs/retired.py", "cli/engine/retired.py"]}))
     done = subprocess.run(
         ["bash", str(SCRIPT), "merged-prs-without-a-floor-read-30d"],
         cwd=REPO,
