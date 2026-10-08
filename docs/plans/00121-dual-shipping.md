@@ -546,4 +546,4 @@ It does not deliver phases 3 and 4. Phase 3's plan takes from this one: the per-
 - R4's day read of `zcrypto-valkey1`'s Alloy headroom, filled in R4.
 - R6's head-series reading with every host shipping, filled in R6.
 - R8's two readings, filled: the spec's measured basis carries them.
-- The comparison's earliest day, filled in R9: 2026-10-10; `COMPARISON_FROM` and T0217's `ripe_when` take it in R9's own pull request.
+- The comparison's earliest day, filled in R9: 2026-10-10; T0217's `ripe_when` takes it in the records, `COMPARISON_FROM` in R9's own pull request.

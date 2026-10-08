@@ -997,4 +997,4 @@ This plan delivers T0219: one version in one file, every role's Alloy under one 
 - R10's preflight, filled in R10.
 - R11's W4 reading, filled: both copies' `activeAt` 2026-10-08T16:18:40Z, 15 min 16 s from the stop, against about 16 minutes, and `up{host="zcrypto-red"}` absent and not 0 on the node; the drill-log entry of 2026-10-08 carries it.
 - R12's two boundary readings, filled: spec 00121's measured basis carries them.
-- The comparison's earliest day, filled in R12: 2026-10-10; `COMPARISON_FROM` and T0217's `ripe_when` take it in their own pull request.
+- The comparison's earliest day, filled in R12: 2026-10-10; T0217's `ripe_when` takes it in the records, `COMPARISON_FROM` in its own pull request.
