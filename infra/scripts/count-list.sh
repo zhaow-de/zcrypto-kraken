@@ -163,31 +163,32 @@ def file_paths(pr):
     because `read_line_fails` has two refusals that fire only on None.
 
     COUNT_LIST_FILES_SNAPSHOT names a recorded `{number: [path]}` map, each list as `gate.PR_FILES_JQ` prints
-    it, so the fetch below can be driven without the network: an arm no test can reach is an arm no probe can
-    kill. Offline, a row the map does not name keeps its bulk list."""
+    it, standing in for the fetch; offline, a row the map does not name keeps its bulk list. The fetched list
+    adds to the bulk one and never shortens it: an empty or short answer would book compliant a PR whose bulk
+    list already names a Fable path."""
     rows = pr.get("files")
     if rows is None:
         return None
     paths = [f.get("path") for f in rows]
     if files_snapshot is not None:
-        return files_snapshot.get(str(pr.get("number")), paths)
-    if offline:
+        fetched = files_snapshot.get(str(pr.get("number")), [])
+    elif offline:
         return paths
-    done = subprocess.run(
-        ["gh", "api", "--paginate", f"repos/{gate.REPO}/pulls/{pr.get('number')}/files", "--jq", gate.PR_FILES_JQ],
-        capture_output=True, text=True, timeout=120,
-    )
-    if done.returncode != 0:
-        # `return 2`, not 1: this entry's other refusals exit 2, and `emit` reads 1 as a zero COUNT.
-        print(
-            f"count-list: PR #{pr.get('number')}'s file list could not be fetched -- the Fable-path arm cannot "
-            f"be decided: {done.stderr.strip()[:200]}",
-            file=sys.stderr,
+    else:
+        done = subprocess.run(
+            ["gh", "api", "--paginate", f"repos/{gate.REPO}/pulls/{pr.get('number')}/files", "--jq", gate.PR_FILES_JQ],
+            capture_output=True, text=True, timeout=120,
         )
-        raise SystemExit(2)
-    # `splitlines()` where the gate splits on whitespace: a path containing a space survives here and is
-    # fragmented there. Unreachable today and this is the correcter form, so the gate is the one to change.
-    return [line for line in done.stdout.splitlines() if line.strip()]
+        if done.returncode != 0:
+            # `return 2`, not 1: this entry's other refusals exit 2, and `emit` reads 1 as a zero COUNT.
+            print(
+                f"count-list: PR #{pr.get('number')}'s file list could not be fetched -- the Fable-path arm cannot "
+                f"be decided: {done.stderr.strip()[:200]}",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+        fetched = [line for line in done.stdout.splitlines() if line.strip()]
+    return fetched + [p for p in paths if p not in fetched]
 
 
 commits_snapshot = json.loads(pathlib.Path(os.environ["COUNT_LIST_COMMITS_SNAPSHOT"]).read_text()) if os.environ.get(

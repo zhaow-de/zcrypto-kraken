@@ -591,9 +591,9 @@ RENAMED = [
 ]
 
 
-def _main_over_files(monkeypatch, body: str, entries: list[dict]) -> int:
+def _main_over_files(monkeypatch, body: str, entries: list[dict], **over) -> int:
     """`main()` with gh's files endpoint answering `entries` through the jq program `main()` hands it."""
-    pr = _pr(body=body)
+    pr = _pr(body=body, **over)
 
     def fake_gh(*args: str) -> str:
         if args[:2] == ("pr", "view"):
@@ -621,6 +621,25 @@ def test_an_opus_read_on_a_pr_renaming_a_file_out_of_a_guarded_path_fails(monkey
 def test_the_substitution_line_admits_an_opus_read_on_a_pr_renaming_a_file_out_of_a_guarded_path(monkeypatch, capsys):
     body = _read_by_opus_with_substitution("the account's Fable limit is reached; the owner authorised Opus")
     assert _main_over_files(monkeypatch, body, RENAMED) == 0, capsys.readouterr().out
+
+
+def test_a_path_holding_a_space_is_read_whole(monkeypatch, capsys):
+    entries = [{"filename": "docs/my notes.md", "previous_filename": ".claude/my notes.md", "status": "renamed"}]
+    assert _main_over_files(monkeypatch, _read_by("Claude Opus 4.8"), entries) == 1
+    out = capsys.readouterr().out
+    assert "the PR touches .claude/my notes.md: the floor there is Claude Fable" in out, out
+
+
+@pytest.mark.parametrize(
+    ("old", "expected"),
+    [("docs/reference/ops-journal/2026-08.md", "GATE PASSED"), ("docs/notes/2026-09.md", "no 'Read before push by:")],
+    ids=["from-inside", "from-outside"],
+)
+def test_a_journal_pr_renaming_a_file_into_the_journal_is_exempt_only_from_inside_it(monkeypatch, capsys, old, expected):
+    entries = [{"filename": "docs/reference/ops-journal/2026-09.md", "previous_filename": old, "status": "renamed"}]
+    _main_over_files(monkeypatch, JOURNAL_PR["body"], entries, headRefName="ops-journal")
+    out = capsys.readouterr().out
+    assert expected in out, out
 
 
 def test_the_substitution_line_needs_a_reason():

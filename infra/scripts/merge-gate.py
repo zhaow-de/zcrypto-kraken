@@ -662,7 +662,8 @@ def main(argv: list[str]) -> int:
     m = READ_LINE.search(_as_a_reader_sees_it(pr.get("body") or ""))
     head = pr.get("headRefOid") or ""
     if m or pr.get("headRefName") == "ops-journal":
-        files = _gh("api", "--paginate", f"repos/{REPO}/pulls/{pr['number']}/files", "--jq", PR_FILES_JQ).split()
+        out = _gh("api", "--paginate", f"repos/{REPO}/pulls/{pr['number']}/files", "--jq", PR_FILES_JQ)
+        files = [line for line in out.splitlines() if line.strip()]
     growth = branch_growth(pr["baseRefName"], pr["headRefName"], head)
     behind = is_behind(pr["baseRefName"], head)
     changed = changed_paths(pr["baseRefName"], head)

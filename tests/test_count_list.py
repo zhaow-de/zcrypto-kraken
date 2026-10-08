@@ -484,47 +484,74 @@ def test_a_truncated_file_list_is_refetched_before_the_fable_arm_decides(tmp_pat
     assert done.returncode == 0 and done.stdout.strip().endswith("\t1"), done.stdout + done.stderr
 
 
-@pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
-def test_a_file_renamed_out_of_a_fable_path_is_counted_by_its_old_path(tmp_path):
-    """The bulk list names a rename by its new path alone, so a complete one is re-read too. The row below moved
-    `cli/engine/retired.py` to `cli/costs/retired.py` under an Opus read with no substitution line, so it must count."""
-    stamp = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    head = "abcdef1234567aaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    prs = [
-        {
-            "number": 4244,
-            "headRefName": "feat/renamed",
-            "mergedAt": stamp,
-            "headRefOid": head,
-            "files": [{"path": "cli/costs/retired.py"}],
-            "body": "Read before push by: Claude Opus at abcdef1234567\n",
-        },
-        {
-            "number": 4245,
-            "headRefName": "feat/old",
-            "mergedAt": "2026-01-01T00:00:00Z",
-            "headRefOid": head,
-            "files": [],
-            "body": "## Summary\n",
-        },
-    ]
-    snapshot, files_snapshot = tmp_path / "prs.json", tmp_path / "files.json"
-    snapshot.write_text(json.dumps(prs))
-    # The recorded list as `PR_FILES_JQ` prints the endpoint's entry: its `filename`, then its `previous_filename`.
-    files_snapshot.write_text(json.dumps({"4244": ["cli/costs/retired.py", "cli/engine/retired.py"]}))
-    done = subprocess.run(
+# `gh` for the floor-read count's live path: `pr list` prints the recorded rows, and the files endpoint runs the jq
+# program the count hands it over the recorded entries of that PR; anything else is refused.
+_FAKE_GH = """#!/usr/bin/env bash
+dir="$(dirname "$0")"
+if [ "$1 $2" = "pr list" ]; then exec cat "$dir/prs.json"; fi
+if [ "$1 $2 $4" = "api --paginate --jq" ]; then
+  n="${3%/files}"
+  exec jq -r "$5" "$dir/files-${n##*/}.json"
+fi
+echo "fake gh: $*" >&2
+exit 64
+"""
+
+
+def _live_count(tmp_path: pathlib.Path, rows: list[dict], entries: dict[int, list[dict]]) -> subprocess.CompletedProcess:
+    """The floor-read count with no snapshot, a fake `gh` and a `git` whose fetch is a no-op ahead of the real ones."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "prs.json").write_text(json.dumps(rows))
+    for number, listed in entries.items():
+        (bin_dir / f"files-{number}.json").write_text(json.dumps(listed))
+    (bin_dir / "gh").write_text(_FAKE_GH)
+    (bin_dir / "git").write_text(f'#!/usr/bin/env bash\n[ "$1" = fetch ] && exit 0\nexec "{shutil.which("git")}" "$@"\n')
+    for name in ("gh", "git"):
+        (bin_dir / name).chmod(0o755)
+    return subprocess.run(
         ["bash", str(SCRIPT), "merged-prs-without-a-floor-read-30d"],
         cwd=REPO,
         capture_output=True,
         text=True,
-        env={
-            **os.environ,
-            "COUNT_LIST_PRS_SNAPSHOT": str(snapshot),
-            "COUNT_LIST_FILES_SNAPSHOT": str(files_snapshot),
-        },
+        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"},
         timeout=120,
     )
-    assert done.returncode == 0 and done.stdout.strip().endswith("\t1"), done.stdout + done.stderr
+
+
+def _live_row(
+    number: int, branch: str, files: list[str], body: str = "Read before push by: Claude Opus at abcdef1234567\n"
+) -> dict:
+    stamp = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    head = "abcdef1234567aaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    return {
+        "number": number,
+        "headRefName": branch,
+        "mergedAt": stamp,
+        "headRefOid": head,
+        "files": [{"path": f} for f in files],
+        "body": body,
+    }
+
+
+_OLD_ROW = {**_live_row(9, "feat/old", [], "## Summary\n"), "mergedAt": "2026-01-01T00:00:00Z"}
+
+
+@pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+def test_the_live_count_reads_a_renamed_file_s_old_path_through_the_gate_s_jq(tmp_path):
+    rows = [_live_row(10, "feat/renamed", ["cli/costs/retired.py"]), _live_row(11, "feat/plain", ["docs/a.md"]), _OLD_ROW]
+    entries = {
+        10: [{"filename": "cli/costs/retired.py", "previous_filename": "cli/engine/retired.py", "status": "renamed"}],
+        11: [{"filename": "docs/a.md", "status": "modified"}],
+    }
+    done = _live_count(tmp_path, rows, entries)
+    assert done.returncode == 0 and done.stdout == "merged-prs-without-a-floor-read-30d\t1\n", done.stdout + done.stderr
+
+
+@pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+def test_an_empty_answer_from_the_files_endpoint_keeps_the_bulk_list(tmp_path):
+    done = _live_count(tmp_path, [_live_row(12, "feat/engine", ["cli/engine/x.py"]), _OLD_ROW], {12: []})
+    assert done.returncode == 0 and done.stdout == "merged-prs-without-a-floor-read-30d\t1\n", done.stdout + done.stderr
 
 
 @pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
