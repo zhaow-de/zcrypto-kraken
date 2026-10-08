@@ -12,6 +12,7 @@ import subprocess
 import sys
 
 import pytest
+import yaml
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 _SCRIPT = _ROOT / "infra" / "scripts" / "merge-gate.py"
@@ -28,8 +29,8 @@ def _load(path: pathlib.Path, name: str):
 gate = _load(_SCRIPT, "merge_gate")
 
 
-def _eval(pr, head_commit=None, files=None, branch_growth=(), kept=None):
-    return gate.evaluate(pr, head_commit, files, list(branch_growth), kept)
+def _eval(pr, head_commit=None, files=None, branch_growth=(), kept=None, behind=False, changed=None):
+    return gate.evaluate(pr, head_commit, files, list(branch_growth), kept, behind=behind, changed=changed)
 
 
 TIP = "6f02667280cfbd7b76cb39d3139a5f865d995c61"
@@ -419,8 +420,10 @@ def test_on_an_unmoved_base_the_arm_admits_a_re_created_tip_and_refuses_a_change
 
 
 def test_main_fetches_the_base_before_the_arm_reads_it(monkeypatch, capsys):
-    """Read before branch_growth's fetch, a stale clone's answer refuses the head the arm exists to admit."""
+    """Read before branch_growth's fetch, a stale clone's answer refuses the head the read arm exists to admit, and
+    passes the behind head the image-path arm exists to refuse."""
     order: list[str] = []
+    behind = [False]
     pr = _pr(body=_stale_body())
 
     def fake_gh(*args: str) -> str:
@@ -436,9 +439,15 @@ def test_main_fetches_the_base_before_the_arm_reads_it(monkeypatch, capsys):
 
     monkeypatch.setattr(gate, "_gh", fake_gh)
     monkeypatch.setattr(gate, "branch_growth", lambda base, head_ref, head: order.append("fetch") or [])
+    monkeypatch.setattr(gate, "is_behind", lambda base, head: order.append("behind") or behind[0])
+    monkeypatch.setattr(gate, "changed_paths", lambda base, head: order.append("paths") or ["cli/engine/moved.py", "docs/moved.py"])
     monkeypatch.setattr(gate, "head_is_the_read", lambda read, head, base: order.append("arm") or True)
     assert gate.main(["merge-gate.py", "1"]) == 0, capsys.readouterr().out
-    assert order == ["fetch", "arm"], order
+    assert order == ["fetch", "behind", "paths", "arm"], order
+    behind[0] = True
+    assert gate.main(["merge-gate.py", "1"]) == 1
+    out = capsys.readouterr().out
+    assert "the diff touches cli/engine/moved.py, a path whose push builds the engine image" in out, out
 
 
 def test_a_row_commit_that_also_touches_another_file_fails():
@@ -959,7 +968,7 @@ def test_a_timeout_anywhere_and_a_silent_merge_base_failure_are_refusals_too(mon
 
 
 def test_an_unchecked_branch_growth_fails_the_gate():
-    fails = gate.evaluate(_pr(), None, None, None)
+    fails = gate.evaluate(_pr(), None, None, None, behind=False)
     assert len(fails) == 1 and "was not checked commit by commit" in fails[0]
 
 
@@ -970,6 +979,96 @@ def test_a_branch_that_cannot_be_fetched_is_one_refusal_not_a_crash(monkeypatch)
     monkeypatch.setattr(gate.subprocess, "run", raise_fetch)
     fails = gate.branch_growth("develop", "gone/branch", "0" * 40)
     assert fails == ["the branch could not be checked commit by commit: fatal: couldn't find remote ref gone/branch"]
+
+
+@pytest.mark.parametrize(
+    ("changed", "touched"),
+    [
+        (["cli/engine/x.py", "docs/x.md"], "cli/engine/x.py"),
+        (["docs/x.md", "pyproject.toml"], "pyproject.toml"),
+        (["docs/x.md", "uv.lock"], "uv.lock"),
+        (["docs/x.md", "infra/docker/Dockerfile"], "infra/docker/Dockerfile"),
+        (["cli/engine/x.py", "docs/x.py"], "cli/engine/x.py"),
+        (["docs/x.py", "cli/engine/x.py"], "cli/engine/x.py"),
+    ],
+    ids=["cli", "pyproject", "lock", "docker", "rename", "rename-reversed"],
+)
+def test_a_behind_pr_touching_an_image_path_is_refused(changed, touched):
+    pr = _pr()
+    assert pr["mergeStateStatus"] == "CLEAN"
+    fails = _eval(pr, behind=True, changed=changed)
+    assert len(fails) == 1, fails
+    assert f"the diff touches {touched}," in fails[0] and "merge develop into the branch" in fails[0], fails[0]
+
+
+def test_a_behind_pr_touching_no_image_path_passes():
+    assert _eval(_pr(), behind=True, changed=["docs/x.md"]) == []
+
+
+def test_an_up_to_date_pr_touching_an_image_path_passes():
+    assert _eval(_pr(), behind=False, changed=["cli/engine/x.py"]) == []
+
+
+def test_an_unread_behind_state_or_changed_path_list_fails_the_gate():
+    for changed in (None, ["docs/x.md"]):
+        fails = _eval(_pr(), behind=None, changed=changed)
+        assert len(fails) == 1 and "git merge-base --is-ancestor did not answer" in fails[0], fails
+    fails = _eval(_pr(), behind=True, changed=None)
+    assert len(fails) == 1 and "git did not list the paths its diff changes" in fails[0], fails
+
+
+def test_the_changed_paths_are_git_s_unquoted_with_a_rename_broken_apart(tmp_path):
+    root = tmp_path / "repo"
+    (root / "cli" / "engine").mkdir(parents=True)
+    _git(root, "init", "-q", "-b", "develop")
+    _git(root, "config", "diff.renames", "true")
+    (root / "cli" / "engine" / "x.py").write_text("x = 1\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "base")
+    _git(root, "update-ref", "refs/remotes/origin/develop", _git(root, "rev-parse", "develop"))
+    _git(root, "checkout", "-q", "-b", "feat/x")
+    (root / "docs").mkdir()
+    _git(root, "mv", "cli/engine/x.py", "docs/x.py")
+    (root / "cli" / "engine" / "café.py").write_text("c = 1\n")
+    (root / "cli" / "engine" / 'q"x.py').write_text("q = 1\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "move")
+    tip = _git(root, "rev-parse", "HEAD")
+    assert gate.changed_paths("develop", tip, cwd=root) == [
+        "cli/engine/café.py",
+        'cli/engine/q"x.py',
+        "cli/engine/x.py",
+        "docs/x.py",
+    ]
+    assert gate.changed_paths("develop", "f" * 40, cwd=root) is None
+    _git(root, "checkout", "-q", "-b", "feat/latin1", "develop")
+    (root / os.fsdecode(b"cli/engine/caf\xe9.py")).write_text("l = 1\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "a name that is not UTF-8")
+    assert gate.changed_paths("develop", _git(root, "rev-parse", "HEAD"), cwd=root) is None
+
+
+def test_the_behind_read_is_git_s_exit_code(monkeypatch):
+    argvs = []
+
+    def exits(rc):
+        def fake_run(args, **kwargs):
+            argvs.append(args)
+            if rc is None:
+                raise gate.subprocess.TimeoutExpired(args, 120)
+            return gate.subprocess.CompletedProcess(args, rc, "", "")
+
+        return fake_run
+
+    for rc, behind in ((0, False), (1, True), (128, None), (None, None)):
+        monkeypatch.setattr(gate.subprocess, "run", exits(rc))
+        assert gate.is_behind("develop", TIP) is behind, rc
+    assert argvs == [["git", "merge-base", "--is-ancestor", "origin/develop", TIP]] * 4
+
+
+def test_the_image_paths_are_the_image_workflow_s_filter():
+    workflow = yaml.safe_load((_ROOT / ".github" / "workflows" / "capture-image.yml").read_text())
+    assert list(gate.IMAGE_PATHS) == workflow[True]["push"]["paths"]
 
 
 def test_a_keyed_branch_with_no_row_is_refused() -> None:
