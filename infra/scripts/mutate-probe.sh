@@ -63,9 +63,8 @@ else
   if [[ -n "$(git status --porcelain)" ]]; then
     echo "mutate-probe: REFUSING — worktree dirty; restore uses 'git checkout --', which would destroy uncommitted work. Commit or stash first." >&2; exit 3
   fi
-  # One probe per checkout: the restore is `git checkout --` over a file a second run may have mutated, so two
-  # runs in one worktree measure each other's edits and both verdicts are unproven. The lock lives in the
-  # worktree's own git dir, so two worktrees of one repository probe in parallel and two runs in one do not.
+  # One probe per checkout: the restore is `git checkout --` over a file a second run may have mutated. The lock
+  # is in the worktree's own git dir, so two worktrees of one repository still probe in parallel.
   lock="$(git rev-parse --absolute-git-dir)/mutate-probe.lock"
   exec 9>"$lock"
   if ! flock -n 9; then

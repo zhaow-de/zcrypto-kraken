@@ -423,8 +423,6 @@ def test_cleanup_cp_failure_is_rc9_and_keeps_pristine(tmp_path, sig):
     Path(kept.group(1)).unlink()  # leave no temp behind
 
 
-# One probe per checkout: a second run in a worktree whose lock another run holds is refused before anything
-# is mutated, with the lock's path in the refusal; the lock is the worktree's own, so a sibling worktree runs.
 def test_a_second_run_in_the_same_checkout_is_refused_while_the_lock_is_held(tmp_path):
     target = make_repo(tmp_path)
     lock = tmp_path / ".git" / "mutate-probe.lock"

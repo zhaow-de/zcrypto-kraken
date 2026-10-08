@@ -1,6 +1,3 @@
-"""`infra/scripts/consumers.sh` — the consumers of a changed file: its direct readers by `git grep -l` with every
-vault-shaped path excluded, then the tests that walk the tree from the repository root, which name no file."""
-
 from __future__ import annotations
 
 import os
@@ -8,8 +5,7 @@ import pathlib
 import subprocess
 
 SCRIPT = pathlib.Path(__file__).resolve().parents[1] / "infra" / "scripts" / "consumers.sh"
-# Assembled at run time: a literal `.claude/skills/...` path reads as this tree's citation of a guidance file to
-# `tests/test_guidance_refs_resolve.py`, which refuses one that does not exist.
+# Assembled so `tests/test_guidance_refs_resolve.py` does not read the fixture's `SKILL.md` path as a citation.
 _SKILL_DIR = ".claude" + "/skills/x"
 
 
@@ -24,6 +20,13 @@ def _repo(tmp_path: pathlib.Path) -> pathlib.Path:
         "import pathlib\nROOT = pathlib.Path(__file__).resolve().parents[1]\nFILES = sorted((ROOT / 'tests').rglob('*.py'))\n"
     )
     (repo / "tests" / "test_own_fixture_glob.py").write_text("import pathlib\nFILES = list(pathlib.Path('.').glob('*.txt'))\n")
+    (repo / "tests" / "test_lsfiles.py").write_text(
+        "import subprocess\nFILES = subprocess.run(['git', 'ls-files', 'infra'], capture_output=True).stdout\n"
+    )
+    (repo / "tests" / "test_parent_glob.py").write_text(
+        'import pathlib\nFILES = sorted(pathlib.Path(__file__).resolve().parent.glob("test_*.py"))\n'
+    )
+    (repo / "tests" / "test_vault_pass_guard.py").write_text("SCRIPT = 'infra/scripts/thing.sh'\n")
     (repo / _SKILL_DIR / "SKILL.md").write_text("run infra/scripts/thing.sh first\n")
     (repo / "infra" / "ansible" / "group_vars" / "all" / "vault.yml").write_text("thing.sh: secret\n")
     (repo / "infra" / "scripts" / "lonely.py").write_text("print(1)\n")
@@ -46,9 +49,10 @@ def test_direct_readers_are_listed_and_the_vault_file_is_not(tmp_path):
     assert r.returncode == 0, r.stderr
     lines = r.stdout.splitlines()
     assert "tests/test_thing_sh.py" in lines
+    assert "tests/test_vault_pass_guard.py" in lines  # a reader whose own name carries "vault" is kept
     assert f"{_SKILL_DIR}/SKILL.md" in lines
     assert "tests/test_other.py" not in lines
-    assert not any("vault" in line for line in lines if not line.startswith("#"))
+    assert not any(line.endswith("vault.yml") for line in lines)
     assert "infra/scripts/thing.sh" not in lines[1:]  # the file itself is not its own reader
 
 
@@ -56,7 +60,7 @@ def test_tree_walkers_follow_and_a_test_globbing_its_own_fixtures_is_not_one(tmp
     repo = _repo(tmp_path)
     r = _run(repo, "infra/scripts/thing.sh")
     walkers = r.stdout.split("# tree walkers", 1)[1].splitlines()[1:]
-    assert walkers == ["tests/test_walker.py"]
+    assert walkers == ["tests/test_lsfiles.py", "tests/test_parent_glob.py", "tests/test_walker.py"]
 
 
 def test_an_empty_reader_list_is_printed_as_a_finding_never_as_nothing(tmp_path):
