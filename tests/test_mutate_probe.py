@@ -1,5 +1,6 @@
 """mutate-probe.sh: the guard-proving rule as executable form (spec 00082 D4)."""
 
+import fcntl
 import os
 import re
 import shutil
@@ -421,3 +422,50 @@ def test_cleanup_cp_failure_is_rc9_and_keeps_pristine(tmp_path, sig):
     kept = re.search(r"KEPT at (\S+)", err_text)
     assert kept and Path(kept.group(1)).exists()  # the pristine copy genuinely survived
     Path(kept.group(1)).unlink()  # leave no temp behind
+
+
+def test_a_second_run_in_the_same_checkout_is_refused_while_the_lock_is_held(tmp_path):
+    target = make_repo(tmp_path)
+    lock = tmp_path / ".git" / "mutate-probe.lock"
+    holder = subprocess.Popen(["flock", str(lock), "sleep", "30"], cwd=tmp_path, start_new_session=True)
+    try:
+        with open(lock, "w") as fh:
+            for _ in range(100):
+                try:
+                    fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    break
+                fcntl.flock(fh, fcntl.LOCK_UN)
+                time.sleep(0.05)
+            else:
+                raise AssertionError("the holder never took the lock")
+        r = run(
+            ["--file", "mod.py", "--control", "s/VALUE = 1/VALUE = 9/", "--mutation", "s/VALUE = 1/VALUE = 2/", "--", "./probe.sh"],
+            tmp_path,
+        )
+    finally:
+        os.killpg(holder.pid, signal.SIGKILL)  # flock AND its sleep: killing flock alone leaves the sleep holding the lock
+        holder.wait()
+    assert r.returncode == 3
+    assert "one probe at a time" in r.stderr and str(lock) in r.stderr
+    assert target.read_text() == "VALUE = 1\n"
+
+
+def test_a_child_the_probe_leaves_behind_does_not_keep_the_lock(tmp_path):
+    make_repo(tmp_path)
+    probe = tmp_path / "probe.sh"
+    probe.write_text("#!/bin/sh\n(sleep 3) &\ngrep -q 'VALUE = 1' mod.py\n")
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qam", "probe forks"], check=True)
+    args = ["--file", "mod.py", "--control", "s/VALUE = 1/VALUE = 9/", "--mutation", "s/VALUE = 1/VALUE = 2/", "--", "./probe.sh"]
+    first = run(args, tmp_path)
+    second = run(args, tmp_path)
+    assert first.returncode == 0 and second.returncode == 0, second.stderr
+
+
+def test_the_lock_is_released_after_a_run_so_the_next_run_proceeds(tmp_path):
+    make_repo(tmp_path)
+    args = ["--file", "mod.py", "--control", "s/VALUE = 1/VALUE = 9/", "--mutation", "s/VALUE = 1/VALUE = 2/", "--", "./probe.sh"]
+    first = run(args, tmp_path)
+    second = run(args, tmp_path)
+    assert first.returncode == 0 and second.returncode == 0
+    assert "KILLED" in second.stdout

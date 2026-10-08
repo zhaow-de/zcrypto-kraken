@@ -74,6 +74,8 @@ gh pr merge <number> --merge --delete-branch
 
 `--merge` keeps per-commit history and the `Co-Authored-By:` trailers.
 
+Run the gate from the branch's checkout (gate 10). `--delete-branch` merges and deletes the remote branch first, then fails its local step while a worktree holds `develop` or the branch, from either checkout: read the PR state before re-sending anything.
+
 ## Step 4 — Sync develop (never through a dirty worktree)
 
 ```bash
@@ -96,6 +98,8 @@ git branch -d <headRefName>
 ```
 
 Run git from the repo root. `-d` needs only that the current branch is another one; when Step 4 left you on `<headRefName>` (a dirty tree), the delete waits with the switch. Because the PR merged with a merge commit (Step 3), the branch is fully integrated and `-d` succeeds. (If `-d` ever errors "not fully merged" **and** the PR shows merged **and** the remote branch is gone, the work IS integrated — `git branch -D <headRefName>` is then safe.)
+
+Before `git branch -d`, a worktree the branch had is removed: first every `wt-*` a read left under its `.tmp/reads/<name>/` — a reader's checkout, every vault file in it — is `git worktree remove --force`d, once `git worktree list` and the read's task show it is not running; then its `.superpowers/sdd/<plan>/` and the `*.md` and `ledger.jsonl` of each `.tmp/reads/<name>/` are copied into the main checkout's `.local/reads-archive/<headRefName>/`, because `git worktree remove` deletes them.
 
 ## Step 6 — Confirm the remote branch is gone
 

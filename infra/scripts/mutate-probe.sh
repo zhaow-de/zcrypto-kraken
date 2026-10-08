@@ -6,7 +6,7 @@
 # always-failing probe scores every mutation KILLED with "control proven" attached to the lie; and
 # requires the CONTROL mutation to FAIL, which is the guard-proving rule as code.
 # Usage: mutate-probe.sh [--sandbox] --file <path> --control <sed-expr> --mutation <sed-expr> -- <probe-cmd...>
-# Exit: rc 2 usage | rc 3 refused | rc 4 restore failed | rc 5 control did not fail | rc 6 no-op sed
+# Exit: rc 2 usage | rc 3 refused (dirty tree, pytest in --sandbox, a second run in this checkout) | rc 4 restore failed | rc 5 control did not fail | rc 6 no-op sed
 #     | rc 7 baseline failed | rc 8 seeding failed | rc 9 cleanup restore failed (pristine kept)
 set -euo pipefail
 
@@ -63,6 +63,13 @@ else
   if [[ -n "$(git status --porcelain)" ]]; then
     echo "mutate-probe: REFUSING — worktree dirty; restore uses 'git checkout --', which would destroy uncommitted work. Commit or stash first." >&2; exit 3
   fi
+  # One probe per checkout: the restore is `git checkout --` over a file a second run may have mutated. The lock
+  # is in the worktree's own git dir, so two worktrees of one repository still probe in parallel.
+  lock="$(git rev-parse --absolute-git-dir)/mutate-probe.lock"
+  exec 9>"$lock"
+  if ! flock -n 9; then
+    echo "mutate-probe: REFUSING — another mutate-probe holds $lock; one probe at a time in a checkout, each its own call after the previous verdict is read." >&2; exit 3
+  fi
 fi
 
 export PYTHONDONTWRITEBYTECODE=1
@@ -98,19 +105,19 @@ apply() {   # apply <sed-expr> <phase: "control sed"|"mutation sed">
 # control. Run it under the SAME conditions as the real probes -- bytecode export set, caches purged --
 # or the baseline is not comparable to what follows.
 purge
-if ! "$@" >/dev/null 2>&1; then
+if ! "$@" 9>&- >/dev/null 2>&1; then
   echo "mutate-probe: baseline failed — the probe must pass on unmutated code. Fix the probe command (or the tree) before any verdict here means anything." >&2
   exit 7
 fi
 
 # 1. control: must FAIL, or the harness is not measuring
 apply "$control" "control sed"
-if "$@" >/dev/null 2>&1; then restore; echo "mutate-probe: CONTROL mutation did not fail the probe — the harness does not bite; no real probe counts. Pick a control the probe must detect." >&2; exit 5; fi
+if "$@" 9>&- >/dev/null 2>&1; then restore; echo "mutate-probe: CONTROL mutation did not fail the probe — the harness does not bite; no real probe counts. Pick a control the probe must detect." >&2; exit 5; fi
 restore
 
 # 2. the real mutation
 apply "$mutation" "mutation sed"
-if "$@" >/dev/null 2>&1; then verdict=SURVIVED; else verdict=KILLED; fi
+if "$@" 9>&- >/dev/null 2>&1; then verdict=SURVIVED; else verdict=KILLED; fi
 restore; purge
 echo "mutate-probe: $verdict (control proven, tree restored byte-identically)"
 [[ "$verdict" == KILLED || "$verdict" == SURVIVED ]]

@@ -12,7 +12,7 @@ The minimum, for every instance the pair contains:
 - every "X is only called from Y" — enumerate the call sites, then trace whether an unlisted one is reachable on a production path;
 - every method the plan's code calls — sync or async by CALLING it in a scratch interpreter, never by `inspect.iscoroutinefunction` (native bindings answer that falsely);
 - every `-k` filter, test path and stated collect count — `uv run pytest --collect-only -q <path> -k "<expr>"`;
-- every constructor, dataclass or signature the plan extends — the existing construction sites (`grep -rn "<Name>("` across `cli/ tests/ infra/`) and whether the new fields have defaults;
+- every constructor, dataclass or signature the plan extends — the existing construction sites (`git grep -n "<Name>(" -- cli tests infra` with the `VAULT_EXCLUDES` pathspecs) and whether the new fields have defaults;
 - every fixture the plan's tests request — its precondition, against what the code path under test actually produces;
 - every template substitution — which publishing path performs it, and whether the plan's artefact travels through that path;
 - every config key, host path, unit name, metric name, alert uid, runbook anchor — present where the plan says, in the current tree;
