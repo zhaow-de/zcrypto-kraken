@@ -131,7 +131,6 @@ GH_TIMEOUT = float(os.environ.get("COUNT_LIST_GH_TIMEOUT") or 120)
 
 
 def gh(*args):
-    """`gh <args>` run under GH_TIMEOUT, or None when it gave no answer in time."""
     try:
         return subprocess.run(["gh", *args], capture_output=True, text=True, timeout=GH_TIMEOUT)
     except subprocess.TimeoutExpired:
@@ -139,13 +138,12 @@ def gh(*args):
 
 
 def refuse(what, done):
-    # Exit 2, not 1: this entry's other refusals exit 2, and `emit` reads 1 as a zero COUNT.
     why = f"no answer in {GH_TIMEOUT:g}s" if done is None else f"exit {done.returncode}: {done.stderr.strip()[:200]}"
     print(f"count-list: {what}: {why}", file=sys.stderr)
     raise SystemExit(2)
 
 
-def commit_of(sha, number):
+def commit_of(sha, number, on_github=False):
     """The commit object the change-index-row exception reads -- a head that is the row commit over the tip the
     body names -- and the full sha of the read the clone arm fetches by, asked for only by a row that fails on
     nothing else. COUNT_LIST_HEADS_SNAPSHOT names a recorded `{oid: commit}` map, keyed by full oid and matched by
@@ -157,9 +155,9 @@ def commit_of(sha, number):
     if offline:
         return None
     done = gh("api", f"repos/{gate.REPO}/commits/{sha}")
-    if done is None:
+    if done is None or (on_github and done.returncode != 0):
         refuse(f"PR #{number}'s commit {sha} could not be fetched -- whether the read covers the head cannot be decided", done)
-    # A failed run answers None, not a refusal: the body may name a tip GitHub never saw.
+    # A failed run on a tip not `on_github` answers None: the body may name a tip GitHub never saw.
     return json.loads(done.stdout) if done.returncode == 0 and done.stdout.strip() else None
 
 
@@ -244,7 +242,7 @@ for pr in json.loads(pathlib.Path(sys.argv[2]).read_text()):
     fails = gate.read_line_fails(pr, None, files)
     head_commit = None
     if fails and all("not the head" in f for f in fails):
-        head_commit = commit_of(pr.get("headRefOid"), pr.get("number"))
+        head_commit = commit_of(pr.get("headRefOid"), pr.get("number"), on_github=True)
         fails = gate.read_line_fails(pr, head_commit, files)
     if fails and all("not the head" in f for f in fails):
         fails = gate.read_line_fails(pr, head_commit, files, kept(pr))  # the clone is asked only where the row arm did not admit

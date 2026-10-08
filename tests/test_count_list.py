@@ -498,13 +498,20 @@ exec cat "$dir/$key.json"
 
 
 def _live_count(
-    tmp_path: pathlib.Path, rows: list[dict], entries: dict[int, list[dict]], hang: tuple[str, ...] = (), **env: str
+    tmp_path: pathlib.Path,
+    rows: list[dict],
+    entries: dict[int, list[dict]],
+    hang: tuple[str, ...] = (),
+    answers: dict[str, object] | None = None,
+    **env: str,
 ) -> subprocess.CompletedProcess:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "prs.json").write_text(json.dumps(rows))
     for number, listed in entries.items():
         (bin_dir / f"files-{number}.json").write_text(json.dumps(listed))
+    for key, answer in (answers or {}).items():
+        (bin_dir / f"{key}.json").write_text(json.dumps(answer))
     for key in hang:
         (bin_dir / f"hang-{key}").touch()
     (bin_dir / "gh").write_text(_FAKE_GH)
@@ -594,6 +601,38 @@ def test_a_hung_head_commit_fetch_is_the_same_error_and_no_traceback(tmp_path):
     assert done.returncode == 2 and done.stdout == "merged-prs-without-a-floor-read-30d\tERROR\n", done.stdout + done.stderr
     assert (
         f"PR #16's commit {head} could not be fetched -- whether the read covers the head cannot be decided: no answer in 0.5s"
+    ) in done.stderr
+    assert "Traceback" not in done.stderr, done.stderr
+
+
+@pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+def test_a_failed_head_commit_fetch_is_an_error_naming_the_pr(tmp_path):
+    head = "99887766554433221100ffeeddccbbaa99887766"
+    rows = [{**_live_row(16, "feat/past-the-read", ["docs/a.md"]), "headRefOid": head}, _OLD_ROW]
+    done = _live_count(tmp_path, rows, {16: [{"filename": "docs/a.md", "status": "modified"}]})
+    assert done.returncode == 2 and done.stdout == "merged-prs-without-a-floor-read-30d\tERROR\n", done.stdout + done.stderr
+    assert (
+        f"PR #16's commit {head} could not be fetched -- whether the read covers the head cannot be decided: exit 1: HTTP 502"
+    ) in done.stderr
+
+
+@pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+def test_a_read_tip_github_never_saw_is_asked_of_the_clone_and_no_error(tmp_path):
+    head = "99887766554433221100ffeeddccbbaa99887766"
+    row = {**_live_row(18, "feat/unpushed-read", ["docs/a.md"]), "headRefOid": head, "mergeCommit": {"oid": "1" * 40}}
+    answers = {f"commit-{head}": {"sha": head, "parents": [{"sha": "0" * 40}], "files": [{"filename": "docs/a.md"}]}}
+    done = _live_count(tmp_path, [row, _OLD_ROW], {18: [{"filename": "docs/a.md", "status": "modified"}]}, answers=answers)
+    assert done.returncode == 0 and done.stdout == "merged-prs-without-a-floor-read-30d\t1\n", done.stdout + done.stderr
+
+
+@pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+def test_a_failed_commits_fetch_for_a_dependabot_row_is_an_error_naming_the_pr_and_no_traceback(tmp_path):
+    rows = [_live_row(19, "dependabot/uv/develop/polars-1.44.2", ["uv.lock"], "Bumps polars.\n"), _OLD_ROW]
+    done = _live_count(tmp_path, rows, {})
+    assert done.returncode == 2 and done.stdout == "merged-prs-without-a-floor-read-30d\tERROR\n", done.stdout + done.stderr
+    assert (
+        "PR #19 is a dependabot branch whose commits could not be fetched, so the no-fix-commit exemption cannot be "
+        "decided: exit 1: HTTP 502"
     ) in done.stderr
     assert "Traceback" not in done.stderr, done.stderr
 
