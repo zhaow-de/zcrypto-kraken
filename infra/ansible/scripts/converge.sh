@@ -47,7 +47,7 @@ docker_apt_distribution access_ops_agentboard_live cache_image_digest cache_allo
 cache_config_reset cache_proxy_image_digest engine_cache_enabled mon_grafana_token_rotate \
 hc_image_tag alloy_deb_version"
 # A reason is prose, and `k=v` truncates it at the first space, so an override travels as JSON alone.
-OVERRIDES="canary_override pins_override engine_window_override arming_override alloy_override"
+OVERRIDES="canary_override pins_override engine_window_override arming_override alloy_override engine_preflight_override"
 OWNKEY="zcrypto_window_record"
 
 # EXACT, word by word: a substring test answers true for `zcrypto zcrypto-red`, which is two hosts
@@ -291,6 +291,8 @@ if text.strip():
     if not isinstance(window, dict):
         window = None
         print(f"converge.sh: WINDOW RECORD UNREADABLE — the row goes without `window`: {text!r}", file=sys.stderr)
+# The engine role merges its `preflight` into the record; booked beside `window`, which keeps the four keys the audit reads.
+preflight = window.pop("preflight", None) if window is not None else None
 rec = {
     "ts": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     "playbook": playbook, "limit": limit, "tags": tags, "extra_vars": extra,
@@ -298,8 +300,10 @@ rec = {
     "skip_tags": skip, "argv": argv_words, "committed_pins": committed,
     "revision": rev, "dirty": dirty == "true", "rc": int(rc),
 }
-if window is not None:
+if window:
     rec["window"] = window
+if preflight is not None:
+    rec["preflight"] = preflight
 line = json.dumps(rec, sort_keys=True)
 try:
     with open(log, "a") as f:
