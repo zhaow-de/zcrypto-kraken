@@ -954,7 +954,7 @@ IMPORT_TRACEBACK = (
     ("run", "says", "quotes", "never"),
     [
         (_preflight_run(1, 'INFO engine preflight starting\n{"ok": false}'), [], ['{"ok": false}'], ["engine preflight starting"]),
-        (_preflight_run(1, "", IMPORT_TRACEBACK), [], [IMPORT_TRACEBACK], []),
+        (_preflight_run(1, "", IMPORT_TRACEBACK), ["(no output)"], [IMPORT_TRACEBACK], []),
         (_preflight_run(1, CRASH_LOG, ""), [], ["RuntimeError: boom"], ["unhandled exception"]),
         (_preflight_run(2, "", "Error: No such command 'preflight'."), [NO_PREFLIGHT], [], [NOT_RUN]),
         (_preflight_run(2, "", "Error: No such option: --state-dir"), [NOT_RUN], ["No such option: --state-dir"], [NO_PREFLIGHT]),
@@ -1091,11 +1091,12 @@ def test_engine_preflight_override_echo_fires_only_on_an_accepted_override(rc, l
 
 
 @pytest.mark.parametrize(
-    ("window", "run", "override", "preflight"),
+    ("window", "run", "label", "override", "preflight"),
     [
         (
             {"at": BOUNDARY + 1900, "floor": BOUNDARY + 1800, "arm": "fixed", "override": False},
             _preflight_run(0, 'INFO engine preflight\n{"ok": true}'),
+            MEMBER + "\n",
             None,
             {
                 "engaged": True,
@@ -1109,12 +1110,14 @@ def test_engine_preflight_override_echo_fires_only_on_an_accepted_override(rc, l
         (
             {"at": BOUNDARY + 500, "floor": BOUNDARY + 408, "arm": "journal", "override": False},
             {"rc": 2, "stdout": "", "stdout_lines": [], "stderr": "Error: No such command 'preflight'."},
+            MEMBER + "\n",
             PREFLIGHT_REASON,
             {"engaged": True, "digest": PREFLIGHT_DIGEST, "rc": 2, "revision": MEMBER, "first_parent": True, "line": None},
         ),
         (
             None,
             _preflight_run(0, '{"ok": true}'),
+            MEMBER + "\n",
             None,
             {
                 "engaged": True,
@@ -1125,9 +1128,16 @@ def test_engine_preflight_override_echo_fires_only_on_an_accepted_override(rc, l
                 "line": '{"ok": true}',
             },
         ),
+        (
+            {"at": BOUNDARY + 1900, "floor": BOUNDARY + 1800, "arm": "fixed", "override": False},
+            _preflight_run(0, '{"ok": true}'),
+            "",
+            PREFLIGHT_REASON,
+            {"engaged": True, "digest": PREFLIGHT_DIGEST, "rc": 0, "revision": None, "first_parent": False, "line": '{"ok": true}'},
+        ),
     ],
 )
-def test_engine_preflight_record_carries_the_six_keys(tmp_path, window, run, override, preflight):
+def test_engine_preflight_record_carries_the_six_keys(tmp_path, window, run, label, override, preflight):
     tasks = load_tasks(ENGINE)
     task = find_task(tasks, PREFLIGHT_RECORD)
     copy = task["ansible.builtin.copy"]
@@ -1148,7 +1158,7 @@ def test_engine_preflight_record_carries_the_six_keys(tmp_path, window, run, ove
         **PREFLIGHT_VARS,
         "zcrypto_window_record": str(record),
         "engine_preflight_run": run,
-        "engine_preflight_label": {"rc": 0, "stdout": MEMBER + "\n"},
+        "engine_preflight_label": {"rc": 0, "stdout": label},
         "engine_preflight_merges": MERGES_READ,
         **({} if override is None else {"engine_preflight_override": override}),
     }

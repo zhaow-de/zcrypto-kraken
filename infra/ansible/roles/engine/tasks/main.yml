@@ -523,14 +523,14 @@
               and (engine_preflight_override | default('') | string | lower not in ['true', 'false', '1', 'yes']))
         fail_msg: >-
           {% if (engine_preflight_run.rc | default(none)) == 1 %}The preflight of {{ engine_image }}@{{ engine_image_digest }}
-          refused on this host (rc 1): {{ engine_preflight_run.stdout_lines | default([]) | last | default(none) }};
+          refused on this host (rc 1): {{ engine_preflight_run.stdout_lines | default([]) | last | default('(no output)', true) }};
           stderr: {{ engine_preflight_run.stderr | default('') | trim }}.
           {% elif (engine_preflight_run.rc | default(none)) == 2
           and "No such command 'preflight'" in (engine_preflight_run.stderr | default('')) %}{{ engine_image }}@{{ engine_image_digest }}
           carries no preflight: it was built before the engine image carried one (rc 2).
           {% else %}The preflight of {{ engine_image }}@{{ engine_image_digest }} could not be run
           (rc {{ engine_preflight_run.rc | default(none) }}): {{ engine_preflight_run.stderr | default('') | trim }}.
-          {% endif %}No engine file was rewritten. Fix the image, or pass the reason as JSON:
+          {% endif %}No engine file was rewritten. Fix what the line names, or pass the reason as JSON:
           -e '{"engine_preflight_override": "<why this cannot wait>"}' (a reason, not a boolean), with the user's explicit approval.
 
     - name: engine provenance — refuse an image whose revision is not a merge on develop or main
