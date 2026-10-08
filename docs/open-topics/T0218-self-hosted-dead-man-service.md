@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: the pull request from `feat/t0218-dead-man-tasks-8-10` is merged into `develop` — check `git fetch -q origin && git log origin/develop --first-parent --merges --oneline --grep='from zhaow-de/feat/t0218-dead-man-tasks-8-10'` prints its merge commit
+ripe_when: "2026-11-01, the last day of the rung-2 box (`infra/runbooks/engine-procedures.md#engine-rung-2-box`), on or after which R14 moves the engine at the box's deferred disarm converge — check `date -u +%F` reads 2026-11-01 or later"
 ---
 
 # Self-hosting the dead-man service: a tailor-made healthchecks.io replacement
@@ -18,10 +18,13 @@ The dead-man checks are the fleet's last line: they page when a host, a daemon o
 - The surface and the command that reads each part of it are spec 00122's measured basis.
 - T0085 names the eleven ping URLs as in scope for the pre-go-live rotation and the two API keys' shapes; T0083 (archived) set the mutual watchdog between Grafana and healthchecks.io.
 - Spec 00123 (one Alloy version across the fleet, T0219) asks of Task 9, under *What this asks of plans 00121 and 00122*: the node's Alloy installed at the fleet file's version, held and pinned, dry-started at that version, under the `alloy` tag, with a `fleet-pins.md` row.
+- The first sitting's R0 to R5, 2026-10-07: R0's instant 2026-10-07T15:25:11Z and the `v6.2.0` manifest read without credentials (the plan's R0); R1 a Linode Nanode 1 GB (`g6-nanode-1`) in SE Stockholm with Backups on, the node alone in that region and the engine host in DE Frankfurt; R2's host key `SHA256:gPI0Sp3AcNX8M+nIMoe5W1xY4N9XpEt1qNQQi8yTdH0` (ED25519) over v4 and v6, LISH's; R3's bootstrap, base and `hc` converges `failed=0`, the full play's one change the hardening role setting the shell of the `alloy` system user the `hc` pass had created, then 22 and 80 closed, 443 and 10022 open; R4 sshd on 10022, Caddy on 443, the container on `127.0.0.1:8000` healthy, Alloy 1.20.1-1, Caddy 2.11.7, `Automatic-Reboot` false, 433 MB of 967 MB available; R5 `/api/v3/status/` 200 with the body `OK` over v4 and v6, `/metrics` 404, `/admin/` without a login 302, a Let's Encrypt certificate, nothing on 80.
+- The cutover sitting's two deviations, 2026-10-08: the Kraken feed was read whole at 15:01Z and 15:24Z, clear each time, but not immediately before each venue-facing converge, the owner running the runsheet's lines ahead of the reads; and the secondary's first run booked no deploy-log row and re-rendered nothing, and was re-run through `converge.sh` at 15:21Z.
+- The rollout's venue-facing rows since R0's instant, read from the cutover's records branch: `uv run python infra/scripts/deploy-log-audit.py maintenance --venue-facing --since 2026-10-07T15:25:11Z` printed `rows inside an API-impacting window 0 of 3 venue-facing`.
 
 ## Done so far
 
-The first pull request, from `docs/t0218-self-hosted-deadman`, carries the pair and the plan's Tasks 1 to 7.
+The first pull request, #663 from `docs/t0218-self-hosted-deadman`, merged 2026-10-06 as 414097c23, carries the pair and the plan's Tasks 1 to 7.
 
 - The spec `docs/specs/00122-self-hosted-dead-man-design.md` and the plan `docs/plans/00122-self-hosted-dead-man.md`: written in 47c48d4dd, reviewed by the `zcrypto-plan-review` loop from d06564503 to its exit at 47a1660e0; the branch's pre-review folded ca1d26578 and 37cf2c7ca into them.
 - Task 1, the shared test helpers `tests/role_render.py` and `tests/selfcheck_driver.py`: a7bba5992, 9d53cdb3e.
@@ -33,7 +36,7 @@ The first pull request, from `docs/t0218-self-hosted-deadman`, carries the pair 
 - Task 7, the push's node-only groups and the daily pass's patch-pass table, with the `zcrypto-grafana-push` skill's default skip: 495551a3a, 0ae529df3, fd8cff1df, a732953b6, d5186872a, f900520f1.
 - Folds spanning several tasks: e77b0f642 and 76b5cc32e, the pre-review's comment rows over Tasks 1 to 5; 2e861a143, the fix range's prose over Tasks 4 and 5.
 
-The second pull request is from `feat/t0218-dead-man-tasks-8-10`; the first merged as #663.
+The second pull request, #667 from `feat/t0218-dead-man-tasks-8-10`, merged 2026-10-07 as 69f169130.
 
 - R-X, 2026-10-06: the owner's converge of the observability node onto the shared code from `develop` 414097c23; its deploy-log rows 2a4c549e7.
 - P1, 2026-10-06: the owner's deploy keypair `deploy_zcrypto-hc_ed25519`, committed by 556a1a5bf.
@@ -47,10 +50,17 @@ The second pull request is from `feat/t0218-dead-man-tasks-8-10`; the first merg
 - `develop` merged in with spec 00123, 2026-10-07: b2360bbb9; the node's Alloy on the shared `alloy_apt` role under the `alloy` tag, its `fleet-pins.md` `alloy` row left to the node's build: 0ea1e3ec0, 6adb02892, cfd10c59b, d08734d02.
 - The first sitting, 2026-10-07 15:25–16:16Z, R0 to R7 each as the plan reads, its converges `rc 0`: f8baf6745 (the deploy-log rows and the `hc` pins row) and 0b0bbd25e (R0 to R5's readings); P4 the owner's in the clone's UI.
 
+The third pull request, #675 from `feat/t0218-dead-man-tasks-11-17`, merged 2026-10-08 as 118b88f62: P5 (564107434), Tasks 11 to 14, 16 and 17, and P6 (dbee372eb).
+
+The cutover, 2026-10-08, from `develop` at 118b88f62, its six converges `rc 0` and every `RestartCount` 0:
+
+- R8: the clone's twelve checks provisioned, and the Grafana pushes and their verification recorded in #675's body under `## Grafana push`; the node's converge at 14:59Z re-rendered the self-check's env and moved no container, `ghcr.io/zhaow-de/healthchecks:v6.2.0` healthy.
+- R9 to R12: ops at 15:03Z, its Alloy restarted 15:03:26Z on v1.20.1 and `zcrypto-ops-liquidations` 15:03:44Z; the observability node at 15:06Z; the NAS at 15:08Z with its compose applied, `zcrypto-archive-pull` created 15:08:19Z and started 15:08:37Z, its Alloy 15:08:39Z; the secondary's `zcrypto-capture` 15:21:15Z and the primary's, under the capture tag, 15:24:21Z; the engine (2026-10-02T08:13:34Z), the cache proxy and the capture pair's Alloy unmoved.
+- R13 in the sitting, `hc-provision.py status` at 15:27Z: eight checks moved — `zcrypto-archive-pull` (first ping 15:12:20Z), `zcrypto-capture` (15:27:24Z), `zcrypto-capture-red` (15:23:18Z), `zcrypto-grafana-watchdog`, `zcrypto-hc` (15:00:26Z), `zcrypto-liquidations` (15:08:47Z), `zcrypto-mon` (15:10:29Z), `zcrypto-panel` (15:23:12Z); four `new` — `zcrypto-gate-verify` until the NAS's next hourly gate export, `zcrypto-verify-replay` and `zcrypto-verified-replay` until their 03:41Z and 05:23Z ticks on 2026-10-09, `zcrypto-engine-shadow` until R14. Grafana Cloud: `max(hc_checks_down_total)` 0 and `count(hc_check_up == 1)` 12, every row `instance="zcrypto-hc.zhaow.me"`; `zcrypto-hcio-watchdog` inactive, health ok, no silence. The owner paused seven healthchecks.io twins; `zcrypto-hc` has none.
+- R13's Slack-link read landed on the clone's login redirect, the spec's Open question 8 answered: the cutover's records pull request carries the edge's cookieless-`HEAD` route over `/checks/*` and `/cloaked/*` with the cookie `sessionid`, beside the sitting's deploy-log rows, `fleet-pins.md`'s `since` cells, `fleet.md`'s two sections and T0085's dead-man credentials.
+
 ## Suggested next steps
 
-- After the second pull request merges: R0 to R7, the node built and read, and P4 (the owner's first sign-in and the project).
-- The third pull request: P5 (the three keys and the uuid) before Task 12; Task 11 (`hc-provision.py`), Task 12 (the pingers' URL scheme), Task 13 (the readers), Task 14 (the node's rule group, its runbook page, its Fleet health row and the observability node's Grafana error-log rule), Task 16 (four skills take the service and its node) and Task 17 (the backup's off-host copy), P6 (the NAS's pull key) before Task 17; the gate re-reads the cutover's release before it opens, and R8's provisioning runs from its branch before it merges.
-- The cutover sitting, after the third merge and spec 00123's Alloy wave: the rest of R8, R9 (ops), R10 (the observability node), R11 (the NAS), R12 (the capture pair), R13 (the checks' first clean read, again the next morning), the Rollback as needed, then R-records-1.
-- The fourth pull request: Task 15 (the drills and the surfaces' sweep), opened once R13 reads clean and merged before R15.
-- After the box closes, 2026-11-01 or a week later: R14 (the engine's move at the box's deferred disarm converge, inside the inter-cycle gap), R15 (the three drills), R16 (retirement, after R14's first clean day and R15's three drill entries) and R-records-2.
+- R13's morning read, 2026-10-09 after 05:23 and before 10:41 UTC: `uv run python infra/scripts/hc-provision.py status` reads eleven moved and `zcrypto-engine-shadow` `new`, and the owner pauses the two replay checks' healthchecks.io twins; then the records pull request's second commit, `uv run python infra/scripts/hc-provision.py fixture` with `tests/test_ops_daily.py`'s count re-trued to twelve, and after its merge the node's converge `infra/ansible/scripts/converge.sh site.yml --limit zcrypto-hc --tags hc -e hc_image_tag=v6.2.0`, which renders the edge route.
+- The fourth pull request: Task 15 (the drills and the surfaces' sweep), merged before R15.
+- On or after 2026-11-01, the box's last day: R14 (the engine's move at the box's deferred disarm converge, inside the inter-cycle gap), R15 (the three drills), R16 (retirement, after R14's first clean day and R15's three drill entries) and R-records-2.
