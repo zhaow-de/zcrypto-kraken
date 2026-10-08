@@ -34,6 +34,9 @@ FABLE_PATHS = (
     "infra/ansible/roles/capture/",
     "infra/ansible/roles/engine/",
 )
+# The PR files endpoint lists a renamed file under its new path in `filename` and its old one in `previous_filename`.
+# Both are paths the PR changed: a file moved out of a Fable path into a plain one touches the Fable path.
+PR_FILES_JQ = ".[] | .filename, (.previous_filename // empty)"
 # .github/workflows/capture-image.yml's on.push.paths, the pushes that build the engine image.
 IMAGE_PATHS = ("cli/**", "pyproject.toml", "uv.lock", "infra/docker/**")
 # The Fable floor is substitutable, and only by a line that says so in the body. An Opus read on a Fable path
@@ -659,7 +662,7 @@ def main(argv: list[str]) -> int:
     m = READ_LINE.search(_as_a_reader_sees_it(pr.get("body") or ""))
     head = pr.get("headRefOid") or ""
     if m or pr.get("headRefName") == "ops-journal":
-        files = _gh("api", "--paginate", f"repos/{REPO}/pulls/{pr['number']}/files", "--jq", ".[].filename").split()
+        files = _gh("api", "--paginate", f"repos/{REPO}/pulls/{pr['number']}/files", "--jq", PR_FILES_JQ).split()
     growth = branch_growth(pr["baseRefName"], pr["headRefName"], head)
     behind = is_behind(pr["baseRefName"], head)
     changed = changed_paths(pr["baseRefName"], head)

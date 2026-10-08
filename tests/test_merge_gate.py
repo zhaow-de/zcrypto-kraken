@@ -584,6 +584,45 @@ def test_the_substitution_line_admits_an_opus_read_on_a_guarded_path(path):
     assert _eval(_pr(body=body), files=["cli/costs/schedule.py", path]) == []
 
 
+# The files endpoint's entries for a PR moving a file out of a Fable path: the new path in `filename`, the old in `previous_filename`.
+RENAMED = [
+    {"filename": "cli/costs/retired.py", "previous_filename": "cli/engine/retired.py", "status": "renamed"},
+    {"filename": "docs/reference/fleet.md", "status": "modified"},
+]
+
+
+def _main_over_files(monkeypatch, body: str, entries: list[dict]) -> int:
+    """`main()` with gh's files endpoint answering `entries` through the jq program `main()` hands it."""
+    pr = _pr(body=body)
+
+    def fake_gh(*args: str) -> str:
+        if args[:2] == ("pr", "view"):
+            return json.dumps(pr)
+        if args[:2] == ("api", "--paginate"):
+            program = args[args.index("--jq") + 1]
+            return subprocess.run(
+                ["jq", "-r", program], input=json.dumps(entries), capture_output=True, text=True, check=True
+            ).stdout
+        raise AssertionError(args)
+
+    monkeypatch.setattr(gate, "_gh", fake_gh)
+    monkeypatch.setattr(gate, "branch_growth", lambda base, head_ref, head: [])
+    monkeypatch.setattr(gate, "is_behind", lambda base, head: False)
+    monkeypatch.setattr(gate, "changed_paths", lambda base, head: [])
+    return gate.main(["merge-gate.py", "1"])
+
+
+def test_an_opus_read_on_a_pr_renaming_a_file_out_of_a_guarded_path_fails(monkeypatch, capsys):
+    assert _main_over_files(monkeypatch, _read_by("Claude Opus 4.8"), RENAMED) == 1
+    out = capsys.readouterr().out
+    assert "the PR touches cli/engine/retired.py: the floor there is Claude Fable" in out, out
+
+
+def test_the_substitution_line_admits_an_opus_read_on_a_pr_renaming_a_file_out_of_a_guarded_path(monkeypatch, capsys):
+    body = _read_by_opus_with_substitution("the account's Fable limit is reached; the owner authorised Opus")
+    assert _main_over_files(monkeypatch, body, RENAMED) == 0, capsys.readouterr().out
+
+
 def test_the_substitution_line_needs_a_reason():
     """A bare marker would be a switch anyone could flip without saying anything; the reason is the whole point."""
     body = f"## Summary\n\nRead before push by: Claude Opus 5 at {TIP}\n\nFable floor substituted by Opus:\n\n- [x] done\n"
