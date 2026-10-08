@@ -906,8 +906,6 @@ def test_the_cli_names_both_subcommands_when_misused(capsys):
         "curl -X DELETE https://healthchecks.io/api/v3/checks/abc",
         "curl -X POST https://example.invalid/api/annotations -d '{}'",
         "curl https://hc-ping.com/some-uuid",
-        "curl -fsS https://zcrypto-hc.zhaow.me/ping/aB3_-aB3_-aB3_-aB3_-x9/zcrypto-capture",
-        "curl -fsS https://zcrypto-hc.zhaow.me:443/ping/aB3_-aB3_-aB3_-aB3_-x9/zcrypto-capture",
         "docker inspect --format '{{json .Config}}' zcrypto-engine",
         "docker inspect --format '{{.Config.Env}}' zcrypto-engine",
         "docker inspect zcrypto-engine",
@@ -919,6 +917,37 @@ def test_shell_composition_and_write_shaped_reads_are_never_autonomous(cmd):
     the engine's Kraken trade key -- no runbook contains such a command, so they are pinned here by
     construction rather than by the corpus."""
     assert ops_daily.classify_action(cmd, host="zcrypto", resolve=_identity) is ops_daily.Tier.PREPARED
+
+
+_PING_TAIL = "aB3_-aB3_-aB3_-aB3_-x9/zcrypto-capture"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        f"https://zcrypto-hc.zhaow.me/ping/{_PING_TAIL}",
+        f"https://zcrypto-hc.zhaow.me:443/ping/{_PING_TAIL}",
+        f"https://zcrypto-hc.zhaow.me:0443/ping/{_PING_TAIL}",
+        f"https://user@zcrypto-hc.zhaow.me/ping/{_PING_TAIL}",
+        "https://hc-ping.com:443/aB3_-aB3_-aB3_-aB3_-x9",
+        # curl removes dot segments before it sends, reading `%2e` as a dot and `a%2f..` as one segment.
+        f"https://zcrypto-hc.zhaow.me/./ping/{_PING_TAIL}",
+        f"https://zcrypto-hc.zhaow.me/x/../ping/{_PING_TAIL}",
+        f"https://zcrypto-hc.zhaow.me/x/%2e%2e/ping/a%2f../../{_PING_TAIL}",
+        # A trailing-dot FQDN names the same host, and curl decodes a percent-encoded one.
+        f"https://zcrypto-hc.zhaow.me./ping/{_PING_TAIL}",
+        f"https://zcrypto-hc.zhaow.me.:443/ping/{_PING_TAIL}",
+        f"https://zcrypto-hc.zhaow.m%45/ping/{_PING_TAIL}",
+        # The app decodes the path curl sent before it routes.
+        f"https://zcrypto-hc.zhaow.me/%70ing/{_PING_TAIL}",
+        f"https://zcrypto-hc.zhaow.me/%70ing/a%2f../../{_PING_TAIL}",
+        # A proxy merges a doubled slash, and one may decode `%2f` before it removes dot segments.
+        f"https://zcrypto-hc.zhaow.me//ping/{_PING_TAIL}",
+        f"https://zcrypto-hc.zhaow.me/x%2f..%2fping/{_PING_TAIL}",
+    ],
+)
+def test_a_ping_url_is_prepared_however_it_is_spelled(url):
+    assert ops_daily.classify_action(f"curl -fsS {url}", host="zcrypto", resolve=_identity) is ops_daily.Tier.PREPARED
 
 
 @pytest.mark.parametrize(
@@ -1010,6 +1039,7 @@ def test_a_peeled_docker_exec_payload_is_re_examined_never_trusted():
         "sudo docker logs zcrypto-capture 2>&1 | grep -E 'checksum desync|desync recovery'",
         "sudo docker inspect --format '{{.State.Status}} {{.RestartCount}}' zcrypto-engine",
         "curl -fsS http://127.0.0.1:12345/metrics",
+        "curl -fsS -m 20 https://zcrypto-hc.zhaow.me/api/v3/status/",
     ],
 )
 def test_the_true_positives_still_pass(cmd):

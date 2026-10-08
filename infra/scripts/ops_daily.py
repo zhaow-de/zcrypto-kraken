@@ -11,6 +11,7 @@ import http.client
 import importlib.util
 import json
 import os
+import posixpath
 import re
 import shutil
 import struct
@@ -1861,12 +1862,39 @@ def _inspect_format_is_scoped(tokens: list[str]) -> bool:
     return True
 
 
+# The floor under the parse below: a substring anywhere in the command, so nothing it refused turns autonomous.
 _PING_URL = re.compile(r"hc-ping|healthchecks\.io/ping|zcrypto-hc\.zhaow\.me(?::\d+)?/ping")
+# hc-ping.com answers a ping on every path; the other two only under /ping.
+_PING_ROUTES = {"hc-ping.com": "/", "healthchecks.io": "/ping", "zcrypto-hc.zhaow.me": "/ping"}
+
+
+def _dedot(path: str) -> str:
+    # `normpath` keeps a leading `//`, so the slashes collapse first.
+    return posixpath.normpath(re.sub(r"/+", "/", path) or "/")
+
+
+def _is_ping_url(url: str) -> bool:
+    """Whether a `_URL`-shaped string lands on a ping route; `urlsplit` raises on nothing that class admits.
+
+    The host is decoded, as curl decodes it, lowercased, and stripped of one trailing dot, its port and its userinfo.
+    The path is read two ways and either reaching the route is a ping: dot segments removed with `%2e` read as a
+    dot, then decoded -- what curl sends and the app routes -- and decoded first, for a front that also reads `%2f`
+    as a slash before it removes them.
+    """
+    parts = urllib.parse.urlsplit(url)
+    host = urllib.parse.unquote(parts.hostname or "").lower().removesuffix(".")
+    prefix = _PING_ROUTES.get(host)
+    if prefix is None:
+        return False
+    sent = urllib.parse.unquote(_dedot(re.sub(r"%2e", ".", parts.path, flags=re.I)))
+    decoded_first = _dedot(urllib.parse.unquote(parts.path))
+    return sent.startswith(prefix) or decoded_first.startswith(prefix)
 
 
 def _curl_is_read(tokens: list[str]) -> bool:
     """A plain GET to a ping URL marks a dead-man alive -- a read that silences an alarm."""
-    return not _PING_URL.search(" ".join(tokens).lower())
+    joined = " ".join(tokens)
+    return not _PING_URL.search(joined.lower()) and not any(_is_ping_url(url) for url in re.findall(_URL, joined))
 
 
 _POSTCHECKS = {"inspect": _inspect_format_is_scoped, "curl": _curl_is_read}
