@@ -368,7 +368,7 @@ def read_line_fails(pr: dict, head_commit: dict | None, files: list[str] | None,
     if pr.get("headRefName") == "ops-journal":
         if files is None:
             return ["the PR's file list was not fetched, so the ops-journal exemption cannot be scoped to the journal files"]
-        if all(f.startswith(JOURNAL) for f in files):
+        if files and all(f.startswith(JOURNAL) for f in files):
             return []  # a month of journal entries has nothing for a reviewer to read (docs/reference/ops-journal/README.md)
     body = pr.get("body") or ""
     head = pr.get("headRefOid") or ""
@@ -667,6 +667,8 @@ def main(argv: list[str]) -> int:
     growth = branch_growth(pr["baseRefName"], pr["headRefName"], head)
     behind = is_behind(pr["baseRefName"], head)
     changed = changed_paths(pr["baseRefName"], head)
+    if files is not None and changed is not None:
+        files += [p for p in changed if p not in files]  # an empty or short answer from GitHub hides nothing the clone names
     kept = None
     if m and head and not head.startswith(m.group(2)):
         head_commit = json.loads(_gh("api", f"repos/{REPO}/commits/{head}"))

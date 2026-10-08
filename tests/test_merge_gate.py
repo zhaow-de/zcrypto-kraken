@@ -590,8 +590,8 @@ RENAMED = [
 ]
 
 
-def _main_over_files(monkeypatch, body: str, entries: list[dict], **over) -> int:
-    """`main()` with gh's files endpoint answering `entries` through the jq program `main()` hands it."""
+def _main_over_files(monkeypatch, body: str, entries: list[dict], changed=(), **over) -> int:
+    """`main()` with gh's files endpoint answering `entries` through the jq program `main()` hands it, and the clone `changed`."""
     pr = _pr(body=body, **over)
 
     def fake_gh(*args: str) -> str:
@@ -607,7 +607,7 @@ def _main_over_files(monkeypatch, body: str, entries: list[dict], **over) -> int
     monkeypatch.setattr(gate, "_gh", fake_gh)
     monkeypatch.setattr(gate, "branch_growth", lambda base, head_ref, head: [])
     monkeypatch.setattr(gate, "is_behind", lambda base, head: False)
-    monkeypatch.setattr(gate, "changed_paths", lambda base, head: [])
+    monkeypatch.setattr(gate, "changed_paths", lambda base, head: None if changed is None else list(changed))
     return gate.main(["merge-gate.py", "1"])
 
 
@@ -637,6 +637,41 @@ def test_a_path_holding_a_space_is_read_whole(monkeypatch, capsys):
 def test_a_journal_pr_renaming_a_file_into_the_journal_is_exempt_only_from_inside_it(monkeypatch, capsys, old, expected):
     entries = [{"filename": "docs/reference/ops-journal/2026-09.md", "previous_filename": old, "status": "renamed"}]
     _main_over_files(monkeypatch, JOURNAL_PR["body"], entries, headRefName="ops-journal")
+    out = capsys.readouterr().out
+    assert expected in out, out
+
+
+SHORT_ANSWERS = pytest.mark.parametrize("entries", [[], [{"filename": "docs/a.md", "status": "modified"}]], ids=["empty", "short"])
+
+
+@SHORT_ANSWERS
+def test_an_opus_read_on_a_fable_path_the_endpoint_left_out_and_the_clone_names_fails(monkeypatch, capsys, entries):
+    assert _main_over_files(monkeypatch, _read_by("Claude Opus 4.8"), entries, changed=["docs/a.md", "cli/engine/a.py"]) == 1
+    out = capsys.readouterr().out
+    assert "the PR touches cli/engine/a.py: the floor there is Claude Fable" in out, out
+
+
+@SHORT_ANSWERS
+def test_the_substitution_line_admits_an_opus_read_on_a_fable_path_only_the_clone_names(monkeypatch, capsys, entries):
+    body = _read_by_opus_with_substitution("the account's Fable limit is reached; the owner authorised Opus")
+    assert _main_over_files(monkeypatch, body, entries, changed=["docs/a.md", "cli/engine/a.py"]) == 0, capsys.readouterr().out
+
+
+JOURNAL_ENTRY = {"filename": "docs/reference/ops-journal/2026-09.md", "status": "modified"}
+
+
+@pytest.mark.parametrize(
+    ("entries", "changed", "expected"),
+    [
+        ([], [JOURNAL_ENTRY["filename"]], "GATE PASSED"),
+        ([JOURNAL_ENTRY], [JOURNAL_ENTRY["filename"], "cli/x.py"], "no 'Read before push by:"),
+        ([], [JOURNAL_ENTRY["filename"], "cli/x.py"], "no 'Read before push by:"),
+        ([], None, "no 'Read before push by:"),
+    ],
+    ids=["empty-clone-journal-only", "short-clone-foreign-file", "empty-clone-foreign-file", "empty-no-clone"],
+)
+def test_a_journal_pr_is_judged_by_the_endpoint_and_the_clone_together(monkeypatch, capsys, entries, changed, expected):
+    _main_over_files(monkeypatch, JOURNAL_PR["body"], entries, changed=changed, headRefName="ops-journal")
     out = capsys.readouterr().out
     assert expected in out, out
 
