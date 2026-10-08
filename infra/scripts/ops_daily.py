@@ -1864,7 +1864,7 @@ def _inspect_format_is_scoped(tokens: list[str]) -> bool:
 
 # The floor under the parse below: a substring anywhere in the command, so nothing it refused turns autonomous.
 _PING_URL = re.compile(r"hc-ping|healthchecks\.io/ping|zcrypto-hc\.zhaow\.me(?::\d+)?/ping")
-# hc-ping.com answers a ping on every path; the other two only under /ping.
+# hc-ping.com answers a ping on every path.
 _PING_ROUTES = {"hc-ping.com": "/", "healthchecks.io": "/ping", "zcrypto-hc.zhaow.me": "/ping"}
 
 
@@ -1874,13 +1874,9 @@ def _dedot(path: str) -> str:
 
 
 def _is_ping_url(url: str) -> bool:
-    """Whether a `_URL`-shaped string lands on a ping route; `urlsplit` raises on nothing that class admits.
-
-    The host is decoded, as curl decodes it, lowercased, and stripped of one trailing dot, its port and its userinfo.
-    The path is read two ways and either reaching the route is a ping: dot segments removed with `%2e` read as a
-    dot, then decoded -- what curl sends and the app routes -- and decoded first, for a front that also reads `%2f`
-    as a slash before it removes them.
-    """
+    """Whether a `_URL`-shaped string lands on a ping route; `urlsplit` raises on nothing that class admits."""
+    # curl takes `https:///host/path`, an empty authority, as `https://host/path`.
+    url = re.sub(r"^(https?:)/{3,}", r"\1//", url)
     parts = urllib.parse.urlsplit(url)
     host = urllib.parse.unquote(parts.hostname or "").lower().removesuffix(".")
     prefix = _PING_ROUTES.get(host)

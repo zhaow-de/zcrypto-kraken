@@ -944,6 +944,9 @@ _PING_TAIL = "aB3_-aB3_-aB3_-aB3_-x9/zcrypto-capture"
         # A proxy merges a doubled slash, and one may decode `%2f` before it removes dot segments.
         f"https://zcrypto-hc.zhaow.me//ping/{_PING_TAIL}",
         f"https://zcrypto-hc.zhaow.me/x%2f..%2fping/{_PING_TAIL}",
+        # An empty authority: each row carries a step past the floor, which matches `zcrypto-hc.zhaow.me/ping` as a substring.
+        f"https:///zcrypto-hc.zhaow.me/./ping/{_PING_TAIL}",
+        f"https:///zcrypto-hc.zhaow.me/%70ing/{_PING_TAIL}",
     ],
 )
 def test_a_ping_url_is_prepared_however_it_is_spelled(url):
