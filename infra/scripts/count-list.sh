@@ -157,7 +157,6 @@ def commit_of(sha, number, on_github=False):
     done = gh("api", f"repos/{gate.REPO}/commits/{sha}")
     if done is None or (on_github and done.returncode != 0):
         refuse(f"PR #{number}'s commit {sha} could not be fetched -- whether the read covers the head cannot be decided", done)
-    # A failed run on a tip not `on_github` answers None: the body may name a tip GitHub never saw.
     return json.loads(done.stdout) if done.returncode == 0 and done.stdout.strip() else None
 
 

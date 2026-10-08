@@ -673,7 +673,7 @@ def main(argv: list[str]) -> int:
     if files is not None and changed is not None:
         files += [p for p in changed if p not in files]  # an empty or short answer from GitHub hides nothing the clone names
     elif files == []:
-        files = None  # an empty answer with no clone list to check it against is no list at all
+        files = None
     kept = None
     if m and head and not head.startswith(m.group(2)):
         head_commit = json.loads(_gh("api", f"repos/{REPO}/commits/{head}"))
