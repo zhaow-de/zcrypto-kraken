@@ -421,3 +421,35 @@ def test_cleanup_cp_failure_is_rc9_and_keeps_pristine(tmp_path, sig):
     kept = re.search(r"KEPT at (\S+)", err_text)
     assert kept and Path(kept.group(1)).exists()  # the pristine copy genuinely survived
     Path(kept.group(1)).unlink()  # leave no temp behind
+
+
+# One probe per checkout: a second run in a worktree whose lock another run holds is refused before anything
+# is mutated, with the lock's path in the refusal; the lock is the worktree's own, so a sibling worktree runs.
+def test_a_second_run_in_the_same_checkout_is_refused_while_the_lock_is_held(tmp_path):
+    target = make_repo(tmp_path)
+    lock = tmp_path / ".git" / "mutate-probe.lock"
+    holder = subprocess.Popen(["flock", str(lock), "sleep", "30"], cwd=tmp_path)
+    try:
+        for _ in range(50):
+            if lock.exists():
+                break
+            time.sleep(0.05)
+        r = run(
+            ["--file", "mod.py", "--control", "s/VALUE = 1/VALUE = 9/", "--mutation", "s/VALUE = 1/VALUE = 2/", "--", "./probe.sh"],
+            tmp_path,
+        )
+    finally:
+        holder.kill()
+        holder.wait()
+    assert r.returncode == 3
+    assert "one probe at a time" in r.stderr and str(lock) in r.stderr
+    assert target.read_text() == "VALUE = 1\n"
+
+
+def test_the_lock_is_released_after_a_run_so_the_next_run_proceeds(tmp_path):
+    make_repo(tmp_path)
+    args = ["--file", "mod.py", "--control", "s/VALUE = 1/VALUE = 9/", "--mutation", "s/VALUE = 1/VALUE = 2/", "--", "./probe.sh"]
+    first = run(args, tmp_path)
+    second = run(args, tmp_path)
+    assert first.returncode == 0 and second.returncode == 0
+    assert "KILLED" in second.stdout
