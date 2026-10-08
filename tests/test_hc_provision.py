@@ -542,7 +542,10 @@ def test_retire_names_a_fleet_check_the_fixture_lacks_and_points_at_apply(retiri
     retiring.clone.checks.pop(retiring.clone.by_name("zcrypto-panel")["uuid"])
     assert _run(capsys, "fixture")[0] == 0
     rc, out, err = _run(capsys, "retire")
-    assert rc == 2 and [line for line in err.splitlines() if "zcrypto-panel" in line and "run apply" in line], err
+    assert rc == 2 and [
+        line for line in err.splitlines() if "zcrypto-panel" in line and "restore the committed fixture, run apply" in line
+    ], err
+    assert "to create them on the service" not in err
     assert retiring.deletes() == []
 
 
