@@ -49,6 +49,6 @@ mon_token_pattern: '^glsa_[A-Za-z0-9]{32}_[0-9a-f]{8}\Z'
 # The directory the node's Alloy textfile collector reads.
 mon_textfile_dir: /var/lib/zcrypto-node-textfile
 
-# The healthchecks.io ping URL of the node's self-check. Empty skips the ping, the ops role's semantics: the
-# check is minted when the node's power-off drill is scheduled, and until then the timer runs and pings nothing.
+# The ping URL of the node's self-check, set in host_vars/zcrypto-mon/vars.yml; the role's second task refuses it
+# empty.
 mon_selfcheck_healthcheck_url: ""

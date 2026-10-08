@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 import pytest
+import yaml
 
 TEMPLATE = Path(__file__).resolve().parent.parent / "infra" / "ansible" / "roles" / "ops" / "templates" / "panel-regenerate.sh.j2"
 
@@ -124,8 +125,11 @@ TIMER_RESTART = "systemctl start zcrypto-panel-materialize.timer"
 def run_tty(script, env, replies, args=()):
     pid, fd = pty.fork()
     if pid == 0:
-        os.environ.update(env)
-        os.execv(str(script), [str(script), *args])
+        try:
+            os.environ.update(env)
+            os.execv(str(script), [str(script), *args])
+        finally:
+            os._exit(127)  # a failed execv must never leave a forked pytest running
     out = b""
     replies = list(replies)
     try:
@@ -329,6 +333,30 @@ def test_happy_path_order_and_checklist(tmp_path):
         TIMER_RESTART,
     ]
     assert "NAS" in out and "Un-pause" in out and "ops_panel_timer_hold" in out
+
+
+HC_DEFAULTS = TEMPLATE.parents[2] / "hc" / "defaults" / "main.yml"
+
+
+def test_the_pause_and_the_unpause_name_the_dead_man_services_panel_check(tmp_path):
+    address = f"https://{yaml.safe_load(HC_DEFAULTS.read_text())['hc_hostname']}"
+    script, env, panel, log = render(tmp_path, STUB_DU_SMALL)
+    rc, out = run_tty(script, env, ["paused"])
+    assert rc == 0, out
+    lines = [line.strip() for line in out.splitlines()]
+    pause = [line for line in lines if line.startswith("Pause it now")]
+    unpause = [line for line in lines if line.startswith("1. Un-pause")]
+    assert len(pause) == 1 and len(unpause) == 1, out
+    for line in pause + unpause:
+        assert "the dead-man service" in line and "zcrypto-panel" in line and "healthchecks.io" not in line, line
+        assert address in line, line
+
+
+def test_a_script_that_cannot_be_executed_ends_its_pty_child(tmp_path):
+    script = tmp_path / "empty"
+    script.write_text("")
+    script.chmod(0o755)
+    assert run_tty(script, dict(os.environ), []) == (127, "")
 
 
 def test_failed_rebuild_leaves_timer_stopped(tmp_path):

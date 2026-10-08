@@ -53,6 +53,7 @@ from cli.engine.gate_cache import (
 )
 from cli.engine.instruments import INSTRUMENT_IDS, _floor_to_step
 from cli.engine.journal import CycleRecord, SnapshotEntry, from_json, validate_record
+from cli.engine.preflight import run_preflight
 from cli.engine.probeplan import ProbePlanError, parse_plan, plan_refusals
 from cli.engine.soak import soak_report
 from cli.engine.store import _HOST_REDELIVERY, BASKET, GRID_INTERVALS, PAIR_KEYS, _store_path, seed_store
@@ -2142,6 +2143,20 @@ def probe_plan(
         raise _abort("plan refused: " + "; ".join(refusals))
     total = sum(i.notional_eur or 0.0 for i in plan.intents)
     typer.echo(f"plan ok: {len(plan.intents)} intent(s), total notional {total:.2f} EUR")
+
+
+@engine_app.command(name="preflight")
+def preflight(
+    state_dir: Path = typer.Option(
+        ...,
+        "--state-dir",
+        help="Engine state directory the configured store and journal must lie under.",
+    ),
+) -> None:
+    """Check offline, writing nothing, that this image can run the engine against the state directory (its configuration, its library version's verification, its price store and its newest cycle record), print the verdict as one JSON line, and exit 1 when any check fails."""
+    result = run_preflight(state_dir)
+    typer.echo(result.to_json_line())
+    raise typer.Exit(0 if result.ok else 1)
 
 
 def _read_draft_record(path: Path) -> CycleRecord:

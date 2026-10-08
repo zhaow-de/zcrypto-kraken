@@ -45,6 +45,7 @@ The second pull request is from `feat/t0218-dead-man-tasks-8-10`; the first merg
 - P3, 2026-10-06, the SES SMTP credential, vaulted, and its endpoint: 0fbd2df88.
 - The release the node deploys moved from `v6.1.0` to `v6.2.0`, the clone's newest, 2026-10-07, the owner's word; its static reads are the spec's measured-basis amendment: e06b8719f, 8bdd8927e, 5eda879f1, ca2cf8e2f.
 - `develop` merged in with spec 00123, 2026-10-07: b2360bbb9; the node's Alloy on the shared `alloy_apt` role under the `alloy` tag, its `fleet-pins.md` `alloy` row left to the node's build: 0ea1e3ec0, 6adb02892, cfd10c59b, d08734d02.
+- The first sitting, 2026-10-07 15:25–16:16Z, R0 to R7 each as the plan reads, its converges `rc 0`: f8baf6745 (the deploy-log rows and the `hc` pins row) and 0b0bbd25e (R0 to R5's readings); P4 the owner's in the clone's UI.
 
 ## Suggested next steps
 

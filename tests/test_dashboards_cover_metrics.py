@@ -282,7 +282,7 @@ def cache_node_readers() -> dict[str, frozenset[str]]:
 # not one per mechanism (see that test's own comment).
 #
 # Scope is the four namespaces this repo's own producers publish into. `node_*`, `process_*`, `hc_*`
-# and `redis_*` come from node-exporter, prometheus_client, healthchecks.io and Alloy's Redis
+# and `redis_*` come from node-exporter, prometheus_client, the dead-man service and Alloy's Redis
 # exporter -- not ours to chart exhaustively, and the alert layer (assertion 1) already pulls in the
 # ones that matter; the cache nodes' keep list is held below to what a reader of a cache node reads.
 _APP = r"(?:zcrypto|ops|zaccess|zcache)_[a-z0-9_]*[a-z0-9]"
@@ -499,6 +499,21 @@ def test_every_panel_id_annotation_is_a_string():
         if "__panelId__" in _annotations(r) and not isinstance(_annotations(r)["__panelId__"], str)
     ]
     assert not wrong, f"__panelId__ must be a QUOTED string in alerts.yaml -- an unquoted id aborts the whole push: {wrong}"
+
+
+def test_the_panels_over_the_dead_man_series_name_the_service():
+    panels = [
+        panel
+        for name, dash in dashboards()
+        if name == "fleet-health-dashboard.json"
+        for panel in _walk_panels(dash.get("panels") or [])
+        if any(re.search(r"\bhc_check", t.get("expr") or "") for t in _prom_targets(panel))
+    ]
+    assert sorted(p["id"] for p in panels) == [103, 104], [p.get("id") for p in panels]
+    for panel in panels:
+        texts = (panel["title"], panel["description"])
+        assert panel["title"].startswith("Dead-man service — "), texts
+        assert not re.search(r"healthchecks\.io|hc\.io", " ".join(texts)), texts
 
 
 def test_every_rule_points_at_a_real_panel_or_a_runbook():

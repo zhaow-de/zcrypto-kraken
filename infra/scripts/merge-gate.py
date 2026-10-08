@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import html
 import json
 import pathlib
@@ -33,6 +34,11 @@ FABLE_PATHS = (
     "infra/ansible/roles/capture/",
     "infra/ansible/roles/engine/",
 )
+# The PR files endpoint lists a renamed file under its new path in `filename` and its old one in `previous_filename`.
+# Both are paths the PR changed: a file moved out of a Fable path into a plain one touches the Fable path.
+PR_FILES_JQ = ".[] | .filename, (.previous_filename // empty)"
+# .github/workflows/capture-image.yml's on.push.paths, the pushes that build the engine image.
+IMAGE_PATHS = ("cli/**", "pyproject.toml", "uv.lock", "infra/docker/**")
 # The Fable floor is substitutable, and only by a line that says so in the body. An Opus read on a Fable path
 # passes when this line carries a reason -- written where the merge decision is read, so the substitution is
 # visible to whoever opens the PR later, instead of being a gate nobody can see was bypassed.
@@ -362,7 +368,7 @@ def read_line_fails(pr: dict, head_commit: dict | None, files: list[str] | None,
     if pr.get("headRefName") == "ops-journal":
         if files is None:
             return ["the PR's file list was not fetched, so the ops-journal exemption cannot be scoped to the journal files"]
-        if all(f.startswith(JOURNAL) for f in files):
+        if files and all(f.startswith(JOURNAL) for f in files):
             return []  # a month of journal entries has nothing for a reviewer to read (docs/reference/ops-journal/README.md)
     body = pr.get("body") or ""
     head = pr.get("headRefOid") or ""
@@ -438,8 +444,11 @@ def evaluate(
     files: list[str] | None = None,
     branch_growth: list[str] | None = None,
     kept: bool | str | None = None,
+    behind: bool | None = None,
+    changed: list[str] | None = None,
 ) -> list[str]:
-    """branch_growth is guidance-guard.py --range's refusals over the branch, [] when it refused nothing; None means it was not run."""
+    """branch_growth is guidance-guard.py --range's refusals over the branch, [] when it refused nothing; None means it was not run.
+    behind and changed are is_behind's and changed_paths' answers, None where git did not answer."""
     fails: list[str] = []
     base = pr.get("baseRefName")
     state = pr.get("state")
@@ -479,6 +488,21 @@ def evaluate(
             "the branch's ambient growth was not checked commit by commit: `guidance-guard.py --range <base>..<head>` did not run"
         )
     fails.extend(branch_growth or [])
+    if behind is None:
+        fails.append(f"whether the head lacks origin/{base}'s tip was not read: git merge-base --is-ancestor did not answer")
+    elif behind and changed is None:
+        fails.append(
+            f"the head lacks origin/{base}'s tip and git did not list the paths its diff changes, so whether it touches a path "
+            "whose push builds the engine image cannot be checked"
+        )
+    elif behind:
+        touched = [p for p in changed if any(fnmatch.fnmatchcase(p, g) for g in IMAGE_PATHS)]
+        if touched:
+            fails.append(
+                f"the head lacks origin/{base}'s tip and the diff touches {touched[0]}, a path whose push builds the engine "
+                "image — merge develop into the branch so the suite runs on the tree that merges (the merge is admitted past "
+                "the read line)"
+            )
     return fails
 
 
@@ -606,6 +630,28 @@ def branch_growth(base_ref: str, head_ref: str, head: str) -> list[str]:
     return [f"the branch could not be checked commit by commit: {(done.stdout + done.stderr).strip()}"]
 
 
+def is_behind(base_ref: str, head: str) -> bool | None:
+    """Whether the head lacks origin/<base>'s tip, read from the clone: under the non-strict required check GitHub's
+    mergeStateStatus reports a behind pull request CLEAN."""
+    try:
+        done = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", f"origin/{base_ref}", head], capture_output=True, text=True, timeout=120
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    return {0: False, 1: True}.get(done.returncode)
+
+
+def changed_paths(base_ref: str, head: str, cwd: pathlib.Path | None = None) -> list[str] | None:
+    """The paths the head changes since its merge base with origin/<base>, a rename's old path beside its new; None
+    when git did not list them. Never GitHub's file list, whose `filename` is a rename's new path alone."""
+    try:
+        out = _git(cwd, "diff", "-z", "--name-only", "--no-renames", f"origin/{base_ref}...{head}")
+    except subprocess.CalledProcessError, subprocess.TimeoutExpired, UnicodeDecodeError:
+        return None
+    return [p for p in out.split("\0") if p]
+
+
 def main(argv: list[str]) -> int:
     if argv[1:] == ["--fable-paths"]:
         print("\n".join(FABLE_PATHS))  # the one copy of the list; CLAUDE.md names this command instead of repeating it
@@ -616,19 +662,30 @@ def main(argv: list[str]) -> int:
     m = READ_LINE.search(_as_a_reader_sees_it(pr.get("body") or ""))
     head = pr.get("headRefOid") or ""
     if m or pr.get("headRefName") == "ops-journal":
-        files = _gh("api", "--paginate", f"repos/{REPO}/pulls/{pr['number']}/files", "--jq", ".[].filename").split()
-    growth = branch_growth(
-        pr["baseRefName"], pr["headRefName"], head
-    )  # fetches origin's base and head first: head_is_the_read reads them
+        try:
+            out = _gh("api", "--paginate", f"repos/{REPO}/pulls/{pr['number']}/files", "--jq", PR_FILES_JQ)
+            files = [line for line in out.splitlines() if line.strip()]
+        except subprocess.CalledProcessError, subprocess.TimeoutExpired:
+            pass  # a failed or hung fetch leaves the list unfetched, which the arms that read it refuse
+    growth = branch_growth(pr["baseRefName"], pr["headRefName"], head)
+    behind = is_behind(pr["baseRefName"], head)
+    changed = changed_paths(pr["baseRefName"], head)
+    if files is not None and changed is not None:
+        files += [p for p in changed if p not in files]  # an empty or short answer from GitHub hides nothing the clone names
+    elif files == []:
+        files = None
     kept = None
     if m and head and not head.startswith(m.group(2)):
-        head_commit = json.loads(_gh("api", f"repos/{REPO}/commits/{head}"))
+        try:
+            head_commit = json.loads(_gh("api", f"repos/{REPO}/commits/{head}"))
+        except subprocess.CalledProcessError, subprocess.TimeoutExpired:
+            pass  # an unread head commit admits nothing as the row commit; the clone's answer decides
         try:
             read = json.loads(_gh("api", f"repos/{REPO}/commits/{m.group(2)}")).get("sha") or m.group(2)
         except subprocess.CalledProcessError, subprocess.TimeoutExpired:
             read = m.group(2)  # a tip GitHub never saw, or a fetch that failed or timed out: the clone is asked by the prefix
         kept = head_is_the_read(read, head, f"origin/{pr['baseRefName']}")
-    fails = evaluate(pr, head_commit, files, growth, kept)
+    fails = evaluate(pr, head_commit, files, growth, kept, behind=behind, changed=changed)
     if fails:
         print("GATE FAILED:")
         for fail in fails:

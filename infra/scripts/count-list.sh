@@ -95,7 +95,7 @@ c_merged_prs_without_a_floor_read() {
   local prs floor oldest
   if [ -n "${COUNT_LIST_PRS_SNAPSHOT:-}" ]; then prs="$(cat "$COUNT_LIST_PRS_SNAPSHOT")" || return 2
   else prs="$(timeout 120 gh pr list --state merged --base develop --limit 400 \
-    --json number,body,mergedAt,headRefName,headRefOid,files,changedFiles,mergeCommit)" || return 2
+    --json number,body,mergedAt,headRefName,headRefOid,files,mergeCommit)" || return 2
     timeout 60 git fetch -q origin develop || return 2; fi  # the merge commits the clone arm takes its base from
   floor="$(printf '%s' "$prs" | jq -r --arg since "$READ_LINE_RULE_SINCE" '[(now - 2592000 | todate), $since] | max')" || return 2
   # A saturated fetch cannot answer. If the OLDEST row fetched is still inside the window, rows below it were
@@ -127,9 +127,23 @@ floor = os.environ["COUNT_LIST_FLOOR"]
 
 heads = json.loads(pathlib.Path(os.environ["COUNT_LIST_HEADS_SNAPSHOT"]).read_text()) if os.environ.get(
     "COUNT_LIST_HEADS_SNAPSHOT") else None
+GH_TIMEOUT = float(os.environ.get("COUNT_LIST_GH_TIMEOUT") or 120)
 
 
-def commit_of(sha):
+def gh(*args):
+    try:
+        return subprocess.run(["gh", *args], capture_output=True, text=True, timeout=GH_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return None
+
+
+def refuse(what, done):
+    why = f"no answer in {GH_TIMEOUT:g}s" if done is None else f"exit {done.returncode}: {done.stderr.strip()[:200]}"
+    print(f"count-list: {what}: {why}", file=sys.stderr)
+    raise SystemExit(2)
+
+
+def commit_of(sha, number, on_github=False):
     """The commit object the change-index-row exception reads -- a head that is the row commit over the tip the
     body names -- and the full sha of the read the clone arm fetches by, asked for only by a row that fails on
     nothing else. COUNT_LIST_HEADS_SNAPSHOT names a recorded `{oid: commit}` map, keyed by full oid and matched by
@@ -140,10 +154,9 @@ def commit_of(sha):
         return next((c for oid, c in heads.items() if oid.startswith(sha)), None)
     if offline:
         return None
-    done = subprocess.run(
-        ["gh", "api", f"repos/{gate.REPO}/commits/{sha}"],
-        capture_output=True, text=True, timeout=60,
-    )
+    done = gh("api", f"repos/{gate.REPO}/commits/{sha}")
+    if done is None or (on_github and done.returncode != 0):
+        refuse(f"PR #{number}'s commit {sha} could not be fetched -- whether the read covers the head cannot be decided", done)
     return json.loads(done.stdout) if done.returncode == 0 and done.stdout.strip() else None
 
 
@@ -156,40 +169,21 @@ files_snapshot = json.loads(pathlib.Path(os.environ["COUNT_LIST_FILES_SNAPSHOT"]
 
 
 def file_paths(pr):
-    """The gate's view of the PR's files, which is NOT what `gh pr list --json files` returns: that gives the
-    first page in the endpoint's own order, so a PR whose only Fable path falls outside it reads as touching
-    none. `changedFiles` is the exact test for that -- it is not truncated, and comparing it to the row's length
-    needs no belief about what a page holds. An ABSENT list stays None rather than becoming `[]`:
-    `read_line_fails` has two refusals that fire only on None, and turning it into an empty list reports
-    'touched nothing' and makes both unreachable.
-
-    COUNT_LIST_FILES_SNAPSHOT names a recorded `{number: [path]}` map so the re-fetch below can be driven
-    without the network, because an arm no test can reach is an arm no probe can kill -- which is how the
-    head-commit arm beside it shipped uncovered once."""
+    """The files endpoint's paths, or a COUNT_LIST_FILES_SNAPSHOT `{number: [path]}` map's, plus every bulk path they lack."""
     rows = pr.get("files")
     if rows is None:
         return None
     paths = [f.get("path") for f in rows]
-    total = pr.get("changedFiles")
-    if total is None or len(paths) >= total:
-        return paths
     if files_snapshot is not None:
-        return files_snapshot.get(str(pr.get("number")), paths)
-    done = subprocess.run(
-        ["gh", "api", "--paginate", f"repos/{gate.REPO}/pulls/{pr.get('number')}/files", "--jq", ".[].filename"],
-        capture_output=True, text=True, timeout=120,
-    )
-    if done.returncode != 0:
-        # `return 2`, not 1: this entry's other refusals exit 2, and `emit` reads 1 as a zero COUNT.
-        print(
-            f"count-list: PR #{pr.get('number')} returned {len(paths)} of {total} files and the rest could not "
-            f"be fetched -- the Fable-path arm cannot be decided: {done.stderr.strip()[:200]}",
-            file=sys.stderr,
-        )
-        raise SystemExit(2)
-    # `splitlines()` where the gate splits on whitespace: a path containing a space survives here and is
-    # fragmented there. Unreachable today and this is the correcter form, so the gate is the one to change.
-    return [line for line in done.stdout.splitlines() if line.strip()]
+        fetched = files_snapshot.get(str(pr.get("number")), [])
+    elif offline:
+        return paths
+    else:
+        done = gh("api", "--paginate", f"repos/{gate.REPO}/pulls/{pr.get('number')}/files", "--jq", gate.PR_FILES_JQ)
+        if done is None or done.returncode != 0:
+            refuse(f"PR #{pr.get('number')}'s file list could not be fetched -- the Fable-path arm cannot be decided", done)
+        fetched = [line for line in done.stdout.splitlines() if line.strip()]
+    return fetched + [p for p in paths if p not in fetched]
 
 
 commits_snapshot = json.loads(pathlib.Path(os.environ["COUNT_LIST_COMMITS_SNAPSHOT"]).read_text()) if os.environ.get(
@@ -208,17 +202,13 @@ def with_commits(pr):
         return {**pr, "commits": commits_snapshot.get(number, [])}
     if offline:
         return pr
-    done = subprocess.run(
-        ["gh", "pr", "view", number, "--json", "commits"],
-        capture_output=True, text=True, timeout=60,
-    )
-    if done.returncode != 0:
-        print(
-            f"count-list: PR #{number} is a dependabot branch whose commits could not be fetched, so the "
-            f"no-fix-commit exemption cannot be decided: {done.stderr.strip()[:200]}",
-            file=sys.stderr,
+    done = gh("pr", "view", number, "--json", "commits")
+    if done is None or done.returncode != 0:
+        refuse(
+            f"PR #{number} is a dependabot branch whose commits could not be fetched, so the no-fix-commit exemption "
+            "cannot be decided",
+            done,
         )
-        raise SystemExit(2)
     return {**pr, "commits": (json.loads(done.stdout) or {}).get("commits") or []}
 
 
@@ -238,7 +228,7 @@ def kept(pr):
     merge = (pr.get("mergeCommit") or {}).get("oid")
     if offline or not merge:
         return None
-    read = (commit_of(read_sha(pr)) or {}).get("sha") or read_sha(pr)
+    read = (commit_of(read_sha(pr), pr.get("number")) or {}).get("sha") or read_sha(pr)
     return gate.head_is_the_read(read, head, f"{merge}^", cwd=root)
 
 
@@ -251,7 +241,7 @@ for pr in json.loads(pathlib.Path(sys.argv[2]).read_text()):
     fails = gate.read_line_fails(pr, None, files)
     head_commit = None
     if fails and all("not the head" in f for f in fails):
-        head_commit = commit_of(pr.get("headRefOid"))
+        head_commit = commit_of(pr.get("headRefOid"), pr.get("number"), on_github=True)
         fails = gate.read_line_fails(pr, head_commit, files)
     if fails and all("not the head" in f for f in fails):
         fails = gate.read_line_fails(pr, head_commit, files, kept(pr))  # the clone is asked only where the row arm did not admit
@@ -378,6 +368,25 @@ c_engine_window_overrides() {
 # A watch number, not a gate: the band's successful rows that carry no well-formed `window`, whose admission can only be inferred.
 c_engine_rows_on_the_completion_floor() { uv run python infra/scripts/deploy-log-audit.py engine-window --log "${COUNT_LIST_DEPLOY_LOG:-docs/reference/deploy-log.jsonl}" | sed -n 's/^engine rows .*of which on the completion floor \([0-9][0-9]*\)$/\1/p'; }
 
+# The window opens at the log's first row carrying a `preflight`, the rows before it gated by the capture bake. An empty
+# `tags` stays out: `site.yml` admits one on the primary only beside `--skip-tags engine`, a run of no engine-role task.
+# shellcheck disable=SC2016  # $first and $since are jq's, bound by the program and by --arg
+engine_preflight_rows='(map(has("preflight")) | index(true)) as $first | if $first == null then [] else .[$first:] end | map(select(($since == "" or (.ts | fromdate) >= ($since | fromdate)) and .limit == "zcrypto" and (.tags | split(",") | any(. == "engine")) and .extra_vars.engine_image_digest != null))'
+
+# A successful re-pin with nothing gating it and nothing bypassing it: no `preflight`, or one whose rc or provenance an
+# assert let through.
+c_engine_repins_without_a_preflight() {
+  local since
+  since="$(round_closed_at)" || return 2
+  jq -s --arg since "$since" "$engine_preflight_rows"' | map(select(.rc == 0 and .extra_vars.engine_preflight_override == null and (.preflight.rc != 0 or .preflight.first_parent != true))) | length' "${COUNT_LIST_DEPLOY_LOG:-docs/reference/deploy-log.jsonl}"
+}
+
+c_engine_preflight_overrides() {
+  local since
+  since="$(round_closed_at)" || return 2
+  jq -s --arg since "$since" "$engine_preflight_rows"' | map(select(.extra_vars.engine_preflight_override != null)) | length' "${COUNT_LIST_DEPLOY_LOG:-docs/reference/deploy-log.jsonl}"
+}
+
 c_nas_rows_without_compat() { awk -F'|' '$3 ~ /^ *nas *$/' docs/reference/fleet-pins.md | grep -vc compat; }
 
 c_image_removals_outside_the_pruner() { git grep -nE 'docker (image (prune|rm)|rmi|system prune)' -- infra cli .claude ':!*.md' ':!infra/scripts/prune-host-images.py' ':!infra/scripts/count-list.sh' | grep -vcE '^[^:]+:[0-9]+:[[:space:]]*#'; }
@@ -458,9 +467,9 @@ c_ambient_bytes() { uv run python infra/scripts/guidance-guard.py --ambient-byte
 # counts the rows written before that arm landed.
 c_deploy_rows_with_an_empty_digest_var() { jq -s '[.[] | select((.extra_vars // {}) | to_entries | any((.key | endswith("_digest")) and ((.value | tostring) | test("^[[:space:]]*$"))))] | length' docs/reference/deploy-log.jsonl; }
 
-# The read-only healthchecks key reaching a host: today only `hc_prometheus_metrics_path` renders, and the
-# `group_vars/all/` copy is read from the workstation by file path. A role naming the key is the finding.
-c_hc_readonly_key_in_a_role() { git grep -nE 'healthchecks_readonly_api_key' -- infra/ansible/roles | grep -vcE '^[^:]+:[0-9]+:[[:space:]]*#'; }
+# The service's read-only key, or healthchecks.io's (healthchecks_readonly_api_key), named on a non-comment line of a
+# role outside the service key's one render, ops' Alloy secrets template.
+c_hc_readonly_key_in_a_role() { git grep -nE '(hc|healthchecks)_readonly_api_key' -- infra/ansible/roles ':!infra/ansible/roles/ops/templates/alloy-secrets.env.j2' | grep -vcE '^[^:]+:[0-9]+:[[:space:]]*#'; }
 
 # A write to one of the seven gate gauges from outside `_ExecGauges.update`, whose one call publishes the
 # six readings at every gate evaluation and the heartbeat at each but the executor's idle refresh: a
@@ -568,6 +577,8 @@ main() {
   emit "engine-rows-outside-the-gap" c_engine_rows_outside_the_gap
   emit "engine-window-overrides" c_engine_window_overrides
   emit "engine-rows-on-the-completion-floor" c_engine_rows_on_the_completion_floor
+  emit "engine-repins-without-a-preflight" c_engine_repins_without_a_preflight
+  emit "engine-preflight-overrides" c_engine_preflight_overrides
   emit "nas-rows-without-compat" c_nas_rows_without_compat
   emit "image-removals-outside-the-pruner" c_image_removals_outside_the_pruner
   emit "inspect-reads-of-dot-image" c_inspect_reads_of_dot_image

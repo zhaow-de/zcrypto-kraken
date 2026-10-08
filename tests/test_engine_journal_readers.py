@@ -37,6 +37,7 @@ READERS = {
     ("cli/engine/cycle.py", "_previous_success"): "validates",
     ("cli/engine/executor.py", "_cycle_records_through"): "validates",
     ("cli/engine/executor.py", "_read_cycle_record"): "validates",
+    ("cli/engine/preflight.py", "_load_newest_record"): "validates",
     ("cli/engine/soak.py", "soak_report"): "validates",
 }
 

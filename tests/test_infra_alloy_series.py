@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 
 import pytest
+import yaml
 
 from tests.alloy_text import live_alloy_text as _live_alloy_text
 from tests.alloy_text import live_j2_text as _live_j2_text
@@ -995,22 +996,45 @@ _MON_LOKI_LINES = [
 ]
 
 
+_HC_LINES = [
+    "HC_METRICS_PATH={{ hc_metrics_path }}",
+    "HC_READONLY_KEY={{ hc_readonly_api_key }}",
+]
+
+
 @pytest.mark.parametrize(
-    ("template", "grafana_lines", "mon_lines"),
+    ("template", "grafana_lines", "mon_lines", "hc_lines"),
     [
-        (ACCESS_SECRETS, _GRAFANA_LINES, _MON_PROM_LINES),
-        (OPS_SECRETS, _GRAFANA_LINES, _MON_PROM_LINES + _MON_LOKI_LINES),
-        (CACHE_SECRETS, _GRAFANA_LINES, _MON_PROM_LINES + _MON_LOKI_LINES),
-        (HC_ENV, [], _MON_PROM_LINES + _MON_LOKI_LINES),
-        (NAS_SECRETS, _GRAFANA_LINES, _MON_PROM_LINES + _MON_LOKI_LINES),
-        (CAPTURE_SECRETS, _GRAFANA_LINES, _MON_PROM_LINES + _MON_LOKI_LINES),
+        (ACCESS_SECRETS, _GRAFANA_LINES, _MON_PROM_LINES, []),
+        (OPS_SECRETS, _GRAFANA_LINES, _MON_PROM_LINES + _MON_LOKI_LINES, _HC_LINES),
+        (CACHE_SECRETS, _GRAFANA_LINES, _MON_PROM_LINES + _MON_LOKI_LINES, []),
+        (HC_ENV, [], _MON_PROM_LINES + _MON_LOKI_LINES, []),
+        (NAS_SECRETS, _GRAFANA_LINES, _MON_PROM_LINES + _MON_LOKI_LINES, []),
+        (CAPTURE_SECRETS, _GRAFANA_LINES, _MON_PROM_LINES + _MON_LOKI_LINES, []),
     ],
     ids=["access", "ops", "cache", "hc", "nas", "capture"],
 )
-def test_the_secrets_lines_are_held_by_literal(template, grafana_lines, mon_lines):
+def test_the_secrets_lines_are_held_by_literal(template, grafana_lines, mon_lines, hc_lines):
     lines = _live_j2_text(template).splitlines()
     assert [line for line in lines if line.startswith("GRAFANA_")] == grafana_lines
     assert [line for line in lines if line.startswith("MON_")] == mon_lines
+    assert [line for line in lines if line.startswith("HC_")] == hc_lines
+
+
+HC_DEFAULTS = REPO / "infra/ansible/roles/hc/defaults/main.yml"
+OBSERVED_VARS = REPO / "infra/ansible/group_vars/observed/vars.yml"
+
+
+def test_the_ops_scrape_reads_the_dead_man_service_with_the_read_only_key_as_its_bearer_token():
+    block = re.search(r'^prometheus\.scrape "healthchecks" \{\n(.*?)\n\}', _live_alloy_text(OPS_ALLOY), re.M | re.S)
+    assert block, f'{OPS_ALLOY}: no prometheus.scrape "healthchecks"'
+    body = block.group(1)
+    hostname = yaml.safe_load(HC_DEFAULTS.read_text())["hc_hostname"]
+    assert re.findall(r'"__address__"\s*=\s*"([^"]*)"', body) == [hostname], body
+    assert re.search(r'^\s*scheme\s*=\s*"https"\s*$', body, re.M), body
+    assert re.search(r'^\s*metrics_path\s*=\s*sys\.env\("HC_METRICS_PATH"\)\s*$', body, re.M), body
+    assert re.search(r'^\s*bearer_token\s*=\s*sys\.env\("HC_READONLY_KEY"\)\s*$', body, re.M), body
+    assert yaml.safe_load(OBSERVED_VARS.read_text())["hc_metrics_path"] == "/projects/{{ hc_project_uuid }}/metrics/"
 
 
 # A name the config reads that the template lacks is an empty string at runtime: the endpoint fails with

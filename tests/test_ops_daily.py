@@ -459,7 +459,60 @@ def test_the_deadmen_are_read_both_through_grafana_and_directly(monkeypatch):
 def test_a_missing_readonly_key_is_named_never_silently_skipped(monkeypatch):
     monkeypatch.setattr(ops_daily, "_readonly_key", lambda: None)
     read = ops_daily.read_deadmen("tok", opener=_canned({"data": {"result": []}}))
-    assert read.unreadable and "healthchecks_readonly_api_key" in read.unreadable
+    assert read.unreadable and "hc_readonly_api_key" in read.unreadable, read.unreadable
+    assert "group_vars/observed/vault.yml" in read.unreadable, read.unreadable
+
+
+_HC_DEFAULTS = Path(__file__).resolve().parents[1] / "infra/ansible/roles/hc/defaults/main.yml"
+
+
+def test_the_direct_read_is_the_services_checks_listing_on_the_hc_roles_hostname():
+    url = urllib.parse.urlsplit(ops_daily.DEADMAN_API)
+    assert (url.scheme, url.path) == ("https", "/api/v3/checks/"), ops_daily.DEADMAN_API
+    assert url.hostname == yaml.safe_load(_HC_DEFAULTS.read_text())["hc_hostname"], ops_daily.DEADMAN_API
+
+
+def test_the_read_only_key_is_read_from_the_observed_vault(monkeypatch):
+    seen = []
+    monkeypatch.setattr(
+        ops_daily.grafana_auth,
+        "vault_var",
+        lambda name, vault_file=ops_daily.grafana_auth.VAULT_FILE: seen.append((name, vault_file)) or "hcr_fake",
+    )
+    assert ops_daily._readonly_key() == "hcr_fake"
+    assert seen == [("hc_readonly_api_key", "group_vars/observed/vault.yml")]
+
+
+def test_the_direct_read_presents_the_read_only_key_to_the_service(monkeypatch):
+    monkeypatch.setattr(ops_daily, "_readonly_key", lambda: "hcr_fake")
+    requests = []
+
+    @contextlib.contextmanager
+    def opener(request, timeout=None):
+        requests.append(request)
+        body = {"checks": []} if request.full_url == ops_daily.DEADMAN_API else {"data": {"result": []}}
+        yield io.BytesIO(json.dumps(body).encode())
+
+    ops_daily.read_deadmen("tok", opener=opener)
+    direct = [r for r in requests if r.full_url == ops_daily.DEADMAN_API]
+    assert len(direct) == 1, [r.full_url for r in requests]
+    assert direct[0].get_header("X-api-key") == "hcr_fake"
+
+
+def test_an_unreachable_service_is_named_as_the_dead_man_service(monkeypatch):
+    monkeypatch.setattr(ops_daily, "_readonly_key", lambda: "hcr_fake")
+    prom = {"data": {"result": [{"metric": {}, "value": [1, "0"]}]}}
+    answers = iter([prom])
+
+    @contextlib.contextmanager
+    def opener(request, timeout=None):
+        if request.full_url == ops_daily.DEADMAN_API:
+            raise urllib.error.URLError("refused")
+        yield io.BytesIO(json.dumps(next(answers)).encode())
+
+    read = ops_daily.read_deadmen("tok", opener=opener)
+    assert read.unreadable and "the dead-man service could not be read directly" in read.unreadable, read.unreadable
+    assert "healthchecks.io" not in read.unreadable, read.unreadable
 
 
 def test_no_series_is_a_verdict_failure_never_a_pass():
@@ -866,6 +919,40 @@ def test_shell_composition_and_write_shaped_reads_are_never_autonomous(cmd):
     assert ops_daily.classify_action(cmd, host="zcrypto", resolve=_identity) is ops_daily.Tier.PREPARED
 
 
+_PING_TAIL = "aB3_-aB3_-aB3_-aB3_-x9/zcrypto-capture"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        f"https://zcrypto-hc.zhaow.me/ping/{_PING_TAIL}",
+        f"https://zcrypto-hc.zhaow.me:443/ping/{_PING_TAIL}",
+        f"https://zcrypto-hc.zhaow.me:0443/ping/{_PING_TAIL}",
+        f"https://user@zcrypto-hc.zhaow.me/ping/{_PING_TAIL}",
+        "https://hc-ping.com:443/aB3_-aB3_-aB3_-aB3_-x9",
+        # curl removes dot segments before it sends, reading `%2e` as a dot and `a%2f..` as one segment.
+        f"https://zcrypto-hc.zhaow.me/./ping/{_PING_TAIL}",
+        f"https://zcrypto-hc.zhaow.me/x/../ping/{_PING_TAIL}",
+        f"https://zcrypto-hc.zhaow.me/x/%2e%2e/ping/a%2f../../{_PING_TAIL}",
+        # A trailing-dot FQDN names the same host, and curl decodes a percent-encoded one.
+        f"https://zcrypto-hc.zhaow.me./ping/{_PING_TAIL}",
+        f"https://zcrypto-hc.zhaow.me.:443/ping/{_PING_TAIL}",
+        f"https://zcrypto-hc.zhaow.m%45/ping/{_PING_TAIL}",
+        # The app decodes the path curl sent before it routes.
+        f"https://zcrypto-hc.zhaow.me/%70ing/{_PING_TAIL}",
+        f"https://zcrypto-hc.zhaow.me/%70ing/a%2f../../{_PING_TAIL}",
+        # A proxy merges a doubled slash, and one may decode `%2f` before it removes dot segments.
+        f"https://zcrypto-hc.zhaow.me//ping/{_PING_TAIL}",
+        f"https://zcrypto-hc.zhaow.me/x%2f..%2fping/{_PING_TAIL}",
+        # An empty authority: each row carries a step past the floor, which matches `zcrypto-hc.zhaow.me/ping` as a substring.
+        f"https:///zcrypto-hc.zhaow.me/./ping/{_PING_TAIL}",
+        f"https:///zcrypto-hc.zhaow.me/%70ing/{_PING_TAIL}",
+    ],
+)
+def test_a_ping_url_is_prepared_however_it_is_spelled(url):
+    assert ops_daily.classify_action(f"curl -fsS {url}", host="zcrypto", resolve=_identity) is ops_daily.Tier.PREPARED
+
+
 @pytest.mark.parametrize(
     "cmd",
     [
@@ -907,13 +994,21 @@ def test_the_round_three_escapes_are_refused(cmd):
         ("sudo docker exec zcrypto-engine zcrypto engine exec-status", "zcrypto"),
         ("uv run python infra/scripts/grafana-query.py 'up{job=\"capture_app\"}'", "ops"),
         ("uv run python infra/scripts/grafana-query.py --stack mon 'count(up{host=\"zcrypto-mon\"})'", "ops"),
+        (
+            'uv run python infra/scripts/grafana-query.py --loki \'sum(count_over_time({host="ops", container!="liquidations"}[2h]))\'',
+            "ops",
+        ),
+        (
+            "uv run python infra/scripts/grafana-query.py --stack mon --loki "
+            '\'sum by (level) (count_over_time({host="zcrypto-hc", container="hc"} |= "is now running" [1h]))\'',
+            "ops",
+        ),
         ("sudo docker logs --since 5h zcrypto-engine | grep 'not scored'", "zcrypto"),
     ],
 )
 def test_the_wrappers_and_quoting_the_runbooks_really_use(cmd, host):
-    """The runbooks' own spellings stay AUTONOMOUS: the NAS's absolute `/usr/local/bin/docker`, a
-    `--format` body or grep pattern holding spaces (so a stage must be tokenised quote-aware),
-    `docker exec` fronting a genuine read, and PromQL full of braces and quotes."""
+    """The runbooks' own spellings stay AUTONOMOUS: a stage is tokenised quote-aware, since an argument's quotes hold
+    spaces, braces and `|`."""
     assert ops_daily.classify_action(cmd, host=host, resolve=_identity) is ops_daily.Tier.AUTONOMOUS
 
 
@@ -947,6 +1042,7 @@ def test_a_peeled_docker_exec_payload_is_re_examined_never_trusted():
         "sudo docker logs zcrypto-capture 2>&1 | grep -E 'checksum desync|desync recovery'",
         "sudo docker inspect --format '{{.State.Status}} {{.RestartCount}}' zcrypto-engine",
         "curl -fsS http://127.0.0.1:12345/metrics",
+        "curl -fsS -m 20 https://zcrypto-hc.zhaow.me/api/v3/status/",
     ],
 )
 def test_the_true_positives_still_pass(cmd):
@@ -1925,7 +2021,7 @@ def test_every_endpoint_the_instrument_builds_is_pinned(monkeypatch):
     deadmen = _recording({"data": {"result": []}}, {"checks": []})
     ops_daily.read_deadmen("tok", opener=deadmen)
     assert any("/uid/%s/api/v1/query" % ops_daily.PROM_DS_UID in u for u in deadmen.urls), deadmen.urls
-    assert any(u == "https://healthchecks.io/api/v3/checks/" for u in deadmen.urls), deadmen.urls
+    assert any(u == "https://zcrypto-hc.zhaow.me/api/v3/checks/" for u in deadmen.urls), deadmen.urls
     assert not any("/loki/" in u for u in deadmen.urls), deadmen.urls
 
     reminders = _recording(_counter(0))
@@ -2147,6 +2243,13 @@ def test_the_real_register_yields_a_refdata_reminder():
 
 _PATCH_PASS_HOSTS = [host for host, _ in ops_daily.PATCH_PASSES]
 _PATCH_PASS_NAMES = {host: f"{ops_daily.ssh_alias(host)} patch pass" for host in _PATCH_PASS_HOSTS}
+
+
+def test_both_nodes_owe_a_monthly_patch_pass():
+    assert ops_daily.PATCH_PASSES == (
+        ("zcrypto-mon", "infra/runbooks/mon.md#mon-patch-pass"),
+        ("zcrypto-hc", "infra/runbooks/hc.md#hc-patch-pass"),
+    )
 
 
 def _converge(ts: str, *, limit, tags="", skip_tags="", rc=0, playbook="site.yml") -> dict:
@@ -2666,10 +2769,9 @@ def test_each_bounded_verdict_check_agrees_with_the_rule_it_mirrors():
 
 
 def test_the_healthchecks_fixture_carries_no_key_the_read_only_fetch_never_returns():
-    """The fixture's keys stay inside the trio the read-only key returns, so it cannot vouch for a
-    payload shape production never sends."""
     fixture = Path(__file__).resolve().parent / "fixtures" / "healthchecks_descriptions.json"
-    extra = sorted({key for check in json.loads(fixture.read_text()) for key in check} - {"name", "tags", "desc"})
+    definitions = {"name", "tags", "desc", "grace", "manual_resume", "timeout", "schedule", "tz"}
+    extra = sorted({key for check in json.loads(fixture.read_text()) for key in check} - definitions)
     assert not extra, f"the fixture grew {extra}, which the read-only fetch does not return"
 
 

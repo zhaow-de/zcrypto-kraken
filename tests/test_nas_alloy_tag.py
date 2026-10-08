@@ -50,6 +50,7 @@ WHOLE_RENDER = [
     ENV_RENDER,
     "render the alloy secrets env file",
     "ensure the hot/ hub directory exists (setgid so both writers' children inherit group zcrypto)",
+    "ensure the dead-man node's backup directory exists (the pull's uid alone reads it)",
     "deploy the vendored rrsync jailer (the NAS ships no rrsync -- rsync 3.4.1's python3 rrsync)",
     "install the hot-push pubkey as a write-capable rrsync forced command jailed to hot/ (on zcrypto-data)",
     "report which stack files this converge changed",

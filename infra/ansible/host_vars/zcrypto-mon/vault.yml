@@ -50,7 +50,7 @@ mon_ingest_logship_password_hash: !vault |
           616165633034613163313432666464363730
 
 # The node's own healthchecks.io ping URL (the check zcrypto-mon, tags mon selfcheck), minted and vaulted by the
-# owner; vars.yml wires it to mon_selfcheck_healthcheck_url and the self-check pings it once per run.
+# owner; kept for the rollback and read by no template: vars.yml renders mon_selfcheck_healthcheck_url from hc_ping_key.
 selfcheck_healthcheck_url: !vault |
           $ANSIBLE_VAULT;1.1;AES256
           62623862316439613761363866623635343034353330363230613835333336323862616561613436
