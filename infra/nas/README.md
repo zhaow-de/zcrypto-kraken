@@ -110,7 +110,7 @@ Every pull channel shares one shape, so each row below says only what is particu
 | `HOT_SSH_KEY` | Private key for the hot-out pull — a **separate** least-privilege keypair (`sync_hot`), never the other channels' keys. | fixed to `/keys/sync_hot` in `compose.yaml` |
 | `HOT_SSH_PORT` | The ops node's SSH port, scoped to this pull only. Home-LAN port **22**, like the panel/reconciled channels. | defaults to `22` in `compose.yaml` |
 | `HC_BACKUP_SOURCE` | The **dead-man node's** nightly backups (`infra/runbooks/hc.md`'s `hc-backup`), pulled over `ARCHIVE_SSH_PORT` by a raw `rsync --archive` with no `--delete`, so a file the node has pruned, or a rebuilt node lacks, stays here. | deploy-time `.env` |
-| `HC_BACKUP_DEST` | Where the backups land: the stack directory's `hc-backups/`, `zcrypto-data:zcrypto` `0700`, created by the `nas` role, off the custody share the ops node mounts over NFS, since a backup carries the service's keys and its Slack webhook. | fixed to `/hc-backups` in `compose.yaml` (the `./hc-backups:/hc-backups` mount) |
+| `HC_BACKUP_DEST` | Where the backups land: the stack directory's `hc-backups/`, `zcrypto-data:zcrypto` `0700`, created by the `nas` role, off the custody share the ops node mounts over NFS. | fixed to `/hc-backups` in `compose.yaml` (the `./hc-backups:/hc-backups` mount) |
 | `HC_BACKUP_SSH_KEY` | The dead-man backup channel's key (`sync_hc_backup`, bootstrap step 3). | fixed to `/keys/sync_hc_backup` in `compose.yaml` |
 | `ARCHIVE_SSH_PORT` | VPS SSH port; defaults to 10022 (matching the capture/engine channels) if omitted or blank. | deploy-time `.env` |
 | `ARCHIVE_PULL_INTERVAL` | Seconds between pull cycles. | defaults to `3600` (hourly) in `compose.yaml`; not rendered by `env.j2` |
