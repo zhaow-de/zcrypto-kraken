@@ -20,8 +20,8 @@ Public halves (`*.pub`) are the plaintext record of what is authorized where; a 
 | `sync_ed25519.pub` | NAS (`/volume1/docker/zcrypto-archive/keys/`) + vaulted here | engine-journal pull channel (`group_vars/capture_host`) |
 | `sync_capture_ed25519.pub` | NAS + vaulted here | primary capture pull channel |
 | `sync_capture_red_ed25519.pub` | NAS + vaulted here | secondary capture pull channel (`host_vars/zcrypto-red`) |
-| `sync_liquidations_ed25519.pub` | NAS | ops liquidations pull channel; installed on `zcrypto-data` by the ops role as `rrsync -ro` (`host_vars/zcrypto-ops`) |
-| `sync_panel_ed25519.pub` | NAS | ops l2-panel pull channel; installed on `zcrypto-data` by the ops role |
-| `sync_reconciled_ed25519.pub` | NAS | ops capture-reconciled pull channel; installed on `zcrypto-data` by the ops role |
-| `sync_hot_ed25519.pub` | NAS | ops hot-out pull channel (spec 00056 D2); installed on `zcrypto-data` by the ops role |
+| `sync_liquidations_ed25519.pub` | NAS + vaulted here | ops liquidations pull channel; installed on `zcrypto-data` by the ops role as `rrsync -ro` (`host_vars/zcrypto-ops`) |
+| `sync_panel_ed25519.pub` | NAS + vaulted here | ops l2-panel pull channel; installed on `zcrypto-data` by the ops role |
+| `sync_reconciled_ed25519.pub` | NAS + vaulted here | ops capture-reconciled pull channel; installed on `zcrypto-data` by the ops role |
+| `sync_hot_ed25519.pub` | NAS + vaulted here | ops hot-out pull channel (spec 00056 D2); installed on `zcrypto-data` by the ops role |
 | `zcrypto_hot_push_ed25519{,.pub}` | vaulted here (+ operator `~/.ssh/zcrypto-hot-push_ed25519`) | the workstation's `zcrypto data push` via the `nas-hot` ssh alias; installed by the nas role, jailed to `hot/`. The **only** write channel into custody (spec 00056 D2). |
