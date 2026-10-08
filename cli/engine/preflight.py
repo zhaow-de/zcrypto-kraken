@@ -44,7 +44,7 @@ def _check_config(state_dir: Path) -> tuple[str, EngineConfig | None]:
         return str(exc), None
     for name, path in (("store_dir", engine.store_dir), ("journal_dir", engine.journal_dir)):
         if not _under(path, state_dir):
-            return f"{name} {path} does not lie under the state directory {state_dir}", None
+            return f"{name} {path} is not an absolute path under the state directory {os.path.abspath(state_dir)}", None
     return "ok", engine
 
 
