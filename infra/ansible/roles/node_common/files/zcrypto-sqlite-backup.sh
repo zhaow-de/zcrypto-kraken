@@ -24,7 +24,7 @@ name=$1
 db=$2
 staging=$3
 dest=$4
-# A sibling of the destination on its filesystem, outside every reader's root, where a copy is written before its rename.
+# A sibling of the destination on its filesystem, outside every reader's root.
 incoming="${dest%/}.incoming"
 keep_days=$5
 out=$6
@@ -43,8 +43,8 @@ now=$(date -u +%s)
 staged="$staging/$name-$(date -u -d "@$now" +%Y-%m-%dT%H%M%SZ).sqlite"
 cutoff=$(date -u -d "@$((now - 10#$keep_days * 86400))" +%Y-%m-%d)
 
-# What a stop removes: the copy in the sibling and, where the host holds the staging directory, the staged file and its
-# journal. A name already taken there is an earlier run's of the same second, refused before the trap could remove it.
+# The files a stop removes. One already there is an earlier run's of the same second, refused before the trap could
+# remove it.
 mine=("$incoming/${staged##*/}")
 [ ${#runner[@]} -gt 0 ] || mine+=("$staged" "$staged-journal")
 for path in "${mine[@]}"; do
@@ -112,7 +112,7 @@ else
   copy_command[-1]+=$staged
 fi
 # The copy is written and held in the sibling and renamed into the destination whole, so a reader of the destination,
-# the NAS's pull among them, never lists a file being written; a copy that fails part-way is removed there.
+# the NAS's pull among them, never lists a file being written.
 copied="$incoming/${staged##*/}"
 "${copy_command[@]}" "$incoming/" || {
   rm -f -- "$copied" || true
@@ -136,8 +136,7 @@ trap - TERM INT
 python3 -c "$prune" "$dest" "$name" "$cutoff" || fail "pruning $dest failed"
 python3 -c "$prune" "$incoming" "$name" "$cutoff" || fail "pruning $incoming failed"
 
-# The files an earlier run left, one written before the group was set among them, then the directory: a directory
-# open to the group lists no file the group cannot read.
+# The files before the directory, so a directory open to the group lists no file the group cannot read.
 if [ -n "$group" ]; then
   find "$dest" -mindepth 1 -maxdepth 1 -type f -exec chgrp -- "$group" {} + -exec chmod 0640 -- {} + ||
     fail "cannot hold the files in $dest at 0640 under the group $group"

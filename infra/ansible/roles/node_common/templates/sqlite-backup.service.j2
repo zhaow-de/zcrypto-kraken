@@ -6,9 +6,8 @@ Description=Back up the {{ node_common_sqlite_backup_name }} SQLite database by 
 [Service]
 Type=oneshot
 # Root, with no User=, DynamicUser= or ProtectSystem= line, as the ops units that drive docker run: the runner reaches
-# the Docker socket, which DynamicUser= refuses, and the copy writes into the destination and its sibling
-# <destination>.incoming, both of which ProtectSystem=strict makes read-only. Each line is quoted whole, since its value
-# carries spaces.
+# the Docker socket, which DynamicUser= refuses, and ProtectSystem=strict makes read-only every directory the run
+# writes into. Each line is quoted whole, since its value carries spaces.
 Environment="SQLITE_BACKUP_RUNNER={{ node_common_sqlite_backup_runner }}"
 Environment="SQLITE_BACKUP_COPY={{ node_common_sqlite_backup_copy }}"
 Environment="SQLITE_BACKUP_GROUP={{ node_common_sqlite_backup_group }}"
