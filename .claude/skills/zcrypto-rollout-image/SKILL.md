@@ -20,7 +20,7 @@ The executable form of the app-image canary rollout: the one image serves captur
 1. Blocker sweep: `docs/open-topics/README.md` + the memo; present the result with the rollout proposal.
 2. Candidate digest from CI; **pre-stage everything**: pull the digest on each host, verify the change is *in* the pulled image (run the image's own version/inspection surface — never assume from the tag), stage the compose pin.
 3. Record the rollback operand now: the currently-running `{{.Config.Image}}` on both hosts, and confirm that digest is still present locally on both (`docker image ls --digests`) — the rollback path depends on it.
-4. `--check --diff` against the fleet from a tree whose rendered config matches it. The capture compose file, rendered `no_log` with `diff: false` since it carries the project ping key, previews `changed` with no diff: its read is *Converge mechanics*' source diff.
+4. `--check --diff` against the fleet from a tree whose rendered config matches it. The capture compose file previews `changed` with no diff: its read is *Converge mechanics*' source diff.
 
 ## Phase 1 — Secondary converge
 
