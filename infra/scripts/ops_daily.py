@@ -307,7 +307,6 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
 
 LOKI_DS_UID_DEFAULT = "grafanacloud-logs"
 DEADMAN_API = "https://zcrypto-hc.zhaow.me/api/v3/checks/"
-# The service's read-only key, by name and vault file; infra/scripts/hc-provision.py reads it through this constant.
 DEADMAN_READONLY_KEY = ("hc_readonly_api_key", "group_vars/observed/vault.yml")
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEPLOY_LOG = REPO_ROOT / "docs/reference/deploy-log.jsonl"
@@ -480,10 +479,8 @@ _INTERNAL_TOKEN = re.compile(r"\bPhase[ -]\d|\bT\d{4}\b|\biter-\d+|\bspec\s+`?\d
 def check_descriptions(checks: list[dict], runbooks: Path = RUNBOOKS) -> list[str]:
     """One line per defect in a dead-man check's description, named per check (spec 00107 D5).
 
-    The descriptions are hand-written in the dead-man service and read from a phone with nothing open.
-    Two assertions each: at least one `Runbook: infra/runbooks/<file>#<anchor>` citation, every one
-    resolving against a real `<a name=…>` tag in the file it names, and no internal token. Detects,
-    never repairs -- they live in the service, so a finding is a line for a human.
+    A description is read from a phone with nothing open. Detects, never repairs: a description is
+    written by `infra/scripts/hc-provision.py apply`, so a finding is fixed in what it writes from.
     """
     out = []
     for check in checks:
@@ -1555,8 +1552,8 @@ _FIRST_STAGE_SHAPES = (
     _Shape(("top",), {"-n": _INT}, short=r"-[bn1H]{1,4}"),
     _Shape(("date",), {"-u": None, "--utc": None}, arity=(0, 1), classes=(_DATEFMT,)),
     _Shape(("hostname",)),
-    # The repo's own read-only instruments. Their operands are PromQL, LogQL and paths, so the class is a
-    # literal: the scanner has already refused every metacharacter that was active where it stood.
+    # The repo's own read-only instruments. Their operands take the literal class: the scanner has already refused every
+    # metacharacter that was active where it stood.
     _Shape(("grafana-query.py",), {"--since": _SINCE, "--step": _NAME, "--stack": _NAME}, arity=(1, 6), classes=(_QUOTED,)),
     _Shape(("grafana-query.py",), {"--loki": None, "--stack": _NAME}, arity=(1, 6), classes=(_QUOTED,)),
     _Shape(("continuity.py",), {"--root": _PATH, "--since": _SINCE, "--until": _SINCE}, arity=(0, 3), classes=(_PATH,)),
@@ -1865,8 +1862,7 @@ def _inspect_format_is_scoped(tokens: list[str]) -> bool:
 
 
 def _curl_is_read(tokens: list[str]) -> bool:
-    """A plain GET to a ping URL, healthchecks.io's or the dead-man service's, marks a dead-man alive -- a read that
-    silences an alarm."""
+    """A plain GET to a ping URL marks a dead-man alive -- a read that silences an alarm."""
     joined = " ".join(tokens).lower()
     return not any(host in joined for host in ("hc-ping", "healthchecks.io/ping", "zcrypto-hc.zhaow.me/ping"))
 
