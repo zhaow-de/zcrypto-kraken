@@ -1,0 +1,37 @@
+---
+# Defaults for the `hc` role (spec 00122): the dead-man service, the owner's healthchecks clone, as one container
+# behind the shared edge. Its vaulted values are host_vars/zcrypto-hc/vault.yml's and its plain ones
+# host_vars/zcrypto-hc/vars.yml's: the role's first two tasks name them.
+
+# The one public name; group_vars/observed/vars.yml, which the pingers' URLs render from, and the ping URL's
+# preflight shapes in tasks/main.yml and the mon role spell it again.
+hc_hostname: zcrypto-hc.zhaow.me
+hc_acme_email: zhaow.km@gmail.com
+
+# `hc_image_tag` has no default: every converge names it with `-e`.
+hc_image: ghcr.io/zhaow-de/healthchecks
+hc_compose_dir: /opt/zcrypto-hc
+# The loopback port the container is published on; Caddy proxies to it.
+hc_port: 8000
+hc_volume: hc-data
+
+# SES's SMTP endpoint and its verified sender, empty here so a converge refuses them by name until
+# host_vars/zcrypto-hc/vars.yml carries them. 587 is SES's STARTTLS port.
+hc_email_host: ""
+hc_email_port: 587
+hc_email_from: ""
+
+# The NAS's pull key forces `rrsync -ro` over this path, and rrsync-shell's unquoted `exec $2` splits that command at
+# its spaces: the path stays free of spaces and globs.
+hc_backup_dir: /var/backups/zcrypto-hc
+hc_backup_keep_days: 14
+# The account the NAS's backup pull logs in as, whose group reads the backup directory, and its rrsync-only shell.
+hc_data_user: zcrypto-data
+hc_rrsync_shell: /usr/local/sbin/rrsync-shell
+# The directory the node's Alloy textfile collector reads.
+hc_textfile_dir: /var/lib/zcrypto-node-textfile
+
+# The superuser's mailbox, where the clone's sudo-mode codes land.
+hc_admin_email: ""
+# The ping URL of the node's own check, set in host_vars/zcrypto-hc/vars.yml; the role's second task refuses it empty.
+hc_selfcheck_healthcheck_url: ""

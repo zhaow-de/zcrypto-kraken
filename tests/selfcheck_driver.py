@@ -33,6 +33,16 @@ def load(script_path: Path, shared_path: Path | None = None) -> types.ModuleType
             sys.modules[SHARED] = before
 
 
+# The caller strips PYTHONPATH and runs from a directory without the module, so only the seeded install path finds it.
+HAND_RUN = """
+import runpy, sys
+from importlib.machinery import FileFinder, SourceFileLoader
+script, installed, copy = sys.argv[1:]
+sys.path_importer_cache[installed] = FileFinder(copy, (SourceFileLoader, [".py"]))
+runpy.run_path(script, run_name="__main__")
+"""
+
+
 class Response(io.BytesIO):
     def __enter__(self):
         return self
@@ -48,7 +58,7 @@ def run(
     *,
     broken=(),
     refused: tuple[str, str] | None = None,
-    now: float,
+    now: float | None = None,
 ) -> tuple[int, list[str], str]:
     """`bodies`, `broken` and `refused[0]` are keyed by the URL without its query."""
     asked: list[str] = []
@@ -64,7 +74,8 @@ def run(
         body = bodies[base]
         return Response((body(request) if callable(body) else body).encode())
 
+    clock = {} if now is None else {"now": lambda: now}
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
-        rc = module.main(env, opener=opener, now=lambda: now)
+        rc = module.main(env, opener=opener, **clock)
     return rc, asked, out.getvalue().strip()

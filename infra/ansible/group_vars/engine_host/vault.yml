@@ -6,8 +6,9 @@
 # RESOLVED the live trading credential — only play targeting (site.yml's engine play converges
 # engine_host, and engine.env.j2 is the sole consumer) kept it off that host's disk. Membership,
 # not targeting, is what the inventory's own comments presented as the boundary; T0061 closed the
-# gap between the claim and the fact. Every variable here is consumed by exactly one template:
-# roles/engine/templates/engine.env.j2, rendered 0600 root-only with `no_log: true` + `diff: false`.
+# gap between the claim and the fact. Each variable here but hcio_engine_healthcheck_url, read by none, is
+# consumed by exactly one template: roles/engine/templates/engine.env.j2, rendered 0600 root-only with
+# `no_log: true` + `diff: false`.
 #
 # Adding a host to engine_host therefore GRANTS IT THE LIVE TRADE KEY. That is the whole point of
 # the group, and the reason it has exactly one member.
@@ -52,7 +53,7 @@ kraken_trade_api_secret: !vault |
           37363262666537636530363939653234373437636438623337366631623065323461656263383032
           37373432383161353437653139343062623632366131373231646366343936363963343837346632
           3632
-engine_healthcheck_url: !vault |
+hcio_engine_healthcheck_url: !vault |
           $ANSIBLE_VAULT;1.1;AES256
           32323938666462303739646562343263363563326533333931393765646335313731643832306338
           3331326462343461313533636135366335326662326266390a613934326139346439656236303630

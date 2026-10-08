@@ -146,6 +146,16 @@
     group: zcrypto
     mode: "2775"
 
+# Where archive-pull, as its compose `user:` 1000:1000, writes the dead-man node's backups; compose.yaml's mount says
+# why it is not under the custody share. Ungated, as hot/ is: `compose up` would otherwise create it root's.
+- name: ensure the dead-man node's backup directory exists (the pull's uid alone reads it)
+  ansible.builtin.file:
+    path: "{{ nas_stack_dir }}/hc-backups"
+    state: directory
+    owner: zcrypto-data
+    group: zcrypto
+    mode: "0700"
+
 # T0056.
 - name: deploy the vendored rrsync jailer (the NAS ships no rrsync -- rsync 3.4.1's python3 rrsync)
   ansible.builtin.copy:

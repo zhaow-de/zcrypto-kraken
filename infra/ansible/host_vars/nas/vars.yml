@@ -1,7 +1,6 @@
 # host_vars/nas — the Synology NAS: the archive/custody tier (spec 00048 Role A), Ansible-managed
 # since T0056. DSM owns the OS; the nas role manages ONLY the zcrypto payload under nas_stack_dir.
-# The secrets sibling (vault.yml) holds nas_gate_healthcheck_url. Deploy background and the
-# image-identifier pitfalls live in infra/nas/README.md.
+# Deploy background and the image-identifier pitfalls live in infra/nas/README.md.
 
 ansible_host: z-home-storage.zhaow.pro
 ansible_user: zcrypto-deploy
@@ -61,9 +60,9 @@ nas_alloy_image: grafana/alloy@sha256:2aa2099af76c0098d4af7a4d6e48f86cb66dc1a000
 # that image pin in ONE applied converge, never render-only against an older image.
 nas_archive_pull_hash_scope: incremental
 
-# Pull sources + per-channel SSH ports, rendered into {{ nas_stack_dir }}/.env by the nas role
-# (roles/nas/templates/env.j2; the env-var contract is in infra/nas/README.md). GATE_HEALTHCHECK_URL
-# is deliberately absent — it is a secret, vaulted as nas_gate_healthcheck_url in vault.yml.
+# Pull sources, per-channel SSH ports and the gate's dead-man ping URL, rendered into {{ nas_stack_dir }}/.env by the
+# nas role (roles/nas/templates/env.j2; the env-var contract is in infra/nas/README.md).
+nas_gate_healthcheck_url: "{{ hc_ping_base }}/zcrypto-gate-verify"
 nas_capture_source: "zcrypto-data@zcrypto.zhaow.me:"
 nas_archive_ssh_port: 10022
 nas_journal_source: "zcrypto-data@zcrypto.zhaow.me:"
@@ -83,6 +82,8 @@ nas_reconciled_ssh_port: 22
 # least-privilege read-only key (sync_hot).
 nas_hot_source: "zcrypto-data@z-home-zcrypto.zhaow.pro:"
 nas_hot_ssh_port: 22
+# The dead-man node's nightly backups, over their own read-only key (sync_hc_backup) and nas_archive_ssh_port.
+nas_hc_backup_source: "zcrypto-data@zcrypto-hc.zhaow.me:"
 
 # Public key material only — the private half lives on the workstation
 # (~/.ssh/zcrypto-hot-push_ed25519), vaulted as a backup in files/. The nas role installs this as a

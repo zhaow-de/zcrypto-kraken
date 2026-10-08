@@ -2,7 +2,7 @@
 name: dependabot
 description: Manage Dependabot dependency-update PRs — list, check out, rebase onto develop, run uv tests + ruff, auto-fix lint/format, push, wait for CI, merge with squash
 disable-model-invocation: true
-allowed-tools: Bash(git fetch:*), Bash(git checkout:*), Bash(git rebase:*), Bash(git status:*), Bash(git stash:*), Bash(git push:*), Bash(git add:*), Bash(git commit:*), Bash(git log:*), Bash(git branch:*), Bash(git rev-parse:*), Bash(gh pr:*), Bash(gh api:*), Bash(timeout:*), Bash(uv:*), Bash(python3:*), Bash(sleep:*), Bash(date:*), Bash(echo:*), Bash(grep:*), Bash(head:*), Bash(cut:*), Read, Glob, Grep, Edit, Write, AskUserQuestion
+allowed-tools: Bash(git fetch:*), Bash(git checkout:*), Bash(git rebase:*), Bash(git status:*), Bash(git stash:*), Bash(git push:*), Bash(git add:*), Bash(git commit:*), Bash(git log:*), Bash(git branch:*), Bash(git rev-parse:*), Bash(git merge-base:*), Bash(gh pr:*), Bash(gh api:*), Bash(timeout:*), Bash(uv:*), Bash(python3:*), Bash(sleep:*), Bash(date:*), Bash(echo:*), Bash(grep:*), Bash(head:*), Bash(cut:*), Read, Glob, Grep, Edit, Write, AskUserQuestion
 ---
 
 # Dependabot PR Management
@@ -138,9 +138,19 @@ if run["s"] != "completed":
 print("success" if run["c"] in ("success", "neutral", "skipped") else f"failed ({run["c"]})")
 '
 
-# Merge ONLY after the poll above printed `success` — re-read it, never infer it; an empty check
-# list is pending, not green. No shell conditional here on purpose: a fresh shell per command means
-# any `if` would test an unset variable and merely LOOK like a guard.
+# After the poll printed `success`, immediately before the squash, each its own command: the squash
+# bypasses infra/scripts/merge-gate.py, so it reads behind itself — a head lacking develop's tip
+# squashes onto a tree no suite ran. `rc 0` merges; `rc 1` goes back to §2a — a PR carrying a 2c fix
+# commit takes its read again over the rebased range, its `Read before push by:` line updated, before
+# the second push — and a second `rc 1` on the same PR stops and asks the user (escalation trigger
+# #6); any other answer stops. Unscoped on purpose: the paths whose push builds the engine image stay
+# in the one list the merge gate's test holds.
+git fetch origin develop
+git merge-base --is-ancestor origin/develop HEAD; echo "rc $?"
+
+# Merge ONLY after the poll above printed `success` and the read above printed `rc 0` — re-read both,
+# never infer them; an empty check list is pending, not green. No shell conditional here on purpose:
+# a fresh shell per command means any `if` would test an unset variable and merely LOOK like a guard.
 # Squash so each dependency bump is a single commit on develop (the deliberate exception to
 # merge-pr's merge-commit rule); also deletes the dependabot/ head branch.
 gh pr merge <number> --squash --delete-branch    # the number step 4 planned, not a variable
@@ -173,6 +183,7 @@ Only pause for user input when:
 3. **Major-version upgrades** where the changelog mentions breaking changes — surface the upgrade summary and ask before merging.
 4. **CI failures unrelated to the PR's changes** (e.g. infra flake, pre-existing test that was passing on develop before this branch was opened).
 5. **A PR's base branch is not `develop`** (likely `.github/dependabot.yml` `target-branch` misconfigured — surface and stop).
+6. **A second `rc 1` on the same PR** — §2d's read found the head lacking `develop`'s tip after its second rebase: `develop` is moving faster than the loop; surface and stop.
 
 ## Notes
 

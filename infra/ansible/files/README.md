@@ -10,17 +10,19 @@ Public halves (`*.pub`) are the plaintext record of what is authorized where; a 
 | `deploy_zcrypto-red_ed25519{,.pub}` | vaulted here (+ operator `~/.ssh`) | `run.sh`; `host_vars/zcrypto-red` |
 | `deploy_zcrypto-ops_ed25519{,.pub}` | vaulted here (+ operator `~/.ssh`) | `run.sh`; `host_vars/zcrypto-ops` |
 | `deploy_nas_ed25519{,.pub}` | vaulted here (+ operator `~/.ssh`) | `run.sh`. `ssh nas` uses the operator's local copy — rotate **both** halves together or the next converge loads a stale key. |
-| `deploy_zaccess_ed25519{,.pub}` | vaulted here | `run.sh` (offered **first** when `--limit zaccess` names the host — its sshd allows two tries; `run.sh`'s comment); `host_vars/zaccess` |
+| `deploy_zaccess_ed25519{,.pub}` | vaulted here (+ operator `~/.ssh`) | `run.sh` (offered **first** when `--limit zaccess` names the host — its sshd allows two tries; `run.sh`'s comment); `host_vars/zaccess`; the workstation's `access` alias |
 | `deploy_zcrypto-valkey1_ed25519{,.pub}` | vaulted here (+ operator `~/.ssh`) | `run.sh`; `host_vars/zcrypto-valkey1`; the workstation's `db1` alias |
 | `deploy_zcrypto-valkey2_ed25519{,.pub}` | vaulted here (+ operator `~/.ssh`) | `run.sh`; `host_vars/zcrypto-valkey2`; the workstation's `db2` alias |
 | `deploy_zcrypto-valkey3_ed25519{,.pub}` | vaulted here (+ operator `~/.ssh`) | `run.sh`; `host_vars/zcrypto-valkey3`; the workstation's `db3` alias |
 | `deploy_zcrypto-mon_ed25519{,.pub}` | vaulted here (+ operator `~/.ssh`) | `run.sh`; `host_vars/zcrypto-mon`; the workstation's `mon` alias |
+| `deploy_zcrypto-hc_ed25519{,.pub}` | vaulted here (+ operator `~/.ssh`) | `run.sh`; `host_vars/zcrypto-hc`; the workstation's `hc` alias |
 | `zaccess_ca.crt`, `zaccess_ca.key.vault` | the `.key` vaulted here | the mTLS CA: `infra/scripts/zaccess-client-cert.sh` signs leaves; the access role installs the `.crt` at `/etc/caddy/` |
 | `sync_ed25519.pub` | NAS (`/volume1/docker/zcrypto-archive/keys/`) + vaulted here | engine-journal pull channel (`group_vars/capture_host`) |
 | `sync_capture_ed25519.pub` | NAS + vaulted here | primary capture pull channel |
 | `sync_capture_red_ed25519.pub` | NAS + vaulted here | secondary capture pull channel (`host_vars/zcrypto-red`) |
-| `sync_liquidations_ed25519.pub` | NAS | ops liquidations pull channel; installed on `zcrypto-data` by the ops role as `rrsync -ro` (`host_vars/zcrypto-ops`) |
-| `sync_panel_ed25519.pub` | NAS | ops l2-panel pull channel; installed on `zcrypto-data` by the ops role |
-| `sync_reconciled_ed25519.pub` | NAS | ops capture-reconciled pull channel; installed on `zcrypto-data` by the ops role |
-| `sync_hot_ed25519.pub` | NAS | ops hot-out pull channel (spec 00056 D2); installed on `zcrypto-data` by the ops role |
+| `sync_liquidations_ed25519.pub` | NAS + vaulted here | ops liquidations pull channel; installed on `zcrypto-data` by the ops role as `rrsync -ro` (`host_vars/zcrypto-ops`) |
+| `sync_panel_ed25519.pub` | NAS + vaulted here | ops l2-panel pull channel; installed on `zcrypto-data` by the ops role |
+| `sync_reconciled_ed25519.pub` | NAS + vaulted here | ops capture-reconciled pull channel; installed on `zcrypto-data` by the ops role |
+| `sync_hot_ed25519.pub` | NAS + vaulted here | ops hot-out pull channel (spec 00056 D2); installed on `zcrypto-data` by the ops role |
+| `sync_hc_backup_ed25519.pub` | NAS + vaulted here | the dead-man node's backup pull channel; installed on `zcrypto-data` by the hc role as `rrsync -ro` (`host_vars/zcrypto-hc`) |
 | `zcrypto_hot_push_ed25519{,.pub}` | vaulted here (+ operator `~/.ssh/zcrypto-hot-push_ed25519`) | the workstation's `zcrypto data push` via the `nas-hot` ssh alias; installed by the nas role, jailed to `hot/`. The **only** write channel into custody (spec 00056 D2). |

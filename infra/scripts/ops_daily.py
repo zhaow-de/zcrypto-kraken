@@ -11,6 +11,7 @@ import http.client
 import importlib.util
 import json
 import os
+import posixpath
 import re
 import shutil
 import struct
@@ -106,6 +107,13 @@ _UID_HOST = {
     "zcrypto-mon-sqlite-locked": "zcrypto-mon",
     "zcrypto-mon-series-high": "zcrypto-mon",
     "zcrypto-mon-retention-by-size": "zcrypto-mon",
+    "zcrypto-mon-grafana-error-logs": "zcrypto-mon",
+    "zcrypto-alloy-dark-hc": "zcrypto-hc",
+    "zcrypto-hc-disk-low": "zcrypto-hc",
+    "zcrypto-hc-reboot-pending": "zcrypto-hc",
+    "zcrypto-hc-service-down": "zcrypto-hc",
+    "zcrypto-hc-backup-stale": "zcrypto-hc",
+    "zcrypto-hc-error-logs": "zcrypto-hc",
 }
 
 
@@ -299,7 +307,8 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
 
 
 LOKI_DS_UID_DEFAULT = "grafanacloud-logs"
-HEALTHCHECKS_API = "https://healthchecks.io/api/v3/checks/"
+DEADMAN_API = "https://zcrypto-hc.zhaow.me/api/v3/checks/"
+DEADMAN_READONLY_KEY = ("hc_readonly_api_key", "group_vars/observed/vault.yml")
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEPLOY_LOG = REPO_ROOT / "docs/reference/deploy-log.jsonl"
 REGISTER = REPO_ROOT / "docs/reference/kraken-snapshot-register.md"
@@ -332,7 +341,10 @@ HEALABLE_COUNTER = "zcrypto_reconcile_healable_gap_seconds_total"
 REFDATA_RUNBOOK = "infra/runbooks/reference-data.md#refdata-sweep-due"
 HEALABLE_RUNBOOK = "infra/runbooks/ops.md#healable-threshold-rederivation-due"
 # (host, runbook)
-PATCH_PASSES = (("zcrypto-mon", "infra/runbooks/mon.md#mon-patch-pass"),)
+PATCH_PASSES = (
+    ("zcrypto-mon", "infra/runbooks/mon.md#mon-patch-pass"),
+    ("zcrypto-hc", "infra/runbooks/hc.md#hc-patch-pass"),
+)
 
 
 def last_full_converge(log: Path, host: str) -> date | None:
@@ -468,10 +480,8 @@ _INTERNAL_TOKEN = re.compile(r"\bPhase[ -]\d|\bT\d{4}\b|\biter-\d+|\bspec\s+`?\d
 def check_descriptions(checks: list[dict], runbooks: Path = RUNBOOKS) -> list[str]:
     """One line per defect in a dead-man check's description, named per check (spec 00107 D5).
 
-    The descriptions are hand-written in healthchecks.io and read from a phone with nothing open.
-    Two assertions each: at least one `Runbook: infra/runbooks/<file>#<anchor>` citation, every one
-    resolving against a real `<a name=…>` tag in the file it names, and no internal token. Detects,
-    never repairs -- they live in the SaaS, so a finding is a line for a human.
+    A description is read from a phone with nothing open. Detects, never repairs: a description is
+    written by `infra/scripts/hc-provision.py apply`, so a finding is fixed in what it writes from.
     """
     out = []
     for check in checks:
@@ -507,7 +517,7 @@ class LogsRead:
 class DeadmenRead:
     via_prometheus: float | None = None
     via_healthchecks: list[dict] = field(default_factory=list)
-    # Three states, not two: `None` is "the check did not run" (healthchecks unreadable, or the
+    # Three states, not two: `None` is "the check did not run" (the service unreadable, or the
     # runbooks were), `[]` is "ran, found nothing". Defaulting to `[]` would print the all-clear
     # description line under a report that never looked.
     description_findings: list[str] | None = None
@@ -567,7 +577,7 @@ def _log_counts(result) -> list[LogCount]:
 
 def _readonly_key() -> str | None:
     try:
-        return grafana_auth.vault_var("healthchecks_readonly_api_key")
+        return grafana_auth.vault_var(*DEADMAN_READONLY_KEY)
     except Exception:
         return None
 
@@ -585,21 +595,22 @@ def read_deadmen(token: str, *, opener=urllib.request.urlopen) -> DeadmenRead:
 
     key = _readonly_key()
     if not key:
-        note("healthchecks_readonly_api_key could not be read from the vault, so the direct dead-man read did not run")
+        name, vault_file = DEADMAN_READONLY_KEY
+        note(f"{name} could not be read from {vault_file}, so the direct dead-man read did not run")
         return read
     try:
-        request = urllib.request.Request(HEALTHCHECKS_API, headers={"X-Api-Key": key})
+        request = urllib.request.Request(DEADMAN_API, headers={"X-Api-Key": key})
         with opener(request, timeout=_TIMEOUT) as response:
             read.via_healthchecks = json.load(response).get("checks", [])
     except _UNREACHABLE as exc:
-        note(f"healthchecks.io could not be read directly: {exc}")
+        note(f"the dead-man service could not be read directly: {exc}")
         return read
     # The check reads runbook FILES, so it gets its own `try` and its own note: inside the
-    # healthchecks `try`, an `OSError` from a runbook would be reported as healthchecks.io unreadable.
+    # listing's `try`, an `OSError` from a runbook would be reported as the service unreadable.
     try:
         read.description_findings = check_descriptions(read.via_healthchecks)
     # `AttributeError` beside `_UNREACHABLE`: this is the module's first content-dependent parse of
-    # the healthchecks payload, and a `checks` element that is not an object would otherwise
+    # the listing's payload, and a `checks` element that is not an object would otherwise
     # traceback out at exit 1 -- ATTENTION, the inverted contract this module's docstring names.
     except (*_UNREACHABLE, AttributeError) as exc:
         note(f"the dead-man descriptions could not be checked (the runbooks are read here): {exc}")
@@ -668,25 +679,28 @@ REBOOT_FLAG = "/var/run/reboot-required"
 REBOOT_PACKAGES = "/var/run/reboot-required.pkgs"
 UPGRADE_CHECK = f"unattended upgrades on {UPGRADE_HOST}"
 
-# The ops host has three names -- the `host` label its rules carry, the fleet name its check rows
-# print and the ssh destination -- and every other host in the map two.
+# Every host in the map has a `host` label its rules carry, a fleet name its check rows print and an
+# ssh destination; the label and the fleet name differ for the ops host alone.
 _SSH_ALIASES = {
     "ops": "hp",
     "zcrypto-red": "red",
+    "zaccess": "access",
     "zcrypto-valkey1": "db1",
     "zcrypto-valkey2": "db2",
     "zcrypto-valkey3": "db3",
     "zcrypto-mon": "mon",
-    "zaccess": "access",
+    "zcrypto-hc": "hc",
 }
 _HOST_LABELS = {
     "hp": "ops",
     "zcrypto-ops": "ops",
     "red": "zcrypto-red",
+    "access": "zaccess",
     "db1": "zcrypto-valkey1",
     "db2": "zcrypto-valkey2",
     "db3": "zcrypto-valkey3",
     "mon": "zcrypto-mon",
+    "hc": "zcrypto-hc",
 }
 
 
@@ -1539,9 +1553,10 @@ _FIRST_STAGE_SHAPES = (
     _Shape(("top",), {"-n": _INT}, short=r"-[bn1H]{1,4}"),
     _Shape(("date",), {"-u": None, "--utc": None}, arity=(0, 1), classes=(_DATEFMT,)),
     _Shape(("hostname",)),
-    # The repo's own read-only instruments. Their operands are PromQL and paths, so the class is a
-    # literal: the scanner has already refused every metacharacter that was active where it stood.
+    # The repo's own read-only instruments. Their operands take the literal class: the scanner has already refused every
+    # metacharacter that was active where it stood.
     _Shape(("grafana-query.py",), {"--since": _SINCE, "--step": _NAME, "--stack": _NAME}, arity=(1, 6), classes=(_QUOTED,)),
+    _Shape(("grafana-query.py",), {"--loki": None, "--stack": _NAME}, arity=(1, 6), classes=(_QUOTED,)),
     _Shape(("continuity.py",), {"--root": _PATH, "--since": _SINCE, "--until": _SINCE}, arity=(0, 3), classes=(_PATH,)),
     _Shape(("ops-postverify.sh",), {"--since": _SINCE}, arity=(0, 3), classes=(_QUOTED,)),
     _Shape(("id",), arity=(0, 1), classes=(_NAME,)),
@@ -1619,15 +1634,20 @@ _PROTECTED_OBJECTS = (
     "grafana-push.sh",
     "@sha256:",
 )
-_TELEMETRY_HOSTS = frozenset({"ops", "nas", "zaccess", "zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3", "zcrypto-mon"})
+_TELEMETRY_HOSTS = frozenset(
+    {"ops", "nas", "zaccess", "zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3", "zcrypto-mon", "zcrypto-hc"}
+)
 # A cache node's Docker daemon carries Valkey and Sentinel, so any other restart there can be a failover: the one
 # object the pass may take is Alloy's container. An allowlist, because a container id names nothing a denylist matches.
 _CACHE_HOSTS = frozenset({"zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3"})
 _CACHE_AUTONOMOUS_OBJECTS = frozenset({"grafana-alloy"})
-# The observability node carries the evaluator, its two stores and the ingest edge, each restarted in an order its
-# runbook gives: the one unit the pass may take is the node's own Alloy.
-_MON_HOSTS = frozenset({"zcrypto-mon"})
-_MON_AUTONOMOUS_OBJECTS = frozenset({"alloy", "alloy.service"})
+# The observability node's evaluator, stores and edge, and the dead-man node's clone and edge, serve the
+# whole fleet: the one unit the pass may take on either is the node's own Alloy.
+_SERVICE_NODES = frozenset({"zcrypto-mon", "zcrypto-hc"})
+_SERVICE_NODE_AUTONOMOUS_OBJECTS = frozenset({"alloy", "alloy.service"})
+# The bridgehead carries the ops tunnel and the mTLS edge.
+_BRIDGEHEAD_HOSTS = frozenset({"zaccess"})
+_BRIDGEHEAD_AUTONOMOUS_OBJECTS = frozenset({"alloy", "alloy.service"})
 # The `docker inspect` guard exists because a READ can surface the trade key; `cat` and `grep` on
 # the same host reach the same secrets through the filesystem, so they get the same treatment.
 # Scoped to the heads that print file CONTENT: `ls`, `stat`, `find` and `sha256sum` still answer
@@ -1842,10 +1862,35 @@ def _inspect_format_is_scoped(tokens: list[str]) -> bool:
     return True
 
 
+# The floor under the parse below: a substring anywhere in the command, so nothing it refused turns autonomous.
+_PING_URL = re.compile(r"hc-ping|healthchecks\.io/ping|zcrypto-hc\.zhaow\.me(?::\d+)?/ping")
+# hc-ping.com answers a ping on every path.
+_PING_ROUTES = {"hc-ping.com": "/", "healthchecks.io": "/ping", "zcrypto-hc.zhaow.me": "/ping"}
+
+
+def _dedot(path: str) -> str:
+    # `normpath` keeps a leading `//`, so the slashes collapse first.
+    return posixpath.normpath(re.sub(r"/+", "/", path) or "/")
+
+
+def _is_ping_url(url: str) -> bool:
+    """Whether a `_URL`-shaped string lands on a ping route; `urlsplit` raises on nothing that class admits."""
+    # curl takes `https:///host/path`, an empty authority, as `https://host/path`.
+    url = re.sub(r"^(https?:)/{3,}", r"\1//", url)
+    parts = urllib.parse.urlsplit(url)
+    host = urllib.parse.unquote(parts.hostname or "").lower().removesuffix(".")
+    prefix = _PING_ROUTES.get(host)
+    if prefix is None:
+        return False
+    sent = urllib.parse.unquote(_dedot(re.sub(r"%2e", ".", parts.path, flags=re.I)))
+    decoded_first = _dedot(urllib.parse.unquote(parts.path))
+    return sent.startswith(prefix) or decoded_first.startswith(prefix)
+
+
 def _curl_is_read(tokens: list[str]) -> bool:
-    """A plain GET to a healthchecks ping URL marks a dead-man alive -- a read that silences an alarm."""
-    joined = " ".join(tokens).lower()
-    return "hc-ping" not in joined and "healthchecks.io/ping" not in joined
+    """A plain GET to a ping URL marks a dead-man alive -- a read that silences an alarm."""
+    joined = " ".join(tokens)
+    return not _PING_URL.search(joined.lower()) and not any(_is_ping_url(url) for url in re.findall(_URL, joined))
 
 
 _POSTCHECKS = {"inspect": _inspect_format_is_scoped, "curl": _curl_is_read}
@@ -1952,6 +1997,8 @@ def _classify_one(command: str, host: str | None, *, resolve, text: str | None =
             operands = _matches(_TELEMETRY_SHAPES, tokens, first_stage=True, host=alias, resolve=resolve)
             if host_label(lands_on) in _CACHE_HOSTS and not (operands and _CACHE_AUTONOMOUS_OBJECTS.issuperset(operands)):
                 operands = None
-            if host_label(lands_on) in _MON_HOSTS and not (operands and _MON_AUTONOMOUS_OBJECTS.issuperset(operands)):
+            if host_label(lands_on) in _SERVICE_NODES and not (operands and _SERVICE_NODE_AUTONOMOUS_OBJECTS.issuperset(operands)):
+                operands = None
+            if host_label(lands_on) in _BRIDGEHEAD_HOSTS and not (operands and _BRIDGEHEAD_AUTONOMOUS_OBJECTS.issuperset(operands)):
                 operands = None
     return Tier.AUTONOMOUS if operands is not None else Tier.PREPARED

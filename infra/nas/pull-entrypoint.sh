@@ -201,6 +201,18 @@ while true; do
 		fi
 	fi
 
+	# The dead-man node's nightly backups: a raw rsync over the hot block's pinned ssh options, since a database file
+	# carries no sidecar to verify. Never --delete: a rebuilt node's directory holds only its first backup. Never
+	# --inplace or --partial: rsync's own temporary name, renamed into place, keeps a partial file from reading as a
+	# backup.
+	if [ -n "${HC_BACKUP_SOURCE:-}" ]; then
+		if ! rsync --archive --chmod=D0700,F0600 \
+				-e "ssh -i $HC_BACKUP_SSH_KEY -p ${ARCHIVE_SSH_PORT:-10022} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o CheckHostIP=no -o UserKnownHostsFile=$ARCHIVE_SSH_KNOWN_HOSTS" \
+				"$HC_BACKUP_SOURCE" "$HC_BACKUP_DEST"; then
+			log ERROR "hc backup pull failed (source=$HC_BACKUP_SOURCE dest=$HC_BACKUP_DEST), continuing"
+		fi
+	fi
+
 	# The reconcile + trade-backfill steps MOVED to the ops node (spec 00054 D2/OPS-5): this host
 	# kept custody, Role A's pull/prune, and its Alloy (D3), and shed the computation -- the Atom tax
 	# on every step sharing this clock had stretched the "hourly" loop to ~103 minutes. The healed

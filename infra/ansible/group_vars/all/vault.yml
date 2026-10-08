@@ -16,9 +16,10 @@
 # `zcrypto` by `roles/engine` (engine.env and haproxy.cfg) and read by `roles/cache` on the three nodes;
 # rotating either is `infra/runbooks/cache.md`'s `cache-password-rotation`.
 #
-# The rest never reach a host. Four are read from the WORKSTATION BY FILE PATH:
+# The rest never reach a host. Five are read from the WORKSTATION BY FILE PATH:
 # `grafana_sa_token` by `infra/scripts/grafana-query.py` and `infra/scripts/ops_daily.py`,
-# `healthchecks_readonly_api_key` by `ops_daily.py`'s direct dead-man read (all three through
+# `healthchecks_readonly_api_key` by `infra/scripts/hc-provision.py`'s reads of healthchecks.io until
+# retirement, `hc_readwrite_api_key` by its writes to the dead-man service (all four through
 # `grafana_auth.vault_var`, whose default IS this file), and `zaccess_client_p12_b64` +
 # `zaccess_client_p12_pass` by `infra/scripts/zaccess-extract-client-cert.sh`.
 #
@@ -225,14 +226,14 @@ zaccess_client_p12_pass: !vault |
           39316133323536643635643765333234346136333665343732313261363930346637
 
 # The healthchecks.io READ-ONLY key (`hcr_` prefix; the `hcw_` admin key is
-# `healthchecks_api_key` in group_vars/capture_host/). Read by ops_daily.py's direct dead-man read,
-# which is what keeps that domain visible while Grafana is dark.
+# `healthchecks_api_key` in group_vars/capture_host/). Read by hc-provision.py's reads of healthchecks.io
+# until retirement; the daily pass reads the dead-man service's own key, hc_readonly_api_key.
 #
 # DUPLICATED BY CONSTRUCTION, and nothing keeps the two in sync: this is the same secret as the
 # last path segment of `hc_prometheus_metrics_path` in group_vars/observed/vault.yml, which embeds
-# the read-only key in its last PATH segment (Alloy joins host and scheme onto it). Rotate them AS ONE -- a rotation that rewrites only the metrics
-# path leaves the daily pass presenting a revoked key, and the pass would report the dead-man
-# domain unreadable rather than wrong.
+# the read-only key in its last PATH segment, kept for the ops scrape's rollback alone. Rotate them AS ONE -- a
+# rotation that rewrites only one leaves hc-provision.py's read or a rolled-back scrape presenting a
+# revoked key.
 healthchecks_readonly_api_key: !vault |
           $ANSIBLE_VAULT;1.1;AES256
           62633638626463353264373466633739643936313961656136396565663666393663636435326131
@@ -305,3 +306,11 @@ slack_shadow_webhook_url: !vault |
           61383230316133353032313134656562383530323335303063343763323537396666363433323436
           64373863383333303230656430613666633661313965653665623064333462656137633835343161
           3933
+hc_readwrite_api_key: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          33313432626232353938653630653364343965386638363936336639326435616136643230323334
+          6234663230393531393936373732303536616265393164370a383965633664643133346665386636
+          39343832333731343130663731346233363032653166303037386632393462653430633766383162
+          3333666532373830330a396432643031396333326566363361643439396262353432346162313665
+          39353635383732613236323637313030393435303561633135643066616333633033663530333866
+          6531366632343038306633336138326635643133633734313763

@@ -158,7 +158,7 @@
         and (engine_window_override | default('') | string | lower not in ['true', 'false', '1', 'yes'])
       tags: [engine, cache-link]
 
-    # converge.sh names this file and copies what lands in it into the run's deploy-log row as `window`, which the
+    # converge.sh names this file and books the window's keys in the run's deploy-log row as `window`, which the
     # deploy-log audit judges an engine row on. `engine_window_floor` and `engine_window_journal` mirror the assert's
     # floor and its journal test character-for-character, as the echo mirrors the window.
     # `noqa: run-once[task]`: the rule warns of the `free` strategy, and this play runs under the default linear one.
@@ -327,3 +327,32 @@
       tags: [chrony]
     - role: mon
       tags: [mon]
+
+# spec 00122.
+- name: converge the dead-man node — the healthchecks clone behind its edge
+  hosts: hc_host
+  become: true
+  pre_tasks:
+    - name: note — the dead-man node's charter
+      ansible.builtin.debug:
+        msg: >-
+          The fleet's dead-man checks on one node, in one container: no trade key and no capture
+          data. The checks, their keys and the Slack integration live in the clone's database, so a
+          lost node is rebuilt from this play and the database's last backup. Run bootstrap.yml
+          first.
+      tags: [always]
+  roles:
+    - role: base
+      tags: [base]
+    - role: hardening
+      tags: [hardening]
+    - role: firewall
+      tags: [firewall]
+    - role: fail2ban
+      tags: [fail2ban]
+    - role: chrony
+      tags: [chrony]
+    - role: docker
+      tags: [docker]
+    - role: hc
+      tags: [hc]

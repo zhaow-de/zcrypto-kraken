@@ -24,6 +24,8 @@ name=$1
 db=$2
 staging=$3
 dest=$4
+# A sibling of the destination on its filesystem, outside every reader's root.
+incoming="${dest%/}.incoming"
 keep_days=$5
 out=$6
 
@@ -35,20 +37,28 @@ flock -n "$lock_fd" || fail "another run of the $name backup holds $lock"
 # A command prefix the database and the staging directory are read through, empty where the host holds them itself.
 read -r -a runner <<<"${SQLITE_BACKUP_RUNNER:-}"
 copy=${SQLITE_BACKUP_COPY:-cp }
+group=${SQLITE_BACKUP_GROUP:-}
 
 now=$(date -u +%s)
 staged="$staging/$name-$(date -u -d "@$now" +%Y-%m-%dT%H%M%SZ).sqlite"
 cutoff=$(date -u -d "@$((now - 10#$keep_days * 86400))" +%Y-%m-%d)
+
+# The files a stop removes. One already there is an earlier run's of the same second, refused before the trap could
+# remove it.
+mine=("$incoming/${staged##*/}")
+[ ${#runner[@]} -gt 0 ] || mine+=("$staged" "$staged-journal")
+for path in "${mine[@]}"; do
+  if [ -e "$path" ] || [ -L "$path" ]; then
+    fail "$path already exists, an earlier run's under this run's name"
+  fi
+done
 
 # systemd signals the unit's whole control group, so a child dies with the script at the signal's default: a Python
 # handler runs only between bytecodes and would wait out SQLite's VACUUM before removing what this trap removes at
 # once. A runner's VACUUM runs on in its container, out of the host's reach; its file is never copied, and the prune
 # removes it past the keep-days.
 stopped() {
-  rm -f -- "$dest/${staged##*/}" || true
-  if [ ${#runner[@]} -eq 0 ]; then
-    rm -f -- "$staged" "$staged-journal" || true
-  fi
+  rm -f -- "${mine[@]}" || true
   log ERROR "stopped by $1 before the backup completed; this run's files are removed"
   exit "$2"
 }
@@ -92,6 +102,7 @@ PY
 
 # 0700, since the copies carry the database.
 [ -d "$dest" ] || install -d -m 0700 -- "$dest" || fail "cannot create $dest"
+[ -d "$incoming" ] || install -d -m 0700 -- "$incoming" || fail "cannot create $incoming"
 # The prefix's last word takes the staged path whole, `web:` becoming `web:<staged>`; a prefix ending in a space, as
 # the host's `cp ` does, takes it as a word of its own.
 read -r -a copy_command <<<"$copy"
@@ -100,17 +111,37 @@ if [[ $copy == *[[:space:]] ]]; then
 else
   copy_command[-1]+=$staged
 fi
-# A copy that fails part-way leaves its file under a backup's name, which the destination's readers would keep.
-"${copy_command[@]}" "$dest/" || {
-  rm -f -- "$dest/${staged##*/}" || true
-  fail "copying $staged into $dest failed"
+# The copy is written and held in the sibling and renamed into the destination whole, so a reader of the destination,
+# the NAS's pull among them, never lists a file being written.
+copied="$incoming/${staged##*/}"
+"${copy_command[@]}" "$incoming/" || {
+  rm -f -- "$copied" || true
+  fail "copying $staged into $incoming failed"
 }
+if [ -n "$group" ]; then
+  { chgrp -- "$group" "$copied" && chmod 0640 -- "$copied"; } || {
+    rm -f -- "$copied" || true
+    fail "cannot hold $copied at 0640 under the group $group"
+  }
+fi
+mv -- "$copied" "$dest/" || {
+  rm -f -- "$copied" || true
+  fail "renaming $copied into $dest failed"
+}
+
+# The run's file is complete in the destination: a stop from here leaves it, and the gauge as it was.
+trap - TERM INT
 
 "${runner[@]}" python3 -c "$prune" "$staging" "$name" "$cutoff" || fail "pruning $staging failed"
 python3 -c "$prune" "$dest" "$name" "$cutoff" || fail "pruning $dest failed"
+python3 -c "$prune" "$incoming" "$name" "$cutoff" || fail "pruning $incoming failed"
 
-# The run's files are complete: a stop from here leaves them, and the gauge as it was.
-trap - TERM INT
+# The files before the directory, so a directory open to the group lists no file the group cannot read.
+if [ -n "$group" ]; then
+  find "$dest" -mindepth 1 -maxdepth 1 -type f -exec chgrp -- "$group" {} + -exec chmod 0640 -- {} + ||
+    fail "cannot hold the files in $dest at 0640 under the group $group"
+  { chgrp -- "$group" "$dest" && chmod 0750 -- "$dest"; } || fail "cannot hold $dest at 0750 under the group $group"
+fi
 
 # Atomic publish, as the reboot check's: the collector globs the directory, and mktemp as a sibling makes the mv a
 # same-filesystem rename.

@@ -6,16 +6,16 @@ VPF="${ANSIBLE_VAULT_PASSWORD_FILE:-$SD/vault-pass.sh}"
 # Every fleet key, the --limit host's first when --limit names one host with a key. The hardened hosts' sshd
 # offers `MaxAuthTries 2` (roles/hardening leaves devsec's `ssh_max_auth_retries` default), so a key the agent
 # presents third is refused before it is tried; and a play's ssh reaches more than its --limit host — the
-# capture and engine roles probe the other capture host by delegate_to — so no key is left out, only moved.
-# A group, a comma list or no --limit keeps the listed order, the bridgehead's key fifth, the cache nodes'
-# sixth to eighth and the observability node's ninth: each of those converges under its own --limit only.
+# capture role probes the other capture host by delegate_to — so no key is left out, only moved.
+# A group, a comma list or no --limit keeps the listed order; every key from the bridgehead's on is a host
+# that converges under its own --limit only.
 LIMIT=""; prev=""
 for a in "$@"; do
   [ "$prev" = "--limit" ] && LIMIT="$a"
   case "$a" in --limit=*) LIMIT="${a#--limit=}" ;; esac
   prev="$a"
 done
-KEYS=(files/deploy_zcrypto_ed25519 files/deploy_zcrypto-red_ed25519 files/deploy_zcrypto-ops_ed25519 files/deploy_nas_ed25519 files/deploy_zaccess_ed25519 files/deploy_zcrypto-valkey1_ed25519 files/deploy_zcrypto-valkey2_ed25519 files/deploy_zcrypto-valkey3_ed25519 files/deploy_zcrypto-mon_ed25519)
+KEYS=(files/deploy_zcrypto_ed25519 files/deploy_zcrypto-red_ed25519 files/deploy_zcrypto-ops_ed25519 files/deploy_nas_ed25519 files/deploy_zaccess_ed25519 files/deploy_zcrypto-valkey1_ed25519 files/deploy_zcrypto-valkey2_ed25519 files/deploy_zcrypto-valkey3_ed25519 files/deploy_zcrypto-mon_ed25519 files/deploy_zcrypto-hc_ed25519)
 if [ -n "$LIMIT" ] && [ -f "files/deploy_${LIMIT}_ed25519" ]; then
   ordered=("files/deploy_${LIMIT}_ed25519")
   for k in "${KEYS[@]}"; do [ "$k" = "files/deploy_${LIMIT}_ed25519" ] || ordered+=("$k"); done

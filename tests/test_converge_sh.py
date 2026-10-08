@@ -48,7 +48,10 @@ def run_with_tty(script, args, reply):
     """Run under a pty (the child's controlling terminal) and type `reply` at the confirm."""
     pid, fd = pty.fork()
     if pid == 0:
-        os.execv(str(script), [str(script), *args])
+        try:
+            os.execv(str(script), [str(script), *args])
+        finally:
+            os._exit(127)  # a failed execv must never leave a forked pytest running
     out = b""
     try:
         while b"aborts:" not in out and b"converge," not in out:
@@ -66,6 +69,13 @@ def run_with_tty(script, args, reply):
         pass
     _, status = os.waitpid(pid, 0)
     return os.waitstatus_to_exitcode(status), out.decode(errors="replace")
+
+
+def test_a_script_that_cannot_be_executed_ends_its_pty_child(tmp_path):
+    script = tmp_path / "empty"
+    script.write_text("")
+    script.chmod(0o755)
+    assert run_with_tty(script, [], "")[0] == 127
 
 
 def run_with_ctty_but_piped_stdin(script, args, piped_reply, deadline=3.0):
@@ -546,6 +556,20 @@ PUBLISHED = [
         "mon",
         {"mon_grafana_token_rotate": "true"},
     ),
+    (["--limit", "zcrypto-hc"], "zcrypto-hc", "", {}),
+    (["--limit", "zcrypto-hc", "--tags", "hc"], "zcrypto-hc", "hc", {}),
+    (
+        ["--limit", "zcrypto-hc", "--tags", "hc", "-e", "hc_image_tag=v6.2.0"],
+        "zcrypto-hc",
+        "hc",
+        {"hc_image_tag": "v6.2.0"},
+    ),
+    (
+        ["--limit", "zcrypto-hc", "--tags", "base,hardening,firewall,fail2ban,chrony,docker", "-e", "daemon_json_ack=true"],
+        "zcrypto-hc",
+        "base,hardening,firewall,fail2ban,chrony,docker",
+        {"daemon_json_ack": "true"},
+    ),
     # The bump skill's one-host rollbacks of a container host, each its own line there.
     (
         [
@@ -747,6 +771,13 @@ OUTSIDE = [
         "a token as an operand, which the row would record",
         "not in this script's key set",
     ),
+    (["--limit", "hc_host"], "the dead-man group where its one host belongs", "unknown host"),
+    (["--limit", "zcrypto-hc", "--tags", "edge"], "the shared edge role, whose tasks take the node's own tag", "unknown tag"),
+    (
+        ["--limit", "zcrypto-hc", "-e", "hc_secret_key=x"],
+        "a secret as an operand, which the row would record",
+        "not in this script's key set",
+    ),
 ]
 
 
@@ -827,6 +858,37 @@ def test_a_refused_override_operand_prints_a_reason_not_a_traceback(tmp_path):
     # either way, so a capture that reads stdout leaves the refusal itself saying nothing.
     refusal = next(line for line in r.stderr.splitlines() if line.startswith("converge.sh:"))
     assert "not JSON" in refusal, refusal
+
+
+def test_engine_preflight_override_is_admitted_only_as_braced_json(tmp_path):
+    script = make_harness(tmp_path)
+    r = run_no_tty(
+        script, ["site.yml", "--limit", "zcrypto", "-e", "engine_preflight_override=a store repair, the store set aside"]
+    )
+    assert r.returncode == 2
+    assert invocations(tmp_path) == []
+    refusal = next(line for line in r.stderr.splitlines() if line.startswith("converge.sh:"))
+    assert "an override is a reason" in refusal, refusal
+
+    reason = "a store repair: the preview finds the store set aside and refuses on stores_missing"
+    rc, _out, log = run_recording(
+        tmp_path,
+        [
+            "site.yml",
+            "--limit",
+            "zcrypto",
+            "--tags",
+            "engine",
+            "-e",
+            f"engine_image_digest={DIGEST}",
+            "-e",
+            json.dumps({"engine_preflight_override": reason}),
+        ],
+        reply="zcrypto",
+    )
+    assert rc == 0
+    rec = json.loads(log.read_text().splitlines()[0])
+    assert rec["extra_vars"] == {"engine_image_digest": DIGEST, "engine_preflight_override": reason}
 
 
 def test_two_tag_flags_book_both_because_ansible_runs_both(tmp_path):
@@ -1072,7 +1134,55 @@ def test_a_pass_whose_play_wrote_no_record_books_no_window(tmp_path):
     rc, _out, log = run_recording(tmp_path, ["site.yml", "--limit", "zcrypto", "--tags", "capture"], reply="zcrypto")
     assert rc == 0
     assert len(_record_files(tmp_path)) == 2, invocations(tmp_path)
-    assert "window" not in json.loads(log.read_text().splitlines()[0])
+    rec = json.loads(log.read_text().splitlines()[0])
+    assert "window" not in rec and "preflight" not in rec, rec
+
+
+PREFLIGHT = {
+    "engaged": True,
+    "digest": DIGEST,
+    "rc": 0,
+    "revision": "0123456789abcdef0123456789abcdef01234567",
+    "first_parent": True,
+    "line": json.dumps(
+        {
+            "config": "ok",
+            "verified": True,
+            "stores_missing": [],
+            "journal": "ok",
+            "version": "0.1.0",
+            "nautilus": "1.220.0",
+            "ok": True,
+        }
+    ),
+}
+
+
+def test_the_preflight_merged_into_the_record_lands_in_the_row_beside_the_window(tmp_path):
+    rc, _out, log = run_recording(
+        tmp_path,
+        ["site.yml", "--limit", "zcrypto", "--tags", "engine", "-e", f"engine_image_digest={DIGEST}"],
+        reply="zcrypto",
+        env={"FAKE_WINDOW": json.dumps({**WINDOW, "preflight": PREFLIGHT})},
+        run_sh=WRITES_THE_RECORD,
+    )
+    assert rc == 0
+    rec = json.loads(log.read_text().splitlines()[0])
+    _booked_as_the_audit_reads(rec)
+    assert rec["preflight"] == PREFLIGHT, rec
+
+
+def test_a_record_holding_only_the_preflight_books_no_window(tmp_path):
+    rc, _out, log = run_recording(
+        tmp_path,
+        ["site.yml", "--limit", "zcrypto", "--tags", "engine", "-e", f"engine_image_digest={DIGEST}"],
+        reply="zcrypto",
+        env={"FAKE_WINDOW": json.dumps({"preflight": PREFLIGHT})},
+        run_sh=WRITES_THE_RECORD,
+    )
+    assert rc == 0
+    rec = json.loads(log.read_text().splitlines()[0])
+    assert rec["preflight"] == PREFLIGHT and "window" not in rec, rec
 
 
 def test_an_unreadable_record_is_loud_and_still_books_the_row(tmp_path):

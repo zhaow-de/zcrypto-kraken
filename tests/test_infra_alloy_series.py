@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 
 import pytest
+import yaml
 
 from tests.alloy_text import live_alloy_text as _live_alloy_text
 from tests.alloy_text import live_j2_text as _live_j2_text
@@ -19,9 +20,11 @@ CAPTURE_ALLOY = REPO / "infra/ansible/roles/capture/files/config.alloy"
 ACCESS_ALLOY = REPO / "infra/ansible/roles/access/files/config.alloy"
 CACHE_ALLOY = REPO / "infra/ansible/roles/cache/files/config.alloy"
 MON_ALLOY = REPO / "infra/ansible/roles/mon/files/config.alloy"
+HC_ALLOY = REPO / "infra/ansible/roles/hc/files/config.alloy"
 CACHE_SECRETS = REPO / "infra/ansible/roles/cache/templates/alloy-secrets.env.j2"
 OPS_SECRETS = REPO / "infra/ansible/roles/ops/templates/alloy-secrets.env.j2"
 ACCESS_SECRETS = REPO / "infra/ansible/roles/access/templates/alloy-env.j2"
+HC_ENV = REPO / "infra/ansible/roles/hc/templates/alloy-env.j2"
 NAS_SECRETS = REPO / "infra/ansible/roles/nas/templates/alloy-secrets.env.j2"
 CAPTURE_SECRETS = REPO / "infra/ansible/roles/capture/templates/alloy-secrets.env.j2"
 
@@ -670,8 +673,9 @@ def _ships_to_the_node_alone(config: Path) -> bool:
         (ACCESS_ALLOY, False),
         (CACHE_ALLOY, False),
         (MON_ALLOY, True),
+        (HC_ALLOY, True),
     ],
-    ids=["nas", "ops", "capture", "access", "cache", "mon"],
+    ids=["nas", "ops", "capture", "access", "cache", "mon", "hc"],
 )
 def test_the_node_alone_reading_tells_each_cloud_config_from_the_nodes_own(config, node_alone):
     assert _ships_to_the_node_alone(config) is node_alone
@@ -982,21 +986,45 @@ _MON_LOKI_LINES = [
 ]
 
 
+_HC_LINES = [
+    "HC_METRICS_PATH={{ hc_metrics_path }}",
+    "HC_READONLY_KEY={{ hc_readonly_api_key }}",
+]
+
+
 @pytest.mark.parametrize(
-    ("template", "mon_lines"),
+    ("template", "grafana_lines", "mon_lines", "hc_lines"),
     [
-        (ACCESS_SECRETS, _MON_PROM_LINES),
-        (OPS_SECRETS, _MON_PROM_LINES + _MON_LOKI_LINES),
-        (CACHE_SECRETS, _MON_PROM_LINES + _MON_LOKI_LINES),
-        (NAS_SECRETS, _MON_PROM_LINES + _MON_LOKI_LINES),
-        (CAPTURE_SECRETS, _MON_PROM_LINES + _MON_LOKI_LINES),
+        (ACCESS_SECRETS, _GRAFANA_LINES, _MON_PROM_LINES, []),
+        (OPS_SECRETS, _GRAFANA_LINES, _MON_PROM_LINES + _MON_LOKI_LINES, _HC_LINES),
+        (CACHE_SECRETS, _GRAFANA_LINES, _MON_PROM_LINES + _MON_LOKI_LINES, []),
+        (HC_ENV, [], _MON_PROM_LINES + _MON_LOKI_LINES, []),
+        (NAS_SECRETS, _GRAFANA_LINES, _MON_PROM_LINES + _MON_LOKI_LINES, []),
+        (CAPTURE_SECRETS, _GRAFANA_LINES, _MON_PROM_LINES + _MON_LOKI_LINES, []),
     ],
-    ids=["access", "ops", "cache", "nas", "capture"],
+    ids=["access", "ops", "cache", "hc", "nas", "capture"],
 )
-def test_the_secrets_lines_are_held_by_literal(template, mon_lines):
+def test_the_secrets_lines_are_held_by_literal(template, grafana_lines, mon_lines, hc_lines):
     lines = _live_j2_text(template).splitlines()
-    assert [line for line in lines if line.startswith("GRAFANA_")] == _GRAFANA_LINES
+    assert [line for line in lines if line.startswith("GRAFANA_")] == grafana_lines
     assert [line for line in lines if line.startswith("MON_")] == mon_lines
+    assert [line for line in lines if line.startswith("HC_")] == hc_lines
+
+
+HC_DEFAULTS = REPO / "infra/ansible/roles/hc/defaults/main.yml"
+OBSERVED_VARS = REPO / "infra/ansible/group_vars/observed/vars.yml"
+
+
+def test_the_ops_scrape_reads_the_dead_man_service_with_the_read_only_key_as_its_bearer_token():
+    block = re.search(r'^prometheus\.scrape "healthchecks" \{\n(.*?)\n\}', _live_alloy_text(OPS_ALLOY), re.M | re.S)
+    assert block, f'{OPS_ALLOY}: no prometheus.scrape "healthchecks"'
+    body = block.group(1)
+    hostname = yaml.safe_load(HC_DEFAULTS.read_text())["hc_hostname"]
+    assert re.findall(r'"__address__"\s*=\s*"([^"]*)"', body) == [hostname], body
+    assert re.search(r'^\s*scheme\s*=\s*"https"\s*$', body, re.M), body
+    assert re.search(r'^\s*metrics_path\s*=\s*sys\.env\("HC_METRICS_PATH"\)\s*$', body, re.M), body
+    assert re.search(r'^\s*bearer_token\s*=\s*sys\.env\("HC_READONLY_KEY"\)\s*$', body, re.M), body
+    assert yaml.safe_load(OBSERVED_VARS.read_text())["hc_metrics_path"] == "/projects/{{ hc_project_uuid }}/metrics/"
 
 
 # A name the config reads that the template lacks is an empty string at runtime: the endpoint fails with
@@ -1010,10 +1038,11 @@ def test_the_secrets_lines_are_held_by_literal(template, mon_lines):
             {"CONFIG_FILE", "CUSTOM_ARGS", "GRAFANA_LOKI_URL", "GRAFANA_LOKI_USERNAME", "GRAFANA_LOKI_PASSWORD"},
         ),
         (OPS_ALLOY, OPS_SECRETS, set()),
+        (HC_ALLOY, HC_ENV, {"CONFIG_FILE", "CUSTOM_ARGS"}),
         (NAS_ALLOY, NAS_SECRETS, set()),
         (CAPTURE_ALLOY, CAPTURE_SECRETS, set()),
     ],
-    ids=["access", "ops", "nas", "capture"],
+    ids=["access", "ops", "hc", "nas", "capture"],
 )
 def test_each_secrets_template_renders_the_names_its_config_reads(config, template, unread):
     read, rendered = _env_names_read(config), _env_names_rendered(template)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import configparser
+import grp
 import json
 import os
 import re
@@ -197,12 +198,14 @@ def test_the_selfcheck_installs_what_its_unit_runs_imports_and_reads_and_enables
         if "src" in args and args["src"] != SELFCHECK["node_common_selfcheck_script"]:
             assert (ROLE / ("templates" if module == "ansible.builtin.template" else "files") / args["src"]).is_file(), args
     by_dest = {args["dest"]: (task, args) for task, _, args in steps if "dest" in args}
-    assert by_dest[service["ExecStart"].split()[1]][1]["src"] == SELFCHECK["node_common_selfcheck_script"]
+    script = by_dest[service["ExecStart"].split()[1]][1]
     env_task, env_args = by_dest[service["EnvironmentFile"]]
     assert (env_args["mode"], env_task["no_log"], env_task["diff"]) == ("0600", True, False)
     (made,) = [index for index, (_, module, _) in enumerate(steps) if module == "ansible.builtin.file"]
     (copied,) = [index for index, (_, _, args) in enumerate(steps) if args.get("src") == "zcrypto_selfcheck.py"]
-    # DynamicUser runs the script as a user that owns nothing, so the module and its directory are world-readable.
+    # DynamicUser runs the script as a user that owns nothing, so the script, the module and its directory are
+    # world-readable.
+    assert (script["src"], script["mode"]) == (SELFCHECK["node_common_selfcheck_script"], "0755")
     assert (steps[made][2]["path"], steps[made][2]["mode"], steps[copied][2]["dest"], steps[copied][2]["mode"]) == (
         "/usr/local/lib/zcrypto",
         "0755",
@@ -258,6 +261,7 @@ BACKUP = {
     "node_common_sqlite_backup_dest": "/var/backups/probe",
     "node_common_sqlite_backup_runner": "docker compose -f /opt/probe/compose.yaml exec -T web",
     "node_common_sqlite_backup_copy": "docker compose -f /opt/probe/compose.yaml cp web:",
+    "node_common_sqlite_backup_group": "probe-data",
     "node_common_sqlite_backup_textfile": "/var/lib/probe-textfile/sqlite-backup.prom",
 }
 STAMPED = re.compile(r"probe-(\d{4}-\d{2}-\d{2})T\d{6}Z\.sqlite")
@@ -286,8 +290,17 @@ if argv[3:6] == ["exec", "-T", "web"]:
     os.execvp(command[0], command)
 if argv[3:4] == ["cp"] and len(argv) == 6 and argv[4].startswith("web:"):
     shutil.copy(mapped(argv[4].removeprefix("web:")), argv[5])
+    with open(os.environ["DOCKER_STUB_SEEN"], "w") as seen:
+        json.dump(sorted(os.listdir(os.environ["DOCKER_STUB_WATCHED"])), seen)
     sys.exit(0)
 sys.exit(f"docker stub: unexpected call: {argv}")
+"""
+CHGRP_STUB = """#!/usr/bin/env python3
+import json, os, sys
+
+with open(os.environ["CHGRP_STUB_LOG"], "a") as log:
+    print(json.dumps(sys.argv[1:]), file=log)
+os.execv("REAL_CHGRP", ["REAL_CHGRP", *sys.argv[1:]])
 """
 # Answers the script's one clock read, `date -u +%s`, with DATE_STUB_NOW, so a test sets the run's time; every other
 # call reaches the real date.
@@ -313,8 +326,7 @@ STUCK_COPY = """#!/usr/bin/env bash
 mkdir -- "$2${1##*/}"
 exit 1
 """
-# sqlite3 shims, found ahead of the standard library on PYTHONPATH: a VACUUM that fails with its file and its journal on
-# disk, and one that holds there until it is stopped.
+# sqlite3 shims, found ahead of the standard library on PYTHONPATH.
 JOURNAL_SHIM = """def connect(*args, **kwargs):
     return Source()
 
@@ -341,6 +353,12 @@ class Source:
         open(os.environ["SLOW_STARTED"], "wb").close()
         while True:
             time.sleep(0.05)
+"""
+IMPORT_SHIM = """import os, time
+
+open(os.environ["SLOW_STARTED"], "wb").close()
+while True:
+    time.sleep(0.05)
 """
 
 
@@ -379,9 +397,10 @@ def _argv(node: Node, *, db=None, staging=None, keep_days="14") -> list[str]:
     return ["probe", str(db or node.db), str(staging or node.staging), str(node.dest), keep_days, str(node.prom)]
 
 
-def _environment(node: Node, *, runner="", copy="", env=None, now=None) -> dict[str, str]:
+def _environment(node: Node, *, runner="", copy="", group="", env=None, now=None) -> dict[str, str]:
     path = f"{node.bin}{os.pathsep}{os.environ['PATH']}"
-    environment = os.environ | {"PATH": path, "SQLITE_BACKUP_RUNNER": runner, "SQLITE_BACKUP_COPY": copy} | (env or {})
+    prefixes = {"SQLITE_BACKUP_RUNNER": runner, "SQLITE_BACKUP_COPY": copy, "SQLITE_BACKUP_GROUP": group}
+    environment = os.environ | {"PATH": path} | prefixes | (env or {})
     if now is not None:
         _stub(node, "date", DATE_STUB.replace("REAL_DATE", shutil.which("date")))
         environment["DATE_STUB_NOW"] = str(now)
@@ -470,6 +489,8 @@ def _through_docker(node: Node) -> list[list[str]]:
         "DOCKER_STUB_LOG": str(node.bin / "docker.log"),
         "DOCKER_STUB_INSIDE": INSIDE,
         "DOCKER_STUB_OUTSIDE": str(node.db.parent),
+        "DOCKER_STUB_WATCHED": str(node.dest),
+        "DOCKER_STUB_SEEN": str(node.bin / "seen.json"),
     }
     result = _backup(
         node,
@@ -499,6 +520,29 @@ def test_a_backup_is_a_valid_copy_of_the_source_staged_and_copied_into_a_new_070
     assert stat.S_IMODE(node.dest.stat().st_mode) == 0o700
 
 
+def test_a_group_holds_the_destination_at_0750_and_every_file_in_it_at_0640_an_earlier_runs_among_them(node):
+    gid = os.getgid()
+    group = grp.getgrgid(gid).gr_name
+    _stub(node, "chgrp", CHGRP_STUB.replace("REAL_CHGRP", shutil.which("chgrp")))
+    node.dest.mkdir(parents=True)
+    node.dest.chmod(0o700)
+    earlier = node.dest / _named(_today(), 1)
+    earlier.write_bytes(b"")
+    earlier.chmod(0o600)
+    result = _backup(node, group=group, env={"CHGRP_STUB_LOG": str(node.bin / "chgrp.log")})
+    assert result.returncode == 0, result.stderr
+    (written,) = _written_by_the_run(node.dest, {earlier.name})
+    assert (stat.S_IMODE(node.dest.stat().st_mode), node.dest.stat().st_gid) == (0o750, gid)
+    held = {path.name: (stat.S_IMODE(path.stat().st_mode), path.stat().st_gid) for path in node.dest.iterdir()}
+    assert held == {earlier.name: (0o640, gid), written.name: (0o640, gid)}
+    # The files already carry the test user's group, so the gids above hold without a chgrp: its calls are the proof.
+    calls = [json.loads(line) for line in (node.bin / "chgrp.log").read_text().splitlines()]
+    assert all(call[:2] == ["--", group] for call in calls), calls
+    paths = [path for call in calls for path in call[2:]]
+    assert paths[0] == f"{node.dest}.incoming/{written.name}" and paths[-1] == str(node.dest), paths
+    assert sorted(paths[1:-1]) == sorted([str(earlier), str(node.dest / written.name)]), paths
+
+
 def test_the_prune_reads_the_date_in_the_name_and_keeps_the_keep_days_in_both_directories(node):
     today = _today()
     seeded = {_named(today, 15), _named(today, 14), _named(today, 13), _named(today, 15, name="other")}
@@ -516,6 +560,17 @@ def test_the_prune_reads_the_date_in_the_name_and_keeps_the_keep_days_in_both_di
         assert [p.name for p in _written_by_the_run(directory, seeded)] == [f"probe-{today:%Y-%m-%d}T120000Z.sqlite"]
         left = {p.name for p in directory.iterdir()} & seeded
         assert left == {_named(today, 14), _named(today, 13), _named(today, 15, name="other")}, directory
+
+
+def test_the_prune_removes_a_file_past_the_keep_days_left_in_the_sibling(node):
+    today = _today()
+    incoming = Path(f"{node.dest}.incoming")
+    incoming.mkdir(parents=True)
+    for days in (15, 13):
+        (incoming / _named(today, days)).write_bytes(b"")
+    result = _backup(node, now=_noon(today))
+    assert result.returncode == 0, result.stderr
+    assert [p.name for p in incoming.iterdir()] == [_named(today, 13)]
 
 
 def test_the_gauge_carries_the_backups_time_under_its_name(node):
@@ -556,7 +611,7 @@ def test_a_copy_that_fails_part_way_after_a_clean_vacuum_leaves_the_gauge_and_no
     assert result.returncode != 0
     (staged,) = _written_by_the_run(node.staging)
     assert _content(staged) == _content(node.db)
-    assert list(node.dest.iterdir()) == []
+    assert list(node.dest.iterdir()) == [] and list(Path(f"{node.dest}.incoming").iterdir()) == []
     assert node.prom.read_text() == PREVIOUS
     assert any(ERROR_LINE.match(line) for line in result.stderr.splitlines()), result.stderr
 
@@ -626,32 +681,60 @@ def test_a_run_while_another_holds_the_lock_fails_and_touches_nothing(node, back
     assert _content(node.dest / expected[0]) == _content(node.db)
 
 
-def _stopped_part_way(node: Node, run: subprocess.Popen[str], started: Path) -> None:
+STOPS = pytest.mark.parametrize(("signum", "rc"), [(signal.SIGTERM, 143), (signal.SIGINT, 130)], ids=["SIGTERM", "SIGINT"])
+
+
+def _stopped_part_way(node: Node, run: subprocess.Popen[str], started: Path, signum: signal.Signals, rc: int) -> None:
     _wait_for(started, run)
-    os.killpg(run.pid, signal.SIGTERM)
+    os.killpg(run.pid, signum)
     _, stderr = run.communicate(timeout=30)
-    assert run.returncode == 143, stderr
-    assert any(ERROR_LINE.match(line) and "stopped by SIGTERM" in line for line in stderr.splitlines()), stderr
-    for directory in (node.staging, node.dest):
+    assert run.returncode == rc, stderr
+    assert any(ERROR_LINE.match(line) and f"stopped by {signum.name}" in line for line in stderr.splitlines()), stderr
+    for directory in (node.staging, node.dest, Path(f"{node.dest}.incoming")):
         left = sorted(p.name for p in directory.iterdir()) if directory.exists() else []
         assert not [name for name in left if STAMPED.fullmatch(name) or name.endswith("-journal")], (directory, left)
     assert node.prom.read_text() == PREVIOUS
 
 
-def test_a_run_stopped_during_a_slow_copy_leaves_no_file_under_a_backups_name(node, background):
+@STOPS
+def test_a_run_stopped_during_a_slow_copy_leaves_no_file_under_a_backups_name(node, background, signum, rc):
     _stub(node, "slow-cp", SLOW_COPY)
     started = node.bin / "started"
     node.prom.write_text(PREVIOUS)
     env = {"SLOW_STARTED": str(started), "SLOW_RELEASE": str(node.bin / "never")}
-    _stopped_part_way(node, _start(node, background, copy="slow-cp ", env=env), started)
+    _stopped_part_way(node, _start(node, background, copy="slow-cp ", env=env), started, signum, rc)
 
 
-def test_a_run_stopped_during_a_slow_vacuum_leaves_no_file_under_a_backups_name(node, background):
+@STOPS
+def test_a_run_stopped_during_a_slow_vacuum_leaves_no_file_under_a_backups_name(node, background, signum, rc):
     shim = _shim(node, "slow-shim", SLOW_SHIM)
     started = node.bin / "started"
     node.prom.write_text(PREVIOUS)
     env = {"SLOW_STARTED": str(started), "PYTHONPATH": str(shim)}
-    _stopped_part_way(node, _start(node, background, env=env), started)
+    _stopped_part_way(node, _start(node, background, env=env), started, signum, rc)
+
+
+@pytest.mark.parametrize("taken", ["staged", "journal", "sibling"])
+def test_a_name_an_earlier_run_of_the_same_second_left_fails_the_run_before_a_stop_could_remove_it(node, background, taken):
+    today = _today()
+    name = f"probe-{today:%Y-%m-%d}T120000Z.sqlite"
+    incoming = Path(f"{node.dest}.incoming")
+    earlier = {"staged": node.staging / name, "journal": node.staging / f"{name}-journal", "sibling": incoming / name}[taken]
+    earlier.parent.mkdir(parents=True)
+    earlier.write_bytes(b"an earlier run's")
+    started = node.bin / "started"
+    env = {"SLOW_STARTED": str(started), "PYTHONPATH": str(_shim(node, "import-shim", IMPORT_SHIM))}
+    run = _start(node, background, env=env, now=_noon(today))
+    deadline = time.monotonic() + 30
+    while run.poll() is None and not started.exists():
+        assert time.monotonic() < deadline, "the run neither ended nor reached its VACUUM"
+        time.sleep(0.02)
+    if run.poll() is None:
+        os.killpg(run.pid, signal.SIGTERM)
+    _, stderr = run.communicate(timeout=30)
+    assert earlier.read_bytes() == b"an earlier run's"
+    assert (run.returncode, started.exists()) == (1, False), stderr
+    assert any(ERROR_LINE.match(line) and f"{earlier} already exists" in line for line in stderr.splitlines()), stderr
 
 
 def test_a_file_already_under_the_runs_name_fails_the_run_and_stays(node):
@@ -707,8 +790,18 @@ def test_the_copy_prefix_takes_the_staged_path_on_its_last_word(node):
     calls = _through_docker(node)
     (staged,) = _written_by_the_run(node.staging)
     (copy,) = [call for call in calls if call[3:4] == ["cp"]]
-    assert copy[3:] == ["cp", f"web:{INSIDE}/backups/{staged.name}", f"{node.dest}/"]
+    assert copy[3:] == ["cp", f"web:{INSIDE}/backups/{staged.name}", f"{node.dest}.incoming/"]
     assert _content(node.dest / staged.name) == _content(node.db)
+
+
+def test_the_copy_is_written_beside_the_destination_and_renamed_into_it_whole(node):
+    calls = _through_docker(node)
+    (staged,) = _written_by_the_run(node.staging)
+    (copy,) = [call for call in calls if call[3:4] == ["cp"]]
+    incoming = Path(f"{node.dest}.incoming")
+    assert copy[5] == f"{incoming}/"
+    assert json.loads((node.bin / "seen.json").read_text()) == [], "the destination listed the run's file while it was written"
+    assert [p.name for p in node.dest.iterdir()] == [staged.name] and list(incoming.iterdir()) == []
 
 
 @pytest.mark.parametrize(
@@ -748,7 +841,7 @@ def _unit_environment(unit: list[str]) -> dict[str, str]:
     return dict(words[0].split("=", 1) for words in assignments)
 
 
-def test_the_backup_unit_runs_the_script_as_root_over_the_includes_arguments_and_its_two_prefixes():
+def test_the_backup_unit_runs_the_script_as_root_over_the_includes_arguments_its_two_prefixes_and_its_group():
     unit = _backup_render("sqlite-backup.service.j2")
     assert unit[0].startswith("# Rendered by the `probe` Ansible role at /etc/systemd/system/zcrypto-sqlite-backup.service;")
     (exec_start,) = [line.removeprefix("ExecStart=").split() for line in unit if line.startswith("ExecStart=")]
@@ -764,7 +857,11 @@ def test_the_backup_unit_runs_the_script_as_root_over_the_includes_arguments_and
     assert _unit_environment(unit) == {
         "SQLITE_BACKUP_RUNNER": BACKUP["node_common_sqlite_backup_runner"],
         "SQLITE_BACKUP_COPY": BACKUP["node_common_sqlite_backup_copy"],
+        "SQLITE_BACKUP_GROUP": BACKUP["node_common_sqlite_backup_group"],
     }
+    ungrouped = {k: v for k, v in BACKUP.items() if k != "node_common_sqlite_backup_group"}
+    default = role_render.render(ROLE, "sqlite-backup.service.j2", {}, **ungrouped).splitlines()
+    assert _unit_environment(default)["SQLITE_BACKUP_GROUP"] == "", "an include naming no group holds its copies root-only"
     keys = {line.split("=", 1)[0] for line in unit if "=" in line and not line.startswith("#")}
     assert not keys & {"User", "DynamicUser", "ProtectSystem"}, keys
 

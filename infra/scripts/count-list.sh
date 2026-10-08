@@ -378,6 +378,25 @@ c_engine_window_overrides() {
 # A watch number, not a gate: the band's successful rows that carry no well-formed `window`, whose admission can only be inferred.
 c_engine_rows_on_the_completion_floor() { uv run python infra/scripts/deploy-log-audit.py engine-window --log "${COUNT_LIST_DEPLOY_LOG:-docs/reference/deploy-log.jsonl}" | sed -n 's/^engine rows .*of which on the completion floor \([0-9][0-9]*\)$/\1/p'; }
 
+# The window opens at the log's first row carrying a `preflight`, the rows before it gated by the capture bake. An empty
+# `tags` stays out: `site.yml` admits one on the primary only beside `--skip-tags engine`, a run of no engine-role task.
+# shellcheck disable=SC2016  # $first and $since are jq's, bound by the program and by --arg
+engine_preflight_rows='(map(has("preflight")) | index(true)) as $first | if $first == null then [] else .[$first:] end | map(select(($since == "" or (.ts | fromdate) >= ($since | fromdate)) and .limit == "zcrypto" and (.tags | split(",") | any(. == "engine")) and .extra_vars.engine_image_digest != null))'
+
+# A successful re-pin with nothing gating it and nothing bypassing it: no `preflight`, or one whose rc or provenance an
+# assert let through.
+c_engine_repins_without_a_preflight() {
+  local since
+  since="$(round_closed_at)" || return 2
+  jq -s --arg since "$since" "$engine_preflight_rows"' | map(select(.rc == 0 and .extra_vars.engine_preflight_override == null and (.preflight.rc != 0 or .preflight.first_parent != true))) | length' "${COUNT_LIST_DEPLOY_LOG:-docs/reference/deploy-log.jsonl}"
+}
+
+c_engine_preflight_overrides() {
+  local since
+  since="$(round_closed_at)" || return 2
+  jq -s --arg since "$since" "$engine_preflight_rows"' | map(select(.extra_vars.engine_preflight_override != null)) | length' "${COUNT_LIST_DEPLOY_LOG:-docs/reference/deploy-log.jsonl}"
+}
+
 c_nas_rows_without_compat() { awk -F'|' '$3 ~ /^ *nas *$/' docs/reference/fleet-pins.md | grep -vc compat; }
 
 c_image_removals_outside_the_pruner() { git grep -nE 'docker (image (prune|rm)|rmi|system prune)' -- infra cli .claude ':!*.md' ':!infra/scripts/prune-host-images.py' ':!infra/scripts/count-list.sh' | grep -vcE '^[^:]+:[0-9]+:[[:space:]]*#'; }
@@ -390,7 +409,7 @@ c_inspect_reads_of_dot_image() { git grep -nE '\{\{ ?(json )?\.Image ?\}\}' -- i
 # counts too, since the base role's default is not read here.
 c_attended_hosts_with_automatic_reboot() {
   local h f n=0
-  for h in zcrypto:capture_host zcrypto-red:capture_host zcrypto-ops:ops_host zcrypto-mon:mon_host; do
+  for h in zcrypto:capture_host zcrypto-red:capture_host zcrypto-ops:ops_host zcrypto-mon:mon_host zcrypto-hc:hc_host; do
     for f in "infra/ansible/host_vars/${h%%:*}/vars.yml" "infra/ansible/group_vars/${h#*:}/vars.yml"; do
       if grep -qE '^base_unattended_upgrades_automatic_reboot:' "$f" 2>/dev/null; then
         grep -qiE '^base_unattended_upgrades_automatic_reboot: *["'"'"']?(0|f|false|n|no|off)["'"'"']? *$' "$f" || n=$((n + 1))
@@ -458,9 +477,9 @@ c_ambient_bytes() { uv run python infra/scripts/guidance-guard.py --ambient-byte
 # counts the rows written before that arm landed.
 c_deploy_rows_with_an_empty_digest_var() { jq -s '[.[] | select((.extra_vars // {}) | to_entries | any((.key | endswith("_digest")) and ((.value | tostring) | test("^[[:space:]]*$"))))] | length' docs/reference/deploy-log.jsonl; }
 
-# The read-only healthchecks key reaching a host: today only `hc_prometheus_metrics_path` renders, and the
-# `group_vars/all/` copy is read from the workstation by file path. A role naming the key is the finding.
-c_hc_readonly_key_in_a_role() { git grep -nE 'healthchecks_readonly_api_key' -- infra/ansible/roles | grep -vcE '^[^:]+:[0-9]+:[[:space:]]*#'; }
+# The service's read-only key, or healthchecks.io's (healthchecks_readonly_api_key), named on a non-comment line of a
+# role outside the service key's one render, ops' Alloy secrets template.
+c_hc_readonly_key_in_a_role() { git grep -nE '(hc|healthchecks)_readonly_api_key' -- infra/ansible/roles ':!infra/ansible/roles/ops/templates/alloy-secrets.env.j2' | grep -vcE '^[^:]+:[0-9]+:[[:space:]]*#'; }
 
 # A write to one of the six gate gauges from outside `_ExecGauges.update`, whose one call publishes the
 # five readings at every gate evaluation and the heartbeat at each but the executor's idle refresh: a
@@ -568,6 +587,8 @@ main() {
   emit "engine-rows-outside-the-gap" c_engine_rows_outside_the_gap
   emit "engine-window-overrides" c_engine_window_overrides
   emit "engine-rows-on-the-completion-floor" c_engine_rows_on_the_completion_floor
+  emit "engine-repins-without-a-preflight" c_engine_repins_without_a_preflight
+  emit "engine-preflight-overrides" c_engine_preflight_overrides
   emit "nas-rows-without-compat" c_nas_rows_without_compat
   emit "image-removals-outside-the-pruner" c_image_removals_outside_the_pruner
   emit "inspect-reads-of-dot-image" c_inspect_reads_of_dot_image

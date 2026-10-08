@@ -51,8 +51,8 @@ engine_cache_proxy_nodes:
   - {name: node2, address: 10.98.0.12}
   - {name: node3, address: 10.98.0.13}
 
-# healthchecks.io ping URL for the dead-man's switch — vault-supplied (the attended deployment
-# vaults it as engine_healthcheck_url); empty means the engine simply skips liveness pings.
+# The dead-man ping URL, set from the project ping key in group_vars/engine_host/vars.yml; empty
+# means the engine simply skips liveness pings.
 engine_healthcheck_url: ""
 
 # Days of engine journal kept on the VPS (spec 00070, T0021; owner's ruling 2026-07-26). The NAS

@@ -1,0 +1,11 @@
+# Rendered by the `hc` Ansible role at /etc/default/alloy; edit infra/ansible/roles/hc/templates/alloy-env.j2 and
+# re-converge. The apt package's alloy.service reads it as EnvironmentFile=: CONFIG_FILE and CUSTOM_ARGS are the
+# unit's own, and the rest come from group_vars/observed/. No GRAFANA_*: this node ships to the observability node alone.
+CONFIG_FILE="/etc/alloy/config.alloy"
+CUSTOM_ARGS=""
+MON_PROM_URL={{ mon_ingest_prom_url }}
+MON_PROM_USERNAME={{ mon_ingest_fleet_user }}
+MON_PROM_PASSWORD={{ mon_ingest_fleet_password }}
+MON_LOKI_URL={{ mon_ingest_loki_url }}
+MON_LOKI_USERNAME={{ mon_ingest_fleet_user }}
+MON_LOKI_PASSWORD={{ mon_ingest_fleet_password }}

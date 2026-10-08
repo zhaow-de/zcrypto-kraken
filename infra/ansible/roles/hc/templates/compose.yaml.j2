@@ -1,0 +1,18 @@
+# Rendered by the `hc` Ansible role at {{ hc_compose_dir }}/compose.yaml; edit
+# infra/ansible/roles/hc/templates/compose.yaml.j2 and re-converge instead of editing it on the node.
+services:
+  web:
+    image: "{{ hc_image }}:{{ hc_image_tag }}"
+    container_name: zcrypto-hc
+    restart: unless-stopped
+    # Compose's default, `missing`, pulls the tag on a start that finds the image pruned, which runs whatever image
+    # the tag then names; the image moves only by a converge naming a pulled tag.
+    pull_policy: never
+    ports: ["127.0.0.1:{{ hc_port }}:8000"]
+    env_file: [./hc.env]
+    volumes: ["{{ hc_volume }}:/data"]
+    logging:
+      driver: journald
+
+volumes:
+  {{ hc_volume }}: {}

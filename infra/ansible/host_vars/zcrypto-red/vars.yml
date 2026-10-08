@@ -21,6 +21,9 @@ capture_cpu_limit: "0.9"
 # privilege, so a compromised NAS key reaches one host's segments.
 sync_capture_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/sync_capture_red_ed25519.pub') }}"
 
+# This host's own dead-man check, not the primary's.
+capture_healthcheck_url: "{{ hc_ping_base }}/zcrypto-capture-red"
+
 # This machine's OWN deploy pubkey: rotation edits files/ once.
 deploy_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/deploy_zcrypto-red_ed25519.pub') }}"
 
