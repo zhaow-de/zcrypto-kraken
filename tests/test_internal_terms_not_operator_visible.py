@@ -613,6 +613,9 @@ def test_compose_interpolation_errors_carry_no_internal_vocabulary():
     assert not found, "\n".join(f"{p}:{i} leaks {hits} into a compose error" for p, i, hits in found)
 
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
 def _rendered_help() -> list[tuple[str, str]]:
     """Every `--help` screen the real Typer app can render."""
     from typer.testing import CliRunner
@@ -627,7 +630,9 @@ def _rendered_help() -> list[tuple[str, str]]:
         result = runner.invoke(app, [*path, "--help"])
         if result.exit_code != 0:
             continue
-        text = result.stdout
+        # CI forces a styled terminal, and a styled Commands row opens with an escape the row match
+        # cannot read past.
+        text = _ANSI_RE.sub("", result.stdout)
         seen.append((" ".join(["zcrypto", *path]), text))
         if "Commands" in text and len(path) < 3:
             block = text.split("Commands", 1)[1]
@@ -644,6 +649,38 @@ def test_rendered_cli_help_carries_no_internal_vocabulary():
     assert screens, "walked no help screens — the walker is broken, not the CLI clean"
     found = [(cmd, hits) for cmd, text in screens if (hits := _leaks(text))]
     assert not found, "\n".join(f"`{cmd} --help` leaks {hits}" for cmd, hits in found)
+
+
+def _walk_under(monkeypatch, **env: str | None) -> tuple[int, bool]:
+    """typer reads `GITHUB_ACTIONS` once, when `typer.rich_utils` is imported, so a setenv alone changes
+    nothing: the module is reloaded under `env` and again once it is restored."""
+    import typer.rich_utils
+    from typer.testing import CliRunner
+
+    from cli.__main__ import app
+
+    try:
+        with monkeypatch.context() as m:
+            for name, value in env.items():
+                if value is None:
+                    m.delenv(name, raising=False)
+                else:
+                    m.setenv(name, value)
+            importlib.reload(typer.rich_utils)
+            styled = bool(_ANSI_RE.search(CliRunner().invoke(app, ["--help"]).stdout))
+            return len(_rendered_help()), styled
+    finally:
+        importlib.reload(typer.rich_utils)
+
+
+def test_the_help_walker_reads_every_screen_under_ci_colour(monkeypatch):
+    plain, _ = _walk_under(monkeypatch, GITHUB_ACTIONS=None)
+    # TERM is pinned: rich renders a dumb or unknown terminal plain even when forced, and the case
+    # would then compare two unstyled walks.
+    forced, styled = _walk_under(monkeypatch, GITHUB_ACTIONS="true", TERM="xterm-256color")
+    assert styled, "GITHUB_ACTIONS=true did not style the help -- this case is not reading what CI renders"
+    assert plain > 1, f"the walker read {plain} screen(s) without GITHUB_ACTIONS -- it is broken, not the CLI small"
+    assert forced == plain, f"the walker read {forced} screen(s) under GITHUB_ACTIONS=true and {plain} without"
 
 
 # ---------------------------------------------------------------------------------------------
