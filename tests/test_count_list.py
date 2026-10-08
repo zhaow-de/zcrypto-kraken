@@ -442,10 +442,7 @@ def test_the_row_commit_and_a_message_amend_are_the_heads_the_read_line_need_not
 @pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
 def test_a_truncated_file_list_is_refetched_before_the_fable_arm_decides(tmp_path):
     """`gh pr list --json files` returns the first page only, so a PR whose Fable path falls outside it reads as
-    touching none — the counter would book it compliant where the gate refuses it. The re-fetch has to happen
-    BEFORE `read_line_fails` sees the list. The row below carries an Opus read and two innocuous paths; the
-    recorded full list adds `cli/engine/soak.py`, so it must count. Without the re-fetch it reads as touching
-    nothing and does not."""
+    touching none — the counter would book it compliant where the gate refuses it."""
     stamp = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     head = "abcdef1234567aaaaaaaaaaaaaaaaaaaaaaaaaaa"
     prs = [
@@ -484,8 +481,6 @@ def test_a_truncated_file_list_is_refetched_before_the_fable_arm_decides(tmp_pat
     assert done.returncode == 0 and done.stdout.strip().endswith("\t1"), done.stdout + done.stderr
 
 
-# `gh` for the floor-read count's live path: `pr list` prints the recorded rows, and the files endpoint runs the jq
-# program the count hands it over the recorded entries of that PR; anything else is refused.
 _FAKE_GH = """#!/usr/bin/env bash
 dir="$(dirname "$0")"
 if [ "$1 $2" = "pr list" ]; then exec cat "$dir/prs.json"; fi
@@ -499,7 +494,6 @@ exit 64
 
 
 def _live_count(tmp_path: pathlib.Path, rows: list[dict], entries: dict[int, list[dict]]) -> subprocess.CompletedProcess:
-    """The floor-read count with no snapshot, a fake `gh` and a `git` whose fetch is a no-op ahead of the real ones."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "prs.json").write_text(json.dumps(rows))

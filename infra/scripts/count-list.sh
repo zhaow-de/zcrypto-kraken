@@ -156,16 +156,7 @@ files_snapshot = json.loads(pathlib.Path(os.environ["COUNT_LIST_FILES_SNAPSHOT"]
 
 
 def file_paths(pr):
-    """The gate's view of the PR's files, read from the files endpoint for every row. `gh pr list --json files`
-    is not that view: it holds the first page alone, and gh asks GraphQL for each file's `path` alone, a
-    rename's new path -- so a Fable path past the first page, or one a file was moved out of, reads as
-    untouched. The bulk list still decides one thing: an ABSENT list stays None rather than becoming `[]`,
-    because `read_line_fails` has two refusals that fire only on None.
-
-    COUNT_LIST_FILES_SNAPSHOT names a recorded `{number: [path]}` map, each list as `gate.PR_FILES_JQ` prints
-    it, standing in for the fetch; offline, a row the map does not name keeps its bulk list. The fetched list
-    adds to the bulk one and never shortens it: an empty or short answer would book compliant a PR whose bulk
-    list already names a Fable path."""
+    """The files endpoint's paths, or a COUNT_LIST_FILES_SNAPSHOT `{number: [path]}` map's, plus every bulk path they lack."""
     rows = pr.get("files")
     if rows is None:
         return None

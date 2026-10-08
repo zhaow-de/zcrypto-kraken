@@ -584,7 +584,6 @@ def test_the_substitution_line_admits_an_opus_read_on_a_guarded_path(path):
     assert _eval(_pr(body=body), files=["cli/costs/schedule.py", path]) == []
 
 
-# The files endpoint's entries for a PR moving a file out of a Fable path: the new path in `filename`, the old in `previous_filename`.
 RENAMED = [
     {"filename": "cli/costs/retired.py", "previous_filename": "cli/engine/retired.py", "status": "renamed"},
     {"filename": "docs/reference/fleet.md", "status": "modified"},
