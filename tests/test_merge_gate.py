@@ -590,7 +590,7 @@ RENAMED = [
 ]
 
 
-def _main_over_files(monkeypatch, body: str, entries: list[dict], changed=(), fails=None, **over) -> int:
+def _main_over_files(monkeypatch, body: str, entries: list[dict], changed=(), fails=None, head_fails=None, **over) -> int:
     """`main()` with gh's files endpoint answering `entries` through the jq program `main()` hands it."""
     pr = _pr(body=body, **over)
 
@@ -604,6 +604,8 @@ def _main_over_files(monkeypatch, body: str, entries: list[dict], changed=(), fa
             return subprocess.run(
                 ["jq", "-r", program], input=json.dumps(entries), capture_output=True, text=True, check=True
             ).stdout
+        if head_fails is not None and args[0] == "api" and "/commits/" in args[1]:
+            raise head_fails
         raise AssertionError(args)
 
     monkeypatch.setattr(gate, "_gh", fake_gh)
@@ -690,15 +692,27 @@ def test_an_opus_read_on_a_non_empty_endpoint_answer_with_no_clone_list_is_judge
     assert _main_over_files(monkeypatch, _read_by("Claude Opus 4.8"), entries, changed=None) == 0, capsys.readouterr().out
 
 
-@pytest.mark.parametrize(
+FETCH_FAILURES = pytest.mark.parametrize(
     "error",
     [subprocess.CalledProcessError(1, ["gh"], stderr="HTTP 502: Bad Gateway"), subprocess.TimeoutExpired(["gh"], 60)],
     ids=["failed", "hung"],
 )
+
+
+@FETCH_FAILURES
 def test_a_files_fetch_that_fails_or_hangs_is_an_unfetched_list_and_no_traceback(monkeypatch, capsys, error):
     assert _main_over_files(monkeypatch, _read_by("Claude Opus 4.8"), [], changed=["docs/a.md"], fails=error) == 1
     out = capsys.readouterr().out
     assert "the PR's file list was not fetched, so the paths that need a Fable read cannot be checked" in out, out
+
+
+@FETCH_FAILURES
+def test_a_head_commit_fetch_that_fails_or_hangs_leaves_the_clone_to_decide_and_no_traceback(monkeypatch, capsys, error):
+    monkeypatch.setattr(gate, "head_is_the_read", lambda read, head, base: "the head's tree is not the read's")
+    entries = [{"filename": "docs/a.md", "status": "modified"}]
+    assert _main_over_files(monkeypatch, _stale_body(), entries, head_fails=error) == 1
+    out = capsys.readouterr().out
+    assert f"the read named in the body covers {PREV[:8]}, not the head {TIP[:8]}: the head's tree is not the read's" in out, out
 
 
 def test_the_substitution_line_needs_a_reason():

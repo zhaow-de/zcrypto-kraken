@@ -676,7 +676,10 @@ def main(argv: list[str]) -> int:
         files = None
     kept = None
     if m and head and not head.startswith(m.group(2)):
-        head_commit = json.loads(_gh("api", f"repos/{REPO}/commits/{head}"))
+        try:
+            head_commit = json.loads(_gh("api", f"repos/{REPO}/commits/{head}"))
+        except subprocess.CalledProcessError, subprocess.TimeoutExpired:
+            pass  # an unread head commit admits nothing as the row commit; the clone's answer decides
         try:
             read = json.loads(_gh("api", f"repos/{REPO}/commits/{m.group(2)}")).get("sha") or m.group(2)
         except subprocess.CalledProcessError, subprocess.TimeoutExpired:
