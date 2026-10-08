@@ -1034,12 +1034,14 @@ def test_the_changed_paths_are_git_s_unquoted_with_a_rename_broken_apart(tmp_pat
     _git(root, "add", "-A")
     _git(root, "commit", "-q", "-m", "move")
     tip = _git(root, "rev-parse", "HEAD")
-    assert gate.changed_paths("develop", tip, cwd=root) == [
-        "cli/engine/café.py",
-        'cli/engine/q"x.py',
-        "cli/engine/x.py",
-        "docs/x.py",
-    ]
+    moved = ["cli/engine/café.py", 'cli/engine/q"x.py', "cli/engine/x.py", "docs/x.py"]
+    assert gate.changed_paths("develop", tip, cwd=root) == moved
+    _git(root, "checkout", "-q", "develop")
+    (root / "uv.lock").write_text("lock\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "develop moves past the branch point")
+    _git(root, "update-ref", "refs/remotes/origin/develop", _git(root, "rev-parse", "develop"))
+    assert gate.changed_paths("develop", tip, cwd=root) == moved
     assert gate.changed_paths("develop", "f" * 40, cwd=root) is None
     _git(root, "checkout", "-q", "-b", "feat/latin1", "develop")
     (root / os.fsdecode(b"cli/engine/caf\xe9.py")).write_text("l = 1\n")
@@ -1069,6 +1071,12 @@ def test_the_behind_read_is_git_s_exit_code(monkeypatch):
 def test_the_image_paths_are_the_image_workflow_s_filter():
     workflow = yaml.safe_load((_ROOT / ".github" / "workflows" / "capture-image.yml").read_text())
     assert list(gate.IMAGE_PATHS) == workflow[True]["push"]["paths"]
+
+
+def test_every_image_path_is_a_literal_or_a_directory_prefix():
+    for glob in gate.IMAGE_PATHS:
+        stem = glob.removesuffix("/**")
+        assert stem and not set(stem) & set("*?+[]!"), glob
 
 
 def test_a_keyed_branch_with_no_row_is_refused() -> None:
