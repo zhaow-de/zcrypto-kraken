@@ -676,6 +676,11 @@ def test_the_readonly_key_count_excludes_the_ops_alloy_secrets_template_and_no_o
     assert _readonly_key_in_a_role(repo, {f"{roles}/ops/templates/grafana-watchdog.sh.j2": "K={{ hc_readonly_api_key }}\n"}) == "2"
 
 
+def test_the_readonly_key_count_sees_healthchecks_ios_spelling_as_well(repo):
+    key = "K={{ healthchecks_readonly_api_key }}\n"
+    assert _readonly_key_in_a_role(repo, {"infra/ansible/roles/capture/templates/compose.yaml.j2": key}) == "1"
+
+
 @pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
 def test_a_dependabot_bump_is_exempt_and_one_carrying_a_fix_commit_is_not(tmp_path):
     """The gate exempts a dependabot PR whose every commit is the bot's, so the counter has to fetch those commits
