@@ -590,7 +590,7 @@ RENAMED = [
 ]
 
 
-def _main_over_files(monkeypatch, body: str, entries: list[dict], changed=(), **over) -> int:
+def _main_over_files(monkeypatch, body: str, entries: list[dict], changed=(), fails=None, **over) -> int:
     """`main()` with gh's files endpoint answering `entries` through the jq program `main()` hands it."""
     pr = _pr(body=body, **over)
 
@@ -598,6 +598,8 @@ def _main_over_files(monkeypatch, body: str, entries: list[dict], changed=(), **
         if args[:2] == ("pr", "view"):
             return json.dumps(pr)
         if args[:2] == ("api", "--paginate"):
+            if fails is not None:
+                raise fails
             program = args[args.index("--jq") + 1]
             return subprocess.run(
                 ["jq", "-r", program], input=json.dumps(entries), capture_output=True, text=True, check=True
@@ -666,14 +668,37 @@ JOURNAL_ENTRY = {"filename": "docs/reference/ops-journal/2026-09.md", "status": 
         ([], [JOURNAL_ENTRY["filename"]], "GATE PASSED"),
         ([JOURNAL_ENTRY], [JOURNAL_ENTRY["filename"], "cli/x.py"], "no 'Read before push by:"),
         ([], [JOURNAL_ENTRY["filename"], "cli/x.py"], "no 'Read before push by:"),
-        ([], None, "no 'Read before push by:"),
+        ([], [], "no 'Read before push by:"),
+        ([], None, "the PR's file list was not fetched, so the ops-journal exemption cannot be scoped"),
     ],
-    ids=["empty-clone-journal-only", "short-clone-foreign-file", "empty-clone-foreign-file", "empty-no-clone"],
+    ids=["empty-clone-journal-only", "short-clone-foreign-file", "empty-clone-foreign-file", "empty-clone-empty", "empty-no-clone"],
 )
 def test_a_journal_pr_is_judged_by_the_endpoint_and_the_clone_together(monkeypatch, capsys, entries, changed, expected):
     _main_over_files(monkeypatch, JOURNAL_PR["body"], entries, changed=changed, headRefName="ops-journal")
     out = capsys.readouterr().out
     assert expected in out, out
+
+
+def test_an_opus_read_on_an_empty_endpoint_answer_with_no_clone_list_is_an_unfetched_list(monkeypatch, capsys):
+    assert _main_over_files(monkeypatch, _read_by("Claude Opus 4.8"), [], changed=None) == 1
+    out = capsys.readouterr().out
+    assert "the PR's file list was not fetched, so the paths that need a Fable read cannot be checked" in out, out
+
+
+def test_an_opus_read_on_a_non_empty_endpoint_answer_with_no_clone_list_is_judged_on_the_answer(monkeypatch, capsys):
+    entries = [{"filename": "docs/a.md", "status": "modified"}]
+    assert _main_over_files(monkeypatch, _read_by("Claude Opus 4.8"), entries, changed=None) == 0, capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "error",
+    [subprocess.CalledProcessError(1, ["gh"], stderr="HTTP 502: Bad Gateway"), subprocess.TimeoutExpired(["gh"], 60)],
+    ids=["failed", "hung"],
+)
+def test_a_files_fetch_that_fails_or_hangs_is_an_unfetched_list_and_no_traceback(monkeypatch, capsys, error):
+    assert _main_over_files(monkeypatch, _read_by("Claude Opus 4.8"), [], changed=["docs/a.md"], fails=error) == 1
+    out = capsys.readouterr().out
+    assert "the PR's file list was not fetched, so the paths that need a Fable read cannot be checked" in out, out
 
 
 def test_the_substitution_line_needs_a_reason():

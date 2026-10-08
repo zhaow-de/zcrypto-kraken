@@ -662,13 +662,18 @@ def main(argv: list[str]) -> int:
     m = READ_LINE.search(_as_a_reader_sees_it(pr.get("body") or ""))
     head = pr.get("headRefOid") or ""
     if m or pr.get("headRefName") == "ops-journal":
-        out = _gh("api", "--paginate", f"repos/{REPO}/pulls/{pr['number']}/files", "--jq", PR_FILES_JQ)
-        files = [line for line in out.splitlines() if line.strip()]
+        try:
+            out = _gh("api", "--paginate", f"repos/{REPO}/pulls/{pr['number']}/files", "--jq", PR_FILES_JQ)
+            files = [line for line in out.splitlines() if line.strip()]
+        except subprocess.CalledProcessError, subprocess.TimeoutExpired:
+            pass  # a failed or hung fetch leaves the list unfetched, which the arms that read it refuse
     growth = branch_growth(pr["baseRefName"], pr["headRefName"], head)
     behind = is_behind(pr["baseRefName"], head)
     changed = changed_paths(pr["baseRefName"], head)
     if files is not None and changed is not None:
         files += [p for p in changed if p not in files]  # an empty or short answer from GitHub hides nothing the clone names
+    elif files == []:
+        files = None  # an empty answer with no clone list to check it against is no list at all
     kept = None
     if m and head and not head.startswith(m.group(2)):
         head_commit = json.loads(_gh("api", f"repos/{REPO}/commits/{head}"))
