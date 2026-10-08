@@ -522,7 +522,7 @@
 - name: install the overlay-writer runner + timer (needs the pinned image digest — historical archive-pull name)
   when: ops_image_digest is defined
   block:
-    # no_log with diff false and 0700: the script carries the dead-man ping URL, and its unit runs as root.
+    # The script carries the dead-man ping URL, and its unit runs as root.
     - name: install the archive-pull runner script
       ansible.builtin.template:
         src: archive-pull.sh.j2
@@ -559,7 +559,7 @@
 # script before units, same discipline as the archive-pull block above.
 - name: install the grafana-watchdog pinger (mutual watchdog, the dead-man service's half)
   block:
-    # 0700: the script carries the dead-man ping URL, and its unit runs as root.
+    # The script carries the dead-man ping URL, and its unit runs as root.
     - name: install the grafana-watchdog runner script
       ansible.builtin.template:
         src: grafana-watchdog.sh.j2
@@ -646,8 +646,7 @@
     # every deliberate restart) is an attended step (`docker compose up -d`): the
     # liquidations stream is not backfillable, so restarting it is never a converge side effect.
     #
-    # mode 0600, no_log and diff false: the rendered file carries COINALYZE_API_KEY and the dead-man ping URL in
-    # plaintext — zcrypto-deploy-only readable, matching the vault's own secrecy expectation.
+    # The rendered file carries COINALYZE_API_KEY and the dead-man ping URL in plaintext.
     - name: render the ops compose file (liquidations poller)
       ansible.builtin.template:
         src: compose.yaml.j2
@@ -658,7 +657,7 @@
       no_log: true
       diff: false
 
-    # no_log with diff false and 0700: three of the four carry a dead-man ping URL, and their units run as root.
+    # Three of the four carry a dead-man ping URL, and their units run as root.
     - name: install the replay + panel + tape-bars runner scripts
       ansible.builtin.template:
         src: "{{ item }}.sh.j2"

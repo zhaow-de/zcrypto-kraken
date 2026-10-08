@@ -12,5 +12,4 @@ hc_sync_backup_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/sync_hc
 hc_admin_email: zhaow.km@gmail.com
 hc_email_from: z-no-reply@zhaow.pro
 hc_email_host: email-smtp.eu-west-1.amazonaws.com
-# The node's own check, under the project ping key's base (group_vars/observed/vars.yml).
 hc_selfcheck_healthcheck_url: "{{ hc_ping_base }}/zcrypto-hc"

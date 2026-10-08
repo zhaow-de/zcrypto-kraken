@@ -1,2 +1,1 @@
-# The engine's dead-man ping URL: the project ping key's base (group_vars/observed/vars.yml) and the check's slug.
 engine_healthcheck_url: "{{ hc_ping_base }}/zcrypto-engine-shadow"

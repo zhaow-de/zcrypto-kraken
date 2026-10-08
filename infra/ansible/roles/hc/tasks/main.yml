@@ -14,8 +14,6 @@
       - {key: hc_email_host_user, shape: '[A-Z0-9]{16,}\Z'}
       - {key: hc_email_host_password, shape: '[A-Za-z0-9+/=]{40,}\Z'}
 
-# The ping URL's key part, [A-Za-z0-9_-]{16,}, admits the minted project ping key, measured at 22 to 29 characters of
-# that alphabet.
 - name: the plain values the env file and the self-check read, refused by shape
   ansible.builtin.include_role: {name: node_common, tasks_from: secrets-preflight}
   vars:

@@ -19,8 +19,6 @@
     node_common_secrets_preflight_file: host_vars/zcrypto-mon/vault.yml
     node_common_secrets_preflight_runbook: infra/runbooks/mon.md's mon-secrets procedure
 
-# The URL renders from the project ping key, whose key part, [A-Za-z0-9_-]{16,}, admits the minted key, measured at 22
-# to 29 characters of that alphabet; the hc role's second list carries the same shape.
 - name: the self-check's ping URL, refused by shape
   ansible.builtin.include_role:
     name: node_common

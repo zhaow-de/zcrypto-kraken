@@ -126,7 +126,7 @@ ops_reconcile_window_hours: 48
 ops_reconcile_mint: false
 
 # The writer cycle's dead-man ping, deliberately a SEPARATE failure domain from
-# the Grafana stack per CLAUDE.md: losing it halves the writer's failure domains silently, with
+# the Grafana stack: losing it halves the writer's failure domains silently, with
 # Grafana still reading healthy metrics throughout. Empty skips the ping, per the CLI's optional
 # semantics.
 ops_archive_pull_healthcheck_url: ""

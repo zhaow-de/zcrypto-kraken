@@ -227,7 +227,7 @@
   no_log: true
   diff: false
 
-# no_log with diff false and root-only: the file carries the dead-man ping URL, which holds the project ping key.
+# The file carries the dead-man ping URL, which holds the project ping key.
 - name: render the capture compose file
   ansible.builtin.template:
     src: compose.yaml.j2

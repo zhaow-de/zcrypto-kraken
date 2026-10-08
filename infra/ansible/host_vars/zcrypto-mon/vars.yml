@@ -12,6 +12,4 @@ base_unattended_upgrades_automatic_reboot: "false"
 # daemon on upgrade.
 base_unattended_upgrades_package_blacklist: []
 deploy_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/deploy_zcrypto-mon_ed25519.pub') }}"
-# The self-check's ping URL, the project ping key's base (group_vars/observed/vars.yml) and the check's slug; the `mon`
-# role renders it into the unit's environment file.
 mon_selfcheck_healthcheck_url: "{{ hc_ping_base }}/zcrypto-mon"

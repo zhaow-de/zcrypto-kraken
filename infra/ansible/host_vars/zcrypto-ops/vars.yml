@@ -20,8 +20,6 @@ base_unattended_upgrades_reboot_time: "02:25"
 # taken. The slot above stays, as the attended window and for the collision assert.
 base_unattended_upgrades_automatic_reboot: "false"
 
-# The dead-man ping URLs the rendered compose and the timers read: the project ping key's base
-# (group_vars/observed/vars.yml) and each check's slug.
 ops_liquidations_healthcheck_url: "{{ hc_ping_base }}/zcrypto-liquidations"
 ops_verify_replay_healthcheck_url: "{{ hc_ping_base }}/zcrypto-verify-replay"
 ops_verified_replay_healthcheck_url: "{{ hc_ping_base }}/zcrypto-verified-replay"
