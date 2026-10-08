@@ -553,7 +553,7 @@
       ansible.builtin.debug:
         msg: >-
           engine preflight override accepted: {{ engine_preflight_override }} — preflight rc {{ engine_preflight_run.rc | default(none) }}:
-          {{ engine_preflight_run.stdout_lines | default([]) | last | default(none) }};
+          {{ engine_preflight_run.stdout_lines | default([]) | last | default('(no output)', true) }};
           revision {{ engine_preflight_label.stdout | default('') | trim }},
           first-parent merge: {{ ((engine_preflight_label.stdout | default('') | trim) in (engine_preflight_merges.stdout_lines | default([]))) }}
       when: >-

@@ -1063,6 +1063,13 @@ def test_engine_provenance_fail_msg_names_the_label_and_the_fetch(label, merges,
             PREFLIGHT_REASON,
             f'engine preflight override accepted: hotfix for the boundary — preflight rc 0: {{"ok": true}}; revision {NON_MEMBER}, first-parent merge: False',
         ),
+        (
+            1,
+            None,
+            MEMBER,
+            PREFLIGHT_REASON,
+            f"engine preflight override accepted: hotfix for the boundary — preflight rc 1: (no output); revision {MEMBER}, first-parent merge: True",
+        ),
         (0, '{"ok": true}', MEMBER, PREFLIGHT_REASON, None),
         (1, '{"ok": false}', MEMBER, "true", None),
         (1, '{"ok": false}', MEMBER, "hotfix!!", None),
@@ -1077,7 +1084,7 @@ def test_engine_preflight_override_echo_fires_only_on_an_accepted_override(rc, l
         disjunct = _disjunct(find_task(tasks, name))
         assert f"not {disjunct}" in when, (name, disjunct, when)
     variables = {
-        "engine_preflight_run": _preflight_run(rc, f"INFO engine preflight\n{last_line}"),
+        "engine_preflight_run": _preflight_run(rc, "" if last_line is None else f"INFO engine preflight\n{last_line}"),
         "engine_preflight_label": {"rc": 0, "stdout": label + "\n"},
         "engine_preflight_merges": MERGES_READ,
         "engine_preflight_override": override,
