@@ -140,9 +140,11 @@ print("success" if run["c"] in ("success", "neutral", "skipped") else f"failed (
 
 # After the poll printed `success`, immediately before the squash, each its own command: the squash
 # bypasses infra/scripts/merge-gate.py, so it reads behind itself — a head lacking develop's tip
-# squashes onto a tree no suite ran. `rc 0` merges; `rc 1` goes back to §2a, and a second `rc 1` on
-# the same PR stops and asks the user (escalation trigger #6); any other answer stops. Unscoped on
-# purpose: the paths whose push builds the engine image stay in the one list the merge gate's test holds.
+# squashes onto a tree no suite ran. `rc 0` merges; `rc 1` goes back to §2a — a PR carrying a 2c fix
+# commit takes its read again over the rebased range, its `Read before push by:` line updated, before
+# the second push — and a second `rc 1` on the same PR stops and asks the user (escalation trigger
+# #6); any other answer stops. Unscoped on purpose: the paths whose push builds the engine image stay
+# in the one list the merge gate's test holds.
 git fetch origin develop
 git merge-base --is-ancestor origin/develop HEAD; echo "rc $?"
 
