@@ -303,6 +303,18 @@ stat -c '%n mtime=%y ctime=%z' /usr/bin/curl
 zgrep -h ' upgrade curl:' /var/log/dpkg.log* | sort | tail -1
 ```
 
+- **Amended 2026-10-08 — the apt hosts after the wave of 2026-10-07, as their `fleet-pins.md` rows carry them.** `zaccess` and `zcrypto-mon` each at `1.20.1-1` since 2026-10-07, under a dpkg hold, pinned at 1001, the two `alloy` rows of the package table. No reading of the D4 simulations or of the post-condition's restart or none is recorded from the wave, plan 00123's R4 slot still open, so the two lines under "Not confirmed here" that they settle stand.
+
+```
+grep -E '^\| alloy \| (zaccess|zcrypto-mon) \|' docs/reference/fleet-pins.md
+```
+
+- **Amended 2026-10-08 — drill W4 on the secondary (D18).** `sudo docker stop grafana-alloy` on `zcrypto-red` at 16:03:24Z, the capture daemon running throughout; on the node at 16:16:30Z `up{host="zcrypto-red"}` read `(no series)`, absent and not 0, and the rule's own query `count(up{host="zcrypto-red"}) or on() vector(0)` 0 by its fallback; both copies of `Fleet · Alloy dark — Capture secondary` `Pending` with `activeAt` 16:08:40Z and `Alerting` with `activeAt` 16:18:40Z, the same instants on both stacks, 15 min 16 s from the stop against the drill's about 16 minutes, the node's copy routed to the shadow channel and Grafana Cloud's to the main channel. Collateral: `Node · the reboot probe stopped publishing entirely (capture, ops)` `Alerting` from 16:29:00Z on both stacks, the hold having overrun 26 min; `zcrypto-hcio-watchdog` and `Fleet · a daemon restarted` `Normal`. The restore, `sudo docker restart grafana-alloy` at 16:32:47Z, 29 min 23 s after the stop; at 16:34:13Z `count(up{host="zcrypto-red"})` 5 on both stacks and both rules `Normal` on both.
+
+```
+grep -A2 '^## 2026-10-08 — W4 — pass' docs/reference/drill-log.md
+```
+
 ## Not confirmed here, and the read that settles each
 
 Each line names the step that reads it; every one is read-only.
