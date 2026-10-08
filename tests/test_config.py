@@ -393,7 +393,6 @@ def test_the_engine_role_template_renders_the_accumulation_switch_only_when_the_
     on = str(value).lower() == "true"
     rendered = _render_engine_toml(engine_accumulation_enabled=value)
     assert load_config(_write(tmp_path, rendered)).engine.accumulation_enabled is on
-    # Off renders no line an image built before the key would refuse; on inserts its one line and moves no other.
     assert ("accumulation_enabled" in rendered) is on, rendered
     assert rendered.replace("accumulation_enabled = true\n", "", 1) == _render_engine_toml(), rendered
 

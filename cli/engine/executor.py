@@ -3333,7 +3333,6 @@ class ProbeExecutor:
 
         Its third act arms the boundary's cycle plan (`_arm_cycle_draft`), which the tick drafts: the
         draft's book read waits for a tick with nothing in flight, and the alert holds the event loop.
-        With `accumulation_enabled` off it arms nothing, and the boundary drafts, marks and submits nothing.
 
         Wrapped, and the wrapping is not defensive habit: the caller invokes this from a `finally`,
         so a raise here would either reach the alert chain or REPLACE an in-flight exception from the
@@ -3380,8 +3379,7 @@ class ProbeExecutor:
         Once a boundary is armed in this process the first tick's re-arm (`_rearm_cycle_draft`) has nothing to look
         for. Wrapped whole: it runs from the boundary alert's `finally` and from the tick.
 
-        With `accumulation_enabled` off it arms and writes nothing: every act of the loop -- the draft, its record, the
-        equity mark, the series' start, the loop's gauges, the plan -- follows a draft armed here."""
+        With `accumulation_enabled` off it arms and writes nothing, and every act of the loop follows a draft armed here."""
         self._draft_rearm_checked = True
         try:
             if not self._config.accumulation_enabled:

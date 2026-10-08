@@ -11225,7 +11225,6 @@ def test_with_the_loop_switched_off_no_boundary_drafts_marks_mints_or_submits_th
     )
     assert (exec_dir(tmp_path) / ARM_FILE).exists() and ex._gate.evaluate(clock.now).level == GateLevel.FULL
     if sidecar:
-        # A boundary with no record to draft from writes `no-cycle` when switched on; off, it writes nothing either.
         (tmp_path / "journal" / f"{_RUNG2_12Z:%Y-%m-%d}" / "failed-cycle-12.json").write_text("{}")
     with _executor_errors(logging.INFO) as records:
         if enter == "the-boundary-alert":
@@ -11239,7 +11238,6 @@ def test_with_the_loop_switched_off_no_boundary_drafts_marks_mints_or_submits_th
         "accumulation loop disabled by config; the boundary drafts nothing"
     ]
     if enter == "the-boundary-alert":
-        # The boundary's acts ahead of the loop's still run: the verdict journaled, the tracking trip read.
         assert _record(tmp_path, _RUNG2_12Z)["plans"] == [] and metrics.tracking == [executor_module._TRACKING_DISARMED]
 
 

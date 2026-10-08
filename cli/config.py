@@ -52,8 +52,7 @@ class EngineConfig:
     # connected) and, on its own, insufficient: arming also requires the arm file on the host, so
     # no single change can arm the live trade path.
     exec_armed: bool = False
-    # The accumulation loop's own switch, beside the arming keys: off, no boundary arms a draft, so nothing is drafted,
-    # marked or submitted from the cycle record; a hand-placed plan and the tracking trip run either way.
+    # The accumulation loop's own switch, not an arming key: off, no boundary drafts a plan, and a hand-placed plan still submits.
     accumulation_enabled: bool = False
     # The total-notional cap a probe plan may carry — the blast-radius bound.
     exec_max_plan_notional_eur: float = 100.0
