@@ -16,6 +16,14 @@ A finding that cannot quote the line it judges is not a finding. Verify every cl
 
 A review that must MUTATE to prove a guard is dispatched write-capable in its own worktree; a read-only reviewer reports the probe as not run, never as passed.
 
+## What a reader runs, and what it never runs
+
+- A script's options are read from its argparse — `sed -n` over the file, or `python -c` importing its parser — never by running it with `--help` when its argv is a query or a run: `grafana-query.py --help` sent `--help` to Grafana Cloud as a query, and `ops-daily.py report --help` ran a whole daily pass with its host reads.
+- Every tree grep carries `--exclude='*vault*'` on the line, or is `git grep … -- <paths> ':!*vault*' ':!*.sops.*'`; nothing under a vault-shaped or `*.sops.*` path is read, printed, grepped, diffed, shown at any revision, archived or copied — a file name printed by `-l` is already a read. `vault_var` is called only inside a length or prefix check whose only output is the number.
+- A probe re-run happens in a detached worktree (`git worktree add --detach <dir> <rev>`, removed after), one `infra/scripts/mutate-probe.sh` run at a time, each its own call — never in a copy or an archive of the repository, which carries every vault file with it.
+- No `ansible-playbook` in any form: this workstation is the fleet host `zcrypto-ops`, so `localhost` is a live venue-facing node. A role is read through the test helpers' renders.
+- A read-only dispatch touches no other repository on disk — a `git fetch` into a peer clone is a write to its refs — and starts no process it does not stop: a process is stopped by its PID read from the process tree, never by a pattern the stopping command's own argv carries, and the report names the `pgrep` read before and after.
+
 ## Report shape — `{OUT}`
 
 One block per finding, nothing else under a `###`. Copy this heading **literally**, square brackets included — they are part of the text, not a choose-one notation; substitute only the severity word, the origin word and the path (a script clusters on it):
