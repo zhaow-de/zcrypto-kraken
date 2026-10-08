@@ -1861,10 +1861,12 @@ def _inspect_format_is_scoped(tokens: list[str]) -> bool:
     return True
 
 
+_PING_URL = re.compile(r"hc-ping|healthchecks\.io/ping|zcrypto-hc\.zhaow\.me(?::\d+)?/ping")
+
+
 def _curl_is_read(tokens: list[str]) -> bool:
     """A plain GET to a ping URL marks a dead-man alive -- a read that silences an alarm."""
-    joined = " ".join(tokens).lower()
-    return not any(host in joined for host in ("hc-ping", "healthchecks.io/ping", "zcrypto-hc.zhaow.me/ping"))
+    return not _PING_URL.search(" ".join(tokens).lower())
 
 
 _POSTCHECKS = {"inspect": _inspect_format_is_scoped, "curl": _curl_is_read}
