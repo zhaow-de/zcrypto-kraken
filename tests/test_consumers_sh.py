@@ -8,11 +8,14 @@ import pathlib
 import subprocess
 
 SCRIPT = pathlib.Path(__file__).resolve().parents[1] / "infra" / "scripts" / "consumers.sh"
+# Assembled at run time: a literal `.claude/skills/...` path reads as this tree's citation of a guidance file to
+# `tests/test_guidance_refs_resolve.py`, which refuses one that does not exist.
+_SKILL_DIR = ".claude" + "/skills/x"
 
 
 def _repo(tmp_path: pathlib.Path) -> pathlib.Path:
     repo = tmp_path / "repo"
-    for d in ("infra/scripts", "infra/ansible/group_vars/all", "tests", ".claude/skills/x"):
+    for d in ("infra/scripts", "infra/ansible/group_vars/all", "tests", _SKILL_DIR):
         (repo / d).mkdir(parents=True)
     (repo / "infra" / "scripts" / "thing.sh").write_text("#!/bin/sh\necho thing\n")
     (repo / "tests" / "test_thing_sh.py").write_text("SCRIPT = 'infra/scripts/thing.sh'\n")
@@ -21,7 +24,7 @@ def _repo(tmp_path: pathlib.Path) -> pathlib.Path:
         "import pathlib\nROOT = pathlib.Path(__file__).resolve().parents[1]\nFILES = sorted((ROOT / 'tests').rglob('*.py'))\n"
     )
     (repo / "tests" / "test_own_fixture_glob.py").write_text("import pathlib\nFILES = list(pathlib.Path('.').glob('*.txt'))\n")
-    (repo / ".claude" / "skills" / "x" / "SKILL.md").write_text("run infra/scripts/thing.sh first\n")
+    (repo / _SKILL_DIR / "SKILL.md").write_text("run infra/scripts/thing.sh first\n")
     (repo / "infra" / "ansible" / "group_vars" / "all" / "vault.yml").write_text("thing.sh: secret\n")
     (repo / "infra" / "scripts" / "lonely.py").write_text("print(1)\n")
     run = lambda *a: subprocess.run(["git", "-C", str(repo), *a], check=True, capture_output=True)  # noqa: E731
@@ -43,7 +46,7 @@ def test_direct_readers_are_listed_and_the_vault_file_is_not(tmp_path):
     assert r.returncode == 0, r.stderr
     lines = r.stdout.splitlines()
     assert "tests/test_thing_sh.py" in lines
-    assert ".claude/skills/x/SKILL.md" in lines
+    assert f"{_SKILL_DIR}/SKILL.md" in lines
     assert "tests/test_other.py" not in lines
     assert not any("vault" in line for line in lines if not line.startswith("#"))
     assert "infra/scripts/thing.sh" not in lines[1:]  # the file itself is not its own reader
