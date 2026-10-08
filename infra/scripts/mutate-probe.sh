@@ -66,7 +66,7 @@ else
   # One probe per checkout: the restore is `git checkout --` over a file a second run may have mutated. The lock
   # is in the worktree's own git dir, so two worktrees of one repository still probe in parallel.
   lock="$(git rev-parse --absolute-git-dir)/mutate-probe.lock"
-  exec 9>"$lock"   # closed for the probe command below, so a child it leaves behind cannot keep the lock
+  exec 9>"$lock"
   if ! flock -n 9; then
     echo "mutate-probe: REFUSING — another mutate-probe holds $lock; one probe at a time in a checkout, each its own call after the previous verdict is read." >&2; exit 3
   fi

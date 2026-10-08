@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # The consumers of a changed file: the files under tests, infra and .claude that name it, then every test that globs,
-# walks or lists files -- the tree walkers name no file and so never match a grep for one, and the list is a superset,
-# since no text rule tells a tree walk from a fixture walk and a missed walker is a red CI run. The search is `git grep` with vault-shaped and
-# `*.sops.*` paths excluded, never `grep -r`, which opens the vault files.
+# walks or lists files -- a tree walker names no file, and no text rule tells it from a fixture walk, so that list is
+# a superset. The search is `git grep` with vault-shaped and `*.sops.*` paths excluded, never `grep -r`, which opens
+# the vault files.
 # Usage: infra/scripts/consumers.sh <path>...   (a path as the tree names it: infra/scripts/foo.sh, cli/engine/x.py)
 #   rc: 0 printed, 2 usage or not in a repository.
 set -euo pipefail
@@ -18,7 +18,7 @@ for path in "$@"; do
   # A Python module is also imported by its stem, as a word; a script is named by its file name alone.
   if [[ "$name" == *.py ]]; then stem_arg=(-e "$stem"); else stem_arg=(-e "$name"); fi
   readers="$(git grep -l -w "${stem_arg[@]}" -e "$name" -- tests infra .claude "${VAULT_EXCLUDES[@]}" | grep -v -F -x "$path" || true)"
-  case "$path" in tests/test_*.py) readers="$(printf '%s\n%s' "$path" "$readers")" ;; esac   # a changed test runs itself
+  case "$path" in tests/test_*.py) readers="$(printf '%s\n%s' "$path" "$readers")" ;; esac
   readers="$(printf '%s\n' "$readers" | sed '/^$/d')"
   if [[ -n "$readers" ]]; then printf '%s\n' "$readers"; else echo "# (none -- a finding: run the file's own test or its directory's readers, never the full suite)"; fi
 done

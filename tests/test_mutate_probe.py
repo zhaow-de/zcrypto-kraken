@@ -430,7 +430,7 @@ def test_a_second_run_in_the_same_checkout_is_refused_while_the_lock_is_held(tmp
     holder = subprocess.Popen(["flock", str(lock), "sleep", "30"], cwd=tmp_path, start_new_session=True)
     try:
         with open(lock, "w") as fh:
-            for _ in range(100):  # held once our own non-blocking try is refused
+            for _ in range(100):
                 try:
                     fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError:

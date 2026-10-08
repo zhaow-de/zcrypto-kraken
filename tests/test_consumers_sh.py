@@ -36,6 +36,7 @@ def _repo(tmp_path: pathlib.Path) -> pathlib.Path:
     (repo / "infra" / "ansible" / "files" / "zaccess_ca.key.vault").write_text("$ANSIBLE_VAULT thing.sh\n")
     (repo / "infra" / "ansible" / "files" / "deploy_x_ed25519").write_text("$ANSIBLE_VAULT thing.sh\n")
     (repo / "infra" / "ansible" / "vault-password.sops.yaml").write_text("thing.sh: sops\n")
+    (repo / "infra" / "ansible" / "vault-password").write_text("thing.sh\n")
     (repo / "infra" / "ansible" / "secrets.sops.yaml").write_text("thing.sh: sops\n")
     (repo / "infra" / "scripts" / "lonely.py").write_text("print(1)\n")
     run = lambda *a: subprocess.run(["git", "-C", str(repo), *a], check=True, capture_output=True)  # noqa: E731
@@ -60,7 +61,14 @@ def test_direct_readers_are_listed_and_the_vault_file_is_not(tmp_path):
     assert "tests/test_vault_pass_guard.py" in lines  # a reader whose own name carries "vault" is kept
     assert f"{_SKILL_DIR}/SKILL.md" in lines
     assert "tests/test_other.py" not in lines
-    for shape in ("vault.yml", "zaccess_ca.key.vault", "deploy_x_ed25519", "vault-password.sops.yaml", "secrets.sops.yaml"):
+    for shape in (
+        "vault.yml",
+        "zaccess_ca.key.vault",
+        "deploy_x_ed25519",
+        "vault-password.sops.yaml",
+        "secrets.sops.yaml",
+        "/vault-password",
+    ):
         assert not any(line.endswith(shape) for line in lines), shape
     assert "infra/scripts/thing.sh" not in lines[1:]  # the file itself is not its own reader
 
