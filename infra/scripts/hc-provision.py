@@ -39,9 +39,7 @@ SERVICE = "https://zcrypto-hc.zhaow.me/api/v3/"
 FIXTURE_PATH = "tests/fixtures/healthchecks_descriptions.json"
 FIXTURE = REPO / FIXTURE_PATH
 TIMEOUT = 30
-# The fleet's size beside zcrypto-hc, which `retire` holds the fixture to, so a check the service holds outside the
-# fleet, once fetched into the fixture, cannot join the checks it deletes; a rerun after a partial delete deletes
-# fewer, printing the rest as already deleted.
+# The fleet's size beside zcrypto-hc, so a check fetched into the fixture from outside the fleet cannot join retire's deletes.
 FLEET_CHECKS = 11
 
 HCIO_READ = ("healthchecks_readonly_api_key", "group_vars/all/vault.yml")
@@ -382,8 +380,8 @@ def retire() -> None:
             missing = sorted({row["name"] for row in committed} - {ZCRYPTO_HC["name"]} - names)
             failing.append(
                 f"the fixture names {len(names)} fleet checks beside zcrypto-hc, short of {FLEET_CHECKS}, missing "
-                f"{', '.join(missing) or 'none the committed fixture names'}: run apply to create them on the service, "
-                "then fixture, never a delete"
+                f"{', '.join(missing) or 'none the committed fixture names'}: restore the committed fixture, run apply "
+                "and fixture, never a delete"
             )
         else:
             failing.append(
