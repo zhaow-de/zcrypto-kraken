@@ -222,11 +222,41 @@ def test_preflight_reports_journal_none_without_a_record(host, emptied):
     assert code == 0
 
 
-def test_preflight_refuses_a_journal_dir_with_entries_and_no_cycle_record(host):
+@pytest.mark.parametrize(
+    "beside",
+    [
+        [],
+        ["failed-cycle-20.json"],
+        ["failed-cycle-20.json", "venue-20.json", "snapshots/cycle-20/BTC-EUR-240.parquet"],
+        ["snapshots/cycle-20.json/BTC-EUR-240.parquet"],
+    ],
+    ids=["an-empty-day", "a-failed-sidecar", "a-sidecar-a-venue-record-and-snapshots", "a-directory-named-like-a-record"],
+)
+def test_preflight_reports_journal_none_for_a_journal_with_no_cycle_record(host, beside):
     state, _ = host
-    (state / "journal" / "2026-10-07" / "cycle-20.json").unlink()
+    day = state / "journal" / "2026-10-07"
+    (day / "cycle-20.json").unlink()
+    for name in beside:
+        (day / name).parent.mkdir(parents=True, exist_ok=True)
+        (day / name).write_text("{}")
     code, line = _preflight(state)
-    assert line["journal"] == f"{state / 'journal'}: no cycle record found"
+    assert line["journal"] == "none"
+    assert line["ok"] is True
+    assert code == 0
+
+
+@pytest.mark.parametrize(
+    "placed",
+    ["cycle-20.json", "2026-10-07/nested/cycle-20.json", "not-a-day/cycle-20.json"],
+    ids=["under-the-journal-dir", "two-levels-down", "under-a-dir-that-is-no-day"],
+)
+def test_preflight_refuses_cycle_records_the_walk_does_not_return(host, placed):
+    state, _ = host
+    journal = state / "journal"
+    (journal / placed).parent.mkdir(parents=True, exist_ok=True)
+    (journal / "2026-10-07" / "cycle-20.json").rename(journal / placed)
+    code, line = _preflight(state)
+    assert line["journal"] == f"{journal}: 1 cycle record(s) the walk did not return"
     assert line["ok"] is False
     assert code == 1
 

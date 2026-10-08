@@ -72,11 +72,15 @@ def _check_journal(journal_dir: Path) -> str:
     artifacts = _journal_artifacts(journal_dir, "*", "cycle-*.json")
     if not artifacts:
         try:
+            # rglob passes over a directory it cannot list; iterdir raises, so an unlistable journal_dir is refused.
             if not journal_dir.exists() or not any(journal_dir.iterdir()):
                 return "none"
+            unwalked = [path for path in journal_dir.rglob("cycle-*.json") if path.is_file()]
         except OSError as exc:
             return f"{journal_dir}: {exc}"
-        return f"{journal_dir}: no cycle record found"
+        if unwalked:
+            return f"{journal_dir}: {len(unwalked)} cycle record(s) the walk did not return"
+        return "none"
     newest = artifacts[-1][1]
     try:
         _load_newest_record(newest)
