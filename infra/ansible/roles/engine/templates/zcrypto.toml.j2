@@ -8,15 +8,20 @@
 store_dir = "{{ engine_state_dir }}/store"
 journal_dir = "{{ engine_state_dir }}/journal"
 exec_enabled = true
-# Rendered explicitly rather than omitted so a converge diff shows the value. FALSE is the only
-# value that belongs here outside an attended probe window: arming also needs the `exec/armed`
-# file on the host, and the resting state is disarmed.
-exec_armed = false
+# Rendered explicitly so a converge diff shows it, from the backstop's fact over this host's vars.yml; arming also needs the exec/armed file on the host.
+exec_armed = {{ engine_exec_armed_in_tree | lower }}
+{# The accumulation loop's own switch, rendered only when on: an image built before the key refuses a config that carries it, and an absent key reads false. #}
+{% if engine_accumulation_enabled | bool %}
+accumulation_enabled = true
+{% endif %}
 # Rendered explicitly, like exec_armed above, so a converge diff shows it — the blast-radius
-# bound on a single probe plan's total notional.
+# bound on a single plan's total notional.
 exec_max_plan_notional_eur = {{ engine_exec_max_plan_notional_eur }}
 shadow_nav_eur = {{ engine_shadow_nav_eur }}
 settle_delay_secs = {{ engine_settle_delay_secs }}
+{% if engine_tracking_band_bps is defined %}
+tracking_band_bps = {{ engine_tracking_band_bps }}
+{% endif %}
 
 {% if engine_cache_enabled | bool %}
 # The engine's cache: enabled from the first boot, every value explicit so a converge diff shows it.

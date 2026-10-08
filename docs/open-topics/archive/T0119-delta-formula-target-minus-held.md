@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: spec `00092`, whose serial is reserved for rung 3 and not yet written, is created, or an executor path sizes an open order as `target − held`
+status: resolved
 ---
 
 # The delta formula: `target − actually held`, not `target − previously journaled intent`
@@ -21,8 +20,9 @@ This is the intent-vs-holdings drift defect: without it, the tiny-live sleeve's 
 - The held-position source is consumed: spec `00089` landed the `held` read (iter-138), and the executor sizes a closer from the Cache's live position; startup reconciliation fail-closes the node. This topic owns the open-order formula and its tests.
 - The formula does not survive a restart on the rung-2 pin (`docs/reference/drill-log.md`, entry `spot-proof`): `held` is the engine Cache's net position, not a figure re-read from the venue, and on nautilus-trader `2.0.0rc6.dev20260921` under `spot_account_type=MARGIN` a restart restores every held spot lot beside an equal `EXTERNAL` short, so `held` reads 0 on a lot Kraken holds and `target − held` would buy the whole book again. The fix is upstream's; rung 3's precondition in master plan §12 is a pinned build that carries it, and says how it is read.
 
-## Suggested next steps
+## Resolution
 
-- **(autonomous)** Implement `delta = target − held` in the executor's order computation, with the accumulation gap journaled per asset per cycle (the gap series is [[T0118]]'s live counterpart and the rung-3 tracking-error input).
-- **(autonomous)** Tests: sub-`ordermin` deltas accumulate and place on crossing; a partial fill leaves the remainder in the gap; restart re-derives the gap from venue state bit-identically — with a spot lot held across it, on a pin that carries the restore's fix: `held` after the restart equals Kraken's holding.
-- **(autonomous)** Wire the gap series into the order/position/PnL metrics families ([[T0018]] / [[T0095]] inheritance) so drift is observable from Grafana, not only from the journal.
+- **The formula is spec `00092` D2's, built by its plan's Task 11 (iter-174, PR #666)**: `_draft_cycle_plan` in `cli/engine/executor.py` drafts each boundary's one plan from `target_eur − held_qty × close` — `held` the venue's own read (`read_venue_book`, Task 2), the close the cycle record's journaled `closes` — through the helper's table at the record's NAV, D4's carry with its two rules from the executor's records, the plan cap and the 3h30 submission window; the engine's Cache net is the record's cross-check column, never the input.
+- **The gap series per asset per cycle is `accum-<HH>.json`** (`cli/engine/accumledger.py`, Task 3): one row per model leg per boundary — `target_eur`, `held_qty`, `cache_net`, `delta_eur`, `outcome`, `reason` — outside the Stage-6a gate's globs. **Its gauge is `zcrypto_exec_gap_eur{symbol}`**, ten series admitted end to end (Task 4): each leg's whole delta at the draft, `delta_eur − filled × close` at its intent's terminal, on the Engine board's accumulation row.
+- **The tests are Task 11's**, in `tests/test_engine_executor.py`, each guard proven by `infra/scripts/mutate-probe.sh` (commit `24ddd4c45`).
+- **Left with their owners, not here**: the restart with a lot held on a pin carrying upstream #5181's fix is `00092`'s rollout gate R0 (1), a live read (master plan §12); slots S2 and S3 — the counts and intent times that confirm D3's window and box and D4's carry, or move them — are rung 2's exit report, [[T0018]]'s row, read at R0 (2).

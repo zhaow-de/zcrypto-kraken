@@ -1191,13 +1191,21 @@ def test_engine_canary_parity_is_gone():
 # refuses a converge that would render the engine ARMED on a nautilus version whose attended
 # order-semantics pass has not run.
 ARMING = "arming backstop — refuse an ARMED converge on a nautilus version whose order-semantics pass has not run"
+READ = "arming backstop — read the tree's arming intent, nautilus pin, and verified-version record"
 DERIVE = "arming backstop — derive the pinned version and the list the record vouches for"
+ARMING_ECHO = "arming override accepted — the reason, on the record"
 ARMING_REASON = "venue incident replay, re-run booked for the same day"
 
-DISARMED_TEMPLATE = "exec_enabled = true\nexec_armed = false\nshadow_nav_eur = 1000\n"
-ARMED_TEMPLATE = "exec_enabled = true\nexec_armed = true\nshadow_nav_eur = 1000\n"
-# The fail-closed third case: neither literal, because the value became a Jinja expression.
-TEMPLATED_ARMED = "exec_enabled = true\nexec_armed = {{ engine_exec_armed }}\nshadow_nav_eur = 1000\n"
+# The host's vars.yml in the tree, which the backstop and the render read. Disarmed is the key absent
+# or the literal false, and every other form counts as armed.
+NO_KEY_HOST_VARS = 'base_unattended_upgrades_reboot_time: "21:25"\ncache_link_address: 10.98.0.1\n'
+FALSE_HOST_VARS = NO_KEY_HOST_VARS + "engine_exec_armed: false\n"
+DISARMED_HOST_VARS = (NO_KEY_HOST_VARS, FALSE_HOST_VARS)
+ARMED_HOST_VARS = NO_KEY_HOST_VARS + "engine_exec_armed: true\n"
+# Neither literal, because the value became a Jinja expression: the backstop counts it armed and the render reads false.
+TEMPLATED_ARMED_HOST_VARS = NO_KEY_HOST_VARS + 'engine_exec_armed: "{{ x }}"\n'
+# The literal false beside the literal true: the render reads the true line.
+DOUBLED_HOST_VARS = NO_KEY_HOST_VARS + "engine_exec_armed: false\nengine_exec_armed: true\n"
 
 VERIFIED_PIN = 'dependencies = [\n    "nautilus-trader==1.230.0",\n]\n'
 UNVERIFIED_PIN_VERSION = "1.231.0"
@@ -1248,111 +1256,301 @@ MALFORMED_RECORDS = [
 
 
 @pytest.mark.parametrize(("record", "why"), MALFORMED_RECORDS)
-def test_arming_backstop_refuses_a_record_that_is_not_a_proper_list(record, why):
+def test_arming_backstop_refuses_a_record_that_is_not_a_proper_list(tmp_path, record, why):
     """A malformed record is a CANNOT-VOUCH, and this guard's contract is cannot-vouch => refuse."""
     task = find_task(load_tasks(ENGINE), ARMING)
-    variables = _arming_vars(ARMED_TEMPLATE, UNVERIFIED_PIN, record=record)
+    variables = _arming_vars(tmp_path, ARMED_HOST_VARS, UNVERIFIED_PIN, record=record)
     assert not truthy(assert_that(task), variables), why
 
 
-def test_arming_backstop_refuses_a_pin_that_is_only_a_PREFIX_of_a_string_record():
+def test_arming_backstop_refuses_a_pin_that_is_only_a_PREFIX_of_a_string_record(tmp_path):
     """A pin that is only a PREFIX of the recorded version never vouches, string record or list —
     `"1.230" in "1.230.0"` is True under Jinja's substring containment.
     """
     task = find_task(load_tasks(ENGINE), ARMING)
-    variables = _arming_vars(ARMED_TEMPLATE, PREFIX_PIN, record="1.230.0")
+    variables = _arming_vars(tmp_path, ARMED_HOST_VARS, PREFIX_PIN, record="1.230.0")
     assert not truthy(assert_that(task), variables)
     # ...and the same prefix pin against a PROPER list record refuses too, on plain non-membership.
-    assert not truthy(assert_that(task), _arming_vars(ARMED_TEMPLATE, PREFIX_PIN, record=["1.230.0"]))
+    assert not truthy(assert_that(task), _arming_vars(tmp_path, ARMED_HOST_VARS, PREFIX_PIN, record=["1.230.0"]))
 
 
-def test_a_malformed_record_still_leaves_a_disarmed_converge_alone():
+@pytest.mark.parametrize("host_vars", DISARMED_HOST_VARS)
+def test_a_malformed_record_still_leaves_a_disarmed_converge_alone(tmp_path, host_vars):
     """Inertness survives the shape check: a broken record must not block the disarmed converges
     the fleet actually runs -- only an ARMED one is ever refused on it."""
     task = find_task(load_tasks(ENGINE), ARMING)
-    variables = _arming_vars(DISARMED_TEMPLATE, UNVERIFIED_PIN, record="1.230.0, 1.231.0")
+    variables = _arming_vars(tmp_path, host_vars, UNVERIFIED_PIN, record="1.230.0, 1.231.0")
     assert truthy(assert_that(task), variables)
 
 
-def _arming_derived(variables: dict) -> dict:
-    return {**variables, **set_facts(find_task(load_tasks(ENGINE), DERIVE), variables)}
+def _arming_tree(root: Path, host_vars: str, pyproject: str, record) -> str:
+    # The assert re-reads all three files through its own lookups, so each case gets a tree of its own
+    # that carries them, and the read task reads the facts from it.
+    repo = root / hashlib.sha256(json.dumps([host_vars, pyproject, record]).encode()).hexdigest()[:16]
+    vars_file = repo / "infra" / "ansible" / "host_vars" / "zcrypto" / "vars.yml"
+    vars_file.parent.mkdir(parents=True, exist_ok=True)
+    vars_file.write_text(host_vars)
+    (repo / "pyproject.toml").write_text(pyproject)
+    record_file = repo / "cli" / "engine" / "order-semantics-verified.json"
+    record_file.parent.mkdir(parents=True, exist_ok=True)
+    record_file.write_text(json.dumps({"verified_nautilus_versions": record}))
+    return str(repo / "infra" / "ansible")
 
 
-def _arming_vars(template: str, pyproject: str, override: str = "", record=_UNSET) -> dict:
+def _arming_derived(variables: dict, extra_vars: dict | None = None) -> dict:
+    # An extra var outranks set_fact: it is bound before the read and derive tasks run and kept over what they set.
+    extra = extra_vars or {}
+    tasks = load_tasks(ENGINE)
+    bound = {**variables, **extra}
+    read = {**bound, **set_facts(find_task(tasks, READ), bound), **extra}
+    return {**read, **set_facts(find_task(tasks, DERIVE), read), **extra}
+
+
+def _arming_vars(root: Path, host_vars: str, pyproject: str, override: str = "", record=_UNSET, extra_vars=None) -> dict:
+    record = RECORD if record is _UNSET else record
     return _arming_derived(
         {
-            "engine_config_template_text": template,
-            "engine_pyproject_text": pyproject,
-            "engine_verified_nautilus": RECORD if record is _UNSET else record,
+            "playbook_dir": _arming_tree(root, host_vars, pyproject, record),
+            "inventory_hostname": "zcrypto",
             "arming_override": override,
-        }
+        },
+        extra_vars,
     )
 
 
 @pytest.mark.parametrize(
-    ("template", "pyproject", "expected", "why"),
+    ("host_vars", "pyproject", "expected", "why"),
     [
-        # INERT on every converge the fleet actually runs today: disarmed, so the version is not
-        # even consulted. This must hold or every converge from now on needs an override.
-        (DISARMED_TEMPLATE, UNVERIFIED_PIN, True, "disarmed on an unverified version"),
-        (DISARMED_TEMPLATE, VERIFIED_PIN, True, "disarmed on a verified version"),
-        (DISARMED_TEMPLATE, NO_PIN, True, "disarmed with no nautilus pin at all"),
+        # INERT on every converge the fleet actually runs disarmed: the version is not even
+        # consulted. This must hold or every such converge needs an override.
+        *[(host_vars, UNVERIFIED_PIN, True, "disarmed on an unverified version") for host_vars in DISARMED_HOST_VARS],
+        *[(host_vars, VERIFIED_PIN, True, "disarmed on a verified version") for host_vars in DISARMED_HOST_VARS],
+        *[(host_vars, NO_PIN, True, "disarmed with no nautilus pin at all") for host_vars in DISARMED_HOST_VARS],
         # THE CONSTRUCTED DEFECT: an armed converge on a version absent from the synthetic RECORD.
-        (ARMED_TEMPLATE, UNVERIFIED_PIN, False, "armed on an unverified version"),
+        (ARMED_HOST_VARS, UNVERIFIED_PIN, False, "armed on an unverified version"),
         # TRUE POSITIVE: a healthy armed converge on a verified version must PASS, or the guard
-        # refuses every legitimate probe window and would simply be routed around.
-        (ARMED_TEMPLATE, VERIFIED_PIN, True, "armed on a verified version"),
+        # refuses every legitimate armed converge and would simply be routed around.
+        (ARMED_HOST_VARS, VERIFIED_PIN, True, "armed on a verified version"),
         # Fail-closed on inputs the guard cannot read: a templated arming value counts as armed,
         # and an unparseable pin is in no record.
-        (TEMPLATED_ARMED, UNVERIFIED_PIN, False, "arming value templated away from the literal"),
-        (TEMPLATED_ARMED, VERIFIED_PIN, True, "templated arming is still fine on a verified version"),
-        (ARMED_TEMPLATE, NO_PIN, False, "armed with an unparseable pin"),
+        (TEMPLATED_ARMED_HOST_VARS, UNVERIFIED_PIN, False, "arming value templated away from the literal"),
+        (TEMPLATED_ARMED_HOST_VARS, VERIFIED_PIN, True, "templated arming is still fine on a verified version"),
+        (ARMED_HOST_VARS, NO_PIN, False, "armed with an unparseable pin"),
         # Arbitrary equality, both directions. The true positive is the one that discriminates: a
         # guard that swallowed the operator into the capture reads the version as "=1.230.0",
         # which is in no record, so it would refuse this row.
-        (ARMED_TEMPLATE, TRIPLE_EQUALS_VERIFIED_PIN, True, "armed on a verified version pinned with ==="),
-        (ARMED_TEMPLATE, TRIPLE_EQUALS_UNVERIFIED_PIN, False, "armed on an unverified version pinned with ==="),
-        (ARMED_TEMPLATE, MARKER_PIN, True, "armed on a verified version pinned with an environment marker"),
-        (ARMED_TEMPLATE, UNSPACED_MARKER_PIN, True, "armed on a verified version pinned with an unspaced marker"),
+        (ARMED_HOST_VARS, TRIPLE_EQUALS_VERIFIED_PIN, True, "armed on a verified version pinned with ==="),
+        (ARMED_HOST_VARS, TRIPLE_EQUALS_UNVERIFIED_PIN, False, "armed on an unverified version pinned with ==="),
+        (ARMED_HOST_VARS, MARKER_PIN, True, "armed on a verified version pinned with an environment marker"),
+        (ARMED_HOST_VARS, UNSPACED_MARKER_PIN, True, "armed on a verified version pinned with an unspaced marker"),
     ],
 )
-def test_arming_backstop_semantics(template, pyproject, expected, why):
+def test_arming_backstop_semantics(tmp_path, host_vars, pyproject, expected, why):
     task = find_task(load_tasks(ENGINE), ARMING)
-    assert truthy(assert_that(task), _arming_vars(template, pyproject)) is expected, why
+    assert truthy(assert_that(task), _arming_vars(tmp_path, host_vars, pyproject)) is expected, why
+
+
+@pytest.mark.parametrize(
+    ("host_vars", "in_tree", "declared"),
+    [
+        pytest.param(NO_KEY_HOST_VARS, False, False, id="no-key"),
+        pytest.param(FALSE_HOST_VARS, False, True, id="false-line"),
+        pytest.param(ARMED_HOST_VARS, True, True, id="true-line"),
+        pytest.param(TEMPLATED_ARMED_HOST_VARS, False, True, id="templated"),
+        pytest.param(DOUBLED_HOST_VARS, True, True, id="doubled"),
+        pytest.param(NO_KEY_HOST_VARS + "engine_exec_armed: true  # c\n", False, True, id="true-with-comment"),
+    ],
+)
+def test_the_render_reads_true_on_the_literal_line_alone_and_the_backstop_counts_every_declared_form(host_vars, in_tree, declared):
+    facts = set_facts(
+        find_task(load_tasks(ENGINE), DERIVE),
+        {"engine_host_vars_text": host_vars, "engine_pyproject_text": VERIFIED_PIN, "engine_verified_nautilus": RECORD},
+    )
+    assert (facts["engine_exec_armed_in_tree"], facts["engine_exec_armed_declared"]) == (in_tree, declared)
+
+
+def test_the_arming_derive_reads_the_hosts_vars_file_through_its_lookup(tmp_path):
+    playbook_dir = tmp_path / "infra" / "ansible"
+    vars_file = playbook_dir / "host_vars" / "zcrypto" / "vars.yml"
+    vars_file.parent.mkdir(parents=True)
+    committed = (ANSIBLE / "host_vars" / "zcrypto" / "vars.yml").read_text()
+    vars_file.write_text(re.sub(r"(?m)^engine_exec_armed:.*\n?", "", committed) + "engine_exec_armed: true\n")
+    read = find_task(load_tasks(ENGINE), READ)["ansible.builtin.set_fact"]
+    variables = {"playbook_dir": str(playbook_dir), "inventory_hostname": "zcrypto", "role_path": str(ANSIBLE / "roles" / "engine")}
+    text = set_facts({"ansible.builtin.set_fact": {"engine_host_vars_text": read["engine_host_vars_text"]}}, variables)
+    derived = set_facts(
+        find_task(load_tasks(ENGINE), DERIVE),
+        {**variables, **text, "engine_pyproject_text": VERIFIED_PIN, "engine_verified_nautilus": RECORD},
+    )
+    assert derived["engine_exec_armed_in_tree"] is True
+
+
+DISARMED_SHAPES = (("no-key", NO_KEY_HOST_VARS), ("false-line", FALSE_HOST_VARS))
+# The render's fact itself: as a JSON extra var, as `-e k=v` hands it, and as strings `| bool` reads
+# false while the rendered `exec_armed = <value>` still parses as TOML true.
+IN_TREE_INJECTIONS = (
+    ("bool-true", True),
+    ("string-true", "true"),
+    ("true-comment", "true #"),
+    ("true-newline", "true\n"),
+    ("space-true", " true"),
+)
+
+
+@pytest.mark.parametrize(
+    ("host_vars", "extra_vars"),
+    [
+        *[
+            pytest.param(host_vars, {"engine_exec_armed_in_tree": value}, id=f"{shape}-{label}")
+            for shape, host_vars in DISARMED_SHAPES
+            for label, value in IN_TREE_INJECTIONS
+        ],
+        # The text both facts derive from.
+        *[
+            pytest.param(host_vars, {"engine_host_vars_text": ARMED_HOST_VARS}, id=f"{shape}-armed-text")
+            for shape, host_vars in DISARMED_SHAPES
+        ],
+        # A string `| bool` reads true on an armed file, which the template would render verbatim.
+        pytest.param(ARMED_HOST_VARS, {"engine_exec_armed_in_tree": "yes"}, id="armed-yes"),
+    ],
+)
+def test_an_extra_var_on_the_facts_name_fails_the_backstop(tmp_path, host_vars, extra_vars):
+    task = find_task(load_tasks(ENGINE), ARMING)
+    derived = _arming_vars(tmp_path, host_vars, VERIFIED_PIN)
+    assert truthy(assert_that(task), derived)
+    injected = _arming_vars(tmp_path, host_vars, VERIFIED_PIN, extra_vars=extra_vars)
+    assert injected["engine_exec_armed_in_tree"] != derived["engine_exec_armed_in_tree"]
+    # The pin gate admits it on a verified version: the refusal is the recompute's.
+    assert truthy(assert_that(task)[0], injected)
+    assert not truthy(assert_that(task), injected)
+
+
+@pytest.mark.parametrize(
+    ("host_vars", "value"),
+    [
+        pytest.param(TEMPLATED_ARMED_HOST_VARS, False, id="templated-false"),
+        pytest.param(TEMPLATED_ARMED_HOST_VARS, "false", id="templated-string-false"),
+        # `| bool` reads it as the file's own true; the recompute compares it exactly.
+        pytest.param(FALSE_HOST_VARS, "yes", id="false-line-yes"),
+    ],
+)
+def test_an_extra_var_on_the_declared_fact_fails_the_backstop(tmp_path, host_vars, value):
+    task = find_task(load_tasks(ENGINE), ARMING)
+    injected = _arming_vars(tmp_path, host_vars, UNVERIFIED_PIN, extra_vars={"engine_exec_armed_declared": value})
+    # The injected value opens the pin gate's first disjunct: the refusal is the recompute's.
+    assert truthy(assert_that(task)[0], injected)
+    assert not truthy(assert_that(task), injected)
+
+
+def test_a_doubled_arming_key_counts_armed_in_the_file_and_in_an_extra_vars_text(tmp_path):
+    task = find_task(load_tasks(ENGINE), ARMING)
+    assert not truthy(assert_that(task), _arming_vars(tmp_path, DOUBLED_HOST_VARS, UNVERIFIED_PIN))
+    assert truthy(assert_that(task), _arming_vars(tmp_path, DOUBLED_HOST_VARS, VERIFIED_PIN))
+    injected = _arming_vars(tmp_path, ARMED_HOST_VARS, UNVERIFIED_PIN, extra_vars={"engine_host_vars_text": DOUBLED_HOST_VARS})
+    assert not truthy(assert_that(task), injected)
+
+
+# One extra var per name the pin gate reads, each value one that opens the gate's first condition on
+# an armed file whose pin the record does not list; the templated file is the armed form the text
+# can be swapped under.
+PIN_DOORS = [
+    pytest.param(TEMPLATED_ARMED_HOST_VARS, {"engine_host_vars_text": FALSE_HOST_VARS}, id="host-vars-text"),
+    pytest.param(ARMED_HOST_VARS, {"engine_pyproject_text": VERIFIED_PIN}, id="pyproject-text"),
+    pytest.param(ARMED_HOST_VARS, {"engine_pinned_nautilus": "1.230.0"}, id="pinned"),
+    pytest.param(ARMED_HOST_VARS, {"engine_verified_nautilus": [UNVERIFIED_PIN_VERSION]}, id="verified-record"),
+    pytest.param(ARMED_HOST_VARS, {"engine_verified_list": [UNVERIFIED_PIN_VERSION]}, id="verified-list"),
+]
+
+
+@pytest.mark.parametrize(("host_vars", "extra_vars"), PIN_DOORS)
+def test_an_extra_var_on_a_name_the_pin_gate_reads_fails_the_backstop(tmp_path, host_vars, extra_vars):
+    task = find_task(load_tasks(ENGINE), ARMING)
+    assert not truthy(assert_that(task), _arming_vars(tmp_path, host_vars, UNVERIFIED_PIN))
+    injected = _arming_vars(tmp_path, host_vars, UNVERIFIED_PIN, extra_vars=extra_vars)
+    # The injected value opens the pin gate: the refusal is the condition that pins the name.
+    assert truthy(assert_that(task)[0], injected)
+    assert not truthy(assert_that(task), injected)
+
+
+def _norm(text: str) -> str:
+    return " ".join(text.split())
+
+
+def test_the_backstops_recompute_reads_the_file_and_the_regex_the_derive_task_reads():
+    tasks = load_tasks(ENGINE)
+    read = find_task(tasks, READ)["ansible.builtin.set_fact"]["engine_host_vars_text"]
+    derive = find_task(tasks, DERIVE)["ansible.builtin.set_fact"]
+    (lookup,) = re.findall(r"lookup\('file', [^)]*\)", read)
+    conditions = assert_that(find_task(tasks, ARMING))
+    # The rendered fact is compared as the string the template renders, the declared one exactly.
+    shapes = {
+        "engine_exec_armed_in_tree": ("(engine_exec_armed_in_tree | lower) == (", " | lower)"),
+        "engine_exec_armed_declared": ("engine_exec_armed_declared == (", ")"),
+    }
+    for fact, (head, tail) in shapes.items():
+        recompute = [c for c in conditions if c.startswith(head)]
+        assert len(recompute) == 1, f"no condition of the backstop recomputes {fact} from the file as {head!r}: {conditions}"
+        assert recompute[0].endswith(tail), recompute[0]
+        assert lookup in recompute[0], (lookup, recompute[0])
+        assert re.findall(r"regex_search\('([^']*)'\)", recompute[0]) == re.findall(r"regex_search\('([^']*)'\)", derive[fact])
+
+
+def test_every_other_fact_the_backstop_reads_is_pinned_to_its_own_set_fact_expression():
+    tasks = load_tasks(ENGINE)
+    facts = {**find_task(tasks, READ)["ansible.builtin.set_fact"], **find_task(tasks, DERIVE)["ansible.builtin.set_fact"]}
+    conditions = [_norm(c) for c in assert_that(find_task(tasks, ARMING))]
+    for name, expression in facts.items():
+        if name in ("engine_exec_armed_in_tree", "engine_exec_armed_declared"):
+            continue
+        inner = _norm(expression)
+        assert inner.startswith("{{ ") and inner.endswith(" }}"), (name, inner)
+        pins = [c for c in conditions if c.startswith(f"{name} == (")]
+        assert len(pins) == 1, f"no condition of the backstop pins {name} by exact equality: {conditions}"
+        assert pins[0] == f"{name} == ({inner[3:-3]})", (name, pins[0])
 
 
 @pytest.mark.parametrize(
     ("override", "expected"),
     [("", False), ("short", False), ("true", False), ("yes", False), (ARMING_REASON, True)],
 )
-def test_arming_backstop_override_demands_a_reason(override, expected):
+def test_arming_backstop_override_demands_a_reason(tmp_path, override, expected):
     """A bare flag must not open this gate -- the override has to carry a why, like its siblings."""
     task = find_task(load_tasks(ENGINE), ARMING)
-    variables = _arming_vars(ARMED_TEMPLATE, UNVERIFIED_PIN, override=override)
+    variables = _arming_vars(tmp_path, ARMED_HOST_VARS, UNVERIFIED_PIN, override=override)
     assert truthy(assert_that(task), variables) is expected
 
 
 @pytest.mark.parametrize(
-    ("template", "pyproject", "override", "expected"),
+    ("host_vars", "pyproject", "override", "expected"),
     [
-        (ARMED_TEMPLATE, UNVERIFIED_PIN, ARMING_REASON, True),  # overrode something -> echo the why
-        (ARMED_TEMPLATE, UNVERIFIED_PIN, "", False),  # refused; there is no why to echo
-        (ARMED_TEMPLATE, VERIFIED_PIN, ARMING_REASON, False),  # verified -> nothing was overridden
-        (DISARMED_TEMPLATE, UNVERIFIED_PIN, ARMING_REASON, False),  # disarmed -> nothing was overridden
-        (ARMED_TEMPLATE, TRIPLE_EQUALS_VERIFIED_PIN, ARMING_REASON, False),
-        (ARMED_TEMPLATE, TRIPLE_EQUALS_UNVERIFIED_PIN, ARMING_REASON, True),
+        (ARMED_HOST_VARS, UNVERIFIED_PIN, ARMING_REASON, True),  # overrode something -> echo the why
+        (ARMED_HOST_VARS, UNVERIFIED_PIN, "", False),  # refused; there is no why to echo
+        (ARMED_HOST_VARS, VERIFIED_PIN, ARMING_REASON, False),  # verified -> nothing was overridden
+        # disarmed -> nothing was overridden
+        *[(host_vars, UNVERIFIED_PIN, ARMING_REASON, False) for host_vars in DISARMED_HOST_VARS],
+        (TEMPLATED_ARMED_HOST_VARS, UNVERIFIED_PIN, ARMING_REASON, True),
+        (DOUBLED_HOST_VARS, UNVERIFIED_PIN, ARMING_REASON, True),
+        (ARMED_HOST_VARS, TRIPLE_EQUALS_VERIFIED_PIN, ARMING_REASON, False),
+        (ARMED_HOST_VARS, TRIPLE_EQUALS_UNVERIFIED_PIN, ARMING_REASON, True),
     ],
 )
-def test_arming_override_echo_fires_only_on_an_accepted_override(template, pyproject, override, expected):
-    task = find_task(load_tasks(ENGINE), "arming override accepted — the reason, on the record")
-    assert truthy(when_conditions(task), _arming_vars(template, pyproject, override=override)) is expected
+def test_arming_override_echo_fires_only_on_an_accepted_override(tmp_path, host_vars, pyproject, override, expected):
+    task = find_task(load_tasks(ENGINE), ARMING_ECHO)
+    assert truthy(when_conditions(task), _arming_vars(tmp_path, host_vars, pyproject, override=override)) is expected
 
 
 @pytest.mark.parametrize(("record", "why"), MALFORMED_RECORDS)
-def test_arming_override_echo_fires_on_a_malformed_record(record, why):
-    task = find_task(load_tasks(ENGINE), "arming override accepted — the reason, on the record")
-    variables = _arming_vars(ARMED_TEMPLATE, UNVERIFIED_PIN, override=ARMING_REASON, record=record)
+def test_arming_override_echo_fires_on_a_malformed_record(tmp_path, record, why):
+    task = find_task(load_tasks(ENGINE), ARMING_ECHO)
+    variables = _arming_vars(tmp_path, ARMED_HOST_VARS, UNVERIFIED_PIN, override=ARMING_REASON, record=record)
     assert truthy(when_conditions(task), variables), why
+
+
+def _arming_fail_msg(variables: dict) -> str:
+    from ansible.template import trust_as_template
+
+    fail_msg = find_task(load_tasks(ENGINE), ARMING)["ansible.builtin.assert"]["fail_msg"]
+    return str(Templar(loader=DataLoader(), variables=variables).template(trust_as_template(fail_msg)))
 
 
 @pytest.mark.parametrize(
@@ -1367,44 +1565,65 @@ def test_arming_override_echo_fires_on_a_malformed_record(record, why):
         ],
     ],
 )
-def test_arming_backstop_fail_msg_renders_the_diagnostic(pyproject, record, names):
-    from ansible.template import trust_as_template
-
-    task = find_task(load_tasks(ENGINE), ARMING)
-    variables = _arming_vars(ARMED_TEMPLATE, pyproject, record=record)
-    fail_msg = task["ansible.builtin.assert"]["fail_msg"]
-    rendered = str(Templar(loader=DataLoader(), variables=variables).template(trust_as_template(fail_msg)))
+def test_arming_backstop_fail_msg_renders_the_diagnostic(tmp_path, pyproject, record, names):
+    rendered = _arming_fail_msg(_arming_vars(tmp_path, ARMED_HOST_VARS, pyproject, record=record))
     for name in names:
         assert name in rendered, rendered
 
 
-def test_arming_backstop_reads_the_real_committed_files():
-    """Both directions from the REAL role, template and pyproject: a recorded version passes, an
-    absent one refuses."""
-    record = json.loads((REPO / "cli" / "engine" / "order-semantics-verified.json").read_text())
-    versions = record["verified_nautilus_versions"]
-    pin = _pinned_nautilus_version()
-    template = (ANSIBLE / "roles" / "engine" / "templates" / "zcrypto.toml.j2").read_text()
+@pytest.mark.parametrize(
+    ("host_vars", "extra_vars"),
+    [
+        pytest.param(FALSE_HOST_VARS, {"engine_exec_armed_in_tree": "true"}, id="in-tree"),
+        pytest.param(FALSE_HOST_VARS, {"engine_exec_armed_declared": "false"}, id="declared"),
+        *PIN_DOORS,
+    ],
+)
+def test_the_arming_backstops_fail_msg_names_the_disagreement(tmp_path, host_vars, extra_vars):
+    rendered = _arming_fail_msg(_arming_vars(tmp_path, host_vars, UNVERIFIED_PIN, extra_vars=extra_vars))
+    (name,) = extra_vars
+    assert rendered.startswith(
+        f"This converge's arming facts disagree with the files in the tree they are derived from: {name}. "
+    ), rendered
 
-    # Either literal: the runbook's arm and disarm PRs each flip only the template line.
-    assert re.search(r"(?m)^exec_armed *= *(true|false) *$", template), (
-        "the committed template must render exec_armed as a boolean literal"
-    )
-    assert "1.230.0" in versions, "the version whose attended pass actually ran must be recorded"
+
+def test_the_fail_msg_tests_every_pin_condition_of_the_assert_verbatim():
     task = find_task(load_tasks(ENGINE), ARMING)
-    armed = re.sub(r"(?m)^exec_armed *= *(true|false) *$", "exec_armed = true", template)
-    base = {
-        "engine_config_template_text": armed,
-        "engine_pyproject_text": (REPO / "pyproject.toml").read_text(),
-        "arming_override": "",
-    }
-    # TRUE POSITIVE: a recorded version must NOT be refused. Fed `versions + [pin]` rather than
-    # `versions` so this half holds in the interim where the bump has landed and its pass has not.
-    assert truthy(assert_that(task), _arming_derived({**base, "engine_verified_nautilus": [*versions, pin]})), (
-        "the guard refuses an armed converge on a version the record lists as verified"
-    )
+    fail_msg = _norm(task["ansible.builtin.assert"]["fail_msg"])
+    pins = [_norm(c) for c in assert_that(task)[1:]]
+    assert fail_msg.count("' if not (") == len(pins), fail_msg
+    for pin in pins:
+        (name,) = re.match(r"\(?(\w+)", pin).groups()
+        assert f"'{name}' if not ({pin}) else ''" in fail_msg, pin
+
+
+def test_arming_backstop_reads_the_real_committed_files(tmp_path):
+    """The real host_vars/zcrypto/vars.yml, pyproject and record through the real read and derive: the
+    tree as committed passes, and with `engine_exec_armed: true` substituted in it passes on the
+    recorded pin and refuses without it."""
+    versions = json.loads((REPO / "cli" / "engine" / "order-semantics-verified.json").read_text())["verified_nautilus_versions"]
+    pin = _pinned_nautilus_version()
+    committed = (ANSIBLE / "host_vars" / "zcrypto" / "vars.yml").read_text()
+    pyproject = (REPO / "pyproject.toml").read_text()
+    task = find_task(load_tasks(ENGINE), ARMING)
+    base = {"inventory_hostname": "zcrypto", "arming_override": ""}
+
+    as_committed = _arming_derived({**base, "playbook_dir": str(ANSIBLE)})
+    # Read with yaml rather than a copy of the derive's regex, which would match itself.
+    assert as_committed["engine_exec_armed_in_tree"] is (yaml.safe_load(committed).get("engine_exec_armed") is True)
+    assert truthy(assert_that(task), as_committed)
+
+    armed_text = re.sub(r"(?m)^engine_exec_armed:.*\n?", "", committed) + "engine_exec_armed: true\n"
+    assert "1.230.0" in versions, "the version whose attended pass actually ran must be recorded"
+    assert pin in versions, f"the pinned nautilus-trader {pin}'s attended order-semantics pass is not recorded"
+    armed = _arming_derived({**base, "playbook_dir": _arming_tree(tmp_path, armed_text, pyproject, versions)})
+    assert armed["engine_exec_armed_in_tree"] is True
+    assert truthy(assert_that(task), armed), "the guard refuses an armed converge on a version the record lists as verified"
     # THE BITE, against the real files: drop the pinned version and the guard must refuse again.
-    assert not truthy(assert_that(task), _arming_derived({**base, "engine_verified_nautilus": [v for v in versions if v != pin]}))
+    unrecorded = [v for v in versions if v != pin]
+    assert not truthy(
+        assert_that(task), _arming_derived({**base, "playbook_dir": _arming_tree(tmp_path, armed_text, pyproject, unrecorded)})
+    )
 
 
 # --- the cache proxy's guards.

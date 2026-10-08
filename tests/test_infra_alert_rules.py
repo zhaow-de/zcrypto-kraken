@@ -380,8 +380,7 @@ NOT_A_FAULT_SIGNAL = {
     "zcrypto_engine_journal_prune_deleted_days",
     "zcrypto_engine_journal_prune_kept_days",
     "zcrypto_engine_journal_prune_oldest_day_age_seconds",
-    # The execution safety envelope's unwatched families; armed, kill_tripped and
-    # last_evaluation_timestamp_seconds are watched, and this list is what keeps that true.
+    # The execution safety envelope's unwatched families; every other one carries a rule, and this list is what keeps that true.
     #   gate_level is the SUMMARY its inputs (armed, kill switch, restart hold, venue) already reduce
     #   to -- every value is legitimate depending on which input is active -- and the two worth
     #   paging on have their own rules.
@@ -394,8 +393,8 @@ NOT_A_FAULT_SIGNAL = {
     # capture side via zcrypto-capture-venue-not-online, which reads the daemon's own
     # zcrypto_capture_venue_status_total, so a second rule on this engine-side cached copy would
     # double-page the same event. The divergence that rule cannot see -- an engine-side REST read
-    # failing CLOSED parks this gauge at 0 while the venue is online -- is a deferred alert in
-    # docs/open-topics/T0018-phase6-build-sequence.md.
+    # failing CLOSED parks this gauge at 0 while the venue is online -- is watched through
+    # zcrypto_exec_venue_read_failed, which zcrypto-engine-exec-venue-diverged reads.
     "zcrypto_exec_venue_ok",
     # The execution instruments (spec 00090 D12). Attended-window instruments: arming is episodic, so
     # between windows these are legitimately flat and any rule on them is alarm fatigue, while inside
@@ -417,20 +416,25 @@ NOT_A_FAULT_SIGNAL = {
     "zcrypto_exec_resting_order_age_seconds",
     # The external-events counter is a forensic instrument: `matched` rising is a restart-adopted
     # order filling, and `unmatched` says an order event no entry in this engine's ledger vouches for
-    # arrived and was acted on nowhere. NO rule, deliberately and not by omission: the candidate --
-    # `unmatched` rising while `zcrypto_exec_armed` is 0 -- pages on the owner's own account
-    # activity, since a hand-placed order while the engine is disarmed is exactly an unmatched
-    # external event, and a rule on a forensic counter is a decision of its own. `zcrypto_exec_armed`
-    # itself is not the obstacle: it is published at every gate evaluation, the executor's idle
-    # refresh once a minute included, so it follows an arm or a disarm within that minute. The silent
-    # failure no rule could catch either way -- an adopted order whose events fail to key into
-    # `_attached` -- is a by-value reading in T0018.
+    # arrived. NO rule, deliberately and not by omission: the candidate -- `unmatched` rising while
+    # `zcrypto_exec_armed` is 0 -- pages on the owner's own account activity, since a hand-placed order
+    # while the engine is disarmed is exactly an unmatched external event, and a rule on a forensic
+    # counter is a decision of its own. `zcrypto_exec_armed` itself is not the obstacle: it is published
+    # at every gate evaluation, the executor's idle refresh once a minute included, so it follows an arm
+    # or a disarm within that minute. The silent failure no rule could catch either way -- an adopted
+    # order whose events fail to key into `_attached` -- is a by-value reading in T0018.
     "zcrypto_exec_external_events_total",
     # The weekly tracking-error verdict. NO rule, deliberately and not by omission: the only value
     # that is a fault -- the band breached -- latches the kill file, which
     # zcrypto-engine-exec-kill-tripped already pages on; `not scored` is a refusal to decide and
     # `disarmed` is the resting state of an engine never given a band.
     "zcrypto_exec_tracking_state",
+    # The accumulation loop's readings. NO rule on these three, deliberately: the gap per leg and the
+    # equity are readings the tracking trip and the drawdown kill already act on, and the drawdown's
+    # fault value latches the kill file, which zcrypto-engine-exec-kill-tripped pages on.
+    "zcrypto_exec_gap_eur",
+    "zcrypto_exec_equity_eur",
+    "zcrypto_exec_drawdown_bps",
     # A level-shift detail read on the board: the §10 whole-book limits binding is the limits doing
     # their job, not a fault. What would be a fault -- the book they shape going somewhere it should
     # not -- is the intent-side gauges' business, not this counter's.
@@ -2346,6 +2350,88 @@ def test_the_shipper_loss_rule_reads_alloys_two_loss_counters_and_keeps_the_logs
     assert "prometheus.exporter.self.alloy.targets" in scraped.split(", "), (
         "the node's Alloy no longer scrapes itself, so on the node this rule would read nothing"
     )
+
+
+# --- the accumulation loop's two rules -----------------------------------------------------------
+
+
+def test_a_freeze_past_fifteen_minutes_pages_and_the_hourly_three_second_blip_does_not():
+    rule = _rule("zcrypto-engine-exec-watchdog-frozen")
+    hold_for = _duration_seconds(rule["for"])
+    assert _evaluator(rule) == {"type": "gt", "params": [0.5]}
+    assert rule["noDataState"] == "OK", "the gauge is absent until the engine that publishes it is converged; NoData must not page"
+
+    def fires(samples):
+        run = 0
+        for t in range(0, 2 * 3600, 60):
+            if next((v for at, v in reversed(samples) if at <= t), 0) > 0.5:
+                run += 60
+                if run >= hold_for:
+                    return True
+            else:
+                run = 0
+        return False
+
+    assert fires([(0, 1), (16 * 60, 0)])
+    assert not fires([(0, 1), (3, 0)])
+    assert not fires([(0, 1), (14 * 60, 0)])
+
+
+def test_two_consecutive_undrafted_boundaries_page_and_one_followed_by_an_ok_boundary_does_not():
+    rule = _rule("zcrypto-engine-exec-boundary-not-drafted")
+    hold_for = _duration_seconds(rule["for"])
+    assert _evaluator(rule) == {"type": "gt", "params": [0.5]}
+    assert rule["noDataState"] == "OK", "the gauge is absent until the engine that publishes it is converged; NoData must not page"
+    expr = rule["data"][0]["model"]["expr"]
+    window = sum(int(n) * {"h": 3600, "m": 60}[u] for n, u in re.findall(r"(\d+)([hm])", re.search(r"\[(\w+)\]", expr).group(1)))
+    h4 = 4 * 3600
+
+    def fire_minute(samples):
+        # a step series scraped each minute from the process's start, 0 before its first sample
+        def value_at(s):
+            return next((v for at, v in reversed(samples) if at <= s), 0)
+
+        run = 0
+        for t in range(0, 14 * 3600, 60):
+            lowest = min(value_at(s) for s in range(max(0, t - window + 60), t + 1, 60))
+            run = run + 60 if lowest > 0.5 else 0
+            if run >= hold_for:
+                return t
+        return None
+
+    # the last 0 sample sits a minute before the boundary's write
+    assert fire_minute([(0, 0), (3600, 1), (3600 + h4, 1)]) == 3600 + h4 + 38 * 60
+    assert fire_minute([(0, 0), (3600, 1), (3600 + h4, 0)]) is None
+    assert fire_minute([(0, 0)]) is None
+    assert rule["data"][0]["relativeTimeRange"]["from"] == window
+
+
+# --- the engine's own read of the venue's status -------------------------------------------------
+
+
+def test_the_engines_venue_read_failing_for_fifteen_minutes_pages_and_a_venue_maintenance_does_not():
+    rule = _rule("zcrypto-engine-exec-venue-diverged")
+    hold_for = _duration_seconds(rule["for"])
+    assert _evaluator(rule) == {"type": "gt", "params": [0.5]}
+    assert rule["noDataState"] == "OK", "the gauge is absent until the engine that publishes it is converged; NoData must not page"
+    (family,) = re.fullmatch(r'(\w+)\{host="zcrypto"\}', rule["data"][0]["model"]["expr"]).groups()
+
+    def fires(series):
+        samples = series.get(family, [])
+        run = 0
+        for t in range(0, 3 * 3600, 60):
+            if next((v for at, v in reversed(samples) if at <= t), 0) > 0.5:
+                run += 60
+                if run >= hold_for:
+                    return True
+            else:
+                run = 0
+        return False
+
+    assert fires({"zcrypto_exec_venue_read_failed": [(0, 1), (16 * 60, 0)]})
+    assert not fires({"zcrypto_exec_venue_read_failed": [(0, 1), (14 * 60, 0)]})
+    maintenance = {"zcrypto_exec_venue_ok": [(0, 0), (2 * 3600, 1)], "zcrypto_exec_venue_read_failed": [(0, 0)]}
+    assert not fires(maintenance)
 
 
 def test_the_split_rule_counts_versions_across_every_host_for_a_day():

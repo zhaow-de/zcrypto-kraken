@@ -869,6 +869,24 @@ def test_a_panels_red_line_agrees_with_the_rule_it_charts():
     assert not bad, "a panel's red line disagrees with the rule that points at it:\n  " + "\n  ".join(bad)
 
 
+def test_the_venue_tiles_read_failure_shows_its_firing_value_red_and_not_as_online():
+    # A target with no override of its own inherits the tile's `1` -> ONLINE mapping, which the red-line
+    # test above accepts as covering the rule's firing value, so the firing read would show a green ONLINE.
+    (board,) = [dash for filename, dash in dashboards() if filename == "engine-dashboard.json"]
+    (panel,) = [p for p in _walk_panels(board["panels"]) if p.get("id") == 55]
+    (target,) = [t for t in _prom_targets(panel) if "zcrypto_exec_venue_read_failed" in promql_families(t["expr"])]
+    overrides = {o["matcher"]["options"]: o for o in panel["fieldConfig"]["overrides"] if o["matcher"]["id"] == "byFrameRefID"}
+    assert target["refId"] in overrides, f"refId {target['refId']} carries no override of its own, so it reads the tile's mapping"
+    mapped = {
+        value: option
+        for prop in overrides[target["refId"]]["properties"]
+        if prop["id"] == "mappings"
+        for mapping in prop["value"]
+        for value, option in mapping["options"].items()
+    }
+    assert mapped.get("1", {}).get("color") == "red" and mapped["1"].get("text") != "ONLINE", mapped
+
+
 def test_a_label_values_host_variable_reaches_only_the_nodes_its_selector_admits():
     def reach(query: str) -> frozenset[str]:
         return _host_variables({"templating": {"list": [{"name": "h", "type": "query", "query": query}]}})["h"]

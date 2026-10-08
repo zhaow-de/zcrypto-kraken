@@ -4,6 +4,7 @@ no live node."""
 
 import ast
 import json
+import os
 import re
 import subprocess
 import sys
@@ -26,6 +27,7 @@ from cli.engine.execgate import GateLevel, GateVerdict
 from cli.engine.execledger import append_plan_entry, write_exec_record
 from cli.engine.journal import CycleRecord, SnapshotEntry, snapshot_content_hash, to_json, validate_record
 from cli.engine.store import BASKET, GRID_INTERVALS, PAIR_KEYS, SeedEntry, SeedReport, _store_path
+from cli.engine.tracking import read_opening_holdings
 from cli.engine.venue import VenueStatus
 from cli.ohlc.dataset import write_parquet
 
@@ -1343,3 +1345,92 @@ def test_the_node_stub_offers_nothing_the_real_type_lacks():
     assert stale == [], f"the plumbing list exempts {stale}, which LiveNode DOES carry -- check them instead"
     extra = sorted(name for name in offered if not hasattr(LiveNode, name))
     assert extra == [], f"the stub node offers {extra}, which the real LiveNode does not carry"
+
+
+# --- the opening holdings' writer ----------------------------------------------------------------
+
+_RUNG2 = REPO / "tests" / "fixtures" / "rung2"
+_BIRTH = datetime(2026, 11, 9, tzinfo=UTC)
+_EUR_ROW = {"balance": 1500.0, "hold_trade": 0.0}
+_TEN_BASES = ["ADA", "AVAX", "BTC", "DOGE", "DOT", "ETH", "LINK", "LTC", "SOL", "XRP"]
+
+
+def _write_opening(
+    case_dir: Path, rows: dict, *, birth: datetime = _BIRTH, written_at: datetime | None = None, cycle: Path | None = None
+):
+    """The writer over `rows` as the balance export, whose file time is an hour before `birth` unless `written_at` says."""
+    case_dir.mkdir(parents=True)
+    export = case_dir / "balance.json"
+    export.write_text(json.dumps(rows))
+    stamp = (written_at if written_at is not None else birth - timedelta(hours=1)).timestamp()
+    os.utime(export, (stamp, stamp))
+    out = case_dir / "exec" / "opening-holdings.json"
+    argv = ["engine", "opening-holdings", "--balance", str(export), "--cycle", str(cycle or _RUNG2 / "cycle-12.json")]
+    return runner.invoke(app, [*argv, "--birth", birth.isoformat(), "--out", str(out)]), out
+
+
+def test_the_opening_writer_reads_spot_rows_and_refuses_a_basket_coin_under_an_earn_code(tmp_path):
+    for name, rows, base in (
+        (
+            "btc-earn",
+            {"BTC": {"balance": 0.0001, "hold_trade": 0.0}, "XBT.M": {"balance": 0.0002, "hold_trade": 0.0}, "EUR": _EUR_ROW},
+            "BTC",
+        ),
+        ("sol-earn", {"SOL.F": {"balance": 1.0, "hold_trade": 0.0}, "EUR": _EUR_ROW}, "SOL"),
+    ):
+        result, out = _write_opening(tmp_path / name, rows)
+        assert result.exit_code != 0 and f"{base} outside the spot wallet" in _output(result), (name, _output(result))
+        assert not out.parent.exists(), name
+
+    spot = {
+        "BTC": {"balance": 0.0001, "hold_trade": 0.0},
+        "XDG": {"balance": 5.0, "hold_trade": 0.0},
+        "XBT.M": {"balance": 0.0, "hold_trade": 0.0},
+        "EUR": _EUR_ROW,
+        "BNB": {"balance": 0.0, "hold_trade": 0.0},
+        "EURC": {"balance": 0.0, "hold_trade": 0.0},
+    }
+    result, out = _write_opening(tmp_path / "spot", spot)
+    assert result.exit_code == 0, _output(result)
+    opening = read_opening_holdings(out)
+    assert opening.birth == _BIRTH
+    assert {base: held for base, held in opening.held.items() if held} == {"BTC": 0.0001, "DOGE": 5.0}
+    written = {row["base"]: row for row in json.loads(out.read_text())["rows"]}
+    assert sorted(written) == _TEN_BASES
+    assert (written["BTC"]["codes"], written["DOGE"]["codes"]) == (["BTC"], ["XDG"])
+    assert [path.name for path in out.parent.iterdir()] == [out.name]
+    closes = json.loads((_RUNG2 / "cycle-12.json").read_text())["closes"]
+    assert f"total {0.0001 * closes['BTC'] + 5.0 * closes['DOGE']:.2f} EUR" in _output(result)
+
+    no_link = json.loads((_RUNG2 / "cycle-12.json").read_text())
+    del no_link["closes"]["LINK"]
+    cycle = tmp_path / "cycle-no-link.json"
+    cycle.write_text(json.dumps(no_link))
+    result, out = _write_opening(tmp_path / "no-close", spot, cycle=cycle)
+    assert result.exit_code != 0 and "carries no close for LINK" in _output(result), _output(result)
+    assert not out.parent.exists()
+
+    for name, written_at, birth in (
+        ("written-at-the-birth", _BIRTH, _BIRTH),
+        ("written-a-minute-after", _BIRTH + timedelta(minutes=1), _BIRTH),
+        ("a-boundary-later", _BIRTH - timedelta(hours=1), _BIRTH + timedelta(hours=4)),
+    ):
+        result, out = _write_opening(tmp_path / name, spot, birth=birth, written_at=written_at)
+        assert result.exit_code != 0 and "the first 4-hourly boundary after the balance export" in _output(result), name
+        assert not out.parent.exists(), name
+    result, out = _write_opening(
+        tmp_path / "off-the-grid", spot, birth=_BIRTH + timedelta(minutes=30), written_at=_BIRTH - timedelta(hours=1)
+    )
+    assert result.exit_code != 0 and not out.parent.exists()
+
+
+def test_the_opening_writer_refuses_an_export_with_an_order_resting_on_a_basket_coin_or_on_eur(tmp_path):
+    for name, rows, held in (
+        ("btc-sell", {"BTC": {"balance": 0.0002, "hold_trade": 0.0001}, "EUR": _EUR_ROW}, "BTC has 0.0001"),
+        ("eur-buy", {"BTC": {"balance": 0.0001, "hold_trade": 0.0}, "EUR": {"balance": 1500.0, "hold_trade": 50.0}}, "EUR has 50"),
+        # LINK is a basket coin the rung-2 helper's nine legs leave out.
+        ("link-sell", {"LINK": {"balance": 1.0, "hold_trade": 0.5}, "EUR": _EUR_ROW}, "LINK has 0.5"),
+    ):
+        result, out = _write_opening(tmp_path / name, rows)
+        assert result.exit_code != 0 and f"{held} held against a resting order" in _output(result), (name, _output(result))
+        assert not out.parent.exists(), name

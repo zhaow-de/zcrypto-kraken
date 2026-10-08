@@ -57,10 +57,10 @@ NOW = datetime(2026, 7, 10, 8, 3, tzinfo=UTC)
 
 @pytest.fixture(autouse=True)
 def _no_production_venue_read(monkeypatch):
-    """The executor's default venue read and holdings read are a real client on the trade credentials,
-    and a developer's shell may hold them; a case here that ticks an executor runs its startup pass.
-    Reaching either fails the test through every `except Exception` on the way, because `pytest.fail`
-    raises a BaseException."""
+    """The executor's default venue read, holdings read and status read are a real client on the trade
+    credentials, and a developer's shell may hold them; a case here that ticks an executor runs its
+    startup pass. Reaching one fails the test through every `except Exception` on the way, because
+    `pytest.fail` raises a BaseException."""
 
     def _refuse(*args, **kwargs):
         pytest.fail("a test reached the production venue read -- pass venue_orders")
@@ -68,8 +68,13 @@ def _no_production_venue_read(monkeypatch):
     def _refuse_holdings(*args, **kwargs):
         pytest.fail("a test reached the production venue holdings read -- pass venue_holdings")
 
+    def _refuse_statuses(*args, **kwargs):
+        pytest.fail("a test reached the production instrument status read -- pass instrument_statuses")
+
     monkeypatch.setattr(executor_module, "read_venue_orders", _refuse)
     monkeypatch.setattr(executor_module, "read_venue_holdings", _refuse_holdings)
+    monkeypatch.setattr(executor_module, "read_venue_book", _refuse_holdings)
+    monkeypatch.setattr(executor_module, "read_instrument_statuses", _refuse_statuses)
 
 
 def _base(asset: str) -> float:
@@ -1090,6 +1095,31 @@ def test_exec_gauges_publish_the_verdict():
     assert reg.get_sample_value("zcrypto_exec_last_evaluation_timestamp_seconds") == NOW.timestamp()
 
 
+@pytest.mark.parametrize(
+    "venue_status,failed",
+    [("unreachable", 1), ("unreadable", 1), ("online", 0), ("maintenance", 0), ("cancel_only", 0), ("post_only", 0)],
+)
+def test_the_venue_read_failure_reads_1_on_a_failed_read_and_0_on_a_word_the_venue_answered(venue_status, failed):
+    reg = CollectorRegistry()
+    _ExecGauges(reg).update(
+        GateVerdict(
+            level=GateLevel.FULL if venue_status == "online" else GateLevel.NONE,
+            reasons=() if venue_status == "online" else ("venue_not_online",),
+            inputs={
+                "armed_in_config": True,
+                "arm_file": True,
+                "kill_file": False,
+                "restart_hold": False,
+                "venue_status": venue_status,
+                "venue_snapshot_age_seconds": 0.0,
+            },
+        ),
+        evaluated_at=NOW,
+    )
+    assert reg.get_sample_value("zcrypto_exec_venue_read_failed") == failed
+    assert reg.get_sample_value("zcrypto_exec_venue_ok") == (1 if venue_status == "online" else 0)
+
+
 def test_armed_requires_BOTH_keys():
     for cfg_armed, file_armed in ((True, False), (False, True), (False, False)):
         reg = CollectorRegistry()
@@ -1676,12 +1706,11 @@ def test_a_fee_the_caller_could_not_denominate_in_eur_counts_the_fill_but_not_th
 
 def test_external_events_counter_preregisters_both_dispositions():
     """`unmatched` is the disposition that carries the signal, and it is the one whose ZERO has to be
-    a measured fact from the first scrape: an event the engine counted and ignored is the only trace
-    a fill on an order this engine's ledger does not vouch for ever leaves. A series that springs
-    into existence at the first such event reads identically to a scrape gap right up to the moment
-    it matters, and gives `rate()` no baseline to measure the step against. Both children therefore
-    exist at 0 before anything happens, and an event moves EXACTLY one of them -- a helper that
-    incremented both, or the wrong one, would report a matched adoption as an unvouched stranger."""
+    a measured fact from the first scrape: a series that springs into existence at the first such event
+    reads identically to a scrape gap right up to the moment it matters, and gives `rate()` no baseline
+    to measure the step against. Both children therefore exist at 0 before anything happens, and an
+    event moves EXACTLY one of them -- a helper that incremented both, or the wrong one, would report a
+    matched adoption as an unvouched stranger."""
     registry = CollectorRegistry()
     metrics = command._ExecutionMetrics(registry)
 
@@ -1768,7 +1797,7 @@ def test_a_raising_ledger_writer_freezes_the_heartbeat_while_the_idle_refresh_mo
     reason the gap is monitored rather than merely documented: reverse the first and the ledger
     could fail silently for days behind a heartbeat that keeps ticking; drop the second and the
     refresh would tick it for the ledger."""
-    from test_engine_executor import StubClient
+    from test_engine_executor import StubClient, _VenueHoldings
 
     from cli.engine.execgate import KILL_FILE, exec_dir
     from cli.engine.executor import ProbeExecutor, set_executor_hooks
@@ -1784,7 +1813,9 @@ def test_a_raising_ledger_writer_freezes_the_heartbeat_while_the_idle_refresh_mo
     sink = command._make_exec_sink(gate, tmp_path / "journal", None, exec_gauges, None)
     clock = types.SimpleNamespace(now=t0)
     config = EngineConfig(journal_dir=tmp_path / "journal", store_dir=tmp_path / "store")
-    executor = ProbeExecutor(client=StubClient(), gate=gate, config=config, clock=lambda: clock.now)
+    executor = ProbeExecutor(
+        client=StubClient(), gate=gate, config=config, clock=lambda: clock.now, venue_holdings=_VenueHoldings()
+    )
     set_executor_hooks(publish_verdict=exec_gauges.update)
     try:
         sink(_sink_result(t0), t0, 1.0)  # one healthy cycle: the heartbeat is t0
@@ -1841,6 +1872,10 @@ def test_a_production_venue_read_is_refused_here_before_any_client_is_built(monk
         executor_module.read_venue_orders(NOW)
     with pytest.raises(pytest.fail.Exception, match="the production venue holdings read"):
         executor_module.read_venue_holdings()
+    with pytest.raises(pytest.fail.Exception, match="the production venue holdings read"):
+        executor_module.read_venue_book()
+    with pytest.raises(pytest.fail.Exception, match="the production instrument status read"):
+        executor_module.read_instrument_statuses()
 
 
 # --- run(): the execution metrics, their seed, and the executor hooks ---------------------------
@@ -1956,6 +1991,115 @@ def test_the_tracking_state_alphabet_never_publishes_zero_and_the_help_names_eve
     metrics.set_tracking_state(sorted(emitted)[0])
     documentation = _families(registry)["zcrypto_exec_tracking_state"].documentation
     assert {int(code) for code in re.findall(r"(\d+) = ", documentation)} == emitted
+
+
+# --- the accumulation families -------------------------------------------------------------------
+
+
+def _exposed(registry: CollectorRegistry) -> dict:
+    return {
+        (sample.name, tuple(sorted(sample.labels.items()))): sample.value
+        for family in text_string_to_metric_families(generate_latest(registry).decode())
+        for sample in family.samples
+    }
+
+
+def test_the_gap_is_eager_at_zero_on_exactly_the_ten_legs_the_holdings_read_counts_under():
+    registry = CollectorRegistry()
+    command._ExecutionMetrics(registry)
+
+    gaps = {labels: value for (name, labels), value in _exposed(registry).items() if name == "zcrypto_exec_gap_eur"}
+    expected = {(("symbol", symbol),) for symbol in executor_module._SPOT_SYMBOL_BY_BASE.values()}
+    assert len(expected) == 10
+    assert gaps == dict.fromkeys(expected, 0.0)
+
+
+def test_the_freeze_and_the_undrafted_boundary_are_eager_at_zero_and_the_equity_and_drawdown_absent_until_set():
+    registry = CollectorRegistry()
+    metrics = command._ExecutionMetrics(registry)
+
+    before = _exposed(registry)
+    assert before[("zcrypto_exec_watchdog_frozen", ())] == 0.0
+    assert before[("zcrypto_exec_boundary_not_drafted", ())] == 0.0
+    assert {name for name, _ in before} & {"zcrypto_exec_equity_eur", "zcrypto_exec_drawdown_bps"} == set()
+
+    metrics.set_gap("BTC/EUR", -42.05)
+    metrics.set_equity(1012.5)
+    metrics.set_drawdown(37.5)
+    metrics.set_watchdog_frozen(True)
+    metrics.set_boundary_not_drafted(True)
+
+    after = _exposed(registry)
+    assert after[("zcrypto_exec_gap_eur", (("symbol", "BTC/EUR"),))] == -42.05
+    assert after[("zcrypto_exec_equity_eur", ())] == 1012.5
+    assert after[("zcrypto_exec_drawdown_bps", ())] == 37.5
+    assert after[("zcrypto_exec_watchdog_frozen", ())] == 1.0
+    assert after[("zcrypto_exec_boundary_not_drafted", ())] == 1.0
+
+    metrics.set_watchdog_frozen(False)
+    metrics.set_boundary_not_drafted(False)
+    assert registry.get_sample_value("zcrypto_exec_watchdog_frozen") == 0.0
+    assert registry.get_sample_value("zcrypto_exec_boundary_not_drafted") == 0.0
+
+
+def test_a_gap_for_a_symbol_outside_the_ten_raises_nothing_and_mints_no_series():
+    registry = CollectorRegistry()
+    metrics = command._ExecutionMetrics(registry)
+    before = _exposed(registry)
+
+    metrics.set_gap("ETH/BTC", 5.0)
+    metrics.set_gap("BNB/EUR", 5.0)
+
+    assert _exposed(registry) == before
+
+
+def test_the_accumulation_hooks_are_a_noop_without_metrics_and_reach_the_installed_families_with_them(caplog):
+    assert executor_module._metrics is None
+    with _zcrypto_caplog_attached(caplog), caplog.at_level(logging.ERROR, logger="zcrypto"):
+        executor_module._set_gap("BTC/EUR", 1.0)
+        executor_module._set_equity(1000.0)
+        executor_module._set_drawdown(10.0)
+        executor_module._set_frozen(True)
+        executor_module._set_boundary_not_drafted(True)
+    # Without the None-guard each call reaches `None.<setter>` inside the wrapper, which raises nothing and logs.
+    assert [r for r in caplog.records if r.getMessage() == "executor metrics hook raised -- continuing"] == []
+
+    registry = CollectorRegistry()
+    executor_module.set_executor_hooks(metrics=command._ExecutionMetrics(registry))
+    executor_module._set_gap("SOL/EUR", -3.5)
+    executor_module._set_equity(990.0)
+    executor_module._set_drawdown(100.0)
+    executor_module._set_frozen(True)
+    executor_module._set_boundary_not_drafted(True)
+
+    assert registry.get_sample_value("zcrypto_exec_gap_eur", {"symbol": "SOL/EUR"}) == -3.5
+    assert registry.get_sample_value("zcrypto_exec_equity_eur") == 990.0
+    assert registry.get_sample_value("zcrypto_exec_drawdown_bps") == 100.0
+    assert registry.get_sample_value("zcrypto_exec_watchdog_frozen") == 1.0
+    assert registry.get_sample_value("zcrypto_exec_boundary_not_drafted") == 1.0
+
+
+def test_a_raising_accumulation_hook_is_logged_and_never_reaches_the_caller(caplog):
+    def _raise_on_call(*args, **kwargs):
+        raise RuntimeError("registry gone")
+
+    raising = types.SimpleNamespace(
+        set_gap=_raise_on_call,
+        set_equity=_raise_on_call,
+        set_drawdown=_raise_on_call,
+        set_watchdog_frozen=_raise_on_call,
+        set_boundary_not_drafted=_raise_on_call,
+    )
+    executor_module.set_executor_hooks(metrics=raising)
+    with _zcrypto_caplog_attached(caplog), caplog.at_level(logging.ERROR, logger="zcrypto"):
+        executor_module._set_gap("BTC/EUR", 1.0)
+        executor_module._set_equity(1000.0)
+        executor_module._set_drawdown(10.0)
+        executor_module._set_frozen(True)
+        executor_module._set_boundary_not_drafted(True)
+
+    # By identity: a session where the "zcrypto" logger still propagates hands caplog each record twice.
+    assert len({id(r) for r in caplog.records if r.getMessage() == "executor metrics hook raised -- continuing"}) == 5
 
 
 # --- this file's own stub node is a restatement of LiveNode / LiveNodeHandle ---------------------

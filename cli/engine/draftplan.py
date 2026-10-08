@@ -209,9 +209,9 @@ def _amount(value: object, what: str) -> float:
     return number
 
 
-def parse_balance_export(doc: object) -> BalanceExport:
+def parse_balance_export(doc: object, *, bases: frozenset[str] = _BASES) -> BalanceExport:
     # flatten imports nautilus; at module level every `zcrypto engine --help` would pay for it.
-    from cli.engine.flatten import resolve_base
+    from cli.engine.flatten import earn_wallet_base, resolve_base
 
     if isinstance(doc, dict) and isinstance(doc.get("error"), str):
         raise DraftPlanError(f"the balance export is an error answer, not balances: {doc.get('message') or doc['error']}")
@@ -231,10 +231,9 @@ def parse_balance_export(doc: object) -> BalanceExport:
             )
         balance = _amount(row["balance"], f"{code} balance")
         hold = _amount(row.get("hold_trade", 0), f"{code} hold_trade")
-        asset = resolve_base(code, _BASES | {"EUR"})
+        asset = resolve_base(code, bases | {"EUR"})
         if asset is None:
-            # Kraken's earn and staking codes: a suffix after a dot (`SOL.F`, `XBT.M`), a lock period (`DOT28.S`, `ETH2`).
-            wallet_base = resolve_base(re.sub(r"\d+$", "", code.split(".")[0]), _BASES)
+            wallet_base = earn_wallet_base(code, bases)
             if balance and wallet_base is not None:
                 raise DraftPlanError(
                     f"{code} holds {balance:.10g} {wallet_base} outside the spot wallet -- the leg would be drafted against "
@@ -253,7 +252,7 @@ def parse_balance_export(doc: object) -> BalanceExport:
         found[asset] = (code, balance)
     if "EUR" not in found:
         raise DraftPlanError("the balance export carries no EUR row")
-    held = {base: found[base][1] if base in found else 0.0 for base in sorted(_BASES)}
+    held = {base: found[base][1] if base in found else 0.0 for base in sorted(bases)}
     return BalanceExport(held=held, free_eur=found["EUR"][1], outside=outside)
 
 
@@ -320,7 +319,8 @@ def refuse_open_margin_positions(doc: object) -> None:
 
 
 def venue_balance(balances: dict, base: str) -> float:
-    # `executor._spot_balance`'s rule, so b is the figure the engine's own sell refusal reads.
+    # `executor._spot_balance`'s rule, so b is the figure the sell refusal of the engine image the box runs
+    # on reads; the tree's engine reads the venue's own book instead.
     from cli.engine.flatten import resolve_base
 
     for code, value in balances.items():
@@ -370,8 +370,9 @@ def decide_leg(
     engine_held: float | None,
     venue_b: float,
     exiting: bool = False,
+    eur_per_weight: float = EUR_PER_WEIGHT,
 ) -> LegDecision:
-    target = 0.0 if exiting else EUR_PER_WEIGHT * max(weight, 0.0)
+    target = 0.0 if exiting else eur_per_weight * max(weight, 0.0)
     leg = LegDecision(
         symbol=symbol,
         weight=weight,
@@ -401,7 +402,7 @@ def decide_leg(
         qty = _floor_to_step(kraken_held, constraints.lot_step)
         reason = "the whole leg" if exiting else "the whole leg: the remainder would be under ordermin"
     if 0 < venue_b < qty:
-        # `executor._classify_spot_close`'s refusal; it admits a sell of no more than b.
+        # The box's engine image refuses a sell over any positive b, dust included.
         capped = _floor_to_step(venue_b, constraints.lot_step)
         if capped < constraints.ordermin:
             return replace(
@@ -429,9 +430,11 @@ def decide_leg(
     return replace(leg, outcome="placed", side="sell", qty=qty, reason=reason)
 
 
-def trim_buys_to_cash(decisions: list[LegDecision], free_eur: float) -> list[LegDecision]:
+def trim_buys_to_cash(
+    decisions: list[LegDecision], free_eur: float, *, cash_reserve_eur: float = CASH_RESERVE_EUR
+) -> list[LegDecision]:
     """Buys are counted in whole cents, so a sum of cent amounts never drifts across the budget."""
-    budget = round(_floor_to_step(round(free_eur - CASH_RESERVE_EUR, 9), 0.01) * 100) if free_eur > CASH_RESERVE_EUR else 0
+    budget = round(_floor_to_step(round(free_eur - cash_reserve_eur, 9), 0.01) * 100) if free_eur > cash_reserve_eur else 0
     buys = sorted((d for d in decisions if d.outcome == "placed" and d.side == "buy"), key=lambda d: (d.notional_eur, d.symbol))
     excess = sum(round(d.notional_eur * 100) for d in buys) - budget
     trimmed: dict[str, LegDecision] = {}
@@ -444,7 +447,7 @@ def trim_buys_to_cash(decisions: list[LegDecision], free_eur: float) -> list[Leg
             trimmed[leg.symbol] = replace(
                 leg,
                 notional_eur=kept,
-                reason=f"trimmed by {excess / 100:.2f} EUR to free EUR - {CASH_RESERVE_EUR:.0f}; the rest carries",
+                reason=f"trimmed by {excess / 100:.2f} EUR to free EUR - {cash_reserve_eur:.0f}; the rest carries",
             )
             excess = 0
         else:
@@ -452,23 +455,50 @@ def trim_buys_to_cash(decisions: list[LegDecision], free_eur: float) -> list[Leg
                 leg,
                 outcome="carried",
                 notional_eur=None,
-                reason=f"buys beyond free EUR - {CASH_RESERVE_EUR:.0f} trim from the smallest",
+                reason=f"buys beyond free EUR - {cash_reserve_eur:.0f} trim from the smallest",
             )
             excess -= cents
     return [trimmed.get(d.symbol, d) for d in decisions]
 
 
-def assemble_plans(decisions: list[LegDecision], max_intents: int = MAX_INTENTS) -> list[list[LegDecision]]:
+def trim_to_plan_cap(decisions: list[LegDecision], cap_eur: float) -> list[LegDecision]:
+    """Carries whole legs from the smallest: sells until the sells fit `cap_eur`, then buys until sells and buys together fit
+    it -- the total `_over_cap_reason` checks at the last sell's sizing. Never a trimmed quantity: a trimmed sell would leave
+    a lot the next boundary sells again."""
+    placed = [d for d in decisions if d.outcome == "placed"]
+    sells = sorted((d for d in placed if d.side == "sell"), key=lambda d: (d.eur, d.symbol))
+    buys = sorted((d for d in placed if d.side == "buy"), key=lambda d: (d.eur, d.symbol))
+    while sells and sum(d.eur for d in sells) > cap_eur:
+        sells.pop(0)
+    while buys and sum(d.eur for d in sells + buys) > cap_eur:
+        buys.pop(0)
+    kept = {d.symbol for d in sells + buys}
+    reason = f"over the plan cap {cap_eur:.0f} EUR; carries to the next boundary"
+    return [
+        replace(d, outcome="carried", qty=None, notional_eur=None, reason=reason)
+        if d.outcome == "placed" and d.symbol not in kept
+        else d
+        for d in decisions
+    ]
+
+
+def assemble_plans(
+    decisions: list[LegDecision], max_intents: int | None = MAX_INTENTS, plan_cap_eur: float | None = PLAN_CAP_EUR
+) -> list[list[LegDecision]]:
     ordered = sorted((d for d in decisions if d.outcome == "placed"), key=lambda d: (d.side != "sell", -d.eur, d.symbol))
     plans: list[list[LegDecision]] = []
     total = 0.0
     for leg in ordered:
-        if leg.eur > PLAN_CAP_EUR:
+        if plan_cap_eur is not None and leg.eur > plan_cap_eur:
             raise DraftPlanError(
-                f"{leg.symbol}'s {leg.side} of {leg.eur:.2f} EUR is over the {PLAN_CAP_EUR:.0f} EUR plan cap on its own -- "
+                f"{leg.symbol}'s {leg.side} of {leg.eur:.2f} EUR is over the {plan_cap_eur:.0f} EUR plan cap on its own -- "
                 "no plan can carry it"
             )
-        if not plans or len(plans[-1]) == max_intents or total + leg.eur > PLAN_CAP_EUR:
+        if (
+            not plans
+            or (max_intents is not None and len(plans[-1]) == max_intents)
+            or (plan_cap_eur is not None and total + leg.eur > plan_cap_eur)
+        ):
             plans.append([])
             total = 0.0
         plans[-1].append(leg)
