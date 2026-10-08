@@ -1,6 +1,5 @@
-"""`zcrypto engine preflight`: the offline self-test a candidate image runs against the engine host's state directory
-before the engine is re-pinned to it. It writes nothing; its network boundary is the container's, not this module's
-imports."""
+"""`zcrypto engine preflight`, the candidate image's offline self-test for the engine's re-pin gate. Its network
+boundary is the container's, not this module's imports."""
 
 from __future__ import annotations
 
