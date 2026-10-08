@@ -20,6 +20,7 @@ The dead-man checks are the fleet's last line: they page when a host, a daemon o
 - Spec 00123 (one Alloy version across the fleet, T0219) asks of Task 9, under *What this asks of plans 00121 and 00122*: the node's Alloy installed at the fleet file's version, held and pinned, dry-started at that version, under the `alloy` tag, with a `fleet-pins.md` row.
 - The first sitting's R0 to R5 readings, 2026-10-07, stand in the plan's R0 to R5.
 - The cutover sitting's three deviations, 2026-10-08: the Kraken feed was read whole at 15:01Z and 15:24Z, clear each time, but not immediately before each venue-facing converge, the owner running the runsheet's lines ahead of the reads; the secondary's first run booked no deploy-log row and re-rendered nothing, and was re-run through `converge.sh` at 15:21Z; and the primary's capture converge was booked at 15:24:22Z, three minutes after the secondary's at 15:21:15Z, against spec 00122 D5's hour between them, the owner running the primary's line straight after the secondary's, ahead of the planned 16:21Z, the engine unmoved — `infra/scripts/count-list.sh capture-hosts-converged-within-an-hour` read 1 at 17:08Z on 2026-10-08, 0 before the sitting.
+- Drill W4 (T0217) ran at 16:03Z on 2026-10-08, the day the cutover sitting converged the secondary's capture at 15:21Z, in a sitting of its own after the day's window closed; the drill's own precondition names a later day than a converge, the Alloy wave's last, and the owner chose to run it the same day as the cutover's.
 
 ## Done so far
 
