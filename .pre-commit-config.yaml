@@ -1,22 +1,16 @@
 # infra/nas/rrsync is vendored VERBATIM — rsync 3.4.1's upstream python3 rrsync, byte-identical to the
-# fleet's own /usr/bin/rrsync (sha256 d4739b6f…). Our formatters must never rewrite third-party
-# security code: a reformat both defeats the provenance and edits the sole write-jail into custody
-# (spec 00056 D2). Excluded globally; its integrity is verified by hash against the in-fleet copy.
-# This line is the ONLY thing holding every non-ruff hook off that file — removed, trailing-whitespace
-# rewrites it (measured 2026-07-24). tests/test_vendored_rrsync_integrity.py is the tripwire.
+# fleet's own /usr/bin/rrsync. Our formatters must never rewrite third-party security code: a reformat
+# both defeats the provenance and edits the sole write-jail into custody (spec 00056 D2). This line is
+# the ONLY thing holding every non-ruff hook off that file — removed, trailing-whitespace rewrites it;
+# tests/test_vendored_rrsync_integrity.py is the tripwire.
 exclude: '^infra/nas/rrsync$'
 
 # Every hook is a commit-time hook unless it says otherwise. Removing this line puts most of them
 # into the push stage as well, and nothing here is worth paying for twice.
-# The push stage needs `pre-commit install --hook-type pre-push`, which is per-clone: a fresh clone
-# has none until it is re-run, and these declarations are the tracked half of that arrangement.
-# The generated hook execs the MAIN CHECKOUT's `.venv/bin/python` by absolute path, shared by every
-# worktree. Delete that venv and, while `pre-commit` is absent from PATH as it is here, every push
-# fails in milliseconds naming neither this file nor `uv sync`; install it on PATH instead and pushes
-# silently run a different, unpinned pre-commit.
-# A push that succeeds is not evidence any hook ran. pre-commit skips the push stage outright when
-# every commit is already reachable from a remote-tracking ref of that remote — and the hooks measure
-# the tree you are STANDING in, not the ref you are pushing.
+# The generated hooks exec the MAIN CHECKOUT's `.venv/bin/python` by absolute path, shared by every
+# worktree. Delete that venv and, while `pre-commit` is absent from PATH as it is here, every commit
+# and push fails in milliseconds naming neither this file nor `uv sync`; install it on PATH instead
+# and they silently run a different, unpinned pre-commit.
 default_stages: [pre-commit]
 # `pre-commit install` then installs the commit-msg hook type beside pre-commit, for guidance-guard,
 # instead of one `--hook-type` per clone; the push stage is empty by design and gets no hook type.
