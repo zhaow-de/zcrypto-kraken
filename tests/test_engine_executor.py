@@ -634,8 +634,9 @@ class CountingGate:
 
 def _config(tmp_path: Path, **overrides) -> EngineConfig:
     # state_dir is journal_dir.parent (the 00088 convention), so exec/ lands at tmp_path/exec --
-    # the same directory _gate() writes its control files into.
-    base = dict(journal_dir=tmp_path / "journal", store_dir=tmp_path / "store")
+    # the same directory _gate() writes its control files into. The loop is switched on unless a case
+    # turns it off: the cases here drive it, and its off reading has cases of its own.
+    base = dict(journal_dir=tmp_path / "journal", store_dir=tmp_path / "store", accumulation_enabled=True)
     base.update(overrides)
     return EngineConfig(**base)
 
@@ -11050,7 +11051,7 @@ def _accum_doc(at: datetime, status: str, **fields) -> dict:
 
 
 def _boundary_executor(
-    tmp_path, *, record_path, holdings, eur_total, eur_free, now, statuses=None, earn=None, series=(), plan_cap=1000.0
+    tmp_path, *, record_path, holdings, eur_total, eur_free, now, statuses=None, earn=None, series=(), plan_cap=1000.0, **settings
 ):
     """An executor at a boundary whose cycle record is `record_path`'s, journaled under its own day: the venue truth
     is `venue-12.json`'s instruments, the book every `INSTRUMENT_IDS` symbol -- 0.0 where `holdings` names none, as
@@ -11077,7 +11078,7 @@ def _boundary_executor(
         tmp_path,
         client=client,
         clock=clock,
-        config=_config(tmp_path, exec_max_plan_notional_eur=plan_cap),
+        config=_config(tmp_path, exec_max_plan_notional_eur=plan_cap, **settings),
         venue_holdings=_VenueHoldings(
             dict.fromkeys(INSTRUMENT_IDS, 0.0) | dict(holdings), eur_total=eur_total, eur_free=eur_free, earn=earn
         ),
@@ -11205,6 +11206,46 @@ def test_a_sidecar_boundary_writes_no_cycle_and_drafts_nothing(tmp_path):
     record = _accum(tmp_path)
     assert record["status"] == "no-cycle" and record["legs"] == [] and record["plan_id"] is None
     assert _record(tmp_path, _RUNG2_12Z)["plans"] == [] and metrics.not_drafted == [True]
+
+
+@pytest.mark.parametrize("enter", ["the-boundary-alert", "the-first-ticks-re-arm"])
+def test_with_the_loop_switched_off_no_boundary_drafts_marks_mints_or_submits_though_both_keys_are_up(tmp_path, enter):
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=RUNG2 / "cycle-12.json",
+        holdings={},
+        eur_total=1500.0,
+        eur_free=1500.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+        accumulation_enabled=False,
+        exec_armed=True,
+    )
+    assert (exec_dir(tmp_path) / ARM_FILE).exists() and ex._gate.evaluate(clock.now).level == GateLevel.FULL
+    with _executor_errors(logging.INFO) as records:
+        if enter == "the-boundary-alert":
+            ex.on_boundary(_RUNG2_12Z)
+        _ticks(ex, clock, 3)
+    assert not accum_record_path(tmp_path / "journal", _RUNG2_12Z).exists()
+    assert not _series_start_path(tmp_path).exists()
+    assert client.submitted == [] and ex._plan is None and ex._pending_draft is None
+    assert (metrics.gaps, metrics.equity, metrics.drawdowns, metrics.not_drafted) == ([], [], [], [])
+    assert [r.getMessage() for r in records if "accumulation loop" in r.getMessage()] == [
+        "accumulation loop disabled by config; the boundary drafts nothing"
+    ]
+    if enter == "the-boundary-alert":
+        # The boundary's acts ahead of the loop's still run: the verdict journaled, the tracking trip read.
+        assert _record(tmp_path, _RUNG2_12Z)["plans"] == [] and metrics.tracking == [executor_module._TRACKING_DISARMED]
+
+
+def test_with_the_loop_switched_off_a_hand_placed_plan_is_picked_up_and_submitted(tmp_path):
+    client = StubClient()
+    ex = _executor(tmp_path, client=client, config=_config(tmp_path, accumulation_enabled=False))
+    _drop_plan(tmp_path, _plan_dict())
+    ex.on_timer(NOW)
+    ex.on_quote(_quote())
+    assert len(client.submitted) == 1 and _plan_entry(tmp_path)["plan_id"] == "p-1"
 
 
 def test_a_book_read_that_fails_three_ticks_writes_book_unread_and_the_next_boundary_absorbs_the_gap(tmp_path):

@@ -52,6 +52,9 @@ class EngineConfig:
     # connected) and, on its own, insufficient: arming also requires the arm file on the host, so
     # no single change can arm the live trade path.
     exec_armed: bool = False
+    # The accumulation loop's own switch, beside the arming keys: off, no boundary arms a draft, so nothing is drafted,
+    # marked or submitted from the cycle record; a hand-placed plan and the tracking trip run either way.
+    accumulation_enabled: bool = False
     # The total-notional cap a probe plan may carry — the blast-radius bound.
     exec_max_plan_notional_eur: float = 100.0
     settle_delay_secs: int = 90
@@ -181,6 +184,12 @@ def _build_engine(table: dict, config_path: Path) -> EngineConfig:
         if not isinstance(value, bool):
             raise ConfigError(f"[{CONFIG_TABLE}.engine].exec_armed in {config_path} must be a boolean")
         overrides["exec_armed"] = value
+
+    if "accumulation_enabled" in raw:
+        value = raw["accumulation_enabled"]
+        if not isinstance(value, bool):
+            raise ConfigError(f"[{CONFIG_TABLE}.engine].accumulation_enabled in {config_path} must be a boolean")
+        overrides["accumulation_enabled"] = value
 
     if "exec_max_plan_notional_eur" in raw:
         value = raw["exec_max_plan_notional_eur"]

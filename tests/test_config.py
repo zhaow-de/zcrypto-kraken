@@ -198,6 +198,23 @@ def test_exec_armed_rejects_a_non_boolean(tmp_path):
         load_config(cfg_path)
 
 
+def test_accumulation_enabled_defaults_to_false_when_absent_even_armed(tmp_path):
+    assert load_config(_write(tmp_path, "[zcrypto.engine]\nexec_armed = true\n")).engine.accumulation_enabled is False
+    assert EngineConfig().accumulation_enabled is False
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_accumulation_enabled_reads_the_value_set(tmp_path, value):
+    cfg = load_config(_write(tmp_path, f"[zcrypto.engine]\naccumulation_enabled = {str(value).lower()}\n"))
+    assert cfg.engine.accumulation_enabled is value
+
+
+def test_accumulation_enabled_rejects_a_non_boolean(tmp_path):
+    for bad in ('"true"', "1", "0"):
+        with pytest.raises(ConfigError, match=r"\[zcrypto\.engine\]\.accumulation_enabled in .* must be a boolean"):
+            load_config(_write(tmp_path, f"[zcrypto.engine]\naccumulation_enabled = {bad}\n"))
+
+
 def test_exec_max_plan_notional_eur_defaults_to_100_when_absent(tmp_path):
     cfg_path = tmp_path / "zcrypto.toml"
     cfg_path.write_text("[zcrypto.engine]\nexec_armed = true\n")
