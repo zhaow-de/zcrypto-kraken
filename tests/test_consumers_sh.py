@@ -85,5 +85,9 @@ def test_the_tree_names_the_script_with_the_walker_tests_the_lessons_named():
         "tests/test_infra_alloy_series.py",
         "tests/test_internal_terms_not_operator_visible.py",
         "tests/test_guidance_guard.py",
+        "tests/test_count_list.py",
+        "tests/test_config_selectors_are_parsed.py",
+        "tests/test_runbook_internal_tokens.py",
+        "tests/test_systemd_user_units.py",
     ):
         assert walker in out.splitlines(), walker
