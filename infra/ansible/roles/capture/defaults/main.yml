@@ -13,8 +13,8 @@ capture_memory_limit: "2g"
 capture_log_max_size: "50m"
 capture_log_max_file: "5"
 
-# Optional healthchecks.io ping URL (the `monitoring` role provisions + supplies this once it
-# lands); empty means the daemon simply skips liveness pings.
+# The dead-man ping URL, set per capture host from the project ping key (group_vars/capture_host/vars.yml);
+# empty means the daemon simply skips liveness pings.
 capture_healthcheck_url: ""
 
 # Local retention of committed hour segments, in days (spec 00050 D8, T0032). The NAS mirror is the

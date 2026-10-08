@@ -5,7 +5,7 @@
 #
 # Read ONE value (the block must be de-indented — ansible-vault needs the ciphertext at column 0,
 # so piping the lines as they appear here fails with "Input is not vault encrypted data"):
-#   VPF=infra/ansible/scripts/vault-pass.sh; V=capture_healthcheck_url
+#   VPF=infra/ansible/scripts/vault-pass.sh; V=ansible_host
 #   awk -v v="$V:" '$1==v{f=1;next} /^[^ ]/{f=0} f && NF' infra/ansible/group_vars/capture_host/vault.yml \
 #     | sed 's/^ *//' | uv run ansible-vault decrypt --vault-password-file "$VPF" --output -
 #
@@ -37,7 +37,7 @@ healthchecks_api_key: !vault |
           6263363564313730310a656137383263616461366362663662393538346566393138343831336432
           39383233343766653461333137303962613437386265373962363235306463343862323535343737
           3637353437653630653932393439623532353766393933383066
-capture_healthcheck_url: !vault |
+hcio_capture_healthcheck_url: !vault |
           $ANSIBLE_VAULT;1.1;AES256
           31313534386339373162353138313932666261306663633939636464633061623066383337336661
           6236366339643030663166653262376437396331613564380a623962363961396162663137363836
@@ -53,7 +53,7 @@ capture_healthcheck_url: !vault |
 # capture-specific — both are read by infra/scripts/grafana-push.sh from the workstation, by path,
 # not by any managed host.
 #
-# The LIVE TRADE KEY (kraken_trade_api_key / kraken_trade_api_secret) and engine_healthcheck_url
+# The LIVE TRADE KEY (kraken_trade_api_key / kraken_trade_api_secret) and hcio_engine_healthcheck_url
 # MOVED to group_vars/engine_host/vault.yml (T0061, 2026-07-17). They are consumed only by the
 # engine play's engine.env.j2, and holding them here meant the capture-only secondary `zcrypto-red`
 # resolved the live trading credential — the group boundary the inventory's comments claimed did

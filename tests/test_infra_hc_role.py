@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 import yaml
+from ansible.parsing.dataloader import DataLoader
+from ansible.template import Templar, trust_as_template
 
 from tests import role_render
 from tests.alloy_part import ALLOY_APT_VERBATIM, module_entry
@@ -19,6 +21,7 @@ from tests.test_infra_alloy_stages import _alloy_string, _hc_match, _stage_block
 from tests.test_infra_converge_guards import (
     assert_that,
     find_task,
+    iter_tasks,
     load_tasks,
     task_index,
     truthy,
@@ -42,13 +45,13 @@ SECRETS = {
     "hc_email_host_user": "AKIA" + "Q" * 16,
     "hc_email_host_password": "S" * 44,
 }
+PING_URL = "https://zcrypto-hc.zhaow.me/ping/" + "k" * 22 + "/zcrypto-hc"
 PLAIN = {
     "hc_email_host": "email-smtp.eu-central-1.amazonaws.com",
     "hc_email_from": "z-no-reply@example.test",
     "hc_admin_email": "owner@example.test",
-    "hc_selfcheck_healthcheck_url": "",
+    "hc_selfcheck_healthcheck_url": PING_URL,
 }
-PING_URL = "https://zcrypto-hc.zhaow.me/ping/" + "k" * 22 + "/zcrypto-hc"
 VAULT_PREFLIGHT = "refuse a missing or misshapen secret, naming the key and never the value"
 PLAIN_PREFLIGHT = "the plain values the env file and the self-check read, refused by shape"
 # The names the clone's docker/.env.example and hc/settings.py read at v6.1.0 that this node sets.
@@ -97,7 +100,7 @@ INCLUDES = yaml.safe_load(
       - {key: hc_email_host, shape: 'email-smtp\.[a-z0-9-]+\.amazonaws\.com\Z'}
       - {key: hc_email_from, shape: '[^@\s]+@[^@\s]+\Z'}
       - {key: hc_admin_email, shape: '[^@\s]+@[^@\s]+\Z'}
-      - {key: hc_selfcheck_healthcheck_url, shape: '(https://zcrypto-hc\.zhaow\.me/ping/[A-Za-z0-9_-]{16,}/[a-z0-9-]+)?\Z'}
+      - {key: hc_selfcheck_healthcheck_url, shape: 'https://zcrypto-hc\.zhaow\.me/ping/[A-Za-z0-9_-]{16,}/[a-z0-9-]+\Z'}
 - name: the edge in front of the service on loopback
   ansible.builtin.include_role: {name: edge}
   vars:
@@ -139,6 +142,7 @@ INCLUDES = yaml.safe_load(
     node_common_sqlite_backup_keep_days: "{{ hc_backup_keep_days }}"
     node_common_sqlite_backup_runner: "docker compose -f {{ hc_compose_dir }}/compose.yaml exec -T web"
     node_common_sqlite_backup_copy: "docker compose -f {{ hc_compose_dir }}/compose.yaml cp web:"
+    node_common_sqlite_backup_group: "{{ hc_data_user }}"
     node_common_sqlite_backup_textfile: "{{ hc_textfile_dir }}/sqlite-backup.prom"
 """
 )
@@ -236,7 +240,7 @@ def test_a_missing_or_misshapen_vaulted_value_is_refused_by_its_key(override, re
     ("override", "refused"),
     [
         ({}, None),
-        ({"hc_selfcheck_healthcheck_url": PING_URL}, None),
+        ({"hc_selfcheck_healthcheck_url": ""}, "hc_selfcheck_healthcheck_url"),
         ({"hc_email_host": ""}, "hc_email_host"),
         ({"hc_email_host": None}, "hc_email_host"),
         ({"hc_email_host": "smtp.example.test"}, "hc_email_host"),
@@ -255,8 +259,8 @@ def test_a_missing_or_misshapen_vaulted_value_is_refused_by_its_key(override, re
         ({"hc_selfcheck_healthcheck_url": PING_URL + "\n"}, "hc_selfcheck_healthcheck_url"),
     ],
     ids=[
-        "all four, the ping URL empty",
-        "the ping URL set",
+        "all four",
+        "the ping URL empty",
         "the SES endpoint not yet written",
         "the SES endpoint missing",
         "an SMTP host off SES",
@@ -527,7 +531,8 @@ def _shared(module: str) -> tuple[str, object]:
 def test_alloy_is_installed_held_and_pinned_by_the_shared_role_alone_and_its_unit_skips_the_preview_that_has_none():
     entries = [module_entry(task) for task, _, _ in alloy_version.role_leaves("hc", frozenset())]
     packages = [entry for entry in entries if entry[0] in ("ansible.builtin.apt", "ansible.builtin.dpkg_selections")]
-    assert packages == [_shared("ansible.builtin.apt"), _shared("ansible.builtin.dpkg_selections")], packages
+    rsync = module_entry(find_task(_tasks(), RSYNC))
+    assert packages == [rsync, _shared("ansible.builtin.apt"), _shared("ansible.builtin.dpkg_selections")], packages
     pins = [entry for entry in entries if "/etc/apt/preferences.d/" in str(entry[1])]
     assert pins == [_shared("ansible.builtin.copy")], pins
     alloy = find_task(_tasks(), "alloy enabled + started")
@@ -741,3 +746,224 @@ def test_the_reboot_check_writes_into_the_directory_the_nodes_alloy_reads():
     assert "textfile" in json.loads(_assigned(unix, "set_collectors"))
     assert dict(unix)["textfile"] == [(f'directory = "{written}"', [])]
     assert written == DEFAULTS["hc_textfile_dir"]
+
+
+# --- the NAS's pull of the backups ---------------------------------------------------------------------------------
+RSYNC = "install rsync, which ships /usr/bin/rrsync, the forced command of the NAS's backup pull"
+RRSYNC_SHELL = "install the rrsync-only login shell for zcrypto-data"
+DATA_USER = "create zcrypto-data, the account the NAS's backup pull logs in as (no password; the rrsync-only shell)"
+PULL_KEY = "install the NAS's backup pull key (rrsync -ro) on zcrypto-data"
+BACKUP = "the nightly backup"
+
+
+def _resolved(value):
+    return role_render.resolve(ROLE, value, {})
+
+
+def test_the_pull_key_runs_rrsync_read_only_pinned_to_the_backup_directory():
+    key = find_task(_tasks(), PULL_KEY)["ansible.posix.authorized_key"]
+    assert _resolved(key["key_options"]) == f'command="/usr/bin/rrsync -ro {DEFAULTS["hc_backup_dir"]}",restrict'
+    assert (key["key"], key["exclusive"]) == ("{{ hc_sync_backup_authorized_key }}", False)
+    host_vars = yaml.safe_load((ANSIBLE / "host_vars/zcrypto-hc/vars.yml").read_text())
+    assert host_vars["hc_sync_backup_authorized_key"] == "{{ lookup('file', playbook_dir ~ '/files/sync_hc_backup_ed25519.pub') }}"
+    assert (ANSIBLE / "files/sync_hc_backup_ed25519.pub").read_text().startswith("ssh-ed25519 ")
+
+
+def test_the_pull_keys_user_is_created_before_it_with_the_wrapper_the_role_installs_as_its_shell():
+    tasks = _tasks()
+    shell = find_task(tasks, RRSYNC_SHELL)["ansible.builtin.copy"]
+    creation = find_task(tasks, DATA_USER)
+    user = creation["ansible.builtin.user"]
+    key = find_task(tasks, PULL_KEY)["ansible.posix.authorized_key"]
+    assert _resolved(user["name"]) == _resolved(key["user"]) == DEFAULTS["hc_data_user"] == "zcrypto-data"
+    assert _resolved(user["shell"]) == _resolved(shell["dest"]) == DEFAULTS["hc_rrsync_shell"]
+    assert shell["src"] == "{{ playbook_dir }}/files/rrsync-shell" and (ANSIBLE / "files/rrsync-shell").is_file()
+    assert (shell["owner"], shell["mode"]) == ("root", "0755")
+    assert (user["system"], user["create_home"], "password" in user) == (True, True, False)
+    assert creation["register"] == "hc_data_user_install"
+    rsync = find_task(tasks, RSYNC)["ansible.builtin.apt"]
+    assert (rsync["name"], rsync["state"]) == ("rsync", "present")
+    order = [task_index(tasks, name) for name in (RSYNC, RRSYNC_SHELL, DATA_USER, PULL_KEY, BACKUP)]
+    assert order == sorted(order), [task["name"] for task in tasks]
+
+
+def test_the_backup_hands_its_files_to_the_pull_users_group():
+    group = find_task(_tasks(), BACKUP)["vars"]["node_common_sqlite_backup_group"]
+    assert _resolved(group) == _resolved(find_task(_tasks(), DATA_USER)["ansible.builtin.user"]["name"])
+
+
+def test_the_hardening_role_leaves_the_pull_users_shell_alone():
+    ignored = yaml.safe_load((ANSIBLE / "group_vars/hc_host/vars.yml").read_text())["os_ignore_users"]
+    # config-selector-ok: the parsed YAML list, so `in` is membership of a name, not a substring of the file
+    assert DEFAULTS["hc_data_user"] in ignored
+
+
+# --- the fleet's ping URLs: one vaulted project key, one base, each check's slug ----------------------------------
+OBSERVED_VARS = ANSIBLE / "group_vars/observed/vars.yml"
+FIXTURE = REPO / "tests/fixtures/healthchecks_descriptions.json"
+# Shaped like the minted key; not a credential.
+DUMMY_PING_KEY = "aB3_-" * 4 + "x9"
+OPS_CHECKS = ("liquidations", "verify_replay", "verified_replay", "archive_pull", "panel", "grafana_watchdog")
+SLUGS = {
+    ("group_vars/capture_host/vars.yml", "capture_healthcheck_url"): "zcrypto-capture",
+    ("host_vars/zcrypto-red/vars.yml", "capture_healthcheck_url"): "zcrypto-capture-red",
+    ("group_vars/engine_host/vars.yml", "engine_healthcheck_url"): "zcrypto-engine-shadow",
+    ("host_vars/nas/vars.yml", "nas_gate_healthcheck_url"): "zcrypto-gate-verify",
+    ("host_vars/zcrypto-mon/vars.yml", "mon_selfcheck_healthcheck_url"): "zcrypto-mon",
+    ("host_vars/zcrypto-hc/vars.yml", "hc_selfcheck_healthcheck_url"): "zcrypto-hc",
+    **{("host_vars/zcrypto-ops/vars.yml", f"ops_{x}_healthcheck_url"): "zcrypto-" + x.replace("_", "-") for x in OPS_CHECKS},
+}
+# A row a rollback in the sitting points back at its healthchecks.io value: (file, variable) -> the name its vars line
+# reads, e.g. "hcio_capture_healthcheck_url". The row's slug stays in the set.
+ROLLED_BACK: dict[tuple[str, str], str] = {}
+
+
+def _var_files(name: str) -> list[Path]:
+    return sorted([*ANSIBLE.glob(f"group_vars/*/{name}"), *ANSIBLE.glob(f"host_vars/*/{name}")])
+
+
+def _ping_url_vars() -> dict[tuple[str, str], str]:
+    found = {}
+    for path in _var_files("vars.yml"):
+        for key, value in (yaml.safe_load(path.read_text()) or {}).items():
+            if key.endswith("_healthcheck_url"):
+                found[(str(path.relative_to(ANSIBLE)), key)] = value
+    return found
+
+
+def _vault_keys(path: Path) -> set[str]:
+    # Key lines alone: a value line is indented ciphertext and is never read into a message.
+    return set(re.findall(r"^([A-Za-z_][A-Za-z0-9_]*):", path.read_text(), re.M))
+
+
+def _vaulted() -> set[str]:
+    return set().union(*(_vault_keys(path) for path in _var_files("vault.yml")))
+
+
+def _assert_rolled_back(value: str, name: str) -> None:
+    assert value == "{{ " + name + " }}"
+    assert name in _vaulted(), f"{name} is no vault key: the rolled-back line would render undefined at the converge"
+
+
+def _clone_shape() -> str:
+    (entry,) = [
+        e for e in _include(PLAIN_PREFLIGHT)["vars"]["node_common_secrets_preflight"] if e["key"] == "hc_selfcheck_healthcheck_url"
+    ]
+    return entry["shape"]
+
+
+def test_the_mon_roles_ping_url_shape_is_this_roles():
+    mon = find_task(load_tasks(ANSIBLE / "roles/mon/tasks/main.yml"), "the self-check's ping URL, refused by shape")
+    (entry,) = mon["vars"]["node_common_secrets_preflight"]
+    assert (entry["key"], entry["shape"]) == ("mon_selfcheck_healthcheck_url", _clone_shape())
+
+
+def test_a_rolled_back_row_names_a_vaulted_key_and_its_line_reads_it():
+    _assert_rolled_back("{{ hcio_capture_healthcheck_url }}", "hcio_capture_healthcheck_url")
+    with pytest.raises(AssertionError, match="no vault key"):
+        _assert_rolled_back("{{ hcio_capture_healthcheck_uri }}", "hcio_capture_healthcheck_uri")
+    with pytest.raises(AssertionError):
+        _assert_rolled_back("{{ hc_ping_base }}/zcrypto-capture", "hcio_capture_healthcheck_url")
+
+
+def test_the_ping_url_variables_are_the_twelve_rows_and_their_slugs_the_fixtures_names_with_zcrypto_hc():
+    assert set(_ping_url_vars()) == set(SLUGS)
+    names = {check["name"] for check in json.loads(FIXTURE.read_text())}
+    assert set(SLUGS.values()) == names | {"zcrypto-hc"}
+    assert len(set(SLUGS.values())) == len(SLUGS) == 12
+
+
+@pytest.mark.parametrize("row", sorted(SLUGS), ids=lambda row: f"{row[0]}:{row[1]}")
+def test_each_ping_url_renders_from_the_project_key_to_its_own_checks_slug(row):
+    value = _ping_url_vars()[row]
+    if row in ROLLED_BACK:
+        _assert_rolled_back(value, ROLLED_BACK[row])
+        return
+    observed = role_render.trusted(yaml.safe_load(OBSERVED_VARS.read_text()))
+    rendered = Templar(loader=DataLoader(), variables={**observed, "hc_ping_key": DUMMY_PING_KEY}).template(
+        trust_as_template(value)
+    )
+    assert re.match(_clone_shape(), rendered), f"{row}: off the clone's shape"
+    assert rendered.rsplit("/", 1)[1] == SLUGS[row]
+    assert rendered.startswith(f"https://{DEFAULTS['hc_hostname']}/ping/{DUMMY_PING_KEY}/")
+
+
+def test_no_ping_url_name_is_a_key_of_both_a_vars_file_and_a_vault_file():
+    # A directory's vault.yml loads after its vars.yml and wins, so a shared name would render the vaulted value.
+    shadowed = sorted({key for _, key in _ping_url_vars()} & _vaulted())
+    assert shadowed == [], f"vaulted under the name a vars file renders: {shadowed}"
+
+
+def test_the_pingers_hostname_is_the_roles_own():
+    assert yaml.safe_load(OBSERVED_VARS.read_text())["hc_hostname"] == DEFAULTS["hc_hostname"]
+
+
+PING_NAMES = re.compile(r"\b\w+_healthcheck_url\b|\bnode_common_selfcheck_env_value\b|\bhc_ping_base\b|\bhc_ping_key\b")
+PING_RENDERS = {
+    ("capture", "render the capture compose file"),
+    ("engine", "render the engine secrets env file (0600 root-only; never logged, never diffed)"),
+    ("nas", "render the stack .env (image pins, pull sources, the vaulted gate dead-man URL)"),
+    ("ops", "render the ops compose file (liquidations poller)"),
+    ("ops", "install the archive-pull runner script"),
+    ("ops", "install the replay + panel + tape-bars runner scripts"),
+    ("ops", "install the grafana-watchdog runner script"),
+    ("node_common", "render the self-check's ping URL, read by systemd alone"),
+}
+PAIR_LIST_PROBES = {
+    ("capture", "probe — this host's own deployed pair list (does this converge ADD a pair?)"),
+    ("capture", "probe — the primary's deployed pair list (pair-add order; fail-CLOSED on unreachable, a new pair is the hazard)"),
+}
+
+
+def _role_tasks() -> list[tuple[Path, dict, dict]]:
+    out = []
+    for path in sorted((ANSIBLE / "roles").glob("*/tasks/*.yml")):
+        role_dir = path.parents[1]
+        variables = role_render.variables(role_dir, {}) if (role_dir / "defaults/main.yml").exists() else {}
+        out.extend((role_dir, task, variables) for task, _ in iter_tasks(load_tasks(path) or []))
+    return out
+
+
+def _templated(value, variables: dict):
+    try:
+        return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(value))
+    except Exception:
+        return value
+
+
+def _expanded(task: dict, field: str, module: dict, variables: dict) -> set[str]:
+    loop = task.get("loop", [None])
+    items = _templated(loop, variables) if isinstance(loop, str) else loop
+    return {_templated(module[field], variables | {"item": item}) for item in items}
+
+
+def _ping_renders() -> list[tuple[str, dict, set[str]]]:
+    found = []
+    for role_dir, task, variables in _role_tasks():
+        module = task.get("ansible.builtin.template")
+        if module is None:
+            continue
+        sources = _expanded(task, "src", module, variables)
+        if any(PING_NAMES.search((role_dir / "templates" / src).read_text()) for src in sources):
+            found.append((role_dir.name, task, _expanded(task, "dest", module, variables)))
+    return found
+
+
+def test_every_render_that_carries_a_ping_url_is_never_logged_never_diffed_and_read_by_its_owner_alone():
+    renders = _ping_renders()
+    assert {(role, task["name"]) for role, task, _ in renders} == PING_RENDERS
+    for role, task, _ in renders:
+        mode = int(task["ansible.builtin.template"]["mode"], 8)
+        assert (task.get("no_log"), task.get("diff"), mode & 0o077) == (True, False, 0), (role, task["name"])
+
+
+def test_every_slurp_of_a_rendered_ping_url_is_never_logged():
+    dests = set().union(*(dest for _, _, dest in _ping_renders()))
+    slurps = [
+        (role_dir.name, task)
+        for role_dir, task, variables in _role_tasks()
+        if "ansible.builtin.slurp" in task and _templated(task["ansible.builtin.slurp"]["src"], variables) in dests
+    ]
+    assert {(role, task["name"]) for role, task in slurps} == PAIR_LIST_PROBES
+    for role, task in slurps:
+        assert task.get("no_log") is True, (role, task["name"])

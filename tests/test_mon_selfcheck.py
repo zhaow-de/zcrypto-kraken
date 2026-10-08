@@ -198,7 +198,7 @@ def test_the_unit_and_its_environment_file_set_every_name_the_script_reads():
     assert read == (set(in_unit) - {"PYTHONPATH"}) | set(in_file), (
         "a name the script reads that nothing sets is a KeyError on every run"
     )
-    assert DEFAULTS["mon_selfcheck_healthcheck_url"] == "", "the check is not minted at node-up, so the default pings nothing"
+    assert DEFAULTS["mon_selfcheck_healthcheck_url"] == "", "a node whose vars.yml sets no URL is refused by name, never pinged"
 
 
 def test_the_unit_runs_what_the_role_installs_as_no_standing_user_and_reads_the_url_from_a_root_only_file():

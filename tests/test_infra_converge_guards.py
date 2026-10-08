@@ -7,6 +7,7 @@ import os
 import re
 import shlex
 import shutil
+import subprocess
 import time
 import tomllib
 from itertools import chain
@@ -2667,6 +2668,86 @@ def test_both_hash_scope_consumers_substitute_full_for_an_empty_assignment(path,
         assert out == expected, f"{path.name}'s {expansion} yields {out!r} for {value!r}, not {expected!r}"
 
 
+# --- The dead-man node's backups.
+HC_BACKUP_BLOCK = re.compile(r"^\tif [^\n]*\bHC_BACKUP_SOURCE\b[^\n]*; then\n.*?^\tfi\n", re.M | re.S)
+HC_BACKUP_SOURCE = "zcrypto-data@zcrypto-hc.invalid:"
+RSYNC_STUB = """#!/usr/bin/env python3
+import json, os, sys
+
+with open(os.environ["RSYNC_STUB_LOG"], "a") as log:
+    print(json.dumps(sys.argv[1:]), file=log)
+sys.exit(int(os.environ["RSYNC_STUB_RC"]))
+"""
+
+
+def _hc_backup_pull(tmp_path: Path, *, source: str | None, rc: int = 0) -> tuple[subprocess.CompletedProcess[str], list]:
+    text = NAS_PULL_ENTRYPOINT.read_text()
+    (block,) = HC_BACKUP_BLOCK.findall(text)
+    log_fn = text[text.index("log() {") : text.index("\n}", text.index("log() {")) + 2]
+    stub = tmp_path / "bin" / "rsync"
+    stub.parent.mkdir()
+    stub.write_text(RSYNC_STUB)
+    stub.chmod(0o755)
+    calls = tmp_path / "rsync.log"
+    env = {
+        "PATH": f"{stub.parent}{os.pathsep}{os.environ['PATH']}",
+        "RSYNC_STUB_LOG": str(calls),
+        "RSYNC_STUB_RC": str(rc),
+        "HC_BACKUP_DEST": "/hc-backups",
+        "HC_BACKUP_SSH_KEY": "/keys/sync_hc_backup",
+        "ARCHIVE_SSH_PORT": "10022",
+        "ARCHIVE_SSH_KNOWN_HOSTS": "/keys/known_hosts",
+    } | ({"HC_BACKUP_SOURCE": source} if source is not None else {})
+    run = subprocess.run(["sh", "-c", f"set -eu\n{log_fn}\n{block}"], env=env, capture_output=True, text=True, check=False)
+    return run, [json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
+
+
+def test_the_hc_backup_pull_copies_the_nodes_directory_over_the_pinned_ssh_and_deletes_nothing(tmp_path):
+    run, calls = _hc_backup_pull(tmp_path, source=HC_BACKUP_SOURCE)
+    assert (run.returncode, run.stderr) == (0, "")
+    ((*options, transport, source, dest),) = calls
+    assert (source, dest) == (HC_BACKUP_SOURCE, "/hc-backups")
+    assert options == ["--archive", "--chmod=D0700,F0600", "-e"], options
+    assert transport == (
+        "ssh -i /keys/sync_hc_backup -p 10022 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o CheckHostIP=no"
+        " -o UserKnownHostsFile=/keys/known_hosts"
+    )
+    assert not [arg for arg in calls[0] if arg.startswith(("--delete", "--remove-source-files"))]
+
+
+def test_a_failed_hc_backup_pull_logs_an_error_naming_its_source_and_the_loop_goes_on(tmp_path):
+    run, calls = _hc_backup_pull(tmp_path, source=HC_BACKUP_SOURCE, rc=23)
+    assert run.returncode == 0 and len(calls) == 1, run.stderr
+    (line,) = run.stderr.splitlines()
+    assert re.fullmatch(
+        r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} ERROR zcrypto\.pull-entrypoint \[pull-entrypoint\.sh\] - "
+        + re.escape(f"hc backup pull failed (source={HC_BACKUP_SOURCE} dest=/hc-backups), continuing"),
+        line,
+    ), line
+
+
+@pytest.mark.parametrize("source", [None, ""], ids=["unset", "empty, as compose passes it"])
+def test_an_unset_hc_backup_source_skips_the_pull(tmp_path, source):
+    run, calls = _hc_backup_pull(tmp_path, source=source)
+    assert (run.returncode, run.stderr, calls) == (0, "", [])
+
+
+def test_the_hc_backup_source_the_env_renders_reaches_the_pull_through_compose(tmp_path):
+    rendered = [line for line in _render_nas_env("incremental").splitlines() if line.startswith("HC_BACKUP_SOURCE=")]
+    assert rendered == ["HC_BACKUP_SOURCE=<nas_hc_backup_source>"], rendered
+    value = rendered[0].partition("=")[2]
+    passed = yaml.safe_load(NAS_COMPOSE.read_text())["services"]["archive-pull"]["environment"].get("HC_BACKUP_SOURCE", "")
+    seen = subprocess.run(
+        ["bash", "-c", f'echo "{passed}"'],
+        capture_output=True,
+        text=True,
+        env={"HC_BACKUP_SOURCE": value, "PATH": os.environ["PATH"]},
+    ).stdout.strip()
+    assert seen == value, f"compose passes {passed!r}, which the container reads as {seen!r}"
+    run, calls = _hc_backup_pull(tmp_path, source=seen)
+    assert [call[-2] for call in calls] == [value], run.stderr
+
+
 # --- A6: the echo's negated clause and the assert's first disjunct must stay the same expression;
 # both are extracted from the committed YAML, because retyping either here would only move the drift.
 OPS_PINS_ECHO = "pins override accepted — the reason, on the record"
@@ -3321,6 +3402,11 @@ FRESH_NODE_SITES = [
     (ROLES / "chrony" / "tasks" / "main.yml", "enable + start chrony", ("chrony_install",)),
     (ROLES / "chrony" / "handlers" / "main.yml", "restart chrony", ("chrony_install",)),
     (ROLES / "ops" / "tasks" / "main.yml", "install docker's drop-in that waits for a resolver", ("ops_docker_dropin_dir",)),
+    (
+        ROLES / "hc" / "tasks" / "main.yml",
+        "install the NAS's backup pull key (rrsync -ro) on zcrypto-data",
+        ("hc_data_user_install",),
+    ),
 ]
 
 

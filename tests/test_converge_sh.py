@@ -48,7 +48,10 @@ def run_with_tty(script, args, reply):
     """Run under a pty (the child's controlling terminal) and type `reply` at the confirm."""
     pid, fd = pty.fork()
     if pid == 0:
-        os.execv(str(script), [str(script), *args])
+        try:
+            os.execv(str(script), [str(script), *args])
+        finally:
+            os._exit(127)  # a failed execv must never leave a forked pytest running
     out = b""
     try:
         while b"aborts:" not in out and b"converge," not in out:
@@ -66,6 +69,13 @@ def run_with_tty(script, args, reply):
         pass
     _, status = os.waitpid(pid, 0)
     return os.waitstatus_to_exitcode(status), out.decode(errors="replace")
+
+
+def test_a_script_that_cannot_be_executed_ends_its_pty_child(tmp_path):
+    script = tmp_path / "empty"
+    script.write_text("")
+    script.chmod(0o755)
+    assert run_with_tty(script, [], "")[0] == 127
 
 
 def run_with_ctty_but_piped_stdin(script, args, piped_reply, deadline=3.0):
