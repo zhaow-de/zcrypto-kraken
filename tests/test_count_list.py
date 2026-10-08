@@ -486,19 +486,27 @@ dir="$(dirname "$0")"
 if [ "$1 $2" = "pr list" ]; then exec cat "$dir/prs.json"; fi
 if [ "$1 $2 $4" = "api --paginate --jq" ]; then
   n="${3%/files}"
-  exec jq -r "$5" "$dir/files-${n##*/}.json"
+  n="${n##*/}"
+  [ -e "$dir/hang-$n" ] && exec sleep 10
+  [ -f "$dir/files-$n.json" ] || { echo "HTTP 502: Bad Gateway" >&2; exit 1; }
+  exec jq -r "$5" "$dir/files-$n.json"
 fi
 echo "fake gh: $*" >&2
 exit 64
 """
 
 
-def _live_count(tmp_path: pathlib.Path, rows: list[dict], entries: dict[int, list[dict]]) -> subprocess.CompletedProcess:
+def _live_count(
+    tmp_path: pathlib.Path, rows: list[dict], entries: dict[int, list[dict]], hang: tuple[int, ...] = (), **env: str
+) -> subprocess.CompletedProcess:
+    """A PR `entries` does not name answers HTTP 502; one `hang` names answers nothing for 10 s."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "prs.json").write_text(json.dumps(rows))
     for number, listed in entries.items():
         (bin_dir / f"files-{number}.json").write_text(json.dumps(listed))
+    for number in hang:
+        (bin_dir / f"hang-{number}").touch()
     (bin_dir / "gh").write_text(_FAKE_GH)
     (bin_dir / "git").write_text(f'#!/usr/bin/env bash\n[ "$1" = fetch ] && exit 0\nexec "{shutil.which("git")}" "$@"\n')
     for name in ("gh", "git"):
@@ -508,7 +516,7 @@ def _live_count(tmp_path: pathlib.Path, rows: list[dict], entries: dict[int, lis
         cwd=REPO,
         capture_output=True,
         text=True,
-        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"},
+        env={**os.environ, **env, "PATH": f"{bin_dir}:{os.environ['PATH']}"},
         timeout=120,
     )
 
@@ -546,6 +554,23 @@ def test_the_live_count_reads_a_renamed_file_s_old_path_through_the_gate_s_jq(tm
 def test_an_empty_answer_from_the_files_endpoint_keeps_the_bulk_list(tmp_path):
     done = _live_count(tmp_path, [_live_row(12, "feat/engine", ["cli/engine/x.py"]), _OLD_ROW], {12: []})
     assert done.returncode == 0 and done.stdout == "merged-prs-without-a-floor-read-30d\t1\n", done.stdout + done.stderr
+
+
+@pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+def test_a_failed_files_fetch_is_an_error_naming_the_pr_rather_than_a_count(tmp_path):
+    rows = [_live_row(10, "feat/plain", ["docs/a.md"]), _live_row(13, "feat/unfetched", ["docs/b.md"]), _OLD_ROW]
+    done = _live_count(tmp_path, rows, {10: [{"filename": "docs/a.md", "status": "modified"}]})
+    assert done.returncode == 2 and done.stdout == "merged-prs-without-a-floor-read-30d\tERROR\n", done.stdout + done.stderr
+    assert "PR #13's file list could not be fetched -- the Fable-path arm cannot be decided: exit 1: HTTP 502" in done.stderr
+
+
+@pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+def test_a_hung_files_fetch_is_the_same_error_and_no_traceback(tmp_path):
+    rows = [_live_row(14, "feat/hung", ["docs/a.md"]), _OLD_ROW]
+    done = _live_count(tmp_path, rows, {}, hang=(14,), COUNT_LIST_FILES_TIMEOUT="0.5")
+    assert done.returncode == 2 and done.stdout == "merged-prs-without-a-floor-read-30d\tERROR\n", done.stdout + done.stderr
+    assert "PR #14's file list could not be fetched -- the Fable-path arm cannot be decided: no answer in 0.5s" in done.stderr
+    assert "Traceback" not in done.stderr, done.stderr
 
 
 @pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")

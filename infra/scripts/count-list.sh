@@ -153,6 +153,7 @@ def read_sha(pr):
 
 files_snapshot = json.loads(pathlib.Path(os.environ["COUNT_LIST_FILES_SNAPSHOT"]).read_text()) if os.environ.get(
     "COUNT_LIST_FILES_SNAPSHOT") else None
+FILES_TIMEOUT = float(os.environ.get("COUNT_LIST_FILES_TIMEOUT") or 120)
 
 
 def file_paths(pr):
@@ -166,15 +167,19 @@ def file_paths(pr):
     elif offline:
         return paths
     else:
-        done = subprocess.run(
-            ["gh", "api", "--paginate", f"repos/{gate.REPO}/pulls/{pr.get('number')}/files", "--jq", gate.PR_FILES_JQ],
-            capture_output=True, text=True, timeout=120,
-        )
-        if done.returncode != 0:
+        try:
+            done = subprocess.run(
+                ["gh", "api", "--paginate", f"repos/{gate.REPO}/pulls/{pr.get('number')}/files", "--jq", gate.PR_FILES_JQ],
+                capture_output=True, text=True, timeout=FILES_TIMEOUT,
+            )
+            why = None if done.returncode == 0 else f"exit {done.returncode}: {done.stderr.strip()[:200]}"
+        except subprocess.TimeoutExpired:
+            why = f"no answer in {FILES_TIMEOUT:g}s"
+        if why is not None:
             # `return 2`, not 1: this entry's other refusals exit 2, and `emit` reads 1 as a zero COUNT.
             print(
                 f"count-list: PR #{pr.get('number')}'s file list could not be fetched -- the Fable-path arm cannot "
-                f"be decided: {done.stderr.strip()[:200]}",
+                f"be decided: {why}",
                 file=sys.stderr,
             )
             raise SystemExit(2)
