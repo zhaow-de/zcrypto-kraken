@@ -783,9 +783,7 @@ def test_engine_pins_override_echo_fires_only_on_an_accepted_override(pins_text,
     assert truthy(when_conditions(task), variables) is expected
 
 
-# --- engine preflight (spec 00124): the candidate image's own `zcrypto engine preflight`, run on the engine host on
-# every converge against a candidate render, and its revision label a first-parent merge of the controller's develop or
-# main. One `engine_preflight_override` bypasses both asserts.
+# --- engine preflight and provenance (spec 00124)
 PREFLIGHT_BLOCK = "engine preflight — run the candidate image's own preflight on this host"
 PREFLIGHT_RENDER = "engine preflight — render the candidate configuration beside the live one"
 PREFLIGHT_RUN = "engine preflight — run the candidate image's preflight, offline and read-only"

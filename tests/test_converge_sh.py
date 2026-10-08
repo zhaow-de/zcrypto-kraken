@@ -1128,7 +1128,6 @@ def test_a_pass_whose_play_wrote_no_record_books_no_window(tmp_path):
     assert "window" not in rec and "preflight" not in rec, rec
 
 
-# The engine role's record task merges this into the file beside the window's keys.
 PREFLIGHT = {
     "engaged": True,
     "digest": DIGEST,
