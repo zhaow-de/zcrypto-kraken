@@ -32,6 +32,11 @@ def _repo(tmp_path: pathlib.Path) -> pathlib.Path:
     )
     (repo / _SKILL_DIR / "SKILL.md").write_text("run infra/scripts/thing.sh first\n")
     (repo / "infra" / "ansible" / "group_vars" / "all" / "vault.yml").write_text("thing.sh: secret\n")
+    (repo / "infra" / "ansible" / "files").mkdir()
+    (repo / "infra" / "ansible" / "files" / "zaccess_ca.key.vault").write_text("$ANSIBLE_VAULT thing.sh\n")
+    (repo / "infra" / "ansible" / "files" / "deploy_x_ed25519").write_text("$ANSIBLE_VAULT thing.sh\n")
+    (repo / "infra" / "ansible" / "vault-password.sops.yaml").write_text("thing.sh: sops\n")
+    (repo / "infra" / "ansible" / "secrets.sops.yaml").write_text("thing.sh: sops\n")
     (repo / "infra" / "scripts" / "lonely.py").write_text("print(1)\n")
     run = lambda *a: subprocess.run(["git", "-C", str(repo), *a], check=True, capture_output=True)  # noqa: E731
     run("init", "-q", "-b", "develop")
@@ -55,15 +60,28 @@ def test_direct_readers_are_listed_and_the_vault_file_is_not(tmp_path):
     assert "tests/test_vault_pass_guard.py" in lines  # a reader whose own name carries "vault" is kept
     assert f"{_SKILL_DIR}/SKILL.md" in lines
     assert "tests/test_other.py" not in lines
-    assert not any(line.endswith("vault.yml") for line in lines)
+    for shape in ("vault.yml", "zaccess_ca.key.vault", "deploy_x_ed25519", "vault-password.sops.yaml", "secrets.sops.yaml"):
+        assert not any(line.endswith(shape) for line in lines), shape
     assert "infra/scripts/thing.sh" not in lines[1:]  # the file itself is not its own reader
 
 
-def test_tree_walkers_follow_and_a_test_globbing_its_own_fixtures_is_not_one(tmp_path):
+def test_every_test_that_globs_walks_or_lists_follows_as_a_walker(tmp_path):
     repo = _repo(tmp_path)
     r = _run(repo, "infra/scripts/thing.sh")
     walkers = r.stdout.split("# tree walkers", 1)[1].splitlines()[1:]
-    assert walkers == ["tests/test_lsfiles.py", "tests/test_parent_glob.py", "tests/test_parent_glob_sq.py", "tests/test_walker.py"]
+    assert walkers == [
+        "tests/test_lsfiles.py",
+        "tests/test_own_fixture_glob.py",
+        "tests/test_parent_glob.py",
+        "tests/test_parent_glob_sq.py",
+        "tests/test_walker.py",
+    ]
+
+
+def test_a_changed_test_file_is_its_own_first_reader(tmp_path):
+    repo = _repo(tmp_path)
+    r = _run(repo, "tests/test_other.py")
+    assert r.stdout.splitlines()[2] == "tests/test_other.py"
 
 
 def test_an_empty_reader_list_is_printed_as_a_finding_never_as_nothing(tmp_path):
@@ -92,5 +110,18 @@ def test_the_tree_names_the_script_with_its_walker_tests():
         "tests/test_config_selectors_are_parsed.py",
         "tests/test_runbook_internal_tokens.py",
         "tests/test_systemd_user_units.py",
+        "tests/test_code_prose_citations.py",
+        "tests/test_risk_limits.py",
+        "tests/test_engine_stub_fidelity.py",
+        "tests/test_engine_node.py",
+        "tests/test_nautilus_interface_pin.py",
+        "tests/test_desync_recovery_wiring.py",
+        "tests/test_alloy_tag.py",
+        "tests/test_infra_shell_templates_render.py",
+        "tests/test_panel_regenerate.py",
+        "tests/test_ops_daily.py",
+        "tests/test_review_workflows.py",
+        "tests/test_open_topics_frontmatter.py",
+        "tests/test_required_status_checks_match_ci.py",
     ):
         assert walker in out.splitlines(), walker
