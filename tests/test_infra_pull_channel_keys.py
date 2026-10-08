@@ -9,7 +9,7 @@ VAULT_FLOOR = 1000
 NAS_NAMES = {"sync": "sync_journal"}
 VAULTED = "$ANSIBLE_VAULT;1.1;AES256\n" + ("61" * 40 + "\n") * 24
 EMPTY_PAYLOAD = "$ANSIBLE_VAULT;1.1;AES256\n" + ("61" * 40 + "\n") * 4 + "6162\n"
-CLEAR = "-----BEGIN OPENSSH PRIVATE KEY-----\nnot-a-key\n"
+CLEAR = "not-a-key\n"
 
 
 def _channel(path):
