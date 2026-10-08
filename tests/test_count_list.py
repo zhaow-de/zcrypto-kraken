@@ -499,7 +499,6 @@ exit 64
 def _live_count(
     tmp_path: pathlib.Path, rows: list[dict], entries: dict[int, list[dict]], hang: tuple[int, ...] = (), **env: str
 ) -> subprocess.CompletedProcess:
-    """A PR `entries` does not name answers HTTP 502; one `hang` names answers nothing for 10 s."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "prs.json").write_text(json.dumps(rows))

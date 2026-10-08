@@ -591,7 +591,7 @@ RENAMED = [
 
 
 def _main_over_files(monkeypatch, body: str, entries: list[dict], changed=(), **over) -> int:
-    """`main()` with gh's files endpoint answering `entries` through the jq program `main()` hands it, and the clone `changed`."""
+    """`main()` with gh's files endpoint answering `entries` through the jq program `main()` hands it."""
     pr = _pr(body=body, **over)
 
     def fake_gh(*args: str) -> str:
