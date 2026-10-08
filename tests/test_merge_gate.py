@@ -584,6 +584,137 @@ def test_the_substitution_line_admits_an_opus_read_on_a_guarded_path(path):
     assert _eval(_pr(body=body), files=["cli/costs/schedule.py", path]) == []
 
 
+RENAMED = [
+    {"filename": "cli/costs/retired.py", "previous_filename": "cli/engine/retired.py", "status": "renamed"},
+    {"filename": "docs/reference/fleet.md", "status": "modified"},
+]
+
+
+def _main_over_files(monkeypatch, body: str, entries: list[dict], changed=(), fails=None, head_fails=None, **over) -> int:
+    """`main()` with gh's files endpoint answering `entries` through the jq program `main()` hands it."""
+    pr = _pr(body=body, **over)
+
+    def fake_gh(*args: str) -> str:
+        if args[:2] == ("pr", "view"):
+            return json.dumps(pr)
+        if args[:2] == ("api", "--paginate"):
+            if fails is not None:
+                raise fails
+            program = args[args.index("--jq") + 1]
+            return subprocess.run(
+                ["jq", "-r", program], input=json.dumps(entries), capture_output=True, text=True, check=True
+            ).stdout
+        if head_fails is not None and args[0] == "api" and "/commits/" in args[1]:
+            raise head_fails
+        raise AssertionError(args)
+
+    monkeypatch.setattr(gate, "_gh", fake_gh)
+    monkeypatch.setattr(gate, "branch_growth", lambda base, head_ref, head: [])
+    monkeypatch.setattr(gate, "is_behind", lambda base, head: False)
+    monkeypatch.setattr(gate, "changed_paths", lambda base, head: None if changed is None else list(changed))
+    return gate.main(["merge-gate.py", "1"])
+
+
+def test_an_opus_read_on_a_pr_renaming_a_file_out_of_a_guarded_path_fails(monkeypatch, capsys):
+    assert _main_over_files(monkeypatch, _read_by("Claude Opus 4.8"), RENAMED) == 1
+    out = capsys.readouterr().out
+    assert "the PR touches cli/engine/retired.py: the floor there is Claude Fable" in out, out
+
+
+def test_the_substitution_line_admits_an_opus_read_on_a_pr_renaming_a_file_out_of_a_guarded_path(monkeypatch, capsys):
+    body = _read_by_opus_with_substitution("the account's Fable limit is reached; the owner authorised Opus")
+    assert _main_over_files(monkeypatch, body, RENAMED) == 0, capsys.readouterr().out
+
+
+def test_a_path_holding_a_space_is_read_whole(monkeypatch, capsys):
+    entries = [{"filename": "docs/my notes.md", "previous_filename": ".claude/my notes.md", "status": "renamed"}]
+    assert _main_over_files(monkeypatch, _read_by("Claude Opus 4.8"), entries) == 1
+    out = capsys.readouterr().out
+    assert "the PR touches .claude/my notes.md: the floor there is Claude Fable" in out, out
+
+
+@pytest.mark.parametrize(
+    ("old", "expected"),
+    [("docs/reference/ops-journal/2026-08.md", "GATE PASSED"), ("docs/notes/2026-09.md", "no 'Read before push by:")],
+    ids=["from-inside", "from-outside"],
+)
+def test_a_journal_pr_renaming_a_file_into_the_journal_is_exempt_only_from_inside_it(monkeypatch, capsys, old, expected):
+    entries = [{"filename": "docs/reference/ops-journal/2026-09.md", "previous_filename": old, "status": "renamed"}]
+    _main_over_files(monkeypatch, JOURNAL_PR["body"], entries, headRefName="ops-journal")
+    out = capsys.readouterr().out
+    assert expected in out, out
+
+
+SHORT_ANSWERS = pytest.mark.parametrize("entries", [[], [{"filename": "docs/a.md", "status": "modified"}]], ids=["empty", "short"])
+
+
+@SHORT_ANSWERS
+def test_an_opus_read_on_a_fable_path_the_endpoint_left_out_and_the_clone_names_fails(monkeypatch, capsys, entries):
+    assert _main_over_files(monkeypatch, _read_by("Claude Opus 4.8"), entries, changed=["docs/a.md", "cli/engine/a.py"]) == 1
+    out = capsys.readouterr().out
+    assert "the PR touches cli/engine/a.py: the floor there is Claude Fable" in out, out
+
+
+@SHORT_ANSWERS
+def test_the_substitution_line_admits_an_opus_read_on_a_fable_path_only_the_clone_names(monkeypatch, capsys, entries):
+    body = _read_by_opus_with_substitution("the account's Fable limit is reached; the owner authorised Opus")
+    assert _main_over_files(monkeypatch, body, entries, changed=["docs/a.md", "cli/engine/a.py"]) == 0, capsys.readouterr().out
+
+
+JOURNAL_ENTRY = {"filename": "docs/reference/ops-journal/2026-09.md", "status": "modified"}
+
+
+@pytest.mark.parametrize(
+    ("entries", "changed", "expected"),
+    [
+        ([], [JOURNAL_ENTRY["filename"]], "GATE PASSED"),
+        ([JOURNAL_ENTRY], [JOURNAL_ENTRY["filename"], "cli/x.py"], "no 'Read before push by:"),
+        ([], [JOURNAL_ENTRY["filename"], "cli/x.py"], "no 'Read before push by:"),
+        ([], [], "no 'Read before push by:"),
+        ([], None, "the PR's file list was not fetched, so the ops-journal exemption cannot be scoped"),
+    ],
+    ids=["empty-clone-journal-only", "short-clone-foreign-file", "empty-clone-foreign-file", "empty-clone-empty", "empty-no-clone"],
+)
+def test_a_journal_pr_is_judged_by_the_endpoint_and_the_clone_together(monkeypatch, capsys, entries, changed, expected):
+    _main_over_files(monkeypatch, JOURNAL_PR["body"], entries, changed=changed, headRefName="ops-journal")
+    out = capsys.readouterr().out
+    assert expected in out, out
+
+
+def test_an_opus_read_on_an_empty_endpoint_answer_with_no_clone_list_is_an_unfetched_list(monkeypatch, capsys):
+    assert _main_over_files(monkeypatch, _read_by("Claude Opus 4.8"), [], changed=None) == 1
+    out = capsys.readouterr().out
+    assert "the PR's file list was not fetched, so the paths that need a Fable read cannot be checked" in out, out
+
+
+def test_an_opus_read_on_a_non_empty_endpoint_answer_with_no_clone_list_is_judged_on_the_answer(monkeypatch, capsys):
+    entries = [{"filename": "docs/a.md", "status": "modified"}]
+    assert _main_over_files(monkeypatch, _read_by("Claude Opus 4.8"), entries, changed=None) == 0, capsys.readouterr().out
+
+
+FETCH_FAILURES = pytest.mark.parametrize(
+    "error",
+    [subprocess.CalledProcessError(1, ["gh"], stderr="HTTP 502: Bad Gateway"), subprocess.TimeoutExpired(["gh"], 60)],
+    ids=["failed", "hung"],
+)
+
+
+@FETCH_FAILURES
+def test_a_files_fetch_that_fails_or_hangs_is_an_unfetched_list_and_no_traceback(monkeypatch, capsys, error):
+    assert _main_over_files(monkeypatch, _read_by("Claude Opus 4.8"), [], changed=["docs/a.md"], fails=error) == 1
+    out = capsys.readouterr().out
+    assert "the PR's file list was not fetched, so the paths that need a Fable read cannot be checked" in out, out
+
+
+@FETCH_FAILURES
+def test_a_head_commit_fetch_that_fails_or_hangs_leaves_the_clone_to_decide_and_no_traceback(monkeypatch, capsys, error):
+    monkeypatch.setattr(gate, "head_is_the_read", lambda read, head, base: "the head's tree is not the read's")
+    entries = [{"filename": "docs/a.md", "status": "modified"}]
+    assert _main_over_files(monkeypatch, _stale_body(), entries, head_fails=error) == 1
+    out = capsys.readouterr().out
+    assert f"the read named in the body covers {PREV[:8]}, not the head {TIP[:8]}: the head's tree is not the read's" in out, out
+
+
 def test_the_substitution_line_needs_a_reason():
     """A bare marker would be a switch anyone could flip without saying anything; the reason is the whole point."""
     body = f"## Summary\n\nRead before push by: Claude Opus 5 at {TIP}\n\nFable floor substituted by Opus:\n\n- [x] done\n"
