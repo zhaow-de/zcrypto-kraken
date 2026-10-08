@@ -374,3 +374,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #667 | 2026-10-06 | feat(infra): 00122 — the dead-man node, its hc role and its self-check | — | 00122 | T0218 |
 | #670 | 2026-10-07 | feat(infra): 00123 — one Alloy version across the fleet under one tag | — | 00123 | T0219 |
 | #671 | 2026-10-07 | docs(data): T0065 — the Q3 2026 OHLCVT ingest closes the reach round | — | — | T0065 |
+| #673 | 2026-10-07 | doc(topics): cherry pick T0018 from 8b5fce5cf | — | — | T0018 |
