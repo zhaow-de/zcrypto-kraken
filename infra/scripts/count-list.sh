@@ -378,14 +378,13 @@ c_engine_window_overrides() {
 # A watch number, not a gate: the band's successful rows that carry no well-formed `window`, whose admission can only be inferred.
 c_engine_rows_on_the_completion_floor() { uv run python infra/scripts/deploy-log-audit.py engine-window --log "${COUNT_LIST_DEPLOY_LOG:-docs/reference/deploy-log.jsonl}" | sed -n 's/^engine rows .*of which on the completion floor \([0-9][0-9]*\)$/\1/p'; }
 
-# The rows both preflight counts read: from the log's first row carrying a `preflight` -- the rows before it were gated
-# by the capture bake -- the primary's runs tagged `engine` and handed `engine_image_digest`. An empty `tags` stays out:
-# `site.yml` admits one on the primary only beside `--skip-tags engine`, a run of no engine-role task.
+# The window opens at the log's first row carrying a `preflight`, the rows before it gated by the capture bake. An empty
+# `tags` stays out: `site.yml` admits one on the primary only beside `--skip-tags engine`, a run of no engine-role task.
 # shellcheck disable=SC2016  # $first and $since are jq's, bound by the program and by --arg
 engine_preflight_rows='(map(has("preflight")) | index(true)) as $first | if $first == null then [] else .[$first:] end | map(select(($since == "" or (.ts | fromdate) >= ($since | fromdate)) and .limit == "zcrypto" and (.tags | split(",") | any(. == "engine")) and .extra_vars.engine_image_digest != null))'
 
 # A successful re-pin with nothing gating it and nothing bypassing it: no `preflight`, or one whose rc or provenance an
-# assert let through. `engaged` is not read, the role writing it true on every record.
+# assert let through.
 c_engine_repins_without_a_preflight() {
   local since
   since="$(round_closed_at)" || return 2
