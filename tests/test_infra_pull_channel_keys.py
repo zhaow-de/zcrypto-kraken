@@ -57,8 +57,8 @@ def _ca_remedy(name):
 
 def _ca_rotation(name):
     return (
-        "a CA key committed and pushed in clear is compromised: re-issue the CA and every leaf "
-        f"infra/scripts/zaccess-client-cert.sh signed with it, then from infra/ansible/ pipe the new CA key into: {_ca_encrypt(name)}"
+        "a CA key committed and pushed in clear is compromised: re-issue the CA here, from infra/ansible/ pipe its key into: "
+        f"{_ca_encrypt(name)}, then re-issue every leaf with infra/scripts/zaccess-client-cert.sh"
     )
 
 
