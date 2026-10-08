@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: "an evaluation statement: seven consecutive daily-pass journal entries dated 2026-10-10 or later, the comparison's earliest day, each carrying the pass's comparison line at `compare: <n> nodes × 24 instants, 0 differences` — phase 3's gate; check: `git fetch -q origin && git grep -h -e '^## 20' -e 'compare: ' origin/ops-journal -- 'docs/reference/ops-journal/20*.md'` lists seven consecutive entries from 2026-10-10 on, each followed by its `compare: … 0 differences` line"
+ripe_when: "an evaluation statement: daily-pass journal entries on seven consecutive days from 2026-10-10, each carrying the pass's comparison line at `compare: <n> nodes × 24 instants, 0 differences` — check: `git fetch -q origin && git grep -h -e '^## 20' -e 'compare: ' origin/ops-journal -- 'docs/reference/ops-journal/20*.md'` lists entries on seven consecutive days from 2026-10-10 on, each followed by its `compare: … 0 differences` line"
 ---
 
 # Self-hosting the metrics, logs and alerting stack in place of Grafana Cloud's free tier
@@ -45,5 +45,4 @@ The assessment of 2026-10-01 is `docs/research/92.self-hosted-observability-asse
 ## Suggested next steps
 
 - R12's pull request of its own: `COMPARISON_FROM = date(2026, 10, 10)` in `infra/scripts/ops_daily.py`, without which no pass compares and the trigger cannot fire.
-- The seven consecutive clean daily runs from 2026-10-10, each pass's `compare:` line in its journal entry (`infra/runbooks/mon.md#mon-compare`).
 - Then phase 3, the cutover of paging, by its own design, and phase 4, the retirement of the Grafana Cloud leg and the keep-alive: each takes its own plan once the phase before it has been read.
