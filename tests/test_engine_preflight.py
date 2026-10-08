@@ -201,13 +201,46 @@ def test_preflight_refuses_an_unreadable_newest_cycle_record(host):
     assert line["ok"] is False
 
 
-def test_preflight_reports_journal_none_without_a_record(host):
+def test_preflight_refuses_a_newest_cycle_record_that_is_not_utf8(host):
     state, _ = host
-    shutil.rmtree(state / "journal" / "2026-10-07")
+    newest = state / "journal" / "2026-10-07" / "cycle-20.json"
+    newest.write_bytes(b"\xff\xfe{}")
+    with pytest.raises(UnicodeDecodeError) as refused:
+        newest.read_text()
+    code, line = _preflight(state)
+    assert code == 1
+    assert line["journal"] == f"{newest}: {refused.value}"
+
+
+@pytest.mark.parametrize("emptied", ["journal", "journal/2026-10-07"], ids=["absent", "empty"])
+def test_preflight_reports_journal_none_without_a_record(host, emptied):
+    state, _ = host
+    shutil.rmtree(state / emptied)
     code, line = _preflight(state)
     assert line["journal"] == "none"
     assert line["ok"] is True
     assert code == 0
+
+
+def test_preflight_refuses_a_journal_dir_with_entries_and_no_cycle_record(host):
+    state, _ = host
+    (state / "journal" / "2026-10-07" / "cycle-20.json").unlink()
+    code, line = _preflight(state)
+    assert line["journal"] == f"{state / 'journal'}: no cycle record found"
+    assert line["ok"] is False
+    assert code == 1
+
+
+def test_preflight_refuses_a_journal_dir_it_cannot_list(host):
+    state, _ = host
+    journal = state / "journal"
+    shutil.rmtree(journal)
+    journal.write_text("")
+    with pytest.raises(NotADirectoryError) as refused:
+        any(journal.iterdir())
+    code, line = _preflight(state)
+    assert line["journal"] == f"{journal}: {refused.value}"
+    assert code == 1
 
 
 def _tree(root: Path) -> dict[str, int]:
