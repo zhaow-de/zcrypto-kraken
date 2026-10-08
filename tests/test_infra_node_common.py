@@ -328,7 +328,8 @@ mkdir -- "$2${1##*/}"
 exit 1
 """
 # sqlite3 shims, found ahead of the standard library on PYTHONPATH: a VACUUM that fails with its file and its journal on
-# disk, one that holds there until it is stopped, and an import that holds there, before the VACUUM checks its name.
+# disk, one that holds there until it is stopped, and one whose import holds until it is stopped, before the VACUUM's
+# program checks its staged name.
 JOURNAL_SHIM = """def connect(*args, **kwargs):
     return Source()
 
