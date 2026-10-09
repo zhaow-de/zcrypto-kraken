@@ -303,6 +303,12 @@ stat -c '%n mtime=%y ctime=%z' /usr/bin/curl
 zgrep -h ' upgrade curl:' /var/log/dpkg.log* | sort | tail -1
 ```
 
+- **Amended 2026-10-08 — the apt hosts after the wave of 2026-10-07, as their `fleet-pins.md` rows carry them.** `zaccess` and `zcrypto-mon` each at `1.20.1-1` since 2026-10-07, under a dpkg hold, pinned at 1001, the two `alloy` rows of the package table.
+
+```
+grep -E '^\| alloy \| (zaccess|zcrypto-mon) \|' docs/reference/fleet-pins.md
+```
+
 ## Not confirmed here, and the read that settles each
 
 Each line names the step that reads it; every one is read-only.

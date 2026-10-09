@@ -14,30 +14,33 @@ Reading rules:
 
 | service | host | digest (sha256, first 12) | since (UTC) | rollback operand (resident on the host at the re-pin) |
 | --- | --- | --- | --- | --- |
-| capture | zcrypto | `f102ca375382` — revision `7ab4fc1a` | 2026-09-30 18:21:10 | `3f291f3cee57` |
-| capture | zcrypto-red | `f102ca375382` — revision `7ab4fc1a` | 2026-09-30 14:06:03 | `3f291f3cee57` |
+| capture | zcrypto | `f102ca375382` — revision `7ab4fc1a` | 2026-10-08 15:24:21 | `3f291f3cee57` |
+| capture | zcrypto-red | `f102ca375382` — revision `7ab4fc1a` | 2026-10-08 15:21:15 | `3f291f3cee57` |
 | engine | zcrypto | `f102ca375382` — revision `7ab4fc1a` | 2026-09-30 18:22:02 | `3f291f3cee57` |
 | cache-proxy | zcrypto | `76928c0d6b39` — HAProxy 3.4.5, upstream `haproxy` | 2026-09-30 18:22:02 | first pin |
-| alloy | zcrypto | `b8ec653c4423` — v1.19.2 | 2026-09-26 13:28:09 | `491b0578c049` — v1.18.0 |
-| alloy | zcrypto-red | `b8ec653c4423` — v1.19.2 | 2026-09-26 09:54:50 | `491b0578c049` — v1.18.0 |
-| alloy | zcrypto-ops | `b8ec653c4423` — v1.19.2 | 2026-09-22 15:55:36 | `491b0578c049` — v1.18.0 |
-| alloy | nas | `b8ec653c4423` — v1.19.2, upstream `grafana/alloy`, no `-compat` variant | 2026-09-30 19:17:42 | `491b0578c049` — v1.18.0 |
+| alloy | zcrypto | `2aa2099af76c` — v1.20.1 | 2026-10-07 12:14:42 | `b8ec653c4423` — v1.19.2 |
+| alloy | zcrypto-red | `2aa2099af76c` — v1.20.1 | 2026-10-08 16:32:47 | `b8ec653c4423` — v1.19.2 |
+| alloy | zcrypto-ops | `2aa2099af76c` — v1.20.1 | 2026-10-08 15:03:26 | `b8ec653c4423` — v1.19.2 |
+| alloy | nas | `2aa2099af76c` — v1.20.1, upstream `grafana/alloy`, no `-compat` variant | 2026-10-08 15:08:39 | `b8ec653c4423` — v1.19.2 |
 | valkey + sentinel | zcrypto-valkey1 | `418652cfb58e` — Valkey 9.1.2, upstream `valkey/valkey` | 2026-09-26 21:20:54 | first pin |
-| alloy | zcrypto-valkey1 | `b8ec653c4423` — v1.19.2 | 2026-09-26 22:35:40 | first pin |
+| alloy | zcrypto-valkey1 | `2aa2099af76c` — v1.20.1 | 2026-10-07 11:05:54 | `b8ec653c4423` — v1.19.2 |
 | valkey + sentinel | zcrypto-valkey2 | `418652cfb58e` — Valkey 9.1.2, upstream `valkey/valkey` | 2026-09-26 21:24:03 | first pin |
-| alloy | zcrypto-valkey2 | `b8ec653c4423` — v1.19.2 | 2026-09-26 22:39:05 | first pin |
+| alloy | zcrypto-valkey2 | `2aa2099af76c` — v1.20.1 | 2026-10-07 11:10:11 | `b8ec653c4423` — v1.19.2 |
 | valkey + sentinel | zcrypto-valkey3 | `418652cfb58e` — Valkey 9.1.2, upstream `valkey/valkey` | 2026-09-26 21:28:18 | first pin |
-| alloy | zcrypto-valkey3 | `b8ec653c4423` — v1.19.2 | 2026-09-26 22:41:11 | first pin |
-| ops (timers + liquidations) | zcrypto-ops | `3f291f3cee57` — revision `77df6273` | 2026-09-24 20:04:48 | `7d4c6066d71e` |
-| archive-pull | nas | `d914dad91536` — revision `7ab4fc1a`, the `-compat` build | 2026-09-30 19:17:40 | `c4135ac75b72` |
+| alloy | zcrypto-valkey3 | `2aa2099af76c` — v1.20.1 | 2026-10-07 11:14:05 | `b8ec653c4423` — v1.19.2 |
+| ops (timers + liquidations) | zcrypto-ops | `3f291f3cee57` — revision `77df6273` | 2026-10-08 15:03:44 | `7d4c6066d71e` |
+| archive-pull | nas | `d914dad91536` — revision `7ab4fc1a`, the `-compat` build | 2026-10-08 15:08:37 | `c4135ac75b72` |
 
-**Non-image pins.** `zaccess`'s `caddy` is an apt package the access role installs unversioned, clearing a `dpkg` hold, so it has no row and no rollback operand here; read its installed version off the host: `dpkg-query -W caddy`. Alloy on the hosts that run it as a package, `zaccess` and `zcrypto-mon`, is installed at `alloy_deb_version` in `infra/ansible/group_vars/observed/alloy.yml`, held and pinned, and takes an `alloy` row in the table below: its version the host's `dpkg-query -W alloy` read after its first `--tags alloy` converge, its notes `dpkg hold; pinned at 1001`; the word `held` in the notes, its reason after it, marks a host a wave left behind.
+**Non-image pins.** `zaccess`'s `caddy` is an apt package the access role installs unversioned, clearing a `dpkg` hold, so it has no row and no rollback operand here; read its installed version off the host: `dpkg-query -W caddy`. Alloy on the hosts that run it as a package is installed at `alloy_deb_version` in `infra/ansible/group_vars/observed/alloy.yml`, held and pinned, and takes an `alloy` row in the table below: its version the host's `dpkg-query -W alloy` read after the converge that installs it, its notes `dpkg hold; pinned at 1001`; the word `held` in the notes, its reason after it, marks a host a wave left behind.
 
 Every host's Alloy runs the fleet's version outside a wave (set: the hosts of the inventory's `observed` group, each by its `alloy` row in either table here, a host with no row counted as off; count: `infra/scripts/count-list.sh hosts-off-the-fleets-alloy-version`).
 
 | package | host | version | since (UTC) | notes |
 | --- | --- | --- | --- | --- |
 | agentboard | zcrypto-ops | `0.5.3` (`@gbasin/agentboard`, npm global as `zhaow`) | 2026-09-17 | restarted by a tunnel-conf converge (`Requires=wg-quick@zaccess0`), not by a role task; re-pins attended, no bake; read-back and upgrade: `infra/runbooks/ops-node.md`'s `agentboard-node-upgrade` |
+| alloy | zaccess | `1.20.1-1` | 2026-10-07 | dpkg hold; pinned at 1001 |
+| alloy | zcrypto-mon | `1.20.1-1` | 2026-10-07 | dpkg hold; pinned at 1001 |
+| alloy | zcrypto-hc | `1.20.1-1` | 2026-10-07 | dpkg hold; pinned at 1001 |
 | hc (the healthchecks clone, `ghcr.io/zhaow-de/healthchecks`, by tag) | zcrypto-hc | `v6.2.0` | 2026-10-07 15:56:59 | first pin; rolled back by `-e hc_image_tag=<previous tag>` on a converge, the previous tag resident on the node |
 
 ## Standing constraints
@@ -59,5 +62,5 @@ The current pins and their operands; older digests are in this file's git log.
 - `c4135ac75b72` = `sha256:c4135ac75b72206d3499c99d476b375d1cc0c3326a4bb8acee255287bb2f3164` — revision `77df6273`, the `-compat` build; the NAS archive-pull's operand
 - `418652cfb58e` = `sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd` — Valkey 9.1.2; the cache nodes
 - `76928c0d6b39` = `sha256:76928c0d6b39bdd5f1c15d519cf48c47a6aa18c1dc552f7af1c146d2aa003c14` — HAProxy 3.4.5; the engine host's cache proxy
-- `b8ec653c4423` = `sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839` — Alloy v1.19.2; the ops, capture and cache hosts and the NAS
-- `491b0578c049` = `sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308` — Alloy v1.18.0; the NAS's, the ops' and the capture hosts' operand
+- `2aa2099af76c` = `sha256:2aa2099af76c0098d4af7a4d6e48f86cb66dc1a000222ad927a1c67c6542d13f` — Alloy v1.20.1; the ops, capture and cache hosts and the NAS
+- `b8ec653c4423` = `sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839` — Alloy v1.19.2; the ops', the capture and cache hosts' and the NAS's operand
