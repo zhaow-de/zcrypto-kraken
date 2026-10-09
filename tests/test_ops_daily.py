@@ -1967,7 +1967,7 @@ def test_the_live_runner_is_bounded_and_runs_from_the_repo_root(monkeypatch):
 
 
 def test_the_comparisons_first_day_is_plan_00123_r12s_day():
-    assert ops_daily.COMPARISON_FROM == date(2026, 10, 10)  # plan 00123 R12: the comparison's earliest day
+    assert ops_daily.COMPARISON_FROM == date(2026, 10, 10)
 
 
 def test_a_truncated_sample_array_is_an_unreadable_source_too():
