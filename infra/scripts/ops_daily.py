@@ -1030,10 +1030,9 @@ def read_soak_verdict(*, now: datetime, runner) -> Check:
         return Check(SOAK_CHECK, SOAK_EXPR, ok=False, value=f"unreadable: {exc}")
 
 
-# The first day the markdown report compares the two stacks: None until the last fleet host has 50 h of data on the
-# node, when the rollout's records pull request sets it; retirement ends the comparison by leaving the stack table one
-# stack, so the constant is never unset again.
-COMPARISON_FROM: date | None = None
+# The first day the markdown report compares the two stacks, derived in plan 00123's R12; retirement ends the
+# comparison by leaving the stack table one stack, so the constant is never unset again.
+COMPARISON_FROM: date | None = date(2026, 10, 10)
 COMPARE_SCRIPT = Path(__file__).resolve().parent / "grafana-compare.py"
 # Four times a run's length and more, so Grafana Cloud's query path can slow that far before a run is cut; the
 # daily-ops skill runs the report in the background for the same reason.
