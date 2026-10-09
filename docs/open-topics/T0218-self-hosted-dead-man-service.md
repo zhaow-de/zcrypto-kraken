@@ -57,9 +57,10 @@ The cutover, 2026-10-08, from `develop` at 118b88f62, its six converges `rc 0`: 
 - R9 to R12, ops, the observability node, the NAS and the capture pair; the engine, the cache proxy and the capture pair's Alloy unmoved.
 - R13 in the sitting: eight checks moved and four `new` — `zcrypto-gate-verify` until the NAS's next gate export, the two replay checks until their 2026-10-09 ticks, `zcrypto-engine-shadow` until R14; Grafana Cloud's down total 0 over twelve rows, `zcrypto-hcio-watchdog` quiet; seven healthchecks.io twins paused.
 - R13's Slack-link read: the cookieless reads answered the login redirect, so the records pull request carries the edge's cookieless-`HEAD` route over `/checks/*` and `/cloaked/*`; the owner ruled on 2026-10-09 that the route stays, the cookieless read deciding it over the signed-in macOS read (spec Open question 8).
+- R13's morning read, 2026-10-09, which completes R13: `hc-provision.py status` at 07:03Z read eleven moved and `zcrypto-engine-shadow` `new`; the owner then paused the two replay checks' healthchecks.io twins, `zcrypto-verify-replay` and `zcrypto-verified-replay`, leaving `zcrypto-engine-shadow` the one check unpaused on healthchecks.io until R14 moves it; the records pull request re-fetched the fixture after the read (382ce8f3e).
 
 ## Suggested next steps
 
-- R13's morning read, 2026-10-09, as the plan's R13 reads it; then the records pull request takes the fixture as R-records-1 reads it, and after its merge the node's converge `infra/ansible/scripts/converge.sh site.yml --limit zcrypto-hc --tags hc -e hc_image_tag=v6.2.0`, which renders the edge route.
+- After the records pull request's merge, the node's converge `infra/ansible/scripts/converge.sh site.yml --limit zcrypto-hc --tags hc -e hc_image_tag=v6.2.0`, which renders the edge route.
 - The fourth pull request: Task 15 (the drills and the surfaces' sweep), merged before R15.
 - On or after 2026-11-01, the box's last day: R14 (the engine's move at the box's deferred disarm converge, inside the inter-cycle gap), R15 (the three drills), R16 (retirement, after R14's first clean day and R15's three drill entries) and R-records-2.
