@@ -17,7 +17,7 @@ GRAFANA_SLACK_WEBHOOK_URL= \
   PATH="$PWD/.venv/bin:$PATH" ./infra/scripts/grafana-push.sh
 ```
 
-A routine push passes `GRAFANA_SLACK_WEBHOOK_URL` empty: the receivers are live, and a shell that exported the node's shadow webhook then leaves Grafana Cloud's receivers where they point.
+A routine push passes `GRAFANA_SLACK_WEBHOOK_URL` empty: the receivers are live, and a shell that exported the other stack's webhook then leaves Grafana Cloud's receivers where they point.
 
 In the dual period — while `infra/scripts/grafana_auth.py`'s `STACKS` holds both stacks — a push is two, from the one checkout that passed Step 2, in the same sitting: the Grafana Cloud push above, whose first line reads `skip-groups=zcrypto-mon zcrypto-hc`, then the node's, `infra/runbooks/mon.md#mon-push` step 1. A push that reached one stack and not the other is followed by the other from the same checkout.
 
