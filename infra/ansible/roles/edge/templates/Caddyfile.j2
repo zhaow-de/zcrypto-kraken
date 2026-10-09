@@ -31,9 +31,8 @@
 
 {% endif %}
 {% if edge_head_paths %}
-	# Slack for macOS pre-resolves a page link with a cookieless HEAD and opens the browser where Grafana's
-	# redirect ends, /login?redirectTo=..., which sends a signed-in session home. No browser sends HEAD for
-	# a navigation, so answering it here lets the client open the link as written.
+	# A link pre-resolver such as Slack's reads a page link with a cookieless HEAD, which no browser navigation
+	# sends, so answering it 200 here hands the browser the link itself rather than the login redirect's end.
 	@a_page_link_pre_resolved_without_a_login {
 		method HEAD
 		path {{ edge_head_paths | join(' ') }}

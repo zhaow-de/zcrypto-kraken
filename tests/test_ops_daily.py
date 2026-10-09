@@ -1966,8 +1966,8 @@ def test_the_live_runner_is_bounded_and_runs_from_the_repo_root(monkeypatch):
     assert list(seen["command"][-3:]) == [str(ops_daily.COMPARE_SCRIPT), "--day", "2026-10-02"]
 
 
-def test_the_comparisons_first_day_is_unset_or_a_plain_date():
-    assert ops_daily.COMPARISON_FROM is None or type(ops_daily.COMPARISON_FROM) is date
+def test_the_comparisons_first_day_is_plan_00123_r12s_day():
+    assert ops_daily.COMPARISON_FROM == date(2026, 10, 10)
 
 
 def test_a_truncated_sample_array_is_an_unreadable_source_too():
@@ -2563,12 +2563,9 @@ def test_clean_descriptions_say_so_in_the_report_and_stay_out_of_the_paragraph()
 
 
 def test_todays_real_descriptions_all_pass():
-    """The true positive: a check that refuses everything is not a check. The fixture is
-    `name`/`tags`/`desc` only, fetched through the read-only key -- never the whole object, which
-    carries each check's write URL -- so a description rewritten in the SaaS moves nothing here until
-    it is re-fetched."""
+    """The true positive: a check that refuses everything is not a check."""
     checks = json.loads((Path(__file__).resolve().parent / "fixtures" / "healthchecks_descriptions.json").read_text())
-    assert len(checks) == 11, len(checks)
+    assert len(checks) == 12, len(checks)
     assert ops_daily.check_descriptions(checks) == []
 
 

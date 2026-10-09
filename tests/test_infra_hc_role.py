@@ -109,8 +109,8 @@ INCLUDES = yaml.safe_load(
     edge_acme_email: "{{ hc_acme_email }}"
     edge_basic_auth_routes: []
     edge_paths_404: []
-    edge_head_paths: []
-    edge_session_cookie: ""
+    edge_head_paths: [/checks/*, /cloaked/*]
+    edge_session_cookie: sessionid
     edge_upstream_port: "{{ hc_port }}"
 - name: the reboot check
   ansible.builtin.include_role: {name: node_common, tasks_from: reboot-check}
@@ -191,6 +191,32 @@ def test_the_shared_includes_run_in_the_roles_order_with_exactly_their_variables
         (t["name"], t["ansible.builtin.include_role"], t["vars"]) for t in INCLUDES
     ]
     assert [task["name"] for task in _tasks()[:2]] == [VAULT_PREFLIGHT, PLAIN_PREFLIGHT], "a no_log task would run first"
+
+
+# --- the edge: a cookieless HEAD on a page link answered there, everything else to the clone ----------------------
+EDGE = ANSIBLE / "roles/edge"
+EDGE_INCLUDE = "the edge in front of the service on loopback"
+HEAD_MATCHER = "@a_page_link_pre_resolved_without_a_login"
+
+
+def _edge_site() -> dict[str, list]:
+    include = _include(EDGE_INCLUDE)
+    assert include["ansible.builtin.include_role"] == {"name": "edge"}, include
+    node = role_render.variables(ROLE, {})
+    text = role_render.render(EDGE, "Caddyfile.j2", {}, **node, **role_render.trusted(include["vars"]))
+    return role_render.site(dict(role_render.blocks(text.splitlines())), DEFAULTS["hc_hostname"])
+
+
+def test_a_cookieless_head_on_a_check_page_or_cloaked_link_is_answered_at_the_edge_and_the_rest_reaches_the_clone():
+    site = _edge_site()
+    assert [line for line in site if line.startswith(("@", "handle"))] == [HEAD_MATCHER, f"handle {HEAD_MATCHER}", "handle"]
+    assert site[HEAD_MATCHER] == [
+        ("method HEAD", []),
+        ("path /checks/* /cloaked/*", []),
+        ("not header_regexp Cookie sessionid=", []),
+    ]
+    assert site[f"handle {HEAD_MATCHER}"] == [("respond 200", [])]
+    assert site["handle"] == [("reverse_proxy 127.0.0.1:8000", [])]
 
 
 # --- the two preflights: refused by name when missing or misshapen ------------------------------------------------

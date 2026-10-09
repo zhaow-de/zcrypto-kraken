@@ -2,7 +2,6 @@
 ![GitHub License](https://img.shields.io/github/license/zhaow-de/zcrypto-kraken)
 ![Python Version from PEP 621 TOML](https://img.shields.io/python/required-version-toml?tomlFilePath=https://raw.githubusercontent.com/zhaow-de/zcrypto-kraken/develop/pyproject.toml)
 ![Coveralls](https://img.shields.io/coverallsCoverage/github/zhaow-de/zcrypto-kraken)
-![healthchecks.io](https://img.shields.io/endpoint?url=https%3A%2F%2Fhealthchecks.io%2Fbadge%2F32eaee6f-cb82-4773-9471-4b802136adc1%2FopNhEK_4-2.shields)
 
 # zcrypto
 
@@ -68,7 +67,7 @@ zcrypto capture [OPTIONS]
 | `--data-dir <PATH>` | Segment output base directory. Defaults to `$ZCRYPTO_CAPTURE_DATA_DIR` if set, else `/var/lib/zcrypto-capture/segments`. |
 | `--duration <SECS>` | Run for this many seconds then stop cleanly (for smoke-testing); omit to run until interrupted. |
 
-Segments land at `<data-dir>/<pair>/{book,trades}/<YYYY>/<MM>/<DD>/<HH>.parquet`. Set `HEALTHCHECK_URL` (a healthchecks.io ping URL) to enable the dead-man's-switch liveness ping; it's optional and skipped when unset.
+Segments land at `<data-dir>/<pair>/{book,trades}/<YYYY>/<MM>/<DD>/<HH>.parquet`. Set `HEALTHCHECK_URL` to enable the dead-man's-switch liveness ping; it's optional and skipped when unset.
 
 ### `zcrypto liquidations`<a name="zcrypto-liquidations"></a>
 
@@ -83,7 +82,7 @@ zcrypto liquidations [OPTIONS]
 | `--data-dir <PATH>` | Segment output base directory. Defaults to `$ZCRYPTO_LIQUIDATIONS_DATA_DIR` if set, else `/var/lib/zcrypto-ops/liquidations`. |
 | `--duration <SECS>` | Run for this many seconds then stop cleanly (for smoke-testing); omit to run until interrupted. |
 
-Segments land at `<data-dir>/<SYMBOL>/liquidations/<YYYY>/<MM>/<DD>/<HH>.parquet` (`<SYMBOL>` is the Binance ticker, e.g. `BTCUSDT`), with columns `ts, symbol, side, price, orig_qty, avg_price, order_status, event_id`. Redelivered events (Binance replays force-orders on reconnect) are de-duped on the synthesized `event_id`. Set `LIQUIDATIONS_HEALTHCHECK_URL` (a healthchecks.io ping URL) to enable the dead-man's-switch liveness ping; it's optional and skipped when unset.
+Segments land at `<data-dir>/<SYMBOL>/liquidations/<YYYY>/<MM>/<DD>/<HH>.parquet` (`<SYMBOL>` is the Binance ticker, e.g. `BTCUSDT`), with columns `ts, symbol, side, price, orig_qty, avg_price, order_status, event_id`. Redelivered events (Binance replays force-orders on reconnect) are de-duped on the synthesized `event_id`. Set `LIQUIDATIONS_HEALTHCHECK_URL` to enable the dead-man's-switch liveness ping; it's optional and skipped when unset.
 
 ### `zcrypto liquidations-poll`<a name="zcrypto-liquidations-poll"></a>
 
@@ -98,7 +97,7 @@ zcrypto liquidations-poll [OPTIONS]
 | `--data-dir <PATH>` | Segment output base directory. Defaults to `$ZCRYPTO_LIQUIDATIONS_DATA_DIR` if set, else `/var/lib/zcrypto-ops/liquidations`. |
 | `--duration <SECS>` | Run for this many seconds then stop cleanly (for smoke-testing; runs at least one poll cycle even with `0`); omit to run until interrupted. |
 
-Requires `$COINALYZE_API_KEY` (exits with an error if unset). Segments land at `<data-dir>/<COIN>/liquidations-1m/<YYYY>/<MM>/<DD>/<HH>.parquet`, with columns `ts, symbol, long_usd, short_usd, event_id`. Only buckets Coinalyze has proven closed (`bucket_end <= now - 120s`) are ingested; each cycle re-polls the last 24h and relies on the synthesized `event_id` (`<symbol>-<bucket_start>`) for de-dup, since Coinalyze's own history only stretches back ~25-33h. Set `LIQUIDATIONS_HEALTHCHECK_URL` (a healthchecks.io ping URL) to enable the dead-man's-switch liveness ping (sent only after a fully successful cycle); it's optional and skipped when unset.
+Requires `$COINALYZE_API_KEY` (exits with an error if unset). Segments land at `<data-dir>/<COIN>/liquidations-1m/<YYYY>/<MM>/<DD>/<HH>.parquet`, with columns `ts, symbol, long_usd, short_usd, event_id`. Only buckets Coinalyze has proven closed (`bucket_end <= now - 120s`) are ingested; each cycle re-polls the last 24h and relies on the synthesized `event_id` (`<symbol>-<bucket_start>`) for de-dup, since Coinalyze's own history only stretches back ~25-33h. Set `LIQUIDATIONS_HEALTHCHECK_URL` to enable the dead-man's-switch liveness ping (sent only after a fully successful cycle); it's optional and skipped when unset.
 
 ### `zcrypto engine`<a name="zcrypto-engine"></a>
 
