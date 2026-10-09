@@ -34,6 +34,9 @@ FABLE_PATHS = (
     "infra/ansible/roles/capture/",
     "infra/ansible/roles/engine/",
 )
+# The PR files endpoint lists a renamed file under its new path in `filename` and its old one in `previous_filename`.
+# Both are paths the PR changed: a file moved out of a Fable path into a plain one touches the Fable path.
+PR_FILES_JQ = ".[] | .filename, (.previous_filename // empty)"
 # .github/workflows/capture-image.yml's on.push.paths, the pushes that build the engine image.
 IMAGE_PATHS = ("cli/**", "pyproject.toml", "uv.lock", "infra/docker/**")
 # The Fable floor is substitutable, and only by a line that says so in the body. An Opus read on a Fable path
@@ -365,7 +368,7 @@ def read_line_fails(pr: dict, head_commit: dict | None, files: list[str] | None,
     if pr.get("headRefName") == "ops-journal":
         if files is None:
             return ["the PR's file list was not fetched, so the ops-journal exemption cannot be scoped to the journal files"]
-        if all(f.startswith(JOURNAL) for f in files):
+        if files and all(f.startswith(JOURNAL) for f in files):
             return []  # a month of journal entries has nothing for a reviewer to read (docs/reference/ops-journal/README.md)
     body = pr.get("body") or ""
     head = pr.get("headRefOid") or ""
@@ -659,13 +662,24 @@ def main(argv: list[str]) -> int:
     m = READ_LINE.search(_as_a_reader_sees_it(pr.get("body") or ""))
     head = pr.get("headRefOid") or ""
     if m or pr.get("headRefName") == "ops-journal":
-        files = _gh("api", "--paginate", f"repos/{REPO}/pulls/{pr['number']}/files", "--jq", ".[].filename").split()
+        try:
+            out = _gh("api", "--paginate", f"repos/{REPO}/pulls/{pr['number']}/files", "--jq", PR_FILES_JQ)
+            files = [line for line in out.splitlines() if line.strip()]
+        except subprocess.CalledProcessError, subprocess.TimeoutExpired:
+            pass  # a failed or hung fetch leaves the list unfetched, which the arms that read it refuse
     growth = branch_growth(pr["baseRefName"], pr["headRefName"], head)
     behind = is_behind(pr["baseRefName"], head)
     changed = changed_paths(pr["baseRefName"], head)
+    if files is not None and changed is not None:
+        files += [p for p in changed if p not in files]  # an empty or short answer from GitHub hides nothing the clone names
+    elif files == []:
+        files = None
     kept = None
     if m and head and not head.startswith(m.group(2)):
-        head_commit = json.loads(_gh("api", f"repos/{REPO}/commits/{head}"))
+        try:
+            head_commit = json.loads(_gh("api", f"repos/{REPO}/commits/{head}"))
+        except subprocess.CalledProcessError, subprocess.TimeoutExpired:
+            pass  # an unread head commit admits nothing as the row commit; the clone's answer decides
         try:
             read = json.loads(_gh("api", f"repos/{REPO}/commits/{m.group(2)}")).get("sha") or m.group(2)
         except subprocess.CalledProcessError, subprocess.TimeoutExpired:

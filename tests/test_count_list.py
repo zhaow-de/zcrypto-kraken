@@ -442,10 +442,7 @@ def test_the_row_commit_and_a_message_amend_are_the_heads_the_read_line_need_not
 @pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
 def test_a_truncated_file_list_is_refetched_before_the_fable_arm_decides(tmp_path):
     """`gh pr list --json files` returns the first page only, so a PR whose Fable path falls outside it reads as
-    touching none — the counter would book it compliant where the gate refuses it. `changedFiles` is the exact
-    truncation test, and the re-fetch has to happen BEFORE `read_line_fails` sees the list. The row below carries
-    an Opus read, two innocuous paths and `changedFiles: 3`; the recorded full list adds `cli/engine/soak.py`, so
-    it must count. Without the re-fetch it reads as touching nothing and does not."""
+    touching none — the counter would book it compliant where the gate refuses it."""
     stamp = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     head = "abcdef1234567aaaaaaaaaaaaaaaaaaaaaaaaaaa"
     prs = [
@@ -454,7 +451,6 @@ def test_a_truncated_file_list_is_refetched_before_the_fable_arm_decides(tmp_pat
             "headRefName": "feat/truncated",
             "mergedAt": stamp,
             "headRefOid": head,
-            "changedFiles": 3,
             "files": [{"path": "docs/a.md"}, {"path": "docs/b.md"}],
             "body": "Read before push by: Claude Opus at abcdef1234567\n",
         },
@@ -463,7 +459,6 @@ def test_a_truncated_file_list_is_refetched_before_the_fable_arm_decides(tmp_pat
             "headRefName": "feat/old",
             "mergedAt": "2026-01-01T00:00:00Z",
             "headRefOid": head,
-            "changedFiles": 0,
             "files": [],
             "body": "## Summary\n",
         },
@@ -484,6 +479,162 @@ def test_a_truncated_file_list_is_refetched_before_the_fable_arm_decides(tmp_pat
         timeout=120,
     )
     assert done.returncode == 0 and done.stdout.strip().endswith("\t1"), done.stdout + done.stderr
+
+
+_FAKE_GH = """#!/usr/bin/env bash
+dir="$(dirname "$0")"
+case "$1 $2" in
+  "pr list") exec cat "$dir/prs.json" ;;
+  "api --paginate") n="${3%/files}"; key="files-${n##*/}" ;;
+  "pr view") key="commits-$3" ;;
+  api\\ repos/*/commits/*) key="commit-${2##*/}" ;;
+  *) echo "fake gh: $*" >&2; exit 64 ;;
+esac
+[ -e "$dir/hang-$key" ] && exec sleep 10
+[ -f "$dir/$key.json" ] || { echo "HTTP 502: Bad Gateway" >&2; exit 1; }
+[ "$4" = "--jq" ] && exec jq -r "$5" "$dir/$key.json"
+exec cat "$dir/$key.json"
+"""
+
+
+def _live_count(
+    tmp_path: pathlib.Path,
+    rows: list[dict],
+    entries: dict[int, list[dict]],
+    hang: tuple[str, ...] = (),
+    answers: dict[str, object] | None = None,
+    **env: str,
+) -> subprocess.CompletedProcess:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "prs.json").write_text(json.dumps(rows))
+    for number, listed in entries.items():
+        (bin_dir / f"files-{number}.json").write_text(json.dumps(listed))
+    for key, answer in (answers or {}).items():
+        (bin_dir / f"{key}.json").write_text(json.dumps(answer))
+    for key in hang:
+        (bin_dir / f"hang-{key}").touch()
+    (bin_dir / "gh").write_text(_FAKE_GH)
+    (bin_dir / "git").write_text(f'#!/usr/bin/env bash\n[ "$1" = fetch ] && exit 0\nexec "{shutil.which("git")}" "$@"\n')
+    for name in ("gh", "git"):
+        (bin_dir / name).chmod(0o755)
+    return subprocess.run(
+        ["bash", str(SCRIPT), "merged-prs-without-a-floor-read-30d"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        env={**os.environ, **env, "PATH": f"{bin_dir}:{os.environ['PATH']}"},
+        timeout=120,
+    )
+
+
+def _live_row(
+    number: int, branch: str, files: list[str], body: str = "Read before push by: Claude Opus at abcdef1234567\n"
+) -> dict:
+    stamp = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    head = "abcdef1234567aaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    return {
+        "number": number,
+        "headRefName": branch,
+        "mergedAt": stamp,
+        "headRefOid": head,
+        "files": [{"path": f} for f in files],
+        "body": body,
+    }
+
+
+_OLD_ROW = {**_live_row(9, "feat/old", [], "## Summary\n"), "mergedAt": "2026-01-01T00:00:00Z"}
+
+
+@pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+def test_the_live_count_reads_a_renamed_file_s_old_path_through_the_gate_s_jq(tmp_path):
+    rows = [_live_row(10, "feat/renamed", ["cli/costs/retired.py"]), _live_row(11, "feat/plain", ["docs/a.md"]), _OLD_ROW]
+    entries = {
+        10: [{"filename": "cli/costs/retired.py", "previous_filename": "cli/engine/retired.py", "status": "renamed"}],
+        11: [{"filename": "docs/a.md", "status": "modified"}],
+    }
+    done = _live_count(tmp_path, rows, entries)
+    assert done.returncode == 0 and done.stdout == "merged-prs-without-a-floor-read-30d\t1\n", done.stdout + done.stderr
+
+
+@pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+def test_an_empty_answer_from_the_files_endpoint_keeps_the_bulk_list(tmp_path):
+    done = _live_count(tmp_path, [_live_row(12, "feat/engine", ["cli/engine/x.py"]), _OLD_ROW], {12: []})
+    assert done.returncode == 0 and done.stdout == "merged-prs-without-a-floor-read-30d\t1\n", done.stdout + done.stderr
+
+
+@pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+def test_a_failed_files_fetch_is_an_error_naming_the_pr_rather_than_a_count(tmp_path):
+    rows = [_live_row(10, "feat/plain", ["docs/a.md"]), _live_row(13, "feat/unfetched", ["docs/b.md"]), _OLD_ROW]
+    done = _live_count(tmp_path, rows, {10: [{"filename": "docs/a.md", "status": "modified"}]})
+    assert done.returncode == 2 and done.stdout == "merged-prs-without-a-floor-read-30d\tERROR\n", done.stdout + done.stderr
+    assert "PR #13's file list could not be fetched -- the Fable-path arm cannot be decided: exit 1: HTTP 502" in done.stderr
+
+
+@pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+def test_a_hung_files_fetch_is_the_same_error_and_no_traceback(tmp_path):
+    rows = [_live_row(14, "feat/hung", ["docs/a.md"]), _OLD_ROW]
+    done = _live_count(tmp_path, rows, {}, hang=("files-14",), COUNT_LIST_GH_TIMEOUT="0.5")
+    assert done.returncode == 2 and done.stdout == "merged-prs-without-a-floor-read-30d\tERROR\n", done.stdout + done.stderr
+    assert "PR #14's file list could not be fetched -- the Fable-path arm cannot be decided: no answer in 0.5s" in done.stderr
+    assert "Traceback" not in done.stderr, done.stderr
+
+
+@pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+def test_a_hung_commits_fetch_for_a_dependabot_row_is_the_same_error_and_no_traceback(tmp_path):
+    rows = [_live_row(15, "dependabot/uv/develop/polars-1.44.2", ["uv.lock"], "Bumps polars.\n"), _OLD_ROW]
+    done = _live_count(tmp_path, rows, {}, hang=("commits-15",), COUNT_LIST_GH_TIMEOUT="0.5")
+    assert done.returncode == 2 and done.stdout == "merged-prs-without-a-floor-read-30d\tERROR\n", done.stdout + done.stderr
+    assert (
+        "PR #15 is a dependabot branch whose commits could not be fetched, so the no-fix-commit exemption cannot be "
+        "decided: no answer in 0.5s"
+    ) in done.stderr
+    assert "Traceback" not in done.stderr, done.stderr
+
+
+@pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+def test_a_hung_head_commit_fetch_is_the_same_error_and_no_traceback(tmp_path):
+    head = "99887766554433221100ffeeddccbbaa99887766"
+    rows = [{**_live_row(16, "feat/past-the-read", ["docs/a.md"]), "headRefOid": head}, _OLD_ROW]
+    entries = {16: [{"filename": "docs/a.md", "status": "modified"}]}
+    done = _live_count(tmp_path, rows, entries, hang=(f"commit-{head}",), COUNT_LIST_GH_TIMEOUT="0.5")
+    assert done.returncode == 2 and done.stdout == "merged-prs-without-a-floor-read-30d\tERROR\n", done.stdout + done.stderr
+    assert (
+        f"PR #16's commit {head} could not be fetched -- whether the read covers the head cannot be decided: no answer in 0.5s"
+    ) in done.stderr
+    assert "Traceback" not in done.stderr, done.stderr
+
+
+@pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+def test_a_failed_head_commit_fetch_is_an_error_naming_the_pr(tmp_path):
+    head = "99887766554433221100ffeeddccbbaa99887766"
+    rows = [{**_live_row(16, "feat/past-the-read", ["docs/a.md"]), "headRefOid": head}, _OLD_ROW]
+    done = _live_count(tmp_path, rows, {16: [{"filename": "docs/a.md", "status": "modified"}]})
+    assert done.returncode == 2 and done.stdout == "merged-prs-without-a-floor-read-30d\tERROR\n", done.stdout + done.stderr
+    assert (
+        f"PR #16's commit {head} could not be fetched -- whether the read covers the head cannot be decided: exit 1: HTTP 502"
+    ) in done.stderr
+
+
+@pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+def test_a_read_tip_github_never_saw_is_asked_of_the_clone_and_no_error(tmp_path):
+    head = "99887766554433221100ffeeddccbbaa99887766"
+    row = {**_live_row(18, "feat/unpushed-read", ["docs/a.md"]), "headRefOid": head, "mergeCommit": {"oid": "1" * 40}}
+    answers = {f"commit-{head}": {"sha": head, "parents": [{"sha": "0" * 40}], "files": [{"filename": "docs/a.md"}]}}
+    done = _live_count(tmp_path, [row, _OLD_ROW], {18: [{"filename": "docs/a.md", "status": "modified"}]}, answers=answers)
+    assert done.returncode == 0 and done.stdout == "merged-prs-without-a-floor-read-30d\t1\n", done.stdout + done.stderr
+
+
+@pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+def test_a_failed_commits_fetch_for_a_dependabot_row_is_an_error_naming_the_pr_and_no_traceback(tmp_path):
+    rows = [_live_row(19, "dependabot/uv/develop/polars-1.44.2", ["uv.lock"], "Bumps polars.\n"), _OLD_ROW]
+    done = _live_count(tmp_path, rows, {})
+    assert done.returncode == 2 and done.stdout == "merged-prs-without-a-floor-read-30d\tERROR\n", done.stdout + done.stderr
+    assert (
+        "PR #19 is a dependabot branch whose commits could not be fetched, so the no-fix-commit exemption cannot be "
+        "decided: exit 1: HTTP 502"
+    ) in done.stderr
+    assert "Traceback" not in done.stderr, done.stderr
 
 
 @pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")

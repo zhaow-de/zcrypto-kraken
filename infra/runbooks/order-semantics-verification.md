@@ -108,6 +108,10 @@ On the workstation, `kraken positions -o json` must print no position. Check aga
 
 From 2.0.0rc6.dev20260921 a node refuses to start while the account holds a Kraken margin position its startup reconciliation cannot rebuild, and the adapter's margin position report carries no entry price, so an ordinary open position can be enough: the start fails with `Unresolved positions during startup reconciliation ... missing avg_px_open for position recovery`. The harness records that as `FAIL` on probe 2 or 6, naming the instrument and quantity (§6). It is not the harness's position to close: find its owner, and run the pass once it is closed. The harness runs its own node, which keeps no cache, so the engine's restart rule's test lifts nothing here.
 
+#### 1.8 The engine is disarmed
+
+The harness signs on the engine's own trade key. A probe's fill that lands while the engine's gate reads armed makes the engine re-read Kraken's holdings on that key, racing the harness's nonce, and so does a socket's return then, the execution socket's about hourly; an armed loop also drafts and places its own plans beside the probes. So the pass runs under the engine's own gate reading disarmed: on the workstation, `uv run python infra/scripts/grafana-query.py 'zcrypto_exec_armed{host="zcrypto"}'` reads `0`. That is the engine's reading, which takes the arm file's removal at its next gate evaluation, within a minute; the file's absence alone does not show it. Before rung 3 the engine reads 0 already. Under rung 3's continuous arming it is a pause, taken with no plan running and resumed after the run (§7.2), as [`engine-procedures.md#rung-3-pause`](engine-procedures.md#rung-3-pause) takes and resumes it. Read it again immediately before §5.1.
+
 ### 2. Environment: the interpreter under test
 
 Run from a tree whose lockfile already carries the version under test, the bump branch itself, so the harness binds the exact interpreter the engine will run:
@@ -316,8 +320,10 @@ uv run python infra/scripts/grafana-query.py \
 ```
 
 - `zcrypto_exec_external_events_total{disposition="unmatched"}` should have risen by roughly the number of order events the probes generated. `(no series)` is a FAIL of the telemetry path, never a zero (no count command: how an operator reads a query's output leaves no record in the tree).
-- `zcrypto_exec_kill_tripped` must still be 0. A trip need not be a diverged order — the kill also latches on a weekly tracking-band breach and on a position that could not be read after an intent — but the divergence path is the one the probes could be suspected of, and they structurally cannot reach it: an external event no ledger row vouches for reaches nothing at all (no count command: `tests/test_engine_executor.py::test_an_external_event_the_ledger_does_not_vouch_for_reaches_nothing_at_all`), so investigate any trip as a real event.
-- `zcrypto_exec_position` must be unchanged and flat.
+- `zcrypto_exec_kill_tripped` must still be 0. A trip need not be a diverged order — the kill also latches on a weekly tracking-band breach, on a drawdown of 15 % of the NAV from the equity series' high-water mark, and on a position that could not be read after an intent — but the divergence path is the one the probes could be suspected of, and they structurally cannot reach it: an external event no ledger row vouches for reaches no row, cancel or trip (no count command: `tests/test_engine_executor.py::test_an_external_event_the_ledger_does_not_vouch_for_reaches_no_trip_row_or_cancel`), and with the engine's gate reading disarmed (§1.8) a probe's fill does not make it read Kraken's holdings either (no count command: `tests/test_engine_executor.py::test_an_unmatched_external_fill_arms_nothing_while_the_engine_is_disarmed`), so investigate any trip as a real event.
+- `zcrypto_exec_position` must be unchanged: flat on an account the engine holds nothing on, and under rung 3 the book it held before the pass.
+
+Then re-arm what §1.8 paused, on the owner's word: the resume of [`engine-procedures.md#rung-3-pause`](engine-procedures.md#rung-3-pause), the arm file re-placed and the gate read `level=full`. A pass that found the engine disarmed before rung 3 re-arms nothing. Under rung 3 a pass that ended with the book where it was — probe 5's round trip sold back to under a lot step (§5.3), and nothing else filled — owes no re-birth, its rows the weekly reconciliation's explained ones; one that left a coin bought or sold beyond that is an attended act on the book, and [`engine-procedures.md#rung-3-re-birth`](engine-procedures.md#rung-3-re-birth) follows the resume.
 
 Then confirm the engine's next boundary cycle journals normally:
 
