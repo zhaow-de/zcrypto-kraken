@@ -19,7 +19,7 @@ The dead-man checks are the fleet's last line: they page when a host, a daemon o
 - T0085 names the eleven ping URLs as in scope for the pre-go-live rotation and the two API keys' shapes; T0083 (archived) set the mutual watchdog between Grafana and healthchecks.io.
 - Spec 00123 (one Alloy version across the fleet, T0219) asks of Task 9, under *What this asks of plans 00121 and 00122*: the node's Alloy installed at the fleet file's version, held and pinned, dry-started at that version, under the `alloy` tag, with a `fleet-pins.md` row.
 - The first sitting's R0 to R5 readings, 2026-10-07, stand in the plan's R0 to R5.
-- The cutover sitting converged the primary's capture three minutes after the secondary's, against spec 00122 D5's hour: `infra/scripts/count-list.sh capture-hosts-converged-within-an-hour` reads 1 for it.
+- The cutover sitting converged the primary's capture three minutes after the secondary's, against spec 00122 D5's hour: `infra/scripts/count-list.sh capture-hosts-converged-within-an-hour` read 1 for it on 2026-10-08, before refine round 18 closed at 21:08Z, and 0 since, the round's close having moved the count's window past it.
 
 ## Done so far
 
