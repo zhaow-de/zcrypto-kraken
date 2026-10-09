@@ -379,3 +379,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #675 | 2026-10-08 | feat(infra): 00122 — the dead-man node: checks, readers, rules, backups | — | 00122 | T0218 |
 | #677 | 2026-10-08 | feat(engine): 00124 — the engine re-pin gate is the candidate preflight | — | 00124 | — |
 | #681 | 2026-10-09 | docs(research): T0018 — rung 2's entry record, the box W41 to W44 | — | — | T0018 |
+| #682 | 2026-10-09 | docs(records): T0217 phase 2 and T0218 sittings, the edge route | — | 00121, 00122, 00123 | T0085, T0217, T0218 |

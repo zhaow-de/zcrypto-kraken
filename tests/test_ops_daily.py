@@ -2563,12 +2563,9 @@ def test_clean_descriptions_say_so_in_the_report_and_stay_out_of_the_paragraph()
 
 
 def test_todays_real_descriptions_all_pass():
-    """The true positive: a check that refuses everything is not a check. The fixture is
-    `name`/`tags`/`desc` only, fetched through the read-only key -- never the whole object, which
-    carries each check's write URL -- so a description rewritten in the SaaS moves nothing here until
-    it is re-fetched."""
+    """The true positive: a check that refuses everything is not a check."""
     checks = json.loads((Path(__file__).resolve().parent / "fixtures" / "healthchecks_descriptions.json").read_text())
-    assert len(checks) == 11, len(checks)
+    assert len(checks) == 12, len(checks)
     assert ops_daily.check_descriptions(checks) == []
 
 
