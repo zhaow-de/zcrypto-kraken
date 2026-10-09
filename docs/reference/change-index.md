@@ -378,3 +378,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #673 | 2026-10-07 | doc(topics): cherry pick T0018 from 8b5fce5cf | — | — | T0018 |
 | #675 | 2026-10-08 | feat(infra): 00122 — the dead-man node: checks, readers, rules, backups | — | 00122 | T0218 |
 | #677 | 2026-10-08 | feat(engine): 00124 — the engine re-pin gate is the candidate preflight | — | 00124 | — |
+| #682 | 2026-10-09 | docs(records): T0217 phase 2 and T0218 sittings, the edge route | — | 00121, 00122, 00123 | T0085, T0217, T0218 |
