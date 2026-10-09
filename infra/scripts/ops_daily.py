@@ -1031,8 +1031,8 @@ def read_soak_verdict(*, now: datetime, runner) -> Check:
 
 
 # The first day the markdown report compares the two stacks: the first day whose 00:00 UTC is at least 50 h past the
-# last fleet host's Alloy recreate on the node (plan 00123's R12); retirement ends the comparison by leaving the stack
-# table one stack, so the constant is never unset again.
+# capture primary's Alloy recreate of plan 00123's R9, 2026-10-07T12:14:42Z, as its R12 counts it; retirement ends the
+# comparison by leaving the stack table one stack, so the constant is never unset again.
 COMPARISON_FROM: date | None = date(2026, 10, 10)
 COMPARE_SCRIPT = Path(__file__).resolve().parent / "grafana-compare.py"
 # Four times a run's length and more, so Grafana Cloud's query path can slow that far before a run is cut; the
