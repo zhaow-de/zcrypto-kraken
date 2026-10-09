@@ -56,7 +56,7 @@ The cutover, 2026-10-08, from `develop` at 118b88f62, its six converges `rc 0`: 
 - R8: the clone's twelve checks provisioned; the Grafana pushes and their verification in #675's body under `## Grafana push`.
 - R9 to R12, ops, the observability node, the NAS and the capture pair; the engine, the cache proxy and the capture pair's Alloy unmoved.
 - R13 in the sitting: eight checks moved and four `new` — `zcrypto-gate-verify` until the NAS's next gate export, the two replay checks until their 2026-10-09 ticks, `zcrypto-engine-shadow` until R14; Grafana Cloud's down total 0 over twelve rows, `zcrypto-hcio-watchdog` quiet; seven healthchecks.io twins paused.
-- R13's Slack-link read: the cookieless reads answered the login redirect, so the records pull request carries the edge's cookieless-`HEAD` route over `/checks/*` and `/cloaked/*` (spec Open question 8).
+- R13's Slack-link read: the cookieless reads answered the login redirect, so the records pull request carries the edge's cookieless-`HEAD` route over `/checks/*` and `/cloaked/*`; the owner ruled on 2026-10-09 that the route stays, the cookieless read deciding it over the signed-in macOS read (spec Open question 8).
 
 ## Suggested next steps
 
