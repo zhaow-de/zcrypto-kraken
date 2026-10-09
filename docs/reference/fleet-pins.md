@@ -31,7 +31,7 @@ Reading rules:
 | ops (timers + liquidations) | zcrypto-ops | `3f291f3cee57` — revision `77df6273` | 2026-10-08 15:03:44 | `7d4c6066d71e` |
 | archive-pull | nas | `d914dad91536` — revision `7ab4fc1a`, the `-compat` build | 2026-10-08 15:08:37 | `c4135ac75b72` |
 
-**Non-image pins.** `zaccess`'s `caddy` is an apt package the access role installs unversioned, clearing a `dpkg` hold, so it has no row and no rollback operand here; read its installed version off the host: `dpkg-query -W caddy`. Alloy on the hosts that run it as a package, `zaccess`, `zcrypto-mon` and `zcrypto-hc`, is installed at `alloy_deb_version` in `infra/ansible/group_vars/observed/alloy.yml`, held and pinned, and takes an `alloy` row in the table below: its version the host's `dpkg-query -W alloy` read after its first `--tags alloy` converge, its notes `dpkg hold; pinned at 1001`; the word `held` in the notes, its reason after it, marks a host a wave left behind.
+**Non-image pins.** `zaccess`'s `caddy` is an apt package the access role installs unversioned, clearing a `dpkg` hold, so it has no row and no rollback operand here; read its installed version off the host: `dpkg-query -W caddy`. Alloy on the hosts that run it as a package is installed at `alloy_deb_version` in `infra/ansible/group_vars/observed/alloy.yml`, held and pinned, and takes an `alloy` row in the table below: its version the host's `dpkg-query -W alloy` read after its first `--tags alloy` converge, its notes `dpkg hold; pinned at 1001`; the word `held` in the notes, its reason after it, marks a host a wave left behind.
 
 Every host's Alloy runs the fleet's version outside a wave (set: the hosts of the inventory's `observed` group, each by its `alloy` row in either table here, a host with no row counted as off; count: `infra/scripts/count-list.sh hosts-off-the-fleets-alloy-version`).
 
@@ -40,7 +40,7 @@ Every host's Alloy runs the fleet's version outside a wave (set: the hosts of th
 | agentboard | zcrypto-ops | `0.5.3` (`@gbasin/agentboard`, npm global as `zhaow`) | 2026-09-17 | restarted by a tunnel-conf converge (`Requires=wg-quick@zaccess0`), not by a role task; re-pins attended, no bake; read-back and upgrade: `infra/runbooks/ops-node.md`'s `agentboard-node-upgrade` |
 | alloy | zaccess | `1.20.1-1` | 2026-10-07 | dpkg hold; pinned at 1001 |
 | alloy | zcrypto-mon | `1.20.1-1` | 2026-10-07 | dpkg hold; pinned at 1001 |
-| alloy | zcrypto-hc | `1.20.1-1` | 2026-10-07 | dpkg hold; pinned at 1001 |
+| alloy | zcrypto-hc | `1.20.1-1` | 2026-10-07 | dpkg hold; pinned at 1001; `dpkg-query -W alloy` on the node: `alloy 1.20.1-1` |
 | hc (the healthchecks clone, `ghcr.io/zhaow-de/healthchecks`, by tag) | zcrypto-hc | `v6.2.0` | 2026-10-07 15:56:59 | first pin; rolled back by `-e hc_image_tag=<previous tag>` on a converge, the previous tag resident on the node |
 
 ## Standing constraints
