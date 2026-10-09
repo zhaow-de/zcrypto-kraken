@@ -534,7 +534,7 @@ Three things about the observability node, `zcrypto-mon`, one leg each. Whether 
 - The node's rules read clean before the first restart, with `mon_get` as [`mon.md#mon-patch-pass`](mon.md#mon-patch-pass) step 5 defines it: `mon_get /api/prometheus/grafana/api/v1/rules | jq -r '[.data.groups[].rules[] | select(.health != "ok") | .name]'` prints `[]`. A rule in error before the induction would have its page booked as a restart's.
 - `max(hc_checks_down_total) == 0` on Grafana Cloud, read by value immediately before: `uv run python infra/scripts/grafana-query.py 'hc_checks_down_total'`. The last leg can put the node's own healthchecks.io check down for one timer period, and `zcrypto-hcio-watchdog` is a fleet-wide aggregate (standing rules above). Not 0 ⇒ clear the down check first, or record **`blocked`** with the reason.
 - The self-check's last journal line, `ssh mon 'sudo journalctl -u zcrypto-mon-selfcheck --no-pager -o cat | grep -E "^selfcheck:" | tail -1'`, ends `-> pinged`. A line ending `no ping URL is set` is a check not yet minted: the last leg then puts no check down, and the entry says so.
-- **Announced in the main channel beforehand**, naming the three pages the last leg can send there: the node's own healthchecks.io check, down for up to one timer period; `zcrypto-hcio-watchdog`, if the check stays down past its `for: 5m`; and `Ops · ERROR logs`, on ops' Alloy giving up a node-bound log batch about seven minutes into the stop (*Must fire* below).
+- **Announced in the main channel beforehand**, naming the pages the last leg can send there: the node's, in *Must fire* and *Expected after the leg* below, and three sent from outside the node: its own healthchecks.io check, down for up to one timer period; `zcrypto-hcio-watchdog`, if the check stays down past its `for: 5m`; and `Ops · ERROR logs`, on ops' Alloy giving up a node-bound log batch about seven minutes into the stop (*Must fire* below).
 - The previous induction reverted and verified by value.
 
 ### Induce
@@ -555,27 +555,27 @@ sudo journalctl -u prometheus --no-pager -o short-precise --since -30min | grep 
 
 **Leg 2, Loki bare, once, Grafana running**, timed the same way against `zcrypto-ops`, which holds `for: 0s` Loki rules: `sudo systemctl restart loki` one second before that group's next evaluation, its duration from the `Stopping` line to Loki's own `Loki started` line, `sudo journalctl -u loki --no-pager -o short-precise --since -30min | grep -E 'Stopping|Loki started'`.
 
-Each restart of legs 1 and 2 is read twice: the rules endpoint first, `mon_get /api/prometheus/grafana/api/v1/rules | jq -r '[.data.groups[].rules[] | select(.health != "ok") | "\(.name) \(.health)"]'`, once the store's ready line is in and before the group's next evaluation, its `lastEvaluation` plus its 60 s `interval`, at which a rule in error reads `ok` again; then the shadow channel for an error page, a message carrying the template's error block, which stays where it was sent. A restart silent on both reads is silent; one that paged is read for which rules. The Prometheus leg reads silent only when all three of its restarts did.
+Each restart of legs 1 and 2 is read twice: the rules endpoint first, `mon_get /api/prometheus/grafana/api/v1/rules | jq -r '[.data.groups[].rules[] | select(.health != "ok") | "\(.name) \(.health)"]'`, once the store's ready line is in and before the group's next evaluation, its `lastEvaluation` plus its 60 s `interval`, at which a rule in error reads `ok` again; then the main channel for an error page from the node, a message carrying the template's error block, which stays where it was sent. A restart silent on both reads is silent; one that paged is read for which rules. The Prometheus leg reads silent only when all three of its restarts did.
 
-**Leg 3, the ordered restart**: [`mon.md#mon-store-restart`](mon.md#mon-store-restart) steps 1 to 4, Prometheus and then Loki in its step 2, Grafana stopped around them. Its step 4's report, `## Alerts firing` with neither `Rules not evaluating` nor `the rules API`, and a shadow channel without an error page are its reading.
+**Leg 3, the ordered restart**: [`mon.md#mon-store-restart`](mon.md#mon-store-restart) steps 1 to 4, Prometheus and then Loki in its step 2, Grafana stopped around them. Its step 4's report, `## Alerts firing` with neither `Rules not evaluating` nor `the rules API`, and a main channel without an error page from the node are its reading.
 
-**Leg 4, the edge**: with the stores and Grafana running, `sudo systemctl stop caddy`, held until the first `zcrypto-alloy-dark-*` page reaches the shadow channel, `zcrypto-alloy-dark-ops` or `zcrypto-alloy-dark-zaccess` for the hosts the precondition listed; then `sudo systemctl start caddy` at once. Nothing heavier: Caddy is the one public listener, and its stop is what the fleet's shippers see as the node gone while the node itself keeps evaluating.
+**Leg 4, the edge**: with the stores and Grafana running, `sudo systemctl stop caddy`, held until the node's first `zcrypto-alloy-dark-*` page reaches the main channel, `zcrypto-alloy-dark-ops` or `zcrypto-alloy-dark-zaccess` for the hosts the precondition listed; then `sudo systemctl start caddy` at once. Nothing heavier: Caddy is the one public listener, and its stop is what the fleet's shippers see as the node gone while the node itself keeps evaluating.
 
 ### Must fire
 
-Legs 1 to 3 have no *Must fire*: a page in leg 1 or 2 is the reading, and a page in leg 3 is a `fail`. Leg 4, on the node's clocks, into the shadow channel:
+Legs 1 to 3 have no *Must fire*: a page in leg 1 or 2 is the reading, and a page in leg 3 is a `fail`. Leg 4, on the node's clocks, into the main channel:
 
 - `zcrypto-mon-ingest-dark` (critical, `metrics`) at ≈ **10 min** from the stop: `count(up{host!="zcrypto-mon"}) or on() vector(0)` reads 0 once the fleet's series go stale, ~5 min, then `for: 5m`, then up to the 60 s group interval. It must have fired before the first per-host page below, the order `zcrypto-mon-ingest-dark`'s section rests on; the entry says which order it saw.
-- The node's copies of `zcrypto-hcio-watchdog` (critical, `metrics`) and of the six NoData rules drill C's ops half lists, seven pages in the shadow channel about a minute before `zcrypto-mon-ingest-dark`, their groups' ticks a phase apart from the `zcrypto-mon` group's, on the sum drill C derives for them: ops ships to the node unfiltered and the node holds the same groups, so the series ops alone carries, the healthchecks.io scrape's among them, go stale on the node with the edge. Grafana Cloud's copies see ops still shipping and stay quiet.
+- The node's copies of `zcrypto-hcio-watchdog` (critical, `metrics`) and of the six NoData rules drill C's ops half lists, seven pages in the main channel about a minute before `zcrypto-mon-ingest-dark`, their groups' ticks a phase apart from the `zcrypto-mon` group's, on the sum drill C derives for them: ops ships to the node unfiltered and the node holds the same groups, so the series ops alone carries, the healthchecks.io scrape's among them, go stale on the node with the edge. Grafana Cloud's copies see ops still shipping and stay quiet.
 - `zcrypto-alloy-dark-ops` and `zcrypto-alloy-dark-zaccess` (critical, `metrics`), the first of them at ≈ **16 min**: the same staleness term, then `for: 10m`, then the interval. The hold ends at the first; the second may land after Caddy is back and resolves with the first.
 - The node's healthchecks.io check, down for at most one timer period, and `zcrypto-hcio-watchdog` on Grafana Cloud possibly behind it, both in the main channel. The self-check pings on its timer, `OnCalendar=*:0/5:23`, the `node_common_selfcheck_on_calendar` that `infra/ansible/roles/mon/tasks/main.yml` passes to `node_common`'s `selfcheck` task file, and while a fleet sample is under five minutes old, the reach of `FLEET_QUERY` in `infra/ansible/roles/mon/files/zcrypto-mon-selfcheck.py`: its last ping, the last `-> pinged` line of the unit's journal before its first `-> not pinging`, falls between about a minute before the stop and five minutes after it, and the check goes down 20 min after that ping, its `timeout` 600 s + `grace` 600 s, unless the run 15 min after it finds Caddy back. A start at the first Alloy-dark page, ≈16 min after the stop, can miss that run: the check is then down until the first run after the start pings, at most one timer period, and Cloud's `zcrypto-hcio-watchdog` (`for: 5m` behind a 60 s scrape) pages the main channel if that period outlives its wait.
 - `Ops · ERROR logs` (`zcrypto-ops-error-logs`, warning, `logs`) on Grafana Cloud, in the main channel, about **7 min** into the stop: ops' Alloy retries a node-bound log batch about ten times and then gives up, the count [`mon.md#zcrypto-mon-shipper-loss`](mon.md#zcrypto-mon-shipper-loss) states, logging `level=error msg="final error sending batch, no retries left, dropping data"` with `component_id=loki.write.mon`, and that rule reads ops' Alloy stream with `for: 0s`. It is the node's ingest, not ops', and the announcement says so.
 
 Expected after the leg, not held for:
 
-- `zcrypto-mon-shipper-loss` (warning, `metrics`) for `ops`, in the shadow channel, about **15 min** after Caddy returns: the dropped batches were counted on ops at the give-up, the counter's increase reaches the node with the WAL's replay once Caddy is back, then `for: 15m` and the interval; it holds up to its `[6h]` window. The bridgehead ships no logs and its samples were held, so it is not in it.
+- `zcrypto-mon-shipper-loss` (warning, `metrics`) for `ops`, in the main channel, about **15 min** after Caddy returns: the dropped batches were counted on ops at the give-up, the counter's increase reaches the node with the WAL's replay once Caddy is back, then `for: 15m` and the interval; it holds up to its `[6h]` window. The bridgehead ships no logs and its samples were held, so it is not in it.
 - The node's `zcrypto-capture-textfile-missing` (warning, `metrics`) stays Normal: `count(node_reboot_required{host=~"zcrypto|zcrypto-red|ops"})` with `lt 3` reads 3 while the capture pair and ops ship to the node, its `noDataState: OK` reads the stop's stale series as Normal, and a count under 3 as their series go stale or return lasts far less than its `for: 20m`.
-- The node's own copy of `Ops · ERROR logs` (`zcrypto-ops-error-logs`, warning, `logs`), in the shadow channel, once Caddy is back: ops' Alloy ships its own container stream to the node as `container="alloy"`, the give-up lines logged from ≈7 min into the stop sit in batches still being retried when Caddy returns at ≈16 min, and the rule reads that stream over `[15m]` with `for: 0s`, so the first evaluation after a delivered line fires it. A line whose own batch was given up on reaches no store, so the page may not come: the entry records whether it did. It is the same event as the main channel's page, read on the node.
+- The node's own copy of `Ops · ERROR logs` (`zcrypto-ops-error-logs`, warning, `logs`), in the main channel, once Caddy is back: ops' Alloy ships its own container stream to the node as `container="alloy"`, the give-up lines logged from ≈7 min into the stop sit in batches still being retried when Caddy returns at ≈16 min, and the rule reads that stream over `[15m]` with `for: 0s`, so the first evaluation after a delivered line fires it. A line whose own batch was given up on reaches no store, so the page may not come: the entry records whether it did. It is the same event as Grafana Cloud's page above, read on the node.
 
 ### Operator action
 
@@ -597,7 +597,7 @@ The Prometheus leg decides the blacklist: three silent restarts keep it empty, t
 
 ### What this proves
 
-That the node's death reaches a person while the node pages the shadow channel alone, through its healthchecks.io check and then Grafana Cloud's `zcrypto-hcio-watchdog`, and what a thirty-minute outage costs per plane: the metrics the shippers hold in their WAL and replay, and the log lines they retry and then drop, which nothing recovers. The figure lands in [`mon.md#mon-dark`](mon.md#mon-dark).
+That the node's death reaches a person, through its healthchecks.io check and then Grafana Cloud's `zcrypto-hcio-watchdog`, and what a thirty-minute outage costs per plane: the metrics the shippers hold in their WAL and replay, and the log lines they retry and then drop, which nothing recovers. The figure lands in [`mon.md#mon-dark`](mon.md#mon-dark).
 
 ### Preconditions
 
@@ -605,7 +605,7 @@ That the node's death reaches a person while the node pages the shadow channel a
 - The node's check minted and pinging: the self-check's last journal line (drill W1's read) ends `-> pinged`, and the `zcrypto-mon` check reads up on healthchecks.io. A line ending `no ping URL is set` is a check not yet minted, with no native page to time: record **`blocked`** with the reason.
 - `max(hc_checks_down_total) == 0` on Grafana Cloud, read by value immediately before: `uv run python infra/scripts/grafana-query.py 'hc_checks_down_total'`. `zcrypto-hcio-watchdog` is in this drill's *Must fire* with a number and is a fleet-wide aggregate (standing rules above): not 0 ⇒ clear the down check first, or record **`blocked`** with the reason.
 - The hosts that ship to the node, read by value and written down, since the readings below take each by name: `uv run python infra/scripts/grafana-query.py --stack mon 'count by (host) (up{host!="zcrypto-mon", job="integrations/unix"})'`.
-- The node's rules read clean (drill W1's read) and the shadow channel quiet of error pages: a page at boot is a reading, and it has to be this drill's.
+- The node's rules read clean (drill W1's read) and the main channel quiet of error pages from the node: a page at boot is a reading, and it has to be this drill's.
 - **Announced in the main channel beforehand**: the check's own page, `zcrypto-hcio-watchdog` about 7 min behind it, and `Ops · ERROR logs` about seven minutes in, as drill W1's leg 4 derives them.
 - The previous induction reverted and verified by value.
 
@@ -618,7 +618,7 @@ In the Linode Cloud Manager, on the Linode `zcrypto-mon`'s page, **Power Off**, 
 - The `zcrypto-mon` check pages natively at its own `timeout` 600 s + `grace` 600 s = **20 min from its last clean ping**, through healthchecks.io's own Slack integration. The self-check pings on `OnCalendar=*:0/5:23`, so the last ping falls within five minutes before the power-off and the page lands 15 to 20 min after it.
 - `zcrypto-hcio-watchdog` (critical, `metrics`) on Grafana Cloud, in the main channel, ≈7 min behind the check (standing rules above), its `Pending` `activeAt` read while pending and shown to postdate the induction.
 - `Ops · ERROR logs` (warning, `logs`) on Grafana Cloud, in the main channel, about 7 min into the outage, on ops' Alloy's give-up line, as drill W1's leg 4 derives it.
-- Nothing from the node for the whole outage, and the shadow channel's silence is not an all-clear: [`mon.md#mon-dark`](mon.md#mon-dark) is the page for those minutes.
+- Nothing from the node for the whole outage: its copies in the main channel stop while Grafana Cloud's continue, and their absence is not an all-clear: [`mon.md#mon-dark`](mon.md#mon-dark) is the page for those minutes.
 - At boot, no error page: Grafana's unit waits for both stores to answer ready, the `ExecStartPre` lines of `infra/ansible/roles/mon/templates/grafana-server.dropin.conf.j2`, so the first evaluation after boot has its stores.
 
 Expected after the boot, not held for: `zcrypto-mon-shipper-loss` (warning, `metrics`) for each host that ships logs to the node, `ops` while the bridgehead ships none, about 15 min after the node takes that host's metrics again, as in drill W1's leg 4.
@@ -649,7 +649,7 @@ The `zcrypto-mon` check is absent from the healthchecks.io checks listing, or `i
 
 ### What this proves
 
-That a lost node is rebuilt from the repository with no UI step and no secret copied by hand, the bootstrap, one converge whose preview passes on the fresh host, and one push, and how long the node's rules go unevaluated from the loss to the first evaluated rule, the exposure [`mon.md#mon-dark`](mon.md#mon-dark) quotes.
+That a lost node is rebuilt from the repository with no UI step, *Induce* step 4's silences aside, and no secret copied by hand, the bootstrap, one converge whose preview passes on the fresh host, and one push, and how long the node's rules go unevaluated from the loss to the first evaluated rule, the exposure [`mon.md#mon-dark`](mon.md#mon-dark) quotes.
 
 ### Preconditions
 
@@ -658,7 +658,7 @@ That a lost node is rebuilt from the repository with no UI step and no secret co
 - The owner's master key in the agent, `ssh-add -l` listing it, and the GPG agent unlocked; not through `run.sh`, whose throwaway agent excludes the master key. The bootstrap connects as root on port 22 with that key, which the rebuild dialog takes as root's.
 - The cached token left where it is, `~/.config/zcrypto/grafana-mon.vault.yml`: the converge must find it refused by the new Grafana and re-mint it, a must-hold below. Deleted first, that reading becomes the absent-token branch, a different one.
 - `max(hc_checks_down_total) == 0` on Grafana Cloud, read by value immediately before, as drill W2 reads it; the check up and the self-check's last line `-> pinged`.
-- **Announced in the main channel beforehand**: the check's own page, `zcrypto-hcio-watchdog` about 7 min behind it, and `Ops · ERROR logs` about seven minutes in, as drill W2's are. The shadow channel's standing NoData pages for the hosts not yet shipping return with the push and are not this drill's.
+- **Announced in the main channel beforehand**: the check's own page, `zcrypto-hcio-watchdog` about 7 min behind it, and `Ops · ERROR logs` about seven minutes in, as drill W2's are. The node's pages *Expected after the push* below reach the main channel too, and the announcement names them.
 - The previous induction reverted and verified by value.
 
 ### Induce
@@ -679,16 +679,18 @@ The rebuild's start is the firewall step's timestamp, `date -u` on the workstati
 
    The bootstrap's recap reads `failed=0 unreachable=0`, its re-bootstrap probe finding no `zcrypto-deploy`; the refusal firing means the Linode was not rebuilt: stop, and do not answer it with `-e rebootstrap=true`. The first `ssh mon` prompts with the fingerprint read in LISH, then prints the provider-assigned hostname and `sudo-ok`. The converge names no tag, since each role of the node's play is wanted: its preview's recap reads `failed=0`, with the installs, the unit starts and the token task `skipping`, and no step is re-run; the real pass's recap reads `failed=0 unreachable=0`, and its token task, under `no_log`, reads `changed`. Then remove the TCP `22` rule from the firewall in the Cloud Manager: the rule list reads TCP `10022`, TCP `443` and ICMP again.
 
-4. **The push**: [`mon.md#mon-push`](mon.md#mon-push) step 1 in its step 2 form, with the shadow webhook, since the contact points are minted anew. Its first line reads `stack=https://zcrypto-mon.zhaow.me` and `skip-groups=<none>`.
+4. **The silences, while a direct-shipped stream has not moved to the node**: each silence on the dead-man of a stream not yet moved, `zcrypto-ops-poller-log-dead`, `zcrypto-capture-log-dead-secondary`, `zcrypto-capture-log-dead-primary` or `zcrypto-engine-log-dead`, that was live at the loss is set again in the node's UI, `https://zcrypto-mon.zhaow.me/alerting/silence/new`, with its matcher and its end as last set or re-dated, then read back by `mon_get /api/alertmanager/grafana/api/v2/silences | jq -c '.[] | select(.status.state == "active") | {id, matchers, endsAt}'`, with `mon_get` as [`mon.md#mon-patch-pass`](mon.md#mon-patch-pass) step 5 defines it: one line per silence set, with its matcher and its end. Such a dead-man fires at the first evaluation after the push and pages the main channel, so this UI step comes before the push and is outside the must-hold *No UI step between the rebuild and the first evaluated rule* below.
 
-5. **The first evaluated rule**: from the push's last line, read the rules endpoint each ten seconds until this prints a time, the end of the measurement: `mon_get /api/prometheus/grafana/api/v1/rules | jq -r '[.data.groups[].rules[] | select(.health == "ok" and (.lastEvaluation | startswith("0001") | not)) | .lastEvaluation] | min // "none yet"'`, with `mon_get` as [`mon.md#mon-patch-pass`](mon.md#mon-patch-pass) step 5 defines it, reading the re-minted token from the cache. A rule scheduled and not yet evaluated reads `health=ok` with the zero `lastEvaluation`, which the filter sets aside.
+5. **The push**: [`mon.md#mon-push`](mon.md#mon-push) step 1 in its step 2 form, since the contact points are minted anew. Its first line reads `stack=https://zcrypto-mon.zhaow.me` and `skip-groups=<none>`.
+
+6. **The first evaluated rule**: from the push's last line, read the rules endpoint each ten seconds until this prints a time, the end of the measurement: `mon_get /api/prometheus/grafana/api/v1/rules | jq -r '[.data.groups[].rules[] | select(.health == "ok" and (.lastEvaluation | startswith("0001") | not)) | .lastEvaluation] | min // "none yet"'`, with `mon_get` as [`mon.md#mon-patch-pass`](mon.md#mon-patch-pass) step 5 defines it, reading the re-minted token from the cache. A rule scheduled and not yet evaluated reads `health=ok` with the zero `lastEvaluation`, which the filter sets aside.
 
 ### Must fire
 
 Must hold, each a **`fail`** when it does not, where an induction that did not land is `blocked`:
 
 - The preview passes on the fresh host with no step re-run.
-- No UI step between the rebuild and the first evaluated rule: the Cloud Manager's clicks are the provider's, not Grafana's.
+- No UI step between the rebuild and the first evaluated rule, *Induce* step 4's silences aside: the Cloud Manager's clicks are the provider's, not Grafana's.
 - The cached token is refused and re-minted into the cache by the converge, the token task reading `changed`, and `stat -c '%a %s' ~/.config/zcrypto/grafana-mon.vault.yml` reads `600` with a non-zero size afterwards.
 - Each rule evaluated and `health=ok` by 2 × the 60 s group interval (standing rules above) from the push's last line, its first evaluation inside one interval and a read one interval later seeing it: drill W1's unhealthy read, its `select` widened by `or (.lastEvaluation | startswith("0001"))`, prints `[]`.
 
@@ -698,15 +700,15 @@ Must fire, in the main channel:
 - `zcrypto-hcio-watchdog` (critical, `metrics`) ≈7 min behind it, its `Pending` `activeAt` read while pending.
 - `Ops · ERROR logs` (warning, `logs`) about 7 min into the rebuild, on ops' Alloy's give-up line, as drill W1's leg 4 derives it.
 
-Expected after the push, not held for: `zcrypto-mon-shipper-loss` (warning, `metrics`) for `ops`, in the shadow channel, about 15 min after the node takes ops' metrics again, as in drill W1's leg 4; and the shadow channel's NoData pages for the hosts not yet shipping, as the node's first push left them.
+Expected after the push, not held for, each in the main channel: `zcrypto-mon-shipper-loss` (warning, `metrics`) for `ops`, about 15 min after the node takes ops' metrics again, as in drill W1's leg 4; the NoData pages for a host not yet shipping to the node, as the node's first push left them; and each Loki dead-man on the node whose stream has logged nothing since the rebuilt Loki started, from the push until that stream's next line. Those dead-men are the Loki rules in `infra/grafana/alerts.yaml` that carry `or on() vector(0)` with `noDataState: Alerting`, read from that file: the NAS's hourly pull holds its page up to an hour, and the engine's, once its stream has moved and its silence ended, up to four hours, its lines coming in a burst around each 4-hourly boundary.
 
 ### Operator action
 
-The induction is its own restore. Confirm by value: [`mon.md#mon-push`](mon.md#mon-push) step 3; `infra/ansible/scripts/converge.sh site.yml --limit zcrypto-mon --tags mon`, whose real pass reads `changed=0 failed=0`, the re-minted token kept; drill W2's `count by (host)` read on the node listing the hosts W2 wrote down; the self-check's next line `-> pinged`, and the check up on healthchecks.io; the firewall's rule list without TCP `22`; and `ssh mon hostname` printing `zcrypto-mon`. The node's Loki starts empty, so the daily pass's history read covers nothing before the push, and the seven days are counted again as [`mon.md#mon-dark`](mon.md#mon-dark) counts them.
+The induction is its own restore. Confirm by value: [`mon.md#mon-push`](mon.md#mon-push) step 3; `infra/ansible/scripts/converge.sh site.yml --limit zcrypto-mon --tags mon`, whose real pass reads `changed=0 failed=0`, the re-minted token kept; drill W2's `count by (host)` read on the node listing the hosts W2 wrote down; the self-check's next line `-> pinged`, and the check up on healthchecks.io; the firewall's rule list without TCP `22`; and `ssh mon hostname` printing `zcrypto-mon`. The node's Loki starts empty, so the daily pass's history read covers nothing before the push, and the comparison reads the node's missing history as differences for the days [`mon.md#mon-dark`](mon.md#mon-dark) names.
 
 ### Record
 
-Entry `W3`, its *host* clause opening with `zcrypto-mon`: the rebuild's start and the first `health=ok` rule's `lastEvaluation`, their difference the measurement; each must-hold with its reading, the token task's `changed` among them; the check's page, the watchdog's `Pending` `activeAt` and page, the `Ops · ERROR logs` page; the day whose comparison restarts. The measurement is written into [`mon.md#mon-dark`](mon.md#mon-dark)'s second slot in the same change; the converges' rows are in `docs/reference/deploy-log.jsonl` as `converge.sh` appended them.
+Entry `W3`, its *host* clause opening with `zcrypto-mon`: the rebuild's start and the first `health=ok` rule's `lastEvaluation`, their difference the measurement; each must-hold with its reading, the token task's `changed` among them; the check's page, the watchdog's `Pending` `activeAt` and page, the `Ops · ERROR logs` page; the first day whose 00:00 UTC is at least 50 h after the converge, from which the comparison reads the rebuilt node's history whole. The measurement is written into [`mon.md#mon-dark`](mon.md#mon-dark)'s second slot in the same change; the converges' rows are in `docs/reference/deploy-log.jsonl` as `converge.sh` appended them.
 
 ### Retire when
 
@@ -718,7 +720,7 @@ Entry `W3`, its *host* clause opening with `zcrypto-mon`: the rebuild's start an
 
 ### What this proves
 
-That the node's dead-men agree with Grafana Cloud's on a real host: with the secondary's Alloy stopped, `up{host="zcrypto-red"}` goes absent on the node and not to 0, and the node's copy of `zcrypto-alloy-dark-capture-secondary` reaches the shadow channel on the timing Cloud's copy pages the main channel. Drill K's instrument and hold, on drill C's secondary half.
+That the node's dead-men agree with Grafana Cloud's on a real host: with the secondary's Alloy stopped, `up{host="zcrypto-red"}` goes absent on the node and not to 0, and the node's copy of `zcrypto-alloy-dark-capture-secondary` pages the main channel on the timing Cloud's copy does, the two side by side until Grafana Cloud's receivers move. Drill K's instrument and hold, on drill C's secondary half.
 
 ### Preconditions
 
@@ -739,7 +741,7 @@ sudo docker stop grafana-alloy
 
 ### Must fire
 
-- `zcrypto-alloy-dark-capture-secondary` (critical, `metrics`) at ≈ **16 min** on both stacks, `for: 10m` + 60 s + ~5 min staleness: the node's copy into the shadow channel and Cloud's into the main channel, each `activeAt` read from its own stack's rules endpoint. On the node, `uv run python infra/scripts/grafana-query.py --stack mon 'up{host="zcrypto-red"}'` reads `(no series)` once the series are stale, and not 0; `count(up{host="zcrypto-red"}) or on() vector(0)`, the rule's own query, reads 0 by its fallback.
+- `zcrypto-alloy-dark-capture-secondary` (critical, `metrics`) at ≈ **16 min** on both stacks, `for: 10m` + 60 s + ~5 min staleness: the node's copy into the main channel, beside Cloud's until Grafana Cloud's receivers move, each `activeAt` read from its own stack's rules endpoint. On the node, `uv run python infra/scripts/grafana-query.py --stack mon 'up{host="zcrypto-red"}'` reads `(no series)` once the series are stale, and not 0; `count(up{host="zcrypto-red"}) or on() vector(0)`, the rule's own query, reads 0 by its fallback.
 - `zcrypto-capture-textfile-missing` (warning, `metrics`) on both stacks at ≈ **26 min**, drill C's secondary half: a **value** page, `count(node_reboot_required{host=~"zcrypto|zcrypto-red|ops"})` with `lt 3` and `for: 20m`, past a hold ended at ≈16 min; it pages where the hold overruns, and its summary names the capture hosts beside ops.
 - `zcrypto-hcio-watchdog` quiet on Grafana Cloud: no check is fed by that host's Alloy, and the node's own check keeps pinging while ops and the other hosts ship.
 - `zcrypto-fleet-daemon-restarted` (warning, `metrics`) on both stacks if the restore lands before about 13 min: `changes(process_start_time_seconds{…}[15m]) > 0` with `for: 2m`, whose hosts include `zcrypto-red` and whose jobs include the Alloy's `integrations/self`, as drill K states.

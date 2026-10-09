@@ -21,7 +21,7 @@ Three of them are silent until the moment they are not. A disabled build lane is
   **Five further classes** (each sits in the same vault-password blast radius that motivated [[T0126]]'s acceptance, so none can be silently out of scope):
   - the **mTLS CA private key** (`infra/ansible/files/zaccess_ca.key.vault`) — the inventory named only the leaves, and the CA is what signs them;
   - the three **WireGuard** secrets (`zaccess_wg_bridgehead_private_key`, `zaccess_wg_ops_private_key`, `zaccess_wg_preshared_key`) — the tunnel the whole access tier rides;
-  - `slack_webhook_url` — a bearer capability: whoever holds it can post as the fleet into `#zcrypto`, which is where time-gated reminders and alert traffic land;
+  - `slack_webhook_url` — a bearer capability: whoever holds it can post as the fleet into `#zcrypto`, which is where time-gated reminders and alert traffic land; re-minted in Slack and re-vaulted, it reaches the contact points of whichever stack pages the main channel, by that stack's push carrying it, the node's being `mon-push`'s *A push that mints or moves the node's two contact points*, and while both stacks page it, both;
   - **four further vaulted SSH private keys** beyond the deploy set (`sync_ed25519`, `sync_capture_ed25519`, `sync_capture_red_ed25519`, `zcrypto_hot_push_ed25519`) — the last is the only write channel into custody and also lives in an operator `~/.ssh`, so rotating it is two-sided;
   - the Grafana credential *pairs*' user halves (`grafana_prom_user`, `grafana_loki_user`) — rotate with their tokens or the pair desynchronises.
 
@@ -32,7 +32,7 @@ Three of them are silent until the moment they are not. A disabled build lane is
   - `mon_grafana_admin_password` and `mon_grafana_secret_key` (`host_vars/zcrypto-mon/vault.yml`) — by `mon-secrets`'s *A generated string* and then its *Converge the node*, on the same page; a replaced secret key leaves Grafana unable to read the webhook it stored, so it is followed by `mon-push`'s *A push that mints or moves the node's two contact points*;
   - `mon_grafana_admin_user`, in the same file, is **not rotated**: Grafana takes the admin's name when it creates its database and refuses another afterwards, so a regenerated name fails the node's next converge at its sign-in (`mon-secrets`'s *The admin's name*);
   - the two ingest pairs — `mon_ingest_fleet_password` and `mon_ingest_logship_password` (`group_vars/observed/vault.yml`) with their bcrypt hashes (`host_vars/zcrypto-mon/vault.yml`) — by `mon-secrets`'s *An ingest password and its hash*, *Converge the node* and *A changed ingest password reaches a shipper at that host's own converge*: a password and its hash together, then the converge of each host that ships to the node;
-  - `slack_shadow_webhook_url` (`group_vars/all/vault.yml`) — a bearer capability as `slack_webhook_url` is; re-minted in Slack and re-vaulted, it reaches the node's contact points by `mon-push`'s *A push that mints or moves the node's two contact points*;
+  - `slack_shadow_webhook_url` (`group_vars/all/vault.yml`) — a bearer capability as `slack_webhook_url` is; re-minted in Slack and re-vaulted, it reaches the contact points of whichever stack pages the shadow channel, by that stack's push carrying it;
   - `mon_selfcheck_healthcheck_url` (`host_vars/zcrypto-mon/vars.yml`), rendered from `hc_ping_key`, with the ping key above;
   - the node's deploy key, `infra/ansible/files/deploy_zcrypto-mon_ed25519`, with the deploy set above.
 

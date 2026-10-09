@@ -403,7 +403,11 @@ The two ways `$B` reaches 0 arrive on different clocks: a dead container at the 
 
 ### What to do
 
-1. **Rule out the telemetry plane FIRST — before touching the position.** From the workstation:
+1. **Rule out the telemetry plane FIRST — before touching the position.** When the page's links are under `https://zcrypto-mon.zhaow.me/`, it is the observability node's copy: read `zcrypto-mon-ingest-dark` there first, from the workstation:
+   ```
+   uv run python infra/scripts/grafana-query.py --stack mon 'count(up{host!="zcrypto-mon"}) or on() vector(0)'
+   ```
+   A reading of 0, or a read that fails to connect — a refused connection, a TLS error or a timeout, since the read travels the same edge — is the node's edge or certificate, with every host absent at once ([`mon.md#zcrypto-mon-ingest-dark`](mon.md#zcrypto-mon-ingest-dark) step 1). The page's two halves are then read on Grafana Cloud's copy, `grafana-query.py` with no `--stack`, before the route split that follows. From the workstation:
    ```
    uv run python infra/scripts/grafana-query.py 'count(up{host="zcrypto"}) or on() vector(0)' 'up{job="engine_app",host="zcrypto"}' 'max(abs(last_over_time(zcrypto_exec_position{host="zcrypto"}[24h])))'
    ```
