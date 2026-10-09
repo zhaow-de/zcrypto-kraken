@@ -217,13 +217,15 @@ def cells(paths):
     return numbers, ids
 
 
-sample = cells(sorted(Path(sys.argv[1]).glob("*-full/*.csv")))
+paths = sorted(Path(sys.argv[1]).glob("*-full/*.csv"))
+sample = cells(paths)
+assert len(paths) == 2 and all(sample), f"the sample is not read: {len(paths)} files"
 fixture = cells(sys.argv[2:])
 print(f"intersection {len(sample[0] & fixture[0]) + len(sample[1] & fixture[1])}")
 PY
 ```
 
-Expected: `intersection 0`. Another count stops the plan: an invented value equals a cell of the owner's records, and the fixture is invented again before anything is committed.
+Expected: `intersection 0`. An `AssertionError` is a check that read no sample — the path wrong or its two CSVs gone — and stops the plan until the check reads them. Another count stops the plan: an invented value equals a cell of the owner's records, and the fixture is invented again before anything is committed.
 
 - [ ] **Step 3: Write the failing tests** — `tests/test_tax_blockpit.py` with the imports it keeps to the end (the module is referenced as `blockpit.<name>`, so no import names a function a later task adds), the fixture paths, two helpers and the readers' cases:
 
@@ -1654,8 +1656,11 @@ def check_order(opening: dict[str, Decimal], rows: list[OutRow]) -> list[Refusal
     held = dict(opening)
     refusals = []
     for row in _written(rows):
-        for asset, moved in _moves(row):
-            held[asset] = held.get(asset, Decimal(0)) + moved
+        moved: dict[str, Decimal] = defaultdict(Decimal)
+        for asset, amount in _moves(row):
+            moved[asset] += amount
+        for asset, amount in moved.items():
+            held[asset] = held.get(asset, Decimal(0)) + amount
             if held[asset] < 0:
                 reason = f"{asset} runs to {_plain(held[asset])} at this row in the written order"
                 refusals.append(Refusal((row.trx_id,), "order", reason))
@@ -2676,11 +2681,11 @@ Blockpit computes FIFO per integration, so the manual integration carries the wh
 
 ### What to do
 
-From the workstation at the repository root; `<W>` is the window's directory name and `<P>` the newest archived window's, the last name `ls /mnt/zhao-crypto/kraken-statements/` prints.
+From the workstation at the repository root; `<W>` is the window's directory name and `<P>` the newest archived window's, the last name `ls /mnt/zhao-crypto/kraken-statements/` prints — for a re-run of `<W>` (step 5's last sentence), the last name it prints before `<W>`, the window before `<W>` or that window's newest sibling.
 
 1. **Request the two exports**: `kraken export-report --report ledgers --starttm <start epoch> --endtm <end epoch>` and the same with `--report trades`, each epoch the UTC midnight of its date (`date -u -d <date> +%s`); each prints a report id.
 2. **Fetch and test them** once `kraken export-status --report ledgers` and `--report trades` read each report `Processed`, before its `expiretm`: `mkdir -p data/kraken-statements/<W>`, then `kraken export-retrieve --output-file data/kraken-statements/<W>/ledgers.zip <the ledgers id>` and the same with `trades.zip` and the trades id. Test each zip with `uv run python -I -c 'import sys, zipfile; print(zipfile.ZipFile(sys.argv[1]).testzip())' <the zip>`, which checks its member's CRC and prints `None`; then `unzip` each zip there, and the directory holds two zips and two CSVs. A zip that fails its test is refused: run its retrieve again.
-3. **Read the CSVs**: each CSV's data rows (`tail -n +2 <the CSV> | wc -l`) equal the `count` that `kraken ledgers -o json` and `kraken trades-history -o json` print with `--start <start epoch - 1>` and `--end <end epoch - 1>`, the API's start bound exclusive and its end inclusive; and the ledger's first and last `time` lie inside the window (`head -2` and `tail -1` of each CSV). A CSV whose rows differ from the count refuses its zip: run that retrieve again.
+3. **Read the CSVs**: each CSV's data rows (`tail -n +2 <the CSV> | wc -l`) equal the `count` that `kraken ledgers -o json` and `kraken trades-history -o json` print with `--start <start epoch>` and `--end <end epoch>`, the API's start bound exclusive and its end inclusive, and its times carry a fraction of a second, so these bounds read the window's rows unless one is stamped exactly on its start or end second; and the ledger's first and last `time` lie inside the window (`head -2` and `tail -1` of each CSV). A CSV whose rows differ from the count refuses its zip: run that retrieve again.
 4. **Write the import file**: `uv run zcrypto tax blockpit --ledgers data/kraken-statements/<W>/<the ledgers CSV> --trades data/kraken-statements/<W>/<the trades CSV> --out data/kraken-statements/<W>/blockpit-<W>.csv --after /mnt/zhao-crypto/kraken-statements/<P>/blockpit-<P>.csv.provenance.json` — the first window takes no `--after`. Exit 0 prints the rows per label and the closing balances. Exit 1 prints each refusal and writes nothing: a row type the mapping has not met, or a window that does not follow the one before, is a decision for the owner, and the window waits for it.
 5. **Archive the window**: `ssh nas 'mkdir -p /volume1/ZhaoCrypto/kraken-statements && mkdir /volume1/ZhaoCrypto/kraken-statements/<W>'` — a window already archived fails the second `mkdir` and stops here, an archived file being replaced by a sibling and not written over ([`nas.md#nas-file-transfer`](nas.md#nas-file-transfer) step 3) — then `scp data/kraken-statements/<W>/* nas:/ZhaoCrypto/kraken-statements/<W>/` — the path without `/volume1`, as the same section says — then `ssh nas 'sudo bash -s /volume1/ZhaoCrypto/kraken-statements' < infra/nas/normalize-archive-perms.sh`, which gives the tree the archive's group and modes, so the mount's readers can open it, then `sha256sum /mnt/zhao-crypto/kraken-statements/<W>/*`, read through the mount as the daily pass and the next window read it: the two CSVs' and the import file's hashes equal the three `jq -r '.inputs.ledgers.sha256, .inputs.trades.sha256, .output.sha256'` prints over the provenance, and the two zips' and the provenance's equal `sha256sum data/kraken-statements/<W>/*`'s. A window run again, once step 6 or 7 stopped it and the owner ruled the change, is the sibling `<W>-r2` (then `-r3`): its directory under `data/kraken-statements/` takes the window's two zips and two Kraken CSVs, step 4 writes `blockpit-<W>-r2.csv` there, and this step archives it as `<W>-r2/`, which the next window's `<P>` then names.
 6. **Import into Blockpit**: Integrations → the manual integration → the upload icon beside Sync → the Blockpit Template tab → `blockpit-<W>.csv`, once; a second upload of one file duplicates its rows, so a re-import follows the deletion of that file's rows in Blockpit. A `Deposit` row is a crypto deposit, Blockpit's unlabeled incoming type, which Blockpit values at market on arrival until it is labelled: label it in Blockpit from what you know of its origin, such as a Transfer from the wallet it left, which carries the acquisition date and cost.
