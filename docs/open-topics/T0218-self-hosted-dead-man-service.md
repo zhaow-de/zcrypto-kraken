@@ -19,7 +19,7 @@ The dead-man checks are the fleet's last line: they page when a host, a daemon o
 - T0085 names the eleven ping URLs as in scope for the pre-go-live rotation and the two API keys' shapes; T0083 (archived) set the mutual watchdog between Grafana and healthchecks.io.
 - Spec 00123 (one Alloy version across the fleet, T0219) asks of Task 9, under *What this asks of plans 00121 and 00122*: the node's Alloy installed at the fleet file's version, held and pinned, dry-started at that version, under the `alloy` tag, with a `fleet-pins.md` row.
 - The first sitting's R0 to R5 readings, 2026-10-07, stand in the plan's R0 to R5.
-- The cutover sitting converged the primary's capture three minutes after the secondary's, against spec 00122 D5's hour: `infra/scripts/count-list.sh capture-hosts-converged-within-an-hour` read 1 for it on 2026-10-08, before refine round 18 closed at 21:08Z, and 0 since, the round's close having moved the count's window past it.
+- The cutover sitting converged the primary's capture three minutes after the secondary's, against spec 00122 D5's hour.
 
 ## Done so far
 
@@ -56,8 +56,8 @@ The cutover, 2026-10-08, from `develop` at 118b88f62, its six converges `rc 0`: 
 - R8: the clone's twelve checks provisioned; the Grafana pushes and their verification in #675's body under `## Grafana push`.
 - R9 to R12, ops, the observability node, the NAS and the capture pair; the engine, the cache proxy and the capture pair's Alloy unmoved.
 - R13 in the sitting: eight checks moved and four `new` — `zcrypto-gate-verify` until the NAS's next gate export, the two replay checks until their 2026-10-09 ticks, `zcrypto-engine-shadow` until R14; Grafana Cloud's down total 0 over twelve rows, `zcrypto-hcio-watchdog` quiet; seven healthchecks.io twins paused.
-- R13's Slack-link read: the cookieless reads answered the login redirect, so the records pull request carries the edge's cookieless-`HEAD` route over `/checks/*` and `/cloaked/*`; the owner ruled on 2026-10-09 that the route stays, the cookieless read deciding it over the signed-in macOS read (spec Open question 8).
-- R13's morning read, 2026-10-09, which completes R13: `hc-provision.py status` at 07:03Z read eleven moved and `zcrypto-engine-shadow` `new`; the owner then paused the two replay checks' healthchecks.io twins, `zcrypto-verify-replay` and `zcrypto-verified-replay`, leaving `zcrypto-engine-shadow` the one check unpaused on healthchecks.io until R14 moves it; the records pull request re-fetched the fixture after the read (382ce8f3e).
+- R13's Slack-link read: the cookieless reads answered the login redirect, so the records pull request carries the edge's cookieless-`HEAD` route over `/checks/*` and `/cloaked/*` (spec Open question 8).
+- R13's morning read, 2026-10-09, which completes R13, as the plan's R13 records it; the records pull request re-fetched the fixture after the read (382ce8f3e).
 
 ## Suggested next steps
 
