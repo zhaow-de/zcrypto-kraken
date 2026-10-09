@@ -1198,7 +1198,7 @@ class Report:
         out += ["", "## Deploys in window"] + (
             [f"- {d.get('ts')} {d.get('playbook')} --limit {d.get('limit')}" for d in self.deploys] or ["- none"]
         )
-        # The line, not a verdict: a difference is a finding for the cutover pull request, and `exit_code` never reads it.
+        # The line, not a verdict: `exit_code` never reads it.
         if self.comparison is not None:
             out += ["", "## Comparison", self.comparison]
         return "\n".join(out)
