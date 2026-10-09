@@ -6,7 +6,7 @@
 
 **Goal:** `zcrypto tax blockpit` maps one window of Kraken's ledger and trades CSV exports onto the rows of Blockpit's manual-import template — a `collateralconversion` pair as one Trade EUR → EURC, a margin close's fee in a Margin Fee row of its own beside its Margin Profit or Loss, every other row type the export holds as spec 00126 D3's table labels it — and writes a provenance file beside the output; it refuses, writing nothing, on a row it cannot map, a balance that does not chain, a movement the output does not carry, a repeated Trx. ID, or a window that does not follow the one before. The monthly procedure archives the exports and the file on the NAS, the daily pass reminds it, and the tracking report reads the export's spelling of a reward. The owner then imports the whole history into a fresh manual integration and re-reads Step 7's five criteria.
 
-**Architecture:** Nine tasks on `docs/t0215-blockpit-fallback`, the branch that holds spec 00126 and this plan, merged as one pull request. The module grows task by task in `cli/tax/`: the template's header and labels and the two readers over the invented windows first; then the mapping and window one's golden rows; the join's cross-check; the run with its checks and its provenance; the `--after` chain and window two; the command and its README section. Then the tracking report's `earn`, the bookkeeping page with the NAS tree's mentions and the daily pass's reminder, and the topic, flipped to `partial` once the pull request is open. The Rollout opens the pull request before Task 9, and after the merge runs the first whole-history window into Blockpit, the five criteria's re-read and, once it passes, the owner's decision on the connector's integration.
+**Architecture:** Nine tasks on `docs/t0215-blockpit-fallback`, the branch that holds spec 00126 and this plan, merged as one pull request. The module grows task by task in `cli/tax/`: the template's header and labels and the two readers over the invented windows first; then the mapping and window one's golden rows; the join's cross-check; the run with its checks and its provenance; the `--after` chain and window two; the command and its README section. Then the tracking report's `earn`, the bookkeeping page with the NAS tree's mentions and the daily pass's reminder, and the topic, flipped to `partial` once the pull request is open. The Rollout opens the pull request as a draft before Task 9 and undrafts it after, and after the merge runs the first whole-history window into Blockpit, the five criteria's re-read and, once it passes, the owner's decision on the connector's integration.
 
 **Tech Stack:** Python 3.14 through `uv run` (`csv`, `decimal`, `hashlib`, `json`, `zipfile` from the standard library, no new dependency); Typer (`cli/__main__.py`'s app) and `typer.testing.CliRunner`; pytest; `infra/scripts/mutate-probe.sh` for guard verdicts; the daily pass `infra/scripts/ops_daily.py`; the workstation's `kraken` CLI and Blockpit's web UI in the Rollout alone.
 
@@ -15,12 +15,12 @@
 ## Global Constraints
 
 - No executor step reaches Kraken, Blockpit, the NAS, a fleet host, Grafana or Slack, and none runs the `kraken` CLI: each such step is an operator step of the Rollout. `ansible-playbook` and `infra/ansible/scripts/converge.sh` are not run at all — nothing here converges, and the workstation is the fleet host `zcrypto-ops`.
-- The owner's real exports lie under `/home/zhaow/Projects/zcrypto-kraken/.claude/worktrees/t0215-blockpit/.tmp/spec-00126/` (gitignored). An executor reads that directory at four steps: Before Task 1's hash read of the template's two files and Task 1's copy of them — Blockpit's own files, none of the owner's — Task 1's check that the invented windows share no value with the owner's exports, which prints one count, and Task 6's smoke run, whose output stays under `.tmp/` and is deleted at its step. No value of the owner's exports — a `txid`, `refid`, time, amount or balance — enters a commit, a fixture, a test, a message or a pull request body; a file's sha256, which names the file and carries none of its values, is not one. The fixtures are the invented windows this plan gives byte for byte, their ids `LFX…`, `TFX…`, `EFX…`, `FFX…`, their months March and April 2031 and their crypto assets ATOM, ALGO, XTZ and NEAR.
-- A guard is proven by `infra/scripts/mutate-probe.sh`, one probe at a time, in-repo on the committed tree, never beside a pytest run in the same checkout. The task commits with the line `PROBE_VERDICT` in its message; its probes run on the committed tree, each with `--control '1,$d'` — every probed file here is a module, a test-read fixture, a test-read README or a runbook page whose emptied text fails the selected tests — and each must end `mutate-probe: KILLED (control proven, tree restored byte-identically)`; then a message-only amend, the tree clean, replaces `PROBE_VERDICT` with each probe's command and its verdict, naming `infra/scripts/mutate-probe.sh`. The branch is unpushed while the tasks run, so the amend rewrites nothing a reader holds. Every probe below was run against a draft of the code this plan gives and was killed; a probe that does not run as printed — a `sed` the committed text does not match is refused as a no-op, rc 6 — is re-anchored on the committed line, never dropped.
+- The owner's real exports lie under `/home/zhaow/Projects/zcrypto-kraken/.claude/worktrees/t0215-blockpit/.tmp/spec-00126/` (gitignored). An executor reads that directory at four steps: Before Task 1's hash read of the template's two files and Task 1's copy of them — Blockpit's own files, none of the owner's — Task 1's check that the invented windows share no value with the owner's exports, which prints one count, and Task 6's smoke run, whose output stays under `.tmp/` and is deleted at its step. No value of the owner's exports — a `txid`, `refid`, time, amount or balance — enters a commit, a fixture, a test, a message or a pull request body; a file's sha256, which names the file and carries none of its values, is not one. The fixtures are the invented windows this plan gives byte for byte, their ids `LFX…`, `TFX…`, `OFX…`, `EFX…`, `FFX…`, their months March and April 2031 and their crypto assets ATOM, ALGO, XTZ and NEAR.
+- A guard is proven by `infra/scripts/mutate-probe.sh`, one probe at a time, in-repo on the committed tree, never beside a pytest run in the same checkout. The task commits with the line `PROBE_VERDICT` in its message; its probes run on the committed tree, each with `--control '1,$d'` — every probed file here is a module, a test-read fixture, a test-read README or a runbook page whose emptied text fails the selected tests, or the test file, whose emptied text leaves the selection nothing to collect, pytest's exit 5 — and each must end `mutate-probe: KILLED (control proven, tree restored byte-identically)`; then a message-only amend, the tree clean, replaces `PROBE_VERDICT` with each probe's command and its verdict, naming `infra/scripts/mutate-probe.sh`. The branch is unpushed while the tasks run, so the amend rewrites nothing a reader holds. Every probe below was run against a draft of the code this plan gives and was killed; a probe that does not run as printed — a `sed` the committed text does not match is refused as a no-op, rc 6 — is re-anchored on the committed line, never dropped.
 - Line numbers of existing files are readings at `f70be7dae`, the branch's base, which the branch's spec commits did not move: each edit is anchored on the quoted text, the number only where to look.
 - `tests/test_internal_terms_not_operator_visible.py` scans every string literal under `cli/` and `infra/scripts/` and the README and runbook text: none carries `Phase <N>`, `T<NNNN>`, `iter-<N>`, `spec <NNNNN>`, `D<N>` or `WP<N>`; a provenance token goes in a comment. No non-Markdown file under `cli/` or `infra/` carries the string `kraken-cli` (`infra/scripts/count-list.sh kraken-cli-on-infra-surfaces`).
-- The commit gate before every commit: the commit's files staged by path, its new files among them, then `uv run pre-commit run -a` until clean, its rewrites staged (ruff's `--fix` orders imports). Conventional Commits; no `.claude/` file and no rule is touched by this plan. Every commit is green over its consumers — each task's consumers step names them — never the full suite locally.
-- A step of Tasks 1 to 6 that names no command runs this one: *Run the tests* or *Run them* — `uv run pytest tests/test_tax_blockpit.py -q -p no:cacheprovider`; *The consumers* of Tasks 1 to 5 — the tax consumers command, `uv run pytest tests/test_tax_blockpit.py tests/test_internal_terms_not_operator_visible.py tests/test_code_prose_citations.py tests/test_live_venue_opt_in.py tests/test_guidance_refs_resolve.py -q -p no:cacheprovider`, Expected: no failure. *The tree is clean*, in every task, is `git status --porcelain`, Expected: empty.
+- The commit gate before every commit: the commit's files staged by path, its new files among them, then `uv run pre-commit run -a` until clean, its rewrites staged (ruff's `--fix` orders imports). Conventional Commits; no `.claude/` file and no rule is touched by this plan. Every commit is green over its consumers, never the full suite locally: `infra/scripts/consumers.sh` governs each task's consumers run, in the implementer contract's form — every test it lists for each path the task's commit stages — and the tests a consumers step names are a floor beneath that list, never the whole run.
+- A step of Tasks 1 to 6 that names no command runs this one: *Run the tests* or *Run them* — `uv run pytest tests/test_tax_blockpit.py -q -p no:cacheprovider`; *The consumers* of Tasks 1 to 5 — the tax consumers command, `uv run pytest tests/test_tax_blockpit.py tests/test_internal_terms_not_operator_visible.py tests/test_code_prose_citations.py tests/test_live_venue_opt_in.py tests/test_guidance_refs_resolve.py -q -p no:cacheprovider`, then the consumers' run, Expected: no failure. *The consumers' run*, in every task after the tests its consumers step names: `uv run pytest $(infra/scripts/consumers.sh <each path the task's commit stages> | grep -E '^tests/test_[^/]*\.py$' | sort -u) -q -p no:cacheprovider`, Expected: no failure; the script's `git grep` reads tracked files alone, so a test the task creates is among the step's named tests, not in its list. *The tree is clean*, in every task, is `git status --porcelain`, Expected: empty.
 - A new Markdown paragraph or list item is one line; an existing file keeps its form. Every page under `infra/runbooks/` and `docs/reference/fleet.md` is a contract page of the commit-msg guidance guard: a list item carrying `every`, `never`, `always`, `only`, `any` or `cannot` names its count or declares `(no count command: …)`, so the texts below are worded without them, and `uv run python infra/scripts/guidance-guard.py --uncounted <page>` prints nothing before the commit. `zcrypto-refine-rules` is loaded before Task 8 writes `infra/runbooks/bookkeeping.md`, a new top-level page under `infra/runbooks/`.
 - Every reviewer — each task's and the branch's — runs on Opus, the model passed explicitly.
 - A commit message ends with this trailer, the placeholder replaced by the executing model's own name, followed by the executing session's `Claude-Session:` line where its harness supplies one:
@@ -83,9 +83,9 @@ Expected: `17:` and `32:` for the two `cli/__main__.py` lines; `437:` for the al
 
 **Interfaces:**
 - Consumes: the template as fetched 2026-10-09 (spec D3, D8; its two sha256s, which Step 3's `TEMPLATE_SHA256` holds); spec D1's column names.
-- Produces, for Tasks 2 to 6: `read_ledger(path) -> list[LedgerRow]` and `read_trades(path) -> dict[str, TradeRow]`, each value the export's own string; `LedgerRow.dec(column) -> Decimal`; `TradeRow.closing`; `Refusal(txids, kind, reason)` with `.line()`; `TaxExportError`; `Refused(refusals)`; `HEADER` (11 names) and `TEMPLATE_LABELS` (33); the two windows' exports; the test file's helpers `_edited` and `_without`.
+- Produces, for Tasks 2 to 6: `read_ledger(path, data=None) -> list[LedgerRow]` and `read_trades(path, data=None) -> dict[str, TradeRow]`, each value the export's own string, `data` the file's bytes where a caller has read them; `LedgerRow.dec(column) -> Decimal`; `TradeRow.closing`; `Refusal(txids, kind, reason)` with `.line()`; `TaxExportError`; `Refused(refusals)`; `HEADER` (11 names) and `TEMPLATE_LABELS` (33); the two windows' exports; the test file's helpers `_edited` and `_without`.
 
-**What this task decides, where the spec leaves it open:** the readers keep each value as the export writes it and validate `time` and the three amounts a run reads on every row (`amount`, `fee`, `balance`) — an amount that does not parse and one that parses to no finite number each a case of its own, and each member of the caught errors (`ValueError` for a time, `InvalidOperation` for an amount) a probe dropping it — leaving `amountusd` to the one mapping that reads it — the owner's export writes it `"-"` on 3 of its 113 rows, so a reader that parsed it would refuse a sound export. The fixture's windows are invented in the sample's shapes: window one opens from zero and holds one of every row spec D3 maps; window two follows it with a rollover and a close of a position window one opened and a spot sale whose `amountusd` is `"-"`. Their numbers are round, and each window's balances chain. Their crypto assets are ATOM, ALGO, XTZ and NEAR, none of the 13 spec 00126's measured basis lists for the owner's export, and Step 2's check reads every non-zero number and every id of the four files against every cell of the owner's two exports, its reading a count, never a value; zero stays outside it, D3's shapes being written in it (a margin open's `amount`, an unfee'd row's `fee`). Window one's first EURC-fee'd open lists its conversion pair before its `margin` row, as the export books them, while the `margin` row's `txid` sorts first — a shape the owner's export holds — so an order by `txid` and the export's own order write different files. The template's CSV, as fetched, has CRLF line endings and no final newline, which the commit gate's `end-of-file-fixer`, `mixed-line-ending` and `trailing-whitespace` would rewrite; the gate's exclude for a recorded file takes it, as it takes the recorded registry index, and a test holds both template files to their sha256s, so an exclude that stops matching the CSV fails a test.
+**What this task decides, where the spec leaves it open:** the readers keep each value as the export writes it and validate `time` and the three amounts a run reads on every row (`amount`, `fee`, `balance`) — an amount that does not parse and one that parses to no finite number each a case of its own, and each member of the caught errors (`ValueError` for a time, `InvalidOperation` for an amount) a probe dropping it — leaving `amountusd` to the one mapping that reads it — the owner's export writes it `"-"` on 3 of its 113 rows, so a reader that parsed it would refuse a sound export. The fixture's windows are invented in the sample's shapes: window one opens from zero and holds one of every row spec D3 maps; window two follows it with a rollover and a close of a position window one opened and a spot sale whose `amountusd` is `"-"`. Their numbers are round, and each window's balances chain. Their crypto assets are ATOM, ALGO, XTZ and NEAR, none of the 13 spec 00126's measured basis lists for the owner's export, and Step 2's check reads every non-zero number and every id of the four files against every cell of the owner's two exports, its reading a count, never a value; zero stays outside it, D3's shapes being written in it (a margin open's `amount`, an unfee'd row's `fee`). Window one's first EURC-fee'd open lists its conversion pair before its `margin` row, as the export books them, while the `margin` row's `txid` sorts first — a shape the owner's export holds — so an order by `txid` and the export's own order write different files. The template's CSV, as fetched, has CRLF line endings and no final newline, which the commit gate's `end-of-file-fixer`, `mixed-line-ending` and `trailing-whitespace` would rewrite; the gate's exclude for a recorded file takes it, as it takes the recorded registry index, and a test holds both template files to their sha256s, so an exclude that stops matching the CSV fails a test. A reader parses the bytes its caller passes as `data`, where it passes them, so Task 4's run hashes and parses one read of each file.
 
 - [ ] **Step 1: The template's two files**
 
@@ -267,7 +267,7 @@ def _template_labels() -> list[str]:
     return "".join(re.findall(r"&quot;(.*?)&quot;", formula)).split(",")
 
 
-def _edited(tmp_path: Path, source: Path, edits: list[tuple[str, str, str | None]]) -> Path:
+def _edited(tmp_path: Path, source: Path, edits: list[tuple[str, str | None, str | None]]) -> Path:
     """`source` with each (txid, column, value) applied; a None column drops the row."""
     with source.open(newline="") as handle:
         rows = list(csv.DictReader(handle))
@@ -393,6 +393,7 @@ class Refused(Exception):
 from __future__ import annotations
 
 import csv
+import io
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -450,19 +451,20 @@ class TradeRow:
         return "closing" in self.misc
 
 
-def _rows(path: Path, columns: tuple[str, ...]) -> list[dict[str, str]]:
+def _rows(path: Path, columns: tuple[str, ...], data: bytes | None) -> list[dict[str, str]]:
     # `utf-8-sig`: a file opened and saved in a spreadsheet gains a byte-order mark glued to its first column name.
-    with path.open(newline="", encoding="utf-8-sig") as handle:
-        reader = csv.DictReader(handle)
-        missing = [column for column in columns if column not in (reader.fieldnames or [])]
-        if missing:
-            raise TaxExportError(f"{path} has no {', '.join(missing)} column")
-        return list(reader)
+    # `data` is the file's bytes where the caller has read them to hash, so the rows parse the bytes it hashed.
+    text = (path.read_bytes() if data is None else data).decode("utf-8-sig")
+    reader = csv.DictReader(io.StringIO(text, newline=""))
+    missing = [column for column in columns if column not in (reader.fieldnames or [])]
+    if missing:
+        raise TaxExportError(f"{path} has no {', '.join(missing)} column")
+    return list(reader)
 
 
-def read_ledger(path: Path) -> list[LedgerRow]:
+def read_ledger(path: Path, data: bytes | None = None) -> list[LedgerRow]:
     rows = []
-    for number, raw in enumerate(_rows(path, LEDGER_COLUMNS), start=1):
+    for number, raw in enumerate(_rows(path, LEDGER_COLUMNS, data), start=1):
         row = LedgerRow(*(raw[column] for column in LEDGER_COLUMNS))
         try:
             datetime.strptime(row.time, LEDGER_TIME)
@@ -474,9 +476,9 @@ def read_ledger(path: Path) -> list[LedgerRow]:
     return rows
 
 
-def read_trades(path: Path) -> dict[str, TradeRow]:
+def read_trades(path: Path, data: bytes | None = None) -> dict[str, TradeRow]:
     trades = {}
-    for raw in _rows(path, TRADES_COLUMNS):
+    for raw in _rows(path, TRADES_COLUMNS, data):
         misc = tuple(word for word in raw["misc"].split(",") if word)
         ledgers = tuple(txid for txid in raw["ledgers"].split(",") if txid)
         trades[raw["txid"]] = TradeRow(raw["txid"], raw["pair"], misc, ledgers, raw["posttxid"])
@@ -556,7 +558,7 @@ TEMPLATE_LABELS = (
 ```
 
 - [ ] **Step 6: Run the tests** — Step 4's command; Expected: `10 passed`.
-- [ ] **Step 7: The consumers** — the tax consumers command (Global Constraints), and the tests naming `.pre-commit-config.yaml`: `uv run pytest tests/test_pre_push_stage.py tests/test_message_citations.py tests/test_vendored_rrsync_integrity.py -q -p no:cacheprovider`; Expected: no failure.
+- [ ] **Step 7: The consumers** — the tax consumers command (Global Constraints), and the tests naming `.pre-commit-config.yaml`: `uv run pytest tests/test_pre_push_stage.py tests/test_message_citations.py tests/test_vendored_rrsync_integrity.py -q -p no:cacheprovider`; then the consumers' run; Expected: no failure.
 
 - [ ] **Step 8: The commit gate**
 - [ ] **Step 9: Commit**
@@ -585,7 +587,7 @@ MSG
 
 ```bash
 infra/scripts/mutate-probe.sh --file cli/tax/kraken_export.py --control '1,$d' \
-  --mutation 's/^        if missing:$/        if False:/' \
+  --mutation 's/^    if missing:$/    if False:/' \
   -- uv run pytest tests/test_tax_blockpit.py -k missing_column -q -p no:cacheprovider
 infra/scripts/mutate-probe.sh --file cli/tax/kraken_export.py --control '1,$d' \
   --mutation 's/^            datetime.strptime(row.time, LEDGER_TIME)$/            pass/' \
@@ -629,10 +631,10 @@ infra/scripts/mutate-probe.sh --file tests/fixtures/tax_blockpit/blockpit-templa
 - Test: `tests/test_tax_blockpit.py`
 
 **Interfaces:**
-- Consumes: Task 1's readers, `HEADER`, `TEMPLATE_LABELS`, `Refusal`.
-- Produces: `map_rows(ledger, trades) -> Mapped` — its `rows` (`OutRow`), `refusals`, `positions` (opening trade id → ledger txids) and `no_movement`; `render_csv(rows) -> bytes`, the import file's bytes; `SINGLE` and `GROUPED`, the dispatch Task 4's conservation test patches.
+- Consumes: Task 1's readers, `HEADER`, `TEMPLATE_LABELS`, `Refusal`, `TaxExportError`.
+- Produces: `map_rows(ledger, trades) -> Mapped` — its `rows` (`OutRow`), `refusals`, `positions` (opening trade id → ledger txids) and `no_movement`; `render_csv(rows) -> bytes`, the import file's bytes, raising `TaxExportError` on a label outside `TEMPLATE_LABELS`; `_moves(row)`, an output row's signed movement per asset, which the tests and Task 4's checks read; `SINGLE` and `GROUPED`, the dispatch Task 4's conservation test patches.
 
-**What this task decides, where the spec leaves it open:** the refusal wording; the `Comment`'s form for spec D3's content — `kraken <type>`, or `kraken <type>/<subtype>` where the row has a subtype, then the `pair` of the trades row its `refid` names where the export holds that row, then `position <id>` on a margin-family row; a one-leg trade's ends `one leg booked` and a sweep's names its `refid` — with no comma, so no field is quoted; the integration name `Kraken manual import` (column B, which an upload into an existing integration ignores); and the row order inside a group — an amount row before its fee row, a sweep's spends by `txid`. A row's group is its type's and its `refid`, so a margin open's `collateralconversion` pair, `margin` row and the `rollover` rows sharing its `refid` stay apart; a `spend` and a `receive` of one sweep share one group. A group's place among one second's rows is its first row's position in the ledger export (spec D5): `Mapped.index` holds each ledger `txid`'s position, and `Mapped.at` turns a group's rows and an ordinal into a row's `order`; `_written` sorts the rows by `time` and `order`, the one written order `render_csv` and Task 4's order check read. A row moving nothing is counted only once its type and subtype have a mapping, so an unknown type at zero refuses. Each member of a compound refusal condition has a `REFUSALS` case it alone decides and a probe dropping that member: `_legs`'s out count and in count; `_conversion`'s row count, EUR debit, EURC credit and fee; `_sweep`'s receive count, spend presence and receive fee, then its receive credit and spend debits, then its finite values and non-zero total. Every `OutRow` takes its `order` from `Mapped.at`: the deposit, reward, rollover and margin rows from their own ledger row, the trade, settle, conversion and sweep rows from their group's. A sweep's shares are rounded down at ten places and the last spend, by `txid`, takes the remainder.
+**What this task decides, where the spec leaves it open:** the refusal wording; the `Comment`'s form for spec D3's content — `kraken <type>`, or `kraken <type>/<subtype>` where the row has a subtype, then the `pair` of the trades row its `refid` names where the export holds that row, then `position <id>` on a margin-family row; a one-leg trade's ends `one leg booked` and a sweep's names its `refid` — with no comma, so no field is quoted; the integration name `Kraken manual import` (column B, which an upload into an existing integration ignores); and the row order inside a group — an amount row before its fee row, a sweep's spends by `txid`. A row's group is its type's and its `refid`, so a margin open's `collateralconversion` pair, `margin` row and the `rollover` rows sharing its `refid` stay apart; a `spend` and a `receive` of one sweep share one group. A group's place among one second's rows is its first row's position in the ledger export (spec D5): `Mapped.index` holds each ledger `txid`'s position, and `Mapped.at` turns a group's rows and an ordinal into a row's `order`; `_written` sorts the rows by `time` and `order`, the one written order `render_csv` and Task 4's order check read. `render_csv` checks each row's label against `TEMPLATE_LABELS` as it writes the row, a label outside it a `TaxExportError` naming the label, so the constant is read at run time, and a test hands `render_csv` a row the mapping never writes. `_moves`, an output row's signed movement per asset, is written here once, over `OutRow`, for the tests and Task 4's checks; `_pair_trade` builds the one Trade row of a two-leg group for `_trade` and `_settled`. A row moving nothing is counted only once its type and subtype have a mapping, so an unknown type at zero refuses. Each member of a compound refusal condition has a `REFUSALS` case it alone decides and a probe dropping that member: `_legs`'s out count and in count; `_conversion`'s row count, EUR debit, EURC credit and fee; `_sweep`'s receive count, spend presence and receive fee, then its receive credit and spend debits, then its finite values and non-zero total. The receive count's case, `sweep_with_two_receives`, turns the fee-less spend into a second receive, so the receive fee does not decide it; the non-zero total's probe selects `sweep_of_one_spend_amountusd_zero`, whose one spend reaches no division; and each of the sweep's probes, and the conversion's whole-condition probe, selects cases whose mutant runs on to the test's assertion rather than raising. Every `OutRow` takes its `order` from `Mapped.at`: the deposit, reward, rollover and margin rows from their own ledger row, the trade, settle, conversion and sweep rows from their group's. A sweep's shares are rounded down at ten places and the last spend, by `txid`, takes the remainder.
 
 - [ ] **Step 1: The golden rows** — `tests/fixtures/tax_blockpit/window-1-blockpit.csv`, byte for byte, written before the code: each row is spec D3's table read off window one by hand — the EUR deposit as Non-Taxable In and the ATOM deposit as Deposit; the two spot trades and the one-leg trade, its EUR leg at `0`; the two opens fee'd in EURC each a Trade EUR → EURC and a Margin Fee in EURC; the three opens fee'd in EUR — one closed in the window, one settled, one held into window two — and the zero-PnL close each a Margin Fee; the two rollovers; the profit close a Margin Profit and a Margin Fee `…-fee`; the loss close's own conversion pair, its Margin Loss in EURC and its Margin Fee; the settle a Trade EUR → ATOM; the three rewards as Staking; the sweep as two Trades into EUR at `0.000201923` and `0.000098077`, which sum to the receive.
 
@@ -680,16 +682,6 @@ def _mapped_rows() -> list[dict[str, str]]:
     return list(csv.DictReader(io.StringIO(body)))
 
 
-def _moves(row: dict[str, str]):
-    for asset, amount, sign in (
-        (row["Incoming Asset"], row["Incoming Amount"], 1),
-        (row["Outgoing Asset"], row["Outgoing Amount"], -1),
-        (row["Fee Asset (optional)"], row["Fee Amount (optional)"], -1),
-    ):
-        if asset:
-            yield asset, sign * Decimal(amount)
-
-
 def test_every_label_the_mapping_writes_is_a_template_label():
     mapped = blockpit.map_rows(read_ledger(LEDGER_1), read_trades(TRADES_1))
     assert {row.label for row in mapped.rows} <= set(_template_labels())
@@ -704,22 +696,30 @@ def test_every_label_the_mapping_writes_is_a_template_label():
     }
 
 
+def test_a_label_outside_the_template_is_refused_as_the_file_is_written():
+    stray = blockpit.OutRow(
+        "2031-03-03 09:00:00", "Unlabeled", "", "", "EUR", "1250.0", "", "", "kraken deposit", "LFX001-SYNTH-LEDGER", (0, 0)
+    )
+    with pytest.raises(TaxExportError, match="'Unlabeled' is not one of the template's labels"):
+        blockpit.render_csv([stray])
+
+
 def test_every_asset_moves_in_the_mapped_rows_as_in_the_ledger():
     want, got = {}, {}
     for row in read_ledger(LEDGER_1):
         want[row.asset] = want.get(row.asset, Decimal(0)) + Decimal(row.amount) - Decimal(row.fee)
-    for row in _mapped_rows():
-        for asset, moved in _moves(row):
+    for row in blockpit.map_rows(read_ledger(LEDGER_1), read_trades(TRADES_1)).rows:
+        for asset, moved in blockpit._moves(row):
             got[asset] = got.get(asset, Decimal(0)) + moved
     assert got == want
 
 
 def test_no_assets_balance_runs_below_zero_in_the_written_order():
     held = {}
-    for row in _mapped_rows():
-        for asset, moved in _moves(row):
+    for row in blockpit._written(blockpit.map_rows(read_ledger(LEDGER_1), read_trades(TRADES_1)).rows):
+        for asset, moved in blockpit._moves(row):
             held[asset] = held.get(asset, Decimal(0)) + moved
-            assert held[asset] >= 0, (asset, row["Trx. ID (optional)"])
+            assert held[asset] >= 0, (asset, row.trx_id)
 
 
 def test_a_margin_close_with_pnl_splits_its_fee_into_its_own_row():
@@ -832,7 +832,7 @@ REFUSALS = [
     ("reward_credits_nothing", LEDGER_1, [("LFX026-SYNTH-LEDGER", "amount", "-0.35")], "a reward that credits nothing"),
     ("rollover_moves_an_amount", LEDGER_1, [("LFX013-SYNTH-LEDGER", "amount", "0.0035")], "a rollover that moves an amount"),
     ("sweep_without_a_receive", LEDGER_1, [("LFX031-SYNTH-LEDGER", None, None)], "not one receive without a fee"),
-    ("sweep_with_two_receives", LEDGER_1, [("LFX030-SYNTH-LEDGER", "type", "receive")], "not one receive without a fee"),
+    ("sweep_with_two_receives", LEDGER_1, [("LFX029-SYNTH-LEDGER", "type", "receive")], "not one receive without a fee"),
     (
         "sweep_without_a_spend",
         LEDGER_1,
@@ -855,10 +855,16 @@ REFUSALS = [
         [("LFX029-SYNTH-LEDGER", "amountusd", "0.0"), ("LFX030-SYNTH-LEDGER", "amountusd", "0.0")],
         "cannot be shared",
     ),
+    (
+        "sweep_of_one_spend_amountusd_zero",
+        LEDGER_1,
+        [("LFX030-SYNTH-LEDGER", None, None), ("LFX029-SYNTH-LEDGER", "amountusd", "0.0")],
+        "cannot be shared",
+    ),
 ]
 
 
-def _refusal_inputs(tmp_path: Path, source: Path, edits: list[tuple[str, str, str | None]]) -> tuple[Path, Path]:
+def _refusal_inputs(tmp_path: Path, source: Path, edits: list[tuple[str, str | None, str | None]]) -> tuple[Path, Path]:
     return (
         _edited(tmp_path, LEDGER_1, edits) if source == LEDGER_1 else LEDGER_1,
         _edited(tmp_path, TRADES_1, edits) if source == TRADES_1 else TRADES_1,
@@ -878,7 +884,7 @@ def test_a_rollover_and_a_close_whose_open_is_an_earlier_windows_are_no_refusal(
     assert mapped.positions == {"TFX012-SYNTH-TRADES": ["LFX101-SYNTH-LEDGER", "LFX102-SYNTH-LEDGER"]}
 ```
 
-- [ ] **Step 3: Run them and read the failure** — `uv run pytest tests/test_tax_blockpit.py -q -p no:cacheprovider`; Expected: the 43 new cases fail with `AttributeError: module 'cli.tax.blockpit' has no attribute` `'map_rows'` or `'render_csv'`, Task 1's 10 pass.
+- [ ] **Step 3: Run them and read the failure** — `uv run pytest tests/test_tax_blockpit.py -q -p no:cacheprovider`; Expected: the 45 new cases fail with `AttributeError: module 'cli.tax.blockpit' has no attribute` — `'map_rows'`, `'render_csv'`, `'_written'` or `'OutRow'` — Task 1's 10 pass.
 - [ ] **Step 4: The mapping** — appended to `cli/tax/blockpit.py`:
 
 ```python
@@ -1017,6 +1023,11 @@ def _legs(rows: list[LedgerRow], kind: str, mapped: Mapped) -> tuple[LedgerRow, 
     return outs[0], ins[0], _fee(fees[0]) if fees else ("", "")
 
 
+def _pair_trade(legs: tuple[LedgerRow, LedgerRow, tuple[str, str]], comment: str, refid: str, order: tuple[int, int]) -> OutRow:
+    out, into, fee = legs
+    return OutRow(out.time, "Trade", out.asset, _unsigned(out.amount), into.asset, into.amount, *fee, comment, refid, order)
+
+
 def _trade(refid: str, rows: list[LedgerRow], trades: dict[str, TradeRow], mapped: Mapped) -> None:
     trade = _trade_of(refid, rows, "trade/tradespot", trades, mapped)
     if trade is None:
@@ -1038,11 +1049,8 @@ def _trade(refid: str, rows: list[LedgerRow], trades: dict[str, TradeRow], mappe
         return
     legs = _legs(rows, "trade/tradespot", mapped)
     if legs is not None:
-        out, into, fee = legs
         comment = f"kraken trade/tradespot {trade.pair}"
-        mapped.rows.append(
-            OutRow(out.time, "Trade", out.asset, _unsigned(out.amount), into.asset, into.amount, *fee, comment, refid, order)
-        )
+        mapped.rows.append(_pair_trade(legs, comment, refid, order))
 
 
 def _settled(refid: str, rows: list[LedgerRow], trades: dict[str, TradeRow], mapped: Mapped) -> None:
@@ -1051,13 +1059,9 @@ def _settled(refid: str, rows: list[LedgerRow], trades: dict[str, TradeRow], map
     position = _position(trade, rows, "settled", mapped) if legs else None
     if position is None:
         return
-    out, into, fee = legs
     mapped.positions.setdefault(position, []).extend(row.txid for row in rows)
     comment = f"kraken settled {trade.pair} position {position}"
-    order = mapped.at(rows)
-    mapped.rows.append(
-        OutRow(out.time, "Trade", out.asset, _unsigned(out.amount), into.asset, into.amount, *fee, comment, refid, order)
-    )
+    mapped.rows.append(_pair_trade(legs, comment, refid, mapped.at(rows)))
 
 
 def _conversion(refid: str, rows: list[LedgerRow], trades: dict[str, TradeRow], mapped: Mapped) -> None:
@@ -1157,6 +1161,16 @@ def map_rows(ledger: list[LedgerRow], trades: dict[str, TradeRow]) -> Mapped:
     return mapped
 
 
+def _moves(row: OutRow):
+    for asset, amount, sign in (
+        (row.in_asset, row.in_amount, 1),
+        (row.out_asset, row.out_amount, -1),
+        (row.fee_asset, row.fee_amount, -1),
+    ):
+        if asset:
+            yield asset, sign * Decimal(amount)
+
+
 def _written(rows: list[OutRow]) -> list[OutRow]:
     return sorted(rows, key=lambda row: (row.time, row.order))
 
@@ -1166,6 +1180,8 @@ def render_csv(rows: list[OutRow]) -> bytes:
     writer = csv.writer(buffer, lineterminator="\n")
     writer.writerow(HEADER)
     for row in _written(rows):
+        if row.label not in TEMPLATE_LABELS:
+            raise TaxExportError(f"{row.label!r} is not one of the template's labels")
         date = datetime.strptime(row.time, LEDGER_TIME).strftime(OUTPUT_DATE)
         writer.writerow(
             (
@@ -1185,8 +1201,8 @@ def render_csv(rows: list[OutRow]) -> bytes:
     return buffer.getvalue().encode("utf-8")
 ```
 
-- [ ] **Step 5: Run the tests** — Step 3's command; Expected: `53 passed`.
-- [ ] **Step 6: The consumers** — the tax consumers command; Expected: no failure.
+- [ ] **Step 5: Run the tests** — Step 3's command; Expected: `55 passed`.
+- [ ] **Step 6: The consumers** — the tax consumers command, then the consumers' run; Expected: no failure.
 - [ ] **Step 7: The commit gate**
 - [ ] **Step 8: Commit**
 
@@ -1203,7 +1219,8 @@ with Kraken's commission as its fee; a small-balance conversion is one Trade per
 receive shared by amountusd; a trade whose ledger booked one leg writes the other at zero. Every
 other type or subtype, and every shape outside the measured ones, is a refusal naming its rows.
 Rows of one second keep the ledger export's own order, in which each asset's balance chain holds,
-since Kraken's txids carry no booking order.
+since Kraken's txids carry no booking order. A label outside the template's own list stops the file
+before it is written.
 
 PROBE_VERDICT
 
@@ -1212,12 +1229,15 @@ MSG
 ```
 
 - [ ] **Step 9: The tree is clean**
-- [ ] **Step 10: Prove the guards, then record their verdicts** — forty-four probes, the mapping's ten shapes and its thirty-four refusal guards; Expected: each KILLED; then the message-only amend.
+- [ ] **Step 10: Prove the guards, then record their verdicts** — forty-five probes, the mapping's ten shapes, its thirty-four refusal guards and the label check; Expected: each KILLED; then the message-only amend.
 
 ```bash
 infra/scripts/mutate-probe.sh --file cli/tax/blockpit.py --control '1,$d' \
   --mutation 's/^    label = "Non-Taxable In" if row.asset == EURO else "Deposit"$/    label = "Non-Taxable (In)" if row.asset == EURO else "Deposit"/' \
   -- uv run pytest tests/test_tax_blockpit.py -k mapping_writes -q -p no:cacheprovider
+infra/scripts/mutate-probe.sh --file cli/tax/blockpit.py --control '1,$d' \
+  --mutation 's/^        if row.label not in TEMPLATE_LABELS:$/        if False:/' \
+  -- uv run pytest tests/test_tax_blockpit.py -k label_outside_the_template -q -p no:cacheprovider
 infra/scripts/mutate-probe.sh --file cli/tax/blockpit.py --control '1,$d' \
   --mutation '/^def _conversion/,/^def _sweep/s/^    mapped.rows.append($/    0 and mapped.rows.append(/' \
   -- uv run pytest tests/test_tax_blockpit.py -k conversion_pair_is_one_trade -q -p no:cacheprovider
@@ -1304,7 +1324,7 @@ infra/scripts/mutate-probe.sh --file cli/tax/blockpit.py --control '1,$d' \
   -- uv run pytest tests/test_tax_blockpit.py -k one_leg_off_its_pair -q -p no:cacheprovider
 infra/scripts/mutate-probe.sh --file cli/tax/blockpit.py --control '1,$d' \
   --mutation 's/^    if len(rows) != 2 or len(outs) != 1 or len(ins) != 1 or any(row.dec("fee") != 0 for row in rows):$/    if False:/' \
-  -- uv run pytest tests/test_tax_blockpit.py -k conversion_not_eur_to_eurc -q -p no:cacheprovider
+  -- uv run pytest tests/test_tax_blockpit.py -k 'conversion_with_a_fee or conversion_with_a_third_row' -q -p no:cacheprovider
 infra/scripts/mutate-probe.sh --file cli/tax/blockpit.py --control '1,$d' \
   --mutation 's/ or len(outs) != 1 or len(ins) != 1 or any/ or len(ins) != 1 or any/' \
   -- uv run pytest tests/test_tax_blockpit.py -k conversion_not_from_eur -q -p no:cacheprovider
@@ -1319,10 +1339,10 @@ infra/scripts/mutate-probe.sh --file cli/tax/blockpit.py --control '1,$d' \
   -- uv run pytest tests/test_tax_blockpit.py -k conversion_with_a_third_row -q -p no:cacheprovider
 infra/scripts/mutate-probe.sh --file cli/tax/blockpit.py --control '1,$d' \
   --mutation 's/^    if len(receives) != 1 or not spends or receives\[0\].dec("fee") != 0:$/    if False:/' \
-  -- uv run pytest tests/test_tax_blockpit.py -k 'sweep_without_a_receive or sweep_with_two_receives' -q -p no:cacheprovider
+  -- uv run pytest tests/test_tax_blockpit.py -k sweep_with_two_receives -q -p no:cacheprovider
 infra/scripts/mutate-probe.sh --file cli/tax/blockpit.py --control '1,$d' \
   --mutation 's/^    if len(receives) != 1 or not spends or /    if not spends or /' \
-  -- uv run pytest tests/test_tax_blockpit.py -k 'sweep_without_a_receive or sweep_with_two_receives' -q -p no:cacheprovider
+  -- uv run pytest tests/test_tax_blockpit.py -k sweep_with_two_receives -q -p no:cacheprovider
 infra/scripts/mutate-probe.sh --file cli/tax/blockpit.py --control '1,$d' \
   --mutation 's/^    if len(receives) != 1 or not spends or /    if len(receives) != 1 or /' \
   -- uv run pytest tests/test_tax_blockpit.py -k sweep_without_a_spend -q -p no:cacheprovider
@@ -1340,13 +1360,13 @@ infra/scripts/mutate-probe.sh --file cli/tax/blockpit.py --control '1,$d' \
   -- uv run pytest tests/test_tax_blockpit.py -k sweep_spend_debits_nothing -q -p no:cacheprovider
 infra/scripts/mutate-probe.sh --file cli/tax/blockpit.py --control '1,$d' \
   --mutation 's/^    if not all(value.is_finite() for value in values) or total == 0:$/    if False:/' \
-  -- uv run pytest tests/test_tax_blockpit.py -k sweep_amountusd -q -p no:cacheprovider
+  -- uv run pytest tests/test_tax_blockpit.py -k 'sweep_amountusd_missing or sweep_amountusd_not_finite' -q -p no:cacheprovider
 infra/scripts/mutate-probe.sh --file cli/tax/blockpit.py --control '1,$d' \
   --mutation 's/^    if not all(value.is_finite() for value in values) or total == 0:$/    if total == 0:/' \
   -- uv run pytest tests/test_tax_blockpit.py -k sweep_amountusd_not_finite -q -p no:cacheprovider
 infra/scripts/mutate-probe.sh --file cli/tax/blockpit.py --control '1,$d' \
   --mutation 's/ or total == 0:$/:/' \
-  -- uv run pytest tests/test_tax_blockpit.py -k sweep_amountusd_zero -q -p no:cacheprovider
+  -- uv run pytest tests/test_tax_blockpit.py -k sweep_of_one_spend_amountusd_zero -q -p no:cacheprovider
 ```
 
 ---
@@ -1389,8 +1409,8 @@ def check_cross(ledger: list[LedgerRow], trades: dict[str, TradeRow]) -> list[Re
     ]
 ```
 
-- [ ] **Step 4: Run the tests** — Expected: `55 passed`.
-- [ ] **Step 5: The consumers** — the tax consumers command; Expected: no failure.
+- [ ] **Step 4: Run the tests** — Expected: `57 passed`.
+- [ ] **Step 5: The consumers** — the tax consumers command, then the consumers' run; Expected: no failure.
 - [ ] **Step 6: The commit gate**
 - [ ] **Step 7: Commit**
 
@@ -1431,9 +1451,9 @@ infra/scripts/mutate-probe.sh --file cli/tax/blockpit.py --control '1,$d' \
 
 **Interfaces:**
 - Consumes: Tasks 1 to 3.
-- Produces: `transform(ledgers, trades, out) -> Written`, writing `out` and `<out>.provenance.json` or raising `Refused` (nothing written) or `TaxExportError` (an output that exists, an unreadable input), its `label_rows` the written rows counted by label; `check_chain`, `check_conservation`, `check_order`, `check_unique`; the provenance's keys — `inputs` (`ledgers`: `file`, `sha256`, `rows`, `first_time`, `last_time`; `trades`: `file`, `sha256`, `rows`), `output` (`file`, `sha256`, `rows`), `labels` (label → asset → `rows`, `incoming`, `outgoing`, `fee`), `opening`, `closing`, `positions`, `no_movement`, `previous` (null until Task 5), `zcrypto`.
+- Produces: `transform(ledgers, trades, out) -> Written`, writing `out` and `<out>.provenance.json` or raising `Refused` (nothing written) or `TaxExportError` (an output that exists, an unreadable input, a label outside the template), its `label_rows` the written rows counted by label; `check_chain`, `check_conservation`, `check_order`, `check_unique`; the provenance's keys — `inputs` (`ledgers`: `file`, `sha256`, `rows`, `first_time`, `last_time`; `trades`: `file`, `sha256`, `rows`), `output` (`file`, `sha256`, `rows`), `labels` (label → asset → `rows`, `incoming`, `outgoing`, `fee`), `opening`, `closing`, `positions`, `no_movement`, `previous` (null until Task 5), `zcrypto`.
 
-**What this task decides, where the spec leaves it open:** the provenance is `json.dumps(…, indent=2, sort_keys=True)` with a newline, its decimals normalized, and a test holds the written file to that form; the golden provenance is that record compact and without its two run-dependent keys, `previous` and `zcrypto`, which the tests read apart — spec D8's golden comparison, but for those two; the chain is read in the export's own row order; the written order is read too, each asset's balance from its opening, each row applied whole, never below zero, so an export that interleaves two groups' rows inside one second — a shape the owner's export does not hold — refuses rather than listing a debit before the credit that funds it; the run over the trades rows reordered compares the import file alone, since the provenance carries the trades file's own sha256.
+**What this task decides, where the spec leaves it open:** the provenance is `json.dumps(…, indent=2, sort_keys=True)` with a newline, its decimals normalized, and a test holds the written file to that form; the golden provenance is that record compact and without its two run-dependent keys, `previous` and `zcrypto`, which the tests read apart — spec D8's golden comparison, but for those two; the chain is read in the export's own row order; the written order is read too, each asset's balance from its opening, each row applied whole, never below zero, so an export that interleaves two groups' rows inside one second — a shape the owner's export does not hold — refuses rather than listing a debit before the credit that funds it; the run over the trades rows reordered compares the import file alone, since the provenance carries the trades file's own sha256; each input is read once, its bytes both hashed into the provenance and handed to its reader.
 
 - [ ] **Step 1: The golden provenance** — `tests/fixtures/tax_blockpit/window-1-blockpit.csv.provenance.json`, one line:
 
@@ -1606,7 +1626,7 @@ def test_a_written_order_that_runs_an_asset_below_zero_is_refused(tmp_path):
     assert sorted(tmp_path.iterdir()) == before
 ```
 
-- [ ] **Step 3: Run them and read the failure** — Expected: the 48 new cases fail with `AttributeError` on `transform` or `check_unique`.
+- [ ] **Step 3: Run them and read the failure** — Expected: the 49 new cases fail with `AttributeError` on `transform` or `check_unique`.
 - [ ] **Step 4: The checks and the run** — appended to `cli/tax/blockpit.py`:
 
 ```python
@@ -1625,16 +1645,6 @@ def check_chain(ledger: list[LedgerRow]) -> tuple[dict[str, Decimal], dict[str, 
             refusals.append(Refusal((row.txid,), "balance", reason))
         closing[row.asset] = row.dec("balance")
     return opening, closing, refusals
-
-
-def _moves(row: OutRow):
-    for asset, amount, sign in (
-        (row.in_asset, row.in_amount, 1),
-        (row.out_asset, row.out_amount, -1),
-        (row.fee_asset, row.fee_amount, -1),
-    ):
-        if asset:
-            yield asset, sign * Decimal(amount)
 
 
 def check_conservation(ledger: list[LedgerRow], rows: list[OutRow]) -> list[Refusal]:
@@ -1721,7 +1731,7 @@ def transform(ledgers: Path, trades: Path, out: Path) -> Written:
         if path.exists():
             raise TaxExportError(f"{path} exists, and a run never overwrites a file")
     ledger_bytes, trades_bytes = ledgers.read_bytes(), trades.read_bytes()
-    ledger, trade_rows = read_ledger(ledgers), read_trades(trades)
+    ledger, trade_rows = read_ledger(ledgers, ledger_bytes), read_trades(trades, trades_bytes)
     mapped = map_rows(ledger, trade_rows)
     opening, closing, chain = check_chain(ledger)
     first_time = ledger[0].time if ledger else None
@@ -1765,8 +1775,8 @@ def transform(ledgers: Path, trades: Path, out: Path) -> Written:
     return Written(out, provenance_path, len(mapped.rows), label_rows, closing_all, _sha256(body), _sha256(provenance))
 ```
 
-- [ ] **Step 5: Run the tests** — Expected: `103 passed`.
-- [ ] **Step 6: The consumers** — the tax consumers command; Expected: no failure.
+- [ ] **Step 5: Run the tests** — Expected: `106 passed`.
+- [ ] **Step 6: The consumers** — the tax consumers command, then the consumers' run; Expected: no failure.
 - [ ] **Step 7: The commit gate**
 - [ ] **Step 8: Commit**
 
@@ -1849,13 +1859,13 @@ infra/scripts/mutate-probe.sh --file cli/tax/blockpit.py --control '1,$d' \
 **Files:**
 - Modify: `cli/tax/blockpit.py` (`transform` replaced; `check_continuity` and `_previous` appended)
 - Create: `tests/fixtures/tax_blockpit/window-2-blockpit.csv`, `window-2-blockpit.csv.provenance.json`
-- Test: `tests/test_tax_blockpit.py` (`_run` replaced; `_empty_window` appended; seven tests, eleven cases)
+- Test: `tests/test_tax_blockpit.py` (`_run` replaced; `_empty_window` appended; eight tests, fifteen cases)
 
 **Interfaces:**
 - Consumes: Task 4's run and provenance.
 - Produces: `transform(ledgers, trades, out, after=None)` — without `after` every asset opens at zero; with it, each opening equals the previous `closing` (an asset it never saw at zero), this ledger's first `time` is after its `inputs.ledgers.last_time`, the provenance's `closing` carries the previous closing of each asset this window does not move, and `previous` is the previous file's sha256; `check_continuity`.
 
-**What this task decides, where the spec leaves it open:** an empty window keeps the previous `last_time`, so the next window chains past it — one test chains window one, an empty window and window two, another opens window one after an empty first window, and each drives one of `check_continuity`'s two `None` guards on the times; a file that is not a provenance this command wrote — not JSON, without `closing` or `inputs.ledgers.last_time`, or with them of the wrong type — is a `TaxExportError`, each member of `_previous`'s caught errors (`ValueError`, `KeyError`, `TypeError`) and of its type check (`closing`, `last_time`) a case it alone decides and a probe dropping it; each of the three continuity refusals' tests reads the directory's listing unchanged, and a probe that writes before the refusal fails each.
+**What this task decides, where the spec leaves it open:** an empty window keeps the previous `last_time`, so the next window chains past it — one test chains window one, an empty window and window two, another opens window one after an empty first window, and each drives one of `check_continuity`'s two `None` guards on the times; a file that is not a provenance this command wrote — not JSON, without `closing` or `inputs.ledgers.last_time`, with them of the wrong type, or with a `closing` value that is not a finite decimal string, the error then naming that value's asset — is a `TaxExportError`, each member of `_previous`'s caught errors (`ValueError`, `KeyError`, `TypeError`), of its type check (`closing`, `last_time`) and of its value check (a string, a finite value, and the `InvalidOperation` a string that is no decimal raises) a case it alone decides and a probe dropping it, a `null` value a fourth case the string member decides; each of the three continuity refusals' tests reads the directory's listing unchanged, and a probe that writes before the refusal fails each.
 
 - [ ] **Step 1: Window two's golden pair** — `tests/fixtures/tax_blockpit/window-2-blockpit.csv`:
 
@@ -1970,6 +1980,18 @@ def test_a_file_that_is_no_provenance_is_refused_as_after(tmp_path, text):
     after.write_text(text)
     with pytest.raises(TaxExportError, match="not a provenance file"):
         _run(tmp_path, LEDGER_2, TRADES_2, after=after, name="window-2-blockpit.csv")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [None, 11.1025, "NaN", "abc"],
+    ids=["closing_value_null", "closing_value_a_number", "closing_value_not_finite", "closing_value_not_a_decimal"],
+)
+def test_a_previous_closing_that_is_no_decimal_string_is_refused_by_its_asset(tmp_path, value):
+    after = tmp_path / "after.json"
+    after.write_text(json.dumps({"closing": {"ATOM": value, "EUR": "1174.1133"}, "inputs": {"ledgers": {"last_time": None}}}))
+    with pytest.raises(TaxExportError, match="its closing ATOM is not a decimal string"):
+        _run(tmp_path, LEDGER_2, TRADES_2, after=after, name="window-2-blockpit.csv")
 ```
 
 - [ ] **Step 3: Run them and read the failure** — Expected: every run case fails with `TypeError: transform() takes 3 positional arguments but 4 were given`.
@@ -1982,7 +2004,7 @@ def transform(ledgers: Path, trades: Path, out: Path, after: Path | None = None)
         if path.exists():
             raise TaxExportError(f"{path} exists, and a run never overwrites a file")
     ledger_bytes, trades_bytes = ledgers.read_bytes(), trades.read_bytes()
-    ledger, trade_rows = read_ledger(ledgers), read_trades(trades)
+    ledger, trade_rows = read_ledger(ledgers, ledger_bytes), read_trades(trades, trades_bytes)
     previous_bytes = after.read_bytes() if after else None
     previous = _previous(after, previous_bytes) if after else None
     mapped = map_rows(ledger, trade_rows)
@@ -2063,11 +2085,20 @@ def _previous(after: Path, data: bytes) -> dict:
         raise TaxExportError(f"{after} is not a provenance file this command wrote") from exc
     if not isinstance(closing, dict) or not (last_time is None or isinstance(last_time, str)):
         raise TaxExportError(f"{after} is not a provenance file this command wrote")
+    for asset, value in sorted(closing.items()):
+        try:
+            is_decimal = isinstance(value, str) and Decimal(value).is_finite()
+        except InvalidOperation:
+            is_decimal = False
+        if not is_decimal:
+            raise TaxExportError(
+                f"{after} is not a provenance file this command wrote: its closing {asset} is not a decimal string"
+            )
     return previous
 ```
 
-- [ ] **Step 5: Run the tests** — Expected: `114 passed`.
-- [ ] **Step 6: The consumers** — the tax consumers command; Expected: no failure.
+- [ ] **Step 5: Run the tests** — Expected: `121 passed`.
+- [ ] **Step 6: The consumers** — the tax consumers command, then the consumers' run; Expected: no failure.
 - [ ] **Step 7: The commit gate**
 - [ ] **Step 8: Commit**
 
@@ -2080,7 +2111,8 @@ A window run with --after refuses an asset whose opening balance is not the prev
 closing one, and a ledger that does not start after the previous window's last row; without --after
 every asset must open at zero, as a whole-history window does. A month skipped or exported twice
 stops here rather than reaching Blockpit. The provenance carries the previous file's sha256 and the
-closing balance of every asset seen so far.
+closing balance of every asset seen so far. An --after file this command did not write is refused,
+down to a closing balance that is not a decimal string.
 
 PROBE_VERDICT
 
@@ -2089,7 +2121,7 @@ MSG
 ```
 
 - [ ] **Step 9: The tree is clean**
-- [ ] **Step 10: Prove the guards, then record their verdicts** — sixteen probes; Expected: each KILLED; then the message-only amend.
+- [ ] **Step 10: Prove the guards, then record their verdicts** — nineteen probes; Expected: each KILLED; then the message-only amend.
 
 ```bash
 infra/scripts/mutate-probe.sh --file cli/tax/blockpit.py --control '1,$d' \
@@ -2125,6 +2157,15 @@ infra/scripts/mutate-probe.sh --file cli/tax/blockpit.py --control '1,$d' \
 infra/scripts/mutate-probe.sh --file cli/tax/blockpit.py --control '1,$d' \
   --mutation 's/^    if not isinstance(closing, dict) or not (last_time is None or isinstance(last_time, str)):$/    if not isinstance(closing, dict):/' \
   -- uv run pytest tests/test_tax_blockpit.py -k last_time_not_a_string -q -p no:cacheprovider
+infra/scripts/mutate-probe.sh --file cli/tax/blockpit.py --control '1,$d' \
+  --mutation 's/^            is_decimal = isinstance(value, str) and Decimal(value).is_finite()$/            is_decimal = Decimal(value).is_finite()/' \
+  -- uv run pytest tests/test_tax_blockpit.py -k closing_value_a_number -q -p no:cacheprovider
+infra/scripts/mutate-probe.sh --file cli/tax/blockpit.py --control '1,$d' \
+  --mutation 's/ and Decimal(value).is_finite()$/ and Decimal(value) is not None/' \
+  -- uv run pytest tests/test_tax_blockpit.py -k closing_value_not_finite -q -p no:cacheprovider
+infra/scripts/mutate-probe.sh --file cli/tax/blockpit.py --control '1,$d' \
+  --mutation 's/^        except InvalidOperation:$/        except ZeroDivisionError:/' \
+  -- uv run pytest tests/test_tax_blockpit.py -k closing_value_not_a_decimal -q -p no:cacheprovider
 infra/scripts/mutate-probe.sh --file cli/tax/blockpit.py --control '1,$d' \
   --mutation 's/^        "previous": _sha256(previous_bytes) if previous_bytes else None,$/        "previous": None,/' \
   -- uv run pytest tests/test_tax_blockpit.py -k window_two_after -q -p no:cacheprovider
@@ -2222,7 +2263,9 @@ def test_the_transform_imports_nothing_outside_its_allowlist():
         "typer",
         "cli.logging",
     }
-    for path in sorted((Path(__file__).resolve().parents[1] / "cli" / "tax").glob("*.py")):
+    paths = sorted((Path(__file__).resolve().parents[1] / "cli" / "tax").glob("*.py"))
+    assert paths
+    for path in paths:
         for node in ast.walk(ast.parse(path.read_text())):
             if isinstance(node, ast.Import):
                 names = [alias.name for alias in node.names]
@@ -2321,14 +2364,14 @@ zcrypto tax blockpit --ledgers <PATH> --trades <PATH> --out <PATH> [--after <PAT
 Each label written is one of the template's own. A row it cannot map, a balance that does not chain, a movement the output does not carry, or a window that does not follow the one before refuses the run: each refusal is printed, nothing is written, and the exit is `1`. Exit `0` prints the rows per label and the closing balances; a usage error, such as an option missing, exits `2`. The provenance carries the sha256 of both inputs and of the output, the per-label sums, the opening and closing balances, each margin position's ledger rows and the previous window's provenance hash; the same inputs give byte-identical files. Read-only on its inputs, offline, and holding no key.
 ````
 
-- [ ] **Step 4: Run the tests** — Expected: `121 passed`.
+- [ ] **Step 4: Run the tests** — Expected: `128 passed`.
 - [ ] **Step 5: The consumers**
 
 ```bash
 uv run pytest tests/test_tax_blockpit.py tests/test_internal_terms_not_operator_visible.py tests/test_code_prose_citations.py tests/test_live_venue_opt_in.py tests/test_guidance_refs_resolve.py tests/test_cli_help_hygiene.py tests/test_engine_command.py tests/test_error_paths_are_logged.py -q -p no:cacheprovider
 ```
 
-Expected: no failure; `tests/test_cli_help_hygiene.py` walks every subcommand's help, the new one's among them.
+Expected: no failure; `tests/test_cli_help_hygiene.py` walks every subcommand's help, the new one's among them. Then the consumers' run (Global Constraints).
 
 - [ ] **Step 6: The smoke run over the owner's export** — outside the tree, its output under `.tmp/` and deleted at the step's end, no value of it copied anywhere:
 
@@ -2336,11 +2379,13 @@ Expected: no failure; `tests/test_cli_help_hygiene.py` walks every subcommand's 
 S=/home/zhaow/Projects/zcrypto-kraken/.claude/worktrees/t0215-blockpit/.tmp/spec-00126
 mkdir -p "$S/smoke"
 uv run zcrypto tax blockpit --ledgers "$S/ledgers-full/kraken-spot-ledgers-2026-07-01-2026-10-09.csv" --trades "$S/trades-full/kraken-spot-trades-2026-07-01-2026-10-09.csv" --out "$S/smoke/blockpit.csv" > "$S/smoke/stdout.txt"; echo "rc $?"
-head -1 "$S/smoke/stdout.txt"
+echo "refusals $(grep -c '^refused ' "$S/smoke/stdout.txt")"
+sed -n 's/^refused [^ ]* \[\([^]]*\)\]:.*/\1/p' "$S/smoke/stdout.txt" | sort | uniq -c
+sed -n 's/^wrote \([0-9]*\) rows to .*/rows \1/p' "$S/smoke/stdout.txt"
 rm -r "$S/smoke"
 ```
 
-Expected: `rc 0` and the first line `wrote 72 rows to …/smoke/blockpit.csv (sha256 …)`, the count spec 00126's measured basis gives; a refusal here is a shape of the owner's export the fixture lacks, and stops the plan for a fixture row and a test of its own before Task 7.
+Expected: `rc 0`, `refusals 0` and `rows 72`, the count spec 00126's measured basis gives. The step prints counts and never a line of the run's output, since a refusal's line carries the owner's ledger ids: a refusal reads `rc 1`, its count, and each refusal kind with its count. A refusal here is a shape of the owner's export the fixture lacks, and stops the plan for a fixture row and a test of its own before Task 7.
 
 - [ ] **Step 7: The commit gate**
 - [ ] **Step 8: Commit**
@@ -2363,7 +2408,7 @@ MSG
 ```
 
 - [ ] **Step 9: The tree is clean**
-- [ ] **Step 10: Prove the guards, then record their verdicts** — eight probes; Expected: each KILLED; then the message-only amend.
+- [ ] **Step 10: Prove the guards, then record their verdicts** — nine probes, the last on the test's own walk; Expected: each KILLED; then the message-only amend.
 
 ```bash
 infra/scripts/mutate-probe.sh --file cli/tax/command.py --control '1,$d' \
@@ -2386,6 +2431,9 @@ infra/scripts/mutate-probe.sh --file cli/tax/command.py --control '1,$d' \
   -- uv run pytest tests/test_tax_blockpit.py -k usage_error -q -p no:cacheprovider
 infra/scripts/mutate-probe.sh --file cli/tax/kraken_export.py --control '1,$d' \
   --mutation 's/^import csv$/import csv\nimport urllib.request/' \
+  -- uv run pytest tests/test_tax_blockpit.py -k imports_nothing -q -p no:cacheprovider
+infra/scripts/mutate-probe.sh --file tests/test_tax_blockpit.py --control '1,$d' \
+  --mutation 's/\.glob("\*\.py"))$/.glob("*.absent"))/' \
   -- uv run pytest tests/test_tax_blockpit.py -k imports_nothing -q -p no:cacheprovider
 infra/scripts/mutate-probe.sh --file README.md --control '1,$d' \
   --mutation '/^| `--after <PATH>` |/d' \
@@ -2438,7 +2486,7 @@ uv run pytest tests/test_engine_tracking.py tests/test_engine_command.py tests/t
 uv run python infra/scripts/guidance-guard.py --uncounted infra/runbooks/engine-procedures.md
 ```
 
-Expected: no failure, and the guard prints nothing.
+Expected: no failure, and the guard prints nothing. Then the consumers' run (Global Constraints).
 
 - [ ] **Step 6: The commit gate**
 - [ ] **Step 7: Commit**
@@ -2479,7 +2527,7 @@ infra/scripts/mutate-probe.sh --file cli/engine/tracking.py --control '1,$d' \
 **Files:**
 - Create: `infra/runbooks/bookkeeping.md`
 - Modify: `infra/runbooks/nas.md` (`:21`, the archive's trees; `:43`, step 3's list of what each tree is), `docs/reference/fleet.md` (`:66`, the mount's trees)
-- Modify: `infra/scripts/ops_daily.py` (four constants after `HEALABLE_RUNBOOK`, `:345`; two functions before `read_reminders`, `:382`; its `statements` parameter after `deploy_log`, `:389`; the reminder before `hours = max(1, …)` inside it, `:433`)
+- Modify: `infra/scripts/ops_daily.py` (four constants after `HEALABLE_RUNBOOK`, `:345`; three functions before `read_reminders`, `:382`; its `statements` parameter after `deploy_log`, `:389`; its two due-status lines, `:411` and `:429`, calling the third; the reminder before `hours = max(1, …)` inside it, `:433`)
 - Test: `tests/test_ops_daily.py` (an autouse fixture before `live_soak_run`, `:126`; the reminder sets of `:2241` and `:2318` gain `kraken bookkeeping`; four tests, nine cases, before `_PATCH_PASS_HOSTS`, `:2244`)
 
 **Interfaces:**
@@ -2640,9 +2688,13 @@ def _bookkeeping_due(end: date | None) -> date:
         return BOOKKEEPING_FIRST_DUE
     following = date(end.year + 1, 1, 1) if end.month == 12 else date(end.year, end.month + 1, 1)
     return following + timedelta(days=1)
+
+
+def _due_status(days: int) -> str:
+    return f"due in {days} days" if days >= 0 else f"OVERDUE by {-days} days"
 ```
 
-`read_reminders` gains `statements: Path | None = None,` after `deploy_log: Path = DEPLOY_LOG,`, and before its `hours = max(1, int(window.total_seconds() // 3600))`:
+`read_reminders` gains `statements: Path | None = None,` after `deploy_log: Path = DEPLOY_LOG,`; its two lines `status = f"due in {days} days" if days >= 0 else f"OVERDUE by {-days} days"`, the refdata sweep's at `:411` and the patch pass's at `:429`, each become `status = _due_status(days)`, the form the third reminder takes; and before its `hours = max(1, int(window.total_seconds() // 3600))`:
 
 ```python
     try:
@@ -2651,7 +2703,7 @@ def _bookkeeping_due(end: date | None) -> date:
         note(f"the statements tree could not be read: {exc}")
     else:
         days = (_bookkeeping_due(end) - now.date()).days
-        status = f"due in {days} days" if days >= 0 else f"OVERDUE by {-days} days"
+        status = _due_status(days)
         newest = f"newest window ends {end.isoformat()}" if end else "no window archived yet"
         read.reminders.append(Reminder("kraken bookkeeping", f"{status} ({newest})", owed=days <= 0, runbook=BOOKKEEPING_RUNBOOK))
 ```
@@ -2726,13 +2778,18 @@ In `infra/runbooks/nas.md:21`, `` plus the hand-downloaded Kraken history dumps 
 ```bash
 uv run pytest tests/test_ops_daily.py tests/test_ops_daily_soak.py tests/test_hc_provision.py tests/test_fleet_contracts.py tests/test_runbook_triggers.py tests/test_runbook_internal_tokens.py tests/test_internal_terms_not_operator_visible.py tests/test_guidance_guard.py tests/test_guidance_refs_resolve.py tests/test_code_prose_citations.py tests/test_scripts_have_tests.py -q -p no:cacheprovider
 uv run python infra/scripts/guidance-guard.py --uncounted infra/runbooks/bookkeeping.md infra/runbooks/nas.md docs/reference/fleet.md
+```
+
+Expected: no failure; the guard prints nothing. Then the consumers' run (Global Constraints), and Step 1's ratio again: `346/492` on the draft this plan was checked with, at least 0.70; the two readings go into the pull request body.
+
+- [ ] **Step 8: The commit gate, then the page's trigger reads** — the gate stages the new page, and `runbook-triggers.py` reads the sections of the files `git ls-files` lists, which holds a new file once it is staged:
+
+```bash
 uv run python infra/scripts/runbook-triggers.py triggers
 uv run python infra/scripts/runbook-triggers.py retire-when
 ```
 
-Expected: no failure; the guard prints nothing; both counts `0`. Then Step 1's ratio again: `346/492` on the draft this plan was checked with, at least 0.70; the two readings go into the pull request body.
-
-- [ ] **Step 8: The commit gate**
+Expected: both counts `0`.
 - [ ] **Step 9: Commit**
 
 ```bash
@@ -2747,7 +2804,8 @@ the newest window holding a provenance file through the read-only mount and owes
 the 2nd of the month after its end, from 2026-11-02 while none is archived. The mount is an
 automount whose directory stands whether or not the NAS answers, so a listing that fails or comes
 back empty is an unreadable source, as is a window whose listing fails; its tests point the tree at a
-tmp directory and never read the mount.
+tmp directory and never read the mount. The due-or-overdue wording is one helper the three
+reminders share.
 
 PROBE_VERDICT
 
@@ -2792,7 +2850,7 @@ infra/scripts/mutate-probe.sh --file infra/runbooks/bookkeeping.md --control '1,
 
 ### Task 9: T0215 partial — its autonomous step done, the import, the re-read and the decision open
 
-**Runs after R1 has opened the pull request, so its number exists.**
+**Runs after R1 has opened the pull request as a draft, so its number exists; R1's undraft follows this task.**
 
 **Files:**
 - Modify: `docs/open-topics/T0215-blockpit-fallback-pre-transform.md`, and `docs/open-topics/README.md` by the render
@@ -2819,11 +2877,11 @@ ripe_when: "a date: 2026-11-02, the Monday after rung 2's box, when October's ex
 ```markdown
 ## Suggested next steps
 
-- **(human, from 2026-11-02)** The first window into a fresh depot, per spec 00126 D9: run steps 1 to 5 of `infra/runbooks/bookkeeping.md#kraken-monthly-bookkeeping` for the window `2026-07-01_2026-11-01`, step 4 with no `--after`; then in Blockpit, Integrations → + Integration → Manual Integration, named `Kraken manual import`; then the page's steps 6 and 7 into it, step 6's upload once and its `Deposit` row, the crypto deposit, labelled from its origin, and step 7's balances equal to the provenance's `closing` on every asset, a difference stopping the window before the re-read. At that upload, read whether the Blockpit Template tab took the `.csv` and whether Blockpit took the one-leg trade's `0` amount, a refusal of either stopping the window for a change of its own — the file in another form, or that row a refusal of the transform — on which the owner rules again; a refusal by the transform itself stops the window for the owner's decision. Then re-read Step 7's five criteria on that integration: the Margin Profit and Loss rows and the spot disposals under §23 as `[iter-172]` read them; every margin and rollover fee in a summed figure, Blockpit's Margin Fee transactions summed per asset equal to the provenance's `Margin Fee` sums and the Steuerbericht's Margin-Gebühr total equal to those transactions' euro values as Blockpit values them, a EURC fee at its EURC price; FIFO lots intact; EURC never negative and no `Auto-Korrektur` lot; the disposal's gain off the settle's basis — read per integration with both present, then with the connector's integration hidden for the Steuerbericht's read — Blockpit's integrations article: a hidden integration's sync stops, it sits at the bottom of the Integrations tab, and Unhide Integration reverses it — noting whether a hidden integration leaves the report. Record pass or fail beside `[iter-172]` in `docs/research/14.phase6-decisions.md` through the `iteration-closeout` skill; on a fail, unhide the connector's integration and keep it, delete nothing, and this item becomes the failing criterion's change.
+- **(human, from 2026-11-02)** The first window into a fresh depot, per spec 00126 D9: run steps 1 to 5 of `infra/runbooks/bookkeeping.md#kraken-monthly-bookkeeping` for the window `2026-07-01_2026-11-01`, step 4 with no `--after`; then in Blockpit, Integrations → + Integration → Manual Integration, named `Kraken manual import`; then the page's steps 6 and 7 into it, step 6's upload once and its `Deposit` row, the crypto deposit, labelled from its origin, and step 7's balances equal to the provenance's `closing` on every asset, a difference stopping the window before the re-read. At that upload, read whether the Blockpit Template tab took the `.csv` and whether Blockpit took the one-leg trade's `0` amount, a refusal of either stopping the window for a change of its own — the file in another form, or that row a refusal of the transform — on which the owner rules again; a refusal by the transform itself stops the window for the owner's decision. Then re-read Step 7's five criteria on that integration: the Margin Profit and Loss rows and the spot disposals under §23 as `[iter-172]` read them; every margin and rollover fee in a summed figure, Blockpit's Margin Fee transactions summed per asset equal to the provenance's `Margin Fee` sums and the Steuerbericht's Margin-Gebühr total equal to those transactions' euro values as Blockpit values them, a EURC fee at its EURC price; FIFO lots intact; EURC never negative and no `Auto-Korrektur` lot; the disposal's gain off the settle's basis — read per integration with both present, then with the connector's integration hidden for the Steuerbericht's read, noting whether a hidden integration leaves the report. Record pass or fail beside `[iter-172]` in `docs/research/14.phase6-decisions.md` through the `iteration-closeout` skill; on a fail, unhide the connector's integration and keep it, delete nothing, and this item becomes the failing criterion's change.
 - **(decision, once every criterion passes)** Whether the connector's integration is hidden for good or deleted — deletion cannot be undone and splits merged transfers back into unlabeled deposits and withdrawals.
 ```
 
-- [ ] **Step 5: The index** — `uv run python infra/scripts/topics-index.py`; then `uv run pytest tests/test_open_topics_frontmatter.py tests/test_topics_index.py tests/test_internal_terms_not_operator_visible.py -q -p no:cacheprovider`; then `infra/scripts/count-list.sh live-topics-without-a-trigger`; Expected: no failure, and the count reading `0`.
+- [ ] **Step 5: The index** — `uv run python infra/scripts/topics-index.py`; then `uv run pytest tests/test_open_topics_frontmatter.py tests/test_topics_index.py tests/test_internal_terms_not_operator_visible.py -q -p no:cacheprovider`; then `infra/scripts/count-list.sh live-topics-without-a-trigger`; then the consumers' run (Global Constraints); Expected: no failure, and the count reading `0`.
 - [ ] **Step 6: The commit gate**
 - [ ] **Step 7: Commit**
 
@@ -2849,7 +2907,7 @@ MSG
 
 **Operator steps.** Nothing below is an executor step: each reaches Kraken, the NAS, Blockpit or GitHub. Each command runs on the workstation at the repository root; `kraken` runs on the workstation alone. The owner's exports never enter the tree; their counts go into the decisions log and the topic, never a value.
 
-**R1. The pull request** (after Task 8, before Task 9). Through the `open-pr` skill over the branch: the `pre-review` workflow over the range's prose and messages, then `review` once the branch is complete, `re-review` over a fix range at most twice, every reviewer on Opus; the body names the read, the tip, every probe's verdict, the runbook-read ratio before and after (Task 8), and the smoke run's row count (Task 6). Task 9 then commits with the number it opened, and that commit takes its own read before the merge. `merge-pr` merges it; `git switch develop && git pull --ff-only && git status --porcelain` reads empty.
+**R1. The pull request** (after Task 8, before Task 9). Through the `open-pr` skill over the branch, opened as a draft (`gh pr create --draft`): `open-pr`'s Step 0 is read at the undraft, not the create, and T0215 reads `status: open` until Task 9. The `pre-review` workflow over the range's prose and messages, then `review` once the branch is complete, `re-review` over a fix range at most twice, every reviewer on Opus; the body names every probe's verdict, the runbook-read ratio before and after (Task 8), and the smoke run's row count (Task 6), and its `Read before push by:` line, naming the read and its tip, is written at the undraft. Task 9 then commits with the number the draft carries, flipping T0215 to `partial`, and that commit takes its own read; the undraft follows Task 9, Step 0's gate read then, the topic `partial` with its remainder registered. `merge-pr` merges it; `git switch develop && git pull --ff-only && git status --porcelain` reads empty.
 
 **R2. The first window** (from 2026-11-02, the topic's date, rung 2's box closed the day before). From merged `develop`, steps 1 to 5 of `infra/runbooks/bookkeeping.md#kraken-monthly-bookkeeping` for the window `2026-07-01_2026-11-01`, its epochs `date -u -d 2026-07-01 +%s` and `date -u -d 2026-11-01 +%s`, step 4 with no `--after`, this being the first window. Expected: each step's reading as the page states it, the transform exiting 0 and printing the rows per label and the closing balances. A refusal stops here: it names a row type or a shape the mapping has not met, a decision for the owner and a change of its own before the window is imported. The readings fill [[ROLLOUT: R2 — the first window's row counts by label and the transform's exit]].
 
