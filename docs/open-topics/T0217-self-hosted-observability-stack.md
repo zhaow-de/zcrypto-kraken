@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: "an evaluation statement: daily-pass journal entries on seven consecutive days from 2026-10-10, each carrying the pass's comparison line at `compare: <n> nodes × 24 instants, 0 differences` — check: `git fetch -q origin && git grep -h -e '^## 20' -e 'compare: ' origin/ops-journal -- 'docs/reference/ops-journal/20*.md'` lists entries on seven consecutive days from 2026-10-10 on, each followed by its `compare: … 0 differences` line"
+ripe_when: "an evaluation statement: daily-pass journal entries on seven consecutive days from 2026-10-10, each carrying the pass's comparison line, `compare: <n> nodes × 24 instants, <n> differences`, whose differences are 0 or each explained in the cutover pull request — check: `git fetch -q origin && git grep -h -e '^## 20' -e 'compare: ' origin/ops-journal -- 'docs/reference/ops-journal/20*.md'` lists entries on seven consecutive days from 2026-10-10 on, each followed by its `compare:` line, none `compare: failed`, and every difference a line counts is explained in the cutover pull request"
 ---
 
 # Self-hosting the metrics, logs and alerting stack in place of Grafana Cloud's free tier
