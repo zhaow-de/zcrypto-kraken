@@ -1966,8 +1966,8 @@ def test_the_live_runner_is_bounded_and_runs_from_the_repo_root(monkeypatch):
     assert list(seen["command"][-3:]) == [str(ops_daily.COMPARE_SCRIPT), "--day", "2026-10-02"]
 
 
-def test_the_comparisons_first_day_is_unset_or_a_plain_date():
-    assert ops_daily.COMPARISON_FROM is None or type(ops_daily.COMPARISON_FROM) is date
+def test_the_comparisons_first_day_is_plan_00123_r12s_day():
+    assert ops_daily.COMPARISON_FROM == date(2026, 10, 10)  # plan 00123 R12: the comparison's earliest day
 
 
 def test_a_truncated_sample_array_is_an_unreadable_source_too():
