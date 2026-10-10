@@ -396,7 +396,7 @@ def seed(
         for interval in GRID_INTERVALS
         if not _store_path(store_dir, symbol, interval).exists()
     ]
-    holes: dict[str, None] = {}
+    holes: set[str] = set()
     with tempfile.TemporaryDirectory(prefix="engine-seed-") as scratch:
         # `seed_store` opens the canonical for an absent store file alone, so the rolling set is read for those alone, each
         # written into this store-shaped scratch: a set that cannot be read blocks no repair that needs none.
@@ -417,7 +417,13 @@ def seed(
                 for symbol, interval in absent:
                     read = rolling.read_rolling(root, symbol, interval, line.day, accept_holes=accept_holes)
                     write_parquet(read.frame, _store_path(canonical_dir, symbol, interval))
-                    holes |= dict.fromkeys(f"{symbol} {day}" for day in read.holes)
+                    # Named here, before `seed_store`, which lands each absent file in the store ahead of its REST
+                    # reconcile: a refusal after that copy would leave it in the store with its hole unnamed, and a re-run
+                    # finds the file present and reads nothing.
+                    for hole in (f"{symbol} {day}" for day in read.holes):
+                        if hole not in holes:
+                            holes.add(hole)
+                            typer.echo(f"hole: {hole}")
             except rolling.HoleError as exc:
                 raise _abort(
                     f"{prefix} {rolling.ROLLING_SET}: {exc} (--accept-holes copies the series without that day, which the "
@@ -433,8 +439,6 @@ def seed(
         except EngineError as exc:
             raise _abort(str(exc)) from exc
     typer.echo(f"seeded {store_dir}: {source} + REST gap-fill; seam QA per pair x grid:")
-    for hole in holes:
-        typer.echo(f"hole: {hole}")
     typer.echo(f"{'pair':<6} {'grid':>5} {'overlap_bars':>12} {'appended':>9} {'replaced':>9}")
     for entry in report.entries:
         typer.echo(

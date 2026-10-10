@@ -251,6 +251,27 @@ def test_seed_refuses_a_hole_and_copies_across_it_with_accept_holes(tmp_path, mo
     assert [line for line in _output(accepted).splitlines() if line.startswith("hole: ")] == ["hole: ADA/EUR 2026-10-02"]
 
 
+def test_seed_names_an_accepted_hole_when_a_later_pair_aborts_it_after_the_copy_landed(tmp_path, monkeypatch):
+    data_dir = _rolling_data_dir(tmp_path, holes={date(2026, 10, 2): {"ADA/EUR"}})
+    engine_cfg = _patch_config(monkeypatch, tmp_path, data_dir=data_dir)
+    _store_all_but(engine_cfg.store_dir, {("ADA/EUR", 1440), ("SOL/BTC", 240)})
+
+    def copy_one_then_refuse(store_dir, canonical_dir, *, canonical_name):
+        copied = _store_path(store_dir, "ADA/EUR", 1440)
+        copied.write_bytes(_store_path(canonical_dir, "ADA/EUR", 1440).read_bytes())
+        raise EngineError("seed_store: SOL/BTC@240 refused")
+
+    monkeypatch.setattr(command, "seed_store", copy_one_then_refuse)
+
+    result = runner.invoke(app, ["engine", "seed", "--accept-holes"])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    out = _output(result)
+    assert "seed_store: SOL/BTC@240 refused" in out
+    assert [line for line in out.splitlines() if line.startswith("hole: ")] == ["hole: ADA/EUR 2026-10-02"]
+
+
 def test_seed_prints_per_pair_overlap_summary(tmp_path, monkeypatch):
     data_dir = _rolling_data_dir(tmp_path)
     engine_cfg = _patch_config(monkeypatch, tmp_path, data_dir=data_dir)
