@@ -59,7 +59,7 @@ Q3_15M_SHA256 = {
 
 
 class RollingError(Exception):
-    """The rolling set does not read as its index lines attest it."""
+    """A refusal by the set's reader or writer: the set, the base's source or tape-bars' tree is not what the set requires."""
 
 
 @dataclass(frozen=True)
