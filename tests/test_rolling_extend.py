@@ -534,7 +534,8 @@ def test_every_directory_the_writer_creates_is_group_writable_and_setgid(tmp_pat
             return real_chmod(path, mode, *args, **kwargs)
 
         monkeypatch.setattr(os, "chmod", chmod)
-        umask = os.umask(0o022)
+        # Without the owner's write bit: a directory left at the umask's mode refuses the mkdir below it.
+        umask = os.umask(0o222)
         try:
             call()
         finally:

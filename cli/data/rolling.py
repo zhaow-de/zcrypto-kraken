@@ -337,8 +337,9 @@ class _Day:
 
 
 def _make_dirs(directory: Path) -> None:
-    """`directory` and its missing ancestors, each created `_DIR_MODE` whatever the umask. A directory already present
-    keeps its mode: another user's directory refuses a chmod."""
+    """`directory` and its missing ancestors, each chmodded `_DIR_MODE` right after its own mkdir, whatever the umask. A
+    directory already present keeps its mode -- another user's directory refuses a chmod -- so a stop between a mkdir
+    and its chmod leaves that one directory at the umask's mode, never the ones made before it."""
     missing = []
     present = directory
     while not present.is_dir():
@@ -346,7 +347,6 @@ def _make_dirs(directory: Path) -> None:
         present = present.parent
     for each in reversed(missing):
         os.mkdir(each)
-    for each in missing:
         os.chmod(each, _DIR_MODE)
 
 
