@@ -89,8 +89,9 @@ def _refresh_snapshots(ctx: RebuildContext, out_root: Path) -> None:
 def _require_fresh_ohlc(last_bars: dict[str, datetime], ctx: RebuildContext) -> None:
     """Refuse a universe build from an OHLC set that does not reach the present: the volume criterion
     is a TRAILING 30-day median, describing current tradeability only if the newest bar is recent.
-    Checked on the STALEST symbol -- a basket `max` would let one fresh symbol vouch
-    for stale ones -- so a delisted symbol fails the rebuild, a corporate action wanting a human (T0025)."""
+    On the rolling set every candidate's frame ends at the set's head, which a pair without a final holds until the
+    owner's close leaves that pair out of the candidates, so a delisted symbol fails the rebuild once the head it holds
+    is past the budget, a corporate action wanting a human (T0025)."""
     as_of = datetime.strptime(ctx.stamp, "%Y%m%d").replace(tzinfo=UTC)
     symbol, last_bar = min(last_bars.items(), key=lambda kv: kv[1])
     staleness_days = (as_of - last_bar).days
