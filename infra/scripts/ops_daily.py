@@ -1075,6 +1075,87 @@ def read_soak_verdict(*, now: datetime, runner) -> Check:
         return Check(SOAK_CHECK, SOAK_EXPR, ok=False, value=f"unreadable: {exc}")
 
 
+ROLLING_CHECK = "rolling canonical head"
+ROLLING_HUB = Path("/mnt/zhao-crypto/hot/ohlc-rolling")
+# A day's finals publish two days after it at 02:52Z at the earliest, so a head two days back is current and three is
+# the reading before that hour.
+ROLLING_STALE_AFTER_DAYS = 3
+# tape-bars' tree on the host the pass runs on, where the held day's finals and a final reopening an ended set are read.
+ROLLING_TAPE = Path("/var/lib/zcrypto-ops/tape-bars")
+# Days past the held day's nominal publication, two days after it, from which a pair still without its final is the
+# owner's decision.
+ROLLING_ESCALATE_AFTER_DAYS = 14
+
+
+def read_rolling_head(*, now: datetime, root: Path, tape_root: Path) -> Check:
+    """The rolling canonical's newest index line on the hub, one row: its chain walked down to the base, its own files
+    re-hashed, and its day at most `ROLLING_STALE_AFTER_DAYS` before `now`'s UTC date.
+
+    The newest line is read by its day, never by `head`, which steps past a line whose files are absent. Ahead of the
+    age test, a line `is_ended` reads -- every pair closed, no final under `tape_root` dated after it -- is its own
+    state, never ok. A head past the threshold is held at the day after it: the value names each pair without a final
+    for that day under `tape_root`, save a pair the line records as closed, and from `ROLLING_ESCALATE_AFTER_DAYS` past
+    that day's publication it is the owner's decision. `tape_root` is listed before each read of it. An `OSError` on
+    the hub or the tape, or a hub with no `index/`, is `unreadable`; a `RollingError` -- a broken link, a listed file
+    absent or changed -- is a FAIL naming it.
+
+    Keyword-only, no defaults: `main` names the hub and the tape.
+    """
+    from cli.data import rolling
+    from cli.tick.materialize import _final_path
+
+    expr = f"the newest index line under {root}, its chain and its files"
+    today = now.astimezone(timezone.utc).date()
+    try:
+        if not rolling.is_chained(root):
+            raise FileNotFoundError(f"{root} holds no index/")
+        days = rolling.line_days(root)
+        if not days:
+            raise rolling.RollingError(f"{root} holds no index line")
+        line = rolling.walk_chain(root, days[-1])[-1]
+        rolling.verify_line(root, line)
+        set_pairs = rolling.pairs(root)
+        closed = {pair for pair in set_pairs if f"closed {pair}" in line.notes}
+        named = f"line {line.sha256[:12]}"
+        # `is_ended` reads the tape only for a line closing every pair.
+        if closed == set(set_pairs):
+            rolling.list_tape(tape_root, set_pairs)
+        if rolling.is_ended(root, line, tape_root):
+            value = (
+                f"ended at {line.day}, {named}: the line closes every pair and no tape-bars final under {tape_root} "
+                "is dated after it"
+            )
+            return Check(ROLLING_CHECK, expr, ok=False, value=value)
+        age = (today - line.day).days
+        aged = f"{line.day}, {age} day{'' if age == 1 else 's'} old, {named}"
+        if age <= ROLLING_STALE_AFTER_DAYS:
+            return Check(ROLLING_CHECK, expr, ok=True, value=f"head {aged}")
+        held = line.day + timedelta(days=1)
+        rolling.list_tape(tape_root, set_pairs)
+        lacking = [pair for pair in set_pairs if pair not in closed and not _final_path(tape_root, pair, held).is_file()]
+        published = held + timedelta(days=2)
+        past = (today - published).days
+        has = "has" if len(lacking) == 1 else "have"
+        if lacking and past >= ROLLING_ESCALATE_AFTER_DAYS:
+            value = (
+                f"the owner decides for {held}: {', '.join(lacking)} {has} no tape-bars final for it under {tape_root}, "
+                f"{past} days past its publication on {published}; close {'it' if len(lacking) == 1 else 'each'} from {held}, "
+                f"or wait (head {line.day}, {named})"
+            )
+        elif lacking:
+            value = f"held at {aged}: {', '.join(lacking)} {has} no tape-bars final for {held} under {tape_root}"
+        else:
+            value = (
+                f"held at {aged}: no pair lacks a tape-bars final for {held} under {tape_root}, "
+                "so the extension or the hub's pull is behind"
+            )
+        return Check(ROLLING_CHECK, expr, ok=False, value=value)
+    except OSError as exc:
+        return Check(ROLLING_CHECK, expr, ok=False, value=f"unreadable: {exc}")
+    except rolling.RollingError as exc:
+        return Check(ROLLING_CHECK, expr, ok=False, value=str(exc))
+
+
 # The first day the markdown report compares the two stacks, derived in plan 00123's R12; retirement ends the
 # comparison by leaving the stack table one stack, so the constant is never unset again.
 COMPARISON_FROM: date | None = date(2026, 10, 10)
@@ -1359,6 +1440,7 @@ def main(argv: list[str]) -> int:
     verdict.append(read_unattended_upgrades(now=now, runner=ssh_read))
     verdict.append(read_agentboard_cgroup(runner=ssh_read))
     verdict.append(read_soak_verdict(now=now, runner=soak_run))
+    verdict.append(read_rolling_head(now=now, root=ROLLING_HUB, tape_root=ROLLING_TAPE))
     # The markdown run alone compares, and once a pass: the daily-ops skill's step 1 passes the flag, the runbooks' confirm
     # reads and the `--journal-entry` run do not.
     compares = "--compare" in argv and "--journal-entry" not in argv and comparison_due(now)
@@ -1605,6 +1687,7 @@ _FIRST_STAGE_SHAPES = (
     _Shape(("grafana-query.py",), {"--since": _SINCE, "--step": _NAME, "--stack": _NAME}, arity=(1, 6), classes=(_QUOTED,)),
     _Shape(("grafana-query.py",), {"--loki": None, "--stack": _NAME}, arity=(1, 6), classes=(_QUOTED,)),
     _Shape(("continuity.py",), {"--root": _PATH, "--since": _SINCE, "--until": _SINCE}, arity=(0, 3), classes=(_PATH,)),
+    _Shape(("zcrypto", "data", "rolling", "verify"), {"--root": _PATH, "--as-of": _DAY}),
     _Shape(("ops-postverify.sh",), {"--since": _SINCE}, arity=(0, 3), classes=(_QUOTED,)),
     _Shape(("id",), arity=(0, 1), classes=(_NAME,)),
 )
