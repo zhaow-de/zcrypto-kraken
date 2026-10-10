@@ -59,7 +59,9 @@ Q3_15M_SHA256 = {
 
 
 class RollingError(Exception):
-    """A refusal by the set's reader or writer: the set, the base's source or tape-bars' tree is not what the set requires."""
+    """A refusal by the set's reader or writer: something it reads -- the set's lines and files, the base's source,
+    tape-bars' tree -- or something its caller asks -- a pair, a grid, an as-of day, a window across a hole, the owner's
+    close -- is not what the set's rules require, and the message names the path or the argument at fault."""
 
 
 @dataclass(frozen=True)
