@@ -15,6 +15,7 @@ from cli.logging import ShipConfig, configure, get_logger
 from cli.panel.command import panel_app
 from cli.research.command import research_app
 from cli.snapshot.command import snapshot_app
+from cli.tax.command import tax_app
 from cli.tick.command import tick_app
 
 app = typer.Typer(
@@ -30,6 +31,7 @@ app.add_typer(data_app, name="data")
 app.add_typer(panel_app, name="panel")
 app.add_typer(research_app, name="research")
 app.add_typer(snapshot_app, name="snapshot")
+app.add_typer(tax_app, name="tax")
 app.add_typer(tick_app, name="tick")
 
 _VALID_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR"}

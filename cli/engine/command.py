@@ -1921,8 +1921,7 @@ def tracking_report(
     except EngineError as exc:
         raise _abort(str(exc)) from exc
 
-    # An export whose HEADER cannot be mapped aborts, unlike an unmatched row: nothing was read, so
-    # there is no reconciliation to report either way. Most runs have no export at all.
+    # An export the reader refuses, at its header or at any row, aborts; an unmatched row is the reconciliation's to report.
     reconciliation = None
     if ledger_export is not None:
         try:

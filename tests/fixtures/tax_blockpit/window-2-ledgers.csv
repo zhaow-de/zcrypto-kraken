@@ -1,0 +1,5 @@
+"txid","refid","time","type","subtype","aclass","subclass","asset","wallet","amount","fee","balance","amountusd","feeusd","balanceusd","feecurrency"
+"LFX101-SYNTH-LEDGER","TFX012-SYNTH-TRADES","2031-04-01 10:00:00","rollover","","currency","fiat","EUR","spot / main",0.0,0.0035,1174.1098,0.0,0.004375,1467.63725,"EUR"
+"LFX102-SYNTH-LEDGER","TFX013-SYNTH-TRADES","2031-04-02 09:00:00","margin","","currency","fiat","EUR","spot / main",2.25,0.065,1176.2948,2.8125,0.08125,1470.3685,"EUR"
+"LFX103-SYNTH-LEDGER","TFX014-SYNTH-TRADES","2031-04-03 12:00:00","trade","tradespot","currency","crypto","ATOM","spot / main",-8.5,0.0,2.6025,"-",0.0,3.253125,""
+"LFX104-SYNTH-LEDGER","TFX014-SYNTH-TRADES","2031-04-03 12:00:00","trade","tradespot","currency","fiat","EUR","spot / main",54.4,0.2176,1230.4772,68.0,0.272,1538.0965,"EUR"

@@ -433,8 +433,10 @@ _MATCHED_LEDGER_TYPES = frozenset({"trade", "margin"})
 # Row types with no fill behind them BY CONSTRUCTION -- an allowlist, so an unknown type is reported rather than passed
 # over, while failing on a deposit would fail every export. `settled` is a hand settle's delivery pair, which the journal
 # holds no row for; `collateralconversion` is the venue's own currency swap for a margin fee, keyed to the position's
-# opening trade; `staking` is a reward the venue credits on a spot holding.
+# opening trade; `staking` is a reward the venue credits on a spot holding, in the API's spelling.
 _NO_FILL_LEDGER_TYPES = frozenset({"deposit", "withdrawal", "transfer", "settled", "collateralconversion", "staking"})
+# The same reward in the CSV export's spelling.
+_EARN_REWARD = ("earn", "reward")
 # The venue's small-balance conversion writes no trade: a `spend` row per coin and a `receive` row for the proceeds, each
 # with this subtype.
 _DUST_SWEEP_SUBTYPE = "dustsweeping"
@@ -457,9 +459,18 @@ def read_ledger_export(path: Path) -> list[LedgerRow]:
                     f"{', '.join(header) or '(empty)'}. Refusing rather than defaulting"
                 )
             rows: list[LedgerRow] = []
+            width = len(header)
             # A row ordinal, not a physical line number: a quoted field may carry a newline, after
             # which the two drift and a line number sends the operator to the wrong place.
             for row_no, raw in enumerate(reader, start=1):
+                # Read a row only at the header's field count: DictReader puts a long row's extras under None, a short
+                # row's gaps as None, and a field inserted mid-row shifts every column after it into the wrong name.
+                if None in raw or None in raw.values():
+                    count = width + len(raw[None]) if None in raw else width - sum(value is None for value in raw.values())
+                    raise EngineError(
+                        f"the ledger export {path} has a field count of {count} at data row {row_no}, against its "
+                        f"header's {width}. Refusing rather than defaulting"
+                    )
                 # The export writes no offset and the venue stamps UTC: a naive one raises against aware boundaries.
                 at = datetime.fromisoformat(raw["time"])
                 rows.append(
@@ -512,7 +523,7 @@ def reconcile_ledger(rows: list[LedgerRow], fills: list[Fill]) -> dict:
             # this comparison exists to detect: it FAILS, and each id is named.
             elif row.refid not in unmatched:
                 unmatched.append(row.refid)
-        elif row.type in _NO_FILL_LEDGER_TYPES:
+        elif row.type in _NO_FILL_LEDGER_TYPES or (row.type, row.subtype) == _EARN_REWARD:
             known[row.type] = known.get(row.type, 0) + 1
         elif row.subtype == _DUST_SWEEP_SUBTYPE and row.type in _DUST_SWEEP_TYPES:
             known[row.subtype] = known.get(row.subtype, 0) + 1
