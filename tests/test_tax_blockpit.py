@@ -699,8 +699,17 @@ def test_the_command_refuses_an_unreadable_input_with_exit_1(tmp_path):
         app,
         ["tax", "blockpit", "--ledgers", str(tmp_path / "absent.csv"), "--trades", str(TRADES_1), "--out", str(tmp_path / "o.csv")],
     )
-    assert result.exit_code == 1
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit)
+    assert f"{tmp_path / 'absent.csv'} cannot be read" in result.output
     assert not (tmp_path / "o.csv").exists()
+
+
+def test_the_command_refuses_an_out_under_an_absent_directory_with_exit_1(tmp_path):
+    out = tmp_path / "absent" / "o.csv"
+    result = RUNNER.invoke(app, ["tax", "blockpit", "--ledgers", str(LEDGER_1), "--trades", str(TRADES_1), "--out", str(out)])
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit)
+    assert str(out) in result.output
+    assert not out.parent.exists()
 
 
 def test_the_command_refuses_an_existing_output_with_exit_1(tmp_path):
