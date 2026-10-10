@@ -794,21 +794,23 @@ def test_an_unlistable_tape_is_refused_never_read_as_no_final(tmp_path):
     assert not _says_ended(result)
     assert _files_under(out / "index") == lines
 
-    tape, out, staging = _outbox(tmp_path / "held", pairs=("BTC/EUR", "ETH/BTC"), days=27)
     first = date(2026, 10, 28)
-    _finals(tape, ("ETH/BTC",), first, date(2026, 11, 3))
-    _put_final(tape, "BTC/EUR", first)
-    _finals(tape, ("BTC/EUR",), date(2026, 11, 1), date(2026, 11, 3))
-    hidden = tape / "BTC/EUR/2026/10"
-    os.chmod(hidden, 0o000)
-    try:
-        result = _extend_cli(tape, out, staging)
-    finally:
-        os.chmod(hidden, 0o755)
+    for mode in (0o000, 0o400):
+        tape, out, staging = _outbox(tmp_path / f"held-{mode:o}", pairs=("BTC/EUR", "ETH/BTC"), days=27)
+        _finals(tape, ("ETH/BTC",), first, date(2026, 11, 3))
+        _put_final(tape, "BTC/EUR", first)
+        _finals(tape, ("BTC/EUR",), date(2026, 11, 1), date(2026, 11, 3))
+        hidden = tape / "BTC/EUR/2026/10"
+        written = _files_under(out)
+        os.chmod(hidden, mode)
+        try:
+            result = _extend_cli(tape, out, staging)
+        finally:
+            os.chmod(hidden, 0o755)
 
-    assert result.exit_code == 1
-    assert str(hidden) in result.output
-    assert first not in _line_days(out)
+        assert result.exit_code == 1, oct(mode)
+        assert str(hidden) in result.output, oct(mode)
+        assert _files_under(out) == written, oct(mode)
 
 
 def test_a_close_without_the_owners_word_and_date_is_refused(tmp_path):

@@ -417,8 +417,9 @@ def stage_base(source: Path, out: Path, staging: Path) -> Line:
 
 def list_tape(tape_root: Path, pairs: tuple[str, ...]) -> None:
     """List `tape_root` and, for each of `pairs` whose directory it holds, that directory and every directory below it,
-    so an absent root or a directory this reader cannot list raises its `OSError`: `_watermark`'s `rglob` and a final's
-    `is_file` read such a directory as holding no final. Called before the first read of `tape_root`."""
+    and stat every file listed, so an absent root, a directory this reader cannot list, or one it can list but not search
+    raises its `OSError`: a final's `is_file` reads each of the three as holding no final, and `_watermark`'s `rglob` the
+    first two. Called before the first read of `tape_root`."""
 
     def refuse(exc: OSError) -> None:
         raise exc
@@ -427,8 +428,9 @@ def list_tape(tape_root: Path, pairs: tuple[str, ...]) -> None:
     for pair in pairs:
         asset, quote = pair.split("/")
         if asset in held and quote in os.listdir(tape_root / asset):
-            for _ in os.walk(tape_root / asset / quote, onerror=refuse):
-                pass
+            for directory, _, names in os.walk(tape_root / asset / quote, onerror=refuse):
+                for name in names:
+                    os.stat(os.path.join(directory, name))
 
 
 def _newest_final(tape_root: Path, pair: str) -> date | None:
