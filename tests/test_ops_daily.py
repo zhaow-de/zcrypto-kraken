@@ -125,8 +125,7 @@ def _soak_answering(payload):
 
 @pytest.fixture(autouse=True)
 def statements_off_the_mount(monkeypatch, tmp_path):
-    """Points every reminders read here at a tmp statements tree, under a parent that lists one entry, never at the NAS
-    mount."""
+    """Under a parent that lists one entry, which the mount check reads as mounted."""
     root = tmp_path / "mnt" / "kraken-statements"
     (root.parent / "kraken-trades").mkdir(parents=True)
     monkeypatch.setattr(ops_daily, "STATEMENTS", root)
