@@ -34,7 +34,9 @@ def _abort(message: str) -> typer.Exit:
 
 @data_app.command()
 def fetch(
-    no_verify: bool = typer.Option(False, "--no-verify", help="Skip manifest hash verification of newly fetched files."),
+    no_verify: bool = typer.Option(
+        False, "--no-verify", help="Skip hash verification of newly fetched files against their manifest or index."
+    ),
 ) -> None:
     """Additively mirror the NAS hot/ hub into the local data root."""
     try:
