@@ -75,7 +75,7 @@ class ObservedReader:
 
         Shared deliberately: a read and a fetch that disagreed about what attests a dataset would
         leave exactly the hole this closes. A set the index attests has none: `read_rolling` checks it
-        against its lines, as the fetch's chained arm does, and never asks here."""
+        against its lines and never asks here."""
         if dataset not in self._vouched:
             try:
                 vouched, by_path = _attestations_for_set(self._root / dataset, dataset)
@@ -163,9 +163,8 @@ class ObservedReader:
         window: tuple[str, str] | None = None,
         accept_holes: bool = False,
     ) -> pl.DataFrame:
-        """`pair`'s bars at `interval` from the chained set `dataset` as of the `YYYY-MM-DD` day `as_of`. The dataset's
-        `files` record that day's index line alone, whatever pairs and grids are read; `rows` and `span` accumulate once
-        per pair and grid. Each hole `accept_holes` lets through is listed by `holes`."""
+        """`pair`'s bars at `interval` from the chained set `dataset` as of the `YYYY-MM-DD` day `as_of`; each hole
+        `accept_holes` lets through is listed by `holes`."""
         try:
             day = datetime.strptime(as_of, "%Y-%m-%d").date()
         except ValueError as exc:
