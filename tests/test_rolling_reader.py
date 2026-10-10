@@ -11,8 +11,10 @@ from polars.testing import assert_frame_equal
 from typer.testing import CliRunner
 
 from cli.__main__ import app
-from cli.data.rolling import RollingError, head, read_rolling
+from cli.data.rolling import ROLLING_SET, RollingError, head, read_rolling
 from cli.ohlc.dataset import FRAME_SCHEMA
+from cli.registry.observed import ObservedReader
+from cli.registry.record import compute_hash
 from tests.rolling_fixtures import BARS_PER_DAY, BASE_DAY, HOLE, TAPE_ORDER, line_bytes, write_chain
 
 runner = CliRunner()
@@ -168,6 +170,32 @@ def test_a_hole_outside_the_window_is_not_a_refusal(tmp_path):
 
     assert read.holes == ()
     assert (read.frame.height, read.frame["ts"][0]) == (BARS_PER_DAY, _at(DAY3))
+
+
+def _observed_block(data_root: Path) -> dict:
+    reader = ObservedReader(data_root)
+    for pair in ("BTC/EUR", "ETH/BTC"):
+        for interval in (15, 1440):
+            reader.read_rolling(ROLLING_SET, pair, interval, "2026-10-03")
+    return reader.block()
+
+
+def test_a_rolling_read_records_the_as_of_line_alone(tmp_path):
+    write_chain(tmp_path / ROLLING_SET)
+    line = (tmp_path / ROLLING_SET / "index/2026/10/03.json").read_bytes()
+
+    block = _observed_block(tmp_path)
+
+    assert block[ROLLING_SET]["files"] == {"index/2026/10/03.json": hashlib.sha256(line).hexdigest()}
+
+
+def test_a_rolling_pin_reproduces_one_block_read_twice(tmp_path):
+    write_chain(tmp_path / ROLLING_SET)
+
+    first, second = _observed_block(tmp_path), _observed_block(tmp_path)
+
+    assert first == second
+    assert compute_hash(first) == compute_hash(second)
 
 
 def test_the_head_is_the_newest_line_whose_files_are_present(tmp_path):
