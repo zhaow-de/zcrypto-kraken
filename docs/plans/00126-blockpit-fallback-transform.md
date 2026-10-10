@@ -634,7 +634,7 @@ infra/scripts/mutate-probe.sh --file tests/fixtures/tax_blockpit/blockpit-templa
 - Consumes: Task 1's readers, `HEADER`, `TEMPLATE_LABELS`, `Refusal`, `TaxExportError`.
 - Produces: `map_rows(ledger, trades) -> Mapped` — its `rows` (`OutRow`), `refusals`, `positions` (opening trade id → ledger txids) and `no_movement`; `render_csv(rows) -> bytes`, the import file's bytes, raising `TaxExportError` on a label outside `TEMPLATE_LABELS`; `_moves(row)`, an output row's signed movement per asset, which the tests and Task 4's checks read; `SINGLE` and `GROUPED`, the dispatch Task 4's conservation test patches.
 
-**What this task decides, where the spec leaves it open:** the refusal wording; the `Comment` — `kraken <type>[/<subtype>]`, the trades row's `pair` where the export holds it, `position <id>` on a margin-family row, a one-leg trade's `one leg booked`, a sweep's `refid` — with no comma, so no field is quoted; the integration name `Kraken manual import`; and a row's group, its type and its `refid`, so a margin open's conversion pair, `margin` row and rollovers stay apart while a sweep's spends and receive share one.
+**What this task decides, where the spec leaves it open:** the `Comment` — `kraken <type>[/<subtype>]`, the trades row's `pair` where the export holds it, `position <id>` on a margin-family row, a one-leg trade's `one leg booked`, a sweep's `refid` — with no comma, so no field is quoted; the integration name `Kraken manual import`; and a row's group, its mapper and its `refid`, so a margin open's conversion pair, `margin` row and rollovers stay apart while a sweep's spends and receive share one.
 
 - [ ] **Step 1: The golden rows** — `tests/fixtures/tax_blockpit/window-1-blockpit.csv`, byte for byte, written before the code: each row spec D3's table read off window one by hand, the one-leg trade's EUR leg at `0` and the sweep's two Trades into EUR summing to the receive.
 
@@ -2732,7 +2732,7 @@ A month has closed, and its Kraken activity is not yet in the Blockpit manual in
 
 ### What it means
 
-Blockpit computes FIFO per integration, so the manual integration carries the whole history and each window extends it without a gap or an overlap. The transform refuses a window whose opening balances are not the closing balances of the window before (`--after`), so a skipped or doubled month stops at step 4 rather than reaching Blockpit. One export spans the whole window — Kraken's export article states no maximum period — and expires 14 days after it is requested.
+Blockpit computes FIFO per integration, so the manual integration carries the whole history and each window extends it without a gap or an overlap. One export spans the whole window — Kraken's export article states no maximum period — and expires 14 days after it is requested.
 
 ### What to do
 
