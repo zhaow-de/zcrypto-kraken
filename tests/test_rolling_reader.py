@@ -154,6 +154,13 @@ def test_a_hole_inside_the_window_is_refused_without_accept_holes(tmp_path):
         read_rolling(tmp_path, "BTC/EUR", 15, DAY3, window=(_at(DAY2, 12), _at(DAY3, 23, 45)))
 
 
+def test_a_hole_on_the_windows_last_day_is_refused_with_the_window_ending_at_that_days_midnight(tmp_path):
+    write_chain(tmp_path, holes={DAY3: {"BTC/EUR"}})
+
+    with pytest.raises(RollingError, match="BTC/EUR has a hole on 2026-10-03"):
+        read_rolling(tmp_path, "BTC/EUR", 1440, DAY3, window=(_at(DAY1), _at(DAY3)))
+
+
 def test_an_accepted_hole_is_reported_and_its_day_left_out(tmp_path):
     write_chain(tmp_path, holes={DAY2: {"BTC/EUR"}})
 
