@@ -11,6 +11,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import tempfile
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -59,9 +60,7 @@ Q3_15M_SHA256 = {
 
 
 class RollingError(Exception):
-    """A refusal by the set's reader or writer: something it reads -- the set's lines and files, the base's source,
-    tape-bars' tree -- or something its caller asks -- a pair, a grid, an as-of day, a window across a hole, the owner's
-    close -- is not what the set's rules require, and the message names the path or the argument at fault."""
+    """A refusal by the set's reader or writer; its message names the path or the argument at fault."""
 
 
 class HoleError(RollingError):
@@ -107,6 +106,15 @@ def _pair_of(relpath: str) -> str:
 
 def _canonical(line: dict) -> bytes:
     return (json.dumps(line, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n").encode()
+
+
+def _is_file(path: Path) -> bool:
+    """`path.is_file()`, save that a failure to stat `path` other than its absence -- a directory above it this reader
+    cannot search -- raises its `OSError`, where `is_file` reads the file as absent."""
+    try:
+        return stat.S_ISREG(path.stat().st_mode)
+    except FileNotFoundError:
+        return False
 
 
 def _sha256(path: Path) -> str:
@@ -245,7 +253,7 @@ def head(root: Path) -> Line:
     one, is stepped past, and a broken link at or below the head refuses."""
     for day in reversed(line_days(root)):
         line = read_line(root, day)
-        if all((root / relpath).is_file() for relpath in line.files):
+        if all(_is_file(root / relpath) for relpath in line.files):
             return walk_chain(root, day)[-1]
     raise RollingError(f"{root} holds no line whose listed files are all present")
 
@@ -253,7 +261,7 @@ def head(root: Path) -> Line:
 def verify_line(root: Path, line: Line) -> None:
     for relpath, digest in sorted(line.files.items()):
         path = root / relpath
-        if not path.is_file():
+        if not _is_file(path):
             raise RollingError(f"{line.relpath}: {relpath} is listed and absent from {root}")
         if _sha256(path) != digest:
             raise RollingError(f"{line.relpath}: {relpath} does not hash to its listing")
@@ -303,7 +311,7 @@ def read_rolling(
     frames = []
     for relpath, digest in listed:
         path = root / relpath
-        if not path.is_file():
+        if not _is_file(path):
             raise RollingError(f"{root}: {relpath} is listed and absent")
         if _sha256(path) != digest:
             raise RollingError(f"{root}: {relpath} does not hash to its listing")
@@ -389,9 +397,8 @@ def _place(staging: Path, out: Path, relpath: str, data: bytes) -> None:
 
 
 def stage_base(source: Path, out: Path, staging: Path) -> Line:
-    """Copy the 15-minute frame at `source` into `out` as the set's base and write the base line. Each file is copied to
-    a temporary under `staging` and checked -- the source's pairs, each temporary's sha256 against `Q3_15M_SHA256`, each
-    frame's `dataset_hash` against the source's manifest -- before the first rename into `out`."""
+    """Copy the 15-minute frame at `source` into `out` as the set's base and write the base line, every file staged under
+    `staging` and checked before the first rename into `out`."""
     found = {f"{path.parent.parent.name}/{path.parent.name}" for path in source.glob("*/*/15.parquet")}
     if found != Q3_15M_SHA256.keys():
         missing, outside = sorted(Q3_15M_SHA256.keys() - found), sorted(found - Q3_15M_SHA256.keys())
@@ -441,10 +448,7 @@ def stage_base(source: Path, out: Path, staging: Path) -> Line:
 
 
 def list_tape(tape_root: Path, pairs: tuple[str, ...]) -> None:
-    """List `tape_root` and, for each of `pairs` whose directory it holds, that directory and every directory below it,
-    and stat every file listed, so an absent root, a directory this reader cannot list, or one it can list but not search
-    raises its `OSError`: a final's `is_file` reads each of the three as holding no final, and `_watermark`'s `rglob` the
-    first two. Called before the first read of `tape_root`."""
+    """Call before reading `tape_root`: raises where `is_file` or `rglob` would read an unreadable tree as no final."""
     held = set(os.listdir(tape_root))
     for pair in pairs:
         asset, quote = pair.split("/")
@@ -466,9 +470,7 @@ def closed_pairs(line: Line, set_pairs: tuple[str, ...]) -> frozenset[str]:
 
 
 def is_ended(root: Path, line: Line, tape_root: Path) -> bool:
-    """True when `line` closes every one of the set's pairs and none of them has a final under `tape_root` dated after
-    it -- the set ended by the owner's closes, which such a later final reopens. The tape is read only for a line that
-    closes every pair, and only after `list_tape`."""
+    """Whether the owner's closes end the set at `line`, a later final of a pair reopening it. Read after `list_tape`."""
     set_pairs = pairs(root)
     if closed_pairs(line, set_pairs) != set(set_pairs):
         return False
@@ -524,10 +526,8 @@ def _plan(tape_root: Path, out: Path, line: Line, set_pairs: tuple[str, ...], cl
 
 def extend(tape_root: Path, out: Path, staging: Path, *, close: Close | None = None) -> ExtendResult:
     """Extend the set at `out` from the day after its head with tape-bars' finals under `tape_root`, each day's files
-    renamed in before its line. A day is written once each pair has a final for it, is under the owner's close, or has
-    a newest final dated `RESCAN_DAYS` + 1 days or more after it; otherwise the run stops there, and it stops at a line
-    `is_ended`. A `close` is refused, nothing written, unless this run writes its first line."""
-    if not (out / line_relpath(BASE_DAY)).is_file():
+    renamed in before its line. A `close` is refused, nothing written, unless this run writes its first line."""
+    if not _is_file(out / line_relpath(BASE_DAY)):
         raise RollingError(f"{out} holds no base line")
     line = head(out)
     set_pairs = pairs(out)

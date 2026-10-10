@@ -591,6 +591,22 @@ def test_extend_refuses_an_outbox_without_a_base_line(tmp_path):
     assert list(staging.iterdir()) == []
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses directory permissions")
+def test_a_base_line_the_run_cannot_search_for_is_refused_never_read_as_absent(tmp_path):
+    tape, out, staging = _outbox(tmp_path, pairs=("BTC/EUR", "ETH/BTC"))
+    month = out / "index/2026/09"
+    os.chmod(month, 0o000)
+    try:
+        result = _extend_cli(tape, out, staging)
+    finally:
+        os.chmod(month, 0o755)
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert f"Permission denied: '{month / '30.json'}'" in result.output
+    assert "holds no base line" not in result.output
+
+
 def test_a_tape_pair_outside_the_base_is_neither_copied_nor_listed(tmp_path):
     tape, out, staging = _outbox(tmp_path)
     _finals(tape, (*TWELVE, OUTSIDER), SEAM, D)

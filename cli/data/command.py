@@ -9,7 +9,7 @@ import typer
 
 from cli.config import ConfigError, load_config, resolve_data_dir, resolve_hot_source, resolve_ohlcvt_source_dir, resolve_push_dest
 from cli.data.errors import DataSyncError
-from cli.data.rebuild import BUILDER_REFUSALS, RebuildContext, rebuild_sets
+from cli.data.rebuild import BUILDER_REFUSALS, REBUILDABLE, RebuildContext, rebuild_sets
 from cli.data.sync import fetch_hot, push_hot
 from cli.logging import get_logger
 
@@ -76,7 +76,7 @@ def push() -> None:
 def rebuild(
     sets: list[str] = typer.Argument(
         ...,
-        help="Dataset names to rebuild (ohlc-full, ohlc-15m, derivatives-funding, derivatives-oi, snapshots, universe).",
+        help=f"Dataset names to rebuild ({', '.join(REBUILDABLE)}).",
     ),
     push_after: bool = typer.Option(True, "--push/--no-push", help="Push the minted sibling(s) to push_dest after rebuilding."),
 ) -> None:
@@ -227,8 +227,8 @@ def rolling_extend(
 ) -> None:
     """Extend the set day by day from tape-bars' finals, each day's index line written after its files, and print the head.
 
-    A day waits while a pair has no final for it and its newest final is inside the re-scan window; a pair the owner
-    closes is a hole from --from until a final of its own reappears. The four close options are given together or not at all.
+    A day waits while a pair has no final for it and no later final past the re-scan window; a pair the owner closes is a hole
+    from --from until a final of its own reappears. The four close options are given together or not at all.
     """
     from cli.data.rolling import Close, RollingError, extend
 

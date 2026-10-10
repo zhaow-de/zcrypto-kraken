@@ -207,8 +207,7 @@ def _compare_bytes(set_dir: Path, set_name: str, rel: str, digest: str) -> None:
 
 def _verify_chained(hub: Path, set_dir: Path, set_name: str, sub_paths: set[str]) -> None:
     """A chained set's new files against its index lines, whose sha256s are of a file's bytes where a manifest's are of
-    its frame's content, so the two never meet in one comparison. A file no line names yet, and a line's file not yet
-    arrived, are pending: reported, and compared when a later fetch brings the line or the file."""
+    its frame's content, so the two never meet in one comparison."""
     try:
         listed: dict[str, str] = {}
         for day in line_days(hub):
@@ -238,8 +237,7 @@ def _verify_new_files(hot_dir: Path, data_root: Path, new_files: tuple[str, ...]
     chained_by_set: dict[str, set[str]] = {}
     for rel in new_files:
         set_name, _, sub_path = rel.partition("/")
-        # A chained set's every new file, a line included, goes to the chained arm; in any other set only a new parquet
-        # is checked, the one kind a manifest attests.
+        # Outside a chained set only a new parquet is checked, the one kind a manifest attests.
         if is_chained(hot_dir / set_name):
             chained_by_set.setdefault(set_name, set()).add(sub_path)
         elif sub_path.endswith(".parquet"):

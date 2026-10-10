@@ -12,7 +12,7 @@ from polars.testing import assert_frame_equal
 from typer.testing import CliRunner
 
 from cli.__main__ import app
-from cli.data.rolling import ROLLING_SET, RollingError, head, line_days, read_rolling
+from cli.data.rolling import ROLLING_SET, RollingError, head, line_days, read_rolling, verify
 from cli.ohlc.dataset import FRAME_SCHEMA
 from cli.registry.observed import ObservedReader
 from cli.registry.record import compute_hash
@@ -218,6 +218,26 @@ def test_an_unlistable_index_month_raises_never_reads_an_older_line_as_the_newes
         os.chmod(month, 0o755)
 
     assert raised.value.filename == str(month)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses directory permissions")
+@pytest.mark.parametrize("reader", ["head", "verify", "read_rolling"])
+def test_a_day_directory_the_reader_cannot_search_raises_never_reads_its_files_as_absent(tmp_path, reader):
+    write_chain(tmp_path)
+    month = tmp_path / "days/BTC/EUR/2026/10"
+    read = {
+        "head": lambda: head(tmp_path),
+        "verify": lambda: verify(tmp_path, DAY3),
+        "read_rolling": lambda: read_rolling(tmp_path, "BTC/EUR", 15, DAY3),
+    }[reader]
+    os.chmod(month, 0o000)
+    try:
+        with pytest.raises(PermissionError) as raised:
+            read()
+    finally:
+        os.chmod(month, 0o755)
+
+    assert Path(raised.value.filename).parent == month
 
 
 def test_verify_prints_the_as_of_lines_sha256_and_exits_0(tmp_path):
