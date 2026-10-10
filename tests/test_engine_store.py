@@ -650,6 +650,28 @@ def test_seed_store_refuses_a_canonical_it_cannot_read_before_copying_it(tmp_pat
     assert not _store_path(store_dir, "ADA/EUR", 240).exists()
 
 
+@pytest.mark.parametrize("wreck", ["corrupt bytes", "a ts off the store's"])
+def test_seed_store_names_the_canonical_by_the_name_it_is_handed(tmp_path, wreck):
+    canonical_dir = tmp_path / "canonical"
+    store_dir = tmp_path / "store"
+    _write_full_universe(canonical_dir, _canonical_rows)
+    broken = _store_path(canonical_dir, "ADA/EUR", 240)
+    if wreck == "corrupt bytes":
+        broken.write_bytes(b"not a parquet file")
+    else:
+        write_parquet(read_parquet(broken).with_columns(pl.col("ts").cast(pl.Datetime("ns", "UTC"))), broken)
+    name = "ohlc-rolling as of 2026-10-03 (0123456789ab)"
+
+    with pytest.raises(EngineError) as exc:
+        seed_store(store_dir, canonical_dir, canonical_name=name, fetch_fn=_good_fetch_fn, clock=lambda: FAR_FUTURE)
+
+    expected = {
+        "corrupt bytes": f"seed_store: cannot read {name} for ADA/EUR@240 — ",
+        "a ts off the store's": f"seed_store: {name} is not the frame the store readers join for ADA/EUR@240 -- ",
+    }[wreck]
+    assert expected in str(exc.value)
+
+
 # Every deviation below survives a `write_parquet`/`read_parquet` round trip, which is why the door is needed; each is
 # what an operator would read off the refusal, so the cases assert the first difference by its text.
 def _deviated(frame: pl.DataFrame, how: str) -> pl.DataFrame:

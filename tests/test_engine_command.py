@@ -186,7 +186,7 @@ def _record_seed_store(monkeypatch, report: SeedReport = SeedReport(entries=()))
     during the call: the seed removes its scratch once the call returns."""
     handed = []
 
-    def record(store_dir, canonical_dir):
+    def record(store_dir, canonical_dir, *, canonical_name):
         files = sorted(path for path in canonical_dir.rglob("*") if path.is_file())
         frames = {path.relative_to(canonical_dir).as_posix(): read_parquet(path) for path in files}
         handed.append((store_dir, canonical_dir, frames))
@@ -280,7 +280,7 @@ def test_seed_prints_per_pair_overlap_summary(tmp_path, monkeypatch):
 def test_seed_engine_error_is_a_clean_exit_1(tmp_path, monkeypatch):
     _patch_config(monkeypatch, tmp_path, data_dir=_rolling_data_dir(tmp_path))
 
-    def boom(store_dir, canonical_dir):
+    def boom(store_dir, canonical_dir, *, canonical_name):
         raise EngineError("window shortfall for BTC/EUR@240 -- run `zcrypto data fetch`")
 
     monkeypatch.setattr(command, "seed_store", boom)
@@ -294,18 +294,18 @@ def test_seed_engine_error_is_a_clean_exit_1(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("broken", ["absent", "a broken link"])
 def test_seed_refuses_naming_the_rolling_set_when_it_cannot_be_read(tmp_path, monkeypatch, broken):
-    """The reader's refusal is the seed's, in the seed's own voice: with a store file absent, a rolling set that is
-    absent or does not chain aborts the command before any store file is touched, the set named after the seed's own
-    words and the reader's message after it."""
+    """With a store file absent, a rolling set that is absent or does not chain aborts the command before any store
+    file is touched, the set named after the seed's own words: an absent set with its directory and the fetch that
+    brings it, a broken one with the reader's message."""
     data_dir = tmp_path / "data"
     if broken == "absent":
-        expected = f"{data_dir / ROLLING_SET} holds no line whose listed files are all present"
+        expected = f", which is absent: no directory {data_dir / ROLLING_SET}; zcrypto data fetch mirrors the hub's datasets"
     else:
         edited = data_dir / ROLLING_SET / write_chain(data_dir / ROLLING_SET, pairs=BASKET)[2]
         line = json.loads(edited.read_bytes())
         line["files"][min(line["files"])] = "0" * 64
         edited.write_bytes(line_bytes(line))
-        expected = "index/2026/10/03.json: its prev is not the sha256 of index/2026/10/02.json"
+        expected = ": index/2026/10/03.json: its prev is not the sha256 of index/2026/10/02.json"
     _patch_config(monkeypatch, tmp_path, data_dir=data_dir)
     handed = _record_seed_store(monkeypatch)
 
@@ -315,10 +315,28 @@ def test_seed_refuses_naming_the_rolling_set_when_it_cannot_be_read(tmp_path, mo
     out = _output(result)
     assert (
         "engine seed: no canonical dataset to seed 24 absent series (ADA/EUR@1440, ADA/EUR@240, AVAX/EUR@1440, ...) from "
-        f"-- ohlc-rolling: {expected}"
+        f"-- ohlc-rolling{expected}"
     ) in out
     assert isinstance(result.exception, SystemExit)
     assert handed == []
+
+
+def test_seed_names_the_rolling_set_when_the_store_refuses_its_frame(tmp_path, monkeypatch):
+    data_dir = _rolling_data_dir(tmp_path, bar=lambda pair, day: {"close": -1.0})
+    _patch_config(monkeypatch, tmp_path, data_dir=data_dir)
+    real = command.seed_store
+    monkeypatch.setattr(command, "seed_store", lambda *args, **kwargs: real(*args, **kwargs, fetch_fn=lambda key, grid: []))
+
+    result = runner.invoke(app, ["engine", "seed"])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    out = _output(result)
+    assert (
+        f"seed_store: ohlc-rolling as of 2026-10-03 ({_head_sha256(data_dir)[:12]}) is not the frame the store readers "
+        "join for ADA/EUR@1440 -- close[0] at "
+    ) in out
+    assert "engine-seed-" not in out
 
 
 def test_seed_refuses_without_a_configured_data_dir(tmp_path, monkeypatch):

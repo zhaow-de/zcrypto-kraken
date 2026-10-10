@@ -138,11 +138,11 @@ def _reconcile(
     return overlap_bars, len(replaced_ts), merged
 
 
-def _read_frame(path: Path, pair: str, interval: int, fn_name: str) -> pl.DataFrame:
+def _read_frame(path: Path, pair: str, interval: int, fn_name: str, *, named: str | None = None) -> pl.DataFrame:
     try:
         return read_parquet(path)
     except (OSError, pl.exceptions.PolarsError) as exc:
-        raise EngineError(f"{fn_name}: cannot read {path} for {pair}@{interval} — {exc}") from exc
+        raise EngineError(f"{fn_name}: cannot read {named or path} for {pair}@{interval} — {exc}") from exc
 
 
 _HOST_REDELIVERY = (
@@ -304,7 +304,7 @@ def _frame_differences(frame: pl.DataFrame, interval: int) -> list[str]:
     return []
 
 
-def _require_store_frame(frame: pl.DataFrame, path: Path, pair: str, interval: int, fn_name: str, *, frozen: bool) -> None:
+def _require_store_frame(frame: pl.DataFrame, path: Path | str, pair: str, interval: int, fn_name: str, *, frozen: bool) -> None:
     """Refuse a frame the store readers cannot join, merge or price, before the seam, the concat or the snapshot write
     gets it: `_frame_differences` is the check, and `frozen` picks the recovery, which is why the caller says which file
     it handed over. `seed_store` runs this over the canonical BEFORE the copy, so a refused canonical leaves no store
@@ -339,12 +339,15 @@ def seed_store(
     store_dir: Path,
     canonical_dir: Path,
     *,
+    canonical_name: str | None = None,
     fetch_fn=fetch_ohlc,
     clock=_utc_now,
 ) -> SeedReport:
     """Bootstrap or repair `store_dir` from `canonical_dir` plus a REST gap-fill, per pair x grid: the
     canonical file is copied only when the store file is absent, so a re-run is idempotent and treats a
-    close mismatch as a poisoned tail to repair rather than the abort a first seed takes."""
+    close mismatch as a poisoned tail to repair rather than the abort a first seed takes. `canonical_name`, given,
+    names the canonical in its refusals in place of its file's path: a `canonical_dir` removed once the call returns
+    is no path to read."""
     now = clock()
     entries = []
     for pair, pair_key in PAIR_KEYS.items():
@@ -357,8 +360,8 @@ def seed_store(
             if not store_existed:
                 # The canonical is checked BEFORE it is copied: a refused copy left in the store is a file the
                 # next run refuses again, naming a path the operator never broke.
-                canonical_frame = _read_frame(canonical_path, pair, interval, "seed_store")
-                _require_store_frame(canonical_frame, canonical_path, pair, interval, "seed_store", frozen=True)
+                canonical_frame = _read_frame(canonical_path, pair, interval, "seed_store", named=canonical_name)
+                _require_store_frame(canonical_frame, canonical_name or canonical_path, pair, interval, "seed_store", frozen=True)
                 write_parquet(canonical_frame, store_path)
 
             store_frame = _read_frame(store_path, pair, interval, "seed_store")

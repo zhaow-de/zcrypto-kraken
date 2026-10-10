@@ -82,8 +82,7 @@ from cli.portfolio.errors import PortfolioError
 logger = get_logger("engine.command")
 
 # `soak-check`'s null reference: the frozen unstamped set, whose span is an instrument of the null. The seed does not
-# read this name -- for an absent store file it copies the rolling canonical, `ohlc-rolling` under the configured
-# data root, at its local head, whose tail a REST gap-fill can seam with.
+# read this name; it copies `ohlc-rolling` (`seed`).
 CANONICAL_DIR = Path("data/ohlc-full")
 DEFAULT_NAVS = (500.0, 1000.0, 2500.0, 5000.0, 10000.0)
 # The two variables carrying the trade credentials (`engine.env.j2` renders both), named here so a refusal can say WHICH is
@@ -402,11 +401,17 @@ def seed(
         # written into this store-shaped scratch: a set that cannot be read blocks no repair that needs none.
         canonical_dir = Path(scratch)
         source = "no store file absent, canonical not read"
+        canonical_name = None
         if absent:
             named = ", ".join(f"{symbol}@{interval}" for symbol, interval in absent[:3]) + (", ..." if len(absent) > 3 else "")
             prefix = f"engine seed: no canonical dataset to seed {len(absent)} absent series ({named}) from --"
             try:
                 root = resolve_data_dir(app_config) / rolling.ROLLING_SET
+                if not root.is_dir():
+                    raise _abort(
+                        f"{prefix} {rolling.ROLLING_SET}, which is absent: no directory {root}; "
+                        "zcrypto data fetch mirrors the hub's datasets"
+                    )
                 line = rolling.head(root)
                 for symbol, interval in absent:
                     read = rolling.read_rolling(root, symbol, interval, line.day, accept_holes=accept_holes)
@@ -416,9 +421,10 @@ def seed(
                 raise _abort(f"{prefix} {rolling.ROLLING_SET}: {exc} (--accept-holes leaves the day out)") from exc
             except (ConfigError, rolling.RollingError, OSError) as exc:
                 raise _abort(f"{prefix} {rolling.ROLLING_SET}: {exc}") from exc
-            source = f"canonical {rolling.ROLLING_SET} as of {line.day} ({line.sha256[:12]})"
+            canonical_name = f"{rolling.ROLLING_SET} as of {line.day} ({line.sha256[:12]})"
+            source = f"canonical {canonical_name}"
         try:
-            report = seed_store(store_dir, canonical_dir)
+            report = seed_store(store_dir, canonical_dir, canonical_name=canonical_name)
         except EngineError as exc:
             raise _abort(str(exc)) from exc
     typer.echo(f"seeded {store_dir}: {source} + REST gap-fill; seam QA per pair x grid:")
