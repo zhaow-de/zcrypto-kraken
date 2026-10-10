@@ -1095,9 +1095,11 @@ def read_rolling_head(*, now: datetime, root: Path, tape_root: Path) -> Check:
     age test, a line `is_ended` reads -- every pair closed, no final under `tape_root` dated after it -- is its own
     state, never ok. A head past the threshold is held at the day after it: the value names each pair without a final
     for that day under `tape_root`, save a pair the line records as closed, and from `ROLLING_ESCALATE_AFTER_DAYS` past
-    that day's publication it is the owner's decision. `tape_root` is listed before each read of it. An `OSError` on
-    the hub or the tape, or a hub with no `index/`, is `unreadable`; a `RollingError` -- a broken link, a listed file
-    absent or changed -- is a FAIL naming it.
+    that day's publication it is the owner's decision. `tape_root` is listed before each read of it, and the index by
+    `line_days`, which raises where it cannot list. A hub with no `index/`, an index directory the pass cannot list,
+    and any other `OSError` on the hub or the tape are `unreadable`; a `RollingError` -- a broken link, a listed file
+    absent or changed -- is a FAIL naming it, a listed file in a directory the pass cannot search reading as absent
+    through `verify_line`'s `is_file`.
 
     Keyword-only, no defaults: `main` names the hub and the tape.
     """

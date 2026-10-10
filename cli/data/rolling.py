@@ -117,17 +117,35 @@ def is_chained(root: Path) -> bool:
     return (root / "index").is_dir()
 
 
+def _refuse(exc: OSError) -> None:
+    """`os.walk`'s `onerror`: a directory the walk cannot list raises, where by default it is skipped as if empty."""
+    raise exc
+
+
 def line_days(root: Path) -> list[date]:
+    """The days of `root`'s index lines, sorted, read from the names `index/*/*/*.json` matches; none when `root` has no
+    `index/`. The index is walked, never globbed: `index/` or a directory under it this reader cannot list raises its
+    `OSError`, where a glob skips it and reads an older line as the newest."""
+    index = root / "index"
+    try:
+        index.stat()
+    except FileNotFoundError:
+        return []
     days = []
-    for path in (root / "index").glob("*/*/*.json"):
-        relpath = path.relative_to(root).as_posix()
-        try:
-            day = date(int(path.parent.parent.name), int(path.parent.name), int(path.stem))
-        except ValueError as exc:
-            raise RollingError(f"{root}: {relpath} is not named for a day") from exc
-        if line_relpath(day) != relpath:
-            raise RollingError(f"{root}: {relpath} is not named for a day")
-        days.append(day)
+    for directory, subdirs, names in os.walk(index, onerror=_refuse, followlinks=True):
+        if len(Path(directory).relative_to(index).parts) < 2:
+            continue
+        entries = [*subdirs, *names]
+        subdirs.clear()
+        for path in (Path(directory) / name for name in entries if name.endswith(".json")):
+            relpath = path.relative_to(root).as_posix()
+            try:
+                day = date(int(path.parent.parent.name), int(path.parent.name), int(path.stem))
+            except ValueError as exc:
+                raise RollingError(f"{root}: {relpath} is not named for a day") from exc
+            if line_relpath(day) != relpath:
+                raise RollingError(f"{root}: {relpath} is not named for a day")
+            days.append(day)
     return sorted(days)
 
 
@@ -422,15 +440,11 @@ def list_tape(tape_root: Path, pairs: tuple[str, ...]) -> None:
     and stat every file listed, so an absent root, a directory this reader cannot list, or one it can list but not search
     raises its `OSError`: a final's `is_file` reads each of the three as holding no final, and `_watermark`'s `rglob` the
     first two. Called before the first read of `tape_root`."""
-
-    def refuse(exc: OSError) -> None:
-        raise exc
-
     held = set(os.listdir(tape_root))
     for pair in pairs:
         asset, quote = pair.split("/")
         if asset in held and quote in os.listdir(tape_root / asset):
-            for directory, _, names in os.walk(tape_root / asset / quote, onerror=refuse):
+            for directory, _, names in os.walk(tape_root / asset / quote, onerror=_refuse):
                 for name in names:
                     os.stat(os.path.join(directory, name))
 

@@ -3993,6 +3993,7 @@ def test_a_rolling_head_file_with_a_flipped_byte_fails(passing_rolling_head, tmp
     assert check.value == "index/2026/10/03.json: days/ETH/BTC/2026/10/03.parquet does not hash to its listing"
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses directory permissions")
 def test_an_unreadable_rolling_hub_is_unreadable_not_ok(passing_rolling_head, tmp_path):
     tape = _tape(tmp_path, _TWO, SEAM, HEAD)
     unstaged = tmp_path / "unstaged"
@@ -4003,6 +4004,19 @@ def test_an_unreadable_rolling_hub_is_unreadable_not_ok(passing_rolling_head, tm
 
         assert not check.ok, root
         assert check.value == f"unreadable: {root} holds no index/"
+
+    root = _hub(tmp_path, days=2)
+    newest = SEAM + timedelta(days=1)
+    for unlistable in (root / "index", root / "index/2026/10"):
+        os.chmod(unlistable, 0o000)
+        try:
+            check = passing_rolling_head(now=_at(newest), root=root, tape_root=tape)
+        finally:
+            os.chmod(unlistable, 0o755)
+
+        assert not check.ok, unlistable
+        assert check.value.startswith("unreadable:"), check.value
+        assert str(unlistable) in check.value
 
 
 def test_the_rolling_row_reaches_the_verdict_the_pass_prints(monkeypatch, capsys):
