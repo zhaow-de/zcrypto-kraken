@@ -669,3 +669,87 @@ def test_the_fields_a_run_returns_are_its_golden_files(tmp_path):
         assert list(written.closing.items()) == sorted(record["closing"].items())
         assert written.sha256 == hashlib.sha256(golden).hexdigest()
         assert written.provenance_sha256 == hashlib.sha256(written.provenance.read_bytes()).hexdigest()
+
+
+RUNNER = CliRunner()
+
+
+def test_the_command_writes_both_files_and_exits_0(tmp_path):
+    out = tmp_path / "window-1-blockpit.csv"
+    result = RUNNER.invoke(app, ["tax", "blockpit", "--ledgers", str(LEDGER_1), "--trades", str(TRADES_1), "--out", str(out)])
+    assert result.exit_code == 0, result.output
+    assert out.read_bytes() == (FIXTURES / "window-1-blockpit.csv").read_bytes()
+    assert f"wrote 26 rows to {out}" in result.output
+    assert "  Trade: 9 rows\n" in result.output
+    assert "closing balances: ALGO 160.245, ATOM 11.1025, EUR 1174.1133, EURC 0, NEAR 0, XTZ 0" in result.output
+
+
+def test_the_command_prints_each_refusal_and_exits_1(tmp_path):
+    ledger = _edited(tmp_path, LEDGER_1, [("LFX027-SYNTH-LEDGER", "subtype", "allocation")])
+    result = RUNNER.invoke(
+        app, ["tax", "blockpit", "--ledgers", str(ledger), "--trades", str(TRADES_1), "--out", str(tmp_path / "o.csv")]
+    )
+    assert result.exit_code == 1
+    assert "refused LFX027-SYNTH-LEDGER [earn/allocation]: no mapping is written for this type and subtype" in result.output
+    assert not (tmp_path / "o.csv").exists()
+
+
+def test_the_command_refuses_an_unreadable_input_with_exit_1(tmp_path):
+    result = RUNNER.invoke(
+        app,
+        ["tax", "blockpit", "--ledgers", str(tmp_path / "absent.csv"), "--trades", str(TRADES_1), "--out", str(tmp_path / "o.csv")],
+    )
+    assert result.exit_code == 1
+    assert not (tmp_path / "o.csv").exists()
+
+
+def test_the_command_refuses_an_existing_output_with_exit_1(tmp_path):
+    out = tmp_path / "o.csv"
+    out.write_text("{}")
+    result = RUNNER.invoke(app, ["tax", "blockpit", "--ledgers", str(LEDGER_1), "--trades", str(TRADES_1), "--out", str(out)])
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit)
+    assert out.read_text() == "{}"
+
+
+def test_the_command_refuses_a_usage_error_with_exit_2():
+    result = RUNNER.invoke(app, ["tax", "blockpit", "--ledgers", str(LEDGER_1), "--trades", str(TRADES_1)])
+    assert result.exit_code == 2
+    assert "Missing option" in result.output
+
+
+def test_the_transform_imports_nothing_outside_its_allowlist():
+    allowed = {
+        "__future__",
+        "csv",
+        "collections",
+        "dataclasses",
+        "datetime",
+        "decimal",
+        "hashlib",
+        "importlib.metadata",
+        "io",
+        "json",
+        "pathlib",
+        "typing",
+        "typer",
+        "cli.logging",
+    }
+    paths = sorted((Path(__file__).resolve().parents[1] / "cli" / "tax").glob("*.py"))
+    assert paths
+    for path in paths:
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = [node.module or ""]
+            else:
+                continue
+            for name in names:
+                assert name in allowed or name.startswith("cli.tax."), (path.name, name)
+
+
+def test_the_readme_names_the_tax_command_and_each_of_its_options():
+    section = (Path(__file__).resolve().parents[1] / "README.md").read_text().split("### `zcrypto tax`", 1)[1].split("\n## ", 1)[0]
+    assert "zcrypto tax blockpit --ledgers <PATH> --trades <PATH> --out <PATH> [--after <PATH>]" in section
+    for option in ("--ledgers", "--trades", "--out", "--after"):
+        assert f"| `{option} <PATH>` |" in section, option

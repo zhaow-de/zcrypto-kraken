@@ -21,6 +21,7 @@ Learning-for-Fun quant-trading research project for Kraken (spot + spot-margin).
   - [`zcrypto research`](#zcrypto-research)
   - [`zcrypto tick`](#zcrypto-tick)
   - [`zcrypto snapshot`](#zcrypto-snapshot)
+  - [`zcrypto tax`](#zcrypto-tax)
 - [Configuration](#configuration)
   - [`[zcrypto]`: dataset paths](#zcrypto-dataset-paths)
   - [`[zcrypto.engine]`: shadow-engine settings](#zcryptoengine-shadow-engine-settings)
@@ -400,6 +401,23 @@ zcrypto snapshot sweep [OPTIONS]
 | `--snapshots-dir <PATH>` | Where the raw snapshot is archived, as `kraken-refdata-<UTC stamp>.json` (default `data/snapshots`). |
 
 Every fetch precedes the write, so a transport failure leaves no snapshot behind. The run prints the snapshot it judged, then `REFUSALS:` — a selected pair gone, no longer `online`, or renamed — and `ANNOUNCED DELISTINGS:` with each one's dates, then the rendered tables for the diff against the committed register. An announced delisting is reported and does not fail the run; a refusal exits `1`, with the snapshot already archived as the evidence.
+
+### `zcrypto tax`<a name="zcrypto-tax"></a>
+
+Tax bookkeeping: one window of Kraken's ledger and trades CSV exports mapped onto Blockpit's manual-import rows, with a provenance file beside them.
+
+```bash
+zcrypto tax blockpit --ledgers <PATH> --trades <PATH> --out <PATH> [--after <PATH>]
+```
+
+| Option | Description |
+| -- | -- |
+| `--ledgers <PATH>` | Kraken's ledger CSV export for the window, read by header name. |
+| `--trades <PATH>` | Kraken's trades CSV export for the same window: a one-leg trade's pair, the position a margin row belongs to, and the cross-check that both files describe the same activity. |
+| `--out <PATH>` | The import file to write, in the template's columns; its provenance is written beside it as `<PATH>.provenance.json`. Neither file may exist beforehand. |
+| `--after <PATH>` | The window before's provenance file: this window's opening balances must equal its closing ones, and this ledger must start after it. Absent, every opening balance must be zero — the first window. |
+
+Each label written is one of the template's own. A row it cannot map, a balance that does not chain, a movement the output does not carry, or a window that does not follow the one before refuses the run: each refusal is printed, nothing is written, and the exit is `1`. Exit `0` prints the rows per label and the closing balances; a usage error, such as an option missing, exits `2`. The provenance carries the sha256 of both inputs and of the output, the per-label sums, the opening and closing balances, each margin position's ledger rows and the previous window's provenance hash; the same inputs give byte-identical files. Read-only on its inputs, offline, and holding no key.
 
 ## Configuration<a name="configuration"></a>
 
