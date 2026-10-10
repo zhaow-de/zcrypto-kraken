@@ -11,6 +11,7 @@ sharing them costs no isolation.
 
 import json
 import math
+import re
 import shutil
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
@@ -987,6 +988,26 @@ def test_an_undecodable_byte_is_refused_as_this_modules_error_not_a_traceback(tm
         (_HEADER + "\n").encode() + b'"L1","R1","2026-08-31 00:00:00","rollover","","currency","\xff\xfe","-0.12","0.12","900.0"\n'
     )
     with pytest.raises(EngineError, match="ledger export"):
+        read_ledger_export(p)
+
+
+_ROLLOVER_ROW = '"L1","R1","2026-08-31 04:05:06","rollover","","currency","ZEUR","-0.12","0.13","900.0"'
+
+
+@pytest.mark.parametrize(
+    "row,refusal",
+    [
+        (_ROLLOVER_ROW + ',"x"', "has a field count of 11 at data row 2, against its header's 10"),
+        # Every column after the insert moves one to the right and still parses: the fee would read -0.12, not 0.13.
+        (_ROLLOVER_ROW.replace('"ZEUR",', '"ZEUR","-0.50",'), "has a field count of 11 at data row 2, against its header's 10"),
+        # Only the balance is missing, a column this reader never reads, so no value read would refuse the row.
+        (_ROLLOVER_ROW.removesuffix(',"900.0"'), "has a field count of 9 at data row 2, against its header's 10"),
+    ],
+    ids=["long_row", "mid_row_insert", "short_row"],
+)
+def test_a_row_whose_field_count_is_not_the_headers_is_refused_by_its_data_row(tmp_path, row, refusal):
+    p = _export(tmp_path, ['"L6","Q1","2026-08-31 00:00:00","deposit","","currency","ZEUR","500.0","0.0","1400.0"', row])
+    with pytest.raises(EngineError, match=re.escape(f"the ledger export {p} {refusal}. Refusing rather than defaulting")):
         read_ledger_export(p)
 
 

@@ -459,9 +459,18 @@ def read_ledger_export(path: Path) -> list[LedgerRow]:
                     f"{', '.join(header) or '(empty)'}. Refusing rather than defaulting"
                 )
             rows: list[LedgerRow] = []
+            width = len(header)
             # A row ordinal, not a physical line number: a quoted field may carry a newline, after
             # which the two drift and a line number sends the operator to the wrong place.
             for row_no, raw in enumerate(reader, start=1):
+                # Read a row only at the header's field count: DictReader puts a long row's extras under None, a short
+                # row's gaps as None, and a field inserted mid-row shifts every column after it into the wrong name.
+                if None in raw or None in raw.values():
+                    count = width + len(raw[None]) if None in raw else width - sum(value is None for value in raw.values())
+                    raise EngineError(
+                        f"the ledger export {path} has a field count of {count} at data row {row_no}, against its "
+                        f"header's {width}. Refusing rather than defaulting"
+                    )
                 # The export writes no offset and the venue stamps UTC: a naive one raises against aware boundaries.
                 at = datetime.fromisoformat(raw["time"])
                 rows.append(
