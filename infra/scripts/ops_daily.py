@@ -343,6 +343,11 @@ def _a_month_after(d: date) -> date:
 HEALABLE_COUNTER = "zcrypto_reconcile_healable_gap_seconds_total"
 REFDATA_RUNBOOK = "infra/runbooks/reference-data.md#refdata-sweep-due"
 HEALABLE_RUNBOOK = "infra/runbooks/ops.md#healable-threshold-rederivation-due"
+BOOKKEEPING_RUNBOOK = "infra/runbooks/bookkeeping.md#kraken-bookkeeping-due"
+STATEMENTS = Path("/mnt/zhao-crypto/kraken-statements")
+# The first window's due day (spec 00126 D7, D9).
+BOOKKEEPING_FIRST_DUE = date(2026, 11, 2)
+_WINDOW_DIR = re.compile(r"^\d{4}-\d{2}-\d{2}_(\d{4}-\d{2}-\d{2})$")
 # (host, runbook)
 PATCH_PASSES = (
     ("zcrypto-mon", "infra/runbooks/mon.md#mon-patch-pass"),
@@ -379,6 +384,35 @@ class RemindersRead:
     unreadable: str | None = None
 
 
+def newest_window_end(statements: Path) -> date | None:
+    """The exclusive end of the newest archived window: a `<start>_<end>` directory holding a provenance file."""
+    # A listing proves the mount: an automount's directory stands whether or not the NAS answers, and one that lists
+    # nothing is read as unmounted.
+    if next(statements.parent.iterdir(), None) is None:
+        raise OSError(f"{statements.parent} lists nothing, so the NAS export is not mounted")
+    try:
+        entries = list(statements.iterdir())
+    except FileNotFoundError:
+        return None
+    ends = [
+        date.fromisoformat(match.group(1))
+        for entry in entries
+        if (match := _WINDOW_DIR.match(entry.name)) and any(path.name.endswith(".provenance.json") for path in entry.iterdir())
+    ]
+    return max(ends, default=None)
+
+
+def _bookkeeping_due(end: date | None) -> date:
+    if end is None:
+        return BOOKKEEPING_FIRST_DUE
+    following = date(end.year + 1, 1, 1) if end.month == 12 else date(end.year, end.month + 1, 1)
+    return following + timedelta(days=1)
+
+
+def _due_status(days: int) -> str:
+    return f"due in {days} days" if days >= 0 else f"OVERDUE by {-days} days"
+
+
 def read_reminders(
     token: str,
     *,
@@ -387,6 +421,7 @@ def read_reminders(
     opener=urllib.request.urlopen,
     register: Path = REGISTER,
     deploy_log: Path = DEPLOY_LOG,
+    statements: Path | None = None,
 ) -> RemindersRead:
     """Due-ness computed from state the pass can read, so a Slack reminder that never arrives costs
     nothing (spec 00107 D1); each reminder comes from the source that actually knows.
@@ -408,7 +443,7 @@ def read_reminders(
             note(f"no dated row under `## Re-confirmation log` in {register.name}")
         else:
             days = (_a_month_after(last) - now.date()).days
-            status = f"due in {days} days" if days >= 0 else f"OVERDUE by {-days} days"
+            status = _due_status(days)
             read.reminders.append(
                 Reminder("refdata sweep", f"{status} (last sweep {last.isoformat()})", owed=days <= 0, runbook=REFDATA_RUNBOOK)
             )
@@ -426,9 +461,19 @@ def read_reminders(
         # No full converge on record is a node that is not built: nothing is owed on it.
         if patched is not None:
             days = (_a_month_after(patched) - now.date()).days
-            status = f"due in {days} days" if days >= 0 else f"OVERDUE by {-days} days"
+            status = _due_status(days)
             last_pass = f"{status} (last full converge {patched.isoformat()})"
             read.reminders.append(Reminder(f"{ssh_alias(host)} patch pass", last_pass, owed=days <= 0, runbook=runbook))
+
+    try:
+        end = newest_window_end(statements or STATEMENTS)
+    except _UNREACHABLE as exc:
+        note(f"the statements tree could not be read: {exc}")
+    else:
+        days = (_bookkeeping_due(end) - now.date()).days
+        status = _due_status(days)
+        newest = f"newest window ends {end.isoformat()}" if end else "no window archived yet"
+        read.reminders.append(Reminder("kraken bookkeeping", f"{status} ({newest})", owed=days <= 0, runbook=BOOKKEEPING_RUNBOOK))
 
     hours = max(1, int(window.total_seconds() // 3600))
     try:

@@ -124,6 +124,16 @@ def _soak_answering(payload):
 
 
 @pytest.fixture(autouse=True)
+def statements_off_the_mount(monkeypatch, tmp_path):
+    """Points every reminders read here at a tmp statements tree, under a parent that lists one entry, never at the NAS
+    mount."""
+    root = tmp_path / "mnt" / "kraken-statements"
+    (root.parent / "kraken-trades").mkdir(parents=True)
+    monkeypatch.setattr(ops_daily, "STATEMENTS", root)
+    return root
+
+
+@pytest.fixture(autouse=True)
 def live_soak_run(monkeypatch):
     """Every test in this file, and in `tests/test_ops_daily_soak.py` which imports it, gets a refusing
     `soak_run`: a test that drives `main(["report"])` and forgets to stub it then fails loudly here instead
@@ -2238,7 +2248,102 @@ def test_the_real_register_yields_a_refdata_reminder():
     read = ops_daily.read_reminders("tok", now=NOW, window=DAY, opener=_canned(_counter(0)))
     assert read.unreadable is None, read.unreadable
     # The committed deploy log decides which nodes' patch passes join them.
-    assert {r.name for r in read.reminders} - set(_PATCH_PASS_NAMES.values()) == {"refdata sweep", "healable re-derivation"}
+    assert {r.name for r in read.reminders} - set(_PATCH_PASS_NAMES.values()) == {
+        "refdata sweep",
+        "healable re-derivation",
+        "kraken bookkeeping",
+    }
+
+
+def _statements(root, *windows, provenance=True):
+    root.mkdir()
+    for name in windows:
+        (root / name).mkdir()
+        if provenance:
+            (root / name / f"blockpit-{name}.csv.provenance.json").write_text("{}")
+    return root
+
+
+@pytest.mark.parametrize(
+    "windows,now,status,owed",
+    [
+        ((), datetime(2026, 10, 30, 3, 0, tzinfo=timezone.utc), "due in 3 days (no window archived yet)", False),
+        ((), datetime(2026, 11, 2, 3, 0, tzinfo=timezone.utc), "due in 0 days (no window archived yet)", True),
+        (
+            ("2026-07-01_2026-11-01",),
+            datetime(2026, 11, 20, 3, 0, tzinfo=timezone.utc),
+            "due in 12 days (newest window ends 2026-11-01)",
+            False,
+        ),
+        (
+            ("2026-07-01_2026-11-01", "2026-11-01_2026-12-01"),
+            datetime(2027, 1, 5, 3, 0, tzinfo=timezone.utc),
+            "OVERDUE by 3 days (newest window ends 2026-12-01)",
+            True,
+        ),
+    ],
+    ids=["first_window_ahead", "first_window_due", "next_window_ahead", "next_window_overdue"],
+)
+def test_the_bookkeeping_reminder_is_due_from_the_newest_archived_window(
+    tmp_path, statements_off_the_mount, windows, now, status, owed
+):
+    _statements(statements_off_the_mount, *windows)
+    read = ops_daily.read_reminders(
+        "tok", now=now, window=DAY, opener=_canned(_counter(0)), register=_register(tmp_path, *_TWO_SWEEPS)
+    )
+    bookkeeping = _reminder(read, "kraken bookkeeping")
+    assert (bookkeeping.status, bookkeeping.owed) == (status, owed)
+    assert bookkeeping.runbook == "infra/runbooks/bookkeeping.md#kraken-bookkeeping-due"
+    assert read.unreadable is None
+
+
+def test_a_window_without_a_provenance_file_is_passed_over(tmp_path, statements_off_the_mount):
+    _statements(statements_off_the_mount, "2026-07-01_2026-11-01")
+    (statements_off_the_mount / "2026-11-01_2026-12-01").mkdir()
+    now = datetime(2026, 12, 3, 3, 0, tzinfo=timezone.utc)
+    read = ops_daily.read_reminders(
+        "tok", now=now, window=DAY, opener=_canned(_counter(0)), register=_register(tmp_path, *_TWO_SWEEPS)
+    )
+    assert _reminder(read, "kraken bookkeeping").status == "OVERDUE by 1 days (newest window ends 2026-11-01)"
+
+
+def _unreadable_statements(tmp_path, statements):
+    read = ops_daily.read_reminders(
+        "tok",
+        now=NOW,
+        window=DAY,
+        opener=_canned(_counter(0)),
+        register=_register(tmp_path, *_TWO_SWEEPS),
+        statements=statements,
+    )
+    assert read.unreadable and "the statements tree could not be read" in read.unreadable, read.unreadable
+    assert not [r for r in read.reminders if r.name == "kraken bookkeeping"]
+    assert _reminder(read, "refdata sweep")
+
+
+def test_an_empty_mountpoint_is_an_unreadable_source(tmp_path):
+    (tmp_path / "automount").mkdir()
+    _unreadable_statements(tmp_path, tmp_path / "automount" / "kraken-statements")
+
+
+@pytest.mark.parametrize("where", ["mount", "tree", "window"])
+def test_a_listing_that_fails_is_an_unreadable_source(tmp_path, monkeypatch, statements_off_the_mount, where):
+    if where != "mount":
+        _statements(statements_off_the_mount, "2026-07-01_2026-11-01")
+    target = {
+        "mount": statements_off_the_mount.parent,
+        "tree": statements_off_the_mount,
+        "window": statements_off_the_mount / "2026-07-01_2026-11-01",
+    }[where]
+    listing = Path.iterdir
+
+    def failing(path):
+        if path == target:
+            raise OSError("Input/output error")
+        return listing(path)
+
+    monkeypatch.setattr(Path, "iterdir", failing)
+    _unreadable_statements(tmp_path, statements_off_the_mount)
 
 
 _PATCH_PASS_HOSTS = [host for host, _ in ops_daily.PATCH_PASSES]
@@ -2315,7 +2420,9 @@ def test_a_host_with_no_full_converge_on_record_owes_no_patch_pass(tmp_path, hos
         deploy_log=_deploy_log(tmp_path, *log),
     )
     assert read.unreadable is None, read.unreadable
-    assert {r.name for r in read.reminders} == {"refdata sweep", "healable re-derivation"} | {_PATCH_PASS_NAMES[o] for o in others}
+    assert {r.name for r in read.reminders} == {"refdata sweep", "healable re-derivation", "kraken bookkeeping"} | {
+        _PATCH_PASS_NAMES[o] for o in others
+    }
 
 
 def test_a_hosts_malformed_row_leaves_the_next_hosts_patch_pass_read(tmp_path, monkeypatch):
