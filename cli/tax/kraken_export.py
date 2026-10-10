@@ -72,7 +72,12 @@ def _rows(path: Path, columns: tuple[str, ...], data: bytes | None) -> list[dict
     missing = [column for column in columns if column not in (reader.fieldnames or [])]
     if missing:
         raise TaxExportError(f"{path} has no {', '.join(missing)} column")
-    return list(reader)
+    rows = list(reader)
+    for number, raw in enumerate(rows, start=1):
+        # csv.DictReader fills a short row's absent columns with None, a whitespace-only line among them.
+        if any(raw[column] is None for column in columns):
+            raise TaxExportError(f"{path} data row {number} ({raw['txid']}): fewer fields than the header names")
+    return rows
 
 
 def read_ledger(path: Path, data: bytes | None = None) -> list[LedgerRow]:

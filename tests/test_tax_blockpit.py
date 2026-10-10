@@ -116,6 +116,30 @@ def test_a_value_the_export_does_not_write_is_refused(tmp_path, column, value):
         read_ledger(_edited(tmp_path, LEDGER_1, [("LFX001-SYNTH-LEDGER", column, value)]))
 
 
+SHORT_LEDGER_ROW = '"LFX099-SYNTH-LEDGER","DFX099-SYNTH-REFID","2031-03-29 10:00:00","deposit"\n'
+
+
+def _appended(directory: Path, source: Path, line: str) -> Path:
+    target = directory / source.name
+    target.write_text(source.read_text() + line)
+    return target
+
+
+@pytest.mark.parametrize(
+    "read,source,line,row",
+    [
+        (read_ledger, LEDGER_1, SHORT_LEDGER_ROW, "data row 32 (LFX099-SYNTH-LEDGER)"),
+        (read_ledger, LEDGER_1, " \n", "data row 32 ( )"),
+        (read_trades, TRADES_1, '"TFX099-SYNTH-TRADES","OFX099-SYNTH-ORDERS","ALGO/EUR"\n', "data row 13 (TFX099-SYNTH-TRADES)"),
+    ],
+    ids=["short_ledger_row", "whitespace_only_ledger_line", "short_trades_row"],
+)
+def test_a_row_shorter_than_the_header_is_refused_by_its_data_row(tmp_path, read, source, line, row):
+    path = _appended(tmp_path, source, line)
+    with pytest.raises(TaxExportError, match=re.escape(f"{path} {row}: fewer fields than the header names")):
+        read(path)
+
+
 def test_window_one_maps_to_its_golden_rows():
     mapped = blockpit.map_rows(read_ledger(LEDGER_1), read_trades(TRADES_1))
     assert mapped.refusals == []
@@ -292,6 +316,12 @@ REFUSALS = [
     ),
     ("sweep_receive_credits_nothing", LEDGER_1, [("LFX031-SYNTH-LEDGER", "amount", "-0.0003")], "a receive that credits nothing"),
     ("sweep_spend_debits_nothing", LEDGER_1, [("LFX029-SYNTH-LEDGER", "amount", "0.00004")], "a spend that debits nothing"),
+    (
+        "sweep_receives_a_spent_asset",
+        LEDGER_1,
+        [("LFX031-SYNTH-LEDGER", "asset", "NEAR")],
+        "the receive is in NEAR, an asset a spend spends",
+    ),
     ("sweep_amountusd_missing", LEDGER_1, [("LFX029-SYNTH-LEDGER", "amountusd", "-")], "cannot be shared"),
     ("sweep_amountusd_not_finite", LEDGER_1, [("LFX029-SYNTH-LEDGER", "amountusd", "NaN")], "cannot be shared"),
     (
@@ -453,6 +483,21 @@ def test_an_existing_output_is_never_overwritten(tmp_path, existing):
         _run(tmp_path)
     assert sorted(path.name for path in tmp_path.iterdir()) == [existing]
     assert (tmp_path / existing).read_text() == "{}"
+
+
+def test_a_failed_provenance_write_removes_the_import_file_and_raises(tmp_path, monkeypatch):
+    write_bytes = Path.write_bytes
+
+    def no_space_for_the_provenance(path: Path, data: bytes) -> int:
+        if path.name.endswith(".provenance.json"):
+            raise OSError(28, "No space left on device", str(path))
+        return write_bytes(path, data)
+
+    monkeypatch.setattr(Path, "write_bytes", no_space_for_the_provenance)
+    with pytest.raises(OSError, match="No space left on device"):
+        _run(tmp_path)
+    assert not (tmp_path / "window-1-blockpit.csv").exists()
+    assert sorted(tmp_path.iterdir()) == []
 
 
 def test_a_row_moving_nothing_is_counted_and_written_nowhere(tmp_path):
@@ -704,6 +749,16 @@ def test_the_command_refuses_an_unreadable_input_with_exit_1(tmp_path):
     assert not (tmp_path / "o.csv").exists()
 
 
+def test_the_command_refuses_a_short_row_with_exit_1_and_writes_nothing(tmp_path):
+    (tmp_path / "inputs").mkdir()
+    ledger = _appended(tmp_path / "inputs", LEDGER_1, SHORT_LEDGER_ROW)
+    out = tmp_path / "o.csv"
+    result = RUNNER.invoke(app, ["tax", "blockpit", "--ledgers", str(ledger), "--trades", str(TRADES_1), "--out", str(out)])
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit)
+    assert f"{ledger} data row 32 (LFX099-SYNTH-LEDGER): fewer fields than the header names" in result.output
+    assert sorted(tmp_path.iterdir()) == [tmp_path / "inputs"]
+
+
 def test_the_command_refuses_an_out_under_an_absent_directory_with_exit_1(tmp_path):
     out = tmp_path / "absent" / "o.csv"
     result = RUNNER.invoke(app, ["tax", "blockpit", "--ledgers", str(LEDGER_1), "--trades", str(TRADES_1), "--out", str(out)])
@@ -739,9 +794,9 @@ def test_the_transform_imports_nothing_outside_its_allowlist():
         "io",
         "json",
         "pathlib",
+        "logging",
         "typing",
         "typer",
-        "cli.logging",
     }
     paths = sorted((Path(__file__).resolve().parents[1] / "cli" / "tax").glob("*.py"))
     assert paths
@@ -754,6 +809,11 @@ def test_the_transform_imports_nothing_outside_its_allowlist():
             else:
                 continue
             for name in names:
+                assert name != "cli.logging" and not name.startswith("cli.logging."), (
+                    path.name,
+                    name,
+                    "cli.logging reaches the network: its package imports cli.logging.ship, which ships to Loki over urllib.request",
+                )
                 assert name in allowed or name.startswith("cli.tax."), (path.name, name)
 
 

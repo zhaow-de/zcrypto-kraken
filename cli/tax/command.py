@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Optional
 
 import typer
 
-from cli.logging import get_logger
 from cli.tax.blockpit import transform
 from cli.tax.errors import Refused, TaxExportError
 
-logger = get_logger("tax.command")
+logger = logging.getLogger("zcrypto.tax.command")
 
 tax_app = typer.Typer(
     no_args_is_help=True,

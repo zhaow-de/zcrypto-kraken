@@ -272,6 +272,9 @@ def _sweep(refid: str, rows: list[LedgerRow], trades: dict[str, TradeRow], mappe
     if receives[0].dec("amount") <= 0 or any(row.dec("amount") >= 0 for row in spends):
         mapped.refuse(rows, kind, "a receive that credits nothing, or a spend that debits nothing")
         return
+    if any(spend.asset == receives[0].asset for spend in spends):
+        mapped.refuse(rows, kind, f"the receive is in {receives[0].asset}, an asset a spend spends")
+        return
     try:
         values = [abs(row.dec("amountusd")) for row in spends]
     except InvalidOperation:
@@ -539,7 +542,11 @@ def transform(ledgers: Path, trades: Path, out: Path, after: Path | None = None)
     }
     provenance = (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8")
     out.write_bytes(body)
-    provenance_path.write_bytes(provenance)
+    try:
+        provenance_path.write_bytes(provenance)
+    except OSError:
+        out.unlink()
+        raise
     label_rows = dict(Counter(row.label for row in mapped.rows))
     return Written(out, provenance_path, len(mapped.rows), label_rows, closing_all, _sha256(body), _sha256(provenance))
 
