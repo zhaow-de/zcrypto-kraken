@@ -28,9 +28,6 @@ def line_bytes(line: dict) -> bytes:
 
 
 def day_bars(pair_index: int, day: date, fields: dict[str, float]) -> pl.DataFrame:
-    """The 96 bars of `day`, in `FRAME_SCHEMA`'s order. Slot `i` at level `L = 100·(pair_index + 1) + 10·(days after
-    BASE_DAY)` opens at `L + i`, highs `L + i + 2`, lows `L + i − 1`, closes `L + i + 1`, vwap `L + i + 0.5`, volume 0.5,
-    count 3; each field `fields` names takes its value on every bar instead."""
     assert fields.keys() <= _FIELDS, f"a bar override names only {sorted(_FIELDS)}, not {sorted(fields)}"
     start = datetime(day.year, day.month, day.day, tzinfo=UTC)
     level = 100.0 * (pair_index + 1) + 10.0 * (day - BASE_DAY).days

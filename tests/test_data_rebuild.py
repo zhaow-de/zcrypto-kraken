@@ -175,8 +175,6 @@ def test_refresh_universe_writes_point_in_time_universe_json(tmp_path, monkeypat
     monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
 
     ohlc_root = tmp_path / "ohlc-rolling"
-    # One head for every pair: a chained set ends each pair at its head's day, 2026-10-30, two days
-    # before the stamp and inside the 7-day budget, so the two frontiers are that one day.
     write_chain(ohlc_root, days=30)
     head = _head(30)
 
@@ -271,8 +269,7 @@ def test_rebuild_refuses_ohlc_reach_as_an_unknown_set(tmp_path):
 
 
 def test_refresh_universe_reads_past_a_hole_older_than_its_volume_window(tmp_path, monkeypatch):
-    """A hole is permanent, so a read of the whole history would refuse every rebuild after one: the read
-    spans the 30 daily bars the median takes, 2026-10-03 to the head 2026-11-01 here."""
+    """The read spans the 30 daily bars the median takes, 2026-10-03 to the head 2026-11-01 here."""
     monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR", "ETH/BTC"))
     monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
     stamp = _stamp(_head(32) + timedelta(days=2))
@@ -430,11 +427,6 @@ def test_refresh_universe_actually_applies_the_spread_cap(tmp_path, monkeypatch)
 
 
 def test_refresh_universe_refuses_a_stale_ohlc_set(tmp_path, monkeypatch):
-    """T0093: the volume floor is a TRAILING 30-day median, so it is only meaningful if the dataset
-    reaches the present. The rolling set stops at its head, which a pair the tape stops carrying holds,
-    so this path can compute a "30-day median" over a window in the past and shrink the universe for
-    what looks like a liquidity move. Fail closed instead of selecting quietly.
-    """
     monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR",))
     monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
 
@@ -537,14 +529,10 @@ def test_a_symbol_the_floor_rejects_is_NOT_a_missing_source(tmp_path, monkeypatc
 
 
 def test_refresh_universe_reads_the_rolling_set_not_the_hardcoded_ohlc_full(tmp_path, monkeypatch):
-    """The WIRING: `_refresh_universe` must read `ohlc-rolling` at its head, not a hard-coded
-    `ohlc-full`. Here `ohlc-full` is stale (refuses if read) and a fresh rolling set is what must
-    actually get read, so a revert flips this test from a passing rebuild to an unhandled staleness
-    DataSyncError."""
+    """The wiring: the rebuild reads `ohlc-rolling` at its head, its provenance naming the set and the head line's
+    sha256, and never the `ohlc-full` beside it, which holds no index line, so a rebuild reading it refuses."""
     monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
 
-    # Stale ohlc-full: newest bar far past the 7-day budget. If _refresh_universe still reads this
-    # (the reverted wiring), the rebuild refuses here instead of succeeding.
     stale_root = tmp_path / "ohlc-full"
     for symbol in rebuild.CANDIDATE_SYMBOLS:
         base, quote = symbol.split("/")

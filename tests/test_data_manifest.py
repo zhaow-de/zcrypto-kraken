@@ -291,9 +291,8 @@ def test_one_span_bound_null_and_the_other_set_is_refused():
 
 # --- every writer, one contract --------------------------------------------------------------------
 #
-# One driver per module of `cli/` that names `build_manifest`. Three reach a remote through an
-# injected seam; the OHLCVT and legacy-conversion drivers read only local files. Every producer
-# runs offline against a tmp tree either way.
+# One driver per module of `cli/` that names `build_manifest`; a driver that reaches a remote does so through an
+# injected seam, so every producer runs offline against a tmp tree.
 
 
 class _Resp(io.BytesIO):
