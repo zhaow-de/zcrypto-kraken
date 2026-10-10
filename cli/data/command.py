@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import typer
@@ -181,3 +181,67 @@ def rolling_verify(
         raise _abort(str(exc)) from exc
 
     typer.echo(f"{day} {line.sha256} files={files}")
+
+
+@rolling_app.command("base")
+def rolling_base(
+    source: Path = typer.Option(..., "--source", help="The frozen 15-minute set to copy from, its manifest beside its files."),
+    out: Path = typer.Option(..., "--out", help="The rolling set's directory, where the base files and the base line land."),
+    staging: Path = typer.Option(
+        ..., "--staging", help="A directory outside --out on the same filesystem, where each file is written before its rename."
+    ),
+) -> None:
+    """Stage the set's base once: copy the twelve 15-minute files, check them against the frozen frame, write the base line."""
+    from cli.data.rolling import RollingError, stage_base
+
+    try:
+        line = stage_base(source, out, staging)
+    except (RollingError, OSError) as exc:
+        raise _abort(str(exc)) from exc
+
+    typer.echo(f"base {line.sha256} files={len(line.files)}")
+
+
+def _day_option(option: str, text: str) -> date:
+    try:
+        return datetime.strptime(text, "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise _abort(f"{option} {text!r} is not a YYYY-MM-DD date") from exc
+
+
+@rolling_app.command("extend")
+def rolling_extend(
+    tape_root: Path = typer.Option(..., "--tape-root", help="tape-bars' tree of daily finals and their sidecars, read only."),
+    out: Path = typer.Option(..., "--out", help="The rolling set's directory, holding its base line."),
+    staging: Path = typer.Option(
+        ..., "--staging", help="A directory outside --out on the same filesystem, where each file is written before its rename."
+    ),
+    close_pairs: list[str] | None = typer.Option(
+        None, "--close-pair", help="A pair the owner closes, its days holes until a final reappears; once per pair."
+    ),
+    from_day: str | None = typer.Option(None, "--from", help="The first day the closed pairs are holes, as YYYY-MM-DD."),
+    owner_word: str | None = typer.Option(None, "--owner-word", help="The owner's word closing the pairs, recorded in each line."),
+    owner_date: str | None = typer.Option(None, "--owner-date", help="The day the owner gave that word, as YYYY-MM-DD."),
+) -> None:
+    """Extend the set day by day from tape-bars' finals, each day's index line written after its files, and print the head.
+
+    A day waits while a pair has no final for it and its newest final is inside the re-scan window; a pair the owner
+    closes is a hole from --from until a final of its own reappears. The four close options are given together or not at all.
+    """
+    from cli.data.rolling import Close, RollingError, extend
+
+    given = {"--close-pair": close_pairs, "--from": from_day, "--owner-word": owner_word, "--owner-date": owner_date}
+    missing = [option for option, value in given.items() if not value]
+    if missing and len(missing) < len(given):
+        raise _abort(f"a close takes --close-pair, --from, --owner-word and --owner-date together; missing {', '.join(missing)}")
+    close = None
+    if not missing:
+        close = Close(tuple(close_pairs), _day_option("--from", from_day), owner_word, _day_option("--owner-date", owner_date))
+
+    try:
+        result = extend(tape_root, out, staging, close=close)
+    except (RollingError, OSError) as exc:
+        raise _abort(str(exc)) from exc
+
+    summary = f"head={result.head.day} days_written={result.days_written} holes={result.holes}"
+    typer.echo(f"{summary} ended" if result.ended else summary)
