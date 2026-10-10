@@ -326,3 +326,13 @@ def test_a_rollover_and_a_close_whose_open_is_an_earlier_windows_are_no_refusal(
     mapped = blockpit.map_rows(read_ledger(LEDGER_2), read_trades(TRADES_2))
     assert mapped.refusals == []
     assert mapped.positions == {"TFX012-SYNTH-TRADES": ["LFX101-SYNTH-LEDGER", "LFX102-SYNTH-LEDGER"]}
+
+
+def test_a_trades_row_without_its_ledger_rows_is_refused(tmp_path):
+    trades = read_trades(_edited(tmp_path, TRADES_1, [("TFX003-SYNTH-TRADES", "ledgers", "LFX999-SYNTH-LEDGER")]))
+    (refusal,) = blockpit.check_cross(read_ledger(LEDGER_1), trades)
+    assert refusal.txids == ("TFX003-SYNTH-TRADES",) and refusal.kind == "trades"
+
+
+def test_a_trades_row_naming_one_present_ledger_id_is_enough():
+    assert blockpit.check_cross(read_ledger(LEDGER_1), read_trades(TRADES_1)) == []

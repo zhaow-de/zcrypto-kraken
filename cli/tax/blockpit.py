@@ -378,3 +378,12 @@ def render_csv(rows: list[OutRow]) -> bytes:
             )
         )
     return buffer.getvalue().encode("utf-8")
+
+
+def check_cross(ledger: list[LedgerRow], trades: dict[str, TradeRow]) -> list[Refusal]:
+    present = {row.txid for row in ledger}
+    return [
+        Refusal((trade.txid,), "trades", "none of its ledger ids is in the ledger export")
+        for trade in trades.values()
+        if not present.intersection(trade.ledgers)
+    ]
