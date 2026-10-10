@@ -114,7 +114,7 @@ def _refresh_universe(ctx: RebuildContext, out_root: Path) -> None:
         # A pair the head line records as closed on the owner's word has no data while the close runs, so it is
         # no candidate. The selection rule keeps a mandatory leg selected only among the candidates it is handed,
         # so a closed mandatory pair refuses the rebuild instead (spec 00125 D6).
-        closed = [pair for pair in set_pairs if f"{rolling._CLOSED}{pair}" in line.notes]
+        closed = sorted(rolling.closed_pairs(line, set_pairs))
         for pair in closed:
             base, quote = pair.split("/")
             if _is_mandatory(SimpleNamespace(base=base, quote=quote), MANDATORY):

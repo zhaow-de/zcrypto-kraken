@@ -1117,7 +1117,7 @@ def read_rolling_head(*, now: datetime, root: Path, tape_root: Path) -> Check:
         line = rolling.walk_chain(root, days[-1])[-1]
         rolling.verify_line(root, line)
         set_pairs = rolling.pairs(root)
-        closed = {pair for pair in set_pairs if f"closed {pair}" in line.notes}
+        closed = rolling.closed_pairs(line, set_pairs)
         named = f"line {line.sha256[:12]}"
         # `is_ended` reads the tape only for a line closing every pair.
         if closed == set(set_pairs):

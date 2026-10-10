@@ -456,12 +456,16 @@ def _newest_final(tape_root: Path, pair: str) -> date | None:
         raise RollingError(str(exc)) from exc
 
 
+def closed_pairs(line: Line, set_pairs: tuple[str, ...]) -> frozenset[str]:
+    return frozenset(pair for pair in set_pairs if f"{_CLOSED}{pair}" in line.notes)
+
+
 def is_ended(root: Path, line: Line, tape_root: Path) -> bool:
     """True when `line` closes every one of the set's pairs and none of them has a final under `tape_root` dated after
     it -- the set ended by the owner's closes, which such a later final reopens. The tape is read only for a line that
     closes every pair, and only after `list_tape`."""
     set_pairs = pairs(root)
-    if not all(f"{_CLOSED}{pair}" in line.notes for pair in set_pairs):
+    if closed_pairs(line, set_pairs) != set(set_pairs):
         return False
     return not any((_newest_final(tape_root, pair) or line.day) > line.day for pair in set_pairs)
 
