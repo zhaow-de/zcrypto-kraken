@@ -387,3 +387,148 @@ def check_cross(ledger: list[LedgerRow], trades: dict[str, TradeRow]) -> list[Re
         for trade in trades.values()
         if not present.intersection(trade.ledgers)
     ]
+
+
+def check_chain(ledger: list[LedgerRow]) -> tuple[dict[str, Decimal], dict[str, Decimal], list[Refusal]]:
+    opening: dict[str, Decimal] = {}
+    closing: dict[str, Decimal] = {}
+    refusals = []
+    for row in ledger:
+        moved = row.dec("amount") - row.dec("fee")
+        if row.asset not in closing:
+            opening[row.asset] = row.dec("balance") - moved
+        elif closing[row.asset] + moved != row.dec("balance"):
+            reason = (
+                f"{row.asset} balance {row.balance} is not the previous {_plain(closing[row.asset])} + {row.amount} - {row.fee}"
+            )
+            refusals.append(Refusal((row.txid,), "balance", reason))
+        closing[row.asset] = row.dec("balance")
+    return opening, closing, refusals
+
+
+def check_conservation(ledger: list[LedgerRow], rows: list[OutRow]) -> list[Refusal]:
+    want: dict[str, Decimal] = defaultdict(Decimal)
+    got: dict[str, Decimal] = defaultdict(Decimal)
+    for row in ledger:
+        want[row.asset] += row.dec("amount") - row.dec("fee")
+    for row in rows:
+        for asset, moved in _moves(row):
+            got[asset] += moved
+    return [
+        Refusal((), "conservation", f"{asset} moves {_plain(got[asset])} in the output and {_plain(want[asset])} in the ledger")
+        for asset in sorted(set(want) | set(got))
+        if got[asset] != want[asset]
+    ]
+
+
+def check_order(opening: dict[str, Decimal], rows: list[OutRow]) -> list[Refusal]:
+    held = dict(opening)
+    refusals = []
+    for row in _written(rows):
+        moved: dict[str, Decimal] = defaultdict(Decimal)
+        for asset, amount in _moves(row):
+            moved[asset] += amount
+        for asset, amount in moved.items():
+            held[asset] = held.get(asset, Decimal(0)) + amount
+            if held[asset] < 0:
+                reason = f"{asset} runs to {_plain(held[asset])} at this row in the written order"
+                refusals.append(Refusal((row.trx_id,), "order", reason))
+    return refusals
+
+
+def check_unique(rows: list[OutRow]) -> list[Refusal]:
+    counts = Counter(row.trx_id for row in rows)
+    return [
+        Refusal((trx_id,), "trx-id", f"{count} output rows carry this Trx. ID")
+        for trx_id, count in sorted(counts.items())
+        if count > 1
+    ]
+
+
+def _label_sums(rows: list[OutRow]) -> dict:
+    sums: dict = {}
+    for row in rows:
+        for asset, amount, column in (
+            (row.in_asset, row.in_amount, "incoming"),
+            (row.out_asset, row.out_amount, "outgoing"),
+            (row.fee_asset, row.fee_amount, "fee"),
+        ):
+            if asset:
+                entry = sums.setdefault(row.label, {}).setdefault(
+                    asset, {"rows": 0, "incoming": Decimal(0), "outgoing": Decimal(0), "fee": Decimal(0)}
+                )
+                entry[column] += Decimal(amount)
+        for asset in {row.in_asset, row.out_asset} - {""}:
+            sums[row.label][asset]["rows"] += 1
+    return {
+        label: {
+            asset: {key: value if key == "rows" else _plain(value) for key, value in entry.items()}
+            for asset, entry in assets.items()
+        }
+        for label, assets in sums.items()
+    }
+
+
+def _sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+@dataclass(frozen=True)
+class Written:
+    out: Path
+    provenance: Path
+    rows: int
+    label_rows: dict[str, int]
+    closing: dict[str, str]
+    sha256: str
+    provenance_sha256: str
+
+
+def transform(ledgers: Path, trades: Path, out: Path) -> Written:
+    provenance_path = out.with_name(out.name + ".provenance.json")
+    for path in (out, provenance_path):
+        if path.exists():
+            raise TaxExportError(f"{path} exists, and a run never overwrites a file")
+    ledger_bytes, trades_bytes = ledgers.read_bytes(), trades.read_bytes()
+    ledger, trade_rows = read_ledger(ledgers, ledger_bytes), read_trades(trades, trades_bytes)
+    mapped = map_rows(ledger, trade_rows)
+    opening, closing, chain = check_chain(ledger)
+    first_time = ledger[0].time if ledger else None
+    refusals = [
+        *mapped.refusals,
+        *check_cross(ledger, trade_rows),
+        *chain,
+        *check_conservation(ledger, mapped.rows),
+        *check_order(opening, mapped.rows),
+        *check_unique(mapped.rows),
+    ]
+    if refusals:
+        raise Refused(refusals)
+    body = render_csv(mapped.rows)
+    closing_all = {asset: _plain(value) for asset, value in sorted(closing.items())}
+    last_time = ledger[-1].time if ledger else None
+    record = {
+        "inputs": {
+            "ledgers": {
+                "file": ledgers.name,
+                "sha256": _sha256(ledger_bytes),
+                "rows": len(ledger),
+                "first_time": first_time,
+                "last_time": last_time,
+            },
+            "trades": {"file": trades.name, "sha256": _sha256(trades_bytes), "rows": len(trade_rows)},
+        },
+        "output": {"file": out.name, "sha256": _sha256(body), "rows": len(mapped.rows)},
+        "labels": _label_sums(mapped.rows),
+        "opening": {asset: _plain(value) for asset, value in sorted(opening.items())},
+        "closing": closing_all,
+        "positions": {position: sorted(txids) for position, txids in sorted(mapped.positions.items())},
+        "no_movement": mapped.no_movement,
+        "previous": None,
+        "zcrypto": version("zcrypto"),
+    }
+    provenance = (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    out.write_bytes(body)
+    provenance_path.write_bytes(provenance)
+    label_rows = dict(Counter(row.label for row in mapped.rows))
+    return Written(out, provenance_path, len(mapped.rows), label_rows, closing_all, _sha256(body), _sha256(provenance))

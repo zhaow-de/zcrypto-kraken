@@ -336,3 +336,193 @@ def test_a_trades_row_without_its_ledger_rows_is_refused(tmp_path):
 
 def test_a_trades_row_naming_one_present_ledger_id_is_enough():
     assert blockpit.check_cross(read_ledger(LEDGER_1), read_trades(TRADES_1)) == []
+
+
+def _run(tmp_path: Path, ledger: Path = LEDGER_1, trades: Path = TRADES_1, name: str = "window-1-blockpit.csv"):
+    return blockpit.transform(ledger, trades, tmp_path / name)
+
+
+def _provenance(path: Path) -> dict:
+    record = json.loads(path.read_text())
+    return {key: value for key, value in record.items() if key not in ("zcrypto", "previous")}
+
+
+def test_a_run_writes_window_ones_golden_rows_and_provenance(tmp_path):
+    written = _run(tmp_path)
+    assert written.out.read_bytes() == (FIXTURES / "window-1-blockpit.csv").read_bytes()
+    assert _provenance(written.provenance) == json.loads((FIXTURES / "window-1-blockpit.csv.provenance.json").read_text())
+    text = written.provenance.read_text()
+    assert text == json.dumps(json.loads(text), indent=2, sort_keys=True) + "\n"
+    record = json.loads(text)
+    assert record["zcrypto"] == version("zcrypto") and record["previous"] is None
+
+
+def test_two_runs_are_byte_equal(tmp_path):
+    first, second = tmp_path / "a", tmp_path / "b"
+    first.mkdir(), second.mkdir()
+    one, two = _run(first), _run(second)
+    assert one.out.read_bytes() == two.out.read_bytes()
+    assert one.provenance.read_bytes() == two.provenance.read_bytes()
+
+
+def test_a_run_over_the_trades_rows_reordered_writes_the_same_file(tmp_path):
+    header, *rows = TRADES_1.read_text().splitlines()
+    (tmp_path / "reordered").mkdir()
+    reordered = tmp_path / "reordered" / TRADES_1.name
+    reordered.write_text("\n".join([header, *reversed(rows)]) + "\n")
+    plain, shuffled = _run(tmp_path), _run(tmp_path, trades=reordered, name="reordered.csv")
+    assert shuffled.out.read_bytes() == plain.out.read_bytes()
+
+
+def test_the_provenance_hashes_are_the_files(tmp_path):
+    written = _run(tmp_path)
+    record = json.loads(written.provenance.read_text())
+    assert record["output"]["sha256"] == hashlib.sha256(written.out.read_bytes()).hexdigest()
+    assert record["inputs"]["ledgers"]["sha256"] == hashlib.sha256(LEDGER_1.read_bytes()).hexdigest()
+    assert record["inputs"]["trades"]["sha256"] == hashlib.sha256(TRADES_1.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize(
+    "edits",
+    [[("LFX005-SYNTH-LEDGER", "balance", "320.0")], [("LFX013-SYNTH-LEDGER", None, None)]],
+    ids=["balance_edited", "row_removed"],
+)
+def test_a_broken_balance_chain_is_refused_and_nothing_is_written(tmp_path, edits):
+    ledger = _edited(tmp_path, LEDGER_1, edits)
+    with pytest.raises(Refused) as caught:
+        _run(tmp_path, ledger=ledger)
+    assert "balance" in {refusal.kind for refusal in caught.value.refusals}
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["window-1-ledgers.csv"]
+
+
+@pytest.mark.parametrize("source,edits,reason", [case[1:] for case in REFUSALS], ids=[case[0] for case in REFUSALS])
+def test_each_refused_shape_writes_nothing(tmp_path, source, edits, reason):
+    ledger, trades = _refusal_inputs(tmp_path, source, edits)
+    before = sorted(tmp_path.iterdir())
+    with pytest.raises(Refused) as caught:
+        _run(tmp_path, ledger=ledger, trades=trades)
+    assert any(reason in refusal.reason for refusal in caught.value.refusals), [r.line() for r in caught.value.refusals]
+    assert sorted(tmp_path.iterdir()) == before
+
+
+def test_a_mapping_that_loses_a_movement_is_refused_by_conservation(tmp_path, monkeypatch):
+    monkeypatch.setitem(blockpit.SINGLE, ("rollover", ""), lambda row, trades, mapped: None)
+    with pytest.raises(Refused) as caught:
+        _run(tmp_path)
+    assert [refusal.line() for refusal in caught.value.refusals] == [
+        "refused - [conservation]: EUR moves 1174.1203 in the output and 1174.1133 in the ledger"
+    ]
+
+
+def test_two_rows_with_one_trx_id_are_refused():
+    row = blockpit.map_rows(read_ledger(LEDGER_1), read_trades(TRADES_1)).rows[0]
+    (refusal,) = blockpit.check_unique([row, row])
+    assert refusal.kind == "trx-id" and refusal.txids == (row.trx_id,)
+
+
+def test_a_run_refuses_a_trades_row_without_its_ledger_rows(tmp_path):
+    trades = _edited(tmp_path, TRADES_1, [("TFX003-SYNTH-TRADES", "ledgers", "LFX999-SYNTH-LEDGER")])
+    with pytest.raises(Refused) as caught:
+        _run(tmp_path, trades=trades)
+    assert [refusal.kind for refusal in caught.value.refusals] == ["trades"]
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["window-1-trades.csv"]
+
+
+def test_a_run_refuses_two_rows_with_one_trx_id(tmp_path, monkeypatch):
+    deposit = blockpit.SINGLE[("deposit", "")]
+
+    def twice(row, trades, mapped):
+        deposit(row, trades, mapped)
+        deposit(row, trades, mapped)
+
+    monkeypatch.setitem(blockpit.SINGLE, ("deposit", ""), twice)
+    with pytest.raises(Refused) as caught:
+        _run(tmp_path)
+    assert "trx-id" in {refusal.kind for refusal in caught.value.refusals}
+
+
+@pytest.mark.parametrize(
+    "existing", ["window-1-blockpit.csv", "window-1-blockpit.csv.provenance.json"], ids=["out_file", "provenance_file"]
+)
+def test_an_existing_output_is_never_overwritten(tmp_path, existing):
+    (tmp_path / existing).write_text("{}")
+    with pytest.raises(TaxExportError, match="never overwrites"):
+        _run(tmp_path)
+    assert sorted(path.name for path in tmp_path.iterdir()) == [existing]
+    assert (tmp_path / existing).read_text() == "{}"
+
+
+def test_a_row_moving_nothing_is_counted_and_written_nowhere(tmp_path):
+    edits = [
+        ("LFX013-SYNTH-LEDGER", "fee", "0.0"),
+        ("LFX013-SYNTH-LEDGER", "balance", "1189.065"),
+        ("LFX014-SYNTH-LEDGER", "fee", "0.007"),
+    ]
+    written = _run(tmp_path, ledger=_edited(tmp_path, LEDGER_1, edits))
+    assert json.loads(written.provenance.read_text())["no_movement"] == 1
+    assert "LFX013-SYNTH-LEDGER" not in written.out.read_text()
+
+
+def test_a_run_over_a_ledger_without_a_column_writes_nothing(tmp_path):
+    ledger = _without(tmp_path, LEDGER_1, "wallet")
+    before = sorted(tmp_path.iterdir())
+    with pytest.raises(TaxExportError, match="wallet"):
+        _run(tmp_path, ledger=ledger)
+    assert sorted(tmp_path.iterdir()) == before
+
+
+def _moved(path: Path, txid: str, before: str) -> Path:
+    header, *rows = path.read_text().splitlines()
+    (row,) = [line for line in rows if line.startswith(f"{txid},")]
+    rows.remove(row)
+    rows.insert(next(at for at, line in enumerate(rows) if line.startswith(f"{before},")), row)
+    path.write_text("\n".join([header, *rows]) + "\n")
+    return path
+
+
+def test_a_written_order_that_runs_an_asset_below_zero_is_refused(tmp_path):
+    # The sell's EUR credit first and its ALGO debit after the buy, one second: each balance chains, and the sell,
+    # written at its first row, spends ALGO the buy has not yet credited.
+    at = "2031-03-03 10:00:00"
+    edits = [
+        ("LFX006-SYNTH-LEDGER", "time", at),
+        ("LFX006-SYNTH-LEDGER", "balance", "1309.76"),
+        ("LFX003-SYNTH-LEDGER", "balance", "1189.28"),
+        ("LFX005-SYNTH-LEDGER", "time", at),
+    ]
+    ledger = _moved(_edited(tmp_path, LEDGER_1, edits), "LFX006-SYNTH-LEDGER", before="LFX003-SYNTH-LEDGER")
+    before = sorted(tmp_path.iterdir())
+    with pytest.raises(Refused) as caught:
+        _run(tmp_path, ledger=ledger)
+    assert [refusal.line() for refusal in caught.value.refusals] == [
+        "refused TFX002-SYNTH-TRADES [order]: ALGO runs to -160 at this row in the written order"
+    ]
+    assert sorted(tmp_path.iterdir()) == before
+
+
+@pytest.mark.parametrize("source", [LEDGER_1, TRADES_1], ids=["ledgers", "trades"])
+def test_each_input_is_read_once_and_its_rows_parse_the_bytes_it_hashed(tmp_path, monkeypatch, source):
+    (tmp_path / "inputs").mkdir()
+    copy = tmp_path / "inputs" / source.name
+    copy.write_bytes(source.read_bytes())
+    read_bytes = Path.read_bytes
+
+    def read_then_empty(path: Path) -> bytes:
+        data = read_bytes(path)
+        if path == copy:
+            copy.write_bytes(b"")
+        return data
+
+    monkeypatch.setattr(Path, "read_bytes", read_then_empty)
+    ledger, trades = (copy, TRADES_1) if source == LEDGER_1 else (LEDGER_1, copy)
+    written = _run(tmp_path, ledger=ledger, trades=trades)
+    assert written.out.read_bytes() == (FIXTURES / "window-1-blockpit.csv").read_bytes()
+    assert _provenance(written.provenance) == json.loads((FIXTURES / "window-1-blockpit.csv.provenance.json").read_text())
+
+
+def test_a_run_over_a_trades_export_without_a_column_writes_nothing(tmp_path):
+    trades = _without(tmp_path, TRADES_1, "pair")
+    before = sorted(tmp_path.iterdir())
+    with pytest.raises(TaxExportError, match="has no pair column"):
+        _run(tmp_path, trades=trades)
+    assert sorted(tmp_path.iterdir()) == before
