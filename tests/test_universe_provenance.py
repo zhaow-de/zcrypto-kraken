@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from cli.data.rolling import line_days, line_relpath, verify
+from tests.rolling_fixtures import write_chain
 from tests.skip_gates import nothing_found_under
 
 pytestmark = pytest.mark.data
@@ -45,31 +47,68 @@ def test_the_v0_catalog_table_still_reproduces_its_own_basket_hash():
     )
 
 
-def test_the_universe_doc_cites_a_hash_that_reproduces_from_the_set_it_names():
-    """The live half: if the doc is regenerated against a new source but its cited hash is not updated
-    in step -- or vice versa -- the artifact cites a basket it was not selected from (T0065)."""
-    text = _UNIVERSE.read_text()
-    stated = re.search(r"`([0-9a-f]{64})`", text.split("basket sha256")[1])
-    assert stated, "the universe doc no longer states a basket sha256 after that phrase"
-
+def _named_set(text: str) -> str:
     named = re.search(r"`data/(ohlc[\w.-]*)/", text)
     assert named, "the universe doc no longer names the OHLC set its volume signal read"
-    manifest = _ROOT / "data" / named.group(1) / "manifest.json"
-    if nothing_found_under(_ROOT / "data", f"{named.group(1)}/manifest.json"):
-        pytest.skip(f"{manifest} absent -- the set is gitignored and not present on this machine")
+    return named.group(1)
 
-    # The set now DECLARES which digest identifies it (spec 00099): reach's identity is its continuous
-    # subset, so reading one named key would be wrong for one of the two sets `resolve_ohlc_source` names.
+
+def _the_doc_cites_the_set_it_names(text: str, data: Path) -> None:
+    """The sha256 the doc cites against the set it names under `data`: one of a chained set's index lines,
+    which `verify` then walks to the base, else the identity digest a set's manifest declares."""
+    stated = re.search(r"`([0-9a-f]{64})`", text.split("basket sha256")[1])
+    assert stated, "the universe doc no longer states a basket sha256 after that phrase"
+    named = _named_set(text)
+    root = data / named
+
+    if (root / "index").is_dir():
+        cited = [
+            day for day in line_days(root) if hashlib.sha256((root / line_relpath(day)).read_bytes()).hexdigest() == stated.group(1)
+        ]
+        assert cited, f"the universe doc cites a sha256 none of {named}'s index lines hashes to: {stated.group(1)[:12]}"
+        verify(root, cited[0])
+        return
+
+    # The set DECLARES which digest identifies it (spec 00099): reach's identity is its continuous
+    # subset and ohlc-full's is set-wide, so reading one named key would be wrong for one of the two.
     from cli.data.manifest import ManifestError, read_manifest
 
+    manifest = root / "manifest.json"
     try:
         basket = read_manifest(manifest).identity_digest
     except ManifestError:  # a tree fetched from the hub is still legacy until converted
         basket = json.loads(manifest.read_text())["basket_sha256"]
     assert basket == stated.group(1), (
         f"the universe doc cites a basket sha256 the set it names does not carry: "
-        f"doc says {stated.group(1)[:12]}, {named.group(1)}/manifest.json says {basket[:12]}"
+        f"doc says {stated.group(1)[:12]}, {named}/manifest.json says {basket[:12]}"
     )
+
+
+def test_the_universe_doc_cites_a_hash_that_reproduces_from_the_set_it_names():
+    """The live half: if the doc is regenerated against a new source but its cited hash is not updated
+    in step -- or vice versa -- the artifact cites a basket it was not selected from (T0065)."""
+    text = _UNIVERSE.read_text()
+    named = _named_set(text)
+    manifest = _ROOT / "data" / named / "manifest.json"
+    if nothing_found_under(_ROOT / "data", f"{named}/manifest.json") and nothing_found_under(_ROOT / "data", f"{named}/index"):
+        pytest.skip(f"{manifest} absent -- the set is gitignored and not present on this machine")
+
+    _the_doc_cites_the_set_it_names(text, _ROOT / "data")
+
+
+def test_a_doc_naming_a_chained_set_cites_one_of_its_lines(tmp_path):
+    root = tmp_path / "ohlc-rolling"
+    write_chain(root)
+    line = root / "index/2026/10/02.json"
+    # A sha256 the set carries that no line hashes to: a day file the cited line lists.
+    listed = min(json.loads(line.read_bytes())["files"].values())
+
+    def doc(digest: str) -> str:
+        return f"- **OHLC dataset:** `data/ohlc-rolling/days/{{base}}/{{quote}}/`, basket sha256 `{digest}`.\n"
+
+    _the_doc_cites_the_set_it_names(doc(hashlib.sha256(line.read_bytes()).hexdigest()), tmp_path)
+    with pytest.raises(AssertionError, match="none of ohlc-rolling's index lines hashes to"):
+        _the_doc_cites_the_set_it_names(doc(listed), tmp_path)
 
 
 def test_the_compact_json_form_does_not_reproduce_it():

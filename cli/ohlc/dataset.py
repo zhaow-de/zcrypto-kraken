@@ -11,7 +11,7 @@ _RAW_COLUMNS = ["ts", "open", "high", "low", "close", "vwap", "volume", "count"]
 _FLOAT_COLUMNS = ["open", "high", "low", "close", "vwap", "volume"]
 
 # A reader that joins on `ts`, compares `close` or concatenates onto a `to_frame` result needs every dtype and the
-# column order to match, so `cli/ohlc/reach.py` holds a canonical file to the whole of this schema.
+# column order to match, so `cli/engine/store.py` holds a store or canonical frame to the whole of this schema.
 FRAME_SCHEMA = pl.Schema({"ts": pl.Datetime("us", "UTC"), **dict.fromkeys(_FLOAT_COLUMNS, pl.Float64), "count": pl.Int64})
 
 

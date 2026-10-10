@@ -1,4 +1,4 @@
-"""Seam primitives shared by `cli/ohlc/reach.py` and `cli/engine/store.py`: what a seam IS is defined here; the guard policies stay with the callers and deliberately differ."""
+"""Seam primitives for `cli/engine/store.py`: what a seam IS is defined here; the guard policy stays with the caller."""
 
 from __future__ import annotations
 

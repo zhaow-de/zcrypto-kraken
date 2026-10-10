@@ -99,9 +99,7 @@ def _reconcile(
     refused whatever `allow_replace` is; the hint follows the side that holds the null ALONE, because a null the fetch
     also holds at that stamp would be refilled from this same fetch by the re-seed a store repair prescribes. Each side
     is read over all the absent rows and carries its own first absent stamp: the first row's side and stamp are that
-    row's alone.
-
-    Sibling: cli/ohlc/reach.py::_merge_or_detach guards the same seam definition under its own policy."""
+    row's alone."""
     overlap_bars, mismatches = seam_overlap(store_frame, rest_frame)
     if overlap_bars < min_overlap:
         raise EngineError(
@@ -311,8 +309,7 @@ def _require_store_frame(frame: pl.DataFrame, path: Path, pair: str, interval: i
     gets it: `_frame_differences` is the check, and `frozen` picks the recovery, which is why the caller says which file
     it handed over. `seed_store` runs this over the canonical BEFORE the copy, so a refused canonical leaves no store
     file for the next run to refuse under the store's recovery; `to_frame` writes exactly this schema, so no schema or
-    order arm refuses a frame this tree wrote. Sibling: `cli/ohlc/reach.py::_read_canonical` holds a canonical the same
-    way for the reach."""
+    order arm refuses a frame this tree wrote."""
     differs = _frame_differences(frame, interval)
     if differs:
         raise EngineError(

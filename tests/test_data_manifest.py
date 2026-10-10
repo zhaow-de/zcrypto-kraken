@@ -291,7 +291,7 @@ def test_one_span_bound_null_and_the_other_set_is_refused():
 
 # --- every writer, one contract --------------------------------------------------------------------
 #
-# One driver per module of `cli/` that names `build_manifest`. Four reach a remote through an
+# One driver per module of `cli/` that names `build_manifest`. Three reach a remote through an
 # injected seam; the OHLCVT and legacy-conversion drivers read only local files. Every producer
 # runs offline against a tmp tree either way.
 
@@ -359,27 +359,6 @@ def _drive_ingest(tmp_path):
     return out / "manifest.json"
 
 
-def _drive_reach(tmp_path):
-    """The REST reach round: the REST rows overlap the canonical tail by ten stamps, so the leg lands
-    continuous and this is the one driver whose manifest carries `identity == "subset:continuous"`
-    rather than the set digest."""
-    from cli.ohlc.dataset import write_parquet
-    from cli.ohlc.reach import reach_round
-
-    canonical, out = tmp_path / "canon", tmp_path / "reach"
-    write_parquet(to_frame(_rows(20)), canonical / "BTC" / "EUR" / "1440.parquet")
-    rest = _rows(15, start=1577836800 + 10 * 86400)
-    reach_round(
-        canonical,
-        out,
-        intervals=(1440,),
-        fetch_fn=lambda *_: rest,
-        clock=lambda: datetime(2020, 3, 1, tzinfo=UTC),
-        sleep_fn=lambda _seconds: None,
-    )
-    return out / "manifest.json"
-
-
 def _drive_funding(tmp_path):
     """The funding substrate: one perp, one published month; the earlier months 404 as a pre-listing run."""
     from cli.derivatives.funding import build_funding_substrate
@@ -439,7 +418,6 @@ _PRODUCERS = {
     "cli/derivatives/funding.py": _drive_funding,
     "cli/derivatives/oi.py": _drive_oi,
     "cli/ohlc/ingest.py": _drive_ingest,
-    "cli/ohlc/reach.py": _drive_reach,
 }
 
 
@@ -449,8 +427,6 @@ def test_every_writer_emits_a_manifest_the_reader_accepts(module, tmp_path):
     consumer actually uses -- a shape that only a bespoke assertion accepts is the zoo again."""
     m = read_manifest(_PRODUCERS[module](tmp_path))
     assert m.schema_version == SCHEMA_VERSION, module
-    if module == "cli/ohlc/reach.py":
-        assert m.identity == "subset:continuous", module
     assert m.identity_digest, module
     assert m.vouched, module
     assert all(k.endswith(".parquet") for k in m.series), module

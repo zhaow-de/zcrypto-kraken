@@ -1,7 +1,9 @@
 """Tests for `cli.data.rebuild` (spec 00056 D3): the sibling-minting rebuild orchestration. The
 builders are monkeypatched into `rebuild.REBUILDABLE` so these tests stay hermetic."""
 
+import hashlib
 import json
+import os
 import tomllib
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
@@ -12,8 +14,9 @@ import pytest
 from cli.costs.spread import effective_spread_bps
 from cli.data import rebuild
 from cli.data.errors import DataSyncError
-from cli.ohlc.reach import ReachEntry, ReachReport
+from cli.data.rolling import RollingError
 from cli.universe.rules import DEFAULT_MAX_SPREAD_BPS, SPREAD_REFERENCE_NOTIONAL_EUR
+from tests.rolling_fixtures import SEAM, line_bytes, write_chain
 
 _FIXTURES = Path(__file__).parent / "fixtures"
 _ASSETPAIRS = json.loads((_FIXTURES / "kraken_assetpairs.json").read_text())
@@ -36,26 +39,6 @@ def _write_daily(path: Path, *, vwap: float, volume: float, n: int = 30, last: d
             "close": [vwap] * n,
             "vwap": [vwap] * n,
             "volume": [volume] * n,
-            "count": [1] * n,
-        }
-    )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    frame.write_parquet(path)
-
-
-def _write_daily_vwaps(path: Path, *, vwaps: list[float], close: float, last: date = date(2026, 7, 18)) -> None:
-    """`volume` is 1.0 on every row, so a row's quote volume IS its `vwap`; `close` stays flat so this
-    frame can double as the BTC/EUR fx leg without moving a BTC-quoted pair's conversion."""
-    n = len(vwaps)
-    frame = pl.DataFrame(
-        {
-            "ts": [datetime.combine(last - timedelta(days=n - 1 - i), time(), tzinfo=UTC) for i in range(n)],
-            "open": [close] * n,
-            "high": [close] * n,
-            "low": [close] * n,
-            "close": [close] * n,
-            "vwap": vwaps,
-            "volume": [1.0] * n,
             "count": [1] * n,
         }
     )
@@ -159,6 +142,30 @@ def test_refresh_snapshots_writes_timestamped_kraken_refdata_json(tmp_path, monk
     assert payload["symbols"] == ["BTC/EUR", "ETH/BTC"]
 
 
+def _head(days: int) -> date:
+    return SEAM + timedelta(days=days - 1)
+
+
+def _stamp(day: date) -> str:
+    return f"{day:%Y%m%d}"
+
+
+def _line_sha256(root: Path, day: date) -> str:
+    return hashlib.sha256((root / f"index/{day:%Y/%m/%d}.json").read_bytes()).hexdigest()
+
+
+def _refresh_into(data_root: Path, name: str, stamp: str) -> dict:
+    out_root = data_root / name
+    out_root.mkdir()
+    rebuild._refresh_universe(rebuild.RebuildContext(data_root=data_root, ohlcvt_source_dir=None, stamp=stamp), out_root)
+    return json.loads((out_root / "point-in-time-universe.json").read_text())
+
+
+def _the_closing_days(days: int) -> list[date]:
+    """The last five days of a `days`-day chain, from a day inside the 30 the median reads to the head."""
+    return [_head(days) - timedelta(days=n) for n in range(5)]
+
+
 def test_refresh_universe_writes_point_in_time_universe_json(tmp_path, monkeypatch):
     # Matches the live set's filename (point-in-time-universe.json, the sole file
     # cli/capture/command.py's _default_pairs reads) and the canonical build_universe_file
@@ -166,17 +173,14 @@ def test_refresh_universe_writes_point_in_time_universe_json(tmp_path, monkeypat
     monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR", "ETH/BTC"))
     monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
 
-    ohlc_root = tmp_path / "ohlc-full"
-    # Deliberately DIFFERENT frontiers, both inside the 7-day budget, so the published bar pins the
-    # min/max choice: with equal `last=` the two statistics coincide and the assertion proves nothing.
-    # BTC/EUR runs 34 bars so the inner ts-join with the earlier-ending ETH/BTC still yields the 30
-    # aligned rows the median needs (intersection 2026-06-15..07-14).
-    _write_daily(ohlc_root / "BTC" / "EUR" / "1440.parquet", vwap=50_000.0, volume=1_000.0, n=34, last=date(2026, 7, 18))
-    _write_daily(ohlc_root / "ETH" / "BTC" / "1440.parquet", vwap=0.05, volume=1_000.0, last=date(2026, 7, 14))
-    (ohlc_root / "manifest.json").write_text(json.dumps({"basket_sha256": "deadbeef"}))
+    ohlc_root = tmp_path / "ohlc-rolling"
+    # One head for every pair: a chained set ends each pair at its head's day, 2026-10-30, two days
+    # before the stamp and inside the 7-day budget, so the two frontiers are that one day.
+    write_chain(ohlc_root, days=30)
+    head = _head(30)
 
-    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260718")
-    out_root = tmp_path / "universe-20260718"
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp=_stamp(head + timedelta(days=2)))
+    out_root = tmp_path / "universe-20261101"
     out_root.mkdir()
 
     rebuild._refresh_universe(ctx, out_root)
@@ -185,21 +189,189 @@ def test_refresh_universe_writes_point_in_time_universe_json(tmp_path, monkeypat
     assert set(payload) == {"as_of", "entries", "escalate", "params", "provenance", "selected", "spread_cap"}
     assert payload["selected"] == ["BTC/EUR", "ETH/BTC"]
     assert payload["params"]["median_quote_volume_window_days"] == rebuild._UNIVERSE_VOLUME_WINDOW_DAYS
-    assert payload["provenance"]["ohlc_dataset_hash"] == "deadbeef"
+    assert payload["provenance"]["ohlc_dataset_hash"] == _line_sha256(ohlc_root, head)
     assert len(payload["provenance"]["snapshot_sha256"]) == 64
     # T0093: the artifact must name the set it was ACTUALLY built from, and how fresh that set was.
-    assert payload["provenance"]["ohlc_dataset_dir"] == "ohlc-full"
-    # The STALEST bar (ETH/BTC's 07-14), not the basket's newest (BTC/EUR's 07-18): only the stalest
-    # supports "every symbol's window ends at or after this". Publishing max would fail here.
-    assert payload["provenance"]["ohlc_stalest_daily_bar"] == "2026-07-14"
+    assert payload["provenance"]["ohlc_dataset_dir"] == "ohlc-rolling"
+    # The head's day: every pair's trailing window ends there, the one day a chained set's
+    # stalest and newest daily bars share.
+    assert payload["provenance"]["ohlc_stalest_daily_bar"] == "2026-10-30"
 
 
-# 40 daily BTC/EUR rows, quote volume 10M on the first thirty and 20M on the last ten: the last-20
+def test_refresh_universe_reads_the_rolling_set_at_its_head(tmp_path, monkeypatch):
+    monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR", "ETH/BTC"))
+    monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
+    root = tmp_path / "ohlc-rolling"
+    write_chain(root, days=30)
+    head, before = _head(30), _head(29)
+    stamp = _stamp(head + timedelta(days=2))
+
+    at_head = _refresh_into(tmp_path, "universe-at-head", stamp)["provenance"]
+    # A fetch that brought the head's line ahead of one of its files: the head is the line before,
+    # whose 30 daily bars the median still takes.
+    (root / f"days/ETH/BTC/{head:%Y/%m/%d}.parquet").unlink()
+    behind = _refresh_into(tmp_path, "universe-behind", stamp)["provenance"]
+
+    assert (at_head["ohlc_as_of"], at_head["ohlc_dataset_hash"], at_head["ohlc_stalest_daily_bar"]) == (
+        head.isoformat(),
+        _line_sha256(root, head),
+        head.isoformat(),
+    )
+    assert (behind["ohlc_as_of"], behind["ohlc_dataset_hash"], behind["ohlc_stalest_daily_bar"]) == (
+        before.isoformat(),
+        _line_sha256(root, before),
+        before.isoformat(),
+    )
+
+
+def test_refresh_universe_provenance_names_the_set_the_as_of_and_the_line(tmp_path, monkeypatch):
+    monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR", "ETH/BTC"))
+    monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
+    root = tmp_path / "ohlc-rolling"
+    write_chain(root, days=30)
+    head = _head(30)
+
+    provenance = _refresh_into(tmp_path, "universe", _stamp(head + timedelta(days=2)))["provenance"]
+
+    assert len(provenance.pop("snapshot_sha256")) == 64
+    assert provenance == {
+        "ohlc_dataset_hash": _line_sha256(root, head),
+        "ohlc_dataset_dir": "ohlc-rolling",
+        "ohlc_as_of": "2026-10-30",
+        "ohlc_stalest_daily_bar": "2026-10-30",
+        "ohlc_closed_pairs": [],
+    }
+
+
+def test_refresh_universe_refuses_a_rolling_set_whose_chain_does_not_walk(tmp_path, monkeypatch):
+    monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR", "ETH/BTC"))
+    monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
+    root = tmp_path / "ohlc-rolling"
+    write_chain(root, days=30)
+    # A line edited after the next one chained to it, still in the index's canonical form.
+    edited = root / "index/2026/10/15.json"
+    line = json.loads(edited.read_bytes())
+    line["files"][min(line["files"])] = "0" * 64
+    edited.write_bytes(line_bytes(line))
+
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp=_stamp(_head(30) + timedelta(days=2)))
+    out_root = tmp_path / "universe-20261101"
+    out_root.mkdir()
+
+    with pytest.raises(RollingError, match=r"index/2026/10/16\.json: its prev is not the sha256 of index/2026/10/15\.json"):
+        rebuild._refresh_universe(ctx, out_root)
+    assert not (out_root / "point-in-time-universe.json").exists()
+
+
+def test_rebuild_refuses_ohlc_reach_as_an_unknown_set(tmp_path):
+    with pytest.raises(DataSyncError, match="unknown set 'ohlc-reach'"):
+        rebuild.rebuild_sets(["ohlc-reach"], rebuild.RebuildContext(tmp_path, None, "20261101"))
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_refresh_universe_reads_past_a_hole_older_than_its_volume_window(tmp_path, monkeypatch):
+    """A hole is permanent, so a read of the whole history would refuse every rebuild after one: the read
+    spans the 30 daily bars the median takes, 2026-10-03 to the head 2026-11-01 here."""
+    monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR", "ETH/BTC"))
+    monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
+    stamp = _stamp(_head(32) + timedelta(days=2))
+    older, inside = tmp_path / "older", tmp_path / "inside"
+    write_chain(older / "ohlc-rolling", days=32, holes={date(2026, 10, 1): {"ETH/BTC"}, date(2026, 10, 2): {"ETH/BTC"}})
+    write_chain(inside / "ohlc-rolling", days=32, holes={date(2026, 10, 3): {"ETH/BTC"}})
+
+    payload = _refresh_into(older, "universe", stamp)
+
+    assert [entry["symbol"] for entry in payload["entries"]] == ["BTC/EUR", "ETH/BTC"]
+    with pytest.raises(RollingError, match=r"ETH/BTC has a hole on 2026-10-03"):
+        _refresh_into(inside, "universe", stamp)
+
+
+def test_refresh_universe_leaves_a_closed_pair_out_and_names_it(tmp_path, monkeypatch):
+    monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
+    # Two `/EUR` legs whose candidate order is not their sorted order, so the provenance's sorted order is not
+    # the candidates' order.
+    shut = {day: {"XRP/EUR", "ADA/EUR"} for day in _the_closing_days(30)}
+    closed, open_holes = tmp_path / "closed", tmp_path / "open-holes"
+    write_chain(closed / "ohlc-rolling", pairs=rebuild.CANDIDATE_SYMBOLS, days=30, closed=shut)
+    write_chain(open_holes / "ohlc-rolling", pairs=rebuild.CANDIDATE_SYMBOLS, days=30, holes=shut)
+    stamp = _stamp(_head(30) + timedelta(days=2))
+
+    payload = _refresh_into(closed, "universe", stamp)
+
+    assert [entry["symbol"] for entry in payload["entries"]] == [
+        symbol for symbol in rebuild.CANDIDATE_SYMBOLS if symbol not in {"XRP/EUR", "ADA/EUR"}
+    ]
+    assert {"XRP/EUR", "ADA/EUR"}.isdisjoint(payload["selected"])
+    assert payload["provenance"]["ohlc_closed_pairs"] == ["ADA/EUR", "XRP/EUR"]
+    with pytest.raises(RollingError, match=r"(XRP|ADA)/EUR has a hole on 2026-10-26"):
+        _refresh_into(open_holes, "universe", stamp)
+
+
+@pytest.mark.parametrize("mandatory", ["BTC/EUR", "ETH/EUR"])
+def test_refresh_universe_refuses_a_closed_mandatory_pair(tmp_path, monkeypatch, mandatory):
+    """BTC/EUR also prices the `/BTC` legs in EUR, so its close refuses here, never at the read of its holes."""
+    fetched = []
+    monkeypatch.setattr(rebuild, "fetch_public", lambda endpoint: fetched.append(endpoint) or _fake_fetch_public(endpoint))
+    # ADA/EUR sorts before both, so a refusal that read only the first closed pair would find no mandatory one.
+    shut = {day: {"ADA/EUR", mandatory} for day in _the_closing_days(30)}
+    write_chain(tmp_path / "ohlc-rolling", pairs=rebuild.CANDIDATE_SYMBOLS, days=30, closed=shut)
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp=_stamp(_head(30) + timedelta(days=2)))
+    out_root = tmp_path / "universe-20261101"
+    out_root.mkdir()
+
+    with pytest.raises(DataSyncError, match=f"mandatory pair {mandatory} ") as refused:
+        rebuild._refresh_universe(ctx, out_root)
+
+    assert "ADA/EUR" not in str(refused.value)
+    assert fetched == []
+    assert not (out_root / "point-in-time-universe.json").exists()
+
+
+def test_refresh_universe_leaves_a_closed_eth_btc_out_though_eth_is_mandatory(tmp_path, monkeypatch):
+    monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
+    write_chain(
+        tmp_path / "ohlc-rolling",
+        pairs=rebuild.CANDIDATE_SYMBOLS,
+        days=30,
+        closed={day: {"ETH/BTC"} for day in _the_closing_days(30)},
+    )
+
+    payload = _refresh_into(tmp_path, "universe", _stamp(_head(30) + timedelta(days=2)))
+
+    assert "ETH/BTC" not in {entry["symbol"] for entry in payload["entries"]}
+    assert "ETH/BTC" not in payload["selected"]
+    assert payload["provenance"]["ohlc_closed_pairs"] == ["ETH/BTC"]
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses directory permissions")
+def test_refresh_universe_refuses_an_index_it_cannot_list(tmp_path, monkeypatch):
+    monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR", "ETH/BTC"))
+    monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
+    write_chain(tmp_path / "ohlc-rolling", days=30)
+    month = tmp_path / "ohlc-rolling/index/2026/10"
+    os.chmod(month, 0o000)
+    try:
+        with pytest.raises(DataSyncError, match=r"universe cannot read \S*/ohlc-rolling -- .*Permission denied"):
+            _refresh_into(tmp_path, "universe", _stamp(_head(30) + timedelta(days=2)))
+    finally:
+        os.chmod(month, 0o755)
+
+
+# 40 daily BTC/EUR bars, its vwap one value on the first thirty and twice it on the last ten: the last-20
 # window sees ten of each and the last-30 window twenty against ten, so the two medians disagree.
 # `quote_volume_in_eur`'s own default window is 30 independently of `_UNIVERSE_VOLUME_WINDOW_DAYS`,
 # and a fixture whose windows agreed would pass with the call site's `window=` dropped.
-_TWO_WINDOW_VWAPS = [10_000_000.0] * 30 + [20_000_000.0] * 10
-_MEDIAN_OVER_30, _MEDIAN_OVER_20 = 10_000_000.0, 15_000_000.0
+_TWO_WINDOW_DAYS = 39
+_DOUBLED_FROM = date(2026, 10, 30)
+_VWAP = 100_000.0
+# A day's 96 bars of volume 0.5 sum to 48, and its vwap is theirs: a daily quote volume of 48 times it.
+_MEDIAN_OVER_30, _MEDIAN_OVER_20 = 48 * _VWAP, 48 * 1.5 * _VWAP
+
+
+def _two_window_vwaps(pair: str, day: date) -> dict[str, float]:
+    if pair != "BTC/EUR":
+        return {}
+    return {"vwap": _VWAP if day < _DOUBLED_FROM else 2 * _VWAP}
 
 
 def _btc_entry(payload: dict) -> dict:
@@ -208,91 +380,23 @@ def _btc_entry(payload: dict) -> dict:
     return rows[0]
 
 
-def _two_window_basket(tmp_path: Path) -> Path:
-    ohlc_root = tmp_path / "ohlc-full"
-    _write_daily_vwaps(ohlc_root / "BTC" / "EUR" / "1440.parquet", vwaps=_TWO_WINDOW_VWAPS, close=50_000.0)
-    _write_daily(ohlc_root / "ETH" / "BTC" / "1440.parquet", vwap=0.05, volume=1_000.0, n=40)
-    (ohlc_root / "manifest.json").write_text(json.dumps({"basket_sha256": "deadbeef"}))
-    return ohlc_root
-
-
-def _refresh_into(tmp_path: Path, name: str) -> dict:
-    out_root = tmp_path / name
-    out_root.mkdir()
-    rebuild._refresh_universe(rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260718"), out_root)
-    return json.loads((out_root / "point-in-time-universe.json").read_text())
-
-
 def test_refresh_universe_medians_over_the_window_its_params_declare(tmp_path, monkeypatch):
     """The published `median_quote_volume_window_days` and the window the medians were taken over are
     two different values, and only the entry moving with the constant proves they are the same one."""
     monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR", "ETH/BTC"))
     monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
-    _two_window_basket(tmp_path)
+    write_chain(tmp_path / "ohlc-rolling", days=_TWO_WINDOW_DAYS, bar=_two_window_vwaps)
+    stamp = _stamp(_head(_TWO_WINDOW_DAYS))
 
     monkeypatch.setattr(rebuild, "_UNIVERSE_VOLUME_WINDOW_DAYS", 30)
-    payload = _refresh_into(tmp_path, "universe-30")
+    payload = _refresh_into(tmp_path, "universe-30", stamp)
     assert payload["params"]["median_quote_volume_window_days"] == 30
     assert _btc_entry(payload)["median_quote_volume"] == _MEDIAN_OVER_30
 
     monkeypatch.setattr(rebuild, "_UNIVERSE_VOLUME_WINDOW_DAYS", 20)
-    moved = _refresh_into(tmp_path, "universe-20")
+    moved = _refresh_into(tmp_path, "universe-20", stamp)
     assert moved["params"]["median_quote_volume_window_days"] == 20
     assert _btc_entry(moved)["median_quote_volume"] == _MEDIAN_OVER_20
-
-
-def test_refresh_universe_refuses_a_basket_with_no_manifest(tmp_path, monkeypatch):
-    """A missing `manifest.json` must fail closed, never emit `ohlc_dataset_hash: ""` (T0094).
-
-    `backfill_basket` always writes a manifest, so its absence means a broken or half-written set. An
-    empty string is the wrong shape for "unknown": it reads as a value and compares EQUAL across two
-    entirely different broken builds, so two artifacts could agree on provenance while sharing none.
-    """
-    monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR", "ETH/BTC"))
-    monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
-
-    ohlc_root = tmp_path / "ohlc-full"
-    _write_daily(ohlc_root / "BTC" / "EUR" / "1440.parquet", vwap=50_000.0, volume=1_000.0)
-    _write_daily(ohlc_root / "ETH" / "BTC" / "1440.parquet", vwap=0.05, volume=1_000.0)
-    # deliberately NO manifest.json
-
-    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260718")
-    out_root = tmp_path / "universe-20260718"
-    out_root.mkdir()
-
-    with pytest.raises(DataSyncError, match="manifest"):
-        rebuild._refresh_universe(ctx, out_root)
-
-    # and it must fail BEFORE writing anything -- a half-written artifact is the failure mode too
-    assert not (out_root / "point-in-time-universe.json").exists()
-
-
-@pytest.mark.parametrize(
-    ("payload", "label"),
-    [("{not json", "invalid JSON"), ('{"other_key": 1}', "missing basket_sha256")],
-)
-def test_refresh_universe_refuses_an_unreadable_manifest(tmp_path, monkeypatch, payload, label):
-    """A manifest that EXISTS but cannot be read is the same defect as an absent one (T0094).
-
-    Both mean the set cannot identify itself, so both get the same typed failure -- otherwise this
-    path raises an untyped KeyError/JSONDecodeError from deep in the call stack, with no path in
-    the message, inconsistent with every other guard in this module.
-    """
-    monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR", "ETH/BTC"))
-    monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
-
-    ohlc_root = tmp_path / "ohlc-full"
-    _write_daily(ohlc_root / "BTC" / "EUR" / "1440.parquet", vwap=50_000.0, volume=1_000.0)
-    _write_daily(ohlc_root / "ETH" / "BTC" / "1440.parquet", vwap=0.05, volume=1_000.0)
-    (ohlc_root / "manifest.json").write_text(payload)
-
-    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260718")
-    out_root = tmp_path / "universe-20260718"
-    out_root.mkdir()
-
-    with pytest.raises(DataSyncError, match="unreadable"):
-        rebuild._refresh_universe(ctx, out_root)
-    assert not (out_root / "point-in-time-universe.json").exists(), label
 
 
 def test_refresh_universe_actually_applies_the_spread_cap(tmp_path, monkeypatch):
@@ -302,14 +406,10 @@ def test_refresh_universe_actually_applies_the_spread_cap(tmp_path, monkeypatch)
     # separately from the map that does the screening, so the two can drift silently (T0024 review).
     monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR", "ETH/BTC"))
     monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
+    write_chain(tmp_path / "ohlc-rolling", days=30)
 
-    ohlc_root = tmp_path / "ohlc-full"
-    _write_daily(ohlc_root / "BTC" / "EUR" / "1440.parquet", vwap=50_000.0, volume=1_000.0)
-    _write_daily(ohlc_root / "ETH" / "BTC" / "1440.parquet", vwap=0.05, volume=1_000.0)
-    (ohlc_root / "manifest.json").write_text(json.dumps({"basket_sha256": "deadbeef"}))
-
-    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260718")
-    out_root = tmp_path / "universe-20260718"
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp=_stamp(_head(30) + timedelta(days=2)))
+    out_root = tmp_path / "universe-20261101"
     out_root.mkdir()
 
     rebuild._refresh_universe(ctx, out_root)
@@ -330,44 +430,23 @@ def test_refresh_universe_actually_applies_the_spread_cap(tmp_path, monkeypatch)
 
 def test_refresh_universe_refuses_a_stale_ohlc_set(tmp_path, monkeypatch):
     """T0093: the volume floor is a TRAILING 30-day median, so it is only meaningful if the dataset
-    reaches the present. `ohlc-full` stops where the OHLCVT dumps stop, so this path can compute a
-    "30-day median" over a window months in the past and shrink the universe for what looks like a
-    liquidity move. Fail closed instead of selecting quietly.
+    reaches the present. The rolling set stops at its head, which a pair the tape stops carrying holds,
+    so this path can compute a "30-day median" over a window in the past and shrink the universe for
+    what looks like a liquidity move. Fail closed instead of selecting quietly.
     """
     monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR",))
     monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
 
-    ohlc_root = tmp_path / "ohlc-full"
-    # Newest bar 2026-03-31, rebuild stamped 2026-07-18 -- the live situation exactly.
-    _write_daily(ohlc_root / "BTC" / "EUR" / "1440.parquet", vwap=50_000.0, volume=1_000.0, last=date(2026, 3, 31))
+    # Head 2026-10-30, rebuild stamped 2026-11-18: 19 days, past the 7-day budget.
+    write_chain(tmp_path / "ohlc-rolling", pairs=("BTC/EUR",), days=30)
 
-    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260718")
-    out_root = tmp_path / "universe-20260718"
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20261118")
+    out_root = tmp_path / "universe-20261118"
     out_root.mkdir()
 
-    with pytest.raises(DataSyncError, match="2026-03-31"):
+    with pytest.raises(DataSyncError, match="2026-10-30"):
         rebuild._refresh_universe(ctx, out_root)
     assert not (out_root / "point-in-time-universe.json").exists(), "must not write a stale universe"
-
-
-def test_refresh_universe_refuses_a_basket_where_only_some_symbols_are_fresh(tmp_path, monkeypatch):
-    """The guard is per-symbol, not on the basket's newest bar: each symbol's median comes from its
-    own frame, so one fresh symbol must not vouch for a stale one. This is the shape T0065's REACH
-    round would produce -- a live-trades->bars tail need not cover every basket symbol equally,
-    leaving the thinner legs at the dump extent. A `max` check passes this basket."""
-    monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR", "ETH/BTC"))
-    monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
-
-    ohlc_root = tmp_path / "ohlc-full"
-    _write_daily(ohlc_root / "BTC" / "EUR" / "1440.parquet", vwap=50_000.0, volume=1_000.0, last=date(2026, 7, 18))
-    _write_daily(ohlc_root / "ETH" / "BTC" / "1440.parquet", vwap=0.05, volume=1_000.0, last=date(2026, 3, 31))
-
-    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260718")
-    out_root = tmp_path / "universe-20260718"
-    out_root.mkdir()
-
-    with pytest.raises(DataSyncError, match="ETH/BTC"):
-        rebuild._refresh_universe(ctx, out_root)
 
 
 def test_refresh_universe_diagnoses_staleness_before_the_row_count(tmp_path, monkeypatch):
@@ -376,14 +455,14 @@ def test_refresh_universe_diagnoses_staleness_before_the_row_count(tmp_path, mon
     monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR",))
     monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
 
-    ohlc_root = tmp_path / "ohlc-full"
-    _write_daily(ohlc_root / "BTC" / "EUR" / "1440.parquet", vwap=50_000.0, volume=1_000.0, n=10, last=date(2026, 3, 31))
+    # Ten daily bars, the head 2026-10-09.
+    write_chain(tmp_path / "ohlc-rolling", pairs=("BTC/EUR",), days=9)
 
-    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260718")
-    out_root = tmp_path / "universe-20260718"
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20261118")
+    out_root = tmp_path / "universe-20261118"
     out_root.mkdir()
 
-    with pytest.raises(DataSyncError, match="2026-03-31"):
+    with pytest.raises(DataSyncError, match="2026-10-09"):
         rebuild._refresh_universe(ctx, out_root)
 
 
@@ -392,12 +471,10 @@ def test_refresh_universe_accepts_an_ohlc_set_inside_the_staleness_budget(tmp_pa
     monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR",))
     monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
 
-    ohlc_root = tmp_path / "ohlc-full"
-    _write_daily(ohlc_root / "BTC" / "EUR" / "1440.parquet", vwap=50_000.0, volume=1_000.0, last=date(2026, 7, 16))
-    (ohlc_root / "manifest.json").write_text(json.dumps({"basket_sha256": "deadbeef"}))
+    write_chain(tmp_path / "ohlc-rolling", pairs=("BTC/EUR",), days=30)
 
-    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260718")
-    out_root = tmp_path / "universe-20260718"
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp=_stamp(_head(30) + timedelta(days=2)))
+    out_root = tmp_path / "universe-20261101"
     out_root.mkdir()
 
     rebuild._refresh_universe(ctx, out_root)  # 2 days stale, inside the budget
@@ -405,30 +482,25 @@ def test_refresh_universe_accepts_an_ohlc_set_inside_the_staleness_budget(tmp_pa
     assert (out_root / "point-in-time-universe.json").exists()
 
 
-def test_refresh_universe_requires_live_ohlc_full(tmp_path, monkeypatch):
+def test_refresh_universe_requires_the_rolling_set(tmp_path, monkeypatch):
     monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR",))
     monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
-    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260718")
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20261101")
 
-    with pytest.raises(DataSyncError, match="ohlc-full"):
-        rebuild._refresh_universe(ctx, tmp_path / "universe-20260718")
+    with pytest.raises(RollingError, match="ohlc-rolling"):
+        rebuild._refresh_universe(ctx, tmp_path / "universe-20261101")
 
 
 def test_a_source_missing_a_candidate_leg_refuses_and_names_it(tmp_path, monkeypatch):
     """The guard this task exists for. `escalate` cannot see a narrower SOURCE: a ten-of-twelve
-    source yields a ten-name universe with escalate False -- a silent shrink. The refusal must
-    also replace today's untyped FileNotFoundError from inside polars."""
+    source yields a ten-name universe with escalate False -- a silent shrink."""
     monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
 
-    ohlc_root = tmp_path / "ohlc-full"
-    for symbol in rebuild.CANDIDATE_SYMBOLS:
-        if symbol == "ETH/BTC":
-            continue  # the missing leg
-        base, quote = symbol.split("/")
-        _write_daily(ohlc_root / base / quote / "1440.parquet", vwap=100.0, volume=2_000.0)
+    # The base line without ETH/BTC, the missing leg.
+    write_chain(tmp_path / "ohlc-rolling", pairs=tuple(s for s in rebuild.CANDIDATE_SYMBOLS if s != "ETH/BTC"), days=30)
 
-    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260718")
-    out_root = tmp_path / "universe-20260718"
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp=_stamp(_head(30) + timedelta(days=2)))
+    out_root = tmp_path / "universe-20261101"
     out_root.mkdir()
 
     with pytest.raises(DataSyncError, match="ETH/BTC"):
@@ -441,17 +513,17 @@ def test_a_symbol_the_floor_rejects_is_NOT_a_missing_source(tmp_path, monkeypatc
     must still flow through escalate -- it must NOT trip the guard."""
     monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
 
-    ohlc_root = tmp_path / "ohlc-full"
-    for symbol in rebuild.CANDIDATE_SYMBOLS:
-        base, quote = symbol.split("/")
-        # SOL/BTC is present but priced to land far below the volume floor -- a selection outcome,
-        # not a missing leg.
-        volume = 0.001 if symbol == "SOL/BTC" else 2_000.0
-        _write_daily(ohlc_root / base / quote / "1440.parquet", vwap=100.0, volume=volume)
-    (ohlc_root / "manifest.json").write_text(json.dumps({"basket_sha256": "deadbeef"}))
+    # SOL/BTC is present but priced to land far below the volume floor -- a selection outcome,
+    # not a missing leg.
+    write_chain(
+        tmp_path / "ohlc-rolling",
+        pairs=rebuild.CANDIDATE_SYMBOLS,
+        days=30,
+        bar=lambda pair, day: {"volume": 0.001} if pair == "SOL/BTC" else {},
+    )
 
-    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260718")
-    out_root = tmp_path / "universe-20260718"
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp=_stamp(_head(30) + timedelta(days=2)))
+    out_root = tmp_path / "universe-20261101"
     out_root.mkdir()
 
     rebuild._refresh_universe(ctx, out_root)  # must not raise
@@ -462,33 +534,11 @@ def test_a_symbol_the_floor_rejects_is_NOT_a_missing_source(tmp_path, monkeypatc
     assert any("below floor" in reason for reason in entries["SOL/BTC"]["reasons"])
 
 
-def test_newest_stamped_source_wins_over_ohlc_full(tmp_path):
-    (tmp_path / "ohlc-full").mkdir()
-    for stamp in ("20260701", "20260811"):
-        (tmp_path / f"ohlc-reach-{stamp}").mkdir()
-    assert rebuild.resolve_ohlc_source(tmp_path).name == "ohlc-reach-20260811"
-
-
-def test_ohlc_full_is_the_fallback_when_no_stamped_source_exists(tmp_path):
-    (tmp_path / "ohlc-full").mkdir()
-    assert rebuild.resolve_ohlc_source(tmp_path).name == "ohlc-full"
-
-
-def test_a_stray_non_stamp_directory_never_outranks_a_dated_source(tmp_path):
-    """The glob alone is not identity: `ohlc-reach-backup` and `ohlc-reach-<stamp>.bak` sort
-    lexicographically AFTER every %Y%m%d stamp, so an operator's hand copy would silently win
-    newest-wins forever. Only exact 8-digit stamps are candidates."""
-    (tmp_path / "ohlc-full").mkdir()
-    for name in ("ohlc-reach-20260811", "ohlc-reach-backup", "ohlc-reach-20260811.bak"):
-        (tmp_path / name).mkdir()
-    assert rebuild.resolve_ohlc_source(tmp_path).name == "ohlc-reach-20260811"
-
-
-def test_refresh_universe_reads_the_resolved_source_not_the_hardcoded_ohlc_full(tmp_path, monkeypatch):
-    """The WIRING, not just the resolver in isolation: `_refresh_universe` must call
-    `resolve_ohlc_source(ctx.data_root)`, not a hard-coded `ohlc-full`. Here `ohlc-full` is stale
-    (refuses if read) and a fresh, complete stamped sibling is what must actually get read, so a
-    revert flips this test from a passing rebuild to an unhandled staleness DataSyncError."""
+def test_refresh_universe_reads_the_rolling_set_not_the_hardcoded_ohlc_full(tmp_path, monkeypatch):
+    """The WIRING: `_refresh_universe` must read `ohlc-rolling` at its head, not a hard-coded
+    `ohlc-full`. Here `ohlc-full` is stale (refuses if read) and a fresh rolling set is what must
+    actually get read, so a revert flips this test from a passing rebuild to an unhandled staleness
+    DataSyncError."""
     monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
 
     # Stale ohlc-full: newest bar far past the 7-day budget. If _refresh_universe still reads this
@@ -499,175 +549,18 @@ def test_refresh_universe_reads_the_resolved_source_not_the_hardcoded_ohlc_full(
         _write_daily(stale_root / base / quote / "1440.parquet", vwap=100.0, volume=2_000.0, last=date(2026, 3, 31))
     (stale_root / "manifest.json").write_text(json.dumps({"basket_sha256": "stale"}))
 
-    # Fresh, complete stamped sibling -- what an operator's reach round mints, and what
-    # resolve_ohlc_source must pick as newest-wins.
-    fresh_root = tmp_path / "ohlc-reach-20260717"
-    for symbol in rebuild.CANDIDATE_SYMBOLS:
-        base, quote = symbol.split("/")
-        _write_daily(fresh_root / base / quote / "1440.parquet", vwap=100.0, volume=2_000.0, last=date(2026, 7, 16))
-    (fresh_root / "manifest.json").write_text(json.dumps({"basket_sha256": "fresh"}))
+    fresh_root = tmp_path / "ohlc-rolling"
+    write_chain(fresh_root, pairs=rebuild.CANDIDATE_SYMBOLS, days=30)
 
-    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260718")
-    out_root = tmp_path / "universe-20260718"
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp=_stamp(_head(30) + timedelta(days=2)))
+    out_root = tmp_path / "universe-20261101"
     out_root.mkdir()
 
-    rebuild._refresh_universe(ctx, out_root)  # must succeed by reading the FRESH sibling
+    rebuild._refresh_universe(ctx, out_root)  # must succeed by reading the rolling set
 
     payload = json.loads((out_root / "point-in-time-universe.json").read_text())
-    assert payload["provenance"]["ohlc_dataset_dir"] == "ohlc-reach-20260717"
-    assert payload["provenance"]["ohlc_dataset_hash"] == "fresh"
-
-
-def _whole_frozen_set(root: Path, *, without: str | None = None) -> Path:
-    """A stamped sibling as `backfill_basket` leaves it: every basket leg, then the manifest."""
-    for leg in rebuild._basket_legs() + ["manifest.json"]:
-        if leg == without:
-            continue
-        (root / leg).parent.mkdir(parents=True, exist_ok=True)
-        (root / leg).write_bytes(b"")
-    return root
-
-
-def test_the_newest_stamped_ohlc_full_sibling_is_the_canonical_the_reach_joins(tmp_path):
-    (tmp_path / "ohlc-full").mkdir()
-    for stamp in ("20260701", "20260920"):
-        _whole_frozen_set(tmp_path / f"ohlc-full-{stamp}")
-    assert rebuild.resolve_canonical_root(tmp_path).name == "ohlc-full-20260920"
-
-
-def test_ohlc_full_is_the_canonical_when_no_stamped_sibling_exists(tmp_path):
-    _whole_frozen_set(tmp_path / "ohlc-full")
-    assert rebuild.resolve_canonical_root(tmp_path).name == "ohlc-full"
-
-
-def test_a_partial_unstamped_ohlc_full_is_refused_naming_the_leg(tmp_path):
-    _whole_frozen_set(tmp_path / "ohlc-full", without="XRP/EUR/60.parquet")
-    with pytest.raises(DataSyncError, match=r"ohlc-full is not a whole set -- missing XRP/EUR/60\.parquet"):
-        rebuild.resolve_canonical_root(tmp_path)
-
-
-def test_a_stamped_sibling_alone_is_the_canonical(tmp_path):
-    _whole_frozen_set(tmp_path / "ohlc-full-20260920")
-    assert rebuild.resolve_canonical_root(tmp_path).name == "ohlc-full-20260920"
-
-
-def test_a_stray_ohlc_full_directory_never_outranks_a_dated_sibling(tmp_path):
-    (tmp_path / "ohlc-full").mkdir()
-    _whole_frozen_set(tmp_path / "ohlc-full-20260920")
-    for name in ("ohlc-full-backup", "ohlc-full-20260920.bak"):
-        (tmp_path / name).mkdir()
-    assert rebuild.resolve_canonical_root(tmp_path).name == "ohlc-full-20260920"
-
-
-def test_the_newest_sibling_without_its_manifest_is_refused_naming_it(tmp_path):
-    """The older whole sibling is in the tree on purpose: a refusal must not fall back to it behind the
-    operator's back."""
-    (tmp_path / "ohlc-full").mkdir()
-    _whole_frozen_set(tmp_path / "ohlc-full-20260701")
-    _whole_frozen_set(tmp_path / "ohlc-full-20260920", without="manifest.json")
-    with pytest.raises(DataSyncError, match=r"ohlc-full-20260920 is not a whole set -- missing manifest\.json"):
-        rebuild.resolve_canonical_root(tmp_path)
-
-
-def test_the_newest_sibling_missing_a_basket_leg_is_refused_naming_the_leg(tmp_path):
-    (tmp_path / "ohlc-full").mkdir()
-    _whole_frozen_set(tmp_path / "ohlc-full-20260920", without="ETH/EUR/240.parquet")
-    with pytest.raises(DataSyncError, match=r"missing ETH/EUR/240\.parquet"):
-        rebuild.resolve_canonical_root(tmp_path)
-
-
-def test_no_frozen_ohlc_full_at_all_is_refused(tmp_path):
-    with pytest.raises(DataSyncError):
-        rebuild.resolve_canonical_root(tmp_path)
-
-
-def test_rebuild_ohlc_reach_joins_the_newest_stamped_ohlc_full_sibling(tmp_path, monkeypatch):
-    """The WIRING: a dump ingest re-freezes the canonical as `ohlc-full-<stamp>`, and a reach round that still
-    joined the unstamped set would seam against the tail the ingest just moved past."""
-    (tmp_path / "ohlc-full").mkdir()
-    _whole_frozen_set(tmp_path / "ohlc-full-20260920")
-    seen = {}
-
-    def _fake_reach(canonical_root, out_root, **kwargs):
-        seen["canonical"] = canonical_root
-        return ReachReport(entries=())
-
-    monkeypatch.setattr(rebuild, "reach_round", _fake_reach)
-    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260921")
-
-    rebuild.rebuild_sets(["ohlc-reach"], ctx)
-
-    assert seen["canonical"] == tmp_path / "ohlc-full-20260920"
-
-
-def test_rebuild_ohlc_reach_joins_ohlc_full_without_a_sibling_and_writes_only_the_minted_one(tmp_path, monkeypatch):
-    """No stamped sibling here, so the builder joins `ohlc-full` -- and writes into the minted sibling
-    only, reading which would reach forward from an empty set."""
-    _whole_frozen_set(tmp_path / "ohlc-full")
-    seen = {}
-
-    def _fake_reach(canonical_root, out_root, **kwargs):
-        seen["canonical"] = canonical_root
-        seen["out"] = out_root
-        (out_root / "written").write_text("x")
-        return ReachReport(entries=())
-
-    monkeypatch.setattr(rebuild, "reach_round", _fake_reach)
-    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260723")
-
-    minted = rebuild.rebuild_sets(["ohlc-reach"], ctx)
-
-    assert seen["canonical"] == tmp_path / "ohlc-full"
-    assert seen["out"] == tmp_path / "ohlc-reach-20260723" == minted[0]
-    assert (tmp_path / "ohlc-reach-20260723" / "written").exists()
-
-
-def test_rebuild_ohlc_reach_warns_naming_every_detached_series(tmp_path, monkeypatch, caplog):
-    """A detached series is the case an operator must not miss, so it is logged by name."""
-    _whole_frozen_set(tmp_path / "ohlc-full")
-    entries = (
-        ReachEntry(
-            symbol="BTC",
-            interval=60,
-            status="detached",
-            rest_first=datetime(2026, 6, 23, tzinfo=UTC),
-            rest_last=datetime(2026, 7, 23, tzinfo=UTC),
-            overlap_bars=0,
-            appended=720,
-            gap_bars=2009,
-        ),
-        ReachEntry(
-            symbol="BTC",
-            interval=240,
-            status="continuous",
-            rest_first=datetime(2026, 3, 25, tzinfo=UTC),
-            rest_last=datetime(2026, 7, 23, tzinfo=UTC),
-            overlap_bars=38,
-            appended=682,
-            gap_bars=0,
-        ),
-    )
-
-    def _fake_reach(canonical_root, out_root, **kwargs):
-        (out_root / "x").write_text("x")
-        return ReachReport(entries=entries)
-
-    monkeypatch.setattr(rebuild, "reach_round", _fake_reach)
-    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260723")
-
-    with caplog.at_level("WARNING"):
-        rebuild.rebuild_sets(["ohlc-reach"], ctx)
-
-    assert "1 of 2 reach series are DETACHED" in caplog.text
-    assert "BTC@60" in caplog.text
-    assert "BTC@240" not in caplog.text
-
-
-def test_rebuild_ohlc_reach_fails_closed_without_any_frozen_ohlc_full(tmp_path):
-    """Nothing to reach forward FROM -- refuse rather than mint an empty set."""
-    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260723")
-    with pytest.raises(DataSyncError):
-        rebuild.rebuild_sets(["ohlc-reach"], ctx)
+    assert payload["provenance"]["ohlc_dataset_dir"] == "ohlc-rolling"
+    assert payload["provenance"]["ohlc_dataset_hash"] == _line_sha256(fresh_root, _head(30))
 
 
 def test_every_rebuildable_dataset_is_an_authored_set():

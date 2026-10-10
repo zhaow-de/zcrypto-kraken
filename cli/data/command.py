@@ -76,7 +76,7 @@ def push() -> None:
 def rebuild(
     sets: list[str] = typer.Argument(
         ...,
-        help="Dataset names to rebuild (ohlc-full, ohlc-reach, ohlc-15m, derivatives-funding, derivatives-oi, snapshots, universe).",
+        help="Dataset names to rebuild (ohlc-full, ohlc-15m, derivatives-funding, derivatives-oi, snapshots, universe).",
     ),
     push_after: bool = typer.Option(True, "--push/--no-push", help="Push the minted sibling(s) to push_dest after rebuilding."),
 ) -> None:
