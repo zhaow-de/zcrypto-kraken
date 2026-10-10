@@ -2192,7 +2192,6 @@ OPS_ROLLING_STAGING_TASK = "ensure the rolling canonical's staging directory exi
 
 
 def test_the_rolling_staging_dir_is_the_outboxs_sibling_with_its_owner_group_and_mode():
-    # The NAS pulls the outbox's whole tree, so a file staged inside it would reach the hub under its temporary name.
     tasks = load_tasks(OPS_TASKS)
     staging = find_task(tasks, OPS_ROLLING_STAGING_TASK)
     assert staging["ansible.builtin.file"] == {
@@ -2220,7 +2219,6 @@ def test_the_outbox_groups_gid_is_derived_beside_the_data_users():
         "ansible_facts": {"getent_group": {"zcrypto-hot": ["x", "1002", "zcrypto-data,zhaow"]}},
         "ops_hot_group": "zcrypto-hot",
     }
-    # A group record's fields after its name are password, gid and members; the passwd record's gid is index 2.
     assert set_facts(tasks[derive], variables)["ops_hot_gid"] == "1002"
 
 

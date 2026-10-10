@@ -233,7 +233,6 @@ def test_the_extend_step_hands_the_cli_the_tape_the_outbox_and_the_staging():
     assert dict(zip(tail[::2], tail[1::2], strict=True)) == {
         option["tape_root"]: "/data/tape-bars",
         option["out"]: "/data/hot-out/ohlc-rolling",
-        # Outside the outbox, whose whole tree the NAS pulls, and on the outbox's own mount, so the rename is atomic.
         option["staging"]: "/data/hot-out-staging",
     }
 
@@ -246,7 +245,6 @@ def test_the_extend_step_mounts_the_data_dir_once_and_the_tape_read_only():
 
 
 def test_the_extend_step_runs_as_the_data_user_in_the_outbox_group():
-    # A numeric --user carries no supplementary group, and the set's directories are writable to the outbox's group alone.
     argv = _extend_argv()
     assert argv[argv.index("--user") + 1] == "998:998"
     assert argv[argv.index("--group-add") + 1] == CONTEXT["ops_hot_gid"]
