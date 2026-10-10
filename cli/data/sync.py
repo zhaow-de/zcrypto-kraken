@@ -229,7 +229,7 @@ def _verify_chained(hub: Path, set_dir: Path, set_name: str, sub_paths: set[str]
                         "data fetch: %s/%s is pending: %s lists it and it has not arrived", set_name, rel, line_relpath(day)
                     )
         head(set_dir)
-    except RollingError as exc:
+    except (RollingError, OSError) as exc:
         raise DataSyncError(f"data fetch: {set_name}: {exc}") from exc
 
 

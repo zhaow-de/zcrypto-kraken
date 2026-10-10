@@ -1,5 +1,7 @@
 import hashlib
 import json
+import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -279,6 +281,26 @@ def test_fetch_admits_a_line_ahead_of_its_file_as_pending(tmp_path):
     assert _pending(lines, "days/ETH/BTC/2026/10/03.parquet"), lines
     late.write_bytes(held)
     assert fetch_hot(hot, data).new_files == (f"{_ROLLING}/days/ETH/BTC/2026/10/03.parquet",)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses directory permissions")
+def test_fetch_refuses_a_hub_index_it_cannot_list_in_one_line(tmp_path):
+    hot, data = tmp_path / "hot", tmp_path / "data"
+    write_chain(hot / _ROLLING)
+    month = hot / _ROLLING / "index/2026/10"
+
+    # rsync refuses a directory it cannot list as well, so the month is hidden once the transfer is done: a hub read
+    # failing between the copy and its verification.
+    def rsync_then_hide(argv, **kwargs):
+        result = subprocess.run(argv, **kwargs)
+        os.chmod(month, 0o000)
+        return result
+
+    try:
+        with pytest.raises(DataSyncError, match=rf"^data fetch: {_ROLLING}: .*Permission denied: '{re.escape(str(month))}'$"):
+            fetch_hot(hot, data, runner=rsync_then_hide)
+    finally:
+        os.chmod(month, 0o755)
 
 
 def test_fetch_refuses_a_file_arriving_after_its_line_whose_bytes_disagree(tmp_path):
