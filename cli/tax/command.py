@@ -34,8 +34,8 @@ def blockpit(
 ) -> None:
     """Map one window of Kraken's ledger and trades exports onto Blockpit's manual-import rows, the provenance beside them.
 
-    A row it cannot map, a balance that does not chain, or a window that does not follow the one before refuses the run:
-    every refusal is printed and nothing is written. Neither output file may exist beforehand.
+    A row it cannot map or a check that fails refuses the run: every refusal is printed and nothing is written.
+    Neither output file may exist beforehand.
     """
     try:
         written = transform(ledgers, trades, out, after)

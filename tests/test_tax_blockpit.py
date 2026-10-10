@@ -23,7 +23,7 @@ LEDGER_1 = FIXTURES / "window-1-ledgers.csv"
 TRADES_1 = FIXTURES / "window-1-trades.csv"
 LEDGER_2 = FIXTURES / "window-2-ledgers.csv"
 TRADES_2 = FIXTURES / "window-2-trades.csv"
-# The template's two files as fetched 2026-10-09 (spec 00126 D8), held byte for byte.
+# The template's two files as fetched (spec 00126 D8).
 TEMPLATE_SHA256 = {
     "blockpit-template.xlsx": "fa48315e27f1b6413418d6964793e4b5841e4a336fcf9064ae921eedd3f61acf",
     "blockpit-template-gid0.csv": "914ab78ebd09b88ad899f75429e6ed107b2ceb79ab61ebf74c06d3ec304e078a",

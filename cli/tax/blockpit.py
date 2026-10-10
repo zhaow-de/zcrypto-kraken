@@ -16,7 +16,7 @@ from pathlib import Path
 from cli.tax.errors import Refusal, Refused, TaxExportError
 from cli.tax.kraken_export import LEDGER_TIME, LedgerRow, TradeRow, read_ledger, read_trades
 
-# The template's first row and its Label dropdown, the data validation on C2:C986.
+# The template's first row and its Label dropdown.
 HEADER = (
     "Date (UTC)",
     "Integration Name",
