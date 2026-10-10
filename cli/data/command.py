@@ -19,6 +19,11 @@ data_app = typer.Typer(
     no_args_is_help=True,
     help="Hot-cluster dataset exchange: fetch the shared working set, push what this node authored, rebuild frozen sets.",
 )
+rolling_app = typer.Typer(
+    no_args_is_help=True,
+    help="The rolling OHLC set: one 15-minute history extended day by day, each day pinned by a chained index line.",
+)
+data_app.add_typer(rolling_app, name="rolling")
 
 
 def _abort(message: str) -> typer.Exit:
@@ -147,3 +152,32 @@ def migrate_manifests(
         typer.echo(f"{r['dataset']:32} {r['status']:24} series={r['series']}")
     if not apply:
         typer.echo("\nDry run. Re-run with --apply to write.")
+
+
+@rolling_app.command("verify")
+def rolling_verify(
+    root: Path | None = typer.Option(
+        None, "--root", help="The set's directory; ohlc-rolling under the configured data root if unset."
+    ),
+    as_of: str = typer.Option(..., "--as-of", help="The day whose index line to verify the set at, as YYYY-MM-DD."),
+) -> None:
+    """Walk the set's index from the as-of day down to its base, re-hash every file it lists, and print that day's line sha256."""
+    from cli.data.rolling import ROLLING_SET, RollingError, verify, walk_chain
+
+    try:
+        day = datetime.strptime(as_of, "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise _abort(f"--as-of {as_of!r} is not a YYYY-MM-DD date") from exc
+    if root is None:
+        try:
+            root = resolve_data_dir(load_config()) / ROLLING_SET
+        except ConfigError as exc:
+            raise _abort(str(exc)) from exc
+
+    try:
+        line = verify(root, day)
+        files = sum(len(each.files) for each in walk_chain(root, day))
+    except (RollingError, OSError) as exc:
+        raise _abort(str(exc)) from exc
+
+    typer.echo(f"{day} {line.sha256} files={files}")
