@@ -3,6 +3,7 @@ import json
 import os
 import re
 import subprocess
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -298,6 +299,30 @@ def test_fetch_refuses_a_hub_index_it_cannot_list_in_one_line(tmp_path):
 
     try:
         with pytest.raises(DataSyncError, match=rf"^data fetch: {_ROLLING}: .*Permission denied: '{re.escape(str(month))}'$"):
+            fetch_hot(hot, data, runner=rsync_then_hide)
+    finally:
+        os.chmod(month, 0o755)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses directory permissions")
+def test_fetch_refuses_a_listed_file_under_a_directory_it_cannot_search_never_reads_it_as_pending(tmp_path):
+    hot, data = tmp_path / "hot", tmp_path / "data"
+    # BTC/EUR's files arrived before their lines and the newest line names none of them, so the trailing head never
+    # stats their directory: only the new lines' own check reaches it.
+    write_chain(hot / _ROLLING, holes={date(2026, 10, 3): {"BTC/EUR"}})
+    for day in ("01", "02"):
+        rel = f"{_ROLLING}/days/BTC/EUR/2026/10/{day}.parquet"
+        _mk(data, rel, (hot / rel).read_bytes())
+    month = data / _ROLLING / "days/BTC/EUR/2026/10"
+
+    def rsync_then_hide(argv, **kwargs):
+        result = subprocess.run(argv, **kwargs)
+        os.chmod(month, 0o000)
+        return result
+
+    first = re.escape(str(month / "01.parquet"))
+    try:
+        with pytest.raises(DataSyncError, match=rf"^data fetch: {_ROLLING}: .*Permission denied: '{first}'$"):
             fetch_hot(hot, data, runner=rsync_then_hide)
     finally:
         os.chmod(month, 0o755)

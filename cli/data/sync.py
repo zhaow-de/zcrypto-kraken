@@ -13,7 +13,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from cli.data.errors import DataSyncError
-from cli.data.rolling import RollingError, head, is_chained, line_days, line_relpath, read_line
+from cli.data.rolling import RollingError, _is_file, head, is_chained, line_days, line_relpath, read_line
 from cli.logging import get_logger
 from cli.ohlc.dataset import dataset_hash, read_parquet
 
@@ -221,7 +221,7 @@ def _verify_chained(hub: Path, set_dir: Path, set_name: str, sub_paths: set[str]
             if line_relpath(day) not in sub_paths:
                 continue
             for rel, digest in sorted(read_line(set_dir, day).files.items()):
-                if (set_dir / rel).is_file():
+                if _is_file(set_dir / rel):
                     _compare_bytes(set_dir, set_name, rel, digest)
                 else:
                     logger.warning(
