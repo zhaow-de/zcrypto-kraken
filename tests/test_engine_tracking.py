@@ -1002,8 +1002,11 @@ _ROLLOVER_ROW = '"L1","R1","2026-08-31 04:05:06","rollover","","currency","ZEUR"
         (_ROLLOVER_ROW.replace('"ZEUR",', '"ZEUR","-0.50",'), "has a field count of 11 at data row 2, against its header's 10"),
         # Only the balance is missing, a column this reader never reads, so no value read would refuse the row.
         (_ROLLOVER_ROW.removesuffix(',"900.0"'), "has a field count of 9 at data row 2, against its header's 10"),
+        # Two fields off, so the printed count is pinned beyond the header's width plus or minus one.
+        (_ROLLOVER_ROW + ',"x","y"', "has a field count of 12 at data row 2, against its header's 10"),
+        (_ROLLOVER_ROW.removesuffix(',"0.13","900.0"'), "has a field count of 8 at data row 2, against its header's 10"),
     ],
-    ids=["long_row", "mid_row_insert", "short_row"],
+    ids=["long_row", "mid_row_insert", "short_row", "long_row_by_two", "short_row_by_two"],
 )
 def test_a_row_whose_field_count_is_not_the_headers_is_refused_by_its_data_row(tmp_path, row, refusal):
     p = _export(tmp_path, ['"L6","Q1","2026-08-31 00:00:00","deposit","","currency","ZEUR","500.0","0.0","1400.0"', row])
