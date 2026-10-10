@@ -879,6 +879,14 @@ def test_a_staking_reward_row_is_a_known_no_fill_type(tmp_path):
     assert out["status"] == "insufficient-data"
 
 
+def test_an_earn_reward_row_is_a_known_no_fill_type_and_another_earn_subtype_is_not(tmp_path):
+    reward = _real_row("L1", "EX-1", "2031-03-25 14:00:00", "earn", "reward", "NEAR", "0.0000035", "0.00000105", "NEAR")
+    allocation = _real_row("L2", "EX-2", "2031-03-25 14:00:00", "earn", "allocation", "NEAR", "0.0000035", "0", "")
+    out = reconcile_ledger(read_ledger_export(_export(tmp_path, [reward, allocation], header=_REAL_HEADER)), [])
+    assert (out["known"], out["ignored"], out["unmatched"]) == ({"earn": 1}, {"earn": 1}, [])
+    assert out["status"] == "insufficient-data"
+
+
 def test_a_transfer_row_is_a_known_no_fill_type(tmp_path):
     transfer = _real_row("L1", "TR-1", "2026-10-01 14:02:58", "transfer", "", "EUR", "25.00", "0", "")
     out = reconcile_ledger(read_ledger_export(_export(tmp_path, [transfer], header=_REAL_HEADER)), [])

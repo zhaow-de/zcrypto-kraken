@@ -1,0 +1,3 @@
+"txid","ordertxid","pair","aclass","subclass","time","type","ordertype","price","cost","fee","vol","margin","misc","ledgers","posttxid","posstatuscode","cprice","ccost","cfee","cvol","cmargin","net","trades"
+"TFX013-SYNTH-TRADES","OFX013-SYNTH-ORDERS","ALGO/EUR","forex","crypto","2031-04-02 09:00:00.1000","buy","limit",0.35,31.5,0.065,90.0,15.75,"closing","LFX102-SYNTH-LEDGER","TFX012-SYNTH-TRADES","","","","","","","",""
+"TFX014-SYNTH-TRADES","OFX014-SYNTH-ORDERS","ATOM/EUR","forex","crypto","2031-04-03 12:00:00.1000","sell","limit",6.4,54.4,0.2176,8.5,0.0,"","LFX104-SYNTH-LEDGER,LFX103-SYNTH-LEDGER","TFX000-SYNTH-NOPOSN","","","","","","","",""

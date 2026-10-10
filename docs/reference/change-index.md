@@ -381,3 +381,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #681 | 2026-10-09 | docs(research): T0018 — rung 2's entry record, the box W41 to W44 | — | — | T0018 |
 | #682 | 2026-10-09 | docs(records): T0217 phase 2 and T0218 sittings, the edge route | — | 00121, 00122, 00123 | T0085, T0217, T0218 |
 | #683 | 2026-10-09 | feat(ops): 00123 R12 — the two-stack comparison runs from 2026-10-10 | — | 00121, 00123 | — |
+| #684 | 2026-10-10 | feat(cli): T0215 — the Blockpit fallback transform of Kraken exports | — | 00126 | T0215 |

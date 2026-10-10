@@ -433,8 +433,10 @@ _MATCHED_LEDGER_TYPES = frozenset({"trade", "margin"})
 # Row types with no fill behind them BY CONSTRUCTION -- an allowlist, so an unknown type is reported rather than passed
 # over, while failing on a deposit would fail every export. `settled` is a hand settle's delivery pair, which the journal
 # holds no row for; `collateralconversion` is the venue's own currency swap for a margin fee, keyed to the position's
-# opening trade; `staking` is a reward the venue credits on a spot holding.
+# opening trade; `staking` is a reward the venue credits on a spot holding, in the API's spelling.
 _NO_FILL_LEDGER_TYPES = frozenset({"deposit", "withdrawal", "transfer", "settled", "collateralconversion", "staking"})
+# The same reward in the CSV export's spelling.
+_EARN_REWARD = ("earn", "reward")
 # The venue's small-balance conversion writes no trade: a `spend` row per coin and a `receive` row for the proceeds, each
 # with this subtype.
 _DUST_SWEEP_SUBTYPE = "dustsweeping"
@@ -512,7 +514,7 @@ def reconcile_ledger(rows: list[LedgerRow], fills: list[Fill]) -> dict:
             # this comparison exists to detect: it FAILS, and each id is named.
             elif row.refid not in unmatched:
                 unmatched.append(row.refid)
-        elif row.type in _NO_FILL_LEDGER_TYPES:
+        elif row.type in _NO_FILL_LEDGER_TYPES or (row.type, row.subtype) == _EARN_REWARD:
             known[row.type] = known.get(row.type, 0) + 1
         elif row.subtype == _DUST_SWEEP_SUBTYPE and row.type in _DUST_SWEEP_TYPES:
             known[row.subtype] = known.get(row.subtype, 0) + 1
