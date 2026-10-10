@@ -4,6 +4,7 @@ builders are monkeypatched into `rebuild.REBUILDABLE` so these tests stay hermet
 import hashlib
 import json
 import os
+import re
 import tomllib
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
@@ -486,8 +487,9 @@ def test_refresh_universe_requires_the_rolling_set(tmp_path, monkeypatch):
     monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR",))
     monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
     ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20261101")
+    absent = re.escape(str(tmp_path / "ohlc-rolling"))
 
-    with pytest.raises(RollingError, match="ohlc-rolling"):
+    with pytest.raises(DataSyncError, match=rf"the ohlc-rolling set, which is absent: no directory {absent}; zcrypto data fetch"):
         rebuild._refresh_universe(ctx, tmp_path / "universe-20261101")
 
 

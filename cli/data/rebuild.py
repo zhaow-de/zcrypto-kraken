@@ -109,6 +109,11 @@ def _refresh_universe(ctx: RebuildContext, out_root: Path) -> None:
     """Refresh the point-in-time universe file via the canonical builders, matching the live set's
     payload shape -- including the `selected` key `zcrypto capture` reads (spec 00056 D3)."""
     root = ctx.data_root / rolling.ROLLING_SET
+    if not root.is_dir():
+        raise DataSyncError(
+            f"data rebuild: universe needs the {rolling.ROLLING_SET} set, which is absent: no directory {root}; "
+            "zcrypto data fetch mirrors the hub's datasets"
+        )
     try:
         line = rolling.head(root)
         set_pairs = rolling.pairs(root)
