@@ -21,21 +21,25 @@ TEMPLATE = REPO / "infra/ansible/roles/ops/templates/tape-bars.sh.j2"
 _ENV = jinja2.Environment(trim_blocks=True, lstrip_blocks=False, undefined=jinja2.StrictUndefined)
 
 CONTEXT = {
-    # Real values; uid/gid arrive as STRINGS (set_fact from getent_passwd), not the ints a guess
-    # supplies.
+    # Real values; uid/gid arrive as STRINGS (set_fact from getent_passwd and getent_group), not the
+    # ints a guess supplies.
     "ops_textfile_dir": "/var/lib/zcrypto-ops/textfile",
     "ops_nas_mount": "/mnt/zhao-crypto",
     "ops_data_dir": "/var/lib/zcrypto-ops",
     "ops_capture_subdir": "capture-segments",
     "ops_reconciled_subdir": "capture-reconciled",
     "ops_tape_bars_subdir": "tape-bars",
+    "ops_hot_out_subdir": "hot-out",
+    "ops_rolling_staging_subdir": "hot-out-staging",
     "ops_image": "ghcr.io/zhaow-de/zcrypto-capture",
     "ops_image_digest": "sha256:" + "c" * 64,
     "ops_uid": "998",
     "ops_gid": "998",
+    "ops_hot_gid": "1002",
 }
 
 PROM_BLOCK_END = 'mv "$tmp" "$PROM"'
+DOCKER_RUN = "docker run --rm --pull never"
 
 
 def _rendered() -> str:
@@ -49,13 +53,27 @@ def _bash() -> str:
     return found
 
 
-def _rendered_argv() -> list[str]:
-    """The `docker run` invocation, tokenised — the redirection tail dropped."""
-    r = _rendered()
-    start = r.index("docker run --rm --pull never")
-    command = r[start : r.index('> "$log" 2>&1', start)]
+def _argv_at(rendered: str, start: int) -> list[str]:
+    """The `docker run` invocation starting at `start`, tokenised — the redirection tail dropped."""
+    command = rendered[start : rendered.index('> "$log" 2>&1', start)]
     # shlex renders each `\<newline>` continuation as a bare newline token.
     return [t for t in shlex.split(command) if t.strip()]
+
+
+def _rendered_argv() -> list[str]:
+    """The sweep's `docker run`, the first."""
+    r = _rendered()
+    return _argv_at(r, r.index(DOCKER_RUN))
+
+
+def _extend_start(rendered: str) -> int:
+    """Where the rolling extension's `docker run`, the second, starts."""
+    return rendered.index(DOCKER_RUN, rendered.index(DOCKER_RUN) + 1)
+
+
+def _extend_argv() -> list[str]:
+    r = _rendered()
+    return _argv_at(r, _extend_start(r))
 
 
 def _value(text: str, series: str) -> str:
@@ -199,3 +217,55 @@ def test_a_run_that_published_advances_the_publish_stamp(tmp_path):
     written = _run_block(tmp_path, rc=0, summary=summary, now=1753800000, seed=SEED)
     assert _value(written, "zcrypto_tapebars_last_publish_timestamp_seconds") == "1753800000"
     assert _value(written, "zcrypto_tapebars_days_written") == "2"
+
+
+def test_the_extend_step_hands_the_cli_the_tape_the_outbox_and_the_staging():
+    extend = get_command(app).commands["data"].commands["rolling"].commands["extend"]
+    option = {p.name: p.opts[0] for p in extend.params if p.param_type_name == "option"}
+
+    argv = _extend_argv()
+    assert argv[argv.index("--entrypoint") + 1] == "zcrypto", "the image's own entrypoint starts `zcrypto capture`"
+    at = argv.index("data")
+    assert argv[at : at + 3] == ["data", "rolling", "extend"]
+    sweep = _rendered_argv()
+    assert argv[at - 1] == sweep[sweep.index("tick") - 1], "the extension must run the image the sweep ran, by its digest"
+    tail = argv[at + 3 :]
+    assert dict(zip(tail[::2], tail[1::2], strict=True)) == {
+        option["tape_root"]: "/data/tape-bars",
+        option["out"]: "/data/hot-out/ohlc-rolling",
+        # Outside the outbox, whose whole tree the NAS pulls, and on the outbox's own mount, so the rename is atomic.
+        option["staging"]: "/data/hot-out-staging",
+    }
+
+
+def test_the_extend_step_mounts_the_data_dir_once_and_the_tape_read_only():
+    argv = _extend_argv()
+    mounts = [argv[i + 1] for i, t in enumerate(argv) if t == "-v"]
+    assert mounts == ["/var/lib/zcrypto-ops:/data", "/var/lib/zcrypto-ops/tape-bars:/data/tape-bars:ro"]
+    assert not [t for t in argv if t.startswith(("--mount", "--volume"))]
+
+
+def test_the_extend_step_runs_as_the_data_user_in_the_outbox_group():
+    # A numeric --user carries no supplementary group, and the set's directories are writable to the outbox's group alone.
+    argv = _extend_argv()
+    assert argv[argv.index("--user") + 1] == "998:998"
+    assert argv[argv.index("--group-add") + 1] == CONTEXT["ops_hot_gid"]
+
+
+def test_the_extend_step_runs_after_the_gauges_are_written():
+    rendered = _rendered()
+    assert _extend_start(rendered) > rendered.index(PROM_BLOCK_END), "the extension's outcome would rewrite the sweep's gauges"
+
+
+@pytest.mark.parametrize(
+    ("sweep_rc", "extend_rc", "unit_rc"),
+    [(0, 1, 1), (2, 0, 2), (2, 1, 2), (0, 0, 0)],
+)
+def test_a_failed_extend_fails_the_unit_and_a_failed_sweep_keeps_its_own_rc(tmp_path, sweep_rc, extend_rc, unit_rc):
+    rendered = _rendered()
+    tail = rendered[_extend_start(rendered) :]
+    assert tail.rstrip().endswith('exit "$rc"')
+    log = tmp_path / "extend.log"
+    harness = f"set -u\nrc={sweep_rc}\nlog={shlex.quote(str(log))}\ndocker() {{ return {extend_rc}; }}\n{tail}"
+    proc = subprocess.run([_bash(), "-c", harness], capture_output=True, text=True)
+    assert proc.returncode == unit_rc, proc.stderr

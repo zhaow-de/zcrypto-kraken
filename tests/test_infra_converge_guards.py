@@ -2187,6 +2187,43 @@ def test_ops_pins_probe_inspects_the_container_the_compose_template_names():
         )
 
 
+OPS_OUTBOX_TASK = "ensure the ops hot-out outbox directory exists"
+OPS_ROLLING_STAGING_TASK = "ensure the rolling canonical's staging directory exists"
+
+
+def test_the_rolling_staging_dir_is_the_outboxs_sibling_with_its_owner_group_and_mode():
+    # The NAS pulls the outbox's whole tree, so a file staged inside it would reach the hub under its temporary name.
+    tasks = load_tasks(OPS_TASKS)
+    staging = find_task(tasks, OPS_ROLLING_STAGING_TASK)
+    assert staging["ansible.builtin.file"] == {
+        "path": "{{ ops_data_dir }}/{{ ops_rolling_staging_subdir }}",
+        "state": "directory",
+        "owner": "{{ ops_data_user }}",
+        "group": "{{ ops_hot_group }}",
+        "mode": "2775",
+    }
+    assert "when" not in staging, "ungated like the outbox: a converge without a digest still leaves the staging in place"
+    assert task_index(tasks, OPS_ROLLING_STAGING_TASK) > task_index(tasks, OPS_OUTBOX_TASK)
+    defaults = yaml.safe_load(OPS_DEFAULTS.read_text())
+    staging_subdir = defaults["ops_rolling_staging_subdir"]
+    assert "/" not in staging_subdir and staging_subdir != defaults["ops_hot_out_subdir"]
+
+
+def test_the_outbox_groups_gid_is_derived_beside_the_data_users():
+    tasks = load_tasks(OPS_TASKS)
+    (lookup,) = [i for i, t in enumerate(tasks) if t.get("ansible.builtin.getent", {}).get("key") == "{{ ops_hot_group }}"]
+    (derive,) = [i for i, t in enumerate(tasks) if "ops_hot_gid" in t.get("ansible.builtin.set_fact", {})]
+    first_gated_block = next(i for i, t in enumerate(tasks) if "block" in t and "digest is defined" in str(t.get("when", "")))
+    assert tasks[lookup]["ansible.builtin.getent"]["database"] == "group"
+    assert lookup < derive < first_gated_block, "the tape-bars runner reading the gid renders inside a digest-gated block"
+    variables = {
+        "ansible_facts": {"getent_group": {"zcrypto-hot": ["x", "1002", "zcrypto-data,zhaow"]}},
+        "ops_hot_group": "zcrypto-hot",
+    }
+    # A group record's fields after its name are password, gid and members; the passwd record's gid is index 2.
+    assert set_facts(tasks[derive], variables)["ops_hot_gid"] == "1002"
+
+
 ACCESS_TASKS = ANSIBLE / "roles" / "access" / "tasks" / "main.yml"
 _RELAY_GATE = "the ssh relay is running the target this play renders"
 _RELAY_FLUSH = "apply pending handlers before the relay drift gate"

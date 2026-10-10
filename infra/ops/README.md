@@ -11,7 +11,7 @@ The node runs on the fleet users/groups model (all Ansible-provisioned):
 - **`zcrypto-deploy`** — the interactive admin: sudo, the `ansible_user`, the `ssh hp` login. Renamed from `deploy` (uid 1001 kept); its `authorized_keys` holds exactly the one operator login key (`exclusive: true`, spec 00057 D1). Never in the data path.
 - **`zcrypto-data`** — the machine-to-machine data user (no sudo, no password). It runs every data container via `--user`, owns `{{ ops_data_dir }}` (default `/var/lib/zcrypto-ops`) and every tree under it, and **serves** the four NAS pull channels via `rrsync -ro` forced-command keys (role-provisioned; the committed pubs in `infra/ansible/files/sync_*_ed25519.pub`). Its shell is the rrsync-only wrapper `ops_rrsync_shell` (`/usr/local/sbin/rrsync-shell`, from `infra/ansible/files/rrsync-shell`), **not** `nologin`: sshd runs a `command="rrsync …"` forced command through the login shell, so `nologin` would swallow it — the wrapper permits only rrsync, and each key is jailed by `command=`/`restrict` to one read-only subtree.
 - **`zcrypto-alloy`** — the telemetry stack's dedicated non-admin user (see the Alloy section).
-- **`zhaow`** (uid 1000) — the research user; authors into `hot-out` via the shared setgid `zcrypto-hot` group (`zcrypto-data` owns + serves it, `zhaow` writes into it).
+- **`zhaow`** (uid 1000) — the research user; authors into `hot-out` via the shared setgid `zcrypto-hot` group (`zcrypto-data` owns + serves it and writes the rolling canonical's daily extension into it from the tape-bars runner, `zhaow` writes into it).
 
 No trade key ever touches this host (D10).
 
@@ -172,7 +172,7 @@ A **new dedicated 4th D9 channel**: the three existing `rrsync -ro` roots are ea
 pinned, so none is a parent of `hot-out` -- it MUST get its own least-privilege key, not a widened
 root. Two differences from the reconciled/panel channels: the NAS pulls it with a **raw
 `rsync --archive --ignore-existing`** (not `zcrypto archive pull`), because hot sets are
-append-only-at-file (D1c) and carry `manifest.json`, not the `.sha256` sidecars `verify_tree`
+append-only-at-file (D1c) and carry `manifest.json` — `ohlc-rolling` its chained index instead — not the `.sha256` sidecars `verify_tree`
 expects -- so the pull is unverified-at-transport and append-only-by-construction (a content-changed
 file is simply untransmittable).
 

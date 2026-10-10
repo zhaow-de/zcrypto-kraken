@@ -6,8 +6,9 @@
 # `zcrypto tick materialize` in the digest-pinned default-AVX image. The primary tree is read
 # straight from the NAS's read-only NFS export at /nas (ro,soft, so a hung NAS surfaces EIO, which
 # the CLI treats as a loud per-day error, never as absence); the reconciled overlay and the
-# tape-bars OUTPUT both live locally under /data — the NAS re-acquires the output through its own
-# rrsync pull, so custody stays NAS-initiated, exactly like the panel.
+# tape-bars OUTPUT both live locally under /data. The tape-bars tree stays on this host, pulled by no
+# channel; the rolling canonical's day files, copied from it by the extension after each sweep, reach
+# the NAS through the hot-out outbox.
 #
 # ARGUMENT ORDER DIFFERS FROM THE PANEL RUNNER'S, deliberately and dangerously: the panel takes
 # (primary, reconciled, --panel-root), this takes (primary, OUT, --reconciled-root). Transposing
@@ -124,5 +125,29 @@ tmp="$PROM.tmp"
     printf 'zcrypto_tapebars_last_publish_timestamp_seconds %s\n' "$publish"
 } > "$tmp"
 mv "$tmp" "$PROM"
+
+# The rolling canonical's daily extension (spec 00125 D3), in the image the sweep ran: it extends the
+# set in the hot-out outbox, which the NAS pulls into its hot/ hub, from tape-bars' finals. It runs
+# after the gauge export, so its outcome never rewrites the sweep's gauges.
+#
+# --group-add is load-bearing: a numeric --user carries no supplementary group, and the set's
+# directories are writable to the outbox's group alone. The tape tree is mounted read-only over the
+# data mount, which the outbox and the staging directory share, so each file's rename from staging
+# into the outbox stays on one filesystem.
+log="$(mktemp)"
+docker run --rm --pull never \
+    --name zcrypto-rolling-extend \
+    --user "{{ ops_uid }}:{{ ops_gid }}" \
+    --group-add "{{ ops_hot_gid }}" \
+    -v "{{ ops_data_dir }}:/data" \
+    -v "{{ ops_data_dir }}/{{ ops_tape_bars_subdir }}:/data/{{ ops_tape_bars_subdir }}:ro" \
+    --entrypoint zcrypto \
+    "{{ ops_image }}@{{ ops_image_digest }}" \
+    data rolling extend --tape-root "/data/{{ ops_tape_bars_subdir }}" --out "/data/{{ ops_hot_out_subdir }}/ohlc-rolling" --staging "/data/{{ ops_rolling_staging_subdir }}" \
+    > "$log" 2>&1
+extend_rc=$?
+cat "$log"
+rm -f "$log"
+if [ "$rc" -eq 0 ]; then rc=$extend_rc; fi
 
 exit "$rc"
