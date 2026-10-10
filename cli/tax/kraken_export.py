@@ -69,11 +69,22 @@ def _rows(path: Path, columns: tuple[str, ...], data: bytes | None) -> list[dict
     except UnicodeDecodeError as exc:
         raise TaxExportError(f"{path} is not UTF-8 text") from exc
     reader = csv.DictReader(io.StringIO(text, newline=""))
-    missing = [column for column in columns if column not in (reader.fieldnames or [])]
+    try:
+        header = reader.fieldnames or []
+    except csv.Error as exc:
+        raise TaxExportError(f"{path} cannot be parsed at its header: {exc}") from exc
+    missing = [column for column in columns if column not in header]
     if missing:
         raise TaxExportError(f"{path} has no {', '.join(missing)} column")
-    rows = list(reader)
-    width = len(reader.fieldnames)
+    rows: list[dict[str, str]] = []
+    try:
+        for raw in reader:
+            rows.append(raw)
+    except csv.Error as exc:
+        # DictReader copies its parser's line_num only after a row parses, so its own still names the row before.
+        line = reader.reader.line_num
+        raise TaxExportError(f"{path} cannot be parsed at data row {len(rows) + 1}, line {line}: {exc}") from exc
+    width = len(header)
     for number, raw in enumerate(rows, start=1):
         # Read a row only at the header's field count: DictReader puts a long row's extras under None, a short row's gaps as None.
         if None in raw or None in raw.values():

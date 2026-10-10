@@ -189,6 +189,34 @@ def test_a_row_whose_field_count_is_not_the_headers_is_refused_by_its_data_row(t
         read(path)
 
 
+OVER_THE_FIELD_LIMIT_ROW = '"LFX099-SYNTH-LEDGER",' + "x" * 200000 + "\n"
+
+
+@pytest.mark.parametrize(
+    "read,source,reshape,refusal",
+    [
+        (
+            read_ledger,
+            LEDGER_1,
+            lambda text: text + OVER_THE_FIELD_LIMIT_ROW,
+            "cannot be parsed at data row 32, line 33: field larger than field limit (131072)",
+        ),
+        (
+            read_trades,
+            TRADES_1,
+            lambda text: "t" * 140000 + "\n" + text,
+            "cannot be parsed at its header: field larger than field limit (131072)",
+        ),
+    ],
+    ids=["field_over_the_limit_in_a_data_row", "field_over_the_limit_in_the_header"],
+)
+def test_a_field_the_csv_parser_refuses_is_refused_by_the_file(tmp_path, read, source, reshape, refusal):
+    path = tmp_path / source.name
+    path.write_text(reshape(source.read_text()))
+    with pytest.raises(TaxExportError, match=re.escape(f"{path} {refusal}")):
+        read(path)
+
+
 def test_window_one_maps_to_its_golden_rows():
     mapped = blockpit.map_rows(read_ledger(LEDGER_1), read_trades(TRADES_1))
     assert mapped.refusals == []
@@ -823,6 +851,16 @@ def test_the_command_refuses_a_short_row_with_exit_1_and_writes_nothing(tmp_path
     assert result.exit_code == 1 and isinstance(result.exception, SystemExit)
     assert f"{ledger} data row 32 (LFX099-SYNTH-LEDGER): 4 fields where the header names 16" in result.output
     assert sorted(tmp_path.iterdir()) == [tmp_path / "inputs"]
+
+
+def test_the_command_refuses_a_field_over_the_parsers_limit_with_exit_1_and_writes_nothing(tmp_path):
+    (tmp_path / "inputs").mkdir(), (tmp_path / "out").mkdir()
+    ledger = _appended(tmp_path / "inputs", LEDGER_1, OVER_THE_FIELD_LIMIT_ROW)
+    out = tmp_path / "out" / "o.csv"
+    result = RUNNER.invoke(app, ["tax", "blockpit", "--ledgers", str(ledger), "--trades", str(TRADES_1), "--out", str(out)])
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit)
+    assert f"{ledger} cannot be parsed at data row 32, line 33: field larger than field limit (131072)" in result.output
+    assert list((tmp_path / "out").iterdir()) == []
 
 
 def test_the_command_refuses_an_out_under_an_absent_directory_with_exit_1(tmp_path):
