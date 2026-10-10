@@ -1,5 +1,5 @@
-"""The live price store (spec 00041): a per-pair x grid Parquet mirror of the frozen canonical
-dataset, kept warm by REST gap-fills."""
+"""The live price store (spec 00041): a per-pair x grid Parquet file, copied from the rolling canonical, `ohlc-rolling`,
+at its head when the seed finds it absent, and kept warm by REST gap-fills."""
 
 from __future__ import annotations
 
@@ -153,18 +153,15 @@ _HOST_REDELIVERY = (
 )
 _STORE_RECOVERY = (
     "on the workstation move this leg aside (outside the store) and run `zcrypto engine seed`, which copies the "
-    "canonical for the absent file and fills the gap from REST; what is lost is any bar past the canonical's tail that "
-    "REST no longer reaches, and when the canonical's tail is itself outside the REST window the seed refuses on its own "
-    f"shortfall until the next quarterly ingest is minted; {_HOST_REDELIVERY}"
+    "rolling canonical at its local head for the absent file and fills the gap from REST; what is lost is any bar past "
+    "the canonical's tail that REST no longer reaches, and when the canonical's tail is itself outside the REST window "
+    f"the seed refuses on its own shortfall until `zcrypto data fetch` brings the hub's newer head; {_HOST_REDELIVERY}"
 )
-_REBUILD_THE_SET = (
-    "rebuild the set (`zcrypto data rebuild ohlc-full --no-push` mints the newer stamped sibling the next seed reads "
-    "once it is whole)"
+_TO_THE_OWNER = (
+    "take the canonical's frame to the owner: the rolling canonical is written once on the hub, its bytes pinned by "
+    "its index, and nothing on the workstation re-mints it"
 )
-_CANONICAL_RECOVERY = (
-    f"nothing was copied to the store; a canonical is the data pipeline's to republish: {_REBUILD_THE_SET} rather "
-    "than recast this file, whose `dataset_hash` a recast changes and nothing in this tree re-vouches"
-)
+_CANONICAL_RECOVERY = f"nothing was copied to the store; {_TO_THE_OWNER}"
 _REST_REFUSED = (
     "nothing from this fetch is written, so there is no store repair: the store holds what it held before the fetch, "
     "the next run fetches again, and a row that returns is the venue's to answer, not the store's"
@@ -188,8 +185,11 @@ _FIRST_SEED_LEG_LANDED = (
     "the leg is the canonical's, copied into the store by this seed, and a seed over a present file never reads the canonical again"
 )
 _FIRST_SEED_LEG_ASIDE = f"{_FIRST_SEED_LEG_LANDED}, so move this leg aside (outside the store) and"
-_FIRST_SEED_REBUILD = f"{_FIRST_SEED_LEG_ASIDE} {_REBUILD_THE_SET}"
-_DISJOINT_CANONICAL_DUMP = f"{_FIRST_SEED_LEG_ASIDE} use the quarterly OHLCVT dump"
+_FIRST_SEED_TO_THE_OWNER = f"{_FIRST_SEED_LEG_ASIDE} {_TO_THE_OWNER}"
+_DISJOINT_CANONICAL_FETCH = (
+    f"{_FIRST_SEED_LEG_ASIDE} run `zcrypto data fetch`, which brings the hub's newer head of the rolling canonical "
+    "for the next seed to copy"
+)
 
 
 def _seam_holes_hint(store_side_repair: str) -> str:
@@ -255,7 +255,7 @@ def _shortfall_hint(
     """`_reconcile`'s `shortfall_hint`. The leg's own repair, which the short-leg and holes arms share, is its
     provenance alone -- which `store_predates_this_run` already carries -- so no caller passes one for an arm it may
     not even reach."""
-    leg_repair = _STORE_RECOVERY if store_predates_this_run else _FIRST_SEED_REBUILD
+    leg_repair = _STORE_RECOVERY if store_predates_this_run else _FIRST_SEED_TO_THE_OWNER
     if store_frame.height < min_overlap:
         return _short_leg_shortfall_hint(store_frame.height, min_overlap, leg_repair)
     if rest_frame.is_empty():
@@ -380,12 +380,12 @@ def seed_store(
                     rest_frame,
                     min_overlap=MIN_SEAM_OVERLAP,
                     store_predates_this_run=store_existed,
-                    disjoint_store_side_repair=_STORE_RECOVERY if store_existed else _DISJOINT_CANONICAL_DUMP,
+                    disjoint_store_side_repair=_STORE_RECOVERY if store_existed else _DISJOINT_CANONICAL_FETCH,
                 ),
                 mismatch_hint=_FRESH_COPY,
                 absent_store_hint=(
                     f"{_FRESH_COPY} in the canonical, whose copy already landed: move this leg aside (outside the store) "
-                    f"and {_REBUILD_THE_SET}"
+                    f"and {_TO_THE_OWNER}"
                     if not store_existed
                     else f"{_RESEED_REFUSED}, and a re-seed over this file refuses the same absent close -- {_STORE_RECOVERY}"
                 ),

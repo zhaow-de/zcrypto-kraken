@@ -1,15 +1,16 @@
 """CLI tests for the `zcrypto engine` sub-app (spec 00041 SS The CLI): CliRunner over the
-subcommands against tmp dirs and stubbed seeder, cycle, builder and node -- no network, no dataset,
-no live node."""
+subcommands against tmp dirs and stubbed seeder, cycle, builder and node -- no network, no dataset outside
+tmp, no live node."""
 
 import ast
+import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
 import types
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import polars as pl
@@ -20,16 +21,18 @@ from typer.testing import CliRunner
 import cli.engine.command as command
 from cli.__main__ import app
 from cli.config import AppConfig, ConfigError, DataConfig, EngineConfig, FetchConfig
+from cli.data.rolling import ROLLING_SET, read_rolling
 from cli.engine import concordance
 from cli.engine.cycle import CycleResult
 from cli.engine.errors import EngineError
 from cli.engine.execgate import GateLevel, GateVerdict
 from cli.engine.execledger import append_plan_entry, write_exec_record
 from cli.engine.journal import CycleRecord, SnapshotEntry, snapshot_content_hash, to_json, validate_record
-from cli.engine.store import BASKET, GRID_INTERVALS, PAIR_KEYS, SeedEntry, SeedReport, _store_path
+from cli.engine.store import BASKET, GRID_INTERVALS, PAIR_KEYS, SeedEntry, SeedReport, _frame_differences, _store_path
 from cli.engine.tracking import read_opening_holdings
 from cli.engine.venue import VenueStatus
-from cli.ohlc.dataset import write_parquet
+from cli.ohlc.dataset import FRAME_SCHEMA, read_parquet, write_parquet
+from tests.rolling_fixtures import line_bytes, write_chain
 
 runner = CliRunner()
 
@@ -160,89 +163,168 @@ def _fake_builder(targets: dict[str, float]):
 # --- seed ------------------------------------------------------------------------------------------
 
 
+_HEAD = date(2026, 10, 3)
+
+
+def _rolling_data_dir(tmp_path: Path, **chain) -> Path:
+    data_dir = tmp_path / "data"
+    write_chain(data_dir / ROLLING_SET, pairs=BASKET, **chain)
+    return data_dir
+
+
+def _store_all_but(store_dir: Path, absent: set[tuple[str, int]]) -> None:
+    for symbol in PAIR_KEYS:
+        for interval in GRID_INTERVALS:
+            if (symbol, interval) not in absent:
+                path = _store_path(store_dir, symbol, interval)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+
+
+def _record_seed_store(monkeypatch, report: SeedReport = SeedReport(entries=())) -> list:
+    """`seed_store` stubbed to record the store dir, the canonical dir and every frame under the canonical dir, read
+    during the call: the seed removes its scratch once the call returns."""
+    handed = []
+
+    def record(store_dir, canonical_dir):
+        files = sorted(path for path in canonical_dir.rglob("*") if path.is_file())
+        frames = {path.relative_to(canonical_dir).as_posix(): read_parquet(path) for path in files}
+        handed.append((store_dir, canonical_dir, frames))
+        return report
+
+    monkeypatch.setattr(command, "seed_store", record)
+    return handed
+
+
+def _head_sha256(data_dir: Path) -> str:
+    return hashlib.sha256((data_dir / ROLLING_SET / "index/2026/10/03.json").read_bytes()).hexdigest()
+
+
+def test_seed_copies_absent_series_from_the_rolling_set_at_its_head(tmp_path, monkeypatch):
+    data_dir = _rolling_data_dir(tmp_path)
+    engine_cfg = _patch_config(monkeypatch, tmp_path, data_dir=data_dir)
+    absent = {("ADA/EUR", 1440), ("SOL/BTC", 240)}
+    _store_all_but(engine_cfg.store_dir, absent)
+    handed = _record_seed_store(monkeypatch)
+
+    result = runner.invoke(app, ["engine", "seed"])
+
+    assert result.exit_code == 0, _output(result)
+    [(store_dir, canonical_dir, frames)] = handed
+    assert store_dir == engine_cfg.store_dir
+    assert sorted(frames) == ["ADA/EUR/1440.parquet", "SOL/BTC/240.parquet"]
+    for pair, interval in absent:
+        frame = frames[f"{pair}/{interval}.parquet"]
+        assert frame.equals(read_rolling(data_dir / ROLLING_SET, pair, interval, _HEAD).frame)
+        assert frame.schema == FRAME_SCHEMA
+        assert _frame_differences(frame, interval) == []
+    assert not canonical_dir.exists()
+    assert f"canonical ohlc-rolling as of 2026-10-03 ({_head_sha256(data_dir)[:12]}) + REST gap-fill" in _output(result)
+
+
+def test_seed_refuses_a_hole_and_copies_across_it_with_accept_holes(tmp_path, monkeypatch):
+    data_dir = _rolling_data_dir(tmp_path, holes={date(2026, 10, 2): {"ADA/EUR"}})
+    engine_cfg = _patch_config(monkeypatch, tmp_path, data_dir=data_dir)
+    _store_all_but(engine_cfg.store_dir, {("ADA/EUR", 1440), ("ADA/EUR", 240)})
+    handed = _record_seed_store(monkeypatch)
+
+    refused = runner.invoke(app, ["engine", "seed"])
+
+    assert refused.exit_code == 1
+    assert isinstance(refused.exception, SystemExit)
+    out = _output(refused)
+    assert "engine seed: no canonical dataset to seed 2 absent series (ADA/EUR@1440, ADA/EUR@240) from -- ohlc-rolling: " in out
+    assert "ADA/EUR has a hole on 2026-10-02" in out
+    assert handed == []
+
+    accepted = runner.invoke(app, ["engine", "seed", "--accept-holes"])
+
+    assert accepted.exit_code == 0, _output(accepted)
+    [(_, _, frames)] = handed
+    days = frames["ADA/EUR/1440.parquet"]["ts"].dt.date().to_list()
+    assert days == [date(2026, 9, 30), date(2026, 10, 1), date(2026, 10, 3)]
+    assert date(2026, 10, 2) not in frames["ADA/EUR/240.parquet"]["ts"].dt.date().to_list()
+    assert [line for line in _output(accepted).splitlines() if line.startswith("hole: ")] == ["hole: ADA/EUR 2026-10-02"]
+
+
 def test_seed_prints_per_pair_overlap_summary(tmp_path, monkeypatch):
-    engine_cfg = _patch_config(monkeypatch, tmp_path, data_dir=Path("data"))
+    data_dir = _rolling_data_dir(tmp_path)
+    engine_cfg = _patch_config(monkeypatch, tmp_path, data_dir=data_dir)
     report = SeedReport(
         entries=(
             SeedEntry(pair="BTC", interval=1440, overlap_bars=98, appended=12, replaced_tail_rows=0),
             SeedEntry(pair="BTC", interval=240, overlap_bars=621, appended=77, replaced_tail_rows=3),
         )
     )
-    calls = []
-    roots = []
-    monkeypatch.setattr(command, "seed_store", lambda store_dir, canonical_dir: calls.append((store_dir, canonical_dir)) or report)
-    # The store dir does not exist, so every file is absent and the seed resolves a canonical under the configured
-    # data root: the resolver answers for it, with a fixed relative root whose digits are no substring the assertions
-    # below match (the tmp store path is the one path left in the output).
-    monkeypatch.setattr(
-        "cli.data.rebuild.resolve_canonical_root", lambda data_root: roots.append(data_root) or Path("data/ohlc-full-20260920")
-    )
+    handed = _record_seed_store(monkeypatch, report)
 
     result = runner.invoke(app, ["engine", "seed"])
 
     assert result.exit_code == 0, _output(result)
-    assert roots == [Path("data")]
-    assert calls == [(engine_cfg.store_dir, Path("data/ohlc-full-20260920"))]
+    [(store_dir, _, frames)] = handed
+    assert store_dir == engine_cfg.store_dir
+    assert len(frames) == len(PAIR_KEYS) * len(GRID_INTERVALS)  # the store dir does not exist, so every file is absent
     assert command.CANONICAL_DIR == Path("data/ohlc-full")
-    out = _output(result)
-    assert "ohlc-full-20260920" in out
-    assert "BTC" in out
-    assert "1440" in out and "240" in out
-    assert "98" in out and "621" in out  # per-pair x grid overlap_bars -- the seam-QA evidence
-    assert "12" in out and "77" in out  # appended
-    assert "3" in out  # replaced tail rows
-    assert "89" in out  # the appended total (12 + 77)
+    # Whole lines: the summary's date and hex carry digits a bare substring check would match.
+    lines = _output(result).splitlines()
+    assert (
+        f"seeded {engine_cfg.store_dir}: canonical ohlc-rolling as of 2026-10-03 ({_head_sha256(data_dir)[:12]}) + REST "
+        "gap-fill; seam QA per pair x grid:"
+    ) in lines
+    assert "pair    grid overlap_bars  appended  replaced" in lines
+    assert "BTC     1440           98        12         0" in lines  # per-pair x grid overlap_bars -- the seam-QA evidence
+    assert "BTC      240          621        77         3" in lines
+    assert "2 series passed seam QA; appended 89 bar(s), replaced 3 divergent tail row(s)" in lines
 
 
 def test_seed_engine_error_is_a_clean_exit_1(tmp_path, monkeypatch):
-    _patch_config(monkeypatch, tmp_path, data_dir=Path("data"))
-    monkeypatch.setattr("cli.data.rebuild.resolve_canonical_root", lambda data_root: Path("data/ohlc-full-20260920"))
+    _patch_config(monkeypatch, tmp_path, data_dir=_rolling_data_dir(tmp_path))
 
     def boom(store_dir, canonical_dir):
-        raise EngineError("window shortfall for BTC@240 -- use the quarterly OHLCVT dump")
+        raise EngineError("window shortfall for BTC/EUR@240 -- run `zcrypto data fetch`")
 
     monkeypatch.setattr(command, "seed_store", boom)
 
     result = runner.invoke(app, ["engine", "seed"])
 
     assert result.exit_code == 1
-    assert "OHLCVT" in _output(result)
+    assert "window shortfall for BTC/EUR@240 -- run `zcrypto data fetch`" in _output(result)
     assert isinstance(result.exception, SystemExit)  # clean typer.Exit, not an EngineError traceback
 
 
-def test_seed_refuses_when_no_whole_frozen_set_resolves(tmp_path, monkeypatch):
-    """The resolver's refusal is the seed's, in the seed's own voice: with a store file absent, a missing or partial
-    frozen set aborts the command before any store file is touched, the resolver's message after the seed's own."""
-    from cli.data.errors import DataSyncError
-
-    _patch_config(monkeypatch, tmp_path, data_dir=Path("data"))
-    calls = []
-    monkeypatch.setattr(
-        command, "seed_store", lambda store_dir, canonical_dir: calls.append((store_dir, canonical_dir)) or SeedReport(entries=())
-    )
-
-    def refuse(data_root):
-        raise DataSyncError("data rebuild: ohlc-reach needs a frozen ohlc-full set to join, none found under data")
-
-    monkeypatch.setattr("cli.data.rebuild.resolve_canonical_root", refuse)
+@pytest.mark.parametrize("broken", ["absent", "a broken link"])
+def test_seed_refuses_naming_the_rolling_set_when_it_cannot_be_read(tmp_path, monkeypatch, broken):
+    """The reader's refusal is the seed's, in the seed's own voice: with a store file absent, a rolling set that is
+    absent or does not chain aborts the command before any store file is touched, the set named after the seed's own
+    words and the reader's message after it."""
+    data_dir = tmp_path / "data"
+    if broken == "absent":
+        expected = f"{data_dir / ROLLING_SET} holds no line whose listed files are all present"
+    else:
+        edited = data_dir / ROLLING_SET / write_chain(data_dir / ROLLING_SET, pairs=BASKET)[2]
+        line = json.loads(edited.read_bytes())
+        line["files"][min(line["files"])] = "0" * 64
+        edited.write_bytes(line_bytes(line))
+        expected = "index/2026/10/03.json: its prev is not the sha256 of index/2026/10/02.json"
+    _patch_config(monkeypatch, tmp_path, data_dir=data_dir)
+    handed = _record_seed_store(monkeypatch)
 
     result = runner.invoke(app, ["engine", "seed"])
 
     assert result.exit_code == 1
     out = _output(result)
-    assert "engine seed: no canonical dataset to seed 24 absent series (ADA/EUR@1440, ADA/EUR@240, AVAX/EUR@1440, ...) from" in out
-    assert "none found under data" in out
+    assert (
+        "engine seed: no canonical dataset to seed 24 absent series (ADA/EUR@1440, ADA/EUR@240, AVAX/EUR@1440, ...) from "
+        f"-- ohlc-rolling: {expected}"
+    ) in out
     assert isinstance(result.exception, SystemExit)
-    assert calls == []
+    assert handed == []
 
 
 def test_seed_refuses_without_a_configured_data_dir(tmp_path, monkeypatch):
-    """No `data_dir` in the config is the same refusal: the seed cannot name a canonical without a data root."""
+    """No `data_dir` in the config is the same refusal: the seed cannot find the rolling set without a data root."""
     _patch_config(monkeypatch, tmp_path)
-    calls = []
-    monkeypatch.setattr(
-        command, "seed_store", lambda store_dir, canonical_dir: calls.append((store_dir, canonical_dir)) or SeedReport(entries=())
-    )
+    handed = _record_seed_store(monkeypatch)
 
     result = runner.invoke(app, ["engine", "seed"])
 
@@ -251,33 +333,28 @@ def test_seed_refuses_without_a_configured_data_dir(tmp_path, monkeypatch):
     assert "engine seed: no canonical dataset to seed 24 absent series (ADA/EUR@1440, ADA/EUR@240, AVAX/EUR@1440, ...) from" in out
     assert "no data_dir configured" in out
     assert "--data-dir" not in out
-    assert calls == []
+    assert handed == []
 
 
 def test_seed_reads_no_canonical_when_every_store_file_is_present(tmp_path, monkeypatch):
-    """`seed_store` opens the canonical for an absent file alone, so the seed resolves one for an absent file alone:
-    a canonical that cannot resolve blocks no repair over a complete store, and the summary says none was read."""
+    """`seed_store` opens the canonical for an absent file alone, so the seed reads the rolling set for an absent file
+    alone: a set that cannot be read blocks no repair over a complete store, and the summary says none was read."""
     engine_cfg = _patch_config(monkeypatch, tmp_path)
-    for symbol in PAIR_KEYS:
-        base, quote = symbol.split("/")
-        for interval in GRID_INTERVALS:
-            path = engine_cfg.store_dir / base / quote / f"{interval}.parquet"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.touch()
-    calls = []
-    monkeypatch.setattr(
-        command, "seed_store", lambda store_dir, canonical_dir: calls.append((store_dir, canonical_dir)) or SeedReport(entries=())
-    )
+    _store_all_but(engine_cfg.store_dir, set())
+    handed = _record_seed_store(monkeypatch)
 
-    def refuse(data_root):
-        raise AssertionError("the resolver must not be consulted when no store file is absent")
+    def refuse(*args, **kwargs):
+        raise AssertionError("the rolling set must not be read when no store file is absent")
 
-    monkeypatch.setattr("cli.data.rebuild.resolve_canonical_root", refuse)
+    monkeypatch.setattr("cli.data.rolling.head", refuse)
+    monkeypatch.setattr("cli.data.rolling.read_rolling", refuse)
 
     result = runner.invoke(app, ["engine", "seed"])
 
     assert result.exit_code == 0, _output(result)
-    assert calls == [(engine_cfg.store_dir, command.CANONICAL_DIR)]
+    [(store_dir, _, frames)] = handed
+    assert store_dir == engine_cfg.store_dir
+    assert frames == {}
     assert "no store file absent, canonical not read" in _output(result)
 
 

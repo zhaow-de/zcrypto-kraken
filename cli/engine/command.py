@@ -10,6 +10,7 @@ import json
 import math
 import os
 import shutil
+import tempfile
 import time
 import urllib.request
 from dataclasses import dataclass
@@ -74,15 +75,15 @@ from cli.engine.venue import read_system_status
 from cli.logging import get_logger
 from cli.logging.redact import ping_failure
 from cli.obs.metrics import build_registry, metrics_port_from_env, start_metrics_server
-from cli.ohlc.dataset import read_parquet
+from cli.ohlc.dataset import read_parquet, write_parquet
 from cli.portfolio.crossfreq_system import CrossfreqSystemConfig
 from cli.portfolio.errors import PortfolioError
 
 logger = get_logger("engine.command")
 
 # `soak-check`'s null reference: the frozen unstamped set, whose span is an instrument of the null. The seed does not
-# read this name -- for an absent store file it resolves the newest whole frozen sibling under the configured data
-# root, the one a REST gap-fill can seam with.
+# read this name -- for an absent store file it copies the rolling canonical, `ohlc-rolling` under the configured
+# data root, at its local head, whose tail a REST gap-fill can seam with.
 CANONICAL_DIR = Path("data/ohlc-full")
 DEFAULT_NAVS = (500.0, 1000.0, 2500.0, 5000.0, 10000.0)
 # The two variables carrying the trade credentials (`engine.env.j2` renders both), named here so a refusal can say WHICH is
@@ -372,40 +373,55 @@ def _write_prom_textfile(
 
 
 @engine_app.command()
-def seed() -> None:
+def seed(
+    accept_holes: bool = typer.Option(
+        False,
+        "--accept-holes",
+        help="Copy an absent series across a day the rolling canonical records as a hole, leaving that day out and "
+        "printing it; without it such a copy is refused.",
+    ),
+) -> None:
     """Seed/refresh the live price store: a Kraken REST gap-fill over every series, and for a store file that is
-    absent a copy of the newest whole frozen ohlc-full sibling under the configured data root, or the unstamped set
-    when no stamped sibling exists (idempotent; also the documented repair for a poisoned store tail). A workstation
-    command: the engine image carries no canonical dataset."""
-    # Imported here: the resolver lives with the rebuild tree, which the engine's own startup has no use for.
-    from cli.data.errors import DataSyncError
-    from cli.data.rebuild import resolve_canonical_root
+    absent a copy of the rolling canonical, ohlc-rolling under the configured data root, at its local head
+    (idempotent; also the documented repair for a poisoned store tail). A workstation command: the engine image
+    carries no canonical dataset."""
+    # Imported here: the rolling reader is the workstation's, which the engine's own startup has no use for.
+    from cli.data import rolling
 
     app_config = _load_app_config()
     store_dir = app_config.engine.store_dir
-    # `seed_store` opens the canonical for an absent store file alone, so it is resolved for one alone: a canonical
-    # that cannot resolve -- a sibling half-minted by an ingest in flight -- blocks no repair that needs none.
     absent = [
-        f"{symbol}@{interval}"
+        (symbol, interval)
         for symbol in PAIR_KEYS
         for interval in GRID_INTERVALS
         if not _store_path(store_dir, symbol, interval).exists()
     ]
-    canonical_dir = CANONICAL_DIR
-    if absent:
-        named = ", ".join(absent[:3]) + (", ..." if len(absent) > 3 else "")
-        prefix = f"engine seed: no canonical dataset to seed {len(absent)} absent series ({named}) from --"
+    holes: dict[str, None] = {}
+    with tempfile.TemporaryDirectory(prefix="engine-seed-") as scratch:
+        # `seed_store` opens the canonical for an absent store file alone, so the rolling set is read for those alone, each
+        # written into this store-shaped scratch: a set that cannot be read blocks no repair that needs none.
+        canonical_dir = Path(scratch)
+        source = "no store file absent, canonical not read"
+        if absent:
+            named = ", ".join(f"{symbol}@{interval}" for symbol, interval in absent[:3]) + (", ..." if len(absent) > 3 else "")
+            prefix = f"engine seed: no canonical dataset to seed {len(absent)} absent series ({named}) from --"
+            try:
+                root = resolve_data_dir(app_config) / rolling.ROLLING_SET
+                line = rolling.head(root)
+                for symbol, interval in absent:
+                    read = rolling.read_rolling(root, symbol, interval, line.day, accept_holes=accept_holes)
+                    write_parquet(read.frame, _store_path(canonical_dir, symbol, interval))
+                    holes |= dict.fromkeys(f"{symbol} {day}" for day in read.holes)
+            except (ConfigError, rolling.RollingError) as exc:
+                raise _abort(f"{prefix} {rolling.ROLLING_SET}: {exc}") from exc
+            source = f"canonical {rolling.ROLLING_SET} as of {line.day} ({line.sha256[:12]})"
         try:
-            canonical_dir = resolve_canonical_root(resolve_data_dir(app_config))
-        except (ConfigError, DataSyncError) as exc:
-            # Neither resolver's remedy names the seed; the seed says whose refusal this is first.
-            raise _abort(f"{prefix} {exc}") from exc
-    try:
-        report = seed_store(store_dir, canonical_dir)
-    except EngineError as exc:
-        raise _abort(str(exc)) from exc
-    source = f"canonical {canonical_dir}" if absent else "no store file absent, canonical not read"
+            report = seed_store(store_dir, canonical_dir)
+        except EngineError as exc:
+            raise _abort(str(exc)) from exc
     typer.echo(f"seeded {store_dir}: {source} + REST gap-fill; seam QA per pair x grid:")
+    for hole in holes:
+        typer.echo(f"hole: {hole}")
     typer.echo(f"{'pair':<6} {'grid':>5} {'overlap_bars':>12} {'appended':>9} {'replaced':>9}")
     for entry in report.entries:
         typer.echo(
