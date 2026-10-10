@@ -74,7 +74,7 @@ def _rows(path: Path, columns: tuple[str, ...], data: bytes | None) -> list[dict
         raise TaxExportError(f"{path} has no {', '.join(missing)} column")
     rows = list(reader)
     for number, raw in enumerate(rows, start=1):
-        # csv.DictReader fills a short row's absent columns with None, a whitespace-only line among them.
+        # csv.DictReader fills a short row's absent columns with None.
         if any(raw[column] is None for column in columns):
             raise TaxExportError(f"{path} data row {number} ({raw['txid']}): fewer fields than the header names")
     return rows

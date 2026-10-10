@@ -541,11 +541,12 @@ def transform(ledgers: Path, trades: Path, out: Path, after: Path | None = None)
         "zcrypto": version("zcrypto"),
     }
     provenance = (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8")
-    out.write_bytes(body)
     try:
+        out.write_bytes(body)
         provenance_path.write_bytes(provenance)
     except OSError:
-        out.unlink()
+        out.unlink(missing_ok=True)
+        provenance_path.unlink(missing_ok=True)
         raise
     label_rows = dict(Counter(row.label for row in mapped.rows))
     return Written(out, provenance_path, len(mapped.rows), label_rows, closing_all, _sha256(body), _sha256(provenance))

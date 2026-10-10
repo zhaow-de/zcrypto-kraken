@@ -485,18 +485,35 @@ def test_an_existing_output_is_never_overwritten(tmp_path, existing):
     assert (tmp_path / existing).read_text() == "{}"
 
 
-def test_a_failed_provenance_write_removes_the_import_file_and_raises(tmp_path, monkeypatch):
-    write_bytes = Path.write_bytes
+class _NoSpace:
+    def __init__(self, handle):
+        self.handle = handle
 
-    def no_space_for_the_provenance(path: Path, data: bytes) -> int:
-        if path.name.endswith(".provenance.json"):
-            raise OSError(28, "No space left on device", str(path))
-        return write_bytes(path, data)
+    def __enter__(self):
+        return self
 
-    monkeypatch.setattr(Path, "write_bytes", no_space_for_the_provenance)
+    def __exit__(self, *exc_info):
+        self.handle.close()
+
+    def write(self, data):
+        raise OSError(28, "No space left on device")
+
+
+@pytest.mark.parametrize(
+    "full", ["window-1-blockpit.csv.provenance.json", "window-1-blockpit.csv"], ids=["provenance_write", "import_file_write"]
+)
+def test_a_write_that_fails_after_its_open_leaves_neither_file(tmp_path, monkeypatch, full):
+    open_path = Path.open
+
+    def opens_then_fills(path: Path, mode: str = "r", *args, **kwargs):
+        handle = open_path(path, mode, *args, **kwargs)
+        return _NoSpace(handle) if path.name == full else handle
+
+    monkeypatch.setattr(Path, "open", opens_then_fills)
     with pytest.raises(OSError, match="No space left on device"):
         _run(tmp_path)
     assert not (tmp_path / "window-1-blockpit.csv").exists()
+    assert not (tmp_path / "window-1-blockpit.csv.provenance.json").exists()
     assert sorted(tmp_path.iterdir()) == []
 
 
