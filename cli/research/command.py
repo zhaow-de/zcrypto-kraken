@@ -10,6 +10,7 @@ from typing import Optional
 
 import typer
 
+from cli.data import rolling
 from cli.registry import TrialRegistry
 from cli.registry.errors import RegistryError
 from cli.registry.observed import ObservedReader
@@ -34,7 +35,8 @@ _REGISTER_FIELDS = (
 
 research_app = typer.Typer(
     no_args_is_help=True,
-    help="Evaluate a committed system over a frozen dataset, and register the trial it produced.",
+    help="Evaluate a committed system over a frozen dataset or the rolling dataset as of a day, and register the trial "
+    "it produced.",
 )
 
 
@@ -50,11 +52,27 @@ def _abort(message: str) -> typer.Exit:
 @research_app.command("eval")
 def eval_subject(
     subject: str = typer.Option(..., "--subject", help=f"System to evaluate. One of: {', '.join(SUBJECTS)}."),
-    dataset: str = typer.Option(..., "--dataset", help="Frozen dataset directory name under the repo's data root."),
+    dataset: str = typer.Option(
+        ...,
+        "--dataset",
+        help=f"Dataset directory name under the repo's data root: a frozen dataset, or the rolling one, {rolling.ROLLING_SET}, "
+        "read with --as-of.",
+    ),
     window: tuple[str, str] = typer.Option(
         (None, None),
         "--window",
         help="Restrict every series to START END (ISO-8601 timestamps, inclusive). Default: full history.",
+    ),
+    as_of: Optional[str] = typer.Option(
+        None,
+        "--as-of",
+        help="Read the rolling dataset as of this UTC day, YYYY-MM-DD: required for it, refused for a frozen dataset.",
+    ),
+    accept_holes: bool = typer.Option(
+        False,
+        "--accept-holes",
+        help="Read the rolling dataset across a day it records as a hole, leaving that day out and printing it; "
+        "without it such a read is refused. Refused for a frozen dataset.",
     ),
     register: bool = typer.Option(False, "--register", help="Append the result to the trial registry."),
     iteration: Optional[str] = typer.Option(None, "--iteration", help="Iteration label of the run (with --register)."),
@@ -71,8 +89,9 @@ def eval_subject(
     seed: Optional[list[int]] = typer.Option(None, "--seed", help="Seed used by the run; repeat for several."),
     registry: Optional[Path] = typer.Option(None, "--registry", help="Registry file to append to. Defaults to the committed one."),
 ) -> None:
-    """Run a committed system over a frozen dataset, reporting the metrics, the dataset bytes the run
-    actually read, and whether those bytes were vouched for by the dataset's own freeze record."""
+    """Run a committed system over a frozen dataset or the rolling dataset as of a day, reporting the metrics, what
+    identifies the data the run actually read -- a frozen dataset's bytes, the rolling dataset's index line for that
+    day -- and what vouched for it: the dataset's own freeze record, or the index chain."""
     known = SUBJECTS.get(subject)
     if known is None:
         raise _abort(f"unknown subject {subject!r}; known subjects: {', '.join(sorted(SUBJECTS))}")
@@ -85,14 +104,26 @@ def eval_subject(
             raise _abort(f"--register needs {', '.join(missing)}")
 
     dataset_dir = _DATA_ROOT / dataset
-    absent = [rel for rel in required_relpaths(known) if not (dataset_dir / rel).is_file()]
+    chained = rolling.is_chained(dataset_dir)
+    if chained and as_of is None:
+        raise _abort(f"dataset {dataset!r} is read as of a day: pass --as-of YYYY-MM-DD")
+    if not chained and (as_of is not None or accept_holes):
+        raise _abort(f"dataset {dataset!r} is frozen: --as-of and --accept-holes read the rolling dataset alone")
+    if chained:
+        try:
+            held = rolling.pairs(dataset_dir)
+        except rolling.RollingError as exc:
+            raise _abort(f"dataset {dataset!r}: {exc}") from exc
+        absent = [pair for pair in (f"{a}/EUR" for a in known.assets) if pair not in held]
+    else:
+        absent = [rel for rel in required_relpaths(known) if not (dataset_dir / rel).is_file()]
     if absent:
         raise _abort(f"dataset {dataset!r} is missing {len(absent)} series {subject!r} requires: {', '.join(absent)}")
 
     bounds = None if window == (None, None) else (window[0], window[1])
     reader = ObservedReader(_DATA_ROOT)
     try:
-        metrics = known.build(reader, dataset, bounds)
+        metrics = known.build(reader, dataset, bounds, as_of=as_of, accept_holes=accept_holes)
         block = reader.block()
     except RegistryError as exc:
         raise _abort(str(exc)) from exc
@@ -100,6 +131,10 @@ def eval_subject(
     typer.echo(f"subject: {subject}")
     typer.echo(f"dataset: {dataset}")
     typer.echo("window: " + ("full history" if bounds is None else f"{bounds[0]} .. {bounds[1]}"))
+    if as_of is not None:
+        typer.echo(f"as of: {as_of}")
+    for hole in reader.holes().get(dataset, []):
+        typer.echo(f"hole: {hole}")
     typer.echo(json.dumps({"metrics": metrics, "datasets": block, "vouched": reader.vouched_status()}, indent=2))
 
     if not register:

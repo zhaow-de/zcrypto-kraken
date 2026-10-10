@@ -24,26 +24,44 @@ class Subject:
     name: str
     intervals: tuple[int, ...]
     assets: tuple[str, ...]
-    build: Callable[[ObservedReader, str, tuple | None], dict]
+    build: Callable[[ObservedReader, str, tuple | None, str | None, bool], dict]
 
 
 def required_relpaths(subject: Subject) -> list[str]:
     return [f"{a}/EUR/{i}.parquet" for a in subject.assets for i in subject.intervals]
 
 
-def _capturing_union(reader: ObservedReader, dataset: str, interval: int, window: tuple[str, str] | None):
-    """The bare relative root makes the paths `load_union` composes the dataset-relative keys the reader wants."""
+def _capturing_union(
+    reader: ObservedReader,
+    dataset: str,
+    interval: int,
+    window: tuple[str, str] | None,
+    as_of: str | None,
+    accept_holes: bool,
+):
+    """The bare relative root makes each path `load_union` composes `<BASE>/<QUOTE>/<interval>.parquet`: a frozen
+    dataset's relative key, or, read as of a day, the rolling dataset's pair and grid."""
+    if as_of is None:
+        return load_union(interval, root=Path(), read=lambda path: reader.read_series(dataset, path.as_posix(), window=window))
     return load_union(
         interval,
         root=Path(),
-        read=lambda path: reader.read_series(dataset, path.as_posix(), window=window),
+        read=lambda path: reader.read_rolling(
+            dataset, "/".join(path.parts[:2]), int(path.stem), as_of, window=window, accept_holes=accept_holes
+        ),
     )
 
 
-def _build_crossfreq(reader: ObservedReader, dataset: str, window: tuple[str, str] | None) -> dict:
+def _build_crossfreq(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
     config = CrossfreqSystemConfig()
-    daily_ts, daily_prices = _capturing_union(reader, dataset, 1440, window)
-    h4_ts, h4_prices = _capturing_union(reader, dataset, 240, window)
+    daily_ts, daily_prices = _capturing_union(reader, dataset, 1440, window, as_of, accept_holes)
+    h4_ts, h4_prices = _capturing_union(reader, dataset, 240, window, as_of, accept_holes)
     result = build_crossfreq_system_fast(daily_prices, daily_ts, h4_prices, h4_ts, config=config)
     return {
         "ann_sharpe_noc": sharpe(result.governed_net, periods_per_year=PPY_4H),
@@ -55,8 +73,14 @@ def _build_crossfreq(reader: ObservedReader, dataset: str, window: tuple[str, st
     }
 
 
-def _build_combined(reader: ObservedReader, dataset: str, window: tuple[str, str] | None) -> dict:
-    _, daily_prices = _capturing_union(reader, dataset, 1440, window)
+def _build_combined(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    _, daily_prices = _capturing_union(reader, dataset, 1440, window, as_of, accept_holes)
     result = build_combined_system(daily_prices)
     return {
         "ann_sharpe_noc": sharpe(result.net_of_cost, periods_per_year=PPY_DAILY),
