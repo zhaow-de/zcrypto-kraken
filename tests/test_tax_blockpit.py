@@ -117,6 +117,7 @@ def test_a_value_the_export_does_not_write_is_refused(tmp_path, column, value):
 
 
 SHORT_LEDGER_ROW = '"LFX099-SYNTH-LEDGER","DFX099-SYNTH-REFID","2031-03-29 10:00:00","deposit"\n'
+POSTTXID = next(csv.reader(io.StringIO(TRADES_1.read_text()))).index("posttxid")
 
 
 def _appended(directory: Path, source: Path, line: str) -> Path:
@@ -125,18 +126,66 @@ def _appended(directory: Path, source: Path, line: str) -> Path:
     return target
 
 
+def _on_row(txid: str, edit):
+    def apply(text: str) -> str:
+        lines = text.splitlines()
+        (at,) = [at for at, line in enumerate(lines) if line.startswith(f'"{txid}",')]
+        buffer = io.StringIO()
+        csv.writer(buffer, quoting=csv.QUOTE_ALL, lineterminator="").writerow(edit(next(csv.reader([lines[at]]))))
+        lines[at] = buffer.getvalue()
+        return "\n".join(lines) + "\n"
+
+    return apply
+
+
 @pytest.mark.parametrize(
-    "read,source,line,row",
+    "read,source,reshape,refusal",
     [
-        (read_ledger, LEDGER_1, SHORT_LEDGER_ROW, "data row 32 (LFX099-SYNTH-LEDGER)"),
-        (read_ledger, LEDGER_1, " \n", "data row 32 ( )"),
-        (read_trades, TRADES_1, '"TFX099-SYNTH-TRADES","OFX099-SYNTH-ORDERS","ALGO/EUR"\n', "data row 13 (TFX099-SYNTH-TRADES)"),
+        (
+            read_ledger,
+            LEDGER_1,
+            lambda text: text + SHORT_LEDGER_ROW,
+            "data row 32 (LFX099-SYNTH-LEDGER): 4 fields where the header names 16",
+        ),
+        (read_ledger, LEDGER_1, lambda text: text + " \n", "data row 32 ( ): 1 field where the header names 16"),
+        (
+            read_trades,
+            TRADES_1,
+            lambda text: text + '"TFX099-SYNTH-TRADES","OFX099-SYNTH-ORDERS","ALGO/EUR"\n',
+            "data row 13 (TFX099-SYNTH-TRADES): 3 fields where the header names 24",
+        ),
+        (
+            read_ledger,
+            LEDGER_1,
+            _on_row("LFX031-SYNTH-LEDGER", lambda fields: [*fields, "x"]),
+            "data row 31 (LFX031-SYNTH-LEDGER): 17 fields where the header names 16",
+        ),
+        (
+            read_trades,
+            TRADES_1,
+            _on_row("TFX006-SYNTH-TRADES", lambda fields: [*fields[:POSTTXID], "x", *fields[POSTTXID:]]),
+            "data row 6 (TFX006-SYNTH-TRADES): 25 fields where the header names 24",
+        ),
+        (
+            read_trades,
+            TRADES_1,
+            _on_row("TFX006-SYNTH-TRADES", lambda fields: fields[: POSTTXID + 1]),
+            "data row 6 (TFX006-SYNTH-TRADES): 16 fields where the header names 24",
+        ),
     ],
-    ids=["short_ledger_row", "whitespace_only_ledger_line", "short_trades_row"],
+    ids=[
+        "short_ledger_row",
+        "whitespace_only_ledger_line",
+        "short_trades_row",
+        "long_ledger_row",
+        "long_trades_row_before_posttxid",
+        "trades_row_short_after_posttxid",
+    ],
 )
-def test_a_row_shorter_than_the_header_is_refused_by_its_data_row(tmp_path, read, source, line, row):
-    path = _appended(tmp_path, source, line)
-    with pytest.raises(TaxExportError, match=re.escape(f"{path} {row}: fewer fields than the header names")):
+def test_a_row_whose_field_count_is_not_the_headers_is_refused_by_its_data_row(tmp_path, read, source, reshape, refusal):
+    path = tmp_path / source.name
+    path.write_text(reshape(source.read_text()))
+    with pytest.raises(TaxExportError, match=re.escape(f"{path} {refusal}")):
         read(path)
 
 
@@ -772,7 +821,7 @@ def test_the_command_refuses_a_short_row_with_exit_1_and_writes_nothing(tmp_path
     out = tmp_path / "o.csv"
     result = RUNNER.invoke(app, ["tax", "blockpit", "--ledgers", str(ledger), "--trades", str(TRADES_1), "--out", str(out)])
     assert result.exit_code == 1 and isinstance(result.exception, SystemExit)
-    assert f"{ledger} data row 32 (LFX099-SYNTH-LEDGER): fewer fields than the header names" in result.output
+    assert f"{ledger} data row 32 (LFX099-SYNTH-LEDGER): 4 fields where the header names 16" in result.output
     assert sorted(tmp_path.iterdir()) == [tmp_path / "inputs"]
 
 

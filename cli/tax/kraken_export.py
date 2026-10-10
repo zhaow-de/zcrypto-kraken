@@ -73,10 +73,13 @@ def _rows(path: Path, columns: tuple[str, ...], data: bytes | None) -> list[dict
     if missing:
         raise TaxExportError(f"{path} has no {', '.join(missing)} column")
     rows = list(reader)
+    width = len(reader.fieldnames)
     for number, raw in enumerate(rows, start=1):
-        # csv.DictReader fills a short row's absent columns with None.
-        if any(raw[column] is None for column in columns):
-            raise TaxExportError(f"{path} data row {number} ({raw['txid']}): fewer fields than the header names")
+        # Read a row only at the header's field count: DictReader puts a long row's extras under None, a short row's gaps as None.
+        if None in raw or None in raw.values():
+            count = width + len(raw[None]) if None in raw else sum(value is not None for value in raw.values())
+            fields = f"{count} field{'' if count == 1 else 's'}"
+            raise TaxExportError(f"{path} data row {number} ({raw['txid']}): {fields} where the header names {width}")
     return rows
 
 
