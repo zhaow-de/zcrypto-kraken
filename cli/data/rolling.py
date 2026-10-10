@@ -64,6 +64,11 @@ class RollingError(Exception):
     close -- is not what the set's rules require, and the message names the path or the argument at fault."""
 
 
+class HoleError(RollingError):
+    """A read refused across a day its pair has a hole on, which `accept_holes` reads across: the commands taking
+    `--accept-holes` name it as the remedy."""
+
+
 @dataclass(frozen=True)
 class Line:
     day: date
@@ -290,7 +295,7 @@ def read_rolling(
         if pair in line.holes:
             if _meets(line.day, window):
                 if not accept_holes:
-                    raise RollingError(f"{root}: {pair} has a hole on {line.day} ({line.holes[pair]}) inside the window read")
+                    raise HoleError(f"{root}: {pair} has a hole on {line.day} ({line.holes[pair]}) inside the window read")
                 holes.append(line.day)
             continue
         relpath = _day_relpath(pair, line.day)

@@ -128,7 +128,8 @@ def eval_subject(
         metrics = known.build(reader, dataset, bounds, as_of=as_of, accept_holes=accept_holes)
         block = reader.block()
     except RegistryError as exc:
-        raise _abort(str(exc)) from exc
+        remedy = " (--accept-holes leaves the day out)" if isinstance(exc.__cause__, rolling.HoleError) else ""
+        raise _abort(f"{exc}{remedy}") from exc
 
     typer.echo(f"subject: {subject}")
     typer.echo(f"dataset: {dataset}")

@@ -412,6 +412,8 @@ def seed(
                     read = rolling.read_rolling(root, symbol, interval, line.day, accept_holes=accept_holes)
                     write_parquet(read.frame, _store_path(canonical_dir, symbol, interval))
                     holes |= dict.fromkeys(f"{symbol} {day}" for day in read.holes)
+            except rolling.HoleError as exc:
+                raise _abort(f"{prefix} {rolling.ROLLING_SET}: {exc} (--accept-holes leaves the day out)") from exc
             except (ConfigError, rolling.RollingError, OSError) as exc:
                 raise _abort(f"{prefix} {rolling.ROLLING_SET}: {exc}") from exc
             source = f"canonical {rolling.ROLLING_SET} as of {line.day} ({line.sha256[:12]})"

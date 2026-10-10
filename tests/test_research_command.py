@@ -21,7 +21,7 @@ from cli.portfolio.crossfreq_system import CrossfreqSystemConfig
 from cli.registry.record import compute_hash
 from cli.research import command as research_command
 from cli.research import subjects
-from tests.rolling_fixtures import write_chain
+from tests.rolling_fixtures import HOLE, write_chain
 
 runner = CliRunner()
 
@@ -349,7 +349,7 @@ def test_eval_refuses_a_hole_and_reads_across_it_with_accept_holes(tmp_path, mon
 
     assert refused.exit_code == 1
     assert isinstance(refused.exception, SystemExit)
-    assert "BTC/EUR" in refused.output and "2026-10-02" in refused.output
+    assert f"BTC/EUR has a hole on 2026-10-02 ({HOLE}) inside the window read (--accept-holes leaves the day out)" in refused.output
 
     accepted = runner.invoke(app, _rolling_eval("--as-of", "2026-10-03", "--accept-holes"))
 

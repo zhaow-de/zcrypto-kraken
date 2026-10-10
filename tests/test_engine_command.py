@@ -32,7 +32,7 @@ from cli.engine.store import BASKET, GRID_INTERVALS, PAIR_KEYS, SeedEntry, SeedR
 from cli.engine.tracking import read_opening_holdings
 from cli.engine.venue import VenueStatus
 from cli.ohlc.dataset import FRAME_SCHEMA, read_parquet, write_parquet
-from tests.rolling_fixtures import line_bytes, write_chain
+from tests.rolling_fixtures import HOLE, line_bytes, write_chain
 
 runner = CliRunner()
 
@@ -234,7 +234,7 @@ def test_seed_refuses_a_hole_and_copies_across_it_with_accept_holes(tmp_path, mo
     assert isinstance(refused.exception, SystemExit)
     out = _output(refused)
     assert "engine seed: no canonical dataset to seed 2 absent series (ADA/EUR@1440, ADA/EUR@240) from -- ohlc-rolling: " in out
-    assert "ADA/EUR has a hole on 2026-10-02" in out
+    assert f"ADA/EUR has a hole on 2026-10-02 ({HOLE}) inside the window read (--accept-holes leaves the day out)" in out
     assert handed == []
 
     accepted = runner.invoke(app, ["engine", "seed", "--accept-holes"])
