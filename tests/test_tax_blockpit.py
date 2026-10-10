@@ -5,6 +5,7 @@ import io
 import json
 import re
 import zipfile
+from collections import Counter
 from decimal import Decimal
 from importlib.metadata import version
 from pathlib import Path
@@ -338,8 +339,10 @@ def test_a_trades_row_naming_one_present_ledger_id_is_enough():
     assert blockpit.check_cross(read_ledger(LEDGER_1), read_trades(TRADES_1)) == []
 
 
-def _run(tmp_path: Path, ledger: Path = LEDGER_1, trades: Path = TRADES_1, name: str = "window-1-blockpit.csv"):
-    return blockpit.transform(ledger, trades, tmp_path / name)
+def _run(
+    tmp_path: Path, ledger: Path = LEDGER_1, trades: Path = TRADES_1, after: Path | None = None, name: str = "window-1-blockpit.csv"
+):
+    return blockpit.transform(ledger, trades, tmp_path / name, after)
 
 
 def _provenance(path: Path) -> dict:
@@ -526,3 +529,143 @@ def test_a_run_over_a_trades_export_without_a_column_writes_nothing(tmp_path):
     with pytest.raises(TaxExportError, match="has no pair column"):
         _run(tmp_path, trades=trades)
     assert sorted(tmp_path.iterdir()) == before
+
+
+def test_window_two_after_window_one_maps_to_its_golden(tmp_path):
+    first = _run(tmp_path)
+    second = _run(tmp_path, LEDGER_2, TRADES_2, after=first.provenance, name="window-2-blockpit.csv")
+    assert second.out.read_bytes() == (FIXTURES / "window-2-blockpit.csv").read_bytes()
+    assert _provenance(second.provenance) == json.loads((FIXTURES / "window-2-blockpit.csv.provenance.json").read_text())
+    assert json.loads(second.provenance.read_text())["previous"] == hashlib.sha256(first.provenance.read_bytes()).hexdigest()
+
+
+def test_window_two_without_after_is_refused(tmp_path):
+    before = sorted(tmp_path.iterdir())
+    with pytest.raises(Refused) as caught:
+        _run(tmp_path, LEDGER_2, TRADES_2, name="window-2-blockpit.csv")
+    assert {refusal.reason for refusal in caught.value.refusals} == {
+        "ATOM opens at 11.1025 and no --after names the window before",
+        "EUR opens at 1174.1133 and no --after names the window before",
+    }
+    assert sorted(tmp_path.iterdir()) == before
+
+
+def test_an_opening_unequal_to_the_previous_closing_is_refused(tmp_path):
+    first = _run(tmp_path)
+    record = json.loads(first.provenance.read_text())
+    record["closing"]["EUR"] = "1174.1130"
+    edited = tmp_path / "edited.provenance.json"
+    edited.write_text(json.dumps(record))
+    before = sorted(tmp_path.iterdir())
+    with pytest.raises(Refused) as caught:
+        _run(tmp_path, LEDGER_2, TRADES_2, after=edited, name="window-2-blockpit.csv")
+    assert [refusal.reason for refusal in caught.value.refusals] == [
+        "EUR opens at 1174.1133 where the window before closed at 1174.113"
+    ]
+    assert sorted(tmp_path.iterdir()) == before
+
+
+def test_a_previous_window_that_does_not_end_before_this_one_is_refused(tmp_path):
+    first = _run(tmp_path)
+    record = json.loads(first.provenance.read_text())
+    record["inputs"]["ledgers"]["last_time"] = "2031-04-01 10:00:00"
+    edited = tmp_path / "edited.provenance.json"
+    edited.write_text(json.dumps(record))
+    before = sorted(tmp_path.iterdir())
+    with pytest.raises(Refused) as caught:
+        _run(tmp_path, LEDGER_2, TRADES_2, after=edited, name="window-2-blockpit.csv")
+    assert [refusal.reason for refusal in caught.value.refusals] == [
+        "this ledger's first time 2031-04-01 10:00:00 is not after the window before's last, 2031-04-01 10:00:00"
+    ]
+    assert sorted(tmp_path.iterdir()) == before
+
+
+def _empty_window(tmp_path: Path) -> tuple[Path, Path]:
+    (tmp_path / "empty").mkdir()
+    ledger, trades = tmp_path / "empty" / LEDGER_1.name, tmp_path / "empty" / TRADES_1.name
+    ledger.write_text(LEDGER_1.read_text().splitlines()[0] + "\n")
+    trades.write_text(TRADES_1.read_text().splitlines()[0] + "\n")
+    return ledger, trades
+
+
+def test_an_empty_window_carries_the_chain_to_the_next(tmp_path):
+    first = _run(tmp_path)
+    empty = _run(tmp_path, *_empty_window(tmp_path), after=first.provenance, name="empty.csv")
+    assert json.loads(empty.provenance.read_text())["inputs"]["ledgers"]["last_time"] == "2031-03-28 22:00:00"
+    second = _run(tmp_path, LEDGER_2, TRADES_2, after=empty.provenance, name="window-2-blockpit.csv")
+    assert second.out.read_bytes() == (FIXTURES / "window-2-blockpit.csv").read_bytes()
+
+
+def test_a_window_after_an_empty_first_window_opens_from_zero(tmp_path):
+    empty = _run(tmp_path, *_empty_window(tmp_path), name="empty.csv")
+    assert json.loads(empty.provenance.read_text())["inputs"]["ledgers"]["last_time"] is None
+    first = _run(tmp_path, after=empty.provenance)
+    assert first.out.read_bytes() == (FIXTURES / "window-1-blockpit.csv").read_bytes()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "{}",
+        '{"closing": {}, "inputs": []}',
+        '{"closing": [], "inputs": {"ledgers": {"last_time": null}}}',
+        '{"closing": {}, "inputs": {"ledgers": {"last_time": 5}}}',
+    ],
+    ids=["empty", "no_keys", "inputs_not_a_map", "closing_not_a_map", "last_time_not_a_string"],
+)
+def test_a_file_that_is_no_provenance_is_refused_as_after(tmp_path, text):
+    after = tmp_path / "after.json"
+    after.write_text(text)
+    with pytest.raises(TaxExportError, match="not a provenance file"):
+        _run(tmp_path, LEDGER_2, TRADES_2, after=after, name="window-2-blockpit.csv")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [None, 11.1025, "NaN", "abc"],
+    ids=["closing_value_null", "closing_value_a_number", "closing_value_not_finite", "closing_value_not_a_decimal"],
+)
+def test_a_previous_closing_that_is_no_decimal_string_is_refused_by_its_asset(tmp_path, value):
+    after = tmp_path / "after.json"
+    after.write_text(json.dumps({"closing": {"ATOM": value, "EUR": "1174.1133"}, "inputs": {"ledgers": {"last_time": None}}}))
+    with pytest.raises(TaxExportError, match="its closing ATOM is not a decimal string"):
+        _run(tmp_path, LEDGER_2, TRADES_2, after=after, name="window-2-blockpit.csv")
+
+
+@pytest.mark.parametrize(
+    "role,shape,reason",
+    [
+        ("ledgers", "absent", "cannot be read"),
+        ("trades", "absent", "cannot be read"),
+        ("after", "absent", "cannot be read"),
+        ("ledgers", "a_directory", "cannot be read"),
+        ("ledgers", "not_utf8", "is not UTF-8 text"),
+        ("trades", "not_utf8", "is not UTF-8 text"),
+    ],
+    ids=["ledgers_absent", "trades_absent", "after_absent", "ledgers_a_directory", "ledgers_not_utf8", "trades_not_utf8"],
+)
+def test_an_input_that_cannot_be_read_is_refused_by_its_path_and_nothing_is_written(tmp_path, role, shape, reason):
+    inputs = {"ledgers": LEDGER_2, "trades": TRADES_2, "after": FIXTURES / "window-1-blockpit.csv.provenance.json"}
+    (tmp_path / "inputs").mkdir()
+    broken = tmp_path / "inputs" if shape == "a_directory" else tmp_path / "inputs" / inputs[role].name
+    if shape == "not_utf8":
+        broken.write_bytes(inputs[role].read_bytes() + b"\xff\n")
+    inputs[role] = broken
+    before = sorted(tmp_path.iterdir())
+    with pytest.raises(TaxExportError, match=re.escape(f"{broken} {reason}")):
+        _run(tmp_path, inputs["ledgers"], inputs["trades"], after=inputs["after"], name="window-2-blockpit.csv")
+    assert sorted(tmp_path.iterdir()) == before
+
+
+def test_the_fields_a_run_returns_are_its_golden_files(tmp_path):
+    first = _run(tmp_path)
+    second = _run(tmp_path, LEDGER_2, TRADES_2, after=first.provenance, name="window-2-blockpit.csv")
+    for written in (first, second):
+        golden = (FIXTURES / written.out.name).read_bytes()
+        record = json.loads((FIXTURES / written.provenance.name).read_text())
+        assert written.rows == record["output"]["rows"]
+        assert written.label_rows == dict(Counter(row["Label"] for row in csv.DictReader(io.StringIO(golden.decode()))))
+        assert list(written.closing.items()) == sorted(record["closing"].items())
+        assert written.sha256 == hashlib.sha256(golden).hexdigest()
+        assert written.provenance_sha256 == hashlib.sha256(written.provenance.read_bytes()).hexdigest()

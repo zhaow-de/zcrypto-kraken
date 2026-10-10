@@ -473,6 +473,13 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _read(path: Path) -> bytes:
+    try:
+        return path.read_bytes()
+    except OSError as exc:
+        raise TaxExportError(f"{path} cannot be read: {exc.strerror}") from exc
+
+
 @dataclass(frozen=True)
 class Written:
     out: Path
@@ -484,13 +491,15 @@ class Written:
     provenance_sha256: str
 
 
-def transform(ledgers: Path, trades: Path, out: Path) -> Written:
+def transform(ledgers: Path, trades: Path, out: Path, after: Path | None = None) -> Written:
     provenance_path = out.with_name(out.name + ".provenance.json")
     for path in (out, provenance_path):
         if path.exists():
             raise TaxExportError(f"{path} exists, and a run never overwrites a file")
-    ledger_bytes, trades_bytes = ledgers.read_bytes(), trades.read_bytes()
+    ledger_bytes, trades_bytes = _read(ledgers), _read(trades)
     ledger, trade_rows = read_ledger(ledgers, ledger_bytes), read_trades(trades, trades_bytes)
+    previous_bytes = _read(after) if after else None
+    previous = _previous(after, previous_bytes) if after else None
     mapped = map_rows(ledger, trade_rows)
     opening, closing, chain = check_chain(ledger)
     first_time = ledger[0].time if ledger else None
@@ -501,12 +510,14 @@ def transform(ledgers: Path, trades: Path, out: Path) -> Written:
         *check_conservation(ledger, mapped.rows),
         *check_order(opening, mapped.rows),
         *check_unique(mapped.rows),
+        *check_continuity(opening, first_time, previous),
     ]
     if refusals:
         raise Refused(refusals)
     body = render_csv(mapped.rows)
-    closing_all = {asset: _plain(value) for asset, value in sorted(closing.items())}
-    last_time = ledger[-1].time if ledger else None
+    carried = {asset: Decimal(value) for asset, value in previous["closing"].items()} if previous else {}
+    closing_all = {asset: _plain(value) for asset, value in sorted({**carried, **closing}.items())}
+    last_time = ledger[-1].time if ledger else (previous["inputs"]["ledgers"]["last_time"] if previous else None)
     record = {
         "inputs": {
             "ledgers": {
@@ -524,7 +535,7 @@ def transform(ledgers: Path, trades: Path, out: Path) -> Written:
         "closing": closing_all,
         "positions": {position: sorted(txids) for position, txids in sorted(mapped.positions.items())},
         "no_movement": mapped.no_movement,
-        "previous": None,
+        "previous": _sha256(previous_bytes) if previous_bytes else None,
         "zcrypto": version("zcrypto"),
     }
     provenance = (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8")
@@ -532,3 +543,48 @@ def transform(ledgers: Path, trades: Path, out: Path) -> Written:
     provenance_path.write_bytes(provenance)
     label_rows = dict(Counter(row.label for row in mapped.rows))
     return Written(out, provenance_path, len(mapped.rows), label_rows, closing_all, _sha256(body), _sha256(provenance))
+
+
+def check_continuity(opening: dict[str, Decimal], first_time: str | None, previous: dict | None) -> list[Refusal]:
+    if previous is None:
+        return [
+            Refusal((), "continuity", f"{asset} opens at {_plain(value)} and no --after names the window before")
+            for asset, value in sorted(opening.items())
+            if value != 0
+        ]
+    closed = {asset: Decimal(value) for asset, value in previous["closing"].items()}
+    refusals = [
+        Refusal(
+            (),
+            "continuity",
+            f"{asset} opens at {_plain(value)} where the window before closed at {_plain(closed.get(asset, Decimal(0)))}",
+        )
+        for asset, value in sorted(opening.items())
+        if value != closed.get(asset, Decimal(0))
+    ]
+    last = previous["inputs"]["ledgers"]["last_time"]
+    if first_time is not None and last is not None and first_time <= last:
+        refusals.append(
+            Refusal((), "continuity", f"this ledger's first time {first_time} is not after the window before's last, {last}")
+        )
+    return refusals
+
+
+def _previous(after: Path, data: bytes) -> dict:
+    try:
+        previous = json.loads(data)
+        closing, last_time = previous["closing"], previous["inputs"]["ledgers"]["last_time"]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise TaxExportError(f"{after} is not a provenance file this command wrote") from exc
+    if not isinstance(closing, dict) or not (last_time is None or isinstance(last_time, str)):
+        raise TaxExportError(f"{after} is not a provenance file this command wrote")
+    for asset, value in sorted(closing.items()):
+        try:
+            is_decimal = isinstance(value, str) and Decimal(value).is_finite()
+        except InvalidOperation:
+            is_decimal = False
+        if not is_decimal:
+            raise TaxExportError(
+                f"{after} is not a provenance file this command wrote: its closing {asset} is not a decimal string"
+            )
+    return previous

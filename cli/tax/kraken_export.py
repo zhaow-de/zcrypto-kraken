@@ -64,7 +64,10 @@ class TradeRow:
 def _rows(path: Path, columns: tuple[str, ...], data: bytes | None) -> list[dict[str, str]]:
     # `utf-8-sig`: a file opened and saved in a spreadsheet gains a byte-order mark glued to its first column name.
     # `data` is the file's bytes where the caller has read them to hash, so the rows parse the bytes it hashed.
-    text = (path.read_bytes() if data is None else data).decode("utf-8-sig")
+    try:
+        text = (path.read_bytes() if data is None else data).decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise TaxExportError(f"{path} is not UTF-8 text") from exc
     reader = csv.DictReader(io.StringIO(text, newline=""))
     missing = [column for column in columns if column not in (reader.fieldnames or [])]
     if missing:

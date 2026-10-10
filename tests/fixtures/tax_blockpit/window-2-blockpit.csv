@@ -1,0 +1,5 @@
+Date (UTC),Integration Name,Label,Outgoing Asset,Outgoing Amount,Incoming Asset,Incoming Amount,Fee Asset (optional),Fee Amount (optional),Comment (optional),Trx. ID (optional)
+01.04.2031 10:00:00,Kraken manual import,Margin Fee,EUR,0.0035,,,,,kraken rollover position TFX012-SYNTH-TRADES,LFX101-SYNTH-LEDGER
+02.04.2031 09:00:00,Kraken manual import,Margin Profit,,,EUR,2.25,,,kraken margin ALGO/EUR position TFX012-SYNTH-TRADES,LFX102-SYNTH-LEDGER
+02.04.2031 09:00:00,Kraken manual import,Margin Fee,EUR,0.065,,,,,kraken margin ALGO/EUR position TFX012-SYNTH-TRADES,LFX102-SYNTH-LEDGER-fee
+03.04.2031 12:00:00,Kraken manual import,Trade,ATOM,8.5,EUR,54.4,EUR,0.2176,kraken trade/tradespot ATOM/EUR,TFX014-SYNTH-TRADES
