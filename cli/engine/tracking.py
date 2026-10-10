@@ -435,7 +435,7 @@ _MATCHED_LEDGER_TYPES = frozenset({"trade", "margin"})
 # holds no row for; `collateralconversion` is the venue's own currency swap for a margin fee, keyed to the position's
 # opening trade; `staking` is a reward the venue credits on a spot holding, in the API's spelling.
 _NO_FILL_LEDGER_TYPES = frozenset({"deposit", "withdrawal", "transfer", "settled", "collateralconversion", "staking"})
-# The same reward in the CSV export's spelling, type `earn` under subtype `reward`.
+# The same reward in the CSV export's spelling.
 _EARN_REWARD = ("earn", "reward")
 # The venue's small-balance conversion writes no trade: a `spend` row per coin and a `receive` row for the proceeds, each
 # with this subtype.
