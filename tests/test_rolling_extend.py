@@ -375,6 +375,19 @@ def test_a_final_without_its_sidecar_is_refused_and_nothing_of_that_day_written(
     assert not any(relpath.endswith("2026/10/02.parquet") for relpath in _files_under(out))
 
 
+def test_a_sidecar_that_is_not_utf_8_is_a_one_line_refusal(tmp_path):
+    tape, out, staging = _outbox(tmp_path, pairs=("BTC/EUR", "ETH/BTC"))
+    _finals(tape, ("BTC/EUR", "ETH/BTC"), SEAM, D)
+    (tape / "BTC/EUR/2026/10/02.parquet.sha256").write_bytes(b"\xff\xfe is not text\n")
+
+    result = _extend_cli(tape, out, staging)
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert f"{tape / 'BTC/EUR/2026/10/02.parquet'} does not hash to its sidecar" in result.output
+    assert D not in _line_days(out)
+
+
 def test_no_existing_file_is_rewritten(tmp_path):
     tape, out, staging = _outbox(tmp_path, pairs=("BTC/EUR", "ETH/BTC"))
     _finals(tape, ("BTC/EUR", "ETH/BTC"), SEAM, SEAM)

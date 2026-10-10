@@ -481,7 +481,7 @@ def _final_bytes(final: Path) -> bytes:
     sidecar = final.with_suffix(".parquet.sha256")
     if not sidecar.is_file():
         raise RollingError(f"{final} has no sidecar {sidecar.name}")
-    if sidecar.read_text() != f"{hashlib.sha256(data).hexdigest()}  {final.name}\n":
+    if sidecar.read_bytes() != f"{hashlib.sha256(data).hexdigest()}  {final.name}\n".encode():
         raise RollingError(f"{final} does not hash to its sidecar {sidecar.name}")
     return data
 
