@@ -1080,7 +1080,7 @@ ROLLING_HUB = Path("/mnt/zhao-crypto/hot/ohlc-rolling")
 # A day's finals publish two days after it at 02:52Z at the earliest, so a head two days back is current and three is
 # the reading before that hour.
 ROLLING_STALE_AFTER_DAYS = 3
-# tape-bars' tree on the host the pass runs on, where the held day's finals and a final reopening an ended set are read.
+# tape-bars' tree on the host the pass runs on.
 ROLLING_TAPE = Path("/var/lib/zcrypto-ops/tape-bars")
 # Days past the held day's nominal publication, two days after it, from which a pair still without its final is the
 # owner's decision.
@@ -1091,17 +1091,7 @@ def read_rolling_head(*, now: datetime, root: Path, tape_root: Path) -> Check:
     """The rolling canonical's newest index line on the hub, one row: its chain walked down to the base, its own files
     re-hashed, and its day at most `ROLLING_STALE_AFTER_DAYS` before `now`'s UTC date.
 
-    The newest line is read by its day, never by `head`, which steps past a line whose files are absent. Ahead of the
-    age test, a line `is_ended` reads -- every pair closed, no final under `tape_root` dated after it -- is its own
-    state, never ok. A head past the threshold is held at the day after it: the value names each pair without a final
-    for that day under `tape_root`, save a pair the line records as closed, and from `ROLLING_ESCALATE_AFTER_DAYS` past
-    that day's publication it is the owner's decision. `tape_root` is listed before each read of it, and the index by
-    `line_days`, which raises where it cannot list. A hub with no `index/`, an index directory the pass cannot list,
-    and any other `OSError` on the hub or the tape are `unreadable`; a `RollingError` -- a broken link, a listed file
-    absent or changed -- is a FAIL naming it, a listed file in a directory the pass cannot search reading as absent
-    through `verify_line`'s `is_file`.
-
-    Keyword-only, no defaults: `main` names the hub and the tape.
+    The newest line is read by its day, never by `head`, which steps past a line whose files are absent.
     """
     from cli.data import rolling
     from cli.tick.materialize import _final_path

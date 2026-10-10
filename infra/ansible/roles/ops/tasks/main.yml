@@ -250,9 +250,6 @@
     group: "{{ ops_hot_group }}"
     mode: "2775"
 
-# The rolling canonical's staging directory, the outbox's sibling: the tape-bars runner's extension
-# writes each file here and renames it into the outbox. Ungated like the outbox; the NAS pull pins
-# hot-out alone, so nothing under the staging directory is ever pulled.
 - name: ensure the rolling canonical's staging directory exists
   ansible.builtin.file:
     path: "{{ ops_data_dir }}/{{ ops_rolling_staging_subdir }}"
@@ -357,9 +354,8 @@
     ops_uid: "{{ ansible_facts['getent_passwd'][ops_data_user][1] }}"
     ops_gid: "{{ ansible_facts['getent_passwd'][ops_data_user][2] }}"
 
-# The tape-bars runner's extension joins the outbox's group by this gid: a numeric --user carries no
-# supplementary group. A group record's fields after its name are password, gid and members, so its
-# gid is index 1, where the passwd record's above is index 2.
+# A group record's fields after its name are password, gid and members, so its gid is index 1, where
+# the passwd record's above is index 2.
 - name: look up the zcrypto-hot exchange group (the rolling extension's container joins it by gid)
   ansible.builtin.getent:
     database: group
