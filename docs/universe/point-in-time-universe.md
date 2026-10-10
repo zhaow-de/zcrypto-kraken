@@ -81,7 +81,7 @@ real market move measured correctly.
   universe rebuild obtains its reference data.
 - **OHLC dataset:** `data/ohlc-reach-20260813/{base}/{quote}/1440.parquet` (gitignored), basket sha256
   `d77fff97c819f5afbabbddf44ad0b8d94185a62a84002aaf36d153357100c98e`, minted 2026-08-13T03:14:02Z. Resolved by
-  `resolve_ohlc_source` as the newest stamped `ohlc-reach-<stamp>` sibling; the stalest daily bar across the
+  `resolve_ohlc_source`, retired since, as the newest stamped `ohlc-reach-<stamp>` sibling; the stalest daily bar across the
   basket is **2026-08-12**, one day old against the 7-day staleness budget. All twelve daily series seamed to the
   canonical tail (`status: continuous`, 586 overlap bars, 134 bars appended, `gap_bars: 0`).
 - **Derivation code:** `cli/universe/` (`volume.py`, `rules.py`, `build.py`) — see
@@ -97,7 +97,7 @@ real market move measured correctly.
 
 - **Full-history volume** — **DISCHARGED 2026-08-13** by this regeneration (→
   `docs/open-topics/T0093-universe-rebuild-reads-a-stale-ohlc-set.md`). The volume signal no longer reads a dead
-  window: `_refresh_universe` resolves the newest stamped reach sibling, and the reach round now mints all twelve
+  window: `_refresh_universe` resolved the newest stamped reach sibling, and the reach round then minted all twelve
   legs rather than the ten EUR ones. What remains on that topic is repo-side only — retiring the legacy
   `universe/` fallback now that a stamped set is published and the resolver selects it.
 - **Spread-cap criterion** — **DISCHARGED 2026-08-13** by this regeneration (→ **T0024**). The artifact carries a
