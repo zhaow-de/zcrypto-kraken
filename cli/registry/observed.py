@@ -182,7 +182,7 @@ class ObservedReader:
             )
         try:
             read = rolling.read_rolling(self._root / dataset, pair, interval, day, window=bounds, accept_holes=accept_holes)
-        except rolling.RollingError as exc:
+        except (rolling.RollingError, OSError) as exc:
             raise RegistryError(f"{dataset}: {exc}") from exc
         frame = read.frame
         if frame.height == 0:

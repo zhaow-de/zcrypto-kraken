@@ -104,6 +104,8 @@ def eval_subject(
             raise _abort(f"--register needs {', '.join(missing)}")
 
     dataset_dir = _DATA_ROOT / dataset
+    if not dataset_dir.is_dir():
+        raise _abort(f"dataset {dataset!r} is absent: no directory {dataset_dir}; zcrypto data fetch mirrors the hub's datasets")
     chained = rolling.is_chained(dataset_dir)
     if chained and as_of is None:
         raise _abort(f"dataset {dataset!r} is read as of a day: pass --as-of YYYY-MM-DD")
@@ -112,7 +114,7 @@ def eval_subject(
     if chained:
         try:
             held = rolling.pairs(dataset_dir)
-        except rolling.RollingError as exc:
+        except (rolling.RollingError, OSError) as exc:
             raise _abort(f"dataset {dataset!r}: {exc}") from exc
         absent = [pair for pair in (f"{a}/EUR" for a in known.assets) if pair not in held]
     else:

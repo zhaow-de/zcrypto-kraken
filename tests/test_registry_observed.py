@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 import re
 from datetime import date, datetime
 from pathlib import Path
@@ -227,6 +228,18 @@ def test_a_rolling_read_of_zero_rows_is_refused(tmp_path):
         reader.read_rolling(ROLLING_SET, "BTC/EUR", 15, _AS_OF, window=("2026-09-29 00:00:00+00:00", "2026-09-29 23:45:00+00:00"))
     with pytest.raises(RegistryError, match="accumulated nothing"):
         reader.block()
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses directory permissions")
+def test_a_rolling_index_the_reader_cannot_list_is_a_registry_refusal_naming_it(tmp_path):
+    root = _rolling(tmp_path)
+    month = root / ROLLING_SET / "index/2026/10"
+    os.chmod(month, 0o000)
+    try:
+        with pytest.raises(RegistryError, match=rf"^{ROLLING_SET}: .*Permission denied: '{re.escape(str(month))}'$"):
+            ObservedReader(root).read_rolling(ROLLING_SET, "BTC/EUR", 1440, _AS_OF)
+    finally:
+        os.chmod(month, 0o755)
 
 
 _FULL_SET_EXPECTATIONS = {  # measured 2026-08-08; spans in the loader's own stamp format

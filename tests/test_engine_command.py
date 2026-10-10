@@ -336,6 +336,24 @@ def test_seed_refuses_without_a_configured_data_dir(tmp_path, monkeypatch):
     assert handed == []
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses directory permissions")
+def test_seed_refuses_a_rolling_index_it_cannot_list_in_one_line(tmp_path, monkeypatch):
+    data_dir = _rolling_data_dir(tmp_path)
+    _patch_config(monkeypatch, tmp_path, data_dir=data_dir)
+    handed = _record_seed_store(monkeypatch)
+    month = data_dir / ROLLING_SET / "index/2026/10"
+    os.chmod(month, 0o000)
+    try:
+        result = runner.invoke(app, ["engine", "seed"])
+    finally:
+        os.chmod(month, 0o755)
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert f"from -- ohlc-rolling: [Errno 13] Permission denied: '{month}'" in _output(result)
+    assert handed == []
+
+
 def test_seed_reads_no_canonical_when_every_store_file_is_present(tmp_path, monkeypatch):
     """`seed_store` opens the canonical for an absent file alone, so the seed reads the rolling set for an absent file
     alone: a set that cannot be read blocks no repair over a complete store, and the summary says none was read."""

@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 from datetime import date
 from pathlib import Path
 
@@ -383,6 +384,39 @@ def test_eval_refuses_a_chained_set_whose_base_line_cannot_be_read(tmp_path, mon
     assert result.exit_code == 1
     assert isinstance(result.exception, SystemExit)
     assert _BASE_LINE in result.output
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses directory permissions")
+def test_eval_refuses_a_rolling_index_it_cannot_list_in_one_line(tmp_path, monkeypatch):
+    root = _rolling_set(tmp_path)
+    month = root / "ohlc-rolling" / "index/2026/10"
+    _anchor(monkeypatch, root)
+    calls = _rolling_subject(monkeypatch)
+    os.chmod(month, 0o000)
+    try:
+        result = runner.invoke(app, _rolling_eval("--as-of", "2026-10-03"))
+    finally:
+        os.chmod(month, 0o755)
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert f"dataset 'ohlc-rolling': [Errno 13] Permission denied: '{month}'" in result.output
+    assert calls == []
+
+
+def test_eval_on_an_absent_dataset_names_it_and_the_fetch(tmp_path, monkeypatch):
+    root = tmp_path / "data"
+    root.mkdir()
+    _anchor(monkeypatch, root)
+    calls = _rolling_subject(monkeypatch)
+
+    result = runner.invoke(app, _rolling_eval("--as-of", "2026-10-03"))
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert f"dataset 'ohlc-rolling' is absent: no directory {root / 'ohlc-rolling'}; zcrypto data fetch" in result.output
+    assert "frozen" not in result.output
+    assert calls == []
 
 
 def test_the_window_reaches_the_rolling_reads(tmp_path, monkeypatch):
