@@ -234,7 +234,11 @@ def test_seed_refuses_a_hole_and_copies_across_it_with_accept_holes(tmp_path, mo
     assert isinstance(refused.exception, SystemExit)
     out = _output(refused)
     assert "engine seed: no canonical dataset to seed 2 absent series (ADA/EUR@1440, ADA/EUR@240) from -- ohlc-rolling: " in out
-    assert f"ADA/EUR has a hole on 2026-10-02 ({HOLE}) inside the window read (--accept-holes leaves the day out)" in out
+    assert (
+        f"ADA/EUR has a hole on 2026-10-02 ({HOLE}) inside the window read (--accept-holes copies the series without that "
+        "day, which the REST gap-fill then fills when it lies inside the REST window; a day older than the window stays "
+        "missing from the store)"
+    ) in out
     assert handed == []
 
     accepted = runner.invoke(app, ["engine", "seed", "--accept-holes"])

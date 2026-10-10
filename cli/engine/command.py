@@ -376,8 +376,9 @@ def seed(
     accept_holes: bool = typer.Option(
         False,
         "--accept-holes",
-        help="Copy an absent series across a day the rolling canonical records as a hole, leaving that day out and "
-        "printing it; without it such a copy is refused.",
+        help="Copy an absent series across a day the rolling canonical records as a hole, leaving that day out of the "
+        "copy and printing it; the REST gap-fill then fills the day when it lies inside the REST window, and a day older "
+        "than the window stays missing from the store. Without it such a copy is refused.",
     ),
 ) -> None:
     """Seed/refresh the live price store: a Kraken REST gap-fill over every series, and for a store file that is
@@ -418,7 +419,11 @@ def seed(
                     write_parquet(read.frame, _store_path(canonical_dir, symbol, interval))
                     holes |= dict.fromkeys(f"{symbol} {day}" for day in read.holes)
             except rolling.HoleError as exc:
-                raise _abort(f"{prefix} {rolling.ROLLING_SET}: {exc} (--accept-holes leaves the day out)") from exc
+                raise _abort(
+                    f"{prefix} {rolling.ROLLING_SET}: {exc} (--accept-holes copies the series without that day, which the "
+                    "REST gap-fill then fills when it lies inside the REST window; a day older than the window stays "
+                    "missing from the store)"
+                ) from exc
             except (ConfigError, rolling.RollingError, OSError) as exc:
                 raise _abort(f"{prefix} {rolling.ROLLING_SET}: {exc}") from exc
             canonical_name = f"{rolling.ROLLING_SET} as of {line.day} ({line.sha256[:12]})"
