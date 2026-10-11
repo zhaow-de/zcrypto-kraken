@@ -1,0 +1,7 @@
+---
+# Off so `apt update` passes while Cloudsmith's repository is out; its own file so mon runs it before its first refresh.
+- name: the Caddy apt repository removed — the interim of 2026-10-11
+  ansible.builtin.deb822_repository:
+    name: caddy
+    state: absent
+    install_python_debian: true

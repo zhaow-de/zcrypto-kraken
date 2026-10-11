@@ -15,7 +15,16 @@ from ansible.template import trust_as_template
 from tests import role_render
 from tests.alloy_part import ALLOY_APT_VERBATIM, module_entry
 from tests.test_alloy_version import alloy_version
-from tests.test_infra_converge_guards import assert_that, find_task, iter_tasks, load_tasks, set_facts, truthy, when_conditions
+from tests.test_infra_converge_guards import (
+    assert_that,
+    find_task,
+    iter_tasks,
+    load_tasks,
+    refreshes_the_apt_cache,
+    set_facts,
+    truthy,
+    when_conditions,
+)
 
 REPO = Path(__file__).resolve().parents[1]
 ANSIBLE = REPO / "infra/ansible"
@@ -371,6 +380,16 @@ def test_alloy_alone_is_held_and_pinned_and_the_other_packages_followed():
     assert pins == [_shared("ansible.builtin.copy")], pins
     recommends = find_task(load_tasks(TASKS), "prometheus present, from Debian main, without the node exporter it recommends")
     assert recommends["ansible.builtin.apt"]["install_recommends"] is False
+
+
+CADDY_SOURCE_ABSENT = {"name": "edge", "tasks_from": "caddy-source-absent"}
+
+
+def test_the_caddy_source_comes_off_before_the_first_apt_refresh():
+    leaves = [task for task, _, _ in alloy_version.role_leaves("mon", frozenset())]
+    removals = [i for i, task in enumerate(leaves) if task.get("ansible.builtin.include_role") == CADDY_SOURCE_ABSENT]
+    refreshes = [i for i, task in enumerate(leaves) if refreshes_the_apt_cache(task)]
+    assert removals and refreshes and removals[0] < refreshes[0], (removals, refreshes)
 
 
 # --- the preview on a node that has nothing yet ------------------------------------------------------------------

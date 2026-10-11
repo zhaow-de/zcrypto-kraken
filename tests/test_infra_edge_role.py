@@ -7,12 +7,23 @@ import pytest
 import yaml
 
 from tests import role_render
-from tests.test_infra_converge_guards import find_task, iter_tasks, load_tasks, set_facts, when_conditions
+from tests.test_alloy_version import alloy_version
+from tests.test_infra_converge_guards import (
+    assert_that,
+    find_task,
+    iter_tasks,
+    load_tasks,
+    refreshes_the_apt_cache,
+    set_facts,
+    truthy,
+    when_conditions,
+)
 
 REPO = Path(__file__).resolve().parents[1]
 ANSIBLE = REPO / "infra/ansible"
 ROLE = ANSIBLE / "roles/edge"
 TASKS = ROLE / "tasks/main.yml"
+SOURCE = ROLE / "tasks/caddy-source-absent.yml"
 HANDLERS = ROLE / "handlers/main.yml"
 HOSTNAME = "edge.example.test"
 HASH_A = "$2b$10$" + "a" * 53
@@ -91,51 +102,77 @@ def test_every_parameter_set_routes_the_authenticated_paths_first_and_the_upstre
     ]
 
 
-# --- packages: Caddy from the cloudsmith repository, followed from apt --------------------------------------------
-def test_caddy_comes_from_the_cloudsmith_repository_and_is_never_forced_held_or_pinned_to_a_version():
+# --- packages: Caddy kept at its installed version, its Cloudsmith source removed ---------------------------------
+def test_the_caddy_repository_is_removed_and_caddy_kept_installed_never_forced_held_or_pinned_to_a_version():
     tasks = iter_tasks(load_tasks(TASKS))
-    (repository,) = [task["ansible.builtin.deb822_repository"] for task, _ in tasks if "ansible.builtin.deb822_repository" in task]
-    assert repository == {
-        "name": "caddy",
-        "types": ["deb"],
-        "uris": "https://dl.cloudsmith.io/public/caddy/stable/deb/debian",
-        "suites": ["any-version"],
-        "components": ["main"],
-        "signed_by": "https://dl.cloudsmith.io/public/caddy/stable/gpg.key",
-        "install_python_debian": True,
-    }
+    assert find_task(load_tasks(TASKS), "the Caddy apt repository removed")["ansible.builtin.import_tasks"] == SOURCE.name
+    files = sorted((ROLE / "tasks").glob("*.yml"))
+    leaves = [task for path in files for task, _ in iter_tasks(load_tasks(path))]
+    (repository,) = [task["ansible.builtin.deb822_repository"] for task in leaves if "ansible.builtin.deb822_repository" in task]
+    assert repository == {"name": "caddy", "state": "absent", "install_python_debian": True}
+    carriers = [task.get("name") for path in files for task in load_tasks(path) if "cloudsmith" in str(task).lower()]
+    assert carriers == [], carriers
     (install,) = [task["ansible.builtin.apt"] for task, _ in tasks if "ansible.builtin.apt" in task]
     assert install == {"name": "caddy", "state": "present", "update_cache": True}, "the repository task refreshes no cache"
     assert "ansible.builtin.dpkg_selections" not in {key for task, _ in tasks for key in task}, "a hold skips caddy silently"
 
 
-# --- the preview on a node that has nothing yet -------------------------------------------------------------------
-_CHANGED, _UNCHANGED, _SKIPPED = {"changed": True}, {"changed": False}, {"changed": False, "skipped": True}
+def test_the_caddy_source_comes_off_before_the_edges_first_apt_refresh():
+    leaves = [task for task, _, _ in alloy_version.role_leaves("edge", frozenset())]
+    removal = {"name": "caddy", "state": "absent", "install_python_debian": True}
+    removals = [i for i, task in enumerate(leaves) if task.get("ansible.builtin.deb822_repository") == removal]
+    refreshes = [i for i, task in enumerate(leaves) if refreshes_the_apt_cache(task)]
+    assert removals and refreshes and removals[0] < refreshes[0], (removals, refreshes)
 
 
-# Each disjunct of the two facts has a case in which it alone is true.
+_READ = "read whether caddy is installed"
+_REFUSAL = "refuse a node without caddy while its apt source is removed"
+_INSTALL = "caddy present — the installed version, never forced or held"
+
+
 @pytest.mark.parametrize(
-    ("check", "repository", "install", "expected"),
+    ("state", "admitted"), [("installed", True), ("", False), ("config-files", False), ("not-installed", False)]
+)
+def test_a_node_without_caddy_is_refused_before_the_install_and_in_a_preview(state, admitted):
+    tasks = load_tasks(TASKS)
+    assert find_task(tasks, _READ) == {
+        "name": _READ,
+        "ansible.builtin.command": {"argv": ["dpkg-query", "--show", "--showformat=${db:Status-Status}", "caddy"]},
+        "register": "edge_caddy_state",
+        "changed_when": False,
+        "failed_when": False,
+        "check_mode": False,
+    }
+    refusal = find_task(tasks, _REFUSAL)
+    assert set(refusal) == {"name", "ansible.builtin.assert"}, sorted(refusal)
+    assert truthy(assert_that(refusal), {"edge_caddy_state": {"stdout": state}}) is admitted
+    names = [task.get("name") for task in tasks]
+    assert names.index(_READ) < names.index(_REFUSAL) < names.index(_INSTALL), names
+
+
+# --- the preview on a node that has no caddy yet ------------------------------------------------------------------
+_CHANGED, _UNCHANGED = {"changed": True}, {"changed": False}
+
+
+# Each conjunct of the fact has a case in which it alone is false.
+@pytest.mark.parametrize(
+    ("check", "install", "expected"),
     [
-        (True, _CHANGED, _SKIPPED, (True, True)),  # a fresh node's preview
-        (True, _UNCHANGED, _CHANGED, (False, True)),  # caddy alone still to install
-        (True, _UNCHANGED, _UNCHANGED, (False, False)),  # an established node's preview
-        (False, _CHANGED, _CHANGED, (False, False)),  # the real first converge
+        (True, _CHANGED, True),  # a preview that would install caddy
+        (True, _UNCHANGED, False),  # an established node's preview
+        (False, _CHANGED, False),  # a real converge that installs caddy
     ],
 )
-def test_the_two_preview_facts_are_true_only_where_a_preview_has_no_package_to_find(check, repository, install, expected):
-    tasks = load_tasks(TASKS)
-    variables = {"ansible_check_mode": check, "edge_caddy_repo": repository}
-    first = set_facts(find_task(tasks, "note a preview that runs before the Caddy repository exists"), variables)
-    variables |= first | {"edge_caddy_install": install}
-    second = set_facts(find_task(tasks, "note a preview that runs before caddy is installed"), variables)
-    assert (bool(first["edge_repo_previewed"]), bool(second["edge_units_previewed"])) == expected
+def test_the_unit_preview_fact_is_true_only_in_a_preview_that_would_install_caddy(check, install, expected):
+    variables = {"ansible_check_mode": check, "edge_caddy_install": install}
+    fact = set_facts(find_task(load_tasks(TASKS), "note a preview that runs before caddy is installed"), variables)
+    assert bool(fact["edge_units_previewed"]) is expected
 
 
-def test_what_needs_the_repository_or_the_unit_skips_the_preview_that_has_neither():
+def test_the_install_runs_in_every_preview_and_what_needs_the_unit_skips_the_preview_that_would_install_caddy():
     tasks = load_tasks(TASKS)
-    install = find_task(tasks, "caddy present — version FOLLOWED from apt, never forced or held")
-    assert when_conditions(install) == ["not edge_repo_previewed"]
+    install = find_task(tasks, "caddy present — the installed version, never forced or held")
+    assert when_conditions(install) == []
     units = [(task["name"], gates) for task, gates in iter_tasks(tasks) if "ansible.builtin.systemd_service" in task]
     assert units == [("caddy enabled + started", ("not edge_units_previewed",))], units
     assert find_task(tasks, "Caddyfile — the one public listener's routes")["notify"] == "reload caddy"
