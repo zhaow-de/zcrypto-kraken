@@ -16,7 +16,7 @@
   ansible.builtin.assert:
     that: edge_caddy_state.stdout == 'installed'
     fail_msg: >-
-      caddy is not installed on {{ inventory_hostname }} (dpkg reads its state as
+      caddy is not in dpkg's installed state on {{ inventory_hostname }} (dpkg reads its state as
       '{{ edge_caddy_state.stdout or "never installed" }}'). Caddy's vendor apt source is removed while that
       repository is out, the interim of 2026-10-11, so apt's only caddy is Debian's 2.6.2, which this play does not
       install. The way back is the owner's debmirror replacing the source.
