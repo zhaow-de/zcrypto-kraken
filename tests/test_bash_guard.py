@@ -801,8 +801,6 @@ AGENT_ADMITTED = [
 
 
 # `grep` and `rg` stay the printing arm's: the git-grep arm admits them whatever their scope.
-# (command, cwd under the repo) -- a `git grep` the arm refuses: its selection, read by git from that cwd, reaches a
-# vaulted file, or an operand or option git would read past what the arm can judge.
 UNSCOPED_GREPS = [
     ("git grep -l foo -- tests infra", "."),
     ("git grep -n foo", "."),
@@ -815,6 +813,15 @@ UNSCOPED_GREPS = [
     ("git grep -l foo 0e950ee10 -- infra/ansible/files/deploy_ed25519", "."),
     ("git grep -O foo infra docs", "."),
     ("git grep --open-files-in-pager foo infra docs", "."),
+    ("git grep --cont 3 docs", "."),
+    ("git grep --max-c 1 docs", "."),
+    ("git grep --after 3 docs", "."),
+    ("git grep --thr 2 docs", "."),
+    ("git grep --max-dep 1 docs", "."),
+    ("git grep -nC 3 docs", "."),
+    ("git grep -lm 1 docs", "."),
+    ("git grep -nA 2 docs", "."),
+    ("git grep -n foo archive/w4-status-after-pipeline -- docs", "."),
     ("git grep --no-inde -l foo -- docs", "."),
     ("git grep --untrack -l foo -- docs", "."),
     ("git grep -n foo -- ':(nonsense)infra'", "."),
@@ -851,6 +858,9 @@ SCOPED_GREPS = [
     ("git grep -n foo -- docs cli", "."),
     ("git grep -n foo HEAD -- docs", "."),
     ("git grep -n foo HEAD -- README.md", "."),
+    ("git grep -Ofoo infra docs", "."),
+    ("git grep -nC3 foo -- docs", "."),
+    ("git grep --cont 3 foo -- docs", "."),
     ("git grep -n foo -- .", "docs"),
     ("git grep -n foo -- ':/tests'", "infra"),
     ("grep -n foo README.md", "."),
