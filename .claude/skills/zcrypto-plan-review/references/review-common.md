@@ -22,6 +22,8 @@ A review that must MUTATE to prove a guard is dispatched write-capable in its ow
 - Every tree grep is `git grep … -- <paths>` with the `VAULT_EXCLUDES` pathspecs of `infra/scripts/consumers.sh`, never `grep -r`, whose `--exclude='*vault*'` still opens the vaulted `*_ed25519` halves; nothing under a vault-shaped path is read, printed, grepped, diffed, shown at any revision, archived or copied — a file name printed by `-l` is already a read. `vault_var` is called only inside a length or prefix check whose only output is the number.
 - A probe re-run happens in a detached worktree (`git worktree add --detach <dir> <rev>`, removed after) — never in a copy or an archive of the repository, which carries every vault file with it.
 - No `ansible-playbook` in any form: this workstation is the fleet host `zcrypto-ops`, so `localhost` is a live venue-facing node. A role is read through the test helpers' renders.
+- A dispatch's scratch lives under the worktree's `.tmp/<role>/` and it removes only what it created there; the session's shared scratchpad is the orchestrator's, never listed, written or deleted by a dispatch.
+- No real account export is looked for, opened, counted or quoted anywhere outside the repository's tracked fixtures: the owner's own Kraken exports under `.local/` are financial records, not test data.
 - A read-only dispatch touches no other repository on disk — a `git fetch` into a peer clone is a write to its refs — and starts no process it does not stop: a process is stopped by its PID read from the process tree, never by a pattern the stopping command's own argv carries, and the report names the `pgrep` read before and after.
 
 ## Report shape — `{OUT}`
