@@ -2371,6 +2371,17 @@ def test_the_ssh_relay_gate_cannot_be_neutered_by_a_task_modifier():
     )
 
 
+def test_the_caddy_repository_is_removed_and_caddy_kept_installed_never_forced_or_held():
+    tasks = iter_tasks(load_tasks(ACCESS_TASKS))
+    (repository,) = [task["ansible.builtin.deb822_repository"] for task, _ in tasks if "ansible.builtin.deb822_repository" in task]
+    assert repository == {"name": "caddy", "state": "absent"}
+    carriers = [task.get("name") for task in load_tasks(ACCESS_TASKS) if "cloudsmith" in str(task).lower()]
+    assert carriers == [], carriers
+    modules = ("ansible.builtin.apt", "ansible.builtin.dpkg_selections")
+    caddy = [task[module] for task, _ in tasks for module in modules if task.get(module, {}).get("name") == "caddy"]
+    assert caddy == [{"name": "caddy", "state": "present", "update_cache": True}, {"name": "caddy", "selection": "install"}], caddy
+
+
 AGENTBOARD_UNIT = ANSIBLE / "roles" / "access_ops" / "templates" / "zaccess-agentboard.service.j2"
 AGENTBOARD_START = ANSIBLE / "roles" / "access_ops" / "templates" / "zaccess-agentboard-start.sh.j2"
 ACCESS_OPS_TASKS = ANSIBLE / "roles" / "access_ops" / "tasks" / "main.yml"

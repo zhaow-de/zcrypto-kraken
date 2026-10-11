@@ -1,8 +1,9 @@
 ---
 # The observability node (spec 00121): Grafana on SQLite, one Prometheus as the remote_write receiver,
 # single-binary Loki, Caddy as the one public listener, and the node's own Alloy. Packages followed from
-# apt, never forced or held, but Alloy, held and pinned at the fleet's version; tests/test_infra_mon_role.py
-# holds what the public login rests on.
+# apt, never forced or held, but Alloy, held and pinned at the fleet's version, and Caddy, frozen at the
+# installed version while the edge role removes its apt source; tests/test_infra_mon_role.py holds what the
+# public login rests on.
 
 # First, so a missing or misshapen vault value fails here by name and not inside a no_log task.
 - name: refuse a missing or misshapen secret, naming the key and never the value

@@ -41,21 +41,17 @@
 - name: ssh relay socket enabled
   ansible.builtin.systemd: {name: zaccess-ssh-proxy.socket, enabled: true, state: started, daemon_reload: true}
 
-- name: add the Caddy apt repository (deb822 format; module fetches + stores the signing key)
+- name: the Caddy apt repository removed — the interim of 2026-10-11
   ansible.builtin.deb822_repository:
     name: caddy
-    types: [deb]
-    uris: https://dl.cloudsmith.io/public/caddy/stable/deb/debian
-    suites: [any-version]
-    components: [main]
-    signed_by: https://dl.cloudsmith.io/public/caddy/stable/gpg.key
-# Caddy follows apt, the one third-party package here that does (Alloy is held at the fleet's version
-# below), and a version pin was never what protected the mTLS edge: the Caddyfile task below runs
-# `validate: caddy validate` -- the INSTALLED binary against the NEW config, before writing it -- so a
-# version whose client-auth syntax moved fails the converge loudly and version-independently. A Caddy
-# that cannot parse its config does not start, so the failure direction is CLOSED: the edge goes dark,
-# never serving without mTLS.
-- name: caddy present — version FOLLOWED from apt, never forced (the Caddyfile validate is the guard)
+    state: absent
+# Caddy is frozen at the installed version while Cloudsmith's repository is out (five outages in 30 days by
+# 2026-10-11): the source and its key are removed so `apt update` passes, and a node that never had Caddy cannot
+# install it until the owner's debmirror replaces the source. The Caddyfile task below runs
+# `validate: caddy validate` -- the INSTALLED binary against the NEW config, before writing it -- so a config
+# this Caddy cannot parse fails the converge loudly. A Caddy that cannot parse its config does not start, so the
+# failure direction is CLOSED: the edge goes dark, never serving without mTLS.
+- name: caddy present — the installed version, never forced (the Caddyfile validate is the guard)
   ansible.builtin.apt:
     name: caddy
     state: present
