@@ -191,7 +191,10 @@ def test_the_three_clauses_state_the_ref_window_and_exclusions_their_counters_re
     merged = _set_clause("merged-prs-without-a-floor-read-30d")
     assert re.match(r"commits on `develop`, and on the branch being read, since ", probe), probe
     assert re.match(r"non-merge commits on `develop`, and on the branch being read, since ", prose), prose
-    assert re.search(r"carries `KILLED`, `SURVIVED` or `control proven` .*? without naming `mutate-probe`$", probe), probe
+    assert re.search(
+        r"carries `KILLED`, `SURVIVED` or `control proven` without naming `mutate-probe`, a `docs\(plans\)` or `docs\(specs\)` commit out",
+        probe,
+    ), probe
     assert re.search(r" — a `claude\(` commit, or one naming this entry, discusses the rule and is out$", prose), prose
     assert re.match(r"PRs merged into `develop` in the last 30 days and since `READ_LINE_RULE_SINCE`", merged), merged
 
