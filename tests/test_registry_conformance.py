@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 
+from cli.data.rolling import ROLLING_SET, RollingError, verify
 from cli.ohlc.dataset import to_frame, write_parquet
 from cli.registry import TrialRegistry
 from cli.registry.observed import ObservedReader
+from tests.rolling_fixtures import write_chain
 from tests.skip_gates import nothing_found
 
 pytestmark = pytest.mark.data
@@ -83,6 +86,11 @@ def conformance(records, data_root: Path, absent_ok: frozenset[str]) -> list[Ver
                 found = _digest(path, cache)
                 if found != recorded:
                     bad.append(f"{relpath}: sha256 {found} != recorded {recorded}")
+                elif relpath.startswith("index/"):
+                    try:
+                        verify(directory, datetime.strptime(relpath, "index/%Y/%m/%d.json").date())
+                    except RollingError as exc:
+                        bad.append(f"{relpath}: {exc}")
             out.append(Verdict(record.trial_id, dataset, FINDING if bad else REDERIVED, "; ".join(bad)))
     return out
 
@@ -180,3 +188,40 @@ def test_the_pass_separates_rederived_from_absent_from_finding(tmp_path):
 
     with_committed_list = {v.dataset: v for v in conformance(records, root, _ABSENT_OK)}
     assert with_committed_list["ds-elsewhere"].verdict == FINDING
+
+
+def _citing_a_line(tmp_path: Path, name: str, relpath: str) -> tuple[Path, list]:
+    root, registry_path = tmp_path / name / "data", tmp_path / name / "registry.jsonl"
+    write_chain(root / ROLLING_SET)
+    digest = hashlib.sha256((root / ROLLING_SET / relpath).read_bytes()).hexdigest()
+    span = ["2026-09-30 00:00:00+00:00", "2026-10-03 00:00:00+00:00"]
+    _append(registry_path, {ROLLING_SET: {"files": {relpath: digest}, "rows": 4, "span": span}}, 1)
+    return root, TrialRegistry(registry_path).records
+
+
+def _replace_a_byte(path: Path, at: int) -> None:
+    data = bytearray(path.read_bytes())
+    data[at] = ord("1") if data[at] == ord("0") else ord("0")
+    path.write_bytes(bytes(data))
+
+
+def test_a_record_citing_a_line_walks_the_chain_and_a_broken_link_is_a_finding(tmp_path):
+    root, records = _citing_a_line(tmp_path, "line-changed", "index/2026/10/03.json")
+    assert [v.verdict for v in conformance(records, root, _ABSENT_OK)] == [REDERIVED]
+    earlier_line = root / ROLLING_SET / "index/2026/10/01.json"
+    _replace_a_byte(earlier_line, earlier_line.read_bytes().index(b'"prev":"') + len(b'"prev":"'))
+
+    [verdict] = conformance(records, root, _ABSENT_OK)
+
+    assert verdict.verdict == FINDING
+    assert "index/2026/10/02.json: its prev is not the sha256 of index/2026/10/01.json" in verdict.detail
+
+    root, records = _citing_a_line(tmp_path, "file-changed", "index/2026/10/03.json")
+    assert [v.verdict for v in conformance(records, root, _ABSENT_OK)] == [REDERIVED]
+    earlier_file = root / ROLLING_SET / "days/BTC/EUR/2026/10/01.parquet"
+    _replace_a_byte(earlier_file, earlier_file.stat().st_size // 2)
+
+    [verdict] = conformance(records, root, _ABSENT_OK)
+
+    assert verdict.verdict == FINDING
+    assert "days/BTC/EUR/2026/10/01.parquet does not hash to its listing" in verdict.detail

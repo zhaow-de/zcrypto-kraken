@@ -14,6 +14,7 @@ import importlib.util
 import inspect
 import io
 import json
+import os
 import re
 import string
 import subprocess
@@ -26,6 +27,8 @@ from pathlib import Path
 
 import pytest
 import yaml
+
+from tests.rolling_fixtures import SEAM, line_bytes, write_chain
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "infra" / "scripts" / "ops_daily.py"
 _spec = importlib.util.spec_from_file_location("ops_daily", _SCRIPT)
@@ -145,6 +148,20 @@ def live_soak_run(monkeypatch):
         raise AssertionError(f"soak_run reached the live runner with {journal_dir} -- this test must stub it")
 
     monkeypatch.setattr(ops_daily, "soak_run", refuse)
+    return real
+
+
+@pytest.fixture(autouse=True)
+def passing_rolling_head(monkeypatch):
+    """Every test in this file, and in `tests/test_ops_daily_soak.py` which imports it, reads an ok rolling head, so a
+    case driving `main(["report"])` keeps its exit code with no hub mounted. The reader's own cases take this fixture's
+    value, which is the real reader."""
+    real = ops_daily.read_rolling_head
+
+    def passing(*, now, root, tape_root):
+        return ops_daily.Check(ops_daily.ROLLING_CHECK, str(root), ok=True, value="head stubbed by the suite")
+
+    monkeypatch.setattr(ops_daily, "read_rolling_head", passing)
     return real
 
 
@@ -753,6 +770,9 @@ _DESTRUCTIVE = (
     # allowed list, and a prefix token would call a correct classification an offender.
     "{{json .Config}}",
     ".Config.Env",
+    # The rolling canonical's two writers, a close being an `extend`: what either puts on the hub is never rewritten.
+    "data rolling extend",
+    "data rolling base",
 )
 
 
@@ -3862,3 +3882,316 @@ def test_the_engine_read_shapes_are_the_clis_own_options():
         for flag, spec in flags.items():
             assert (spec is None) == real[sub][flag], (sub, flag, spec, real[sub][flag])
         assert set(real[sub]) - set(flags) == set(_ENGINE_OPTIONS_LEFT_OUT.get(sub, {})), (sub, set(real[sub]) - set(flags))
+
+
+# --- the rolling canonical's head on the hub: its newest line, its chain, its files, and the day it is held at ---------
+
+
+_TWO = ("BTC/EUR", "ETH/BTC")
+HEAD = SEAM + timedelta(days=2)
+HELD = HEAD + timedelta(days=1)
+
+
+def _hub(where: Path, **kw) -> Path:
+    """A rolling set written by hand under `where`, its newest line HEAD unless `days` says otherwise."""
+    root = where / "ohlc-rolling"
+    write_chain(root, **kw)
+    return root
+
+
+def _final_at(tape: Path, pair: str, day: date) -> Path:
+    return tape / pair / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.parquet"
+
+
+def _final(tape: Path, pair: str, day: date) -> Path:
+    """A tape-bars final in its own layout; the row reads where finals are, never their bytes."""
+    final = _final_at(tape, pair, day)
+    final.parent.mkdir(parents=True, exist_ok=True)
+    final.write_bytes(b"final")
+    return final
+
+
+def _tape(where: Path, pairs: tuple[str, ...], first: date, last: date) -> Path:
+    tape = where / "tape-bars"
+    tape.mkdir(parents=True, exist_ok=True)
+    for pair in pairs:
+        for n in range((last - first).days + 1):
+            _final(tape, pair, first + timedelta(days=n))
+    return tape
+
+
+def _at(day: date, hour: int = 12) -> datetime:
+    return datetime(day.year, day.month, day.day, hour, tzinfo=timezone.utc)
+
+
+def _sha12(root: Path, day: date) -> str:
+    return hashlib.sha256((root / f"index/{day:%Y}/{day:%m}/{day:%d}.json").read_bytes()).hexdigest()[:12]
+
+
+def test_the_rolling_head_is_ok_three_days_back(passing_rolling_head, tmp_path):
+    root = _hub(tmp_path)
+    tape = _tape(tmp_path, _TWO, SEAM, HEAD)
+
+    check = passing_rolling_head(now=_at(HEAD + timedelta(days=3), 23), root=root, tape_root=tape)
+
+    assert check.name == "rolling canonical head"
+    assert check.ok, check.value
+    assert check.value == f"head {HEAD}, 3 days old, line {_sha12(root, HEAD)}"
+
+
+def test_a_rolling_head_four_days_back_fails(passing_rolling_head, tmp_path):
+    root = _hub(tmp_path)
+    tape = _tape(tmp_path, _TWO, SEAM, HEAD)
+
+    check = passing_rolling_head(now=_at(HEAD + timedelta(days=4), 0), root=root, tape_root=tape)
+
+    assert not check.ok
+    assert check.value == (
+        f"held at {HEAD}, 4 days old, line {_sha12(root, HEAD)}: BTC/EUR, ETH/BTC have no tape-bars final for {HELD} under {tape}"
+    )
+
+
+def test_a_rolling_head_whose_prev_disagrees_fails(passing_rolling_head, tmp_path):
+    root = _hub(tmp_path)
+    tape = _tape(tmp_path, _TWO, SEAM, HEAD)
+    newest = root / "index/2026/10/03.json"
+    line = json.loads(newest.read_bytes())
+    line["prev"] = ("1" if line["prev"][0] == "0" else "0") + line["prev"][1:]
+    newest.write_bytes(line_bytes(line))
+
+    check = passing_rolling_head(now=_at(HEAD + timedelta(days=1)), root=root, tape_root=tape)
+
+    assert not check.ok
+    assert not check.value.startswith("unreadable:"), check.value
+    assert check.value == "index/2026/10/03.json: its prev is not the sha256 of index/2026/10/02.json"
+
+
+def test_a_rolling_head_naming_an_absent_file_fails(passing_rolling_head, tmp_path):
+    root = _hub(tmp_path)
+    tape = _tape(tmp_path, _TWO, SEAM, HEAD)
+    (root / "days/BTC/EUR/2026/10/03.parquet").unlink()
+
+    check = passing_rolling_head(now=_at(HEAD + timedelta(days=1)), root=root, tape_root=tape)
+
+    assert not check.ok
+    assert not check.value.startswith("unreadable:"), check.value
+    assert check.value == f"index/2026/10/03.json: days/BTC/EUR/2026/10/03.parquet is listed and absent from {root}"
+
+
+def test_a_rolling_head_file_with_a_flipped_byte_fails(passing_rolling_head, tmp_path):
+    root = _hub(tmp_path)
+    tape = _tape(tmp_path, _TWO, SEAM, HEAD)
+    path = root / "days/ETH/BTC/2026/10/03.parquet"
+    data = bytearray(path.read_bytes())
+    data[len(data) // 2] ^= 0xFF
+    path.write_bytes(bytes(data))
+
+    check = passing_rolling_head(now=_at(HEAD + timedelta(days=1)), root=root, tape_root=tape)
+
+    assert not check.ok
+    assert not check.value.startswith("unreadable:"), check.value
+    assert check.value == "index/2026/10/03.json: days/ETH/BTC/2026/10/03.parquet does not hash to its listing"
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses directory permissions")
+def test_an_unreadable_rolling_hub_is_unreadable_not_ok(passing_rolling_head, tmp_path):
+    tape = _tape(tmp_path, _TWO, SEAM, HEAD)
+    unstaged = tmp_path / "unstaged"
+    unstaged.mkdir()
+
+    for root in (tmp_path / "absent", unstaged):
+        check = passing_rolling_head(now=_at(HEAD), root=root, tape_root=tape)
+
+        assert not check.ok, root
+        assert check.value == f"unreadable: {root} holds no index/"
+
+    root = _hub(tmp_path, days=2)
+    newest = SEAM + timedelta(days=1)
+    for unlistable in (root / "index", root / "index/2026/10"):
+        os.chmod(unlistable, 0o000)
+        try:
+            check = passing_rolling_head(now=_at(newest), root=root, tape_root=tape)
+        finally:
+            os.chmod(unlistable, 0o755)
+
+        assert not check.ok, unlistable
+        assert check.value.startswith("unreadable:"), check.value
+        assert str(unlistable) in check.value
+
+
+def test_the_rolling_row_reaches_the_verdict_the_pass_prints(monkeypatch, capsys):
+    monkeypatch.setattr(ops_daily.grafana_auth, "vault_var", lambda name, vault_file: "tok")
+    monkeypatch.setattr(ops_daily, "read_alerts", lambda *a, **k: ops_daily.AlertsRead())
+    monkeypatch.setattr(ops_daily, "read_logs", lambda *a, **k: ops_daily.LogsRead())
+    monkeypatch.setattr(ops_daily, "read_deadmen", lambda *a, **k: ops_daily.DeadmenRead(via_prometheus=0.0))
+    monkeypatch.setattr(ops_daily, "read_verdict", lambda *a, **k: [])
+    monkeypatch.setattr(ops_daily, "read_deploys", lambda *a, **k: [])
+    monkeypatch.setattr(ops_daily, "read_reminders", lambda *a, **k: ops_daily.RemindersRead())
+    monkeypatch.setattr(ops_daily, "ssh_read", _host_answering(StampEpoch=str(int(datetime.now(timezone.utc).timestamp()))))
+    monkeypatch.setattr(ops_daily, "soak_run", _soak_answering(_a_current_soak_payload()))
+
+    def answering(ok: bool, value: str):
+        def read(*, now, root, tape_root):
+            assert (root, tape_root) == (ops_daily.ROLLING_HUB, ops_daily.ROLLING_TAPE)
+            return ops_daily.Check(ops_daily.ROLLING_CHECK, str(root), ok=ok, value=value)
+
+        return read
+
+    monkeypatch.setattr(ops_daily, "read_rolling_head", answering(True, "head 2026-10-07, 2 days old, line 0123456789ab"))
+    assert ops_daily.main(["report"]) == 0
+    assert "- PASS rolling canonical head: head 2026-10-07, 2 days old" in capsys.readouterr().out
+
+    held = "held at 2026-10-03, 6 days old, line 0123456789ab: BTC/EUR has no tape-bars final for 2026-10-04"
+    monkeypatch.setattr(ops_daily, "read_rolling_head", answering(False, held))
+    assert ops_daily.main(["report"]) == 1
+    assert f"- FAIL rolling canonical head: {held}" in capsys.readouterr().out
+
+    monkeypatch.setattr(ops_daily, "read_rolling_head", answering(False, f"unreadable: {ops_daily.ROLLING_HUB} holds no index/"))
+    assert ops_daily.main(["report"]) == 2
+    assert f"- rolling canonical head could not be read: {ops_daily.ROLLING_HUB} holds no index/" in capsys.readouterr().out
+
+
+def test_the_rolling_verify_is_an_autonomous_read_on_ops():
+    command = "uv run zcrypto data rolling verify --root /mnt/zhao-crypto/hot/ohlc-rolling --as-of 2026-10-07"
+    assert ops_daily.classify_action(command, host="ops", resolve=_identity) is ops_daily.Tier.AUTONOMOUS
+
+
+def _held_on_one_pair(where: Path) -> tuple[Path, Path]:
+    """The set at HEAD, BTC/EUR's tape stopping there and ETH/BTC's running on past HELD."""
+    root = _hub(where)
+    _tape(where, ("BTC/EUR",), SEAM, HEAD)
+    return root, _tape(where, ("ETH/BTC",), SEAM, HELD + timedelta(days=20))
+
+
+def test_a_day_held_thirteen_days_past_its_publication_reads_as_held(passing_rolling_head, tmp_path):
+    root, tape = _held_on_one_pair(tmp_path)
+
+    check = passing_rolling_head(now=_at(HELD + timedelta(days=2 + 13)), root=root, tape_root=tape)
+
+    assert not check.ok
+    assert check.value == (
+        f"held at {HEAD}, 16 days old, line {_sha12(root, HEAD)}: BTC/EUR has no tape-bars final for {HELD} under {tape}"
+    )
+
+
+def test_a_day_held_fourteen_days_past_its_publication_is_an_attention_line_naming_the_pair(passing_rolling_head, tmp_path):
+    root, tape = _held_on_one_pair(tmp_path)
+
+    check = passing_rolling_head(now=_at(HELD + timedelta(days=2 + 14)), root=root, tape_root=tape)
+
+    assert not check.ok
+    assert check.value == (
+        f"the owner decides for {HELD}: BTC/EUR has no tape-bars final for it under {tape}, 14 days past its publication "
+        f"on {HELD + timedelta(days=2)}; close it from {HELD}, or wait (head {HEAD}, line {_sha12(root, HEAD)})"
+    )
+
+
+def test_a_closed_pair_is_never_named_by_the_held_state_or_the_attention_line(passing_rolling_head, tmp_path):
+    root = _hub(tmp_path, pairs=("BTC/EUR", "DOT/EUR", "ETH/BTC", "ETH/EUR"), closed={HEAD: {"DOT/EUR"}})
+    _tape(tmp_path, ("DOT/EUR",), SEAM, HEAD - timedelta(days=1))
+    tape = _tape(tmp_path, ("BTC/EUR", "ETH/BTC", "ETH/EUR"), SEAM, HELD)
+    now = _at(HELD + timedelta(days=2 + 14))
+
+    check = passing_rolling_head(now=now, root=root, tape_root=tape)
+
+    assert not check.ok
+    assert check.value == (
+        f"held at {HEAD}, 17 days old, line {_sha12(root, HEAD)}: no pair lacks a tape-bars final for {HELD} under {tape}, "
+        "so the extension or the hub's pull is behind"
+    )
+
+    for pair in ("BTC/EUR", "ETH/EUR"):
+        _final_at(tape, pair, HELD).unlink()
+    check = passing_rolling_head(now=now, root=root, tape_root=tape)
+
+    assert not check.ok
+    assert check.value.startswith(f"the owner decides for {HELD}: BTC/EUR, ETH/EUR have no tape-bars final for it"), check.value
+    assert "DOT/EUR" not in check.value
+
+
+def test_an_ended_set_reads_as_its_own_state(passing_rolling_head, tmp_path):
+    root = _hub(tmp_path / "all-closed", closed={HEAD: set(_TWO)})
+    tape = _tape(tmp_path / "all-closed", _TWO, SEAM, HEAD - timedelta(days=1))
+
+    check = passing_rolling_head(now=_at(HEAD + timedelta(days=1)), root=root, tape_root=tape)
+
+    assert not check.ok
+    assert check.value == (
+        f"ended at {HEAD}, line {_sha12(root, HEAD)}: the line closes every pair and no tape-bars final under {tape} "
+        "is dated after it"
+    )
+
+    newest = SEAM + timedelta(days=4)
+    every = {SEAM + timedelta(days=n): set(_TWO) for n in (1, 2, 3)}
+    reopened = _hub(tmp_path / "reopened", days=5, closed=every | {newest: {"BTC/EUR"}})
+    reopened_tape = _tape(tmp_path / "reopened", _TWO, SEAM, SEAM)
+    _final(reopened_tape, "ETH/BTC", newest)
+
+    check = passing_rolling_head(now=_at(newest + timedelta(days=1)), root=reopened, tape_root=reopened_tape)
+
+    assert check.ok, check.value
+    assert check.value == f"head {newest}, 1 day old, line {_sha12(reopened, newest)}"
+
+    _final(tape, "ETH/BTC", HEAD + timedelta(days=3))
+
+    check = passing_rolling_head(now=_at(HEAD + timedelta(days=5)), root=root, tape_root=tape)
+
+    assert not check.ok
+    assert check.value == (
+        f"held at {HEAD}, 5 days old, line {_sha12(root, HEAD)}: no pair lacks a tape-bars final for {HELD} under {tape}, "
+        "so the extension or the hub's pull is behind"
+    )
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses directory permissions")
+def test_an_unlistable_tape_reads_as_unreadable(passing_rolling_head, tmp_path):
+    root = _hub(tmp_path / "all-closed", closed={HEAD: set(_TWO)})
+    tape = tmp_path / "all-closed" / "tape-bars"
+
+    check = passing_rolling_head(now=_at(HEAD + timedelta(days=1)), root=root, tape_root=tape)
+
+    assert not check.ok
+    assert check.value.startswith("unreadable:"), check.value
+    assert str(tape) in check.value
+
+    _tape(tmp_path / "all-closed", _TWO, SEAM, HEAD - timedelta(days=1))
+    month = _final(tape, "ETH/BTC", HEAD + timedelta(days=3)).parent
+    os.chmod(month, 0o000)
+    try:
+        check = passing_rolling_head(now=_at(HEAD + timedelta(days=1)), root=root, tape_root=tape)
+    finally:
+        os.chmod(month, 0o755)
+
+    assert not check.ok
+    assert check.value.startswith("unreadable:"), check.value
+    assert str(month) in check.value
+
+    root = _hub(tmp_path / "held")
+    tape = _tape(tmp_path / "held", _TWO, SEAM, HELD)
+    month = _final_at(tape, "BTC/EUR", HELD).parent
+    os.chmod(month, 0o000)
+    try:
+        check = passing_rolling_head(now=_at(HEAD + timedelta(days=5)), root=root, tape_root=tape)
+    finally:
+        os.chmod(month, 0o755)
+
+    assert not check.ok
+    assert check.value.startswith("unreadable:"), check.value
+    assert str(month) in check.value and "no tape-bars final" not in check.value
+
+
+def test_the_rolling_writers_carry_a_destructive_token():
+    close = (
+        "uv run zcrypto data rolling extend --tape-root /var/lib/zcrypto-ops/tape-bars "
+        "--out /var/lib/zcrypto-ops/hot-out/ohlc-rolling --staging /var/lib/zcrypto-ops/hot-out-staging "
+        "--close-pair DOT/EUR --from 2026-11-14 --owner-word x --owner-date 2026-11-30"
+    )
+    base = (
+        "uv run zcrypto data rolling base --source /mnt/zhao-crypto/hot/ohlc-15m-20261007 "
+        "--out /var/lib/zcrypto-ops/hot-out/ohlc-rolling --staging /var/lib/zcrypto-ops/hot-out-staging"
+    )
+    verify = "uv run zcrypto data rolling verify --root /mnt/zhao-crypto/hot/ohlc-rolling --as-of 2026-10-07"
+
+    assert _destructive(close)
+    assert _destructive(base)
+    assert not _destructive(verify)

@@ -156,12 +156,13 @@ def test_seed_store_happy_path(tmp_path):
     assert ts[0].tzinfo is not None  # aware-UTC
 
 
-def test_seed_store_window_shortfall_names_ohlcvt_dump(tmp_path):
+def test_seed_store_window_shortfall_names_the_fetch_of_a_newer_head(tmp_path):
     """`rest_head` (day 50) is newer than `store_tail` (day 9, the canonical's), so the two sides are disjoint by
     construction and the cause is ambiguous: both candidates are named with a next step each, the store-side one is
-    the quarterly dump because this seed created the store file from the canonical, and the measurements an operator
-    would read to tell them apart are carried. The copy has already landed when the seam refuses, so that repair opens
-    by moving the landed leg aside -- without it the next seed reads the same leg and refuses the same way."""
+    a fetch of the rolling canonical's newer head because this seed created the store file from the canonical, and
+    the measurements an operator would read to tell them apart are carried. The copy has already landed when the seam
+    refuses, so that repair opens by moving the landed leg aside -- without it the next seed reads the same leg and
+    refuses the same way."""
     canonical_dir = tmp_path / "canonical"
     store_dir = tmp_path / "store"
     _write_full_universe(canonical_dir, _canonical_rows)
@@ -173,9 +174,11 @@ def test_seed_store_window_shortfall_names_ohlcvt_dump(tmp_path):
         seed_store(store_dir, canonical_dir, fetch_fn=fetch_fn, clock=lambda: FAR_FUTURE)
 
     msg = str(exc.value)
-    assert "OHLCVT" in msg
     assert "shortfall" in msg
-    assert "move this leg aside (outside the store) and use the quarterly OHLCVT dump" in msg
+    assert (
+        "move this leg aside (outside the store) and run `zcrypto data fetch`, which brings the hub's newer head of "
+        "the rolling canonical for the next seed to copy"
+    ) in msg
     assert "a seed over a present file never reads the canonical again" in msg  # why the move-aside comes first
     assert _store_path(store_dir, "BTC/EUR", 1440).exists()  # the leg the repair moves aside is on disk already
     assert "the venue answered with a shorter history than the seam needs" in msg  # the fetch-side candidate
@@ -193,7 +196,7 @@ def test_seed_store_seam_holes_names_a_step_on_each_side(tmp_path):
     the stamps the seam needs. Here they are the fetch's -- days 8 and 9 -- but the door cannot measure that, so it
     names both sides, the reading that separates them, and a step on each: the next fetch for the venue's side, and
     for the store's the repair its neighbouring arms name, which on a first seed opens by moving the landed leg
-    aside. The dump stays out: it answers a receded window, which this arm has refuted."""
+    aside. The fetch of a newer head stays out: it answers a receded window, which this arm has refuted."""
     canonical_dir = tmp_path / "canonical"
     store_dir = tmp_path / "store"
     _write_full_universe(canonical_dir, _canonical_rows)
@@ -211,11 +214,11 @@ def test_seed_store_seam_holes_names_a_step_on_each_side(tmp_path):
     assert "read the two sides' stamps across the span they both cover" in msg  # the reading that separates them
     assert "there is no store repair -- the next run fetches again" in msg  # the fetch-side step
     assert "the store leg carries enough rows to clear the floor on its own" in msg
-    assert "OHLCVT" not in msg and "quarterly" not in msg
+    assert "zcrypto data fetch" not in msg
     # The store-side step, routed as the neighbouring arms route it: this seed copied the leg in, so it is the
     # canonical's and it is already on disk, which is why the repair opens by moving it aside.
     assert "and if the store leg is the holed side, the leg is the canonical's, copied into the store by this seed" in msg
-    assert "move this leg aside (outside the store) and rebuild the set" in msg
+    assert "move this leg aside (outside the store) and take the canonical's frame to the owner" in msg
     assert _store_path(store_dir, "BTC/EUR", 1440).exists()
     assert "zcrypto engine seed" not in msg  # the store file's own recovery answers a re-seed, not a first seed
 
@@ -240,13 +243,13 @@ def test_seed_store_short_store_leg_names_the_store_side_repair(tmp_path, seedin
     assert "the venue answered with a shorter history" not in msg  # one cause, not two candidates
     if seeding == "first seed":
         assert "the leg is the canonical's, copied into the store by this seed" in msg
-        assert "`zcrypto data rebuild ohlc-full --no-push`" in msg
-        # The copy already landed, so the rebuild alone never reaches the next seed: the move-aside comes first.
-        assert "move this leg aside (outside the store) and rebuild the set" in msg
+        assert "the rolling canonical is written once on the hub, its bytes pinned by its index" in msg
+        # The copy already landed, so the owner's answer alone never reaches the next seed: the move-aside comes first.
+        assert "move this leg aside (outside the store) and take the canonical's frame to the owner" in msg
         assert _store_path(store_dir, "ADA/EUR", 1440).exists()
     else:
         assert "move this leg aside (outside the store) and run `zcrypto engine seed`" in msg
-        assert "rebuild the set" not in msg
+        assert "take the canonical's frame to the owner" not in msg
 
 
 def test_seed_store_short_store_leg_is_answered_as_short_even_when_disjoint(tmp_path):
@@ -287,16 +290,16 @@ def test_seed_store_short_store_leg_is_answered_as_short_even_when_the_fetch_is_
     assert "no answer the venue could send clears it and the store side is the cause" in msg
     assert "the REST fetch carries no completed bar" not in msg  # the empty arm's text, which sits below this one
     if seeding == "first seed":
-        assert "move this leg aside (outside the store) and rebuild the set" in msg
+        assert "move this leg aside (outside the store) and take the canonical's frame to the owner" in msg
         assert _store_path(store_dir, "ADA/EUR", 1440).exists()
     else:
         assert "move this leg aside (outside the store) and run `zcrypto engine seed`" in msg
 
 
-def test_seed_store_disjoint_reseed_names_store_file_recovery_not_the_dump(tmp_path):
+def test_seed_store_disjoint_reseed_names_store_file_recovery_not_the_first_seeds_fetch(tmp_path):
     """On a re-seed the tail read is the live store file's, not the canonical's, so the store-side candidate the
-    disjoint hint names is the store-file recovery (move the leg aside and re-seed) -- never the quarterly dump,
-    whose repair only answers a first seed's canonical-derived tail."""
+    disjoint hint names is the store-file recovery (move the leg aside and re-seed) -- never the first seed's move
+    aside and fetch of a newer head, whose repair only answers a first seed's canonical-derived tail."""
     store_dir = tmp_path / "store"
     canonical_dir = tmp_path / "unused_canonical"  # never read: the store pre-exists for every pair
     _write_full_universe(store_dir, _canonical_rows)
@@ -309,7 +312,8 @@ def test_seed_store_disjoint_reseed_names_store_file_recovery_not_the_dump(tmp_p
 
     msg = str(exc.value)
     assert "shortfall" in msg
-    assert "OHLCVT" not in msg  # the dump is not named; _STORE_RECOVERY's own "quarterly ingest" is a distinct phrase
+    # The first seed's remedy is not named; _STORE_RECOVERY's own `zcrypto data fetch` follows its re-seed, a distinct phrase.
+    assert "move this leg aside (outside the store) and run `zcrypto data fetch`" not in msg
     assert "the venue answered with a shorter history than the seam needs" in msg
     assert "the store fell behind the REST window's reach" in msg
     assert "move this leg aside (outside the store) and run `zcrypto engine seed`" in msg
@@ -318,10 +322,10 @@ def test_seed_store_disjoint_reseed_names_store_file_recovery_not_the_dump(tmp_p
 
 def test_seed_store_routes_a_shortfall_from_an_empty_fetch_to_the_fetch(tmp_path):
     """The seed's shortfall arm is reached by an empty REST answer as well as by a canonical tail outside the REST
-    window, and only the second names the dump, as a candidate: an empty answer is decided before either frame's
-    stamps are read and names the fetch alone. The canonical copy has already landed when the seam refuses --
-    `seed_store` copies an absent leg before the reconcile -- so the leg is present for the next run and the refusal
-    prescribes nothing over it."""
+    window, and only the second names the fetch of a newer head, as a candidate: an empty answer is decided before
+    either frame's stamps are read and names the fetch alone. The canonical copy has already landed when the seam
+    refuses -- `seed_store` copies an absent leg before the reconcile -- so the leg is present for the next run and
+    the refusal prescribes nothing over it."""
     canonical_dir = tmp_path / "canonical"
     store_dir = tmp_path / "store"
     _write_full_universe(canonical_dir, _canonical_rows)
@@ -333,13 +337,13 @@ def test_seed_store_routes_a_shortfall_from_an_empty_fetch_to_the_fetch(tmp_path
     assert "seed_store: window shortfall for ADA/EUR@1440 — only 0 shared stamp(s)" in msg
     assert "the REST fetch carries no completed bar, so there is no store repair" in msg
     assert "the next run fetches again" in msg
-    assert "OHLCVT" not in msg and "quarterly" not in msg
+    assert "zcrypto data fetch" not in msg
     # The landed copy is named, in the wording the first-seed arms use for it, and nothing is prescribed over it:
     # no move-aside, no re-seed -- the fetch is still the only thing that can change.
     assert "the leg is the canonical's, copied into the store by this seed" in msg
     assert "a seed over a present file never reads the canonical again" in msg
     assert "zcrypto engine seed" not in msg and "move this leg aside" not in msg
-    assert "rebuild the set" not in msg
+    assert "take the canonical's frame to the owner" not in msg
     landed = _store_path(store_dir, "ADA/EUR", 1440)
     assert read_parquet(landed).equals(to_frame(_canonical_rows(1440)))
 
@@ -358,7 +362,7 @@ def test_seed_store_overlap_mismatch_aborts_on_first_seed(tmp_path):
         seed_store(store_dir, canonical_dir, fetch_fn=fetch_fn, clock=lambda: FAR_FUTURE)
 
     assert "mismatch" in str(exc.value)
-    assert "OHLCVT" not in str(exc.value)  # distinct from the window-shortfall guard
+    assert "zcrypto data fetch" not in str(exc.value)  # distinct from the window-shortfall guard
 
 
 def test_seed_store_idempotent_reseed_appends_only_missing(tmp_path):
@@ -436,8 +440,8 @@ def test_seed_store_names_the_canonical_when_the_copy_is_what_is_broken(tmp_path
     assert str(_store_path(store_dir, "ADA/EUR", 240)) not in str(exc.value)
     # A canonical is hash-attested, so "recast in place" is the wrong instruction there.
     assert "recast the column in place" not in str(exc.value)
-    assert "dataset_hash" in str(exc.value) and "data rebuild ohlc-full --no-push" in str(exc.value)
-    assert "nothing was copied to the store; a canonical is the data pipeline's to republish" in str(exc.value)
+    assert "the rolling canonical is written once on the hub, its bytes pinned by its index" in str(exc.value)
+    assert "nothing was copied to the store; take the canonical's frame to the owner" in str(exc.value)
     assert not _store_path(store_dir, "ADA/EUR", 240).exists()  # no copy was written to be refused next round
 
 
@@ -646,6 +650,28 @@ def test_seed_store_refuses_a_canonical_it_cannot_read_before_copying_it(tmp_pat
     assert not _store_path(store_dir, "ADA/EUR", 240).exists()
 
 
+@pytest.mark.parametrize("wreck", ["corrupt bytes", "a ts off the store's"])
+def test_seed_store_names_the_canonical_by_the_name_it_is_handed(tmp_path, wreck):
+    canonical_dir = tmp_path / "canonical"
+    store_dir = tmp_path / "store"
+    _write_full_universe(canonical_dir, _canonical_rows)
+    broken = _store_path(canonical_dir, "ADA/EUR", 240)
+    if wreck == "corrupt bytes":
+        broken.write_bytes(b"not a parquet file")
+    else:
+        write_parquet(read_parquet(broken).with_columns(pl.col("ts").cast(pl.Datetime("ns", "UTC"))), broken)
+    name = "ohlc-rolling as of 2026-10-03 (0123456789ab)"
+
+    with pytest.raises(EngineError) as exc:
+        seed_store(store_dir, canonical_dir, canonical_name=name, fetch_fn=_good_fetch_fn, clock=lambda: FAR_FUTURE)
+
+    expected = {
+        "corrupt bytes": f"seed_store: cannot read {name} for ADA/EUR@240 — ",
+        "a ts off the store's": f"seed_store: {name} is not the frame the store readers join for ADA/EUR@240 -- ",
+    }[wreck]
+    assert expected in str(exc.value)
+
+
 # Every deviation below survives a `write_parquet`/`read_parquet` round trip, which is why the door is needed; each is
 # what an operator would read off the refusal, so the cases assert the first difference by its text.
 def _deviated(frame: pl.DataFrame, how: str) -> pl.DataFrame:
@@ -792,7 +818,8 @@ def test_the_store_readers_admit_a_null_close_at_an_unshared_stamp(tmp_path, rea
 @pytest.mark.parametrize("how", ["an extra column", "no rows", "a null stamp", "a repeated stamp", "an off-grid stamp", "nan"])
 def test_seed_store_refuses_a_deviated_canonical_before_copying_it(tmp_path, how):
     """One case per arm: the canonical is held to the whole width before the copy, named as the file that is broken,
-    with the data pipeline's recovery and no store file left for the next run to refuse under the store's."""
+    with the recovery that takes the canonical's frame to the owner and no store file left for the next run to refuse
+    under the store's."""
     canonical_dir = tmp_path / "canonical"
     store_dir = tmp_path / "store"
     _write_full_universe(canonical_dir, _canonical_rows)
@@ -805,8 +832,8 @@ def test_seed_store_refuses_a_deviated_canonical_before_copying_it(tmp_path, how
     assert f"seed_store: {broken} is not the frame the store readers join for ADA/EUR@240 -- " in msg
     assert _first_difference(how, 240) in msg
     assert str(_store_path(store_dir, "ADA/EUR", 240)) not in msg
-    assert "nothing was copied to the store; a canonical is the data pipeline's to republish" in msg
-    assert "data rebuild ohlc-full --no-push" in msg and "dataset_hash" in msg
+    assert "nothing was copied to the store; take the canonical's frame to the owner" in msg
+    assert "the rolling canonical is written once on the hub, its bytes pinned by its index" in msg
     assert "move this leg aside" not in msg and "recast the column in place" not in msg
     assert _store_path(store_dir, "ADA/EUR", 1440).exists()  # the legs before the refused one are seeded and written
     assert not _store_path(store_dir, "ADA/EUR", 240).exists()
@@ -978,4 +1005,4 @@ def test_seed_store_claims_a_fresh_copy_for_an_absent_close_only_when_it_copied(
     else:
         assert f"absent on the store tail (first at {stamp})" in msg
         assert "this is a fresh canonical copy" in msg and "whose copy already landed" in msg
-        assert "move this leg aside (outside the store) and rebuild the set" in msg
+        assert "move this leg aside (outside the store) and take the canonical's frame to the owner" in msg

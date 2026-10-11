@@ -2,15 +2,18 @@
 
 import hashlib
 import json
+import os
 import re
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import pytest
 
+from cli.data.rolling import ROLLING_SET
 from cli.ohlc.dataset import to_frame, write_parquet
 from cli.registry.errors import RegistryError
 from cli.registry.observed import ObservedReader
+from tests.rolling_fixtures import write_chain
 from tests.skip_gates import nothing_found_under
 
 pytestmark = pytest.mark.data
@@ -131,6 +134,112 @@ def test_vouched_check_true_positive_mismatch_and_absence(tmp_path):
     reader3 = ObservedReader(root)
     with pytest.raises(RegistryError, match="vouched"):
         reader3.read_series("ohlc-test", "BTC/EUR/1440.parquet")
+
+
+_AS_OF = "2026-10-03"
+
+
+def _rolling(tmp_path, **chain) -> Path:
+    root = tmp_path / "data"
+    write_chain(root / ROLLING_SET, **chain)
+    return root
+
+
+def test_a_second_as_of_on_one_rolling_set_is_refused(tmp_path):
+    reader = ObservedReader(_rolling(tmp_path))
+    reader.read_rolling(ROLLING_SET, "BTC/EUR", 1440, "2026-10-02")
+
+    with pytest.raises(RegistryError, match="already read as of 2026-10-02"):
+        reader.read_rolling(ROLLING_SET, "BTC/EUR", 1440, _AS_OF)
+
+    assert reader.block()[ROLLING_SET]["files"].keys() == {"index/2026/10/02.json"}
+
+
+def test_a_rolling_read_honours_the_window_in_rows_and_span(tmp_path):
+    reader = ObservedReader(_rolling(tmp_path))
+
+    frame = reader.read_rolling(
+        ROLLING_SET, "BTC/EUR", 15, _AS_OF, window=("2026-09-30 12:00:00+00:00", "2026-10-01 11:45:00+00:00")
+    )
+
+    assert frame.height == 96
+    entry = reader.block()[ROLLING_SET]
+    assert entry["rows"] == 96
+    assert entry["span"] == ["2026-09-30 12:00:00+00:00", "2026-10-01 11:45:00+00:00"]
+
+
+def test_an_accepted_rolling_hole_is_listed_by_pair_and_day(tmp_path):
+    root = _rolling(tmp_path, holes={date(2026, 10, 2): {"BTC/EUR"}})
+    with pytest.raises(RegistryError, match="BTC/EUR has a hole on 2026-10-02"):
+        ObservedReader(root).read_rolling(ROLLING_SET, "BTC/EUR", 1440, _AS_OF)
+
+    reader = ObservedReader(root)
+    reader.read_rolling(ROLLING_SET, "BTC/EUR", 1440, _AS_OF, accept_holes=True)
+    reader.read_rolling(ROLLING_SET, "BTC/EUR", 240, _AS_OF, accept_holes=True)
+    reader.read_rolling(ROLLING_SET, "ETH/BTC", 1440, _AS_OF, accept_holes=True)
+
+    assert reader.holes() == {ROLLING_SET: ["BTC/EUR 2026-10-02"]}
+
+
+def test_a_rolling_dataset_reads_as_chained_not_inert(tmp_path):
+    root = _rolling(tmp_path)
+    reader = ObservedReader(root)
+    reader.read_rolling(ROLLING_SET, "BTC/EUR", 1440, _AS_OF)
+    digest = hashlib.sha256((root / ROLLING_SET / "index/2026/10/03.json").read_bytes()).hexdigest()
+
+    assert reader.vouched_status() == {ROLLING_SET: f"chained (as of 2026-10-03, line {digest[:12]})"}
+
+
+def test_rolling_reads_of_two_pairs_at_two_grids_accumulate_rows_and_span(tmp_path):
+    reader = ObservedReader(_rolling(tmp_path))
+    late = ("2026-10-02 00:00:00+00:00", "2026-10-03 23:45:00+00:00")
+    reads = (("BTC/EUR", 1440, None), ("BTC/EUR", 240, late), ("ETH/BTC", 1440, None), ("ETH/BTC", 240, late))
+
+    heights = [reader.read_rolling(ROLLING_SET, pair, grid, _AS_OF, window=window).height for pair, grid, window in reads]
+
+    assert heights == [4, 12, 4, 12]
+    expected = (32, ["2026-09-30 00:00:00+00:00", "2026-10-03 20:00:00+00:00"])
+    entry = reader.block()[ROLLING_SET]
+    assert (entry["rows"], entry["span"]) == expected
+    reader.read_rolling(ROLLING_SET, "BTC/EUR", 240, _AS_OF, window=late)
+    entry = reader.block()[ROLLING_SET]
+    assert (entry["rows"], entry["span"]) == expected
+    with pytest.raises(RegistryError, match="already read with window"):
+        reader.read_rolling(ROLLING_SET, "BTC/EUR", 240, _AS_OF)
+
+
+def test_a_series_read_of_a_rolling_dataset_is_refused(tmp_path):
+    root = _rolling(tmp_path)
+    rolling_first = ObservedReader(root)
+    rolling_first.read_rolling(ROLLING_SET, "BTC/EUR", 1440, _AS_OF)
+    with pytest.raises(RegistryError, match="reads one dataset one way"):
+        rolling_first.read_series(ROLLING_SET, "base/BTC/EUR/15.parquet")
+
+    series_first = ObservedReader(root)
+    series_first.read_series(ROLLING_SET, "base/BTC/EUR/15.parquet")
+    with pytest.raises(RegistryError, match="reads one dataset one way"):
+        series_first.read_rolling(ROLLING_SET, "BTC/EUR", 1440, _AS_OF)
+
+
+def test_a_rolling_read_of_zero_rows_is_refused(tmp_path):
+    reader = ObservedReader(_rolling(tmp_path))
+
+    with pytest.raises(RegistryError, match="zero rows"):
+        reader.read_rolling(ROLLING_SET, "BTC/EUR", 15, _AS_OF, window=("2026-09-29 00:00:00+00:00", "2026-09-29 23:45:00+00:00"))
+    with pytest.raises(RegistryError, match="accumulated nothing"):
+        reader.block()
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses directory permissions")
+def test_a_rolling_index_the_reader_cannot_list_is_a_registry_refusal_naming_it(tmp_path):
+    root = _rolling(tmp_path)
+    month = root / ROLLING_SET / "index/2026/10"
+    os.chmod(month, 0o000)
+    try:
+        with pytest.raises(RegistryError, match=rf"^{ROLLING_SET}: .*Permission denied: '{re.escape(str(month))}'$"):
+            ObservedReader(root).read_rolling(ROLLING_SET, "BTC/EUR", 1440, _AS_OF)
+    finally:
+        os.chmod(month, 0o755)
 
 
 _FULL_SET_EXPECTATIONS = {  # measured 2026-08-08; spans in the loader's own stamp format

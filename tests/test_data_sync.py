@@ -1,10 +1,19 @@
+import hashlib
+import json
+import os
+import re
 import subprocess
+from datetime import date
 from pathlib import Path
 
 import pytest
 
 from cli.data.errors import DataSyncError
-from cli.data.sync import fetch_hot, push_hot
+from cli.data.sync import fetch_hot, logger, push_hot
+from tests.logcapture import messages_of
+from tests.rolling_fixtures import line_bytes, write_chain
+
+_ROLLING = "ohlc-rolling"
 
 
 def _mk(root: Path, rel: str, content: bytes) -> Path:
@@ -198,3 +207,132 @@ def test_fetch_ignores_a_set_that_ships_no_parquet(tmp_path):
     f.write_text("{}")
     r = fetch_hot(hot, data)
     assert "universe/selection.json" in r.new_files
+
+
+def _flip(path: Path) -> None:
+    data = bytearray(path.read_bytes())
+    data[len(data) // 2] ^= 0xFF
+    path.write_bytes(bytes(data))
+
+
+def _pending(lines: list[str], relpath: str) -> bool:
+    return any(f"{_ROLLING}/{relpath}" in line and "pending" in line for line in lines)
+
+
+def test_fetch_admits_a_rolling_day_file_matching_its_line(tmp_path):
+    hot, data = tmp_path / "hot", tmp_path / "data"
+    write_chain(hot / _ROLLING)
+    report = fetch_hot(hot, data)
+    assert {f"{_ROLLING}/days/BTC/EUR/2026/10/03.parquet", f"{_ROLLING}/index/2026/10/03.json"} <= set(report.new_files)
+
+
+def test_fetch_refuses_a_rolling_day_file_disagreeing_with_its_line(tmp_path):
+    hot, data = tmp_path / "hot", tmp_path / "data"
+    write_chain(hot / _ROLLING)
+    _flip(hot / _ROLLING / "days/BTC/EUR/2026/10/02.parquet")
+    with pytest.raises(DataSyncError, match=f"{_ROLLING}/days/BTC/EUR/2026/10/02.parquet hashes to"):
+        fetch_hot(hot, data)
+
+
+def test_fetch_leaves_a_rolling_day_file_no_line_names_pending(tmp_path):
+    hot, data = tmp_path / "hot", tmp_path / "data"
+    (hot / _ROLLING / write_chain(hot / _ROLLING)[-1]).unlink()
+    with messages_of(logger) as lines:
+        report = fetch_hot(hot, data)
+    assert f"{_ROLLING}/days/BTC/EUR/2026/10/03.parquet" in report.new_files
+    assert _pending(lines, "days/BTC/EUR/2026/10/03.parquet"), lines
+
+
+def test_fetch_refuses_a_fetched_chain_whose_link_is_broken(tmp_path):
+    hot, data = tmp_path / "hot", tmp_path / "data"
+    second = hot / _ROLLING / write_chain(hot / _ROLLING, days=2)[2]
+    line = json.loads(second.read_bytes())
+    line["prev"] = hashlib.sha256(b"another line").hexdigest()
+    second.write_bytes(line_bytes(line))
+    with pytest.raises(DataSyncError, match="index/2026/10/02.json: its prev is not the sha256 of index/2026/10/01.json"):
+        fetch_hot(hot, data)
+
+
+def test_fetch_compares_a_pending_file_when_its_line_arrives(tmp_path):
+    hot, data = tmp_path / "hot", tmp_path / "data"
+    newest = hot / _ROLLING / write_chain(hot / _ROLLING)[-1]
+    line = newest.read_bytes()
+    newest.unlink()
+    fetch_hot(hot, data)
+    _flip(data / _ROLLING / "days/BTC/EUR/2026/10/03.parquet")
+    newest.write_bytes(line)
+    with pytest.raises(DataSyncError, match=f"{_ROLLING}/days/BTC/EUR/2026/10/03.parquet hashes to"):
+        fetch_hot(hot, data)
+
+
+def _a_line_ahead_of_its_file(hot: Path) -> tuple[Path, bytes]:
+    write_chain(hot / _ROLLING)
+    late = hot / _ROLLING / "days/ETH/BTC/2026/10/03.parquet"
+    held = late.read_bytes()
+    late.unlink()
+    return late, held
+
+
+def test_fetch_admits_a_line_ahead_of_its_file_as_pending(tmp_path):
+    hot, data = tmp_path / "hot", tmp_path / "data"
+    late, held = _a_line_ahead_of_its_file(hot)
+    with messages_of(logger) as lines:
+        first = fetch_hot(hot, data)
+    assert f"{_ROLLING}/index/2026/10/03.json" in first.new_files
+    assert _pending(lines, "days/ETH/BTC/2026/10/03.parquet"), lines
+    late.write_bytes(held)
+    assert fetch_hot(hot, data).new_files == (f"{_ROLLING}/days/ETH/BTC/2026/10/03.parquet",)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses directory permissions")
+def test_fetch_refuses_a_hub_index_it_cannot_list_in_one_line(tmp_path):
+    hot, data = tmp_path / "hot", tmp_path / "data"
+    write_chain(hot / _ROLLING)
+    month = hot / _ROLLING / "index/2026/10"
+
+    # rsync refuses a directory it cannot list as well, so the month is hidden once the transfer is done: a hub read
+    # failing between the copy and its verification.
+    def rsync_then_hide(argv, **kwargs):
+        result = subprocess.run(argv, **kwargs)
+        os.chmod(month, 0o000)
+        return result
+
+    try:
+        with pytest.raises(DataSyncError, match=rf"^data fetch: {_ROLLING}: .*Permission denied: '{re.escape(str(month))}'$"):
+            fetch_hot(hot, data, runner=rsync_then_hide)
+    finally:
+        os.chmod(month, 0o755)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses directory permissions")
+def test_fetch_refuses_a_listed_file_under_a_directory_it_cannot_search_never_reads_it_as_pending(tmp_path):
+    hot, data = tmp_path / "hot", tmp_path / "data"
+    # BTC/EUR's files arrived before their lines and the newest line names none of them, so the trailing head never
+    # stats their directory: only the new lines' own check reaches it.
+    write_chain(hot / _ROLLING, holes={date(2026, 10, 3): {"BTC/EUR"}})
+    for day in ("01", "02"):
+        rel = f"{_ROLLING}/days/BTC/EUR/2026/10/{day}.parquet"
+        _mk(data, rel, (hot / rel).read_bytes())
+    month = data / _ROLLING / "days/BTC/EUR/2026/10"
+
+    def rsync_then_hide(argv, **kwargs):
+        result = subprocess.run(argv, **kwargs)
+        os.chmod(month, 0o000)
+        return result
+
+    first = re.escape(str(month / "01.parquet"))
+    try:
+        with pytest.raises(DataSyncError, match=rf"^data fetch: {_ROLLING}: .*Permission denied: '{first}'$"):
+            fetch_hot(hot, data, runner=rsync_then_hide)
+    finally:
+        os.chmod(month, 0o755)
+
+
+def test_fetch_refuses_a_file_arriving_after_its_line_whose_bytes_disagree(tmp_path):
+    hot, data = tmp_path / "hot", tmp_path / "data"
+    late, held = _a_line_ahead_of_its_file(hot)
+    fetch_hot(hot, data)
+    late.write_bytes(held)
+    _flip(late)
+    with pytest.raises(DataSyncError, match=f"{_ROLLING}/days/ETH/BTC/2026/10/03.parquet hashes to"):
+        fetch_hot(hot, data)

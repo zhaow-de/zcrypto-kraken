@@ -136,6 +136,8 @@ _DATA_ABSENT_REASONS = [
     "no BTC/EUR trade segments under /mnt/zhao-crypto/capture-segments",
     "no heal-complete BTC/EUR day in the last 6 days under /mnt/zhao-crypto/capture-segments",
     "no local datasets (CI)",
+    "data/ohlc-rolling absent — the staged base is on the data-bearing workstation only",
+    "data/ohlc-rolling absent — the base's derivation is checked on the data-bearing workstation only",
 ]
 _OWN_GATE_REASONS = [
     "needs a live venue: set ZCRYPTO_LIVE_VENUE_TESTS=1 to run it",

@@ -4,27 +4,25 @@ an `out_root` -- so a revision mints a sibling and never overwrites the live set
 from __future__ import annotations
 
 import json
-import re
 import shutil
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 from cli.backfill.backfill import backfill_basket
 from cli.backfill.errors import BackfillError
 from cli.backfill.substrate15m import build_15m_substrate
 from cli.costs.errors import CostModelError
 from cli.costs.spread import SPREAD_CALIBRATION, effective_spread_bps
+from cli.data import rolling
 from cli.data.errors import DataSyncError
-from cli.data.manifest import ManifestError, read_manifest
+from cli.data.manifest import ManifestError
 from cli.derivatives.errors import DerivativesError
 from cli.derivatives.funding import build_funding_substrate
 from cli.derivatives.oi import build_oi_substrate
-from cli.logging import get_logger
-from cli.ohlc.dataset import read_parquet
 from cli.ohlc.errors import OHLCError
-from cli.ohlc.reach import reach_round
 from cli.snapshot import CANDIDATE_SYMBOLS, derive_universe
 from cli.snapshot.errors import SnapshotError
 from cli.snapshot.fetch import fetch_public
@@ -37,11 +35,10 @@ from cli.universe.rules import (
     DEFAULT_MIN_MEDIAN_QUOTE_VOLUME,
     MANDATORY,
     SPREAD_REFERENCE_NOTIONAL_EUR,
+    _is_mandatory,
     finalize_universe,
 )
 from cli.universe.volume import quote_volume_in_eur
-
-logger = get_logger("data.rebuild")
 
 _OHLC_INTERVALS = ["1440", "240", "60"]
 _UNIVERSE_VOLUME_WINDOW_DAYS = 30
@@ -74,22 +71,6 @@ def _rebuild_ohlc_15m(ctx: RebuildContext, out_root: Path) -> None:
     build_15m_substrate(source_dir, list(CANDIDATE_SYMBOLS), out_root, fetched_at=datetime.now(UTC).isoformat())
 
 
-def _rebuild_ohlc_reach(ctx: RebuildContext, out_root: Path) -> None:
-    """Carry the newest frozen `ohlc-full` forward from Kraken's REST OHLC window (T0065); series the window
-    no longer reaches land `.detached` and are warned about, not refused."""
-    canonical_root = resolve_canonical_root(ctx.data_root)
-    logger.info("data rebuild: ohlc-reach joins the canonical at %s", canonical_root)
-    report = reach_round(canonical_root, out_root)
-    detached = report.detached
-    if detached:
-        logger.warning(
-            "data rebuild: %d of %d reach series are DETACHED (no seam to the canonical tail): %s",
-            len(detached),
-            len(report.entries),
-            ", ".join(f"{e.symbol}@{e.interval}" for e in detached),
-        )
-
-
 def _refresh_funding(ctx: RebuildContext, out_root: Path) -> None:
     build_funding_substrate(out_root)
 
@@ -108,14 +89,15 @@ def _refresh_snapshots(ctx: RebuildContext, out_root: Path) -> None:
 def _require_fresh_ohlc(last_bars: dict[str, datetime], ctx: RebuildContext) -> None:
     """Refuse a universe build from an OHLC set that does not reach the present: the volume criterion
     is a TRAILING 30-day median, describing current tradeability only if the newest bar is recent.
-    Checked on the STALEST symbol -- a basket `max` would let one fresh symbol vouch
-    for stale ones -- so a delisted symbol fails the rebuild, a corporate action wanting a human (T0025)."""
+    On the rolling set every candidate's frame ends at the set's head, which a pair without a final holds until the
+    owner's close leaves that pair out of the candidates, so a delisted symbol fails the rebuild once the head it holds
+    is past the budget, a corporate action wanting a human (T0025)."""
     as_of = datetime.strptime(ctx.stamp, "%Y%m%d").replace(tzinfo=UTC)
     symbol, last_bar = min(last_bars.items(), key=lambda kv: kv[1])
     staleness_days = (as_of - last_bar).days
     if staleness_days > UNIVERSE_MAX_OHLC_STALENESS_DAYS:
         raise DataSyncError(
-            f"data rebuild: universe needs an ohlc-full set reaching the present -- {symbol}'s newest "
+            f"data rebuild: universe needs the {rolling.ROLLING_SET} set reaching the present -- {symbol}'s newest "
             f"daily bar is {last_bar.date().isoformat()}, {staleness_days} days before the rebuild "
             f"stamp {as_of.date().isoformat()} (budget {UNIVERSE_MAX_OHLC_STALENESS_DAYS} days). A "
             f"trailing {_UNIVERSE_VOLUME_WINDOW_DAYS}-day median over that window measures past "
@@ -123,87 +105,57 @@ def _require_fresh_ohlc(last_bars: dict[str, datetime], ctx: RebuildContext) -> 
         )
 
 
-_STAMPED_REACH = re.compile(r"ohlc-reach-\d{8}")
-_STAMPED_FULL = re.compile(r"ohlc-full-\d{8}")
-
-
-def _basket_legs() -> list[str]:
-    return [f"{symbol}/{interval}.parquet" for symbol in CANDIDATE_SYMBOLS for interval in _OHLC_INTERVALS]
-
-
-def _missing_from_whole_set(root: Path) -> list[str]:
-    missing = [leg for leg in _basket_legs() if not (root / leg).is_file()]
-    if not (root / "manifest.json").is_file():
-        missing.append("manifest.json")
-    return missing
-
-
-def resolve_canonical_root(data_root: Path) -> Path:
-    """A dump ingest re-freezes the canonical as an `ohlc-full-<stamp>` sibling and never in place (spec 00056
-    D1c), so the frozen set reaching furthest is the newest stamp, not `ohlc-full`. Either is refused unless it is
-    whole -- the manifest is the last thing `backfill_basket` writes -- because a round joined to a half-written
-    set would seam a short basket and report success."""
-    stamped = sorted(
-        (p for p in data_root.glob("ohlc-full-*") if p.is_dir() and _STAMPED_FULL.fullmatch(p.name)),
-        key=lambda p: p.name,
-        reverse=True,
-    )
-    if stamped:
-        chosen = stamped[0]
-    else:
-        chosen = data_root / "ohlc-full"
-        if not chosen.exists():
-            raise DataSyncError(f"data rebuild: ohlc-reach needs a frozen ohlc-full set to join, none found under {data_root}")
-    missing = _missing_from_whole_set(chosen)
-    if missing:
-        raise DataSyncError(
-            f"data rebuild: the frozen ohlc-full set {chosen} is not a whole set -- missing "
-            f"{', '.join(missing)}; re-mint it -- a whole stamped sibling outranks whatever is broken here"
-        )
-    return chosen
-
-
-def resolve_ohlc_source(data_root: Path) -> Path:
-    """The newest stamped `ohlc-reach-<%Y%m%d>` sibling, else canonical `ohlc-full`: newest-wins because
-    publication is additive (`rsync --ignore-existing`), so a fixed name is never refreshable on the hub.
-    Only exact stamped names are candidates, fixed-width digits sorting chronologically, so a stray sibling
-    never outranks a date."""
-    stamped = sorted(
-        (p for p in data_root.glob("ohlc-reach-*") if p.is_dir() and _STAMPED_REACH.fullmatch(p.name)),
-        key=lambda p: p.name,
-        reverse=True,
-    )
-    if stamped:
-        return stamped[0]
-    fallback = data_root / "ohlc-full"
-    if not fallback.exists():
-        raise DataSyncError(f"data rebuild: universe needs the live ohlc-full/ set, not found at {fallback}")
-    return fallback
-
-
 def _refresh_universe(ctx: RebuildContext, out_root: Path) -> None:
     """Refresh the point-in-time universe file via the canonical builders, matching the live set's
     payload shape -- including the `selected` key `zcrypto capture` reads (spec 00056 D3)."""
-    symbols = list(CANDIDATE_SYMBOLS)
-    assetpairs_result = fetch_public("AssetPairs")
-    assets_result = fetch_public("Assets")
-    snapshot = build_snapshot(assetpairs_result, assets_result, symbols, datetime.now(UTC).isoformat())
-    pairs = derive_universe(assetpairs_result, assets_result, symbols)
-
-    ohlc_root = resolve_ohlc_source(ctx.data_root)
-    missing = [symbol for symbol in CANDIDATE_SYMBOLS if not (ohlc_root / Path(symbol) / "1440.parquet").exists()]
-    if missing:
-        # `escalate` compares the SELECTED set against band bounds and cannot see that the SOURCE was
-        # narrower, so a missing leg would shrink the universe silently. Refuse here, naming the legs,
-        # rather than an untyped FileNotFoundError from inside polars several frames later.
-        raise DataSyncError(f"data rebuild: universe source is missing candidate leg(s): {', '.join(missing)} -- under {ohlc_root}")
-    btc_eur = read_parquet(ohlc_root / "BTC" / "EUR" / "1440.parquet")
-    dailies = {s: read_parquet(ohlc_root / s.split("/")[0] / s.split("/")[1] / "1440.parquet") for s in symbols}
+    root = ctx.data_root / rolling.ROLLING_SET
+    if not root.is_dir():
+        raise DataSyncError(
+            f"data rebuild: universe needs the {rolling.ROLLING_SET} set, which is absent: no directory {root}; "
+            "zcrypto data fetch mirrors the hub's datasets"
+        )
+    try:
+        line = rolling.head(root)
+        set_pairs = rolling.pairs(root)
+        # A pair the head line records as closed on the owner's word has no data while the close runs, so it is
+        # no candidate. The selection rule keeps a mandatory leg selected only among the candidates it is handed,
+        # so a closed mandatory pair refuses the rebuild instead (spec 00125 D6).
+        closed = sorted(rolling.closed_pairs(line, set_pairs))
+        for pair in closed:
+            base, quote = pair.split("/")
+            if _is_mandatory(SimpleNamespace(base=base, quote=quote), MANDATORY):
+                raise DataSyncError(
+                    f"data rebuild: universe refuses the closed mandatory pair {pair} -- {line.relpath} records its "
+                    "close on the owner's word, and every universe selects the mandatory EUR legs"
+                )
+        missing = [symbol for symbol in CANDIDATE_SYMBOLS if symbol not in set_pairs]
+        if missing:
+            # `escalate` compares the SELECTED set against band bounds and cannot see that the SOURCE was
+            # narrower, so a missing leg would shrink the universe silently. Refuse here, naming every leg.
+            raise DataSyncError(f"data rebuild: universe source is missing candidate leg(s): {', '.join(missing)} -- under {root}")
+        symbols = [symbol for symbol in CANDIDATE_SYMBOLS if symbol not in closed]
+        # Only the daily bars the volume median takes, ending at the head: a hole is permanent, so a read of the
+        # whole history would refuse every later rebuild on one hole, where one inside these bars refuses this one.
+        end = datetime.combine(line.day, time(), tzinfo=UTC)
+        window = (end - timedelta(days=_UNIVERSE_VOLUME_WINDOW_DAYS - 1), end)
+        frames = {
+            pair: rolling.read_rolling(root, pair, 1440, line.day, window=window, accept_holes=False).frame
+            for pair in dict.fromkeys(["BTC/EUR", *symbols])
+        }
+    except OSError as exc:
+        raise DataSyncError(f"data rebuild: universe cannot read {root} -- {exc}") from exc
+    btc_eur = frames["BTC/EUR"]
+    dailies = {symbol: frames[symbol] for symbol in symbols}
     # Freshness BEFORE the medians: `quote_volume_in_eur` raises on a short frame, so a stale set that
     # is also short would report a row count and never diagnose the staleness.
     last_bars = {symbol: daily["ts"][-1] for symbol, daily in dailies.items() if daily.height}
     if last_bars:
         _require_fresh_ohlc(last_bars, ctx)
+
+    assetpairs_result = fetch_public("AssetPairs")
+    assets_result = fetch_public("Assets")
+    snapshot = build_snapshot(assetpairs_result, assets_result, symbols, datetime.now(UTC).isoformat())
+    pairs = derive_universe(assetpairs_result, assets_result, symbols)
     volumes = {
         symbol: quote_volume_in_eur(
             daily,
@@ -236,46 +188,16 @@ def _refresh_universe(ctx: RebuildContext, out_root: Path) -> None:
         "source": "cli/costs/spread.py — mean effective spread at size",
         "unevaluated_count": sum(1 for e in selection.entries if e["spread_bps"] is None),
     }
-    manifest_path = ohlc_root / "manifest.json"
-    # Fail closed on a missing manifest: `backfill_basket` always writes one, so its
-    # absence means a broken or half-written set, and an empty provenance hash reads as a value and
-    # compares EQUAL across two unrelated broken builds -- a directory name is not an identity.
-    if not manifest_path.exists():
-        raise DataSyncError(
-            f"data rebuild: universe needs {manifest_path} to record the OHLC set's identity -- "
-            "absent, so the set is broken or half-written; refusing to write an artifact whose "
-            "provenance hash would be empty"
-        )
-    # A manifest that exists but cannot be read means the same thing, that the set cannot identify
-    # itself, so it takes the same typed failure rather than an untyped error from deep in the stack.
-    try:
-        # ONE accessor, no dataset name in this path: reach's identity is its continuous subset and
-        # ohlc-full's is set-wide, and the manifest declares which -- choosing here would restore the
-        # per-set knowledge the contract removed.
-        ohlc_dataset_hash = read_manifest(manifest_path).identity_digest
-    except ManifestError:
-        # A legacy manifest still identifies itself the old way; degrading rather than refusing keeps
-        # a hub-fetched tree usable before it has been converted.
-        try:
-            ohlc_dataset_hash = json.loads(manifest_path.read_text())["basket_sha256"]
-        except (json.JSONDecodeError, KeyError) as exc:
-            raise DataSyncError(
-                f"data rebuild: {manifest_path} is unreadable as a basket manifest ({exc!r}) -- "
-                "refusing to write an artifact that cannot cite the set it was built from"
-            ) from exc
-    except (json.JSONDecodeError, KeyError) as exc:
-        raise DataSyncError(
-            f"data rebuild: {manifest_path} is unreadable as a basket manifest ({exc!r}) -- "
-            "refusing to write an artifact that cannot cite the set it was built from"
-        ) from exc
     # Name the set this build READ and how fresh it was: a hash alone stops resolving once a directory
     # is retired. The published bar is the STALEST symbol's newest -- the value
     # `_require_fresh_ohlc` tests, and the only one every symbol's trailing window ends at or after.
     provenance = {
         "snapshot_sha256": snapshot["raw_sha256"],
-        "ohlc_dataset_hash": ohlc_dataset_hash,
-        "ohlc_dataset_dir": ohlc_root.name,
+        "ohlc_dataset_hash": line.sha256,
+        "ohlc_dataset_dir": root.name,
+        "ohlc_as_of": line.day.isoformat(),
         "ohlc_stalest_daily_bar": min(last_bars.values()).date().isoformat(),
+        "ohlc_closed_pairs": closed,
     }
     file = build_universe_file(
         selection,
@@ -290,7 +212,6 @@ def _refresh_universe(ctx: RebuildContext, out_root: Path) -> None:
 REBUILDABLE: dict[str, Callable[[RebuildContext, Path], None]] = {
     "ohlc-full": _rebuild_ohlc_full,
     "ohlc-15m": _rebuild_ohlc_15m,
-    "ohlc-reach": _rebuild_ohlc_reach,
     "derivatives-funding": _refresh_funding,
     "derivatives-oi": _refresh_oi,
     "snapshots": _refresh_snapshots,
@@ -305,6 +226,7 @@ BUILDER_REFUSALS: tuple[type[Exception], ...] = (
     DerivativesError,
     ManifestError,
     OHLCError,
+    rolling.RollingError,
     SnapshotError,
     UniverseError,
 )

@@ -110,7 +110,7 @@ zcrypto engine <subcommand> [OPTIONS]
 
 | Subcommand | Description |
 | -- | -- |
-| `seed` | Seed/refresh the live price store (`store_dir`): a REST gap-fill over every series, and for an absent store file a copy of the newest whole frozen `ohlc-full` sibling under the configured data root (the unstamped set when no stamped sibling exists); workstation-only, the engine image carrying no canonical dataset; idempotent, prints the per-pair × grid seam-QA summary. Also the repair for a poisoned store tail. |
+| `seed [--accept-holes]` | Seed/refresh the live price store (`store_dir`): a REST gap-fill over every series, and for an absent store file a copy of the rolling canonical, `ohlc-rolling` under the configured data root, at its local head, derived to the store's grids; a copy across a day the set records as a hole is refused unless `--accept-holes`, which copies the series without that day and prints it, the REST gap-fill then filling the day when it lies inside the REST window and a day older than the window staying missing from the store; workstation-only, the engine image carrying no canonical dataset; idempotent, prints the per-pair × grid seam-QA summary. Also the repair for a poisoned store tail. |
 | `run` | Run the shadow node in the foreground — one journaled cycle per 4h boundary. Fails fast (exit 1) when the store is missing any basket series, or when `ZCRYPTO_REQUIRE_CONFIG` is set and no `zcrypto.toml` exists; a start the node cannot complete aborts and exits non-zero rather than resting as a live-looking node, and the supervisor's restart is the recovery. Set `HEALTHCHECK_URL` to enable the per-cycle dead-man's-switch ping: a success record pings the URL, a failed-cycle sidecar `<url>/fail`, and a propagating exception pings nothing and alerts by silence. |
 | `cycle [--at ISO_TS] [--replace]` | Run one cycle manually, defaulting to the most recent elapsed boundary; `--at` must be an aware ISO-8601 timestamp exactly on the 4h UTC grid. An already-journaled boundary is refused unless `--replace`, which first deletes its record/sidecar and its snapshots. Exits non-zero when the cycle fails. |
 | `replay [--date YYYY-MM-DD] [--path fast\|verified] [--journal-dir <PATH>]` | Replay journaled success cycles through the builder and compare recomputed targets against the journaled ones. Hash mismatches and validation failures are classified per cycle rather than crashing the sweep, sidecars are listed as failed cycles, and either exits non-zero. `--journal-dir` reads a journal other than the configured one. |
@@ -296,9 +296,9 @@ Each pair is watermarked at its newest existing panel hour; a sweep only materia
 
 ### `zcrypto data`<a name="zcrypto-data"></a>
 
-The hot-cluster dataset exchange: every research node — the workstation, the ops node — fetches the same small `hot/` working set from the NAS hub and pushes back only what it authored; a revision never overwrites a published file, it mints a sibling instead. Three clusters make up the full topology: **custody** (the unbackfillable capture archive + raw dumps, replicated once to the NAS, read in place), **hot** (the small working set every node fetches/pushes via this command), and **private** (per-node state — the engine store/journal — that never syncs). See `docs/reference/data-catalog-full.md` for the full inventory.
+The hot-cluster dataset exchange: every research node — the workstation, the ops node — fetches the same small `hot/` working set from the NAS hub and pushes back only what it authored, save the rolling canonical, which the ops node writes into its outbox and the NAS pulls; a revision never overwrites a published file, it mints a sibling instead. Three clusters make up the full topology: **custody** (the unbackfillable capture archive + raw dumps, replicated once to the NAS, read in place), **hot** (the small working set every node fetches/pushes via this command), and **private** (per-node state — the engine store/journal — that never syncs). See `docs/reference/data-catalog-full.md` for the full inventory.
 
-`fetch` additively mirrors the NAS `hot/` hub into the local data root, verifying newly fetched files against their manifest's `sha256` by default.
+`fetch` additively mirrors the NAS `hot/` hub into the local data root, verifying newly fetched files by default — a set's parquet against its manifest, the rolling canonical's against its index lines, a day file no line names yet, or a line whose file has not arrived, left pending until the other arrives.
 
 ```bash
 zcrypto data fetch
@@ -306,7 +306,7 @@ zcrypto data fetch
 
 | Option | Description |
 | -- | -- |
-| `--no-verify` | Skip manifest hash verification of newly fetched files. |
+| `--no-verify` | Skip hash verification of newly fetched files against their manifest or index. |
 
 `push` sends this node's authored sets (`[zcrypto.data].authored_sets`) to the configured `push_dest` — an ssh alias pinned by the NAS's forced rsync command, never the read-write NFS mount.
 
@@ -320,31 +320,40 @@ zcrypto data push
 zcrypto data migrate-manifests [--apply]
 ```
 
-`rebuild` re-freezes or refreshes one or more sets from their sources (the OHLCVT dumps; the funding/snapshot/universe fetchers) and mints a new sibling directory — it never writes into the live set. By convention this runs on the workstation — the authoring node; the ops node is pull-only and only consumes frozen baskets via `fetch`. Its dump source (`nfs_mount_dir/kraken-ohlcvt-updates`) derives from the NAS mount root.
+`rebuild` re-freezes or refreshes one or more sets from their sources (the OHLCVT dumps; the funding/snapshot/universe fetchers) and mints a new sibling directory — it never writes into the live set. By convention this runs on the workstation — the authoring node; the ops node authors one set, the rolling canonical, through its outbox, which the NAS pulls, and otherwise consumes frozen baskets via `fetch`. Its dump source (`nfs_mount_dir/kraken-ohlcvt-updates`) derives from the NAS mount root.
 
 ```bash
 zcrypto data rebuild <SET>...
 ```
 
-`ohlc-reach` is the exception to "from the OHLCVT dumps": it carries the newest frozen `ohlc-full` forward — the newest stamped `ohlc-full-<stamp>` sibling a dump ingest minted, else `ohlc-full` itself — using Kraken's public REST OHLC window, which serves the most recent ~720 bars per interval. That window recedes at a rate set by the interval — roughly 720 days at the daily grid, 120 days at 4h, but only 30 days at 1h — so a reach set is routinely **mixed**, and each series lands one of two ways:
-
-- **continuous** (`<interval>.parquet`) — the REST window still overlaps the canonical tail, the seam was verified (at least 6 shared stamps, every shared close equal), and the merged series is drop-in compatible with any `ohlc-full` reader.
-- **detached** (`<interval>.detached.parquet`) — the window no longer reaches the canonical tail. The bars are still written, because a REST bar is retrievable only while the window still reaches it; but they sit under a filename no `ohlc-full` reader globs, so a detached segment cannot be silently spliced across the gap. Promote it deliberately once an intervening dump closes the gap. Whether a detached capture is a *bridge* (a scheduled dump will cover the same span, so it just buys continuity earlier) or a *rescue* (nothing else will ever cover it) depends on the dump calendar — the set does not assume, so check before treating one as either.
-
-`manifest.json` records the status per series — a reach set never makes one set-wide continuity claim. A run logs a WARNING naming every detached series. A seam that *overlaps but does not hold* (too few shared stamps, or a disagreeing close) is a hard error, not a fallback to detached: the canonical set is authoritative, so a contradiction there is a data-integrity failure rather than a gap.
-
 | Argument / Option | Description |
 | -- | -- |
-| `SETS...` | Dataset names to rebuild: `ohlc-full`, `ohlc-reach`, `ohlc-15m`, `derivatives-funding`, `derivatives-oi`, `snapshots`, `universe`. |
+| `SETS...` | Dataset names to rebuild: `ohlc-full`, `ohlc-15m`, `derivatives-funding`, `derivatives-oi`, `snapshots`, `universe`. |
 | `--push` / `--no-push` | Push the minted sibling(s) to `push_dest` after rebuilding (default `--push`). |
 
-All three exit **1** on a configuration or sync error (a missing/unmountable hot source `nfs_mount_dir/hot`, an unlisted authored set, an unknown rebuild set, a mismatched manifest hash, a `universe` rebuild whose resolved OHLC source (the newest `ohlc-reach-<stamp>` sibling, else `ohlc-full`) is staler than the 7-day budget, is missing any candidate leg, or whose `manifest.json` is missing/unreadable — the set then cannot identify itself, so no artifact is written), else **0**. The transport is always plain rsync `--archive --ignore-existing` — never `--delete` — so the append-only contract is enforced structurally: a content-changed file is simply untransmittable.
+All three exit **1** on a configuration or sync error (a missing/unmountable hot source `nfs_mount_dir/hot`, an unlisted authored set, an unknown rebuild set, a mismatched manifest hash, a `universe` rebuild whose source, the rolling canonical at its local head, is staler than the 7-day budget, is missing any candidate leg, has an index chain that does not walk, holds a hole of a candidate pair in the 30 days its volume median reads (a pair the owner has closed is left out of the candidates), or records a mandatory pair, BTC/EUR or ETH/EUR, as closed — no artifact is then written), else **0**. The transport is always plain rsync `--archive --ignore-existing` — never `--delete` — so the append-only contract is enforced structurally: a content-changed file is simply untransmittable.
 
 `derivatives-oi` backfills open-interest history from Binance Vision daily `metrics` dumps (5-minute `sum_open_interest` + the free long/short and taker ratios, back to each perp's listing) into `data/derivatives-oi/`, the sibling of `derivatives-funding` — the second free-backfillable B2 input. Both come from the public `data.binance.vision` CDN (checksum-verified per file); liquidations, the third B2 input, have no free dump and are collected live via Coinalyze instead (see `docs/open-topics/T0023-*`).
 
+`rolling` keeps the rolling canonical, `ohlc-rolling`: one 15-minute history of the twelve pairs — Kraken's quarterly dump frame through 2026-09-30, then the captured tape's daily bars from 2026-10-01 — extended day by day, each UTC day pinned by a write-once index line that carries the sha256 of the line before it, so a pin is an as-of day named by the sha256 of that day's line. Hourly, 4h and daily bars are derived on read.
+
+```bash
+zcrypto data rolling base --source <PATH> --out <PATH> --staging <PATH>
+zcrypto data rolling extend --tape-root <PATH> --out <PATH> --staging <PATH> [--close-pair <PAIR>... --from <YYYY-MM-DD> --owner-word <TEXT> --owner-date <YYYY-MM-DD>]
+zcrypto data rolling verify --as-of <YYYY-MM-DD> [--root <PATH>]
+```
+
+| Subcommand | Description |
+| -- | -- |
+| `base --source <PATH> --out <PATH> --staging <PATH>` | Stage the set's base once: copy the twelve 15-minute files of the frozen set at `--source`, its manifest beside its files, into `--out`, each checked first against the sha256 the code holds for that frame's file and against the frame hash its manifest attests, then write the base line. Refuses a source missing one of the twelve pairs or holding another, and a file already under `--out` with other bytes. Prints the base line's sha256 and its file count. |
+| `extend --tape-root <PATH> --out <PATH> --staging <PATH> [--close-pair <PAIR>... --from <YYYY-MM-DD> --owner-word <TEXT> --owner-date <YYYY-MM-DD>]` | Extend the set from the day after its head with tape-bars' daily finals under `--tape-root`, read only. A day is written once each pair has a final for it, is closed by the owner, or has a final dated more than three days after it, past tape-bars' re-scan window, that pair's day then a permanent hole the day's line names; otherwise the run stops at that day. Each final is checked against its tape-bars sidecar before any file is written, and each day's files are renamed in before its line. `--close-pair` (once per pair), `--from`, `--owner-word` and `--owner-date` are given together or not at all: they close the named pairs from `--from` on the owner's word, each day from it a hole recorded with that word until a final of the pair's own reappears; a close is refused, nothing written, for a pair outside the set, for a pair with a final for `--from` itself, and when the run would write no line for `--from`. A line closing every pair ends the set, the run writing nothing more until a later final of one of its pairs reopens it. Prints the head, the days written and the holes, and `ended` when the set has ended. |
+| `verify --as-of <YYYY-MM-DD> [--root <PATH>]` | Walk the set's index from the as-of day's line down to its base, checking that each line's sha256 is its successor's `prev` and re-hashing every file each line lists, then print the day, its line's sha256 — the pin to compare — and the count of files checked. `--root` defaults to `ohlc-rolling` under the configured data root. Read-only. |
+
+`--staging` is a directory outside `--out` on the same filesystem, where each file is written before its rename into `--out`, so a pull of the outbox never copies a temporary file. Each `rolling` command exits **1** on a refusal, naming the path or argument at fault, else **0**.
+
 ### `zcrypto research`<a name="zcrypto-research"></a>
 
-Evaluates a committed system over a frozen dataset and, on request, appends the resulting trial to the registry. This is the only supported way to add a registry record: the fit reads every series through the capturing loader, and the file digests / row counts / time span that loader accumulated become the record's `datasets` block — so a record's dataset identity is what the run actually read, never a hash supplied alongside it.
+Evaluates a committed system over a frozen dataset, or over the rolling canonical at an as-of day, and, on request, appends the resulting trial to the registry. This is the only supported way to add a registry record: the fit reads every series through the capturing loader, and the file digests / row counts / time span that loader accumulated become the record's `datasets` block — so a record's dataset identity is what the run actually read, never a hash supplied alongside it.
 
 ```bash
 zcrypto research eval --subject <NAME> --dataset <DIR> [OPTIONS]
@@ -353,8 +362,10 @@ zcrypto research eval --subject <NAME> --dataset <DIR> [OPTIONS]
 | Option | Description |
 | -- | -- |
 | `--subject <NAME>` | System to evaluate: `record44-crossfreq` (the cross-frequency system; daily + 4h series) or `record33-combined` (the combined system; daily series). |
-| `--dataset <DIR>` | Frozen dataset directory name under the repo's `data/` root, e.g. `ohlc-full`. |
+| `--dataset <DIR>` | Dataset directory name under the repo's `data/` root: a frozen set, e.g. `ohlc-full`, or the rolling canonical `ohlc-rolling`, which requires `--as-of`. |
 | `--window START END` | Restrict every series to the inclusive ISO-8601 range. Default: full history. |
+| `--as-of <YYYY-MM-DD>` | Read the rolling canonical as of this UTC day: required for `ohlc-rolling`, refused for a frozen dataset. Each series is read from the base and every day file the index lists for it up to that day, each file checked against its index line, and the record's `datasets` block carries that day's index line and its sha256. |
+| `--accept-holes` | Read the rolling canonical across a day it records as a hole inside the window read, leaving that day out and printing it; without it such a read is refused, naming the pair and the day. Refused for a frozen dataset. |
 | `--register` | Append the result to the trial registry. Omitted, the command only reports. |
 | `--iteration <S>` | Iteration label of the run. Required with `--register`. |
 | `--family <S>` | Trial family this run belongs to. Required with `--register`. |
@@ -366,7 +377,7 @@ zcrypto research eval --subject <NAME> --dataset <DIR> [OPTIONS]
 | `--seed <N>` | Seed used by the run; repeat the flag for several. |
 | `--registry <PATH>` | Registry file to append to. Defaults to the committed `docs/reference/trial-registry.jsonl`. |
 
-The report names the metrics, the observed dataset block, and whether the dataset's own freeze record vouched for the bytes read (a dataset with no `manifest.json` reports as inert — nothing cross-checked the bytes). Exits **1** on an unknown subject (listing the known ones), on a dataset missing any series the subject needs (naming every missing file, before a single read), on a `--register` run missing one of its required flags, and when the registry refuses the record.
+The report names the metrics, the observed dataset block, and whether the dataset's own freeze record vouched for the bytes read (a dataset with no `manifest.json` reports as inert — nothing cross-checked the bytes — save the rolling canonical, which reports `chained` with its as-of day and line, every file the run read checked against its index). Exits **1** on an unknown subject (listing the known ones), on a dataset missing any series the subject needs (naming every missing file, or every missing pair for the rolling canonical, before a single read), on a `--register` run missing one of its required flags, and when the registry refuses the record.
 
 ### `zcrypto tick`<a name="zcrypto-tick"></a>
 

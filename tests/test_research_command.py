@@ -5,8 +5,11 @@ default appends a fabricated row to it; `_registry_default_off_the_committed_led
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
+import os
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -18,6 +21,7 @@ from cli.portfolio.crossfreq_system import CrossfreqSystemConfig
 from cli.registry.record import compute_hash
 from cli.research import command as research_command
 from cli.research import subjects
+from tests.rolling_fixtures import HOLE, write_chain
 
 runner = CliRunner()
 
@@ -58,7 +62,7 @@ def _stub_subject(monkeypatch):
     """A subject returning fixed metrics over whatever the reader hands it, declaring only BTC so
     `required_relpaths` demands just the one file `_stub_dataset` writes."""
 
-    def build(reader, dataset, window):
+    def build(reader, dataset, window, as_of=None, accept_holes=False):
         reader.read_series(dataset, "BTC/EUR/1440.parquet", window=window)
         return {"sharpe": 1.0}
 
@@ -255,3 +259,175 @@ def test_required_relpaths_is_the_cross_product_of_assets_and_intervals():
     relpaths = subjects.required_relpaths(subject)
     assert len(relpaths) == len(subject.assets) * len(subject.intervals)
     assert "BTC/EUR/240.parquet" in relpaths and "BTC/EUR/1440.parquet" in relpaths
+
+
+_EUR_PAIRS = tuple(f"{a}/EUR" for a in CrossfreqSystemConfig().assets)
+_BASE_LINE = "index/2026/09/30.json"
+
+
+def _rolling_set(tmp_path: Path, *, pairs: tuple[str, ...] = _EUR_PAIRS, **chain) -> Path:
+    root = tmp_path / "data"
+    write_chain(root / "ohlc-rolling", pairs=pairs, **chain)
+    return root
+
+
+def _rolling_subject(monkeypatch) -> list:
+    """A subject over the ten assets reading 1440 as the production builds do, returning fixed metrics so no fit's minimum
+    history applies to a four-day chain; the list it returns gains each build's `as_of`."""
+    calls = []
+
+    def build(reader, dataset, window, as_of=None, accept_holes=False):
+        calls.append(as_of)
+        subjects._capturing_union(reader, dataset, 1440, window, as_of, accept_holes)
+        return {"sharpe": 1.0}
+
+    assets = CrossfreqSystemConfig().assets
+    monkeypatch.setitem(subjects.SUBJECTS, "rolling-stub", subjects.Subject("rolling-stub", (1440,), assets, build))
+    return calls
+
+
+def _rolling_eval(*args: str) -> list[str]:
+    return ["research", "eval", "--subject", "rolling-stub", "--dataset", "ohlc-rolling", *args]
+
+
+def test_eval_on_a_chained_set_requires_as_of(tmp_path, monkeypatch):
+    _anchor(monkeypatch, _rolling_set(tmp_path))
+    calls = _rolling_subject(monkeypatch)
+
+    result = runner.invoke(app, _rolling_eval())
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "--as-of" in result.output
+    assert calls == []
+
+
+@pytest.mark.parametrize("flags", [["--as-of", "2026-10-03"], ["--accept-holes"]], ids=["as-of", "accept-holes"])
+def test_eval_on_an_unchained_set_refuses_as_of(tmp_path, monkeypatch, flags):
+    _anchor(monkeypatch, _stub_dataset(tmp_path))
+    _stub_subject(monkeypatch)
+
+    result = runner.invoke(app, ["research", "eval", "--subject", "stub", "--dataset", "ohlc-test", *flags])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert flags[0] in result.output
+
+
+def test_eval_on_the_rolling_set_records_the_as_of_line(tmp_path, monkeypatch):
+    root = _rolling_set(tmp_path)
+    registry = tmp_path / "registry.jsonl"
+    _anchor(monkeypatch, root, registry)
+    _rolling_subject(monkeypatch)
+    line = "index/2026/10/02.json"
+    digest = hashlib.sha256((root / "ohlc-rolling" / line).read_bytes()).hexdigest()
+
+    result = runner.invoke(app, _rolling_eval("--as-of", "2026-10-02", *_register_args(registry, n_trials=1)))
+
+    assert result.exit_code == 0, result.output
+    printed = result.output.splitlines()
+    assert printed[printed.index("window: full history") + 1] == "as of: 2026-10-02"
+    record = json.loads(registry.read_text())
+    assert record["datasets"] == {
+        "ohlc-rolling": {
+            "files": {line: digest},
+            "rows": 30,
+            "span": ["2026-09-30 00:00:00+00:00", "2026-10-02 00:00:00+00:00"],
+        }
+    }
+    assert record["dataset_hash"] == compute_hash(record["datasets"])
+    report, _ = json.JSONDecoder().raw_decode(result.output, result.output.index("{"))
+    assert report["vouched"] == {"ohlc-rolling": f"chained (as of 2026-10-02, line {digest[:12]})"}
+    assert "inert" not in result.output
+
+
+def test_eval_refuses_a_hole_and_reads_across_it_with_accept_holes(tmp_path, monkeypatch):
+    _anchor(monkeypatch, _rolling_set(tmp_path, holes={date(2026, 10, 2): {"BTC/EUR", "SOL/EUR"}}))
+    _rolling_subject(monkeypatch)
+
+    refused = runner.invoke(app, _rolling_eval("--as-of", "2026-10-03"))
+
+    assert refused.exit_code == 1
+    assert isinstance(refused.exception, SystemExit)
+    assert f"BTC/EUR has a hole on 2026-10-02 ({HOLE}) inside the window read (--accept-holes leaves the day out)" in refused.output
+
+    accepted = runner.invoke(app, _rolling_eval("--as-of", "2026-10-03", "--accept-holes"))
+
+    assert accepted.exit_code == 0, accepted.output
+    holes = [text for text in accepted.output.splitlines() if text.startswith("hole: ")]
+    assert holes == ["hole: BTC/EUR 2026-10-02", "hole: SOL/EUR 2026-10-02"]
+    assert _block_and_metrics(accepted.output)["datasets"]["ohlc-rolling"]["rows"] == 38
+
+
+def test_a_chained_set_missing_a_required_pair_is_refused_naming_it(tmp_path, monkeypatch):
+    held = tuple(pair for pair in _EUR_PAIRS if pair not in ("AVAX/EUR", "XRP/EUR"))
+    _anchor(monkeypatch, _rolling_set(tmp_path, pairs=held))
+    calls = _rolling_subject(monkeypatch)
+
+    result = runner.invoke(app, _rolling_eval("--as-of", "2026-10-03"))
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "AVAX/EUR" in result.output and "XRP/EUR" in result.output
+    assert [pair for pair in held if pair in result.output] == []
+    assert calls == []
+
+
+def test_eval_refuses_a_chained_set_whose_base_line_cannot_be_read(tmp_path, monkeypatch):
+    root = _rolling_set(tmp_path)
+    (root / "ohlc-rolling" / _BASE_LINE).write_bytes(b"{}")
+    _anchor(monkeypatch, root)
+    _rolling_subject(monkeypatch)
+
+    result = runner.invoke(app, _rolling_eval("--as-of", "2026-10-03"))
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert _BASE_LINE in result.output
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses directory permissions")
+def test_eval_refuses_a_rolling_index_it_cannot_list_in_one_line(tmp_path, monkeypatch):
+    root = _rolling_set(tmp_path)
+    month = root / "ohlc-rolling" / "index/2026/10"
+    _anchor(monkeypatch, root)
+    calls = _rolling_subject(monkeypatch)
+    os.chmod(month, 0o000)
+    try:
+        result = runner.invoke(app, _rolling_eval("--as-of", "2026-10-03"))
+    finally:
+        os.chmod(month, 0o755)
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert f"dataset 'ohlc-rolling': [Errno 13] Permission denied: '{month}'" in result.output
+    assert calls == []
+
+
+def test_eval_on_an_absent_dataset_names_it_and_the_fetch(tmp_path, monkeypatch):
+    root = tmp_path / "data"
+    root.mkdir()
+    _anchor(monkeypatch, root)
+    calls = _rolling_subject(monkeypatch)
+
+    result = runner.invoke(app, _rolling_eval("--as-of", "2026-10-03"))
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert f"dataset 'ohlc-rolling' is absent: no directory {root / 'ohlc-rolling'}; zcrypto data fetch" in result.output
+    assert "frozen" not in result.output
+    assert calls == []
+
+
+def test_the_window_reaches_the_rolling_reads(tmp_path, monkeypatch):
+    _anchor(monkeypatch, _rolling_set(tmp_path))
+    _rolling_subject(monkeypatch)
+
+    result = runner.invoke(
+        app, _rolling_eval("--as-of", "2026-10-03", "--window", "2026-10-01 00:00:00+00:00", "2026-10-02 00:00:00+00:00")
+    )
+
+    assert result.exit_code == 0, result.output
+    block = _block_and_metrics(result.output)["datasets"]["ohlc-rolling"]
+    assert block["rows"] == 20
+    assert block["span"] == ["2026-10-01 00:00:00+00:00", "2026-10-02 00:00:00+00:00"]
