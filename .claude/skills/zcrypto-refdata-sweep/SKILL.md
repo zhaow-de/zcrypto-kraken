@@ -1,6 +1,6 @@
 ---
 name: zcrypto-refdata-sweep
-description: Run the Kraken reference-data re-confirmation sweep — the monthly routine, and the mandatory one immediately before the go/no-go. Re-fetches the public endpoints, re-renders docs/reference/kraken-snapshot-register.md, and reads the verdict from the rendered tables, never from the raw hash.
+description: Run the Kraken reference-data re-confirmation sweep — the monthly routine, and the mandatory one immediately before the go/no-go.
 disable-model-invocation: false
 ---
 
