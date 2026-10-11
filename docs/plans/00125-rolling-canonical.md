@@ -1,7 +1,5 @@
 # One growing OHLC canonical: `ohlc-rolling`, the Q3 15-minute frame extended daily from tape-bars — implementation plan
 
-> Every value a rollout reading decides is listed at the end, `ROLLOUT:` in double square brackets until filled.
-
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Research reads one canonical that reaches the present: `ohlc-rolling`, the 12 files of `ohlc-15m-20261007` copied byte for byte as its base and tape-bars' daily finals copied from 2026-10-01 as its extension, 60/240/1440 derived on read, every day a write-once index line chained to the one before it, so a trial pins an as-of day by one hash. The ops node extends it after each tape-bars sweep through its `hot-out` outbox, the NAS's hot pull carries it to the hub, `data fetch` attests it, the daily pass reads its head, and the searches, the universe rebuild and the engine seed read it; the reach round retires (spec 00125).
@@ -946,7 +944,7 @@ uv run python infra/scripts/ops-daily.py report --since 24h; echo "report exit $
 
 Expected: the `rolling canonical head` row ok, naming the R5 head, its age and its line's first twelve hex; the first head row, filled: `PASS rolling canonical head: head 2026-10-09, 2 days old, line b1303cd954e3`.
 
-**R8. The retirements the owner takes.** By the owner's hand on the NAS, as the Q2 siblings went to `/volume1/ZhaoCrypto/backup-ohlc-squash-2026-10-09/`: `ohlc-reach-20261007` off `hot/` from R2 on, and `ohlc-full-20261007` and `ohlc-15m-20261007` once R6's data-gated tests have passed; each local copy under the main checkout's `data/` the owner removes too, after copying it aside per `CLAUDE.md`'s data rule. No step of this plan moves or deletes a set; the retirements, filled: all three into `/volume1/ZhaoCrypto/backup-ohlc-squash-2026-10-11/` at 2026-10-11T13:28:00Z.
+**R8. The retirements the owner takes.** By the owner's hand on the NAS, as the Q2 siblings went to `/volume1/ZhaoCrypto/backup-ohlc-squash-2026-10-09/`: `ohlc-reach-20261007` off `hot/` from R2 on, and `ohlc-full-20261007` and `ohlc-15m-20261007` once R6's data-gated tests have passed; each local copy under the main checkout's `data/` the owner removes too, after copying it aside per `CLAUDE.md`'s data rule. No step of this plan moves or deletes a set; the retirements, filled: all three into `/volume1/ZhaoCrypto/backup-ohlc-squash-2026-10-11/` at 2026-10-11T13:28:00Z, and their local copies removed by the owner the same day.
 
 **R-close. Closing a pair the tape stopped carrying** — only on the owner's explicit word, after the head row's attention line has named the pair and the day; never part of this rollout's own run, and taken whenever that word comes. Right after a `:52` tape-bars run has finished, so no extension runs beside it, the values replaced by the attention line's pair and day and the owner's words and their date:
 
@@ -961,6 +959,10 @@ uv run zcrypto data rolling extend --tape-root /var/lib/zcrypto-ops/tape-bars --
 Expected: `head=<FROM_DAY or later> days_written=<n> holes=<n>`, followed by `ended` when the close leaves no pair of the set open and no final of the set's pairs dated after its line, the set then ended until a final of one of the set's pairs reappears and reopens it with no owner act, as Task 11's section tells the owner before the word is given, the line for `FROM_DAY` naming the pair under `holes` and carrying the close in its `notes`; a refusal writes nothing and goes back to the owner, a `PAIR` the set does not hold — one spelled otherwise than the attention line names it — and a close given while the set is ended among the refusals.
 
 **R-records.** A records pull request after R7: the converge's deploy-log row and the ops pin row of `docs/reference/fleet-pins.md`; the slots' readings in its message, each retirement R8 has seen by then among them. The catalog's lines naming the sets R8 retires read true before and after each move (Task 10), so a retirement after this pull request owes the tree no edit.
+
+## Resolution
+
+This plan delivers spec 00125: the rolling canonical's reader, writer and record; its daily extension on the ops host through the outbox; the fetch's attestation and the daily pass's head row; the searches, the universe rebuild and the engine seed on it; and the reach round's retirement; and, a rider on the owner's word, the master plan's eight lines naming the OHLCVT archive as research's source. It moves no set off the hub — the retirements are the owner's — and it touches neither tape-bars' gate and layout nor what `soak-check`, record 44's legs and the legacy pins read, which stays `ohlc-full` and `ohlc-15m` (Task 6 re-trues `load_union`'s docstring alone).
 
 ## Resolution
 

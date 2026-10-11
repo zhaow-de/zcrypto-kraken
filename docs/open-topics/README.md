@@ -6,7 +6,7 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 
 - [T0022 — B1 — intraday trend + time-of-day/day-of-week seasonality (the family topic)](T0022-b1-intraday-seasonality-family.md) — ripe when: a genuinely new B1 hypothesis is pre-registered, or the owner expands or closes the shared B budget
 - [T0214 — The deployable record's cost basis is re-priced from rung 2's measured blend, as a new registry record](T0214-cost-basis-re-priced-at-rung-2.md) — ripe when: `uv run zcrypto engine tracking-report --journal-dir <pulled journal> --since <first day of rung 2> --until <the last Sunday>` reports a realized maker share on at least 30 euro-denominated fills — the count the `basis:` line names
-- [T0220 — Retire the August stamped sets and the legacy universe fallback at the next universe refresh](T0220-retire-august-stamped-sets-and-legacy-universe.md) — ripe when: a universe refresh newer than 2026-08-13 is published to the hub — check: `ls /mnt/zhao-crypto/hot | grep -E "^universe-[0-9]{8}$" | sort | tail -1` prints a stamp above `universe-20260813`
+- [T0220 — Retire the August stamped sets and the legacy universe at the next universe refresh](T0220-retire-august-stamped-sets-and-legacy-universe.md) — ripe when: a universe refresh newer than 2026-08-13 is published to the hub — check: `ls /mnt/zhao-crypto/hot | grep -E "^universe-[0-9]{8}$" | sort | tail -1` prints a stamp above `universe-20260813`
 
 ## Partially done
 
