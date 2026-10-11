@@ -12,11 +12,11 @@ set -euo pipefail
 mode="${1:?mode required: pre-write|post-read|post-write}"
 # The fields are read one per line, so a newline in `tool_name` or `file_path` desynchronises them; not fixed, as
 # the harness sets `tool_name` and a path with a newline is not the memo -- NUL-separating them moves the byte.
-{ read -r tool; read -r path; read -r placeholder; } < <(python3 -c 'import json,re,sys; d=json.load(sys.stdin); t=d.get("tool_input",{}); print(d.get("tool_name","")); print(t.get("file_path","")); m=next((x.group(0) for x in re.finditer(r"(?i)\b[0-9x?]{2}:[0-9x?]{2}(?![0-9a-f])", str(t.get("new_string") or t.get("content") or "")) if re.search(r"(?i)[x?]", x.group(0))), ""); print(m)')
-# Every file, not the memo alone: an hour-and-minute stamp with an x or a ? in any digit's place is refused before
-# the memo's own checks -- a test module's or a hook's own cases spell the placeholders; a hex literal is no stamp.
+{ read -r tool; read -r path; read -r placeholder; } < <(python3 -c 'import json,re,sys; d=json.load(sys.stdin); t=d.get("tool_input",{}); print(d.get("tool_name","")); print(t.get("file_path","")); m=next((x.group(0) for x in re.finditer(r"(?i)[0-9x?]{2}:[0-9x?]{2}(?![0-9a-f])", str(t.get("new_string") or t.get("content") or "")) if re.search(r"(?i)[x?]", x.group(0))), ""); print(m)')
+# Every file, not the memo alone, before the memo's own checks -- a test module's or a hook's own cases spell the
+# placeholders; a hex literal is no stamp.
 if [[ "$mode" == pre-write && -n "${placeholder:-}" && "$path" != */tests/*.py && "$path" != */.claude/hooks/* ]]; then
-  echo "memo-guard: BLOCKED. '$placeholder' is a placeholder stamp — paste the printed value of \`date -u\` or of the record (an mtime, a reflog, a PR's createdAt), never an x digit." >&2
+  echo "memo-guard: BLOCKED. '$placeholder' is a placeholder stamp — paste the printed value of \`date -u\` or of the record (an mtime, a reflog, a PR's createdAt)." >&2
   exit 2
 fi
 case "$path" in

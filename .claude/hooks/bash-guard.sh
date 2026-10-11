@@ -756,9 +756,8 @@ def object_type(where, word):
 
 
 def scoped_grep(rest, where):
-    # None when git selects no vaulted file for the search, else why it may: git does the selecting, never a hand
-    # matcher -- `git ls-files` from the payload's cwd over the pathspecs as spelled. A commit's tree is overlaid on the
-    # index, a superset that can only refuse more; any other object refuses.
+    # git does the selecting, never a hand matcher: `git ls-files` from the payload's cwd over the pathspecs as spelled.
+    # A commit's tree is overlaid on the index, a superset that can only refuse more; any other object refuses.
     if any(a[:2] == "--" and among(a, {"--no-index", "--untracked"}) for a in rest):
         return "searches past the index -- drop `--no-index` or `--untracked`"
     bare, specs = grep_pathspecs(rest)
