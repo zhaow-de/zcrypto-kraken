@@ -963,16 +963,3 @@ Expected: `head=<FROM_DAY or later> days_written=<n> holes=<n>`, followed by `en
 ## Resolution
 
 This plan delivers spec 00125: the rolling canonical's reader, writer and record; its daily extension on the ops host through the outbox; the fetch's attestation and the daily pass's head row; the searches, the universe rebuild and the engine seed on it; and the reach round's retirement; and, a rider on the owner's word, the master plan's eight lines naming the OHLCVT archive as research's source. It moves no set off the hub — the retirements are the owner's — and it touches neither tape-bars' gate and layout nor what `soak-check`, record 44's legs and the legacy pins read, which stays `ohlc-full` and `ohlc-15m` (Task 6 re-trues `load_union`'s docstring alone).
-
-## Resolution
-
-This plan delivers spec 00125: the rolling canonical's reader, writer and record; its daily extension on the ops host through the outbox; the fetch's attestation and the daily pass's head row; the searches, the universe rebuild and the engine seed on it; and the reach round's retirement; and, a rider on the owner's word, the master plan's eight lines naming the OHLCVT archive as research's source. It moves no set off the hub — the retirements are the owner's — and it touches neither tape-bars' gate and layout nor what `soak-check`, record 44's legs and the legacy pins read, which stays `ohlc-full` and `ohlc-15m` (Task 6 re-trues `load_union`'s docstring alone).
-
-## Slots the rollout fills
-
-- The ops image digest the converge landed, filled in R3.
-- The base line's sha256, filled in R4.
-- The first extension's summary line and its head line's sha256, filled in R5.
-- The fetch's new-file count and the two data-gated readings, filled in R6.
-- The first rolling canonical head row, filled in R7.
-- Each retirement's instant and destination, filled in R8.
