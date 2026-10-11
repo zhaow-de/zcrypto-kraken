@@ -14,7 +14,7 @@
 
 ## Global Constraints
 
-- Every line number this plan gives for existing code or text is a reading at `56a855371` (develop's `3d54c79fd` plus the branch's two carried commits); a task that edits a file reads the lines it cites again before its first edit, and every edit below is anchored on quoted text, never on a number.
+- Every line number this plan gives for existing code or text is a reading at `94b9383c1` (develop's `f4481c56c` plus the branch's two carried commits, `69ccd7aab` and `94b9383c1`); a task that edits a file reads the lines it cites again before its first edit, and every edit below is anchored on quoted text, never on a number.
 - No executor step reaches a host, the NAS, a venue, Grafana or the vendor's repository: every such step is an operator step of the Rollout, attended. The vendor's key is written from the text this plan carries (Task 1), never fetched. `ansible-playbook` and `infra/ansible/scripts/converge.sh` are never run by an executor in any form — this workstation is the fleet host `zcrypto-ops`; a role's YAML is proven by the tests' walk and the commit gate's `ansible-lint`. No executor step writes under `/var/lib/`, `/etc/` or `/mnt/zhao-crypto/`; a scratch file goes under `.tmp/00127/` in the worktree.
 - Every commit is green over its consumers, the files `infra/scripts/consumers.sh` prints for the task's changed files, run as each task's consumer step writes it; the full suite runs in CI alone. A task that adds or edits text `tests/test_internal_terms_not_operator_visible.py` walks — a role task name or message, a systemd `Description=`, a runbook page — runs that file too, and its allowlist is never widened.
 - A guard is proven by `infra/scripts/mutate-probe.sh`, never a hand-rolled mutate-and-restore. The script refuses a dirty tree, so a task commits with the line `PROBE_VERDICT` in its message, runs its probes on the committed tree, each line below ending `mutate-probe: KILLED (control proven, tree restored byte-identically)`, then a message-only amend with the tree clean replaces `PROBE_VERDICT` with each probe's command and its verbatim verdict — the branch is unpushed and unread while the tasks run, so the amend rewrites nothing a reader holds. A probe's sed is addressed by a pattern the file holds once, or by line numbers read from the committed file as this plan writes it; a task whose file differs from this plan's text re-reads the numbers before the probe. The control is `'1,$d'` unless the probe passes on an emptied file, where the control is a mutation its test must fail (Task 4's two vendor-name probes).
@@ -36,7 +36,7 @@
 
 ## Review Focus
 
-- The bootstrap order on the bridgehead: debmirror and gpgv, the key, the user, the directory and its served tree, the units, the timer, the served tree's `Release` read, the first sync while the served tree holds no `Release`, the `file:` source over the served tree, the pin, the install — nothing reads the copy before it exists, and nothing in the chain fails a preview of the established bridgehead (the timer and the first sync skipped by `access_caddy_mirror_previewed`).
+- The bootstrap order on the bridgehead: debmirror and gpgv, the key, the user, the directory and its served tree, the units, the timer, the served tree's `Release` read, the first sync while the served tree holds no `Release`, the `file:` source over the served tree, the pin, the install — nothing reads the copy before it exists, and nothing in the chain fails a preview of the established bridgehead (the timer skipped by `access_caddy_mirror_previewed`, the first sync by the command module, which runs nothing in a preview).
 - The swap: debmirror syncs a hard-linked copy of the served tree, and systemd exchanges the copy with the served tree only after debmirror exits 0, since debmirror 2.47 moves a new index in when a pool file failed; the served tree changes by that exchange alone, so a failed sync leaves it as the last sync that passed.
 - The vendor's repository is read by the sync alone: no role's `deb822_repository` names it, and the access role's defaults are the one file that does.
 - The served copy is the vendor's signed files unchanged, verified on every node against the vendored keyring, and the site serves `/dists/*` and `/pool/*` alone, without a listing or mTLS, while the two mTLS sites keep theirs.
@@ -71,7 +71,7 @@ Expected, 20 lines: `.claude/skills/zcrypto-bump-alloy/SKILL.md:90`, `infra/ansi
 
 **Files:**
 - Create: `infra/ansible/files/caddy-archive-keyring.gpg`, `tests/test_infra_caddy_mirror.py`
-- Modify: `infra/ansible/group_vars/all/vars.yml` (two values after the last line, `:9`), `infra/ansible/files/README.md` (a row before the `zaccess_ca.crt` row)
+- Modify: `infra/ansible/group_vars/all/vars.yml` (`:1`, the header that names what the file holds, and two values after the last line, `:9`), `infra/ansible/files/README.md` (a row before the `zaccess_ca.crt` row)
 
 - [ ] **Step 1: Read** spec 00127 D3 and its measured basis's key lines; `infra/ansible/files/README.md`; `infra/ansible/group_vars/all/vars.yml`.
 - [ ] **Step 2: Write the failing test**
@@ -242,6 +242,15 @@ cat >> infra/ansible/group_vars/all/vars.yml <<'EOF'
 caddy_mirror_host: apt.zaccess.zhaow.me
 caddy_mirror_keyring: /etc/apt/keyrings/caddy-archive-keyring.gpg
 EOF
+python3 -I - infra/ansible/group_vars/all/vars.yml <<'EOF'
+import sys
+path = sys.argv[1]
+OLD = "# Plaintext public halves readable by every play (spec 00075): the WireGuard endpoint identities.\n"
+NEW = "# Plaintext values readable by every play: the WireGuard endpoint identities' public halves (spec 00075), and below them the Caddy apt mirror's host and keyring path.\n"
+text = open(path).read()
+assert text.count(OLD) == 1
+open(path, "w").write(text.replace(OLD, NEW))
+EOF
 python3 -I - infra/ansible/files/README.md <<'EOF'
 import sys
 path = sys.argv[1]
@@ -298,10 +307,10 @@ Expected: `KILLED`; then the message-only amend.
 
 **Files:**
 - Create: `infra/ansible/roles/access/templates/zaccess-caddy-mirror.service.j2`, `infra/ansible/roles/access/templates/zaccess-caddy-mirror.timer.j2`
-- Modify: `infra/ansible/roles/access/defaults/main.yml` (five values after `:14`), `infra/ansible/roles/access/tasks/main.yml` (`:44-70`, the interim's removal, read, refusal, the renamed install and the hold, become the chain below), `tests/test_infra_caddy_mirror.py` (rewritten whole), `tests/test_infra_converge_guards.py` (`:2387-2430`, the access role's three interim tests and their three name constants, leave: the new file holds the install and the hold)
+- Modify: `infra/ansible/roles/access/defaults/main.yml` (five values after `:14`), `infra/ansible/roles/access/tasks/main.yml` (`:1`, the role's header, which names what the role runs; `:44-70`, the interim's removal, read, refusal, the renamed install and the hold, become the chain below), `tests/test_infra_caddy_mirror.py` (rewritten whole), `tests/test_infra_converge_guards.py` (`:2387-2430`, the access role's three interim tests and their three name constants, leave: the new file holds the install and the hold)
 
 **What this task decides, where the spec leaves it open:**
-- The first sync is `systemctl start zaccess-caddy-mirror.service` as a command, gated on the preview fact and on the served tree's `Release` read, and not the systemd module's `state: started`: the module issues no start on a unit already `activating` (ansible-core 2.21.4, `modules/systemd_service.py:292-293`, `:557-558`), so while a sync is already running — the timer's, a hand start's, or one a dropped converge left — it returns at once, and the `file:` source after it would be written over a served tree with no `Release`. `systemctl start` joins that sync's start job, or starts one, waits for the oneshot to end, its `ExecStartPost` included, and fails when the sync fails, so the `file:` source after it reads the tree the exchange put in place and a failed sync stops the converge before it; the task's keys are closed in its test, so no `ignore_errors` or `failed_when` lets a failed sync through. The gate keeps every converge after a passing sync off the vendor; a first sync that failed leaves the served tree empty, and the next converge syncs again.
+- The first sync is `systemctl start zaccess-caddy-mirror.service` as a command, gated on the served tree's `Release` read alone, and not the systemd module's `state: started`: the module issues no start on a unit already `activating` (ansible-core 2.21.4, `modules/systemd_service.py:292-293`, `:557-558`), so while a sync is already running — the timer's, a hand start's, or one a dropped converge left — it returns at once, and the `file:` source after it would be written over a served tree with no `Release`. `systemctl start` joins that sync's start job, or starts one, waits for the oneshot to end, its `ExecStartPost` included, and fails when the sync fails, so the `file:` source after it reads the tree the exchange put in place and a failed sync stops the converge before it; the task's keys are closed in its test, so no `ignore_errors` or `failed_when` lets a failed sync through. The gate keeps every converge after a passing sync off the vendor; a first sync that failed leaves the served tree empty, and the next converge syncs again. No preview runs it: the command module runs nothing in check mode (`modules/command.py:333`, `:342-344`), and the closed keys admit no `check_mode: false`, so the preview fact the timer reads would gate nothing here.
 - The swap is the unit's own, with no script: `ExecStartPre` removes the last staging tree and hard-links a copy of the served one in its place, `ExecStart` is debmirror over the copy, and `ExecStartPost`, which systemd runs only after `ExecStart` exits 0, exchanges the two trees in one `mv -T --exchange` (coreutils 9.7 on Debian 13; without `-T`, `mv` reads the served tree as a target directory and refuses). debmirror 2.47 writes each index and pool file by unlinking and re-creating it (`http_get`, `system_redirect_io`, its meta-file move), so a write to the copy reaches no file of the served tree; its trace file under `project/`, which the site does not serve, is the one file it rewrites in place.
 - The task names are the operator's handles and carry no internal term; the unit's `Description=` is walked by `tests/test_internal_terms_not_operator_visible.py`.
 
@@ -462,7 +471,10 @@ def test_the_bridgehead_mirrors_then_reads_its_mirror_from_disk_then_installs_ca
         "group": "{{ access_caddy_mirror_user }}",
         "mode": "0755",
     }
-    source = find_task(tasks, SOURCE)["ansible.builtin.deb822_repository"]
+    # One source in the file: a second, built from the upstream defaults, would read the vendor without naming it.
+    deb822 = "ansible.builtin.deb822_repository"
+    (source,) = [task[deb822] for task, _ in iter_tasks(tasks) if deb822 in task]
+    assert find_task(tasks, SOURCE)[deb822] == source
     assert source == {
         "name": "caddy",
         "types": ["deb"],
@@ -474,19 +486,17 @@ def test_the_bridgehead_mirrors_then_reads_its_mirror_from_disk_then_installs_ca
     }
 
 
-@pytest.mark.parametrize(
-    ("previewed", "exists", "runs"), [(False, False, True), (False, True, False), (True, False, False), (True, True, False)]
-)
-def test_the_first_sync_runs_on_an_empty_mirror_and_never_in_a_preview_without_its_unit(previewed, exists, runs):
+@pytest.mark.parametrize(("exists", "runs"), [(False, True), (True, False)])
+def test_the_first_sync_runs_on_an_empty_mirror_and_never_in_a_preview(exists, runs):
     tasks = load_tasks(ACCESS_TASKS)
     sync = find_task(tasks, FIRST_SYNC)
+    # Closed: a check_mode: false would run the sync in a preview, an ignore_errors let a failed one through.
     assert set(sync) == {"name", "ansible.builtin.command", "changed_when", "when"}, sorted(sync)
     assert sync["ansible.builtin.command"] == "systemctl start zaccess-caddy-mirror.service"
     release = find_task(tasks, RELEASE)
     assert release["ansible.builtin.stat"] == {"path": "{{ access_caddy_mirror_served }}/dists/any-version/Release"}
     assert release["register"] == "access_caddy_mirror_release"
-    variables = {"access_caddy_mirror_previewed": previewed, "access_caddy_mirror_release": {"stat": {"exists": exists}}}
-    assert truthy(when_conditions(sync), variables) is runs
+    assert truthy(when_conditions(sync), {"access_caddy_mirror_release": {"stat": {"exists": exists}}}) is runs
 
 
 @pytest.mark.parametrize(
@@ -529,7 +539,7 @@ EOF
 uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider
 ```
 
-Expected: `13 failed, 2 passed` — the keyring's hash and `test_the_bridgehead_installs_caddy_never_forced_or_held`, whose install and hold the interim kept, pass; the others fail on the absent templates and task names.
+Expected: `11 failed, 2 passed` — the keyring's hash and `test_the_bridgehead_installs_caddy_never_forced_or_held`, whose install and hold the interim kept, pass; the others fail on the absent templates and task names.
 
 - [ ] **Step 4: Implement** — the defaults, the two units, the chain in place of the interim's block, and the interim tests' removal:
 
@@ -642,9 +652,7 @@ BLOCK = '''# The Caddy apt mirror, then Caddy from it (spec 00127): debmirror is
 - name: the mirror's first sync, before the Caddy source reads it from disk  # noqa: command-instead-of-module
   ansible.builtin.command: systemctl start zaccess-caddy-mirror.service
   changed_when: true
-  when:
-    - not access_caddy_mirror_previewed
-    - not access_caddy_mirror_release.stat.exists
+  when: not access_caddy_mirror_release.stat.exists
 - name: the Caddy apt source — the bridgehead's own mirror, read from disk
   ansible.builtin.deb822_repository:
     name: caddy
@@ -673,6 +681,9 @@ BLOCK = '''# The Caddy apt mirror, then Caddy from it (spec 00127): debmirror is
   ansible.builtin.dpkg_selections: {name: caddy, selection: install}
 '''
 text = open(path).read()
+HEADER = "# The access role (spec 00075): WireGuard server + relays + Caddy edge + native Alloy.\n"
+assert text.count(HEADER) == 1
+text = text.replace(HEADER, "# The access role (spec 00075): WireGuard server + relays + Caddy edge and its apt mirror (spec 00127) + native Alloy.\n")
 start = text.index("- name: the Caddy apt repository removed — the interim of 2026-10-11\n")
 end = text.index("\n# spec 00075 D16.\n- name: zaccess mTLS CA cert")
 assert text.count("- name: the Caddy apt repository removed") == 1
@@ -694,7 +705,7 @@ PYEOF
 uv run pytest tests/test_infra_caddy_mirror.py tests/test_infra_converge_guards.py tests/test_access_alloy_tag.py -q -p no:cacheprovider
 ```
 
-Expected: no failure; `tests/test_infra_caddy_mirror.py` reads `15 passed` on its own.
+Expected: no failure; `tests/test_infra_caddy_mirror.py` reads `13 passed` on its own.
 
 - [ ] **Step 6: The consumers**
 
@@ -724,7 +735,7 @@ Co-Authored-By: Claude <actual executing model> <noreply@anthropic.com>
 EOF
 ```
 
-- [ ] **Step 9: Prove the guards** — the service's signature check, keyring, architecture and umask, and the served tree it does not sync; the swap's copy and exchange, and the service's closed key set; the timer's catch-up, delay and start at boot; the vendor key's copy; the chain's order, its user, the directory's mode, the apt list and the `file:` source; the first sync's command and closed task keys, its two gates, the served tree it reads and the read's register; the preview fact, the units' register and the timer's gate; the pin; the hold:
+- [ ] **Step 9: Prove the guards** — the service's signature check, keyring, architecture and umask, and the served tree it does not sync; the swap's copy and exchange, and the service's closed key set; the timer's catch-up, delay and start at boot; the vendor key's copy; the chain's order, its user, the directory's mode, the apt list, the `file:` source and the one source the file holds; the first sync's command and closed task keys, its gate, the served tree it reads and the read's register; the preview fact, the units' register and the timer's gate; the pin; the hold:
 
 ```bash
 infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/templates/zaccess-caddy-mirror.service.j2 --control '1,$d' --mutation 's/ --check-gpg//' -- uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider -k test_the_sync_runs_debmirror_over_one_suite_amd64_and_main_checking_the_release_signature
@@ -739,17 +750,17 @@ infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/templates/zacces
 infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/templates/zaccess-caddy-mirror.timer.j2 --control '1,$d' --mutation '/^RandomizedDelaySec=30min$/d' -- uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider -k test_the_sync_runs_daily_and_a_day_the_bridgehead_was_down_runs_at_its_next_start
 infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/templates/zaccess-caddy-mirror.timer.j2 --control '1,$d' --mutation '/^WantedBy=timers.target$/d' -- uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider -k test_the_sync_runs_daily_and_a_day_the_bridgehead_was_down_runs_at_its_next_start
 infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/tasks/main.yml --control '1,$d' --mutation 's|    dest: "{{ caddy_mirror_keyring }}"|    dest: /etc/apt/keyrings/caddy.gpg|' -- uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider -k 'test_the_vendored_keyring_lands_where_the_caddy_source_reads_it and access'
-infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/tasks/main.yml --control '1,$d' --mutation '93h;94,100H;93,100d;109G' -- uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider -k test_the_bridgehead_mirrors_then_reads_its_mirror_from_disk_then_installs_caddy
+infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/tasks/main.yml --control '1,$d' --mutation '93h;94,98H;93,98d;107G' -- uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider -k test_the_bridgehead_mirrors_then_reads_its_mirror_from_disk_then_installs_caddy
 infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/tasks/main.yml --control '1,$d' --mutation '59h;60,65H;59,65d;81G' -- uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider -k test_the_bridgehead_mirrors_then_reads_its_mirror_from_disk_then_installs_caddy
 infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/tasks/main.yml --control '1,$d' --mutation 's/^    mode: "0755"$/    mode: "0750"/' -- uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider -k test_the_bridgehead_mirrors_then_reads_its_mirror_from_disk_then_installs_caddy
 infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/tasks/main.yml --control '1,$d' --mutation 's/name: \[debmirror, gpgv\]/name: [debmirror]/' -- uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider -k test_the_bridgehead_mirrors_then_reads_its_mirror_from_disk_then_installs_caddy
 infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/tasks/main.yml --control '1,$d' --mutation 's|uris: "file:{{ access_caddy_mirror_served }}"|uris: "https://{{ caddy_mirror_host }}"|' -- uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider -k test_the_bridgehead_mirrors_then_reads_its_mirror_from_disk_then_installs_caddy
-infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/tasks/main.yml --control '1,$d' --mutation '/^    - not access_caddy_mirror_release.stat.exists$/d' -- uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider -k test_the_first_sync_runs_on_an_empty_mirror_and_never_in_a_preview_without_its_unit
-infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/tasks/main.yml --control '1,$d' --mutation '/^    - not access_caddy_mirror_previewed$/d' -- uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider -k test_the_first_sync_runs_on_an_empty_mirror_and_never_in_a_preview_without_its_unit
-infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/tasks/main.yml --control '1,$d' --mutation 's|path: "{{ access_caddy_mirror_served }}/dists/any-version/Release"|path: "{{ access_caddy_mirror_dir }}/staging/dists/any-version/Release"|' -- uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider -k test_the_first_sync_runs_on_an_empty_mirror_and_never_in_a_preview_without_its_unit
-infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/tasks/main.yml --control '1,$d' --mutation 's|^  ansible.builtin.command: systemctl start zaccess-caddy-mirror.service$|  ansible.builtin.systemd: {name: zaccess-caddy-mirror.service, state: started}|' -- uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider -k test_the_first_sync_runs_on_an_empty_mirror_and_never_in_a_preview_without_its_unit
-infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/tasks/main.yml --control '1,$d' --mutation '/^  changed_when: true$/a\  ignore_errors: true' -- uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider -k test_the_first_sync_runs_on_an_empty_mirror_and_never_in_a_preview_without_its_unit
-infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/tasks/main.yml --control '1,$d' --mutation '/^  register: access_caddy_mirror_release$/d' -- uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider -k test_the_first_sync_runs_on_an_empty_mirror_and_never_in_a_preview_without_its_unit
+infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/tasks/main.yml --control '1,$d' --mutation 's|^    install_python_debian: true$|&\n- name: a second Caddy source, from the upstream defaults\n  ansible.builtin.deb822_repository:\n    name: caddy-vendor\n    types: [deb]\n    uris: "https://{{ access_caddy_mirror_upstream_host }}/{{ access_caddy_mirror_upstream_root }}"\n    suites: [any-version]\n    components: [main]\n    signed_by: "{{ caddy_mirror_keyring }}"|' -- uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider -k test_the_bridgehead_mirrors_then_reads_its_mirror_from_disk_then_installs_caddy
+infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/tasks/main.yml --control '1,$d' --mutation '/^  when: not access_caddy_mirror_release.stat.exists$/d' -- uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider -k test_the_first_sync_runs_on_an_empty_mirror_and_never_in_a_preview
+infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/tasks/main.yml --control '1,$d' --mutation 's|path: "{{ access_caddy_mirror_served }}/dists/any-version/Release"|path: "{{ access_caddy_mirror_dir }}/staging/dists/any-version/Release"|' -- uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider -k test_the_first_sync_runs_on_an_empty_mirror_and_never_in_a_preview
+infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/tasks/main.yml --control '1,$d' --mutation 's|^  ansible.builtin.command: systemctl start zaccess-caddy-mirror.service$|  ansible.builtin.systemd: {name: zaccess-caddy-mirror.service, state: started}|' -- uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider -k test_the_first_sync_runs_on_an_empty_mirror_and_never_in_a_preview
+infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/tasks/main.yml --control '1,$d' --mutation '/^  changed_when: true$/a\  ignore_errors: true' -- uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider -k test_the_first_sync_runs_on_an_empty_mirror_and_never_in_a_preview
+infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/tasks/main.yml --control '1,$d' --mutation '/^  register: access_caddy_mirror_release$/d' -- uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider -k test_the_first_sync_runs_on_an_empty_mirror_and_never_in_a_preview
 infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/tasks/main.yml --control '1,$d' --mutation 's/ansible_check_mode and access_caddy_mirror_units is changed/access_caddy_mirror_units is changed/' -- uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider -k test_the_timer_skips_the_preview_that_has_not_written_its_unit
 infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/tasks/main.yml --control '1,$d' --mutation '/^  when: not access_caddy_mirror_previewed$/d' -- uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider -k test_the_timer_skips_the_preview_that_has_not_written_its_unit
 infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/tasks/main.yml --control '1,$d' --mutation '/^  register: access_caddy_mirror_units$/d' -- uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider -k test_the_timer_skips_the_preview_that_has_not_written_its_unit
@@ -791,8 +802,13 @@ def test_the_mirror_site_is_public_and_serves_the_two_apt_trees_alone():
 
 
 def test_the_two_mtls_sites_still_import_the_snippet():
-    importing = [name for name, body in _caddyfile().items() if ("import mtls", []) in body]
+    caddyfile = _caddyfile()
+    importing = [name for name, body in caddyfile.items() if ("import mtls", []) in body]
     assert importing == ["tmux.zaccess.zhaow.me", "nas.zaccess.zhaow.me"], importing
+    # A global `servers { strict_sni_host insecure_off }` lets a client with no certificate reach these sites under the apt. name.
+    assert [line.split()[0] for line, _ in caddyfile[""]] == ["email"], caddyfile[""]
+    tls = dict(caddyfile["(mtls)"])["tls"]
+    assert ("mode require_and_verify", []) in dict(tls)["client_auth"], tls
 EOF
 ```
 
@@ -802,7 +818,7 @@ EOF
 uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider
 ```
 
-Expected: `1 failed, 16 passed`, the site test on a `KeyError` for `apt.zaccess.zhaow.me`; the mTLS test passes already, the regression it holds being one this task could cause.
+Expected: `1 failed, 14 passed`, the site test on a `KeyError` for `apt.zaccess.zhaow.me`; the mTLS test passes already, the regression it holds being one this task could cause.
 - [ ] **Step 4: Implement** — the site, and the name of the task that writes the Caddyfile, which the public site falsifies:
 
 ```bash
@@ -834,7 +850,7 @@ open(path, "w").write(text.replace(OLD, NEW))
 PYEOF
 ```
 
-- [ ] **Step 5: Run the tests** — Step 3's command; Expected: `17 passed`.
+- [ ] **Step 5: Run the tests** — Step 3's command; Expected: `15 passed`.
 - [ ] **Step 6: The consumers**
 
 ```bash
@@ -863,7 +879,7 @@ Co-Authored-By: Claude <actual executing model> <noreply@anthropic.com>
 EOF
 ```
 
-- [ ] **Step 9: Prove the guards** — the site imports no mTLS, lists nothing, serves two trees, answers 404 elsewhere and repeats no line; the two mTLS sites keep the snippet:
+- [ ] **Step 9: Prove the guards** — the site imports no mTLS, lists nothing, serves two trees, answers 404 elsewhere and repeats no line; the two mTLS sites keep the snippet, its `require_and_verify`, and a global block that turns no SNI-to-Host check off:
 
 ```bash
 infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/templates/Caddyfile.j2 --control '1,$d' --mutation 's|^\t@apt path /dists/\* /pool/\*$|\timport mtls\n&|' -- uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider -k test_the_mirror_site_is_public_and_serves_the_two_apt_trees_alone
@@ -872,6 +888,8 @@ infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/templates/Caddyf
 infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/templates/Caddyfile.j2 --control '1,$d' --mutation '/^\thandle {$/,/^\t}$/d' -- uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider -k test_the_mirror_site_is_public_and_serves_the_two_apt_trees_alone
 infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/templates/Caddyfile.j2 --control '1,$d' --mutation 's|^\thandle @apt {$|\thandle @apt {\n\t\tfile_server browse\n\t}\n&|' -- uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider -k test_the_mirror_site_is_public_and_serves_the_two_apt_trees_alone
 infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/templates/Caddyfile.j2 --control '1,$d' --mutation '/^nas.zaccess.zhaow.me {$/,/^}$/{/import mtls/d}' -- uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider -k test_the_two_mtls_sites_still_import_the_snippet
+infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/templates/Caddyfile.j2 --control '1,$d' --mutation 's|^\temail .*|&\n\tservers {\n\t\tstrict_sni_host insecure_off\n\t}|' -- uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider -k test_the_two_mtls_sites_still_import_the_snippet
+infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/templates/Caddyfile.j2 --control '1,$d' --mutation 's/mode require_and_verify/mode request/' -- uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider -k test_the_two_mtls_sites_still_import_the_snippet
 ```
 
 Expected: each `KILLED`; then the message-only amend.
@@ -913,7 +931,8 @@ _INSTALL = "caddy present — version FOLLOWED from apt, never forced or held"
 
 def test_caddy_comes_from_the_bridgeheads_mirror_and_is_never_forced_held_or_pinned_to_a_version():
     tasks = iter_tasks(load_tasks(TASKS))
-    assert find_task(load_tasks(TASKS), _SOURCE_IMPORT)["ansible.builtin.import_tasks"] == SOURCE.name
+    # Closed: a keyword on the import reaches every imported task, the read and the refusal among them.
+    assert find_task(load_tasks(TASKS), _SOURCE_IMPORT) == {"name": _SOURCE_IMPORT, "ansible.builtin.import_tasks": SOURCE.name}
     files = sorted((ROLE / "tasks").glob("*.yml"))
     leaves = [task for path in files for task, _ in iter_tasks(load_tasks(path))]
     (repository,) = [task["ansible.builtin.deb822_repository"] for task in leaves if "ansible.builtin.deb822_repository" in task]
@@ -1015,9 +1034,13 @@ def test_the_caddy_source_comes_off_before_the_first_apt_refresh():
     assert removals and refreshes and removals[0] < refreshes[0], (removals, refreshes)
 '''
 NEW = '''CADDY_SOURCE = {"name": "edge", "tasks_from": "caddy-source"}
+CADDY_SOURCE_INCLUDE = "the Caddy apt source names the bridgehead's mirror before any apt refresh"
 
 
 def test_the_caddy_source_names_the_mirror_before_the_first_apt_refresh():
+    # Closed: the order below reads positions alone, and a when: on the include could skip it.
+    include = find_task(load_tasks(TASKS), CADDY_SOURCE_INCLUDE)
+    assert include == {"name": CADDY_SOURCE_INCLUDE, "ansible.builtin.include_role": CADDY_SOURCE}, include
     leaves = [task for task, _, _ in alloy_version.role_leaves("mon", frozenset())]
     sources = [i for i, task in enumerate(leaves) if task.get("ansible.builtin.include_role") == CADDY_SOURCE]
     refreshes = [i for i, task in enumerate(leaves) if refreshes_the_apt_cache(task)]
@@ -1063,7 +1086,7 @@ PYEOF
 uv run pytest tests/test_infra_caddy_mirror.py tests/test_infra_edge_role.py tests/test_infra_mon_role.py -q -p no:cacheprovider
 ```
 
-Expected: `15 failed, 102 passed` — the edge's pin and keyring cases and the vendor-name test (the interim's edge and mon comments name the vendor), the edge's source, order, preflight and pair tests on the absent `caddy-source.yml` and task names, and mon's include.
+Expected: `15 failed, 100 passed` — the edge's pin and keyring cases and the vendor-name test (the interim's edge and mon comments name the vendor), the edge's source, order, preflight and pair tests on the absent `caddy-source.yml` and task names, and mon's include.
 
 - [ ] **Step 4: Implement**
 
@@ -1191,7 +1214,7 @@ PYEOF
 uv run pytest tests/test_infra_caddy_mirror.py tests/test_infra_edge_role.py tests/test_infra_mon_role.py tests/test_infra_hc_role.py tests/test_mon_alloy_tag.py -q -p no:cacheprovider
 ```
 
-Expected: no failure; `tests/test_infra_caddy_mirror.py` reads `20 passed` on its own.
+Expected: no failure; `tests/test_infra_caddy_mirror.py` reads `18 passed` on its own.
 
 - [ ] **Step 6: The consumers**
 
@@ -1221,10 +1244,11 @@ Co-Authored-By: Claude <actual executing model> <noreply@anthropic.com>
 EOF
 ```
 
-- [ ] **Step 9: Prove the guards** — the source's address; the vendor named by the access defaults alone, its control a comment naming the vendor, since an emptied file passes that test; the preflight's condition, modifier, preview read and order, the pin after the refusal among it; the edge's pin and its vendor key's copy; the edge's and mon's source before the first refresh; the pair and the two registers it reads:
+- [ ] **Step 9: Prove the guards** — the source's address; the vendor named by the access defaults alone, its control a comment naming the vendor, since an emptied file passes that test; the preflight's condition, modifier, preview read and order, the pin after the refusal among it; the edge's pin and its vendor key's copy; the edge's and mon's source before the first refresh, the edge's import and mon's include closed to their keys; the pair and the two registers it reads:
 
 ```bash
 infra/scripts/mutate-probe.sh --file infra/ansible/roles/edge/tasks/caddy-source.yml --control '1,$d' --mutation 's|uris: "https://{{ caddy_mirror_host }}"|uris: "https://dl.cloudsmith.io/public/caddy/stable/deb/debian"|' -- uv run pytest tests/test_infra_edge_role.py -q -p no:cacheprovider -k test_caddy_comes_from_the_bridgeheads_mirror_and_is_never_forced_held_or_pinned_to_a_version
+infra/scripts/mutate-probe.sh --file infra/ansible/roles/edge/tasks/main.yml --control '1,$d' --mutation '/^  ansible.builtin.import_tasks: caddy-source.yml$/a\  ignore_errors: "{{ ansible_check_mode }}"' -- uv run pytest tests/test_infra_edge_role.py -q -p no:cacheprovider -k test_caddy_comes_from_the_bridgeheads_mirror_and_is_never_forced_held_or_pinned_to_a_version
 infra/scripts/mutate-probe.sh --file infra/ansible/roles/access/tasks/main.yml --control '1i\# dl.cloudsmith.io' --mutation 's|uris: "file:{{ access_caddy_mirror_served }}"|uris: https://dl.cloudsmith.io/public/caddy/stable/deb/debian|' -- uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider -k test_the_vendors_repository_is_named_by_the_mirrors_upstream_alone
 infra/scripts/mutate-probe.sh --file infra/ansible/roles/edge/tasks/caddy-source.yml --control '1a\# dl.cloudsmith.io' --mutation 's|uris: "https://{{ caddy_mirror_host }}"|uris: "https://dl.cloudsmith.io/public/caddy/stable/deb/debian"|' -- uv run pytest tests/test_infra_caddy_mirror.py -q -p no:cacheprovider -k test_the_vendors_repository_is_named_by_the_mirrors_upstream_alone
 infra/scripts/mutate-probe.sh --file infra/ansible/roles/edge/tasks/caddy-source.yml --control '1,$d' --mutation 's/that: edge_caddy_mirror.status == 200/that: edge_caddy_mirror.status is defined/' -- uv run pytest tests/test_infra_edge_role.py -q -p no:cacheprovider -k test_a_mirror_that_does_not_answer_is_refused_before_the_source_is_written_and_in_a_preview
@@ -1241,6 +1265,7 @@ infra/scripts/mutate-probe.sh --file infra/ansible/roles/edge/tasks/main.yml --c
 infra/scripts/mutate-probe.sh --file infra/ansible/roles/edge/tasks/caddy-source.yml --control '1,$d' --mutation '/^  register: edge_caddy_repo$/d' -- uv run pytest tests/test_infra_edge_role.py -q -p no:cacheprovider -k test_the_two_preview_facts_are_true_only_where_a_preview_has_no_package_to_find
 infra/scripts/mutate-probe.sh --file infra/ansible/roles/edge/tasks/main.yml --control '1,$d' --mutation '/^  register: edge_caddy_install$/d' -- uv run pytest tests/test_infra_edge_role.py -q -p no:cacheprovider -k test_the_two_preview_facts_are_true_only_where_a_preview_has_no_package_to_find
 infra/scripts/mutate-probe.sh --file infra/ansible/roles/mon/tasks/main.yml --control '1,$d' --mutation '35h;36H;35,36d;42G' -- uv run pytest tests/test_infra_mon_role.py -q -p no:cacheprovider -k test_the_caddy_source_names_the_mirror_before_the_first_apt_refresh
+infra/scripts/mutate-probe.sh --file infra/ansible/roles/mon/tasks/main.yml --control '1,$d' --mutation '/^  ansible.builtin.include_role: {name: edge, tasks_from: caddy-source}$/a\  when: not ansible_check_mode' -- uv run pytest tests/test_infra_mon_role.py -q -p no:cacheprovider -k test_the_caddy_source_names_the_mirror_before_the_first_apt_refresh
 ```
 
 Expected: each `KILLED`; then the message-only amend.
@@ -1276,11 +1301,11 @@ The bridgehead mirrors the vendor's Caddy apt repository, one suite (`any-versio
 ### What to do
 
 1. **Sync now**: `ssh access 'sudo systemctl start zaccess-caddy-mirror.service'` returns when the sync has ended, and prints `Job for zaccess-caddy-mirror.service failed` when it failed.
-2. **Read the sync's result**: `ssh access 'systemctl show -p Result -p ExecMainExitTimestamp zaccess-caddy-mirror.service'` reads `Result=success` and the time the sync ended. `Result=exit-code` is read by `ssh access 'sudo journalctl -u zaccess-caddy-mirror.service --no-pager -n 50'`, whose lines after `Errors:` name each failure, while the mirror goes on serving the last sync that passed. A `Download of pool/… failed: 404 …` is the vendor's repository answering without a file its index names, on which the syncs keep failing until the vendor serves the file, so it goes to the owner the day it is read. A `402`, a `5xx`, a refused connection or a timeout is the vendor's repository not answering, which a later sync passes. A line ending `signature does not verify.` goes to the owner, since the vendor has rotated its key and each sync fails there until a change vendors the new one. Another failure goes to the owner.
-3. **Read whether the mirror is current**: `curl -fsS https://apt.zaccess.zhaow.me/dists/any-version/Release | grep '^Date:'` and `curl -fsS https://dl.cloudsmith.io/public/caddy/stable/deb/debian/dists/any-version/Release | grep '^Date:'` print the same `Date:` on a current mirror. A mirror whose `Date:` is more than a month older than the vendor's goes to the owner: its syncs have failed for a month or more.
-4. **Read what a node installs from**: `ssh mon 'apt-cache policy caddy'`, or `ssh hc`, names `https://apt.zaccess.zhaow.me any-version/main` under the candidate, and Debian's `caddy` at priority `-1`.
-5. **Upgrade the bridgehead's own Caddy**, after step 1, for a Caddy security release the day it is read: `ssh access 'sudo apt-get update && sudo apt-get -o Dpkg::Options::=--force-confold install --only-upgrade caddy && sudo systemctl restart caddy'`. Then `ssh access 'apt-cache policy caddy'` reads the installed version equal to the candidate, `ssh access 'systemctl is-active caddy'` reads `active`, and from the workstation `curl -s -o /dev/null -w '%{http_code}\\n' https://tmux.zaccess.zhaow.me/` prints `000`, the mTLS edge refusing a client without a certificate. A Caddy that does not read `active` goes to the owner, and the mirror keeps the version before, which `apt-cache policy caddy` lists. The observability node and the dead-man node take the release by their patch passes, `mon.md`'s `mon-patch-pass` and `hc.md`'s `hc-patch-pass`, whose package step syncs this mirror first.
-6. **A preview refused at the mirror read, or a read of it answering other than `200`**, by the answer. `-1` with `CERTIFICATE_VERIFY_FAILED` is the `apt.` site's certificate, whose renewal `ssh access 'sudo journalctl -u caddy --no-pager -n 200'` shows. `-1` with `TLSV1_ALERT_INTERNAL_ERROR` is a Caddy holding no `apt.` certificate, whose issuance the same journal shows; on a bridgehead without the mirror's units, the access converge below writes the site. `-1` with the connection refused or timed out is the bridgehead's Caddy down, which `ssh access 'systemctl status caddy'` reads, or the bridgehead itself where ssh does not answer, `zaccess-bridgehead-dark` below. `404` is a served tree without a passing sync, which step 1 mends and step 2 reads. An access converge, `infra/ansible/scripts/converge.sh site.yml --limit zaccess --tags access`, mends a bridgehead without the mirror's units alone, `ssh access 'systemctl cat zaccess-caddy-mirror.service'` answering `No files found`, and is taken outside a relay cut, since it reopens a cut SSH relay (`zaccess-cut-ssh-relay` step 3). Another answer goes to the owner.
+2. **Read the sync's result**: `ssh access 'systemctl show -p Result -p ExecMainExitTimestamp zaccess-caddy-mirror.service'` reads `Result=success` and the time the sync ended. `Result=exit-code` is read by `ssh access 'sudo journalctl -u zaccess-caddy-mirror.service -I --no-pager'`, the last sync's lines whole, whose indented lines under `Errors:` name each failure, while the mirror goes on serving the last sync that passed. A `Download of pool/… failed: 404 …` is the vendor's repository answering without a file its index names, on which the syncs keep failing until the vendor serves the file, so it goes to the owner the day it is read. A `Download of … failed: 402 …`, a `Download of … failed: 5…` — `500 Can't connect to …`, a refused or timed-out connection, among them — or a `read timeout at …` is the vendor's repository not answering, which a later sync passes. A line naming `signature does not verify` goes to the owner, since the vendor has rotated its key and each sync fails there until a change vendors the new one. Another failure, or another `Result=`, goes to the owner.
+3. **Read whether the mirror is current**: `curl -fsS https://apt.zaccess.zhaow.me/dists/any-version/Release | grep '^Date:'` and `curl -fsS https://dl.cloudsmith.io/public/caddy/stable/deb/debian/dists/any-version/Release | grep '^Date:'` print the same `Date:` on a current mirror. A mirror whose `Date:` is more than a month older than the vendor's goes to the owner: its syncs have failed for a month or more. One less than a month older is step 2's to read.
+4. **Read what a node installs from**: `ssh mon 'apt-cache policy caddy'`, or `ssh hc`, names `https://apt.zaccess.zhaow.me any-version/main` under the candidate, and Debian's `caddy` at priority `-1`. Another answer goes to the owner.
+5. **Upgrade the bridgehead's own Caddy**, after step 1, for a Caddy security release the day it is read. First `ssh access 'dpkg-query -W caddy'` prints the installed version, the version before. Then `ssh access 'sudo apt-get update && sudo apt-get -o Dpkg::Options::=--force-confold install --only-upgrade caddy && sudo systemctl restart caddy'`, and three reads: `ssh access 'apt-cache policy caddy'` reads the installed version equal to the candidate, `ssh access 'systemctl is-active caddy'` reads `active`, and from the workstation `curl -s -o /dev/null -w '%{http_code}\\n' https://tmux.zaccess.zhaow.me/` prints `000`, the mTLS edge refusing a client without a certificate. An installed version other than the candidate goes to the owner. A Caddy that does not read `active`, or a `tmux.` read other than `000`, leaves the front door down or open to a client without a certificate, so it is rolled back at once to the version before, which the mirror keeps: `ssh access 'sudo apt-get -o Dpkg::Options::=--force-confold install -y --allow-downgrades caddy=<the version before> && sudo systemctl restart caddy'`; then the three reads again, and it goes to the owner. The observability node and the dead-man node take the release by their patch passes, `mon.md`'s `mon-patch-pass` and `hc.md`'s `hc-patch-pass`, whose package step syncs this mirror first.
+6. **A preview refused at the mirror read, or a read of it answering other than `200`**, by the answer, which a converge's refusal prints as `-1` with the uri module's message and a `curl` read as `000` with curl's own. `-1` with `CERTIFICATE_VERIFY_FAILED`, or `000` with `SSL certificate problem` (curl's 60), is the `apt.` site's certificate, whose renewal `ssh access 'sudo journalctl -u caddy --no-pager -n 200'` shows. `-1` with `TLSV1_ALERT_INTERNAL_ERROR`, or `000` with `tlsv1 alert internal error` (curl's 35), is a Caddy holding no `apt.` certificate, whose issuance the same journal shows; on a bridgehead without the mirror's units, the access converge below writes the site. `-1` with the connection refused or timed out, or `000` with `Could not connect to server` (curl's 7) or `Connection timed out` (curl's 28), is the bridgehead's Caddy down, which `ssh access 'systemctl status caddy'` reads, or the bridgehead itself where ssh does not answer, `zaccess-bridgehead-dark` below. `404` is a served tree without a passing sync, which step 1 mends and step 2 reads. An access converge, `infra/ansible/scripts/converge.sh site.yml --limit zaccess --tags access`, mends a bridgehead without the mirror's units alone, `ssh access 'systemctl cat zaccess-caddy-mirror.service'` answering `No files found`, and is taken outside a relay cut, since it reopens a cut SSH relay (`zaccess-cut-ssh-relay` step 3). Another answer goes to the owner.
 
 ### Retire when
 
@@ -1502,7 +1527,7 @@ Expected: `rc 1`, no line.
 uv run pre-commit run -a && infra/scripts/count-list.sh probe-verdicts-without-the-script prose-only-commits-without-the-prover
 ```
 
-Expected: every hook `Passed` or `Skipped`; `prose-only-commits-without-the-prover` `0`; `probe-verdicts-without-the-script` what it read at the branch's base, `1` at `56a855371`, so the branch's own commits add none.
+Expected: every hook `Passed` or `Skipped`; `prose-only-commits-without-the-prover` `0`; `probe-verdicts-without-the-script` what it read at the branch's base, `0` at `f4481c56c`, so the branch's own commits add none.
 
 - [ ] **Step 3: The branch's own tests together**
 
@@ -1520,7 +1545,7 @@ Expected: no failure.
 
 **Operator steps.** Nothing below is an executor step: each reaches the bridgehead, an edge node, the vendor or DNS. `W$` is a shell on this workstation, `zcrypto-ops`, at the main checkout's root on merged `develop`. None of the three hosts is venue-facing, so no Kraken maintenance window bounds these converges (spec 00127 D8).
 
-**Stop conditions.** A preview that names a file outside the role's Caddy, Alloy and mirror paths holds the rollout until the owner has read it. A first sync that fails, a site that serves anything but the vendor's `Release` byte for byte, or a node's preview refused at the mirror read after R4 passed stops the rollout for the owner; nothing under `/var/lib/caddy-apt-mirror` is edited by hand to get past it.
+**Stop conditions.** A preview that names a file outside the role's Caddy, Alloy and mirror paths holds the rollout until the owner has read it. A first sync that fails, a site that serves anything but the vendor's `Release` byte for byte, or a node's preview refused at the mirror read after R4 passed stops the rollout for the owner; nothing under `/var/lib/caddy-apt-mirror` is edited by hand to get past it. Any other read below that answers other than its Expected, and other than an answer its own step gives an action, stops the rollout for the owner at that step.
 
 **R0. Preconditions**, at planning, again immediately before R2, and again at R3, each its own call:
 - No Alloy wave open, since each role-tagged converge below lands the committed Alloy: `W$ uv run python infra/scripts/alloy-version.py off-fleet` prints `0`.
@@ -1566,7 +1591,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://tmux.zaccess.zhaow.me/
 curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: tmux.zaccess.zhaow.me' https://apt.zaccess.zhaow.me/
 ```
 
-Expected: both fetches succeed; `cmp rc 0` — the vendor's `Release` byte for byte (a later vendor release between R3 and R4 reads `cmp rc 1`, and a sync by `zaccess.md`'s `zaccess-caddy-mirror` step 1 is taken and the read run again); `Good signature from "Caddy Web Server <contact@caddyserver.com>"`; `404` three times — the site block's behaviour on the bridgehead's own Caddy, which the tests read as text alone; `000` for `tmux.`, the mTLS edge refusing a client without a certificate; and `421` for the `tmux.` Host over the `apt.` name, Caddy's strict SNI-to-Host match on a listener with client auth, read here for the first time, since before R3 the bridgehead serves no name on `:443` without client auth. Another answer to any of the five `curl -s` reads, whatever its class, stops the rollout for the owner before R5. Then `rm -r .tmp/00127-r4`; `[[ROLLOUT: the served Release against the vendor's, its signature check, the three 404 reads and the two tmux reads]]`.
+Expected: both fetches succeed; `cmp rc 0` — the vendor's `Release` byte for byte (a later vendor release between R3 and R4 reads `cmp rc 1`, and a sync by `zaccess.md`'s `zaccess-caddy-mirror` step 1 is taken and the read run again); `Good signature from "Caddy Web Server <contact@caddyserver.com>"`; `404` three times — the site block's behaviour, which the tests read as text alone and the vendor's Caddy 2.11.7 answered so over the rendered site in the spec's measured basis, read here on the bridgehead's own Caddy; `000` for `tmux.`, the mTLS edge refusing a client without a certificate; and `421` for the `tmux.` Host over the `apt.` name, Caddy's strict SNI-to-Host match on a listener with client auth, as the same lab answered, read on the bridgehead here for the first time, since before R3 it serves no name on `:443` without client auth. Then `rm -r .tmp/00127-r4`; `[[ROLLOUT: the served Release against the vendor's, its signature check, the three 404 reads and the two tmux reads]]`.
 
 **R5. The observability node**, in R2's sitting, after R4.
 
@@ -1590,7 +1615,7 @@ Expected: as R5's, on `zcrypto-hc`. Then the same without `--check`, and `ssh hc
 ssh access 'systemctl show -p Result -p ExecMainStartTimestamp zaccess-caddy-mirror.service'
 ```
 
-Expected: `Result=success` and debmirror's start between 03:41 and 04:13 UTC that day — the timer's 03:41, its 30-minute random delay, systemd's one-minute timer accuracy, and the hard-linked copy before debmirror; `[[ROLLOUT: the first timer-started sync's result]]`.
+Expected: `Result=success` and debmirror's start between 03:41 and 04:13 UTC that day — the timer's 03:41, its 30-minute random delay, systemd's one-minute timer accuracy, and the hard-linked copy before debmirror; a `Result=` other than `success` is read by `zaccess.md`'s `zaccess-caddy-mirror` step 2, whose answers it takes; `[[ROLLOUT: the first timer-started sync's result]]`.
 
 **R-records.** A records pull request after R7: the deploy-log rows `converge.sh` appended at R3, R5 and R6; the slots' readings in its message. Caddy is unversioned, so `docs/reference/fleet-pins.md` takes no row.
 
