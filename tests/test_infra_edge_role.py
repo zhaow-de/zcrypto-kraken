@@ -7,7 +7,17 @@ import pytest
 import yaml
 
 from tests import role_render
-from tests.test_infra_converge_guards import assert_that, find_task, iter_tasks, load_tasks, set_facts, truthy, when_conditions
+from tests.test_alloy_version import alloy_version
+from tests.test_infra_converge_guards import (
+    assert_that,
+    find_task,
+    iter_tasks,
+    load_tasks,
+    refreshes_the_apt_cache,
+    set_facts,
+    truthy,
+    when_conditions,
+)
 
 REPO = Path(__file__).resolve().parents[1]
 ANSIBLE = REPO / "infra/ansible"
@@ -105,6 +115,14 @@ def test_the_caddy_repository_is_removed_and_caddy_kept_installed_never_forced_h
     (install,) = [task["ansible.builtin.apt"] for task, _ in tasks if "ansible.builtin.apt" in task]
     assert install == {"name": "caddy", "state": "present", "update_cache": True}, "the repository task refreshes no cache"
     assert "ansible.builtin.dpkg_selections" not in {key for task, _ in tasks for key in task}, "a hold skips caddy silently"
+
+
+def test_the_caddy_source_comes_off_before_the_edges_first_apt_refresh():
+    leaves = [task for task, _, _ in alloy_version.role_leaves("edge", frozenset())]
+    removal = {"name": "caddy", "state": "absent", "install_python_debian": True}
+    removals = [i for i, task in enumerate(leaves) if task.get("ansible.builtin.deb822_repository") == removal]
+    refreshes = [i for i, task in enumerate(leaves) if refreshes_the_apt_cache(task)]
+    assert removals and refreshes and removals[0] < refreshes[0], (removals, refreshes)
 
 
 _READ = "read whether caddy is installed"
