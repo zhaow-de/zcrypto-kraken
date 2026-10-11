@@ -28,7 +28,7 @@ Reading rules:
 | alloy | zcrypto-valkey2 | `2aa2099af76c` — v1.20.1 | 2026-10-07 11:10:11 | `b8ec653c4423` — v1.19.2 |
 | valkey + sentinel | zcrypto-valkey3 | `418652cfb58e` — Valkey 9.1.2, upstream `valkey/valkey` | 2026-09-26 21:28:18 | first pin |
 | alloy | zcrypto-valkey3 | `2aa2099af76c` — v1.20.1 | 2026-10-07 11:14:05 | `b8ec653c4423` — v1.19.2 |
-| ops (timers + liquidations) | zcrypto-ops | `3f291f3cee57` — revision `77df6273` | 2026-10-08 15:03:44 | `7d4c6066d71e` |
+| ops (timers + liquidations) | zcrypto-ops | `335e768da985` — revision `02b74a13` | 2026-10-11 12:18:45 | `3f291f3cee57` |
 | archive-pull | nas | `d914dad91536` — revision `7ab4fc1a`, the `-compat` build | 2026-10-08 15:08:37 | `c4135ac75b72` |
 
 **Non-image pins.** `zaccess`'s `caddy` is an apt package the access role installs unversioned, clearing a `dpkg` hold, so it has no row and no rollback operand here; read its installed version off the host: `dpkg-query -W caddy`. Alloy on the hosts that run it as a package is installed at `alloy_deb_version` in `infra/ansible/group_vars/observed/alloy.yml`, held and pinned, and takes an `alloy` row in the table below: its version the host's `dpkg-query -W alloy` read after the converge that installs it, its notes `dpkg hold; pinned at 1001`; the word `held` in the notes, its reason after it, marks a host a wave left behind.
@@ -56,8 +56,8 @@ A constraint lives where it is enforced or executed: the NAS `-compat` rule, the
 The current pins and their operands; older digests are in this file's git log.
 
 - `f102ca375382` = `sha256:f102ca3753826c6aac0af4a3c98e0c7c5f5faca0b1906ca104ed99715bdefb62` — revision `7ab4fc1a`, AVX; capture on both hosts and the engine
-- `3f291f3cee57` = `sha256:3f291f3cee57b2a5209ab4860c8e6bdb14b7e3007ec0e87e8dcf4c2309d32c73` — revision `77df6273`, AVX; ops, and the capture pair's and the engine's operand
-- `7d4c6066d71e` = `sha256:7d4c6066d71edad9fa9029c4d725f9bfc354ba22b7e7044be95cd01b1c27a107` — revision `a1a39280`, AVX; ops' operand
+- `335e768da985` = `sha256:335e768da985e25496a1f15d431f968a34a8d5544bfca351ed8269b05d26e644` — revision `02b74a13`, AVX; ops
+- `3f291f3cee57` = `sha256:3f291f3cee57b2a5209ab4860c8e6bdb14b7e3007ec0e87e8dcf4c2309d32c73` — revision `77df6273`, AVX; ops' operand, and the capture pair's and the engine's operand
 - `d914dad91536` = `sha256:d914dad91536b56823d7a3a2b7452e9d60aa03b17e76a5651bcf77e3c54ef4dd` — revision `7ab4fc1a`, the `-compat` build; the NAS archive-pull
 - `c4135ac75b72` = `sha256:c4135ac75b72206d3499c99d476b375d1cc0c3326a4bb8acee255287bb2f3164` — revision `77df6273`, the `-compat` build; the NAS archive-pull's operand
 - `418652cfb58e` = `sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd` — Valkey 9.1.2; the cache nodes
