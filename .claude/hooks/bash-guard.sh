@@ -756,10 +756,11 @@ def object_type(where, word):
 
 
 def scoped_grep(rest, where):
-    # git does the selecting, never a hand matcher: `git ls-files` from the payload's cwd over the pathspecs as spelled.
-    # A commit's tree is overlaid on the index, a superset that can only refuse more; any other object refuses.
+    # None when git selects no vaulted file for the search, else why it may: git does the selecting, never a hand
+    # matcher -- `git ls-files` from the payload's cwd over the pathspecs as spelled. A commit's tree is overlaid on the
+    # index, a superset that can only refuse more; any other object refuses.
     if any(a[:2] == "--" and among(a, {"--no-index", "--untracked"}) for a in rest):
-        return False
+        return "searches past the index -- drop `--no-index` or `--untracked`"
     bare, specs = grep_pathspecs(rest)
     commits = []
     for x in bare:
@@ -767,7 +768,7 @@ def scoped_grep(rest, where):
         if kind == "commit":
             commits.append(x)
         elif kind:
-            return False
+            return f"names the {kind} `{x}`, which the arm cannot scope -- search a commit, or the index"
         else:
             specs.append(x)
     for tree in commits or [None]:
@@ -775,9 +776,11 @@ def scoped_grep(rest, where):
         done = subprocess.run(
             ["git", "-C", where, "ls-files", "-z", "--full-name", *with_tree, "--", *specs], capture_output=True, text=True
         )
-        if done.returncode or any(vault_path("/" + f) for f in done.stdout.split("\0") if f):
-            return False
-    return True
+        if done.returncode:
+            return "carries a pathspec git cannot read -- spell it as git ls-files accepts it"
+        if any(vault_path("/" + f) for f in done.stdout.split("\0") if f):
+            return "may search a vaulted file -- from the repository root add " + EXCLUDES_SPELLED + " after `--`, or name files outside the vaulted set"
+    return None
 
 
 def refuse_vault(words, what, raw):
@@ -816,8 +819,8 @@ def judge_vault(words, raw, where):
     sub, rest, chdirs = git_sub(words)
     for d in chdirs:
         where = resolve(where, d)
-    if sub == "grep" and where and not scoped_grep(rest, where):
-        refuse_vault(words, "may search a vaulted file -- from the repository root add " + EXCLUDES_SPELLED + " after `--`, or name files outside the vaulted set", raw)
+    if sub == "grep" and where and (why := scoped_grep(rest, where)):
+        refuse_vault(words, why, raw)
     if sub in ("show", "cat-file") and where:
         hit = next((a for a in rest if ":" in a and a[:1] != "-" and at_revision(where, a)), None)
         if hit:
