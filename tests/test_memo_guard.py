@@ -132,3 +132,12 @@ def test_a_stamp_pasted_from_the_clock_is_admitted(hook, tmp_path: Path, text: s
     other.write_text("- a line\n")
     payload = {"tool_name": "Edit", "tool_input": {"file_path": str(other), "new_string": text}}
     assert hook("pre-write", payload).returncode == 0
+
+
+def test_a_placeholder_in_a_test_file_or_a_hook_is_admitted(hook, tmp_path: Path):
+    for rel in ("tests/test_memo_guard.py", ".claude/hooks/memo-guard.sh"):
+        target = tmp_path / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("x\n")
+        payload = {"tool_name": "Edit", "tool_input": {"file_path": str(target), "new_string": "a case: 12:1xZ"}}
+        assert hook("pre-write", payload).returncode == 0

@@ -800,14 +800,17 @@ AGENT_ADMITTED = [
 ]
 
 
-# A `git grep` that can open a vaulted file -- without the three excluding pathspecs over anything but single
-# files -- beside the scoped shape nearest to it. `grep -r` and `rg` keep the printing arm's judgement.
+# `grep` and `rg` stay the printing arm's: the git-grep arm admits them whatever their scope.
 UNSCOPED_GREPS = [
     "git grep -l foo -- tests infra",
     "git grep -n foo",
     "git grep -n foo -- infra/ansible",
     "git grep -l -e foo -e bar -- tests",
     "git grep -l foo -- tests ':!*vault*' ':!*.sops.*'",
+    "git grep -n foo -- infra/ansible/group_vars/all/vault.yml",
+    "git grep -n foo -- tests/test_bash_guard.py ':/'",
+    "git grep -n foo -- ':(glob)tests/*.py'",
+    "git grep -l foo -- tests ':!docs/vault-notes.md' ':!x.sops.d' ':!y_ed25519'",
 ]
 SCOPED_GREPS = [
     "git grep -l foo -- tests infra ':!*vault*' ':!*.sops.*' ':!infra/ansible/files/*_ed25519'",

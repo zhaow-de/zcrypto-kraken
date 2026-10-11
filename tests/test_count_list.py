@@ -1058,7 +1058,6 @@ def test_the_completion_floor_count_reads_only_the_rows_that_carry_no_window_rec
     rows = [band, {**band, "ts": "2026-09-25T12:12:24Z"}, {**band, "ts": "2026-09-25T16:12:24Z", "window": window}]
     entry = "engine-rows-on-the-completion-floor"
     assert _windowed(tmp_path, entry, git_dir, rows=rows).stdout == f"{entry}\t2\n"
-    # A row stamped before the round closed is outside the window, as it is for every other engine entry.
     assert _windowed(tmp_path, entry, git_dir, rows=[{**band, "ts": "2026-09-19T08:12:24Z"}]).stdout == f"{entry}\t0\n"
 
 

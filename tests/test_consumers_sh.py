@@ -127,5 +127,4 @@ def test_the_tree_names_the_script_with_its_walker_tests():
         "tests/test_open_topics_frontmatter.py",
     ):
         assert walker in out.splitlines(), walker
-    # A walker over another top-level directory is not listed for an infra file: it reads none of it.
     assert "tests/test_risk_limits.py" not in out.splitlines()
