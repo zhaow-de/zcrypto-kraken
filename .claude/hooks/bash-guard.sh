@@ -738,8 +738,7 @@ def grep_pathspecs(rest):
         return bare, after
     if bare:
         return bare[1:], after
-    # git skips a `--` that comes before the pattern: the next word is the pattern, the words up to a second `--` are
-    # revisions or paths, and only that second `--` starts the pathspecs.
+    # git skips a `--` that comes before the pattern and takes the next word as the pattern.
     words = after[1:]
     if "--" in words:
         k = words.index("--")
