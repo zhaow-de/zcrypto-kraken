@@ -725,36 +725,20 @@ def git_sub(words):
 
 
 EXCLUDES_SPELLED = "`':!*vault*' ':!*.sops.*' ':!infra/ansible/files/*_ed25519'`"
-# git grep's options whose value is the NEXT word; `-O` and `--open-files-in-pager` take only an attached one.
-GREP_VALUE = {
-    "-e", "-f", "-C", "-A", "-B", "-m", "--threads", "--max-depth", "--max-count", "--context", "--after-context",
-    "--before-context",
-}
+# git grep's value-taking options, as option_walk reads them: a short letter with a separate or attached value, `-O`
+# with an attached one alone, and a long name by git's unique-prefix rule.
+GREP_OPTIONS = ("efCABm", "O", {"context", "after-context", "before-context", "max-count", "max-depth", "threads"})
 
 
 def grep_pathspecs(rest):
-    # git's rule: before `--`, the first bare word is the pattern unless `-e` or `-f` gave one.
-    specs, ended, bare, patterned = [], False, [], False
-    i = 0
-    while i < len(rest):
-        a = rest[i]
-        if ended:
-            specs.append(a)
-        elif a == "--":
-            ended = True
-        elif a in ("-e", "-f"):
-            patterned = True
-            i += 1
-        elif a.startswith(("--and", "--or", "--not")) or a in ("(", ")"):
-            pass
-        elif a in GREP_VALUE:
-            i += 1
-        elif a.startswith("-"):
-            pass
-        else:
-            bare.append(a)
-        i += 1
-    return (bare if patterned else bare[1:]), specs
+    # git's rule: before `--`, the first bare word is the pattern unless `-e` or `-f` gave one; `(`, `)` and the
+    # boolean words are no operands. (operands before `--`, pathspecs after it): a revision stands only among the former.
+    flags, _, ops = option_walk(rest, *GREP_OPTIONS)
+    after = rest[rest.index("--") + 1 :] if "--" in rest else []
+    bare = [o for o in ops[: len(ops) - len(after)] if o not in ("(", ")")]
+    if not any(f in ("e", "f") for f in flags):
+        bare = bare[1:]
+    return bare, after
 
 
 def object_type(where, word):
