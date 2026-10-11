@@ -946,7 +946,7 @@ uv run python infra/scripts/ops-daily.py report --since 24h; echo "report exit $
 
 Expected: the `rolling canonical head` row ok, naming the R5 head, its age and its line's first twelve hex; the first head row, read 2026-10-11T13:18:41Z: `PASS rolling canonical head: head 2026-10-09, 2 days old, line b1303cd954e3`.
 
-**R8. The retirements the owner takes.** By the owner's hand on the NAS, as the Q2 siblings went to `/volume1/ZhaoCrypto/backup-ohlc-squash-2026-10-09/`: `ohlc-reach-20261007` off `hot/` from R2 on, and `ohlc-full-20261007` and `ohlc-15m-20261007` once R6's data-gated tests have passed; each local copy under the main checkout's `data/` the owner removes too, after copying it aside per `CLAUDE.md`'s data rule. No step of this plan moves or deletes a set; `[[ROLLOUT: each retirement's instant and destination]]`.
+**R8. The retirements the owner takes.** By the owner's hand on the NAS, as the Q2 siblings went to `/volume1/ZhaoCrypto/backup-ohlc-squash-2026-10-09/`: `ohlc-reach-20261007` off `hot/` from R2 on, and `ohlc-full-20261007` and `ohlc-15m-20261007` once R6's data-gated tests have passed; each local copy under the main checkout's `data/` the owner removes too, after copying it aside per `CLAUDE.md`'s data rule. No step of this plan moves or deletes a set; the three retirements, taken by the owner's hand on the NAS at 2026-10-11T13:28:00Z: `ohlc-reach-20261007`, `ohlc-full-20261007` and `ohlc-15m-20261007` moved from `hot/` to `/volume1/ZhaoCrypto/backup-ohlc-squash-2026-10-11/`, read from the workstation's mount as absent from `hot/` with the destination present; the local copies under `data/` still in place, the owner's to remove after copying aside.
 
 **R-close. Closing a pair the tape stopped carrying** — only on the owner's explicit word, after the head row's attention line has named the pair and the day; never part of this rollout's own run, and taken whenever that word comes. Right after a `:52` tape-bars run has finished, so no extension runs beside it, the values replaced by the attention line's pair and day and the owner's words and their date:
 
@@ -973,4 +973,4 @@ This plan delivers spec 00125: the rolling canonical's reader, writer and record
 - The first extension's summary line and its head line's sha256, filled in R5: `head=2026-10-09 days_written=9 holes=0` and `b1303cd954e34d87acd8199f2aa61fcb02b79d89175e2e9979b02929d096da66`.
 - The fetch's new-file count and the two data-gated readings, filled in R6: `new=172` and `2 passed`, none skipped.
 - The first rolling canonical head row, filled in R7: `head 2026-10-09, 2 days old, line b1303cd954e3`.
-- `[[ROLLOUT: each retirement's instant and destination]]` (R8) — the owner's acts, in R-records' message for those taken before it.
+- Each retirement's instant and destination, filled in R8: the three sets at 2026-10-11T13:28:00Z, into `/volume1/ZhaoCrypto/backup-ohlc-squash-2026-10-11/`.
