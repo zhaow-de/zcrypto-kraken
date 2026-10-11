@@ -1,6 +1,6 @@
 # One growing OHLC canonical: `ohlc-rolling`, the Q3 15-minute frame extended daily from tape-bars — implementation plan
 
-> Every value a rollout reading decides is a marked slot, `ROLLOUT:` inside double square brackets, listed at the end.
+> Every value a rollout reading decides is listed at the end, `ROLLOUT:` in double square brackets until filled.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -903,7 +903,7 @@ sudo docker pull "ghcr.io/zhaow-de/zcrypto-capture@$OPS_DIGEST"
 infra/ansible/scripts/converge.sh site.yml --limit zcrypto-ops --tags ops -e ops_image_digest="$OPS_DIGEST" -e ops_alloy_digest="$OPS_ALLOY" -e liquidations_decision=roll-after --check
 ```
 
-the two values replaced by the new image's digest and `alloy_image_digest` in `infra/ansible/group_vars/observed/alloy.yml`, the image pulled first because the ops role has no pull task and its `preflight — refuse a digest the host has not pulled` refuses the preview too. Expected: the preview names the runner scripts and the ops compose file changed — the digest moves in each, and `/usr/local/sbin/zcrypto-tape-bars` carries the extension besides — and `/var/lib/zcrypto-ops/hot-out-staging` created; the scripts and the compose file render `no_log` with `diff: false`, so their read is the source diff from the host's newest qualifying deploy-log row, as the skill's preview bullet says. Then the same without `--check`, and `W$ infra/scripts/ops-postverify.sh`, every check passing; the digest the converge landed, `sha256:335e768da985e25496a1f15d431f968a34a8d5544bfca351ed8269b05d26e644`, CI's build of `02b74a133`, the deploy-log row of 2026-10-11T12:15:36Z (rc 0, `ok=81 changed=4 failed=0`), `ops-postverify.sh` ALL PASS, the liquidations poller rolled by hand at 12:18:45Z — the pins row carries it.
+the two values replaced by the new image's digest and `alloy_image_digest` in `infra/ansible/group_vars/observed/alloy.yml`, the image pulled first because the ops role has no pull task and its `preflight — refuse a digest the host has not pulled` refuses the preview too. Expected: the preview names the runner scripts and the ops compose file changed — the digest moves in each, and `/usr/local/sbin/zcrypto-tape-bars` carries the extension besides — and `/var/lib/zcrypto-ops/hot-out-staging` created; the scripts and the compose file render `no_log` with `diff: false`, so their read is the source diff from the host's newest qualifying deploy-log row, as the skill's preview bullet says. Then the same without `--check`, and `W$ infra/scripts/ops-postverify.sh`, every check passing; the digest the converge landed, filled: `335e768da985`, the ops pin row's in R-records.
 
 **R4. The base, on the owner's word** (immediately after R3, before the next `:52`):
 
@@ -912,7 +912,7 @@ uv run zcrypto data rolling base --source /mnt/zhao-crypto/hot/ohlc-15m-20261007
 uv run zcrypto data rolling verify --root /var/lib/zcrypto-ops/hot-out/ohlc-rolling --as-of 2026-09-30
 ```
 
-Expected: `base <sha256> files=12` — the command refusing before its first rename unless each file's bytes are `Q3_15M_SHA256`'s — and the verify printing `2026-09-30`, the same sha256 and `files=12`; a `base` stopped before it prints is run again at once, the same command completing the base by Task 2's byte-equal rule; the base line, read 2026-10-11T12:20:04Z: `3b527f2123470a52acf29e7e9db498b0fedcea85e753110e549c289ad2818acb`, `files=12`, the verify at 2026-09-30 printing the same line.
+Expected: `base <sha256> files=12` — the command refusing before its first rename unless each file's bytes are `Q3_15M_SHA256`'s — and the verify printing `2026-09-30`, the same sha256 and `files=12`; a `base` stopped before it prints is run again at once, the same command completing the base by Task 2's byte-equal rule; the base line, filled: `3b527f2123470a52acf29e7e9db498b0fedcea85e753110e549c289ad2818acb`, `files=12`, the verify at 2026-09-30 printing the same line.
 
 **R5. The first extension** (immediately after R4, before the next `:52`, so the manual start is the first extension and the journal's last ten minutes hold its lines).
 
@@ -926,7 +926,7 @@ Expected: the sweep's summary line, then `head=<the newest day whose twelve fina
 uv run zcrypto data rolling verify --root /var/lib/zcrypto-ops/hot-out/ohlc-rolling --as-of "$HEAD_DAY"
 ```
 
-Expected: `HEAD_DAY`, its line's sha256 and `files=` the base's twelve and twelve a day, exit 0; the first extension, started by hand 2026-10-11T12:20:16Z: the sweep `days_written=0 days_skipped=48 days_unsettled=24 days_unhealed=0 days_gap=0 rows=0 errors=0`, the extension `head=2026-10-09 days_written=9 holes=0`, the verify at 2026-10-09 `b1303cd954e34d87acd8199f2aa61fcb02b79d89175e2e9979b02929d096da66 files=120`.
+Expected: `HEAD_DAY`, its line's sha256 and `files=` the base's twelve and twelve a day, exit 0; the first extension, filled: the sweep `days_written=0 days_skipped=48 days_unsettled=24 days_unhealed=0 days_gap=0 rows=0 errors=0`, the extension `head=2026-10-09 days_written=9 holes=0`, the verify at 2026-10-09 `b1303cd954e34d87acd8199f2aa61fcb02b79d89175e2e9979b02929d096da66 files=120`.
 
 **R6. The hub, the fetch and the data-gated tests.** After the NAS's next hourly pull:
 
@@ -936,7 +936,7 @@ uv run zcrypto data fetch
 uv run pytest tests/test_rolling_extend.py -q -p no:cacheprovider -k "test_the_staged_base_is_the_q3_15m_frame_byte_for_byte or test_the_grids_derived_from_the_staged_base_equal_the_q3_coarse_frames"
 ```
 
-Expected: the hub's verify printing R5's sha256 at `HEAD_DAY`; the fetch with no refusal, its `new=` counting the set's files and every other hub set the local root lacks — `derivatives-oi`'s 11 files and `ohlc-reach`'s 31 as read on 2026-10-09; the two data-gated tests `2 passed`, neither skipped; the hub's verify at 2026-10-09 printing R5's sha256 and `files=120` at 2026-10-11T13:17:51Z; the fetch `new=172 skipped=199` at 13:18:04Z — the set's 130, `derivatives-oi`'s 11 and `ohlc-reach`'s 31; the two data-gated tests `2 passed, 40 deselected`, none skipped, at 13:18:12Z.
+Expected: the hub's verify printing R5's sha256 at `HEAD_DAY`; the fetch with no refusal, its `new=` counting the set's files and every other hub set the local root lacks — `derivatives-oi`'s 11 files and `ohlc-reach`'s 31 as read on 2026-10-09; the two data-gated tests `2 passed`, neither skipped; filled: the hub's verify as R5's, the fetch `new=172 skipped=199`, the set's 130 among them, the tests `2 passed, 40 deselected`.
 
 **R7. The head read by value.**
 
@@ -944,9 +944,9 @@ Expected: the hub's verify printing R5's sha256 at `HEAD_DAY`; the fetch with no
 uv run python infra/scripts/ops-daily.py report --since 24h; echo "report exit $?"
 ```
 
-Expected: the `rolling canonical head` row ok, naming the R5 head, its age and its line's first twelve hex; the first head row, read 2026-10-11T13:18:41Z: `PASS rolling canonical head: head 2026-10-09, 2 days old, line b1303cd954e3`.
+Expected: the `rolling canonical head` row ok, naming the R5 head, its age and its line's first twelve hex; the first head row, filled: `PASS rolling canonical head: head 2026-10-09, 2 days old, line b1303cd954e3`.
 
-**R8. The retirements the owner takes.** By the owner's hand on the NAS, as the Q2 siblings went to `/volume1/ZhaoCrypto/backup-ohlc-squash-2026-10-09/`: `ohlc-reach-20261007` off `hot/` from R2 on, and `ohlc-full-20261007` and `ohlc-15m-20261007` once R6's data-gated tests have passed; each local copy under the main checkout's `data/` the owner removes too, after copying it aside per `CLAUDE.md`'s data rule. No step of this plan moves or deletes a set; the three retirements, taken by the owner's hand on the NAS at 2026-10-11T13:28:00Z: `ohlc-reach-20261007`, `ohlc-full-20261007` and `ohlc-15m-20261007` moved from `hot/` to `/volume1/ZhaoCrypto/backup-ohlc-squash-2026-10-11/`, read from the workstation's mount as absent from `hot/` with the destination present; the local copies under `data/` still in place, the owner's to remove after copying aside.
+**R8. The retirements the owner takes.** By the owner's hand on the NAS, as the Q2 siblings went to `/volume1/ZhaoCrypto/backup-ohlc-squash-2026-10-09/`: `ohlc-reach-20261007` off `hot/` from R2 on, and `ohlc-full-20261007` and `ohlc-15m-20261007` once R6's data-gated tests have passed; each local copy under the main checkout's `data/` the owner removes too, after copying it aside per `CLAUDE.md`'s data rule. No step of this plan moves or deletes a set; the retirements, filled: `ohlc-reach-20261007`, `ohlc-full-20261007` and `ohlc-15m-20261007`, off `hot/` into `/volume1/ZhaoCrypto/backup-ohlc-squash-2026-10-11/` at 2026-10-11T13:28:00Z.
 
 **R-close. Closing a pair the tape stopped carrying** — only on the owner's explicit word, after the head row's attention line has named the pair and the day; never part of this rollout's own run, and taken whenever that word comes. Right after a `:52` tape-bars run has finished, so no extension runs beside it, the values replaced by the attention line's pair and day and the owner's words and their date:
 
@@ -968,9 +968,9 @@ This plan delivers spec 00125: the rolling canonical's reader, writer and record
 
 ## Slots the rollout fills
 
-- The ops image digest the converge landed, filled in R3: `335e768da985`, as the records' pin row carries it.
-- The base line's sha256, filled in R4: `3b527f2123470a52acf29e7e9db498b0fedcea85e753110e549c289ad2818acb`, the pin of the base alone, the as-of 2026-09-30.
-- The first extension's summary line and its head line's sha256, filled in R5: `head=2026-10-09 days_written=9 holes=0` and `b1303cd954e34d87acd8199f2aa61fcb02b79d89175e2e9979b02929d096da66`.
-- The fetch's new-file count and the two data-gated readings, filled in R6: `new=172` and `2 passed`, none skipped.
-- The first rolling canonical head row, filled in R7: `head 2026-10-09, 2 days old, line b1303cd954e3`.
-- Each retirement's instant and destination, filled in R8: the three sets at 2026-10-11T13:28:00Z, into `/volume1/ZhaoCrypto/backup-ohlc-squash-2026-10-11/`.
+- The ops image digest the converge landed, filled in R3.
+- The base line's sha256, filled in R4.
+- The first extension's summary line and its head line's sha256, filled in R5.
+- The fetch's new-file count and the two data-gated readings, filled in R6.
+- The first rolling canonical head row, filled in R7.
+- Each retirement's instant and destination, filled in R8.

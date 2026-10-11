@@ -57,7 +57,7 @@ The current pins and their operands; older digests are in this file's git log.
 
 - `f102ca375382` = `sha256:f102ca3753826c6aac0af4a3c98e0c7c5f5faca0b1906ca104ed99715bdefb62` — revision `7ab4fc1a`, AVX; capture on both hosts and the engine
 - `335e768da985` = `sha256:335e768da985e25496a1f15d431f968a34a8d5544bfca351ed8269b05d26e644` — revision `02b74a13`, AVX; ops
-- `3f291f3cee57` = `sha256:3f291f3cee57b2a5209ab4860c8e6bdb14b7e3007ec0e87e8dcf4c2309d32c73` — revision `77df6273`, AVX; ops' operand, and the capture pair's and the engine's operand
+- `3f291f3cee57` = `sha256:3f291f3cee57b2a5209ab4860c8e6bdb14b7e3007ec0e87e8dcf4c2309d32c73` — revision `77df6273`, AVX; the ops', the capture pair's and the engine's operand
 - `d914dad91536` = `sha256:d914dad91536b56823d7a3a2b7452e9d60aa03b17e76a5651bcf77e3c54ef4dd` — revision `7ab4fc1a`, the `-compat` build; the NAS archive-pull
 - `c4135ac75b72` = `sha256:c4135ac75b72206d3499c99d476b375d1cc0c3326a4bb8acee255287bb2f3164` — revision `77df6273`, the `-compat` build; the NAS archive-pull's operand
 - `418652cfb58e` = `sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd` — Valkey 9.1.2; the cache nodes
