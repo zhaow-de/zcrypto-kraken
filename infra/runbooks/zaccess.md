@@ -47,7 +47,7 @@ There is none: **the bridgehead's Alloy takes no digest operand and owes no bake
 
 ### What to do
 
-1. Edit `infra/ansible/roles/access/files/config.alloy`, then `infra/ansible/scripts/converge.sh site.yml --limit zaccess --tags alloy` from the workstation.
+1. Edit `infra/ansible/roles/access/files/config.alloy`, then `infra/ansible/scripts/converge.sh site.yml --limit zaccess --tags alloy` from the workstation. After the Caddy interim of 2026-10-11 merges, the bridgehead's first converge is its `--tags access` one, which removes Caddy's Cloudsmith source; this `--tags alloy` converge, an un-tagged converge and a hand `apt-get update` come after it, since an Alloy run before it passes its preview and fails in the real pass at Alloy's apt refresh, a bump with its pin file already moved.
 2. Read the version and the hold on the host: `dpkg-query -W alloy; apt-mark showhold` names the version the converge installed and lists `alloy`.
 
 ### Retire when

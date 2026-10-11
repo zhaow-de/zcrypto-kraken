@@ -667,7 +667,7 @@ The rebuild's start is the firewall step's timestamp, `date -u` on the workstati
 
 1. **The firewall**: in the Cloud Manager, add to `zcrypto-mon` an inbound Accept TCP `22` rule for IPv4 and for IPv6 from all sources. The bootstrap connects as root on port 22, and the node's first converge removed that rule.
 
-2. **The rebuild**: on the Linode's page, **Rebuild** from the Debian 13 image, the owner's master key as root's, Backups left enabled. Then in LISH, the new host key's fingerprint, `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`, and on the workstation the stale line removed, `ssh-keygen -R '[zcrypto-mon.zhaow.me]:10022'`, since the alias `mon` connects on 10022 and its known host has changed.
+2. **The rebuild**: while the Caddy interim of 2026-10-11 stands, a rebuild stops at the edge role's refusal of a node without Caddy, after Grafana and Loki are installed, so this drill is not run until the owner's debmirror replaces Caddy's apt source. Otherwise, on the Linode's page, **Rebuild** from the Debian 13 image, the owner's master key as root's, Backups left enabled. Then in LISH, the new host key's fingerprint, `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`, and on the workstation the stale line removed, `ssh-keygen -R '[zcrypto-mon.zhaow.me]:10022'`, since the alias `mon` connects on 10022 and its known host has changed.
 
 3. **The bootstrap, the alias and the converge**, from the repo root, in that order; the deploy key `~/.ssh/deploy_zcrypto-mon_ed25519` and the `Host mon` stanza are the workstation's from the node's first build and need no step:
 
