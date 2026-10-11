@@ -12,7 +12,7 @@ No subagents, no agent tools; everything runs as plain blocking commands, nothin
 
 ## The tests
 
-- Before the commit, run every test `infra/scripts/consumers.sh <path>` lists for each changed file, its tree walkers included; with no direct reader a prose file runs nothing, its claim being `infra/scripts/prove-inert.py`'s and the pre-review's, and a code file runs its own test, the empty list going in the report — never a bare `uv run pytest`, whose full suite is CI's.
+- Before the commit, run every test `infra/scripts/consumers.sh <path>` lists for each changed file, its tree walkers included, and a code file with no test listed runs its own test, the empty list going in the report — never a bare `uv run pytest`, whose full suite is CI's.
 - Stage by explicit path, new files first, then the gate: `pre-commit run -a` reads tracked files only, so an untracked test is invisible to it and a clean gate says nothing about it.
 - A commit split by file kind is checked in a scratch worktree at each piece's tree before the pieces are committed: a red intermediate commit is a bisect trap the next reader pays for.
 - A fixture that sits equally far from the two states the test separates is vacuous: a symmetry noticed at design time is broken before the case is written, never left for the probe to find.
