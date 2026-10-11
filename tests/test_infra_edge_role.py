@@ -125,7 +125,9 @@ def test_a_node_without_caddy_is_refused_before_the_install_and_in_a_preview(sta
         "failed_when": False,
         "check_mode": False,
     }
-    assert truthy(assert_that(find_task(tasks, _REFUSAL)), {"edge_caddy_state": {"stdout": state}}) is admitted
+    refusal = find_task(tasks, _REFUSAL)
+    assert set(refusal) == {"name", "ansible.builtin.assert"}, sorted(refusal)
+    assert truthy(assert_that(refusal), {"edge_caddy_state": {"stdout": state}}) is admitted
     names = [task.get("name") for task in tasks]
     assert names.index(_READ) < names.index(_REFUSAL) < names.index(_INSTALL), names
 

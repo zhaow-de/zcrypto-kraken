@@ -2400,7 +2400,9 @@ def test_the_access_role_refuses_a_node_without_caddy_before_the_install_and_in_
         "failed_when": False,
         "check_mode": False,
     }
-    assert truthy(assert_that(find_task(tasks, _CADDY_REFUSAL)), {"access_caddy_state": {"stdout": state}}) is admitted
+    refusal = find_task(tasks, _CADDY_REFUSAL)
+    assert set(refusal) == {"name", "ansible.builtin.assert"}, sorted(refusal)
+    assert truthy(assert_that(refusal), {"access_caddy_state": {"stdout": state}}) is admitted
     names = [task.get("name") for task in tasks]
     assert names.index(_CADDY_READ) < names.index(_CADDY_REFUSAL) < names.index(_CADDY_INSTALL), names
 
