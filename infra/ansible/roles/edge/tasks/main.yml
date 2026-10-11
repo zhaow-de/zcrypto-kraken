@@ -1,14 +1,7 @@
 ---
 # The Caddy edge (spec 00122 D15), the node's one public listener; tests/test_infra_edge_role.py holds what it renders and gates.
-# Caddy is frozen at the installed version while Cloudsmith's repository is out (five outages in 30 days by
-# 2026-10-11): the source and its key are removed so `apt update` passes, and apt keeps the installed Caddy over
-# Debian's older one, since it downgrades only under a pin of 1000 or more. A node that never had Caddy installs
-# Debian's own from main instead, 2.6.2 on Debian 13, until the owner's debmirror replaces the source.
-- name: the Caddy apt repository removed — the interim of 2026-10-11
-  ansible.builtin.deb822_repository:
-    name: caddy
-    state: absent
-    install_python_debian: true
+- name: the Caddy apt repository removed
+  ansible.builtin.import_tasks: caddy-source-absent.yml
 
 - name: caddy present — the installed version, never forced or held
   ansible.builtin.apt:

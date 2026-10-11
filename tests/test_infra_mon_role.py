@@ -373,6 +373,23 @@ def test_alloy_alone_is_held_and_pinned_and_the_other_packages_followed():
     assert recommends["ansible.builtin.apt"]["install_recommends"] is False
 
 
+CADDY_SOURCE_ABSENT = {"name": "edge", "tasks_from": "caddy-source-absent"}
+
+
+def _refreshes_the_apt_cache(task: dict) -> bool:
+    apt = task.get("ansible.builtin.apt")
+    shell = " ".join(str(task.get(key, "")) for key in ("ansible.builtin.command", "ansible.builtin.shell"))
+    refresh = isinstance(apt, dict) and bool(apt.get("update_cache") or apt.get("cache_valid_time"))
+    return refresh or bool(re.search(r"\bapt(-get)?\s+update\b", shell))
+
+
+def test_the_caddy_source_comes_off_before_the_first_apt_refresh():
+    leaves = [task for task, _, _ in alloy_version.role_leaves("mon", frozenset())]
+    removals = [i for i, task in enumerate(leaves) if task.get("ansible.builtin.include_role") == CADDY_SOURCE_ABSENT]
+    refreshes = [i for i, task in enumerate(leaves) if _refreshes_the_apt_cache(task)]
+    assert removals and refreshes and removals[0] < refreshes[0], (removals, refreshes)
+
+
 # --- the preview on a node that has nothing yet ------------------------------------------------------------------
 _CHANGED, _UNCHANGED, _SKIPPED = {"changed": True}, {"changed": False}, {"changed": False, "skipped": True}
 

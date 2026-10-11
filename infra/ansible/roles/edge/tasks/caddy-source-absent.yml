@@ -1,0 +1,11 @@
+---
+# Caddy is frozen at the installed version while Cloudsmith's repository is out (five outages in 30 days by
+# 2026-10-11): the source and its key are removed so `apt update` passes, and apt keeps the installed Caddy over
+# Debian's older one, since it downgrades only under a pin of 1000 or more. A node that never had Caddy installs
+# Debian's own from main instead, 2.6.2 on Debian 13, until the owner's debmirror replaces the source. Its own file,
+# so the mon role can include it ahead of its first apt refresh.
+- name: the Caddy apt repository removed — the interim of 2026-10-11
+  ansible.builtin.deb822_repository:
+    name: caddy
+    state: absent
+    install_python_debian: true

@@ -13,6 +13,7 @@ REPO = Path(__file__).resolve().parents[1]
 ANSIBLE = REPO / "infra/ansible"
 ROLE = ANSIBLE / "roles/edge"
 TASKS = ROLE / "tasks/main.yml"
+SOURCE = ROLE / "tasks/caddy-source-absent.yml"
 HANDLERS = ROLE / "handlers/main.yml"
 HOSTNAME = "edge.example.test"
 HASH_A = "$2b$10$" + "a" * 53
@@ -94,9 +95,12 @@ def test_every_parameter_set_routes_the_authenticated_paths_first_and_the_upstre
 # --- packages: Caddy kept at its installed version, its Cloudsmith source removed ---------------------------------
 def test_the_caddy_repository_is_removed_and_caddy_kept_installed_never_forced_held_or_pinned_to_a_version():
     tasks = iter_tasks(load_tasks(TASKS))
-    (repository,) = [task["ansible.builtin.deb822_repository"] for task, _ in tasks if "ansible.builtin.deb822_repository" in task]
+    assert find_task(load_tasks(TASKS), "the Caddy apt repository removed")["ansible.builtin.import_tasks"] == SOURCE.name
+    files = sorted((ROLE / "tasks").glob("*.yml"))
+    leaves = [task for path in files for task, _ in iter_tasks(load_tasks(path))]
+    (repository,) = [task["ansible.builtin.deb822_repository"] for task in leaves if "ansible.builtin.deb822_repository" in task]
     assert repository == {"name": "caddy", "state": "absent", "install_python_debian": True}
-    carriers = [task.get("name") for task in load_tasks(TASKS) if "cloudsmith" in str(task).lower()]
+    carriers = [task.get("name") for path in files for task in load_tasks(path) if "cloudsmith" in str(task).lower()]
     assert carriers == [], carriers
     (install,) = [task["ansible.builtin.apt"] for task, _ in tasks if "ansible.builtin.apt" in task]
     assert install == {"name": "caddy", "state": "present", "update_cache": True}, "the repository task refreshes no cache"
