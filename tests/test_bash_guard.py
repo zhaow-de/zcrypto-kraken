@@ -801,7 +801,8 @@ AGENT_ADMITTED = [
 
 
 # `grep` and `rg` stay the printing arm's: the git-grep arm admits them whatever their scope.
-# (command, cwd under the repo) -- a `git grep` whose pathspecs, read by git from that cwd, select a vaulted file.
+# (command, cwd under the repo) -- a `git grep` the arm refuses: its selection, read by git from that cwd, reaches a
+# vaulted file, or an operand or option git would read past what the arm can judge.
 UNSCOPED_GREPS = [
     ("git grep -l foo -- tests infra", "."),
     ("git grep -n foo", "."),
@@ -811,6 +812,9 @@ UNSCOPED_GREPS = [
     ("git grep -n foo ':/caddy'", "."),
     ("git grep -n foo ':0:infra/ansible/files/deploy_zcrypto_ed25519'", "."),
     ("git grep -n foo 0e950ee10 -- infra/ansible/files", "."),
+    ("git grep -l foo 0e950ee10 -- infra/ansible/files/deploy_ed25519", "."),
+    ("git grep -O foo infra docs", "."),
+    ("git grep --open-files-in-pager foo infra docs", "."),
     ("git grep --no-inde -l foo -- docs", "."),
     ("git grep --untrack -l foo -- docs", "."),
     ("git grep -n foo -- ':(nonsense)infra'", "."),
