@@ -73,6 +73,19 @@ def set_facts(task: dict, variables: dict) -> dict:
     return {k: t.template(trust_as_template(v)) for k, v in task["ansible.builtin.set_fact"].items()}
 
 
+def refreshes_the_apt_cache(task: dict) -> bool:
+    for key, args in task.items():
+        module = key.rsplit(".", 1)[-1]
+        if not isinstance(args, dict):
+            continue
+        if module in ("apt", "package") and (args.get("update_cache") or args.get("cache_valid_time")):
+            return True
+        if module == "apt_repository" and args.get("update_cache", True):
+            return True
+    shell = " ".join(str(task.get(key, "")) for key in ("ansible.builtin.command", "ansible.builtin.shell"))
+    return bool(re.search(r"\bapt(-get)?\s+update\b", shell))
+
+
 def task_index(tasks: list[dict], name: str) -> int:
     # Positional, top-level only -- ORDER is the property under test, and find_task's recursion into
     # block/pre_tasks would return a task whose index says nothing about the role's own sequence.
@@ -2405,6 +2418,14 @@ def test_the_access_role_refuses_a_node_without_caddy_before_the_install_and_in_
     assert truthy(assert_that(refusal), {"access_caddy_state": {"stdout": state}}) is admitted
     names = [task.get("name") for task in tasks]
     assert names.index(_CADDY_READ) < names.index(_CADDY_REFUSAL) < names.index(_CADDY_INSTALL), names
+
+
+def test_the_access_role_removes_the_caddy_source_before_its_first_apt_refresh():
+    leaves = [task for task, _, _ in alloy_version.role_leaves("access", frozenset())]
+    removal = {"name": "caddy", "state": "absent"}
+    removals = [i for i, task in enumerate(leaves) if task.get("ansible.builtin.deb822_repository") == removal]
+    refreshes = [i for i, task in enumerate(leaves) if refreshes_the_apt_cache(task)]
+    assert removals and refreshes and removals[0] < refreshes[0], (removals, refreshes)
 
 
 AGENTBOARD_UNIT = ANSIBLE / "roles" / "access_ops" / "templates" / "zaccess-agentboard.service.j2"
