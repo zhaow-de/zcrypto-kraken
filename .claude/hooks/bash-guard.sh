@@ -725,14 +725,15 @@ def git_sub(words):
 
 
 EXCLUDES_SPELLED = "`':!*vault*' ':!*.sops.*' ':!infra/ansible/files/*_ed25519'`"
+# git grep's options whose value is the NEXT word; `-O` and `--open-files-in-pager` take only an attached one.
 GREP_VALUE = {
-    "-e", "-f", "-C", "-A", "-B", "-m", "-O", "--threads", "--max-depth", "--max-count", "--context", "--after-context",
-    "--before-context", "--open-files-in-pager",
+    "-e", "-f", "-C", "-A", "-B", "-m", "--threads", "--max-depth", "--max-count", "--context", "--after-context",
+    "--before-context",
 }
 
 
 def grep_pathspecs(rest):
-    # git's rule: before `--`, the first bare word is the pattern unless `-e` or `-f` gave one; empty is the whole tree.
+    # git's rule: before `--`, the first bare word is the pattern unless `-e` or `-f` gave one.
     specs, ended, bare, patterned = [], False, [], False
     i = 0
     while i < len(rest):
@@ -753,7 +754,6 @@ def grep_pathspecs(rest):
         else:
             bare.append(a)
         i += 1
-    # (operands before `--`, pathspecs after it): a revision can stand only among the former.
     return (bare if patterned else bare[1:]), specs
 
 
@@ -768,8 +768,7 @@ def object_type(where, word):
 
 def scoped_grep(rest, where):
     # git does the selecting, never a hand matcher: `git ls-files` from the payload's cwd over the pathspecs as spelled.
-    # A commit operand's tree joins the index through `--with-tree`; a tree, blob or tag operand is refused, as is a
-    # search past the index (`--no-index`, `--untracked`, by git's own option-prefix rule).
+    # A commit's tree is overlaid on the index, a superset that can only refuse more; any other object refuses.
     if any(a[:2] == "--" and among(a, {"--no-index", "--untracked"}) for a in rest):
         return False
     bare, specs = grep_pathspecs(rest)
@@ -829,7 +828,7 @@ def judge_vault(words, raw, where):
     for d in chdirs:
         where = resolve(where, d)
     if sub == "grep" and where and not scoped_grep(rest, where):
-        refuse_vault(words, "searches a vaulted file -- add " + EXCLUDES_SPELLED + " after `--`, spelled from the repository root, or name files outside the vaulted set", raw)
+        refuse_vault(words, "may search a vaulted file -- from the repository root add " + EXCLUDES_SPELLED + " after `--`, or name files outside the vaulted set", raw)
     if sub in ("show", "cat-file") and where:
         hit = next((a for a in rest if ":" in a and a[:1] != "-" and at_revision(where, a)), None)
         if hit:
