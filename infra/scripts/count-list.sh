@@ -276,7 +276,8 @@ c_probe_verdicts_without_the_script() {
   fi
   since="$landed"
   [[ "$PROBE_VERDICT_RULE_SINCE" > "$since" ]] && since="$PROBE_VERDICT_RULE_SINCE"
-  comm -23 <(git log develop HEAD --since="$since" --grep='control proven' --grep=KILLED --grep=SURVIVED --format=%h | sort) \
+  # A docs(plans) or docs(specs) commit quotes a plan's probe rows, whose fences name the script themselves: out.
+  comm -23 <(git log develop HEAD --since="$since" --grep='control proven' --grep=KILLED --grep=SURVIVED --format='%h %s' | grep -vE ' docs\((plans|specs)\)' | cut -d' ' -f1 | sort) \
            <(git log develop HEAD --since="$since" --grep=mutate-probe --format=%h | sort) | wc -l
 }
 
@@ -366,7 +367,12 @@ c_engine_window_overrides() {
 }
 
 # A watch number, not a gate: the band's successful rows that carry no well-formed `window`, whose admission can only be inferred.
-c_engine_rows_on_the_completion_floor() { uv run python infra/scripts/deploy-log-audit.py engine-window --log "${COUNT_LIST_DEPLOY_LOG:-docs/reference/deploy-log.jsonl}" | sed -n 's/^engine rows .*of which on the completion floor \([0-9][0-9]*\)$/\1/p'; }
+c_engine_rows_on_the_completion_floor() {
+  local since window=()
+  since="$(round_closed_at)" || return 2
+  if [ -n "$since" ]; then window=(--since "$since"); fi
+  uv run python infra/scripts/deploy-log-audit.py engine-window --log "${COUNT_LIST_DEPLOY_LOG:-docs/reference/deploy-log.jsonl}" "${window[@]}" | sed -n 's/^engine rows .*of which on the completion floor \([0-9][0-9]*\)$/\1/p'
+}
 
 # The window opens at the log's first row carrying a `preflight`, the rows before it gated by the capture bake. An empty
 # `tags` stays out: `site.yml` admits one on the primary only beside `--skip-tags engine`, a run of no engine-role task.

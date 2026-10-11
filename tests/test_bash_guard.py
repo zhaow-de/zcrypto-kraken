@@ -149,7 +149,7 @@ REFUSED = [
     ("cat f | head -n 5 | wc -l", "head -n 5"),
     ("git status --porcelain | head -1 | wc -c", "head -1"),
     ("git log | head -20 | sort -u | wc -l", "head -20"),  # the count need not be the next stage
-    ("git grep -n TODO | head -10 | grep -c cli/", "head -10"),
+    ("git grep -n TODO -- cli ':!*vault*' ':!*.sops.*' ':!infra/ansible/files/*_ed25519' | head -10 | grep -c cli/", "head -10"),
     ("git log --oneline | head -5 | grep --count fix", "head -5"),
     ("git log --oneline | head -5 | rg --count-matches fix", "head -5"),
     ("uv run pytest -q | tail -1 | grep -c passed", "tail -1"),
@@ -365,7 +365,7 @@ ADMITTED = [
     "git rebase -n main",
     "git am -3 patch.mbox",
     "git log --oneline -n 5",
-    "git grep -n -- no-verify",
+    "git grep -n no-verify -- tests ':!*vault*' ':!*.sops.*' ':!infra/ansible/files/*_ed25519'",
     "git push --no-verify",
     "sed -n 1,5p file",
     "ls -n",
@@ -744,7 +744,7 @@ AGENT_ADMITTED = [
     ("git ls-tree HEAD", MAIN),
     ("git ls-remote origin", MAIN),
     ("git cat-file -t HEAD", MAIN),
-    ("git grep -n TODO", MAIN),
+    ("git grep -n TODO -- cli ':!*vault*' ':!*.sops.*' ':!infra/ansible/files/*_ed25519'", MAIN),
     ("git blame README.md", MAIN),
     ("git describe --tags", MAIN),
     ("git name-rev HEAD", MAIN),
@@ -797,6 +797,83 @@ AGENT_ADMITTED = [
     (f"pushd {WORKTREE} && git commit -m x", MAIN),
     ("git commit -m x", "/tmp/elsewhere"),
     ("git commit -m x", f"{MAIN}-other"),  # a sibling sharing the main checkout's path as a prefix
+]
+
+
+# `grep` and `rg` stay the printing arm's: the git-grep arm admits them whatever their scope.
+UNSCOPED_GREPS = [
+    ("git grep -l foo -- tests infra", "."),
+    ("git grep -n foo", "."),
+    ("git grep -n foo HEAD", "."),
+    ("git grep -n foo HEAD:infra", "."),
+    ("git grep -n foo 'HEAD^{tree}'", "."),
+    ("git grep -n foo ':/caddy'", "."),
+    ("git grep -n foo ':0:infra/ansible/files/deploy_zcrypto_ed25519'", "."),
+    ("git grep -n foo 0e950ee10 -- infra/ansible/files", "."),
+    ("git grep -l foo 0e950ee10 -- infra/ansible/files/deploy_ed25519", "."),
+    ("git grep -O foo infra docs", "."),
+    ("git grep --open-files-in-pager foo infra docs", "."),
+    ("git grep --cont 3 docs", "."),
+    ("git grep --max-c 1 docs", "."),
+    ("git grep --after 3 docs", "."),
+    ("git grep --thr 2 docs", "."),
+    ("git grep --max-dep 1 docs", "."),
+    ("git grep -nC 3 docs", "."),
+    ("git grep -lm 1 docs", "."),
+    ("git grep -nA 2 docs", "."),
+    ("git grep -n foo archive/w4-status-after-pipeline -- docs", "."),
+    ("git grep -C 99 -e -- 0e950ee10 'infra/ansible/files/deploy_ed2551*'", "."),
+    ("git grep -ne -- HEAD:infra", "."),
+    ("git grep -n -- foo", "."),
+    ("git grep -n -- foo HEAD:infra", "."),
+    ("git grep -C 99 -- BEGIN 0e950ee10 'infra/ansible/files/deploy_ed2551*'", "."),
+    ("git grep --no-inde -l foo -- docs", "."),
+    ("git grep --untrack -l foo -- docs", "."),
+    ("git grep -n foo -- ':(nonsense)infra'", "."),
+    ("git grep -n foo -- infra/ansible", "."),
+    ("git grep -n foo -- ./infra ':!*.sops.*'", "."),
+    ("git grep -n foo -- infra//ansible", "."),
+    ("git grep -n foo -- ':(icase)INFRA'", "."),
+    ("git grep -n foo -- infra/ansible/group_vars/all/vault.yml", "."),
+    ("git grep -n foo -- README.md ':/'", "."),
+    ("git grep -l foo -- infra ':!*vault*' ':!*.sops.*' ':!infra/ansible/files/deploy_*'", "."),
+    ("git grep -l foo -- infra ':!*vault*' ':!*.sops.*' ':!*/deploy_*_ed25519'", "."),
+    ("git grep -l foo -- infra ':!docs/vault-notes.md' ':!x.sops.d' ':!y_ed25519'", "."),
+    ("git grep -n foo -- infra ':(exclude,glob)*vault*' ':(exclude)*.sops.*' ':(exclude)infra/ansible/files/*_ed25519'", "."),
+    ("git grep -n foo -- ../infra", "docs"),
+    ("git grep -n foo -- ':/'", "docs"),
+    ("git grep -n foo -- ':(top)infra'", "docs"),
+    ("git grep -l foo -- ':!*vault*' ':!*.sops.*'", "infra"),
+    ("git grep -n foo -- files/deploy_zcrypto_ed25519", "infra/ansible"),
+]
+SCOPED_GREPS = [
+    ("git grep -l foo -- tests infra ':!*vault*' ':!*.sops.*' ':!infra/ansible/files/*_ed25519'", "."),
+    (
+        "git grep -n -e foo -- infra ':!*vault.yml' ':!*.vault' ':!*.sops.*' ':!*vault-password*' ':!infra/ansible/files/*_ed25519'",
+        ".",
+    ),
+    ("git grep -n foo -- infra ':^*vault*' ':^*.sops.*' ':^infra/ansible/files/*_ed25519'", "."),
+    ("git grep -n foo -- tests/test_bash_guard.py", "."),
+    ("git grep -n foo tests/test_bash_guard.py README.md", "."),
+    ("git grep -n foo -- README.md ':(glob)infra/*'", "."),
+    ("git grep -n foo -- ':(top)README.md'", "."),
+    ("git grep -n foo -- ':(literal)README.md'", "."),
+    ("git grep --max-count 1 foo pyproject.toml", "."),
+    ("git grep -l -e foo -e bar -- tests", "."),
+    ("git grep -n foo -- docs cli", "."),
+    ("git grep -n foo HEAD -- docs", "."),
+    ("git grep -n foo HEAD -- README.md", "."),
+    ("git grep -Ofoo infra docs", "."),
+    ("git grep -nC3 foo -- docs", "."),
+    ("git grep --cont 3 foo -- docs", "."),
+    ("git grep -e -- -- docs", "."),
+    ("git grep -ne -- docs/README.md", "."),
+    ("git grep -n -- foo -- docs", "."),
+    ("git grep -n -- foo docs/README.md", "."),
+    ("git grep -n -- foo -- HEAD:infra", "."),
+    ("git grep -n foo -- .", "docs"),
+    ("git grep -n foo -- ':/tests'", "infra"),
+    ("grep -n foo README.md", "."),
 ]
 
 
@@ -1117,3 +1194,36 @@ MAIN_LOOP = (
 def test_the_main_loop_runs_what_a_dispatched_agent_may_not(tmp_path: Path, command: str, where: str, extra: dict):
     r = run_hook(agent_call(command, where, **extra), cwd=tmp_path, env=AGENT_ENV)
     assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
+
+
+def call_from(command: str, sub: str) -> dict:
+    return {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(REPO / sub)}
+
+
+@pytest.mark.parametrize(("command", "sub"), UNSCOPED_GREPS, ids=[f"{c} @ {s}" for c, s in UNSCOPED_GREPS])
+def test_a_git_grep_that_selects_a_vaulted_file_is_blocked_with_the_remedy(tmp_path: Path, command: str, sub: str):
+    r = run_hook(call_from(command, sub), cwd=tmp_path)
+    assert r.returncode == 2, r.stderr
+    assert "BLOCKED" in r.stderr and "`vault_var` through command substitution" in r.stderr
+    assert r.stdout == ""
+
+
+@pytest.mark.parametrize(
+    ("command", "remedy"),
+    [
+        ("git grep -n foo HEAD:infra", "search a commit, or the index"),
+        ("git grep --no-inde -l foo -- docs", "drop `--no-index` or `--untracked`"),
+        ("git grep -n foo -- ':(nonsense)infra'", "spell it as git ls-files accepts it"),
+        ("git grep -n foo -- infra", "':!*vault*' ':!*.sops.*' ':!infra/ansible/files/*_ed25519'"),
+    ],
+)
+def test_a_refused_git_greps_remedy_names_its_own_way_through(tmp_path: Path, command: str, remedy: str):
+    r = run_hook(call(command), cwd=tmp_path)
+    assert r.returncode == 2 and remedy in r.stderr, r.stderr
+
+
+@pytest.mark.parametrize(("command", "sub"), SCOPED_GREPS, ids=[f"{c} @ {s}" for c, s in SCOPED_GREPS])
+def test_a_git_grep_that_selects_no_vaulted_file_is_admitted_silently(tmp_path: Path, command: str, sub: str):
+    r = run_hook(call_from(command, sub), cwd=tmp_path)
+    assert r.returncode == 0, r.stderr
+    assert r.stderr == "" and r.stdout == ""

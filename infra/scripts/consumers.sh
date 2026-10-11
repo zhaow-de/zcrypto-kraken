@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# The consumers of a changed file: the files under tests, infra and .claude that name it, then every test that globs,
-# walks or lists files -- a tree walker names no file, and no text rule tells it from a fixture walk, so that list is
-# a superset. The search is `git grep` with vault-shaped and `*.sops.*` paths excluded, never `grep -r`, which opens
-# the vault files.
+# The consumers of a changed file: the files under tests, infra and .claude that name it, then the tests that glob,
+# walk or list files and name its top-level directory -- or, for a changed test, walk their own. The search is
+# `git grep` with vault-shaped and `*.sops.*` paths excluded, never `grep -r`, which opens the vault files.
 # Usage: infra/scripts/consumers.sh <path>...   (a path as the tree names it: infra/scripts/foo.sh, cli/engine/x.py)
 #   rc: 0 printed, 2 usage or not in a repository.
 set -euo pipefail
@@ -20,7 +19,14 @@ for path in "$@"; do
   readers="$(git grep -l -w "${stem_arg[@]}" -e "$name" -- tests infra .claude "${VAULT_EXCLUDES[@]}" | grep -v -F -x "$path" || true)"
   case "$path" in tests/test_*.py) readers="$(printf '%s\n%s' "$path" "$readers")" ;; esac
   readers="$(printf '%s\n' "$readers" | sed '/^$/d')"
-  if [[ -n "$readers" ]]; then printf '%s\n' "$readers"; else echo "# (none -- a finding: run the file's own test or its directory's readers, never the full suite)"; fi
+  if [[ -n "$readers" ]]; then printf '%s\n' "$readers"; else echo "# (none -- no direct reader: a prose file runs nothing and its claim is the pre-review's or prove-inert.py's; a code file runs its own test; never the full suite)"; fi
+  # A glob over a tmp_path fixture names no directory of the tree.
+  if [[ "$path" != */* ]]; then echo "# tree walkers: none -- a top-level file"; continue; fi
+  top="${path%%/*}"
+  echo "# tree walkers over $top/ (the tests that glob, walk or list files and name that directory, or walk their own under tests/; a whole-tree walk naming none is not listed):"
+  walkers="$(git grep -l -E 'rglob\(|\.glob\(|os\.walk\(|iterdir\(|listdir\(|scandir\(|ls-files' -- tests "${VAULT_EXCLUDES[@]}" | sort || true)"
+  for w in $walkers; do
+    if git grep -q -E "(^|[\"'/ (])${top//./\\.}([\"'/ )]|$)" -- "$w"; then printf '%s\n' "$w"
+    elif [[ "$top" == tests ]] && git grep -q -E '__file__\)(\.resolve\(\))?\.parent(\.(glob|rglob|iterdir)\(|$)' -- "$w"; then printf '%s\n' "$w"; fi
+  done
 done
-echo "# tree walkers (every test that globs, walks or lists files -- a superset: one over its own fixtures is harmless to run):"
-git grep -l -E 'rglob\(|\.glob\(|os\.walk\(|iterdir\(|listdir\(|scandir\(|ls-files' -- tests "${VAULT_EXCLUDES[@]}" | sort || true

@@ -1,6 +1,6 @@
 ---
 name: zcrypto-rollout-image
-description: Attended canary rollout of the app-image digest — capture secondary, event-sized bake with abort signals, then capture primary and engine in one shot — with preflight, rollback and verify-by-outcome; plus every tier's image-converge mechanics (engine window, ops, panel regeneration, NAS) and the bumps of the cache tier's two third-party pins, Valkey and HAProxy. User-invoked only.
+description: Attended app-image digest rollout — capture secondary, the bake, then primary and engine — and every tier's image-converge mechanics: the ops and NAS converges, panel regeneration, the cache tier's Valkey and HAProxy bumps. User-invoked only.
 disable-model-invocation: true
 ---
 
