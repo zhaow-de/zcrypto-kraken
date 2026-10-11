@@ -382,3 +382,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #682 | 2026-10-09 | docs(records): T0217 phase 2 and T0218 sittings, the edge route | — | 00121, 00122, 00123 | T0085, T0217, T0218 |
 | #683 | 2026-10-09 | feat(ops): 00123 R12 — the two-stack comparison runs from 2026-10-10 | — | 00121, 00123 | — |
 | #684 | 2026-10-10 | feat(cli): T0215 — the Blockpit fallback transform of Kraken exports | — | 00126 | T0215 |
+| #686 | 2026-10-11 | feat(data): 00125 — the rolling OHLC canonical, extended from the tape | — | 00125 | — |
