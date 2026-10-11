@@ -87,7 +87,6 @@ def test_a_changed_test_lists_the_walkers_over_tests_and_those_beside_it(tmp_pat
     repo = _repo(tmp_path)
     r = _run(repo, "tests/test_other.py")
     walkers = r.stdout.split("# tree walkers over tests/", 1)[1].splitlines()[1:]
-    # test_root_glob.py reads `__file__` only to find the root and walks infra/: not a walker beside the changed test.
     assert walkers == ["tests/test_parent_glob.py", "tests/test_parent_glob_sq.py", "tests/test_walker.py"]
 
 

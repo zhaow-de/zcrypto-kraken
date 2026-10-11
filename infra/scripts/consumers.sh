@@ -20,14 +20,13 @@ for path in "$@"; do
   case "$path" in tests/test_*.py) readers="$(printf '%s\n%s' "$path" "$readers")" ;; esac
   readers="$(printf '%s\n' "$readers" | sed '/^$/d')"
   if [[ -n "$readers" ]]; then printf '%s\n' "$readers"; else echo "# (none -- no direct reader: a prose file runs nothing and its claim is the pre-review's or prove-inert.py's; a code file runs its own test; never the full suite)"; fi
-  # A glob over a tmp_path fixture names no directory of the tree; a changed test also takes the walkers over their
-  # own directory (`__file__`'s parent globbed or listed). A top-level file has no directory to walk.
+  # A glob over a tmp_path fixture names no directory of the tree.
   if [[ "$path" != */* ]]; then echo "# tree walkers: none -- a top-level file"; continue; fi
   top="${path%%/*}"
   echo "# tree walkers over $top/ (the tests that glob, walk or list files and name that directory; a whole-tree walk naming none is not listed):"
   walkers="$(git grep -l -E 'rglob\(|\.glob\(|os\.walk\(|iterdir\(|listdir\(|scandir\(|ls-files' -- tests "${VAULT_EXCLUDES[@]}" | sort || true)"
   for w in $walkers; do
     if git grep -q -E "(^|[\"'/ (])${top//./\\.}([\"'/ )]|$)" -- "$w"; then printf '%s\n' "$w"
-    elif [[ "$top" == tests ]] && git grep -q -E '__file__\)(\.resolve\(\))?\.parent\.(glob|rglob|iterdir)\(' -- "$w"; then printf '%s\n' "$w"; fi
+    elif [[ "$top" == tests ]] && git grep -q -E '__file__\)(\.resolve\(\))?\.parent\b' -- "$w"; then printf '%s\n' "$w"; fi
   done
 done
