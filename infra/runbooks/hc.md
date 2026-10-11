@@ -329,7 +329,7 @@ The node's Alloy, an apt package under systemd, stopped shipping to the observab
 
 1. On the node: `systemctl status alloy`.
 2. `sudo journalctl -u alloy --no-pager -n 100`. A config that fails to load is the usual cause; the role validates the file before it lands, so look for a hand edit of `/etc/alloy/config.alloy`.
-3. `sudo systemctl restart alloy` is the usual fix. If it will not stay up, re-converge: `infra/ansible/scripts/converge.sh site.yml --limit zcrypto-hc --tags alloy -e hc_image_tag=<the pinned tag>` from the workstation, the tag the `hc` row of `docs/reference/fleet-pins.md` records.
+3. `sudo systemctl restart alloy` is the usual fix. If it will not stay up, re-converge: `infra/ansible/scripts/converge.sh site.yml --limit zcrypto-hc --tags alloy -e hc_image_tag=<the pinned tag>` from the workstation, the tag the `hc` row of `docs/reference/fleet-pins.md` records. After the Caddy interim of 2026-10-11 merges and before the node's `--tags hc` converge has run, this `--tags alloy` converge fails loudly at Alloy's apt refresh on the Cloudsmith source that converge removes: take `infra/ansible/scripts/converge.sh site.yml --limit zcrypto-hc --tags hc -e hc_image_tag=<the pinned tag>` first.
 4. Confirm from the workstation: `uv run python infra/scripts/grafana-query.py --stack mon 'count(up{host="zcrypto-hc"})'` reads 2.
 
 ### Retire when
