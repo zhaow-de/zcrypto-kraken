@@ -3,6 +3,24 @@
 - name: the Caddy apt repository removed
   ansible.builtin.import_tasks: caddy-source-absent.yml
 
+# Read in a preview too, so a node without Caddy fails its preview, before apt could put Debian's 2.6.2 in its place.
+- name: read whether caddy is installed
+  ansible.builtin.command:
+    argv: [dpkg-query, --show, "--showformat=${db:Status-Status}", caddy]
+  register: edge_caddy_state
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: refuse a node without caddy while its apt source is removed
+  ansible.builtin.assert:
+    that: edge_caddy_state.stdout == 'installed'
+    fail_msg: >-
+      caddy is not installed on {{ inventory_hostname }} (dpkg reads its state as
+      '{{ edge_caddy_state.stdout or "never installed" }}'). Caddy's vendor apt source is removed while that
+      repository is out, the interim of 2026-10-11, so apt's only caddy is Debian's 2.6.2, which this play does not
+      install. The way back is the owner's debmirror replacing the source.
+
 - name: caddy present — the installed version, never forced or held
   ansible.builtin.apt:
     name: caddy

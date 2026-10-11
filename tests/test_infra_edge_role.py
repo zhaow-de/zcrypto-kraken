@@ -7,7 +7,7 @@ import pytest
 import yaml
 
 from tests import role_render
-from tests.test_infra_converge_guards import find_task, iter_tasks, load_tasks, set_facts, when_conditions
+from tests.test_infra_converge_guards import assert_that, find_task, iter_tasks, load_tasks, set_facts, truthy, when_conditions
 
 REPO = Path(__file__).resolve().parents[1]
 ANSIBLE = REPO / "infra/ansible"
@@ -105,6 +105,29 @@ def test_the_caddy_repository_is_removed_and_caddy_kept_installed_never_forced_h
     (install,) = [task["ansible.builtin.apt"] for task, _ in tasks if "ansible.builtin.apt" in task]
     assert install == {"name": "caddy", "state": "present", "update_cache": True}, "the repository task refreshes no cache"
     assert "ansible.builtin.dpkg_selections" not in {key for task, _ in tasks for key in task}, "a hold skips caddy silently"
+
+
+_READ = "read whether caddy is installed"
+_REFUSAL = "refuse a node without caddy while its apt source is removed"
+_INSTALL = "caddy present — the installed version, never forced or held"
+
+
+@pytest.mark.parametrize(
+    ("state", "admitted"), [("installed", True), ("", False), ("config-files", False), ("not-installed", False)]
+)
+def test_a_node_without_caddy_is_refused_before_the_install_and_in_a_preview(state, admitted):
+    tasks = load_tasks(TASKS)
+    assert find_task(tasks, _READ) == {
+        "name": _READ,
+        "ansible.builtin.command": {"argv": ["dpkg-query", "--show", "--showformat=${db:Status-Status}", "caddy"]},
+        "register": "edge_caddy_state",
+        "changed_when": False,
+        "failed_when": False,
+        "check_mode": False,
+    }
+    assert truthy(assert_that(find_task(tasks, _REFUSAL)), {"edge_caddy_state": {"stdout": state}}) is admitted
+    names = [task.get("name") for task in tasks]
+    assert names.index(_READ) < names.index(_REFUSAL) < names.index(_INSTALL), names
 
 
 # --- the preview on a node that has no caddy yet ------------------------------------------------------------------

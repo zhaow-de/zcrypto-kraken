@@ -2382,6 +2382,29 @@ def test_the_caddy_repository_is_removed_and_caddy_kept_installed_never_forced_o
     assert caddy == [{"name": "caddy", "state": "present", "update_cache": True}, {"name": "caddy", "selection": "install"}], caddy
 
 
+_CADDY_READ = "read whether caddy is installed"
+_CADDY_REFUSAL = "refuse a node without caddy while its apt source is removed"
+_CADDY_INSTALL = "caddy present — the installed version, never forced (the Caddyfile validate is the guard)"
+
+
+@pytest.mark.parametrize(
+    ("state", "admitted"), [("installed", True), ("", False), ("config-files", False), ("not-installed", False)]
+)
+def test_the_access_role_refuses_a_node_without_caddy_before_the_install_and_in_a_preview(state, admitted):
+    tasks = load_tasks(ACCESS_TASKS)
+    assert find_task(tasks, _CADDY_READ) == {
+        "name": _CADDY_READ,
+        "ansible.builtin.command": {"argv": ["dpkg-query", "--show", "--showformat=${db:Status-Status}", "caddy"]},
+        "register": "access_caddy_state",
+        "changed_when": False,
+        "failed_when": False,
+        "check_mode": False,
+    }
+    assert truthy(assert_that(find_task(tasks, _CADDY_REFUSAL)), {"access_caddy_state": {"stdout": state}}) is admitted
+    names = [task.get("name") for task in tasks]
+    assert names.index(_CADDY_READ) < names.index(_CADDY_REFUSAL) < names.index(_CADDY_INSTALL), names
+
+
 AGENTBOARD_UNIT = ANSIBLE / "roles" / "access_ops" / "templates" / "zaccess-agentboard.service.j2"
 AGENTBOARD_START = ANSIBLE / "roles" / "access_ops" / "templates" / "zaccess-agentboard-start.sh.j2"
 ACCESS_OPS_TASKS = ANSIBLE / "roles" / "access_ops" / "tasks" / "main.yml"

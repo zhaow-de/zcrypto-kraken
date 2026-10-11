@@ -47,12 +47,27 @@
     state: absent
 # Caddy is frozen at the installed version while Cloudsmith's repository is out (five outages in 30 days by
 # 2026-10-11): the source and its key are removed so `apt update` passes, and apt keeps the installed Caddy over
-# Debian's older one, since it downgrades only under a pin of 1000 or more. A node that never had Caddy installs
-# Debian's own from main instead, 2.6.2 on Debian 13, the release spec 00075 D9 judged too far behind for this
-# edge, until the owner's debmirror replaces the source. The Caddyfile task below runs
-# `validate: caddy validate` -- the INSTALLED binary against the NEW config, before writing it -- so a config
-# this Caddy cannot parse fails the converge loudly. A Caddy that cannot parse its config does not start, so the
-# failure direction is CLOSED: the edge goes dark, never serving without mTLS.
+# Debian's older one, since it downgrades only under a pin of 1000 or more. A node without Caddy is refused below,
+# before the install and in a preview too, so Debian's own 2.6.2 on Debian 13, the release spec 00075 D9 judged too
+# far behind for this edge, is never installed in its place; the owner's debmirror replacing the source is the way
+# back. The Caddyfile task below runs `validate: caddy validate` -- the INSTALLED binary against the NEW config,
+# before writing it -- so a config this Caddy cannot parse fails the converge loudly. A Caddy that cannot parse its
+# config does not start, so the failure direction is CLOSED: the edge goes dark, never serving without mTLS.
+- name: read whether caddy is installed
+  ansible.builtin.command:
+    argv: [dpkg-query, --show, "--showformat=${db:Status-Status}", caddy]
+  register: access_caddy_state
+  changed_when: false
+  failed_when: false
+  check_mode: false
+- name: refuse a node without caddy while its apt source is removed
+  ansible.builtin.assert:
+    that: access_caddy_state.stdout == 'installed'
+    fail_msg: >-
+      caddy is not installed on {{ inventory_hostname }} (dpkg reads its state as
+      '{{ access_caddy_state.stdout or "never installed" }}'). Caddy's vendor apt source is removed while that
+      repository is out, the interim of 2026-10-11, so apt's only caddy is Debian's 2.6.2, which this play does not
+      install. The way back is the owner's debmirror replacing the source.
 - name: caddy present — the installed version, never forced (the Caddyfile validate is the guard)
   ansible.builtin.apt:
     name: caddy
