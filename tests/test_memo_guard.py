@@ -125,6 +125,9 @@ def test_hook_is_wired_pre_write_on_edit_and_write():
         ("at 1x:30Z", "1x:30"),
         ("at 12:3X", "12:3X"),
         ("at 12:3?Z", "12:3?"),
+        ("at 2026-10-11T12:3xZ", "12:3x"),
+        ("at ?2:30Z", "?2:30"),
+        ("at ??:??Z", "??:??"),
     ],
 )
 def test_a_placeholder_stamp_is_refused_in_any_edit(hook, tmp_path: Path, text: str, named: str):
