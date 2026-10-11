@@ -87,7 +87,7 @@ The preview names files under `/etc/zcrypto-ops/alloy` alone — `compose.yaml` 
 
 ### The observability node, the bridgehead, then the dead-man node
 
-After the Caddy interim of 2026-10-11 merges, each of these three nodes takes its role-tagged converge (`--limit zcrypto-mon --tags mon`, `--limit zaccess --tags access`, `--limit zcrypto-hc --tags hc`) before its `--tags alloy` converge below: that converge removes Caddy's Cloudsmith source, and an Alloy run before it passes its preview and fails in the real pass at Alloy's apt refresh, the pin file already moved.
+After the Caddy interim of 2026-10-11 merges, each node takes its role-tagged converge (`--limit zcrypto-mon --tags mon`, `--limit zaccess --tags access`, `--limit zcrypto-hc --tags hc -e hc_image_tag=<the pinned tag>`) before its `--tags alloy` one below: that converge removes Caddy's Cloudsmith source, and an Alloy run before it passes its preview and fails at Alloy's apt refresh, the pin file already moved.
 
 ```bash
 ssh mon 'systemctl show -p ActiveEnterTimestamp --value grafana-server prometheus loki caddy'
