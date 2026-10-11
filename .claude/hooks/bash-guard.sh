@@ -724,6 +724,49 @@ def git_sub(words):
     return (argv[i], argv[i + 1 :], chdirs) if i < len(argv) else (None, [], chdirs)
 
 
+EXCLUDES_SPELLED = "`':!*vault*' ':!*.sops.*' ':!infra/ansible/files/*_ed25519'`"
+GREP_VALUE = {"-e", "-f", "-C", "-A", "-B", "-m", "-O", "--threads", "--max-depth", "--open-files-in-pager"}
+
+
+def grep_pathspecs(rest):
+    # The pathspecs a `git grep` searches: the words after `--`, else its operands past the pattern -- the first
+    # bare word unless `-e` or `-f` carries the pattern; an option's value is skipped. None is the whole tree.
+    specs, ended, bare, patterned = [], False, [], False
+    i = 0
+    while i < len(rest):
+        a = rest[i]
+        if ended:
+            specs.append(a)
+        elif a == "--":
+            ended = True
+        elif a in ("-e", "-f"):
+            patterned = True
+            i += 1
+        elif a.startswith(("--and", "--or", "--not")) or a in ("(", ")"):
+            pass
+        elif a in GREP_VALUE:
+            i += 1
+        elif a.startswith("-"):
+            pass
+        else:
+            bare.append(a)
+        i += 1
+    if ended:
+        return specs
+    return bare if patterned else bare[1:]
+
+
+def scoped_grep(rest, where):
+    # A `git grep` that cannot open a vaulted file: every vault-shaped path excluded by pathspec, or every operand a
+    # single existing file spelled without a wildcard.
+    specs = grep_pathspecs(rest)
+    excl = [x for x in specs if x.startswith((":!", ":(exclude)"))]
+    if any("vault" in x for x in excl) and any(".sops." in x for x in excl) and any("_ed25519" in x for x in excl):
+        return True
+    files = [x for x in specs if not x.startswith(":")]
+    return bool(files) and all(not WILD.search(x) and os.path.isfile(posixpath.join(where, x)) for x in files)
+
+
 def refuse_vault(words, what, raw):
     refuse(f"`{spelled(words)}` {what}; in `{raw}`. {VAULT_REMEDY}")
 
@@ -760,6 +803,8 @@ def judge_vault(words, raw, where):
     sub, rest, chdirs = git_sub(words)
     for d in chdirs:
         where = resolve(where, d)
+    if sub == "grep" and where and not scoped_grep(rest, where):
+        refuse_vault(words, "searches the tree without the vault pathspecs -- add " + EXCLUDES_SPELLED + " after `--`, or name single files", raw)
     if sub in ("show", "cat-file") and where:
         hit = next((a for a in rest if ":" in a and a[:1] != "-" and at_revision(where, a)), None)
         if hit:
