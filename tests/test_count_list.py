@@ -192,7 +192,7 @@ def test_the_three_clauses_state_the_ref_window_and_exclusions_their_counters_re
     assert re.match(r"commits on `develop`, and on the branch being read, since ", probe), probe
     assert re.match(r"non-merge commits on `develop`, and on the branch being read, since ", prose), prose
     assert re.search(
-        r"carries `KILLED`, `SURVIVED` or `control proven` without naming `mutate-probe`, a `docs\(plans\)` or `docs\(specs\)` commit out",
+        r"carries `KILLED`, `SURVIVED` or `control proven` without naming `mutate-probe`, a `docs\(plans\)` or `docs\(specs\)` commit out, its fences naming the script$",
         probe,
     ), probe
     assert re.search(r" — a `claude\(` commit, or one naming this entry, discusses the rule and is out$", prose), prose
