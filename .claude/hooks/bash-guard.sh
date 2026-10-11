@@ -726,16 +726,11 @@ def git_sub(words):
 
 
 EXCLUDES_SPELLED = "`':!*vault*' ':!*.sops.*' ':!infra/ansible/files/*_ed25519'`"
-# One of each vault-shaped name; an exclude set is admitted when its patterns cover every one.
-VAULT_REPRESENTATIVES = (
-    "infra/ansible/group_vars/all/vault.yml",
-    "infra/ansible/host_vars/zcrypto/vault.yml",
-    "infra/ansible/files/zaccess_ca.key.vault",
-    "infra/ansible/vault-password.sops.yaml",
-    "infra/ansible/vault-password",
-    "infra/ansible/files/deploy_x_ed25519",
-)
-GREP_VALUE = {"-e", "-f", "-C", "-A", "-B", "-m", "-O", "--threads", "--max-depth", "--open-files-in-pager"}
+GREP_VALUE = {
+    "-e", "-f", "-C", "-A", "-B", "-m", "-O", "--threads", "--max-depth", "--max-count", "--context", "--after-context",
+    "--before-context", "--open-files-in-pager",
+}
+MAGIC = re.compile(r"^:\(([^)]*)\)(.*)$")
 
 
 def grep_pathspecs(rest):
@@ -765,18 +760,49 @@ def grep_pathspecs(rest):
     return bare if patterned else bare[1:]
 
 
-def scoped_grep(rest, where):
-    # Admitted: the three vault excludes after `--`, or operands that are each a named file outside the vaulted set.
-    specs = grep_pathspecs(rest)
-    patterns = [x[2:] if x.startswith(":!") else x[len(":(exclude)"):] for x in specs if x.startswith((":!", ":(exclude)"))]
-    if all(any(fnmatch.fnmatch(rep, pat) for pat in patterns) for rep in VAULT_REPRESENTATIVES):
+def pathspec_parts(spec):
+    # (excluded, pattern): git's pathspec magic -- `:!x` and `:^x` exclude, `:(exclude,…)x` too; `:/x` and `:(top)x`
+    # are x from the root; `:(glob)x`, `:(literal)x`, `:(icase)x` are x; a bare `:` prefix is nothing.
+    if spec.startswith((":!", ":^")):
+        return True, spec[2:]
+    m = MAGIC.match(spec)
+    if m:
+        kinds = {k.strip() for k in m.group(1).split(",")}
+        return "exclude" in kinds, m.group(2)
+    if spec.startswith(":/"):
+        return False, spec[2:]
+    if spec.startswith(":"):
+        return False, spec[1:]
+    return False, spec
+
+
+def names(pattern, path):
+    # Whether a pathspec names a path: the path itself, a directory above it, or a glob over it.
+    if pattern in ("", "."):
         return True
-    if any(x.startswith(":") for x in specs if not x.startswith((":!", ":(exclude)"))):
-        return False  # a positive magic pathspec -- `:/`, `:(glob)…` -- is a tree, not a file
-    files = [x for x in specs if not x.startswith(":")]
-    return bool(files) and all(
-        not WILD.search(x) and os.path.isfile(posixpath.join(where, x)) and not held(x, where) for x in files
-    )
+    pattern = pattern.rstrip("/")
+    return path == pattern or path.startswith(pattern + "/") or fnmatch.fnmatch(path, pattern)
+
+
+@functools.lru_cache(maxsize=8)
+def vaulted_files(where):
+    done = subprocess.run(["git", "-C", where, "ls-files", "-z"], capture_output=True, text=True)
+    if done.returncode:
+        return ()
+    return tuple(p for p in done.stdout.split("\0") if p and vault_path("/" + p))
+
+
+def scoped_grep(rest, where):
+    # Admitted when no vaulted file of the tree is searched: every one is outside the positive pathspecs or under an
+    # exclude, read against `git ls-files`, never against a sample of names.
+    parts = [pathspec_parts(x) for x in grep_pathspecs(rest)]
+    excludes = [pat for ex, pat in parts if ex]
+    positives = [pat for ex, pat in parts if not ex]
+    for v in vaulted_files(where):
+        searched = (not positives or any(names(pat, v) for pat in positives)) and not any(names(pat, v) for pat in excludes)
+        if searched:
+            return False
+    return True
 
 
 def refuse_vault(words, what, raw):
