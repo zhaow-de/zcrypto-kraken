@@ -730,14 +730,21 @@ GREP_OPTIONS = ("efCABm", "O", {"context", "after-context", "before-context", "m
 
 
 def grep_pathspecs(rest):
-    # git's rule: before `--`, the first bare word is the pattern unless `-e` or `-f` gave one; after it, every word is
-    # a pathspec.
+    # git's rule: the pattern is `-e`'s or `-f`'s, else the first bare word; only a `--` after it starts the pathspecs.
     flags, _, ops, sep = option_walk(rest, *GREP_OPTIONS, with_separator=True)
     after = rest[sep + 1 :] if sep is not None else []
     bare = [o for o in ops[: len(ops) - len(after)] if o not in ("(", ")")]
-    if not any(f in ("e", "f") for f in flags):
-        bare = bare[1:]
-    return bare, after
+    if any(f in ("e", "f") for f in flags):
+        return bare, after
+    if bare:
+        return bare[1:], after
+    # git skips a `--` that comes before the pattern: the next word is the pattern, the words up to a second `--` are
+    # revisions or paths, and only that second `--` starts the pathspecs.
+    words = after[1:]
+    if "--" in words:
+        k = words.index("--")
+        return [w for w in words[:k] if w not in ("(", ")")], words[k + 1 :]
+    return [w for w in words if w not in ("(", ")")], []
 
 
 def object_type(where, word):
@@ -880,8 +887,7 @@ def main_admits(sub, rest):
 
 def option_walk(rest, short_value, short_attached, long_value, with_separator=False):
     # A subcommand's options -- a short one as its letter, a long one as its name -- each with its value or None, and
-    # its operands; an option's value is no operand. With `with_separator`, also where the `--` that ended the options
-    # stood, or None: a `--` consumed as an option's value is no separator.
+    # its operands; an option's value is no operand.
     flags, values, ops, j, sep = [], [], [], 0, None
     while j < len(rest):
         tok = rest[j]
