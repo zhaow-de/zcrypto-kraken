@@ -67,8 +67,12 @@ def test_the_probe_verdict_predicate_is_the_scripts_own_wording():
     assert fn, "the entry's function is gone or renamed"
     # The arm parsed as a line, not searched as a substring: `tests/test_config_selectors_are_parsed.py` refuses
     # `in` over a hand-edited infra file, and the anchored shape is the stronger claim anyway.
-    left = re.search(r"^\s*comm -23 <\(git log (?P<opts>[^|]*?)--format=%h \| sort\)", fn.group(0), re.M)
-    assert left, "the left arm is no longer the first `comm -23 <(git log ...)` line of the function"
+    left = re.search(
+        r"^\s*comm -23 <\(git log (?P<opts>[^|]*?)--format='%h %s' \| grep -vE ' docs\\\(\(plans\|specs\)\\\)' \| cut -d' ' -f1 \| sort\)",
+        fn.group(0),
+        re.M,
+    )
+    assert left, "the left arm is no longer the first `comm -23 <(git log ...)` line, with a docs(plans|specs) commit out"
     assert re.fullmatch(
         r'develop HEAD --since="\$since" --grep=\'control proven\' --grep=KILLED --grep=SURVIVED ', left.group("opts")
     ), left.group("opts")
@@ -948,6 +952,10 @@ REPIN = {"ts": "2026-09-24T16:30:00Z", "limit": "zcrypto", "tags": "engine", "rc
 GATED = {**REPIN, "ts": "2026-09-24T12:00:00Z", "preflight": PASSED}
 BYPASSED = {**REPIN, "extra_vars": {"engine_image_digest": DIGEST, "engine_preflight_override": "an approved hotfix"}}
 WINDOWED = {
+    "engine-rows-on-the-completion-floor": [
+        {"ts": ts, "limit": "zcrypto", "tags": "engine", "rc": 0, "extra_vars": {}}
+        for ts in ("2026-09-19T08:12:24Z", "2026-09-25T08:12:24Z")
+    ],
     "engine-repins-without-a-preflight": [GATED, *({**REPIN, "ts": ts} for ts in (BEFORE, AT))],
     "engine-preflight-overrides": [GATED, *({**BYPASSED, "ts": ts} for ts in (BEFORE, AT))],
     "canary-bypasses-on-the-primary": [
@@ -1045,11 +1053,13 @@ def test_the_capture_pair_count_books_no_restart_for_an_alloy_converge_on_a_capt
 
 def test_the_completion_floor_count_reads_only_the_rows_that_carry_no_window_record(tmp_path):
     git_dir = _history(tmp_path, closes_a_round=True)
-    band = {"ts": "2026-09-19T08:12:24Z", "limit": "zcrypto", "tags": "engine", "rc": 0, "extra_vars": {}}
-    window = {"at": 1789833600 + 700, "floor": 1789833600 + 408, "arm": "journal", "override": False}
-    rows = [band, {**band, "ts": "2026-09-19T12:12:24Z"}, {**band, "ts": "2026-09-19T16:12:24Z", "window": window}]
+    band = {"ts": "2026-09-25T08:12:24Z", "limit": "zcrypto", "tags": "engine", "rc": 0, "extra_vars": {}}
+    window = {"at": 1790352000 + 700, "floor": 1790352000 + 408, "arm": "journal", "override": False}
+    rows = [band, {**band, "ts": "2026-09-25T12:12:24Z"}, {**band, "ts": "2026-09-25T16:12:24Z", "window": window}]
     entry = "engine-rows-on-the-completion-floor"
     assert _windowed(tmp_path, entry, git_dir, rows=rows).stdout == f"{entry}\t2\n"
+    # A row stamped before the round closed is outside the window, as it is for every other engine entry.
+    assert _windowed(tmp_path, entry, git_dir, rows=[{**band, "ts": "2026-09-19T08:12:24Z"}]).stdout == f"{entry}\t0\n"
 
 
 def test_a_recorded_override_row_is_counted_as_a_bypass_and_not_as_outside_the_gap(tmp_path):
