@@ -725,16 +725,15 @@ def git_sub(words):
 
 
 EXCLUDES_SPELLED = "`':!*vault*' ':!*.sops.*' ':!infra/ansible/files/*_ed25519'`"
-# git grep's value-taking options, as option_walk reads them: a short letter with a separate or attached value, `-O`
-# with an attached one alone, and a long name by git's unique-prefix rule.
+# git grep's value-taking options in option_walk's slots; `-O` takes only an attached value, never the next word.
 GREP_OPTIONS = ("efCABm", "O", {"context", "after-context", "before-context", "max-count", "max-depth", "threads"})
 
 
 def grep_pathspecs(rest):
-    # git's rule: before `--`, the first bare word is the pattern unless `-e` or `-f` gave one; `(`, `)` and the
-    # boolean words are no operands. (operands before `--`, pathspecs after it): a revision stands only among the former.
-    flags, _, ops = option_walk(rest, *GREP_OPTIONS)
-    after = rest[rest.index("--") + 1 :] if "--" in rest else []
+    # git's rule: before `--`, the first bare word is the pattern unless `-e` or `-f` gave one; after it, every word is
+    # a pathspec.
+    flags, _, ops, sep = option_walk(rest, *GREP_OPTIONS, with_separator=True)
+    after = rest[sep + 1 :] if sep is not None else []
     bare = [o for o in ops[: len(ops) - len(after)] if o not in ("(", ")")]
     if not any(f in ("e", "f") for f in flags):
         bare = bare[1:]
@@ -879,14 +878,16 @@ def main_admits(sub, rest):
     return False
 
 
-def option_walk(rest, short_value, short_attached, long_value):
+def option_walk(rest, short_value, short_attached, long_value, with_separator=False):
     # A subcommand's options -- a short one as its letter, a long one as its name -- each with its value or None, and
-    # its operands; an option's value is no operand.
-    flags, values, ops, j = [], [], [], 0
+    # its operands; an option's value is no operand. With `with_separator`, also where the `--` that ended the options
+    # stood, or None: a `--` consumed as an option's value is no separator.
+    flags, values, ops, j, sep = [], [], [], 0, None
     while j < len(rest):
         tok = rest[j]
         j += 1
         if tok == "--":
+            sep = j - 1
             ops.extend(rest[j:])
             break
         if tok.startswith("--"):
@@ -908,6 +909,8 @@ def option_walk(rest, short_value, short_attached, long_value):
                 break
         else:
             ops.append(tok)
+    if with_separator:
+        return flags, values, ops, sep
     return flags, values, ops
 
 
