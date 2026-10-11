@@ -800,33 +800,46 @@ AGENT_ADMITTED = [
 ]
 
 
-# A `git grep` that searches a vaulted file of the tree, beside the shape nearest it that searches none; `grep` and
-# `rg` stay the printing arm's.
+# `grep` and `rg` stay the printing arm's: the git-grep arm admits them whatever their scope.
+# (command, cwd under the repo) -- a `git grep` whose pathspecs, read by git from that cwd, select a vaulted file.
 UNSCOPED_GREPS = [
-    "git grep -l foo -- tests infra",
-    "git grep -n foo",
-    "git grep -n foo -- infra/ansible",
-    "git grep -n foo -- infra/ansible/group_vars/all/vault.yml",
-    "git grep -n foo -- README.md ':(glob)infra/*'",
-    "git grep -n foo -- README.md ':/'",
-    "git grep -l foo -- infra ':!*vault*' ':!*.sops.*' ':!infra/ansible/files/deploy_*'",
-    "git grep -l foo -- infra ':!*vault*' ':!*.sops.*' ':!*/deploy_*_ed25519'",
-    "git grep -l foo -- infra ':!docs/vault-notes.md' ':!x.sops.d' ':!y_ed25519'",
+    ("git grep -l foo -- tests infra", "."),
+    ("git grep -n foo", "."),
+    ("git grep -n foo HEAD", "."),
+    ("git grep -n foo -- infra/ansible", "."),
+    ("git grep -n foo -- ./infra ':!*.sops.*'", "."),
+    ("git grep -n foo -- infra//ansible", "."),
+    ("git grep -n foo -- ':(icase)INFRA'", "."),
+    ("git grep -n foo -- infra/ansible/group_vars/all/vault.yml", "."),
+    ("git grep -n foo -- README.md ':/'", "."),
+    ("git grep -l foo -- infra ':!*vault*' ':!*.sops.*' ':!infra/ansible/files/deploy_*'", "."),
+    ("git grep -l foo -- infra ':!*vault*' ':!*.sops.*' ':!*/deploy_*_ed25519'", "."),
+    ("git grep -l foo -- infra ':!docs/vault-notes.md' ':!x.sops.d' ':!y_ed25519'", "."),
+    ("git grep -n foo -- infra ':(exclude,glob)*vault*' ':(exclude)*.sops.*' ':(exclude)infra/ansible/files/*_ed25519'", "."),
+    ("git grep -n foo -- ../infra", "docs"),
+    ("git grep -n foo -- ':/'", "docs"),
+    ("git grep -n foo -- ':(top)infra'", "docs"),
+    ("git grep -l foo -- ':!*vault*' ':!*.sops.*'", "infra"),
+    ("git grep -n foo -- files/deploy_zcrypto_ed25519", "infra/ansible"),
 ]
 SCOPED_GREPS = [
-    "git grep -l foo -- tests infra ':!*vault*' ':!*.sops.*' ':!infra/ansible/files/*_ed25519'",
-    "git grep -n -e foo -- infra ':!*vault.yml' ':!*.vault' ':!*.sops.*' ':!*vault-password*' ':!infra/ansible/files/*_ed25519'",
-    "git grep -n foo -- infra ':^*vault*' ':^*.sops.*' ':^infra/ansible/files/*_ed25519'",
-    "git grep -n foo -- infra ':(exclude,glob)*vault*' ':(exclude)*.sops.*' ':(exclude)infra/ansible/files/*_ed25519'",
-    "git grep -n foo -- tests/test_bash_guard.py",
-    "git grep -n foo tests/test_bash_guard.py README.md",
-    "git grep -n foo -- ':(top)README.md'",
-    "git grep -n foo -- ':(literal)README.md'",
-    "git grep --max-count 1 foo pyproject.toml",
-    "git grep -l -e foo -e bar -- tests",
-    "git grep -n foo -- docs cli",
-    "grep -n foo README.md",
-    "grep -c foo infra/ansible/group_vars/all/vault.yml",
+    ("git grep -l foo -- tests infra ':!*vault*' ':!*.sops.*' ':!infra/ansible/files/*_ed25519'", "."),
+    (
+        "git grep -n -e foo -- infra ':!*vault.yml' ':!*.vault' ':!*.sops.*' ':!*vault-password*' ':!infra/ansible/files/*_ed25519'",
+        ".",
+    ),
+    ("git grep -n foo -- infra ':^*vault*' ':^*.sops.*' ':^infra/ansible/files/*_ed25519'", "."),
+    ("git grep -n foo -- tests/test_bash_guard.py", "."),
+    ("git grep -n foo tests/test_bash_guard.py README.md", "."),
+    ("git grep -n foo -- README.md ':(glob)infra/*'", "."),
+    ("git grep -n foo -- ':(top)README.md'", "."),
+    ("git grep -n foo -- ':(literal)README.md'", "."),
+    ("git grep --max-count 1 foo pyproject.toml", "."),
+    ("git grep -l -e foo -e bar -- tests", "."),
+    ("git grep -n foo -- docs cli", "."),
+    ("git grep -n foo -- .", "docs"),
+    ("git grep -n foo -- ':/tests'", "infra"),
+    ("grep -n foo README.md", "."),
 ]
 
 
@@ -1149,16 +1162,20 @@ def test_the_main_loop_runs_what_a_dispatched_agent_may_not(tmp_path: Path, comm
     assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
 
 
-@pytest.mark.parametrize("command", UNSCOPED_GREPS)
-def test_a_tree_search_without_the_vault_pathspecs_is_blocked_with_the_remedy(tmp_path: Path, command: str):
-    r = run_hook(call(command), cwd=tmp_path)
+def call_from(command: str, sub: str) -> dict:
+    return {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(REPO / sub)}
+
+
+@pytest.mark.parametrize(("command", "sub"), UNSCOPED_GREPS, ids=[f"{c} @ {s}" for c, s in UNSCOPED_GREPS])
+def test_a_git_grep_that_selects_a_vaulted_file_is_blocked_with_the_remedy(tmp_path: Path, command: str, sub: str):
+    r = run_hook(call_from(command, sub), cwd=tmp_path)
     assert r.returncode == 2, r.stderr
     assert "BLOCKED" in r.stderr and "':!*vault*' ':!*.sops.*' ':!infra/ansible/files/*_ed25519'" in r.stderr
     assert r.stdout == ""
 
 
-@pytest.mark.parametrize("command", SCOPED_GREPS)
-def test_a_scoped_tree_search_is_admitted_silently(tmp_path: Path, command: str):
-    r = run_hook(call(command), cwd=tmp_path)
+@pytest.mark.parametrize(("command", "sub"), SCOPED_GREPS, ids=[f"{c} @ {s}" for c, s in SCOPED_GREPS])
+def test_a_git_grep_that_selects_no_vaulted_file_is_admitted_silently(tmp_path: Path, command: str, sub: str):
+    r = run_hook(call_from(command, sub), cwd=tmp_path)
     assert r.returncode == 0, r.stderr
     assert r.stderr == "" and r.stdout == ""
