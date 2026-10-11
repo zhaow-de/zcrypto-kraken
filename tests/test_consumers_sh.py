@@ -73,17 +73,18 @@ def test_direct_readers_are_listed_and_the_vault_file_is_not(tmp_path):
     assert "infra/scripts/thing.sh" not in lines[1:]  # the file itself is not its own reader
 
 
-def test_every_test_that_globs_walks_or_lists_follows_as_a_walker(tmp_path):
+def test_a_walker_follows_only_when_it_names_the_changed_files_top_level_directory(tmp_path):
     repo = _repo(tmp_path)
     r = _run(repo, "infra/scripts/thing.sh")
-    walkers = r.stdout.split("# tree walkers", 1)[1].splitlines()[1:]
-    assert walkers == [
-        "tests/test_lsfiles.py",
-        "tests/test_own_fixture_glob.py",
-        "tests/test_parent_glob.py",
-        "tests/test_parent_glob_sq.py",
-        "tests/test_walker.py",
-    ]
+    walkers = r.stdout.split("# tree walkers over infra/", 1)[1].splitlines()[1:]
+    assert walkers == ["tests/test_lsfiles.py"]
+
+
+def test_a_changed_test_lists_the_walkers_over_tests_and_those_beside_it(tmp_path):
+    repo = _repo(tmp_path)
+    r = _run(repo, "tests/test_other.py")
+    walkers = r.stdout.split("# tree walkers over tests/", 1)[1].splitlines()[1:]
+    assert walkers == ["tests/test_parent_glob.py", "tests/test_parent_glob_sq.py", "tests/test_walker.py"]
 
 
 def test_a_changed_test_file_is_its_own_first_reader(tmp_path):
@@ -96,7 +97,7 @@ def test_an_empty_reader_list_is_printed_as_a_finding_never_as_nothing(tmp_path)
     repo = _repo(tmp_path)
     r = _run(repo, "infra/scripts/lonely.py")
     assert r.returncode == 0
-    assert "(none -- a finding" in r.stdout and "never the full suite" in r.stdout
+    assert "(none -- no direct reader" in r.stdout and "never the full suite" in r.stdout
 
 
 def test_no_argument_is_usage(tmp_path):
@@ -119,17 +120,12 @@ def test_the_tree_names_the_script_with_its_walker_tests():
         "tests/test_runbook_internal_tokens.py",
         "tests/test_systemd_user_units.py",
         "tests/test_code_prose_citations.py",
-        "tests/test_risk_limits.py",
-        "tests/test_engine_stub_fidelity.py",
-        "tests/test_engine_node.py",
-        "tests/test_nautilus_interface_pin.py",
         "tests/test_desync_recovery_wiring.py",
-        "tests/test_alloy_tag.py",
         "tests/test_infra_shell_templates_render.py",
         "tests/test_panel_regenerate.py",
         "tests/test_ops_daily.py",
-        "tests/test_review_workflows.py",
         "tests/test_open_topics_frontmatter.py",
-        "tests/test_required_status_checks_match_ci.py",
     ):
         assert walker in out.splitlines(), walker
+    # A walker over another top-level directory is not listed for an infra file: it reads none of it.
+    assert "tests/test_risk_limits.py" not in out.splitlines()
