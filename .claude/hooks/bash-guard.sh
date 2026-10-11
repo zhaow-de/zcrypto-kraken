@@ -51,6 +51,7 @@
 set -euo pipefail
 input="$(cat)"
 prog="$(cat <<'PY'
+import fnmatch
 import functools
 import glob
 import json
@@ -725,12 +726,20 @@ def git_sub(words):
 
 
 EXCLUDES_SPELLED = "`':!*vault*' ':!*.sops.*' ':!infra/ansible/files/*_ed25519'`"
+# One of each vault-shaped name; an exclude set is admitted when its patterns cover every one.
+VAULT_REPRESENTATIVES = (
+    "infra/ansible/group_vars/all/vault.yml",
+    "infra/ansible/host_vars/zcrypto/vault.yml",
+    "infra/ansible/files/zaccess_ca.key.vault",
+    "infra/ansible/vault-password.sops.yaml",
+    "infra/ansible/vault-password",
+    "infra/ansible/files/deploy_x_ed25519",
+)
 GREP_VALUE = {"-e", "-f", "-C", "-A", "-B", "-m", "-O", "--threads", "--max-depth", "--open-files-in-pager"}
 
 
 def grep_pathspecs(rest):
-    # The pathspecs a `git grep` searches: the words after `--`, else its operands past the pattern -- the first
-    # bare word unless `-e` or `-f` carries the pattern; an option's value is skipped. None is the whole tree.
+    # git's rule: without `--`, the first bare word is the pattern unless `-e` or `-f` gave one. Empty is the whole tree.
     specs, ended, bare, patterned = [], False, [], False
     i = 0
     while i < len(rest):
@@ -757,14 +766,17 @@ def grep_pathspecs(rest):
 
 
 def scoped_grep(rest, where):
-    # A `git grep` that cannot open a vaulted file: every vault-shaped path excluded by pathspec, or every operand a
-    # single existing file spelled without a wildcard.
+    # Admitted: the three vault excludes after `--`, or operands that are each a named file outside the vaulted set.
     specs = grep_pathspecs(rest)
-    excl = [x for x in specs if x.startswith((":!", ":(exclude)"))]
-    if any("vault" in x for x in excl) and any(".sops." in x for x in excl) and any("_ed25519" in x for x in excl):
+    patterns = [x[2:] if x.startswith(":!") else x[len(":(exclude)"):] for x in specs if x.startswith((":!", ":(exclude)"))]
+    if all(any(fnmatch.fnmatch(rep, pat) for pat in patterns) for rep in VAULT_REPRESENTATIVES):
         return True
+    if any(x.startswith(":") for x in specs if not x.startswith((":!", ":(exclude)"))):
+        return False  # a positive magic pathspec -- `:/`, `:(glob)…` -- is a tree, not a file
     files = [x for x in specs if not x.startswith(":")]
-    return bool(files) and all(not WILD.search(x) and os.path.isfile(posixpath.join(where, x)) for x in files)
+    return bool(files) and all(
+        not WILD.search(x) and os.path.isfile(posixpath.join(where, x)) and not held(x, where) for x in files
+    )
 
 
 def refuse_vault(words, what, raw):

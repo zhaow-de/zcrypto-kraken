@@ -15,9 +15,9 @@ set -euo pipefail
 # rather than closing the class -- a NUL in `tool_name` desynchronises that too.
 mode="${1:?mode required: pre-write|post-read|post-write}"
 { read -r tool; read -r path; read -r placeholder; } < <(python3 -c 'import json,re,sys; d=json.load(sys.stdin); t=d.get("tool_input",{}); print(d.get("tool_name","")); print(t.get("file_path","")); m=re.search(r"[0-9]{2}:[0-9]x(?:[0-9]|Z|\b)", str(t.get("new_string") or t.get("content") or "")); print(m.group(0) if m else "")')
-# A placeholder stamp -- an hour with an x digit, `08:5xZ`, `13:1xZ` -- is refused in any Edit or Write: eleven such
-# slips in two days, each disclaimed in the same breath, and the clock or a record was always one call away.
-if [[ "$mode" == pre-write && -n "${placeholder:-}" ]]; then
+# Every file, not the memo alone: a stamp with an x for a minute digit is refused before the memo's own checks --
+# except under tests/ and .claude/hooks/, whose own cases spell the placeholders.
+if [[ "$mode" == pre-write && -n "${placeholder:-}" && "$path" != */tests/* && "$path" != */.claude/hooks/* ]]; then
   echo "memo-guard: BLOCKED. '$placeholder' is a placeholder stamp — paste the printed value of \`date -u\` or of the record (an mtime, a reflog, a PR's createdAt), never an x digit." >&2
   exit 2
 fi
