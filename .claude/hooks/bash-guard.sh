@@ -51,7 +51,6 @@
 set -euo pipefail
 input="$(cat)"
 prog="$(cat <<'PY'
-import fnmatch
 import functools
 import glob
 import json
@@ -730,7 +729,6 @@ GREP_VALUE = {
     "-e", "-f", "-C", "-A", "-B", "-m", "-O", "--threads", "--max-depth", "--max-count", "--context", "--after-context",
     "--before-context", "--open-files-in-pager",
 }
-MAGIC = re.compile(r"^:\(([^)]*)\)(.*)$")
 
 
 def grep_pathspecs(rest):
@@ -760,49 +758,22 @@ def grep_pathspecs(rest):
     return bare if patterned else bare[1:]
 
 
-def pathspec_parts(spec):
-    # (excluded, pattern): git's pathspec magic -- `:!x` and `:^x` exclude, `:(exclude,…)x` too; `:/x` and `:(top)x`
-    # are x from the root; `:(glob)x`, `:(literal)x`, `:(icase)x` are x; a bare `:` prefix is nothing.
-    if spec.startswith((":!", ":^")):
-        return True, spec[2:]
-    m = MAGIC.match(spec)
-    if m:
-        kinds = {k.strip() for k in m.group(1).split(",")}
-        return "exclude" in kinds, m.group(2)
-    if spec.startswith(":/"):
-        return False, spec[2:]
-    if spec.startswith(":"):
-        return False, spec[1:]
-    return False, spec
-
-
-def names(pattern, path):
-    # Whether a pathspec names a path: the path itself, a directory above it, or a glob over it.
-    if pattern in ("", "."):
-        return True
-    pattern = pattern.rstrip("/")
-    return path == pattern or path.startswith(pattern + "/") or fnmatch.fnmatch(path, pattern)
-
-
-@functools.lru_cache(maxsize=8)
-def vaulted_files(where):
-    done = subprocess.run(["git", "-C", where, "ls-files", "-z"], capture_output=True, text=True)
-    if done.returncode:
-        return ()
-    return tuple(p for p in done.stdout.split("\0") if p and vault_path("/" + p))
+def is_revision(where, word):
+    done = subprocess.run(["git", "-C", where, "rev-parse", "--verify", "--quiet", word + "^{commit}"], capture_output=True)
+    return done.returncode == 0
 
 
 def scoped_grep(rest, where):
-    # Admitted when no vaulted file of the tree is searched: every one is outside the positive pathspecs or under an
-    # exclude, read against `git ls-files`, never against a sample of names.
-    parts = [pathspec_parts(x) for x in grep_pathspecs(rest)]
-    excludes = [pat for ex, pat in parts if ex]
-    positives = [pat for ex, pat in parts if not ex]
-    for v in vaulted_files(where):
-        searched = (not positives or any(names(pat, v) for pat in positives)) and not any(names(pat, v) for pat in excludes)
-        if searched:
-            return False
-    return True
+    # Admitted when the search selects no vaulted file of the tree. git does the selecting: `git ls-files` from the
+    # payload's cwd over the pathspecs as spelled, so every magic, spelling and cwd reads as git grep reads it; a
+    # bare revision before the pathspecs is the tree at that revision, searched over the same pathspecs.
+    if any(a in ("--no-index", "--untracked") for a in rest):
+        return False
+    specs = [x for x in grep_pathspecs(rest) if not (not x.startswith(":") and is_revision(where, x))]
+    done = subprocess.run(["git", "-C", where, "ls-files", "-z", "--full-name", "--", *specs], capture_output=True, text=True)
+    if done.returncode:
+        return False
+    return not any(vault_path("/" + f) for f in done.stdout.split("\0") if f)
 
 
 def refuse_vault(words, what, raw):

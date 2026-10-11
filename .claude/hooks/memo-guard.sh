@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Read-guard for .local/memo.md (hand-edited outside sessions, not version-controlled), and the placeholder-stamp
-# refusal for every Edit or Write.
+# refusal.
 # Protocol: an Edit is allowed only when the file has been Read since its content last changed;
 # every write invalidates the stamp, so the next write (and honest verification) needs a re-read.
 # A Write of the existing file is refused outright -- it drops whatever the rewrite forgot, and
