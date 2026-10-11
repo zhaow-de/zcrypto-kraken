@@ -100,6 +100,14 @@ def test_an_empty_reader_list_is_printed_as_a_finding_never_as_nothing(tmp_path)
     assert "(none -- no direct reader" in r.stdout and "never the full suite" in r.stdout
 
 
+def test_a_top_level_file_lists_no_walker(tmp_path):
+    repo = _repo(tmp_path)
+    (repo / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True)
+    r = _run(repo, "pyproject.toml")
+    assert "# tree walkers: none -- a top-level file" in r.stdout and "tree walkers over" not in r.stdout
+
+
 def test_no_argument_is_usage(tmp_path):
     repo = _repo(tmp_path)
     r = _run(repo)
