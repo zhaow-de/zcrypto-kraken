@@ -27,6 +27,9 @@ def _repo(tmp_path: pathlib.Path) -> pathlib.Path:
         'import pathlib\nFILES = sorted(pathlib.Path(__file__).resolve().parent.glob("test_*.py"))\n'
     )
     (repo / "tests" / "test_vault_pass_guard.py").write_text("SCRIPT = 'infra/scripts/thing.sh'\n")
+    (repo / "tests" / "test_root_glob.py").write_text(
+        "import pathlib\nROOT = pathlib.Path(__file__).resolve().parents[1]\nFILES = sorted((ROOT / 'infra').rglob('*.sh'))\n"
+    )
     (repo / "tests" / "test_parent_glob_sq.py").write_text(
         "import pathlib\nFILES = sorted(pathlib.Path(__file__).resolve().parent.glob('test_*.py'))\n"
     )
@@ -77,13 +80,14 @@ def test_a_walker_follows_only_when_it_names_the_changed_files_top_level_directo
     repo = _repo(tmp_path)
     r = _run(repo, "infra/scripts/thing.sh")
     walkers = r.stdout.split("# tree walkers over infra/", 1)[1].splitlines()[1:]
-    assert walkers == ["tests/test_lsfiles.py"]
+    assert walkers == ["tests/test_lsfiles.py", "tests/test_root_glob.py"]
 
 
 def test_a_changed_test_lists_the_walkers_over_tests_and_those_beside_it(tmp_path):
     repo = _repo(tmp_path)
     r = _run(repo, "tests/test_other.py")
     walkers = r.stdout.split("# tree walkers over tests/", 1)[1].splitlines()[1:]
+    # test_root_glob.py reads `__file__` only to find the root and walks infra/: not a walker beside the changed test.
     assert walkers == ["tests/test_parent_glob.py", "tests/test_parent_glob_sq.py", "tests/test_walker.py"]
 
 
