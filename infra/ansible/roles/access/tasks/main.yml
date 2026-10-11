@@ -45,14 +45,7 @@
   ansible.builtin.deb822_repository:
     name: caddy
     state: absent
-# Caddy is frozen at the installed version while Cloudsmith's repository is out (five outages in 30 days by
-# 2026-10-11): the source and its key are removed so `apt update` passes, and apt keeps the installed Caddy over
-# Debian's older one, since it downgrades only under a pin of 1000 or more. A node without Caddy is refused below,
-# before the install and in a preview too, so Debian's own 2.6.2 on Debian 13, the release spec 00075 D9 judged too
-# far behind for this edge, is never installed in its place; the owner's debmirror replacing the source is the way
-# back. The Caddyfile task below runs `validate: caddy validate` -- the INSTALLED binary against the NEW config,
-# before writing it -- so a config this Caddy cannot parse fails the converge loudly. A Caddy that cannot parse its
-# config does not start, so the failure direction is CLOSED: the edge goes dark, never serving without mTLS.
+# Off so `apt update` passes while Cloudsmith's repository is out; apt never downgrades the installed Caddy to Debian's.
 - name: read whether caddy is installed
   ansible.builtin.command:
     argv: [dpkg-query, --show, "--showformat=${db:Status-Status}", caddy]
@@ -135,8 +128,8 @@
 
 # Alloy is held at the fleet's version and pinned, through the shared apt role (spec 00123 D3, D5), and runs here,
 # after the revocation path and the flush above, so no Alloy failure in a real pass takes the pinned leaves, the
-# Caddyfile or `reload caddy` with it. A preview that cannot fetch the Grafana repository's signing key still refuses
-# the whole converge, as the Caddy repository's fetch already does.
+# Caddyfile or `reload caddy` with it. A preview that cannot fetch the Grafana repository's signing key refuses
+# the whole converge.
 - name: install, pin and hold alloy at the version committed for this host
   ansible.builtin.import_role:
     name: alloy_apt

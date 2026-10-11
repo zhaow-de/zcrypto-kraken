@@ -3,7 +3,6 @@
 - name: the Caddy apt repository removed
   ansible.builtin.import_tasks: caddy-source-absent.yml
 
-# Read in a preview too, so a node without Caddy fails its preview, before apt could put Debian's 2.6.2 in its place.
 - name: read whether caddy is installed
   ansible.builtin.command:
     argv: [dpkg-query, --show, "--showformat=${db:Status-Status}", caddy]

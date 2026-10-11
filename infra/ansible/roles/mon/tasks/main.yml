@@ -31,8 +31,7 @@
     node_common_secrets_preflight_runbook: infra/runbooks/hc.md's hc-keys procedure
 
 # ---- Packages and their sources ------------------------------------------------------------------
-# Ahead of the Alloy install and the cache refresh below: each runs `apt update`, which Caddy's Cloudsmith source
-# fails while that repository is out. The edge include further down runs the same task again, a no-op by then.
+# `apt update` fails on Caddy's Cloudsmith source while that repository is out.
 - name: the Caddy apt repository removed before any apt refresh
   ansible.builtin.include_role: {name: edge, tasks_from: caddy-source-absent}
 
