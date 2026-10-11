@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# The consumers of a changed file: the files under tests, infra and .claude that name it, then every test that globs,
-# walks or lists files -- a tree walker names no file, and no text rule tells it from a fixture walk, so that list is
-# a superset. The search is `git grep` with vault-shaped and `*.sops.*` paths excluded, never `grep -r`, which opens
-# the vault files.
+# The consumers of a changed file: the files under tests, infra and .claude that name it, then the tests that glob,
+# walk or list files and name its top-level directory. The search is `git grep` with vault-shaped and `*.sops.*`
+# paths excluded, never `grep -r`, which opens the vault files.
 # Usage: infra/scripts/consumers.sh <path>...   (a path as the tree names it: infra/scripts/foo.sh, cli/engine/x.py)
 #   rc: 0 printed, 2 usage or not in a repository.
 set -euo pipefail
@@ -21,11 +20,10 @@ for path in "$@"; do
   case "$path" in tests/test_*.py) readers="$(printf '%s\n%s' "$path" "$readers")" ;; esac
   readers="$(printf '%s\n' "$readers" | sed '/^$/d')"
   if [[ -n "$readers" ]]; then printf '%s\n' "$readers"; else echo "# (none -- no direct reader: a prose file runs nothing and its claim is the pre-review's or prove-inert.py's; a code file runs its own test; never the full suite)"; fi
-  # A tree walker is listed for this file only when it names the file's top-level directory (docs, infra, cli,
-  # .claude, tests) as a path element, or walks beside itself under tests/ for a changed test: a glob over a
-  # tmp_path fixture names no directory of the tree and reads none of it.
+  # A glob over a tmp_path fixture names no directory of the tree; a changed test also takes the walkers rooted at
+  # `__file__`.
   top="${path%%/*}"
-  echo "# tree walkers over $top/ (every test that globs, walks or lists files and names that directory -- a superset: one over its own fixtures is harmless to run):"
+  echo "# tree walkers over $top/ (the tests that glob, walk or list files and name that directory; a whole-tree walk naming none is not listed):"
   walkers="$(git grep -l -E 'rglob\(|\.glob\(|os\.walk\(|iterdir\(|listdir\(|scandir\(|ls-files' -- tests "${VAULT_EXCLUDES[@]}" | sort || true)"
   for w in $walkers; do
     if git grep -q -E "(^|[\"'/ (])${top//./\\.}([\"'/ )]|$)" -- "$w"; then printf '%s\n' "$w"
