@@ -1,7 +1,5 @@
 # One growing OHLC canonical: `ohlc-rolling`, the Q3 15-minute frame extended daily from tape-bars — implementation plan
 
-> Every value a rollout reading decides is a marked slot, `ROLLOUT:` inside double square brackets, listed at the end.
-
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Research reads one canonical that reaches the present: `ohlc-rolling`, the 12 files of `ohlc-15m-20261007` copied byte for byte as its base and tape-bars' daily finals copied from 2026-10-01 as its extension, 60/240/1440 derived on read, every day a write-once index line chained to the one before it, so a trial pins an as-of day by one hash. The ops node extends it after each tape-bars sweep through its `hot-out` outbox, the NAS's hot pull carries it to the hub, `data fetch` attests it, the daily pass reads its head, and the searches, the universe rebuild and the engine seed read it; the reach round retires (spec 00125).
@@ -903,7 +901,7 @@ sudo docker pull "ghcr.io/zhaow-de/zcrypto-capture@$OPS_DIGEST"
 infra/ansible/scripts/converge.sh site.yml --limit zcrypto-ops --tags ops -e ops_image_digest="$OPS_DIGEST" -e ops_alloy_digest="$OPS_ALLOY" -e liquidations_decision=roll-after --check
 ```
 
-the two values replaced by the new image's digest and `alloy_image_digest` in `infra/ansible/group_vars/observed/alloy.yml`, the image pulled first because the ops role has no pull task and its `preflight — refuse a digest the host has not pulled` refuses the preview too. Expected: the preview names the runner scripts and the ops compose file changed — the digest moves in each, and `/usr/local/sbin/zcrypto-tape-bars` carries the extension besides — and `/var/lib/zcrypto-ops/hot-out-staging` created; the scripts and the compose file render `no_log` with `diff: false`, so their read is the source diff from the host's newest qualifying deploy-log row, as the skill's preview bullet says. Then the same without `--check`, and `W$ infra/scripts/ops-postverify.sh`, every check passing; `[[ROLLOUT: the ops image digest the converge lands]]`.
+the two values replaced by the new image's digest and `alloy_image_digest` in `infra/ansible/group_vars/observed/alloy.yml`, the image pulled first because the ops role has no pull task and its `preflight — refuse a digest the host has not pulled` refuses the preview too. Expected: the preview names the runner scripts and the ops compose file changed — the digest moves in each, and `/usr/local/sbin/zcrypto-tape-bars` carries the extension besides — and `/var/lib/zcrypto-ops/hot-out-staging` created; the scripts and the compose file render `no_log` with `diff: false`, so their read is the source diff from the host's newest qualifying deploy-log row, as the skill's preview bullet says. Then the same without `--check`, and `W$ infra/scripts/ops-postverify.sh`, every check passing; the digest the converge landed, filled: `335e768da985`, the ops pin row's in R-records.
 
 **R4. The base, on the owner's word** (immediately after R3, before the next `:52`):
 
@@ -912,7 +910,7 @@ uv run zcrypto data rolling base --source /mnt/zhao-crypto/hot/ohlc-15m-20261007
 uv run zcrypto data rolling verify --root /var/lib/zcrypto-ops/hot-out/ohlc-rolling --as-of 2026-09-30
 ```
 
-Expected: `base <sha256> files=12` — the command refusing before its first rename unless each file's bytes are `Q3_15M_SHA256`'s — and the verify printing `2026-09-30`, the same sha256 and `files=12`; a `base` stopped before it prints is run again at once, the same command completing the base by Task 2's byte-equal rule; `[[ROLLOUT: the base line's sha256]]`.
+Expected: `base <sha256> files=12` — the command refusing before its first rename unless each file's bytes are `Q3_15M_SHA256`'s — and the verify printing `2026-09-30`, the same sha256 and `files=12`; a `base` stopped before it prints is run again at once, the same command completing the base by Task 2's byte-equal rule; the base line, filled: `3b527f2123470a52acf29e7e9db498b0fedcea85e753110e549c289ad2818acb`, `files=12`, the verify at 2026-09-30 printing the same line.
 
 **R5. The first extension** (immediately after R4, before the next `:52`, so the manual start is the first extension and the journal's last ten minutes hold its lines).
 
@@ -926,7 +924,7 @@ Expected: the sweep's summary line, then `head=<the newest day whose twelve fina
 uv run zcrypto data rolling verify --root /var/lib/zcrypto-ops/hot-out/ohlc-rolling --as-of "$HEAD_DAY"
 ```
 
-Expected: `HEAD_DAY`, its line's sha256 and `files=` the base's twelve and twelve a day, exit 0; `[[ROLLOUT: the first extension's summary line and its head line's sha256]]`.
+Expected: `HEAD_DAY`, its line's sha256 and `files=` the base's twelve and twelve a day, exit 0; the first extension, filled: the sweep `days_written=0 days_skipped=48 days_unsettled=24 days_unhealed=0 days_gap=0 rows=0 errors=0`, the extension `head=2026-10-09 days_written=9 holes=0`, the verify at 2026-10-09 `b1303cd954e34d87acd8199f2aa61fcb02b79d89175e2e9979b02929d096da66 files=120`.
 
 **R6. The hub, the fetch and the data-gated tests.** After the NAS's next hourly pull:
 
@@ -936,7 +934,7 @@ uv run zcrypto data fetch
 uv run pytest tests/test_rolling_extend.py -q -p no:cacheprovider -k "test_the_staged_base_is_the_q3_15m_frame_byte_for_byte or test_the_grids_derived_from_the_staged_base_equal_the_q3_coarse_frames"
 ```
 
-Expected: the hub's verify printing R5's sha256 at `HEAD_DAY`; the fetch with no refusal, its `new=` counting the set's files and every other hub set the local root lacks — `derivatives-oi`'s 11 files and `ohlc-reach`'s 31 as read on 2026-10-09; the two data-gated tests `2 passed`, neither skipped; `[[ROLLOUT: the fetch's new-file count and the two data-gated readings]]`.
+Expected: the hub's verify printing R5's sha256 at `HEAD_DAY`; the fetch with no refusal, its `new=` counting the set's files and every other hub set the local root lacks — `derivatives-oi`'s 11 files and `ohlc-reach`'s 31 as read on 2026-10-09; the two data-gated tests `2 passed`, neither skipped; filled: the hub's verify as R5's, the fetch `new=172 skipped=199`, the set's 130 among them, the tests `2 passed, 40 deselected`.
 
 **R7. The head read by value.**
 
@@ -944,9 +942,9 @@ Expected: the hub's verify printing R5's sha256 at `HEAD_DAY`; the fetch with no
 uv run python infra/scripts/ops-daily.py report --since 24h; echo "report exit $?"
 ```
 
-Expected: the `rolling canonical head` row ok, naming the R5 head, its age and its line's first twelve hex; `[[ROLLOUT: the first rolling canonical head row]]`.
+Expected: the `rolling canonical head` row ok, naming the R5 head, its age and its line's first twelve hex; the first head row, filled: `PASS rolling canonical head: head 2026-10-09, 2 days old, line b1303cd954e3`.
 
-**R8. The retirements the owner takes.** By the owner's hand on the NAS, as the Q2 siblings went to `/volume1/ZhaoCrypto/backup-ohlc-squash-2026-10-09/`: `ohlc-reach-20261007` off `hot/` from R2 on, and `ohlc-full-20261007` and `ohlc-15m-20261007` once R6's data-gated tests have passed; each local copy under the main checkout's `data/` the owner removes too, after copying it aside per `CLAUDE.md`'s data rule. No step of this plan moves or deletes a set; `[[ROLLOUT: each retirement's instant and destination]]`.
+**R8. The retirements the owner takes.** By the owner's hand on the NAS, as the Q2 siblings went to `/volume1/ZhaoCrypto/backup-ohlc-squash-2026-10-09/`: `ohlc-reach-20261007` off `hot/` from R2 on, and `ohlc-full-20261007` and `ohlc-15m-20261007` once R6's data-gated tests have passed; each local copy under the main checkout's `data/` the owner removes too, after copying it aside per `CLAUDE.md`'s data rule. No step of this plan moves or deletes a set; the retirements, filled: all three into `/volume1/ZhaoCrypto/backup-ohlc-squash-2026-10-11/` at 2026-10-11T13:28:00Z, and their local copies removed by the owner the same day.
 
 **R-close. Closing a pair the tape stopped carrying** — only on the owner's explicit word, after the head row's attention line has named the pair and the day; never part of this rollout's own run, and taken whenever that word comes. Right after a `:52` tape-bars run has finished, so no extension runs beside it, the values replaced by the attention line's pair and day and the owner's words and their date:
 
@@ -960,17 +958,8 @@ uv run zcrypto data rolling extend --tape-root /var/lib/zcrypto-ops/tape-bars --
 
 Expected: `head=<FROM_DAY or later> days_written=<n> holes=<n>`, followed by `ended` when the close leaves no pair of the set open and no final of the set's pairs dated after its line, the set then ended until a final of one of the set's pairs reappears and reopens it with no owner act, as Task 11's section tells the owner before the word is given, the line for `FROM_DAY` naming the pair under `holes` and carrying the close in its `notes`; a refusal writes nothing and goes back to the owner, a `PAIR` the set does not hold — one spelled otherwise than the attention line names it — and a close given while the set is ended among the refusals.
 
-**R-records.** A records pull request after R7: the converge's deploy-log row and the ops pin row of `docs/reference/fleet-pins.md`; the slots' readings in its message, each retirement R8 has seen by then among them. The catalog's lines naming the sets R8 retires read true before and after each move (Task 10), so a retirement after this pull request owes the tree no edit; the slot below records only the retirements R8 has seen by then, a later one's instant and destination being the owner's to keep.
+**R-records.** A records pull request after R7: the converge's deploy-log row and the ops pin row of `docs/reference/fleet-pins.md`; the slots' readings in its message, each retirement R8 has seen by then among them. The catalog's lines naming the sets R8 retires read true before and after each move (Task 10), so a retirement after this pull request owes the tree no edit.
 
 ## Resolution
 
 This plan delivers spec 00125: the rolling canonical's reader, writer and record; its daily extension on the ops host through the outbox; the fetch's attestation and the daily pass's head row; the searches, the universe rebuild and the engine seed on it; and the reach round's retirement; and, a rider on the owner's word, the master plan's eight lines naming the OHLCVT archive as research's source. It moves no set off the hub — the retirements are the owner's — and it touches neither tape-bars' gate and layout nor what `soak-check`, record 44's legs and the legacy pins read, which stays `ohlc-full` and `ohlc-15m` (Task 6 re-trues `load_union`'s docstring alone).
-
-## Slots the rollout fills
-
-- `[[ROLLOUT: the ops image digest the converge lands]]` (R3) — into the records' pin row.
-- `[[ROLLOUT: the base line's sha256]]` (R4) — the pin of the base alone, the as-of 2026-09-30.
-- `[[ROLLOUT: the first extension's summary line and its head line's sha256]]` (R5).
-- `[[ROLLOUT: the fetch's new-file count and the two data-gated readings]]` (R6).
-- `[[ROLLOUT: the first rolling canonical head row]]` (R7).
-- `[[ROLLOUT: each retirement's instant and destination]]` (R8) — the owner's acts, in R-records' message for those taken before it.
