@@ -1204,8 +1204,22 @@ def call_from(command: str, sub: str) -> dict:
 def test_a_git_grep_that_selects_a_vaulted_file_is_blocked_with_the_remedy(tmp_path: Path, command: str, sub: str):
     r = run_hook(call_from(command, sub), cwd=tmp_path)
     assert r.returncode == 2, r.stderr
-    assert "BLOCKED" in r.stderr and "':!*vault*' ':!*.sops.*' ':!infra/ansible/files/*_ed25519'" in r.stderr
+    assert "BLOCKED" in r.stderr and "`vault_var` through command substitution" in r.stderr
     assert r.stdout == ""
+
+
+@pytest.mark.parametrize(
+    ("command", "remedy"),
+    [
+        ("git grep -n foo HEAD:infra", "search a commit, or the index"),
+        ("git grep --no-inde -l foo -- docs", "drop `--no-index` or `--untracked`"),
+        ("git grep -n foo -- ':(nonsense)infra'", "spell it as git ls-files accepts it"),
+        ("git grep -n foo -- infra", "':!*vault*' ':!*.sops.*' ':!infra/ansible/files/*_ed25519'"),
+    ],
+)
+def test_a_refused_git_greps_remedy_names_its_own_way_through(tmp_path: Path, command: str, remedy: str):
+    r = run_hook(call(command), cwd=tmp_path)
+    assert r.returncode == 2 and remedy in r.stderr, r.stderr
 
 
 @pytest.mark.parametrize(("command", "sub"), SCOPED_GREPS, ids=[f"{c} @ {s}" for c, s in SCOPED_GREPS])

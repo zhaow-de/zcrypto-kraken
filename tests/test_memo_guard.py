@@ -116,7 +116,16 @@ def test_hook_is_wired_pre_write_on_edit_and_write():
 
 
 @pytest.mark.parametrize(
-    ("text", "named"), [("received 12:1xZ (the owner's read)", "12:1xZ"), ("at 08:5xZ", "08:5xZ"), ("about 03:0x", "03:0x")]
+    ("text", "named"),
+    [
+        ("received 12:1xZ (the owner's read)", "12:1x"),
+        ("at 08:5xZ", "08:5x"),
+        ("about 03:0x", "03:0x"),
+        ("at 12:xxZ", "12:xx"),
+        ("at 1x:30Z", "1x:30"),
+        ("at 12:3X", "12:3X"),
+        ("at 12:3?Z", "12:3?"),
+    ],
 )
 def test_a_placeholder_stamp_is_refused_in_any_edit(hook, tmp_path: Path, text: str, named: str):
     other = tmp_path / "ledger.md"
@@ -126,7 +135,9 @@ def test_a_placeholder_stamp_is_refused_in_any_edit(hook, tmp_path: Path, text: 
     assert r.returncode == 2 and "placeholder stamp" in r.stderr and f"'{named}'" in r.stderr
 
 
-@pytest.mark.parametrize("text", ["received 12:15Z", "the fetch at 13:18:04Z", "0x1F and 2026-10-11T12:02:30Z"])
+@pytest.mark.parametrize(
+    "text", ["received 12:15Z", "the fetch at 13:18:04Z", "0x1F and 2026-10-11T12:02:30Z", "slice buf[16:0x20]"]
+)
 def test_a_stamp_pasted_from_the_clock_is_admitted(hook, tmp_path: Path, text: str):
     other = tmp_path / "ledger.md"
     other.write_text("- a line\n")
@@ -143,7 +154,7 @@ def test_a_placeholder_in_a_directory_merely_named_tests_is_refused(hook, tmp_pa
 
 
 def test_a_placeholder_in_a_test_file_or_a_hook_is_admitted(hook, tmp_path: Path):
-    for rel in ("tests/test_memo_guard.py", ".claude/hooks/memo-guard.sh"):
+    for rel in ("tests/test_memo_guard.py", "tests/conftest.py", ".claude/hooks/memo-guard.sh"):
         target = tmp_path / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("x\n")
