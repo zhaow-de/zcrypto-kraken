@@ -732,7 +732,7 @@ GREP_VALUE = {
 
 
 def grep_pathspecs(rest):
-    # git's rule: without `--`, the first bare word is the pattern unless `-e` or `-f` gave one. Empty is the whole tree.
+    # git's rule: before `--`, the first bare word is the pattern unless `-e` or `-f` gave one; empty is the whole tree.
     specs, ended, bare, patterned = [], False, [], False
     i = 0
     while i < len(rest):
@@ -753,27 +753,43 @@ def grep_pathspecs(rest):
         else:
             bare.append(a)
         i += 1
-    if ended:
-        return specs
-    return bare if patterned else bare[1:]
+    # (operands before `--`, pathspecs after it): a revision can stand only among the former.
+    return (bare if patterned else bare[1:]), specs
 
 
-def is_revision(where, word):
-    done = subprocess.run(["git", "-C", where, "rev-parse", "--verify", "--quiet", word + "^{commit}"], capture_output=True)
-    return done.returncode == 0
+def object_type(where, word):
+    # The type of the object a bare operand names -- commit, tree, blob, tag -- or None for a pathspec.
+    done = subprocess.run(["git", "-C", where, "rev-parse", "--verify", "--quiet", word], capture_output=True, text=True)
+    if done.returncode or not done.stdout.strip():
+        return None
+    kind = subprocess.run(["git", "-C", where, "cat-file", "-t", done.stdout.strip()], capture_output=True, text=True)
+    return kind.stdout.strip() or None
 
 
 def scoped_grep(rest, where):
-    # Admitted when the search selects no vaulted file of the tree. git does the selecting: `git ls-files` from the
-    # payload's cwd over the pathspecs as spelled, so every magic, spelling and cwd reads as git grep reads it; a
-    # bare revision before the pathspecs is the tree at that revision, searched over the same pathspecs.
-    if any(a in ("--no-index", "--untracked") for a in rest):
+    # git does the selecting, never a hand matcher: `git ls-files` from the payload's cwd over the pathspecs as spelled.
+    # A commit operand's tree joins the index through `--with-tree`; a tree, blob or tag operand is refused, as is a
+    # search past the index (`--no-index`, `--untracked`, by git's own option-prefix rule).
+    if any(a[:2] == "--" and among(a, {"--no-index", "--untracked"}) for a in rest):
         return False
-    specs = [x for x in grep_pathspecs(rest) if not (not x.startswith(":") and is_revision(where, x))]
-    done = subprocess.run(["git", "-C", where, "ls-files", "-z", "--full-name", "--", *specs], capture_output=True, text=True)
-    if done.returncode:
-        return False
-    return not any(vault_path("/" + f) for f in done.stdout.split("\0") if f)
+    bare, specs = grep_pathspecs(rest)
+    commits = []
+    for x in bare:
+        kind = object_type(where, x)
+        if kind == "commit":
+            commits.append(x)
+        elif kind:
+            return False
+        else:
+            specs.append(x)
+    for tree in commits or [None]:
+        with_tree = [f"--with-tree={tree}"] if tree else []
+        done = subprocess.run(
+            ["git", "-C", where, "ls-files", "-z", "--full-name", *with_tree, "--", *specs], capture_output=True, text=True
+        )
+        if done.returncode or any(vault_path("/" + f) for f in done.stdout.split("\0") if f):
+            return False
+    return True
 
 
 def refuse_vault(words, what, raw):
@@ -813,7 +829,7 @@ def judge_vault(words, raw, where):
     for d in chdirs:
         where = resolve(where, d)
     if sub == "grep" and where and not scoped_grep(rest, where):
-        refuse_vault(words, "searches the tree without the vault pathspecs -- add " + EXCLUDES_SPELLED + " after `--`, or name single files", raw)
+        refuse_vault(words, "searches a vaulted file -- add " + EXCLUDES_SPELLED + " after `--`, spelled from the repository root, or name files outside the vaulted set", raw)
     if sub in ("show", "cat-file") and where:
         hit = next((a for a in rest if ":" in a and a[:1] != "-" and at_revision(where, a)), None)
         if hit:
