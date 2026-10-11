@@ -113,3 +113,22 @@ def test_hook_is_wired_pre_write_on_edit_and_write():
         hook["command"] for entry in settings["hooks"]["PreToolUse"] if entry["matcher"] == "Edit|Write" for hook in entry["hooks"]
     ]
     assert any("memo-guard.sh pre-write" in c for c in commands)
+
+
+@pytest.mark.parametrize(
+    ("text", "named"), [("received 12:1xZ (the owner's read)", "12:1xZ"), ("at 08:5xZ", "08:5xZ"), ("about 03:0x", "03:0x")]
+)
+def test_a_placeholder_stamp_is_refused_in_any_edit(hook, tmp_path: Path, text: str, named: str):
+    other = tmp_path / "ledger.md"
+    other.write_text("- a line\n")
+    payload = {"tool_name": "Edit", "tool_input": {"file_path": str(other), "new_string": text}}
+    r = hook("pre-write", payload)
+    assert r.returncode == 2 and "placeholder stamp" in r.stderr and f"'{named}'" in r.stderr
+
+
+@pytest.mark.parametrize("text", ["received 12:15Z", "the fetch at 13:18:04Z", "0x1F and 2026-10-11T12:02:30Z"])
+def test_a_stamp_pasted_from_the_clock_is_admitted(hook, tmp_path: Path, text: str):
+    other = tmp_path / "ledger.md"
+    other.write_text("- a line\n")
+    payload = {"tool_name": "Edit", "tool_input": {"file_path": str(other), "new_string": text}}
+    assert hook("pre-write", payload).returncode == 0

@@ -149,7 +149,7 @@ REFUSED = [
     ("cat f | head -n 5 | wc -l", "head -n 5"),
     ("git status --porcelain | head -1 | wc -c", "head -1"),
     ("git log | head -20 | sort -u | wc -l", "head -20"),  # the count need not be the next stage
-    ("git grep -n TODO | head -10 | grep -c cli/", "head -10"),
+    ("git grep -n TODO -- cli ':!*vault*' ':!*.sops.*' ':!infra/ansible/files/*_ed25519' | head -10 | grep -c cli/", "head -10"),
     ("git log --oneline | head -5 | grep --count fix", "head -5"),
     ("git log --oneline | head -5 | rg --count-matches fix", "head -5"),
     ("uv run pytest -q | tail -1 | grep -c passed", "tail -1"),
@@ -365,7 +365,7 @@ ADMITTED = [
     "git rebase -n main",
     "git am -3 patch.mbox",
     "git log --oneline -n 5",
-    "git grep -n -- no-verify",
+    "git grep -n no-verify -- tests ':!*vault*' ':!*.sops.*' ':!infra/ansible/files/*_ed25519'",
     "git push --no-verify",
     "sed -n 1,5p file",
     "ls -n",
@@ -744,7 +744,7 @@ AGENT_ADMITTED = [
     ("git ls-tree HEAD", MAIN),
     ("git ls-remote origin", MAIN),
     ("git cat-file -t HEAD", MAIN),
-    ("git grep -n TODO", MAIN),
+    ("git grep -n TODO -- cli ':!*vault*' ':!*.sops.*' ':!infra/ansible/files/*_ed25519'", MAIN),
     ("git blame README.md", MAIN),
     ("git describe --tags", MAIN),
     ("git name-rev HEAD", MAIN),
@@ -797,6 +797,25 @@ AGENT_ADMITTED = [
     (f"pushd {WORKTREE} && git commit -m x", MAIN),
     ("git commit -m x", "/tmp/elsewhere"),
     ("git commit -m x", f"{MAIN}-other"),  # a sibling sharing the main checkout's path as a prefix
+]
+
+
+# A `git grep` that can open a vaulted file -- without the three excluding pathspecs over anything but single
+# files -- beside the scoped shape nearest to it. `grep -r` and `rg` keep the printing arm's judgement.
+UNSCOPED_GREPS = [
+    "git grep -l foo -- tests infra",
+    "git grep -n foo",
+    "git grep -n foo -- infra/ansible",
+    "git grep -l -e foo -e bar -- tests",
+    "git grep -l foo -- tests ':!*vault*' ':!*.sops.*'",
+]
+SCOPED_GREPS = [
+    "git grep -l foo -- tests infra ':!*vault*' ':!*.sops.*' ':!infra/ansible/files/*_ed25519'",
+    "git grep -n -e foo -- tests ':!*vault.yml' ':!*.vault' ':!*.sops.*' ':!*vault-password*' ':!infra/ansible/files/*_ed25519'",
+    "git grep -n foo -- tests/test_bash_guard.py",
+    "git grep -n foo tests/test_bash_guard.py README.md",
+    "grep -n foo README.md",
+    "grep -c foo infra/ansible/group_vars/all/vault.yml",
 ]
 
 
@@ -1117,3 +1136,18 @@ MAIN_LOOP = (
 def test_the_main_loop_runs_what_a_dispatched_agent_may_not(tmp_path: Path, command: str, where: str, extra: dict):
     r = run_hook(agent_call(command, where, **extra), cwd=tmp_path, env=AGENT_ENV)
     assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
+
+
+@pytest.mark.parametrize("command", UNSCOPED_GREPS)
+def test_a_tree_search_without_the_vault_pathspecs_is_blocked_with_the_remedy(tmp_path: Path, command: str):
+    r = run_hook(call(command), cwd=tmp_path)
+    assert r.returncode == 2, r.stderr
+    assert "BLOCKED" in r.stderr and "':!*vault*' ':!*.sops.*' ':!infra/ansible/files/*_ed25519'" in r.stderr
+    assert r.stdout == ""
+
+
+@pytest.mark.parametrize("command", SCOPED_GREPS)
+def test_a_scoped_tree_search_is_admitted_silently(tmp_path: Path, command: str):
+    r = run_hook(call(command), cwd=tmp_path)
+    assert r.returncode == 0, r.stderr
+    assert r.stderr == "" and r.stdout == ""
