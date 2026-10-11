@@ -800,23 +800,31 @@ AGENT_ADMITTED = [
 ]
 
 
-# `grep` and `rg` stay the printing arm's: the git-grep arm admits them whatever their scope.
+# A `git grep` that searches a vaulted file of the tree, beside the shape nearest it that searches none; `grep` and
+# `rg` stay the printing arm's.
 UNSCOPED_GREPS = [
     "git grep -l foo -- tests infra",
     "git grep -n foo",
     "git grep -n foo -- infra/ansible",
-    "git grep -l -e foo -e bar -- tests",
-    "git grep -l foo -- tests ':!*vault*' ':!*.sops.*'",
     "git grep -n foo -- infra/ansible/group_vars/all/vault.yml",
-    "git grep -n foo -- tests/test_bash_guard.py ':/'",
-    "git grep -n foo -- ':(glob)tests/*.py'",
-    "git grep -l foo -- tests ':!docs/vault-notes.md' ':!x.sops.d' ':!y_ed25519'",
+    "git grep -n foo -- README.md ':(glob)infra/*'",
+    "git grep -n foo -- README.md ':/'",
+    "git grep -l foo -- infra ':!*vault*' ':!*.sops.*' ':!infra/ansible/files/deploy_*'",
+    "git grep -l foo -- infra ':!*vault*' ':!*.sops.*' ':!*/deploy_*_ed25519'",
+    "git grep -l foo -- infra ':!docs/vault-notes.md' ':!x.sops.d' ':!y_ed25519'",
 ]
 SCOPED_GREPS = [
     "git grep -l foo -- tests infra ':!*vault*' ':!*.sops.*' ':!infra/ansible/files/*_ed25519'",
-    "git grep -n -e foo -- tests ':!*vault.yml' ':!*.vault' ':!*.sops.*' ':!*vault-password*' ':!infra/ansible/files/*_ed25519'",
+    "git grep -n -e foo -- infra ':!*vault.yml' ':!*.vault' ':!*.sops.*' ':!*vault-password*' ':!infra/ansible/files/*_ed25519'",
+    "git grep -n foo -- infra ':^*vault*' ':^*.sops.*' ':^infra/ansible/files/*_ed25519'",
+    "git grep -n foo -- infra ':(exclude,glob)*vault*' ':(exclude)*.sops.*' ':(exclude)infra/ansible/files/*_ed25519'",
     "git grep -n foo -- tests/test_bash_guard.py",
     "git grep -n foo tests/test_bash_guard.py README.md",
+    "git grep -n foo -- ':(top)README.md'",
+    "git grep -n foo -- ':(literal)README.md'",
+    "git grep --max-count 1 foo pyproject.toml",
+    "git grep -l -e foo -e bar -- tests",
+    "git grep -n foo -- docs cli",
     "grep -n foo README.md",
     "grep -c foo infra/ansible/group_vars/all/vault.yml",
 ]

@@ -134,6 +134,14 @@ def test_a_stamp_pasted_from_the_clock_is_admitted(hook, tmp_path: Path, text: s
     assert hook("pre-write", payload).returncode == 0
 
 
+def test_a_placeholder_in_a_directory_merely_named_tests_is_refused(hook, tmp_path: Path):
+    target = tmp_path / "data" / "tests" / "notes.md"
+    target.parent.mkdir(parents=True)
+    target.write_text("x\n")
+    payload = {"tool_name": "Edit", "tool_input": {"file_path": str(target), "new_string": "received 12:1xZ"}}
+    assert hook("pre-write", payload).returncode == 2
+
+
 def test_a_placeholder_in_a_test_file_or_a_hook_is_admitted(hook, tmp_path: Path):
     for rel in ("tests/test_memo_guard.py", ".claude/hooks/memo-guard.sh"):
         target = tmp_path / rel
