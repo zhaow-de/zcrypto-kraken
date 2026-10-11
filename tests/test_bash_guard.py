@@ -870,6 +870,7 @@ SCOPED_GREPS = [
     ("git grep -ne -- docs/README.md", "."),
     ("git grep -n -- foo -- docs", "."),
     ("git grep -n -- foo docs/README.md", "."),
+    ("git grep -n -- foo -- HEAD:infra", "."),
     ("git grep -n foo -- .", "docs"),
     ("git grep -n foo -- ':/tests'", "infra"),
     ("grep -n foo README.md", "."),
