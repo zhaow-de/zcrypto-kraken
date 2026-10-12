@@ -1,0 +1,23 @@
+# Rendered by the `access` Ansible role at /etc/systemd/system/zaccess-caddy-mirror.service — edit
+# infra/ansible/roles/access/templates/zaccess-caddy-mirror.service.j2 instead. Traceability: spec 00127.
+[Unit]
+Description=Sync of the Caddy apt mirror, one suite, amd64 and main, for the edge nodes
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User={{ access_caddy_mirror_user }}
+Group={{ access_caddy_mirror_user }}
+UMask=0022
+TimeoutStartSec=2h
+# debmirror moves a new index in even when a pool file failed, so it syncs a hard-linked copy of the served tree, and
+# the copy replaces the served tree only once debmirror has exited 0.
+ExecStartPre=/usr/bin/rm -rf {{ access_caddy_mirror_dir }}/staging
+ExecStartPre=/usr/bin/cp -al {{ access_caddy_mirror_served }} {{ access_caddy_mirror_dir }}/staging
+ExecStart=/usr/bin/debmirror --method=https --host={{ access_caddy_mirror_upstream_host }} --root={{ access_caddy_mirror_upstream_root }} --dist=any-version --section=main --arch=amd64 --nosource --check-gpg --keyring={{ caddy_mirror_keyring }} --rsync-extra=none --diff=none --postcleanup --verbose {{ access_caddy_mirror_dir }}/staging
+ExecStartPost=/usr/bin/mv -T --exchange {{ access_caddy_mirror_dir }}/staging {{ access_caddy_mirror_served }}
+ProtectSystem=strict
+ReadWritePaths={{ access_caddy_mirror_dir }}
+PrivateTmp=true
+NoNewPrivileges=true

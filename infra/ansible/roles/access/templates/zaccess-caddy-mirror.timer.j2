@@ -1,0 +1,14 @@
+# Rendered by the `access` Ansible role at /etc/systemd/system/zaccess-caddy-mirror.timer — edit
+# infra/ansible/roles/access/templates/zaccess-caddy-mirror.timer.j2 instead. Traceability: spec 00127.
+[Unit]
+Description=Daily sync of the Caddy apt mirror
+
+[Timer]
+OnCalendar=*-*-* 03:41:00
+RandomizedDelaySec=30min
+# A day the bridgehead was down is synced at its next start.
+Persistent=true
+Unit=zaccess-caddy-mirror.service
+
+[Install]
+WantedBy=timers.target
