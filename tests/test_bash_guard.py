@@ -845,14 +845,24 @@ UNSCOPED_GREPS = [
     ("git grep -n foo -- ':(top)infra'", "docs"),
     ("git grep -l foo -- ':!*vault*' ':!*.sops.*'", "infra"),
     ("git grep -n foo -- files/deploy_zcrypto_ed25519", "infra/ansible"),
-]
-SCOPED_GREPS = [
     ("git grep -l foo -- tests infra ':!*vault*' ':!*.sops.*' ':!infra/ansible/files/*_ed25519'", "."),
     (
         "git grep -n -e foo -- infra ':!*vault.yml' ':!*.vault' ':!*.sops.*' ':!*vault-password*' ':!infra/ansible/files/*_ed25519'",
         ".",
     ),
     ("git grep -n foo -- infra ':^*vault*' ':^*.sops.*' ':^infra/ansible/files/*_ed25519'", "."),
+    ("git grep -c ANSIBLE -- infra/ansible/group_vars ':!zzzz'", "."),
+    ("git grep -c ANSIBLE -- infra/ansible/group_vars ':/!zzzz'", "."),
+    ("git grep -c ANSIBLE -- infra/ansible/group_vars ':(exclude)zzzz'", "."),
+    (
+        "git grep -l foo -- infra/ansible ':!*vault.yml' ':!*.vault' ':!*.sops.*' ':!*vault-password*' ':!infra/ansible/files/*_ed25519'",
+        ".",
+    ),
+]
+SCOPED_GREPS = [
+    ("git grep -l foo -- infra/ansible/roles ':!*.vault'", "."),
+    ("git grep -n foo -- ':!*vault.yml' ':!*.vault' ':!*.sops.*' ':!*vault-password*' ':!infra/ansible/files/*_ed25519'", "."),
+    ("git grep -l foo -- infra/scripts infra/runbooks tests", "."),
     ("git grep -n foo -- tests/test_bash_guard.py", "."),
     ("git grep -n foo tests/test_bash_guard.py README.md", "."),
     ("git grep -n foo -- README.md ':(glob)infra/*'", "."),
@@ -1214,7 +1224,7 @@ def test_a_git_grep_that_selects_a_vaulted_file_is_blocked_with_the_remedy(tmp_p
         ("git grep -n foo HEAD:infra", "search a commit, or the index"),
         ("git grep --no-inde -l foo -- docs", "drop `--no-index` or `--untracked`"),
         ("git grep -n foo -- ':(nonsense)infra'", "spell it as git ls-files accepts it"),
-        ("git grep -n foo -- infra", "':!*vault*' ':!*.sops.*' ':!infra/ansible/files/*_ed25519'"),
+        ("git grep -n foo -- infra", "name directories or files outside the vaulted set"),
     ],
 )
 def test_a_refused_git_greps_remedy_names_its_own_way_through(tmp_path: Path, command: str, remedy: str):
