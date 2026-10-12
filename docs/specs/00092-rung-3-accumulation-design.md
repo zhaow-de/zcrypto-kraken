@@ -302,7 +302,7 @@ PY
 
 ```
 python3 -c "import json,collections;r=[json.loads(l) for l in open('/home/zhaow/Projects/zcrypto-kraken/data/rung2/decisions.jsonl') if l.strip()];print(len(r),collections.Counter(x['outcome'] for x in r),round(sum(x['notional_eur'] for x in r if x['outcome']=='placed'),2))"
-grep -c 'MAKER' /home/zhaow/Projects/zcrypto-kraken/data/rung2/days.md
+grep -c 'MAKER' docs/reference/rung2-box/days.md
 ```
 
 Output: `27 Counter({'placed': 9, 'queued': 9, 'carried': 9}) 154.17`; `3`.
