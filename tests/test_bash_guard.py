@@ -852,6 +852,8 @@ UNSCOPED_GREPS = [
     ),
     ("git grep -n foo -- infra ':^*vault*' ':^*.sops.*' ':^infra/ansible/files/*_ed25519'", "."),
     ("git grep -c ANSIBLE -- infra/ansible/group_vars ':!zzzz'", "."),
+    ("git grep -c ANSIBLE -- infra/ansible/group_vars ':/!zzzz'", "."),
+    ("git grep -c ANSIBLE -- infra/ansible/group_vars ':(exclude)zzzz'", "."),
     (
         "git grep -l foo -- infra/ansible ':!*vault.yml' ':!*.vault' ':!*.sops.*' ':!*vault-password*' ':!infra/ansible/files/*_ed25519'",
         ".",
