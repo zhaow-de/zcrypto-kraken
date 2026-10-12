@@ -19,15 +19,13 @@ from cli.capture.book import OrderBook
 from cli.capture.command import _default_pairs, _parse_ts, resolve_universe_path, single_instance_lock
 from cli.capture.errors import CaptureError
 from cli.capture.segment_writer import BOOK_SCHEMA, TRADE_SCHEMA, HourOracle, SegmentWriter, verify_manifest
+from tests.skip_gates import nothing_found_under
 
 pytestmark = pytest.mark.data
 
 runner = CliRunner()
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
-# The point-in-time universe JSON is a gitignored *generated* artifact (its canonical committed
-# form is docs/universe/point-in-time-universe.md); it is absent in CI and fresh checkouts.
-_REPO_UNIVERSE = Path("data/universe/point-in-time-universe.json")
 
 
 def test_default_pairs_filters_to_eur_quoted(tmp_path):
@@ -74,13 +72,16 @@ def test_default_pairs_all_eur_quoted_returns_every_symbol_with_no_record_at_err
     assert [r.message for r in caplog.records if r.levelno >= logging.ERROR] == []
 
 
-@pytest.mark.skipif(not _REPO_UNIVERSE.exists(), reason="generated (gitignored) universe JSON absent — see docs/universe/*.md")
+@pytest.mark.skipif(
+    nothing_found_under(Path("data"), "universe-*/point-in-time-universe.json"),
+    reason="generated (gitignored) universe JSON absent — see docs/universe/*.md",
+)
 def test_default_pairs_from_local_universe_file():
-    # A local sanity check on the real generated universe file when present: 12 selected symbols,
-    # 10 of them EUR-quoted (the "EUR majors").
-    pairs = _default_pairs(_REPO_UNIVERSE)
-    assert len(pairs) == 10
-    assert all(p.endswith("/EUR") for p in pairs)
+    # Whichever stamped set is newest: the expectation is read from it, never a pinned count, so a refresh moves both sides.
+    artifact = resolve_universe_path(Path("data"))
+    selected = json.loads(artifact.read_text())["selected"]
+    pairs = _default_pairs(artifact)
+    assert pairs == [s for s in selected if s.endswith("/EUR")]
     assert "BTC/EUR" in pairs
     assert "ETH/BTC" not in pairs
 

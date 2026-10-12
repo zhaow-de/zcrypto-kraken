@@ -566,7 +566,9 @@ def test_every_rebuildable_dataset_is_an_authored_set():
     config = tomllib.loads((Path(__file__).resolve().parents[1] / "zcrypto.toml").read_text())
     authored = set(config["zcrypto"]["data"]["authored_sets"])
 
-    missing = sorted(set(rebuild.REBUILDABLE) - authored)
+    # Rebuildable and not authored: the universe's readers resolve the newest stamped sibling, which `data rebuild`
+    # pushes as it mints it; nothing reads the unstamped `universe/`.
+    missing = sorted(set(rebuild.REBUILDABLE) - authored - {"universe"})
 
     assert not missing, (
         f"rebuildable dataset(s) absent from zcrypto.toml authored_sets: {missing}. "

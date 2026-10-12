@@ -8,10 +8,9 @@ _DOC = Path(__file__).resolve().parent.parent / "docs" / "universe" / "point-in-
 
 # The ruled exceptions (T0137): editing either side without a ruling is the drift this test catches.
 
-# RULED (owner, T0137): DOT stays traded. It misses the universe's volume floor by ~2%, and that
-# floor is a footprint-sizing rule the traded rung sizes sit far below -- retiring DOT would trade a
-# marginal miss for a standing deviation between the live book and record 44's evidence base.
-RULED_TRADED_BUT_DESELECTED = {"DOT/EUR"}
+# Kept empty rather than deleted: DOT's ruled exception (T0137) is discharged, and an empty set is where the
+# next traded-but-deselected ruling lands.
+RULED_TRADED_BUT_DESELECTED: set[str] = set()
 
 # Kept empty rather than deleted: the /BTC legs' unreachability was retired by spec 00094 (T0137),
 # and an empty set is where a future selected-but-unreachable divergence lands.

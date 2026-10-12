@@ -385,3 +385,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #686 | 2026-10-11 | feat(data): 00125 — the rolling OHLC canonical, extended from the tape | — | 00125 | — |
 | #688 | 2026-10-11 | docs(reference): 00125 rollout records — ops pin, rows 112–114, slots | — | 00125 | — |
 | #690 | 2026-10-12 | feat(infra): 00127 — the bridgehead mirrors Caddy's apt repository | — | 00127 | — |
+| #695 | 2026-10-12 | feat(data): universe refreshed from the rolling set, August sets retired | — | — | T0220 |
