@@ -75,4 +75,4 @@ capture was EUR-only, and a null on either is now the failure signal rather than
 ## Deferred / follow-ups
 
 - **Full symbol & corporate-action ledger** (redenominations, quote-book migrations, delistings) beyond iter-002's
-  alias ledger (XBT=BTC, XDG=DOGE) — registered as **T0025** (`docs/open-topics/T0025-full-corporate-action-ledger.md`).
+  alias ledger (XBT=BTC, XDG=DOGE) — **T0025**, resolved (`docs/open-topics/archive/T0025-full-corporate-action-ledger.md`).
