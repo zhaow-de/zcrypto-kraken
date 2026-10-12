@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: 'a milestone: rung 3''s go/no-go decided, `engine-rung-3` step 9; check: `grep -c -E "rung 3.s go/no-go.*\(Decision: [0-9]+\)" docs/research/14.phase6-decisions.md` prints at least 1 — the decision entry in the log''s own shape, where the bare phrase already has hits'
+ripe_when: 'a milestone: rung 3''s go/no-go decided, `engine-rung-3` step 9; check: `grep -c -i -E "rung 3.s go/no-go.*\(Decision:" docs/research/14.phase6-decisions.md` prints at least 1'
 ---
 
 # engine-procedures.md without the one-time rungs
