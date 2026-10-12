@@ -18,8 +18,8 @@ from cli.ohlc.seam import MIN_SEAM_OVERLAP, drop_in_progress, seam_overlap
 
 logger = get_logger("engine.store")
 
-# The single committed source of truth for the engine's basket (spec 00094); the universe selection
-# and this basket agree on every leg, and tests/test_basket_concordance.py pins the ruled exceptions.
+# The single committed source of truth for the engine's basket (spec 00094); tests/test_basket_concordance.py
+# holds it to the universe selection.
 BASKET: tuple[str, ...] = (
     "ADA/EUR",
     "AVAX/EUR",
