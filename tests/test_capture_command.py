@@ -77,8 +77,7 @@ def test_default_pairs_all_eur_quoted_returns_every_symbol_with_no_record_at_err
 
 @pytest.mark.skipif(not _REPO_UNIVERSE.exists(), reason="generated (gitignored) universe JSON absent — see docs/universe/*.md")
 def test_default_pairs_from_local_universe_file():
-    # The real generated artifact, whichever stamped set is newest: the default pairs are its EUR-quoted
-    # selection, no more and no fewer, so a refresh that drops or adds an EUR leg moves both sides.
+    # Whichever stamped set is newest: the expectation is read from it, never a pinned count, so a refresh moves both sides.
     selected = json.loads(_REPO_UNIVERSE.read_text())["selected"]
     pairs = _default_pairs(_REPO_UNIVERSE)
     assert pairs == [s for s in selected if s.endswith("/EUR")]
