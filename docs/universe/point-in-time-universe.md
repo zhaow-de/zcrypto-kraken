@@ -1,12 +1,9 @@
 # Point-in-Time Universe
 
-**Iteration:** iter-137 · **Phase:** 1 (Data Foundation) · **Scope:** the mechanical, rule-driven universe
-selection defined in `docs/specs/00003-universe-finalization-design.md` (master-plan §3), composing iter-002's
-margin/leverage snapshot (`cli.snapshot`) and daily OHLC via `cli/universe/` (`finalize_universe` +
-`build_universe_file`). **Regenerated 2026-10-12** from the rolling canonical (spec `00125`): the volume signal
-reads `ohlc-rolling` at its head day 2026-10-10, the set the daily extension keeps at the present, so a refresh no
-longer needs a reach rebuild first; the previous generation (2026-08-13, spec `00093`'s sitting) read the stamped
-`ohlc-reach-20260813`, retired with this one (T0220).
+**Phase:** 1 (Data Foundation) · **Scope:** the mechanical, rule-driven universe selection defined in
+`docs/specs/00003-universe-finalization-design.md` (master-plan §3), composing iter-002's margin/leverage snapshot
+(`cli.snapshot`) and daily OHLC via `cli/universe/` (`finalize_universe` + `build_universe_file`). **Regenerated
+2026-10-12** from the rolling canonical `ohlc-rolling` (spec `00125`) at its head day 2026-10-10.
 
 **As of:** 2026-10-12 (UTC)
 **Escalate:** **False** — 12 selected, within `MIN_NAMES`–`MAX_NAMES` (8–15). No escalation signal this run.
@@ -32,11 +29,7 @@ BTC/EUR, ETH/EUR, SOL/EUR, XRP/EUR, ADA/EUR, LINK/EUR, DOGE/EUR, LTC/EUR, DOT/EU
 | ETH/BTC  | yes      | yes    | 5            | 712,128.94                      | 1.178        | -       |
 | SOL/BTC  | yes      | yes    | 4            | 356,777.57                      | 1.842        | -       |
 
-All twelve candidates are margin-enabled with `leverage_buy` clearing `min_leverage=2`, every one clears the
-10 bps spread cap, and every one clears the volume floor — **DOT/EUR is back**, at 768,357.15 against the
-150,000 floor it missed by 2% on 2026-08-13. The two BTC-quoted RV legs clear the floor once FX-normalized to EUR
-via `quote_volume_in_eur`. None of BTC/ETH's own criteria failed, so the `mandatory` override (§3: BTC/ETH always
-selected) did not activate.
+None of BTC/ETH's own criteria failed, so the `mandatory` override (§3: BTC/ETH always selected) did not activate.
 
 ## Parameters
 
@@ -59,17 +52,7 @@ selected) did not activate.
 | `unevaluated_count` | **0** |
 
 All twelve symbols carry a numeric `spread_bps`, the two BTC-quoted legs included — they read `null` while L2
-capture was EUR-only, and a null on either is now the failure signal rather than the expected state. The widest is
-DOT/EUR at 4.930 bps, comfortably inside the 10 bps cap, so **the cap binds on nothing this run**: it excludes no
-symbol that volume did not already exclude.
-
-## Escalation note
-
-12 of 12 candidates are selected; `escalate=False` (within `MIN_NAMES=8`–`MAX_NAMES=15`), so no escalation signal
-fires. No exclusion this run: the one the 2026-08-13 generation carried, **DOT/EUR below the floor** at 146,957.37,
-has reversed on the fresh 30-day window at 768,357.15, and every median is higher than that generation's — BTC/EUR
-28.8 M against 17.7 M, ETH/EUR 16.3 M against 8.6 M, XRP/EUR 15.3 M against 2.2 M. The traded basket and the
-selection now agree on every leg (`tests/test_basket_concordance.py`).
+capture was EUR-only, and a null on either is now the failure signal rather than the expected state.
 
 ## Provenance
 
@@ -80,23 +63,16 @@ selection now agree on every leg (`tests/test_basket_concordance.py`).
 - **OHLC dataset:** `data/ohlc-rolling/days/{base}/{quote}/` (gitignored), the rolling canonical (spec `00125`) at
   its head day **2026-10-10**, basket sha256 `fcb62a79fab7b58626f0cbd96ae40093a6dfc9e6ff51384cf25a5e9759dc44c4` —
   the sha256 of that day's index line, which `zcrypto data rolling verify` walks down to the base; the stalest daily
-  bar across the basket is 2026-10-10, two days old against the 7-day staleness budget; no pair closed, no hole.
+  bar across the basket is 2026-10-10, two days old against the 7-day staleness budget; no pair closed.
 - **Derivation code:** `cli/universe/` (`volume.py`, `rules.py`, `build.py`) — see
   `docs/specs/00003-universe-finalization-design.md`. Volume is computed via `quote_volume_in_eur` (EUR-quoted
   legs: identical to `median_quote_volume`; BTC-quoted legs: FX-normalized through the BTC/EUR daily close), and
   the floor is `DEFAULT_MIN_MEDIAN_QUOTE_VOLUME = 150_000.0`.
 - **Machine-readable file:** `data/universe-20261012/point-in-time-universe.json` (gitignored) — sha256
   `c6a168e5907cb03ba5c2479d41b1a3b864793deb194ad1c6d285a0e94636ae54`. Published to the hub as the immutable
-  stamped set `universe-20261012/` (spec `00093` D5) on 2026-10-12 at 14:44Z; `resolve_universe_path` in
-  `cli/capture/command.py` picks the newest stamped set, and the unstamped `universe/` is retired (T0220).
+  stamped set `universe-20261012/` (spec `00093` D5) on 2026-10-12 at 14:44Z.
 
 ## Deferred / follow-ups
 
-- **Full-history volume** — **DISCHARGED 2026-08-13** by spec `00093`'s sitting (→
-  `docs/open-topics/T0093-universe-rebuild-reads-a-stale-ohlc-set.md`), and the volume signal now reads the rolling
-  canonical, which never goes stale by construction; the repo-side remainder, retiring the legacy `universe/`
-  fallback, landed with T0220.
-- **Spread-cap criterion** — **DISCHARGED 2026-08-13** (→ **T0024**). The artifact carries a computed
-  `spread_cap` record with `unevaluated_count: 0` and all twelve symbols carry a numeric `spread_bps`.
 - **Full symbol & corporate-action ledger** (redenominations, quote-book migrations, delistings) beyond iter-002's
   alias ledger (XBT=BTC, XDG=DOGE) — registered as **T0025** (`docs/open-topics/T0025-full-corporate-action-ledger.md`).
