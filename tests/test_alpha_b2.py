@@ -1,0 +1,129 @@
+import math
+import re
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+from cli.alpha.b2 import B2Config, close_grid, funding_grid_feature
+from cli.alpha.errors import AlphaError
+
+UTC = timezone.utc
+DAY0 = datetime(2024, 3, 1, tzinfo=UTC)
+# Under a window of 3 these score [None, None, 1.0, -1.0]: the last two prints' z are defined and differ.
+RATES = [0.0001, 0.0002, 0.0003, 0.0001]
+
+
+def _hours(*hours: int) -> list[datetime]:
+    return [DAY0 + timedelta(hours=h) for h in hours]
+
+
+def _feature(prints_ts, rates, union_ts, *, z_window=3, intervals=None):
+    if intervals is None:
+        intervals = [8] * len(rates)
+    return funding_grid_feature(prints_ts, rates, intervals, union_ts, config=B2Config(z_window=z_window))
+
+
+def test_a_print_30ms_past_its_hour_aligns_as_the_on_hour_print():
+    union = _hours(8, 12, 16, 20, 24)
+    on_hour = _feature(_hours(0, 8, 16, 24), RATES, union)
+    late = _feature(_hours(0, 8, 16) + [DAY0 + timedelta(hours=24, milliseconds=30)], RATES, union)
+    assert late[3] == pytest.approx(-1.0), "the 00:00 print's own z at the 00:00 close, not the 1.0 carried before it"
+    assert late == on_hour == [None, pytest.approx(1.0), pytest.approx(1.0), pytest.approx(-1.0)]
+
+
+def test_a_print_61s_past_its_hour_is_refused_by_name_and_one_60s_past_aligns_as_on_the_hour():
+    union = _hours(8, 12, 16, 20, 24)
+    on_hour = _feature(_hours(0, 8, 16, 24), RATES, union)
+    with pytest.raises(AlphaError, match=re.escape("prints_ts[3] = 2024-03-02T00:01:01+00:00")):
+        _feature(_hours(0, 8, 16) + [DAY0 + timedelta(hours=24, seconds=61)], RATES, union)
+    assert _feature(_hours(0, 8, 16) + [DAY0 + timedelta(hours=24, seconds=60)], RATES, union) == on_hour
+
+
+_PRINTS = _hours(0, 8, 16, 24)
+_UNION = _hours(8, 12, 16, 20, 24)
+
+
+@pytest.mark.parametrize(
+    ("prints_ts", "union_ts", "named"),
+    [
+        pytest.param(_hours(0, 16, 8, 24), _UNION, "prints_ts", id="unsorted-prints"),
+        pytest.param(_PRINTS, _hours(8, 16, 12, 20, 24), "union_ts", id="unsorted-union"),
+        pytest.param(_PRINTS[:2] + [_PRINTS[2].replace(tzinfo=None)] + _PRINTS[3:], _UNION, "prints_ts", id="naive-print"),
+        pytest.param(_PRINTS, _UNION[:2] + [_UNION[2].replace(tzinfo=None)] + _UNION[3:], "union_ts", id="naive-union"),
+    ],
+)
+def test_unsorted_or_naive_stamps_are_refused(prints_ts, union_ts, named):
+    with pytest.raises(AlphaError, match=named):
+        _feature(prints_ts, RATES, union_ts)
+
+
+def test_print_lists_of_unequal_length_are_refused():
+    with pytest.raises(AlphaError, match="equal length"):
+        _feature(_PRINTS, RATES, _UNION, intervals=[8, 8, 8])
+
+
+def test_an_off_cadence_print_is_mapped_to_none_so_every_window_holding_it_is_none():
+    rates = [0.0001, 0.0002, 0.0003, 0.0001, 0.0005, 0.0002, 0.0003, 0.0004, 0.0002]
+    intervals = [8, 8, 8, 8, 4, 8, 8, 8, 8]
+    feature = _feature(_hours(*range(0, 72, 8)), rates, _hours(*range(0, 72, 4)), intervals=intervals)
+    # Return index j closes at 4(j + 1) h; the off-cadence print settles at 32 h, and the windows of
+    # the prints at 32, 40 and 48 h hold it. Dropped instead of mapped, the 40 h print scores 0.0.
+    assert feature == [None] * 3 + [pytest.approx(v) for v in (1.0, 1.0, -1.0, -1.0)] + [None] * 6 + [
+        pytest.approx(v) for v in (1.0, 1.0, -1.0, -1.0)
+    ]
+
+
+def test_the_grid_is_the_close_stamp_neither_the_bar_open_nor_the_next_close():
+    union = _hours(0, 4, 8)
+    assert _feature(_hours(-16, -8, 0, 8), RATES, union) == [pytest.approx(1.0), pytest.approx(-1.0)]
+    assert close_grid(union) == _hours(4, 8)
+
+
+def test_a_truncated_prefix_of_the_inputs_reproduces_the_full_run_bit_for_bit():
+    rates = [r * 1e-4 for r in (3, -1, 4, 0, 9, -2, 11, 5, -4, 7, 2, -6, 10, 1, -3)]
+    prints_ts = [DAY0 + timedelta(hours=8 * i, milliseconds=7 * (i % 3)) for i in range(len(rates))]
+    union_ts = _hours(*range(12, 116, 4))
+    full = _feature(prints_ts, rates, union_ts)
+    assert len(full) == len(union_ts) - 1 and None not in full
+    for n in range(1, len(union_ts)):
+        cutoff = union_ts[n - 1] + timedelta(hours=4)
+        visible = [i for i, t in enumerate(prints_ts) if t.replace(minute=0, second=0, microsecond=0) <= cutoff]
+        prefix = _feature([prints_ts[i] for i in visible], [rates[i] for i in visible], union_ts[: n + 1])
+        assert prefix == full[:n], f"prefix at n={n} disagrees with the full run"
+
+
+def test_a_planted_two_sigma_print_lifts_the_feature_from_its_hours_close_until_the_next_prints():
+    rates = [0.0001] * 10 + [0.0009, 0.0001]
+    feature = _feature(_hours(*range(0, 96, 8)), rates, _hours(68, 72, 76, 80, 84, 88), z_window=10)
+    spike = pytest.approx(9 / math.sqrt(10))
+    assert feature == [0.0, 0.0, spike, spike, pytest.approx(-1 / math.sqrt(10))]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("z_threshold", 0),
+        ("z_threshold", -1.0),
+        ("z_threshold", math.nan),
+        ("z_threshold", math.inf),
+        ("z_threshold", True),
+        ("derisk_scale", 0),
+        ("derisk_scale", 1.5),
+        ("derisk_scale", math.nan),
+        ("derisk_scale", True),
+        ("z_window", 1),
+        ("z_window", 2.5),
+        ("z_window", True),
+    ],
+)
+def test_b2config_refuses_an_out_of_range_or_bool_field(field, value):
+    with pytest.raises(AlphaError, match=field):
+        B2Config(**{field: value})
+
+
+def test_b2config_accepts_a_full_scale():
+    assert B2Config(derisk_scale=1.0).derisk_scale == 1.0
+
+
+def test_b2config_defaults_are_the_pre_registered_constants():
+    assert (B2Config().z_threshold, B2Config().derisk_scale, B2Config().z_window) == (2.0, 0.5, 90)
