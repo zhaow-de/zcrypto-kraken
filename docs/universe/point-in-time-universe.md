@@ -71,8 +71,3 @@ capture was EUR-only, and a null on either is now the failure signal rather than
 - **Machine-readable file:** `data/universe-20261012/point-in-time-universe.json` (gitignored) — sha256
   `c6a168e5907cb03ba5c2479d41b1a3b864793deb194ad1c6d285a0e94636ae54`. Published to the hub as the immutable
   stamped set `universe-20261012/` (spec `00093` D5) on 2026-10-12 at 14:44Z.
-
-## Deferred / follow-ups
-
-- **Full symbol & corporate-action ledger** (redenominations, quote-book migrations, delistings) beyond iter-002's
-  alias ledger (XBT=BTC, XDG=DOGE) — **T0025**, resolved (`docs/open-topics/archive/T0025-full-corporate-action-ledger.md`).
