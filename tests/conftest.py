@@ -1,7 +1,15 @@
 import logging
 import sys
+import tempfile
+from pathlib import Path
 
 import pytest
+
+# Every temporary file of a run -- pytest's numbered `pytest-of-<user>/pytest-<N>` base and every `mkdtemp` -- lands
+# under the checkout's gitignored `.tmp/`, not the workstation's inode-bounded tmpfs; set before the first `tmp_path`.
+TMP_ROOT = Path(__file__).resolve().parents[1] / ".tmp"
+TMP_ROOT.mkdir(exist_ok=True)
+tempfile.tempdir = str(TMP_ROOT)
 
 import cli.engine.cycle as cycle
 
