@@ -6,21 +6,38 @@ default appends a fabricated row to it; `_registry_default_off_the_committed_led
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import math
 import os
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
+import polars as pl
 import pytest
 from typer.testing import CliRunner
 
 from cli.__main__ import app
+from cli.alpha.a1 import _asset_returns
+from cli.alpha.b1 import book_turnover
+from cli.alpha.b2 import (
+    net_of_cost,
+    per_year_engaged_counts,
+    per_year_max_drawdown,
+    per_year_positions_differ,
+    per_year_turnover,
+    scale_positions,
+)
+from cli.derivatives.funding import PERP_SYMBOLS
+from cli.features.derivatives import coverage_by_year
 from cli.ohlc.dataset import to_frame, write_parquet
-from cli.portfolio.crossfreq_system import CrossfreqSystemConfig
+from cli.portfolio.crossfreq_system import CrossfreqSystemConfig, _ffill_btc
+from cli.portfolio.record44_legs import benchmark_4h_net_of_cost, calendar_year_slices
+from cli.registry.observed import ObservedReader
 from cli.registry.record import compute_hash
 from cli.research import command as research_command
 from cli.research import subjects
+from cli.validation import max_drawdown, sharpe
 from tests.rolling_fixtures import HOLE, write_chain
 
 runner = CliRunner()
@@ -431,3 +448,273 @@ def test_the_window_reaches_the_rolling_reads(tmp_path, monkeypatch):
     block = _block_and_metrics(result.output)["datasets"]["ohlc-rolling"]
     assert block["rows"] == 20
     assert block["span"] == ["2026-10-01 00:00:00+00:00", "2026-10-02 00:00:00+00:00"]
+
+
+def test_the_b2_subject_is_registered_over_the_ten_assets_4h_series():
+    subject = subjects.SUBJECTS["b2-funding-derisk"]
+    assert subject.name == "b2-funding-derisk"
+    assert subject.intervals == (240,)
+    assert subject.assets == CrossfreqSystemConfig().assets
+    assert subject.build is subjects._build_b2_funding_derisk
+
+
+# Spec 00128 D7's metric keys, pinned as literals for the reason `_COMBINED_METRIC_KEYS` is.
+_B2_METRIC_KEYS = {
+    "ann_sharpe_noc",
+    "ann_sharpe_noc_decisive",
+    "per_period_sharpe_4h",
+    "arm_a_ann_sharpe_noc",
+    "arm_a_ann_sharpe_noc_decisive",
+    "benchmark_ann_sharpe_noc",
+    "benchmark_ann_sharpe_noc_decisive",
+    "dsr_corrected",
+    "dsr_pass",
+    "spa_pass",
+    "spa_p_full",
+    "cost_stress_pass",
+    "worst_slice_relative_pass",
+    "passes",
+    "decisive_start",
+    "n_resamples",
+    "arm_a_passes",
+    "spa_p_decisive_b30_s42",
+    "spa_p_decisive_b30_s7",
+    "spa_p_decisive_b30_s1234",
+    "spa_p_decisive_b102_s42",
+    "spa_p_decisive_b102_s7",
+    "spa_p_decisive_b102_s1234",
+    "head_to_head_mean_outperf_full",
+    "head_to_head_spa_p_full",
+    "head_to_head_mean_outperf_2021",
+    "head_to_head_spa_p_2021",
+    "max_drawdown",
+    "arm_a_max_drawdown",
+    "max_drawdown_reduction_pct",
+    "turnover_a",
+    "turnover_b",
+    "stamps_positions_differ",
+    "engaged_per_year",
+    "positions_differ_per_year",
+    "turnover_a_per_year",
+    "turnover_b_per_year",
+    "max_drawdown_per_year",
+    "arm_a_max_drawdown_per_year",
+    "binperp_funding_z30d_coverage",
+}
+_B2_GRID = ((30, 42), (30, 7), (30, 1234), (102, 42), (102, 7), (102, 1234))
+_B2_FLAGS = ("dsr_pass", "spa_pass", "cost_stress_pass", "worst_slice_pass")
+_B2_ASSETS = CrossfreqSystemConfig().assets
+_B2_START = datetime(2020, 10, 1, tzinfo=UTC)
+_B2_BARS = 1_640
+_B2_WINDOW_BARS = 1_620
+# (first bar, bars, depth) on every asset: December 2020's fall is the window's deepest, February 2021's the deepest from
+# 2021-01-01 and the one the funding spikes sit inside.
+_B2_FALLS = ((420, 24, 0.40), (822, 24, 0.25))
+_B2_FUNDING_FROM = datetime(2020, 8, 15, tzinfo=UTC)
+_B2_PRINTS = 1_000
+_B2_SPIKE_PRINTS = 6
+_B2_NEVER_SPIKES = "XRP"
+
+
+def _b2_ohlc_rows(phase: float) -> list[list]:
+    rows = []
+    for i, row in enumerate(_rows(_B2_BARS, phase=phase, start=int(_B2_START.timestamp()), step=4 * 3600)):
+        factor = math.prod(1 - depth * min(max((i - first) / bars, 0.0), 1.0) for first, bars, depth in _B2_FALLS)
+        rows.append([row[0], *(f"{float(v) * factor}" for v in row[1:6]), *row[6:]])
+    return rows
+
+
+def _b2_dataset(tmp_path: Path) -> Path:
+    """The ten 4h series and a `derivatives-funding` set whose 8h prints open 47 days before the first bar; every perp but
+    one spikes inside the second fall, each from its own print, so the overlay de-risks each asset at its own stamps."""
+    root = tmp_path / "data"
+    for i, asset in enumerate(_B2_ASSETS):
+        write_parquet(to_frame(_b2_ohlc_rows(i * 0.7)), root / "ohlc-test" / f"{asset}/EUR/240.parquet")
+    stamps = [_B2_FUNDING_FROM + timedelta(hours=8 * j) for j in range(_B2_PRINTS)]
+    second_fall = _B2_START + timedelta(hours=4 * _B2_FALLS[1][0])
+    for i, asset in enumerate(_B2_ASSETS):
+        rates = [0.0001 * (1 + 0.5 * math.sin(j + i)) for j in range(_B2_PRINTS)]
+        if asset != _B2_NEVER_SPIKES:
+            first = stamps.index(second_fall + timedelta(hours=8 * i))
+            rates[first : first + _B2_SPIKE_PRINTS] = [0.003] * _B2_SPIKE_PRINTS
+        frame = pl.DataFrame(
+            {"ts": stamps, "funding_rate": rates, "interval_hours": [8] * _B2_PRINTS},
+            schema={"ts": pl.Datetime("us", "UTC"), "funding_rate": pl.Float64, "interval_hours": pl.Int64},
+        )
+        write_parquet(frame, root / "derivatives-funding" / PERP_SYMBOLS[asset] / "funding.parquet")
+    return root
+
+
+def _recording(monkeypatch, name: str, rewrite) -> list[tuple[dict, dict]]:
+    """`subjects.<name>` as a pass-through keeping each call's arguments, bound with defaults applied, and the result
+    `rewrite` makes of the real one."""
+    real = getattr(subjects, name)
+    signature = inspect.signature(real)
+    calls = []
+
+    def wrapper(*args, **kwargs):
+        bound = signature.bind(*args, **kwargs)
+        bound.apply_defaults()
+        result = rewrite(dict(bound.arguments), real(*args, **kwargs))
+        calls.append((dict(bound.arguments), result))
+        return result
+
+    monkeypatch.setattr(subjects, name, wrapper)
+    return calls
+
+
+def _kill_bar_sentinels(cell, *, inverted: bool) -> dict:
+    """The eight keys the subject reads, per call: floats distinct across the cells and the keys, `passes` true at the
+    headline cell alone and the four flags false there alone -- or, inverted, both patterns flipped; arm A's call is the
+    headline's opposite."""
+    if cell == "A":
+        headline = _kill_bar_sentinels((30, 42), inverted=inverted)
+        return {"dsr": 0.91, "spa_p_value": 0.81, "spa_p_value_full": 0.71} | {
+            key: not headline[key] for key in ("passes", *_B2_FLAGS)
+        }
+    i = _B2_GRID.index(cell)
+    at_headline = cell == (30, 42)
+    return {
+        "dsr": 0.11 + i / 100,
+        "spa_p_value": 0.21 + i / 100,
+        "spa_p_value_full": 0.31 + i / 100,
+        "passes": at_headline != inverted,
+        **dict.fromkeys(_B2_FLAGS, at_headline == inverted),
+    }
+
+
+@pytest.mark.parametrize("inverted", [False, True], ids=["passes-at-the-headline", "passes-off-the-headline"])
+def test_the_b2_subject_registers_each_metric_from_its_own_call(tmp_path, monkeypatch, inverted):
+    root = _b2_dataset(tmp_path)
+    registry = tmp_path / "registry.jsonl"
+    _anchor(monkeypatch, root, registry)
+    ts = [_B2_START + timedelta(hours=4 * k) for k in range(_B2_WINDOW_BARS)]
+    close = [t + timedelta(hours=4) for t in ts[:-1]]
+    k21 = next(k for k, t in enumerate(close) if t >= datetime(2021, 1, 1, tzinfo=UTC))
+    assert k21 == 551
+    window = (str(ts[0]), str(ts[-1]))
+
+    inputs = subjects._b2_inputs(ObservedReader(root), "ohlc-test", window, None, False)
+    assert inputs.h4_ts == ts
+    cost = CrossfreqSystemConfig().cost_per_side
+    arm_a, scales = inputs.arm_a, inputs.scales
+    arm_b = scale_positions(arm_a, scales)
+    fed = _ffill_btc(inputs.h4_prices)
+    returns = {a: _asset_returns(fed[a]) for a in _B2_ASSETS}
+    net_a = net_of_cost(arm_a, returns, cost_per_side=cost)
+    net_b = net_of_cost(arm_b, returns, cost_per_side=cost)
+    net_a_x15 = net_of_cost(arm_a, returns, cost_per_side=1.5 * cost)
+    net_b_x15 = net_of_cost(arm_b, returns, cost_per_side=1.5 * cost)
+    bench = benchmark_4h_net_of_cost(inputs.h4_prices, cost_per_side=cost)
+    slices_a, slices_b, slices_bench = (
+        {year: s for year, s in calendar_year_slices(series, ts).items() if year != "2020"} for series in (net_a, net_b, bench)
+    )
+
+    assert net_b[k21:] != net_a[k21:]
+    assert abs(max_drawdown(net_b[k21:]) - max_drawdown(net_a[k21:])) > 1e-9
+    assert abs(max_drawdown(net_b[k21:]) - max_drawdown(net_b)) > 1e-9
+    assert abs(max_drawdown(net_a[k21:]) - max_drawdown(net_a)) > 1e-9
+    assert abs(book_turnover(arm_b) - book_turnover(arm_a)) > 1e-9
+    assert scales[_B2_NEVER_SPIKES] == [1.0] * len(close)
+    assert len({tuple(s) for s in scales.values()}) == len(_B2_ASSETS)
+    assert list(slices_b) == list(slices_bench) == ["2021"]
+
+    def kill_bar(arguments, result):
+        book = arguments["book_net_returns"]
+        cell = "A" if book == net_a else (arguments["mean_block"], arguments["seed"]) if book == net_b else None
+        return result | _kill_bar_sentinels(cell, inverted=inverted) if cell in ("A", *_B2_GRID) else result
+
+    def head_to_head(arguments, result):
+        p = {len(net_b): 0.41, len(net_b) - k21: 0.42}.get(len(arguments["book_net_of_cost"]))
+        return result if p is None else result | {"spa_p_value": p}
+
+    kill_calls = _recording(monkeypatch, "a1_kill_bar", kill_bar)
+    verdict_calls = _recording(monkeypatch, "net_of_cost_verdict", head_to_head)
+    result = runner.invoke(
+        app,
+        ["research", "eval", "--subject", "b2-funding-derisk", "--dataset", "ohlc-test", "--window", *window]
+        + _register_args(registry, n_trials=1),
+    )
+    assert result.exit_code == 0, result.output
+
+    bar = {
+        "n_trials": 1,
+        "var_trials": 0.0,
+        "benchmark_net_returns": bench,
+        "benchmark_slices": slices_bench,
+        "decisive_start": 1380,
+        "n_resamples": 2000,
+    }
+    arm_a_call = {"book_net_returns": net_a, "mean_block": 30, "seed": 42, "cost_stressed_returns": net_a_x15}
+    want = [bar | arm_a_call | {"regime_slices": slices_a}] + [
+        bar | {"book_net_returns": net_b, "mean_block": b, "seed": s, "cost_stressed_returns": net_b_x15, "regime_slices": slices_b}
+        for b, s in _B2_GRID
+    ]
+
+    def by_cell(arguments):
+        return arguments["book_net_returns"] == net_a, arguments["mean_block"], arguments["seed"]
+
+    assert sorted((arguments for arguments, _ in kill_calls), key=by_cell) == sorted(want, key=by_cell)
+    verdict = {"mean_block": 30, "seed": 42, "n_resamples": 2000}
+    assert [arguments for arguments, _ in verdict_calls] == [
+        {"book_net_of_cost": net_b, "benchmark_net_of_cost": net_a} | verdict,
+        {"book_net_of_cost": net_b[k21:], "benchmark_net_of_cost": net_a[k21:]} | verdict,
+    ]
+    full, from_2021 = (outcome for _, outcome in verdict_calls)
+    assert full["mean_outperformance"] != from_2021["mean_outperformance"]
+    assert (full["spa_p_value"], from_2021["spa_p_value"]) == (0.41, 0.42)
+
+    results = {
+        "A" if arguments["book_net_returns"] == net_a else (arguments["mean_block"], arguments["seed"]): outcome
+        for arguments, outcome in kill_calls
+    }
+    headline = results[(30, 42)]
+    drawdown_b, drawdown_a = max_drawdown(net_b[k21:]), max_drawdown(net_a[k21:])
+    differ = per_year_positions_differ(arm_a, arm_b, close)
+    expected = {
+        "ann_sharpe_noc": sharpe(net_b, periods_per_year=2190),
+        "ann_sharpe_noc_decisive": sharpe(net_b[1380:], periods_per_year=2190),
+        "per_period_sharpe_4h": sharpe(net_b),
+        "arm_a_ann_sharpe_noc": sharpe(net_a, periods_per_year=2190),
+        "arm_a_ann_sharpe_noc_decisive": sharpe(net_a[1380:], periods_per_year=2190),
+        "benchmark_ann_sharpe_noc": sharpe(bench, periods_per_year=2190),
+        "benchmark_ann_sharpe_noc_decisive": sharpe(bench[1380:], periods_per_year=2190),
+        "dsr_corrected": headline["dsr"],
+        "dsr_pass": int(headline["dsr_pass"]),
+        "spa_pass": int(headline["spa_pass"]),
+        "spa_p_full": headline["spa_p_value_full"],
+        "cost_stress_pass": int(headline["cost_stress_pass"]),
+        "worst_slice_relative_pass": int(headline["worst_slice_pass"]),
+        "passes": int(headline["passes"]),
+        "decisive_start": 1380,
+        "n_resamples": 2000,
+        "arm_a_passes": int(results["A"]["passes"]),
+        **{f"spa_p_decisive_b{b}_s{s}": results[(b, s)]["spa_p_value"] for b, s in _B2_GRID},
+        "head_to_head_mean_outperf_full": full["mean_outperformance"],
+        "head_to_head_spa_p_full": full["spa_p_value"],
+        "head_to_head_mean_outperf_2021": from_2021["mean_outperformance"],
+        "head_to_head_spa_p_2021": from_2021["spa_p_value"],
+        "max_drawdown": drawdown_b,
+        "arm_a_max_drawdown": drawdown_a,
+        "max_drawdown_reduction_pct": 100 * (drawdown_a - drawdown_b) / drawdown_a,
+        "turnover_a": book_turnover(arm_a),
+        "turnover_b": book_turnover(arm_b),
+        "stamps_positions_differ": sum(differ.values()),
+        "engaged_per_year": per_year_engaged_counts(arm_a, scales, close),
+        "positions_differ_per_year": differ,
+        "turnover_a_per_year": per_year_turnover(arm_a, close),
+        "turnover_b_per_year": per_year_turnover(arm_b, close),
+        "max_drawdown_per_year": per_year_max_drawdown(net_b, close),
+        "arm_a_max_drawdown_per_year": per_year_max_drawdown(net_a, close),
+        "binperp_funding_z30d_coverage": {
+            a: {str(year): [c.non_null, c.total] for year, c in coverage_by_year(close, inputs.binperp_funding_z30d[a]).items()}
+            for a in _B2_ASSETS
+        },
+    }
+    record = json.loads(registry.read_text())
+    assert set(record["metrics"]) == _B2_METRIC_KEYS
+    assert record["metrics"] == expected
+    assert set(record["datasets"]["derivatives-funding"]["files"]) == {f"{PERP_SYMBOLS[a]}/funding.parquet" for a in _B2_ASSETS}
+    ohlc = record["datasets"]["ohlc-test"]
+    assert ohlc["rows"] == len(_B2_ASSETS) * _B2_WINDOW_BARS < len(_B2_ASSETS) * _B2_BARS
+    assert ohlc["span"] == [str(ts[0]), str(ts[-1])]
