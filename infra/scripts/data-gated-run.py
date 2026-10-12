@@ -51,9 +51,7 @@ _ID = re.compile(r"^(?P<id>[^\s\[]+(?:\[.*?\])?)(?: - |$)")
 _SKIPPED = re.compile(r"^SKIPPED \[(?P<count>\d+)\] (?P<site>\S+?):(?: (?P<reason>.*))?$")
 # The reasons this tree's gates give for a dataset that is not on this machine (`grep -rn skipif
 # tests/*.py`, `grep -rn 'pytest.skip(' tests/*.py`), matched by their vocabulary so a new gate in the
-# same voice is caught without a list to keep: a dataset, substrate, snapshot, archive, manifest or
-# mount that is absent, not present, not mounted or not on this host. Not matched, so no finding: the
-# live-venue opt-in, root's permission bypass, a missing develop ref or tool -- the suite's own gates.
+# same voice is caught without a list to keep.
 _DATA_ABSENCE = re.compile(
     r"dataset|\bdata[/ -]|substrate|snapshot|refdata|universe JSON|manifest|\bhub\b|mount|"
     r"archive|segments|journal mirror|gitignored|off-workstation|on this (?:node|host|machine)",
