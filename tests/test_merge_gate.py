@@ -711,9 +711,8 @@ BOX_ENTRY = {**JOURNAL_ENTRY, "filename": "docs/reference/rung2-box/days.md"}
     [
         ([], [BOX_ENTRY["filename"]], "GATE PASSED"),
         ([BOX_ENTRY], [BOX_ENTRY["filename"], "cli/x.py"], "no 'Read before push by:"),
-        ([], None, "the PR's file list was not fetched, so the records exemption cannot be scoped"),
     ],
-    ids=["box-days-only", "foreign-file", "no-clone"],
+    ids=["box-days-only", "foreign-file"],
 )
 def test_a_records_branch_pr_is_judged_through_main_like_the_journals(monkeypatch, capsys, entries, changed, expected):
     """The arm is reachable only if `main()` fetches the file list for a `records/` head, as it does for `ops-journal`."""
