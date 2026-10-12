@@ -372,8 +372,8 @@ def read_line_fails(pr: dict, head_commit: dict | None, files: list[str] | None,
     if head_ref == "ops-journal" or head_ref.startswith("records/"):
         if files is None:
             return ["the PR's file list was not fetched, so the records exemption cannot be scoped to the record files"]
-        if files and all(f.startswith(RECORDS) for f in files):
-            return []
+        if files and all(f.startswith(RECORDS) and not f.endswith("/README.md") for f in files):
+            return []  # a README under a records directory is the record's contract, not a record: it takes the read
     body = pr.get("body") or ""
     head = pr.get("headRefOid") or ""
     # The read line is judged in the same plain prefix as the substitution. It costs nothing on a PR that uses

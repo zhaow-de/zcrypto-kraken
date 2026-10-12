@@ -550,6 +550,11 @@ def test_a_records_branch_name_alone_does_not_exempt_a_record_file_elsewhere():
     assert len(fails) == 1 and fails[0].startswith("no 'Read before push by:")
 
 
+def test_a_records_branch_carrying_a_records_readme_takes_every_arm():
+    fails = _eval(_pr(**BOX_PR), files=["docs/reference/rung2-box/days.md", "docs/reference/rung2-box/README.md"])
+    assert len(fails) == 1 and fails[0].startswith("no 'Read before push by:")
+
+
 def test_a_records_branch_of_rung_3_days_needs_no_read_line():
     assert _eval(_pr(headRefName="records/rung3-week-1", body="- [x] done\n"), files=["docs/reference/rung3/days.md"]) == []
 
