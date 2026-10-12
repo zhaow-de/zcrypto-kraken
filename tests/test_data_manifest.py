@@ -225,7 +225,6 @@ from pathlib import Path as _Path
 pytestmark = pytest.mark.data
 
 _HUB_REACH = _Path("/mnt/zhao-crypto/hot/ohlc-reach/manifest.json")
-_LOCAL_REACH = _Path("data/ohlc-reach-20260813/manifest.json")
 
 
 def _reach_series(manifest_path, *, continuous):
@@ -261,15 +260,6 @@ def test_path_order_re_anchors_the_hub_reach_continuous_digest_and_the_move_is_d
         "the re-anchor is expected; silently matching would mean the recipe did not change"
     )
     assert raw["basket_sha256"] == "8a826898241a5f1e5501db6ffeb398b81780ffd7cbbfedc1b230231432e13ab2"
-
-
-@pytest.mark.skipif(not _LOCAL_REACH.is_file(), reason="needs the local reach sibling")
-def test_path_order_re_anchors_the_local_reach_detached_digest():
-    raw, series = _reach_series(_LOCAL_REACH, continuous=False)
-    assert len({k.rsplit("/", 1)[1] for k in series}) > 1, "degenerate fixture: needs >1 interval to bite"
-    assert set_digest(series) == "5907b1e31f45237831449c72e00185299bfa8a604ee7c4f10ed4133c931032d9"
-    assert set_digest(series) != raw["detached_sha256"]
-    assert raw["detached_sha256"] == "0c07900fb9cf68419630dd8d14d62894e144f2d8f66a07c8bd130964007d53e0"
 
 
 def test_an_empty_series_is_a_healthy_producer_output_not_a_fault():

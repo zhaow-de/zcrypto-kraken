@@ -130,7 +130,6 @@ _DATA_ABSENT_REASONS = [
     "ohlc-15m not on this host — data-bearing workstation only",
     "gitignored refdata snapshot absent",
     "engine journal mount not present",
-    "/home/zhaow/Projects/zcrypto-kraken/data/ohlc-reach-20260813/manifest.json absent -- the set is gitignored and not present on this machine",
     "data/ohlc-full absent — the canonical-host marker; the disk pass runs only where the data root is",
     "trade archive absent at /mnt/zhao-crypto/capture-segments — data-bearing workstation only",
     "no BTC/EUR trade segments under /mnt/zhao-crypto/capture-segments",
