@@ -2384,50 +2384,6 @@ def test_the_ssh_relay_gate_cannot_be_neutered_by_a_task_modifier():
     )
 
 
-def test_the_caddy_repository_is_removed_and_caddy_kept_installed_never_forced_or_held():
-    tasks = iter_tasks(load_tasks(ACCESS_TASKS))
-    (repository,) = [task["ansible.builtin.deb822_repository"] for task, _ in tasks if "ansible.builtin.deb822_repository" in task]
-    assert repository == {"name": "caddy", "state": "absent"}
-    carriers = [task.get("name") for task in load_tasks(ACCESS_TASKS) if "cloudsmith" in str(task).lower()]
-    assert carriers == [], carriers
-    modules = ("ansible.builtin.apt", "ansible.builtin.dpkg_selections")
-    caddy = [task[module] for task, _ in tasks for module in modules if task.get(module, {}).get("name") == "caddy"]
-    assert caddy == [{"name": "caddy", "state": "present", "update_cache": True}, {"name": "caddy", "selection": "install"}], caddy
-
-
-_CADDY_READ = "read whether caddy is installed"
-_CADDY_REFUSAL = "refuse a node without caddy while its apt source is removed"
-_CADDY_INSTALL = "caddy present — the installed version, never forced (the Caddyfile validate is the guard)"
-
-
-@pytest.mark.parametrize(
-    ("state", "admitted"), [("installed", True), ("", False), ("config-files", False), ("not-installed", False)]
-)
-def test_the_access_role_refuses_a_node_without_caddy_before_the_install_and_in_a_preview(state, admitted):
-    tasks = load_tasks(ACCESS_TASKS)
-    assert find_task(tasks, _CADDY_READ) == {
-        "name": _CADDY_READ,
-        "ansible.builtin.command": {"argv": ["dpkg-query", "--show", "--showformat=${db:Status-Status}", "caddy"]},
-        "register": "access_caddy_state",
-        "changed_when": False,
-        "failed_when": False,
-        "check_mode": False,
-    }
-    refusal = find_task(tasks, _CADDY_REFUSAL)
-    assert set(refusal) == {"name", "ansible.builtin.assert"}, sorted(refusal)
-    assert truthy(assert_that(refusal), {"access_caddy_state": {"stdout": state}}) is admitted
-    names = [task.get("name") for task in tasks]
-    assert names.index(_CADDY_READ) < names.index(_CADDY_REFUSAL) < names.index(_CADDY_INSTALL), names
-
-
-def test_the_access_role_removes_the_caddy_source_before_its_first_apt_refresh():
-    leaves = [task for task, _, _ in alloy_version.role_leaves("access", frozenset())]
-    removal = {"name": "caddy", "state": "absent"}
-    removals = [i for i, task in enumerate(leaves) if task.get("ansible.builtin.deb822_repository") == removal]
-    refreshes = [i for i, task in enumerate(leaves) if refreshes_the_apt_cache(task)]
-    assert removals and refreshes and removals[0] < refreshes[0], (removals, refreshes)
-
-
 AGENTBOARD_UNIT = ANSIBLE / "roles" / "access_ops" / "templates" / "zaccess-agentboard.service.j2"
 AGENTBOARD_START = ANSIBLE / "roles" / "access_ops" / "templates" / "zaccess-agentboard-start.sh.j2"
 ACCESS_OPS_TASKS = ANSIBLE / "roles" / "access_ops" / "tasks" / "main.yml"

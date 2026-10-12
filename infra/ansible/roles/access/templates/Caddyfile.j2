@@ -31,3 +31,15 @@ nas.zaccess.zhaow.me {
 		}
 	}
 }
+
+# The Caddy apt mirror, public, without mTLS: the vendor's signed repository, re-served as it is.
+{{ caddy_mirror_host }} {
+	@apt path /dists/* /pool/*
+	handle @apt {
+		root * {{ access_caddy_mirror_served }}
+		file_server
+	}
+	handle {
+		respond 404
+	}
+}

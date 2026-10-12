@@ -12,3 +12,10 @@ access_acme_email: zhaow.km@gmail.com
 # IS the pin; the Caddyfile template loops this list. Sorted -- an unstable glob order would make
 # the rendered Caddyfile flap changed on every converge even with no leaves added or removed.
 access_pinned_leaves: "{{ lookup('ansible.builtin.fileglob', role_path ~ '/files/pinned-leaves/*.pem', wantlist=true) | map('basename') | sort }}"
+
+# The Caddy apt mirror (spec 00127).
+access_caddy_mirror_upstream_host: dl.cloudsmith.io
+access_caddy_mirror_upstream_root: public/caddy/stable/deb/debian
+access_caddy_mirror_user: caddy-mirror
+access_caddy_mirror_dir: /var/lib/caddy-apt-mirror
+access_caddy_mirror_served: "{{ access_caddy_mirror_dir }}/served"

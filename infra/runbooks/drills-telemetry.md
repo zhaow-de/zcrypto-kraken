@@ -653,7 +653,7 @@ That a lost node is rebuilt from the repository with no UI step and no secret co
 
 ### Preconditions
 
-- The owner's debmirror in place of Caddy's apt source: while the interim of 2026-10-11 stands, the rebuild stops at the edge role's refusal of a node without Caddy, after Grafana and Loki are installed.
+- The bridgehead's Caddy mirror answers: `curl -fsS -o /dev/null -w '%{http_code}\n' https://apt.zaccess.zhaow.me/dists/any-version/Release` from the workstation reads `200`, and another answer sends you to `zaccess.md`'s `zaccess-caddy-mirror` before the rebuild. The rebuild installs Caddy from it, and the node's converge refuses in its preview while it does not answer; `ssh access 'sudo cat /var/lib/caddy-apt-mirror/caddy-rollback'` prints `No such file or directory` while no Caddy rollback by `zaccess.md`'s `zaccess-caddy-mirror` step 5 awaits the owner's answer, and another answer is a hold, which goes to the owner with what it printed: a version it prints is the one rolled back from, which stays the mirror's candidate until the record is removed on that answer; a rebuild installs the mirror's candidate, so it waits through a hold.
 - An attended window; standing rules above; drill W2 passed before it.
 - In the Cloud Manager: the Linode `zcrypto-mon` with Backups enabled, read on its Backups tab, and the firewall `zcrypto-mon` attached to it with inbound Accept TCP `10022` and TCP `443` for both families and ICMP, the state the node's first converge left it in.
 - The owner's master key in the agent, `ssh-add -l` listing it, and the GPG agent unlocked; not through `run.sh`, whose throwaway agent excludes the master key. The bootstrap connects as root on port 22 with that key, which the rebuild dialog takes as root's.

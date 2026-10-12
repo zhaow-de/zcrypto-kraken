@@ -1,0 +1,48 @@
+---
+# Caddy's apt source on an edge node, the bridgehead's mirror (spec 00127); its own file so mon writes it before its
+# first apt refresh.
+- name: read whether the bridgehead's Caddy mirror answers
+  ansible.builtin.uri:
+    url: "https://{{ caddy_mirror_host }}/dists/any-version/Release"
+    method: HEAD
+  register: edge_caddy_mirror
+  failed_when: false
+  check_mode: false
+
+- name: refuse a Caddy source the bridgehead's mirror does not serve
+  ansible.builtin.assert:
+    that: edge_caddy_mirror.status == 200
+    fail_msg: >-
+      https://{{ caddy_mirror_host }}/dists/any-version/Release answers {{ edge_caddy_mirror.status }} to
+      {{ inventory_hostname }} ({{ edge_caddy_mirror.msg | default('') }}), so every apt refresh would fail on the
+      Caddy source this play writes. infra/runbooks/zaccess.md's zaccess-caddy-mirror procedure reads each answer.
+
+- name: the Caddy vendor key apt verifies the mirror's Release with
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/files/caddy-archive-keyring.gpg"
+    dest: "{{ caddy_mirror_keyring }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: the Caddy apt source — the bridgehead's mirror
+  ansible.builtin.deb822_repository:
+    name: caddy
+    types: [deb]
+    uris: "https://{{ caddy_mirror_host }}"
+    suites: [any-version]
+    components: [main]
+    signed_by: "{{ caddy_mirror_keyring }}"
+    install_python_debian: true
+  register: edge_caddy_repo
+
+- name: Debian's own caddy never a candidate — the mirror's is the one apt installs
+  ansible.builtin.copy:
+    content: |
+      Package: caddy
+      Pin: release o=Debian
+      Pin-Priority: -1
+    dest: /etc/apt/preferences.d/caddy
+    owner: root
+    group: root
+    mode: "0644"
