@@ -209,3 +209,28 @@ def test_the_bridgehead_installs_caddy_never_forced_or_held():
     modules = ("ansible.builtin.apt", "ansible.builtin.dpkg_selections")
     caddy = [task[module] for task, _ in tasks for module in modules if task.get(module, {}).get("name") == "caddy"]
     assert caddy == [{"name": "caddy", "state": "present", "update_cache": True}, {"name": "caddy", "selection": "install"}], caddy
+
+
+# --- the site ---------------------------------------------------------------------------------------------------------------
+def _caddyfile() -> dict[str, list]:
+    return dict(role_render.blocks(_render("Caddyfile.j2").splitlines()))
+
+
+def test_the_mirror_site_is_public_and_serves_the_two_apt_trees_alone():
+    body = _caddyfile()["apt.zaccess.zhaow.me"]
+    lines = [line for line, _ in body]
+    assert len(lines) == len(set(lines)), "a repeated line: Caddy routes a handle by the first, a dict by the last"
+    site = dict(body)
+    assert list(site) == ["@apt path /dists/* /pool/*", "handle @apt", "handle"], list(site)
+    assert site["handle @apt"] == [("root * /var/lib/caddy-apt-mirror/served", []), ("file_server", [])]
+    assert site["handle"] == [("respond 404", [])]
+
+
+def test_the_two_mtls_sites_still_import_the_snippet():
+    caddyfile = _caddyfile()
+    importing = [name for name, body in caddyfile.items() if ("import mtls", []) in body]
+    assert importing == ["tmux.zaccess.zhaow.me", "nas.zaccess.zhaow.me"], importing
+    # A global `servers { strict_sni_host insecure_off }` lets a client with no certificate reach these sites under the apt. name.
+    assert [line.split()[0] for line, _ in caddyfile[""]] == ["email"], caddyfile[""]
+    tls = dict(caddyfile["(mtls)"])["tls"]
+    assert ("mode require_and_verify", []) in dict(tls)["client_auth"], tls

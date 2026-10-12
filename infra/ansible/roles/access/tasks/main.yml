@@ -161,9 +161,7 @@
   notify: reload caddy
 # spec 00075 D14: mTLS is proven before any upstream exists; the NAS/agentboard upstreams are
 # wired behind this same gate.
-- name: >-
-    Caddyfile -- global block + the (mtls) snippet + the two static vhosts (mTLS proven
-    before any upstream exists; later upstreams are wired behind this same gate)
+- name: Caddyfile -- global block + the (mtls) snippet, the two mTLS vhosts and the public apt mirror site
   ansible.builtin.template:
     src: Caddyfile.j2
     dest: /etc/caddy/Caddyfile
