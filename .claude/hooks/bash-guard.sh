@@ -761,9 +761,9 @@ def exclude_spec(spec):
 
 
 def scoped_grep(rest, where):
-    # git does the selecting, never a hand matcher: `git ls-files` from the payload's cwd over the positive pathspecs
-    # alone, since git 2.47's ls-files can list nothing for a positive beside an exclude. A commit's tree is overlaid
-    # on the index, a superset that can only refuse more; any other object refuses.
+    # git does the selecting, never a hand matcher: `git ls-files` from the payload's cwd over the positives if any,
+    # since git 2.47's ls-files can list nothing for a positive beside an exclude. A commit's tree is overlaid on the
+    # index, a superset that can only refuse more; any other object refuses.
     if any(a[:2] == "--" and among(a, {"--no-index", "--untracked"}) for a in rest):
         return "searches past the index -- drop `--no-index` or `--untracked`"
     bare, specs = grep_pathspecs(rest)
@@ -776,7 +776,6 @@ def scoped_grep(rest, where):
             return f"names the {kind} `{x}`, which the arm cannot scope -- search a commit, or the index"
         else:
             specs.append(x)
-    # With no positive spelled, git lists the exclude-only shape exactly, so the excludes stand.
     positives = [x for x in specs if not exclude_spec(x)]
     listed = positives or specs
     for tree in commits or [None]:
@@ -789,7 +788,7 @@ def scoped_grep(rest, where):
         if done.returncode:
             return "carries a pathspec git cannot read -- spell it as git ls-files accepts it"
         if any(vault_path("/" + f) for f in done.stdout.split("\0") if f):
-            return "may search a vaulted file -- name directories or files outside the vaulted set (`vault.yml`, `*.vault`, `vault-password.sops.yaml`, `files/*_ed25519`); an exclude is ignored"
+            return "may search a vaulted file -- name directories or files outside the vaulted set (`vault.yml`, `*.vault`, `vault-password.sops.yaml`, `files/*_ed25519`); excludes count alone"
     return None
 
 
