@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import shlex
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,7 @@ ACCESS_TASKS = ACCESS / "tasks/main.yml"
 EDGE_SOURCE = ANSIBLE / "roles/edge/tasks/caddy-source.yml"
 KEYRING = ANSIBLE / "files/caddy-archive-keyring.gpg"
 KEYRING_SHA256 = "c17cd5298a0bab02fda439fff278d9a55df2120cf9dac790c6ce71930db90b37"
+UNVAULTED = (":!*vault.yml", ":!*.vault", ":!*.sops.*", ":!*vault-password*", ":!infra/ansible/files/*_ed25519")
 ALL = yaml.safe_load((ANSIBLE / "group_vars/all/vars.yml").read_text())
 MIRROR = {key: ALL[key] for key in ("caddy_mirror_host", "caddy_mirror_keyring")}
 PIN = "Package: caddy\nPin: release o=Debian\nPin-Priority: -1\n"
@@ -240,6 +242,10 @@ def test_the_two_mtls_sites_still_import_the_snippet():
 
 # --- the vendor's repository: read by the sync alone ------------------------------------------------------------------
 def test_the_vendors_repository_is_named_by_the_mirrors_upstream_alone():
-    files = [path for path in (ANSIBLE / "roles").rglob("*") if path.is_file()]
-    hits = sorted(str(path.relative_to(ANSIBLE)) for path in files if b"cloudsmith" in path.read_bytes().lower())
+    # The excludes stand alone and the prefix is filtered here: beside a positive pathspec, `git ls-files` misapplies them.
+    listed = subprocess.run(["git", "ls-files", "-z", "--full-name", "--", *UNVAULTED], cwd=REPO, capture_output=True, check=True)
+    files = [(REPO / name).relative_to(ANSIBLE) for name in listed.stdout.decode().split("\0") if name.startswith("infra/ansible/")]
+    tops = {path.parts[0] for path in files}
+    assert {"files", "group_vars", "host_vars", "roles"} <= tops, sorted(tops)
+    hits = sorted(str(path) for path in files if b"cloudsmith" in (ANSIBLE / path).read_bytes().lower())
     assert hits == ["roles/access/defaults/main.yml"], hits
