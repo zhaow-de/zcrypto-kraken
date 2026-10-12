@@ -545,7 +545,7 @@ def test_a_records_branch_carrying_a_file_outside_the_records_directories_takes_
     assert len(fails) == 1 and fails[0].startswith("no 'Read before push by:")
 
 
-def test_a_records_branch_name_alone_does_not_exempt_a_journal_file_elsewhere():
+def test_a_records_branch_name_alone_does_not_exempt_a_record_file_elsewhere():
     fails = _eval(_pr(headRefName="records/anything", body="- [x] done\n"), files=["docs/reference/drill-log.md"])
     assert len(fails) == 1 and fails[0].startswith("no 'Read before push by:")
 
@@ -699,6 +699,25 @@ JOURNAL_ENTRY = {"filename": "docs/reference/ops-journal/2026-09.md", "status": 
 )
 def test_a_journal_pr_is_judged_by_the_endpoint_and_the_clone_together(monkeypatch, capsys, entries, changed, expected):
     _main_over_files(monkeypatch, JOURNAL_PR["body"], entries, changed=changed, headRefName="ops-journal")
+    out = capsys.readouterr().out
+    assert expected in out, out
+
+
+BOX_ENTRY = {**JOURNAL_ENTRY, "filename": "docs/reference/rung2-box/days.md"}
+
+
+@pytest.mark.parametrize(
+    ("entries", "changed", "expected"),
+    [
+        ([], [BOX_ENTRY["filename"]], "GATE PASSED"),
+        ([BOX_ENTRY], [BOX_ENTRY["filename"], "cli/x.py"], "no 'Read before push by:"),
+        ([], None, "the PR's file list was not fetched, so the records exemption cannot be scoped"),
+    ],
+    ids=["box-days-only", "foreign-file", "no-clone"],
+)
+def test_a_records_branch_pr_is_judged_through_main_like_the_journals(monkeypatch, capsys, entries, changed, expected):
+    """The arm is reachable only if `main()` fetches the file list for a `records/` head, as it does for `ops-journal`."""
+    _main_over_files(monkeypatch, BOX_PR["body"], entries, changed=changed, headRefName=BOX_PR["headRefName"])
     out = capsys.readouterr().out
     assert expected in out, out
 

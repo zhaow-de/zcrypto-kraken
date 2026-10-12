@@ -17,9 +17,8 @@ INDEX = "docs/reference/change-index.md"
 # The rendered files a rebase onto a moved base resolves by hand: the change index and the topics index.
 RENDERED = (INDEX, "docs/open-topics/README.md")
 JOURNAL = "docs/reference/ops-journal/"
-# The records family: a PR whose every file is a hand-written record under one of these directories (their
-# READMEs declare the record shape) has nothing for a reviewer to re-true -- a `records/<name>` branch, or the
-# ops-journal's own branch name.
+# The records family: directories whose README declares an append-only record; a PR carrying only their files
+# has nothing for a reviewer to re-true.
 RECORDS = (JOURNAL, "docs/reference/rung2-box/")
 DEPENDABOT = "dependabot[bot]"
 # `commits` is here because `read_line_fails`'s dependabot arm reads it: a field an arm reads and this
@@ -374,7 +373,7 @@ def read_line_fails(pr: dict, head_commit: dict | None, files: list[str] | None,
         if files is None:
             return ["the PR's file list was not fetched, so the records exemption cannot be scoped to the record files"]
         if files and all(f.startswith(RECORDS) for f in files):
-            return []  # a month of journal entries or a week of box days has nothing for a reviewer to read (the READMEs under RECORDS)
+            return []
     body = pr.get("body") or ""
     head = pr.get("headRefOid") or ""
     # The read line is judged in the same plain prefix as the substitution. It costs nothing on a PR that uses
@@ -666,7 +665,8 @@ def main(argv: list[str]) -> int:
     head_commit = files = None
     m = READ_LINE.search(_as_a_reader_sees_it(pr.get("body") or ""))
     head = pr.get("headRefOid") or ""
-    if m or pr.get("headRefName") == "ops-journal":
+    head_ref = pr.get("headRefName") or ""
+    if m or head_ref == "ops-journal" or head_ref.startswith("records/"):
         try:
             out = _gh("api", "--paginate", f"repos/{REPO}/pulls/{pr['number']}/files", "--jq", PR_FILES_JQ)
             files = [line for line in out.splitlines() if line.strip()]
