@@ -242,7 +242,7 @@ def test_the_two_mtls_sites_still_import_the_snippet():
 
 # --- the vendor's repository: read by the sync alone ------------------------------------------------------------------
 def test_the_vendors_repository_is_named_by_the_mirrors_upstream_alone():
-    # The excludes stand alone and the prefix is filtered here: beside a positive pathspec, `git ls-files` misapplies them.
+    # The excludes stand alone: beside an `infra/ansible` pathspec, `git ls-files` misapplies them.
     listed = subprocess.run(["git", "ls-files", "-z", "--full-name", "--", *UNVAULTED], cwd=REPO, capture_output=True, check=True)
     files = [(REPO / name).relative_to(ANSIBLE) for name in listed.stdout.decode().split("\0") if name.startswith("infra/ansible/")]
     tops = {path.parts[0] for path in files}
