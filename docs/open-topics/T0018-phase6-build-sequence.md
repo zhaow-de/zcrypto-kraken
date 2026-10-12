@@ -73,7 +73,7 @@ Beside the sequence, the drill program's engine enhancements: `00105` the go-liv
 
 | Step | Who | When | How | Waits on |
 | --- | --- | --- | --- | --- |
-| Rung 2's box run to its exit: the daily windows, the restarts if any, the weekly reads, the exit sells Sat 10-31 with Sun 11-01 in reserve, one closing restart if the engine restarted inside the box | the owner (every drop, the arm file, every host line) + the coordinator (the workstation reads, `data/rung2/days.md`) | Mon 2026-10-05 to Sun 2026-11-01 | `infra/runbooks/engine-procedures.md`, `engine-rung-2-box` steps 2–8 | nothing — running |
+| Rung 2's box run to its exit: the daily windows, the restarts if any, the weekly reads, the exit sells Sat 10-31 with Sun 11-01 in reserve, one closing restart if the engine restarted inside the box | the owner (every drop, the arm file, every host line) + the coordinator (the workstation reads, `docs/reference/rung2-box/days.md`) | Mon 2026-10-05 to Sun 2026-11-01 | `infra/runbooks/engine-procedures.md`, `engine-rung-2-box` steps 2–8 | nothing — running |
 | The exit report, slots S1–S12 of spec `00092` filled | the coordinator (the readings) + the owner (the reading of it) | W45, by Fri 2026-11-06 | `engine-rung-2-box` step 9; `00092` *The slots rung 2's box fills* | the box's end |
 | [[T0214]] — the cost basis re-priced from the box's measured blend | [[T0214]] | its trigger | [[T0214]] | the box's fills |
 | [[T0150]] — the `held` half of the cycle record, and the runbook's disarm-across-a-NAV-change line re-trued in the disarm converge | [[T0150]] | not before 2026-10-25 | [[T0150]] | the disarm converge |
