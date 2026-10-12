@@ -77,11 +77,11 @@ def test_default_pairs_all_eur_quoted_returns_every_symbol_with_no_record_at_err
 
 @pytest.mark.skipif(not _REPO_UNIVERSE.exists(), reason="generated (gitignored) universe JSON absent — see docs/universe/*.md")
 def test_default_pairs_from_local_universe_file():
-    # A local sanity check on the real generated universe file when present: 12 selected symbols,
-    # 10 of them EUR-quoted (the "EUR majors").
+    # The real generated artifact, whichever stamped set is newest: the default pairs are its EUR-quoted
+    # selection, no more and no fewer, so a refresh that drops or adds an EUR leg moves both sides.
+    selected = json.loads(_REPO_UNIVERSE.read_text())["selected"]
     pairs = _default_pairs(_REPO_UNIVERSE)
-    assert len(pairs) == 10
-    assert all(p.endswith("/EUR") for p in pairs)
+    assert pairs == [s for s in selected if s.endswith("/EUR")]
     assert "BTC/EUR" in pairs
     assert "ETH/BTC" not in pairs
 
