@@ -25,9 +25,6 @@ pytestmark = pytest.mark.data
 runner = CliRunner()
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
-# The point-in-time universe JSON is a gitignored *generated* artifact (its canonical committed
-# form is docs/universe/point-in-time-universe.md); it is absent in CI and fresh checkouts, and the
-# resolver picks the newest stamped set, never the retired unstamped one.
 try:
     _REPO_UNIVERSE = resolve_universe_path(Path("data"))
 except FileNotFoundError:
