@@ -1,5 +1,5 @@
 # Rung 3 — the accumulation's records
 
-`days.md` is rung 3's daily record, born with the rung: one entry per day, appended on the day by the coordinator from the day's reads, each with the clock's stamp as it printed; what an entry carries — the day, a pause, the week, a birth — is `engine-rung-3`'s in `infra/runbooks/engine-procedures.md`. It is append-only: a wrong reading is corrected by a later entry that names it, never by editing the earlier one.
+`days.md` is rung 3's daily record, born with the rung: one entry per day, appended on the day by the coordinator from the day's reads, each with the clock's stamp as it printed; what an entry carries is `engine-rung-3`'s in `infra/runbooks/engine-procedures.md`. It is append-only: a wrong reading is corrected by a later entry that names it, never by editing the earlier one.
 
 A day's entry is appended on the week's branch, `records/rung3-week-<N>`, in its own worktree as the box's is — the main checkout stays on `develop`, the nightly data-gated run's tree — and the Monday carrying the week's read closes it; the next week's branch is cut from `develop` once its pull request merges. That pull request carries this directory's files alone, so the gate's records family (`infra/scripts/merge-gate.py`) exempts it from the pre-push read.
