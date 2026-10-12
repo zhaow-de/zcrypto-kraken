@@ -55,7 +55,7 @@ _SKIPPED = re.compile(r"^SKIPPED \[(?P<count>\d+)\] (?P<site>\S+?):(?: (?P<reaso
 # mount that is absent, not present, not mounted or not on this host. Not matched, so no finding: the
 # live-venue opt-in, root's permission bypass, a missing develop ref or tool -- the suite's own gates.
 _DATA_ABSENCE = re.compile(
-    r"dataset|\bdata[/ -]|substrate|snapshot|refdata|universe JSON|manifest|\bhub\b|reach sibling|mount|"
+    r"dataset|\bdata[/ -]|substrate|snapshot|refdata|universe JSON|manifest|\bhub\b|mount|"
     r"archive|segments|journal mirror|gitignored|off-workstation|on this (?:node|host|machine)",
     re.IGNORECASE,
 )
