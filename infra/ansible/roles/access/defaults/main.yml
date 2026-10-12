@@ -13,8 +13,7 @@ access_acme_email: zhaow.km@gmail.com
 # the rendered Caddyfile flap changed on every converge even with no leaves added or removed.
 access_pinned_leaves: "{{ lookup('ansible.builtin.fileglob', role_path ~ '/files/pinned-leaves/*.pem', wantlist=true) | map('basename') | sort }}"
 
-# The Caddy apt mirror (spec 00127): the repository it copies, named here and in no other role file, the system user
-# its sync runs as, the directory it syncs under, and the served tree in it.
+# The Caddy apt mirror (spec 00127).
 access_caddy_mirror_upstream_host: dl.cloudsmith.io
 access_caddy_mirror_upstream_root: public/caddy/stable/deb/debian
 access_caddy_mirror_user: caddy-mirror
