@@ -724,7 +724,6 @@ def git_sub(words):
     return (argv[i], argv[i + 1 :], chdirs) if i < len(argv) else (None, [], chdirs)
 
 
-EXCLUDES_SPELLED = "`':!*vault*' ':!*.sops.*' ':!infra/ansible/files/*_ed25519'`"
 # git grep's value-taking options in option_walk's slots; `-O` takes only an attached value, never the next word.
 GREP_OPTIONS = ("efCABm", "O", {"context", "after-context", "before-context", "max-count", "max-depth", "threads"})
 
@@ -755,9 +754,18 @@ def object_type(where, word):
     return kind.stdout.strip() or None
 
 
+def exclude_spec(spec):
+    # git's three exclude spellings: `:!x`, `:^x`, and `:(exclude,...)x` with `exclude` among the magic words.
+    if spec[:2] in (":!", ":^"):
+        return True
+    return spec.startswith(":(") and ")" in spec and "exclude" in spec[2 : spec.index(")")].split(",")
+
+
 def scoped_grep(rest, where):
-    # git does the selecting, never a hand matcher: `git ls-files` from the payload's cwd over the pathspecs as spelled.
-    # A commit's tree is overlaid on the index, a superset that can only refuse more; any other object refuses.
+    # git does the selecting, never a hand matcher: `git ls-files` from the payload's cwd over the positive pathspecs
+    # alone -- git 2.47 lists nothing for a positive under infra/ansible beside any exclude, so an exclude scopes nothing
+    # here and a search is admitted only when no positive reaches a vaulted file. A commit's tree is overlaid on the
+    # index, a superset that can only refuse more; any other object refuses.
     if any(a[:2] == "--" and among(a, {"--no-index", "--untracked"}) for a in rest):
         return "searches past the index -- drop `--no-index` or `--untracked`"
     bare, specs = grep_pathspecs(rest)
@@ -773,12 +781,14 @@ def scoped_grep(rest, where):
     for tree in commits or [None]:
         with_tree = [f"--with-tree={tree}"] if tree else []
         done = subprocess.run(
-            ["git", "-C", where, "ls-files", "-z", "--full-name", *with_tree, "--", *specs], capture_output=True, text=True
+            ["git", "-C", where, "ls-files", "-z", "--full-name", *with_tree, "--", *[x for x in specs if not exclude_spec(x)]],
+            capture_output=True,
+            text=True,
         )
         if done.returncode:
             return "carries a pathspec git cannot read -- spell it as git ls-files accepts it"
         if any(vault_path("/" + f) for f in done.stdout.split("\0") if f):
-            return "may search a vaulted file -- from the repository root add " + EXCLUDES_SPELLED + " after `--`, or name files outside the vaulted set"
+            return "may search a vaulted file -- name directories or files outside the vaulted set (`vault.yml`, `*.vault`, `*.sops.*`, `files/*_ed25519`); an exclude pathspec scopes nothing here"
     return None
 
 
