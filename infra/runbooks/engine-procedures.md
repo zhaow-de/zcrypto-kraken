@@ -801,7 +801,7 @@ After an attended act that changes the book outside the engine's fills — a fla
 
 #### 9. The go/no-go — the owner's decision
 
-Read once three complete ISO weeks are decided, counted from the second rung-3 week, and recorded in `docs/research/14.phase6-decisions.md` with the readings, the entry's header opening `Rung 3's go/no-go` and closing with its `(Decision: …)` tag, the shape the runbook-revision topic's trigger reads. <!-- T0221 --> The gate's terms are the master plan's, `docs/research/00.master-plan.md`, rung 3's go/no-go gate; these are the reads this procedure produces for it.
+Read once three complete ISO weeks are decided, counted from the second rung-3 week, and recorded in `docs/research/14.phase6-decisions.md` with the readings, the entry's header naming `Rung 3's go/no-go` before its `(Decision: …)` tag, the shape the runbook-revision topic's trigger reads. <!-- T0221 --> The gate's terms are the master plan's, `docs/research/00.master-plan.md`, rung 3's go/no-go gate; these are the reads this procedure produces for it.
 
 1. **Inside the band**: the weekly reads' `within` column reads `yes` for three consecutive complete ISO weeks the report decided, the second rung-3 week the first it decides. The report's own `Verdict:` line reads `pass` once at least three weeks are decided and each decided week is inside.
 2. **Zero unreconciled order or position states**, from the engine's three reconciliations — the startup pass, the re-read pass and the boundary's book read — as the journal records them: each `ambiguous` row settled, each `reconciled` or `withdrawn` event and each leg whose `cache_net` differs from its `held_qty` explained in `docs/reference/rung3/days.md`, and each unmatched ledger row explained at the weekly reads.
