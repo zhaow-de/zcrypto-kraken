@@ -73,7 +73,7 @@ def resolve_universe_path(data_root: Path) -> Path:
     """The newest COMPLETE stamped universe set's artifact. Publication is additive, so the artifact is a SERIES of
     immutable `universe-<%Y%m%d>` sets rather than one mutable filename: fixed-width digits sort chronologically, and a
     stray hand copy never outranks a date. A stamped dir lacking the artifact is skipped LOUDLY, not fatally -- an
-    in-flight fetch has one for seconds. The legacy unstamped set stays in `authored_sets`; `push_hot` raises without it."""
+    in-flight fetch has one for seconds. The unstamped legacy set is retired and is not a fallback."""
     stamped = sorted(
         (p for p in data_root.glob("universe-*") if p.is_dir() and _STAMPED_UNIVERSE.fullmatch(p.name)),
         key=lambda p: p.name,

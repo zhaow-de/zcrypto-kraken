@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: 'a universe refresh newer than 2026-08-13 is published to the hub — check: `ls /mnt/zhao-crypto/hot | grep -E "^universe-[0-9]{8}$" | sort | tail -1` prints a stamp above `universe-20260813`'
+status: resolved
 ---
 
 # Retire the August stamped sets and the legacy universe at the next universe refresh
@@ -17,8 +16,8 @@ Three dangling sets on `hot/` and under `data/` read as live data to every fetch
 
 - 2026-10-11: the owner retired `ohlc-reach-20261007`, `ohlc-full-20261007` and `ohlc-15m-20261007` to `/volume1/ZhaoCrypto/backup-ohlc-squash-2026-10-11/` (plan `00125` R8) and asked whether the two August sets could be absorbed into the unstamped ones; they cannot while `universe-20260813` is the resolver's pick, for the reasons above.
 
-## Suggested next steps
+## Resolution
 
-- When the trigger reads true: read the new artifact's provenance, `python3 -I -c 'import json; print(json.load(open("data/universe-<stamp>/point-in-time-universe.json"))["provenance"])'` after `uv run zcrypto data fetch`, and confirm `ohlc_dataset_dir` names `ohlc-rolling`.
-- One PR: move `tests/test_data_manifest.py`'s `_LOCAL_REACH`, `tests/test_data_gated_run.py`'s message and `tests/test_capture_command.py`'s `_REPO_UNIVERSE` off the sets this topic retires; re-true the catalog's "two reach sets stay" line and `docs/universe/point-in-time-universe.md`'s two fallback lines; drop `universe` from `authored_sets` in `zcrypto.toml`, which `tests/test_data_rebuild.py::test_every_rebuildable_dataset_is_an_authored_set` refuses until it is changed.
-- After the merge, by the owner's hand on the NAS: `mv /volume1/ZhaoCrypto/hot/ohlc-reach-20260813 /volume1/ZhaoCrypto/hot/universe-20260813 /volume1/ZhaoCrypto/hot/universe /volume1/ZhaoCrypto/backup-ohlc-squash-<date>/`, then the local copies under `data/` copied aside and removed, and `ls /mnt/zhao-crypto/hot` read back; then this topic resolved with the PR and the move's instant.
+- 2026-10-12: on the owner's ask the refresh ran from the rolling canonical at its 2026-10-10 head — `zcrypto data fetch`, then `zcrypto data rebuild universe --no-push` minted `data/universe-20261012` (provenance `ohlc_dataset_dir` = `ohlc-rolling`, 12 selected, DOT/EUR back above the floor), and on the word "push the set" the sibling alone was pushed to the hub at 14:44:41Z (new=1, skipped=0); the hub copy's sha256 opens `c6a168e5907cb03b`, byte-identical to the local mint.
+- The PR carrying this file: `tests/test_data_manifest.py`'s local reach pin and `tests/test_data_gated_run.py`'s tolerated reason for it go with the set they pinned; `tests/test_capture_command.py` reads the newest stamped artifact through `resolve_universe_path`; `tests/test_data_rebuild.py` exempts the universe from the authored-set rule, since its rebuild publishes its own stamped sibling; `tests/test_basket_concordance.py`'s ruled DOT exception is discharged; `universe` leaves `authored_sets` in `zcrypto.toml`; the catalog's reach-set line and universe entry and `docs/universe/point-in-time-universe.md` describe the 2026-10-12 generation.
+- After the merge, by the owner's hand on the NAS: `mv /volume1/ZhaoCrypto/hot/ohlc-reach-20260813 /volume1/ZhaoCrypto/hot/universe-20260813 /volume1/ZhaoCrypto/hot/universe /volume1/ZhaoCrypto/backup-ohlc-squash-2026-10-12/`, then the local copies under `data/` removed, and `ls /mnt/zhao-crypto/hot` read back — the fleet's step, recorded in the ops journal's entry of the day it is done.
