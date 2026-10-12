@@ -861,6 +861,7 @@ UNSCOPED_GREPS = [
 ]
 SCOPED_GREPS = [
     ("git grep -l foo -- infra/ansible/roles ':!*.vault'", "."),
+    ("git grep -n foo -- ':!*vault.yml' ':!*.vault' ':!*.sops.*' ':!*vault-password*' ':!infra/ansible/files/*_ed25519'", "."),
     ("git grep -l foo -- infra/scripts infra/runbooks tests", "."),
     ("git grep -n foo -- tests/test_bash_guard.py", "."),
     ("git grep -n foo tests/test_bash_guard.py README.md", "."),
