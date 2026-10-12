@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from cli.alpha.errors import AlphaError
 from cli.features.derivatives import align_asof, funding_zscore
 from cli.logging import get_logger
+from cli.validation import max_drawdown
 
 logger = get_logger("alpha.b2")
 
@@ -93,3 +94,116 @@ def funding_grid_feature(
         len(union_ts) - 1,
     )
     return align_asof(normalised, z, close_grid(union_ts))
+
+
+def _check_lengths(lists: dict[str, list], expected: int | None = None) -> int:
+    for name, values in lists.items():
+        if expected is None:
+            expected = len(values)
+        elif len(values) != expected:
+            raise AlphaError(f"{name} has length {len(values)}, expected {expected}")
+    return 0 if expected is None else expected
+
+
+def _check_paired(x_name: str, x: dict[str, list], y_name: str, y: dict[str, list], expected: int | None = None) -> int:
+    if set(x) != set(y):
+        raise AlphaError(f"{x_name} and {y_name} must hold the same assets, got {sorted(x)} and {sorted(y)}")
+    named = {f"{x_name}[{asset!r}]": v for asset, v in x.items()} | {f"{y_name}[{asset!r}]": v for asset, v in y.items()}
+    return _check_lengths(named, expected)
+
+
+def derisk_scales(z_by_asset: dict[str, list[float | None]], *, config: B2Config) -> dict[str, list[float]]:
+    """One-sided by ruling (docs/specs/00128 D3): a z at or below the threshold, one below minus it
+    included, and a None z leave the position whole -- a z below minus the threshold is a later
+    trial's candidate, never read here through an `abs`."""
+    if not isinstance(config, B2Config):
+        raise AlphaError(f"config must be a B2Config, got {type(config)!r}")
+    _check_lengths({f"z_by_asset[{asset!r}]": zs for asset, zs in z_by_asset.items()})
+    scales = {
+        asset: [config.derisk_scale if z is not None and z > config.z_threshold else 1.0 for z in zs]
+        for asset, zs in z_by_asset.items()
+    }
+    logger.debug(
+        "derisk scales: %d of %d asset-stamps scaled to %s",
+        sum(s != 1.0 for values in scales.values() for s in values),
+        sum(len(values) for values in scales.values()),
+        config.derisk_scale,
+    )
+    return scales
+
+
+def scale_positions(asset_positions: dict[str, list[float]], scales: dict[str, list[float]]) -> dict[str, list[float]]:
+    _check_paired("asset_positions", asset_positions, "scales", scales)
+    return {asset: [p * s for p, s in zip(asset_positions[asset], scales[asset])] for asset in asset_positions}
+
+
+def net_of_cost(
+    asset_positions: dict[str, list[float]],
+    asset_returns: dict[str, list[float | None]],
+    *,
+    cost_per_side: float,
+) -> list[float]:
+    """`build_crossfreq_system`'s net-of-cost loop (docs/specs/00128 D5), the one arm A, arm B and
+    B's cost-stressed series all go through: each asset's turnover from flat, a None return read as 0.0."""
+    n = _check_paired("asset_positions", asset_positions, "asset_returns", asset_returns)
+    legs = [(asset_positions[asset], asset_returns[asset]) for asset in asset_positions]
+    previous = [0.0] * len(legs)
+    net: list[float] = []
+    for k in range(n):
+        gross, turnover = 0.0, 0.0
+        for i, (positions, returns) in enumerate(legs):
+            p = positions[k]
+            r = returns[k]
+            gross += p * (0.0 if r is None else r)
+            turnover += abs(p - previous[i])
+            previous[i] = p
+        net.append(gross - turnover * cost_per_side)
+    return net
+
+
+def per_year_engaged_counts(
+    asset_positions: dict[str, list[float]], scales: dict[str, list[float]], close_ts: list[datetime]
+) -> dict[str, int]:
+    """Asset-stamps long under a scale below 1, per close year (docs/specs/00128 D6): a flat stamp at
+    z > 2 is no engagement, since the overlay halves nothing there."""
+    _check_paired("asset_positions", asset_positions, "scales", scales, len(close_ts))
+    counts = dict.fromkeys((str(t.year) for t in close_ts), 0)
+    legs = [(asset_positions[asset], scales[asset]) for asset in asset_positions]
+    for positions, asset_scales in legs:
+        for k, (p, s) in enumerate(zip(positions, asset_scales)):
+            if p > 0 and s < 1:
+                counts[str(close_ts[k].year)] += 1
+    return counts
+
+
+def per_year_positions_differ(a: dict[str, list[float]], b: dict[str, list[float]], close_ts: list[datetime]) -> dict[str, int]:
+    _check_paired("a", a, "b", b, len(close_ts))
+    years = [str(t.year) for t in close_ts]
+    counts = dict.fromkeys(years, 0)
+    legs = [(a[asset], b[asset]) for asset in a]
+    for k, year in enumerate(years):
+        if any(x[k] != y[k] for x, y in legs):
+            counts[year] += 1
+    return counts
+
+
+def per_year_turnover(asset_positions: dict[str, list[float]], close_ts: list[datetime]) -> dict[str, float]:
+    """`book_turnover`'s convention split by close year: each asset from flat, each change in the year
+    of its own return index."""
+    _check_lengths({f"asset_positions[{asset!r}]": v for asset, v in asset_positions.items()}, len(close_ts))
+    years = [str(t.year) for t in close_ts]
+    totals = dict.fromkeys(years, 0.0)
+    for positions in asset_positions.values():
+        previous = 0.0
+        for k, p in enumerate(positions):
+            totals[years[k]] += abs(p - previous)
+            previous = p
+    return totals
+
+
+def per_year_max_drawdown(returns: list[float], close_ts: list[datetime]) -> dict[str, float]:
+    _check_lengths({"returns": returns}, len(close_ts))
+    by_year: dict[str, list[float]] = {}
+    for r, t in zip(returns, close_ts):
+        by_year.setdefault(str(t.year), []).append(r)
+    return {year: max_drawdown(slice_) for year, slice_ in by_year.items()}

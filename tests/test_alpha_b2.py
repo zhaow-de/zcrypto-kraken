@@ -4,7 +4,19 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from cli.alpha.b2 import B2Config, close_grid, funding_grid_feature
+from cli.alpha.b1 import book_turnover
+from cli.alpha.b2 import (
+    B2Config,
+    close_grid,
+    derisk_scales,
+    funding_grid_feature,
+    net_of_cost,
+    per_year_engaged_counts,
+    per_year_max_drawdown,
+    per_year_positions_differ,
+    per_year_turnover,
+    scale_positions,
+)
 from cli.alpha.errors import AlphaError
 
 UTC = timezone.utc
@@ -127,3 +139,120 @@ def test_b2config_accepts_a_full_scale():
 
 def test_b2config_defaults_are_the_pre_registered_constants():
     assert (B2Config().z_threshold, B2Config().derisk_scale, B2Config().z_window) == (2.0, 0.5, 90)
+
+
+def test_a_planted_crossing_scales_exactly_its_stamps_and_neither_a_z_of_2_nor_one_below_minus_2():
+    z = {"BTC": [0.5, 2.5, 3.1, 2.0, 1.9], "ETH": [2.0, -3.0, 2.0001, -2.5, 4.0]}
+    assert derisk_scales(z, config=B2Config()) == {"BTC": [1.0, 0.5, 0.5, 1.0, 1.0], "ETH": [1.0, 1.0, 0.5, 1.0, 0.5]}
+
+
+def test_a_none_z_leaves_the_scale_at_one():
+    z = {"BTC": [None, 2.5, None], "ETH": [None, None, None]}
+    assert derisk_scales(z, config=B2Config()) == {"BTC": [1.0, 0.5, 1.0], "ETH": [1.0, 1.0, 1.0]}
+
+
+def test_derisk_scales_refuses_a_config_other_than_b2config():
+    with pytest.raises(AlphaError, match="B2Config"):
+        derisk_scales({"BTC": [2.5]}, config=None)
+
+
+def test_scale_positions_pairs_each_assets_scales_by_key_not_by_order():
+    positions = {"BTC": [0.4, 0.2, 0.1], "ETH": [0.3, 0.6, 0.5]}
+    scales = {"ETH": [1.0, 0.5, 0.5], "BTC": [0.5, 1.0, 1.0]}
+    assert scale_positions(positions, scales) == {"BTC": [0.2, 0.2, 0.1], "ETH": [0.3, 0.3, 0.25]}
+
+
+def test_net_of_cost_charges_the_de_risk_and_the_re_risk_and_reads_a_none_return_as_zero():
+    returns = {"ETH": [0.01, None, -0.02, 0.03], "BTC": [0.02, -0.01, 0.04, None]}
+    arm_a = {"BTC": [0.5, 0.5, 0.5, 0.5], "ETH": [0.2, 0.2, 0.2, 0.2]}
+    arm_b = {"BTC": [0.5, 0.5, 0.25, 0.5], "ETH": [0.2, 0.2, 0.2, 0.2]}
+    net_a = net_of_cost(arm_a, returns, cost_per_side=0.006)
+    net_b = net_of_cost(arm_b, returns, cost_per_side=0.006)
+    # Index 0 opens both legs from flat: 0.5 * 0.02 + 0.2 * 0.01 - 0.006 * (0.5 + 0.2).
+    assert net_a == pytest.approx([0.0078, -0.005, 0.016, 0.006])
+    # BTC halved at index 2: 0.5 * 0.5 * 0.04 off that gross, 0.006 * 0.25 charged there and at the re-risk.
+    assert net_b == pytest.approx([0.0078, -0.005, 0.0045, 0.0045])
+    assert sum(net_a) - sum(net_b) == pytest.approx(0.5 * 0.5 * 0.04 + 0.006 * 0.5)
+
+
+# Return indices 0-2 close in 2020 and 3-5 in 2021; index 3 opens 2020-12-31T20:00Z.
+_CLOSE = close_grid([datetime(2020, 12, 31, 8, tzinfo=UTC) + timedelta(hours=4 * i) for i in range(7)])
+_ARM_A = {"BTC": [0.4, 0.4, 0.0, 0.0, 0.3, 0.3], "ETH": [0.2, 0.2, 0.2, 0.5, 0.5, 0.0]}
+# BTC at indices 2 and 3 and ETH at index 5 are flat under a 0.5 scale: not engaged stamps.
+_SCALES = {"ETH": [1.0, 1.0, 1.0, 0.5, 0.5, 0.5], "BTC": [1.0, 1.0, 0.5, 0.5, 0.5, 1.0]}
+_ARM_B = {"ETH": [0.2, 0.2, 0.2, 0.25, 0.25, 0.0], "BTC": [0.4, 0.4, 0.0, 0.0, 0.15, 0.3]}
+
+
+def test_per_year_engaged_counts_counts_long_de_risked_asset_stamps_and_never_a_flat_one():
+    assert per_year_engaged_counts(_ARM_A, _SCALES, _CLOSE) == {"2020": 0, "2021": 3}
+
+
+def test_per_year_positions_differ_counts_a_return_index_once_however_many_assets_differ():
+    assert per_year_positions_differ(_ARM_A, _ARM_B, _CLOSE) == {"2020": 0, "2021": 2}
+
+
+def test_per_year_turnover_charges_each_change_from_flat_in_its_index_year():
+    assert per_year_turnover(_ARM_A, _CLOSE) == {"2020": pytest.approx(1.0), "2021": pytest.approx(1.1)}
+    assert per_year_turnover(_ARM_B, _CLOSE) == {"2020": pytest.approx(1.0), "2021": pytest.approx(0.6)}
+    assert sum(per_year_turnover(_ARM_A, _CLOSE).values()) == pytest.approx(book_turnover(_ARM_A))
+
+
+def test_per_year_max_drawdown_reads_each_year_from_its_own_peak():
+    returns = [0.10, -0.20, 0.05, -0.10, 0.10, -0.05]
+    assert per_year_max_drawdown(returns, _CLOSE) == {"2020": pytest.approx(0.2), "2021": pytest.approx(0.1)}
+
+
+_POS = {"BTC": [0.4, 0.2], "ETH": [0.3, 0.6]}
+
+
+@pytest.mark.parametrize(
+    ("call", "match"),
+    [
+        pytest.param(
+            lambda: derisk_scales({"BTC": [1.0, 2.5], "ETH": [1.0]}, config=B2Config()),
+            r"z_by_asset\['ETH'\] has length 1, expected 2",
+            id="derisk-scales-unequal-lengths",
+        ),
+        pytest.param(
+            lambda: scale_positions(_POS, {"BTC": [1.0, 1.0], "SOL": [1.0, 1.0]}), "same assets", id="scale-positions-key-sets"
+        ),
+        pytest.param(
+            lambda: scale_positions(_POS, {"BTC": [1.0, 1.0], "ETH": [1.0]}),
+            r"scales\['ETH'\] has length 1, expected 2",
+            id="scale-positions-unequal-lengths",
+        ),
+        pytest.param(
+            lambda: net_of_cost(_POS, {"BTC": [0.01, 0.02], "SOL": [0.01, 0.02]}, cost_per_side=0.006),
+            "same assets",
+            id="net-of-cost-key-sets",
+        ),
+        pytest.param(
+            lambda: net_of_cost(_POS, {"BTC": [0.01, 0.02], "ETH": [0.01]}, cost_per_side=0.006),
+            r"asset_returns\['ETH'\] has length 1, expected 2",
+            id="net-of-cost-unequal-lengths",
+        ),
+        pytest.param(
+            lambda: per_year_engaged_counts(_ARM_A, {"BTC": [1.0] * 6, "SOL": [1.0] * 6}, _CLOSE),
+            "same assets",
+            id="engaged-counts-key-sets",
+        ),
+        pytest.param(
+            lambda: per_year_engaged_counts(_ARM_A, _SCALES, _CLOSE[:5]), "has length 6, expected 5", id="engaged-counts-close-ts"
+        ),
+        pytest.param(
+            lambda: per_year_positions_differ(_ARM_A, {"BTC": [0.0] * 6, "SOL": [0.0] * 6}, _CLOSE),
+            "same assets",
+            id="positions-differ-key-sets",
+        ),
+        pytest.param(
+            lambda: per_year_positions_differ(_ARM_A, _ARM_B, _CLOSE[:5]),
+            "has length 6, expected 5",
+            id="positions-differ-close-ts",
+        ),
+        pytest.param(lambda: per_year_turnover(_ARM_A, _CLOSE[:5]), "has length 6, expected 5", id="turnover-close-ts"),
+        pytest.param(lambda: per_year_max_drawdown([0.0] * 6, _CLOSE[:5]), "has length 6, expected 5", id="max-drawdown-close-ts"),
+    ],
+)
+def test_a_mismatched_input_is_refused(call, match):
+    with pytest.raises(AlphaError, match=match):
+        call()
