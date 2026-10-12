@@ -87,7 +87,7 @@ The preview names files under `/etc/zcrypto-ops/alloy` alone — `compose.yaml` 
 
 ### The observability node, the bridgehead, then the dead-man node
 
-The observability node's and the dead-man node's Alloy refresh reads their Caddy source, the bridgehead's mirror, and a `--tags alloy` converge reads nothing of the mirror before that refresh: before either node's `--tags alloy` converge, here or in *Rollback*, `curl -fsS -o /dev/null -w '%{http_code}\n' https://apt.zaccess.zhaow.me/dists/any-version/Release` from the workstation reads `200`, and another answer is `infra/runbooks/zaccess.md`'s `zaccess-caddy-mirror` first; a converge run while the mirror does not answer passes its preview and fails at Alloy's apt refresh, the pin file already moved. The bridgehead reads its own mirror from disk and takes no such read.
+The observability node's and the dead-man node's Alloy refresh reads their Caddy source, the bridgehead's mirror, which a `--tags alloy` converge does not read before it: before either node's `--tags alloy` converge, `curl -fsS -o /dev/null -w '%{http_code}\n' https://apt.zaccess.zhaow.me/dists/any-version/Release` from the workstation reads `200`, and another answer is `infra/runbooks/zaccess.md`'s `zaccess-caddy-mirror` first; a converge run while the mirror does not answer passes its preview and fails at Alloy's apt refresh, the pin file already moved. The bridgehead reads its own mirror from disk and takes no such read.
 
 ```bash
 ssh mon 'systemctl show -p ActiveEnterTimestamp --value grafana-server prometheus loki caddy'
