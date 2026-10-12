@@ -17,6 +17,7 @@ REPO = Path(__file__).resolve().parents[1]
 ANSIBLE = REPO / "infra/ansible"
 ACCESS = ANSIBLE / "roles/access"
 ACCESS_TASKS = ACCESS / "tasks/main.yml"
+EDGE_SOURCE = ANSIBLE / "roles/edge/tasks/caddy-source.yml"
 KEYRING = ANSIBLE / "files/caddy-archive-keyring.gpg"
 KEYRING_SHA256 = "c17cd5298a0bab02fda439fff278d9a55df2120cf9dac790c6ce71930db90b37"
 ALL = yaml.safe_load((ANSIBLE / "group_vars/all/vars.yml").read_text())
@@ -26,6 +27,7 @@ SERVED, STAGING = "/var/lib/caddy-apt-mirror/served", "/var/lib/caddy-apt-mirror
 
 DEBMIRROR = "debmirror and gpgv present — the mirror's tool and its signature check, both from Debian"
 KEY = "the Caddy vendor key the mirror and apt verify its Release with"
+EDGE_KEY = "the Caddy vendor key apt verifies the mirror's Release with"
 USER = "the mirror's system user"
 DIRECTORY = "the mirror's directory and its served tree, readable by the caddy user"
 UNITS = "the mirror's service + timer"
@@ -56,7 +58,7 @@ def test_the_vendored_keyring_is_the_vendor_key_as_measured():
     assert hashlib.sha256(KEYRING.read_bytes()).hexdigest() == KEYRING_SHA256
 
 
-@pytest.mark.parametrize(("path", "name"), [(ACCESS_TASKS, KEY)], ids=["access"])
+@pytest.mark.parametrize(("path", "name"), [(ACCESS_TASKS, KEY), (EDGE_SOURCE, EDGE_KEY)], ids=["access", "edge"])
 def test_the_vendored_keyring_lands_where_the_caddy_source_reads_it(path, name):
     copy = find_task(load_tasks(path), name)["ansible.builtin.copy"]
     assert copy == {
@@ -198,7 +200,7 @@ def test_the_timer_skips_the_preview_that_has_not_written_its_unit(check, units,
 
 
 # --- what apt may install -------------------------------------------------------------------------------------------------
-@pytest.mark.parametrize("path", [ACCESS_TASKS], ids=["access"])
+@pytest.mark.parametrize("path", [ACCESS_TASKS, EDGE_SOURCE], ids=["access", "edge"])
 def test_debians_own_caddy_is_never_a_candidate(path):
     pin = find_task(load_tasks(path), DEBIAN_PIN)["ansible.builtin.copy"]
     assert pin == {"content": PIN, "dest": "/etc/apt/preferences.d/caddy", "owner": "root", "group": "root", "mode": "0644"}
@@ -234,3 +236,10 @@ def test_the_two_mtls_sites_still_import_the_snippet():
     assert [line.split()[0] for line, _ in caddyfile[""]] == ["email"], caddyfile[""]
     tls = dict(caddyfile["(mtls)"])["tls"]
     assert ("mode require_and_verify", []) in dict(tls)["client_auth"], tls
+
+
+# --- the vendor's repository: read by the sync alone ------------------------------------------------------------------
+def test_the_vendors_repository_is_named_by_the_mirrors_upstream_alone():
+    files = [path for path in (ANSIBLE / "roles").rglob("*") if path.is_file()]
+    hits = sorted(str(path.relative_to(ANSIBLE)) for path in files if b"cloudsmith" in path.read_bytes().lower())
+    assert hits == ["roles/access/defaults/main.yml"], hits

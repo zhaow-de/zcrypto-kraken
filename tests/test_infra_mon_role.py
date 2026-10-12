@@ -382,14 +382,18 @@ def test_alloy_alone_is_held_and_pinned_and_the_other_packages_followed():
     assert recommends["ansible.builtin.apt"]["install_recommends"] is False
 
 
-CADDY_SOURCE_ABSENT = {"name": "edge", "tasks_from": "caddy-source-absent"}
+CADDY_SOURCE = {"name": "edge", "tasks_from": "caddy-source"}
+CADDY_SOURCE_INCLUDE = "the Caddy apt source names the bridgehead's mirror before any apt refresh"
 
 
-def test_the_caddy_source_comes_off_before_the_first_apt_refresh():
+def test_the_caddy_source_names_the_mirror_before_the_first_apt_refresh():
+    # Closed: the order below reads positions alone, and a when: on the include could skip it.
+    include = find_task(load_tasks(TASKS), CADDY_SOURCE_INCLUDE)
+    assert include == {"name": CADDY_SOURCE_INCLUDE, "ansible.builtin.include_role": CADDY_SOURCE}, include
     leaves = [task for task, _, _ in alloy_version.role_leaves("mon", frozenset())]
-    removals = [i for i, task in enumerate(leaves) if task.get("ansible.builtin.include_role") == CADDY_SOURCE_ABSENT]
+    sources = [i for i, task in enumerate(leaves) if task.get("ansible.builtin.include_role") == CADDY_SOURCE]
     refreshes = [i for i, task in enumerate(leaves) if refreshes_the_apt_cache(task)]
-    assert removals and refreshes and removals[0] < refreshes[0], (removals, refreshes)
+    assert sources and refreshes and sources[0] < refreshes[0], (sources, refreshes)
 
 
 # --- the preview on a node that has nothing yet ------------------------------------------------------------------

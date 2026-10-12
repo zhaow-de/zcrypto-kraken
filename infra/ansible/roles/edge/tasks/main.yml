@@ -1,36 +1,26 @@
 ---
 # The Caddy edge (spec 00122 D15), the node's one public listener; tests/test_infra_edge_role.py holds what it renders and gates.
-- name: the Caddy apt repository removed
-  ansible.builtin.import_tasks: caddy-source-absent.yml
+- name: the Caddy apt source, its key and Debian's caddy pinned out, from the bridgehead's mirror
+  ansible.builtin.import_tasks: caddy-source.yml
 
-- name: read whether caddy is installed
-  ansible.builtin.command:
-    argv: [dpkg-query, --show, "--showformat=${db:Status-Status}", caddy]
-  register: edge_caddy_state
-  changed_when: false
-  failed_when: false
-  check_mode: false
+# A preview whose Caddy source this converge changes (a fresh node, or a first converge onto the mirror) has no lists
+# from it, so apt may not find caddy and converge.sh stops on a failed preview: what needs the package or unit skips it.
+- name: note a preview that runs before the Caddy repository exists
+  ansible.builtin.set_fact:
+    edge_repo_previewed: "{{ ansible_check_mode and edge_caddy_repo is changed }}"
 
-- name: refuse a node without caddy while its apt source is removed
-  ansible.builtin.assert:
-    that: edge_caddy_state.stdout == 'installed'
-    fail_msg: >-
-      caddy is not in dpkg's installed state on {{ inventory_hostname }} (dpkg reads its state as
-      '{{ edge_caddy_state.stdout or "never installed" }}'). Caddy's vendor apt source is removed while that
-      repository is out, the interim of 2026-10-11, so apt's only caddy is Debian's 2.6.2, which this play does not
-      install. The way back is the owner's debmirror replacing the source.
-
-- name: caddy present — the installed version, never forced or held
+- name: caddy present — version FOLLOWED from apt, never forced or held
   ansible.builtin.apt:
     name: caddy
     state: present
     update_cache: true
   register: edge_caddy_install
+  when: not edge_repo_previewed
 
 # A preview that would install caddy has no unit of it for systemd to find.
 - name: note a preview that runs before caddy is installed
   ansible.builtin.set_fact:
-    edge_units_previewed: "{{ ansible_check_mode and edge_caddy_install is changed }}"
+    edge_units_previewed: "{{ ansible_check_mode and (edge_repo_previewed or edge_caddy_install is changed) }}"
 
 # Validated by the installed binary before it replaces the live file, so a Caddyfile this Caddy cannot
 # parse fails the converge and the edge keeps serving the old one. It carries the basic-auth users' hashes.
