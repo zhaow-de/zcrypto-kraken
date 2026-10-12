@@ -39,7 +39,7 @@ The human gates below attach to the operations themselves, not to whichever skil
 - **A `DependsOn:` that names an artifact states whether the artifact EXISTS.** "Read X first" and "build X first" compress to the same reference and fail differently. The work to produce a missing prerequisite is itself a queue item, sequenced above its consumer.
 - **Milestones sequence like items.** A `###` milestone may carry one `DependsOn:` line directly under its heading (another milestone, or a named trigger/date); milestones appear in dependency-true order, and an item is eligible for pickup when its own **and** its milestone's `DependsOn:` are satisfied.
 - An added item takes the index's title wording as its subject and **condenses** the topic's own text into `Why` — the clauses that matter for this milestone, not a paste; detail stays in the topic file, reachable through the `T<NNNN>` reference.
-- **Every live topic has its own item.** Each `docs/open-topics/T*.md` whose status is open or partial heads one queue item by its serial, since the memo is where a topic is picked and a topic without a line is invisible at pick time (no count command: the memo is unversioned; per live topic, one line under `## WORK-ITEMS QUEUE` matches `^- (🔄|⬜) \*\*T<NNNN>\b` — column 0, so a marked sub-bullet nested in another item is not a head).
+- **Every live topic has its own item.** Each `docs/open-topics/T*.md` whose status is open or partial heads one queue item by its serial, since the memo is where a topic is picked and a topic without a line is invisible at pick time (no count command: the memo is unversioned; per live topic, an item head under `## WORK-ITEMS QUEUE` matches `^- (🔄|⬜) \*\*T<NNNN>\b`).
 
 ## How references resolve
 
