@@ -19,7 +19,7 @@ RENDERED = (INDEX, "docs/open-topics/README.md")
 JOURNAL = "docs/reference/ops-journal/"
 # The records family: directories whose README declares an append-only record; a PR carrying only their files
 # has nothing for a reviewer to re-true.
-RECORDS = (JOURNAL, "docs/reference/rung2-box/")
+RECORDS = (JOURNAL, "docs/reference/rung2-box/", "docs/reference/rung3/")
 DEPENDABOT = "dependabot[bot]"
 # `commits` is here because `read_line_fails`'s dependabot arm reads it: a field an arm reads and this
 # fetch omits is not a missing exemption, it is a refusal on every PR of that shape.
