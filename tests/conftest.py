@@ -1,15 +1,19 @@
 import logging
+import os
 import sys
 import tempfile
 from pathlib import Path
 
 import pytest
 
-# Every temporary file of a run -- pytest's numbered `pytest-of-<user>/pytest-<N>` base and every `mkdtemp` -- lands
-# under the checkout's gitignored `.tmp/`, not the workstation's inode-bounded tmpfs; set before the first `tmp_path`.
+# Every temporary file of a run -- pytest's numbered `pytest-of-<user>/pytest-<N>` base, every `mkdtemp`, and a child's
+# `mktemp` through TMPDIR -- lands under the checkout's gitignored `.tmp/`, not the workstation's inode-bounded tmpfs;
+# set before the first `tmp_path`. The ceiling keeps a scratch directory outside any repository for git, as `/tmp` was.
 TMP_ROOT = Path(__file__).resolve().parents[1] / ".tmp"
 TMP_ROOT.mkdir(exist_ok=True)
 tempfile.tempdir = str(TMP_ROOT)
+os.environ["TMPDIR"] = str(TMP_ROOT)
+os.environ["GIT_CEILING_DIRECTORIES"] = str(TMP_ROOT)
 
 import cli.engine.cycle as cycle
 

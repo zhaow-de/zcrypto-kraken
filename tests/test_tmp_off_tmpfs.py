@@ -1,3 +1,5 @@
+import os
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -14,3 +16,12 @@ def test_a_mkdtemp_lands_under_the_checkouts_tmp():
         assert REPO / ".tmp" in made.resolve().parents, made
     finally:
         made.rmdir()
+
+
+def test_a_tmp_path_is_outside_any_repository_for_git(tmp_path: Path):
+    r = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode != 0, r.stdout
+
+
+def test_a_childs_tmpdir_is_the_checkouts_tmp():
+    assert Path(os.environ["TMPDIR"]).resolve() == (REPO / ".tmp").resolve()
