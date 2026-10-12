@@ -17,6 +17,10 @@ INDEX = "docs/reference/change-index.md"
 # The rendered files a rebase onto a moved base resolves by hand: the change index and the topics index.
 RENDERED = (INDEX, "docs/open-topics/README.md")
 JOURNAL = "docs/reference/ops-journal/"
+# The records family: a PR whose every file is a hand-written record under one of these directories (their
+# READMEs declare the record shape) has nothing for a reviewer to re-true -- a `records/<name>` branch, or the
+# ops-journal's own branch name.
+RECORDS = (JOURNAL, "docs/reference/rung2-box/")
 DEPENDABOT = "dependabot[bot]"
 # `commits` is here because `read_line_fails`'s dependabot arm reads it: a field an arm reads and this
 # fetch omits is not a missing exemption, it is a refusal on every PR of that shape.
@@ -365,11 +369,12 @@ def read_line_fails(pr: dict, head_commit: dict | None, files: list[str] | None,
 
         if commits and all(_bot_only(c) for c in commits):
             return []  # .claude/skills/dependabot: a PR with no fix commit needs no read, and its squash bypasses this gate
-    if pr.get("headRefName") == "ops-journal":
+    head_ref = pr.get("headRefName") or ""
+    if head_ref == "ops-journal" or head_ref.startswith("records/"):
         if files is None:
-            return ["the PR's file list was not fetched, so the ops-journal exemption cannot be scoped to the journal files"]
-        if files and all(f.startswith(JOURNAL) for f in files):
-            return []  # a month of journal entries has nothing for a reviewer to read (docs/reference/ops-journal/README.md)
+            return ["the PR's file list was not fetched, so the records exemption cannot be scoped to the record files"]
+        if files and all(f.startswith(RECORDS) for f in files):
+            return []  # a month of journal entries or a week of box days has nothing for a reviewer to read (the READMEs under RECORDS)
     body = pr.get("body") or ""
     head = pr.get("headRefOid") or ""
     # The read line is judged in the same plain prefix as the substitution. It costs nothing on a PR that uses

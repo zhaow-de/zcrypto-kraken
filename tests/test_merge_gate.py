@@ -533,6 +533,28 @@ def test_a_journal_pr_with_no_file_list_fails():
     assert len(_eval(_pr(**JOURNAL_PR))) == 1
 
 
+BOX_PR = {"headRefName": "records/rung2-week-2", "body": "## 2026-W42\n\n- [x] CI green\n"}
+
+
+def test_a_records_branch_of_box_days_needs_no_read_line():
+    assert _eval(_pr(**BOX_PR), files=["docs/reference/rung2-box/days.md"]) == []
+
+
+def test_a_records_branch_carrying_a_file_outside_the_records_directories_takes_every_arm():
+    fails = _eval(_pr(**BOX_PR), files=["docs/reference/rung2-box/days.md", "infra/runbooks/engine-procedures.md"])
+    assert len(fails) == 1 and fails[0].startswith("no 'Read before push by:")
+
+
+def test_a_records_branch_name_alone_does_not_exempt_a_journal_file_elsewhere():
+    fails = _eval(_pr(headRefName="records/anything", body="- [x] done\n"), files=["docs/reference/drill-log.md"])
+    assert len(fails) == 1 and fails[0].startswith("no 'Read before push by:")
+
+
+def test_a_box_days_file_on_an_ordinary_branch_takes_every_arm():
+    fails = _eval(_pr(headRefName="docs/rung2-week1-records", body="- [x] done\n"), files=["docs/reference/rung2-box/days.md"])
+    assert len(fails) == 1 and fails[0].startswith("no 'Read before push by:")
+
+
 def test_a_missing_or_placeholder_line_fails():
     unrecorded = "no 'Read before push by: <model> at <sha>' line in the body: the whole-branch read is unrecorded"
     assert _eval(_pr(body="## Summary\n\n- [x] done\n")) == [unrecorded]
@@ -671,7 +693,7 @@ JOURNAL_ENTRY = {"filename": "docs/reference/ops-journal/2026-09.md", "status": 
         ([JOURNAL_ENTRY], [JOURNAL_ENTRY["filename"], "cli/x.py"], "no 'Read before push by:"),
         ([], [JOURNAL_ENTRY["filename"], "cli/x.py"], "no 'Read before push by:"),
         ([], [], "no 'Read before push by:"),
-        ([], None, "the PR's file list was not fetched, so the ops-journal exemption cannot be scoped"),
+        ([], None, "the PR's file list was not fetched, so the records exemption cannot be scoped"),
     ],
     ids=["empty-clone-journal-only", "short-clone-foreign-file", "empty-clone-foreign-file", "empty-clone-empty", "empty-no-clone"],
 )
