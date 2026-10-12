@@ -776,10 +776,13 @@ def scoped_grep(rest, where):
             return f"names the {kind} `{x}`, which the arm cannot scope -- search a commit, or the index"
         else:
             specs.append(x)
+    # With no positive spelled, git lists the exclude-only shape exactly, so the excludes stand.
+    positives = [x for x in specs if not exclude_spec(x)]
+    listed = positives or specs
     for tree in commits or [None]:
         with_tree = [f"--with-tree={tree}"] if tree else []
         done = subprocess.run(
-            ["git", "-C", where, "ls-files", "-z", "--full-name", *with_tree, "--", *[x for x in specs if not exclude_spec(x)]],
+            ["git", "-C", where, "ls-files", "-z", "--full-name", *with_tree, "--", *listed],
             capture_output=True,
             text=True,
         )
