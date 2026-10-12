@@ -302,6 +302,9 @@ PY
 
 ```
 python3 -c "import json,collections;r=[json.loads(l) for l in open('/home/zhaow/Projects/zcrypto-kraken/data/rung2/decisions.jsonl') if l.strip()];print(len(r),collections.Counter(x['outcome'] for x in r),round(sum(x['notional_eur'] for x in r if x['outcome']=='placed'),2))"
+```
+
+Output: `27 Counter({'placed': 9, 'queued': 9, 'carried': 9}) 154.17`.
 
 - **The test baselines the plan's counts rest on.** `tests/test_engine_executor.py` 596 passed; `tests/test_engine_draftplan.py` 153 passed; `tests/test_engine_execgate.py` 44 passed.
 
