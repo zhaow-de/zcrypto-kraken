@@ -1,7 +1,18 @@
 import logging
+import os
 import sys
+import tempfile
+from pathlib import Path
 
 import pytest
+
+# This process's temporary files, and a child's that inherits TMPDIR, go under the checkout's gitignored `.tmp/`,
+# not the inode-bounded tmpfs; set before the first `tmp_path`. The ceiling keeps them outside any repository for git.
+TMP_ROOT = Path(__file__).resolve().parents[1] / ".tmp"
+TMP_ROOT.mkdir(exist_ok=True)
+tempfile.tempdir = str(TMP_ROOT)
+os.environ["TMPDIR"] = str(TMP_ROOT)
+os.environ["GIT_CEILING_DIRECTORIES"] = str(TMP_ROOT)
 
 import cli.engine.cycle as cycle
 
