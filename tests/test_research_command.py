@@ -1052,8 +1052,6 @@ _COMPUTE_ERRORS = (AlphaError, BacktestError, BenchmarkError, FeatureError, Port
 
 
 def _raising_subject(monkeypatch, error: type[Exception]) -> str:
-    """Installs `raising-stub`, whose build raises `error`, over `_stub_dataset`'s one series; returns the raise site."""
-
     def build(reader, dataset, window, as_of=None, accept_holes=False):
         raise error("the stub's cause")
 

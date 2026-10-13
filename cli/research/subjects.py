@@ -60,8 +60,8 @@ class SubjectError(Exception):
     1 on it, never a traceback."""
 
 
-# The error class of every compute package a subject's build calls into: the command exits 1 on any of them. A build that
-# calls into a package outside these adds its class here and to the stub test's list in tests/test_research_command.py.
+# The error class of every compute package a subject's build calls into; a build calling into another adds its class
+# here and to `_COMPUTE_ERRORS` in tests/test_research_command.py.
 EVALUATION_ERRORS = (AlphaError, BacktestError, BenchmarkError, FeatureError, PortfolioError, RiskError, ValidationError)
 
 
@@ -108,7 +108,7 @@ def _capturing_union(
 
 
 def _series(dataset: str, asset: str, interval: int, as_of: str | None) -> str:
-    """A frozen dataset's file, or, read as of a day, the rolling dataset's pair and grid, which no file holds alone."""
+    """Read as of a day, a series is the rolling dataset's pair and grid, which no file holds alone."""
     if as_of is None:
         return f"{dataset}/{asset}/EUR/{interval}.parquet"
     return f"{dataset} {asset}/EUR at {interval} minutes as of {as_of}"
@@ -121,9 +121,8 @@ def _refuse_unfed_grids(
     daily_prices: dict[str, list[float | None]],
     h4_prices: dict[str, list[float | None]],
 ) -> None:
-    """The two shapes `build_crossfreq_system_fast` admits and then fails on with a plain `ValueError` or `AttributeError`,
-    which the command does not catch: an asset with no close on one of the grids, and BTC with no close at the daily grid's
-    first stamp, a gap `_ffill_btc` cannot bridge."""
+    """Refused here because `build_crossfreq_system_fast` admits both shapes and then fails on them with a plain
+    `ValueError` or `AttributeError`, which the command does not catch."""
     for interval, prices in ((1440, daily_prices), (240, h4_prices)):
         for asset, closes in prices.items():
             if all(close is None for close in closes):
