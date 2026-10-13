@@ -1,8 +1,8 @@
 """The evaluable subjects: committed systems, each reproducing a registry record or registering a trial.
 
 A subject declares its `--dataset` series, so the command can refuse an incomplete dataset before any read; a second
-dataset its `build` reads goes undeclared, and a file of it the build cannot read refuses the run at that read, naming
-the file. Every byte a `build` reads goes through `ObservedReader`."""
+dataset its `build` reads goes undeclared, and the build names a file of it that it cannot read.
+Every byte a `build` reads goes through `ObservedReader`."""
 
 from __future__ import annotations
 
@@ -90,10 +90,10 @@ def _capturing_union(
                 )
         except pl.exceptions.PolarsError as exc:
             raise SubjectError(f"{dataset}/{path.as_posix()}: {exc}") from exc
-        # `load_union` indexes both columns outside this read, where a missing one would no longer name its file.
-        missing = sorted({"ts", "close"} - set(frame.columns))
-        if missing:
-            raise SubjectError(f"{dataset}/{path.as_posix()}: no {' or '.join(missing)} column")
+        # `load_union` indexes `close` outside this read, where a missing one would no longer name its file; a missing `ts`
+        # fails the read itself.
+        if "close" not in frame.columns:
+            raise SubjectError(f"{dataset}/{path.as_posix()}: no close column")
         return frame
 
     return load_union(interval, root=Path(), read=read)
@@ -213,7 +213,7 @@ def _b2_over(window: tuple[str, str] | None) -> str:
 
 def _b2_refuse_window(h4_ts: list[datetime], window: tuple[str, str] | None) -> None:
     """The refusals `a1_kill_bar` and `net_of_cost_verdict` make of a window too short for them or lying in partial years,
-    raised before the arms are built so that the message names the window."""
+    raised before the arms are built, in the window's terms."""
     close = close_grid(h4_ts)
     from_2021 = sum(t >= _FROM_2021 for t in close)
     if len(close) < _DECISIVE_START + 2:
@@ -266,8 +266,7 @@ def _build_b2_funding_derisk(
     try:
         return _b2_metrics(_b2_inputs(reader, dataset, window, as_of, accept_holes))
     except (AlphaError, BacktestError, ValidationError) as exc:
-        # A file's errors are named in `_b2_inputs`; what arrives here is a series the window leaves flat, or arm A never
-        # drawing down.
+        # `_b2_inputs` names a funding file's errors; any other, a bad close included, is named as the window's.
         raise SubjectError(f"{_b2_over(window)}: {exc}") from exc
 
 
