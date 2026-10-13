@@ -361,7 +361,7 @@ zcrypto research eval --subject <NAME> --dataset <DIR> [OPTIONS]
 
 | Option | Description |
 | -- | -- |
-| `--subject <NAME>` | System to evaluate: `record44-crossfreq` (the cross-frequency system; daily + 4h series) or `record33-combined` (the combined system; daily series). |
+| `--subject <NAME>` | System to evaluate: `record44-crossfreq` (the cross-frequency system; daily + 4h series), `record33-combined` (the combined system; daily series) or `b2-funding-derisk` (the A2 4h ensemble against the same ensemble halved per asset while that asset's 30-day funding z-score exceeds 2; the 4h series of `--dataset`, and the `derivatives-funding` set's ten funding files read whole, never windowed). |
 | `--dataset <DIR>` | Dataset directory name under the repo's `data/` root: a frozen set, e.g. `ohlc-full`, or the rolling canonical `ohlc-rolling`, which requires `--as-of`. |
 | `--window START END` | Restrict every series to the inclusive ISO-8601 range. Default: full history. |
 | `--as-of <YYYY-MM-DD>` | Read the rolling canonical as of this UTC day: required for `ohlc-rolling`, refused for a frozen dataset. Each series is read from the base and every day file the index lists for it up to that day, each file checked against its index line, and the record's `datasets` block carries that day's index line and its sha256. |
@@ -377,7 +377,7 @@ zcrypto research eval --subject <NAME> --dataset <DIR> [OPTIONS]
 | `--seed <N>` | Seed used by the run; repeat the flag for several. |
 | `--registry <PATH>` | Registry file to append to. Defaults to the committed `docs/reference/trial-registry.jsonl`. |
 
-The report names the metrics, the observed dataset block, and whether the dataset's own freeze record vouched for the bytes read (a dataset with no `manifest.json` reports as inert — nothing cross-checked the bytes — save the rolling canonical, which reports `chained` with its as-of day and line, every file the run read checked against its index). Exits **1** on an unknown subject (listing the known ones), on a dataset missing any series the subject needs (naming every missing file, or every missing pair for the rolling canonical, before a single read), on a `--register` run missing one of its required flags, and when the registry refuses the record.
+The report names the metrics, the observed dataset block, and whether the dataset's own freeze record vouched for the bytes read (a dataset with no `manifest.json` reports as inert — nothing cross-checked the bytes — save the rolling canonical, which reports `chained` with its as-of day and line, every file the run read checked against its index). Exits **1** on an unknown subject (listing the known ones), on a dataset missing any series the subject needs (naming every missing file, or every missing pair for the rolling canonical, before a single read — the `--dataset` series alone), on a series file or a `b2-funding-derisk` `--window` it cannot evaluate (naming either), on a `--register` run missing one of its required flags, and when the registry refuses the record.
 
 ### `zcrypto tick`<a name="zcrypto-tick"></a>
 

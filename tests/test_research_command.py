@@ -6,21 +6,38 @@ default appends a fabricated row to it; `_registry_default_off_the_committed_led
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import math
 import os
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
+import polars as pl
 import pytest
 from typer.testing import CliRunner
 
 from cli.__main__ import app
+from cli.alpha.a1 import _asset_returns
+from cli.alpha.b1 import book_turnover
+from cli.alpha.b2 import (
+    net_of_cost,
+    per_year_engaged_counts,
+    per_year_max_drawdown,
+    per_year_positions_differ,
+    per_year_turnover,
+    scale_positions,
+)
+from cli.derivatives.funding import PERP_SYMBOLS
+from cli.features.derivatives import coverage_by_year
 from cli.ohlc.dataset import to_frame, write_parquet
-from cli.portfolio.crossfreq_system import CrossfreqSystemConfig
+from cli.portfolio.crossfreq_system import CrossfreqSystemConfig, _ffill_btc
+from cli.portfolio.record44_legs import benchmark_4h_net_of_cost, calendar_year_slices
+from cli.registry.observed import ObservedReader
 from cli.registry.record import compute_hash
 from cli.research import command as research_command
 from cli.research import subjects
+from cli.validation import max_drawdown, sharpe
 from tests.rolling_fixtures import HOLE, write_chain
 
 runner = CliRunner()
@@ -431,3 +448,456 @@ def test_the_window_reaches_the_rolling_reads(tmp_path, monkeypatch):
     block = _block_and_metrics(result.output)["datasets"]["ohlc-rolling"]
     assert block["rows"] == 20
     assert block["span"] == ["2026-10-01 00:00:00+00:00", "2026-10-02 00:00:00+00:00"]
+
+
+def test_the_b2_subject_is_registered_over_the_ten_assets_4h_series():
+    subject = subjects.SUBJECTS["b2-funding-derisk"]
+    assert subject.name == "b2-funding-derisk"
+    assert subject.intervals == (240,)
+    assert subject.assets == CrossfreqSystemConfig().assets
+    assert subject.build is subjects._build_b2_funding_derisk
+
+
+# Spec 00128 D7's metric keys, pinned as literals for the reason `_COMBINED_METRIC_KEYS` is.
+_B2_METRIC_KEYS = {
+    "ann_sharpe_noc",
+    "ann_sharpe_noc_decisive",
+    "per_period_sharpe_4h",
+    "arm_a_ann_sharpe_noc",
+    "arm_a_ann_sharpe_noc_decisive",
+    "benchmark_ann_sharpe_noc",
+    "benchmark_ann_sharpe_noc_decisive",
+    "dsr_corrected",
+    "dsr_pass",
+    "spa_pass",
+    "spa_p_full",
+    "cost_stress_pass",
+    "worst_slice_relative_pass",
+    "passes",
+    "decisive_start",
+    "n_resamples",
+    "arm_a_passes",
+    "spa_p_decisive_b30_s42",
+    "spa_p_decisive_b30_s7",
+    "spa_p_decisive_b30_s1234",
+    "spa_p_decisive_b102_s42",
+    "spa_p_decisive_b102_s7",
+    "spa_p_decisive_b102_s1234",
+    "head_to_head_mean_outperf_full",
+    "head_to_head_spa_p_full",
+    "head_to_head_mean_outperf_2021",
+    "head_to_head_spa_p_2021",
+    "max_drawdown",
+    "arm_a_max_drawdown",
+    "max_drawdown_reduction_pct",
+    "turnover_a",
+    "turnover_b",
+    "stamps_positions_differ",
+    "engaged_per_year",
+    "positions_differ_per_year",
+    "turnover_a_per_year",
+    "turnover_b_per_year",
+    "max_drawdown_per_year",
+    "arm_a_max_drawdown_per_year",
+    "binperp_funding_z30d_coverage",
+}
+_B2_GRID = ((30, 42), (30, 7), (30, 1234), (102, 42), (102, 7), (102, 1234))
+_B2_FLAGS = ("dsr_pass", "spa_pass", "cost_stress_pass", "worst_slice_pass")
+_B2_ASSETS = CrossfreqSystemConfig().assets
+_B2_START = datetime(2020, 10, 1, tzinfo=UTC)
+_B2_BARS = 1_640
+_B2_WINDOW_BARS = 1_620
+# (first bar, bars, depth) on every asset: December 2020's fall is the window's deepest, February 2021's the deepest from
+# 2021-01-01 and the one the funding spikes sit inside.
+_B2_FALLS = ((420, 24, 0.40), (822, 24, 0.25))
+_B2_FUNDING_FROM = datetime(2020, 8, 15, tzinfo=UTC)
+_B2_PRINTS = 1_000
+_B2_SPIKE_PRINTS = 6
+_B2_NEVER_SPIKES = "XRP"
+
+
+def _b2_ohlc_rows(phase: float, start: datetime, flat: bool) -> list[list]:
+    rows = []
+    for i, row in enumerate(_rows(_B2_BARS, phase=phase, start=int(start.timestamp()), step=4 * 3600)):
+        factor = math.prod(1 - depth * min(max((i - first) / bars, 0.0), 1.0) for first, bars, depth in _B2_FALLS)
+        prices = ("100.0", "101.0", "99.0", "100.0", "100.0") if flat else (f"{float(v) * factor}" for v in row[1:6])
+        rows.append([row[0], *prices, *row[6:]])
+    return rows
+
+
+def _b2_dataset(tmp_path: Path, *, start: datetime = _B2_START, flat: bool = False) -> Path:
+    """The ten 4h series and a `derivatives-funding` set whose 8h prints open 47 days before `_B2_START`; every perp but
+    one spikes inside the second fall, each from its own print, so the overlay de-risks each asset at its own stamps."""
+    root = tmp_path / "data"
+    for i, asset in enumerate(_B2_ASSETS):
+        write_parquet(to_frame(_b2_ohlc_rows(i * 0.7, start, flat)), root / "ohlc-test" / f"{asset}/EUR/240.parquet")
+    stamps = [_B2_FUNDING_FROM + timedelta(hours=8 * j) for j in range(_B2_PRINTS)]
+    second_fall = _B2_START + timedelta(hours=4 * _B2_FALLS[1][0])
+    for i, asset in enumerate(_B2_ASSETS):
+        rates = [0.0001 * (1 + 0.5 * math.sin(j + i)) for j in range(_B2_PRINTS)]
+        if asset != _B2_NEVER_SPIKES:
+            first = stamps.index(second_fall + timedelta(hours=8 * i))
+            rates[first : first + _B2_SPIKE_PRINTS] = [0.003] * _B2_SPIKE_PRINTS
+        frame = pl.DataFrame(
+            {"ts": stamps, "funding_rate": rates, "interval_hours": [8] * _B2_PRINTS},
+            schema={"ts": pl.Datetime("us", "UTC"), "funding_rate": pl.Float64, "interval_hours": pl.Int64},
+        )
+        write_parquet(frame, root / "derivatives-funding" / PERP_SYMBOLS[asset] / "funding.parquet")
+    return root
+
+
+def _recording(monkeypatch, name: str, rewrite) -> list[tuple[dict, dict]]:
+    """`subjects.<name>` as a pass-through keeping each call's arguments, bound with defaults applied, and the result
+    `rewrite` makes of the real one."""
+    real = getattr(subjects, name)
+    signature = inspect.signature(real)
+    calls = []
+
+    def wrapper(*args, **kwargs):
+        bound = signature.bind(*args, **kwargs)
+        bound.apply_defaults()
+        result = rewrite(dict(bound.arguments), real(*args, **kwargs))
+        calls.append((dict(bound.arguments), result))
+        return result
+
+    monkeypatch.setattr(subjects, name, wrapper)
+    return calls
+
+
+def _kill_bar_sentinels(cell, *, inverted: bool) -> dict:
+    """Per-call sentinels for the eight keys the subject reads, so a float or a flag read off the wrong cell or key, a flag
+    read off another flag, or `passes` read off a flag or another cell fails the record's comparison: the flags are ints
+    other than 0 and 1, which the subject's `int()` and the registry's leaf check carry through."""
+    i = (*_B2_GRID, "A").index(cell)
+    if cell == "A":
+        floats = {"dsr": 0.91, "spa_p_value": 0.81, "spa_p_value_full": 0.71}
+    else:
+        floats = {"dsr": 0.11 + i / 100, "spa_p_value": 0.21 + i / 100, "spa_p_value_full": 0.31 + i / 100}
+    # B's `passes` is true at the headline alone, or false there alone, so an `all` or an `any` over the grid moves it;
+    # arm A's is false, told from B's headline by the first parametrisation and from B's other cells by the second.
+    passes = cell != "A" and (cell == (30, 42)) != inverted
+    return floats | {"passes": passes} | {flag: 10 * (i + 1) + j for j, flag in enumerate(_B2_FLAGS)}
+
+
+@pytest.mark.parametrize("inverted", [False, True], ids=["passes-at-the-headline", "passes-off-the-headline"])
+def test_the_b2_subject_registers_each_metric_from_its_own_call(tmp_path, monkeypatch, inverted):
+    root = _b2_dataset(tmp_path)
+    registry = tmp_path / "registry.jsonl"
+    _anchor(monkeypatch, root, registry)
+    ts = [_B2_START + timedelta(hours=4 * k) for k in range(_B2_WINDOW_BARS)]
+    close = [t + timedelta(hours=4) for t in ts[:-1]]
+    k21 = next(k for k, t in enumerate(close) if t >= datetime(2021, 1, 1, tzinfo=UTC))
+    assert k21 == 551
+    window = (str(ts[0]), str(ts[-1]))
+
+    inputs = subjects._b2_inputs(ObservedReader(root), "ohlc-test", window, None, False)
+    assert inputs.h4_ts == ts
+    cost = CrossfreqSystemConfig().cost_per_side
+    arm_a, scales = inputs.arm_a, inputs.scales
+    arm_b = scale_positions(arm_a, scales)
+    fed = _ffill_btc(inputs.h4_prices)
+    returns = {a: _asset_returns(fed[a]) for a in _B2_ASSETS}
+    net_a = net_of_cost(arm_a, returns, cost_per_side=cost)
+    net_b = net_of_cost(arm_b, returns, cost_per_side=cost)
+    net_a_x15 = net_of_cost(arm_a, returns, cost_per_side=1.5 * cost)
+    net_b_x15 = net_of_cost(arm_b, returns, cost_per_side=1.5 * cost)
+    bench = benchmark_4h_net_of_cost(inputs.h4_prices, cost_per_side=cost)
+    slices_a, slices_b, slices_bench = (
+        {year: s for year, s in calendar_year_slices(series, ts).items() if year != "2020"} for series in (net_a, net_b, bench)
+    )
+
+    assert net_b[k21:] != net_a[k21:]
+    assert abs(max_drawdown(net_b[k21:]) - max_drawdown(net_a[k21:])) > 1e-9
+    assert abs(max_drawdown(net_b[k21:]) - max_drawdown(net_b)) > 1e-9
+    assert abs(max_drawdown(net_a[k21:]) - max_drawdown(net_a)) > 1e-9
+    assert abs(book_turnover(arm_b) - book_turnover(arm_a)) > 1e-9
+    assert scales[_B2_NEVER_SPIKES] == [1.0] * len(close)
+    assert len({tuple(s) for s in scales.values()}) == len(_B2_ASSETS)
+    assert list(slices_b) == list(slices_bench) == ["2021"]
+
+    def kill_bar(arguments, result):
+        book = arguments["book_net_returns"]
+        cell = "A" if book == net_a else (arguments["mean_block"], arguments["seed"]) if book == net_b else None
+        return result | _kill_bar_sentinels(cell, inverted=inverted) if cell in ("A", *_B2_GRID) else result
+
+    def head_to_head(arguments, result):
+        p = {len(net_b): 0.41, len(net_b) - k21: 0.42}.get(len(arguments["book_net_of_cost"]))
+        return result if p is None else result | {"spa_p_value": p}
+
+    kill_calls = _recording(monkeypatch, "a1_kill_bar", kill_bar)
+    verdict_calls = _recording(monkeypatch, "net_of_cost_verdict", head_to_head)
+    result = runner.invoke(
+        app,
+        ["research", "eval", "--subject", "b2-funding-derisk", "--dataset", "ohlc-test", "--window", *window]
+        + _register_args(registry, n_trials=1),
+    )
+    assert result.exit_code == 0, result.output
+
+    bar = {
+        "n_trials": 1,
+        "var_trials": 0.0,
+        "benchmark_net_returns": bench,
+        "benchmark_slices": slices_bench,
+        "decisive_start": 1380,
+        "n_resamples": 2000,
+    }
+    arm_a_call = {"book_net_returns": net_a, "mean_block": 30, "seed": 42, "cost_stressed_returns": net_a_x15}
+    want = [bar | arm_a_call | {"regime_slices": slices_a}] + [
+        bar | {"book_net_returns": net_b, "mean_block": b, "seed": s, "cost_stressed_returns": net_b_x15, "regime_slices": slices_b}
+        for b, s in _B2_GRID
+    ]
+
+    def by_cell(arguments):
+        return arguments["book_net_returns"] == net_a, arguments["mean_block"], arguments["seed"]
+
+    assert sorted((arguments for arguments, _ in kill_calls), key=by_cell) == sorted(want, key=by_cell)
+    verdict = {"mean_block": 30, "seed": 42, "n_resamples": 2000}
+    assert [arguments for arguments, _ in verdict_calls] == [
+        {"book_net_of_cost": net_b, "benchmark_net_of_cost": net_a} | verdict,
+        {"book_net_of_cost": net_b[k21:], "benchmark_net_of_cost": net_a[k21:]} | verdict,
+    ]
+    full, from_2021 = (outcome for _, outcome in verdict_calls)
+    assert full["mean_outperformance"] != from_2021["mean_outperformance"]
+    assert (full["spa_p_value"], from_2021["spa_p_value"]) == (0.41, 0.42)
+
+    results = {
+        "A" if arguments["book_net_returns"] == net_a else (arguments["mean_block"], arguments["seed"]): outcome
+        for arguments, outcome in kill_calls
+    }
+    headline = results[(30, 42)]
+    drawdown_b, drawdown_a = max_drawdown(net_b[k21:]), max_drawdown(net_a[k21:])
+    differ = per_year_positions_differ(arm_a, arm_b, close)
+    expected = {
+        "ann_sharpe_noc": sharpe(net_b, periods_per_year=2190),
+        "ann_sharpe_noc_decisive": sharpe(net_b[1380:], periods_per_year=2190),
+        "per_period_sharpe_4h": sharpe(net_b),
+        "arm_a_ann_sharpe_noc": sharpe(net_a, periods_per_year=2190),
+        "arm_a_ann_sharpe_noc_decisive": sharpe(net_a[1380:], periods_per_year=2190),
+        "benchmark_ann_sharpe_noc": sharpe(bench, periods_per_year=2190),
+        "benchmark_ann_sharpe_noc_decisive": sharpe(bench[1380:], periods_per_year=2190),
+        "dsr_corrected": headline["dsr"],
+        "dsr_pass": int(headline["dsr_pass"]),
+        "spa_pass": int(headline["spa_pass"]),
+        "spa_p_full": headline["spa_p_value_full"],
+        "cost_stress_pass": int(headline["cost_stress_pass"]),
+        "worst_slice_relative_pass": int(headline["worst_slice_pass"]),
+        "passes": int(headline["passes"]),
+        "decisive_start": 1380,
+        "n_resamples": 2000,
+        "arm_a_passes": int(results["A"]["passes"]),
+        **{f"spa_p_decisive_b{b}_s{s}": results[(b, s)]["spa_p_value"] for b, s in _B2_GRID},
+        "head_to_head_mean_outperf_full": full["mean_outperformance"],
+        "head_to_head_spa_p_full": full["spa_p_value"],
+        "head_to_head_mean_outperf_2021": from_2021["mean_outperformance"],
+        "head_to_head_spa_p_2021": from_2021["spa_p_value"],
+        "max_drawdown": drawdown_b,
+        "arm_a_max_drawdown": drawdown_a,
+        "max_drawdown_reduction_pct": 100 * (drawdown_a - drawdown_b) / drawdown_a,
+        "turnover_a": book_turnover(arm_a),
+        "turnover_b": book_turnover(arm_b),
+        "stamps_positions_differ": sum(differ.values()),
+        "engaged_per_year": per_year_engaged_counts(arm_a, scales, close),
+        "positions_differ_per_year": differ,
+        "turnover_a_per_year": per_year_turnover(arm_a, close),
+        "turnover_b_per_year": per_year_turnover(arm_b, close),
+        "max_drawdown_per_year": per_year_max_drawdown(net_b, close),
+        "arm_a_max_drawdown_per_year": per_year_max_drawdown(net_a, close),
+        "binperp_funding_z30d_coverage": {
+            a: {str(year): [c.non_null, c.total] for year, c in coverage_by_year(close, inputs.binperp_funding_z30d[a]).items()}
+            for a in _B2_ASSETS
+        },
+    }
+    record = json.loads(registry.read_text())
+    assert set(record["metrics"]) == _B2_METRIC_KEYS
+    assert record["metrics"] == expected
+    assert set(record["datasets"]["derivatives-funding"]["files"]) == {f"{PERP_SYMBOLS[a]}/funding.parquet" for a in _B2_ASSETS}
+    ohlc = record["datasets"]["ohlc-test"]
+    assert ohlc["rows"] == len(_B2_ASSETS) * _B2_WINDOW_BARS < len(_B2_ASSETS) * _B2_BARS
+    assert ohlc["span"] == [str(ts[0]), str(ts[-1])]
+
+
+_B2_SPOILT = PERP_SYMBOLS["SOL"]
+# From here 1,469 return indices close before 2021-01-01.
+_B2_FROM_MAY_2020 = datetime(2020, 5, 1, tzinfo=UTC)
+_B2_IN_2026 = datetime(2026, 1, 1, tzinfo=UTC)
+
+
+def _b2_eval(start: datetime, bars: int) -> list[str]:
+    end = start + timedelta(hours=4 * (bars - 1))
+    return ["research", "eval", "--subject", "b2-funding-derisk", "--dataset", "ohlc-test", "--window", str(start), str(end)]
+
+
+def _a_print_61s_late(path: Path) -> None:
+    frame = pl.read_parquet(path)
+    stamps = frame["ts"].to_list()
+    stamps[5] += timedelta(seconds=61)
+    frame.with_columns(ts=pl.Series(stamps, dtype=frame.schema["ts"])).write_parquet(path)
+
+
+@pytest.mark.parametrize(
+    ("spoil", "cause"),
+    [
+        pytest.param(Path.unlink, "No such file or directory", id="missing"),
+        pytest.param(lambda path: path.write_bytes(b"not a parquet file"), "File out of specification", id="not-parquet"),
+        pytest.param(
+            lambda path: pl.read_parquet(path).drop("funding_rate").write_parquet(path),
+            '"funding_rate" not found',
+            id="no-rate-column",
+        ),
+        pytest.param(lambda path: pl.read_parquet(path).clear().write_parquet(path), "zero rows", id="empty"),
+        pytest.param(_a_print_61s_late, "beyond the 60 s settlement tolerance", id="a-print-61s-past-its-hour"),
+        pytest.param(
+            lambda path: pl.read_parquet(path).with_columns(funding_rate=math.nan).write_parquet(path),
+            "must be finite numbers or None",
+            id="non-finite-rates",
+        ),
+    ],
+)
+def test_the_b2_subject_refuses_a_funding_file_it_cannot_read_naming_it(tmp_path, monkeypatch, spoil, cause):
+    root = _b2_dataset(tmp_path)
+    spoil(root / "derivatives-funding" / _B2_SPOILT / "funding.parquet")
+    _anchor(monkeypatch, root)
+
+    result = runner.invoke(app, _b2_eval(_B2_START, _B2_WINDOW_BARS))
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit), "a refusal ends in an exit, never a traceback"
+    assert f"derivatives-funding/{_B2_SPOILT}/funding.parquet" in result.output
+    assert cause in result.output
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses file permissions")
+def test_the_b2_subject_refuses_a_funding_file_it_may_not_open_naming_it(tmp_path, monkeypatch):
+    root = _b2_dataset(tmp_path)
+    spoilt = root / "derivatives-funding" / _B2_SPOILT / "funding.parquet"
+    _anchor(monkeypatch, root)
+    os.chmod(spoilt, 0o000)
+    try:
+        result = runner.invoke(app, _b2_eval(_B2_START, _B2_WINDOW_BARS))
+    finally:
+        os.chmod(spoilt, 0o644)
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit), "a refusal ends in an exit, never a traceback"
+    assert f"derivatives-funding/{_B2_SPOILT}/funding.parquet" in result.output
+    assert "Permission denied" in result.output
+
+
+@pytest.mark.parametrize(
+    ("spoil", "cause"),
+    [
+        pytest.param(lambda path: path.write_bytes(b"not a parquet file"), "File out of specification", id="not-parquet"),
+        pytest.param(lambda path: pl.read_parquet(path).drop("close").write_parquet(path), "no close column", id="no-close-column"),
+    ],
+)
+def test_a_price_file_the_union_cannot_read_is_refused_naming_it(tmp_path, monkeypatch, spoil, cause):
+    root = _b2_dataset(tmp_path)
+    spoil(root / "ohlc-test" / "ETH/EUR/240.parquet")
+    _anchor(monkeypatch, root)
+
+    result = runner.invoke(app, _b2_eval(_B2_START, _B2_WINDOW_BARS))
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit), "a refusal ends in an exit, never a traceback"
+    assert "ohlc-test/ETH/EUR/240.parquet" in result.output
+    assert cause in result.output
+
+
+@pytest.mark.parametrize(
+    ("start", "bars", "flat", "cause"),
+    [
+        pytest.param(
+            _B2_START,
+            1_382,
+            False,
+            "it holds 1381 return indices, and the kill bar's decisive window opens at index 1380 and needs 2",
+            id="one-index-short",
+        ),
+        pytest.param(
+            _B2_FROM_MAY_2020,
+            1_471,
+            False,
+            "1 of its return indices close at or after 2021-01-01T00:00Z, and the from-2021 head-to-head needs 2",
+            id="one-index-into-2021",
+        ),
+        pytest.param(
+            _B2_IN_2026,
+            _B2_BARS,
+            False,
+            "none of its return indices closes in a calendar year the worst-slice leg reads",
+            id="inside-2026",
+        ),
+        pytest.param(_B2_START, _B2_WINDOW_BARS, True, "degenerate backtest: returns have zero variance", id="arms-never-trade"),
+        pytest.param(
+            _B2_FROM_MAY_2020,
+            1_472,
+            False,
+            "arm A never draws down from 2021-01-01T00:00Z, so max_drawdown_reduction_pct divides by zero",
+            id="arm-a-never-draws-down-from-2021",
+        ),
+    ],
+)
+def test_the_b2_subject_refuses_a_window_it_cannot_evaluate_naming_it(tmp_path, monkeypatch, start, bars, flat, cause):
+    _anchor(monkeypatch, _b2_dataset(tmp_path, start=start, flat=flat))
+    args = _b2_eval(start, bars)
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit), "a refusal ends in an exit, never a traceback"
+    assert f"b2-funding-derisk over the window {args[-2]} .. {args[-1]}: {cause}" in result.output
+
+
+def _one_bar_in_the_window(path: Path) -> None:
+    frame = pl.read_parquet(path)
+    frame.filter(pl.col("ts") >= frame["ts"][_B2_WINDOW_BARS - 1]).write_parquet(path)
+
+
+@pytest.mark.parametrize(
+    "spoil",
+    [
+        pytest.param(_one_bar_in_the_window, id="one-bar-in-the-window"),
+        pytest.param(
+            lambda path: (
+                (frame := pl.read_parquet(path)).with_columns(close=pl.lit(None, dtype=frame.schema["close"])).write_parquet(path)
+            ),
+            id="no-close-at-all",
+        ),
+    ],
+)
+def test_the_b2_subject_refuses_an_asset_too_thin_in_the_window_naming_the_window(tmp_path, monkeypatch, spoil):
+    root = _b2_dataset(tmp_path)
+    spoil(root / "ohlc-test" / "ETH/EUR/240.parquet")
+    _anchor(monkeypatch, root)
+    args = _b2_eval(_B2_START, _B2_WINDOW_BARS)
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit), "a refusal ends in an exit, never a traceback"
+    assert f"b2-funding-derisk over the window {args[-2]} .. {args[-1]}: prices must be a list of >= 2 values" in result.output
+
+
+def test_the_b2_inputs_scale_each_spiking_asset_from_the_first_close_at_or_after_its_first_spike(tmp_path):
+    ts = [_B2_START + timedelta(hours=4 * k) for k in range(_B2_WINDOW_BARS)]
+    inputs = subjects._b2_inputs(ObservedReader(_b2_dataset(tmp_path)), "ohlc-test", (str(ts[0]), str(ts[-1])), None, False)
+
+    first = {a: next((k for k, s in enumerate(inputs.scales[a]) if s != 1.0), None) for a in _B2_ASSETS}
+
+    # Asset i's first spike prints at bar 822 + 2i's open, which closes return index 821 + 2i.
+    spikes = _B2_FALLS[1][0] - 1
+    assert first == {a: None if a == _B2_NEVER_SPIKES else spikes + 2 * i for i, a in enumerate(_B2_ASSETS)}
+
+
+def test_the_b2_subject_refuses_a_window_its_benchmark_never_trades_naming_it(tmp_path, monkeypatch):
+    """A window the frozen benchmark's 1,200-bar gate never opens over leaves its returns flat; the fixture's gate opens,
+    so the flat series is handed in."""
+    _anchor(monkeypatch, _b2_dataset(tmp_path))
+    monkeypatch.setattr(subjects, "benchmark_4h_net_of_cost", lambda prices, *, cost_per_side: [0.0] * (len(prices["BTC"]) - 1))
+    args = _b2_eval(_B2_START, _B2_WINDOW_BARS)
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit), "a refusal ends in an exit, never a traceback"
+    assert f"b2-funding-derisk over the window {args[-2]} .. {args[-1]}: no non-degenerate slice to compare" in result.output

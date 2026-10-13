@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: "per family — B2 and C3: go-live is settled (both are otherwise ripe; re-deferred 2026-08-23, see `## Done so far`); B4-legs and B3: the §10 portfolio-limits code lands; C2: a tick catalog exists; C1: weeks of captured L2 exist"
+ripe_when: "per family — C3: go-live is settled (otherwise ripe; re-deferred 2026-08-23, see `## Done so far`); B4-legs and B3: the §10 portfolio-limits code lands; C2: a tick catalog exists; C1: weeks of captured L2 exist"
 ---
 
 # Bucket-B/C alpha families — the un-started remainder of the §5 queue
@@ -17,13 +17,15 @@ Buckets B (intraday band) and C (long shots) are where the master plan's residua
 
 - The A-family arc's binding lessons transfer wholesale: judge net-of-cost from the first verdict; the short's borrow carry is a structural ~5 %/yr drag; benchmark warm-up asymmetries must be windowed out; the worst-slice leg is exposure-blind pending T0009.
 - Prerequisites: T0009 resolved (protocol legs → revised kill bar, iter-072); **T0012 resolved (iter-085): the 15m substrate exists** — `data/ohlc-15m`, basket_sha256 `0fed24a6…`, tick-reconciled bit-exact; note for B1 design: AVAX/LINK/DOT recent-year 15m density is 88–97% (real omitted no-trade slots — fill/skip policy is a B1 design decision). The tick catalog was dropped with T0012 — C2 must re-open it as its own topic. T0003 (captured L2 → C1) and T0014 (spread term → B1 maker realism, ripe ≈ 2026-07-22) unchanged.
-- Budgets pre-registered and untouched: **B = 25, C = 10**; A retains 8 reserved trials (T0009/T0011).
+- Budgets pre-registered: **B = 25**, shared across Bucket B (B1 spent 2, 23 remain), and **C = 10**, untouched; A retains 8 reserved trials (T0009/T0011).
 
 ## Done so far
 
-- **B1 split out (iter-086)**: the family opened as its own topic [T0022](T0022-b1-intraday-seasonality-family.md) with spec/plan `00045` — per this umbrella's own split rule. The umbrella's remainder is B2/B3/B4 and C1–C3.
+- **B1 split out (iter-086)**: the family opened as its own topic [T0022](T0022-b1-intraday-seasonality-family.md) with spec/plan `00045` — per this umbrella's own split rule. The umbrella's remainder is now B3/B4 and C1–C3, B2 having opened under T0023 (below).
 
-- **B2 and C3 are ripe and deliberately NOT picked up (re-deferred 2026-08-23, owner's call).** B2's sourcing has been unblocked since 2026-07-24 and C3 since iter-072, so neither waits on anything technical. The reason is contention, not readiness: the active front is the Phase-6b go-live run-up ([[T0085]]), and opening an alpha family competes with it for the same attention while the live path is being armed. Re-evaluate once go-live is settled — this is a decision, not an oversight, and it is recorded here so the ripe state stops reading as a miss.
+- **B2 opened (iter-175, spec/plan `00128`)** on the owner's word of 2026-10-12, its trial 1 stopped unspent at the pre-flight (the shared B budget 23 of 25); the family's state and the trigger of its next trial are [T0023](T0023-b2-derivatives-data-sourcing.md)'s.
+
+- **C3 is ripe and deliberately NOT picked up (re-deferred 2026-08-23, owner's call).** C3's sourcing has been unblocked since iter-072; the reason is contention: the active front is the Phase-6b go-live run-up ([[T0085]]), and opening an alpha family competes with it for the same attention while the live path is being armed. This is a decision, not an oversight, recorded here so the ripe state stops reading as a miss.
 
 ## Standing prerequisites for any short-carrying or levered family (registered here because this topic's families fire them)
 
@@ -32,5 +34,4 @@ Buckets B (intraday band) and C (long shots) are where the master plan's residua
 
 ## Suggested next steps
 
-- Next family to split out when picked: B2 (ripe), then B4-legs/B3 (need the §10 portfolio-limits code first), then C3/C2/C1 per ranking.
-- Order per §5 ranking (B1 done): B2 → B4-legs → B3 → C2 → C3 → C1 (C1 last: taker economics near-certainly kill it without L2 maker realism).
+- Order per §5 ranking (B1 done, B2 open): B4-legs → B3 → C2 → C3 → C1 (C1 last: taker economics near-certainly kill it without L2 maker realism).
