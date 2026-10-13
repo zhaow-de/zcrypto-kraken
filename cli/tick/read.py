@@ -78,8 +78,7 @@ def read_trades_csv(source: str | Path | tuple[str | Path, str]) -> pl.DataFrame
 
     names = _COMPLETE_COLUMNS if schema == "complete" else _QUARTERLY_COLUMNS
     try:
-        # Renamed after the positional projection: `new_columns` must name every column in the file, and a
-        # quarterly file carries more fields than the four kept.
+        # Renamed after the read: polars 2 refuses a `new_columns` whose length differs from the file's column count.
         raw = pl.read_csv(
             data,
             has_header=False,
@@ -94,8 +93,7 @@ def read_trades_csv(source: str | Path | tuple[str | Path, str]) -> pl.DataFrame
     except pl.exceptions.PolarsError as exc:
         raise TickError(f"unreadable trades CSV {label}: {exc}") from exc
 
-    # A null in a required field means a row was too short; `side` is required only in the quarterly layout, where a
-    # missing side is malformed, not the complete layout's legitimate absence.
+    # Polars reads a short row's absent fields, and an empty field, as null.
     if raw.select(pl.any_horizontal(pl.col(names).is_null())).to_series().any():
         raise TickError(f"malformed row (missing a required field) in {label}")
 
