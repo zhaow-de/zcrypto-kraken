@@ -195,7 +195,7 @@ while true; do
 	# egid already zcrypto.
 	if [ -n "${HOT_SOURCE:-}" ]; then
 		if ! rsync --archive --ignore-existing --chmod=D2775,F0664 \
-				-e "ssh -i $HOT_SSH_KEY -p ${HOT_SSH_PORT:-22} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o CheckHostIP=no -o UserKnownHostsFile=$ARCHIVE_SSH_KNOWN_HOSTS" \
+				-e "ssh -i $HOT_SSH_KEY -p ${HOT_SSH_PORT:-22} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o CheckHostIP=no -o AddressFamily=inet -o UserKnownHostsFile=$ARCHIVE_SSH_KNOWN_HOSTS" \
 				"$HOT_SOURCE" "$HOT_DEST"; then
 			log ERROR "hot pull failed (source=$HOT_SOURCE dest=$HOT_DEST), continuing"
 		fi
@@ -207,7 +207,7 @@ while true; do
 	# backup.
 	if [ -n "${HC_BACKUP_SOURCE:-}" ]; then
 		if ! rsync --archive --chmod=D0700,F0600 \
-				-e "ssh -i $HC_BACKUP_SSH_KEY -p ${ARCHIVE_SSH_PORT:-10022} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o CheckHostIP=no -o UserKnownHostsFile=$ARCHIVE_SSH_KNOWN_HOSTS" \
+				-e "ssh -i $HC_BACKUP_SSH_KEY -p ${ARCHIVE_SSH_PORT:-10022} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o CheckHostIP=no -o AddressFamily=inet -o UserKnownHostsFile=$ARCHIVE_SSH_KNOWN_HOSTS" \
 				"$HC_BACKUP_SOURCE" "$HC_BACKUP_DEST"; then
 			log ERROR "hc backup pull failed (source=$HC_BACKUP_SOURCE dest=$HC_BACKUP_DEST), continuing"
 		fi
