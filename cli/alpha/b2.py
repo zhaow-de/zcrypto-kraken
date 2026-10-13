@@ -47,7 +47,6 @@ def _validate_stamps(name: str, ts: list[datetime]) -> None:
             raise AlphaError(f"{name} must be strictly increasing, violated at index {i}")
 
 
-# The close of return index k, never the bar-open ts[k] (one bar stale) nor ts[k + 1] + 4h (a 4h look-ahead).
 def close_grid(union_ts: list[datetime]) -> list[datetime]:
     return [t + _BOUNDARY for t in union_ts[:-1]]
 
@@ -113,9 +112,8 @@ def _check_paired(x_name: str, x: dict[str, list], y_name: str, y: dict[str, lis
 
 
 def derisk_scales(z_by_asset: dict[str, list[float | None]], *, config: B2Config) -> dict[str, list[float]]:
-    """One-sided by ruling (docs/specs/00128 D3): a z at or below the threshold, one below minus it
-    included, and a None z leave the position whole -- a z below minus the threshold is a later
-    trial's candidate, never read here through an `abs`."""
+    """One-sided by ruling (docs/specs/00128 D3): a z below minus the threshold is a later trial's candidate, never read
+    here through an `abs`."""
     if not isinstance(config, B2Config):
         raise AlphaError(f"config must be a B2Config, got {type(config)!r}")
     _check_lengths({f"z_by_asset[{asset!r}]": zs for asset, zs in z_by_asset.items()})
@@ -143,8 +141,8 @@ def net_of_cost(
     *,
     cost_per_side: float,
 ) -> list[float]:
-    """`build_crossfreq_system`'s net-of-cost loop (docs/specs/00128 D5), the one arm A, arm B and
-    B's cost-stressed series all go through: each asset's turnover from flat, a None return read as 0.0."""
+    """`build_crossfreq_system`'s net-of-cost loop, copied (docs/specs/00128 D5): no test ties the two, so a change to
+    that loop is made here too."""
     n = _check_paired("asset_positions", asset_positions, "asset_returns", asset_returns)
     legs = [(asset_positions[asset], asset_returns[asset]) for asset in asset_positions]
     previous = [0.0] * len(legs)
@@ -188,8 +186,6 @@ def per_year_positions_differ(a: dict[str, list[float]], b: dict[str, list[float
 
 
 def per_year_turnover(asset_positions: dict[str, list[float]], close_ts: list[datetime]) -> dict[str, float]:
-    """`book_turnover`'s convention split by close year: each asset from flat, each change in the year
-    of its own return index."""
     _check_lengths({f"asset_positions[{asset!r}]": v for asset, v in asset_positions.items()}, len(close_ts))
     years = [str(t.year) for t in close_ts]
     totals = dict.fromkeys(years, 0.0)
