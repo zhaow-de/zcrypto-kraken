@@ -1,6 +1,6 @@
-"""The B2 trial's pre-flight on the data root the run reads: the subject's inputs half -- arm A's positions, the funding
-feature and the scales, no return of arm B -- reproduces spec 00128's measured basis, and its block is the one that spec
-names, so a re-promotion of the rolling set or the funding set fails here by design."""
+"""The B2 trial's pre-flight on the data root the run reads: the subject's inputs half reproduces spec 00128's measured
+basis and its block is the one that spec names, so a re-promotion of the rolling set or the funding set fails here by
+design."""
 
 from __future__ import annotations
 
@@ -18,6 +18,8 @@ from tests.skip_gates import nothing_found_under
 
 pytestmark = pytest.mark.data
 
+# Literal-rooted, the form the skip-gate guard admits; the test's first assertion makes it the run's own root.
+_DATA_ROOT = Path(__file__).resolve().parents[1] / "data"
 _WINDOW = ("2020-09-22 00:00:00+00:00", "2026-06-30 23:59:59+00:00")
 _AS_OF = "2026-10-10"
 # Copied from the spec's measured basis, never from a run.
@@ -39,13 +41,14 @@ _ENGAGED_PER_YEAR = {"2020": 283, "2021": 1_189, "2022": 8, "2023": 572, "2024":
 
 
 @pytest.mark.skipif(
-    nothing_found_under(Path("data"), "ohlc-rolling/index/2026/10/10.json")
-    or nothing_found_under(Path("data"), "derivatives-funding/*/funding.parquet"),
+    nothing_found_under(_DATA_ROOT, "ohlc-rolling/index/2026/10/10.json")
+    or nothing_found_under(_DATA_ROOT, "derivatives-funding/*/funding.parquet"),
     reason="the rolling set's 2026-10-10 line or the derivatives-funding set is absent under data/",
 )
 def test_the_b2_inputs_reproduce_the_measured_basis_and_arm_a_is_the_builders_a2_sleeve():
+    assert _DATA_ROOT == research_command._DATA_ROOT
     assets = CrossfreqSystemConfig().assets
-    reader = ObservedReader(research_command._DATA_ROOT)
+    reader = ObservedReader(_DATA_ROOT)
     inputs = subjects._b2_inputs(reader, "ohlc-rolling", _WINDOW, _AS_OF, True)
     assert compute_hash(reader.block()) == _BLOCK_HASH
 
