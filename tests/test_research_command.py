@@ -848,6 +848,47 @@ def test_the_b2_subject_refuses_a_window_it_cannot_evaluate_naming_it(tmp_path, 
     assert f"b2-funding-derisk over the window {args[-2]} .. {args[-1]}: {cause}" in result.output
 
 
+def _one_bar_in_the_window(path: Path) -> None:
+    frame = pl.read_parquet(path)
+    frame.filter(pl.col("ts") >= frame["ts"][_B2_WINDOW_BARS - 1]).write_parquet(path)
+
+
+@pytest.mark.parametrize(
+    "spoil",
+    [
+        pytest.param(_one_bar_in_the_window, id="one-bar-in-the-window"),
+        pytest.param(
+            lambda path: (
+                (frame := pl.read_parquet(path)).with_columns(close=pl.lit(None, dtype=frame.schema["close"])).write_parquet(path)
+            ),
+            id="no-close-at-all",
+        ),
+    ],
+)
+def test_the_b2_subject_refuses_an_asset_too_thin_in_the_window_naming_the_window(tmp_path, monkeypatch, spoil):
+    root = _b2_dataset(tmp_path)
+    spoil(root / "ohlc-test" / "ETH/EUR/240.parquet")
+    _anchor(monkeypatch, root)
+    args = _b2_eval(_B2_START, _B2_WINDOW_BARS)
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit), "a refusal ends in an exit, never a traceback"
+    assert f"b2-funding-derisk over the window {args[-2]} .. {args[-1]}: prices must be a list of >= 2 values" in result.output
+
+
+def test_the_b2_inputs_scale_each_spiking_asset_from_the_first_close_at_or_after_its_first_spike(tmp_path):
+    ts = [_B2_START + timedelta(hours=4 * k) for k in range(_B2_WINDOW_BARS)]
+    inputs = subjects._b2_inputs(ObservedReader(_b2_dataset(tmp_path)), "ohlc-test", (str(ts[0]), str(ts[-1])), None, False)
+
+    first = {a: next((k for k, s in enumerate(inputs.scales[a]) if s != 1.0), None) for a in _B2_ASSETS}
+
+    # Asset i's first spike prints at bar 822 + 2i's open, which closes return index 821 + 2i.
+    spikes = _B2_FALLS[1][0] - 1
+    assert first == {a: None if a == _B2_NEVER_SPIKES else spikes + 2 * i for i, a in enumerate(_B2_ASSETS)}
+
+
 def test_the_b2_subject_refuses_a_window_its_benchmark_never_trades_naming_it(tmp_path, monkeypatch):
     """A window the frozen benchmark's 1,200-bar gate never opens over leaves its returns flat; the fixture's gate opens,
     so the flat series is handed in."""
