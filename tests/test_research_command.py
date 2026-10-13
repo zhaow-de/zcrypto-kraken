@@ -10,6 +10,7 @@ import inspect
 import json
 import math
 import os
+import subprocess
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
@@ -50,7 +51,8 @@ runner = CliRunner()
 
 _DAY = 86400
 _EPOCH_2020 = 1577836800  # 2020-01-01T00:00:00Z
-_COMMITTED_REGISTRY = Path(__file__).resolve().parents[1] / "docs" / "reference" / "trial-registry.jsonl"
+_REPO = Path(__file__).resolve().parents[1]
+_COMMITTED_REGISTRY = _REPO / "docs" / "reference" / "trial-registry.jsonl"
 _CLEAN_HEAD = "a" * 40
 
 
@@ -259,6 +261,15 @@ def _block_and_metrics(output: str) -> dict:
 # `record33-combined`'s committed headline keys, pinned here as literals: reading them back off the
 # subject under test would assert nothing about which metrics the command actually reports.
 _COMBINED_METRIC_KEYS = {"ann_sharpe_noc", "per_period_sharpe", "bench_ann_sharpe", "cap_breach_bars", "n_periods"}
+# `record44-crossfreq`'s, for the same reason.
+_CROSSFREQ_METRIC_KEYS = {
+    "ann_sharpe_noc",
+    "per_period_sharpe_4h",
+    "ann_sharpe_ungoverned",
+    "cap_breach_bars",
+    "governor_engaged_bars",
+    "n_periods",
+}
 
 
 def test_a_production_subject_honours_window_all_the_way_down_to_the_reads(tmp_path, monkeypatch):
@@ -539,6 +550,63 @@ _B2_METRIC_KEYS = {
     "arm_a_max_drawdown_per_year",
     "binperp_funding_z30d_coverage",
 }
+
+
+@pytest.mark.parametrize("name", sorted(subjects.SUBJECTS))
+def test_every_subject_declares_a_tracked_spec_its_keys_seeds_rule_and_incumbent(name):
+    subject = subjects.SUBJECTS[name]
+    tracked = subprocess.run(
+        ["git", "-C", str(_REPO), "ls-files", "--error-unmatch", "--", str(subject.spec)], capture_output=True, text=True
+    )
+    assert tracked.returncode == 0, f"{name} declares the spec {subject.spec!r}, which git does not track: {tracked.stderr}"
+    assert subject.metric_keys
+    assert (subject.verdict is None) == (subject.no_verdict is None)
+    assert subject.incumbent is None or subject.incumbent in subjects.SUBJECTS
+    assert type(subject.seeds) is tuple and all(type(seed) is int for seed in subject.seeds)
+
+
+def test_each_subject_declares_the_metric_keys_its_build_returns():
+    assert subjects.SUBJECTS["b2-funding-derisk"].metric_keys == _B2_METRIC_KEYS
+    assert subjects.SUBJECTS["record33-combined"].metric_keys == _COMBINED_METRIC_KEYS
+    assert subjects.SUBJECTS["record44-crossfreq"].metric_keys == _CROSSFREQ_METRIC_KEYS
+
+
+# One engaged year of two, so a rule reading `all` where it reads `any` turns this adopt into a stop.
+_B2_ADOPTING = {
+    "arm_a_passes": 1,
+    "engaged_per_year": {"2021": 4, "2022": 0},
+    "passes": 1,
+    "head_to_head_mean_outperf_2021": 0.001,
+    "head_to_head_spa_p_2021": 0.01,
+    "max_drawdown_reduction_pct": 5.0,
+}
+_B2_NEVER_ENGAGED = {"engaged_per_year": {"2021": 0, "2022": 0}}
+
+
+@pytest.mark.parametrize(
+    ("change", "verdict"),
+    [
+        pytest.param({"arm_a_passes": 0}, None, id="arm-a-fails-its-bar"),
+        pytest.param(_B2_NEVER_ENGAGED, None, id="the-overlay-never-engages"),
+        pytest.param({"arm_a_passes": 0, "passes": 0}, None, id="arm-a-read-before-passes"),
+        pytest.param({**_B2_NEVER_ENGAGED, "passes": 0}, None, id="engagement-read-before-passes"),
+        pytest.param({"passes": 0}, "reject", id="arm-b-fails-its-bar"),
+        pytest.param(
+            {"head_to_head_mean_outperf_2021": 0.001, "head_to_head_spa_p_2021": 0.01, "max_drawdown_reduction_pct": 5.0},
+            "adopt",
+            id="outperforms-significantly-and-cuts-drawdown",
+        ),
+        pytest.param({"head_to_head_spa_p_2021": 0.05}, "park", id="p-at-exactly-0.05"),
+        pytest.param({"head_to_head_mean_outperf_2021": 0.0}, "reject", id="mean-at-exactly-0"),
+        pytest.param({"max_drawdown_reduction_pct": 1e-6}, "reject", id="reduction-at-exactly-1e-6"),
+        pytest.param({"max_drawdown_reduction_pct": 2e-6, "head_to_head_spa_p_2021": 0.2}, "park", id="reduction-past-1e-6-p-0.2"),
+        pytest.param({"head_to_head_mean_outperf_2021": -0.001}, "reject", id="mean-negative"),
+    ],
+)
+def test_the_b2_rule_maps_its_metrics_to_a_verdict_or_a_stop(change, verdict):
+    assert subjects._b2_verdict({**_B2_ADOPTING, **change}) == verdict
+
+
 _B2_GRID = ((30, 42), (30, 7), (30, 1234), (102, 42), (102, 7), (102, 1234))
 _B2_FLAGS = ("dsr_pass", "spa_pass", "cost_stress_pass", "worst_slice_pass")
 _B2_ASSETS = CrossfreqSystemConfig().assets

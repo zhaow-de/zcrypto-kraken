@@ -71,6 +71,12 @@ class Subject:
     intervals: tuple[int, ...]
     assets: tuple[str, ...]
     build: Callable[[ObservedReader, str, tuple | None, str | None, bool], dict]
+    spec: str | None = None  # repo-relative path; its sha256 is the record's spec_hash
+    metric_keys: frozenset[str] = frozenset()  # exactly the keys build returns
+    seeds: tuple[int, ...] = ()
+    verdict: Callable[[dict], str | None] | None = None  # docs/specs/00129 D4; None: evaluate-only
+    no_verdict: str | None = None  # docs/specs/00129 D4, D7: the outcome a reading carries when the rule returns None
+    incumbent: str | None = None  # docs/specs/00129 D3: the subject whose book this one builds in the same run
 
 
 def required_relpaths(subject: Subject) -> list[str]:
@@ -385,8 +391,107 @@ def _b2_metrics(inputs: _B2Inputs) -> dict:
     }
 
 
+# docs/specs/00128 D7's metric keys.
+_B2_METRIC_KEYS = frozenset(
+    {
+        "ann_sharpe_noc",
+        "ann_sharpe_noc_decisive",
+        "per_period_sharpe_4h",
+        "arm_a_ann_sharpe_noc",
+        "arm_a_ann_sharpe_noc_decisive",
+        "benchmark_ann_sharpe_noc",
+        "benchmark_ann_sharpe_noc_decisive",
+        "dsr_corrected",
+        "dsr_pass",
+        "spa_pass",
+        "spa_p_full",
+        "cost_stress_pass",
+        "worst_slice_relative_pass",
+        "passes",
+        "decisive_start",
+        "n_resamples",
+        "arm_a_passes",
+        "spa_p_decisive_b30_s42",
+        "spa_p_decisive_b30_s7",
+        "spa_p_decisive_b30_s1234",
+        "spa_p_decisive_b102_s42",
+        "spa_p_decisive_b102_s7",
+        "spa_p_decisive_b102_s1234",
+        "head_to_head_mean_outperf_full",
+        "head_to_head_spa_p_full",
+        "head_to_head_mean_outperf_2021",
+        "head_to_head_spa_p_2021",
+        "max_drawdown",
+        "arm_a_max_drawdown",
+        "max_drawdown_reduction_pct",
+        "turnover_a",
+        "turnover_b",
+        "stamps_positions_differ",
+        "engaged_per_year",
+        "positions_differ_per_year",
+        "turnover_a_per_year",
+        "turnover_b_per_year",
+        "max_drawdown_per_year",
+        "arm_a_max_drawdown_per_year",
+        "binperp_funding_z30d_coverage",
+    }
+)
+
+
+# docs/specs/00128 D6's matrix plus the two instrument findings its metrics show (docs/specs/00129 D4): a change to it is a
+# new spec and a new trial, never an edit here.
+def _b2_verdict(m: dict) -> str | None:
+    if not m["arm_a_passes"] or not any(m["engaged_per_year"].values()):
+        return None  # instrument finding: no verdict, the trial unspent
+    if not m["passes"]:
+        return "reject"
+    if m["head_to_head_mean_outperf_2021"] > 0 and m["max_drawdown_reduction_pct"] > 1e-6:
+        return "adopt" if m["head_to_head_spa_p_2021"] < 0.05 else "park"
+    return "reject"
+
+
 SUBJECTS: dict[str, Subject] = {
-    "record44-crossfreq": Subject("record44-crossfreq", (1440, 240), _ASSETS, _build_crossfreq),
-    "record33-combined": Subject("record33-combined", (1440,), _ASSETS, _build_combined),
-    "b2-funding-derisk": Subject("b2-funding-derisk", (240,), _ASSETS, _build_b2_funding_derisk),
+    "record44-crossfreq": Subject(
+        "record44-crossfreq",
+        (1440, 240),
+        _ASSETS,
+        _build_crossfreq,
+        spec="docs/specs/00038-cross-frequency-combination-design.md",
+        metric_keys=frozenset(
+            {
+                "ann_sharpe_noc",
+                "per_period_sharpe_4h",
+                "ann_sharpe_ungoverned",
+                "cap_breach_bars",
+                "governor_engaged_bars",
+                "n_periods",
+            }
+        ),
+    ),
+    "record33-combined": Subject(
+        "record33-combined",
+        (1440,),
+        _ASSETS,
+        _build_combined,
+        spec="docs/specs/00035-combination-trial-design.md",
+        metric_keys=frozenset({"ann_sharpe_noc", "per_period_sharpe", "bench_ann_sharpe", "cap_breach_bars", "n_periods"}),
+    ),
+    "b2-funding-derisk": Subject(
+        "b2-funding-derisk",
+        (240,),
+        _ASSETS,
+        _build_b2_funding_derisk,
+        spec="docs/specs/00128-b2-family-opening-design.md",
+        metric_keys=_B2_METRIC_KEYS,
+        seeds=(42, 7, 1234),
+        verdict=_b2_verdict,
+        no_verdict=(
+            "instrument finding: arm A fails the bar this window sets, or the overlay engages at no stamp; no verdict, "
+            "the trial unspent"
+        ),
+    ),
 }
+
+# docs/specs/00129 D3: the records at or below 47 a --comparator-trial may name, each mapped to the subject that reproduces
+# its book. An id joins with its subject and a data-gated test proving that subject reproduces the record, in one PR.
+LEGACY_INCUMBENTS: dict[int, str] = {33: "record33-combined", 44: "record44-crossfreq", 47: "record44-crossfreq"}

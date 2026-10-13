@@ -5,11 +5,18 @@ real. Git is required, not skipped-if-absent: a provenance guard that silently s
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
+from collections.abc import Callable
+from dataclasses import asdict, replace
 from pathlib import Path
 
+import pytest
+
+from cli.registry import TrialRegistry
 from cli.registry.record import run_ref_path_candidates, validate_caller_fields
+from cli.research.subjects import LEGACY_INCUMBENTS, SUBJECTS, Subject
 
 REPO = Path(__file__).resolve().parents[1]
 REGISTRY = REPO / "docs" / "reference" / "trial-registry.jsonl"
@@ -157,3 +164,263 @@ def test_committed_spec_hash_lookup_is_sane():
     assert len(hashes) > 50
     record_44 = next(r for r in _records() if r["trial_id"] == 44)
     assert record_44["spec_hash"] in hashes  # 44 is outside LEGACY_SPEC_HASH_ORPHANS, so its pin must resolve here
+
+
+def _is_ancestor(commit: str) -> bool:
+    return (
+        subprocess.run(["git", "-C", str(REPO), "merge-base", "--is-ancestor", commit, "HEAD"], capture_output=True).returncode == 0
+    )
+
+
+def _spec_sha256(path: str) -> str:
+    return hashlib.sha256((REPO / path).read_bytes()).hexdigest()
+
+
+def _trials(registry: Path = REGISTRY) -> dict[int, dict]:
+    return {record.trial_id: asdict(record) for record in TrialRegistry(registry).records}
+
+
+def live_entries(registry: Path = REGISTRY) -> list[tuple[str, str, dict]]:
+    """The one enumeration of what CI holds to its subject and of what the replay parametrises over: a new kind of entry
+    joins here, never in a second list."""
+    return [(f"trial-{trial_id}", "trial", entry) for trial_id, entry in _trials(registry).items() if trial_id > 47]
+
+
+def _comparator_finding(invocation: dict, subject: Subject, legacy: dict, trials: dict[int, dict]) -> str | None:
+    comparator, incumbent = invocation["comparator_trial"], subject.incumbent
+    if incumbent is None:
+        if comparator is None:
+            return None
+        return f"comparator_trial {comparator}, but {subject.name} declares no incumbent, so it compares against no trial"
+    if comparator is None:
+        return f"no comparator_trial, but {subject.name} declares the incumbent {incumbent}, whose trial it must name"
+    backing = trials.get(comparator, {}).get("invocation")
+    through_trials = backing is not None and backing["subject"] == incumbent
+    through_legacy = legacy.get(comparator) == incumbent
+    if through_trials or through_legacy:
+        return None
+    return (
+        f"comparator_trial {comparator} names neither a record whose invocation names {incumbent}, {subject.name}'s "
+        "incumbent, nor a LEGACY_INCUMBENTS entry mapping to it"
+    )
+
+
+def _findings(
+    entry: dict,
+    kind: str,
+    *,
+    subjects: dict,
+    legacy: dict,
+    trials: dict[int, dict],
+    is_ancestor: Callable[[str], bool],
+    spec_sha256: Callable[[str], str],
+) -> list[str]:
+    name = f"{kind}-{entry[f'{kind}_id']}"
+    invocation = entry["invocation"]
+    subject = subjects.get(invocation["subject"])
+    if subject is None:
+        return [
+            f"{name}: names the subject {invocation['subject']!r}, which SUBJECTS does not hold; a subject a record names is "
+            "never deleted or renamed"
+        ]
+    found = []
+    keys = set(entry["metrics"])
+    if keys != subject.metric_keys:
+        found.append(
+            f"{name}: its metric keys are not {subject.name}'s: missing {sorted(subject.metric_keys - keys)}, "
+            f"unknown {sorted(keys - subject.metric_keys)}"
+        )
+    if not is_ancestor(invocation["commit"]):
+        found.append(
+            f"{name}: its commit {invocation['commit']} is not an ancestor of HEAD; if its PR was squash- or rebase-merged, "
+            "open a PR into develop that merges that PR's head with `-s ours` (`git fetch origin refs/pull/<N>/head`, then "
+            "`git merge -s ours FETCH_HEAD`), which makes the commit an ancestor and changes no file"
+        )
+    if entry["spec_hash"] != spec_sha256(subject.spec):
+        found.append(f"{name}: its spec_hash is not the sha256 of {subject.spec}, the spec {subject.name} declares")
+    if kind == "trial":
+        if subject.verdict is None:
+            found.append(
+                f"{name}: names {subject.name}, which declares no verdict rule, and an evaluate-only subject registers no trial"
+            )
+        elif entry["verdict"] != (ruled := subject.verdict(entry["metrics"])):
+            found.append(
+                f"{name}: its verdict {entry['verdict']!r} is not {ruled!r}, what {subject.name}'s rule gives on its metrics"
+            )
+    if (wrong := _comparator_finding(invocation, subject, legacy, trials)) is not None:
+        found.append(f"{name}: {wrong}")
+    return found
+
+
+def test_every_record_past_47_holds_to_the_subject_it_names():
+    trials = _trials()
+    found = [
+        finding
+        for _, kind, entry in live_entries()
+        for finding in _findings(
+            entry,
+            kind,
+            subjects=SUBJECTS,
+            legacy=LEGACY_INCUMBENTS,
+            trials=trials,
+            is_ancestor=_is_ancestor,
+            spec_sha256=_spec_sha256,
+        )
+    ]
+    assert found == []
+
+
+def test_live_entries_holds_exactly_the_records_past_47(tmp_path):
+    path = tmp_path / "trials.jsonl"
+    datasets = {
+        "ohlc-test": {
+            "files": {"BTC/EUR/1440.parquet": "c" * 64},
+            "rows": 10,
+            "span": ["2020-01-01 00:00:00+00:00", "2020-01-10 00:00:00+00:00"],
+        }
+    }
+    invocation = {
+        "subject": "stub",
+        "dataset": "ohlc-test",
+        "window": None,
+        "as_of": None,
+        "accept_holes": False,
+        "comparator_trial": None,
+        "commit": "a" * 40,
+    }
+    for n in range(1, 49):
+        TrialRegistry(path).append(
+            iteration="iter-001",
+            family="A1",
+            spec_hash="s",
+            datasets=datasets,
+            invocation=invocation,
+            seeds=[0],
+            metrics={"sharpe": 0.3},
+            n_trials_in_family=n,
+            verdict="reject",
+            run_ref="cli/registry/record.py",
+        )
+
+    assert [(label, kind, entry["trial_id"]) for label, kind, entry in live_entries(path)] == [("trial-48", "trial", 48)]
+
+
+def test_the_legacy_incumbents_are_frozen_each_backed_by_a_subject_and_a_record_at_or_below_47():
+    growth = (
+        "LEGACY_INCUMBENTS grows only as a legacy id joins with its subject and a data-gated test proving that subject "
+        "reproduces the record, in one PR that also changes this literal"
+    )
+    assert LEGACY_INCUMBENTS == {33: "record33-combined", 44: "record44-crossfreq", 47: "record44-crossfreq"}, growth
+    assert set(LEGACY_INCUMBENTS.values()) <= set(SUBJECTS), growth
+    committed = {record["trial_id"] for record in _records()}
+    assert all(trial_id <= 47 and trial_id in committed for trial_id in LEGACY_INCUMBENTS), growth
+
+
+_B2 = "b2-funding-derisk"
+_B2_SPEC = "docs/specs/00128-b2-family-opening-design.md"
+_COMBINED_SPEC = "docs/specs/00035-combination-trial-design.md"
+_STUB = "b2-against-record44"
+_WITH_INCUMBENT = {**SUBJECTS, _STUB: replace(SUBJECTS[_B2], name=_STUB, incumbent="record44-crossfreq")}
+
+
+def _head() -> str:
+    return subprocess.run(["git", "-C", str(REPO), "rev-parse", "HEAD"], capture_output=True, check=True, text=True).stdout.strip()
+
+
+def _b2_trial(trial_id: int, subject: str = _B2) -> dict:
+    metrics = dict.fromkeys(SUBJECTS[_B2].metric_keys, 0.0) | {"passes": 0, "arm_a_passes": 1, "engaged_per_year": {"2021": 3}}
+    return {
+        "trial_id": trial_id,
+        "schema_version": 5,
+        "spec_hash": _spec_sha256(_B2_SPEC),
+        "invocation": {
+            "subject": subject,
+            "dataset": "ohlc-rolling",
+            "window": None,
+            "as_of": "2026-10-10",
+            "accept_holes": True,
+            "comparator_trial": None,
+            "commit": _head(),
+        },
+        "metrics": metrics,
+        "verdict": "reject",
+    }
+
+
+def _check(entry: dict, *, subjects: dict = SUBJECTS, trials: dict[int, dict] | None = None) -> list[str]:
+    return _findings(
+        entry,
+        "trial",
+        subjects=subjects,
+        legacy=LEGACY_INCUMBENTS,
+        trials=_trials() if trials is None else trials,
+        is_ancestor=_is_ancestor,
+        spec_sha256=_spec_sha256,
+    )
+
+
+def test_a_clean_b2_trial_yields_no_finding():
+    assert _check(_b2_trial(49)) == []
+
+
+def _as_record33(entry: dict) -> None:
+    entry["invocation"]["subject"] = "record33-combined"
+    entry["metrics"] = dict.fromkeys(SUBJECTS["record33-combined"].metric_keys, 0.0)
+    entry["spec_hash"] = _spec_sha256(_COMBINED_SPEC)
+
+
+def _against(comparator: int | None) -> Callable[[dict], None]:
+    return lambda entry: entry["invocation"].update(subject=_STUB, comparator_trial=comparator)
+
+
+@pytest.mark.parametrize(
+    ("change", "subjects", "trial_48_subject", "finding"),
+    [
+        pytest.param(
+            lambda e: e["invocation"].update(subject="no-such-subject"),
+            SUBJECTS,
+            None,
+            "SUBJECTS does not hold",
+            id="unknown-subject",
+        ),
+        pytest.param(lambda e: e["metrics"].update(not_a_b2_key=0.0), SUBJECTS, None, "unknown ['not_a_b2_key']", id="a-key-added"),
+        pytest.param(lambda e: e["metrics"].pop("turnover_a"), SUBJECTS, None, "missing ['turnover_a']", id="a-key-removed"),
+        pytest.param(
+            lambda e: e["invocation"].update(commit="f" * 40), SUBJECTS, None, "not an ancestor of HEAD", id="commit-off-head"
+        ),
+        pytest.param(
+            lambda e: e.update(spec_hash=_spec_sha256(_COMBINED_SPEC)),
+            SUBJECTS,
+            None,
+            "is not the sha256 of",
+            id="another-specs-hash",
+        ),
+        pytest.param(lambda e: e.update(verdict="adopt"), SUBJECTS, None, "rule gives", id="verdict-off-the-rule"),
+        pytest.param(_as_record33, SUBJECTS, None, "declares no verdict rule", id="a-trial-of-a-ruleless-subject"),
+        pytest.param(_against(None), _WITH_INCUMBENT, None, "no comparator_trial", id="incumbent-without-comparator"),
+        pytest.param(
+            lambda e: e["invocation"].update(comparator_trial=44),
+            SUBJECTS,
+            None,
+            "declares no incumbent",
+            id="comparator-without-incumbent",
+        ),
+        pytest.param(_against(44), _WITH_INCUMBENT, None, None, id="44-accepted-through-the-map"),
+        pytest.param(_against(48), _WITH_INCUMBENT, "record44-crossfreq", None, id="accepted-through-the-trials"),
+        pytest.param(_against(33), _WITH_INCUMBENT, None, "names neither", id="33-mapped-to-another-subject"),
+        pytest.param(_against(45), _WITH_INCUMBENT, None, "names neither", id="45-in-no-map-and-no-invocation"),
+        pytest.param(_against(48), _WITH_INCUMBENT, _B2, "names neither", id="a-trial-of-another-subject"),
+    ],
+)
+def test_one_change_to_a_clean_trial_yields_exactly_its_finding(change, subjects, trial_48_subject, finding):
+    entry, trials = _b2_trial(49), _trials()
+    if trial_48_subject is not None:
+        trials[48] = _b2_trial(48, trial_48_subject)
+    change(entry)
+
+    found = _check(entry, subjects=subjects, trials=trials)
+
+    if finding is None:
+        assert found == []
+    else:
+        assert len(found) == 1 and finding in found[0], found
