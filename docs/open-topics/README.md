@@ -7,6 +7,7 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 - [T0022 — B1 — intraday trend + time-of-day/day-of-week seasonality (the family topic)](T0022-b1-intraday-seasonality-family.md) — ripe when: a genuinely new B1 hypothesis is pre-registered, or the owner expands or closes the shared B budget
 - [T0214 — The deployable record's cost basis is re-priced from rung 2's measured blend, as a new registry record](T0214-cost-basis-re-priced-at-rung-2.md) — ripe when: `uv run zcrypto engine tracking-report --journal-dir <pulled journal> --since <first day of rung 2> --until <the last Sunday>` reports a realized maker share on at least 30 euro-denominated fills — the count the `basis:` line names
 - [T0221 — engine-procedures.md without the one-time rungs](T0221-engine-procedures-without-the-rungs.md) — ripe when: a milestone: rung 3's go/no-go decided, `engine-rung-3` step 9; check: `grep -c -i -E "rung 3.s go/no-go.*\(Decision:" docs/research/14.phase6-decisions.md` prints at least 1
+- [T0222 — A trial run on a branch that never merges spends uncounted](T0222-a-trial-on-an-unmerged-branch-spends-uncounted.md) — ripe when: an evaluation statement: the next trial is pre-registered — check: `git grep -h -E '^\[iter-[0-9]+\] .*[Tt]rial [0-9]+ (shape|pre-registration)' -- 'docs/research/*.phase*-decisions.md' | wc -l` prints at least 4 (3 on 2026-10-13: B1's trials 1 and 2, B2's trial 1)
 
 ## Partially done
 
