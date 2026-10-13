@@ -1,5 +1,6 @@
 """Spec 00082: a converge guard's condition is evaluated through Ansible's own templar, fed constructed probe outcomes -- never a re-implementation of the logic."""
 
+import ast
 import hashlib
 import importlib.util
 import json
@@ -2947,9 +2948,11 @@ sys.exit(int(os.environ["RSYNC_STUB_RC"]))
 """
 
 
-def _hc_backup_pull(tmp_path: Path, *, source: str | None, rc: int = 0) -> tuple[subprocess.CompletedProcess[str], list]:
+def _entrypoint_block(
+    tmp_path: Path, block_re: re.Pattern[str], env: dict[str, str], rc: int = 0
+) -> tuple[subprocess.CompletedProcess[str], list]:
     text = NAS_PULL_ENTRYPOINT.read_text()
-    (block,) = HC_BACKUP_BLOCK.findall(text)
+    (block,) = block_re.findall(text)
     log_fn = text[text.index("log() {") : text.index("\n}", text.index("log() {")) + 2]
     stub = tmp_path / "bin" / "rsync"
     stub.parent.mkdir()
@@ -2960,13 +2963,15 @@ def _hc_backup_pull(tmp_path: Path, *, source: str | None, rc: int = 0) -> tuple
         "PATH": f"{stub.parent}{os.pathsep}{os.environ['PATH']}",
         "RSYNC_STUB_LOG": str(calls),
         "RSYNC_STUB_RC": str(rc),
-        "HC_BACKUP_DEST": "/hc-backups",
-        "HC_BACKUP_SSH_KEY": "/keys/sync_hc_backup",
-        "ARCHIVE_SSH_PORT": "10022",
         "ARCHIVE_SSH_KNOWN_HOSTS": "/keys/known_hosts",
-    } | ({"HC_BACKUP_SOURCE": source} if source is not None else {})
+    } | env
     run = subprocess.run(["sh", "-c", f"set -eu\n{log_fn}\n{block}"], env=env, capture_output=True, text=True, check=False)
     return run, [json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
+
+
+def _hc_backup_pull(tmp_path: Path, *, source: str | None, rc: int = 0) -> tuple[subprocess.CompletedProcess[str], list]:
+    env = {"HC_BACKUP_DEST": "/hc-backups", "HC_BACKUP_SSH_KEY": "/keys/sync_hc_backup", "ARCHIVE_SSH_PORT": "10022"}
+    return _entrypoint_block(tmp_path, HC_BACKUP_BLOCK, env | ({"HC_BACKUP_SOURCE": source} if source is not None else {}), rc)
 
 
 def test_the_hc_backup_pull_copies_the_nodes_directory_over_the_pinned_ssh_and_deletes_nothing(tmp_path):
@@ -2977,7 +2982,7 @@ def test_the_hc_backup_pull_copies_the_nodes_directory_over_the_pinned_ssh_and_d
     assert options == ["--archive", "--chmod=D0700,F0600", "-e"], options
     assert transport == (
         "ssh -i /keys/sync_hc_backup -p 10022 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o CheckHostIP=no"
-        " -o UserKnownHostsFile=/keys/known_hosts"
+        " -o AddressFamily=inet -o UserKnownHostsFile=/keys/known_hosts"
     )
     assert not [arg for arg in calls[0] if arg.startswith(("--delete", "--remove-source-files"))]
 
@@ -3013,6 +3018,60 @@ def test_the_hc_backup_source_the_env_renders_reaches_the_pull_through_compose(t
     assert seen == value, f"compose passes {passed!r}, which the container reads as {seen!r}"
     run, calls = _hc_backup_pull(tmp_path, source=seen)
     assert [call[-2] for call in calls] == [value], run.stderr
+
+
+# --- The NAS pull's ssh transports connect over IPv4 only.
+HOT_BLOCK = re.compile(r"^\tif [^\n]*\bHOT_SOURCE\b[^\n]*; then\n.*?^\tfi\n", re.M | re.S)
+HOT_SOURCE = "zcrypto-data@zcrypto-ops.invalid:"
+_IPV4_ONLY = re.compile(r"(?<!\S)-o AddressFamily=inet(?!\S)")
+_SSH_COMMAND_WORD = re.compile(r"(?<![\w./-])ssh(?![\w-])")
+
+
+def test_the_hot_pull_copies_the_outbox_over_the_pinned_ssh_and_overwrites_nothing(tmp_path):
+    env = {"HOT_SOURCE": HOT_SOURCE, "HOT_DEST": "/archive/hot", "HOT_SSH_KEY": "/keys/sync_hot", "HOT_SSH_PORT": "22"}
+    run, calls = _entrypoint_block(tmp_path, HOT_BLOCK, env)
+    assert (run.returncode, run.stderr) == (0, "")
+    ((*options, transport, source, dest),) = calls
+    assert (source, dest) == (HOT_SOURCE, "/archive/hot")
+    assert options == ["--archive", "--ignore-existing", "--chmod=D2775,F0664", "-e"], options
+    assert transport == (
+        "ssh -i /keys/sync_hot -p 22 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o CheckHostIP=no"
+        " -o AddressFamily=inet -o UserKnownHostsFile=/keys/known_hosts"
+    )
+
+
+def _ssh_command_strings_under_cli() -> list[str]:
+    sites = []
+    for path in sorted((REPO / "cli").rglob("*.py")):
+        tree = ast.parse(path.read_text())
+        parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str) and re.match(r"ssh(\s|$)", node.value):
+                scope = node
+                while scope in parents and not isinstance(scope, ast.FunctionDef | ast.AsyncFunctionDef):
+                    scope = parents[scope]
+                sites.append(f"{path.relative_to(REPO)}::{getattr(scope, 'name', '<module>')}")
+    return sites
+
+
+def test_every_ssh_transport_the_nas_pull_container_builds_connects_over_ipv4_only(monkeypatch, tmp_path):
+    from cli.archive import command
+
+    # A new ssh command string under cli/ is a transport the image can build: it fails here until this walk exercises it.
+    assert _ssh_command_strings_under_cli() == ["cli/archive/command.py::_run_rsync"]
+    monkeypatch.setenv("ARCHIVE_SSH_KEY", "/keys/k")
+    seen = []
+    monkeypatch.setattr(command.subprocess, "run", lambda argv, **_: seen.append(argv) or subprocess.CompletedProcess(argv, 0, ""))
+    command._run_rsync("h:/src/", tmp_path)
+    ((*_, flag, wrapper, _source, _dest),) = seen
+    entrypoint = [
+        line.strip()
+        for line in NAS_PULL_ENTRYPOINT.read_text().splitlines()
+        if _SSH_COMMAND_WORD.search(line) and not line.lstrip().startswith("#")
+    ]
+    walked = [key for key in ("$HOT_SSH_KEY", "$HC_BACKUP_SSH_KEY") if any(key in line for line in entrypoint)]
+    assert (flag, walked) == ("-e", ["$HOT_SSH_KEY", "$HC_BACKUP_SSH_KEY"]), entrypoint
+    assert [transport for transport in (wrapper, *entrypoint) if not _IPV4_ONLY.search(transport)] == []
 
 
 # --- A6: the echo's negated clause and the assert's first disjunct must stay the same expression;
