@@ -1,4 +1,5 @@
-"""The disk conformance pass: every schema-4 record's cited bytes, re-hashed against `data/` (spec 00086 D7)."""
+"""The conformance passes: every schema-4 record's cited bytes, re-hashed against `data/` (spec 00086 D7) and against the
+hub's `hot/` (spec 00129 D6)."""
 
 from __future__ import annotations
 
@@ -9,12 +10,13 @@ from pathlib import Path
 
 import pytest
 
+from cli.config import load_config, resolve_hot_source
 from cli.data.rolling import ROLLING_SET, RollingError, verify
 from cli.ohlc.dataset import to_frame, write_parquet
 from cli.registry import TrialRegistry
 from cli.registry.observed import ObservedReader
 from tests.rolling_fixtures import write_chain
-from tests.skip_gates import nothing_found
+from tests.skip_gates import mount_absent, nothing_found
 
 pytestmark = pytest.mark.data
 
@@ -53,24 +55,24 @@ def _digest(path: Path, cache: dict) -> str:
 
 @dataclass(frozen=True)
 class Verdict:
-    trial_id: int
+    label: str
     dataset: str
     verdict: str
     detail: str
 
 
-def conformance(records, data_root: Path, absent_ok: frozenset[str]) -> list[Verdict]:
-    """One verdict per `(record, dataset)` citation, over whatever records are handed in."""
+def conformance(cited: list[tuple[str, dict]], data_root: Path, absent_ok: frozenset[str]) -> list[Verdict]:
+    """One verdict per `(label, dataset)` citation, over whatever pairs are handed in."""
     cache: dict = {}
     out: list[Verdict] = []
-    for record in records:
-        for dataset, block in sorted((record.datasets or {}).items()):
+    for label, datasets in cited:
+        for dataset, block in sorted(datasets.items()):
             directory = data_root / dataset
             if not directory.is_dir():
                 listed = dataset in absent_ok
                 out.append(
                     Verdict(
-                        record.trial_id,
+                        label,
                         dataset,
                         ABSENT_HERE if listed else FINDING,
                         "" if listed else f"cites dataset {dataset!r}, which is not on this host and is not an allowed absence",
@@ -91,8 +93,20 @@ def conformance(records, data_root: Path, absent_ok: frozenset[str]) -> list[Ver
                         verify(directory, datetime.strptime(relpath, "index/%Y/%m/%d.json").date())
                     except RollingError as exc:
                         bad.append(f"{relpath}: {exc}")
-            out.append(Verdict(record.trial_id, dataset, FINDING if bad else REDERIVED, "; ".join(bad)))
+            out.append(Verdict(label, dataset, FINDING if bad else REDERIVED, "; ".join(bad)))
     return out
+
+
+def _cited(registry: Path = _REGISTRY) -> list[tuple[str, dict]]:
+    cited = []
+    for record in TrialRegistry(registry).records:
+        if record.schema_version >= 4:
+            cited.append((f"trial {record.trial_id}", record.datasets))
+    return cited
+
+
+def _hub_root() -> Path:
+    return resolve_hot_source(load_config())
 
 
 def test_every_schema_4_records_citations_still_rehash_against_this_hosts_data():
@@ -100,13 +114,21 @@ def test_every_schema_4_records_citations_still_rehash_against_this_hosts_data()
     # CI run permanently red; without the second the pass would be vacuous while it reads as covered.
     if not _CANONICAL.is_dir():
         pytest.skip("data/ohlc-full absent — the canonical-host marker; the disk pass runs only where the data root is")
-    records = [r for r in TrialRegistry(_REGISTRY).records if r.schema_version >= 4]
-    if nothing_found(records):
+    cited = _cited()
+    if nothing_found(cited):
         pytest.skip("no schema-4 records yet — nothing in the registry cites observed bytes")
 
-    verdicts = conformance(records, _DATA_ROOT, _ABSENT_OK)
+    verdicts = conformance(cited, _DATA_ROOT, _ABSENT_OK)
     findings = [v for v in verdicts if v.verdict == FINDING]
-    assert not findings, _STOP + "\n" + "\n".join(f"  trial {v.trial_id} / {v.dataset}: {v.detail}" for v in findings)
+    assert not findings, _STOP + "\n" + "\n".join(f"  {v.label} / {v.dataset}: {v.detail}" for v in findings)
+
+
+@pytest.mark.skipif(mount_absent("hot"), reason="hub mount absent — the hub pass reads hot/ where the NAS is mounted")
+def test_the_hubs_hot_still_holds_every_byte_a_record_cites():
+    findings = [v for v in conformance(_cited(), _hub_root(), frozenset()) if v.verdict == FINDING]
+    assert not findings, "a set a record cites changed or left the hub's hot/:\n" + "\n".join(
+        f"  {v.label} / {v.dataset}: {v.detail}" for v in findings
+    )
 
 
 def _rows(n: int, *, start: int = 1577836800, step: int = 86400):  # 2020-01-01, daily steps
@@ -180,10 +202,10 @@ def test_the_pass_separates_rederived_from_absent_from_finding(tmp_path):
     _append(registry_path, _observed(root, "ds-partial", ("BTC/EUR/1440.parquet", "ETH/EUR/1440.parquet")), 5)
     (root / "ds-partial" / "ETH/EUR/1440.parquet").unlink()
 
-    records = TrialRegistry(registry_path).records
-    assert [r.trial_id for r in records] == [1, 2, 3, 4, 5]
+    cited = _cited(registry_path)
+    assert [label for label, _ in cited] == ["trial 1", "trial 2", "trial 3", "trial 4", "trial 5"]
 
-    seen = {v.dataset: v for v in conformance(records, root, frozenset({"ds-elsewhere"}))}
+    seen = {v.dataset: v for v in conformance(cited, root, frozenset({"ds-elsewhere"}))}
     assert len(seen) == 5
     assert seen["ds-good"].verdict == REDERIVED
     assert seen["ds-elsewhere"].verdict == ABSENT_HERE
@@ -193,19 +215,19 @@ def test_the_pass_separates_rederived_from_absent_from_finding(tmp_path):
     assert "sha256" in seen["ds-drifted"].detail
     assert seen["ds-partial"].verdict == FINDING
     assert seen["ds-partial"].detail == "ETH/EUR/1440.parquet: the named file is missing"
-    assert seen["ds-partial"].trial_id == 5
+    assert seen["ds-partial"].label == "trial 5"
 
-    with_committed_list = {v.dataset: v for v in conformance(records, root, _ABSENT_OK)}
+    with_committed_list = {v.dataset: v for v in conformance(cited, root, _ABSENT_OK)}
     assert with_committed_list["ds-elsewhere"].verdict == FINDING
 
 
-def _citing_a_line(tmp_path: Path, name: str, relpath: str) -> tuple[Path, list]:
+def _citing_a_line(tmp_path: Path, name: str, relpath: str) -> tuple[Path, list[tuple[str, dict]]]:
     root, registry_path = tmp_path / name / "data", tmp_path / name / "registry.jsonl"
     write_chain(root / ROLLING_SET)
     digest = hashlib.sha256((root / ROLLING_SET / relpath).read_bytes()).hexdigest()
     span = ["2026-09-30 00:00:00+00:00", "2026-10-03 00:00:00+00:00"]
     _append(registry_path, {ROLLING_SET: {"files": {relpath: digest}, "rows": 4, "span": span}}, 1)
-    return root, TrialRegistry(registry_path).records
+    return root, _cited(registry_path)
 
 
 def _replace_a_byte(path: Path, at: int) -> None:
@@ -215,22 +237,53 @@ def _replace_a_byte(path: Path, at: int) -> None:
 
 
 def test_a_record_citing_a_line_walks_the_chain_and_a_broken_link_is_a_finding(tmp_path):
-    root, records = _citing_a_line(tmp_path, "line-changed", "index/2026/10/03.json")
-    assert [v.verdict for v in conformance(records, root, _ABSENT_OK)] == [REDERIVED]
+    root, cited = _citing_a_line(tmp_path, "line-changed", "index/2026/10/03.json")
+    assert [v.verdict for v in conformance(cited, root, _ABSENT_OK)] == [REDERIVED]
     earlier_line = root / ROLLING_SET / "index/2026/10/01.json"
     _replace_a_byte(earlier_line, earlier_line.read_bytes().index(b'"prev":"') + len(b'"prev":"'))
 
-    [verdict] = conformance(records, root, _ABSENT_OK)
+    [verdict] = conformance(cited, root, _ABSENT_OK)
 
     assert verdict.verdict == FINDING
     assert "index/2026/10/02.json: its prev is not the sha256 of index/2026/10/01.json" in verdict.detail
 
-    root, records = _citing_a_line(tmp_path, "file-changed", "index/2026/10/03.json")
-    assert [v.verdict for v in conformance(records, root, _ABSENT_OK)] == [REDERIVED]
+    root, cited = _citing_a_line(tmp_path, "file-changed", "index/2026/10/03.json")
+    assert [v.verdict for v in conformance(cited, root, _ABSENT_OK)] == [REDERIVED]
     earlier_file = root / ROLLING_SET / "days/BTC/EUR/2026/10/01.parquet"
     _replace_a_byte(earlier_file, earlier_file.stat().st_size // 2)
 
-    [verdict] = conformance(records, root, _ABSENT_OK)
+    [verdict] = conformance(cited, root, _ABSENT_OK)
 
     assert verdict.verdict == FINDING
     assert "days/BTC/EUR/2026/10/01.parquet does not hash to its listing" in verdict.detail
+
+
+def test_the_hub_root_is_hot_under_the_configured_nfs_mount():
+    assert _hub_root() == Path(load_config().nfs_mount_dir) / "hot"
+
+
+def test_a_cited_file_whose_hub_copy_holds_other_bytes_is_rederived_on_the_node_and_a_finding_on_the_hub(tmp_path):
+    node, hub, registry_path = tmp_path / "node", tmp_path / "hub", tmp_path / "registry.jsonl"
+    _write(node, "ds-frozen", "BTC/EUR/1440.parquet", 10)
+    _append(registry_path, _observed(node, "ds-frozen", ("BTC/EUR/1440.parquet",)), 1)
+    _write(hub, "ds-frozen", "BTC/EUR/1440.parquet", 11)
+    cited = _cited(registry_path)
+
+    assert [(v.label, v.verdict) for v in conformance(cited, node, _ABSENT_OK)] == [("trial 1", REDERIVED)]
+    [verdict] = conformance(cited, hub, frozenset())
+    assert (verdict.label, verdict.dataset, verdict.verdict) == ("trial 1", "ds-frozen", FINDING)
+    assert verdict.detail.startswith("BTC/EUR/1440.parquet: sha256 ")
+
+
+def test_a_cited_line_whose_day_files_left_the_hub_is_a_finding_naming_the_absent_day_file(tmp_path):
+    hub, cited = _citing_a_line(tmp_path, "hub", "index/2026/10/03.json")
+    assert [v.verdict for v in conformance(cited, hub, frozenset())] == [REDERIVED]
+
+    (hub / ROLLING_SET / "days").rename(tmp_path / "aside")
+
+    [verdict] = conformance(cited, hub, frozenset())
+    assert (verdict.label, verdict.dataset, verdict.verdict) == ("trial 1", ROLLING_SET, FINDING)
+    assert verdict.detail == (
+        "index/2026/10/03.json: index/2026/10/01.json: "
+        f"days/BTC/EUR/2026/10/01.parquet is listed and absent from {hub / ROLLING_SET}"
+    )
