@@ -45,8 +45,10 @@ from cli.portfolio.crossfreq_system import (
     _ffill_btc,
     build_crossfreq_system_fast,
 )
+from cli.portfolio.errors import PortfolioError
 from cli.portfolio.record44_legs import benchmark_4h_net_of_cost, calendar_year_slices, load_union
 from cli.registry.observed import ObservedReader
+from cli.risk.errors import RiskError
 from cli.validation import ValidationError, max_drawdown, sharpe
 
 PPY_DAILY = 365
@@ -54,8 +56,13 @@ PPY_4H = 2190
 
 
 class SubjectError(Exception):
-    """A subject's refusal of an input it cannot evaluate, its message naming the file or the window: the command exits 1
-    on it, never a traceback."""
+    """A subject's refusal of an input it cannot evaluate, its message naming the series or the window: the command exits
+    1 on it, never a traceback."""
+
+
+# The class of every error a subject's build can raise from a compute package; one more is added here and to
+# `_COMPUTE_ERRORS` in tests/test_research_command.py.
+EVALUATION_ERRORS = (AlphaError, BacktestError, BenchmarkError, FeatureError, PortfolioError, RiskError, ValidationError)
 
 
 @dataclass(frozen=True)
@@ -100,6 +107,33 @@ def _capturing_union(
     return load_union(interval, root=Path(), read=read)
 
 
+def _series(dataset: str, asset: str, interval: int, as_of: str | None) -> str:
+    """Read as of a day, a series is the rolling dataset's pair and grid, which no file holds alone."""
+    if as_of is None:
+        return f"{dataset}/{asset}/EUR/{interval}.parquet"
+    return f"{dataset} {asset}/EUR at {interval} minutes as of {as_of}"
+
+
+def _refuse_unfed_grids(
+    dataset: str,
+    as_of: str | None,
+    daily_ts: list[datetime],
+    daily_prices: dict[str, list[float | None]],
+    h4_prices: dict[str, list[float | None]],
+) -> None:
+    """Refused here because `build_crossfreq_system_fast` admits both shapes and then fails on them with a plain
+    `ValueError` or `AttributeError`, which the command does not catch."""
+    for interval, prices in ((1440, daily_prices), (240, h4_prices)):
+        for asset, closes in prices.items():
+            if all(close is None for close in closes):
+                raise SubjectError(f"{_series(dataset, asset, interval, as_of)}: no close in the window read")
+    if daily_prices["BTC"][0] is None:
+        raise SubjectError(
+            f"{_series(dataset, 'BTC', 1440, as_of)}: no close at {daily_ts[0]}, the first daily stamp of the window read, "
+            "and the BTC forward fill cannot bridge a leading gap"
+        )
+
+
 def _build_crossfreq(
     reader: ObservedReader,
     dataset: str,
@@ -110,6 +144,7 @@ def _build_crossfreq(
     config = CrossfreqSystemConfig()
     daily_ts, daily_prices = _capturing_union(reader, dataset, 1440, window, as_of, accept_holes)
     h4_ts, h4_prices = _capturing_union(reader, dataset, 240, window, as_of, accept_holes)
+    _refuse_unfed_grids(dataset, as_of, daily_ts, daily_prices, h4_prices)
     result = build_crossfreq_system_fast(daily_prices, daily_ts, h4_prices, h4_ts, config=config)
     return {
         "ann_sharpe_noc": sharpe(result.governed_net, periods_per_year=PPY_4H),

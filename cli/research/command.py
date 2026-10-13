@@ -5,6 +5,7 @@ carries, so what was fitted and what was recorded cannot drift apart."""
 from __future__ import annotations
 
 import json
+import traceback
 from pathlib import Path
 from typing import Optional
 
@@ -14,7 +15,7 @@ from cli.data import rolling
 from cli.registry import TrialRegistry
 from cli.registry.errors import RegistryError
 from cli.registry.observed import ObservedReader
-from cli.research.subjects import SUBJECTS, SubjectError, required_relpaths
+from cli.research.subjects import EVALUATION_ERRORS, SUBJECTS, SubjectError, required_relpaths
 
 # Repo-anchored, never cwd-relative: a dataset name must mean one directory from any working directory, and a cwd-relative
 # `_REGISTRY` default would silently mint a fresh, chainless registry on a WRITE instead of appending to the real one.
@@ -47,6 +48,12 @@ def _abort(message: str) -> typer.Exit:
     visible whatever the log configuration is."""
     typer.echo(message, err=True)
     return typer.Exit(code=1)
+
+
+def _raise_site(exc: BaseException) -> str:
+    frame = traceback.extract_tb(exc.__traceback__)[-1]
+    path = Path(frame.filename)
+    return f"{path.relative_to(_REPO_ROOT) if path.is_relative_to(_REPO_ROOT) else path}:{frame.lineno}"
 
 
 @research_app.command("eval")
@@ -130,6 +137,12 @@ def eval_subject(
     except (RegistryError, OSError, SubjectError) as exc:
         remedy = " (--accept-holes leaves the day out)" if isinstance(exc.__cause__, rolling.HoleError) else ""
         raise _abort(f"{exc}{remedy}") from exc
+    except EVALUATION_ERRORS as exc:
+        # These classes are also raised on a bad config or argument: the class and the raise site tell a fault in the code
+        # from a refusal of the window or the data.
+        span = "the full history" if bounds is None else f"the window {bounds[0]} .. {bounds[1]}"
+        read = dataset if as_of is None else f"{dataset} as of {as_of}"
+        raise _abort(f"{subject} over {span} of {read}: {exc} ({type(exc).__name__} raised at {_raise_site(exc)})") from exc
 
     typer.echo(f"subject: {subject}")
     typer.echo(f"dataset: {dataset}")
