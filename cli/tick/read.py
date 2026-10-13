@@ -76,34 +76,25 @@ def read_trades_csv(source: str | Path | tuple[str | Path, str]) -> pl.DataFrame
     schema = _detect_schema(data, has_header)
     skip_rows = 1 if has_header else 0
 
+    names = _COMPLETE_COLUMNS if schema == "complete" else _QUARTERLY_COLUMNS
     try:
+        # Renamed after the read: polars 2 refuses a `new_columns` whose length differs from the file's column count.
+        raw = pl.read_csv(
+            data,
+            has_header=False,
+            skip_rows=skip_rows,
+            columns=list(range(len(names))),
+            truncate_ragged_lines=True,
+            infer_schema=False,
+        )
+        raw = raw.rename(dict(zip(raw.columns, names, strict=True)))
         if schema == "complete":
-            raw = pl.read_csv(
-                data,
-                has_header=False,
-                skip_rows=skip_rows,
-                columns=[0, 1, 2],
-                new_columns=_COMPLETE_COLUMNS,
-                truncate_ragged_lines=True,
-                infer_schema=False,
-            ).with_columns(pl.lit(None, dtype=pl.Utf8).alias("side"))
-        else:
-            raw = pl.read_csv(
-                data,
-                has_header=False,
-                skip_rows=skip_rows,
-                columns=[0, 1, 2, 3],
-                new_columns=_QUARTERLY_COLUMNS,
-                truncate_ragged_lines=True,
-                infer_schema=False,
-            )
+            raw = raw.with_columns(pl.lit(None, dtype=pl.Utf8).alias("side"))
     except pl.exceptions.PolarsError as exc:
         raise TickError(f"unreadable trades CSV {label}: {exc}") from exc
 
-    # A null in a required field means a row was too short; `side` is required only in the quarterly layout, where a
-    # missing side is malformed, not the complete layout's legitimate absence.
-    null_cols = _COMPLETE_COLUMNS if schema == "complete" else _QUARTERLY_COLUMNS
-    if raw.select(pl.any_horizontal(pl.col(null_cols).is_null())).to_series().any():
+    # Polars reads a short row's absent fields, and an empty field, as null.
+    if raw.select(pl.any_horizontal(pl.col(names).is_null())).to_series().any():
         raise TickError(f"malformed row (missing a required field) in {label}")
 
     try:
