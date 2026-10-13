@@ -3020,7 +3020,7 @@ def test_the_hc_backup_source_the_env_renders_reaches_the_pull_through_compose(t
     assert [call[-2] for call in calls] == [value], run.stderr
 
 
-# --- The NAS pull's ssh transports connect over IPv4 only: the NAS has no IPv6 route.
+# --- The NAS pull's ssh transports connect over IPv4 only.
 HOT_BLOCK = re.compile(r"^\tif [^\n]*\bHOT_SOURCE\b[^\n]*; then\n.*?^\tfi\n", re.M | re.S)
 HOT_SOURCE = "zcrypto-data@zcrypto-ops.invalid:"
 _IPV4_ONLY = re.compile(r"(?<!\S)-o AddressFamily=inet(?!\S)")
