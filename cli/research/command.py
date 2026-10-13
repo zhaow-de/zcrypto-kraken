@@ -5,6 +5,7 @@ carries, so what was fitted and what was recorded cannot drift apart."""
 from __future__ import annotations
 
 import json
+import subprocess
 import traceback
 from pathlib import Path
 from typing import Optional
@@ -48,6 +49,21 @@ def _abort(message: str) -> typer.Exit:
     visible whatever the log configuration is."""
     typer.echo(message, err=True)
     return typer.Exit(code=1)
+
+
+def _tree_state(root: Path) -> tuple[str, str]:
+    def git(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True)
+
+    head = git("rev-parse", "HEAD")
+    if head.returncode != 0:
+        raise _abort(f"{root} is not a git checkout, and a record names its code by commit")
+    # --untracked-files=all overrides a status.showUntrackedFiles that would hide an untracked file; a damaged index
+    # exits 128 printing nothing, so a non-zero exit is refused and never read as a clean tree.
+    status = git("status", "--porcelain", "--untracked-files=all")
+    if status.returncode != 0:
+        raise _abort(f"{root}: git status failed, so the tree cannot be read clean: {status.stderr.strip()}")
+    return head.stdout.strip(), status.stdout
 
 
 def _raise_site(exc: BaseException) -> str:
@@ -168,6 +184,15 @@ def eval_subject(
             notes=notes,
             variant=variant,
             datasets=block,
+            invocation={
+                "subject": subject,
+                "dataset": dataset,
+                "window": None if bounds is None else list(bounds),
+                "as_of": as_of,
+                "accept_holes": accept_holes,
+                "comparator_trial": None,
+                "commit": _tree_state(_REPO_ROOT)[0],
+            },
         )
     except RegistryError as exc:
         raise _abort(f"the registry refused this record: {exc}") from exc

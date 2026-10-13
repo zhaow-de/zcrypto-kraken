@@ -51,6 +51,7 @@ runner = CliRunner()
 _DAY = 86400
 _EPOCH_2020 = 1577836800  # 2020-01-01T00:00:00Z
 _COMMITTED_REGISTRY = Path(__file__).resolve().parents[1] / "docs" / "reference" / "trial-registry.jsonl"
+_CLEAN_HEAD = "a" * 40
 
 
 def _rows(n: int, *, phase: float = 0.0, start: int = _EPOCH_2020, step: int = _DAY):
@@ -108,6 +109,12 @@ def _registry_default_off_the_committed_ledger(tmp_path, monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def _clean_tree(monkeypatch):
+    """The register path reads the code root's HEAD and status: no verdict here may depend on the checkout it runs in."""
+    monkeypatch.setattr(research_command, "_tree_state", lambda root: (_CLEAN_HEAD, ""))
+
+
 def _register_args(registry: Path, *, n_trials: int, family: str = "STUB") -> list[str]:
     return [
         "--register",
@@ -140,7 +147,7 @@ def test_eval_reports_the_block_and_writes_no_record_without_register(tmp_path, 
     assert not registry.exists(), "a read-only eval must not touch the registry"
 
 
-def test_register_appends_one_schema_4_record_whose_hash_derives_from_the_observed_block(tmp_path, monkeypatch):
+def test_register_appends_one_schema_5_record_whose_hash_derives_from_the_observed_block(tmp_path, monkeypatch):
     root = _stub_dataset(tmp_path)
     registry = tmp_path / "registry.jsonl"
     _stub_subject(monkeypatch)
@@ -155,7 +162,7 @@ def test_register_appends_one_schema_4_record_whose_hash_derives_from_the_observ
     lines = registry.read_text().splitlines()
     assert len(lines) == 1
     record = json.loads(lines[0])
-    assert record["schema_version"] == 4
+    assert record["schema_version"] == 5
     assert record["dataset_hash"] == compute_hash(record["datasets"])
     assert list(record["datasets"]["ohlc-test"]["files"]) == ["BTC/EUR/1440.parquet"]
     assert record["run_ref"].startswith("cli/research/command.py")
@@ -362,6 +369,31 @@ def test_eval_on_the_rolling_set_records_the_as_of_line(tmp_path, monkeypatch):
     report, _ = json.JSONDecoder().raw_decode(result.output, result.output.index("{"))
     assert report["vouched"] == {"ohlc-rolling": f"chained (as of 2026-10-02, line {digest[:12]})"}
     assert "inert" not in result.output
+
+
+def test_a_register_run_records_the_invocation_that_produced_it(tmp_path, monkeypatch):
+    root = _rolling_set(tmp_path)
+    registry = tmp_path / "registry.jsonl"
+    _anchor(monkeypatch, root, registry)
+    _rolling_subject(monkeypatch)
+    window = ["2026-10-01 00:00:00+00:00", "2026-10-02 00:00:00+00:00"]
+
+    result = runner.invoke(
+        app, _rolling_eval("--as-of", "2026-10-03", "--accept-holes", "--window", *window, *_register_args(registry, n_trials=1))
+    )
+
+    assert result.exit_code == 0, result.output
+    record = json.loads(registry.read_text())
+    assert record["schema_version"] == 5
+    assert record["invocation"] == {
+        "subject": "rolling-stub",
+        "dataset": "ohlc-rolling",
+        "window": window,
+        "as_of": "2026-10-03",
+        "accept_holes": True,
+        "comparator_trial": None,
+        "commit": _CLEAN_HEAD,
+    }
 
 
 def test_eval_refuses_a_hole_and_reads_across_it_with_accept_holes(tmp_path, monkeypatch):

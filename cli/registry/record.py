@@ -9,8 +9,8 @@ from pathlib import Path
 
 from cli.registry.errors import RegistryCorruptionError, RegistryError
 
-SCHEMA_VERSION = 4
-_LOADABLE_SCHEMA_VERSIONS = frozenset({2, 3, 4})
+SCHEMA_VERSION = 5
+_LOADABLE_SCHEMA_VERSIONS = frozenset({2, 3, 4, 5})
 GENESIS_HASH = "0" * 64
 VERDICTS = frozenset({"adopt", "reject", "park"})
 
@@ -23,8 +23,12 @@ _EXPECTED_STORED_KEYS = {
     3: _BASE_STORED_KEYS | {"variant"},
     4: _BASE_STORED_KEYS | {"variant", "datasets"},
 }
+_EXPECTED_STORED_KEYS[5] = _EXPECTED_STORED_KEYS[4] | {"invocation"}
 
 _SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+_INVOCATION_KEYS = frozenset({"subject", "dataset", "window", "as_of", "accept_holes", "comparator_trial", "commit"})
+_COMMIT = re.compile(r"[0-9a-f]{40}")
+_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 def canonical_json(obj: dict) -> str:
@@ -182,6 +186,36 @@ def _validate_datasets_shape(datasets, where: str) -> None:
             raise RegistryCorruptionError(f"{where}: datasets[{name!r}] span must be a list of exactly 2 str")
 
 
+def validate_invocation(inv, datasets: dict, own_trial_id: int | None, where: str) -> None:
+    """own_trial_id None: a reading, whose comparator is a trial id from another sequence."""
+    if type(inv) is not dict:
+        raise RegistryCorruptionError(f"{where}: invocation must be a dict")
+    if set(inv) != _INVOCATION_KEYS:
+        raise RegistryCorruptionError(
+            f"{where}: invocation keys must be exactly {sorted(_INVOCATION_KEYS)} "
+            f"(missing {sorted(_INVOCATION_KEYS - set(inv))}, unknown {sorted(set(inv) - _INVOCATION_KEYS, key=str)})"
+        )
+    if type(inv["subject"]) is not str or not inv["subject"]:
+        raise RegistryCorruptionError(f"{where}: invocation subject must be a non-empty str")
+    if type(inv["dataset"]) is not str or inv["dataset"] not in datasets:
+        raise RegistryCorruptionError(f"{where}: invocation dataset must name a key of this record's datasets block")
+    window = inv["window"]
+    if window is not None and (type(window) is not list or len(window) != 2 or any(type(bound) is not str for bound in window)):
+        raise RegistryCorruptionError(f"{where}: invocation window must be null or a list of exactly 2 str")
+    as_of = inv["as_of"]
+    if as_of is not None and (type(as_of) is not str or not _DAY.fullmatch(as_of)):
+        raise RegistryCorruptionError(f"{where}: invocation as_of must be null or a YYYY-MM-DD day")
+    if type(inv["accept_holes"]) is not bool:
+        raise RegistryCorruptionError(f"{where}: invocation accept_holes must be a bool")
+    comparator = inv["comparator_trial"]
+    if comparator is not None and (
+        type(comparator) is not int or comparator < 1 or (own_trial_id is not None and comparator >= own_trial_id)
+    ):
+        raise RegistryCorruptionError(f"{where}: invocation comparator_trial must be null or an int >= 1 below this trial's own id")
+    if type(inv["commit"]) is not str or not _COMMIT.fullmatch(inv["commit"]):
+        raise RegistryCorruptionError(f"{where}: invocation commit must be 40 lowercase hex")
+
+
 def validate_stored_record(rec: dict, where: str) -> None:
     version = rec.get("schema_version")
     if version not in _LOADABLE_SCHEMA_VERSIONS:
@@ -210,10 +244,14 @@ def validate_stored_record(rec: dict, where: str) -> None:
         raise RegistryCorruptionError(f"{where}: dataset_hash must be a non-empty str")
     if version >= 4:
         if "datasets" not in rec:
-            raise RegistryCorruptionError(f"{where}: schema_version 4 record must carry a datasets block")
+            raise RegistryCorruptionError(f"{where}: schema_version {version} record must carry a datasets block")
         _validate_datasets_shape(rec["datasets"], where)
         if rec["dataset_hash"] != compute_hash(rec["datasets"]):
             raise RegistryCorruptionError(f"{where}: dataset_hash is not the digest of this record's datasets block")
+    if version >= 5:
+        if "invocation" not in rec:
+            raise RegistryCorruptionError(f"{where}: schema_version {version} record must carry an invocation")
+        validate_invocation(rec["invocation"], rec["datasets"], rec["trial_id"], where)
     caller = {k: v for k, v in rec.items() if k not in _STORE_OWNED}
     validate_caller_fields(caller, check_run_ref_provenance=False)
 
@@ -233,6 +271,7 @@ class TrialRecord:
     spec_hash: str
     dataset_hash: str
     datasets: dict | None = None
+    invocation: dict | None = None
     seeds: tuple[int, ...]
     metrics: dict
     n_trials_in_family: int

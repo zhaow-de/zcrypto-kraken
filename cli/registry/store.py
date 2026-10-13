@@ -23,6 +23,8 @@ logger = get_logger("registry.store")
 
 # The highest trial_id predating the datasets block; the file is append-only, so an exemption by ID can never grow.
 _LEGACY_UNPROVENANCED_MAX_TRIAL_ID = 46
+# The highest trial_id predating the invocation (docs/specs/00129 D1), fixed for the same reason.
+_INVOCATION_FLOOR_TRIAL_ID = 47
 
 
 def _to_record(rec: dict) -> TrialRecord:
@@ -36,6 +38,7 @@ def _to_record(rec: dict) -> TrialRecord:
         spec_hash=rec["spec_hash"],
         dataset_hash=rec["dataset_hash"],
         datasets=rec.get("datasets"),
+        invocation=rec.get("invocation"),
         seeds=tuple(rec["seeds"]),
         metrics=rec["metrics"],
         n_trials_in_family=rec["n_trials_in_family"],
@@ -57,6 +60,12 @@ def _assert_cross_record(recs: list[dict], path: Path) -> None:
                 f"{path}: trial {rec['trial_id']} declares schema_version {rec['schema_version']}; every "
                 f"record past trial {_LEGACY_UNPROVENANCED_MAX_TRIAL_ID} must be schema_version 4+ and carry "
                 f"a derived datasets block"
+            )
+        if rec["trial_id"] > _INVOCATION_FLOOR_TRIAL_ID and rec["schema_version"] < 5:
+            raise RegistryCorruptionError(
+                f"{path}: trial {rec['trial_id']} declares schema_version {rec['schema_version']}; every "
+                f"record past trial {_INVOCATION_FLOOR_TRIAL_ID} must be schema_version 5+ and carry "
+                f"the invocation that produced it"
             )
         expected_prev = GENESIS_HASH if idx == 0 else recs[idx - 1]["record_hash"]
         if rec["prev_hash"] != expected_prev:
@@ -129,6 +138,7 @@ class TrialRegistry:
         family: str,
         spec_hash: str,
         datasets: dict,  # the observed block (see ObservedReader.block); dataset_hash is derived from it
+        invocation: dict,  # required: the command's arguments and the code's commit (see validate_invocation)
         seeds: list[int],
         metrics: dict,
         n_trials_in_family: int,
@@ -167,6 +177,7 @@ class TrialRegistry:
                 "timestamp": _now_utc_iso(),
                 "prev_hash": prev_hash,
                 "datasets": datasets,
+                "invocation": invocation,
             }
             rec["dataset_hash"] = compute_hash(rec["datasets"])
             rec["record_hash"] = compute_hash(rec)

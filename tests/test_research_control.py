@@ -90,12 +90,21 @@ def test_the_whole_identity_path_round_trips_on_synthetic_data(tmp_path):
         n_trials_in_family=1,
         verdict="park",
         run_ref="cli/registry/observed.py",
+        invocation={
+            "subject": "control",
+            "dataset": "ohlc-synthetic",
+            "window": None,
+            "as_of": None,
+            "accept_holes": False,
+            "comparator_trial": None,
+            "commit": "0" * 40,
+        },
     )
 
     reloaded = TrialRegistry(registry_path).records
     assert len(reloaded) == 1
     record = reloaded[0]
-    assert record.schema_version == 4
+    assert record.schema_version == 5
     assert record.datasets == block
     assert record.dataset_hash == compute_hash(record.datasets) == appended.dataset_hash
     # The stored digests are the files' own bytes, so the round trip is not self-referential.

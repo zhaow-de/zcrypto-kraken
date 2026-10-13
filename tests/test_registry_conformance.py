@@ -146,6 +146,15 @@ def _append(registry_path: Path, datasets: dict, n: int) -> None:
         n_trials_in_family=n,
         verdict="park",
         run_ref="cli/registry/observed.py",
+        invocation={
+            "subject": "conformance",
+            "dataset": next(iter(datasets)),
+            "window": None,
+            "as_of": None,
+            "accept_holes": False,
+            "comparator_trial": None,
+            "commit": "0" * 40,
+        },
     )
 
 
