@@ -504,6 +504,24 @@ def test_a_subject_without_an_incumbent_is_refused_a_comparator_trial(tmp_path, 
     assert registry.read_bytes() == before
 
 
+def test_a_run_refused_for_an_unclean_tree_leaves_a_torn_registry_tail_unhealed(tmp_path, monkeypatch):
+    registry = _committed_copy(tmp_path)
+    with open(registry, "ab") as torn:
+        torn.write(b'{"trial_id": 48, "fami')
+    before = registry.read_bytes()
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    calls = _stub_subject(monkeypatch, incumbent="record44-crossfreq")
+    monkeypatch.setattr(research_command, "_tree_state", lambda root: (_CLEAN_HEAD, "?? scratch.py\n"))
+
+    result = runner.invoke(app, [*_stub_eval(), "--comparator-trial", "44", *_register_args(registry, n_trials=1)])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "scratch.py" in result.output
+    assert registry.read_bytes() == before
+    assert calls == []
+
+
 def test_a_legacy_record_the_incumbent_reproduces_is_recorded_as_the_comparator(tmp_path, monkeypatch):
     registry = _committed_copy(tmp_path)
     _anchor(monkeypatch, _stub_dataset(tmp_path), registry)

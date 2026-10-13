@@ -169,8 +169,6 @@ def eval_subject(
             )
         if known.incumbent is None and comparator_trial is not None:
             raise _abort(f"{subject} declares no incumbent, so it compares against no trial: drop --comparator-trial")
-        if comparator_trial is not None:
-            _refuse_an_unbacked_comparator(target, known, comparator_trial)
         supplied = {"iteration": iteration, "family": family, "n_trials": n_trials}
         missing = [flag for flag, key in _REGISTER_FIELDS if supplied[key] is None]
         if missing:
@@ -181,6 +179,9 @@ def eval_subject(
                 f"{_REPO_ROOT} has uncommitted changes, and a record names its code by commit: commit or remove "
                 f"{_status_paths(before[1])}, then register again"
             )
+        # After the clean-tree refusal, which must read the tree the operator left: the registry's reader heals a torn last line.
+        if comparator_trial is not None:
+            _refuse_an_unbacked_comparator(target, known, comparator_trial)
         computed_spec_hash = hashlib.sha256((_REPO_ROOT / known.spec).read_bytes()).hexdigest()
         if spec_hash is not None and spec_hash != computed_spec_hash:
             raise _abort(
