@@ -387,3 +387,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #690 | 2026-10-12 | feat(infra): 00127 — the bridgehead mirrors Caddy's apt repository | — | 00127 | — |
 | #695 | 2026-10-12 | feat(data): universe refreshed from the rolling set, August sets retired | — | — | T0220 |
 | #702 | 2026-10-13 | feat(alpha): iter-175 — B2 opening, the funding-extreme de-risk overlay | iter-175 | 00128 | T0016, T0023 |
+| #703 | 2026-10-13 | docs(research): T0016 reads A spent and T0009, T0014 resolved | — | — | T0016 |
