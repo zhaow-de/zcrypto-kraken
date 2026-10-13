@@ -1,5 +1,5 @@
-"""The conformance passes: every schema-4 record's cited bytes, re-hashed against `data/` (spec 00086 D7) and against the
-hub's `hot/` (spec 00129 D6)."""
+"""The conformance passes: every schema-4 record's and every reading's cited bytes, re-hashed against `data/` (spec 00086
+D7) and against the hub's `hot/` (spec 00129 D6)."""
 
 from __future__ import annotations
 
@@ -13,10 +13,11 @@ import pytest
 from cli.config import load_config, resolve_hot_source
 from cli.data.rolling import ROLLING_SET, RollingError, verify
 from cli.ohlc.dataset import to_frame, write_parquet
-from cli.registry import TrialRegistry
+from cli.registry import ReadingLedger, TrialRegistry
 from cli.registry.observed import ObservedReader
 from tests.rolling_fixtures import write_chain
 from tests.skip_gates import mount_absent, nothing_found
+from tests.test_trial_registry_provenance import LEDGER
 
 pytestmark = pytest.mark.data
 
@@ -97,11 +98,13 @@ def conformance(cited: list[tuple[str, dict]], data_root: Path, absent_ok: froze
     return out
 
 
-def _cited(registry: Path = _REGISTRY) -> list[tuple[str, dict]]:
+def _cited(registry: Path = _REGISTRY, ledger: Path = LEDGER) -> list[tuple[str, dict]]:
     cited = []
     for record in TrialRegistry(registry).records:
         if record.schema_version >= 4:
             cited.append((f"trial {record.trial_id}", record.datasets))
+    for reading in ReadingLedger(ledger).records:
+        cited.append((f"reading {reading.reading_id}", reading.datasets))
     return cited
 
 
@@ -116,7 +119,7 @@ def test_every_schema_4_records_citations_still_rehash_against_this_hosts_data()
         pytest.skip("data/ohlc-full absent — the canonical-host marker; the disk pass runs only where the data root is")
     cited = _cited()
     if nothing_found(cited):
-        pytest.skip("no schema-4 records yet — nothing in the registry cites observed bytes")
+        pytest.skip("no schema-4 record or reading yet — nothing in the registry or the ledger cites observed bytes")
 
     verdicts = conformance(cited, _DATA_ROOT, _ABSENT_OK)
     findings = [v for v in verdicts if v.verdict == FINDING]
@@ -202,7 +205,7 @@ def test_the_pass_separates_rederived_from_absent_from_finding(tmp_path):
     _append(registry_path, _observed(root, "ds-partial", ("BTC/EUR/1440.parquet", "ETH/EUR/1440.parquet")), 5)
     (root / "ds-partial" / "ETH/EUR/1440.parquet").unlink()
 
-    cited = _cited(registry_path)
+    cited = _cited(registry_path, tmp_path / "ledger.jsonl")
     assert [label for label, _ in cited] == ["trial 1", "trial 2", "trial 3", "trial 4", "trial 5"]
 
     seen = {v.dataset: v for v in conformance(cited, root, frozenset({"ds-elsewhere"}))}
@@ -221,13 +224,44 @@ def test_the_pass_separates_rederived_from_absent_from_finding(tmp_path):
     assert with_committed_list["ds-elsewhere"].verdict == FINDING
 
 
+def test_the_pass_cites_every_reading_beside_the_records(tmp_path):
+    root, registry_path, ledger_path = tmp_path / "data", tmp_path / "registry.jsonl", tmp_path / "ledger.jsonl"
+    _write(root, "ds-read", "BTC/EUR/1440.parquet", 10)
+    datasets = _observed(root, "ds-read", ("BTC/EUR/1440.parquet",))
+    _append(registry_path, _fabricated("ds-registered"), 1)
+    ReadingLedger(ledger_path).append(
+        iteration="iter-000",
+        spec_hash="0" * 64,
+        invocation={
+            "subject": "conformance",
+            "dataset": "ds-read",
+            "window": None,
+            "as_of": None,
+            "accept_holes": False,
+            "comparator_trial": None,
+            "commit": "0" * 40,
+        },
+        datasets=datasets,
+        metrics={"sharpe": 1.0},
+        outcome=None,
+    )
+
+    cited = _cited(registry_path, ledger_path)
+
+    assert cited == [("trial 1", _fabricated("ds-registered")), ("reading 1", datasets)]
+    assert [(v.label, v.verdict) for v in conformance(cited, root, frozenset({"ds-registered"}))] == [
+        ("trial 1", ABSENT_HERE),
+        ("reading 1", REDERIVED),
+    ]
+
+
 def _citing_a_line(tmp_path: Path, name: str, relpath: str) -> tuple[Path, list[tuple[str, dict]]]:
     root, registry_path = tmp_path / name / "data", tmp_path / name / "registry.jsonl"
     write_chain(root / ROLLING_SET)
     digest = hashlib.sha256((root / ROLLING_SET / relpath).read_bytes()).hexdigest()
     span = ["2026-09-30 00:00:00+00:00", "2026-10-03 00:00:00+00:00"]
     _append(registry_path, {ROLLING_SET: {"files": {relpath: digest}, "rows": 4, "span": span}}, 1)
-    return root, _cited(registry_path)
+    return root, _cited(registry_path, tmp_path / name / "ledger.jsonl")
 
 
 def _replace_a_byte(path: Path, at: int) -> None:
@@ -267,7 +301,7 @@ def test_a_cited_file_whose_hub_copy_holds_other_bytes_is_rederived_on_the_node_
     _write(node, "ds-frozen", "BTC/EUR/1440.parquet", 10)
     _append(registry_path, _observed(node, "ds-frozen", ("BTC/EUR/1440.parquet",)), 1)
     _write(hub, "ds-frozen", "BTC/EUR/1440.parquet", 11)
-    cited = _cited(registry_path)
+    cited = _cited(registry_path, tmp_path / "ledger.jsonl")
 
     assert [(v.label, v.verdict) for v in conformance(cited, node, _ABSENT_OK)] == [("trial 1", REDERIVED)]
     [verdict] = conformance(cited, hub, frozenset())

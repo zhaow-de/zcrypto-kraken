@@ -49,7 +49,7 @@ def test_the_b2_inputs_reproduce_the_measured_basis_and_arm_a_is_the_builders_a2
     assert _DATA_ROOT == research_command._DATA_ROOT
     assets = CrossfreqSystemConfig().assets
     reader = ObservedReader(_DATA_ROOT)
-    inputs = subjects._b2_inputs(reader, "ohlc-rolling", _WINDOW, _AS_OF, True)
+    inputs = subjects._b2_inputs(reader, "ohlc-rolling", _WINDOW, _AS_OF, True, subject="b2-funding-derisk")
     assert compute_hash(reader.block()) == _BLOCK_HASH
 
     assert len(inputs.close) == _RETURN_INDICES

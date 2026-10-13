@@ -1,7 +1,8 @@
-"""`zcrypto research eval` — the committed door to the registry (spec 00086).
+"""`zcrypto research eval` — the committed door to the registry (spec 00086) and to the readings ledger (spec 00129).
 
-`cli.research.command._REGISTRY` defaults to the committed ledger, so a register run reaching that
-default appends a fabricated row to it; `_registry_default_off_the_committed_ledger` is the guard."""
+`cli.research.command._REGISTRY` defaults to the committed trial registry and `_LEDGER` to the committed readings ledger,
+so a run reaching either default appends a fabricated line to it; `_registry_default_off_the_committed_ledger` and
+`_ledger_default_off_the_committed_file` are the guards."""
 
 from __future__ import annotations
 
@@ -50,6 +51,7 @@ from cli.research import subjects
 from cli.risk.errors import RiskError
 from cli.validation import ValidationError, max_drawdown, sharpe
 from tests.rolling_fixtures import HOLE, write_chain
+from tests.test_trial_registry_provenance import LEDGER, _trials, live_entries
 
 runner = CliRunner()
 
@@ -134,12 +136,21 @@ def _registry_default_off_the_committed_ledger(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _ledger_default_off_the_committed_file(tmp_path, monkeypatch):
+    """`ReadingLedger(ledger or _LEDGER).append` writes wherever `_LEDGER` points, so no test in this module may start or
+    end with it on the committed readings ledger."""
+    monkeypatch.setattr("cli.research.command._LEDGER", tmp_path / "unanchored-ledger.jsonl")
+    yield
+    assert research_command._LEDGER != LEDGER, "this test left cli.research.command._LEDGER on the committed readings ledger"
+
+
+@pytest.fixture(autouse=True)
 def _clean_tree(monkeypatch):
     """The register path reads the code root's HEAD and status: no verdict here may depend on the checkout it runs in."""
     monkeypatch.setattr(research_command, "_tree_state", lambda root: (_CLEAN_HEAD, ""))
 
 
-def _register_args(registry: Path, *, n_trials: int, family: str = "STUB") -> list[str]:
+def _register_args(registry: Path, *, n_trials: int, family: str = "STUB", ledger: Path | None = None) -> list[str]:
     return [
         "--register",
         "--registry",
@@ -150,7 +161,16 @@ def _register_args(registry: Path, *, n_trials: int, family: str = "STUB") -> li
         family,
         "--n-trials",
         str(n_trials),
+        *([] if ledger is None else ["--ledger", str(ledger)]),
     ]
+
+
+def _reading_args(ledger: Path) -> list[str]:
+    return ["--reading", "--ledger", str(ledger), "--iteration", "iter-001"]
+
+
+def _kept(ledger: Path) -> list[dict]:
+    return [json.loads(line) for line in ledger.read_text().splitlines()]
 
 
 def test_eval_reports_the_block_and_writes_no_record_without_register(tmp_path, monkeypatch):
@@ -391,16 +411,31 @@ def test_a_typed_verdict_the_rule_does_not_give_is_refused(tmp_path, monkeypatch
     assert not registry.exists()
 
 
-def test_a_rule_that_stops_is_refused_naming_the_subjects_stop(tmp_path, monkeypatch):
-    registry = tmp_path / "registry.jsonl"
+def test_a_rule_that_stops_keeps_the_run_as_a_reading_and_spends_no_trial(tmp_path, monkeypatch):
+    registry, ledger = tmp_path / "registry.jsonl", tmp_path / "ledger.jsonl"
     _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
     _stub_subject(monkeypatch, verdict=lambda metrics: None, no_verdict="the stub's own stop")
 
-    result = runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1)])
+    result = runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1, ledger=ledger)])
+
+    assert result.exit_code == 0, result.output
+    assert "no verdict — the stub's own stop: recorded reading 1; no trial spent" in result.output
+    (reading,) = _kept(ledger)
+    assert (reading["reading_id"], reading["outcome"], reading["metrics"]) == (1, "the stub's own stop", {"sharpe": 1.0})
+    assert not registry.exists()
+
+
+def test_a_typed_verdict_on_a_run_the_rule_stops_on_is_refused_and_nothing_kept(tmp_path, monkeypatch):
+    registry, ledger = tmp_path / "registry.jsonl", tmp_path / "ledger.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    _stub_subject(monkeypatch, verdict=lambda metrics: None, no_verdict="the stub's own stop")
+
+    result = runner.invoke(app, [*_stub_eval(), "--verdict", "reject", *_register_args(registry, n_trials=1, ledger=ledger)])
 
     assert result.exit_code == 1
     assert isinstance(result.exception, SystemExit)
-    assert "no verdict: the stub's own stop" in result.output
+    assert "--verdict reject" in result.output and "no verdict" in result.output
+    assert not ledger.exists()
     assert not registry.exists()
 
 
@@ -578,6 +613,165 @@ def test_a_registered_trial_is_the_comparator_only_of_a_subject_naming_its_subje
         assert result.exit_code == 1
         assert isinstance(result.exception, SystemExit)
         assert after == before
+
+
+def test_a_reading_of_a_ruleless_subject_is_kept_in_the_ledger_with_no_outcome(tmp_path, monkeypatch):
+    registry, ledger = tmp_path / "registry.jsonl", tmp_path / "ledger.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    _stub_subject(monkeypatch, verdict=None, no_verdict=None)
+
+    result = runner.invoke(app, [*_stub_eval(), *_reading_args(ledger)])
+
+    assert result.exit_code == 0, result.output
+    assert "recorded reading 1" in result.output
+    (reading,) = _kept(ledger)
+    assert (reading["reading_id"], reading["iteration"], reading["outcome"]) == (1, "iter-001", None)
+    assert reading["metrics"] == {"sharpe": 1.0}
+    assert not registry.exists()
+
+
+def test_a_reading_records_the_sha256_of_the_subjects_spec_and_the_invocation_that_produced_it(tmp_path, monkeypatch):
+    ledger = tmp_path / "ledger.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path))
+    _stub_subject(monkeypatch, verdict=None, no_verdict=None)
+
+    result = runner.invoke(app, [*_stub_eval(), *_reading_args(ledger)])
+
+    assert result.exit_code == 0, result.output
+    (reading,) = _kept(ledger)
+    assert reading["spec_hash"] == _STUB_SPEC_SHA256
+    assert reading["invocation"] == {
+        "subject": "stub",
+        "dataset": "ohlc-test",
+        "window": None,
+        "as_of": None,
+        "accept_holes": False,
+        "comparator_trial": None,
+        "commit": _CLEAN_HEAD,
+    }
+    assert reading["dataset_hash"] == compute_hash(reading["datasets"])
+
+
+def test_a_reading_of_a_subject_with_a_rule_is_refused_before_the_fit(tmp_path, monkeypatch):
+    ledger = tmp_path / "ledger.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path))
+    calls = _stub_subject(monkeypatch)
+
+    result = runner.invoke(app, [*_stub_eval(), *_reading_args(ledger)])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "declares a verdict rule" in result.output
+    assert calls == []
+    assert not ledger.exists()
+
+
+def test_a_reading_beside_register_is_refused_before_the_fit(tmp_path, monkeypatch):
+    registry, ledger = tmp_path / "registry.jsonl", tmp_path / "ledger.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    calls = _stub_subject(monkeypatch)
+
+    result = runner.invoke(app, [*_stub_eval(), *_reading_args(ledger), *_register_args(registry, n_trials=1)])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "--register and --reading" in result.output
+    assert calls == []
+    assert not ledger.exists() and not registry.exists()
+
+
+def test_a_reading_refuses_a_typed_verdict_before_the_fit(tmp_path, monkeypatch):
+    ledger = tmp_path / "ledger.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path))
+    calls = _stub_subject(monkeypatch, verdict=None, no_verdict=None)
+
+    result = runner.invoke(app, [*_stub_eval(), "--verdict", "adopt", *_reading_args(ledger)])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "--verdict" in result.output
+    assert calls == []
+    assert not ledger.exists()
+
+
+def test_a_reading_from_an_unclean_tree_is_refused_before_the_fit_listing_the_paths(tmp_path, monkeypatch):
+    ledger = tmp_path / "ledger.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path))
+    calls = _stub_subject(monkeypatch, verdict=None, no_verdict=None)
+    monkeypatch.setattr(research_command, "_tree_state", lambda root: (_CLEAN_HEAD, " M cli/research/subjects.py\n"))
+
+    result = runner.invoke(app, [*_stub_eval(), *_reading_args(ledger)])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "cli/research/subjects.py" in result.output
+    assert calls == []
+    assert not ledger.exists()
+
+
+def test_a_reading_whose_head_moves_during_the_fit_is_refused_and_nothing_kept(tmp_path, monkeypatch):
+    ledger = tmp_path / "ledger.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path))
+    calls = _stub_subject(monkeypatch, verdict=None, no_verdict=None)
+    states = iter([(_CLEAN_HEAD, ""), ("b" * 40, "")])
+    monkeypatch.setattr(research_command, "_tree_state", lambda root: next(states))
+
+    result = runner.invoke(app, [*_stub_eval(), *_reading_args(ledger)])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "changed during the fit" in result.output
+    assert calls == ["ohlc-test"]
+    assert not ledger.exists()
+
+
+@pytest.mark.parametrize(
+    ("returned", "declared"),
+    [
+        pytest.param({"sharpe": 1.0, "sortino": 2.0}, {"sharpe"}, id="one-key-more"),
+        pytest.param({"sharpe": 1.0}, {"sharpe", "sortino"}, id="one-key-fewer"),
+    ],
+)
+def test_a_reading_refuses_a_build_whose_keys_are_not_the_declared_ones(tmp_path, monkeypatch, returned, declared):
+    ledger = tmp_path / "ledger.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path))
+    calls = _stub_subject(monkeypatch, metrics=returned, metric_keys=frozenset(declared), verdict=None, no_verdict=None)
+
+    result = runner.invoke(app, [*_stub_eval(), *_reading_args(ledger)])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "sortino" in result.output
+    assert calls == ["ohlc-test"]
+    assert not ledger.exists()
+
+
+@pytest.mark.parametrize(
+    ("declared", "flags", "kind"),
+    [
+        pytest.param({}, "register", "trial", id="a-trial"),
+        pytest.param({"verdict": None, "no_verdict": None}, "reading", "reading", id="a-reading"),
+        pytest.param({"verdict": lambda metrics: None}, "register", "reading", id="a-stops-reading"),
+    ],
+)
+def test_every_append_prints_the_replay_case_of_its_line(tmp_path, monkeypatch, declared, flags, kind):
+    registry, ledger = _committed_copy(tmp_path), tmp_path / "ledger.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    _stub_subject(monkeypatch, **declared)
+    args = _register_args(registry, n_trials=1, ledger=ledger) if flags == "register" else _reading_args(ledger)
+
+    result = runner.invoke(app, [*_stub_eval(), *args])
+
+    assert result.exit_code == 0, result.output
+    entries = live_entries(registry, ledger)
+    if kind == "trial":
+        appended = max(_trials(registry))
+        (label,) = [label for label, k, entry in entries if k == "trial" and entry["trial_id"] == appended]
+    else:
+        (label,) = [label for label, k, _ in entries if k == "reading"]
+        assert label == "reading-1"
+    assert f"uv run pytest tests/test_registry_replay.py -k '[{label}]'" in result.output
+    assert "data/ohlc-full" in result.output
 
 
 def test_a_dataset_missing_required_series_is_refused_naming_every_missing_file(tmp_path, monkeypatch):
@@ -1054,7 +1248,7 @@ def _kill_bar_sentinels(cell, *, inverted: bool, arm_a_passes) -> dict:
 )
 def test_the_b2_subject_registers_each_metric_from_its_own_call(tmp_path, monkeypatch, inverted, arm_a_passes):
     root = _b2_dataset(tmp_path)
-    registry = tmp_path / "registry.jsonl"
+    registry, ledger = tmp_path / "registry.jsonl", tmp_path / "ledger.jsonl"
     _anchor(monkeypatch, root, registry)
     ts = [_B2_START + timedelta(hours=4 * k) for k in range(_B2_WINDOW_BARS)]
     close = [t + timedelta(hours=4) for t in ts[:-1]]
@@ -1062,7 +1256,7 @@ def test_the_b2_subject_registers_each_metric_from_its_own_call(tmp_path, monkey
     assert k21 == 551
     window = (str(ts[0]), str(ts[-1]))
 
-    inputs = subjects._b2_inputs(ObservedReader(root), "ohlc-test", window, None, False)
+    inputs = subjects._b2_inputs(ObservedReader(root), "ohlc-test", window, None, False, subject="b2-funding-derisk")
     assert inputs.h4_ts == ts
     cost = CrossfreqSystemConfig().cost_per_side
     arm_a, scales = inputs.arm_a, inputs.scales
@@ -1103,20 +1297,23 @@ def test_the_b2_subject_registers_each_metric_from_its_own_call(tmp_path, monkey
     result = runner.invoke(
         app,
         ["research", "eval", "--subject", "b2-funding-derisk", "--dataset", "ohlc-test", "--window", *window]
-        + _register_args(registry, n_trials=1),
+        + _register_args(registry, n_trials=1, ledger=ledger),
     )
+    assert result.exit_code == 0, result.output
     if arm_a_passes:
-        assert result.exit_code == 0, result.output
         reported = json.loads(registry.read_text())
         assert reported["verdict"] == "reject"
         assert reported["seeds"] == [42, 7, 1234]
         assert reported["metrics"]["arm_a_passes"] == 7
+        assert not ledger.exists()
     else:
-        assert result.exit_code == 1
-        assert isinstance(result.exception, SystemExit)
-        assert f"no verdict: {subjects.SUBJECTS['b2-funding-derisk'].no_verdict}" in result.output
+        stop = subjects.SUBJECTS["b2-funding-derisk"].no_verdict
+        assert f"no verdict — {stop}: recorded reading 1; no trial spent" in result.output
         assert not registry.exists()
         reported = _block_and_metrics(result.output)
+        (reading,) = _kept(ledger)
+        assert reading["metrics"] == reported["metrics"]
+        assert reading["outcome"] == stop
 
     bar = {
         "n_trials": 1,
@@ -1364,13 +1561,47 @@ def test_the_b2_subject_refuses_an_asset_too_thin_in_the_window_naming_the_windo
 
 def test_the_b2_inputs_scale_each_spiking_asset_from_the_first_close_at_or_after_its_first_spike(tmp_path):
     ts = [_B2_START + timedelta(hours=4 * k) for k in range(_B2_WINDOW_BARS)]
-    inputs = subjects._b2_inputs(ObservedReader(_b2_dataset(tmp_path)), "ohlc-test", (str(ts[0]), str(ts[-1])), None, False)
+    inputs = subjects._b2_inputs(
+        ObservedReader(_b2_dataset(tmp_path)), "ohlc-test", (str(ts[0]), str(ts[-1])), None, False, subject="b2-funding-derisk"
+    )
 
     first = {a: next((k for k, s in enumerate(inputs.scales[a]) if s != 1.0), None) for a in _B2_ASSETS}
 
     # Asset i's first spike prints at bar 822 + 2i's open, which closes return index 821 + 2i.
     spikes = _B2_FALLS[1][0] - 1
     assert first == {a: None if a == _B2_NEVER_SPIKES else spikes + 2 * i for i, a in enumerate(_B2_ASSETS)}
+
+
+# Spec 00129 D7's ten keys of arm A's bar, pinned as literals for the reason `_COMBINED_METRIC_KEYS` is.
+_ARM_A_BAR_KEYS = {
+    "dsr",
+    "dsr_pass",
+    "spa_p_value",
+    "spa_p_value_full",
+    "spa_pass",
+    "cost_stress_sharpe",
+    "cost_stress_pass",
+    "worst_slice_sharpe",
+    "worst_slice_pass",
+    "passes",
+}
+_ARM_A_BAR_FLAGS = {"dsr_pass", "spa_pass", "cost_stress_pass", "worst_slice_pass", "passes"}
+
+
+def test_the_arm_a_bar_subject_returns_its_ten_keys_as_ints_and_floats_and_never_builds_arm_b(tmp_path, monkeypatch):
+    root = _b2_dataset(tmp_path)
+    ts = [_B2_START + timedelta(hours=4 * k) for k in range(_B2_WINDOW_BARS)]
+    scaled = _recording(monkeypatch, "scale_positions", lambda arguments, result: result)
+    subject = subjects.SUBJECTS["b2-arm-a-bar"]
+
+    metrics = subject.build(ObservedReader(root), "ohlc-test", (str(ts[0]), str(ts[-1])))
+
+    assert subject.metric_keys == _ARM_A_BAR_KEYS
+    assert set(metrics) == _ARM_A_BAR_KEYS
+    assert {key for key, value in metrics.items() if type(value) is int} == _ARM_A_BAR_FLAGS
+    assert {key for key, value in metrics.items() if type(value) is float} == _ARM_A_BAR_KEYS - _ARM_A_BAR_FLAGS
+    assert {metrics[flag] for flag in _ARM_A_BAR_FLAGS} <= {0, 1}
+    assert scaled == []
 
 
 def test_the_b2_subject_refuses_a_window_its_benchmark_never_trades_naming_it(tmp_path, monkeypatch):
@@ -1397,7 +1628,10 @@ def _declared_series(tmp_path: Path, subject: subjects.Subject) -> tuple[Path, d
 
 
 # A subject whose build reads a dataset it does not declare brings its own fixture here; any other is fed its declared series.
-_CONTRACT_DATASETS = {"b2-funding-derisk": lambda tmp_path, subject: (_b2_dataset(tmp_path), _B2_START)}
+_CONTRACT_DATASETS = {
+    "b2-funding-derisk": lambda tmp_path, subject: (_b2_dataset(tmp_path), _B2_START),
+    "b2-arm-a-bar": lambda tmp_path, subject: (_b2_dataset(tmp_path), _B2_START),
+}
 
 
 def _a_close_zeroed(path: Path) -> None:

@@ -14,12 +14,13 @@ from pathlib import Path
 
 import pytest
 
-from cli.registry import TrialRegistry
+from cli.registry import ReadingLedger, TrialRegistry
 from cli.registry.record import run_ref_path_candidates, validate_caller_fields
 from cli.research.subjects import LEGACY_INCUMBENTS, SUBJECTS, Subject
 
 REPO = Path(__file__).resolve().parents[1]
 REGISTRY = REPO / "docs" / "reference" / "trial-registry.jsonl"
+LEDGER = REPO / "docs" / "reference" / "reading-ledger.jsonl"
 
 # These trials name scratchpad scripts that were never committed and are gone. The registry is
 # append-only and hash-chained, so the records can never be repaired -- and the exemption may never
@@ -180,10 +181,16 @@ def _trials(registry: Path = REGISTRY) -> dict[int, dict]:
     return {record.trial_id: asdict(record) for record in TrialRegistry(registry).records}
 
 
-def live_entries(registry: Path = REGISTRY) -> list[tuple[str, str, dict]]:
+def _readings(ledger: Path = LEDGER) -> dict[int, dict]:
+    return {record.reading_id: asdict(record) for record in ReadingLedger(ledger).records}
+
+
+def live_entries(registry: Path = REGISTRY, ledger: Path = LEDGER) -> list[tuple[str, str, dict]]:
     """The one enumeration of what CI holds to its subject and of what the replay parametrises over: a new kind of entry
     joins here, never in a second list."""
-    return [(f"trial-{trial_id}", "trial", entry) for trial_id, entry in _trials(registry).items() if trial_id > 47]
+    trials = [(f"trial-{trial_id}", "trial", entry) for trial_id, entry in _trials(registry).items() if trial_id > 47]
+    readings = [(f"reading-{reading_id}", "reading", entry) for reading_id, entry in _readings(ledger).items()]
+    return trials + readings
 
 
 def _comparator_finding(invocation: dict, subject: Subject, legacy: dict, trials: dict[int, dict]) -> str | None:
@@ -203,6 +210,20 @@ def _comparator_finding(invocation: dict, subject: Subject, legacy: dict, trials
         f"comparator_trial {comparator} names neither a record whose invocation names {incumbent}, {subject.name}'s "
         "incumbent, nor a LEGACY_INCUMBENTS entry mapping to it"
     )
+
+
+def _outcome_finding(subject: Subject, metrics: dict, outcome: str | None) -> str | None:
+    """A reading's outcome against its subject's rule: none for a ruleless subject; for a ruled one, its stop, on metrics
+    the rule stops on."""
+    if subject.verdict is None:
+        if outcome is None:
+            return None
+        return f"its outcome is {outcome!r}, and {subject.name} declares no rule, so a reading of it carries none"
+    if outcome != subject.no_verdict:
+        return f"its outcome is {outcome!r}, and a reading of {subject.name} carries its stop, {subject.no_verdict!r}"
+    if (ruled := subject.verdict(metrics)) is not None:
+        return f"{subject.name}'s rule gives the verdict {ruled!r} on its metrics, so the run is a trial and never a reading"
+    return None
 
 
 def _findings(
@@ -247,6 +268,8 @@ def _findings(
             found.append(
                 f"{name}: its verdict {entry['verdict']!r} is not {ruled!r}, what {subject.name}'s rule gives on its metrics"
             )
+    elif (wrong := _outcome_finding(subject, entry["metrics"], entry["outcome"])) is not None:
+        found.append(f"{name}: {wrong}")
     if (wrong := _comparator_finding(invocation, subject, legacy, trials)) is not None:
         found.append(f"{name}: {wrong}")
     return found
@@ -270,39 +293,56 @@ def test_every_record_past_47_holds_to_the_subject_it_names():
     assert found == []
 
 
-def test_live_entries_holds_exactly_the_records_past_47(tmp_path):
-    path = tmp_path / "trials.jsonl"
-    datasets = {
-        "ohlc-test": {
-            "files": {"BTC/EUR/1440.parquet": "c" * 64},
-            "rows": 10,
-            "span": ["2020-01-01 00:00:00+00:00", "2020-01-10 00:00:00+00:00"],
-        }
+_DATASETS = {
+    "ohlc-test": {
+        "files": {"BTC/EUR/1440.parquet": "c" * 64},
+        "rows": 10,
+        "span": ["2020-01-01 00:00:00+00:00", "2020-01-10 00:00:00+00:00"],
     }
-    invocation = {
-        "subject": "stub",
-        "dataset": "ohlc-test",
-        "window": None,
-        "as_of": None,
-        "accept_holes": False,
-        "comparator_trial": None,
-        "commit": "a" * 40,
-    }
+}
+_INVOCATION = {
+    "subject": "stub",
+    "dataset": "ohlc-test",
+    "window": None,
+    "as_of": None,
+    "accept_holes": False,
+    "comparator_trial": None,
+    "commit": "a" * 40,
+}
+
+
+def _forty_eight_trials(path: Path) -> Path:
     for n in range(1, 49):
         TrialRegistry(path).append(
             iteration="iter-001",
             family="A1",
             spec_hash="s",
-            datasets=datasets,
-            invocation=invocation,
+            datasets=_DATASETS,
+            invocation=_INVOCATION,
             seeds=[0],
             metrics={"sharpe": 0.3},
             n_trials_in_family=n,
             verdict="reject",
             run_ref="cli/registry/record.py",
         )
+    return path
 
-    assert [(label, kind, entry["trial_id"]) for label, kind, entry in live_entries(path)] == [("trial-48", "trial", 48)]
+
+def test_live_entries_holds_exactly_the_records_past_47(tmp_path):
+    registry = _forty_eight_trials(tmp_path / "trials.jsonl")
+
+    entries = live_entries(registry, tmp_path / "readings.jsonl")
+
+    assert [(label, kind, entry["trial_id"]) for label, kind, entry in entries] == [("trial-48", "trial", 48)]
+
+
+def test_live_entries_holds_every_reading_beside_the_records_past_47(tmp_path):
+    registry, ledger = _forty_eight_trials(tmp_path / "trials.jsonl"), tmp_path / "readings.jsonl"
+    ReadingLedger(ledger).append(
+        iteration="iter-001", spec_hash="s", invocation=_INVOCATION, datasets=_DATASETS, metrics={"sharpe": 0.3}, outcome=None
+    )
+
+    assert {label for label, _, _ in live_entries(registry, ledger)} == {"trial-48", "reading-1"}
 
 
 def test_the_legacy_incumbents_are_frozen_each_backed_by_a_subject_and_a_record_at_or_below_47():
@@ -347,10 +387,10 @@ def _b2_trial(trial_id: int, subject: str = _B2) -> dict:
     }
 
 
-def _check(entry: dict, *, subjects: dict = SUBJECTS, trials: dict[int, dict] | None = None) -> list[str]:
+def _check(entry: dict, *, kind: str = "trial", subjects: dict = SUBJECTS, trials: dict[int, dict] | None = None) -> list[str]:
     return _findings(
         entry,
-        "trial",
+        kind,
         subjects=subjects,
         legacy=LEGACY_INCUMBENTS,
         trials=_trials() if trials is None else trials,
@@ -424,3 +464,40 @@ def test_one_change_to_a_clean_trial_yields_exactly_its_finding(change, subjects
         assert found == []
     else:
         assert len(found) == 1 and finding in found[0], found
+
+
+_ARM_A_BAR = "b2-arm-a-bar"
+_ARM_A_BAR_METRICS = dict.fromkeys(SUBJECTS[_ARM_A_BAR].metric_keys, 0)
+# `_b2_trial`'s metrics, on which the rule gives `reject`, with arm A failing its bar, on which it stops.
+_B2_STOPPED = {"arm_a_passes": 0}
+
+
+@pytest.mark.parametrize(
+    ("subject", "change", "outcome", "finding"),
+    [
+        pytest.param(_ARM_A_BAR, None, None, None, id="a-ruleless-subjects-clean-reading"),
+        pytest.param(_B2, _B2_STOPPED, "no_verdict", None, id="a-ruled-subjects-clean-stop"),
+        pytest.param(_ARM_A_BAR, None, "a stop", "declares no rule", id="a-ruleless-subjects-reading-with-an-outcome"),
+        pytest.param(
+            _B2, {}, "no_verdict", "gives the verdict 'reject'", id="a-ruled-subjects-reading-its-rule-gives-a-verdict-on"
+        ),
+    ],
+)
+def test_a_reading_carries_the_outcome_its_subjects_rule_gives_and_no_other(subject, change, outcome, finding):
+    trial = _b2_trial(49, subject)
+    metrics = _ARM_A_BAR_METRICS if change is None else trial["metrics"] | change
+    stop = SUBJECTS[subject].no_verdict if outcome == "no_verdict" else outcome
+    entry = {
+        "reading_id": 1,
+        "spec_hash": trial["spec_hash"],
+        "invocation": trial["invocation"],
+        "metrics": metrics,
+        "outcome": stop,
+    }
+
+    found = _check(entry, kind="reading")
+
+    if finding is None:
+        assert found == []
+    else:
+        assert len(found) == 1 and found[0].startswith("reading-1: ") and finding in found[0], found

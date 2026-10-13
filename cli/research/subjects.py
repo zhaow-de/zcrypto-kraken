@@ -210,11 +210,13 @@ def _b2_inputs(
     window: tuple[str, str] | None,
     as_of: str | None,
     accept_holes: bool,
+    *,
+    subject: str,
 ) -> _B2Inputs:
     """Arm A's positions, the funding feature and the scales, and no return of arm B: the pre-run engagement read runs on
-    this half alone (docs/specs/00128 D6)."""
+    this half alone (docs/specs/00128 D6). `subject` is the name a refusal of the window gives."""
     h4_ts, h4_prices = _capturing_union(reader, dataset, 240, window, as_of, accept_holes)
-    _b2_refuse_window(h4_ts, window)
+    _b2_refuse_window(subject, h4_ts, window)
     config = B2Config()
     feature = {}
     for asset in _ASSETS:
@@ -256,28 +258,28 @@ def _b2_slices(series: list[float], h4_ts: list[datetime]) -> dict[str, list[flo
     return {year: s for year, s in calendar_year_slices(series, h4_ts).items() if year != "2020"}
 
 
-def _b2_over(window: tuple[str, str] | None) -> str:
-    return "b2-funding-derisk over " + ("the full history" if window is None else f"the window {window[0]} .. {window[1]}")
+def _b2_over(subject: str, window: tuple[str, str] | None) -> str:
+    return f"{subject} over " + ("the full history" if window is None else f"the window {window[0]} .. {window[1]}")
 
 
-def _b2_refuse_window(h4_ts: list[datetime], window: tuple[str, str] | None) -> None:
+def _b2_refuse_window(subject: str, h4_ts: list[datetime], window: tuple[str, str] | None) -> None:
     """The refusals `a1_kill_bar` and `net_of_cost_verdict` make of a window too short for them or lying in partial years,
     raised before the arms are built, in the window's terms."""
     close = close_grid(h4_ts)
     from_2021 = sum(t >= _FROM_2021 for t in close)
     if len(close) < _DECISIVE_START + 2:
         raise SubjectError(
-            f"{_b2_over(window)}: it holds {len(close)} return indices, and the kill bar's decisive window opens at index "
+            f"{_b2_over(subject, window)}: it holds {len(close)} return indices, and the kill bar's decisive window opens at index "
             f"{_DECISIVE_START} and needs 2"
         )
     if from_2021 < 2:
         raise SubjectError(
-            f"{_b2_over(window)}: {from_2021} of its return indices close at or after 2021-01-01T00:00Z, and the from-2021 "
+            f"{_b2_over(subject, window)}: {from_2021} of its return indices close at or after 2021-01-01T00:00Z, and the from-2021 "
             "head-to-head needs 2"
         )
     if not _b2_slices([0.0] * len(close), h4_ts):
         raise SubjectError(
-            f"{_b2_over(window)}: none of its return indices closes in a calendar year the worst-slice leg reads, partial "
+            f"{_b2_over(subject, window)}: none of its return indices closes in a calendar year the worst-slice leg reads, partial "
             "years left out"
         )
 
@@ -304,6 +306,24 @@ def _b2_arm_a_bar(inputs: _B2Inputs) -> dict:
     )
 
 
+def _b2_build(
+    subject: str,
+    compute: Callable[[_B2Inputs], dict],
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None,
+    accept_holes: bool,
+) -> dict:
+    """Reads nothing past `_b2_inputs`, whose block the basis test pins as the trial's."""
+    try:
+        return compute(_b2_inputs(reader, dataset, window, as_of, accept_holes, subject=subject))
+    except (AlphaError, BacktestError, BenchmarkError, FeatureError, ValidationError) as exc:
+        # `_b2_inputs` names a funding file's errors; any other a compute package raises, a bad close included, is named
+        # as the window's.
+        raise SubjectError(f"{_b2_over(subject, window)}: {exc}") from exc
+
+
 def _build_b2_funding_derisk(
     reader: ObservedReader,
     dataset: str,
@@ -311,13 +331,28 @@ def _build_b2_funding_derisk(
     as_of: str | None = None,
     accept_holes: bool = False,
 ) -> dict:
-    """Reads nothing past `_b2_inputs`, whose block the basis test pins as the trial's."""
-    try:
-        return _b2_metrics(_b2_inputs(reader, dataset, window, as_of, accept_holes))
-    except (AlphaError, BacktestError, BenchmarkError, FeatureError, ValidationError) as exc:
-        # `_b2_inputs` names a funding file's errors; any other a compute package raises, a bad close included, is named
-        # as the window's.
-        raise SubjectError(f"{_b2_over(window)}: {exc}") from exc
+    return _b2_build("b2-funding-derisk", _b2_metrics, reader, dataset, window, as_of, accept_holes)
+
+
+# docs/specs/00129 D7's ten keys of arm A's bar; its flags are recorded as 0 or 1.
+_B2_ARM_A_BAR_FLAGS = frozenset({"dsr_pass", "spa_pass", "cost_stress_pass", "worst_slice_pass", "passes"})
+_B2_ARM_A_BAR_KEYS = _B2_ARM_A_BAR_FLAGS | {"dsr", "spa_p_value", "spa_p_value_full", "cost_stress_sharpe", "worst_slice_sharpe"}
+
+
+def _b2_arm_a_bar_metrics(inputs: _B2Inputs) -> dict:
+    bar = _b2_arm_a_bar(inputs)
+    return {key: int(bar[key]) if key in _B2_ARM_A_BAR_FLAGS else bar[key] for key in sorted(_B2_ARM_A_BAR_KEYS)}
+
+
+def _build_b2_arm_a_bar(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    """Arm A's headline bar alone: arm B is never built, so no return of it is computed."""
+    return _b2_build("b2-arm-a-bar", _b2_arm_a_bar_metrics, reader, dataset, window, as_of, accept_holes)
 
 
 def _b2_metrics(inputs: _B2Inputs) -> dict:
@@ -496,6 +531,15 @@ SUBJECTS: dict[str, Subject] = {
             "instrument finding: arm A fails the bar this window sets, or the overlay engages at no stamp; no verdict, "
             "the trial unspent"
         ),
+    ),
+    "b2-arm-a-bar": Subject(
+        "b2-arm-a-bar",
+        (240,),
+        _ASSETS,
+        _build_b2_arm_a_bar,
+        spec="docs/specs/00128-b2-family-opening-design.md",
+        metric_keys=_B2_ARM_A_BAR_KEYS,
+        seeds=(42,),
     ),
 }
 

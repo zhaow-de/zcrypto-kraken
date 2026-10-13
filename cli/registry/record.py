@@ -25,6 +25,25 @@ _EXPECTED_STORED_KEYS = {
 }
 _EXPECTED_STORED_KEYS[5] = _EXPECTED_STORED_KEYS[4] | {"invocation"}
 
+READING_SCHEMA_VERSION = 1
+_READING_KEYS = frozenset(
+    {
+        "reading_id",
+        "schema_version",
+        "timestamp",
+        "prev_hash",
+        "record_hash",
+        "dataset_hash",
+        "iteration",
+        "spec_hash",
+        "invocation",
+        "datasets",
+        "metrics",
+        "outcome",
+        "notes",
+    }
+)
+
 _SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 _INVOCATION_KEYS = frozenset({"subject", "dataset", "window", "as_of", "accept_holes", "comparator_trial", "commit"})
 _COMMIT = re.compile(r"[0-9a-f]{40}")
@@ -256,6 +275,42 @@ def validate_stored_record(rec: dict, where: str) -> None:
     validate_caller_fields(caller, check_run_ref_provenance=False)
 
 
+def validate_reading_fields(f: dict, where: str) -> None:
+    """The fields the command supplies, checked before the store composes a reading and again on every load."""
+    for key in ("iteration", "spec_hash"):
+        if type(f[key]) is not str or not f[key]:
+            raise RegistryError(f"{where}: {key} must be a non-empty str")
+    _validate_datasets_shape(f["datasets"], where)
+    validate_invocation(f["invocation"], f["datasets"], None, where)
+    if type(f["metrics"]) is not dict or not f["metrics"]:
+        raise RegistryError(f"{where}: metrics must be a non-empty dict")
+    _assert_finite(f["metrics"], f"{where}: metrics")
+    if f["outcome"] is not None and (type(f["outcome"]) is not str or not f["outcome"]):
+        raise RegistryError(f"{where}: outcome must be null or a non-empty str")
+    if type(f["notes"]) is not str:
+        raise RegistryError(f"{where}: notes must be a str")
+
+
+def validate_stored_reading(rec: dict, where: str) -> None:
+    if set(rec) != _READING_KEYS:
+        raise RegistryCorruptionError(
+            f"{where}: a reading's keys must be exactly {sorted(_READING_KEYS)} "
+            f"(missing {sorted(_READING_KEYS - set(rec))}, unknown {sorted(set(rec) - _READING_KEYS, key=str)})"
+        )
+    if type(rec["schema_version"]) is not int or rec["schema_version"] != READING_SCHEMA_VERSION:
+        raise RegistryCorruptionError(f"{where}: unknown reading schema_version {rec['schema_version']!r}")
+    body = {k: v for k, v in rec.items() if k != "record_hash"}
+    if compute_hash(body) != rec["record_hash"]:
+        raise RegistryCorruptionError(f"{where}: record_hash mismatch (reading was mutated)")
+    if type(rec["prev_hash"]) is not str or len(rec["prev_hash"]) != 64:
+        raise RegistryCorruptionError(f"{where}: prev_hash must be a 64-char hex str")
+    if type(rec["reading_id"]) is not int:
+        raise RegistryCorruptionError(f"{where}: reading_id must be int")
+    validate_reading_fields(rec, where)
+    if rec["dataset_hash"] != compute_hash(rec["datasets"]):
+        raise RegistryCorruptionError(f"{where}: dataset_hash is not the digest of this reading's datasets block")
+
+
 @dataclass(frozen=True, kw_only=True)
 class TrialRecord:
     """A single trial record; `variant` is schema_version 3+ only, omitted from the serialized line when None. Trials 25-32
@@ -277,6 +332,26 @@ class TrialRecord:
     n_trials_in_family: int
     verdict: str
     run_ref: str | None
+    notes: str
+    prev_hash: str
+    record_hash: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class ReadingRecord:
+    """A run that decides without spending a trial: an evaluate-only subject's, or a ruled subject's whose rule stopped,
+    its `outcome` then that subject's `no_verdict` (docs/specs/00129 D7)."""
+
+    reading_id: int
+    schema_version: int
+    timestamp: str
+    iteration: str
+    spec_hash: str
+    dataset_hash: str
+    datasets: dict
+    invocation: dict
+    metrics: dict
+    outcome: str | None
     notes: str
     prev_hash: str
     record_hash: str

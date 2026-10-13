@@ -4,8 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from cli.registry import GENESIS_HASH, SCHEMA_VERSION, RegistryCorruptionError, RegistryError, TrialRegistry
+from cli.registry import GENESIS_HASH, SCHEMA_VERSION, ReadingLedger, RegistryCorruptionError, RegistryError, TrialRegistry
 from cli.registry.record import canonical_json, compute_hash
+from tests.test_trial_registry_provenance import LEDGER
 
 _REGISTRY = Path(__file__).resolve().parents[1] / "docs" / "reference" / "trial-registry.jsonl"
 
@@ -477,6 +478,12 @@ def test_live_registry_file_loads_clean():
     assert all(r.schema_version >= 3 for r in reg.records[32:])
 
 
+def test_live_reading_ledger_loads_clean():
+    # Read-only, as the registry's: the load runs the ledger's contiguity and chain checks over the committed file.
+    ledger = ReadingLedger(LEDGER)
+    assert [r.reading_id for r in ledger.records] == list(range(1, len(ledger) + 1))
+
+
 def test_append_records_a_committed_run_ref_end_to_end(tmp_path):
     p = tmp_path / "t.jsonl"
     r = _append(TrialRegistry(p), n_trials_in_family=1, run_ref=COMMITTED_PATH)
@@ -756,3 +763,142 @@ def test_append_revalidates_and_a_bad_block_writes_nothing(tmp_path):
     with pytest.raises(RegistryError):
         _append(reg, family="A", n_trials_in_family=1, datasets={"ohlc-test": {**_BLOCK, "rows": 0}})
     assert not reg.path.exists() or reg.path.read_text() == ""
+
+
+_READING_DATASETS = {"ohlc-test": dict(_BLOCK)}
+
+
+def _append_reading(ledger: ReadingLedger, **over):
+    kw = dict(
+        iteration="iter-001",
+        spec_hash="s",
+        invocation=_invocation(_READING_DATASETS),
+        datasets=_READING_DATASETS,
+        metrics={"sharpe": 0.3, "dsr": 0.1},
+        outcome=None,
+    )
+    kw.update(over)
+    return ledger.append(**kw)
+
+
+def _reading_line(reading_id: int, prev_hash: str = GENESIS_HASH, **over) -> str:
+    body = dict(
+        reading_id=reading_id,
+        schema_version=1,
+        timestamp="2026-10-13T00:00:00+00:00",
+        iteration="iter-001",
+        spec_hash="s",
+        invocation=_invocation(_READING_DATASETS),
+        datasets=_READING_DATASETS,
+        metrics={"sharpe": 0.3},
+        outcome=None,
+        notes="",
+        prev_hash=prev_hash,
+    )
+    body.update(over)
+    body["dataset_hash"] = over.get("dataset_hash", compute_hash(body["datasets"]))
+    return canonical_json(dict(body, record_hash=compute_hash(body)))
+
+
+def test_a_reading_round_trips_through_disk(tmp_path):
+    path = tmp_path / "readings.jsonl"
+    invocation = _invocation(_READING_DATASETS, subject="b2-arm-a-bar", as_of="2026-10-10", accept_holes=True, comparator_trial=44)
+    written = _append_reading(ReadingLedger(path), invocation=invocation, outcome="the stub's stop", notes="kept")
+
+    (reloaded,) = ReadingLedger(path).records
+
+    assert reloaded == written
+    assert (reloaded.reading_id, reloaded.schema_version, reloaded.prev_hash) == (1, 1, GENESIS_HASH)
+    assert (reloaded.invocation, reloaded.outcome, reloaded.notes) == (invocation, "the stub's stop", "kept")
+    assert reloaded.dataset_hash == compute_hash(_READING_DATASETS)
+    assert set(json.loads(path.read_text())) == {
+        "reading_id",
+        "schema_version",
+        "timestamp",
+        "prev_hash",
+        "record_hash",
+        "dataset_hash",
+        "iteration",
+        "spec_hash",
+        "invocation",
+        "datasets",
+        "metrics",
+        "outcome",
+        "notes",
+    }
+
+
+def test_two_readings_chain_with_contiguous_ids_across_a_reopen(tmp_path):
+    path = tmp_path / "readings.jsonl"
+    first = _append_reading(ReadingLedger(path))
+    second = _append_reading(ReadingLedger(path), outcome="a stop")
+
+    assert (first.reading_id, second.reading_id) == (1, 2)
+    assert second.prev_hash == first.record_hash
+    assert [r.reading_id for r in ReadingLedger(path).records] == [1, 2]
+
+
+def test_a_torn_trailing_reading_heals_as_a_torn_trial_does(tmp_path):
+    path = tmp_path / "readings.jsonl"
+    path.write_text(_reading_line(1) + "\n" + '{"reading_id":2,"iter', encoding="utf-8")
+
+    assert len(ReadingLedger(path)) == 1
+    assert path.read_text(encoding="utf-8").endswith("}\n")
+    assert _append_reading(ReadingLedger(path)).reading_id == 2
+
+
+@pytest.mark.parametrize(
+    "over, match",
+    [
+        pytest.param({"outcome": ""}, "outcome", id="outcome-empty"),
+        pytest.param({"outcome": 1}, "outcome", id="outcome-int"),
+        pytest.param({"invocation": None}, "invocation must be a dict", id="invocation-missing"),
+        pytest.param({"metrics": {"dsr": float("nan")}}, "non-finite", id="metrics-nan"),
+    ],
+)
+def test_an_ill_formed_reading_is_refused_before_the_write(tmp_path, over, match):
+    path = tmp_path / "readings.jsonl"
+
+    with pytest.raises(RegistryError, match=match):
+        _append_reading(ReadingLedger(path), **over)
+
+    assert not path.exists()
+
+
+def test_a_stored_reading_without_its_invocation_is_refused_at_load(tmp_path):
+    body = json.loads(_reading_line(1))
+    del body["invocation"], body["record_hash"]
+    line = canonical_json(dict(body, record_hash=compute_hash(body)))
+
+    with pytest.raises(RegistryCorruptionError, match=r"missing \['invocation'\]"):
+        ReadingLedger(_write(tmp_path, [line]))
+
+
+@pytest.mark.parametrize(("ids", "out_of_place"), [((1, 3), 3), ((2, 1), 2)], ids=["1-then-3", "2-then-1"])
+def test_a_ledger_whose_ids_skip_or_reorder_is_refused_naming_the_reading_out_of_place(tmp_path, ids, out_of_place):
+    first = _reading_line(ids[0])
+    second = _reading_line(ids[1], prev_hash=_hash_of(first))
+
+    with pytest.raises(RegistryCorruptionError, match=f"reading_id {out_of_place} not contiguous"):
+        ReadingLedger(_write(tmp_path, [first, second]))
+
+
+def test_a_reading_whose_body_changed_under_its_record_hash_is_refused(tmp_path):
+    tampered = _reading_line(1).replace('"sharpe":0.3', '"sharpe":0.9')
+
+    with pytest.raises(RegistryCorruptionError, match="record_hash"):
+        ReadingLedger(_write(tmp_path, [tampered]))
+
+
+def test_a_reading_whose_dataset_hash_is_not_its_blocks_digest_is_refused(tmp_path):
+    with pytest.raises(RegistryCorruptionError, match="dataset_hash"):
+        ReadingLedger(_write(tmp_path, [_reading_line(1, dataset_hash="d" * 64)]))
+
+
+def test_a_rewritten_first_reading_breaks_the_chain_at_the_second(tmp_path):
+    first = _reading_line(1)
+    second = _reading_line(2, prev_hash=_hash_of(first))
+    rewritten = _reading_line(1, metrics={"sharpe": 0.9})
+
+    with pytest.raises(RegistryCorruptionError, match="reading 2 prev_hash breaks the chain"):
+        ReadingLedger(_write(tmp_path, [rewritten, second]))

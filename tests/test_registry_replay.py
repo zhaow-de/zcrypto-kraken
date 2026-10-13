@@ -1,4 +1,5 @@
-"""Every record past 47 replayed at HEAD: the block, the metrics and the verdict equal the record's exactly, no tolerance."""
+"""Every record past 47 and every reading replayed at HEAD: the block, the metrics and the verdict or the outcome equal the
+stored ones exactly, no tolerance."""
 
 from __future__ import annotations
 
@@ -21,6 +22,7 @@ from tests.test_research_command import (
     _anchor,
     _clean_tree,  # noqa: F401 -- autouse: this import is what applies it in this module
     _git_repo,
+    _ledger_default_off_the_committed_file,  # noqa: F401 -- autouse, applied here by this import as `_clean_tree` is
     _register_args,
     _registry_default_off_the_committed_ledger,  # noqa: F401 -- autouse, applied here by this import as `_clean_tree` is
     _stub_dataset,
@@ -29,7 +31,7 @@ from tests.test_research_command import (
     _write_series,
     runner,
 )
-from tests.test_trial_registry_provenance import REGISTRY, REPO, _trials, live_entries
+from tests.test_trial_registry_provenance import LEDGER, REGISTRY, REPO, _outcome_finding, _readings, _trials, live_entries
 
 pytestmark = pytest.mark.data
 
@@ -44,11 +46,11 @@ _REPLAY_READS: tuple[str, ...] = (
     "uv.lock",
     ".python-version",
     "zcrypto.toml",
-    *(path.relative_to(REPO).as_posix() for path in (REGISTRY, _VOUCHED_SIDECAR)),
+    *(path.relative_to(REPO).as_posix() for path in (REGISTRY, LEDGER, _VOUCHED_SIDECAR)),
 )
 
 # Each committed file whose lines the replay enumerates, with the key its ids are stored under.
-_ENUMERATED = ((REGISTRY, "trial_id"),)
+_ENUMERATED = ((REGISTRY, "trial_id"), (LEDGER, "reading_id"))
 
 # "<label>": "<commit>: <reason>", a record whose numbers moved on purpose, grown by a reviewed PR; its case still runs and
 # must still differ.
@@ -91,10 +93,13 @@ def replay(entry: dict, kind: str, data_root: Path) -> list[str]:
                 f"{label}: {key} is {_shown(at_head)} at HEAD and {_shown(recorded)} in the record, made at {commit}; "
                 f"`git log {commit}..HEAD -- uv.lock` lists a dependency bump since"
             )
-    if (ruled := subject.verdict(metrics)) != entry["verdict"]:
-        found.append(
-            f"{label}: {subject.name}'s rule gives the verdict {ruled!r} at HEAD, and the record stores {entry['verdict']!r}"
-        )
+    if kind == "trial":
+        if (ruled := subject.verdict(metrics)) != entry["verdict"]:
+            found.append(
+                f"{label}: {subject.name}'s rule gives the verdict {ruled!r} at HEAD, and the record stores {entry['verdict']!r}"
+            )
+    elif (wrong := _outcome_finding(subject, metrics, entry["outcome"])) is not None:
+        found.append(f"{label}: at HEAD, {wrong}")
     return found
 
 
@@ -150,7 +155,8 @@ def test_this_checkout_holds_every_record_origin_develop_holds():
         relpath = path.relative_to(REPO).as_posix()
         held = _git("ls-tree", "--name-only", "origin/develop", "--", relpath)
         develop_text = _git("show", f"origin/develop:{relpath}") if held else ""
-        if ids := _behind(path.read_text(encoding="utf-8"), develop_text, id_key):
+        head_text = path.read_text(encoding="utf-8") if path.exists() else ""
+        if ids := _behind(head_text, develop_text, id_key):
             behind[relpath] = sorted(ids)
     if behind:
         pytest.fail(
@@ -208,6 +214,31 @@ def test_a_stored_verdict_the_rule_does_not_give_is_a_finding_naming_the_verdict
     found = replay(record, "trial", root)
 
     assert len(found) == 1 and "verdict" in found[0] and "'reject'" in found[0], found
+
+
+def _kept_as_a_reading(tmp_path, monkeypatch) -> tuple[dict, Path]:
+    root, registry, ledger = _stub_dataset(tmp_path), tmp_path / "registry.jsonl", tmp_path / "ledger.jsonl"
+    _anchor(monkeypatch, root, registry)
+    _stub_subject(monkeypatch, verdict=lambda metrics: None, no_verdict="the stub's stop")
+    result = runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1, ledger=ledger)])
+    assert result.exit_code == 0, result.output
+    (reading,) = _readings(ledger).values()
+    return reading, root
+
+
+def test_a_stop_the_command_kept_as_a_reading_replays_with_no_finding(tmp_path, monkeypatch):
+    reading, root = _kept_as_a_reading(tmp_path, monkeypatch)
+
+    assert replay(reading, "reading", root) == []
+
+
+def test_a_stored_outcome_other_than_the_rules_stop_is_a_finding_naming_the_outcome(tmp_path, monkeypatch):
+    reading, root = _kept_as_a_reading(tmp_path, monkeypatch)
+    reading["outcome"] = "another stop"
+
+    found = replay(reading, "reading", root)
+
+    assert len(found) == 1 and "outcome" in found[0] and "'another stop'" in found[0], found
 
 
 def _build_raising(monkeypatch, error: type[BaseException]) -> None:

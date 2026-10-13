@@ -14,16 +14,17 @@ from typing import Optional
 import typer
 
 from cli.data import rolling
-from cli.registry import TrialRegistry
+from cli.registry import ReadingLedger, TrialRegistry
 from cli.registry.errors import RegistryError
 from cli.registry.observed import ObservedReader
 from cli.research.subjects import EVALUATION_ERRORS, LEGACY_INCUMBENTS, SUBJECTS, Subject, SubjectError, required_relpaths
 
 # Repo-anchored, never cwd-relative: a dataset name must mean one directory from any working directory, and a cwd-relative
-# `_REGISTRY` default would silently mint a fresh, chainless registry on a WRITE instead of appending to the real one.
+# `_REGISTRY` or `_LEDGER` default would silently mint a fresh, chainless file on a WRITE instead of appending to the real one.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DATA_ROOT = _REPO_ROOT / "data"
 _REGISTRY = _REPO_ROOT / "docs" / "reference" / "trial-registry.jsonl"
+_LEDGER = _REPO_ROOT / "docs" / "reference" / "reading-ledger.jsonl"
 
 # The append-time provenance guard (`_validate_run_ref`) refuses a run_ref with no path-like token that resolves in the repo.
 _RUN_REF = "cli/research/command.py — docs/specs/00086-verifiable-dataset-provenance-design.md"
@@ -33,11 +34,12 @@ _REGISTER_FIELDS = (
     ("--family", "family"),
     ("--n-trials", "n_trials"),
 )
+_READING_FIELDS = (("--iteration", "iteration"),)
 
 research_app = typer.Typer(
     no_args_is_help=True,
     help="Evaluate a committed system over a frozen dataset or the rolling dataset as of a day, and register the trial "
-    "it produced.",
+    "it produced or keep the reading.",
 )
 
 
@@ -87,6 +89,14 @@ def _refuse_an_unbacked_comparator(registry: Path, known: Subject, comparator_tr
         )
 
 
+def _echo_replay_case(label: str) -> None:
+    typer.echo(f"replay it before each push that carries this line: uv run pytest tests/test_registry_replay.py -k '[{label}]'")
+    typer.echo(
+        "  it passes with nothing skipped only with data/ohlc-full linked beside the sets the line cites, since the replay "
+        "skips without it"
+    )
+
+
 def _raise_site(exc: BaseException) -> str:
     frame = traceback.extract_tb(exc.__traceback__)[-1]
     path = Path(frame.filename)
@@ -122,23 +132,33 @@ def eval_subject(
         False,
         "--register",
         help="Append the result to the trial registry as a trial whose verdict is the subject's rule and whose seeds are its "
-        "declared ones. Refused for a subject with no rule, and from a tree with uncommitted changes.",
+        "declared ones; a rule that gives no verdict keeps the run as a reading instead, spending no trial. Refused for a "
+        "subject with no rule, and from a tree with uncommitted changes.",
     ),
-    iteration: Optional[str] = typer.Option(None, "--iteration", help="Iteration label of the run (with --register)."),
+    reading: bool = typer.Option(
+        False,
+        "--reading",
+        help="Append the result to the readings ledger: a run of a subject with no rule, kept without spending a trial. "
+        "Refused with --register, for a subject with a rule, and from a tree with uncommitted changes.",
+    ),
+    iteration: Optional[str] = typer.Option(None, "--iteration", help="Iteration label of the run (with --register or --reading)."),
     family: Optional[str] = typer.Option(None, "--family", help="Trial family this run belongs to (with --register)."),
     spec_hash: Optional[str] = typer.Option(
         None,
         "--spec-hash",
-        help="The sha256 of the subject's spec, asserted: refused unless it equals the one computed (with --register).",
+        help="The sha256 of the subject's spec, asserted: refused unless it equals the one computed (with --register or "
+        "--reading).",
     ),
     verdict: Optional[str] = typer.Option(
-        None, "--verdict", help="The verdict asserted: refused unless it equals the subject's rule's (with --register)."
+        None,
+        "--verdict",
+        help="The verdict asserted: refused unless it equals the subject's rule's (with --register; refused with --reading).",
     ),
     comparator_trial: Optional[int] = typer.Option(
         None,
         "--comparator-trial",
         help="The trial this run compares against, built by the subject's incumbent: required for a subject that declares "
-        "one, refused for any other (with --register).",
+        "one, refused for any other (with --register or --reading).",
     ),
     n_trials: Optional[int] = typer.Option(
         None,
@@ -148,6 +168,12 @@ def eval_subject(
     variant: Optional[str] = typer.Option(None, "--variant", help="Variant label within the family."),
     notes: str = typer.Option("", "--notes", help="Free-text notes stored with the record."),
     registry: Optional[Path] = typer.Option(None, "--registry", help="Registry file to append to. Defaults to the committed one."),
+    ledger: Optional[Path] = typer.Option(
+        None,
+        "--ledger",
+        help="Readings ledger to append to, by --reading or by a --register run whose rule gives no verdict. Defaults to "
+        "the committed one.",
+    ),
 ) -> None:
     """Run a committed system over a frozen dataset or the rolling dataset as of a day, reporting the metrics, what
     identifies the data the run actually read -- a frozen dataset's bytes, the rolling dataset's index line for that
@@ -156,12 +182,22 @@ def eval_subject(
     if known is None:
         raise _abort(f"unknown subject {subject!r}; known subjects: {', '.join(sorted(SUBJECTS))}")
 
-    # Everything a register run can be refused for without the data is checked before any read: a refusal must not cost
-    # a full evaluation.
+    # Everything a recording run can be refused for without the data is checked before any read: a refusal must not cost a
+    # full evaluation.
     target = registry or _REGISTRY
-    if register:
-        if known.verdict is None:
-            raise _abort(f"{subject} declares no verdict rule, so it registers no trial: run it without --register")
+    records = register or reading
+    if records:
+        if register and reading:
+            raise _abort("--register and --reading are exclusive: a subject with a rule registers, one without keeps a reading")
+        if register and known.verdict is None:
+            raise _abort(f"{subject} declares no verdict rule, so it registers no trial: keep the run with --reading instead")
+        if reading and known.verdict is not None:
+            raise _abort(
+                f"{subject} declares a verdict rule, so its run is a trial, or a reading its rule's stop keeps: run it with "
+                "--register instead"
+            )
+        if reading and verdict is not None:
+            raise _abort(f"--verdict {verdict} asserts a trial's verdict, and a reading stores none: drop --verdict")
         if known.incumbent is not None and comparator_trial is None:
             raise _abort(
                 f"{subject} compares against its incumbent, {known.incumbent}: pass --comparator-trial N, the id of the "
@@ -170,14 +206,14 @@ def eval_subject(
         if known.incumbent is None and comparator_trial is not None:
             raise _abort(f"{subject} declares no incumbent, so it compares against no trial: drop --comparator-trial")
         supplied = {"iteration": iteration, "family": family, "n_trials": n_trials}
-        missing = [flag for flag, key in _REGISTER_FIELDS if supplied[key] is None]
+        missing = [flag for flag, key in (_REGISTER_FIELDS if register else _READING_FIELDS) if supplied[key] is None]
         if missing:
-            raise _abort(f"--register needs {', '.join(missing)}")
+            raise _abort(f"{'--register' if register else '--reading'} needs {', '.join(missing)}")
         before = _tree_state(_REPO_ROOT)
         if before[1]:
             raise _abort(
                 f"{_REPO_ROOT} has uncommitted changes, and a record names its code by commit: commit or remove "
-                f"{_status_paths(before[1])}, then register again"
+                f"{_status_paths(before[1])}, then run again"
             )
         # After the clean-tree refusal, which must read the tree the operator left: the registry's reader heals a torn last line.
         if comparator_trial is not None:
@@ -186,7 +222,7 @@ def eval_subject(
         if spec_hash is not None and spec_hash != computed_spec_hash:
             raise _abort(
                 f"--spec-hash {spec_hash} is not {computed_spec_hash}, the sha256 of {known.spec}, the spec {subject} "
-                "declares, at this commit: read what changed in the spec since that hash, then register again without "
+                "declares, at this commit: read what changed in the spec since that hash, then run again without "
                 "--spec-hash or with the spec's own"
             )
 
@@ -226,13 +262,13 @@ def eval_subject(
 
     report = {"metrics": metrics, "datasets": block, "vouched": reader.vouched_status()}
     ruled = None
-    if register:
+    if records:
         keys = set(metrics)
         if keys != known.metric_keys:
             raise _abort(
                 f"{subject}'s build returned keys other than the ones it declares: missing "
                 f"{sorted(known.metric_keys - keys)}, unknown {sorted(keys - known.metric_keys)}; make the build and its "
-                "declared metric keys agree, commit, then register again"
+                "declared metric keys agree, commit, then run again"
             )
         if known.verdict is not None:
             ruled = known.verdict(metrics)
@@ -247,13 +283,13 @@ def eval_subject(
         typer.echo(f"hole: {hole}")
     typer.echo(json.dumps(report, indent=2))
 
-    if not register:
+    if not records:
         return
     after = _tree_state(_REPO_ROOT)
     if after != before:
         raise _abort(
             f"{_REPO_ROOT} changed during the fit (HEAD {before[0]}, then {after[0]}; uncommitted after it: "
-            f"{_status_paths(after[1]) or 'none'}), so no commit names the code that ran: register again once nothing else "
+            f"{_status_paths(after[1]) or 'none'}), so no commit names the code that ran: run again once nothing else "
             "writes to the checkout"
         )
     if verdict is not None and verdict != ruled:
@@ -261,10 +297,35 @@ def eval_subject(
             f"--verdict {verdict} disagrees with {subject}'s rule, which gives {ruled or 'no verdict'} on these metrics, so "
             "nothing is recorded: drop --verdict to take the rule's"
         )
+    invocation = {
+        "subject": subject,
+        "dataset": dataset,
+        "window": None if bounds is None else list(bounds),
+        "as_of": as_of,
+        "accept_holes": accept_holes,
+        "comparator_trial": comparator_trial,
+        "commit": before[0],
+    }
     if ruled is None:
-        raise _abort(
-            f"no verdict: {known.no_verdict}; {subject}'s rule stops on these metrics, so nothing is recorded and no trial spent"
-        )
+        # A subject with no rule, or a rule that stops: a reading, its outcome the stop's text or none.
+        try:
+            kept = ReadingLedger(ledger or _LEDGER).append(
+                iteration=iteration,
+                spec_hash=computed_spec_hash,
+                invocation=invocation,
+                datasets=block,
+                metrics=metrics,
+                outcome=known.no_verdict,
+                notes=notes,
+            )
+        except RegistryError as exc:
+            raise _abort(f"the ledger refused this reading: {exc}") from exc
+        if kept.outcome is None:
+            typer.echo(f"recorded reading {kept.reading_id}")
+        else:
+            typer.echo(f"no verdict — {kept.outcome}: recorded reading {kept.reading_id}; no trial spent")
+        _echo_replay_case(f"reading-{kept.reading_id}")
+        return
     try:
         record = TrialRegistry(target).append(
             iteration=iteration,
@@ -278,16 +339,9 @@ def eval_subject(
             notes=notes,
             variant=variant,
             datasets=block,
-            invocation={
-                "subject": subject,
-                "dataset": dataset,
-                "window": None if bounds is None else list(bounds),
-                "as_of": as_of,
-                "accept_holes": accept_holes,
-                "comparator_trial": comparator_trial,
-                "commit": before[0],
-            },
+            invocation=invocation,
         )
     except RegistryError as exc:
         raise _abort(f"the registry refused this record: {exc}") from exc
     typer.echo(f"recorded trial {record.trial_id} in family {record.family}")
+    _echo_replay_case(f"trial-{record.trial_id}")

@@ -3,6 +3,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -10,12 +11,16 @@ from cli.logging.get_logger import get_logger
 from cli.registry.errors import RegistryCorruptionError, RegistryError
 from cli.registry.record import (
     GENESIS_HASH,
+    READING_SCHEMA_VERSION,
     SCHEMA_VERSION,
+    ReadingRecord,
     TrialRecord,
     canonical_json,
     compute_hash,
     loads_strict,
     validate_caller_fields,
+    validate_reading_fields,
+    validate_stored_reading,
     validate_stored_record,
 )
 
@@ -79,7 +84,22 @@ def _assert_cross_record(recs: list[dict], path: Path) -> None:
         seen[rec["family"]] = prior + 1
 
 
-def _read_healing(path: Path) -> list[dict]:
+def _to_reading(rec: dict) -> ReadingRecord:
+    return ReadingRecord(**rec)
+
+
+def _assert_reading_chain(recs: list[dict], path: Path) -> None:
+    for idx, rec in enumerate(recs):
+        if rec["reading_id"] != idx + 1:
+            raise RegistryCorruptionError(f"{path}: reading_id {rec['reading_id']} not contiguous (expected {idx + 1})")
+        expected_prev = GENESIS_HASH if idx == 0 else recs[idx - 1]["record_hash"]
+        if rec["prev_hash"] != expected_prev:
+            raise RegistryCorruptionError(f"{path}: reading {rec['reading_id']} prev_hash breaks the chain")
+
+
+def _read_healing(
+    path: Path, validate: Callable[[dict, str], None], assert_cross_record: Callable[[list[dict], Path], None]
+) -> list[dict]:
     if not path.exists():
         return []
     raw = path.read_bytes()
@@ -99,20 +119,52 @@ def _read_healing(path: Path) -> list[dict]:
             raise  # NaN/Inf token is always poison — never self-heal
         except json.JSONDecodeError as e:
             if is_last and not ends_nl:
-                logger.warning("registry %s: truncating unparseable torn trailing line", path)
+                logger.warning("%s: truncating unparseable torn trailing line", path)
                 nl = raw.rfind(b"\n")
                 with open(path, "r+b") as fh:
                     fh.truncate(nl + 1 if nl >= 0 else 0)
                 break
             raise RegistryCorruptionError(f"{path}: malformed JSON at line {i + 1}") from e
-        validate_stored_record(rec, f"{path} line {i + 1}")
+        validate(rec, f"{path} line {i + 1}")
         out.append(rec)
-    _assert_cross_record(out, path)
+    assert_cross_record(out, path)
     return out
+
+
+def _read_trials(path: Path) -> list[dict]:
+    return _read_healing(path, validate_stored_record, _assert_cross_record)
+
+
+def _read_readings(path: Path) -> list[dict]:
+    return _read_healing(path, validate_stored_reading, _assert_reading_chain)
 
 
 def _now_utc_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _append_locked(
+    path: Path,
+    read: Callable[[Path], list[dict]],
+    compose: Callable[[list[dict]], dict],
+    validate: Callable[[dict, str], None],
+) -> dict:
+    """`compose` builds the next line from the file as re-read under the lock, the file being authoritative; the store
+    derives its two hashes."""
+    lock_f = open(path, "a", encoding="utf-8")
+    try:
+        fcntl.flock(lock_f.fileno(), fcntl.LOCK_EX)
+        rec = compose(read(path))
+        rec["dataset_hash"] = compute_hash(rec["datasets"])
+        rec["record_hash"] = compute_hash(rec)
+        validate(rec, f"{path} (append)")  # one bad line is permanent: refuse before the write
+        lock_f.write(canonical_json(rec) + "\n")
+        lock_f.flush()
+        os.fsync(lock_f.fileno())
+    finally:
+        fcntl.flock(lock_f.fileno(), fcntl.LOCK_UN)
+        lock_f.close()
+    return rec
 
 
 class TrialRegistry:
@@ -122,7 +174,7 @@ class TrialRegistry:
 
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
-        self._records = tuple(_to_record(r) for r in _read_healing(self.path))
+        self._records = tuple(_to_record(r) for r in _read_trials(self.path))
 
     @property
     def records(self) -> tuple[TrialRecord, ...]:
@@ -161,33 +213,73 @@ class TrialRegistry:
         if variant is not None:  # omit the key entirely rather than serialize a `null` (canonical form stays clean)
             caller["variant"] = variant
         validate_caller_fields(caller)  # raises on non-finite metric BEFORE opening the file
-        lock_f = open(self.path, "a", encoding="utf-8")
-        try:
-            fcntl.flock(lock_f.fileno(), fcntl.LOCK_EX)
-            disk = _read_healing(self.path)  # re-derive from disk under lock — the file is authoritative
-            next_id = disk[-1]["trial_id"] + 1 if disk else 1
+
+        def compose(disk: list[dict]) -> dict:
             prior = sum(1 for r in disk if r["family"] == family)
             if n_trials_in_family < prior + 1:
                 raise RegistryError(f"n_trials_in_family={n_trials_in_family} < {prior + 1} already recorded in family {family!r}")
-            prev_hash = disk[-1]["record_hash"] if disk else GENESIS_HASH
-            rec = {
+            return {
                 **caller,
-                "trial_id": next_id,
+                "trial_id": disk[-1]["trial_id"] + 1 if disk else 1,
                 "schema_version": SCHEMA_VERSION,
                 "timestamp": _now_utc_iso(),
-                "prev_hash": prev_hash,
+                "prev_hash": disk[-1]["record_hash"] if disk else GENESIS_HASH,
                 "datasets": datasets,
                 "invocation": invocation,
             }
-            rec["dataset_hash"] = compute_hash(rec["datasets"])
-            rec["record_hash"] = compute_hash(rec)
-            validate_stored_record(rec, f"{self.path} (append)")  # one bad line is permanent: refuse before the write
-            lock_f.write(canonical_json(rec) + "\n")
-            lock_f.flush()
-            os.fsync(lock_f.fileno())
-        finally:
-            fcntl.flock(lock_f.fileno(), fcntl.LOCK_UN)
-            lock_f.close()
-        record = _to_record(rec)
+
+        record = _to_record(_append_locked(self.path, _read_trials, compose, validate_stored_record))
+        self._records = (*self._records, record)
+        return record
+
+
+class ReadingLedger:
+    """Append-only, hash-chained JSONL store of readings, through the registry's locked append and torn-line healing; its
+    own class because a reading has no family, budget or verdict, which `TrialRegistry`'s validator requires
+    (docs/specs/00129 D7)."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = Path(path)
+        self._records = tuple(_to_reading(r) for r in _read_readings(self.path))
+
+    @property
+    def records(self) -> tuple[ReadingRecord, ...]:
+        return self._records
+
+    def __len__(self) -> int:
+        return len(self._records)
+
+    def append(
+        self,
+        *,
+        iteration: str,
+        spec_hash: str,
+        invocation: dict,
+        datasets: dict,
+        metrics: dict,
+        outcome: str | None,  # None, or the stop text of the subject's rule
+        notes: str = "",
+    ) -> ReadingRecord:
+        caller = dict(
+            iteration=iteration,
+            spec_hash=spec_hash,
+            invocation=invocation,
+            datasets=datasets,
+            metrics=metrics,
+            outcome=outcome,
+            notes=notes,
+        )
+        validate_reading_fields(caller, f"{self.path} (append)")  # before the open, which creates the file
+
+        def compose(disk: list[dict]) -> dict:
+            return {
+                **caller,
+                "reading_id": disk[-1]["reading_id"] + 1 if disk else 1,
+                "schema_version": READING_SCHEMA_VERSION,
+                "timestamp": _now_utc_iso(),
+                "prev_hash": disk[-1]["record_hash"] if disk else GENESIS_HASH,
+            }
+
+        record = _to_reading(_append_locked(self.path, _read_readings, compose, validate_stored_reading))
         self._records = (*self._records, record)
         return record
