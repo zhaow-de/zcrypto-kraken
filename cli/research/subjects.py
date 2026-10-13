@@ -45,10 +45,8 @@ from cli.portfolio.crossfreq_system import (
     _ffill_btc,
     build_crossfreq_system_fast,
 )
-from cli.portfolio.errors import PortfolioError
 from cli.portfolio.record44_legs import benchmark_4h_net_of_cost, calendar_year_slices, load_union
 from cli.registry.observed import ObservedReader
-from cli.risk.errors import RiskError
 from cli.validation import ValidationError, max_drawdown, sharpe
 
 PPY_DAILY = 365
@@ -268,9 +266,9 @@ def _build_b2_funding_derisk(
     """Reads nothing past `_b2_inputs`, whose block the basis test pins as the trial's."""
     try:
         return _b2_metrics(_b2_inputs(reader, dataset, window, as_of, accept_holes))
-    except (AlphaError, BacktestError, BenchmarkError, FeatureError, PortfolioError, RiskError, ValidationError) as exc:
-        # The error class of every compute package the build calls into. `_b2_inputs` names a funding file's errors; any
-        # other, a bad close or an asset too thin in the window included, is named as the window's.
+    except (AlphaError, BacktestError, BenchmarkError, FeatureError, ValidationError) as exc:
+        # `_b2_inputs` names a funding file's errors; any other a compute package raises, a bad close included, is named
+        # as the window's.
         raise SubjectError(f"{_b2_over(window)}: {exc}") from exc
 
 
