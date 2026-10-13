@@ -10,12 +10,14 @@ import inspect
 import json
 import math
 import os
+import shutil
 import subprocess
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import polars as pl
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from cli.__main__ import app
@@ -84,15 +86,33 @@ def _daily_dataset(tmp_path: Path, n: int = 600, dataset: str = "ohlc-test") -> 
     return root
 
 
-def _stub_subject(monkeypatch):
+_STUB_SPEC = "docs/specs/00086-verifiable-dataset-provenance-design.md"
+# What a stub declares unless its case overrides a keyword: a ruled subject, so a register run reaches the append.
+_STUB_DECLARED = {
+    "spec": _STUB_SPEC,
+    "metric_keys": frozenset({"sharpe"}),
+    "verdict": lambda metrics: "adopt",
+    "no_verdict": "the stub's stop",
+}
+
+
+def _stub_subject(monkeypatch, name: str = "stub", *, metrics: dict | None = None, **declared) -> list:
     """A subject returning fixed metrics over whatever the reader hands it, declaring only BTC so
-    `required_relpaths` demands just the one file `_stub_dataset` writes."""
+    `required_relpaths` demands just the one file `_stub_dataset` writes; the list it returns gains each build's dataset."""
+    calls = []
 
     def build(reader, dataset, window, as_of=None, accept_holes=False):
+        calls.append(dataset)
         reader.read_series(dataset, "BTC/EUR/1440.parquet", window=window)
-        return {"sharpe": 1.0}
+        return {"sharpe": 1.0} if metrics is None else metrics
 
-    monkeypatch.setitem(subjects.SUBJECTS, "stub", subjects.Subject("stub", (1440,), ("BTC",), build))
+    subject = subjects.Subject(name, (1440,), ("BTC",), build, **(_STUB_DECLARED | declared))
+    monkeypatch.setitem(subjects.SUBJECTS, name, subject)
+    return calls
+
+
+def _stub_eval(name: str = "stub") -> list[str]:
+    return ["research", "eval", "--subject", name, "--dataset", "ohlc-test"]
 
 
 def _anchor(monkeypatch, data_root: Path, registry: Path | None = None):
@@ -126,10 +146,6 @@ def _register_args(registry: Path, *, n_trials: int, family: str = "STUB") -> li
         "iter-001",
         "--family",
         family,
-        "--spec-hash",
-        "s",
-        "--verdict",
-        "adopt",
         "--n-trials",
         str(n_trials),
     ]
@@ -184,7 +200,7 @@ def test_a_register_run_that_forgets_to_anchor_lands_off_the_committed_ledger(tm
     result = runner.invoke(
         app,
         ["research", "eval", "--subject", "stub", "--dataset", "ohlc-test", "--register"]
-        + ["--iteration", "iter-001", "--family", "STUB", "--spec-hash", "s", "--verdict", "adopt", "--n-trials", "1"],
+        + ["--iteration", "iter-001", "--family", "STUB", "--n-trials", "1"],
     )
 
     assert result.exit_code == 0, result.output
@@ -224,9 +240,324 @@ def test_register_without_the_caller_fields_is_refused_naming_them(tmp_path, mon
     )
 
     assert result.exit_code != 0
-    for flag in ("--iteration", "--family", "--spec-hash", "--verdict", "--n-trials"):
+    for flag in ("--iteration", "--family", "--n-trials"):
         assert flag in result.output
+    assert "--spec-hash" not in result.output and "--verdict" not in result.output
     assert not registry.exists()
+
+
+# The autouse `_clean_tree` stubs the module's name; the cases over real repositories call the function itself.
+_unstubbed_tree_state = research_command._tree_state
+# Passed on every commit: CI's runner has no git identity.
+_GIT_IDENTITY = ("-c", "user.name=zcrypto-test", "-c", "user.email=zcrypto-test@example.invalid", "-c", "commit.gpgsign=false")
+
+
+def _git_repo(root: Path, *paths: str) -> str:
+    """A new repository at `root` whose one commit holds each path, written with its own name as its text, or one file
+    when none is given; its HEAD."""
+    root.mkdir(parents=True, exist_ok=True)
+    tracked = paths or ("tracked.txt",)
+
+    def git(*args: str) -> str:
+        return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, check=True).stdout
+
+    git("init", "-q")
+    for path in tracked:
+        (root / path).parent.mkdir(parents=True, exist_ok=True)
+        (root / path).write_text(f"{path}\n")
+    git("add", "--", *tracked)
+    git(*_GIT_IDENTITY, "commit", "-q", "-m", "fixture")
+    return git("rev-parse", "HEAD").strip()
+
+
+def test_the_tree_state_is_the_code_roots_whatever_the_cwd(tmp_path, monkeypatch):
+    first = _git_repo(tmp_path / "first", "first.txt")
+    second = _git_repo(tmp_path / "second", "second.txt")
+    assert first != second
+    monkeypatch.chdir(tmp_path / "second")
+
+    assert _unstubbed_tree_state(tmp_path / "first") == (first, "")
+
+
+@pytest.mark.parametrize("show", [None, "no"], ids=["default", "show-untracked-files-no"])
+def test_the_tree_state_lists_an_untracked_file_whatever_the_repository_config_says(tmp_path, show):
+    root = tmp_path / "repo"
+    _git_repo(root)
+    (root / "scratch").mkdir()
+    (root / "scratch" / "new-design.md").write_text("draft\n")
+    if show is not None:
+        subprocess.run(["git", "-C", str(root), "config", "status.showUntrackedFiles", show], check=True)
+
+    assert _unstubbed_tree_state(root)[1] == "?? scratch/new-design.md\n"
+
+
+def test_a_tree_whose_index_cannot_be_read_is_refused_never_read_clean(tmp_path, capsys):
+    root = tmp_path / "repo"
+    _git_repo(root)
+    with open(root / ".git" / "index", "r+b") as index:
+        index.truncate(20)
+
+    with pytest.raises(typer.Exit) as refused:
+        _unstubbed_tree_state(root)
+
+    assert refused.value.exit_code == 1
+    assert "git status failed" in capsys.readouterr().err
+
+
+def test_a_directory_that_is_no_repository_is_refused(tmp_path, capsys):
+    (tmp_path / "plain").mkdir()
+
+    with pytest.raises(typer.Exit) as refused:
+        _unstubbed_tree_state(tmp_path / "plain")
+
+    assert refused.value.exit_code == 1
+    assert "is not a git checkout" in capsys.readouterr().err
+
+
+def test_a_register_run_from_an_unclean_tree_is_refused_before_the_fit_listing_the_paths(tmp_path, monkeypatch):
+    registry = tmp_path / "registry.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    calls = _stub_subject(monkeypatch)
+    dirt = " M cli/research/subjects.py\n?? docs/specs/00999-scratch-design.md\n"
+    monkeypatch.setattr(research_command, "_tree_state", lambda root: (_CLEAN_HEAD, dirt))
+
+    result = runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1)])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "cli/research/subjects.py" in result.output and "docs/specs/00999-scratch-design.md" in result.output
+    assert calls == []
+    assert not registry.exists()
+
+
+@pytest.mark.parametrize(
+    "after",
+    [pytest.param(("b" * 40, ""), id="head-moved"), pytest.param((_CLEAN_HEAD, "?? scratch.py\n"), id="tree-dirtied")],
+)
+def test_a_tree_that_changes_during_the_fit_is_refused_and_nothing_recorded(tmp_path, monkeypatch, after):
+    registry = tmp_path / "registry.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    calls = _stub_subject(monkeypatch)
+    states = iter([(_CLEAN_HEAD, ""), after])
+    monkeypatch.setattr(research_command, "_tree_state", lambda root: next(states))
+
+    result = runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1)])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "changed during the fit" in result.output
+    assert calls == ["ohlc-test"]
+    assert not registry.exists()
+
+
+def test_register_refuses_an_evaluate_only_subject_before_the_fit(tmp_path, monkeypatch):
+    registry = tmp_path / "registry.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    calls = _stub_subject(monkeypatch, verdict=None, no_verdict=None)
+
+    result = runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1)])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "declares no verdict rule" in result.output
+    assert calls == []
+    assert not registry.exists()
+
+
+@pytest.mark.parametrize("typed", [[], ["--verdict", "park"]], ids=["untyped", "typed-as-the-rule-gives"])
+def test_register_records_the_verdict_the_subjects_rule_gives(tmp_path, monkeypatch, typed):
+    registry = tmp_path / "registry.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    _stub_subject(monkeypatch, verdict=lambda metrics: "park")
+
+    result = runner.invoke(app, [*_stub_eval(), *typed, *_register_args(registry, n_trials=1)])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(registry.read_text())["verdict"] == "park"
+
+
+def test_a_typed_verdict_the_rule_does_not_give_is_refused(tmp_path, monkeypatch):
+    registry = tmp_path / "registry.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    _stub_subject(monkeypatch, verdict=lambda metrics: "park")
+
+    result = runner.invoke(app, [*_stub_eval(), "--verdict", "adopt", *_register_args(registry, n_trials=1)])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "--verdict adopt" in result.output and "park" in result.output
+    assert not registry.exists()
+
+
+def test_a_rule_that_stops_is_refused_naming_the_subjects_stop(tmp_path, monkeypatch):
+    registry = tmp_path / "registry.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    _stub_subject(monkeypatch, verdict=lambda metrics: None, no_verdict="the stub's own stop")
+
+    result = runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1)])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "no verdict: the stub's own stop" in result.output
+    assert not registry.exists()
+
+
+_STUB_SPEC_SHA256 = hashlib.sha256((_REPO / _STUB_SPEC).read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize("typed", [[], ["--spec-hash", _STUB_SPEC_SHA256]], ids=["untyped", "typed-as-computed"])
+def test_register_records_the_sha256_of_the_subjects_spec_and_its_declared_seeds(tmp_path, monkeypatch, typed):
+    registry = tmp_path / "registry.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    _stub_subject(monkeypatch, seeds=(11, 5))
+
+    result = runner.invoke(app, [*_stub_eval(), *typed, *_register_args(registry, n_trials=1)])
+
+    assert result.exit_code == 0, result.output
+    record = json.loads(registry.read_text())
+    assert record["spec_hash"] == _STUB_SPEC_SHA256
+    assert record["seeds"] == [11, 5]
+
+
+def test_a_typed_spec_hash_other_than_the_specs_is_refused_before_the_fit(tmp_path, monkeypatch):
+    registry = tmp_path / "registry.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    calls = _stub_subject(monkeypatch)
+
+    result = runner.invoke(app, [*_stub_eval(), "--spec-hash", "0" * 64, *_register_args(registry, n_trials=1)])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert _STUB_SPEC in result.output
+    assert calls == []
+    assert not registry.exists()
+
+
+def test_seed_is_no_option(tmp_path, monkeypatch):
+    _anchor(monkeypatch, _stub_dataset(tmp_path))
+    calls = _stub_subject(monkeypatch)
+
+    result = runner.invoke(app, [*_stub_eval(), "--seed", "1"])
+
+    assert result.exit_code == 2
+    assert "--seed" in result.output
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("returned", "declared"),
+    [
+        pytest.param({"sharpe": 1.0, "sortino": 2.0}, {"sharpe"}, id="one-key-more"),
+        pytest.param({"sharpe": 1.0}, {"sharpe", "sortino"}, id="one-key-fewer"),
+    ],
+)
+def test_register_refuses_a_build_whose_keys_are_not_the_declared_ones(tmp_path, monkeypatch, returned, declared):
+    registry = tmp_path / "registry.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    calls = _stub_subject(monkeypatch, metrics=returned, metric_keys=frozenset(declared))
+
+    result = runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1)])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "sortino" in result.output
+    assert calls == ["ohlc-test"]
+    assert not registry.exists()
+
+
+def _committed_copy(tmp_path: Path) -> Path:
+    """The committed registry copied, so a new trial's id lies above every legacy id a case names."""
+    registry = tmp_path / "registry.jsonl"
+    shutil.copyfile(_COMMITTED_REGISTRY, registry)
+    return registry
+
+
+def test_a_subject_with_an_incumbent_is_refused_without_a_comparator_trial(tmp_path, monkeypatch):
+    registry = _committed_copy(tmp_path)
+    before = registry.read_bytes()
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    calls = _stub_subject(monkeypatch, incumbent="record44-crossfreq")
+
+    result = runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1)])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "pass --comparator-trial" in result.output
+    assert calls == []
+    assert registry.read_bytes() == before
+
+
+def test_a_subject_without_an_incumbent_is_refused_a_comparator_trial(tmp_path, monkeypatch):
+    registry = _committed_copy(tmp_path)
+    before = registry.read_bytes()
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+
+    result = runner.invoke(
+        app,
+        ["research", "eval", "--subject", "b2-funding-derisk", "--dataset", "ohlc-test", "--comparator-trial", "44"]
+        + _register_args(registry, n_trials=1),
+    )
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "declares no incumbent" in result.output
+    assert registry.read_bytes() == before
+
+
+def test_a_legacy_record_the_incumbent_reproduces_is_recorded_as_the_comparator(tmp_path, monkeypatch):
+    registry = _committed_copy(tmp_path)
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    _stub_subject(monkeypatch, incumbent="record44-crossfreq")
+
+    result = runner.invoke(app, [*_stub_eval(), "--comparator-trial", "44", *_register_args(registry, n_trials=1)])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(registry.read_text().splitlines()[-1])["invocation"]["comparator_trial"] == 44
+
+
+@pytest.mark.parametrize("n", [33, 45], ids=["another-subjects-legacy-record", "a-legacy-record-no-subject-reproduces"])
+def test_a_legacy_record_the_incumbent_does_not_reproduce_is_refused_as_the_comparator(tmp_path, monkeypatch, n):
+    registry = _committed_copy(tmp_path)
+    before = registry.read_bytes()
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    calls = _stub_subject(monkeypatch, incumbent="record44-crossfreq")
+
+    result = runner.invoke(app, [*_stub_eval(), "--comparator-trial", str(n), *_register_args(registry, n_trials=1)])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert f"--comparator-trial {n}" in result.output
+    assert calls == []
+    assert registry.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("incumbent", "recorded"),
+    [pytest.param("stub", True, id="the-incumbents-trial"), pytest.param("record44-crossfreq", False, id="another-subjects-trial")],
+)
+def test_a_registered_trial_is_the_comparator_only_of_a_subject_naming_its_subject(tmp_path, monkeypatch, incumbent, recorded):
+    registry = _committed_copy(tmp_path)
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    _stub_subject(monkeypatch)
+    assert runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1)]).exit_code == 0
+    trial = json.loads(registry.read_text().splitlines()[-1])
+    assert trial["schema_version"] == 5 and trial["invocation"]["subject"] == "stub"
+    before = registry.read_text().splitlines()
+    _stub_subject(monkeypatch, "follower", incumbent=incumbent)
+
+    result = runner.invoke(
+        app, [*_stub_eval("follower"), "--comparator-trial", str(trial["trial_id"]), *_register_args(registry, n_trials=2)]
+    )
+
+    after = registry.read_text().splitlines()
+    if recorded:
+        assert result.exit_code == 0, result.output
+        assert after[: len(before)] == before and len(after) == len(before) + 1
+        assert json.loads(after[-1])["invocation"]["comparator_trial"] == trial["trial_id"]
+    else:
+        assert result.exit_code == 1
+        assert isinstance(result.exception, SystemExit)
+        assert after == before
 
 
 def test_a_dataset_missing_required_series_is_refused_naming_every_missing_file(tmp_path, monkeypatch):
@@ -253,9 +584,8 @@ def test_an_unknown_subject_is_refused_listing_the_known_ones(tmp_path, monkeypa
 
 
 def _block_and_metrics(output: str) -> dict:
-    """The JSON report the command prints after the human-readable lines."""
-    start = output.index("{")
-    return json.loads(output[start:])
+    """The JSON report the command prints after the human-readable lines, and before any refusal or stop."""
+    return json.JSONDecoder().raw_decode(output, output.index("{"))[0]
 
 
 # `record33-combined`'s committed headline keys, pinned here as literals: reading them back off the
@@ -323,7 +653,8 @@ def _rolling_subject(monkeypatch) -> list:
         return {"sharpe": 1.0}
 
     assets = CrossfreqSystemConfig().assets
-    monkeypatch.setitem(subjects.SUBJECTS, "rolling-stub", subjects.Subject("rolling-stub", (1440,), assets, build))
+    subject = subjects.Subject("rolling-stub", (1440,), assets, build, **_STUB_DECLARED)
+    monkeypatch.setitem(subjects.SUBJECTS, "rolling-stub", subject)
     return calls
 
 
@@ -670,9 +1001,9 @@ def _recording(monkeypatch, name: str, rewrite) -> list[tuple[dict, dict]]:
     return calls
 
 
-def _kill_bar_sentinels(cell, *, inverted: bool) -> dict:
+def _kill_bar_sentinels(cell, *, inverted: bool, arm_a_passes) -> dict:
     """Per-call sentinels for the eight keys the subject reads, so a float or a flag read off the wrong cell or key, a flag
-    read off another flag, or `passes` read off a flag or another cell fails the record's comparison: the flags are ints
+    read off another flag, or `passes` read off a flag or another cell fails the metrics' comparison: the flags are ints
     other than 0 and 1, which the subject's `int()` and the registry's leaf check carry through."""
     i = (*_B2_GRID, "A").index(cell)
     if cell == "A":
@@ -680,13 +1011,21 @@ def _kill_bar_sentinels(cell, *, inverted: bool) -> dict:
     else:
         floats = {"dsr": 0.11 + i / 100, "spa_p_value": 0.21 + i / 100, "spa_p_value_full": 0.31 + i / 100}
     # B's `passes` is true at the headline alone, or false there alone, so an `all` or an `any` over the grid moves it;
-    # arm A's is false, told from B's headline by the first parametrisation and from B's other cells by the second.
-    passes = cell != "A" and (cell == (30, 42)) != inverted
+    # arm A's is false in the first two parametrisations, told from B's headline by the first and from B's other cells by
+    # the second, so the rule stops on both; in the third it is the int 7, which no B cell carries.
+    passes = arm_a_passes if cell == "A" else (cell == (30, 42)) != inverted
     return floats | {"passes": passes} | {flag: 10 * (i + 1) + j for j, flag in enumerate(_B2_FLAGS)}
 
 
-@pytest.mark.parametrize("inverted", [False, True], ids=["passes-at-the-headline", "passes-off-the-headline"])
-def test_the_b2_subject_registers_each_metric_from_its_own_call(tmp_path, monkeypatch, inverted):
+@pytest.mark.parametrize(
+    ("inverted", "arm_a_passes"),
+    [
+        pytest.param(False, False, id="passes-at-the-headline"),
+        pytest.param(True, False, id="passes-off-the-headline"),
+        pytest.param(True, 7, id="arm-a-passes"),
+    ],
+)
+def test_the_b2_subject_registers_each_metric_from_its_own_call(tmp_path, monkeypatch, inverted, arm_a_passes):
     root = _b2_dataset(tmp_path)
     registry = tmp_path / "registry.jsonl"
     _anchor(monkeypatch, root, registry)
@@ -724,7 +1063,9 @@ def test_the_b2_subject_registers_each_metric_from_its_own_call(tmp_path, monkey
     def kill_bar(arguments, result):
         book = arguments["book_net_returns"]
         cell = "A" if book == net_a else (arguments["mean_block"], arguments["seed"]) if book == net_b else None
-        return result | _kill_bar_sentinels(cell, inverted=inverted) if cell in ("A", *_B2_GRID) else result
+        return (
+            result | _kill_bar_sentinels(cell, inverted=inverted, arm_a_passes=arm_a_passes) if cell in ("A", *_B2_GRID) else result
+        )
 
     def head_to_head(arguments, result):
         p = {len(net_b): 0.41, len(net_b) - k21: 0.42}.get(len(arguments["book_net_of_cost"]))
@@ -737,7 +1078,18 @@ def test_the_b2_subject_registers_each_metric_from_its_own_call(tmp_path, monkey
         ["research", "eval", "--subject", "b2-funding-derisk", "--dataset", "ohlc-test", "--window", *window]
         + _register_args(registry, n_trials=1),
     )
-    assert result.exit_code == 0, result.output
+    if arm_a_passes:
+        assert result.exit_code == 0, result.output
+        reported = json.loads(registry.read_text())
+        assert reported["verdict"] == "reject"
+        assert reported["seeds"] == [42, 7, 1234]
+        assert reported["metrics"]["arm_a_passes"] == 7
+    else:
+        assert result.exit_code == 1
+        assert isinstance(result.exception, SystemExit)
+        assert f"no verdict: {subjects.SUBJECTS['b2-funding-derisk'].no_verdict}" in result.output
+        assert not registry.exists()
+        reported = _block_and_metrics(result.output)
 
     bar = {
         "n_trials": 1,
@@ -813,11 +1165,10 @@ def test_the_b2_subject_registers_each_metric_from_its_own_call(tmp_path, monkey
             for a in _B2_ASSETS
         },
     }
-    record = json.loads(registry.read_text())
-    assert set(record["metrics"]) == _B2_METRIC_KEYS
-    assert record["metrics"] == expected
-    assert set(record["datasets"]["derivatives-funding"]["files"]) == {f"{PERP_SYMBOLS[a]}/funding.parquet" for a in _B2_ASSETS}
-    ohlc = record["datasets"]["ohlc-test"]
+    assert set(reported["metrics"]) == _B2_METRIC_KEYS
+    assert reported["metrics"] == expected
+    assert set(reported["datasets"]["derivatives-funding"]["files"]) == {f"{PERP_SYMBOLS[a]}/funding.parquet" for a in _B2_ASSETS}
+    ohlc = reported["datasets"]["ohlc-test"]
     assert ohlc["rows"] == len(_B2_ASSETS) * _B2_WINDOW_BARS < len(_B2_ASSETS) * _B2_BARS
     assert ohlc["span"] == [str(ts[0]), str(ts[-1])]
 
