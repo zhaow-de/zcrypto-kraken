@@ -743,7 +743,10 @@ def test_a_record_past_the_floors_must_declare_schema_five(tmp_path):
     v3["schema_version"] = 3
     v3["dataset_hash"] = "ba47e37e2601d6098fd13c0e338a5301e8eeebb16bb4341c76a68147c7b08e42"  # spec 00086 D4's own example
     forged = canonical_json(dict(v3, record_hash=compute_hash(v3)))
-    with pytest.raises(RegistryCorruptionError, match="schema_version"):
+    with pytest.raises(
+        RegistryCorruptionError,
+        match=f"trial {next_id} declares schema_version 3; every record past trial 46 must be schema_version 4",
+    ):
         TrialRegistry(_write(tmp_path, [*real, forged]))
 
 
