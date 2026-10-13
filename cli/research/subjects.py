@@ -79,15 +79,24 @@ def _capturing_union(
 ):
     """The bare relative root makes each path `load_union` composes `<BASE>/<QUOTE>/<interval>.parquet`: a frozen
     dataset's relative key, or, read as of a day, the rolling dataset's pair and grid."""
-    if as_of is None:
-        return load_union(interval, root=Path(), read=lambda path: reader.read_series(dataset, path.as_posix(), window=window))
-    return load_union(
-        interval,
-        root=Path(),
-        read=lambda path: reader.read_rolling(
-            dataset, "/".join(path.parts[:2]), int(path.stem), as_of, window=window, accept_holes=accept_holes
-        ),
-    )
+
+    def read(path: Path) -> pl.DataFrame:
+        try:
+            if as_of is None:
+                frame = reader.read_series(dataset, path.as_posix(), window=window)
+            else:
+                frame = reader.read_rolling(
+                    dataset, "/".join(path.parts[:2]), int(path.stem), as_of, window=window, accept_holes=accept_holes
+                )
+        except pl.exceptions.PolarsError as exc:
+            raise SubjectError(f"{dataset}/{path.as_posix()}: {exc}") from exc
+        # `load_union` indexes both columns outside this read, where a missing one would no longer name its file.
+        missing = sorted({"ts", "close"} - set(frame.columns))
+        if missing:
+            raise SubjectError(f"{dataset}/{path.as_posix()}: no {' or '.join(missing)} column")
+        return frame
+
+    return load_union(interval, root=Path(), read=read)
 
 
 def _build_crossfreq(

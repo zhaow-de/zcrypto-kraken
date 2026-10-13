@@ -784,6 +784,26 @@ def test_the_b2_subject_refuses_a_funding_file_it_may_not_open_naming_it(tmp_pat
 
 
 @pytest.mark.parametrize(
+    ("spoil", "cause"),
+    [
+        pytest.param(lambda path: path.write_bytes(b"not a parquet file"), "File out of specification", id="not-parquet"),
+        pytest.param(lambda path: pl.read_parquet(path).drop("close").write_parquet(path), "no close column", id="no-close-column"),
+    ],
+)
+def test_a_price_file_the_union_cannot_read_is_refused_naming_it(tmp_path, monkeypatch, spoil, cause):
+    root = _b2_dataset(tmp_path)
+    spoil(root / "ohlc-test" / "ETH/EUR/240.parquet")
+    _anchor(monkeypatch, root)
+
+    result = runner.invoke(app, _b2_eval(_B2_START, _B2_WINDOW_BARS))
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit), "a refusal ends in an exit, never a traceback"
+    assert "ohlc-test/ETH/EUR/240.parquet" in result.output
+    assert cause in result.output
+
+
+@pytest.mark.parametrize(
     ("start", "bars", "flat", "cause"),
     [
         pytest.param(
