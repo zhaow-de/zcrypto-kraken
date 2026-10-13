@@ -1,6 +1,7 @@
 import math
 import re
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -156,6 +157,12 @@ def test_derisk_scales_refuses_a_config_other_than_b2config():
         derisk_scales({"BTC": [2.5]}, config=None)
 
 
+def test_funding_grid_feature_refuses_a_config_other_than_b2config():
+    unvalidated = SimpleNamespace(z_threshold=2.0, derisk_scale=0.5, z_window=3)
+    with pytest.raises(AlphaError, match="B2Config"):
+        funding_grid_feature(_PRINTS, RATES, [8] * len(RATES), _UNION, config=unvalidated)
+
+
 def test_scale_positions_pairs_each_assets_scales_by_key_not_by_order():
     positions = {"BTC": [0.4, 0.2, 0.1], "ETH": [0.3, 0.6, 0.5]}
     scales = {"ETH": [1.0, 0.5, 0.5], "BTC": [0.5, 1.0, 1.0]}
@@ -170,7 +177,6 @@ def test_net_of_cost_charges_the_de_risk_and_the_re_risk_and_reads_a_none_return
     net_b = net_of_cost(arm_b, returns, cost_per_side=0.006)
     # Index 0 opens both legs from flat: 0.5 * 0.02 + 0.2 * 0.01 - 0.006 * (0.5 + 0.2).
     assert net_a == pytest.approx([0.0078, -0.005, 0.016, 0.006])
-    # BTC halved at index 2: 0.5 * 0.5 * 0.04 off that gross, 0.006 * 0.25 charged there and at the re-risk.
     assert net_b == pytest.approx([0.0078, -0.005, 0.0045, 0.0045])
     assert sum(net_a) - sum(net_b) == pytest.approx(0.5 * 0.5 * 0.04 + 0.006 * 0.5)
 
