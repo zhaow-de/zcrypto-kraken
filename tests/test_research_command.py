@@ -565,23 +565,18 @@ def _recording(monkeypatch, name: str, rewrite) -> list[tuple[dict, dict]]:
 
 
 def _kill_bar_sentinels(cell, *, inverted: bool) -> dict:
-    """The eight keys the subject reads, per call: floats distinct across the cells and the keys, `passes` true at the
-    headline cell alone and the four flags false there alone -- or, inverted, both patterns flipped; arm A's call is the
-    headline's opposite."""
+    """Per-call sentinels for the eight keys the subject reads, so a float or a flag read off the wrong cell or key, a flag
+    read off another flag, or `passes` read off a flag or another cell fails the record's comparison: the flags are ints
+    other than 0 and 1, which the subject's `int()` and the registry's leaf check carry through."""
+    i = (*_B2_GRID, "A").index(cell)
     if cell == "A":
-        headline = _kill_bar_sentinels((30, 42), inverted=inverted)
-        return {"dsr": 0.91, "spa_p_value": 0.81, "spa_p_value_full": 0.71} | {
-            key: not headline[key] for key in ("passes", *_B2_FLAGS)
-        }
-    i = _B2_GRID.index(cell)
-    at_headline = cell == (30, 42)
-    return {
-        "dsr": 0.11 + i / 100,
-        "spa_p_value": 0.21 + i / 100,
-        "spa_p_value_full": 0.31 + i / 100,
-        "passes": at_headline != inverted,
-        **dict.fromkeys(_B2_FLAGS, at_headline == inverted),
-    }
+        floats = {"dsr": 0.91, "spa_p_value": 0.81, "spa_p_value_full": 0.71}
+    else:
+        floats = {"dsr": 0.11 + i / 100, "spa_p_value": 0.21 + i / 100, "spa_p_value_full": 0.31 + i / 100}
+    # B's `passes` is true at the headline alone, or false there alone, so an `all` or an `any` over the grid moves it;
+    # arm A's is false, told from B's headline by the first parametrisation and from B's other cells by the second.
+    passes = cell != "A" and (cell == (30, 42)) != inverted
+    return floats | {"passes": passes} | {flag: 10 * (i + 1) + j for j, flag in enumerate(_B2_FLAGS)}
 
 
 @pytest.mark.parametrize("inverted", [False, True], ids=["passes-at-the-headline", "passes-off-the-headline"])
