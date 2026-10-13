@@ -28,16 +28,22 @@ from cli.alpha.b2 import (
     per_year_turnover,
     scale_positions,
 )
+from cli.alpha.errors import AlphaError
+from cli.backtest.errors import BacktestError
+from cli.benchmark.errors import BenchmarkError
 from cli.derivatives.funding import PERP_SYMBOLS
 from cli.features.derivatives import coverage_by_year
+from cli.features.errors import FeatureError
 from cli.ohlc.dataset import to_frame, write_parquet
 from cli.portfolio.crossfreq_system import CrossfreqSystemConfig, _ffill_btc
+from cli.portfolio.errors import PortfolioError
 from cli.portfolio.record44_legs import benchmark_4h_net_of_cost, calendar_year_slices
 from cli.registry.observed import ObservedReader
 from cli.registry.record import compute_hash
 from cli.research import command as research_command
 from cli.research import subjects
-from cli.validation import max_drawdown, sharpe
+from cli.risk.errors import RiskError
+from cli.validation import ValidationError, max_drawdown, sharpe
 from tests.rolling_fixtures import HOLE, write_chain
 
 runner = CliRunner()
@@ -901,3 +907,198 @@ def test_the_b2_subject_refuses_a_window_its_benchmark_never_trades_naming_it(tm
     assert result.exit_code == 1
     assert isinstance(result.exception, SystemExit), "a refusal ends in an exit, never a traceback"
     assert f"b2-funding-derisk over the window {args[-2]} .. {args[-1]}: no non-degenerate slice to compare" in result.output
+
+
+def _declared_series(tmp_path: Path, subject: subjects.Subject) -> tuple[Path, datetime]:
+    root = tmp_path / "data"
+    for i, asset in enumerate(subject.assets):
+        for interval in subject.intervals:
+            relpath = f"{asset}/EUR/{interval}.parquet"
+            _write_series(root, "ohlc-test", relpath, 600 * 1440 // interval, phase=i * 0.7, step=60 * interval)
+    return root, datetime.fromtimestamp(_EPOCH_2020, UTC)
+
+
+# A subject whose build reads a dataset it does not declare brings its own fixture here; any other is fed its declared series.
+_CONTRACT_DATASETS = {"b2-funding-derisk": lambda tmp_path, subject: (_b2_dataset(tmp_path), _B2_START)}
+
+
+def _a_close_zeroed(path: Path) -> None:
+    frame = pl.read_parquet(path)
+    closes = frame["close"].to_list()
+    closes[len(closes) // 2] = 0.0
+    frame.with_columns(close=pl.Series(closes, dtype=frame.schema["close"])).write_parquet(path)
+
+
+def _no_close(path: Path) -> None:
+    frame = pl.read_parquet(path)
+    frame.with_columns(close=pl.lit(None, dtype=frame.schema["close"])).write_parquet(path)
+
+
+def _first_bar_dropped(path: Path) -> None:
+    pl.read_parquet(path).slice(1).write_parquet(path)
+
+
+# Each spoils the named asset's file at one declared interval per row, so a guard holding one grid and not another fails.
+_CONTRACT_SPOILS = {
+    "a-zero-close": ("ETH", _a_close_zeroed),
+    "an-asset-never-closes": ("ETH", _no_close),
+    "btc-absent-at-the-first-stamp": ("BTC", _first_bar_dropped),
+}
+_CONTRACT_WINDOWS = ("1-bar-window", "2-bar-window", "5-bar-window")
+
+
+def _contract_rows() -> list:
+    rows = []
+    for name in sorted(subjects.SUBJECTS):
+        rows += [pytest.param(name, case, None, id=f"{name}-{case}") for case in ("evaluates", *_CONTRACT_WINDOWS)]
+        rows += [
+            pytest.param(name, case, interval, id=f"{name}-{case}-on-{interval}")
+            for interval in subjects.SUBJECTS[name].intervals
+            for case in _CONTRACT_SPOILS
+        ]
+    return rows
+
+
+@pytest.mark.parametrize(("name", "case", "interval"), _contract_rows())
+def test_every_subject_evaluates_its_fixture_and_ends_an_input_it_cannot_evaluate_in_an_exit(
+    tmp_path, monkeypatch, name, case, interval
+):
+    subject = subjects.SUBJECTS[name]
+    root, start = _CONTRACT_DATASETS.get(name, _declared_series)(tmp_path, subject)
+    _anchor(monkeypatch, root)
+    args = ["research", "eval", "--subject", name, "--dataset", "ohlc-test"]
+    spoilt = None
+    if case in _CONTRACT_WINDOWS:
+        end = start + timedelta(minutes=max(subject.intervals) * (int(case.split("-")[0]) - 1))
+        args += ["--window", str(start), str(end)]
+    elif case in _CONTRACT_SPOILS:
+        asset, spoil = _CONTRACT_SPOILS[case]
+        spoilt = f"ohlc-test/{asset}/EUR/{interval}.parquet"
+        spoil(root / spoilt)
+
+    result = runner.invoke(app, args)
+
+    assert result.exception is None or isinstance(result.exception, SystemExit), "a refusal ends in an exit, never a traceback"
+    if case == "evaluates":
+        assert result.exit_code == 0, result.output
+        assert _block_and_metrics(result.output)["metrics"]
+    elif case in _CONTRACT_WINDOWS:
+        assert result.exit_code == 1
+        assert f"{name} over the window {args[-2]} .. {args[-1]}" in result.output
+    elif case == "a-zero-close":
+        assert result.exit_code == 1
+        assert f"{name} over the full history" in result.output
+    elif result.exit_code == 1:
+        # A subject may evaluate an asset that never closes or a late first BTC bar; one that refuses names where.
+        assert f"{name} over the full history" in result.output or spoilt in result.output
+
+
+def _record44_frozen(tmp_path: Path, asset: str, spoil) -> tuple[Path, list[str]]:
+    root, _ = _declared_series(tmp_path, subjects.SUBJECTS["record44-crossfreq"])
+    spoil(root / "ohlc-test" / f"{asset}/EUR/1440.parquet")
+    return root, ["--dataset", "ohlc-test"]
+
+
+_ROLLING_FIRST_DAY = ["--window", "2026-10-01 00:00:00+00:00", "2026-10-03 20:00:00+00:00"]
+
+
+@pytest.mark.parametrize(
+    ("dataset", "message"),
+    [
+        pytest.param(
+            lambda tmp_path: _record44_frozen(tmp_path, "ETH", _no_close),
+            "ohlc-test/ETH/EUR/1440.parquet: no close in the window read",
+            id="frozen-eth-never-closes",
+        ),
+        pytest.param(
+            lambda tmp_path: _record44_frozen(tmp_path, "BTC", _first_bar_dropped),
+            "ohlc-test/BTC/EUR/1440.parquet: no close at 2020-01-01 00:00:00+00:00, the first daily stamp of the window read",
+            id="frozen-btc-absent-at-the-first-daily-stamp",
+        ),
+        pytest.param(
+            lambda tmp_path: (
+                _rolling_set(tmp_path, bar=lambda pair, day: {"close": None} if pair == "ETH/EUR" else {}),
+                ["--dataset", "ohlc-rolling", "--as-of", "2026-10-03"],
+            ),
+            "ohlc-rolling ETH/EUR at 1440 minutes as of 2026-10-03: no close in the window read",
+            id="rolling-eth-never-closes",
+        ),
+        pytest.param(
+            lambda tmp_path: (
+                _rolling_set(tmp_path, holes={date(2026, 10, 1): {"BTC/EUR"}}),
+                ["--dataset", "ohlc-rolling", "--as-of", "2026-10-03", "--accept-holes", *_ROLLING_FIRST_DAY],
+            ),
+            "ohlc-rolling BTC/EUR at 1440 minutes as of 2026-10-03: no close at 2026-10-01 00:00:00+00:00, the first daily "
+            "stamp of the window read",
+            id="rolling-btc-absent-at-the-first-daily-stamp",
+        ),
+    ],
+)
+def test_record44_refuses_a_grid_it_cannot_feed_naming_the_file_or_the_rolling_pair_and_grid(
+    tmp_path, monkeypatch, dataset, message
+):
+    root, args = dataset(tmp_path)
+    _anchor(monkeypatch, root)
+
+    result = runner.invoke(app, ["research", "eval", "--subject", "record44-crossfreq", *args])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit), "a refusal ends in an exit, never a traceback"
+    assert message in result.output
+
+
+# Listed here, never read off `subjects.EVALUATION_ERRORS`: a class dropped from the tuple must fail a row, not lose it.
+_COMPUTE_ERRORS = (AlphaError, BacktestError, BenchmarkError, FeatureError, PortfolioError, RiskError, ValidationError)
+
+
+def _raising_subject(monkeypatch, error: type[Exception]) -> str:
+    """Installs `raising-stub`, whose build raises `error`, over `_stub_dataset`'s one series; returns the raise site."""
+
+    def build(reader, dataset, window, as_of=None, accept_holes=False):
+        raise error("the stub's cause")
+
+    monkeypatch.setitem(subjects.SUBJECTS, "raising-stub", subjects.Subject("raising-stub", (1440,), ("BTC",), build))
+    return f"tests/test_research_command.py:{build.__code__.co_firstlineno + 1}"
+
+
+@pytest.mark.parametrize("error", _COMPUTE_ERRORS, ids=lambda error: error.__name__)
+def test_a_compute_package_error_ends_in_an_exit_naming_subject_window_dataset_class_and_raise_site(tmp_path, monkeypatch, error):
+    _anchor(monkeypatch, _stub_dataset(tmp_path))
+    site = _raising_subject(monkeypatch, error)
+    start, end = "2020-01-02 00:00:00+00:00", "2020-01-05 00:00:00+00:00"
+
+    result = runner.invoke(app, ["research", "eval", "--subject", "raising-stub", "--dataset", "ohlc-test", "--window", start, end])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit), "a refusal ends in an exit, never a traceback"
+    cause = f"the stub's cause ({error.__name__} raised at {site})"
+    assert f"raising-stub over the window {start} .. {end} of ohlc-test: {cause}" in result.output
+
+
+@pytest.mark.parametrize(
+    ("dataset", "flags", "where"),
+    [
+        pytest.param("ohlc-test", [], "the full history of ohlc-test", id="frozen-full-history"),
+        pytest.param("ohlc-rolling", ["--as-of", "2026-10-02"], "the full history of ohlc-rolling as of 2026-10-02", id="as-of"),
+    ],
+)
+def test_a_compute_package_error_names_the_full_history_and_the_as_of_day(tmp_path, monkeypatch, dataset, flags, where):
+    _rolling_set(tmp_path)
+    _anchor(monkeypatch, _stub_dataset(tmp_path))
+    site = _raising_subject(monkeypatch, ValidationError)
+
+    result = runner.invoke(app, ["research", "eval", "--subject", "raising-stub", "--dataset", dataset, *flags])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit), "a refusal ends in an exit, never a traceback"
+    assert f"raising-stub over {where}: the stub's cause (ValidationError raised at {site})" in result.output
+
+
+def test_a_plain_python_exception_in_a_build_escapes_as_itself(tmp_path, monkeypatch):
+    _anchor(monkeypatch, _stub_dataset(tmp_path))
+    _raising_subject(monkeypatch, ValueError)
+
+    result = runner.invoke(app, ["research", "eval", "--subject", "raising-stub", "--dataset", "ohlc-test"])
+
+    assert type(result.exception) is ValueError, "a plain Python exception is a fault in the code, never a refusal"
+    assert str(result.exception) == "the stub's cause"
