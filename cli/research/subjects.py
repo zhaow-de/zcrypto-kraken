@@ -60,8 +60,8 @@ class SubjectError(Exception):
     1 on it, never a traceback."""
 
 
-# The error class of every compute package a subject's build calls into; a build calling into another adds its class
-# here and to `_COMPUTE_ERRORS` in tests/test_research_command.py.
+# The class of every error a subject's build can raise from a compute package; one more is added here and to
+# `_COMPUTE_ERRORS` in tests/test_research_command.py.
 EVALUATION_ERRORS = (AlphaError, BacktestError, BenchmarkError, FeatureError, PortfolioError, RiskError, ValidationError)
 
 
