@@ -1,8 +1,8 @@
 """The evaluable subjects: committed systems, each reproducing a registry record or registering a trial.
 
 A subject declares its `--dataset` series, so the command can refuse an incomplete dataset before any read; a second
-dataset its `build` reads goes undeclared, and a file of it that is absent fails the run at that read, inside the build.
-Every byte a `build` reads goes through `ObservedReader`."""
+dataset its `build` reads goes undeclared, and a file of it the build cannot read refuses the run at that read, naming
+the file. Every byte a `build` reads goes through `ObservedReader`."""
 
 from __future__ import annotations
 
@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import NamedTuple
+
+import polars as pl
 
 from cli.alpha import A2Config, a2_book_returns
 from cli.alpha.a1 import _asset_returns
@@ -28,9 +30,12 @@ from cli.alpha.b2 import (
     per_year_turnover,
     scale_positions,
 )
+from cli.alpha.errors import AlphaError
 from cli.alpha.killbar import a1_kill_bar, net_of_cost_verdict
+from cli.backtest.errors import BacktestError
 from cli.derivatives.funding import PERP_SYMBOLS
 from cli.features.derivatives import coverage_by_year
+from cli.features.errors import FeatureError
 from cli.portfolio.builder import build_combined_system
 from cli.portfolio.crossfreq_system import (
     _A2_LOOKBACK,
@@ -41,10 +46,15 @@ from cli.portfolio.crossfreq_system import (
 )
 from cli.portfolio.record44_legs import benchmark_4h_net_of_cost, calendar_year_slices, load_union
 from cli.registry.observed import ObservedReader
-from cli.validation import max_drawdown, sharpe
+from cli.validation import ValidationError, max_drawdown, sharpe
 
 PPY_DAILY = 365
 PPY_4H = 2190
+
+
+class SubjectError(Exception):
+    """A subject's refusal of an input it cannot evaluate, its message naming the file or the window: the command exits 1
+    on it, never a traceback."""
 
 
 @dataclass(frozen=True)
@@ -146,14 +156,19 @@ def _b2_inputs(
     """Arm A's positions, the funding feature and the scales, and no return of arm B: the pre-run engagement read runs on
     this half alone (docs/specs/00128 D6)."""
     h4_ts, h4_prices = _capturing_union(reader, dataset, 240, window, as_of, accept_holes)
+    _b2_refuse_window(h4_ts, window)
     config = B2Config()
     feature = {}
     for asset in _ASSETS:
-        # Read whole, never windowed: the z-score warms on the prints before the window opens.
-        prints = reader.read_series("derivatives-funding", f"{PERP_SYMBOLS[asset]}/funding.parquet")
-        feature[asset] = funding_grid_feature(
-            prints["ts"].to_list(), prints["funding_rate"].to_list(), prints["interval_hours"].to_list(), h4_ts, config=config
-        )
+        relpath = f"{PERP_SYMBOLS[asset]}/funding.parquet"
+        try:
+            # Read whole, never windowed: the z-score warms on the prints before the window opens.
+            prints = reader.read_series("derivatives-funding", relpath)
+            feature[asset] = funding_grid_feature(
+                prints["ts"].to_list(), prints["funding_rate"].to_list(), prints["interval_hours"].to_list(), h4_ts, config=config
+            )
+        except (pl.exceptions.PolarsError, AlphaError, FeatureError) as exc:
+            raise SubjectError(f"derivatives-funding/{relpath}: {exc}") from exc
     fed = _ffill_btc(h4_prices)
     arms = [
         a2_book_returns(
@@ -183,8 +198,34 @@ def _b2_slices(series: list[float], h4_ts: list[datetime]) -> dict[str, list[flo
     return {year: s for year, s in calendar_year_slices(series, h4_ts).items() if year != "2020"}
 
 
+def _b2_over(window: tuple[str, str] | None) -> str:
+    return "b2-funding-derisk over " + ("the full history" if window is None else f"the window {window[0]} .. {window[1]}")
+
+
+def _b2_refuse_window(h4_ts: list[datetime], window: tuple[str, str] | None) -> None:
+    """The refusals `a1_kill_bar` and `net_of_cost_verdict` make of a window too short for them or lying in partial years,
+    raised before the arms are built so that the message names the window."""
+    close = close_grid(h4_ts)
+    from_2021 = sum(t >= _FROM_2021 for t in close)
+    if len(close) < _DECISIVE_START + 2:
+        raise SubjectError(
+            f"{_b2_over(window)}: it holds {len(close)} return indices, and the kill bar's decisive window opens at index "
+            f"{_DECISIVE_START} and needs 2"
+        )
+    if from_2021 < 2:
+        raise SubjectError(
+            f"{_b2_over(window)}: {from_2021} of its return indices close at or after 2021-01-01T00:00Z, and the from-2021 "
+            "head-to-head needs 2"
+        )
+    if not _b2_slices([0.0] * len(close), h4_ts):
+        raise SubjectError(
+            f"{_b2_over(window)}: none of its return indices closes in a calendar year the worst-slice leg reads, partial "
+            "years left out"
+        )
+
+
 def _b2_arm_a_bar(inputs: _B2Inputs) -> dict:
-    """Arm A's headline bar, an instrument check run only after the spec's sha256 is taken (docs/specs/00128 D6)."""
+    """Arm A's headline bar, the instrument check of docs/specs/00128 D6."""
     cost = CrossfreqSystemConfig().cost_per_side
     returns = _b2_returns(inputs.h4_prices)
     net_a = net_of_cost(inputs.arm_a, returns, cost_per_side=cost)
@@ -213,7 +254,15 @@ def _build_b2_funding_derisk(
     accept_holes: bool = False,
 ) -> dict:
     """Reads nothing past `_b2_inputs`, whose block the basis test pins as the trial's."""
-    inputs = _b2_inputs(reader, dataset, window, as_of, accept_holes)
+    try:
+        return _b2_metrics(_b2_inputs(reader, dataset, window, as_of, accept_holes))
+    except (AlphaError, BacktestError, ValidationError) as exc:
+        # A file's errors are named in `_b2_inputs`; what arrives here is a series the window leaves flat, or arm A never
+        # drawing down.
+        raise SubjectError(f"{_b2_over(window)}: {exc}") from exc
+
+
+def _b2_metrics(inputs: _B2Inputs) -> dict:
     arm_a, scales, close = inputs.arm_a, inputs.scales, inputs.close
     arm_b = scale_positions(arm_a, scales)
     cost = CrossfreqSystemConfig().cost_per_side
@@ -223,6 +272,11 @@ def _build_b2_funding_derisk(
     net_b_x15 = net_of_cost(arm_b, returns, cost_per_side=1.5 * cost)
     bench = benchmark_4h_net_of_cost(inputs.h4_prices, cost_per_side=cost)
     slices_b, slices_bench = _b2_slices(net_b, inputs.h4_ts), _b2_slices(bench, inputs.h4_ts)
+    k21 = next((k for k, t in enumerate(close) if t >= _FROM_2021), len(close))
+    drawdown_b = max_drawdown(net_b[k21:])
+    drawdown_a = max_drawdown(net_a[k21:])
+    if drawdown_a == 0:
+        raise ValidationError("arm A never draws down from 2021-01-01T00:00Z, so max_drawdown_reduction_pct divides by zero")
     grid = {
         (block, seed): a1_kill_bar(
             net_b,
@@ -241,14 +295,11 @@ def _build_b2_funding_derisk(
         for seed in (42, 7, 1234)
     }
     headline = grid[(30, 42)]
-    k21 = next((k for k, t in enumerate(close) if t >= _FROM_2021), len(close))
     head_to_head = {}
     for label, start in (("full", 0), ("2021", k21)):
         verdict = net_of_cost_verdict(net_b[start:], net_a[start:], mean_block=30, seed=42, n_resamples=_N_RESAMPLES)
         head_to_head[f"head_to_head_mean_outperf_{label}"] = verdict["mean_outperformance"]
         head_to_head[f"head_to_head_spa_p_{label}"] = verdict["spa_p_value"]
-    drawdown_b = max_drawdown(net_b[k21:])
-    drawdown_a = max_drawdown(net_a[k21:])
     positions_differ = per_year_positions_differ(arm_a, arm_b, close)
     return {
         "ann_sharpe_noc": sharpe(net_b, periods_per_year=PPY_4H),

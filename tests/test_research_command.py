@@ -516,20 +516,21 @@ _B2_SPIKE_PRINTS = 6
 _B2_NEVER_SPIKES = "XRP"
 
 
-def _b2_ohlc_rows(phase: float) -> list[list]:
+def _b2_ohlc_rows(phase: float, start: datetime, flat: bool) -> list[list]:
     rows = []
-    for i, row in enumerate(_rows(_B2_BARS, phase=phase, start=int(_B2_START.timestamp()), step=4 * 3600)):
+    for i, row in enumerate(_rows(_B2_BARS, phase=phase, start=int(start.timestamp()), step=4 * 3600)):
         factor = math.prod(1 - depth * min(max((i - first) / bars, 0.0), 1.0) for first, bars, depth in _B2_FALLS)
-        rows.append([row[0], *(f"{float(v) * factor}" for v in row[1:6]), *row[6:]])
+        prices = ("100.0", "101.0", "99.0", "100.0", "100.0") if flat else (f"{float(v) * factor}" for v in row[1:6])
+        rows.append([row[0], *prices, *row[6:]])
     return rows
 
 
-def _b2_dataset(tmp_path: Path) -> Path:
-    """The ten 4h series and a `derivatives-funding` set whose 8h prints open 47 days before the first bar; every perp but
+def _b2_dataset(tmp_path: Path, *, start: datetime = _B2_START, flat: bool = False) -> Path:
+    """The ten 4h series and a `derivatives-funding` set whose 8h prints open 47 days before `_B2_START`; every perp but
     one spikes inside the second fall, each from its own print, so the overlay de-risks each asset at its own stamps."""
     root = tmp_path / "data"
     for i, asset in enumerate(_B2_ASSETS):
-        write_parquet(to_frame(_b2_ohlc_rows(i * 0.7)), root / "ohlc-test" / f"{asset}/EUR/240.parquet")
+        write_parquet(to_frame(_b2_ohlc_rows(i * 0.7, start, flat)), root / "ohlc-test" / f"{asset}/EUR/240.parquet")
     stamps = [_B2_FUNDING_FROM + timedelta(hours=8 * j) for j in range(_B2_PRINTS)]
     second_fall = _B2_START + timedelta(hours=4 * _B2_FALLS[1][0])
     for i, asset in enumerate(_B2_ASSETS):
@@ -718,3 +719,129 @@ def test_the_b2_subject_registers_each_metric_from_its_own_call(tmp_path, monkey
     ohlc = record["datasets"]["ohlc-test"]
     assert ohlc["rows"] == len(_B2_ASSETS) * _B2_WINDOW_BARS < len(_B2_ASSETS) * _B2_BARS
     assert ohlc["span"] == [str(ts[0]), str(ts[-1])]
+
+
+_B2_SPOILT = PERP_SYMBOLS["SOL"]
+# From here 1,469 return indices close before 2021-01-01.
+_B2_FROM_MAY_2020 = datetime(2020, 5, 1, tzinfo=UTC)
+_B2_IN_2026 = datetime(2026, 1, 1, tzinfo=UTC)
+
+
+def _b2_eval(start: datetime, bars: int) -> list[str]:
+    end = start + timedelta(hours=4 * (bars - 1))
+    return ["research", "eval", "--subject", "b2-funding-derisk", "--dataset", "ohlc-test", "--window", str(start), str(end)]
+
+
+def _a_print_61s_late(path: Path) -> None:
+    frame = pl.read_parquet(path)
+    stamps = frame["ts"].to_list()
+    stamps[5] += timedelta(seconds=61)
+    frame.with_columns(ts=pl.Series(stamps, dtype=frame.schema["ts"])).write_parquet(path)
+
+
+@pytest.mark.parametrize(
+    ("spoil", "cause"),
+    [
+        pytest.param(Path.unlink, "No such file or directory", id="missing"),
+        pytest.param(lambda path: path.write_bytes(b"not a parquet file"), "File out of specification", id="not-parquet"),
+        pytest.param(
+            lambda path: pl.read_parquet(path).drop("funding_rate").write_parquet(path),
+            '"funding_rate" not found',
+            id="no-rate-column",
+        ),
+        pytest.param(lambda path: pl.read_parquet(path).clear().write_parquet(path), "zero rows", id="empty"),
+        pytest.param(_a_print_61s_late, "beyond the 60 s settlement tolerance", id="a-print-61s-past-its-hour"),
+        pytest.param(
+            lambda path: pl.read_parquet(path).with_columns(funding_rate=math.nan).write_parquet(path),
+            "must be finite numbers or None",
+            id="non-finite-rates",
+        ),
+    ],
+)
+def test_the_b2_subject_refuses_a_funding_file_it_cannot_read_naming_it(tmp_path, monkeypatch, spoil, cause):
+    root = _b2_dataset(tmp_path)
+    spoil(root / "derivatives-funding" / _B2_SPOILT / "funding.parquet")
+    _anchor(monkeypatch, root)
+
+    result = runner.invoke(app, _b2_eval(_B2_START, _B2_WINDOW_BARS))
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit), "a refusal ends in an exit, never a traceback"
+    assert f"derivatives-funding/{_B2_SPOILT}/funding.parquet" in result.output
+    assert cause in result.output
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses file permissions")
+def test_the_b2_subject_refuses_a_funding_file_it_may_not_open_naming_it(tmp_path, monkeypatch):
+    root = _b2_dataset(tmp_path)
+    spoilt = root / "derivatives-funding" / _B2_SPOILT / "funding.parquet"
+    _anchor(monkeypatch, root)
+    os.chmod(spoilt, 0o000)
+    try:
+        result = runner.invoke(app, _b2_eval(_B2_START, _B2_WINDOW_BARS))
+    finally:
+        os.chmod(spoilt, 0o644)
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit), "a refusal ends in an exit, never a traceback"
+    assert f"derivatives-funding/{_B2_SPOILT}/funding.parquet" in result.output
+    assert "Permission denied" in result.output
+
+
+@pytest.mark.parametrize(
+    ("start", "bars", "flat", "cause"),
+    [
+        pytest.param(
+            _B2_START,
+            1_382,
+            False,
+            "it holds 1381 return indices, and the kill bar's decisive window opens at index 1380 and needs 2",
+            id="one-index-short",
+        ),
+        pytest.param(
+            _B2_FROM_MAY_2020,
+            1_471,
+            False,
+            "1 of its return indices close at or after 2021-01-01T00:00Z, and the from-2021 head-to-head needs 2",
+            id="one-index-into-2021",
+        ),
+        pytest.param(
+            _B2_IN_2026,
+            _B2_BARS,
+            False,
+            "none of its return indices closes in a calendar year the worst-slice leg reads",
+            id="inside-2026",
+        ),
+        pytest.param(_B2_START, _B2_WINDOW_BARS, True, "degenerate backtest: returns have zero variance", id="arms-never-trade"),
+        pytest.param(
+            _B2_FROM_MAY_2020,
+            1_472,
+            False,
+            "arm A never draws down from 2021-01-01T00:00Z, so max_drawdown_reduction_pct divides by zero",
+            id="arm-a-never-draws-down-from-2021",
+        ),
+    ],
+)
+def test_the_b2_subject_refuses_a_window_it_cannot_evaluate_naming_it(tmp_path, monkeypatch, start, bars, flat, cause):
+    _anchor(monkeypatch, _b2_dataset(tmp_path, start=start, flat=flat))
+    args = _b2_eval(start, bars)
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit), "a refusal ends in an exit, never a traceback"
+    assert f"b2-funding-derisk over the window {args[-2]} .. {args[-1]}: {cause}" in result.output
+
+
+def test_the_b2_subject_refuses_a_window_its_benchmark_never_trades_naming_it(tmp_path, monkeypatch):
+    """A window the frozen benchmark's 1,200-bar gate never opens over leaves its returns flat; the fixture's gate opens,
+    so the flat series is handed in."""
+    _anchor(monkeypatch, _b2_dataset(tmp_path))
+    monkeypatch.setattr(subjects, "benchmark_4h_net_of_cost", lambda prices, *, cost_per_side: [0.0] * (len(prices["BTC"]) - 1))
+    args = _b2_eval(_B2_START, _B2_WINDOW_BARS)
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit), "a refusal ends in an exit, never a traceback"
+    assert f"b2-funding-derisk over the window {args[-2]} .. {args[-1]}: no non-degenerate slice to compare" in result.output

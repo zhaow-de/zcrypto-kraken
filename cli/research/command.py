@@ -14,7 +14,7 @@ from cli.data import rolling
 from cli.registry import TrialRegistry
 from cli.registry.errors import RegistryError
 from cli.registry.observed import ObservedReader
-from cli.research.subjects import SUBJECTS, required_relpaths
+from cli.research.subjects import SUBJECTS, SubjectError, required_relpaths
 
 # Repo-anchored, never cwd-relative: a dataset name must mean one directory from any working directory, and a cwd-relative
 # `_REGISTRY` default would silently mint a fresh, chainless registry on a WRITE instead of appending to the real one.
@@ -127,7 +127,7 @@ def eval_subject(
     try:
         metrics = known.build(reader, dataset, bounds, as_of=as_of, accept_holes=accept_holes)
         block = reader.block()
-    except RegistryError as exc:
+    except (RegistryError, OSError, SubjectError) as exc:
         remedy = " (--accept-holes leaves the day out)" if isinstance(exc.__cause__, rolling.HoleError) else ""
         raise _abort(f"{exc}{remedy}") from exc
 
