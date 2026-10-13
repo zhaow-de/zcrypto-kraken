@@ -15,8 +15,8 @@ Buckets B (intraday band) and C (long shots) are where the master plan's residua
 
 ## Findings so far
 
-- The A-family arc's binding lessons transfer wholesale: judge net-of-cost from the first verdict; the short's borrow carry is a structural ~5 %/yr drag; benchmark warm-up asymmetries must be windowed out; the worst-slice leg's DD count favours low exposure.
-- Prerequisites: T0009 resolved (protocol legs → revised kill bar, iter-072); **T0012 resolved (iter-085): the 15m substrate exists** — `data/ohlc-15m`, basket_sha256 `0fed24a6…`, tick-reconciled bit-exact. The tick catalog was dropped with T0012 — C2 must re-open it as its own topic. T0003 (captured L2 → C1) and T0014 (spread term → maker realism) resolved.
+- The A-family arc's binding lessons transfer wholesale: judge net-of-cost from the first verdict; the short's borrow carry is a structural ~5 %/yr drag; benchmark warm-up asymmetries must be windowed out.
+- Prerequisites: T0009 resolved (protocol legs → revised kill bar, iter-072); **T0012 resolved (iter-085): the 15m substrate exists** — `data/ohlc-15m`, basket_sha256 `0fed24a6…`, tick-reconciled bit-exact. The tick catalog was dropped with T0012 — C2 must re-open it as its own topic. T0003 (captured L2 → C1) and T0014 (the spread term) resolved; maker-fill realism stays unmeasured.
 - Budgets pre-registered: **B = 25**, shared across Bucket B (B1 spent 2, 23 remain), and **C = 10**, untouched; A is spent, 40 of 40.
 
 ## Done so far
