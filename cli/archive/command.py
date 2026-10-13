@@ -97,7 +97,10 @@ def _run_rsync(source: str, dest: Path) -> RsyncOutcome:
     # stray agent/other key can't burn auth attempts and trip the rrsync forced command.
     # CheckHostIP=no: the hostname key is pinned; the extra IP-keyed check would try to append the
     # IP's key on every pull, which fails against the read-only /keys mount.
-    ssh_opts = f"-i {ssh_key} -p {ssh_port} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o CheckHostIP=no"
+    # AddressFamily=inet: the NAS has no IPv6 route, so an attempt at a source's AAAA address fails.
+    ssh_opts = (
+        f"-i {ssh_key} -p {ssh_port} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o CheckHostIP=no -o AddressFamily=inet"
+    )
     known_hosts = os.environ.get("ARCHIVE_SSH_KNOWN_HOSTS")
     if known_hosts:  # a pre-seeded, mounted known_hosts pins the VPS host key across restarts
         ssh_opts += f" -o UserKnownHostsFile={known_hosts}"

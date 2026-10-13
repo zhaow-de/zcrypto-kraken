@@ -78,6 +78,7 @@ Every pull channel shares one shape, so each row below says only what is particu
 - Its `*_SOURCE` is an rsync source spec `zcrypto-data@<host>:` — the m2m data user, never the admin `zcrypto-deploy` (spec 00057) — whose `rrsync -ro` forced command pins the remote subtree, so the client-side path is ignored. The ops-node channels (liquidations, panel, reconciled, hot) are set up in `infra/ops/README.md`.
 - Its `*_SSH_KEY` is that channel's own least-privilege keypair under `keys/`, so a leaked key exposes one channel. `cli/archive/command.py` reads a single `ARCHIVE_SSH_KEY` from the environment and the entrypoint sets it per subprocess call, which is why each channel needs its own variable here. Every source's host key is pinned in the one shared `keys/known_hosts` (bootstrap step 4).
 - Its `*_SSH_PORT` is scoped to that pull the same way: the ops node is a home-LAN box on port **22**, while the VPS channels take `ARCHIVE_SSH_PORT`, 10022.
+- Its ssh is pinned to IPv4 (`AddressFamily=inet`), the NAS having no IPv6 route.
 - It is hash-verified against the source's `.sha256` sidecars — except the engine-journal pull (`--no-verify`) and the `hot/` and dead-man backup pulls (each a raw rsync), each named in its row.
 - Leaving its `*_SOURCE` unset skips that pull entirely, so this stack runs on a NAS that has not been given the channel. The primary capture pull is the exception: it is unconditional.
 
