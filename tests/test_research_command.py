@@ -12,6 +12,7 @@ import math
 import os
 import shutil
 import subprocess
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
@@ -38,6 +39,7 @@ from cli.derivatives.funding import PERP_SYMBOLS
 from cli.features.derivatives import coverage_by_year
 from cli.features.errors import FeatureError
 from cli.ohlc.dataset import to_frame, write_parquet
+from cli.portfolio.builder import CombinedSystemConfig, build_combined_system
 from cli.portfolio.crossfreq_system import CrossfreqSystemConfig, _ffill_btc
 from cli.portfolio.errors import PortfolioError
 from cli.portfolio.record44_legs import benchmark_4h_net_of_cost, calendar_year_slices
@@ -856,6 +858,13 @@ def test_the_b2_subject_is_registered_over_the_ten_assets_4h_series():
     assert subject.build is subjects._build_b2_funding_derisk
 
 
+def test_the_b2_subjects_cost_arms_lookback_and_periods_are_the_literals_its_spec_fixes():
+    assert subjects._B2_COST_PER_SIDE == 0.006
+    assert subjects._B2_A2_ARMS == (((20, 50, 100), 0.12), ((60, 120, 240), 0.10), ((60, 120, 240), 0.12))
+    assert subjects._B2_LOOKBACK == 180
+    assert subjects.PPY_4H == 2190
+
+
 # Spec 00128 D7's metric keys, pinned as literals for the reason `_COMBINED_METRIC_KEYS` is.
 _B2_METRIC_KEYS = {
     "ann_sharpe_noc",
@@ -1460,6 +1469,24 @@ def test_every_subject_evaluates_its_fixture_and_ends_an_input_it_cannot_evaluat
     elif result.exit_code == 1:
         # A subject may evaluate an asset that never closes or a late first BTC bar; one that refuses names where.
         assert f"{name} over the full history" in result.output or spoilt in result.output
+
+
+@dataclass(frozen=True)
+class _MovedCrossfreqDefaults(CrossfreqSystemConfig):
+    fee_per_side: float = 0.0045
+    spread_per_side: float = 0.0010
+    a2_arms: tuple[tuple[tuple[int, int, int], float], ...] = (((10, 30, 60), 0.15), ((40, 80, 160), 0.08))
+
+
+@pytest.mark.parametrize("name", sorted(subjects.SUBJECTS))
+def test_every_subjects_metrics_hold_when_the_shared_defaults_move(tmp_path, monkeypatch, name):
+    subject = subjects.SUBJECTS[name]
+    root, _ = _CONTRACT_DATASETS.get(name, _declared_series)(tmp_path, subject)
+    pinned = subject.build(ObservedReader(root), "ohlc-test", None)
+    monkeypatch.setattr(subjects, "CrossfreqSystemConfig", _MovedCrossfreqDefaults)
+    monkeypatch.setitem(build_combined_system.__kwdefaults__, "config", CombinedSystemConfig(spot_fee_per_side=0.0045))
+
+    assert subject.build(ObservedReader(root), "ohlc-test", None) == pinned
 
 
 def _record44_frozen(tmp_path: Path, asset: str, spoil) -> tuple[Path, list[str]]:

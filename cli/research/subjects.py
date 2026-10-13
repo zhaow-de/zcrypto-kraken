@@ -37,10 +37,8 @@ from cli.benchmark.errors import BenchmarkError
 from cli.derivatives.funding import PERP_SYMBOLS
 from cli.features.derivatives import coverage_by_year
 from cli.features.errors import FeatureError
-from cli.portfolio.builder import build_combined_system
+from cli.portfolio.builder import CombinedSystemConfig, build_combined_system
 from cli.portfolio.crossfreq_system import (
-    _A2_LOOKBACK,
-    _PPY_4H,
     CrossfreqSystemConfig,
     _ffill_btc,
     build_crossfreq_system_fast,
@@ -140,6 +138,12 @@ def _refuse_unfed_grids(
         )
 
 
+# A legacy subject's cost is a literal of its own, never the shared default a re-price moves (docs/specs/00129 D5): a
+# replay of the record it stands for reads the cost that record ran on.
+_RECORD44_CONFIG = CrossfreqSystemConfig(fee_per_side=0.0040, spread_per_side=0.0020)
+_RECORD33_CONFIG = CombinedSystemConfig(spot_fee_per_side=0.006)
+
+
 def _build_crossfreq(
     reader: ObservedReader,
     dataset: str,
@@ -147,11 +151,10 @@ def _build_crossfreq(
     as_of: str | None = None,
     accept_holes: bool = False,
 ) -> dict:
-    config = CrossfreqSystemConfig()
     daily_ts, daily_prices = _capturing_union(reader, dataset, 1440, window, as_of, accept_holes)
     h4_ts, h4_prices = _capturing_union(reader, dataset, 240, window, as_of, accept_holes)
     _refuse_unfed_grids(dataset, as_of, daily_ts, daily_prices, h4_prices)
-    result = build_crossfreq_system_fast(daily_prices, daily_ts, h4_prices, h4_ts, config=config)
+    result = build_crossfreq_system_fast(daily_prices, daily_ts, h4_prices, h4_ts, config=_RECORD44_CONFIG)
     return {
         "ann_sharpe_noc": sharpe(result.governed_net, periods_per_year=PPY_4H),
         "per_period_sharpe_4h": sharpe(result.governed_net),
@@ -170,7 +173,7 @@ def _build_combined(
     accept_holes: bool = False,
 ) -> dict:
     _, daily_prices = _capturing_union(reader, dataset, 1440, window, as_of, accept_holes)
-    result = build_combined_system(daily_prices)
+    result = build_combined_system(daily_prices, config=_RECORD33_CONFIG)
     return {
         "ann_sharpe_noc": sharpe(result.net_of_cost, periods_per_year=PPY_DAILY),
         "per_period_sharpe": sharpe(result.net_of_cost),
@@ -182,10 +185,14 @@ def _build_combined(
 
 _ASSETS = CrossfreqSystemConfig().assets
 
-# The B2 trial's fixed constants (docs/specs/00128 D4, D6): a change to one is a new trial, never an edit here.
+# The B2 trial's fixed constants (docs/specs/00128 D4-D6), its cost and arms literals of its own rather than the shared
+# defaults a re-price moves (docs/specs/00129 D5): a change to one is a new trial, never an edit here.
 _DECISIVE_START = 1380
 _N_RESAMPLES = 2000
 _FROM_2021 = datetime(2021, 1, 1, tzinfo=UTC)
+_B2_COST_PER_SIDE = 0.006
+_B2_A2_ARMS = (((20, 50, 100), 0.12), ((60, 120, 240), 0.10), ((60, 120, 240), 0.12))
+_B2_LOOKBACK = 180
 
 
 class _B2Inputs(NamedTuple):
@@ -228,12 +235,12 @@ def _b2_inputs(
                 lookbacks=lookbacks,
                 short="off",
                 target_vol=target_vol,
-                vol_lookback=_A2_LOOKBACK,
-                basket_lookback=_A2_LOOKBACK,
-                periods_per_year=_PPY_4H,
+                vol_lookback=_B2_LOOKBACK,
+                basket_lookback=_B2_LOOKBACK,
+                periods_per_year=PPY_4H,
             ),
         )["asset_positions"]
-        for lookbacks, target_vol in CrossfreqSystemConfig().a2_arms
+        for lookbacks, target_vol in _B2_A2_ARMS
     ]
     arm_a = {a: [statistics.mean(arm[a][k] for arm in arms) for k in range(len(h4_ts) - 1)] for a in _ASSETS}
     return _B2Inputs(h4_ts, h4_prices, close_grid(h4_ts), arm_a, feature, derisk_scales(feature, config=config))
@@ -277,7 +284,7 @@ def _b2_refuse_window(h4_ts: list[datetime], window: tuple[str, str] | None) -> 
 
 def _b2_arm_a_bar(inputs: _B2Inputs) -> dict:
     """Arm A's headline bar, the instrument check of docs/specs/00128 D6."""
-    cost = CrossfreqSystemConfig().cost_per_side
+    cost = _B2_COST_PER_SIDE
     returns = _b2_returns(inputs.h4_prices)
     net_a = net_of_cost(inputs.arm_a, returns, cost_per_side=cost)
     net_a_x15 = net_of_cost(inputs.arm_a, returns, cost_per_side=1.5 * cost)
@@ -316,7 +323,7 @@ def _build_b2_funding_derisk(
 def _b2_metrics(inputs: _B2Inputs) -> dict:
     arm_a, scales, close = inputs.arm_a, inputs.scales, inputs.close
     arm_b = scale_positions(arm_a, scales)
-    cost = CrossfreqSystemConfig().cost_per_side
+    cost = _B2_COST_PER_SIDE
     returns = _b2_returns(inputs.h4_prices)
     net_a = net_of_cost(arm_a, returns, cost_per_side=cost)
     net_b = net_of_cost(arm_b, returns, cost_per_side=cost)
