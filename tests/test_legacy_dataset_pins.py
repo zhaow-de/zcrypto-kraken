@@ -1,4 +1,4 @@
-"""The four pre-schema-4 hashes: documented, never repaired (spec 00086 D6)."""
+"""The four pre-schema-4 hashes, each recomputed: three from data/ohlc-full by the recovered manifest recipe, one composed from two operands (spec 00086 D6 as amended by spec 00130 D6)."""
 
 import hashlib
 import json
@@ -12,10 +12,24 @@ _ROOT = Path(__file__).resolve().parents[1]
 _PINS = _ROOT / "docs" / "reference" / "legacy-dataset-pins.jsonl"
 _REGISTRY = _ROOT / "docs" / "reference" / "trial-registry.jsonl"
 _MANIFEST_15M = _ROOT / "data" / "ohlc-15m" / "manifest.json"
+_OHLC_FULL = _ROOT / "data" / "ohlc-full"
+# The recovered trial44_write.py's manifest (git show 74080b69e:docs/reference/trial43-recovered-runners/trial44_write.py),
+# transcribed: per asset its row count, first and last stamp and first and last close, nothing else of the bytes.
+_LEGACY_ASSETS = ("ADA", "AVAX", "BTC", "DOGE", "DOT", "ETH", "LINK", "LTC", "SOL", "XRP")
 
 
 def _rows():
     return [json.loads(l) for l in _PINS.read_text().splitlines()]
+
+
+def _legacy_manifest(interval: int) -> str:
+    from cli.ohlc.dataset import read_parquet
+
+    parts = []
+    for asset in _LEGACY_ASSETS:
+        frame = read_parquet(_OHLC_FULL / asset / "EUR" / f"{interval}.parquet")
+        parts.append(f"{asset}:{len(frame)}:{frame['ts'][0]}:{frame['ts'][-1]}:{frame['close'][0]}:{frame['close'][-1]}")
+    return "|".join(sorted(parts))
 
 
 def test_exactly_the_four_known_hashes_with_registry_true_trial_ids():
@@ -28,7 +42,7 @@ def test_exactly_the_four_known_hashes_with_registry_true_trial_ids():
 
 
 def test_the_reproduced_recipe_executes_from_its_own_literals():
-    row = next(r for r in _rows() if r["confidence"] == "reproduced")
+    row = next(r for r in _rows() if "operand_4h" in r["evidence"])
     h4, h15 = row["evidence"]["operand_4h"], row["evidence"]["operand_15m"]
     assert hashlib.sha256(f"{h4}:{h15}".encode()).hexdigest() == row["hash"]
 
@@ -39,8 +53,12 @@ def test_epistemics_live_in_the_referent_value():
             assert row["referent"] is None
         elif row["confidence"] == "inferred":
             assert "INFERRED" in row["referent"] and "never recomputed" in row["referent"]
-        else:  # reproduced — the row a careless reader trusts most needs the qualifier most
-            assert "unrecoverable" in row["referent"]
+        else:  # reproduced: each qualifier the row's evidence carries is read in its referent
+            assert "REPRODUCED" in row["referent"] and "weak digest" in row["referent"]
+            if "operand_4h" in row["evidence"]:
+                assert row["evidence"]["operand_4h"][:8] in row["referent"]
+            if "scope_mismatch" in row["evidence"]:
+                assert "not established" in row["referent"]
 
 
 def test_every_confidence_is_one_of_the_three_ruled_grades():
@@ -50,7 +68,7 @@ def test_every_confidence_is_one_of_the_three_ruled_grades():
 def test_the_reproduced_15m_operand_is_the_manifest_basket_on_disk():
     if not _MANIFEST_15M.exists():
         pytest.skip("data/ohlc-15m/manifest.json absent — off-workstation; the 15m byte anchor is data-gated")
-    row = next(r for r in _rows() if r["confidence"] == "reproduced")
+    row = next(r for r in _rows() if "operand_4h" in r["evidence"])
     # `basket_sha256` became `set_sha256` under the manifest contract (spec 00099), with the same
     # value for this set: ohlc-15m is single-interval, so path order and the legacy string-sorted
     # interval order coincide, and the byte anchor this row pins holds under either key.
@@ -61,3 +79,16 @@ def test_the_reproduced_15m_operand_is_the_manifest_basket_on_disk():
     except ManifestError:
         basket = json.loads(_MANIFEST_15M.read_text())["basket_sha256"]
     assert row["evidence"]["operand_15m"] == basket
+
+
+@pytest.mark.parametrize(
+    ("prefix", "intervals"),
+    [("81dc9b44", (240,)), ("ba47e37e", (1440,)), ("45275ebe", (1440, 240))],
+)
+def test_the_legacy_digest_recomputes_from_the_files_it_names(prefix, intervals):
+    if not _OHLC_FULL.is_dir():
+        pytest.skip("data/ohlc-full absent — the legacy digests recompute on the data host only")
+    row = next(r for r in _rows() if r["hash"].startswith(prefix))
+    text = "||".join(_legacy_manifest(i) for i in intervals)
+    assert hashlib.sha256(text.encode()).hexdigest() == row["hash"]
+    assert row["confidence"] == "reproduced" and row["evidence"]["recipe_intervals"] == list(intervals)
