@@ -7,6 +7,7 @@ import inspect
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -495,7 +496,8 @@ def test_seed_is_no_option(tmp_path, monkeypatch):
     result = runner.invoke(app, [*_stub_eval(), "--seed", "1"])
 
     assert result.exit_code == 2
-    assert "--seed" in result.output
+    # Rendered in colour, as on CI, Typer styles each hyphen of an option apart.
+    assert "--seed" in re.sub(r"\x1b\[[0-9;]*m", "", result.output)
     assert calls == []
 
 
