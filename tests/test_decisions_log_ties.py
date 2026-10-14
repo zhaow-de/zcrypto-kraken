@@ -47,7 +47,7 @@ def _verdict_findings(iter_n: int, line: str, cited: list[int], trials: dict[int
     if len(stems) > 1:
         return [
             f"[iter-{iter_n}]: its header holds the verdicts {stems}: one entry records one trial's verdict, so write any "
-            "other trial's in lowercase"
+            "other in lowercase"
         ]
     if not stems:
         remedy = _moved(iter_n, _VERDICT.search(line, len(header)), "write ADOPT, PARK or REJECT before its first '. '")
