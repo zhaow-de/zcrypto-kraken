@@ -590,7 +590,7 @@ def test_a_legacy_record_the_incumbent_reproduces_is_recorded_as_the_comparator(
     assert json.loads(registry.read_text().splitlines()[-1])["invocation"]["comparator_trial"] == 44
 
 
-@pytest.mark.parametrize("n", [33, 45], ids=["another-subjects-legacy-record", "a-legacy-record-no-subject-reproduces"])
+@pytest.mark.parametrize("n", [33, 43], ids=["another-subjects-legacy-record", "a-legacy-record-no-subject-reproduces"])
 def test_a_legacy_record_the_incumbent_does_not_reproduce_is_refused_as_the_comparator(tmp_path, monkeypatch, n):
     registry = _committed_copy(tmp_path)
     before = registry.read_bytes()

@@ -348,7 +348,13 @@ def test_the_legacy_incumbents_are_frozen_each_backed_by_a_subject_and_a_record_
         "LEGACY_INCUMBENTS grows only as a legacy id joins with its subject and a data-gated test proving that subject "
         "reproduces the record, in one PR that also changes this literal"
     )
-    assert LEGACY_INCUMBENTS == {33: "record33-combined", 44: "record44-crossfreq", 47: "record44-crossfreq"}, growth
+    assert LEGACY_INCUMBENTS == {
+        33: "record33-combined",
+        44: "record44-crossfreq",
+        45: "b1-conditioning",
+        46: "b1-window-only",
+        47: "record44-crossfreq",
+    }, growth
     assert set(LEGACY_INCUMBENTS.values()) <= set(SUBJECTS), growth
     committed = {record["trial_id"] for record in _records()}
     assert all(trial_id <= 47 and trial_id in committed for trial_id in LEGACY_INCUMBENTS), growth
@@ -446,7 +452,7 @@ def _against(comparator: int | None) -> Callable[[dict], None]:
         pytest.param(_against(44), _WITH_INCUMBENT, None, None, id="44-accepted-through-the-map"),
         pytest.param(_against(48), _WITH_INCUMBENT, "record44-crossfreq", None, id="accepted-through-the-trials"),
         pytest.param(_against(33), _WITH_INCUMBENT, None, "names neither", id="33-mapped-to-another-subject"),
-        pytest.param(_against(45), _WITH_INCUMBENT, None, "names neither", id="45-in-no-map-and-no-invocation"),
+        pytest.param(_against(43), _WITH_INCUMBENT, None, "names neither", id="43-in-no-map-and-no-invocation"),
         pytest.param(_against(48), _WITH_INCUMBENT, _B2, "names neither", id="a-trial-of-another-subject"),
     ],
 )

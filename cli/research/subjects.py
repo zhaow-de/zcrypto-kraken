@@ -808,4 +808,10 @@ SUBJECTS: dict[str, Subject] = {
 
 # docs/specs/00129 D3: the records at or below 47 a --comparator-trial may name, each mapped to the subject that reproduces
 # its book.
-LEGACY_INCUMBENTS: dict[int, str] = {33: "record33-combined", 44: "record44-crossfreq", 47: "record44-crossfreq"}
+LEGACY_INCUMBENTS: dict[int, str] = {
+    33: "record33-combined",
+    44: "record44-crossfreq",
+    45: "b1-conditioning",
+    46: "b1-window-only",
+    47: "record44-crossfreq",
+}
