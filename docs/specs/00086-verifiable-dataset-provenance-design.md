@@ -71,12 +71,14 @@ uv run zcrypto research eval --subject <name> --dataset <dir> [--window A B] [--
 
 **The ruling this spec carries (owner decision, ratified with this spec's approval):** `ba47e37e` and `81dc9b44` are accepted as **unverifiable** — no further reconstruction effort — and every citation must say so.
 
+**Amended 2026-10-14 (spec 00130 D6, the owner's ruling of 2026-10-14):** the recovered trial44_write.py's manifest recipe recomputes 81dc9b44, ba47e37e and 45275ebe from data/ohlc-full; the three rows are reproduced, each naming its weak digest, and tests/test_legacy_dataset_pins.py executes the recipe.
+
 `docs/reference/legacy-dataset-pins.jsonl`, one line per distinct pre-schema-4 hash: `referent`, `confidence` (`reproduced` | `inferred` | `unrecoverable`), `trial_ids`, evidence. The epistemics live **in the referent value**, not only in a sibling field, so a careless grep can never return a bare path that reads as verified fact:
 
-- `cccb8d17` — `reproduced`: re-derives as `sha256(hex_4h + ":" + hex_15m)`, **executed by a test** rather than asserted; its referent names inline that its 4h operand is the unrecoverable `81dc9b44` — the row a careless reader trusts most needs the qualifier most.
-- `ba47e37e` — `inferred`: identified by extent + the v0 exclusion, daily series only; referent reads `"data/ohlc-full daily (INFERRED from extent + exclusion — never recomputed)"`; `trial_ids` exposes the scope mismatch (36 A1 + 2 P1, trials 33/35) — and states the honest negative rather than guessing its direction: committed state does not establish what those two P1 runs read (both ran from scratchpad drivers; their registry notes describe daily-cadence sleeves), so the daily-only inference simply does not extend to them.
-- `81dc9b44` — `unrecoverable`, `referent: null`.
-- `45275ebe` — `inferred`: composes the two above, inherits unrecoverability; pinned by `tests/test_record44_legs.py`'s `UNION_BARS` extent assertion; the runbook's stated composition does not reproduce, and the entry says so.
+- `cccb8d17` — `reproduced`: re-derives as `sha256(hex_4h + ":" + hex_15m)`, **executed by a test** rather than asserted; its referent names inline that its 4h operand is the unrecoverable `81dc9b44` — the row a careless reader trusts most needs the qualifier most. Amended (spec 00130 D6, the owner's ruling of 2026-10-14): its 4h operand 81dc9b44 is reproduced by a weak digest, and its referent says so.
+- `ba47e37e` — `inferred`: identified by extent + the v0 exclusion, daily series only; referent reads `"data/ohlc-full daily (INFERRED from extent + exclusion — never recomputed)"`; `trial_ids` exposes the scope mismatch (36 A1 + 2 P1, trials 33/35) — and states the honest negative rather than guessing its direction: committed state does not establish what those two P1 runs read (both ran from scratchpad drivers; their registry notes describe daily-cadence sleeves), so the daily-only inference simply does not extend to them. Amended (spec 00130 D6, the owner's ruling of 2026-10-14): reproduced by a weak digest, named in the referent. The scope note stays, and the referent carries it.
+- `81dc9b44` — `unrecoverable`, `referent: null`. Amended (spec 00130 D6, the owner's ruling of 2026-10-14): reproduced by a weak digest, named in the referent.
+- `45275ebe` — `inferred`: composes the two above, inherits unrecoverability; pinned by `tests/test_record44_legs.py`'s `UNION_BARS` extent assertion; the runbook's stated composition does not reproduce, and the entry says so. Amended (spec 00130 D6, the owner's ruling of 2026-10-14): reproduced by a weak digest over both intervals; the entry drops its runbook-composition note.
 
 ### D7 — Verification is constructed, and it runs where it can actually run
 
@@ -90,7 +92,7 @@ uv run zcrypto research eval --subject <name> --dataset <dir> [--window A B] [--
 2. **Byte identity is file-grain.** A re-encoded parquet with identical logical content moves every hash (correct under §8's immutability rule); sub-file addressing is rejected as a canonicalization swamp.
 3. **Bypass reads are invisible.** The block covers what went through `ObservedReader`; a run that also opens files directly records nothing about them. "Provenance at the point of consumption" is honest only for loads through the loader — this spec never writes the phrase without the qualifier. The runner is the committed path; review is the fence.
 4. **Whole-file hashes even for windowed use** — a trial reading 100 bars of a 3,003-row file vouches the whole file's bytes; `rows`/`span` carry the slice.
-5. **Nothing retroactive.** The 44 unresolved hashes stay unresolved; D6 documents, never repairs; all 46 records load untouched.
+5. **Nothing retroactive.** The 44 unresolved hashes stay unresolved; D6 documents, never repairs — amended by spec 00130 D6, the owner's ruling of 2026-10-14: the three legacy digests recompute; the registry stays append-only and no record changes; all 46 records load untouched.
 6. **Freeze-side verification stays [[T0133]]'s scope** — record 47 pins what it read at eval time; nothing here re-verifies the freeze on later syncs. The record-scoped hashes reduce T0133's sting (a later edit to a file record 47 read is caught by the conformance pass) without absorbing its scope.
 7. **Environment is not captured** — data identity only; numeric reproduction of results is concordance territory.
 8. **The registry cannot verify protocol compliance** (window choice, budget state, §12 ratification) — ledger and runbook territory.
