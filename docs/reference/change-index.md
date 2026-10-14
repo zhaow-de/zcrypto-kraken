@@ -389,3 +389,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #702 | 2026-10-13 | feat(alpha): iter-175 — B2 opening, the funding-extreme de-risk overlay | iter-175 | 00128 | T0016, T0023 |
 | #703 | 2026-10-13 | docs(research): T0016 reads A spent and T0009, T0014 resolved | — | — | T0016 |
 | #704 | 2026-10-13 | docs(reference): 00127 rollout records — deploy-log rows of R3, R5, R6 | — | 00127 | — |
+| #708 | 2026-10-14 | feat(research): 00129 — every trial re-derivable from tree and hub | — | 00129 | — |
