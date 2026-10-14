@@ -50,7 +50,6 @@ def _verdict_findings(iter_n: int, line: str, cited: list[int], trials: dict[int
             "other in lowercase"
         ]
     if not stems:
-        # Never "move the verdict its line holds": past the header it may be a cited trial's, never this entry's.
         return [
             f"[iter-{iter_n}]: its header names (registry trial {cited[-1]} and states no verdict: write its own trial's "
             "ADOPT, PARK or REJECT before its first '. ', or, where it keeps a reading, put that (reading N there and move "
