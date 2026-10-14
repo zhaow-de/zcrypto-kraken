@@ -61,7 +61,7 @@ The verdict tiles' own PromQL is among what the report's fleet checks already ra
 
 ## 5. Evaluate the due reminders
 
-The report's `## Reminders` section is the trigger — an **OWED** line is work, not decoration: open the section it names (`reference-data.md#refdata-sweep-due`, `ops.md#healable-threshold-rederivation-due`) and do it. The healable line says only whether the counter moved in the window — the count itself is still that section's step 1, from the ledger.
+The report's `## Reminders` section is the trigger — an **OWED** line is work, not decoration: open the section it names and do it.
 
 **Slack's scheduled message is a convenience ping, never the check.** Its scheduling cannot be listed or verified from this side, so "no message arrived" means nothing and a message that did arrive adds nothing the report did not already say. A reminder source the report could not read is exit 2, like any other.
 
