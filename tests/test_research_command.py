@@ -846,7 +846,6 @@ def _block_and_metrics(output: str) -> dict:
 # `record33-combined`'s committed headline keys, pinned here as literals: reading them back off the
 # subject under test would assert nothing about which metrics the command actually reports.
 _COMBINED_METRIC_KEYS = {"ann_sharpe_noc", "per_period_sharpe", "bench_ann_sharpe", "cap_breach_bars", "n_periods"}
-# `record44-crossfreq`'s, for the same reason.
 _CROSSFREQ_METRIC_KEYS = {
     "ann_sharpe_noc",
     "per_period_sharpe_4h",
@@ -1734,7 +1733,7 @@ def test_every_subject_evaluates_its_fixture_and_ends_an_input_it_cannot_evaluat
     assert result.exception is None or isinstance(result.exception, SystemExit), "a refusal ends in an exit, never a traceback"
     if case == "evaluates":
         assert result.exit_code == 0, result.output
-        assert _block_and_metrics(result.output)["metrics"]
+        assert set(_block_and_metrics(result.output)["metrics"]) == subject.metric_keys
     elif case in _CONTRACT_WINDOWS:
         assert result.exit_code == 1
         assert f"{name} over the window {args[-2]} .. {args[-1]}" in result.output
