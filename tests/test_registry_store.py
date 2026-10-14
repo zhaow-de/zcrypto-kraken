@@ -4,8 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from cli.registry import GENESIS_HASH, SCHEMA_VERSION, RegistryCorruptionError, RegistryError, TrialRegistry
+from cli.registry import GENESIS_HASH, SCHEMA_VERSION, ReadingLedger, RegistryCorruptionError, RegistryError, TrialRegistry
 from cli.registry.record import canonical_json, compute_hash
+from tests.test_trial_registry_provenance import LEDGER
 
 _REGISTRY = Path(__file__).resolve().parents[1] / "docs" / "reference" / "trial-registry.jsonl"
 
@@ -99,6 +100,15 @@ def test_contiguity_violation_raises(tmp_path):
         TrialRegistry(_write(tmp_path, [_line(2), _line(1)]))
 
 
+@pytest.mark.parametrize(("ids", "out_of_place"), [((1, 3), 3), ((2, 1), 2)], ids=["1-then-3", "2-then-1"])
+def test_a_registry_whose_ids_skip_or_reorder_is_refused_naming_the_trial_out_of_place(tmp_path, ids, out_of_place):
+    first = _line(ids[0], n=1)
+    second = _line(ids[1], n=2, prev_hash=_hash_of(first))
+
+    with pytest.raises(RegistryCorruptionError, match=f"trial_id {out_of_place} not contiguous"):
+        TrialRegistry(_write(tmp_path, [first, second]))
+
+
 def test_record_hash_mismatch_raises(tmp_path):
     good = _line(1)
     tampered = good.replace('"sharpe":0.3', '"sharpe":0.9')  # finite->finite edit, hash now stale
@@ -145,6 +155,19 @@ def test_unknown_schema_version_raises(tmp_path):
 COMMITTED_PATH = "cli/registry/record.py"  # a real, git-tracked file: run_ref must name one
 
 
+def _invocation(datasets: dict, **over) -> dict:
+    return {
+        "subject": "stub",
+        "dataset": next(iter(datasets)),
+        "window": None,
+        "as_of": None,
+        "accept_holes": False,
+        "comparator_trial": None,
+        "commit": "a" * 40,
+        **over,
+    }
+
+
 def _append(reg, **over):
     kw = dict(
         iteration="iter-001",
@@ -158,6 +181,7 @@ def _append(reg, **over):
         run_ref=COMMITTED_PATH,
     )
     kw.update(over)
+    kw.setdefault("invocation", _invocation(kw["datasets"]))
     return reg.append(**kw)
 
 
@@ -463,6 +487,13 @@ def test_live_registry_file_loads_clean():
     assert all(r.schema_version >= 3 for r in reg.records[32:])
 
 
+def test_live_reading_ledger_loads_clean():
+    # Read-only, as the registry's: the load runs the ledger's contiguity and chain checks over the committed file.
+    ledger = ReadingLedger(LEDGER)
+    assert len(ledger) >= 1  # an absent ledger loads as no readings; floored, never pinned
+    assert [r.reading_id for r in ledger.records] == list(range(1, len(ledger) + 1))
+
+
 def test_append_records_a_committed_run_ref_end_to_end(tmp_path):
     p = tmp_path / "t.jsonl"
     r = _append(TrialRegistry(p), n_trials_in_family=1, run_ref=COMMITTED_PATH)
@@ -481,7 +512,24 @@ def test_append_rejects_unprovenanced_run_ref_before_writing(tmp_path):
 def test_append_requires_run_ref_explicitly(tmp_path):
     # keyword-only with no default: omitting run_ref is a TypeError, not a recorded null
     reg = TrialRegistry(tmp_path / "t.jsonl")
+    datasets = {"ohlc-test": dict(_BLOCK)}
     with pytest.raises(TypeError):
+        reg.append(
+            iteration="iter-001",
+            family="A1",
+            spec_hash="s",
+            datasets=datasets,
+            seeds=[0],
+            metrics={"sharpe": 0.3},
+            n_trials_in_family=1,
+            verdict="adopt",
+            invocation=_invocation(datasets),
+        )
+
+
+def test_append_requires_an_invocation_explicitly(tmp_path):
+    reg = TrialRegistry(tmp_path / "t.jsonl")
+    with pytest.raises(TypeError, match="invocation"):
         reg.append(
             iteration="iter-001",
             family="A1",
@@ -491,7 +539,60 @@ def test_append_requires_run_ref_explicitly(tmp_path):
             metrics={"sharpe": 0.3},
             n_trials_in_family=1,
             verdict="adopt",
+            run_ref=COMMITTED_PATH,
         )
+    assert not reg.path.exists()
+
+
+def test_an_appended_invocation_reloads_at_schema_five(tmp_path):
+    reg = _new_registry(tmp_path)
+    datasets = {"ohlc-test": dict(_BLOCK)}
+    _append(reg, family="A", n_trials_in_family=1, datasets=datasets)
+    invocation = _invocation(
+        datasets,
+        subject="b2-funding-derisk",
+        window=["2020-01-02 00:00:00+00:00", "2020-01-09 00:00:00+00:00"],
+        as_of="2026-10-02",
+        accept_holes=True,
+        comparator_trial=1,
+        commit="0123456789abcdef" * 2 + "01234567",
+    )
+    written = _append(reg, family="A", n_trials_in_family=2, datasets=datasets, invocation=invocation)
+    reloaded = _new_registry(tmp_path).records[-1]
+    assert (reloaded.schema_version, reloaded.invocation) == (5, invocation)
+    assert written.invocation == invocation
+
+
+_DATASETS = {"ohlc-test": dict(_BLOCK)}
+
+
+@pytest.mark.parametrize(
+    "invocation, match",
+    [
+        pytest.param(None, "invocation must be a dict", id="not-a-dict"),
+        pytest.param({k: v for k, v in _invocation(_DATASETS).items() if k != "commit"}, r"missing \['commit'\]", id="missing-key"),
+        pytest.param(_invocation(_DATASETS, seed=7), r"unknown \['seed'\]", id="extra-key"),
+        pytest.param(_invocation(_DATASETS, subject=""), "invocation subject", id="subject-empty"),
+        pytest.param(_invocation(_DATASETS, dataset="ohlc-other"), "invocation dataset", id="dataset-not-in-datasets"),
+        pytest.param(_invocation(_DATASETS, window=["2020-01-02 00:00:00+00:00"]), "invocation window", id="window-one-str"),
+        pytest.param(_invocation(_DATASETS, window=["2020-01-02 00:00:00+00:00", 5]), "invocation window", id="window-str-and-int"),
+        pytest.param(_invocation(_DATASETS, as_of="2026-1-1"), "invocation as_of", id="as-of-unpadded"),
+        pytest.param(_invocation(_DATASETS, accept_holes=1), "invocation accept_holes", id="accept-holes-int"),
+        pytest.param(_invocation(_DATASETS, comparator_trial=0), "invocation comparator_trial", id="comparator-zero"),
+        pytest.param(_invocation(_DATASETS, comparator_trial=True), "invocation comparator_trial", id="comparator-bool"),
+        pytest.param(_invocation(_DATASETS, comparator_trial=2), "invocation comparator_trial", id="comparator-own-id"),
+        pytest.param(_invocation(_DATASETS, commit="a" * 39), "invocation commit", id="commit-39-hex"),
+        pytest.param(_invocation(_DATASETS, commit="A" * 40), "invocation commit", id="commit-uppercase-hex"),
+    ],
+)
+def test_an_ill_shaped_invocation_is_refused_before_the_write(tmp_path, invocation, match):
+    # Appended as trial 2, so a comparator of True (== 1) is refused by the type check alone and not by the own-id bound.
+    reg = _new_registry(tmp_path)
+    _append(reg, family="A", n_trials_in_family=1, datasets=_DATASETS)
+    before = reg.path.read_text()
+    with pytest.raises(RegistryCorruptionError, match=match):
+        _append(reg, family="A", n_trials_in_family=2, datasets=_DATASETS, invocation=invocation)
+    assert reg.path.read_text() == before
 
 
 def test_variant_does_not_affect_family_budget_monotonic_check(tmp_path):
@@ -514,11 +615,11 @@ def test_append_has_no_dataset_hash_parameter():
     assert "dataset_hash" not in inspect.signature(TrialRegistry.append).parameters
 
 
-def test_a_schema_four_record_round_trips_through_disk(tmp_path):
+def test_a_schema_five_record_round_trips_through_disk(tmp_path):
     reg = _new_registry(tmp_path)
     written = _append(reg, family="A", n_trials_in_family=1, datasets={"ohlc-test": dict(_BLOCK)})
     reloaded = _new_registry(tmp_path).records[-1]
-    assert reloaded.schema_version == 4
+    assert reloaded.schema_version == 5
     assert reloaded.dataset_hash == compute_hash(reloaded.datasets) == written.dataset_hash
 
 
@@ -612,16 +713,17 @@ def test_a_stored_schema_three_dataset_hash_must_still_be_a_nonempty_str(tmp_pat
         TrialRegistry(_write(tmp_path, [canonical_json(dict(body, record_hash=compute_hash(body)))]))
 
 
-def test_a_record_past_the_legacy_floor_must_declare_schema_four(tmp_path):
-    """spec 00086 D4: the floor at trial 46 binds the record after the last real one -- built on the
-    real file, read-only."""
+def test_a_record_past_the_floors_must_declare_schema_five(tmp_path):
+    """spec 00086 D4's floor at trial 46 and spec 00129 D1's at trial 47 bind the record after the last real one -- built
+    on the real file, read-only."""
     real = _REGISTRY.read_text(encoding="utf-8").splitlines()
     prev = json.loads(real[-1])
+    next_id = prev["trial_id"] + 1
 
-    def _line47(**over):
+    def _line_next(**over):
         body = dict(
-            trial_id=prev["trial_id"] + 1,
-            schema_version=4,
+            trial_id=next_id,
+            schema_version=5,
             timestamp="2026-08-09T00:00:00+00:00",
             iteration="iter-001",
             family="FLOOR",
@@ -634,20 +736,34 @@ def test_a_record_past_the_legacy_floor_must_declare_schema_four(tmp_path):
             notes="",
             prev_hash=prev["record_hash"],
             datasets={"ohlc-test": dict(_BLOCK)},
+            invocation=_invocation({"ohlc-test": dict(_BLOCK)}),
         )
         body.update(over)
         body["dataset_hash"] = compute_hash(body["datasets"])
         return canonical_json(dict(body, record_hash=compute_hash(body)))
 
-    # Non-vacuous both directions: the same record at schema 4 loads, so the floor is what rejects.
-    assert len(TrialRegistry(_write(tmp_path, [*real, _line47()]))) == prev["trial_id"] + 1
+    # Non-vacuous both directions: the same record at schema 5 loads, so the floors are what reject.
+    assert len(TrialRegistry(_write(tmp_path, [*real, _line_next()]))) == next_id
 
-    v3 = json.loads(_line47())
-    del v3["datasets"], v3["record_hash"]
+    v4 = json.loads(_line_next())
+    del v4["invocation"], v4["record_hash"]
+    v4["schema_version"] = 4
+    forged_v4 = canonical_json(dict(v4, record_hash=compute_hash(v4)))
+    with pytest.raises(
+        RegistryCorruptionError,
+        match=f"trial {next_id} declares schema_version 4; every record past trial 47 must be schema_version 5",
+    ):
+        TrialRegistry(_write(tmp_path, [*real, forged_v4]))
+
+    v3 = json.loads(_line_next())
+    del v3["datasets"], v3["invocation"], v3["record_hash"]
     v3["schema_version"] = 3
     v3["dataset_hash"] = "ba47e37e2601d6098fd13c0e338a5301e8eeebb16bb4341c76a68147c7b08e42"  # spec 00086 D4's own example
     forged = canonical_json(dict(v3, record_hash=compute_hash(v3)))
-    with pytest.raises(RegistryCorruptionError, match="schema_version"):
+    with pytest.raises(
+        RegistryCorruptionError,
+        match=f"trial {next_id} declares schema_version 3; every record past trial 46 must be schema_version 4",
+    ):
         TrialRegistry(_write(tmp_path, [*real, forged]))
 
 
@@ -657,3 +773,142 @@ def test_append_revalidates_and_a_bad_block_writes_nothing(tmp_path):
     with pytest.raises(RegistryError):
         _append(reg, family="A", n_trials_in_family=1, datasets={"ohlc-test": {**_BLOCK, "rows": 0}})
     assert not reg.path.exists() or reg.path.read_text() == ""
+
+
+_READING_DATASETS = {"ohlc-test": dict(_BLOCK)}
+
+
+def _append_reading(ledger: ReadingLedger, **over):
+    kw = dict(
+        iteration="iter-001",
+        spec_hash="s",
+        invocation=_invocation(_READING_DATASETS),
+        datasets=_READING_DATASETS,
+        metrics={"sharpe": 0.3, "dsr": 0.1},
+        outcome=None,
+    )
+    kw.update(over)
+    return ledger.append(**kw)
+
+
+def _reading_line(reading_id: int, prev_hash: str = GENESIS_HASH, **over) -> str:
+    body = dict(
+        reading_id=reading_id,
+        schema_version=1,
+        timestamp="2026-10-13T00:00:00+00:00",
+        iteration="iter-001",
+        spec_hash="s",
+        invocation=_invocation(_READING_DATASETS),
+        datasets=_READING_DATASETS,
+        metrics={"sharpe": 0.3},
+        outcome=None,
+        notes="",
+        prev_hash=prev_hash,
+    )
+    body.update(over)
+    body["dataset_hash"] = over.get("dataset_hash", compute_hash(body["datasets"]))
+    return canonical_json(dict(body, record_hash=compute_hash(body)))
+
+
+def test_a_reading_round_trips_through_disk(tmp_path):
+    path = tmp_path / "readings.jsonl"
+    invocation = _invocation(_READING_DATASETS, subject="b2-arm-a-bar", as_of="2026-10-10", accept_holes=True, comparator_trial=44)
+    written = _append_reading(ReadingLedger(path), invocation=invocation, outcome="the stub's stop", notes="kept")
+
+    (reloaded,) = ReadingLedger(path).records
+
+    assert reloaded == written
+    assert (reloaded.reading_id, reloaded.schema_version, reloaded.prev_hash) == (1, 1, GENESIS_HASH)
+    assert (reloaded.invocation, reloaded.outcome, reloaded.notes) == (invocation, "the stub's stop", "kept")
+    assert reloaded.dataset_hash == compute_hash(_READING_DATASETS)
+    assert set(json.loads(path.read_text())) == {
+        "reading_id",
+        "schema_version",
+        "timestamp",
+        "prev_hash",
+        "record_hash",
+        "dataset_hash",
+        "iteration",
+        "spec_hash",
+        "invocation",
+        "datasets",
+        "metrics",
+        "outcome",
+        "notes",
+    }
+
+
+def test_two_readings_chain_with_contiguous_ids_across_a_reopen(tmp_path):
+    path = tmp_path / "readings.jsonl"
+    first = _append_reading(ReadingLedger(path))
+    second = _append_reading(ReadingLedger(path), outcome="a stop")
+
+    assert (first.reading_id, second.reading_id) == (1, 2)
+    assert second.prev_hash == first.record_hash
+    assert [r.reading_id for r in ReadingLedger(path).records] == [1, 2]
+
+
+def test_a_torn_trailing_reading_heals_as_a_torn_trial_does(tmp_path):
+    path = tmp_path / "readings.jsonl"
+    path.write_text(_reading_line(1) + "\n" + '{"reading_id":2,"iter', encoding="utf-8")
+
+    assert len(ReadingLedger(path)) == 1
+    assert path.read_text(encoding="utf-8").endswith("}\n")
+    assert _append_reading(ReadingLedger(path)).reading_id == 2
+
+
+@pytest.mark.parametrize(
+    "over, match",
+    [
+        pytest.param({"outcome": ""}, "outcome", id="outcome-empty"),
+        pytest.param({"outcome": 1}, "outcome", id="outcome-int"),
+        pytest.param({"invocation": None}, "invocation must be a dict", id="invocation-missing"),
+        pytest.param({"metrics": {"dsr": float("nan")}}, "non-finite", id="metrics-nan"),
+    ],
+)
+def test_an_ill_formed_reading_is_refused_before_the_write(tmp_path, over, match):
+    path = tmp_path / "readings.jsonl"
+
+    with pytest.raises(RegistryError, match=match):
+        _append_reading(ReadingLedger(path), **over)
+
+    assert not path.exists()
+
+
+def test_a_stored_reading_without_its_invocation_is_refused_at_load(tmp_path):
+    body = json.loads(_reading_line(1))
+    del body["invocation"], body["record_hash"]
+    line = canonical_json(dict(body, record_hash=compute_hash(body)))
+
+    with pytest.raises(RegistryCorruptionError, match=r"missing \['invocation'\]"):
+        ReadingLedger(_write(tmp_path, [line]))
+
+
+@pytest.mark.parametrize(("ids", "out_of_place"), [((1, 3), 3), ((2, 1), 2)], ids=["1-then-3", "2-then-1"])
+def test_a_ledger_whose_ids_skip_or_reorder_is_refused_naming_the_reading_out_of_place(tmp_path, ids, out_of_place):
+    first = _reading_line(ids[0])
+    second = _reading_line(ids[1], prev_hash=_hash_of(first))
+
+    with pytest.raises(RegistryCorruptionError, match=f"reading_id {out_of_place} not contiguous"):
+        ReadingLedger(_write(tmp_path, [first, second]))
+
+
+def test_a_reading_whose_body_changed_under_its_record_hash_is_refused(tmp_path):
+    tampered = _reading_line(1).replace('"sharpe":0.3', '"sharpe":0.9')
+
+    with pytest.raises(RegistryCorruptionError, match="record_hash"):
+        ReadingLedger(_write(tmp_path, [tampered]))
+
+
+def test_a_reading_whose_dataset_hash_is_not_its_blocks_digest_is_refused(tmp_path):
+    with pytest.raises(RegistryCorruptionError, match="dataset_hash"):
+        ReadingLedger(_write(tmp_path, [_reading_line(1, dataset_hash="d" * 64)]))
+
+
+def test_a_rewritten_first_reading_breaks_the_chain_at_the_second(tmp_path):
+    first = _reading_line(1)
+    second = _reading_line(2, prev_hash=_hash_of(first))
+    rewritten = _reading_line(1, metrics={"sharpe": 0.9})
+
+    with pytest.raises(RegistryCorruptionError, match="reading 2 prev_hash breaks the chain"):
+        ReadingLedger(_write(tmp_path, [rewritten, second]))

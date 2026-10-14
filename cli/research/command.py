@@ -4,7 +4,9 @@ carries, so what was fitted and what was recorded cannot drift apart."""
 
 from __future__ import annotations
 
+import hashlib
 import json
+import subprocess
 import traceback
 from pathlib import Path
 from typing import Optional
@@ -12,16 +14,17 @@ from typing import Optional
 import typer
 
 from cli.data import rolling
-from cli.registry import TrialRegistry
+from cli.registry import VERDICTS, ReadingLedger, TrialRegistry
 from cli.registry.errors import RegistryError
 from cli.registry.observed import ObservedReader
-from cli.research.subjects import EVALUATION_ERRORS, SUBJECTS, SubjectError, required_relpaths
+from cli.research.subjects import EVALUATION_ERRORS, LEGACY_INCUMBENTS, SUBJECTS, Subject, SubjectError, required_relpaths
 
 # Repo-anchored, never cwd-relative: a dataset name must mean one directory from any working directory, and a cwd-relative
-# `_REGISTRY` default would silently mint a fresh, chainless registry on a WRITE instead of appending to the real one.
+# `_REGISTRY` or `_LEDGER` default would silently mint a fresh, chainless file on a WRITE instead of appending to the real one.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DATA_ROOT = _REPO_ROOT / "data"
 _REGISTRY = _REPO_ROOT / "docs" / "reference" / "trial-registry.jsonl"
+_LEDGER = _REPO_ROOT / "docs" / "reference" / "reading-ledger.jsonl"
 
 # The append-time provenance guard (`_validate_run_ref`) refuses a run_ref with no path-like token that resolves in the repo.
 _RUN_REF = "cli/research/command.py — docs/specs/00086-verifiable-dataset-provenance-design.md"
@@ -29,15 +32,14 @@ _RUN_REF = "cli/research/command.py — docs/specs/00086-verifiable-dataset-prov
 _REGISTER_FIELDS = (
     ("--iteration", "iteration"),
     ("--family", "family"),
-    ("--spec-hash", "spec_hash"),
-    ("--verdict", "verdict"),
     ("--n-trials", "n_trials"),
 )
+_READING_FIELDS = (("--iteration", "iteration"),)
 
 research_app = typer.Typer(
     no_args_is_help=True,
     help="Evaluate a committed system over a frozen dataset or the rolling dataset as of a day, and register the trial "
-    "it produced.",
+    "it produced or keep the reading.",
 )
 
 
@@ -48,6 +50,58 @@ def _abort(message: str) -> typer.Exit:
     visible whatever the log configuration is."""
     typer.echo(message, err=True)
     return typer.Exit(code=1)
+
+
+def _no_file_there(flag: str, path: Path) -> typer.Exit | None:
+    if path.is_dir():
+        return _abort(f"{flag} {path} is a directory: pass the path of a file in it")
+    if not path.parent.is_dir():
+        return _abort(f"{flag} {path}: {path.parent} is no directory: create it, or pass a path whose directory exists")
+    return None
+
+
+def _tree_state(root: Path) -> tuple[str, str]:
+    def git(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True)
+
+    head = git("rev-parse", "HEAD")
+    if head.returncode != 0:
+        raise _abort(f"{root} is not a git checkout, and a record names its code by commit")
+    # --untracked-files=all overrides a status.showUntrackedFiles that would hide an untracked file.
+    status = git("status", "--porcelain", "--untracked-files=all")
+    if status.returncode != 0:
+        raise _abort(f"{root}: git status failed, so the tree cannot be read clean: {status.stderr.strip()}")
+    return head.stdout.strip(), status.stdout
+
+
+def _status_paths(status: str) -> str:
+    return ", ".join(line[3:] for line in status.splitlines())
+
+
+def _refuse_an_unbacked_comparator(registry: Path, known: Subject, comparator_trial: int) -> None:
+    """Accepts the id as `_comparator_finding` in tests/test_trial_registry_provenance.py does, so a record this command
+    writes passes that check."""
+    try:
+        trials = {record.trial_id: record for record in TrialRegistry(registry).records}
+    except RegistryError as exc:
+        raise _abort(f"--comparator-trial {comparator_trial}: the registry {registry} cannot be read: {exc}") from exc
+    backing = trials[comparator_trial].invocation if comparator_trial in trials else None
+    through_trials = backing is not None and backing["subject"] == known.incumbent
+    through_legacy = LEGACY_INCUMBENTS.get(comparator_trial) == known.incumbent
+    if not (through_trials or through_legacy):
+        raise _abort(
+            f"--comparator-trial {comparator_trial} names neither a trial in {registry} registered by {known.incumbent}, "
+            f"{known.name}'s incumbent, nor a legacy record {known.incumbent} reproduces: pass the id of the {known.incumbent} "
+            "trial this run compares against"
+        )
+
+
+def _echo_replay_case(label: str) -> None:
+    typer.echo(f"replay it before each push that carries this line: uv run pytest tests/test_registry_replay.py -k '[{label}]'")
+    typer.echo(
+        "  it passes with nothing skipped only with data/ohlc-full linked beside the sets the line cites, since the replay "
+        "skips without it"
+    )
 
 
 def _raise_site(exc: BaseException) -> str:
@@ -81,11 +135,38 @@ def eval_subject(
         help="Read the rolling dataset across a day it records as a hole, leaving that day out and printing it; "
         "without it such a read is refused. Refused for a frozen dataset.",
     ),
-    register: bool = typer.Option(False, "--register", help="Append the result to the trial registry."),
-    iteration: Optional[str] = typer.Option(None, "--iteration", help="Iteration label of the run (with --register)."),
+    register: bool = typer.Option(
+        False,
+        "--register",
+        help="Append the result to the trial registry as a trial whose verdict is the subject's rule and whose seeds are its "
+        "declared ones; a rule that gives no verdict keeps the run as a reading instead, spending no trial. Refused for a "
+        "subject with no rule, and from a tree with uncommitted changes.",
+    ),
+    reading: bool = typer.Option(
+        False,
+        "--reading",
+        help="Append the result to the readings ledger: a run of a subject with no rule, kept without spending a trial. "
+        "Refused with --register, for a subject with a rule, and from a tree with uncommitted changes.",
+    ),
+    iteration: Optional[str] = typer.Option(None, "--iteration", help="Iteration label of the run (with --register or --reading)."),
     family: Optional[str] = typer.Option(None, "--family", help="Trial family this run belongs to (with --register)."),
-    spec_hash: Optional[str] = typer.Option(None, "--spec-hash", help="Hash of the design this run implements (with --register)."),
-    verdict: Optional[str] = typer.Option(None, "--verdict", help="One of adopt, reject, park (with --register)."),
+    spec_hash: Optional[str] = typer.Option(
+        None,
+        "--spec-hash",
+        help="The sha256 of the subject's spec, asserted: refused unless it equals the one computed (with --register or "
+        "--reading).",
+    ),
+    verdict: Optional[str] = typer.Option(
+        None,
+        "--verdict",
+        help="The verdict asserted: refused unless it equals the subject's rule's (with --register; refused with --reading).",
+    ),
+    comparator_trial: Optional[int] = typer.Option(
+        None,
+        "--comparator-trial",
+        help="The trial of the subject's incumbent this run compares against: required for a subject that declares one, "
+        "refused for any other (with --register or --reading).",
+    ),
     n_trials: Optional[int] = typer.Option(
         None,
         "--n-trials",
@@ -93,8 +174,13 @@ def eval_subject(
     ),
     variant: Optional[str] = typer.Option(None, "--variant", help="Variant label within the family."),
     notes: str = typer.Option("", "--notes", help="Free-text notes stored with the record."),
-    seed: Optional[list[int]] = typer.Option(None, "--seed", help="Seed used by the run; repeat for several."),
     registry: Optional[Path] = typer.Option(None, "--registry", help="Registry file to append to. Defaults to the committed one."),
+    ledger: Optional[Path] = typer.Option(
+        None,
+        "--ledger",
+        help="Readings ledger to append to, by --reading or by a --register run whose rule gives no verdict. Defaults to "
+        "the committed one.",
+    ),
 ) -> None:
     """Run a committed system over a frozen dataset or the rolling dataset as of a day, reporting the metrics, what
     identifies the data the run actually read -- a frozen dataset's bytes, the rolling dataset's index line for that
@@ -103,12 +189,54 @@ def eval_subject(
     if known is None:
         raise _abort(f"unknown subject {subject!r}; known subjects: {', '.join(sorted(SUBJECTS))}")
 
-    # Caller fields are checked BEFORE the fit: a missing flag must not cost a full evaluation.
-    if register:
-        supplied = {"iteration": iteration, "family": family, "spec_hash": spec_hash, "verdict": verdict, "n_trials": n_trials}
-        missing = [flag for flag, key in _REGISTER_FIELDS if supplied[key] is None]
+    # Every refusal that needs no data comes before any read: a refusal must not cost a full evaluation.
+    target = registry or _REGISTRY
+    ledger_target = ledger or _LEDGER
+    records = register or reading
+    if records:
+        if register and reading:
+            raise _abort("--register and --reading are exclusive: a subject with a rule registers, one without keeps a reading")
+        if register and known.verdict is None:
+            raise _abort(f"{subject} declares no verdict rule, so it registers no trial: keep the run with --reading instead")
+        if reading and known.verdict is not None:
+            raise _abort(
+                f"{subject} declares a verdict rule, so its run is a trial, or a reading its rule's stop keeps: run it with "
+                "--register instead"
+            )
+        if reading and verdict is not None:
+            raise _abort(f"--verdict {verdict} asserts a trial's verdict, and a reading stores none: drop --verdict")
+        if verdict is not None and verdict not in VERDICTS:
+            raise _abort(
+                f"--verdict {verdict} is none of {', '.join(sorted(VERDICTS))}: pass one, or drop --verdict to take the rule's"
+            )
+        if known.incumbent is not None and comparator_trial is None:
+            raise _abort(
+                f"{subject} compares against its incumbent, {known.incumbent}: pass --comparator-trial N, the id of the "
+                f"{known.incumbent} trial this run compares against"
+            )
+        if known.incumbent is None and comparator_trial is not None:
+            raise _abort(f"{subject} declares no incumbent, so it compares against no trial: drop --comparator-trial")
+        supplied = {"iteration": iteration, "family": family, "n_trials": n_trials}
+        missing = [flag for flag, key in (_REGISTER_FIELDS if register else _READING_FIELDS) if supplied[key] is None]
         if missing:
-            raise _abort(f"--register needs {', '.join(missing)}")
+            raise _abort(f"{'--register' if register else '--reading'} needs {', '.join(missing)}")
+        if refused := _no_file_there("--ledger", ledger_target) or _no_file_there("--registry", target):
+            raise refused
+        before = _tree_state(_REPO_ROOT)
+        if before[1]:
+            raise _abort(
+                f"{_REPO_ROOT} has uncommitted changes, and a record names its code by commit: commit or remove "
+                f"{_status_paths(before[1])}, then run again"
+            )
+        if comparator_trial is not None:
+            _refuse_an_unbacked_comparator(target, known, comparator_trial)
+        computed_spec_hash = hashlib.sha256((_REPO_ROOT / known.spec).read_bytes()).hexdigest()
+        if spec_hash is not None and spec_hash != computed_spec_hash:
+            raise _abort(
+                f"--spec-hash {spec_hash} is not {computed_spec_hash}, the sha256 of {known.spec}, the spec {subject} "
+                "declares, at this commit: read what changed in the spec since that hash, then run again without "
+                "--spec-hash or with the spec's own"
+            )
 
     dataset_dir = _DATA_ROOT / dataset
     if not dataset_dir.is_dir():
@@ -144,6 +272,20 @@ def eval_subject(
         read = dataset if as_of is None else f"{dataset} as of {as_of}"
         raise _abort(f"{subject} over {span} of {read}: {exc} ({type(exc).__name__} raised at {_raise_site(exc)})") from exc
 
+    report = {"metrics": metrics, "datasets": block, "vouched": reader.vouched_status()}
+    ruled = None
+    if records:
+        keys = set(metrics)
+        if keys != known.metric_keys:
+            raise _abort(
+                f"{subject}'s build returned keys other than the ones it declares: missing "
+                f"{sorted(known.metric_keys - keys)}, unknown {sorted(keys - known.metric_keys)}; make the build and its "
+                "declared metric keys agree, commit, then run again"
+            )
+        if known.verdict is not None:
+            ruled = known.verdict(metrics)
+            report["verdict"] = ruled
+
     typer.echo(f"subject: {subject}")
     typer.echo(f"dataset: {dataset}")
     typer.echo("window: " + ("full history" if bounds is None else f"{bounds[0]} .. {bounds[1]}"))
@@ -151,24 +293,67 @@ def eval_subject(
         typer.echo(f"as of: {as_of}")
     for hole in reader.holes().get(dataset, []):
         typer.echo(f"hole: {hole}")
-    typer.echo(json.dumps({"metrics": metrics, "datasets": block, "vouched": reader.vouched_status()}, indent=2))
+    typer.echo(json.dumps(report, indent=2))
 
-    if not register:
+    if not records:
+        return
+    after = _tree_state(_REPO_ROOT)
+    if after != before:
+        raise _abort(
+            f"{_REPO_ROOT} changed during the fit (HEAD {before[0]}, then {after[0]}; uncommitted after it: "
+            f"{_status_paths(after[1]) or 'none'}), so no commit names the code that ran: run again once nothing else "
+            "writes to the checkout"
+        )
+    if verdict is not None and verdict != ruled:
+        raise _abort(
+            f"--verdict {verdict} disagrees with {subject}'s rule, which gives {ruled or 'no verdict'} on these metrics, so "
+            "nothing is recorded: drop --verdict to take the rule's"
+        )
+    invocation = {
+        "subject": subject,
+        "dataset": dataset,
+        "window": None if bounds is None else list(bounds),
+        "as_of": as_of,
+        "accept_holes": accept_holes,
+        "comparator_trial": comparator_trial,
+        "commit": before[0],
+    }
+    if ruled is None:
+        # A subject with no rule, or a rule that stops: a reading, its outcome the stop's text or none.
+        try:
+            kept = ReadingLedger(ledger_target).append(
+                iteration=iteration,
+                spec_hash=computed_spec_hash,
+                invocation=invocation,
+                datasets=block,
+                metrics=metrics,
+                outcome=known.no_verdict,
+                notes=notes,
+            )
+        except RegistryError as exc:
+            raise _abort(f"the ledger refused this reading: {exc}") from exc
+        if kept.outcome is None:
+            typer.echo(f"recorded reading {kept.reading_id}")
+        else:
+            typer.echo(f"no verdict — {kept.outcome}: recorded reading {kept.reading_id}; no trial spent")
+        _echo_replay_case(f"reading-{kept.reading_id}")
         return
     try:
-        record = TrialRegistry(registry or _REGISTRY).append(
+        record = TrialRegistry(target).append(
             iteration=iteration,
             family=family,
-            spec_hash=spec_hash,
-            seeds=list(seed or []),
+            spec_hash=computed_spec_hash,
+            seeds=list(known.seeds),
             metrics=metrics,
             n_trials_in_family=n_trials,
-            verdict=verdict,
+            verdict=ruled,
             run_ref=_RUN_REF,
             notes=notes,
             variant=variant,
             datasets=block,
+            invocation=invocation,
         )
     except RegistryError as exc:
         raise _abort(f"the registry refused this record: {exc}") from exc
     typer.echo(f"recorded trial {record.trial_id} in family {record.family}")
+    _echo_replay_case(f"trial-{record.trial_id}")

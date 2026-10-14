@@ -37,11 +37,10 @@ from cli.benchmark.errors import BenchmarkError
 from cli.derivatives.funding import PERP_SYMBOLS
 from cli.features.derivatives import coverage_by_year
 from cli.features.errors import FeatureError
-from cli.portfolio.builder import build_combined_system
+from cli.portfolio.builder import CombinedSystemConfig, build_combined_system
 from cli.portfolio.crossfreq_system import (
-    _A2_LOOKBACK,
-    _PPY_4H,
     CrossfreqSystemConfig,
+    CrossfreqSystemResult,
     _ffill_btc,
     build_crossfreq_system_fast,
 )
@@ -71,6 +70,12 @@ class Subject:
     intervals: tuple[int, ...]
     assets: tuple[str, ...]
     build: Callable[[ObservedReader, str, tuple | None, str | None, bool], dict]
+    spec: str | None = None  # repo-relative path; its sha256 is the record's spec_hash
+    metric_keys: frozenset[str] = frozenset()  # exactly the keys build returns
+    seeds: tuple[int, ...] = ()
+    verdict: Callable[[dict], str | None] | None = None  # docs/specs/00129 D4; None: evaluate-only
+    no_verdict: str | None = None  # docs/specs/00129 D4, D7: the outcome a reading carries when the rule returns None
+    incumbent: str | None = None  # docs/specs/00129 D3: the subject whose book this one builds in the same run
 
 
 def required_relpaths(subject: Subject) -> list[str]:
@@ -134,6 +139,26 @@ def _refuse_unfed_grids(
         )
 
 
+# A legacy subject's cost is a literal of its own, never the shared default a re-price moves (docs/specs/00129 D5): a
+# replay of the record it stands for reads the cost that record ran on.
+_RECORD44_CONFIG = CrossfreqSystemConfig(fee_per_side=0.0040, spread_per_side=0.0020)
+_RECORD33_CONFIG = CombinedSystemConfig(spot_fee_per_side=0.006)
+
+
+def _crossfreq_book(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> tuple[list[datetime], dict[str, list[float | None]], list[datetime], dict[str, list[float | None]], CrossfreqSystemResult]:
+    daily_ts, daily_prices = _capturing_union(reader, dataset, 1440, window, as_of, accept_holes)
+    h4_ts, h4_prices = _capturing_union(reader, dataset, 240, window, as_of, accept_holes)
+    _refuse_unfed_grids(dataset, as_of, daily_ts, daily_prices, h4_prices)
+    result = build_crossfreq_system_fast(daily_prices, daily_ts, h4_prices, h4_ts, config=_RECORD44_CONFIG)
+    return daily_ts, daily_prices, h4_ts, h4_prices, result
+
+
 def _build_crossfreq(
     reader: ObservedReader,
     dataset: str,
@@ -141,11 +166,7 @@ def _build_crossfreq(
     as_of: str | None = None,
     accept_holes: bool = False,
 ) -> dict:
-    config = CrossfreqSystemConfig()
-    daily_ts, daily_prices = _capturing_union(reader, dataset, 1440, window, as_of, accept_holes)
-    h4_ts, h4_prices = _capturing_union(reader, dataset, 240, window, as_of, accept_holes)
-    _refuse_unfed_grids(dataset, as_of, daily_ts, daily_prices, h4_prices)
-    result = build_crossfreq_system_fast(daily_prices, daily_ts, h4_prices, h4_ts, config=config)
+    *_, result = _crossfreq_book(reader, dataset, window, as_of, accept_holes)
     return {
         "ann_sharpe_noc": sharpe(result.governed_net, periods_per_year=PPY_4H),
         "per_period_sharpe_4h": sharpe(result.governed_net),
@@ -164,7 +185,7 @@ def _build_combined(
     accept_holes: bool = False,
 ) -> dict:
     _, daily_prices = _capturing_union(reader, dataset, 1440, window, as_of, accept_holes)
-    result = build_combined_system(daily_prices)
+    result = build_combined_system(daily_prices, config=_RECORD33_CONFIG)
     return {
         "ann_sharpe_noc": sharpe(result.net_of_cost, periods_per_year=PPY_DAILY),
         "per_period_sharpe": sharpe(result.net_of_cost),
@@ -176,10 +197,14 @@ def _build_combined(
 
 _ASSETS = CrossfreqSystemConfig().assets
 
-# The B2 trial's fixed constants (docs/specs/00128 D4, D6): a change to one is a new trial, never an edit here.
+# The B2 trial's fixed constants (docs/specs/00128 D4-D6, docs/specs/00129 D5): a change to one is a new trial, never an
+# edit here.
 _DECISIVE_START = 1380
 _N_RESAMPLES = 2000
 _FROM_2021 = datetime(2021, 1, 1, tzinfo=UTC)
+_B2_COST_PER_SIDE = 0.006
+_B2_A2_ARMS = (((20, 50, 100), 0.12), ((60, 120, 240), 0.10), ((60, 120, 240), 0.12))
+_B2_LOOKBACK = 180
 
 
 class _B2Inputs(NamedTuple):
@@ -197,11 +222,13 @@ def _b2_inputs(
     window: tuple[str, str] | None,
     as_of: str | None,
     accept_holes: bool,
+    *,
+    subject: str,
 ) -> _B2Inputs:
     """Arm A's positions, the funding feature and the scales, and no return of arm B: the pre-run engagement read runs on
-    this half alone (docs/specs/00128 D6)."""
+    this half alone (docs/specs/00128 D6). `subject` is the name a refusal of the window gives."""
     h4_ts, h4_prices = _capturing_union(reader, dataset, 240, window, as_of, accept_holes)
-    _b2_refuse_window(h4_ts, window)
+    _b2_refuse_window(subject, h4_ts, window)
     config = B2Config()
     feature = {}
     for asset in _ASSETS:
@@ -222,12 +249,12 @@ def _b2_inputs(
                 lookbacks=lookbacks,
                 short="off",
                 target_vol=target_vol,
-                vol_lookback=_A2_LOOKBACK,
-                basket_lookback=_A2_LOOKBACK,
-                periods_per_year=_PPY_4H,
+                vol_lookback=_B2_LOOKBACK,
+                basket_lookback=_B2_LOOKBACK,
+                periods_per_year=PPY_4H,
             ),
         )["asset_positions"]
-        for lookbacks, target_vol in CrossfreqSystemConfig().a2_arms
+        for lookbacks, target_vol in _B2_A2_ARMS
     ]
     arm_a = {a: [statistics.mean(arm[a][k] for arm in arms) for k in range(len(h4_ts) - 1)] for a in _ASSETS}
     return _B2Inputs(h4_ts, h4_prices, close_grid(h4_ts), arm_a, feature, derisk_scales(feature, config=config))
@@ -243,35 +270,35 @@ def _b2_slices(series: list[float], h4_ts: list[datetime]) -> dict[str, list[flo
     return {year: s for year, s in calendar_year_slices(series, h4_ts).items() if year != "2020"}
 
 
-def _b2_over(window: tuple[str, str] | None) -> str:
-    return "b2-funding-derisk over " + ("the full history" if window is None else f"the window {window[0]} .. {window[1]}")
+def _b2_over(subject: str, window: tuple[str, str] | None) -> str:
+    return f"{subject} over " + ("the full history" if window is None else f"the window {window[0]} .. {window[1]}")
 
 
-def _b2_refuse_window(h4_ts: list[datetime], window: tuple[str, str] | None) -> None:
+def _b2_refuse_window(subject: str, h4_ts: list[datetime], window: tuple[str, str] | None) -> None:
     """The refusals `a1_kill_bar` and `net_of_cost_verdict` make of a window too short for them or lying in partial years,
     raised before the arms are built, in the window's terms."""
     close = close_grid(h4_ts)
     from_2021 = sum(t >= _FROM_2021 for t in close)
     if len(close) < _DECISIVE_START + 2:
         raise SubjectError(
-            f"{_b2_over(window)}: it holds {len(close)} return indices, and the kill bar's decisive window opens at index "
+            f"{_b2_over(subject, window)}: it holds {len(close)} return indices, and the kill bar's decisive window opens at index "
             f"{_DECISIVE_START} and needs 2"
         )
     if from_2021 < 2:
         raise SubjectError(
-            f"{_b2_over(window)}: {from_2021} of its return indices close at or after 2021-01-01T00:00Z, and the from-2021 "
+            f"{_b2_over(subject, window)}: {from_2021} of its return indices close at or after 2021-01-01T00:00Z, and the from-2021 "
             "head-to-head needs 2"
         )
     if not _b2_slices([0.0] * len(close), h4_ts):
         raise SubjectError(
-            f"{_b2_over(window)}: none of its return indices closes in a calendar year the worst-slice leg reads, partial "
+            f"{_b2_over(subject, window)}: none of its return indices closes in a calendar year the worst-slice leg reads, partial "
             "years left out"
         )
 
 
 def _b2_arm_a_bar(inputs: _B2Inputs) -> dict:
     """Arm A's headline bar, the instrument check of docs/specs/00128 D6."""
-    cost = CrossfreqSystemConfig().cost_per_side
+    cost = _B2_COST_PER_SIDE
     returns = _b2_returns(inputs.h4_prices)
     net_a = net_of_cost(inputs.arm_a, returns, cost_per_side=cost)
     net_a_x15 = net_of_cost(inputs.arm_a, returns, cost_per_side=1.5 * cost)
@@ -291,6 +318,24 @@ def _b2_arm_a_bar(inputs: _B2Inputs) -> dict:
     )
 
 
+def _b2_build(
+    subject: str,
+    compute: Callable[[_B2Inputs], dict],
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None,
+    accept_holes: bool,
+) -> dict:
+    """Reads nothing past `_b2_inputs`, whose block the basis test pins as the trial's."""
+    try:
+        return compute(_b2_inputs(reader, dataset, window, as_of, accept_holes, subject=subject))
+    except (AlphaError, BacktestError, BenchmarkError, FeatureError, ValidationError) as exc:
+        # `_b2_inputs` names a funding file's errors; any other a compute package raises, a bad close included, is named
+        # as the window's.
+        raise SubjectError(f"{_b2_over(subject, window)}: {exc}") from exc
+
+
 def _build_b2_funding_derisk(
     reader: ObservedReader,
     dataset: str,
@@ -298,19 +343,33 @@ def _build_b2_funding_derisk(
     as_of: str | None = None,
     accept_holes: bool = False,
 ) -> dict:
-    """Reads nothing past `_b2_inputs`, whose block the basis test pins as the trial's."""
-    try:
-        return _b2_metrics(_b2_inputs(reader, dataset, window, as_of, accept_holes))
-    except (AlphaError, BacktestError, BenchmarkError, FeatureError, ValidationError) as exc:
-        # `_b2_inputs` names a funding file's errors; any other a compute package raises, a bad close included, is named
-        # as the window's.
-        raise SubjectError(f"{_b2_over(window)}: {exc}") from exc
+    return _b2_build("b2-funding-derisk", _b2_metrics, reader, dataset, window, as_of, accept_holes)
+
+
+# docs/specs/00129 D7's keys of arm A's bar.
+_B2_ARM_A_BAR_FLAGS = frozenset({"dsr_pass", "spa_pass", "cost_stress_pass", "worst_slice_pass", "passes"})
+_B2_ARM_A_BAR_KEYS = _B2_ARM_A_BAR_FLAGS | {"dsr", "spa_p_value", "spa_p_value_full", "cost_stress_sharpe", "worst_slice_sharpe"}
+
+
+def _b2_arm_a_bar_metrics(inputs: _B2Inputs) -> dict:
+    bar = _b2_arm_a_bar(inputs)
+    return {key: int(bar[key]) if key in _B2_ARM_A_BAR_FLAGS else bar[key] for key in sorted(_B2_ARM_A_BAR_KEYS)}
+
+
+def _build_b2_arm_a_bar(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    return _b2_build("b2-arm-a-bar", _b2_arm_a_bar_metrics, reader, dataset, window, as_of, accept_holes)
 
 
 def _b2_metrics(inputs: _B2Inputs) -> dict:
     arm_a, scales, close = inputs.arm_a, inputs.scales, inputs.close
     arm_b = scale_positions(arm_a, scales)
-    cost = CrossfreqSystemConfig().cost_per_side
+    cost = _B2_COST_PER_SIDE
     returns = _b2_returns(inputs.h4_prices)
     net_a = net_of_cost(arm_a, returns, cost_per_side=cost)
     net_b = net_of_cost(arm_b, returns, cost_per_side=cost)
@@ -385,8 +444,116 @@ def _b2_metrics(inputs: _B2Inputs) -> dict:
     }
 
 
+# docs/specs/00128 D7's metric keys.
+_B2_METRIC_KEYS = frozenset(
+    {
+        "ann_sharpe_noc",
+        "ann_sharpe_noc_decisive",
+        "per_period_sharpe_4h",
+        "arm_a_ann_sharpe_noc",
+        "arm_a_ann_sharpe_noc_decisive",
+        "benchmark_ann_sharpe_noc",
+        "benchmark_ann_sharpe_noc_decisive",
+        "dsr_corrected",
+        "dsr_pass",
+        "spa_pass",
+        "spa_p_full",
+        "cost_stress_pass",
+        "worst_slice_relative_pass",
+        "passes",
+        "decisive_start",
+        "n_resamples",
+        "arm_a_passes",
+        "spa_p_decisive_b30_s42",
+        "spa_p_decisive_b30_s7",
+        "spa_p_decisive_b30_s1234",
+        "spa_p_decisive_b102_s42",
+        "spa_p_decisive_b102_s7",
+        "spa_p_decisive_b102_s1234",
+        "head_to_head_mean_outperf_full",
+        "head_to_head_spa_p_full",
+        "head_to_head_mean_outperf_2021",
+        "head_to_head_spa_p_2021",
+        "max_drawdown",
+        "arm_a_max_drawdown",
+        "max_drawdown_reduction_pct",
+        "turnover_a",
+        "turnover_b",
+        "stamps_positions_differ",
+        "engaged_per_year",
+        "positions_differ_per_year",
+        "turnover_a_per_year",
+        "turnover_b_per_year",
+        "max_drawdown_per_year",
+        "arm_a_max_drawdown_per_year",
+        "binperp_funding_z30d_coverage",
+    }
+)
+
+
+# docs/specs/00128 D6's matrix plus the two instrument findings its metrics show (docs/specs/00129 D4): a change to it is a
+# new spec and a new trial, never an edit here.
+def _b2_verdict(m: dict) -> str | None:
+    if not m["arm_a_passes"] or not any(m["engaged_per_year"].values()):
+        return None
+    if not m["passes"]:
+        return "reject"
+    if m["head_to_head_mean_outperf_2021"] > 0 and m["max_drawdown_reduction_pct"] > 1e-6:
+        return "adopt" if m["head_to_head_spa_p_2021"] < 0.05 else "park"
+    return "reject"
+
+
 SUBJECTS: dict[str, Subject] = {
-    "record44-crossfreq": Subject("record44-crossfreq", (1440, 240), _ASSETS, _build_crossfreq),
-    "record33-combined": Subject("record33-combined", (1440,), _ASSETS, _build_combined),
-    "b2-funding-derisk": Subject("b2-funding-derisk", (240,), _ASSETS, _build_b2_funding_derisk),
+    "record44-crossfreq": Subject(
+        "record44-crossfreq",
+        (1440, 240),
+        _ASSETS,
+        _build_crossfreq,
+        spec="docs/specs/00038-cross-frequency-combination-design.md",
+        metric_keys=frozenset(
+            {
+                "ann_sharpe_noc",
+                "per_period_sharpe_4h",
+                "ann_sharpe_ungoverned",
+                "cap_breach_bars",
+                "governor_engaged_bars",
+                "n_periods",
+            }
+        ),
+    ),
+    "record33-combined": Subject(
+        "record33-combined",
+        (1440,),
+        _ASSETS,
+        _build_combined,
+        spec="docs/specs/00035-combination-trial-design.md",
+        metric_keys=frozenset({"ann_sharpe_noc", "per_period_sharpe", "bench_ann_sharpe", "cap_breach_bars", "n_periods"}),
+    ),
+    "b2-funding-derisk": Subject(
+        "b2-funding-derisk",
+        (240,),
+        _ASSETS,
+        _build_b2_funding_derisk,
+        spec="docs/specs/00128-b2-family-opening-design.md",
+        metric_keys=_B2_METRIC_KEYS,
+        seeds=(42, 7, 1234),
+        verdict=_b2_verdict,
+        no_verdict=(
+            "instrument finding: arm A fails the bar this window sets, or the overlay engages at no stamp; no verdict, "
+            "the trial unspent"
+        ),
+    ),
+    "b2-arm-a-bar": Subject(
+        "b2-arm-a-bar",
+        (240,),
+        _ASSETS,
+        _build_b2_arm_a_bar,
+        spec="docs/specs/00128-b2-family-opening-design.md",
+        metric_keys=_B2_ARM_A_BAR_KEYS,
+        seeds=(42,),
+    ),
 }
+
+# docs/specs/00129 D3: the records at or below 47 a --comparator-trial may name, each mapped to the subject that reproduces
+# its book.
+LEGACY_INCUMBENTS: dict[int, str] = {33: "record33-combined", 44: "record44-crossfreq", 47: "record44-crossfreq"}
