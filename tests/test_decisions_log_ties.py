@@ -50,13 +50,12 @@ def _verdict_findings(iter_n: int, line: str, cited: list[int], trials: dict[int
             "other in lowercase"
         ]
     if not stems:
-        remedy = _moved(
-            iter_n,
-            _VERDICT.search(line, len(header)),
-            "write its own trial's ADOPT, PARK or REJECT before its first '. ', or, where it keeps a reading, put that "
-            "(reading N there and move the cited trial's token past it",
-        )
-        return [f"[iter-{iter_n}]: its header names (registry trial {cited[-1]} and states no verdict: {remedy}"]
+        # Never "move the verdict its line holds": past the header it may be a cited trial's, never this entry's.
+        return [
+            f"[iter-{iter_n}]: its header names (registry trial {cited[-1]} and states no verdict: write its own trial's "
+            "ADOPT, PARK or REJECT before its first '. ', or, where it keeps a reading, put that (reading N there and move "
+            "the cited trial's token past it"
+        ]
     # A trial is registered after the incumbent it is compared with, so the highest id is the entry's own.
     judged = cited[-1:]
     return [
@@ -190,8 +189,18 @@ def test_the_committed_decisions_logs_tie_every_verdict_to_its_record():
             ["[iter-176] B2 trial 2 (registry trial 48). Verdict: REJECT."],
             {48: "adopt"},
             set(),
-            "states no verdict: [iter-176]'s header ends at its first '. ', and the REJECT its line holds past it",
+            "states no verdict: write its own trial's ADOPT, PARK or REJECT before its first '. '",
             id="a-verdict-past-the-headers-end",
+        ),
+        pytest.param(
+            [
+                "[iter-176] B2 trial 2 stopped against the incumbent (registry trial 47) (reading 2) (Decision: 1). The "
+                "incumbent stays ADOPTED."
+            ],
+            {47: "adopt"},
+            {2},
+            "where it keeps a reading, put that (reading N there and move the cited trial's token past it",
+            id="a-stopped-challengers-reading-whose-line-holds-its-incumbents-verdict",
         ),
         pytest.param(
             ["[iter-176] B2 trial 2 — REJECT. Recorded as (registry trial 48)."],
