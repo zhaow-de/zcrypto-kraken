@@ -590,7 +590,7 @@ def test_a_legacy_record_the_incumbent_reproduces_is_recorded_as_the_comparator(
     assert json.loads(registry.read_text().splitlines()[-1])["invocation"]["comparator_trial"] == 44
 
 
-@pytest.mark.parametrize("n", [33, 45], ids=["another-subjects-legacy-record", "a-legacy-record-no-subject-reproduces"])
+@pytest.mark.parametrize("n", [33, 43], ids=["another-subjects-legacy-record", "a-legacy-record-no-subject-reproduces"])
 def test_a_legacy_record_the_incumbent_does_not_reproduce_is_refused_as_the_comparator(tmp_path, monkeypatch, n):
     registry = _committed_copy(tmp_path)
     before = registry.read_bytes()
@@ -1290,6 +1290,22 @@ def _b2_dataset(tmp_path: Path, *, start: datetime = _B2_START, flat: bool = Fal
     return root
 
 
+_B1_START = datetime(2015, 6, 1, tzinfo=UTC)
+_B1_BARS = 1_600  # 4h bars: 1,599 return indices, 315 of them from 2016-01-01, closes in 2015 and 2016
+
+
+def _b1_dataset(tmp_path: Path, *, start: datetime = _B1_START, bars: int = _B1_BARS, m15: bool = True) -> Path:
+    """Its 15m set's last bar closes four hours past the last 4h decision boundary, so the vol scaler's extent check passes."""
+    root = tmp_path / "data"
+    for i, asset in enumerate(_B2_ASSETS):
+        rows = _rows(bars, phase=i * 0.7, start=int(start.timestamp()), step=4 * 3600)
+        write_parquet(to_frame(rows), root / "ohlc-test" / f"{asset}/EUR/240.parquet")
+        if m15:
+            rows = _rows(bars * 16, phase=i * 0.7, start=int(start.timestamp()), step=900)
+            write_parquet(to_frame(rows), root / "ohlc-15m" / f"{asset}/EUR/15.parquet")
+    return root
+
+
 def _recording(monkeypatch, name: str, rewrite) -> list[tuple[dict, dict]]:
     """`subjects.<name>` as a pass-through keeping each call's arguments, bound with defaults applied, and the result
     `rewrite` makes of the real one."""
@@ -1704,6 +1720,147 @@ def test_the_b2_subject_refuses_a_window_its_benchmark_never_trades_naming_it(tm
     assert f"b2-funding-derisk over the window {args[-2]} .. {args[-1]}: no non-degenerate slice to compare" in result.output
 
 
+# Records 45 and 46's metric keys (docs/specs/00130 D3), pinned against the committed records below.
+_B1_REGISTERED_KEYS = frozenset(
+    {
+        "ann_sharpe_noc",
+        "ann_sharpe_noc_decisive",
+        "arm_a_ann_sharpe_noc",
+        "arm_a_ann_sharpe_noc_decisive",
+        "arm_a_max_drawdown",
+        "arm_a_spot_drag_pct_yr",
+        "benchmark_ann_sharpe_noc",
+        "benchmark_ann_sharpe_noc_decisive",
+        "cost_stress_pass",
+        "decisive_start",
+        "dsr_corrected",
+        "dsr_pass",
+        "gated_per_year",
+        "head_to_head_mean_outperf_2016",
+        "head_to_head_spa_p_2016",
+        "head_to_head_spa_p_full",
+        "max_drawdown",
+        "n_resamples",
+        "passes",
+        "per_period_sharpe_4h",
+        "scaled_per_year",
+        "spa_p_decisive_b102",
+        "spa_p_decisive_b30",
+        "spa_p_full",
+        "spa_p_seed1234",
+        "spa_p_seed7",
+        "spa_pass",
+        "spot_drag_pct_yr",
+        "stamps_held",
+        "stamps_positions_differ",
+        "stamps_scaled",
+        "turnover_a",
+        "turnover_b",
+        "turnover_reduction_pct",
+        "worst_slice_relative_pass",
+    }
+)
+
+
+def test_the_b1_subjects_literals_are_the_ones_records_45_and_46_ran_with():
+    assert subjects._B1_COST_PER_SIDE == 0.006
+    assert subjects._B1_A2_ARMS == (((20, 50, 100), 0.12), ((60, 120, 240), 0.10), ((60, 120, 240), 0.12))
+    assert subjects._B1_LOOKBACK == 180
+    assert subjects._B1_DECISIVE_START == 1380
+    assert subjects._B1_N_RESAMPLES == 2000
+    assert subjects._B1_FROM_2016 == datetime(2016, 1, 1, tzinfo=UTC)
+    assert subjects._B1_GRID == ((30, 7), (30, 1234), (102, 42))
+
+
+@pytest.mark.parametrize(
+    ("name", "trial_id", "build"),
+    [("b1-conditioning", 45, "_build_b1_conditioning"), ("b1-window-only", 46, "_build_b1_window_only")],
+)
+def test_each_b1_subject_declares_its_records_keys_and_is_evaluate_only(name, trial_id, build):
+    subject = subjects.SUBJECTS[name]
+    assert subject.metric_keys == _B1_REGISTERED_KEYS == frozenset(_trials()[trial_id]["metrics"])
+    assert subject.build is getattr(subjects, build)
+    assert (subject.intervals, subject.assets, subject.seeds) == ((240,), _B2_ASSETS, (42, 7, 1234))
+    assert subject.spec == "docs/specs/00045-b1-seasonality-conditioning-design.md"
+    assert subject.verdict is None and subject.no_verdict is None and subject.incumbent is None
+
+
+@pytest.mark.parametrize(
+    ("name", "datasets"),
+    [
+        pytest.param("b1-conditioning", {"ohlc-test", "ohlc-15m"}, id="b1-conditioning"),
+        pytest.param("b1-window-only", {"ohlc-test"}, id="b1-window-only"),
+    ],
+)
+def test_only_b1_conditioning_reads_the_15m_set(tmp_path, name, datasets):
+    reader = ObservedReader(_b1_dataset(tmp_path))
+    subjects.SUBJECTS[name].build(reader, "ohlc-test", None)
+    assert set(reader.block()) == datasets
+
+
+@pytest.mark.parametrize(
+    ("spoil", "cause"),
+    [
+        pytest.param(Path.unlink, "No such file or directory", id="missing"),
+        pytest.param(lambda path: path.write_bytes(b"not a parquet file"), "File out of specification", id="not-parquet"),
+    ],
+)
+def test_b1_conditioning_names_a_15m_file_it_cannot_read(tmp_path, monkeypatch, spoil, cause):
+    root = _b1_dataset(tmp_path)
+    spoil(root / "ohlc-15m" / "SOL/EUR/15.parquet")
+    _anchor(monkeypatch, root)
+
+    result = runner.invoke(app, ["research", "eval", "--subject", "b1-conditioning", "--dataset", "ohlc-test"])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "ohlc-15m/SOL/EUR/15.parquet" in result.output and cause in result.output
+
+
+def test_b1_conditioning_refuses_a_15m_set_short_of_the_last_decision_boundary_in_its_own_terms(tmp_path, monkeypatch):
+    root = _b1_dataset(tmp_path)
+    for path in (root / "ohlc-15m").rglob("15.parquet"):
+        # Eight hours off each file: the last close falls four hours short of the last decision boundary.
+        pl.read_parquet(path).head(-32).write_parquet(path)
+    _anchor(monkeypatch, root)
+
+    result = runner.invoke(app, ["research", "eval", "--subject", "b1-conditioning", "--dataset", "ohlc-test"])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "b1-conditioning over the full history: 15m substrate ends at" in result.output
+    assert "pass a --window that ends by the frozen ohlc-15m set's last bar" in result.output
+    assert "refresh the substrate" not in result.output
+
+
+@pytest.mark.parametrize(
+    ("start", "bars", "message"),
+    [
+        pytest.param(datetime(2020, 1, 1, tzinfo=UTC), 1_300, "it holds 1299 return indices", id="short-of-the-decisive-window"),
+        pytest.param(
+            datetime(2015, 1, 1, tzinfo=UTC),
+            _B1_BARS,
+            "0 of its return indices open at or after 2016-01-01T00:00Z",
+            id="before-2016",
+        ),
+        pytest.param(
+            datetime(2026, 1, 1, tzinfo=UTC), _B1_BARS, "none of its return indices closes in a calendar year", id="all-in-2026"
+        ),
+    ],
+)
+@pytest.mark.parametrize("name", ["b1-conditioning", "b1-window-only"])
+def test_a_b1_history_the_bar_cannot_read_is_refused_before_the_arms(tmp_path, monkeypatch, name, start, bars, message):
+    _anchor(monkeypatch, _b1_dataset(tmp_path, start=start, bars=bars, m15=False))
+    calls = _recording(monkeypatch, "a2_book_returns", lambda arguments, result: result)
+
+    result = runner.invoke(app, ["research", "eval", "--subject", name, "--dataset", "ohlc-test"])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert f"{name} over the full history: " in result.output and message in result.output
+    assert calls == []
+
+
 def _declared_series(tmp_path: Path, subject: subjects.Subject) -> tuple[Path, datetime]:
     root = tmp_path / "data"
     for i, asset in enumerate(subject.assets):
@@ -1713,10 +1870,12 @@ def _declared_series(tmp_path: Path, subject: subjects.Subject) -> tuple[Path, d
     return root, datetime.fromtimestamp(_EPOCH_2020, UTC)
 
 
-# A subject whose build reads a dataset it does not declare brings its own fixture here; any other is fed its declared series.
+# A subject whose build reads a dataset it does not declare brings its own fixture here, and b1-window-only shares b1-conditioning's; any other is fed its declared series.
 _CONTRACT_DATASETS = {
     "b2-funding-derisk": lambda tmp_path, subject: (_b2_dataset(tmp_path), _B2_START),
     "b2-arm-a-bar": lambda tmp_path, subject: (_b2_dataset(tmp_path), _B2_START),
+    "b1-conditioning": lambda tmp_path, subject: (_b1_dataset(tmp_path), _B1_START),
+    "b1-window-only": lambda tmp_path, subject: (_b1_dataset(tmp_path, m15=False), _B1_START),
 }
 
 

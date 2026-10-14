@@ -390,3 +390,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #703 | 2026-10-13 | docs(research): T0016 reads A spent and T0009, T0014 resolved | — | — | T0016 |
 | #704 | 2026-10-13 | docs(reference): 00127 rollout records — deploy-log rows of R3, R5, R6 | — | 00127 | — |
 | #708 | 2026-10-14 | feat(research): 00129 — every trial re-derivable from tree and hub | — | 00129 | — |
+| #715 | 2026-10-14 | feat(research): 00130 — records 45 and 46 re-derived as B1 subjects | — | 00130 | T0223 |
