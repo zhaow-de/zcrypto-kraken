@@ -668,8 +668,7 @@ def _b1_build(
     try:
         return _b1_metrics(h4_ts, h4_prices, m15, n_trials=1 if conditioning else 2)
     except (AlphaError, BacktestError, BenchmarkError, FeatureError, ValidationError) as exc:
-        # The scaler's extent check (docs/specs/00045 F8) and a bad close among them, named as the window's; ohlc-15m is
-        # frozen, so the extent check's remedy here is a window that ends inside it, never a refreshed substrate.
+        # The scaler's extent check (docs/specs/00045 F8) and a bad close among them, named as the window's.
         reason = str(exc).replace(
             "refresh the substrate before conditioning (F8)",
             "pass a --window that ends by the frozen ohlc-15m set's last bar",

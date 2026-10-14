@@ -56,7 +56,7 @@ def test_epistemics_live_in_the_referent_value():
             assert "REPRODUCED" in row["referent"] and "weak digest" in row["referent"]
             if "operand_4h" in row["evidence"]:
                 assert row["evidence"]["operand_4h"][:8] in row["referent"]
-            # Trials 33 and 35 ran from scratchpad drivers: what they read is not established, key or no key.
+            # Trials 33 and 35 are P1 runs: committed state does not establish what they read.
             if "scope_mismatch" in row["evidence"] or {33, 35} & set(row["trial_ids"]):
                 assert "scope_mismatch" in row["evidence"] and "not established" in row["referent"]
 
