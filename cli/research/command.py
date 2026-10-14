@@ -52,6 +52,13 @@ def _abort(message: str) -> typer.Exit:
     return typer.Exit(code=1)
 
 
+def _no_directory(flag: str, path: Path) -> typer.Exit:
+    return _abort(
+        f"{flag} {path}: {path.parent} is no directory, so nothing could be appended there: create it, or pass a path "
+        "whose directory exists"
+    )
+
+
 def _tree_state(root: Path) -> tuple[str, str]:
     def git(*args: str) -> subprocess.CompletedProcess:
         return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True)
@@ -185,6 +192,7 @@ def eval_subject(
     # Everything a recording run can be refused for without the data is checked before any read: a refusal must not cost a
     # full evaluation.
     target = registry or _REGISTRY
+    ledger_target = ledger or _LEDGER
     records = register or reading
     if records:
         if register and reading:
@@ -209,6 +217,10 @@ def eval_subject(
         missing = [flag for flag, key in (_REGISTER_FIELDS if register else _READING_FIELDS) if supplied[key] is None]
         if missing:
             raise _abort(f"{'--register' if register else '--reading'} needs {', '.join(missing)}")
+        if not ledger_target.parent.is_dir():
+            raise _no_directory("--ledger", ledger_target)
+        if not target.parent.is_dir():
+            raise _no_directory("--registry", target)
         before = _tree_state(_REPO_ROOT)
         if before[1]:
             raise _abort(
@@ -309,7 +321,7 @@ def eval_subject(
     if ruled is None:
         # A subject with no rule, or a rule that stops: a reading, its outcome the stop's text or none.
         try:
-            kept = ReadingLedger(ledger or _LEDGER).append(
+            kept = ReadingLedger(ledger_target).append(
                 iteration=iteration,
                 spec_hash=computed_spec_hash,
                 invocation=invocation,

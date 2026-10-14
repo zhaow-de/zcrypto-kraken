@@ -694,6 +694,37 @@ def test_a_reading_refuses_a_typed_verdict_before_the_fit(tmp_path, monkeypatch)
     assert not ledger.exists()
 
 
+@pytest.mark.parametrize(
+    ("flags", "flag", "declared"),
+    [
+        pytest.param("reading", "--ledger", {"verdict": None, "no_verdict": None}, id="a-reading-runs-ledger"),
+        pytest.param("register", "--ledger", {"verdict": lambda metrics: None}, id="a-stopping-register-runs-ledger"),
+        pytest.param("reading", "--registry", {"verdict": None, "no_verdict": None}, id="a-reading-runs-registry"),
+        pytest.param("register", "--registry", {}, id="a-register-runs-registry"),
+    ],
+)
+def test_a_ledger_or_registry_in_a_missing_directory_is_refused_before_the_fit_naming_it(
+    tmp_path, monkeypatch, flags, flag, declared
+):
+    nodir = tmp_path / "nodir"
+    registry = nodir / "r.jsonl" if flag == "--registry" else tmp_path / "registry.jsonl"
+    ledger = nodir / "l.jsonl" if flag == "--ledger" else tmp_path / "ledger.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    calls = _stub_subject(monkeypatch, **declared)
+    if flags == "register":
+        args = _register_args(registry, n_trials=1, ledger=ledger)
+    else:
+        args = [*_reading_args(ledger), "--registry", str(registry)]
+
+    result = runner.invoke(app, [*_stub_eval(), *args])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert f"{flag} {nodir}" in result.output
+    assert calls == []
+    assert not nodir.exists() and not registry.exists() and not ledger.exists()
+
+
 def test_a_reading_from_an_unclean_tree_is_refused_before_the_fit_listing_the_paths(tmp_path, monkeypatch):
     ledger = tmp_path / "ledger.jsonl"
     _anchor(monkeypatch, _stub_dataset(tmp_path))
