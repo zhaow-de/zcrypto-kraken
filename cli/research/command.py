@@ -53,10 +53,7 @@ def _abort(message: str) -> typer.Exit:
 
 
 def _no_directory(flag: str, path: Path) -> typer.Exit:
-    return _abort(
-        f"{flag} {path}: {path.parent} is no directory, so nothing could be appended there: create it, or pass a path "
-        "whose directory exists"
-    )
+    return _abort(f"{flag} {path}: {path.parent} is no directory: create it, or pass a path whose directory exists")
 
 
 def _tree_state(root: Path) -> tuple[str, str]:

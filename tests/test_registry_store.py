@@ -490,7 +490,7 @@ def test_live_registry_file_loads_clean():
 def test_live_reading_ledger_loads_clean():
     # Read-only, as the registry's: the load runs the ledger's contiguity and chain checks over the committed file.
     ledger = ReadingLedger(LEDGER)
-    assert len(ledger) >= 1  # reading 1, B2 trial 1's pre-flight stop; floored, never pinned
+    assert len(ledger) >= 1  # an absent ledger loads as no readings; floored, never pinned
     assert [r.reading_id for r in ledger.records] == list(range(1, len(ledger) + 1))
 
 

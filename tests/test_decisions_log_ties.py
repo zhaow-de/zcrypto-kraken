@@ -9,12 +9,12 @@ from cli.registry import ReadingLedger, TrialRegistry
 from tests.test_trial_registry_provenance import LEDGER, REGISTRY, REPO
 
 _ENTRY = re.compile(r"^\[iter-(\d+)\b")
-# An id ends at `,`, `)` or `;`, so prose such as "(reading 3 sources)" is no tie.
 _TIE = re.compile(r"\((registry trial|reading) (\d+)(?=[,);])")
 _VERDICT = re.compile(r"\b(ADOPT|PARK|REJECT)(?:ED|S)?\b")
 _ANY_CASE_VERDICT = re.compile(_VERDICT.pattern, re.IGNORECASE)
 _TRIAL_WORD = re.compile(r"\btrial\b", re.IGNORECASE)
 _TIE_FLOOR_ITER = 175
+_TOKEN_END = "the id ended by ',', ')' or ';'"
 
 
 def _header(line: str) -> str:
@@ -45,11 +45,14 @@ def _verdict_findings(iter_n: int, line: str, cited: list[int], trials: dict[int
     header = _header(line)
     stems = sorted({verdict.group(1) for verdict in _VERDICT.finditer(header)})
     if len(stems) > 1:
-        return [f"[iter-{iter_n}]: its header holds the verdicts {stems}: one entry records one trial's verdict"]
+        return [
+            f"[iter-{iter_n}]: its header holds the verdicts {stems}: one entry records one trial's verdict, so write any "
+            "other trial's in lowercase"
+        ]
     if not stems:
         remedy = _moved(iter_n, _VERDICT.search(line, len(header)), "write ADOPT, PARK or REJECT before its first '. '")
         return [f"[iter-{iter_n}]: its header names (registry trial {cited[-1]} and states no verdict: {remedy}"]
-    # The highest id is the entry's own trial; a lower one is a comparator it cites, held to existence alone.
+    # A trial is registered after the incumbent it is compared with, so the highest id is the entry's own.
     judged = cited[-1:]
     return [
         f"[iter-{iter_n}]: its header's verdict {stem} is not trial {n}'s, {trials[n]!r}"
@@ -78,13 +81,13 @@ def tie_findings(entries: list[tuple[int, str]], trials: dict[int, str], reading
             remedy = _moved(
                 iter_n,
                 _TIE.search(line, len(header)),
-                f"past iter-{_TIE_FLOOR_ITER} it names the record as (registry trial N or (reading N",
+                f"past iter-{_TIE_FLOOR_ITER} it names the record as (registry trial N or (reading N, {_TOKEN_END}",
             )
             found.append(f"[iter-{iter_n}]: its header holds a verdict on a trial and no tie: {remedy}")
     for kind, n in [("registry trial", n) for n in sorted(trials) if n > 47] + [("reading", n) for n in sorted(readings)]:
         if (kind, n) not in named:
             held_at, held = past.get((kind, n), (0, None))
-            remedy = _moved(held_at, held, f"the entry recording its decision carries ({kind} {n}")
+            remedy = _moved(held_at, held, f"the entry recording its decision carries ({kind} {n}, {_TOKEN_END}")
             found.append(f"{kind} {n} is named by no decisions-log header: {remedy}")
     return found
 
@@ -219,3 +222,10 @@ def test_one_broken_tie_is_exactly_one_finding(lines, trials, readings, finding)
 )
 def test_a_sound_tie_is_no_finding(lines, trials):
     assert tie_findings(_entries(lines), trials, set()) == []
+
+
+@pytest.mark.parametrize("end", [" — family B2)", ": B2)", " )"])
+def test_a_tie_whose_id_ends_otherwise_is_told_how_its_id_ends(end):
+    found = tie_findings(_entries([f"[iter-176] B2 trial 2 — REJECT (registry trial 48{end}. Body."]), {48: "reject"}, set())
+
+    assert len(found) == 2 and all("the id ended by ',', ')' or ';'" in finding for finding in found), found
