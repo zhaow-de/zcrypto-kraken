@@ -50,7 +50,12 @@ def _verdict_findings(iter_n: int, line: str, cited: list[int], trials: dict[int
             "other in lowercase"
         ]
     if not stems:
-        remedy = _moved(iter_n, _VERDICT.search(line, len(header)), "write ADOPT, PARK or REJECT before its first '. '")
+        remedy = _moved(
+            iter_n,
+            _VERDICT.search(line, len(header)),
+            "write its own trial's ADOPT, PARK or REJECT before its first '. ', or, where it keeps a reading, put that "
+            "(reading N there and move the cited trial's token past it",
+        )
         return [f"[iter-{iter_n}]: its header names (registry trial {cited[-1]} and states no verdict: {remedy}"]
     # A trial is registered after the incumbent it is compared with, so the highest id is the entry's own.
     judged = cited[-1:]
@@ -150,15 +155,22 @@ def test_the_committed_decisions_logs_tie_every_verdict_to_its_record():
             ["[iter-176] B2 trial 2 — the verdict (registry trial 48) (Decision: 1)"],
             {48: "reject"},
             set(),
-            "states no verdict: write ADOPT, PARK or REJECT before its first '. '",
+            "states no verdict: write its own trial's ADOPT, PARK or REJECT before its first '. '",
             id="the-closeout-templates-question-line",
         ),
         pytest.param(
             ["[iter-176] B2 trial 2 rejected (registry trial 48). Body."],
             {48: "adopt"},
             set(),
-            "states no verdict: write ADOPT, PARK or REJECT before its first '. '",
+            "states no verdict: write its own trial's ADOPT, PARK or REJECT before its first '. '",
             id="a-lowercase-verdict-beside-a-tie",
+        ),
+        pytest.param(
+            ["[iter-176] B2 trial 2 stopped against the incumbent (registry trial 47) (reading 2) (Decision: 1)"],
+            {47: "adopt"},
+            {2},
+            "where it keeps a reading, put that (reading N there and move the cited trial's token past it",
+            id="a-stopped-challengers-reading-citing-its-incumbent-in-the-header",
         ),
         pytest.param(
             ["[iter-176] B2 trial 2 rejected, no tie. Body."],
@@ -222,6 +234,12 @@ def test_one_broken_tie_is_exactly_one_finding(lines, trials, readings, finding)
 )
 def test_a_sound_tie_is_no_finding(lines, trials):
     assert tie_findings(_entries(lines), trials, set()) == []
+
+
+def test_a_stopped_challengers_reading_may_cite_its_incumbent_below_its_header():
+    line = "[iter-176] B2 trial 2 stopped (reading 2), its incumbent cited below. Against (registry trial 47)."
+
+    assert tie_findings(_entries([line]), {47: "adopt"}, {2}) == []
 
 
 @pytest.mark.parametrize("end", [" — family B2)", ": B2)", " )"])
