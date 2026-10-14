@@ -14,7 +14,7 @@ from typing import Optional
 import typer
 
 from cli.data import rolling
-from cli.registry import ReadingLedger, TrialRegistry
+from cli.registry import VERDICTS, ReadingLedger, TrialRegistry
 from cli.registry.errors import RegistryError
 from cli.registry.observed import ObservedReader
 from cli.research.subjects import EVALUATION_ERRORS, LEGACY_INCUMBENTS, SUBJECTS, Subject, SubjectError, required_relpaths
@@ -206,6 +206,10 @@ def eval_subject(
             )
         if reading and verdict is not None:
             raise _abort(f"--verdict {verdict} asserts a trial's verdict, and a reading stores none: drop --verdict")
+        if verdict is not None and verdict not in VERDICTS:
+            raise _abort(
+                f"--verdict {verdict} is none of {', '.join(sorted(VERDICTS))}: pass one, or drop --verdict to take the rule's"
+            )
         if known.incumbent is not None and comparator_trial is None:
             raise _abort(
                 f"{subject} compares against its incumbent, {known.incumbent}: pass --comparator-trial N, the id of the "

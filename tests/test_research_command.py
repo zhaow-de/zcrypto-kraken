@@ -421,6 +421,20 @@ def test_a_typed_verdict_the_rule_does_not_give_is_refused(tmp_path, monkeypatch
     assert not registry.exists()
 
 
+def test_a_verdict_outside_adopt_reject_and_park_is_refused_before_the_fit(tmp_path, monkeypatch):
+    registry = tmp_path / "registry.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    calls = _stub_subject(monkeypatch)
+
+    result = runner.invoke(app, [*_stub_eval(), "--verdict", "adpot", *_register_args(registry, n_trials=1)])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "--verdict adpot" in result.output
+    assert calls == []
+    assert not registry.exists()
+
+
 def test_a_rule_that_stops_keeps_the_run_as_a_reading_and_spends_no_trial(tmp_path, monkeypatch):
     registry, ledger = tmp_path / "registry.jsonl", tmp_path / "ledger.jsonl"
     _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
@@ -733,6 +747,20 @@ def test_a_ledger_or_registry_in_a_missing_directory_is_refused_before_the_fit_n
     assert f"{flag} {nodir}" in result.output
     assert calls == []
     assert not nodir.exists() and not registry.exists() and not ledger.exists()
+
+
+def test_a_reading_refuses_a_typed_spec_hash_other_than_the_specs_before_the_fit(tmp_path, monkeypatch):
+    ledger = tmp_path / "ledger.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path))
+    calls = _stub_subject(monkeypatch, verdict=None, no_verdict=None)
+
+    result = runner.invoke(app, [*_stub_eval(), "--spec-hash", "0" * 64, *_reading_args(ledger)])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert _STUB_SPEC in result.output
+    assert calls == []
+    assert not ledger.exists()
 
 
 def test_a_reading_from_an_unclean_tree_is_refused_before_the_fit_listing_the_paths(tmp_path, monkeypatch):
