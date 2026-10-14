@@ -1295,8 +1295,7 @@ _B1_BARS = 1_600  # 4h bars: 1,599 return indices, 315 of them from 2016-01-01, 
 
 
 def _b1_dataset(tmp_path: Path, *, start: datetime = _B1_START, bars: int = _B1_BARS, m15: bool = True) -> Path:
-    """The ten 4h series and, unless `m15` is false, an `ohlc-15m` set of the same span at 15 minutes, whose last bar
-    closes four hours past the last 4h decision boundary, so the vol scaler's extent check passes."""
+    """Its 15m set's last bar closes four hours past the last 4h decision boundary, so the vol scaler's extent check passes."""
     root = tmp_path / "data"
     for i, asset in enumerate(_B2_ASSETS):
         rows = _rows(bars, phase=i * 0.7, start=int(start.timestamp()), step=4 * 3600)
@@ -1869,8 +1868,7 @@ def _declared_series(tmp_path: Path, subject: subjects.Subject) -> tuple[Path, d
     return root, datetime.fromtimestamp(_EPOCH_2020, UTC)
 
 
-# A subject whose build reads a dataset it does not declare brings its own fixture here, and b1-window-only takes
-# b1-conditioning's 4h series, both building through _b1_build; any other is fed its declared series.
+# A subject whose build reads a dataset it does not declare brings its own fixture here, and b1-window-only shares b1-conditioning's; any other is fed its declared series.
 _CONTRACT_DATASETS = {
     "b2-funding-derisk": lambda tmp_path, subject: (_b2_dataset(tmp_path), _B2_START),
     "b2-arm-a-bar": lambda tmp_path, subject: (_b2_dataset(tmp_path), _B2_START),

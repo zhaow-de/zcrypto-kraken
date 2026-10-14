@@ -1,5 +1,4 @@
-"""Records 45 and 46, B1's trials 1 and 2, re-derived by their subjects over ohlc-full at the precision their lost writer
-stored (docs/specs/00130 D4): a moved metric, a moved input file or a moved verdict fails here, where the data is."""
+"""Records 45 and 46, B1's trials 1 and 2, re-derived by their subjects over ohlc-full at the precision their lost writer stored (docs/specs/00130 D4)."""
 
 from __future__ import annotations
 
@@ -16,7 +15,7 @@ from tests.test_trial_registry_provenance import REGISTRY
 pytestmark = pytest.mark.data
 
 _DATA_ROOT = Path(__file__).resolve().parents[1] / "data"
-# The lost writer's decimals (docs/specs/00130's measured basis): 4 unless named; ints and per-year dicts exact.
+# The lost writer's decimals (docs/specs/00130's measured basis).
 _DECIMALS = {
     "dsr_corrected": 5,
     "per_period_sharpe_4h": 5,

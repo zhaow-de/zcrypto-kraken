@@ -564,8 +564,6 @@ def _b1_metrics(
     *,
     n_trials: int,
 ) -> dict:
-    """Records 45 and 46's protocol: arm A the three adopted A2 arms equal-weighted, arm B through the overlay, the
-    benchmark, the bar, the grid and the head-to-heads, costed inline at 0.006 per side (docs/specs/00130 D3)."""
     n = len(h4_ts) - 1
     fed = _ffill_btc(h4_prices)
     arms = [
@@ -611,8 +609,7 @@ def _b1_metrics(
         (block, seed): reality_check_pvalue(decisive, mean_block=block, n_resamples=_B1_N_RESAMPLES, seed=seed)["p_value"]
         for block, seed in _B1_GRID
     }
-    # A stamp belongs to the year of its bar's start, ts[k], as the decisions log's [iter-086] fold-assignment entry rules
-    # (bar-start year).
+    # A stamp belongs to the year of its bar's start, ts[k], as the decisions log's [iter-086] fold-assignment entry rules.
     k16 = next(k for k in range(n) if h4_ts[k] >= _B1_FROM_2016)
     full = net_of_cost_verdict(net_b, net_a, mean_block=30, seed=42, n_resamples=_B1_N_RESAMPLES)
     from_2016 = net_of_cost_verdict(net_b[k16:], net_a[k16:], mean_block=30, seed=42, n_resamples=_B1_N_RESAMPLES)
@@ -695,7 +692,7 @@ def _build_b1_window_only(
     return _b1_build("b1-window-only", False, reader, dataset, window, as_of, accept_holes)
 
 
-# Records 45 and 46's 35 keys (docs/specs/00130 D3).
+# Records 45 and 46's metric keys (docs/specs/00130 D3).
 _B1_METRIC_KEYS = frozenset(
     {
         "ann_sharpe_noc",

@@ -1,4 +1,4 @@
-"""The four pre-schema-4 hashes, each recomputed: three from data/ohlc-full by the recovered manifest recipe, one composed from two operands (spec 00086 D6 as amended by spec 00130 D6)."""
+"""The four pre-schema-4 hashes (spec 00086 D6 as amended by spec 00130 D6)."""
 
 import hashlib
 import json
@@ -13,8 +13,6 @@ _PINS = _ROOT / "docs" / "reference" / "legacy-dataset-pins.jsonl"
 _REGISTRY = _ROOT / "docs" / "reference" / "trial-registry.jsonl"
 _MANIFEST_15M = _ROOT / "data" / "ohlc-15m" / "manifest.json"
 _OHLC_FULL = _ROOT / "data" / "ohlc-full"
-# The recovered trial44_write.py's manifest (git show 74080b69e:docs/reference/trial43-recovered-runners/trial44_write.py),
-# transcribed: per asset its row count, first and last stamp and first and last close, nothing else of the bytes.
 _LEGACY_ASSETS = ("ADA", "AVAX", "BTC", "DOGE", "DOT", "ETH", "LINK", "LTC", "SOL", "XRP")
 
 
@@ -23,6 +21,7 @@ def _rows():
 
 
 def _legacy_manifest(interval: int) -> str:
+    """The recovered trial44_write.py's manifest(interval) (git show 74080b69e:docs/reference/trial43-recovered-runners/trial44_write.py), transcribed: a weak digest, not every byte."""
     from cli.ohlc.dataset import read_parquet
 
     parts = []
