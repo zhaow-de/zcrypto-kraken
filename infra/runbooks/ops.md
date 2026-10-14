@@ -250,40 +250,6 @@ The counter is denominated in primary silence deliberately: a correlated outage 
 
 ______________________________________________________________________
 
-<a name="healable-threshold-rederivation-due"></a>
-
-## healable-threshold-rederivation-due — SCHEDULED REMINDER
-
-### What you are seeing
-
-The daily pass's report names this reminder under `## Reminders`: **OWED** when `zcrypto_reconcile_healable_gap_seconds_total` increased in the window — a new healable-gap event landed, so the count in step 1 is owed again — and `ok` when it did not. **A third status says the counter *reset*** — a ledger correction or rebuild lowered the total, so `increase()` would read the whole post-reset value as movement. That is OWED too, and the report deliberately quotes no figure with it: the recount below is the only arbiter. A Slack message in `#zcrypto` may prompt the same; the report is the trigger, the message a convenience ping that cannot be verified to exist from this side. It is not an alert — **nothing is wrong**. Unlike `refdata-sweep-due`, which is calendar-driven, this one is event-driven: qualifying days accrue only when the counter moves, and the pass reads the counter, never the ledger — step 1 is still yours.
-
-### What it means
-
-The `gt [300]` bar is bounded, not fitted, and marked `PROVISIONAL` at the rule in `infra/grafana/alerts.yaml`. What the events up to 2026-08-04 measured is on record in the resolved topic that fixed this counter<!-- T0103 -->.
-
-### What to do
-
-1. **Count the qualifying days from the LEDGER, never from Grafana Cloud.** Cloud's retention is short (~14 days), so a long selector there reads zero over a series it has never seen move (no count command: the qualifying-day count is an operator's read of the ops host's ledger).
-
-   ```
-   ssh hp "sudo cat /var/lib/zcrypto-ops/capture-reconciled/reconcile-ledger.jsonl"
-   ```
-
-   Sum per day with the **production expression** from `cli/archive/command.py` — `float(record.get("claimed_seconds") or record.get("healed_seconds") or 0.0)` — and confirm your total equals the live gauge before trusting the per-day split. A parse that misses the `healed_seconds` fallback totals wrong and mis-attributes days. When the counter's movement since the last pass equals what the hour of a capture-tagged primary converge booked, the recount is decided: nothing organic landed, and step 3 applies.
-
-2. **Count only organic days after 2026-08-04.** The hour of a capture-tagged primary converge in `docs/reference/deploy-log.jsonl` books the restart, not the host: leave that hour out and count the day by what remains. The log begins 2026-08-28; days up to 2026-08-04 are in the bound already (no count command: the qualifying-day count is an operator's read of the ops host's ledger against the deploy log).
-
-3. **Fewer than three organic days ⇒ do nothing except re-arm.** Schedule the next reminder in `#zcrypto` — the following month, matching `refdata-sweep-due`'s cadence — and stop. The re-arm is a convenience — the pass re-evaluates the counter every time it runs whether or not the message lands (no count command: `infra/scripts/ops_daily.py` reads the counter on every run), so a message that never arrives is not replaced out of band: the next one is scheduled here, when this section next runs.
-
-4. **Three or more ⇒ the re-derivation is due, and it is real work** — fit the threshold, push it with `infra/grafana/alerts.yaml`, verify the pushed rule by reading it back from the provisioning API rather than trusting an exit code. Open a `T<NNNN>` for it if it needs a decision; this runbook holds the trigger, not the backlog.
-
-### Retire when
-
-The evaluator of `zcrypto-reconcile-healable-gap-rate` in `infra/grafana/alerts.yaml` no longer carries its `PROVISIONAL` marker, or the rule is absent from `infra/grafana/alerts.yaml`.
-
-______________________________________________________________________
-
 <a name="zcrypto-reconcile-cycle-duration"></a>
 
 ## zcrypto-reconcile-cycle-duration — ALERT
