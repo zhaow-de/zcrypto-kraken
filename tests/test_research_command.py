@@ -51,7 +51,7 @@ from cli.research import subjects
 from cli.risk.errors import RiskError
 from cli.validation import ValidationError, max_drawdown, sharpe
 from tests.rolling_fixtures import HOLE, write_chain
-from tests.test_trial_registry_provenance import LEDGER, _trials, live_entries
+from tests.test_trial_registry_provenance import LEDGER, REGISTRY, _trials, live_entries
 
 runner = CliRunner()
 
@@ -60,6 +60,8 @@ _EPOCH_2020 = 1577836800  # 2020-01-01T00:00:00Z
 _REPO = Path(__file__).resolve().parents[1]
 _COMMITTED_REGISTRY = _REPO / "docs" / "reference" / "trial-registry.jsonl"
 _CLEAN_HEAD = "a" * 40
+# Read at import: the autouse fixtures below move both before every test.
+_DEFAULT_REGISTRY, _DEFAULT_LEDGER = research_command._REGISTRY, research_command._LEDGER
 
 
 def _rows(n: int, *, phase: float = 0.0, start: int = _EPOCH_2020, step: int = _DAY):
@@ -228,6 +230,14 @@ def test_a_register_run_that_forgets_to_anchor_lands_off_the_committed_ledger(tm
     assert result.exit_code == 0, result.output
     assert len(research_command._REGISTRY.read_text().splitlines()) == 1
     assert _COMMITTED_REGISTRY.read_bytes() == before
+
+
+def test_the_commands_default_ledger_is_the_one_every_check_reads():
+    assert _DEFAULT_LEDGER == LEDGER
+
+
+def test_the_commands_default_registry_is_the_one_every_check_reads():
+    assert _DEFAULT_REGISTRY == REGISTRY
 
 
 def test_a_second_trial_in_a_family_needs_n_trials_above_the_recorded_count(tmp_path, monkeypatch):

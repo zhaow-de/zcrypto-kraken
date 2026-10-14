@@ -17,14 +17,13 @@ from cli.registry import ReadingLedger, TrialRegistry
 from cli.registry.observed import ObservedReader
 from tests.rolling_fixtures import write_chain
 from tests.skip_gates import mount_absent, nothing_found
-from tests.test_trial_registry_provenance import LEDGER
+from tests.test_trial_registry_provenance import LEDGER, REGISTRY
 
 pytestmark = pytest.mark.data
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _DATA_ROOT = _REPO_ROOT / "data"
 _CANONICAL = _DATA_ROOT / "ohlc-full"
-_REGISTRY = _REPO_ROOT / "docs" / "reference" / "trial-registry.jsonl"
 
 # Dataset dirs a record may legitimately cite that do not resolve on the canonical data host. EMPTY at birth, growing only
 # by a reviewed PR: an UNLISTED citation that does not resolve is a finding, so a fabricated citation either fails this
@@ -98,7 +97,7 @@ def conformance(cited: list[tuple[str, dict]], data_root: Path, absent_ok: froze
     return out
 
 
-def _cited(registry: Path = _REGISTRY, ledger: Path = LEDGER) -> list[tuple[str, dict]]:
+def _cited(registry: Path = REGISTRY, ledger: Path = LEDGER) -> list[tuple[str, dict]]:
     cited = []
     for record in TrialRegistry(registry).records:
         if record.schema_version >= 4:
