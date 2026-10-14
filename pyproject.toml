@@ -6,11 +6,11 @@ readme = "README.md"
 requires-python = "==3.14.*"
 dependencies = [
     "nautilus-trader===2.0.0rc6.dev20260921",
-    "numpy>=2.5.2",
-    "polars>=1.44.0",
-    "prometheus-client>=0.26.0",
-    "typer>=0.27.1",
-    "websockets>=17.0.1",
+    "numpy==2.5.4",
+    "polars==2.0.0",
+    "prometheus-client==0.26.0",
+    "typer==0.27.3",
+    "websockets==17.2",
 ]
 
 [project.scripts]
@@ -51,11 +51,11 @@ exclude_also = [
 
 [dependency-groups]
 dev = [
-    "ansible>=14.3.1",
-    "ansible-lint>=26.8.0",
-    "pre-commit>=4.6.2",
-    "pytest>=9.1.1",
-    "pytest-cov>=7.1.0",
-    "pytest-xdist>=3.8.0",
-    "ruff>=0.16.4",
+    "ansible==14.5.0",
+    "ansible-lint==26.10.1",
+    "pre-commit==4.7.0",
+    "pytest==9.1.1",
+    "pytest-cov==7.1.0",
+    "pytest-xdist==3.8.0",
+    "ruff==0.17.0",
 ]
