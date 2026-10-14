@@ -1,5 +1,3 @@
-"""Every verdict a decisions log records is tied to the trial or reading whose numbers it rests on (spec 00129 D7)."""
-
 from __future__ import annotations
 
 import re
@@ -11,8 +9,10 @@ from cli.registry import ReadingLedger, TrialRegistry
 from tests.test_trial_registry_provenance import LEDGER, REGISTRY, REPO
 
 _ENTRY = re.compile(r"^\[iter-(\d+)\b")
-_TIE = re.compile(r"\((registry trial|reading) (\d+)\b")
+# An id ends at `,`, `)` or `;`, so prose such as "(reading 3 sources)" is no tie.
+_TIE = re.compile(r"\((registry trial|reading) (\d+)(?=[,);])")
 _VERDICT = re.compile(r"\b(ADOPT|PARK|REJECT)(?:ED|S)?\b")
+_ANY_CASE_VERDICT = re.compile(_VERDICT.pattern, re.IGNORECASE)
 _TRIAL_WORD = re.compile(r"\btrial\b", re.IGNORECASE)
 _TIE_FLOOR_ITER = 175
 
@@ -23,7 +23,7 @@ def _header(line: str) -> str:
 
 
 def _entries(lines: list[str]) -> list[tuple[int, str]]:
-    return [(int(entry.group(1)), _header(line)) for line in lines if (entry := _ENTRY.match(line))]
+    return [(int(entry.group(1)), line) for line in lines if (entry := _ENTRY.match(line))]
 
 
 def _committed_entries() -> list[tuple[int, str]]:
@@ -33,32 +33,59 @@ def _committed_entries() -> list[tuple[int, str]]:
     return _entries([line for log in logs for line in (REPO / log).read_text(encoding="utf-8").splitlines()])
 
 
+def _moved(iter_n: int, held: re.Match | None, remedy: str) -> str:
+    if held is not None:
+        return (
+            f"[iter-{iter_n}]'s header ends at its first '. ', and the {held.group(0)} its line holds past it must move before it"
+        )
+    return remedy
+
+
+def _verdict_findings(iter_n: int, line: str, cited: list[int], trials: dict[int, str]) -> list[str]:
+    header = _header(line)
+    stems = sorted({verdict.group(1) for verdict in _VERDICT.finditer(header)})
+    if len(stems) > 1:
+        return [f"[iter-{iter_n}]: its header holds the verdicts {stems}: one entry records one trial's verdict"]
+    if not stems:
+        remedy = _moved(iter_n, _VERDICT.search(line, len(header)), "write ADOPT, PARK or REJECT before its first '. '")
+        return [f"[iter-{iter_n}]: its header names (registry trial {cited[-1]} and states no verdict: {remedy}"]
+    # The highest id is the entry's own trial; a lower one is a comparator it cites, held to existence alone.
+    judged = cited[-1:]
+    return [
+        f"[iter-{iter_n}]: its header's verdict {stem} is not trial {n}'s, {trials[n]!r}"
+        for n in judged
+        if n in trials
+        for stem in stems
+        if stem != trials[n].upper()
+    ]
+
+
 def tie_findings(entries: list[tuple[int, str]], trials: dict[int, str], readings: set[int]) -> list[str]:
-    """`entries` are `(iter, header)` pairs; `trials` maps every trial id to its verdict."""
-    found, named = [], set()
-    for iter_n, header in entries:
-        ties = list(_TIE.finditer(header))
-        for tie in ties:
-            kind, n = tie.group(1), int(tie.group(2))
-            named.add((kind, n))
+    """`entries` are `(iter, line)` pairs; `trials` maps every trial id to its verdict."""
+    found, named, past = [], set(), {}
+    for iter_n, line in entries:
+        header = _header(line)
+        ties = [(tie.group(1), int(tie.group(2))) for tie in _TIE.finditer(header)]
+        named.update(ties)
+        for tie in _TIE.finditer(line, len(header)):
+            past.setdefault((tie.group(1), int(tie.group(2))), (iter_n, tie))
+        for kind, n in ties:
             if n not in (trials if kind == "registry trial" else readings):
                 found.append(f"[iter-{iter_n}]: ({kind} {n} names no {kind.split()[-1]} on record")
-            elif kind == "registry trial":
-                stems = {verdict.group(1) for verdict in _VERDICT.finditer(header)}
-                if len(stems) > 1:
-                    found.append(
-                        f"[iter-{iter_n}]: its header holds the verdicts {sorted(stems)}, and trial {n} has one, {trials[n]!r}"
-                    )
-                elif len(stems) == 1 and stems != {trials[n].upper()}:
-                    found.append(f"[iter-{iter_n}]: its header's verdict {stems.pop()} is not trial {n}'s, {trials[n]!r}")
-        if iter_n > _TIE_FLOOR_ITER and _VERDICT.search(header) and _TRIAL_WORD.search(header) and not ties:
-            found.append(
-                f"[iter-{iter_n}]: its header holds a verdict on a trial and no tie: past iter-{_TIE_FLOOR_ITER} it names the "
-                "record as (registry trial N or (reading N"
+        if cited := sorted(n for kind, n in ties if kind == "registry trial"):
+            found += _verdict_findings(iter_n, line, cited, trials)
+        if iter_n > _TIE_FLOOR_ITER and _ANY_CASE_VERDICT.search(header) and _TRIAL_WORD.search(header) and not ties:
+            remedy = _moved(
+                iter_n,
+                _TIE.search(line, len(header)),
+                f"past iter-{_TIE_FLOOR_ITER} it names the record as (registry trial N or (reading N",
             )
+            found.append(f"[iter-{iter_n}]: its header holds a verdict on a trial and no tie: {remedy}")
     for kind, n in [("registry trial", n) for n in sorted(trials) if n > 47] + [("reading", n) for n in sorted(readings)]:
         if (kind, n) not in named:
-            found.append(f"{kind} {n} is named by no decisions-log header: the entry recording its decision carries ({kind} {n}")
+            held_at, held = past.get((kind, n), (0, None))
+            remedy = _moved(held_at, held, f"the entry recording its decision carries ({kind} {n}")
+            found.append(f"{kind} {n} is named by no decisions-log header: {remedy}")
     return found
 
 
@@ -109,6 +136,55 @@ def test_the_committed_decisions_logs_tie_every_verdict_to_its_record():
             "['ADOPT', 'REJECT']",
             id="two-verdict-stems",
         ),
+        pytest.param(
+            ["[iter-180] B2 trial 3 — REJECT against the incumbent (registry trial 47) (registry trial 49)."],
+            {47: "adopt", 49: "adopt"},
+            set(),
+            "REJECT is not trial 49's",
+            id="a-challengers-verdict-against-its-own-record",
+        ),
+        pytest.param(
+            ["[iter-176] B2 trial 2 — the verdict (registry trial 48) (Decision: 1)"],
+            {48: "reject"},
+            set(),
+            "states no verdict: write ADOPT, PARK or REJECT before its first '. '",
+            id="the-closeout-templates-question-line",
+        ),
+        pytest.param(
+            ["[iter-176] B2 trial 2 rejected (registry trial 48). Body."],
+            {48: "adopt"},
+            set(),
+            "states no verdict: write ADOPT, PARK or REJECT before its first '. '",
+            id="a-lowercase-verdict-beside-a-tie",
+        ),
+        pytest.param(
+            ["[iter-176] B2 trial 2 rejected, no tie. Body."],
+            {},
+            set(),
+            "no tie: past iter-175",
+            id="a-lowercase-past-floor-verdict-on-a-trial-without-a-tie",
+        ),
+        pytest.param(
+            ["[iter-176] B2 trial 2 vs. arm A — REJECT (registry trial 48)."],
+            {48: "reject"},
+            set(),
+            "[iter-176]'s header ends at its first '. ', and the (registry trial 48 its line holds past it must move before it",
+            id="a-tie-past-an-abbreviations-full-stop",
+        ),
+        pytest.param(
+            ["[iter-176] B2 trial 2 (registry trial 48). Verdict: REJECT."],
+            {48: "adopt"},
+            set(),
+            "states no verdict: [iter-176]'s header ends at its first '. ', and the REJECT its line holds past it",
+            id="a-verdict-past-the-headers-end",
+        ),
+        pytest.param(
+            ["[iter-176] B2 trial 2 — REJECT. Recorded as (registry trial 48)."],
+            {},
+            set(),
+            "no tie: [iter-176]'s header ends at its first '. ', and the (registry trial 48 its line holds past it",
+            id="a-past-floor-verdicts-tie-past-the-headers-end",
+        ),
     ],
 )
 def test_one_broken_tie_is_exactly_one_finding(lines, trials, readings, finding):
@@ -133,6 +209,12 @@ def test_one_broken_tie_is_exactly_one_finding(lines, trials, readings, finding)
             {48: "reject"},
             id="the-shape-every-entry-takes-from-48-on",
         ),
+        pytest.param(
+            ["[iter-180] B2 trial 3 — REJECT against the incumbent (registry trial 47) (registry trial 49)."],
+            {47: "adopt", 49: "reject"},
+            id="a-challenger-citing-its-incumbents-trial",
+        ),
+        pytest.param(["[iter-178] Which bar (reading 3 sources) for B3? (Decision: 1)"], {}, id="prose-in-parentheses-is-no-tie"),
     ],
 )
 def test_a_sound_tie_is_no_finding(lines, trials):
