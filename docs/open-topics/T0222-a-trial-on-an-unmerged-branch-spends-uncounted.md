@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: "an evaluation statement: the next trial is pre-registered — check: `git grep -h -E '^\\[iter-[0-9]+\\] .*[Tt]rial [0-9]+ (shape|pre-registration)' -- 'docs/research/*.phase*-decisions.md' | wc -l` prints at least 4 (3 on 2026-10-13: B1's trials 1 and 2, B2's trial 1)"
+ripe_when: "an evaluation statement: the next trial is pre-registered — check: `git grep -h -E '^\\[iter-[0-9]+\\] .*[Tt]rial [0-9]+ (shape|pre-registration)' -- 'docs/research/*.phase*-decisions.md' | wc -l` prints at least 4"
 ---
 
 # A trial run on a branch that never merges spends uncounted
@@ -11,11 +11,10 @@ The trial registry lives in the tree, so a trial run and registered on a branch 
 
 ## Why this matters
 
-`n_trials_in_family` feeds the deflated-Sharpe correction and the family's hard budget (A=40, B=25, C=10, master plan §12). Every abandoned branch understates both — the selection bias the registry exists to correct. Spec 00129 makes every registered trial re-derivable, but it states this hole without closing it: closing it needs a record kept outside git or a process ruling, either a design of its own.
+`n_trials_in_family` feeds the deflated-Sharpe correction and the family's hard budget (A=40, B=25, C=10, master plan §12). Every abandoned branch understates both — the selection bias the registry exists to correct.
 
 ## Findings so far
 
-- Registered on the owner's word of 2026-10-13 ("register a topic for S5"), from spec 00129's plan review: the design critic's scenario S5, carried by the round-1 fixer as a skipped deferral.
 - Spec 00129 (`docs/specs/00129-trial-provenance-design.md`) records each trial's invocation and commit and holds every record past 47 to its subject in CI; a record that never reaches `develop` is outside all of it.
 - Three shapes are in view, none measured: (1) the count reads pre-registrations, which land on `develop` before the run, so an abandoned run shows as a pre-registered trial with no record; (2) an append-only attempts log outside git, written at `--register` time and reconciled against `develop`'s registry; (3) a process rule — a trial runs and registers only on a branch with an open pull request, and a closed, unmerged one counts against its family, GitHub keeping closed pull requests.
 
