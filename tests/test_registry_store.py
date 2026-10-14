@@ -100,6 +100,15 @@ def test_contiguity_violation_raises(tmp_path):
         TrialRegistry(_write(tmp_path, [_line(2), _line(1)]))
 
 
+@pytest.mark.parametrize(("ids", "out_of_place"), [((1, 3), 3), ((2, 1), 2)], ids=["1-then-3", "2-then-1"])
+def test_a_registry_whose_ids_skip_or_reorder_is_refused_naming_the_trial_out_of_place(tmp_path, ids, out_of_place):
+    first = _line(ids[0], n=1)
+    second = _line(ids[1], n=2, prev_hash=_hash_of(first))
+
+    with pytest.raises(RegistryCorruptionError, match=f"trial_id {out_of_place} not contiguous"):
+        TrialRegistry(_write(tmp_path, [first, second]))
+
+
 def test_record_hash_mismatch_raises(tmp_path):
     good = _line(1)
     tampered = good.replace('"sharpe":0.3', '"sharpe":0.9')  # finite->finite edit, hash now stale

@@ -55,11 +55,21 @@ def _to_record(rec: dict) -> TrialRecord:
     )
 
 
+def _refuse_an_id_out_of_place(recs: list[dict], idx: int, path: Path, id_key: str) -> None:
+    if recs[idx][id_key] != idx + 1:
+        raise RegistryCorruptionError(f"{path}: {id_key} {recs[idx][id_key]} not contiguous (expected {idx + 1})")
+
+
+def _refuse_a_broken_link(recs: list[dict], idx: int, path: Path, id_key: str) -> None:
+    expected_prev = GENESIS_HASH if idx == 0 else recs[idx - 1]["record_hash"]
+    if recs[idx]["prev_hash"] != expected_prev:
+        raise RegistryCorruptionError(f"{path}: {id_key.removesuffix('_id')} {recs[idx][id_key]} prev_hash breaks the chain")
+
+
 def _assert_cross_record(recs: list[dict], path: Path) -> None:
     seen: dict[str, int] = {}
     for idx, rec in enumerate(recs):
-        if rec["trial_id"] != idx + 1:
-            raise RegistryCorruptionError(f"{path}: trial_id {rec['trial_id']} not contiguous (expected {idx + 1})")
+        _refuse_an_id_out_of_place(recs, idx, path, "trial_id")
         if rec["trial_id"] > _LEGACY_UNPROVENANCED_MAX_TRIAL_ID and rec["schema_version"] < 4:
             raise RegistryCorruptionError(
                 f"{path}: trial {rec['trial_id']} declares schema_version {rec['schema_version']}; every "
@@ -72,9 +82,7 @@ def _assert_cross_record(recs: list[dict], path: Path) -> None:
                 f"record past trial {_INVOCATION_FLOOR_TRIAL_ID} must be schema_version 5+ and carry "
                 f"the invocation that produced it"
             )
-        expected_prev = GENESIS_HASH if idx == 0 else recs[idx - 1]["record_hash"]
-        if rec["prev_hash"] != expected_prev:
-            raise RegistryCorruptionError(f"{path}: trial {rec['trial_id']} prev_hash breaks the chain")
+        _refuse_a_broken_link(recs, idx, path, "trial_id")
         prior = seen.get(rec["family"], 0)
         if rec["n_trials_in_family"] < prior + 1:
             raise RegistryCorruptionError(
@@ -89,12 +97,9 @@ def _to_reading(rec: dict) -> ReadingRecord:
 
 
 def _assert_reading_chain(recs: list[dict], path: Path) -> None:
-    for idx, rec in enumerate(recs):
-        if rec["reading_id"] != idx + 1:
-            raise RegistryCorruptionError(f"{path}: reading_id {rec['reading_id']} not contiguous (expected {idx + 1})")
-        expected_prev = GENESIS_HASH if idx == 0 else recs[idx - 1]["record_hash"]
-        if rec["prev_hash"] != expected_prev:
-            raise RegistryCorruptionError(f"{path}: reading {rec['reading_id']} prev_hash breaks the chain")
+    for idx in range(len(recs)):
+        _refuse_an_id_out_of_place(recs, idx, path, "reading_id")
+        _refuse_a_broken_link(recs, idx, path, "reading_id")
 
 
 def _read_healing(
@@ -145,16 +150,20 @@ def _now_utc_iso() -> str:
 
 def _append_locked(
     path: Path,
+    id_key: str,
     read: Callable[[Path], list[dict]],
     compose: Callable[[list[dict]], dict],
     validate: Callable[[dict, str], None],
 ) -> dict:
-    """`compose` builds the next line from the file as re-read under the lock, the file being authoritative; the store
-    derives its two hashes."""
+    """`compose` builds the next line's own fields from the file as re-read under the lock, the file being authoritative;
+    the store adds the next id, the link to the last line and the two hashes."""
     lock_f = open(path, "a", encoding="utf-8")
     try:
         fcntl.flock(lock_f.fileno(), fcntl.LOCK_EX)
-        rec = compose(read(path))
+        disk = read(path)
+        rec = compose(disk)
+        rec[id_key] = disk[-1][id_key] + 1 if disk else 1
+        rec["prev_hash"] = disk[-1]["record_hash"] if disk else GENESIS_HASH
         rec["dataset_hash"] = compute_hash(rec["datasets"])
         rec["record_hash"] = compute_hash(rec)
         validate(rec, f"{path} (append)")  # one bad line is permanent: refuse before the write
@@ -220,15 +229,13 @@ class TrialRegistry:
                 raise RegistryError(f"n_trials_in_family={n_trials_in_family} < {prior + 1} already recorded in family {family!r}")
             return {
                 **caller,
-                "trial_id": disk[-1]["trial_id"] + 1 if disk else 1,
                 "schema_version": SCHEMA_VERSION,
                 "timestamp": _now_utc_iso(),
-                "prev_hash": disk[-1]["record_hash"] if disk else GENESIS_HASH,
                 "datasets": datasets,
                 "invocation": invocation,
             }
 
-        record = _to_record(_append_locked(self.path, _read_trials, compose, validate_stored_record))
+        record = _to_record(_append_locked(self.path, "trial_id", _read_trials, compose, validate_stored_record))
         self._records = (*self._records, record)
         return record
 
@@ -272,14 +279,8 @@ class ReadingLedger:
         validate_reading_fields(caller, f"{self.path} (append)")  # before the open, which creates the file
 
         def compose(disk: list[dict]) -> dict:
-            return {
-                **caller,
-                "reading_id": disk[-1]["reading_id"] + 1 if disk else 1,
-                "schema_version": READING_SCHEMA_VERSION,
-                "timestamp": _now_utc_iso(),
-                "prev_hash": disk[-1]["record_hash"] if disk else GENESIS_HASH,
-            }
+            return {**caller, "schema_version": READING_SCHEMA_VERSION, "timestamp": _now_utc_iso()}
 
-        record = _to_reading(_append_locked(self.path, _read_readings, compose, validate_stored_reading))
+        record = _to_reading(_append_locked(self.path, "reading_id", _read_readings, compose, validate_stored_reading))
         self._records = (*self._records, record)
         return record
