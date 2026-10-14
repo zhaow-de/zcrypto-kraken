@@ -52,8 +52,12 @@ def _abort(message: str) -> typer.Exit:
     return typer.Exit(code=1)
 
 
-def _no_directory(flag: str, path: Path) -> typer.Exit:
-    return _abort(f"{flag} {path}: {path.parent} is no directory: create it, or pass a path whose directory exists")
+def _no_file_there(flag: str, path: Path) -> typer.Exit | None:
+    if path.is_dir():
+        return _abort(f"{flag} {path} is a directory: pass the path of a file in it")
+    if not path.parent.is_dir():
+        return _abort(f"{flag} {path}: {path.parent} is no directory: create it, or pass a path whose directory exists")
+    return None
 
 
 def _tree_state(root: Path) -> tuple[str, str]:
@@ -216,10 +220,8 @@ def eval_subject(
         missing = [flag for flag, key in (_REGISTER_FIELDS if register else _READING_FIELDS) if supplied[key] is None]
         if missing:
             raise _abort(f"{'--register' if register else '--reading'} needs {', '.join(missing)}")
-        if not ledger_target.parent.is_dir():
-            raise _no_directory("--ledger", ledger_target)
-        if not target.parent.is_dir():
-            raise _no_directory("--registry", target)
+        if refused := _no_file_there("--ledger", ledger_target) or _no_file_there("--registry", target):
+            raise refused
         before = _tree_state(_REPO_ROOT)
         if before[1]:
             raise _abort(

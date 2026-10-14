@@ -712,15 +712,15 @@ def test_a_reading_refuses_a_typed_verdict_before_the_fit(tmp_path, monkeypatch)
     assert not ledger.exists()
 
 
-@pytest.mark.parametrize(
-    ("flags", "flag", "declared"),
-    [
-        pytest.param("reading", "--ledger", {"verdict": None, "no_verdict": None}, id="a-reading-runs-ledger"),
-        pytest.param("register", "--ledger", {"verdict": lambda metrics: None}, id="a-stopping-register-runs-ledger"),
-        pytest.param("reading", "--registry", {"verdict": None, "no_verdict": None}, id="a-reading-runs-registry"),
-        pytest.param("register", "--registry", {}, id="a-register-runs-registry"),
-    ],
-)
+_RECORDING_PATHS = [
+    pytest.param("reading", "--ledger", {"verdict": None, "no_verdict": None}, id="a-reading-runs-ledger"),
+    pytest.param("register", "--ledger", {"verdict": lambda metrics: None}, id="a-stopping-register-runs-ledger"),
+    pytest.param("reading", "--registry", {"verdict": None, "no_verdict": None}, id="a-reading-runs-registry"),
+    pytest.param("register", "--registry", {}, id="a-register-runs-registry"),
+]
+
+
+@pytest.mark.parametrize(("flags", "flag", "declared"), _RECORDING_PATHS)
 def test_a_ledger_or_registry_in_a_missing_directory_is_refused_before_the_fit_naming_it(
     tmp_path, monkeypatch, flags, flag, declared
 ):
@@ -741,6 +741,28 @@ def test_a_ledger_or_registry_in_a_missing_directory_is_refused_before_the_fit_n
     assert f"{flag} {nodir}" in result.output
     assert calls == []
     assert not nodir.exists() and not registry.exists() and not ledger.exists()
+
+
+@pytest.mark.parametrize(("flags", "flag", "declared"), _RECORDING_PATHS)
+def test_a_ledger_or_registry_that_is_a_directory_is_refused_before_the_fit_naming_it(tmp_path, monkeypatch, flags, flag, declared):
+    adir = tmp_path / "adir"
+    adir.mkdir()
+    registry = adir if flag == "--registry" else tmp_path / "registry.jsonl"
+    ledger = adir if flag == "--ledger" else tmp_path / "ledger.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    calls = _stub_subject(monkeypatch, **declared)
+    if flags == "register":
+        args = _register_args(registry, n_trials=1, ledger=ledger)
+    else:
+        args = [*_reading_args(ledger), "--registry", str(registry)]
+
+    result = runner.invoke(app, [*_stub_eval(), *args])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert f"{flag} {adir} is a directory" in result.output
+    assert calls == []
+    assert list(adir.iterdir()) == [] and not (tmp_path / "registry.jsonl").exists() and not (tmp_path / "ledger.jsonl").exists()
 
 
 def test_a_reading_refuses_a_typed_spec_hash_other_than_the_specs_before_the_fit(tmp_path, monkeypatch):
