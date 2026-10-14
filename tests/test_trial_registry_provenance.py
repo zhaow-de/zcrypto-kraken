@@ -213,8 +213,6 @@ def _comparator_finding(invocation: dict, subject: Subject, legacy: dict, trials
 
 
 def _outcome_finding(subject: Subject, metrics: dict, outcome: str | None) -> str | None:
-    """A reading's outcome against its subject's rule: none for a ruleless subject; for a ruled one, its stop, on metrics
-    the rule stops on."""
     if subject.verdict is None:
         if outcome is None:
             return None

@@ -1,5 +1,4 @@
-"""Every record past 47 and every reading replayed at HEAD: the block, the metrics and the verdict or the outcome equal the
-stored ones exactly, no tolerance."""
+"""Every record past 47 and every reading replayed at HEAD: block, metrics and verdict or outcome equal, no tolerance."""
 
 from __future__ import annotations
 
@@ -49,11 +48,9 @@ _REPLAY_READS: tuple[str, ...] = (
     *(path.relative_to(REPO).as_posix() for path in (REGISTRY, LEDGER, _VOUCHED_SIDECAR)),
 )
 
-# Each committed file whose lines the replay enumerates, with the key its ids are stored under.
 _ENUMERATED = ((REGISTRY, "trial_id"), (LEDGER, "reading_id"))
 
-# "<label>": "<commit>: <reason>", a record whose numbers moved on purpose, grown by a reviewed PR; its case still runs and
-# must still differ.
+# "<label>": "<commit>: <reason>", a record whose numbers moved on purpose, grown by a reviewed PR.
 REPLAY_MOVED: dict[str, str] = {}
 
 
@@ -70,8 +67,7 @@ def _shown(value) -> str:
 
 
 def replay(entry: dict, kind: str, data_root: Path) -> list[str]:
-    """What differs between the record and its subject's build at HEAD over the recorded invocation. A refusal of the
-    invocation is one finding; any other exception propagates, so a cited set that is absent fails the case."""
+    """What differs between the record and its subject's build at HEAD over the recorded invocation."""
     label, invocation = f"{kind}-{entry[f'{kind}_id']}", entry["invocation"]
     subject = subjects.SUBJECTS[invocation["subject"]]
     reader = ObservedReader(data_root)
@@ -91,7 +87,7 @@ def replay(entry: dict, kind: str, data_root: Path) -> list[str]:
         if at_head != recorded:
             found.append(
                 f"{label}: {key} is {_shown(at_head)} at HEAD and {_shown(recorded)} in the record, made at {commit}; "
-                f"`git log {commit}..HEAD -- uv.lock` lists a dependency bump since"
+                f"`git log {commit}..HEAD -- uv.lock` lists any bump since"
             )
     if kind == "trial":
         if (ruled := subject.verdict(metrics)) != entry["verdict"]:

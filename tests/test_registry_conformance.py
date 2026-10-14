@@ -1,5 +1,4 @@
-"""The conformance passes: every schema-4 record's and every reading's cited bytes, re-hashed against `data/` (spec 00086
-D7) and against the hub's `hot/` (spec 00129 D6)."""
+"""Each schema-4 record's and reading's cited bytes, re-hashed against `data/` (spec 00086 D7) and the hub's `hot/` (00129 D6)."""
 
 from __future__ import annotations
 
@@ -62,7 +61,6 @@ class Verdict:
 
 
 def conformance(cited: list[tuple[str, dict]], data_root: Path, absent_ok: frozenset[str]) -> list[Verdict]:
-    """One verdict per `(label, dataset)` citation, over whatever pairs are handed in."""
     cache: dict = {}
     out: list[Verdict] = []
     for label, datasets in cited:

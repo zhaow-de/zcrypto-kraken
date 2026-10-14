@@ -66,8 +66,7 @@ def _tree_state(root: Path) -> tuple[str, str]:
     head = git("rev-parse", "HEAD")
     if head.returncode != 0:
         raise _abort(f"{root} is not a git checkout, and a record names its code by commit")
-    # --untracked-files=all overrides a status.showUntrackedFiles that would hide an untracked file; a damaged index
-    # exits 128 printing nothing, so a non-zero exit is refused and never read as a clean tree.
+    # --untracked-files=all overrides a status.showUntrackedFiles that would hide an untracked file.
     status = git("status", "--porcelain", "--untracked-files=all")
     if status.returncode != 0:
         raise _abort(f"{root}: git status failed, so the tree cannot be read clean: {status.stderr.strip()}")
@@ -164,8 +163,8 @@ def eval_subject(
     comparator_trial: Optional[int] = typer.Option(
         None,
         "--comparator-trial",
-        help="The trial this run compares against, built by the subject's incumbent: required for a subject that declares "
-        "one, refused for any other (with --register or --reading).",
+        help="The trial of the subject's incumbent this run compares against: required for a subject that declares one, "
+        "refused for any other (with --register or --reading).",
     ),
     n_trials: Optional[int] = typer.Option(
         None,
@@ -189,8 +188,7 @@ def eval_subject(
     if known is None:
         raise _abort(f"unknown subject {subject!r}; known subjects: {', '.join(sorted(SUBJECTS))}")
 
-    # Everything a recording run can be refused for without the data is checked before any read: a refusal must not cost a
-    # full evaluation.
+    # Every refusal that needs no data comes before any read: a refusal must not cost a full evaluation.
     target = registry or _REGISTRY
     ledger_target = ledger or _LEDGER
     records = register or reading
@@ -231,7 +229,6 @@ def eval_subject(
                 f"{_REPO_ROOT} has uncommitted changes, and a record names its code by commit: commit or remove "
                 f"{_status_paths(before[1])}, then run again"
             )
-        # After the clean-tree refusal, which must read the tree the operator left: the registry's reader heals a torn last line.
         if comparator_trial is not None:
             _refuse_an_unbacked_comparator(target, known, comparator_trial)
         computed_spec_hash = hashlib.sha256((_REPO_ROOT / known.spec).read_bytes()).hexdigest()

@@ -1,8 +1,4 @@
-"""`zcrypto research eval` — the committed door to the registry (spec 00086) and to the readings ledger (spec 00129).
-
-`cli.research.command._REGISTRY` defaults to the committed trial registry and `_LEDGER` to the committed readings ledger,
-so a run reaching either default appends a fabricated line to it; `_registry_default_off_the_committed_ledger` and
-`_ledger_default_off_the_committed_file` are the guards."""
+"""`zcrypto research eval` — the committed door to the registry (spec 00086) and to the readings ledger (spec 00129)."""
 
 from __future__ import annotations
 
@@ -285,8 +281,6 @@ _GIT_IDENTITY = ("-c", "user.name=zcrypto-test", "-c", "user.email=zcrypto-test@
 
 
 def _git_repo(root: Path, *paths: str) -> str:
-    """A new repository at `root` whose one commit holds each path, written with its own name as its text, or one file
-    when none is given; its HEAD."""
     root.mkdir(parents=True, exist_ok=True)
     tracked = paths or ("tracked.txt",)
 
@@ -527,7 +521,7 @@ def test_register_refuses_a_build_whose_keys_are_not_the_declared_ones(tmp_path,
 
 
 def _committed_copy(tmp_path: Path) -> Path:
-    """The committed registry copied, so a new trial's id lies above every legacy id a case names."""
+    """The committed registry: the legacy ids the cases name are records there with no invocation."""
     registry = tmp_path / "registry.jsonl"
     shutil.copyfile(_COMMITTED_REGISTRY, registry)
     return registry
@@ -867,7 +861,7 @@ def test_an_unknown_subject_is_refused_listing_the_known_ones(tmp_path, monkeypa
 
 
 def _block_and_metrics(output: str) -> dict:
-    """The JSON report the command prints after the human-readable lines, and before any refusal or stop."""
+    """The JSON report the command prints, read without the lines before or after it."""
     return json.JSONDecoder().raw_decode(output, output.index("{"))[0]
 
 

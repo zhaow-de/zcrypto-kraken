@@ -94,7 +94,7 @@ def test_the_committed_decisions_logs_tie_every_verdict_to_its_record():
     trials = {record.trial_id: record.verdict for record in TrialRegistry(REGISTRY).records}
     readings = {reading.reading_id for reading in ReadingLedger(LEDGER).records}
 
-    assert len(entries) >= 318, "the logs held 318 entries when the tie was written, and an entry is never deleted"
+    assert len(entries) >= 318, "a decisions-log entry is never deleted"
     assert tie_findings(entries, trials, readings) == []
 
 

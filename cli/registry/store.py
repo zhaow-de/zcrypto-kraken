@@ -155,8 +155,7 @@ def _append_locked(
     compose: Callable[[list[dict]], dict],
     validate: Callable[[dict, str], None],
 ) -> dict:
-    """`compose` builds the next line's own fields from the file as re-read under the lock, the file being authoritative;
-    the store adds the next id, the link to the last line and the two hashes."""
+    """`compose` gets the file as re-read under the lock, which is authoritative, and builds the line's own fields."""
     lock_f = open(path, "a", encoding="utf-8")
     try:
         fcntl.flock(lock_f.fileno(), fcntl.LOCK_EX)
@@ -199,7 +198,7 @@ class TrialRegistry:
         family: str,
         spec_hash: str,
         datasets: dict,  # the observed block (see ObservedReader.block); dataset_hash is derived from it
-        invocation: dict,  # required: the command's arguments and the code's commit (see validate_invocation)
+        invocation: dict,  # the command's arguments and the code's commit (see validate_invocation)
         seeds: list[int],
         metrics: dict,
         n_trials_in_family: int,
@@ -264,7 +263,7 @@ class ReadingLedger:
         invocation: dict,
         datasets: dict,
         metrics: dict,
-        outcome: str | None,  # None, or the stop text of the subject's rule
+        outcome: str | None,
         notes: str = "",
     ) -> ReadingRecord:
         caller = dict(

@@ -197,8 +197,8 @@ def _build_combined(
 
 _ASSETS = CrossfreqSystemConfig().assets
 
-# The B2 trial's fixed constants (docs/specs/00128 D4-D6), its cost and arms literals of its own rather than the shared
-# defaults a re-price moves (docs/specs/00129 D5): a change to one is a new trial, never an edit here.
+# The B2 trial's fixed constants (docs/specs/00128 D4-D6, docs/specs/00129 D5): a change to one is a new trial, never an
+# edit here.
 _DECISIVE_START = 1380
 _N_RESAMPLES = 2000
 _FROM_2021 = datetime(2021, 1, 1, tzinfo=UTC)
@@ -346,7 +346,7 @@ def _build_b2_funding_derisk(
     return _b2_build("b2-funding-derisk", _b2_metrics, reader, dataset, window, as_of, accept_holes)
 
 
-# docs/specs/00129 D7's ten keys of arm A's bar; its flags are recorded as 0 or 1.
+# docs/specs/00129 D7's keys of arm A's bar.
 _B2_ARM_A_BAR_FLAGS = frozenset({"dsr_pass", "spa_pass", "cost_stress_pass", "worst_slice_pass", "passes"})
 _B2_ARM_A_BAR_KEYS = _B2_ARM_A_BAR_FLAGS | {"dsr", "spa_p_value", "spa_p_value_full", "cost_stress_sharpe", "worst_slice_sharpe"}
 
@@ -363,7 +363,6 @@ def _build_b2_arm_a_bar(
     as_of: str | None = None,
     accept_holes: bool = False,
 ) -> dict:
-    """Arm A's headline bar alone: arm B is never built, so no return of it is computed."""
     return _b2_build("b2-arm-a-bar", _b2_arm_a_bar_metrics, reader, dataset, window, as_of, accept_holes)
 
 
@@ -496,7 +495,7 @@ _B2_METRIC_KEYS = frozenset(
 # new spec and a new trial, never an edit here.
 def _b2_verdict(m: dict) -> str | None:
     if not m["arm_a_passes"] or not any(m["engaged_per_year"].values()):
-        return None  # instrument finding: no verdict, the trial unspent
+        return None
     if not m["passes"]:
         return "reject"
     if m["head_to_head_mean_outperf_2021"] > 0 and m["max_drawdown_reduction_pct"] > 1e-6:
@@ -556,5 +555,5 @@ SUBJECTS: dict[str, Subject] = {
 }
 
 # docs/specs/00129 D3: the records at or below 47 a --comparator-trial may name, each mapped to the subject that reproduces
-# its book. An id joins with its subject and a data-gated test proving that subject reproduces the record, in one PR.
+# its book.
 LEGACY_INCUMBENTS: dict[int, str] = {33: "record33-combined", 44: "record44-crossfreq", 47: "record44-crossfreq"}
