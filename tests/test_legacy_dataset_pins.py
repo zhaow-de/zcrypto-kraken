@@ -56,8 +56,8 @@ def test_epistemics_live_in_the_referent_value():
             assert "REPRODUCED" in row["referent"] and "weak digest" in row["referent"]
             if "operand_4h" in row["evidence"]:
                 assert row["evidence"]["operand_4h"][:8] in row["referent"]
-            if "scope_mismatch" in row["evidence"]:
-                assert "not established" in row["referent"]
+            if {33, 35} & set(row["trial_ids"]):  # P1 runs from scratchpad drivers: what they read is not established
+                assert "scope_mismatch" in row["evidence"] and "not established" in row["referent"]
 
 
 def test_every_confidence_is_one_of_the_three_ruled_grades():
