@@ -340,9 +340,7 @@ def _a_month_after(d: date) -> date:
     return date(year, month, min(d.day, calendar.monthrange(year, month)[1]))
 
 
-HEALABLE_COUNTER = "zcrypto_reconcile_healable_gap_seconds_total"
 REFDATA_RUNBOOK = "infra/runbooks/reference-data.md#refdata-sweep-due"
-HEALABLE_RUNBOOK = "infra/runbooks/ops.md#healable-threshold-rederivation-due"
 BOOKKEEPING_RUNBOOK = "infra/runbooks/bookkeeping.md#kraken-bookkeeping-due"
 STATEMENTS = Path("/mnt/zhao-crypto/kraken-statements")
 # The first window's due day (spec 00126 D7, D9).
@@ -414,11 +412,8 @@ def _due_status(days: int) -> str:
 
 
 def read_reminders(
-    token: str,
     *,
     now: datetime,
-    window: timedelta,
-    opener=urllib.request.urlopen,
     register: Path = REGISTER,
     deploy_log: Path = DEPLOY_LOG,
     statements: Path | None = None,
@@ -475,36 +470,6 @@ def read_reminders(
         newest = f"newest window ends {end.isoformat()}" if end else "no window archived yet"
         read.reminders.append(Reminder("kraken bookkeeping", f"{status} ({newest})", owed=days <= 0, runbook=BOOKKEEPING_RUNBOOK))
 
-    hours = max(1, int(window.total_seconds() // 3600))
-    try:
-        series = _proxy_query(PROM_DS_UID, f"sum(increase({HEALABLE_COUNTER}[{hours}h]))", token, opener)
-        resets = _proxy_query(PROM_DS_UID, f"sum(resets({HEALABLE_COUNTER}[{hours}h]))", token, opener)
-        if not series or not resets:
-            note("the healable counter returned no series, so the re-derivation reminder could not be evaluated")
-            return read
-        moved = float(series[0]["value"][1])
-        reset = float(resets[0]["value"][1]) > 0
-    except _UNREACHABLE as exc:
-        note(f"the healable counter could not be read: {exc}")
-        return read
-    if reset:
-        # A counter summed from an append-only ledger CAN DECREASE when a record is corrected or the
-        # ledger is rebuilt -- a correction that raises the total resets nothing -- and `increase()`
-        # then reports the whole post-reset value as movement (`T0044` records the correction it
-        # was opened on). This mirrors `zcrypto-reconcile-healable-gap-rate`'s `resets()`.
-        owed = True
-        status = f"counter reset in {hours} h (a ledger correction or rebuild), so its movement says nothing -- recount the qualifying days from the ledger"
-    else:
-        owed = moved > 0
-        # `increase()` extrapolates to the range boundaries, so this figure is NOT the ledger's
-        # delta -- and the ledger is the arbiter the runbook names, precisely because Cloud cannot
-        # answer the question. Quote it as the approximation it is (spec 00107 D3).
-        status = (
-            f"counter moved ~+{moved:.1f} s in {hours} h (scraped, extrapolated -- not the ledger's), recount the qualifying days"
-            if owed
-            else f"counter unchanged in {hours} h"
-        )
-    read.reminders.append(Reminder("healable re-derivation", status, owed=owed, runbook=HEALABLE_RUNBOOK))
     return read
 
 
@@ -1442,7 +1407,7 @@ def main(argv: list[str]) -> int:
         deadmen=read_deadmen(token),
         verdict=verdict,
         deploys=read_deploys(window, now=now),
-        reminders=read_reminders(token, now=now, window=window),
+        reminders=read_reminders(now=now),
         now=now,
         window=window,
         comparison=read_comparison(now=now, runner=compare_run) if compares else None,

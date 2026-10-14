@@ -1769,7 +1769,6 @@ def test_a_transport_failure_is_an_unreadable_source_not_a_crash(exc):
         (ops_daily.read_logs, {"window": DAY}),
         (ops_daily.read_alerts, {"now": NOW, "window": DAY}),
         (ops_daily.read_deadmen, {}),
-        (ops_daily.read_reminders, {"now": NOW, "window": DAY}),
     ):
         result = read("tok", opener=_raises(exc), **kwargs)
         assert result.unreadable, f"{read.__name__} let {type(exc).__name__} escape"
@@ -2053,18 +2052,6 @@ def test_every_endpoint_the_instrument_builds_is_pinned(monkeypatch):
     assert any(u == "https://zcrypto-hc.zhaow.me/api/v3/checks/" for u in deadmen.urls), deadmen.urls
     assert not any("/loki/" in u for u in deadmen.urls), deadmen.urls
 
-    reminders = _recording(_counter(0))
-    ops_daily.read_reminders("tok", now=NOW, window=DAY, opener=reminders)
-    assert len(reminders.urls) == 2 and all("/uid/%s/api/v1/query" % ops_daily.PROM_DS_UID in u for u in reminders.urls), (
-        reminders.urls
-    )
-    assert "sum(increase(zcrypto_reconcile_healable_gap_seconds_total[24h]))" in urllib.parse.unquote(reminders.urls[0]), (
-        reminders.urls
-    )
-    assert "sum(resets(zcrypto_reconcile_healable_gap_seconds_total[24h]))" in urllib.parse.unquote(reminders.urls[1]), (
-        reminders.urls
-    )
-
 
 def test_the_journal_paragraph_carries_warnings_when_there_are_any():
     """The journal paragraph counts WARNING beside ERROR/CRITICAL and keeps the two figures apart --
@@ -2188,10 +2175,6 @@ def test_the_monthly_cadence_is_a_calendar_month_with_the_day_clamped(last, expe
     assert ops_daily._a_month_after(last) == expected
 
 
-def _counter(value):
-    return {"data": {"result": [{"metric": {}, "value": [1, str(value)]}]}}
-
-
 _TWO_SWEEPS = (("#0 (Phase 0, iter-002)", "2026-07-07T03:29:00+00:00"), ("#1 (monthly, 2026-08-04)", "2026-08-04T10:40:09+00:00"))
 
 
@@ -2210,9 +2193,7 @@ def _reminder(read, name):
 )
 def test_the_refdata_reminder_is_computed_from_the_register_and_the_monthly_cadence(tmp_path, now, status, owed):
     """A lost Slack message costs nothing: due-ness is derived from repo state every day."""
-    read = ops_daily.read_reminders(
-        "tok", now=now, window=DAY, opener=_canned(_counter(0)), register=_register(tmp_path, *_TWO_SWEEPS)
-    )
+    read = ops_daily.read_reminders(now=now, register=_register(tmp_path, *_TWO_SWEEPS))
     refdata = _reminder(read, "refdata sweep")
     assert refdata.status.startswith(status), refdata.status
     assert "2026-08-04" in refdata.status, refdata.status
@@ -2222,54 +2203,19 @@ def test_the_refdata_reminder_is_computed_from_the_register_and_the_monthly_cade
 
 
 def test_a_register_with_no_dated_row_is_an_unreadable_source_never_not_due(tmp_path):
-    read = ops_daily.read_reminders("tok", now=NOW, window=DAY, opener=_canned(_counter(0)), register=_register(tmp_path))
+    read = ops_daily.read_reminders(now=NOW, register=_register(tmp_path))
     assert read.unreadable and "Re-confirmation log" in read.unreadable, read.unreadable
     assert not [r for r in read.reminders if r.name == "refdata sweep"]
-
-
-@pytest.mark.parametrize("value,owed,word", [("88.4", True, "moved ~+88.4 s"), ("0", False, "unchanged")])
-def test_the_healable_reminder_fires_only_when_the_counter_moved(tmp_path, value, owed, word):
-    """The reminder is owed only when the counter moved, and its status names the movement -- two
-    payloads here: the `increase()`, then a `resets()` of 0."""
-    read = ops_daily.read_reminders(
-        "tok", now=NOW, window=DAY, opener=_canned(_counter(value), _counter(0)), register=_register(tmp_path, *_TWO_SWEEPS)
-    )
-    healable = _reminder(read, "healable re-derivation")
-    assert healable.owed is owed
-    assert word in healable.status, healable.status
-    assert healable.runbook == "infra/runbooks/ops.md#healable-threshold-rederivation-due"
-
-
-def test_the_healable_reminder_names_a_counter_reset_and_never_quotes_it_as_movement(tmp_path):
-    """A non-zero `resets()` in the window makes the paired `increase()` unquotable: the reminder is
-    owed, its status names the reset, and the figure `increase()` returned never reaches the report
-    as movement."""
-    read = ops_daily.read_reminders(
-        "tok", now=NOW, window=DAY, opener=_canned(_counter("18850.2"), _counter(1)), register=_register(tmp_path, *_TWO_SWEEPS)
-    )
-    healable = _reminder(read, "healable re-derivation")
-    assert healable.owed is True
-    assert "reset" in healable.status and "18850" not in healable.status, healable.status
-
-
-def test_a_healable_counter_with_no_series_is_unreadable_never_quiet(tmp_path):
-    read = ops_daily.read_reminders(
-        "tok", now=NOW, window=DAY, opener=_canned({"data": {"result": []}}), register=_register(tmp_path, *_TWO_SWEEPS)
-    )
-    assert read.unreadable and "no series" in read.unreadable, read.unreadable
-    assert not [r for r in read.reminders if r.name == "healable re-derivation"]
-    assert _reminder(read, "refdata sweep")  # the half that could be read still is
 
 
 def test_the_real_register_yields_a_refdata_reminder():
     """The committed `REGISTER` default is what this exercises: it omits `register=` deliberately, so
     giving it a `tmp_path` fixture would move it off the path `main` takes."""
-    read = ops_daily.read_reminders("tok", now=NOW, window=DAY, opener=_canned(_counter(0)))
+    read = ops_daily.read_reminders(now=NOW)
     assert read.unreadable is None, read.unreadable
     # The committed deploy log decides which nodes' patch passes join them.
     assert {r.name for r in read.reminders} - set(_PATCH_PASS_NAMES.values()) == {
         "refdata sweep",
-        "healable re-derivation",
         "kraken bookkeeping",
     }
 
@@ -2307,9 +2253,7 @@ def test_the_bookkeeping_reminder_is_due_from_the_newest_archived_window(
     tmp_path, statements_off_the_mount, windows, now, status, owed
 ):
     _statements(statements_off_the_mount, *windows)
-    read = ops_daily.read_reminders(
-        "tok", now=now, window=DAY, opener=_canned(_counter(0)), register=_register(tmp_path, *_TWO_SWEEPS)
-    )
+    read = ops_daily.read_reminders(now=now, register=_register(tmp_path, *_TWO_SWEEPS))
     bookkeeping = _reminder(read, "kraken bookkeeping")
     assert (bookkeeping.status, bookkeeping.owed) == (status, owed)
     assert bookkeeping.runbook == "infra/runbooks/bookkeeping.md#kraken-bookkeeping-due"
@@ -2320,18 +2264,13 @@ def test_a_window_without_a_provenance_file_is_passed_over(tmp_path, statements_
     _statements(statements_off_the_mount, "2026-07-01_2026-11-01")
     (statements_off_the_mount / "2026-11-01_2026-12-01").mkdir()
     now = datetime(2026, 12, 3, 3, 0, tzinfo=timezone.utc)
-    read = ops_daily.read_reminders(
-        "tok", now=now, window=DAY, opener=_canned(_counter(0)), register=_register(tmp_path, *_TWO_SWEEPS)
-    )
+    read = ops_daily.read_reminders(now=now, register=_register(tmp_path, *_TWO_SWEEPS))
     assert _reminder(read, "kraken bookkeeping").status == "OVERDUE by 1 days (newest window ends 2026-11-01)"
 
 
 def _unreadable_statements(tmp_path, statements):
     read = ops_daily.read_reminders(
-        "tok",
         now=NOW,
-        window=DAY,
-        opener=_canned(_counter(0)),
         register=_register(tmp_path, *_TWO_SWEEPS),
         statements=statements,
     )
@@ -2409,10 +2348,7 @@ def _node_log(host: str) -> tuple[dict, ...]:
 )
 def test_a_nodes_patch_pass_is_due_a_month_after_its_last_full_converge(tmp_path, host, runbook, now, status, owed):
     read = ops_daily.read_reminders(
-        "tok",
         now=now,
-        window=DAY,
-        opener=_canned(_counter(0)),
         register=_register(tmp_path, *_TWO_SWEEPS),
         deploy_log=_deploy_log(tmp_path, *_node_log(host)),
     )
@@ -2431,27 +2367,19 @@ def test_a_host_with_no_full_converge_on_record_owes_no_patch_pass(tmp_path, hos
     if rows == "no full converge of the node":
         log += _node_log(host)[2:]
     read = ops_daily.read_reminders(
-        "tok",
         now=NOW,
-        window=DAY,
-        opener=_canned(_counter(0)),
         register=_register(tmp_path, *_TWO_SWEEPS),
         deploy_log=_deploy_log(tmp_path, *log),
     )
     assert read.unreadable is None, read.unreadable
-    assert {r.name for r in read.reminders} == {"refdata sweep", "healable re-derivation", "kraken bookkeeping"} | {
-        _PATCH_PASS_NAMES[o] for o in others
-    }
+    assert {r.name for r in read.reminders} == {"refdata sweep", "kraken bookkeeping"} | {_PATCH_PASS_NAMES[o] for o in others}
 
 
 def test_a_hosts_malformed_row_leaves_the_next_hosts_patch_pass_read(tmp_path, monkeypatch):
     first = ops_daily.PATCH_PASSES[0][0]
     monkeypatch.setattr(ops_daily, "PATCH_PASSES", (*ops_daily.PATCH_PASSES, ("zcrypto-red", "infra/runbooks/capture.md")))
     read = ops_daily.read_reminders(
-        "tok",
         now=NOW,
-        window=DAY,
-        opener=_canned(_counter(0)),
         register=_register(tmp_path, *_TWO_SWEEPS),
         deploy_log=_deploy_log(
             tmp_path, _converge("not-a-date", limit=first), _converge("2026-08-20T10:00:00Z", limit="zcrypto-red")
@@ -2465,10 +2393,7 @@ def test_a_hosts_malformed_row_leaves_the_next_hosts_patch_pass_read(tmp_path, m
 def test_a_deploy_log_that_cannot_be_opened_is_noted_once_however_many_hosts_read_it(tmp_path, monkeypatch):
     monkeypatch.setattr(ops_daily, "PATCH_PASSES", (*ops_daily.PATCH_PASSES, ("zcrypto-red", "infra/runbooks/capture.md")))
     read = ops_daily.read_reminders(
-        "tok",
         now=NOW,
-        window=DAY,
-        opener=_canned(_counter(0)),
         register=_register(tmp_path, *_TWO_SWEEPS),
         deploy_log=tmp_path,
     )
@@ -2510,10 +2435,10 @@ def test_an_owed_reminder_reports_and_never_blocks():
                 runbook="infra/runbooks/reference-data.md#refdata-sweep-due",
             ),
             ops_daily.Reminder(
-                "healable re-derivation",
-                "counter unchanged in 24 h",
+                "kraken bookkeeping",
+                "due in 12 days (newest window ends 2026-11-01)",
                 owed=False,
-                runbook="infra/runbooks/ops.md#healable-threshold-rederivation-due",
+                runbook="infra/runbooks/bookkeeping.md#kraken-bookkeeping-due",
             ),
         ]
     )
@@ -2521,15 +2446,15 @@ def test_an_owed_reminder_reports_and_never_blocks():
     assert r.exit_code == 0, r.exit_code
     md = r.markdown()
     assert "## Reminders" in md and "OWED refdata sweep: OVERDUE by 6 days" in md and "#refdata-sweep-due" in md, md
-    assert "ok healable re-derivation: counter unchanged" in md, md
+    assert "ok kraken bookkeeping: due in 12 days" in md, md
     para = r.journal_paragraph()
     assert "reminders OWED refdata sweep: OVERDUE by 6 days" in para, para
-    assert "OWED healable" not in para, para  # the marker discriminates; it is not decoration
+    assert "OWED kraken bookkeeping" not in para, para  # the marker discriminates; it is not decoration
 
 
 def test_an_unreadable_reminder_source_exits_2_like_every_other_source():
-    r = _report(reminders=ops_daily.RemindersRead(unreadable="the healable counter could not be read: timed out"))
-    assert r.exit_code == 2 and "healable counter could not be read" in r.markdown()
+    r = _report(reminders=ops_daily.RemindersRead(unreadable="the statements tree could not be read: Input/output error"))
+    assert r.exit_code == 2 and "statements tree could not be read" in r.markdown()
 
 
 def test_the_report_refuses_to_be_built_without_a_reminders_read():
@@ -2718,10 +2643,9 @@ def _dies_mid_read():
         ("read_alerts", "the rules API"),
         ("read_logs", "the log plane"),
         ("read_deadmen", "the dead-man count"),
-        ("read_reminders", "the healable counter"),
     ],
 )
-def test_a_body_that_dies_mid_read_is_an_unreadable_source_on_every_reader(reader, source, tmp_path, monkeypatch):
+def test_a_body_that_dies_mid_read_is_an_unreadable_source_on_every_reader(reader, source, monkeypatch):
     """Each reader reports a truncated body as ITS OWN unreadable source instead of raising -- the read
     side of `_UNREACHABLE`, which every fixture that fails at open leaves unexercised."""
     monkeypatch.setattr(ops_daily, "_readonly_key", lambda: "k")
@@ -2729,7 +2653,6 @@ def test_a_body_that_dies_mid_read_is_an_unreadable_source_on_every_reader(reade
         "read_alerts": {"now": NOW, "window": DAY},
         "read_logs": {"window": DAY},
         "read_deadmen": {},
-        "read_reminders": {"now": NOW, "window": DAY, "register": _register(tmp_path, *_TWO_SWEEPS)},
     }[reader]
     read = getattr(ops_daily, reader)("tok", opener=_dies_mid_read(), **extra)
     assert read.unreadable is not None, f"{reader} read a body that died mid-read as a clean source"
