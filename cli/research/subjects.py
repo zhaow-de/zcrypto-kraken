@@ -17,7 +17,15 @@ import polars as pl
 
 from cli.alpha import A2Config, a2_book_returns
 from cli.alpha.a1 import _asset_returns
-from cli.alpha.b1 import book_turnover
+from cli.alpha.b1 import (
+    B1Config,
+    book_turnover,
+    condition_positions,
+    per_year_gated_counts,
+    per_year_scaled_counts,
+    seasonality_gates,
+    vol_state_scale,
+)
 from cli.alpha.b2 import (
     B2Config,
     close_grid,
@@ -48,7 +56,7 @@ from cli.portfolio.errors import PortfolioError
 from cli.portfolio.record44_legs import benchmark_4h_net_of_cost, calendar_year_slices, load_union
 from cli.registry.observed import ObservedReader
 from cli.risk.errors import RiskError
-from cli.validation import ValidationError, max_drawdown, sharpe
+from cli.validation import ValidationError, max_drawdown, reality_check_pvalue, sharpe
 
 PPY_DAILY = 365
 PPY_4H = 2190
@@ -503,6 +511,232 @@ def _b2_verdict(m: dict) -> str | None:
     return "reject"
 
 
+# The B1 trials' fixed constants (docs/specs/00045's protocol, records 37-39's arms; docs/specs/00130 D2): records 45 and
+# 46 ran with these, so a change to one no longer re-derives them.
+_B1_COST_PER_SIDE = 0.006
+_B1_A2_ARMS = (((20, 50, 100), 0.12), ((60, 120, 240), 0.10), ((60, 120, 240), 0.12))
+_B1_LOOKBACK = 180
+_B1_DECISIVE_START = 1380
+_B1_N_RESAMPLES = 2000
+_B1_FROM_2016 = datetime(2016, 1, 1, tzinfo=UTC)
+# The SPA grid's points past the headline (30, 42) that records 45 and 46 store as keys.
+_B1_GRID = ((30, 7), (30, 1234), (102, 42))
+
+
+def _b1_refuse_window(subject: str, h4_ts: list[datetime], window: tuple[str, str] | None) -> None:
+    n = len(h4_ts) - 1
+    from_2016 = sum(t >= _B1_FROM_2016 for t in h4_ts[:-1])
+    if n < _B1_DECISIVE_START + 2:
+        raise SubjectError(
+            f"{_b2_over(subject, window)}: it holds {n} return indices, and the kill bar's decisive window opens at index "
+            f"{_B1_DECISIVE_START} and needs 2"
+        )
+    if from_2016 < 2:
+        raise SubjectError(
+            f"{_b2_over(subject, window)}: {from_2016} of its return indices open at or after 2016-01-01T00:00Z, and the "
+            "from-2016 head-to-head needs 2"
+        )
+    if not calendar_year_slices([0.0] * n, h4_ts):
+        raise SubjectError(
+            f"{_b2_over(subject, window)}: none of its return indices closes in a calendar year the worst-slice leg reads, "
+            "2013 and 2026 left out"
+        )
+
+
+def _b1_m15(reader: ObservedReader) -> dict[str, tuple[list[datetime], list[float]]]:
+    """Read whole, never windowed: the scaler's trailing day reaches back past a window's first boundary; its 180-boundary
+    median still warms inside the window."""
+    m15 = {}
+    for asset in _ASSETS:
+        relpath = f"{asset}/EUR/15.parquet"
+        try:
+            frame = reader.read_series("ohlc-15m", relpath)
+            m15[asset] = (frame["ts"].to_list(), frame["close"].to_list())
+        except pl.exceptions.PolarsError as exc:
+            raise SubjectError(f"ohlc-15m/{relpath}: {exc}") from exc
+    return m15
+
+
+def _b1_metrics(
+    h4_ts: list[datetime],
+    h4_prices: dict[str, list[float | None]],
+    m15: dict[str, tuple[list[datetime], list[float]]] | None,
+    *,
+    n_trials: int,
+) -> dict:
+    """Records 45 and 46's protocol: arm A the three adopted A2 arms equal-weighted, arm B through the overlay, the
+    benchmark, the bar, the grid and the head-to-heads, costed inline at 0.006 per side (docs/specs/00130 D3)."""
+    n = len(h4_ts) - 1
+    fed = _ffill_btc(h4_prices)
+    arms = [
+        a2_book_returns(
+            fed,
+            config=A2Config(
+                lookbacks=lookbacks,
+                short="off",
+                target_vol=target_vol,
+                vol_lookback=_B1_LOOKBACK,
+                basket_lookback=_B1_LOOKBACK,
+                periods_per_year=PPY_4H,
+            ),
+        )["asset_positions"]
+        for lookbacks, target_vol in _B1_A2_ARMS
+    ]
+    arm_a = {a: [statistics.mean(arm[a][k] for arm in arms) for k in range(n)] for a in _ASSETS}
+    returns = {a: _asset_returns(fed[a]) for a in _ASSETS}
+    cost = _B1_COST_PER_SIDE
+    net_a = net_of_cost(arm_a, returns, cost_per_side=cost)
+    config = B1Config()
+    gates = seasonality_gates(net_a, h4_ts, config=config)
+    scales = [1.0] * n if m15 is None else vol_state_scale(m15, h4_ts, config=config)
+    arm_b = condition_positions(arm_a, gates, scales)
+    net_b = net_of_cost(arm_b, returns, cost_per_side=cost)
+    net_b_x15 = net_of_cost(arm_b, returns, cost_per_side=1.5 * cost)
+    bench = benchmark_4h_net_of_cost(h4_prices, cost_per_side=cost)
+    bar = a1_kill_bar(
+        net_b,
+        bench,
+        n_trials=n_trials,
+        var_trials=0.0,
+        mean_block=30,
+        seed=42,
+        cost_stressed_returns=net_b_x15,
+        regime_slices=calendar_year_slices(net_b, h4_ts),
+        benchmark_slices=calendar_year_slices(bench, h4_ts),
+        decisive_start=_B1_DECISIVE_START,
+        n_resamples=_B1_N_RESAMPLES,
+    )
+    decisive = [[net_b[k] - bench[k]] for k in range(_B1_DECISIVE_START, n)]
+    grid = {
+        (block, seed): reality_check_pvalue(decisive, mean_block=block, n_resamples=_B1_N_RESAMPLES, seed=seed)["p_value"]
+        for block, seed in _B1_GRID
+    }
+    # A stamp belongs to the year of its bar's start, ts[k], as the decisions log's [iter-086] fold-assignment entry rules
+    # (bar-start year).
+    k16 = next(k for k in range(n) if h4_ts[k] >= _B1_FROM_2016)
+    full = net_of_cost_verdict(net_b, net_a, mean_block=30, seed=42, n_resamples=_B1_N_RESAMPLES)
+    from_2016 = net_of_cost_verdict(net_b[k16:], net_a[k16:], mean_block=30, seed=42, n_resamples=_B1_N_RESAMPLES)
+    turnover_a, turnover_b = book_turnover(arm_a), book_turnover(arm_b)
+    return {
+        "ann_sharpe_noc": sharpe(net_b, periods_per_year=PPY_4H),
+        "ann_sharpe_noc_decisive": sharpe(net_b[_B1_DECISIVE_START:], periods_per_year=PPY_4H),
+        "per_period_sharpe_4h": sharpe(net_b),
+        "arm_a_ann_sharpe_noc": sharpe(net_a, periods_per_year=PPY_4H),
+        "arm_a_ann_sharpe_noc_decisive": sharpe(net_a[_B1_DECISIVE_START:], periods_per_year=PPY_4H),
+        "benchmark_ann_sharpe_noc": sharpe(bench, periods_per_year=PPY_4H),
+        "benchmark_ann_sharpe_noc_decisive": sharpe(bench[_B1_DECISIVE_START:], periods_per_year=PPY_4H),
+        "dsr_corrected": bar["dsr"],
+        "dsr_pass": int(bar["dsr_pass"]),
+        "spa_pass": int(bar["spa_pass"]),
+        "spa_p_full": bar["spa_p_value_full"],
+        "cost_stress_pass": int(bar["cost_stress_pass"]),
+        "worst_slice_relative_pass": int(bar["worst_slice_pass"]),
+        "passes": int(bar["passes"]),
+        "decisive_start": _B1_DECISIVE_START,
+        "n_resamples": _B1_N_RESAMPLES,
+        "spa_p_decisive_b30": bar["spa_p_value"],
+        "spa_p_decisive_b102": grid[(102, 42)],
+        "spa_p_seed7": grid[(30, 7)],
+        "spa_p_seed1234": grid[(30, 1234)],
+        "head_to_head_spa_p_full": full["spa_p_value"],
+        "head_to_head_mean_outperf_2016": from_2016["mean_outperformance"],
+        "head_to_head_spa_p_2016": from_2016["spa_p_value"],
+        "max_drawdown": max_drawdown(net_b),
+        "arm_a_max_drawdown": max_drawdown(net_a),
+        "spot_drag_pct_yr": turnover_b / n * cost * PPY_4H,
+        "arm_a_spot_drag_pct_yr": turnover_a / n * cost * PPY_4H,
+        "turnover_a": turnover_a,
+        "turnover_b": turnover_b,
+        "turnover_reduction_pct": 100 * (turnover_a - turnover_b) / turnover_a,
+        "stamps_held": gates.count(0),
+        "stamps_scaled": sum(scale != 1.0 for scale in scales),
+        "stamps_positions_differ": sum(any(arm_b[a][k] != arm_a[a][k] for a in _ASSETS) for k in range(n)),
+        "gated_per_year": {str(year): count for year, count in per_year_gated_counts(gates, h4_ts).items()},
+        "scaled_per_year": {str(year): count for year, count in per_year_scaled_counts(scales, h4_ts).items()},
+    }
+
+
+def _b1_build(
+    subject: str,
+    conditioning: bool,
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None,
+    accept_holes: bool,
+) -> dict:
+    h4_ts, h4_prices = _capturing_union(reader, dataset, 240, window, as_of, accept_holes)
+    _b1_refuse_window(subject, h4_ts, window)
+    m15 = _b1_m15(reader) if conditioning else None
+    try:
+        return _b1_metrics(h4_ts, h4_prices, m15, n_trials=1 if conditioning else 2)
+    except (AlphaError, BacktestError, BenchmarkError, FeatureError, ValidationError) as exc:
+        # The scaler's extent check (docs/specs/00045 F8) and a bad close among them, named as the window's.
+        raise SubjectError(f"{_b2_over(subject, window)}: {exc}") from exc
+
+
+def _build_b1_conditioning(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    return _b1_build("b1-conditioning", True, reader, dataset, window, as_of, accept_holes)
+
+
+def _build_b1_window_only(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    return _b1_build("b1-window-only", False, reader, dataset, window, as_of, accept_holes)
+
+
+# Records 45 and 46's 35 keys (docs/specs/00130 D3).
+_B1_METRIC_KEYS = frozenset(
+    {
+        "ann_sharpe_noc",
+        "ann_sharpe_noc_decisive",
+        "arm_a_ann_sharpe_noc",
+        "arm_a_ann_sharpe_noc_decisive",
+        "arm_a_max_drawdown",
+        "arm_a_spot_drag_pct_yr",
+        "benchmark_ann_sharpe_noc",
+        "benchmark_ann_sharpe_noc_decisive",
+        "cost_stress_pass",
+        "decisive_start",
+        "dsr_corrected",
+        "dsr_pass",
+        "gated_per_year",
+        "head_to_head_mean_outperf_2016",
+        "head_to_head_spa_p_2016",
+        "head_to_head_spa_p_full",
+        "max_drawdown",
+        "n_resamples",
+        "passes",
+        "per_period_sharpe_4h",
+        "scaled_per_year",
+        "spa_p_decisive_b102",
+        "spa_p_decisive_b30",
+        "spa_p_full",
+        "spa_p_seed1234",
+        "spa_p_seed7",
+        "spa_pass",
+        "spot_drag_pct_yr",
+        "stamps_held",
+        "stamps_positions_differ",
+        "stamps_scaled",
+        "turnover_a",
+        "turnover_b",
+        "turnover_reduction_pct",
+        "worst_slice_relative_pass",
+    }
+)
+
+
 SUBJECTS: dict[str, Subject] = {
     "record44-crossfreq": Subject(
         "record44-crossfreq",
@@ -551,6 +785,24 @@ SUBJECTS: dict[str, Subject] = {
         spec="docs/specs/00128-b2-family-opening-design.md",
         metric_keys=_B2_ARM_A_BAR_KEYS,
         seeds=(42,),
+    ),
+    "b1-conditioning": Subject(
+        "b1-conditioning",
+        (240,),
+        _ASSETS,
+        _build_b1_conditioning,
+        spec="docs/specs/00045-b1-seasonality-conditioning-design.md",
+        metric_keys=_B1_METRIC_KEYS,
+        seeds=(42, 7, 1234),
+    ),
+    "b1-window-only": Subject(
+        "b1-window-only",
+        (240,),
+        _ASSETS,
+        _build_b1_window_only,
+        spec="docs/specs/00045-b1-seasonality-conditioning-design.md",
+        metric_keys=_B1_METRIC_KEYS,
+        seeds=(42, 7, 1234),
     ),
 }
 
