@@ -16,6 +16,7 @@ from cli.portfolio.record44_legs import load_union
 from cli.registry import TrialRegistry
 from cli.registry.observed import ObservedReader
 from cli.registry.record import compute_hash
+from cli.research import subjects
 
 pytestmark = pytest.mark.data
 
@@ -24,6 +25,7 @@ _DATA_ROOT = _REPO_ROOT / "data"
 _CANONICAL = _DATA_ROOT / "ohlc-full"
 _REGISTRY = _REPO_ROOT / "docs" / "reference" / "trial-registry.jsonl"
 
+_RECORD_33 = 33
 _RECORD_44 = 44
 _GOVERNOR_ENGAGED_BARS = 7302
 _CAP_BREACH_BARS = 1318
@@ -62,6 +64,19 @@ def test_the_committed_loading_path_reproduces_record_44s_figures_and_slice():
 
     block = reader.block()["ohlc-full"]
     assert (len(block["files"]), block["rows"], block["span"]) == (_FROZEN_FILES, _FROZEN_ROWS, _FROZEN_SPAN), _DRIFTED
+
+
+@pytest.mark.skipif(
+    not _CANONICAL.is_dir(), reason="data/ohlc-full absent — the record-33 control runs on the data-bearing workstation only"
+)
+def test_record33_combined_reproduces_record_33s_sharpes_and_cap_breaches():
+    metrics = subjects.SUBJECTS["record33-combined"].build(ObservedReader(_DATA_ROOT), "ohlc-full", None)
+    registered = {r.trial_id: r.metrics for r in TrialRegistry(_REGISTRY).records}[_RECORD_33]
+    assert (round(metrics["ann_sharpe_noc"], 4), round(metrics["bench_ann_sharpe"], 4), metrics["cap_breach_bars"]) == (
+        registered["sharpe_full"],
+        registered["benchmark_sharpe_full"],
+        registered["cap_breach_bars"],
+    )
 
 
 def _rows(n: int, *, start: int = 1577836800, step: int = 86400):  # 2020-01-01, daily steps

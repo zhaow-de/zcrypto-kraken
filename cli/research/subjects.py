@@ -40,6 +40,7 @@ from cli.features.errors import FeatureError
 from cli.portfolio.builder import CombinedSystemConfig, build_combined_system
 from cli.portfolio.crossfreq_system import (
     CrossfreqSystemConfig,
+    CrossfreqSystemResult,
     _ffill_btc,
     build_crossfreq_system_fast,
 )
@@ -144,6 +145,20 @@ _RECORD44_CONFIG = CrossfreqSystemConfig(fee_per_side=0.0040, spread_per_side=0.
 _RECORD33_CONFIG = CombinedSystemConfig(spot_fee_per_side=0.006)
 
 
+def _crossfreq_book(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> tuple[list[datetime], dict[str, list[float | None]], list[datetime], dict[str, list[float | None]], CrossfreqSystemResult]:
+    daily_ts, daily_prices = _capturing_union(reader, dataset, 1440, window, as_of, accept_holes)
+    h4_ts, h4_prices = _capturing_union(reader, dataset, 240, window, as_of, accept_holes)
+    _refuse_unfed_grids(dataset, as_of, daily_ts, daily_prices, h4_prices)
+    result = build_crossfreq_system_fast(daily_prices, daily_ts, h4_prices, h4_ts, config=_RECORD44_CONFIG)
+    return daily_ts, daily_prices, h4_ts, h4_prices, result
+
+
 def _build_crossfreq(
     reader: ObservedReader,
     dataset: str,
@@ -151,10 +166,7 @@ def _build_crossfreq(
     as_of: str | None = None,
     accept_holes: bool = False,
 ) -> dict:
-    daily_ts, daily_prices = _capturing_union(reader, dataset, 1440, window, as_of, accept_holes)
-    h4_ts, h4_prices = _capturing_union(reader, dataset, 240, window, as_of, accept_holes)
-    _refuse_unfed_grids(dataset, as_of, daily_ts, daily_prices, h4_prices)
-    result = build_crossfreq_system_fast(daily_prices, daily_ts, h4_prices, h4_ts, config=_RECORD44_CONFIG)
+    *_, result = _crossfreq_book(reader, dataset, window, as_of, accept_holes)
     return {
         "ann_sharpe_noc": sharpe(result.governed_net, periods_per_year=PPY_4H),
         "per_period_sharpe_4h": sharpe(result.governed_net),
