@@ -1829,6 +1829,8 @@ def test_b1_conditioning_refuses_a_15m_set_short_of_the_last_decision_boundary_i
     assert result.exit_code == 1
     assert isinstance(result.exception, SystemExit)
     assert "b1-conditioning over the full history: 15m substrate ends at" in result.output
+    assert "pass a --window that ends by the frozen ohlc-15m set's last bar" in result.output
+    assert "refresh the substrate" not in result.output
 
 
 @pytest.mark.parametrize(
