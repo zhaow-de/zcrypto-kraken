@@ -23,8 +23,7 @@ KEY_INPUTS = (
     "working-directory",
 )
 # What setup-uv reads when the matching input is empty: `UV_PYTHON_ARCH` for python-arch, in the key,
-# and `UV_CACHE_DIR` for the cache path. The step sees the workflow's, the job's and its own `env:`,
-# the innermost winning.
+# and `UV_CACHE_DIR` for the cache path.
 KEY_ENVS = ("UV_PYTHON_ARCH", "UV_CACHE_DIR")
 SAVE_WHEN_THE_LOCK_CHANGED = "${{ steps.lock.outputs.changed == 'true' }}"
 
