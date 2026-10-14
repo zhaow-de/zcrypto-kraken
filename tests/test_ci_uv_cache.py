@@ -8,12 +8,13 @@ ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = ROOT / ".github" / "workflows"
 SUITE = WORKFLOWS / "test-suite.yml"
 WARMER = WORKFLOWS / "uv-cache.yml"
-# setup-uv folds the first five into its cache key (`computeKeys` in its src/cache/restore-cache.ts),
+# setup-uv folds the first six into its cache key (`computeKeys` in its src/cache/restore-cache.ts),
 # with the runner's OS and its cache-format version; `cache-local-path` decides the path the cache is
 # saved under, which a restore must match too, and `working-directory` the directory the glob is read
 # from: one differing input splits the two workflows onto caches neither ever restores from the other.
 KEY_INPUTS = (
     "python-version",
+    "python-arch",
     "cache-dependency-glob",
     "prune-cache",
     "cache-python",
