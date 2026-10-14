@@ -140,8 +140,8 @@ def test_every_record_past_47_replays_at_head(kind, entry):
     if dirt := _tracked_dirt(REPO):
         pytest.fail(
             f"{REPO} has uncommitted changes under the paths a replay reads, so a replay would measure them and not HEAD: "
-            f"{', '.join(line[3:] for line in dirt.splitlines())}. Committing that work on its own branch, through a PR, "
-            "clears it: never the stash, which every session shares, and not a fix branch"
+            f"{', '.join(line[3:] for line in dirt.splitlines())}. Moving that work to its own branch and a PR, this "
+            "checkout back on develop, clears it: never the stash, which every session shares"
         )
     if found := replay(entry, kind, _DATA_ROOT):
         raise ReplayDiffers("\n".join(found))
