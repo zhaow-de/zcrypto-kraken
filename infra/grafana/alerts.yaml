@@ -1663,15 +1663,14 @@ rules:
       # depend on the mode. `healable` counts the seconds the secondary WITNESSED and could cover, in
       # both modes.
       #
-      # 300 s per pair per day. Divided by the live pair count, so 300 is WALL-CLOCK seconds per pair
-      # -- undivided it is a cross-stream sum that tightens silently with every pair added. A single
-      # pair's long silence pages the stream-silent rules first and reaches this one only past 300 s
-      # times the pair count; a mean cannot exceed its largest pair, so a day crosses 300 only when
-      # some pair booked more than 300 s in it. Blind to any gap under the reconciler's 30 s floor,
-      # clean-close reconnects among them, which zcrypto-capture-reconnect-rate reads instead.
-      # Fitted 2026-10-14 at 300 over the three qualifying days after 2026-08-04 -- the days with
-      # healable time outside the hour of a capture-tagged primary converge: 38.2, 171.9 and 46.8 s
-      # per pair, two of them deliberate or venue events -- ~3.5x their mean, on the owner's word.
+      # Divided by the live pair count, so 300 is WALL-CLOCK seconds per pair -- undivided it is a
+      # cross-stream sum that tightens silently with every pair added. A single pair's long silence
+      # pages the stream-silent rules first and reaches this one only past 300 s times the pair count;
+      # a mean cannot exceed its largest pair, so a day crosses 300 only when some pair booked more
+      # than 300 s in it. Blind to any gap under the reconciler's 30 s floor, clean-close reconnects
+      # among them, which zcrypto-capture-reconnect-rate reads instead. Fitted at ~3.5x the mean
+      # per-pair healable day after 2026-08-04, a capture-tagged primary converge's hour left out, on
+      # the owner's word; the days and their figures are in the commit message that fitted it.
       #
       # `and resets(...) == 0` guards the same counter-reset hazard as the residual-gap rule (T0044),
       # and MORE so here: this window is 24h, so a ledger correction would false-page for a full day.
