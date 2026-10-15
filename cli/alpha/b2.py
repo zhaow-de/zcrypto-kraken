@@ -149,8 +149,7 @@ def _mark_at_or_after(t: datetime) -> datetime:
 
 
 def _oi_marks(oi_ts: list[datetime]) -> list[datetime]:
-    """The regular 4h close grid over the rows' own span (docs/specs/00131 D6): from the close of the bar holding the
-    first row to the close of the bar holding the last, each the first 4h mark at or after its row."""
+    """The regular 4h close grid over the rows' own span (docs/specs/00131 D6)."""
     if not oi_ts:
         return []
     first, last = _mark_at_or_after(oi_ts[0]), _mark_at_or_after(oi_ts[-1])
@@ -164,11 +163,9 @@ def _oi_at_union_closes(
     oi_values: list[float | None],
     union_ts: list[datetime],
 ) -> list:
-    """Every OI emitter's one pipeline (docs/specs/00131 D4-D6): the `sum_open_interest` level on `_oi_marks`' grid --
-    a `0.0` placeholder None before the as-of, a row read from its own stamp, never normalised as a funding print is,
-    and a level reaching a mark only from inside the bar that mark closes, `mark - 4h < ts <= mark`, else None --
-    `feature` over that grid series, then each union close's value by exact lookup, None outside the span. The union's
-    bar-open stamps in, `len(union_ts) - 1` values out."""
+    """Every OI emitter's one pipeline (docs/specs/00131 D4-D6), the union's bar-open stamps in: `feature` runs over the
+    `sum_open_interest` level on `_oi_marks`' grid, never over the raw rows, and each union close reads it by exact lookup. A
+    row is read from its own stamp, never truncated as a funding print's is: the stamp is when the venue measured the level."""
     if len(oi_ts) != len(oi_values):
         raise AlphaError(f"oi_ts and oi_values must be equal length, got {len(oi_ts)} and {len(oi_values)}")
     _validate_stamps("oi_ts", oi_ts)

@@ -387,7 +387,6 @@ def test_a_level_exactly_4h_old_at_a_mark_is_none_and_one_a_second_younger_is_re
 
 
 def test_a_late_stamped_row_is_read_from_its_own_stamp_never_from_its_mark():
-    # 22 s before the 04:00 close (278 s past 03:55, the largest offset docs/specs/00131's basis measured), and 30 s after it.
     oi_ts = [DAY0 + timedelta(hours=4, seconds=-22), DAY0 + timedelta(hours=4, seconds=30)]
     assert oi_grid_levels(oi_ts, [100.0, 110.0], _hours(0, 4, 8)) == [100.0, 110.0]
 
