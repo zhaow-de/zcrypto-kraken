@@ -1,6 +1,7 @@
-"""B1 trial 3's hourly realized-variance inverse weights (docs/specs/00132-b1-hourly-rv-weights-design.md, D2).
+"""B1 trial 3 (docs/specs/00132-b1-hourly-rv-weights-design.md): the hourly realized-variance inverse weights (D2), arm B's
+A2 book on given weights (D3) and the engagement helpers (D7).
 
-Every stamp is its bar's open, so the window at return index `t` holds the hourly bars whose close stamp `h + 1h` lies in
+Every stamp is its bar's open, so the weights' window at return index `t` holds the hourly bars whose close stamp `h + 1h` lies in
 `(union_ts[t - lookback] + 4h, union_ts[t] + 4h]`: arm A's span, its last close the decision instant.
 Each windowed bar's log return reaches back to the asset's previous present hourly bar however many hours back, so a gap's
 move is counted once, never dropped.

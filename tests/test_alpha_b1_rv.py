@@ -373,6 +373,7 @@ def test_the_book_holds_the_given_weights_at_the_vol_target_of_the_base_returns_
     "edit,match",
     [
         pytest.param(lambda w: w[:-1], "weights must hold one dict per return index, 399, got 398", id="weights-one-short"),
+        pytest.param(lambda w: w + [{}], "weights must hold one dict per return index, 399, got 400", id="weights-one-long"),
         pytest.param(
             lambda w: w[:50] + [{**w[50], "XRP": 0.5}] + w[51:],
             "weights at return index 50 name assets the prices lack: ['XRP']",
@@ -409,6 +410,11 @@ def test_weight_total_variation_counts_every_move_from_an_empty_start_and_an_ass
     assert weight_total_variation([{}, {"A": 1.0}, {"A": 0.75, "B": 0.25}, {"B": 1.0}]) == 3.0
 
 
+def test_weight_total_variation_counts_a_non_empty_first_dict_against_the_empty_previous():
+    # Index 0 against {}: 0.75 + 0.25; index 1: A leaves 0.75 and B rises 0.75.
+    assert weight_total_variation([{"A": 0.75, "B": 0.25}, {"B": 1.0}]) == 2.5
+
+
 def _year_case() -> tuple[list[dict[str, float]], list[dict[str, float]], list[datetime]]:
     # Return index 2 opens 2015-12-31 20:00 and closes 2016-01-01 00:00.
     union_ts = [datetime(2015, 12, 31, h, tzinfo=timezone.utc) for h in (12, 16, 20)]
@@ -430,3 +436,9 @@ def test_per_year_mean_weights_refuses_a_union_one_stamp_short():
     weights_a, weights_b, union_ts = _year_case()
     with pytest.raises(AlphaError, match=re.escape("got 4 stamps, 4 and 4 dicts")):
         per_year_mean_weights(weights_a, weights_b, union_ts[:-1], ["BTC", "ETH"])
+
+
+def test_per_year_mean_weights_refuses_weights_b_one_dict_short_of_weights_a():
+    weights_a, weights_b, union_ts = _year_case()
+    with pytest.raises(AlphaError, match=re.escape("got 5 stamps, 4 and 3 dicts")):
+        per_year_mean_weights(weights_a, weights_b[:-1], union_ts, ["BTC", "ETH"])
