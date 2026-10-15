@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: a genuinely new B1 hypothesis is pre-registered, or the owner expands or closes the shared B budget
+ripe_when: the owner picks a survey candidate, closes the family, or expands or closes the shared B budget
 ---
 
 # B1 — intraday trend + time-of-day/day-of-week seasonality (the family topic)
@@ -21,9 +21,9 @@ B1 is the §5 ranked queue's top un-started family — the "genuinely new freque
 - Hypothesis + trial-1 pre-registration: decisions log `[iter-086]` — the conditioning A/B on the adopted A2-4h ensemble (arm A = trials 37–39 equal-weight as adopted; arm B = + hour-of-day/day-of-week favorable-window gating and intraday-vol-state scaling from the 15m substrate), one knob, judged per T0009's revised kill bar vs the frozen B3+vt-dynamic benchmark.
 - Substrate QA input (iter-085): AVAX/LINK/DOT recent-year 15m density 88–97% (omitted no-trade slots) — the vol-state features must define behavior on missing 15m bars explicitly.
 - Budget: **B = 25 shared across Bucket B** (pre-registered, hard); B1 trials count against it under the family's registry key.
-- **Candidate survey** (the owner's disposition of 2026-07-23, to have new candidates drafted): `docs/research/10.phase4-b1-candidate-hypotheses.md` writes three fence-legal candidates up for pre-registration, none seen against a return — A, hourly realized vol as the ensemble's cross-asset weight estimator; B, volume confirmation of its breakout entries against an hour-of-week norm; C, hourly exits on its own channel — and argues that no trial beats B and C and narrowly beats A.
+- **Candidate survey** (the owner's disposition of 2026-07-23, to have new candidates drafted): `docs/research/10.phase4-b1-candidate-hypotheses.md` writes three fence-legal candidates up for pre-registration, none seen against a return, and argues that no trial beats two of them and narrowly beats the third.
 
 ## Suggested next steps
 
-- **The owner picks from the candidate survey, or closes the family**: one of candidates A, B or C pre-registered as B1's third trial — with the dataset and window, `var_trials` and the registration details the survey's common decisions list — or this topic archived as attributed out (the conditioning-overlay class after trials 45+46: the scaler harms, the gates edge-dilute, execution-scheduler seasonality belongs to the go-live engine, not a backtest overlay). The survey rides branch `research/t0022-b1-candidate-hypotheses`, which exists, pushed with no pull request; the attended session that takes the pick, or the close, finishes on that branch and opens its one pull request.
+- **The owner picks from the candidate survey, or closes the family**: one of its candidates pre-registered as B1's third trial, with the common decisions the survey lists, or this topic archived as attributed out.
 - Kill discipline: an honest kill closes this topic (archive with the verdict); budget exhaustion or a family kill-bar hit does the same. Expanding past the shared B budget is a parked human decision, never autonomous.
