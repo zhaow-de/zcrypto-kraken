@@ -6,9 +6,18 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from cli.alpha.a1 import _inverse_vol_weights
-from cli.alpha.b1_rv import hourly_rv_inverse_vol_weights
+from cli.alpha.a2 import A2Config, _asset_directions_a2, a2_book_returns
+from cli.alpha.b1_rv import (
+    a2_positions_with_weights,
+    hourly_rv_inverse_vol_weights,
+    per_year_mean_weights,
+    weight_total_variation,
+    weights_differ_count,
+)
 from cli.alpha.errors import AlphaError
+from cli.benchmark.strategies import vol_target
 from cli.portfolio.crossfreq_system import _ffill_btc
+from cli.research.subjects import _B1_A2_ARMS, _B1_LOOKBACK, PPY_4H
 
 START = datetime(2024, 1, 1, tzinfo=timezone.utc)
 H1 = timedelta(hours=1)
@@ -278,3 +287,146 @@ def test_bad_input_is_refused(broken, match):
     union_ts, prices, hourly = broken(*_union_and_hourly(_plain_paths(10)))
     with pytest.raises(AlphaError, match=re.escape(match)):
         hourly_rv_inverse_vol_weights(prices, union_ts, hourly, lookback=LOOKBACK)
+
+
+_SMALL_A2 = A2Config(lookbacks=(5, 10, 20), short="off", target_vol=0.12, vol_lookback=12, basket_lookback=8, periods_per_year=2190)
+
+
+def _book_prices(n: int) -> dict[str, list[float | None]]:
+    # SOL lists a quarter of the way in and ADA misses one bar mid-history.
+    prices = {
+        "BTC": _random_path(11, n, 0.02),
+        "ETH": _random_path(12, n, 0.03),
+        "SOL": _random_path(13, n, 0.04),
+        "ADA": _random_path(14, n, 0.025),
+    }
+    prices["SOL"][: n // 4] = [None] * (n // 4)
+    prices["ADA"][n // 2] = None
+    return prices
+
+
+@pytest.mark.parametrize(
+    "config,n",
+    [pytest.param(_SMALL_A2, 400, id="vol-12-basket-8")]
+    + [
+        pytest.param(
+            A2Config(
+                lookbacks=lookbacks,
+                short="off",
+                target_vol=target_vol,
+                vol_lookback=_B1_LOOKBACK,
+                basket_lookback=_B1_LOOKBACK,
+                periods_per_year=PPY_4H,
+            ),
+            600,
+            id=f"adopted-{'-'.join(map(str, lookbacks))}-{target_vol}",
+        )
+        for lookbacks, target_vol in _B1_A2_ARMS
+    ],
+)
+def test_given_arm_a_s_weights_the_book_is_a2_s_own(config, n):
+    prices = _book_prices(n)
+    expected = a2_book_returns(prices, config=config)["asset_positions"]
+    assert all(any(expected[asset]) for asset in prices)
+    weights = _inverse_vol_weights(prices, lookback=config.basket_lookback)
+    assert a2_positions_with_weights(prices, weights, config=config) == expected
+
+
+def _btc_alone(weights_a: list[dict[str, float]]) -> list[dict[str, float]]:
+    return [{"BTC": 1.0} if w else {} for w in weights_a]
+
+
+def _half_moved_to_ada(weights_a: list[dict[str, float]]) -> list[dict[str, float]]:
+    return [{"BTC": 0.5, "ADA": 0.5} if w else {} for w in weights_a]
+
+
+@pytest.mark.parametrize("plant", [pytest.param(_btc_alone, id="btc-alone"), pytest.param(_half_moved_to_ada, id="half-to-ada")])
+def test_the_book_holds_the_given_weights_at_the_vol_target_of_the_base_returns_they_make(plant):
+    c = _SMALL_A2
+    prices = _book_prices(400)
+    n = len(prices["BTC"])
+    weights = plant(_inverse_vol_weights(prices, lookback=c.basket_lookback))
+    assert weights != _inverse_vol_weights(prices, lookback=c.basket_lookback)
+    asset_ts = {a: [k for k, p in enumerate(series) if p is not None] for a, series in prices.items()}
+    d = _asset_directions_a2(prices, list(range(n)), asset_ts, config=c)
+    r = {
+        a: [p[k + 1] / p[k] - 1 if p[k] is not None and p[k + 1] is not None else None for k in range(n - 1)]
+        for a, p in prices.items()
+    }
+    base = []
+    for k in range(n - 1):
+        # Term by term, as the book adds: `sum()` over floats is compensated, so its last bit can differ.
+        total = 0.0
+        for a in prices:
+            if d[a][k] is not None and r[a][k] is not None:
+                total += weights[k].get(a, 0.0) * d[a][k] * r[a][k]
+        base.append(total)
+    lev = vol_target(
+        base, target_vol=c.target_vol / math.sqrt(c.periods_per_year), lookback=c.vol_lookback, max_leverage=c.max_leverage
+    )
+    assert any(0.0 < x < c.max_leverage for x in lev)
+    expected = {a: [weights[k].get(a, 0.0) * (d[a][k] or 0.0) * lev[k] for k in range(n - 1)] for a in prices}
+    assert a2_positions_with_weights(prices, weights, config=c) == expected
+
+
+@pytest.mark.parametrize(
+    "edit,match",
+    [
+        pytest.param(lambda w: w[:-1], "weights must hold one dict per return index, 399, got 398", id="weights-one-short"),
+        pytest.param(
+            lambda w: w[:50] + [{**w[50], "XRP": 0.5}] + w[51:],
+            "weights at return index 50 name assets the prices lack: ['XRP']",
+            id="weight-for-an-asset-the-prices-lack",
+        ),
+    ],
+)
+def test_the_book_refuses_weights_that_do_not_fit_the_prices(edit, match):
+    prices = _book_prices(400)
+    weights = edit(_inverse_vol_weights(prices, lookback=_SMALL_A2.basket_lookback))
+    with pytest.raises(AlphaError, match=re.escape(match)):
+        a2_positions_with_weights(prices, weights, config=_SMALL_A2)
+
+
+def test_weights_differ_count_counts_the_return_indices_whose_dicts_differ():
+    weights_a = [{}, {"A": 1.0}, {"A": 0.5, "B": 0.5}, {"A": 0.75, "B": 0.25}]
+    weights_b = [{}, {"A": 1.0}, {"A": 0.5, "B": 0.5}, {"A": 0.5, "B": 0.5}]
+    assert weights_differ_count(weights_a, weights_b) == 1
+
+
+def test_weights_differ_count_refuses_key_sets_that_differ_naming_the_return_index():
+    weights_a = [{}, {"A": 1.0}, {"A": 1.0}, {"A": 1.0}]
+    weights_b = [{}, {"A": 1.0}, {"A": 0.5, "B": 0.5}, {"A": 1.0}]
+    with pytest.raises(AlphaError, match=re.escape("differ at return index 2: ['A'] against ['A', 'B']")):
+        weights_differ_count(weights_a, weights_b)
+
+
+def test_weights_differ_count_refuses_lists_of_unequal_length():
+    with pytest.raises(AlphaError, match=re.escape("must have equal length, got 2 and 3")):
+        weights_differ_count([{}, {"A": 1.0}], [{}, {"A": 1.0}, {"A": 1.0}])
+
+
+def test_weight_total_variation_counts_every_move_from_an_empty_start_and_an_asset_that_leaves():
+    assert weight_total_variation([{}, {"A": 1.0}, {"A": 0.75, "B": 0.25}, {"B": 1.0}]) == 3.0
+
+
+def _year_case() -> tuple[list[dict[str, float]], list[dict[str, float]], list[datetime]]:
+    # Return index 2 opens 2015-12-31 20:00 and closes 2016-01-01 00:00.
+    union_ts = [datetime(2015, 12, 31, h, tzinfo=timezone.utc) for h in (12, 16, 20)]
+    union_ts += [datetime(2016, 1, 1, h, tzinfo=timezone.utc) for h in (0, 4)]
+    weights_a = [{}, {"BTC": 0.5, "ETH": 0.5}, {"BTC": 0.75, "ETH": 0.25}, {"BTC": 1.0}]
+    weights_b = [{}, {"BTC": 0.25, "ETH": 0.75}, {"BTC": 0.5, "ETH": 0.5}, {"BTC": 1.0}]
+    return weights_a, weights_b, union_ts
+
+
+def test_per_year_mean_weights_keys_a_return_index_by_its_bar_start_year_arm_b_s_mean_first():
+    weights_a, weights_b, union_ts = _year_case()
+    assert per_year_mean_weights(weights_a, weights_b, union_ts, ["BTC", "ETH"]) == {
+        "BTC": {"2015": [0.75 / 3, 1.25 / 3], "2016": [1.0, 1.0]},
+        "ETH": {"2015": [1.25 / 3, 0.75 / 3], "2016": [0.0, 0.0]},
+    }
+
+
+def test_per_year_mean_weights_refuses_a_union_one_stamp_short():
+    weights_a, weights_b, union_ts = _year_case()
+    with pytest.raises(AlphaError, match=re.escape("got 4 stamps, 4 and 4 dicts")):
+        per_year_mean_weights(weights_a, weights_b, union_ts[:-1], ["BTC", "ETH"])
