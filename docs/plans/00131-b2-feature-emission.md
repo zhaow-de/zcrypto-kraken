@@ -45,9 +45,10 @@ def test_the_sign_run_counts_prints_never_bars_as_of_each_close():
 
 def test_an_off_cadence_print_breaks_the_sign_run_and_is_none_while_it_is_the_latest_print():
     intervals = [8, 8, 8, 4, 8, 8, 8]
-    # Dropped instead of mapped, the 24 h and 28 h closes would read the 16 h print's run, 1.
+    rates = _SIGN_RATES[:4] + [0.0] + _SIGN_RATES[5:]
+    # Dropped instead of mapped, the 32 h and 36 h closes would continue the 16 h print's zero run, 2.
     expected = [1, 2, 2, 1, 1, None, None, 1, 1, 1, 1, 2, 2]
-    assert funding_sign_grid_feature(_SIGN_PRINTS, _SIGN_RATES, intervals, _SIGN_UNION) == expected
+    assert funding_sign_grid_feature(_SIGN_PRINTS, rates, intervals, _SIGN_UNION) == expected
 
 
 def test_the_accrued_carry_sums_the_latest_90_prints_as_of_each_close():
@@ -540,7 +541,8 @@ def test_a_zero_placeholder_leaves_every_oi_zscore_window_holding_its_mark_none(
 def test_a_truncated_prefix_of_the_rows_reproduces_every_oi_trio_emitter_bit_for_bit(emitter, defined):
     oi_ts, oi_values, union_ts = _oi_prefix_fixture()
     full = emitter(oi_ts, oi_values, union_ts)
-    # Exact: a stale or placeholder level the feature reads in place of None defines more closes.
+    # Exact: a stale level the feature reads in place of None defines more closes, and so does a placeholder's fall-back,
+    # save the z-score's, which the placeholder case carries.
     assert len(full) == len(union_ts) - 1 and sum(v is not None for v in full) == defined
     for n in range(1, len(union_ts)):
         cutoff = union_ts[n - 1] + timedelta(hours=4)
@@ -611,7 +613,7 @@ infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def oi_moment
 - [ ] **Step 1 — the edit** (`topic-ops`' edit mechanics: each anchor's `grep -c` reads 1 first, and `grep '^#'` of the file reads the same headings before and after). In `## Done so far`, below the bullet opening `- **B2 emission and trial-1 subject DELIVERED (iter-175, spec/plan `00128`)**`, one blank line and then:
 
 ```markdown
-- **B2's remaining funding and OI features on the 4h close grid DELIVERED (spec/plan `00131`)**: `cli/alpha/b2.py` — the funding sign run and the 90-print accrued carry through the z-score's one print pipeline, each fed the prints and never the grid, and no print read at a close a settlement or more after it, so a close past a series' last print reads `None`; the OI level `sum_open_interest` on a regular 4h grid over the substrate's own span, as-of on its raw stamps, a `0.0` placeholder `None` and no level older than the bar its mark closes (11 of 104,446 marks measured); the OI log-delta, 180-bar z-score and 180-bar momentum over that grid series, warm for a window opening 30 days into the span save where a `None` level lies in the window, as for the 30 days from 2024-02-16T20:00Z in every symbol; each read at a union's closes by exact lookup, a column's `binperp_` name and per-year coverage the consumer's. No subject, no registry record. The 1h grid is dropped: a same-hour de-risk is an execution-layer knob and a trial on it its own pre-registration (spec `00128` D1), and no committed subject reads a 1h series.
+- **B2's remaining funding and OI features on the 4h close grid DELIVERED (spec/plan `00131`)**: `cli/alpha/b2.py` — the funding sign run and the 90-print accrued carry through the z-score's one print pipeline, each fed the prints and never the grid, and no print read at a close a settlement or more after it, so from the close a settlement past a series' last print the features read `None`; the OI level `sum_open_interest` on a regular 4h grid over the substrate's own span, as-of on its raw stamps, a `0.0` placeholder `None` and no level older than the bar its mark closes (11 of 104,446 marks measured); the OI log-delta, 180-bar z-score and 180-bar momentum over that grid series, warm for a window opening 30 days into the span save where a `None` level lies in the window, as for the 30 days from 2024-02-16T20:00Z in every symbol; each read at a union's closes by exact lookup, a column's `binperp_` name and per-year coverage the consumer's. No subject, no registry record. The 1h grid is dropped: a same-hour de-risk is an execution-layer knob and a trial on it its own pre-registration (spec `00128` D1), and no committed subject reads a 1h series.
 ```
 
   In `## Suggested next steps`, the bullet opening `- **(autonomous) the rest of the substrate→feature emission.**` is replaced whole by the one feature family of spec `00110` D7 no emitter carries yet — its warning is now the emitters' construction and their known answers:
