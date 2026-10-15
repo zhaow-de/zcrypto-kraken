@@ -13,6 +13,9 @@ from cli.features.derivatives import (
     funding_sign_persistence,
     funding_zscore,
     oi_levels_from_raw,
+    oi_log_delta,
+    oi_momentum,
+    oi_zscore,
 )
 from cli.logging import get_logger
 from cli.validation import max_drawdown
@@ -28,6 +31,8 @@ _FUNDING_INTERVAL_HOURS = 8
 _SETTLEMENT_INTERVAL = timedelta(hours=_FUNDING_INTERVAL_HOURS)
 # Pre-registered 30-day windows (docs/specs/00110 D7, docs/specs/00131 D3), not knobs: a change to one is a new trial.
 _CARRY_WINDOW = 90
+_OI_ZSCORE_WINDOW = 180
+_OI_MOMENTUM_LOOKBACK = 180
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -191,6 +196,20 @@ def _oi_at_union_closes(
 
 def oi_grid_levels(oi_ts: list[datetime], oi_values: list[float | None], union_ts: list[datetime]) -> list[float | None]:
     return _oi_at_union_closes("level", list, oi_ts, oi_values, union_ts)
+
+
+def oi_log_delta_grid_feature(oi_ts: list[datetime], oi_values: list[float | None], union_ts: list[datetime]) -> list[float | None]:
+    return _oi_at_union_closes("log-delta", oi_log_delta, oi_ts, oi_values, union_ts)
+
+
+def oi_zscore_grid_feature(oi_ts: list[datetime], oi_values: list[float | None], union_ts: list[datetime]) -> list[float | None]:
+    zscore = partial(oi_zscore, window=_OI_ZSCORE_WINDOW)
+    return _oi_at_union_closes("z-score", zscore, oi_ts, oi_values, union_ts)
+
+
+def oi_momentum_grid_feature(oi_ts: list[datetime], oi_values: list[float | None], union_ts: list[datetime]) -> list[float | None]:
+    momentum = partial(oi_momentum, lookback=_OI_MOMENTUM_LOOKBACK)
+    return _oi_at_union_closes("momentum", momentum, oi_ts, oi_values, union_ts)
 
 
 def _check_lengths(lists: dict[str, list], expected: int | None = None) -> int:

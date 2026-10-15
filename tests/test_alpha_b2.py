@@ -16,6 +16,9 @@ from cli.alpha.b2 import (
     funding_sign_grid_feature,
     net_of_cost,
     oi_grid_levels,
+    oi_log_delta_grid_feature,
+    oi_momentum_grid_feature,
+    oi_zscore_grid_feature,
     per_year_engaged_counts,
     per_year_max_drawdown,
     per_year_positions_differ,
@@ -453,4 +456,73 @@ def test_a_truncated_prefix_of_the_rows_reproduces_the_grid_levels_bit_for_bit()
         cutoff = union_ts[n - 1] + timedelta(hours=4)
         visible = [i for i, t in enumerate(oi_ts) if t <= cutoff]
         prefix = oi_grid_levels([oi_ts[i] for i in visible], [oi_values[i] for i in visible], union_ts[: n + 1])
+        assert prefix == full[:n], f"prefix at n={n} disagrees with the full run"
+
+
+def _oi_on_the_grid(levels: list[float]) -> tuple[list[datetime], list[float], list[datetime]]:
+    """Each level the later of two rows inside its bar, the earlier 1.5 times it: a feature over the raw rows and one
+    over the grid disagree."""
+    union_ts = _hours(*range(0, 4 * (len(levels) + 1), 4))
+    oi_ts, oi_values = [], []
+    for k, level in enumerate(levels):
+        close = union_ts[k] + timedelta(hours=4)
+        oi_ts += [close - timedelta(minutes=10), close - timedelta(minutes=5)]
+        oi_values += [1.5 * level, level]
+    return oi_ts, oi_values, union_ts
+
+
+def test_the_oi_log_delta_is_bar_to_bar_on_the_grid_never_row_to_row():
+    # Over the raw rows it would read each bar's last five minutes, log(1 / 1.5), at every close.
+    assert oi_log_delta_grid_feature(*_oi_on_the_grid([100.0, 110.0, 121.0, 133.1])) == [None] + [pytest.approx(math.log(1.1))] * 3
+
+
+def test_the_oi_zscore_recovers_a_spike_over_180_grid_bars():
+    expected = [None] * 179 + [0.0, pytest.approx(179 / math.sqrt(180))]
+    assert oi_zscore_grid_feature(*_oi_on_the_grid([100.0] * 180 + [200.0])) == expected
+
+
+def test_the_oi_momentum_reads_its_base_180_grid_bars_back():
+    expected = [None] * 180 + [pytest.approx(1.8), pytest.approx(281 / 101 - 1)]
+    assert oi_momentum_grid_feature(*_oi_on_the_grid([100.0 + k for k in range(182)])) == expected
+
+
+def test_the_oi_windows_are_the_pre_registered_180_bars():
+    assert (b2._OI_ZSCORE_WINDOW, b2._OI_MOMENTUM_LOOKBACK) == (180, 180)
+
+
+def test_a_union_hole_leaves_the_next_oi_log_delta_a_single_4h_step():
+    oi_ts, oi_values, union_ts = _oi_on_the_grid([100.0 * 1.1**k for k in range(6)])
+    del union_ts[3]
+    # The union has no close at 16 h; over its own closes the 20 h log-delta would span 8 h, log(1.21).
+    assert oi_log_delta_grid_feature(oi_ts, oi_values, union_ts) == [None] + [pytest.approx(math.log(1.1))] * 4
+
+
+def test_a_union_opening_inside_the_rows_span_reads_the_oi_zscore_warm():
+    oi_ts, oi_values, union_ts = _oi_on_the_grid([100.0] * 180 + [200.0])
+    # Two return indices closing on the spike fixture's last two marks; over their own two closes both would be None.
+    assert oi_zscore_grid_feature(oi_ts, oi_values, union_ts[179:]) == [0.0, pytest.approx(179 / math.sqrt(180))]
+
+
+def test_a_zero_placeholder_leaves_every_oi_zscore_window_holding_its_mark_none():
+    oi_ts, oi_values, union_ts = _oi_on_the_grid([100.0] * 181)
+    oi_values[1] = 0.0
+    # Bar 0's later row is the placeholder: fallen back to its earlier row, 150.0, the first window would score.
+    assert oi_zscore_grid_feature(oi_ts, oi_values, union_ts) == [None] * 180 + [0.0]
+
+
+@pytest.mark.parametrize(
+    ("emitter", "defined"),
+    [(oi_log_delta_grid_feature, 204), (oi_zscore_grid_feature, 22), (oi_momentum_grid_feature, 57)],
+    ids=["log-delta", "zscore", "momentum"],
+)
+def test_a_truncated_prefix_of_the_rows_reproduces_every_oi_trio_emitter_bit_for_bit(emitter, defined):
+    oi_ts, oi_values, union_ts = _oi_prefix_fixture()
+    full = emitter(oi_ts, oi_values, union_ts)
+    # Exact: a stale level the feature reads in place of None defines more closes, and so does a placeholder's fall-back,
+    # save the z-score's, which the placeholder case carries.
+    assert len(full) == len(union_ts) - 1 and sum(v is not None for v in full) == defined
+    for n in range(1, len(union_ts)):
+        cutoff = union_ts[n - 1] + timedelta(hours=4)
+        visible = [i for i, t in enumerate(oi_ts) if t <= cutoff]
+        prefix = emitter([oi_ts[i] for i in visible], [oi_values[i] for i in visible], union_ts[: n + 1])
         assert prefix == full[:n], f"prefix at n={n} disagrees with the full run"
