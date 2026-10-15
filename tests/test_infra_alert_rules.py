@@ -2314,7 +2314,8 @@ def test_the_database_lock_rule_is_a_burst_rule_over_grafanas_own_journal():
     (query,) = [q for q in rule["data"] if q["datasourceUid"] == "${GRAFANA_LOKI_DS_UID}"]
     assert query["model"]["expr"] == (
         'sum(count_over_time({host="zcrypto-mon", container="grafana-server"} |= "database is locked"'
-        ' != "sleeping then retrying" [15m])) or on() vector(0)'
+        ' | logfmt | msg!~".*sleeping then retrying.*" | query!~".*database is locked.*"'
+        " [15m])) or on() vector(0)"
     )
     assert (rule["for"], rule["notification_settings"]["receiver"]) == ("0s", "logs")
     alloy = (ANSIBLE / "roles/mon/files/config.alloy").read_text()
