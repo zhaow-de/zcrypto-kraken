@@ -119,18 +119,13 @@ def test_the_ini_names_the_secret_files_and_carries_none_of_their_values():
 # --- what the node's Grafana and Loki log ------------------------------------------------------------------------
 
 
-_GRAFANA_LEVELS = ("debug", "info", "warn", "error", "critical")
-
-
-def test_grafana_logs_warnings_and_above_in_every_mode_and_logger():
+def test_grafana_logs_warnings_and_above_in_every_mode_with_no_logger_filter():
     ini = _ini()
     assert ini.get("log", "level", fallback=None) == "warn"
     for section in [s for s in ini.sections() if s == "log" or s.startswith("log.")]:
-        level = ini.get(section, "level", fallback="warn")
-        assert _GRAFANA_LEVELS.index(level) >= _GRAFANA_LEVELS.index("warn"), f"[{section}] level = {level}"
-        for entry in ini.get(section, "filters", fallback="").split():
-            raised = entry.rpartition(":")[2]
-            assert _GRAFANA_LEVELS.index(raised) >= _GRAFANA_LEVELS.index("warn"), f"[{section}] filters {entry}"
+        assert not ini.has_option(section, "filters"), f"[{section}] filters can raise a logger back below warn"
+        level = (ini.get(section, "level", fallback="") or "warn").lower()
+        assert level in ("warn", "error", "critical"), f"[{section}] level = {level}"
 
 
 def test_loki_logs_warnings_and_above():
