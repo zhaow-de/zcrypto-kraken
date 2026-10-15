@@ -5,13 +5,20 @@ from types import SimpleNamespace
 
 import pytest
 
+from cli.alpha import b2
 from cli.alpha.b1 import book_turnover
 from cli.alpha.b2 import (
     B2Config,
     close_grid,
     derisk_scales,
+    funding_carry_grid_feature,
     funding_grid_feature,
+    funding_sign_grid_feature,
     net_of_cost,
+    oi_grid_levels,
+    oi_log_delta_grid_feature,
+    oi_momentum_grid_feature,
+    oi_zscore_grid_feature,
     per_year_engaged_counts,
     per_year_max_drawdown,
     per_year_positions_differ,
@@ -262,3 +269,259 @@ _POS = {"BTC": [0.4, 0.2], "ETH": [0.3, 0.6]}
 def test_a_mismatched_input_is_refused(call, match):
     with pytest.raises(AlphaError, match=match):
         call()
+
+
+# The sign runs these prints score are 1, 2, 1, 1, 2, 1, 2; 13 return indices close every 4 h from 04:00.
+_SIGN_PRINTS = _hours(0, 8, 16, 24, 32, 40, 48)
+_SIGN_RATES = [1e-4, 2e-4, 0.0, -1e-4, -3e-4, 2e-4, 1e-4]
+_SIGN_UNION = _hours(*range(0, 56, 4))
+# The carry over the 90 prints ending at the 90th, 91st and 92nd print is 4095e-6, 4185e-6 and 4275e-6.
+_CARRY_PRINTS = _hours(*range(0, 8 * 92, 8))
+_CARRY_RATES = [(i + 1) * 1e-6 for i in range(92)]
+_CARRY_UNION = _hours(*range(704, 736, 4))
+
+
+def test_the_sign_run_counts_prints_never_bars_as_of_each_close():
+    # Fed the aligned grid instead, each print would count once per bar it carries across: 1, 2, 3, 1, 2, 1, 2, 3, 4, ...
+    assert funding_sign_grid_feature(_SIGN_PRINTS, _SIGN_RATES, [8] * 7, _SIGN_UNION) == [1, 2, 2, 1, 1, 1, 1, 2, 2, 1, 1, 2, 2]
+
+
+def test_an_off_cadence_print_breaks_the_sign_run_and_is_none_while_it_is_the_latest_print():
+    intervals = [8, 8, 8, 4, 8, 8, 8]
+    rates = _SIGN_RATES[:4] + [0.0] + _SIGN_RATES[5:]
+    # Dropped instead of mapped, the 32 h and 36 h closes would continue the 16 h print's zero run, 2.
+    expected = [1, 2, 2, 1, 1, None, None, 1, 1, 1, 1, 2, 2]
+    assert funding_sign_grid_feature(_SIGN_PRINTS, rates, intervals, _SIGN_UNION) == expected
+
+
+def test_the_accrued_carry_sums_the_latest_90_prints_as_of_each_close():
+    feature = funding_carry_grid_feature(_CARRY_PRINTS, _CARRY_RATES, [8] * 92, _CARRY_UNION)
+    # The 704 h print is the 89th, its window one print short.
+    assert feature == [None] + [pytest.approx(v * 1e-6) for v in (4095, 4095, 4185, 4185, 4275, 4275)]
+
+
+def test_an_off_cadence_print_leaves_every_carry_window_holding_it_none():
+    intervals = [8, 4] + [8] * 90
+    # Dropped instead of mapped, the 720 h print would sum the 90 prints left before it, 4184e-6.
+    expected = [None] * 5 + [pytest.approx(4275e-6)] * 2
+    assert funding_carry_grid_feature(_CARRY_PRINTS, _CARRY_RATES, intervals, _CARRY_UNION) == expected
+
+
+def test_the_carry_window_is_the_pre_registered_90_prints():
+    assert b2._CARRY_WINDOW == 90
+
+
+# Each emitter's fixture, the print a test moves, and the return index its own hour closes, where its value differs from
+# the one carried before it.
+_NEW_FUNDING_EMITTERS = [
+    pytest.param(funding_sign_grid_feature, _SIGN_PRINTS, _SIGN_RATES, _SIGN_UNION, 4, 7, id="sign"),
+    pytest.param(funding_carry_grid_feature, _CARRY_PRINTS, _CARRY_RATES, _CARRY_UNION, 90, 3, id="carry"),
+]
+
+
+@pytest.mark.parametrize(("emitter", "prints", "rates", "union", "moved", "at"), _NEW_FUNDING_EMITTERS)
+def test_every_new_funding_emitter_reads_a_print_30ms_past_its_hour_as_that_hours_settlement(
+    emitter, prints, rates, union, moved, at
+):
+    late = [t + timedelta(milliseconds=30) if i == moved else t for i, t in enumerate(prints)]
+    on_hour = emitter(prints, rates, [8] * len(rates), union)
+    assert on_hour[at] != on_hour[at - 1]
+    assert emitter(late, rates, [8] * len(rates), union) == on_hour
+
+
+@pytest.mark.parametrize(("emitter", "prints", "rates", "union", "moved", "at"), _NEW_FUNDING_EMITTERS)
+def test_every_new_funding_emitter_refuses_a_print_61s_past_its_hour_by_name(emitter, prints, rates, union, moved, at):
+    late = [t + timedelta(seconds=61) if i == moved else t for i, t in enumerate(prints)]
+    with pytest.raises(AlphaError, match=re.escape(f"prints_ts[{moved}] = {late[moved].isoformat()}")):
+        emitter(late, rates, [8] * len(rates), union)
+
+
+@pytest.mark.parametrize("emitter", [funding_sign_grid_feature, funding_carry_grid_feature], ids=["sign", "carry"])
+def test_a_truncated_prefix_of_the_print_inputs_reproduces_every_new_funding_emitter_bit_for_bit(emitter):
+    rates = [((7 * i) % 11 - 5) * 1e-5 for i in range(120)]
+    prints_ts = [DAY0 + timedelta(hours=8 * i, milliseconds=7 * (i % 3)) for i in range(len(rates))]
+    union_ts = _hours(*range(764, 900, 4))
+    full = emitter(prints_ts, rates, [8] * len(rates), union_ts)
+    assert len(full) == len(union_ts) - 1 and None not in full
+    for n in range(1, len(union_ts)):
+        cutoff = union_ts[n - 1] + timedelta(hours=4)
+        visible = [i for i, t in enumerate(prints_ts) if t.replace(minute=0, second=0, microsecond=0) <= cutoff]
+        prefix = emitter([prints_ts[i] for i in visible], [rates[i] for i in visible], [8] * len(visible), union_ts[: n + 1])
+        assert prefix == full[:n], f"prefix at n={n} disagrees with the full run"
+
+
+_FUNDING_EMITTERS = [
+    pytest.param(lambda *inputs: funding_grid_feature(*inputs, config=B2Config()), id="zscore"),
+    pytest.param(funding_sign_grid_feature, id="sign"),
+    pytest.param(funding_carry_grid_feature, id="carry"),
+]
+
+
+@pytest.mark.parametrize("emitter", _FUNDING_EMITTERS)
+def test_every_funding_emitter_reads_none_from_the_close_a_settlement_past_its_last_print(emitter):
+    # The last print settles at 728 h: the 732 h close still reads it, and from 736 h the next settlement is due and absent.
+    feature = emitter(_CARRY_PRINTS, _CARRY_RATES, [8] * 92, _hours(*range(720, 748, 4)))
+    assert None not in feature[:3] and feature[2] == feature[1] and feature[3:] == [None] * 3
+
+
+@pytest.mark.parametrize("emitter", _FUNDING_EMITTERS)
+@pytest.mark.parametrize(
+    ("prints_ts", "intervals", "union_ts", "named"),
+    [
+        pytest.param(_PRINTS, [8] * 5, _UNION, "equal length", id="longer-intervals"),
+        pytest.param(_hours(0, 8, 8, 24), [8] * 4, _UNION, "prints_ts", id="duplicate-prints"),
+        pytest.param(_PRINTS, [8] * 4, _hours(8, 12, 12, 16, 20), "union_ts", id="duplicate-union"),
+    ],
+)
+def test_every_funding_emitter_refuses_a_shape_it_would_otherwise_read_silently(emitter, prints_ts, intervals, union_ts, named):
+    with pytest.raises(AlphaError, match=named):
+        emitter(prints_ts, RATES, intervals, union_ts)
+
+
+def test_a_level_exactly_4h_old_at_a_mark_is_none_and_one_a_second_younger_is_read():
+    union = _hours(0, 4, 8, 12)
+    assert oi_grid_levels(_hours(4, 12), [100.0, 110.0], union) == [100.0, None, 110.0]
+    younger = [DAY0 + timedelta(hours=4, seconds=1), DAY0 + timedelta(hours=12)]
+    # The rows' span opens at the 08:00 mark, the first at or after the younger row: the 04:00 close lies before it.
+    assert oi_grid_levels(younger, [100.0, 110.0], union) == [None, 100.0, 110.0]
+
+
+def test_a_late_stamped_row_is_read_from_its_own_stamp_never_from_its_mark():
+    oi_ts = [DAY0 + timedelta(hours=4, seconds=-22), DAY0 + timedelta(hours=4, seconds=30)]
+    assert oi_grid_levels(oi_ts, [100.0, 110.0], _hours(0, 4, 8)) == [100.0, 110.0]
+
+
+def test_a_zero_placeholder_is_none_at_the_close_it_reaches_never_the_level_before_it():
+    oi_ts = [DAY0 + timedelta(hours=4, minutes=-10), DAY0 + timedelta(hours=4, minutes=-5), DAY0 + timedelta(hours=8, minutes=-5)]
+    assert oi_grid_levels(oi_ts, [100.0, 0.0, 105.0], _hours(0, 4, 8)) == [None, 105.0]
+
+
+def test_a_union_close_before_or_after_the_rows_span_or_of_an_empty_series_reads_none():
+    oi_ts = [DAY0 + timedelta(hours=12, minutes=-5), DAY0 + timedelta(hours=16, minutes=-5)]
+    assert oi_grid_levels(oi_ts, [100.0, 110.0], _hours(*range(0, 28, 4))) == [None, None, 100.0, 110.0, None, None]
+    assert oi_grid_levels([], [], _hours(0, 4)) == [None]
+
+
+def test_a_union_stamp_off_a_4h_mark_is_refused_by_name():
+    with pytest.raises(AlphaError, match=re.escape("union_ts[2] = 2024-03-01T09:00:00+00:00 is not on a 4 h mark")):
+        oi_grid_levels(_hours(1, 5, 9), [100.0, 101.0, 102.0], _hours(0, 4, 9))
+
+
+@pytest.mark.parametrize(
+    ("oi_ts", "union_ts", "named"),
+    [
+        pytest.param(_hours(5, 1, 9), _hours(0, 4, 8), "oi_ts", id="unsorted-rows"),
+        pytest.param(_hours(1, 5, 5), _hours(0, 4, 8), "oi_ts", id="duplicate-rows"),
+        pytest.param(_hours(1, 5, 9), _hours(0, 8, 4), "union_ts", id="unsorted-union"),
+        pytest.param([DAY0.replace(hour=1, tzinfo=None)] + _hours(5, 9), _hours(0, 4, 8), "oi_ts", id="naive-row"),
+        pytest.param(_hours(1, 5, 9), [DAY0.replace(tzinfo=None)] + _hours(4, 8), "union_ts", id="naive-union"),
+    ],
+)
+def test_oi_grid_levels_refuses_unsorted_or_naive_stamps(oi_ts, union_ts, named):
+    with pytest.raises(AlphaError, match=named):
+        oi_grid_levels(oi_ts, [100.0, 101.0, 102.0], union_ts)
+
+
+@pytest.mark.parametrize("oi_values", [[100.0, 101.0], [100.0, 101.0, 102.0, 103.0]], ids=["shorter", "longer"])
+def test_oi_grid_levels_refuses_lists_of_unequal_length(oi_values):
+    with pytest.raises(AlphaError, match="equal length"):
+        oi_grid_levels(_hours(1, 5, 9), oi_values, _hours(0, 4, 8))
+
+
+def _oi_prefix_fixture() -> tuple[list[datetime], list[float], list[datetime]]:
+    """Two rows for each of 240 bars but 37 and 38; a union opening at bar 30, missing bar 100's open and closing one
+    bar past the rows; and the substrate's shapes planted inside it: a close's own row stamped 30 s late at bar 33, a
+    `0.0` placeholder as bar 35's last row, and no row in bars 37 and 38, whose closes find a level 4 h 5 min and
+    8 h 5 min old."""
+    oi_ts, oi_values = [], []
+    for k in range(240):
+        close = DAY0 + timedelta(hours=4 * (k + 1))
+        if k in (37, 38):
+            continue
+        last = close + timedelta(seconds=30) if k == 33 else close - timedelta(minutes=5)
+        oi_ts += [close - timedelta(minutes=10), last]
+        oi_values += [100.0 + (37 * k) % 23, 0.0 if k == 35 else 100.5 + (53 * k) % 29]
+    union_ts = [t for t in _hours(*range(4 * 30, 4 * 242, 4)) if t != DAY0 + timedelta(hours=4 * 100)]
+    return oi_ts, oi_values, union_ts
+
+
+def test_a_truncated_prefix_of_the_rows_reproduces_the_grid_levels_bit_for_bit():
+    oi_ts, oi_values, union_ts = _oi_prefix_fixture()
+    full = oi_grid_levels(oi_ts, oi_values, union_ts)
+    # Return index j closes bar 30 + j up to the missing open, bar 31 + j after it: bars 35, 37 and 38 read None, and so
+    # does bar 240, past the rows.
+    assert len(full) == len(union_ts) - 1 and [j for j, v in enumerate(full) if v is None] == [5, 7, 8, len(full) - 1]
+    for n in range(1, len(union_ts)):
+        cutoff = union_ts[n - 1] + timedelta(hours=4)
+        visible = [i for i, t in enumerate(oi_ts) if t <= cutoff]
+        prefix = oi_grid_levels([oi_ts[i] for i in visible], [oi_values[i] for i in visible], union_ts[: n + 1])
+        assert prefix == full[:n], f"prefix at n={n} disagrees with the full run"
+
+
+def _oi_on_the_grid(levels: list[float]) -> tuple[list[datetime], list[float], list[datetime]]:
+    """Each level the later of two rows inside its bar, the earlier 1.5 times it: a feature over the raw rows and one
+    over the grid disagree."""
+    union_ts = _hours(*range(0, 4 * (len(levels) + 1), 4))
+    oi_ts, oi_values = [], []
+    for k, level in enumerate(levels):
+        close = union_ts[k] + timedelta(hours=4)
+        oi_ts += [close - timedelta(minutes=10), close - timedelta(minutes=5)]
+        oi_values += [1.5 * level, level]
+    return oi_ts, oi_values, union_ts
+
+
+def test_the_oi_log_delta_is_bar_to_bar_on_the_grid_never_row_to_row():
+    # Over the raw rows it would read each bar's last five minutes, log(1 / 1.5), at every close.
+    assert oi_log_delta_grid_feature(*_oi_on_the_grid([100.0, 110.0, 121.0, 133.1])) == [None] + [pytest.approx(math.log(1.1))] * 3
+
+
+def test_the_oi_zscore_recovers_a_spike_over_180_grid_bars():
+    expected = [None] * 179 + [0.0, pytest.approx(179 / math.sqrt(180))]
+    assert oi_zscore_grid_feature(*_oi_on_the_grid([100.0] * 180 + [200.0])) == expected
+
+
+def test_the_oi_momentum_reads_its_base_180_grid_bars_back():
+    expected = [None] * 180 + [pytest.approx(1.8), pytest.approx(281 / 101 - 1)]
+    assert oi_momentum_grid_feature(*_oi_on_the_grid([100.0 + k for k in range(182)])) == expected
+
+
+def test_the_oi_windows_are_the_pre_registered_180_bars():
+    assert (b2._OI_ZSCORE_WINDOW, b2._OI_MOMENTUM_LOOKBACK) == (180, 180)
+
+
+def test_a_union_hole_leaves_the_next_oi_log_delta_a_single_4h_step():
+    oi_ts, oi_values, union_ts = _oi_on_the_grid([100.0 * 1.1**k for k in range(6)])
+    del union_ts[3]
+    # The union has no close at 16 h; over its own closes the 20 h log-delta would span 8 h, log(1.21).
+    assert oi_log_delta_grid_feature(oi_ts, oi_values, union_ts) == [None] + [pytest.approx(math.log(1.1))] * 4
+
+
+def test_a_union_opening_inside_the_rows_span_reads_the_oi_zscore_warm():
+    oi_ts, oi_values, union_ts = _oi_on_the_grid([100.0] * 180 + [200.0])
+    # Two return indices closing on the spike fixture's last two marks; over their own two closes both would be None.
+    assert oi_zscore_grid_feature(oi_ts, oi_values, union_ts[179:]) == [0.0, pytest.approx(179 / math.sqrt(180))]
+
+
+def test_a_zero_placeholder_leaves_every_oi_zscore_window_holding_its_mark_none():
+    oi_ts, oi_values, union_ts = _oi_on_the_grid([100.0] * 181)
+    oi_values[1] = 0.0
+    # Bar 0's later row is the placeholder: fallen back to its earlier row, 150.0, the first window would score.
+    assert oi_zscore_grid_feature(oi_ts, oi_values, union_ts) == [None] * 180 + [0.0]
+
+
+@pytest.mark.parametrize(
+    ("emitter", "defined"),
+    [(oi_log_delta_grid_feature, 204), (oi_zscore_grid_feature, 22), (oi_momentum_grid_feature, 57)],
+    ids=["log-delta", "zscore", "momentum"],
+)
+def test_a_truncated_prefix_of_the_rows_reproduces_every_oi_trio_emitter_bit_for_bit(emitter, defined):
+    oi_ts, oi_values, union_ts = _oi_prefix_fixture()
+    full = emitter(oi_ts, oi_values, union_ts)
+    # Exact: a stale level the feature reads in place of None defines more closes, and so does a placeholder's fall-back,
+    # save the z-score's, which the placeholder case carries.
+    assert len(full) == len(union_ts) - 1 and sum(v is not None for v in full) == defined
+    for n in range(1, len(union_ts)):
+        cutoff = union_ts[n - 1] + timedelta(hours=4)
+        visible = [i for i, t in enumerate(oi_ts) if t <= cutoff]
+        prefix = emitter([oi_ts[i] for i in visible], [oi_values[i] for i in visible], union_ts[: n + 1])
+        assert prefix == full[:n], f"prefix at n={n} disagrees with the full run"
