@@ -116,11 +116,20 @@ def test_the_ini_names_the_secret_files_and_carries_none_of_their_values():
     assert copy["dest"] == "/etc/grafana/{{ item.file }}"
 
 
-# --- grafana.ini: what it logs -----------------------------------------------------------------------------------
+# --- what the node's Grafana and Loki log ------------------------------------------------------------------------
 
 
-def test_the_datasource_plugins_log_their_queries_at_warn():
-    assert _ini().get("log", "filters", fallback=None) == "plugin.prometheus:warn plugin.loki:warn"
+def test_grafana_logs_warnings_and_above_in_every_mode_with_no_logger_filter():
+    ini = _ini()
+    assert ini.get("log", "level", fallback=None) == "warn"
+    for section in [s for s in ini.sections() if s == "log" or s.startswith("log.")]:
+        assert not ini.has_option(section, "filters"), f"[{section}] filters can raise a logger back below warn"
+        level = (ini.get(section, "level", fallback="") or "warn").lower()
+        assert level in ("warn", "error", "critical"), f"[{section}] level = {level}"
+
+
+def test_loki_logs_warnings_and_above():
+    assert yaml.safe_load(_render("loki-config.yml.j2"))["server"]["log_level"] == "warn"
 
 
 # --- the Caddyfile: one public name and the routes it answers ----------------------------------------------------
