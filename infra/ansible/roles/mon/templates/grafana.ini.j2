@@ -60,9 +60,10 @@ sqlExpressions = false
 wal = true
 
 [log]
-# The datasource plugins log every query at info, its text in the line: most of Grafana's own lines,
-# and a text match over them reads other rules' queries.
-filters = plugin.prometheus:warn plugin.loki:warn
+# Warnings and above only: at info Grafana and its datasource plugins log every query, scheduler tick
+# and notification hand-off, which no rule, panel or runbook reads, and a text match over a logged
+# query reads other rules' queries.
+level = warn
 
 [unified_alerting.state_history]
 enabled = true
