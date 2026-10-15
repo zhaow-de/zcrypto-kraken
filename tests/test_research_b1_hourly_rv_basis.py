@@ -57,7 +57,8 @@ def test_the_b1_hourly_rv_reads_reproduce_the_measured_basis():
     present, agree = 0, 0
     for asset, (stamps, closes) in hourly.items():
         # Both grids bucket the same minutes at `ts // interval * interval`, so an hourly bar's 4h bar opens at its own
-        # stamp floored to 4h; dict order keeps each bucket's last present hourly close.
+        # stamp floored to 4h. A later row's close overwrites an earlier one in its bucket, so each bucket keeps the close
+        # of its last row in file order: its last present hourly close where the file's stamps ascend.
         last = {int(h.timestamp()) // 14_400 * 14_400: close for h, close in zip(stamps, closes)}
         h4 = {int(t.timestamp()): close for t, close in zip(h4_ts, h4_prices[asset]) if close is not None}
         assert set(last) == set(h4), f"{asset}: a 4h bar with no hourly bar, or an hourly bar in a 4h bar the asset lacks"

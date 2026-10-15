@@ -856,6 +856,13 @@ def _b1_hourly_rv_metrics(inputs: _B1HourlyRVInputs) -> dict:
     h4_ts, fed, returns, arm_a = inputs.h4_ts, inputs.fed, inputs.returns, inputs.arm_a
     weights_a, weights_b = inputs.weights_a, inputs.weights_b
     n = len(h4_ts) - 1
+    # Before the bars: on a book that never trades, `sharpe(net_a)` would refuse first and this refusal would never fire.
+    turnover_a, weight_tv_a = book_turnover(arm_a), weight_total_variation(weights_a)
+    if turnover_a == 0 or weight_tv_a == 0:
+        raise ValidationError(
+            f"turnover_a is {turnover_a} and weight_tv_a is {weight_tv_a}, and turnover_reduction_pct and weight_tv_ratio "
+            "divide by them"
+        )
     arm_a_bar, arm_a_var_trials, net_a, bench = _b1_hourly_rv_arm_a(inputs)
     arms = []
     for lookbacks, target_vol in _B1_A2_ARMS:
@@ -895,13 +902,7 @@ def _b1_hourly_rv_metrics(inputs: _B1HourlyRVInputs) -> dict:
     k16 = next(k for k in range(n) if h4_ts[k] >= _B1_FROM_2016)
     full = net_of_cost_verdict(net_b, net_a, mean_block=30, seed=42, n_resamples=_B1_N_RESAMPLES)
     from_2016 = net_of_cost_verdict(net_b[k16:], net_a[k16:], mean_block=30, seed=42, n_resamples=_B1_N_RESAMPLES)
-    turnover_a, turnover_b = book_turnover(arm_a), book_turnover(arm_b)
-    weight_tv_a, weight_tv_b = weight_total_variation(weights_a), weight_total_variation(weights_b)
-    if turnover_a == 0 or weight_tv_a == 0:
-        raise ValidationError(
-            f"turnover_a is {turnover_a} and weight_tv_a is {weight_tv_a}, and turnover_reduction_pct and weight_tv_ratio "
-            "divide by them"
-        )
+    turnover_b, weight_tv_b = book_turnover(arm_b), weight_total_variation(weights_b)
     return {
         "ann_sharpe_noc": sharpe(net_b, periods_per_year=PPY_4H),
         "ann_sharpe_noc_decisive": sharpe(net_b[_B1_DECISIVE_START:], periods_per_year=PPY_4H),
