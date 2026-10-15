@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: the owner picks a survey candidate, closes the family, or expands or closes the shared B budget
+ripe_when: 'an activity: the owner picks a candidate from the B1 survey or closes the family, recorded in the decisions log; check: `git grep -c -E ''^\[iter-[0-9]+\] B1 (survey pick|trial 3 pre-registration|family closed)'' -- docs/research/10.phase4-decisions.md` prints at least 1'
 ---
 
 # B1 — intraday trend + time-of-day/day-of-week seasonality (the family topic)
@@ -21,7 +21,7 @@ B1 is the §5 ranked queue's top un-started family — the "genuinely new freque
 - Hypothesis + trial-1 pre-registration: decisions log `[iter-086]` — the conditioning A/B on the adopted A2-4h ensemble (arm A = trials 37–39 equal-weight as adopted; arm B = + hour-of-day/day-of-week favorable-window gating and intraday-vol-state scaling from the 15m substrate), one knob, judged per T0009's revised kill bar vs the frozen B3+vt-dynamic benchmark.
 - Substrate QA input (iter-085): AVAX/LINK/DOT recent-year 15m density 88–97% (omitted no-trade slots) — the vol-state features must define behavior on missing 15m bars explicitly.
 - Budget: **B = 25 shared across Bucket B** (pre-registered, hard); B1 trials count against it under the family's registry key.
-- **Candidate survey** (the owner's disposition of 2026-07-23, to have new candidates drafted): `docs/research/10.phase4-b1-candidate-hypotheses.md` writes three fence-legal candidates up for pre-registration, none seen against a return, and argues that no trial beats two of them and narrowly beats the third.
+- **Candidate survey** (the owner's disposition of 2026-07-23, to have new candidates drafted): `docs/research/10.phase4-b1-candidate-hypotheses.md` writes three candidates up for pre-registration — two plainly inside the family's fence, the third, candidate A, inside it only if the owner keys it to B1 rather than to the spent A family or a new Bucket B key — none seen against a return, and argues that no trial beats two of them and narrowly beats the third.
 
 ## Suggested next steps
 
