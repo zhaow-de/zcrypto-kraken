@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: 'an activity: the owner picks a candidate from the B1 survey or closes the family, recorded in the decisions log; check: `git grep -c -E ''^\[iter-[0-9]+\] B1 (survey|candidate|trial 3|family|attributed)'' -- docs/research/10.phase4-decisions.md` prints at least 1'
+ripe_when: 'an activity: the owner picks a candidate from the B1 survey or closes the family, recorded in the decisions log; check: `git grep -c -E ''^\[iter[^—]*B1 (survey|candidate|trial 3|family|attributed)'' -- docs/research/10.phase4-decisions.md` prints at least 1'
 ---
 
 # B1 — intraday trend + time-of-day/day-of-week seasonality (the family topic)
