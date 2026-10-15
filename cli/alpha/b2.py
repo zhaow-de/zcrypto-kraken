@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from functools import partial
 
 from cli.alpha.errors import AlphaError
-from cli.features.derivatives import align_asof, funding_zscore
+from cli.features.derivatives import (
+    align_asof,
+    funding_accrued_carry,
+    funding_sign_persistence,
+    funding_zscore,
+)
 from cli.logging import get_logger
 from cli.validation import max_drawdown
 
@@ -15,6 +22,9 @@ _BOUNDARY = timedelta(hours=4)
 # A ruling (docs/specs/00128 D2), not a knob: a print within this of its hour is that hour's settlement.
 _STAMP_TOLERANCE = timedelta(seconds=60)
 _FUNDING_INTERVAL_HOURS = 8
+_SETTLEMENT_INTERVAL = timedelta(hours=_FUNDING_INTERVAL_HOURS)
+# Pre-registered 30-day windows (docs/specs/00110 D7, docs/specs/00131 D3), not knobs: a change to one is a new trial.
+_CARRY_WINDOW = 90
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -51,21 +61,19 @@ def close_grid(union_ts: list[datetime]) -> list[datetime]:
     return [t + _BOUNDARY for t in union_ts[:-1]]
 
 
-def funding_grid_feature(
+def _funding_on_close_grid(
+    label: str,
+    feature: Callable[[list[float | None]], list],
     prints_ts: list[datetime],
     prints_rate: list[float | None],
     prints_interval_hours: list[int],
     union_ts: list[datetime],
-    *,
-    config: B2Config,
-) -> list[float | None]:
-    """The trailing funding z-score as-of each return index's close (docs/specs/00128 D2): the union's
-    bar-open stamps in, `len(union_ts) - 1` values out. Both stamp rulings live here -- the print
-    stamp truncated to its hour, and the grid `close_grid` -- so a caller hands raw stamps and
-    shifts none itself. An off-cadence print is mapped to None before the z-score, never dropped:
-    dropping it would let a window span a different horizon under the same label."""
-    if not isinstance(config, B2Config):
-        raise AlphaError(f"config must be a B2Config, got {type(config)!r}")
+) -> list:
+    """Every funding emitter's one print pipeline (docs/specs/00131 D2), where docs/specs/00128 D2's two stamp rulings
+    live: the print stamp truncated to its hour, and `feature`'s print-indexed output as-of on `close_grid`, a print
+    reaching a close only before the next settlement is due (docs/specs/00131 D5) -- past a series' last print the
+    as-of would carry it on. An off-cadence print is mapped to None before `feature`, never dropped: dropping it would
+    let a window span a different horizon under the same label."""
     if not len(prints_ts) == len(prints_rate) == len(prints_interval_hours):
         raise AlphaError(
             "prints_ts, prints_rate and prints_interval_hours must be equal length, "
@@ -85,14 +93,47 @@ def funding_grid_feature(
         normalised.append(hour)
 
     rates = [r if h == _FUNDING_INTERVAL_HOURS else None for r, h in zip(prints_rate, prints_interval_hours)]
-    z = funding_zscore(rates, window=config.z_window)
+    values = feature(rates)
     logger.debug(
-        "funding grid feature: %d prints, %d off-cadence mapped to None, %d return indices",
+        "funding %s grid feature: %d prints, %d off-cadence mapped to None, %d return indices",
+        label,
         len(prints_ts),
         sum(h != _FUNDING_INTERVAL_HOURS for h in prints_interval_hours),
         len(union_ts) - 1,
     )
-    return align_asof(normalised, z, close_grid(union_ts))
+    closes = close_grid(union_ts)
+    # The as-of over print indices, so the bound below reads the hour of the print each close takes.
+    latest = align_asof(normalised, list(range(len(normalised))), closes)
+    return [None if j is None or normalised[j] <= c - _SETTLEMENT_INTERVAL else values[j] for j, c in zip(latest, closes)]
+
+
+def funding_grid_feature(
+    prints_ts: list[datetime],
+    prints_rate: list[float | None],
+    prints_interval_hours: list[int],
+    union_ts: list[datetime],
+    *,
+    config: B2Config,
+) -> list[float | None]:
+    """The trailing funding z-score as-of each return index's close (docs/specs/00128 D2): the union's bar-open stamps
+    in, `len(union_ts) - 1` values out, the stamps raw -- a caller shifts none itself."""
+    if not isinstance(config, B2Config):
+        raise AlphaError(f"config must be a B2Config, got {type(config)!r}")
+    zscore = partial(funding_zscore, window=config.z_window)
+    return _funding_on_close_grid("z-score", zscore, prints_ts, prints_rate, prints_interval_hours, union_ts)
+
+
+def funding_sign_grid_feature(
+    prints_ts: list[datetime], prints_rate: list[float | None], prints_interval_hours: list[int], union_ts: list[datetime]
+) -> list[int | None]:
+    return _funding_on_close_grid("sign run", funding_sign_persistence, prints_ts, prints_rate, prints_interval_hours, union_ts)
+
+
+def funding_carry_grid_feature(
+    prints_ts: list[datetime], prints_rate: list[float | None], prints_interval_hours: list[int], union_ts: list[datetime]
+) -> list[float | None]:
+    carry = partial(funding_accrued_carry, window=_CARRY_WINDOW)
+    return _funding_on_close_grid("accrued carry", carry, prints_ts, prints_rate, prints_interval_hours, union_ts)
 
 
 def _check_lengths(lists: dict[str, list], expected: int | None = None) -> int:

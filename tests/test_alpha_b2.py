@@ -5,12 +5,15 @@ from types import SimpleNamespace
 
 import pytest
 
+from cli.alpha import b2
 from cli.alpha.b1 import book_turnover
 from cli.alpha.b2 import (
     B2Config,
     close_grid,
     derisk_scales,
+    funding_carry_grid_feature,
     funding_grid_feature,
+    funding_sign_grid_feature,
     net_of_cost,
     per_year_engaged_counts,
     per_year_max_drawdown,
@@ -262,3 +265,110 @@ _POS = {"BTC": [0.4, 0.2], "ETH": [0.3, 0.6]}
 def test_a_mismatched_input_is_refused(call, match):
     with pytest.raises(AlphaError, match=match):
         call()
+
+
+# The sign runs these prints score are 1, 2, 1, 1, 2, 1, 2; 13 return indices close every 4 h from 04:00.
+_SIGN_PRINTS = _hours(0, 8, 16, 24, 32, 40, 48)
+_SIGN_RATES = [1e-4, 2e-4, 0.0, -1e-4, -3e-4, 2e-4, 1e-4]
+_SIGN_UNION = _hours(*range(0, 56, 4))
+# The carry over the 90 prints ending at the 90th, 91st and 92nd print is 4095e-6, 4185e-6 and 4275e-6.
+_CARRY_PRINTS = _hours(*range(0, 8 * 92, 8))
+_CARRY_RATES = [(i + 1) * 1e-6 for i in range(92)]
+_CARRY_UNION = _hours(*range(704, 736, 4))
+
+
+def test_the_sign_run_counts_prints_never_bars_as_of_each_close():
+    # Fed the aligned grid instead, each print would count once per bar it carries across: 1, 2, 3, 1, 2, 1, 2, 3, 4, ...
+    assert funding_sign_grid_feature(_SIGN_PRINTS, _SIGN_RATES, [8] * 7, _SIGN_UNION) == [1, 2, 2, 1, 1, 1, 1, 2, 2, 1, 1, 2, 2]
+
+
+def test_an_off_cadence_print_breaks_the_sign_run_and_is_none_while_it_is_the_latest_print():
+    intervals = [8, 8, 8, 4, 8, 8, 8]
+    rates = _SIGN_RATES[:4] + [0.0] + _SIGN_RATES[5:]
+    # Dropped instead of mapped, the 32 h and 36 h closes would continue the 16 h print's zero run, 2.
+    expected = [1, 2, 2, 1, 1, None, None, 1, 1, 1, 1, 2, 2]
+    assert funding_sign_grid_feature(_SIGN_PRINTS, rates, intervals, _SIGN_UNION) == expected
+
+
+def test_the_accrued_carry_sums_the_latest_90_prints_as_of_each_close():
+    feature = funding_carry_grid_feature(_CARRY_PRINTS, _CARRY_RATES, [8] * 92, _CARRY_UNION)
+    # The 704 h print is the 89th, its window one print short.
+    assert feature == [None] + [pytest.approx(v * 1e-6) for v in (4095, 4095, 4185, 4185, 4275, 4275)]
+
+
+def test_an_off_cadence_print_leaves_every_carry_window_holding_it_none():
+    intervals = [8, 4] + [8] * 90
+    # Dropped instead of mapped, the 720 h print would sum the 90 prints left before it, 4184e-6.
+    expected = [None] * 5 + [pytest.approx(4275e-6)] * 2
+    assert funding_carry_grid_feature(_CARRY_PRINTS, _CARRY_RATES, intervals, _CARRY_UNION) == expected
+
+
+def test_the_carry_window_is_the_pre_registered_90_prints():
+    assert b2._CARRY_WINDOW == 90
+
+
+# Each emitter's fixture, the print a test moves, and the return index its own hour closes, where its value differs from
+# the one carried before it.
+_NEW_FUNDING_EMITTERS = [
+    pytest.param(funding_sign_grid_feature, _SIGN_PRINTS, _SIGN_RATES, _SIGN_UNION, 4, 7, id="sign"),
+    pytest.param(funding_carry_grid_feature, _CARRY_PRINTS, _CARRY_RATES, _CARRY_UNION, 90, 3, id="carry"),
+]
+
+
+@pytest.mark.parametrize(("emitter", "prints", "rates", "union", "moved", "at"), _NEW_FUNDING_EMITTERS)
+def test_every_new_funding_emitter_reads_a_print_30ms_past_its_hour_as_that_hours_settlement(
+    emitter, prints, rates, union, moved, at
+):
+    late = [t + timedelta(milliseconds=30) if i == moved else t for i, t in enumerate(prints)]
+    on_hour = emitter(prints, rates, [8] * len(rates), union)
+    assert on_hour[at] != on_hour[at - 1]
+    assert emitter(late, rates, [8] * len(rates), union) == on_hour
+
+
+@pytest.mark.parametrize(("emitter", "prints", "rates", "union", "moved", "at"), _NEW_FUNDING_EMITTERS)
+def test_every_new_funding_emitter_refuses_a_print_61s_past_its_hour_by_name(emitter, prints, rates, union, moved, at):
+    late = [t + timedelta(seconds=61) if i == moved else t for i, t in enumerate(prints)]
+    with pytest.raises(AlphaError, match=re.escape(f"prints_ts[{moved}] = {late[moved].isoformat()}")):
+        emitter(late, rates, [8] * len(rates), union)
+
+
+@pytest.mark.parametrize("emitter", [funding_sign_grid_feature, funding_carry_grid_feature], ids=["sign", "carry"])
+def test_a_truncated_prefix_of_the_print_inputs_reproduces_every_new_funding_emitter_bit_for_bit(emitter):
+    rates = [((7 * i) % 11 - 5) * 1e-5 for i in range(120)]
+    prints_ts = [DAY0 + timedelta(hours=8 * i, milliseconds=7 * (i % 3)) for i in range(len(rates))]
+    union_ts = _hours(*range(764, 900, 4))
+    full = emitter(prints_ts, rates, [8] * len(rates), union_ts)
+    assert len(full) == len(union_ts) - 1 and None not in full
+    for n in range(1, len(union_ts)):
+        cutoff = union_ts[n - 1] + timedelta(hours=4)
+        visible = [i for i, t in enumerate(prints_ts) if t.replace(minute=0, second=0, microsecond=0) <= cutoff]
+        prefix = emitter([prints_ts[i] for i in visible], [rates[i] for i in visible], [8] * len(visible), union_ts[: n + 1])
+        assert prefix == full[:n], f"prefix at n={n} disagrees with the full run"
+
+
+_FUNDING_EMITTERS = [
+    pytest.param(lambda *inputs: funding_grid_feature(*inputs, config=B2Config()), id="zscore"),
+    pytest.param(funding_sign_grid_feature, id="sign"),
+    pytest.param(funding_carry_grid_feature, id="carry"),
+]
+
+
+@pytest.mark.parametrize("emitter", _FUNDING_EMITTERS)
+def test_every_funding_emitter_reads_none_from_the_close_a_settlement_past_its_last_print(emitter):
+    # The last print settles at 728 h: the 732 h close still reads it, and from 736 h the next settlement is due and absent.
+    feature = emitter(_CARRY_PRINTS, _CARRY_RATES, [8] * 92, _hours(*range(720, 748, 4)))
+    assert None not in feature[:3] and feature[2] == feature[1] and feature[3:] == [None] * 3
+
+
+@pytest.mark.parametrize("emitter", _FUNDING_EMITTERS)
+@pytest.mark.parametrize(
+    ("prints_ts", "intervals", "union_ts", "named"),
+    [
+        pytest.param(_PRINTS, [8] * 5, _UNION, "equal length", id="longer-intervals"),
+        pytest.param(_hours(0, 8, 8, 24), [8] * 4, _UNION, "prints_ts", id="duplicate-prints"),
+        pytest.param(_PRINTS, [8] * 4, _hours(8, 12, 12, 16, 20), "union_ts", id="duplicate-union"),
+    ],
+)
+def test_every_funding_emitter_refuses_a_shape_it_would_otherwise_read_silently(emitter, prints_ts, intervals, union_ts, named):
+    with pytest.raises(AlphaError, match=named):
+        emitter(prints_ts, RATES, intervals, union_ts)
