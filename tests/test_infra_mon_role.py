@@ -100,10 +100,6 @@ def test_the_ini_carries_what_the_public_login_rests_on(section, key, value):
     assert ini.get(section, key) == value
 
 
-def test_the_datasource_plugins_log_their_queries_at_warn():
-    assert _ini().get("log", "filters", fallback=None) == "plugin.prometheus:warn plugin.loki:warn"
-
-
 def test_the_ini_names_the_secret_files_and_carries_none_of_their_values():
     rendered = _render("grafana.ini.j2")
     for name in ("mon_grafana_admin_user", "mon_grafana_admin_password", "mon_grafana_secret_key"):
@@ -118,6 +114,13 @@ def test_the_ini_names_the_secret_files_and_carries_none_of_their_values():
         ("secret_key", "{{ mon_grafana_secret_key }}"),
     }
     assert copy["dest"] == "/etc/grafana/{{ item.file }}"
+
+
+# --- grafana.ini: what it logs -----------------------------------------------------------------------------------
+
+
+def test_the_datasource_plugins_log_their_queries_at_warn():
+    assert _ini().get("log", "filters", fallback=None) == "plugin.prometheus:warn plugin.loki:warn"
 
 
 # --- the Caddyfile: one public name and the routes it answers ----------------------------------------------------

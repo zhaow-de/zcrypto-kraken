@@ -5951,9 +5951,9 @@ rules:
     condition: C
     data:
       # A match on Grafana's own line, which carries no label for it. A datasource plugin can log each
-      # query it runs with the query in its `query` field, so a line whose text sits there is another
-      # rule's query, never a lock, and is left out; so is Grafana's retry of a locked write,
-      # `Database locked, sleeping then retrying`. What is counted is an operation Grafana gave up on.
+      # query it runs in the line's `query` field, so a line whose text sits there is a logged query,
+      # never a lock, and is left out; so is Grafana's retry of a locked write, `Database locked,
+      # sleeping then retrying`.
       - refId: A
         queryType: instant
         relativeTimeRange: {from: 900, to: 0}
