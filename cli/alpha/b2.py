@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from functools import partial
 
 from cli.alpha.errors import AlphaError
@@ -12,6 +12,7 @@ from cli.features.derivatives import (
     funding_accrued_carry,
     funding_sign_persistence,
     funding_zscore,
+    oi_levels_from_raw,
 )
 from cli.logging import get_logger
 from cli.validation import max_drawdown
@@ -19,6 +20,8 @@ from cli.validation import max_drawdown
 logger = get_logger("alpha.b2")
 
 _BOUNDARY = timedelta(hours=4)
+# The 4h marks are the multiples of 4 h from here: the OI grid and every union close stand on them.
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 # A ruling (docs/specs/00128 D2), not a knob: a print within this of its hour is that hour's settlement.
 _STAMP_TOLERANCE = timedelta(seconds=60)
 _FUNDING_INTERVAL_HOURS = 8
@@ -134,6 +137,60 @@ def funding_carry_grid_feature(
 ) -> list[float | None]:
     carry = partial(funding_accrued_carry, window=_CARRY_WINDOW)
     return _funding_on_close_grid("accrued carry", carry, prints_ts, prints_rate, prints_interval_hours, union_ts)
+
+
+def _mark_at_or_after(t: datetime) -> datetime:
+    return _EPOCH - (_EPOCH - t) // _BOUNDARY * _BOUNDARY
+
+
+def _oi_marks(oi_ts: list[datetime]) -> list[datetime]:
+    """The regular 4h close grid over the rows' own span (docs/specs/00131 D6): from the close of the bar holding the
+    first row to the close of the bar holding the last, each the first 4h mark at or after its row."""
+    if not oi_ts:
+        return []
+    first, last = _mark_at_or_after(oi_ts[0]), _mark_at_or_after(oi_ts[-1])
+    return [first + k * _BOUNDARY for k in range((last - first) // _BOUNDARY + 1)]
+
+
+def _oi_at_union_closes(
+    label: str,
+    feature: Callable[[list[float | None]], list],
+    oi_ts: list[datetime],
+    oi_values: list[float | None],
+    union_ts: list[datetime],
+) -> list:
+    """Every OI emitter's one pipeline (docs/specs/00131 D4-D6): the `sum_open_interest` level on `_oi_marks`' grid --
+    a `0.0` placeholder None before the as-of, a row read from its own stamp, never normalised as a funding print is,
+    and a level reaching a mark only from inside the bar that mark closes, `mark - 4h < ts <= mark`, else None --
+    `feature` over that grid series, then each union close's value by exact lookup, None outside the span. The union's
+    bar-open stamps in, `len(union_ts) - 1` values out."""
+    if len(oi_ts) != len(oi_values):
+        raise AlphaError(f"oi_ts and oi_values must be equal length, got {len(oi_ts)} and {len(oi_values)}")
+    _validate_stamps("oi_ts", oi_ts)
+    _validate_stamps("union_ts", union_ts)
+    for i, t in enumerate(union_ts):
+        if (t - _EPOCH) % _BOUNDARY:
+            raise AlphaError(f"union_ts[{i}] = {t.isoformat()} is not on a 4 h mark")
+    marks = _oi_marks(oi_ts)
+    levels = oi_levels_from_raw(oi_values)
+    # The as-of over row indices, so the bound below reads the stamp of the row each mark takes.
+    rows = align_asof(oi_ts, list(range(len(oi_ts))), marks)
+    grid = [None if j is None or oi_ts[j] <= g - _BOUNDARY else levels[j] for j, g in zip(rows, marks)]
+    values = dict(zip(marks, feature(grid)))
+    out = [values.get(c) for c in close_grid(union_ts)]
+    logger.debug(
+        "oi %s at union closes: %d rows, %d marks, %d return indices, %d None",
+        label,
+        len(oi_ts),
+        len(marks),
+        len(out),
+        out.count(None),
+    )
+    return out
+
+
+def oi_grid_levels(oi_ts: list[datetime], oi_values: list[float | None], union_ts: list[datetime]) -> list[float | None]:
+    return _oi_at_union_closes("level", list, oi_ts, oi_values, union_ts)
 
 
 def _check_lengths(lists: dict[str, list], expected: int | None = None) -> int:

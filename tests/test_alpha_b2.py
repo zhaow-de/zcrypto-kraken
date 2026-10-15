@@ -15,6 +15,7 @@ from cli.alpha.b2 import (
     funding_grid_feature,
     funding_sign_grid_feature,
     net_of_cost,
+    oi_grid_levels,
     per_year_engaged_counts,
     per_year_max_drawdown,
     per_year_positions_differ,
@@ -372,3 +373,84 @@ def test_every_funding_emitter_reads_none_from_the_close_a_settlement_past_its_l
 def test_every_funding_emitter_refuses_a_shape_it_would_otherwise_read_silently(emitter, prints_ts, intervals, union_ts, named):
     with pytest.raises(AlphaError, match=named):
         emitter(prints_ts, RATES, intervals, union_ts)
+
+
+def test_a_level_exactly_4h_old_at_a_mark_is_none_and_one_a_second_younger_is_read():
+    union = _hours(0, 4, 8, 12)
+    assert oi_grid_levels(_hours(4, 12), [100.0, 110.0], union) == [100.0, None, 110.0]
+    younger = [DAY0 + timedelta(hours=4, seconds=1), DAY0 + timedelta(hours=12)]
+    # The rows' span opens at the 08:00 mark, the first at or after the younger row: the 04:00 close lies before it.
+    assert oi_grid_levels(younger, [100.0, 110.0], union) == [None, 100.0, 110.0]
+
+
+def test_a_late_stamped_row_is_read_from_its_own_stamp_never_from_its_mark():
+    # 22 s before the 04:00 close (278 s past 03:55, the largest offset docs/specs/00131's basis measured), and 30 s after it.
+    oi_ts = [DAY0 + timedelta(hours=4, seconds=-22), DAY0 + timedelta(hours=4, seconds=30)]
+    assert oi_grid_levels(oi_ts, [100.0, 110.0], _hours(0, 4, 8)) == [100.0, 110.0]
+
+
+def test_a_zero_placeholder_is_none_at_the_close_it_reaches_never_the_level_before_it():
+    oi_ts = [DAY0 + timedelta(hours=4, minutes=-10), DAY0 + timedelta(hours=4, minutes=-5), DAY0 + timedelta(hours=8, minutes=-5)]
+    assert oi_grid_levels(oi_ts, [100.0, 0.0, 105.0], _hours(0, 4, 8)) == [None, 105.0]
+
+
+def test_a_union_close_before_or_after_the_rows_span_or_of_an_empty_series_reads_none():
+    oi_ts = [DAY0 + timedelta(hours=12, minutes=-5), DAY0 + timedelta(hours=16, minutes=-5)]
+    assert oi_grid_levels(oi_ts, [100.0, 110.0], _hours(*range(0, 28, 4))) == [None, None, 100.0, 110.0, None, None]
+    assert oi_grid_levels([], [], _hours(0, 4)) == [None]
+
+
+def test_a_union_stamp_off_a_4h_mark_is_refused_by_name():
+    with pytest.raises(AlphaError, match=re.escape("union_ts[2] = 2024-03-01T09:00:00+00:00 is not on a 4 h mark")):
+        oi_grid_levels(_hours(1, 5, 9), [100.0, 101.0, 102.0], _hours(0, 4, 9))
+
+
+@pytest.mark.parametrize(
+    ("oi_ts", "union_ts", "named"),
+    [
+        pytest.param(_hours(5, 1, 9), _hours(0, 4, 8), "oi_ts", id="unsorted-rows"),
+        pytest.param(_hours(1, 5, 5), _hours(0, 4, 8), "oi_ts", id="duplicate-rows"),
+        pytest.param(_hours(1, 5, 9), _hours(0, 8, 4), "union_ts", id="unsorted-union"),
+        pytest.param([DAY0.replace(hour=1, tzinfo=None)] + _hours(5, 9), _hours(0, 4, 8), "oi_ts", id="naive-row"),
+        pytest.param(_hours(1, 5, 9), [DAY0.replace(tzinfo=None)] + _hours(4, 8), "union_ts", id="naive-union"),
+    ],
+)
+def test_oi_grid_levels_refuses_unsorted_or_naive_stamps(oi_ts, union_ts, named):
+    with pytest.raises(AlphaError, match=named):
+        oi_grid_levels(oi_ts, [100.0, 101.0, 102.0], union_ts)
+
+
+@pytest.mark.parametrize("oi_values", [[100.0, 101.0], [100.0, 101.0, 102.0, 103.0]], ids=["shorter", "longer"])
+def test_oi_grid_levels_refuses_lists_of_unequal_length(oi_values):
+    with pytest.raises(AlphaError, match="equal length"):
+        oi_grid_levels(_hours(1, 5, 9), oi_values, _hours(0, 4, 8))
+
+
+def _oi_prefix_fixture() -> tuple[list[datetime], list[float], list[datetime]]:
+    """Two rows for each of 240 bars but 37 and 38; a union opening at bar 30, missing bar 100's open and closing one
+    bar past the rows; and the substrate's shapes planted inside it: a close's own row stamped 30 s late at bar 33, a
+    `0.0` placeholder as bar 35's last row, and no row in bars 37 and 38, whose closes find a level 4 h 5 min and
+    8 h 5 min old."""
+    oi_ts, oi_values = [], []
+    for k in range(240):
+        close = DAY0 + timedelta(hours=4 * (k + 1))
+        if k in (37, 38):
+            continue
+        last = close + timedelta(seconds=30) if k == 33 else close - timedelta(minutes=5)
+        oi_ts += [close - timedelta(minutes=10), last]
+        oi_values += [100.0 + (37 * k) % 23, 0.0 if k == 35 else 100.5 + (53 * k) % 29]
+    union_ts = [t for t in _hours(*range(4 * 30, 4 * 242, 4)) if t != DAY0 + timedelta(hours=4 * 100)]
+    return oi_ts, oi_values, union_ts
+
+
+def test_a_truncated_prefix_of_the_rows_reproduces_the_grid_levels_bit_for_bit():
+    oi_ts, oi_values, union_ts = _oi_prefix_fixture()
+    full = oi_grid_levels(oi_ts, oi_values, union_ts)
+    # Return index j closes bar 30 + j up to the missing open, bar 31 + j after it: bars 35, 37 and 38 read None, and so
+    # does bar 240, past the rows.
+    assert len(full) == len(union_ts) - 1 and [j for j, v in enumerate(full) if v is None] == [5, 7, 8, len(full) - 1]
+    for n in range(1, len(union_ts)):
+        cutoff = union_ts[n - 1] + timedelta(hours=4)
+        visible = [i for i, t in enumerate(oi_ts) if t <= cutoff]
+        prefix = oi_grid_levels([oi_ts[i] for i in visible], [oi_values[i] for i in visible], union_ts[: n + 1])
+        assert prefix == full[:n], f"prefix at n={n} disagrees with the full run"
