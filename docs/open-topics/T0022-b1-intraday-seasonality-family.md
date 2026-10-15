@@ -21,9 +21,9 @@ B1 is the §5 ranked queue's top un-started family — the "genuinely new freque
 - Hypothesis + trial-1 pre-registration: decisions log `[iter-086]` — the conditioning A/B on the adopted A2-4h ensemble (arm A = trials 37–39 equal-weight as adopted; arm B = + hour-of-day/day-of-week favorable-window gating and intraday-vol-state scaling from the 15m substrate), one knob, judged per T0009's revised kill bar vs the frozen B3+vt-dynamic benchmark.
 - Substrate QA input (iter-085): AVAX/LINK/DOT recent-year 15m density 88–97% (omitted no-trade slots) — the vol-state features must define behavior on missing 15m bars explicitly.
 - Budget: **B = 25 shared across Bucket B** (pre-registered, hard); B1 trials count against it under the family's registry key.
-- **Candidate survey** (the owner's disposition of 2026-07-23, to have new candidates drafted): `docs/research/10.phase4-b1-candidate-hypotheses.md` writes three candidates up for pre-registration — two plainly inside the family's fence, the third, candidate A, inside it only if the owner keys it to B1 rather than to the spent A family or a new Bucket B key — none seen against a return, and argues that no trial beats two of them and narrowly beats the third.
+- **Candidate survey** (the owner's disposition of 2026-07-23, to have new candidates drafted): `docs/research/10.phase4-b1-candidate-hypotheses.md` writes three candidates up for pre-registration, none seen against a return, and argues that no trial beats two of them and narrowly beats the third.
 
 ## Suggested next steps
 
-- **The owner picks from the candidate survey, or closes the family**: one of its candidates pre-registered as B1's third trial, with the common decisions the survey lists, or this topic archived as attributed out.
+- **The owner picks from the candidate survey, or closes the family**: one of its candidates pre-registered, with the common decisions the survey lists, or this topic archived as attributed out.
 - Kill discipline: an honest kill closes this topic (archive with the verdict); budget exhaustion or a family kill-bar hit does the same. Expanding past the shared B budget is a parked human decision, never autonomous.
