@@ -87,7 +87,6 @@ def _ini() -> configparser.ConfigParser:
         ("plugins", "preinstall_disabled", "true"),
         ("feature_toggles", "sqlExpressions", "false"),
         ("database", "wal", "true"),
-        ("log", "filters", "plugin.prometheus:warn plugin.loki:warn"),
         ("unified_alerting.state_history", "backend", "loki"),
         ("unified_alerting.state_history", "loki_remote_url", "http://127.0.0.1:3100"),
         ("analytics", "reporting_enabled", "false"),
@@ -99,6 +98,10 @@ def test_the_ini_carries_what_the_public_login_rests_on(section, key, value):
     ini = _ini()
     assert ini.has_option(section, key), f"[{section}] {key} is not set, so Grafana's own default stands"
     assert ini.get(section, key) == value
+
+
+def test_the_datasource_plugins_log_their_queries_at_warn():
+    assert _ini().get("log", "filters", fallback=None) == "plugin.prometheus:warn plugin.loki:warn"
 
 
 def test_the_ini_names_the_secret_files_and_carries_none_of_their_values():

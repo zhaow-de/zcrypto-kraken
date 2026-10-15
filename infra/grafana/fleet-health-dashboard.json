@@ -3042,7 +3042,7 @@
             "type": "loki",
             "uid": "grafanacloud-logs"
           },
-          "expr": "sum(count_over_time({host=\"zcrypto-mon\", container=\"grafana-server\"} |= \"database is locked\" | logfmt | msg!=\"Database locked, sleeping then retrying\" | error=~\".*database is locked.*\" or err=~\".*database is locked.*\" or msg=~\".*database is locked.*\" [15m])) or on() vector(0)",
+          "expr": "sum(count_over_time({host=\"zcrypto-mon\", container=\"grafana-server\"} |= \"database is locked\" | logfmt | msg!~\".*sleeping then retrying.*\" | query!~\".*database is locked.*\" [15m])) or on() vector(0)",
           "refId": "A",
           "legendFormat": "failed operations in the last 15 minutes"
         }
