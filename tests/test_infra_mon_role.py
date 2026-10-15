@@ -116,6 +116,13 @@ def test_the_ini_names_the_secret_files_and_carries_none_of_their_values():
     assert copy["dest"] == "/etc/grafana/{{ item.file }}"
 
 
+# --- grafana.ini: what it logs -----------------------------------------------------------------------------------
+
+
+def test_the_datasource_plugins_log_their_queries_at_warn():
+    assert _ini().get("log", "filters", fallback=None) == "plugin.prometheus:warn plugin.loki:warn"
+
+
 # --- the Caddyfile: one public name and the routes it answers ----------------------------------------------------
 def _caddyfile_text() -> str:
     # The include's vars as the play resolves them: over the role's own defaults, the vault, and the edge's defaults.

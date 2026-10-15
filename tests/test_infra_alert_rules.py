@@ -2314,7 +2314,8 @@ def test_the_database_lock_rule_is_a_burst_rule_over_grafanas_own_journal():
     (query,) = [q for q in rule["data"] if q["datasourceUid"] == "${GRAFANA_LOKI_DS_UID}"]
     assert query["model"]["expr"] == (
         'sum(count_over_time({host="zcrypto-mon", container="grafana-server"} |= "database is locked"'
-        ' != "sleeping then retrying" [15m])) or on() vector(0)'
+        ' | logfmt | msg!~".*sleeping then retrying.*" | query!~".*database is locked.*"'
+        " [15m])) or on() vector(0)"
     )
     assert (rule["for"], rule["notification_settings"]["receiver"]) == ("0s", "logs")
     alloy = (ANSIBLE / "roles/mon/files/config.alloy").read_text()
@@ -2448,7 +2449,7 @@ def _log_expr(uid: str) -> str:
 
 def _log_rule_shape(expr: str) -> str:
     shape = re.sub(r'\{host="[^"]+", container=~?"[^"]+", ', "{", expr)
-    shape = re.sub(r'\} != "[^"]+"', "}", shape)
+    shape = re.sub(r'\}(?: != "(?:[^"\\]|\\.)+")+', "}", shape)
     assert shape != expr, f"no host and container matchers to take out of {expr!r}"
     return shape
 
@@ -2467,6 +2468,11 @@ def test_the_grafana_error_rule_leaves_out_the_lines_the_lock_rule_counts():
     expr = _log_expr("zcrypto-mon-grafana-error-logs")
     assert expr.count('{host="zcrypto-mon", container="grafana-server", level=~"ERROR|CRITICAL"}') == 1, expr
     assert f'level=~"ERROR|CRITICAL"}} != "{counted}"' in expr, f"a line {counted!r} would be counted by both rules"
+
+
+def test_the_grafana_error_rule_leaves_out_a_restarts_plugin_stops():
+    expr = _log_expr("zcrypto-mon-grafana-error-logs")
+    assert '} != "database is locked" != "error=\\"signal: terminated\\"" | json' in expr, expr
 
 
 def _container_label_of_the_clones_stream() -> str:
