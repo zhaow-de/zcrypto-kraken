@@ -6222,9 +6222,7 @@ rules:
     orgId: 1
     condition: C
     data:
-      # A logfmt line is no JSON object, so `msg` falls back to the line itself. At a restart each
-      # bundled plugin logs `plugin process exited` with `error="signal: terminated"` at ERROR, the
-      # orderly stop, and is left out; a plugin that dies another way carries another error and pages.
+      # A logfmt line is no JSON object, so `msg` falls back to the line itself.
       - refId: A
         queryType: instant
         relativeTimeRange: {from: 900, to: 0}
@@ -6259,7 +6257,7 @@ rules:
     execErrState: Alerting
     for: 0s
     annotations:
-      summary: "Grafana on the observability node logged an ERROR or CRITICAL line in the last 15 minutes, its locked-database lines left to their own rule and a restart's plugin stops left out: a notification it failed to deliver, a rule it could not evaluate, a call it refused. One alert instance per distinct line, at most 5 of them, each the line's first 200 characters. This page leaves through the node's two contact points, both on one Slack webhook, so a failure of that webhook silences it with the rest. Runbook: infra/runbooks/mon.md#zcrypto-mon-grafana-error-logs"
+      summary: "Grafana on the observability node logged an ERROR or CRITICAL line in the last 15 minutes, its locked-database lines left to their own rule: a notification it failed to deliver, a rule it could not evaluate, a call it refused. One alert instance per distinct line, at most 5 of them, each the line's first 200 characters. This page leaves through the node's two contact points, both on one Slack webhook, so a failure of that webhook silences it with the rest. Runbook: infra/runbooks/mon.md#zcrypto-mon-grafana-error-logs"
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "911"
       unit: "ERROR or CRITICAL lines in the last 15 minutes"

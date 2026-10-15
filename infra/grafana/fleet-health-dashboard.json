@@ -3451,7 +3451,7 @@
       "id": 911,
       "type": "timeseries",
       "title": "Monitor — Grafana's own ERROR lines",
-      "description": "Is Grafana on the node logging errors of its own? One line per distinct ERROR or CRITICAL line in the fifteen minutes before each point, at most five, each named by its first 200 characters; the locked-database lines are left to their own panel (905). The alert pages on the first one. A notification Grafana failed to deliver shows here as its notifier's line, and its contact point's last attempt in the node's Alerting UI says why.",
+      "description": "Is Grafana on the node logging errors of its own? One line per distinct ERROR or CRITICAL line in the fifteen minutes before each point, at most five, each named by its first 200 characters; the locked-database lines are left to their own panel (905), and a restart's plugin stops are left out. The alert pages on the first one. A notification Grafana failed to deliver shows here as its notifier's line, and its contact point's last attempt in the node's Alerting UI says why.",
       "datasource": {
         "type": "loki",
         "uid": "grafanacloud-logs"
