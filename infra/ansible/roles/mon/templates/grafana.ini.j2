@@ -59,6 +59,11 @@ sqlExpressions = false
 [database]
 wal = true
 
+[log]
+# The datasource plugins log every query at info, its text in the line: most of Grafana's own lines,
+# read by no rule, and a text match over them reads other rules' queries. Warnings and errors still ship.
+filters = plugin.prometheus:warn plugin.loki:warn
+
 [unified_alerting.state_history]
 enabled = true
 backend = loki

@@ -87,6 +87,7 @@ def _ini() -> configparser.ConfigParser:
         ("plugins", "preinstall_disabled", "true"),
         ("feature_toggles", "sqlExpressions", "false"),
         ("database", "wal", "true"),
+        ("log", "filters", "plugin.prometheus:warn plugin.loki:warn"),
         ("unified_alerting.state_history", "backend", "loki"),
         ("unified_alerting.state_history", "loki_remote_url", "http://127.0.0.1:3100"),
         ("analytics", "reporting_enabled", "false"),
