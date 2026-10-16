@@ -1878,9 +1878,9 @@ _B1_HOURLY_RV_BTC_GAPS = (400, 1_500)
 
 def _b1_hourly_rv_dataset(tmp_path: Path, *, start: datetime = _B1_START, bars: int = _B1_BARS) -> Path:
     """The ten hourly series and the 4h series aggregated from their present rows, so each 4h close is its bucket's last
-    present hourly close. Each asset's closes bounce by a size of their own, which lifts its hourly realized variance
-    against its 4h variance by its own amount; every asset but BTC misses one hour in 89 + 2i, and BTC misses two whole
-    4h buckets, which the union keeps and `_ffill_btc` fills."""
+    present hourly close. Each asset's closes bounce by a size of their own, which lifts its hourly realized variance against
+    its 4h variance by its own amount; every other asset misses single hours and BTC two whole 4h buckets, which the union
+    keeps and `_ffill_btc` fills."""
     root = tmp_path / "data"
     for i, asset in enumerate(_B2_ASSETS):
         hourly = []
@@ -1913,7 +1913,7 @@ _B1_HOURLY_RV_SPEC = "docs/specs/00132-b1-hourly-rv-weights-design.md"
 _B1_HOURLY_RV_NO_VERDICT = (
     "instrument finding: arm A fails the bar, or arm B's weights equal arm A's at every stamp; no verdict, the trial unspent"
 )
-# Spec 00132 D8's 42 keys of the trial and 19 of its pre-flight, pinned as literals for the reason `_COMBINED_METRIC_KEYS` is.
+# Spec 00132 D8's keys of the trial and of its pre-flight, pinned as literals for the reason `_COMBINED_METRIC_KEYS` is.
 _B1_HOURLY_RV_METRIC_KEYS = frozenset(
     {
         "ann_sharpe_noc",
@@ -2116,9 +2116,8 @@ def test_the_b1_hourly_rv_subject_registers_each_metric_from_its_own_call(tmp_pa
     net_a_x15, net_b_x15 = (net_of_cost(arm, returns, cost_per_side=1.5 * cost) for arm in (arm_a, arm_b))
     bench = benchmark_4h_net_of_cost(h4_prices, cost_per_side=cost)
 
-    # The other choices of filled against raw prices end in a refusal here: `_validate_prices_by_asset` refuses a BTC
-    # None, and arm A's weights over the raw prices weight other assets than `weights_b`, which `weights_differ_count`
-    # refuses.
+    # The other filled-or-raw choices refuse here: `_validate_prices_by_asset` refuses a BTC None, and arm A's weights over
+    # the raw prices weight other assets than `weights_b`, which `weights_differ_count` refuses.
     assert fed["BTC"] != h4_prices["BTC"]
     assert net_of_cost(arm_b, {a: _asset_returns(h4_prices[a]) for a in _B2_ASSETS}, cost_per_side=cost) != net_b
     assert benchmark_4h_net_of_cost(fed, cost_per_side=cost) != bench
@@ -2320,16 +2319,27 @@ def test_b1_hourly_rv_names_an_hourly_file_it_cannot_read(tmp_path, monkeypatch,
     assert "ohlc-test/SOL/EUR/60.parquet" in result.output and cause in result.output
 
 
+def _arm_a_flat(monkeypatch) -> None:
+    def flat(arguments, result):
+        return result | {"asset_positions": {a: [0.0] * len(p) for a, p in result["asset_positions"].items()}}
+
+    _recording(monkeypatch, "a2_book_returns", flat)
+
+
+def _arm_a_weights_frozen(monkeypatch) -> None:
+    monkeypatch.setattr(subjects, "weight_total_variation", lambda *args, **kwargs: 0.0)
+
+
 @pytest.mark.parametrize(
-    ("zeroed", "named"),
+    ("freeze", "named"),
     [
-        pytest.param("book_turnover", "turnover_a is 0.0", id="arm-a-never-trades"),
-        pytest.param("weight_total_variation", "weight_tv_a is 0.0", id="arm-a-weights-never-move"),
+        pytest.param(_arm_a_flat, "turnover_a is 0.0", id="arm-a-never-trades"),
+        pytest.param(_arm_a_weights_frozen, "weight_tv_a is 0.0", id="arm-a-weights-never-move"),
     ],
 )
-def test_b1_hourly_rv_refuses_a_build_whose_arm_a_never_trades_or_whose_weights_never_move(tmp_path, monkeypatch, zeroed, named):
+def test_b1_hourly_rv_refuses_a_build_whose_arm_a_never_trades_or_whose_weights_never_move(tmp_path, monkeypatch, freeze, named):
     _anchor(monkeypatch, _b1_hourly_rv_dataset(tmp_path))
-    monkeypatch.setattr(subjects, zeroed, lambda *args, **kwargs: 0.0)
+    freeze(monkeypatch)
 
     result = runner.invoke(app, ["research", "eval", "--subject", "b1-hourly-rv", "--dataset", "ohlc-test"])
 
@@ -2370,16 +2380,12 @@ def _declared_series(tmp_path: Path, subject: subjects.Subject) -> tuple[Path, d
     return root, datetime.fromtimestamp(_EPOCH_2020, UTC)
 
 
-# A subject brings its own fixture here when its build reads a dataset it does not declare, or rests on a seam between its
-# declared grids that `_declared_series` does not hold; b1-window-only shares b1-conditioning's; any other is fed its
-# declared series.
+# A subject whose build reads a dataset it does not declare brings its own fixture here, and b1-window-only shares b1-conditioning's; any other is fed its declared series.
 _CONTRACT_DATASETS = {
     "b2-funding-derisk": lambda tmp_path, subject: (_b2_dataset(tmp_path), _B2_START),
     "b2-arm-a-bar": lambda tmp_path, subject: (_b2_dataset(tmp_path), _B2_START),
     "b1-conditioning": lambda tmp_path, subject: (_b1_dataset(tmp_path), _B1_START),
     "b1-window-only": lambda tmp_path, subject: (_b1_dataset(tmp_path, m15=False), _B1_START),
-    "b1-hourly-rv": lambda tmp_path, subject: (_b1_hourly_rv_dataset(tmp_path), _B1_START),
-    "b1-hourly-rv-preflight": lambda tmp_path, subject: (_b1_hourly_rv_dataset(tmp_path), _B1_START),
 }
 
 

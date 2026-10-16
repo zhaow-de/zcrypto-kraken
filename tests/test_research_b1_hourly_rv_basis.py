@@ -1,6 +1,5 @@
-"""B1 trial 3's reads on the data root the run reads: the subject's reads half reproduces spec 00132's measured basis — the
-block, the union, the hourly rows and the seam between the two grids — and computes no weight, so it runs before the spec's
-hash is taken."""
+"""B1 trial 3's reads half against spec 00132's measured basis on the run's data root: it computes no weight, so it runs
+before the spec's hash is taken."""
 
 from __future__ import annotations
 
@@ -17,7 +16,7 @@ from tests.skip_gates import nothing_found_under
 
 pytestmark = pytest.mark.data
 
-# Literal-rooted, the form the skip-gate guard admits; the test's first assertion makes it the run's own root.
+# Literal-rooted, the form the skip-gate guard admits.
 _DATA_ROOT = Path(__file__).resolve().parents[1] / "data"
 # Copied from the spec's measured basis, never from a run.
 _BLOCK_HASH = "8216f4db47db18c63c78a9225e59cf0c44ba703c3881af22acdb9d315d3849a1"
@@ -56,9 +55,7 @@ def test_the_b1_hourly_rv_reads_reproduce_the_measured_basis():
 
     present, agree = 0, 0
     for asset, (stamps, closes) in hourly.items():
-        # Both grids bucket the same minutes at `ts // interval * interval`, so an hourly bar's 4h bar opens at its own
-        # stamp floored to 4h. A later row's close overwrites an earlier one in its bucket, so each bucket keeps the close
-        # of its last row in file order: its last present hourly close where the file's stamps ascend.
+        # An hourly bar's 4h bar opens at its stamp floored to 4h; the dict keeps each bucket's last close in file order.
         last = {int(h.timestamp()) // 14_400 * 14_400: close for h, close in zip(stamps, closes)}
         h4 = {int(t.timestamp()): close for t, close in zip(h4_ts, h4_prices[asset]) if close is not None}
         assert set(last) == set(h4), f"{asset}: a 4h bar with no hourly bar, or an hourly bar in a 4h bar the asset lacks"

@@ -745,8 +745,7 @@ _B1_METRIC_KEYS = frozenset(
 )
 
 
-# B1 trial 3 (docs/specs/00132): arm A is records 45 and 46's ensemble, arm B the same with its weights from hourly
-# realized variance; the B1 literals above are its instrument too.
+# B1 trial 3 (docs/specs/00132) reads the B1 literals above as its instrument too.
 # Records 45 and 46's registered per_period_sharpe_4h: the dispersion reads the registry's values, never a re-derivation (D6).
 _B1_RECORDED_PER_PERIOD_SHARPES = (0.02374, 0.02959)
 # The B1 family's trial count at this trial, records 45 and 46 its first two.
@@ -831,7 +830,7 @@ def _b1_hourly_rv_inputs(reads: _B1HourlyRVReads) -> _B1HourlyRVInputs:
 
 def _b1_hourly_rv_arm_a(inputs: _B1HourlyRVInputs) -> tuple[dict, float, list[float], list[float]]:
     """Arm A's bar at the family's dispersion with arm A standing as its third Sharpe (D6), which the pre-flight reads
-    before arm B's Sharpe exists; with `arm_a_var_trials`, `net_a` and the benchmark."""
+    before arm B's Sharpe exists."""
     net_a = net_of_cost(inputs.arm_a, inputs.returns, cost_per_side=_B1_COST_PER_SIDE)
     net_a_x15 = net_of_cost(inputs.arm_a, inputs.returns, cost_per_side=1.5 * _B1_COST_PER_SIDE)
     bench = benchmark_4h_net_of_cost(inputs.h4_prices, cost_per_side=_B1_COST_PER_SIDE)
@@ -1017,7 +1016,7 @@ def _b1_hourly_rv_verdict(m: dict) -> str | None:
     return "reject"
 
 
-# docs/specs/00132 D8's keys of the trial and of its pre-flight, the latter `b2-arm-a-bar`'s ten among them.
+# docs/specs/00132 D8's keys of the trial and of its pre-flight.
 _B1_HOURLY_RV_METRIC_KEYS = frozenset(
     {
         "ann_sharpe_noc",
