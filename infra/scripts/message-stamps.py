@@ -1,9 +1,6 @@
-"""The commit-msg guard over a message's stamps: a placeholder stamp -- two digit-or-x-or-? pairs around a colon, at
-least one an x or a ?, no hex digit after it, the pattern memo-guard refuses in an Edit or a Write -- is refused, and
-the remedy is the printed value of `date -u` or of the record.
-
-Not read: a `#` line and everything below git's scissors line, which git drops from the message, a code span and a
-fenced block -- the escapes for a placeholder quoted on purpose."""
+"""The commit-msg guard over a message's stamps: memo-guard's placeholder-stamp pattern, refused in the message as in an
+Edit or a Write. Below git's scissors line is the diff `commit -v` appends; a `#` line is read, since git keeps it from
+`-m` and `-F`."""
 
 from __future__ import annotations
 
@@ -24,8 +21,6 @@ def stamps(raw: str) -> list[tuple[int, str]]:
     for number, line in enumerate(raw.split("\n"), 1):
         if line.startswith(SCISSORS):
             break
-        if line.startswith("#"):
-            continue
         if line.lstrip().startswith(("```", "~~~")):
             fenced = not fenced
             continue
