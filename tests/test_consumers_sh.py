@@ -80,6 +80,10 @@ def _direct_repo(tmp_path: pathlib.Path) -> pathlib.Path:
         "tests/test_longer_names.py": f"from pkg.area import widgets\nimport pkg.area.widget_line\nSRC = '{_MODULE}.j2'\n",
         "tests/test_walks_pkg.py": "import pathlib\nFILES = sorted(pathlib.Path('pkg').rglob('*.py'))\n",
         "tests/test_imports_pkg.py": "import pkg\n",
+        "tests/test_by_name.py": 'import pathlib\nAREA = pathlib.Path("pkg") / "area"\nSRC = AREA / "widget.py"\n',
+        "pkg/area/gadget.yaml": "a: 1\n",
+        "pkg/spare/gadget.yaml": "a: 2\n",
+        "tests/test_names_gadget.py": 'import pathlib\nAREA = pathlib.Path("pkg") / "area"\nCONF = AREA / "gadget.yaml"\n',
         "tests/test_a_reader.py": "from tests.test_by_path import SRC\n",
         "tests/helper.py": f"SRC = '{_MODULE}'\n",
         "infra/scripts/uses.sh": f"cat {_MODULE}\n",
@@ -210,6 +214,15 @@ def test_direct_reads_the_from_import(tmp_path):
 
 def test_direct_reads_a_parenthesised_from_import(tmp_path):
     assert "tests/test_by_paren.py" in _direct(_direct_repo(tmp_path), _MODULE)
+
+
+def test_direct_reads_the_file_name_joined_to_a_variable_and_not_the_bare_stem(tmp_path):
+    lines = _direct(_direct_repo(tmp_path), _MODULE)
+    assert "tests/test_by_name.py" in lines and "tests/test_bare_stem.py" not in lines
+
+
+def test_direct_does_not_read_a_file_name_another_tracked_file_carries(tmp_path):
+    assert "tests/test_names_gadget.py" not in _direct(_direct_repo(tmp_path), "pkg/area/gadget.yaml")
 
 
 def test_direct_does_not_read_the_bare_stem_as_a_word(tmp_path):

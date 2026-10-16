@@ -3,8 +3,9 @@
 # walk or list files and name its top-level directory -- or, for a changed test, walk their own. The search is
 # `git grep` with vault-shaped and `*.sops.*` paths excluded, never `grep -r`, which opens the vault files.
 # --direct lists only the tests/test_*.py files that name the path in a full form -- the repo path, whole or split at
-# its slashes across quoted literals; a Python module's dotted name and its `from <package> import <name>` -- never by
-# the bare stem, and no tree walkers; a changed test file lists itself first.
+# its slashes across quoted literals; its file name with the extension, where no other tracked file carries that name; a
+# Python module's dotted name and its `from <package> import <name>` -- never by the bare stem, and no tree walkers; a
+# changed test file lists itself first.
 # Usage: infra/scripts/consumers.sh [--direct] <path>...   (a path as the tree names it: infra/scripts/foo.sh, cli/engine/x.py)
 #   rc: 0 printed, 2 usage or not in a repository.
 set -euo pipefail
@@ -27,6 +28,10 @@ direct_readers() {
   local -a forms paren=()
   split="$(ere "$path")"
   forms=(-e "$L${split//\//"$SEP"}$RP")
+  # A name several tracked files carry, `command.py` or `__init__.py`, names none of them.
+  if [[ "$path" == */* && -z "$(git ls-files -- ":(glob)**/${path##*/}" | grep -v -F -x "$path" || true)" ]]; then
+    forms+=(-e "$L$(ere "${path##*/}")$RP")
+  fi
   if [[ "$path" == *.py ]]; then mod="${path%.py}"; mod="${mod%/__init__}"; mod="${mod//\//.}"; fi
   if [[ "$mod" == *.* ]]; then
     pkg="$(ere "${mod%.*}")"; nm="$(ere "${mod##*.}")"
@@ -45,7 +50,7 @@ direct_readers() {
   readers="$(printf '%s\n' "$readers" | sed '/^$/d' | grep -v -F -x "$path" | LC_ALL=C sort -u || true)"
   case "$path" in tests/test_*.py) readers="$(printf '%s\n%s' "$path" "$readers" | sed '/^$/d')" ;; esac
   echo "## $path"
-  echo "# direct test readers (--direct: the path whole or split, the dotted module, the from-import; no tree walkers):"
+  echo "# direct test readers (--direct: the path whole or split, a unique file name, the dotted module, the from-import; no tree walkers):"
   if [[ -n "$readers" ]]; then printf '%s\n' "$readers"; else echo "# (none -- no test file names it in a full form: a prose file runs nothing and its claim is the pre-review's or prove-inert.py's; a code file runs its own test; never the full suite)"; fi
 }
 
