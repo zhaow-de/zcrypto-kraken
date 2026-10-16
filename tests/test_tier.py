@@ -126,8 +126,11 @@ def test_a_plan_naming_cli_engine_is_full(repo: pathlib.Path, capsys: pytest.Cap
     assert out == ["tier: full", "full cli/engine/x.py — under cli/engine/, read as a non-prose change"]
 
 
-def test_a_plan_naming_the_lockfile_is_full(repo: pathlib.Path, capsys: pytest.CaptureFixture[str]) -> None:
-    assert _run(repo, capsys, "--paths", "uv.lock") == ["tier: full", "full uv.lock — under uv.lock, read as a non-prose change"]
+@pytest.mark.parametrize("path", ["uv.lock", "pyproject.toml", "infra/docker/Dockerfile", "cli/__main__.py", "cli/config.py"])
+def test_a_plan_naming_what_builds_or_starts_the_engine_is_full(
+    repo: pathlib.Path, capsys: pytest.CaptureFixture[str], path: str
+) -> None:
+    assert _run(repo, capsys, "--paths", path) == ["tier: full", f"full {path} — under {path}, read as a non-prose change"]
 
 
 def test_a_plan_naming_a_script_and_a_docs_page_is_light(repo: pathlib.Path, capsys: pytest.CaptureFixture[str]) -> None:

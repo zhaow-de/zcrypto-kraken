@@ -11,14 +11,14 @@ Per file of `git diff --name-only --no-renames <base>..<head>` -- a rename is it
   none   a Markdown file under docs/ or infra/runbooks/
   full   a file under FULL_PATHS, a cli/ module of the engine's and capture's load-time closure at <base> or at
          <head>, a file with `vault` in its path or a changed line naming ohlc-holdout, or a changed
-         tests/**/test_*.py importing a module of that closure or under cli/engine, cli/capture or cli/registry --
-         unless `prove-inert.py <base> <file>` exits 0 or 3 for it
+         tests/**/test_*.py importing a module of that closure or under cli/registry -- unless
+         `prove-inert.py <base> <file>` exits 0 or 3 for it
   light  everything else
 The diff's tier is the highest of its files. prove-inert reads the after side from the working tree, so a file
 whose working copy differs from <head>, or that <head> deletes, is never made light by it.
 
 The load-time closure starts from every module under cli/engine and cli/capture and follows each module's imports
-outside a def or lambda, a package's __init__ included before its submodules; an import inside a def is not followed.
+outside a def or lambda and the package __init__ files above it.
 
 `--paths` decides from the paths a plan names, before the code exists: each is read as a non-prose change -- no
 diff, no prove-inert, no ohlc-holdout line -- the closure is read from the working tree, and a listed test file is
@@ -63,6 +63,10 @@ FULL_PATHS = tuple(
             "docs/reference/trial-registry.jsonl",
             "zcrypto.toml",
             "uv.lock",
+            "pyproject.toml",
+            "infra/docker/Dockerfile",
+            "cli/__main__.py",
+            "cli/config.py",
         )
     )
 )
