@@ -1,10 +1,7 @@
 """B1 trial 3 (docs/specs/00132-b1-hourly-rv-weights-design.md): the hourly realized-variance inverse weights (D2), arm B's
 A2 book on given weights (D3) and the engagement helpers (D7).
 
-Every stamp is its bar's open, so the weights' window at return index `t` holds the hourly bars whose close stamp `h + 1h` lies in
-`(union_ts[t - lookback] + 4h, union_ts[t] + 4h]`: arm A's span, its last close the decision instant.
-Each windowed bar's log return reaches back to the asset's previous present hourly bar however many hours back, so a gap's
-move is counted once, never dropped.
+Every stamp is its bar's open: the weights read the hourly bars closing in arm A's span, each return reaching back across a gap.
 """
 
 from __future__ import annotations
@@ -86,9 +83,7 @@ def hourly_rv_inverse_vol_weights(
 def a2_positions_with_weights(
     prices_by_asset: dict[str, list[float | None]], weights: list[dict[str, float]], *, config: A2Config
 ) -> dict[str, list[float]]:
-    """`a2_book_returns`' body with `weights` in place of its `_inverse_vol_weights` call, returning the asset positions
-    alone: the vol target reads the base returns these weights make, and given arm A's weights the result is
-    `a2_book_returns`' `asset_positions` exactly."""
+    """`a2_book_returns`' body with `weights` in place of its `_inverse_vol_weights` call, returning the asset positions alone."""
     if not isinstance(config, A2Config):
         raise AlphaError(f"config must be an A2Config, got {type(config)!r}")
     _validate_prices_by_asset(prices_by_asset)
@@ -154,8 +149,8 @@ def weight_total_variation(weights: list[dict[str, float]]) -> float:
 def per_year_mean_weights(
     weights_a: list[dict[str, float]], weights_b: list[dict[str, float]], union_ts: list[datetime], assets: list[str]
 ) -> dict[str, dict[str, list[float]]]:
-    """`{asset: {year: [arm B's mean, arm A's mean]}}`, arm B's first though arm A's path is the first argument; a return
-    index is keyed by its bar-start year, the year of `union_ts[k]`, not of its close."""
+    """`{asset: {year: [arm B's mean, arm A's mean]}}`, arm B's first though `weights_a` is the first argument; the year is
+    `union_ts[k]`'s, the bar's start."""
     if len(union_ts) != len(weights_a) + 1 or len(weights_b) != len(weights_a):
         raise AlphaError(
             "union_ts must hold one stamp more than weights_a has dicts, and weights_b as many dicts as weights_a; "

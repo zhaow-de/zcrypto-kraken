@@ -23,7 +23,7 @@ START = datetime(2024, 1, 1, tzinfo=timezone.utc)
 H1 = timedelta(hours=1)
 H4 = timedelta(hours=4)
 LOOKBACK = 4
-# Bucket nets 2, -2, 0, 4, -2, 0, 2: no four consecutive equal, so no 4h window is flat.
+# No four consecutive buckets' sign sums are equal, so no 4h window is flat.
 SIGNS = [(1, 1, 1, -1), (1, -1, -1, -1), (1, 1, -1, -1), (1, 1, 1, 1), (-1, -1, -1, 1), (-1, -1, 1, 1), (1, -1, 1, 1)]
 
 
@@ -123,7 +123,6 @@ def test_no_weight_reads_an_hourly_bar_closing_after_its_decision_instant():
 
 
 def test_a_gap_return_and_the_edge_return_reach_back_to_the_previous_present_bar():
-    # At t = 8 the window holds the bars opened at hours 20 through 35 (the union is contiguous from START).
     t = 8
     paths = _plain_paths(12)
     rng = random.Random(4)
@@ -293,7 +292,6 @@ _SMALL_A2 = A2Config(lookbacks=(5, 10, 20), short="off", target_vol=0.12, vol_lo
 
 
 def _book_prices(n: int) -> dict[str, list[float | None]]:
-    # SOL lists a quarter of the way in and ADA misses one bar mid-history.
     prices = {
         "BTC": _random_path(11, n, 0.02),
         "ETH": _random_path(12, n, 0.03),
@@ -388,6 +386,21 @@ def test_the_book_refuses_weights_that_do_not_fit_the_prices(edit, match):
         a2_positions_with_weights(prices, weights, config=_SMALL_A2)
 
 
+def test_the_book_refuses_a_config_that_is_not_an_a2config():
+    prices = _book_prices(400)
+    weights = _inverse_vol_weights(prices, lookback=_SMALL_A2.basket_lookback)
+    with pytest.raises(AlphaError, match=re.escape("config must be an A2Config, got <class 'dict'>")):
+        a2_positions_with_weights(prices, weights, config=vars(_SMALL_A2))
+
+
+def test_the_book_refuses_a_zero_close_before_it_divides_by_it():
+    prices = _book_prices(400)
+    weights = _inverse_vol_weights(prices, lookback=_SMALL_A2.basket_lookback)
+    zeroed = {**prices, "ETH": prices["ETH"][:200] + [0.0] + prices["ETH"][201:]}
+    with pytest.raises(AlphaError, match=re.escape("prices must be None or finite positive numbers, got 0.0")):
+        a2_positions_with_weights(zeroed, weights, config=_SMALL_A2)
+
+
 def test_weights_differ_count_counts_the_return_indices_whose_dicts_differ():
     weights_a = [{}, {"A": 1.0}, {"A": 0.5, "B": 0.5}, {"A": 0.75, "B": 0.25}]
     weights_b = [{}, {"A": 1.0}, {"A": 0.5, "B": 0.5}, {"A": 0.5, "B": 0.5}]
@@ -406,12 +419,16 @@ def test_weights_differ_count_refuses_lists_of_unequal_length():
         weights_differ_count([{}, {"A": 1.0}], [{}, {"A": 1.0}, {"A": 1.0}])
 
 
+def test_weights_differ_count_refuses_weights_a_longer_than_weights_b():
+    with pytest.raises(AlphaError, match=re.escape("must have equal length, got 3 and 2")):
+        weights_differ_count([{}, {"A": 1.0}, {"A": 1.0}], [{}, {"A": 1.0}])
+
+
 def test_weight_total_variation_counts_every_move_from_an_empty_start_and_an_asset_that_leaves():
     assert weight_total_variation([{}, {"A": 1.0}, {"A": 0.75, "B": 0.25}, {"B": 1.0}]) == 3.0
 
 
 def test_weight_total_variation_counts_a_non_empty_first_dict_against_the_empty_previous():
-    # Index 0 against {}: 0.75 + 0.25; index 1: A leaves 0.75 and B rises 0.75.
     assert weight_total_variation([{"A": 0.75, "B": 0.25}, {"B": 1.0}]) == 2.5
 
 
@@ -442,3 +459,15 @@ def test_per_year_mean_weights_refuses_weights_b_one_dict_short_of_weights_a():
     weights_a, weights_b, union_ts = _year_case()
     with pytest.raises(AlphaError, match=re.escape("got 5 stamps, 4 and 3 dicts")):
         per_year_mean_weights(weights_a, weights_b[:-1], union_ts, ["BTC", "ETH"])
+
+
+def test_per_year_mean_weights_refuses_a_union_one_stamp_long():
+    weights_a, weights_b, union_ts = _year_case()
+    with pytest.raises(AlphaError, match=re.escape("got 6 stamps, 4 and 4 dicts")):
+        per_year_mean_weights(weights_a, weights_b, union_ts + [datetime(2016, 1, 1, 8, tzinfo=timezone.utc)], ["BTC", "ETH"])
+
+
+def test_per_year_mean_weights_refuses_weights_b_one_dict_longer_than_weights_a():
+    weights_a, weights_b, union_ts = _year_case()
+    with pytest.raises(AlphaError, match=re.escape("got 5 stamps, 4 and 5 dicts")):
+        per_year_mean_weights(weights_a, weights_b + [{"BTC": 1.0}], union_ts, ["BTC", "ETH"])
