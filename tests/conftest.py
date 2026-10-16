@@ -28,8 +28,7 @@ def _git(*args: str) -> subprocess.CompletedProcess[str]:
 
 
 def _slow_ledger() -> Path | None:
-    """Where this branch's passed slow cases are recorded, each as `<node id> <full sha of HEAD when it passed>`; None
-    where every slow case runs and none is recorded."""
+    """Where this branch's passed slow cases are recorded; None where every slow case runs and none is recorded."""
     if "CI" in os.environ or "GITHUB_ACTIONS" in os.environ or os.environ.get("ZCRYPTO_RERUN_SLOW") == "1":
         return None
     branch = _git("branch", "--show-current").stdout.strip()
@@ -41,8 +40,12 @@ def _slow_ledger() -> Path | None:
     return TMP_ROOT / "slow-passed" / f"{branch}.txt"
 
 
+def _tree_is_head() -> bool:
+    status = _git("status", "--porcelain", "--untracked-files=no")
+    return status.returncode == 0 and not status.stdout
+
+
 def _recorded(ledger: Path) -> dict[str, str | None]:
-    """Each case's last line: the sha it passed at, or None for a line that carries none, which leaves the case to run."""
     records: dict[str, str | None] = {}
     for line in filter(None, (line.strip() for line in ledger.read_text().splitlines())):
         node, _, sha = line.rpartition(" ")
@@ -54,8 +57,8 @@ def _recorded(ledger: Path) -> dict[str, str | None]:
 
 
 def _direct_readers(paths: list[str]) -> dict[str, set[str]] | None:
-    """Each path's `consumers.sh --direct` test readers, from one call over all of them; None when the script is absent
-    or fails, which leaves every case with a changed file to run."""
+    """Each path's `consumers.sh --direct` test readers; None when the script is absent or fails, so every case with a
+    changed file runs."""
     if not CONSUMERS.is_file():
         return None
     run = subprocess.run(["bash", str(CONSUMERS), "--direct", *paths], cwd=TMP_ROOT.parent, capture_output=True, text=True)
@@ -72,8 +75,6 @@ def _direct_readers(paths: list[str]) -> dict[str, set[str]] | None:
 
 
 def _still_passed(slow: list[pytest.Item], records: dict[str, str | None]) -> set[str]:
-    """The slow cases whose recorded pass still stands: no file changed since its sha -- the working tree against that
-    commit, uncommitted edits included -- is its test file or has its test file among its `--direct` readers."""
     changed: dict[str, set[str] | None] = {}
     for sha in {records[item.nodeid] for item in slow if records.get(item.nodeid)}:
         diff = _git("diff", "--name-only", "--no-renames", "-z", sha, "--")
@@ -184,7 +185,7 @@ def pytest_runtest_makereport(item, call):
     report = yield
     if report.when == "call" and report.passed and item.get_closest_marker("slow"):
         ledger = _slow_ledger()
-        if ledger is not None and (head := _git("rev-parse", "HEAD").stdout.strip()):
+        if ledger is not None and _tree_is_head() and (head := _git("rev-parse", "HEAD").stdout.strip()):
             ledger.parent.mkdir(parents=True, exist_ok=True)
             with ledger.open("a") as f:
                 f.write(f"{item.nodeid} {head}\n")
