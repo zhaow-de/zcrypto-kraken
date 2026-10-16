@@ -13,8 +13,8 @@ SCRIPT = SCRIPTS / "launch-read.py"
 LEDGER = SCRIPTS / "review-ledger.py"
 
 
-def _run(*args: str) -> subprocess.CompletedProcess:
-    return subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True)
+def _run(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True, cwd=cwd)
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -44,9 +44,11 @@ def shas(repo: Path) -> list[str]:
     return [_git(repo, "rev-parse", f"HEAD~{n}") for n in (3, 2, 1, 0)]
 
 
-def _args(kind: str, repo: Path, *extra: str, base: str = "HEAD~3", tip: str = "HEAD") -> subprocess.CompletedProcess:
+def _args(
+    kind: str, repo: Path, *extra: str, base: str = "HEAD~3", tip: str = "HEAD", cwd: Path | None = None
+) -> subprocess.CompletedProcess:
     report_dir = repo.parent / "reads"
-    return _run("args", kind, "--repo", str(repo), "--base", base, "--tip", tip, "--report-dir", str(report_dir), *extra)
+    return _run("args", kind, "--repo", str(repo), "--base", base, "--tip", tip, "--report-dir", str(report_dir), *extra, cwd=cwd)
 
 
 def _ok(done: subprocess.CompletedProcess) -> dict:
@@ -110,6 +112,25 @@ def test_re_review_carries_its_priors_and_the_ledger(repo: Path):
     )
     assert [p["severity"] for p in out["prior"]] == ["Critical", "Important"]
     assert out["ledger"] == [] and out["reported"] == "#3 left" and out["model"] == "fable"
+
+
+def test_re_review_carries_the_priors_it_leaves(repo: Path):
+    out = _ok(_args("re-review", repo, "--prior", _prior(repo, "Important"), "--left", "#1 the owner's ruling keeps it"))
+    assert out["left"] == "#1 the owner's ruling keeps it"
+
+
+def test_pre_review_carries_its_worktree_resolved_absolute(repo: Path):
+    out = _ok(_args("pre-review", repo, "--worktree", "wt", cwd=repo.parent))
+    assert out["worktree"] == str((repo.parent / "wt").resolve())
+
+
+def test_review_carries_the_lenses_its_file_holds(repo: Path):
+    path = repo.parent / "lenses.json"
+    lenses = [{"name": "docs", "brief": "Every runbook line the range changes, typed as written."}]
+    path.write_text(json.dumps(lenses))
+    assert _ok(_args("review", repo, "--lenses", str(path)))["lenses"] == lenses
+    path.write_text(json.dumps(lenses[0]))
+    _refused(_args("review", repo, "--lenses", str(path)), "not a JSON array of lens objects")
 
 
 @pytest.mark.parametrize("kind", ["review", "re-review"])
@@ -193,6 +214,12 @@ def test_a_malformed_or_repeated_range_label_is_refused(repo: Path, extra: list[
         ("review", ("--ranges", "one=HEAD~3..HEAD"), "review takes no --ranges"),
         ("review", ("--prior", "p.json"), "review takes no --prior"),
         ("re-review", ("--prior", "p.json", "--rulings", "x"), "re-review takes no --rulings"),
+        ("pre-review", ("--left", "#1 x"), "pre-review takes no --left"),
+        ("review", ("--left", "#1 x"), "review takes no --left"),
+        ("review", ("--worktree", "wt"), "review takes no --worktree"),
+        ("re-review", ("--prior", "p.json", "--worktree", "wt"), "re-review takes no --worktree"),
+        ("pre-review", ("--lenses", "l.json"), "pre-review takes no --lenses"),
+        ("re-review", ("--prior", "p.json", "--lenses", "l.json"), "re-review takes no --lenses"),
     ],
 )
 def test_a_flag_the_workflow_does_not_take_is_refused(repo: Path, kind: str, extra: tuple[str, ...], says: str):

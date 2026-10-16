@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The tier a change owes, one per diff: it decides both the spec+plan review and the mutate-probe rule.
+"""The tier a change owes: it decides both the spec+plan review and the mutate-probe rule.
 
     uv run python infra/scripts/tier.py <base>..<head> [--repo <path>]
     uv run python infra/scripts/tier.py --paths <path>... [--repo <path>]
@@ -8,10 +8,10 @@ The first line is `tier: full|light|none`; one line follows per path at that tie
 `light <path>`, and a `none` tier lists none. rc 0; rc 2 on a usage or a git error.
 
 Per file of `git diff --name-only --no-renames <base>..<head>` -- a rename is its old path and its new:
-  none   a Markdown file under docs/ or infra/runbooks/; the diff is none only when every file is
+  none   a Markdown file under docs/ or infra/runbooks/
   full   a file under FULL_PATHS, with `vault` in its path, with a changed line naming ohlc-holdout, or a changed
          tests/**/test_*.py importing a module under cli/engine, cli/capture or cli/registry -- unless
-         `prove-inert.py <base> <file>` exits 0 (prose-only) or 3 (comments changed, nothing else) for it
+         `prove-inert.py <base> <file>` exits 0 or 3 for it
   light  everything else
 The diff's tier is the highest of its files. prove-inert reads the after side from the working tree, so a file
 whose working copy differs from <head>, or that <head> deletes, is never made light by it.
@@ -61,7 +61,6 @@ PRODUCTION_MODULES = ("cli.engine", "cli.capture", "cli.registry")
 NONE_DIRS = ("docs/", "infra/runbooks/")
 VAULT = "vault"
 HOLDOUT = "ohlc-holdout"
-# prove-inert's INERT and COMMENTS CHANGED: a comment or docstring edit is light even under a full path.
 LIGHT_EXITS = (0, 3)
 RANK = {"none": 0, "light": 1, "full": 2}
 
@@ -102,7 +101,6 @@ def production_imports(src: str) -> list[str] | None:
         if isinstance(node, ast.Import):
             names.update(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-            # `from cli import engine` imports the module cli.engine as surely as `import cli.engine` does.
             names.add(node.module)
             names.update(f"{node.module}.{alias.name}" for alias in node.names)
     return sorted(n for n in names if any(n == m or n.startswith(f"{m}.") for m in PRODUCTION_MODULES))
@@ -141,7 +139,6 @@ def names_holdout(root: pathlib.Path, base: str, head: str, path: str) -> bool:
 
 
 def comments_or_prose_only(root: pathlib.Path, base: str, head: str, path: str) -> tuple[bool, str]:
-    """Whether prove-inert finds the file's change prose-only or comments alone, and, when not, what said so."""
     if _at(root, head, path) is None:
         return False, f"{head} deletes it"
     if subprocess.run(["git", "-C", str(root), "diff", "--quiet", head, "--", path], capture_output=True).returncode != 0:
