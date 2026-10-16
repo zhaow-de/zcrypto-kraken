@@ -389,6 +389,12 @@ def _cut(site: str) -> list[dict]:
             _cut("t.tmpl:3"),
             ("t.tmpl:5: deleted at", "[{{ .Status }}]"),
         ),
+        (
+            {"t.tmpl": GO},
+            {"t.tmpl": GO.replace("{{- /* A block\n     the pre-review cut. */ -}}\n", "")},
+            _cut("t.tmpl:3"),
+            ("t.tmpl:3: deleted at", "{{- /* A block"),
+        ),
     ],
     ids=[
         "a guard cut beside a comment",
@@ -404,6 +410,7 @@ def _cut(site: str) -> list[dict]:
         "an Alloy setting after a glob in a string",
         "a Jinja raw block's text",
         "a Go template line",
+        "a trim-marked Go comment",
     ],
 )
 def test_a_fold_that_deletes_a_line_of_code_is_refused(repo, base, fold, rows, says):
@@ -444,11 +451,9 @@ def test_a_fold_that_deletes_a_line_of_code_is_refused(repo, base, fold, rows, s
         (
             {"t.tmpl": GO},
             {
-                "t.tmpl": GO.replace("{{/* The comment the pre-review cut. */}}\n", "").replace(
-                    "{{- /* A block\n     the pre-review cut. */ -}}\n", ""
-                )
+                "t.tmpl": GO.replace("{{/* The comment the pre-review cut. */}}\n", ""),
             },
-            _cut("t.tmpl:1") + _cut("t.tmpl:3"),
+            _cut("t.tmpl:1"),
         ),
     ],
     ids=[
@@ -459,7 +464,7 @@ def test_a_fold_that_deletes_a_line_of_code_is_refused(repo, base, fold, rows, s
         "a TOML comment",
         "Alloy comments",
         "Jinja comments",
-        "Go template comments",
+        "a Go template comment",
     ],
 )
 def test_a_fold_that_deletes_prose_alone_passes(repo, base, fold, rows):

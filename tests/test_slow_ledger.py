@@ -30,6 +30,7 @@ def _scratch_test(body: str) -> str:
 
 @pytest.fixture
 def tree(tmp_path: Path) -> Path:
+    (tmp_path / ".gitignore").write_text(".tmp/\n__pycache__/\n")
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "conftest.py").write_text(CONFTEST.read_text())
     (tmp_path / "tests" / "slow-cases.txt").write_text(f"# fixture\n{SLOW}\n")
@@ -41,7 +42,7 @@ def tree(tmp_path: Path) -> Path:
     (tmp_path / "lib" / "other.txt").write_text("other\n")
     (tmp_path / "pytest.ini").write_text("[pytest]\nmarkers =\n    slow: fixture\n")
     _git(tmp_path, "init", "-q", "-b", "develop")
-    _git(tmp_path, "add", "tests", "infra", "lib", "pytest.ini")
+    _git(tmp_path, "add", ".gitignore", "tests", "infra", "lib", "pytest.ini")
     _git(tmp_path, *_ID, "commit", "-q", "-m", "seed")
     _git(tmp_path, "checkout", "-q", "-b", "scratch")
     return tmp_path
@@ -115,6 +116,13 @@ def test_a_slow_case_passing_with_an_uncommitted_edit_leaves_no_ledger_line_and_
     _git(tree, "checkout", "--", SUBJECT)
     second = run(tree)
     assert f"{SLOW} PASSED" in second.stdout and DESELECTED not in second.stdout, second.stdout + second.stderr
+
+
+def test_a_slow_case_passing_beside_an_untracked_file_leaves_no_ledger_line(tree):
+    (tree / "lib" / "scratch.txt").write_text("untracked\n")
+    first = run(tree)
+    assert first.returncode == 0 and f"{SLOW} PASSED" in first.stdout, first.stdout + first.stderr
+    assert not ledger(tree).exists()
 
 
 def test_a_passed_slow_case_stays_deselected_after_a_commit_changes_an_unrelated_file(tree):

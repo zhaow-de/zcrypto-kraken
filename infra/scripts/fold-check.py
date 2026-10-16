@@ -324,7 +324,8 @@ def _jinja_comments(text: str) -> list[tuple[int, int]]:
 
 
 def _go_comments(text: str) -> list[tuple[int, int]]:
-    """The spans of the `{{/* */}}` comments outside an action's strings; none when a comment or an action does not end."""
+    """The spans of the `{{/* */}}` comments outside an action's strings, a trim-marked one left out because it moves
+    the rendered whitespace; none when a comment or an action does not end."""
     spans: list[tuple[int, int]] = []
     i = 0
     while (i := text.find("{{", i)) >= 0:
@@ -332,7 +333,8 @@ def _go_comments(text: str) -> list[tuple[int, int]]:
             end = text.find("*/", opened.end())
             if end < 0 or not (closed := GO_CLOSE.match(text, end)):
                 return []
-            spans.append((i, closed.end()))
+            if not (text.startswith("{{-", i) or text[: closed.end()].endswith("-}}")):
+                spans.append((i, closed.end()))
             i = closed.end()
         elif (i := _tag_end(text, i + 2, "}}")) < 0:
             return []
@@ -353,7 +355,6 @@ def _prose(path: str, lines: list[str]) -> set[int]:
     """The <base> lines a fold may delete."""
     language = _language(path, lines)
     text, held = "\n".join(lines) + "\n", set()
-    # A template's comments are prose whole; the rule its rendered class gives reads the text without them.
     if path.endswith(".j2"):
         text, held = _blank(text, _jinja_comments(text))
     if path.endswith((".tmpl", ".gotmpl")) or (path.endswith(".j2") and GO_OPEN.search(text)):

@@ -41,7 +41,7 @@ def _slow_ledger() -> Path | None:
 
 
 def _tree_is_head() -> bool:
-    status = _git("status", "--porcelain", "--untracked-files=no")
+    status = _git("status", "--porcelain")
     return status.returncode == 0 and not status.stdout
 
 
