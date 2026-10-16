@@ -61,6 +61,8 @@ def objects(flag: str, path: pathlib.Path, item: str) -> list[dict]:
         raise Refused(f"--{flag} {path} is not readable JSON ({exc})") from exc
     if not isinstance(rows, list) or not all(isinstance(r, dict) for r in rows):
         raise Refused(f"--{flag} {path} is not a JSON array of {item} objects")
+    if flag == "lenses" and not rows:
+        raise Refused(f"--lenses {path} is an empty array, which the workflow reads as its two default lenses")
     return rows
 
 

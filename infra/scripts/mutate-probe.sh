@@ -113,7 +113,7 @@ if ! "$@" 9>&- >/dev/null 2>&1; then
   exit 7
 fi
 
-no_test_ran() {   # no_test_ran <phase: "control"|"mutation">
+no_test_ran() {
   echo "mutate-probe: REFUSING — the $1 run exited 5, pytest's \"no tests ran\": nothing was measured, so it is no kill. Fix the probe's selection." >&2
   exit 2
 }

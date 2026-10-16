@@ -174,7 +174,7 @@ def test_a_re_dated_branch_s_row_is_same_tree(tmp_path: Path, repo: Path, kind: 
     ids=["tree changed", "tip message changed", "an earlier message changed"],
 )
 @pytest.mark.parametrize("kind", ["pre-review", "fold-check"])
-def test_a_pre_review_of_another_tree_or_other_messages_does_not(tmp_path: Path, repo: Path, rebuilt, kind: str):
+def test_a_pre_review_of_another_tree_or_other_messages_is_not_same_tree(tmp_path: Path, repo: Path, rebuilt, kind: str):
     read_tip = _branch(repo, ("one\n", "feat: one"), ("two\n", "feat: two"), when="2026-09-01T00:00:00Z")
     tip = _branch(repo, *rebuilt, when="2026-09-02T00:00:00Z")
     (tmp_path / "ledger.jsonl").write_text(json.dumps({"kind": kind, "range": "main..x", "tip": read_tip, "ts": "t"}) + "\n")

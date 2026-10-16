@@ -46,7 +46,7 @@ def run(tree: Path, *args: str, **env: str) -> subprocess.CompletedProcess[str]:
 
 
 def ledger(tree: Path, key: str = "") -> Path:
-    key = key or f"scratch@{_git(tree, 'rev-parse', '--short', 'develop')}"
+    key = key or "scratch"
     return tree / ".tmp" / "slow-passed" / f"{key}.txt"
 
 
@@ -106,7 +106,7 @@ def test_on_develop_and_main_no_slow_case_is_deselected_and_none_is_recorded(tre
     assert not (tree / ".tmp" / "slow-passed").exists()
 
 
-def test_merging_develop_in_starts_a_fresh_ledger(tree):
+def test_merging_develop_in_keeps_a_passed_slow_case_deselected(tree):
     first = run(tree)
     assert first.returncode == 0 and f"{SLOW} PASSED" in first.stdout, first.stdout + first.stderr
     before = ledger(tree)
@@ -116,5 +116,5 @@ def test_merging_develop_in_starts_a_fresh_ledger(tree):
     _git(tree, "checkout", "-q", "scratch")
     _git(tree, *_ID, "merge", "-q", "--no-ff", "-m", "merge develop", "develop")
     after = run(tree)
-    assert after.returncode == 0 and f"{SLOW} PASSED" in after.stdout and DESELECTED not in after.stdout, after.stdout
-    assert ledger(tree) != before and ledger(tree).read_text().splitlines() == [SLOW]
+    assert f"{SLOW} PASSED" not in after.stdout and DESELECTED in after.stdout, after.stdout + after.stderr
+    assert ledger(tree) == before and ledger(tree).read_text().splitlines() == [SLOW]

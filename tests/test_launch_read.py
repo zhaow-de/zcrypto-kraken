@@ -131,6 +131,8 @@ def test_review_carries_the_lenses_its_file_holds(repo: Path):
     assert _ok(_args("review", repo, "--lenses", str(path)))["lenses"] == lenses
     path.write_text(json.dumps(lenses[0]))
     _refused(_args("review", repo, "--lenses", str(path)), "not a JSON array of lens objects")
+    path.write_text("[]")
+    _refused(_args("review", repo, "--lenses", str(path)), "an empty array")
 
 
 @pytest.mark.parametrize("kind", ["review", "re-review"])
