@@ -6,7 +6,7 @@
 
 **Goal:** Paging moves from Grafana Cloud to the observability node `zcrypto-mon` in the spec's order. The node's four direct-stream dead-men have been silenced since 2026-10-15, ahead of the gate, and are re-dated to their sittings on the hand-over day; once the gate holds and the four are read back, its two contact points move to the main channel, so both stacks page there. After rung 2's box, each direct-shipped log stream moves to the node's Loki in a sitting of its own, the engine's at the November nautilus bump's engine re-pin, which is the box's deferred disarm converge unless the Global Constraints' fallback separates the two. Once every stream has moved and the node has paged the main channel for seven days, Grafana Cloud's receivers move to the shadow channel, the ops watchdog probes the node, and the tools' default stack becomes the node. Grafana Cloud keeps evaluating every shared rule until phase 4 retires its leg.
 
-**Architecture:** Nine build tasks in three pull requests, with attended runsheets between them and two records pull requests. The first, the cutover pull request the spec names, records the gate and re-trues the surfaces that hold the node to the shadow channel (Tasks 1 to 3), and the node's silences and its push to the main webhook follow; the second merges on the hand-over day after the box and moves the logship templates to the node's `logship` user with the hand-over procedure (Tasks 4 and 5), the four sittings following; the third flips the default stack, the watchdog's probe, the node-dark procedure and the skills (Tasks 6 to 9), and Grafana Cloud's push to the shadow webhook and the ops converge follow.
+**Architecture:** Ten build tasks in three pull requests, with attended runsheets between them and two records pull requests. The first, the cutover pull request the spec names, records the gate, re-trues the surfaces that hold the node to the shadow channel and leaves the node's Grafana-error rule's `context canceled` lines unpaged (Tasks 1 to 3a), and the node's silences and its push to the main webhook, which carries that rule, follow; the second, built from a fresh `develop` about three days before the hand-over day, merges on that day after the box and moves the logship templates to the node's `logship` user with the hand-over procedure (Tasks 4 and 5), the four sittings following; the third, built once the last sitting is read, flips the default stack, the watchdog's probe, the node-dark procedure and the skills (Tasks 6 to 9), and Grafana Cloud's push to the shadow webhook and the ops converge follow.
 
 **Tech Stack:** Grafana OSS on the node and Grafana Cloud, `infra/scripts/grafana-push.sh`, `grafana_auth.py`'s stack table, `grafana-query.py`, `ops_daily.py` and `grafana-compare.py`; Ansible (ansible-core 2.21, the `capture`, `ops`, `engine` and `mon` roles) through `infra/ansible/scripts/converge.sh`; the application log shipper `cli/logging/ship.py`, unchanged; pytest; `infra/scripts/mutate-probe.sh` for guard verdicts; Python 3.14 through `uv run`.
 
@@ -61,14 +61,14 @@
   - At this plan's base the hits that carry a read with no `--stack` are `drills-telemetry.md` lines 535, 606, 632, 634 and 725, `engine-procedures.md` 388, `hc.md` 31, 51 and 144, `mon.md` 71, 98 and 101, `observability.md` 377, the push skill's 38 and the rollout-image skill's 107, with the bump-alloy skill's 205 and 215, whose reads sit in the list under 205 and in 215's words. Each is classed by what its read means.
 - **Every commit is green over its changed files' consumers, never the full suite locally, which is CI's.** `CONSUMERS <paths>` is `(set -o pipefail; mkdir -p .tmp/<role> && infra/scripts/consumers.sh <paths> | tee .tmp/<role>/consumers.out | grep -E '^tests/test_[^/]+\.py$' | sort -u | xargs -r uv run pytest -q -p no:cacheprovider)`, the implementer contract's reader list run whole, its `<paths>` the files the commit changes (`git diff --name-only HEAD`) and any a step adds, and `.tmp/<role>/` the dispatch's own scratch directory, where the implementer contract has it remove what it created before its report; with no path `consumers.sh` exits 2, and the pipeline fails with it. Every commit that changes a file runs it beside the tests its task's consumer step names, and each path whose block in `.tmp/<role>/consumers.out` reads `# (none` is named in the task's report.
   - A task that edits a page under `infra/runbooks/` also runs `WALKERS`, the tests that read every top-level page there: `uv run pytest tests/test_internal_terms_not_operator_visible.py tests/test_runbook_internal_tokens.py tests/test_runbook_triggers.py tests/test_infra_alert_rules.py tests/test_ops_daily.py tests/test_guidance_guard.py tests/test_count_list.py tests/test_guidance_refs_resolve.py tests/test_code_prose_citations.py -q -p no:cacheprovider`. A test that reads one page by name runs beside them in the task that edits that page: `tests/test_engine_draftplan.py` reads `engine-procedures.md`'s `engine-rung-2-box` section.
-  - **The autonomy floor.** `tests/test_ops_daily.py`'s `test_most_read_only_diagnostics_are_autonomous_on_ops`, among `WALKERS`, holds at least 0.70 of the runbooks' read-only commands `AUTONOMOUS` under the classifier `ops_daily.classify_action` (`infra/scripts/ops_daily.py`). `RATIO` reads it: `uv run python -c 'from tests import test_ops_daily as t; o = t.ops_daily; reads = [c for c in t._runbook_commands() if not t._destructive(c)]; a = [c for c in reads if o.classify_action(chr(96) + c + chr(96), host="ops", resolve=t._identity) is o.Tier.AUTONOMOUS]; print(f"{len(a)}/{len(reads)} = {len(a) / len(reads):.4f}")'`. Tasks 5 and 8 each take `RATIO` before and after their runbook edits and name both readings in the task's report. Where a read a task adds classifies `PREPARED` and takes the ratio under 0.70, the task widens the classifier's allowlist with a corpus-justified head, as the test's docstring directs, and never narrows the extraction, in a guard commit with its `infra/scripts/mutate-probe.sh` probe and the probes' commit after it (the guard bullet above).
+  - **The autonomy floor.** `tests/test_ops_daily.py`'s `test_most_read_only_diagnostics_are_autonomous_on_ops`, among `WALKERS`, holds at least 0.70 of the runbooks' read-only commands `AUTONOMOUS` under the classifier `ops_daily.classify_action` (`infra/scripts/ops_daily.py`). `RATIO` reads it: `uv run python -c 'from tests import test_ops_daily as t; o = t.ops_daily; reads = [c for c in t._runbook_commands() if not t._destructive(c)]; a = [c for c in reads if o.classify_action(chr(96) + c + chr(96), host="ops", resolve=t._identity) is o.Tier.AUTONOMOUS]; print(f"{len(a)}/{len(reads)} = {len(a) / len(reads):.4f}")'`. Tasks 3a, 5 and 8 each take `RATIO` before and after their runbook edits and name both readings in the task's report. Where a read a task adds classifies `PREPARED` and takes the ratio under 0.70, the task widens the classifier's allowlist with a corpus-justified head, as the test's docstring directs, and never narrows the extraction, in a guard commit with its `infra/scripts/mutate-probe.sh` probe and the probes' commit after it (the guard bullet above).
   - A task that edits a skill runs `tests/test_guidance_guard.py` and `tests/test_guidance_refs_resolve.py`.
 - **The commit gate runs before every commit.** The commit's files are staged by path, and then `uv run pre-commit run -a` runs clean. A run that rewrites files is re-run until clean, and the rewrites are staged.
 - **A task whose files span kinds commits each kind under its own Conventional Commits type:** `docs(runbooks)` over the runbooks and topics, and the code, compose, README and rules files under `feat`, `fix` or `chore` with the matching scope; the task's `docs` fence is its docs commit's subject, each other commit takes a subject of its own type, and the pre-review grades every fence in the task's range.
 - A new Markdown paragraph or list item is one line, with no column wrap and no filler blank lines. A universal word in a new runbook bullet (every, never, always, only, any, cannot) carries its `(set: …; count: …)` or `(no count command: …)` clause, or the bullet is worded without it.
 - **Tasks 3, 6 and 9 alone edit files under `.claude/`, each in a `claude` commit that carries no other file.**
   - A commit that grows the always-loaded set (a skill's `description`) carries the line `Ambient grows by N bytes: <reason>`, with N as `infra/scripts/guidance-guard.py` measures it.
-  - `zcrypto-refine-rules` is loaded before each edit to a skill or to a top-level page under `infra/runbooks/`: the pages Tasks 2, 4, 5 and 8 edit and the skills of Tasks 3, 6 and 9.
+  - `zcrypto-refine-rules` is loaded before each edit to a skill or to a top-level page under `infra/runbooks/`: the pages Tasks 2, 3a, 4, 5 and 8 edit and the skills of Tasks 3, 6 and 9.
   - No task edits `CLAUDE.md`.
 - A commit message ends with this trailer, the placeholder replaced by the executing model's own name, followed by the executing session's `Claude-Session:` line where its harness supplies one:
 
@@ -81,8 +81,9 @@ Co-Authored-By: Claude <actual executing model> <noreply@anthropic.com>
 - `docs/open-topics/T0217-self-hosted-observability-stack.md`: the gate's findings bullet (Task 1); the readings, the state and the `ripe_when` the two records pull requests write (R-records-1, R-records-2).
 - `infra/runbooks/mon.md`:
   - Task 2: `mon-push` step 2, where the node's webhook is the main channel's, with its rollback; `mon-secrets` step 1; `mon-patch-pass` step 6; `zcrypto-mon-reboot-pending`; `zcrypto-mon-grafana-error-logs`; `mon-dark`'s *What you are seeing*; `zcrypto-mon-ingest-dark` step 1; and the clauses that hold the cutover ahead, false from the cutover pull request's merge: `mon-compare`'s *What it means* last sentence, step 1's last sentence and steps 2 and 4, and `mon-dark`'s *What it means* clause on the seven days.
+  - Task 3a: the rider's two lines in `zcrypto-mon-grafana-error-logs`, its *What you are seeing* quote of the rule's selector and one *What it means* sentence.
   - Task 5: a new `mon-stream-handover` procedure; `mon-secrets` step 4; `mon-compare`'s clause on the seven direct-stream rules.
-  - Task 8: `mon-dark`, `mon-push` step 1 and `mon-compare` step 3 after the flip; the planned stops of the node's Grafana, its edge or the node, and the header's sentence on a converge of the node that takes Grafana down; and the rider's two lines in `zcrypto-mon-grafana-error-logs`, its *What you are seeing* quote of the rule's selector and one *What it means* sentence.
+  - Task 8: `mon-dark`, `mon-push` step 1 and `mon-compare` step 3 after the flip; the planned stops of the node's Grafana, its edge or the node, and the header's sentence on a converge of the node that takes Grafana down.
 - `infra/runbooks/hc.md`: the header and the sections whose sentences say the node's `zcrypto-hc` group or its Alloy-dark rule pages the shadow channel (Task 2); `hc-dark` and `zcrypto-hc-service-down` once Grafana Cloud pages the shadow channel, and `hc-keys` step 5's announcement (Task 8).
 - `infra/runbooks/engine.md`: `#zcrypto-engine-dark-with-exposure` step 1 gains the read of `zcrypto-mon-ingest-dark` first (Task 2), with its stack names re-trued after the flip (Task 8); `#zcrypto-engine-log-dead`'s step 5 on a rotated token (Task 4), and its early case, its rebuilt-node case, step 4 and step 6 (Task 5).
 - `infra/runbooks/drills-telemetry.md`: the `W1` to `W4` sections' channel sentences, drill W3's push step, the silence re-set ahead of it, its *Expected after the push* and its two clauses on the comparison's count (Task 2); drills C and C′, the sections' Grafana Cloud lines once the node pages alone, and the W1 to W3 announcements of the watchdog's page (Task 8).
@@ -91,7 +92,7 @@ Co-Authored-By: Claude <actual executing model> <noreply@anthropic.com>
 - `infra/runbooks/observability.md`: `#zcrypto-hcio-watchdog` step 4's first read (Task 2); `zcrypto-logship` step 5's and `poller-log-dead` step 1's lines on the vaulted token (Task 4); the direct-ship sections, by heading `zcrypto-logship`, `zcrypto-capture-log-dead` and `zcrypto-ops-log-plane` (Task 5); `grafana-cloud-dark` becomes `grafana-dark`, the node-dark procedure, with `#zcrypto-hcio-watchdog`, the header and the alloy-dark sections re-trued (Task 8).
 - `infra/runbooks/ops-node.md`: the keep-alive section's link to `grafana-cloud-dark` and its sentence on what pages a dark Grafana Cloud (Task 8).
 - The other operator pages whose lines the pager sweep classes (a), and `infra/grafana/alerts.yaml`'s text where it says Grafana Cloud pages (Task 8).
-- The rider (Task 8): `infra/grafana/alerts.yaml`'s `zcrypto-mon-grafana-error-logs` expression, and `infra/grafana/fleet-health-dashboard.json`'s panel 911, its expression and its description.
+- The rider (Task 3a): `infra/grafana/alerts.yaml`'s `zcrypto-mon-grafana-error-logs` expression, and `infra/grafana/fleet-health-dashboard.json`'s panel 911, its expression and its description.
 - `docs/open-topics/T0085-final-pre-golive-steps.md`: the two Slack webhook entries (Task 2); the ingest pairs' entry on the `logship` password and the recreate list's logship entry (Task 5).
 - `README.md`, `cli/__main__.py` and `infra/docker/Dockerfile`: the `--ship-logs` help and comment's destination; `infra/grafana/alerts.yaml`: the comment on the capture daemon's direct push (Task 5).
 - `infra/ansible/group_vars/observed/vars.yml`: `mon_ingest_logship_user` (Task 4).
@@ -106,17 +107,17 @@ Co-Authored-By: Claude <actual executing model> <noreply@anthropic.com>
 - The ops watchdog (Task 7): `infra/ansible/roles/ops/defaults/main.yml` (`ops_grafana_watchdog_probe_url`, and the keep-alive's comment below it); `roles/ops/templates/grafana-watchdog.sh.j2` (the header); `roles/ops/templates/grafana-watchdog.service.j2` and `grafana-watchdog.timer.j2` (the two descriptions).
 - `.claude/skills/zcrypto-grafana-push/SKILL.md`: line 20's webhook sentence (Task 3); Step 0's stack lines and Step 3's render sentence (Task 6); Step 0's dual-period paragraph, Steps 1, 3 and 4 and the description after the flip (Task 9). `.claude/skills/zcrypto-daily-ops/SKILL.md`: the comparison's clauses that hold the cutover ahead (Task 3); the stack the pass reads (Task 9). The other skills the pager sweep names (Task 9).
 - Tests:
+  - `tests/test_infra_alert_rules.py`: the restart-stops case's substring and the rider's own case (Task 3a).
   - `tests/test_infra_compose_templates.py`: each logship guard's whole branch under the new name, the render tasks' `when:`, the logship files' literal lines, no role reading Grafana Cloud's logship token, the module comment's guard name, and the two valid-YAML families' names (Task 4).
   - `tests/test_infra_mon_role.py`: the group vars' logship user, in the case renamed for it (Task 4).
   - `tests/test_infra_converge_guards.py`: one comment (Task 4).
   - `tests/test_grafana_auth.py`, `tests/test_grafana_query.py`, `tests/test_ops_daily.py` and `tests/test_grafana_push_sh.py`: the default stack (Task 6).
   - `tests/test_grafana_auth.py`: the probe held to the default stack (Task 7).
-  - `tests/test_infra_alert_rules.py`: the restart-stops case's substring and the rider's own case (Task 8).
 - The records pull requests, not a task's: `docs/reference/deploy-log.jsonl`, `fleet-pins.md`'s `since` cells and the engine's re-pinned row, and `fleet.md`.
 
 ## Review Focus
 
-Six classes, each held by the tests or reads of the tasks named beside it.
+Seven classes, each held by the tests or reads of the tasks named beside it.
 
 - **A stream pushed with a credential the edge refuses, or a guard keyed on a name the vault lacks.** Either way, the shipper's push fails and its lines are dropped and counted, or the compose renders without `--ship-logs`. The literal case holds each logship template's non-comment lines whole: `mon_ingest_loki_url`, `mon_ingest_logship_user`, `mon_ingest_logship_password` and `ZCRYPTO_SHIP_LOGS=1`, the flag without which the capture image's ENTRYPOINT omits `--ship-logs`. The group-vars case holds `mon_ingest_logship_user` equal to the `mon` role's default and admitted on the Loki path alone. R5's `logship` push reads the vault key before any shipper presents it. The branch case renders the capture, ops and engine compose templates, eight guards between them, with `mon_ingest_logship_password` alone defined and reads each service's whole true branch, then with nothing defined its whole false branch; the render-task case holds both `render the logship secrets env file` tasks' `when:` to that name; Step 10 renames each of the ten to a name no context defines. The sweep case holds no file under `infra/ansible/roles/` naming `logship_loki_token`, and Step 10 puts the name into a comment that only that case reads (Task 4).
 - **The engine restarted for its hand-over by anything but S4's converge, the deferred disarm converge or, after the fallback, the re-pin alone, or a capture restart outside its attended sitting.**
@@ -127,6 +128,7 @@ Six classes, each held by the tests or reads of the tasks named beside it.
 - **A rule of the node-only groups reaching Grafana Cloud after the flip.** The host-keyed skip default and the refusal are unchanged and keep holding on every Grafana Cloud spelling. A push naming no stack now goes to the node and sends both node groups (Task 6).
 - **A silence that outlives its stream, ends before it, or blinds a stream not yet moved.** The node's four, set on 2026-10-15 and read back at R2, are re-dated at R5 to end at their sittings and are read back expired with their instants. Grafana Cloud's take the matchers the Global Constraints' *Grafana Cloud's silences* bullet names (R2, R5, R6 to R9, R10, R-records-2).
 - **An operator surface left saying the old pager, or a phase-4 line re-trued early.** Task 2 runs its sweep, and Tasks 8 and 9 the pager sweep, each hit classed. A line that says which stack pages, which channel a stack's page reaches, which URL the watchdog probes or which stack a tool reads by default is re-trued in the task that makes it false. A line on the Grafana Cloud leg's shipping, its keep-lists, its keep-alive, its retention or a past event is left to phase 4 or to history (Tasks 2, 5, 8, 9).
+- **A line the owner chose not to page reaching the main channel from R3.** R3's push carries the rider with the main webhook, so the node's Grafana-error rule leaves out a `context canceled` line from its first page there. The rider's case holds the exclusion after the plugin-stop exclusion in the rule's expression and in panel 911's, the shape case holds the rule to `zcrypto-ops-error-logs`' shape, and R3's step 6 reads both on the node (Task 3a, R3).
 
 ---
 
@@ -233,7 +235,46 @@ Expected: one line ending `:1`, then `4`, then `1`. Any other reading is a stop:
 - [ ] **Step 5: Commit** — `claude(skills): a routine push leaves either stack's receivers where they point, whichever channel's webhook the shell holds, and the daily pass's comparison gates nothing once the gate is read`, with the trailer; a `claude` commit carrying no other file.
 - [ ] **Step 6: The tree is clean.**
 
-Then the cutover pull request opens through the `open-pr` skill over Tasks 1 to 3. Its body cites Task 1's bullet under a `## Gate` section, and each difference with its explanation. A different agent reads the branch. The Rollout's R2, the read-back of the four silences set on 2026-10-15, runs once the pull request is open and before `merge-pr` merges it, since a rebuild or a key replacement that follows the merged `mon-push` step 2 mints the main webhook; R3 and R4 follow from merged `develop`.
+---
+
+### Task 3a: The Grafana-error rule and panel 911 leave out a line whose error is context canceled, before the node pages the main channel
+
+**Files:**
+- Modify, the rider (the owner's word of 2026-10-09, its form the owner's word of 2026-10-16, "Broad: any context canceled", and its place in this pull request the owner's word of 2026-10-16T14:11:25Z, "ok, follow your recommendation", since R3 makes the rule page the main channel): a line Grafana logs at ERROR with `error="context canceled"`, a panel query a browser cancelled or a restart's `job cleanup controller failed`, pages no more. Its cost, which the owner took: a real failure that reports only `context canceled` stops paging.
+  - `infra/grafana/alerts.yaml`, `zcrypto-mon-grafana-error-logs`' expression: one more `!= "error=\"context canceled\""` after `!= "error=\"signal: terminated\""`.
+  - `infra/grafana/fleet-health-dashboard.json`, panel 911: its `expr`, the same exclusion in the same place, and its `description`, whose "a restart's plugin stops are left out" names the `context canceled` lines beside them.
+  - `infra/runbooks/mon.md#zcrypto-mon-grafana-error-logs`: *What you are seeing*'s quote of the rule's selector, and one *What it means* sentence on the `context canceled` lines and that cost. Step 2's full-set read stays as `develop` has it: its purpose is the full set, and left unchanged it leaves `tests/test_ops_daily.py`'s autonomy floor where it is.
+- Test: `tests/test_infra_alert_rules.py`, the rider's: `test_the_grafana_error_rule_leaves_out_a_restarts_plugin_stops`' exact substring ends at the plugin-stop exclusion, its ` | json` tail no longer following it; and a new case of the rider's own holds `!= "error=\"signal: terminated\"" != "error=\"context canceled\"" | json` in the rule's expression and in panel 911's. Otherwise none new; `WALKERS` for the `mon.md` lines.
+
+**Interfaces:**
+- Consumes: `tests/test_infra_alert_rules.py`'s `_log_rule_shape` and `test_a_node_log_rule_keeps_the_ops_error_rules_shape`; the rule's `ruleGroup: zcrypto-mon`, which `infra/scripts/grafana-push.sh` leaves out of a push addressed to Grafana Cloud.
+- Produces: the rule and panel 911 that R3's push carries to the node with the main webhook.
+
+**What this task decides, where the spec leaves it open:**
+- **The rider's form is the one the shape case admits.** `tests/test_infra_alert_rules.py`'s `_log_rule_shape` strips a run of `!= "…"` exclusions after the selector, and `test_a_node_log_rule_keeps_the_ops_error_rules_shape` holds the rule's shape to `zcrypto-ops-error-logs`', so one more `!=` in that run leaves that case passing unchanged, and the helper takes no edit (the owner's word of 2026-10-16).
+- **The rider reaches the node at R3's own push.** `zcrypto-mon-grafana-error-logs` is in the node-only `zcrypto-mon` group, which a push addressed to Grafana Cloud leaves out, so the node's push alone carries the rule: R3's push from `develop`, after this pull request merges, carries it with the main webhook, and R3's step 6 reads it on the node. Each push also sends every `infra/grafana/*-dashboard.json` to the stack it addresses, so R3's push carries panel 911 to the node too, and Grafana Cloud's copy of the panel follows at Grafana Cloud's next push, R10's receiver push at the latest. Under the invariant "Through the box, Grafana Cloud is untouched", the dashboard stands so: no Rollout step pushes to Grafana Cloud before R10, so its panel 911 keeps drawing the `context canceled` lines the node's leaves out; a panel pages nothing, and the rule is in no group Grafana Cloud evaluates, so its rules, receivers, watchdog URL and vault values stay as they are. A Grafana Cloud push taken for another change from a `develop` that carries this one carries the panel and none of the rule.
+
+- [ ] **Step 1: Load `zcrypto-refine-rules`** before the `alerts.yaml` and `mon.md` edits, and read `RATIO` before any runbook edit, into the task's report (Global Constraints, the autonomy floor).
+- [ ] **Step 2: The rider's failing test**, the Test entry's two changes in `tests/test_infra_alert_rules.py`. Run it — `uv run pytest tests/test_infra_alert_rules.py -q -p no:cacheprovider`; Expected: the rider's case fails on the rule's expression, which lacks the exclusion, and no other case fails, the restart-stops case's shorter substring being in the expression already.
+- [ ] **Step 3: The rule's expression and panel 911**, the rider's first two Files entries. Then the tests — Expected: no failure; and `CONSUMERS` over `infra/grafana/alerts.yaml`, `infra/grafana/fleet-health-dashboard.json` and `tests/test_infra_alert_rules.py`; Expected: no failure.
+- [ ] **Step 4: The commit gate.**
+- [ ] **Step 5: Commit** — `fix(infra): zcrypto-mon-grafana-error-logs and panel 911 leave out a line whose error is context canceled`, with the trailer.
+- [ ] **Step 6: Prove the guard, then record the verdicts in the probes' commit (Global Constraints).** Each mutation deletes the rider's exclusion from one file, and each run's control is `'1,$d'`, the file emptied:
+
+```bash
+probe() { infra/scripts/mutate-probe.sh --file "$1" --control '1,$d' --mutation 's/ != [^ ]*context canceled[^ ]*//' -- uv run pytest tests/test_infra_alert_rules.py -q -p no:cacheprovider; }
+probe infra/grafana/alerts.yaml
+probe infra/grafana/fleet-health-dashboard.json
+```
+
+  Expected: two runs, each ending `mutate-probe: KILLED (control proven, tree restored byte-identically)`; the dashboard's is the rider's case's alone to kill.
+
+- [ ] **Step 7: The rider's two lines in `mon.md#zcrypto-mon-grafana-error-logs`**, its last Files entry, under Step 1's `zcrypto-refine-rules`. Then `WALKERS`, and `RATIO`; Expected: no failure, and `RATIO` as Step 1 read it, since neither line is a command.
+- [ ] **Step 8: The commit gate.**
+- [ ] **Step 9: Commit** — `docs(runbooks): the Grafana-error page names the context canceled lines its rule leaves out`, with the trailer; the Global Constraints' kind split, after the probes' commit.
+- [ ] **Step 10: The tree is clean.**
+
+Then the cutover pull request opens through the `open-pr` skill over Tasks 1 to 3a. Its body cites Task 1's bullet under a `## Gate` section, and each difference with its explanation. A different agent reads the branch. The Rollout's R2, the read-back of the four silences set on 2026-10-15, runs once the pull request is open and before `merge-pr` merges it, since a rebuild or a key replacement that follows the merged `mon-push` step 2 mints the main webhook. The pull request merges first and R3 follows from merged `develop` on the same day (the owner's word of 2026-10-16T14:11:25Z), so R3's push carries Task 3a's rule with the main webhook; R4 follows.
 
 ---
 
@@ -446,7 +487,7 @@ done
 - [ ] **Step 6: Commit** — the runbooks and T0085 under `docs(runbooks): a direct-shipped stream's hand-over to the node, one sitting each, and the engine's at the box's deferred disarm converge`, the docs commit's subject, and `README.md`, `cli/__main__.py`, `infra/docker/Dockerfile`, `infra/grafana/alerts.yaml`, `infra/scripts/grafana-compare.py` and `infra/ops/README.md` in commits of their own type (Global Constraints); each with the trailer.
 - [ ] **Step 7: The tree is clean.**
 
-Then the second pull request opens over Tasks 4 and 5, is read by a different agent and is reviewed ahead of the hand-over day. `merge-pr` merges it on [[ROLLOUT: the hand-over day …]], after the box, before that day's first converge (R5).
+Then the second pull request opens over Tasks 4 and 5, built from a fresh `develop` no earlier than about three days before the hand-over day, so that its branch is open for at most about three days (the owner's word of 2026-10-16T14:11:25Z), is read by a different agent and is reviewed ahead of the hand-over day. `merge-pr` merges it on [[ROLLOUT: the hand-over day …]], after the box, before that day's first converge (R5).
 
 ---
 
@@ -576,11 +617,7 @@ probe 's|^ops_grafana_watchdog_probe_url: "https://zcrypto-mon.zhaow.me/api/heal
 - Modify: `infra/runbooks/drills-telemetry.md` (drill C′, "Grafana Cloud dark", re-pointed at the Grafana that pages, with its probe override's restore reading the new default; drill C's and the `W` sections' Grafana Cloud lines by the cut below, drill W2's two reads of Grafana Cloud among them, the Cloud leg's `count_over_time` and the lines-lost count's first, and drill W4's precondition, "the same query on Grafana Cloud without `--stack`", each taking `--stack cloud`)
 - Modify, for the clone's `zcrypto-grafana-watchdog`, which from R10 probes the node's `/api/health` every five minutes and pings `/fail` on a failed probe: each procedure that stops the node's Grafana, its edge or the node itself announces that page in the main channel beforehand. At this plan's base they are `mon.md`'s `mon-store-restart` step 1, `mon-patch-pass` step 3, `zcrypto-mon-reboot-pending` step 1, `mon-secrets` step 3 and `zcrypto-mon-retention-by-size` step 3, `hc.md`'s `hc-keys` step 5, and the announcements of drills W1 (legs 3 and 4), W2 and W3 in `drills-telemetry.md`, W1's count of the pages its announcement names among them. The tree merged at `00390c8b3` adds `mon-patch-pass` step 2's deferred Caddy install, taken on a later day when a pass left `caddy` out, whose package restarts Caddy when it upgrades it, as in step 3's install; it takes step 3's announcement. The three converge steps among them announce the page when their preview queues a handler that stops or restarts Grafana, Prometheus or Loki, since a store's restart stops Grafana around it, and `mon.md`'s header says the same once for a converge of the node outside these steps, `mon-token-rotate` step 1 and `mon-patch-pass` step 4 among them.
 - Modify: the pager sweep's other class (a) hits outside `.claude/`, and `infra/grafana/alerts.yaml`'s summaries or comments where they say Grafana Cloud pages
-- Modify, the rider (the owner's word of 2026-10-09, its form the owner's word of 2026-10-16, "Broad: any context canceled"): a line Grafana logs at ERROR with `error="context canceled"`, a panel query a browser cancelled or a restart's `job cleanup controller failed`, pages no more. Its cost, which the owner took: a real failure that reports only `context canceled` stops paging.
-  - `infra/grafana/alerts.yaml`, `zcrypto-mon-grafana-error-logs`' expression: one more `!= "error=\"context canceled\""` after `!= "error=\"signal: terminated\""`.
-  - `infra/grafana/fleet-health-dashboard.json`, panel 911: its `expr`, the same exclusion in the same place, and its `description`, whose "a restart's plugin stops are left out" names the `context canceled` lines beside them.
-  - `infra/runbooks/mon.md#zcrypto-mon-grafana-error-logs`: *What you are seeing*'s quote of the rule's selector, and one *What it means* sentence on the `context canceled` lines and that cost. Step 2's full-set read stays as `develop` has it: its purpose is the full set, and left unchanged it leaves `tests/test_ops_daily.py`'s autonomy floor where it is.
-- Test: `tests/test_infra_alert_rules.py`, the rider's: `test_the_grafana_error_rule_leaves_out_a_restarts_plugin_stops`' exact substring ends at the plugin-stop exclusion, its ` | json` tail no longer following it; and a new case of the rider's own holds `!= "error=\"signal: terminated\"" != "error=\"context canceled\"" | json` in the rule's expression and in panel 911's. Otherwise none new; `WALKERS`, among them `tests/test_infra_alert_rules.py` and `tests/test_ops_daily.py` (the fixture's `Runbook:` anchors, of which none names `grafana-cloud-dark` at this plan's base).
+- Test: none new; `WALKERS`, among them `tests/test_infra_alert_rules.py` and `tests/test_ops_daily.py` (the fixture's `Runbook:` anchors, of which none names `grafana-cloud-dark` at this plan's base).
 
 **Interfaces:**
 - Consumes: Tasks 6 and 7; D24; the measured W2 and W3 figures in `mon-dark`; the clone's checks `zcrypto-mon` and `zcrypto-grafana-watchdog` (spec 00122 D8).
@@ -589,8 +626,7 @@ probe 's|^ops_grafana_watchdog_probe_url: "https://zcrypto-mon.zhaow.me/api/heal
 **What this task decides, where the spec leaves it open:**
 - **The cut between this phase and phase 4** is the pager sweep's two classes (Global Constraints), run over its paths outside `.claude/`; Task 2 and Task 5 have re-trued some of its hits by then. The docs commit's body gives each class's count, below Step 6's subject.
 - **The anchor is renamed,** since a heading that names Grafana Cloud over a procedure for the node is false. History (the drill log, T0158's record of what landed, archived topics, the specs and plans) keeps the old anchor in its text.
-- **The rider's form is the one the shape case admits.** `tests/test_infra_alert_rules.py`'s `_log_rule_shape` strips a run of `!= "…"` exclusions after the selector, and `test_a_node_log_rule_keeps_the_ops_error_rules_shape` holds the rule's shape to `zcrypto-ops-error-logs`', so one more `!=` in that run leaves that case passing unchanged, and the helper takes no edit (the owner's word of 2026-10-16).
-- **The rider's expression and panel 911, and a rule summary the sweep changes, take the dual push after the merge** (R10's last step). The rider changes `zcrypto-mon-grafana-error-logs`' expression and panel 911, a panel of a dashboard both stacks carry, so that push follows. No summary change is expected: at this plan's base the sweep's one summary hit is `zcrypto-alloy-dark-hc`'s, which names what reads the service, not where the page goes.
+- **A rule summary the sweep changes takes the dual push after the merge** (R10's last step). No summary change is expected: at this plan's base the sweep's one summary hit is `zcrypto-alloy-dark-hc`'s, which names what reads the service, not where the page goes.
 
 - [ ] **Step 1: Load `zcrypto-refine-rules`.**
 - [ ] **Step 2: The pager sweep**, its output in the dispatch's scratch, `.tmp/<role>/task8-sweep`, removed before the task's report, and each hit outside `.claude/` classed (a) or (b) in that report; and `RATIO`, read before any runbook edit, into the same report (Global Constraints, the autonomy floor).
@@ -599,24 +635,6 @@ probe 's|^ops_grafana_watchdog_probe_url: "https://zcrypto-mon.zhaow.me/api/heal
 - [ ] **Step 5: The commit gate.**
 - [ ] **Step 6: Commit** — `docs(runbooks): the node-dark procedure, and the pages that named Grafana Cloud as the pager name the node`, the docs commit's subject, its body giving each class's count; `infra/grafana/alerts.yaml`'s text, where Step 3 changed it, in a commit of its own type (Global Constraints); each with the trailer.
 - [ ] **Step 7: The tree is clean.**
-- [ ] **Step 8: The rider's failing test**, the Test entry's two changes in `tests/test_infra_alert_rules.py`. Run it — `uv run pytest tests/test_infra_alert_rules.py -q -p no:cacheprovider`; Expected: the rider's case fails on the rule's expression, which lacks the exclusion, and no other case fails, the restart-stops case's shorter substring being in the expression already.
-- [ ] **Step 9: The rule's expression and panel 911**, the rider's first two Files entries. Then the tests — Expected: no failure; and `CONSUMERS` over `infra/grafana/alerts.yaml`, `infra/grafana/fleet-health-dashboard.json` and `tests/test_infra_alert_rules.py`; Expected: no failure.
-- [ ] **Step 10: The commit gate.**
-- [ ] **Step 11: Commit** — `fix(infra): zcrypto-mon-grafana-error-logs and panel 911 leave out a line whose error is context canceled`, with the trailer.
-- [ ] **Step 12: Prove the guard, then record the verdicts in the probes' commit (Global Constraints).** Each mutation deletes the rider's exclusion from one file, and each run's control is `'1,$d'`, the file emptied:
-
-```bash
-probe() { infra/scripts/mutate-probe.sh --file "$1" --control '1,$d' --mutation 's/ != [^ ]*context canceled[^ ]*//' -- uv run pytest tests/test_infra_alert_rules.py -q -p no:cacheprovider; }
-probe infra/grafana/alerts.yaml
-probe infra/grafana/fleet-health-dashboard.json
-```
-
-  Expected: two runs, each ending `mutate-probe: KILLED (control proven, tree restored byte-identically)`; the dashboard's is the rider's case's alone to kill.
-
-- [ ] **Step 13: The rider's two lines in `mon.md#zcrypto-mon-grafana-error-logs`**, its last Files entry, under Step 1's `zcrypto-refine-rules`. Then `WALKERS`, and `RATIO`; Expected: no failure, and `RATIO` as Step 4 read it, since neither line is a command.
-- [ ] **Step 14: The commit gate.**
-- [ ] **Step 15: Commit** — `docs(runbooks): the Grafana-error page names the context canceled lines its rule leaves out`, with the trailer; the Global Constraints' kind split, after the probes' commit.
-- [ ] **Step 16: The tree is clean.**
 
 ---
 
@@ -642,7 +660,7 @@ probe infra/grafana/fleet-health-dashboard.json
 - [ ] **Step 5: Commit** — `claude(skills): the push, the daily pass and the Alloy bump take the observability node as the stack that pages`, with `Ambient grows by N bytes: <reason>` where the description grew, and the trailer; a `claude` commit carrying no other file.
 - [ ] **Step 6: The tree is clean.**
 
-Then the third pull request opens over Tasks 6 to 9, once S4 is read and seven days have passed since R3's instant. A different agent reads it, and `merge-pr` merges it immediately before R10, in R10's sitting.
+Then the third pull request is built over Tasks 6 to 9 from a fresh `develop` once S4, the last sitting, is read (the owner's word of 2026-10-16T14:11:25Z), and opens once seven days have also passed since R3's instant. A different agent reads it, and `merge-pr` merges it immediately before R10, in R10's sitting.
 
 ---
 
@@ -717,6 +735,7 @@ Its first line reads `stack=https://zcrypto-mon.zhaow.me` and `skip-groups=<none
 
 4. The owner, signed in on the node, presses the test of each contact point, `metrics` and `logs`, under Alerting → Contact points. Expected: two test messages in the main channel and none in the shadow channel.
 5. `uv run python infra/scripts/ops-daily.py report --stack mon --since 1h` prints no `Rules not evaluating` section.
+6. Task 3a's rider on the node, the push skill's Step 3 over the rule and the panel the push changed: `mon_get /api/v1/provisioning/alert-rules/zcrypto-mon-grafana-error-logs | jq -r '.data[] | select(.refId == "A") | .model.expr' | grep -c 'context canceled'` and `mon_get /api/dashboards/uid/zcrypto-fleet | jq -r '.dashboard.panels[] | select(.id == 911) | .targets[].expr' | grep -c 'context canceled'` each read `1`; and the rule's expression as `infra/grafana/alerts.yaml` holds it, read by `uv run python infra/scripts/grafana-query.py --stack mon --loki '<that expression>'`, reads a number, `(no series)` a fail. A `0` from either count is a push from a checkout without Task 3a's commit: step 2's holds are read again and step 3's push runs again.
 
 The instant is [[ROLLOUT: R3's instant — the node's receivers on the main channel, from which its seven days count]]. Rollback (D25): the same push with `vault_var("slack_shadow_webhook_url")`, and the two tests read in the shadow channel, until S1; from S1 on, in the Global Constraints' order, every moved stream returned first.
 
@@ -731,7 +750,7 @@ The instant is [[ROLLOUT: R3's instant — the node's receivers on the main chan
 
 The reading is [[ROLLOUT: R4's page — its rule, its time and where its three links landed]].
 
-**R-records-1. The node pages the main channel: one pull request.** From `develop`, once R3 has run and before R5, whether or not R4's page has come, since R4's reading goes to R-records-2:
+**R-records-1. The node pages the main channel: one pull request.** From `develop`, once R3 has run and before R5, cut on R3's day and merged within the hour (the owner's word of 2026-10-16T14:11:25Z), whether or not R4's page has come, since R4's reading goes to R-records-2:
 - T0217's `## Findings so far` gains R0's instant, R3's instant and the two contact-point tests, and its bullet on the four silences, `develop`'s of 2026-10-15, takes each silence's id from `.tmp/cutover/r2-silences` beside its uid and its end as last set, in place of a second bullet on them.
 - Its `## Suggested next steps` loses the line on plan 00123's R12 pull request, merged, `COMPARISON_FROM = date(2026, 10, 10)` being on `develop`, and the line on phases 3 and 4 after it drops its opening `Then`.
 - Its `ripe_when` becomes the date [[ROLLOUT: the hand-over day …]], the streams' earliest day, with the check `date -u +%F`.
@@ -816,7 +835,7 @@ W$ date -u +%Y-%m-%dT%H:%M:%SZ | tee .tmp/cutover/r10-instant
   - `W$ uv run python -c 'import sys; sys.path.insert(0, "infra/scripts"); import grafana_auth as g; print(g.DEFAULT_STACK, g.GRAFANA_URL)'` reads `mon https://zcrypto-mon.zhaow.me`.
   - `W$ uv run python infra/scripts/ops-daily.py report --since 1h` prints no `## Sources that could not be read` naming a Grafana source, and its `## Alerts firing` equals `--stack mon`'s.
   - Rollback: none of its own. A source the node's default cannot read fails the same with `--stack mon` and is the node's to repair, `mon.md#mon-token-rotate` for a refused token; the revert of the default flip runs only with R10's receiver rollback (Global Constraints).
-- **The dual push:** Task 8's rider changed `zcrypto-mon-grafana-error-logs`' expression and panel 911, so the dual push of Task 9's skill follows, the node's first, its Step 1 and its Step 3 reading the rule and panel 911 on the node by value; it carries whatever other text of `infra/grafana/alerts.yaml` Task 8 changed with them.
+- **The dual push, where Task 8 changed a rule's summary** (Task 8's decision on it): the dual push of Task 9's skill follows, the node's first, its Step 1 and its Step 3 reading each changed rule on the node by value; it carries whatever other text of `infra/grafana/alerts.yaml` Task 8 changed with them. With no summary changed, none follows: Task 3a's rider reached the node at R3, and Grafana Cloud's push above carries panel 911 there.
 
 The day is [[ROLLOUT: R10's day — Grafana Cloud's receivers moved to the shadow channel]].
 
