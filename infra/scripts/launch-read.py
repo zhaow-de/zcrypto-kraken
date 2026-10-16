@@ -2,7 +2,7 @@
 """The arguments a pre-review, review or re-review is launched with, and a dispatch brief's standing lines.
 
 `args` prints the JSON object the workflow takes: each rev resolved by git to its full sha, `ledger` read by
-`review-ledger.py read` against that same tip, and what the workflow would refuse refused here before the launch.
+`review-ledger.py read` against that same tip, and some of the workflow's refusals made before the launch.
 `brief` appends the standing-lines file to a brief unless the brief already carries it, and prints the brief's path.
 rc: 0 printed, 2 refused with the rule named on stderr.
 """
@@ -27,7 +27,11 @@ DRIVE_CAP = 400
 LABEL = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 SEVERITIES = ("Critical", "Important")
 MODELS = {"pre-review": ("opus",), "review": ("opus", "fable"), "re-review": ("opus", "fable")}
-TAKES = {"pre-review": {"rulings", "ranges"}, "review": {"drive"}, "re-review": {"prior", "reported", "drive"}}
+TAKES = {
+    "pre-review": {"rulings", "ranges", "worktree"},
+    "review": {"drive", "lenses"},
+    "re-review": {"prior", "reported", "drive", "left"},
+}
 
 
 class Refused(Exception):
@@ -50,13 +54,18 @@ def js_length(text: str) -> int:
     return len(text.encode("utf-16-le")) // 2
 
 
-def priors(path: pathlib.Path) -> list[dict]:
+def objects(flag: str, path: pathlib.Path, item: str) -> list[dict]:
     try:
         rows = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise Refused(f"--prior {path} is not readable JSON ({exc})") from exc
+        raise Refused(f"--{flag} {path} is not readable JSON ({exc})") from exc
     if not isinstance(rows, list) or not all(isinstance(r, dict) for r in rows):
-        raise Refused(f"--prior {path} is not a JSON array of finding objects")
+        raise Refused(f"--{flag} {path} is not a JSON array of {item} objects")
+    return rows
+
+
+def priors(path: pathlib.Path) -> list[dict]:
+    rows = objects("prior", path, "finding")
     for row in rows:
         if row.get("severity") not in SEVERITIES:
             raise Refused(
@@ -94,7 +103,7 @@ def slices(specs: list[str], base: str, tip: str, repo: pathlib.Path) -> list[di
 
 
 def build(a: argparse.Namespace) -> dict:
-    given = ("prior", "reported", "drive", "rulings", "ranges")
+    given = ("prior", "reported", "drive", "rulings", "ranges", "left", "worktree", "lenses")
     stray = [n for n in given if getattr(a, n) is not None and n not in TAKES[a.kind]]
     if stray:
         raise Refused(f"{a.kind} takes no {', '.join('--' + n for n in stray)}: the workflow would drop it unread")
@@ -114,12 +123,16 @@ def build(a: argparse.Namespace) -> dict:
         out["prior"] = priors(a.prior)
     report_dir = a.report_dir.resolve()
     out["reportDir"] = str(report_dir)
+    if a.worktree is not None:
+        out["worktree"] = str(a.worktree.resolve())
     if a.kind != "pre-review":
         try:
             out["ledger"] = review_ledger.read(report_dir, tip, repo)
         except (review_ledger.LedgerError, OSError) as exc:
             raise Refused(str(exc)) from exc
-    for name in ("reported", "drive", "rulings"):
+    if a.lenses is not None:
+        out["lenses"] = objects("lenses", a.lenses, "lens")
+    for name in ("left", "reported", "drive", "rulings"):
         if getattr(a, name) is not None:
             out[name] = getattr(a, name)
     if a.ranges is not None:
@@ -156,9 +169,14 @@ def run(argv: list[str]) -> int:
     read.add_argument("--report-dir", type=pathlib.Path, required=True)
     read.add_argument("--prior", type=pathlib.Path, help="a JSON file holding the array of open Critical and Important findings")
     read.add_argument("--reported")
+    read.add_argument("--left", help="each prior consciously left, by id (#<id>) with its reason")
     read.add_argument("--drive")
+    read.add_argument(
+        "--lenses", type=pathlib.Path, help="a JSON file holding the array of {name, brief} lenses read in place of the default two"
+    )
     read.add_argument("--rulings")
     read.add_argument("--ranges", nargs="+", action="extend", metavar="LABEL=BASE..TIP")
+    read.add_argument("--worktree", type=pathlib.Path, help="a detached worktree at the tip, already synced, the graders run in")
     read.add_argument("--model", choices=("opus", "fable"), default="opus")
     brief = sub.add_parser("brief")
     brief.add_argument("brief", type=pathlib.Path)
