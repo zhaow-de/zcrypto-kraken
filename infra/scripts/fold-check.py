@@ -3,8 +3,9 @@
 
 Run from the repository; <base> in --range is the tip the pre-review read, where each row's site line is counted, and
 the report dir's ledger holds that pre-review's row at <base>. Every line a hunk deletes is prose at <base>: in a Python
-file a comment, a docstring or a blank line, as tokenized; in a shell or YAML file a `#` comment or a blank line; in a JS
-file a `//` or `/* */` comment or a blank line; a `#!` first line never; a Markdown or other text file whole. A `.j2`
+file a comment, a docstring or a blank line, as tokenized; in a JS file a `//` or `/* */` comment or a blank line; in a
+JSON file a blank line; in a Markdown file any line; in every other file -- shell, YAML, TOML, a systemd unit, an env
+file, a Caddyfile, an Alloy config, an unknown suffix -- a `#` comment or a blank line; a `#!` first line never. A `.j2`
 template is read as the file it renders; a file with no known suffix by its `#!` line.
 Not read: which prose a hunk deletes beside a site -- a row gives a site's first line, not its extent.
 Exit: 0 passed and recorded; 1 a row or a change fails, or no pre-review row at <base>, each printed, nothing written;
@@ -33,6 +34,8 @@ LANGUAGES = {
     **dict.fromkeys((".sh", ".bash", ".zsh"), "shell"),
     **dict.fromkeys((".yml", ".yaml"), "yaml"),
     **dict.fromkeys((".js", ".mjs", ".cjs"), "js"),
+    **dict.fromkeys((".json", ".jsonl"), "json"),
+    ".md": "markdown",
 }
 INTERPRETERS = ((re.compile(r"python[0-9.]*"), "python"), (re.compile(r"(?:ba|da|k|z)?sh"), "shell"), (re.compile(r"node"), "js"))
 LAYOUT = {tokenize.NL, tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT, tokenize.ENCODING, tokenize.ENDMARKER, tokenize.COMMENT}
@@ -255,10 +258,12 @@ def _prose(path: str, lines: list[str]) -> set[int]:
         prose = set(range(1, len(lines) + 1)) - _python_code(text)
     elif language == "js":
         prose = set(range(1, len(lines) + 1)) - _js_code(text)
-    elif language in ("shell", "yaml"):
-        prose = {k for k, t in enumerate(lines, 1) if not t.strip() or t.lstrip().startswith("#")}
-    else:
+    elif language == "json":
+        prose = {k for k, t in enumerate(lines, 1) if not t.strip()}
+    elif language == "markdown":
         return set(range(1, len(lines) + 1))
+    else:
+        prose = {k for k, t in enumerate(lines, 1) if not t.strip() or t.lstrip().startswith("#")}
     return prose - {1} if lines and lines[0].startswith("#!") else prose
 
 
