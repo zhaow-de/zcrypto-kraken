@@ -123,8 +123,11 @@ def _refused(done: subprocess.CompletedProcess, repo, *says: str) -> None:
     assert not _ledger(repo).exists(), "a failing fold writes nothing"
 
 
-def test_a_ship_text_altered_by_one_word_is_refused(repo):
-    done, _ = _fold(repo, {"a.py": FOLDED_A.replace("says the rest", "says the whole rest"), "notes.md": FOLDED_NOTES})
+@pytest.mark.parametrize(
+    "a_py", [FOLDED_A.replace("says the rest", "says the whole rest"), A_PY], ids=["altered by one word", "not folded"]
+)
+def test_a_ship_text_not_verbatim_at_the_tip_is_refused(repo, a_py):
+    done, _ = _fold(repo, {"a.py": a_py, "notes.md": FOLDED_NOTES})
     _refused(done, repo, "a.py:5 [trim]: its text is not verbatim in a.py")
 
 
@@ -137,6 +140,18 @@ def test_a_line_added_beside_the_ship_texts_is_refused(repo):
 def test_a_changed_file_no_row_names_is_refused(repo):
     done, _ = _fold(repo, {"a.py": FOLDED_A, "notes.md": FOLDED_NOTES, "b.py": "VALUE = 2\n"})
     _refused(done, repo, "b.py: changed by the range, named by no trim, fix or cut row")
+
+
+def test_a_mode_change_beside_the_ship_texts_is_refused(repo):
+    (repo[0] / "a.py").chmod(0o755)
+    done, _ = _fold(repo, {"a.py": FOLDED_A, "notes.md": FOLDED_NOTES})
+    _refused(done, repo, "a.py: a mode change, which no ship text carries")
+
+
+def test_a_file_deleted_by_a_cut_is_refused(repo):
+    rows = [{"site": "b.py:1", "survives": "cut", "correct": True, "duplicateOf": "", "ship": ""}]
+    done, _ = _fold(repo, {"b.py": None}, rows)
+    _refused(done, repo, "b.py: the file is deleted, which no ship text carries")
 
 
 @pytest.mark.parametrize(

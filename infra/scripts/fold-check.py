@@ -5,10 +5,10 @@ Usage: fold-check.py <rows.json> --range <base>..<tip> --report-dir <dir>, run f
 `prose` array the pre-review returned, and <base> is the tip it read: a row's site line is counted there.
 A pass needs each `trim` or `fix` text verbatim at <tip> in its site's file -- whole lines, each compared without its
 indentation -- with the site's line at <base> deleted or inside that text; each `cut` site's line deleted and its
-`ship` empty; every file the range changes named by a non-`keep` row; every hunk touching a row's site line or a
-`trim` or `fix` text, blank lines between them counting as touching; and every non-blank line the range adds inside
-a `trim` or `fix` text of its own file. What a hunk deletes beside a site it touches is not read: a site's extent at
-<base> is not in the rows.
+`ship` empty; every file the range changes named by a non-`keep` row, in its text alone -- not binary, not its mode,
+not deleted; every hunk touching a row's site line or a `trim` or `fix` text, blank lines between them counting as
+touching; and every non-blank line the range adds inside a `trim` or `fix` text of its own file. What a hunk deletes
+beside a site it touches is not read: a site's extent at <base> is not in the rows.
 A pass appends a `fold-check` row through `review-ledger.py`'s `append`; review.js and re-review.js admit it at its
 own tip alone.
 Exit: 0 passed and recorded; 1 a row or a change fails, each printed, nothing written; 2 usage, or git refused.
@@ -89,20 +89,25 @@ def _changed(base: str, tip: str) -> list[str]:
     return [p for p in out.decode("utf-8", "surrogateescape").split("\0") if p]
 
 
-def _hunks(base: str, tip: str, path: str) -> list[Hunk] | None:
-    """None for a binary change."""
+def _hunks(base: str, tip: str, path: str) -> tuple[list[Hunk], list[str]]:
+    """The hunks, and what the file's header changes that no line of text carries."""
     diff = ["--literal-pathspecs", "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-relative", "-U0"]
     hunks: list[Hunk] = []
+    beyond: list[str] = []
     for line in _git(*diff, base, tip, "--", path).decode("utf-8", "surrogateescape").split("\n"):
         if m := HUNK.match(line):
             a, b, c, d = m.groups()
             hunks.append(Hunk(int(a), 1 if b is None else int(b), int(c), 1 if d is None else int(d)))
         elif not hunks:
             if line.startswith("Binary files ") or line == "GIT binary patch":
-                return None
+                beyond.append("a binary change")
+            elif line.startswith("new mode "):
+                beyond.append("a mode change")
+            elif line.startswith("deleted file mode "):
+                beyond.append("the file is deleted")
         elif line.startswith("+"):
             hunks[-1].added.append(line[1:])
-    return hunks
+    return hunks, beyond
 
 
 def _deleted(hunks: list[Hunk]) -> set[int]:
@@ -185,10 +190,8 @@ def check(rows: list[Row], base: str, tip: str) -> list[str]:
     base_lines = {p: _lines(base, p) for p in named}
     hunks: dict[str, list[Hunk]] = {p: [] for p in named}
     for p in changed:
-        found = _hunks(base, tip, p)
-        if found is None:
-            fails.append(f"{p}: a binary change, which no ship text carries")
-        hunks[p] = found or []
+        hunks[p], beyond = _hunks(base, tip, p)
+        fails += [f"{p}: {what}, which no ship text carries" for what in beyond]
     spans = {r: _occurrences(tip_lines[r.path] or [], _ship_lines(r.ship)) for r in answered if r.survives in SHIPS}
 
     for r in answered:
@@ -240,8 +243,6 @@ def run(argv: list[str]) -> int:
     parser.add_argument("--report-dir", required=True, type=pathlib.Path, help="the reportDir whose ledger.jsonl takes the row")
     args = parser.parse_args(argv)
     try:
-        if not args.report_dir.is_dir():
-            raise Usage(f"{args.report_dir} is not a directory: the reportDir the reads were given")
         rows = read_rows(args.rows)
         base, tip = (_commit(rev) for rev in args.range.split(".."))
         ancestry = subprocess.run(["git", "merge-base", "--is-ancestor", base, tip], capture_output=True)
