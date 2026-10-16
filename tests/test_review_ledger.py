@@ -154,7 +154,7 @@ def test_a_malformed_line_is_refused_by_its_number(tmp_path: Path, repo: Path):
 
 
 @pytest.mark.parametrize("kind", ["pre-review", "fold-check"])
-def test_a_pre_review_of_a_re_dated_branch_covers_its_tip(tmp_path: Path, repo: Path, kind: str):
+def test_a_re_dated_branch_s_row_is_same_tree(tmp_path: Path, repo: Path, kind: str):
     commits = (("one\n", "feat: one"), ("two\n", "feat: two"))
     read_tip = _branch(repo, *commits, when="2026-09-01T00:00:00Z")
     tip = _branch(repo, *commits, when="2026-09-02T00:00:00Z")

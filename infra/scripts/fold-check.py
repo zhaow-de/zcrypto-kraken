@@ -1,16 +1,9 @@
 #!/usr/bin/env python3
 """A fold made of a pre-review's ship texts alone, checked in place of a fresh pre-review of its tip.
 
-Usage: fold-check.py <rows.json> --range <base>..<tip> --report-dir <dir>, run from the repository. `rows.json` is the
-`prose` array the pre-review returned, and <base> is the tip it read: a row's site line is counted there.
-A pass needs each `trim` or `fix` text verbatim at <tip> in its site's file -- whole lines, each compared without its
-indentation -- with the site's line at <base> deleted or inside that text; each `cut` site's line deleted and its
-`ship` empty; every file the range changes named by a non-`keep` row, in its text alone -- not binary, not its mode,
-not deleted; every hunk touching a row's site line or a `trim` or `fix` text, blank lines between them counting as
-touching; and every non-blank line the range adds inside a `trim` or `fix` text of its own file. What a hunk deletes
-beside a site it touches is not read: a site's extent at <base> is not in the rows.
-A pass appends a `fold-check` row through `review-ledger.py`'s `append`; review.js and re-review.js admit it at its
-own tip alone.
+Run from the repository; <base> in --range is the tip the pre-review read, where each row's site line is counted.
+Not read: what a hunk deletes beside a site it touches or beneath a ship text, nor where a ship text stands once its
+site's line is deleted -- a row gives a site's first line, not its extent.
 Exit: 0 passed and recorded; 1 a row or a change fails, each printed, nothing written; 2 usage, or git refused.
 """
 
