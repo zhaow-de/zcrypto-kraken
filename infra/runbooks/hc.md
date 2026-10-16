@@ -305,7 +305,7 @@ Unattended upgrades install Debian's security patches alone. Caddy and Docker co
 
 6. **With a new release, read its records** on the observability node within the hour after the converge: `uv run python infra/scripts/grafana-query.py --stack mon --loki 'sum by (level) (count_over_time({host="zcrypto-hc", container="hc"} |= "is now running" [1h]))'` reads `level="INFO"` at 2 for each start of the service in the hour, the alert sender's and the report sender's, and no row without a `level`. The replaced release's stop records carry no such text, and its start records are older than the hour unless step 4 restarted it. A row without a `level` is the new release writing records that are not JSON objects: roll it back by step 5 with the previous tag, by `hc-restore` from step 3's backup when the new release migrated the database, and take the release to the owner.
 
-7. **Read the reboot flag**, on the node: `ls /run/reboot-required`. `No such file or directory` is no reboot pending; the file listed is one, taken by `zcrypto-hc-reboot-pending` below from its first step. That alert pages the main channel, and this read stays the pass's own.
+7. **Read the reboot flag**, on the node: `ls /run/reboot-required`. `No such file or directory` is no reboot pending; the file listed is one, taken by `zcrypto-hc-reboot-pending` below from its first step.
 
 ### Retire when
 
@@ -374,7 +374,7 @@ A **warning** Grafana alert from the observability node, `Dead-man · reboot pen
 
 ### What it means
 
-The node installs Debian's security patches by itself and does not reboot itself: a reboot stops the service, and with it each dead-man check, for its duration, so it is taken by hand, in the node's 10:25 UTC slot. While the node is down the fleet's pings are lost and no check is evaluated; a reboot of a few minutes ends inside each check's `timeout` + `grace`, so no check pages for it, and one back within `zcrypto-hcio-watchdog`'s five minutes at `999` pages nothing in the main channel. This alert pages the main channel, and `hc-patch-pass` step 7 reads the same flag in the monthly pass.
+The node installs Debian's security patches by itself and does not reboot itself: a reboot stops the service, and with it each dead-man check, for its duration, so it is taken by hand, in the node's 10:25 UTC slot. While the node is down the fleet's pings are lost and no check is evaluated; a reboot of a few minutes ends inside each check's `timeout` + `grace`, so no check pages for it, and one back within `zcrypto-hcio-watchdog`'s five minutes at `999` pages nothing in the main channel.
 
 ### What to do
 
