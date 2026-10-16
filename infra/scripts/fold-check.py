@@ -1,25 +1,47 @@
 #!/usr/bin/env python3
 """A fold made of a pre-review's ship texts alone, checked in place of a fresh pre-review of its tip.
 
-Run from the repository; <base> in --range is the tip the pre-review read, where each row's site line is counted.
-Not read: what a hunk deletes beside a site it touches or beneath a ship text -- a row gives a site's first line, not its extent.
-Exit: 0 passed and recorded; 1 a row or a change fails, each printed, nothing written; 2 usage, or git refused.
+Run from the repository; <base> in --range is the tip the pre-review read, where each row's site line is counted, and
+the report dir's ledger holds that pre-review's row at <base>. Every line a hunk deletes is prose at <base>: in a Python
+file a comment, a docstring or a blank line, as tokenized; in a shell or YAML file a `#` comment or a blank line; in a JS
+file a `//` or `/* */` comment or a blank line; a `#!` first line never; a Markdown or other text file whole. A `.j2`
+template is read as the file it renders; a file with no known suffix by its `#!` line.
+Not read: which prose a hunk deletes beside a site -- a row gives a site's first line, not its extent.
+Exit: 0 passed and recorded; 1 a row or a change fails, or no pre-review row at <base>, each printed, nothing written;
+2 usage, or git refused.
 """
 
 from __future__ import annotations
 
 import argparse
+import ast
 import importlib.util
+import io
 import json
 import pathlib
 import re
 import subprocess
 import sys
+import tokenize
 from dataclasses import dataclass, field
 
 SURVIVES = ("trim", "cut", "fix", "keep")
 SHIPS = ("trim", "fix")
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+LANGUAGES = {
+    **dict.fromkeys((".py", ".pyi"), "python"),
+    **dict.fromkeys((".sh", ".bash", ".zsh"), "shell"),
+    **dict.fromkeys((".yml", ".yaml"), "yaml"),
+    **dict.fromkeys((".js", ".mjs", ".cjs"), "js"),
+}
+INTERPRETERS = ((re.compile(r"python[0-9.]*"), "python"), (re.compile(r"(?:ba|da|k|z)?sh"), "shell"), (re.compile(r"node"), "js"))
+LAYOUT = {tokenize.NL, tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT, tokenize.ENCODING, tokenize.ENDMARKER, tokenize.COMMENT}
+# A `/` after one of these opens a regex literal; after anything else it divides.
+REGEX_AFTER = {
+    "",
+    *"(,=:[!&|?{};+-*%<>~^",
+    *"return typeof case do else in of new delete void throw yield await instanceof".split(),
+}
 
 
 def _load_ledger():
@@ -137,6 +159,109 @@ def _touches(hunk: Hunk, spans: list[tuple[int, int]], lines: list[str]) -> bool
     return any(s <= hi and e >= lo for s, e in spans)
 
 
+def _language(path: str, lines: list[str]) -> str:
+    if suffix := LANGUAGES.get(pathlib.PurePosixPath(path.removesuffix(".j2")).suffix):
+        return suffix
+    if lines and lines[0].startswith("#!"):
+        names = [word.rsplit("/", 1)[-1] for word in lines[0][2:].split()]
+        for pattern, language in INTERPRETERS:
+            if any(pattern.fullmatch(name) for name in names):
+                return language
+    return "text"
+
+
+def _python_code(text: str) -> set[int]:
+    """The lines a token other than a comment or a docstring touches; every line when the file does not parse."""
+    try:
+        tree = ast.parse(text)
+        tokens = list(tokenize.generate_tokens(io.StringIO(text).readline))
+    except SyntaxError, ValueError, tokenize.TokenError:
+        return set(range(1, text.count("\n") + 2))
+    docs = [
+        (node.body[0].lineno, node.body[0].end_lineno)
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.body
+        and isinstance(node.body[0], ast.Expr)
+        and isinstance(node.body[0].value, ast.Constant)
+        and isinstance(node.body[0].value.value, str)
+    ]
+    code: set[int] = set()
+    for tok in tokens:
+        if tok.type in LAYOUT or (tok.type == tokenize.STRING and any(a <= tok.start[0] and tok.end[0] <= b for a, b in docs)):
+            continue
+        code.update(range(tok.start[0], tok.end[0] + 1))
+    return code
+
+
+def _js_code(text: str) -> set[int]:
+    """The lines code or a string's text touches, a blank line inside a string or template included; every line when
+    the file ends inside a string, a template, a regex or a block comment."""
+    code: set[int] = set()
+    state, prev, klass, depth, holes = "code", "", False, 0, []  # holes: the depth each open `${` returns to its template at
+    i, line, n = 0, 1, len(text)
+    while i < n:
+        c = text[i]
+        if state == "line":
+            state = "code" if c == "\n" else state
+        elif state == "block":
+            if text.startswith("*/", i):
+                state, i = "code", i + 1
+        elif state in ("'", '"', "`", "regex"):
+            code.add(line)
+            if c == "\\":
+                i += 1
+                line += i < n and text[i] == "\n"
+            elif state == "`" and text.startswith("${", i):
+                depth += 1
+                holes.append(depth)
+                state, prev, i = "code", "{", i + 1
+            elif state == "regex" and c in "[]":
+                klass = c == "["  # inside a class `/` does not close the literal
+            elif c == ("/" if state == "regex" else state) and not klass:
+                state, prev = "code", ")" if state == "regex" else c
+            elif c == "\n" and state != "`":
+                state = "code"  # an unterminated literal ends at its line, as the engine refuses it
+        elif text.startswith("//", i):
+            state, i = "line", i + 1
+        elif text.startswith("/*", i):
+            state, i = "block", i + 1
+        elif not c.isspace():
+            code.add(line)
+            if c in "'\"`" or (c == "/" and prev in REGEX_AFTER):
+                state, klass = ("regex" if c == "/" else c), False
+            elif c == "}" and holes and holes[-1] == depth:
+                holes.pop()
+                depth -= 1
+                state = "`"
+            elif c.isalnum() or c in "_$":
+                j = i
+                while j + 1 < n and (text[j + 1].isalnum() or text[j + 1] in "_$"):
+                    j += 1
+                prev, i = text[i : j + 1], j
+            else:
+                depth += (c == "{") - (c == "}")
+                prev = c
+        line += c == "\n"
+        i += 1
+    return code if state in ("code", "line") else set(range(1, line + 1))
+
+
+def _prose(path: str, lines: list[str]) -> set[int]:
+    """The <base> lines a fold may delete."""
+    language = _language(path, lines)
+    text = "\n".join(lines) + "\n"
+    if language == "python":
+        prose = set(range(1, len(lines) + 1)) - _python_code(text)
+    elif language == "js":
+        prose = set(range(1, len(lines) + 1)) - _js_code(text)
+    elif language in ("shell", "yaml"):
+        prose = {k for k, t in enumerate(lines, 1) if not t.strip() or t.lstrip().startswith("#")}
+    else:
+        return set(range(1, len(lines) + 1))
+    return prose - {1} if lines and lines[0].startswith("#!") else prose
+
+
 def _clip(text: str) -> str:
     text = text.strip()
     return text if len(text) <= 120 else text[:117] + "..."
@@ -224,6 +349,12 @@ def check(rows: list[Row], base: str, tip: str) -> list[str]:
             continue
         texts = [span for r in answered if r.survives in SHIPS and r.path == p for span in at_site.get(r, [])]
         sites = {r.line for r in answered if r.path == p}
+        old = base_lines[p] or []
+        prose = _prose(p, old)
+        fails += [
+            f"{p}:{n}: deleted at {at_base}, where it is no comment, docstring or blank line: {_clip(old[n - 1])}"
+            for n in sorted(_deleted(hunks[p]) - prose)
+        ]
         for h in hunks[p]:
             outside = [
                 (h.new + k, t) for k, t in enumerate(h.added) if t.strip() and not any(s <= h.new + k <= e for s, e in texts)
@@ -239,6 +370,13 @@ def check(rows: list[Row], base: str, tip: str) -> list[str]:
     return fails
 
 
+def unread(report_dir: pathlib.Path, base: str) -> list[str]:
+    entries = ledger.read(report_dir, base, pathlib.Path("."))
+    if any(e.get("kind") == "pre-review" and ledger.SHA.match(str(e.get("tip"))) and base.startswith(e["tip"]) for e in entries):
+        return []
+    return [f"{report_dir / 'ledger.jsonl'} holds no pre-review row at {base[:9]}, the tip the rows were read at"]
+
+
 def run(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("rows", type=pathlib.Path, help="the `prose` array the pre-review returned, as JSON")
@@ -251,8 +389,10 @@ def run(argv: list[str]) -> int:
         ancestry = subprocess.run(["git", "merge-base", "--is-ancestor", base, tip], capture_output=True)
         if ancestry.returncode:
             raise Usage(f"{args.range}: {base[:9]} is not an ancestor of {tip[:9]}, so the range is no fold of it")
-        fails = check(rows, base, tip)
-    except Usage as exc:
+        if not args.report_dir.is_dir():
+            raise Usage(f"{args.report_dir} is not a directory: the reportDir the pre-review at {base[:9]} was recorded in")
+        fails = unread(args.report_dir, base) + check(rows, base, tip)
+    except (Usage, ledger.LedgerError) as exc:
         print(f"fold-check: {exc}", file=sys.stderr)
         return 2
     if fails:
@@ -260,7 +400,7 @@ def run(argv: list[str]) -> int:
         print(f"fold-check: {len(fails)} failure(s) at {tip[:9]}, nothing written: a fold beyond its ship texts takes a pre-review")
         return 1
     try:
-        ledger.append(args.report_dir, ledger.stamped("fold-check", args.range, tip), None, [])
+        ledger.append(args.report_dir, ledger.stamped("fold-check", f"{base}..{tip}", tip), None, [])
     except (ledger.LedgerError, OSError) as exc:
         print(f"fold-check: {exc}", file=sys.stderr)
         return 2
