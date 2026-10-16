@@ -308,6 +308,32 @@ def test_a_report_dir_that_does_not_exist_is_refused(repo):
 GUARD_PY = 'def f(x):\n    # The comment the pre-review cut.\n    if x < 0:\n        raise ValueError("refused")\n    return x\n'
 SH = "#!/bin/sh\n# The comment the pre-review cut.\n\nset -eu\necho hi\n"
 JS = "// The comment the pre-review cut.\nconst limit = 3\nconst t = `one\n\ntwo`\n"
+ALLOY = (
+    "// The comment the pre-review cut.\n"
+    'local.file_match "logs" {\n'
+    '  path_targets = [{"__path__" = "/var/log/*.log"}]\n'
+    '  sync_period = "10s"\n'
+    "  /* A block\n"
+    "     the pre-review cut. */\n"
+    "}\n"
+)
+J2 = (
+    "{# The comment the pre-review cut. #}\n"
+    "key = 1\n"
+    "{# A block\n"
+    "   the pre-review cut. #}\n"
+    "{% raw %}\n"
+    "{# text the template renders #}\n"
+    "{% endraw %}\n"
+)
+GO = (
+    "{{/* The comment the pre-review cut. */}}\n"
+    '{{ define "title" }}\n'
+    "{{- /* A block\n"
+    "     the pre-review cut. */ -}}\n"
+    "[{{ .Status }}] {{ .CommonLabels.alertname }}\n"
+    "{{ end }}\n"
+)
 
 
 def _cut(site: str) -> list[dict]:
@@ -337,6 +363,32 @@ def _cut(site: str) -> list[dict]:
         ({"j.js": JS}, {"j.js": JS.replace("one\n\ntwo", "one\ntwo")}, _cut("j.js:4"), ("j.js:4: deleted at",)),
         ({"z.toml": "# The comment.\nkey = 1\n"}, {"z.toml": ""}, _cut("z.toml:1"), ("z.toml:2: deleted at", "key = 1")),
         ({"d.json": '{\n  "key": 1\n}\n'}, {"d.json": "{\n}\n"}, _cut("d.json:2"), ("d.json:2: deleted at", '"key": 1')),
+        (
+            {"config.alloy": ALLOY},
+            {"config.alloy": ALLOY.replace('  sync_period = "10s"\n  /* A block\n     the pre-review cut. */\n', "")},
+            _cut("config.alloy:5"),
+            ("config.alloy:4: deleted at", 'sync_period = "10s"'),
+        ),
+        (
+            {"t.toml.j2": J2},
+            {
+                "t.toml.j2": J2.replace("{# A block\n   the pre-review cut. #}\n", "").replace(
+                    "{# text the template renders #}\n", ""
+                )
+            },
+            _cut("t.toml.j2:3"),
+            ("t.toml.j2:6: deleted at", "{# text the template renders #}"),
+        ),
+        (
+            {"t.tmpl": GO},
+            {
+                "t.tmpl": GO.replace(
+                    "{{- /* A block\n     the pre-review cut. */ -}}\n[{{ .Status }}] {{ .CommonLabels.alertname }}\n", ""
+                )
+            },
+            _cut("t.tmpl:3"),
+            ("t.tmpl:5: deleted at", "[{{ .Status }}]"),
+        ),
     ],
     ids=[
         "a guard cut beside a comment",
@@ -349,6 +401,9 @@ def _cut(site: str) -> list[dict]:
         "a blank line inside a JS template",
         "a TOML key",
         "a JSON line",
+        "an Alloy setting after a glob in a string",
+        "a Jinja raw block's text",
+        "a Go template line",
     ],
 )
 def test_a_fold_that_deletes_a_line_of_code_is_refused(repo, base, fold, rows, says):
@@ -368,8 +423,44 @@ def test_a_fold_that_deletes_a_line_of_code_is_refused(repo, base, fold, rows, s
         ({"c.yml": "a: 1\n# The comment.\nb: 2\n"}, {"c.yml": "a: 1\nb: 2\n"}, _cut("c.yml:2")),
         ({"j.js": "/* A block\n   the pre-review cut. */\n\nconst a = 1\n"}, {"j.js": "const a = 1\n"}, _cut("j.js:1")),
         ({"z.toml": "a = 1\n# The comment.\nb = 2\n"}, {"z.toml": "a = 1\nb = 2\n"}, _cut("z.toml:2")),
+        (
+            {"config.alloy": ALLOY},
+            {
+                "config.alloy": ALLOY.replace("// The comment the pre-review cut.\n", "").replace(
+                    "  /* A block\n     the pre-review cut. */\n", ""
+                )
+            },
+            _cut("config.alloy:1") + _cut("config.alloy:5"),
+        ),
+        (
+            {"t.toml.j2": J2},
+            {
+                "t.toml.j2": J2.replace("{# The comment the pre-review cut. #}\n", "").replace(
+                    "{# A block\n   the pre-review cut. #}\n", ""
+                )
+            },
+            _cut("t.toml.j2:1") + _cut("t.toml.j2:3"),
+        ),
+        (
+            {"t.tmpl": GO},
+            {
+                "t.tmpl": GO.replace("{{/* The comment the pre-review cut. */}}\n", "").replace(
+                    "{{- /* A block\n     the pre-review cut. */ -}}\n", ""
+                )
+            },
+            _cut("t.tmpl:1") + _cut("t.tmpl:3"),
+        ),
     ],
-    ids=["a docstring paragraph", "a shell comment", "a YAML comment", "a JS block comment", "a TOML comment"],
+    ids=[
+        "a docstring paragraph",
+        "a shell comment",
+        "a YAML comment",
+        "a JS block comment",
+        "a TOML comment",
+        "Alloy comments",
+        "Jinja comments",
+        "Go template comments",
+    ],
 )
 def test_a_fold_that_deletes_prose_alone_passes(repo, base, fold, rows):
     done, _ = _fold(_pre_reviewed(repo[0], _commit(repo[0], base, "base")), fold, rows)
