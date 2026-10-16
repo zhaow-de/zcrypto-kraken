@@ -22,8 +22,9 @@ _SLOW_DESELECTED = pytest.StashKey[int]()
 
 
 def _slow_ledger() -> Path | None:
-    """The ledger of this branch's passed slow cases; None -- every slow case runs, none is recorded -- in CI, under
-    `ZCRYPTO_RERUN_SLOW=1` and outside a repository."""
+    """The ledger of the passed slow cases of this branch since its merge-base with `develop`, or of a detached HEAD's
+    commit; None -- every slow case runs, none is recorded -- in CI, under `ZCRYPTO_RERUN_SLOW=1`, on `develop` and
+    `main`, and outside a repository or without that merge-base."""
     if "CI" in os.environ or "GITHUB_ACTIONS" in os.environ or os.environ.get("ZCRYPTO_RERUN_SLOW") == "1":
         return None
 
@@ -31,12 +32,13 @@ def _slow_ledger() -> Path | None:
         return subprocess.run(["git", "-C", str(TMP_ROOT.parent), *args], capture_output=True, text=True).stdout.strip()
 
     branch = git("branch", "--show-current")
+    if branch in ("develop", "main"):
+        return None
     if not branch:
         sha = git("rev-parse", "--short", "HEAD")
-        if not sha:
-            return None
-        branch = f"detached-{sha}"
-    return TMP_ROOT / "slow-passed" / f"{branch}.txt"
+        return TMP_ROOT / "slow-passed" / f"detached-{sha}.txt" if sha else None
+    base = git("merge-base", "HEAD", "develop")
+    return TMP_ROOT / "slow-passed" / f"{branch}@{git('rev-parse', '--short', base)}.txt" if base else None
 
 
 @pytest.fixture(autouse=True)
