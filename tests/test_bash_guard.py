@@ -512,6 +512,9 @@ MEMO_WRITES = [
     ("cp .tmp/memo.new .local/memo.md", ".local/memo.md"),
     ("cp /tmp/memo.md .local/", ".local/memo.md"),
     ("cp -t .local .tmp/memo.md", ".local/memo.md"),
+    ("cp .tmp/memo.md.bak .tmp/memo.md .local/", ".local/memo.md"),
+    ("cp .tmp/memo.bak.md .local/memo.md", ".local/memo.md"),
+    ("mv .tmp/memo.md.orig .local/memo.md", ".local/memo.md"),
     ("mv .tmp/memo.new .local/memo.md", ".local/memo.md"),
     (
         "install -m 600 .tmp/memo.new /home/u/Projects/zcrypto-kraken/.local/memo.md",
@@ -535,6 +538,10 @@ MEMO_READS = [
     # the memo copied aside, a read piped onward, a write of another file
     "cp .local/memo.md .tmp/memo.bak",
     "cp .local/memo.md .tmp/",
+    # a restore from copies taken aside, every source a `.bak`
+    "cp .tmp/memo.md.bak .local/memo.md",
+    "mv .local/memo.md.bak .local/memo.md",
+    "install -m 600 .tmp/memo.md.bak .local/memo.md",
     "cat .local/memo.md | tee .tmp/memo.copy",
     "sed -n '/QUEUE/,$p' .local/memo.md > .tmp/queue.md",
     "sed -i 's|.local/memo.md|the memo|' docs/x.md",
