@@ -61,7 +61,7 @@ def _commit(repo: pathlib.Path) -> None:
     run("commit", "-qm", "seed")
 
 
-# Names no path of this tree carries, so the real tree never reads this file as a consumer of one of its own.
+# The fixture names no path or module of this tree, so it makes this file no real path's --direct reader or walker.
 _MODULE = "pkg/area/widget.py"
 
 
