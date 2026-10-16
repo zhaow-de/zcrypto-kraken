@@ -3,10 +3,11 @@
 # worktree, because restore is `git checkout --` and would destroy uncommitted work; refuses pytest
 # under `--sandbox`, because the editable install's .pth resolves cli and tests back to the repo so
 # every verdict would measure unmutated code; requires the probe to PASS unmutated first, since an
-# always-failing probe scores every mutation KILLED with "control proven" attached to the lie; and
-# requires the CONTROL mutation to FAIL, which is the guard-proving rule as code.
+# always-failing probe scores every mutation KILLED with "control proven" attached to the lie;
+# requires the CONTROL mutation to FAIL, which is the guard-proving rule as code; and refuses a control
+# or mutation run that exits 5, pytest's "no tests ran", because a run that selected nothing is no kill.
 # Usage: mutate-probe.sh [--sandbox] --file <path> --control <sed-expr> --mutation <sed-expr> -- <probe-cmd...>
-# Exit: rc 2 usage | rc 3 refused (dirty tree, pytest in --sandbox, a second run in this checkout) | rc 4 restore failed | rc 5 control did not fail | rc 6 no-op sed
+# Exit: rc 2 usage, or a control or mutation run that exited 5 | rc 3 refused (dirty tree, pytest in --sandbox, a second run in this checkout) | rc 4 restore failed | rc 5 control did not fail | rc 6 no-op sed
 #     | rc 7 baseline failed | rc 8 seeding failed | rc 9 cleanup restore failed (pristine kept)
 set -euo pipefail
 
@@ -73,6 +74,8 @@ else
 fi
 
 export PYTHONDONTWRITEBYTECODE=1
+# Without it tests/conftest.py's ledger deselects, from every run after the baseline, a slow case the baseline passed.
+export ZCRYPTO_RERUN_SLOW=1
 purge() { find . -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true; }
 
 # I6a: restore must work in BOTH modes — the sandbox has no .git, so keep a pristine copy and
@@ -110,14 +113,23 @@ if ! "$@" 9>&- >/dev/null 2>&1; then
   exit 7
 fi
 
+no_test_ran() {   # no_test_ran <phase: "control"|"mutation">
+  echo "mutate-probe: REFUSING — the $1 run exited 5, pytest's \"no tests ran\": nothing was measured, so it is no kill. Fix the probe's selection." >&2
+  exit 2
+}
+
 # 1. control: must FAIL, or the harness is not measuring
 apply "$control" "control sed"
-if "$@" 9>&- >/dev/null 2>&1; then restore; echo "mutate-probe: CONTROL mutation did not fail the probe — the harness does not bite; no real probe counts. Pick a control the probe must detect." >&2; exit 5; fi
+rc=0; "$@" 9>&- >/dev/null 2>&1 || rc=$?
 restore
+if [[ $rc -eq 0 ]]; then echo "mutate-probe: CONTROL mutation did not fail the probe — the harness does not bite; no real probe counts. Pick a control the probe must detect." >&2; exit 5; fi
+if [[ $rc -eq 5 ]]; then no_test_ran control; fi
 
 # 2. the real mutation
 apply "$mutation" "mutation sed"
-if "$@" 9>&- >/dev/null 2>&1; then verdict=SURVIVED; else verdict=KILLED; fi
+rc=0; "$@" 9>&- >/dev/null 2>&1 || rc=$?
 restore; purge
+if [[ $rc -eq 5 ]]; then no_test_ran mutation; fi
+if [[ $rc -eq 0 ]]; then verdict=SURVIVED; else verdict=KILLED; fi
 echo "mutate-probe: $verdict (control proven, tree restored byte-identically)"
 [[ "$verdict" == KILLED || "$verdict" == SURVIVED ]]

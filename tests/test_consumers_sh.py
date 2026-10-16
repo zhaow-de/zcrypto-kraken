@@ -61,8 +61,10 @@ def _commit(repo: pathlib.Path) -> None:
     run("commit", "-qm", "seed")
 
 
-# The fixture names no path or module of this tree, so it makes this file no real path's --direct reader or walker.
+# No name below is one this tree carries: a real one lists this file as that path's --direct reader or walker.
 _MODULE = "pkg/area/widget.py"
+# `pkg/spare/gadget.yaml` carries its file name, so the file-name form is off and only the path forms can read it.
+_SHARED = "pkg/area/gadget.yaml"
 
 
 def _direct_repo(tmp_path: pathlib.Path) -> pathlib.Path:
@@ -71,8 +73,8 @@ def _direct_repo(tmp_path: pathlib.Path) -> pathlib.Path:
         "pkg/__init__.py": "",
         "pkg/area/__init__.py": "",
         _MODULE: "def go():\n    return 0\n",
-        "tests/test_by_path.py": f"SRC = '{_MODULE}'\n",
-        "tests/test_by_split_path.py": 'import pathlib\nSRC = pathlib.Path(__file__).parents[1] / "pkg" / "area" / "widget.py"\n',
+        "tests/test_by_path.py": f"SRC = '{_SHARED}'\n",
+        "tests/test_by_split_path.py": 'import pathlib\nSRC = pathlib.Path(__file__).parents[1] / "pkg" / "area" / "gadget.yaml"\n',
         "tests/test_by_dotted.py": "from pkg.area.widget import go\n",
         "tests/test_by_from.py": "from pkg.area import widget as area_widget\n",
         "tests/test_by_paren.py": "from pkg.area import (\n    widget,\n    sprocket,\n)\n",
@@ -81,7 +83,7 @@ def _direct_repo(tmp_path: pathlib.Path) -> pathlib.Path:
         "tests/test_walks_pkg.py": "import pathlib\nFILES = sorted(pathlib.Path('pkg').rglob('*.py'))\n",
         "tests/test_imports_pkg.py": "import pkg\n",
         "tests/test_by_name.py": 'import pathlib\nAREA = pathlib.Path("pkg") / "area"\nSRC = AREA / "widget.py"\n',
-        "pkg/area/gadget.yaml": "a: 1\n",
+        _SHARED: "a: 1\n",
         "pkg/spare/gadget.yaml": "a: 2\n",
         "tests/test_names_gadget.py": 'import pathlib\nAREA = pathlib.Path("pkg") / "area"\nCONF = AREA / "gadget.yaml"\n',
         "tests/test_a_reader.py": "from tests.test_by_path import SRC\n",
@@ -197,11 +199,11 @@ def _direct(repo: pathlib.Path, *paths: str) -> list[str]:
 
 
 def test_direct_reads_the_repo_path_whole(tmp_path):
-    assert "tests/test_by_path.py" in _direct(_direct_repo(tmp_path), _MODULE)
+    assert "tests/test_by_path.py" in _direct(_direct_repo(tmp_path), _SHARED)
 
 
 def test_direct_reads_the_repo_path_split_at_its_slashes(tmp_path):
-    assert "tests/test_by_split_path.py" in _direct(_direct_repo(tmp_path), _MODULE)
+    assert "tests/test_by_split_path.py" in _direct(_direct_repo(tmp_path), _SHARED)
 
 
 def test_direct_reads_the_dotted_module(tmp_path):
@@ -222,7 +224,7 @@ def test_direct_reads_the_file_name_joined_to_a_variable_and_not_the_bare_stem(t
 
 
 def test_direct_does_not_read_a_file_name_another_tracked_file_carries(tmp_path):
-    assert "tests/test_names_gadget.py" not in _direct(_direct_repo(tmp_path), "pkg/area/gadget.yaml")
+    assert "tests/test_names_gadget.py" not in _direct(_direct_repo(tmp_path), _SHARED)
 
 
 def test_direct_does_not_read_the_bare_stem_as_a_word(tmp_path):

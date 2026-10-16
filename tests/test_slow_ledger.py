@@ -14,6 +14,7 @@ CONFTEST = Path(__file__).resolve().parent / "conftest.py"
 SLOW = "tests/test_scratch.py::test_slow_one"
 DESELECTED = "conftest: 1 slow case(s) deselected"
 _OVERRIDES = ("CI", "GITHUB_ACTIONS", "ZCRYPTO_RERUN_SLOW")
+_ID = ("-c", "user.email=s@test", "-c", "user.name=s")
 
 
 def _git(tree: Path, *args: str) -> str:
@@ -27,7 +28,9 @@ def tree(tmp_path: Path) -> Path:
     (tmp_path / "tests" / "slow-cases.txt").write_text(f"# fixture\n{SLOW}\n")
     (tmp_path / "tests" / "test_scratch.py").write_text("def test_slow_one():\n    pass\n\n\ndef test_fast():\n    pass\n")
     (tmp_path / "pytest.ini").write_text("[pytest]\nmarkers =\n    slow: fixture\n")
-    _git(tmp_path, "init", "-q", "-b", "scratch")
+    _git(tmp_path, "init", "-q", "-b", "develop")
+    _git(tmp_path, *_ID, "commit", "-q", "--allow-empty", "-m", "seed")
+    _git(tmp_path, "checkout", "-q", "-b", "scratch")
     return tmp_path
 
 
@@ -42,8 +45,9 @@ def run(tree: Path, *args: str, **env: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def ledger(tree: Path, branch: str = "scratch") -> Path:
-    return tree / ".tmp" / "slow-passed" / f"{branch}.txt"
+def ledger(tree: Path, key: str = "") -> Path:
+    key = key or f"scratch@{_git(tree, 'rev-parse', '--short', 'develop')}"
+    return tree / ".tmp" / "slow-passed" / f"{key}.txt"
 
 
 def _seed(tree: Path) -> None:
@@ -77,7 +81,7 @@ def test_the_override_runs_a_passed_slow_case_again_and_writes_nothing(tree):
 
 
 def test_a_detached_head_keeps_its_ledger_under_its_short_sha(tree):
-    _git(tree, "-c", "user.email=s@test", "-c", "user.name=s", "commit", "-q", "--allow-empty", "-m", "seed")
+    _git(tree, *_ID, "commit", "-q", "--allow-empty", "-m", "ahead")
     _git(tree, "checkout", "-q", "--detach")
     r = run(tree)
     assert r.returncode == 0, r.stdout + r.stderr
@@ -91,3 +95,26 @@ def test_under_xdist_the_pass_is_recorded_and_the_second_run_names_the_deselecti
     second = run(tree, "-n", "2")
     assert second.returncode == 0 and SLOW not in second.stdout, second.stdout + second.stderr
     assert DESELECTED in second.stdout, second.stdout
+
+
+@pytest.mark.parametrize("branch", ["develop", "main"])
+def test_on_develop_and_main_no_slow_case_is_deselected_and_none_is_recorded(tree, branch):
+    _git(tree, "checkout", "-q", "-B", branch)
+    for _ in range(2):
+        r = run(tree)
+        assert r.returncode == 0 and f"{SLOW} PASSED" in r.stdout and DESELECTED not in r.stdout, r.stdout + r.stderr
+    assert not (tree / ".tmp" / "slow-passed").exists()
+
+
+def test_merging_develop_in_starts_a_fresh_ledger(tree):
+    first = run(tree)
+    assert first.returncode == 0 and f"{SLOW} PASSED" in first.stdout, first.stdout + first.stderr
+    before = ledger(tree)
+    assert before.read_text().splitlines() == [SLOW]
+    _git(tree, "checkout", "-q", "develop")
+    _git(tree, *_ID, "commit", "-q", "--allow-empty", "-m", "develop moves")
+    _git(tree, "checkout", "-q", "scratch")
+    _git(tree, *_ID, "merge", "-q", "--no-ff", "-m", "merge develop", "develop")
+    after = run(tree)
+    assert after.returncode == 0 and f"{SLOW} PASSED" in after.stdout and DESELECTED not in after.stdout, after.stdout
+    assert ledger(tree) != before and ledger(tree).read_text().splitlines() == [SLOW]
