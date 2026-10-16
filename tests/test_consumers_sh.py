@@ -61,24 +61,25 @@ def _commit(repo: pathlib.Path) -> None:
     run("commit", "-qm", "seed")
 
 
-_MODULE = "cli/research/command.py"
+# Names no path of this tree carries, so the real tree never reads this file as a consumer of one of its own.
+_MODULE = "pkg/area/widget.py"
 
 
 def _direct_repo(tmp_path: pathlib.Path) -> pathlib.Path:
     repo = tmp_path / "repo"
     files = {
-        "cli/__init__.py": "",
-        "cli/research/__init__.py": "",
-        _MODULE: "def run():\n    return 0\n",
+        "pkg/__init__.py": "",
+        "pkg/area/__init__.py": "",
+        _MODULE: "def go():\n    return 0\n",
         "tests/test_by_path.py": f"SRC = '{_MODULE}'\n",
-        "tests/test_by_split_path.py": 'import pathlib\nSRC = pathlib.Path(__file__).parents[1] / "cli" / "research" / "command.py"\n',
-        "tests/test_by_dotted.py": "from cli.research.command import run\n",
-        "tests/test_by_from.py": "from cli.research import command as research_command\n",
-        "tests/test_by_paren.py": "from cli.research import (\n    command,\n    subjects,\n)\n",
-        "tests/test_bare_stem.py": "ARGS = ['research', 'command']  # the command runs\n",
-        "tests/test_longer_names.py": f"from cli.research import commands\nimport cli.research.command_line\nSRC = '{_MODULE}.j2'\n",
-        "tests/test_walks_cli.py": "import pathlib\nFILES = sorted(pathlib.Path('cli').rglob('*.py'))\n",
-        "tests/test_imports_cli.py": "import cli\n",
+        "tests/test_by_split_path.py": 'import pathlib\nSRC = pathlib.Path(__file__).parents[1] / "pkg" / "area" / "widget.py"\n',
+        "tests/test_by_dotted.py": "from pkg.area.widget import go\n",
+        "tests/test_by_from.py": "from pkg.area import widget as area_widget\n",
+        "tests/test_by_paren.py": "from pkg.area import (\n    widget,\n    sprocket,\n)\n",
+        "tests/test_bare_stem.py": "ARGS = ['area', 'widget']  # the widget goes\n",
+        "tests/test_longer_names.py": f"from pkg.area import widgets\nimport pkg.area.widget_line\nSRC = '{_MODULE}.j2'\n",
+        "tests/test_walks_pkg.py": "import pathlib\nFILES = sorted(pathlib.Path('pkg').rglob('*.py'))\n",
+        "tests/test_imports_pkg.py": "import pkg\n",
         "tests/test_a_reader.py": "from tests.test_by_path import SRC\n",
         "tests/helper.py": f"SRC = '{_MODULE}'\n",
         "infra/scripts/uses.sh": f"cat {_MODULE}\n",
@@ -233,18 +234,18 @@ def test_direct_lists_a_changed_test_file_first(tmp_path):
 
 def test_direct_prints_no_walker_section(tmp_path):
     repo = _direct_repo(tmp_path)
-    assert "tests/test_walks_cli.py" in _run(repo, _MODULE).stdout.splitlines()
+    assert "tests/test_walks_pkg.py" in _run(repo, _MODULE).stdout.splitlines()
     lines = _direct(repo, _MODULE)
-    assert not any(line.startswith("# tree walkers") for line in lines) and "tests/test_walks_cli.py" not in lines
+    assert not any(line.startswith("# tree walkers") for line in lines) and "tests/test_walks_pkg.py" not in lines
 
 
 def test_direct_reads_a_package_init_as_the_package_and_not_its_submodules(tmp_path):
-    lines = _direct(_direct_repo(tmp_path), "cli/research/__init__.py")
+    lines = _direct(_direct_repo(tmp_path), "pkg/area/__init__.py")
     assert "tests/test_by_from.py" in lines and "tests/test_by_dotted.py" not in lines
 
 
 def test_direct_reads_a_top_level_package_only_in_an_import_statement(tmp_path):
-    assert _direct(_direct_repo(tmp_path), "cli/__init__.py")[2:] == ["tests/test_imports_cli.py"]
+    assert _direct(_direct_repo(tmp_path), "pkg/__init__.py")[2:] == ["tests/test_imports_pkg.py"]
 
 
 def test_direct_without_a_path_is_usage(tmp_path):
