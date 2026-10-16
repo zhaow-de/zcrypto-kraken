@@ -11,10 +11,10 @@ Per file of `git diff --name-only --no-renames <base>..<head>` -- a rename is it
   none   a Markdown file under docs/ or infra/runbooks/; the diff is none only when every file is
   full   a file under FULL_PATHS, with `vault` in its path, with a changed line naming ohlc-holdout, or a changed
          tests/**/test_*.py importing a module under cli/engine, cli/capture or cli/registry -- unless
-         `prove-inert.py <base> <file>` exits 0 for it
+         `prove-inert.py <base> <file>` exits 0 (prose-only) or 3 (comments changed, nothing else) for it
   light  everything else
 The diff's tier is the highest of its files. prove-inert reads the after side from the working tree, so a file
-whose working copy differs from <head>, or that <head> deletes, is never proven prose-only.
+whose working copy differs from <head>, or that <head> deletes, is never made light by it.
 
 `--paths` decides from the paths a plan names, before the code exists: each is read as a non-prose change -- no
 diff, no prove-inert, no ohlc-holdout line -- and a listed test file is full when it exists and imports one of
@@ -61,6 +61,8 @@ PRODUCTION_MODULES = ("cli.engine", "cli.capture", "cli.registry")
 NONE_DIRS = ("docs/", "infra/runbooks/")
 VAULT = "vault"
 HOLDOUT = "ohlc-holdout"
+# prove-inert's INERT and COMMENTS CHANGED: a comment or docstring edit is light even under a full path.
+LIGHT_EXITS = (0, 3)
 RANK = {"none": 0, "light": 1, "full": 2}
 
 
@@ -107,7 +109,7 @@ def production_imports(src: str) -> list[str] | None:
 
 
 def full_reason(path: str, *, names_holdout: bool, test_sources: list[str]) -> str | None:
-    """Why a path is a full candidate before prose-only is asked, None when it is not one."""
+    """Why a path is a full candidate before prove-inert is asked, None when it is not one."""
     for prefix in FULL_PATHS:
         if path == prefix or (prefix.endswith("/") and path.startswith(prefix)):
             return f"under {prefix}"
@@ -138,14 +140,14 @@ def names_holdout(root: pathlib.Path, base: str, head: str, path: str) -> bool:
     return False
 
 
-def prose_only(root: pathlib.Path, base: str, head: str, path: str) -> tuple[bool, str]:
-    """Whether prove-inert certifies the file's change, and, when it does not, what said so."""
+def comments_or_prose_only(root: pathlib.Path, base: str, head: str, path: str) -> tuple[bool, str]:
+    """Whether prove-inert finds the file's change prose-only or comments alone, and, when not, what said so."""
     if _at(root, head, path) is None:
         return False, f"{head} deletes it"
     if subprocess.run(["git", "-C", str(root), "diff", "--quiet", head, "--", path], capture_output=True).returncode != 0:
         return False, f"the working tree differs from {head} there, and prove-inert reads the working tree"
     done = subprocess.run([sys.executable, str(PROVE_INERT), base, path], cwd=root, capture_output=True, text=True)
-    if done.returncode == 0:
+    if done.returncode in LIGHT_EXITS:
         return True, ""
     verdict = next((ln.removeprefix(f"{path}: ") for ln in done.stdout.splitlines() if ln.startswith(f"{path}: ")), "")
     return False, f"prove-inert exit {done.returncode}" + (f" ({verdict.split(' -- ')[0]})" if verdict else "")
@@ -163,7 +165,7 @@ def classify_diff(root: pathlib.Path, base: str, head: str) -> list[tuple[str, s
         if reason is None:
             out.append(("light", path, ""))
             continue
-        proven, why = prose_only(root, base, head, path)
+        proven, why = comments_or_prose_only(root, base, head, path)
         out.append(("light", path, "") if proven else ("full", path, f"{reason}; {why}"))
     return out
 

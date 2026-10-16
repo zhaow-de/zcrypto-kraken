@@ -70,9 +70,9 @@ def test_a_docstring_only_change_under_cli_engine_is_light(repo: pathlib.Path, c
     assert out == ["tier: light", "light cli/engine/x.py"]
 
 
-def test_a_comment_only_change_under_cli_engine_is_full(repo: pathlib.Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_a_comment_only_change_under_cli_engine_is_light(repo: pathlib.Path, capsys: pytest.CaptureFixture[str]) -> None:
     out = _change(repo, capsys, {"cli/engine/x.py": ENGINE}, {"cli/engine/x.py": ENGINE + "# a note\n"})
-    assert out == ["tier: full", "full cli/engine/x.py — under cli/engine/; prove-inert exit 3 (COMMENTS CHANGED)"]
+    assert out == ["tier: light", "light cli/engine/x.py"]
 
 
 def test_a_code_change_under_cli_engine_is_full(repo: pathlib.Path, capsys: pytest.CaptureFixture[str]) -> None:
