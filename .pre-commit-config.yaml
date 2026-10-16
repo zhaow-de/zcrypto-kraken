@@ -137,6 +137,14 @@ repos:
         language: system
         stages: [commit-msg]
         always_run: true
+      # The placeholder stamp memo-guard refuses in an Edit or a Write, refused in the message; a code span or a
+      # fenced block quotes one.
+      - id: message-stamps
+        name: no placeholder stamp in the message
+        entry: uv run python infra/scripts/message-stamps.py
+        language: system
+        stages: [commit-msg]
+        always_run: true
 
   - repo: https://github.com/hukkin/mdformat
     rev: 1.0.0
