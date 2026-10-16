@@ -24,7 +24,7 @@ Buckets B (intraday band) and C (long shots) are where the master plan's residua
 
 - **B1 split out (iter-086)** as [T0022](T0022-b1-intraday-seasonality-family.md), spec/plan `00045`; trial 3 (iter-177, spec/plan `00132`, registry trial 48) PARK, its next step the owner's pick, T0022's.
 
-- **B2 opened (iter-175, spec/plan `00128`)** on the owner's word of 2026-10-12, its trial 1 stopped unspent at the pre-flight (the shared B budget 23 of 25); the family's state and the trigger of its next trial are [T0023](T0023-b2-derivatives-data-sourcing.md)'s.
+- **B2 opened (iter-175, spec/plan `00128`)** on the owner's word of 2026-10-12, its trial 1 stopped unspent at the pre-flight; the family's state and the trigger of its next trial are [T0023](T0023-b2-derivatives-data-sourcing.md)'s.
 
 - **C3 is ripe and deliberately NOT picked up (re-deferred 2026-08-23, owner's call).** C3's sourcing has been unblocked since iter-072; the reason is contention: the active front is the Phase-6b go-live run-up ([[T0085]]), and opening an alpha family competes with it for the same attention while the live path is being armed. This is a decision, not an oversight, recorded here so the ripe state stops reading as a miss.
 
