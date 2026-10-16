@@ -82,7 +82,7 @@ Try to REFUTE it: reproduce what the evidence claims, and decide whether the cla
 // --- Ledger: the order of reviews, refused rather than remembered --------------------------------------
 const ledgerPath = `${reportDir}/ledger.jsonl`
 if (!Array.isArray(ledger) || ledger.some((e) => !e || typeof e !== 'object')) throw new Error(`review refuses ${tip}: \`ledger\` is not the array \`uv run python infra/scripts/review-ledger.py read ${reportDir} --tip ${tip}\` prints — pass it`)
-// A pre-review covers one tip: the one it read, compared as written, short or long — never an ancestor of it — or a later tip whose tree and commit messages are that tip's, a re-dated or re-signed commit having moved the name and nothing the pre-review grades. A fold-check covers the tip it checked and no other, and only beside a pre-review row at its range's base, the tip whose rows it checked: a moved tip re-runs the script.
+// A pre-review covers one tip: the one it read, compared as written, short or long — never an ancestor of it — or a later tip whose tree and commit messages are that tip's, a re-dated or re-signed commit having moved the name and nothing the pre-review grades. A fold-check covers the tip it checked and no other: a moved tip re-runs the script.
 const sameSha = (a, b) => typeof a === 'string' && typeof b === 'string' && (a === b || (a.length >= 7 && b.length >= 7 && (a.startsWith(b) || b.startsWith(a))))
 const sameTip = (e) => sameSha(e.tip, tip)
 const readAtBase = (e) => typeof e.range === 'string' && /^[0-9a-f]{7,64}\.\.[0-9a-f]{7,64}$/.test(e.range) && ledger.some((p) => p.kind === 'pre-review' && sameSha(p.tip, e.range.split('..')[0]))

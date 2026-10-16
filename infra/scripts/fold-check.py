@@ -2,11 +2,8 @@
 """A fold made of a pre-review's ship texts alone, checked in place of a fresh pre-review of its tip.
 
 Run from the repository; <base> in --range is the tip the pre-review read, where each row's site line is counted, and
-the report dir's ledger holds that pre-review's row at <base>. Every line a hunk deletes is prose at <base>: in a Python
-file a comment, a docstring or a blank line, as tokenized; in a JS file a `//` or `/* */` comment or a blank line; in a
-JSON file a blank line; in a Markdown file any line; in every other file -- shell, YAML, TOML, a systemd unit, an env
-file, a Caddyfile, an Alloy config, an unknown suffix -- a `#` comment or a blank line; a `#!` first line never. A `.j2`
-template is read as the file it renders; a file with no known suffix by its `#!` line.
+the report dir's ledger holds that pre-review's row at <base>. Every line a hunk deletes must be prose at <base>, as
+`_prose` reads its file's class.
 Not read: which prose a hunk deletes beside a site -- a row gives a site's first line, not its extent.
 Exit: 0 passed and recorded; 1 a row or a change fails, or no pre-review row at <base>, each printed, nothing written;
 2 usage, or git refused.
@@ -36,6 +33,7 @@ LANGUAGES = {
     **dict.fromkeys((".js", ".mjs", ".cjs"), "js"),
     **dict.fromkeys((".json", ".jsonl"), "json"),
     ".md": "markdown",
+    ".alloy": "alloy",
 }
 INTERPRETERS = ((re.compile(r"python[0-9.]*"), "python"), (re.compile(r"(?:ba|da|k|z)?sh"), "shell"), (re.compile(r"node"), "js"))
 LAYOUT = {tokenize.NL, tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT, tokenize.ENCODING, tokenize.ENDMARKER, tokenize.COMMENT}
@@ -45,6 +43,10 @@ REGEX_AFTER = {
     *"(,=:[!&|?{};+-*%<>~^",
     *"return typeof case do else in of new delete void throw yield await instanceof".split(),
 }
+JINJA_RAW = re.compile(r"\{%[-+]?\s*raw\s*[-+]?%\}")
+JINJA_ENDRAW = re.compile(r"\{%[-+]?\s*endraw\s*[-+]?%\}")
+GO_OPEN = re.compile(r"\{\{(?:-[ \t\r\n])?/\*")
+GO_CLOSE = re.compile(r"\*/(?:[ \t\r\n]-)?\}\}")
 
 
 def _load_ledger():
@@ -198,8 +200,8 @@ def _python_code(text: str) -> set[int]:
 
 
 def _js_code(text: str) -> set[int]:
-    """The lines code or a string's text touches, a blank line inside a string or template included; every line when
-    the file ends inside a string, a template, a regex or a block comment."""
+    """The lines code or a string's text touches; every line when the file ends inside a string, a template, a regex or
+    a block comment."""
     code: set[int] = set()
     state, prev, klass, depth, holes = "code", "", False, 0, []  # holes: the depth each open `${` returns to its template at
     i, line, n = 0, 1, len(text)
@@ -250,20 +252,127 @@ def _js_code(text: str) -> set[int]:
     return code if state in ("code", "line") else set(range(1, line + 1))
 
 
+def _alloy_code(text: str) -> set[int]:
+    """The lines code or a string's text touches; every line when the file ends inside a string or a block comment."""
+    code: set[int] = set()
+    state, line, i, n = "code", 1, 0, len(text)
+    while i < n:
+        c = text[i]
+        if state == "line":
+            state = "code" if c == "\n" else state
+        elif state == "block":
+            if text.startswith("*/", i):
+                state, i = "code", i + 1
+        elif state in ('"', "`"):
+            code.add(line)
+            if c == "\\" and state == '"':  # a backtick string is raw: no escape
+                i += 1
+                line += i < n and text[i] == "\n"
+            elif c == state:
+                state = "code"
+        elif text.startswith("//", i):
+            state, i = "line", i + 1
+        elif text.startswith("/*", i):
+            state, i = "block", i + 1
+        elif not c.isspace():
+            code.add(line)
+            state = c if c in '"`' else state
+        line += c == "\n"
+        i += 1
+    return code if state in ("code", "line") else set(range(1, line + 1))
+
+
+def _tag_end(text: str, i: int, close: str) -> int:
+    """The index past the `close` that ends a tag whose text starts at `i`, a quoted `close` being text; -1 when none does."""
+    quote = ""
+    while i < len(text):
+        c = text[i]
+        if quote:
+            if c == "\\" and quote != "`":
+                i += 1
+            elif c == quote:
+                quote = ""
+        elif text.startswith(close, i):
+            return i + len(close)
+        elif c in "'\"`":
+            quote = c
+        i += 1
+    return -1
+
+
+def _jinja_comments(text: str) -> list[tuple[int, int]]:
+    """The spans of the `{# #}` comments outside a raw block and a tag's strings; none when a comment, a raw block or a tag
+    does not end."""
+    spans: list[tuple[int, int]] = []
+    i = 0
+    while (i := text.find("{", i)) >= 0:
+        if text.startswith("{#", i):
+            if (end := text.find("#}", i + 2)) < 0:
+                return []
+            spans.append((i, end + 2))
+            i = end + 2
+        elif raw := JINJA_RAW.match(text, i):
+            if not (endraw := JINJA_ENDRAW.search(text, raw.end())):
+                return []
+            i = endraw.end()
+        elif text.startswith(("{{", "{%"), i):
+            if (i := _tag_end(text, i + 2, "}}" if text[i + 1] == "{" else "%}")) < 0:
+                return []
+        else:
+            i += 1
+    return spans
+
+
+def _go_comments(text: str) -> list[tuple[int, int]]:
+    """The spans of the `{{/* */}}` comments outside an action's strings; none when a comment or an action does not end."""
+    spans: list[tuple[int, int]] = []
+    i = 0
+    while (i := text.find("{{", i)) >= 0:
+        if opened := GO_OPEN.match(text, i):
+            end = text.find("*/", opened.end())
+            if end < 0 or not (closed := GO_CLOSE.match(text, end)):
+                return []
+            spans.append((i, closed.end()))
+            i = closed.end()
+        elif (i := _tag_end(text, i + 2, "}}")) < 0:
+            return []
+    return spans
+
+
+def _blank(text: str, spans: list[tuple[int, int]]) -> tuple[str, set[int]]:
+    """The text with each span's characters but its newlines made spaces, and the lines that held text in spans alone."""
+    chars = list(text)
+    for a, b in spans:
+        chars[a:b] = (c if c == "\n" else " " for c in text[a:b])
+    blanked = "".join(chars)
+    held = {k for k, (was, now) in enumerate(zip(text.split("\n"), blanked.split("\n")), 1) if was.strip() and not now.strip()}
+    return blanked, held
+
+
 def _prose(path: str, lines: list[str]) -> set[int]:
     """The <base> lines a fold may delete."""
     language = _language(path, lines)
-    text = "\n".join(lines) + "\n"
+    text, held = "\n".join(lines) + "\n", set()
+    # A template's comments are prose whole; the rule its rendered class gives reads the text without them.
+    if path.endswith(".j2"):
+        text, held = _blank(text, _jinja_comments(text))
+    if path.endswith((".tmpl", ".gotmpl")) or (path.endswith(".j2") and GO_OPEN.search(text)):
+        text, go = _blank(text, _go_comments(text))
+        held |= go
+    rendered = text.split("\n")[: len(lines)]
     if language == "python":
         prose = set(range(1, len(lines) + 1)) - _python_code(text)
     elif language == "js":
         prose = set(range(1, len(lines) + 1)) - _js_code(text)
+    elif language == "alloy":
+        prose = set(range(1, len(lines) + 1)) - _alloy_code(text)
     elif language == "json":
-        prose = {k for k, t in enumerate(lines, 1) if not t.strip()}
+        prose = {k for k, t in enumerate(rendered, 1) if not t.strip()}
     elif language == "markdown":
         return set(range(1, len(lines) + 1))
     else:
-        prose = {k for k, t in enumerate(lines, 1) if not t.strip() or t.lstrip().startswith("#")}
+        prose = {k for k, t in enumerate(rendered, 1) if not t.strip() or t.lstrip().startswith("#")}
+    prose |= held
     return prose - {1} if lines and lines[0].startswith("#!") else prose
 
 
