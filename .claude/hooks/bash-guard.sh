@@ -35,7 +35,8 @@
 # variable or a substitution leave it unknown, a relative `cd` after them keeps it so, and the vaulted-file and memo
 # families read an unknown directory as the payload's `cwd`. Scope is not tracked, so a `cd` outlives its subshell.
 #
-# Outside the memo family: a wrapper (`sudo tee`), a glob, a path a variable holds whole, an interpreter, `dd`, `rm`.
+# The memo family admits a `cp`, `mv` or `install` onto the memo whose every source ends in `.bak`. Outside it: a wrapper
+# (`sudo tee`), a glob, a path a variable holds whole, an interpreter, `awk -i inplace`, `rsync`, `ln`, `dd`, `rm`.
 #
 # The dispatched-agent family judges only a call whose payload carries `agent_id`, which the harness sets inside a
 # subagent alone, so the main loop's pushes and merges never reach it. The main checkout is the parent of the git
