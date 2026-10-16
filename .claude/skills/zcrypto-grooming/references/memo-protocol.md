@@ -1,6 +1,6 @@
 # The memo protocol — `.local/memo.md`
 
-**One writer:** a payload session sends `zcrypto-marco` the exact text and where it goes; marco writes, and records the `sha256 · lines · bytes` chain in `.local/coordination.md`. The memo lives in the main checkout under `.local/`, which `infra/scripts/sweep.sh` reads from any checkout.
+**One writer:** a payload session sends `zcrypto-marco` the exact text and where it goes; marco writes, and records the `sha256 · lines · bytes` chain in `.local/coordination.md`. The memo is written at a milestone — a PR opened or merged, an owner ruling, a topic registered or resolved, a branch parked — never after every step; the branch's own ledger carries the steps between. The memo lives in the main checkout under `.local/`, which `infra/scripts/sweep.sh` reads from any checkout.
 
 The human gates below attach to the operations themselves, not to whichever skill loaded this file.
 
