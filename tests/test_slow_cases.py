@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -18,6 +19,7 @@ def _collect(*args: str) -> set[str]:
         cwd=ROOT,
         capture_output=True,
         text=True,
+        env={**os.environ, "ZCRYPTO_RERUN_SLOW": "1"},  # the marks, not this branch's ledger of passed slow cases
     )
     assert done.returncode in (0, 5), done.stdout + done.stderr
     return {line for line in done.stdout.split("\n\n", 1)[0].splitlines() if "::" in line}
