@@ -393,3 +393,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #715 | 2026-10-14 | feat(research): 00130 — records 45 and 46 re-derived as B1 subjects | — | 00130 | T0223 |
 | #717 | 2026-10-15 | feat(alpha): 00131 — B2's funding and OI features on the 4h close grid | — | 00131 | T0023 |
 | #718 | 2026-10-15 | docs(research): iter-176 — holdout, DSR and fee contradictions resolved | iter-176 | — | — |
+| #724 | 2026-10-16 | feat(research): iter-177 — B1 trial 3: hourly realized-vol weights on A2 | iter-177 | 00132 | T0022 |
