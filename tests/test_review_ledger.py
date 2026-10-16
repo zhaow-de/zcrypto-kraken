@@ -108,9 +108,9 @@ def test_append_starts_its_row_on_a_line_of_its_own(tmp_path: Path):
 )
 def test_append_refuses_what_is_not_a_row_and_writes_nothing(tmp_path: Path, bad: list[str]):
     (tmp_path / "f.md").write_text("## Refutation\n")
-    done = _ledger("append", str(tmp_path), *bad)
+    done = _ledger("append", str(tmp_path), *(str(tmp_path / a) if a in ("f.md", "r.md") else a for a in bad))
     assert done.returncode != 0 and done.stderr, done
-    assert not (tmp_path / "ledger.jsonl").exists()
+    assert not (tmp_path / "ledger.jsonl").exists() and not (tmp_path / "r.md").exists()
 
 
 def test_append_refuses_a_report_dir_that_does_not_exist(tmp_path: Path):
