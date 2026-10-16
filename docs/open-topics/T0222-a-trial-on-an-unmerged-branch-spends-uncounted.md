@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: "an evaluation statement: a trial past record 47 is registered on develop, the first after this topic was registered — check: `git grep -h -c -E '\"trial_id\":(4[89]|[5-9][0-9]|[1-9][0-9]{2,})[,}]' -- docs/reference/trial-registry.jsonl` prints at least 1"
+ripe_when: "an evaluation statement: a trial past record 47 is registered on develop — check: `git grep -h -c -E '\"trial_id\":(4[89]|[5-9][0-9]|[1-9][0-9]{2,})[,}]' -- docs/reference/trial-registry.jsonl` prints at least 1"
 ---
 
 # A trial run on a branch that never merges spends uncounted
@@ -22,4 +22,4 @@ The trial registry lives in the tree, so a trial run and registered on a branch 
 ## Suggested next steps
 
 - Measure each shape against the trials 1–47 as they were registered: which would have counted every run the decisions logs pre-registered, and what each costs a research iteration.
-- Decide one with the owner, and land it before the next trial after record 48 runs; record 48 ran before the decision.
+- Decide one with the owner, and land it before the next trial after record 48 runs.
