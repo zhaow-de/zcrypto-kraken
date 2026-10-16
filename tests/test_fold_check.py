@@ -79,13 +79,19 @@ def _commit(repo: Path, files: dict[str, str | None], message: str) -> str:
     return _git(repo, "rev-parse", "HEAD")
 
 
+def _pre_reviewed(root: Path, base: str) -> tuple[Path, str]:
+    row = {"kind": "pre-review", "range": f"main..{base}", "tip": base, "ts": "t"}
+    (root.parent / "reads" / "ledger.jsonl").write_text(json.dumps(row) + "\n")
+    return root, base
+
+
 @pytest.fixture
 def repo(tmp_path: Path) -> tuple[Path, str]:
     root = tmp_path / "repo"
     root.mkdir()
     (tmp_path / "reads").mkdir()
     _git(root, "init", "-q", "-b", "main")
-    return root, _commit(root, {"a.py": A_PY, "notes.md": NOTES, "b.py": "VALUE = 1\n"}, "base")
+    return _pre_reviewed(root, _commit(root, {"a.py": A_PY, "notes.md": NOTES, "b.py": "VALUE = 1\n"}, "base"))
 
 
 def _fold(repo: tuple[Path, str], files: dict[str, str | None], rows: list[dict] = ROWS, range_: str | None = None):
@@ -101,26 +107,30 @@ def _ledger(repo: tuple[Path, str]) -> Path:
     return repo[0].parent / "reads" / "ledger.jsonl"
 
 
+def _rows(repo: tuple[Path, str]) -> list[dict]:
+    return [json.loads(line) for line in _ledger(repo).read_text().splitlines()] if _ledger(repo).exists() else []
+
+
 def test_a_fold_of_the_ship_texts_alone_passes_and_appends_its_row(repo):
     done, tip = _fold(repo, {"a.py": FOLDED_A, "notes.md": FOLDED_NOTES})
     assert done.returncode == 0, done.stdout + done.stderr
-    [row] = [json.loads(line) for line in _ledger(repo).read_text().splitlines()]
-    assert {k: row[k] for k in ("kind", "range", "tip")} == {"kind": "fold-check", "range": f"{repo[1][:9]}..{tip}", "tip": tip}
+    [_, row] = _rows(repo)
+    assert {k: row[k] for k in ("kind", "range", "tip")} == {"kind": "fold-check", "range": f"{repo[1]}..{tip}", "tip": tip}
     assert "passed" in done.stdout and done.stderr == ""
 
 
-def test_a_tip_named_by_a_revision_is_recorded_by_its_id(repo):
+def test_a_range_named_by_revisions_is_recorded_by_its_ids(repo):
     done, tip = _fold(repo, {"a.py": FOLDED_A, "notes.md": FOLDED_NOTES}, range_="HEAD~1..HEAD")
     assert done.returncode == 0, done.stdout + done.stderr
-    row = json.loads(_ledger(repo).read_text())
-    assert (row["range"], row["tip"]) == ("HEAD~1..HEAD", tip)
+    row = _rows(repo)[-1]
+    assert (row["range"], row["tip"]) == (f"{repo[1]}..{tip}", tip)
 
 
-def _refused(done: subprocess.CompletedProcess, repo, *says: str) -> None:
+def _refused(done: subprocess.CompletedProcess, repo, *says: str, kinds: tuple[str, ...] = ("pre-review",)) -> None:
     assert done.returncode == 1, done.stdout + done.stderr
     for said in says:
         assert said in done.stdout, (said, done.stdout)
-    assert not _ledger(repo).exists(), "a failing fold writes nothing"
+    assert [row["kind"] for row in _rows(repo)] == list(kinds), "a failing fold writes nothing"
 
 
 @pytest.mark.parametrize(
@@ -283,7 +293,7 @@ def test_a_range_that_changes_nothing_is_refused(repo):
 def test_usage_and_git_refusals_exit_2_and_write_nothing(repo, rows, range_):
     done, _ = _fold(repo, {"a.py": FOLDED_A, "notes.md": FOLDED_NOTES}, rows, range_)
     assert done.returncode == 2 and done.stderr, done
-    assert not _ledger(repo).exists()
+    assert [row["kind"] for row in _rows(repo)] == ["pre-review"]
 
 
 def test_a_report_dir_that_does_not_exist_is_refused(repo):
@@ -293,3 +303,108 @@ def test_a_report_dir_that_does_not_exist_is_refused(repo):
     args = [str(root.parent / "rows.json"), "--range", f"{base}..{tip}", "--report-dir", str(root.parent / "nowhere")]
     done = subprocess.run([sys.executable, str(SCRIPT), *args], cwd=root, env=ENV, capture_output=True, text=True)
     assert done.returncode == 2 and "is not a directory" in done.stderr, done
+
+
+GUARD_PY = 'def f(x):\n    # The comment the pre-review cut.\n    if x < 0:\n        raise ValueError("refused")\n    return x\n'
+SH = "#!/bin/sh\n# The comment the pre-review cut.\n\nset -eu\necho hi\n"
+JS = "// The comment the pre-review cut.\nconst limit = 3\nconst t = `one\n\ntwo`\n"
+
+
+def _cut(site: str) -> list[dict]:
+    return [{"site": site, "survives": "cut", "correct": True, "duplicateOf": "", "ship": ""}]
+
+
+@pytest.mark.parametrize(
+    ("base", "fold", "rows", "says"),
+    [
+        (
+            {"g.py": GUARD_PY},
+            {"g.py": "def f(x):\n    return x\n"},
+            _cut("g.py:2"),
+            ("g.py:3: deleted at", "g.py:4: deleted at", 'raise ValueError("refused")'),
+        ),
+        (
+            {"g.py": GUARD_PY},
+            {"g.py": "def f(x):\n    # The new comment.\n    return x\n"},
+            [{"site": "g.py:2", "survives": "fix", "correct": False, "duplicateOf": "", "ship": "# The new comment."}],
+            ("g.py:3: deleted at", "if x < 0:"),
+        ),
+        ({"s.py": 'MSG = """\n# Not a comment.\n"""\n'}, {"s.py": 'MSG = """\n"""\n'}, _cut("s.py:2"), ("s.py:2: deleted at",)),
+        ({"s.sh": SH}, {"s.sh": "#!/bin/sh\necho hi\n"}, _cut("s.sh:2"), ("s.sh:4: deleted at", "set -eu")),
+        ({"s.sh": SH}, {"s.sh": "\nset -eu\necho hi\n"}, _cut("s.sh:2"), ("s.sh:1: deleted at", "#!/bin/sh")),
+        ({"c.yml": "# The comment.\nkey: value\n"}, {"c.yml": ""}, _cut("c.yml:1"), ("c.yml:2: deleted at", "key: value")),
+        ({"j.js": JS}, {"j.js": "const t = `one\n\ntwo`\n"}, _cut("j.js:1"), ("j.js:2: deleted at", "const limit = 3")),
+        ({"j.js": JS}, {"j.js": JS.replace("one\n\ntwo", "one\ntwo")}, _cut("j.js:4"), ("j.js:4: deleted at",)),
+    ],
+    ids=[
+        "a guard cut beside a comment",
+        "a guard dropped beneath a fix",
+        "a line of a string that is no docstring",
+        "a shell command beside a comment",
+        "the #! line",
+        "a YAML key",
+        "a JS statement",
+        "a blank line inside a JS template",
+    ],
+)
+def test_a_fold_that_deletes_a_line_of_code_is_refused(repo, base, fold, rows, says):
+    done, _ = _fold(_pre_reviewed(repo[0], _commit(repo[0], base, "base")), fold, rows)
+    _refused(done, repo, *says)
+
+
+@pytest.mark.parametrize(
+    ("base", "fold", "rows"),
+    [
+        (
+            {"d.py": 'def f():\n    """One line.\n\n    A paragraph the pre-review cut.\n    """\n    return 1\n'},
+            {"d.py": 'def f():\n    """One line.\n    """\n    return 1\n'},
+            _cut("d.py:4"),
+        ),
+        ({"s.sh": SH}, {"s.sh": "#!/bin/sh\nset -eu\necho hi\n"}, _cut("s.sh:2")),
+        ({"c.yml": "a: 1\n# The comment.\nb: 2\n"}, {"c.yml": "a: 1\nb: 2\n"}, _cut("c.yml:2")),
+        ({"j.js": "/* A block\n   the pre-review cut. */\n\nconst a = 1\n"}, {"j.js": "const a = 1\n"}, _cut("j.js:1")),
+    ],
+    ids=["a docstring paragraph", "a shell comment", "a YAML comment", "a JS block comment"],
+)
+def test_a_fold_that_deletes_prose_alone_passes(repo, base, fold, rows):
+    done, _ = _fold(_pre_reviewed(repo[0], _commit(repo[0], base, "base")), fold, rows)
+    assert done.returncode == 0, done.stdout + done.stderr
+
+
+@pytest.mark.parametrize(
+    ("ledger", "admitted"),
+    [
+        (None, False),
+        ([], False),
+        ([("review", 40)], False),
+        ([("pre-review", 5)], False),
+        ([("pre-review", "fedcba9876543210")], False),
+        ([("pre-review", 7)], True),
+        ([("review", 40), ("pre-review", 9)], True),
+    ],
+    ids=[
+        "no ledger",
+        "an empty ledger",
+        "a review row at the base",
+        "a tip of five digits",
+        "a pre-review at another tip",
+        "a seven-digit prefix",
+        "a short tip beside a review row",
+    ],
+)
+def test_a_fold_is_checked_only_beside_a_pre_review_row_at_its_base(repo, ledger, admitted):
+    base = repo[1]
+    if ledger is None:
+        _ledger(repo).unlink()
+    else:
+        rows = [
+            {"kind": kind, "range": f"main..{base}", "tip": base[:tip] if isinstance(tip, int) else tip} for kind, tip in ledger
+        ]
+        _ledger(repo).write_text("".join(json.dumps(row) + "\n" for row in rows))
+    done, _ = _fold(repo, {"a.py": FOLDED_A, "notes.md": FOLDED_NOTES})
+    kinds = tuple(kind for kind, _ in ledger or [])
+    if admitted:
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert [row["kind"] for row in _rows(repo)] == [*kinds, "fold-check"]
+    else:
+        _refused(done, repo, "holds no pre-review row at", kinds=kinds)
