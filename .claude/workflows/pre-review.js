@@ -45,7 +45,7 @@ const CLAIM = {
   properties: {
     commit: { type: 'string' },
     claim: { type: 'string', description: 'one claim the message makes, in its words' },
-    disposition: { type: 'string', enum: ['reproduces', 'does-not-reproduce', 'not-checkable'] },
+    disposition: { type: 'string', enum: ['reproduces', 'does-not-reproduce', 'not-checkable', 'beyond-the-message-rule'] },
     by: { type: 'string', description: 'the command re-run and what it printed, or why it cannot be run' },
   },
   required: ['commit', 'claim', 'disposition', 'by'],
@@ -95,7 +95,7 @@ The first question is asked of every PARAGRAPH of every site the range touches, 
 
 Return a row for a site that needs a change — \`trim\`, \`cut\`, or \`fix\` when the length stands and a claim in it does not — with the text to ship, verbatim — the WHOLE site as it should read, never a fragment with the rest declared unchanged, because the author replaces the site with it — and never longer than what stands: a fix that lengthens a site is a \`cut\` you have not found yet; and a \`keep\` row for every paragraph of a site longer than eight lines that stands — a \`keep\` whose \`ship\` names no reason a reader would act on is not a keep, and the run reports it as a row you owe. A shorter site that stands as written is counted in \`graded\` and not listed, so the report is the exceptions and \`graded\` is the census.
 
-2. CLAIMS. Every claim a commit message in the range makes that a command can check — a number, a count, a grep verdict, a citation, a "none left" — re-run with the command the message quotes (or the obvious one when it quotes none) and compared. A claim that does not reproduce is disposition does-not-reproduce with what the command printed.${rulings && (!slice || slice === FAN[FAN.length - 1]) ? ` The task loop's rulings are claims too: every line of ${rulings} carrying \`Ruling:\` or \`minor (deferred)\` is re-run like a message's claim, its commit the one it names or \`task-loop\`.` : ''}
+2. CLAIMS. Every claim a commit message in the range makes that a command can check — a number, a count, a grep verdict, a citation, a "none left" — re-run with the command the message quotes (or the obvious one when it quotes none) and compared. A claim that does not reproduce is disposition does-not-reproduce with what the command printed. A message carries what changed and its test command's result line (CLAUDE.md): re-run those; a claim beyond them is reported as disposition beyond-the-message-rule, Minor, without re-deriving it, and it alone does not make the range unready — its remedy is the next message's discipline, never an amend.${rulings && (!slice || slice === FAN[FAN.length - 1]) ? ` The task loop's rulings are claims too: every line of ${rulings} carrying \`Ruling:\` or \`minor (deferred)\` is re-run like a message's claim, its commit the one it names or \`task-loop\`.` : ''}
 
 3. PROBES. Every mutate-probe verdict a message records: apply the quoted mutation to a copy of the file and compile it (python -m py_compile, bash -n, node --check as the file demands) — a mutation that does not parse voids the verdict whatever the script printed; then re-run the probe as quoted and read what the killed case died on: a collection error, an import error or a SyntaxError is not a kill by the guard.
 

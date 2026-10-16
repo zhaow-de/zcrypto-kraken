@@ -18,6 +18,8 @@ Run it with the harness's `run_in_background`, which hands the output back when 
 
 Run it from a checkout at `develop`'s tip, never from the `ops-journal` worktree — its scripts are `develop`'s only at the month-change re-cut; the journal entry is written in the `ops-journal` worktree, the report is not. Exit **0** all-clear · **1** attention · **2** a source could not be read. **Exit 2 is the first finding**, and the report names which source: a source that cannot be reached is a finding about that source, never a gap to pass over. `(no series)` is a FAIL, never a zero.
 
+A reading for the entry is taken whole and by value: a count is read off the value, never off `tail`, `head` or a `grep -c` whose case may not match; a time is pasted in UTC as the command printed it; Kraken's scheduled-maintenance feed is read beside its incidents feed.
+
 The `## Comparison` section, printed from the day `COMPARISON_FROM` in `infra/scripts/ops_daily.py` names while `grafana_auth.py`'s `STACKS` holds both stacks, moves no exit code: read its one line by `infra/runbooks/mon.md#mon-compare` step 2.
 
 ## 2. Follow the runbook, per alert that fired
