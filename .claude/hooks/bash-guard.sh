@@ -37,8 +37,9 @@
 #
 # The memo family reads a stage's program as its first word, as the cap arm does, so `sudo tee` and `timeout 5 sed -i`
 # are outside it, and a path is `.local/memo.md` by its last two components, spelled or reached from the stage's
-# directory. Outside it too: a glob, a brace, a path a variable holds whole, an interpreter, `dd`, `perl -i`,
-# `awk -i inplace`, `rm`, `ln`, and the memo as the source of a `mv`.
+# directory. A `cp`, `mv` or `install` onto the memo whose every source's file name ends in `.bak` is admitted, so a
+# copy taken aside can undo a bad edit. Outside it too: a glob, a brace, a path a variable holds whole, an
+# interpreter, `dd`, `perl -i`, `awk -i inplace`, `rm`, `ln`, and the memo as the source of a `mv`.
 #
 # The dispatched-agent family judges only a call whose payload carries `agent_id`, which the harness sets inside a
 # subagent alone, so the main loop's pushes and merges never reach it. The main checkout is the parent of the git
@@ -891,6 +892,8 @@ def judge_memo(words, raw, where):
         if into is None and len(ops) > 1:
             into, ops = ops[-1], ops[:-1]
             written.append(into)
+        if ops and all(posixpath.basename(s).endswith(".bak") for s in ops):
+            return
         # a directory target receives each source under its own name
         written += [posixpath.join(into, posixpath.basename(s)) for s in ops] if into else []
         how = f"as {whose} target"
