@@ -117,6 +117,7 @@ def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
     must do is the admission comment above `sameTip` in the flow it drives."""
     assert shutil.which("node") is not None, "no node on PATH, so the refusal cannot be driven"
     ancestor = {"kind": "pre-review", "tip": "0ancestor", "sameTreeAndMessages": True}
+    folded_ancestor = {**ancestor, "kind": "fold-check"}
     cases = {
         "review": [
             (None, "is not the array"),
@@ -137,6 +138,14 @@ def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
             ([{"kind": "pre-review", "tip": "abcdef012"}, {**ancestor, "against": "fedcba987"}], "was read against another tip"),
             ([{"kind": "pre-review", "tip": "0ancestor", "sameTreeAndMessages": False}], "records no pre-review"),
             ([{"kind": "review", "tip": "0ancestor", "sameTreeAndMessages": True}], "records no pre-review"),
+            ([{"kind": "fold-check", "tip": "abcdef012"}], None),
+            ([{"kind": "fold-check", "tip": "abcdef0"}], None),
+            ([{"kind": "fold-check", "tip": "abcdef0123456789"}], None),
+            ([{"kind": "fold-check", "tip": "abcde"}], "records no pre-review"),
+            ([{"kind": "fold-check", "tip": "fedcba987"}], "records no pre-review"),
+            ([folded_ancestor], "records no pre-review"),
+            ([{**folded_ancestor, "against": "abcdef012"}], "records no pre-review"),
+            ([{**folded_ancestor, "against": "fedcba987"}], "was read against another tip"),
         ],
         "re-review": [
             (None, "is not the array"),
@@ -158,6 +167,11 @@ def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
                 "records no pre-review",
             ),
             ([{"kind": "review", "tip": "0ancestor", "sameTreeAndMessages": True}], "records no pre-review"),
+            ([{"kind": "fold-check", "tip": "abcdef012"}], "records no review"),
+            ([{"kind": "review", "tip": "0ancestor"}, {"kind": "fold-check", "tip": "abcdef012"}], None),
+            ([{"kind": "review", "tip": "0ancestor"}, {"kind": "fold-check", "tip": "abcdef0"}], None),
+            ([{"kind": "review", "tip": "0ancestor"}, {"kind": "fold-check", "tip": "fedcba987"}], "records no pre-review"),
+            ([{"kind": "review", "tip": "0ancestor"}, {**folded_ancestor, "against": "abcdef012"}], "records no pre-review"),
         ],
     }
     for flow, table in cases.items():
