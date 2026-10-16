@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -18,24 +19,79 @@ os.environ["GIT_CEILING_DIRECTORIES"] = str(TMP_ROOT)
 import cli.engine.cycle as cycle
 
 SLOW_CASES = Path(__file__).resolve().parent / "slow-cases.txt"
+CONSUMERS = TMP_ROOT.parent / "infra" / "scripts" / "consumers.sh"
 _SLOW_DESELECTED = pytest.StashKey[int]()
 
 
+def _git(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["git", "-C", str(TMP_ROOT.parent), *args], capture_output=True, text=True)
+
+
 def _slow_ledger() -> Path | None:
-    """Where this branch's passed slow cases are recorded; None where every slow case runs and none is recorded."""
+    """Where this branch's passed slow cases are recorded, each as `<node id> <full sha of HEAD when it passed>`; None
+    where every slow case runs and none is recorded."""
     if "CI" in os.environ or "GITHUB_ACTIONS" in os.environ or os.environ.get("ZCRYPTO_RERUN_SLOW") == "1":
         return None
-
-    def git(*args: str) -> str:
-        return subprocess.run(["git", "-C", str(TMP_ROOT.parent), *args], capture_output=True, text=True).stdout.strip()
-
-    branch = git("branch", "--show-current")
+    branch = _git("branch", "--show-current").stdout.strip()
     if branch in ("develop", "main"):
         return None
     if not branch:
-        sha = git("rev-parse", "--short", "HEAD")
+        sha = _git("rev-parse", "--short", "HEAD").stdout.strip()
         return TMP_ROOT / "slow-passed" / f"detached-{sha}.txt" if sha else None
     return TMP_ROOT / "slow-passed" / f"{branch}.txt"
+
+
+def _recorded(ledger: Path) -> dict[str, str | None]:
+    """Each case's last line: the sha it passed at, or None for a line that carries none, which leaves the case to run."""
+    records: dict[str, str | None] = {}
+    for line in filter(None, (line.strip() for line in ledger.read_text().splitlines())):
+        node, _, sha = line.rpartition(" ")
+        if node and re.fullmatch(r"[0-9a-f]{40}([0-9a-f]{24})?", sha):
+            records[node] = sha
+        else:
+            records[line] = None
+    return records
+
+
+def _direct_readers(paths: list[str]) -> dict[str, set[str]] | None:
+    """Each path's `consumers.sh --direct` test readers, from one call over all of them; None when the script is absent
+    or fails, which leaves every case with a changed file to run."""
+    if not CONSUMERS.is_file():
+        return None
+    run = subprocess.run(["bash", str(CONSUMERS), "--direct", *paths], cwd=TMP_ROOT.parent, capture_output=True, text=True)
+    if run.returncode != 0:
+        return None
+    readers: dict[str, set[str]] = {}
+    current: set[str] | None = None
+    for line in run.stdout.splitlines():
+        if line.startswith("## "):
+            current = readers.setdefault(line[3:], set())
+        elif current is not None and line and not line.startswith("#"):
+            current.add(line)
+    return readers
+
+
+def _still_passed(slow: list[pytest.Item], records: dict[str, str | None]) -> set[str]:
+    """The slow cases whose recorded pass still stands: no file changed since its sha -- the working tree against that
+    commit, uncommitted edits included -- is its test file or has its test file among its `--direct` readers."""
+    changed: dict[str, set[str] | None] = {}
+    for sha in {records[item.nodeid] for item in slow if records.get(item.nodeid)}:
+        diff = _git("diff", "--name-only", "--no-renames", "-z", sha, "--")
+        changed[sha] = set(diff.stdout.split("\0")) - {""} if diff.returncode == 0 else None
+    paths = sorted(set().union(*(files for files in changed.values() if files)))
+    readers = _direct_readers(paths) if paths else {}
+    fresh = set()
+    for item in slow:
+        files = changed.get(records.get(item.nodeid) or "")
+        if files is None or (files and readers is None):
+            continue
+        try:
+            test_file = item.path.resolve().relative_to(TMP_ROOT.parent).as_posix()
+        except ValueError:
+            continue
+        if test_file not in files and not any(test_file in readers.get(path, ()) for path in files):
+            fresh.add(item.nodeid)
+    return fresh
 
 
 @pytest.fixture(autouse=True)
@@ -96,17 +152,18 @@ def pytest_collection_modifyitems(config, items):
     for item in slow:
         item.add_marker(pytest.mark.slow)
     collected = len(items)
-    ledger = _slow_ledger() if slow else None
+    result = yield
+    # After the yield, so a run whose `-m` or `-k` left no slow case pays for no `git diff` and no consumers.sh call.
+    kept = [item for item in items if item.nodeid in listed]
+    ledger = _slow_ledger() if kept else None
     if ledger is not None and ledger.is_file():
-        passed = set(ledger.read_text().splitlines())
-        done = {item.nodeid for item in slow if item.nodeid in passed}
+        done = _still_passed(kept, _recorded(ledger))
         if done:
             config.hook.pytest_deselected(items=[item for item in items if item.nodeid in done])
             items[:] = [item for item in items if item.nodeid not in done]
         config.stash[_SLOW_DESELECTED] = len(done)
         if hasattr(config, "workeroutput"):
             config.workeroutput["slow_deselected"] = len(done)
-    result = yield
     expression = config.option.keyword
     if expression and collected and not items and not config.option.collectonly:
         given = [f"-k '{expression}'"]
@@ -127,10 +184,10 @@ def pytest_runtest_makereport(item, call):
     report = yield
     if report.when == "call" and report.passed and item.get_closest_marker("slow"):
         ledger = _slow_ledger()
-        if ledger is not None:
+        if ledger is not None and (head := _git("rev-parse", "HEAD").stdout.strip()):
             ledger.parent.mkdir(parents=True, exist_ok=True)
             with ledger.open("a") as f:
-                f.write(f"{item.nodeid}\n")
+                f.write(f"{item.nodeid} {head}\n")
     return report
 
 
@@ -144,6 +201,6 @@ def pytest_testnodedown(node, error):
 def pytest_terminal_summary(terminalreporter, config):
     if count := config.stash.get(_SLOW_DESELECTED, 0):
         terminalreporter.write_line(
-            f"conftest: {count} slow case(s) deselected -- each passed earlier on this branch, per {_slow_ledger()}; "
-            f"ZCRYPTO_RERUN_SLOW=1 runs them again"
+            f"conftest: {count} slow case(s) deselected -- each passed at a commit since which no file its test file "
+            f"names (consumers.sh --direct) has changed, per {_slow_ledger()}; ZCRYPTO_RERUN_SLOW=1 runs them again"
         )
