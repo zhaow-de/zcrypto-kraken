@@ -6229,7 +6229,7 @@ rules:
         datasourceUid: "${GRAFANA_LOKI_DS_UID}"
         model:
           expr: >-
-            topk(5, sum by (host, container, level, msg) (count_over_time({host="zcrypto-mon", container="grafana-server", level=~"ERROR|CRITICAL"} != "database is locked" != "error=\"signal: terminated\"" | json message="message" | drop __error__, __error_details__ | label_format msg=`{{ if .message }}{{ printf "%.200s" .message }}{{ else }}{{ printf "%.200s" __line__ }}{{ end }}` [15m]))) or on() vector(0)
+            topk(5, sum by (host, container, level, msg) (count_over_time({host="zcrypto-mon", container="grafana-server", level=~"ERROR|CRITICAL"} != "database is locked" != "error=\"signal: terminated\"" != "error=\"context canceled\"" | json message="message" | drop __error__, __error_details__ | label_format msg=`{{ if .message }}{{ printf "%.200s" .message }}{{ else }}{{ printf "%.200s" __line__ }}{{ end }}` [15m]))) or on() vector(0)
           queryType: instant
           refId: A
       - refId: B

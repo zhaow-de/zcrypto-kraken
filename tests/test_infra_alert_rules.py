@@ -2472,7 +2472,15 @@ def test_the_grafana_error_rule_leaves_out_the_lines_the_lock_rule_counts():
 
 def test_the_grafana_error_rule_leaves_out_a_restarts_plugin_stops():
     expr = _log_expr("zcrypto-mon-grafana-error-logs")
-    assert '} != "database is locked" != "error=\\"signal: terminated\\"" | json' in expr, expr
+    assert '} != "database is locked" != "error=\\"signal: terminated\\""' in expr, expr
+
+
+def test_the_grafana_error_rule_and_its_panel_leave_out_a_context_canceled_line():
+    board = json.loads((REPO / "infra/grafana/fleet-health-dashboard.json").read_text())
+    (panel,) = [p for p in board["panels"] if p.get("id") == 911]
+    exclusions = '!= "error=\\"signal: terminated\\"" != "error=\\"context canceled\\"" | json'
+    for expr in (_log_expr("zcrypto-mon-grafana-error-logs"), *(t["expr"] for t in panel["targets"])):
+        assert exclusions in expr, expr
 
 
 def _container_label_of_the_clones_stream() -> str:
