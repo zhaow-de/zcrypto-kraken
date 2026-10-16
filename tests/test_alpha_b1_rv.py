@@ -393,7 +393,7 @@ def test_the_book_refuses_a_config_that_is_not_an_a2config():
         a2_positions_with_weights(prices, weights, config=vars(_SMALL_A2))
 
 
-def test_the_book_refuses_a_zero_close_before_it_divides_by_it():
+def test_the_book_refuses_a_zero_close_with_its_own_error():
     prices = _book_prices(400)
     weights = _inverse_vol_weights(prices, lookback=_SMALL_A2.basket_lookback)
     zeroed = {**prices, "ETH": prices["ETH"][:200] + [0.0] + prices["ETH"][201:]}
