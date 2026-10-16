@@ -40,6 +40,11 @@ def _slow_ledger() -> Path | None:
     return TMP_ROOT / "slow-passed" / f"{branch}.txt"
 
 
+def _tree_is_head() -> bool:
+    status = _git("status", "--porcelain", "--untracked-files=no")
+    return status.returncode == 0 and not status.stdout
+
+
 def _recorded(ledger: Path) -> dict[str, str | None]:
     records: dict[str, str | None] = {}
     for line in filter(None, (line.strip() for line in ledger.read_text().splitlines())):
@@ -180,7 +185,7 @@ def pytest_runtest_makereport(item, call):
     report = yield
     if report.when == "call" and report.passed and item.get_closest_marker("slow"):
         ledger = _slow_ledger()
-        if ledger is not None and (head := _git("rev-parse", "HEAD").stdout.strip()):
+        if ledger is not None and _tree_is_head() and (head := _git("rev-parse", "HEAD").stdout.strip()):
             ledger.parent.mkdir(parents=True, exist_ok=True)
             with ledger.open("a") as f:
                 f.write(f"{item.nodeid} {head}\n")

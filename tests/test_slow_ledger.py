@@ -107,6 +107,16 @@ def test_an_uncommitted_edit_to_a_file_its_test_names_runs_a_passed_slow_case_ag
     assert f"{SLOW} PASSED" in r.stdout and DESELECTED not in r.stdout, r.stdout + r.stderr
 
 
+def test_a_slow_case_passing_with_an_uncommitted_edit_leaves_no_ledger_line_and_runs_on_the_next_run(tree):
+    change(tree, SUBJECT, commit=False)
+    first = run(tree)
+    assert first.returncode == 0 and f"{SLOW} PASSED" in first.stdout, first.stdout + first.stderr
+    assert not ledger(tree).exists()
+    _git(tree, "checkout", "--", SUBJECT)
+    second = run(tree)
+    assert f"{SLOW} PASSED" in second.stdout and DESELECTED not in second.stdout, second.stdout + second.stderr
+
+
 def test_a_passed_slow_case_stays_deselected_after_a_commit_changes_an_unrelated_file(tree):
     first = run(tree)
     assert first.returncode == 0 and f"{SLOW} PASSED" in first.stdout, first.stdout + first.stderr
