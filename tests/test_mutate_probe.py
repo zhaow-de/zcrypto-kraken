@@ -204,6 +204,38 @@ def test_probe_runs_with_bytecode_writing_disabled(tmp_path):
     assert "baseline" in (r2.stdout + r2.stderr).lower()
 
 
+def test_the_baseline_control_and_mutation_runs_each_see_zcrypto_rerun_slow_1(tmp_path):
+    repo = tmp_path / "repo"
+    make_repo(repo)
+    seen = tmp_path / "seen.txt"
+    (repo / "probe.sh").write_text(f"#!/bin/sh\necho \"$ZCRYPTO_RERUN_SLOW\" >> {seen}\ngrep -q 'VALUE = 1' mod.py\n")
+    subprocess.run(["git", "-C", str(repo), "commit", "-qam", "env probe"], check=True)
+    args = ["--file", "mod.py", "--control", "s/VALUE = 1/VALUE = 9/", "--mutation", "s/VALUE = 1/VALUE = 2/", "--", "./probe.sh"]
+    # an inherited 0, so the assertion measures the script's export and not the environment it was started in
+    r = run(args, repo, env_extra={"ZCRYPTO_RERUN_SLOW": "0"})
+    assert r.returncode == 0 and "KILLED" in r.stdout, f"{r.returncode} {r.stdout}{r.stderr}"
+    assert seen.read_text().splitlines() == ["1", "1", "1"]
+
+
+@pytest.mark.parametrize(
+    ("phase", "control"),
+    [
+        pytest.param("control", "s/VALUE = 1/VALUE = 2/", id="control"),
+        pytest.param("mutation", "s/VALUE = 1/VALUE = 9/", id="mutation"),
+    ],
+)
+def test_a_control_or_mutation_run_that_ran_no_test_is_refused_not_scored(tmp_path, phase, control):
+    target = make_repo(tmp_path)
+    (tmp_path / "probe.sh").write_text(
+        "#!/bin/sh\ngrep -q 'VALUE = 1' mod.py && exit 0\ngrep -q 'VALUE = 9' mod.py && exit 1\nexit 5\n"
+    )
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qam", "exit-5 probe"], check=True)
+    r = run(["--file", "mod.py", "--control", control, "--mutation", "s/VALUE = 1/VALUE = 2/", "--", "./probe.sh"], tmp_path)
+    assert r.returncode == 2, f"{r.returncode} {r.stdout}{r.stderr}"
+    assert f"the {phase} run exited 5" in r.stderr and "KILLED" not in r.stdout
+    assert target.read_text() == "VALUE = 1\n"
+
+
 def test_purge_removes_a_pre_existing_pycache(tmp_path):
     repo = tmp_path / "repo"
     make_repo(repo)
