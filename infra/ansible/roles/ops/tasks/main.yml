@@ -250,6 +250,14 @@
     group: "{{ ops_hot_group }}"
     mode: "2775"
 
+- name: ensure the rolling canonical's staging directory exists
+  ansible.builtin.file:
+    path: "{{ ops_data_dir }}/{{ ops_rolling_staging_subdir }}"
+    state: directory
+    owner: "{{ ops_data_user }}"
+    group: "{{ ops_hot_group }}"
+    mode: "2775"
+
 # --- Fleet users/groups (spec 00057, ops phase): the zcrypto-data m2m identity + the hot-out
 # authoring bridge. Created in the unconditional preamble (no digest gate) -- these accounts must
 # exist before any data ownership or container-user change.
@@ -345,6 +353,17 @@
   ansible.builtin.set_fact:
     ops_uid: "{{ ansible_facts['getent_passwd'][ops_data_user][1] }}"
     ops_gid: "{{ ansible_facts['getent_passwd'][ops_data_user][2] }}"
+
+# A group record's fields after its name are password, gid and members, so its gid is index 1, where
+# the passwd record's above is index 2.
+- name: look up the zcrypto-hot exchange group (the rolling extension's container joins it by gid)
+  ansible.builtin.getent:
+    database: group
+    key: "{{ ops_hot_group }}"
+
+- name: derive the zcrypto-hot gid for the rolling extension's --group-add
+  ansible.builtin.set_fact:
+    ops_hot_gid: "{{ ansible_facts['getent_group'][ops_hot_group][1] }}"
 
 # --- spec 00082 converge guards (wave 1). Probe idiom: probes never fail or change; the assert
 # --- refuses with the fix in the message. Tests: tests/test_infra_converge_guards.py.

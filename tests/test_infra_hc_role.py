@@ -23,6 +23,7 @@ from tests.test_infra_converge_guards import (
     find_task,
     iter_tasks,
     load_tasks,
+    refreshes_the_apt_cache,
     task_index,
     truthy,
     when_conditions,
@@ -191,6 +192,13 @@ def test_the_shared_includes_run_in_the_roles_order_with_exactly_their_variables
         (t["name"], t["ansible.builtin.include_role"], t["vars"]) for t in INCLUDES
     ]
     assert [task["name"] for task in _tasks()[:2]] == [VAULT_PREFLIGHT, PLAIN_PREFLIGHT], "a no_log task would run first"
+
+
+def test_the_edge_include_comes_before_the_first_apt_refresh():
+    leaves = [task for task, _, _ in alloy_version.role_leaves("hc", frozenset())]
+    edges = [i for i, task in enumerate(leaves) if task.get("ansible.builtin.include_role") == {"name": "edge"}]
+    refreshes = [i for i, task in enumerate(leaves) if refreshes_the_apt_cache(task)]
+    assert edges and refreshes and edges[0] < refreshes[0], (edges, refreshes)
 
 
 # --- the edge: a cookieless HEAD on a page link answered there, everything else to the clone ----------------------

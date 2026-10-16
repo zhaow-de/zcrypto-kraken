@@ -339,6 +339,21 @@ def test_run_rsync_itemizes_and_returns_the_transfers(monkeypatch, tmp_path: Pat
     assert seen["kwargs"]["stdout"] is subprocess.PIPE and seen["kwargs"]["text"] is True
 
 
+def test_run_rsync_hands_rsync_the_pinned_ssh_transport_over_ipv4_only(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("ARCHIVE_SSH_KEY", "/keys/k")
+    monkeypatch.setenv("ARCHIVE_SSH_PORT", "2222")
+    monkeypatch.setenv("ARCHIVE_SSH_KNOWN_HOSTS", "/keys/known_hosts")
+    seen: list = []
+    monkeypatch.setattr(command.subprocess, "run", lambda argv, **_: seen.append(argv) or subprocess.CompletedProcess(argv, 0, ""))
+    command._run_rsync("h:/src/", tmp_path)
+    ((*_, flag, transport, source, dest),) = seen
+    assert (flag, source, dest) == ("-e", "h:/src/", str(tmp_path))
+    assert transport == (
+        "ssh -i /keys/k -p 2222 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o CheckHostIP=no -o AddressFamily=inet"
+        " -o UserKnownHostsFile=/keys/known_hosts"
+    )
+
+
 def test_run_rsync_without_a_key_is_a_transport_failure_with_no_transfers(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.delenv("ARCHIVE_SSH_KEY", raising=False)
     assert command._run_rsync("h:/src/", tmp_path) == RsyncOutcome(2, frozenset())

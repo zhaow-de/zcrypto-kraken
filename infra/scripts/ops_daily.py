@@ -340,9 +340,12 @@ def _a_month_after(d: date) -> date:
     return date(year, month, min(d.day, calendar.monthrange(year, month)[1]))
 
 
-HEALABLE_COUNTER = "zcrypto_reconcile_healable_gap_seconds_total"
 REFDATA_RUNBOOK = "infra/runbooks/reference-data.md#refdata-sweep-due"
-HEALABLE_RUNBOOK = "infra/runbooks/ops.md#healable-threshold-rederivation-due"
+BOOKKEEPING_RUNBOOK = "infra/runbooks/bookkeeping.md#kraken-bookkeeping-due"
+STATEMENTS = Path("/mnt/zhao-crypto/kraken-statements")
+# The first window's due day (spec 00126 D7, D9).
+BOOKKEEPING_FIRST_DUE = date(2026, 11, 2)
+_WINDOW_DIR = re.compile(r"^\d{4}-\d{2}-\d{2}_(\d{4}-\d{2}-\d{2})$")
 # (host, runbook)
 PATCH_PASSES = (
     ("zcrypto-mon", "infra/runbooks/mon.md#mon-patch-pass"),
@@ -379,14 +382,41 @@ class RemindersRead:
     unreadable: str | None = None
 
 
+def newest_window_end(statements: Path) -> date | None:
+    """The exclusive end of the newest archived window: a `<start>_<end>` directory holding a provenance file."""
+    # A listing proves the mount: an automount's directory stands whether or not the NAS answers, and one that lists
+    # nothing is read as unmounted.
+    if next(statements.parent.iterdir(), None) is None:
+        raise OSError(f"{statements.parent} lists nothing, so the NAS export is not mounted")
+    try:
+        entries = list(statements.iterdir())
+    except FileNotFoundError:
+        return None
+    ends = [
+        date.fromisoformat(match.group(1))
+        for entry in entries
+        if (match := _WINDOW_DIR.match(entry.name)) and any(path.name.endswith(".provenance.json") for path in entry.iterdir())
+    ]
+    return max(ends, default=None)
+
+
+def _bookkeeping_due(end: date | None) -> date:
+    if end is None:
+        return BOOKKEEPING_FIRST_DUE
+    following = date(end.year + 1, 1, 1) if end.month == 12 else date(end.year, end.month + 1, 1)
+    return following + timedelta(days=1)
+
+
+def _due_status(days: int) -> str:
+    return f"due in {days} days" if days >= 0 else f"OVERDUE by {-days} days"
+
+
 def read_reminders(
-    token: str,
     *,
     now: datetime,
-    window: timedelta,
-    opener=urllib.request.urlopen,
     register: Path = REGISTER,
     deploy_log: Path = DEPLOY_LOG,
+    statements: Path | None = None,
 ) -> RemindersRead:
     """Due-ness computed from state the pass can read, so a Slack reminder that never arrives costs
     nothing (spec 00107 D1); each reminder comes from the source that actually knows.
@@ -408,7 +438,7 @@ def read_reminders(
             note(f"no dated row under `## Re-confirmation log` in {register.name}")
         else:
             days = (_a_month_after(last) - now.date()).days
-            status = f"due in {days} days" if days >= 0 else f"OVERDUE by {-days} days"
+            status = _due_status(days)
             read.reminders.append(
                 Reminder("refdata sweep", f"{status} (last sweep {last.isoformat()})", owed=days <= 0, runbook=REFDATA_RUNBOOK)
             )
@@ -426,40 +456,20 @@ def read_reminders(
         # No full converge on record is a node that is not built: nothing is owed on it.
         if patched is not None:
             days = (_a_month_after(patched) - now.date()).days
-            status = f"due in {days} days" if days >= 0 else f"OVERDUE by {-days} days"
+            status = _due_status(days)
             last_pass = f"{status} (last full converge {patched.isoformat()})"
             read.reminders.append(Reminder(f"{ssh_alias(host)} patch pass", last_pass, owed=days <= 0, runbook=runbook))
 
-    hours = max(1, int(window.total_seconds() // 3600))
     try:
-        series = _proxy_query(PROM_DS_UID, f"sum(increase({HEALABLE_COUNTER}[{hours}h]))", token, opener)
-        resets = _proxy_query(PROM_DS_UID, f"sum(resets({HEALABLE_COUNTER}[{hours}h]))", token, opener)
-        if not series or not resets:
-            note("the healable counter returned no series, so the re-derivation reminder could not be evaluated")
-            return read
-        moved = float(series[0]["value"][1])
-        reset = float(resets[0]["value"][1]) > 0
+        end = newest_window_end(statements or STATEMENTS)
     except _UNREACHABLE as exc:
-        note(f"the healable counter could not be read: {exc}")
-        return read
-    if reset:
-        # A counter summed from an append-only ledger CAN DECREASE when a record is corrected or the
-        # ledger is rebuilt -- a correction that raises the total resets nothing -- and `increase()`
-        # then reports the whole post-reset value as movement (`T0044` records the correction it
-        # was opened on). This mirrors `zcrypto-reconcile-healable-gap-rate`'s `resets()`.
-        owed = True
-        status = f"counter reset in {hours} h (a ledger correction or rebuild), so its movement says nothing -- recount the qualifying days from the ledger"
+        note(f"the statements tree could not be read: {exc}")
     else:
-        owed = moved > 0
-        # `increase()` extrapolates to the range boundaries, so this figure is NOT the ledger's
-        # delta -- and the ledger is the arbiter the runbook names, precisely because Cloud cannot
-        # answer the question. Quote it as the approximation it is (spec 00107 D3).
-        status = (
-            f"counter moved ~+{moved:.1f} s in {hours} h (scraped, extrapolated -- not the ledger's), recount the qualifying days"
-            if owed
-            else f"counter unchanged in {hours} h"
-        )
-    read.reminders.append(Reminder("healable re-derivation", status, owed=owed, runbook=HEALABLE_RUNBOOK))
+        days = (_bookkeeping_due(end) - now.date()).days
+        status = _due_status(days)
+        newest = f"newest window ends {end.isoformat()}" if end else "no window archived yet"
+        read.reminders.append(Reminder("kraken bookkeeping", f"{status} ({newest})", owed=days <= 0, runbook=BOOKKEEPING_RUNBOOK))
+
     return read
 
 
@@ -1030,6 +1040,79 @@ def read_soak_verdict(*, now: datetime, runner) -> Check:
         return Check(SOAK_CHECK, SOAK_EXPR, ok=False, value=f"unreadable: {exc}")
 
 
+ROLLING_CHECK = "rolling canonical head"
+ROLLING_HUB = Path("/mnt/zhao-crypto/hot/ohlc-rolling")
+# A day's finals publish two days after it at 02:52Z at the earliest, so a head two days back is current and three is
+# the reading before that hour.
+ROLLING_STALE_AFTER_DAYS = 3
+# tape-bars' tree on the host the pass runs on.
+ROLLING_TAPE = Path("/var/lib/zcrypto-ops/tape-bars")
+# Days past the held day's nominal publication, two days after it, from which a pair still without its final is the
+# owner's decision.
+ROLLING_ESCALATE_AFTER_DAYS = 14
+
+
+def read_rolling_head(*, now: datetime, root: Path, tape_root: Path) -> Check:
+    """The rolling canonical's newest index line on the hub, one row: its chain walked down to the base, its own files
+    re-hashed, and its day at most `ROLLING_STALE_AFTER_DAYS` before `now`'s UTC date.
+
+    The newest line is read by its day, never by `head`, which steps past a line whose files are absent.
+    """
+    from cli.data import rolling
+    from cli.tick.materialize import _final_path
+
+    expr = f"the newest index line under {root}, its chain and its files"
+    today = now.astimezone(timezone.utc).date()
+    try:
+        if not rolling.is_chained(root):
+            raise FileNotFoundError(f"{root} holds no index/")
+        days = rolling.line_days(root)
+        if not days:
+            raise rolling.RollingError(f"{root} holds no index line")
+        line = rolling.walk_chain(root, days[-1])[-1]
+        rolling.verify_line(root, line)
+        set_pairs = rolling.pairs(root)
+        closed = rolling.closed_pairs(line, set_pairs)
+        named = f"line {line.sha256[:12]}"
+        # `is_ended` reads the tape only for a line closing every pair.
+        if closed == set(set_pairs):
+            rolling.list_tape(tape_root, set_pairs)
+        if rolling.is_ended(root, line, tape_root):
+            value = (
+                f"ended at {line.day}, {named}: the line closes every pair and no tape-bars final under {tape_root} "
+                "is dated after it"
+            )
+            return Check(ROLLING_CHECK, expr, ok=False, value=value)
+        age = (today - line.day).days
+        aged = f"{line.day}, {age} day{'' if age == 1 else 's'} old, {named}"
+        if age <= ROLLING_STALE_AFTER_DAYS:
+            return Check(ROLLING_CHECK, expr, ok=True, value=f"head {aged}")
+        held = line.day + timedelta(days=1)
+        rolling.list_tape(tape_root, set_pairs)
+        lacking = [pair for pair in set_pairs if pair not in closed and not _final_path(tape_root, pair, held).is_file()]
+        published = held + timedelta(days=2)
+        past = (today - published).days
+        has = "has" if len(lacking) == 1 else "have"
+        if lacking and past >= ROLLING_ESCALATE_AFTER_DAYS:
+            value = (
+                f"the owner decides for {held}: {', '.join(lacking)} {has} no tape-bars final for it under {tape_root}, "
+                f"{past} days past its publication on {published}; close {'it' if len(lacking) == 1 else 'each'} from {held}, "
+                f"or wait (head {line.day}, {named})"
+            )
+        elif lacking:
+            value = f"held at {aged}: {', '.join(lacking)} {has} no tape-bars final for {held} under {tape_root}"
+        else:
+            value = (
+                f"held at {aged}: no pair lacks a tape-bars final for {held} under {tape_root}, "
+                "so the extension or the hub's pull is behind"
+            )
+        return Check(ROLLING_CHECK, expr, ok=False, value=value)
+    except OSError as exc:
+        return Check(ROLLING_CHECK, expr, ok=False, value=f"unreadable: {exc}")
+    except rolling.RollingError as exc:
+        return Check(ROLLING_CHECK, expr, ok=False, value=str(exc))
+
+
 # The first day the markdown report compares the two stacks, derived in plan 00123's R12; retirement ends the
 # comparison by leaving the stack table one stack, so the constant is never unset again.
 COMPARISON_FROM: date | None = date(2026, 10, 10)
@@ -1314,6 +1397,7 @@ def main(argv: list[str]) -> int:
     verdict.append(read_unattended_upgrades(now=now, runner=ssh_read))
     verdict.append(read_agentboard_cgroup(runner=ssh_read))
     verdict.append(read_soak_verdict(now=now, runner=soak_run))
+    verdict.append(read_rolling_head(now=now, root=ROLLING_HUB, tape_root=ROLLING_TAPE))
     # The markdown run alone compares, and once a pass: the daily-ops skill's step 1 passes the flag, the runbooks' confirm
     # reads and the `--journal-entry` run do not.
     compares = "--compare" in argv and "--journal-entry" not in argv and comparison_due(now)
@@ -1323,7 +1407,7 @@ def main(argv: list[str]) -> int:
         deadmen=read_deadmen(token),
         verdict=verdict,
         deploys=read_deploys(window, now=now),
-        reminders=read_reminders(token, now=now, window=window),
+        reminders=read_reminders(now=now),
         now=now,
         window=window,
         comparison=read_comparison(now=now, runner=compare_run) if compares else None,
@@ -1560,6 +1644,7 @@ _FIRST_STAGE_SHAPES = (
     _Shape(("grafana-query.py",), {"--since": _SINCE, "--step": _NAME, "--stack": _NAME}, arity=(1, 6), classes=(_QUOTED,)),
     _Shape(("grafana-query.py",), {"--loki": None, "--stack": _NAME}, arity=(1, 6), classes=(_QUOTED,)),
     _Shape(("continuity.py",), {"--root": _PATH, "--since": _SINCE, "--until": _SINCE}, arity=(0, 3), classes=(_PATH,)),
+    _Shape(("zcrypto", "data", "rolling", "verify"), {"--root": _PATH, "--as-of": _DAY}),
     _Shape(("ops-postverify.sh",), {"--since": _SINCE}, arity=(0, 3), classes=(_QUOTED,)),
     _Shape(("id",), arity=(0, 1), classes=(_NAME,)),
 )

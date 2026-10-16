@@ -34,6 +34,7 @@ The assessment of 2026-10-01 is `docs/research/92.self-hosted-observability-asse
 - **R4's db2 and db3, 2026-10-05**: `db1`'s day read of its Alloy headroom came first, 0.171 against the bar of 0.9; then `db2` converged at 20:48:54Z and `db3` at 21:03:31Z, Valkey and Sentinel untouched on each, each node's hour of log lines equal on both stacks.
 - **The Alloy wave, 2026-10-07**: every `observed` host moved to v1.20.1, the NAS and the capture pair dual-shipping in it, the primary's Alloy recreated last at 12:14:42Z. At 2026-10-08T15:54:01Z the node read `v1.20.1` alone in `alloy_build_info`, and every job Cloud reads for each host on the node too, each above Cloud's count; its head read 25,189 on 2026-10-07 and 26,373 then, against 10,222 alone — above the plan's 21,022 to 22,222, under the bar of 40,000. The boundary reading is Cloud 5 and the node 6, off by the sample at `t`, written into the spec's measured basis.
 - **The comparison's earliest day is 2026-10-10**: the primary's recreate plus 50 h is 2026-10-09T14:14:42Z.
+- **The node's four direct-shipped dead-men are silenced under spec 00121 D22 step (1), taken early.** On the owner's word of 2026-10-15, `zcrypto-capture-log-dead-primary`, `-secondary`, `zcrypto-engine-log-dead` and `zcrypto-ops-poller-log-dead` each carry a node silence on its `__alert_rule_uid__` alone, expiring 2026-11-09T12:00Z; D22 step (3) ends each at its stream's hand-over, one not handed over by then pages again, and a node rebuild loses them.
 
 ## Done so far
 

@@ -15,14 +15,14 @@ A heading carrying the date and the verdict, then one paragraph of labelled clau
 
 window 24 h to 2026-08-29 06:00Z · alerts none · checks all pass · logs 0 ERROR/CRITICAL lines ·
 dead-men 0 down via Grafana, 10 read directly · deploys none ·
-reminders refdata sweep: due in 5 days (last sweep 2026-08-04), healable re-derivation: counter unchanged in 24 h · actions none · follow-ups none
+reminders refdata sweep: due in 5 days (last sweep 2026-08-04) · actions none · follow-ups none
 ```
 
 The verdict is one of `all-clear`, `attention`, `incident`. `tests/test_ops_journal.py` checks only that every heading parses and that dates increase within a file — greppable, not a schema, so the paragraph stays prose an operator can read.
 
 ## The branch
 
-A standing branch, `ops-journal`, cut from `develop`. The pass commits to it after every run; at a month change it opens the finished month's PR, merges it on CI green, and re-cuts the branch from `develop`. That is a standing exception to `open-pr`'s Step 0 word and to the pre-push read, holding only while every file of the PR is under this directory — `merge-pr`'s gate scopes it so: a month of all-clear entries has nothing for a reviewer to read (`.claude/skills/zcrypto-daily-ops/SKILL.md` carries the month-change step).
+A standing branch, `ops-journal`, cut from `develop`. The pass commits to it after every run; at a month change it opens the finished month's PR, merges it on CI green, and re-cuts the branch from `develop`. That is a standing exception to `open-pr`'s Step 0 word and to the pre-push read, holding only while every file of the PR is in the records family `RECORDS` names in `infra/scripts/merge-gate.py`: a month of all-clear entries has nothing for a reviewer to read (`.claude/skills/zcrypto-daily-ops/SKILL.md` carries the month-change step).
 
 ## What this is not
 

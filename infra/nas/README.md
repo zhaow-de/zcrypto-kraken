@@ -78,6 +78,7 @@ Every pull channel shares one shape, so each row below says only what is particu
 - Its `*_SOURCE` is an rsync source spec `zcrypto-data@<host>:` — the m2m data user, never the admin `zcrypto-deploy` (spec 00057) — whose `rrsync -ro` forced command pins the remote subtree, so the client-side path is ignored. The ops-node channels (liquidations, panel, reconciled, hot) are set up in `infra/ops/README.md`.
 - Its `*_SSH_KEY` is that channel's own least-privilege keypair under `keys/`, so a leaked key exposes one channel. `cli/archive/command.py` reads a single `ARCHIVE_SSH_KEY` from the environment and the entrypoint sets it per subprocess call, which is why each channel needs its own variable here. Every source's host key is pinned in the one shared `keys/known_hosts` (bootstrap step 4).
 - Its `*_SSH_PORT` is scoped to that pull the same way: the ops node is a home-LAN box on port **22**, while the VPS channels take `ARCHIVE_SSH_PORT`, 10022.
+- Its ssh is pinned to IPv4 (`AddressFamily=inet`), the NAS having no IPv6 route.
 - It is hash-verified against the source's `.sha256` sidecars — except the engine-journal pull (`--no-verify`) and the `hot/` and dead-man backup pulls (each a raw rsync), each named in its row.
 - Leaving its `*_SOURCE` unset skips that pull entirely, so this stack runs on a NAS that has not been given the channel. The primary capture pull is the exception: it is unconditional.
 
@@ -105,7 +106,7 @@ Every pull channel shares one shape, so each row below says only what is particu
 | `RECONCILED_SSH_KEY` | The reconciled-overlay channel's key. | fixed to `/keys/sync_reconciled` in `compose.yaml` |
 | `RECONCILED_SSH_PORT` | The ops node's port for this pull. | defaults to `22` in `compose.yaml` |
 | `RECONCILED_DEST` | Where the healed-overlay mirror lands — only **healed** hours, plus the append-only ledger. | defaults to `/archive/capture-reconciled` in `compose.yaml` |
-| `HOT_SOURCE` | The **ops node's** hot-out outbox (spec 00056 D2/D4), pulled by a raw `rsync --archive --ignore-existing` rather than `zcrypto archive pull`: hot sets carry `manifest.json`, not sidecars. | deploy-time `.env` |
+| `HOT_SOURCE` | The **ops node's** hot-out outbox (spec 00056 D2/D4), pulled by a raw `rsync --archive --ignore-existing` rather than `zcrypto archive pull`: hot sets carry `manifest.json` — `ohlc-rolling` its chained index instead — not sidecars. | deploy-time `.env` |
 | `HOT_DEST` | Where the hot-cluster working set lands — the `hot/` hub itself (`/archive` == `/volume1/ZhaoCrypto`). | defaults to `/archive/hot` in `compose.yaml` |
 | `HOT_SSH_KEY` | Private key for the hot-out pull — a **separate** least-privilege keypair (`sync_hot`), never the other channels' keys. | fixed to `/keys/sync_hot` in `compose.yaml` |
 | `HOT_SSH_PORT` | The ops node's SSH port, scoped to this pull only. Home-LAN port **22**, like the panel/reconciled channels. | defaults to `22` in `compose.yaml` |

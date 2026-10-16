@@ -1663,14 +1663,14 @@ rules:
       # depend on the mode. `healable` counts the seconds the secondary WITNESSED and could cover, in
       # both modes.
       #
-      # PROVISIONAL: 300 s per pair per day is BOUNDED, not fitted. Divided by the live pair count, so
-      # 300 is WALL-CLOCK seconds per pair -- undivided it is a cross-stream sum that tightens silently
-      # with every pair added. A single pair's long silence pages the stream-silent rules first and
-      # reaches this one only past 300 s times the pair count; a mean cannot exceed its largest
-      # pair, so a day crosses 300 only when some pair booked more than 300 s in it. Blind to any
-      # gap under the reconciler's 30 s floor, clean-close reconnects among them, which
-      # zcrypto-capture-reconnect-rate reads instead. The reminder in infra/runbooks/ops.md counts
-      # the organic days the real fit needs.
+      # Divided by the live pair count, so 300 is WALL-CLOCK seconds per pair -- undivided it is a
+      # cross-stream sum that tightens silently with every pair added. A single pair's long silence
+      # pages the stream-silent rules first and reaches this one only past 300 s times the pair count;
+      # a mean cannot exceed its largest pair, so a day crosses 300 only when some pair booked more
+      # than 300 s in it. Blind to any gap under the reconciler's 30 s floor, clean-close reconnects
+      # among them, which zcrypto-capture-reconnect-rate reads instead. Fitted at ~3.5x the mean
+      # per-pair healable day after 2026-08-04, a capture-tagged primary converge's hour left out, on
+      # the owner's word; the days and their figures are in the commit message that fitted it.
       #
       # `and resets(...) == 0` guards the same counter-reset hazard as the residual-gap rule (T0044),
       # and MORE so here: this window is 24h, so a ledger correction would false-page for a full day.
@@ -5950,18 +5950,17 @@ rules:
     orgId: 1
     condition: C
     data:
-      # A text match, since the line is Grafana's own and carries no label for it. Grafana's retry of
-      # a locked write logs the same text at info, `Database locked, sleeping then retrying`, at each
-      # start and beside its cleanup job: the second filter leaves those out, so what is counted is
-      # an operation Grafana gave up on, a write whose retries ran out or a request it could not
-      # authenticate. The window is the burst rules' 15 minutes.
+      # A match on Grafana's own line, which carries no label for it. A datasource plugin can log each
+      # query it runs in the line's `query` field, so a line whose text sits there is a logged query,
+      # never a lock, and is left out; so is Grafana's retry of a locked write, `Database locked,
+      # sleeping then retrying`.
       - refId: A
         queryType: instant
         relativeTimeRange: {from: 900, to: 0}
         datasourceUid: "${GRAFANA_LOKI_DS_UID}"
         model:
           expr: >-
-            sum(count_over_time({host="zcrypto-mon", container="grafana-server"} |= "database is locked" != "sleeping then retrying" [15m])) or on() vector(0)
+            sum(count_over_time({host="zcrypto-mon", container="grafana-server"} |= "database is locked" | logfmt | msg!~".*sleeping then retrying.*" | query!~".*database is locked.*" [15m])) or on() vector(0)
           queryType: instant
           refId: A
       - refId: B
@@ -6230,7 +6229,7 @@ rules:
         datasourceUid: "${GRAFANA_LOKI_DS_UID}"
         model:
           expr: >-
-            topk(5, sum by (host, container, level, msg) (count_over_time({host="zcrypto-mon", container="grafana-server", level=~"ERROR|CRITICAL"} != "database is locked" | json message="message" | drop __error__, __error_details__ | label_format msg=`{{ if .message }}{{ printf "%.200s" .message }}{{ else }}{{ printf "%.200s" __line__ }}{{ end }}` [15m]))) or on() vector(0)
+            topk(5, sum by (host, container, level, msg) (count_over_time({host="zcrypto-mon", container="grafana-server", level=~"ERROR|CRITICAL"} != "database is locked" != "error=\"signal: terminated\"" | json message="message" | drop __error__, __error_details__ | label_format msg=`{{ if .message }}{{ printf "%.200s" .message }}{{ else }}{{ printf "%.200s" __line__ }}{{ end }}` [15m]))) or on() vector(0)
           queryType: instant
           refId: A
       - refId: B

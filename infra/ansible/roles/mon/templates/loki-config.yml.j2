@@ -6,7 +6,9 @@ server:
   http_listen_port: {{ mon_loki_port }}
   grpc_listen_address: 127.0.0.1
   grpc_listen_port: {{ mon_loki_grpc_port }}
-  log_level: info
+  # Warnings and above only: at info Loki logs statistics for every query it answers, and stores
+  # each line itself.
+  log_level: warn
 
 common:
   instance_addr: 127.0.0.1

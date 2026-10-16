@@ -47,8 +47,9 @@ SPA_GRID = ((30, 7), (30, 1234), (102, 42), (102, 7), (102, 1234))
 
 def load_union(interval: int, *, root: Path = DATA_ROOT, read=read_parquet) -> tuple[list[datetime], dict[str, list[float | None]]]:
     """Union-calendar bar-START stamps and per-asset closes (None where an asset has no bar); a capturing `read` (an
-    adapter over `ObservedReader.read_series`) is how a run's dataset identity is observed from the bytes this function
-    actually opens, rather than claimed alongside it."""
+    adapter over `ObservedReader.read_series`, or over `ObservedReader.read_rolling` for the rolling set) is how a run's
+    dataset identity is observed from what this function actually reads -- the bytes it opens, or the rolling set's
+    as-of index line, which commits to them -- rather than claimed alongside it."""
     assets = CrossfreqSystemConfig().assets
     frames = {a: read(root / a / "EUR" / f"{interval}.parquet") for a in assets}
     union_ts = sorted(set().union(*[set(f["ts"].to_list()) for f in frames.values()]))

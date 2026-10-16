@@ -1,5 +1,6 @@
 """Spec 00082: a converge guard's condition is evaluated through Ansible's own templar, fed constructed probe outcomes -- never a re-implementation of the logic."""
 
+import ast
 import hashlib
 import importlib.util
 import json
@@ -71,6 +72,19 @@ def set_facts(task: dict, variables: dict) -> dict:
 
     t = Templar(loader=DataLoader(), variables=variables)
     return {k: t.template(trust_as_template(v)) for k, v in task["ansible.builtin.set_fact"].items()}
+
+
+def refreshes_the_apt_cache(task: dict) -> bool:
+    for key, args in task.items():
+        module = key.rsplit(".", 1)[-1]
+        if not isinstance(args, dict):
+            continue
+        if module in ("apt", "package") and (args.get("update_cache") or args.get("cache_valid_time")):
+            return True
+        if module == "apt_repository" and args.get("update_cache", True):
+            return True
+    shell = " ".join(str(task.get(key, "")) for key in ("ansible.builtin.command", "ansible.builtin.shell"))
+    return bool(re.search(r"\bapt(-get)?\s+update\b", shell))
 
 
 def task_index(tasks: list[dict], name: str) -> int:
@@ -2187,6 +2201,41 @@ def test_ops_pins_probe_inspects_the_container_the_compose_template_names():
         )
 
 
+OPS_OUTBOX_TASK = "ensure the ops hot-out outbox directory exists"
+OPS_ROLLING_STAGING_TASK = "ensure the rolling canonical's staging directory exists"
+
+
+def test_the_rolling_staging_dir_is_the_outboxs_sibling_with_its_owner_group_and_mode():
+    tasks = load_tasks(OPS_TASKS)
+    staging = find_task(tasks, OPS_ROLLING_STAGING_TASK)
+    assert staging["ansible.builtin.file"] == {
+        "path": "{{ ops_data_dir }}/{{ ops_rolling_staging_subdir }}",
+        "state": "directory",
+        "owner": "{{ ops_data_user }}",
+        "group": "{{ ops_hot_group }}",
+        "mode": "2775",
+    }
+    assert "when" not in staging, "ungated like the outbox: a converge without a digest still leaves the staging in place"
+    assert task_index(tasks, OPS_ROLLING_STAGING_TASK) > task_index(tasks, OPS_OUTBOX_TASK)
+    defaults = yaml.safe_load(OPS_DEFAULTS.read_text())
+    staging_subdir = defaults["ops_rolling_staging_subdir"]
+    assert "/" not in staging_subdir and staging_subdir != defaults["ops_hot_out_subdir"]
+
+
+def test_the_outbox_groups_gid_is_derived_beside_the_data_users():
+    tasks = load_tasks(OPS_TASKS)
+    (lookup,) = [i for i, t in enumerate(tasks) if t.get("ansible.builtin.getent", {}).get("key") == "{{ ops_hot_group }}"]
+    (derive,) = [i for i, t in enumerate(tasks) if "ops_hot_gid" in t.get("ansible.builtin.set_fact", {})]
+    first_gated_block = next(i for i, t in enumerate(tasks) if "block" in t and "digest is defined" in str(t.get("when", "")))
+    assert tasks[lookup]["ansible.builtin.getent"]["database"] == "group"
+    assert lookup < derive < first_gated_block, "the tape-bars runner reading the gid renders inside a digest-gated block"
+    variables = {
+        "ansible_facts": {"getent_group": {"zcrypto-hot": ["x", "1002", "zcrypto-data,zhaow"]}},
+        "ops_hot_group": "zcrypto-hot",
+    }
+    assert set_facts(tasks[derive], variables)["ops_hot_gid"] == "1002"
+
+
 ACCESS_TASKS = ANSIBLE / "roles" / "access" / "tasks" / "main.yml"
 _RELAY_GATE = "the ssh relay is running the target this play renders"
 _RELAY_FLUSH = "apply pending handlers before the relay drift gate"
@@ -2899,9 +2948,11 @@ sys.exit(int(os.environ["RSYNC_STUB_RC"]))
 """
 
 
-def _hc_backup_pull(tmp_path: Path, *, source: str | None, rc: int = 0) -> tuple[subprocess.CompletedProcess[str], list]:
+def _entrypoint_block(
+    tmp_path: Path, block_re: re.Pattern[str], env: dict[str, str], rc: int = 0
+) -> tuple[subprocess.CompletedProcess[str], list]:
     text = NAS_PULL_ENTRYPOINT.read_text()
-    (block,) = HC_BACKUP_BLOCK.findall(text)
+    (block,) = block_re.findall(text)
     log_fn = text[text.index("log() {") : text.index("\n}", text.index("log() {")) + 2]
     stub = tmp_path / "bin" / "rsync"
     stub.parent.mkdir()
@@ -2912,13 +2963,15 @@ def _hc_backup_pull(tmp_path: Path, *, source: str | None, rc: int = 0) -> tuple
         "PATH": f"{stub.parent}{os.pathsep}{os.environ['PATH']}",
         "RSYNC_STUB_LOG": str(calls),
         "RSYNC_STUB_RC": str(rc),
-        "HC_BACKUP_DEST": "/hc-backups",
-        "HC_BACKUP_SSH_KEY": "/keys/sync_hc_backup",
-        "ARCHIVE_SSH_PORT": "10022",
         "ARCHIVE_SSH_KNOWN_HOSTS": "/keys/known_hosts",
-    } | ({"HC_BACKUP_SOURCE": source} if source is not None else {})
+    } | env
     run = subprocess.run(["sh", "-c", f"set -eu\n{log_fn}\n{block}"], env=env, capture_output=True, text=True, check=False)
     return run, [json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
+
+
+def _hc_backup_pull(tmp_path: Path, *, source: str | None, rc: int = 0) -> tuple[subprocess.CompletedProcess[str], list]:
+    env = {"HC_BACKUP_DEST": "/hc-backups", "HC_BACKUP_SSH_KEY": "/keys/sync_hc_backup", "ARCHIVE_SSH_PORT": "10022"}
+    return _entrypoint_block(tmp_path, HC_BACKUP_BLOCK, env | ({"HC_BACKUP_SOURCE": source} if source is not None else {}), rc)
 
 
 def test_the_hc_backup_pull_copies_the_nodes_directory_over_the_pinned_ssh_and_deletes_nothing(tmp_path):
@@ -2929,7 +2982,7 @@ def test_the_hc_backup_pull_copies_the_nodes_directory_over_the_pinned_ssh_and_d
     assert options == ["--archive", "--chmod=D0700,F0600", "-e"], options
     assert transport == (
         "ssh -i /keys/sync_hc_backup -p 10022 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o CheckHostIP=no"
-        " -o UserKnownHostsFile=/keys/known_hosts"
+        " -o AddressFamily=inet -o UserKnownHostsFile=/keys/known_hosts"
     )
     assert not [arg for arg in calls[0] if arg.startswith(("--delete", "--remove-source-files"))]
 
@@ -2965,6 +3018,60 @@ def test_the_hc_backup_source_the_env_renders_reaches_the_pull_through_compose(t
     assert seen == value, f"compose passes {passed!r}, which the container reads as {seen!r}"
     run, calls = _hc_backup_pull(tmp_path, source=seen)
     assert [call[-2] for call in calls] == [value], run.stderr
+
+
+# --- The NAS pull's ssh transports connect over IPv4 only.
+HOT_BLOCK = re.compile(r"^\tif [^\n]*\bHOT_SOURCE\b[^\n]*; then\n.*?^\tfi\n", re.M | re.S)
+HOT_SOURCE = "zcrypto-data@zcrypto-ops.invalid:"
+_IPV4_ONLY = re.compile(r"(?<!\S)-o AddressFamily=inet(?!\S)")
+_SSH_COMMAND_WORD = re.compile(r"(?<![\w./-])ssh(?![\w-])")
+
+
+def test_the_hot_pull_copies_the_outbox_over_the_pinned_ssh_and_overwrites_nothing(tmp_path):
+    env = {"HOT_SOURCE": HOT_SOURCE, "HOT_DEST": "/archive/hot", "HOT_SSH_KEY": "/keys/sync_hot", "HOT_SSH_PORT": "22"}
+    run, calls = _entrypoint_block(tmp_path, HOT_BLOCK, env)
+    assert (run.returncode, run.stderr) == (0, "")
+    ((*options, transport, source, dest),) = calls
+    assert (source, dest) == (HOT_SOURCE, "/archive/hot")
+    assert options == ["--archive", "--ignore-existing", "--chmod=D2775,F0664", "-e"], options
+    assert transport == (
+        "ssh -i /keys/sync_hot -p 22 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o CheckHostIP=no"
+        " -o AddressFamily=inet -o UserKnownHostsFile=/keys/known_hosts"
+    )
+
+
+def _ssh_command_strings_under_cli() -> list[str]:
+    sites = []
+    for path in sorted((REPO / "cli").rglob("*.py")):
+        tree = ast.parse(path.read_text())
+        parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str) and re.match(r"ssh(\s|$)", node.value):
+                scope = node
+                while scope in parents and not isinstance(scope, ast.FunctionDef | ast.AsyncFunctionDef):
+                    scope = parents[scope]
+                sites.append(f"{path.relative_to(REPO)}::{getattr(scope, 'name', '<module>')}")
+    return sites
+
+
+def test_every_ssh_transport_the_nas_pull_container_builds_connects_over_ipv4_only(monkeypatch, tmp_path):
+    from cli.archive import command
+
+    # A new ssh command string under cli/ is a transport the image can build: it fails here until this walk exercises it.
+    assert _ssh_command_strings_under_cli() == ["cli/archive/command.py::_run_rsync"]
+    monkeypatch.setenv("ARCHIVE_SSH_KEY", "/keys/k")
+    seen = []
+    monkeypatch.setattr(command.subprocess, "run", lambda argv, **_: seen.append(argv) or subprocess.CompletedProcess(argv, 0, ""))
+    command._run_rsync("h:/src/", tmp_path)
+    ((*_, flag, wrapper, _source, _dest),) = seen
+    entrypoint = [
+        line.strip()
+        for line in NAS_PULL_ENTRYPOINT.read_text().splitlines()
+        if _SSH_COMMAND_WORD.search(line) and not line.lstrip().startswith("#")
+    ]
+    walked = [key for key in ("$HOT_SSH_KEY", "$HC_BACKUP_SSH_KEY") if any(key in line for line in entrypoint)]
+    assert (flag, walked) == ("-e", ["$HOT_SSH_KEY", "$HC_BACKUP_SSH_KEY"]), entrypoint
+    assert [transport for transport in (wrapper, *entrypoint) if not _IPV4_ONLY.search(transport)] == []
 
 
 # --- A6: the echo's negated clause and the assert's first disjunct must stay the same expression;

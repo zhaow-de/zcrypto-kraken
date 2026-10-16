@@ -724,6 +724,74 @@ def git_sub(words):
     return (argv[i], argv[i + 1 :], chdirs) if i < len(argv) else (None, [], chdirs)
 
 
+# git grep's value-taking options in option_walk's slots; `-O` takes only an attached value, never the next word.
+GREP_OPTIONS = ("efCABm", "O", {"context", "after-context", "before-context", "max-count", "max-depth", "threads"})
+
+
+def grep_pathspecs(rest):
+    # git's rule: the pattern is `-e`'s or `-f`'s, else the first bare word; only a `--` after it starts the pathspecs.
+    flags, _, ops, sep = option_walk(rest, *GREP_OPTIONS, with_separator=True)
+    after = rest[sep + 1 :] if sep is not None else []
+    bare = [o for o in ops[: len(ops) - len(after)] if o not in ("(", ")")]
+    if any(f in ("e", "f") for f in flags):
+        return bare, after
+    if bare:
+        return bare[1:], after
+    # git skips a `--` that comes before the pattern and takes the next word as the pattern.
+    words = after[1:]
+    if "--" in words:
+        k = words.index("--")
+        return [w for w in words[:k] if w not in ("(", ")")], words[k + 1 :]
+    return [w for w in words if w not in ("(", ")")], []
+
+
+def object_type(where, word):
+    # The type of the object a bare operand names -- commit, tree, blob, tag -- or None for a pathspec.
+    done = subprocess.run(["git", "-C", where, "rev-parse", "--verify", "--quiet", word], capture_output=True, text=True)
+    if done.returncode or not done.stdout.strip():
+        return None
+    kind = subprocess.run(["git", "-C", where, "cat-file", "-t", done.stdout.strip()], capture_output=True, text=True)
+    return kind.stdout.strip() or None
+
+
+def exclude_spec(spec):
+    if re.match(r":[/!^]*[!^]", spec):
+        return True
+    return spec.startswith(":(") and ")" in spec and "exclude" in spec[2 : spec.index(")")].split(",")
+
+
+def scoped_grep(rest, where):
+    # git does the selecting, never a hand matcher: `git ls-files` from the payload's cwd over the positives if any,
+    # since git 2.47's ls-files can list nothing for a positive beside an exclude. A commit's tree is overlaid on the
+    # index, a superset that can only refuse more; any other object refuses.
+    if any(a[:2] == "--" and among(a, {"--no-index", "--untracked"}) for a in rest):
+        return "searches past the index -- drop `--no-index` or `--untracked`"
+    bare, specs = grep_pathspecs(rest)
+    commits = []
+    for x in bare:
+        kind = object_type(where, x)
+        if kind == "commit":
+            commits.append(x)
+        elif kind:
+            return f"names the {kind} `{x}`, which the arm cannot scope -- search a commit, or the index"
+        else:
+            specs.append(x)
+    positives = [x for x in specs if not exclude_spec(x)]
+    listed = positives or specs
+    for tree in commits or [None]:
+        with_tree = [f"--with-tree={tree}"] if tree else []
+        done = subprocess.run(
+            ["git", "-C", where, "ls-files", "-z", "--full-name", *with_tree, "--", *listed],
+            capture_output=True,
+            text=True,
+        )
+        if done.returncode:
+            return "carries a pathspec git cannot read -- spell it as git ls-files accepts it"
+        if any(vault_path("/" + f) for f in done.stdout.split("\0") if f):
+            return "may search a vaulted file -- name directories or files outside the vaulted set (`vault.yml`, `*.vault`, `vault-password.sops.yaml`, `files/*_ed25519`); excludes count alone"
+    return None
+
+
 def refuse_vault(words, what, raw):
     refuse(f"`{spelled(words)}` {what}; in `{raw}`. {VAULT_REMEDY}")
 
@@ -760,6 +828,8 @@ def judge_vault(words, raw, where):
     sub, rest, chdirs = git_sub(words)
     for d in chdirs:
         where = resolve(where, d)
+    if sub == "grep" and where and (why := scoped_grep(rest, where)):
+        refuse_vault(words, why, raw)
     if sub in ("show", "cat-file") and where:
         hit = next((a for a in rest if ":" in a and a[:1] != "-" and at_revision(where, a)), None)
         if hit:
@@ -826,14 +896,15 @@ def main_admits(sub, rest):
     return False
 
 
-def option_walk(rest, short_value, short_attached, long_value):
+def option_walk(rest, short_value, short_attached, long_value, with_separator=False):
     # A subcommand's options -- a short one as its letter, a long one as its name -- each with its value or None, and
     # its operands; an option's value is no operand.
-    flags, values, ops, j = [], [], [], 0
+    flags, values, ops, j, sep = [], [], [], 0, None
     while j < len(rest):
         tok = rest[j]
         j += 1
         if tok == "--":
+            sep = j - 1
             ops.extend(rest[j:])
             break
         if tok.startswith("--"):
@@ -855,6 +926,8 @@ def option_walk(rest, short_value, short_attached, long_value):
                 break
         else:
             ops.append(tok)
+    if with_separator:
+        return flags, values, ops, sep
     return flags, values, ops
 
 

@@ -26,7 +26,7 @@ def tree(tmp_path: Path) -> Path:
 
 def run(tree: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *args],
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--rootdir", str(tree), *args],
         cwd=tree,
         capture_output=True,
         text=True,

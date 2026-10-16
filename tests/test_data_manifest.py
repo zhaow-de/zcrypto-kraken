@@ -225,7 +225,6 @@ from pathlib import Path as _Path
 pytestmark = pytest.mark.data
 
 _HUB_REACH = _Path("/mnt/zhao-crypto/hot/ohlc-reach/manifest.json")
-_LOCAL_REACH = _Path("data/ohlc-reach-20260813/manifest.json")
 
 
 def _reach_series(manifest_path, *, continuous):
@@ -263,15 +262,6 @@ def test_path_order_re_anchors_the_hub_reach_continuous_digest_and_the_move_is_d
     assert raw["basket_sha256"] == "8a826898241a5f1e5501db6ffeb398b81780ffd7cbbfedc1b230231432e13ab2"
 
 
-@pytest.mark.skipif(not _LOCAL_REACH.is_file(), reason="needs the local reach sibling")
-def test_path_order_re_anchors_the_local_reach_detached_digest():
-    raw, series = _reach_series(_LOCAL_REACH, continuous=False)
-    assert len({k.rsplit("/", 1)[1] for k in series}) > 1, "degenerate fixture: needs >1 interval to bite"
-    assert set_digest(series) == "5907b1e31f45237831449c72e00185299bfa8a604ee7c4f10ed4133c931032d9"
-    assert set_digest(series) != raw["detached_sha256"]
-    assert raw["detached_sha256"] == "0c07900fb9cf68419630dd8d14d62894e144f2d8f66a07c8bd130964007d53e0"
-
-
 def test_an_empty_series_is_a_healthy_producer_output_not_a_fault():
     # derivatives-funding and -oi already emit first_ts: None for a perp with no rows. Refusing
     # that would refuse a healthy run; the KEY must still be present, because absent means the
@@ -291,9 +281,8 @@ def test_one_span_bound_null_and_the_other_set_is_refused():
 
 # --- every writer, one contract --------------------------------------------------------------------
 #
-# One driver per module of `cli/` that names `build_manifest`. Four reach a remote through an
-# injected seam; the OHLCVT and legacy-conversion drivers read only local files. Every producer
-# runs offline against a tmp tree either way.
+# One driver per module of `cli/` that names `build_manifest`; a driver that reaches a remote does so through an
+# injected seam, so every producer runs offline against a tmp tree.
 
 
 class _Resp(io.BytesIO):
@@ -359,27 +348,6 @@ def _drive_ingest(tmp_path):
     return out / "manifest.json"
 
 
-def _drive_reach(tmp_path):
-    """The REST reach round: the REST rows overlap the canonical tail by ten stamps, so the leg lands
-    continuous and this is the one driver whose manifest carries `identity == "subset:continuous"`
-    rather than the set digest."""
-    from cli.ohlc.dataset import write_parquet
-    from cli.ohlc.reach import reach_round
-
-    canonical, out = tmp_path / "canon", tmp_path / "reach"
-    write_parquet(to_frame(_rows(20)), canonical / "BTC" / "EUR" / "1440.parquet")
-    rest = _rows(15, start=1577836800 + 10 * 86400)
-    reach_round(
-        canonical,
-        out,
-        intervals=(1440,),
-        fetch_fn=lambda *_: rest,
-        clock=lambda: datetime(2020, 3, 1, tzinfo=UTC),
-        sleep_fn=lambda _seconds: None,
-    )
-    return out / "manifest.json"
-
-
 def _drive_funding(tmp_path):
     """The funding substrate: one perp, one published month; the earlier months 404 as a pre-listing run."""
     from cli.derivatives.funding import build_funding_substrate
@@ -439,7 +407,6 @@ _PRODUCERS = {
     "cli/derivatives/funding.py": _drive_funding,
     "cli/derivatives/oi.py": _drive_oi,
     "cli/ohlc/ingest.py": _drive_ingest,
-    "cli/ohlc/reach.py": _drive_reach,
 }
 
 
@@ -449,8 +416,6 @@ def test_every_writer_emits_a_manifest_the_reader_accepts(module, tmp_path):
     consumer actually uses -- a shape that only a bespoke assertion accepts is the zoo again."""
     m = read_manifest(_PRODUCERS[module](tmp_path))
     assert m.schema_version == SCHEMA_VERSION, module
-    if module == "cli/ohlc/reach.py":
-        assert m.identity == "subset:continuous", module
     assert m.identity_digest, module
     assert m.vouched, module
     assert all(k.endswith(".parquet") for k in m.series), module

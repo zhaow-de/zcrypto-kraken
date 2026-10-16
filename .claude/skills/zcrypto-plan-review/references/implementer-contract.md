@@ -8,11 +8,11 @@ No subagents, no agent tools; everything runs as plain blocking commands, nothin
 - A host-side block pasted into a page is never called in a plain shell to check its syntax: the block's own function shells out to `sudo` and `docker`, and the call is live. `bash -n` reads it.
 - No `ansible-playbook` in any form, `--syntax-check` and `--check` included: this workstation is the fleet host `zcrypto-ops`, and `localhost` is a live venue-facing node. A role is proven through the test helpers' renders.
 - A script's options are read from its argparse with `sed -n` or `python -c`, never by running it with `--help` when its argv is a query or a run.
-- The dispatch's scratch lives under its own named directory in the scratchpad and is removed before the report; a process the dispatch starts is stopped before the report, by its PID read from the process tree — never by a pattern the stopping command's own argv carries — and the report names the `pgrep` read before and after.
+- The dispatch's scratch lives under the worktree's `.tmp/<role>/`, its own directory, never the session's shared scratchpad, and the dispatch removes only what it created there before the report; a process the dispatch starts is stopped before the report, by its PID read from the process tree — never by a pattern the stopping command's own argv carries — and the report names the `pgrep` read before and after.
 
 ## The tests
 
-- Before the commit, run every test `infra/scripts/consumers.sh <path>` lists for each changed file; an empty reader list goes in the report, never answered by a bare `uv run pytest`, whose full suite is CI's.
+- Before the commit, run every test `infra/scripts/consumers.sh <path>` lists for each changed file, its tree walkers included, and a code file with no test listed runs its own test, the empty list going in the report — never a bare `uv run pytest`, whose full suite is CI's.
 - Stage by explicit path, new files first, then the gate: `pre-commit run -a` reads tracked files only, so an untracked test is invisible to it and a clean gate says nothing about it.
 - A commit split by file kind is checked in a scratch worktree at each piece's tree before the pieces are committed: a red intermediate commit is a bisect trap the next reader pays for.
 - A fixture that sits equally far from the two states the test separates is vacuous: a symmetry noticed at design time is broken before the case is written, never left for the probe to find.

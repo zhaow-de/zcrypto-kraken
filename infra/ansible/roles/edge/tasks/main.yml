@@ -1,18 +1,10 @@
 ---
 # The Caddy edge (spec 00122 D15), the node's one public listener; tests/test_infra_edge_role.py holds what it renders and gates.
-- name: add the Caddy apt repository
-  ansible.builtin.deb822_repository:
-    name: caddy
-    types: [deb]
-    uris: https://dl.cloudsmith.io/public/caddy/stable/deb/debian
-    suites: [any-version]
-    components: [main]
-    signed_by: https://dl.cloudsmith.io/public/caddy/stable/gpg.key
-    install_python_debian: true
-  register: edge_caddy_repo
+- name: the Caddy apt source, its key and Debian's caddy pinned out, from the bridgehead's mirror
+  ansible.builtin.import_tasks: caddy-source.yml
 
-# A preview on a node that never had the repository cannot see caddy: apt fails on a name its cache does not
-# hold, and converge.sh stops on a failed preview. What needs the package or its unit skips exactly that case.
+# A preview whose Caddy source this converge changes (a fresh node, or a first converge onto the mirror) has no lists
+# from it, so apt may not find caddy and converge.sh stops on a failed preview: what needs the package or unit skips it.
 - name: note a preview that runs before the Caddy repository exists
   ansible.builtin.set_fact:
     edge_repo_previewed: "{{ ansible_check_mode and edge_caddy_repo is changed }}"

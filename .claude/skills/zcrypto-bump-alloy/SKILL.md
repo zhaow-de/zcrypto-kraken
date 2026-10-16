@@ -87,6 +87,8 @@ The preview names files under `/etc/zcrypto-ops/alloy` alone — `compose.yaml` 
 
 ### The observability node, the bridgehead, then the dead-man node
 
+The observability node's and the dead-man node's Alloy refresh reads their Caddy source, the bridgehead's mirror, which a `--tags alloy` converge does not read before it: before either node's `--tags alloy` converge, `curl -fsS -o /dev/null -w '%{http_code}\n' https://apt.zaccess.zhaow.me/dists/any-version/Release` from the workstation reads `200`, and another answer is `infra/runbooks/zaccess.md`'s `zaccess-caddy-mirror` first; a converge run while the mirror does not answer passes its preview and fails at Alloy's apt refresh, the pin file already moved. The bridgehead reads its own mirror from disk and takes no such read.
+
 ```bash
 ssh mon 'systemctl show -p ActiveEnterTimestamp --value grafana-server prometheus loki caddy'
 infra/ansible/scripts/converge.sh site.yml --limit zcrypto-mon --tags alloy
@@ -235,7 +237,7 @@ infra/ansible/scripts/converge.sh site.yml --limit zcrypto-valkey<N> --tags allo
 infra/ansible/scripts/converge.sh site.yml --limit <apt host> --tags alloy -e alloy_deb_version=<previous> -e '{"alloy_override": "<reason>"}'
 ```
 
-The first line is ops's (`ops_alloy_digest`) and the secondary's (`capture_alloy_digest`); an apt host's `<previous>` is the `<x.y.z>-<n>` string.
+The first line is ops's (`ops_alloy_digest`) and the secondary's (`capture_alloy_digest`); an apt host's `<previous>` is the `<x.y.z>-<n>` string, and the observability node's or the dead-man node's apt-host line takes the Caddy mirror read under *The observability node, the bridgehead, then the dead-man node* first.
 
 **The NAS's** takes no operand: it is an attended hand recreate from the previous pin, whose image is still on the NAS, run there (`ssh nas`):
 

@@ -27,6 +27,15 @@ def _repo(tmp_path: pathlib.Path) -> pathlib.Path:
         'import pathlib\nFILES = sorted(pathlib.Path(__file__).resolve().parent.glob("test_*.py"))\n'
     )
     (repo / "tests" / "test_vault_pass_guard.py").write_text("SCRIPT = 'infra/scripts/thing.sh'\n")
+    (repo / "tests" / "test_root_glob.py").write_text(
+        "import pathlib\nROOT = pathlib.Path(__file__).resolve().parents[1]\nFILES = sorted((ROOT / 'infra').rglob('*.sh'))\n"
+    )
+    (repo / "tests" / "test_two_step_own_dir.py").write_text(
+        "import pathlib\nTESTS = pathlib.Path(__file__).resolve().parent\nFILES = sorted(TESTS.glob('test_*.py'))\n"
+    )
+    (repo / "tests" / "test_parent_parent_root.py").write_text(
+        "import pathlib\nROOT = pathlib.Path(__file__).resolve().parent.parent\nFILES = sorted((ROOT / 'infra').rglob('*.sh'))\n"
+    )
     (repo / "tests" / "test_parent_glob_sq.py").write_text(
         "import pathlib\nFILES = sorted(pathlib.Path(__file__).resolve().parent.glob('test_*.py'))\n"
     )
@@ -73,15 +82,21 @@ def test_direct_readers_are_listed_and_the_vault_file_is_not(tmp_path):
     assert "infra/scripts/thing.sh" not in lines[1:]  # the file itself is not its own reader
 
 
-def test_every_test_that_globs_walks_or_lists_follows_as_a_walker(tmp_path):
+def test_a_walker_follows_only_when_it_names_the_changed_files_top_level_directory(tmp_path):
     repo = _repo(tmp_path)
     r = _run(repo, "infra/scripts/thing.sh")
-    walkers = r.stdout.split("# tree walkers", 1)[1].splitlines()[1:]
+    walkers = r.stdout.split("# tree walkers over infra/", 1)[1].splitlines()[1:]
+    assert walkers == ["tests/test_lsfiles.py", "tests/test_parent_parent_root.py", "tests/test_root_glob.py"]
+
+
+def test_a_changed_test_lists_the_walkers_over_tests_and_those_beside_it(tmp_path):
+    repo = _repo(tmp_path)
+    r = _run(repo, "tests/test_other.py")
+    walkers = r.stdout.split("# tree walkers over tests/", 1)[1].splitlines()[1:]
     assert walkers == [
-        "tests/test_lsfiles.py",
-        "tests/test_own_fixture_glob.py",
         "tests/test_parent_glob.py",
         "tests/test_parent_glob_sq.py",
+        "tests/test_two_step_own_dir.py",
         "tests/test_walker.py",
     ]
 
@@ -96,7 +111,15 @@ def test_an_empty_reader_list_is_printed_as_a_finding_never_as_nothing(tmp_path)
     repo = _repo(tmp_path)
     r = _run(repo, "infra/scripts/lonely.py")
     assert r.returncode == 0
-    assert "(none -- a finding" in r.stdout and "never the full suite" in r.stdout
+    assert "(none -- no direct reader" in r.stdout and "never the full suite" in r.stdout
+
+
+def test_a_top_level_file_lists_no_walker(tmp_path):
+    repo = _repo(tmp_path)
+    (repo / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True)
+    r = _run(repo, "pyproject.toml")
+    assert "# tree walkers: none -- a top-level file" in r.stdout and "tree walkers over" not in r.stdout
 
 
 def test_no_argument_is_usage(tmp_path):
@@ -119,17 +142,11 @@ def test_the_tree_names_the_script_with_its_walker_tests():
         "tests/test_runbook_internal_tokens.py",
         "tests/test_systemd_user_units.py",
         "tests/test_code_prose_citations.py",
-        "tests/test_risk_limits.py",
-        "tests/test_engine_stub_fidelity.py",
-        "tests/test_engine_node.py",
-        "tests/test_nautilus_interface_pin.py",
         "tests/test_desync_recovery_wiring.py",
-        "tests/test_alloy_tag.py",
         "tests/test_infra_shell_templates_render.py",
         "tests/test_panel_regenerate.py",
         "tests/test_ops_daily.py",
-        "tests/test_review_workflows.py",
         "tests/test_open_topics_frontmatter.py",
-        "tests/test_required_status_checks_match_ci.py",
     ):
         assert walker in out.splitlines(), walker
+    assert "tests/test_risk_limits.py" not in out.splitlines()

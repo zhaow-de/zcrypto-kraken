@@ -4,6 +4,7 @@ push can never clobber what another node already deposited."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 from collections.abc import Sequence
@@ -12,6 +13,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from cli.data.errors import DataSyncError
+from cli.data.rolling import RollingError, _is_file, head, is_chained, line_days, line_relpath, read_line
 from cli.logging import get_logger
 from cli.ohlc.dataset import dataset_hash, read_parquet
 
@@ -196,11 +198,49 @@ def _verify_outgoing(set_dir: Path, set_name: str, planned: tuple[str, ...]) -> 
             )
 
 
+def _compare_bytes(set_dir: Path, set_name: str, rel: str, digest: str) -> None:
+    with (set_dir / rel).open("rb") as f:
+        actual = hashlib.file_digest(f, "sha256").hexdigest()
+    if actual != digest:
+        raise DataSyncError(f"data fetch: {set_name}/{rel} hashes to {actual}, not the {digest} its index line lists")
+
+
+def _verify_chained(hub: Path, set_dir: Path, set_name: str, sub_paths: set[str]) -> None:
+    """A chained set's new files against its index lines, whose sha256s are of a file's bytes where a manifest's are of
+    its frame's content, so the two never meet in one comparison."""
+    try:
+        listed: dict[str, str] = {}
+        for day in line_days(hub):
+            listed |= read_line(hub, day).files
+        for rel in sorted(rel for rel in sub_paths if rel.endswith(".parquet")):
+            if rel in listed:
+                _compare_bytes(set_dir, set_name, rel, listed[rel])
+            else:
+                logger.warning("data fetch: %s/%s is pending: no index line names it yet, so no reader opens it", set_name, rel)
+        for day in line_days(set_dir):
+            if line_relpath(day) not in sub_paths:
+                continue
+            for rel, digest in sorted(read_line(set_dir, day).files.items()):
+                if _is_file(set_dir / rel):
+                    _compare_bytes(set_dir, set_name, rel, digest)
+                else:
+                    logger.warning(
+                        "data fetch: %s/%s is pending: %s lists it and it has not arrived", set_name, rel, line_relpath(day)
+                    )
+        head(set_dir)
+    except (RollingError, OSError) as exc:
+        raise DataSyncError(f"data fetch: {set_name}: {exc}") from exc
+
+
 def _verify_new_files(hot_dir: Path, data_root: Path, new_files: tuple[str, ...]) -> None:
     new_by_set: dict[str, set[str]] = {}
+    chained_by_set: dict[str, set[str]] = {}
     for rel in new_files:
         set_name, _, sub_path = rel.partition("/")
-        if sub_path.endswith(".parquet"):  # only parquet content is manifest-attested; skip json/ledgers
+        # Outside a chained set only a new parquet is checked, the one kind a manifest attests.
+        if is_chained(hot_dir / set_name):
+            chained_by_set.setdefault(set_name, set()).add(sub_path)
+        elif sub_path.endswith(".parquet"):
             new_by_set.setdefault(set_name, set()).add(sub_path)
 
     for set_name, sub_paths in new_by_set.items():
@@ -217,6 +257,9 @@ def _verify_new_files(hot_dir: Path, data_root: Path, new_files: tuple[str, ...]
         for sub_path in sub_paths:
             if (why := _attestation_failure(data_root / set_name, sub_path, vouched, by_path)) is not None:
                 raise DataSyncError(f"data fetch: {set_name}/{sub_path} {why}")
+
+    for set_name, sub_paths in chained_by_set.items():
+        _verify_chained(hot_dir / set_name, data_root / set_name, set_name, sub_paths)
 
 
 def fetch_hot(hot_dir: Path, data_root: Path, *, verify: bool = True, runner=subprocess.run) -> SyncReport:

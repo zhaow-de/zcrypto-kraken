@@ -1,4 +1,4 @@
-# The access role (spec 00075): WireGuard server + relays + Caddy edge + native Alloy.
+# The access role (spec 00075): WireGuard server + relays + Caddy edge and its apt mirror (spec 00127) + native Alloy.
 - name: wireguard + probe dependencies
   ansible.builtin.apt: {name: [wireguard-tools], state: present}
 
@@ -41,20 +41,80 @@
 - name: ssh relay socket enabled
   ansible.builtin.systemd: {name: zaccess-ssh-proxy.socket, enabled: true, state: started, daemon_reload: true}
 
-- name: add the Caddy apt repository (deb822 format; module fetches + stores the signing key)
+# The Caddy apt mirror, then Caddy from it (spec 00127): debmirror is Debian's, so a bridgehead without Caddy mirrors
+# the vendor's repository first and installs Caddy from that copy on disk.
+- name: debmirror and gpgv present — the mirror's tool and its signature check, both from Debian
+  ansible.builtin.apt:
+    name: [debmirror, gpgv]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+- name: the Caddy vendor key the mirror and apt verify its Release with
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/files/caddy-archive-keyring.gpg"
+    dest: "{{ caddy_mirror_keyring }}"
+    owner: root
+    group: root
+    mode: "0644"
+- name: the mirror's system user
+  ansible.builtin.user:
+    name: "{{ access_caddy_mirror_user }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ access_caddy_mirror_dir }}"
+    create_home: false
+- name: the mirror's directory and its served tree, readable by the caddy user
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ access_caddy_mirror_user }}"
+    group: "{{ access_caddy_mirror_user }}"
+    mode: "0755"
+  loop: ["{{ access_caddy_mirror_dir }}", "{{ access_caddy_mirror_served }}"]
+- name: the mirror's service + timer
+  ansible.builtin.template:
+    src: "zaccess-caddy-mirror.{{ item }}.j2"
+    dest: "/etc/systemd/system/zaccess-caddy-mirror.{{ item }}"
+    mode: "0644"
+  loop: [service, timer]
+  register: access_caddy_mirror_units
+  notify: reload systemd
+# A preview has not written the units, and systemd refuses a unit it cannot find.
+- name: note a preview that runs before the mirror's units exist
+  ansible.builtin.set_fact:
+    access_caddy_mirror_previewed: "{{ ansible_check_mode and access_caddy_mirror_units is changed }}"
+- name: the mirror's timer enabled
+  ansible.builtin.systemd: {name: zaccess-caddy-mirror.timer, enabled: true, state: started, daemon_reload: true}
+  when: not access_caddy_mirror_previewed
+- name: read whether the mirror's served tree holds a Release
+  ansible.builtin.stat:
+    path: "{{ access_caddy_mirror_served }}/dists/any-version/Release"
+  register: access_caddy_mirror_release
+# systemctl start joins a sync already running and returns its result; the systemd module's state: started starts
+# no unit already activating, so it would return before that sync has put a Release in place.
+- name: the mirror's first sync, before the Caddy source reads it from disk  # noqa: command-instead-of-module
+  ansible.builtin.command: systemctl start zaccess-caddy-mirror.service
+  changed_when: true
+  when: not access_caddy_mirror_release.stat.exists
+- name: the Caddy apt source — the bridgehead's own mirror, read from disk
   ansible.builtin.deb822_repository:
     name: caddy
     types: [deb]
-    uris: https://dl.cloudsmith.io/public/caddy/stable/deb/debian
+    uris: "file:{{ access_caddy_mirror_served }}"
     suites: [any-version]
     components: [main]
-    signed_by: https://dl.cloudsmith.io/public/caddy/stable/gpg.key
-# Caddy follows apt, the one third-party package here that does (Alloy is held at the fleet's version
-# below), and a version pin was never what protected the mTLS edge: the Caddyfile task below runs
-# `validate: caddy validate` -- the INSTALLED binary against the NEW config, before writing it -- so a
-# version whose client-auth syntax moved fails the converge loudly and version-independently. A Caddy
-# that cannot parse its config does not start, so the failure direction is CLOSED: the edge goes dark,
-# never serving without mTLS.
+    signed_by: "{{ caddy_mirror_keyring }}"
+    install_python_debian: true
+- name: Debian's own caddy never a candidate — the mirror's is the one apt installs
+  ansible.builtin.copy:
+    content: |
+      Package: caddy
+      Pin: release o=Debian
+      Pin-Priority: -1
+    dest: /etc/apt/preferences.d/caddy
+    owner: root
+    group: root
+    mode: "0644"
 - name: caddy present — version FOLLOWED from apt, never forced (the Caddyfile validate is the guard)
   ansible.builtin.apt:
     name: caddy
@@ -101,9 +161,7 @@
   notify: reload caddy
 # spec 00075 D14: mTLS is proven before any upstream exists; the NAS/agentboard upstreams are
 # wired behind this same gate.
-- name: >-
-    Caddyfile -- global block + the (mtls) snippet + the two static vhosts (mTLS proven
-    before any upstream exists; later upstreams are wired behind this same gate)
+- name: Caddyfile -- global block + the (mtls) snippet, the two mTLS vhosts and the public apt mirror site
   ansible.builtin.template:
     src: Caddyfile.j2
     dest: /etc/caddy/Caddyfile
@@ -122,8 +180,8 @@
 
 # Alloy is held at the fleet's version and pinned, through the shared apt role (spec 00123 D3, D5), and runs here,
 # after the revocation path and the flush above, so no Alloy failure in a real pass takes the pinned leaves, the
-# Caddyfile or `reload caddy` with it. A preview that cannot fetch the Grafana repository's signing key still refuses
-# the whole converge, as the Caddy repository's fetch already does.
+# Caddyfile or `reload caddy` with it. A preview that cannot fetch the Grafana repository's signing key refuses
+# the whole converge.
 - name: install, pin and hold alloy at the version committed for this host
   ansible.builtin.import_role:
     name: alloy_apt

@@ -30,6 +30,11 @@
     node_common_secrets_preflight_runbook: infra/runbooks/hc.md's hc-keys procedure
 
 # ---- Packages and their sources ------------------------------------------------------------------
+# Before the first apt refresh below, which reads the mirror's source: a mirror that does not answer is refused here.
+# A --tags alloy run selects no task of this include.
+- name: the Caddy apt source names the bridgehead's mirror before any apt refresh
+  ansible.builtin.include_role: {name: edge, tasks_from: caddy-source}
+
 # The shared install adds the Grafana apt repository, which Grafana and Loki install from as well.
 - name: install, pin and hold alloy at the version committed for this host
   ansible.builtin.import_role:

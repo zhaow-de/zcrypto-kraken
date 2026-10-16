@@ -17,6 +17,9 @@ INDEX = "docs/reference/change-index.md"
 # The rendered files a rebase onto a moved base resolves by hand: the change index and the topics index.
 RENDERED = (INDEX, "docs/open-topics/README.md")
 JOURNAL = "docs/reference/ops-journal/"
+# The records family: directories whose README declares an append-only record; a PR carrying only their records
+# has nothing for a reviewer to re-true, and the README that declares them is not a record.
+RECORDS = (JOURNAL, "docs/reference/rung2-box/", "docs/reference/rung3/")
 DEPENDABOT = "dependabot[bot]"
 # `commits` is here because `read_line_fails`'s dependabot arm reads it: a field an arm reads and this
 # fetch omits is not a missing exemption, it is a refusal on every PR of that shape.
@@ -365,11 +368,12 @@ def read_line_fails(pr: dict, head_commit: dict | None, files: list[str] | None,
 
         if commits and all(_bot_only(c) for c in commits):
             return []  # .claude/skills/dependabot: a PR with no fix commit needs no read, and its squash bypasses this gate
-    if pr.get("headRefName") == "ops-journal":
+    head_ref = pr.get("headRefName") or ""
+    if head_ref == "ops-journal" or head_ref.startswith("records/"):
         if files is None:
-            return ["the PR's file list was not fetched, so the ops-journal exemption cannot be scoped to the journal files"]
-        if files and all(f.startswith(JOURNAL) for f in files):
-            return []  # a month of journal entries has nothing for a reviewer to read (docs/reference/ops-journal/README.md)
+            return ["the PR's file list was not fetched, so the records exemption cannot be scoped to the record files"]
+        if files and all(f.startswith(RECORDS) and not f.endswith("/README.md") for f in files):
+            return []  # a records directory's README is the record's contract, not a record
     body = pr.get("body") or ""
     head = pr.get("headRefOid") or ""
     # The read line is judged in the same plain prefix as the substitution. It costs nothing on a PR that uses
@@ -661,7 +665,8 @@ def main(argv: list[str]) -> int:
     head_commit = files = None
     m = READ_LINE.search(_as_a_reader_sees_it(pr.get("body") or ""))
     head = pr.get("headRefOid") or ""
-    if m or pr.get("headRefName") == "ops-journal":
+    head_ref = pr.get("headRefName") or ""
+    if m or head_ref == "ops-journal" or head_ref.startswith("records/"):
         try:
             out = _gh("api", "--paginate", f"repos/{REPO}/pulls/{pr['number']}/files", "--jq", PR_FILES_JQ)
             files = [line for line in out.splitlines() if line.strip()]

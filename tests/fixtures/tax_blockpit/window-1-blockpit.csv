@@ -1,0 +1,27 @@
+Date (UTC),Integration Name,Label,Outgoing Asset,Outgoing Amount,Incoming Asset,Incoming Amount,Fee Asset (optional),Fee Amount (optional),Comment (optional),Trx. ID (optional)
+03.03.2031 09:00:00,Kraken manual import,Non-Taxable In,,,EUR,1250.0,,,kraken deposit,LFX001-SYNTH-LEDGER
+03.03.2031 09:10:00,Kraken manual import,Deposit,,,ATOM,8.5,,,kraken deposit,LFX002-SYNTH-LEDGER
+03.03.2031 10:00:00,Kraken manual import,Trade,EUR,120.0,ALGO,320.0,EUR,0.48,kraken trade/tradespot ALGO/EUR,TFX001-SYNTH-TRADES
+03.03.2031 11:00:00,Kraken manual import,Trade,ALGO,160.0,EUR,60.0,EUR,0.24,kraken trade/tradespot ALGO/EUR,TFX002-SYNTH-TRADES
+03.03.2031 11:30:00,Kraken manual import,Trade,EUR,0,XTZ,0.00004,,,kraken trade/tradespot XTZ/EUR one leg booked,TFX003-SYNTH-TRADES
+03.03.2031 12:00:00,Kraken manual import,Trade,EUR,0.075,EURC,0.075,,,kraken collateralconversion ATOM/EUR position TFX004-SYNTH-TRADES,TFX004-SYNTH-TRADES
+03.03.2031 12:00:00,Kraken manual import,Margin Fee,EURC,0.075,,,,,kraken margin ATOM/EUR position TFX004-SYNTH-TRADES,LFX008-SYNTH-LEDGER
+03.03.2031 12:05:00,Kraken manual import,Margin Fee,EUR,0.065,,,,,kraken margin ALGO/EUR position TFX005-SYNTH-TRADES,LFX011-SYNTH-LEDGER
+03.03.2031 13:00:00,Kraken manual import,Margin Fee,EUR,0.075,,,,,kraken margin ATOM/EUR position TFX004-SYNTH-TRADES,LFX012-SYNTH-LEDGER
+03.03.2031 16:05:00,Kraken manual import,Margin Fee,EUR,0.0035,,,,,kraken rollover ALGO/EUR position TFX005-SYNTH-TRADES,LFX013-SYNTH-LEDGER
+03.03.2031 20:05:00,Kraken manual import,Margin Fee,EUR,0.0035,,,,,kraken rollover ALGO/EUR position TFX005-SYNTH-TRADES,LFX014-SYNTH-LEDGER
+04.03.2031 09:00:00,Kraken manual import,Margin Profit,,,EUR,1.75,,,kraken margin ALGO/EUR position TFX005-SYNTH-TRADES,LFX015-SYNTH-LEDGER
+04.03.2031 09:00:00,Kraken manual import,Margin Fee,EUR,0.065,,,,,kraken margin ALGO/EUR position TFX005-SYNTH-TRADES,LFX015-SYNTH-LEDGER-fee
+05.03.2031 10:00:00,Kraken manual import,Trade,EUR,0.075,EURC,0.075,,,kraken collateralconversion ATOM/EUR position TFX008-SYNTH-TRADES,TFX008-SYNTH-TRADES
+05.03.2031 10:00:00,Kraken manual import,Margin Fee,EURC,0.075,,,,,kraken margin ATOM/EUR position TFX008-SYNTH-TRADES,LFX018-SYNTH-LEDGER
+05.03.2031 14:00:00,Kraken manual import,Trade,EUR,0.825,EURC,0.825,,,kraken collateralconversion ATOM/EUR position TFX008-SYNTH-TRADES,TFX009-SYNTH-TRADES
+05.03.2031 14:00:00,Kraken manual import,Margin Loss,EURC,0.75,,,,,kraken margin ATOM/EUR position TFX008-SYNTH-TRADES,LFX021-SYNTH-LEDGER
+05.03.2031 14:00:00,Kraken manual import,Margin Fee,EURC,0.075,,,,,kraken margin ATOM/EUR position TFX008-SYNTH-TRADES,LFX021-SYNTH-LEDGER-fee
+06.03.2031 10:00:00,Kraken manual import,Margin Fee,EUR,0.065,,,,,kraken margin ATOM/EUR position TFX010-SYNTH-TRADES,LFX022-SYNTH-LEDGER
+06.03.2031 15:00:00,Kraken manual import,Trade,EUR,15.6,ATOM,2.6,,,kraken settled ATOM/EUR position TFX010-SYNTH-TRADES,TFX011-SYNTH-TRADES
+20.03.2031 10:00:00,Kraken manual import,Margin Fee,EUR,0.065,,,,,kraken margin ALGO/EUR position TFX012-SYNTH-TRADES,LFX025-SYNTH-LEDGER
+25.03.2031 14:00:00,Kraken manual import,Staking,,,ALGO,0.35,ALGO,0.105,kraken earn/reward,LFX026-SYNTH-LEDGER
+25.03.2031 14:00:00,Kraken manual import,Staking,,,ATOM,0.0025,,,kraken earn/reward,LFX027-SYNTH-LEDGER
+25.03.2031 14:00:00,Kraken manual import,Staking,,,NEAR,0.0000035,NEAR,0.00000105,kraken earn/reward,LFX028-SYNTH-LEDGER
+28.03.2031 22:00:00,Kraken manual import,Trade,XTZ,0.00004,EUR,0.000201923,,,kraken spend/dustsweeping TFXD001-SYNTH-SWEEPS,LFX029-SYNTH-LEDGER
+28.03.2031 22:00:00,Kraken manual import,Trade,NEAR,0.0000024,EUR,0.000098077,NEAR,0.00000005,kraken spend/dustsweeping TFXD001-SYNTH-SWEEPS,LFX030-SYNTH-LEDGER

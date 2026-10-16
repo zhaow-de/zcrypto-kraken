@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Read-guard for .local/memo.md (hand-edited outside sessions, not version-controlled).
+# Read-guard for .local/memo.md (hand-edited outside sessions, not version-controlled), and the placeholder-stamp
+# refusal.
 # Protocol: an Edit is allowed only when the file has been Read since its content last changed;
 # every write invalidates the stamp, so the next write (and honest verification) needs a re-read.
 # A Write of the existing file is refused outright -- it drops whatever the rewrite forgot, and
@@ -8,13 +9,16 @@
 # post-write on Edit|Write (invalidates + instructs the read-back). Shell writes bypass Edit/Write,
 # which is why the grooming/auto-exec skills require memo edits to go through those tools.
 set -euo pipefail
-# The two fields are read one per line, so a separator in `tool_name` desynchronises the pair and
-# `path` holds a fragment that matches no memo pattern, exiting 0. Not reachable and not fixed: the
-# harness sets `tool_name`, and a `file_path` carrying a newline names a file that is not the memo,
-# so no input both desynchronises this and writes the memo. NUL-separating the pair moves the byte
-# rather than closing the class -- a NUL in `tool_name` desynchronises that too.
 mode="${1:?mode required: pre-write|post-read|post-write}"
-{ read -r tool; read -r path; } < <(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("tool_name","")); print(d.get("tool_input",{}).get("file_path",""))')
+# The fields are read one per line, so a newline in `tool_name` or `file_path` desynchronises them; not fixed, as
+# the harness sets `tool_name` and a path with a newline is not the memo -- NUL-separating them moves the byte.
+{ read -r tool; read -r path; read -r placeholder; } < <(python3 -c 'import json,re,sys; d=json.load(sys.stdin); t=d.get("tool_input",{}); print(d.get("tool_name","")); print(t.get("file_path","")); m=next((x.group(0) for x in re.finditer(r"(?i)[0-9x?]{2}:[0-9x?]{2}(?![0-9a-f])", str(t.get("new_string") or t.get("content") or "")) if re.search(r"(?i)[x?]", x.group(0))), ""); print(m)')
+# Every file, not the memo alone, before the memo's own checks -- a test module's or a hook's own cases spell the
+# placeholders; a hex literal is no stamp.
+if [[ "$mode" == pre-write && -n "${placeholder:-}" && "$path" != */tests/*.py && "$path" != */.claude/hooks/* ]]; then
+  echo "memo-guard: BLOCKED. '$placeholder' is a placeholder stamp — paste the printed value of \`date -u\` or of the record (an mtime, a reflog, a PR's createdAt)." >&2
+  exit 2
+fi
 case "$path" in
   */.local/memo.md|.local/memo.md) ;;
   *) exit 0 ;;

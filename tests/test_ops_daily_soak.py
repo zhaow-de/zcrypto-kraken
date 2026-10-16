@@ -24,6 +24,7 @@ from test_ops_daily import (
     _soak_payload,
     live_soak_run,  # noqa: F401 -- autouse: this import is what registers it in this module
     ops_daily,
+    passing_rolling_head,  # noqa: F401 -- autouse, registered here by this import as `live_soak_run` is
 )
 
 

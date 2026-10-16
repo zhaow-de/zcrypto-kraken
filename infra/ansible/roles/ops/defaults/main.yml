@@ -31,6 +31,10 @@ ops_tape_bars_subdir: tape-bars
 # The hot-out outbox (spec 00056 D2/D4), under ops_data_dir: what this node stages for the NAS to
 # pull into its hot/ hub via the sync_hot -ro channel (infra/ops/README.md).
 ops_hot_out_subdir: hot-out
+# The rolling canonical's staging directory, the outbox's sibling under ops_data_dir: the tape-bars
+# runner's extension writes each file here and renames it into the outbox, so it shares the outbox's
+# filesystem and lies outside the hot-out pull, which would carry a temporary name to the hub for good.
+ops_rolling_staging_subdir: hot-out-staging
 # The liquidations tree (OPS-2), under ops_data_dir; the sync_liquidations pull pins this root.
 ops_liquidations_subdir: liquidations
 
@@ -44,7 +48,8 @@ ops_data_user: zcrypto-data
 # forced-command pulls, refuses interactive shells + any non-rrsync command. Defense-in-depth over
 # the per-key command=/restrict jail.
 ops_rrsync_shell: /usr/local/sbin/rrsync-shell
-# hot-out's two-role handoff group (setgid): zcrypto-data owns + serves; zhaow authors into it.
+# hot-out's two-role handoff group (setgid): zcrypto-data owns + serves, and writes the rolling
+# canonical's daily extension from the tape-bars runner; zhaow authors into it.
 ops_hot_group: zcrypto-hot
 # The interactive-research user (workstation-aligned; created by the research role, NOT this pipeline
 # role). Added to ops_hot_group only when it already exists, so this role never creates it.

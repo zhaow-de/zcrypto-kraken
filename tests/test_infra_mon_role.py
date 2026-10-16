@@ -15,7 +15,16 @@ from ansible.template import trust_as_template
 from tests import role_render
 from tests.alloy_part import ALLOY_APT_VERBATIM, module_entry
 from tests.test_alloy_version import alloy_version
-from tests.test_infra_converge_guards import assert_that, find_task, iter_tasks, load_tasks, set_facts, truthy, when_conditions
+from tests.test_infra_converge_guards import (
+    assert_that,
+    find_task,
+    iter_tasks,
+    load_tasks,
+    refreshes_the_apt_cache,
+    set_facts,
+    truthy,
+    when_conditions,
+)
 
 REPO = Path(__file__).resolve().parents[1]
 ANSIBLE = REPO / "infra/ansible"
@@ -105,6 +114,22 @@ def test_the_ini_names_the_secret_files_and_carries_none_of_their_values():
         ("secret_key", "{{ mon_grafana_secret_key }}"),
     }
     assert copy["dest"] == "/etc/grafana/{{ item.file }}"
+
+
+# --- what the node's Grafana and Loki log ------------------------------------------------------------------------
+
+
+def test_grafana_logs_warnings_and_above_in_every_mode_with_no_logger_filter():
+    ini = _ini()
+    assert ini.get("log", "level", fallback=None) == "warn"
+    for section in [s for s in ini.sections() if s == "log" or s.startswith("log.")]:
+        assert not ini.has_option(section, "filters"), f"[{section}] filters can raise a logger back below warn"
+        level = (ini.get(section, "level", fallback="") or "warn").lower()
+        assert level in ("warn", "error", "critical"), f"[{section}] level = {level}"
+
+
+def test_loki_logs_warnings_and_above():
+    assert yaml.safe_load(_render("loki-config.yml.j2"))["server"]["log_level"] == "warn"
 
 
 # --- the Caddyfile: one public name and the routes it answers ----------------------------------------------------
@@ -371,6 +396,20 @@ def test_alloy_alone_is_held_and_pinned_and_the_other_packages_followed():
     assert pins == [_shared("ansible.builtin.copy")], pins
     recommends = find_task(load_tasks(TASKS), "prometheus present, from Debian main, without the node exporter it recommends")
     assert recommends["ansible.builtin.apt"]["install_recommends"] is False
+
+
+CADDY_SOURCE = {"name": "edge", "tasks_from": "caddy-source"}
+CADDY_SOURCE_INCLUDE = "the Caddy apt source names the bridgehead's mirror before any apt refresh"
+
+
+def test_the_caddy_source_names_the_mirror_before_the_first_apt_refresh():
+    # Closed: the order below reads positions alone, and a when: on the include could skip it.
+    include = find_task(load_tasks(TASKS), CADDY_SOURCE_INCLUDE)
+    assert include == {"name": CADDY_SOURCE_INCLUDE, "ansible.builtin.include_role": CADDY_SOURCE}, include
+    leaves = [task for task, _, _ in alloy_version.role_leaves("mon", frozenset())]
+    sources = [i for i, task in enumerate(leaves) if task.get("ansible.builtin.include_role") == CADDY_SOURCE]
+    refreshes = [i for i, task in enumerate(leaves) if refreshes_the_apt_cache(task)]
+    assert sources and refreshes and sources[0] < refreshes[0], (sources, refreshes)
 
 
 # --- the preview on a node that has nothing yet ------------------------------------------------------------------

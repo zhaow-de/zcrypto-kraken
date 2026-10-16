@@ -16,10 +16,12 @@ from tests.test_infra_archive_pull_template import _ops_parse_regex
 ROLES = pathlib.Path(__file__).resolve().parent.parent / "infra" / "ansible" / "roles"
 
 # Vars the templates need that their role defaults do not carry — runtime facts (ops_uid/ops_gid
-# come from getent_passwd at converge time) or values supplied by inventory.
+# come from getent_passwd and ops_hot_gid from getent_group at converge time) or values supplied by
+# inventory.
 RUNTIME_FACTS = {
     "ops_uid": "1002",
     "ops_gid": "1002",
+    "ops_hot_gid": "1002",
     # No repo default by design — the pins rule keeps it operand-only, always passed with -e.
     "ops_image_digest": "sha256:" + "ab" * 32,
     "ops_textfile_dir": "/var/lib/zcrypto-ops/textfile",

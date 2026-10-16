@@ -7,12 +7,24 @@ import pytest
 import yaml
 
 from tests import role_render
-from tests.test_infra_converge_guards import find_task, iter_tasks, load_tasks, set_facts, when_conditions
+from tests.test_alloy_version import alloy_version
+from tests.test_infra_caddy_mirror import DEBIAN_PIN
+from tests.test_infra_converge_guards import (
+    assert_that,
+    find_task,
+    iter_tasks,
+    load_tasks,
+    refreshes_the_apt_cache,
+    set_facts,
+    truthy,
+    when_conditions,
+)
 
 REPO = Path(__file__).resolve().parents[1]
 ANSIBLE = REPO / "infra/ansible"
 ROLE = ANSIBLE / "roles/edge"
 TASKS = ROLE / "tasks/main.yml"
+SOURCE = ROLE / "tasks/caddy-source.yml"
 HANDLERS = ROLE / "handlers/main.yml"
 HOSTNAME = "edge.example.test"
 HASH_A = "$2b$10$" + "a" * 53
@@ -91,22 +103,62 @@ def test_every_parameter_set_routes_the_authenticated_paths_first_and_the_upstre
     ]
 
 
-# --- packages: Caddy from the cloudsmith repository, followed from apt --------------------------------------------
-def test_caddy_comes_from_the_cloudsmith_repository_and_is_never_forced_held_or_pinned_to_a_version():
+# --- packages: Caddy from the bridgehead's mirror, followed from apt -----------------------------------------------
+_SOURCE_IMPORT = "the Caddy apt source, its key and Debian's caddy pinned out, from the bridgehead's mirror"
+_MIRROR_SOURCE = {
+    "name": "caddy",
+    "types": ["deb"],
+    "uris": "https://{{ caddy_mirror_host }}",
+    "suites": ["any-version"],
+    "components": ["main"],
+    "signed_by": "{{ caddy_mirror_keyring }}",
+    "install_python_debian": True,
+}
+_INSTALL = "caddy present — version FOLLOWED from apt, never forced or held"
+
+
+def test_caddy_comes_from_the_bridgeheads_mirror_and_is_never_forced_held_or_pinned_to_a_version():
     tasks = iter_tasks(load_tasks(TASKS))
-    (repository,) = [task["ansible.builtin.deb822_repository"] for task, _ in tasks if "ansible.builtin.deb822_repository" in task]
-    assert repository == {
-        "name": "caddy",
-        "types": ["deb"],
-        "uris": "https://dl.cloudsmith.io/public/caddy/stable/deb/debian",
-        "suites": ["any-version"],
-        "components": ["main"],
-        "signed_by": "https://dl.cloudsmith.io/public/caddy/stable/gpg.key",
-        "install_python_debian": True,
-    }
+    # Closed: a keyword on the import reaches every imported task, the read and the refusal among them.
+    assert find_task(load_tasks(TASKS), _SOURCE_IMPORT) == {"name": _SOURCE_IMPORT, "ansible.builtin.import_tasks": SOURCE.name}
+    files = sorted((ROLE / "tasks").glob("*.yml"))
+    leaves = [task for path in files for task, _ in iter_tasks(load_tasks(path))]
+    (repository,) = [task["ansible.builtin.deb822_repository"] for task in leaves if "ansible.builtin.deb822_repository" in task]
+    assert repository == _MIRROR_SOURCE
     (install,) = [task["ansible.builtin.apt"] for task, _ in tasks if "ansible.builtin.apt" in task]
     assert install == {"name": "caddy", "state": "present", "update_cache": True}, "the repository task refreshes no cache"
     assert "ansible.builtin.dpkg_selections" not in {key for task, _ in tasks for key in task}, "a hold skips caddy silently"
+
+
+def test_the_caddy_source_names_the_mirror_before_the_edges_first_apt_refresh():
+    leaves = [task for task, _, _ in alloy_version.role_leaves("edge", frozenset())]
+    sources = [i for i, task in enumerate(leaves) if task.get("ansible.builtin.deb822_repository") == _MIRROR_SOURCE]
+    refreshes = [i for i, task in enumerate(leaves) if refreshes_the_apt_cache(task)]
+    assert sources and refreshes and sources[0] < refreshes[0], (sources, refreshes)
+
+
+_MIRROR_READ = "read whether the bridgehead's Caddy mirror answers"
+_MIRROR_REFUSAL = "refuse a Caddy source the bridgehead's mirror does not serve"
+_KEY = "the Caddy vendor key apt verifies the mirror's Release with"
+_SOURCE_TASK = "the Caddy apt source — the bridgehead's mirror"
+
+
+@pytest.mark.parametrize(("status", "admitted"), [(200, True), (404, False), (402, False), (-1, False)])
+def test_a_mirror_that_does_not_answer_is_refused_before_the_source_is_written_and_in_a_preview(status, admitted):
+    tasks = load_tasks(SOURCE)
+    assert find_task(tasks, _MIRROR_READ) == {
+        "name": _MIRROR_READ,
+        "ansible.builtin.uri": {"url": "https://{{ caddy_mirror_host }}/dists/any-version/Release", "method": "HEAD"},
+        "register": "edge_caddy_mirror",
+        "failed_when": False,
+        "check_mode": False,
+    }
+    refusal = find_task(tasks, _MIRROR_REFUSAL)
+    assert set(refusal) == {"name", "ansible.builtin.assert"}, sorted(refusal)
+    assert truthy(assert_that(refusal), {"edge_caddy_mirror": {"status": status}}) is admitted
+    names = [task.get("name") for task in tasks]
+    order = [names.index(name) for name in (_MIRROR_READ, _MIRROR_REFUSAL, _KEY, _SOURCE_TASK, DEBIAN_PIN)]
+    assert order == sorted(order), names
 
 
 # --- the preview on a node that has nothing yet -------------------------------------------------------------------
@@ -117,7 +169,7 @@ _CHANGED, _UNCHANGED, _SKIPPED = {"changed": True}, {"changed": False}, {"change
 @pytest.mark.parametrize(
     ("check", "repository", "install", "expected"),
     [
-        (True, _CHANGED, _SKIPPED, (True, True)),  # a fresh node's preview
+        (True, _CHANGED, _SKIPPED, (True, True)),  # a fresh node's preview, or the first onto the mirror
         (True, _UNCHANGED, _CHANGED, (False, True)),  # caddy alone still to install
         (True, _UNCHANGED, _UNCHANGED, (False, False)),  # an established node's preview
         (False, _CHANGED, _CHANGED, (False, False)),  # the real first converge
@@ -125,6 +177,8 @@ _CHANGED, _UNCHANGED, _SKIPPED = {"changed": True}, {"changed": False}, {"change
 )
 def test_the_two_preview_facts_are_true_only_where_a_preview_has_no_package_to_find(check, repository, install, expected):
     tasks = load_tasks(TASKS)
+    assert find_task(load_tasks(SOURCE), _SOURCE_TASK)["register"] == "edge_caddy_repo"
+    assert find_task(tasks, _INSTALL)["register"] == "edge_caddy_install"
     variables = {"ansible_check_mode": check, "edge_caddy_repo": repository}
     first = set_facts(find_task(tasks, "note a preview that runs before the Caddy repository exists"), variables)
     variables |= first | {"edge_caddy_install": install}
@@ -134,8 +188,7 @@ def test_the_two_preview_facts_are_true_only_where_a_preview_has_no_package_to_f
 
 def test_what_needs_the_repository_or_the_unit_skips_the_preview_that_has_neither():
     tasks = load_tasks(TASKS)
-    install = find_task(tasks, "caddy present — version FOLLOWED from apt, never forced or held")
-    assert when_conditions(install) == ["not edge_repo_previewed"]
+    assert when_conditions(find_task(tasks, _INSTALL)) == ["not edge_repo_previewed"]
     units = [(task["name"], gates) for task, gates in iter_tasks(tasks) if "ansible.builtin.systemd_service" in task]
     assert units == [("caddy enabled + started", ("not edge_units_previewed",))], units
     assert find_task(tasks, "Caddyfile — the one public listener's routes")["notify"] == "reload caddy"

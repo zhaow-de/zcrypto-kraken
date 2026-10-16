@@ -11,6 +11,7 @@ sharing them costs no isolation.
 
 import json
 import math
+import re
 import shutil
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
@@ -879,6 +880,14 @@ def test_a_staking_reward_row_is_a_known_no_fill_type(tmp_path):
     assert out["status"] == "insufficient-data"
 
 
+def test_an_earn_reward_row_is_a_known_no_fill_type_and_another_earn_subtype_is_not(tmp_path):
+    reward = _real_row("L1", "EX-1", "2031-03-25 14:00:00", "earn", "reward", "NEAR", "0.0000035", "0.00000105", "NEAR")
+    allocation = _real_row("L2", "EX-2", "2031-03-25 14:00:00", "earn", "allocation", "NEAR", "0.0000035", "0", "")
+    out = reconcile_ledger(read_ledger_export(_export(tmp_path, [reward, allocation], header=_REAL_HEADER)), [])
+    assert (out["known"], out["ignored"], out["unmatched"]) == ({"earn": 1}, {"earn": 1}, [])
+    assert out["status"] == "insufficient-data"
+
+
 def test_a_transfer_row_is_a_known_no_fill_type(tmp_path):
     transfer = _real_row("L1", "TR-1", "2026-10-01 14:02:58", "transfer", "", "EUR", "25.00", "0", "")
     out = reconcile_ledger(read_ledger_export(_export(tmp_path, [transfer], header=_REAL_HEADER)), [])
@@ -979,6 +988,29 @@ def test_an_undecodable_byte_is_refused_as_this_modules_error_not_a_traceback(tm
         (_HEADER + "\n").encode() + b'"L1","R1","2026-08-31 00:00:00","rollover","","currency","\xff\xfe","-0.12","0.12","900.0"\n'
     )
     with pytest.raises(EngineError, match="ledger export"):
+        read_ledger_export(p)
+
+
+_ROLLOVER_ROW = '"L1","R1","2026-08-31 04:05:06","rollover","","currency","ZEUR","-0.12","0.13","900.0"'
+
+
+@pytest.mark.parametrize(
+    "row,refusal",
+    [
+        (_ROLLOVER_ROW + ',"x"', "has a field count of 11 at data row 2, against its header's 10"),
+        # Every column after the insert moves one to the right and still parses: the fee would read -0.12, not 0.13.
+        (_ROLLOVER_ROW.replace('"ZEUR",', '"ZEUR","-0.50",'), "has a field count of 11 at data row 2, against its header's 10"),
+        # Only the balance is missing, a column this reader never reads, so no value read would refuse the row.
+        (_ROLLOVER_ROW.removesuffix(',"900.0"'), "has a field count of 9 at data row 2, against its header's 10"),
+        # Two fields off, so the printed count is pinned beyond the header's width plus or minus one.
+        (_ROLLOVER_ROW + ',"x","y"', "has a field count of 12 at data row 2, against its header's 10"),
+        (_ROLLOVER_ROW.removesuffix(',"0.13","900.0"'), "has a field count of 8 at data row 2, against its header's 10"),
+    ],
+    ids=["long_row", "mid_row_insert", "short_row", "long_row_by_two", "short_row_by_two"],
+)
+def test_a_row_whose_field_count_is_not_the_headers_is_refused_by_its_data_row(tmp_path, row, refusal):
+    p = _export(tmp_path, ['"L6","Q1","2026-08-31 00:00:00","deposit","","currency","ZEUR","500.0","0.0","1400.0"', row])
+    with pytest.raises(EngineError, match=re.escape(f"the ledger export {p} {refusal}. Refusing rather than defaulting")):
         read_ledger_export(p)
 
 

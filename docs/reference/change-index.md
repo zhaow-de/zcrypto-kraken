@@ -381,3 +381,16 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #681 | 2026-10-09 | docs(research): T0018 — rung 2's entry record, the box W41 to W44 | — | — | T0018 |
 | #682 | 2026-10-09 | docs(records): T0217 phase 2 and T0218 sittings, the edge route | — | 00121, 00122, 00123 | T0085, T0217, T0218 |
 | #683 | 2026-10-09 | feat(ops): 00123 R12 — the two-stack comparison runs from 2026-10-10 | — | 00121, 00123 | — |
+| #684 | 2026-10-10 | feat(cli): T0215 — the Blockpit fallback transform of Kraken exports | — | 00126 | T0215 |
+| #686 | 2026-10-11 | feat(data): 00125 — the rolling OHLC canonical, extended from the tape | — | 00125 | — |
+| #688 | 2026-10-11 | docs(reference): 00125 rollout records — ops pin, rows 112–114, slots | — | 00125 | — |
+| #690 | 2026-10-12 | feat(infra): 00127 — the bridgehead mirrors Caddy's apt repository | — | 00127 | — |
+| #695 | 2026-10-12 | feat(data): universe refreshed from the rolling set, August sets retired | — | — | T0220 |
+| #702 | 2026-10-13 | feat(alpha): iter-175 — B2 opening, the funding-extreme de-risk overlay | iter-175 | 00128 | T0016, T0023 |
+| #703 | 2026-10-13 | docs(research): T0016 reads A spent and T0009, T0014 resolved | — | — | T0016 |
+| #704 | 2026-10-13 | docs(reference): 00127 rollout records — deploy-log rows of R3, R5, R6 | — | 00127 | — |
+| #708 | 2026-10-14 | feat(research): 00129 — every trial re-derivable from tree and hub | — | 00129 | — |
+| #715 | 2026-10-14 | feat(research): 00130 — records 45 and 46 re-derived as B1 subjects | — | 00130 | T0223 |
+| #717 | 2026-10-15 | feat(alpha): 00131 — B2's funding and OI features on the 4h close grid | — | 00131 | T0023 |
+| #718 | 2026-10-15 | docs(research): iter-176 — holdout, DSR and fee contradictions resolved | iter-176 | — | — |
+| #724 | 2026-10-16 | feat(research): iter-177 — B1 trial 3: hourly realized-vol weights on A2 | iter-177 | 00132 | T0022 |

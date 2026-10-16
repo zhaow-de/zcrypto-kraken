@@ -8,12 +8,13 @@ ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = ROOT / ".github" / "workflows"
 SUITE = WORKFLOWS / "test-suite.yml"
 WARMER = WORKFLOWS / "uv-cache.yml"
-# setup-uv folds the first five into its cache key (`computeKeys` in its src/cache/restore-cache.ts),
+# setup-uv folds the first six into its cache key (`computeKeys` in its src/cache/restore-cache.ts),
 # with the runner's OS and its cache-format version; `cache-local-path` decides the path the cache is
 # saved under, which a restore must match too, and `working-directory` the directory the glob is read
 # from: one differing input splits the two workflows onto caches neither ever restores from the other.
 KEY_INPUTS = (
     "python-version",
+    "python-arch",
     "cache-dependency-glob",
     "prune-cache",
     "cache-python",
@@ -21,6 +22,9 @@ KEY_INPUTS = (
     "cache-local-path",
     "working-directory",
 )
+# What setup-uv reads when the matching input is empty: `UV_PYTHON_ARCH` for python-arch, in the key,
+# and `UV_CACHE_DIR` for the cache path.
+KEY_ENVS = ("UV_PYTHON_ARCH", "UV_CACHE_DIR")
 SAVE_WHEN_THE_LOCK_CHANGED = "${{ steps.lock.outputs.changed == 'true' }}"
 
 
@@ -38,13 +42,22 @@ def _setup_uv(job: dict) -> dict:
     return step
 
 
+def _setup_uv_env(workflow: dict) -> dict:
+    job = _only_job(workflow)
+    return {**(workflow.get("env") or {}), **(job.get("env") or {}), **(_setup_uv(job).get("env") or {})}
+
+
 def test_the_warmer_and_the_suite_compute_the_same_cache_key():
-    suite_job, warmer = _only_job(_load(SUITE)), _only_job(_load(WARMER))
+    suite_workflow, warmer_workflow = _load(SUITE), _load(WARMER)
+    suite_job, warmer = _only_job(suite_workflow), _only_job(warmer_workflow)
     assert suite_job["runs-on"] == warmer["runs-on"]
     suite, warm = _setup_uv(suite_job), _setup_uv(warmer)
     assert suite["uses"] == warm["uses"]
     for name in KEY_INPUTS:
         assert suite.get("with", {}).get(name) == warm.get("with", {}).get(name), name
+    suite_env, warm_env = _setup_uv_env(suite_workflow), _setup_uv_env(warmer_workflow)
+    for name in KEY_ENVS:
+        assert suite_env.get(name) == warm_env.get(name), name
     assert suite["with"]["cache-dependency-glob"] == "uv.lock"
 
 
