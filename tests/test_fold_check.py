@@ -148,6 +148,11 @@ def test_a_mode_change_beside_the_ship_texts_is_refused(repo):
     _refused(done, repo, "a.py: a mode change, which no ship text carries")
 
 
+def test_a_byte_that_makes_the_file_binary_is_refused(repo):
+    done, _ = _fold(repo, {"a.py": FOLDED_A.replace("return 1", "return 1\x00"), "notes.md": FOLDED_NOTES})
+    _refused(done, repo, "a.py: a binary change, which no ship text carries")
+
+
 def test_a_file_deleted_by_a_cut_is_refused(repo):
     rows = [{"site": "b.py:1", "survives": "cut", "correct": True, "duplicateOf": "", "ship": ""}]
     done, _ = _fold(repo, {"b.py": None}, rows)
