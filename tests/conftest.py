@@ -16,6 +16,8 @@ os.environ["GIT_CEILING_DIRECTORIES"] = str(TMP_ROOT)
 
 import cli.engine.cycle as cycle
 
+SLOW_CASES = Path(__file__).resolve().parent / "slow-cases.txt"
+
 
 @pytest.fixture(autouse=True)
 def _reset_metrics_sink():
@@ -67,6 +69,13 @@ def pytest_collection_modifyitems(config, items):
     which has no expression to name and where pytest's own line already stands alone; `--collect-only`, where an
     empty selection is the answer to the question asked; and a run that collected nothing at all, where there was
     nothing to select and the run's own answer -- an ERRORS block, or an empty path -- already stands."""
+    # `slow` is a case's mark, named only in the list beside this file; set before the yield, so `-m` deselects on it.
+    # A scratch tree that copies this file alone (tests/test_empty_k_guard.py) has no list, and nothing there is slow.
+    lines = SLOW_CASES.read_text().splitlines() if SLOW_CASES.is_file() else []
+    listed = {line.strip() for line in lines if line.strip() and not line.startswith("#")}
+    for item in items:
+        if item.nodeid in listed:
+            item.add_marker(pytest.mark.slow)
     collected = len(items)
     result = yield
     expression = config.option.keyword
