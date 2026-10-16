@@ -120,7 +120,7 @@ def test_a_failing_slow_case_is_not_recorded_and_runs_again(tree):
     _git(tree, "add", "tests/test_scratch.py")
     _git(tree, *_ID, "commit", "-q", "-m", "the slow case fails")
     for _ in range(2):
-        r = run(tree)
+        r = run(tree, "-m", "slow")
         assert r.returncode == 1 and f"{SLOW} FAILED" in r.stdout, r.stdout + r.stderr
     assert not ledger(tree).exists()
 
