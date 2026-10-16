@@ -48,12 +48,45 @@ def _repo(tmp_path: pathlib.Path) -> pathlib.Path:
     (repo / "infra" / "ansible" / "vault-password").write_text("thing.sh\n")
     (repo / "infra" / "ansible" / "secrets.sops.yaml").write_text("thing.sh: sops\n")
     (repo / "infra" / "scripts" / "lonely.py").write_text("print(1)\n")
+    _commit(repo)
+    return repo
+
+
+def _commit(repo: pathlib.Path) -> None:
     run = lambda *a: subprocess.run(["git", "-C", str(repo), *a], check=True, capture_output=True)  # noqa: E731
     run("init", "-q", "-b", "develop")
     run("config", "user.email", "c@test")
     run("config", "user.name", "c")
     run("add", "-A")
     run("commit", "-qm", "seed")
+
+
+_MODULE = "cli/research/command.py"
+
+
+def _direct_repo(tmp_path: pathlib.Path) -> pathlib.Path:
+    repo = tmp_path / "repo"
+    files = {
+        "cli/__init__.py": "",
+        "cli/research/__init__.py": "",
+        _MODULE: "def run():\n    return 0\n",
+        "tests/test_by_path.py": f"SRC = '{_MODULE}'\n",
+        "tests/test_by_split_path.py": 'import pathlib\nSRC = pathlib.Path(__file__).parents[1] / "cli" / "research" / "command.py"\n',
+        "tests/test_by_dotted.py": "from cli.research.command import run\n",
+        "tests/test_by_from.py": "from cli.research import command as research_command\n",
+        "tests/test_by_paren.py": "from cli.research import (\n    command,\n    subjects,\n)\n",
+        "tests/test_bare_stem.py": "ARGS = ['research', 'command']  # the command runs\n",
+        "tests/test_longer_names.py": f"from cli.research import commands\nimport cli.research.command_line\nSRC = '{_MODULE}.j2'\n",
+        "tests/test_walks_cli.py": "import pathlib\nFILES = sorted(pathlib.Path('cli').rglob('*.py'))\n",
+        "tests/test_imports_cli.py": "import cli\n",
+        "tests/test_a_reader.py": "from tests.test_by_path import SRC\n",
+        "tests/helper.py": f"SRC = '{_MODULE}'\n",
+        "infra/scripts/uses.sh": f"cat {_MODULE}\n",
+    }
+    for rel, text in files.items():
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text(text)
+    _commit(repo)
     return repo
 
 
@@ -150,3 +183,70 @@ def test_the_tree_names_the_script_with_its_walker_tests():
     ):
         assert walker in out.splitlines(), walker
     assert "tests/test_risk_limits.py" not in out.splitlines()
+
+
+def _direct(repo: pathlib.Path, *paths: str) -> list[str]:
+    r = _run(repo, "--direct", *paths)
+    assert r.returncode == 0, r.stderr
+    return r.stdout.splitlines()
+
+
+def test_direct_reads_the_repo_path_whole(tmp_path):
+    assert "tests/test_by_path.py" in _direct(_direct_repo(tmp_path), _MODULE)
+
+
+def test_direct_reads_the_repo_path_split_at_its_slashes(tmp_path):
+    assert "tests/test_by_split_path.py" in _direct(_direct_repo(tmp_path), _MODULE)
+
+
+def test_direct_reads_the_dotted_module(tmp_path):
+    assert "tests/test_by_dotted.py" in _direct(_direct_repo(tmp_path), _MODULE)
+
+
+def test_direct_reads_the_from_import(tmp_path):
+    assert "tests/test_by_from.py" in _direct(_direct_repo(tmp_path), _MODULE)
+
+
+def test_direct_reads_a_parenthesised_from_import(tmp_path):
+    assert "tests/test_by_paren.py" in _direct(_direct_repo(tmp_path), _MODULE)
+
+
+def test_direct_does_not_read_the_bare_stem_as_a_word(tmp_path):
+    repo = _direct_repo(tmp_path)
+    assert "tests/test_bare_stem.py" in _run(repo, _MODULE).stdout.splitlines()
+    assert "tests/test_bare_stem.py" not in _direct(repo, _MODULE)
+
+
+def test_direct_does_not_read_a_longer_name_that_starts_with_the_module_or_path(tmp_path):
+    assert "tests/test_longer_names.py" not in _direct(_direct_repo(tmp_path), _MODULE)
+
+
+def test_direct_lists_only_test_files(tmp_path):
+    repo = _direct_repo(tmp_path)
+    assert {"tests/helper.py", "infra/scripts/uses.sh"} <= set(_run(repo, _MODULE).stdout.splitlines())
+    assert not {"tests/helper.py", "infra/scripts/uses.sh"} & set(_direct(repo, _MODULE))
+
+
+def test_direct_lists_a_changed_test_file_first(tmp_path):
+    assert _direct(_direct_repo(tmp_path), "tests/test_by_path.py")[2:] == ["tests/test_by_path.py", "tests/test_a_reader.py"]
+
+
+def test_direct_prints_no_walker_section(tmp_path):
+    repo = _direct_repo(tmp_path)
+    assert "tests/test_walks_cli.py" in _run(repo, _MODULE).stdout.splitlines()
+    lines = _direct(repo, _MODULE)
+    assert not any(line.startswith("# tree walkers") for line in lines) and "tests/test_walks_cli.py" not in lines
+
+
+def test_direct_reads_a_package_init_as_the_package_and_not_its_submodules(tmp_path):
+    lines = _direct(_direct_repo(tmp_path), "cli/research/__init__.py")
+    assert "tests/test_by_from.py" in lines and "tests/test_by_dotted.py" not in lines
+
+
+def test_direct_reads_a_top_level_package_only_in_an_import_statement(tmp_path):
+    assert _direct(_direct_repo(tmp_path), "cli/__init__.py")[2:] == ["tests/test_imports_cli.py"]
+
+
+def test_direct_without_a_path_is_usage(tmp_path):
+    r = _run(_repo(tmp_path), "--direct")
+    assert r.returncode == 2 and "usage" in r.stderr
