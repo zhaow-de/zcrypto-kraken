@@ -136,3 +136,49 @@ def test_a_plan_naming_a_test_is_full_only_when_it_exists_and_imports_one(
     _commit(repo, {"tests/test_r.py": "from cli.registry import errors\n"}, "test")
     out = _run(repo, capsys, "--paths", "tests/test_r.py", "tests/test_new.py")
     assert out == ["tier: full", "full tests/test_r.py — a test importing cli.registry, read as a non-prose change"]
+
+
+LIMITS = "def apply_position_caps(book):\n    return book\n"
+ENGINE_TREE = {
+    "cli/__init__.py": "",
+    "cli/engine/__init__.py": "",
+    "cli/engine/feeders.py": (
+        "from cli.portfolio.crossfreq_system import apply_whole_book_limits\nfrom cli.risk import apply_position_caps\n"
+    ),
+    "cli/risk/__init__.py": "from cli.risk.limits import apply_position_caps\n",
+    "cli/risk/limits.py": LIMITS,
+    "cli/portfolio/__init__.py": "",
+    "cli/portfolio/crossfreq_system.py": "def apply_whole_book_limits(book):\n    return book\n",
+    "cli/liquidations/__init__.py": "",
+    "cli/liquidations/x.py": "X = 1\n",
+    "tests/test_caps.py": "from cli.risk import apply_position_caps\n\n\ndef test_caps():\n    assert apply_position_caps(1) == 1\n",
+}
+CLOSURE = "in the engine's and capture's load-time closure"
+
+
+def test_a_plan_naming_modules_the_engine_loads_is_full(repo: pathlib.Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _commit(repo, ENGINE_TREE, "engine")
+    out = _run(repo, capsys, "--paths", "cli/risk/limits.py", "cli/portfolio/crossfreq_system.py", "cli/liquidations/x.py")
+    assert out == [
+        "tier: full",
+        f"full cli/risk/limits.py — {CLOSURE}, cli.engine.feeders > cli.risk > cli.risk.limits, read as a non-prose change",
+        f"full cli/portfolio/crossfreq_system.py — {CLOSURE}, cli.engine.feeders > cli.portfolio.crossfreq_system, "
+        "read as a non-prose change",
+    ]
+
+
+def test_a_module_the_engine_does_not_load_stays_light(repo: pathlib.Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _commit(repo, ENGINE_TREE, "engine")
+    assert _run(repo, capsys, "--paths", "cli/liquidations/x.py") == ["tier: light", "light cli/liquidations/x.py"]
+
+
+def test_a_test_importing_a_module_the_engine_loads_is_full(repo: pathlib.Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _commit(repo, ENGINE_TREE, "engine")
+    out = _run(repo, capsys, "--paths", "tests/test_caps.py")
+    assert out == ["tier: full", "full tests/test_caps.py — a test importing cli.risk, read as a non-prose change"]
+
+
+def test_a_code_change_to_a_module_the_engine_loads_is_full(repo: pathlib.Path, capsys: pytest.CaptureFixture[str]) -> None:
+    out = _change(repo, capsys, ENGINE_TREE, {"cli/risk/limits.py": LIMITS.replace("return book", "return {}")})
+    why = f"full cli/risk/limits.py — {CLOSURE}, cli.engine.feeders > cli.risk > cli.risk.limits; prove-inert exit "
+    assert out[0] == "tier: full" and out[1].startswith(why) and len(out) == 2, out
