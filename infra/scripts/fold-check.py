@@ -1,16 +1,8 @@
 #!/usr/bin/env python3
 """A fold made of a pre-review's ship texts alone, checked in place of a fresh pre-review of its tip.
 
-Usage: fold-check.py <rows.json> --range <base>..<tip> --report-dir <dir>, run from the repository. `rows.json` is the
-`prose` array the pre-review returned, and <base> is the tip it read: a row's site line is counted there.
-A pass needs each `trim` or `fix` text verbatim at <tip> in its site's file -- whole lines, each compared without its
-indentation -- with the site's line at <base> deleted or inside that text; each `cut` site's line deleted and its
-`ship` empty; every file the range changes named by a non-`keep` row, in its text alone -- not binary, not its mode,
-not deleted; every hunk touching a row's site line or a `trim` or `fix` text, blank lines between them counting as
-touching; and every non-blank line the range adds inside a `trim` or `fix` text of its own file. What a hunk deletes
-beside a site it touches is not read: a site's extent at <base> is not in the rows.
-A pass appends a `fold-check` row through `review-ledger.py`'s `append`; review.js and re-review.js admit it at its
-own tip alone.
+Run from the repository; <base> in --range is the tip the pre-review read, where each row's site line is counted.
+Not read: what a hunk deletes beside a site it touches or beneath a ship text -- a row gives a site's first line, not its extent.
 Exit: 0 passed and recorded; 1 a row or a change fails, each printed, nothing written; 2 usage, or git refused.
 """
 
@@ -193,6 +185,7 @@ def check(rows: list[Row], base: str, tip: str) -> list[str]:
         hunks[p], beyond = _hunks(base, tip, p)
         fails += [f"{p}: {what}, which no ship text carries" for what in beyond]
     spans = {r: _occurrences(tip_lines[r.path] or [], _ship_lines(r.ship)) for r in answered if r.survives in SHIPS}
+    at_site: dict[Row, list[tuple[int, int]]] = {}
 
     for r in answered:
         tag = f"{r.site} [{r.survives}]"
@@ -210,24 +203,34 @@ def check(rows: list[Row], base: str, tip: str) -> list[str]:
             fails.append(f"{tag}: {r.path} has {len(base_lines[r.path])} lines at {at_base}, the tip the rows were read at")
             continue
         if r.line in _deleted(hunks[r.path]):
+            if r.survives in SHIPS and spans[r]:
+                [h] = [h for h in hunks[r.path] if r.line in _deleted([h])]
+                at_site[r] = [span for span in spans[r] if _touches(h, [span], tip_lines[r.path] or [])]
+                if not at_site[r]:
+                    where = h.new if h.new_count else h.new + 1
+                    fails.append(f"{tag}: its text does not stand where its line at {at_base} was, {r.path}:{where} at {at_tip}")
             continue
         now = _to_tip(r.line, hunks[r.path])
         if r.survives == "cut":
             fails.append(f"{tag}: the cut is not made: its line at {at_base} stands at {r.path}:{now} at {at_tip}")
-        elif spans[r] and not any(s <= now <= e for s, e in spans[r]):
-            fails.append(f"{tag}: its line at {at_base} stands at {r.path}:{now} at {at_tip}, outside its text")
+        elif spans[r]:
+            at_site[r] = [(s, e) for s, e in spans[r] if s <= now <= e]
+            if not at_site[r]:
+                fails.append(f"{tag}: its line at {at_base} stands at {r.path}:{now} at {at_tip}, outside its text")
 
     for p in changed:
         if p not in named:
             fails.append(f"{p}: changed by the range, named by no trim, fix or cut row")
             continue
-        texts = [span for r in answered if r.survives in SHIPS and r.path == p for span in spans[r]]
+        texts = [span for r in answered if r.survives in SHIPS and r.path == p for span in at_site.get(r, [])]
         sites = {r.line for r in answered if r.path == p}
         for h in hunks[p]:
             outside = [
                 (h.new + k, t) for k, t in enumerate(h.added) if t.strip() and not any(s <= h.new + k <= e for s, e in texts)
             ]
-            fails += [f"{p}:{n}: added at {at_tip} outside every trim or fix text of the file: {_clip(t)}" for n, t in outside]
+            fails += [
+                f"{p}:{n}: added at {at_tip} outside every trim or fix text standing at its site: {_clip(t)}" for n, t in outside
+            ]
             if any(t.strip() for t in h.added) or _deleted([h]) & sites or _touches(h, texts, tip_lines[p] or []):
                 continue
             fails.append(

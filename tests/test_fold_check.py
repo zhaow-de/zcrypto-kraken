@@ -180,6 +180,53 @@ def test_an_old_site_kept_beside_its_ship_text_is_refused(repo):
     _refused(done, repo, "a.py:5 [trim]: its line at", "outside its text")
 
 
+@pytest.mark.parametrize(
+    ("files", "rows", "says"),
+    [
+        (
+            {
+                "a.py": FOLDED_A.replace("    # The code below\n    # says the rest.\n", "").replace(
+                    "    return 1\n", "    # The code below\n    # says the rest.\n"
+                ),
+                "notes.md": FOLDED_NOTES,
+            },
+            ROWS,
+            ("a.py:5 [trim]: its text does not stand where its line at", "a.py:9: added at"),
+        ),
+        (
+            {"notes.md": NOTES.replace("The second paragraph has a wrong claim in it.\n", "")},
+            [
+                {
+                    "site": "notes.md:5",
+                    "survives": "fix",
+                    "correct": False,
+                    "duplicateOf": "",
+                    "ship": "The fourth paragraph stands too.",
+                }
+            ],
+            ("notes.md:5 [fix]: its text does not stand where its line at",),
+        ),
+        (
+            {"notes.md": NOTES.replace("The fourth paragraph stands too.", "The first paragraph stands as it is.")},
+            [
+                {
+                    "site": "notes.md:3",
+                    "survives": "trim",
+                    "correct": True,
+                    "duplicateOf": "",
+                    "ship": "The first paragraph stands as it is.",
+                }
+            ],
+            ("notes.md:9: added at",),
+        ),
+    ],
+    ids=["replacing a line no row names", "standing elsewhere already", "added again away from the site it keeps"],
+)
+def test_a_ship_text_away_from_its_site_is_refused(repo, files, rows, says):
+    done, _ = _fold(repo, files, rows)
+    _refused(done, repo, *says)
+
+
 def test_a_deletion_away_from_every_row_is_refused(repo):
     done, _ = _fold(repo, {"a.py": FOLDED_A.replace("    return 1\n", ""), "notes.md": FOLDED_NOTES})
     _refused(done, repo, "a.py: the hunk at", "touches no row's site or text")
