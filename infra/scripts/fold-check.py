@@ -2,11 +2,8 @@
 """A fold made of a pre-review's ship texts alone, checked in place of a fresh pre-review of its tip.
 
 Run from the repository; <base> in --range is the tip the pre-review read, where each row's site line is counted, and
-the report dir's ledger holds that pre-review's row at <base>. Every line a hunk deletes is prose at <base>: in a Python
-file a comment, a docstring or a blank line, as tokenized; in a JS file a `//` or `/* */` comment or a blank line; in a
-JSON file a blank line; in a Markdown file any line; in every other file -- shell, YAML, TOML, a systemd unit, an env
-file, a Caddyfile, an Alloy config, an unknown suffix -- a `#` comment or a blank line; a `#!` first line never. A `.j2`
-template is read as the file it renders; a file with no known suffix by its `#!` line.
+the report dir's ledger holds that pre-review's row at <base>. Every line a hunk deletes must be prose at <base>, as
+`_prose` reads its file's class.
 Not read: which prose a hunk deletes beside a site -- a row gives a site's first line, not its extent.
 Exit: 0 passed and recorded; 1 a row or a change fails, or no pre-review row at <base>, each printed, nothing written;
 2 usage, or git refused.
@@ -198,8 +195,8 @@ def _python_code(text: str) -> set[int]:
 
 
 def _js_code(text: str) -> set[int]:
-    """The lines code or a string's text touches, a blank line inside a string or template included; every line when
-    the file ends inside a string, a template, a regex or a block comment."""
+    """The lines code or a string's text touches; every line when the file ends inside a string, a template, a regex or
+    a block comment."""
     code: set[int] = set()
     state, prev, klass, depth, holes = "code", "", False, 0, []  # holes: the depth each open `${` returns to its template at
     i, line, n = 0, 1, len(text)
