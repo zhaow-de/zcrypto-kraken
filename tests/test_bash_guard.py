@@ -496,6 +496,7 @@ MEMO_WRITES = [
     ("sed --in-place '/^- done/d' .local/memo.md", ".local/memo.md"),
     ("sed -ni p .local/memo.md", ".local/memo.md"),
     ("sed -i -- 's/a/b/' .tmp/x.md .local/memo.md", ".local/memo.md"),
+    ("sed -i 's/a/b/' .local/./memo.md", ".local/./memo.md"),
     ("echo '- item' >> .local/memo.md", ".local/memo.md"),
     ("printf 'x\\n' > .local/memo.md", ".local/memo.md"),
     ("echo x >| ./.local/memo.md", "./.local/memo.md"),
@@ -537,6 +538,7 @@ MEMO_READS = [
     "cat .local/memo.md | tee .tmp/memo.copy",
     "sed -n '/QUEUE/,$p' .local/memo.md > .tmp/queue.md",
     "sed -i 's|.local/memo.md|the memo|' docs/x.md",
+    "sed -i 's/.local/memo.md/' docs/x.md",  # the script, not a file: its words end in the memo's two
     "echo x >> .local/memo.md.bak",
     "echo x >> docs/memo.md",
     # the write as text
@@ -1044,6 +1046,11 @@ def test_a_shell_write_of_the_memo_is_blocked_with_the_remedy(tmp_path: Path, co
     assert "BLOCKED" in claim and f" writes the memo `{path}` " in claim, r.stderr
     assert "through the Edit tool after a Read" in r.stderr and "memo-guard" in r.stderr
     assert r.stdout == ""
+
+
+def test_a_redirect_standing_alone_before_a_command_is_named_as_its_own_stage(tmp_path: Path):
+    r = run_hook(call("> .local/memo.md; echo done"), cwd=tmp_path)
+    assert r.returncode == 2 and "BLOCKED — `> .local/memo.md` writes the memo" in r.stderr, r.stderr
 
 
 @pytest.mark.parametrize("command", MEMO_READS)
