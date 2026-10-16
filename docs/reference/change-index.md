@@ -394,3 +394,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #717 | 2026-10-15 | feat(alpha): 00131 — B2's funding and OI features on the 4h close grid | — | 00131 | T0023 |
 | #718 | 2026-10-15 | docs(research): iter-176 — holdout, DSR and fee contradictions resolved | iter-176 | — | — |
 | #724 | 2026-10-16 | feat(research): iter-177 — B1 trial 3: hourly realized-vol weights on A2 | iter-177 | 00132 | T0022 |
+| #725 | 2026-10-16 | feat(observability): 00121 — the paging cutover: gate, rider, R3 ready | — | 00121, 00122, 00124 | T0217 |
