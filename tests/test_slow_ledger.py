@@ -1,5 +1,5 @@
-"""`tests/conftest.py`'s ledger of passed slow cases, driven by running pytest over a scratch tree that carries a copy of
-the shipped conftest and consumers.sh and a fixture list, so no real slow case runs."""
+"""`tests/conftest.py`'s ledger of passed slow cases, driven by running pytest over a scratch tree (`tree`), so no real
+slow case runs."""
 
 from __future__ import annotations
 
