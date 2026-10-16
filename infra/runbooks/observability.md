@@ -348,9 +348,9 @@ Panel 103 on the `zcrypto-fleet` board shows the same number, and `hc_check_up` 
 
 ### What to do
 
-1. **Name the check and read the value:**
-   `uv run python infra/scripts/grafana-query.py 'hc_check_up' 'hc_checks_down_total'`
-   Rows where `hc_check_up` is 0 are the down checks. `(no series)` here is the 999 case, not a clean bill.
+1. **Name the check and read the value**, on the stack whose copy paged:
+   `uv run python infra/scripts/grafana-query.py --stack mon 'hc_check_up' 'hc_checks_down_total'`
+   for the node's copy, its links under `https://zcrypto-mon.zhaow.me/`, and the same read with `--stack cloud` in place of `--stack mon` for Grafana Cloud's, its links under `https://zcrypto2026.grafana.net/`. Rows where `hc_check_up` is 0 are the down checks. `(no series)` here is the 999 case, not a clean bill; on the node's copy, a read that fails to connect is the node's edge, which step 4's first read takes.
 2. **Value 1–N** ⇒ open the dead-man service, `https://zcrypto-hc.zhaow.me`, and read that check's **last ping time and its last event**. A received `/fail` and a plain silence mean different things — the engine row above is the clearest example. Then go to the owning section in the map, and treat this Grafana page as the redundant copy it is. The engine's check, `zcrypto-engine-shadow`, is read on `https://healthchecks.io` until `uv run python infra/scripts/hc-provision.py status` prints it `moved`: its pinger moves after the others, and until then the service holds it with no ping yet, which reads 1 in this rule's scrape, so a down engine check pages through healthchecks.io's own notification and not here.
 3. **`zcrypto-grafana-watchdog` DOWN while you are reading this page in Grafana** means the ops pinger, its probe of Grafana or its ping to the dead-man service failed, and the unit's journal read against step 2's last event says which: `ssh hp`, `systemctl status zcrypto-grafana-watchdog.timer --no-pager`, then `sudo journalctl -u zcrypto-grafana-watchdog.service --since '<YYYY-MM-DD HH:MM> UTC' --no-pager`. The service ends successful whether the probe passed or failed, so its exit status tells nothing; curl's own error line, one per attempt, is the read. Both curls — the probe, then the ping — write to this journal, and a `(22)` or `(28)` line names no host, so the check's last event says whose it is:
    - **A received `/fail`** — the ping landed, so that run's lines are the probe's:
