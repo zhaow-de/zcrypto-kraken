@@ -1,5 +1,3 @@
-"""The per-diff tier, read from a tmp repository through the real prove-inert and merge-gate."""
-
 import importlib.util
 import pathlib
 import subprocess
