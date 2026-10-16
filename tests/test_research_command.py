@@ -59,6 +59,8 @@ from cli.validation import ValidationError, max_drawdown, sharpe
 from tests.rolling_fixtures import HOLE, write_chain
 from tests.test_trial_registry_provenance import LEDGER, REGISTRY, _trials, live_entries
 
+pytestmark = pytest.mark.slow
+
 runner = CliRunner()
 
 _DAY = 86400

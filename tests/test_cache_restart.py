@@ -29,6 +29,8 @@ from cli.engine.execledger import exec_record_path, read_exec_record, validate_e
 from cli.engine.probeplan import PLAN_FILENAME
 from tests import kraken_loopback as lb
 
+pytestmark = pytest.mark.slow
+
 REPO = Path(__file__).resolve().parents[1]
 CHILD = Path(__file__).parent / "cache_restart_child.py"
 ACL_TEMPLATE = REPO / "infra/ansible/roles/cache/templates/users.acl.j2"
