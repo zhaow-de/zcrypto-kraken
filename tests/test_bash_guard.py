@@ -535,10 +535,9 @@ MEMO_READS = [
     "grep -rn tee .local/memo.md",
     "grep -c 'sed -i' .local/memo.md",
     "sha256sum .local/memo.md > .tmp/memo.sha",
-    # the memo copied aside, a read piped onward, a write of another file
+    # the memo copied aside, a restore from `.bak` copies, a read piped onward, a write of another file
     "cp .local/memo.md .tmp/memo.bak",
     "cp .local/memo.md .tmp/",
-    # a restore from copies taken aside, every source a `.bak`
     "cp .tmp/memo.md.bak .local/memo.md",
     "mv .local/memo.md.bak .local/memo.md",
     "install -m 600 .tmp/memo.md.bak .local/memo.md",
