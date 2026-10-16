@@ -335,6 +335,8 @@ def _cut(site: str) -> list[dict]:
         ({"c.yml": "# The comment.\nkey: value\n"}, {"c.yml": ""}, _cut("c.yml:1"), ("c.yml:2: deleted at", "key: value")),
         ({"j.js": JS}, {"j.js": "const t = `one\n\ntwo`\n"}, _cut("j.js:1"), ("j.js:2: deleted at", "const limit = 3")),
         ({"j.js": JS}, {"j.js": JS.replace("one\n\ntwo", "one\ntwo")}, _cut("j.js:4"), ("j.js:4: deleted at",)),
+        ({"z.toml": "# The comment.\nkey = 1\n"}, {"z.toml": ""}, _cut("z.toml:1"), ("z.toml:2: deleted at", "key = 1")),
+        ({"d.json": '{\n  "key": 1\n}\n'}, {"d.json": "{\n}\n"}, _cut("d.json:2"), ("d.json:2: deleted at", '"key": 1')),
     ],
     ids=[
         "a guard cut beside a comment",
@@ -345,6 +347,8 @@ def _cut(site: str) -> list[dict]:
         "a YAML key",
         "a JS statement",
         "a blank line inside a JS template",
+        "a TOML key",
+        "a JSON line",
     ],
 )
 def test_a_fold_that_deletes_a_line_of_code_is_refused(repo, base, fold, rows, says):
@@ -363,8 +367,9 @@ def test_a_fold_that_deletes_a_line_of_code_is_refused(repo, base, fold, rows, s
         ({"s.sh": SH}, {"s.sh": "#!/bin/sh\nset -eu\necho hi\n"}, _cut("s.sh:2")),
         ({"c.yml": "a: 1\n# The comment.\nb: 2\n"}, {"c.yml": "a: 1\nb: 2\n"}, _cut("c.yml:2")),
         ({"j.js": "/* A block\n   the pre-review cut. */\n\nconst a = 1\n"}, {"j.js": "const a = 1\n"}, _cut("j.js:1")),
+        ({"z.toml": "a = 1\n# The comment.\nb = 2\n"}, {"z.toml": "a = 1\nb = 2\n"}, _cut("z.toml:2")),
     ],
-    ids=["a docstring paragraph", "a shell comment", "a YAML comment", "a JS block comment"],
+    ids=["a docstring paragraph", "a shell comment", "a YAML comment", "a JS block comment", "a TOML comment"],
 )
 def test_a_fold_that_deletes_prose_alone_passes(repo, base, fold, rows):
     done, _ = _fold(_pre_reviewed(repo[0], _commit(repo[0], base, "base")), fold, rows)
