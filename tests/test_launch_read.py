@@ -128,10 +128,23 @@ def test_a_prior_that_is_not_critical_or_important_is_refused(repo: Path, severi
     _refused(_args("re-review", repo, "--prior", _prior(repo, "Critical", severity)), f"prior #2 is {severity}", "--reported")
 
 
-def test_a_prior_file_that_is_not_an_array_of_findings_is_refused(repo: Path):
+@pytest.mark.parametrize(
+    ("text", "says"),
+    [(None, "not readable JSON"), ("[{", "not readable JSON"), ('{"id": 1}', "not a JSON array"), ("[1]", "not a JSON array")],
+    ids=["missing", "not-json", "object", "array-of-numbers"],
+)
+def test_a_prior_file_that_is_not_an_array_of_findings_is_refused(repo: Path, text: str | None, says: str):
     path = repo.parent / "prior.json"
-    path.write_text(json.dumps({"id": 1, "severity": "Critical"}))
-    _refused(_args("re-review", repo, "--prior", str(path)), "not a JSON array")
+    if text is not None:
+        path.write_text(text)
+    _refused(_args("re-review", repo, "--prior", str(path)), says)
+
+
+def test_a_ledger_line_that_is_not_json_is_refused(repo: Path):
+    reads = repo.parent / "reads"
+    reads.mkdir()
+    (reads / "ledger.jsonl").write_text("nope\n")
+    _refused(_args("review", repo), "ledger.jsonl:1 is not JSON")
 
 
 def test_chained_ranges_pass_with_full_shas(repo: Path, shas: list[str]):
@@ -214,3 +227,10 @@ def test_brief_refuses_a_lines_file_with_nothing_to_append(tmp_path: Path, which
         lines.write_text("\n")
     _refused(_run("brief", str(brief), "--lines", str(lines)), str(lines))
     assert brief.read_text() == "# Brief\n"
+
+
+def test_brief_refuses_a_brief_it_cannot_read(tmp_path: Path):
+    brief, lines = tmp_path / "brief.md", tmp_path / "lines.md"
+    lines.write_text("- One.\n")
+    _refused(_run("brief", str(brief), "--lines", str(lines)), f"the brief {brief} is not readable")
+    assert not brief.exists()
