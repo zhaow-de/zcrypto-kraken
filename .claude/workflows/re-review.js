@@ -95,11 +95,11 @@ ${f.priorId === undefined ? '' : `This row reopens prior #${f.priorId}. Its firs
 // --- Ledger: the order of reviews, refused rather than remembered --------------------------------------
 const ledgerPath = `${reportDir}/ledger.jsonl`
 if (!Array.isArray(ledger) || ledger.some((e) => !e || typeof e !== 'object')) throw new Error(`re-review refuses ${tip}: \`ledger\` is not the array \`uv run python infra/scripts/review-ledger.py read ${reportDir} --tip ${tip}\` prints — pass it`)
-// A pre-review covers one tip: the one it read, compared as written, short or long — never an ancestor of it — or a later tip whose tree and commit messages are that tip's, a re-dated or re-signed commit having moved the name and nothing the pre-review grades.
+// A pre-review covers one tip: the one it read, compared as written, short or long — never an ancestor of it — or a later tip whose tree and commit messages are that tip's, a re-dated or re-signed commit having moved the name and nothing the pre-review grades. A fold-check covers the tip it checked and no other: a moved tip re-runs the script.
 const sameTip = (e) => typeof e.tip === 'string' && (e.tip === tip || (e.tip.length >= 7 && tip.length >= 7 && (e.tip.startsWith(tip) || tip.startsWith(e.tip))))
 if (ledger.some((e) => e.against !== undefined && !sameTip({ tip: e.against }))) throw new Error(`re-review refuses ${tip}: ${ledgerPath} was read against another tip — read it again with --tip ${tip}`)
 if (!ledger.some((e) => e.kind === 'review')) throw new Error(`re-review refuses ${tip}: ${ledgerPath} records no review of this branch — a fix range follows a whole-branch review, never replaces it`)
-if (!ledger.some((e) => e.kind === 'pre-review' && (sameTip(e) || e.sameTreeAndMessages === true))) throw new Error(`re-review refuses ${tip}: ${ledgerPath} records no pre-review of this tip — run pre-review on the fix range first, over the amended commit alone after a message-only amend, and append the row it returns`)
+if (!ledger.some((e) => (e.kind === 'pre-review' && (sameTip(e) || e.sameTreeAndMessages === true)) || (e.kind === 'fold-check' && sameTip(e)))) throw new Error(`re-review refuses ${tip}: ${ledgerPath} records no pre-review or fold-check of this tip — run pre-review on the fix range first, over the amended commit alone after a message-only amend, and append the row it returns; a fold of a pre-review's ship texts alone is checked by infra/scripts/fold-check.py instead`)
 
 // --- Re-read -----------------------------------------------------------------------------------
 phase('Re-read')

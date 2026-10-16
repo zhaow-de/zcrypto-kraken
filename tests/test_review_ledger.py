@@ -58,14 +58,15 @@ def _read(report_dir: Path, tip: str, repo: Path) -> list[dict]:
 
 
 def test_append_creates_the_ledger_and_appends_one_row_per_call(tmp_path: Path):
-    for kind, tip in (("pre-review", "abcdef0"), ("review", "abcdef0123")):
+    for kind, tip in (("pre-review", "abcdef0"), ("review", "abcdef0123"), ("fold-check", "abcdef01")):
         done = _ledger("append", str(tmp_path), "--kind", kind, "--range", "develop..abcdef0", "--tip", tip)
         assert done.returncode == 0 and done.stdout == "" and done.stderr == "", done
     rows = [json.loads(line) for line in (tmp_path / "ledger.jsonl").read_text().splitlines()]
-    assert [list(row) for row in rows] == [["kind", "range", "tip", "ts"]] * 2
+    assert [list(row) for row in rows] == [["kind", "range", "tip", "ts"]] * 3
     assert [(r["kind"], r["range"], r["tip"]) for r in rows] == [
         ("pre-review", "develop..abcdef0", "abcdef0"),
         ("review", "develop..abcdef0", "abcdef0123"),
+        ("fold-check", "develop..abcdef0", "abcdef01"),
     ]
     assert all(TS.match(r["ts"]) for r in rows), rows
 
@@ -95,6 +96,7 @@ def test_append_starts_its_row_on_a_line_of_its_own(tmp_path: Path):
         ["--kind", "review", "--range", "a..b", "--tip", "HEAD"],
         ["--kind", "review", "--range", "a..b", "--tip", "abcde"],
         ["--kind", "pre-review", "--range", "a..b", "--tip", "abcdef0", "--refutation", "f.md", "--report", "r.md"],
+        ["--kind", "fold-check", "--range", "a..b", "--tip", "abcdef0", "--refutation", "f.md", "--report", "r.md"],
         ["--kind", "review", "--range", "a..b", "--tip", "abcdef0", "--report", "r.md"],
         ["--range", "a..b", "--tip", "abcdef0"],
         ["--row", "not json"],
@@ -106,9 +108,9 @@ def test_append_starts_its_row_on_a_line_of_its_own(tmp_path: Path):
 )
 def test_append_refuses_what_is_not_a_row_and_writes_nothing(tmp_path: Path, bad: list[str]):
     (tmp_path / "f.md").write_text("## Refutation\n")
-    done = _ledger("append", str(tmp_path), *bad)
+    done = _ledger("append", str(tmp_path), *(str(tmp_path / a) if a in ("f.md", "r.md") else a for a in bad))
     assert done.returncode != 0 and done.stderr, done
-    assert not (tmp_path / "ledger.jsonl").exists()
+    assert not (tmp_path / "ledger.jsonl").exists() and not (tmp_path / "r.md").exists()
 
 
 def test_append_refuses_a_report_dir_that_does_not_exist(tmp_path: Path):
@@ -138,6 +140,7 @@ def test_read_prints_the_entries_and_a_missing_ledger_is_none(tmp_path: Path, re
     rows = [
         {"kind": "task", "label": "t1", "range": "main..x"},
         {"kind": "pre-review", "range": "main..x", "tip": tip, "ts": "t"},
+        {"kind": "fold-check", "range": "main..x", "tip": tip, "ts": "t"},
         {"kind": "review", "range": "main..x", "tip": "0ancestor", "ts": "t"},
     ]
     (tmp_path / "ledger.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows) + "\n")
@@ -150,14 +153,13 @@ def test_a_malformed_line_is_refused_by_its_number(tmp_path: Path, repo: Path):
     assert done.returncode == 1 and "ledger.jsonl:2 is not a JSON object" in done.stderr and done.stdout == ""
 
 
-def test_a_pre_review_of_a_re_dated_branch_covers_its_tip(tmp_path: Path, repo: Path):
+@pytest.mark.parametrize("kind", ["pre-review", "fold-check"])
+def test_a_pre_review_of_a_re_dated_branch_covers_its_tip(tmp_path: Path, repo: Path, kind: str):
     commits = (("one\n", "feat: one"), ("two\n", "feat: two"))
     read_tip = _branch(repo, *commits, when="2026-09-01T00:00:00Z")
     tip = _branch(repo, *commits, when="2026-09-02T00:00:00Z")
     assert tip != read_tip
-    (tmp_path / "ledger.jsonl").write_text(
-        json.dumps({"kind": "pre-review", "range": "main..x", "tip": read_tip, "ts": "t"}) + "\n"
-    )
+    (tmp_path / "ledger.jsonl").write_text(json.dumps({"kind": kind, "range": "main..x", "tip": read_tip, "ts": "t"}) + "\n")
     [entry] = _read(tmp_path, tip, repo)
     assert entry["sameTreeAndMessages"] is True and entry["against"] == tip
 
@@ -171,12 +173,11 @@ def test_a_pre_review_of_a_re_dated_branch_covers_its_tip(tmp_path: Path, repo: 
     ],
     ids=["tree changed", "tip message changed", "an earlier message changed"],
 )
-def test_a_pre_review_of_another_tree_or_other_messages_does_not(tmp_path: Path, repo: Path, rebuilt):
+@pytest.mark.parametrize("kind", ["pre-review", "fold-check"])
+def test_a_pre_review_of_another_tree_or_other_messages_does_not(tmp_path: Path, repo: Path, rebuilt, kind: str):
     read_tip = _branch(repo, ("one\n", "feat: one"), ("two\n", "feat: two"), when="2026-09-01T00:00:00Z")
     tip = _branch(repo, *rebuilt, when="2026-09-02T00:00:00Z")
-    (tmp_path / "ledger.jsonl").write_text(
-        json.dumps({"kind": "pre-review", "range": "main..x", "tip": read_tip, "ts": "t"}) + "\n"
-    )
+    (tmp_path / "ledger.jsonl").write_text(json.dumps({"kind": kind, "range": "main..x", "tip": read_tip, "ts": "t"}) + "\n")
     [entry] = _read(tmp_path, tip, repo)
     assert entry["sameTreeAndMessages"] is False and entry["against"] == tip
 
