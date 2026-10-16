@@ -2,10 +2,7 @@
 # The consumers of a changed file: the files under tests, infra and .claude that name it, then the tests that glob,
 # walk or list files and name its top-level directory -- or, for a changed test, walk their own. The search is
 # `git grep` with vault-shaped and `*.sops.*` paths excluded, never `grep -r`, which opens the vault files.
-# --direct lists only the tests/test_*.py files that name the path in a full form -- the repo path, whole or split at
-# its slashes across quoted literals; its file name with the extension, where no other tracked file carries that name; a
-# Python module's dotted name and its `from <package> import <name>` -- never by the bare stem, and no tree walkers; a
-# changed test file lists itself first.
+# --direct lists only the tests/test_*.py files that name the path in a full form, never by its bare stem, and no walkers.
 # Usage: infra/scripts/consumers.sh [--direct] <path>...   (a path as the tree names it: infra/scripts/foo.sh, cli/engine/x.py)
 #   rc: 0 printed, 2 usage or not in a repository.
 set -euo pipefail

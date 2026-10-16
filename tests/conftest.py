@@ -22,8 +22,8 @@ _SLOW_DESELECTED = pytest.StashKey[int]()
 
 
 def _slow_ledger() -> Path | None:
-    """The file this branch's passed slow cases are appended to, read de-duplicated; None in CI and under
-    `ZCRYPTO_RERUN_SLOW=1`, where every slow case runs and nothing is recorded, and outside a repository."""
+    """The ledger of this branch's passed slow cases; None -- every slow case runs, none is recorded -- in CI, under
+    `ZCRYPTO_RERUN_SLOW=1` and outside a repository."""
     if "CI" in os.environ or "GITHUB_ACTIONS" in os.environ or os.environ.get("ZCRYPTO_RERUN_SLOW") == "1":
         return None
 
@@ -97,7 +97,6 @@ def pytest_collection_modifyitems(config, items):
     for item in slow:
         item.add_marker(pytest.mark.slow)
     collected = len(items)
-    # A slow case runs at most once per branch: one this branch's ledger holds as passed is deselected here.
     ledger = _slow_ledger() if slow else None
     if ledger is not None and ledger.is_file():
         passed = set(ledger.read_text().splitlines())
