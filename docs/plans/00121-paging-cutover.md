@@ -274,7 +274,7 @@ probe infra/grafana/fleet-health-dashboard.json
 - [ ] **Step 9: Commit** — `docs(runbooks): the Grafana-error page names the context canceled lines its rule leaves out`, with the trailer; the Global Constraints' kind split, after the probes' commit.
 - [ ] **Step 10: The tree is clean.**
 
-Then the cutover pull request opens through the `open-pr` skill over Tasks 1 to 3a. Its body cites Task 1's bullet under a `## Gate` section, and each difference with its explanation. A different agent reads the branch. The Rollout's R2, the read-back of the four silences set on 2026-10-15, runs once the pull request is open and before `merge-pr` merges it, since a rebuild or a key replacement that follows the merged `mon-push` step 2 mints the main webhook. The pull request merges first and R3 follows from merged `develop` on the same day (the owner's word of 2026-10-16T14:11:25Z); R4 follows.
+Then the cutover pull request opens through the `open-pr` skill over Tasks 1 to 3a. Its body cites Task 1's bullet under a `## Gate` section, and each difference with its explanation. A different agent reads the branch. The Rollout's R2, the read-back of the four silences set on 2026-10-15, runs once the pull request is open and before `merge-pr` merges it. The pull request merges first and R3 follows from merged `develop` on the same day (the owner's word of 2026-10-16T14:11:25Z); R4 follows.
 
 ---
 
