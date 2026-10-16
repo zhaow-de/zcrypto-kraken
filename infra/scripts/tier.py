@@ -62,6 +62,7 @@ FULL_PATHS = tuple(
             "infra/grafana/alerts.yaml",
             "docs/reference/trial-registry.jsonl",
             "zcrypto.toml",
+            "uv.lock",
         )
     )
 )
