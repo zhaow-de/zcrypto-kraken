@@ -489,6 +489,70 @@ ADMITTED = [
     "cat infra/ansible/group_vars/all/vault.yml$'\\0'x",
 ]
 
+# (command, the memo path the message must name)
+MEMO_WRITES = [
+    ("sed -i 's/- old/- new/' .local/memo.md", ".local/memo.md"),
+    ("sed -i.bak -e 's/a/b/' .local/memo.md", ".local/memo.md"),
+    ("sed --in-place '/^- done/d' .local/memo.md", ".local/memo.md"),
+    ("sed -ni p .local/memo.md", ".local/memo.md"),
+    ("sed -i -- 's/a/b/' .tmp/x.md .local/memo.md", ".local/memo.md"),
+    ("sed -i 's/a/b/' .local/./memo.md", ".local/./memo.md"),
+    ("echo '- item' >> .local/memo.md", ".local/memo.md"),
+    ("printf 'x\\n' > .local/memo.md", ".local/memo.md"),
+    ("echo x >| ./.local/memo.md", "./.local/memo.md"),
+    ("git log -1 --format=%H &>> .local/memo.md", ".local/memo.md"),
+    ("> .local/memo.md", ".local/memo.md"),
+    ("cat <<'EOF' >> .local/memo.md\n- item\nEOF", ".local/memo.md"),
+    ("{ echo a; echo b; } >> .local/memo.md", ".local/memo.md"),
+    ('echo x >> "$CLAUDE_PROJECT_DIR/.local/memo.md"', "$CLAUDE_PROJECT_DIR/.local/memo.md"),
+    ("echo x | tee .local/memo.md", ".local/memo.md"),
+    ("echo x | tee -a .local/memo.md >/dev/null", ".local/memo.md"),
+    ("echo x | tee --append /dev/null .local/memo.md", ".local/memo.md"),
+    ("x=$(echo y | tee -a .local/memo.md)", ".local/memo.md"),
+    ("cp .tmp/memo.new .local/memo.md", ".local/memo.md"),
+    ("cp /tmp/memo.md .local/", ".local/memo.md"),
+    ("cp -t .local .tmp/memo.md", ".local/memo.md"),
+    ("cp .tmp/memo.md.bak .tmp/memo.md .local/", ".local/memo.md"),
+    ("cp .tmp/memo.bak.md .local/memo.md", ".local/memo.md"),
+    ("mv .tmp/memo.md.orig .local/memo.md", ".local/memo.md"),
+    ("mv .tmp/memo.new .local/memo.md", ".local/memo.md"),
+    (
+        "install -m 600 .tmp/memo.new /home/u/Projects/zcrypto-kraken/.local/memo.md",
+        "/home/u/Projects/zcrypto-kraken/.local/memo.md",
+    ),
+    ("truncate -s 0 .local/memo.md", ".local/memo.md"),
+    ("cd .local && sed -i 's/a/b/' memo.md", "memo.md"),
+]
+
+MEMO_READS = [
+    "cat .local/memo.md",
+    "grep -n T0217 .local/memo.md",
+    "sed -n '1,40p' .local/memo.md",
+    "head -50 .local/memo.md",
+    "tail -20 .local/memo.md | cut -c1-80",
+    "wc -l .local/memo.md",
+    "diff .local/memo.md .tmp/memo.bak",
+    "grep -rn tee .local/memo.md",
+    "grep -c 'sed -i' .local/memo.md",
+    "sha256sum .local/memo.md > .tmp/memo.sha",
+    # the memo copied aside, a restore from `.bak` copies, a read piped onward, a write of another file
+    "cp .local/memo.md .tmp/memo.bak",
+    "cp .local/memo.md .tmp/",
+    "cp .tmp/memo.md.bak .local/memo.md",
+    "mv .local/memo.md.bak .local/memo.md",
+    "install -m 600 .tmp/memo.md.bak .local/memo.md",
+    "cat .local/memo.md | tee .tmp/memo.copy",
+    "sed -n '/QUEUE/,$p' .local/memo.md > .tmp/queue.md",
+    "sed -i 's|.local/memo.md|the memo|' docs/x.md",
+    "sed -i 's/.local/memo.md/' docs/x.md",  # the script, not a file: its words end in the memo's two
+    "echo x >> .local/memo.md.bak",
+    "echo x >> docs/memo.md",
+    # the write as text
+    "echo '>> .local/memo.md is refused'",
+    "cat <<'EOF' > .tmp/note.md\necho x >> .local/memo.md\nEOF",
+    'git commit -m "docs: never sed -i .local/memo.md"',
+]
+
 # (command, the stage the message must name) -- refused from a dispatched agent in its own worktree
 AGENT_WRITES = [
     ("git push", "git push"),
@@ -978,6 +1042,27 @@ def test_an_ordinary_command_is_admitted_silently(tmp_path: Path, command: str):
     assert r.returncode == 0, r.stderr
     assert r.stdout == ""
     assert r.stderr == ""
+
+
+@pytest.mark.parametrize(("command", "path"), MEMO_WRITES, ids=[c for c, _ in MEMO_WRITES])
+def test_a_shell_write_of_the_memo_is_blocked_with_the_remedy(tmp_path: Path, command: str, path: str):
+    r = run_hook(call(command), cwd=tmp_path)
+    assert r.returncode == 2, r.stderr
+    claim = r.stderr.partition("; in `")[0]
+    assert "BLOCKED" in claim and f" writes the memo `{path}` " in claim, r.stderr
+    assert "through the Edit tool after a Read" in r.stderr and "memo-guard" in r.stderr
+    assert r.stdout == ""
+
+
+def test_a_redirect_standing_alone_before_a_command_is_named_as_its_own_stage(tmp_path: Path):
+    r = run_hook(call("> .local/memo.md; echo done"), cwd=tmp_path)
+    assert r.returncode == 2 and "BLOCKED — `> .local/memo.md` writes the memo" in r.stderr, r.stderr
+
+
+@pytest.mark.parametrize("command", MEMO_READS)
+def test_a_read_of_the_memo_and_a_write_of_another_file_are_admitted_silently(tmp_path: Path, command: str):
+    r = run_hook(call(command), cwd=tmp_path)
+    assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
 
 
 @pytest.mark.parametrize("payload", ["", "not json at all", "{", "[]", '{"tool_input": "x"}'])

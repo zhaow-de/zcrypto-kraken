@@ -117,6 +117,13 @@ def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
     must do is the admission comment above `sameTip` in the flow it drives."""
     assert shutil.which("node") is not None, "no node on PATH, so the refusal cannot be driven"
     ancestor = {"kind": "pre-review", "tip": "0ancestor", "sameTreeAndMessages": True}
+    folded_ancestor = {**ancestor, "kind": "fold-check"}
+    # As review-ledger.py read prints them: the fold-check row's range by the ids fold-check.py resolved, and the
+    # pre-review row at that range's base compared against the read's tip.
+    fold = {"kind": "fold-check", "range": "0ba5e01234..abcdef012", "tip": "abcdef012"}
+    at_base = {"kind": "pre-review", "tip": "0ba5e01234", "sameTreeAndMessages": False, "against": "abcdef012"}
+    unranged = {k: v for k, v in fold.items() if k != "range"}
+    named = {**fold, "range": "HEAD~1..HEAD"}
     cases = {
         "review": [
             (None, "is not the array"),
@@ -137,6 +144,22 @@ def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
             ([{"kind": "pre-review", "tip": "abcdef012"}, {**ancestor, "against": "fedcba987"}], "was read against another tip"),
             ([{"kind": "pre-review", "tip": "0ancestor", "sameTreeAndMessages": False}], "records no pre-review"),
             ([{"kind": "review", "tip": "0ancestor", "sameTreeAndMessages": True}], "records no pre-review"),
+            ([fold], "records no pre-review"),
+            ([at_base, fold], None),
+            ([{**at_base, "tip": "0ba5e01"}, fold], None),
+            ([at_base, {**fold, "range": "0ba5e01..abcdef012"}], None),
+            ([{**at_base, "tip": "0ba5e"}, fold], "records no pre-review"),
+            ([{**at_base, "tip": "fedcba987"}, fold], "records no pre-review"),
+            ([{**at_base, "kind": "review"}, fold], "records no pre-review"),
+            ([at_base, unranged], "records no pre-review"),
+            ([at_base, named], "records no pre-review"),
+            ([at_base, {**fold, "tip": "abcdef0"}], None),
+            ([at_base, {**fold, "tip": "abcdef0123456789"}], None),
+            ([at_base, {**fold, "tip": "abcde"}], "records no pre-review"),
+            ([at_base, {**fold, "tip": "fedcba987"}], "records no pre-review"),
+            ([at_base, folded_ancestor], "records no pre-review"),
+            ([at_base, {**folded_ancestor, "against": "abcdef012"}], "records no pre-review"),
+            ([{**folded_ancestor, "against": "fedcba987"}], "was read against another tip"),
         ],
         "re-review": [
             (None, "is not the array"),
@@ -158,6 +181,19 @@ def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
                 "records no pre-review",
             ),
             ([{"kind": "review", "tip": "0ancestor", "sameTreeAndMessages": True}], "records no pre-review"),
+            ([at_base, fold], "records no review"),
+            ([{"kind": "review", "tip": "0ancestor"}, fold], "records no pre-review"),
+            ([{"kind": "review", "tip": "0ba5e01234"}, fold], "records no pre-review"),
+            ([{"kind": "review", "tip": "0ancestor"}, at_base, fold], None),
+            ([{"kind": "review", "tip": "0ancestor"}, at_base, {**fold, "tip": "abcdef0"}], None),
+            ([{"kind": "review", "tip": "0ancestor"}, {**at_base, "tip": "fedcba987"}, fold], "records no pre-review"),
+            ([{"kind": "review", "tip": "0ancestor"}, at_base, unranged], "records no pre-review"),
+            ([{"kind": "review", "tip": "0ancestor"}, at_base, named], "records no pre-review"),
+            ([{"kind": "review", "tip": "0ancestor"}, at_base, {**fold, "tip": "fedcba987"}], "records no pre-review"),
+            (
+                [{"kind": "review", "tip": "0ancestor"}, at_base, {**folded_ancestor, "against": "abcdef012"}],
+                "records no pre-review",
+            ),
         ],
     }
     for flow, table in cases.items():

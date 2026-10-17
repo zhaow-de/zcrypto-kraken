@@ -3,9 +3,9 @@
 
 `append` writes the row a pre-review, review or re-review returns, and for a review or re-review appends the
 refutation block it returns to each report it names; with `--row` it appends any one-object row as given, a
-controller's task rows among them. `read` prints the entries a review or re-review takes as its
-`ledger` argument, each pre-review entry at another tip carrying `sameTreeAndMessages` and the tip it was compared
-against, which the workflows refuse when it is not their own.
+controller's task rows among them; `fold-check.py` writes its row through `append`. `read` prints the entries a
+review or re-review takes as its `ledger` argument, each pre-review or fold-check entry at another tip carrying
+`sameTreeAndMessages` and the tip it was compared against, which the workflows refuse when it is not their own.
 """
 
 from __future__ import annotations
@@ -18,7 +18,8 @@ import re
 import subprocess
 import sys
 
-KINDS = ("pre-review", "review", "re-review")
+KINDS = ("pre-review", "review", "re-review", "fold-check")
+TIP_BOUND = ("pre-review", "fold-check")
 SHA = re.compile(r"^[0-9a-f]{7,64}$")
 
 
@@ -81,7 +82,7 @@ def read(report_dir: pathlib.Path, tip: str, repo: pathlib.Path) -> list[dict]:
             raise LedgerError(f"{ledger}:{n} is not JSON ({exc.msg}); mend the line by hand") from exc
         if not isinstance(entry, dict):
             raise LedgerError(f"{ledger}:{n} is not a JSON object; mend the line by hand")
-        if entry.get("kind") == "pre-review" and entry.get("tip") != tip:
+        if entry.get("kind") in TIP_BOUND and entry.get("tip") != tip:
             entry["sameTreeAndMessages"] = same_tree_and_messages(repo, entry.get("tip"), tip)
             entry["against"] = tip
         entries.append(entry)
@@ -97,6 +98,10 @@ def annotate(report: pathlib.Path, block: str) -> str | None:
     with report.open("a", encoding="utf-8") as fh:
         fh.write(("" if not text else "\n" if text.endswith("\n") else "\n\n") + body)
     return None
+
+
+def stamped(kind: str, range_: str, tip: str) -> dict:
+    return {"kind": kind, "range": range_, "tip": tip, "ts": dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")}
 
 
 def append(report_dir: pathlib.Path, row: dict, refutation: pathlib.Path | None, reports: list[pathlib.Path]) -> list[str]:
@@ -144,10 +149,9 @@ def run(argv: list[str]) -> int:
             raise LedgerError("append takes --kind, --range and --tip together, or --row alone")
         if (args.refutation is None) != (not args.report):
             raise LedgerError("--refutation and --report go together: the block and the reports it is appended to")
-        if args.refutation is not None and args.kind == "pre-review":
-            raise LedgerError("a pre-review returns no refutation block")
-        stamp = dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-        row = args.row if args.row is not None else {"kind": args.kind, "range": args.range, "tip": args.tip, "ts": stamp}
+        if args.refutation is not None and args.kind in TIP_BOUND:
+            raise LedgerError(f"a {args.kind} returns no refutation block")
+        row = args.row if args.row is not None else stamped(args.kind, args.range, args.tip)
         for note in append(args.report_dir, row, args.refutation, args.report):
             print(f"review-ledger: {note}", file=sys.stderr)
     except (LedgerError, OSError) as exc:

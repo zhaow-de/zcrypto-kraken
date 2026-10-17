@@ -28,12 +28,15 @@
 # A vault tool's writing verb is admitted over a vaulted file: a key rotation runs `ansible-vault encrypt|rekey`.
 # Refused deliberately, as a word is judged wherever it stands: an agent's `echo git push`, `echo cat <vaulted file>`.
 #
-# A stage's directory, for the vaulted-file family and the dispatched-agent family, is the payload's `cwd` moved by
+# A stage's directory, for the vaulted-file, memo and dispatched-agent families, is the payload's `cwd` moved by
 # each pipeline before it that is one stage whose command word is `cd` or `pushd` with a literal first operand, or
 # none, then by git's `-C`s. Every other change of directory is unfollowed: `builtin cd`, `command cd`, `{fd}>x cd`
 # and a `cd` inside a pipeline leave the directory where the hook had it; `cd -`, `popd` and an operand through a
-# variable or a substitution leave it unknown, a relative `cd` after them keeps it so, and the vaulted-file family
-# reads an unknown directory as the payload's `cwd`. Scope is not tracked, so a `cd` outlives its subshell.
+# variable or a substitution leave it unknown, a relative `cd` after them keeps it so, and the vaulted-file and memo
+# families read an unknown directory as the payload's `cwd`. Scope is not tracked, so a `cd` outlives its subshell.
+#
+# Outside the memo family: every writer its corpus does not refuse -- a wrapper (`sudo tee`), a glob or a brace, a
+# path a variable holds whole, an interpreter, `awk -i inplace`, `rsync`, `ln`, `dd`, `rm`.
 #
 # The dispatched-agent family judges only a call whose payload carries `agent_id`, which the harness sets inside a
 # subagent alone, so the main loop's pushes and merges never reach it. The main checkout is the parent of the git
@@ -102,6 +105,7 @@ PIPE = {"|", "|&"}  # one more stage of the same pipeline; every other separator
 REDIRECT = {"&>>", "<<<", "<<", "<>", "<&", ">&", "&>", ">>", ">|", "<", ">"}
 PUNCT = set("();<>|&\n")
 INPUT = {"<", "<>"}  # a redirect whose target is a file the stage reads
+OUTPUT = {">", ">>", ">|", "&>", "&>>", ">&"}  # a redirect whose target is a file the stage writes
 PRINTERS = {"cat", "head", "tail", "less", "more", "sed", "awk", "cut", "strings", "xxd", "od", "base64", "tac", "nl", "hexdump", "hd"}
 COPIERS = {"cp", "scp", "rsync"}
 INTERPRETER = re.compile(r"^python(\d+(\.\d+)?)?$")
@@ -114,6 +118,19 @@ VAULT_REMEDY = (
     "A vaulted value is read by `vault_var` through command substitution, never printed; a header or a count by "
     "`grep -c`, `sha256sum`, `wc`, `stat`, `ls` or `git log --`."
 )
+MEMO = [".local", "memo.md"]
+MEMO_REMEDY = (
+    "The memo is written through the Edit tool after a Read of it, where memo-guard checks the write against that read; "
+    "a shell write bypasses the check. A read -- `cat`, `grep`, `sed -n`, `head` -- stays open."
+)
+SED_VALUE = ("efl", "i", {"expression", "file", "line-length"})
+TRUNCATE_VALUE = ("sr", "", {"size", "reference"})
+# Per program: whose target the memo would be, and its valued options in option_walk's three kinds.
+MOVERS = {
+    "cp": ("a copy's", ("St", "", {"suffix", "target-directory"})),
+    "mv": ("a move's", ("St", "", {"suffix", "target-directory"})),
+    "install": ("an install's", ("mogSt", "", {"mode", "owner", "group", "suffix", "target-directory"})),
+}
 GH_PR_WRITES = {"create", "ready", "merge", "edit", "close", "comment", "review"}
 GH_WRITE_METHODS = {"POST", "PATCH", "PUT", "DELETE"}
 GH_VALUE = {"-R", "--repo"}
@@ -171,10 +188,12 @@ HOOK_DIR = posixpath.dirname(os.path.abspath(sys.argv[1]))
 
 
 class Stage(list):
-    # A stage's words, and the files its `<` redirects feed it, which are no word of its argv.
+    # A stage's words, the files its `<` redirects feed it, and its output redirects as (operator, target): no word of
+    # its argv.
     def __init__(self):
         super().__init__()
         self.inputs = []
+        self.outputs = []
 
 
 def expansions(body):
@@ -369,6 +388,8 @@ def pipelines(text):
         if skip:
             if skip in INPUT:
                 pipes[-1][-1].inputs.append(tok)
+            elif skip in OUTPUT:
+                pipes[-1][-1].outputs.append((skip, tok))
             skip = ""
             continue
         if not tok or not set(tok) <= PUNCT:
@@ -377,13 +398,14 @@ def pipelines(text):
         last = ""
         while tok:
             last = next(op for op in OPS if tok.startswith(op))
-            if last in PIPE and pipes[-1][-1]:
+            filled = bool(pipes[-1][-1]) or bool(pipes[-1][-1].outputs)  # `> f` alone is a stage: it truncates f
+            if last in PIPE and filled:
                 pipes[-1].append(Stage())
-            elif last in SEP and pipes[-1][-1]:
+            elif last in SEP and filled:
                 pipes.append([Stage()])
             tok = tok[len(last) :]
         skip = last if last in REDIRECT else ""
-    out = [[stage for stage in pipe if stage] for pipe in pipes]
+    out = [[stage for stage in pipe if stage or stage.outputs] for pipe in pipes]
     out = [pipe for pipe in out if pipe]
     for body in bodies:
         out.extend(pipelines(body))
@@ -836,6 +858,48 @@ def judge_vault(words, raw, where):
             refuse_vault(words, f"prints the vaulted file `{hit.rpartition(':')[2]}` at a revision", raw)
 
 
+def names_memo(path, where):
+    return any(posixpath.normpath(p).split("/")[-2:] == MEMO for p in (path, posixpath.join(where, path)))
+
+
+def refuse_memo(shown, hit, how, raw):
+    refuse(f"`{shown}` writes the memo `{hit}` {how}; in `{raw}`. {MEMO_REMEDY}")
+
+
+def judge_memo(words, raw, where):
+    for op, target in words.outputs:
+        if names_memo(target, where):
+            refuse_memo(" ".join(filter(None, (spelled(words), op, shlex.quote(target)))), target, "through a redirect", raw)
+    p, rest = argv_of(words)
+    if p == "sed":
+        flags, _, ops = option_walk(rest, *SED_VALUE)
+        if not any(f == "i" or among(f, {"--in-place"}) for f in flags):
+            return
+        scripted = any(f in ("e", "f") or among(f, {"--expression", "--file"}) for f in flags)
+        written, how = (ops if scripted else ops[1:]), "in place"
+    elif p == "tee":
+        written, how = operands(rest), "from its input"
+    elif p == "truncate":
+        written, how = option_walk(rest, *TRUNCATE_VALUE)[2], "by truncating it"
+    elif p in MOVERS:
+        whose, values = MOVERS[p]
+        flags, vals, ops = option_walk(rest, *values)
+        into = next((v for f, v in zip(flags, vals) if f == "t" or among(f, {"--target-directory"})), None)
+        written = []
+        if into is None and len(ops) > 1:
+            into, ops = ops[-1], ops[:-1]
+            written.append(into)
+        if ops and all(posixpath.basename(s).endswith(".bak") for s in ops):
+            return
+        written += [posixpath.join(into, posixpath.basename(s)) for s in ops] if into else []
+        how = f"as {whose} target"
+    else:
+        return
+    hit = next((w for w in written if names_memo(w, where)), None)
+    if hit:
+        refuse_memo(spelled(words), hit, how, raw)
+
+
 def is_gh(w):
     return w == "gh" or (w.endswith("/gh") and not ASSIGN.match(w))
 
@@ -1130,6 +1194,7 @@ try:
         for words in pipe:
             judge(words)
             judge_vault(words, raw, here or cwd)
+            judge_memo(words, raw, here or cwd)
             if agent:
                 judge_agent(words, here, raw, call.get("session_id"))
         judge_cap(pipe, raw)
