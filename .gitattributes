@@ -1,2 +1,0 @@
-# The phase decisions logs are append-only: two branches appending entries merge with both kept (iteration-closeout).
-docs/research/*.phase*-decisions.md merge=union
