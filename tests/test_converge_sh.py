@@ -36,12 +36,15 @@ def invocations(tmp_path):
 
 @pytest.fixture(autouse=True)
 def _no_deploy_log_above_tmp_path(tmp_path):
-    """make_harness puts the script in tmp_path, so its default deploy log resolves three levels above it -- the
-    repository's own log when the basetemp sits two levels under the root."""
-    log = (tmp_path / ".." / ".." / ".." / "docs" / "reference" / "deploy-log.jsonl").resolve()
-    before = log.read_bytes() if log.exists() else None
+    """make_harness copies the script, so an unpinned real pass writes its default log three levels above the copy:
+    the repository's own log, watched at any harness depth, and the one above tmp_path. A write fails loudly and is
+    not written back, since a real converge in this checkout may have appended beside it."""
+    logs = {SCRIPT.parents[3] / "docs" / "reference" / "deploy-log.jsonl"}
+    logs.add((tmp_path / ".." / ".." / ".." / "docs" / "reference" / "deploy-log.jsonl").resolve())
+    before = {log: log.read_bytes() if log.exists() else None for log in logs}
     yield
-    assert (log.read_bytes() if log.exists() else None) == before, f"a real pass wrote {log}: pin ZCRYPTO_DEPLOY_LOG in tmp_path"
+    wrote = sorted(str(log) for log in logs if (log.read_bytes() if log.exists() else None) != before[log])
+    assert not wrote, f"a real pass wrote {wrote}: pin ZCRYPTO_DEPLOY_LOG in tmp_path"
 
 
 def run_no_tty(script, args, env=None):
