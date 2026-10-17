@@ -34,6 +34,19 @@ def invocations(tmp_path):
     return log.read_text().splitlines() if log.exists() else []
 
 
+@pytest.fixture(autouse=True)
+def _no_deploy_log_above_tmp_path(tmp_path):
+    """converge.sh writes its default log three levels above its copy, so the repository's log is watched whatever
+    the harness depth, as is the one three levels above tmp_path. A write is not restored: a real converge in this
+    checkout may have appended beside it."""
+    logs = {SCRIPT.parents[3] / "docs" / "reference" / "deploy-log.jsonl"}
+    logs.add((tmp_path / ".." / ".." / ".." / "docs" / "reference" / "deploy-log.jsonl").resolve())
+    before = {log: log.read_bytes() if log.exists() else None for log in logs}
+    yield
+    wrote = sorted(str(log) for log in logs if (log.read_bytes() if log.exists() else None) != before[log])
+    assert not wrote, f"a real pass wrote {wrote}: pin ZCRYPTO_DEPLOY_LOG in tmp_path"
+
+
 def run_no_tty(script, args, env=None):
     return subprocess.run(
         ["setsid", str(script), *args],
@@ -182,6 +195,7 @@ def _clear_deploy_env(monkeypatch):
 
 def test_typed_limit_runs_the_real_pass(tmp_path, monkeypatch):
     _clear_deploy_env(monkeypatch)
+    monkeypatch.setenv("ZCRYPTO_DEPLOY_LOG", str(tmp_path / "deploy-log.jsonl"))
     script = make_harness(tmp_path)
     rc, _out = run_with_tty(script, ["site.yml", "--limit", "zcrypto-red"], "zcrypto-red")
     assert rc == 0
@@ -193,6 +207,7 @@ def test_typed_limit_runs_the_real_pass(tmp_path, monkeypatch):
 
 def test_limit_equals_form_is_parsed(tmp_path, monkeypatch):
     _clear_deploy_env(monkeypatch)
+    monkeypatch.setenv("ZCRYPTO_DEPLOY_LOG", str(tmp_path / "deploy-log.jsonl"))
     script = make_harness(tmp_path)
     rc, out = run_with_tty(script, ["site.yml", "--limit=zcrypto-ops"], "zcrypto-ops")
     assert rc == 0
