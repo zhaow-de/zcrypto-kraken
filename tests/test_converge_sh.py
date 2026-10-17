@@ -36,9 +36,9 @@ def invocations(tmp_path):
 
 @pytest.fixture(autouse=True)
 def _no_deploy_log_above_tmp_path(tmp_path):
-    """make_harness copies the script, so an unpinned real pass writes its default log three levels above the copy:
-    the repository's own log, watched at any harness depth, and the one above tmp_path. A write fails loudly and is
-    not written back, since a real converge in this checkout may have appended beside it."""
+    """converge.sh writes its default log three levels above its copy, so the repository's log is watched whatever
+    the harness depth, as is the one three levels above tmp_path. A write is not restored: a real converge in this
+    checkout may have appended beside it."""
     logs = {SCRIPT.parents[3] / "docs" / "reference" / "deploy-log.jsonl"}
     logs.add((tmp_path / ".." / ".." / ".." / "docs" / "reference" / "deploy-log.jsonl").resolve())
     before = {log: log.read_bytes() if log.exists() else None for log in logs}
