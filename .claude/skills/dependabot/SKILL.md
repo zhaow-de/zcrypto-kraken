@@ -169,6 +169,8 @@ ref=$(git stash list | grep -F "dependabot-skill-temp" | head -1 | cut -d: -f1)
 [ -n "$ref" ] && git stash pop "$ref"
 ```
 
+After the merges, `develop` is synced as `merge-pr`'s Step 4 syncs it, before anything else runs from this checkout. The bumps get no rollout of their own (the owner's word of 2026-10-13): "the rollout ride the next converge" — an image they rebuild reaches a host at the next converge that re-pins its digest.
+
 Report a summary:
 - ✅ Merged PRs (with number + package)
 - ⏭️ Skipped PRs (with reasons — e.g. major-version requiring human review, base branch wrong)

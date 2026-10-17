@@ -109,7 +109,7 @@ The entry's paragraph, to `#zcrypto`. If no Slack tool is reachable, say so in t
 
 A scheduled message fires once. Schedule tomorrow's trigger before finishing, the way `refdata-sweep-due` does. **The Slack message is the convenience; the named hand-off is the trigger** — the pass is re-armed only when something that outlives this session carries tomorrow's.
 
-**Before an entry routes a converge as owed or counts a topic's arms, it reads the sources**: the topic's `ripe_when` from its own file, never from memory of it, and `.local/deadman/spec-decisions.md` grepped for the owner's ruling on the thing routed — a converge the owner ruled not to run is recorded as ruled, never routed.
+**Before an entry routes a converge as owed or counts a topic's arms, it reads the sources**, never memory: the topic's file — `ripe_when` and body — and the memo item its serial heads, where the owner's converge rulings are quoted; a converge the owner ruled not to run is recorded as ruled, never routed, and a dependency bump's image is owed no converge of its own (`dependabot`'s Phase 3).
 
 **With no Slack tool, the entry says so AND the re-trigger goes to a carrier that outlives the session**: hand it to `zcrypto-marco` for the memo queue, the way 5b hands a fired trigger, or schedule a routine through `/schedule`; the entry names which. A session-local scheduler is not a substitute: it dies with the session, and this reminder has to outlive it.
 
