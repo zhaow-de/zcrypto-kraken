@@ -21,7 +21,7 @@ An iteration that introduces, relocates, or retires a dataset updates `docs/refe
 
 Skipped: permission, process, formatting, and engineering that touches none of the above. A reversible tooling choice is still decided autonomously, just not logged.
 
-**When, and by whom:** the session that makes the decision or hears the ruling writes the entry on its own branch and commits it before the branch's whole-branch read (the `review` workflow), so the read covers it. The phase logs merge by union (`.gitattributes`): of two branches appending to one log, the later merges `develop` in with both entries kept and no hand resolution, the shape `merge-pr`'s gate admits past the read's tip. A ruling given between branches rides the next branch that touches its subject, never a gitignored file alone. A plan ends with the task that writes its decisions' entry, or its last task states `Decisions log: none — <reason>`.
+**When, and by whom:** the session that makes the decision or hears the ruling writes the entry on its own branch and commits it before the branch's whole-branch read (the `review` workflow), so the read covers it. Two branches appending to one log conflict at its end: the later merges `develop` in, keeps both entries by hand, and that merge takes a re-review, since `merge-pr`'s gate admits no hand resolution. A ruling given between branches rides the next branch that touches its subject, never a gitignored file alone. A plan ends with the task that writes its decisions' entry, or its last task states `Decisions log: none — <reason>`.
 
 ### What to log
 
