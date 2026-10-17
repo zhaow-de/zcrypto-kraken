@@ -27,6 +27,7 @@ Sessions talk through `SendMessage`, addressed by name. Session identity is not 
   Message: <whom, at start, at each commit, when blocked, at completion>
   Concurrency: <how many subagents at once, and what may run in parallel>
   A gap is decided by: <marco, or the session itself, and for which class>
+  Decisions log: <the phase log the session's decisions or the owner's rulings it hears go to, written on its own branch before its read (`iteration-closeout`), or none — <reason>>
   ```
 - **A topic registration is asked for in a message of its own**, and answered in one: asked inside a longer relay, a one-clause approval is read as a decision on the whole.
 - An assignment whose pre-push loop reaches a third round carrying a Critical or Important gets a transcript retro by marco before that session's next assignment, written to a dated directory under `.local/retro/` with a proposed rule or skill change.
