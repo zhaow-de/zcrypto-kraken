@@ -17,7 +17,7 @@ Sessions talk through `SendMessage`, addressed by name. Session identity is not 
 
 - **One subject per payload session — the owner's ruling.** A session whose branch is finished but gated on an external event stays idle; marco offers it no second subject and treats no idle session as spare capacity (set: the payload rows of the table; count: `awk -F'|' '/^\| *zcrypto-(alex|bravo|zebra)/ && split($5,a,/[;,+]/)>1' .local/coordination.md | wc -l` — rows holding two or more subjects).
 - A subject goes to the idle session holding its context, else the idle one. A row is the session's current state; a guard, file or property a report names goes into the topic cell, compared pairwise before assigning (count: `awk -F'|' '/^\| *zcrypto-(alex|bravo|zebra)/ {gsub(/ /,"",$5); if ($5!="—") print $5}' .local/coordination.md | sort | uniq -d | wc -l` — a subject on two rows). A block below the table lives while its assignment is in flight (count: `grep -c '^## ' .local/coordination.md` against the rows holding a subject).
-- A brief names the component, the session it addresses, the branch and the worktree, the boundary list (paths and actions it stays off), where output lands, whom to message, the concurrency bound, and who decides a gap (no count command: they are prose fields with no fixed literal — nothing can grep whether a brief names who decides a gap — where a memo or table paste, above, is a shape a grep reads; the skeleton below is what a brief is written from). Its shape:
+- A brief names the component, the session it addresses, the branch and the worktree, the boundary list (paths and actions it stays off), where output lands, whom to message, the concurrency bound, who decides a gap, and the decisions log its decisions go to (no count command: they are prose fields with no fixed literal — nothing can grep whether a brief names who decides a gap — where a memo or table paste, above, is a shape a grep reads; the skeleton below is what a brief is written from). Its shape:
 
   ```markdown
   # <component> — <session>
@@ -27,7 +27,7 @@ Sessions talk through `SendMessage`, addressed by name. Session identity is not 
   Message: <whom, at start, at each commit, when blocked, at completion>
   Concurrency: <how many subagents at once, and what may run in parallel>
   A gap is decided by: <marco, or the session itself, and for which class>
-  Decisions log: <the phase log the session's decisions or the owner's rulings it hears go to, written on its own branch before its read (`iteration-closeout`), or none — <reason>>
+  Decisions log: <the phase log its decisions and the rulings it hears go to (`iteration-closeout`), or none — <reason>>
   ```
 - **A topic registration is asked for in a message of its own**, and answered in one: asked inside a longer relay, a one-clause approval is read as a decision on the whole.
 - An assignment whose pre-push loop reaches a third round carrying a Critical or Important gets a transcript retro by marco before that session's next assignment, written to a dated directory under `.local/retro/` with a proposed rule or skill change.
