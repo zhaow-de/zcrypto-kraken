@@ -34,6 +34,16 @@ def invocations(tmp_path):
     return log.read_text().splitlines() if log.exists() else []
 
 
+@pytest.fixture(autouse=True)
+def _no_deploy_log_above_tmp_path(tmp_path):
+    """make_harness puts the script in tmp_path, so its default deploy log resolves three levels above it -- the
+    repository's own log when the basetemp sits two levels under the root."""
+    log = (tmp_path / ".." / ".." / ".." / "docs" / "reference" / "deploy-log.jsonl").resolve()
+    before = log.read_bytes() if log.exists() else None
+    yield
+    assert (log.read_bytes() if log.exists() else None) == before, f"a real pass wrote {log}: pin ZCRYPTO_DEPLOY_LOG in tmp_path"
+
+
 def run_no_tty(script, args, env=None):
     return subprocess.run(
         ["setsid", str(script), *args],
@@ -182,6 +192,7 @@ def _clear_deploy_env(monkeypatch):
 
 def test_typed_limit_runs_the_real_pass(tmp_path, monkeypatch):
     _clear_deploy_env(monkeypatch)
+    monkeypatch.setenv("ZCRYPTO_DEPLOY_LOG", str(tmp_path / "deploy-log.jsonl"))
     script = make_harness(tmp_path)
     rc, _out = run_with_tty(script, ["site.yml", "--limit", "zcrypto-red"], "zcrypto-red")
     assert rc == 0
@@ -193,6 +204,7 @@ def test_typed_limit_runs_the_real_pass(tmp_path, monkeypatch):
 
 def test_limit_equals_form_is_parsed(tmp_path, monkeypatch):
     _clear_deploy_env(monkeypatch)
+    monkeypatch.setenv("ZCRYPTO_DEPLOY_LOG", str(tmp_path / "deploy-log.jsonl"))
     script = make_harness(tmp_path)
     rc, out = run_with_tty(script, ["site.yml", "--limit=zcrypto-ops"], "zcrypto-ops")
     assert rc == 0
