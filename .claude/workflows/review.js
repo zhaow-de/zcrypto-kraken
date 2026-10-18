@@ -155,7 +155,7 @@ const ledgerOut = await agent(`From the directory ${repo}, two steps and nothing
 REFUTATION
 ${refutation}
 REFUTATION`, { label: 'ledger', phase: 'Ledger', effort: 'low', agentType: 'general-purpose', ...(model ? { model } : {}) })
-log(`ledger: ${String(ledgerOut || '').trim().slice(0, 240) || 'the append agent returned nothing — append the row by hand, the block with --refutation and --report where the read returns one'}`)
+log(`ledger: ${String(ledgerOut || '').trim().slice(0, 240) || 'the append agent returned nothing, as a clean append prints nothing — read ledger.jsonl before appending by hand'}`)
 
 return {
   range,

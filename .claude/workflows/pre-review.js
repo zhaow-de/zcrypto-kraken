@@ -145,5 +145,5 @@ log(`prose: ${report.graded} graded${FAN ? ' (summed over slices, so a site two 
 // --- Ledger: the row this read owes, appended by the read itself (a controller forgot it once and fold-check refused) ---
 phase('Ledger')
 const ledgerOut = await agent(`From the directory ${repo} run exactly this one command and return its stdout and stderr verbatim, nothing else, no other command: uv run python infra/scripts/review-ledger.py append ${reportDir} --kind pre-review --range ${range} --tip ${tip}`, { label: 'ledger', phase: 'Ledger', effort: 'low', agentType: 'general-purpose', model: model || 'opus' })
-log(`ledger: ${String(ledgerOut || '').trim().slice(0, 240) || 'the append agent returned nothing — append the row by hand, the block with --refutation and --report where the read returns one'}`)
+log(`ledger: ${String(ledgerOut || '').trim().slice(0, 240) || 'the append agent returned nothing, as a clean append prints nothing — read ledger.jsonl before appending by hand'}`)
 return { ...report, row: { kind: 'pre-review', range, tip } }
