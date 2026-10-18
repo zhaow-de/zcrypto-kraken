@@ -981,6 +981,20 @@ def test_an_ill_shaped_reading_attempt_is_refused_before_the_write(tmp_path, att
     assert not path.exists()
 
 
+def test_a_reading_append_requires_an_attempt_explicitly(tmp_path):
+    path = tmp_path / "readings.jsonl"
+    with pytest.raises(TypeError, match="attempt"):
+        ReadingLedger(path).append(
+            iteration="iter-001",
+            spec_hash="s",
+            invocation=_invocation(_READING_DATASETS),
+            datasets=_READING_DATASETS,
+            metrics={"sharpe": 0.3},
+            outcome=None,
+        )
+    assert not path.exists()
+
+
 def test_a_reading_past_the_first_must_declare_schema_two(tmp_path):
     first = _reading_line(1)
     with pytest.raises(
