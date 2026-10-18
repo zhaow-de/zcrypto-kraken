@@ -119,21 +119,21 @@ def test_direct_readers_are_listed_and_the_vault_file_is_not(tmp_path):
         "/vault-password",
     ):
         assert not any(line.endswith(shape) for line in lines), shape
-    assert "infra/scripts/thing.sh" not in lines[1:]  # the file itself is not its own reader
+    assert "infra/scripts/thing.sh" not in lines  # the file itself is not its own reader
 
 
 def test_a_walker_follows_only_when_it_names_the_changed_files_top_level_directory(tmp_path):
     repo = _repo(tmp_path)
     r = _run(repo, "infra/scripts/thing.sh")
-    walkers = r.stdout.split("# tree walkers over infra/", 1)[1].splitlines()[1:]
-    assert walkers == ["tests/test_lsfiles.py", "tests/test_parent_parent_root.py", "tests/test_root_glob.py"]
+    assert "# tree walkers over infra/" in r.stderr
+    assert r.stdout.splitlines()[3:] == ["tests/test_lsfiles.py", "tests/test_parent_parent_root.py", "tests/test_root_glob.py"]
 
 
 def test_a_changed_test_lists_the_walkers_over_tests_and_those_beside_it(tmp_path):
     repo = _repo(tmp_path)
     r = _run(repo, "tests/test_other.py")
-    walkers = r.stdout.split("# tree walkers over tests/", 1)[1].splitlines()[1:]
-    assert walkers == [
+    assert "# tree walkers over tests/" in r.stderr
+    assert r.stdout.splitlines()[1:] == [
         "tests/test_parent_glob.py",
         "tests/test_parent_glob_sq.py",
         "tests/test_two_step_own_dir.py",
@@ -144,7 +144,7 @@ def test_a_changed_test_lists_the_walkers_over_tests_and_those_beside_it(tmp_pat
 def test_a_changed_test_file_is_its_own_first_reader(tmp_path):
     repo = _repo(tmp_path)
     r = _run(repo, "tests/test_other.py")
-    assert r.stdout.splitlines()[2] == "tests/test_other.py"
+    assert r.stdout.splitlines()[0] == "tests/test_other.py"
 
 
 def test_an_empty_reader_list_is_a_finding_on_stderr_and_no_line_on_stdout(tmp_path):
@@ -152,12 +152,21 @@ def test_an_empty_reader_list_is_a_finding_on_stderr_and_no_line_on_stdout(tmp_p
     r = _run(repo, "infra/scripts/lonely.py")
     assert r.returncode == 0
     assert "(none -- no direct reader" in r.stderr and "never the full suite" in r.stderr
-    assert "(none" not in r.stdout
-    assert r.stdout.split("# direct readers", 1)[1].split("# tree walkers", 1)[0].splitlines()[1:] == []
+    assert "(none" not in r.stdout and "# direct readers" in r.stderr
+    assert r.stdout.splitlines() == ["tests/test_lsfiles.py", "tests/test_parent_parent_root.py", "tests/test_root_glob.py"]
     r = _run(repo, "--direct", "infra/scripts/lonely.py")
     assert r.returncode == 0
     assert "(none -- no test file names it" in r.stderr and "never the full suite" in r.stderr
-    assert [line for line in r.stdout.splitlines() if not line.startswith("#")] == []
+    assert r.stdout == ""
+
+
+def test_stdout_holds_paths_alone_and_every_header_is_stderr(tmp_path):
+    repo = _repo(tmp_path)
+    for args in (("infra/scripts/thing.sh",), ("--direct", "infra/scripts/thing.sh"), ("tests/test_other.py",)):
+        r = _run(repo, *args)
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.splitlines() and not any(line.startswith("#") for line in r.stdout.splitlines()), r.stdout
+        assert r.stderr.splitlines()[0] == f"## {args[-1]}", r.stderr
 
 
 def test_a_top_level_file_lists_no_walker(tmp_path):
@@ -165,7 +174,7 @@ def test_a_top_level_file_lists_no_walker(tmp_path):
     (repo / "pyproject.toml").write_text("[project]\nname = 'x'\n")
     subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True)
     r = _run(repo, "pyproject.toml")
-    assert "# tree walkers: none -- a top-level file" in r.stdout and "tree walkers over" not in r.stdout
+    assert "# tree walkers: none -- a top-level file" in r.stderr and "tree walkers over" not in r.stderr and r.stdout == ""
 
 
 def test_no_argument_is_usage(tmp_path):
@@ -250,7 +259,7 @@ def test_direct_lists_only_test_files(tmp_path):
 
 
 def test_direct_lists_a_changed_test_file_first(tmp_path):
-    assert _direct(_direct_repo(tmp_path), "tests/test_by_path.py")[2:] == ["tests/test_by_path.py", "tests/test_a_reader.py"]
+    assert _direct(_direct_repo(tmp_path), "tests/test_by_path.py") == ["tests/test_by_path.py", "tests/test_a_reader.py"]
 
 
 def test_direct_prints_no_walker_section(tmp_path):
@@ -266,7 +275,7 @@ def test_direct_reads_a_package_init_as_the_package_and_not_its_submodules(tmp_p
 
 
 def test_direct_reads_a_top_level_package_only_in_an_import_statement(tmp_path):
-    assert _direct(_direct_repo(tmp_path), "pkg/__init__.py")[2:] == ["tests/test_imports_pkg.py"]
+    assert _direct(_direct_repo(tmp_path), "pkg/__init__.py") == ["tests/test_imports_pkg.py"]
 
 
 def test_direct_without_a_path_is_usage(tmp_path):
