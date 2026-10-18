@@ -1361,6 +1361,31 @@ def test_the_main_loop_runs_what_a_dispatched_agent_may_not(tmp_path: Path, comm
     assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
 
 
+# (command, the stage the message must name) -- a grep handed files in a pipeline naming infra
+HANDED_GREPS = [
+    ("git ls-files 'infra/ansible/**/*.j2' | xargs grep -l foo", "xargs grep -l foo"),
+    ("find infra/ansible -name '*.j2' -exec grep -l foo {} +", "find infra/ansible -name '*.j2' -exec grep -l foo '{}' +"),
+]
+HANDED_GREPS_ADMITTED = [
+    "git ls-files 'cli/**/*.py' | xargs grep -l foo",
+    "git ls-files 'infra/**/*.bak' | xargs rm",
+]
+
+
+@pytest.mark.parametrize(("command", "stage"), HANDED_GREPS, ids=[c for c, _ in HANDED_GREPS])
+def test_a_grep_handed_files_in_a_pipeline_naming_infra_is_blocked_with_the_remedy(tmp_path: Path, command: str, stage: str):
+    r = run_hook(call(command), cwd=tmp_path)
+    assert r.returncode == 2, r.stderr
+    assert f"BLOCKED — `{stage}` greps the files it is handed in a pipeline naming infra" in r.stderr, r.stderr
+    assert "`vault_var` through command substitution" in r.stderr and r.stdout == ""
+
+
+@pytest.mark.parametrize("command", HANDED_GREPS_ADMITTED)
+def test_a_grep_handed_files_outside_infra_or_another_program_over_infra_is_admitted(tmp_path: Path, command: str):
+    r = run_hook(call(command), cwd=tmp_path)
+    assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
+
+
 def call_from(command: str, sub: str) -> dict:
     return {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(REPO / sub)}
 
