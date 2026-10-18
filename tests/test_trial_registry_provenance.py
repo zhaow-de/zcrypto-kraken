@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
+import sys
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -764,10 +765,17 @@ def _reading_attempt(attempt_id: int) -> dict:
     return {"log": _L, "id": attempt_id, "begin": _begin_hash(attempt_id), "absorbs": []}
 
 
+# The table's world: records 1-48 and reading 1, append-only, so a row's figures stay fixed as entries land past the
+# floors, which the live test holds.
+def _floor_world() -> tuple[dict[int, dict], dict[int, dict]]:
+    trials, readings = _trials(), _readings()
+    return {n: trials[n] for n in trials if n <= 48}, {n: readings[n] for n in readings if n <= 1}
+
+
 def _count_check(
     trials=(), readings=(), *, subjects=SUBJECTS, bucket_of=BUCKET_OF, budget=BUDGET, allowlist=frozenset({_L})
 ) -> list[str]:
-    committed_trials, committed_readings = _trials(), _readings()
+    committed_trials, committed_readings = _floor_world()
     committed_trials.update({trial["trial_id"]: trial for trial in trials})
     committed_readings.update({reading["reading_id"]: reading for reading in readings})
     return _attempt_findings(
@@ -783,6 +791,19 @@ def test_every_record_past_48_holds_to_its_count_family_budget_log_and_carry_for
 
 
 def test_a_clean_schema_6_trial_yields_no_finding():
+    assert _count_check([_trial6(49)]) == []
+
+
+def test_an_entry_landing_past_the_floors_leaves_the_clean_row_clean(monkeypatch):
+    log = next(iter(parse_allowlist(ALLOWLIST_FILE.read_text(encoding="utf-8"))))
+    trials, readings = _trials(), _readings()
+    landed = _trial6(50, attempt_id=2)
+    landed["attempt"]["log"] = log
+    stop = _reading2(2, _B2, {**_reading_attempt(3), "log": log})
+    module = sys.modules[__name__]
+    monkeypatch.setattr(module, "_trials", lambda: {**trials, 50: landed})
+    monkeypatch.setattr(module, "_readings", lambda: {**readings, 2: stop})
+
     assert _count_check([_trial6(49)]) == []
 
 
