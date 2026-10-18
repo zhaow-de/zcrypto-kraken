@@ -41,11 +41,14 @@
 # Outside the memo family: every writer its corpus does not refuse -- a wrapper (`sudo tee`), a glob or a brace, a
 # path a variable holds whole, an interpreter, `awk -i inplace`, `rsync`, `ln`, `dd`, `rm`.
 #
-# A state-changing git command -- commit, merge, rebase, reset, push, checkout, switch, stash (not list|show), mv, rm,
-# a branch delete, rename, copy or force, worktree add|remove|move -- stamps `.tmp/.git-state-stamp` under the top of
-# the checkout it runs in, once per call at admission; a second one under 3 s after is refused, since a hook sees one
-# Bash call and nothing of its siblings, and two in one checkout at once is a parallel call, not a sequence. A read
-# neither stamps nor is refused; a directory that is no checkout, or an unreadable stamp, admits.
+# A state-changing git command -- commit, merge, rebase, reset, push, pull, fetch, cherry-pick, revert, am, checkout,
+# switch, stash (not list|show), mv, rm, a branch delete, rename, copy or force, worktree add|remove|move -- stamps
+# `zcrypto-git-state-stamp` in the git directory of the checkout it runs in (a worktree's own, never the common dir two
+# worktrees share; never under the top, where `git add .` would commit it in a checkout that ignores no `.tmp`), once
+# per call at admission; a second one under 3 s after is refused, since a hook sees one Bash call and nothing of its
+# siblings, and the shape it guards is two parallel calls on one checkout -- a sequential pair whose first has returned
+# inside the gap is refused too, the mechanic being time, and its remedy is to re-send after the gap. A read neither
+# stamps nor is refused; a directory that is no checkout, or an unreadable stamp, admits; `tag` is outside.
 #
 # The dispatched-agent family judges only a call whose payload carries `agent_id`, which the harness sets inside a
 # subagent alone, so the main loop's pushes and merges never reach it. The main checkout is the parent of the git
@@ -195,8 +198,8 @@ WORKTREE_REMEDY = (
     "repository's main checkout or of one of its worktrees, whoever made it, or under its session's directory in "
     "Claude Code's temp root; a worktree, and another session's directory, are that session's."
 )
-STATE_SUBS = {"commit", "merge", "rebase", "reset", "push", "checkout", "switch", "stash", "mv", "rm"}
-STATE_STAMP = ".tmp/.git-state-stamp"
+STATE_SUBS = {"commit", "merge", "rebase", "reset", "push", "pull", "fetch", "cherry-pick", "revert", "am", "checkout", "switch", "stash", "mv", "rm"}
+STATE_STAMP = "zcrypto-git-state-stamp"  # in the checkout's own git directory
 STATE_GAP = 3.0  # seconds since the checkout's last admitted state-changing git command
 XARGS_VALUE = {"-n", "-I", "-L", "-P", "-d", "-s"}  # xargs' short options whose value is the next word
 HOOK_DIR = posixpath.dirname(os.path.abspath(sys.argv[1]))
@@ -1088,9 +1091,10 @@ def in_main_checkout(path):
 
 
 @functools.cache
-def top_and_common(where):
+def checkout_dirs(where):
+    # The checkout's top, its common git dir and its own git dir (a worktree's `.git/worktrees/<name>`), or None.
     done = subprocess.run(
-        ["git", "-C", where, "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"],
+        ["git", "-C", where, "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir", "--absolute-git-dir"],
         capture_output=True,
         text=True,
     )
@@ -1104,7 +1108,7 @@ def worktree_top(path):
     ours, here = os.path.realpath(f"{main}/.git"), path
     while here != "/":
         here = posixpath.dirname(here)
-        if top_and_common(here) == (here, ours):
+        if (checkout_dirs(here) or ())[:2] == (here, ours):
             return here
     return None
 
@@ -1167,16 +1171,19 @@ def state_stamp(words, here):
         return None
     for d in chdirs:
         here = resolve(here, d)
-    found = top_and_common(here) if here else None
+    found = checkout_dirs(here) if here else None
     if found is None:
         return None
-    stamp = posixpath.join(found[0], STATE_STAMP)
+    stamp = posixpath.join(found[2], STATE_STAMP)
     try:
         age = time.time() - float(open(stamp).read())
     except (OSError, ValueError):
         return stamp
     if age < STATE_GAP:
-        refuse(f"`{spelled(words)}` is a state-changing git command and one started {age:.1f} s ago in this checkout: a state-changing git command runs alone — re-send it after the previous one returns")
+        refuse(
+            f"`{spelled(words)}`: a state-changing git command started {age:.1f} s ago in this checkout; a state-changing "
+            f"git command runs alone, never beside another — if that one has already returned, re-send this one after the gap"
+        )
     return stamp
 
 
