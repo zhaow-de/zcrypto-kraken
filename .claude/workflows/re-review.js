@@ -5,6 +5,7 @@ export const meta = {
   phases: [
     { title: 'Re-read', detail: 'one reader over the fix range with the open priors' },
     { title: 'Refute', detail: 'one skeptic per Critical and Important, new or reopened' },
+    { title: 'Ledger', detail: 'the row appended to ledger.jsonl by the read itself' },
   ],
 }
 
@@ -80,7 +81,7 @@ ${priorList}
 What the author names as consciously left, each by prior id with its reason (the reason is a claim this read rests on: check it against the tree): ${left || 'nothing'}
 Minors the prior read reported, fixed or left with their reasons — context, not priors: ${reported || 'none'}
 
-The pre-review has already graded the range's prose and re-run its message claims: grade prose only where acting on it as written breaks something, and re-measure a claim only where the range's correctness rests on it.${drive ? ` Beyond the standing brief, drive this: ${drive}` : ''}
+The pre-review has graded the range's prose and read its message claims and ran nothing: every mutate-probe verdict a message in the fix range records is yours to re-run through its case, grade prose only where acting on it as written breaks something, and re-measure a claim only where the range's correctness rests on it.${drive ? ` Beyond the standing brief, drive this: ${drive}` : ''}
 
 Read \`git diff ${range}\` first, then each commit message. Then walk every prior finding by id: closed (name the hunk or commit, AND name the class the finding is an instance of, both ways — the text (sibling spellings, other carriers of the same claim, other branches of the same condition) and the space (the categories the fixed code's input or state ranges over, judged against the invariant the fix restores) — and say what you checked beyond the instance the finding named; where the finding has no class beyond itself say that instead; a hunk that answers the finding as written and leaves a sibling standing has not closed it), left (only when the author's words above name it by id AND the reason holds against the tree), or open — a prior finding neither closed nor named as left is open; report it in the prior table only, since the workflow carries an open one forward itself. Grade anything else in the diff you would grade as a new finding; a Minor you list is context for the author's next pre-review, not a row for the next read. Write a Markdown report to ${reportPath} with \`## Verdict\`, \`## Prior findings\` (a table), \`## Findings\` and \`## Executed\`, then return the structured output; the report and the structure must agree.`
 
@@ -153,6 +154,11 @@ const refutation = graded.length
   : '## Refutation\n\nNo finding was graded, so no skeptic ran.'
 log(`ledger: write the returned refutation to a file, then uv run python infra/scripts/review-ledger.py append ${reportDir} --kind re-review --range ${range} --tip ${tip} --refutation <that file> --report ${reportPath}`)
 if (report.reportPath && report.reportPath !== reportPath) log(`the reader says it wrote ${report.reportPath}, not ${reportPath}: the refutation block goes to the path this workflow names`)
+
+// --- Ledger: the row this read owes, appended by the read itself (a controller forgot it once and fold-check refused) ---
+phase('Ledger')
+const ledgerOut = await agent(`From the directory ${repo} run exactly this one command and return its stdout and stderr verbatim, nothing else, no other command: uv run python infra/scripts/review-ledger.py append ${reportDir} --kind re-review --range ${range} --tip ${tip}`, { label: 'ledger', phase: 'Ledger', effort: 'low', agentType: 'general-purpose', ...(model ? { model } : {}) })
+log(`ledger: ${String(ledgerOut || '').trim().slice(0, 240) || 'the append agent returned nothing — append the row by hand'}`)
 
 return {
   range,

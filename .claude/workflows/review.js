@@ -5,6 +5,7 @@ export const meta = {
   phases: [
     { title: 'Read', detail: 'one read-only reader per lens, in parallel' },
     { title: 'Refute', detail: 'one skeptic per Critical and Important' },
+    { title: 'Ledger', detail: 'the row appended to ledger.jsonl by the read itself' },
   ],
 }
 
@@ -67,7 +68,7 @@ const lensPath = (name) => `${reportDir}/${name}-${tip}.md`
 
 const readerPrompt = (lens) => `You are one of ${lenses.length} independent readers, a different agent from the author, of \`git log ${range}\` at tip \`${tip}\` in ${repo}. ${RULES} ${CHECKOUT(`read-${lens.name}`)} ${SCOPE} Grading: ${GRADING}
 
-YOUR LENS — ${lens.name}: ${lens.brief} The other lenses are ${lenses.filter((o) => o.name !== lens.name).map((o) => o.name).join(', ') || 'none'}; leave their ground to them. The pre-review has already graded the range's prose and re-run its message claims: grade prose only where acting on it as written breaks something, and re-measure a claim only where the range's correctness rests on it.${drive ? ` Beyond the standing brief, drive this: ${drive}` : ''}
+YOUR LENS — ${lens.name}: ${lens.brief} The other lenses are ${lenses.filter((o) => o.name !== lens.name).map((o) => o.name).join(', ') || 'none'}; leave their ground to them. The pre-review has graded the range's prose and read its message claims and ran nothing: every mutate-probe verdict a message in the range records is yours to re-run through its case (the guards lens), grade prose only where acting on it as written breaks something, and re-measure a claim only where the range's correctness rests on it.${drive ? ` Beyond the standing brief, drive this: ${drive}` : ''}
 
 Ask of every surface the range adds or keeps whether it should exist at all, before asking whether it is true: a surface that should not exist outranks every truth finding about it. Read \`git diff ${range}\` first, then each commit message. Write a Markdown report to ${lensPath(lens.name)} with \`## Verdict\`, \`## Findings\` (one \`### [Severity] path:line — claim\` heading per finding with evidence and a \`Consequence:\` line) and \`## Executed\`, then return the structured output with the same findings; the report and the structure must agree.`
 
@@ -147,6 +148,11 @@ const refutation = graded.length
 const lensReports = live.map((r) => lensPath(r.lens))
 log(`ledger: write the returned refutation to a file, then uv run python infra/scripts/review-ledger.py append ${reportDir} --kind review --range ${range} --tip ${tip} --refutation <that file> ${lensReports.map((p) => `--report ${p}`).join(' ')}`)
 for (const r of live) if (r.reportPath && r.reportPath !== lensPath(r.lens)) log(`lens ${r.lens} says it wrote ${r.reportPath}, not ${lensPath(r.lens)}: the refutation block goes to the path this workflow names`)
+
+// --- Ledger: the row this read owes, appended by the read itself (a controller forgot it once and fold-check refused) ---
+phase('Ledger')
+const ledgerOut = await agent(`From the directory ${repo} run exactly this one command and return its stdout and stderr verbatim, nothing else, no other command: uv run python infra/scripts/review-ledger.py append ${reportDir} --kind review --range ${range} --tip ${tip}`, { label: 'ledger', phase: 'Ledger', effort: 'low', agentType: 'general-purpose', ...(model ? { model } : {}) })
+log(`ledger: ${String(ledgerOut || '').trim().slice(0, 240) || 'the append agent returned nothing — append the row by hand'}`)
 
 return {
   range,
