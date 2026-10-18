@@ -100,7 +100,7 @@ def test_each_read_ends_in_its_own_ledger_phase_and_the_first_read_reads_none():
         assert text.rfind("phase(") == text.rfind("phase('Ledger')"), f"{name}: the ledger phase is the last"
     before_the_grader = (_FLOWS / "pre-review.js").read_text().split("phase('Pre-review')")[0]
     after_meta = re.split(r"^}\n", before_the_grader, maxsplit=1, flags=re.M)[1]
-    assert not re.search(r"\bledger\b", after_meta.replace("ledger.md", "")), "the pre-review reads no ledger"
+    assert not re.search(r"\bledger\b", after_meta.replace("ledger.md", ""))
     assert before_the_grader.count("throw") == 1, (
         "pre-review is the first read: it reads no ledger and refuses nothing but its arguments"
     )
