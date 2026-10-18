@@ -1,4 +1,4 @@
-"""The three review workflows carry one grading, one scope and one set of rules, copied because a workflow script
+"""The three review workflows carry one grading and one set of rules, copied because a workflow script
 cannot import another."""
 
 from __future__ import annotations
@@ -100,7 +100,7 @@ def test_each_read_ends_in_its_own_ledger_phase_and_the_first_read_reads_none():
         assert text.rfind("phase(") == text.rfind("phase('Ledger')"), f"{name}: the ledger phase is the last"
     before_the_grader = (_FLOWS / "pre-review.js").read_text().split("phase('Pre-review')")[0]
     after_meta = re.split(r"^}\n", before_the_grader, maxsplit=1, flags=re.M)[1]
-    assert "review-ledger.py" not in after_meta and "ledger.jsonl" not in after_meta
+    assert not re.search(r"\bledger\b", after_meta.replace("ledger.md", "")), "the pre-review reads no ledger"
     assert before_the_grader.count("throw") == 1, (
         "pre-review is the first read: it reads no ledger and refuses nothing but its arguments"
     )
@@ -284,8 +284,6 @@ _BRANCH = {"repo": "/r", "range": "develop..tip9abcde", "tip": "tip9abcde", "rep
 
 
 def test_the_graders_run_on_opus_unless_a_caller_names_another_which_is_refused():
-    """The graders read prose, message claims and probe mutations — the work the owner put on Opus on 2026-09-20;
-    Fable keeps the reads, whose class walks build compositions by hand."""
     for args in (_BRANCH, {**_BRANCH, "model": "opus"}):
         ran = _drive_pre_review(args)
         assert [(c["label"], c["model"]) for c in ran["calls"]] == [("pre-review", "opus"), ("ledger", "opus")]
