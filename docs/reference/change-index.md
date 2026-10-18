@@ -397,3 +397,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #725 | 2026-10-16 | feat(observability): 00121 — the paging cutover: gate, rider, R3 ready | — | 00121, 00122, 00124 | T0217 |
 | #726 | 2026-10-16 | docs(topics): T0217 — the node pages main; a silence goes on each stack | — | 00121 | T0217 |
 | #730 | 2026-10-18 | feat(registry): every trial run counted, an abandoned branch included | — | 00133 | T0222 |
+| #731 | 2026-10-18 | feat(research): iter-178 — B1 trial 4: volume-confirmed entries, REJECT | iter-178 | 00134 | T0022 |
