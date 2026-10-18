@@ -17,7 +17,9 @@ os.environ["TMPDIR"] = str(TMP_ROOT)
 os.environ["GIT_CEILING_DIRECTORIES"] = str(TMP_ROOT)
 
 import cli.engine.cycle as cycle
+from cli.registry import attempts
 
+_REAL_LOG_PATH, _REAL_ALLOWED_LOG_IDS = attempts.log_path, attempts.allowed_log_ids
 SLOW_CASES = Path(__file__).resolve().parent / "slow-cases.txt"
 CONSUMERS = TMP_ROOT.parent / "infra" / "scripts" / "consumers.sh"
 _SLOW_DESELECTED = pytest.StashKey[int]()
@@ -132,6 +134,34 @@ def _restore_zcrypto_logger():
     logger.handlers[:] = handlers
     logger.setLevel(level)
     logger.propagate = propagate
+
+
+def _allowlisted(path: Path) -> frozenset[str]:
+    return frozenset(attempts.parse_allowlist(path.read_text())) if path.is_file() else frozenset()
+
+
+@pytest.fixture(autouse=True)
+def _attempts_log_in_tmp_path(tmp_path):
+    # A patcher of its own, so a test's `monkeypatch.undo()` never reaches these patches. The allowlist is read on
+    # every call: a test writes or rewrites it after this fixture has run.
+    patch = pytest.MonkeyPatch()
+    patch.setattr(attempts, "log_path", lambda code_root: tmp_path / ".local" / "trial-attempts.jsonl")
+    patch.setattr(attempts, "allowed_log_ids", lambda code_root: _allowlisted(tmp_path / "trial-attempt-logs.txt"))
+    yield
+    patch.undo()
+
+
+@pytest.fixture(autouse=True)
+def _attempts_log_kept_in_tmp_path(_attempts_log_in_tmp_path, monkeypatch, tmp_path):
+    # Torn down before `monkeypatch` is undone, so it reads what the test patched through it.
+    yield
+    assert attempts.log_path is not _REAL_LOG_PATH, (
+        "this test left cli.registry.attempts.log_path on the real resolution, which names the main checkout's trial-attempts log"
+    )
+    assert attempts.allowed_log_ids is not _REAL_ALLOWED_LOG_IDS, (
+        "this test left cli.registry.attempts.allowed_log_ids on the real allowlist"
+    )
+    assert attempts.log_path(TMP_ROOT.parent).is_relative_to(tmp_path)
 
 
 @pytest.hookimpl(wrapper=True)

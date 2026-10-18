@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import fcntl
 import json
 import os
@@ -15,6 +16,7 @@ from cli.registry.attempts import AttemptLog, AttemptLogError, collect, init_log
 from cli.registry.record import GENESIS_HASH, canonical_json, compute_hash, loads_strict
 
 REPO = Path(__file__).resolve().parents[1]
+CONFTEST = REPO / "tests" / "conftest.py"
 _LOG, _OTHER = "a" * 32, "b" * 32
 _SPEC = "c" * 64
 _BUCKETS = {"A1": "A", "B1": "B", "B2": "B", "P1": None}
@@ -428,6 +430,67 @@ def test_a_common_dir_with_no_checkout_is_refused(tmp_path):
         match="no main checkout at .*, resolved from git rev-parse --git-common-dir: run from a clone with a working tree",
     ):
         _real_log_path(work)
+
+
+def test_the_attempts_log_resolves_under_the_tests_tmp_path(tmp_path):
+    (tmp_path / "trial-attempt-logs.txt").write_text(f"{'1' * 32} zcrypto-test\n")
+    assert attempts.log_path(REPO) == tmp_path / ".local" / "trial-attempts.jsonl"
+    assert attempts.allowed_log_ids(REPO) == {"1" * 32}
+    assert not (tmp_path / ".local").exists()
+
+
+def test_no_module_under_cli_imports_a_name_from_the_attempts_module():
+    by_name = [
+        f"{path.relative_to(REPO)}:{node.lineno}"
+        for path in sorted((REPO / "cli").rglob("*.py"))
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"), filename=str(path)))
+        if isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[-1] == "attempts"
+    ]
+    assert by_name == [], (
+        "code under cli/ reaches cli.registry.attempts as attempts.<name> through `from cli.registry import attempts`, so a "
+        f"test's patch of the module's attribute reaches it; a name imported from the module keeps the real one: {by_name}"
+    )
+
+
+@pytest.mark.parametrize("name", ["log_path", "allowed_log_ids"])
+def test_a_test_that_points_the_log_at_the_real_one_fails_its_teardown(tmp_path, name):
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    (tree / "conftest.py").write_text(CONFTEST.read_text())
+    (tree / "test_scratch.py").write_text(
+        f"from cli.registry import attempts\n\nREAL = attempts.{name}\n\n\n"
+        f"def test_points_at_the_real_one(monkeypatch):\n    monkeypatch.setattr(attempts, {name!r}, REAL)\n"
+    )
+
+    run = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--tb=line", "--rootdir", str(tree)],
+        cwd=tree,
+        capture_output=True,
+        text=True,
+    )
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert f"left cli.registry.attempts.{name} on the real" in run.stdout, run.stdout
+
+
+def test_a_test_that_undoes_its_monkeypatch_keeps_the_log_in_its_tmp_path(tmp_path):
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    (tree / "conftest.py").write_text(CONFTEST.read_text())
+    (tree / "test_scratch.py").write_text(
+        "from cli.registry import attempts\n\n\n"
+        "def test_undoes_its_patches(monkeypatch, tmp_path):\n    monkeypatch.undo()\n"
+        "    assert attempts.log_path(tmp_path).is_relative_to(tmp_path)\n"
+    )
+
+    run = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--tb=line", "--rootdir", str(tree)],
+        cwd=tree,
+        capture_output=True,
+        text=True,
+    )
+
+    assert run.returncode == 0, run.stdout + run.stderr
 
 
 def test_the_branch_is_none_on_a_detached_head_and_an_orphan_from_one_is_named_so(tmp_path):
