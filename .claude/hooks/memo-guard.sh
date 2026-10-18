@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# retire when: .local/memo.md is no longer the session's hand-edited queue, and no stamp is pasted by hand.
 # Read-guard for .local/memo.md (hand-edited outside sessions, not version-controlled), and the placeholder-stamp
 # refusal.
 # Protocol: an Edit is allowed only when the file has been Read since its content last changed;

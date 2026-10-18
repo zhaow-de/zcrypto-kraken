@@ -7,9 +7,12 @@ the ordinary shape nearest to it that it must admit (exit 0, silent).
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
+import re
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -951,17 +954,28 @@ SCOPED_GREPS = [
 ]
 
 
+# The checkouts the corpus's admitted `git commit`s stamp for the runs-alone arm: the cases run one at a time across
+# xdist workers, each with those stamps gone, or the next admitted commit within 3 s is refused.
+STAMPS = [Path(d) / ".tmp" / ".git-state-stamp" for d in (str(REPO), MAIN)]
+LOCK = REPO / ".tmp" / ".bash-guard-tests.lock"
+
+
 def run_hook(payload: dict | str, cwd: Path, env: dict | None = None, hook: Path = HOOK) -> subprocess.CompletedProcess:
     """Dicts are JSON-encoded; strings pass through verbatim so the malformed-input cases can hand the hook
     something that is not JSON."""
-    return subprocess.run(
-        ["bash", str(hook)],
-        input=payload if isinstance(payload, str) else json.dumps(payload),
-        capture_output=True,
-        text=True,
-        cwd=cwd,
-        env=env,
-    )
+    LOCK.parent.mkdir(exist_ok=True)
+    with open(LOCK, "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        for stamp in STAMPS:
+            stamp.unlink(missing_ok=True)
+        return subprocess.run(
+            ["bash", str(hook)],
+            input=payload if isinstance(payload, str) else json.dumps(payload),
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            env=env,
+        )
 
 
 def call(command: str) -> dict:
@@ -1111,6 +1125,60 @@ def test_a_judging_that_fails_refuses_a_dispatched_agent_and_admits_the_main_loo
     assert r.returncode == 0 and "NOTE — the hook failed on its own (rc 1); the command runs unjudged." in r.stderr, r.stderr
 
 
+def state_repo(tmp_path: Path) -> tuple[dict, Path]:
+    """A checkout of its own and its stamp's path: the payload's cwd is the repo, so the stamp lands under its top."""
+    repo = (tmp_path / "repo").resolve()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    return {"tool_name": "Bash", "tool_input": {"command": ""}, "cwd": str(repo)}, repo / ".tmp" / ".git-state-stamp"
+
+
+def stamped(payload: dict, stamp: Path, age: float) -> dict:
+    stamp.parent.mkdir()
+    stamp.write_text(repr(time.time() - age))
+    return payload
+
+
+def test_a_state_changing_git_command_within_the_gap_of_another_is_refused(tmp_path: Path):
+    payload, stamp = state_repo(tmp_path)
+    payload = stamped(payload, stamp, 0.4)
+    before = stamp.read_text()
+    payload["tool_input"]["command"] = "git commit -m x"
+    r = run_hook(payload, cwd=tmp_path)
+    assert r.returncode == 2, r.stderr
+    assert re.search(
+        r"BLOCKED — `git commit -m x` is a state-changing git command and one started 0\.[4-9] s ago in this checkout: ", r.stderr
+    ), r.stderr
+    assert "a state-changing git command runs alone — re-send it after the previous one returns" in r.stderr
+    assert stamp.read_text() == before and r.stdout == ""
+
+
+def test_a_state_changing_git_command_past_the_gap_is_admitted_and_restamps(tmp_path: Path):
+    payload, stamp = state_repo(tmp_path)
+    payload = stamped(payload, stamp, 5.0)
+    payload["tool_input"]["command"] = "git commit -m x"
+    r = run_hook(payload, cwd=tmp_path)
+    assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
+    assert time.time() - float(stamp.read_text()) < 3.0
+
+
+def test_a_git_read_within_the_gap_is_admitted_and_leaves_the_stamp(tmp_path: Path):
+    payload, stamp = state_repo(tmp_path)
+    payload = stamped(payload, stamp, 0.4)
+    before = stamp.read_text()
+    payload["tool_input"]["command"] = "git status"
+    r = run_hook(payload, cwd=tmp_path)
+    assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
+    assert stamp.read_text() == before
+
+
+def test_a_state_changing_git_command_with_no_stamp_is_admitted_and_stamps(tmp_path: Path):
+    payload, stamp = state_repo(tmp_path)
+    payload["tool_input"]["command"] = "git add . && git commit -m x"
+    r = run_hook(payload, cwd=tmp_path)
+    assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
+    assert time.time() - float(stamp.read_text()) < 3.0
+
+
 def test_hook_is_executable():
     assert HOOK.stat().st_mode & 0o111, "the hook must be executable -- settings.json invokes it directly"
 
@@ -1257,6 +1325,8 @@ NO_SCRATCH_IN_A_WORKTREE = [
 def repository_call(repository: dict[str, str], tmp_path: Path, command: str, where: str) -> subprocess.CompletedProcess:
     payload = agent_call(command.format(**repository), where.format(**repository), agent_id="a1")
     env = {**os.environ, "CLAUDE_CODE_TMPDIR": repository["root"]}
+    for top in ("main", "wt"):  # the checkouts the module's worktree removes stamp
+        (Path(repository[top]) / ".tmp" / ".git-state-stamp").unlink(missing_ok=True)
     return run_hook(payload, cwd=tmp_path, env=env, hook=Path(repository["main"]) / ".claude/hooks/bash-guard.sh")
 
 
@@ -1288,6 +1358,31 @@ MAIN_LOOP = (
 @pytest.mark.parametrize("extra", [{}, {"agent_type": "reviewer"}], ids=["bare", "agent_type alone"])
 def test_the_main_loop_runs_what_a_dispatched_agent_may_not(tmp_path: Path, command: str, where: str, extra: dict):
     r = run_hook(agent_call(command, where, **extra), cwd=tmp_path, env=AGENT_ENV)
+    assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
+
+
+# (command, the stage the message must name) -- a grep handed files in a pipeline naming infra
+HANDED_GREPS = [
+    ("git ls-files 'infra/ansible/**/*.j2' | xargs grep -l foo", "xargs grep -l foo"),
+    ("find infra/ansible -name '*.j2' -exec grep -l foo {} +", "find infra/ansible -name '*.j2' -exec grep -l foo '{}' +"),
+]
+HANDED_GREPS_ADMITTED = [
+    "git ls-files 'cli/**/*.py' | xargs grep -l foo",
+    "git ls-files 'infra/**/*.bak' | xargs rm",
+]
+
+
+@pytest.mark.parametrize(("command", "stage"), HANDED_GREPS, ids=[c for c, _ in HANDED_GREPS])
+def test_a_grep_handed_files_in_a_pipeline_naming_infra_is_blocked_with_the_remedy(tmp_path: Path, command: str, stage: str):
+    r = run_hook(call(command), cwd=tmp_path)
+    assert r.returncode == 2, r.stderr
+    assert f"BLOCKED — `{stage}` greps the files it is handed in a pipeline naming infra" in r.stderr, r.stderr
+    assert "`vault_var` through command substitution" in r.stderr and r.stdout == ""
+
+
+@pytest.mark.parametrize("command", HANDED_GREPS_ADMITTED)
+def test_a_grep_handed_files_outside_infra_or_another_program_over_infra_is_admitted(tmp_path: Path, command: str):
+    r = run_hook(call(command), cwd=tmp_path)
     assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
 
 
