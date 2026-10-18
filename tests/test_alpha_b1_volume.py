@@ -305,3 +305,9 @@ def test_directions_differ_keys_no_year_whose_only_stamp_is_the_last():
     # Index 1's bar opens 2016-12-31 20:00, closes in 2017 and is keyed 2016; the last stamp opens no bar with a return.
     union_ts = [datetime(2016, 12, 31, 16, tzinfo=UTC), datetime(2016, 12, 31, 20, tzinfo=UTC), datetime(2017, 1, 1, tzinfo=UTC)]
     assert directions_differ_per_year([{"BTC": [1.0, 1.0]}], [{"BTC": [1.0, 0.0]}], union_ts) == {"2016": 1}
+
+
+def test_directions_differ_keeps_the_last_return_index_year_at_0():
+    # Index 0 differs, keyed 2015; index 1's bar opens 2016-12-31 20:00 and is equal, so 2016 stays at 0; 2017 has no key.
+    union_ts = [datetime(2015, 12, 31, 20, tzinfo=UTC), datetime(2016, 12, 31, 20, tzinfo=UTC), datetime(2017, 1, 1, tzinfo=UTC)]
+    assert directions_differ_per_year([{"BTC": [1.0, 1.0]}], [{"BTC": [0.0, 1.0]}], union_ts) == {"2015": 1, "2016": 0}
