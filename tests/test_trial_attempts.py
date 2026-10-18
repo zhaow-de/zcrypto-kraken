@@ -473,6 +473,27 @@ def test_a_test_that_points_the_log_at_the_real_one_fails_its_teardown(tmp_path,
     assert f"left cli.registry.attempts.{name} on the real" in run.stdout, run.stdout
 
 
+def test_a_test_that_points_the_log_outside_its_tmp_path_fails_its_teardown(tmp_path):
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    (tree / "conftest.py").write_text(CONFTEST.read_text())
+    (tree / "test_scratch.py").write_text(
+        "from cli.registry import attempts\n\n\n"
+        "def test_points_outside_its_tmp_path(monkeypatch):\n"
+        '    monkeypatch.setattr(attempts, "log_path", lambda code_root: code_root / ".local" / "trial-attempts.jsonl")\n'
+    )
+
+    run = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--tb=line", "--rootdir", str(tree)],
+        cwd=tree,
+        capture_output=True,
+        text=True,
+    )
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "left cli.registry.attempts.log_path resolving outside its tmp_path" in run.stdout, run.stdout
+
+
 def test_a_test_that_undoes_its_monkeypatch_keeps_the_log_in_its_tmp_path(tmp_path):
     tree = tmp_path / "tree"
     tree.mkdir()

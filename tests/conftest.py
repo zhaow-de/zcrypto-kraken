@@ -161,7 +161,9 @@ def _attempts_log_kept_in_tmp_path(_attempts_log_in_tmp_path, monkeypatch, tmp_p
     assert attempts.allowed_log_ids is not _REAL_ALLOWED_LOG_IDS, (
         "this test left cli.registry.attempts.allowed_log_ids on the real allowlist"
     )
-    assert attempts.log_path(TMP_ROOT.parent).is_relative_to(tmp_path)
+    assert attempts.log_path(TMP_ROOT.parent).is_relative_to(tmp_path), (
+        "this test left cli.registry.attempts.log_path resolving outside its tmp_path"
+    )
 
 
 @pytest.hookimpl(wrapper=True)
