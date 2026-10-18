@@ -3,6 +3,8 @@
 # walk or list files and name its top-level directory -- or, for a changed test, walk their own. The search is
 # `git grep` with vault-shaped and `*.sops.*` paths excluded, never `grep -r`, which opens the vault files.
 # --direct lists only the tests/test_*.py files that name the path in a full form, never by its bare stem, and no walkers.
+# stdout is the paths alone, one per line, so `T=$(consumers.sh --direct <p>); [ -n "$T" ] && uv run pytest $T` runs
+# them or nothing; every `##` and `#` header and note is stderr.
 # Usage: infra/scripts/consumers.sh [--direct] <path>...   (a path as the tree names it: infra/scripts/foo.sh, cli/engine/x.py)
 #   rc: 0 printed, 2 usage or not in a repository.
 set -euo pipefail
@@ -46,8 +48,8 @@ direct_readers() {
   fi
   readers="$(printf '%s\n' "$readers" | sed '/^$/d' | grep -v -F -x "$path" | LC_ALL=C sort -u || true)"
   case "$path" in tests/test_*.py) readers="$(printf '%s\n%s' "$path" "$readers" | sed '/^$/d')" ;; esac
-  echo "## $path"
-  echo "# direct test readers (--direct: the path whole or split, a unique file name, the dotted module, the from-import; no tree walkers):"
+  echo "## $path" >&2
+  echo "# direct test readers (--direct: the path whole or split, a unique file name, the dotted module, the from-import; no tree walkers):" >&2
   if [[ -n "$readers" ]]; then printf '%s\n' "$readers"; else echo "# (none -- no test file names it in a full form: a prose file runs nothing and its claim is the pre-review's or prove-inert.py's; a code file runs its own test; never the full suite)" >&2; fi
 }
 
@@ -55,8 +57,8 @@ for path in "$@"; do
   if [[ $direct -eq 1 ]]; then direct_readers "$path"; continue; fi
   name="$(basename "$path")"
   stem="${name%.*}"
-  echo "## $path"
-  echo "# direct readers (git grep -l, vault paths excluded):"
+  echo "## $path" >&2
+  echo "# direct readers (git grep -l, vault paths excluded):" >&2
   # A Python module is also imported by its stem, as a word; a script is named by its file name alone.
   if [[ "$name" == *.py ]]; then stem_arg=(-e "$stem"); else stem_arg=(-e "$name"); fi
   readers="$(git grep -l -w "${stem_arg[@]}" -e "$name" -- tests infra .claude "${VAULT_EXCLUDES[@]}" | grep -v -F -x "$path" || true)"
@@ -64,9 +66,9 @@ for path in "$@"; do
   readers="$(printf '%s\n' "$readers" | sed '/^$/d')"
   if [[ -n "$readers" ]]; then printf '%s\n' "$readers"; else echo "# (none -- no direct reader: a prose file runs nothing and its claim is the pre-review's or prove-inert.py's; a code file runs its own test; never the full suite)" >&2; fi
   # A glob over a tmp_path fixture names no directory of the tree.
-  if [[ "$path" != */* ]]; then echo "# tree walkers: none -- a top-level file"; continue; fi
+  if [[ "$path" != */* ]]; then echo "# tree walkers: none -- a top-level file" >&2; continue; fi
   top="${path%%/*}"
-  echo "# tree walkers over $top/ (the tests that glob, walk or list files and name that directory, or walk their own under tests/; a whole-tree walk naming none is not listed):"
+  echo "# tree walkers over $top/ (the tests that glob, walk or list files and name that directory, or walk their own under tests/; a whole-tree walk naming none is not listed):" >&2
   walkers="$(git grep -l -E 'rglob\(|\.glob\(|os\.walk\(|iterdir\(|listdir\(|scandir\(|ls-files' -- tests "${VAULT_EXCLUDES[@]}" | sort || true)"
   for w in $walkers; do
     if git grep -q -E "(^|[\"'/ (])${top//./\\.}([\"'/ )]|$)" -- "$w"; then printf '%s\n' "$w"
