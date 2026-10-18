@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from cli.registry import ReadingLedger, TrialRegistry
+from cli.registry import ReadingLedger, TrialRegistry, budget
 from cli.registry.record import run_ref_path_candidates, validate_caller_fields
 from cli.research.subjects import LEGACY_INCUMBENTS, SUBJECTS, Subject
 
@@ -358,6 +358,16 @@ def test_the_legacy_incumbents_are_frozen_each_backed_by_a_subject_and_a_record_
     assert set(LEGACY_INCUMBENTS.values()) <= set(SUBJECTS), growth
     committed = {record["trial_id"] for record in _records()}
     assert all(trial_id <= 47 and trial_id in committed for trial_id in LEGACY_INCUMBENTS), growth
+
+
+def test_the_budgets_and_buckets_are_the_master_plans_literals():
+    growth = (
+        "an expansion is the owner's ruling and a new family joins with its bucket: each lands in a pull request that "
+        "changes this literal and quotes the ruling"
+    )
+    assert budget.BUDGET == {"A": 40, "B": 25, "C": 10}, growth
+    assert budget.BUCKET_OF == {"A1": "A", "B1": "B", "B2": "B", "P1": None}, growth
+    assert {bucket for bucket in budget.BUCKET_OF.values() if bucket is not None} <= set(budget.BUDGET), growth
 
 
 _B2 = "b2-funding-derisk"
