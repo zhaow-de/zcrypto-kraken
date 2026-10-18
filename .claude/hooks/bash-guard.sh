@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# retire when: Claude Code's permission layer refuses these families itself (a hook bypass, a vaulted read, a memo shell write, an agent's push).
 # PreToolUse[Bash] guard: a refusal is exit 2, the one code the harness blocks on, with the spelling found and
 # what it costs on stderr; anything else exits 0 silently.
 # `tests/test_bash_guard.py` drives every family in both directions and IS the list of what is refused and what

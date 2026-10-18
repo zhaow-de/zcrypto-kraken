@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# retire when: merge-pr's Step 4 sync is the only fetch, pull, merge or rebase a session runs.
 # PostToolUse[Bash] guard: after a command containing `git fetch`, `git pull`, `git merge`,
 # `git rebase` or `git remote update`, REPORT a tracking branch left behind its upstream. The command
 # already ran, so a PostToolUse hook cannot refuse anything; what it can do is say, before the next
