@@ -276,7 +276,7 @@ c_probe_verdicts_without_the_script() {
 }
 
 # A failing suite is an error, never a zero count: its output still carries a "N passed" summary.
-# retire when: docs/reference/trial-registry.jsonl is gone or no record of it carries spec_hash — tests/test_trial_registry_provenance.py goes with it
+# retire when: no record in trial-registry.jsonl or reading-ledger.jsonl carries spec_hash — tests/test_trial_registry_provenance.py goes with them
 c_spec_hash_provenance() { uv run pytest tests/test_trial_registry_provenance.py -q || return 2; }
 
 # retire when: tests/test_internal_terms_not_operator_visible.py is removed — the operator-read surfaces it walks gone, or the internal-token vocabulary retired
