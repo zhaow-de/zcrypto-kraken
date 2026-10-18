@@ -17,6 +17,7 @@ import polars as pl
 
 from cli.alpha import A2Config, a2_book_returns
 from cli.alpha.a1 import _asset_returns, _inverse_vol_weights
+from cli.alpha.a2 import _asset_directions_a2
 from cli.alpha.b1 import (
     B1Config,
     book_turnover,
@@ -32,6 +33,13 @@ from cli.alpha.b1_rv import (
     per_year_mean_weights,
     weight_total_variation,
     weights_differ_count,
+)
+from cli.alpha.b1_volume import (
+    a2_positions_on_directions,
+    asset_directions_confirmed,
+    confirmations_by_asset,
+    directions_differ_per_year,
+    entry_events_per_year,
 )
 from cli.alpha.b2 import (
     B2Config,
@@ -1080,6 +1088,370 @@ _B1_HOURLY_RV_PREFLIGHT_KEYS = _B2_ARM_A_BAR_KEYS | {
 }
 
 
+# B1 trial 4 (docs/specs/00134) reads the B1 literals above as its instrument too, and trial 3's SPA grid (D10).
+# Records 45, 46 and 48's registered per_period_sharpe_4h, record 48's every digit its writer stored: the dispersion reads the
+# registry's values, never a re-derivation (D7).
+_B1_VOLUME_RECORDED_PER_PERIOD_SHARPES = (*_B1_RECORDED_PER_PERIOD_SHARPES, 0.030191886721210086)
+# The B1 family's trial count at this trial: records 45, 46 and 48, and itself (D11).
+_B1_VOLUME_N_TRIALS = 4
+# The thin-cell rule: a cell's hour-of-week shape is 1 until it holds 100 earlier observations (D3).
+_B1_VOLUME_MIN_CELL_OBS = 100
+
+
+class _B1VolumeReads(NamedTuple):
+    h4_ts: list[datetime]
+    h4_prices: dict[str, list[float | None]]
+    volumes: dict[str, list[float | None]]
+
+
+def _b1_volume_reads(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None,
+    accept_holes: bool,
+    *,
+    subject: str,
+) -> _B1VolumeReads:
+    """The union, the window's refusal and the volumes on the union's stamps, and no compute: the basis test runs this half
+    alone. The volumes are read under the union's bounds, so a windowed norm warms up from the window's first bar (D4)."""
+    if as_of is not None:
+        raise SubjectError(
+            f"{subject} evaluates a frozen set's 4h series and their volumes, never the rolling dataset as of a day: drop "
+            "--as-of and pass a frozen --dataset"
+        )
+    h4_ts, h4_prices = _capturing_union(reader, dataset, 240, window, as_of, accept_holes)
+    _b1_refuse_window(subject, h4_ts, window)
+    volumes = {}
+    for asset in _ASSETS:
+        relpath = f"{asset}/EUR/240.parquet"
+        try:
+            frame = reader.read_series(dataset, relpath, window=window)
+            by_ts = dict(zip(frame["ts"].to_list(), frame["volume"].to_list(), strict=True))
+        except pl.exceptions.PolarsError as exc:
+            raise SubjectError(f"{dataset}/{relpath}: {exc}") from exc
+        volumes[asset] = [by_ts.get(t) for t in h4_ts]
+    return _B1VolumeReads(h4_ts, h4_prices, volumes)
+
+
+class _B1VolumeInputs(NamedTuple):
+    h4_ts: list[datetime]
+    h4_prices: dict[str, list[float | None]]
+    volumes: dict[str, list[float | None]]
+    fed: dict[str, list[float | None]]
+    returns: dict[str, list[float | None]]
+    weights_a: list[dict[str, float]]
+    vt_a: list[list[float]]
+    directions_a: list[dict[str, list[float | None]]]
+    confirm: dict[str, list[bool]]
+    directions_b: list[dict[str, list[float | None]]]
+    events: list[dict[str, dict[int, list[tuple[int, bool]]]]]
+    own_stamps: dict[str, list[datetime]]
+    arm_a: dict[str, list[float]]
+
+
+def _b1_volume_inputs(reads: _B1VolumeReads) -> _B1VolumeInputs:
+    """Arm A's positions, vol scalars and directions, the confirmations and each arm's confirmed directions and entry events,
+    one entry per arm of `_B1_A2_ARMS` in its order, and no position or return of arm B: the pre-flight reads this half
+    alone. The confirmations come first, so their price validation refuses a bad close before `_asset_returns` divides by it."""
+    h4_ts, h4_prices, volumes = reads
+    n = len(h4_ts) - 1
+    fed = _ffill_btc(h4_prices)
+    confirm = confirmations_by_asset(fed, h4_prices, h4_ts, volumes, lookback=_B1_LOOKBACK, min_cell_obs=_B1_VOLUME_MIN_CELL_OBS)
+    returns = {a: _asset_returns(fed[a]) for a in _ASSETS}
+    # One path for the three arms, each arm's basket_lookback being _B1_LOOKBACK (D1).
+    weights_a = _inverse_vol_weights(fed, lookback=_B1_LOOKBACK)
+    # Each asset's own bars as `a2_book_returns` indexes them; the events' bars index `own_stamps`.
+    union_idx = list(range(len(h4_ts)))
+    asset_ts = {a: [k for k, p in enumerate(fed[a]) if p is not None] for a in _ASSETS}
+    own_stamps = {a: [h4_ts[k] for k in asset_ts[a]] for a in _ASSETS}
+    positions_a, vt_a, directions_a, directions_b, events = [], [], [], [], []
+    for lookbacks, target_vol in _B1_A2_ARMS:
+        config = A2Config(
+            lookbacks=lookbacks,
+            short="off",
+            target_vol=target_vol,
+            vol_lookback=_B1_LOOKBACK,
+            basket_lookback=_B1_LOOKBACK,
+            periods_per_year=PPY_4H,
+        )
+        book = a2_book_returns(fed, config=config)
+        positions_a.append(book["asset_positions"])
+        vt_a.append(book["vol_target_positions"])
+        directions_a.append(_asset_directions_a2(fed, union_idx, asset_ts, config=config))
+        confirmed, arm_events = asset_directions_confirmed(fed, union_idx, asset_ts, confirm, config=config)
+        directions_b.append(confirmed)
+        events.append(arm_events)
+    arm_a = {a: [statistics.mean(arm[a][k] for arm in positions_a) for k in range(n)] for a in _ASSETS}
+    return _B1VolumeInputs(
+        h4_ts, h4_prices, volumes, fed, returns, weights_a, vt_a, directions_a, confirm, directions_b, events, own_stamps, arm_a
+    )
+
+
+def _b1_volume_arm_a(inputs: _B1VolumeInputs) -> tuple[dict, float, list[float], list[float]]:
+    """Arm A's bar at the family's dispersion with arm A standing as its fourth Sharpe (D7), which the pre-flight reads
+    before arm B's Sharpe exists."""
+    net_a = net_of_cost(inputs.arm_a, inputs.returns, cost_per_side=_B1_COST_PER_SIDE)
+    net_a_x15 = net_of_cost(inputs.arm_a, inputs.returns, cost_per_side=1.5 * _B1_COST_PER_SIDE)
+    bench = benchmark_4h_net_of_cost(inputs.h4_prices, cost_per_side=_B1_COST_PER_SIDE)
+    arm_a_var_trials = statistics.variance([*_B1_VOLUME_RECORDED_PER_PERIOD_SHARPES, sharpe(net_a)])
+    bar = a1_kill_bar(
+        net_a,
+        bench,
+        n_trials=_B1_VOLUME_N_TRIALS,
+        var_trials=arm_a_var_trials,
+        mean_block=30,
+        seed=42,
+        cost_stressed_returns=net_a_x15,
+        regime_slices=calendar_year_slices(net_a, inputs.h4_ts),
+        benchmark_slices=calendar_year_slices(bench, inputs.h4_ts),
+        decisive_start=_B1_DECISIVE_START,
+        n_resamples=_B1_N_RESAMPLES,
+    )
+    return bar, arm_a_var_trials, net_a, bench
+
+
+def _b1_volume_engagement(inputs: _B1VolumeInputs) -> dict:
+    """D8's six keys, read from prices and volumes alone: no position or return of arm B."""
+    per_year = {str(i + 1): entry_events_per_year(events, inputs.own_stamps) for i, events in enumerate(inputs.events)}
+    counts = [
+        count
+        for by_asset in per_year.values()
+        for by_lookback in by_asset.values()
+        for by_year in by_lookback.values()
+        for count in by_year.values()
+    ]
+    events, rejected = sum(count[0] for count in counts), sum(count[1] for count in counts)
+    if events == 0:
+        raise ValidationError("entry_events is 0, and share_rejected divides by it")
+    differ = directions_differ_per_year(inputs.directions_a, inputs.directions_b, inputs.h4_ts)
+    return {
+        "entry_events_per_year": per_year,
+        "entry_events": events,
+        "entry_events_rejected": rejected,
+        "share_rejected": rejected / events,
+        "stamps_directions_differ": sum(differ.values()),
+        "stamps_directions_differ_per_year": differ,
+    }
+
+
+def _b1_volume_metrics(inputs: _B1VolumeInputs) -> dict:
+    h4_ts, returns, arm_a = inputs.h4_ts, inputs.returns, inputs.arm_a
+    weights_a, vt_a, directions_b = inputs.weights_a, inputs.vt_a, inputs.directions_b
+    n = len(h4_ts) - 1
+    # Before the bars: on a book that never trades, `sharpe(net_a)` would refuse first and this refusal would never fire.
+    turnover_a = book_turnover(arm_a)
+    if turnover_a == 0:
+        raise ValidationError(f"turnover_a is {turnover_a}, and turnover_reduction_pct divides by it")
+    engagement = _b1_volume_engagement(inputs)
+    arm_a_bar, arm_a_var_trials, net_a, bench = _b1_volume_arm_a(inputs)
+    # Arm A's weights and each arm's own vol scalar on arm B's confirmed directions (D1).
+    arms = [a2_positions_on_directions(weights_a, directions_b[i], vt_a[i]) for i in range(len(_B1_A2_ARMS))]
+    arm_b = {a: [statistics.mean(arm[a][k] for arm in arms) for k in range(n)] for a in _ASSETS}
+    net_b = net_of_cost(arm_b, returns, cost_per_side=_B1_COST_PER_SIDE)
+    net_b_x15 = net_of_cost(arm_b, returns, cost_per_side=1.5 * _B1_COST_PER_SIDE)
+    per_period_sharpe_4h = sharpe(net_b)
+    var_trials = statistics.variance([*_B1_VOLUME_RECORDED_PER_PERIOD_SHARPES, per_period_sharpe_4h])
+    bar = a1_kill_bar(
+        net_b,
+        bench,
+        n_trials=_B1_VOLUME_N_TRIALS,
+        var_trials=var_trials,
+        mean_block=30,
+        seed=42,
+        cost_stressed_returns=net_b_x15,
+        regime_slices=calendar_year_slices(net_b, h4_ts),
+        benchmark_slices=calendar_year_slices(bench, h4_ts),
+        decisive_start=_B1_DECISIVE_START,
+        n_resamples=_B1_N_RESAMPLES,
+    )
+    decisive = [[net_b[k] - bench[k]] for k in range(_B1_DECISIVE_START, n)]
+    grid = {_B1_HOURLY_RV_GRID[0]: bar["spa_p_value"]} | {
+        (block, seed): reality_check_pvalue(decisive, mean_block=block, n_resamples=_B1_N_RESAMPLES, seed=seed)["p_value"]
+        for block, seed in _B1_HOURLY_RV_GRID[1:]
+    }
+    # The bar-start year, as `_b1_metrics` cuts it.
+    k16 = next(k for k in range(n) if h4_ts[k] >= _B1_FROM_2016)
+    full = net_of_cost_verdict(net_b, net_a, mean_block=30, seed=42, n_resamples=_B1_N_RESAMPLES)
+    from_2016 = net_of_cost_verdict(net_b[k16:], net_a[k16:], mean_block=30, seed=42, n_resamples=_B1_N_RESAMPLES)
+    turnover_b = book_turnover(arm_b)
+    return {
+        "ann_sharpe_noc": sharpe(net_b, periods_per_year=PPY_4H),
+        "ann_sharpe_noc_decisive": sharpe(net_b[_B1_DECISIVE_START:], periods_per_year=PPY_4H),
+        "per_period_sharpe_4h": per_period_sharpe_4h,
+        "arm_a_ann_sharpe_noc": sharpe(net_a, periods_per_year=PPY_4H),
+        "arm_a_ann_sharpe_noc_decisive": sharpe(net_a[_B1_DECISIVE_START:], periods_per_year=PPY_4H),
+        "benchmark_ann_sharpe_noc": sharpe(bench, periods_per_year=PPY_4H),
+        "benchmark_ann_sharpe_noc_decisive": sharpe(bench[_B1_DECISIVE_START:], periods_per_year=PPY_4H),
+        "var_trials": var_trials,
+        "dsr_corrected": bar["dsr"],
+        "dsr_pass": int(bar["dsr_pass"]),
+        "spa_pass": int(bar["spa_pass"]),
+        "spa_p_full": bar["spa_p_value_full"],
+        "cost_stress_pass": int(bar["cost_stress_pass"]),
+        "worst_slice_relative_pass": int(bar["worst_slice_pass"]),
+        "passes": int(bar["passes"]),
+        "decisive_start": _B1_DECISIVE_START,
+        "n_resamples": _B1_N_RESAMPLES,
+        "arm_a_var_trials": arm_a_var_trials,
+        "arm_a_passes": int(arm_a_bar["passes"]),
+        **{f"spa_p_decisive_b{block}_s{seed}": grid[(block, seed)] for block, seed in _B1_HOURLY_RV_GRID},
+        "head_to_head_mean_outperf_full": full["mean_outperformance"],
+        "head_to_head_spa_p_full": full["spa_p_value"],
+        "head_to_head_mean_outperf_2016": from_2016["mean_outperformance"],
+        "head_to_head_spa_p_2016": from_2016["spa_p_value"],
+        "max_drawdown": max_drawdown(net_b),
+        "arm_a_max_drawdown": max_drawdown(net_a),
+        "spot_drag_pct_yr": turnover_b / n * _B1_COST_PER_SIDE * PPY_4H,
+        "arm_a_spot_drag_pct_yr": turnover_a / n * _B1_COST_PER_SIDE * PPY_4H,
+        "turnover_a": turnover_a,
+        "turnover_b": turnover_b,
+        "turnover_reduction_pct": 100 * (turnover_a - turnover_b) / turnover_a,
+        "stamps_positions_differ": sum(any(arm_b[a][k] != arm_a[a][k] for a in _ASSETS) for k in range(n)),
+        **engagement,
+    }
+
+
+def _b1_volume_preflight_metrics(inputs: _B1VolumeInputs) -> dict:
+    """The entry events and stamps whose directions differ, and arm A's anchors and bar (D8, D9): no position or return of
+    arm B."""
+    engagement = _b1_volume_engagement(inputs)
+    n = len(inputs.h4_ts) - 1
+    bar, arm_a_var_trials, net_a, bench = _b1_volume_arm_a(inputs)
+    turnover_a = book_turnover(inputs.arm_a)
+    return {
+        "arm_a_ann_sharpe_noc": sharpe(net_a, periods_per_year=PPY_4H),
+        "arm_a_ann_sharpe_noc_decisive": sharpe(net_a[_B1_DECISIVE_START:], periods_per_year=PPY_4H),
+        "arm_a_max_drawdown": max_drawdown(net_a),
+        "turnover_a": turnover_a,
+        "arm_a_spot_drag_pct_yr": turnover_a / n * _B1_COST_PER_SIDE * PPY_4H,
+        "benchmark_ann_sharpe_noc": sharpe(bench, periods_per_year=PPY_4H),
+        "benchmark_ann_sharpe_noc_decisive": sharpe(bench[_B1_DECISIVE_START:], periods_per_year=PPY_4H),
+        "arm_a_var_trials": arm_a_var_trials,
+        **{key: int(bar[key]) if key in _B2_ARM_A_BAR_FLAGS else bar[key] for key in sorted(_B2_ARM_A_BAR_KEYS)},
+        **engagement,
+    }
+
+
+def _b1_volume_build(
+    subject: str,
+    compute: Callable[[_B1VolumeInputs], dict],
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None,
+    accept_holes: bool,
+) -> dict:
+    reads = _b1_volume_reads(reader, dataset, window, as_of, accept_holes, subject=subject)
+    try:
+        return compute(_b1_volume_inputs(reads))
+    except (AlphaError, BacktestError, BenchmarkError, FeatureError, ValidationError) as exc:
+        # A bad close or volume, a book that never trades and a build with no entry event among them, named as the window's.
+        raise SubjectError(f"{_b2_over(subject, window)}: {exc}") from exc
+
+
+def _build_b1_volume_confirmation(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    return _b1_volume_build("b1-volume-confirmation", _b1_volume_metrics, reader, dataset, window, as_of, accept_holes)
+
+
+def _build_b1_volume_confirmation_preflight(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    return _b1_volume_build(
+        "b1-volume-confirmation-preflight", _b1_volume_preflight_metrics, reader, dataset, window, as_of, accept_holes
+    )
+
+
+# docs/specs/00134 D10's matrix plus the two instrument findings its metrics show (docs/specs/00129 D4), verbatim: a change to
+# it is a new spec and a new trial, never an edit here.
+def _b1_volume_confirmation_verdict(m: dict) -> str | None:
+    if not m["arm_a_passes"] or m["stamps_directions_differ"] == 0:
+        return None  # instrument finding: no verdict, the trial unspent
+    if not m["passes"]:
+        return "reject"
+    if m["head_to_head_mean_outperf_full"] > 0 and m["turnover_b"] < m["turnover_a"]:
+        if m["head_to_head_spa_p_full"] < 0.05 and m["spa_p_decisive_b102_s42"] < 0.05:
+            return "adopt"
+        return "park"
+    return "reject"
+
+
+# docs/specs/00134 D11's keys of the trial and of its pre-flight.
+_B1_VOLUME_METRIC_KEYS = frozenset(
+    {
+        "ann_sharpe_noc",
+        "ann_sharpe_noc_decisive",
+        "per_period_sharpe_4h",
+        "arm_a_ann_sharpe_noc",
+        "arm_a_ann_sharpe_noc_decisive",
+        "benchmark_ann_sharpe_noc",
+        "benchmark_ann_sharpe_noc_decisive",
+        "var_trials",
+        "dsr_corrected",
+        "dsr_pass",
+        "spa_pass",
+        "spa_p_full",
+        "cost_stress_pass",
+        "worst_slice_relative_pass",
+        "passes",
+        "decisive_start",
+        "n_resamples",
+        "arm_a_var_trials",
+        "arm_a_passes",
+        "spa_p_decisive_b30_s42",
+        "spa_p_decisive_b30_s7",
+        "spa_p_decisive_b30_s1234",
+        "spa_p_decisive_b102_s42",
+        "spa_p_decisive_b102_s7",
+        "spa_p_decisive_b102_s1234",
+        "head_to_head_mean_outperf_full",
+        "head_to_head_spa_p_full",
+        "head_to_head_mean_outperf_2016",
+        "head_to_head_spa_p_2016",
+        "max_drawdown",
+        "arm_a_max_drawdown",
+        "spot_drag_pct_yr",
+        "arm_a_spot_drag_pct_yr",
+        "turnover_a",
+        "turnover_b",
+        "turnover_reduction_pct",
+        "entry_events",
+        "entry_events_rejected",
+        "share_rejected",
+        "entry_events_per_year",
+        "stamps_directions_differ",
+        "stamps_directions_differ_per_year",
+        "stamps_positions_differ",
+    }
+)
+_B1_VOLUME_PREFLIGHT_KEYS = _B2_ARM_A_BAR_KEYS | {
+    "arm_a_ann_sharpe_noc",
+    "arm_a_ann_sharpe_noc_decisive",
+    "arm_a_max_drawdown",
+    "turnover_a",
+    "arm_a_spot_drag_pct_yr",
+    "benchmark_ann_sharpe_noc",
+    "benchmark_ann_sharpe_noc_decisive",
+    "arm_a_var_trials",
+    "entry_events",
+    "entry_events_rejected",
+    "share_rejected",
+    "entry_events_per_year",
+    "stamps_directions_differ",
+    "stamps_directions_differ_per_year",
+}
+
+
 SUBJECTS: dict[str, Subject] = {
     "record44-crossfreq": Subject(
         "record44-crossfreq",
@@ -1172,6 +1544,31 @@ SUBJECTS: dict[str, Subject] = {
         _build_b1_hourly_rv_preflight,
         spec="docs/specs/00132-b1-hourly-rv-weights-design.md",
         metric_keys=_B1_HOURLY_RV_PREFLIGHT_KEYS,
+        seeds=(42,),
+    ),
+    "b1-volume-confirmation": Subject(
+        "b1-volume-confirmation",
+        (240,),
+        _ASSETS,
+        _build_b1_volume_confirmation,
+        spec="docs/specs/00134-b1-volume-confirmation-design.md",
+        metric_keys=_B1_VOLUME_METRIC_KEYS,
+        seeds=(42, 7, 1234),
+        verdict=_b1_volume_confirmation_verdict,
+        no_verdict=(
+            "instrument finding: arm A fails the bar, or arm B's directions equal arm A's at every stamp; no verdict, the "
+            "trial unspent"
+        ),
+        family="B1",
+        n_trials=_B1_VOLUME_N_TRIALS,
+    ),
+    "b1-volume-confirmation-preflight": Subject(
+        "b1-volume-confirmation-preflight",
+        (240,),
+        _ASSETS,
+        _build_b1_volume_confirmation_preflight,
+        spec="docs/specs/00134-b1-volume-confirmation-design.md",
+        metric_keys=_B1_VOLUME_PREFLIGHT_KEYS,
         seeds=(42,),
     ),
 }

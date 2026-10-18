@@ -23,6 +23,7 @@ from typer.testing import CliRunner
 from cli.__main__ import app
 from cli.alpha import A2Config, a2_book_returns
 from cli.alpha.a1 import _asset_returns, _inverse_vol_weights
+from cli.alpha.a2 import _asset_directions_a2
 from cli.alpha.b1 import book_turnover
 from cli.alpha.b1_rv import (
     a2_positions_with_weights,
@@ -30,6 +31,13 @@ from cli.alpha.b1_rv import (
     per_year_mean_weights,
     weight_total_variation,
     weights_differ_count,
+)
+from cli.alpha.b1_volume import (
+    a2_positions_on_directions,
+    asset_directions_confirmed,
+    confirmations_by_asset,
+    directions_differ_per_year,
+    entry_events_per_year,
 )
 from cli.alpha.b2 import (
     net_of_cost,
@@ -1393,6 +1401,8 @@ def test_each_subject_declares_the_metric_keys_its_build_returns():
     assert subjects.SUBJECTS["record44-crossfreq"].metric_keys == _CROSSFREQ_METRIC_KEYS
     assert subjects.SUBJECTS["b1-hourly-rv"].metric_keys == _B1_HOURLY_RV_METRIC_KEYS
     assert subjects.SUBJECTS["b1-hourly-rv-preflight"].metric_keys == _B1_HOURLY_RV_PREFLIGHT_KEYS
+    assert subjects.SUBJECTS["b1-volume-confirmation"].metric_keys == _B1_VOLUME_METRIC_KEYS
+    assert subjects.SUBJECTS["b1-volume-confirmation-preflight"].metric_keys == _B1_VOLUME_PREFLIGHT_KEYS
 
 
 # One engaged year of two, so a rule reading `all` where it reads `any` turns this adopt into a stop.
@@ -2084,14 +2094,48 @@ def _b1_hourly_rv_dataset(tmp_path: Path, *, start: datetime = _B1_START, bars: 
     return root
 
 
-_RULED_FIXTURES = {"b1-hourly-rv": _b1_hourly_rv_dataset, "b2-funding-derisk": _b2_dataset}
+# BTC's two missing 4h bars: the first among BTC's first 180 bars, where every entry is accepted, the second past them.
+_B1_VOLUME_BTC_GAPS = (100, 1_500)
+
+
+def _b1_volume_dataset(tmp_path: Path, *, start: datetime = _B1_START, bars: int = _B1_BARS) -> Path:
+    """Each bar's volume moves on a phase of its own asset's, so the gate rejects entries past the warm-up."""
+    root = tmp_path / "data"
+    for i, asset in enumerate(_B2_ASSETS):
+        rows = [
+            [*row[:6], f"{10.0 + 9.0 * math.sin(2.7 * k + i)}", row[7]]
+            for k, row in enumerate(_rows(bars, phase=i * 0.7, start=int(start.timestamp()), step=4 * 3600))
+            if not (asset == "BTC" and k in _B1_VOLUME_BTC_GAPS)
+        ]
+        write_parquet(to_frame(rows), root / "ohlc-test" / f"{asset}/EUR/240.parquet")
+    return root
+
+
+def _b1_volume_args(name: str, tmp_path: Path, *, dataset: str = "ohlc-test") -> list[str]:
+    # A ruled subject's command-path cases register into tmp_path: spec 00133 D7 admits no plain eval of a subject with a rule.
+    args = ["research", "eval", "--subject", name, "--dataset", dataset]
+    if subjects.SUBJECTS[name].verdict is None:
+        return args
+    flags = ["--register", "--registry", str(tmp_path / "registry.jsonl"), "--ledger", str(tmp_path / "ledger.jsonl")]
+    return [*args, *flags, "--iteration", "iter-001", "--family", "B1", "--n-trials", "4"]
+
+
+_RULED_FIXTURES = {
+    "b1-hourly-rv": _b1_hourly_rv_dataset,
+    "b1-volume-confirmation": _b1_volume_dataset,
+    "b2-funding-derisk": _b2_dataset,
+}
 # Each ruled subject's count constant, which the tie raises so that a literal at a kill-bar site fails it.
-_DECLARED_COUNT = {"b1-hourly-rv": "_B1_HOURLY_RV_N_TRIALS", "b2-funding-derisk": "_B2_N_TRIALS"}
+_DECLARED_COUNT = {
+    "b1-hourly-rv": "_B1_HOURLY_RV_N_TRIALS",
+    "b1-volume-confirmation": "_B1_VOLUME_N_TRIALS",
+    "b2-funding-derisk": "_B2_N_TRIALS",
+}
 
 
 def test_the_ruled_subjects_declare_their_families_and_trial_counts():
     declared = {name: (s.family, s.n_trials) for name, s in subjects.SUBJECTS.items() if s.verdict is not None}
-    assert declared == {"b1-hourly-rv": ("B1", 3), "b2-funding-derisk": ("B2", 1)}
+    assert declared == {"b1-hourly-rv": ("B1", 3), "b1-volume-confirmation": ("B1", 4), "b2-funding-derisk": ("B2", 1)}
     assert set(_RULED_FIXTURES) == set(declared) == set(_DECLARED_COUNT)
 
 
@@ -2584,6 +2628,488 @@ def test_a_b1_hourly_rv_history_the_bar_cannot_read_is_refused_before_the_arms_a
     assert sorted(read) == sorted(f"{a}/EUR/240.parquet" for a in _B2_ASSETS)
 
 
+_B1_VOLUME_SPEC = "docs/specs/00134-b1-volume-confirmation-design.md"
+_B1_VOLUME_NO_VERDICT = (
+    "instrument finding: arm A fails the bar, or arm B's directions equal arm A's at every stamp; no verdict, the trial unspent"
+)
+_B1_VOLUME_ENGAGEMENT = frozenset(
+    {
+        "entry_events",
+        "entry_events_rejected",
+        "share_rejected",
+        "entry_events_per_year",
+        "stamps_directions_differ",
+        "stamps_directions_differ_per_year",
+    }
+)
+# Typed from the spec's key list, never read off the subject.
+_B1_VOLUME_METRIC_KEYS = _B1_VOLUME_ENGAGEMENT | {
+    "ann_sharpe_noc",
+    "ann_sharpe_noc_decisive",
+    "per_period_sharpe_4h",
+    "arm_a_ann_sharpe_noc",
+    "arm_a_ann_sharpe_noc_decisive",
+    "benchmark_ann_sharpe_noc",
+    "benchmark_ann_sharpe_noc_decisive",
+    "var_trials",
+    "dsr_corrected",
+    "dsr_pass",
+    "spa_pass",
+    "spa_p_full",
+    "cost_stress_pass",
+    "worst_slice_relative_pass",
+    "passes",
+    "decisive_start",
+    "n_resamples",
+    "arm_a_var_trials",
+    "arm_a_passes",
+    "spa_p_decisive_b30_s42",
+    "spa_p_decisive_b30_s7",
+    "spa_p_decisive_b30_s1234",
+    "spa_p_decisive_b102_s42",
+    "spa_p_decisive_b102_s7",
+    "spa_p_decisive_b102_s1234",
+    "head_to_head_mean_outperf_full",
+    "head_to_head_spa_p_full",
+    "head_to_head_mean_outperf_2016",
+    "head_to_head_spa_p_2016",
+    "max_drawdown",
+    "arm_a_max_drawdown",
+    "spot_drag_pct_yr",
+    "arm_a_spot_drag_pct_yr",
+    "turnover_a",
+    "turnover_b",
+    "turnover_reduction_pct",
+    "stamps_positions_differ",
+}
+_B1_VOLUME_PREFLIGHT_KEYS = _B1_VOLUME_ENGAGEMENT | _B1_HOURLY_RV_ANCHORS | _ARM_A_BAR_KEYS | {"arm_a_var_trials"}
+
+
+def test_the_b1_volume_subjects_declare_the_4h_grid_the_specs_keys_and_seeds_and_the_trial_alone_a_rule_and_a_count():
+    trial, preflight = subjects.SUBJECTS["b1-volume-confirmation"], subjects.SUBJECTS["b1-volume-confirmation-preflight"]
+    assert (len(_B1_VOLUME_METRIC_KEYS), len(_B1_VOLUME_PREFLIGHT_KEYS)) == (43, 24)
+    assert (trial.name, trial.intervals, trial.assets, trial.spec, trial.seeds) == (
+        "b1-volume-confirmation",
+        (240,),
+        _B2_ASSETS,
+        _B1_VOLUME_SPEC,
+        (42, 7, 1234),
+    )
+    assert trial.build is subjects._build_b1_volume_confirmation and trial.metric_keys == _B1_VOLUME_METRIC_KEYS
+    assert (trial.verdict, trial.no_verdict, trial.incumbent) == (
+        subjects._b1_volume_confirmation_verdict,
+        _B1_VOLUME_NO_VERDICT,
+        None,
+    )
+    assert (trial.family, trial.n_trials) == ("B1", 4)
+    assert (preflight.name, preflight.intervals, preflight.assets, preflight.spec, preflight.seeds) == (
+        "b1-volume-confirmation-preflight",
+        (240,),
+        _B2_ASSETS,
+        _B1_VOLUME_SPEC,
+        (42,),
+    )
+    assert preflight.build is subjects._build_b1_volume_confirmation_preflight
+    assert preflight.metric_keys == _B1_VOLUME_PREFLIGHT_KEYS
+    assert (preflight.verdict, preflight.no_verdict, preflight.incumbent, preflight.family, preflight.n_trials) == (None,) * 5
+
+
+def test_the_b1_volume_dispersion_reads_records_45_46_and_48s_registered_sharpes():
+    assert (
+        subjects._B1_VOLUME_RECORDED_PER_PERIOD_SHARPES
+        == (0.02374, 0.02959, 0.030191886721210086)
+        == tuple(_trials()[n]["metrics"]["per_period_sharpe_4h"] for n in (45, 46, 48))
+    )
+
+
+# Adopting on every key the rule reads; each row moves the keys it names.
+_B1_VOLUME_ADOPTING = {
+    "arm_a_passes": 1,
+    "stamps_directions_differ": 9,
+    "passes": 1,
+    "spa_p_decisive_b102_s42": 0.01,
+    "head_to_head_mean_outperf_full": 0.001,
+    "head_to_head_spa_p_full": 0.01,
+    "turnover_a": 140.0,
+    "turnover_b": 120.0,
+}
+
+
+@pytest.mark.parametrize(
+    ("change", "verdict"),
+    [
+        pytest.param({}, "adopt", id="row-1-passes-outperforms-significantly-at-both-blocks-and-trades-less"),
+        pytest.param({"spa_p_decisive_b102_s42": 0.2}, "park", id="row-2-the-block-102-spa-fails"),
+        pytest.param({"head_to_head_spa_p_full": 0.2}, "park", id="row-3-outperforms-insignificantly-and-trades-less"),
+        pytest.param({"head_to_head_mean_outperf_full": -0.001}, "reject", id="row-4-underperforms"),
+        pytest.param({"turnover_b": 150.0}, "reject", id="row-4-trades-more"),
+        pytest.param({"passes": 0}, "reject", id="row-5-arm-b-fails-its-bar"),
+        pytest.param({"turnover_b": 140.0}, "reject", id="turnover-tied"),
+        pytest.param({"head_to_head_mean_outperf_full": 0.0}, "reject", id="mean-at-exactly-0"),
+        pytest.param({"head_to_head_spa_p_full": 0.05}, "park", id="p-at-exactly-0.05"),
+        pytest.param({"head_to_head_spa_p_full": 0.0499, "spa_p_decisive_b102_s42": 0.0499}, "adopt", id="both-p-at-0.0499"),
+        pytest.param(
+            {"head_to_head_spa_p_full": 0.0499, "spa_p_decisive_b102_s42": 0.05}, "park", id="block-102-p-at-exactly-0.05"
+        ),
+        pytest.param(
+            {"head_to_head_mean_outperf_full": -0.001, "head_to_head_mean_outperf_2016": 0.001},
+            "reject",
+            id="outperforms-from-2016-alone",
+        ),
+        pytest.param({"arm_a_passes": 0}, None, id="arm-a-fails-its-bar"),
+        pytest.param({"stamps_directions_differ": 0}, None, id="the-directions-never-differ"),
+        pytest.param({"arm_a_passes": 0, "passes": 0}, None, id="arm-a-read-before-passes"),
+        pytest.param({"stamps_directions_differ": 0, "passes": 0}, None, id="the-directions-read-before-passes"),
+    ],
+)
+def test_the_b1_volume_rule_maps_its_metrics_to_a_verdict_or_a_stop(change, verdict):
+    assert subjects._b1_volume_confirmation_verdict({**_B1_VOLUME_ADOPTING, **change}) == verdict
+
+
+@pytest.mark.parametrize(
+    ("arm_b_passes", "arm_a_passes"),
+    [pytest.param(True, False, id="arm-a-fails-so-the-rule-stops"), pytest.param(False, 7, id="arm-b-fails-so-the-rule-rejects")],
+)
+def test_the_b1_volume_subject_registers_each_metric_from_its_own_call(tmp_path, monkeypatch, arm_b_passes, arm_a_passes):
+    root = _b1_volume_dataset(tmp_path)
+    registry, ledger = tmp_path / "registry.jsonl", tmp_path / "ledger.jsonl"
+    _anchor(monkeypatch, root, registry)
+    h4_ts, h4_prices, volumes = subjects._b1_volume_reads(
+        ObservedReader(root), "ohlc-test", None, None, False, subject="b1-volume-confirmation"
+    )
+    n = len(h4_ts) - 1
+    k16 = next(k for k in range(n) if h4_ts[k] >= datetime(2016, 1, 1, tzinfo=UTC))
+    fed = _ffill_btc(h4_prices)
+    confirm = confirmations_by_asset(fed, h4_prices, h4_ts, volumes, lookback=180, min_cell_obs=100)
+    weights_a = _inverse_vol_weights(fed, lookback=180)
+    union_idx = list(range(len(h4_ts)))
+    asset_ts = {a: [k for k, p in enumerate(fed[a]) if p is not None] for a in _B2_ASSETS}
+    books = [a2_book_returns(fed, config=config) for config in _B1_HOURLY_RV_ARMS]
+    directions_a = [_asset_directions_a2(fed, union_idx, asset_ts, config=config) for config in _B1_HOURLY_RV_ARMS]
+    confirmed = [asset_directions_confirmed(fed, union_idx, asset_ts, confirm, config=config) for config in _B1_HOURLY_RV_ARMS]
+    directions_b = [directions for directions, _ in confirmed]
+    arms_b = [a2_positions_on_directions(weights_a, d, book["vol_target_positions"]) for d, book in zip(directions_b, books)]
+    arm_a, arm_b = (
+        {a: [statistics.mean(arm[a][k] for arm in arms) for k in range(n)] for a in _B2_ASSETS}
+        for arms in ([book["asset_positions"] for book in books], arms_b)
+    )
+    returns = {a: _asset_returns(fed[a]) for a in _B2_ASSETS}
+    net_a, net_b = (net_of_cost(arm, returns, cost_per_side=0.006) for arm in (arm_a, arm_b))
+    net_a_x15, net_b_x15 = (net_of_cost(arm, returns, cost_per_side=1.5 * 0.006) for arm in (arm_a, arm_b))
+    bench = benchmark_4h_net_of_cost(h4_prices, cost_per_side=0.006)
+
+    assert fed["BTC"] != h4_prices["BTC"]
+    assert net_of_cost(arm_b, {a: _asset_returns(h4_prices[a]) for a in _B2_ASSETS}, cost_per_side=0.006) != net_b
+    assert benchmark_4h_net_of_cost(fed, cost_per_side=0.006) != bench
+    assert any(not accepted for a in _B2_ASSETS if a != "BTC" for accepted in confirm[a][180:])
+    assert confirm["BTC"][100] and not confirm["BTC"][1500]
+    assert directions_b != directions_a and net_b != net_a and net_b[k16:] != net_a[k16:]
+    assert book_turnover(arm_b) != book_turnover(arm_a)
+    assert all(
+        b <= a for da, db in zip(directions_a, directions_b) for s in _B2_ASSETS for a, b in zip(da[s], db[s]) if a is not None
+    )
+    assert all(arm_b[a][k] <= arm_a[a][k] for a in _B2_ASSETS for k in range(n))
+
+    def kill_bar(arguments, result):
+        book = arguments["book_net_returns"]
+        cell = "A" if book == net_a else "B" if book == net_b else None
+        if cell is None:
+            return result
+        return result | _b1_hourly_rv_bar_sentinels(cell, passes=arm_a_passes if cell == "A" else arm_b_passes)
+
+    spa_sentinels = {cell: 0.51 + i / 100 for i, cell in enumerate(_B1_HOURLY_RV_CELLS)}
+
+    def spa(arguments, result):
+        p = spa_sentinels.get((arguments["mean_block"], arguments["seed"]))
+        return result if p is None else result | {"p_value": p}
+
+    def head_to_head(arguments, result):
+        p = {n: 0.41, n - k16: 0.42}.get(len(arguments["book_net_of_cost"]))
+        return result if p is None else result | {"spa_p_value": p}
+
+    kill_calls = _recording(monkeypatch, "a1_kill_bar", kill_bar)
+    spa_calls = _recording(monkeypatch, "reality_check_pvalue", spa)
+    verdict_calls = _recording(monkeypatch, "net_of_cost_verdict", head_to_head)
+    confirm_calls = _recording(monkeypatch, "confirmations_by_asset", lambda arguments, result: result)
+    result = runner.invoke(
+        app,
+        ["research", "eval", "--subject", "b1-volume-confirmation", "--dataset", "ohlc-test", "--register", "--registry"]
+        + [str(registry), "--ledger", str(ledger), "--iteration", "iter-178", "--family", "B1", "--n-trials", "4"]
+        + ["--variant", "B1-volume-confirm-a2eq-v1"],
+    )
+
+    assert result.exit_code == 0, result.output
+    if arm_a_passes:
+        (record,) = [json.loads(line) for line in registry.read_text().splitlines()]
+        assert set(record["metrics"]) == _B1_VOLUME_METRIC_KEYS
+        assert set(record["datasets"]["ohlc-test"]["files"]) == {f"{a}/EUR/240.parquet" for a in _B2_ASSETS}
+        assert record["n_trials_in_family"] == 4
+        assert record["verdict"] == "reject"
+        assert not ledger.exists()
+        stored = record["metrics"]
+    else:
+        assert f"no verdict — {_B1_VOLUME_NO_VERDICT}: recorded reading 1; no trial spent" in result.output
+        assert not registry.exists()
+        (reading,) = _kept(ledger)
+        assert reading["outcome"] == _B1_VOLUME_NO_VERDICT
+        assert reading["metrics"] == _block_and_metrics(result.output)["metrics"]
+        stored = reading["metrics"]
+
+    var_b = statistics.variance([0.02374, 0.02959, 0.030191886721210086, sharpe(net_b)])
+    var_a = statistics.variance([0.02374, 0.02959, 0.030191886721210086, sharpe(net_a)])
+    bar = {
+        "benchmark_net_returns": bench,
+        "n_trials": 4,
+        "mean_block": 30,
+        "seed": 42,
+        "benchmark_slices": calendar_year_slices(bench, h4_ts),
+        "decisive_start": 1380,
+        "n_resamples": 2000,
+    }
+    assert len(kill_calls) == 2
+    assert {"A" if arguments["book_net_returns"] == net_a else "B": arguments for arguments, _ in kill_calls} == {
+        "B": bar
+        | {
+            "book_net_returns": net_b,
+            "var_trials": var_b,
+            "cost_stressed_returns": net_b_x15,
+            "regime_slices": calendar_year_slices(net_b, h4_ts),
+        },
+        "A": bar
+        | {
+            "book_net_returns": net_a,
+            "var_trials": var_a,
+            "cost_stressed_returns": net_a_x15,
+            "regime_slices": calendar_year_slices(net_a, h4_ts),
+        },
+    }
+    assert [(arguments["lookback"], arguments["min_cell_obs"]) for arguments, _ in confirm_calls] == [(180, 100)]
+    decisive = [[net_b[k] - bench[k]] for k in range(1380, n)]
+    assert sorted(
+        (arguments for arguments, _ in spa_calls), key=lambda arguments: (arguments["mean_block"], arguments["seed"])
+    ) == [
+        {"perf_matrix": decisive, "mean_block": block, "n_resamples": 2000, "seed": seed}
+        for block, seed in sorted(_B1_HOURLY_RV_CELLS[1:])
+    ]
+    head_to_head_call = {"mean_block": 30, "seed": 42, "n_resamples": 2000}
+    assert [arguments for arguments, _ in verdict_calls] == [
+        {"book_net_of_cost": net_b, "benchmark_net_of_cost": net_a} | head_to_head_call,
+        {"book_net_of_cost": net_b[k16:], "benchmark_net_of_cost": net_a[k16:]} | head_to_head_call,
+    ]
+    full, from_2016 = (outcome for _, outcome in verdict_calls)
+    assert full["mean_outperformance"] != from_2016["mean_outperformance"]
+
+    bars = {"A" if arguments["book_net_returns"] == net_a else "B": outcome for arguments, outcome in kill_calls}
+    grid = {(arguments["mean_block"], arguments["seed"]): outcome["p_value"] for arguments, outcome in spa_calls}
+    turnover_a, turnover_b = book_turnover(arm_a), book_turnover(arm_b)
+    expected = {
+        "ann_sharpe_noc": sharpe(net_b, periods_per_year=2190),
+        "ann_sharpe_noc_decisive": sharpe(net_b[1380:], periods_per_year=2190),
+        "per_period_sharpe_4h": sharpe(net_b),
+        "arm_a_ann_sharpe_noc": sharpe(net_a, periods_per_year=2190),
+        "arm_a_ann_sharpe_noc_decisive": sharpe(net_a[1380:], periods_per_year=2190),
+        "benchmark_ann_sharpe_noc": sharpe(bench, periods_per_year=2190),
+        "benchmark_ann_sharpe_noc_decisive": sharpe(bench[1380:], periods_per_year=2190),
+        "var_trials": var_b,
+        "dsr_corrected": bars["B"]["dsr"],
+        "dsr_pass": int(bars["B"]["dsr_pass"]),
+        "spa_pass": int(bars["B"]["spa_pass"]),
+        "spa_p_full": bars["B"]["spa_p_value_full"],
+        "cost_stress_pass": int(bars["B"]["cost_stress_pass"]),
+        "worst_slice_relative_pass": int(bars["B"]["worst_slice_pass"]),
+        "passes": int(bars["B"]["passes"]),
+        "decisive_start": 1380,
+        "n_resamples": 2000,
+        "arm_a_var_trials": var_a,
+        "arm_a_passes": int(bars["A"]["passes"]),
+        "spa_p_decisive_b30_s42": bars["B"]["spa_p_value"],
+        **{f"spa_p_decisive_b{block}_s{seed}": grid[(block, seed)] for block, seed in _B1_HOURLY_RV_CELLS[1:]},
+        "head_to_head_mean_outperf_full": full["mean_outperformance"],
+        "head_to_head_spa_p_full": full["spa_p_value"],
+        "head_to_head_mean_outperf_2016": from_2016["mean_outperformance"],
+        "head_to_head_spa_p_2016": from_2016["spa_p_value"],
+        "max_drawdown": max_drawdown(net_b),
+        "arm_a_max_drawdown": max_drawdown(net_a),
+        "spot_drag_pct_yr": turnover_b / n * 0.006 * 2190,
+        "arm_a_spot_drag_pct_yr": turnover_a / n * 0.006 * 2190,
+        "turnover_a": turnover_a,
+        "turnover_b": turnover_b,
+        "turnover_reduction_pct": 100 * (turnover_a - turnover_b) / turnover_a,
+        "stamps_positions_differ": sum(any(arm_b[a][k] != arm_a[a][k] for a in _B2_ASSETS) for k in range(n)),
+    }
+    own_stamps = {a: [h4_ts[k] for k in asset_ts[a]] for a in _B2_ASSETS}
+    per_year = {str(i + 1): entry_events_per_year(events, own_stamps) for i, (_, events) in enumerate(confirmed)}
+    counts = [
+        c
+        for arm in per_year.values()
+        for by_asset in arm.values()
+        for by_lookback in by_asset.values()
+        for c in by_lookback.values()
+    ]
+    events, rejected = sum(c[0] for c in counts), sum(c[1] for c in counts)
+    differ = directions_differ_per_year(directions_a, directions_b, h4_ts)
+    expected |= {
+        "entry_events_per_year": per_year,
+        "entry_events": events,
+        "entry_events_rejected": rejected,
+        "share_rejected": rejected / events,
+        "stamps_directions_differ": sum(differ.values()),
+        "stamps_directions_differ_per_year": differ,
+    }
+    assert set(expected) == _B1_VOLUME_METRIC_KEYS
+    assert stored == expected
+
+
+def test_the_b1_volume_preflight_reads_arm_a_and_the_entry_events_and_never_builds_arm_bs_positions(tmp_path, monkeypatch):
+    root = _b1_volume_dataset(tmp_path)
+    trial = subjects.SUBJECTS["b1-volume-confirmation"].build(ObservedReader(root), "ohlc-test", None)
+
+    def arm_b_positions(*args, **kwargs):
+        raise AssertionError("the pre-flight built arm B's positions")
+
+    monkeypatch.setattr(subjects, "a2_positions_on_directions", arm_b_positions)
+    bars = _recording(monkeypatch, "a1_kill_bar", lambda arguments, result: result)
+    metrics = subjects.SUBJECTS["b1-volume-confirmation-preflight"].build(ObservedReader(root), "ohlc-test", None)
+
+    assert [arguments["n_trials"] for arguments, _ in bars] == [4]
+    ints = _ARM_A_BAR_FLAGS | {"entry_events", "entry_events_rejected", "stamps_directions_differ"}
+    dicts = {"entry_events_per_year", "stamps_directions_differ_per_year"}
+    assert set(metrics) == _B1_VOLUME_PREFLIGHT_KEYS
+    assert {key for key, value in metrics.items() if type(value) is int} == ints
+    assert {key for key, value in metrics.items() if type(value) is dict} == dicts
+    assert {key for key, value in metrics.items() if type(value) is float} == _B1_VOLUME_PREFLIGHT_KEYS - ints - dicts
+    assert metrics["stamps_directions_differ"] > 0 and 0 < metrics["entry_events_rejected"] < metrics["entry_events"]
+    assert {key: metrics[key] for key in _B1_VOLUME_ENGAGEMENT} == {key: trial[key] for key in _B1_VOLUME_ENGAGEMENT}
+    assert (metrics["passes"], metrics["arm_a_var_trials"]) == (trial["arm_a_passes"], trial["arm_a_var_trials"])
+    assert {key: metrics[key] for key in _B1_HOURLY_RV_ANCHORS} == {key: trial[key] for key in _B1_HOURLY_RV_ANCHORS}
+
+
+@pytest.mark.parametrize("name", ["b1-volume-confirmation", "b1-volume-confirmation-preflight"])
+def test_a_b1_volume_subject_refuses_as_of_before_any_read(tmp_path, monkeypatch, name):
+    _anchor(monkeypatch, _rolling_set(tmp_path))
+
+    def read(*args, **kwargs):
+        raise AssertionError("the subject read a series before refusing --as-of")
+
+    monkeypatch.setattr(subjects, "_capturing_union", read)
+
+    result = runner.invoke(app, [*_b1_volume_args(name, tmp_path, dataset="ohlc-rolling"), "--as-of", "2026-10-03"])
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert f"{name} evaluates a frozen set's 4h series and their volumes, never the rolling dataset as of a day: drop --as-of" in (
+        result.output
+    )
+
+
+def test_b1_volume_names_a_240_file_without_a_volume_column(tmp_path, monkeypatch):
+    root = _b1_volume_dataset(tmp_path)
+    path = root / "ohlc-test" / "SOL/EUR/240.parquet"
+    pl.read_parquet(path).drop("volume").write_parquet(path)
+    _anchor(monkeypatch, root)
+
+    result = runner.invoke(app, _b1_volume_args("b1-volume-confirmation", tmp_path))
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert "ohlc-test/SOL/EUR/240.parquet" in result.output and '"volume" not found' in result.output
+
+
+def _a_volume_set(path: Path, value: float | None) -> datetime:
+    frame = pl.read_parquet(path)
+    volumes, k = frame["volume"].to_list(), frame.height // 2
+    volumes[k] = value
+    frame.with_columns(volume=pl.Series(volumes, dtype=frame.schema["volume"])).write_parquet(path)
+    return frame["ts"][k]
+
+
+@pytest.mark.parametrize(
+    ("value", "named"),
+    [
+        pytest.param(0.0, "volume must be a finite number above 0, got 0.0 at ", id="zero-volume"),
+        pytest.param(None, "no volume where the close is present at ", id="null-volume"),
+    ],
+)
+def test_b1_volume_refuses_a_volume_it_cannot_gate_naming_the_asset_and_stamp(tmp_path, monkeypatch, value, named):
+    root = _b1_volume_dataset(tmp_path)
+    stamp = _a_volume_set(root / "ohlc-test" / "ETH/EUR/240.parquet", value)
+    _anchor(monkeypatch, root)
+    calls = _recording(monkeypatch, "a2_book_returns", lambda arguments, result: result)
+
+    result = runner.invoke(app, _b1_volume_args("b1-volume-confirmation", tmp_path))
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert f"b1-volume-confirmation over the full history: ETH: {named}{stamp.isoformat()}" in result.output
+    assert calls == []
+
+
+def test_b1_volume_refuses_a_build_whose_arm_a_never_trades(tmp_path, monkeypatch):
+    _anchor(monkeypatch, _b1_volume_dataset(tmp_path))
+    _arm_a_flat(monkeypatch)
+
+    result = runner.invoke(app, _b1_volume_args("b1-volume-confirmation", tmp_path))
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert "b1-volume-confirmation over the full history: turnover_a is 0.0" in result.output
+
+
+@pytest.mark.parametrize("name", ["b1-volume-confirmation", "b1-volume-confirmation-preflight"])
+def test_a_b1_volume_build_without_an_entry_event_is_refused(tmp_path, monkeypatch, name):
+    _anchor(monkeypatch, _b1_volume_dataset(tmp_path))
+    real = subjects.asset_directions_confirmed
+
+    def no_events(*args, **kwargs):
+        directions, events = real(*args, **kwargs)
+        return directions, {asset: dict.fromkeys(by_lookback, []) for asset, by_lookback in events.items()}
+
+    monkeypatch.setattr(subjects, "asset_directions_confirmed", no_events)
+
+    result = runner.invoke(app, _b1_volume_args(name, tmp_path))
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert f"{name} over the full history: entry_events is 0, and share_rejected divides by it" in result.output
+
+
+@pytest.mark.parametrize(("start", "bars", "message"), _B1_UNREADABLE_HISTORIES)
+def test_a_b1_volume_history_the_bar_cannot_read_is_refused_before_the_arms_and_the_volume_reads(
+    tmp_path, monkeypatch, start, bars, message
+):
+    _anchor(monkeypatch, _b1_volume_dataset(tmp_path, start=start, bars=bars))
+    calls = _recording(monkeypatch, "a2_book_returns", lambda arguments, result: result)
+    read_series, read = ObservedReader.read_series, []
+
+    def recording_read(self, dataset, relpath, window=None):
+        read.append(relpath)
+        return read_series(self, dataset, relpath, window)
+
+    monkeypatch.setattr(ObservedReader, "read_series", recording_read)
+
+    result = runner.invoke(app, _b1_volume_args("b1-volume-confirmation", tmp_path))
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert "b1-volume-confirmation over the full history: " in result.output and message in result.output
+    assert calls == [] and sorted(read) == sorted(f"{a}/EUR/240.parquet" for a in _B2_ASSETS)
+
+
+def test_b1_volume_reads_its_volumes_under_the_unions_window(tmp_path, monkeypatch):
+    root = _b1_volume_dataset(tmp_path)
+    first, last = _B1_START + timedelta(hours=4 * 100), _B1_START + timedelta(hours=4 * (_B1_BARS - 1))
+    window = (str(first), str(last))
+    read_series, reads = ObservedReader.read_series, []
+
+    def recording_read(self, dataset, relpath, window=None):
+        reads.append((relpath, window))
+        return read_series(self, dataset, relpath, window)
+
+    monkeypatch.setattr(ObservedReader, "read_series", recording_read)
+
+    h4_ts, h4_prices, volumes = subjects._b1_volume_reads(
+        ObservedReader(root), "ohlc-test", window, None, False, subject="b1-volume-confirmation"
+    )
+
+    assert sorted(reads) == sorted((f"{a}/EUR/240.parquet", window) for a in _B2_ASSETS for _ in range(2))
+    assert (h4_ts[0], h4_ts[-1]) == (first, last)
+    assert all([v is not None for v in volumes[a]] == [p is not None for p in h4_prices[a]] for a in _B2_ASSETS)
+
+
 def _declared_series(tmp_path: Path, subject: subjects.Subject) -> tuple[Path, datetime]:
     root = tmp_path / "data"
     for i, asset in enumerate(subject.assets):
@@ -2594,9 +3120,9 @@ def _declared_series(tmp_path: Path, subject: subjects.Subject) -> tuple[Path, d
 
 
 # A subject whose build reads a dataset it does not declare brings its own fixture here, and b1-window-only shares
-# b1-conditioning's; b1-hourly-rv and its pre-flight bring theirs, shorter than their declared series — `_B1_BARS` 4h bars
-# against `_declared_series`' 600 days — because each row that evaluates them runs arm A's kill bar, and the trial's arm
-# B's too, over the whole series; any other is fed its declared series.
+# b1-conditioning's; the ruled B1 subjects and their pre-flights bring theirs, shorter than their declared series —
+# `_B1_BARS` 4h bars against `_declared_series`' 600 days — because each row that evaluates them runs arm A's kill bar,
+# and the trial's arm B's too, over the whole series; any other is fed its declared series.
 _CONTRACT_DATASETS = {
     "b2-funding-derisk": lambda tmp_path, subject: (_b2_dataset(tmp_path), _B2_START),
     "b2-arm-a-bar": lambda tmp_path, subject: (_b2_dataset(tmp_path), _B2_START),
@@ -2604,6 +3130,8 @@ _CONTRACT_DATASETS = {
     "b1-window-only": lambda tmp_path, subject: (_b1_dataset(tmp_path, m15=False), _B1_START),
     "b1-hourly-rv": lambda tmp_path, subject: (_b1_hourly_rv_dataset(tmp_path), _B1_START),
     "b1-hourly-rv-preflight": lambda tmp_path, subject: (_b1_hourly_rv_dataset(tmp_path), _B1_START),
+    "b1-volume-confirmation": lambda tmp_path, subject: (_b1_volume_dataset(tmp_path), _B1_START),
+    "b1-volume-confirmation-preflight": lambda tmp_path, subject: (_b1_volume_dataset(tmp_path), _B1_START),
 }
 
 
