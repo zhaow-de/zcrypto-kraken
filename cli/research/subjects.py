@@ -92,7 +92,7 @@ class Subject:
     no_verdict: str | None = None  # docs/specs/00129 D4, D7: the outcome a reading carries when the rule returns None
     incumbent: str | None = None  # docs/specs/00129 D3: the subject whose book this one builds in the same run
     family: str | None = None  # docs/specs/00133 D4: the registry family key a ruled subject's trials count against
-    n_trials: int | None = None  # docs/specs/00133 D4: the count its kill bars deflate at, frozen once a record lands
+    n_trials: int | None = None  # docs/specs/00133 D4: the count its kill bars deflate at, frozen once a record or reading lands
 
 
 def required_relpaths(subject: Subject) -> list[str]:
@@ -220,7 +220,7 @@ _DECISIVE_START = 1380
 _N_RESAMPLES = 2000
 _FROM_2021 = datetime(2021, 1, 1, tzinfo=UTC)
 _B2_COST_PER_SIDE = 0.006
-_B2_N_TRIALS = 1  # docs/specs/00133 D4: raised in place, not a new trial, until a record or reading of the subject lands
+_B2_N_TRIALS = 1  # docs/specs/00133 D4: raised in place when the count refusal asks, until a record or reading of the subject lands
 _B2_A2_ARMS = (((20, 50, 100), 0.12), ((60, 120, 240), 0.10), ((60, 120, 240), 0.12))
 _B2_LOOKBACK = 180
 
