@@ -51,21 +51,6 @@ emit() {
   printf '%s\t%s\n' "$name" "$joined"
 }
 
-# The count the corpus does not carry: merges whose every changed file is a topic file. The file
-# list is taken against the merge's FIRST parent, because `git show --stat` on a merge renders an
-# empty diffstat and would score every merge as touching nothing.
-count_micro_prs() {
-  local branch="$1" merge files micro=0
-  while IFS= read -r merge; do
-    files="$(git diff --name-only "${merge}^1" "$merge")"
-    if [ -z "$files" ]; then continue; fi
-    if ! printf '%s\n' "$files" | grep -qv '^docs/open-topics/'; then
-      micro=$((micro + 1))
-    fi
-  done < <(git log --merges --first-parent "$branch" --format=%H)
-  printf '%s\n' "$micro"
-}
-
 # retire when: a pre-commit hook in .pre-commit-config.yaml refuses a staged docs/*.md, the refusal replacing this count
 c_docs_markdown_at_the_root() { git ls-files ':(glob)docs/*.md' | wc -l; }
 
@@ -472,10 +457,7 @@ c_capture_hosts_converged_within_an_hour() {
 # retire when: infra/ansible/scripts/converge.sh stops reading /dev/tty for its confirm — a timeout then kills the whole run, the rule's harm gone
 c_converge_sh_wrapped_in_timeout() { git grep -nE 'timeout +[0-9]+[smh]? .*converge\.sh' -- ':!*.md' | wc -l; }
 
-# retire when: .claude/skills/zcrypto-refine-rules/SKILL.md stops naming topic-only-merges — retired by the owner's word, held by that line
-c_micro_prs() { count_micro_prs develop; }
-
-# The other count the corpus does not carry: claude-kind commits since the last refine round
+# The count the corpus does not carry: claude-kind commits since the last refine round
 # closed. A missing closing commit is an error, never a count over the whole history.
 # retire when: the refine round stops reading it
 c_claude_commits_since_the_round_closed() {
@@ -485,15 +467,7 @@ c_claude_commits_since_the_round_closed() {
   git log "${base}..develop" --no-merges --format=%s | grep -c '^claude('
 }
 
-# The third count the corpus does not carry: processes with a cwd inside a worktree, the read that
-# catches a stale worktree whatever its branch's merge state (the protocol's worktree line). The
-# worktrees are the linked ones `git worktree list` names, wherever each was cut; its first entry is
-# the main checkout, which is not one. The kernel renders a removed cwd as `<path> (deleted)`, which
-# the match strips.
-# retire when: .claude/skills/zcrypto-refine-rules/SKILL.md stops naming worktrees — retired by the owner's word, held by that line
-c_worktree_processes() { for l in /proc/[0-9]*/cwd; do readlink "$l"; done 2>/dev/null | awk 'NR == FNR { if (sub(/^worktree /, "") && seen++) w[$0] = 1; next } { sub(/ \(deleted\)$/, ""); for (p in w) if (index($0 "/", p "/") == 1) { n++; break } } END { print n + 0 }' <(git worktree list --porcelain) -; }
-
-# The fourth: the always-loaded bytes -- the corpus whole, plus every skill's name and description values,
+# The other: the always-loaded bytes -- the corpus whole, plus every skill's name and description values,
 # which load with it -- measured by the guard's own parser, so this entry and what the guard refuses to
 # grow without a stated reason cannot disagree.
 # retire when: the refine round stops reading it
@@ -643,9 +617,7 @@ main() {
   emit "runbook-sections-without-a-retire-when" c_runbook_sections_without_a_retire_when
   emit "runbook-universals-without-a-count" c_runbook_universals_without_a_count
   emit "converge-sh-wrapped-in-timeout" c_converge_sh_wrapped_in_timeout
-  emit "topic-only-merges" c_micro_prs
   emit "claude-commits-since-the-round-closed" c_claude_commits_since_the_round_closed
-  emit "worktrees" c_worktree_processes
   emit "ambient-bytes" c_ambient_bytes
   emit "merged-prs-without-a-floor-read-30d" c_merged_prs_without_a_floor_read
   emit "deploy-rows-with-an-empty-digest-var" c_deploy_rows_with_an_empty_digest_var
