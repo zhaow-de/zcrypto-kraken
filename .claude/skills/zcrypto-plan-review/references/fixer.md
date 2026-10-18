@@ -10,7 +10,7 @@ Read the union report `{UNION}` in full. Then read {SPEC} — the binding author
 
 {SPEC_PINNED}
 
-**Fix the family, not the instance.** When a finding names a defect shape — an input that raises before the first write, a guard whose fixture satisfies every conjunct, a reference to a renamed thing — name the family at the design concept the finding exposes (what identifies a unit, when an open one is alive), never at the finding's own path: plan 00133's floor found one concept five times, one instance per cycle; then, enumerate every member in the pair exhaustively, fix all of them, and **write the enumeration into the artefact** so the next reader inherits it instead of re-deriving it. Three independent readers each found one member of a five-member family; the enumeration found all five.
+**Fix the family, not the instance.** When a finding names a defect shape — an input that raises before the first write, a guard whose fixture satisfies every conjunct, a reference to a renamed thing — name the family at the design concept the finding exposes (what identifies a unit, when an open one is alive), never at the finding's own path; then enumerate every member in the pair exhaustively, fix all of them, and **write the enumeration into the artefact** so the next reader inherits it instead of re-deriving it. Three independent readers each found one member of a five-member family; the enumeration found all five.
 
 **Extend, do not restate.** Two things that must agree are made unable to disagree — a shared constant, one source of truth, a derived value — never the same fact written twice. Restating is where the next round's regression is born.
 

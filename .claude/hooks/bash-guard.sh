@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# retire when: Claude Code's permission layer refuses these families itself (a hook bypass, a vaulted read, a memo shell write, an agent's push).
+# retire when: Claude Code's permission layer itself refuses every family this header names.
 # PreToolUse[Bash] guard: a refusal is exit 2, the one code the harness blocks on, with the spelling found and
 # what it costs on stderr; anything else exits 0 silently.
 # `tests/test_bash_guard.py` drives every family in both directions and IS the list of what is refused and what
@@ -44,7 +44,7 @@
 # A state-changing git command -- commit, merge, rebase, reset, push, checkout, switch, stash (not list|show), mv, rm,
 # a branch delete, rename, copy or force, worktree add|remove|move -- stamps `.tmp/.git-state-stamp` under the top of
 # the checkout it runs in, once per call at admission; a second one under 3 s after is refused, since a hook sees one
-# Bash call and nothing of its siblings, and two in one checkout at once is the parallel call the rule forbids. A read
+# Bash call and nothing of its siblings, and two in one checkout at once is a parallel call, not a sequence. A read
 # neither stamps nor is refused; a directory that is no checkout, or an unreadable stamp, admits.
 #
 # The dispatched-agent family judges only a call whose payload carries `agent_id`, which the harness sets inside a
@@ -616,7 +616,6 @@ def judge_cap(pipe, raw):
 
 
 def handed_grep(words):
-    # A grep over files another program hands it: `xargs [options] grep|rg`, or `find ... -exec grep|rg`.
     p, rest = argv_of(words)
     if p == "xargs":
         j = 0
