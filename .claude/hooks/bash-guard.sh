@@ -27,7 +27,8 @@
 # its whole directory -- none is an argv this guard judges; nor is a vaulted file the command makes before it reads it
 # (`ln -s <vaulted file> x && cat x`), since a file's existence is read before anything runs. Of `xargs` and
 # `find -exec`, two shapes are judged: a stage whose command word is `xargs` with `grep` or `rg` as its first operand,
-# or `find` carrying `-exec grep|rg`, in a pipeline any stage of which names `infra` as a word or a path component;
+# or `find` carrying `-exec grep|rg`, in a pipeline any stage of which names `infra` as a word or a path component --
+# the grep's own pattern argument excepted, so `xargs grep -l infra` over `cli` is a search, not a read of infra;
 # every other `xargs` or `-exec` is outside. A vault tool's writing verb is admitted over a vaulted file: a key rotation runs `ansible-vault encrypt|rekey`.
 # Refused deliberately, as a word is judged wherever it stands: an agent's `echo git push`, `echo cat <vaulted file>`.
 #
@@ -628,10 +629,34 @@ def handed_grep(words):
     return p == "find" and any(a == "-exec" and rest[j + 1].rpartition("/")[2] in GREPS for j, a in enumerate(rest[:-1]))
 
 
+def grep_pattern_at(stage):
+    # The index, in a stage `handed_grep` matches, of the grep's pattern argument: `-e PAT`'s or `--regexp=PAT`'s value,
+    # else the first word after the grep program not opening with `-`; None when the stage carries none.
+    p, rest = argv_of(stage)
+    base = len(stage) - len(rest)
+    if p == "xargs":
+        j = 0
+        while rest[j].startswith("-"):
+            j += 2 if rest[j] in XARGS_VALUE else 1
+    else:
+        j = next(j for j, a in enumerate(rest[:-1]) if a == "-exec" and rest[j + 1].rpartition("/")[2] in GREPS) + 1
+    for i in range(j + 1, len(rest)):
+        if rest[i] in ("-e", "--regexp"):
+            return base + i + 1 if i + 1 < len(rest) else None
+        if rest[i].startswith("--regexp=") or not rest[i].startswith("-"):
+            return base + i
+    return None
+
+
 def judge_handed_grep(pipe, raw):
-    if any("infra" in w.split("/") for stage in pipe for w in stage):
-        for stage in pipe:
-            if handed_grep(stage):
+    # A handed grep's pattern is not a word naming infra; a path argument naming `infra/..` is.
+    handed = [handed_grep(stage) for stage in pipe]
+    if not any(handed):
+        return
+    judged = [w for stage, h in zip(pipe, handed) for i, w in enumerate(stage) if not (h and i == grep_pattern_at(stage))]
+    if any("infra" in w.split("/") for w in judged):
+        for stage, h in zip(pipe, handed):
+            if h:
                 refuse_vault(stage, "greps the files it is handed in a pipeline naming infra, where the vaulted files sit", raw)
 
 
