@@ -254,7 +254,7 @@ def volume_confirmations(
     out: list[bool] = []
     for t, v in zip(stamps, volumes, strict=True):
         if len(rows) < lookback:
-            out.append(True)  # fewer than 180 prior bars: accepted, a fill among them (D4)
+            out.append(True)  # the warm-up: accepted, a fill among them (D4)
             if v is not None:
                 rows.append(v)
             continue
