@@ -14,7 +14,7 @@
 
 - The log: `.local/trial-attempts.jsonl` in the main checkout, the parent of `git -C <code root> rev-parse --git-common-dir`, resolved against the code root when relative; refused when that parent is no checkout.
 - Each line canonical JSON (`canonical_json`), `seq` contiguous from 1, `prev_hash` the previous line's `line_hash` (64 zeros on line 1), `line_hash` the `compute_hash` of the line without it; line 1 and only line 1 is the genesis line, `log_id` 32 lowercase hex from `secrets.token_hex(16)`, `host` `socket.gethostname()`; key sets exactly the formats section's for `genesis`, `begin` and `end`.
-- Every read of the log holds its flock, so another session's line in flight is never taken for a torn one; every write of a line is one `os.write` whose count is checked, a short one refused as an `OSError`, since `os.write` returns what it wrote and raises nothing when a full disk cuts the line. A torn last line — any last line without its `\n`, parseable or not, which under the flock only a refused write or a writer that died leaves — is healed so: the whole file copied to `<log>.torn-<UTC stamp>` beside it, then truncated, then the chain re-verified over the file as read back from disk, the copy deleted only after that verification passes; a failing one keeps the copy and refuses naming it. The stamp is `datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")`, the copy made with an exclusive create.
+- Every read of the log holds its flock, so another session's line in flight is never taken for a torn one; every write of a line is one `os.write` whose count is checked, a short one refused as an `OSError`, since `os.write` returns what it wrote and raises nothing when a full disk cuts the line. A torn last line — any last line without its `\n`, parseable or not, which under the flock only a refused write or a writer that died leaves — is healed so: the whole file copied to `<log>.torn-<UTC stamp>` beside it, then truncated, then the chain re-verified over the file as read back from disk, the copy deleted only after that verification passes; a failing one keeps the copy and refuses naming it. The stamp is `datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")`, the copy made with an exclusive create. An `OSError` the log raises outside the two refusals spec D2 prints ends the command in a traceback: `attempts-init`'s genesis line; `locked()`'s read, after the print, where the run's `end` already stands and it counts as any run refused after its print; and the failed `end` one of Task 5's four exits writes, the build's error chained beneath it, nothing printed and the attempt left open, counting until a same-arguments retry absorbs it (spec D3).
 - An `end` line: exactly one of `verdict` (`adopt`, `reject`, `park`), `stop` (the subject's `no_verdict`) and `failed` (`<class>: <message>`) non-null; `metrics` and `metrics_hash` (`compute_hash(metrics)`) null exactly when `failed` is not.
 - `BUCKET_OF = {"A1": "A", "B1": "B", "B2": "B", "P1": None}` and `BUDGET = {"A": 40, "B": 25, "C": 10}`, in `cli/registry/budget.py`.
 - `SCHEMA_VERSION = 6` adds `attempt`; `_ATTEMPT_FLOOR_TRIAL_ID = 48`; `READING_SCHEMA_VERSION = 2` adds `attempt`, floored at reading 1.
@@ -49,7 +49,7 @@
 - Modify `cli/research/command.py` — `attempts-init`; the register path's lines, count and refusals; the plain-eval refusal.
 - Modify `tests/conftest.py` — the autouse fixture.
 - Modify `tests/test_research_command.py`, `tests/test_registry_replay.py`, `tests/test_registry_store.py`, `tests/test_registry_record.py`, `tests/test_registry_conformance.py`, `tests/test_research_control.py`, `tests/test_trial_registry_provenance.py`, `tests/test_decisions_log_ties.py`.
-- Modify `infra/scripts/workspace-transport.zsh`, `tests/test_workspace_transport.py` — the transport carries the log only over a prefix of itself (spec D6).
+- Modify `infra/scripts/workspace-transport.zsh`, `tests/test_workspace_transport.py` — the transport's two `.local/` rsyncs leave each machine's log and its heal's copies where they are (spec D6).
 - Modify `README.md` — the `zcrypto research` section.
 - Modify `tests/slow-cases.txt` — the DSR tie's two cases.
 - Move `docs/open-topics/T0222-a-trial-on-an-unmerged-branch-spends-uncounted.md` into `docs/open-topics/archive/`, resolved; re-render `docs/open-topics/README.md`.
@@ -427,6 +427,10 @@ def test_an_end_names_an_open_attempt_with_exactly_one_outcome(tmp_path):
         with pytest.raises(AttemptLogError, match=match):
             log.end(attempt, **outcome)
     assert len(AttemptLog(path).lines) == 6
+    log.end(attempt, stop="the stub's stop", metrics={"sharpe": 0.3})
+    log.end(log.begin(lambda lines: None, **_fields(tmp_path, 4)), failed="SubjectError: too short")
+    stopped, failed = (line for line in AttemptLog(path).lines[6:] if line["kind"] == "end")
+    assert (stopped["stop"], stopped["verdict"], failed["failed"], failed["metrics"]) == ("the stub's stop", None, "SubjectError: too short", None)
 
 
 def test_begin_counts_over_the_lines_another_session_appended_after_this_log_was_read(tmp_path):
@@ -646,7 +650,7 @@ Expected: `ERROR collecting tests/test_trial_attempts.py` — `ImportError: cann
   - `_write_line`: `os.write(fd, line)` called through the module (`import os`), so a test wraps it, and an `OSError` naming the bytes written and the line's when it wrote fewer, so a writer returns only once its whole line, `\n` included, is written; every line the log gains — `init_log`'s genesis, `begin`'s, `end`'s — goes through it.
   - `init_log`: an exclusive create (`os.O_WRONLY | os.O_CREAT | os.O_EXCL`), its line written through `_write_line`, `fsync`'d; an existing path, empty or not, raises D1's first remedy verbatim, "<path> exists: a log is created once, never beside the records that cite it; for a damaged one, rename it aside, then restore it from a backup if one exists; otherwise create a new log with zcrypto research attempts-init and add its id to docs/reference/trial-attempt-logs.txt by PR, saying what was lost".
   - The read, one `_read_healing` call per read, always under the log's flock — `fcntl.flock(fd, fcntl.LOCK_EX)` called through the module (`import fcntl`), so a test wraps it, on an `os.open(path, os.O_WRONLY | os.O_APPEND)` descriptor: the constructor takes it for its own read, while `begin`, `end` and `locked()` read under the one they already hold and never open a second, whose flock would wait on the first; a writer holds the flock from its write through its `fsync`, so a read under it never sees another session's line half written: when the bytes are not empty and do not end in `\n` — a torn last line, parseable or not, decoded by nothing before the heal, since a tear can fall inside a multibyte character (Global Constraints) — copy the whole file aside, truncate it after its last `\n`, then `_read_healing(path, _validate_line, _verify_chain)` over the healed file, then unlink the copy; an empty result is refused by `_verify_chain([])` itself ("line 1 is not a genesis line"), called by the read, since `_read_healing` returns `[]` for an empty file without calling its check (`store.py:111-112`), and on the heal path before the copy is unlinked; every refusal of a read is an `AttemptLogError` reading "<path>: line <n> <what breaks>" — `_read_healing`'s malformed-JSON refusal re-raised as "line <n> is not JSON" — and, when a copy was made, D1's third form, "<path>: the healed log breaks at line <n> <what breaks>, and its bytes before the heal are kept at <copy>", the copy kept. `_validate_line` checks each kind's key set exactly — the formats section's, which `test_a_log_appends_chained_lines_from_its_genesis` lists — refusing as "<path>: line <n> keys must be exactly [...] (missing [...], unknown [...])", each list sorted; `_verify_chain` raises `AttemptLogError(f"{path}: line {n} {what breaks}")` for a line 1 that is no genesis or absent ("is not a genesis line"), a second genesis ("is a second genesis line"), a `seq` out of place, a `prev_hash` or `line_hash` that does not hold, a `begin` whose `attempt` is not the next ("begins attempt <a>"), an `end` naming no open attempt ("ends attempt <a>").
-  - `AttemptLog.__init__` opens that descriptor first, an absent path (`FileNotFoundError`) refused as "no trial-attempts log at <path>", and releases the flock and closes the descriptor before it returns; `begin` and `end` take `fcntl.flock(LOCK_EX)` on an `os.open(path, os.O_WRONLY | os.O_APPEND)` descriptor (never `O_CREAT`), re-read the lines under the lock, set `seq`, `prev_hash`, `line_hash`, run `_verify_chain` over the lines plus the new one before writing, write one line through `_write_line`, `fsync`, unlock, and refresh `self.lines`; each of the four — the constructor, `begin`, `end` and `locked()` — releases the flock and closes the descriptor in a `finally`, since every one of them can raise under it (a broken chain, a short write, `admit`'s count and budget refusals, `end`'s refusals, the count, budget and store refusals inside `locked()`), and a raw descriptor left locked makes the process's next read wait on it forever; `begin` calls `admit(lines)` with the re-read lines before composing its line and stores `timestamp`, `host` (`socket.gethostname()`), `worktree`, `registry`, `ledger` as absolute strings (`Path.resolve()`); `end` refuses, before composing its line, an attempt with no `begin` or an earlier `end` ("attempt <a> is not open" — a wording `_verify_chain` never prints, so the test tells this check from the chain's), an outcome other than exactly one of the three ("exactly one of verdict, stop and failed"), `metrics` other than a non-empty dict while `failed` is null or other than null while it is set ("metrics must be a non-empty dict exactly when failed is null"), and a `verdict` outside `VERDICTS` ("verdict must be one of [...]", sorted) — every rule the formats section gives an `end` line that composing it does not make true by itself: `metrics_hash` is computed here, `stop` and `failed` are the command's text, and the metric leaves are Task 5's check before the `end`; a verdict outside `VERDICTS` or a verdict with no metrics would otherwise be a finished orphan whose `counted` entry every later record of its bucket must carry and the store refuses. `locked()` holds the same flock over a re-read and yields the lines; nothing inside it calls `begin` or `end`.
+  - `AttemptLog.__init__` opens that descriptor first, an absent path (`FileNotFoundError`) refused as "no trial-attempts log at <path>", and releases the flock and closes the descriptor before it returns; `begin` and `end` take `fcntl.flock(LOCK_EX)` on an `os.open(path, os.O_WRONLY | os.O_APPEND)` descriptor (never `O_CREAT`), re-read the lines under the lock, set `seq`, `prev_hash`, `line_hash`, run `_verify_chain` over the lines plus the new one before writing, write one line through `_write_line`, `fsync`, unlock, and refresh `self.lines`; each of the four — the constructor, `begin`, `end` and `locked()` — releases the flock and closes the descriptor in a `finally`, since every one of them can raise under it (a broken chain, a short write, `admit`'s count and budget refusals, `end`'s refusals, the count, budget and store refusals inside `locked()`), and a raw descriptor left locked makes the process's next read wait on it forever; `begin` calls `admit(lines)` with the re-read lines before composing its line and stores `timestamp`, `host` (`socket.gethostname()`), `worktree`, `registry`, `ledger` as absolute strings (`Path.resolve()`); `end` refuses, before composing its line, an attempt with no `begin` or an earlier `end` ("attempt <a> is not open" — a wording `_verify_chain` never prints, so the test tells this check from the chain's), an outcome other than exactly one of the three ("exactly one of verdict, stop and failed"), `metrics` other than a non-empty dict while `failed` is null or other than null while it is set ("metrics must be a non-empty dict exactly when failed is null"), and a non-null `verdict` outside `VERDICTS` ("verdict must be one of [...]", sorted), a stop's and a failure's `verdict` being null — every rule the formats section gives an `end` line that composing it does not make true by itself: `metrics_hash` is computed here, `stop` and `failed` are the command's text, and the metric leaves are Task 5's check before the `end`; a verdict outside `VERDICTS` or a verdict with no metrics would otherwise be a finished orphan whose `counted` entry every later record of its bucket must carry and the store refuses. `locked()` holds the same flock over a re-read and yields the lines; nothing inside it calls `begin` or `end`.
 
 - [ ] **Step 5: Implement the reads of what landed** — `collect` keeps each record once, by `("attempt", log, id)` when `record.get("attempt")` is set and else by `("hash", record_hash)`, the first seen kept, readings alike; `files_landed` reads the two target files through `TrialRegistry(registry).records` and `ReadingLedger(ledger).records` (`dataclasses.asdict`), an absent file reading as none; `landed` refuses unless `_git(code_root, "rev-parse", "--verify", "--quiet", f"{DEVELOP}^{{commit}}")` exits 0, with D3's remedy "origin/develop does not resolve in <root>: run git fetch origin develop, then run again", then merges, in this order, the target files, `HEAD` and `origin/develop` — the registry and the ledger at each ref, `REGISTRY_RELPATH` and `LEDGER_RELPATH` — each ref's file read only when `_git(code_root, "cat-file", "-e", f"{ref}:{path}")` exits 0, through `git show`, a line at a time through `loads_strict` — a `git show` that exits non-zero raises `AttemptLogError` naming the ref and the path, never reads as an empty file. The two shapes `landed` returns differ on records 1–48 and reading 1: as `git show` reads them they carry no `attempt` key (records 1–47 no `invocation` key either), as the store loads them `attempt` is null (`invocation` null on 1–47); so every read of a landed record's or reading's `attempt`, `absorbs`, `counted` or `invocation` — `collect`, `_landed_ids`, `listed` and `lacking` here, D4's frozen check in Task 7, `_attempt_findings` in Task 8 — goes through `.get`, an absent or null value reading as none.
 
@@ -696,7 +700,7 @@ EOF
 | `test_a_log_whose_chain_breaks_is_refused and seq-skips` / `prev-hash-breaks` / `line-hash-breaks` / `attempt-skips` / `end-without-begin` | each check made `if False:`, one probe each |
 | `test_a_log_whose_chain_breaks_is_refused and begin-without-family` | `_validate_line`'s key-set check made `if False:` |
 | `test_attempts_init_refuses_an_existing_log` | `\| os.O_EXCL` cut |
-| `test_an_end_names_an_open_attempt_with_exactly_one_outcome` | the open-attempt check made `if False:`; apart, the exactly-one check; apart, the metrics-exactly-when-not-failed check; apart, the `VERDICTS` check — each made `if False:` |
+| `test_an_end_names_an_open_attempt_with_exactly_one_outcome` | the open-attempt check made `if False:`; apart, the exactly-one check; apart, the metrics-exactly-when-not-failed check; apart, the `VERDICTS` check — each made `if False:`; apart, the `VERDICTS` check's non-null condition cut, so a stop's `end` is refused |
 | `test_begin_counts_over_the_lines_another_session_appended_after_this_log_was_read` | `admit` called with `self.lines` in place of the re-read lines |
 | `test_the_log_path_is_the_main_checkouts_from_any_worktree` | `"--git-common-dir"` made `"--git-dir"` |
 | `test_a_common_dir_with_no_checkout_is_refused` | the show-toplevel comparison made `if False:` |
@@ -775,11 +779,11 @@ EOF
 
 ______________________________________________________________________
 
-### Task 3: the allowlist, `zcrypto research attempts-init` and the transport's prefix check (D6's file and transport call, D1's command)
+### Task 3: the allowlist, `zcrypto research attempts-init` and the transport's exclusion of the log (D6's file and transport call, D1's command)
 
 **Files:**
 - Create: `docs/reference/trial-attempt-logs.txt`
-- Modify: `cli/registry/attempts.py`, `cli/research/command.py`, `README.md` (the `zcrypto research` section: a usage line and a paragraph for `attempts-init`), `infra/scripts/workspace-transport.zsh` (the log carried only over a prefix of itself)
+- Modify: `cli/registry/attempts.py`, `cli/research/command.py`, `README.md` (the `zcrypto research` section: a usage line and a paragraph for `attempts-init`), `infra/scripts/workspace-transport.zsh` (the log excluded from both `.local/` rsyncs)
 - Test: `tests/test_trial_attempts.py`, `tests/test_research_command.py`, `tests/test_trial_registry_provenance.py`, `tests/test_workspace_transport.py`
 
 **Interfaces:**
@@ -795,7 +799,7 @@ def allowed_log_ids(code_root: Path) -> frozenset[str]: ...  # the rows on origi
 def attempts_init() -> None: ...
 ```
 
-and, in `infra/scripts/workspace-transport.zsh`, the POSIX function `log_carries_over <destination copy> <source log>`.
+and, in `infra/scripts/workspace-transport.zsh`, the array `LOCAL_EXCLUDES`, which both `.local/` rsyncs pass.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -866,58 +870,45 @@ def test_the_allowlist_rows_are_ids_and_hosts_each_id_once():
 
 ```python
 # tests/test_workspace_transport.py
-_CARRIES = re.compile(r"^log_carries_over\(\) \{ .* \}$", re.M)
-_LOG_STEP = re.compile(
-    r'^remote "cat \$\{\(q\)REPO_DIR\}/\.local/trial-attempts\.jsonl 2>/dev/null \|\| true" > "\$DEST_LOG" \\\n'
-    r"  \|\| die .*\n"
-    r'log_carries_over "\$DEST_LOG" "\$REPO_DIR/\.local/trial-attempts\.jsonl" \\\n'
-    r'  \|\| die "',
-    re.M,
-)
+_LOCAL_EXCLUDES = re.compile(r"^LOCAL_EXCLUDES=\(.*\)$", re.M)
 
 
-@pytest.mark.parametrize(
-    ("destination", "source", "carried"),
-    [
-        pytest.param(b"", None, True, id="neither-machine-holds-a-log"),
-        pytest.param(b"", b"g\nb\n", True, id="only-the-source-holds-one"),
-        pytest.param(b"g\nb\n", b"g\nb\n", True, id="the-same-log"),
-        pytest.param(b"g\n", b"g\nb\n", True, id="the-destination-holds-a-prefix"),
-        pytest.param(b"g\nb\n", b"g\n", False, id="the-destination-holds-more"),
-        pytest.param(b"g\nx\n", b"g\nb\n", False, id="the-log-forked"),
-        pytest.param(b"g\n", None, False, id="only-the-destination-holds-one"),
-    ],
-)
-def test_a_trial_attempts_log_is_carried_only_over_a_prefix_of_itself(tmp_path, destination, source, carried):
-    (line,) = _CARRIES.findall(SCRIPT.read_text())
-    copy, log = tmp_path / "destination-copy", tmp_path / "trial-attempts.jsonl"
-    copy.write_bytes(destination)
-    if source is not None:
-        log.write_bytes(source)
-    # `sh` runs the zsh script's line, as the temp-root case does, so the suite needs no zsh.
-    run = subprocess.run(["sh", "-c", f'{line}\nlog_carries_over "$1" "$2"', "sh", str(copy), str(log)], capture_output=True)
-    assert (run.returncode == 0) is carried, run
+def test_the_local_mirror_leaves_each_machines_trial_attempts_log_and_its_torn_copies_where_they_are(tmp_path):
+    (line,) = _LOCAL_EXCLUDES.findall(SCRIPT.read_text())
+    source, destination = tmp_path / "source", tmp_path / "destination"
+    for root in (source, destination):
+        root.mkdir()
+        (root / "trial-attempts.jsonl").write_text(f"{root.name}\n")
+        (root / f"trial-attempts.jsonl.torn-{root.name}").write_text(f"{root.name}\n")
+    (source / "memo.md").write_text("memo\n")
+    (destination / "retro.md").write_text("destination only\n")
+    # `bash` runs the zsh script's array line, which means the same in both, so the suite needs no zsh.
+    mirror = f'{line}\nrsync -a --delete "${{LOCAL_EXCLUDES[@]}}" "$1/" "$2/"'
+    subprocess.run(["bash", "-c", mirror, "bash", str(source), str(destination)], check=True, capture_output=True)
+
+    kept = sorted(path.name for path in destination.iterdir())
+    assert kept == ["memo.md", "trial-attempts.jsonl", "trial-attempts.jsonl.torn-destination"], kept
+    assert (destination / "trial-attempts.jsonl").read_text() == "destination\n"
 
 
-def test_the_transport_reads_the_destinations_log_and_refuses_before_its_gate():
-    text = SCRIPT.read_text()
-    step = _LOG_STEP.search(text)
-    assert step and step.start() < text.index("\n# --- the plan, then the gate"), (
-        "the transport no longer copies the destination's trial-attempts log and refuses, before its gate, one that is not "
-        "a prefix of the source's"
+def test_both_local_rsyncs_pass_the_exclusions():
+    rsyncs = [line for line in SCRIPT.read_text().splitlines() if '"${RSYNC[@]}"' in line and '"$REPO_DIR/.local/"' in line]
+    assert len(rsyncs) == 2 and all('"${LOCAL_EXCLUDES[@]}"' in line for line in rsyncs), (
+        "the dry run that counts the plan's .local/ deletions and the .local/ mirror no longer both pass LOCAL_EXCLUDES",
+        rsyncs,
     )
 ```
 
 - [ ] **Step 2: Run them to verify they fail**
 
 Run: `uv run pytest tests/test_trial_attempts.py tests/test_trial_registry_provenance.py -k "allowlist or allowed_ids" -q -p no:cacheprovider --basetemp=.tmp/plan-00133/pt`, `uv run pytest tests/test_research_command.py::test_attempts_init_writes_one_genesis_line_and_prints_its_allowlist_row -q -p no:cacheprovider --basetemp=.tmp/plan-00133/pt` and `uv run pytest tests/test_workspace_transport.py -q -p no:cacheprovider --basetemp=.tmp/plan-00133/pt`
-Expected: `AttributeError: module 'cli.registry.attempts' has no attribute 'allowed_log_ids'` collecting `tests/test_trial_attempts.py`, and `ImportError: cannot import name 'parse_allowlist'` collecting `tests/test_trial_registry_provenance.py` and again collecting `tests/test_research_command.py`, which imports the provenance module; in the transport module the seven prefix rows fail on `ValueError: not enough values to unpack`, the step case on its assertion, and the five cases already there pass.
+Expected: `AttributeError: module 'cli.registry.attempts' has no attribute 'allowed_log_ids'` collecting `tests/test_trial_attempts.py`, and `ImportError: cannot import name 'parse_allowlist'` collecting `tests/test_trial_registry_provenance.py` and again collecting `tests/test_research_command.py`, which imports the provenance module; in the transport module the exclusion case fails on `ValueError: not enough values to unpack (expected 1, got 0)`, the both-rsyncs case on its assertion, and the five cases already there pass.
 
-- [ ] **Step 3: Implement** — `parse_allowlist` matches each non-empty row against `[0-9a-f]{32} \S+` and refuses with `AttemptLogError` naming "row <n>", a repeated id "row <n> repeats <id>"; `allowed_log_ids` reads the rows of `ALLOWLIST` at `DEVELOP` alone, so a branch that adds a fresh log's row admits nothing until that row merges (spec D6), develop lacking the file (`cat-file -e`) reading as none and a `git show` that exits non-zero raising, as in `landed`; `attempts-init` writes the genesis line at `attempts.log_path(_REPO_ROOT)` through `attempts.init_log`, prints "created <path>; add this row to docs/reference/trial-attempt-logs.txt by PR:" and then the row `<log_id> <host>` on its own line, and turns an `AttemptLogError` into exit 1 echoing its message. Its help: "Create this clone's trial-attempts log, once, and print the row its id takes in the committed allowlist." README: the usage line `zcrypto research attempts-init` and a paragraph saying it creates the clone's log in the main checkout's `.local/` once, refuses an existing one, and prints the allowlist row to add by PR. `infra/scripts/workspace-transport.zsh`: `DEST_LOG="/tmp/zcrypto-workspace-transport.attempts"` beside `BUNDLE`, the EXIT trap's `rm -f` removing it beside the bundle; then, after the `.local/` delete count and before `# --- the plan, then the gate`, the one POSIX line `log_carries_over() { [ ! -s "$1" ] || cmp -s -n "$(wc -c < "$1")" "$1" "$2"; }` — true when the destination's copy is empty or a byte-prefix of the source's log — then `remote "cat ${(q)REPO_DIR}/.local/trial-attempts.jsonl 2>/dev/null || true" > "$DEST_LOG" \` over `  || die "could not read the destination's trial-attempts log -- nothing was touched"`, an absent log copied as an empty one, and `log_carries_over "$DEST_LOG" "$REPO_DIR/.local/trial-attempts.jsonl" \` over `  || die "<spec D6's transport remedy, verbatim, <destination> being $DEST>"`.
+- [ ] **Step 3: Implement** — `parse_allowlist` matches each non-empty row against `[0-9a-f]{32} \S+` and refuses with `AttemptLogError` naming "row <n>", a repeated id "row <n> repeats <id>"; `allowed_log_ids` reads the rows of `ALLOWLIST` at `DEVELOP` alone, so a branch that adds a fresh log's row admits nothing until that row merges (spec D6), develop lacking the file (`cat-file -e`) reading as none and a `git show` that exits non-zero raising, as in `landed`; `attempts-init` writes the genesis line at `attempts.log_path(_REPO_ROOT)` through `attempts.init_log`, prints "created <path>; add this row to docs/reference/trial-attempt-logs.txt by PR:" and then the row `<log_id> <host>` on its own line, and turns an `AttemptLogError` into exit 1 echoing its message. Its help: "Create this clone's trial-attempts log, once, and print the row its id takes in the committed allowlist." README: the usage line `zcrypto research attempts-init` and a paragraph saying it creates the clone's log in the main checkout's `.local/` once, refuses an existing one, and prints the allowlist row to add by PR. `infra/scripts/workspace-transport.zsh`: right after `CLAUDE_EXCLUDES`, a comment saying each machine keeps its own trial-attempts log and its heal's copies under its own id — a mirrored log drops the destination's attempts or leaves two machines appending under one id — and that an excluded path is also kept from `--delete` on the destination, then the line `LOCAL_EXCLUDES=(--exclude='/trial-attempts.jsonl*')`; `"${LOCAL_EXCLUDES[@]}"` is passed by the dry run that counts `.local/` deletions for the plan, right after its `--info=del`, and by the `.local/` mirror, right after its `--delete`.
 
 - [ ] **Step 4: Run the Step 2 tests but the allowlist file's** — expected pass; `test_the_allowlist_rows_are_ids_and_hosts_each_id_once` still fails with `FileNotFoundError`.
 
-- [ ] **Step 5: Create the workstation's log, once** — `ls /home/zhaow/Projects/zcrypto-kraken/.local/trial-attempts.jsonl` must exit 2 ("No such file"); if it exists, stop and report, never run the command over it. Then `uv run zcrypto research attempts-init` from this worktree; it prints the row. Write that row, verbatim, as the one line of `docs/reference/trial-attempt-logs.txt`.
+- [ ] **Step 5: Create the workstation's log, once** — `ls /home/zhaow/Projects/zcrypto-kraken/.local/trial-attempts.jsonl` must exit 2 ("No such file"); if it exists, stop and report, never run the command over it. Then `uv run zcrypto research attempts-init` from this worktree; it prints the row. Write that row, verbatim, as the one line of `docs/reference/trial-attempt-logs.txt`. This step opens the window the spec's What stays prose names under a second workstation; the PR body names it for the owner, who runs the transport.
 
 - [ ] **Step 6: Run all of Step 2's tests** — expected pass.
 
@@ -926,7 +917,7 @@ Expected: `AttributeError: module 'cli.registry.attempts' has no attribute 'allo
 ```bash
 git add docs/reference/trial-attempt-logs.txt cli/registry/attempts.py cli/research/command.py README.md infra/scripts/workspace-transport.zsh tests/test_trial_attempts.py tests/test_research_command.py tests/test_trial_registry_provenance.py tests/test_workspace_transport.py
 git commit -F - <<'EOF'
-feat(research): zcrypto research attempts-init, the committed allowlist of log ids, and a transport that carries the log only over a prefix of itself
+feat(research): zcrypto research attempts-init, the committed allowlist of log ids, and a transport that leaves each machine's log where it is
 
 <the task's pytest result line, pasted from its run>
 
@@ -935,7 +926,7 @@ Claude-Session: <the executing session's URL>
 EOF
 ```
 
-- [ ] **Step 8: Probe** — `--file cli/registry/attempts.py`, control `s/^def _git(/def _git_gone(/` (the allowlist cases reach it through `allowed_log_ids`; the parse rows take control `s/^def parse_allowlist(/def parse_allowlist_gone(/`): the row pattern widened to `[0-9a-fA-F]{32}` against `uppercase-id`; ` \S+` made ` ?\S*` against `no-host`; the repeat check made `if False:` against `repeated-id`; `DEVELOP` made `"HEAD"` against `test_the_allowed_ids_are_the_allowlists_on_origin_develop_never_a_branchs_own`; apart, the `cat-file -e` check `allowed_log_ids` reaches made `if True:` against the same case, its `bare` repository's failed `git show` then raising where the case reads none. `--file cli/research/command.py`, control `s/^def _abort(/def _abort_gone(/`: the row's echo made `None` against `test_attempts_init_writes_one_genesis_line_and_prints_its_allowlist_row`. `--file docs/reference/trial-attempt-logs.txt`, control `1p` (the row repeated): the id's last hex digit made `G` against `test_the_allowlist_rows_are_ids_and_hosts_each_id_once`. `--file infra/scripts/workspace-transport.zsh`, control `s/^log_carries_over() /log_carries_over_gone() /` for the prefix rows and `s/^# --- the plan, then the gate/# --- the gate/` for the step case: `! -s` made `! -e` against `neither-machine-holds-a-log`; ` -n "$(wc -c < "$1")"` cut from the `cmp` against `the-destination-holds-a-prefix`; `|| cmp -s ` made `|| true ` against `the-log-forked`; the copy's `> "$DEST_LOG"` made `> /dev/null` against `test_the_transport_reads_the_destinations_log_and_refuses_before_its_gate`; apart, `|| die "the trial-attempts log on` made `|| true "the trial-attempts log on` against the same.
+- [ ] **Step 8: Probe** — `--file cli/registry/attempts.py`, control `s/^def _git(/def _git_gone(/` (the allowlist cases reach it through `allowed_log_ids`; the parse rows take control `s/^def parse_allowlist(/def parse_allowlist_gone(/`): the row pattern widened to `[0-9a-fA-F]{32}` against `uppercase-id`; ` \S+` made ` ?\S*` against `no-host`; the repeat check made `if False:` against `repeated-id`; `DEVELOP` made `"HEAD"` against `test_the_allowed_ids_are_the_allowlists_on_origin_develop_never_a_branchs_own`; apart, the `cat-file -e` check `allowed_log_ids` reaches made `if True:` against the same case, its `bare` repository's failed `git show` then raising where the case reads none. `--file cli/research/command.py`, control `s/^def _abort(/def _abort_gone(/`: the row's echo made `None` against `test_attempts_init_writes_one_genesis_line_and_prints_its_allowlist_row`. `--file docs/reference/trial-attempt-logs.txt`, control `1p` (the row repeated): the id's last hex digit made `G` against `test_the_allowlist_rows_are_ids_and_hosts_each_id_once`. `--file infra/scripts/workspace-transport.zsh`, control `s/LOCAL_EXCLUDES/LOCAL_EXCLUDES_GONE/` for both cases: `--exclude='/trial-attempts` made `--include='/trial-attempts` against `test_the_local_mirror_leaves_each_machines_trial_attempts_log_and_its_torn_copies_where_they_are`; apart, `jsonl*'` made `jsonl'` against the same; the dry run's `--info=del "${LOCAL_EXCLUDES[@]}" ` made `--info=del ` against `test_both_local_rsyncs_pass_the_exclusions`; apart, the mirror's `--delete "${LOCAL_EXCLUDES[@]}"` made `--delete` against the same.
 
 ______________________________________________________________________
 
