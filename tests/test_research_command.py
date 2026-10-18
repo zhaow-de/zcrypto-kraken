@@ -2799,7 +2799,10 @@ def test_the_b1_volume_subject_registers_each_metric_from_its_own_call(tmp_path,
     bench = benchmark_4h_net_of_cost(h4_prices, cost_per_side=0.006)
 
     assert fed["BTC"] != h4_prices["BTC"]
+    assert net_of_cost(arm_b, {a: _asset_returns(h4_prices[a]) for a in _B2_ASSETS}, cost_per_side=0.006) != net_b
+    assert benchmark_4h_net_of_cost(fed, cost_per_side=0.006) != bench
     assert any(not accepted for a in _B2_ASSETS if a != "BTC" for accepted in confirm[a][180:])
+    assert confirm["BTC"][100] and not confirm["BTC"][1500]
     assert directions_b != directions_a and net_b != net_a and net_b[k16:] != net_a[k16:]
     assert book_turnover(arm_b) != book_turnover(arm_a)
     assert all(
