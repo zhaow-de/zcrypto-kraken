@@ -91,6 +91,8 @@ class Subject:
     verdict: Callable[[dict], str | None] | None = None  # docs/specs/00129 D4; None: evaluate-only
     no_verdict: str | None = None  # docs/specs/00129 D4, D7: the outcome a reading carries when the rule returns None
     incumbent: str | None = None  # docs/specs/00129 D3: the subject whose book this one builds in the same run
+    family: str | None = None  # docs/specs/00133 D4: the registry family key a ruled subject's trials count against
+    n_trials: int | None = None  # docs/specs/00133 D4: the count its kill bars deflate at, frozen once a record lands
 
 
 def required_relpaths(subject: Subject) -> list[str]:
@@ -218,6 +220,7 @@ _DECISIVE_START = 1380
 _N_RESAMPLES = 2000
 _FROM_2021 = datetime(2021, 1, 1, tzinfo=UTC)
 _B2_COST_PER_SIDE = 0.006
+_B2_N_TRIALS = 1  # docs/specs/00133 D4: raised in place, not a new trial, until a record or reading of the subject lands
 _B2_A2_ARMS = (((20, 50, 100), 0.12), ((60, 120, 240), 0.10), ((60, 120, 240), 0.12))
 _B2_LOOKBACK = 180
 
@@ -311,7 +314,7 @@ def _b2_refuse_window(subject: str, h4_ts: list[datetime], window: tuple[str, st
         )
 
 
-def _b2_arm_a_bar(inputs: _B2Inputs) -> dict:
+def _b2_arm_a_bar(inputs: _B2Inputs, *, n_trials: int) -> dict:
     """Arm A's headline bar, the instrument check of docs/specs/00128 D6."""
     cost = _B2_COST_PER_SIDE
     returns = _b2_returns(inputs.h4_prices)
@@ -321,7 +324,7 @@ def _b2_arm_a_bar(inputs: _B2Inputs) -> dict:
     return a1_kill_bar(
         net_a,
         bench,
-        n_trials=1,
+        n_trials=n_trials,
         var_trials=0.0,
         mean_block=30,
         seed=42,
@@ -367,7 +370,8 @@ _B2_ARM_A_BAR_KEYS = _B2_ARM_A_BAR_FLAGS | {"dsr", "spa_p_value", "spa_p_value_f
 
 
 def _b2_arm_a_bar_metrics(inputs: _B2Inputs) -> dict:
-    bar = _b2_arm_a_bar(inputs)
+    # 1, the count reading 1 was kept at: `_B2_N_TRIALS` moving never moves that landed reading's replay.
+    bar = _b2_arm_a_bar(inputs, n_trials=1)
     return {key: int(bar[key]) if key in _B2_ARM_A_BAR_FLAGS else bar[key] for key in sorted(_B2_ARM_A_BAR_KEYS)}
 
 
@@ -400,7 +404,7 @@ def _b2_metrics(inputs: _B2Inputs) -> dict:
         (block, seed): a1_kill_bar(
             net_b,
             bench,
-            n_trials=1,
+            n_trials=_B2_N_TRIALS,
             var_trials=0.0,
             mean_block=block,
             seed=seed,
@@ -437,7 +441,7 @@ def _b2_metrics(inputs: _B2Inputs) -> dict:
         "passes": int(headline["passes"]),
         "decisive_start": _DECISIVE_START,
         "n_resamples": _N_RESAMPLES,
-        "arm_a_passes": int(_b2_arm_a_bar(inputs)["passes"]),
+        "arm_a_passes": int(_b2_arm_a_bar(inputs, n_trials=_B2_N_TRIALS)["passes"]),
         **{f"spa_p_decisive_b{block}_s{seed}": result["spa_p_value"] for (block, seed), result in grid.items()},
         **head_to_head,
         "max_drawdown": drawdown_b,
@@ -1115,6 +1119,8 @@ SUBJECTS: dict[str, Subject] = {
             "instrument finding: arm A fails the bar this window sets, or the overlay engages at no stamp; no verdict, "
             "the trial unspent"
         ),
+        family="B2",
+        n_trials=_B2_N_TRIALS,
     ),
     "b2-arm-a-bar": Subject(
         "b2-arm-a-bar",
@@ -1156,6 +1162,8 @@ SUBJECTS: dict[str, Subject] = {
             "instrument finding: arm A fails the bar, or arm B's weights equal arm A's at every stamp; no verdict, the trial "
             "unspent"
         ),
+        family="B1",
+        n_trials=_B1_HOURLY_RV_N_TRIALS,
     ),
     "b1-hourly-rv-preflight": Subject(
         "b1-hourly-rv-preflight",

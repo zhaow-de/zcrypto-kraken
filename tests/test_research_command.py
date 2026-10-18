@@ -11,7 +11,7 @@ import re
 import shutil
 import statistics
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
@@ -50,7 +50,7 @@ from cli.portfolio.builder import CombinedSystemConfig, build_combined_system
 from cli.portfolio.crossfreq_system import CrossfreqSystemConfig, _ffill_btc
 from cli.portfolio.errors import PortfolioError
 from cli.portfolio.record44_legs import benchmark_4h_net_of_cost, calendar_year_slices
-from cli.registry import attempts
+from cli.registry import attempts, budget
 from cli.registry.observed import ObservedReader
 from cli.registry.record import compute_hash
 from cli.research import command as research_command
@@ -1351,6 +1351,10 @@ def test_every_subject_declares_a_tracked_spec_its_keys_seeds_rule_and_incumbent
     assert (subject.verdict is None) == (subject.no_verdict is None)
     assert subject.incumbent is None or subject.incumbent in subjects.SUBJECTS
     assert type(subject.seeds) is tuple and all(type(seed) is int for seed in subject.seeds)
+    if subject.verdict is None:
+        assert subject.family is None and subject.n_trials is None
+    else:
+        assert subject.family in budget.BUCKET_OF and type(subject.n_trials) is int and subject.n_trials >= 1
 
 
 def test_each_subject_declares_the_metric_keys_its_build_returns():
@@ -2050,6 +2054,36 @@ def _b1_hourly_rv_dataset(tmp_path: Path, *, start: datetime = _B1_START, bars: 
     return root
 
 
+_RULED_FIXTURES = {"b1-hourly-rv": _b1_hourly_rv_dataset, "b2-funding-derisk": _b2_dataset}
+# Each ruled subject's count constant, which the tie raises so that a literal at a kill-bar site fails it.
+_DECLARED_COUNT = {"b1-hourly-rv": "_B1_HOURLY_RV_N_TRIALS", "b2-funding-derisk": "_B2_N_TRIALS"}
+
+
+def test_the_ruled_subjects_declare_their_families_and_trial_counts():
+    declared = {name: (s.family, s.n_trials) for name, s in subjects.SUBJECTS.items() if s.verdict is not None}
+    assert declared == {"b1-hourly-rv": ("B1", 3), "b2-funding-derisk": ("B2", 1)}
+    assert set(_RULED_FIXTURES) == set(declared) == set(_DECLARED_COUNT)
+
+
+@pytest.mark.parametrize("name", sorted(_RULED_FIXTURES))
+def test_every_ruled_subjects_kill_bar_deflates_at_its_declared_count(tmp_path, monkeypatch, name):
+    assert getattr(subjects, _DECLARED_COUNT[name]) == subjects.SUBJECTS[name].n_trials
+    raised = subjects.SUBJECTS[name].n_trials + 1
+    monkeypatch.setattr(subjects, _DECLARED_COUNT[name], raised)
+    monkeypatch.setitem(subjects.SUBJECTS, name, replace(subjects.SUBJECTS[name], n_trials=raised))
+    counts = []
+
+    def recorder(*args, n_trials, **kwargs):
+        counts.append(n_trials)
+        return _b1_hourly_rv_bar_sentinels("B", passes=True)
+
+    monkeypatch.setattr(subjects, "a1_kill_bar", recorder)
+
+    subjects.SUBJECTS[name].build(ObservedReader(_RULED_FIXTURES[name](tmp_path)), "ohlc-test", None)
+
+    assert counts and set(counts) == {raised}
+
+
 _B1_HOURLY_RV_SPEC = "docs/specs/00132-b1-hourly-rv-weights-design.md"
 _B1_HOURLY_RV_NO_VERDICT = (
     "instrument finding: arm A fails the bar, or arm B's weights equal arm A's at every stamp; no verdict, the trial unspent"
@@ -2166,7 +2200,6 @@ def test_the_b1_hourly_rv_dispersion_reads_records_45_and_46s_registered_sharpes
         == (0.02374, 0.02959)
         == tuple(_trials()[n]["metrics"]["per_period_sharpe_4h"] for n in (45, 46))
     )
-    assert subjects._B1_HOURLY_RV_N_TRIALS == 3
 
 
 # Adopting on every key the rule reads; each row moves the keys it names.
