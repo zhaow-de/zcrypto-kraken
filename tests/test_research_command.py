@@ -159,6 +159,15 @@ def _clean_tree(monkeypatch):
     monkeypatch.setattr(research_command, "_tree_state", lambda root: (_CLEAN_HEAD, ""))
 
 
+@pytest.fixture(autouse=True)
+def _attempts_log(tmp_path, monkeypatch, _attempts_log_in_tmp_path) -> Path:
+    path = attempts.log_path(_REPO)
+    path.parent.mkdir(parents=True)
+    log_id = attempts.init_log(path, host="zcrypto-test")
+    (tmp_path / "trial-attempt-logs.txt").write_text(f"{log_id} zcrypto-test\n")
+    return path
+
+
 def _register_args(registry: Path, *, n_trials: int, family: str = "STUB", ledger: Path | None = None) -> list[str]:
     return [
         "--register",
@@ -182,6 +191,10 @@ def _kept(ledger: Path) -> list[dict]:
     return [json.loads(line) for line in ledger.read_text().splitlines()]
 
 
+def _log_lines(path: Path) -> list[dict]:
+    return list(attempts.AttemptLog(path).lines)
+
+
 def test_eval_reports_the_block_and_writes_no_record_without_register(tmp_path, monkeypatch):
     root = _stub_dataset(tmp_path)
     registry = tmp_path / "registry.jsonl"
@@ -196,7 +209,7 @@ def test_eval_reports_the_block_and_writes_no_record_without_register(tmp_path, 
     assert not registry.exists(), "a read-only eval must not touch the registry"
 
 
-def test_register_appends_one_schema_5_record_whose_hash_derives_from_the_observed_block(tmp_path, monkeypatch):
+def test_register_appends_one_schema_6_record_whose_hash_derives_from_the_observed_block(tmp_path, monkeypatch):
     root = _stub_dataset(tmp_path)
     registry = tmp_path / "registry.jsonl"
     _stub_subject(monkeypatch)
@@ -211,7 +224,7 @@ def test_register_appends_one_schema_5_record_whose_hash_derives_from_the_observ
     lines = registry.read_text().splitlines()
     assert len(lines) == 1
     record = json.loads(lines[0])
-    assert record["schema_version"] == 5
+    assert record["schema_version"] == 6
     assert record["dataset_hash"] == compute_hash(record["datasets"])
     assert list(record["datasets"]["ohlc-test"]["files"]) == ["BTC/EUR/1440.parquet"]
     assert record["run_ref"].startswith("cli/research/command.py")
@@ -468,6 +481,133 @@ def test_a_typed_verdict_on_a_run_the_rule_stops_on_is_refused_and_nothing_kept(
     assert not registry.exists()
 
 
+def test_a_clean_run_is_admitted_and_logged_begin_and_end(tmp_path, monkeypatch, _attempts_log):
+    registry = tmp_path / "registry.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    _stub_subject(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, [*_stub_eval(), *_register_args(Path("registry.jsonl"), n_trials=1)])
+
+    assert result.exit_code == 0, result.output
+    record = json.loads(registry.read_text())
+    log = attempts.AttemptLog(_attempts_log)
+    begin, end = log.lines[1:]
+    assert record["schema_version"] == 6
+    assert record["attempt"] == {"log": log.log_id, "id": 1, "begin": begin["line_hash"], "absorbs": [], "counted": []}
+    assert (begin["kind"], begin["attempt"], end["kind"], end["attempt"]) == ("begin", 1, "end", 1)
+    assert begin["registry"] == str(registry.resolve())
+    assert (begin["invocation"], begin["spec_hash"], begin["family"]) == (record["invocation"], record["spec_hash"], "STUB")
+    assert (end["verdict"], end["stop"], end["failed"]) == ("adopt", None, None)
+    assert end["metrics_hash"] == compute_hash(record["metrics"])
+
+
+def _raising_stub(monkeypatch, returned: dict | None = None, raised: type[Exception] = subjects.SubjectError) -> None:
+    def build(reader, dataset, window, as_of=None, accept_holes=False):
+        reader.read_series(dataset, "BTC/EUR/1440.parquet", window=window)
+        if returned is None:
+            raise raised("the stub's window is too short")
+        return returned
+
+    monkeypatch.setitem(subjects.SUBJECTS, "stub", subjects.Subject("stub", (1440,), ("BTC",), build, **_STUB_DECLARED))
+
+
+@pytest.mark.parametrize(
+    ("returned", "raised", "failed"),
+    [
+        pytest.param(None, subjects.SubjectError, "SubjectError: the stub's window is too short", id="the-build-raises"),
+        pytest.param(None, ValidationError, "ValidationError: the stub's window is too short", id="a-compute-error"),
+        pytest.param(
+            {"sharpe": 1.0, "extra": 2.0},
+            subjects.SubjectError,
+            "SubjectError: stub's build returned keys other than the ones it declares",
+            id="the-keys-differ",
+        ),
+        pytest.param(
+            {"sharpe": None},
+            subjects.SubjectError,
+            "RegistryError: metrics.sharpe: unsupported metric leaf type NoneType",
+            id="a-leaf-the-registry-refuses",
+        ),
+    ],
+)
+def test_a_failed_build_ends_its_attempt_with_its_class_and_message(tmp_path, monkeypatch, _attempts_log, returned, raised, failed):
+    registry = tmp_path / "registry.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    _raising_stub(monkeypatch, returned, raised)
+
+    result = runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1)])
+
+    assert result.exit_code == 1 and not registry.exists() and '"metrics"' not in result.output, result.output
+    end = _log_lines(_attempts_log)[-1]
+    assert end["kind"] == "end" and end["failed"].startswith(failed)
+    assert (end["verdict"], end["stop"], end["metrics"], end["metrics_hash"]) == (None, None, None, None)
+
+
+def test_a_stop_ends_its_attempt_with_the_stop_and_its_reading_carries_it(tmp_path, monkeypatch, _attempts_log):
+    registry, ledger = tmp_path / "registry.jsonl", tmp_path / "ledger.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    _stub_subject(monkeypatch, verdict=lambda metrics: None)
+
+    result = runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1, ledger=ledger)])
+
+    assert result.exit_code == 0, result.output
+    log = attempts.AttemptLog(_attempts_log)
+    (reading,) = _kept(ledger)
+    assert (reading["schema_version"], reading["attempt"]) == (
+        2,
+        {"log": log.log_id, "id": 1, "begin": log.lines[1]["line_hash"], "absorbs": []},
+    )
+    assert (log.lines[-1]["stop"], log.lines[-1]["verdict"]) == ("the stub's stop", None)
+
+
+def test_a_ruleless_reading_writes_no_line_and_carries_no_attempt(tmp_path, monkeypatch, _attempts_log):
+    ledger = tmp_path / "ledger.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path))
+    _stub_subject(monkeypatch, verdict=None, no_verdict=None)
+
+    result = runner.invoke(app, [*_stub_eval(), *_reading_args(ledger)])
+
+    assert result.exit_code == 0, result.output
+    assert _kept(ledger)[0]["attempt"] is None and len(_log_lines(_attempts_log)) == 1
+
+
+def test_a_begin_the_log_refuses_ends_the_run_before_the_build(tmp_path, monkeypatch):
+    registry = tmp_path / "registry.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    calls = _stub_subject(monkeypatch)
+
+    def refuse(self, admit, **fields):
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(attempts.AttemptLog, "begin", refuse)
+
+    result = runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1)])
+
+    assert result.exit_code == 1 and "refused the run's first line: No space left on device; nothing ran" in result.output
+    assert calls == [] and not registry.exists()
+
+
+def test_an_end_the_log_refuses_withholds_the_numbers(tmp_path, monkeypatch):
+    registry = tmp_path / "registry.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    _stub_subject(monkeypatch, metrics={"sharpe": 1.2345})
+
+    def refuse(self, attempt, **outcome):
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(attempts.AttemptLog, "end", refuse)
+
+    result = runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1)])
+
+    assert result.exit_code == 1
+    assert (
+        "refused the run's last line: No space left on device; the numbers are withheld and the attempt stays open: run again "
+        "with the same arguments, which absorbs it"
+    ) in result.output
+    assert "1.2345" not in result.output and not registry.exists()
+
+
 _STUB_SPEC_SHA256 = hashlib.sha256((_REPO / _STUB_SPEC).read_bytes()).hexdigest()
 
 
@@ -626,7 +766,7 @@ def test_a_registered_trial_is_the_comparator_only_of_a_subject_naming_its_subje
     _stub_subject(monkeypatch)
     assert runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1)]).exit_code == 0
     trial = json.loads(registry.read_text().splitlines()[-1])
-    assert trial["schema_version"] == 5 and trial["invocation"]["subject"] == "stub"
+    assert trial["schema_version"] == 6 and trial["invocation"]["subject"] == "stub"
     before = registry.read_text().splitlines()
     _stub_subject(monkeypatch, "follower", incumbent=incumbent)
 
@@ -1036,7 +1176,7 @@ def test_a_register_run_records_the_invocation_that_produced_it(tmp_path, monkey
 
     assert result.exit_code == 0, result.output
     record = json.loads(registry.read_text())
-    assert record["schema_version"] == 5
+    assert record["schema_version"] == 6
     assert record["invocation"] == {
         "subject": "rolling-stub",
         "dataset": "ohlc-rolling",

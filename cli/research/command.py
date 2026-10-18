@@ -14,9 +14,10 @@ from typing import Optional
 import typer
 
 from cli.data import rolling
-from cli.registry import VERDICTS, ReadingLedger, TrialRegistry, attempts
+from cli.registry import VERDICTS, ReadingLedger, TrialRegistry, attempts, budget
 from cli.registry.errors import RegistryError
 from cli.registry.observed import ObservedReader
+from cli.registry.record import validate_metrics
 from cli.research.subjects import EVALUATION_ERRORS, LEGACY_INCUMBENTS, SUBJECTS, Subject, SubjectError, required_relpaths
 
 # Repo-anchored, never cwd-relative: a dataset name must mean one directory from any working directory, and a cwd-relative
@@ -102,6 +103,13 @@ def _echo_replay_case(label: str) -> None:
         "  it passes with nothing skipped only with data/ohlc-full linked beside the sets the line cites, since the replay "
         "skips without it"
     )
+
+
+def _end_failed(log, attempt: int | None, failed: str) -> None:
+    """Ends the run's attempt, when it began one, before an exit that prints no number. An error the log raises here ends
+    the command in a traceback over the exit's own, the attempt left open for a retry of the same arguments to absorb."""
+    if attempt is not None:
+        log.end(attempt, failed=failed)
 
 
 def _raise_site(exc: BaseException) -> str:
@@ -258,14 +266,47 @@ def eval_subject(
         raise _abort(f"dataset {dataset!r} is missing {len(absent)} series {subject!r} requires: {', '.join(absent)}")
 
     bounds = None if window == (None, None) else (window[0], window[1])
+    log = attempt = own = None
+    if records:
+        invocation = {
+            "subject": subject,
+            "dataset": dataset,
+            "window": None if bounds is None else list(bounds),
+            "as_of": as_of,
+            "accept_holes": accept_holes,
+            "comparator_trial": comparator_trial,
+            "commit": before[0],
+        }
+    if register:
+        log_file = attempts.LOG_RELPATH
+        try:
+            log_file = attempts.log_path(_REPO_ROOT)
+            log = attempts.AttemptLog(log_file)
+            attempt = log.begin(
+                lambda lines: None,
+                invocation=invocation,
+                spec_hash=computed_spec_hash,
+                family=family,
+                bucket=budget.BUCKET_OF.get(family),
+                n_trials=n_trials,
+                worktree=_REPO_ROOT,
+                branch=attempts.current_branch(_REPO_ROOT),
+                registry=target,
+                ledger=ledger_target,
+            )
+        except (OSError, RegistryError) as exc:
+            raise _abort(f"the trial-attempts log {log_file} refused the run's first line: {exc}; nothing ran") from exc
+
     reader = ObservedReader(_DATA_ROOT)
     try:
         metrics = known.build(reader, dataset, bounds, as_of=as_of, accept_holes=accept_holes)
         block = reader.block()
     except (RegistryError, OSError, SubjectError) as exc:
+        _end_failed(log, attempt, f"{type(exc).__name__}: {exc}")
         remedy = " (--accept-holes leaves the day out)" if isinstance(exc.__cause__, rolling.HoleError) else ""
         raise _abort(f"{exc}{remedy}") from exc
     except EVALUATION_ERRORS as exc:
+        _end_failed(log, attempt, f"{type(exc).__name__}: {exc}")
         # These classes are also raised on a bad config or argument: the class and the raise site tell a fault in the code
         # from a refusal of the window or the data.
         span = "the full history" if bounds is None else f"the window {bounds[0]} .. {bounds[1]}"
@@ -277,14 +318,32 @@ def eval_subject(
     if records:
         keys = set(metrics)
         if keys != known.metric_keys:
-            raise _abort(
+            refusal = (
                 f"{subject}'s build returned keys other than the ones it declares: missing "
                 f"{sorted(known.metric_keys - keys)}, unknown {sorted(keys - known.metric_keys)}; make the build and its "
                 "declared metric keys agree, commit, then run again"
             )
+            _end_failed(log, attempt, f"SubjectError: {refusal}")
+            raise _abort(refusal)
+        # The rule the store applies after the print, applied before the end line: an end holding a leaf the store refuses
+        # would stand in the log as a look no record can carry.
+        try:
+            validate_metrics(metrics, "metrics")
+        except RegistryError as exc:
+            _end_failed(log, attempt, f"RegistryError: {exc}")
+            raise _abort(f"{subject}'s build returned metrics the registry refuses: {exc}") from exc
         if known.verdict is not None:
             ruled = known.verdict(metrics)
             report["verdict"] = ruled
+    if attempt is not None:
+        try:
+            log.end(attempt, verdict=ruled, stop=known.no_verdict if ruled is None else None, metrics=metrics)
+        except (OSError, RegistryError) as exc:
+            raise _abort(
+                f"the trial-attempts log {log.path} refused the run's last line: {exc}; the numbers are withheld and the "
+                "attempt stays open: run again with the same arguments, which absorbs it"
+            ) from exc
+        own = {"log": log.log_id, "id": attempt, "begin": attempts.begin_hash(log.lines, attempt)}
 
     typer.echo(f"subject: {subject}")
     typer.echo(f"dataset: {dataset}")
@@ -309,15 +368,6 @@ def eval_subject(
             f"--verdict {verdict} disagrees with {subject}'s rule, which gives {ruled or 'no verdict'} on these metrics, so "
             "nothing is recorded: drop --verdict to take the rule's"
         )
-    invocation = {
-        "subject": subject,
-        "dataset": dataset,
-        "window": None if bounds is None else list(bounds),
-        "as_of": as_of,
-        "accept_holes": accept_holes,
-        "comparator_trial": comparator_trial,
-        "commit": before[0],
-    }
     if ruled is None:
         # A subject with no rule, or a rule that stops: a reading, its outcome the stop's text or none.
         try:
@@ -329,6 +379,7 @@ def eval_subject(
                 metrics=metrics,
                 outcome=known.no_verdict,
                 notes=notes,
+                attempt=None if own is None else {**own, "absorbs": []},
             )
         except RegistryError as exc:
             raise _abort(f"the ledger refused this reading: {exc}") from exc
@@ -352,6 +403,7 @@ def eval_subject(
             variant=variant,
             datasets=block,
             invocation=invocation,
+            attempt={**own, "absorbs": [], "counted": []},
         )
     except RegistryError as exc:
         raise _abort(f"the registry refused this record: {exc}") from exc

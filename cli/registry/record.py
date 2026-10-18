@@ -9,8 +9,8 @@ from pathlib import Path
 
 from cli.registry.errors import RegistryCorruptionError, RegistryError
 
-SCHEMA_VERSION = 5
-_LOADABLE_SCHEMA_VERSIONS = frozenset({2, 3, 4, 5})
+SCHEMA_VERSION = 6
+_LOADABLE_SCHEMA_VERSIONS = frozenset({2, 3, 4, 5, 6})
 GENESIS_HASH = "0" * 64
 VERDICTS = frozenset({"adopt", "reject", "park"})
 
@@ -24,8 +24,9 @@ _EXPECTED_STORED_KEYS = {
     4: _BASE_STORED_KEYS | {"variant", "datasets"},
 }
 _EXPECTED_STORED_KEYS[5] = _EXPECTED_STORED_KEYS[4] | {"invocation"}
+_EXPECTED_STORED_KEYS[6] = _EXPECTED_STORED_KEYS[5] | {"attempt"}
 
-READING_SCHEMA_VERSION = 1
+READING_SCHEMA_VERSION = 2
 _READING_KEYS = frozenset(
     {
         "reading_id",
@@ -43,8 +44,14 @@ _READING_KEYS = frozenset(
         "notes",
     }
 )
+_READING_KEYS_AT = {1: _READING_KEYS, 2: _READING_KEYS | {"attempt"}}
 
 _SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+_LOG_ID = re.compile(r"[0-9a-f]{32}")
+_RECORD_ATTEMPT_KEYS = frozenset({"log", "id", "begin", "absorbs", "counted"})
+_READING_ATTEMPT_KEYS = frozenset({"log", "id", "begin", "absorbs"})
+_ABSORBED_KEYS = frozenset({"id", "begin"})
+_COUNTED_KEYS = frozenset({"log", "id", "begin", "family", "subject", "spec_hash", "verdict", "metrics"})
 _INVOCATION_KEYS = frozenset({"subject", "dataset", "window", "as_of", "accept_holes", "comparator_trial", "commit"})
 _COMMIT = re.compile(r"[0-9a-f]{40}")
 _DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
@@ -142,6 +149,100 @@ def _assert_finite(value, path: str) -> None:
         raise RegistryError(f"{path}: unsupported metric leaf type {type(value).__name__} (pass builtin int/float)")
 
 
+def validate_metrics(metrics, where: str) -> None:
+    if type(metrics) is not dict or not metrics:
+        raise RegistryError(f"{where} must be a non-empty dict")
+    _assert_finite(metrics, where)
+
+
+def _is_attempt_id(value) -> bool:
+    return type(value) is int and value >= 1
+
+
+def _is_log_id(value) -> bool:
+    return type(value) is str and _LOG_ID.fullmatch(value) is not None
+
+
+def _is_sha256_hex(value) -> bool:
+    return type(value) is str and _SHA256_HEX.fullmatch(value) is not None
+
+
+def _validate_attempt_reference(attempt: dict, where: str) -> None:
+    if not _is_log_id(attempt["log"]):
+        raise RegistryError(f"{where}: attempt log must be 32 lowercase hex")
+    if not _is_attempt_id(attempt["id"]):
+        raise RegistryError(f"{where}: attempt id must be an int >= 1")
+    if not _is_sha256_hex(attempt["begin"]):
+        raise RegistryError(f"{where}: attempt begin must be 64 lowercase hex")
+    absorbs = attempt["absorbs"]
+    if type(absorbs) is not list:
+        raise RegistryError(f"{where}: attempt absorbs must be a list")
+    for absorbed in absorbs:
+        if type(absorbed) is not dict or set(absorbed) != _ABSORBED_KEYS:
+            raise RegistryError(f"{where}: attempt absorbs entry keys must be exactly {sorted(_ABSORBED_KEYS)}")
+        if not _is_attempt_id(absorbed["id"]) or absorbed["id"] >= attempt["id"]:
+            raise RegistryError(f"{where}: attempt absorbs ids must be distinct ints >= 1 below the attempt's id")
+        if not _is_sha256_hex(absorbed["begin"]):
+            raise RegistryError(f"{where}: attempt absorbs entry begin must be 64 lowercase hex")
+    if len({absorbed["id"] for absorbed in absorbs}) != len(absorbs):
+        raise RegistryError(f"{where}: attempt absorbs ids must be distinct ints >= 1 below the attempt's id")
+
+
+def validate_record_attempt(attempt, where: str) -> None:
+    if type(attempt) is not dict:
+        raise RegistryError(f"{where}: attempt must be a dict")
+    if set(attempt) != _RECORD_ATTEMPT_KEYS:
+        raise RegistryError(
+            f"{where}: attempt keys must be exactly {sorted(_RECORD_ATTEMPT_KEYS)} "
+            f"(missing {sorted(_RECORD_ATTEMPT_KEYS - set(attempt))}, unknown {sorted(set(attempt) - _RECORD_ATTEMPT_KEYS, key=str)})"
+        )
+    _validate_attempt_reference(attempt, where)
+    counted = attempt["counted"]
+    if type(counted) is not list:
+        raise RegistryError(f"{where}: attempt counted must be a list")
+    absorbed_ids = {absorbed["id"] for absorbed in attempt["absorbs"]}
+    seen: set[tuple[str, int]] = set()
+    for entry in counted:
+        if type(entry) is not dict or set(entry) != _COUNTED_KEYS:
+            raise RegistryError(f"{where}: counted entry keys must be exactly {sorted(_COUNTED_KEYS)}")
+        if not _is_log_id(entry["log"]):
+            raise RegistryError(f"{where}: counted entry log must be 32 lowercase hex")
+        if not _is_attempt_id(entry["id"]):
+            raise RegistryError(f"{where}: counted entry id must be an int >= 1")
+        if not _is_sha256_hex(entry["begin"]):
+            raise RegistryError(f"{where}: counted entry begin must be 64 lowercase hex")
+        if not _is_sha256_hex(entry["spec_hash"]):
+            raise RegistryError(f"{where}: counted entry spec_hash must be 64 lowercase hex")
+        for key in ("family", "subject"):
+            if type(entry[key]) is not str or not entry[key]:
+                raise RegistryError(f"{where}: counted entry {key} must be a non-empty str")
+        if entry["verdict"] not in VERDICTS:
+            raise RegistryError(f"{where}: counted entry verdict must be one of {sorted(VERDICTS)}")
+        validate_metrics(entry["metrics"], f"{where}: counted entry metrics")
+        pair = (entry["log"], entry["id"])
+        if (
+            pair in seen
+            or pair == (attempt["log"], attempt["id"])
+            or (entry["log"] == attempt["log"] and entry["id"] in absorbed_ids)
+        ):
+            raise RegistryError(
+                f"{where}: counted entries must be distinct (log, id) pairs, none the record's own attempt or one it absorbs"
+            )
+        seen.add(pair)
+
+
+def validate_reading_attempt(attempt, where: str) -> None:
+    """Null on a ruleless subject's reading; on a ruled subject's stop, the run's attempt with no `counted`, since only a
+    record spends."""
+    if attempt is None:
+        return
+    if type(attempt) is not dict:
+        raise RegistryError(f"{where}: reading attempt must be null or a dict")
+    if set(attempt) != _READING_ATTEMPT_KEYS:
+        raise RegistryError(f"{where}: reading attempt keys must be exactly {sorted(_READING_ATTEMPT_KEYS)}")
+    _validate_attempt_reference(attempt, where)
+
+
 def validate_caller_fields(f: dict, *, check_run_ref_provenance: bool = True) -> None:
     """`check_run_ref_provenance` is off only for stored-record re-validation,
     because the registry is append-only and records written before the guard existed must keep loading."""
@@ -156,9 +257,7 @@ def validate_caller_fields(f: dict, *, check_run_ref_provenance: bool = True) ->
             raise RegistryError(f"{key} must be a non-empty str")
     if type(f["seeds"]) is not list or any(type(s) is not int for s in f["seeds"]):
         raise RegistryError("seeds must be a list[int] (may be empty)")
-    if type(f["metrics"]) is not dict or not f["metrics"]:
-        raise RegistryError("metrics must be a non-empty dict")
-    _assert_finite(f["metrics"], "metrics")
+    validate_metrics(f["metrics"], "metrics")
     if type(f["n_trials_in_family"]) is not int or f["n_trials_in_family"] < 1:
         raise RegistryError("n_trials_in_family must be an int >= 1")
     if f["verdict"] not in VERDICTS:
@@ -271,6 +370,8 @@ def validate_stored_record(rec: dict, where: str) -> None:
         if "invocation" not in rec:
             raise RegistryCorruptionError(f"{where}: schema_version {version} record must carry an invocation")
         validate_invocation(rec["invocation"], rec["datasets"], rec["trial_id"], where)
+    if version >= 6:
+        validate_record_attempt(rec.get("attempt"), where)
     caller = {k: v for k, v in rec.items() if k not in _STORE_OWNED}
     validate_caller_fields(caller, check_run_ref_provenance=False)
 
@@ -282,23 +383,24 @@ def validate_reading_fields(f: dict, where: str) -> None:
             raise RegistryError(f"{where}: {key} must be a non-empty str")
     _validate_datasets_shape(f["datasets"], where)
     validate_invocation(f["invocation"], f["datasets"], None, where)
-    if type(f["metrics"]) is not dict or not f["metrics"]:
-        raise RegistryError(f"{where}: metrics must be a non-empty dict")
-    _assert_finite(f["metrics"], f"{where}: metrics")
+    validate_metrics(f["metrics"], f"{where}: metrics")
     if f["outcome"] is not None and (type(f["outcome"]) is not str or not f["outcome"]):
         raise RegistryError(f"{where}: outcome must be null or a non-empty str")
     if type(f["notes"]) is not str:
         raise RegistryError(f"{where}: notes must be a str")
+    validate_reading_attempt(f.get("attempt"), where)
 
 
 def validate_stored_reading(rec: dict, where: str) -> None:
-    if set(rec) != _READING_KEYS:
+    version = rec.get("schema_version")
+    if type(version) is not int or version not in _READING_KEYS_AT:
+        raise RegistryCorruptionError(f"{where}: unknown reading schema_version {version!r}")
+    keys = _READING_KEYS_AT[version]
+    if set(rec) != keys:
         raise RegistryCorruptionError(
-            f"{where}: a reading's keys must be exactly {sorted(_READING_KEYS)} "
-            f"(missing {sorted(_READING_KEYS - set(rec))}, unknown {sorted(set(rec) - _READING_KEYS, key=str)})"
+            f"{where}: a reading's keys must be exactly {sorted(keys)} "
+            f"(missing {sorted(keys - set(rec))}, unknown {sorted(set(rec) - keys, key=str)})"
         )
-    if type(rec["schema_version"]) is not int or rec["schema_version"] != READING_SCHEMA_VERSION:
-        raise RegistryCorruptionError(f"{where}: unknown reading schema_version {rec['schema_version']!r}")
     body = {k: v for k, v in rec.items() if k != "record_hash"}
     if compute_hash(body) != rec["record_hash"]:
         raise RegistryCorruptionError(f"{where}: record_hash mismatch (reading was mutated)")
@@ -327,6 +429,7 @@ class TrialRecord:
     dataset_hash: str
     datasets: dict | None = None
     invocation: dict | None = None
+    attempt: dict | None = None
     seeds: tuple[int, ...]
     metrics: dict
     n_trials_in_family: int
@@ -355,3 +458,4 @@ class ReadingRecord:
     notes: str
     prev_hash: str
     record_hash: str
+    attempt: dict | None = None

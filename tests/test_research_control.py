@@ -114,12 +114,13 @@ def test_the_whole_identity_path_round_trips_on_synthetic_data(tmp_path):
             "comparator_trial": None,
             "commit": "0" * 40,
         },
+        attempt={"log": "e" * 32, "id": 1, "begin": "e" * 64, "absorbs": [], "counted": []},
     )
 
     reloaded = TrialRegistry(registry_path).records
     assert len(reloaded) == 1
     record = reloaded[0]
-    assert record.schema_version == 5
+    assert record.schema_version == 6
     assert record.datasets == block
     assert record.dataset_hash == compute_hash(record.datasets) == appended.dataset_hash
     # The stored digests are the files' own bytes, so the round trip is not self-referential.

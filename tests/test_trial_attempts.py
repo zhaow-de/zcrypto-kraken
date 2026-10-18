@@ -734,6 +734,7 @@ def _append_one(path: Path) -> dict:
         n_trials_in_family=1,
         verdict="reject",
         run_ref="cli/registry/record.py",
+        attempt={"log": "e" * 32, "id": 1, "begin": "e" * 64, "absorbs": [], "counted": []},
     )
     return json.loads(path.read_text().splitlines()[-1])
 

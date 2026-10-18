@@ -19,6 +19,7 @@ from cli.validation import ValidationError
 from tests.test_research_command import (
     _CLEAN_HEAD,
     _anchor,
+    _attempts_log,  # noqa: F401 -- autouse: this import is what applies it in this module
     _clean_tree,  # noqa: F401 -- autouse: this import is what applies it in this module
     _git_repo,
     _ledger_default_off_the_committed_file,  # noqa: F401 -- autouse, applied here by this import as `_clean_tree` is

@@ -324,6 +324,7 @@ def _forty_eight_trials(path: Path) -> Path:
             n_trials_in_family=n,
             verdict="reject",
             run_ref="cli/registry/record.py",
+            attempt={"log": "e" * 32, "id": n, "begin": f"{n:064x}", "absorbs": [], "counted": []},
         )
     return path
 
@@ -339,7 +340,13 @@ def test_live_entries_holds_exactly_the_records_past_47(tmp_path):
 def test_live_entries_holds_every_reading_beside_the_records_past_47(tmp_path):
     registry, ledger = _forty_eight_trials(tmp_path / "trials.jsonl"), tmp_path / "readings.jsonl"
     ReadingLedger(ledger).append(
-        iteration="iter-001", spec_hash="s", invocation=_INVOCATION, datasets=_DATASETS, metrics={"sharpe": 0.3}, outcome=None
+        iteration="iter-001",
+        spec_hash="s",
+        invocation=_INVOCATION,
+        datasets=_DATASETS,
+        metrics={"sharpe": 0.3},
+        outcome=None,
+        attempt=None,
     )
 
     assert {label for label, _, _ in live_entries(registry, ledger)} == {"trial-48", "reading-1"}
