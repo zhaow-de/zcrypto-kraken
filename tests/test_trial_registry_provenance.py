@@ -38,7 +38,7 @@ LEGACY_SPEC_HASH_ORPHANS = frozenset({34, 35})
 
 # Every subject a committed record's invocation names, at the n_trials its records deflated at: frozen, so a further
 # trial of one declares a new subject, and a subject's first landed record adds its row here in the PR that lands it.
-LANDED_N_TRIALS: dict[str, int] = {"b1-hourly-rv": 3}
+LANDED_N_TRIALS: dict[str, int] = {"b1-hourly-rv": 3, "b1-volume-confirmation": 4}
 
 
 def _git_tracked() -> frozenset[str]:
@@ -958,6 +958,6 @@ def test_each_landed_subjects_n_trials_is_frozen_at_its_literal():
     for entry in _trials().values():
         if entry["invocation"] is not None:
             landed.setdefault(entry["invocation"]["subject"], set()).add(entry["n_trials_in_family"])
-    assert LANDED_N_TRIALS == {"b1-hourly-rv": 3}, growth
+    assert LANDED_N_TRIALS == {"b1-hourly-rv": 3, "b1-volume-confirmation": 4}, growth
     assert landed == {subject: {n} for subject, n in LANDED_N_TRIALS.items()}, growth
     assert all(SUBJECTS[subject].n_trials == n for subject, n in LANDED_N_TRIALS.items()), growth

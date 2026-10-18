@@ -17,12 +17,12 @@ Buckets B (intraday band) and C (long shots) are where the master plan's residua
 
 - The A-family arc's binding lessons transfer wholesale: judge net-of-cost from the first verdict; the short's borrow carry is a structural ~5 %/yr drag; benchmark warm-up asymmetries must be windowed out.
 - Prerequisites: T0009 resolved (protocol legs → revised kill bar, iter-072); **T0012 resolved (iter-085): the 15m substrate exists** — `data/ohlc-15m`, basket_sha256 `0fed24a6…`, tick-reconciled bit-exact. The tick catalog was dropped with T0012 — C2 must re-open it as its own topic. T0003 (captured L2 → C1) and T0014 (the spread term) resolved; maker-fill realism stays unmeasured.
-- Budgets pre-registered: **B = 25**, shared across Bucket B (B1 spent 3, 22 remain), and **C = 10**, untouched; A is spent, 40 of 40.
+- Budgets pre-registered: **B = 25**, shared across Bucket B (B1 spent 4, 21 remain), and **C = 10**, untouched; A is spent, 40 of 40.
 - Two rulings bind every B and C pre-registration (the owner, 2026-10-15, `10.phase4-decisions.md` `[iter-176]`): the DSR leg binds at every `n_trials`, `var_trials` 0.0 included, as the ratified bar has it; and a search may read the spent holdout's window, 2026-04-01 → 2026-07-09, through `ohlc-rolling`, but no result there is reported as holdout or out-of-sample evidence.
 
 ## Done so far
 
-- **B1 split out (iter-086)** as [T0022](T0022-b1-intraday-seasonality-family.md), spec/plan `00045`; trial 3 (iter-177, spec/plan `00132`, registry trial 48) PARK, its next step the owner's pick, T0022's.
+- **B1 split out (iter-086)** as [T0022](T0022-b1-intraday-seasonality-family.md), spec/plan `00045`; trial 3 (iter-177, spec/plan `00132`, registry trial 48) PARK; trial 4 (iter-178, spec/plan `00134`, registry trial 49) REJECT, its next step the owner's pick, T0022's.
 
 - **B2 opened (iter-175, spec/plan `00128`)** on the owner's word of 2026-10-12, its trial 1 stopped unspent at the pre-flight; the family's state and the trigger of its next trial are [T0023](T0023-b2-derivatives-data-sourcing.md)'s.
 
