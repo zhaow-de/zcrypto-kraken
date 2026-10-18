@@ -25,8 +25,8 @@
 - No test writes the real log, and none reaches the real allowlist through `allowed_log_ids` — the literal checks of Tasks 3 and 8 read the committed file directly: from Task 4 the conftest fixture holds both in each test's `tmp_path`; before it, a test that reaches the log patches `cli.registry.attempts.log_path` itself. Code under `cli/` reaches `cli/registry/attempts.py` only as `attempts.<name>` through `from cli.registry import attempts`, read when the call runs: never a name imported from it, which Task 4's `test_no_module_under_cli_imports_a_name_from_the_attempts_module` refuses, and never `attempts.<name>` bound to another name at import time — a module-level assignment, a default argument — which that walk does not see, since either keeps the real function whatever a test patches.
 - No trial is registered and no record or reading written on this branch; the one write outside this worktree is Task 3's single `zcrypto research attempts-init`, which creates the main checkout's log.
 - String literals under `cli/` — refusals, help texts — and the README rows carry no `Phase <N>`, `T<NNNN>`, `iter-<N>`, `spec <NNNNN>` or `D<N>` (`tests/test_internal_terms_not_operator_visible.py`, `tests/test_cli_help_hygiene.py`).
-- Every pytest run is preceded by `mkdir -p .tmp/plan-00133` and carries `-q -p no:cacheprovider --basetemp=.tmp/plan-00133/pt`; before each commit the direct readers of each changed path run (`bash infra/scripts/consumers.sh --direct <paths>`), never the full suite, which is CI's; never `tests/test_grafana_push_sh.py`.
-- Every new guard — a test, an assertion, a refusal — is proven with `infra/scripts/mutate-probe.sh` after its task's commit (the script refuses a dirty tree); the tier is `full` (`uv run python infra/scripts/tier.py --paths cli/registry/store.py`), so each guard through its own `-k` case, never through a case listed in `tests/slow-cases.txt`: the two cases of Task 6's DSR tie join that list, each build taking over 10 s, so their probes are recorded `probe skipped: slow case`, and no other test this plan adds joins it. Each probe: `infra/scripts/mutate-probe.sh --file <F> --control '<sed>' --mutation '<sed>' -- uv run pytest <test file> -k '<case>' -q -p no:cacheprovider --basetemp=.tmp/plan-00133/pt`, expected `KILLED`; the mutation substitutes and never deletes a line (`if <cond>:` becomes `if False:`, a call `None`, a clause its neutral operand), each of its patterns one whose `grep -c` reads 1; a `.py` file's sed is dry-run first with `sed '<expr>' <F> | uv run python -c 'import ast,sys; ast.parse(sys.stdin.read())'`, and a file of another kind is proven changed by mutate-probe's own refusal of a sed that changes nothing (rc 6); the control is the task's named one, never a variant of the mutation. Each verdict line goes in the PR body, naming `infra/scripts/mutate-probe.sh`.
+- Every pytest run is preceded by `mkdir -p .tmp/plan-00133` and carries `-q -p no:cacheprovider --basetemp=.tmp/plan-00133/pt`; before each commit the direct readers of each changed path run (`bash infra/scripts/consumers.sh --direct <paths>`), and beside them the three walkers that read what a task writes, which `--direct` lists for no path under `cli/` or `tests/` — `tests/test_internal_terms_not_operator_visible.py`, every string literal under `cli/`, for a task that changes a file there; `tests/test_cli_help_hygiene.py`, every command's help through the app, for one that changes a help string; `tests/test_config_selectors_are_parsed.py`, every test module's `in` comparisons over the text of a file under `infra/`, for one whose test reads such a file, its case for that module alone (`-k <the module's file name>`) — never the full suite, which is CI's; never `tests/test_grafana_push_sh.py`.
+- Every new guard — a test, an assertion, a refusal — is proven with `infra/scripts/mutate-probe.sh` after its task's commit (the script refuses a dirty tree); the tier is `full` (`uv run python infra/scripts/tier.py --paths cli/registry/store.py`), so each guard through its own `-k` case, never through a case listed in `tests/slow-cases.txt`: the two cases of Task 6's DSR tie join that list, each build taking over 10 s, so their probes are recorded `probe skipped: slow case`, and no other test this plan adds joins it. Each probe: `infra/scripts/mutate-probe.sh --file <F> --control '<sed>' --mutation '<sed>' -- uv run pytest <test file> -k '<case>' -q -p no:cacheprovider --basetemp=.tmp/plan-00133/pt`, expected `KILLED`; the mutation substitutes and never deletes a line (`if <cond>:` becomes `if False:`; a call `None`, or `True` where the call is a predicate a condition reads, so the mutated check accepts every value; a clause its neutral operand), each of its patterns one whose `grep -c` reads 1, or, where the text a row names repeats in its file — the flocks of Task 1 Step 4, the `.get` reads of its Step 5, a check written once before the fit and once after the print — its `s` command range-addressed, `/<start>/,/<end>/s/…/…/`, the start pattern one whose `grep -c` reads 1 and the range, from it through the first line after it that the end pattern matches, bounded to the one function or block the row names, `sed -n '/<start>/,/<end>/p' <F>` read before the probe; a `.py` file's sed is dry-run first with `sed '<expr>' <F> | uv run python -c 'import ast,sys; ast.parse(sys.stdin.read())'`, and a file of another kind is proven changed by mutate-probe's own refusal of a sed that changes nothing (rc 6); the control is the task's named one, never a variant of the mutation. Each verdict line goes in the PR body, naming `infra/scripts/mutate-probe.sh`.
 - Commits: one per task, never an amend; `uv run pre-commit run -a` re-run until clean, staging what it rewrote by explicit path; the message says what changed and carries the test command's result line, and ends with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` — the executing model, so an implementer on another model names its own — and the executing session's `Claude-Session:` line.
 
 ## Review Focus
@@ -669,7 +669,7 @@ Expected: all pass.
 
 - [ ] **Step 8: Run the consumers, then commit**
 
-Run: `bash infra/scripts/consumers.sh --direct cli/registry/attempts.py tests/test_trial_attempts.py`, then each listed test file under the same pytest flags.
+Run: `bash infra/scripts/consumers.sh --direct cli/registry/attempts.py tests/test_trial_attempts.py`, then each listed test file under the same pytest flags, and the Global Constraints' walker for files under `cli/`.
 
 ```bash
 git add cli/registry/attempts.py tests/test_trial_attempts.py
@@ -690,7 +690,7 @@ EOF
 | `test_a_log_appends_chained_lines_from_its_genesis` | `begin`'s `resolve()` of `worktree` cut; apart, the genesis `timestamp` key cut from `init_log`'s line and from `_validate_line`'s genesis set, one sed of two substitutions |
 | `test_a_torn_last_line_is_healed_and_a_torn_middle_line_refused` | the copy-aside call made `None` |
 | `test_a_torn_last_line_is_healed_and_a_torn_middle_line_refused` (store.py) | `if is_last and not ends_nl:` made `if True:` |
-| `test_a_torn_tail_another_session_is_still_writing_is_never_healed` | the flock the constructor's read takes made `None` |
+| `test_a_torn_tail_another_session_is_still_writing_is_never_healed` | the flock the constructor's read takes made `None`, range-addressed from `def __init__(` to the next `def` |
 | `test_a_heal_that_fails_its_chain_keeps_the_copy` | the healed read's `_verify_chain` argument replaced by `lambda lines, path: None` |
 | `test_a_torn_last_line_inside_a_multibyte_character_is_healed` | the heal's not-ending-in-`\n` condition made `False`, so `_read_healing` decodes the torn bytes |
 | `test_a_short_write_is_refused_and_the_line_it_left_without_its_newline_is_healed` | `_write_line`'s short-write check made `if False:`; apart, the heal's not-ending-in-`\n` condition made `False` |
@@ -719,7 +719,7 @@ EOF
 | `test_a_listed_orphans_class_is_final` | the listed restriction cut from the absorbed clause |
 | `test_a_held_attempt_is_out_of_the_orphans_until_this_run_absorbs_it_or_not` | the held class made `if False:`; apart, `own` excluded from the absorbers; apart, the held class's tuple compared without its arguments; apart, its open-or-`hold_finished` condition made `True`; apart, the same condition made `hold_finished` alone |
 | `test_a_log_lacking_an_attempt_a_record_or_reading_names_is_found` | the `absorbs` ids cut from `lacking`; apart, readings cut |
-| `test_the_count_reads_records_1_to_48_and_reading_1_in_either_landed_shape` | `_landed_ids`'s `.get("attempt")` made `["attempt"]`; apart, `lacking`'s |
+| `test_the_count_reads_records_1_to_48_and_reading_1_in_either_landed_shape` | `_landed_ids`'s `.get("attempt")` made `["attempt"]`; apart, `lacking`'s — each range-addressed from its `def` to the next `def` |
 | `test_landed_reads_the_targets_head_and_origin_develop_each_record_once` | the attempt key in `collect` made the hash key; apart, `DEVELOP` cut from the refs; apart, the `cat-file -e` check made `if True:`; apart, `LEDGER_RELPATH` cut from the refs' paths |
 | `test_landed_refuses_an_unresolvable_develop` | the develop check made `if False:` |
 
@@ -761,7 +761,7 @@ Expected: `ImportError: cannot import name 'budget' from 'cli.registry'`.
 
 - [ ] **Step 4: Run it to verify it passes** — the Step 2 command, expected `1 passed`.
 
-- [ ] **Step 5: Consumers, then commit**
+- [ ] **Step 5: Consumers, the Global Constraints' walker for files under `cli/` among them, then commit**
 
 ```bash
 git add cli/registry/budget.py tests/test_trial_registry_provenance.py
@@ -775,7 +775,7 @@ Claude-Session: <the executing session's URL>
 EOF
 ```
 
-- [ ] **Step 6: Probe** — `--file cli/registry/budget.py`, control `s/^BUDGET = /BUDGET_GONE = /`, mutation `25` made `26`, case `test_the_budgets_and_buckets_are_the_master_plans_literals`; and mutation `"B2": "B"` made `"B2": "C"`, the same case.
+- [ ] **Step 6: Probe** — `--file cli/registry/budget.py`, control `s/^BUDGET\b/BUDGET_GONE/`, which matches the name annotated or not, mutation `"B": 25` made `"B": 26`, case `test_the_budgets_and_buckets_are_the_master_plans_literals`; and mutation `"B2": "B"` made `"B2": "C"`, the same case.
 
 ______________________________________________________________________
 
@@ -892,7 +892,9 @@ def test_the_local_mirror_leaves_each_machines_trial_attempts_log_and_its_torn_c
 
 
 def test_both_local_rsyncs_pass_the_exclusions():
+    # config-selector-ok: an rsync command, not a setting; a comment line naming both moves the count off 2
     rsyncs = [line for line in SCRIPT.read_text().splitlines() if '"${RSYNC[@]}"' in line and '"$REPO_DIR/.local/"' in line]
+    # config-selector-ok: each line is one of the two rsync commands selected above
     assert len(rsyncs) == 2 and all('"${LOCAL_EXCLUDES[@]}"' in line for line in rsyncs), (
         "the dry run that counts the plan's .local/ deletions and the .local/ mirror no longer both pass LOCAL_EXCLUDES",
         rsyncs,
@@ -912,7 +914,7 @@ Expected: `AttributeError: module 'cli.registry.attempts' has no attribute 'allo
 
 - [ ] **Step 6: Run all of Step 2's tests** — expected pass.
 
-- [ ] **Step 7: Consumers, then commit** — `consumers.sh --direct` over the nine paths of the `git add` below, `tests/test_internal_terms_not_operator_visible.py` among them, and `tests/test_cli_help_hygiene.py`, which reads every command's help through the app and so is no direct reader.
+- [ ] **Step 7: Consumers, then commit** — `consumers.sh --direct` over the nine paths of the `git add` below, and all three of the Global Constraints' walkers: this task changes files under `cli/`, a help string, and a test that reads `infra/scripts/workspace-transport.zsh`.
 
 ```bash
 git add docs/reference/trial-attempt-logs.txt cli/registry/attempts.py cli/research/command.py README.md infra/scripts/workspace-transport.zsh tests/test_trial_attempts.py tests/test_research_command.py tests/test_trial_registry_provenance.py tests/test_workspace_transport.py
@@ -1101,10 +1103,10 @@ def test_append_requires_an_attempt_explicitly(tmp_path):
     [
         pytest.param(None, "attempt must be a dict", id="not-a-dict"),
         pytest.param({k: v for k, v in _attempt().items() if k != "counted"}, r"missing \['counted'\]", id="missing-key"),
-        pytest.param(_attempt(log="f" * 31), "attempt log", id="log-31-hex"),
+        pytest.param(_attempt(log="f" * 31), "attempt log", id="attempt-log-31-hex"),
         pytest.param(_attempt(log="F" * 32), "attempt log", id="log-uppercase"),
-        pytest.param(_attempt(id=0), "attempt id", id="id-zero"),
-        pytest.param(_attempt(id=True), "attempt id", id="id-bool"),
+        pytest.param(_attempt(id=0), "attempt id", id="attempt-id-zero"),
+        pytest.param(_attempt(id=True), "attempt id", id="attempt-id-bool"),
         pytest.param(_attempt(absorbs=[1, 1]), "attempt absorbs", id="absorbs-repeated"),
         pytest.param(_attempt(absorbs=[3]), "attempt absorbs", id="absorbs-not-below-id"),
         pytest.param(_attempt(absorbs=[True]), "attempt absorbs", id="absorbs-bool"),
@@ -1306,7 +1308,7 @@ Expected: `TypeError: TrialRegistry.append() got an unexpected keyword argument 
 
 - [ ] **Step 6: Run the Step 3 tests and the migrated modules** — `uv run pytest tests/test_registry_store.py tests/test_registry_record.py tests/test_registry_conformance.py tests/test_research_control.py tests/test_trial_registry_provenance.py tests/test_trial_attempts.py -q -p no:cacheprovider --basetemp=.tmp/plan-00133/pt`, then `tests/test_research_command.py` alone; expected all pass, the data-gated cases skipping without `data/`.
 
-- [ ] **Step 7: Consumers, then commit** — `consumers.sh --direct` over the eleven paths of the `git add` below, the union under the pytest flags.
+- [ ] **Step 7: Consumers, then commit** — `consumers.sh --direct` over the eleven paths of the `git add` below, the union under the pytest flags, and the Global Constraints' walker for files under `cli/`.
 
 ```bash
 git add cli/registry/record.py cli/registry/store.py cli/research/command.py tests/test_registry_record.py tests/test_registry_store.py tests/test_registry_conformance.py tests/test_research_control.py tests/test_trial_registry_provenance.py tests/test_trial_attempts.py tests/test_research_command.py tests/test_registry_replay.py
@@ -1320,7 +1322,7 @@ Claude-Session: <the executing session's URL>
 EOF
 ```
 
-- [ ] **Step 8: Probe** — `--file cli/registry/record.py`, control `s/^def _assert_finite(/def _assert_finite_gone(/`: each check of `validate_record_attempt` made `if False:` against its row of `test_an_ill_shaped_attempt_is_refused_before_the_write` (one probe per row, twenty-two; a check shared through a helper — the id check, which `id`, `absorbs` and each entry's `id` reach — probed at its call for the row's field, that call made `None`; for `entry-without-metrics` and `entry-metrics-nan` the check is `validate_metrics`'s, its dict check made `if False:` and its `_assert_finite` call made `None`), each of `validate_reading_attempt`'s against its row of the reading table; the version-6 key-set entry cut against `test_a_schema_six_record_round_trips_its_attempt`; `validate_stored_record`'s `validate_record_attempt` call made `None` against `test_a_record_past_the_floors_must_declare_schema_six`. `--file cli/registry/store.py`, control `s/^def _read_healing(/def _read_healing_gone(/`: `< 6` made `< 5` against `test_a_record_past_the_floors_must_declare_schema_six`; the reading floor's `< 2` made `< 1` against `test_a_reading_past_the_first_must_declare_schema_two`; `attempt: dict,` made `attempt: dict = None,` against `test_append_requires_an_attempt_explicitly`; the pre-open `validate_record_attempt` call made `None` against the `entry-metrics-nan` row; `_to_reading`'s `ReadingRecord(**rec)` made `ReadingRecord(**{**rec, "attempt": None})` against `test_a_reading_at_schema_two_round_trips_its_attempt`. `--file cli/research/command.py`, control `s/^def _no_file_there(/def _no_file_there_gone(/`: the begin's refusal made `None` against `test_a_begin_the_log_refuses_ends_the_run_before_the_build`; the end's refusal made `None` against `test_an_end_the_log_refuses_withholds_the_numbers`; the failed `end` in the `(RegistryError, OSError, SubjectError)` clause made `None` against `the-build-raises`, in the `EVALUATION_ERRORS` clause against `a-compute-error`, before the key-set exit against `the-keys-differ`, and before the leaf check's exit against `a-leaf-the-registry-refuses`; the leaf check's `validate_metrics` call made `None` against `a-leaf-the-registry-refuses`; the stop's reading `attempt` made `None` against `test_a_stop_ends_its_attempt_with_the_stop_and_its_reading_carries_it`; the condition that writes the `begin` made `True`, so a ruleless reading writes one, against `test_a_ruleless_reading_writes_no_line_and_carries_no_attempt`; the begin's `registry=target` made `registry=ledger_target` against `test_a_clean_run_is_admitted_and_logged_begin_and_end`.
+- [ ] **Step 8: Probe** — `--file cli/registry/record.py`, control `s/^def _assert_finite(/def _assert_finite_gone(/`: each check of `validate_record_attempt` made `if False:` against its row of `test_an_ill_shaped_attempt_is_refused_before_the_write` (one probe per row, twenty-two; a check shared through a helper — the id check, which `id`, `absorbs` and each entry's `id` reach — probed at its call for the row's field, that call made to accept every value, the Global Constraints' neutral call; for `entry-without-metrics` and `entry-metrics-nan` the check is `validate_metrics`'s, its dict check made `if False:` and its `_assert_finite` call made `None`), each of `validate_reading_attempt`'s against its row of the reading table; the version-6 key-set entry cut against `test_a_schema_six_record_round_trips_its_attempt`; `validate_stored_record`'s `validate_record_attempt` call made `None` against `test_a_record_past_the_floors_must_declare_schema_six`. `--file cli/registry/store.py`, control `s/^def _read_healing(/def _read_healing_gone(/`: `< 6` made `< 5` against `test_a_record_past_the_floors_must_declare_schema_six`; the reading floor's `< 2` made `< 1` against `test_a_reading_past_the_first_must_declare_schema_two`; `attempt: dict,` made `attempt: dict = None,` against `test_append_requires_an_attempt_explicitly`; the pre-open `validate_record_attempt` call made `None` against the `entry-metrics-nan` row; `_to_reading`'s `ReadingRecord(**rec)` made `ReadingRecord(**{**rec, "attempt": None})` against `test_a_reading_at_schema_two_round_trips_its_attempt`. `--file cli/research/command.py`, control `s/^def _no_file_there(/def _no_file_there_gone(/`: the begin's refusal made `None` against `test_a_begin_the_log_refuses_ends_the_run_before_the_build`; the end's refusal made `None` against `test_an_end_the_log_refuses_withholds_the_numbers`; the failed `end` in the `(RegistryError, OSError, SubjectError)` clause made `None` against `the-build-raises`, in the `EVALUATION_ERRORS` clause against `a-compute-error`, before the key-set exit against `the-keys-differ`, and before the leaf check's exit against `a-leaf-the-registry-refuses`; the leaf check's `validate_metrics` call made `None` against `a-leaf-the-registry-refuses`; the stop's reading `attempt` made `None` against `test_a_stop_ends_its_attempt_with_the_stop_and_its_reading_carries_it`; the condition that writes the `begin` made `True`, so a ruleless reading writes one, against `test_a_ruleless_reading_writes_no_line_and_carries_no_attempt`; the begin's `registry=target` made `registry=ledger_target` against `test_a_clean_run_is_admitted_and_logged_begin_and_end`.
 
 ______________________________________________________________________
 
@@ -1382,7 +1384,7 @@ Expected: `AttributeError: 'Subject' object has no attribute 'family'`.
 
 - [ ] **Step 4: Run the Step 2 tests** — expected pass; then `uv run pytest tests/test_research_command.py -k "b1_hourly_rv_dispersion" -q -p no:cacheprovider --basetemp=.tmp/plan-00133/pt` passes without its pin. Then add `tests/test_research_command.py::test_every_ruled_subjects_kill_bar_deflates_at_its_declared_count[b1-hourly-rv]` and `[b2-funding-derisk]` to `tests/slow-cases.txt` in its sorted order: each build takes over 10 s with `a1_kill_bar` replaced, the list's own bar.
 
-- [ ] **Step 5: Consumers, then commit** — `consumers.sh --direct` over the three paths of the `git add` below, `tests/test_slow_cases.py` among them.
+- [ ] **Step 5: Consumers, then commit** — `consumers.sh --direct` over the three paths of the `git add` below, `tests/test_slow_cases.py` among them, and the Global Constraints' walker for files under `cli/`.
 
 ```bash
 git add cli/research/subjects.py tests/test_research_command.py tests/slow-cases.txt
@@ -1404,16 +1406,16 @@ ______________________________________________________________________
 ### Task 7: the register path counts — the refusals, the provisional absorption, the plain-eval refusal (D2–D7)
 
 **Files:**
-- Modify: `cli/research/command.py`, `README.md` (the `--register`, `--family` and `--n-trials` rows and the paragraph under the table)
+- Modify: `cli/research/command.py`, `README.md` (the `--register`, `--family`, `--n-trials` and `--registry` rows and the paragraph under the table)
 - Test: `tests/test_research_command.py`, `tests/test_registry_replay.py` (its two register cases, if a migration rule below reaches them)
 
 **Interfaces:**
 - Consumes: Task 1's `landed`, `files_landed`, `reconcile`, `lacking`, `arguments`, `AttemptLog.locked`, `Count`, `Orphan.describe`, `DEVELOP`; Task 2's `budget`; Task 3's `allowed_log_ids`; Task 5's lines; Task 6's declarations.
 - Produces: nothing new for later tasks; the register path in D2's order:
   1. after the unknown-subject refusal, D7's: a subject whose `verdict` is set, run with neither `--register` nor `--reading`, refused before any read — "<subject> declares a verdict rule, so every run of it is a trial: run it with --register; a ruleless pre-flight subject reads the inputs without the trial's result";
-  2. with today's refusals that need no data, for `--register`: D4's "--family <x> is not <F>, the family <subject> declares: pass --family <F>" and "--n-trials <x> is not <n>, the count <subject> declares and deflates at: pass --n-trials <n>"; D5's "family <F> is in no bucket of cli/registry/budget.py: add it with its bucket in a reviewed pull request"; D6's absent log, its broken chain (D1's line remedy appended to the `AttemptLogError`), its unlisted id (`attempts.allowed_log_ids(_REPO_ROOT)`), each with its remedy verbatim; `landed = attempts.landed(_REPO_ROOT, target, ledger_target)` (D3's develop refusal); `attempts.lacking(...)`, D6's third remedy for the first pair; and D4's frozen count — a landed record whose `invocation`, read through `.get` (Task 1 Step 5), names this subject and whose `n_trials_in_family` is not the declared `n_trials`, the highest such trial named — "<subject> declares n_trials <x>, and its trial <N> landed at n_trials <n>, which that record's deflated Sharpe used, so its n_trials is frozen: declare a new subject (a new name) for the further trial";
+  2. with today's refusals that need no data, for `--register`: D4's "--family <x> is not <F>, the family <subject> declares: pass --family <F>" and "--n-trials <x> is not <n>, the count <subject> declares and deflates at: pass --n-trials <n>"; D5's "family <F> is in no bucket of cli/registry/budget.py: add it with its bucket in a reviewed pull request"; D6's absent log, its broken chain (D1's line remedy appended to the `AttemptLogError`), its unlisted id (`attempts.allowed_log_ids(_REPO_ROOT)`), each with its remedy verbatim; `landed = attempts.landed(_REPO_ROOT, target, ledger_target)` (D3's develop refusal), a `RegistryError` it raises turned into `raise _abort(str(exc))`, its message D3's remedy or the store's own; `attempts.lacking(...)`, D6's third remedy for the first pair; and D4's frozen count — a landed record whose `invocation`, read through `.get` (Task 1 Step 5), names this subject and whose `n_trials_in_family` is not the declared `n_trials`, the highest such trial named — "<subject> declares n_trials <x>, and its trial <N> landed at n_trials <n>, which that record's deflated Sharpe used, so its n_trials is frozen: declare a new subject (a new name) for the further trial";
   3. the dataset checks;
-  4. `log.begin(admit, …)`, `admit` re-reading `attempts.landed(...)`, then `count = attempts.reconcile(lines, landed, log_id=log.log_id, bucket_of=budget.BUCKET_OF, hold=hold)`, `hold` being `(subject, attempts.arguments(invocation), computed_spec_hash)`, refusing when `known.n_trials < count.required_n(family)` with D4's split remedy, composed from `attempts.reconcile(lines, landed, log_id=log.log_id, bucket_of=budget.BUCKET_OF, hold=None if frozen else hold, hold_finished=False)`, `frozen` true when a landed record names the subject — its `required_n(family)` the `<m>` the remedy names and its orphans of the family listed through `describe()`: a raised run that leaves the spec file, so `spec_hash`, unchanged holds every open attempt this one held and absorbs each whatever its numbers, and a finished one only on equal numbers; one whose spec file changed holds none and is refused before its fit naming the full count; a new subject absorbs no attempt of this one (spec D3) — then the "raise …" tail, or, when `frozen`, the "<subject>'s n_trials is frozen by its trial <N>: declare a new subject (a new name) for the further trial" tail — and when the bucket is set and `count.spent(bucket) + 1 > budget.BUDGET[bucket]` with D5's "bucket <b> has spent <s> of its <B> trials (<r> records, <k> attempts that never landed), so this trial would exceed it: an expansion is the owner's ruling, written into cli/registry/budget.py by a pull request that quotes it";
+  4. `log.begin(admit, …)`, `admit` re-reading `attempts.landed(...)` as step 2 reads it and raising each of its refusals as `raise _abort(...)` — a `typer.Exit`, which the `(OSError, RegistryError)` clause around `begin` (Task 5 Step 5) never catches, so that clause speaks only for the log's own read and write — then `count = attempts.reconcile(lines, landed, log_id=log.log_id, bucket_of=budget.BUCKET_OF, hold=hold)`, `hold` being `(subject, attempts.arguments(invocation), computed_spec_hash)`, refusing when `known.n_trials < count.required_n(family)` with D4's split remedy, composed from `attempts.reconcile(lines, landed, log_id=log.log_id, bucket_of=budget.BUCKET_OF, hold=None if frozen else hold, hold_finished=False)`, `frozen` true when a landed record names the subject — its `required_n(family)` the `<m>` the remedy names and its orphans of the family listed through `describe()`: a raised run that leaves the spec file, so `spec_hash`, unchanged holds every open attempt this one held and absorbs each whatever its numbers, and a finished one only on equal numbers; one whose spec file changed holds none and is refused before its fit naming the full count; a new subject absorbs no attempt of this one (spec D3) — then the "raise …" tail, or, when `frozen`, the "<subject>'s n_trials is frozen by its trial <N>: declare a new subject (a new name) for the further trial" tail — and when the bucket is set and `strict.spent(bucket) + 1 > budget.BUDGET[bucket]`, `strict` being `attempts.reconcile(lines, landed, log_id=log.log_id, bucket_of=budget.BUCKET_OF, hold=hold, hold_finished=False)`, which holds out only the open attempts `hold` names, since a finished one printed a look this run absorbs only on equal numbers (spec D5), with D5's "bucket <b> has spent <s> of its <B> trials (<r> records, <k> attempts that never landed), so this trial would exceed it: an expansion is the owner's ruling, written into cli/registry/budget.py by a pull request that quotes it", its figures read from `strict`;
   5. the build, the key set, the rule, the `end` line (Task 5), the print;
   6. the tree check and the `--verdict` assertion as today; then one block under `with log.locked() as lines:` — `landed` re-read, `count = attempts.reconcile(lines, landed, log_id=log.log_id, bucket_of=budget.BUCKET_OF, own=attempt)` with no `hold`, since after the `end` a held attempt is classified as any other (spec D3), the same two refusals as step 4 on the new count (the run refused after its print, both attempts counting), the count's remedy composed as step 4's — over these lines, which hold this run's `end`, so a refused verdict counts itself among the attempts the next run must meet, and the remedy's `<this run>` reads "the next run" (spec D4) — then the append with `attempt={"log": log.log_id, "id": attempt, "absorbs": list(count.absorbs), "counted": count.counted(family)}`, or the stop's reading with `absorbs` alone.
 
@@ -1578,7 +1580,7 @@ def test_raising_n_trials_to_the_figure_a_refusal_names_admits_the_next_run(tmp_
     assert retry.exit_code == 0, retry.output
 
 
-def test_a_held_attempt_that_turns_orphan_past_the_budget_is_refused_after_its_print(tmp_path, monkeypatch, _attempts_log):
+def test_a_retry_of_a_printed_attempt_at_the_budgets_edge_is_refused_before_its_fit(tmp_path, monkeypatch, _attempts_log):
     registry = tmp_path / "registry.jsonl"
     monkeypatch.setitem(budget.BUCKET_OF, "STUB", "B")
     monkeypatch.setitem(budget.BUCKET_OF, "OTHER", "B")
@@ -1586,12 +1588,32 @@ def test_a_held_attempt_that_turns_orphan_past_the_budget_is_refused_after_its_p
     _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
     _stub_subject(monkeypatch)
     assert runner.invoke(app, [*_stub_eval(), "--verdict", "park", *_register_args(registry, n_trials=1)]).exit_code == 1
-    _stub_subject(monkeypatch, n_trials=2, metrics={"sharpe": 2.0})
 
-    retry = runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=2)])
+    output = _refused_before_the_fit(tmp_path, monkeypatch, registry=registry, n_trials=2, metrics={"sharpe": 2.0})
 
-    assert retry.exit_code == 1 and '"sharpe": 2.0' in retry.output, retry.output
-    assert "bucket B has spent 25 of its 25 trials (24 records, 1 attempts that never landed)" in retry.output
+    assert "bucket B has spent 25 of its 25 trials (24 records, 1 attempts that never landed)" in output
+    assert len(registry.read_text().splitlines()) == 24
+
+
+def test_a_bucket_filled_during_the_fit_refuses_the_run_after_its_print(tmp_path, monkeypatch, _attempts_log):
+    registry = tmp_path / "registry.jsonl"
+    monkeypatch.setitem(budget.BUCKET_OF, "STUB", "B")
+    monkeypatch.setitem(budget.BUCKET_OF, "OTHER", "B")
+    _seed(registry, "OTHER", 24)
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    _stub_subject(monkeypatch)
+    stub = subjects.SUBJECTS["stub"]
+
+    def build(reader, dataset, window, as_of=None, accept_holes=False):
+        _planted(_attempts_log, ("elsewhere", None), family="OTHER")
+        return stub.build(reader, dataset, window, as_of, accept_holes)
+
+    monkeypatch.setitem(subjects.SUBJECTS, "stub", replace(stub, build=build))
+
+    result = runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1)])
+
+    assert result.exit_code == 1 and '"sharpe": 1.0' in result.output, result.output
+    assert "bucket B has spent 25 of its 25 trials (24 records, 1 attempts that never landed)" in result.output
     assert len(registry.read_text().splitlines()) == 24
 
 
@@ -1906,16 +1928,16 @@ with `from dataclasses import replace` and `from cli.registry import TrialRegist
 
 - [ ] **Step 3: Run them to verify they fail**
 
-Run: `uv run pytest tests/test_research_command.py -k "abandoned_branch or refused_after_its_print or numbers_moved or figure_a_refusal_names or past_the_budget or stop_spends or counts_nothing or scratch_registry or open_attempt or held_attempt or lands_between or plain_eval or other_than_the_subjects or fewer_than or at_its_budget or one_below_its_budget or no_bucket or landed_subjects_n_trials_is_frozen or network or stale_develop or unresolvable or absent_log or broken_log or unlisted_log or lacking" -q -p no:cacheprovider --basetemp=.tmp/plan-00133/pt` — it selects no case that exists before this task.
+Run: `uv run pytest tests/test_research_command.py -k "abandoned_branch or refused_after_its_print or numbers_moved or figure_a_refusal_names or budgets_edge or filled_during_the_fit or stop_spends or counts_nothing or scratch_registry or open_attempt or held_attempt or lands_between or plain_eval or other_than_the_subjects or fewer_than or at_its_budget or one_below_its_budget or no_bucket or landed_subjects_n_trials_is_frozen or network or stale_develop or unresolvable or absent_log or broken_log or unlisted_log or lacking" -q -p no:cacheprovider --basetemp=.tmp/plan-00133/pt` — it selects no case that exists before this task.
 Expected: each fails — the refusals absent (exit 0 where 1 is asserted), `counted` empty where the orphan is asserted — except five that pass until Step 4 and are proven by their probes: `test_a_plain_eval_of_a_ruleless_subject_is_admitted`, `test_a_stop_spends_nothing`, `test_a_failed_build_logs_a_failed_end_and_counts_nothing`, `test_a_held_attempt_another_session_lands_mid_fit_is_absorbed_by_no_one_twice` and `test_a_bucket_one_below_its_budget_admits_its_last_trial`, each an admission nothing refuses yet.
 
 - [ ] **Step 4: Implement the register path** — the Interfaces block's six steps in `cli/research/command.py`, `budget` read through its module, every git call through `attempts`; D4's split remedy composed once and used before the fit and after the print.
 
-- [ ] **Step 5: README and help** — the three `help=` strings of `--register`, `--family` and `--n-trials` in `cli/research/command.py` rewritten to say what their README rows below say, `--n-trials` no longer "must exceed the count already recorded"; then the README. `--register`: a ruled run's first line goes to the clone's trial-attempts log before the fit and its last before the print, so a run whose branch never merges still counts; refused for an absent, unlisted or damaged log; a plain eval of a subject with a rule is refused. `--family`: must equal the family the subject declares, which must be in a bucket of `cli/registry/budget.py`. `--n-trials`: must equal the count the subject declares, which must cover the family's records, this run and its attempts that never landed; frozen once a record of the subject has landed, when a further trial declares a new subject. The paragraph: the bucket budgets refuse a trial past them.
+- [ ] **Step 5: README and help** — the four `help=` strings of `--register`, `--family`, `--n-trials` and `--registry` in `cli/research/command.py` rewritten to say what their README rows below say, `--n-trials` no longer "must exceed the count already recorded"; then the README. `--register`: a ruled run's first line goes to the clone's trial-attempts log before the fit and its last before the print, so a run whose branch never merges still counts; refused for an absent, unlisted or damaged log; a plain eval of a subject with a rule is refused. `--family`: must equal the family the subject declares, which must be in a bucket of `cli/registry/budget.py`. `--n-trials`: must equal the count the subject declares, which must cover the family's records, this run and its attempts that never landed; frozen once a record of the subject has landed, when a further trial declares a new subject. `--registry`: a ruled run writes its attempt to the clone's trial-attempts log whatever file this names, and one whose record does not reach the committed registry counts, for every run into the committed registry, against its family and bucket as an attempt that never landed, so a rehearsal into another file spends a trial. The paragraph: the bucket budgets refuse a trial past them.
 
 - [ ] **Step 6: Run the Step 3 tests, then the two modules whole** — `uv run pytest tests/test_research_command.py -q -p no:cacheprovider --basetemp=.tmp/plan-00133/pt` (its cases listed in `tests/slow-cases.txt` included, the run split by node id into parts each under 600 s) and `tests/test_registry_replay.py`; expected all pass.
 
-- [ ] **Step 7: Consumers, then commit** — `consumers.sh --direct` over the four paths of the `git add` below, `tests/test_internal_terms_not_operator_visible.py` among them, and `tests/test_cli_help_hygiene.py`, which reads the three help strings through the app.
+- [ ] **Step 7: Consumers, then commit** — `consumers.sh --direct` over the four paths of the `git add` below, and the Global Constraints' walkers for files under `cli/` and for help strings.
 
 ```bash
 git add cli/research/command.py README.md tests/test_research_command.py tests/test_registry_replay.py
@@ -1940,7 +1962,8 @@ EOF
 | `test_a_family_in_no_bucket_is_refused` | command.py | the bucket membership's `if` made `if False:` |
 | `test_a_bucket_at_its_budget_is_refused` | command.py | the budget's `if` before the fit made `if False:` |
 | `one_below_its_budget` | command.py | the budget's `>` before the fit made `>=` |
-| `past_the_budget` | command.py | the budget's `if` after the print made `if False:` |
+| `budgets_edge` | command.py | `strict`'s `hold_finished=False` made `hold_finished=True`, so the budget holds out the finished attempt this retry shares its arguments with |
+| `filled_during_the_fit` | command.py | the budget's `if` after the print made `if False:` |
 | `fewer_than` | command.py | the count's `if` before the fit made `if False:` |
 | `frozen and raised-count` | command.py | the frozen count's `if` made `if False:` |
 | `frozen and declared-count` | command.py | the frozen tail's condition made `False` |
@@ -1984,7 +2007,7 @@ def _attempt_findings(trials: dict[int, dict], readings: dict[int, dict], *, sub
                       budget: Mapping[str, int], allowlist: frozenset[str]) -> list[str]: ...
 ```
 
-`_attempt_findings` implements the spec's CI checks section over the records past 48 and the readings past 1 (records from trial 1 counting in (ix) and (x)), each finding opening `<label> (<check>): ` — `trial-49 (vii): …` — and naming the figure it needed; a record past 48 whose subject `SUBJECTS` lacks yields nothing here, since `_findings`' (i) reports it.
+`_attempt_findings` implements the spec's CI checks section over the records past 48 and the readings past 1 (records from trial 1 counting in (ix) and (x)), each finding opening `<label> (<check>): ` — `trial-49 (vii): …` — and naming the figure it needed; a record past 48 or a reading past 1 whose subject `SUBJECTS` lacks yields nothing here, since `_findings`' (i) reports it.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2177,6 +2200,18 @@ ______________________________________________________________________
 **Files:** `docs/open-topics/T0222-a-trial-on-an-unmerged-branch-spends-uncounted.md` → `docs/open-topics/archive/`, `docs/open-topics/README.md`.
 
 - [ ] **Step 1** — `status: resolved`, `ripe_when:` deleted, `## Suggested next steps` removed, `## Resolution` naming this branch's commits (the log and the count, the budgets, the allowlist and `attempts-init`, the conftest fixtures, schema 6, the declarations, the register path, the CI checks, the tie) and the spec and plan 00133; the measurement its first step asked for is the spec's measured basis, and the decision its second asked for is the owner's ruling of 2026-10-17 as the spec records it, option 1 taken unattended; `git mv` into `archive/`; `uv run python infra/scripts/topics-index.py`; `uv run pytest -q -p no:cacheprovider --basetemp=.tmp/plan-00133/pt tests/test_open_topics_frontmatter.py`.
-- [ ] **Step 2** — the consumers of the two topic paths (`consumers.sh --direct`), then commit `docs(open-topics): T0222 resolved — every ruled run is counted from the clone's trial-attempts log`, its trailers as every task's.
+- [ ] **Step 2** — the consumers of the two topic paths (`consumers.sh --direct`), then commit, staging the archived topic by its new path, since Step 1's `git mv` staged the rename with the topic's content before its edits:
+
+```bash
+git add docs/open-topics/archive/T0222-a-trial-on-an-unmerged-branch-spends-uncounted.md docs/open-topics/README.md
+git commit -F - <<'EOF'
+docs(open-topics): T0222 resolved — every ruled run is counted from the clone's trial-attempts log
+
+<the task's pytest result line, pasted from its run>
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: <the executing session's URL>
+EOF
+```
 
 Decisions log: the [00133] entry in docs/research/10.phase4-decisions.md, written at spec time (88b5bc73d); no further decision on a phase's subject is made in the tasks.
