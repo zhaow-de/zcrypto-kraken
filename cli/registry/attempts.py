@@ -97,6 +97,7 @@ def current_branch(code_root: Path) -> str | None:
 
 
 def init_log(path: Path, *, host: str | None = None) -> str:
+    path.parent.mkdir(parents=False, exist_ok=True)
     try:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
     except FileExistsError:

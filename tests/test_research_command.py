@@ -2821,6 +2821,19 @@ def test_attempts_init_writes_one_genesis_line_and_prints_its_allowlist_row(tmp_
     assert len(attempts.AttemptLog(path).lines) == 1
 
 
+def test_attempts_init_creates_the_local_dir_a_fresh_clones_main_checkout_lacks(tmp_path, monkeypatch):
+    main_checkout = tmp_path / "fresh-clone"
+    main_checkout.mkdir()
+    path = main_checkout / ".local" / "trial-attempts.jsonl"
+    monkeypatch.setattr(attempts, "log_path", lambda code_root: path)
+    assert not path.parent.exists()
+
+    result = runner.invoke(app, ["research", "attempts-init"])
+
+    assert result.exit_code == 0, result.output
+    assert [line["kind"] for line in attempts.AttemptLog(path).lines] == ["genesis"]
+
+
 def _refused_before_the_fit(tmp_path, monkeypatch, *, registry: Path | None = None, flags: dict | None = None, **declared) -> str:
     registry = registry or tmp_path / "registry.jsonl"
     _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
