@@ -149,7 +149,12 @@ for (const r of live) if (r.reportPath && r.reportPath !== lensPath(r.lens)) log
 
 // --- Ledger: the row this read owes, appended by the read itself (a controller forgot it once and fold-check refused) ---
 phase('Ledger')
-const ledgerOut = await agent(`From the directory ${repo} run exactly this one command and return its stdout and stderr verbatim, nothing else, no other command: uv run python infra/scripts/review-ledger.py append ${reportDir} --kind review --range ${range} --tip ${tip}`, { label: 'ledger', phase: 'Ledger', effort: 'low', agentType: 'general-purpose', ...(model ? { model } : {}) })
+const refutationPath = `${reportDir}/refutation-${tip}.md`
+const ledgerOut = await agent(`From the directory ${repo}, two steps and nothing else. First write the text between the two lines reading REFUTATION below to ${refutationPath} byte for byte, through a quoted heredoc (cat > ${refutationPath} <<'REFUTATION' … REFUTATION). Then run exactly this one command and return its stdout and stderr verbatim: uv run python infra/scripts/review-ledger.py append ${reportDir} --kind review --range ${range} --tip ${tip} --refutation ${refutationPath} ${live.map((r) => `--report ${lensPath(r.lens)}`).join(' ')}
+
+REFUTATION
+${refutation}
+REFUTATION`, { label: 'ledger', phase: 'Ledger', effort: 'low', agentType: 'general-purpose', ...(model ? { model } : {}) })
 log(`ledger: ${String(ledgerOut || '').trim().slice(0, 240) || 'the append agent returned nothing — append the row by hand'}`)
 
 return {
