@@ -147,11 +147,17 @@ def test_a_changed_test_file_is_its_own_first_reader(tmp_path):
     assert r.stdout.splitlines()[2] == "tests/test_other.py"
 
 
-def test_an_empty_reader_list_is_printed_as_a_finding_never_as_nothing(tmp_path):
+def test_an_empty_reader_list_is_a_finding_on_stderr_and_no_line_on_stdout(tmp_path):
     repo = _repo(tmp_path)
     r = _run(repo, "infra/scripts/lonely.py")
     assert r.returncode == 0
-    assert "(none -- no direct reader" in r.stdout and "never the full suite" in r.stdout
+    assert "(none -- no direct reader" in r.stderr and "never the full suite" in r.stderr
+    assert "(none" not in r.stdout
+    assert r.stdout.split("# direct readers", 1)[1].split("# tree walkers", 1)[0].splitlines()[1:] == []
+    r = _run(repo, "--direct", "infra/scripts/lonely.py")
+    assert r.returncode == 0
+    assert "(none -- no test file names it" in r.stderr and "never the full suite" in r.stderr
+    assert [line for line in r.stdout.splitlines() if not line.startswith("#")] == []
 
 
 def test_a_top_level_file_lists_no_walker(tmp_path):
