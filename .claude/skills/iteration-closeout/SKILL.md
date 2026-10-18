@@ -1,6 +1,6 @@
 ---
 name: iteration-closeout
-description: Use whenever a decision on a phase's subject is made or ruled — research, or execution (engine, order path, rungs and the box, risk limits, trade-path gates and their fleet) — in any session, on any branch, and at closeout to sync dataset catalogs. Load BEFORE writing the entry.
+description: Load before writing a decisions-log entry: a decision on a phase's subject — research or execution — made or ruled in any session, on any branch; dataset-catalog sync at closeout.
 disable-model-invocation: false
 ---
 

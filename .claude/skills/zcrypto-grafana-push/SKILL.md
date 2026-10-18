@@ -1,6 +1,6 @@
 ---
 name: zcrypto-grafana-push
-description: Push the committed dashboards and alert rules to Grafana Cloud — the one invocation with its credentials, the preflight over the series added or changed rules read, verification by value, the prune, and a push from a feature branch under its conditions.
+description: Push the committed dashboards and alert rules to Grafana Cloud: the one invocation with its credentials, the preflight, verification by value, the prune.
 ---
 
 # zcrypto-grafana-push
