@@ -36,8 +36,7 @@ LEGACY_UNCOMMITTED = frozenset(range(33, 47))
 # Append-only, so unrepairable; same freeze discipline as above.
 LEGACY_SPEC_HASH_ORPHANS = frozenset({34, 35})
 
-# Every subject a committed record's invocation names, at the n_trials its records deflated at: frozen, so a further
-# trial of one declares a new subject, and a subject's first landed record adds its row here in the PR that lands it.
+# Every subject a committed record's invocation names, at the n_trials its records deflated at.
 LANDED_N_TRIALS: dict[str, int] = {"b1-hourly-rv": 3, "b1-volume-confirmation": 4}
 
 
