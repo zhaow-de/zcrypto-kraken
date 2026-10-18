@@ -1398,10 +1398,16 @@ def test_the_main_loop_runs_what_a_dispatched_agent_may_not(tmp_path: Path, comm
 HANDED_GREPS = [
     ("git ls-files 'infra/ansible/**/*.j2' | xargs grep -l foo", "xargs grep -l foo"),
     ("find infra/ansible -name '*.j2' -exec grep -l foo {} +", "find infra/ansible -name '*.j2' -exec grep -l foo '{}' +"),
+    ("git ls-files infra | xargs grep -l key", "xargs grep -l key"),
+    ("git ls-files cli | xargs grep -l -e key infra/ansible/x.yml", "xargs grep -l -e key infra/ansible/x.yml"),
 ]
 HANDED_GREPS_ADMITTED = [
     "git ls-files 'cli/**/*.py' | xargs grep -l foo",
     "git ls-files 'infra/**/*.bak' | xargs rm",
+    "git ls-files cli | xargs grep -l infra",
+    "git ls-files cli | xargs grep -l -e infra",
+    "git ls-files cli | xargs grep -l --regexp=infra",
+    "find cli -name '*.py' -exec grep -l infra {} +",
 ]
 
 
