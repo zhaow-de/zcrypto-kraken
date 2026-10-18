@@ -106,12 +106,6 @@ def test_the_prose_only_entry_reads_the_ref_predicate_and_exclusions_its_clause_
 PROTOCOL = REPO / "docs" / "reference" / "multi-agent-protocol.md"
 
 
-def _worktree_pipeline() -> str:
-    fn = re.search(r"^c_worktree_processes\(\) \{ (?P<pipe>.*); \}$", SCRIPT.read_text(), re.M)
-    assert fn, "the worktrees entry's function is gone, renamed or no longer one line"
-    return fn.group("pipe")
-
-
 def _set_clause(entry: str) -> str:
     """The `(set: …; count: …)` clause of the CLAUDE.md bullet naming `entry`, parsed out of its line."""
     tail = re.compile(r"count-list\.sh " + re.escape(entry) + r"`\)")
@@ -719,11 +713,6 @@ def _merge(repo: pathlib.Path, branch: str, files: list[str]) -> None:
         _git(repo, "commit", "-qm", f"add {rel}")
     _git(repo, "checkout", "-q", "develop")
     _git(repo, "merge", "-q", "--no-ff", "-m", f"Merge pull request from {branch}", branch)
-
-
-def _topic_only_merges(repo: pathlib.Path) -> str:
-    script = f'source "{SCRIPT}"; cd "{repo}"; count_micro_prs develop'
-    return subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True).stdout.strip()
 
 
 @pytest.fixture
