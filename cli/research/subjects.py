@@ -215,12 +215,12 @@ def _build_combined(
 _ASSETS = CrossfreqSystemConfig().assets
 
 # The B2 trial's fixed constants (docs/specs/00128 D4-D6, docs/specs/00129 D5): a change to one is a new trial, never an
-# edit here.
+# edit here, `_B2_N_TRIALS` aside.
 _DECISIVE_START = 1380
 _N_RESAMPLES = 2000
 _FROM_2021 = datetime(2021, 1, 1, tzinfo=UTC)
 _B2_COST_PER_SIDE = 0.006
-_B2_N_TRIALS = 1  # docs/specs/00133 D4: raised in place when the count refusal asks, until a record or reading of the subject lands
+_B2_N_TRIALS = 1  # docs/specs/00133 D4: raised in place until a record or reading of the subject lands
 _B2_A2_ARMS = (((20, 50, 100), 0.12), ((60, 120, 240), 0.10), ((60, 120, 240), 0.12))
 _B2_LOOKBACK = 180
 

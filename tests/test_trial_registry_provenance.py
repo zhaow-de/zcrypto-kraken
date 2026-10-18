@@ -716,8 +716,7 @@ def test_a_reading_carries_the_outcome_its_subjects_rule_gives_and_no_other(subj
 _L = "f" * 32
 _FOLLOW = "b2-follow"
 _B1_FOLLOW = "b1-follow"
-# The table's subjects, frozen at the declarations the floor world implies, b2-funding-derisk at n_trials 1, so a raise a
-# correct PR makes in cli/research/subjects.py never moves a row; the live test reads SUBJECTS.
+# Frozen, so a raise a correct PR makes in cli/research/subjects.py never moves a row; the live test reads SUBJECTS.
 _TABLE_SUBJECTS = {
     _B2: replace(SUBJECTS[_B2], family="B2", n_trials=1),
     _ARM_A_BAR: replace(SUBJECTS[_ARM_A_BAR], verdict=None, family=None, n_trials=None),
@@ -771,8 +770,7 @@ def _reading_attempt(attempt_id: int) -> dict:
     return {"log": _L, "id": attempt_id, "begin": _begin_hash(attempt_id), "absorbs": []}
 
 
-# The table's world: records 1-48 and reading 1, append-only, so a row's figures stay fixed as entries land past the
-# floors, which the live test holds.
+# Append-only, so a row's figures stay fixed as entries land past the floors, which the live test holds.
 def _floor_world() -> tuple[dict[int, dict], dict[int, dict]]:
     trials, readings = _trials(), _readings()
     return {n: trials[n] for n in trials if n <= 48}, {n: readings[n] for n in readings if n <= 1}

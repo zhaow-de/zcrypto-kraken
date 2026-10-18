@@ -119,10 +119,7 @@ def _named(landed: attempts.Landed, subject: str) -> list[dict]:
 def _short_count(
     lines: tuple[dict, ...], landed: attempts.Landed, *, log_id: str, known: Subject, family: str, hold: tuple, this_run: str
 ) -> str:
-    """The refusal of a declared count below the family's, before the fit and after the print alike. Its figure holds out
-    the open attempts of this run's subject, arguments and spec_hash whose process is gone when it asks for a raise, since
-    the raised run absorbs each, and nothing when it asks for a new subject; over lines holding this run's end, this run
-    counts as any other attempt."""
+    """The count refusal at both sites; a raise's figure holds out the gone open attempts the raised run absorbs."""
     subject, declared = known.name, known.n_trials
     frozen_by = max((record["trial_id"] for record in _named(landed, subject)), default=None)
     shown = attempts.reconcile(
