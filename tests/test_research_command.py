@@ -50,7 +50,7 @@ from cli.portfolio.builder import CombinedSystemConfig, build_combined_system
 from cli.portfolio.crossfreq_system import CrossfreqSystemConfig, _ffill_btc
 from cli.portfolio.errors import PortfolioError
 from cli.portfolio.record44_legs import benchmark_4h_net_of_cost, calendar_year_slices
-from cli.registry import attempts, budget
+from cli.registry import TrialRegistry, attempts, budget
 from cli.registry.observed import ObservedReader
 from cli.registry.record import compute_hash
 from cli.research import command as research_command
@@ -58,6 +58,7 @@ from cli.research import subjects
 from cli.risk.errors import RiskError
 from cli.validation import ValidationError, max_drawdown, sharpe
 from tests.rolling_fixtures import HOLE, write_chain
+from tests.test_trial_attempts import _reaped_pid
 from tests.test_trial_registry_provenance import LEDGER, REGISTRY, _trials, live_entries
 
 runner = CliRunner()
@@ -106,6 +107,8 @@ _STUB_DECLARED = {
     "metric_keys": frozenset({"sharpe"}),
     "verdict": lambda metrics: "adopt",
     "no_verdict": "the stub's stop",
+    "family": "STUB",
+    "n_trials": 1,
 }
 
 
@@ -165,7 +168,13 @@ def _attempts_log(tmp_path, monkeypatch, _attempts_log_in_tmp_path) -> Path:
     path.parent.mkdir(parents=True)
     log_id = attempts.init_log(path, host="zcrypto-test")
     (tmp_path / "trial-attempt-logs.txt").write_text(f"{log_id} zcrypto-test\n")
+    monkeypatch.setattr(attempts, "landed", lambda code_root, registry, ledger: attempts.files_landed(registry, ledger))
+    monkeypatch.setitem(budget.BUCKET_OF, "STUB", None)
     return path
+
+
+# The real functions, kept before a fixture can replace them.
+_unstubbed_landed, _unstubbed_log_path, _unstubbed_allowed = attempts.landed, attempts.log_path, attempts.allowed_log_ids
 
 
 def _register_args(registry: Path, *, n_trials: int, family: str = "STUB", ledger: Path | None = None) -> list[str]:
@@ -180,6 +189,25 @@ def _register_args(registry: Path, *, n_trials: int, family: str = "STUB", ledge
         "--n-trials",
         str(n_trials),
         *([] if ledger is None else ["--ledger", str(ledger)]),
+    ]
+
+
+def _as_trial(name: str, tmp_path: Path) -> list[str]:
+    known = subjects.SUBJECTS[name]
+    if known.verdict is None:
+        return []
+    return [
+        "--register",
+        "--registry",
+        str(tmp_path / "registry.jsonl"),
+        "--ledger",
+        str(tmp_path / "ledger.jsonl"),
+        "--iteration",
+        "iter-001",
+        "--family",
+        known.family,
+        "--n-trials",
+        str(known.n_trials),
     ]
 
 
@@ -198,7 +226,7 @@ def _log_lines(path: Path) -> list[dict]:
 def test_eval_reports_the_block_and_writes_no_record_without_register(tmp_path, monkeypatch):
     root = _stub_dataset(tmp_path)
     registry = tmp_path / "registry.jsonl"
-    _stub_subject(monkeypatch)
+    _stub_subject(monkeypatch, verdict=None, no_verdict=None)
     _anchor(monkeypatch, root, registry)
 
     result = runner.invoke(app, ["research", "eval", "--subject", "stub", "--dataset", "ohlc-test"])
@@ -272,10 +300,12 @@ def test_a_second_trial_in_a_family_needs_n_trials_above_the_recorded_count(tmp_
 
     repeat = runner.invoke(app, [*base, *_register_args(registry, n_trials=1)])
     assert repeat.exit_code != 0
-    assert "n_trials_in_family" in repeat.output
+    assert "stub declares n_trials 1, and family STUB needs at least 2: 1 records, this run" in repeat.output
+    assert "stub's n_trials is frozen by its trial 1: declare a new subject (a new name) for the further trial" in repeat.output
     assert len(registry.read_text().splitlines()) == 1
 
-    second = runner.invoke(app, [*base, *_register_args(registry, n_trials=2)])
+    _stub_subject(monkeypatch, "stub-2", n_trials=2)
+    second = runner.invoke(app, [*_stub_eval("stub-2"), *_register_args(registry, n_trials=2)])
     assert second.exit_code == 0, second.output
     assert len(registry.read_text().splitlines()) == 2
 
@@ -768,7 +798,7 @@ def test_a_registered_trial_is_the_comparator_only_of_a_subject_naming_its_subje
     trial = json.loads(registry.read_text().splitlines()[-1])
     assert trial["schema_version"] == 6 and trial["invocation"]["subject"] == "stub"
     before = registry.read_text().splitlines()
-    _stub_subject(monkeypatch, "follower", incumbent=incumbent)
+    _stub_subject(monkeypatch, "follower", incumbent=incumbent, n_trials=2)
 
     result = runner.invoke(
         app, [*_stub_eval("follower"), "--comparator-trial", str(trial["trial_id"]), *_register_args(registry, n_trials=2)]
@@ -1092,7 +1122,7 @@ def _rolling_set(tmp_path: Path, *, pairs: tuple[str, ...] = _EUR_PAIRS, **chain
     return root
 
 
-def _rolling_subject(monkeypatch) -> list:
+def _rolling_subject(monkeypatch, **declared) -> list:
     """A subject over the ten assets reading 1440 as the production builds do, returning fixed metrics so no fit's minimum
     history applies to a four-day chain; the list it returns gains each build's `as_of`."""
     calls = []
@@ -1103,7 +1133,7 @@ def _rolling_subject(monkeypatch) -> list:
         return {"sharpe": 1.0}
 
     assets = CrossfreqSystemConfig().assets
-    subject = subjects.Subject("rolling-stub", (1440,), assets, build, **_STUB_DECLARED)
+    subject = subjects.Subject("rolling-stub", (1440,), assets, build, **(_STUB_DECLARED | declared))
     monkeypatch.setitem(subjects.SUBJECTS, "rolling-stub", subject)
     return calls
 
@@ -1114,7 +1144,7 @@ def _rolling_eval(*args: str) -> list[str]:
 
 def test_eval_on_a_chained_set_requires_as_of(tmp_path, monkeypatch):
     _anchor(monkeypatch, _rolling_set(tmp_path))
-    calls = _rolling_subject(monkeypatch)
+    calls = _rolling_subject(monkeypatch, verdict=None, no_verdict=None)
 
     result = runner.invoke(app, _rolling_eval())
 
@@ -1127,7 +1157,7 @@ def test_eval_on_a_chained_set_requires_as_of(tmp_path, monkeypatch):
 @pytest.mark.parametrize("flags", [["--as-of", "2026-10-03"], ["--accept-holes"]], ids=["as-of", "accept-holes"])
 def test_eval_on_an_unchained_set_refuses_as_of(tmp_path, monkeypatch, flags):
     _anchor(monkeypatch, _stub_dataset(tmp_path))
-    _stub_subject(monkeypatch)
+    _stub_subject(monkeypatch, verdict=None, no_verdict=None)
 
     result = runner.invoke(app, ["research", "eval", "--subject", "stub", "--dataset", "ohlc-test", *flags])
 
@@ -1190,7 +1220,7 @@ def test_a_register_run_records_the_invocation_that_produced_it(tmp_path, monkey
 
 def test_eval_refuses_a_hole_and_reads_across_it_with_accept_holes(tmp_path, monkeypatch):
     _anchor(monkeypatch, _rolling_set(tmp_path, holes={date(2026, 10, 2): {"BTC/EUR", "SOL/EUR"}}))
-    _rolling_subject(monkeypatch)
+    _rolling_subject(monkeypatch, verdict=None, no_verdict=None)
 
     refused = runner.invoke(app, _rolling_eval("--as-of", "2026-10-03"))
 
@@ -1209,7 +1239,7 @@ def test_eval_refuses_a_hole_and_reads_across_it_with_accept_holes(tmp_path, mon
 def test_a_chained_set_missing_a_required_pair_is_refused_naming_it(tmp_path, monkeypatch):
     held = tuple(pair for pair in _EUR_PAIRS if pair not in ("AVAX/EUR", "XRP/EUR"))
     _anchor(monkeypatch, _rolling_set(tmp_path, pairs=held))
-    calls = _rolling_subject(monkeypatch)
+    calls = _rolling_subject(monkeypatch, verdict=None, no_verdict=None)
 
     result = runner.invoke(app, _rolling_eval("--as-of", "2026-10-03"))
 
@@ -1224,7 +1254,7 @@ def test_eval_refuses_a_chained_set_whose_base_line_cannot_be_read(tmp_path, mon
     root = _rolling_set(tmp_path)
     (root / "ohlc-rolling" / _BASE_LINE).write_bytes(b"{}")
     _anchor(monkeypatch, root)
-    _rolling_subject(monkeypatch)
+    _rolling_subject(monkeypatch, verdict=None, no_verdict=None)
 
     result = runner.invoke(app, _rolling_eval("--as-of", "2026-10-03"))
 
@@ -1238,7 +1268,7 @@ def test_eval_refuses_a_rolling_index_it_cannot_list_in_one_line(tmp_path, monke
     root = _rolling_set(tmp_path)
     month = root / "ohlc-rolling" / "index/2026/10"
     _anchor(monkeypatch, root)
-    calls = _rolling_subject(monkeypatch)
+    calls = _rolling_subject(monkeypatch, verdict=None, no_verdict=None)
     os.chmod(month, 0o000)
     try:
         result = runner.invoke(app, _rolling_eval("--as-of", "2026-10-03"))
@@ -1255,7 +1285,7 @@ def test_eval_on_an_absent_dataset_names_it_and_the_fetch(tmp_path, monkeypatch)
     root = tmp_path / "data"
     root.mkdir()
     _anchor(monkeypatch, root)
-    calls = _rolling_subject(monkeypatch)
+    calls = _rolling_subject(monkeypatch, verdict=None, no_verdict=None)
 
     result = runner.invoke(app, _rolling_eval("--as-of", "2026-10-03"))
 
@@ -1268,7 +1298,7 @@ def test_eval_on_an_absent_dataset_names_it_and_the_fetch(tmp_path, monkeypatch)
 
 def test_the_window_reaches_the_rolling_reads(tmp_path, monkeypatch):
     _anchor(monkeypatch, _rolling_set(tmp_path))
-    _rolling_subject(monkeypatch)
+    _rolling_subject(monkeypatch, verdict=None, no_verdict=None)
 
     result = runner.invoke(
         app, _rolling_eval("--as-of", "2026-10-03", "--window", "2026-10-01 00:00:00+00:00", "2026-10-02 00:00:00+00:00")
@@ -1555,7 +1585,7 @@ def test_the_b2_subject_registers_each_metric_from_its_own_call(tmp_path, monkey
     result = runner.invoke(
         app,
         ["research", "eval", "--subject", "b2-funding-derisk", "--dataset", "ohlc-test", "--window", *window]
-        + _register_args(registry, n_trials=1, ledger=ledger),
+        + _register_args(registry, n_trials=1, family="B2", ledger=ledger),
     )
     assert result.exit_code == 0, result.output
     if arm_a_passes:
@@ -1697,7 +1727,7 @@ def test_the_b2_subject_refuses_a_funding_file_it_cannot_read_naming_it(tmp_path
     spoil(root / "derivatives-funding" / _B2_SPOILT / "funding.parquet")
     _anchor(monkeypatch, root)
 
-    result = runner.invoke(app, _b2_eval(_B2_START, _B2_WINDOW_BARS))
+    result = runner.invoke(app, [*_b2_eval(_B2_START, _B2_WINDOW_BARS), *_as_trial("b2-funding-derisk", tmp_path)])
 
     assert result.exit_code == 1
     assert isinstance(result.exception, SystemExit), "a refusal ends in an exit, never a traceback"
@@ -1712,7 +1742,7 @@ def test_the_b2_subject_refuses_a_funding_file_it_may_not_open_naming_it(tmp_pat
     _anchor(monkeypatch, root)
     os.chmod(spoilt, 0o000)
     try:
-        result = runner.invoke(app, _b2_eval(_B2_START, _B2_WINDOW_BARS))
+        result = runner.invoke(app, [*_b2_eval(_B2_START, _B2_WINDOW_BARS), *_as_trial("b2-funding-derisk", tmp_path)])
     finally:
         os.chmod(spoilt, 0o644)
 
@@ -1734,7 +1764,7 @@ def test_a_price_file_the_union_cannot_read_is_refused_naming_it(tmp_path, monke
     spoil(root / "ohlc-test" / "ETH/EUR/240.parquet")
     _anchor(monkeypatch, root)
 
-    result = runner.invoke(app, _b2_eval(_B2_START, _B2_WINDOW_BARS))
+    result = runner.invoke(app, [*_b2_eval(_B2_START, _B2_WINDOW_BARS), *_as_trial("b2-funding-derisk", tmp_path)])
 
     assert result.exit_code == 1
     assert isinstance(result.exception, SystemExit), "a refusal ends in an exit, never a traceback"
@@ -1780,7 +1810,7 @@ def test_the_b2_subject_refuses_a_window_it_cannot_evaluate_naming_it(tmp_path, 
     _anchor(monkeypatch, _b2_dataset(tmp_path, start=start, flat=flat))
     args = _b2_eval(start, bars)
 
-    result = runner.invoke(app, args)
+    result = runner.invoke(app, [*args, *_as_trial("b2-funding-derisk", tmp_path)])
 
     assert result.exit_code == 1
     assert isinstance(result.exception, SystemExit), "a refusal ends in an exit, never a traceback"
@@ -1810,7 +1840,7 @@ def test_the_b2_subject_refuses_an_asset_too_thin_in_the_window_naming_the_windo
     _anchor(monkeypatch, root)
     args = _b2_eval(_B2_START, _B2_WINDOW_BARS)
 
-    result = runner.invoke(app, args)
+    result = runner.invoke(app, [*args, *_as_trial("b2-funding-derisk", tmp_path)])
 
     assert result.exit_code == 1
     assert isinstance(result.exception, SystemExit), "a refusal ends in an exit, never a traceback"
@@ -1869,7 +1899,7 @@ def test_the_b2_subject_refuses_a_window_its_benchmark_never_trades_naming_it(tm
     monkeypatch.setattr(subjects, "benchmark_4h_net_of_cost", lambda prices, *, cost_per_side: [0.0] * (len(prices["BTC"]) - 1))
     args = _b2_eval(_B2_START, _B2_WINDOW_BARS)
 
-    result = runner.invoke(app, args)
+    result = runner.invoke(app, [*args, *_as_trial("b2-funding-derisk", tmp_path)])
 
     assert result.exit_code == 1
     assert isinstance(result.exception, SystemExit), "a refusal ends in an exit, never a traceback"
@@ -2463,7 +2493,10 @@ def test_a_b1_hourly_rv_subject_refuses_as_of_before_any_read(tmp_path, monkeypa
 
     monkeypatch.setattr(subjects, "_capturing_union", read)
 
-    result = runner.invoke(app, ["research", "eval", "--subject", name, "--dataset", "ohlc-rolling", "--as-of", "2026-10-03"])
+    result = runner.invoke(
+        app,
+        ["research", "eval", "--subject", name, "--dataset", "ohlc-rolling", "--as-of", "2026-10-03", *_as_trial(name, tmp_path)],
+    )
 
     assert result.exit_code == 1
     assert isinstance(result.exception, SystemExit), "a refusal ends in an exit, never a traceback"
@@ -2486,7 +2519,9 @@ def test_b1_hourly_rv_names_an_hourly_file_it_cannot_read(tmp_path, monkeypatch,
     spoil(root / "ohlc-test" / "SOL/EUR/60.parquet")
     _anchor(monkeypatch, root)
 
-    result = runner.invoke(app, ["research", "eval", "--subject", "b1-hourly-rv", "--dataset", "ohlc-test"])
+    result = runner.invoke(
+        app, ["research", "eval", "--subject", "b1-hourly-rv", "--dataset", "ohlc-test", *_as_trial("b1-hourly-rv", tmp_path)]
+    )
 
     assert result.exit_code == 1
     assert isinstance(result.exception, SystemExit), "a refusal ends in an exit, never a traceback"
@@ -2515,7 +2550,9 @@ def test_b1_hourly_rv_refuses_a_build_whose_arm_a_never_trades_or_whose_weights_
     _anchor(monkeypatch, _b1_hourly_rv_dataset(tmp_path))
     freeze(monkeypatch)
 
-    result = runner.invoke(app, ["research", "eval", "--subject", "b1-hourly-rv", "--dataset", "ohlc-test"])
+    result = runner.invoke(
+        app, ["research", "eval", "--subject", "b1-hourly-rv", "--dataset", "ohlc-test", *_as_trial("b1-hourly-rv", tmp_path)]
+    )
 
     assert result.exit_code == 1
     assert isinstance(result.exception, SystemExit), "a refusal ends in an exit, never a traceback"
@@ -2536,7 +2573,9 @@ def test_a_b1_hourly_rv_history_the_bar_cannot_read_is_refused_before_the_arms_a
 
     monkeypatch.setattr(ObservedReader, "read_series", recording_read)
 
-    result = runner.invoke(app, ["research", "eval", "--subject", "b1-hourly-rv", "--dataset", "ohlc-test"])
+    result = runner.invoke(
+        app, ["research", "eval", "--subject", "b1-hourly-rv", "--dataset", "ohlc-test", *_as_trial("b1-hourly-rv", tmp_path)]
+    )
 
     assert result.exit_code == 1
     assert isinstance(result.exception, SystemExit)
@@ -2622,7 +2661,7 @@ def test_every_subject_evaluates_its_fixture_and_ends_an_input_it_cannot_evaluat
         spoilt = f"ohlc-test/{asset}/EUR/{interval}.parquet"
         spoil(root / spoilt)
 
-    result = runner.invoke(app, args)
+    result = runner.invoke(app, [*args, *_as_trial(name, tmp_path)])
 
     assert result.exception is None or isinstance(result.exception, SystemExit), "a refusal ends in an exit, never a traceback"
     if case == "evaluates":
@@ -2780,3 +2819,657 @@ def test_attempts_init_writes_one_genesis_line_and_prints_its_allowlist_row(tmp_
     again = runner.invoke(app, ["research", "attempts-init"])
     assert again.exit_code == 1 and "exists: a log is created once" in again.output
     assert len(attempts.AttemptLog(path).lines) == 1
+
+
+def _refused_before_the_fit(tmp_path, monkeypatch, *, registry: Path | None = None, flags: dict | None = None, **declared) -> str:
+    registry = registry or tmp_path / "registry.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    calls = _stub_subject(monkeypatch, **declared)
+    typed = {"family": declared.get("family", "STUB"), "n_trials": declared.get("n_trials", 1), **(flags or {})}
+    before = _log_lines(attempts.log_path(_REPO))
+
+    result = runner.invoke(app, [*_stub_eval(), *_register_args(registry, **typed)])
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert calls == [] and _log_lines(attempts.log_path(_REPO)) == before
+    return result.output
+
+
+def _planted(path: Path, *subjects_ended: tuple[str, str | None], family: str = "STUB") -> None:
+    """Another session's attempts, each ended with its verdict, or left open for None."""
+    log = attempts.AttemptLog(path)
+    for subject, verdict in subjects_ended:
+        invocation = {
+            "subject": subject,
+            "dataset": "ohlc-test",
+            "window": None,
+            "as_of": None,
+            "accept_holes": False,
+            "comparator_trial": None,
+            "commit": _CLEAN_HEAD,
+        }
+        attempt = log.begin(
+            lambda lines: None,
+            invocation=invocation,
+            spec_hash="c" * 64,
+            family=family,
+            bucket=None,
+            n_trials=1,
+            worktree=path.parent,
+            branch="research/elsewhere",
+            registry=path.parent / "r.jsonl",
+            ledger=path.parent / "l.jsonl",
+        )
+        if verdict is not None:
+            log.end(attempt, verdict=verdict, metrics={"sharpe": 0.5})
+
+
+_SEED_BLOCK = {
+    "ohlc-test": {
+        "files": {"BTC/EUR/1440.parquet": "c" * 64},
+        "rows": 10,
+        "span": ["2020-01-01 00:00:00+00:00", "2020-01-10 00:00:00+00:00"],
+    }
+}
+
+
+def _begin_line_hash(path: Path, attempt: int) -> str:
+    return next(line["line_hash"] for line in _log_lines(path) if line["kind"] == "begin" and line["attempt"] == attempt)
+
+
+def _seed(
+    registry: Path,
+    family: str,
+    count: int,
+    *,
+    log: str = "e" * 32,
+    first_id: int = 1,
+    subject: str = "seed",
+    begin_of=lambda attempt_id: f"{attempt_id:064x}",
+) -> None:
+    for n in range(1, count + 1):
+        TrialRegistry(registry).append(
+            iteration="iter-001",
+            family=family,
+            spec_hash="s",
+            datasets=_SEED_BLOCK,
+            seeds=[0],
+            metrics={"sharpe": 0.3},
+            invocation={
+                "subject": subject,
+                "dataset": "ohlc-test",
+                "window": None,
+                "as_of": None,
+                "accept_holes": False,
+                "comparator_trial": None,
+                "commit": _CLEAN_HEAD,
+            },
+            n_trials_in_family=n,
+            verdict="reject",
+            run_ref="cli/registry/record.py",
+            attempt={"log": log, "id": first_id + n - 1, "begin": begin_of(first_id + n - 1), "absorbs": [], "counted": []},
+        )
+
+
+def test_a_run_on_an_abandoned_branch_is_counted_by_the_next_registration(tmp_path, monkeypatch):
+    main, worktree = tmp_path / "main", tmp_path / "wt"
+    _git_repo(main, _STUB_SPEC)
+    subprocess.run(
+        ["git", "-C", str(main), "worktree", "add", "-q", "-b", "research/x", str(worktree)], check=True, capture_output=True
+    )
+    log = main / ".local" / "trial-attempts.jsonl"
+    log.parent.mkdir()
+    log_id = attempts.init_log(log, host="zcrypto-test")
+    (tmp_path / "trial-attempt-logs.txt").write_text(f"{log_id} zcrypto-test\n")
+    monkeypatch.setattr(
+        attempts,
+        "log_path",
+        lambda root: _unstubbed_log_path(root) if Path(root).is_relative_to(tmp_path) else tmp_path / "stray.jsonl",
+    )
+    _anchor(monkeypatch, _stub_dataset(tmp_path))
+    _stub_subject(monkeypatch)
+    monkeypatch.setattr(research_command, "_REPO_ROOT", worktree)
+    assert runner.invoke(app, [*_stub_eval(), *_register_args(worktree / "registry.jsonl", n_trials=1)]).exit_code == 0
+    subprocess.run(["git", "-C", str(main), "worktree", "remove", "--force", str(worktree)], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(main), "branch", "-q", "-D", "research/x"], check=True, capture_output=True)
+    monkeypatch.setattr(research_command, "_REPO_ROOT", main)
+    calls = _stub_subject(monkeypatch, "stub-2")
+
+    refused = runner.invoke(app, [*_stub_eval("stub-2"), *_register_args(main / "registry.jsonl", n_trials=1)])
+
+    assert refused.exit_code == 1 and f"{log_id[:8]}#1 stub adopt" in refused.output and "on research/x" in refused.output
+    assert calls == []
+    _stub_subject(monkeypatch, "stub-2", n_trials=2)
+    admitted = runner.invoke(app, [*_stub_eval("stub-2"), *_register_args(main / "registry.jsonl", n_trials=2)])
+    assert admitted.exit_code == 0, admitted.output
+    spec_hash = hashlib.sha256((main / _STUB_SPEC).read_bytes()).hexdigest()
+    assert json.loads((main / "registry.jsonl").read_text())["attempt"]["counted"] == [
+        {
+            "log": log_id,
+            "id": 1,
+            "begin": _begin_line_hash(log, 1),
+            "family": "STUB",
+            "subject": "stub",
+            "spec_hash": spec_hash,
+            "verdict": "adopt",
+            "metrics": {"sharpe": 1.0},
+        }
+    ]
+
+
+def test_a_run_refused_after_its_print_still_counts(tmp_path, monkeypatch, _attempts_log):
+    registry = tmp_path / "registry.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    _stub_subject(monkeypatch)
+    refused = runner.invoke(app, [*_stub_eval(), "--verdict", "park", *_register_args(registry, n_trials=1)])
+    assert refused.exit_code == 1 and '"sharpe": 1.0' in refused.output and not registry.exists()
+    assert _log_lines(_attempts_log)[-1]["verdict"] == "adopt"
+    calls = _stub_subject(monkeypatch, "stub-2")
+    assert runner.invoke(app, [*_stub_eval("stub-2"), *_register_args(registry, n_trials=1)]).exit_code == 1 and calls == []
+
+    retry = runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1)])
+
+    assert retry.exit_code == 0, retry.output
+    assert json.loads(registry.read_text())["attempt"]["absorbs"] == [{"id": 1, "begin": _begin_line_hash(_attempts_log, 1)}]
+
+
+def test_a_retry_whose_numbers_moved_is_refused_after_its_print_and_both_count(tmp_path, monkeypatch, _attempts_log):
+    registry = tmp_path / "registry.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    _stub_subject(monkeypatch)
+    assert runner.invoke(app, [*_stub_eval(), "--verdict", "park", *_register_args(registry, n_trials=1)]).exit_code == 1
+    _stub_subject(monkeypatch, metrics={"sharpe": 2.0})
+
+    retry = runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1)])
+
+    log8 = attempts.AttemptLog(_attempts_log).log_id[:8]
+    assert retry.exit_code == 1 and '"sharpe": 2.0' in retry.output and f"{log8}#1" in retry.output and not registry.exists()
+    _stub_subject(monkeypatch, "stub-2", n_trials=2)
+    third = runner.invoke(app, [*_stub_eval("stub-2"), *_register_args(registry, n_trials=2)])
+    assert third.exit_code == 1 and f"{log8}#1" in third.output and f"{log8}#2" in third.output
+
+
+def _end_refused(self, attempt, **outcome):
+    raise OSError("No space left on device")
+
+
+@pytest.mark.parametrize(
+    ("refused", "figure"),
+    [
+        pytest.param("after-its-print", 3, id="after-its-print"),
+        pytest.param("before-the-fit", 3, id="before-the-fit"),
+        pytest.param("open-and-held", 2, id="open-and-held"),
+        pytest.param("frozen", 3, id="frozen"),
+    ],
+)
+def test_raising_n_trials_to_the_figure_a_refusal_names_admits_the_next_run(tmp_path, monkeypatch, _attempts_log, refused, figure):
+    registry = tmp_path / "registry.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    _stub_subject(monkeypatch)
+    if refused == "after-its-print":
+        stub = subjects.SUBJECTS["stub"]
+
+        def build(reader, dataset, window, as_of=None, accept_holes=False):
+            _planted(_attempts_log, ("elsewhere", None))
+            return stub.build(reader, dataset, window, as_of, accept_holes)
+
+        monkeypatch.setitem(subjects.SUBJECTS, "stub", replace(stub, build=build))
+        first = runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1)])
+        assert '"sharpe": 1.0' in first.output, first.output
+        assert "0 records, the next run, and 2 attempts that never landed" in first.output, first.output
+    else:
+        if refused == "before-the-fit":
+            assert runner.invoke(app, [*_stub_eval(), "--verdict", "park", *_register_args(registry, n_trials=1)]).exit_code == 1
+        else:
+            with monkeypatch.context() as patch:
+                patch.setattr(attempts.AttemptLog, "end", _end_refused)
+                # Its attempt stands for one whose process exited once its end was refused.
+                patch.setattr(attempts, "_process_marks", lambda: {"pid": os.getpid(), "boot": "another boot"})
+                assert runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1)]).exit_code == 1
+        if refused == "frozen":
+            _seed(registry, "STUB", 1, subject="stub")
+        else:
+            _planted(_attempts_log, ("elsewhere", "reject"))
+        first = runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1)])
+        assert '"sharpe"' not in first.output, first.output
+    named = re.search(r"family STUB needs at least (\d+)", first.output)
+    assert first.exit_code == 1 and named and int(named.group(1)) == figure, first.output
+    assert ("stub's n_trials is frozen by its trial 1" in first.output) == (refused == "frozen"), first.output
+    n, subject = figure, "stub-2" if refused == "frozen" else "stub"
+    # This stub's numbers move with its declared count and its spec file stays, the case where the figure is exact.
+    _stub_subject(monkeypatch, subject, n_trials=n, metrics={"sharpe": 1.0 / n})
+
+    retry = runner.invoke(app, [*_stub_eval(subject), *_register_args(registry, n_trials=n)])
+
+    assert retry.exit_code == 0, retry.output
+
+
+def test_a_retry_of_a_printed_attempt_at_the_budgets_edge_is_refused_before_its_fit(tmp_path, monkeypatch, _attempts_log):
+    registry = tmp_path / "registry.jsonl"
+    monkeypatch.setitem(budget.BUCKET_OF, "STUB", "B")
+    monkeypatch.setitem(budget.BUCKET_OF, "OTHER", "B")
+    _seed(registry, "OTHER", 24)
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    _stub_subject(monkeypatch)
+    assert runner.invoke(app, [*_stub_eval(), "--verdict", "park", *_register_args(registry, n_trials=1)]).exit_code == 1
+
+    output = _refused_before_the_fit(tmp_path, monkeypatch, registry=registry, n_trials=2, metrics={"sharpe": 2.0})
+
+    assert "bucket B has spent 25 of its 25 trials (24 records, 1 attempts that never landed)" in output
+    assert len(registry.read_text().splitlines()) == 24
+
+
+def test_a_bucket_filled_during_the_fit_refuses_the_run_after_its_print(tmp_path, monkeypatch, _attempts_log):
+    registry = tmp_path / "registry.jsonl"
+    monkeypatch.setitem(budget.BUCKET_OF, "STUB", "B")
+    monkeypatch.setitem(budget.BUCKET_OF, "OTHER", "B")
+    _seed(registry, "OTHER", 24)
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    _stub_subject(monkeypatch)
+    stub = subjects.SUBJECTS["stub"]
+
+    def build(reader, dataset, window, as_of=None, accept_holes=False):
+        _planted(_attempts_log, ("elsewhere", None), family="OTHER")
+        return stub.build(reader, dataset, window, as_of, accept_holes)
+
+    monkeypatch.setitem(subjects.SUBJECTS, "stub", replace(stub, build=build))
+
+    result = runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1)])
+
+    assert result.exit_code == 1 and '"sharpe": 1.0' in result.output, result.output
+    assert "bucket B has spent 25 of its 25 trials (24 records, 1 attempts that never landed)" in result.output
+    assert len(registry.read_text().splitlines()) == 24
+
+
+@pytest.mark.parametrize(
+    ("marks", "admitted"),
+    [
+        pytest.param(lambda: None, False, id="its-process-runs"),
+        pytest.param(lambda: {"pid": _reaped_pid(), "boot": attempts._boot_id()}, True, id="its-pid-reaped"),
+        pytest.param(lambda: {"pid": os.getpid(), "boot": "another boot"}, True, id="another-boot"),
+    ],
+)
+def test_an_open_attempt_at_the_budgets_edge_is_held_only_when_its_process_is_gone(
+    tmp_path, monkeypatch, _attempts_log, marks, admitted
+):
+    registry = tmp_path / "registry.jsonl"
+    monkeypatch.setitem(budget.BUCKET_OF, "STUB", "B")
+    monkeypatch.setitem(budget.BUCKET_OF, "OTHER", "B")
+    _seed(registry, "OTHER", 24)
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    _stub_subject(monkeypatch)
+    with monkeypatch.context() as patch:
+        patch.setattr(attempts.AttemptLog, "end", _end_refused)
+        if (planted := marks()) is not None:
+            patch.setattr(attempts, "_process_marks", lambda: planted)
+        assert runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1)]).exit_code == 1
+
+    if not admitted:
+        output = _refused_before_the_fit(tmp_path, monkeypatch, registry=registry, n_trials=2)
+        assert "bucket B has spent 25 of its 25 trials (24 records, 1 attempts that never landed)" in output
+        return
+    _stub_subject(monkeypatch, n_trials=2)
+    result = runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=2)])
+    assert result.exit_code == 0, result.output
+    lines = registry.read_text().splitlines()
+    assert len(lines) == 25 and json.loads(lines[-1])["attempt"]["absorbs"] == [
+        {"id": 1, "begin": _begin_line_hash(_attempts_log, 1)}
+    ]
+
+
+def test_a_stop_spends_nothing(tmp_path, monkeypatch, _attempts_log):
+    registry, ledger = tmp_path / "registry.jsonl", tmp_path / "ledger.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    _stub_subject(monkeypatch, verdict=lambda metrics: None)
+    assert runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1, ledger=ledger)]).exit_code == 0
+    assert _kept(ledger)[0]["attempt"]["id"] == 1
+    _stub_subject(monkeypatch, "stub-2")
+    # The stop's reading landed in `ledger`; this registration reads another, so the stop is not landed here.
+    elsewhere = tmp_path / "another-ledger.jsonl"
+    admitted = runner.invoke(app, [*_stub_eval("stub-2"), *_register_args(registry, n_trials=1, ledger=elsewhere)])
+    assert admitted.exit_code == 0, admitted.output
+
+
+def test_a_failed_build_logs_a_failed_end_and_counts_nothing(tmp_path, monkeypatch, _attempts_log):
+    registry = tmp_path / "registry.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    _raising_stub(monkeypatch)
+    assert runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1)]).exit_code == 1
+    assert _log_lines(_attempts_log)[-1]["failed"] == "SubjectError: the stub's window is too short"
+    _stub_subject(monkeypatch, "stub-2")
+    assert runner.invoke(app, [*_stub_eval("stub-2"), *_register_args(registry, n_trials=1)]).exit_code == 0
+
+
+def test_a_scratch_registry_run_is_an_orphan_once_the_committed_registry_is_the_target(tmp_path, monkeypatch, _attempts_log):
+    scratch, committed = tmp_path / "scratch.jsonl", tmp_path / "committed.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), committed)
+    _stub_subject(monkeypatch)
+    assert runner.invoke(app, [*_stub_eval(), *_register_args(scratch, n_trials=1)]).exit_code == 0
+    calls = _stub_subject(monkeypatch, "stub-2")
+    log8 = attempts.AttemptLog(_attempts_log).log_id[:8]
+    base = ["--register", "--iteration", "iter-001", "--family", "STUB"]
+    refused = runner.invoke(app, [*_stub_eval("stub-2"), *base, "--n-trials", "1"])
+    assert refused.exit_code == 1 and f"{log8}#1" in refused.output and calls == []
+    _stub_subject(monkeypatch, "stub-2", n_trials=2)
+    assert runner.invoke(app, [*_stub_eval("stub-2"), *base, "--n-trials", "2"]).exit_code == 0
+    assert [entry["id"] for entry in json.loads(committed.read_text())["attempt"]["counted"]] == [1]
+
+
+def test_an_open_attempt_in_the_family_raises_the_count(tmp_path, monkeypatch, _attempts_log):
+    registry = tmp_path / "registry.jsonl"
+    _planted(_attempts_log, ("elsewhere", None))
+    log8 = attempts.AttemptLog(_attempts_log).log_id[:8]
+    assert f"{log8}#1 elsewhere no end" in _refused_before_the_fit(tmp_path, monkeypatch, registry=registry)
+    _stub_subject(monkeypatch, n_trials=2)
+
+    admitted = runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=2)])
+
+    assert admitted.exit_code == 0, admitted.output
+    assert json.loads(registry.read_text())["attempt"]["counted"] == []
+
+
+def test_a_held_attempt_another_session_lands_mid_fit_is_absorbed_by_no_one_twice(tmp_path, monkeypatch, _attempts_log):
+    registry = tmp_path / "registry.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    _stub_subject(monkeypatch)
+    assert runner.invoke(app, [*_stub_eval(), "--verdict", "park", *_register_args(registry, n_trials=1)]).exit_code == 1
+    log_id, stub = attempts.AttemptLog(_attempts_log).log_id, subjects.SUBJECTS["stub"]
+
+    def build(reader, dataset, window, as_of=None, accept_holes=False):
+        _seed(registry, "OTHER", 1, log=log_id, begin_of=lambda attempt_id: _begin_line_hash(_attempts_log, attempt_id))
+        return stub.build(reader, dataset, window, as_of, accept_holes)
+
+    monkeypatch.setitem(subjects.SUBJECTS, "stub", replace(stub, build=build))
+
+    result = runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1)])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(registry.read_text().splitlines()[-1])["attempt"]["absorbs"] == []
+
+
+@pytest.mark.parametrize(
+    ("planted", "method", "fitted", "figure"),
+    [
+        pytest.param("a-begin", "begin", False, 2, id="a-begin-in-the-window"),
+        pytest.param("a-record", "begin", False, 2, id="a-record-in-the-window"),
+        pytest.param("a-begin", "locked", True, 3, id="a-begin-before-the-post-check"),
+    ],
+)
+def test_what_lands_between_a_read_and_the_lock_its_count_takes_is_counted(
+    tmp_path, monkeypatch, _attempts_log, planted, method, fitted, figure
+):
+    registry = tmp_path / "registry.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    calls = _stub_subject(monkeypatch)
+    real = getattr(attempts.AttemptLog, method)
+
+    def planting(self, *args, **kwargs):
+        monkeypatch.setattr(attempts.AttemptLog, method, real)
+        if planted == "a-begin":
+            _planted(_attempts_log, ("elsewhere", None))
+        else:
+            _seed(registry, "STUB", 1)
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(attempts.AttemptLog, method, planting)
+
+    result = runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1)])
+
+    named = re.search(r"family STUB needs at least (\d+)", result.output)
+    assert result.exit_code == 1 and named and int(named.group(1)) == figure, result.output
+    assert bool(calls) is fitted, result.output
+
+
+def test_a_plain_eval_of_a_ruled_subject_is_refused_before_any_read(tmp_path, monkeypatch):
+    _anchor(monkeypatch, tmp_path / "no-data")
+    calls = _stub_subject(monkeypatch)
+
+    result = runner.invoke(app, _stub_eval())
+
+    assert result.exit_code == 1 and calls == []
+    assert (
+        "stub declares a verdict rule, so every run of it is a trial: run it with --register; a ruleless pre-flight subject "
+        "reads the inputs without the trial's result"
+    ) in result.output
+
+
+def test_a_plain_eval_of_a_ruleless_subject_is_admitted(tmp_path, monkeypatch, _attempts_log):
+    _anchor(monkeypatch, _stub_dataset(tmp_path))
+    _stub_subject(monkeypatch, verdict=None, no_verdict=None, family=None, n_trials=None)
+    assert runner.invoke(app, _stub_eval()).exit_code == 0 and len(_log_lines(_attempts_log)) == 1
+
+
+def test_a_family_other_than_the_subjects_is_refused(tmp_path, monkeypatch):
+    output = _refused_before_the_fit(tmp_path, monkeypatch, flags={"family": "OTHER"})
+    assert "--family OTHER is not STUB, the family stub declares: pass --family STUB" in output
+
+
+def test_an_n_trials_other_than_the_subjects_is_refused(tmp_path, monkeypatch):
+    output = _refused_before_the_fit(tmp_path, monkeypatch, flags={"n_trials": 2})
+    assert "--n-trials 2 is not 1, the count stub declares and deflates at: pass --n-trials 1" in output
+
+
+def test_a_subject_counting_fewer_than_its_family_needs_is_refused_naming_each_orphan(tmp_path, monkeypatch, _attempts_log):
+    _planted(_attempts_log, ("elsewhere", "reject"), ("elsewhere-too", "park"))
+    log8 = attempts.AttemptLog(_attempts_log).log_id[:8]
+    output = _refused_before_the_fit(tmp_path, monkeypatch)
+    assert (
+        "stub declares n_trials 1, and family STUB needs at least 3: 0 records, this run, and 2 attempts that never landed"
+        in output
+    )
+    assert f"{log8}#1 elsewhere reject" in output and f"{log8}#2 elsewhere-too park" in output
+    assert "raise stub's n_trials, which its deflated Sharpe uses, commit, then run again" in output
+
+
+def test_a_bucket_at_its_budget_is_refused(tmp_path, monkeypatch):
+    registry = tmp_path / "registry.jsonl"
+    _seed(registry, "A1", 40)
+    output = _refused_before_the_fit(tmp_path, monkeypatch, registry=registry, family="A1", n_trials=41)
+    assert (
+        "bucket A has spent 40 of its 40 trials (40 records, 0 attempts that never landed), so this trial would exceed it: an "
+        "expansion is the owner's ruling, written into cli/registry/budget.py by a pull request that quotes it"
+    ) in output
+
+
+def test_a_bucket_one_below_its_budget_admits_its_last_trial(tmp_path, monkeypatch):
+    registry = tmp_path / "registry.jsonl"
+    _seed(registry, "A1", 39)
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    _stub_subject(monkeypatch, family="A1", n_trials=40)
+
+    result = runner.invoke(app, [*_stub_eval(), *_register_args(registry, family="A1", n_trials=40)])
+
+    assert result.exit_code == 0, result.output
+    assert len(registry.read_text().splitlines()) == 40
+
+
+def test_a_family_in_no_bucket_is_refused(tmp_path, monkeypatch):
+    output = _refused_before_the_fit(tmp_path, monkeypatch, family="ZZ")
+    assert "family ZZ is in no bucket of cli/registry/budget.py: add it with its bucket in a reviewed pull request" in output
+
+
+@pytest.mark.parametrize(
+    ("n_trials", "message"),
+    [
+        pytest.param(
+            2,
+            "stub declares n_trials 2, and its trial 1 landed at n_trials 1, which that record's deflated Sharpe used, so its n_trials is frozen: declare a new subject (a new name) for the further trial",
+            id="raised-count",
+        ),
+        pytest.param(
+            1,
+            "stub's n_trials is frozen by its trial 1: declare a new subject (a new name) for the further trial",
+            id="declared-count",
+        ),
+    ],
+)
+def test_a_landed_subjects_n_trials_is_frozen(tmp_path, monkeypatch, n_trials, message):
+    registry = tmp_path / "registry.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    _stub_subject(monkeypatch)
+    assert runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1)]).exit_code == 0
+
+    assert message in _refused_before_the_fit(tmp_path, monkeypatch, registry=registry, n_trials=n_trials)
+
+
+def _repo_with_develop(tmp_path: Path, monkeypatch, *records: dict, develop_at: str = "head") -> Path:
+    repo = tmp_path / "repo"
+    head = _git_repo(repo)
+    if records:
+        (repo / "docs" / "reference").mkdir(parents=True)
+        (repo / attempts.REGISTRY_RELPATH).write_text("".join(json.dumps(record) + "\n" for record in records))
+        subprocess.run(["git", "-C", str(repo), "add", "--", attempts.REGISTRY_RELPATH], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(repo), *_GIT_IDENTITY, "commit", "-q", "-m", "landed"], check=True, capture_output=True)
+        landed_at = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+        ).stdout.strip()
+        subprocess.run(["git", "-C", str(repo), "checkout", "-q", "--detach", head], check=True, capture_output=True)
+        head = landed_at if develop_at == "current" else head
+    if develop_at != "none":
+        subprocess.run(["git", "-C", str(repo), "update-ref", attempts.DEVELOP, head], check=True, capture_output=True)
+    monkeypatch.setattr(attempts, "landed", lambda code_root, registry, ledger: _unstubbed_landed(repo, registry, ledger))
+    return repo
+
+
+def test_the_register_path_makes_no_network_call(tmp_path, monkeypatch):
+    repo = _repo_with_develop(tmp_path, monkeypatch)
+    log = repo / ".local" / "trial-attempts.jsonl"
+    log.parent.mkdir()
+    log_id = attempts.init_log(log, host="zcrypto-test")
+    (repo / attempts.ALLOWLIST).parent.mkdir(parents=True, exist_ok=True)
+    (repo / attempts.ALLOWLIST).write_text(f"{log_id} zcrypto-test\n")
+    subprocess.run(["git", "-C", str(repo), "add", "--", attempts.ALLOWLIST], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repo), *_GIT_IDENTITY, "commit", "-q", "-m", "allowlist"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repo), "update-ref", attempts.DEVELOP, "HEAD"], check=True, capture_output=True)
+    monkeypatch.setattr(attempts, "log_path", lambda code_root: _unstubbed_log_path(repo))
+    monkeypatch.setattr(attempts, "allowed_log_ids", lambda code_root: _unstubbed_allowed(repo))
+    registry = tmp_path / "registry.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    _stub_subject(monkeypatch)
+    argvs, real_run = [], subprocess.run
+
+    def spy(argv, *args, **kwargs):
+        argvs.append([str(arg) for arg in argv])
+        return real_run(argv, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", spy)
+
+    result = runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1)])
+
+    assert result.exit_code == 0, result.output
+    assert any("show" in argv or "cat-file" in argv for argv in argvs), argvs
+    assert [argv for argv in argvs if {"fetch", "ls-remote", "gh"} & set(argv) or argv[0] == "gh"] == []
+
+
+@pytest.mark.parametrize("develop_at", ["stale", "current"])
+def test_a_stale_develop_requires_the_same_count(tmp_path, monkeypatch, _attempts_log, develop_at):
+    _planted(_attempts_log, ("elsewhere", "reject"))
+    log_id = attempts.AttemptLog(_attempts_log).log_id
+    landed_record = {
+        "trial_id": 1,
+        "family": "STUB",
+        "record_hash": "7" * 64,
+        "n_trials_in_family": 1,
+        "invocation": {"subject": "elsewhere"},
+        "attempt": {"log": log_id, "id": 1, "begin": _begin_line_hash(_attempts_log, 1), "absorbs": [], "counted": []},
+    }
+    # A legacy record: neither an invocation key nor an attempt key.
+    legacy = {"trial_id": 2, "family": "A1", "record_hash": "6" * 64, "n_trials_in_family": 1}
+    _repo_with_develop(tmp_path, monkeypatch, landed_record, legacy, develop_at=develop_at)
+    registry = tmp_path / "registry.jsonl"
+
+    assert "family STUB needs at least 2" in _refused_before_the_fit(tmp_path, monkeypatch, registry=registry)
+    _stub_subject(monkeypatch, n_trials=2)
+    assert runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=2)]).exit_code == 0
+    counted = [entry["id"] for entry in json.loads(registry.read_text())["attempt"]["counted"]]
+    assert counted == ([1] if develop_at == "stale" else [])
+
+
+def test_an_unresolvable_develop_is_refused(tmp_path, monkeypatch):
+    repo = _repo_with_develop(tmp_path, monkeypatch, develop_at="none")
+    output = _refused_before_the_fit(tmp_path, monkeypatch)
+    assert f"origin/develop does not resolve in {repo}: run git fetch origin develop, then run again" in output
+
+
+def test_an_unresolvable_develop_is_refused_before_the_empty_allowlist_it_reads(tmp_path, monkeypatch):
+    repo = _repo_with_develop(tmp_path, monkeypatch, develop_at="none")
+    monkeypatch.setattr(attempts, "allowed_log_ids", lambda code_root: _unstubbed_allowed(repo))
+    assert _unstubbed_allowed(repo) == frozenset()
+
+    output = _refused_before_the_fit(tmp_path, monkeypatch)
+
+    assert f"origin/develop does not resolve in {repo}: run git fetch origin develop, then run again" in output
+    assert "does not list" not in output
+
+
+def test_an_absent_log_is_refused_with_its_remedy(tmp_path, monkeypatch, _attempts_log):
+    registry = tmp_path / "registry.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    calls = _stub_subject(monkeypatch)
+    _attempts_log.unlink()
+
+    result = runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1)])
+
+    assert result.exit_code == 1 and calls == [] and not _attempts_log.exists()
+    assert (
+        f"no trial-attempts log at {_attempts_log}: restore it from a backup if one exists; otherwise create a new log with "
+        "zcrypto research attempts-init and add its id to docs/reference/trial-attempt-logs.txt by PR, saying what was lost"
+    ) in result.output
+
+
+def test_a_broken_log_is_refused_with_its_remedy(tmp_path, monkeypatch, _attempts_log):
+    registry = tmp_path / "registry.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    calls = _stub_subject(monkeypatch)
+    _attempts_log.write_text(_attempts_log.read_text().replace('"host":"zcrypto-test"', '"host":"elsewhere"'))
+
+    result = runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1)])
+
+    assert result.exit_code == 1 and calls == [] and not registry.exists()
+    assert f"{_attempts_log}: line 1 line_hash" in result.output
+    assert (
+        "rename it aside, then restore it from a backup if one exists; otherwise create a new log with zcrypto research "
+        "attempts-init and add its id to docs/reference/trial-attempt-logs.txt by PR, saying what was lost"
+    ) in result.output
+
+
+def test_an_unlisted_log_is_refused_with_its_remedy(tmp_path, monkeypatch, _attempts_log):
+    (tmp_path / "trial-attempt-logs.txt").write_text("")
+    log_id = attempts.AttemptLog(_attempts_log).log_id
+    output = _refused_before_the_fit(tmp_path, monkeypatch)
+    assert (
+        f"the trial-attempts log {_attempts_log} has id {log_id}, which docs/reference/trial-attempt-logs.txt on origin/develop "
+        "does not list: restore the listed log from a backup if one exists; otherwise add this id to "
+        "docs/reference/trial-attempt-logs.txt by PR, saying what was lost, and run again once it has merged and "
+        "origin/develop is fetched"
+    ) in output
+
+
+def test_a_log_lacking_a_landed_attempt_is_refused(tmp_path, monkeypatch, _attempts_log):
+    registry = tmp_path / "registry.jsonl"
+    _seed(registry, "STUB", 1, log=attempts.AttemptLog(_attempts_log).log_id, first_id=5)
+    output = _refused_before_the_fit(tmp_path, monkeypatch, registry=registry)
+    assert (
+        f"{_attempts_log} lacks attempt 5, which trial 1 carries: the log was truncated, replaced, restored from an older backup "
+        "or forked; rename it aside, then "
+        "restore it from a backup if one exists; otherwise create a new log with zcrypto research attempts-init and add its "
+        "id to docs/reference/trial-attempt-logs.txt by PR, saying what was lost"
+    ) in output
+
+
+def test_a_b2_run_logs_its_bucket_count_ledger_worktree_and_branch_in_its_begin_line(tmp_path, monkeypatch, _attempts_log):
+    code = tmp_path / "code"
+    _git_repo(code, _STUB_SPEC)
+    subprocess.run(["git", "-C", str(code), "checkout", "-q", "-b", "research/b2-run"], check=True, capture_output=True)
+    monkeypatch.setattr(research_command, "_REPO_ROOT", code)
+    registry, ledger = tmp_path / "registry.jsonl", tmp_path / "ledger.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    _stub_subject(monkeypatch, family="B2")
+
+    result = runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1, family="B2", ledger=ledger)])
+
+    assert result.exit_code == 0, result.output
+    begin = _log_lines(_attempts_log)[1]
+    assert (begin["family"], begin["bucket"], begin["n_trials"]) == ("B2", "B", 1)
+    assert (begin["ledger"], begin["registry"]) == (str(ledger.resolve()), str(registry.resolve()))
+    assert (begin["worktree"], begin["branch"]) == (str(code.resolve()), "research/b2-run")
