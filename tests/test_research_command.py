@@ -50,6 +50,7 @@ from cli.portfolio.builder import CombinedSystemConfig, build_combined_system
 from cli.portfolio.crossfreq_system import CrossfreqSystemConfig, _ffill_btc
 from cli.portfolio.errors import PortfolioError
 from cli.portfolio.record44_legs import benchmark_4h_net_of_cost, calendar_year_slices
+from cli.registry import attempts
 from cli.registry.observed import ObservedReader
 from cli.registry.record import compute_hash
 from cli.research import command as research_command
@@ -2590,3 +2591,19 @@ def test_a_plain_python_exception_in_a_build_escapes_as_itself(tmp_path, monkeyp
 
     assert type(result.exception) is ValueError, "a plain Python exception is a fault in the code, never a refusal"
     assert str(result.exception) == "the stub's cause"
+
+
+def test_attempts_init_writes_one_genesis_line_and_prints_its_allowlist_row(tmp_path, monkeypatch):
+    path = tmp_path / "fresh-clone" / ".local" / "trial-attempts.jsonl"
+    path.parent.mkdir(parents=True)
+    monkeypatch.setattr(attempts, "log_path", lambda code_root: path)
+
+    result = runner.invoke(app, ["research", "attempts-init"])
+
+    assert result.exit_code == 0, result.output
+    log = attempts.AttemptLog(path)
+    assert len(log.lines) == 1 and f"{log.log_id} {log.host}" in result.output.splitlines()
+    assert "docs/reference/trial-attempt-logs.txt" in result.output
+    again = runner.invoke(app, ["research", "attempts-init"])
+    assert again.exit_code == 1 and "exists: a log is created once" in again.output
+    assert len(attempts.AttemptLog(path).lines) == 1

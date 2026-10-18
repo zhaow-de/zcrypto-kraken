@@ -14,7 +14,7 @@ from typing import Optional
 import typer
 
 from cli.data import rolling
-from cli.registry import VERDICTS, ReadingLedger, TrialRegistry
+from cli.registry import VERDICTS, ReadingLedger, TrialRegistry, attempts
 from cli.registry.errors import RegistryError
 from cli.registry.observed import ObservedReader
 from cli.research.subjects import EVALUATION_ERRORS, LEGACY_INCUMBENTS, SUBJECTS, Subject, SubjectError, required_relpaths
@@ -357,3 +357,16 @@ def eval_subject(
         raise _abort(f"the registry refused this record: {exc}") from exc
     typer.echo(f"recorded trial {record.trial_id} in family {record.family}")
     _echo_replay_case(f"trial-{record.trial_id}")
+
+
+@research_app.command("attempts-init")
+def attempts_init() -> None:
+    """Create this clone's trial-attempts log, once, and print the row its id takes in the committed allowlist."""
+    try:
+        path = attempts.log_path(_REPO_ROOT)
+        attempts.init_log(path)
+        log = attempts.AttemptLog(path)
+    except attempts.AttemptLogError as exc:
+        raise _abort(str(exc)) from exc
+    typer.echo(f"created {path}; add this row to docs/reference/trial-attempt-logs.txt by PR:")
+    typer.echo(f"{log.log_id} {log.host}")

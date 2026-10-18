@@ -22,6 +22,7 @@ _STEP = re.compile(
 _MKDIR = (
     r'^    "\$\{RSYNC\[@\]\}" --delete --rsync-path="mkdir -m 700 -p \$\{\(q\)root\} \$\{\(q\)root\}/claude-\$UID && rsync" \\$'
 )
+_LOCAL_EXCLUDES = re.compile(r"^LOCAL_EXCLUDES=\(.*\)$", re.M)
 
 
 @pytest.mark.parametrize(
@@ -60,3 +61,31 @@ def test_the_scratchpad_step_syncs_the_per_uid_directory_under_each_root_to_the_
         "the source or the destination is no longer the per-uid directory under the root walked"
     )
     assert not re.search(r"/tmp/claude", text), "a literal per-uid directory is back in the script"
+
+
+def test_the_local_mirror_leaves_each_machines_trial_attempts_log_and_its_torn_copies_where_they_are(tmp_path):
+    (line,) = _LOCAL_EXCLUDES.findall(SCRIPT.read_text())
+    source, destination = tmp_path / "source", tmp_path / "destination"
+    for root in (source, destination):
+        root.mkdir()
+        (root / "trial-attempts.jsonl").write_text(f"{root.name}\n")
+        (root / f"trial-attempts.jsonl.torn-{root.name}").write_text(f"{root.name}\n")
+    (source / "memo.md").write_text("memo\n")
+    (destination / "retro.md").write_text("destination only\n")
+    # `bash` runs the zsh script's array line, which means the same in both, so the suite needs no zsh.
+    mirror = f'{line}\nrsync -a --delete "${{LOCAL_EXCLUDES[@]}}" "$1/" "$2/"'
+    subprocess.run(["bash", "-c", mirror, "bash", str(source), str(destination)], check=True, capture_output=True)
+
+    kept = sorted(path.name for path in destination.iterdir())
+    assert kept == ["memo.md", "trial-attempts.jsonl", "trial-attempts.jsonl.torn-destination"], kept
+    assert (destination / "trial-attempts.jsonl").read_text() == "destination\n"
+
+
+def test_both_local_rsyncs_pass_the_exclusions():
+    # config-selector-ok: an rsync command, not a setting; a comment line naming both moves the count off 2
+    rsyncs = [line for line in SCRIPT.read_text().splitlines() if '"${RSYNC[@]}"' in line and '"$REPO_DIR/.local/"' in line]
+    # config-selector-ok: each line is one of the two rsync commands selected above
+    assert len(rsyncs) == 2 and all('"${LOCAL_EXCLUDES[@]}"' in line for line in rsyncs), (
+        "the dry run that counts the plan's .local/ deletions and the .local/ mirror no longer both pass LOCAL_EXCLUDES",
+        rsyncs,
+    )

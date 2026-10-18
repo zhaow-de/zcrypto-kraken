@@ -173,11 +173,15 @@ CLAUDE_EXCLUDES=(
   --exclude='/gh-pr-status-cache.json' --exclude='/mcp-needs-auth-cache.json' --exclude='/stats-cache.json'
   --exclude='/.last-cleanup' --exclude='/.last-update-result.json'
 )
+# Each machine keeps its own trial-attempts log, and the copies its heal sets aside, under its own
+# id: a mirrored log drops the destination's attempts no record names, or leaves two machines
+# appending under one id. An excluded path is also kept from --delete on the destination.
+LOCAL_EXCLUDES=(--exclude='/trial-attempts.jsonl*')
 src_memo_sum="$(md5sum "$REPO_DIR/.local/memo.md" 2>/dev/null | cut -d' ' -f1 || true)"
 dst_memo_sum="$(remote "md5sum ${(q)REPO_DIR}/.local/memo.md 2>/dev/null | cut -d' ' -f1" || true)"
 claude_deletes="$("${RSYNC[@]}" -n --delete --info=del "${CLAUDE_EXCLUDES[@]}" \
   "$HOME/.claude/" "$DEST:.claude/" 2>/dev/null | grep -c '^deleting ' || true)"
-local_deletes="$("${RSYNC[@]}" -n --delete --info=del "$REPO_DIR/.local/" "$DEST:$REPO_DIR/.local/" 2>/dev/null | grep -c '^deleting ' || true)"
+local_deletes="$("${RSYNC[@]}" -n --delete --info=del "${LOCAL_EXCLUDES[@]}" "$REPO_DIR/.local/" "$DEST:$REPO_DIR/.local/" 2>/dev/null | grep -c '^deleting ' || true)"
 dest_sentinel="$(remote "cat ${(q)SENTINEL} 2>/dev/null" || true)"
 
 # --- the plan, then the gate -------------------------------------------------------------------
@@ -256,9 +260,10 @@ rm -f "$BUNDLE"
 
 # --- .local/ (gitignored; nothing deleted from the memo is recoverable) ------------------------
 # The backup lands in $HOME, never inside $REPO_DIR: an untracked file there would fail the
-# both-repos-clean gate on the next run. The destination's .local/ is made to mirror the source's.
+# both-repos-clean gate on the next run. The destination's .local/ is made to mirror the source's,
+# LOCAL_EXCLUDES aside.
 remote "rm -rf ~/.zcrypto-local.pre-transport && cp -pr ${(q)REPO_DIR}/.local ~/.zcrypto-local.pre-transport 2>/dev/null || true"
-"${RSYNC[@]}" --delete "$REPO_DIR/.local/" "$DEST:$REPO_DIR/.local/"
+"${RSYNC[@]}" --delete "${LOCAL_EXCLUDES[@]}" "$REPO_DIR/.local/" "$DEST:$REPO_DIR/.local/"
 
 # ~/.claude/ moves except machine-local runtime, caches and auth material. Excludes are ANCHORED to
 # the top level: an unanchored `cache/` would also match plugins/cache/, which holds the pinned

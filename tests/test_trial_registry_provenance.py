@@ -15,12 +15,14 @@ from pathlib import Path
 import pytest
 
 from cli.registry import ReadingLedger, TrialRegistry, budget
+from cli.registry.attempts import parse_allowlist
 from cli.registry.record import run_ref_path_candidates, validate_caller_fields
 from cli.research.subjects import LEGACY_INCUMBENTS, SUBJECTS, Subject
 
 REPO = Path(__file__).resolve().parents[1]
 REGISTRY = REPO / "docs" / "reference" / "trial-registry.jsonl"
 LEDGER = REPO / "docs" / "reference" / "reading-ledger.jsonl"
+ALLOWLIST_FILE = REPO / "docs" / "reference" / "trial-attempt-logs.txt"
 
 # These trials name scratchpad scripts that were never committed and are gone. The registry is
 # append-only and hash-chained, so the records can never be repaired -- and the exemption may never
@@ -368,6 +370,12 @@ def test_the_budgets_and_buckets_are_the_master_plans_literals():
     assert budget.BUDGET == {"A": 40, "B": 25, "C": 10}, growth
     assert budget.BUCKET_OF == {"A1": "A", "B1": "B", "B2": "B", "P1": None}, growth
     assert {bucket for bucket in budget.BUCKET_OF.values() if bucket is not None} <= set(budget.BUDGET), growth
+
+
+def test_the_allowlist_rows_are_ids_and_hosts_each_id_once():
+    assert parse_allowlist(ALLOWLIST_FILE.read_text(encoding="utf-8")), (
+        "the allowlist lists every trial-attempts log ever created, one row each, and no row is ever removed"
+    )
 
 
 _B2 = "b2-funding-derisk"

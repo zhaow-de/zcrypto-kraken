@@ -25,6 +25,7 @@ _REMEDY_TAIL = (
 )
 # The real functions, kept before a fixture can replace them.
 _real_log_path, _real_landed = attempts.log_path, attempts.landed
+_real_allowed = attempts.allowed_log_ids
 
 
 def _begin_hash(attempt: int) -> str:
@@ -682,3 +683,29 @@ def test_landed_refuses_an_unresolvable_develop(tmp_path):
         AttemptLogError, match=re.escape(f"origin/develop does not resolve in {root}: run git fetch origin develop, then run again")
     ):
         _real_landed(root, tmp_path / "r.jsonl", tmp_path / "l.jsonl")
+
+
+@pytest.mark.parametrize(
+    ("text", "match"),
+    [
+        pytest.param(f"{_LOG.upper()} zcrypto-ops\n", "row 1", id="uppercase-id"),
+        pytest.param(f"{_LOG}\n", "row 1", id="no-host"),
+        pytest.param(f"{_LOG} zcrypto-ops\n{_LOG} zcrypto-red\n", "row 2 repeats", id="repeated-id"),
+    ],
+)
+def test_the_allowlist_refuses_a_malformed_or_repeated_row(text, match):
+    assert attempts.parse_allowlist(f"{_LOG} zcrypto-ops\n{_OTHER} zcrypto-red\n") == {_LOG: "zcrypto-ops", _OTHER: "zcrypto-red"}
+    with pytest.raises(AttemptLogError, match=match):
+        attempts.parse_allowlist(text)
+
+
+def test_the_allowed_ids_are_the_allowlists_on_origin_develop_never_a_branchs_own(tmp_path):
+    root = _repo(tmp_path / "repo")
+    develop = _commit(root, {attempts.ALLOWLIST: f"{_OTHER} zcrypto-red\n"})
+    subprocess.run(["git", "-C", str(root), "update-ref", attempts.DEVELOP, develop], check=True, capture_output=True)
+    _commit(root, {attempts.ALLOWLIST: f"{_OTHER} zcrypto-red\n{_LOG} zcrypto-ops\n"})
+
+    assert _real_allowed(root) == {_OTHER}
+    bare = _repo(tmp_path / "bare")
+    subprocess.run(["git", "-C", str(bare), "update-ref", attempts.DEVELOP, "HEAD"], check=True, capture_output=True)
+    assert _real_allowed(bare) == frozenset()

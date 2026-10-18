@@ -6,6 +6,7 @@ from __future__ import annotations
 import dataclasses
 import fcntl
 import os
+import re
 import secrets
 import socket
 import subprocess
@@ -23,8 +24,10 @@ from cli.registry.store import _read_healing
 LOG_RELPATH = Path(".local") / "trial-attempts.jsonl"
 REGISTRY_RELPATH = "docs/reference/trial-registry.jsonl"
 LEDGER_RELPATH = "docs/reference/reading-ledger.jsonl"
+ALLOWLIST = "docs/reference/trial-attempt-logs.txt"
 DEVELOP = "refs/remotes/origin/develop"
 BOOT_ID = Path("/proc/sys/kernel/random/boot_id")
+_ALLOWLIST_ROW = re.compile(r"[0-9a-f]{32} \S+")
 
 _LINE_KEYS = {
     "genesis": frozenset({"seq", "kind", "log_id", "host", "timestamp", "prev_hash", "line_hash"}),
@@ -406,13 +409,35 @@ def files_landed(registry: Path, ledger: Path) -> Landed:
     )
 
 
-def _shown(code_root: Path, ref: str, relpath: str) -> list[dict]:
+def _show(code_root: Path, ref: str, relpath: str) -> str:
     if _git(code_root, "cat-file", "-e", f"{ref}:{relpath}").returncode == 0:
         shown = _git(code_root, "show", f"{ref}:{relpath}")
         if shown.returncode != 0:
             raise AttemptLogError(f"git show {ref}:{relpath} in {code_root} exited {shown.returncode}: {shown.stderr.strip()}")
-        return [loads_strict(line) for line in shown.stdout.splitlines() if line]
-    return []
+        return shown.stdout
+    return ""
+
+
+def _shown(code_root: Path, ref: str, relpath: str) -> list[dict]:
+    return [loads_strict(line) for line in _show(code_root, ref, relpath).splitlines() if line]
+
+
+def parse_allowlist(text: str) -> dict[str, str]:
+    rows: dict[str, str] = {}
+    for n, row in enumerate(text.splitlines(), start=1):
+        if not row:
+            continue
+        if not _ALLOWLIST_ROW.fullmatch(row):
+            raise AttemptLogError(f"{ALLOWLIST}: row {n} is not a log id, 32 lowercase hex, a space and its host: {row!r}")
+        log_id, _, host = row.partition(" ")
+        if log_id in rows:
+            raise AttemptLogError(f"{ALLOWLIST}: row {n} repeats {log_id}: a log takes one row")
+        rows[log_id] = host
+    return rows
+
+
+def allowed_log_ids(code_root: Path) -> frozenset[str]:
+    return frozenset(parse_allowlist(_show(code_root, DEVELOP, ALLOWLIST)))
 
 
 def landed(code_root: Path, registry: Path, ledger: Path) -> Landed:

@@ -357,6 +357,7 @@ Evaluates a committed system over a frozen dataset, or over the rolling canonica
 
 ```bash
 zcrypto research eval --subject <NAME> --dataset <DIR> [OPTIONS]
+zcrypto research attempts-init
 ```
 
 | Option | Description |
@@ -380,6 +381,8 @@ zcrypto research eval --subject <NAME> --dataset <DIR> [OPTIONS]
 | `--ledger <PATH>` | Readings ledger to append to, by `--reading` or by a `--register` run whose rule gives no verdict. Defaults to the committed `docs/reference/reading-ledger.jsonl`. |
 
 The report names the metrics, the observed dataset block, and whether the dataset's own freeze record vouched for the bytes read (a dataset with no `manifest.json` reports as inert — nothing cross-checked the bytes — save the rolling canonical, which reports `chained` with its as-of day and line, every file the run read checked against its index). Exits **1** on every refusal, naming its cause; a `--register` or `--reading` run is refused before a single read for everything that needs no data. A run whose rule gives no verdict is kept as a reading and exits **0**. Every append then prints the replay case to run before each push that carries the line.
+
+`attempts-init` creates this clone's trial-attempts log, `.local/trial-attempts.jsonl` in the main checkout — one file for every worktree of the clone — once: it refuses a path that already exists, empty or not, and prints the row the new log's id takes, `<log id> <host>`, to add to `docs/reference/trial-attempt-logs.txt` by PR. Exits **1** on a refusal, else **0**.
 
 ### `zcrypto tick`<a name="zcrypto-tick"></a>
 
