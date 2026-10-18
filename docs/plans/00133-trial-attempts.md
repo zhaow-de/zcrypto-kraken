@@ -25,7 +25,7 @@
 - No test writes the real log, and none reaches the real allowlist through `allowed_log_ids` — the literal checks of Tasks 3 and 8 read the committed file directly: from Task 4 the conftest fixture holds both in each test's `tmp_path`; before it, a test that reaches the log patches `cli.registry.attempts.log_path` itself. Code under `cli/` reaches `cli/registry/attempts.py` only as `attempts.<name>` through `from cli.registry import attempts`, read when the call runs: never a name imported from it, which Task 4's `test_no_module_under_cli_imports_a_name_from_the_attempts_module` refuses, and never `attempts.<name>` bound to another name at import time — a module-level assignment, a default argument — which that walk does not see, since either keeps the real function whatever a test patches.
 - No trial is registered and no record or reading written on this branch; the one write outside this worktree is Task 3's single `zcrypto research attempts-init`, which creates the main checkout's log.
 - String literals under `cli/` — refusals, help texts — and the README rows carry no `Phase <N>`, `T<NNNN>`, `iter-<N>`, `spec <NNNNN>` or `D<N>` (`tests/test_internal_terms_not_operator_visible.py`, `tests/test_cli_help_hygiene.py`).
-- Every pytest run is preceded by `mkdir -p .tmp/plan-00133` and carries `-q -p no:cacheprovider --basetemp=.tmp/plan-00133/pt`; before each commit the direct readers of each changed path run (`bash infra/scripts/consumers.sh --direct <paths>`), and beside them the three walkers that read what a task writes, which `--direct` lists for no path under `cli/` or `tests/` — `tests/test_internal_terms_not_operator_visible.py`, every string literal under `cli/`, for a task that changes a file there; `tests/test_cli_help_hygiene.py`, every command's help through the app, for one that changes a help string; `tests/test_config_selectors_are_parsed.py`, every test module's `in` comparisons over the text of a file under `infra/`, for one whose test reads such a file, its case for that module alone (`-k <the module's file name>`) — never the full suite, which is CI's; never `tests/test_grafana_push_sh.py`.
+- Every pytest run is preceded by `mkdir -p .tmp/plan-00133` and carries `-q -p no:cacheprovider --basetemp=.tmp/plan-00133/pt`; before each commit the direct readers of each changed path run (`bash infra/scripts/consumers.sh --direct <paths>`), and beside them the three walkers that read what a task writes, which `--direct` lists for no path under `cli/` or `tests/` — `tests/test_internal_terms_not_operator_visible.py`, every string literal under `cli/`, for a task that changes a file there; `tests/test_cli_help_hygiene.py`, every command's help through the app, for one that changes a help string; `tests/test_config_selectors_are_parsed.py`, every test module's `in` comparisons over the text of a file under `infra/`, for one whose test reads such a file, its case for that module alone (`-k <the module's file name>`) — never the full suite, which is CI's; never `tests/test_grafana_push_sh.py`. A run of `tests/test_research_command.py` whole — Task 5 Step 6, Task 7 Step 6 — takes its cases `tests/slow-cases.txt` lists too, split by node id into parts each under 600 s, a blocking call's cap.
 - Every new guard — a test, an assertion, a refusal — is proven with `infra/scripts/mutate-probe.sh` after its task's commit (the script refuses a dirty tree); the tier is `full` (`uv run python infra/scripts/tier.py --paths cli/registry/store.py`), so each guard through its own `-k` case, never through a case listed in `tests/slow-cases.txt`: the two cases of Task 6's DSR tie join that list, each build taking over 10 s, so their probes are recorded `probe skipped: slow case`, and no other test this plan adds joins it. Each probe: `infra/scripts/mutate-probe.sh --file <F> --control '<sed>' --mutation '<sed>' -- uv run pytest <test file> -k '<case>' -q -p no:cacheprovider --basetemp=.tmp/plan-00133/pt`, expected `KILLED`; the mutation substitutes and never deletes a line (`if <cond>:` becomes `if False:`; a call `None`, or `True` where the call is a predicate a condition reads, so the mutated check accepts every value; a clause its neutral operand), each of its patterns one whose `grep -c` reads 1, or, where the text a row names repeats in its file — the flocks of Task 1 Step 4, the `.get` reads of its Step 5, a check written once before the fit and once after the print — its `s` command range-addressed, `/<start>/,/<end>/s/…/…/`, the start pattern one whose `grep -c` reads 1 and the range, from it through the first line after it that the end pattern matches, bounded to the one function or block the row names, `sed -n '/<start>/,/<end>/p' <F>` read before the probe; a `.py` file's sed is dry-run first with `sed '<expr>' <F> | uv run python -c 'import ast,sys; ast.parse(sys.stdin.read())'`, and a file of another kind is proven changed by mutate-probe's own refusal of a sed that changes nothing (rc 6); the control is the task's named one, never a variant of the mutation. Each verdict line goes in the PR body, naming `infra/scripts/mutate-probe.sh`.
 - Commits: one per task, never an amend; `uv run pre-commit run -a` re-run until clean, staging what it rewrote by explicit path; the message says what changed and carries the test command's result line, and ends with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` — the executing model, so an implementer on another model names its own — and the executing session's `Claude-Session:` line.
 
@@ -94,6 +94,7 @@ class Attempt:
     end: dict | None
 
 def attempts_of(lines: Sequence[dict]) -> tuple[Attempt, ...]: ...
+def begin_hash(lines: Sequence[dict], attempt: int) -> str: ...  # the line_hash of the attempt's begin line
 
 class AttemptLog:
     path: Path
@@ -122,6 +123,7 @@ def landed(code_root: Path, registry: Path, ledger: Path) -> Landed: ...
 class Orphan:
     log: str
     id: int
+    begin: str  # the line_hash of its begin line
     family: str
     subject: str
     spec_hash: str
@@ -130,14 +132,14 @@ class Orphan:
     timestamp: str | None = None
     branch: str | None = None
     listed_by: int | None = None  # the trial whose counted carried it
-    def entry(self) -> dict: ...  # the counted entry: log, id, family, subject, spec_hash, verdict, metrics
+    def entry(self) -> dict: ...  # the counted entry: log, id, begin, family, subject, spec_hash, verdict, metrics
     def describe(self) -> str: ...
 
 @dataclass(frozen=True)
 class Count:
     records: tuple[dict, ...]
     orphans: tuple[Orphan, ...]
-    absorbs: tuple[int, ...]
+    absorbs: tuple[dict, ...]  # {"id", "begin"} of each attempt this run absorbs, by id
     bucket_of: Mapping[str, str | None]
     def required_n(self, family: str) -> int: ...
     def spent(self, bucket: str) -> int: ...
@@ -146,7 +148,7 @@ class Count:
 def reconcile(lines: Sequence[dict], landed: Landed, *, log_id: str, bucket_of: Mapping[str, str | None],
               own: int | None = None, hold: tuple[str, dict, str] | None = None, hold_finished: bool = True) -> Count: ...
 def lacking(lines: Sequence[dict], landed: Landed, log_id: str) -> list[tuple[str, int]]: ...
-def _landed_ids(landed: Landed) -> set[tuple[str, int]]: ...
+def _landed_ids(landed: Landed) -> set[tuple[str, int, str]]: ...
 def _verify_chain(lines: list[dict], path: Path) -> None: ...
 ```
 
@@ -183,13 +185,22 @@ _REMEDY_TAIL = (
 _real_log_path, _real_landed = attempts.log_path, attempts.landed
 
 
+def _begin_hash(attempt: int) -> str:
+    return f"{attempt:064x}"
+
+
+def _ref(attempt: int) -> dict:
+    return {"id": attempt, "begin": _begin_hash(attempt)}
+
+
 # By default begun before this boot, so its process is gone, as a killed run's is.
 def _begin(attempt: int, *, subject="stub", family="B1", dataset="ohlc-full", spec_hash=_SPEC, branch="research/x",
-           commit="d" * 40, pid=1, boot="another boot") -> dict:
+           commit="d" * 40, pid=1, boot="another boot", line_hash=None) -> dict:
     invocation = {"subject": subject, "dataset": dataset, "window": None, "as_of": None, "accept_holes": False,
                   "comparator_trial": None, "commit": commit}
     return {"kind": "begin", "attempt": attempt, "timestamp": f"2026-10-17T19:{attempt:02d}:00+00:00", "branch": branch,
-            "invocation": invocation, "spec_hash": spec_hash, "family": family, "pid": pid, "boot": boot}
+            "invocation": invocation, "spec_hash": spec_hash, "family": family, "pid": pid, "boot": boot,
+            "line_hash": line_hash or _begin_hash(attempt)}
 
 
 def _end(attempt: int, verdict: str | None = "reject", *, stop=None, failed=None, metrics=None) -> dict:
@@ -485,15 +496,17 @@ Expected: collection fails with `ImportError: cannot import name 'attempts' from
 ```python
 # tests/test_trial_attempts.py
 def test_an_attempt_a_record_carries_is_landed():
-    record = _record(1, attempt={"log": _LOG, "id": 1, "absorbs": [], "counted": []})
+    record = _record(1, attempt={"log": _LOG, "id": 1, "begin": _begin_hash(1), "absorbs": [], "counted": []})
     assert _count([_begin(1), _end(1)], [record]).required_n("B1") == 1 + 0 + 1
     assert _count([_begin(1), _end(1)]).required_n("B1") == 0 + 1 + 1
+    assert _count([_begin(1, line_hash="e" * 64), _end(1)], [record]).required_n("B1") == 1 + 1 + 1
 
 
 def test_an_attempt_in_an_absorbs_is_landed():
-    record = _record(1, attempt={"log": _LOG, "id": 2, "absorbs": [1], "counted": []})
+    record = _record(1, attempt={"log": _LOG, "id": 2, "begin": _begin_hash(2), "absorbs": [_ref(1)], "counted": []})
     lines = [_begin(1), _end(1, "park"), _begin(2), _end(2)]
     assert _count(lines, [record]).required_n("B1") == 1 + 0 + 1
+    assert _count([_begin(1, line_hash="e" * 64), *lines[1:]], [record]).required_n("B1") == 1 + 1 + 1
 
 
 def test_equal_arguments_spec_metrics_and_outcome_absorb_the_earlier_attempt():
@@ -545,29 +558,34 @@ def test_an_orphan_counts_once_against_its_family_and_its_bucket():
     assert [e["id"] for e in elsewhere.counted("B1")] == [1]
 
 
-_LISTED = {"log": _OTHER, "id": 7, "family": "B2", "subject": "b2-funding-derisk", "spec_hash": _SPEC, "verdict": "reject",
-           "metrics": {"sharpe": 0.1}}
+_LISTED = {"log": _OTHER, "id": 7, "begin": _begin_hash(7), "family": "B2", "subject": "b2-funding-derisk", "spec_hash": _SPEC,
+           "verdict": "reject", "metrics": {"sharpe": 0.1}}
 
 
 def test_an_orphan_a_landed_record_lists_is_carried_from_any_log():
-    lister = _record(1, attempt={"log": _OTHER, "id": 8, "absorbs": [], "counted": [_LISTED]})
+    lister = _record(1, attempt={"log": _OTHER, "id": 8, "begin": _begin_hash(8), "absorbs": [], "counted": [_LISTED]})
     count = _count([], [lister])
     assert count.required_n("B2") == 0 + 1 + 1 and count.counted("B1") == [_LISTED]
     assert count.orphans[0].describe() == f"{_OTHER[:8]}#7 b2-funding-derisk reject listed by trial 1"
-    relister = _record(2, attempt={"log": _OTHER, "id": 9, "absorbs": [], "counted": [_LISTED]})
+    relister = _record(2, attempt={"log": _OTHER, "id": 9, "begin": _begin_hash(9), "absorbs": [], "counted": [_LISTED]})
     twice = _count([], [lister, relister])
     assert (twice.required_n("B2"), twice.spent("B"), twice.counted("B1")) == (0 + 1 + 1, 2 + 1, [_LISTED])
-    landing = _record(3, "B2", attempt={"log": _OTHER, "id": 10, "absorbs": [7], "counted": []})
+    forked = _record(2, attempt={**relister["attempt"], "counted": [{**_LISTED, "begin": "e" * 64}]})
+    assert _count([], [lister, forked]).required_n("B2") == 0 + 2 + 1
+    landing = _record(3, "B2", attempt={"log": _OTHER, "id": 10, "begin": _begin_hash(10), "absorbs": [_ref(7)], "counted": []})
     assert _count([], [lister, relister, landing]).required_n("B2") == 1 + 0 + 1
+    elsewhere = _record(3, "B2", attempt={**landing["attempt"], "absorbs": [{"id": 7, "begin": "e" * 64}]})
+    assert _count([], [lister, relister, elsewhere]).required_n("B2") == 1 + 1 + 1
 
 
 def test_a_listed_orphans_class_is_final():
     lines = [_begin(1), _end(1), _begin(2), _end(2)]
-    entry = {"log": _LOG, "id": 1, "family": "B1", "subject": "stub", "spec_hash": _SPEC, "verdict": "reject", "metrics": {"sharpe": 0.3}}
-    lister = _record(1, "B2", attempt={"log": _OTHER, "id": 1, "absorbs": [], "counted": [entry]})
+    entry = {"log": _LOG, "id": 1, "begin": _begin_hash(1), "family": "B1", "subject": "stub", "spec_hash": _SPEC, "verdict": "reject",
+             "metrics": {"sharpe": 0.3}}
+    lister = _record(1, "B2", attempt={"log": _OTHER, "id": 1, "begin": _begin_hash(1), "absorbs": [], "counted": [entry]})
     assert _count(lines).required_n("B1") == 0 + 1 + 1
     assert _count(lines, [lister]).required_n("B1") == 0 + 2 + 1
-    landing = _record(2, "B1", attempt={"log": _LOG, "id": 3, "absorbs": [1], "counted": []})
+    landing = _record(2, "B1", attempt={"log": _LOG, "id": 3, "begin": _begin_hash(3), "absorbs": [_ref(1)], "counted": []})
     assert _count(lines, [lister, landing]).required_n("B1") == 1 + 1 + 1
 
 
@@ -579,7 +597,7 @@ def test_a_held_attempt_is_out_of_the_orphans_until_this_run_absorbs_it_or_not()
     assert _count([_begin(1), _end(1)], hold=hold, hold_finished=False).required_n("B1") == 0 + 1 + 1
     assert _count([_begin(1)], hold=hold, hold_finished=False).required_n("B1") == 0 + 0 + 1
     same = _count([_begin(1), _end(1), _begin(2), _end(2)], own=2)
-    assert (same.required_n("B1"), same.absorbs) == (1, (1,))
+    assert (same.required_n("B1"), same.absorbs) == (1, (_ref(1),))
     moved = _count([_begin(1), _end(1), _begin(2), _end(2, metrics={"sharpe": 0.4})], own=2)
     assert (moved.required_n("B1"), moved.absorbs) == (2, ())
 
@@ -596,6 +614,8 @@ def _reaped_pid() -> int:
         pytest.param(lambda: {"pid": os.getpid(), "boot": attempts._boot_id()}, False, id="its-process-runs"),
         pytest.param(lambda: {"pid": _reaped_pid(), "boot": attempts._boot_id()}, True, id="its-pid-reaped"),
         pytest.param(lambda: {"pid": os.getpid(), "boot": "another boot"}, True, id="another-boot"),
+        # Where pid 1 is root's, a run by any other user gets PermissionError signalling it: a live process another user owns.
+        pytest.param(lambda: {"pid": 1, "boot": attempts._boot_id()}, False, id="another-users-process"),
     ],
 )
 def test_an_open_attempt_is_held_or_absorbed_only_when_its_process_is_gone(marks, gone):
@@ -606,18 +626,22 @@ def test_an_open_attempt_is_held_or_absorbed_only_when_its_process_is_gone(marks
     for hold_finished in (True, False):
         assert _count([open_x], hold=hold, hold_finished=hold_finished).required_n("B1") == (1 if gone else 2)
     retried = _count([open_x, _begin(2), _end(2)], own=2)
-    assert (retried.required_n("B1"), retried.absorbs) == ((1, (1,)) if gone else (2, ()))
+    assert (retried.required_n("B1"), retried.absorbs) == ((1, (_ref(1),)) if gone else (2, ()))
     assert _count([open_x, _begin(2), _end(2)]).required_n("B1") == (2 if gone else 3)
 
 
 def test_a_log_lacking_an_attempt_a_record_or_reading_names_is_found():
-    record = _record(1, attempt={"log": _LOG, "id": 3, "absorbs": [2], "counted": []})
-    reading = {"reading_id": 1, "record_hash": "9" * 64, "attempt": {"log": _LOG, "id": 5, "absorbs": []}}
-    foreign = _record(2, attempt={"log": _OTHER, "id": 4, "absorbs": [], "counted": []})
+    record = _record(1, attempt={"log": _LOG, "id": 3, "begin": _begin_hash(3), "absorbs": [_ref(2)], "counted": []})
+    reading = {"reading_id": 1, "record_hash": "9" * 64, "attempt": {"log": _LOG, "id": 5, "begin": _begin_hash(5), "absorbs": []}}
+    foreign = _record(2, attempt={"log": _OTHER, "id": 4, "begin": _begin_hash(4), "absorbs": [], "counted": []})
     assert lacking([_begin(1), _begin(2), _begin(3)], collect([record, foreign], [reading]), _LOG) == [("reading 1", 5)]
     assert lacking([_begin(1)], collect([record], []), _LOG) == [("trial 1", 3), ("trial 1", 2)]
-    lister = _record(3, attempt={"log": _OTHER, "id": 5, "absorbs": [], "counted": [{**_LISTED, "log": _LOG, "id": 3}, _LISTED]})
+    assert lacking([_begin(1), _begin(2), _begin(3, line_hash="e" * 64)], collect([record], []), _LOG) == [("trial 1", 3)]
+    assert lacking([_begin(1), _begin(2, line_hash="e" * 64), _begin(3)], collect([record], []), _LOG) == [("trial 1", 2)]
+    entry = {**_LISTED, "log": _LOG, "id": 3, "begin": _begin_hash(3)}
+    lister = _record(3, attempt={"log": _OTHER, "id": 5, "begin": _begin_hash(5), "absorbs": [], "counted": [entry, _LISTED]})
     assert lacking([_begin(1), _begin(2), _begin(3), _end(3)], collect([lister], []), _LOG) == []
+    assert lacking([_begin(1), _begin(2), _begin(3, line_hash="e" * 64), _end(3)], collect([lister], []), _LOG) == [("trial 3", 3)]
     assert lacking([_begin(1), _begin(2), _begin(3)], collect([lister], []), _LOG) == [("trial 3", 3)]
     assert lacking([_begin(1), _begin(2)], collect([lister], []), _LOG) == [("trial 3", 3)]
 
@@ -649,10 +673,10 @@ def _append_one(path: Path) -> dict:
 def test_landed_reads_the_targets_head_and_origin_develop_each_record_once(tmp_path):
     root = _repo(tmp_path / "repo")
     target = _append_one(tmp_path / "target.jsonl")
-    with_attempt = _record(2, attempt={"log": _LOG, "id": 1, "absorbs": [], "counted": []})
+    with_attempt = _record(2, attempt={"log": _LOG, "id": 1, "begin": _begin_hash(1), "absorbs": [], "counted": []})
     rebased = {**with_attempt, "trial_id": 3, "record_hash": "8" * 64}
-    develop_only = _record(4, attempt={"log": _OTHER, "id": 1, "absorbs": [], "counted": []})
-    reading = {"reading_id": 1, "record_hash": "9" * 64, "attempt": {"log": _LOG, "id": 5, "absorbs": []}}
+    develop_only = _record(4, attempt={"log": _OTHER, "id": 1, "begin": _begin_hash(1), "absorbs": [], "counted": []})
+    reading = {"reading_id": 1, "record_hash": "9" * 64, "attempt": {"log": _LOG, "id": 5, "begin": _begin_hash(5), "absorbs": []}}
     committed = {attempts.REGISTRY_RELPATH: _jsonl(target, with_attempt, develop_only), attempts.LEDGER_RELPATH: _jsonl(reading)}
     develop = _commit(root, committed)
     subprocess.run(["git", "-C", str(root), "update-ref", attempts.DEVELOP, develop], check=True, capture_output=True)
@@ -685,20 +709,20 @@ Expected: `ERROR collecting tests/test_trial_attempts.py` — `ImportError: cann
 - [ ] **Step 4: Implement the log in `cli/registry/attempts.py`** — the Interfaces block's names, and:
   - `main_checkout`: `_git(code_root, "rev-parse", "--git-common-dir")`, resolved against `code_root` when relative, its parent; refused unless `_git(parent, "rev-parse", "--show-toplevel")` prints that parent (both through `Path.resolve()`), with D1's remedy "no main checkout at <dir>, resolved from git rev-parse --git-common-dir: run from a clone with a working tree". `log_path` is `main_checkout(code_root) / LOG_RELPATH`. `current_branch`: `_git(code_root, "branch", "--show-current")`, empty output is `None`.
   - `_write_line`: `os.write(fd, line)` called through the module (`import os`), so a test wraps it, and an `OSError` naming the bytes written and the line's when it wrote fewer, so a writer returns only once its whole line, `\n` included, is written; every line the log gains — `init_log`'s genesis, `begin`'s, `end`'s — goes through it.
-  - `_boot_id` reads `BOOT_ID` and strips it; `_process_marks` returns `{"pid": os.getpid(), "boot": _boot_id()}`, which `begin` calls through the module's namespace, so a test that patches `attempts._process_marks` stands a run's attempt for one whose process is gone; `_alive(begin)` — spec D3's liveness test — returns `False` when `begin["boot"]` is not `_boot_id()` or `os.kill(begin["pid"], 0)` raises `ProcessLookupError`, and `True` otherwise, a `PermissionError` being a live process another user owns.
+  - `_boot_id` reads `BOOT_ID` and strips it; `_process_marks` returns `{"pid": os.getpid(), "boot": _boot_id()}`, which `begin` calls through the module's namespace, so a test that patches `attempts._process_marks` stands a run's attempt for one whose process is gone; `_alive(begin)` — spec D3's liveness test — returns `False` when `begin["boot"]` is not `_boot_id()` or `os.kill(begin["pid"], 0)` raises `ProcessLookupError`, and `True` otherwise, a `PermissionError` being a live process another user owns, which an `except PermissionError` clause returns by name, so the probe of the `another-users-process` row can address it.
   - `init_log`: an exclusive create (`os.O_WRONLY | os.O_CREAT | os.O_EXCL`), its line written through `_write_line`, `fsync`'d; an existing path, empty or not, raises D1's first remedy verbatim, "<path> exists: a log is created once, never beside the records that cite it; for a damaged one, rename it aside, then restore it from a backup if one exists; otherwise create a new log with zcrypto research attempts-init and add its id to docs/reference/trial-attempt-logs.txt by PR, saying what was lost".
   - The read, one `_read_healing` call per read, always under the log's flock — `fcntl.flock(fd, fcntl.LOCK_EX)` called through the module (`import fcntl`), so a test wraps it, on an `os.open(path, os.O_WRONLY | os.O_APPEND)` descriptor: the constructor takes it for its own read, while `begin`, `end` and `locked()` read under the one they already hold and never open a second, whose flock would wait on the first; a writer holds the flock from its write through its `fsync`, so a read under it never sees another session's line half written: when the bytes are not empty and do not end in `\n` — a torn last line, parseable or not, decoded by nothing before the heal, since a tear can fall inside a multibyte character (Global Constraints) — copy the whole file aside, truncate it after its last `\n`, then `_read_healing(path, _validate_line, _verify_chain)` over the healed file, then unlink the copy; an empty result is refused by `_verify_chain([])` itself ("line 1 is not a genesis line"), called by the read, since `_read_healing` returns `[]` for an empty file without calling its check (`store.py:111-112`), and on the heal path before the copy is unlinked; every refusal of a read is an `AttemptLogError` reading "<path>: line <n> <what breaks>" — `_read_healing`'s malformed-JSON refusal re-raised as "line <n> is not JSON" — and, when a copy was made, D1's third form, "<path>: the healed log breaks at line <n> <what breaks>, and its bytes before the heal are kept at <copy>", the copy kept. `_validate_line` checks each kind's key set exactly — the formats section's, which `test_a_log_appends_chained_lines_from_its_genesis` lists — refusing as "<path>: line <n> keys must be exactly [...] (missing [...], unknown [...])", each list sorted; `_verify_chain` raises `AttemptLogError(f"{path}: line {n} {what breaks}")` for a line 1 that is no genesis or absent ("is not a genesis line"), a second genesis ("is a second genesis line"), a `seq` out of place, a `prev_hash` or `line_hash` that does not hold, a `begin` whose `attempt` is not the next ("begins attempt <a>"), an `end` naming no open attempt ("ends attempt <a>").
   - `AttemptLog.__init__` opens that descriptor first, an absent path (`FileNotFoundError`) refused as "no trial-attempts log at <path>", and releases the flock and closes the descriptor before it returns; `begin` and `end` take `fcntl.flock(LOCK_EX)` on an `os.open(path, os.O_WRONLY | os.O_APPEND)` descriptor (never `O_CREAT`), re-read the lines under the lock, set `seq`, `prev_hash`, `line_hash`, run `_verify_chain` over the lines plus the new one before writing, write one line through `_write_line`, `fsync`, unlock, and refresh `self.lines`; each of the four — the constructor, `begin`, `end` and `locked()` — releases the flock and closes the descriptor in a `finally`, since every one of them can raise under it (a broken chain, a short write, `admit`'s count and budget refusals, `end`'s refusals, the count, budget and store refusals inside `locked()`), and a raw descriptor left locked makes the process's next read wait on it forever; `begin` calls `admit(lines)` with the re-read lines before composing its line and stores `timestamp`, `host` (`socket.gethostname()`), the `pid` and `boot` `_process_marks()` returns, and `worktree`, `registry`, `ledger` as absolute strings (`Path.resolve()`); `end` refuses, before composing its line, an attempt with no `begin` or an earlier `end` ("attempt <a> is not open" — a wording `_verify_chain` never prints, so the test tells this check from the chain's), an outcome other than exactly one of the three ("exactly one of verdict, stop and failed"), `metrics` other than a non-empty dict while `failed` is null or other than null while it is set ("metrics must be a non-empty dict exactly when failed is null"), and a non-null `verdict` outside `VERDICTS` ("verdict must be one of [...]", sorted), a stop's and a failure's `verdict` being null — every rule the formats section gives an `end` line that composing it does not make true by itself: `metrics_hash` is computed here, `stop` and `failed` are the command's text, and the metric leaves are Task 5's check before the `end`; a verdict outside `VERDICTS` or a verdict with no metrics would otherwise be a finished orphan whose `counted` entry every later record of its bucket must carry and the store refuses. `locked()` holds the same flock over a re-read and yields the lines; nothing inside it calls `begin` or `end`.
 
-- [ ] **Step 5: Implement the reads of what landed** — `collect` keeps each record once, by `("attempt", log, id)` when `record.get("attempt")` is set and else by `("hash", record_hash)`, the first seen kept, readings alike; `files_landed` reads the two target files through `TrialRegistry(registry).records` and `ReadingLedger(ledger).records` (`dataclasses.asdict`), an absent file reading as none; `landed` refuses unless `_git(code_root, "rev-parse", "--verify", "--quiet", f"{DEVELOP}^{{commit}}")` exits 0, with D3's remedy "origin/develop does not resolve in <root>: run git fetch origin develop, then run again", then merges, in this order, the target files, `HEAD` and `origin/develop` — the registry and the ledger at each ref, `REGISTRY_RELPATH` and `LEDGER_RELPATH` — each ref's file read only when `_git(code_root, "cat-file", "-e", f"{ref}:{path}")` exits 0, through `git show`, a line at a time through `loads_strict` — a `git show` that exits non-zero raises `AttemptLogError` naming the ref and the path, never reads as an empty file. The two shapes `landed` returns differ on records 1–48 and reading 1: as `git show` reads them they carry no `attempt` key (records 1–47 no `invocation` key either), as the store loads them `attempt` is null (`invocation` null on 1–47); so every read of a landed record's or reading's `attempt`, `absorbs`, `counted` or `invocation` — `collect`, `_landed_ids`, `listed` and `lacking` here, D4's frozen check in Task 7, `_attempt_findings` in Task 8 — goes through `.get`, an absent or null value reading as none.
+- [ ] **Step 5: Implement the reads of what landed** — `collect` keeps each record once, by `("attempt", log, id, begin)` when `record.get("attempt")` is set and else by `("hash", record_hash)`, the first seen kept, readings alike; `files_landed` reads the two target files through `TrialRegistry(registry).records` and `ReadingLedger(ledger).records` (`dataclasses.asdict`), an absent file reading as none; `landed` refuses unless `_git(code_root, "rev-parse", "--verify", "--quiet", f"{DEVELOP}^{{commit}}")` exits 0, with D3's remedy "origin/develop does not resolve in <root>: run git fetch origin develop, then run again", then merges, in this order, the target files, `HEAD` and `origin/develop` — the registry and the ledger at each ref, `REGISTRY_RELPATH` and `LEDGER_RELPATH` — each ref's file read only when `_git(code_root, "cat-file", "-e", f"{ref}:{path}")` exits 0, through `git show`, a line at a time through `loads_strict` — a `git show` that exits non-zero raises `AttemptLogError` naming the ref and the path, never reads as an empty file. The two shapes `landed` returns differ on records 1–48 and reading 1: as `git show` reads them they carry no `attempt` key (records 1–47 no `invocation` key either), as the store loads them `attempt` is null (`invocation` null on 1–47); so every read of a landed record's or reading's `attempt`, `absorbs`, `counted` or `invocation` — `collect`, `_landed_ids`, `listed` and `lacking` here, D4's frozen check in Task 7, `_attempt_findings` in Task 8 — goes through `.get`, an absent or null value reading as none.
 
-- [ ] **Step 6: Implement the count** — `reconcile` is the algorithm D3 and its author's calls fix; with `landed_ids = _landed_ids(landed)` (every `attempt` (log, id) and every `absorbs` id of a landed record or reading) and `listed` the (log, id) every landed record's `attempt.counted` names, each local attempt X except `own`, in id order, is:
-  1. landed — `(log_id, X.id)` in `landed_ids`;
-  2. absorbed — by the earliest later attempt Y (Y may be `own`) whose `arguments(invocation)` and `spec_hash` equal X's and which, when X has an `end`, has an `end` with X's non-null `metrics_hash` and X's (`verdict`, `stop`), and, when X has none, has any `end` while `_alive(X.begin)` is false; for X in `listed`, only Y == `own` qualifies; `Count.absorbs` is the X whose absorber is `own`, ascending;
+- [ ] **Step 6: Implement the count** — `reconcile` is the algorithm D3 and its author's calls fix; with `landed_ids = _landed_ids(landed)` (the (log, id, begin) of every landed record's or reading's `attempt`, and of every entry of its `absorbs` under that attempt's `log`) and `listed` the (log, id, begin) every landed record's `attempt.counted` names — every match below is on all three, X's begin being `X.begin["line_hash"]`, so an attempt a restored or forked log wrote under a landed or listed id is never taken for the one that landed or was listed (spec D3) — each local attempt X except `own`, in id order, is:
+  1. landed — `(log_id, X.id, X's begin)` in `landed_ids`;
+  2. absorbed — by the earliest later attempt Y (Y may be `own`) whose `arguments(invocation)` and `spec_hash` equal X's and which, when X has an `end`, has an `end` with X's non-null `metrics_hash` and X's (`verdict`, `stop`), and, when X has none, has any `end` while `_alive(X.begin)` is false; for X in `listed`, only Y == `own` qualifies; `Count.absorbs` is `{"id": X.id, "begin": X's begin}` of each X whose absorber is `own`, ascending by id;
   3. stopped, or 4. failed — its `end` stored `stop`, or `failed`: counts 0 (skipped for X in `listed`, which counts as an orphan whatever its log says);
   5. held — `hold` given, `(X.begin.invocation.subject, arguments(...), spec_hash)` equals it, and X open with `_alive(X.begin)` false, or X finished and `hold_finished`: counts 0;
   6. orphan — every other, its `Orphan` from its `begin` and `end` (`verdict` and `metrics` None while open).
-  Then every `listed` (log, id) neither landed nor a local attempt of `log_id` is a carried `Orphan` from its entry, `listed_by` the listing record's `trial_id`, each (log, id) once — an `if` that skips a (log, id) already carried, since once a record lists an orphan every later record of its bucket lists it too (CI check xii). `required_n(F)` = landed records of family F + orphans of F + 1; `spent(b)` = landed records whose `bucket_of.get(family)` is b + orphans whose family maps to b; `counted(F)` = the `entry()` of every orphan with a non-null `verdict` in F's bucket — family F itself when F is bucketless — sorted by (log, id). `describe()` is "<log8>#<id> <subject> <verdict, or no end> <timestamp> on <branch, or a detached HEAD>" for a local orphan and "<log8>#<id> <subject> <verdict> listed by trial <N>" for a carried one. `lacking` returns ("trial N" or "reading N", id) for each `attempt` id and then each `absorbs` id of this log that a landed entry names with no `begin` in `lines`, and then for each `counted` entry naming this log whose attempt has no `end` in `lines`.
+  Then every `listed` (log, id, begin) neither landed nor a local attempt of `log_id` with that id and begin is a carried `Orphan` from its entry, `listed_by` the listing record's `trial_id`, each (log, id, begin) once — an `if` that skips one already carried, since once a record lists an orphan every later record of its bucket lists it too (CI check xii). `required_n(F)` = landed records of family F + orphans of F + 1; `spent(b)` = landed records whose `bucket_of.get(family)` is b + orphans whose family maps to b; `counted(F)` = the `entry()` of every orphan with a non-null `verdict` in F's bucket — family F itself when F is bucketless — sorted by (log, id, begin). `describe()` is "<log8>#<id> <subject> <verdict, or no end> <timestamp> on <branch, or a detached HEAD>" for a local orphan and "<log8>#<id> <subject> <verdict> listed by trial <N>" for a carried one. `begin_hash(lines, attempt)` is the `line_hash` of the attempt's `begin` line in `lines`, which the command composes into the record's and the reading's own `attempt` (Tasks 5 and 7). `lacking` returns ("trial N" or "reading N", id) for each `attempt` and then each `absorbs` entry of this log that a landed entry names whose id has no `begin` line in `lines` or whose `begin` is not that line's `line_hash`, and then for each `counted` entry naming this log that fails the same match or whose attempt has no `end` in `lines` — one match per reference kind, the `end` test the `counted` entry's alone, since a listed attempt whose `end` the log lost would read as open and be absorbed by a same-arguments run whatever its numbers (spec D6).
 
 - [ ] **Step 7: Run the tests to verify they pass**
 
@@ -743,8 +767,8 @@ EOF
 | `test_the_log_path_is_the_main_checkouts_from_any_worktree` | `"--git-common-dir"` made `"--git-dir"` |
 | `test_a_common_dir_with_no_checkout_is_refused` | the show-toplevel comparison made `if False:` |
 | `test_the_branch_is_none_on_a_detached_head_and_an_orphan_from_one_is_named_so` | `"a detached HEAD"` fallback made `str(self.branch)` |
-| `test_an_attempt_a_record_carries_is_landed` | the `attempt` id cut from `_landed_ids` |
-| `test_an_attempt_in_an_absorbs_is_landed` | the `absorbs` ids cut from `_landed_ids` |
+| `test_an_attempt_a_record_carries_is_landed` | the `attempt` id cut from `_landed_ids`; apart, class 1 matched on (log, id) alone — the `begin` of each entry `_landed_ids` builds and of class 1's lookup made `None`, one sed — which its third assertion kills |
+| `test_an_attempt_in_an_absorbs_is_landed` | the `absorbs` ids cut from `_landed_ids`; apart, the row above's (log, id)-alone match, which its second assertion kills |
 | `test_equal_arguments_spec_metrics_and_outcome_absorb_the_earlier_attempt` | the absorbed class made `if False:`; apart, `arguments` equality cut from the clause a finished X meets |
 | `test_an_outcome_that_differs_on_equal_metrics_absorbs_nothing` | the (`verdict`, `stop`) equality cut from the finished clause |
 | `test_a_begin_only_attempt_is_absorbed_by_a_retry_with_its_arguments` | the open-X clause made `False`; apart, `arguments` equality cut from the clause an open X meets, one probe with the finished X's row when the two clauses share the condition; apart, the open-X clause's `end` requirement on Y made `True` |
@@ -753,13 +777,14 @@ EOF
 | `test_a_begin_only_attempt_with_no_retry_is_an_orphan` | the `verdict` filter cut from `counted` |
 | `test_a_stop_counts_zero` / `test_a_failed_attempt_counts_zero` | each class made `if False:` |
 | `test_an_orphan_counts_once_against_its_family_and_its_bucket` | `spent`'s `bucket_of.get(...)` comparison made against the family; apart, `counted`'s bucket filter cut |
-| `test_an_orphan_a_landed_record_lists_is_carried_from_any_log` | the carried loop made `if False:`; apart, its landed exemption cut; apart, its once-per-(log, id) `if` made `if False:` |
+| `test_an_orphan_a_landed_record_lists_is_carried_from_any_log` | the carried loop made `if False:`; apart, its landed exemption cut; apart, its once-per-(log, id, begin) `if` made `if False:`; apart, the `begin` of that `if`'s key made `None`, which `forked` kills; apart, the landed exemption matched on (log, id) alone — the `begin` of each entry `_landed_ids` builds and of the exemption's lookup made `None`, one sed — which `elsewhere` kills |
 | `test_a_listed_orphans_class_is_final` | the listed restriction cut from the absorbed clause |
-| `test_a_held_attempt_is_out_of_the_orphans_until_this_run_absorbs_it_or_not` | the held class made `if False:`; apart, `own` excluded from the absorbers; apart, the held class's tuple compared without its arguments; apart, its condition on X's `end` — open and gone, or finished and `hold_finished` — made `True`; apart, the same condition made `hold_finished` alone |
+| `test_a_held_attempt_is_out_of_the_orphans_until_this_run_absorbs_it_or_not` | the held class made `if False:`; apart, `own` excluded from the absorbers; apart, the held class's tuple compared without its arguments; apart, its condition on X's `end` — open and gone, or finished and `hold_finished` — made `True`; apart, the same condition made `hold_finished` alone; apart, the `begin` of a `Count.absorbs` entry made `None` |
 | `test_an_open_attempt_is_held_or_absorbed_only_when_its_process_is_gone and its-process-runs` | the held class's `_alive(X.begin)`-false conjunct made `True`; apart, the absorbed clause's, one probe when the two share the condition, each range-addressed to its clause; apart, `_boot_id`'s `.strip()` cut, range-addressed from `def _boot_id(` to the next `def` |
 | `test_an_open_attempt_is_held_or_absorbed_only_when_its_process_is_gone and its-pid-reaped` | `_alive`'s `ProcessLookupError` branch made to return `True`, range-addressed from `def _alive(` to the next `def` |
 | `test_an_open_attempt_is_held_or_absorbed_only_when_its_process_is_gone and another-boot` | `_alive`'s boot comparison made `if False:` |
-| `test_a_log_lacking_an_attempt_a_record_or_reading_names_is_found` | the `absorbs` ids cut from `lacking`; apart, readings cut; apart, the `counted` entries cut; apart, the `counted` entries' `end` test made a `begin` test |
+| `test_an_open_attempt_is_held_or_absorbed_only_when_its_process_is_gone and another-users-process` | `_alive`'s `PermissionError` made `ChildProcessError`, range-addressed from `def _alive(` to the next `def`, so a live process another user owns escapes as an error |
+| `test_a_log_lacking_an_attempt_a_record_or_reading_names_is_found` | the `absorbs` ids cut from `lacking`; apart, readings cut; apart, the `counted` entries cut; apart, the `counted` entries' `end` test cut; apart, the `begin` comparison cut from the match of an `attempt`, of an `absorbs` entry and of a `counted` entry — one probe per kind, each killed by the assertion whose one fault is that kind's `begin`, or one probe for the three where they share the comparison |
 | `test_the_count_reads_records_1_to_48_and_reading_1_in_either_landed_shape` | `_landed_ids`'s `.get("attempt")` made `["attempt"]`; apart, `lacking`'s — each range-addressed from its `def` to the next `def` |
 | `test_landed_reads_the_targets_head_and_origin_develop_each_record_once` | the attempt key in `collect` made the hash key; apart, `DEVELOP` cut from the refs; apart, the `cat-file -e` check made `if True:`; apart, `LEDGER_RELPATH` cut from the refs' paths |
 | `test_landed_refuses_an_unresolvable_develop` | the develop check made `if False:` |
@@ -1079,7 +1104,7 @@ The begin and end lines land here, with the block they mint, because `TrialRegis
 - Test: `tests/test_registry_record.py` (`:50`), `tests/test_registry_store.py`, `tests/test_registry_conformance.py` (`:161`, `:229`), `tests/test_research_control.py` (`:98`, `:122`), `tests/test_trial_registry_provenance.py` (`_forty_eight_trials`, the `ReadingLedger(ledger).append(` in `test_live_entries_holds_every_reading_beside_the_records_past_47`), `tests/test_trial_attempts.py` (`_append_one`), `tests/test_research_command.py`, `tests/test_registry_replay.py`
 
 **Interfaces:**
-- Consumes: Task 1's `AttemptLog`, `log_path`, `current_branch`; Task 2's `budget.BUCKET_OF`; Task 4's fixture.
+- Consumes: Task 1's `AttemptLog`, `log_path`, `current_branch`, `begin_hash`; Task 2's `budget.BUCKET_OF`; Task 4's fixture.
 - Produces:
 
 ```python
@@ -1115,12 +1140,16 @@ _ATTEMPT_LOG = "f" * 32
 
 
 def _entry(**over) -> dict:
-    return {"log": "e" * 32, "id": 2, "family": "B2", "subject": "b2-funding-derisk", "spec_hash": "c" * 64,
+    return {"log": "e" * 32, "id": 2, "begin": "b" * 64, "family": "B2", "subject": "b2-funding-derisk", "spec_hash": "c" * 64,
             "verdict": "reject", "metrics": {"sharpe": 0.1}, **over}
 
 
+def _absorbed(attempt_id, begin: str = "a" * 64) -> dict:
+    return {"id": attempt_id, "begin": begin}
+
+
 def _attempt(**over) -> dict:
-    return {"log": _ATTEMPT_LOG, "id": 3, "absorbs": [1], "counted": [_entry()], **over}
+    return {"log": _ATTEMPT_LOG, "id": 3, "begin": "d" * 64, "absorbs": [_absorbed(1)], "counted": [_entry()], **over}
 
 
 def test_a_schema_six_record_round_trips_its_attempt(tmp_path):
@@ -1148,13 +1177,17 @@ def test_append_requires_an_attempt_explicitly(tmp_path):
         pytest.param(_attempt(log="F" * 32), "attempt log", id="log-uppercase"),
         pytest.param(_attempt(id=0), "attempt id", id="attempt-id-zero"),
         pytest.param(_attempt(id=True), "attempt id", id="attempt-id-bool"),
-        pytest.param(_attempt(absorbs=[1, 1]), "attempt absorbs", id="absorbs-repeated"),
-        pytest.param(_attempt(absorbs=[3]), "attempt absorbs", id="absorbs-not-below-id"),
-        pytest.param(_attempt(absorbs=[True]), "attempt absorbs", id="absorbs-bool"),
+        pytest.param(_attempt(begin="d" * 63), "attempt begin", id="attempt-begin-not-hex"),
+        pytest.param(_attempt(absorbs=[_absorbed(1), _absorbed(1)]), "attempt absorbs", id="absorbs-repeated"),
+        pytest.param(_attempt(absorbs=[_absorbed(3)]), "attempt absorbs", id="absorbs-not-below-id"),
+        pytest.param(_attempt(absorbs=[_absorbed(True)]), "attempt absorbs", id="absorbs-bool"),
+        pytest.param(_attempt(absorbs=[{"id": 1}]), "attempt absorbs entry keys", id="absorbed-without-begin"),
+        pytest.param(_attempt(absorbs=[_absorbed(1, "A" * 64)]), "attempt absorbs entry begin", id="absorbed-begin-not-hex"),
         pytest.param(_attempt(counted=[{**_entry(), "outcome": "reject"}]), "counted entry keys", id="entry-extra-key"),
         pytest.param(_attempt(counted=[_entry(log="e" * 31)]), "counted entry log", id="entry-log-31-hex"),
         pytest.param(_attempt(counted=[_entry(id=0)]), "counted entry id", id="entry-id-zero"),
         pytest.param(_attempt(counted=[_entry(id=True)]), "counted entry id", id="entry-id-bool"),
+        pytest.param(_attempt(counted=[_entry(begin="b" * 63)]), "counted entry begin", id="entry-begin-not-hex"),
         pytest.param(_attempt(counted=[_entry(spec_hash="s")]), "counted entry spec_hash", id="entry-spec-hash-not-hex"),
         pytest.param(_attempt(counted=[_entry(family="")]), "counted entry family", id="entry-family-empty"),
         pytest.param(_attempt(counted=[_entry(subject="")]), "counted entry subject", id="entry-subject-empty"),
@@ -1175,16 +1208,17 @@ def test_an_ill_shaped_attempt_is_refused_before_the_write(tmp_path, attempt, ma
 
 def test_a_reading_at_schema_two_round_trips_its_attempt(tmp_path):
     path = tmp_path / "readings.jsonl"
-    written = _append_reading(ReadingLedger(path), attempt={"log": "f" * 32, "id": 4, "absorbs": [2]})
+    attempt = {"log": "f" * 32, "id": 4, "begin": "d" * 64, "absorbs": [_absorbed(2)]}
+    written = _append_reading(ReadingLedger(path), attempt=attempt)
     (reloaded,) = ReadingLedger(path).records
-    assert (reloaded.schema_version, reloaded.attempt) == (2, {"log": "f" * 32, "id": 4, "absorbs": [2]}) and reloaded == written
+    assert (reloaded.schema_version, reloaded.attempt) == (2, attempt) and reloaded == written
 
 
 @pytest.mark.parametrize(
     ("attempt", "match"),
     [
-        pytest.param({"log": "f" * 32, "id": 4, "absorbs": [], "counted": []}, "reading attempt keys", id="reading-lists-nothing"),
-        pytest.param({"log": "f" * 32, "id": 4, "absorbs": [4]}, "attempt absorbs", id="reading-absorbs-not-below-id"),
+        pytest.param({"log": "f" * 32, "id": 4, "begin": "d" * 64, "absorbs": [], "counted": []}, "reading attempt keys", id="reading-lists-nothing"),
+        pytest.param({"log": "f" * 32, "id": 4, "begin": "d" * 64, "absorbs": [_absorbed(4)]}, "attempt absorbs", id="reading-absorbs-not-below-id"),
         pytest.param("f" * 32, "reading attempt must be null or a dict", id="reading-not-a-dict"),
     ],
 )
@@ -1203,7 +1237,7 @@ def test_a_reading_past_the_first_must_declare_schema_two(tmp_path):
     assert len(ReadingLedger(_write(tmp_path, [first, second]))) == 2
 ```
 
-and migrate: `_append` gains `kw.setdefault("attempt", {"log": _ATTEMPT_LOG, "id": 1, "absorbs": [], "counted": []})`, `_append_reading` gains `attempt=None` in its defaults; `test_append_requires_run_ref_explicitly` and `test_append_requires_an_invocation_explicitly` pass an `attempt`; `test_a_schema_five_record_round_trips_through_disk` becomes `..._six_...` reading 6, and `test_an_appended_invocation_reloads_at_schema_five` becomes `..._at_schema_six`, its `(5, invocation)` read `(6, invocation)`; `test_a_reading_round_trips_through_disk` reads schema 2 and its key set gains `"attempt"`; `test_a_record_past_the_floors_must_declare_schema_five` becomes `test_a_record_past_the_floors_must_declare_schema_six`: `_line_next` builds schema 6 with `attempt=_attempt(id=1, absorbs=[], counted=[])` and loads, the same line at schema 5 with `attempt` removed and its hash recomputed is refused matching `f"trial {next_id} declares schema_version 5; every record past trial 48 must be schema_version 6"`, and the schema-4 case removes `attempt` too, its match unchanged (the floor at 47 fires before the one at 48), the schema-3 case likewise; and the load checks the block's form as the append does: `TrialRegistry(_write(tmp_path, [*real, _line_next(attempt=_attempt(id=1, absorbs=[], counted=[_entry(verdict=None)]))]))`, its line hash-correct at schema 6, raises under `pytest.raises(RegistryError, match="counted entry verdict")`. A schema-5 assertion this list missed reads 6 by the same rule.
+and migrate: `_append` gains `kw.setdefault("attempt", _attempt(id=1, absorbs=[], counted=[]))`, `_append_reading` gains `attempt=None` in its defaults; `test_append_requires_run_ref_explicitly` and `test_append_requires_an_invocation_explicitly` pass an `attempt`; `test_a_schema_five_record_round_trips_through_disk` becomes `..._six_...` reading 6, and `test_an_appended_invocation_reloads_at_schema_five` becomes `..._at_schema_six`, its `(5, invocation)` read `(6, invocation)`; `test_a_reading_round_trips_through_disk` reads schema 2 and its key set gains `"attempt"`; `test_a_record_past_the_floors_must_declare_schema_five` becomes `test_a_record_past_the_floors_must_declare_schema_six`: `_line_next` builds schema 6 with `attempt=_attempt(id=1, absorbs=[], counted=[])` and loads, the same line at schema 5 with `attempt` removed and its hash recomputed is refused matching `f"trial {next_id} declares schema_version 5; every record past trial 48 must be schema_version 6"`, and the schema-4 case removes `attempt` too, its match unchanged (the floor at 47 fires before the one at 48), the schema-3 case likewise; and the load checks the block's form as the append does: `TrialRegistry(_write(tmp_path, [*real, _line_next(attempt=_attempt(id=1, absorbs=[], counted=[_entry(verdict=None)]))]))`, its line hash-correct at schema 6, raises under `pytest.raises(RegistryError, match="counted entry verdict")`. A schema-5 assertion this list missed reads 6 by the same rule.
 
 - [ ] **Step 2: Write the command's failing tests**
 
@@ -1233,9 +1267,9 @@ def test_a_clean_run_is_admitted_and_logged_begin_and_end(tmp_path, monkeypatch,
     assert result.exit_code == 0, result.output
     record = json.loads(registry.read_text())
     log = attempts.AttemptLog(_attempts_log)
-    assert record["schema_version"] == 6
-    assert record["attempt"] == {"log": log.log_id, "id": 1, "absorbs": [], "counted": []}
     begin, end = log.lines[1:]
+    assert record["schema_version"] == 6
+    assert record["attempt"] == {"log": log.log_id, "id": 1, "begin": begin["line_hash"], "absorbs": [], "counted": []}
     assert (begin["kind"], begin["attempt"], end["kind"], end["attempt"]) == ("begin", 1, "end", 1)
     assert begin["registry"] == str(registry.resolve())
     assert (begin["invocation"], begin["spec_hash"], begin["family"]) == (record["invocation"], record["spec_hash"], "STUB")
@@ -1285,7 +1319,7 @@ def test_a_stop_ends_its_attempt_with_the_stop_and_its_reading_carries_it(tmp_pa
     assert result.exit_code == 0, result.output
     log = attempts.AttemptLog(_attempts_log)
     (reading,) = _kept(ledger)
-    assert (reading["schema_version"], reading["attempt"]) == (2, {"log": log.log_id, "id": 1, "absorbs": []})
+    assert (reading["schema_version"], reading["attempt"]) == (2, {"log": log.log_id, "id": 1, "begin": log.lines[1]["line_hash"], "absorbs": []})
     assert (log.lines[-1]["stop"], log.lines[-1]["verdict"]) == ("the stub's stop", None)
 
 
@@ -1336,18 +1370,18 @@ def test_an_end_the_log_refuses_withholds_the_numbers(tmp_path, monkeypatch):
     assert "1.2345" not in result.output and not registry.exists()
 ```
 
-and migrate: the module's three `["schema_version"] == 5` assertions read 6; `tests/test_registry_replay.py` imports `_attempts_log` from `tests.test_research_command` beside `_clean_tree`, with the same `# noqa: F401` comment; the other append call sites pass `attempt` — `tests/test_registry_conformance.py:161` and `:229`, `tests/test_research_control.py:98` (its `:122` reads 6), `tests/test_trial_registry_provenance.py`'s `_forty_eight_trials` (`{"log": "e" * 32, "id": n, "absorbs": [], "counted": []}`) and its reading append (`attempt=None`), `tests/test_trial_attempts.py`'s `_append_one` (`attempt={"log": "e" * 32, "id": 1, "absorbs": [], "counted": []}`, a key no other record of its one caller carries) — `git grep -n -E "\.append\($|reg\.append\(|ledger\.append\(" -- tests/` lists them.
+and migrate: the module's three `["schema_version"] == 5` assertions read 6; `tests/test_registry_replay.py` imports `_attempts_log` from `tests.test_research_command` beside `_clean_tree`, with the same `# noqa: F401` comment; the other append call sites pass `attempt` — `tests/test_registry_conformance.py:161` and `:229`, `tests/test_research_control.py:98` (its `:122` reads 6), `tests/test_trial_registry_provenance.py`'s `_forty_eight_trials` (`{"log": "e" * 32, "id": n, "begin": f"{n:064x}", "absorbs": [], "counted": []}`) and its reading append (`attempt=None`), `tests/test_trial_attempts.py`'s `_append_one` (`attempt={"log": "e" * 32, "id": 1, "begin": "e" * 64, "absorbs": [], "counted": []}`, a key no other record of its one caller carries) — `git grep -n -E "\.append\($|reg\.append\(|ledger\.append\(" -- tests/` lists them.
 
 - [ ] **Step 3: Run them to verify they fail**
 
 Run: `uv run pytest tests/test_registry_store.py tests/test_research_command.py -k "attempt and not attempts_init or schema_six or schema_two or begin or end_the_log or stop_ends or ruleless_reading or clean_run or failed_build_ends" -q -p no:cacheprovider --basetemp=.tmp/plan-00133/pt`
 Expected: `TypeError: TrialRegistry.append() got an unexpected keyword argument 'attempt'` and the command cases failing on `schema_version == 6`, a missing `begin` line, or — `a-leaf-the-registry-refuses` — the numbers printed before the store's refusal.
 
-- [ ] **Step 4: Implement the store** — `record.py`: the Interfaces' constants; `validate_metrics(metrics, where)` raises `RegistryError(f"{where} must be a non-empty dict")` unless `metrics` is one, then runs `_assert_finite(metrics, where)` — the one metric-leaf rule, which `validate_caller_fields` (`where` `"metrics"`), `validate_reading_fields` (`f"{where}: metrics"`), each counted entry and Step 5's check before the `end` line call, so none can disagree, both existing callers' messages unchanged; `_EXPECTED_STORED_KEYS[6] = _EXPECTED_STORED_KEYS[5] | {"attempt"}`; `validate_stored_record` requires and checks `attempt` at 6, through `validate_record_attempt`, so a stored line is held to the form an append is; `validate_record_attempt` checks spec D8's form with the test table's messages — "attempt must be a dict", "attempt keys must be exactly [...] (missing [...], unknown [...])", "attempt log must be 32 lowercase hex", "attempt id must be an int >= 1" (`type(...) is int`), "attempt absorbs must be distinct ints >= 1 below the attempt's id" (each `type(...) is int`, the id check's), "counted entry keys must be exactly [...]", "counted entry log …", "counted entry id must be an int >= 1" (the id check's), "counted entry spec_hash must be 64 lowercase hex", "counted entry family …" and "… subject must be a non-empty str", "counted entry verdict must be one of ['adopt', 'park', 'reject']", "counted entry metrics must be a non-empty dict" then `_assert_finite` (`validate_metrics(entry["metrics"], "counted entry metrics")`), "counted entries must be distinct (log, id) pairs, none the record's own attempt or one it absorbs"; `validate_reading_attempt` takes `None` or the three keys, "reading attempt must be null or a dict", "reading attempt keys must be exactly ['absorbs', 'id', 'log']", the log, id and absorbs checks shared; `validate_stored_reading` reads `schema_version` (an int in `{1, 2}`) before the key set, the key set being `_READING_KEYS` at 1 and `_READING_KEYS | {"attempt"}` at 2. `store.py`: `_to_record` passes `attempt=rec.get("attempt")`; `_assert_cross_record` refuses a record past `_ATTEMPT_FLOOR_TRIAL_ID` below schema 6, after the floor at 47, naming the trial, its schema and "every record past trial 48 must be schema_version 6"; `_assert_reading_chain` refuses, after its link check, a reading past `_ATTEMPT_FLOOR_READING_ID` below schema 2 ("reading <n> declares schema_version <s>; every reading past reading 1 must be schema_version 2"); `TrialRegistry.append` takes `attempt: dict` with no default and validates it before the open, as `validate_caller_fields` runs; `ReadingLedger.append` takes `attempt: dict | None` with no default, validated in `validate_reading_fields` before the open.
+- [ ] **Step 4: Implement the store** — `record.py`: the Interfaces' constants; `validate_metrics(metrics, where)` raises `RegistryError(f"{where} must be a non-empty dict")` unless `metrics` is one, then runs `_assert_finite(metrics, where)` — the one metric-leaf rule, which `validate_caller_fields` (`where` `"metrics"`), `validate_reading_fields` (`f"{where}: metrics"`), each counted entry and Step 5's check before the `end` line call, so none can disagree, both existing callers' messages unchanged; `_EXPECTED_STORED_KEYS[6] = _EXPECTED_STORED_KEYS[5] | {"attempt"}`; `validate_stored_record` requires and checks `attempt` at 6, through `validate_record_attempt`, so a stored line is held to the form an append is; `validate_record_attempt` checks spec D8's form with the test table's messages — "attempt must be a dict", "attempt keys must be exactly [...] (missing [...], unknown [...])", "attempt log must be 32 lowercase hex", "attempt id must be an int >= 1" (`type(...) is int`), "attempt begin must be 64 lowercase hex", "attempt absorbs entry keys must be exactly ['begin', 'id']", "attempt absorbs ids must be distinct ints >= 1 below the attempt's id" (each `type(...) is int`, the id check's), "attempt absorbs entry begin must be 64 lowercase hex", "counted entry keys must be exactly [...]", "counted entry log …", "counted entry id must be an int >= 1" (the id check's), "counted entry begin must be 64 lowercase hex", "counted entry spec_hash must be 64 lowercase hex", "counted entry family …" and "… subject must be a non-empty str", "counted entry verdict must be one of ['adopt', 'park', 'reject']", "counted entry metrics must be a non-empty dict" then `_assert_finite` (`validate_metrics(entry["metrics"], "counted entry metrics")`), "counted entries must be distinct (log, id) pairs, none the record's own attempt or one it absorbs"; `validate_reading_attempt` takes `None` or the four keys, "reading attempt must be null or a dict", "reading attempt keys must be exactly ['absorbs', 'begin', 'id', 'log']", the log, id, begin and absorbs checks shared; `validate_stored_reading` reads `schema_version` (an int in `{1, 2}`) before the key set, the key set being `_READING_KEYS` at 1 and `_READING_KEYS | {"attempt"}` at 2. `store.py`: `_to_record` passes `attempt=rec.get("attempt")`; `_assert_cross_record` refuses a record past `_ATTEMPT_FLOOR_TRIAL_ID` below schema 6, after the floor at 47, naming the trial, its schema and "every record past trial 48 must be schema_version 6"; `_assert_reading_chain` refuses, after its link check, a reading past `_ATTEMPT_FLOOR_READING_ID` below schema 2 ("reading <n> declares schema_version <s>; every reading past reading 1 must be schema_version 2"); `TrialRegistry.append` takes `attempt: dict` with no default and validates it before the open, as `validate_caller_fields` runs; `ReadingLedger.append` takes `attempt: dict | None` with no default, validated in `validate_reading_fields` before the open.
 
-- [ ] **Step 5: Implement the lines in `cli/research/command.py`** — for `--register` of a ruled subject, after the dataset checks and before the build: the invocation, built as today but here, then `log = attempts.AttemptLog(attempts.log_path(_REPO_ROOT))` and `attempt = log.begin(lambda lines: None, invocation=…, spec_hash=computed_spec_hash, family=family, bucket=budget.BUCKET_OF.get(family), n_trials=n_trials, worktree=_REPO_ROOT, branch=attempts.current_branch(_REPO_ROOT), registry=target, ledger=ledger_target)`, any `(OSError, RegistryError)` from either refused as D2's first remedy, "the trial-attempts log <path> refused the run's first line: <error>; nothing ran". Each of the four exits between the `begin` and the `end` line first writes `log.end(attempt, failed=f"{type(exc).__name__}: {exc}")`, then exits as today: the build's two except clauses, `(RegistryError, OSError, SubjectError)` and `EVALUATION_ERRORS`; the key-set refusal, its `failed` `SubjectError: ` and its refusal text; and the leaf check below — each a row of `test_a_failed_build_ends_its_attempt_with_its_class_and_message` and a probe of Step 8. Right after the key-set check, under the same `if records:`, `validate_metrics(metrics, "metrics")` — the leaf rule the store would apply after the print — and a `RegistryError` it raises is handled as the key-set refusal is: `failed` written as `RegistryError: <message>`, then the exit with the message, nothing printed. Every leaf the store refuses is caught here, before the `end` line: a None, a bool, a NaN or an infinity, a numpy scalar, a key that is not a str; an `end` holding one would be a finished orphan whose `counted` entry every later record in its bucket must carry and the store refuses, and a NaN would raise from the `end` line's own `canonical_json` as a traceback. After the rule and before the print, `log.end(attempt, verdict=ruled, metrics=metrics)` or, on a stop, `log.end(attempt, stop=known.no_verdict, metrics=metrics)`, an `(OSError, RegistryError)` refused as D2's second remedy, "the trial-attempts log <path> refused the run's last line: <error>; the numbers are withheld and the attempt stays open: run again with the same arguments, which absorbs it", printing nothing. The appends pass `attempt={"log": log.log_id, "id": attempt, "absorbs": [], "counted": []}` to the registry and `{"log": log.log_id, "id": attempt, "absorbs": []}` to the ledger on a stop; a ruleless `--reading` writes no line and passes `attempt=None`.
+- [ ] **Step 5: Implement the lines in `cli/research/command.py`** — for `--register` of a ruled subject, after the dataset checks and before the build: the invocation, built as today but here, then `log = attempts.AttemptLog(attempts.log_path(_REPO_ROOT))` and `attempt = log.begin(lambda lines: None, invocation=…, spec_hash=computed_spec_hash, family=family, bucket=budget.BUCKET_OF.get(family), n_trials=n_trials, worktree=_REPO_ROOT, branch=attempts.current_branch(_REPO_ROOT), registry=target, ledger=ledger_target)`, any `(OSError, RegistryError)` from either refused as D2's first remedy, "the trial-attempts log <path> refused the run's first line: <error>; nothing ran". Each of the four exits between the `begin` and the `end` line first writes `log.end(attempt, failed=f"{type(exc).__name__}: {exc}")`, then exits as today: the build's two except clauses, `(RegistryError, OSError, SubjectError)` and `EVALUATION_ERRORS`; the key-set refusal, its `failed` `SubjectError: ` and its refusal text; and the leaf check below — each a row of `test_a_failed_build_ends_its_attempt_with_its_class_and_message` and a probe of Step 8. Right after the key-set check, under the same `if records:`, `validate_metrics(metrics, "metrics")` — the leaf rule the store would apply after the print — and a `RegistryError` it raises is handled as the key-set refusal is: `failed` written as `RegistryError: <message>`, then the exit with the message, nothing printed. Every leaf the store refuses is caught here, before the `end` line: a None, a bool, a NaN or an infinity, a numpy scalar, a key that is not a str; an `end` holding one would be a finished orphan whose `counted` entry every later record in its bucket must carry and the store refuses, and a NaN would raise from the `end` line's own `canonical_json` as a traceback. After the rule and before the print, `log.end(attempt, verdict=ruled, metrics=metrics)` or, on a stop, `log.end(attempt, stop=known.no_verdict, metrics=metrics)`, an `(OSError, RegistryError)` refused as D2's second remedy, "the trial-attempts log <path> refused the run's last line: <error>; the numbers are withheld and the attempt stays open: run again with the same arguments, which absorbs it", printing nothing. The run's own reference is composed once, after the `end` line, `own = {"log": log.log_id, "id": attempt, "begin": attempts.begin_hash(log.lines, attempt)}`, and the appends pass `attempt={**own, "absorbs": [], "counted": []}` to the registry and `{**own, "absorbs": []}` to the ledger on a stop; a ruleless `--reading` writes no line and passes `attempt=None`.
 
-- [ ] **Step 6: Run the Step 3 tests and the migrated modules** — `uv run pytest tests/test_registry_store.py tests/test_registry_record.py tests/test_registry_conformance.py tests/test_research_control.py tests/test_trial_registry_provenance.py tests/test_trial_attempts.py -q -p no:cacheprovider --basetemp=.tmp/plan-00133/pt`, then `tests/test_research_command.py` alone; expected all pass, the data-gated cases skipping without `data/`.
+- [ ] **Step 6: Run the Step 3 tests and the migrated modules** — `uv run pytest tests/test_registry_store.py tests/test_registry_record.py tests/test_registry_conformance.py tests/test_research_control.py tests/test_trial_registry_provenance.py tests/test_trial_attempts.py -q -p no:cacheprovider --basetemp=.tmp/plan-00133/pt`, then `tests/test_research_command.py` alone, split as the Global Constraints say; expected all pass, the data-gated cases skipping without `data/`.
 
 - [ ] **Step 7: Consumers, then commit** — `consumers.sh --direct` over the eleven paths of the `git add` below, the union under the pytest flags, and the Global Constraints' walker for files under `cli/`.
 
@@ -1363,7 +1397,7 @@ Claude-Session: <the executing session's URL>
 EOF
 ```
 
-- [ ] **Step 8: Probe** — `--file cli/registry/record.py`, control `s/^def _assert_finite(/def _assert_finite_gone(/`: each check of `validate_record_attempt` made `if False:` against its row of `test_an_ill_shaped_attempt_is_refused_before_the_write` (one probe per row, twenty-two; a check shared through a helper — the id check, which `id`, `absorbs` and each entry's `id` reach — probed at its call for the row's field, that call made to accept every value, the Global Constraints' neutral call; for `entry-without-metrics` and `entry-metrics-nan` the check is `validate_metrics`'s, its dict check made `if False:` and its `_assert_finite` call made `None`), each of `validate_reading_attempt`'s against its row of the reading table; the version-6 key-set entry cut against `test_a_schema_six_record_round_trips_its_attempt`; `validate_stored_record`'s `validate_record_attempt` call made `None` against `test_a_record_past_the_floors_must_declare_schema_six`. `--file cli/registry/store.py`, control `s/^def _read_healing(/def _read_healing_gone(/`: `< 6` made `< 5` against `test_a_record_past_the_floors_must_declare_schema_six`; the reading floor's `< 2` made `< 1` against `test_a_reading_past_the_first_must_declare_schema_two`; `attempt: dict,` made `attempt: dict = None,` against `test_append_requires_an_attempt_explicitly`; the pre-open `validate_record_attempt` call made `None` against the `entry-metrics-nan` row; `_to_reading`'s `ReadingRecord(**rec)` made `ReadingRecord(**{**rec, "attempt": None})` against `test_a_reading_at_schema_two_round_trips_its_attempt`. `--file cli/research/command.py`, control `s/^def _no_file_there(/def _no_file_there_gone(/`: the begin's refusal made `None` against `test_a_begin_the_log_refuses_ends_the_run_before_the_build`; the end's refusal made `None` against `test_an_end_the_log_refuses_withholds_the_numbers`; the failed `end` in the `(RegistryError, OSError, SubjectError)` clause made `None` against `the-build-raises`, in the `EVALUATION_ERRORS` clause against `a-compute-error`, before the key-set exit against `the-keys-differ`, and before the leaf check's exit against `a-leaf-the-registry-refuses`; the leaf check's `validate_metrics` call made `None` against `a-leaf-the-registry-refuses`; the stop's reading `attempt` made `None` against `test_a_stop_ends_its_attempt_with_the_stop_and_its_reading_carries_it`; the condition that writes the `begin` made `True`, so a ruleless reading writes one, against `test_a_ruleless_reading_writes_no_line_and_carries_no_attempt`; the begin's `registry=target` made `registry=ledger_target` against `test_a_clean_run_is_admitted_and_logged_begin_and_end`.
+- [ ] **Step 8: Probe** — `--file cli/registry/record.py`, control `s/^def _assert_finite(/def _assert_finite_gone(/`: each check of `validate_record_attempt` made `if False:` against its row of `test_an_ill_shaped_attempt_is_refused_before_the_write` (one probe per row, twenty-six; a check shared through a helper — the id check, which `id`, each `absorbs` entry's and each `counted` entry's `id` reach, or a 64-hex check the `begin` fields and `spec_hash` share — probed at its call for the row's field, that call made to accept every value, the Global Constraints' neutral call; for `entry-without-metrics` and `entry-metrics-nan` the check is `validate_metrics`'s, its dict check made `if False:` and its `_assert_finite` call made `None`), each of `validate_reading_attempt`'s against its row of the reading table; the version-6 key-set entry cut against `test_a_schema_six_record_round_trips_its_attempt`; `validate_stored_record`'s `validate_record_attempt` call made `None` against `test_a_record_past_the_floors_must_declare_schema_six`. `--file cli/registry/store.py`, control `s/^def _read_healing(/def _read_healing_gone(/`: `< 6` made `< 5` against `test_a_record_past_the_floors_must_declare_schema_six`; the reading floor's `< 2` made `< 1` against `test_a_reading_past_the_first_must_declare_schema_two`; `attempt: dict,` made `attempt: dict = None,` against `test_append_requires_an_attempt_explicitly`; the pre-open `validate_record_attempt` call made `None` against the `entry-metrics-nan` row; `_to_reading`'s `ReadingRecord(**rec)` made `ReadingRecord(**{**rec, "attempt": None})` against `test_a_reading_at_schema_two_round_trips_its_attempt`. `--file cli/research/command.py`, control `s/^def _no_file_there(/def _no_file_there_gone(/`: the begin's refusal made `None` against `test_a_begin_the_log_refuses_ends_the_run_before_the_build`; the end's refusal made `None` against `test_an_end_the_log_refuses_withholds_the_numbers`; the failed `end` in the `(RegistryError, OSError, SubjectError)` clause made `None` against `the-build-raises`, in the `EVALUATION_ERRORS` clause against `a-compute-error`, before the key-set exit against `the-keys-differ`, and before the leaf check's exit against `a-leaf-the-registry-refuses`; the leaf check's `validate_metrics` call made `None` against `a-leaf-the-registry-refuses`; the stop's reading `attempt` made `None` against `test_a_stop_ends_its_attempt_with_the_stop_and_its_reading_carries_it`; the condition that writes the `begin` made `True`, so a ruleless reading writes one, against `test_a_ruleless_reading_writes_no_line_and_carries_no_attempt`; the begin's `registry=target` made `registry=ledger_target` against `test_a_clean_run_is_admitted_and_logged_begin_and_end`. `--file cli/registry/attempts.py`, control `s/^def _git(/def _git_gone(/` (the run's `current_branch` reaches it): `begin_hash` made to read the attempt's `end` line in place of its `begin` line, range-addressed from `def begin_hash(` to the next `def`, against `test_a_clean_run_is_admitted_and_logged_begin_and_end`.
 
 ______________________________________________________________________
 
@@ -1381,19 +1415,27 @@ ______________________________________________________________________
 
 ```python
 # tests/test_research_command.py
+from dataclasses import replace
+
 from cli.registry import budget
 
 _RULED_FIXTURES = {"b1-hourly-rv": _b1_hourly_rv_dataset, "b2-funding-derisk": _b2_dataset}
+# Each ruled subject's count constant, which the tie raises so that a literal at a kill-bar site fails it.
+_DECLARED_COUNT = {"b1-hourly-rv": "_B1_HOURLY_RV_N_TRIALS", "b2-funding-derisk": "_B2_N_TRIALS"}
 
 
 def test_the_ruled_subjects_declare_their_families_and_trial_counts():
     declared = {name: (s.family, s.n_trials) for name, s in subjects.SUBJECTS.items() if s.verdict is not None}
     assert declared == {"b1-hourly-rv": ("B1", 3), "b2-funding-derisk": ("B2", 1)}
-    assert set(_RULED_FIXTURES) == set(declared)
+    assert set(_RULED_FIXTURES) == set(declared) == set(_DECLARED_COUNT)
 
 
 @pytest.mark.parametrize("name", sorted(_RULED_FIXTURES))
 def test_every_ruled_subjects_kill_bar_deflates_at_its_declared_count(tmp_path, monkeypatch, name):
+    assert getattr(subjects, _DECLARED_COUNT[name]) == subjects.SUBJECTS[name].n_trials
+    raised = subjects.SUBJECTS[name].n_trials + 1
+    monkeypatch.setattr(subjects, _DECLARED_COUNT[name], raised)
+    monkeypatch.setitem(subjects.SUBJECTS, name, replace(subjects.SUBJECTS[name], n_trials=raised))
     counts = []
 
     def recorder(*args, n_trials, **kwargs):
@@ -1404,7 +1446,7 @@ def test_every_ruled_subjects_kill_bar_deflates_at_its_declared_count(tmp_path, 
 
     subjects.SUBJECTS[name].build(ObservedReader(_RULED_FIXTURES[name](tmp_path)), "ohlc-test", None)
 
-    assert counts and set(counts) == {subjects.SUBJECTS[name].n_trials}
+    assert counts and set(counts) == {raised}
 ```
 
 and extend `test_every_subject_declares_a_tracked_spec_its_keys_seeds_rule_and_incumbent` with:
@@ -1419,7 +1461,7 @@ and extend `test_every_subject_declares_a_tracked_spec_its_keys_seeds_rule_and_i
 - [ ] **Step 2: Run them to verify they fail**
 
 Run: `uv run pytest tests/test_research_command.py -k "families_and_trial_counts or kill_bar_deflates or declares_a_tracked_spec" -q -p no:cacheprovider --basetemp=.tmp/plan-00133/pt`
-Expected: `AttributeError: 'Subject' object has no attribute 'family'`.
+Expected: `AttributeError: 'Subject' object has no attribute 'family'`, the b1 tie's `... no attribute 'n_trials'`, and the b2 tie's `module 'cli.research.subjects' has no attribute '_B2_N_TRIALS'`.
 
 - [ ] **Step 3: Implement** — the two fields after `incumbent`, each with a comment naming the spec's D4; `_B2_N_TRIALS = 1` beside `_B2_COST_PER_SIDE`; `_b2_arm_a_bar`'s keyword `n_trials` and its two callers' counts (Interfaces); the two declarations.
 
@@ -1454,11 +1496,11 @@ ______________________________________________________________________
 - Consumes: Task 1's `landed`, `files_landed`, `reconcile`, `lacking`, `arguments`, `AttemptLog.locked`, `Count`, `Orphan.describe`, `DEVELOP`, and, in its tests, `_process_marks`, `_boot_id` and `_reaped_pid`; Task 2's `budget`; Task 3's `allowed_log_ids`; Task 5's lines; Task 6's declarations.
 - Produces: nothing new for later tasks; the register path in D2's order:
   1. after the unknown-subject refusal, D7's: a subject whose `verdict` is set, run with neither `--register` nor `--reading`, refused before any read — "<subject> declares a verdict rule, so every run of it is a trial: run it with --register; a ruleless pre-flight subject reads the inputs without the trial's result";
-  2. with today's refusals that need no data, for `--register`: D4's "--family <x> is not <F>, the family <subject> declares: pass --family <F>" and "--n-trials <x> is not <n>, the count <subject> declares and deflates at: pass --n-trials <n>"; D5's "family <F> is in no bucket of cli/registry/budget.py: add it with its bucket in a reviewed pull request"; D6's absent log, its broken chain (D1's line remedy appended to the `AttemptLogError`), its unlisted id (`attempts.allowed_log_ids(_REPO_ROOT)`), each with its remedy verbatim; `landed = attempts.landed(_REPO_ROOT, target, ledger_target)` (D3's develop refusal), a `RegistryError` it raises turned into `raise _abort(str(exc))`, its message D3's remedy or the store's own; `attempts.lacking(...)`, D6's third remedy for the first pair; and D4's frozen count — a landed record whose `invocation`, read through `.get` (Task 1 Step 5), names this subject and whose `n_trials_in_family` is not the declared `n_trials`, the highest such trial named — "<subject> declares n_trials <x>, and its trial <N> landed at n_trials <n>, which that record's deflated Sharpe used, so its n_trials is frozen: declare a new subject (a new name) for the further trial";
+  2. with today's refusals that need no data, for `--register` — every new read among them, of the log, the allowlist and the landed files (`AttemptLog`, `allowed_log_ids`, `landed`, `lacking`, the frozen count), after today's clean-tree refusal, beside the comparator's registry read, since `landed` reads the target through the store, which heals a torn tail that an unclean-tree refusal leaves byte-identical (`test_a_run_refused_for_an_unclean_tree_leaves_a_torn_registry_tail_unhealed`): D4's "--family <x> is not <F>, the family <subject> declares: pass --family <F>" and "--n-trials <x> is not <n>, the count <subject> declares and deflates at: pass --n-trials <n>"; D5's "family <F> is in no bucket of cli/registry/budget.py: add it with its bucket in a reviewed pull request"; D6's absent log, its broken chain (D1's line remedy appended to the `AttemptLogError`), its unlisted id (`attempts.allowed_log_ids(_REPO_ROOT)`), each with its remedy verbatim; `landed = attempts.landed(_REPO_ROOT, target, ledger_target)` (D3's develop refusal), a `RegistryError` it raises turned into `raise _abort(str(exc))`, its message D3's remedy or the store's own; `attempts.lacking(...)`, D6's third remedy for the first pair; and D4's frozen count — a landed record whose `invocation`, read through `.get` (Task 1 Step 5), names this subject and whose `n_trials_in_family` is not the declared `n_trials`, the highest such trial named — "<subject> declares n_trials <x>, and its trial <N> landed at n_trials <n>, which that record's deflated Sharpe used, so its n_trials is frozen: declare a new subject (a new name) for the further trial";
   3. the dataset checks;
   4. `log.begin(admit, …)`, `admit` re-reading `attempts.landed(...)` as step 2 reads it and raising each of its refusals as `raise _abort(...)` — a `typer.Exit`, which the `(OSError, RegistryError)` clause around `begin` (Task 5 Step 5) never catches, so a refusal of the count, the budget or the re-read is never reported as the log's — then `count = attempts.reconcile(lines, landed, log_id=log.log_id, bucket_of=budget.BUCKET_OF, hold=hold)`, `hold` being `(subject, attempts.arguments(invocation), computed_spec_hash)`, refusing when `known.n_trials < count.required_n(family)` with D4's split remedy, composed from `attempts.reconcile(lines, landed, log_id=log.log_id, bucket_of=budget.BUCKET_OF, hold=None if frozen else hold, hold_finished=False)`, `frozen` true when a landed record names the subject — its `required_n(family)` the `<m>` the remedy names and its orphans of the family listed through `describe()`: a raised run that leaves the spec file, so `spec_hash`, unchanged holds every open attempt this one held, each one whose process is gone and so can no longer end, and absorbs each whatever its numbers, and a finished one only on equal numbers; one whose spec file changed holds none and is refused before its fit naming the full count; a new subject absorbs no attempt of this one (spec D3) — then the "raise …" tail, or, when `frozen`, the "<subject>'s n_trials is frozen by its trial <N>: declare a new subject (a new name) for the further trial" tail — and when the bucket is set and `strict.spent(bucket) + 1 > budget.BUDGET[bucket]`, `strict` being `attempts.reconcile(lines, landed, log_id=log.log_id, bucket_of=budget.BUCKET_OF, hold=hold, hold_finished=False)`, which holds out only the open attempts `hold` names whose process is gone, since a finished one printed a look this run absorbs only on equal numbers and a live one may yet print one (spec D5), with D5's "bucket <b> has spent <s> of its <B> trials (<r> records, <k> attempts that never landed), so this trial would exceed it: an expansion is the owner's ruling, written into cli/registry/budget.py by a pull request that quotes it", its figures read from `strict`;
   5. the build, the key set, the rule, the `end` line (Task 5), the print;
-  6. the tree check and the `--verdict` assertion as today; then one block under `with log.locked() as lines:` — `landed` re-read, `count = attempts.reconcile(lines, landed, log_id=log.log_id, bucket_of=budget.BUCKET_OF, own=attempt)` with no `hold`, since after the `end` a held attempt is classified as any other (spec D3), the same two refusals as step 4 on the new count (the run refused after its print, both attempts counting), the count's remedy composed as step 4's — over these lines, which hold this run's `end`, so a refused verdict counts itself among the attempts the next run must meet, and the remedy's `<this run>` reads "the next run" (spec D4) — then the append with `attempt={"log": log.log_id, "id": attempt, "absorbs": list(count.absorbs), "counted": count.counted(family)}`, or the stop's reading with `absorbs` alone.
+  6. the tree check and the `--verdict` assertion as today; then one block under `with log.locked() as lines:` — `landed` re-read, `count = attempts.reconcile(lines, landed, log_id=log.log_id, bucket_of=budget.BUCKET_OF, own=attempt)` with no `hold`, since after the `end` a held attempt is classified as any other (spec D3), the same two refusals as step 4 on the new count (the run refused after its print, both attempts counting), the count's remedy composed as step 4's — over these lines, which hold this run's `end`, so a refused verdict counts itself among the attempts the next run must meet, and the remedy's `<this run>` reads "the next run" (spec D4) — then the append with `attempt={**own, "absorbs": list(count.absorbs), "counted": count.counted(family)}`, `own` Task 5's `{log, id, begin}`, or the stop's reading with `{**own, "absorbs": list(count.absorbs)}`.
 
 - [ ] **Step 1: Migrate the module's fixtures and stubs** — `_STUB_DECLARED` gains `"family": "STUB"` and `"n_trials": 1`; `_attempts_log` gains `monkeypatch.setattr(attempts, "landed", lambda code_root, registry, ledger: attempts.files_landed(registry, ledger))` and `monkeypatch.setitem(budget.BUCKET_OF, "STUB", None)`; at module level `_unstubbed_landed, _unstubbed_log_path, _unstubbed_allowed = attempts.landed, attempts.log_path, attempts.allowed_log_ids`. Then, by rule, every case the new refusals reach: (a) a plain eval of a ruled stub (`_stub_subject`, `_rolling_subject`) declares it ruleless with `verdict=None, no_verdict=None` — `_rolling_subject` gains `**declared`, merged over `_STUB_DECLARED` as `_stub_subject`'s are, so its two `--register` callers stay ruled and its plain-eval callers pass the two keywords; (b) a plain eval of a ruled production subject — `_b2_eval`'s callers, the `b1-hourly-rv` row of `test_a_b1_hourly_rv_subject_refuses_as_of_before_any_read`, `test_b1_hourly_rv_names_an_hourly_file_it_cannot_read`, `test_b1_hourly_rv_refuses_a_build_whose_arm_a_never_trades_or_whose_weights_never_move`, `test_a_b1_hourly_rv_history_the_bar_cannot_read_is_refused_before_the_arms_and_the_hourly_reads`, and the `b1-hourly-rv` and `b2-funding-derisk` rows of `test_every_subject_evaluates_its_fixture_and_ends_an_input_it_cannot_evaluate_in_an_exit` — splices `_as_trial(name, tmp_path)` in at the invoke, `runner.invoke(app, [*args, *_as_trial(name, tmp_path)])`, `args` itself unchanged because four cases read the window back from its tail (`args[-2]`, `args[-1]`), a helper returning `[]` for a ruleless subject and for a ruled one `["--register", "--registry", str(tmp_path / "registry.jsonl"), "--ledger", str(tmp_path / "ledger.jsonl"), "--iteration", "iter-001", "--family", family, "--n-trials", str(n_trials)]` from its declaration, so the case keeps the command path and the build's refusal it tests (the spec's author's call); (c) a register run whose `--n-trials` is not 1 — `follower` in `test_a_registered_trial_is_the_comparator_only_of_a_subject_naming_its_subject` — declares that count on its stub, and a register run of a production subject types its declared family and count (`family="B2"` in `test_the_b2_subject_registers_each_metric_from_its_own_call`; `--family B1 --n-trials 3` in `test_the_b1_hourly_rv_subject_registers_each_metric_from_its_own_call`), a case refused before D4's checks (`test_a_subject_without_an_incumbent_is_refused_a_comparator_trial`) keeping its message; (d) `test_a_second_trial_in_a_family_needs_n_trials_above_the_recorded_count` registers its second trial as `stub-2` declaring 2, and its repeat at 1 asserts D4's message with the frozen tail in place of `n_trials_in_family`. Step 6's run of the two modules is where a case the list missed shows: it is migrated by the rule of (a)–(d) it falls under, and a failure under none of them is reported, never patched around.
 
@@ -1495,13 +1537,18 @@ def _planted(path: Path, *subjects_ended: tuple[str, str | None], family: str = 
 _SEED_BLOCK = {"ohlc-test": {"files": {"BTC/EUR/1440.parquet": "c" * 64}, "rows": 10, "span": ["2020-01-01 00:00:00+00:00", "2020-01-10 00:00:00+00:00"]}}
 
 
-def _seed(registry: Path, family: str, count: int, *, log: str = "e" * 32, first_id: int = 1, subject: str = "seed") -> None:
+def _begin_line_hash(path: Path, attempt: int) -> str:
+    return next(line["line_hash"] for line in _log_lines(path) if line["kind"] == "begin" and line["attempt"] == attempt)
+
+
+def _seed(registry: Path, family: str, count: int, *, log: str = "e" * 32, first_id: int = 1, subject: str = "seed",
+          begin_of=lambda attempt_id: f"{attempt_id:064x}") -> None:
     for n in range(1, count + 1):
         TrialRegistry(registry).append(
             iteration="iter-001", family=family, spec_hash="s", datasets=_SEED_BLOCK, seeds=[0], metrics={"sharpe": 0.3},
             invocation={"subject": subject, "dataset": "ohlc-test", "window": None, "as_of": None, "accept_holes": False, "comparator_trial": None, "commit": _CLEAN_HEAD},
             n_trials_in_family=n, verdict="reject", run_ref="cli/registry/record.py",
-            attempt={"log": log, "id": first_id + n - 1, "absorbs": [], "counted": []},
+            attempt={"log": log, "id": first_id + n - 1, "begin": begin_of(first_id + n - 1), "absorbs": [], "counted": []},
         )
 
 
@@ -1532,7 +1579,8 @@ def test_a_run_on_an_abandoned_branch_is_counted_by_the_next_registration(tmp_pa
     assert admitted.exit_code == 0, admitted.output
     spec_hash = hashlib.sha256((main / _STUB_SPEC).read_bytes()).hexdigest()
     assert json.loads((main / "registry.jsonl").read_text())["attempt"]["counted"] == [
-        {"log": log_id, "id": 1, "family": "STUB", "subject": "stub", "spec_hash": spec_hash, "verdict": "adopt", "metrics": {"sharpe": 1.0}}
+        {"log": log_id, "id": 1, "begin": _begin_line_hash(log, 1), "family": "STUB", "subject": "stub", "spec_hash": spec_hash,
+         "verdict": "adopt", "metrics": {"sharpe": 1.0}}
     ]
 
 
@@ -1549,7 +1597,7 @@ def test_a_run_refused_after_its_print_still_counts(tmp_path, monkeypatch, _atte
     retry = runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1)])
 
     assert retry.exit_code == 0, retry.output
-    assert json.loads(registry.read_text())["attempt"]["absorbs"] == [1]
+    assert json.loads(registry.read_text())["attempt"]["absorbs"] == [{"id": 1, "begin": _begin_line_hash(_attempts_log, 1)}]
 
 
 def test_a_retry_whose_numbers_moved_is_refused_after_its_print_and_both_count(tmp_path, monkeypatch, _attempts_log):
@@ -1689,7 +1737,7 @@ def test_an_open_attempt_at_the_budgets_edge_is_held_only_when_its_process_is_go
     result = runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=2)])
     assert result.exit_code == 0, result.output
     lines = registry.read_text().splitlines()
-    assert len(lines) == 25 and json.loads(lines[-1])["attempt"]["absorbs"] == [1]
+    assert len(lines) == 25 and json.loads(lines[-1])["attempt"]["absorbs"] == [{"id": 1, "begin": _begin_line_hash(_attempts_log, 1)}]
 
 
 def test_a_stop_spends_nothing(tmp_path, monkeypatch, _attempts_log):
@@ -1751,7 +1799,7 @@ def test_a_held_attempt_another_session_lands_mid_fit_is_absorbed_by_no_one_twic
     log_id, stub = attempts.AttemptLog(_attempts_log).log_id, subjects.SUBJECTS["stub"]
 
     def build(reader, dataset, window, as_of=None, accept_holes=False):
-        _seed(registry, "OTHER", 1, log=log_id)
+        _seed(registry, "OTHER", 1, log=log_id, begin_of=lambda attempt_id: _begin_line_hash(_attempts_log, attempt_id))
         return stub.build(reader, dataset, window, as_of, accept_holes)
 
     monkeypatch.setitem(subjects.SUBJECTS, "stub", replace(stub, build=build))
@@ -1925,8 +1973,8 @@ def test_the_register_path_makes_no_network_call(tmp_path, monkeypatch):
 def test_a_stale_develop_requires_the_same_count(tmp_path, monkeypatch, _attempts_log, develop_at):
     _planted(_attempts_log, ("elsewhere", "reject"))
     log_id = attempts.AttemptLog(_attempts_log).log_id
-    landed_record = {"trial_id": 1, "family": "STUB", "record_hash": "7" * 64, "n_trials_in_family": 1,
-                     "invocation": {"subject": "elsewhere"}, "attempt": {"log": log_id, "id": 1, "absorbs": [], "counted": []}}
+    landed_record = {"trial_id": 1, "family": "STUB", "record_hash": "7" * 64, "n_trials_in_family": 1, "invocation": {"subject": "elsewhere"},
+                     "attempt": {"log": log_id, "id": 1, "begin": _begin_line_hash(_attempts_log, 1), "absorbs": [], "counted": []}}
     # A legacy record: neither an invocation key nor an attempt key.
     legacy = {"trial_id": 2, "family": "A1", "record_hash": "6" * 64, "n_trials_in_family": 1}
     _repo_with_develop(tmp_path, monkeypatch, landed_record, legacy, develop_at=develop_at)
@@ -1993,13 +2041,14 @@ def test_a_log_lacking_a_landed_attempt_is_refused(tmp_path, monkeypatch, _attem
     _seed(registry, "STUB", 1, log=attempts.AttemptLog(_attempts_log).log_id, first_id=5)
     output = _refused_before_the_fit(tmp_path, monkeypatch, registry=registry)
     assert (
-        f"{_attempts_log} lacks attempt 5, which trial 1 carries: the log was truncated or replaced; rename it aside, then "
+        f"{_attempts_log} lacks attempt 5, which trial 1 carries: the log was truncated, replaced, restored from an older backup "
+        "or forked; rename it aside, then "
         "restore it from a backup if one exists; otherwise create a new log with zcrypto research attempts-init and add its "
         "id to docs/reference/trial-attempt-logs.txt by PR, saying what was lost"
     ) in output
 ```
 
-with `from dataclasses import replace`, `from cli.registry import TrialRegistry` and `from tests.test_trial_attempts import _reaped_pid` among the module's imports, and `_GIT_IDENTITY` the module's.
+with `from cli.registry import TrialRegistry` and `from tests.test_trial_attempts import _reaped_pid` among the module's imports, `replace` Task 6's, and `_GIT_IDENTITY` the module's.
 
 - [ ] **Step 3: Run them to verify they fail**
 
@@ -2008,9 +2057,9 @@ Expected: each fails — the refusals absent (exit 0 where 1 is asserted), `coun
 
 - [ ] **Step 4: Implement the register path** — the Interfaces block's six steps in `cli/research/command.py`, `budget` read through its module, every git call through `attempts`; D4's split remedy composed once and used before the fit and after the print.
 
-- [ ] **Step 5: README and help** — the four `help=` strings of `--register`, `--family`, `--n-trials` and `--registry` in `cli/research/command.py` rewritten to say what their README rows below say, `--n-trials` no longer "must exceed the count already recorded"; then the README. `--register`: a ruled run's first line goes to the clone's trial-attempts log before the fit and its last before the print, so a run whose branch never merges still counts; refused for an absent, unlisted or damaged log; a plain eval of a subject with a rule is refused. `--family`: must equal the family the subject declares, which must be in a bucket of `cli/registry/budget.py`. `--n-trials`: must equal the count the subject declares, which must cover the family's records, this run and its attempts that never landed; frozen once a record of the subject has landed, when a further trial declares a new subject. `--registry`: a ruled run writes its attempt to the clone's trial-attempts log whatever file this names, and one whose record does not reach the committed registry counts, for every run into the committed registry, against its family and bucket as an attempt that never landed, so a rehearsal into another file spends a trial. The paragraph: the bucket budgets refuse a trial past them.
+- [ ] **Step 5: README and help** — the four `help=` strings of `--register`, `--family`, `--n-trials` and `--registry` in `cli/research/command.py` rewritten to say what their README rows below say, `--n-trials` no longer "must exceed the count already recorded"; then the README. `--register`: a ruled run's first line goes to the clone's trial-attempts log before the fit and its last before the print, so a run whose branch never merges still counts; refused for an absent, unlisted or damaged log; a plain eval of a subject with a rule is refused. `--family`: must equal the family the subject declares, which must be in a bucket of `cli/registry/budget.py`. `--n-trials`: must equal the count the subject declares, which must cover the family's records, this run and its attempts that never landed; frozen once a record of the subject has landed, when a further trial declares a new subject. `--registry`: a ruled run writes its attempt to the clone's trial-attempts log whatever file this names, so a run whose record lands in another file counts against its family and bucket as an attempt that never landed until a later run into the committed registry, with the same subject, arguments and spec file, returns its numbers and verdict and absorbs it — at the count the first run declared, since a raise that moves the numbers leaves both counting — and where the first run took a bucket's last trial, that later run is refused before its fit. The paragraph: the bucket budgets refuse a trial past them.
 
-- [ ] **Step 6: Run the Step 3 tests, then the two modules whole** — `uv run pytest tests/test_research_command.py -q -p no:cacheprovider --basetemp=.tmp/plan-00133/pt` (its cases listed in `tests/slow-cases.txt` included, the run split by node id into parts each under 600 s) and `tests/test_registry_replay.py`; expected all pass.
+- [ ] **Step 6: Run the Step 3 tests, then the two modules whole** — `uv run pytest tests/test_research_command.py -q -p no:cacheprovider --basetemp=.tmp/plan-00133/pt`, split as the Global Constraints say, and `tests/test_registry_replay.py`; expected all pass.
 
 - [ ] **Step 7: Consumers, then commit** — `consumers.sh --direct` over the four paths of the `git add` below, and the Global Constraints' walkers for files under `cli/` and for help strings.
 
@@ -2105,19 +2154,29 @@ _WITH_FOLLOWER = {
 }
 
 
-def _trial6(trial_id: int, *, family="B2", n=1, subject=_B2, attempt_id=1, absorbs=(), counted=()) -> dict:
+def _begin_hash(attempt_id: int) -> str:
+    return f"{attempt_id:064x}"
+
+
+def _trial6(trial_id: int, *, family="B2", n=1, subject=_B2, attempt_id=1, absorbs=(), counted=(), begin=None) -> dict:
     return {**_b2_trial(trial_id, subject), "schema_version": 6, "family": family, "n_trials_in_family": n,
-            "attempt": {"log": _L, "id": attempt_id, "absorbs": list(absorbs), "counted": list(counted)}}
+            "attempt": {"log": _L, "id": attempt_id, "begin": begin or _begin_hash(attempt_id),
+                        "absorbs": [{"id": a, "begin": _begin_hash(a)} for a in absorbs], "counted": list(counted)}}
 
 
-# By default the verdict and numbers a clean b2 trial records, so a record landing the attempt late matches its entry.
+# By default the begin, verdict and numbers a clean b2 trial records, so a record landing the attempt late matches its entry.
 def _listed(attempt_id: int, family: str = "B2", log: str = _L, *, subject: str = _B2, metrics: dict | None = None) -> dict:
-    return {"log": log, "id": attempt_id, "family": family, "subject": subject, "spec_hash": _spec_sha256(_B2_SPEC),
-            "verdict": "reject", "metrics": _b2_trial(attempt_id)["metrics"] if metrics is None else metrics}
+    return {"log": log, "id": attempt_id, "begin": _begin_hash(attempt_id), "family": family, "subject": subject,
+            "spec_hash": _spec_sha256(_B2_SPEC), "verdict": "reject",
+            "metrics": _b2_trial(attempt_id)["metrics"] if metrics is None else metrics}
 
 
 def _reading2(reading_id: int, subject: str, attempt: dict | None) -> dict:
     return {"reading_id": reading_id, "schema_version": 2, "invocation": {"subject": subject}, "attempt": attempt}
+
+
+def _reading_attempt(attempt_id: int) -> dict:
+    return {"log": _L, "id": attempt_id, "begin": _begin_hash(attempt_id), "absorbs": []}
 
 
 def _count_check(trials=(), readings=(), *, subjects=SUBJECTS, bucket_of=BUCKET_OF, budget=BUDGET, allowlist=frozenset({_L})) -> list[str]:
@@ -2147,9 +2206,9 @@ def test_a_clean_schema_6_trial_yields_no_finding():
         pytest.param([_trial6(49)], [], {"bucket_of": {k: v for k, v in BUCKET_OF.items() if k != "B2"}}, "(x):", id="a-family-in-no-bucket"),
         pytest.param([_trial6(49)], [], {"allowlist": frozenset()}, "trial-49 (xi):", id="a-log-off-the-allowlist"),
         pytest.param([_trial6(49, counted=[_listed(5, "B1", "e" * 32)])], [], {}, "trial-49 (xi):", id="a-counted-log-off-the-allowlist"),
-        pytest.param([_trial6(49, attempt_id=2, absorbs=[1])], [_reading2(2, _B2, {"log": _L, "id": 1, "absorbs": []})], {}, "(xi):", id="an-attempt-landed-twice"),
+        pytest.param([_trial6(49, attempt_id=2, absorbs=[1])], [_reading2(2, _B2, _reading_attempt(1))], {}, "(xi):", id="an-attempt-landed-twice"),
         pytest.param([_trial6(49)], [_reading2(2, _B2, None)], {}, "reading-2 (xi):", id="a-ruled-reading-without-its-attempt"),
-        pytest.param([_trial6(49)], [_reading2(2, "b2-arm-a-bar", {"log": _L, "id": 3, "absorbs": []})], {}, "reading-2 (xi):", id="a-ruleless-reading-with-an-attempt"),
+        pytest.param([_trial6(49)], [_reading2(2, "b2-arm-a-bar", _reading_attempt(3))], {}, "reading-2 (xi):", id="a-ruleless-reading-with-an-attempt"),
         pytest.param([_trial6(49, counted=[_listed(5, "B1")]), _trial6(50, subject=_FOLLOW, n=2, attempt_id=2)], [], {"subjects": _WITH_FOLLOWER}, "trial-50 (xii):", id="a-listed-orphan-dropped"),
         pytest.param([_trial6(49, family="B1", n=4, subject=_B1_FOLLOW, counted=[_listed(5)]), _trial6(50, attempt_id=2)], [], {"subjects": _WITH_FOLLOWER}, "trial-50 (xii):", id="a-bucket-mates-orphan-dropped"),
         pytest.param([_trial6(49, counted=[_listed(5, "B1")]), _trial6(50, subject=_FOLLOW, n=2, attempt_id=2, counted=[_listed(5, "B1")])], [], {"subjects": _WITH_FOLLOWER}, None, id="a-listed-orphan-carried"),
@@ -2157,7 +2216,9 @@ def test_a_clean_schema_6_trial_yields_no_finding():
         pytest.param([_trial6(49, counted=[_listed(5, "B1")]), _trial6(50, subject=_FOLLOW, n=2, attempt_id=2, counted=[_listed(5, "B1")])], [], {"subjects": _WITH_FOLLOWER, "budget": {"A": 40, "B": 6, "C": 10}}, None, id="an-orphan-two-records-list-spends-once"),
         pytest.param([_trial6(49, counted=[_listed(5, "B1", subject=_FOLLOW)]), _trial6(50, subject=_FOLLOW, n=2, attempt_id=6, absorbs=[5])], [], {"subjects": _WITH_FOLLOWER, "budget": {"A": 40, "B": 5, "C": 10}}, None, id="a-landed-orphan-spends-nothing-more"),
         pytest.param([_trial6(49, counted=[_listed(5, "B1", subject=_FOLLOW, metrics={"sharpe": 0.1})]), _trial6(50, subject=_FOLLOW, n=2, attempt_id=5)], [], {"subjects": _WITH_FOLLOWER}, "trial-50 (xi):", id="a-listed-id-landed-with-other-numbers"),
-        pytest.param([_trial6(49, counted=[_listed(5, "B1")]), _trial6(50, subject=_FOLLOW, n=2, attempt_id=2)], [_reading2(2, _B2, {"log": _L, "id": 5, "absorbs": []})], {"subjects": _WITH_FOLLOWER}, "reading-2 (xi):", id="a-reading-landing-a-listed-orphan"),
+        pytest.param([_trial6(49, counted=[_listed(5, "B1", subject=_FOLLOW)]), _trial6(50, subject=_FOLLOW, n=2, attempt_id=5, begin="e" * 64)], [], {"subjects": _WITH_FOLLOWER}, "trial-50 (xi):", id="a-listed-id-landed-under-another-begin"),
+        pytest.param([_trial6(49, counted=[_listed(5, "B1")]), _trial6(50, subject=_FOLLOW, n=2, attempt_id=2)], [_reading2(2, _B2, _reading_attempt(5))], {"subjects": _WITH_FOLLOWER}, "reading-2 (xi):", id="a-reading-landing-a-listed-orphan"),
+        pytest.param([_trial6(49, counted=[_listed(5, "B1")]), _trial6(50, subject=_FOLLOW, n=2, attempt_id=2, counted=[{**_listed(5, "B1"), "begin": "e" * 64}])], [], {"subjects": _WITH_FOLLOWER}, "trial-50 (xii):", id="a-listed-orphan-swapped-for-another-begin"),
     ],
 )
 def test_one_change_to_a_clean_schema_6_trial_yields_exactly_its_finding(trials, readings, over, finding):
@@ -2188,7 +2249,7 @@ def test_each_landed_subjects_n_trials_is_frozen_at_its_literal():
 Run: `uv run pytest tests/test_trial_registry_provenance.py -k "past_48 or schema_6 or landed_subjects" -q -p no:cacheprovider --basetemp=.tmp/plan-00133/pt`
 Expected: `NameError: name '_attempt_findings' is not defined`, and `name 'LANDED_N_TRIALS' is not defined`.
 
-- [ ] **Step 3: Implement `_attempt_findings` and `LANDED_N_TRIALS`** — the six checks, read from `docs/specs/00133-t0222-trial-attempts-design.md`'s `## The CI checks` before writing them, every clause a condition the code holds, and every read of a record's or reading's `attempt`, `absorbs`, `counted` or `invocation` through `.get` (Task 1 Step 5), since `_trials()` and `_readings()` give records 1–48 and reading 1 `attempt: None` and records 1–47 `invocation: None`: (x) over the distinct (log, id) a bucket's `counted` entries name, less those landed, which the two rows at the budget's edge, `an-orphan-two-records-list-spends-once` (B = 6, five records and one distinct orphan) and `a-landed-orphan-spends-nothing-more` (B = 5, five records and none), tell from a sum of each record's entries; "landed" every (log, id) a record or reading carries as `attempt` or in `absorbs`; (x) once per bucket of `budget` plus one finding per family a record carries that `bucket_of` lacks, labelled with the first record carrying it; (xi)'s last clause once per (log, id) a record's `counted` lists and a record or reading lands, labelled with the entry that lands it, a record's `invocation` subject, `spec_hash`, `verdict` and `metrics` compared with the listed entry's and a reading landing one a finding by itself; (xii) per record past 48 against every earlier record of its bucket — of its family when bucketless.
+- [ ] **Step 3: Implement `_attempt_findings` and `LANDED_N_TRIALS`** — the six checks, read from `docs/specs/00133-t0222-trial-attempts-design.md`'s `## The CI checks` before writing them, every clause a condition the code holds, and every read of a record's or reading's `attempt`, `absorbs`, `counted` or `invocation` through `.get` (Task 1 Step 5), since `_trials()` and `_readings()` give records 1–48 and reading 1 `attempt: None` and records 1–47 `invocation: None`: (x) over the distinct (log, id) a bucket's `counted` entries name, less those landed, which the two rows at the budget's edge, `an-orphan-two-records-list-spends-once` (B = 6, five records and one distinct orphan) and `a-landed-orphan-spends-nothing-more` (B = 5, five records and none), tell from a sum of each record's entries; "landed" every (log, id) a record or reading carries as `attempt` or in `absorbs`; (x) once per bucket of `budget` plus one finding per family a record carries that `bucket_of` lacks, labelled with the first record carrying it; (xi)'s last clause once per (log, id) a record's `counted` lists and a record or reading lands, labelled with the entry that lands it, the landing reference's `begin`, a record's `invocation` subject, `spec_hash`, `verdict` and `metrics` compared with the listed entry's and a reading landing one a finding by itself; (xii) per record past 48 against every earlier record of its bucket — of its family when bucketless — each listed entry matched on (log, id, `begin`) and exempt when a record or reading lands its (log, id), which (xi) judges, so `a-listed-id-landed-under-another-begin` is one finding and `a-listed-orphan-swapped-for-another-begin` one.
 
 - [ ] **Step 4: Run them to verify they pass** — the Step 2 command; expected pass, the live test over today's file holding no record past 48.
 
@@ -2206,7 +2267,7 @@ Claude-Session: <the executing session's URL>
 EOF
 ```
 
-- [ ] **Step 6: Probe** — `--file tests/test_trial_registry_provenance.py`, control `s/^def _spec_sha256(/def _spec_sha256_gone(/`: each of the six checks made always-clean (`if False:` on its finding's condition), one probe per finding row of the table — (vii), (viii), (ix), (x) budget, (x) membership, (xi) attempt log, (xi) counted log, (xi) twice, (xi) ruled reading, (xi) ruleless reading, (xi) landed with other numbers, (xi) landed by a reading, (xii) — each against its row id; the `metrics` cut from (xi)'s comparison of a landing record with a listed entry against `a-listed-id-landed-with-other-numbers`, whose subject, `spec_hash` and verdict match its entry's; (ix)'s term for the records of its family before it cut against `a-second-record-of-the-family`; (xii)'s scope narrowed from the bucket to the family against `a-bucket-mates-orphan-dropped`; the landed exemption cut from (xii) against `a-listed-orphan-landed-since`; (x)'s distinct set made a count of every entry against `an-orphan-two-records-list-spends-once`; (x)'s landed exemption cut against `a-landed-orphan-spends-nothing-more`. `--file cli/research/subjects.py`, control `s/^def _b2_verdict(/def _b2_verdict_gone(/`: `_B1_HOURLY_RV_N_TRIALS = 3` made `= 4` against `test_each_landed_subjects_n_trials_is_frozen_at_its_literal`. The live test holds no record past 48 today, so its clauses are proven through the table, which calls the same function.
+- [ ] **Step 6: Probe** — `--file tests/test_trial_registry_provenance.py`, control `s/^def _spec_sha256(/def _spec_sha256_gone(/`: each of the six checks made always-clean (`if False:` on its finding's condition), one probe per finding row of the table — (vii), (viii), (ix), (x) budget, (x) membership, (xi) attempt log, (xi) counted log, (xi) twice, (xi) ruled reading, (xi) ruleless reading, (xi) landed with other numbers, (xi) landed by a reading, (xii) — each against its row id; the `metrics` cut from (xi)'s comparison of a landing record with a listed entry against `a-listed-id-landed-with-other-numbers`, whose subject, `spec_hash` and verdict match its entry's; the `begin` cut from the same comparison against `a-listed-id-landed-under-another-begin`, whose subject, `spec_hash`, verdict and metrics match its entry's; (xii)'s entries matched on (log, id) alone, the `begin` cut, against `a-listed-orphan-swapped-for-another-begin`; (ix)'s term for the records of its family before it cut against `a-second-record-of-the-family`; (xii)'s scope narrowed from the bucket to the family against `a-bucket-mates-orphan-dropped`; the landed exemption cut from (xii) against `a-listed-orphan-landed-since`; (x)'s distinct set made a count of every entry against `an-orphan-two-records-list-spends-once`; (x)'s landed exemption cut against `a-landed-orphan-spends-nothing-more`. `--file cli/research/subjects.py`, control `s/^def _b2_verdict(/def _b2_verdict_gone(/`: `_B1_HOURLY_RV_N_TRIALS = 3` made `= 4` against `test_each_landed_subjects_n_trials_is_frozen_at_its_literal`. The live test holds no record past 48 today, so its clauses are proven through the table, which calls the same function.
 
 ______________________________________________________________________
 
