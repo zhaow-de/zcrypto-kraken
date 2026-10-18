@@ -146,7 +146,6 @@ const refutation = graded.length
       .join('\n')}`
   : '## Refutation\n\nNo finding was graded, so no skeptic ran.'
 const lensReports = live.map((r) => lensPath(r.lens))
-log(`ledger: write the returned refutation to a file, then uv run python infra/scripts/review-ledger.py append ${reportDir} --kind review --range ${range} --tip ${tip} --refutation <that file> ${lensReports.map((p) => `--report ${p}`).join(' ')}`)
 for (const r of live) if (r.reportPath && r.reportPath !== lensPath(r.lens)) log(`lens ${r.lens} says it wrote ${r.reportPath}, not ${lensPath(r.lens)}: the refutation block goes to the path this workflow names`)
 
 // --- Ledger: the row this read owes, appended by the read itself (a controller forgot it once and fold-check refused) ---

@@ -152,7 +152,6 @@ const refutation = graded.length
       .map((f) => `| ${f.id} | ${f.severity} | \`${f.path}:${f.line}\` | ${f.severity === 'Minor' ? 'no skeptic: a Minor is reported, never refuted' : f.refuted ? `REFUTED — ${oneLine(f.skeptic && f.skeptic.reason)}` : `stands — ${oneLine(f.skeptic && f.skeptic.reason) || 'the skeptic could not refute it'}`} |`)
       .join('\n')}`
   : '## Refutation\n\nNo finding was graded, so no skeptic ran.'
-log(`ledger: write the returned refutation to a file, then uv run python infra/scripts/review-ledger.py append ${reportDir} --kind re-review --range ${range} --tip ${tip} --refutation <that file> --report ${reportPath}`)
 if (report.reportPath && report.reportPath !== reportPath) log(`the reader says it wrote ${report.reportPath}, not ${reportPath}: the refutation block goes to the path this workflow names`)
 
 // --- Ledger: the row this read owes, appended by the read itself (a controller forgot it once and fold-check refused) ---
