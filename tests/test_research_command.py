@@ -3081,6 +3081,50 @@ def test_a_bucket_filled_during_the_fit_refuses_the_run_after_its_print(tmp_path
     assert len(registry.read_text().splitlines()) == 24
 
 
+def test_a_stop_after_its_bucket_filled_during_the_fit_keeps_its_reading(tmp_path, monkeypatch, _attempts_log):
+    registry, ledger = tmp_path / "registry.jsonl", tmp_path / "ledger.jsonl"
+    monkeypatch.setitem(budget.BUCKET_OF, "STUB", "B")
+    monkeypatch.setitem(budget.BUCKET_OF, "OTHER", "B")
+    _seed(registry, "OTHER", 24)
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    _stub_subject(monkeypatch, verdict=lambda metrics: None)
+    stub = subjects.SUBJECTS["stub"]
+
+    def build(reader, dataset, window, as_of=None, accept_holes=False):
+        _planted(_attempts_log, ("elsewhere", None), family="OTHER")
+        return stub.build(reader, dataset, window, as_of, accept_holes)
+
+    monkeypatch.setitem(subjects.SUBJECTS, "stub", replace(stub, build=build))
+
+    result = runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1, ledger=ledger)])
+
+    assert result.exit_code == 0, result.output
+    assert "no verdict — the stub's stop: recorded reading 1; no trial spent" in result.output
+    assert _kept(ledger)[0]["attempt"]["id"] == 1 and len(registry.read_text().splitlines()) == 24
+
+
+def test_a_record_of_the_subject_landed_during_the_fit_refuses_the_run_after_its_print_naming_a_new_subject(
+    tmp_path, monkeypatch, _attempts_log
+):
+    registry = tmp_path / "registry.jsonl"
+    _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
+    _stub_subject(monkeypatch)
+    stub = subjects.SUBJECTS["stub"]
+
+    def build(reader, dataset, window, as_of=None, accept_holes=False):
+        _seed(registry, "STUB", 1, subject="stub")
+        return stub.build(reader, dataset, window, as_of, accept_holes)
+
+    monkeypatch.setitem(subjects.SUBJECTS, "stub", replace(stub, build=build))
+
+    result = runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1)])
+
+    assert result.exit_code == 1 and '"sharpe": 1.0' in result.output, result.output
+    assert "family STUB needs at least 3: 1 records, the next run, and 1 attempts that never landed" in result.output
+    assert "stub's n_trials is frozen by its trial 1: declare a new subject (a new name) for the further trial" in result.output
+    assert len(registry.read_text().splitlines()) == 1
+
+
 @pytest.mark.parametrize(
     ("marks", "admitted"),
     [

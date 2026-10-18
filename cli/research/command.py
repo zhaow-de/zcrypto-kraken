@@ -116,14 +116,18 @@ def _named(landed: attempts.Landed, subject: str) -> list[dict]:
     return [record for record in landed.records if (record.get("invocation") or {}).get("subject") == subject]
 
 
-def _frozen_by(landed: attempts.Landed, subject: str) -> int | None:
-    return max((record["trial_id"] for record in _named(landed, subject)), default=None)
-
-
-def _short_count(subject: str, declared: int, family: str, shown: attempts.Count, this_run: str, frozen_by: int | None) -> str:
-    """`shown` holds out the open attempts of this run's subject, arguments and spec_hash whose process is gone when the
-    remedy asks for a raise, since the raised run absorbs each, and nothing when it asks for a new subject; after the print
-    it classifies this run as any other attempt."""
+def _short_count(
+    lines: tuple[dict, ...], landed: attempts.Landed, *, log_id: str, known: Subject, family: str, hold: tuple, this_run: str
+) -> str:
+    """The refusal of a declared count below the family's, before the fit and after the print alike. Its figure holds out
+    the open attempts of this run's subject, arguments and spec_hash whose process is gone when it asks for a raise, since
+    the raised run absorbs each, and nothing when it asks for a new subject; over lines holding this run's end, this run
+    counts as any other attempt."""
+    subject, declared = known.name, known.n_trials
+    frozen_by = max((record["trial_id"] for record in _named(landed, subject)), default=None)
+    shown = attempts.reconcile(
+        lines, landed, log_id=log_id, bucket_of=budget.BUCKET_OF, hold=None if frozen_by is not None else hold, hold_finished=False
+    )
     records = sum(1 for record in shown.records if record["family"] == family)
     orphans = [orphan for orphan in shown.orphans if orphan.family == family]
     head = (
@@ -422,16 +426,9 @@ def eval_subject(
                 raise _abort(str(exc)) from exc
             count = attempts.reconcile(lines, seen, log_id=log.log_id, bucket_of=budget.BUCKET_OF, hold=hold)
             if known.n_trials < count.required_n(family):
-                frozen_by = _frozen_by(seen, subject)
-                shown = attempts.reconcile(
-                    lines,
-                    seen,
-                    log_id=log.log_id,
-                    bucket_of=budget.BUCKET_OF,
-                    hold=None if frozen_by is not None else hold,
-                    hold_finished=False,
+                raise _abort(
+                    _short_count(lines, seen, log_id=log.log_id, known=known, family=family, hold=hold, this_run="this run")
                 )
-                raise _abort(_short_count(subject, known.n_trials, family, shown, "this run", frozen_by))
             if bucket is not None:
                 strict = attempts.reconcile(
                     lines, seen, log_id=log.log_id, bucket_of=budget.BUCKET_OF, hold=hold, hold_finished=False
@@ -547,17 +544,11 @@ def eval_subject(
             raise _abort(str(exc)) from exc
         count = attempts.reconcile(lines, settled, log_id=log.log_id, bucket_of=budget.BUCKET_OF, own=attempt)
         if known.n_trials < count.required_n(family):
-            frozen_by = _frozen_by(settled, subject)
-            shown = attempts.reconcile(
-                lines,
-                settled,
-                log_id=log.log_id,
-                bucket_of=budget.BUCKET_OF,
-                hold=None if frozen_by is not None else hold,
-                hold_finished=False,
+            raise _abort(
+                _short_count(lines, settled, log_id=log.log_id, known=known, family=family, hold=hold, this_run="the next run")
             )
-            raise _abort(_short_count(subject, known.n_trials, family, shown, "the next run", frozen_by))
-        if bucket is not None and count.spent(bucket) + 1 > budget.BUDGET[bucket]:
+        # A stop spends no trial, so the budget never refuses its reading.
+        if ruled is not None and bucket is not None and count.spent(bucket) + 1 > budget.BUDGET[bucket]:
             raise _abort(_over_budget(bucket, count))
         if ruled is None:
             _keep_reading(ledger_target, **reading_fields, attempt={**own, "absorbs": list(count.absorbs)})
