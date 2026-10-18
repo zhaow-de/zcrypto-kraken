@@ -34,7 +34,7 @@ def volume_confirmations(stamps: list[datetime], volumes: list[float | None], *,
     out: list[bool] = []
     for t, v in zip(stamps, volumes, strict=True):
         if len(rows) < lookback:
-            out.append(True)  # fewer than 180 prior bars: accepted, a fill among them (D4)
+            out.append(True)  # the warm-up: accepted, a fill among them (D4)
             if v is not None:
                 rows.append(v)
             continue
@@ -154,8 +154,8 @@ def a2_positions_on_directions(
 def entry_events_per_year(
     events: dict[str, dict[int, list[tuple[int, bool]]]], own_stamps: dict[str, list[datetime]]
 ) -> dict[str, dict[str, dict[str, list[int]]]]:
-    """`[events, rejected]` per asset, lookback and bar-start year of the event bar, every year in which the asset has a state
-    zeros included."""
+    """`[events, rejected]` per asset, lookback and bar-start year of the event bar, every year the asset has a state, zeros
+    included."""
     out: dict[str, dict[str, dict[str, list[int]]]] = {}
     for asset, by_lookback in events.items():
         years = sorted({own_stamps[asset][j].year for j in range(len(own_stamps[asset]) - 1)})
@@ -176,7 +176,7 @@ def directions_differ_per_year(
     directions_b: list[dict[str, list[float | None]]],
     union_ts: list[datetime],
 ) -> dict[str, int]:
-    """The return indices at which any arm's direction on any asset differs, per bar-start year, every year zeros included."""
+    """Per bar-start year, zeros included, the count of return indices at which any arm's direction on any asset differs."""
     out = {str(t.year): 0 for t in union_ts[:-1]}
     for k in range(len(union_ts) - 1):
         if any(da[a][k] != db[a][k] for da, db in zip(directions_a, directions_b) for a in da):

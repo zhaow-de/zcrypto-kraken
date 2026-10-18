@@ -3117,9 +3117,9 @@ def _declared_series(tmp_path: Path, subject: subjects.Subject) -> tuple[Path, d
 
 
 # A subject whose build reads a dataset it does not declare brings its own fixture here, and b1-window-only shares
-# b1-conditioning's; b1-hourly-rv, b1-volume-confirmation and their pre-flights bring theirs, shorter than their declared
-# series — `_B1_BARS` 4h bars against `_declared_series`' 600 days — because each row that evaluates them runs arm A's kill
-# bar, and the trial's arm B's too, over the whole series; any other is fed its declared series.
+# b1-conditioning's; the ruled B1 subjects and their pre-flights bring theirs, shorter than their declared series —
+# `_B1_BARS` 4h bars against `_declared_series`' 600 days — because each row that evaluates them runs arm A's kill bar,
+# and the trial's arm B's too, over the whole series; any other is fed its declared series.
 _CONTRACT_DATASETS = {
     "b2-funding-derisk": lambda tmp_path, subject: (_b2_dataset(tmp_path), _B2_START),
     "b2-arm-a-bar": lambda tmp_path, subject: (_b2_dataset(tmp_path), _B2_START),
