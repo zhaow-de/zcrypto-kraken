@@ -25,7 +25,7 @@
 - The rule is spec D10's code block verbatim, `_b1_volume_confirmation_verdict`; every quantity it reads is a stored key read unrounded; an exact turnover tie rejects.
 - The record (D11): family `B1`, `n_trials_in_family` 4, variant `B1-volume-confirm-a2eq-v1`, iteration `iter-178`, seeds (42, 7, 1234), no `--verdict` (D12).
 - The subjects (D11): `b1-volume-confirmation`, 43 metric keys, with the rule, `family="B1"`, `n_trials=_B1_VOLUME_N_TRIALS`, and `no_verdict` "instrument finding: arm A fails the bar, or arm B's directions equal arm A's at every stamp; no verdict, the trial unspent"; `b1-volume-confirmation-preflight`, 24 keys, seeds (42,), no rule, family or count; both declaring `spec="docs/specs/00134-b1-volume-confirmation-design.md"`.
-- The hash rule (D8, D9): no position, return or direction of either arm, no confirmation flag and no bar is computed over the trial's data before Task 5 step 2 takes the spec's sha256. Tasks 2–4 meet `data/ohlc-full` only through `_b1_volume_reads` in `tests/test_research_b1_volume_basis.py::test_the_b1_volume_reads_reproduce_the_measured_basis`; until Task 5 step 2 every other run adds `-m "not data"` and that test runs by node id. No reader, reviewer or plan-review dispatch runs either subject, `_b1_volume_inputs`, the module's functions or a transcription of them over the real set before then; every read's dispatch carries this rule. No return of arm B is computed over the trial's data by any step but Task 5 step 6's register run.
+- The hash rule (D8, D9): no position, return or direction of either arm, no confirmation flag and no bar is computed over the trial's data before Task 5 step 2 takes the spec's sha256. Tasks 2–4 meet `data/ohlc-full` only through `_b1_volume_reads` in `tests/test_research_b1_volume_basis.py::test_the_b1_volume_reads_reproduce_the_measured_basis`; until Task 5 step 2 every other run adds `-m "not data"` and that test runs by node id. No reader, reviewer or plan-review dispatch runs either subject, `_b1_volume_inputs`, the module's functions or a transcription of them over the real set before then; every read's dispatch carries this rule. No return of arm B is computed over the trial's data before Task 5 step 6's register run, the first step to compute one; Task 6 step 7's replay of the landed record recomputes it.
 - The gate on spec 00133 (D12): neither subject runs over the trial's data before spec 00133 has merged into develop and develop into this branch; there is no plain eval of `b1-volume-confirmation`, before or after the register run.
 - No change to `cli/alpha/a1.py`, `cli/alpha/a2.py`, `cli/alpha/b1.py`, `cli/alpha/b1_rv.py`, `cli/alpha/b2.py`, `cli/features/*`, `cli/portfolio/*`, the engine or any adopted artifact (D1). Code citations name a function, never a line: the rebase moves `cli/research/subjects.py`'s lines.
 - Never edit `docs/specs/00134-b1-volume-confirmation-design.md` after Task 5 step 2, nor `docs/specs/00045-b1-seasonality-conditioning-design.md` or `docs/specs/00132-b1-hourly-rv-weights-design.md`, whose hashes records pin; never write `docs/reference/trial-registry.jsonl` or `docs/reference/reading-ledger.jsonl`, nor run `--register` or `--reading` over a committed file, except where Task 5 names it. Never `git stash`; a state-changing git command runs alone.
@@ -33,8 +33,8 @@
 - No operator-read surface — `README.md`, a `SubjectError` or `AlphaError` message, the `no_verdict` text — carries `Phase <N>`, `T<NNNN>`, `iter-<N>`, `spec <NNNNN>` or `D<N>` (`tests/test_internal_terms_not_operator_visible.py`); comments may, under CLAUDE.md's comment rule.
 - Every pytest run is `mkdir -p .tmp/plan-00134 && uv run pytest <file>::<test> -q -p no:cacheprovider --basetemp=.tmp/plan-00134/pt` (or a file, or `-k`), split into parts each under 600 s, nothing backgrounded; before each commit the direct readers of each changed path run (`bash infra/scripts/consumers.sh --direct <paths>`), never the full suite, which is CI's; a case reading a mount, a holdout set or a set not linked here is deselected by node id and named in the task report.
 - Probes: the tier is `full` — measured, `uv run python infra/scripts/tier.py --paths cli/alpha/b1_volume.py cli/research/subjects.py tests/test_research_command.py tests/test_trial_registry_provenance.py docs/reference/trial-registry.jsonl` prints `tier: full`, the two code paths alone `light` (**Author's call**: the tier of the commits' test paths decides, so each task reads `uv run python infra/scripts/tier.py <base>..<head>` over its commit and probes at what it prints). On `full` each new guard — a test function, and each refusal case — is proven through its own case with `infra/scripts/mutate-probe.sh --file <F> --control '<sed>' --mutation '<sed>' -- uv run pytest <node id> -q -p no:cacheprovider --basetemp=.tmp/plan-00134/pt` after its task's commit (the script refuses a dirty tree), expected `KILLED`; the mutation substitutes and never deletes a line (`if <cond>:` becomes `if False:`, a call `None`), its site a pattern whose `grep -c` reads 1 or an address whose range holds one, dry-run first through `sed '<expr>' <F> | uv run python -c 'import ast,sys; ast.parse(sys.stdin.read())'`; never through a case `tests/slow-cases.txt` lists — each new case whose own time is 10 s or more (`--durations=0`) joins that list at its sorted place in its task's commit, and the commit records `probe skipped: slow case` naming it. Each verdict line goes in the PR body, naming `infra/scripts/mutate-probe.sh`.
-- Commits: one per task that changes the tree (Task 1 rewrites and adds none; Task 5's record lands in Task 6's commit); never an amend; `uv run pre-commit run -a` re-run until clean, staging what it rewrote by explicit path; the message says what changed and carries the test command's result line, pasted from its run, and ends with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` — the executing model, so an implementer on another model names its own — and the executing session's `Claude-Session:` line.
-- The reads: the trio over Tasks 2–4's range (`pre-review`, `review`, `re-review`, as CLAUDE.md orders them) closes with no open Critical or Important before Task 5 step 2, and nothing the run executes or the record pins changes from that read to the registration unless a read of the change follows (Task 5 step 1); Task 6's commit takes its own `pre-review`; the PR is created and edited through `open-pr`, its read line naming the tip read.
+- Commits: one per task that changes the tree (Task 1 adds none; Task 5's record lands in Task 6's commit); never an amend; `uv run pre-commit run -a` re-run until clean, staging what it rewrote by explicit path; the message says what changed and carries the test command's result line, pasted from its run, and ends with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` — the executing model, so an implementer on another model names its own — and the executing session's `Claude-Session:` line.
+- The reads: the trio over Tasks 2–4's range (`pre-review`, `review`, `re-review`, as CLAUDE.md orders them) closes with no open Critical or Important before Task 5 step 2, and nothing the run executes or the record pins changes from that read to the registration unless a read of the change follows (Task 5 step 1); Task 6's commit takes its own `pre-review`, then the read of the delta from the tip the last read covered (Task 6 step 8) before the push that carries it; the PR is created and edited through `open-pr`, its read line naming the tip read.
 
 ## Review Focus
 
@@ -50,33 +50,26 @@
 - Create `tests/test_alpha_b1_volume.py` — the module's tests, synthetic, every expected value computed by hand.
 - Create `tests/test_research_b1_volume_basis.py` — data-gated: the reads against the measured basis, and arm A against record 45's anchors.
 - Modify `cli/research/subjects.py` — the literals, the three halves, the two subjects.
-- Modify `tests/test_research_command.py` — the fixture, the subjects' tests, `_RULED_FIXTURES`, `_CONTRACT_DATASETS`; `README.md` — the `--subject` row; `tests/slow-cases.txt` — the new slow cases.
+- Modify `tests/test_research_command.py` — the fixture, the subjects' tests, `_RULED_FIXTURES`, `_DECLARED_COUNT`, `_CONTRACT_DATASETS`; `README.md` — the `--subject` row; `tests/slow-cases.txt` — the new slow cases.
 - At the run: `docs/reference/trial-registry.jsonl` (or, on a stop, `docs/reference/reading-ledger.jsonl`), `tests/test_trial_registry_provenance.py` (`LANDED_N_TRIALS`), `docs/research/10.phase4-decisions.md`, `docs/open-topics/T0022-b1-intraday-seasonality-family.md`, `docs/open-topics/T0016-bucket-b-c-alpha-families.md`, `docs/open-topics/README.md`, and on an adopt `docs/open-topics/T0123-sleeve-promotion-path.md`.
 
 ______________________________________________________________________
 
-### Task 1: the branch onto spec 00133's built `Subject` (D12's "Where the build sits")
+### Task 1: the branch on spec 00133's built `Subject`, checked (D12's "Where the build sits")
 
-**Files:** none changed; the branch's commits are replayed onto plan 00133's Task 6 commit.
+**Files:** none changed. The branch was rebased onto plan 00133's Task 6 commit `cfb4619480ee9a07afc19fbcbf828e46fced701f` and its fix `3068c8a0811fd6d719491a30202f239df926da63` before the plan review, which read that tree; this task checks it and changes nothing.
 
 **Interfaces:**
-- Consumes: plan 00133 Task 6's `Subject.family: str | None = None`, `Subject.n_trials: int | None = None`, `_RULED_FIXTURES`, `test_the_ruled_subjects_declare_their_families_and_trial_counts` and `test_every_ruled_subjects_kill_bar_deflates_at_its_declared_count`; plan 00133 Task 4's autouse fixture `_attempts_log_in_tmp_path(tmp_path, monkeypatch)` in `tests/conftest.py`; plan 00133 Task 5's autouse module fixture `_attempts_log(tmp_path, monkeypatch, _attempts_log_in_tmp_path) -> Path` in `tests/test_research_command.py`; plan 00133 Task 2's `budget.BUCKET_OF`.
-- Produces: this branch's commits on top of that commit, unchanged in content but for the decisions log's merged tail.
+- Consumes: plan 00133 Task 6's `Subject.family: str | None = None`, `Subject.n_trials: int | None = None`, `_RULED_FIXTURES`, `_DECLARED_COUNT`, `test_the_ruled_subjects_declare_their_families_and_trial_counts` and `test_every_ruled_subjects_kill_bar_deflates_at_its_declared_count`; plan 00133 Task 4's autouse fixture `_attempts_log_in_tmp_path(tmp_path)` in `tests/conftest.py`; plan 00133 Task 5's autouse module fixture `_attempts_log(tmp_path, monkeypatch, _attempts_log_in_tmp_path) -> Path` in `tests/test_research_command.py`; plan 00133 Task 2's `budget.BUCKET_OF`.
+- Produces: nothing; a failed check stops the plan, and the report names it.
 
-- [ ] **Step 1: Find plan 00133's Task 6 commit** — `git log --format='%H %s' --fixed-strings --grep='each ruled subject declares its family and trial count' research/00133-t0222-abandoned-trials` prints one line; its sha is `TASK6` below. No line: stop — this plan waits, and no later task runs. At this plan's commit it prints none: spec 00133's branch holds its spec and plan alone.
-
-- [ ] **Step 2: Choose rebase or merge** — `git status --porcelain` prints nothing; `git rev-parse --abbrev-ref --symbolic-full-name @{u}` failing (no upstream) means the branch was never pushed: rebase. **Author's call**: a branch already pushed is merged instead — `git merge --no-edit "$TASK6"` — so no force-push rewrites what a read covered; the conflict below is resolved the same way.
-
-- [ ] **Step 3: Rebase** — `git rebase --onto "$TASK6" "$(git merge-base HEAD "$TASK6")"`, the merge base being develop's `86175dfe5` from which both branches were cut. The one expected conflict is `docs/research/10.phase4-decisions.md` at `docs(research): [iter-178] B1's fourth trial is candidate B, on the owner's answers`: both branches append after the same last entry; resolve to the base's `[00133]` entry, one blank line, then this branch's two `[iter-178]` entries exactly as `ORIG_HEAD` holds them; `git add docs/research/10.phase4-decisions.md`, then `GIT_EDITOR=true git rebase --continue`. Any other conflict: `git rebase --abort`, and the report names it.
-
-- [ ] **Step 4: Verify** — each its own call, each read before the next:
-  - `git diff --quiet ORIG_HEAD HEAD -- docs/specs/00134-b1-volume-confirmation-design.md docs/plans/00134-b1-volume-confirmation.md` exits 0 (the spec's bytes, and so its future hash, unmoved).
-  - `git diff ORIG_HEAD HEAD -- docs/research/10.phase4-decisions.md` adds the `[00133]` entry and nothing else.
-  - `uv run python -c 'from dataclasses import fields; from cli.research.subjects import SUBJECTS, Subject; names = {f.name for f in fields(Subject)}; assert {"family", "n_trials"} <= names, sorted(names); print(SUBJECTS["b1-hourly-rv"].family, SUBJECTS["b1-hourly-rv"].n_trials)'` prints `B1 3`; against the tree at this plan's commit it fails, `AssertionError: ['assets', 'build', 'incumbent', 'intervals', 'metric_keys', 'name', 'no_verdict', 'seeds', 'spec', 'verdict']`.
-  - `git grep -n -e "def _attempts_log_in_tmp_path" -e "^_RULED_FIXTURES = " -- tests/conftest.py tests/test_research_command.py` prints two lines.
+- [ ] **Step 1: Check** — each its own call, each read before the next:
+  - `git merge-base --is-ancestor 3068c8a0811fd6d719491a30202f239df926da63 HEAD` exits 0.
+  - `uv run python -c 'from dataclasses import fields; from cli.research.subjects import SUBJECTS, Subject; names = {f.name for f in fields(Subject)}; assert {"family", "n_trials"} <= names, sorted(names); print(SUBJECTS["b1-hourly-rv"].family, SUBJECTS["b1-hourly-rv"].n_trials)'` prints `B1 3`.
+  - `git grep -n -e "def _attempts_log_in_tmp_path" -e "^_RULED_FIXTURES = " -e "^_DECLARED_COUNT = " -- tests/conftest.py tests/test_research_command.py` prints three lines.
   - `mkdir -p .tmp/plan-00134 && uv run pytest tests/test_decisions_log_ties.py -q -p no:cacheprovider --basetemp=.tmp/plan-00134/pt` and `uv run pytest tests/test_research_command.py -k "families_and_trial_counts or declares_a_tracked_spec" -q -p no:cacheprovider --basetemp=.tmp/plan-00134/pt` pass.
 
-No commit: a rebase adds none.
+No commit: a check adds none.
 
 ______________________________________________________________________
 
@@ -85,6 +78,7 @@ ______________________________________________________________________
 **Files:**
 - Create: `cli/alpha/b1_volume.py`
 - Create: `tests/test_alpha_b1_volume.py`
+- Modify: `tests/slow-cases.txt`, when Step 4 times a case at 10 s or more
 
 **Interfaces:**
 - Consumes: `cli.alpha.a1._map_to_union_index`, `cli.alpha.a1._validate_prices_by_asset`, `cli.alpha.a2.A2Config`, `cli.features.channel_position`, `cli.alpha.errors.AlphaError`; nothing of spec 00133.
@@ -164,16 +158,24 @@ def test_the_level_is_the_median_of_the_prior_bars_and_never_the_bar_itself():
 
 def test_the_hour_of_week_shape_binds_at_min_cell_obs_earlier_observations():
     # Weekly stamps, one cell; lookback 2, min_cell_obs 2. Bar 2: L = 16, no observation, S = 1, 32 >= 16, ratio 2.0. Bar 3:
-    # L = 28, one observation, S = 1, 28 >= 28, ratio 1.0. Bar 4: L = 30, S = median(2.0, 1.0) = 1.5, 40 < 45.0. Bar 5:
-    # L = 34, S = median(2.0, 1.0, 4/3) = 4/3, 44 < 45.33. With S held at 1, bars 4 and 5 would be accepted.
-    volumes = [8.0, 24.0, 32.0, 28.0, 40.0, 44.0]
-    assert volume_confirmations(_stamps(6, _WEEK), volumes, lookback=2, min_cell_obs=2) == [True, True, True, True, False, False]
+    # L = 28, one observation, S = 1, 28 >= 28, ratio 1.0. Bar 4: L = 30, S = median(2.0, 1.0) = 1.5, 40 < 45.0, its ratio
+    # 4/3 kept though it is rejected. Bar 5: L = 34, S = median(2.0, 1.0, 4/3) = 4/3, 46 >= 45.33. With S held at 1 bar 4
+    # would be accepted; the mean, 13/9, would reject bar 5 (46 < 49.11), and so would S without bar 4's ratio (1.5, 46 < 51).
+    volumes = [8.0, 24.0, 32.0, 28.0, 40.0, 46.0]
+    assert volume_confirmations(_stamps(6, _WEEK), volumes, lookback=2, min_cell_obs=2) == [True, True, True, True, False, True]
 
 
-def test_each_hour_of_week_cell_holds_its_own_ratios():
-    # Mondays 04:00 and Tuesdays 04:00 alternate, two cells with one hour of day; lookback 2, min_cell_obs 1. Bar 4, a
-    # Monday: L = median(10, 30) = 20, S = Monday's 1.0, 20 >= 20; a key of the hour alone would pool Tuesday's 3.0, S = 2.0.
-    stamps = [_T0 + w * _WEEK + d * _DAY for w in range(3) for d in range(2)]
+@pytest.mark.parametrize(
+    "stamps",
+    [
+        pytest.param([_T0 + w * _WEEK + d * _DAY for w in range(3) for d in range(2)], id="two-weekdays-one-hour"),
+        pytest.param([_T0 + w * _WEEK + h * _H4 for w in range(3) for h in range(2)], id="two-hours-one-weekday"),
+    ],
+)
+def test_each_hour_of_week_cell_holds_its_own_ratios(stamps):
+    # Two cells alternate, Monday and Tuesday at 04:00 or Monday at 04:00 and 08:00; lookback 2, min_cell_obs 1. Bar 4:
+    # L = median(10, 30) = 20, S = its own cell's 1.0, 20 >= 20; a key pooling the two cells, the hour alone on the first row
+    # and the weekday alone on the second, would add the other cell's 3.0, S = 2.0.
     volumes = [10.0, 10.0, 10.0, 30.0, 20.0, 20.0]
     assert volume_confirmations(stamps, volumes, lookback=2, min_cell_obs=1) == [True, True, True, True, True, False]
 
@@ -284,6 +286,11 @@ def test_a_rejected_entry_leaves_the_state_an_exit_is_always_taken_and_each_touc
     assert donchian_signal_confirmed(_PRICES, confirm, window=2, band=1.0) == (
         [0.0, 0.0, 1.0, -1.0, -1.0, -1.0, -1.0],
         [(1, False), (2, True), (4, False), (5, False)],
+    )
+    # A rise: bar 1's entry is accepted, so bar 2's touch, B already +1, is no event and keeps +1 though its flag is false.
+    assert donchian_signal_confirmed([10.0, 11.0, 12.0, 13.0], [True, True, False, True], window=2, band=1.0) == (
+        [0.0, 1.0, 1.0],
+        [(1, True)],
     )
 
 
@@ -399,13 +406,15 @@ Expected: collection error, `ModuleNotFoundError: No module named 'cli.alpha.b1_
   - `a2_positions_on_directions`: refuses, on one `if`, `len(weights) != len(scalar)` or any direction list of another length (`"weights, directions and scalar differ in length"`); returns `{asset: [weights[k].get(asset, 0.0) * (directions[asset][k] or 0.0) * scalar[k] for k in range(len(scalar))] for asset in directions}` — `a2_book_returns`' asset-positions expression, so the identity holds bit for bit.
   - `entry_events_per_year`: per asset, the years `{own_stamps[asset][j].year for j in range(len(own_stamps[asset]) - 1)}` — the bars with a state — each `[0, 0]`, then each event `(j, accepted)` adds 1 to `[0]` and, when rejected, 1 to `[1]` of `str(own_stamps[asset][j].year)`; keys `str(w)` and `str(year)`.
   - `directions_differ_per_year`: `{str(y): 0}` for every bar-start year of `union_ts[:-1]`, then 1 added to `str(union_ts[k].year)` for each return index `k` where `any(da[a][k] != db[a][k] for da, db in zip(directions_a, directions_b) for a in da)`.
+  - **Author's call**: four shape refusals guard no input the subjects build — `donchian_signal_confirmed`'s flag count, `asset_directions_confirmed`'s assets and per-asset flag count, `a2_positions_on_directions`' lengths — since each function's one caller in this plan already ties them; they stay because a longer list or an extra asset would otherwise be read short without a word, its tail or the asset left unread.
 
-- [ ] **Step 4: Run the tests to verify they pass** — Step 2's command; expected `43 passed`.
+- [ ] **Step 4: Run the tests to verify they pass** — Step 2's command with `--durations=0`; expected `44 passed`, and a case at 10 s or more joins `tests/slow-cases.txt` at its sorted place, staged with this task's commit.
 
 - [ ] **Step 5: Consumers, then commit** — `bash infra/scripts/consumers.sh --direct cli/alpha/b1_volume.py` lists the new test file alone; the gate.
 
 ```bash
 git add cli/alpha/b1_volume.py tests/test_alpha_b1_volume.py
+# and tests/slow-cases.txt when Step 4 listed a case
 git commit -F - <<'EOF'
 feat(alpha): the hour-of-week volume norm, the confirmed A2 entry gate and arm B's positions for B1 trial 4
 
@@ -416,20 +425,20 @@ Claude-Session: <the executing session's URL>
 EOF
 ```
 
-- [ ] **Step 6: Probes** — `--file cli/alpha/b1_volume.py`, control `s/^def volume_confirmations(/def volume_confirmations_gone(/` (the test module imports it, so every case fails); each row one probe, expected `KILLED`; a row naming several cases is one probe per case:
+- [ ] **Step 6: Probes** — `--file cli/alpha/b1_volume.py`, control `s/^def volume_confirmations(/def volume_confirmations_gone(/` (the test module imports it, so every case fails); each mutation a row names is one probe, expected `KILLED`; a row naming several cases is one probe per case. Every choice spec D2's and D3's code blocks fix fails a case of this file when altered, and the rows probe the level's prior window, its median and the `>=`, the cell's threshold, `S`'s median and its observations (a rejected bar's among them), each half of the cell key, the warm-up and the fill, and the entry only off +1, the flag deciding it and the exit taken whatever the flag. The boundary's `+ timedelta(hours=4)` alone moves no flag: shifting every UTC stamp by 4 h maps the 168 hour-of-week cells one to one.
 
 | node id under `tests/test_alpha_b1_volume.py::` | mutation |
 | -- | -- |
-| `test_the_level_is_the_median_of_the_prior_bars_and_never_the_bar_itself` | `s/level = statistics.median(rows\[-lookback:\])/level = statistics.median([*rows[1 - lookback:], v])/` |
-| `test_the_hour_of_week_shape_binds_at_min_cell_obs_earlier_observations` | `len(cell) >= min_cell_obs` made `len(cell) > min_cell_obs` |
-| `test_each_hour_of_week_cell_holds_its_own_ratios` | `(b.hour, b.weekday())` made `(b.hour, 0)` |
+| `test_the_level_is_the_median_of_the_prior_bars_and_never_the_bar_itself` | `s/level = statistics.median(rows\[-lookback:\])/level = statistics.median([*rows[1 - lookback:], v])/`; `statistics.median(rows[-lookback:])` made `statistics.mean(rows[-lookback:])`; `v >= level * shape` made `v > level * shape` |
+| `test_the_hour_of_week_shape_binds_at_min_cell_obs_earlier_observations` | `len(cell) >= min_cell_obs` made `len(cell) > min_cell_obs`; `statistics.median(cell)` made `statistics.mean(cell)`; `cell.append(v / level)` made `cell.append(v / level) if v >= level * shape else None` |
+| `test_each_hour_of_week_cell_holds_its_own_ratios[<row>]` | `(b.hour, b.weekday())` made `(b.hour, 0)` (`two-weekdays-one-hour`), and made `(0, b.weekday())` (`two-hours-one-weekday`) |
 | `test_the_warm_up_accepts_every_bar_and_a_missing_volume_after_it_never_confirms` | the fill line's `out.append(False)` made `out.append(True)` |
 | `test_a_history_shorter_than_the_lookback_accepts_every_entry` | `if len(rows) < lookback:` made `if len(rows) < min(lookback, 3):` |
 | `test_no_flag_reads_a_later_bar` | `s/level = statistics.median(rows\[-lookback:\])/level = statistics.median([x for x in volumes if x is not None][len(rows) + 2 - lookback : len(rows) + 2])/` |
 | `test_volume_confirmations_refuses_an_input_it_cannot_gate[<row>]` | each refusal's `if` made `if False:` against each row it refuses: the count check (`lookback-0`, `lookback-bool`, `lookback-float`, `min-cell-obs-0`), the length (`unequal-lengths`), tz (`naive-stamp`), order (`repeated-stamp`), the volume (`zero-volume`, `negative-volume`, `nan-volume`, `inf-volume`, `bool-volume`) |
 | `test_a_btc_fill_is_accepted_in_the_warm_up_and_rejected_after_it` | the warm-up line's `out.append(True)` made `out.append(v is not None)` |
 | `test_confirmations_by_asset_refuses_a_volume_off_its_close[<row>]` | the presence `if` made `if False:` (`a-volume-at-a-fill`, `no-volume-at-a-close`, `a-volume-before-the-listing`); the re-raise's `f"{a}: {exc}"` made `f"{exc}"` (`a-zero-volume-named-by-asset`); `_validate_prices_by_asset(fed)` made `None` (`a-zero-close`); the asset-set `if` made `if False:` (`an-asset-without-volumes`) |
-| `test_a_rejected_entry_leaves_the_state_an_exit_is_always_taken_and_each_touch_off_plus_1_is_an_event` | `if confirm[j]:` made `if True:` |
+| `test_a_rejected_entry_leaves_the_state_an_exit_is_always_taken_and_each_touch_off_plus_1_is_an_event` | `if confirm[j]:` made `if True:`; `if held != 1.0:` made `if True:`; `elif cp[j] <= -band:` made `elif cp[j] <= -band and confirm[j]:` |
 | `test_every_entry_confirmed_is_the_unconfirmed_state_machine[2]` | `held = -1.0` made `held = 0.0` |
 | `test_the_directions_map_the_confirmed_states_onto_the_union_clipped_at_0` | `d.append(max(ensemble, 0.0))` made `d.append(ensemble)` |
 | `test_with_every_entry_confirmed_the_directions_and_positions_are_arm_as[<each>]` | `* scalar[k]` made `* scalar[k - 1]` |
@@ -447,7 +456,7 @@ ______________________________________________________________________
 - Modify: `tests/test_research_command.py`, `README.md`, `tests/slow-cases.txt`
 
 **Interfaces:**
-- Consumes: this plan's Task 2's seven functions, imported into `subjects` by name (so a test's `monkeypatch.setattr(subjects, …)` reaches them), and `cli.alpha.a2._asset_directions_a2`; plan 00133 Task 6's `Subject.family` and `Subject.n_trials`, `_RULED_FIXTURES` and the declared-counts test; plan 00133 Tasks 4 and 5's `_attempts_log_in_tmp_path` and `_attempts_log`, which hold every `--register` run's attempts log in `tmp_path`; the test module's `_rows`, `_B1_START`, `_B1_BARS`, `_B2_ASSETS`, `_anchor`, `_recording`, `_rolling_set`, `_kept`, `_block_and_metrics`, `_trials`, `_arm_a_flat`, `_B1_UNREADABLE_HISTORIES`, `_B1_HOURLY_RV_ARMS`, `_B1_HOURLY_RV_CELLS`, `_B1_HOURLY_RV_ANCHORS`, `_ARM_A_BAR_KEYS`, `_ARM_A_BAR_FLAGS`, `_b1_hourly_rv_bar_sentinels`.
+- Consumes: this plan's Task 2's seven functions, imported into `subjects` by name (so a test's `monkeypatch.setattr(subjects, …)` reaches them), and `cli.alpha.a2._asset_directions_a2`; plan 00133 Task 6's `Subject.family` and `Subject.n_trials`, `_RULED_FIXTURES`, `_DECLARED_COUNT` and the declared-counts and kill-bar tests; plan 00133 Tasks 4 and 5's `_attempts_log_in_tmp_path` and `_attempts_log`, which hold every `--register` run's attempts log in `tmp_path`; the test module's `_rows`, `_B1_START`, `_B1_BARS`, `_B2_ASSETS`, `_anchor`, `_recording`, `_rolling_set`, `_kept`, `_block_and_metrics`, `_trials`, `_arm_a_flat`, `_B1_UNREADABLE_HISTORIES`, `_B1_HOURLY_RV_ARMS`, `_B1_HOURLY_RV_CELLS`, `_B1_HOURLY_RV_ANCHORS`, `_ARM_A_BAR_KEYS`, `_ARM_A_BAR_FLAGS`, `_b1_hourly_rv_bar_sentinels`.
 - Produces:
 
 ```python
@@ -511,7 +520,7 @@ def _b1_volume_dataset(tmp_path: Path, *, start: datetime = _B1_START, bars: int
 
 
 def _b1_volume_args(name: str, tmp_path: Path, *, dataset: str = "ohlc-test") -> list[str]:
-    # A ruled subject's every run is a trial, so its command-path cases register into tmp_path.
+    # A ruled subject's command-path cases register into tmp_path: spec 00133 D7 admits no plain eval of a subject with a rule.
     args = ["research", "eval", "--subject", name, "--dataset", dataset]
     if subjects.SUBJECTS[name].verdict is None:
         return args
@@ -519,7 +528,7 @@ def _b1_volume_args(name: str, tmp_path: Path, *, dataset: str = "ohlc-test") ->
     return [*args, *flags, "--iteration", "iter-001", "--family", "B1", "--n-trials", "4"]
 ```
 
-  **Author's call**: `_b1_volume_args` registers the ruled subject's command-path cases into `tmp_path` rather than running a plain eval, so each case holds at plan 00133's Task 6 commit, where a plain eval still runs, and after its Task 7, which refuses one. `_RULED_FIXTURES` gains `"b1-volume-confirmation": _b1_volume_dataset`, and `test_the_ruled_subjects_declare_their_families_and_trial_counts`' literal gains `"b1-volume-confirmation": ("B1", 4)`. `_CONTRACT_DATASETS` gains both subjects, each `lambda tmp_path, subject: (_b1_volume_dataset(tmp_path), _B1_START)`, and the comment over it names them beside trial 3's: they bring their own fixture, shorter than their declared series, because each row that evaluates them runs arm A's bar, and the trial's arm B's too, over the whole series. `test_each_subject_declares_the_metric_keys_its_build_returns` gains the two `metric_keys` lines. Then, after trial 3's tests:
+  **Author's call**: `_b1_volume_args` registers the ruled subject's command-path cases into `tmp_path` rather than running a plain eval, so each case holds at plan 00133's Task 6 commit, where a plain eval still runs; that they hold after its Task 7, which refuses one, is Task 5 step 1's post-merge run of `tests/test_research_command.py` to prove. `_RULED_FIXTURES` gains `"b1-volume-confirmation": _b1_volume_dataset`, `_DECLARED_COUNT` gains `"b1-volume-confirmation": "_B1_VOLUME_N_TRIALS"`, and `test_the_ruled_subjects_declare_their_families_and_trial_counts`' literal gains `"b1-volume-confirmation": ("B1", 4)`. `_CONTRACT_DATASETS` gains both subjects, each `lambda tmp_path, subject: (_b1_volume_dataset(tmp_path), _B1_START)`, and the comment over it names them beside trial 3's: they bring their own fixture, shorter than their declared series, because each row that evaluates them runs arm A's bar, and the trial's arm B's too, over the whole series. `test_each_subject_declares_the_metric_keys_its_build_returns` gains the two `metric_keys` lines. Then, after trial 3's tests:
 
 ```python
 _B1_VOLUME_SPEC = "docs/specs/00134-b1-volume-confirmation-design.md"
@@ -635,8 +644,10 @@ def test_the_b1_volume_preflight_reads_arm_a_and_the_entry_events_and_never_buil
         raise AssertionError("the pre-flight built arm B's positions")
 
     monkeypatch.setattr(subjects, "a2_positions_on_directions", arm_b_positions)
+    bars = _recording(monkeypatch, "a1_kill_bar", lambda arguments, result: result)
     metrics = subjects.SUBJECTS["b1-volume-confirmation-preflight"].build(ObservedReader(root), "ohlc-test", None)
 
+    assert [arguments["n_trials"] for arguments, _ in bars] == [4]
     ints = _ARM_A_BAR_FLAGS | {"entry_events", "entry_events_rejected", "stamps_directions_differ"}
     dicts = {"entry_events_per_year", "stamps_directions_differ_per_year"}
     assert set(metrics) == _B1_VOLUME_PREFLIGHT_KEYS
@@ -778,16 +789,16 @@ def test_b1_volume_reads_its_volumes_under_the_unions_window(tmp_path, monkeypat
 - [ ] **Step 2: Run them to verify they fail**
 
 Run: `mkdir -p .tmp/plan-00134 && uv run pytest tests/test_research_command.py -k "b1_volume or ruled_subjects" -q -p no:cacheprovider --basetemp=.tmp/plan-00134/pt`
-Expected: each fails on `AttributeError: module 'cli.research.subjects' has no attribute '_b1_volume_reads'` or a sibling name, or on `KeyError: 'b1-volume-confirmation'`. Against the tree at this plan's commit the fragments cannot run: they need plan 00133's Task 6 names, which Task 1 brings.
+Expected: each new `b1_volume` case and the kill-bar test's `[b1-volume-confirmation]` row fail on `AttributeError: module 'cli.research.subjects' has no attribute '_b1_volume_reads'` or a sibling name, or on `KeyError: 'b1-volume-confirmation'`; `test_the_ruled_subjects_declare_their_families_and_trial_counts` fails on its literal's `AssertionError`, `SUBJECTS` declaring no `b1-volume-confirmation` yet; the kill-bar test's `[b1-hourly-rv]` and `[b2-funding-derisk]` rows pass.
 
 - [ ] **Step 3: Implement in `cli/research/subjects.py`** — the Produces names, each with the spec's values:
-  - The three literals, each with the one-line reason it is a literal (records 45, 46 and 48's registered values, record 48's every digit its writer stored; the family's count at this trial, three records, no orphan, and itself; the thin-cell rule's 100). **Author's call**: the SPA grid is trial 3's `_B1_HOURLY_RV_GRID`, reused — the same six cells in the same order, the headline first — as D10 takes trial 3's form.
+  - The three literals, each with the one-line reason it is a literal (records 45, 46 and 48's registered values, record 48's every digit its writer stored; the family's count at this trial, records 45, 46 and 48 and itself; the thin-cell rule's 100). **Author's call**: the SPA grid is trial 3's `_B1_HOURLY_RV_GRID`, reused — the same six cells in the same order, the headline first — as D10 takes trial 3's form.
   - `_b1_volume_reads`: `if as_of is not None:` on its own line, refusing before any read with `f"{subject} evaluates a frozen set's 4h series and their volumes, never the rolling dataset as of a day: drop --as-of and pass a frozen --dataset"`; `_capturing_union(reader, dataset, 240, window, as_of, accept_holes)`; `_b1_refuse_window(subject, h4_ts, window)` on its own line; per asset of `_ASSETS` `reader.read_series(dataset, f"{asset}/EUR/240.parquet", window=window)`, its `ts` and `volume` columns read as `frame["volume"].to_list()` on one line inside the `try`, a `pl.exceptions.PolarsError` a `SubjectError` naming `f"{dataset}/{relpath}: {exc}"`; the volumes mapped onto the union by `ts`, `None` where the asset has no bar.
   - `_b1_volume_inputs`: `fed = _ffill_btc(h4_prices)`; `confirm = confirmations_by_asset(fed, h4_prices, h4_ts, volumes, lookback=_B1_LOOKBACK, min_cell_obs=_B1_VOLUME_MIN_CELL_OBS)` next, its price validation refusing a bad close before `_asset_returns` divides by it; `returns`; `weights_a = _inverse_vol_weights(fed, lookback=_B1_LOOKBACK)`; `union_idx = list(range(len(h4_ts)))` and `asset_ts`, the indices where `fed[a]` holds a price, as `a2_book_returns` builds them; `own_stamps` the stamps at those indices; per arm of `_B1_A2_ARMS` its `A2Config` (arm A's) bound to a name, `a2_book_returns(fed, config=<it>)` for the positions and `vol_target_positions`, `_asset_directions_a2(fed, union_idx, asset_ts, config=<it>)` and `asset_directions_confirmed(fed, union_idx, asset_ts, confirm, config=<it>)`; `arm_a` the per-asset mean — no position or return of arm B.
   - `_b1_volume_arm_a`: trial 3's `_b1_hourly_rv_arm_a` over these inputs, `arm_a_var_trials = statistics.variance([*_B1_VOLUME_RECORDED_PER_PERIOD_SHARPES, sharpe(net_a)])`, `n_trials=_B1_VOLUME_N_TRIALS`.
   - `_b1_volume_engagement`: `entry_events_per_year` per arm under `str(i + 1)`; the totals; `if events == 0:` on its own line, a `ValidationError` `"entry_events is 0, and share_rejected divides by it"`; `share_rejected`; `directions_differ_per_year(directions_a, directions_b, h4_ts)` and its sum — D8's six keys.
   - `_b1_volume_metrics`: `turnover_a = book_turnover(arm_a)` and `if turnover_a == 0:` on its own line, a `ValidationError` `f"turnover_a is {turnover_a}, and turnover_reduction_pct divides by it"`, then the engagement — both before any bar; arm A's half; arm B per arm `a2_positions_on_directions(weights_a, directions_b[i], vt_a[i])` on one line, the per-asset mean; `net_b`, `net_b_x15`; `per_period_sharpe_4h = sharpe(net_b)` on its own line; `var_trials = statistics.variance([*_B1_VOLUME_RECORDED_PER_PERIOD_SHARPES, per_period_sharpe_4h])`; arm B's bar, the five other SPA cells, `k16`, the two head-to-heads; the 43 keys, each from one source as D11 lists them, `stamps_positions_differ` by `_b1_hourly_rv_metrics`' expression, `spot_drag_pct_yr` and `arm_a_spot_drag_pct_yr` as `turnover / n * _B1_COST_PER_SIDE * PPY_4H`.
-  - `_b1_volume_preflight_metrics`: the engagement first; arm A's bar's ten keys as `_b1_hourly_rv_preflight_metrics` writes them, flags as int; `arm_a_var_trials`; the seven anchors over `net_a`, `bench` and arm A's turnover.
+  - `_b1_volume_preflight_metrics`: the engagement first; arm A's bar from `_b1_volume_arm_a(inputs)`, the trial's own call, its ten keys as `_b1_hourly_rv_preflight_metrics` writes them, flags as int; `arm_a_var_trials`; the seven anchors over `net_a`, `bench` and arm A's turnover.
   - `_b1_volume_build`: the reads, then the inputs and `compute` inside one `try`, `(AlphaError, BacktestError, BenchmarkError, FeatureError, ValidationError)` a `SubjectError` `f"{_b2_over(subject, window)}: {exc}"`, as `_b1_hourly_rv_build` does; the two builders over it.
   - `_b1_volume_confirmation_verdict`: spec D10's code block verbatim, under trial 3's comment form naming spec 00134 D10.
   - `_B1_VOLUME_METRIC_KEYS` (43) and `_B1_VOLUME_PREFLIGHT_KEYS = _B2_ARM_A_BAR_KEYS | {…the seven anchors…, "arm_a_var_trials", …the six engagement keys…}` (24); the two `SUBJECTS` entries exactly as D11 declares them, `no_verdict` the spec's text.
@@ -828,7 +839,8 @@ EOF
 | `test_a_b1_volume_history_the_bar_cannot_read_is_refused_…[<each>]` | within `/^def _b1_volume_reads(/,/^def /`, the `_b1_refuse_window(` line's call made `None` |
 | `test_b1_volume_reads_its_volumes_under_the_unions_window` | within the same range, the volume read's `window=window` made `window=None` |
 | `test_every_subject_evaluates_its_fixture_and_ends_an_input_it_cannot_evaluate_in_an_exit[b1-volume-confirmation-a-zero-close-on-240]` | within `/^def _b1_volume_inputs(/,/^def /`, `s/^\( *\)fed = _ffill_btc(h4_prices)$/\1fed = _ffill_btc(h4_prices); _ = [_asset_returns(fed[a]) for a in _ASSETS]/` (the zero close then a `ZeroDivisionError`, a traceback) |
-| `test_the_b1_volume_subject_registers_each_metric_from_its_own_call[<each>]`, `test_the_b1_volume_preflight_reads_…`, the `-evaluates` contract rows and the shared-defaults rows | slow cases: skipped, recorded in the commit — unless step 5 timed one under 10 s, when it takes arm B's positions built on arm A's directions: within `/^def _b1_volume_metrics(/,/^def /`, the `a2_positions_on_directions(` line's arm-B directions made arm A's, `directions_b` made `directions_a` |
+| `test_the_b1_volume_preflight_reads_…` | a slow case: skipped, recorded in the commit — unless step 5 timed it under 10 s, when within `/^def _b1_volume_arm_a(/,/^def /`, `n_trials=_B1_VOLUME_N_TRIALS,` made `n_trials=1 + _B1_VOLUME_N_TRIALS,` |
+| `test_the_b1_volume_subject_registers_each_metric_from_its_own_call[<each>]`, the `-evaluates` contract rows and the shared-defaults rows | slow cases: skipped, recorded in the commit — unless step 5 timed one under 10 s, when it takes arm B's positions built on arm A's directions: within `/^def _b1_volume_metrics(/,/^def /`, the `a2_positions_on_directions(` line's arm-B directions made arm A's, `directions_b` made `directions_a` |
 
 ______________________________________________________________________
 
@@ -836,6 +848,7 @@ ______________________________________________________________________
 
 **Files:**
 - Create: `tests/test_research_b1_volume_basis.py` (module-marked `data`)
+- Modify: `tests/slow-cases.txt`, when Step 2 times the basis test at 10 s or more
 
 **Interfaces:**
 - Consumes: Task 3's `_b1_volume_reads`, `_b1_volume_inputs` and `_B1VolumeInputs`' fields `h4_ts`, `h4_prices`, `returns`, `arm_a`; `tests.skip_gates.nothing_found_under`.
@@ -844,8 +857,8 @@ ______________________________________________________________________
 - [ ] **Step 1: Write the failing tests** — every literal copied from the spec's measured basis, never from a run:
 
 ```python
-"""B1 trial 4's reads half against spec 00134's measured basis, which computes no direction and runs before the spec's
-hash; and arm A against record 45's anchors at the registry's precision, which builds arm A and runs only after it."""
+"""B1 trial 4's reads half against spec 00134's measured basis, computing no direction, and arm A against record 45's
+anchors at the registry's precision."""
 
 from __future__ import annotations
 
@@ -899,14 +912,16 @@ _NORM = {
     "XRP": ((2017, 6, 17, 12), 316059.421934235, 457, 459, 19_243, (2019, 5, 18, 12), (2019, 6, 1, 4)),
 }
 _H4 = timedelta(hours=4)
-_ABSENT = nothing_found_under(_DATA_ROOT, "ohlc-full/*/EUR/240.parquet")
 
 
 def _utc(parts: tuple[int, ...]) -> datetime:
     return datetime(*parts, tzinfo=UTC)
 
 
-@pytest.mark.skipif(_ABSENT, reason="the frozen ohlc-full set's 4h files are absent under data/")
+@pytest.mark.skipif(
+    nothing_found_under(_DATA_ROOT, "ohlc-full/*/EUR/240.parquet"),
+    reason="the frozen ohlc-full set's 4h files are absent under data/",
+)
 def test_the_b1_volume_reads_reproduce_the_measured_basis():
     assert _DATA_ROOT == research_command._DATA_ROOT
     reader = ObservedReader(_DATA_ROOT)
@@ -939,7 +954,10 @@ def test_the_b1_volume_reads_reproduce_the_measured_basis():
         assert (len(bound), min(bound.values()), max(bound.values())) == (42, _utc(first_bound), _utc(last_bound)), asset
 
 
-@pytest.mark.skipif(_ABSENT, reason="the frozen ohlc-full set's 4h files are absent under data/")
+@pytest.mark.skipif(
+    nothing_found_under(_DATA_ROOT, "ohlc-full/*/EUR/240.parquet"),
+    reason="the frozen ohlc-full set's 4h files are absent under data/",
+)
 def test_the_b1_volume_arm_a_reproduces_record_45s_arm_a():
     reads = subjects._b1_volume_reads(ObservedReader(_DATA_ROOT), "ohlc-full", None, None, False, subject="b1-volume-confirmation")
     inputs = subjects._b1_volume_inputs(reads)
@@ -960,24 +978,26 @@ def test_the_b1_volume_arm_a_reproduces_record_45s_arm_a():
 
 - [ ] **Step 2: Run the basis test** — alone, by node id; the arm-A test is not run before Task 5 step 2.
 
-Run: `mkdir -p .tmp/plan-00134 && uv run pytest tests/test_research_b1_volume_basis.py::test_the_b1_volume_reads_reproduce_the_measured_basis -q -p no:cacheprovider --basetemp=.tmp/plan-00134/pt`
-Expected at this task (Task 3 committed): pass — a reads half the measured basis already describes; before Task 3, and against the tree at this plan's commit, `AttributeError: module 'cli.research.subjects' has no attribute '_b1_volume_reads'`. A skip is no pass: `data/ohlc-full` is linked in this worktree.
+Run: `mkdir -p .tmp/plan-00134 && uv run pytest tests/test_research_b1_volume_basis.py::test_the_b1_volume_reads_reproduce_the_measured_basis --durations=0 -q -p no:cacheprovider --basetemp=.tmp/plan-00134/pt`
+Expected at this task (Task 3 committed): pass — a reads half the measured basis already describes; before Task 3, and against the tree at this plan's commit, `AttributeError: module 'cli.research.subjects' has no attribute '_b1_volume_reads'`. A skip is no pass: `data/ohlc-full` is linked in this worktree. At 10 s or more its node id joins `tests/slow-cases.txt` at its sorted place in this task's commit.
 
-- [ ] **Step 3: Consumers, then commit** — the file's direct readers (`bash infra/scripts/consumers.sh --direct tests/test_research_b1_volume_basis.py`) with `-m "not data"`, the basis test by node id, the gate.
+- [ ] **Step 3: Consumers, then commit** — the file's direct readers (`bash infra/scripts/consumers.sh --direct tests/test_research_b1_volume_basis.py`) with `-m "not data"`; the two tree walkers over `tests/` whose subject this file carries, its skip gates and its data mark, `uv run pytest tests/test_live_venue_opt_in.py::test_every_skip_gate_in_tests_matches_a_form tests/test_data_gated_marker.py -m "not data" -q -p no:cacheprovider --basetemp=.tmp/plan-00134/pt` (no other test file this plan writes adds a skip gate or a data mark); the basis test by node id; `tests/test_slow_cases.py` when the list changed; the gate.
 
 ```bash
 git add tests/test_research_b1_volume_basis.py
+# and tests/slow-cases.txt when Step 2 listed the basis test
 git commit -F - <<'EOF'
 test(research): B1 trial 4's reads against the measured basis, and arm A against record 45's anchors after the hash
 
 <the basis test's pytest result line, pasted from its run>
+<probe skipped: slow case — the basis test, when listed>
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: <the executing session's URL>
 EOF
 ```
 
-- [ ] **Step 4: Probe** — `--file cli/research/subjects.py`, control `s/^def _b1_volume_reads(/def _b1_volume_reads_gone(/` (the test reads the name at call time), mutation `s/frame\["volume"\]/frame["count"]/` (its `grep -c` 1), against `tests/test_research_b1_volume_basis.py::test_the_b1_volume_reads_reproduce_the_measured_basis`, expected `KILLED`. The arm-A test cannot run before the hash; Task 5 step 4 times it, and probes it there when it runs under 10 s.
+- [ ] **Step 4: Probe** — `--file cli/research/subjects.py`, control `s/^def _b1_volume_reads(/def _b1_volume_reads_gone(/` (the test reads the name at call time), mutation `s/frame\["volume"\]/frame["count"]/` (its `grep -c` 1), against `tests/test_research_b1_volume_basis.py::test_the_b1_volume_reads_reproduce_the_measured_basis`, expected `KILLED` — when Step 2 timed it under 10 s; a listed basis test is not probed, its commit recording `probe skipped: slow case`. The arm-A test cannot run before the hash; Task 5 step 4 times it, and probes it there when it runs under 10 s.
 
 ______________________________________________________________________
 
@@ -990,8 +1010,8 @@ ______________________________________________________________________
 - Produces: one appended registry record (or ledger reading), checked; the pre-flight's output and the run's output under `.tmp/plan-00134/`.
 
 - [ ] **Step 1: The gate** — each its own call:
-  - `git fetch origin develop`, then `git cat-file -e origin/develop:cli/registry/attempts.py` and `git cat-file -e origin/develop:docs/reference/trial-attempt-logs.txt` exit 0: spec 00133 has merged. Otherwise stop: the run waits.
-  - `git merge --no-edit origin/develop`, alone; a conflict keeps both sides; then `tests/test_alpha_b1_volume.py`, `tests/test_research_command.py`, `tests/test_trial_attempts.py`, `tests/test_trial_registry_provenance.py` and `tests/test_decisions_log_ties.py` pass `-m "not data"`, in parts. A failure in this plan's tests after the merge is fixed by a commit, never an amend.
+  - `git fetch origin develop`, then `git cat-file -e origin/develop:docs/open-topics/archive/T0222-a-trial-on-an-unmerged-branch-spends-uncounted.md` exits 0: spec 00133 has merged whole, its topic archived by plan 00133's last task in the pull request that carries its count and its plain-eval refusal. Otherwise stop: the run waits.
+  - `git merge --no-edit origin/develop`, alone; a conflict keeps both sides; then `tests/test_alpha_b1_volume.py`, `tests/test_research_command.py`, `tests/test_trial_attempts.py`, `tests/test_trial_registry_provenance.py` and `tests/test_decisions_log_ties.py` pass `-m "not data"`, in parts — the run that proves `_b1_volume_args`' command-path cases under plan 00133's Task 7. A failure in this plan's tests after the merge is fixed by a commit, never an amend.
   - The reads over Tasks 2–4 have closed with no open Critical or Important, and nothing changed since: `git diff --quiet <the tip the last read names in its report> -- cli/ tests/ pyproject.toml uv.lock docs/specs/00134-b1-volume-confirmation-design.md` exits 0; the merge, or a fix, changes it — a read of that diff comes first, and this check then names its tip.
   - Arm A's code path: `git log --oneline 838adb43291183a5bc320fba804be4d4eb777ed0..HEAD -- cli/alpha cli/features cli/portfolio cli/benchmark cli/validation cli/backtest cli/registry/observed.py cli/ohlc` lists Task 2's commit and its fixes alone; any other commit is named in the task report, the anchors at step 5 deciding whether it moved arm A.
 
@@ -1031,9 +1051,9 @@ sys.exit(0 if m["stamps_directions_differ"] > 0 else "no direction differs at an
 EOF
 ```
 
-  Expected now: it cannot run (no subject; spec 00133's code absent) — it runs at this step alone. A block that differs, an anchor off, `passes` 0 or `stamps_directions_differ` 0 is D9's or D8's instrument finding — stop: no run, no verdict, the trial unspent. The stop is kept as a reading, after step 3's check: `uv run zcrypto research eval --subject b1-volume-confirmation-preflight --dataset ohlc-full --reading --iteration iter-178 --spec-hash <step 2's sha256> --notes "<what failed, quoted from the check's output; no verdict, the trial unspent>"`; Task 6 records it. A year with events and none accepted stops nothing; it is quoted in the notes and the entry.
+  Expected now: it cannot run (no subject) — it runs at this step alone. A block that differs, an anchor off, `passes` 0 or `stamps_directions_differ` 0 is D9's or D8's instrument finding — stop: no run, no verdict, the trial unspent. The stop is kept as a reading, after step 3's check: `uv run zcrypto research eval --subject b1-volume-confirmation-preflight --dataset ohlc-full --reading --iteration iter-178 --spec-hash <step 2's sha256> --notes "<what failed, quoted from the check's output; no verdict, the trial unspent>"`; Task 6 records it. A year with events and none accepted stops nothing; it is quoted in the notes and the entry.
 
-- [ ] **Step 6: D12 step 4, the trial** — one run, by the owner or on their word, after step 3's check: `uv run zcrypto research eval --subject b1-volume-confirmation --dataset ohlc-full --register --iteration iter-178 --family B1 --n-trials 4 --variant B1-volume-confirm-a2eq-v1 --spec-hash <step 2's sha256> --notes "<below>" > .tmp/plan-00134/trial4.out 2>&1`, then `cat .tmp/plan-00134/trial4.out`. No `--verdict` and no plain eval, before or after (D12). The notes, written before the run, name only what is fixed before it: `subject b1-volume-confirmation over ohlc-full, full history, no as-of; var_trials the sample variance of records 45, 46 and 48's registered per-period Sharpes 0.02374, 0.02959 and 0.030191886721210086 and arm B's, n_trials 4, the DSR leg binding; pre-flight: block ff2e5700…, arm A <the seven anchors>, passes 1, entry_events <n>, rejected <r>, stamps_directions_differ <s>, <years with events and none accepted, or none>; the matrix pre-registered by the spec's sha256 <step 2's value>`. A refusal from the count — an attempt in B1 that never landed, or bucket B spent — is refused before the fit, naming each orphan, and the trial goes back to the owner (D12). A stop by the rule writes a reading carrying its attempt, which counts 0.
+- [ ] **Step 6: D12 step 4, the trial** — one run, by the owner or on their word, after step 3's check: `uv run zcrypto research eval --subject b1-volume-confirmation --dataset ohlc-full --register --iteration iter-178 --family B1 --n-trials 4 --variant B1-volume-confirm-a2eq-v1 --spec-hash <step 2's sha256> --notes "<below>" > .tmp/plan-00134/trial4.out 2>&1`, then `cat .tmp/plan-00134/trial4.out`. No `--verdict` and no plain eval, before or after (D12). The notes, written before the run, name only what is fixed before it: `subject b1-volume-confirmation over ohlc-full, full history, no as-of; arm B the A2 4h ensemble with each breakout entry accepted only on a bar whose volume is at or above its hour-of-week norm, exits always taken, on arm A's weights and vol scalar; arm A the same ensemble unchanged, both built in the run; var_trials the sample variance of records 45, 46 and 48's registered per-period Sharpes 0.02374, 0.02959 and 0.030191886721210086 and arm B's, n_trials 4, the DSR leg binding; pre-flight: block ff2e5700…, arm A <the seven anchors>, passes 1, entry_events <n>, rejected <r>, stamps_directions_differ <s>, <years with events and none accepted, or none>; park variants, pre-registered: on the matrix's third row hour-of-day cells only (6) and the mean in place of the median, on its second the block-sensitivity finding; the matrix pre-registered by the spec's sha256 <step 2's value>`. A refusal from the count — an attempt in B1 that never landed, or bucket B spent — is refused before the fit, naming each orphan, and the trial goes back to the owner (D12) through T0022: Task 6 runs its refusal arm, with no record and no reading. A stop by the rule writes a reading carrying its attempt, which counts 0.
 
 - [ ] **Step 7: The record's checks** — on a record, each failure the owner's question before Task 6:
 
@@ -1056,14 +1076,14 @@ checks = {
     "keys": set(m) == subject.metric_keys,
     "verdict": r["verdict"] == subject.verdict(m),
     "printed": printed == m,
-    "attempt": (r["attempt"]["absorbs"], r["attempt"]["counted"]) == ([], []),
+    "attempt": r["attempt"]["absorbs"] == [],
 }
-print(r["trial_id"], r["verdict"], checks)
+print(r["trial_id"], r["verdict"], checks, "counted", r["attempt"]["counted"])
 sys.exit(0 if all(checks.values()) else 1)
 EOF
 ```
 
-  Expected now: it cannot run — no record exists, and `attempt` is spec 00133's key. `printed` is the first JSON object the run printed, the text after it left unread. A non-empty `counted` is not a failure of the run — it is named in Task 6's header — but goes in the report. On a stop by the rule, the ledger's last line is checked instead: its subject `b1-volume-confirmation`, its outcome the `no_verdict` text, its `attempt` non-null, its `spec_hash` step 2's.
+  Expected now: it cannot run — no record exists, and `attempt` is spec 00133's key. `printed` is the first JSON object the run printed, the text after it left unread. `counted` is printed, never checked: a non-empty one, an orphan the count admitted elsewhere in bucket B, is no failure of the run — Task 6's header and T0016's line name it — and goes in the report. On a stop by the rule, the ledger's last line is checked instead: its subject `b1-volume-confirmation`, its outcome the `no_verdict` text, its `attempt` non-null, its `spec_hash` step 2's.
 
 No commit: the appended line lands in Task 6's commit, with the decisions-log header that names it and the literal that pins its subject — `tests/test_decisions_log_ties.py::test_the_committed_decisions_logs_tie_every_verdict_to_its_record` and plan 00133's `test_each_landed_subjects_n_trials_is_frozen_at_its_literal` hold only over the three together (**Author's call**).
 
@@ -1072,11 +1092,13 @@ ______________________________________________________________________
 ### Task 6: the verdict — the record, the decisions log, T0022, T0016 and on an adopt T0123 (D12, D13)
 
 **Files:**
-- Modify: `docs/reference/trial-registry.jsonl` (appended by Task 5), `tests/test_trial_registry_provenance.py`, `docs/research/10.phase4-decisions.md`, `docs/open-topics/T0022-b1-intraday-seasonality-family.md`, `docs/open-topics/T0016-bucket-b-c-alpha-families.md`, `docs/open-topics/README.md`, `tests/slow-cases.txt` (when step 4 of Task 5 says so); on an adopt `docs/open-topics/T0123-sleeve-promotion-path.md`; on a stop `docs/reference/reading-ledger.jsonl` in the registry's place
+- Modify: `docs/reference/trial-registry.jsonl` (appended by Task 5), `tests/test_trial_registry_provenance.py`, `docs/research/10.phase4-decisions.md`, `docs/open-topics/T0022-b1-intraday-seasonality-family.md`, `docs/open-topics/T0016-bucket-b-c-alpha-families.md`, `docs/open-topics/README.md`, `tests/slow-cases.txt` (when step 4 of Task 5 says so); on an adopt `docs/open-topics/T0123-sleeve-promotion-path.md`; on a stop `docs/reference/reading-ledger.jsonl` in the registry's place; on a refusal from the count, T0022 and the index alone
 
 **Interfaces:**
 - Consumes: plan 00133 Task 8's `LANDED_N_TRIALS: dict[str, int] = {"b1-hourly-rv": 3}` and `test_each_landed_subjects_n_trials_is_frozen_at_its_literal`; plan 00133 Task 9's `(attempts counted: <log8>#<id>, …)` tie in `tie_findings`; this plan's Task 5 record, checked.
 - Produces: the records commit.
+
+On a refusal from the count (Task 5 step 6) there is no record and no reading: steps 1, 4, 5, 6 and 8 run, step 4 on its refusal arm, step 6 staging T0022 and the index alone under `docs(open-topics): B1 trial 4 refused by the count before the fit; T0022 holds the refusal for the owner`.
 
 - [ ] **Step 1: The PR** — the unpushed range takes its `pre-review`, then the push, its own call, then the PR through `open-pr` (the change-index row at create time), so its number exists for the entry: title `feat(research): iter-178 — B1 trial 4, volume confirmation of the A2 ensemble's breakout entries`.
 
@@ -1087,11 +1109,12 @@ ______________________________________________________________________
 - [ ] **Step 4: The topics**, per `topic-ops`. T0022's findings take trial 4 — its record id, verdict, the row that fired, `var_trials`, the engagement figures — or, on a stop, the instrument finding and its reading id. Its `ripe_when`, an activity, is rewritten for what remains, each with a check that prints at least 1 once it happens and nothing when this step commits it, run then and its output read, shown matching a sample header in `iteration-closeout`'s form:
   - reject: `an activity: the owner picks B1's next step after trial 4's reject — candidate C, a park variant of trial 3, or closing the family as attributed out — recorded in the decisions log; check: git grep -c -E '^\[iter-[0-9]+\] B1.s next step after trial 4' -- docs/research/10.phase4-decisions.md prints at least 1`;
   - park: the same activity after trial 4's park, its variants (hour-of-day cells only (6); the mean in place of the median; on the second row the block-sensitivity finding) each a new trial of the shared budget, with the same check;
-  - adopt: `an activity: the P1 combination trial over record 47's book carrying trial 4's arm B is picked for an iteration; check: git grep -c -E '^\[iter-[0-9]+\] .*combination trial over record 47.s book' -- docs/research/10.phase4-decisions.md prints at least 1`; and T0123's `ripe_when` gains `— registry trial <N>, B1 trial 4's ADOPT on the A2 ensemble alone, ripens this only once the P1 combination trial over record 47's book that carries it adopts`, written in this PR so no tree holds the adopt without it (D13);
-  - stop: `an activity: the owner decides B1's next step after trial 4's instrument finding, recorded in the decisions log; check: git grep -c -E '^\[iter-[0-9]+\] B1.s next step after trial 4.s instrument finding' -- docs/research/10.phase4-decisions.md prints at least 1`.
+  - adopt: `an activity: the P1 combination trial over record 47's book carrying trial 4's arm B is picked for an iteration; check: git grep -c -E '^\[iter-[0-9]+\] .*combination trial over record 47.s book' -- docs/research/10.phase4-decisions.md docs/research/13.phase5-decisions.md prints at least 1`, the second log the one `iteration-closeout` routes a combination of sleeves to; and T0123's `ripe_when` gains `— registry trial <N>, B1 trial 4's ADOPT on the A2 ensemble alone, ripens this only once the P1 combination trial over record 47's book that carries it adopts`, written in this PR so no tree holds the adopt without it (D13);
+  - stop: `an activity: the owner decides B1's next step after trial 4's instrument finding, recorded in the decisions log; check: git grep -c -E '^\[iter-[0-9]+\] B1.s next step after trial 4.s instrument finding' -- docs/research/10.phase4-decisions.md prints at least 1`;
+  - refusal from the count: T0022's findings take the refusal as `.tmp/plan-00134/trial4.out` printed it, each orphan or the spent bucket it named; `an activity: the owner rules on B1's fourth trial after the count refused it — a new subject declaring the count its orphans need, or bucket B's spent budget — recorded in the decisions log; check: git grep -c -E '^\[iter-[0-9]+\] B1 trial 4 after the count.s refusal' -- docs/research/10.phase4-decisions.md prints at least 1`; T0016 unchanged.
   T0022's next steps say the same. T0016's budget line reads `B1 spent 4, 21 remain` — less one more for each orphan the record's `attempt.counted` lists, named on that line — and its B1 line under `## Done so far` names trial 4 and its verdict; on a stop T0016 is unchanged, 22 remaining. `uv run python infra/scripts/topics-index.py` re-renders the index.
 
-- [ ] **Step 5: Tests and gate** — `tests/test_decisions_log_ties.py`, `tests/test_trial_registry_provenance.py`, `tests/test_slow_cases.py` and the direct readers of `docs/open-topics/` pass; `uv run pre-commit run -a` until clean.
+- [ ] **Step 5: Tests and gate** — the direct readers of each path the commit stages, run as the Global Constraints run them (`consumers.sh --direct`, `-m "not data"`, a mount-reading case deselected by node id and named), `tests/test_decisions_log_ties.py` among them, and `tests/test_slow_cases.py` when the list changed, pass; `uv run pre-commit run -a` until clean.
 
 - [ ] **Step 6: Commit**
 
@@ -1113,6 +1136,4 @@ EOF
 
 - [ ] **Step 7: The replay case and the probe** — `uv run pytest tests/test_registry_replay.py -k 'trial-<its id>' -q -p no:cacheprovider --basetemp=.tmp/plan-00134/pt` passes (on a stop `-k 'reading-<its id>'`), on the commit, since the case fails on any uncommitted change under the registry and the ledger; a difference goes to the owner before the push. On a record, the literal's probe: `--file cli/research/subjects.py`, control `s/^def _b2_verdict(/def _b2_verdict_gone(/`, mutation `s/^_B1_VOLUME_N_TRIALS = 4$/_B1_VOLUME_N_TRIALS = 5/`, against `tests/test_trial_registry_provenance.py::test_each_landed_subjects_n_trials_is_frozen_at_its_literal`, expected `KILLED`.
 
-- [ ] **Step 8: The read and the PR body** — the commit's `pre-review`, then the push, its own call; the PR body through `open-pr`: the verdict or the instrument finding, every probe verdict line naming `infra/scripts/mutate-probe.sh`, each `probe skipped: slow case`, and the read line naming the tip the last read covered. Merged on the owner's word through `merge-pr`; before it, `git status --short --ignored` is read, `.tmp/plan-00134` removed, `unlink data/ohlc-full`, and `ls -la /home/zhaow/Projects/zcrypto-kraken/data` shows the canonical `ohlc-full` still there.
-
-- [ ] **Step 9:** Decisions log: the verdict entry above, written after the run
+- [ ] **Step 8: The read and the PR body** — the commit's `pre-review`, then the read of the delta from the tip the last read covered — `review` over `<that tip>..HEAD`, since the commit adds files outside that read's range, and `re-review` over a fix of it — then the push, its own call; the PR body through `open-pr`: the verdict or the instrument finding, every probe verdict line naming `infra/scripts/mutate-probe.sh`, each `probe skipped: slow case`, and the read line naming the tip the delta's read covered, `merge-pr`'s gate refusing any other. Merged on the owner's word through `merge-pr`; before it, `git status --short --ignored` is read, `.tmp/plan-00134` removed, `unlink data/ohlc-full`, and `ls -la /home/zhaow/Projects/zcrypto-kraken/data` shows the canonical `ohlc-full` still there.
