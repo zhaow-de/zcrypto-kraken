@@ -716,10 +716,16 @@ def test_a_reading_carries_the_outcome_its_subjects_rule_gives_and_no_other(subj
 _L = "f" * 32
 _FOLLOW = "b2-follow"
 _B1_FOLLOW = "b1-follow"
+# The table's subjects, frozen at the declarations the floor world implies, b2-funding-derisk at n_trials 1, so a raise a
+# correct PR makes in cli/research/subjects.py never moves a row; the live test reads SUBJECTS.
+_TABLE_SUBJECTS = {
+    _B2: replace(SUBJECTS[_B2], family="B2", n_trials=1),
+    _ARM_A_BAR: replace(SUBJECTS[_ARM_A_BAR], verdict=None, family=None, n_trials=None),
+}
 _WITH_FOLLOWER = {
-    **SUBJECTS,
-    _FOLLOW: replace(SUBJECTS[_B2], name=_FOLLOW, n_trials=2),
-    _B1_FOLLOW: replace(SUBJECTS["b1-hourly-rv"], name=_B1_FOLLOW, n_trials=4),
+    **_TABLE_SUBJECTS,
+    _FOLLOW: replace(_TABLE_SUBJECTS[_B2], name=_FOLLOW, n_trials=2),
+    _B1_FOLLOW: replace(SUBJECTS["b1-hourly-rv"], name=_B1_FOLLOW, family="B1", n_trials=4),
 }
 
 
@@ -773,7 +779,7 @@ def _floor_world() -> tuple[dict[int, dict], dict[int, dict]]:
 
 
 def _count_check(
-    trials=(), readings=(), *, subjects=SUBJECTS, bucket_of=BUCKET_OF, budget=BUDGET, allowlist=frozenset({_L})
+    trials=(), readings=(), *, subjects=_TABLE_SUBJECTS, bucket_of=BUCKET_OF, budget=BUDGET, allowlist=frozenset({_L})
 ) -> list[str]:
     committed_trials, committed_readings = _floor_world()
     committed_trials.update({trial["trial_id"]: trial for trial in trials})
@@ -791,6 +797,12 @@ def test_every_record_past_48_holds_to_its_count_family_budget_log_and_carry_for
 
 
 def test_a_clean_schema_6_trial_yields_no_finding():
+    assert _count_check([_trial6(49)]) == []
+
+
+def test_a_raise_of_a_live_subjects_n_trials_leaves_the_clean_row_clean(monkeypatch):
+    monkeypatch.setitem(SUBJECTS, _B2, replace(SUBJECTS[_B2], n_trials=2))
+
     assert _count_check([_trial6(49)]) == []
 
 
@@ -813,7 +825,7 @@ def test_an_entry_landing_past_the_floors_leaves_the_clean_row_clean(monkeypatch
         pytest.param(
             [_trial6(49)],
             [],
-            {"subjects": {**SUBJECTS, _B2: replace(SUBJECTS[_B2], family="B1")}},
+            {"subjects": {**_TABLE_SUBJECTS, _B2: replace(_TABLE_SUBJECTS[_B2], family="B1")}},
             "trial-49 (vii):",
             id="family-off-the-subject",
         ),
