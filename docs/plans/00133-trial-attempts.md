@@ -32,7 +32,7 @@
 ## Review Focus
 
 - Two sessions running the same arguments at once: a held attempt that another session lands between this run's `begin` and its append must be absorbed by no one twice — the post-check and the append run under the log's lock, reading `landed` afresh, so the record never repeats a landed (log, id) and CI's (xi) never fails a correct PR. Test: Task 7, `test_a_held_attempt_another_session_lands_mid_fit_is_absorbed_by_no_one_twice`.
-- Two sessions starting trials in one family at once: the count must read the log as re-read under the lock, so the second session sees the first's `begin`, never a stale instance's lines, and over `landed` re-read inside that lock, never the read before the data. Tests: Task 1, `test_begin_counts_over_the_lines_another_session_appended_after_this_log_was_read` — `begin` hands `admit` the re-read lines; Task 7, `test_what_lands_between_the_pre_data_reads_and_the_lock_is_counted_before_the_fit` — the command counts over them and over `landed` as `admit` re-reads it.
+- Two sessions starting trials in one family at once: the count must read the log as re-read under the lock, so the second session sees the first's `begin`, never a stale instance's lines, and over `landed` re-read inside that lock, never the read before the data. Tests: Task 1, `test_begin_counts_over_the_lines_another_session_appended_after_this_log_was_read` — `begin` hands `admit` the re-read lines; Task 7, `test_what_lands_between_a_read_and_the_lock_its_count_takes_is_counted` — the command counts over them and over `landed` as `admit` re-reads it. The two counts read four inputs, each fresh under its lock, each with a case that writes after the last earlier read of it: the lines and `landed` inside `begin` (that test's rows `a-begin-in-the-window`, after the constructor's read, and `a-record-in-the-window`, after the read before the data), the lines inside `locked()` after the print (its row `a-begin-before-the-post-check`, after the `end` that refreshed `log.lines`), and `landed` inside `locked()` (`lands_mid_fit`, after both earlier reads).
 - A read racing another session's append: every read holds the log's flock, so a line half written is never taken for a torn tail and truncated away, which would leave a printed attempt open for any retry to absorb. Test: Task 1, `test_a_torn_tail_another_session_is_still_writing_is_never_healed`.
 - A torn last line that ends inside a multibyte UTF-8 character — a non-ASCII worktree path or branch name, which `canonical_json` writes raw — must heal like any torn line, never escape as a `UnicodeDecodeError` traceback. Test: Task 1, `test_a_torn_last_line_inside_a_multibyte_character_is_healed`.
 - A registration from a detached HEAD — every scratch tree here is detached — must write `branch` null and name such an orphan "on a detached HEAD" in D4's refusal. Test: Task 1, `test_the_branch_is_none_on_a_detached_head_and_an_orphan_from_one_is_named_so`.
@@ -1674,27 +1674,35 @@ def test_a_held_attempt_another_session_lands_mid_fit_is_absorbed_by_no_one_twic
     assert json.loads(registry.read_text().splitlines()[-1])["attempt"]["absorbs"] == []
 
 
-@pytest.mark.parametrize("window", ["a-begin-in-the-window", "a-record-in-the-window"])
-def test_what_lands_between_the_pre_data_reads_and_the_lock_is_counted_before_the_fit(tmp_path, monkeypatch, _attempts_log, window):
+@pytest.mark.parametrize(
+    ("planted", "method", "fitted", "figure"),
+    [
+        pytest.param("a-begin", "begin", False, 2, id="a-begin-in-the-window"),
+        pytest.param("a-record", "begin", False, 2, id="a-record-in-the-window"),
+        pytest.param("a-begin", "locked", True, 3, id="a-begin-before-the-post-check"),
+    ],
+)
+def test_what_lands_between_a_read_and_the_lock_its_count_takes_is_counted(tmp_path, monkeypatch, _attempts_log, planted, method, fitted, figure):
     registry = tmp_path / "registry.jsonl"
     _anchor(monkeypatch, _stub_dataset(tmp_path), registry)
     calls = _stub_subject(monkeypatch)
-    real_begin = attempts.AttemptLog.begin
+    real = getattr(attempts.AttemptLog, method)
 
-    def begin(self, admit, **fields):
-        monkeypatch.setattr(attempts.AttemptLog, "begin", real_begin)
-        if window == "a-begin-in-the-window":
+    def planting(self, *args, **kwargs):
+        monkeypatch.setattr(attempts.AttemptLog, method, real)
+        if planted == "a-begin":
             _planted(_attempts_log, ("elsewhere", None))
         else:
             _seed(registry, "STUB", 1)
-        return real_begin(self, admit, **fields)
+        return real(self, *args, **kwargs)
 
-    monkeypatch.setattr(attempts.AttemptLog, "begin", begin)
+    monkeypatch.setattr(attempts.AttemptLog, method, planting)
 
     result = runner.invoke(app, [*_stub_eval(), *_register_args(registry, n_trials=1)])
 
-    assert result.exit_code == 1 and calls == [], result.output
-    assert "family STUB needs at least 2" in result.output, result.output
+    named = re.search(r"family STUB needs at least (\d+)", result.output)
+    assert result.exit_code == 1 and named and int(named.group(1)) == figure, result.output
+    assert bool(calls) is fitted, result.output
 
 
 def test_a_plain_eval_of_a_ruled_subject_is_refused_before_any_read(tmp_path, monkeypatch):
@@ -1959,6 +1967,7 @@ EOF
 | `lands_mid_fit` | command.py | the locked block's re-read of `landed` replaced by the one before the data |
 | `lands_between and a-begin-in-the-window` | command.py | the admission count's `lines` argument made `log.lines`, the snapshot the constructor read |
 | `lands_between and a-record-in-the-window` | command.py | `admit`'s re-read of `landed` replaced by the one before the data |
+| `lands_between and a-begin-before-the-post-check` | command.py | the post-print count's `lines` argument made `log.lines`, as the `end` refreshed it |
 | `stale_develop and current` | command.py | the frozen check's `.get("invocation")` made `["invocation"]` |
 | `test_the_register_path_makes_no_network_call` | attempts.py | a `_git(` call prefixed `_git(code_root, "fetch", "--dry-run") and `, which runs the fetch and keeps the call's own result whatever the line's shape, a CompletedProcess being truthy: the develop check's (`_git(code_root, "rev-parse", "--verify"`); apart, `main_checkout`'s (`_git(code_root, "rev-parse", "--git-common-dir"`); apart, the `cat-file -e` call `allowed_log_ids` reaches |
 | `stale_develop and current` | attempts.py | `DEVELOP` cut from `landed`'s refs |
