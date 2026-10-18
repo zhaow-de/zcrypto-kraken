@@ -22,10 +22,12 @@
 # handed to `sh -c`, `eval` or a Python subprocess, a program, a flag or a vaulted path arriving through a variable,
 # a substitution or an encoding, a cap first in its pipeline, which truncates what it opened rather than what the
 # command computed (`head -1 VERSION`), a truncation that is neither head nor tail, and a vaulted file read by a
-# program no family names (`grep` without `-c`, `diff`, `git log -p`, a Python script) or reached through `xargs`,
-# `find -exec` or a copy of its whole directory -- none is an argv this guard judges; nor is a vaulted file the command
-# makes before it reads it (`ln -s <vaulted file> x && cat x`), since a file's existence is read before anything runs.
-# A vault tool's writing verb is admitted over a vaulted file: a key rotation runs `ansible-vault encrypt|rekey`.
+# program no family names (`grep` without `-c`, `diff`, `git log -p`, a Python script) or reached through a copy of
+# its whole directory -- none is an argv this guard judges; nor is a vaulted file the command makes before it reads it
+# (`ln -s <vaulted file> x && cat x`), since a file's existence is read before anything runs. Of `xargs` and
+# `find -exec`, two shapes are judged: a stage whose command word is `xargs` with `grep` or `rg` as its first operand,
+# or `find` carrying `-exec grep|rg`, in a pipeline any stage of which names `infra` as a word or a path component;
+# every other `xargs` or `-exec` is outside. A vault tool's writing verb is admitted over a vaulted file: a key rotation runs `ansible-vault encrypt|rekey`.
 # Refused deliberately, as a word is judged wherever it stands: an agent's `echo git push`, `echo cat <vaulted file>`.
 #
 # A stage's directory, for the vaulted-file, memo and dispatched-agent families, is the payload's `cwd` moved by
@@ -195,6 +197,7 @@ WORKTREE_REMEDY = (
 STATE_SUBS = {"commit", "merge", "rebase", "reset", "push", "checkout", "switch", "stash", "mv", "rm"}
 STATE_STAMP = ".tmp/.git-state-stamp"
 STATE_GAP = 3.0  # seconds since the checkout's last admitted state-changing git command
+XARGS_VALUE = {"-n", "-I", "-L", "-P", "-d", "-s"}  # xargs' short options whose value is the next word
 HOOK_DIR = posixpath.dirname(os.path.abspath(sys.argv[1]))
 
 
@@ -609,6 +612,24 @@ def judge_cap(pipe, raw):
                 inner = capped_stage(body)
                 if inner and comparing(stage):
                     refuse_capped_test(inner, stage, raw)
+
+
+def handed_grep(words):
+    # A grep over files another program hands it: `xargs [options] grep|rg`, or `find ... -exec grep|rg`.
+    p, rest = argv_of(words)
+    if p == "xargs":
+        j = 0
+        while j < len(rest) and rest[j].startswith("-"):
+            j += 2 if rest[j] in XARGS_VALUE else 1
+        return j < len(rest) and rest[j].rpartition("/")[2] in GREPS
+    return p == "find" and any(a == "-exec" and rest[j + 1].rpartition("/")[2] in GREPS for j, a in enumerate(rest[:-1]))
+
+
+def judge_handed_grep(pipe, raw):
+    if any("infra" in w.split("/") for stage in pipe for w in stage):
+        for stage in pipe:
+            if handed_grep(stage):
+                refuse_vault(stage, "greps the files it is handed in a pipeline naming infra, where the vaulted files sit", raw)
 
 
 def is_git(w):
@@ -1240,6 +1261,7 @@ try:
                 judge_agent(words, here, raw, call.get("session_id"))
             stages.append((words, here or cwd))
         judge_cap(pipe, raw)
+        judge_handed_grep(pipe, raw)
         if len(pipe) == 1:
             here = moved(pipe[0], here)
     # The stamps are read after every other arm, so their refusal names the earlier one, and written once at admission.
