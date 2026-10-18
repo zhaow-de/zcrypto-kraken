@@ -31,7 +31,7 @@ The branch's commits deliver:
 - the hard budgets, A=40, B=25 and C=10, and each family's bucket, as literals in `cli/registry/budget.py` that CI asserts;
 - `zcrypto research attempts-init`, which creates the log once, the committed allowlist of log ids `docs/reference/trial-attempt-logs.txt`, and a workspace transport whose `.local/` rsyncs exclude the log;
 - the conftest fixtures that put each test's log and allowlist in its `tmp_path` and refuse the real ones at teardown;
-- schema 6, under which a record past 48 and a reading past 1 carry the attempt their run's `begin` and `end` lines minted, a record also the orphans it counted;
+- schema 6, under which a record past 48 and a ruled subject's reading past 1 carry the attempt their run's `begin` and `end` lines minted, a record also the orphans it counted;
 - each ruled subject's declared family and trial count, at which its kill bar deflates;
 - the register path's family, count, budget and log refusals, its provisional absorption of an open attempt, and the refusal of a ruled subject's plain eval;
 - CI's checks holding every record past 48 to its family, count, budget, log and carry-forward;
