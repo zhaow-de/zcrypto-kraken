@@ -13,6 +13,7 @@ _TIE = re.compile(r"\((registry trial|reading) (\d+)(?=[,);])")
 _VERDICT = re.compile(r"\b(ADOPT|PARK|REJECT)(?:ED|S)?\b")
 _ANY_CASE_VERDICT = re.compile(_VERDICT.pattern, re.IGNORECASE)
 _TRIAL_WORD = re.compile(r"\btrial\b", re.IGNORECASE)
+_COUNTED = re.compile(r"\(attempts counted: ([0-9a-f]{8}#\d+(?:, [0-9a-f]{8}#\d+)*)\)")
 _TIE_FLOOR_ITER = 175
 _TOKEN_END = "the id ended by ',', ')' or ';'"
 
@@ -66,8 +67,32 @@ def _verdict_findings(iter_n: int, line: str, cited: list[int], trials: dict[int
     ]
 
 
-def tie_findings(entries: list[tuple[int, str]], trials: dict[int, str], readings: set[int]) -> list[str]:
-    """`entries` are `(iter, line)` pairs; `trials` maps every trial id to its verdict."""
+def _counted_findings(iter_n: int, header: str, judged: list[int], counted: dict[int, list[str]]) -> list[str]:
+    owed = {token for n in judged for token in counted.get(n, [])}
+    named = {token for held in _COUNTED.finditer(header) for token in held.group(1).split(", ")}
+    found = []
+    if missing := sorted(owed - named):
+        found.append(
+            f"[iter-{iter_n}]: registry trial {judged[-1]} counted attempts its header does not name: missing {missing}; "
+            "name each before its first '. ' as (attempts counted: <log8>#<id>, …)"
+        )
+    if extra := sorted(named - owed):
+        found.append(
+            f"[iter-{iter_n}]: its header names attempts registry trial {judged[-1]} did not count: extra {extra}; its "
+            "(attempts counted: …) names that record's counted entries alone"
+        )
+    return found
+
+
+def tie_findings(
+    entries: list[tuple[int, str]],
+    trials: dict[int, str],
+    readings: set[int],
+    counted: dict[int, list[str]] | None = None,
+) -> list[str]:
+    """`entries` are `(iter, line)` pairs; `trials` maps every trial id to its verdict; `counted` maps a trial id to the
+    `<log8>#<id>` tokens of its record's `attempt.counted`, a trial it omits counting none."""
+    counted = counted or {}
     found, named, past = [], set(), {}
     for iter_n, line in entries:
         header = _header(line)
@@ -80,6 +105,7 @@ def tie_findings(entries: list[tuple[int, str]], trials: dict[int, str], reading
                 found.append(f"[iter-{iter_n}]: ({kind} {n} names no {kind.split()[-1]} on record")
         if cited := sorted(n for kind, n in ties if kind == "registry trial"):
             found += _verdict_findings(iter_n, line, cited, trials)
+            found += _counted_findings(iter_n, header, cited[-1:], counted)
         if iter_n > _TIE_FLOOR_ITER and _ANY_CASE_VERDICT.search(header) and _TRIAL_WORD.search(header) and not ties:
             remedy = _moved(
                 iter_n,
@@ -99,9 +125,14 @@ def test_the_committed_decisions_logs_tie_every_verdict_to_its_record():
     entries = _committed_entries()
     trials = {record.trial_id: record.verdict for record in TrialRegistry(REGISTRY).records}
     readings = {reading.reading_id for reading in ReadingLedger(LEDGER).records}
+    counted = {
+        record.trial_id: [f"{entry['log'][:8]}#{entry['id']}" for entry in record.attempt["counted"]]
+        for record in TrialRegistry(REGISTRY).records
+        if record.attempt
+    }
 
     assert len(entries) >= 318, "a decisions-log entry is never deleted"
-    assert tie_findings(entries, trials, readings) == []
+    assert tie_findings(entries, trials, readings, counted) == []
 
 
 @pytest.mark.parametrize(
@@ -255,3 +286,47 @@ def test_a_tie_whose_id_ends_otherwise_is_told_how_its_id_ends(end):
     found = tie_findings(_entries([f"[iter-176] B2 trial 2 — REJECT (registry trial 48{end}. Body."]), {48: "reject"}, set())
 
     assert len(found) == 2 and all("the id ended by ',', ')' or ';'" in finding for finding in found), found
+
+
+@pytest.mark.parametrize(
+    ("line", "counted", "finding"),
+    [
+        pytest.param(
+            "[iter-180] B1 trial 4 — REJECT (registry trial 49).",
+            {49: ["ffffffff#5"]},
+            "missing ['ffffffff#5']",
+            id="a-counted-orphan-unnamed",
+        ),
+        pytest.param(
+            "[iter-180] B1 trial 4 — REJECT (registry trial 49) (attempts counted: ffffffff#5, ffffffff#6).",
+            {49: ["ffffffff#5"]},
+            "extra ['ffffffff#6']",
+            id="an-orphan-the-record-does-not-count",
+        ),
+    ],
+)
+def test_a_header_names_exactly_the_orphans_its_record_counted(line, counted, finding):
+    found = tie_findings(_entries([line]), {49: "reject"}, set(), counted)
+
+    assert len(found) == 1 and finding in found[0], found
+
+
+@pytest.mark.parametrize(
+    ("line", "counted"),
+    [
+        pytest.param(
+            "[iter-180] B1 trial 4 — REJECT (registry trial 49) (attempts counted: ffffffff#5, eeeeeeee#2).",
+            {49: ["eeeeeeee#2", "ffffffff#5"]},
+            id="every-counted-orphan-named",
+        ),
+        pytest.param("[iter-180] B1 trial 4 — REJECT (registry trial 49).", {49: []}, id="a-record-that-counted-none"),
+        pytest.param(
+            "[iter-180] B1 trial 4 — REJECT against the incumbent (registry trial 47) (registry trial 49) (attempts counted: "
+            "ffffffff#5).",
+            {47: ["eeeeeeee#2"], 49: ["ffffffff#5"]},
+            id="an-incumbents-counted-orphan-unnamed",
+        ),
+    ],
+)
+def test_a_header_naming_its_counted_orphans_is_no_finding(line, counted):
+    assert tie_findings(_entries([line]), {47: "adopt", 49: "reject"}, set(), counted) == []
