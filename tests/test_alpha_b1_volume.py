@@ -299,3 +299,10 @@ def test_directions_differ_per_bar_start_year_counting_each_stamp_once():
     directions_b = [{"BTC": [0.5, 0.0, 0.0, None, 0.0]}, {"BTC": [1.0, 1.0, 0.0, 1.0, 1.0]}]
     # Stamp 2, keyed 2015, differs on both arms and counts once; stamp 3's None equals None; 2014 stays, at 0.
     assert directions_differ_per_year(directions_a, directions_b, union_ts) == {"2014": 0, "2015": 1, "2016": 1}
+
+
+def test_directions_differ_keys_no_year_whose_only_stamp_is_the_last():
+    # Three stamps, two return indices. Index 1's bar opens 2016-12-31 20:00 and closes in 2017; it differs and is keyed 2016.
+    # The last stamp, 2017-01-01 00:00, opens no bar with a return, so 2017 gets no key, not even a 0.
+    union_ts = [datetime(2016, 12, 31, 16, tzinfo=UTC), datetime(2016, 12, 31, 20, tzinfo=UTC), datetime(2017, 1, 1, tzinfo=UTC)]
+    assert directions_differ_per_year([{"BTC": [1.0, 1.0]}], [{"BTC": [1.0, 0.0]}], union_ts) == {"2016": 1}
