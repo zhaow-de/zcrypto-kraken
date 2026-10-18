@@ -182,7 +182,33 @@ def _append(reg, **over):
     )
     kw.update(over)
     kw.setdefault("invocation", _invocation(kw["datasets"]))
+    kw.setdefault("attempt", _attempt(id=1, absorbs=[], counted=[]))
     return reg.append(**kw)
+
+
+_ATTEMPT_LOG = "f" * 32
+
+
+def _entry(**over) -> dict:
+    return {
+        "log": "e" * 32,
+        "id": 2,
+        "begin": "b" * 64,
+        "family": "B2",
+        "subject": "b2-funding-derisk",
+        "spec_hash": "c" * 64,
+        "verdict": "reject",
+        "metrics": {"sharpe": 0.1},
+        **over,
+    }
+
+
+def _absorbed(attempt_id, begin: str = "a" * 64) -> dict:
+    return {"id": attempt_id, "begin": begin}
+
+
+def _attempt(**over) -> dict:
+    return {"log": _ATTEMPT_LOG, "id": 3, "begin": "d" * 64, "absorbs": [_absorbed(1)], "counted": [_entry()], **over}
 
 
 def test_append_assigns_contiguous_ids_across_reopen(tmp_path):
@@ -524,6 +550,7 @@ def test_append_requires_run_ref_explicitly(tmp_path):
             n_trials_in_family=1,
             verdict="adopt",
             invocation=_invocation(datasets),
+            attempt=_attempt(id=1, absorbs=[], counted=[]),
         )
 
 
@@ -540,11 +567,12 @@ def test_append_requires_an_invocation_explicitly(tmp_path):
             n_trials_in_family=1,
             verdict="adopt",
             run_ref=COMMITTED_PATH,
+            attempt=_attempt(id=1, absorbs=[], counted=[]),
         )
     assert not reg.path.exists()
 
 
-def test_an_appended_invocation_reloads_at_schema_five(tmp_path):
+def test_an_appended_invocation_reloads_at_schema_six(tmp_path):
     reg = _new_registry(tmp_path)
     datasets = {"ohlc-test": dict(_BLOCK)}
     _append(reg, family="A", n_trials_in_family=1, datasets=datasets)
@@ -559,7 +587,7 @@ def test_an_appended_invocation_reloads_at_schema_five(tmp_path):
     )
     written = _append(reg, family="A", n_trials_in_family=2, datasets=datasets, invocation=invocation)
     reloaded = _new_registry(tmp_path).records[-1]
-    assert (reloaded.schema_version, reloaded.invocation) == (5, invocation)
+    assert (reloaded.schema_version, reloaded.invocation) == (6, invocation)
     assert written.invocation == invocation
 
 
@@ -615,12 +643,80 @@ def test_append_has_no_dataset_hash_parameter():
     assert "dataset_hash" not in inspect.signature(TrialRegistry.append).parameters
 
 
-def test_a_schema_five_record_round_trips_through_disk(tmp_path):
+def test_a_schema_six_record_round_trips_through_disk(tmp_path):
     reg = _new_registry(tmp_path)
     written = _append(reg, family="A", n_trials_in_family=1, datasets={"ohlc-test": dict(_BLOCK)})
     reloaded = _new_registry(tmp_path).records[-1]
-    assert reloaded.schema_version == 5
+    assert reloaded.schema_version == 6
     assert reloaded.dataset_hash == compute_hash(reloaded.datasets) == written.dataset_hash
+
+
+def test_a_schema_six_record_round_trips_its_attempt(tmp_path):
+    reg = _new_registry(tmp_path)
+    written = _append(reg, family="A", n_trials_in_family=1, attempt=_attempt())
+    reloaded = _new_registry(tmp_path).records[-1]
+    assert (reloaded.schema_version, reloaded.attempt) == (6, _attempt()) and written.attempt == _attempt()
+
+
+def test_append_requires_an_attempt_explicitly(tmp_path):
+    reg = TrialRegistry(tmp_path / "t.jsonl")
+    datasets = {"ohlc-test": dict(_BLOCK)}
+    with pytest.raises(TypeError, match="attempt"):
+        reg.append(
+            iteration="iter-001",
+            family="A1",
+            spec_hash="s",
+            datasets=datasets,
+            invocation=_invocation(datasets),
+            seeds=[0],
+            metrics={"sharpe": 0.3},
+            n_trials_in_family=1,
+            verdict="adopt",
+            run_ref=COMMITTED_PATH,
+        )
+    assert not reg.path.exists()
+
+
+@pytest.mark.parametrize(
+    ("attempt", "match"),
+    [
+        pytest.param(None, "attempt must be a dict", id="not-a-dict"),
+        pytest.param({k: v for k, v in _attempt().items() if k != "counted"}, r"missing \['counted'\]", id="missing-key"),
+        pytest.param(_attempt(log="f" * 31), "attempt log", id="attempt-log-31-hex"),
+        pytest.param(_attempt(log="F" * 32), "attempt log", id="log-uppercase"),
+        pytest.param(_attempt(id=0), "attempt id", id="attempt-id-zero"),
+        pytest.param(_attempt(id=True), "attempt id", id="attempt-id-bool"),
+        pytest.param(_attempt(begin="d" * 63), "attempt begin", id="attempt-begin-not-hex"),
+        pytest.param(_attempt(absorbs={}), "attempt absorbs must be a list", id="absorbs-not-a-list"),
+        pytest.param(_attempt(absorbs=[_absorbed(1), _absorbed(1)]), "attempt absorbs", id="absorbs-repeated"),
+        pytest.param(_attempt(absorbs=[_absorbed(3)]), "attempt absorbs", id="absorbs-not-below-id"),
+        pytest.param(_attempt(absorbs=[_absorbed(True)]), "attempt absorbs", id="absorbs-bool"),
+        pytest.param(_attempt(absorbs=[{"id": 1}]), "attempt absorbs entry keys", id="absorbed-without-begin"),
+        pytest.param(_attempt(absorbs=[_absorbed(1, "A" * 64)]), "attempt absorbs entry begin", id="absorbed-begin-not-hex"),
+        pytest.param(_attempt(counted={}), "attempt counted must be a list", id="counted-not-a-list"),
+        pytest.param(_attempt(counted=[{**_entry(), "outcome": "reject"}]), "counted entry keys", id="entry-extra-key"),
+        pytest.param(_attempt(counted=[_entry(log="e" * 31)]), "counted entry log", id="entry-log-31-hex"),
+        pytest.param(_attempt(counted=[_entry(id=0)]), "counted entry id", id="entry-id-zero"),
+        pytest.param(_attempt(counted=[_entry(id=True)]), "counted entry id", id="entry-id-bool"),
+        pytest.param(_attempt(counted=[_entry(begin="b" * 63)]), "counted entry begin", id="entry-begin-not-hex"),
+        pytest.param(_attempt(counted=[_entry(spec_hash="s")]), "counted entry spec_hash", id="entry-spec-hash-not-hex"),
+        pytest.param(_attempt(counted=[_entry(family="")]), "counted entry family", id="entry-family-empty"),
+        pytest.param(_attempt(counted=[_entry(subject="")]), "counted entry subject", id="entry-subject-empty"),
+        pytest.param(_attempt(counted=[_entry(), _entry()]), "counted entries", id="entry-repeated"),
+        pytest.param(_attempt(counted=[_entry(log=_ATTEMPT_LOG, id=3)]), "counted entries", id="entry-is-the-records-own"),
+        pytest.param(_attempt(counted=[_entry(log=_ATTEMPT_LOG, id=1)]), "counted entries", id="entry-in-absorbs"),
+        pytest.param(_attempt(counted=[_entry(verdict=None)]), "counted entry verdict", id="entry-open"),
+        pytest.param(
+            _attempt(counted=[_entry(metrics=None)]), "counted entry metrics must be a non-empty dict", id="entry-without-metrics"
+        ),
+        pytest.param(_attempt(counted=[_entry(metrics={"sharpe": float("nan")})]), "non-finite", id="entry-metrics-nan"),
+    ],
+)
+def test_an_ill_shaped_attempt_is_refused_before_the_write(tmp_path, attempt, match):
+    reg = _new_registry(tmp_path)
+    with pytest.raises(RegistryError, match=match):
+        _append(reg, family="A", n_trials_in_family=1, attempt=attempt)
+    assert not reg.path.exists()
 
 
 def test_different_file_sets_give_different_digests(tmp_path):
@@ -713,9 +809,9 @@ def test_a_stored_schema_three_dataset_hash_must_still_be_a_nonempty_str(tmp_pat
         TrialRegistry(_write(tmp_path, [canonical_json(dict(body, record_hash=compute_hash(body)))]))
 
 
-def test_a_record_past_the_floors_must_declare_schema_five(tmp_path):
-    """spec 00086 D4's floor at trial 46 and spec 00129 D1's at trial 47 bind the record after the last real one -- built
-    on the real file, read-only."""
+def test_a_record_past_the_floors_must_declare_schema_six(tmp_path):
+    """spec 00086 D4's floor at trial 46, spec 00129 D1's at trial 47 and spec 00133 D8's at trial 48 bind the record after
+    the last real one -- built on the real file, read-only."""
     real = _REGISTRY.read_text(encoding="utf-8").splitlines()
     prev = json.loads(real[-1])
     next_id = prev["trial_id"] + 1
@@ -723,7 +819,7 @@ def test_a_record_past_the_floors_must_declare_schema_five(tmp_path):
     def _line_next(**over):
         body = dict(
             trial_id=next_id,
-            schema_version=5,
+            schema_version=6,
             timestamp="2026-08-09T00:00:00+00:00",
             iteration="iter-001",
             family="FLOOR",
@@ -737,16 +833,27 @@ def test_a_record_past_the_floors_must_declare_schema_five(tmp_path):
             prev_hash=prev["record_hash"],
             datasets={"ohlc-test": dict(_BLOCK)},
             invocation=_invocation({"ohlc-test": dict(_BLOCK)}),
+            attempt=_attempt(id=1, absorbs=[], counted=[]),
         )
         body.update(over)
         body["dataset_hash"] = compute_hash(body["datasets"])
         return canonical_json(dict(body, record_hash=compute_hash(body)))
 
-    # Non-vacuous both directions: the same record at schema 5 loads, so the floors are what reject.
+    # Non-vacuous both directions: the same record at schema 6 loads, so the floors are what reject.
     assert len(TrialRegistry(_write(tmp_path, [*real, _line_next()]))) == next_id
 
+    v5 = json.loads(_line_next())
+    del v5["attempt"], v5["record_hash"]
+    v5["schema_version"] = 5
+    forged_v5 = canonical_json(dict(v5, record_hash=compute_hash(v5)))
+    with pytest.raises(
+        RegistryCorruptionError,
+        match=f"trial {next_id} declares schema_version 5; every record past trial 48 must be schema_version 6",
+    ):
+        TrialRegistry(_write(tmp_path, [*real, forged_v5]))
+
     v4 = json.loads(_line_next())
-    del v4["invocation"], v4["record_hash"]
+    del v4["invocation"], v4["attempt"], v4["record_hash"]
     v4["schema_version"] = 4
     forged_v4 = canonical_json(dict(v4, record_hash=compute_hash(v4)))
     with pytest.raises(
@@ -756,7 +863,7 @@ def test_a_record_past_the_floors_must_declare_schema_five(tmp_path):
         TrialRegistry(_write(tmp_path, [*real, forged_v4]))
 
     v3 = json.loads(_line_next())
-    del v3["datasets"], v3["invocation"], v3["record_hash"]
+    del v3["datasets"], v3["invocation"], v3["attempt"], v3["record_hash"]
     v3["schema_version"] = 3
     v3["dataset_hash"] = "ba47e37e2601d6098fd13c0e338a5301e8eeebb16bb4341c76a68147c7b08e42"  # spec 00086 D4's own example
     forged = canonical_json(dict(v3, record_hash=compute_hash(v3)))
@@ -765,6 +872,9 @@ def test_a_record_past_the_floors_must_declare_schema_five(tmp_path):
         match=f"trial {next_id} declares schema_version 3; every record past trial 46 must be schema_version 4",
     ):
         TrialRegistry(_write(tmp_path, [*real, forged]))
+
+    with pytest.raises(RegistryError, match="counted entry verdict"):
+        TrialRegistry(_write(tmp_path, [*real, _line_next(attempt=_attempt(id=1, absorbs=[], counted=[_entry(verdict=None)]))]))
 
 
 def test_append_revalidates_and_a_bad_block_writes_nothing(tmp_path):
@@ -786,6 +896,7 @@ def _append_reading(ledger: ReadingLedger, **over):
         datasets=_READING_DATASETS,
         metrics={"sharpe": 0.3, "dsr": 0.1},
         outcome=None,
+        attempt=None,
     )
     kw.update(over)
     return ledger.append(**kw)
@@ -818,7 +929,7 @@ def test_a_reading_round_trips_through_disk(tmp_path):
     (reloaded,) = ReadingLedger(path).records
 
     assert reloaded == written
-    assert (reloaded.reading_id, reloaded.schema_version, reloaded.prev_hash) == (1, 1, GENESIS_HASH)
+    assert (reloaded.reading_id, reloaded.schema_version, reloaded.prev_hash) == (1, 2, GENESIS_HASH)
     assert (reloaded.invocation, reloaded.outcome, reloaded.notes) == (invocation, "the stub's stop", "kept")
     assert reloaded.dataset_hash == compute_hash(_READING_DATASETS)
     assert set(json.loads(path.read_text())) == {
@@ -835,7 +946,63 @@ def test_a_reading_round_trips_through_disk(tmp_path):
         "metrics",
         "outcome",
         "notes",
+        "attempt",
     }
+
+
+def test_a_reading_at_schema_two_round_trips_its_attempt(tmp_path):
+    path = tmp_path / "readings.jsonl"
+    attempt = {"log": "f" * 32, "id": 4, "begin": "d" * 64, "absorbs": [_absorbed(2)]}
+    written = _append_reading(ReadingLedger(path), attempt=attempt)
+    (reloaded,) = ReadingLedger(path).records
+    assert (reloaded.schema_version, reloaded.attempt) == (2, attempt) and reloaded == written
+
+
+@pytest.mark.parametrize(
+    ("attempt", "match"),
+    [
+        pytest.param(
+            {"log": "f" * 32, "id": 4, "begin": "d" * 64, "absorbs": [], "counted": []},
+            "reading attempt keys",
+            id="reading-lists-nothing",
+        ),
+        pytest.param(
+            {"log": "f" * 32, "id": 4, "begin": "d" * 64, "absorbs": [_absorbed(4)]},
+            "attempt absorbs",
+            id="reading-absorbs-not-below-id",
+        ),
+        pytest.param("f" * 32, "reading attempt must be null or a dict", id="reading-not-a-dict"),
+    ],
+)
+def test_an_ill_shaped_reading_attempt_is_refused_before_the_write(tmp_path, attempt, match):
+    path = tmp_path / "readings.jsonl"
+    with pytest.raises(RegistryError, match=match):
+        _append_reading(ReadingLedger(path), attempt=attempt)
+    assert not path.exists()
+
+
+def test_a_reading_append_requires_an_attempt_explicitly(tmp_path):
+    path = tmp_path / "readings.jsonl"
+    with pytest.raises(TypeError, match="attempt"):
+        ReadingLedger(path).append(
+            iteration="iter-001",
+            spec_hash="s",
+            invocation=_invocation(_READING_DATASETS),
+            datasets=_READING_DATASETS,
+            metrics={"sharpe": 0.3},
+            outcome=None,
+        )
+    assert not path.exists()
+
+
+def test_a_reading_past_the_first_must_declare_schema_two(tmp_path):
+    first = _reading_line(1)
+    with pytest.raises(
+        RegistryCorruptionError, match="reading 2 declares schema_version 1; every reading past reading 1 must be schema_version 2"
+    ):
+        ReadingLedger(_write(tmp_path, [first, _reading_line(2, prev_hash=_hash_of(first))]))
+    second = _reading_line(2, prev_hash=_hash_of(first), schema_version=2, attempt=None)
+    assert len(ReadingLedger(_write(tmp_path, [first, second]))) == 2
 
 
 def test_two_readings_chain_with_contiguous_ids_across_a_reopen(tmp_path):

@@ -7,7 +7,6 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 - [T0022 — B1 — intraday trend + time-of-day/day-of-week seasonality (the family topic)](T0022-b1-intraday-seasonality-family.md) — ripe when: an activity: the owner picks B1's next step after trial 3's park, recorded in the decisions log; check: `git grep -c -E '^\[iter-[0-9]+\] B1.s next step after trial 3' -- docs/research/10.phase4-decisions.md` prints at least 1
 - [T0214 — The deployable record's cost basis is re-priced from rung 2's measured blend, as a new registry record](T0214-cost-basis-re-priced-at-rung-2.md) — ripe when: `uv run zcrypto engine tracking-report --journal-dir <pulled journal> --since <first day of rung 2> --until <the last Sunday>` reports a realized maker share on at least 30 euro-denominated fills — the count the `basis:` line names
 - [T0221 — engine-procedures.md without the one-time rungs](T0221-engine-procedures-without-the-rungs.md) — ripe when: a milestone: rung 3's go/no-go decided, `engine-rung-3` step 9; check: `grep -c -i -E "rung 3.s go/no-go.*\(Decision:" docs/research/14.phase6-decisions.md` prints at least 1
-- [T0222 — A trial run on a branch that never merges spends uncounted](T0222-a-trial-on-an-unmerged-branch-spends-uncounted.md) — ripe when: an evaluation statement: a trial past record 47 is registered on develop — check: `git grep -h -c -E '"trial_id":(4[89]|[5-9][0-9]|[1-9][0-9]{2,})[,}]' -- docs/reference/trial-registry.jsonl` prints at least 1
 
 ## Partially done
 
@@ -229,4 +228,5 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 - [T0213 — The engine's cache — the engine-side half of spec 00118](archive/T0213-engine-cache-engine-half.md)
 - [T0219 — One Alloy version across the fleet](archive/T0219-one-alloy-version-across-the-fleet.md)
 - [T0220 — Retire the August stamped sets and the legacy universe at the next universe refresh](archive/T0220-retire-august-stamped-sets-and-legacy-universe.md)
+- [T0222 — A trial run on a branch that never merges spends uncounted](archive/T0222-a-trial-on-an-unmerged-branch-spends-uncounted.md)
 - [T0223 — Records 45 and 46 rebuilt as a B1 subject](archive/T0223-records-45-and-46-rebuilt-as-a-b1-subject.md)

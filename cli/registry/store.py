@@ -20,6 +20,7 @@ from cli.registry.record import (
     loads_strict,
     validate_caller_fields,
     validate_reading_fields,
+    validate_record_attempt,
     validate_stored_reading,
     validate_stored_record,
 )
@@ -30,6 +31,9 @@ logger = get_logger("registry.store")
 _LEGACY_UNPROVENANCED_MAX_TRIAL_ID = 46
 # The highest trial_id predating the invocation (docs/specs/00129 D1), fixed for the same reason.
 _INVOCATION_FLOOR_TRIAL_ID = 47
+# The highest trial_id and reading_id predating the attempt (docs/specs/00133 D8), fixed for the same reason.
+_ATTEMPT_FLOOR_TRIAL_ID = 48
+_ATTEMPT_FLOOR_READING_ID = 1
 
 
 def _to_record(rec: dict) -> TrialRecord:
@@ -44,6 +48,7 @@ def _to_record(rec: dict) -> TrialRecord:
         dataset_hash=rec["dataset_hash"],
         datasets=rec.get("datasets"),
         invocation=rec.get("invocation"),
+        attempt=rec.get("attempt"),
         seeds=tuple(rec["seeds"]),
         metrics=rec["metrics"],
         n_trials_in_family=rec["n_trials_in_family"],
@@ -82,6 +87,12 @@ def _assert_cross_record(recs: list[dict], path: Path) -> None:
                 f"record past trial {_INVOCATION_FLOOR_TRIAL_ID} must be schema_version 5+ and carry "
                 f"the invocation that produced it"
             )
+        if rec["trial_id"] > _ATTEMPT_FLOOR_TRIAL_ID and rec["schema_version"] < 6:
+            raise RegistryCorruptionError(
+                f"{path}: trial {rec['trial_id']} declares schema_version {rec['schema_version']}; every "
+                f"record past trial {_ATTEMPT_FLOOR_TRIAL_ID} must be schema_version 6 and carry "
+                f"the attempt its run's log minted"
+            )
         _refuse_a_broken_link(recs, idx, path, "trial_id")
         prior = seen.get(rec["family"], 0)
         if rec["n_trials_in_family"] < prior + 1:
@@ -97,9 +108,14 @@ def _to_reading(rec: dict) -> ReadingRecord:
 
 
 def _assert_reading_chain(recs: list[dict], path: Path) -> None:
-    for idx in range(len(recs)):
+    for idx, rec in enumerate(recs):
         _refuse_an_id_out_of_place(recs, idx, path, "reading_id")
         _refuse_a_broken_link(recs, idx, path, "reading_id")
+        if rec["reading_id"] > _ATTEMPT_FLOOR_READING_ID and rec["schema_version"] < 2:
+            raise RegistryCorruptionError(
+                f"{path}: reading {rec['reading_id']} declares schema_version {rec['schema_version']}; every reading past "
+                f"reading {_ATTEMPT_FLOOR_READING_ID} must be schema_version 2"
+            )
 
 
 def _read_healing(
@@ -204,6 +220,7 @@ class TrialRegistry:
         n_trials_in_family: int,
         verdict: str,
         run_ref: str,  # required: must name a repo-relative path that exists (see _validate_run_ref)
+        attempt: dict,
         notes: str = "",
         variant: str | None = None,
     ) -> TrialRecord:
@@ -221,6 +238,7 @@ class TrialRegistry:
         if variant is not None:  # omit the key entirely rather than serialize a `null` (canonical form stays clean)
             caller["variant"] = variant
         validate_caller_fields(caller)  # raises on non-finite metric BEFORE opening the file
+        validate_record_attempt(attempt, f"{self.path} (append)")
 
         def compose(disk: list[dict]) -> dict:
             prior = sum(1 for r in disk if r["family"] == family)
@@ -232,6 +250,7 @@ class TrialRegistry:
                 "timestamp": _now_utc_iso(),
                 "datasets": datasets,
                 "invocation": invocation,
+                "attempt": attempt,
             }
 
         record = _to_record(_append_locked(self.path, "trial_id", _read_trials, compose, validate_stored_record))
@@ -264,6 +283,7 @@ class ReadingLedger:
         datasets: dict,
         metrics: dict,
         outcome: str | None,
+        attempt: dict | None,
         notes: str = "",
     ) -> ReadingRecord:
         caller = dict(
@@ -274,6 +294,7 @@ class ReadingLedger:
             metrics=metrics,
             outcome=outcome,
             notes=notes,
+            attempt=attempt,
         )
         validate_reading_fields(caller, f"{self.path} (append)")  # before the open, which creates the file
 

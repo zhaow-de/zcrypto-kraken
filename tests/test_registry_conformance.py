@@ -177,6 +177,7 @@ def _append(registry_path: Path, datasets: dict, n: int) -> None:
             "comparator_trial": None,
             "commit": "0" * 40,
         },
+        attempt={"log": "e" * 32, "id": n, "begin": f"{n:064x}", "absorbs": [], "counted": []},
     )
 
 
@@ -241,6 +242,7 @@ def test_the_pass_cites_every_reading_beside_the_records(tmp_path):
         datasets=datasets,
         metrics={"sharpe": 1.0},
         outcome=None,
+        attempt=None,
     )
 
     cited = _cited(registry_path, ledger_path)

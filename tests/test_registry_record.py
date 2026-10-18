@@ -47,7 +47,7 @@ def test_loads_strict_accepts_finite():
 
 
 def test_constants():
-    assert SCHEMA_VERSION == 5 and VERDICTS == frozenset({"adopt", "reject", "park"})
+    assert SCHEMA_VERSION == 6 and VERDICTS == frozenset({"adopt", "reject", "park"})
 
 
 COMMITTED_PATH = "cli/registry/record.py"  # a real, git-tracked file: run_ref must name one
