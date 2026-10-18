@@ -66,14 +66,19 @@ count_micro_prs() {
   printf '%s\n' "$micro"
 }
 
+# retire when: a pre-commit hook in .pre-commit-config.yaml refuses a staged docs/*.md, the refusal replacing this count
 c_docs_markdown_at_the_root() { git ls-files ':(glob)docs/*.md' | wc -l; }
 
+# retire when: .github/settings.yml's protection on develop is taken as the refusal at the point of use and the count has read 0 for three refine rounds
 c_non_pr_merges() { git log --first-parent --merges develop --format=%s | grep -vc '^Merge pull request'; }
 
+# retire when: the trade key and the Loki password leave the engine container's env for a mounted secrets file in infra/ansible/roles/engine/, so an env dump prints nothing
 c_engine_env_forms() { git grep -nE '\{\{ ?json \.Config(\.Env)? ?\}\}|docker exec [^|;]* env( |$)|docker compose config' -- infra .claude cli ':!*.md' ':!infra/scripts/count-list.sh' | grep -vcE '^[^:]+:[0-9]+:[[:space:]]*#'; }
 
+# retire when: the inventory's secrets leave ansible-vault for a store ansible-inventory cannot render, infra/ansible/scripts/vault-pass.sh retired with them
 c_ansible_inventory_forms() { git grep -nE 'ansible-inventory( +\S+)* +--(host|list|vars)' -- infra .claude cli ':!*.md' ':!infra/ansible/scripts/vault-pass.sh' ':!infra/scripts/count-list.sh' | grep -vcE '^[^:]+:[0-9]+:[[:space:]]*#'; }
 
+# retire when: the refine round stops reading it
 c_prose_chars() { uv run python infra/scripts/prose-chars.py; }
 
 # This entry CALLS merge-gate.py's `read_line_fails` rather than restating it: a counter that disagrees with the gate
@@ -91,6 +96,7 @@ PROSE_ONLY_RULE_SINCE="2026-09-13T00:00:00Z"
 # good, and a count that cannot read 0 is not a detector. The window is the LATER of this and the clause's landing,
 # so an earlier value cannot widen the count past the rule.
 PROBE_VERDICT_RULE_SINCE="2026-09-21T17:42:23Z"
+# retire when: the whole-branch read is a required status check in .github/settings.yml, GitHub refusing the merge instead of merge-gate.py's read-line arm
 c_merged_prs_without_a_floor_read() {
   local prs floor oldest
   if [ -n "${COUNT_LIST_PRS_SNAPSHOT:-}" ]; then prs="$(cat "$COUNT_LIST_PRS_SNAPSHOT")" || return 2
@@ -254,8 +260,10 @@ PYGATE
   return "$rc"
 }
 
+# retire when: kraken-cli leaves the workstation too — git grep kraken-cli over the tree and docs/reference hits nothing
 c_kraken_cli_on_infra() { git grep -c kraken-cli -- infra cli ':!*.md' ':!infra/scripts/count-list.sh' | wc -l; }
 
+# retire when: a commit-msg hook in .pre-commit-config.yaml runs infra/scripts/prove-inert.py over a message that says prose-only, refusing the claim at the commit
 c_prose_only_commits_without_the_prover() {
   comm -23 <(git log develop HEAD --since="$PROSE_ONLY_RULE_SINCE" --no-merges --format='%h %s' -i --grep=prose-only | grep -v ' claude(' | cut -d' ' -f1 | sort) \
            <(git log develop HEAD --since="$PROSE_ONLY_RULE_SINCE" --no-merges -i --grep=prove-inert --grep=prose-only-commits-without-the-prover --format=%h | sort) | wc -l
@@ -267,6 +275,7 @@ c_prose_only_commits_without_the_prover() {
 #
 # Anchor and arms read `develop HEAD`: develop's history plus the branch being read, so a violation is caught
 # where it can still be reworded. A window anchored on one ref and measured on another can miss the set entirely.
+# retire when: infra/scripts/message-citations.py, the commit-msg hook, refuses KILLED, SURVIVED or control proven without mutate-probe named, the refusal replacing this count
 c_probe_verdicts_without_the_script() {
   local landed since
   landed="$(git log develop HEAD --reverse --format=%cI -S'probe-verdicts-without-the-script' -- CLAUDE.md | head -1)"
@@ -282,16 +291,21 @@ c_probe_verdicts_without_the_script() {
 }
 
 # A failing suite is an error, never a zero count: its output still carries a "N passed" summary.
+# retire when: docs/reference/trial-registry.jsonl is gone or no record of it carries spec_hash — tests/test_trial_registry_provenance.py goes with it
 c_spec_hash_provenance() { uv run pytest tests/test_trial_registry_provenance.py -q || return 2; }
 
+# retire when: tests/test_internal_terms_not_operator_visible.py is removed — the operator-read surfaces it walks gone, or the internal-token vocabulary retired
 c_operator_term_surfaces() { uv run pytest tests/test_internal_terms_not_operator_visible.py -q || return 2; }
 
+# retire when: _WP_CARRIERS is gone from tests/test_internal_terms_not_operator_visible.py — no allowlist left to widen
 c_operator_term_allowlist_edits() { git log --oneline -G_WP_CARRIERS -- tests/test_internal_terms_not_operator_visible.py | wc -l; }
 
 # The skip gates under `tests/` the guard finds: one opt-in name over those, and every guard one of six
 # forms or refused with the remedy it prints. The guard is the count.
+# retire when: no test under tests/ reaches a venue — tests/test_live_venue_opt_in.py finds no skip gate and is removed
 c_skip_gate_contract() { uv run pytest tests/test_live_venue_opt_in.py -q || return 2; }
 
+# retire when: tests/test_open_topics_frontmatter.py refuses a live topic with no ripe_when, the refusal replacing this count
 c_topics_without_a_trigger() { grep -L '^ripe_when: *[^ ]' docs/open-topics/T*.md | wc -l; }
 
 # The bullets and numbered steps of the top-level runbook pages, `infra/runbooks/README.md` aside, whose own bullets
@@ -301,6 +315,7 @@ c_topics_without_a_trigger() { grep -L '^ripe_when: *[^ ]' docs/open-topics/T*.m
 # declaration's why is inside its bullet and takes the rule with it. The classes and the path exemption are
 # `tests/test_internal_terms_not_operator_visible.py`'s. One line per bullet, its tokens joined, so the count is
 # bullets to fix and not tokens.
+# retire when: three refine rounds at 0 with the rule line kept — the owner's call
 c_runbook_bullets_with_an_internal_token() { git ls-files 'infra/runbooks/*.md' | grep -vE '^infra/runbooks/(README\.md$|[^/]+/)' | xargs uv run python infra/scripts/runbook-internal-tokens.py | wc -l; }
 
 # A deploy-log count that calls this reads the rows stamped at or after the previous refine round's closing commit --
@@ -322,6 +337,7 @@ round_closed_at() {
 # The bypasses the ROW names. `converge.sh` accepts an override as JSON and refuses every other
 # spelling before the pass, so every bypass THROUGH IT is here; `run.sh` takes raw ansible argv and
 # writes no row at all, which is the hole this count cannot see and the confirm gate is why.
+# retire when: canary_override is gone from infra/ansible/roles/capture/tasks/main.yml — no bypass left to count
 c_canary_bypasses() {
   local since
   since="$(round_closed_at)" || return 2
@@ -331,6 +347,7 @@ c_canary_bypasses() {
 # COUNT_LIST_FEED_SNAPSHOT is the snapshot arm of the audit: set it and the count reads a recorded
 # feed instead of the network, which is how a test runs this line and how a rolled feed keeps its
 # coverage. Unset, the count is the live feed, as the corpus states it.
+# retire when: infra/ansible/scripts/converge.sh reads the scheduled-maintenances feed whole and refuses a venue-facing run inside a window, the refusal replacing this count
 c_converges_inside_a_kraken_window() {
   local feed=()
   if [ -n "${COUNT_LIST_FEED_SNAPSHOT:-}" ]; then feed=(--from-snapshot "$COUNT_LIST_FEED_SNAPSHOT"); fi
@@ -340,6 +357,7 @@ c_converges_inside_a_kraken_window() {
 
 # shellcheck disable=SC2016  # the backticks are the drill-log row's literal Markdown fences
 # `, the engine` opens an order-path entry, outside the rule's set (.claude/rules/fleet-deploys.md).
+# retire when: docs/reference/drill-log.md is closed — no drill family open in infra/runbooks/drills-telemetry.md or infra/runbooks/drills-order-path.md
 c_drills_on_the_primary() {
   local log="${COUNT_LIST_DRILL_LOG:-docs/reference/drill-log.md}"
   [ -f "$log" ] && [ -r "$log" ] || return 2
@@ -348,8 +366,10 @@ c_drills_on_the_primary() {
 
 # `--skip-tags engine` is infra/README.md's published primary form and names no tag, so it books an
 # empty `tags` and its own `skip_tags` cell; counting it here would read a violation that never was.
+# retire when: infra/ansible/scripts/converge.sh refuses --limit zcrypto with neither --tags nor --skip-tags, the refusal replacing this count
 c_un_tagged_primary_runs() { jq -c 'select(.limit=="zcrypto" and .tags=="" and (.skip_tags // "")=="")' docs/reference/deploy-log.jsonl | wc -l; }
 
+# retire when: the engine converge no longer needs the inter-cycle gap — the window assert gone from infra/ansible/site.yml with the 4-hourly cycle, or infra/ansible/roles/engine/ removed
 c_engine_rows_outside_the_gap() {
   local since window=()
   since="$(round_closed_at)" || return 2
@@ -359,6 +379,7 @@ c_engine_rows_outside_the_gap() {
 
 # The engine window's bypasses: every row whose run carried a non-null `engine_window_override`, recorded or not.
 # One without a record that landed outside the fixed gap is counted by the entry above as well.
+# retire when: engine_window_override is gone from infra/ansible/site.yml — no bypass left to count
 c_engine_window_overrides() {
   local since window=()
   since="$(round_closed_at)" || return 2
@@ -367,6 +388,7 @@ c_engine_window_overrides() {
 }
 
 # A watch number, not a gate: the band's successful rows that carry no well-formed `window`, whose admission can only be inferred.
+# retire when: every engine row since the floor carries a well-formed window — infra/ansible/scripts/converge.sh writes it on each engine run, nothing left to infer
 c_engine_rows_on_the_completion_floor() {
   local since window=()
   since="$(round_closed_at)" || return 2
@@ -381,28 +403,34 @@ engine_preflight_rows='(map(has("preflight")) | index(true)) as $first | if $fir
 
 # A successful re-pin with nothing gating it and nothing bypassing it: no `preflight`, or one whose rc or provenance an
 # assert let through.
+# retire when: the preflight's rc and first-parent asserts in infra/ansible/roles/engine/tasks/main.yml are each proven by a case in tests/test_infra_converge_guards.py, the role's refusal then the gate
 c_engine_repins_without_a_preflight() {
   local since
   since="$(round_closed_at)" || return 2
   jq -s --arg since "$since" "$engine_preflight_rows"' | map(select(.rc == 0 and .extra_vars.engine_preflight_override == null and (.preflight.rc != 0 or .preflight.first_parent != true))) | length' "${COUNT_LIST_DEPLOY_LOG:-docs/reference/deploy-log.jsonl}"
 }
 
+# retire when: engine_preflight_override is gone from infra/ansible/roles/engine/tasks/main.yml — no bypass left to count
 c_engine_preflight_overrides() {
   local since
   since="$(round_closed_at)" || return 2
   jq -s --arg since "$since" "$engine_preflight_rows"' | map(select(.extra_vars.engine_preflight_override != null)) | length' "${COUNT_LIST_DEPLOY_LOG:-docs/reference/deploy-log.jsonl}"
 }
 
+# retire when: the NAS leaves the fleet (no nas row in docs/reference/fleet-pins.md), or the compat runtime is dropped from .github/workflows/capture-image.yml
 c_nas_rows_without_compat() { awk -F'|' '$3 ~ /^ *nas *$/' docs/reference/fleet-pins.md | grep -vc compat; }
 
+# retire when: infra/scripts/prune-host-images.py is retired for a role or timer that prunes on the host — the rule's only-by-the-script clause gone with it
 c_image_removals_outside_the_pruner() { git grep -nE 'docker (image (prune|rm)|rmi|system prune)' -- infra cli .claude ':!*.md' ':!infra/scripts/prune-host-images.py' ':!infra/scripts/count-list.sh' | grep -vcE '^[^:]+:[0-9]+:[[:space:]]*#'; }
 
+# retire when: no fleet role under infra/ansible/roles/ runs docker — the container read docs/reference/fleet-pins.md prescribes gone with it
 c_inspect_reads_of_dot_image() { git grep -nE '\{\{ ?(json )?\.Image ?\}\}' -- infra cli .claude ':!*.md' ':!infra/scripts/count-list.sh' | grep -vcE '^[^:]+:[0-9]+:[[:space:]]*#'; }
 
 # A host that reboots by hand counts unless the setting it reads first -- its host_vars, else its group's --
 # is one of six false spellings (0, f, false, n, no, off): the template renders the value raw into apt's config,
 # whose reader accepts these and more, so the count never under-reports. A host with the key in neither file
 # counts too, since the base role's default is not read here.
+# retire when: the five hosts leave infra/ansible/inventory/hosts.yml, or the base role refuses a truthy base_unattended_upgrades_automatic_reboot on them with tests/test_infra_unattended_upgrades.py proving it
 c_attended_hosts_with_automatic_reboot() {
   local h f n=0
   for h in zcrypto:capture_host zcrypto-red:capture_host zcrypto-ops:ops_host zcrypto-mon:mon_host zcrypto-hc:hc_host; do
@@ -417,13 +445,16 @@ c_attended_hosts_with_automatic_reboot() {
   echo "$n"
 }
 
+# retire when: infra/scripts/runbook-triggers.py triggers is a pre-commit hook in .pre-commit-config.yaml, refusing an untriggered section at the commit
 c_runbook_sections_without_a_trigger() { uv run python infra/scripts/runbook-triggers.py triggers; }
 
+# retire when: infra/scripts/runbook-triggers.py retire-when is a pre-commit hook in .pre-commit-config.yaml, refusing the section at the commit
 c_runbook_sections_without_a_retire_when() { uv run python infra/scripts/runbook-triggers.py retire-when; }
 
 # The runbook pages take the corpus's universal test (the owner, 2026-09-11): the guard's own bullet reader over the
 # tracked top-level pages, the README aside because its own bullets state the rule rather than an operator's steps. It reads 0 and the pages are in the
 # guard's contract set, so this entry is the number behind a gate rather than an instrument in front of one.
+# retire when: three refine rounds at 0 with the rule line kept — the owner's call
 c_runbook_universals_without_a_count() { git ls-files 'infra/runbooks/*.md' | grep -vE '^infra/runbooks/(README\.md$|[^/]+/)' | xargs uv run python infra/scripts/guidance-guard.py --uncounted | wc -l; }  # top-level pages only, the set the guard judges
 
 # Every successful capture-touching row -- a capture tag, or an un-tagged site.yml run -- becomes one
@@ -431,18 +462,22 @@ c_runbook_universals_without_a_count() { git ls-files 'infra/runbooks/*.md' | gr
 # pairs of events on different hosts within an hour of each other; a group row pairs with itself.
 # The `capture_host` arm below is for the rows already written: `converge.sh` refuses a group limit
 # now — `--limit capture_host` restarts both capture hosts close together, which the rule forbids.
+# retire when: infra/ansible/scripts/converge.sh reads docs/reference/deploy-log.jsonl and refuses a capture-host run within an hour of the other host's, the refusal replacing this count
 c_capture_hosts_converged_within_an_hour() {
   local since
   since="$(round_closed_at)" || return 2
   jq -s --arg since "$since" '[.[] | select(.rc == 0 and ((.tags | test("capture")) or .tags == "") and (.limit == "zcrypto" or .limit == "zcrypto-red" or .limit == "capture_host")) | . as $r | (if .limit == "capture_host" then ["zcrypto", "zcrypto-red"] else [.limit] end)[] | {host: ., t: ($r.ts | fromdate)}] | sort_by(.t) | [range(0; length) as $i | range($i + 1; length) as $j | select(.[$i].host != .[$j].host and (.[$j].t - .[$i].t) <= 3600 and ($since == "" or .[$j].t >= ($since | fromdate)))] | length' "${COUNT_LIST_DEPLOY_LOG:-docs/reference/deploy-log.jsonl}"
 }
 
+# retire when: infra/ansible/scripts/converge.sh stops reading /dev/tty for its confirm — a timeout then kills the whole run, the rule's harm gone
 c_converge_sh_wrapped_in_timeout() { git grep -nE 'timeout +[0-9]+[smh]? .*converge\.sh' -- ':!*.md' | wc -l; }
 
+# retire when: .claude/skills/zcrypto-refine-rules/SKILL.md stops naming topic-only-merges — retired by the owner's word, held by that line
 c_micro_prs() { count_micro_prs develop; }
 
 # The other count the corpus does not carry: claude-kind commits since the last refine round
 # closed. A missing closing commit is an error, never a count over the whole history.
+# retire when: the refine round stops reading it
 c_claude_commits_since_the_round_closed() {
   local base
   base="$(git log -1 --grep='^Refine-Round-Closed:' --format=%h)"
@@ -455,11 +490,13 @@ c_claude_commits_since_the_round_closed() {
 # worktrees are the linked ones `git worktree list` names, wherever each was cut; its first entry is
 # the main checkout, which is not one. The kernel renders a removed cwd as `<path> (deleted)`, which
 # the match strips.
+# retire when: .claude/skills/zcrypto-refine-rules/SKILL.md stops naming worktrees — retired by the owner's word, held by that line
 c_worktree_processes() { for l in /proc/[0-9]*/cwd; do readlink "$l"; done 2>/dev/null | awk 'NR == FNR { if (sub(/^worktree /, "") && seen++) w[$0] = 1; next } { sub(/ \(deleted\)$/, ""); for (p in w) if (index($0 "/", p "/") == 1) { n++; break } } END { print n + 0 }' <(git worktree list --porcelain) -; }
 
 # The fourth: the always-loaded bytes -- the corpus whole, plus every skill's name and description values,
 # which load with it -- measured by the guard's own parser, so this entry and what the guard refuses to
 # grow without a stated reason cannot disagree.
+# retire when: the refine round stops reading it
 c_ambient_bytes() { uv run python infra/scripts/guidance-guard.py --ambient-bytes; }
 
 # --- The W15 candidates that earned an entry --------------------------------------------------------
@@ -471,36 +508,44 @@ c_ambient_bytes() { uv run python infra/scripts/guidance-guard.py --ambient-byte
 # A converge that passed `-e <role>_digest=` with nothing after the `=`: the role reads it as defined and
 # renders a broken image ref. `converge.sh` refuses an empty value before the pass now, so this
 # counts the rows written before that arm landed.
+# retire when: docs/reference/deploy-log.jsonl is rotated past the rows written before infra/ansible/scripts/converge.sh's empty-digest refusal — the only rows the count can read
 c_deploy_rows_with_an_empty_digest_var() { jq -s '[.[] | select((.extra_vars // {}) | to_entries | any((.key | endswith("_digest")) and ((.value | tostring) | test("^[[:space:]]*$"))))] | length' docs/reference/deploy-log.jsonl; }
 
 # The service's read-only key, or healthchecks.io's (healthchecks_readonly_api_key), named on a non-comment line of a
 # role outside the service key's one render, ops' Alloy secrets template.
+# retire when: the healthchecks.io scrape leaves ops' Alloy — infra/ansible/roles/ops/templates/alloy-secrets.env.j2 no longer renders the key
 c_hc_readonly_key_in_a_role() { git grep -nE '(hc|healthchecks)_readonly_api_key' -- infra/ansible/roles ':!infra/ansible/roles/ops/templates/alloy-secrets.env.j2' | grep -vcE '^[^:]+:[0-9]+:[[:space:]]*#'; }
 
 # A write to one of the seven gate gauges from outside `_ExecGauges.update`, whose one call publishes the
 # six readings at every gate evaluation and the heartbeat at each but the executor's idle refresh: a
 # write elsewhere is a gauge moving with no evaluation behind it. The awk excises that method's body alone.
+# retire when: _ExecGauges.update is gone from cli/engine/command.py — the seven gate gauges published another way, their rule rewritten with it
 c_gate_gauge_writes_outside_the_publish_call() { [ -f cli/engine/command.py ] || return 2; { awk '/^    def update\(self, verdict/{i=1;next} i&&(/^    (def |@)/||/^[^ ]/){i=0} !i' cli/engine/command.py; git grep -h -E '\.(gate_level|armed|kill_tripped|restart_hold|venue_ok|venue_read_failed|last_evaluation)\.set\(' -- cli ':!cli/engine/command.py'; } | grep -cE '\.(gate_level|armed|kill_tripped|restart_hold|venue_ok|venue_read_failed|last_evaluation)\.set\('; }
 
 # `--delete` anywhere in the archive pull's module: the mirror keeps every day it ever fetched, which is
 # what makes a mismatch count span days and an empty tree mean the pull has never succeeded.
+# retire when: the journal pull leaves cli/archive/command.py, or the NAS mirror stops being the retention the engine host's 60-day prune relies on
 c_archive_pull_delete_flags() { [ -f cli/archive/command.py ] || return 2; grep -nE -- '--delete' cli/archive/command.py | grep -vcE '^[0-9]+:[[:space:]]*#'; }
 
 # A deployed `--cache` naming a path outside `/tmp/`: wider than the bullet's "a path both hosts reach",
 # which is the direction that never under-reports the siting the cross-host poisoning rule forbids.
+# retire when: the --cache option is gone from cli/engine/command.py and cli/engine/gate_cache.py — no path left for the cross-host poisoning the ephemeral siting prevents
 c_gate_cache_args_outside_tmp() { git grep -nE -- '--cache[ =]["'"'"'$]?[/$~.]' -- infra cli ':!*.md' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | grep -vcE -- '--cache[ =]["'"'"']?/tmp/'; }
 
 # A rule whose `folderUID` is a literal rather than `${GRAFANA_ALERT_FOLDER_UID}`: it provisions into
 # another folder AND escapes the push script's orphan prune, which selects by that same field.
+# retire when: tests/test_infra_alert_rules.py refuses a rule whose folderUID is not the ${GRAFANA_ALERT_FOLDER_UID} literal, the refusal replacing this count
 # shellcheck disable=SC2016  # ${GRAFANA_ALERT_FOLDER_UID} is the placeholder text alerts.yaml carries, compared as a literal
 c_alert_rules_without_the_folder_literal() { uv run python -c 'import yaml;print(sum(r.get("folderUID")!="${GRAFANA_ALERT_FOLDER_UID}" for r in yaml.safe_load(open("infra/grafana/alerts.yaml"))["rules"]))'; }
 
 # A verified nautilus version with no adapter-verification record carrying a PASS. Both arming guards read
 # that file, so a version added without its attended record is live money on an uncleared adapter.
+# retire when: tests/test_nautilus_pin_verified.py refuses a verified_nautilus_versions entry whose docs/reference/adapter-verification/<version>.md carries no PASS, the refusal replacing this count
 c_verified_versions_without_a_pass_record() { jq -r '.verified_nautilus_versions[]' cli/engine/order-semantics-verified.json | while read -r v; do grep -qE '\*\*(Verdict: )?PASS\b' "docs/reference/adapter-verification/$v.md" 2>/dev/null || echo "$v"; done | wc -l; }
 
 # A member of the inventory's `engine_host` group other than `zcrypto`: every "primary only" reading on
 # the capture-daemon and hosts pages rests on that group holding one host, and the live trade key with it.
+# retire when: the engine_host group leaves infra/ansible/inventory/hosts.yml — the engine run elsewhere, every primary-only reading rewritten
 c_engine_hosts_besides_the_primary() {
   uv run python - <<'INV'
 import yaml
@@ -541,16 +586,20 @@ INV
 # invocation whose `--format` sits on the continuation line counts too, over-reporting in the safe direction for a
 # prohibition, since a line-oriented grep cannot see the next line. Narrower than the
 # bare command an operator types at a prompt, which nothing records.
+# retire when: .claude/hooks/bash-guard.sh refuses docker inspect <container> with no --format, the refusal replacing this count
 c_unscoped_docker_inspects_invoked() { git grep -nE 'docker inspect +[^`;&|]' -- infra cli .claude ':!*.md' ':!infra/scripts/count-list.sh' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | grep -oE 'docker inspect +[^`;&|][^;&|]*' | grep -vcE -- '--format|-f '; }
 
 # The pinned leaves the edge renders, one `file /etc/caddy/pinned-leaves/<name>.pem` line per tracked PEM:
 # a figure to read, not a gate. At 1 every revocation issues its replacement first; at 0 the block is empty.
 # Read from the INDEX, while `access_pinned_leaves` globs the filesystem: an untracked PEM in that directory would
 # render and is not counted here, which is the direction that keeps the number reproducible in CI. Left knowingly.
+# retire when: infra/ansible/roles/access/files/pinned-leaves/ is gone — the edge verifying clients by a CA instead of pinned leaves
 c_pinned_leaves_the_edge_renders() { git ls-files ':(glob)infra/ansible/roles/access/files/pinned-leaves/*.pem' | wc -l; }
 
+# retire when: infra/ansible/scripts/converge.sh writes the pin row itself on a SUCCEEDED run — docs/reference/fleet-pins.md rendered from docs/reference/deploy-log.jsonl, nothing left to disagree
 c_pins_not_yet_converged() { uv run python infra/scripts/pins-converged.py; }
 
+# retire when: Alloy leaves the fleet — infra/ansible/group_vars/observed/alloy.yml gone, or the observed group empty in infra/ansible/inventory/hosts.yml
 c_hosts_off_the_fleets_alloy_version() { uv run python infra/scripts/alloy-version.py off-fleet; }
 
 main() {

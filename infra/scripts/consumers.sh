@@ -48,7 +48,7 @@ direct_readers() {
   case "$path" in tests/test_*.py) readers="$(printf '%s\n%s' "$path" "$readers" | sed '/^$/d')" ;; esac
   echo "## $path"
   echo "# direct test readers (--direct: the path whole or split, a unique file name, the dotted module, the from-import; no tree walkers):"
-  if [[ -n "$readers" ]]; then printf '%s\n' "$readers"; else echo "# (none -- no test file names it in a full form: a prose file runs nothing and its claim is the pre-review's or prove-inert.py's; a code file runs its own test; never the full suite)"; fi
+  if [[ -n "$readers" ]]; then printf '%s\n' "$readers"; else echo "# (none -- no test file names it in a full form: a prose file runs nothing and its claim is the pre-review's or prove-inert.py's; a code file runs its own test; never the full suite)" >&2; fi
 }
 
 for path in "$@"; do
@@ -62,7 +62,7 @@ for path in "$@"; do
   readers="$(git grep -l -w "${stem_arg[@]}" -e "$name" -- tests infra .claude "${VAULT_EXCLUDES[@]}" | grep -v -F -x "$path" || true)"
   case "$path" in tests/test_*.py) readers="$(printf '%s\n%s' "$path" "$readers")" ;; esac
   readers="$(printf '%s\n' "$readers" | sed '/^$/d')"
-  if [[ -n "$readers" ]]; then printf '%s\n' "$readers"; else echo "# (none -- no direct reader: a prose file runs nothing and its claim is the pre-review's or prove-inert.py's; a code file runs its own test; never the full suite)"; fi
+  if [[ -n "$readers" ]]; then printf '%s\n' "$readers"; else echo "# (none -- no direct reader: a prose file runs nothing and its claim is the pre-review's or prove-inert.py's; a code file runs its own test; never the full suite)" >&2; fi
   # A glob over a tmp_path fixture names no directory of the tree.
   if [[ "$path" != */* ]]; then echo "# tree walkers: none -- a top-level file"; continue; fi
   top="${path%%/*}"
