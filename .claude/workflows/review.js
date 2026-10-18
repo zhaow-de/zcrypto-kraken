@@ -145,7 +145,6 @@ const refutation = graded.length
       .map((f) => `| ${f.id} | ${f.severity} | \`${f.path}:${f.line}\` | ${f.lenses.join(', ')} | ${f.severity === 'Minor' ? 'no skeptic: a Minor is reported, never refuted' : f.refuted ? `REFUTED — ${oneLine(f.skeptic && f.skeptic.reason)}` : `stands — ${oneLine(f.skeptic && f.skeptic.reason) || 'the skeptic could not refute it'}`} |`)
       .join('\n')}`
   : '## Refutation\n\nNo finding was graded, so no skeptic ran.'
-const lensReports = live.map((r) => lensPath(r.lens))
 for (const r of live) if (r.reportPath && r.reportPath !== lensPath(r.lens)) log(`lens ${r.lens} says it wrote ${r.reportPath}, not ${lensPath(r.lens)}: the refutation block goes to the path this workflow names`)
 
 // --- Ledger: the row this read owes, appended by the read itself (a controller forgot it once and fold-check refused) ---
