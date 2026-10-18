@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.14 through uv; polars for the parquet reads; pytest with typer's `CliRunner`; `infra/scripts/mutate-probe.sh`, `infra/scripts/consumers.sh`, `infra/scripts/tier.py`, `infra/scripts/topics-index.py`.
 
-**Spec:** `docs/specs/00134-b1-volume-confirmation-design.md` — binding; D1–D13 are cited by name, and the values below are copied from it verbatim. Spec 00133 (`docs/specs/00133-t0222-trial-attempts-design.md`) and plan 00133 (`docs/plans/00133-trial-attempts.md`), on `research/00133-t0222-abandoned-trials`, give the interfaces this plan consumes, named as plan 00133's Interfaces blocks name them. **Iteration:** iter-178. **Topic:** T0022 under T0016. **Branch:** `research/iter-178-b1-volume-confirmation`, worktree `.claude/worktrees/b1-trial4`. A choice this plan makes that the spec leaves open is marked **Author's call**.
+**Spec:** `docs/specs/00134-b1-volume-confirmation-design.md` — binding; D1–D13 are cited by name, and the values below are copied from it verbatim. Spec 00133 (`docs/specs/00133-t0222-trial-attempts-design.md`) and plan 00133 (`docs/plans/00133-trial-attempts.md`), merged into develop as pull request #730, give the interfaces this plan consumes, named as plan 00133's Interfaces blocks name them. **Iteration:** iter-178. **Topic:** T0022 under T0016. **Branch:** `research/iter-178-b1-volume-confirmation`, worktree `.claude/worktrees/b1-trial4`. A choice this plan makes that the spec leaves open is marked **Author's call**.
 
 ## Global Constraints
 
