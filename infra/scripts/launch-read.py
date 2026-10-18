@@ -26,7 +26,7 @@ STANDING_LINES = _HERE.parents[1] / ".claude/skills/zcrypto-plan-review/referenc
 DRIVE_CAP = 400
 LABEL = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 SEVERITIES = ("Critical", "Important")
-MODELS = {"pre-review": ("opus", "fable"), "review": ("opus", "fable"), "re-review": ("opus", "fable")}
+MODELS = {"pre-review": ("opus",), "review": ("opus", "fable"), "re-review": ("opus", "fable")}
 TAKES = {
     "pre-review": {"rulings", "ranges", "worktree"},
     "review": {"drive", "lenses"},

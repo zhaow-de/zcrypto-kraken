@@ -228,9 +228,9 @@ def test_a_flag_the_workflow_does_not_take_is_refused(repo: Path, kind: str, ext
     _refused(_args(kind, repo, *extra), says)
 
 
-def test_pre_review_and_review_take_fable(repo: Path):
+def test_pre_review_runs_on_opus_alone(repo: Path):
     assert _ok(_args("review", repo, "--model", "fable"))["model"] == "fable"
-    assert _ok(_args("pre-review", repo, "--model", "fable"))["model"] == "fable"
+    _refused(_args("pre-review", repo, "--model", "fable"), "pre-review runs on opus, never fable")
 
 
 def test_re_review_without_priors_is_refused(repo: Path):
