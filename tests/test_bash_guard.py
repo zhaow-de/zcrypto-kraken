@@ -956,7 +956,16 @@ SCOPED_GREPS = [
 
 # The checkouts the corpus's admitted `git commit`s stamp for the runs-alone arm: the cases run one at a time across
 # xdist workers, each with those stamps gone, or the next admitted commit within 3 s is refused.
-STAMPS = [Path(d) / ".tmp" / ".git-state-stamp" for d in (str(REPO), MAIN)]
+def git_dir(checkout: str | Path) -> Path:
+    return Path(
+        subprocess.run(
+            ["git", "-C", str(checkout), "rev-parse", "--absolute-git-dir"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+    )
+
+
+STAMP_NAME = "zcrypto-git-state-stamp"
+STAMPS = [git_dir(d) / STAMP_NAME for d in (str(REPO), MAIN)]
 LOCK = REPO / ".tmp" / ".bash-guard-tests.lock"
 
 
@@ -1126,36 +1135,44 @@ def test_a_judging_that_fails_refuses_a_dispatched_agent_and_admits_the_main_loo
 
 
 def state_repo(tmp_path: Path) -> tuple[dict, Path]:
-    """A checkout of its own and its stamp's path: the payload's cwd is the repo, so the stamp lands under its top."""
+    """A checkout of its own and its stamp's path: the payload's cwd is the repo, so the stamp lands in its git dir."""
     repo = (tmp_path / "repo").resolve()
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
-    return {"tool_name": "Bash", "tool_input": {"command": ""}, "cwd": str(repo)}, repo / ".tmp" / ".git-state-stamp"
+    return {"tool_name": "Bash", "tool_input": {"command": ""}, "cwd": str(repo)}, git_dir(repo) / STAMP_NAME
 
 
 def stamped(payload: dict, stamp: Path, age: float) -> dict:
-    stamp.parent.mkdir()
     stamp.write_text(repr(time.time() - age))
     return payload
 
 
-def test_a_state_changing_git_command_within_the_gap_of_another_is_refused(tmp_path: Path):
+# The state-changing commands the runs-alone arm's two gap cases drive.
+STATE_CHANGERS = ["git commit -m x", "git cherry-pick abc1234"]
+
+
+@pytest.mark.parametrize("command", STATE_CHANGERS)
+def test_a_state_changing_git_command_within_the_gap_of_another_is_refused(tmp_path: Path, command: str):
     payload, stamp = state_repo(tmp_path)
     payload = stamped(payload, stamp, 0.4)
     before = stamp.read_text()
-    payload["tool_input"]["command"] = "git commit -m x"
+    payload["tool_input"]["command"] = command
     r = run_hook(payload, cwd=tmp_path)
     assert r.returncode == 2, r.stderr
     assert re.search(
-        r"BLOCKED — `git commit -m x` is a state-changing git command and one started 0\.[4-9] s ago in this checkout: ", r.stderr
+        rf"BLOCKED — `{re.escape(command)}`: a state-changing git command started 0\.[4-9] s ago in this checkout; ", r.stderr
     ), r.stderr
-    assert "a state-changing git command runs alone — re-send it after the previous one returns" in r.stderr
+    assert (
+        "a state-changing git command runs alone, never beside another — if that one has already returned, re-send this "
+        "one after the gap" in r.stderr
+    )
     assert stamp.read_text() == before and r.stdout == ""
 
 
-def test_a_state_changing_git_command_past_the_gap_is_admitted_and_restamps(tmp_path: Path):
+@pytest.mark.parametrize("command", STATE_CHANGERS)
+def test_a_state_changing_git_command_past_the_gap_is_admitted_and_restamps(tmp_path: Path, command: str):
     payload, stamp = state_repo(tmp_path)
     payload = stamped(payload, stamp, 5.0)
-    payload["tool_input"]["command"] = "git commit -m x"
+    payload["tool_input"]["command"] = command
     r = run_hook(payload, cwd=tmp_path)
     assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
     assert time.time() - float(stamp.read_text()) < 3.0
@@ -1177,6 +1194,22 @@ def test_a_state_changing_git_command_with_no_stamp_is_admitted_and_stamps(tmp_p
     r = run_hook(payload, cwd=tmp_path)
     assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
     assert time.time() - float(stamp.read_text()) < 3.0
+
+
+def test_the_stamp_is_not_in_the_tree_an_admitted_commit_commits(tmp_path: Path):
+    payload, stamp = state_repo(tmp_path)
+    repo = Path(payload["cwd"])
+    (repo / "a.txt").write_text("a\n")
+    payload["tool_input"]["command"] = "git add . && git commit -q -m first"
+    r = run_hook(payload, cwd=tmp_path)
+    assert (r.returncode, r.stdout, r.stderr) == (0, "", "") and stamp.is_file()
+    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x"}
+    env.update({"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "commit.gpgsign", "GIT_CONFIG_VALUE_0": "false"})
+    subprocess.run(["bash", "-c", payload["tool_input"]["command"]], cwd=repo, env=env, check=True)
+    status = subprocess.run(["git", "-C", str(repo), "status", "--porcelain"], capture_output=True, text=True, check=True)
+    assert status.stdout == "" and not (repo / ".gitignore").exists()
+    shown = subprocess.run(["git", "-C", str(repo), "ls-files"], capture_output=True, text=True, check=True).stdout
+    assert shown == "a.txt\n"
 
 
 def test_hook_is_executable():
@@ -1326,7 +1359,7 @@ def repository_call(repository: dict[str, str], tmp_path: Path, command: str, wh
     payload = agent_call(command.format(**repository), where.format(**repository), agent_id="a1")
     env = {**os.environ, "CLAUDE_CODE_TMPDIR": repository["root"]}
     for top in ("main", "wt"):  # the checkouts the module's worktree removes stamp
-        (Path(repository[top]) / ".tmp" / ".git-state-stamp").unlink(missing_ok=True)
+        (git_dir(repository[top]) / STAMP_NAME).unlink(missing_ok=True)
     return run_hook(payload, cwd=tmp_path, env=env, hook=Path(repository["main"]) / ".claude/hooks/bash-guard.sh")
 
 
