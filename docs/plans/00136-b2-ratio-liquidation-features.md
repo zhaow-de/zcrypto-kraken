@@ -257,13 +257,13 @@ _LIQUIDATION_UNION = _hours(0, 4, 8, 12, 16)
 _LIQUIDATION_COVERED = [t for t in _hours(*range(16)) if t != DAY0 + timedelta(hours=9)]
 
 
-def test_each_liquidation_column_sums_its_bars_buckets_under_its_lower_bound_name():
+def test_each_liquidation_column_sums_its_bars_buckets_under_its_provenance_name():
     # The 03:59 bucket closes at 04:00 and is bar 0's; the 04:00 bucket is bar 1's. Bar 2 holds 09:00, not asserted.
     assert liquidation_grid_features(*_buckets(_LIQUIDATIONS["BTC"]), _LIQUIDATION_UNION, _LIQUIDATION_COVERED) == {
         "binperp_liq_lowerbound_long_usd": [175.0, 30.0, None, 5.0],
         "binperp_liq_lowerbound_short_usd": [325.0, 90.0, None, 12.0],
         "binperp_liq_lowerbound_total_usd": [500.0, 120.0, None, 17.0],
-        "binperp_liq_lowerbound_imbalance": [-0.3, -0.5, None, -7 / 17],
+        "binperp_liq_imbalance": [-0.3, -0.5, None, -7 / 17],
     }
 
 
@@ -273,7 +273,7 @@ def test_a_covered_bar_with_no_bucket_for_the_coin_reads_zero_notional_and_no_im
         "binperp_liq_lowerbound_long_usd": [0.0, 0.0, None, 9.0],
         "binperp_liq_lowerbound_short_usd": [40.0, 0.0, None, 0.0],
         "binperp_liq_lowerbound_total_usd": [40.0, 0.0, None, 9.0],
-        "binperp_liq_lowerbound_imbalance": [-1.0, None, None, 1.0],
+        "binperp_liq_imbalance": [-1.0, None, None, 1.0],
     }
 
 
@@ -315,7 +315,7 @@ def test_a_truncated_prefix_of_the_buckets_reproduces_every_liquidation_column_b
     # Exact: bar 6 holds the 26th hour, not asserted, and DOT holds no bucket in bars 2, 4, 9, 11 and 13.
     assert [j for j, v in enumerate(full["BTC"]["binperp_liq_lowerbound_total_usd"]) if v is None] == [5]
     assert [j for j, v in enumerate(full["DOT"]["binperp_liq_lowerbound_total_usd"]) if v is None] == [5]
-    assert [j for j, v in enumerate(full["DOT"]["binperp_liq_lowerbound_imbalance"]) if v is None] == [1, 3, 5, 7, 9, 11]
+    assert [j for j, v in enumerate(full["DOT"]["binperp_liq_imbalance"]) if v is None] == [1, 3, 5, 7, 9, 11]
     for n in range(1, len(union_ts)):
         # The buckets and the assertion truncated alike at the cutoff, a bucket closing a minute after its stamp.
         cutoff = union_ts[n - 1] + timedelta(hours=4)
@@ -332,12 +332,12 @@ def test_a_truncated_prefix_of_the_buckets_reproduces_every_liquidation_column_b
 
 ```python
 _HOUR = timedelta(hours=1)
-# The stream is a proxy, not the tape, and every column's name says so (docs/specs/00136 D5).
+# A notional's name says it is a lower bound of the tape; the imbalance's says only its stream (docs/specs/00136 D5).
 _LIQUIDATION_COLUMNS = (
     "binperp_liq_lowerbound_long_usd",
     "binperp_liq_lowerbound_short_usd",
     "binperp_liq_lowerbound_total_usd",
-    "binperp_liq_lowerbound_imbalance",
+    "binperp_liq_imbalance",
 )
 ```
 
@@ -400,17 +400,17 @@ infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidati
 infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's/asserted = set(covered)/asserted = set(covered) | {t.replace(minute=0) for t in bucket_ts}/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_a_bar_holding_an_hour_not_asserted_covered_reads_none_even_over_its_buckets'
 infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's/imbalance = None if total == 0 else/imbalance = 0.0 if total == 0 else/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_a_covered_bar_with_no_bucket_for_the_coin_reads_zero_notional_and_no_imbalance'
 infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's|range(_BOUNDARY // _HOUR)|range(1, _BOUNDARY // _HOUR + 1)|' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_a_truncated_prefix_of_the_buckets_reproduces_every_liquidation_column_bit_for_bit'
-infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's|(long_sum - short_sum) / total|(short_sum - long_sum) / total|' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_each_liquidation_column_sums_its_bars_buckets_under_its_lower_bound_name'
-infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's/bisect_left(bucket_ts, t)/bisect_left(bucket_ts, t + timedelta(microseconds=1))/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_each_liquidation_column_sums_its_bars_buckets_under_its_lower_bound_name'
-infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's/bisect_left(bucket_ts, t + _BOUNDARY)/bisect_left(bucket_ts, t + _BOUNDARY + timedelta(microseconds=1))/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_each_liquidation_column_sums_its_bars_buckets_under_its_lower_bound_name'
+infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's|(long_sum - short_sum) / total|(short_sum - long_sum) / total|' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_each_liquidation_column_sums_its_bars_buckets_under_its_provenance_name'
+infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's/bisect_left(bucket_ts, t)/bisect_left(bucket_ts, t + timedelta(microseconds=1))/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_each_liquidation_column_sums_its_bars_buckets_under_its_provenance_name'
+infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's/bisect_left(bucket_ts, t + _BOUNDARY)/bisect_left(bucket_ts, t + _BOUNDARY + timedelta(microseconds=1))/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_each_liquidation_column_sums_its_bars_buckets_under_its_provenance_name'
 infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's/bisect_left(bucket_ts, t + _BOUNDARY)/bisect_left(bucket_ts, t + _BOUNDARY + _HOUR)/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_a_truncated_prefix_of_the_buckets_reproduces_every_liquidation_column_bit_for_bit'
 infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's/if not len(bucket_ts) == len(long_usd) == len(short_usd):/if False:/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_liquidation_grid_features_refuses_bucket_lists_of_unequal_length'
 infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's/_validate_stamps("bucket_ts", bucket_ts)/None/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_liquidation_grid_features_refuses_unsorted_or_repeated_bucket_stamps[repeated]'
 infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation '/^def liquidation_grid_features(/,/^def /s/_validate_union_marks(union_ts)/None/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_a_liquidation_union_stamp_off_a_4h_mark_is_refused_by_name'
-infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's/"binperp_liq_lowerbound_imbalance",/"binperp_liq_imbalance",/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_each_liquidation_column_sums_its_bars_buckets_under_its_lower_bound_name'
+infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's/"binperp_liq_imbalance",/"binperp_imbalance",/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_each_liquidation_column_sums_its_bars_buckets_under_its_provenance_name'
 ```
 
-  The first three rows are spec D4: the assertion ignored, so a bar holding an hour not asserted reads its sums; coverage read from the hours the coin's own buckets fall in; and those hours read as coverage beside the assertion. The fifth reads each bar's hours one later, its last the next bar's first, which the prefix case's exact `None` positions catch; the seventh and eighth move the 04:00 bucket out of bar 1 and into bar 0 (spec D6); the ninth sums each bar's buckets an hour past its close, the look-ahead the prefix case exists for. The tenth and eleventh drop the length check and the stamps' check (spec D3), each against a shape it refuses that the emitter would otherwise read silently; the twelfth drops the union's mark check; the thirteenth renames a column off D5's provenance.
+  The first three rows are spec D4: the assertion ignored, so a bar holding an hour not asserted reads its sums; coverage read from the hours the coin's own buckets fall in; and those hours read as coverage beside the assertion. The fifth reads each bar's hours one later, its last the next bar's first, which the prefix case's exact `None` positions catch; the seventh and eighth move the 04:00 bucket out of bar 1 and into bar 0 (spec D6); the ninth sums each bar's buckets an hour past its close, the look-ahead the prefix case exists for. The tenth and eleventh drop the length check and the stamps' check (spec D3), each against a shape it refuses that the emitter would otherwise read silently; the twelfth drops the union's mark check; the thirteenth drops the stream from the imbalance's name, off D5's provenance.
 
 - [ ] **Step 6 — commit**: `feat(alpha): the B2 liquidations leg per union bar over one coin's bucket rows, a bar covered where the caller asserts its hours`, its body the Step 3 and Step 4 result lines and the thirteen rows, each with its verdict line; then `test "$(git rev-parse HEAD^{tree})" = <the hash the setup printed>`.
 
@@ -447,7 +447,7 @@ infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidati
   Logged <date -u +%F>, from docs/specs/00136-b2-ratio-liquidation-features-design.md D4.
 
 [00136] How does a liquidation column say it comes from a lossy stream? (Decision: 1)
-  1. **`binperp_liq_lowerbound_` names** — `long_usd`, `short_usd`, `total_usd` and `imbalance`, stated once: the three notionals are lower bounds of the notional liquidated on the venue, and the imbalance names its stream and bounds nothing. Chosen (the controller's ruling R5, read as the author corrected it): the stream is a lower-bound proxy, not the tape, the catalog's hard caveat, and the name is the one place the caveat survives every downstream join.
+  1. **`binperp_liq_lowerbound_` names for the three notionals, `long_usd`, `short_usd` and `total_usd`, and `binperp_liq_imbalance`** — stated once: the three notionals are lower bounds of the notional liquidated on the venue, and the imbalance, a ratio of two undercounts, bounds nothing, so its name says its stream alone. Chosen (the controller's ruling R5 as amended, "the imbalance's name says its stream, never "lower bound""): the stream is a lower-bound proxy, not the tape, the catalog's hard caveat, and the name is the one place the caveat survives every downstream join.
   2. **A lower-bound suffix on every name** — it would call the imbalance a lower bound, which a ratio of two undercounts is not.
   3. **Plain `binperp_liq_` names, the caveat in the documentation** — a column beside the funding and OI columns would read as the venue's tape.
   Logged <date -u +%F>, from docs/specs/00136-b2-ratio-liquidation-features-design.md D5.
@@ -470,7 +470,7 @@ infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidati
 - [ ] **Step 1 — the edit** (`topic-ops`' edit mechanics: each anchor's `grep -c` reads 1 first, and `grep '^#'` of the file reads the same headings before and after). In `## Done so far`, below the bullet opening `- **B2's remaining funding and OI features on the 4h close grid DELIVERED (spec/plan `00131`)**`, one blank line and then:
 
 ```markdown
-- **B2's ratio columns and liquidations leg on the 4h close grid DELIVERED (spec/plan `00136`)**: `cli/alpha/b2.py` — `ratio_grid_features`, the four Binance ratios under their `binperp_` names, each read as a level through the OI level's pipeline on spec `00131`'s regular grid with its staleness bound, a `0.0` taker ratio a reading and a null as a bar's last row `None`, never the row before it; and `liquidation_grid_features`, a pure function over one coin's bucket rows as a subject reads them, which gives per union bar the long, short and total liquidated notional and their imbalance under `binperp_liq_lowerbound_` names, the stream a proxy and not the tape. Coverage is the caller's: it passes, per coin, the hours it asserts the poller covered, and a bar reads its sums, zero where the coin holds no bucket, only where all four of its hours are asserted, else `None` — nothing on disk records what a poll covered for a coin, and coverage inferred from the coins' finals reads a covered zero five ways (spec `00136` D4). Reading the rows is the subject's, through `ObservedReader` from a frozen block of the live tape, never the NAS copy, whose pull can leave the coins at different snapshots (spec `00136` D3). No spike flag: a threshold on these totals is a trial's pre-registration. No subject, no registry record.
+- **B2's ratio columns and liquidations leg on the 4h close grid DELIVERED (spec/plan `00136`)**: `cli/alpha/b2.py` — `ratio_grid_features`, the four Binance ratios under their `binperp_` names, each read as a level through the OI level's pipeline on spec `00131`'s regular grid with its staleness bound, a `0.0` taker ratio a reading and a null as a bar's last row `None`, never the row before it; and `liquidation_grid_features`, a pure function over one coin's bucket rows as a subject reads them, which gives per union bar the long, short and total liquidated notional under `binperp_liq_lowerbound_` names, the stream a proxy and not the tape, and their imbalance as `binperp_liq_imbalance`, a ratio that bounds nothing. Coverage is the caller's: it passes, per coin, the hours it asserts the poller covered, and a bar reads its sums, zero where the coin holds no bucket, only where all four of its hours are asserted, else `None` — nothing on disk records what a poll covered for a coin, and coverage inferred from the coins' finals reads a covered zero five ways (spec `00136` D4). Reading the rows is the subject's, through `ObservedReader` from a frozen block of the live tape, never the NAS copy, whose pull can leave the coins at different snapshots (spec `00136` D3). No spike flag: a threshold on these totals is a trial's pre-registration. No subject, no registry record.
 ```
 
   In `## Suggested next steps`, the bullets opening `- **(autonomous) the ratio columns on the 4h close grid.**` and `- **(autonomous) the liquidations feature leg.**` are deleted, and the bullet opening `- **(later trials, after the instrument ruling, each its own pre-registration against the shared B budget)**` is replaced whole by:
