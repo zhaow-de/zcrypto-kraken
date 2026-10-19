@@ -16,6 +16,7 @@ from cli.features.derivatives import (
     oi_log_delta,
     oi_momentum,
     oi_zscore,
+    ratio_features,
 )
 from cli.logging import get_logger
 from cli.validation import max_drawdown
@@ -156,32 +157,37 @@ def _oi_marks(oi_ts: list[datetime]) -> list[datetime]:
     return [first + k * _BOUNDARY for k in range((last - first) // _BOUNDARY + 1)]
 
 
-def _oi_at_union_closes(
-    label: str,
-    feature: Callable[[list[float | None]], list],
-    oi_ts: list[datetime],
-    oi_values: list[float | None],
-    union_ts: list[datetime],
-) -> list:
-    """Every OI emitter's one pipeline (docs/specs/00131 D4-D6), the union's bar-open stamps in: `feature` runs over the
-    `sum_open_interest` level on `_oi_marks`' grid, never over the raw rows, and each union close reads it by exact lookup. A
-    row is read from its own stamp, never truncated as a funding print's is: the stamp is when the venue measured the level."""
-    if len(oi_ts) != len(oi_values):
-        raise AlphaError(f"oi_ts and oi_values must be equal length, got {len(oi_ts)} and {len(oi_values)}")
-    _validate_stamps("oi_ts", oi_ts)
+def _validate_union_marks(union_ts: list[datetime]) -> None:
     _validate_stamps("union_ts", union_ts)
     for i, t in enumerate(union_ts):
         if (t - _EPOCH) % _BOUNDARY:
             raise AlphaError(f"union_ts[{i}] = {t.isoformat()} is not on a 4 h mark")
+
+
+def _rows_at_union_closes(
+    label: str,
+    feature: Callable[[list[float | None]], list],
+    oi_ts: list[datetime],
+    values_name: str,
+    levels: list[float | None],
+    union_ts: list[datetime],
+) -> list:
+    """Every emitter over the OI file's 5-minute rows runs this one pipeline (docs/specs/00131 D4-D6, docs/specs/00136
+    D2), the union's bar-open stamps in: `feature` runs over the value on `_oi_marks`' grid, never over the raw rows, and
+    each union close reads it by exact lookup. A row is read from its own stamp, never truncated as a funding print's is:
+    the stamp is when the venue measured the value."""
+    if len(oi_ts) != len(levels):
+        raise AlphaError(f"oi_ts and {values_name} must be equal length, got {len(oi_ts)} and {len(levels)}")
+    _validate_stamps("oi_ts", oi_ts)
+    _validate_union_marks(union_ts)
     marks = _oi_marks(oi_ts)
-    levels = oi_levels_from_raw(oi_values)
     # The as-of over row indices, so the bound below reads the stamp of the row each mark takes.
     rows = align_asof(oi_ts, list(range(len(oi_ts))), marks)
     grid = [None if j is None or oi_ts[j] <= g - _BOUNDARY else levels[j] for j, g in zip(rows, marks)]
     values = dict(zip(marks, feature(grid)))
     out = [values.get(c) for c in close_grid(union_ts)]
     logger.debug(
-        "oi %s at union closes: %d rows, %d marks, %d return indices, %d None",
+        "%s at union closes: %d rows, %d marks, %d return indices, %d None",
         label,
         len(oi_ts),
         len(marks),
@@ -189,6 +195,17 @@ def _oi_at_union_closes(
         out.count(None),
     )
     return out
+
+
+def _oi_at_union_closes(
+    label: str,
+    feature: Callable[[list[float | None]], list],
+    oi_ts: list[datetime],
+    oi_values: list[float | None],
+    union_ts: list[datetime],
+) -> list:
+    """The `sum_open_interest` level: a `0.0` placeholder is None before the as-of (docs/specs/00110 D5)."""
+    return _rows_at_union_closes(f"oi {label}", feature, oi_ts, "oi_values", oi_levels_from_raw(oi_values), union_ts)
 
 
 def oi_grid_levels(oi_ts: list[datetime], oi_values: list[float | None], union_ts: list[datetime]) -> list[float | None]:
@@ -207,6 +224,16 @@ def oi_zscore_grid_feature(oi_ts: list[datetime], oi_values: list[float | None],
 def oi_momentum_grid_feature(oi_ts: list[datetime], oi_values: list[float | None], union_ts: list[datetime]) -> list[float | None]:
     momentum = partial(oi_momentum, lookback=_OI_MOMENTUM_LOOKBACK)
     return _oi_at_union_closes("momentum", momentum, oi_ts, oi_values, union_ts)
+
+
+def ratio_grid_features(
+    oi_ts: list[datetime], ratios: dict[str, list[float | None]], union_ts: list[datetime]
+) -> dict[str, list[float | None]]:
+    """Each ratio is read as a level, unmapped (docs/specs/00136 D2): a `0.0` taker ratio is an all-sell bar the venue
+    published, never an OI placeholder."""
+    return {
+        name: _rows_at_union_closes(name, list, oi_ts, name, values, union_ts) for name, values in ratio_features(ratios).items()
+    }
 
 
 def _check_lengths(lists: dict[str, list], expected: int | None = None) -> int:

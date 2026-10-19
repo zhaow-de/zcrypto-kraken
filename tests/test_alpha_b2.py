@@ -23,9 +23,11 @@ from cli.alpha.b2 import (
     per_year_max_drawdown,
     per_year_positions_differ,
     per_year_turnover,
+    ratio_grid_features,
     scale_positions,
 )
 from cli.alpha.errors import AlphaError
+from cli.features.errors import FeatureError
 
 UTC = timezone.utc
 DAY0 = datetime(2024, 3, 1, tzinfo=UTC)
@@ -525,3 +527,80 @@ def test_a_truncated_prefix_of_the_rows_reproduces_every_oi_trio_emitter_bit_for
         visible = [i for i, t in enumerate(oi_ts) if t <= cutoff]
         prefix = emitter([oi_ts[i] for i in visible], [oi_values[i] for i in visible], union_ts[: n + 1])
         assert prefix == full[:n], f"prefix at n={n} disagrees with the full run"
+
+
+_RATIO_COLUMNS = (
+    "count_toptrader_long_short_ratio",
+    "sum_toptrader_long_short_ratio",
+    "count_long_short_ratio",
+    "sum_taker_long_short_vol_ratio",
+)
+
+
+def _each_ratio(values: list[float | None]) -> dict[str, list[float | None]]:
+    return {name: list(values) for name in _RATIO_COLUMNS}
+
+
+def _binperp(values: list[float | None]) -> dict[str, list[float | None]]:
+    return {f"binperp_{name}": list(values) for name in _RATIO_COLUMNS}
+
+
+def test_each_ratio_reads_its_bars_last_row_at_the_close_under_its_binperp_name():
+    oi_ts = [DAY0 + timedelta(hours=4 * k + 4, minutes=m) for k in range(3) for m in (-10, -5)]
+    ratios = {name: [i + 1.0 + r / 10 for r in range(6)] for i, name in enumerate(_RATIO_COLUMNS)}
+    # Each bar's later row, from its own column: an earlier row, or a column read in another's place, differs.
+    expected = {f"binperp_{name}": [i + 1.0 + r / 10 for r in (1, 3, 5)] for i, name in enumerate(_RATIO_COLUMNS)}
+    assert ratio_grid_features(oi_ts, ratios, _hours(0, 4, 8, 12)) == expected
+
+
+def test_a_ratio_row_exactly_4h_old_at_a_mark_is_none_and_one_a_second_younger_is_read():
+    union = _hours(0, 4, 8, 12)
+    assert ratio_grid_features(_hours(4, 12), _each_ratio([1.5, 2.5]), union) == _binperp([1.5, None, 2.5])
+    younger = [DAY0 + timedelta(hours=4, seconds=1), DAY0 + timedelta(hours=12)]
+    assert ratio_grid_features(younger, _each_ratio([1.5, 2.5]), union) == _binperp([None, 1.5, 2.5])
+
+
+_TWO_BARS = [DAY0 + timedelta(hours=4, minutes=-10), DAY0 + timedelta(hours=4, minutes=-5), DAY0 + timedelta(hours=8, minutes=-5)]
+
+
+def test_a_zero_taker_ratio_as_a_bars_last_row_is_read_never_mapped_to_none():
+    ratios = _each_ratio([1.2, 1.3, 1.4]) | {"sum_taker_long_short_vol_ratio": [1.2, 0.0, 0.0]}
+    # Mapped as an OI placeholder is, both closes would read None.
+    assert ratio_grid_features(_TWO_BARS, ratios, _hours(0, 4, 8))["binperp_sum_taker_long_short_vol_ratio"] == [0.0, 0.0]
+
+
+def test_a_null_ratio_as_a_bars_last_row_is_none_at_its_close_never_the_row_before_it():
+    assert ratio_grid_features(_TWO_BARS, _each_ratio([1.2, None, 1.4]), _hours(0, 4, 8)) == _binperp([None, 1.4])
+
+
+def test_ratio_grid_features_refuses_a_missing_ratio_column():
+    with pytest.raises(FeatureError, match="missing ratio column"):
+        ratio_grid_features(_hours(1, 5, 9), {name: [1.0, 1.1, 1.2] for name in _RATIO_COLUMNS[:3]}, _hours(0, 4, 8))
+
+
+def test_ratio_grid_features_refuses_a_ratio_longer_than_the_rows_by_its_name():
+    ratios = _each_ratio([1.0, 1.1, 1.2]) | {"count_long_short_ratio": [1.0, 1.1, 1.2, 1.3]}
+    with pytest.raises(AlphaError, match="oi_ts and binperp_count_long_short_ratio must be equal length, got 3 and 4"):
+        ratio_grid_features(_hours(1, 5, 9), ratios, _hours(0, 4, 8))
+
+
+def test_a_truncated_prefix_of_the_rows_reproduces_the_ratio_columns_bit_for_bit():
+    oi_ts, oi_values, union_ts = _oi_prefix_fixture()
+    # The fixture's `0.0`, bar 35's last row, is a null in three columns and a reading in the taker ratio.
+    ratios = _each_ratio([None if v == 0.0 else v / 100 for v in oi_values]) | {
+        "sum_taker_long_short_vol_ratio": [v / 100 for v in oi_values]
+    }
+    full = ratio_grid_features(oi_ts, ratios, union_ts)
+    # Return index j closes bar 30 + j up to the missing open: bars 37 and 38 are stale and bar 240 lies past the rows in
+    # every column; bar 35 reads None where its last row is null and 0.0 in the taker ratio.
+    last = len(union_ts) - 2
+    assert {name: [j for j, v in enumerate(values) if v is None] for name, values in full.items()} == {
+        f"binperp_{name}": [7, 8, last] if name == "sum_taker_long_short_vol_ratio" else [5, 7, 8, last] for name in _RATIO_COLUMNS
+    }
+    for n in range(1, len(union_ts)):
+        cutoff = union_ts[n - 1] + timedelta(hours=4)
+        visible = [i for i, t in enumerate(oi_ts) if t <= cutoff]
+        prefix = ratio_grid_features(
+            [oi_ts[i] for i in visible], {name: [values[i] for i in visible] for name, values in ratios.items()}, union_ts[: n + 1]
+        )
+        assert prefix == {name: values[:n] for name, values in full.items()}, f"prefix at n={n} disagrees with the full run"
