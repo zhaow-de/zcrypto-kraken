@@ -705,7 +705,6 @@ def test_liquidation_grid_features_refuses_a_naive_bucket_stamp_by_name():
     "stamp", [(DAY0 + timedelta(hours=5)).replace(tzinfo=None), DAY0 + timedelta(hours=5, minutes=31)], ids=["naive", "off-hour"]
 )
 def test_liquidation_grid_features_refuses_a_naive_or_off_hour_covered_stamp_by_name(stamp):
-    # Read anyway, the stamp in 05:00's place equals no hour start, so bar 1 would read None with no error.
     covered = [stamp if t == DAY0 + timedelta(hours=5) else t for t in _LIQUIDATION_COVERED]
     with pytest.raises(AlphaError, match=re.escape(f"covered must be tz-aware hour starts, got {stamp.isoformat()}")):
         liquidation_grid_features(*_buckets(_LIQUIDATIONS["BTC"]), _LIQUIDATION_UNION, covered)

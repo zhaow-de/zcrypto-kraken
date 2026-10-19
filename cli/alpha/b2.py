@@ -264,7 +264,7 @@ def liquidation_grid_features(
     _validate_union_marks(union_ts)
     asserted = set(covered)
     for t in asserted:
-        if t.utcoffset() is None or t.minute or t.second or t.microsecond:
+        if t.utcoffset() is None or t != t.replace(minute=0, second=0, microsecond=0):
             raise AlphaError(f"covered must be tz-aware hour starts, got {t.isoformat()}")
     out: dict[str, list[float | None]] = {name: [] for name in _LIQUIDATION_COLUMNS}
     for t in union_ts[:-1]:
