@@ -14,6 +14,7 @@ from cli.alpha.b2 import (
     funding_carry_grid_feature,
     funding_grid_feature,
     funding_sign_grid_feature,
+    liquidation_grid_features,
     net_of_cost,
     oi_grid_levels,
     oi_log_delta_grid_feature,
@@ -23,9 +24,11 @@ from cli.alpha.b2 import (
     per_year_max_drawdown,
     per_year_positions_differ,
     per_year_turnover,
+    ratio_grid_features,
     scale_positions,
 )
 from cli.alpha.errors import AlphaError
+from cli.features.errors import FeatureError
 
 UTC = timezone.utc
 DAY0 = datetime(2024, 3, 1, tzinfo=UTC)
@@ -525,3 +528,217 @@ def test_a_truncated_prefix_of_the_rows_reproduces_every_oi_trio_emitter_bit_for
         visible = [i for i, t in enumerate(oi_ts) if t <= cutoff]
         prefix = emitter([oi_ts[i] for i in visible], [oi_values[i] for i in visible], union_ts[: n + 1])
         assert prefix == full[:n], f"prefix at n={n} disagrees with the full run"
+
+
+_RATIO_COLUMNS = (
+    "count_toptrader_long_short_ratio",
+    "sum_toptrader_long_short_ratio",
+    "count_long_short_ratio",
+    "sum_taker_long_short_vol_ratio",
+)
+
+
+def _each_ratio(values: list[float | None]) -> dict[str, list[float | None]]:
+    return {name: list(values) for name in _RATIO_COLUMNS}
+
+
+def _binperp(values: list[float | None]) -> dict[str, list[float | None]]:
+    return {f"binperp_{name}": list(values) for name in _RATIO_COLUMNS}
+
+
+def test_each_ratio_reads_its_bars_last_row_at_the_close_under_its_binperp_name():
+    oi_ts = [DAY0 + timedelta(hours=4 * k + 4, minutes=m) for k in range(3) for m in (-10, -5)]
+    ratios = {name: [i + 1.0 + r / 10 for r in range(6)] for i, name in enumerate(_RATIO_COLUMNS)}
+    # Each bar's later row, from its own column: an earlier row, or a column read in another's place, differs.
+    expected = {f"binperp_{name}": [i + 1.0 + r / 10 for r in (1, 3, 5)] for i, name in enumerate(_RATIO_COLUMNS)}
+    assert ratio_grid_features(oi_ts, ratios, _hours(0, 4, 8, 12)) == expected
+
+
+def test_a_ratio_row_exactly_4h_old_at_a_mark_is_none_and_one_a_second_younger_is_read():
+    union = _hours(0, 4, 8, 12)
+    assert ratio_grid_features(_hours(4, 12), _each_ratio([1.5, 2.5]), union) == _binperp([1.5, None, 2.5])
+    younger = [DAY0 + timedelta(hours=4, seconds=1), DAY0 + timedelta(hours=12)]
+    assert ratio_grid_features(younger, _each_ratio([1.5, 2.5]), union) == _binperp([None, 1.5, 2.5])
+
+
+_TWO_BARS = [DAY0 + timedelta(hours=4, minutes=-10), DAY0 + timedelta(hours=4, minutes=-5), DAY0 + timedelta(hours=8, minutes=-5)]
+
+
+def test_a_zero_taker_ratio_as_a_bars_last_row_is_read_never_mapped_to_none():
+    ratios = _each_ratio([1.2, 1.3, 1.4]) | {"sum_taker_long_short_vol_ratio": [1.2, 0.0, 0.0]}
+    # Mapped as an OI placeholder is, both closes would read None.
+    assert ratio_grid_features(_TWO_BARS, ratios, _hours(0, 4, 8))["binperp_sum_taker_long_short_vol_ratio"] == [0.0, 0.0]
+
+
+def test_a_null_ratio_as_a_bars_last_row_is_none_at_its_close_never_the_row_before_it():
+    assert ratio_grid_features(_TWO_BARS, _each_ratio([1.2, None, 1.4]), _hours(0, 4, 8)) == _binperp([None, 1.4])
+
+
+def test_ratio_grid_features_refuses_a_missing_ratio_column():
+    with pytest.raises(FeatureError, match="missing ratio column"):
+        ratio_grid_features(_hours(1, 5, 9), {name: [1.0, 1.1, 1.2] for name in _RATIO_COLUMNS[:3]}, _hours(0, 4, 8))
+
+
+def test_ratio_grid_features_refuses_a_ratio_longer_than_the_rows_by_its_name():
+    ratios = _each_ratio([1.0, 1.1, 1.2]) | {"count_long_short_ratio": [1.0, 1.1, 1.2, 1.3]}
+    with pytest.raises(AlphaError, match="oi_ts and binperp_count_long_short_ratio must be equal length, got 3 and 4"):
+        ratio_grid_features(_hours(1, 5, 9), ratios, _hours(0, 4, 8))
+
+
+def test_a_truncated_prefix_of_the_rows_reproduces_the_ratio_columns_bit_for_bit():
+    oi_ts, oi_values, union_ts = _oi_prefix_fixture()
+    ratios = _each_ratio([None if v == 0.0 else v / 100 for v in oi_values]) | {
+        "sum_taker_long_short_vol_ratio": [v / 100 for v in oi_values]
+    }
+    full = ratio_grid_features(oi_ts, ratios, union_ts)
+    # Return index j closes bar 30 + j up to the missing open: bars 37 and 38 are stale and bar 240 lies past the rows in
+    # every column; bar 35 reads None where its last row is null and 0.0 in the taker ratio.
+    last = len(union_ts) - 2
+    assert {name: [j for j, v in enumerate(values) if v is None] for name, values in full.items()} == {
+        f"binperp_{name}": [7, 8, last] if name == "sum_taker_long_short_vol_ratio" else [5, 7, 8, last] for name in _RATIO_COLUMNS
+    }
+    for n in range(1, len(union_ts)):
+        cutoff = union_ts[n - 1] + timedelta(hours=4)
+        visible = [i for i, t in enumerate(oi_ts) if t <= cutoff]
+        prefix = ratio_grid_features(
+            [oi_ts[i] for i in visible], {name: [values[i] for i in visible] for name, values in ratios.items()}, union_ts[: n + 1]
+        )
+        assert prefix == {name: values[:n] for name, values in full.items()}, f"prefix at n={n} disagrees with the full run"
+
+
+def _buckets(rows: list[tuple[int, float, float]]) -> tuple[list[datetime], list[float], list[float]]:
+    """`rows` holds `(minute after DAY0, long_usd, short_usd)` in order: one coin's bucket stamps and its two legs."""
+    return [DAY0 + timedelta(minutes=m) for m, _, _ in rows], [lo for _, lo, _ in rows], [sh for _, _, sh in rows]
+
+
+# BTC holds a bucket in each hour from 00:00 to 15:00, DOT one at 00:10 and one at 15:00.
+_LIQUIDATIONS = {
+    "BTC": [
+        (5, 100.0, 0.0),
+        (65, 0.0, 300.0),
+        (130, 25.0, 25.0),
+        (239, 50.0, 0.0),
+        (240, 0.0, 80.0),
+        (300, 20.0, 0.0),
+        (370, 10.0, 0.0),
+        (479, 0.0, 10.0),
+        (485, 5.0, 0.0),
+        (545, 2.0, 1.0),
+        (610, 0.0, 7.0),
+        (700, 3.0, 0.0),
+        (725, 1.0, 0.0),
+        (790, 0.0, 2.0),
+        (850, 4.0, 4.0),
+        (950, 0.0, 6.0),
+    ],
+    "DOT": [(10, 0.0, 40.0), (900, 9.0, 0.0)],
+}
+_LIQUIDATION_UNION = _hours(0, 4, 8, 12, 16)
+_LIQUIDATION_COVERED = [t for t in _hours(*range(16)) if t != DAY0 + timedelta(hours=9)]
+
+
+def test_each_liquidation_column_sums_its_bars_buckets_under_its_provenance_name():
+    # The 03:59 bucket closes at 04:00 and is bar 0's; the 04:00 bucket is bar 1's. Bar 2 holds 09:00, not asserted.
+    assert liquidation_grid_features(*_buckets(_LIQUIDATIONS["BTC"]), _LIQUIDATION_UNION, _LIQUIDATION_COVERED) == {
+        "binperp_liq_lowerbound_long_usd": [175.0, 30.0, None, 5.0],
+        "binperp_liq_lowerbound_short_usd": [325.0, 90.0, None, 12.0],
+        "binperp_liq_lowerbound_total_usd": [500.0, 120.0, None, 17.0],
+        "binperp_liq_imbalance": [-0.3, -0.5, None, -7 / 17],
+    }
+
+
+def test_a_covered_bar_with_no_bucket_for_the_coin_reads_zero_notional_and_no_imbalance():
+    # DOT holds no bucket from 01:00 to 14:00: the assertion is what says the poller covered bar 1.
+    features = liquidation_grid_features(*_buckets(_LIQUIDATIONS["DOT"]), _LIQUIDATION_UNION, _LIQUIDATION_COVERED)
+    assert features == {
+        "binperp_liq_lowerbound_long_usd": [0.0, 0.0, None, 9.0],
+        "binperp_liq_lowerbound_short_usd": [40.0, 0.0, None, 0.0],
+        "binperp_liq_lowerbound_total_usd": [40.0, 0.0, None, 9.0],
+        "binperp_liq_imbalance": [-1.0, None, None, 1.0],
+    }
+    # The int 0 compares equal to 0.0 above: an empty bar's sums are floats, as every other bar's are.
+    notionals = ("binperp_liq_lowerbound_long_usd", "binperp_liq_lowerbound_short_usd", "binperp_liq_lowerbound_total_usd")
+    assert [type(features[name][1]) for name in notionals] == [float] * 3
+
+
+def test_a_bar_holding_an_hour_not_asserted_covered_reads_none_even_over_its_buckets():
+    # BTC holds a bucket at 09:05; read as covered, BTC's bar 2 would sum to 10.0 long and 8.0 short.
+    for coin in ("BTC", "DOT"):
+        features = liquidation_grid_features(*_buckets(_LIQUIDATIONS[coin]), _LIQUIDATION_UNION, _LIQUIDATION_COVERED)
+        assert [values[2] for values in features.values()] == [None] * 4
+
+
+@pytest.mark.parametrize("hour", [8, 11], ids=["first", "last"])
+def test_a_bar_whose_first_or_last_hour_is_not_asserted_covered_reads_none(hour):
+    # Bar 2 is [08:00, 12:00): hours 8 and 11 are its first and last.
+    covered = [t for t in _hours(*range(16)) if t != DAY0 + timedelta(hours=hour)]
+    for coin in ("BTC", "DOT"):
+        features = liquidation_grid_features(*_buckets(_LIQUIDATIONS[coin]), _LIQUIDATION_UNION, covered)
+        assert [values[2] for values in features.values()] == [None] * 4, coin
+
+
+def test_liquidation_grid_features_refuses_bucket_lists_of_unequal_length():
+    bucket_ts, long_usd, short_usd = _buckets(_LIQUIDATIONS["DOT"])
+    with pytest.raises(AlphaError, match=re.escape("bucket_ts, long_usd and short_usd must be equal length, got 2, 2 and 3")):
+        liquidation_grid_features(bucket_ts, long_usd, short_usd + [1.0], _LIQUIDATION_UNION, _LIQUIDATION_COVERED)
+
+
+def test_liquidation_grid_features_refuses_an_empty_read_by_name():
+    with pytest.raises(AlphaError, match=re.escape("bucket_ts is empty: every covered bar would sum to zero")):
+        liquidation_grid_features([], [], [], _LIQUIDATION_UNION, _LIQUIDATION_COVERED)
+
+
+@pytest.mark.parametrize("bucket_ts", [_hours(0, 2, 1), _hours(0, 1, 1)], ids=["unsorted", "repeated"])
+def test_liquidation_grid_features_refuses_unsorted_or_repeated_bucket_stamps(bucket_ts):
+    # Read anyway, a repeated bucket is summed twice and an unsorted one can fall outside its bar's slice.
+    with pytest.raises(AlphaError, match=re.escape("bucket_ts must be strictly increasing, violated at index 2")):
+        liquidation_grid_features(bucket_ts, [1.0, 2.0, 3.0], [0.0, 0.0, 0.0], _hours(0, 4), _hours(0, 1, 2, 3))
+
+
+def test_liquidation_grid_features_refuses_a_naive_bucket_stamp_by_name():
+    bucket_ts = _hours(0, 1) + [(DAY0 + timedelta(hours=2)).replace(tzinfo=None)]
+    with pytest.raises(AlphaError, match=re.escape("bucket_ts must be tz-aware datetimes, bucket_ts[2] = ")):
+        liquidation_grid_features(bucket_ts, [1.0, 2.0, 3.0], [0.0, 0.0, 0.0], _hours(0, 4), _hours(0, 1, 2, 3))
+
+
+@pytest.mark.parametrize(
+    "stamp",
+    [
+        (DAY0 + timedelta(hours=5)).replace(tzinfo=None),
+        DAY0 + timedelta(hours=5, minutes=31),
+        DAY0.replace(hour=10, tzinfo=timezone(timedelta(hours=5, minutes=30))),
+    ],
+    ids=["naive", "off-hour", "half-hour-zone"],
+)
+def test_liquidation_grid_features_refuses_a_naive_or_off_hour_covered_stamp_by_name(stamp):
+    covered = [stamp if t == DAY0 + timedelta(hours=5) else t for t in _LIQUIDATION_COVERED]
+    with pytest.raises(AlphaError, match=re.escape(f"covered must be tz-aware hour starts, got {stamp.isoformat()}")):
+        liquidation_grid_features(*_buckets(_LIQUIDATIONS["BTC"]), _LIQUIDATION_UNION, covered)
+
+
+def test_a_liquidation_union_stamp_off_a_4h_mark_is_refused_by_name():
+    with pytest.raises(AlphaError, match=re.escape("union_ts[1] = 2024-03-01T05:00:00+00:00 is not on a 4 h mark")):
+        liquidation_grid_features(*_buckets(_LIQUIDATIONS["BTC"]), _hours(0, 5, 9), _LIQUIDATION_COVERED)
+
+
+def test_a_truncated_prefix_of_the_buckets_reproduces_every_liquidation_column_bit_for_bit():
+    btc = [(60 * h + (17 * h) % 60, float(h % 3), float(h % 4 + 1)) for h in range(56) if h not in (13, 26)]
+    dot = [(60 * h + 30, 2.0, 0.0) for h in (0, 7, 13, 14, 21, 35, 42, 49)]
+    rows = {"BTC": _buckets(btc), "DOT": _buckets(dot)}
+    covered = [t for t in _hours(*range(56)) if t != DAY0 + timedelta(hours=18)]
+    # Return index j opens bar j + 1 up to the missing open of bar 7, bar j + 2 after it; the last closes on the last hour.
+    union_ts = [t for t in _hours(*range(4, 60, 4)) if t != DAY0 + timedelta(hours=28)]
+    full = {coin: liquidation_grid_features(*columns, union_ts, covered) for coin, columns in rows.items()}
+    # Exact: bar 4 holds h = 18, not asserted, and DOT holds no bucket in bars 2, 6, 9, 11 and 13. Bar 6, before the
+    # missing open, is covered: stretched across the hole, it would sum hours its prefix at n = 6 neither holds nor asserts.
+    assert [j for j, v in enumerate(full["BTC"]["binperp_liq_lowerbound_total_usd"]) if v is None] == [3]
+    assert [j for j, v in enumerate(full["DOT"]["binperp_liq_lowerbound_total_usd"]) if v is None] == [3]
+    assert [j for j, v in enumerate(full["DOT"]["binperp_liq_imbalance"]) if v is None] == [1, 3, 5, 7, 9, 11]
+    for n in range(1, len(union_ts)):
+        # The buckets and the assertion truncated alike at the cutoff, a bucket closing a minute after its stamp.
+        cutoff = union_ts[n - 1] + timedelta(hours=4)
+        prefix_covered = [t for t in covered if t + timedelta(hours=1) <= cutoff]
+        for coin, (bucket_ts, long_usd, short_usd) in rows.items():
+            k = sum(t + timedelta(minutes=1) <= cutoff for t in bucket_ts)
+            prefix = liquidation_grid_features(bucket_ts[:k], long_usd[:k], short_usd[:k], union_ts[: n + 1], prefix_covered)
+            assert prefix == {name: values[:n] for name, values in full[coin].items()}, f"{coin} prefix at n={n} disagrees"

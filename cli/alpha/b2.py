@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from bisect import bisect_left
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import partial
@@ -16,6 +17,7 @@ from cli.features.derivatives import (
     oi_log_delta,
     oi_momentum,
     oi_zscore,
+    ratio_features,
 )
 from cli.logging import get_logger
 from cli.validation import max_drawdown
@@ -33,6 +35,14 @@ _SETTLEMENT_INTERVAL = timedelta(hours=_FUNDING_INTERVAL_HOURS)
 _CARRY_WINDOW = 90
 _OI_ZSCORE_WINDOW = 180
 _OI_MOMENTUM_LOOKBACK = 180
+_HOUR = timedelta(hours=1)
+# The imbalance carries no lowerbound_: a ratio of two undercounts bounds nothing (docs/specs/00136 D5).
+_LIQUIDATION_COLUMNS = (
+    "binperp_liq_lowerbound_long_usd",
+    "binperp_liq_lowerbound_short_usd",
+    "binperp_liq_lowerbound_total_usd",
+    "binperp_liq_imbalance",
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -156,32 +166,37 @@ def _oi_marks(oi_ts: list[datetime]) -> list[datetime]:
     return [first + k * _BOUNDARY for k in range((last - first) // _BOUNDARY + 1)]
 
 
-def _oi_at_union_closes(
-    label: str,
-    feature: Callable[[list[float | None]], list],
-    oi_ts: list[datetime],
-    oi_values: list[float | None],
-    union_ts: list[datetime],
-) -> list:
-    """Every OI emitter's one pipeline (docs/specs/00131 D4-D6), the union's bar-open stamps in: `feature` runs over the
-    `sum_open_interest` level on `_oi_marks`' grid, never over the raw rows, and each union close reads it by exact lookup. A
-    row is read from its own stamp, never truncated as a funding print's is: the stamp is when the venue measured the level."""
-    if len(oi_ts) != len(oi_values):
-        raise AlphaError(f"oi_ts and oi_values must be equal length, got {len(oi_ts)} and {len(oi_values)}")
-    _validate_stamps("oi_ts", oi_ts)
+def _validate_union_marks(union_ts: list[datetime]) -> None:
     _validate_stamps("union_ts", union_ts)
     for i, t in enumerate(union_ts):
         if (t - _EPOCH) % _BOUNDARY:
             raise AlphaError(f"union_ts[{i}] = {t.isoformat()} is not on a 4 h mark")
+
+
+def _rows_at_union_closes(
+    label: str,
+    feature: Callable[[list[float | None]], list],
+    oi_ts: list[datetime],
+    values_name: str,
+    levels: list[float | None],
+    union_ts: list[datetime],
+) -> list:
+    """Every emitter over the OI file's 5-minute rows runs this one pipeline (docs/specs/00131 D4-D6, docs/specs/00136
+    D2), the union's bar-open stamps in: `feature` runs over the value on `_oi_marks`' grid, never over the raw rows, and
+    each union close reads it by exact lookup. A row is read from its own stamp, never truncated as a funding print's is:
+    the stamp is when the venue measured the value."""
+    if len(oi_ts) != len(levels):
+        raise AlphaError(f"oi_ts and {values_name} must be equal length, got {len(oi_ts)} and {len(levels)}")
+    _validate_stamps("oi_ts", oi_ts)
+    _validate_union_marks(union_ts)
     marks = _oi_marks(oi_ts)
-    levels = oi_levels_from_raw(oi_values)
     # The as-of over row indices, so the bound below reads the stamp of the row each mark takes.
     rows = align_asof(oi_ts, list(range(len(oi_ts))), marks)
     grid = [None if j is None or oi_ts[j] <= g - _BOUNDARY else levels[j] for j, g in zip(rows, marks)]
     values = dict(zip(marks, feature(grid)))
     out = [values.get(c) for c in close_grid(union_ts)]
     logger.debug(
-        "oi %s at union closes: %d rows, %d marks, %d return indices, %d None",
+        "%s at union closes: %d rows, %d marks, %d return indices, %d None",
         label,
         len(oi_ts),
         len(marks),
@@ -189,6 +204,16 @@ def _oi_at_union_closes(
         out.count(None),
     )
     return out
+
+
+def _oi_at_union_closes(
+    label: str,
+    feature: Callable[[list[float | None]], list],
+    oi_ts: list[datetime],
+    oi_values: list[float | None],
+    union_ts: list[datetime],
+) -> list:
+    return _rows_at_union_closes(f"oi {label}", feature, oi_ts, "oi_values", oi_levels_from_raw(oi_values), union_ts)
 
 
 def oi_grid_levels(oi_ts: list[datetime], oi_values: list[float | None], union_ts: list[datetime]) -> list[float | None]:
@@ -207,6 +232,63 @@ def oi_zscore_grid_feature(oi_ts: list[datetime], oi_values: list[float | None],
 def oi_momentum_grid_feature(oi_ts: list[datetime], oi_values: list[float | None], union_ts: list[datetime]) -> list[float | None]:
     momentum = partial(oi_momentum, lookback=_OI_MOMENTUM_LOOKBACK)
     return _oi_at_union_closes("momentum", momentum, oi_ts, oi_values, union_ts)
+
+
+def ratio_grid_features(
+    oi_ts: list[datetime], ratios: dict[str, list[float | None]], union_ts: list[datetime]
+) -> dict[str, list[float | None]]:
+    """Each ratio is read as a level, unmapped (docs/specs/00136 D2): a `0.0` taker ratio is an all-sell bar the venue
+    published, never an OI placeholder."""
+    return {
+        name: _rows_at_union_closes(name, list, oi_ts, name, values, union_ts) for name, values in ratio_features(ratios).items()
+    }
+
+
+def liquidation_grid_features(
+    bucket_ts: list[datetime],
+    long_usd: list[float],
+    short_usd: list[float],
+    union_ts: list[datetime],
+    covered: Collection[datetime],
+) -> dict[str, list[float | None]]:
+    """One coin's 1-minute liquidation buckets, as the subject read them, summed over each union bar (docs/specs/00136
+    D3-D6). `covered` holds the hour starts the caller asserts the poller covered for the coin: a bar whose four hours it
+    holds sums the buckets stamped inside it, zero where there are none, and any other bar reads None."""
+    if not len(bucket_ts) == len(long_usd) == len(short_usd):
+        raise AlphaError(
+            f"bucket_ts, long_usd and short_usd must be equal length, got {len(bucket_ts)}, {len(long_usd)} and {len(short_usd)}"
+        )
+    if not bucket_ts:
+        raise AlphaError("bucket_ts is empty: every covered bar would sum to zero")
+    _validate_stamps("bucket_ts", bucket_ts)
+    _validate_union_marks(union_ts)
+    asserted = set(covered)
+    for t in asserted:
+        if t.utcoffset() is None or (t - _EPOCH) % _HOUR:
+            raise AlphaError(f"covered must be tz-aware hour starts, got {t.isoformat()}")
+    out: dict[str, list[float | None]] = {name: [] for name in _LIQUIDATION_COLUMNS}
+    for t in union_ts[:-1]:
+        hours = [t + k * _HOUR for k in range(_BOUNDARY // _HOUR)]
+        if not asserted.issuperset(hours):
+            for values in out.values():
+                values.append(None)
+            continue
+        # A bucket covers its minute, so one stamped on the close is the next bar's (docs/specs/00136 D6).
+        lo, hi = bisect_left(bucket_ts, t), bisect_left(bucket_ts, t + _BOUNDARY)
+        long_sum = sum(long_usd[lo:hi], 0.0)
+        short_sum = sum(short_usd[lo:hi], 0.0)
+        total = long_sum + short_sum
+        imbalance = None if total == 0 else (long_sum - short_sum) / total
+        for name, value in zip(_LIQUIDATION_COLUMNS, (long_sum, short_sum, total, imbalance)):
+            out[name].append(value)
+    logger.debug(
+        "liquidations at union closes: %d buckets, %d asserted hours, %d return indices, %d None",
+        len(bucket_ts),
+        len(asserted),
+        len(union_ts) - 1,
+        out[_LIQUIDATION_COLUMNS[0]].count(None),
+    )
+    return out
 
 
 def _check_lengths(lists: dict[str, list], expected: int | None = None) -> int:
