@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: 'an activity: the owner picks B1''s next step after trial 5''s reject — a park variant of trial 3, or closing the family as attributed out — recorded in the decisions log; check: `git grep -c -E ''^\[iter-[0-9]+\] B1.s next step after trial 5'' -- docs/research/10.phase4-decisions.md` prints at least 1'
+status: resolved
 ---
 
 # B1 — intraday trend + time-of-day/day-of-week seasonality (the family topic)
@@ -26,8 +25,6 @@ B1 is the §5 ranked queue's top un-started family — the "genuinely new freque
 - Budget: **B = 25 shared across Bucket B** (pre-registered, hard); B1 trials count against it under the family's registry key.
 - **Candidate survey** (the owner's disposition of 2026-07-23, to have new candidates drafted): `docs/research/10.phase4-b1-candidate-hypotheses.md` writes three candidates up for pre-registration, none seen against a return, and argues that no trial beats two of them and narrowly beats the third.
 
-## Suggested next steps
+## Resolution
 
-- **The owner picks B1's next step after trial 5's reject, or closes the family**: with trial 5 the survey's three candidates are spent, so the pick is a park variant of trial 3 — 15m sampling, or the hourly estimator also in the book vol target — a new trial of the shared B budget; or this topic archived as attributed out. Closing the family is the owner's alone. The pick is recorded in the decisions log as `[iter-<NNN>] B1's next step after trial 5 — <the pick> (Decision: N)`.
-- **A park variant of trial 3 asks the owner for its adoption path rather than inheriting spec 00132's D9**, which settled it for trial 3 without the owner's word: an adopt a registry fact on the A2 ensemble alone, deploying it needing a combination trial over record 47's book and an hourly grid in the engine's store. The survey had left that to the owner (`docs/research/10.phase4-b1-candidate-hypotheses.md:60`).
-- Kill discipline: an honest kill closes this topic (archive with the verdict); budget exhaustion or a family kill-bar hit does the same. Expanding past the shared B budget is a parked human decision, never autonomous.
+Closed as attributed out at iter-180 on the owner's pick of 2026-10-19, recorded as `[iter-180] B1's next step after trial 5 — closed as attributed out` in `docs/research/10.phase4-decisions.md`: five trials, records 45, 46, 48, 49 and 50, none adopted, their verdicts above. Trial 3's two park variants — 15m sampling, and the hourly estimator also in the book vol target — are consciously dropped: their best case is a fraction of a percent a year, and an adopt would still need a combination trial before reaching the book.
