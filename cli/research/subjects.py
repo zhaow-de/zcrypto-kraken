@@ -27,6 +27,16 @@ from cli.alpha.b1 import (
     seasonality_gates,
     vol_state_scale,
 )
+from cli.alpha.b1_exit import (
+    a2_slot_positions,
+    asset_directions_hourly_exit,
+    exit_events_per_year,
+    hourly_closes_differ_per_year,
+    interior_closes_by_asset,
+    intra_turnover,
+    net_of_cost_hourly,
+    price_paths,
+)
 from cli.alpha.b1_rv import (
     a2_positions_with_weights,
     hourly_rv_inverse_vol_weights,
@@ -1452,6 +1462,351 @@ _B1_VOLUME_PREFLIGHT_KEYS = _B2_ARM_A_BAR_KEYS | {
 }
 
 
+# B1 trial 5 (docs/specs/00135) reads the B1 literals above as its instrument too, and trial 3's reads half and SPA grid (D1,
+# D5).
+# Records 45, 46, 48 and 49's registered per_period_sharpe_4h, record 49's every digit its writer stored: the dispersion reads
+# the registry's values, never a re-derivation (D7).
+_B1_EXIT_RECORDED_PER_PERIOD_SHARPES = (*_B1_VOLUME_RECORDED_PER_PERIOD_SHARPES, 0.03028127927651177)
+# The B1 family's trial count at this trial: records 45, 46, 48 and 49, and itself (D11).
+_B1_EXIT_N_TRIALS = 5
+
+
+class _B1HourlyExitInputs(NamedTuple):
+    h4_ts: list[datetime]
+    h4_prices: dict[str, list[float | None]]
+    fed: dict[str, list[float | None]]
+    returns: dict[str, list[float | None]]
+    weights_a: list[dict[str, float]]
+    vt_a: list[list[float]]
+    directions_a: list[dict[str, list[float | None]]]
+    interior: dict[str, list[tuple[float | None, float | None, float | None]]]
+    directions_b: list[dict[str, list[tuple[float, float, float, float] | None]]]
+    events: list[dict[str, dict[int, list[tuple[int, int, bool]]]]]
+    own_stamps: dict[str, list[datetime]]
+    paths: dict[str, list[tuple[float, float, float, float, float] | None]]
+    arm_a: dict[str, list[float]]
+
+
+def _b1_hourly_exit_inputs(reads: _B1HourlyRVReads) -> _B1HourlyExitInputs:
+    """Arm A's positions, vol scalars and directions, the interior closes, each arm's slot directions and exit events, one
+    entry per arm of `_B1_A2_ARMS` in its order, and the price paths, and no position or return of arm B: the pre-flight
+    reads this half alone. The interior closes come first, so their price validation and the hourly refusals (D4) refuse a
+    bad close before `_asset_returns` divides by it."""
+    h4_ts, h4_prices, hourly = reads
+    n = len(h4_ts) - 1
+    fed = _ffill_btc(h4_prices)
+    interior = interior_closes_by_asset(fed, h4_prices, h4_ts, hourly)
+    returns = {a: _asset_returns(fed[a]) for a in _ASSETS}
+    # One path for the three arms, each arm's basket_lookback being _B1_LOOKBACK (D1).
+    weights_a = _inverse_vol_weights(fed, lookback=_B1_LOOKBACK)
+    # Each asset's own bars as `a2_book_returns` indexes them; the events' bars index `own_stamps`.
+    union_idx = list(range(len(h4_ts)))
+    asset_ts = {a: [k for k, p in enumerate(fed[a]) if p is not None] for a in _ASSETS}
+    own_stamps = {a: [h4_ts[k] for k in asset_ts[a]] for a in _ASSETS}
+    positions_a, vt_a, directions_a, directions_b, events = [], [], [], [], []
+    for lookbacks, target_vol in _B1_A2_ARMS:
+        config = A2Config(
+            lookbacks=lookbacks,
+            short="off",
+            target_vol=target_vol,
+            vol_lookback=_B1_LOOKBACK,
+            basket_lookback=_B1_LOOKBACK,
+            periods_per_year=PPY_4H,
+        )
+        book = a2_book_returns(fed, config=config)
+        positions_a.append(book["asset_positions"])
+        vt_a.append(book["vol_target_positions"])
+        directions_a.append(_asset_directions_a2(fed, union_idx, asset_ts, config=config))
+        slot_directions, arm_events = asset_directions_hourly_exit(fed, union_idx, asset_ts, interior, config=config)
+        directions_b.append(slot_directions)
+        events.append(arm_events)
+    # After the slot directions, which refuse an interior list whose length is not the price series': `price_paths` reads
+    # the same lists unchecked.
+    paths = price_paths(fed, interior)
+    arm_a = {a: [statistics.mean(arm[a][k] for arm in positions_a) for k in range(n)] for a in _ASSETS}
+    return _B1HourlyExitInputs(
+        h4_ts, h4_prices, fed, returns, weights_a, vt_a, directions_a, interior, directions_b, events, own_stamps, paths, arm_a
+    )
+
+
+def _b1_hourly_exit_arm_a(inputs: _B1HourlyExitInputs) -> tuple[dict, float, list[float], list[float]]:
+    """Arm A's bar at the family's dispersion with arm A standing as its fifth Sharpe (D7), which the pre-flight reads
+    before arm B's Sharpe exists."""
+    net_a = net_of_cost(inputs.arm_a, inputs.returns, cost_per_side=_B1_COST_PER_SIDE)
+    net_a_x15 = net_of_cost(inputs.arm_a, inputs.returns, cost_per_side=1.5 * _B1_COST_PER_SIDE)
+    bench = benchmark_4h_net_of_cost(inputs.h4_prices, cost_per_side=_B1_COST_PER_SIDE)
+    arm_a_var_trials = statistics.variance([*_B1_EXIT_RECORDED_PER_PERIOD_SHARPES, sharpe(net_a)])
+    bar = a1_kill_bar(
+        net_a,
+        bench,
+        n_trials=_B1_EXIT_N_TRIALS,
+        var_trials=arm_a_var_trials,
+        mean_block=30,
+        seed=42,
+        cost_stressed_returns=net_a_x15,
+        regime_slices=calendar_year_slices(net_a, inputs.h4_ts),
+        benchmark_slices=calendar_year_slices(bench, inputs.h4_ts),
+        decisive_start=_B1_DECISIVE_START,
+        n_resamples=_B1_N_RESAMPLES,
+    )
+    return bar, arm_a_var_trials, net_a, bench
+
+
+def _b1_hourly_exit_engagement(inputs: _B1HourlyExitInputs) -> dict:
+    """D8's seven keys, read from closes alone: no position or return of arm B."""
+    per_year = {str(i + 1): exit_events_per_year(events, inputs.own_stamps) for i, events in enumerate(inputs.events)}
+    counts = [
+        count
+        for by_asset in per_year.values()
+        for by_lookback in by_asset.values()
+        for by_year in by_lookback.values()
+        for count in by_year.values()
+    ]
+    events, early, false = (sum(count[i] for count in counts) for i in range(3))
+    if events == 0:
+        raise ValidationError("exit_events is 0, and share_false divides by it")
+    differ = hourly_closes_differ_per_year(inputs.directions_a, inputs.directions_b, inputs.h4_ts)
+    return {
+        "exit_events_per_year": per_year,
+        "exit_events": events,
+        "exit_events_early": early,
+        "exit_events_false": false,
+        "share_false": false / events,
+        "hourly_closes_directions_differ": sum(differ.values()),
+        "hourly_closes_directions_differ_per_year": differ,
+    }
+
+
+def _b1_hourly_exit_metrics(inputs: _B1HourlyExitInputs) -> dict:
+    h4_ts, arm_a = inputs.h4_ts, inputs.arm_a
+    n = len(h4_ts) - 1
+    # Before the bars: on a book that never trades, `sharpe(net_a)` would refuse first and this refusal would never fire;
+    # the drawdown is read off its own `net_of_cost`, so neither refusal waits on a kill bar.
+    turnover_a = book_turnover(arm_a)
+    drawdown_a = max_drawdown(net_of_cost(arm_a, inputs.returns, cost_per_side=_B1_COST_PER_SIDE))
+    if turnover_a == 0 or drawdown_a == 0:
+        raise ValidationError(
+            f"turnover_a is {turnover_a} and arm_a_max_drawdown is {drawdown_a}, and turnover_reduction_pct and "
+            "max_drawdown_reduction_pct divide by them"
+        )
+    engagement = _b1_hourly_exit_engagement(inputs)
+    arm_a_bar, arm_a_var_trials, net_a, bench = _b1_hourly_exit_arm_a(inputs)
+    # Arm A's weights and each arm's own vol scalar on arm B's slot directions (D1).
+    arms = [a2_slot_positions(inputs.weights_a, inputs.directions_b[i], inputs.vt_a[i]) for i in range(len(_B1_A2_ARMS))]
+    arm_b = {a: [tuple(statistics.mean(arm[a][k][i] for arm in arms) for i in range(4)) for k in range(n)] for a in _ASSETS}
+    net_b = net_of_cost_hourly(arm_b, inputs.paths, cost_per_side=_B1_COST_PER_SIDE)
+    net_b_x15 = net_of_cost_hourly(arm_b, inputs.paths, cost_per_side=1.5 * _B1_COST_PER_SIDE)
+    per_period_sharpe_4h = sharpe(net_b)
+    var_trials = statistics.variance([*_B1_EXIT_RECORDED_PER_PERIOD_SHARPES, per_period_sharpe_4h])
+    bar = a1_kill_bar(
+        net_b,
+        bench,
+        n_trials=_B1_EXIT_N_TRIALS,
+        var_trials=var_trials,
+        mean_block=30,
+        seed=42,
+        cost_stressed_returns=net_b_x15,
+        regime_slices=calendar_year_slices(net_b, h4_ts),
+        benchmark_slices=calendar_year_slices(bench, h4_ts),
+        decisive_start=_B1_DECISIVE_START,
+        n_resamples=_B1_N_RESAMPLES,
+    )
+    decisive = [[net_b[k] - bench[k]] for k in range(_B1_DECISIVE_START, n)]
+    grid = {_B1_HOURLY_RV_GRID[0]: bar["spa_p_value"]} | {
+        (block, seed): reality_check_pvalue(decisive, mean_block=block, n_resamples=_B1_N_RESAMPLES, seed=seed)["p_value"]
+        for block, seed in _B1_HOURLY_RV_GRID[1:]
+    }
+    # The bar-start year, as `_b1_metrics` cuts it.
+    k16 = next(k for k in range(n) if h4_ts[k] >= _B1_FROM_2016)
+    full = net_of_cost_verdict(net_b, net_a, mean_block=30, seed=42, n_resamples=_B1_N_RESAMPLES)
+    from_2016 = net_of_cost_verdict(net_b[k16:], net_a[k16:], mean_block=30, seed=42, n_resamples=_B1_N_RESAMPLES)
+    # Each asset's slot positions flattened in time order, so the intra-interval trades count (D3).
+    turnover_b = book_turnover({a: [p for slots in arm_b[a] for p in slots] for a in _ASSETS})
+    drawdown_b = max_drawdown(net_b)
+    return {
+        "ann_sharpe_noc": sharpe(net_b, periods_per_year=PPY_4H),
+        "ann_sharpe_noc_decisive": sharpe(net_b[_B1_DECISIVE_START:], periods_per_year=PPY_4H),
+        "per_period_sharpe_4h": per_period_sharpe_4h,
+        "arm_a_ann_sharpe_noc": sharpe(net_a, periods_per_year=PPY_4H),
+        "arm_a_ann_sharpe_noc_decisive": sharpe(net_a[_B1_DECISIVE_START:], periods_per_year=PPY_4H),
+        "benchmark_ann_sharpe_noc": sharpe(bench, periods_per_year=PPY_4H),
+        "benchmark_ann_sharpe_noc_decisive": sharpe(bench[_B1_DECISIVE_START:], periods_per_year=PPY_4H),
+        "var_trials": var_trials,
+        "dsr_corrected": bar["dsr"],
+        "dsr_pass": int(bar["dsr_pass"]),
+        "spa_pass": int(bar["spa_pass"]),
+        "spa_p_full": bar["spa_p_value_full"],
+        "cost_stress_pass": int(bar["cost_stress_pass"]),
+        "worst_slice_relative_pass": int(bar["worst_slice_pass"]),
+        "passes": int(bar["passes"]),
+        "decisive_start": _B1_DECISIVE_START,
+        "n_resamples": _B1_N_RESAMPLES,
+        "arm_a_var_trials": arm_a_var_trials,
+        "arm_a_passes": int(arm_a_bar["passes"]),
+        **{f"spa_p_decisive_b{block}_s{seed}": grid[(block, seed)] for block, seed in _B1_HOURLY_RV_GRID},
+        "head_to_head_mean_outperf_full": full["mean_outperformance"],
+        "head_to_head_spa_p_full": full["spa_p_value"],
+        "head_to_head_mean_outperf_2016": from_2016["mean_outperformance"],
+        "head_to_head_spa_p_2016": from_2016["spa_p_value"],
+        "max_drawdown": drawdown_b,
+        "arm_a_max_drawdown": drawdown_a,
+        "max_drawdown_reduction_pct": 100 * (drawdown_a - drawdown_b) / drawdown_a,
+        "spot_drag_pct_yr": turnover_b / n * _B1_COST_PER_SIDE * PPY_4H,
+        "arm_a_spot_drag_pct_yr": turnover_a / n * _B1_COST_PER_SIDE * PPY_4H,
+        "turnover_a": turnover_a,
+        "turnover_b": turnover_b,
+        "turnover_b_intra": intra_turnover(arm_b),
+        "turnover_reduction_pct": 100 * (turnover_a - turnover_b) / turnover_a,
+        "stamps_positions_differ": sum(any(p != arm_a[a][k] for a in _ASSETS for p in arm_b[a][k]) for k in range(n)),
+        **engagement,
+    }
+
+
+def _b1_hourly_exit_preflight_metrics(inputs: _B1HourlyExitInputs) -> dict:
+    """The exit events and hourly closes whose directions differ, and arm A's anchors and bar (D8, D9): no position or return
+    of arm B."""
+    engagement = _b1_hourly_exit_engagement(inputs)
+    n = len(inputs.h4_ts) - 1
+    bar, arm_a_var_trials, net_a, bench = _b1_hourly_exit_arm_a(inputs)
+    turnover_a = book_turnover(inputs.arm_a)
+    return {
+        "arm_a_ann_sharpe_noc": sharpe(net_a, periods_per_year=PPY_4H),
+        "arm_a_ann_sharpe_noc_decisive": sharpe(net_a[_B1_DECISIVE_START:], periods_per_year=PPY_4H),
+        "arm_a_max_drawdown": max_drawdown(net_a),
+        "turnover_a": turnover_a,
+        "arm_a_spot_drag_pct_yr": turnover_a / n * _B1_COST_PER_SIDE * PPY_4H,
+        "benchmark_ann_sharpe_noc": sharpe(bench, periods_per_year=PPY_4H),
+        "benchmark_ann_sharpe_noc_decisive": sharpe(bench[_B1_DECISIVE_START:], periods_per_year=PPY_4H),
+        "arm_a_var_trials": arm_a_var_trials,
+        **{key: int(bar[key]) if key in _B2_ARM_A_BAR_FLAGS else bar[key] for key in sorted(_B2_ARM_A_BAR_KEYS)},
+        **engagement,
+    }
+
+
+def _b1_hourly_exit_build(
+    subject: str,
+    compute: Callable[[_B1HourlyExitInputs], dict],
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None,
+    accept_holes: bool,
+) -> dict:
+    reads = _b1_hourly_rv_reads(reader, dataset, window, as_of, accept_holes, subject=subject)
+    try:
+        return compute(_b1_hourly_exit_inputs(reads))
+    except (AlphaError, BacktestError, BenchmarkError, FeatureError, ValidationError) as exc:
+        # A bad hourly close or bar, a book that never trades or never draws down and a build with no exit event among
+        # them, named as the window's.
+        raise SubjectError(f"{_b2_over(subject, window)}: {exc}") from exc
+
+
+def _build_b1_hourly_exit(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    return _b1_hourly_exit_build("b1-hourly-channel-exits", _b1_hourly_exit_metrics, reader, dataset, window, as_of, accept_holes)
+
+
+def _build_b1_hourly_exit_preflight(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    return _b1_hourly_exit_build(
+        "b1-hourly-channel-exits-preflight", _b1_hourly_exit_preflight_metrics, reader, dataset, window, as_of, accept_holes
+    )
+
+
+# docs/specs/00135 D10's matrix plus the two instrument findings its metrics show (docs/specs/00129 D4), verbatim: a change to
+# it is a new spec and a new trial, never an edit here.
+def _b1_hourly_exit_verdict(m: dict) -> str | None:
+    if not m["arm_a_passes"] or m["hourly_closes_directions_differ"] == 0:
+        return None  # instrument finding: no verdict, the trial unspent
+    if not m["passes"]:
+        return "reject"
+    if m["head_to_head_mean_outperf_full"] > 0 and m["max_drawdown_reduction_pct"] > 1e-6:
+        if m["head_to_head_spa_p_full"] < 0.05 and m["spa_p_decisive_b102_s42"] < 0.05:
+            return "adopt"
+        return "park"
+    return "reject"
+
+
+# docs/specs/00135 D11's keys of the trial and of its pre-flight.
+_B1_EXIT_METRIC_KEYS = frozenset(
+    {
+        "ann_sharpe_noc",
+        "ann_sharpe_noc_decisive",
+        "per_period_sharpe_4h",
+        "arm_a_ann_sharpe_noc",
+        "arm_a_ann_sharpe_noc_decisive",
+        "benchmark_ann_sharpe_noc",
+        "benchmark_ann_sharpe_noc_decisive",
+        "var_trials",
+        "dsr_corrected",
+        "dsr_pass",
+        "spa_pass",
+        "spa_p_full",
+        "cost_stress_pass",
+        "worst_slice_relative_pass",
+        "passes",
+        "decisive_start",
+        "n_resamples",
+        "arm_a_var_trials",
+        "arm_a_passes",
+        "spa_p_decisive_b30_s42",
+        "spa_p_decisive_b30_s7",
+        "spa_p_decisive_b30_s1234",
+        "spa_p_decisive_b102_s42",
+        "spa_p_decisive_b102_s7",
+        "spa_p_decisive_b102_s1234",
+        "head_to_head_mean_outperf_full",
+        "head_to_head_spa_p_full",
+        "head_to_head_mean_outperf_2016",
+        "head_to_head_spa_p_2016",
+        "max_drawdown",
+        "arm_a_max_drawdown",
+        "max_drawdown_reduction_pct",
+        "spot_drag_pct_yr",
+        "arm_a_spot_drag_pct_yr",
+        "turnover_a",
+        "turnover_b",
+        "turnover_b_intra",
+        "turnover_reduction_pct",
+        "exit_events",
+        "exit_events_early",
+        "exit_events_false",
+        "share_false",
+        "exit_events_per_year",
+        "hourly_closes_directions_differ",
+        "hourly_closes_directions_differ_per_year",
+        "stamps_positions_differ",
+    }
+)
+_B1_EXIT_PREFLIGHT_KEYS = _B2_ARM_A_BAR_KEYS | {
+    "arm_a_ann_sharpe_noc",
+    "arm_a_ann_sharpe_noc_decisive",
+    "arm_a_max_drawdown",
+    "turnover_a",
+    "arm_a_spot_drag_pct_yr",
+    "benchmark_ann_sharpe_noc",
+    "benchmark_ann_sharpe_noc_decisive",
+    "arm_a_var_trials",
+    "exit_events",
+    "exit_events_early",
+    "exit_events_false",
+    "share_false",
+    "exit_events_per_year",
+    "hourly_closes_directions_differ",
+    "hourly_closes_directions_differ_per_year",
+}
+
+
 SUBJECTS: dict[str, Subject] = {
     "record44-crossfreq": Subject(
         "record44-crossfreq",
@@ -1569,6 +1924,31 @@ SUBJECTS: dict[str, Subject] = {
         _build_b1_volume_confirmation_preflight,
         spec="docs/specs/00134-b1-volume-confirmation-design.md",
         metric_keys=_B1_VOLUME_PREFLIGHT_KEYS,
+        seeds=(42,),
+    ),
+    "b1-hourly-channel-exits": Subject(
+        "b1-hourly-channel-exits",
+        (240, 60),
+        _ASSETS,
+        _build_b1_hourly_exit,
+        spec="docs/specs/00135-b1-hourly-channel-exits-design.md",
+        metric_keys=_B1_EXIT_METRIC_KEYS,
+        seeds=(42, 7, 1234),
+        verdict=_b1_hourly_exit_verdict,
+        no_verdict=(
+            "instrument finding: arm A fails the bar, or arm B's directions equal arm A's at every hourly close; no verdict, "
+            "the trial unspent"
+        ),
+        family="B1",
+        n_trials=_B1_EXIT_N_TRIALS,
+    ),
+    "b1-hourly-channel-exits-preflight": Subject(
+        "b1-hourly-channel-exits-preflight",
+        (240, 60),
+        _ASSETS,
+        _build_b1_hourly_exit_preflight,
+        spec="docs/specs/00135-b1-hourly-channel-exits-design.md",
+        metric_keys=_B1_EXIT_PREFLIGHT_KEYS,
         seeds=(42,),
     ),
 }
