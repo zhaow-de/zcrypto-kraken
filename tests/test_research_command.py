@@ -2140,8 +2140,8 @@ def _b1_volume_args(name: str, tmp_path: Path, *, dataset: str = "ohlc-test") ->
 def _b1_hourly_exit_dataset(tmp_path: Path, *, start: datetime = _B1_START, bars: int = _B1_BARS) -> Path:
     """Hourly closes on a slow cycle, so the 4h series makes new channel lows as well as highs, each 4h bucket's second
     hourly close dipped by a size of its asset's own, so an hourly close breaches a channel its 4h close then holds or
-    breaks; the 4h series aggregated from the present hourly rows. BTC misses the two 4h buckets of
-    `_B1_HOURLY_RV_BTC_GAPS`, which `_ffill_btc` fills, and every other asset single hours."""
+    breaks. BTC misses the two 4h buckets of `_B1_HOURLY_RV_BTC_GAPS`, which `_ffill_btc` fills, and every other asset
+    single hours."""
     root = tmp_path / "data"
     for i, asset in enumerate(_B2_ASSETS):
         hourly = []

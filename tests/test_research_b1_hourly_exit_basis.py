@@ -1,5 +1,5 @@
 """B1 trial 5's reads half and interior hourly closes against spec 00135's measured basis, computing no state, and arm A
-against records 48 and 49's stored figures, run only after the spec's hash."""
+against records 48 and 49's stored figures."""
 
 from __future__ import annotations
 

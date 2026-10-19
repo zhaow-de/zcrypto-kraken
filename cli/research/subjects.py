@@ -1488,10 +1488,9 @@ class _B1HourlyExitInputs(NamedTuple):
 
 
 def _b1_hourly_exit_inputs(reads: _B1HourlyRVReads) -> _B1HourlyExitInputs:
-    """Arm A's positions, vol scalars and directions, the interior closes, each arm's slot directions and exit events, one
-    entry per arm of `_B1_A2_ARMS` in its order, and the price paths, and no position or return of arm B: the pre-flight
-    reads this half alone. The interior closes come first, so their price validation and the hourly refusals (D4) refuse a
-    bad close before `_asset_returns` divides by it."""
+    """Each per-arm field one entry per arm of `_B1_A2_ARMS` in its order, and no position or return of arm B: the
+    pre-flight reads this half alone. The interior closes come first, so their price validation and the hourly refusals
+    (D4) refuse a bad close before `_asset_returns` divides by it."""
     h4_ts, h4_prices, hourly = reads
     n = len(h4_ts) - 1
     fed = _ffill_btc(h4_prices)
@@ -1696,8 +1695,6 @@ def _b1_hourly_exit_build(
     try:
         return compute(_b1_hourly_exit_inputs(reads))
     except (AlphaError, BacktestError, BenchmarkError, FeatureError, ValidationError) as exc:
-        # A bad hourly close or bar, a book that never trades or never draws down and a build with no exit event among
-        # them, named as the window's.
         raise SubjectError(f"{_b2_over(subject, window)}: {exc}") from exc
 
 
