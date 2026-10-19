@@ -1,6 +1,6 @@
 ---
 name: zcrypto-daily-ops
-description: Run the daily proactive operations pass — read the fleet, follow the runbook for whatever fired, remediate within the two tiers, write the journal entry and post the summary. Human-triggered, once a day.
+description: Run the daily proactive operations pass — read the fleet, follow the runbook for what fired, remediate within the two tiers, journal, post the summary. Human-triggered, once a day.
 disable-model-invocation: false
 ---
 

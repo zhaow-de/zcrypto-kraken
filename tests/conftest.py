@@ -59,20 +59,16 @@ def _recorded(ledger: Path) -> dict[str, str | None]:
 
 
 def _direct_readers(paths: list[str]) -> dict[str, set[str]] | None:
-    """Each path's `consumers.sh --direct` test readers; None when the script is absent or fails, so every case with a
-    changed file runs."""
+    """Each path's `consumers.sh --direct` test readers, one call per path since its stdout is that path's readers alone;
+    None when the script is absent or a call fails, so every case with a changed file runs."""
     if not CONSUMERS.is_file():
         return None
-    run = subprocess.run(["bash", str(CONSUMERS), "--direct", *paths], cwd=TMP_ROOT.parent, capture_output=True, text=True)
-    if run.returncode != 0:
-        return None
     readers: dict[str, set[str]] = {}
-    current: set[str] | None = None
-    for line in run.stdout.splitlines():
-        if line.startswith("## "):
-            current = readers.setdefault(line[3:], set())
-        elif current is not None and line and not line.startswith("#"):
-            current.add(line)
+    for path in paths:
+        run = subprocess.run(["bash", str(CONSUMERS), "--direct", path], cwd=TMP_ROOT.parent, capture_output=True, text=True)
+        if run.returncode != 0:
+            return None
+        readers[path] = {line for line in run.stdout.splitlines() if line}
     return readers
 
 

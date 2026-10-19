@@ -6,6 +6,8 @@ A finding is **Critical or Important only if a concrete failure scenario can be 
 
 **Critical** — the scenario reaches production, is irreversible, loses data, or defeats a safety guard. **Important** — meets that bar but is recoverable. **Minor** — everything else.
 
+A scenario that needs a condition the spec's `## Operating model` excludes — a second session, a second machine, a restored copy, a process it says does not run — is Minor by construction, its heading's block naming the excluded condition.
+
 The blast radius of this pair — anything outside these is Minor by construction:
 
 {BLAST_RADIUS}

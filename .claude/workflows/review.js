@@ -5,6 +5,7 @@ export const meta = {
   phases: [
     { title: 'Read', detail: 'one read-only reader per lens, in parallel' },
     { title: 'Refute', detail: 'one skeptic per Critical and Important' },
+    { title: 'Ledger', detail: 'the row appended to ledger.jsonl by the read itself' },
   ],
 }
 
@@ -23,7 +24,7 @@ for (const l of lenses) {
 }
 if (new Set(lenses.map((l) => l.name)).size !== lenses.length) throw new Error(`lens names must be distinct: ${lenses.map((l) => l.name).join(', ')}`)
 
-// --- shared with pre-review.js and re-review.js; tests/test_review_workflows.py holds GRADING, SCOPE and RULES equal across the three ---
+// --- shared with pre-review.js and re-review.js; tests/test_review_workflows.py holds GRADING and RULES equal across the three ---
 const GRADING = `Critical = a defect that reaches the operator as a traceback, silently degrades a report, refuses something legitimate, instructs the operator to destroy or invalidate data, or changes live-trade-path behaviour no test drives; a count that reads 0 over a set that misses the violation's usual shape; a guard that passes when it should refuse. Important = a claim a commit message makes that does not reproduce with the command it quotes, a probe verdict earned by something other than the guard it names, a number typed rather than pasted from the run it describes, a test that can pass vacuously, prose that, acted on as written, breaks something no test stops, or a change that alters behaviour or a guard's reach whatever its size. Minor = everything else in prose: wrong, dead, self-contradictory, naming a site a reader cannot find, or a comment or docstring a reader would not act on.`
 const SCOPE = `Re-run a probe only through the case its message records (a \`-k\` case), never a whole test file; re-derive a number only where the range's correctness rests on it; never run the full suite, prose-chars or the whole count list — they are CI's and the author's. About 40 tool calls: when the range is graded, stop and write.`
 const RULES = `READ-ONLY in the repo checkout, \`.local/\` included — gitignored is not outside it: no edits, no commits, no checkout, no stash. Plain blocking commands only, no background jobs, no subagents, and no agent tools (\`ListAgents\`, \`SendMessage\`): you read a range, you do not coordinate. Never run \`docker inspect\`, \`ansible-inventory\` or ssh; the data root under data/ is unversioned and read-only for you. Never run \`ansible-playbook\` in any form, against localhost or any inventory: this workstation is the fleet host zcrypto-ops, a live venue-facing node, and a play rendered against it is a play run on it.`
@@ -67,7 +68,7 @@ const lensPath = (name) => `${reportDir}/${name}-${tip}.md`
 
 const readerPrompt = (lens) => `You are one of ${lenses.length} independent readers, a different agent from the author, of \`git log ${range}\` at tip \`${tip}\` in ${repo}. ${RULES} ${CHECKOUT(`read-${lens.name}`)} ${SCOPE} Grading: ${GRADING}
 
-YOUR LENS — ${lens.name}: ${lens.brief} The other lenses are ${lenses.filter((o) => o.name !== lens.name).map((o) => o.name).join(', ') || 'none'}; leave their ground to them. The pre-review has already graded the range's prose and re-run its message claims: grade prose only where acting on it as written breaks something, and re-measure a claim only where the range's correctness rests on it.${drive ? ` Beyond the standing brief, drive this: ${drive}` : ''}
+YOUR LENS — ${lens.name}: ${lens.brief} The other lenses are ${lenses.filter((o) => o.name !== lens.name).map((o) => o.name).join(', ') || 'none'}; leave their ground to them. The pre-review has graded the range's prose, read its message claims and run nothing: every mutate-probe verdict a message in the range records is yours to re-run through its case (the guards lens), grade prose only where acting on it as written breaks something, and re-measure a claim only where the range's correctness rests on it.${drive ? ` Beyond the standing brief, drive this: ${drive}` : ''}
 
 Ask of every surface the range adds or keeps whether it should exist at all, before asking whether it is true: a surface that should not exist outranks every truth finding about it. Read \`git diff ${range}\` first, then each commit message. Write a Markdown report to ${lensPath(lens.name)} with \`## Verdict\`, \`## Findings\` (one \`### [Severity] path:line — claim\` heading per finding with evidence and a \`Consequence:\` line) and \`## Executed\`, then return the structured output with the same findings; the report and the structure must agree.`
 
@@ -135,7 +136,7 @@ const graded = (
 const standing = graded.filter((f) => !f.refuted)
 log(`after refutation: ${count('Critical', standing)} Critical / ${count('Important', standing)} Important / ${count('Minor', standing)} Minor standing, ${graded.length - standing.length} refuted`)
 
-// --- Refutation: returned for the caller to append ------------------------------------------------
+// --- Refutation: the Ledger agent below appends it to each report ---------------------------------
 // The lenses write their reports before any skeptic runs, and a skeptic writes nothing to the repo, so without this block
 // each lens report heads every refuted finding by its first severity, and its next reader reports one this read answered.
 const oneLine = (t) => String(t == null ? '' : t).replace(/\s+/g, ' ').replace(/\|/g, '\\|').slice(0, 300)
@@ -144,9 +145,17 @@ const refutation = graded.length
       .map((f) => `| ${f.id} | ${f.severity} | \`${f.path}:${f.line}\` | ${f.lenses.join(', ')} | ${f.severity === 'Minor' ? 'no skeptic: a Minor is reported, never refuted' : f.refuted ? `REFUTED — ${oneLine(f.skeptic && f.skeptic.reason)}` : `stands — ${oneLine(f.skeptic && f.skeptic.reason) || 'the skeptic could not refute it'}`} |`)
       .join('\n')}`
   : '## Refutation\n\nNo finding was graded, so no skeptic ran.'
-const lensReports = live.map((r) => lensPath(r.lens))
-log(`ledger: write the returned refutation to a file, then uv run python infra/scripts/review-ledger.py append ${reportDir} --kind review --range ${range} --tip ${tip} --refutation <that file> ${lensReports.map((p) => `--report ${p}`).join(' ')}`)
 for (const r of live) if (r.reportPath && r.reportPath !== lensPath(r.lens)) log(`lens ${r.lens} says it wrote ${r.reportPath}, not ${lensPath(r.lens)}: the refutation block goes to the path this workflow names`)
+
+// --- Ledger: the row this read owes, appended by the read itself (a controller forgot it once and fold-check refused) ---
+phase('Ledger')
+const refutationPath = `${reportDir}/refutation-${tip}.md`
+const ledgerOut = await agent(`From the directory ${repo}, two steps and nothing else. First write the text between the two lines reading REFUTATION below to ${refutationPath} byte for byte, through a quoted heredoc (cat > ${refutationPath} <<'REFUTATION' … REFUTATION). Then run exactly this one command and return its stdout and stderr verbatim: uv run python infra/scripts/review-ledger.py append ${reportDir} --kind review --range ${range} --tip ${tip} --refutation ${refutationPath} ${live.map((r) => `--report ${lensPath(r.lens)}`).join(' ')}
+
+REFUTATION
+${refutation}
+REFUTATION`, { label: 'ledger', phase: 'Ledger', effort: 'low', agentType: 'general-purpose', ...(model ? { model } : {}) })
+log(`ledger: ${String(ledgerOut || '').trim().slice(0, 240) || 'the append agent returned nothing, as a clean append prints nothing — read ledger.jsonl before appending by hand'}`)
 
 return {
   range,

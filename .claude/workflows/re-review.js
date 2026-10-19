@@ -5,6 +5,7 @@ export const meta = {
   phases: [
     { title: 'Re-read', detail: 'one reader over the fix range with the open priors' },
     { title: 'Refute', detail: 'one skeptic per Critical and Important, new or reopened' },
+    { title: 'Ledger', detail: 'the row appended to ledger.jsonl by the read itself' },
   ],
 }
 
@@ -25,7 +26,7 @@ if (drive && drive.length > 400) throw new Error(`drive is ${drive.length} chara
 // One report per read, as pre-review's: a fixed path lets a branch's second re-review overwrite its first.
 const reportPath = `${reportDir}/re-review-${tip}.md`
 
-// --- shared with pre-review.js and review.js; tests/test_review_workflows.py holds GRADING, SCOPE and RULES equal across the three ---
+// --- shared with pre-review.js and review.js; tests/test_review_workflows.py holds GRADING and RULES equal across the three ---
 const GRADING = `Critical = a defect that reaches the operator as a traceback, silently degrades a report, refuses something legitimate, instructs the operator to destroy or invalidate data, or changes live-trade-path behaviour no test drives; a count that reads 0 over a set that misses the violation's usual shape; a guard that passes when it should refuse. Important = a claim a commit message makes that does not reproduce with the command it quotes, a probe verdict earned by something other than the guard it names, a number typed rather than pasted from the run it describes, a test that can pass vacuously, prose that, acted on as written, breaks something no test stops, or a change that alters behaviour or a guard's reach whatever its size. Minor = everything else in prose: wrong, dead, self-contradictory, naming a site a reader cannot find, or a comment or docstring a reader would not act on.`
 const SCOPE = `Re-run a probe only through the case its message records (a \`-k\` case), never a whole test file; re-derive a number only where the range's correctness rests on it; never run the full suite, prose-chars or the whole count list — they are CI's and the author's. About 40 tool calls: when the range is graded, stop and write.`
 const RULES = `READ-ONLY in the repo checkout, \`.local/\` included — gitignored is not outside it: no edits, no commits, no checkout, no stash. Plain blocking commands only, no background jobs, no subagents, and no agent tools (\`ListAgents\`, \`SendMessage\`): you read a range, you do not coordinate. Never run \`docker inspect\`, \`ansible-inventory\` or ssh; the data root under data/ is unversioned and read-only for you. Never run \`ansible-playbook\` in any form, against localhost or any inventory: this workstation is the fleet host zcrypto-ops, a live venue-facing node, and a play rendered against it is a play run on it.`
@@ -80,7 +81,7 @@ ${priorList}
 What the author names as consciously left, each by prior id with its reason (the reason is a claim this read rests on: check it against the tree): ${left || 'nothing'}
 Minors the prior read reported, fixed or left with their reasons — context, not priors: ${reported || 'none'}
 
-The pre-review has already graded the range's prose and re-run its message claims: grade prose only where acting on it as written breaks something, and re-measure a claim only where the range's correctness rests on it.${drive ? ` Beyond the standing brief, drive this: ${drive}` : ''}
+The pre-review has graded the range's prose, read its message claims and run nothing: every mutate-probe verdict a message in the fix range records is yours to re-run through its case, grade prose only where acting on it as written breaks something, and re-measure a claim only where the range's correctness rests on it.${drive ? ` Beyond the standing brief, drive this: ${drive}` : ''}
 
 Read \`git diff ${range}\` first, then each commit message. Then walk every prior finding by id: closed (name the hunk or commit, AND name the class the finding is an instance of, both ways — the text (sibling spellings, other carriers of the same claim, other branches of the same condition) and the space (the categories the fixed code's input or state ranges over, judged against the invariant the fix restores) — and say what you checked beyond the instance the finding named; where the finding has no class beyond itself say that instead; a hunk that answers the finding as written and leaves a sibling standing has not closed it), left (only when the author's words above name it by id AND the reason holds against the tree), or open — a prior finding neither closed nor named as left is open; report it in the prior table only, since the workflow carries an open one forward itself. Grade anything else in the diff you would grade as a new finding; a Minor you list is context for the author's next pre-review, not a row for the next read. Write a Markdown report to ${reportPath} with \`## Verdict\`, \`## Prior findings\` (a table), \`## Findings\` and \`## Executed\`, then return the structured output; the report and the structure must agree.`
 
@@ -142,7 +143,7 @@ const graded = (
 const standing = graded.filter((f) => !f.refuted)
 log(`after refutation: ${count('Critical', standing)} Critical / ${count('Important', standing)} Important standing, ${count('Minor', standing)} Minor reported, ${graded.length - standing.length} refuted`)
 
-// --- Refutation: returned for the caller to append ------------------------------------------------
+// --- Refutation: the Ledger agent below appends it to each report ---------------------------------
 // The reader writes its report before any skeptic runs, and a skeptic writes nothing to the repo, so without this block
 // the report at reportPath heads every refuted finding by its first severity, and its next reader reports one this read answered.
 const oneLine = (t) => String(t == null ? '' : t).replace(/\s+/g, ' ').replace(/\|/g, '\\|').slice(0, 300)
@@ -151,8 +152,17 @@ const refutation = graded.length
       .map((f) => `| ${f.id} | ${f.severity} | \`${f.path}:${f.line}\` | ${f.severity === 'Minor' ? 'no skeptic: a Minor is reported, never refuted' : f.refuted ? `REFUTED — ${oneLine(f.skeptic && f.skeptic.reason)}` : `stands — ${oneLine(f.skeptic && f.skeptic.reason) || 'the skeptic could not refute it'}`} |`)
       .join('\n')}`
   : '## Refutation\n\nNo finding was graded, so no skeptic ran.'
-log(`ledger: write the returned refutation to a file, then uv run python infra/scripts/review-ledger.py append ${reportDir} --kind re-review --range ${range} --tip ${tip} --refutation <that file> --report ${reportPath}`)
 if (report.reportPath && report.reportPath !== reportPath) log(`the reader says it wrote ${report.reportPath}, not ${reportPath}: the refutation block goes to the path this workflow names`)
+
+// --- Ledger: the row this read owes, appended by the read itself (a controller forgot it once and fold-check refused) ---
+phase('Ledger')
+const refutationPath = `${reportDir}/refutation-${tip}.md`
+const ledgerOut = await agent(`From the directory ${repo}, two steps and nothing else. First write the text between the two lines reading REFUTATION below to ${refutationPath} byte for byte, through a quoted heredoc (cat > ${refutationPath} <<'REFUTATION' … REFUTATION). Then run exactly this one command and return its stdout and stderr verbatim: uv run python infra/scripts/review-ledger.py append ${reportDir} --kind re-review --range ${range} --tip ${tip} --refutation ${refutationPath} --report ${reportPath}
+
+REFUTATION
+${refutation}
+REFUTATION`, { label: 'ledger', phase: 'Ledger', effort: 'low', agentType: 'general-purpose', ...(model ? { model } : {}) })
+log(`ledger: ${String(ledgerOut || '').trim().slice(0, 240) || 'the append agent returned nothing, as a clean append prints nothing — read ledger.jsonl before appending by hand'}`)
 
 return {
   range,

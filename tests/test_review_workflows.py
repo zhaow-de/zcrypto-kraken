@@ -1,4 +1,4 @@
-"""The three review workflows carry one grading, one scope and one set of rules, copied because a workflow script
+"""The three review workflows carry one grading and one set of rules, copied because a workflow script
 cannot import another."""
 
 from __future__ import annotations
@@ -22,9 +22,12 @@ def _constant(name: str, text: str) -> str:
 
 def test_the_three_workflows_share_their_grading_scope_and_checkout_contract():
     texts = {f: (_FLOWS / f"{f}.js").read_text() for f in ("pre-review", "review", "re-review")}
-    for name in ("GRADING", "SCOPE", "RULES"):
+    for name in ("GRADING", "RULES"):
         values = {f: _constant(name, t) for f, t in texts.items()}
         assert len(set(values.values())) == 1, f"{name} differs between {sorted(values)}"
+    scopes = {f: _constant("SCOPE", t) for f, t in texts.items()}
+    assert scopes["review"] == scopes["re-review"], "the two reads share their scope"
+    assert scopes["pre-review"].startswith("Run no pytest and no mutate-probe"), "the pre-review reads and runs nothing"
 
 
 def test_a_keep_row_that_says_nothing_is_reported_as_owed():
@@ -90,12 +93,15 @@ def test_the_grading_grades_prose_by_consequence():
     assert "prose that, acted on as written, breaks something no test stops" in text
 
 
-def test_no_workflow_keeps_the_ledger_and_the_first_read_reads_none():
+def test_each_read_ends_in_its_own_ledger_phase_and_the_first_read_reads_none():
     for name in ("pre-review", "review", "re-review"):
         text = (_FLOWS / f"{name}.js").read_text()
-        assert "Bookkeeping" not in text and "phase('Record')" not in text and "phase('Ledger')" not in text, name
+        assert "Bookkeeping" not in text and "phase('Record')" not in text and text.count("phase('Ledger')") == 1, name
+        assert text.rfind("phase(") == text.rfind("phase('Ledger')"), f"{name}: the ledger phase is the last"
     before_the_grader = (_FLOWS / "pre-review.js").read_text().split("phase('Pre-review')")[0]
-    assert "ledger" not in before_the_grader and before_the_grader.count("throw") == 1, (
+    after_meta = re.split(r"^}\n", before_the_grader, maxsplit=1, flags=re.M)[1]
+    assert not re.search(r"\bledger\b", after_meta.replace("ledger.md", ""))
+    assert before_the_grader.count("throw") == 1, (
         "pre-review is the first read: it reads no ledger and refuses nothing but its arguments"
     )
 
@@ -278,11 +284,9 @@ _BRANCH = {"repo": "/r", "range": "develop..tip9abcde", "tip": "tip9abcde", "rep
 
 
 def test_the_graders_run_on_opus_unless_a_caller_names_another_which_is_refused():
-    """The graders re-run commands and diff texts — the work the owner put on Opus on 2026-09-20; Fable keeps
-    the reads, whose class walks build compositions by hand."""
     for args in (_BRANCH, {**_BRANCH, "model": "opus"}):
         ran = _drive_pre_review(args)
-        assert [(c["label"], c["model"]) for c in ran["calls"]] == [("pre-review", "opus")]
+        assert [(c["label"], c["model"]) for c in ran["calls"]] == [("pre-review", "opus"), ("ledger", "opus")]
     for below_or_above in ("sonnet", "fable"):
         ran = _drive_pre_review({**_BRANCH, "model": below_or_above})
         assert "floor and cap" in ran.get("error", ""), (below_or_above, ran)
@@ -296,8 +300,8 @@ def test_a_fanned_pre_review_runs_one_grader_per_slice_and_returns_one_row_at_th
     a row at a slice's own end, would either pass a review over a tip nobody read whole or refuse one that was."""
     ran = _drive_pre_review({**_BRANCH, "ranges": _SLICES, "rulings": "/r/.tmp/sdd/progress.md", "worktree": "/r/.tmp/wt"})
     assert "error" not in ran, ran
-    assert [c["label"] for c in ran["calls"]] == ["pre-review:head", "pre-review:tail"]
-    first, last = (c["prompt"] for c in ran["calls"])
+    assert [c["label"] for c in ran["calls"]] == ["pre-review:head", "pre-review:tail", "ledger"]
+    first, last = (c["prompt"] for c in ran["calls"][:2])
     for prompt, slice_ in ((first, _SLICES[0]), (last, _SLICES[1])):
         assert (
             f"`git log {slice_['range']}`" in prompt
@@ -309,7 +313,10 @@ def test_a_fanned_pre_review_runs_one_grader_per_slice_and_returns_one_row_at_th
     assert "/r/.tmp/sdd/progress.md" in last and "/r/.tmp/sdd/progress.md" not in first, "the rulings go to the last slice alone"
     out = ran["out"]
     assert out["row"] == {"kind": "pre-review", "range": "develop..tip9abcde", "tip": "tip9abcde"} and "recorded" not in out
-    assert "review-ledger.py append /r/.tmp/reads/x --kind pre-review --range develop..tip9abcde --tip tip9abcde" in ran["logs"][-1]
+    assert (
+        "review-ledger.py append /r/.tmp/reads/x --kind pre-review --range develop..tip9abcde --tip tip9abcde"
+        in ran["calls"][-1]["prompt"]
+    )
     assert out["graded"] == 7 and out["ready"] is False
     assert out["verdict"] == "[head] v-head [tail] v-tail"
     rows = sorted((row["site"], row["survives"], row["ship"]) for row in out["prose"])
@@ -330,7 +337,7 @@ def test_a_fanned_pre_review_runs_one_grader_per_slice_and_returns_one_row_at_th
 @pytest.mark.parametrize("absent", [{}, {"ranges": None}], ids=["left out", "null"])
 def test_a_pre_review_given_no_slices_is_the_one_grader_it_was(absent):
     ran = _drive_pre_review({**_BRANCH, "worktree": "/r/.tmp/wt", "rulings": "/r/.tmp/sdd/progress.md", **absent})
-    assert [c["label"] for c in ran["calls"]] == ["pre-review"]
+    assert [c["label"] for c in ran["calls"]] == ["pre-review", "ledger"]
     prompt = ran["calls"][0]["prompt"]
     assert "/r/.tmp/reads/x/pre-review-tip9abcde.md" in prompt and "the slice" not in prompt
     assert "you are its only user" in prompt and "/r/.tmp/sdd/progress.md" in prompt
@@ -371,38 +378,44 @@ def test_a_malformed_fan_out_is_refused_with_the_args_rule(ranges):
 
 def test_the_longest_label_and_a_one_slice_cover_are_admitted():
     ran = _drive_pre_review({**_BRANCH, "ranges": _whole("t" * 32)})
-    assert [c["label"] for c in ran.get("calls", [])] == ["pre-review:" + "t" * 32], ran
+    assert [c["label"] for c in ran.get("calls", [])] == ["pre-review:" + "t" * 32, "ledger"], ran
 
 
 _PRE_REVIEWED = {"kind": "pre-review", "range": "develop..tip9abcde", "tip": "tip9abcde", "ts": "t"}
 _READS = {
-    "review": ({**_BRANCH, "ledger": [_PRE_REVIEWED]}, ["read:behaviour", "read:guards", "refute:1"], ["behaviour", "guards"]),
+    "review": (
+        {**_BRANCH, "ledger": [_PRE_REVIEWED]},
+        ["read:behaviour", "read:guards", "refute:1", "ledger"],
+        ["behaviour", "guards"],
+    ),
     "re-review": (
         {
             **_BRANCH,
             "prior": [{"id": 1, "severity": "Important", "path": "a.py", "line": 1, "claim": "c"}],
             "ledger": [{**_PRE_REVIEWED, "kind": "review"}, _PRE_REVIEWED],
         },
-        ["re-read", "refute:1"],
+        ["re-read", "refute:1", "ledger"],
         ["re-review"],
     ),
 }
 
 
 @pytest.mark.parametrize("flow", sorted(_READS))
-def test_a_read_runs_no_bookkeeping_agent_and_returns_its_row_and_refutation(flow):
+def test_a_read_appends_its_own_row_and_refutation_through_one_ledger_agent_after_its_readers(flow):
     args, labels, reports = _READS[flow]
     ran = _drive(flow, args, _READERS)
     assert "error" not in ran, ran
-    assert [c["label"] for c in ran["calls"]] == labels, "every agent is a reader or a skeptic"
-    assert not any("ledger" in c["prompt"] for c in ran["calls"]), "no agent is told of the ledger"
+    assert [c["label"] for c in ran["calls"]] == labels, "every agent is a reader or a skeptic, then the one ledger agent"
+    assert not any("ledger" in c["prompt"] for c in ran["calls"] if c["label"] != "ledger"), "no reader is told of the ledger"
+    ledger_prompt = ran["calls"][-1]["prompt"]
     out = ran["out"]
     assert out["row"] == {"kind": flow, "range": "develop..tip9abcde", "tip": "tip9abcde"} and "recorded" not in out
     assert out["refutation"].startswith("## Refutation\n") and "| REFUTED — r \\| why |" in out["refutation"]
-    append = f"review-ledger.py append /r/.tmp/reads/x --kind {flow} --range develop..tip9abcde --tip tip9abcde --refutation "
-    assert any(append in line for line in ran["logs"]), ran["logs"]
+    append = f"review-ledger.py append /r/.tmp/reads/x --kind {flow} --range develop..tip9abcde --tip tip9abcde --refutation /r/.tmp/reads/x/refutation-tip9abcde.md "
+    assert append in ledger_prompt and ledger_prompt.count("\nREFUTATION") == 2, ledger_prompt
+    assert out["refutation"] in ledger_prompt, "the block the read returns is the block the agent writes"
     for report in reports:
-        assert any(f"--report /r/.tmp/reads/x/{report}-tip9abcde.md" in line for line in ran["logs"]), (report, ran["logs"])
+        assert f"--report /r/.tmp/reads/x/{report}-tip9abcde.md" in ledger_prompt, (report, ledger_prompt)
 
 
 @pytest.mark.parametrize("flow", sorted(_READS))

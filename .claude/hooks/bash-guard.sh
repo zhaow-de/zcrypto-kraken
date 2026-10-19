@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# retire when: Claude Code's permission layer itself refuses every family this header names.
 # PreToolUse[Bash] guard: a refusal is exit 2, the one code the harness blocks on, with the spelling found and
 # what it costs on stderr; anything else exits 0 silently.
 # `tests/test_bash_guard.py` drives every family in both directions and IS the list of what is refused and what
@@ -22,10 +23,13 @@
 # handed to `sh -c`, `eval` or a Python subprocess, a program, a flag or a vaulted path arriving through a variable,
 # a substitution or an encoding, a cap first in its pipeline, which truncates what it opened rather than what the
 # command computed (`head -1 VERSION`), a truncation that is neither head nor tail, and a vaulted file read by a
-# program no family names (`grep` without `-c`, `diff`, `git log -p`, a Python script) or reached through `xargs`,
-# `find -exec` or a copy of its whole directory -- none is an argv this guard judges; nor is a vaulted file the command
-# makes before it reads it (`ln -s <vaulted file> x && cat x`), since a file's existence is read before anything runs.
-# A vault tool's writing verb is admitted over a vaulted file: a key rotation runs `ansible-vault encrypt|rekey`.
+# program no family names (`grep` without `-c`, `diff`, `git log -p`, a Python script) or reached through a copy of
+# its whole directory -- none is an argv this guard judges; nor is a vaulted file the command makes before it reads it
+# (`ln -s <vaulted file> x && cat x`), since a file's existence is read before anything runs. Of `xargs` and
+# `find -exec`, two shapes are judged: a stage whose command word is `xargs` with `grep` or `rg` as its first operand,
+# or `find` carrying `-exec grep|rg`, in a pipeline any stage of which names `infra` as a word or a path component --
+# the word `grep_pattern_at` takes for the grep's pattern excepted; every other `xargs` or `-exec` is outside. A vault
+# tool's writing verb is admitted over a vaulted file: a key rotation runs `ansible-vault encrypt|rekey`.
 # Refused deliberately, as a word is judged wherever it stands: an agent's `echo git push`, `echo cat <vaulted file>`.
 #
 # A stage's directory, for the vaulted-file, memo and dispatched-agent families, is the payload's `cwd` moved by
@@ -37,6 +41,12 @@
 #
 # Outside the memo family: every writer its corpus does not refuse -- a wrapper (`sudo tee`), a glob or a brace, a
 # path a variable holds whole, an interpreter, `awk -i inplace`, `rsync`, `ln`, `dd`, `rm`.
+#
+# A state-changing git command (`changes_state`; `tag` deliberately not) stamps `zcrypto-git-state-stamp` in the
+# checkout's own git directory -- a worktree's, not the common dir worktrees share -- once per call at admission; a
+# second one under 3 s after is refused, since a hook sees one Bash call and nothing of its siblings: time is the
+# mechanic, so a sequential pair inside the gap is refused as a parallel pair is. A read neither stamps nor is refused;
+# a directory that is no checkout, or an unreadable stamp, admits.
 #
 # The dispatched-agent family judges only a call whose payload carries `agent_id`, which the harness sets inside a
 # subagent alone, so the main loop's pushes and merges never reach it. The main checkout is the parent of the git
@@ -54,6 +64,7 @@
 set -euo pipefail
 input="$(cat)"
 prog="$(cat <<'PY'
+import contextlib
 import functools
 import glob
 import json
@@ -64,6 +75,7 @@ import shlex
 import signal
 import subprocess
 import sys
+import time
 
 KEY = "core.hookspath"
 NO_VERIFY = "--no-verify"
@@ -184,6 +196,10 @@ WORKTREE_REMEDY = (
     "repository's main checkout or of one of its worktrees, whoever made it, or under its session's directory in "
     "Claude Code's temp root; a worktree, and another session's directory, are that session's."
 )
+STATE_SUBS = {"commit", "merge", "rebase", "reset", "push", "pull", "fetch", "cherry-pick", "revert", "am", "checkout", "switch", "stash", "mv", "rm"}
+STATE_STAMP = "zcrypto-git-state-stamp"
+STATE_GAP = 3.0  # seconds since the checkout's last admitted state-changing git command
+XARGS_VALUE = {"-n", "-I", "-L", "-P", "-d", "-s"}  # xargs' short options whose value is the next word
 HOOK_DIR = posixpath.dirname(os.path.abspath(sys.argv[1]))
 
 
@@ -598,6 +614,45 @@ def judge_cap(pipe, raw):
                 inner = capped_stage(body)
                 if inner and comparing(stage):
                     refuse_capped_test(inner, stage, raw)
+
+
+def handed_grep(words):
+    p, rest = argv_of(words)
+    if p == "xargs":
+        j = 0
+        while j < len(rest) and rest[j].startswith("-"):
+            j += 2 if rest[j] in XARGS_VALUE else 1
+        return j < len(rest) and rest[j].rpartition("/")[2] in GREPS
+    return p == "find" and any(a == "-exec" and rest[j + 1].rpartition("/")[2] in GREPS for j, a in enumerate(rest[:-1]))
+
+
+def grep_pattern_at(stage):
+    p, rest = argv_of(stage)
+    base = len(stage) - len(rest)
+    if p == "xargs":
+        j = 0
+        while rest[j].startswith("-"):
+            j += 2 if rest[j] in XARGS_VALUE else 1
+    else:
+        j = next(j for j, a in enumerate(rest[:-1]) if a == "-exec" and rest[j + 1].rpartition("/")[2] in GREPS) + 1
+    for i in range(j + 1, len(rest)):
+        w = rest[i]
+        if w in ("-e", "--regexp") or (w.startswith("-") and not w.startswith("--") and w.endswith("e")):
+            return base + i + 1 if i + 1 < len(rest) else None
+        if w.startswith("--regexp=") or not w.startswith("-") or (not w.startswith("--") and "e" in w[1:]):
+            return base + i
+    return None
+
+
+def judge_handed_grep(pipe, raw):
+    handed = [handed_grep(stage) for stage in pipe]
+    if not any(handed):
+        return
+    judged = [w for stage, h in zip(pipe, handed) for i, w in enumerate(stage) if not (h and i == grep_pattern_at(stage))]
+    if any("infra" in w.split("/") for w in judged):
+        for stage, h in zip(pipe, handed):
+            if h:
+                refuse_vault(stage, "greps the files it is handed in a pipeline naming infra, where the vaulted files sit", raw)
 
 
 def is_git(w):
@@ -1056,9 +1111,10 @@ def in_main_checkout(path):
 
 
 @functools.cache
-def top_and_common(where):
+def checkout_dirs(where):
+    # The checkout's top, its common git dir and its own git dir (a worktree's `.git/worktrees/<name>`), or None.
     done = subprocess.run(
-        ["git", "-C", where, "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"],
+        ["git", "-C", where, "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir", "--absolute-git-dir"],
         capture_output=True,
         text=True,
     )
@@ -1072,7 +1128,7 @@ def worktree_top(path):
     ours, here = os.path.realpath(f"{main}/.git"), path
     while here != "/":
         here = posixpath.dirname(here)
-        if top_and_common(here) == (here, ours):
+        if (checkout_dirs(here) or ())[:2] == (here, ours):
             return here
     return None
 
@@ -1117,6 +1173,38 @@ def judge_agent(words, here, raw, session):
             f"`{spelled(words)}` runs `git {sub}` in the main checkout, at `{here}`, from a dispatched agent; in "
             f"`{raw}`. {CHECKOUT_REMEDY}"
         )
+
+
+def changes_state(sub, rest):
+    if sub == "stash":
+        return rest[:1] not in (["list"], ["show"])
+    if sub == "branch":
+        return bool(ref_write(sub, rest))
+    return sub in STATE_SUBS or (sub == "worktree" and rest[:1] in (["add"], ["remove"], ["move"]))
+
+
+def state_stamp(words, here):
+    # The stamp of the checkout a state-changing git command runs in, or None for a read or a directory that is no
+    # checkout; a stamp younger than STATE_GAP refuses.
+    sub, rest, chdirs = git_sub(words)
+    if not sub or not changes_state(sub, rest):
+        return None
+    for d in chdirs:
+        here = resolve(here, d)
+    found = checkout_dirs(here) if here else None
+    if found is None:
+        return None
+    stamp = posixpath.join(found[2], STATE_STAMP)
+    try:
+        age = time.time() - float(open(stamp).read())
+    except (OSError, ValueError):
+        return stamp
+    if age < STATE_GAP:
+        refuse(
+            f"`{spelled(words)}`: a state-changing git command started {age:.1f} s ago in this checkout and each runs "
+            f"alone — if that one has already returned, re-send this one after the gap"
+        )
+    return stamp
 
 
 def env_assignments(words):
@@ -1190,6 +1278,7 @@ try:
         sys.exit(3)
     cwd = call.get("cwd") if isinstance(call.get("cwd"), str) and call.get("cwd") else os.getcwd()
     here = cwd
+    stages = []
     for pipe in commands:
         for words in pipe:
             judge(words)
@@ -1197,9 +1286,17 @@ try:
             judge_memo(words, raw, here or cwd)
             if agent:
                 judge_agent(words, here, raw, call.get("session_id"))
+            stages.append((words, here or cwd))
         judge_cap(pipe, raw)
+        judge_handed_grep(pipe, raw)
         if len(pipe) == 1:
             here = moved(pipe[0], here)
+    # The stamps are read after every other arm, so their refusal names the earlier one, and written once at admission.
+    for stamp in {s for words, where in stages if (s := state_stamp(words, where))}:
+        with contextlib.suppress(OSError):
+            os.makedirs(posixpath.dirname(stamp), exist_ok=True)
+            with open(stamp, "w") as f:
+                f.write(repr(time.time()))
 except Exception as exc:
     if agent:
         refuse(

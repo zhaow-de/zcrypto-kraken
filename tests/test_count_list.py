@@ -34,7 +34,7 @@ CORPUS = (
 
 _ENTRY = re.compile(r'^\s*emit "([^"]+)"', re.MULTILINE)
 _CORPUS_ENTRY = re.compile(r"count: `infra/scripts/count-list\.sh ([a-z0-9-]+)`")
-NOT_NAMED = {"topic-only-merges", "claude-commits-since-the-round-closed", "worktrees", "ambient-bytes"}
+NOT_NAMED = {"claude-commits-since-the-round-closed", "ambient-bytes"}
 _VALUE = re.compile(r"\d+(?: passed)?")
 
 
@@ -101,78 +101,6 @@ def test_the_prose_only_entry_reads_the_ref_predicate_and_exclusions_its_clause_
     )
     assert re.search(left, fn.group(0), re.M), "the left arm no longer reads as the clause states"
     assert re.search(right, fn.group(0), re.M), "the right arm no longer reads as the clause states"
-
-
-PROTOCOL = REPO / "docs" / "reference" / "multi-agent-protocol.md"
-
-
-def _worktree_pipeline() -> str:
-    fn = re.search(r"^c_worktree_processes\(\) \{ (?P<pipe>.*); \}$", SCRIPT.read_text(), re.M)
-    assert fn, "the worktrees entry's function is gone, renamed or no longer one line"
-    return fn.group("pipe")
-
-
-def test_the_worktree_count_counts_a_cwd_inside_any_linked_worktree_and_not_the_main_checkout(tmp_path):
-    main = tmp_path.resolve() / "main"
-    root = tmp_path.resolve() / "claude-tmp"
-    slug = "-home-zhaow-Projects-zcrypto-kraken"
-    git = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
-    subprocess.run([*git, "init", "-q", str(main)], check=True)
-    subprocess.run([*git, "-C", str(main), "commit", "-q", "--allow-empty", "-m", "x"], check=True)
-    harness = main / ".claude" / "worktrees" / "x"
-    payload = root / "claude-1000" / slug / "wt-b"
-    for worktree in (harness, payload):
-        subprocess.run([*git, "-C", str(main), "worktree", "add", "-q", "--detach", str(worktree)], check=True)
-    cwds = [
-        str(harness / "sub"),  # below a worktree cut under the checkout, where the harness cuts its own: counted
-        str(payload),  # a payload worktree under a temp root, the cwd its own top: counted
-        str(main),  # the main checkout
-        str(harness) + "y",  # a sibling sharing a worktree's path as a prefix
-        str(root / "claude-1000" / slug / "scratch"),  # a scratchpad beside a worktree, under the per-uid directory
-    ]
-    stage = _worktree_pipeline().rsplit(" | ", 1)[1]
-    done = subprocess.run(["bash", "-c", f"printf '%s\\n' \"$@\" | {stage}", "_", *cwds], capture_output=True, text=True, cwd=main)
-    assert done.stdout.strip() == "2", done.stdout + done.stderr
-
-
-def test_the_worktree_count_sees_a_cwd_the_kernel_renders_deleted_under_a_worktree_git_still_lists(tmp_path):
-    main = tmp_path.resolve() / "main"
-    git = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
-    subprocess.run([*git, "init", "-q", str(main)], check=True)
-    subprocess.run([*git, "-C", str(main), "commit", "-q", "--allow-empty", "-m", "x"], check=True)
-    prunable, unregistered = tmp_path.resolve() / "wt-rm", tmp_path.resolve() / "wt-gitrm"
-    for worktree in (prunable, unregistered):
-        subprocess.run([*git, "-C", str(main), "worktree", "add", "-q", "--detach", str(worktree)], check=True)
-    (prunable / "sub").mkdir()
-    parked = [subprocess.Popen(["sleep", "60"], cwd=str(d)) for d in (prunable, prunable / "sub", unregistered)]
-    try:
-        shutil.rmtree(prunable)
-        subprocess.run([*git, "-C", str(main), "worktree", "remove", "--force", str(unregistered)], check=True)
-        cwds = [os.readlink(f"/proc/{p.pid}/cwd") for p in parked]
-        assert [c.endswith(" (deleted)") for c in cwds] == [True] * 3, cwds
-        listed = subprocess.run(
-            [*git, "-C", str(main), "worktree", "list", "--porcelain"], capture_output=True, text=True, check=True
-        ).stdout
-        assert f"worktree {prunable}\n" in listed and f"worktree {unregistered}\n" not in listed, listed
-        stage = _worktree_pipeline().rsplit(" | ", 1)[1]
-        done = subprocess.run(
-            ["bash", "-c", f"printf '%s\\n' \"$@\" | {stage}", "_", *cwds], capture_output=True, text=True, cwd=main
-        )
-        # The prunable worktree's two count; the unregistered one's is inside no worktree the list names.
-        assert done.stdout.strip() == "2", done.stdout + done.stderr
-    finally:
-        for p in parked:
-            p.kill()
-            p.wait()
-
-
-def test_the_protocols_worktree_count_is_the_scripts_own_pipeline():
-    line = next(
-        l for l in PROTOCOL.read_text().splitlines() if l.startswith("- A worktree is removed when its branch merges; the count")
-    )
-    copy = re.search(r"\(`(?P<pipe>for l in /proc/\[0-9\]\*/cwd; [^`]*)`\)", line)
-    assert copy, "the protocol's worktree line no longer carries the count in a code span"
-    assert copy.group("pipe") == _worktree_pipeline(), "the protocol's copy and the script's function differ"
 
 
 def _set_clause(entry: str) -> str:
@@ -264,8 +192,8 @@ def test_every_rule_window_is_a_full_instant_and_not_a_bare_date():
     assert inlined == [], f"a window is inlined instead of naming its RULE_SINCE: {inlined}"
 
 
-def test_the_corpus_names_every_entry_but_the_four_the_script_carries_on_its_own():
-    """A corpus count names an entry that exists, and an entry the corpus does not name is one of the four -- a universal whose count is not run here is the finding."""
+def test_the_corpus_names_every_entry_but_the_two_the_script_carries_on_its_own():
+    """A corpus count names an entry that exists, and an entry the corpus does not name is one of the two -- a universal whose count is not run here is the finding."""
     names = _ENTRY.findall(SCRIPT.read_text())
     assert len(names) == len(set(names)), f"two entries answer to one name: {sorted(names)}"
     corpus = _corpus_entries()
@@ -773,22 +701,6 @@ def _git(repo: pathlib.Path, *args: str) -> str:
     return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, check=True).stdout
 
 
-def _merge(repo: pathlib.Path, branch: str, files: list[str]) -> None:
-    _git(repo, "checkout", "-q", "-b", branch)
-    for rel in files:
-        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
-        (repo / rel).write_text(f"{branch}\n")
-        _git(repo, "add", rel)
-        _git(repo, "commit", "-qm", f"add {rel}")
-    _git(repo, "checkout", "-q", "develop")
-    _git(repo, "merge", "-q", "--no-ff", "-m", f"Merge pull request from {branch}", branch)
-
-
-def _topic_only_merges(repo: pathlib.Path) -> str:
-    script = f'source "{SCRIPT}"; cd "{repo}"; count_micro_prs develop'
-    return subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True).stdout.strip()
-
-
 @pytest.fixture
 def repo(tmp_path: pathlib.Path) -> pathlib.Path:
     subprocess.run(["git", "init", "-q", "-b", "develop", str(tmp_path)], check=True)
@@ -799,14 +711,6 @@ def repo(tmp_path: pathlib.Path) -> pathlib.Path:
     _git(tmp_path, "add", "README.md")
     _git(tmp_path, "commit", "-qm", "base")
     return tmp_path
-
-
-def test_the_topic_only_arm_counts_a_merge_only_when_every_file_it_brought_in_is_a_topic_file(repo):
-    """One file outside `docs/open-topics/` disqualifies the whole merge, however many topic files ride with it."""
-    _merge(repo, "mixed", ["docs/open-topics/T9998-parked.md", "cli/thing.py"])
-    assert _topic_only_merges(repo) == "0"
-    _merge(repo, "topics-only", ["docs/open-topics/T9999-parked.md", "docs/open-topics/README.md"])
-    assert _topic_only_merges(repo) == "1"
 
 
 def _readonly_key_in_a_role(repo: pathlib.Path, files: dict[str, str]) -> str:

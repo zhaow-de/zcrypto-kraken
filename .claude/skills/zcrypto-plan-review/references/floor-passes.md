@@ -2,27 +2,13 @@
 
 Each section below is one prompt. `{SPEC_PINNED}` is the same clause `fixer.md` renders.
 
-## minor-sweep
-
-You are folding the remaining Minor findings into a spec+plan pair in {WORKTREE} (branch {BRANCH}). You have no prior context.
-
-Read `{UNION}` — only its Minor blocks concern you — then {SPEC} (the binding authority), {PLAN}, `{REPORT_DIR}/pin-facts.md`, the fix reports {PRIOR_FIX} (so an origin label is a fact you can check rather than a guess), and every file a finding cites.{TOPIC_LINE} Do not read `.local/memo.md`.
-
-**Fold every Minor whose fix is one local hunk that adds no mechanism and moves no cross-reference.** Leave every other Minor, and every one you verify wrong, with a one-clause reason **in the commit message body** — that message is the durable record of what was consciously left; nothing else records it. With nothing to fold, commit `--allow-empty` carrying the reasons. Your cwd resets between commands: prefix each with `cd {WORKTREE} &&`. No edit outside a Minor's own hunk: a sweep that starts extending is a fix round, and this is not one.
-
-{SPEC_PINNED} Under the pinned clause a Minor whose hunk is in {SPEC} goes under `## Left` with the reason `pinned` — this report has no `## Spec-blocked`.
-
-Before committing, `grep` the pair for every value you changed, and re-run every `--collect-only` a touched filter affects. Stage by explicit path; `Co-Authored-By: <your own model, exactly as your system prompt names it> <noreply@anthropic.com>`; `uv run pre-commit run -a` until clean; never `--no-verify`. Do not push.
-
-Report `{OUT}`: `## Folded`, `## Left` (key + reason) and `## Spec amendments` (quoted before/after, or `none`) — counts derived by re-reading it. Final message: the commit hash and the two counts. Run everything as plain blocking commands; background nothing; no subagents; no agent tools (`ListAgents`, `SendMessage`); do not end your turn before the commit exists.
-
 ## exec
 
 You are the executability pass for a spec+plan pair. Work in the detached worktree {EXEC_WT} — a throwaway copy at the branch's HEAD; write and commit there freely, it is removed afterwards. You have no prior context.
 
 Read {SPEC}, {PLAN}, `{REPORT_DIR}/pin-facts.md` and the fix reports {PRIOR_FIX} — they live under the branch's own worktree, which you read and never write. The fix reports are what make an origin label checkable; without them every finding looks like the author's.{TOPIC_LINE} Do not read `.local/memo.md`. Every write, command and commit is in {EXEC_WT}: your cwd resets between commands, so prefix each with `cd {EXEC_WT} &&`; `{OUT}` is an absolute path outside it. Before the first verdict run `cd {EXEC_WT} && uv run python -c 'import cli; print(cli.__file__)'` and record the output as the first row of `## Executed` — it must start with {EXEC_WT}, or every verdict measures the wrong tree.
 
-The semantic reviews are done and their findings fixed. **Do not review what the documents say. Your subject is whether the plan CAN BE EXECUTED against this tree, task by task, by an implementer who sees only the task's text and the Global Constraints.** A plan built of complete code fences is a program; run it.
+The semantic reviews are done and their findings fixed. **Do not review what the documents say. Your subject is whether the plan CAN BE EXECUTED against this tree, task by task, by an implementer who sees only the task's text and the Global Constraints.** A plan built of complete code fences is a program; run it. Run each task's stated commands, its test file and its probes; never the suite, which is CI's, and never a pytest over the whole `tests/` tree.
 
 For every task, in order, in {EXEC_WT}:
 

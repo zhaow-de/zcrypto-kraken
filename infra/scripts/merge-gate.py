@@ -1,5 +1,17 @@
 """The merge-pr gate: every reason a pull request is not ready to merge, or GATE PASSED."""
 
+# retire when:
+#  1. state and draft — GitHub's merge button is the only path to a merge, which a closed or draft PR has none of
+#  2. mergeable — GitHub refuses CONFLICTING and UNKNOWN on every merge path, the API's included
+#  3. mergeStateStatus — .github/settings.yml's branch protection is the one gate the repo trusts, this evaluator no longer defense in depth
+#  4. reviewDecision — reviews are required in .github/settings.yml, so a CHANGES_REQUESTED is BLOCKED under arm 3
+#  5. CI — GitHub's required `Full test suite` check is the only CI gate the repo trusts, a pending run refused by it alone
+#  6. checklist — the PR template carries no task list, or GitHub refuses a merge over an unchecked box
+#  7. read line — a reader's row lives in the PR's checks instead of its body
+#  8. records exemption — arm 7 goes, or RECORDS has no directory left whose README declares its PRs outside the pre-push read
+#  9. ambient growth — the commit-msg hook running infra/scripts/guidance-guard.py sees every rewrite, or the `Ambient grows by` line leaves the message
+# 10. change-index row — docs/reference/change-index.md is rendered from the merges and owes no hand-written row, or open-pr writes the row as a check
+
 from __future__ import annotations
 
 import fnmatch
