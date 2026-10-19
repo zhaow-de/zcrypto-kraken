@@ -1033,6 +1033,8 @@ def test_the_round_three_escapes_are_refused(cmd):
             "ops",
         ),
         ("sudo docker logs --since 5h zcrypto-engine | grep 'not scored'", "zcrypto"),
+        ("uv run python infra/scripts/grafana-compare.py --day 2026-11-20", "ops"),
+        ("uv run python infra/scripts/grafana-compare.py", "ops"),
     ],
 )
 def test_the_wrappers_and_quoting_the_runbooks_really_use(cmd, host):
@@ -1048,6 +1050,12 @@ def test_the_query_tools_stack_flag_takes_a_name_and_nothing_else():
     assert ops_daily.classify_action("uv run python infra/scripts/grafana-query.py --stack", host="ops", resolve=_identity) is (
         ops_daily.Tier.PREPARED
     )
+
+
+def test_the_compare_tools_day_flag_takes_a_date_and_nothing_else():
+    for tail in ("--day yesterday", "--day 2026-10-18;id", "--day", "--day 2026-10-18 extra", "--stack mon"):
+        step = f"uv run python infra/scripts/grafana-compare.py {tail}"
+        assert ops_daily.classify_action(step, host="ops", resolve=_identity) is ops_daily.Tier.PREPARED, tail
 
 
 def test_a_peeled_docker_exec_payload_is_re_examined_never_trusted():

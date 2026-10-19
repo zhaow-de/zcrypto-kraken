@@ -158,11 +158,17 @@ def differences(node: Node, instant: int, first: str, a: dict, second: str, b: d
 
 def _day(argv: list[str]) -> date:
     today = datetime.now(timezone.utc).date()
-    if "--day" not in argv:
+    if not argv:
         return today - timedelta(days=1)
+    if len(argv) == 2 and argv[0] == "--day":
+        value = argv[1]
+    elif len(argv) == 1 and argv[0].startswith("--day="):
+        value = argv[0].partition("=")[2]
+    else:
+        raise Failed(f"the arguments are [--day YYYY-MM-DD], not {' '.join(argv)!r}")
     try:
-        day = date.fromisoformat(argv[argv.index("--day") + 1])
-    except (IndexError, ValueError) as exc:
+        day = date.fromisoformat(value)
+    except ValueError as exc:
         raise Failed(f"--day takes YYYY-MM-DD: {exc}") from exc
     if day >= today:
         raise Failed(f"--day {day} has not ended in UTC")
