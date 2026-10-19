@@ -702,7 +702,13 @@ def test_liquidation_grid_features_refuses_a_naive_bucket_stamp_by_name():
 
 
 @pytest.mark.parametrize(
-    "stamp", [(DAY0 + timedelta(hours=5)).replace(tzinfo=None), DAY0 + timedelta(hours=5, minutes=31)], ids=["naive", "off-hour"]
+    "stamp",
+    [
+        (DAY0 + timedelta(hours=5)).replace(tzinfo=None),
+        DAY0 + timedelta(hours=5, minutes=31),
+        DAY0.replace(hour=10, tzinfo=timezone(timedelta(hours=5, minutes=30))),
+    ],
+    ids=["naive", "off-hour", "half-hour-zone"],
 )
 def test_liquidation_grid_features_refuses_a_naive_or_off_hour_covered_stamp_by_name(stamp):
     covered = [stamp if t == DAY0 + timedelta(hours=5) else t for t in _LIQUIDATION_COVERED]
