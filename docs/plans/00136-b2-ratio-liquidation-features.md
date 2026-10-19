@@ -1,10 +1,10 @@
 # B2's ratio columns and liquidations leg on the 4h close grid — implementation plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task: a fresh implementer per task and a fresh reviewer before the next. Steps use checkbox (`- [ ]`) syntax for tracking. `zcrypto-plan-review` reviews this plan with its spec before Task 1, at the tier its tasks' paths decide: `full` — `uv run python infra/scripts/tier.py --paths cli/alpha/b2.py tests/test_alpha_b2.py docs/research/10.phase4-decisions.md docs/open-topics/T0023-b2-derivatives-data-sourcing.md docs/open-topics/README.md` prints `tier: full`, for `tests/test_alpha_b2.py`, a test importing `cli.alpha.b1`.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task: a fresh implementer per task and a fresh reviewer before the next. Steps use checkbox (`- [ ]`) syntax for tracking. `zcrypto-plan-review` reviews this plan with its spec before Task 1, at the tier its tasks' paths decide: `full` — `uv run python infra/scripts/tier.py --paths cli/alpha/b2.py tests/test_alpha_b2.py docs/research/10.phase4-decisions.md docs/open-topics/T0023-b2-derivatives-data-sourcing.md` prints `tier: full`, for `tests/test_alpha_b2.py`, a test importing `cli.alpha.b1`.
 
-**Goal:** spec `docs/specs/00136-b2-ratio-liquidation-features-design.md` — `cli/alpha/b2.py` emits the four Binance ratios, each read as a level at a union's 4h closes through the OI rows' one pipeline, and the liquidations leg, per union bar the long, short and total notional and their imbalance from the Coinalyze poller's tree, an hour covered when any coin's tree holds its final and a union closing past the tree's finality frontier refused; each proven on known answers and the truncating-prefix property; the decisions log carries six `[00136]` entries and T0023 records both delivered.
+**Goal:** spec `docs/specs/00136-b2-ratio-liquidation-features-design.md` — `cli/alpha/b2.py` emits the four Binance ratios, each read as a level at a union's 4h closes through the OI rows' one pipeline, and the liquidations leg, per union bar the long, short and total notional and their imbalance from the Coinalyze poller's tree, a bar covered only where the caller asserts each of its hours covered for the coin and a union refused where an asserted hour is unfinished on disk; each proven on known answers and the truncating-prefix property; the decisions log carries six `[00136]` entries and T0023 records both delivered.
 
-**Architecture:** one module, `cli/alpha/b2.py`. `_oi_at_union_closes` gives its grid, its staleness bound and its lookup to `_rows_at_union_closes` and keeps only the placeholder mapping, and the union's two checks move into `_validate_union_marks`; `ratio_grid_features` reads each ratio through `_rows_at_union_closes` unmapped, its names and validation `ratio_features`' (spec D2). `liquidation_grid_features` lists the poller's finals with `_liquidation_finals`, takes its coverage from every coin's tree under the root, refuses a union whose last close lies past the tree's finality frontier — the newest final's hour close less `_FINALIZE_LAG_SECONDS`, imported from `cli.liquidations.coinalyze` — and sums each union bar's buckets (spec D3, D4, D6) under D5's names. The ratio emitter is a pure function over lists; the liquidation emitter reads parquet with polars and writes nothing. No subject, no registry record, no dataset read by any test.
+**Architecture:** one module, `cli/alpha/b2.py`. `_oi_at_union_closes` gives its grid, its staleness bound and its lookup to `_rows_at_union_closes` and keeps only the placeholder mapping, and the union's two checks move into `_validate_union_marks`; `ratio_grid_features` reads each ratio through `_rows_at_union_closes` unmapped, its names and validation `ratio_features`' (spec D2). `liquidation_grid_features` lists the coin's finals and its unfinished files with `_liquidation_segments`, takes its coverage from its `covered` argument, the hours the caller asserts the poller covered for the coin, refuses a union when an asserted hour is unfinished on disk, and sums each union bar's buckets (spec D3, D4, D6) under D5's names. The ratio emitter is a pure function over lists; the liquidation emitter reads parquet with polars and writes nothing. No subject, no registry record, no dataset read by any test.
 
 **Tech stack:** Python 3.14 through uv; polars; pytest; `infra/scripts/mutate-probe.sh`, `infra/scripts/consumers.sh`, `infra/scripts/tier.py`, `infra/scripts/topics-index.py`.
 
@@ -13,21 +13,22 @@
 ## Global Constraints
 
 - TDD per task: the failing test first, the implementation second, the test green third.
-- Tests: every pytest run is `mkdir -p .tmp/00136 && uv run pytest <file or node id> -q -p no:cacheprovider --basetemp=.tmp/00136/pt` — pytest creates `--basetemp` but not its parent, and the liquidation tests lay their trees out under it — never a bare `uv run pytest`. Before each commit, the consumers: `T=$(infra/scripts/consumers.sh --direct <each changed path> | sort -u)` and `[ -n "$T" ] && uv run pytest $T -m "not slow" -q -p no:cacheprovider --basetemp=.tmp/00136/pt`. For `cli/alpha/b2.py` and `tests/test_alpha_b2.py` that is `tests/test_alpha_b1_exit.py`, `tests/test_alpha_b2.py`, `tests/test_research_b1_hourly_exit_basis.py`, `tests/test_research_b1_volume_basis.py`, `tests/test_research_b2_basis.py` and `tests/test_research_command.py`, measured at Task 2's tree as `520 passed, 2 skipped, 48 deselected in 182.87s`, one part under 600 s; the 2 skips are the two B1 basis files' data-gated cases, the frozen `ohlc-full` set being absent under `data/`, and each task report names them. A commit message's test line is a run over that commit's own tree.
+- Tests: every pytest run outside the probe tree is `mkdir -p .tmp/00136 && uv run pytest <file or node id> -q -p no:cacheprovider --basetemp=.tmp/00136/pt` — pytest creates `--basetemp` but not its parent, and the liquidation tests lay their trees out under it — never a bare `uv run pytest`; inside the probe tree, the probe rows' own `--basetemp=.tmp/pt`, whose parent the probe setup creates. Before each commit, the consumers, as one line: `T=$(infra/scripts/consumers.sh --direct <each changed path> | sort -u) && [ -n "$T" ] && uv run pytest $T -m "not slow" -q -p no:cacheprovider --basetemp=.tmp/00136/pt`. For `cli/alpha/b2.py` and `tests/test_alpha_b2.py` that is `tests/test_alpha_b1_exit.py`, `tests/test_alpha_b2.py`, `tests/test_research_b1_hourly_exit_basis.py`, `tests/test_research_b1_volume_basis.py`, `tests/test_research_b2_basis.py` and `tests/test_research_command.py`; a run the tool's 600 s ceiling cuts off is re-run as two calls, `tests/test_alpha_b1_exit.py tests/test_alpha_b2.py` and the other four, and the task report gives both result lines. Its 2 skips are the two B1 basis files' data-gated cases, the frozen `ohlc-full` set being absent under `data/`, and each task report names them. A commit message's test line is a run over that commit's own tree.
 - Probes: the tier is `full`, so each guard is proven through its own node id with `infra/scripts/mutate-probe.sh`, before its commit and on the commit's own tree. After the gate, with the task's files staged:
 
 ```bash
 TREE=$(git write-tree)
+echo "probe tree $TREE"
 git worktree add --detach .tmp/00136/probe HEAD
 git -C .tmp/00136/probe read-tree -u --reset "$TREE"
 git -C .tmp/00136/probe commit -q -m "test: probe $TREE"
 mkdir -p .tmp/00136/probe/.tmp
 ```
 
-  then, from `.tmp/00136/probe`, each row of the task's probe block, one at a time, each its own call after the previous verdict is read, every one expected to print `mutate-probe: KILLED (control proven, tree restored byte-identically)`. Before each row, its dry run from the same directory: `sed -e '<mutation>' cli/alpha/b2.py | uv run python -c 'import ast, sys; ast.parse(sys.stdin.read())'` exits 0 and `diff <(sed -e '<mutation>' cli/alpha/b2.py) cli/alpha/b2.py | grep -c '^>'` prints 1 — the substitution changes one line, its site standing once or its address range holding one — and the same two for the control. Every mutation substitutes and none deletes a line; every control renames the `def` of a function the case's module imports, so it fails the case at collection. After the last verdict, `git worktree remove --force .tmp/00136/probe`. The task's commit carries in its message each row's command and its verdict line, the script named in both, and after it `test "$(git rev-parse HEAD^{tree})" = "$TREE"` passes. No case here is slow: the longest, the liquidations prefix case, measured 3.79 s (`--durations=3`), under the 10 s that puts a case in `tests/slow-cases.txt`.
+  The block runs as one call — the one exception to a state-changing git command running alone, since `$TREE` lives only in that call's shell — and prints the tree's hash; then, from `.tmp/00136/probe`, each row of the task's probe block, one at a time, each its own call after the previous verdict is read, every one expected to print `mutate-probe: KILLED (control proven, tree restored byte-identically)`. Before each row, its dry run from the same directory: `sed -e '<mutation>' cli/alpha/b2.py | uv run python -c 'import ast, sys; ast.parse(sys.stdin.read())'` exits 0 and `diff <(sed -e '<mutation>' cli/alpha/b2.py) cli/alpha/b2.py | grep -c '^>'` prints 1 — the substitution changes one line, its site standing once or its address range holding one — and the same two for the control. Every mutation substitutes and none deletes a line; every control renames the `def` of a function the case's module imports, so it fails the case at collection. After the last verdict, `git worktree remove --force .tmp/00136/probe`. The task's commit carries in its message each row's command and its verdict line, the script named in both, and after it `test "$(git rev-parse HEAD^{tree})" = <the hash the setup printed>` passes. No case here is slow: the longest, the liquidations prefix case, measured 2.92 s (`--durations=3`), under the 10 s that puts a case in `tests/slow-cases.txt`.
 - Data: no test and no step reads a dataset or the live liquidations tree; every fixture is synthetic, the liquidation trees laid out under `--basetemp` by the poller's own `SegmentWriter`. Never `/var/lib/zcrypto-ops/liquidations`, `data/ohlc-holdout-*` or `/mnt/zhao-crypto/`; never ssh, docker, `kraken-cli`, a Grafana or Kraken endpoint, or `tests/test_grafana_push_sh.py`. Never look for, open, count or quote any real account export anywhere outside the repository's tracked fixtures.
 - Never write `docs/reference/trial-registry.jsonl` or `docs/reference/reading-ledger.jsonl`, and the decisions log only through Task 3's append; never `zcrypto research eval`; never compute a return or a performance figure; never `git stash`; no amend; a state-changing git command runs alone.
-- Not edited: `cli/features/derivatives.py`, `cli/liquidations/`, `cli/capture/`, `cli/research/subjects.py` — `git diff --quiet develop HEAD -- cli/features cli/liquidations cli/capture cli/research` exits 0 after every task — and the spec after its commit. No task's diff removes a line of `tests/test_alpha_b2.py`: spec `00131`'s OI cases are spec D2's proof of the lifted pipeline, and `git diff -U0 develop -- tests/test_alpha_b2.py | grep -c '^-[^-]'` prints 0 after every task.
+- Not edited: `cli/features/derivatives.py`, `cli/liquidations/`, `cli/capture/`, `cli/research/subjects.py` — `git diff --quiet $(git merge-base develop HEAD) HEAD -- cli/features cli/liquidations cli/capture cli/research` exits 0 after every task — and the spec after its commit. No task's diff removes a line of `tests/test_alpha_b2.py`: spec `00131`'s OI cases are spec D2's proof of the lifted pipeline, and `git diff -U0 $(git merge-base develop HEAD) -- tests/test_alpha_b2.py | grep -c '^-[^-]'` prints 0 after every task — the cut point, never the moving `develop` tip.
 - No string literal under `cli/` — an error message, a log line — carries `spec <NNNNN>`, `D<N>`, `T<NNNN>` or `iter-<N>` (`tests/test_internal_terms_not_operator_visible.py`), and no code prose carries a plan-task number (`tests/test_code_prose_citations.py`); comments and docstrings cite `docs/specs/00136 D<N>`.
 - Commits: one per task, `feat(alpha)` for Tasks 1–2, `docs(research)` for Task 3 and `docs(open-topics)` for Task 4, staged by explicit path; the gate `uv run pre-commit run -a`, re-run until clean, runs before the probe tree is cut, so the probed tree is the committed one; each message ends with `Co-Authored-By: Claude <actual executing model> <noreply@anthropic.com>` and `Claude-Session: <the executing session's URL>`.
 - Scratch under this worktree's `.tmp/00136/`, the probe tree removed at the end of its task.
@@ -189,11 +190,11 @@ def ratio_grid_features(
 
   The checks run in their old order — the length, the rows' stamps, the union's stamps, the union's marks — with their old messages, the length message naming `oi_values` for the four OI emitters, so spec `00131`'s cases read the same refusals; the debug line's label gains an `oi ` prefix from `_oi_at_union_closes` and reads the column's name for a ratio.
 
-- [ ] **Step 3 — green**: the Step 1 command → `99 passed`; `git diff -U0 develop -- tests/test_alpha_b2.py | grep -c '^-[^-]'` → `0`; `uv run ruff format --check cli/alpha/b2.py tests/test_alpha_b2.py` → `2 files already formatted`, `uv run ruff check cli/alpha/b2.py tests/test_alpha_b2.py` → `All checks passed!`.
+- [ ] **Step 3 — green**: the Step 1 command → `99 passed`; `git diff -U0 $(git merge-base develop HEAD) -- tests/test_alpha_b2.py | grep -c '^-[^-]'` → `0`; `uv run ruff format --check cli/alpha/b2.py tests/test_alpha_b2.py` → `2 files already formatted`, `uv run ruff check cli/alpha/b2.py tests/test_alpha_b2.py` → `All checks passed!`.
 
 - [ ] **Step 4 — the consumers and the gate**: the consumers run (Global Constraints) passes; stage `cli/alpha/b2.py` and `tests/test_alpha_b2.py`; `uv run pre-commit run -a` until clean.
 
-- [ ] **Step 5 — probes** on the commit's own tree (Global Constraints), each expected KILLED — the ratio rulings against the ratio cases, and the lifted pipeline's moved lines (the mapping, the length check, the union's two checks and their call) against spec `00131`'s OI cases (spec D2):
+- [ ] **Step 5 — probes** on the commit's own tree (Global Constraints), each expected KILLED — the ratio rulings against the ratio cases, and the lifted pipeline's moved lines (the mapping, the length check, the union's two checks and their call, the rows' stamp check) against spec `00131`'s OI cases (spec D2):
 
 ```bash
 infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def ratio_grid_features(/def ratio_grid_features_gone(/' --mutation 's/oi_ts\[j\] <= g - _BOUNDARY/oi_ts[j] < g - _BOUNDARY/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_a_ratio_row_exactly_4h_old_at_a_mark_is_none_and_one_a_second_younger_is_read'
@@ -209,11 +210,12 @@ infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def oi_grid_l
 infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def oi_grid_levels(/def oi_grid_levels_gone(/' --mutation '/^def _validate_union_marks(/,/^def /s/_validate_stamps("union_ts", union_ts)/None/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_oi_grid_levels_refuses_unsorted_or_naive_stamps[unsorted-union]'
 infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def oi_grid_levels(/def oi_grid_levels_gone(/' --mutation 's/if (t - _EPOCH) % _BOUNDARY:/if False:/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_a_union_stamp_off_a_4h_mark_is_refused_by_name'
 infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def oi_grid_levels(/def oi_grid_levels_gone(/' --mutation '/^def _rows_at_union_closes(/,/^def /s/_validate_union_marks(union_ts)/None/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_a_union_stamp_off_a_4h_mark_is_refused_by_name'
+infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def oi_grid_levels(/def oi_grid_levels_gone(/' --mutation 's/_validate_stamps("oi_ts", oi_ts)/None/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_oi_grid_levels_refuses_unsorted_or_naive_stamps[duplicate-rows]'
 ```
 
-  The fourth row is the fall-back spec D2 refuses, the as-of over the non-null rows alone; the eighth reads each mark from the bar after it, the look-ahead the prefix case exists for; the ninth leaves an OI placeholder unmapped, the mapping's move proven against the case that carried it before.
+  The fourth row is the fall-back spec D2 refuses, the as-of over the non-null rows alone; the eighth reads each mark from the bar after it, the look-ahead the prefix case exists for; the ninth leaves an OI placeholder unmapped, the mapping's move proven against the case that carried it before; the fourteenth drops the rows' stamp check, against the duplicate-rows case, which the pipeline reads silently without it.
 
-- [ ] **Step 6 — commit**: `feat(alpha): the B2 ratio columns read as levels at a union's 4h closes through the OI rows' one pipeline`, its body the Step 3 and Step 4 result lines and the thirteen rows, each with its verdict line; then `test "$(git rev-parse HEAD^{tree})" = "$TREE"`.
+- [ ] **Step 6 — commit**: `feat(alpha): the B2 ratio columns read as levels at a union's 4h closes through the OI rows' one pipeline`, its body the Step 3 and Step 4 result lines and the fourteen rows, each with its verdict line; then `test "$(git rev-parse HEAD^{tree})" = <the hash the setup printed>`.
 
 ### Task 2 — the liquidations leg from the poller's tree
 
@@ -238,8 +240,8 @@ def _liquidation_tree(root: Path, buckets: dict[str, list[tuple[int, float, floa
     return root
 
 
-# BTC holds a bucket in each hour from 00:00 to 15:00 but 09:00, which no tree holds; DOT one at 00:10 and one at 15:00;
-# ETH one 46 h 30 min after DAY0, the tree's newest final, whose hour closes 31 h after 16:00, the union's last close.
+# BTC holds a bucket in each hour from 00:00 to 15:00, DOT one at 00:10 and one at 15:00; the caller asserts every hour
+# of the union's bars covered but 09:00.
 _LIQUIDATIONS = {
     "BTC": [
         (5, 100.0, 0.0),
@@ -251,6 +253,7 @@ _LIQUIDATIONS = {
         (370, 10.0, 0.0),
         (479, 0.0, 10.0),
         (485, 5.0, 0.0),
+        (545, 2.0, 1.0),
         (610, 0.0, 7.0),
         (700, 3.0, 0.0),
         (725, 1.0, 0.0),
@@ -259,9 +262,9 @@ _LIQUIDATIONS = {
         (950, 0.0, 6.0),
     ],
     "DOT": [(10, 0.0, 40.0), (900, 9.0, 0.0)],
-    "ETH": [(60 * 46 + 30, 1.0, 0.0)],
 }
 _LIQUIDATION_UNION = _hours(0, 4, 8, 12, 16)
+_LIQUIDATION_COVERED = [t for t in _hours(*range(16)) if t != DAY0 + timedelta(hours=9)]
 
 
 @pytest.fixture(scope="module")
@@ -270,8 +273,8 @@ def liquidation_root(tmp_path_factory):
 
 
 def test_each_liquidation_column_sums_its_bars_buckets_under_its_lower_bound_name(liquidation_root):
-    # The 03:59 bucket closes at 04:00 and is bar 0's; the 04:00 bucket is bar 1's. Bar 2 holds the uncovered 09:00.
-    assert liquidation_grid_features(liquidation_root, "BTC", _LIQUIDATION_UNION) == {
+    # The 03:59 bucket closes at 04:00 and is bar 0's; the 04:00 bucket is bar 1's. Bar 2 holds 09:00, not asserted.
+    assert liquidation_grid_features(liquidation_root, "BTC", _LIQUIDATION_UNION, _LIQUIDATION_COVERED) == {
         "binperp_liq_lowerbound_long_usd": [175.0, 30.0, None, 5.0],
         "binperp_liq_lowerbound_short_usd": [325.0, 90.0, None, 12.0],
         "binperp_liq_lowerbound_total_usd": [500.0, 120.0, None, 17.0],
@@ -280,8 +283,8 @@ def test_each_liquidation_column_sums_its_bars_buckets_under_its_lower_bound_nam
 
 
 def test_a_covered_bar_with_no_bucket_for_the_coin_reads_zero_notional_and_no_imbalance(liquidation_root):
-    # DOT's own tree holds no hour from 01:00 to 14:00: BTC's is what shows the poller covered bar 1.
-    assert liquidation_grid_features(liquidation_root, "DOT", _LIQUIDATION_UNION) == {
+    # DOT's own tree holds no hour from 01:00 to 14:00: the assertion is what says the poller covered bar 1.
+    assert liquidation_grid_features(liquidation_root, "DOT", _LIQUIDATION_UNION, _LIQUIDATION_COVERED) == {
         "binperp_liq_lowerbound_long_usd": [0.0, 0.0, None, 9.0],
         "binperp_liq_lowerbound_short_usd": [40.0, 0.0, None, 0.0],
         "binperp_liq_lowerbound_total_usd": [40.0, 0.0, None, 9.0],
@@ -289,52 +292,52 @@ def test_a_covered_bar_with_no_bucket_for_the_coin_reads_zero_notional_and_no_im
     }
 
 
-def test_a_bar_holding_an_hour_no_tree_finalized_reads_none_never_zero(liquidation_root):
-    # Read as a quiet hour, 09:00 would leave BTC's bar 2 the sum of its other three hours, 8.0 long and 7.0 short.
+def test_a_bar_holding_an_hour_not_asserted_covered_reads_none_even_over_a_final(liquidation_root):
+    # BTC's tree holds 09:00's final; read as covered, BTC's bar 2 would sum to 10.0 long and 8.0 short.
     for coin in ("BTC", "DOT"):
-        features = liquidation_grid_features(liquidation_root, coin, _LIQUIDATION_UNION)
+        features = liquidation_grid_features(liquidation_root, coin, _LIQUIDATION_UNION, _LIQUIDATION_COVERED)
         assert [values[2] for values in features.values()] == [None] * 4
 
 
-def test_an_hour_holding_only_parts_is_not_covered(tmp_path):
-    # Closed unfinalized, BTC's writer leaves 07:00 as parts: the poller has not finished that hour. ETH's final at 38:30
-    # puts the frontier on the union's last close, 08:00.
-    _liquidation_tree(tmp_path, {"ETH": [(60 * 38 + 30, 1.0, 0.0)]})
+@pytest.mark.parametrize(
+    "name", ["07.part0000.parquet", "07.held0000.parquet", "07.parquet.merging"], ids=["part", "held", "merging"]
+)
+def test_an_asserted_hour_unfinished_on_disk_refuses_the_union(tmp_path, name):
+    # Closed unfinalized, BTC's writer leaves 07:00 as a part, here renamed to each unfinished form.
     root = _liquidation_tree(tmp_path, {"BTC": _LIQUIDATIONS["BTC"][:8]}, finalize=False)
-    assert liquidation_grid_features(root, "BTC", _hours(0, 4, 8))["binperp_liq_lowerbound_total_usd"] == [500.0, None]
+    hour_dir = root / "BTC" / "liquidations-1m" / "2024" / "03" / "01"
+    (hour_dir / "07.part0000.parquet").rename(hour_dir / name)
+    refused = f"BTC's hour 2024-03-01T07:00:00+00:00 is asserted covered but unfinished on disk: {hour_dir / name}"
+    with pytest.raises(AlphaError, match=re.escape(refused)):
+        liquidation_grid_features(root, "BTC", _hours(0, 4, 8), _hours(*range(8)))
 
 
-def test_a_union_closing_on_the_finality_frontier_is_read_and_one_closing_a_step_past_it_is_refused(liquidation_root):
-    # ETH's final is the newest: its hour closes at 47:00, and the frontier lies 31 h before, at 16:00.
-    assert liquidation_grid_features(liquidation_root, "BTC", _LIQUIDATION_UNION)["binperp_liq_lowerbound_total_usd"][-1] == 17.0
-    past = "union_ts closes at 2024-03-01T20:00:00+00:00, past the finality frontier (2024-03-01T16:00:00+00:00)"
-    with pytest.raises(AlphaError, match=re.escape(past)):
-        liquidation_grid_features(liquidation_root, "BTC", _hours(0, 4, 8, 12, 16, 20))
-
-
-def test_a_tree_holding_no_final_refuses_every_union(tmp_path):
-    root = _liquidation_tree(tmp_path, {"BTC": [(5, 100.0, 0.0)]}, finalize=False)
-    with pytest.raises(AlphaError, match=re.escape("past the finality frontier (none, no final)")):
-        liquidation_grid_features(root, "BTC", _hours(0, 4))
+def test_an_unfinished_file_beside_a_final_or_in_an_hour_not_asserted_is_not_refused(tmp_path):
+    # 02:00 holds a part beside its final, whose bucket bar 0 reads; 07:00, a part alone, is not asserted.
+    root = _liquidation_tree(tmp_path, {"BTC": _LIQUIDATIONS["BTC"][:8]}, finalize=False)
+    hour_dir = root / "BTC" / "liquidations-1m" / "2024" / "03" / "01"
+    shutil.copyfile(hour_dir / "07.part0000.parquet", hour_dir / "02.part0000.parquet")
+    features = liquidation_grid_features(root, "BTC", _hours(0, 4, 8), _hours(*range(7)))
+    assert features["binperp_liq_lowerbound_total_usd"] == [500.0, None]
 
 
 def test_a_coin_with_no_tree_under_the_root_is_refused_by_name(liquidation_root):
-    # Read anyway, SOL would sum to zero at every bar BTC's tree covers.
+    # Read anyway, SOL would sum to zero at every bar the caller asserts covered.
     with pytest.raises(AlphaError, match=re.escape(f"no liquidations tree for 'SOL' under {liquidation_root}")):
-        liquidation_grid_features(liquidation_root, "SOL", _LIQUIDATION_UNION)
+        liquidation_grid_features(liquidation_root, "SOL", _LIQUIDATION_UNION, _LIQUIDATION_COVERED)
 
 
 def test_a_liquidation_union_stamp_off_a_4h_mark_is_refused_by_name(liquidation_root):
     with pytest.raises(AlphaError, match=re.escape("union_ts[1] = 2024-03-01T05:00:00+00:00 is not on a 4 h mark")):
-        liquidation_grid_features(liquidation_root, "BTC", _hours(0, 5, 9))
+        liquidation_grid_features(liquidation_root, "BTC", _hours(0, 5, 9), _LIQUIDATION_COVERED)
 
 
-def _hours_closed_by(src: Path, dst: Path, cutoffs: dict[str, datetime]) -> Path:
-    """A copy of `src` holding each coin's hours that close at or before its cutoff: with a cutoff on the hour, exactly
-    the buckets stamped before it, each closing a minute after its stamp."""
+def _hours_closed_by(src: Path, dst: Path, cutoff: datetime) -> Path:
+    """A copy of `src` holding the hours that close at or before `cutoff`: with a cutoff on the hour, exactly the buckets
+    stamped before it, each closing a minute after its stamp."""
     for path in src.rglob("*.parquet*"):
-        coin, _, year, month, day, name = path.relative_to(src).parts
-        if datetime(int(year), int(month), int(day), int(name[:2]), tzinfo=UTC) + timedelta(hours=1) <= cutoffs[coin]:
+        _, _, year, month, day, name = path.relative_to(src).parts
+        if datetime(int(year), int(month), int(day), int(name[:2]), tzinfo=UTC) + timedelta(hours=1) <= cutoff:
             (dst / path.relative_to(src)).parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(path, dst / path.relative_to(src))
     return dst
@@ -342,39 +345,38 @@ def _hours_closed_by(src: Path, dst: Path, cutoffs: dict[str, datetime]) -> Path
 
 def test_a_truncated_prefix_of_the_buckets_reproduces_every_liquidation_column_bit_for_bit(tmp_path):
     # BTC holds a bucket in each of the 56 hours from DAY0 but the 13th and the 26th, DOT in eight of them, the 13th among
-    # them: every hour is covered but the 26th, which no tree holds. ETH only witnesses finality: a final 30 hours after
-    # each close the union can end on, which puts the tree's frontier on that close.
+    # them; every hour is asserted covered but the 26th.
     btc = [(60 * h + (17 * h) % 60, float(h % 3), float(h % 4 + 1)) for h in range(56) if h not in (13, 26)]
     dot = [(60 * h + 30, 2.0, 0.0) for h in (0, 7, 13, 14, 21, 35, 42, 49)]
-    eth = [(60 * h + 30, 1.0, 0.0) for h in range(38, 87, 4)]
-    root = _liquidation_tree(tmp_path / "full", {"BTC": btc, "DOT": dot, "ETH": eth})
+    root = _liquidation_tree(tmp_path / "full", {"BTC": btc, "DOT": dot})
+    covered = [t for t in _hours(*range(56)) if t != DAY0 + timedelta(hours=26)]
     # Return index j opens bar j + 1 up to the missing open of bar 7, bar j + 2 after it; the last closes on the last hour.
     union_ts = [t for t in _hours(*range(4, 60, 4)) if t != DAY0 + timedelta(hours=28)]
-    full = {coin: liquidation_grid_features(root, coin, union_ts) for coin in ("BTC", "DOT")}
-    # Exact: bar 6 holds the uncovered 26th hour in both trees, and DOT holds no bucket in bars 2, 4, 9, 11 and 13.
+    full = {coin: liquidation_grid_features(root, coin, union_ts, covered) for coin in ("BTC", "DOT")}
+    # Exact: bar 6 holds the 26th hour, not asserted, and DOT holds no bucket in bars 2, 4, 9, 11 and 13.
     assert [j for j, v in enumerate(full["BTC"]["binperp_liq_lowerbound_total_usd"]) if v is None] == [5]
     assert [j for j, v in enumerate(full["DOT"]["binperp_liq_lowerbound_total_usd"]) if v is None] == [5]
     assert [j for j, v in enumerate(full["DOT"]["binperp_liq_lowerbound_imbalance"]) if v is None] == [1, 3, 5, 7, 9, 11]
     for n in range(1, len(union_ts)):
-        # The two coins read truncated at the cutoff, the witness 31 h past it: the union's last close is the frontier.
+        # The tree and the assertion truncated alike at the cutoff: neither holds the hour after it.
         cutoff = union_ts[n - 1] + timedelta(hours=4)
-        cutoffs = {"BTC": cutoff, "DOT": cutoff, "ETH": cutoff + timedelta(hours=31)}
-        prefix_root = _hours_closed_by(root, tmp_path / f"n{n}", cutoffs)
+        prefix_root = _hours_closed_by(root, tmp_path / f"n{n}", cutoff)
+        prefix_covered = [t for t in covered if t + timedelta(hours=1) <= cutoff]
         for coin, features in full.items():
-            prefix = liquidation_grid_features(prefix_root, coin, union_ts[: n + 1])
+            prefix = liquidation_grid_features(prefix_root, coin, union_ts[: n + 1], prefix_covered)
             assert prefix == {name: values[:n] for name, values in features.items()}, f"{coin} prefix at n={n} disagrees"
 ```
 
-  The fixtures' arithmetic: BTC's bar 0 sums 100 + 0 + 25 + 50 = 175 long and 0 + 300 + 25 + 0 = 325 short, the imbalance −150 / 500; bar 1, 20 + 10 = 30 long and 80 + 10 = 90 short, −60 / 120; bar 3, 1 + 4 = 5 long and 2 + 4 + 6 = 12 short, −7 / 17 — each sum exact in binary floating point and each quotient the division the test writes. DOT's two buckets give bar 0 40 short and bar 3 9 long; its bar 1 holds none of its own inside BTC's coverage. Bar 2 holds 09:00, which neither tree holds. ETH's one bucket, 46 h 30 min after DAY0, is the fixture's newest final: its hour closes at 47:00, so the frontier is 16:00, the union's last close — the boundary case reads that union and refuses the one closing at 20:00, a 4h step past. The parts case keeps BTC's first eight buckets, 00:05 to 07:59, unfinalized: the writer finalizes 00:00 to 06:00 as each later hour's bucket arrives and leaves 07:00 as `07.part0000.parquet` at `close()`; ETH's final at 38:30 puts that tree's frontier on its union's last close, 08:00. The no-final case leaves BTC's one bucket as parts, so the tree holds no final. The prefix case's trees hold 75 finals, BTC's 54 hours, DOT's eight and ETH's 13 — ETH only witnesses finality, a final every 4 h from hour 38 to hour 86, 30 hours after each close the union can end on, so the full run's frontier is 56:00, the union's last close, and each copy, the read coins truncated at the cutoff and ETH 31 h past it, has its frontier on the prefix union's last close while the hour after the cutoff stays absent from it (**Author's call**: truncating every coin at the cutoff would put the frontier 31 h before the prefix union's last close and refuse it, and truncating every coin 31 h past the cutoff would let a look-ahead of up to 31 h pass); the union's 12 return indices open bars 1–6 and 8–13, index 5 opening bar 6, which holds the 26th hour; bar 3 holds BTC's missing 13th hour, which DOT's tree covers; DOT's buckets fall in bars 0, 1, 3, 5, 8, 10 and 12, so its imbalance is `None` at the indices opening bars 2, 4, 9, 11 and 13 and at index 5. Run the Step 1 command of Task 1: collection fails, `ImportError: cannot import name 'liquidation_grid_features' from 'cli.alpha.b2'`.
+  The fixtures' arithmetic: BTC's bar 0 sums 100 + 0 + 25 + 50 = 175 long and 0 + 300 + 25 + 0 = 325 short, the imbalance −150 / 500; bar 1, 20 + 10 = 30 long and 80 + 10 = 90 short, −60 / 120; bar 3, 1 + 4 = 5 long and 2 + 4 + 6 = 12 short, −7 / 17 — each sum exact in binary floating point and each quotient the division the test writes. Bar 2 holds 09:00, which the module's assertion leaves out though BTC's tree holds its final: read as covered, BTC's bar 2 would sum 5 + 2 + 3 = 10 long and 1 + 7 = 8 short. DOT's two buckets give bar 0 40 short and bar 3 9 long; its bar 1 holds none of its own, and the assertion covers it. The refusal case keeps BTC's first eight buckets, 00:05 to 07:59, unfinalized: the writer finalizes 00:00 to 06:00 as each later hour's bucket arrives and leaves 07:00 as `07.part0000.parquet` at `close()`, which the case renames to each unfinished form; with 00:00 to 07:00 asserted, 07:00 refuses the union. The no-refusal case keeps the same eight and copies 07:00's part beside 02:00's final: asserting 00:00 to 06:00 only, bar 0 reads its 500 from the finals and bar 1, holding the unasserted 07:00, reads `None`. The prefix case's tree holds 62 finals, BTC's 54 hours and DOT's eight, every hour asserted but the 26th, and each copy is read under the asserted hours that close by its cutoff; the union's 12 return indices open bars 1–6 and 8–13, index 5 opening bar 6, which holds the 26th hour; bar 3 holds BTC's missing 13th hour, which the assertion covers; DOT's buckets fall in bars 0, 1, 3, 5, 8, 10 and 12, so its imbalance is `None` at the indices opening bars 2, 4, 9, 11 and 13 and at index 5. Run `mkdir -p .tmp/00136 && uv run pytest tests/test_alpha_b2.py -q -p no:cacheprovider --basetemp=.tmp/00136/pt`: collection fails, `ImportError: cannot import name 'liquidation_grid_features' from 'cli.alpha.b2'`.
 
-- [ ] **Step 2 — the reader and the emitter** (`cli/alpha/b2.py`). `import re` goes below `import math`; `from pathlib import Path` below `from functools import partial`, then a blank line and `import polars as pl` above the `cli` imports, ruff's third-party section; `from cli.liquidations.coinalyze import _FINALIZE_LAG_SECONDS` goes on its own line above `from cli.logging import get_logger`, the lag's one copy. Below `_OI_MOMENTUM_LOOKBACK = 180`:
+- [ ] **Step 2 — the reader and the emitter** (`cli/alpha/b2.py`). `import re` goes below `import math`; `from collections.abc import Callable` becomes `from collections.abc import Callable, Collection`; `from pathlib import Path` goes below `from functools import partial`, then a blank line and `import polars as pl` above the `cli` imports, ruff's third-party section. Below `_OI_MOMENTUM_LOOKBACK = 180`:
 
 ```python
 _HOUR = timedelta(hours=1)
-_FINALIZE_LAG = timedelta(seconds=_FINALIZE_LAG_SECONDS)
-# A final the poller's writer committed, `<YYYY>/<MM>/<DD>/<HH>.parquet` under a coin's tree: parts, held spills and
-# merging files are not final, so an hour holding only those is not read (docs/specs/00136 D3).
+# A final under a coin's tree, the one file the emitter reads (docs/specs/00136 D3).
 _LIQUIDATION_FINAL = re.compile(r"(\d{4})/(\d{2})/(\d{2})/(\d{2})\.parquet")
+# An hour's unfinished files under a coin's tree, the one on-disk sign that an hour is open (docs/specs/00136 D3).
+_LIQUIDATION_UNFINISHED = re.compile(r"(\d{4})/(\d{2})/(\d{2})/(\d{2})\.(?:part\d+\.parquet|held\d+\.parquet|parquet\.merging)")
 # The stream is a proxy, not the tape, and every column's name says so (docs/specs/00136 D5).
 _LIQUIDATION_COLUMNS = (
     "binperp_liq_lowerbound_long_usd",
@@ -387,37 +389,38 @@ _LIQUIDATION_COLUMNS = (
   Below `ratio_grid_features`, above `def _check_lengths(`:
 
 ```python
-def _liquidation_finals(tree: Path) -> dict[datetime, Path]:
+def _liquidation_segments(tree: Path) -> tuple[dict[datetime, Path], dict[datetime, Path]]:
+    """The coin's finals by hour, and its unfinished files by hour where the hour holds no final (docs/specs/00136 D3)."""
     finals: dict[datetime, Path] = {}
-    for path in tree.rglob("*.parquet"):
-        if m := _LIQUIDATION_FINAL.fullmatch(path.relative_to(tree).as_posix()):
+    unfinished: dict[datetime, Path] = {}
+    for path in tree.rglob("*"):
+        name = path.relative_to(tree).as_posix()
+        if m := _LIQUIDATION_FINAL.fullmatch(name):
             finals[datetime(*map(int, m.groups()), tzinfo=UTC)] = path
-    return finals
+        elif m := _LIQUIDATION_UNFINISHED.fullmatch(name):
+            unfinished[datetime(*map(int, m.groups()), tzinfo=UTC)] = path
+    return finals, {hour: path for hour, path in unfinished.items() if hour not in finals}
 
 
-def liquidation_grid_features(root: Path, coin: str, union_ts: list[datetime]) -> dict[str, list[float | None]]:
+def liquidation_grid_features(
+    root: Path, coin: str, union_ts: list[datetime], covered: Collection[datetime]
+) -> dict[str, list[float | None]]:
     """The coin's 1-minute liquidation buckets as the poller lays them out under `root`, summed over each union bar
-    (docs/specs/00136 D3-D6). An hour is covered when any coin's tree holds its final, since one poll fetches every coin:
-    a covered bar with no bucket reads zero, a bar holding an uncovered hour None."""
+    (docs/specs/00136 D3-D6). `covered` holds the hour starts the caller asserts the poller covered for `coin`: a bar
+    whose four hours it holds sums the coin's finals, zero where there are none, and any other bar reads None."""
     _validate_union_marks(union_ts)
     tree = root / coin / "liquidations-1m"
     if not tree.is_dir():
         raise AlphaError(f"no liquidations tree for {coin!r} under {root}")
-    covered = {hour for other in root.glob("*/liquidations-1m") for hour in _liquidation_finals(other)}
-    # The newest final's hour closed before the cycle that wrote it, and a cycle's sweep finalizes every coin's hour that
-    # started more than 31 h before it: every hour closing by here is final for every coin (docs/specs/00136 D3).
-    frontier = max(covered) + _HOUR - _FINALIZE_LAG if covered else None
-    closes = close_grid(union_ts)
-    if closes and (frontier is None or closes[-1] > frontier):
-        bound = "none, no final" if frontier is None else frontier.isoformat()
-        raise AlphaError(
-            f"union_ts closes at {closes[-1].isoformat()}, past the finality frontier ({bound}) of the liquidations tree under {root}"
-        )
-    finals = _liquidation_finals(tree)
+    finals, unfinished = _liquidation_segments(tree)
+    asserted = set(covered)
+    if open_hours := asserted & unfinished.keys():
+        hour = min(open_hours)
+        raise AlphaError(f"{coin}'s hour {hour.isoformat()} is asserted covered but unfinished on disk: {unfinished[hour]}")
     out: dict[str, list[float | None]] = {name: [] for name in _LIQUIDATION_COLUMNS}
     for t in union_ts[:-1]:
         hours = [t + k * _HOUR for k in range(_BOUNDARY // _HOUR)]
-        if not covered.issuperset(hours):
+        if not asserted.issuperset(hours):
             for values in out.values():
                 values.append(None)
             continue
@@ -429,45 +432,46 @@ def liquidation_grid_features(root: Path, coin: str, union_ts: list[datetime]) -
         for name, value in zip(_LIQUIDATION_COLUMNS, (long_usd, short_usd, total, imbalance)):
             out[name].append(value)
     logger.debug(
-        "liquidations %s at union closes: %d finals, %d covered hours, %d return indices, %d None",
+        "liquidations %s at union closes: %d finals, %d asserted hours, %d return indices, %d None",
         coin,
         len(finals),
-        len(covered),
+        len(asserted),
         len(union_ts) - 1,
         out[_LIQUIDATION_COLUMNS[0]].count(None),
     )
     return out
 ```
 
-  **Author's call:** a bar's hours are `range(_BOUNDARY // _HOUR)`, four, tied to the bar's width rather than a literal; and each final is read once per bar that holds its hour, the union's bars never overlapping; the frontier is the newest final's hour close less 31 h, an hour more conservative than the sweep's own bound (spec D3), and a tree holding no final refuses every union with a close.
+  **Author's call:** a bar's hours are `range(_BOUNDARY // _HOUR)`, four, tied to the bar's width rather than a literal; each final is read once per bar that holds its hour, the union's bars never overlapping; and `covered` is read as a set, its stamps unvalidated — a stamp that is no hour start, or a naive one, equals no bar's hour, so its bar reads None, the error running to None and never to a zero.
 
-- [ ] **Step 3 — green**: the Step 1 command of Task 1 → `108 passed`; `git diff -U0 develop -- tests/test_alpha_b2.py | grep -c '^-[^-]'` → `0`; the two ruff commands clean as in Task 1.
+- [ ] **Step 3 — green**: `mkdir -p .tmp/00136 && uv run pytest tests/test_alpha_b2.py -q -p no:cacheprovider --basetemp=.tmp/00136/pt` → `109 passed`; `git diff -U0 $(git merge-base develop HEAD) -- tests/test_alpha_b2.py | grep -c '^-[^-]'` → `0`; `uv run ruff format --check cli/alpha/b2.py tests/test_alpha_b2.py` → `2 files already formatted`, `uv run ruff check cli/alpha/b2.py tests/test_alpha_b2.py` → `All checks passed!`.
 
-- [ ] **Step 4 — the consumers and the gate**: the consumers run passes — `520 passed, 2 skipped, 48 deselected`, measured at this tree; stage `cli/alpha/b2.py` and `tests/test_alpha_b2.py`; `uv run pre-commit run -a` until clean.
+- [ ] **Step 4 — the consumers and the gate**: the consumers run passes — `521 passed, 2 skipped, 48 deselected`, measured at this tree; stage `cli/alpha/b2.py` and `tests/test_alpha_b2.py`; `uv run pre-commit run -a` until clean.
 
 - [ ] **Step 5 — probes** on the commit's own tree, each expected KILLED:
 
 ```bash
-infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's/if not covered.issuperset(hours):/if False:/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_a_bar_holding_an_hour_no_tree_finalized_reads_none_never_zero'
-infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's/covered = {hour for other in .*$/covered = set(_liquidation_finals(tree))/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_a_covered_bar_with_no_bucket_for_the_coin_reads_zero_notional_and_no_imbalance'
+infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's/if not asserted.issuperset(hours):/if False:/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_a_bar_holding_an_hour_not_asserted_covered_reads_none_even_over_a_final'
+infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's/asserted = set(covered)/asserted = set(finals)/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_a_covered_bar_with_no_bucket_for_the_coin_reads_zero_notional_and_no_imbalance'
+infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's/asserted = set(covered)/asserted = set(covered) | finals.keys()/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_a_bar_holding_an_hour_not_asserted_covered_reads_none_even_over_a_final'
 infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's/imbalance = None if total == 0 else/imbalance = 0.0 if total == 0 else/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_a_covered_bar_with_no_bucket_for_the_coin_reads_zero_notional_and_no_imbalance'
 infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's|range(_BOUNDARY // _HOUR)|range(1, _BOUNDARY // _HOUR + 1)|' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_a_truncated_prefix_of_the_buckets_reproduces_every_liquidation_column_bit_for_bit'
 infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's|(long_usd - short_usd) / total|(short_usd - long_usd) / total|' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_each_liquidation_column_sums_its_bars_buckets_under_its_lower_bound_name'
-infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's|\\\.parquet")|(?:\\.part\\d{4})?\\.parquet")|' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_an_hour_holding_only_parts_is_not_covered'
+infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's|\\\.parquet")|(?:\\.part\\d{4})?\\.parquet")|' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_an_asserted_hour_unfinished_on_disk_refuses_the_union[part]'
+infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's/if open_hours := asserted & unfinished.keys():/if False:/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_an_asserted_hour_unfinished_on_disk_refuses_the_union[part]'
+infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's/(?:part/(?:pirt/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_an_asserted_hour_unfinished_on_disk_refuses_the_union[part]'
+infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's/|held/|hild/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_an_asserted_hour_unfinished_on_disk_refuses_the_union[held]'
+infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's/merging)")/mirging)")/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_an_asserted_hour_unfinished_on_disk_refuses_the_union[merging]'
+infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's/if open_hours := asserted & unfinished.keys():/if open_hours := unfinished.keys():/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_an_unfinished_file_beside_a_final_or_in_an_hour_not_asserted_is_not_refused'
+infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's/ if hour not in finals}/}/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_an_unfinished_file_beside_a_final_or_in_an_hour_not_asserted_is_not_refused'
 infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's/if not tree.is_dir():/if False:/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_a_coin_with_no_tree_under_the_root_is_refused_by_name'
 infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation '/^def liquidation_grid_features(/,/^def /s/_validate_union_marks(union_ts)/None/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_a_liquidation_union_stamp_off_a_4h_mark_is_refused_by_name'
 infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's/"binperp_liq_lowerbound_imbalance",/"binperp_liq_imbalance",/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_each_liquidation_column_sums_its_bars_buckets_under_its_lower_bound_name'
-infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's/or closes\[-1\] > frontier):/or closes[-1] >= frontier):/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_a_union_closing_on_the_finality_frontier_is_read_and_one_closing_a_step_past_it_is_refused'
-infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's/frontier = max(covered) + _HOUR - _FINALIZE_LAG if covered/frontier = max(covered) - _FINALIZE_LAG if covered/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_a_union_closing_on_the_finality_frontier_is_read_and_one_closing_a_step_past_it_is_refused'
-infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's/if closes and (frontier is None or closes\[-1\] > frontier):/if False:/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_a_union_closing_on_the_finality_frontier_is_read_and_one_closing_a_step_past_it_is_refused'
-infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's|_FINALIZE_LAG = timedelta(seconds=_FINALIZE_LAG_SECONDS)|_FINALIZE_LAG = timedelta(seconds=_FINALIZE_LAG_SECONDS // 2)|' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_a_union_closing_on_the_finality_frontier_is_read_and_one_closing_a_step_past_it_is_refused'
-infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's/or closes\[-1\] > frontier):/or closes[0] > frontier):/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_a_union_closing_on_the_finality_frontier_is_read_and_one_closing_a_step_past_it_is_refused'
-infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidation_grid_features(/def liquidation_grid_features_gone(/' --mutation 's/(frontier is None or closes\[-1\] > frontier)/(closes[-1] > frontier)/' -- uv run pytest -q -p no:cacheprovider --basetemp=.tmp/pt 'tests/test_alpha_b2.py::test_a_tree_holding_no_final_refuses_every_union'
 ```
 
-  The first two rows are spec D4 both ways — a gap read as a quiet hour, and coverage read from the coin's own tree alone; the fourth reads each bar's hours one later, its last the next bar's first, the look-ahead the prefix case exists for; the sixth lets a part count as a final (spec D3); the ninth renames a column off D5's provenance. The last six are spec D3's refusal: the frontier compared with `>=`, so a union closing on it is refused; the frontier taken from the newest final's hour start rather than its close; the refusal removed; the poller's lag halved; the union's first close compared in place of its last; and a tree with no final compared against no frontier.
+  The first three rows are spec D4: the assertion ignored, so a bar holding an hour not asserted reads its sums; coverage read from the coin's own finals; and a final read as coverage beside the assertion. The fifth reads each bar's hours one later, its last the next bar's first, the look-ahead the prefix case exists for; the seventh lets a part count as a final (spec D3); the sixteenth renames a column off D5's provenance. Rows eight to thirteen are spec D3's refusal: the refusal removed; each of the three unfinished forms dropped from `_LIQUIDATION_UNFINISHED`, each against its own case; the assertion dropped from the refusal, so an unfinished hour not asserted refuses; and the no-final filter dropped, so a part beside a final refuses.
 
-- [ ] **Step 6 — commit**: `feat(alpha): the B2 liquidations leg per union bar from the poller's tree, an hour covered when any coin's tree holds its final`, its body the Step 3 and Step 4 result lines and the fifteen rows, each with its verdict line; then `test "$(git rev-parse HEAD^{tree})" = "$TREE"`.
+- [ ] **Step 6 — commit**: `feat(alpha): the B2 liquidations leg per union bar from the poller's tree, a bar covered where the caller asserts its hours`, its body the Step 3 and Step 4 result lines and the sixteen rows, each with its verdict line; then `test "$(git rev-parse HEAD^{tree})" = <the hash the setup printed>`.
 
 ### Task 3 — the decisions log: six `[00136]` entries
 
@@ -477,7 +481,7 @@ infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidati
 
 ```markdown
 [00136] T0023's two remaining autonomous emission items, the ratio columns and the liquidations leg: one spec or a spec each, and where do they sit? (Decision: 1)
-  The controller's ruling R1, one of R1–R6 of 2026-10-19 in the attended session, on the owner's words "directly run C for B1, then B2‘s data work, then B2 baseline ruling" and, after #738, "yes, start the B2 data work after the merge"; R1 and R3 amended at 2026-10-19T15:39:57Z after the author's report.
+  The controller's ruling R1, one of R1–R7 of 2026-10-19 in the attended session, on the owner's words "directly run C for B1, then B2‘s data work, then B2 baseline ruling" and, after #738, "yes, start the B2 data work after the merge"; R1 and R3 amended at 2026-10-19T15:39:57Z after the author's report, and R3 and R4 by R7 at 2026-10-19T17:04:26Z after plan review round 1.
   1. **One spec, both emitters in `cli/alpha/b2.py`** beside spec 00131's, each returning named columns, one value per return index at `close_grid(union_ts)`; no subject, no registry record, no trial; the Bybit funding cross-check stays a nice-to-have on T0023. Chosen: emission infrastructure the next B2 pre-registration names, and the owner's word that day, "the transient issue shouldn't be over prepared", keeps the design minimal.
   2. **A spec each** — two review cycles for two small emitters that share the 4h close grid and the union's checks.
   3. **The Bybit cross-check beside them** — a robustness check no B2 trial waits on.
@@ -486,19 +490,19 @@ infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidati
 [00136] The four Binance ratios at a union's 4h closes: read as levels through the OI level's pipeline, a `0.0` mapped as an OI placeholder is, or a null falling back to the row before it? (Decision: 1)
   1. **Read as levels through spec 00131's pipeline, unmapped** — its regular grid over the rows' span, its staleness bound `mark − 4h < ts ≤ mark` and its raw stamps; names and validation `ratio_features`'; the placeholder mapping lifted out of the shared pipeline into its OI caller; a null as a bar's last row `None` at that close. Chosen (the controller's ruling R2): the ratios are columns of the OI level's own rows, and a `0.0` taker ratio is an all-sell bar the venue published (spec 00110 D5) — 45 rows, and the bar's last row at 6 marks.
   2. **A `0.0` mapped to `None` as an OI placeholder is** — those 6 closes would read `None` where the venue published a reading.
-  3. **A null falling back to the row before it** — a reading the venue did not show at that stamp, against spec 00110 D5's no-imputation rule; 19,205, 19,194, 1,211 and 7,759 of the 104,446 marks read `None` under option 1.
+  3. **A null falling back to the row before it** — a reading the venue did not show at that stamp, against spec 00110 D5's no-imputation rule; at the 19,205, 19,194, 1,211 and 7,759 of the 104,446 marks whose bar's last row is null, option 1 reads `None`.
   Logged 2026-10-19, from docs/specs/00136-b2-ratio-liquidation-features-design.md D2.
 
-[00136] The liquidations leg's data: the Coinalyze poller's live tree in place or a frozen copy, which files count, and how close to the tree's newest hour may a union reach? (Decision: 1)
-  1. **The poller's tree in place, finals only, a union refused past the tree's finality frontier** — `liquidation_grid_features(root, coin, union_ts)` reads `<root>/<coin>/liquidations-1m/<YYYY>/<MM>/<DD>/<HH>.parquet`, never a part, a held spill or a merging file; a coin with no tree is refused by name; a union whose last close lies past the newest final's hour close less `_FINALIZE_LAG_SECONDS`, 31 h, imported from `cli.liquidations.coinalyze`, is refused naming both stamps. Chosen (the controller's ruling R3, its refusal ruled at 2026-10-19T15:39:57Z): freezing a block is the pre-registration of the first trial that reads it, and inside the newest 31 h a sparse coin's buckets may still sit in the writer's memory while another coin's final covers the hour; at the read the frontier was 2026-10-18T08:00Z. If wrong, a caller cuts its union about 31 h back.
+[00136] The liquidations leg's data: the Coinalyze poller's live tree in place or a frozen copy, which roots and files count, and what does the emitter refuse? (Decision: 1)
+  1. **The poller's tree in place or a block frozen from it, finals only, a union refused when an hour the caller asserts covered is unfinished on disk** — `liquidation_grid_features(root, coin, union_ts, covered)` reads `<root>/<coin>/liquidations-1m/<YYYY>/<MM>/<DD>/<HH>.parquet`, never a part, a held spill or a merging file; a coin with no tree is refused by name; an asserted hour whose coin's tree holds a part, a held spill or a merging file and no final refuses the union, naming the file; never the NAS copy, whose hourly `rsync -a` pull keeps what a failed pull copied, so its coins can stand at different snapshots. Chosen (the controller's ruling R3, amended by R7 at 2026-10-19T17:04:26Z): freezing a block is the pre-registration of the first trial that reads it, and an unfinished file is the one on-disk sign of an open hour — an open hour in the writer's memory leaves none. If wrong, an asserted hour still in the writer's memory reads its coin low there.
   2. **A frozen copy or a new dataset directory now** — a freeze before any trial pre-registers its block.
-  3. **The frontier left to the caller, the author's first draft** — an unchecked union reads a sparse coin low inside the newest 31 h, and higher on a later read. Amended by the refusal.
+  3. **A union refused past a finality frontier, the newest final's hour close less the poller's 31 h lag** — R3's refusal as ruled at 2026-10-19T15:39:57Z; it assumed the cycle that wrote the newest final had swept every coin, but the poller writes a cycle's rotation finals before its sweep and skips the sweep in a failed cycle, so the frontier could pass an hour a quiet coin still held in memory. Withdrawn by R7.
   Logged 2026-10-19, from docs/specs/00136-b2-ratio-liquidation-features-design.md D3.
 
 [00136] Liquidation coverage: when does a 4h bar with no bucket read zero, and when `None`? (Decision: 1)
-  1. **An hour is covered when any coin's tree holds its final; a covered bar with no bucket reads zero, a bar holding an uncovered hour `None`** — one poll fetches all ten coins, so the poller's uptime is one fact for the ten. Chosen (the controller's ruling R4, read as the author corrected it): a coin's own tree writes nothing for a quiet hour, the bucket watermark lives in memory and is never durable, and a manifest exists only beside a final; measured, none of the 2,302 closed hours from 2026-07-14T10Z lacks every coin's final, while the coins' own trees lack 11 (ETH) to 828 (LTC) of them.
-  2. **Coverage from the coin's own tree** — a quiet hour and a gap leave the same nothing, so LTC would read 828 quiet hours as gaps.
-  3. **No coverage rule, a bar with no bucket always zero** — a poller gap would read as a quiet market, a manufactured zero.
+  1. **The caller's, explicit: per coin, the hour starts it asserts the poller covered; a bar all of whose hours are asserted sums the coin's buckets, zero where none, and any other bar `None`** — how a caller proves coverage (the poller's success timestamp after its sweep, the journal's failed-cycle runs, two reads a cycle apart, a coin's first and last final) is the first liquidation trial's freeze and pre-registration, a next step on T0023. Chosen (the controller's ruling R7, 2026-10-19T17:04:26Z, amending R4): nothing on disk records what a poll covered for a coin — a quiet hour writes no final, and the bucket watermark lives in memory, never durable. If wrong, the first trial builds its coverage evidence before it reads a bar, work that falls on it anyway.
+  2. **Coverage from the coin's own tree** — a quiet hour and a gap leave the same nothing, so LTC would read 828 quiet hours of the 2,302 closed hours measured as gaps.
+  3. **An hour covered when any coin's tree holds its final, R4 as the author corrected it** — measured, none of the 2,302 closed hours from 2026-07-14T10Z lacks every coin's final, but the rule reads a covered zero five ways: a cycle's rotation finals written before its sweep, a failed cycle skipping the sweep, a raising entry leaving the coins after it unwritten, a coin polled for part of the union, and a NAS pull that fails part-way. Withdrawn by R7.
   Logged 2026-10-19, from docs/specs/00136-b2-ratio-liquidation-features-design.md D4.
 
 [00136] How does a liquidation column say it comes from a lossy stream? (Decision: 1)
@@ -525,13 +529,13 @@ infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidati
 - [ ] **Step 1 — the edit** (`topic-ops`' edit mechanics: each anchor's `grep -c` reads 1 first, and `grep '^#'` of the file reads the same headings before and after). In `## Done so far`, below the bullet opening `- **B2's remaining funding and OI features on the 4h close grid DELIVERED (spec/plan `00131`)**`, one blank line and then:
 
 ```markdown
-- **B2's ratio columns and liquidations leg on the 4h close grid DELIVERED (spec/plan `00136`)**: `cli/alpha/b2.py` — `ratio_grid_features`, the four Binance ratios under their `binperp_` names, each read as a level through the OI level's pipeline on spec `00131`'s regular grid with its staleness bound, a `0.0` taker ratio a reading and a null as a bar's last row `None`, never the row before it; and `liquidation_grid_features`, which reads the Coinalyze poller's tree in place, finals only, and gives per union bar the long, short and total liquidated notional and their imbalance under `binperp_liq_lowerbound_` names, the stream a proxy and not the tape. An hour is covered when any coin's tree holds its final, since one poll fetches all ten, so a covered bar with no bucket reads zero and a bar holding an uncovered hour `None` — no such hour in the 2,302 closed hours measured from 2026-07-14T10Z, where LTC's own tree lacks 828. No spike flag: a threshold on these totals is a trial's pre-registration. A union whose last close lies past the tree's finality frontier — the newest final's hour close less the poller's 31 h finalization lag — is refused, so every hour read is final for every coin. No subject, no registry record.
+- **B2's ratio columns and liquidations leg on the 4h close grid DELIVERED (spec/plan `00136`)**: `cli/alpha/b2.py` — `ratio_grid_features`, the four Binance ratios under their `binperp_` names, each read as a level through the OI level's pipeline on spec `00131`'s regular grid with its staleness bound, a `0.0` taker ratio a reading and a null as a bar's last row `None`, never the row before it; and `liquidation_grid_features`, which reads the Coinalyze poller's tree in place or a block frozen from it, finals only — never the NAS copy, whose pull can leave the coins at different snapshots — and gives per union bar the long, short and total liquidated notional and their imbalance under `binperp_liq_lowerbound_` names, the stream a proxy and not the tape. Coverage is the caller's: it passes, per coin, the hours it asserts the poller covered, and a bar reads its sums, zero where the coin holds no bucket, only where all four of its hours are asserted, else `None` — nothing on disk records what a poll covered for a coin, and coverage inferred from the coins' finals reads a covered zero five ways (spec `00136` D4). A union is refused when an asserted hour is unfinished on disk, a part, a held spill or a merging file and no final, the one on-disk sign of an open hour; an open hour in the poller's memory leaves none, so proving the assertion is the caller's. No spike flag: a threshold on these totals is a trial's pre-registration. No subject, no registry record.
 ```
 
   In `## Suggested next steps`, the bullets opening `- **(autonomous) the ratio columns on the 4h close grid.**` and `- **(autonomous) the liquidations feature leg.**` are deleted, and the bullet opening `- **(later trials, after the instrument ruling, each its own pre-registration against the shared B budget)**` is replaced whole by:
 
 ```markdown
-- **(later trials, after the instrument ruling, each its own pre-registration against the shared B budget)** the OI leg, the z < −2 re-risk, and the threshold, scale or window variants spec `00128` names; a liquidations trial freezes its block of the live tape as its pre-registration, its union closing at or before the block's finality frontier, and defines any spike threshold there (spec `00136` D3, D6).
+- **(later trials, after the instrument ruling, each its own pre-registration against the shared B budget)** the OI leg, the z < −2 re-risk, and the threshold, scale or window variants spec `00128` names; a liquidations trial freezes its block of the live tape and, before it reads a bar, proves the coverage it passes per coin — the poller's success timestamp after its sweep, the journal's failed-cycle runs, two reads a cycle apart, each coin's first and last final, read against the image the poller's container runs — as its pre-registration, and defines any spike threshold or windowed feature over these totals, a z-score or a persistence, there (spec `00136` D3, D4, D6).
 ```
 
   The Bybit cross-check stays a nice-to-have, and the instrument ruling stays the owner's. `status` and `ripe_when` do not change, so the index is not re-rendered: `uv run python infra/scripts/topics-index.py --check` exits 0, and `mkdir -p .tmp/00136 && uv run pytest tests/test_open_topics_frontmatter.py -q -p no:cacheprovider --basetemp=.tmp/00136/pt` passes (measured `1104 passed`).
@@ -540,7 +544,7 @@ infra/scripts/mutate-probe.sh --file cli/alpha/b2.py --control 's/^def liquidati
 
 ### Task 5 — the reads and the PR (the controller's)
 
-- [ ] `git diff --quiet develop HEAD -- cli/features cli/liquidations cli/capture cli/research` exits 0.
-- [ ] `mkdir -p .tmp/00136 && uv run pytest tests/test_alpha_b2.py -q -p no:cacheprovider --basetemp=.tmp/00136/pt` → `108 passed`; the 28 probe verdicts of Tasks 1–2, each `KILLED`, carried into the PR body.
+- [ ] `git diff --quiet $(git merge-base develop HEAD) HEAD -- cli/features cli/liquidations cli/capture cli/research` exits 0.
+- [ ] `mkdir -p .tmp/00136 && uv run pytest tests/test_alpha_b2.py -q -p no:cacheprovider --basetemp=.tmp/00136/pt` → `109 passed`; the 30 probe verdicts of Tasks 1–2, each `KILLED`, carried into the PR body.
 - [ ] The repo's trio over the branch: `pre-review`, `review`, `re-review` at most twice; push only after the read; the PR through `open-pr` — `feat(alpha): 00136 — B2's ratio columns and liquidations leg on the 4h close grid`, its body naming the read line, the probe verdicts and T0023's update; the change-index row; merge on the owner's word through `merge-pr`; the two data links (`data/derivatives-funding`, `data/derivatives-oi`) unlinked before `git worktree remove`, the main checkout's `data/` listing read after.
 - [ ] Decisions log: Task 3's six `[00136]` entries in `docs/research/10.phase4-decisions.md`, committed before the whole-branch read so the read covers them.
