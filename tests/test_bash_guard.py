@@ -1395,6 +1395,8 @@ HANDED_GREPS = [
     ("git ls-files 'infra/ansible/**/*.j2' | xargs grep -l foo", "xargs grep -l foo"),
     ("find infra/ansible -name '*.j2' -exec grep -l foo {} +", "find infra/ansible -name '*.j2' -exec grep -l foo '{}' +"),
     ("git ls-files infra | xargs grep -l key", "xargs grep -l key"),
+    ("git ls-files cli | xargs grep -rlekey infra", "xargs grep -rlekey infra"),
+    ("git ls-files cli | xargs grep -rle key infra", "xargs grep -rle key infra"),
     ("git ls-files cli | xargs grep -l -e key infra/ansible/x.yml", "xargs grep -l -e key infra/ansible/x.yml"),
 ]
 HANDED_GREPS_ADMITTED = [
