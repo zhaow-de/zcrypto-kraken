@@ -262,11 +262,10 @@ def liquidation_grid_features(
         raise AlphaError("bucket_ts is empty: every covered bar would sum to zero")
     _validate_stamps("bucket_ts", bucket_ts)
     _validate_union_marks(union_ts)
-    asserted: set[datetime] = set()
-    for t in covered:
+    asserted = set(covered)
+    for t in asserted:
         if t.utcoffset() is None or t.minute or t.second or t.microsecond:
             raise AlphaError(f"covered must be tz-aware hour starts, got {t.isoformat()}")
-        asserted.add(t)
     out: dict[str, list[float | None]] = {name: [] for name in _LIQUIDATION_COLUMNS}
     for t in union_ts[:-1]:
         hours = [t + k * _HOUR for k in range(_BOUNDARY // _HOUR)]
