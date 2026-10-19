@@ -22,7 +22,7 @@ Buckets B (intraday band) and C (long shots) are where the master plan's residua
 
 ## Done so far
 
-- **B1 split out (iter-086)** as [T0022](T0022-b1-intraday-seasonality-family.md), spec/plan `00045`; trial 3 (iter-177, spec/plan `00132`, registry trial 48) PARK; trial 4 (iter-178, spec/plan `00134`, registry trial 49) REJECT; trial 5 (iter-179, spec/plan `00135`, registry trial 50) REJECT, its next step the owner's pick, T0022's.
+- **B1 split out (iter-086)** as [T0022](archive/T0022-b1-intraday-seasonality-family.md), spec/plan `00045`; trial 3 (iter-177, spec/plan `00132`, registry trial 48) PARK; trial 4 (iter-178, spec/plan `00134`, registry trial 49) REJECT; trial 5 (iter-179, spec/plan `00135`, registry trial 50) REJECT; **closed as attributed out at iter-180** on the owner's pick, T0022 resolved.
 
 - **B2 opened (iter-175, spec/plan `00128`)** on the owner's word of 2026-10-12, its trial 1 stopped unspent at the pre-flight; the family's state and the trigger of its next trial are [T0023](T0023-b2-derivatives-data-sourcing.md)'s.
 

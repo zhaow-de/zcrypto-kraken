@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: 'an activity: the owner picks B1''s next step after trial 5''s reject — a park variant of trial 3, or closing the family as attributed out — recorded in the decisions log; check: `git grep -c -E ''^\[iter-[0-9]+\] B1.s next step after trial 5'' -- docs/research/10.phase4-decisions.md` prints at least 1'
+status: resolved
 ---
 
 # B1 — intraday trend + time-of-day/day-of-week seasonality (the family topic)
@@ -26,8 +25,6 @@ B1 is the §5 ranked queue's top un-started family — the "genuinely new freque
 - Budget: **B = 25 shared across Bucket B** (pre-registered, hard); B1 trials count against it under the family's registry key.
 - **Candidate survey** (the owner's disposition of 2026-07-23, to have new candidates drafted): `docs/research/10.phase4-b1-candidate-hypotheses.md` writes three candidates up for pre-registration, none seen against a return, and argues that no trial beats two of them and narrowly beats the third.
 
-## Suggested next steps
+## Resolution
 
-- **The owner picks B1's next step after trial 5's reject, or closes the family**: with trial 5 the survey's three candidates are spent, so the pick is a park variant of trial 3 — 15m sampling, or the hourly estimator also in the book vol target — a new trial of the shared B budget; or this topic archived as attributed out. Closing the family is the owner's alone. The pick is recorded in the decisions log as `[iter-<NNN>] B1's next step after trial 5 — <the pick> (Decision: N)`.
-- **A park variant of trial 3 asks the owner for its adoption path rather than inheriting spec 00132's D9**, which settled it for trial 3 without the owner's word: an adopt a registry fact on the A2 ensemble alone, deploying it needing a combination trial over record 47's book and an hourly grid in the engine's store. The survey had left that to the owner (`docs/research/10.phase4-b1-candidate-hypotheses.md:60`).
-- Kill discipline: an honest kill closes this topic (archive with the verdict); budget exhaustion or a family kill-bar hit does the same. Expanding past the shared B budget is a parked human decision, never autonomous.
+Closed as attributed out at iter-180, on the owner's pick of 2026-10-19 ("close B1 as attributed out"), recorded as `[iter-180] B1's next step after trial 5 — closed as attributed out` in `docs/research/10.phase4-decisions.md`. Five trials, registry records 45–50, none adopted: 45, 46, 49 and 50 rejected, 48 parked. Every arm B was the adopted A2 ensemble with one change, so the decisive test was beating that ensemble head to head, which went against B four times in five; the fifth, trial 3's hourly realized-volatility weights, favoured B by +4.23e-07 per bar at SPA p 0.18. The family's premise was tried as conditioning (trials 1–2, iter-086/087), as the weight estimator (trial 3, iter-177, spec 00132), on entries (trial 4, iter-178, spec 00134) and on exits (trial 5, iter-179, spec 00135, PR #735). Trial 3's two park variants — 15m sampling, and the hourly estimator also in the book vol target — are consciously dropped: their best case is a fraction of a percent a year, and an adopt would still need a combination trial before reaching the book. The robust part of intraday seasonality, volume, volatility and liquidity by hour, is an execution-cost question the engine's realized-fill measurement owns, not a return trial. Trial 5's finding for the risk layer: an intra-cycle exit cut the maximum drawdown 7.6 % at a return cost. B1 spent 5 of the shared Bucket-B budget; 20 remain for B2 (T0023) and the families T0016 ranks next.

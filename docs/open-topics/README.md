@@ -4,7 +4,6 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 
 ## Open
 
-- [T0022 — B1 — intraday trend + time-of-day/day-of-week seasonality (the family topic)](T0022-b1-intraday-seasonality-family.md) — ripe when: an activity: the owner picks B1's next step after trial 5's reject — a park variant of trial 3, or closing the family as attributed out — recorded in the decisions log; check: `git grep -c -E '^\[iter-[0-9]+\] B1.s next step after trial 5' -- docs/research/10.phase4-decisions.md` prints at least 1
 - [T0214 — The deployable record's cost basis is re-priced from rung 2's measured blend, as a new registry record](T0214-cost-basis-re-priced-at-rung-2.md) — ripe when: `uv run zcrypto engine tracking-report --journal-dir <pulled journal> --since <first day of rung 2> --until <the last Sunday>` reports a realized maker share on at least 30 euro-denominated fills — the count the `basis:` line names
 - [T0221 — engine-procedures.md without the one-time rungs](T0221-engine-procedures-without-the-rungs.md) — ripe when: a milestone: rung 3's go/no-go decided, `engine-rung-3` step 9; check: `grep -c -i -E "rung 3.s go/no-go.*\(Decision:" docs/research/14.phase6-decisions.md` prints at least 1
 
@@ -46,6 +45,7 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 - [T0019 — P1 fixed-weight combination variant](archive/T0019-p1-fixed-weight-variant.md)
 - [T0020 — Grafana Cloud observability — execute spec 00043](archive/T0020-grafana-cloud-observability.md)
 - [T0021 — VPS engine-journal retention — prune-after-verified-pull](archive/T0021-vps-journal-retention.md)
+- [T0022 — B1 — intraday trend + time-of-day/day-of-week seasonality (the family topic)](archive/T0022-b1-intraday-seasonality-family.md)
 - [T0024 — Universe selection — spread-cap criterion](archive/T0024-universe-spread-cap-criterion.md)
 - [T0025 — Full symbol & corporate-action ledger](archive/T0025-full-corporate-action-ledger.md)
 - [T0026 — Reconnect trade-snapshot silently overwrites finalized trade segments](archive/T0026-reconnect-trade-snapshot-overwrite.md)
