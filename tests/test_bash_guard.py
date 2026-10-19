@@ -954,8 +954,6 @@ SCOPED_GREPS = [
 ]
 
 
-# The checkouts the corpus's admitted `git commit`s stamp for the runs-alone arm: the cases run one at a time across
-# xdist workers, each with those stamps gone, or the next admitted commit within 3 s is refused.
 def git_dir(checkout: str | Path) -> Path:
     return Path(
         subprocess.run(
@@ -965,6 +963,8 @@ def git_dir(checkout: str | Path) -> Path:
 
 
 STAMP_NAME = "zcrypto-git-state-stamp"
+# The checkouts the corpus's admitted `git commit`s stamp for the runs-alone arm: the cases run one at a time across
+# xdist workers, each with those stamps gone, or the next admitted commit within 3 s is refused.
 STAMPS = [git_dir(d) / STAMP_NAME for d in (str(REPO), MAIN)]
 LOCK = REPO / ".tmp" / ".bash-guard-tests.lock"
 
@@ -1146,7 +1146,6 @@ def stamped(payload: dict, stamp: Path, age: float) -> dict:
     return payload
 
 
-# The state-changing commands the runs-alone arm's two gap cases drive.
 STATE_CHANGERS = ["git commit -m x", "git cherry-pick abc1234"]
 
 
@@ -1159,12 +1158,9 @@ def test_a_state_changing_git_command_within_the_gap_of_another_is_refused(tmp_p
     r = run_hook(payload, cwd=tmp_path)
     assert r.returncode == 2, r.stderr
     assert re.search(
-        rf"BLOCKED — `{re.escape(command)}`: a state-changing git command started 0\.[4-9] s ago in this checkout; ", r.stderr
+        rf"BLOCKED — `{re.escape(command)}`: a state-changing git command started 0\.[4-9] s ago in this checkout and ", r.stderr
     ), r.stderr
-    assert (
-        "a state-changing git command runs alone, never beside another — if that one has already returned, re-send this "
-        "one after the gap" in r.stderr
-    )
+    assert "each runs alone — if that one has already returned, re-send this one after the gap" in r.stderr
     assert stamp.read_text() == before and r.stdout == ""
 
 
