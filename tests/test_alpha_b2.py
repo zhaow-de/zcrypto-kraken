@@ -651,12 +651,16 @@ def test_each_liquidation_column_sums_its_bars_buckets_under_its_provenance_name
 
 def test_a_covered_bar_with_no_bucket_for_the_coin_reads_zero_notional_and_no_imbalance():
     # DOT holds no bucket from 01:00 to 14:00: the assertion is what says the poller covered bar 1.
-    assert liquidation_grid_features(*_buckets(_LIQUIDATIONS["DOT"]), _LIQUIDATION_UNION, _LIQUIDATION_COVERED) == {
+    features = liquidation_grid_features(*_buckets(_LIQUIDATIONS["DOT"]), _LIQUIDATION_UNION, _LIQUIDATION_COVERED)
+    assert features == {
         "binperp_liq_lowerbound_long_usd": [0.0, 0.0, None, 9.0],
         "binperp_liq_lowerbound_short_usd": [40.0, 0.0, None, 0.0],
         "binperp_liq_lowerbound_total_usd": [40.0, 0.0, None, 9.0],
         "binperp_liq_imbalance": [-1.0, None, None, 1.0],
     }
+    # The int 0 compares equal to 0.0 above: an empty bar's sums are floats, as every other bar's are.
+    notionals = ("binperp_liq_lowerbound_long_usd", "binperp_liq_lowerbound_short_usd", "binperp_liq_lowerbound_total_usd")
+    assert [type(features[name][1]) for name in notionals] == [float] * 3
 
 
 def test_a_bar_holding_an_hour_not_asserted_covered_reads_none_even_over_its_buckets():
@@ -664,6 +668,15 @@ def test_a_bar_holding_an_hour_not_asserted_covered_reads_none_even_over_its_buc
     for coin in ("BTC", "DOT"):
         features = liquidation_grid_features(*_buckets(_LIQUIDATIONS[coin]), _LIQUIDATION_UNION, _LIQUIDATION_COVERED)
         assert [values[2] for values in features.values()] == [None] * 4
+
+
+@pytest.mark.parametrize("hour", [8, 11], ids=["first", "last"])
+def test_a_bar_whose_first_or_last_hour_is_not_asserted_covered_reads_none(hour):
+    # Bar 2 is [08:00, 12:00): hours 8 and 11 are its first and last.
+    covered = [t for t in _hours(*range(16)) if t != DAY0 + timedelta(hours=hour)]
+    for coin in ("BTC", "DOT"):
+        features = liquidation_grid_features(*_buckets(_LIQUIDATIONS[coin]), _LIQUIDATION_UNION, covered)
+        assert [values[2] for values in features.values()] == [None] * 4, coin
 
 
 def test_liquidation_grid_features_refuses_bucket_lists_of_unequal_length():
@@ -684,14 +697,20 @@ def test_liquidation_grid_features_refuses_unsorted_or_repeated_bucket_stamps(bu
         liquidation_grid_features(bucket_ts, [1.0, 2.0, 3.0], [0.0, 0.0, 0.0], _hours(0, 4), _hours(0, 1, 2, 3))
 
 
+def test_liquidation_grid_features_refuses_a_naive_bucket_stamp_by_name():
+    bucket_ts = _hours(0, 1) + [(DAY0 + timedelta(hours=2)).replace(tzinfo=None)]
+    with pytest.raises(AlphaError, match=re.escape("bucket_ts must be tz-aware datetimes, bucket_ts[2] = ")):
+        liquidation_grid_features(bucket_ts, [1.0, 2.0, 3.0], [0.0, 0.0, 0.0], _hours(0, 4), _hours(0, 1, 2, 3))
+
+
 def test_a_liquidation_union_stamp_off_a_4h_mark_is_refused_by_name():
     with pytest.raises(AlphaError, match=re.escape("union_ts[1] = 2024-03-01T05:00:00+00:00 is not on a 4 h mark")):
         liquidation_grid_features(*_buckets(_LIQUIDATIONS["BTC"]), _hours(0, 5, 9), _LIQUIDATION_COVERED)
 
 
 def test_a_truncated_prefix_of_the_buckets_reproduces_every_liquidation_column_bit_for_bit():
-    # BTC holds a bucket in each of the 56 hours from DAY0 but the 13th and the 26th, DOT in eight of them, the 13th among
-    # them; every hour is asserted covered but the 18th.
+    # BTC holds a bucket in each hour h = 0..55 from DAY0 but h = 13 and h = 26, DOT in eight of them, h = 13 among them;
+    # every hour is asserted covered but h = 18.
     btc = [(60 * h + (17 * h) % 60, float(h % 3), float(h % 4 + 1)) for h in range(56) if h not in (13, 26)]
     dot = [(60 * h + 30, 2.0, 0.0) for h in (0, 7, 13, 14, 21, 35, 42, 49)]
     rows = {"BTC": _buckets(btc), "DOT": _buckets(dot)}
@@ -699,7 +718,7 @@ def test_a_truncated_prefix_of_the_buckets_reproduces_every_liquidation_column_b
     # Return index j opens bar j + 1 up to the missing open of bar 7, bar j + 2 after it; the last closes on the last hour.
     union_ts = [t for t in _hours(*range(4, 60, 4)) if t != DAY0 + timedelta(hours=28)]
     full = {coin: liquidation_grid_features(*columns, union_ts, covered) for coin, columns in rows.items()}
-    # Exact: bar 4 holds the 18th hour, not asserted, and DOT holds no bucket in bars 2, 6, 9, 11 and 13. Bar 6, before the
+    # Exact: bar 4 holds h = 18, not asserted, and DOT holds no bucket in bars 2, 6, 9, 11 and 13. Bar 6, before the
     # missing open, is covered: stretched across the hole, it would sum hours its prefix at n = 6 neither holds nor asserts.
     assert [j for j, v in enumerate(full["BTC"]["binperp_liq_lowerbound_total_usd"]) if v is None] == [3]
     assert [j for j, v in enumerate(full["DOT"]["binperp_liq_lowerbound_total_usd"]) if v is None] == [3]
