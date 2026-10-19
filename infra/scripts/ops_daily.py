@@ -1642,6 +1642,7 @@ _FIRST_STAGE_SHAPES = (
     # metacharacter that was active where it stood.
     _Shape(("grafana-query.py",), {"--since": _SINCE, "--step": _NAME, "--stack": _NAME}, arity=(1, 6), classes=(_QUOTED,)),
     _Shape(("grafana-query.py",), {"--loki": None, "--stack": _NAME}, arity=(1, 6), classes=(_QUOTED,)),
+    _Shape(("grafana-compare.py",), {"--day": _DAY}),
     _Shape(("continuity.py",), {"--root": _PATH, "--since": _SINCE, "--until": _SINCE}, arity=(0, 3), classes=(_PATH,)),
     _Shape(("zcrypto", "data", "rolling", "verify"), {"--root": _PATH, "--as-of": _DAY}),
     _Shape(("ops-postverify.sh",), {"--since": _SINCE}, arity=(0, 3), classes=(_QUOTED,)),
