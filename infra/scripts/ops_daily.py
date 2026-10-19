@@ -1638,8 +1638,7 @@ _FIRST_STAGE_SHAPES = (
     _Shape(("top",), {"-n": _INT}, short=r"-[bn1H]{1,4}"),
     _Shape(("date",), {"-u": None, "--utc": None}, arity=(0, 1), classes=(_DATEFMT,)),
     _Shape(("hostname",)),
-    # The repo's own read-only instruments. Their operands take the literal class: the scanner has already refused every
-    # metacharacter that was active where it stood.
+    # The repo's own read-only instruments.
     _Shape(("grafana-query.py",), {"--since": _SINCE, "--step": _NAME, "--stack": _NAME}, arity=(1, 6), classes=(_QUOTED,)),
     _Shape(("grafana-query.py",), {"--loki": None, "--stack": _NAME}, arity=(1, 6), classes=(_QUOTED,)),
     _Shape(("grafana-compare.py",), {"--day": _DAY}),

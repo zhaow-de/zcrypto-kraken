@@ -480,6 +480,21 @@ def test_the_difference_line_names_the_rule_the_node_the_instant_and_what_differ
     assert out[23].startswith("r-up B 2026-09-30T23:00Z ")
 
 
+def test_the_attached_form_names_the_same_day_as_the_spaced_one(monkeypatch, tmp_path, capsys):
+    _alerts(monkeypatch, tmp_path, _rule("r-up", "up"))
+    stacks = _Stacks(monkeypatch)
+    rc, out = _run(capsys, (f"--day={DAY}",))
+    assert rc == 0 and {r.time for r in stacks.requests} == {str(t) for t in INSTANTS}
+
+
+@pytest.mark.parametrize("argv", [("--days", DAY), ("--day", DAY, "extra"), ("extra",), ("--day",), ("--day", DAY, "--day", DAY)])
+def test_an_argument_beyond_the_one_flag_is_a_failure_before_any_query(monkeypatch, tmp_path, capsys, argv):
+    _alerts(monkeypatch, tmp_path, _rule("r-up", "up"))
+    stacks = _Stacks(monkeypatch)
+    rc, out = _run(capsys, argv)
+    assert rc == 2 and out[-1].startswith("compare: failed: the arguments are [--day YYYY-MM-DD]") and stacks.requests == []
+
+
 def test_a_date_the_flag_cannot_parse_is_a_failure_before_any_query(monkeypatch, tmp_path, capsys):
     _alerts(monkeypatch, tmp_path, _rule("r-up", "up"))
     stacks = _Stacks(monkeypatch)
