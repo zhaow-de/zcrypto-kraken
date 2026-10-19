@@ -399,3 +399,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #730 | 2026-10-18 | feat(registry): every trial run counted, an abandoned branch included | — | 00133 | T0222 |
 | #731 | 2026-10-18 | feat(research): iter-178 — B1 trial 4: volume-confirmed entries, REJECT | iter-178 | 00134 | T0022 |
 | #735 | 2026-10-19 | feat(research): iter-179 — B1 trial 5: hourly channel exits on A2 | iter-179 | 00135 | T0022 |
+| #736 | 2026-10-19 | docs(research): iter-180 — B1 closed as attributed out; T0022 resolved | iter-180 | — | T0022 |
