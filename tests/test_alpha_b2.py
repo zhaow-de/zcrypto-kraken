@@ -587,7 +587,6 @@ def test_ratio_grid_features_refuses_a_ratio_longer_than_the_rows_by_its_name():
 
 def test_a_truncated_prefix_of_the_rows_reproduces_the_ratio_columns_bit_for_bit():
     oi_ts, oi_values, union_ts = _oi_prefix_fixture()
-    # The fixture's `0.0`, bar 35's last row, is a null in three columns and a reading in the taker ratio.
     ratios = _each_ratio([None if v == 0.0 else v / 100 for v in oi_values]) | {
         "sum_taker_long_short_vol_ratio": [v / 100 for v in oi_values]
     }
@@ -612,8 +611,7 @@ def _buckets(rows: list[tuple[int, float, float]]) -> tuple[list[datetime], list
     return [DAY0 + timedelta(minutes=m) for m, _, _ in rows], [lo for _, lo, _ in rows], [sh for _, _, sh in rows]
 
 
-# BTC holds a bucket in each hour from 00:00 to 15:00, DOT one at 00:10 and one at 15:00; the caller asserts every hour
-# of the union's bars covered but 09:00.
+# BTC holds a bucket in each hour from 00:00 to 15:00, DOT one at 00:10 and one at 15:00.
 _LIQUIDATIONS = {
     "BTC": [
         (5, 100.0, 0.0),
@@ -686,7 +684,7 @@ def test_liquidation_grid_features_refuses_bucket_lists_of_unequal_length():
 
 
 def test_liquidation_grid_features_refuses_an_empty_read_by_name():
-    with pytest.raises(AlphaError, match=re.escape("bucket_ts is empty: read anyway, every covered bar would sum to zero")):
+    with pytest.raises(AlphaError, match=re.escape("bucket_ts is empty: every covered bar would sum to zero")):
         liquidation_grid_features([], [], [], _LIQUIDATION_UNION, _LIQUIDATION_COVERED)
 
 
@@ -703,14 +701,22 @@ def test_liquidation_grid_features_refuses_a_naive_bucket_stamp_by_name():
         liquidation_grid_features(bucket_ts, [1.0, 2.0, 3.0], [0.0, 0.0, 0.0], _hours(0, 4), _hours(0, 1, 2, 3))
 
 
+@pytest.mark.parametrize(
+    "stamp", [(DAY0 + timedelta(hours=5)).replace(tzinfo=None), DAY0 + timedelta(hours=5, minutes=31)], ids=["naive", "off-hour"]
+)
+def test_liquidation_grid_features_refuses_a_naive_or_off_hour_covered_stamp_by_name(stamp):
+    # Read anyway, the stamp in 05:00's place equals no hour start, so bar 1 would read None with no error.
+    covered = [stamp if t == DAY0 + timedelta(hours=5) else t for t in _LIQUIDATION_COVERED]
+    with pytest.raises(AlphaError, match=re.escape(f"covered must be tz-aware hour starts, got {stamp.isoformat()}")):
+        liquidation_grid_features(*_buckets(_LIQUIDATIONS["BTC"]), _LIQUIDATION_UNION, covered)
+
+
 def test_a_liquidation_union_stamp_off_a_4h_mark_is_refused_by_name():
     with pytest.raises(AlphaError, match=re.escape("union_ts[1] = 2024-03-01T05:00:00+00:00 is not on a 4 h mark")):
         liquidation_grid_features(*_buckets(_LIQUIDATIONS["BTC"]), _hours(0, 5, 9), _LIQUIDATION_COVERED)
 
 
 def test_a_truncated_prefix_of_the_buckets_reproduces_every_liquidation_column_bit_for_bit():
-    # BTC holds a bucket in each hour h = 0..55 from DAY0 but h = 13 and h = 26, DOT in eight of them, h = 13 among them;
-    # every hour is asserted covered but h = 18.
     btc = [(60 * h + (17 * h) % 60, float(h % 3), float(h % 4 + 1)) for h in range(56) if h not in (13, 26)]
     dot = [(60 * h + 30, 2.0, 0.0) for h in (0, 7, 13, 14, 21, 35, 42, 49)]
     rows = {"BTC": _buckets(btc), "DOT": _buckets(dot)}

@@ -36,7 +36,7 @@ _CARRY_WINDOW = 90
 _OI_ZSCORE_WINDOW = 180
 _OI_MOMENTUM_LOOKBACK = 180
 _HOUR = timedelta(hours=1)
-# A notional's name says it is a lower bound of the tape; the imbalance's says only its stream (docs/specs/00136 D5).
+# The imbalance carries no lowerbound_: a ratio of two undercounts bounds nothing (docs/specs/00136 D5).
 _LIQUIDATION_COLUMNS = (
     "binperp_liq_lowerbound_long_usd",
     "binperp_liq_lowerbound_short_usd",
@@ -213,7 +213,6 @@ def _oi_at_union_closes(
     oi_values: list[float | None],
     union_ts: list[datetime],
 ) -> list:
-    """The `sum_open_interest` level: a `0.0` placeholder is None before the as-of (docs/specs/00110 D5)."""
     return _rows_at_union_closes(f"oi {label}", feature, oi_ts, "oi_values", oi_levels_from_raw(oi_values), union_ts)
 
 
@@ -260,10 +259,14 @@ def liquidation_grid_features(
             f"bucket_ts, long_usd and short_usd must be equal length, got {len(bucket_ts)}, {len(long_usd)} and {len(short_usd)}"
         )
     if not bucket_ts:
-        raise AlphaError("bucket_ts is empty: read anyway, every covered bar would sum to zero")
+        raise AlphaError("bucket_ts is empty: every covered bar would sum to zero")
     _validate_stamps("bucket_ts", bucket_ts)
     _validate_union_marks(union_ts)
-    asserted = set(covered)
+    asserted: set[datetime] = set()
+    for t in covered:
+        if t.utcoffset() is None or t.minute or t.second or t.microsecond:
+            raise AlphaError(f"covered must be tz-aware hour starts, got {t.isoformat()}")
+        asserted.add(t)
     out: dict[str, list[float | None]] = {name: [] for name in _LIQUIDATION_COLUMNS}
     for t in union_ts[:-1]:
         hours = [t + k * _HOUR for k in range(_BOUNDARY // _HOUR)]
