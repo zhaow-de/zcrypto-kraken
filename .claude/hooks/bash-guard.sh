@@ -28,8 +28,8 @@
 # (`ln -s <vaulted file> x && cat x`), since a file's existence is read before anything runs. Of `xargs` and
 # `find -exec`, two shapes are judged: a stage whose command word is `xargs` with `grep` or `rg` as its first operand,
 # or `find` carrying `-exec grep|rg`, in a pipeline any stage of which names `infra` as a word or a path component --
-# the grep's own pattern argument excepted, so `xargs grep -l infra` over `cli` is a search, not a read of infra;
-# every other `xargs` or `-exec` is outside. A vault tool's writing verb is admitted over a vaulted file: a key rotation runs `ansible-vault encrypt|rekey`.
+# the word `grep_pattern_at` takes for the grep's pattern excepted; every other `xargs` or `-exec` is outside. A vault
+# tool's writing verb is admitted over a vaulted file: a key rotation runs `ansible-vault encrypt|rekey`.
 # Refused deliberately, as a word is judged wherever it stands: an agent's `echo git push`, `echo cat <vaulted file>`.
 #
 # A stage's directory, for the vaulted-file, memo and dispatched-agent families, is the payload's `cwd` moved by
@@ -42,14 +42,11 @@
 # Outside the memo family: every writer its corpus does not refuse -- a wrapper (`sudo tee`), a glob or a brace, a
 # path a variable holds whole, an interpreter, `awk -i inplace`, `rsync`, `ln`, `dd`, `rm`.
 #
-# A state-changing git command -- commit, merge, rebase, reset, push, pull, fetch, cherry-pick, revert, am, checkout,
-# switch, stash (not list|show), mv, rm, a branch delete, rename, copy or force, worktree add|remove|move -- stamps
-# `zcrypto-git-state-stamp` in the git directory of the checkout it runs in (a worktree's own, never the common dir two
-# worktrees share; never under the top, where `git add .` would commit it in a checkout that ignores no `.tmp`), once
-# per call at admission; a second one under 3 s after is refused, since a hook sees one Bash call and nothing of its
-# siblings, and the shape it guards is two parallel calls on one checkout -- a sequential pair whose first has returned
-# inside the gap is refused too, the mechanic being time, and its remedy is to re-send after the gap. A read neither
-# stamps nor is refused; a directory that is no checkout, or an unreadable stamp, admits; `tag` is outside.
+# A state-changing git command (`changes_state`; `tag` deliberately not) stamps `zcrypto-git-state-stamp` in the
+# checkout's own git directory -- a worktree's, not the common dir worktrees share -- once per call at admission; a
+# second one under 3 s after is refused, since a hook sees one Bash call and nothing of its siblings: time is the
+# mechanic, so a sequential pair inside the gap is refused as a parallel pair is. A read neither stamps nor is refused;
+# a directory that is no checkout, or an unreadable stamp, admits.
 #
 # The dispatched-agent family judges only a call whose payload carries `agent_id`, which the harness sets inside a
 # subagent alone, so the main loop's pushes and merges never reach it. The main checkout is the parent of the git
@@ -200,7 +197,7 @@ WORKTREE_REMEDY = (
     "Claude Code's temp root; a worktree, and another session's directory, are that session's."
 )
 STATE_SUBS = {"commit", "merge", "rebase", "reset", "push", "pull", "fetch", "cherry-pick", "revert", "am", "checkout", "switch", "stash", "mv", "rm"}
-STATE_STAMP = "zcrypto-git-state-stamp"  # in the checkout's own git directory
+STATE_STAMP = "zcrypto-git-state-stamp"
 STATE_GAP = 3.0  # seconds since the checkout's last admitted state-changing git command
 XARGS_VALUE = {"-n", "-I", "-L", "-P", "-d", "-s"}  # xargs' short options whose value is the next word
 HOOK_DIR = posixpath.dirname(os.path.abspath(sys.argv[1]))
@@ -630,8 +627,6 @@ def handed_grep(words):
 
 
 def grep_pattern_at(stage):
-    # The index, in a stage `handed_grep` matches, of the grep's pattern argument: `-e PAT`'s or `--regexp=PAT`'s value,
-    # else the first word after the grep program not opening with `-`; None when the stage carries none.
     p, rest = argv_of(stage)
     base = len(stage) - len(rest)
     if p == "xargs":
@@ -649,7 +644,6 @@ def grep_pattern_at(stage):
 
 
 def judge_handed_grep(pipe, raw):
-    # A handed grep's pattern is not a word naming infra; a path argument naming `infra/..` is.
     handed = [handed_grep(stage) for stage in pipe]
     if not any(handed):
         return
@@ -1206,8 +1200,8 @@ def state_stamp(words, here):
         return stamp
     if age < STATE_GAP:
         refuse(
-            f"`{spelled(words)}`: a state-changing git command started {age:.1f} s ago in this checkout; a state-changing "
-            f"git command runs alone, never beside another — if that one has already returned, re-send this one after the gap"
+            f"`{spelled(words)}`: a state-changing git command started {age:.1f} s ago in this checkout and each runs "
+            f"alone — if that one has already returned, re-send this one after the gap"
         )
     return stamp
 
