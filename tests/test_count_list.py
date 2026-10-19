@@ -103,9 +103,6 @@ def test_the_prose_only_entry_reads_the_ref_predicate_and_exclusions_its_clause_
     assert re.search(right, fn.group(0), re.M), "the right arm no longer reads as the clause states"
 
 
-PROTOCOL = REPO / "docs" / "reference" / "multi-agent-protocol.md"
-
-
 def _set_clause(entry: str) -> str:
     """The `(set: …; count: …)` clause of the CLAUDE.md bullet naming `entry`, parsed out of its line."""
     tail = re.compile(r"count-list\.sh " + re.escape(entry) + r"`\)")
@@ -702,17 +699,6 @@ def test_the_script_prints_one_shaped_line_per_entry(tmp_path):
 
 def _git(repo: pathlib.Path, *args: str) -> str:
     return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, check=True).stdout
-
-
-def _merge(repo: pathlib.Path, branch: str, files: list[str]) -> None:
-    _git(repo, "checkout", "-q", "-b", branch)
-    for rel in files:
-        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
-        (repo / rel).write_text(f"{branch}\n")
-        _git(repo, "add", rel)
-        _git(repo, "commit", "-qm", f"add {rel}")
-    _git(repo, "checkout", "-q", "develop")
-    _git(repo, "merge", "-q", "--no-ff", "-m", f"Merge pull request from {branch}", branch)
 
 
 @pytest.fixture
