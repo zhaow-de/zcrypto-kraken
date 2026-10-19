@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from bisect import bisect_left
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import partial
@@ -34,6 +35,14 @@ _SETTLEMENT_INTERVAL = timedelta(hours=_FUNDING_INTERVAL_HOURS)
 _CARRY_WINDOW = 90
 _OI_ZSCORE_WINDOW = 180
 _OI_MOMENTUM_LOOKBACK = 180
+_HOUR = timedelta(hours=1)
+# A notional's name says it is a lower bound of the tape; the imbalance's says only its stream (docs/specs/00136 D5).
+_LIQUIDATION_COLUMNS = (
+    "binperp_liq_lowerbound_long_usd",
+    "binperp_liq_lowerbound_short_usd",
+    "binperp_liq_lowerbound_total_usd",
+    "binperp_liq_imbalance",
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -234,6 +243,50 @@ def ratio_grid_features(
     return {
         name: _rows_at_union_closes(name, list, oi_ts, name, values, union_ts) for name, values in ratio_features(ratios).items()
     }
+
+
+def liquidation_grid_features(
+    bucket_ts: list[datetime],
+    long_usd: list[float],
+    short_usd: list[float],
+    union_ts: list[datetime],
+    covered: Collection[datetime],
+) -> dict[str, list[float | None]]:
+    """One coin's 1-minute liquidation buckets, as the subject read them, summed over each union bar (docs/specs/00136
+    D3-D6). `covered` holds the hour starts the caller asserts the poller covered for the coin: a bar whose four hours it
+    holds sums the buckets stamped inside it, zero where there are none, and any other bar reads None."""
+    if not len(bucket_ts) == len(long_usd) == len(short_usd):
+        raise AlphaError(
+            f"bucket_ts, long_usd and short_usd must be equal length, got {len(bucket_ts)}, {len(long_usd)} and {len(short_usd)}"
+        )
+    if not bucket_ts:
+        raise AlphaError("bucket_ts is empty: read anyway, every covered bar would sum to zero")
+    _validate_stamps("bucket_ts", bucket_ts)
+    _validate_union_marks(union_ts)
+    asserted = set(covered)
+    out: dict[str, list[float | None]] = {name: [] for name in _LIQUIDATION_COLUMNS}
+    for t in union_ts[:-1]:
+        hours = [t + k * _HOUR for k in range(_BOUNDARY // _HOUR)]
+        if not asserted.issuperset(hours):
+            for values in out.values():
+                values.append(None)
+            continue
+        # A bucket covers its minute, so one stamped on the close is the next bar's (docs/specs/00136 D6).
+        lo, hi = bisect_left(bucket_ts, t), bisect_left(bucket_ts, t + _BOUNDARY)
+        long_sum = sum(long_usd[lo:hi], 0.0)
+        short_sum = sum(short_usd[lo:hi], 0.0)
+        total = long_sum + short_sum
+        imbalance = None if total == 0 else (long_sum - short_sum) / total
+        for name, value in zip(_LIQUIDATION_COLUMNS, (long_sum, short_sum, total, imbalance)):
+            out[name].append(value)
+    logger.debug(
+        "liquidations at union closes: %d buckets, %d asserted hours, %d return indices, %d None",
+        len(bucket_ts),
+        len(asserted),
+        len(union_ts) - 1,
+        out[_LIQUIDATION_COLUMNS[0]].count(None),
+    )
+    return out
 
 
 def _check_lengths(lists: dict[str, list], expected: int | None = None) -> int:
