@@ -636,9 +636,10 @@ def grep_pattern_at(stage):
     else:
         j = next(j for j, a in enumerate(rest[:-1]) if a == "-exec" and rest[j + 1].rpartition("/")[2] in GREPS) + 1
     for i in range(j + 1, len(rest)):
-        if rest[i] in ("-e", "--regexp"):
+        w = rest[i]
+        if w in ("-e", "--regexp") or (w.startswith("-") and not w.startswith("--") and w.endswith("e")):
             return base + i + 1 if i + 1 < len(rest) else None
-        if rest[i].startswith("--regexp=") or not rest[i].startswith("-"):
+        if w.startswith("--regexp=") or not w.startswith("-") or (not w.startswith("--") and "e" in w[1:]):
             return base + i
     return None
 
