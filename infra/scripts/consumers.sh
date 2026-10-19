@@ -3,8 +3,7 @@
 # walk or list files and name its top-level directory -- or, for a changed test, walk their own. The search is
 # `git grep` with vault-shaped and `*.sops.*` paths excluded, never `grep -r`, which opens the vault files.
 # --direct lists only the tests/test_*.py files that name the path in a full form, never by its bare stem, and no walkers.
-# stdout is the paths alone, one per line, so `T=$(consumers.sh --direct <p>); [ -n "$T" ] && uv run pytest $T` runs
-# them or nothing; every `##` and `#` header and note is stderr.
+# stdout is the paths alone, one per line, so --direct's output is a pytest argument list; every header and note is stderr.
 # Usage: infra/scripts/consumers.sh [--direct] <path>...   (a path as the tree names it: infra/scripts/foo.sh, cli/engine/x.py)
 #   rc: 0 printed, 2 usage or not in a repository.
 set -euo pipefail
