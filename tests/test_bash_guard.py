@@ -1401,6 +1401,7 @@ HANDED_GREPS = [
 ]
 HANDED_GREPS_ADMITTED = [
     "git ls-files 'cli/**/*.py' | xargs grep -l foo",
+    "git ls-files cli | xargs grep -rle infra",
     "git ls-files 'infra/**/*.bak' | xargs rm",
     "git ls-files cli | xargs grep -l infra",
     "git ls-files cli | xargs grep -l -e infra",
