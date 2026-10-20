@@ -112,6 +112,9 @@ REFUSED = [
     ('echo "`git commit -n`"', "-n"),
     ("cat <<EOF\n$(git commit -n)\nEOF", "-n"),
     ("cat <<EOF\n`git commit --no-verify`\nEOF", "--no-verify"),
+    # a `<<` quoted inside a backtick opens no heredoc: the next line, and the backtick's own next line, are judged
+    ('echo `echo "<<EOF"`\ngit commit --no-verify -m x', "--no-verify"),
+    ('echo `echo "<<EOF"\necho y` ; git commit --no-verify -m x', "--no-verify"),
     # merge, rebase, am; -n is --no-verify on am
     ("git merge --no-verify feature", "--no-verify"),
     ("git merge --no-veri feature", "--no-veri"),
