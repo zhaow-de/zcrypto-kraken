@@ -1806,7 +1806,7 @@ _B1_EXIT_PREFLIGHT_KEYS = _B2_ARM_A_BAR_KEYS | {
 
 # docs/specs/00137 D9: the trial on a frozen set's full history — docs/specs/00128's arms, bars, matrix and keys, its slices
 # `calendar_year_slices`' stub years alone.
-_B2_FULL_N_TRIALS = 1  # docs/specs/00133 D4's count: no B2 record and no orphan when the trial was pre-registered
+_B2_FULL_N_TRIALS = 1  # docs/specs/00137 D10: fixed by the spec's hash; a different count is a new subject, never this one raised
 
 
 def _b2_full_arm_a_bar(inputs: _B2Inputs) -> tuple[dict, list[float], list[float]]:
