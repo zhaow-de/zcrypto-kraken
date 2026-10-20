@@ -57,6 +57,7 @@ exclude_also = [
 dev = [
     "ansible==14.5.0",
     "ansible-lint==26.10.1",
+    "coveralls==4.1.0",
     "pre-commit==4.7.0",
     "pytest==9.1.1",
     "pytest-cov==7.1.0",
