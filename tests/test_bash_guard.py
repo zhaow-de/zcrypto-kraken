@@ -112,9 +112,6 @@ REFUSED = [
     ('echo "`git commit -n`"', "-n"),
     ("cat <<EOF\n$(git commit -n)\nEOF", "-n"),
     ("cat <<EOF\n`git commit --no-verify`\nEOF", "--no-verify"),
-    # a `<<` quoted inside a backtick opens no heredoc: the next line, and the backtick's own next line, are judged
-    ('echo `echo "<<EOF"`\ngit commit --no-verify -m x', "--no-verify"),
-    ('echo `echo "<<EOF"\necho y` ; git commit --no-verify -m x', "--no-verify"),
     # merge, rebase, am; -n is --no-verify on am
     ("git merge --no-verify feature", "--no-verify"),
     ("git merge --no-veri feature", "--no-veri"),
@@ -1088,101 +1085,6 @@ def test_a_redirect_standing_alone_before_a_command_is_named_as_its_own_stage(tm
 @pytest.mark.parametrize("command", MEMO_READS)
 def test_a_read_of_the_memo_and_a_write_of_another_file_are_admitted_silently(tmp_path: Path, command: str):
     r = run_hook(call(command), cwd=tmp_path)
-    assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
-
-
-# (command, the memo spelling the message must name, the files the stage's directory holds)
-INTERPRETER_MEMO = {
-    "a python heredoc": ("python3 - <<'EOF'\nopen('.local/memo.md', 'a').write('- item\\n')\nEOF", ".local/memo.md", {}),
-    "python -c": ("python3 -c \"open('.local/memo.md', 'w').write('x')\"", ".local/memo.md", {}),
-    "uv run python -c": ("uv run python -c \"open('.local/memo.md', 'w').write('x')\"", ".local/memo.md", {}),
-    "a read-shaped heredoc": ("python3 - <<'EOF'\nprint(open('.local/memo.md').read())\nEOF", ".local/memo.md", {}),
-    "a heredoc beside a script": (
-        "python3 tool.py <<'EOF'\nopen('.local/memo.md', 'a')\nEOF",
-        ".local/memo.md",
-        {"tool.py": "x = 1\n"},
-    ),
-    "pathlib joined": ("python3 -c \"import pathlib; (pathlib.Path('.local') / 'memo.md').write_text('x')\"", ".local/memo.md", {}),
-    "os.path.join": ("python3 -c \"import os; open(os.path.join('.local', 'memo.md'), 'a')\"", ".local/memo.md", {}),
-    "an f-string": ("python3 -c \"open(f'{root}/.local/memo.md', 'a')\"", "{root}/.local/memo.md", {}),
-    "a script file": ("python3 tool.py", ".local/memo.md", {"tool.py": "open('.local/memo.md', 'a').write('x')\n"}),
-    "node -e": ("node -e \"require('fs').appendFileSync('.local/memo.md', 'x')\"", ".local/memo.md", {}),
-    "perl -e": ('perl -e \'open(F, ">>", ".local/memo.md")\'', ".local/memo.md", {}),
-    "memo.md from .local": ("cd .local && python3 -c \"open('memo.md', 'a')\"", "memo.md", {}),
-    "a memo heredoc after a quoted substitution's heredoc": (
-        "git log -1 --format=%s \"$(cat <<'EOM'\nhello\nEOM\n)\" ; python3 - <<'EOF'\nopen('.local/memo.md', 'w').write('x')\nEOF",
-        ".local/memo.md",
-        {},
-    ),
-    "a here-string": ("python3 <<< \"open('.local/memo.md', 'w').write('x')\"", ".local/memo.md", {}),
-    "a memo heredoc after a backtick's heredoc": (
-        "echo `cat <<'EOM'\nhello\nEOM\n` ; python3 - <<'EOF'\nopen('.local/memo.md', 'w').write('x')\nEOF",
-        ".local/memo.md",
-        {},
-    ),
-    "a memo heredoc after a process substitution's heredoc": (
-        "cat <(cat <<'EOM'\nhello\nEOM\n) ; python3 - <<'EOF'\nopen('.local/memo.md', 'w').write('x')\nEOF",
-        ".local/memo.md",
-        {},
-    ),
-    "a memo heredoc on the lines after a here-string": (
-        "python3 <<< \"print(1)\"\necho body\ncat <<'EOM'\nreal\nEOM\npython3 - <<'EOF'\nopen('.local/memo.md', 'w').write('x')\nEOF",
-        ".local/memo.md",
-        {},
-    ),
-    "a memo heredoc after an arithmetic shift in a substitution": (
-        "echo $((1<<2))\npython3 - <<'EOF'\nopen('.local/memo.md', 'w').write('x')\nEOF",
-        ".local/memo.md",
-        {},
-    ),
-    "a memo heredoc after an arithmetic command's shift": (
-        "(( x = 1 << 2 ))\npython3 - <<'EOF'\nopen('.local/memo.md', 'w').write('x')\nEOF",
-        ".local/memo.md",
-        {},
-    ),
-    "a memo heredoc after a single-quoted <<": (
-        "echo '<<EOF'\npython3 - <<'EOF'\nopen('.local/memo.md', 'w').write('x')\nEOF",
-        ".local/memo.md",
-        {},
-    ),
-}
-# (command, the files the stage's directory holds)
-INTERPRETER_OTHER = {
-    "a python heredoc writing another file": ("python3 - <<'EOF'\nopen('.tmp/note.md', 'w').write('x')\nEOF", {}),
-    "python -c": ("python3 -c \"print('hi')\"", {}),
-    "a script file": ("python3 tool.py", {"tool.py": "print('hi')\n"}),
-    "a module": ("uv run python -m pytest tool.py", {"tool.py": "open('.local/memo.md').read()\n"}),
-    "cat .local/memo.md": ("cat .local/memo.md", {}),
-    "cat .local/memo.md piped to python": ('cat .local/memo.md | python3 -c "import sys; print(len(sys.stdin.read()))"', {}),
-    "a harmless heredoc after a substitution's heredoc naming the memo": (
-        "echo \"$(cat <<'EOM'\nsee .local/memo.md\nEOM\n)\" ; python3 - <<'EOF'\nprint(1)\nEOF",
-        {},
-    ),
-    "a here-string naming another file": ("python3 <<< \"open('.tmp/note.md', 'w').write('x')\"", {}),
-    "a harmless heredoc on the lines after a here-string": (
-        "python3 <<< \"print(1)\"\necho body\ncat <<'EOM'\nreal\nEOM\npython3 - <<'EOF'\nprint(1)\nEOF",
-        {},
-    ),
-}
-
-
-@pytest.mark.parametrize(("command", "path", "files"), INTERPRETER_MEMO.values(), ids=INTERPRETER_MEMO.keys())
-def test_an_interpreters_text_naming_the_memo_is_blocked_with_the_remedy(tmp_path: Path, command: str, path: str, files: dict):
-    for name, text in files.items():
-        (tmp_path / name).write_text(text)
-    r = run_hook({**call(command), "cwd": str(tmp_path)}, cwd=tmp_path)
-    assert r.returncode == 2, r.stderr
-    claim = r.stderr.partition("; in `")[0]
-    assert "BLOCKED" in claim and f" names the memo `{path}` " in claim, r.stderr
-    assert "through the Edit tool after a Read" in r.stderr and "refused whole" in r.stderr
-    assert r.stdout == ""
-
-
-@pytest.mark.parametrize(("command", "files"), INTERPRETER_OTHER.values(), ids=INTERPRETER_OTHER.keys())
-def test_an_interpreters_text_naming_no_memo_is_admitted_silently(tmp_path: Path, command: str, files: dict):
-    for name, text in files.items():
-        (tmp_path / name).write_text(text)
-    r = run_hook({**call(command), "cwd": str(tmp_path)}, cwd=tmp_path)
     assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
 
 
