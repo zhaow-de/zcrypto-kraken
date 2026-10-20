@@ -40,12 +40,10 @@
 # families read an unknown directory as the payload's `cwd`. Scope is not tracked, so a `cd` outlives its subshell.
 #
 # Outside the memo family: every writer its corpus does not refuse -- a wrapper (`sudo tee`), a glob or a brace, a
-# path a variable holds whole, `awk -i inplace`, `rsync`, `ln`, `dd`, `rm`. An interpreter stage (python, node, perl,
-# ruby, at any position in the stage) is judged by the text it runs -- its `-c`/`-e` body, each heredoc on its stdin,
-# the script file it names, read from the stage's directory -- and refused when a token of that text, or two adjacent
-# tokens joined, spell the memo; read-shaped or not, since a write mode is no cheaper to read than the whole body.
-# Outside it: a body piped from another stage (`cat <<EOF | python3`), a module (`-m`), a path the body composes from
-# pieces no token or adjacent pair spells, and a script past SCRIPT_CAP characters.
+# path a variable holds whole, `awk -i inplace`, `rsync`, `ln`, `dd`, `rm`. An interpreter's text naming the memo is
+# refused read-shaped or not, since a write mode is no cheaper to read than the whole body; outside it: a body piped
+# from another stage (`cat <<EOF | python3`), a module (`-m`), a path the body composes from pieces no token or
+# adjacent pair spells, and a script past SCRIPT_CAP characters.
 #
 # A state-changing git command (`changes_state`; `tag` deliberately not) stamps `zcrypto-git-state-stamp` in the
 # checkout's own git directory -- a worktree's, not the common dir worktrees share -- once per call at admission; a
@@ -219,13 +217,14 @@ HOOK_DIR = posixpath.dirname(os.path.abspath(sys.argv[1]))
 
 
 class Stage(list):
-    # A stage's words, the files its `<` redirects feed it, its output redirects as (operator, target) and the heredoc
-    # bodies on its stdin: no word of its argv.
+    # A stage's words, the files its `<` redirects feed it, its output redirects as (operator, target), the heredoc
+    # bodies and the here-strings on its stdin: no word of its argv.
     def __init__(self):
         super().__init__()
         self.inputs = []
         self.outputs = []
         self.heredocs = []
+        self.herestrings = []
 
 
 def expansions(body):
@@ -295,7 +294,8 @@ def cut_heredocs(text):
     # A scan that knows quotes and $(...) -- the heredoc inside the documented `-m "$(cat <<'EOF' ... EOF)"` is a
     # heredoc, and its body carries whatever the message says. Returns the cut text, the command substitutions it
     # closed -- `$( .. )` and backticks, each a command of its own; an unclosed one is bash's to refuse -- and the
-    # heredoc bodies in the order of their `<<` operators, which is the order the cut text keeps them.
+    # bodies of the top-level heredocs in the order of their `<<` operators; a heredoc inside a substitution is that
+    # substitution's, found when its text is judged as a command, and its `<<` is kept out of the cut text.
     out, bodies, docs, pending, stack, i, n, sub_close = [], [], [], [], [("top", 0)], 0, len(text), -1
     while i < n:
         ch, st = text[i], stack[-1][0]
@@ -327,6 +327,34 @@ def cut_heredocs(text):
             continue
         if st != "dq" and text.startswith('$"', i):
             i += 1
+            continue
+        if st != "dq" and text.startswith("<<", i) and not text.startswith("<<<", i) and (m := HEREDOC.match(text, i)):
+            # A backslash anywhere in the delimiter quotes it (`<<\EOF`): no expansion, like `<<'EOF'`.
+            expands = m.group(4) is not None and "\\" not in m.group(0)
+            pending.append((m.group(2) or m.group(3) or m.group(4), bool(m.group(1)), expands, len(stack)))
+            if len(stack) == 1:
+                out.append(m.group(0))
+            i = m.end()
+            continue
+        if st != "dq" and ch == "\n" and (due := [p for p in pending if p[3] >= len(stack)]):
+            # The bodies a newline opens are those of the `<<` operators at its depth or deeper: one inside a
+            # substitution reads its body at the substitution's own newline, as bash's parser does.
+            out.append("\n")
+            i += 1
+            pending = [p for p in pending if p[3] < len(stack)]
+            for delim, dash, expands, depth in due:
+                lines = []
+                while i < n:
+                    end = text.find("\n", i)
+                    line = text[i : n if end == -1 else end]
+                    i = n if end == -1 else end + 1
+                    if (line.lstrip("\t") if dash else line) == delim:
+                        break
+                    lines.append(line)
+                if depth == 1:
+                    docs.append("\n".join(lines))
+                    if expands:
+                        bodies.extend(expansions(docs[-1]))
             continue
         if st == "bq":
             if ch == "`":
@@ -378,32 +406,6 @@ def cut_heredocs(text):
             end = text.find("\n", i)
             i = n if end == -1 else end
             continue
-        elif ch == "<" and text.startswith("<<", i) and not text.startswith("<<<", i):
-            m = HEREDOC.match(text, i)
-            if m:
-                # A backslash anywhere in the delimiter quotes it (`<<\EOF`): no expansion, like `<<'EOF'`.
-                expands = m.group(4) is not None and "\\" not in m.group(0)
-                pending.append((m.group(2) or m.group(3) or m.group(4), bool(m.group(1)), expands))
-                out.append(m.group(0))
-                i = m.end()
-                continue
-        elif ch == "\n" and pending:
-            out.append("\n")
-            i += 1
-            for delim, dash, expands in pending:
-                lines = []
-                while i < n:
-                    end = text.find("\n", i)
-                    line = text[i : n if end == -1 else end]
-                    i = n if end == -1 else end + 1
-                    if (line.lstrip("\t") if dash else line) == delim:
-                        break
-                    lines.append(line)
-                docs.append("\n".join(lines))
-                if expands:
-                    bodies.extend(expansions(docs[-1]))
-            pending = []
-            continue
         out.append(ch)
         i += 1
     return "".join(out), bodies, docs
@@ -424,6 +426,8 @@ def pipelines(text):
                 pipes[-1][-1].inputs.append(tok)
             elif skip in OUTPUT:
                 pipes[-1][-1].outputs.append((skip, tok))
+            elif skip == "<<<":
+                pipes[-1][-1].herestrings.append(tok)
             skip = ""
             continue
         if not tok or not set(tok) <= PUNCT:
@@ -937,13 +941,11 @@ def names_memo(path, where):
     return any(posixpath.normpath(p).split("/")[-2:] == MEMO for p in (path, posixpath.join(where, path)))
 
 
-def refuse_memo(shown, hit, how, raw):
-    refuse(f"`{shown}` writes the memo `{hit}` {how}; in `{raw}`. {MEMO_REMEDY}")
+def refuse_memo(shown, hit, how, raw, verb="writes"):
+    refuse(f"`{shown}` {verb} the memo `{hit}` {how}; in `{raw}`. {MEMO_REMEDY}")
 
 
 def interpreter_texts(words, where):
-    # The texts an interpreter stage runs, each with what it is: a body option's value, each heredoc on its stdin, and
-    # the script file its first operand names, read from `where`; a `-` operand is the heredoc, `-m` a module.
     lang, at = None, None
     for i, w in enumerate(words):
         p = w.rpartition("/")[2]
@@ -962,6 +964,7 @@ def interpreter_texts(words, where):
     ]
     scripted = bool(texts)
     texts += [(doc, "from its heredoc") for doc in getattr(words, "heredocs", [])]
+    texts += [(s, "from its here-string") for s in getattr(words, "herestrings", [])]
     if ops and ops[0] != "-" and not scripted and "m" not in flags and os.path.isfile(posixpath.join(where, ops[0])):
         with contextlib.suppress(OSError), open(posixpath.join(where, ops[0]), errors="replace") as f:
             texts.append((f.read(SCRIPT_CAP), f"from the script `{ops[0]}`"))
@@ -969,8 +972,7 @@ def interpreter_texts(words, where):
 
 
 def text_names_memo(text, where):
-    # The token of a text, or two adjacent tokens joined (`os.path.join(".local", "memo.md")`, `Path(".local") /
-    # "memo.md"`), that names the memo from `where`; tokens with no letter or digit are skipped.
+    # A token with no letter or digit (the `/` of `Path(".local") / "memo.md"`) is skipped, so its neighbours pair.
     parts = [t for t in re.findall(r"[^\s'\"(),;]+", text) if re.search(r"[A-Za-z0-9]", t)]
     pairs = [posixpath.join(a, b) for a, b in zip(parts, parts[1:])]
     return next((t for t in parts + pairs if names_memo(t, where)), None)
@@ -983,7 +985,7 @@ def judge_memo(words, raw, where):
     for text, how in interpreter_texts(words, where):
         hit = text_names_memo(text, where)
         if hit:
-            refuse_memo(spelled(words), hit, how, raw)
+            refuse_memo(spelled(words), hit, how, raw, verb="names")
     p, rest = argv_of(words)
     if p == "sed":
         flags, _, ops = option_walk(rest, *SED_VALUE)
