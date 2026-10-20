@@ -50,13 +50,15 @@ for feed in ("scheduled-maintenances", "scheduled-maintenances/upcoming"):
     print(f"== {feed}: updated_at {d['page']['updated_at']}, {len(ms)} entries; act window {start:%m-%d %H:%M}-{end:%m-%d %H:%M}Z")
     for m in ms:
         names = [m["name"], *(c["name"] for c in m["components"])]
-        venue = any(word.search(n) for n in names)
+        updates = m.get("incident_updates")
+        bodies = [u.get("body") or "" for u in updates if isinstance(u, dict)] if isinstance(updates, list) else []
+        venue = any(word.search(t) for t in names + bodies)
         hit = venue and t(m["scheduled_for"]) < end and t(m["scheduled_until"]) > start
         print("STOP " if hit else "venue" if venue else "-    ", m["status"], m["scheduled_for"], m["scheduled_until"], m["name"], names[1:])
 PY
 ```
 
-A `STOP` line stops the act, the test being the converge bullet's in `.claude/rules/fleet-deploys.md`; `venue` marks an entry carrying the word outside the window, and an entry's own name is read because an empty `components` array is not an absent impact. A failed fetch, a traceback, `END is not later than START` or `0 entries` on the first feed, the 50 most recent entries, is never evidence the window is clear: fetch again, and check again immediately before the run (§5). `0 entries` on the second feed, the upcoming ones, beside a first feed that printed its entries, is nothing upcoming.
+A `STOP` line stops the act, the test being the converge bullet's in `.claude/rules/fleet-deploys.md`; `venue` marks an entry carrying the word outside the window, and an entry's own name and its `incident_updates[].body` texts are read because an empty `components` array is not an absent impact. A failed fetch, a traceback, `END is not later than START` or `0 entries` on the first feed, the 50 most recent entries, is never evidence the window is clear: fetch again, and check again immediately before the run (§5). `0 entries` on the second feed, the upcoming ones, beside a first feed that printed its entries, is nothing upcoming.
 
 #### 1.2 The engine's 4-hour boundary
 
