@@ -112,6 +112,9 @@ REFUSED = [
     ('echo "`git commit -n`"', "-n"),
     ("cat <<EOF\n$(git commit -n)\nEOF", "-n"),
     ("cat <<EOF\n`git commit --no-verify`\nEOF", "--no-verify"),
+    # a `<<` quoted inside a backtick opens no heredoc: the next line, and the backtick's own next line, are judged
+    ('echo `echo "<<EOF"`\ngit commit --no-verify -m x', "--no-verify"),
+    ('echo `echo "<<EOF"\necho y` ; git commit --no-verify -m x', "--no-verify"),
     # merge, rebase, am; -n is --no-verify on am
     ("git merge --no-verify feature", "--no-verify"),
     ("git merge --no-veri feature", "--no-veri"),
@@ -1112,6 +1115,36 @@ INTERPRETER_MEMO = {
         {},
     ),
     "a here-string": ("python3 <<< \"open('.local/memo.md', 'w').write('x')\"", ".local/memo.md", {}),
+    "a memo heredoc after a backtick's heredoc": (
+        "echo `cat <<'EOM'\nhello\nEOM\n` ; python3 - <<'EOF'\nopen('.local/memo.md', 'w').write('x')\nEOF",
+        ".local/memo.md",
+        {},
+    ),
+    "a memo heredoc after a process substitution's heredoc": (
+        "cat <(cat <<'EOM'\nhello\nEOM\n) ; python3 - <<'EOF'\nopen('.local/memo.md', 'w').write('x')\nEOF",
+        ".local/memo.md",
+        {},
+    ),
+    "a memo heredoc on the lines after a here-string": (
+        "python3 <<< \"print(1)\"\necho body\ncat <<'EOM'\nreal\nEOM\npython3 - <<'EOF'\nopen('.local/memo.md', 'w').write('x')\nEOF",
+        ".local/memo.md",
+        {},
+    ),
+    "a memo heredoc after an arithmetic shift in a substitution": (
+        "echo $((1<<2))\npython3 - <<'EOF'\nopen('.local/memo.md', 'w').write('x')\nEOF",
+        ".local/memo.md",
+        {},
+    ),
+    "a memo heredoc after an arithmetic command's shift": (
+        "(( x = 1 << 2 ))\npython3 - <<'EOF'\nopen('.local/memo.md', 'w').write('x')\nEOF",
+        ".local/memo.md",
+        {},
+    ),
+    "a memo heredoc after a single-quoted <<": (
+        "echo '<<EOF'\npython3 - <<'EOF'\nopen('.local/memo.md', 'w').write('x')\nEOF",
+        ".local/memo.md",
+        {},
+    ),
 }
 # (command, the files the stage's directory holds)
 INTERPRETER_OTHER = {
@@ -1126,6 +1159,10 @@ INTERPRETER_OTHER = {
         {},
     ),
     "a here-string naming another file": ("python3 <<< \"open('.tmp/note.md', 'w').write('x')\"", {}),
+    "a harmless heredoc on the lines after a here-string": (
+        "python3 <<< \"print(1)\"\necho body\ncat <<'EOM'\nreal\nEOM\npython3 - <<'EOF'\nprint(1)\nEOF",
+        {},
+    ),
 }
 
 
