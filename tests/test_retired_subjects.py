@@ -64,7 +64,6 @@ def test_a_retired_subjects_cases_are_marked_and_deselected_under_not_retired(co
 
 
 def _kept_subject_functions() -> set[str]:
-    """The test functions of `SUBJECT_TESTS` whose decorators or body name a kept subject."""
     source = (REPO / SUBJECT_TESTS).read_text()
     return {
         node.name
@@ -76,8 +75,8 @@ def _kept_subject_functions() -> set[str]:
 
 
 def test_the_kept_subjects_cases_stay_under_not_retired(collections):
-    """A kept subject's case is one of a function naming the subject, or one whose parameter id opens with it; a case
-    whose id opens with a retired name keeps its mark, as a function parametrised over SUBJECTS has."""
+    """A case whose id opens with a retired name keeps its mark: a function naming a kept subject may be parametrised over
+    SUBJECTS."""
     retired, kept = collections
     functions = _kept_subject_functions()
     assert {

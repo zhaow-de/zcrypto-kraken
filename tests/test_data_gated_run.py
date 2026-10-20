@@ -29,8 +29,8 @@ _REAL_SEND = runner.send_coverage
 
 @pytest.fixture(autouse=True)
 def _no_vault_and_no_upload(tmp_path, monkeypatch):
-    """A case that reaches the token or the upload without faking them meets a vault module that does not exist and an
-    upload double that records the reach, which fails the case at teardown."""
+    """A raise here would be swallowed into a `failed` outcome by `coverage_upload`, so the double records each reach and
+    the case fails at teardown."""
     monkeypatch.setattr(runner, "_AUTH", tmp_path / "no-grafana-auth.py")
     reached = []
     monkeypatch.setattr(runner, "send_coverage", lambda repo, token: reached.append(repo))
