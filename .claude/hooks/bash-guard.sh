@@ -7,7 +7,7 @@
 #
 # Argv, not text. The command is cut of its heredoc bodies, split into pipelines and into stages, and tokenised,
 # so a flag inside a quoted message, a heredoc or a comment is never an argv element. A substitution -- `$( .. )`,
-# backticks, `<( .. )`, `>( .. )` -- is a command of its own wherever bash performs one, and nowhere else.
+# backticks, `<( .. )`, `>( .. )` -- is a command of its own wherever bash performs one.
 # A wrapper is transparent to the bypass arm and opaque to the cap arm: the first finds `git` at any position in a
 # simple command, so `timeout 5 git commit -n` and `/usr/bin/git commit --no-verify` are that one call in its
 # wrapper, path and option spellings; the second reads a stage's program as its first word alone, so
@@ -276,9 +276,9 @@ def ansi_decode(raw):
 
 
 def cut_heredocs(text):
-    # A scan that knows quotes and $(...) -- the heredoc inside the documented `-m "$(cat <<'EOF' ... EOF)"` is a
-    # heredoc, and its body carries whatever the message says. Returns the cut text and the command substitutions
-    # it closed -- `$( .. )` and backticks, each a command of its own; an unclosed one is bash's to refuse.
+    # A scan that knows quotes and substitutions -- the heredoc inside the documented `-m "$(cat <<'EOF' ... EOF)"`
+    # is a heredoc, and its body carries whatever the message says. Returns the cut text and the substitutions it
+    # closed, each a command of its own; an unclosed one is bash's to refuse.
     out, bodies, pending, stack, i, n, sub_close = [], [], [], [("top", 0)], 0, len(text), -1
     while i < n:
         ch, st = text[i], stack[-1][0]
