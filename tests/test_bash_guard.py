@@ -1088,8 +1088,7 @@ def test_a_read_of_the_memo_and_a_write_of_another_file_are_admitted_silently(tm
     assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
 
 
-# (command, the memo spelling the message must name, the files the stage's directory holds) -- the text an
-# interpreter runs, refused whole whether it reads or writes
+# (command, the memo spelling the message must name, the files the stage's directory holds)
 INTERPRETER_MEMO = {
     "a python heredoc": ("python3 - <<'EOF'\nopen('.local/memo.md', 'a').write('- item\\n')\nEOF", ".local/memo.md", {}),
     "python -c": ("python3 -c \"open('.local/memo.md', 'w').write('x')\"", ".local/memo.md", {}),
@@ -1107,8 +1106,14 @@ INTERPRETER_MEMO = {
     "node -e": ("node -e \"require('fs').appendFileSync('.local/memo.md', 'x')\"", ".local/memo.md", {}),
     "perl -e": ('perl -e \'open(F, ">>", ".local/memo.md")\'', ".local/memo.md", {}),
     "memo.md from .local": ("cd .local && python3 -c \"open('memo.md', 'a')\"", "memo.md", {}),
+    "a memo heredoc after a quoted substitution's heredoc": (
+        "git log -1 --format=%s \"$(cat <<'EOM'\nhello\nEOM\n)\" ; python3 - <<'EOF'\nopen('.local/memo.md', 'w').write('x')\nEOF",
+        ".local/memo.md",
+        {},
+    ),
+    "a here-string": ("python3 <<< \"open('.local/memo.md', 'w').write('x')\"", ".local/memo.md", {}),
 }
-# (command, the files the stage's directory holds) -- an interpreter's text naming no memo, and the memo read by cat
+# (command, the files the stage's directory holds)
 INTERPRETER_OTHER = {
     "a python heredoc writing another file": ("python3 - <<'EOF'\nopen('.tmp/note.md', 'w').write('x')\nEOF", {}),
     "python -c": ("python3 -c \"print('hi')\"", {}),
@@ -1116,6 +1121,11 @@ INTERPRETER_OTHER = {
     "a module": ("uv run python -m pytest tool.py", {"tool.py": "open('.local/memo.md').read()\n"}),
     "cat .local/memo.md": ("cat .local/memo.md", {}),
     "cat .local/memo.md piped to python": ('cat .local/memo.md | python3 -c "import sys; print(len(sys.stdin.read()))"', {}),
+    "a harmless heredoc after a substitution's heredoc naming the memo": (
+        "echo \"$(cat <<'EOM'\nsee .local/memo.md\nEOM\n)\" ; python3 - <<'EOF'\nprint(1)\nEOF",
+        {},
+    ),
+    "a here-string naming another file": ("python3 <<< \"open('.tmp/note.md', 'w').write('x')\"", {}),
 }
 
 
@@ -1126,7 +1136,7 @@ def test_an_interpreters_text_naming_the_memo_is_blocked_with_the_remedy(tmp_pat
     r = run_hook({**call(command), "cwd": str(tmp_path)}, cwd=tmp_path)
     assert r.returncode == 2, r.stderr
     claim = r.stderr.partition("; in `")[0]
-    assert "BLOCKED" in claim and f" writes the memo `{path}` " in claim, r.stderr
+    assert "BLOCKED" in claim and f" names the memo `{path}` " in claim, r.stderr
     assert "through the Edit tool after a Read" in r.stderr and "refused whole" in r.stderr
     assert r.stdout == ""
 
