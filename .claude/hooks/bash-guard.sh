@@ -40,7 +40,12 @@
 # families read an unknown directory as the payload's `cwd`. Scope is not tracked, so a `cd` outlives its subshell.
 #
 # Outside the memo family: every writer its corpus does not refuse -- a wrapper (`sudo tee`), a glob or a brace, a
-# path a variable holds whole, an interpreter, `awk -i inplace`, `rsync`, `ln`, `dd`, `rm`.
+# path a variable holds whole, `awk -i inplace`, `rsync`, `ln`, `dd`, `rm`. An interpreter stage (python, node, perl,
+# ruby, at any position in the stage) is judged by the text it runs -- its `-c`/`-e` body, each heredoc on its stdin,
+# the script file it names, read from the stage's directory -- and refused when a token of that text, or two adjacent
+# tokens joined, spell the memo; read-shaped or not, since a write mode is no cheaper to read than the whole body.
+# Outside it: a body piped from another stage (`cat <<EOF | python3`), a module (`-m`), a path the body composes from
+# pieces no token or adjacent pair spells, and a script past SCRIPT_CAP characters.
 #
 # A state-changing git command (`changes_state`; `tag` deliberately not) stamps `zcrypto-git-state-stamp` in the
 # checkout's own git directory -- a worktree's, not the common dir worktrees share -- once per call at admission; a
@@ -133,7 +138,8 @@ VAULT_REMEDY = (
 MEMO = [".local", "memo.md"]
 MEMO_REMEDY = (
     "The memo is written through the Edit tool after a Read of it, where memo-guard checks the write against that read; "
-    "a shell write bypasses the check. A read -- `cat`, `grep`, `sed -n`, `head` -- stays open."
+    "a shell write bypasses the check. A read -- `cat`, `grep`, `sed -n`, `head` -- stays open; an interpreter's body "
+    "naming the memo is refused whole, whether it reads or writes."
 )
 SED_VALUE = ("efl", "i", {"expression", "file", "line-length"})
 TRUNCATE_VALUE = ("sr", "", {"size", "reference"})
@@ -143,6 +149,15 @@ MOVERS = {
     "mv": ("a move's", ("St", "", {"suffix", "target-directory"})),
     "install": ("an install's", ("mogSt", "", {"mode", "owner", "group", "suffix", "target-directory"})),
 }
+# Per interpreter: the short options whose value is a body it runs, its other valued short options, and its long
+# options taking a value; node's `--eval` and `--print` are bodies too.
+INTERPRETERS = {
+    "python": ("c", "mWX", set()),
+    "node": ("ep", "r", {"eval", "print", "require", "import"}),
+    "perl": ("eE", "", set()),
+    "ruby": ("e", "rIE", set()),
+}
+SCRIPT_CAP = 1 << 20  # characters of a script file read for the memo's name
 GH_PR_WRITES = {"create", "ready", "merge", "edit", "close", "comment", "review"}
 GH_WRITE_METHODS = {"POST", "PATCH", "PUT", "DELETE"}
 GH_VALUE = {"-R", "--repo"}
@@ -204,12 +219,13 @@ HOOK_DIR = posixpath.dirname(os.path.abspath(sys.argv[1]))
 
 
 class Stage(list):
-    # A stage's words, the files its `<` redirects feed it, and its output redirects as (operator, target): no word of
-    # its argv.
+    # A stage's words, the files its `<` redirects feed it, its output redirects as (operator, target) and the heredoc
+    # bodies on its stdin: no word of its argv.
     def __init__(self):
         super().__init__()
         self.inputs = []
         self.outputs = []
+        self.heredocs = []
 
 
 def expansions(body):
@@ -277,9 +293,10 @@ def ansi_decode(raw):
 
 def cut_heredocs(text):
     # A scan that knows quotes and $(...) -- the heredoc inside the documented `-m "$(cat <<'EOF' ... EOF)"` is a
-    # heredoc, and its body carries whatever the message says. Returns the cut text and the command substitutions
-    # it closed -- `$( .. )` and backticks, each a command of its own; an unclosed one is bash's to refuse.
-    out, bodies, pending, stack, i, n, sub_close = [], [], [], [("top", 0)], 0, len(text), -1
+    # heredoc, and its body carries whatever the message says. Returns the cut text, the command substitutions it
+    # closed -- `$( .. )` and backticks, each a command of its own; an unclosed one is bash's to refuse -- and the
+    # heredoc bodies in the order of their `<<` operators, which is the order the cut text keeps them.
+    out, bodies, docs, pending, stack, i, n, sub_close = [], [], [], [], [("top", 0)], 0, len(text), -1
     while i < n:
         ch, st = text[i], stack[-1][0]
         if st == "sq":
@@ -382,19 +399,20 @@ def cut_heredocs(text):
                     if (line.lstrip("\t") if dash else line) == delim:
                         break
                     lines.append(line)
+                docs.append("\n".join(lines))
                 if expands:
-                    bodies.extend(expansions("\n".join(lines)))
+                    bodies.extend(expansions(docs[-1]))
             pending = []
             continue
         out.append(ch)
         i += 1
-    return "".join(out), bodies
+    return "".join(out), bodies, docs
 
 
 def pipelines(text):
     # Each pipeline as its stages, in order: the second arm judges what one stage hands the next, and the first
     # arm reads every stage on its own.
-    cut, bodies = cut_heredocs(text)
+    cut, bodies, docs = cut_heredocs(text)
     lex = shlex.shlex(cut, posix=True, punctuation_chars="".join(sorted(PUNCT)))
     lex.commenters = ""  # bash's comments are cut above; a `#` inside a word (issue#42) is text
     lex.whitespace = " \t\r"
@@ -419,6 +437,8 @@ def pipelines(text):
                 pipes[-1].append(Stage())
             elif last in SEP and filled:
                 pipes.append([Stage()])
+            elif last == "<<" and docs:
+                pipes[-1][-1].heredocs.append(docs.pop(0))
             tok = tok[len(last) :]
         skip = last if last in REDIRECT else ""
     out = [[stage for stage in pipe if stage or stage.outputs] for pipe in pipes]
@@ -921,10 +941,49 @@ def refuse_memo(shown, hit, how, raw):
     refuse(f"`{shown}` writes the memo `{hit}` {how}; in `{raw}`. {MEMO_REMEDY}")
 
 
+def interpreter_texts(words, where):
+    # The texts an interpreter stage runs, each with what it is: a body option's value, each heredoc on its stdin, and
+    # the script file its first operand names, read from `where`; a `-` operand is the heredoc, `-m` a module.
+    lang, at = None, None
+    for i, w in enumerate(words):
+        p = w.rpartition("/")[2]
+        lang = "python" if INTERPRETER.match(p) else p if p in INTERPRETERS else None
+        if lang:
+            at = i
+            break
+    if lang is None:
+        return []
+    body, valued, longs = INTERPRETERS[lang]
+    flags, values, ops = option_walk(words[at + 1 :], body + valued, "", longs)
+    texts = [
+        (v, f"from its {'-' + f if len(f) == 1 else f} body")
+        for f, v in zip(flags, values)
+        if v is not None and (f in body or f in ("--eval", "--print"))
+    ]
+    scripted = bool(texts)
+    texts += [(doc, "from its heredoc") for doc in getattr(words, "heredocs", [])]
+    if ops and ops[0] != "-" and not scripted and "m" not in flags and os.path.isfile(posixpath.join(where, ops[0])):
+        with contextlib.suppress(OSError), open(posixpath.join(where, ops[0]), errors="replace") as f:
+            texts.append((f.read(SCRIPT_CAP), f"from the script `{ops[0]}`"))
+    return texts
+
+
+def text_names_memo(text, where):
+    # The token of a text, or two adjacent tokens joined (`os.path.join(".local", "memo.md")`, `Path(".local") /
+    # "memo.md"`), that names the memo from `where`; tokens with no letter or digit are skipped.
+    parts = [t for t in re.findall(r"[^\s'\"(),;]+", text) if re.search(r"[A-Za-z0-9]", t)]
+    pairs = [posixpath.join(a, b) for a, b in zip(parts, parts[1:])]
+    return next((t for t in parts + pairs if names_memo(t, where)), None)
+
+
 def judge_memo(words, raw, where):
     for op, target in words.outputs:
         if names_memo(target, where):
             refuse_memo(" ".join(filter(None, (spelled(words), op, shlex.quote(target)))), target, "through a redirect", raw)
+    for text, how in interpreter_texts(words, where):
+        hit = text_names_memo(text, where)
+        if hit:
+            refuse_memo(spelled(words), hit, how, raw)
     p, rest = argv_of(words)
     if p == "sed":
         flags, _, ops = option_walk(rest, *SED_VALUE)
