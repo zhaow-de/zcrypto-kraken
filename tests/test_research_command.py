@@ -50,6 +50,8 @@ from cli.alpha.b1_volume import (
     entry_events_per_year,
 )
 from cli.alpha.b2 import (
+    B2Config,
+    derisk_scales,
     net_of_cost,
     per_year_engaged_counts,
     per_year_max_drawdown,
@@ -1416,6 +1418,8 @@ def test_each_subject_declares_the_metric_keys_its_build_returns():
     assert subjects.SUBJECTS["b1-volume-confirmation-preflight"].metric_keys == _B1_VOLUME_PREFLIGHT_KEYS
     assert subjects.SUBJECTS["b1-hourly-channel-exits"].metric_keys == _B1_EXIT_METRIC_KEYS
     assert subjects.SUBJECTS["b1-hourly-channel-exits-preflight"].metric_keys == _B1_EXIT_PREFLIGHT_KEYS
+    assert subjects.SUBJECTS["b2-funding-derisk-full"].metric_keys == _B2_METRIC_KEYS
+    assert subjects.SUBJECTS["b2-funding-derisk-full-preflight"].metric_keys == _B2_FULL_PREFLIGHT_KEYS
 
 
 # One engaged year of two, so a rule reading `all` where it reads `any` turns this adopt into a stop.
@@ -1929,6 +1933,350 @@ def test_the_b2_subject_refuses_a_window_its_benchmark_never_trades_naming_it(tm
     assert f"b2-funding-derisk over the window {args[-2]} .. {args[-1]}: no non-degenerate slice to compare" in result.output
 
 
+_B2_FULL_SPEC = "docs/specs/00137-b2-trial-2-ohlc-full-design.md"
+_B2_FULL_NO_VERDICT = (
+    "instrument finding: arm A fails the bar this window sets, or the overlay engages at no stamp; no verdict, the trial unspent"
+)
+_B2_FULL_ANCHORS = frozenset(
+    {
+        "arm_a_ann_sharpe_noc",
+        "arm_a_ann_sharpe_noc_decisive",
+        "arm_a_max_drawdown_full",
+        "turnover_a",
+        "arm_a_spot_drag_pct_yr",
+        "benchmark_ann_sharpe_noc",
+        "benchmark_ann_sharpe_noc_decisive",
+    }
+)
+_B2_FULL_ENGAGEMENT = frozenset({"engaged_per_asset", "engaged_per_year", "binperp_funding_z30d_coverage"})
+# Spec 00137 D9's twenty keys of the pre-flight, typed from the spec, never read off the subject.
+_B2_FULL_PREFLIGHT_KEYS = _B2_FULL_ANCHORS | _ARM_A_BAR_KEYS | _B2_FULL_ENGAGEMENT
+
+
+def test_the_b2_full_subjects_declare_the_4h_grid_the_specs_keys_and_seeds_and_the_trial_alone_a_rule_and_a_count():
+    trial, preflight = subjects.SUBJECTS["b2-funding-derisk-full"], subjects.SUBJECTS["b2-funding-derisk-full-preflight"]
+    assert (len(_B2_METRIC_KEYS), len(_B2_FULL_PREFLIGHT_KEYS)) == (40, 20)
+    assert (trial.name, trial.intervals, trial.assets, trial.spec, trial.seeds) == (
+        "b2-funding-derisk-full",
+        (240,),
+        _B2_ASSETS,
+        _B2_FULL_SPEC,
+        (42, 7, 1234),
+    )
+    assert trial.build is subjects._build_b2_funding_derisk_full and trial.metric_keys == _B2_METRIC_KEYS
+    assert (trial.verdict, trial.no_verdict, trial.incumbent) == (subjects._b2_verdict, _B2_FULL_NO_VERDICT, None)
+    assert (trial.family, trial.n_trials) == ("B2", 1) == ("B2", subjects._B2_FULL_N_TRIALS)
+    assert (preflight.name, preflight.intervals, preflight.assets, preflight.spec, preflight.seeds) == (
+        "b2-funding-derisk-full-preflight",
+        (240,),
+        _B2_ASSETS,
+        _B2_FULL_SPEC,
+        (42,),
+    )
+    assert preflight.build is subjects._build_b2_funding_derisk_full_preflight
+    assert preflight.metric_keys == _B2_FULL_PREFLIGHT_KEYS
+    assert (preflight.verdict, preflight.no_verdict, preflight.incumbent, preflight.family, preflight.n_trials) == (None,) * 5
+
+
+# Adopting on every key the rule reads, the full-window head-to-head and the block-102 cell set against the verdict, so a
+# rule reading either in place of the from-2021 read or the headline cell moves the first row.
+_B2_FULL_ADOPTING = {
+    "arm_a_passes": 1,
+    "engaged_per_year": {"2013": 0, "2021": 4},
+    "passes": 1,
+    "head_to_head_mean_outperf_2021": 0.001,
+    "head_to_head_spa_p_2021": 0.01,
+    "head_to_head_mean_outperf_full": -0.001,
+    "head_to_head_spa_p_full": 0.9,
+    "spa_p_decisive_b102_s42": 0.9,
+    "max_drawdown_reduction_pct": 5.0,
+}
+_B2_FULL_NEVER_ENGAGED = {"engaged_per_year": {"2013": 0, "2021": 0}}
+
+
+@pytest.mark.parametrize(
+    ("change", "verdict"),
+    [
+        pytest.param({}, "adopt", id="row-1-outperforms-significantly-from-2021-and-draws-down-less"),
+        pytest.param({"head_to_head_spa_p_2021": 0.0499}, "adopt", id="row-1-p-at-0.0499"),
+        pytest.param({"max_drawdown_reduction_pct": 2e-6}, "adopt", id="row-1-reduction-past-1e-6"),
+        pytest.param({"head_to_head_spa_p_2021": 0.2}, "park", id="row-2-outperforms-insignificantly-from-2021"),
+        pytest.param({"head_to_head_spa_p_2021": 0.05}, "park", id="row-2-p-at-exactly-0.05"),
+        pytest.param({"head_to_head_mean_outperf_2021": -0.001}, "reject", id="row-3-underperforms-from-2021"),
+        pytest.param({"head_to_head_mean_outperf_2021": 0.0}, "reject", id="row-3-mean-at-exactly-0"),
+        pytest.param({"max_drawdown_reduction_pct": -5.0}, "reject", id="row-3-draws-down-more"),
+        pytest.param({"max_drawdown_reduction_pct": 1e-6}, "reject", id="row-3-reduction-at-exactly-1e-6"),
+        pytest.param(
+            {"head_to_head_mean_outperf_2021": -0.001, "head_to_head_mean_outperf_full": 0.001, "head_to_head_spa_p_full": 0.01},
+            "reject",
+            id="row-3-outperforms-over-the-full-window-alone",
+        ),
+        pytest.param({"passes": 0}, "reject", id="row-4-arm-b-fails-its-bar"),
+        pytest.param({"arm_a_passes": 0}, None, id="arm-a-fails-its-bar"),
+        pytest.param(_B2_FULL_NEVER_ENGAGED, None, id="the-overlay-never-engages"),
+        pytest.param({"arm_a_passes": 0, "passes": 0}, None, id="arm-a-read-before-passes"),
+        pytest.param({**_B2_FULL_NEVER_ENGAGED, "passes": 0}, None, id="engagement-read-before-passes"),
+    ],
+)
+def test_the_b2_full_rule_maps_spec_00128s_matrix_to_a_verdict_or_a_stop(change, verdict):
+    assert subjects.SUBJECTS["b2-funding-derisk-full"].verdict({**_B2_FULL_ADOPTING, **change}) == verdict
+
+
+def _fingerprint(*parts) -> bytes:
+    return hashlib.sha256(repr(parts).encode()).digest()
+
+
+def _fake_kill_bar(
+    book_net_returns,
+    benchmark_net_returns,
+    *,
+    n_trials,
+    var_trials,
+    mean_block,
+    seed,
+    cost_stressed_returns,
+    regime_slices,
+    benchmark_slices,
+    decisive_start=0,
+    n_resamples=1000,
+):
+    """Each value a function of every argument: two builds making the same calls get the same results, and a key read off
+    another call or another key differs; the flags are ints other than 0 and 1."""
+    d = _fingerprint(
+        book_net_returns,
+        benchmark_net_returns,
+        n_trials,
+        var_trials,
+        mean_block,
+        seed,
+        cost_stressed_returns,
+        regime_slices,
+        benchmark_slices,
+        decisive_start,
+        n_resamples,
+    )
+    floats = ("dsr", "spa_p_value", "spa_p_value_full", "cost_stress_sharpe", "worst_slice_sharpe")
+    return (
+        {key: d[i] / 256 + i for i, key in enumerate(floats)}
+        | {key: 2 + d[10 + i] for i, key in enumerate(_B2_FLAGS)}
+        | {"passes": 2 + d[20]}
+    )
+
+
+def _fake_benchmark(h4_prices, *, cost_per_side):
+    d = _fingerprint(h4_prices, cost_per_side)
+    return [(d[k % 32] - 128) / 1e5 for k in range(len(h4_prices["BTC"]) - 1)]
+
+
+def _fake_head_to_head(book_net_of_cost, benchmark_net_of_cost, *, mean_block, seed, n_resamples=2000):
+    d = _fingerprint(book_net_of_cost, benchmark_net_of_cost, mean_block, seed, n_resamples)
+    return {
+        "spa_p_value": d[0] / 256,
+        "beats": False,
+        "book_sharpe": 0.0,
+        "benchmark_sharpe": 0.0,
+        "mean_outperformance": d[1] - 128,
+    }
+
+
+def test_the_b2_full_metrics_are_b2_metrics_on_calendar_year_slices_at_one_trial_2020_kept(tmp_path, monkeypatch):
+    inputs = subjects._b2_inputs(
+        ObservedReader(_b2_dataset(tmp_path)), "ohlc-test", None, None, False, subject="b2-funding-derisk-full"
+    )
+    n = len(inputs.close)
+    k21 = next(k for k, t in enumerate(inputs.close) if t >= datetime(2021, 1, 1, tzinfo=UTC))
+    assert (n, k21) == (_B2_BARS - 1, 551)
+    monkeypatch.setattr(subjects, "a1_kill_bar", _fake_kill_bar)
+    monkeypatch.setattr(subjects, "benchmark_4h_net_of_cost", _fake_benchmark)
+    monkeypatch.setattr(subjects, "net_of_cost_verdict", _fake_head_to_head)
+    bars = _recording(monkeypatch, "a1_kill_bar", lambda arguments, result: result)
+    head_to_heads = _recording(monkeypatch, "net_of_cost_verdict", lambda arguments, result: result)
+
+    full = subjects._b2_full_metrics(inputs)
+
+    assert set(full) == _B2_METRIC_KEYS
+    assert sorted((arguments["mean_block"], arguments["seed"]) for arguments, _ in bars) == sorted([*_B2_GRID, (30, 42)])
+    for arguments, _ in bars:
+        assert (arguments["n_trials"], arguments["var_trials"], arguments["decisive_start"], arguments["n_resamples"]) == (
+            1,
+            0.0,
+            1380,
+            2000,
+        )
+        assert list(arguments["regime_slices"]) == list(arguments["benchmark_slices"]) == ["2020", "2021"]
+    assert [len(arguments["book_net_of_cost"]) for arguments, _ in head_to_heads] == [n, n - k21]
+    # Spec 00128's metrics, `_b2_slices` read as the stub years alone and at the full subject's count: `_b2_full_metrics`
+    # must not call `_b2_slices`.
+    monkeypatch.setattr(subjects, "_b2_slices", calendar_year_slices)
+    monkeypatch.setattr(subjects, "_B2_N_TRIALS", subjects._B2_FULL_N_TRIALS)
+    assert subjects._b2_metrics(inputs) == full
+
+
+def test_where_no_z_score_is_defined_the_b2_full_subjects_arm_b_is_arm_a_bit_for_bit(tmp_path, monkeypatch):
+    inputs = subjects._b2_inputs(
+        ObservedReader(_b2_dataset(tmp_path)), "ohlc-test", None, None, False, subject="b2-funding-derisk-full"
+    )
+    dark = {a: [None] * len(inputs.close) for a in _B2_ASSETS}
+    inputs = inputs._replace(binperp_funding_z30d=dark, scales=derisk_scales(dark, config=B2Config()))
+    monkeypatch.setattr(subjects, "a1_kill_bar", _fake_kill_bar)
+    monkeypatch.setattr(subjects, "benchmark_4h_net_of_cost", _fake_benchmark)
+    monkeypatch.setattr(subjects, "net_of_cost_verdict", _fake_head_to_head)
+    head_to_heads = _recording(monkeypatch, "net_of_cost_verdict", lambda arguments, result: result)
+
+    full = subjects._b2_full_metrics(inputs)
+
+    assert [arguments["book_net_of_cost"] == arguments["benchmark_net_of_cost"] for arguments, _ in head_to_heads] == [True] * 2
+    assert (full["stamps_positions_differ"], full["turnover_b"], full["max_drawdown"], full["max_drawdown_reduction_pct"]) == (
+        0,
+        full["turnover_a"],
+        full["arm_a_max_drawdown"],
+        0.0,
+    )
+    assert set(full["engaged_per_year"].values()) == {0}
+
+
+def test_the_b2_full_preflight_reads_arm_a_and_the_engagement_and_never_builds_arm_b(tmp_path, monkeypatch):
+    monkeypatch.setattr(subjects, "a1_kill_bar", _fake_kill_bar)
+    monkeypatch.setattr(subjects, "benchmark_4h_net_of_cost", _fake_benchmark)
+
+    def arm_b(*args, **kwargs):
+        raise AssertionError("the pre-flight built arm B's positions")
+
+    monkeypatch.setattr(subjects, "scale_positions", arm_b)
+    reads = _recording(monkeypatch, "_b2_inputs", lambda arguments, result: result)
+    bars = _recording(monkeypatch, "a1_kill_bar", lambda arguments, result: result)
+
+    metrics = subjects.SUBJECTS["b2-funding-derisk-full-preflight"].build(ObservedReader(_b2_dataset(tmp_path)), "ohlc-test", None)
+
+    ((_, inputs),) = reads
+    returns = {a: _asset_returns(_ffill_btc(inputs.h4_prices)[a]) for a in _B2_ASSETS}
+    net_a, net_a_x15 = (net_of_cost(inputs.arm_a, returns, cost_per_side=cost) for cost in (0.006, 1.5 * 0.006))
+    bench = _fake_benchmark(inputs.h4_prices, cost_per_side=0.006)
+    turnover_a, n = book_turnover(inputs.arm_a), len(inputs.close)
+    ((arguments, bar),) = bars
+    assert arguments == {
+        "book_net_returns": net_a,
+        "benchmark_net_returns": bench,
+        "n_trials": 1,
+        "var_trials": 0.0,
+        "mean_block": 30,
+        "seed": 42,
+        "cost_stressed_returns": net_a_x15,
+        "regime_slices": calendar_year_slices(net_a, inputs.h4_ts),
+        "benchmark_slices": calendar_year_slices(bench, inputs.h4_ts),
+        "decisive_start": 1380,
+        "n_resamples": 2000,
+    }
+    engaged = {a: sum(p > 0 and s < 1 for p, s in zip(inputs.arm_a[a], inputs.scales[a])) for a in _B2_ASSETS}
+    assert metrics == {
+        "arm_a_ann_sharpe_noc": sharpe(net_a, periods_per_year=2190),
+        "arm_a_ann_sharpe_noc_decisive": sharpe(net_a[1380:], periods_per_year=2190),
+        "arm_a_max_drawdown_full": max_drawdown(net_a),
+        "turnover_a": turnover_a,
+        "arm_a_spot_drag_pct_yr": turnover_a / n * 0.006 * 2190,
+        "benchmark_ann_sharpe_noc": sharpe(bench, periods_per_year=2190),
+        "benchmark_ann_sharpe_noc_decisive": sharpe(bench[1380:], periods_per_year=2190),
+        **{key: int(bar[key]) if key in _ARM_A_BAR_FLAGS else bar[key] for key in _ARM_A_BAR_KEYS},
+        "engaged_per_asset": engaged,
+        "engaged_per_year": per_year_engaged_counts(inputs.arm_a, inputs.scales, inputs.close),
+        "binperp_funding_z30d_coverage": {
+            a: {
+                str(year): [c.non_null, c.total]
+                for year, c in coverage_by_year(inputs.close, inputs.binperp_funding_z30d[a]).items()
+            }
+            for a in _B2_ASSETS
+        },
+    }
+    assert set(metrics) == _B2_FULL_PREFLIGHT_KEYS
+    assert sum(engaged.values()) == sum(metrics["engaged_per_year"].values()) > 0
+    assert metrics["engaged_per_asset"][_B2_NEVER_SPIKES] == 0
+
+
+@pytest.mark.parametrize("name", ["b2-funding-derisk-full", "b2-funding-derisk-full-preflight"])
+def test_a_b2_full_subject_refuses_as_of_before_any_read(tmp_path, monkeypatch, name):
+    _anchor(monkeypatch, _rolling_set(tmp_path))
+
+    def read(*args, **kwargs):
+        raise AssertionError("the subject read a series before refusing --as-of")
+
+    monkeypatch.setattr(subjects, "_capturing_union", read)
+    args = ["research", "eval", "--subject", name, "--dataset", "ohlc-rolling", "--as-of", "2026-10-03"]
+
+    result = runner.invoke(app, [*args, *_as_trial(name, tmp_path)])
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert (
+        f"{name} evaluates a frozen set's 4h series, never the rolling dataset as of a day: drop --as-of and pass a frozen "
+        "--dataset"
+    ) in result.output
+
+
+@pytest.mark.parametrize(
+    ("flags", "refused"),
+    [
+        pytest.param(
+            [],
+            "b2-funding-derisk-full declares a verdict rule, so every run of it is a trial: run it with --register",
+            id="plain-eval",
+        ),
+        pytest.param(
+            ["--register", "--iteration", "iter-181", "--family", "B2", "--n-trials", "2"],
+            "--n-trials 2 is not 1, the count b2-funding-derisk-full declares and deflates at: pass --n-trials 1",
+            id="another-count",
+        ),
+    ],
+)
+def test_b2_full_refuses_a_plain_eval_and_another_count_before_any_read(tmp_path, monkeypatch, flags, refused):
+    _anchor(monkeypatch, tmp_path / "no-data", tmp_path / "registry.jsonl")
+    reads = _recording(monkeypatch, "_b2_inputs", lambda arguments, result: result)
+
+    result = runner.invoke(app, ["research", "eval", "--subject", "b2-funding-derisk-full", "--dataset", "ohlc-test", *flags])
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert refused in result.output and reads == []
+
+
+@pytest.mark.parametrize(
+    ("bars", "cause"),
+    [
+        pytest.param(
+            1_471,
+            "1 of its return indices close at or after 2021-01-01T00:00Z, and the from-2021 head-to-head needs 2",
+            id="one-index-into-2021",
+        ),
+        pytest.param(
+            1_472,
+            "arm A never draws down from 2021-01-01T00:00Z, so max_drawdown_reduction_pct divides by zero",
+            id="arm-a-never-draws-down-from-2021",
+        ),
+    ],
+)
+def test_the_b2_full_subject_refuses_a_window_it_cannot_evaluate_before_any_bar(tmp_path, monkeypatch, bars, cause):
+    _anchor(monkeypatch, _b2_dataset(tmp_path, start=_B2_FROM_MAY_2020))
+    args = _b2_eval(_B2_FROM_MAY_2020, bars)
+    args[args.index("b2-funding-derisk")] = "b2-funding-derisk-full"
+    kill_bars = _recording(monkeypatch, "a1_kill_bar", lambda arguments, result: result)
+
+    result = runner.invoke(app, [*args, *_as_trial("b2-funding-derisk-full", tmp_path)])
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert f"b2-funding-derisk-full over the window {args[-2]} .. {args[-1]}: {cause}" in result.output
+    assert kill_bars == []
+
+
+def test_the_b2_full_subject_refuses_a_funding_file_it_cannot_read_naming_it(tmp_path, monkeypatch):
+    root = _b2_dataset(tmp_path)
+    (root / "derivatives-funding" / _B2_SPOILT / "funding.parquet").write_bytes(b"not a parquet file")
+    _anchor(monkeypatch, root)
+    args = ["research", "eval", "--subject", "b2-funding-derisk-full", "--dataset", "ohlc-test"]
+
+    result = runner.invoke(app, [*args, *_as_trial("b2-funding-derisk-full", tmp_path)])
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert f"derivatives-funding/{_B2_SPOILT}/funding.parquet" in result.output
+    assert "File out of specification" in result.output
+
+
 # Records 45 and 46's metric keys (docs/specs/00130 D3), pinned against the committed records below.
 _B1_REGISTERED_KEYS = frozenset(
     {
@@ -2162,6 +2510,7 @@ _RULED_FIXTURES = {
     "b1-hourly-rv": _b1_hourly_rv_dataset,
     "b1-volume-confirmation": _b1_volume_dataset,
     "b2-funding-derisk": _b2_dataset,
+    "b2-funding-derisk-full": _b2_dataset,
 }
 # Each ruled subject's count constant, which the tie raises so that a literal at a kill-bar site fails it.
 _DECLARED_COUNT = {
@@ -2169,6 +2518,7 @@ _DECLARED_COUNT = {
     "b1-hourly-rv": "_B1_HOURLY_RV_N_TRIALS",
     "b1-volume-confirmation": "_B1_VOLUME_N_TRIALS",
     "b2-funding-derisk": "_B2_N_TRIALS",
+    "b2-funding-derisk-full": "_B2_FULL_N_TRIALS",
 }
 
 
@@ -2179,6 +2529,7 @@ def test_the_ruled_subjects_declare_their_families_and_trial_counts():
         "b1-hourly-rv": ("B1", 3),
         "b1-volume-confirmation": ("B1", 4),
         "b2-funding-derisk": ("B2", 1),
+        "b2-funding-derisk-full": ("B2", 1),
     }
     assert set(_RULED_FIXTURES) == set(declared) == set(_DECLARED_COUNT)
 
@@ -3692,6 +4043,8 @@ def _declared_series(tmp_path: Path, subject: subjects.Subject) -> tuple[Path, d
 _CONTRACT_DATASETS = {
     "b2-funding-derisk": lambda tmp_path, subject: (_b2_dataset(tmp_path), _B2_START),
     "b2-arm-a-bar": lambda tmp_path, subject: (_b2_dataset(tmp_path), _B2_START),
+    "b2-funding-derisk-full": lambda tmp_path, subject: (_b2_dataset(tmp_path), _B2_START),
+    "b2-funding-derisk-full-preflight": lambda tmp_path, subject: (_b2_dataset(tmp_path), _B2_START),
     "b1-conditioning": lambda tmp_path, subject: (_b1_dataset(tmp_path), _B1_START),
     "b1-window-only": lambda tmp_path, subject: (_b1_dataset(tmp_path, m15=False), _B1_START),
     "b1-hourly-rv": lambda tmp_path, subject: (_b1_hourly_rv_dataset(tmp_path), _B1_START),
