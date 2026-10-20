@@ -2,6 +2,12 @@ You are folding review findings into a spec+plan pair in {WORKTREE} (branch {BRA
 
 Read the union report `{UNION}` in full. Then read {SPEC} — the binding authority — then {PLAN}, then `{REPORT_DIR}/pin-facts.md`, then **every file a finding cites**, so you verify each finding against the real code before acting on it.{TOPIC_LINE} Do not read `.local/memo.md`. Your cwd resets between commands: prefix each with `cd {WORKTREE} &&`.
 
+## The controller's rulings
+
+{RULINGS}
+
+A ruling above binds the fix, and before it is written it is checked against the contract its executor works under — `references/implementer-contract.md` when the plan goes to the SDD loop — because a ruling that contradicts that contract (a background run, a tool the contract forbids) costs a round.
+
 ## The task
 
 **Fix every Critical and Important.** Fold every Minor whose fix is one local hunk that adds no mechanism and moves no cross-reference; skip one only with a one-clause reason — no sweep follows you, so your `## Skipped` is the record of what was left.
