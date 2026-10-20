@@ -1331,6 +1331,7 @@ def test_the_window_reaches_the_rolling_reads(tmp_path, monkeypatch):
     assert block["span"] == ["2026-10-01 00:00:00+00:00", "2026-10-02 00:00:00+00:00"]
 
 
+@pytest.mark.retired
 def test_the_b2_subject_is_registered_over_the_ten_assets_4h_series():
     subject = subjects.SUBJECTS["b2-funding-derisk"]
     assert subject.name == "b2-funding-derisk"
@@ -1339,6 +1340,7 @@ def test_the_b2_subject_is_registered_over_the_ten_assets_4h_series():
     assert subject.build is subjects._build_b2_funding_derisk
 
 
+@pytest.mark.retired
 def test_the_b2_subjects_cost_arms_lookback_and_periods_are_the_literals_its_spec_fixes():
     assert subjects._B2_COST_PER_SIDE == 0.006
     assert subjects._B2_A2_ARMS == (((20, 50, 100), 0.12), ((60, 120, 240), 0.10), ((60, 120, 240), 0.12))
@@ -1434,6 +1436,7 @@ _B2_ADOPTING = {
 _B2_NEVER_ENGAGED = {"engaged_per_year": {"2021": 0, "2022": 0}}
 
 
+@pytest.mark.retired
 @pytest.mark.parametrize(
     ("change", "verdict"),
     [
@@ -1553,6 +1556,7 @@ def _kill_bar_sentinels(cell, *, inverted: bool, arm_a_passes) -> dict:
     return floats | {"passes": passes} | {flag: 10 * (i + 1) + j for j, flag in enumerate(_B2_FLAGS)}
 
 
+@pytest.mark.retired
 @pytest.mark.parametrize(
     ("inverted", "arm_a_passes"),
     [
@@ -1730,6 +1734,7 @@ def _a_print_61s_late(path: Path) -> None:
     frame.with_columns(ts=pl.Series(stamps, dtype=frame.schema["ts"])).write_parquet(path)
 
 
+@pytest.mark.retired
 @pytest.mark.parametrize(
     ("spoil", "cause"),
     [
@@ -1762,6 +1767,7 @@ def test_the_b2_subject_refuses_a_funding_file_it_cannot_read_naming_it(tmp_path
     assert cause in result.output
 
 
+@pytest.mark.retired
 @pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses file permissions")
 def test_the_b2_subject_refuses_a_funding_file_it_may_not_open_naming_it(tmp_path, monkeypatch):
     root = _b2_dataset(tmp_path)
@@ -1799,6 +1805,7 @@ def test_a_price_file_the_union_cannot_read_is_refused_naming_it(tmp_path, monke
     assert cause in result.output
 
 
+@pytest.mark.retired
 @pytest.mark.parametrize(
     ("start", "bars", "flat", "cause"),
     [
@@ -1849,6 +1856,7 @@ def _one_bar_in_the_window(path: Path) -> None:
     frame.filter(pl.col("ts") >= frame["ts"][_B2_WINDOW_BARS - 1]).write_parquet(path)
 
 
+@pytest.mark.retired
 @pytest.mark.parametrize(
     "spoil",
     [
@@ -1874,6 +1882,7 @@ def test_the_b2_subject_refuses_an_asset_too_thin_in_the_window_naming_the_windo
     assert f"b2-funding-derisk over the window {args[-2]} .. {args[-1]}: prices must be a list of >= 2 values" in result.output
 
 
+@pytest.mark.retired
 def test_the_b2_inputs_scale_each_spiking_asset_from_the_first_close_at_or_after_its_first_spike(tmp_path):
     ts = [_B2_START + timedelta(hours=4 * k) for k in range(_B2_WINDOW_BARS)]
     inputs = subjects._b2_inputs(
@@ -1903,6 +1912,7 @@ _ARM_A_BAR_KEYS = {
 _ARM_A_BAR_FLAGS = {"dsr_pass", "spa_pass", "cost_stress_pass", "worst_slice_pass", "passes"}
 
 
+@pytest.mark.retired
 def test_the_arm_a_bar_subject_returns_its_ten_keys_as_ints_and_floats_and_never_builds_arm_b(tmp_path, monkeypatch):
     root = _b2_dataset(tmp_path)
     ts = [_B2_START + timedelta(hours=4 * k) for k in range(_B2_WINDOW_BARS)]
@@ -1919,6 +1929,7 @@ def test_the_arm_a_bar_subject_returns_its_ten_keys_as_ints_and_floats_and_never
     assert scaled == []
 
 
+@pytest.mark.retired
 def test_the_b2_subject_refuses_a_window_its_benchmark_never_trades_naming_it(tmp_path, monkeypatch):
     """A window the frozen benchmark's 1,200-bar gate never opens over leaves its returns flat; the fixture's gate opens,
     so the flat series is handed in."""
@@ -1953,6 +1964,7 @@ _B2_FULL_ENGAGEMENT = frozenset({"engaged_per_asset", "engaged_per_year", "binpe
 _B2_FULL_PREFLIGHT_KEYS = _B2_FULL_ANCHORS | _ARM_A_BAR_KEYS | _B2_FULL_ENGAGEMENT
 
 
+@pytest.mark.retired
 def test_the_b2_full_subjects_declare_the_4h_grid_the_specs_keys_and_seeds_and_the_trial_alone_a_rule_and_a_count():
     trial, preflight = subjects.SUBJECTS["b2-funding-derisk-full"], subjects.SUBJECTS["b2-funding-derisk-full-preflight"]
     assert (len(_B2_METRIC_KEYS), len(_B2_FULL_PREFLIGHT_KEYS)) == (40, 20)
@@ -1994,6 +2006,7 @@ _B2_FULL_ADOPTING = {
 _B2_FULL_NEVER_ENGAGED = {"engaged_per_year": {"2013": 0, "2021": 0}}
 
 
+@pytest.mark.retired
 @pytest.mark.parametrize(
     ("change", "verdict"),
     [
@@ -2079,6 +2092,7 @@ def _fake_head_to_head(book_net_of_cost, benchmark_net_of_cost, *, mean_block, s
     }
 
 
+@pytest.mark.retired
 def test_the_b2_full_metrics_are_b2_metrics_on_calendar_year_slices_at_one_trial_2020_kept(tmp_path, monkeypatch):
     inputs = subjects._b2_inputs(
         ObservedReader(_b2_dataset(tmp_path)), "ohlc-test", None, None, False, subject="b2-funding-derisk-full"
@@ -2112,6 +2126,7 @@ def test_the_b2_full_metrics_are_b2_metrics_on_calendar_year_slices_at_one_trial
     assert subjects._b2_metrics(inputs) == full
 
 
+@pytest.mark.retired
 def test_where_no_z_score_is_defined_the_b2_full_subjects_arm_b_is_arm_a_bit_for_bit(tmp_path, monkeypatch):
     inputs = subjects._b2_inputs(
         ObservedReader(_b2_dataset(tmp_path)), "ohlc-test", None, None, False, subject="b2-funding-derisk-full"
@@ -2135,6 +2150,7 @@ def test_where_no_z_score_is_defined_the_b2_full_subjects_arm_b_is_arm_a_bit_for
     assert set(full["engaged_per_year"].values()) == {0}
 
 
+@pytest.mark.retired
 def test_the_b2_full_preflight_reads_arm_a_and_the_engagement_and_never_builds_arm_b(tmp_path, monkeypatch):
     monkeypatch.setattr(subjects, "a1_kill_bar", _fake_kill_bar)
     monkeypatch.setattr(subjects, "benchmark_4h_net_of_cost", _fake_benchmark)
@@ -2211,6 +2227,7 @@ def test_a_b2_full_subject_refuses_as_of_before_any_read(tmp_path, monkeypatch, 
     ) in result.output
 
 
+@pytest.mark.retired
 @pytest.mark.parametrize(
     ("flags", "refused"),
     [
@@ -2236,6 +2253,7 @@ def test_b2_full_refuses_a_plain_eval_and_another_count_before_any_read(tmp_path
     assert refused in result.output and reads == []
 
 
+@pytest.mark.retired
 @pytest.mark.parametrize(
     ("bars", "cause"),
     [
@@ -2264,6 +2282,7 @@ def test_the_b2_full_subject_refuses_a_window_it_cannot_evaluate_before_any_bar(
     assert kill_bars == []
 
 
+@pytest.mark.retired
 def test_the_b2_full_subject_refuses_a_funding_file_it_cannot_read_naming_it(tmp_path, monkeypatch):
     root = _b2_dataset(tmp_path)
     (root / "derivatives-funding" / _B2_SPOILT / "funding.parquet").write_bytes(b"not a parquet file")
@@ -2319,6 +2338,7 @@ _B1_REGISTERED_KEYS = frozenset(
 )
 
 
+@pytest.mark.retired
 def test_the_b1_subjects_literals_are_the_ones_records_45_and_46_ran_with():
     assert subjects._B1_COST_PER_SIDE == 0.006
     assert subjects._B1_A2_ARMS == (((20, 50, 100), 0.12), ((60, 120, 240), 0.10), ((60, 120, 240), 0.12))
@@ -2355,6 +2375,7 @@ def test_only_b1_conditioning_reads_the_15m_set(tmp_path, name, datasets):
     assert set(reader.block()) == datasets
 
 
+@pytest.mark.retired
 @pytest.mark.parametrize(
     ("spoil", "cause"),
     [
@@ -2374,6 +2395,7 @@ def test_b1_conditioning_names_a_15m_file_it_cannot_read(tmp_path, monkeypatch, 
     assert "ohlc-15m/SOL/EUR/15.parquet" in result.output and cause in result.output
 
 
+@pytest.mark.retired
 def test_b1_conditioning_refuses_a_15m_set_short_of_the_last_decision_boundary_in_its_own_terms(tmp_path, monkeypatch):
     root = _b1_dataset(tmp_path)
     for path in (root / "ohlc-15m").rglob("15.parquet"):
@@ -2634,6 +2656,7 @@ _B1_HOURLY_RV_PREFLIGHT_KEYS = frozenset(
 )
 
 
+@pytest.mark.retired
 def test_the_b1_hourly_rv_subjects_declare_both_grids_the_specs_keys_and_seeds_and_the_trial_alone_a_rule():
     trial, preflight = subjects.SUBJECTS["b1-hourly-rv"], subjects.SUBJECTS["b1-hourly-rv-preflight"]
     assert (len(_B1_HOURLY_RV_METRIC_KEYS), len(_B1_HOURLY_RV_PREFLIGHT_KEYS)) == (42, 19)
@@ -2663,6 +2686,7 @@ def test_the_b1_hourly_rv_subjects_declare_both_grids_the_specs_keys_and_seeds_a
     assert preflight.verdict is None and preflight.no_verdict is None and preflight.incumbent is None
 
 
+@pytest.mark.retired
 def test_the_b1_hourly_rv_dispersion_reads_records_45_and_46s_registered_sharpes_over_three_trials():
     assert (
         subjects._B1_RECORDED_PER_PERIOD_SHARPES
@@ -2684,6 +2708,7 @@ _B1_HOURLY_RV_ADOPTING = {
 }
 
 
+@pytest.mark.retired
 @pytest.mark.parametrize(
     ("change", "verdict"),
     [
@@ -2731,6 +2756,7 @@ def _b1_hourly_rv_bar_sentinels(cell: str, *, passes) -> dict:
     return floats | {"passes": passes} | {flag: 10 * (i + 1) + j for j, flag in enumerate(_B2_FLAGS)}
 
 
+@pytest.mark.retired
 @pytest.mark.parametrize(
     ("arm_b_passes", "arm_a_passes"),
     [pytest.param(True, False, id="arm-a-fails-so-the-rule-stops"), pytest.param(False, 7, id="arm-b-fails-so-the-rule-rejects")],
@@ -2904,6 +2930,7 @@ def test_the_b1_hourly_rv_subject_registers_each_metric_from_its_own_call(tmp_pa
     assert stored == expected
 
 
+@pytest.mark.retired
 def test_the_b1_hourly_rv_preflight_reads_arm_a_and_the_two_weight_paths_and_never_builds_arm_bs_book(tmp_path, monkeypatch):
     root = _b1_hourly_rv_dataset(tmp_path)
     trial = subjects.SUBJECTS["b1-hourly-rv"].build(ObservedReader(root), "ohlc-test", None)
@@ -2944,6 +2971,7 @@ def test_a_b1_hourly_rv_subject_refuses_as_of_before_any_read(tmp_path, monkeypa
     )
 
 
+@pytest.mark.retired
 @pytest.mark.parametrize(
     ("spoil", "cause"),
     [
@@ -2978,6 +3006,7 @@ def _arm_a_weights_frozen(monkeypatch) -> None:
     monkeypatch.setattr(subjects, "weight_total_variation", lambda *args, **kwargs: 0.0)
 
 
+@pytest.mark.retired
 @pytest.mark.parametrize(
     ("freeze", "named"),
     [
@@ -2998,6 +3027,7 @@ def test_b1_hourly_rv_refuses_a_build_whose_arm_a_never_trades_or_whose_weights_
     assert "b1-hourly-rv over the full history: " in result.output and named in result.output
 
 
+@pytest.mark.retired
 @pytest.mark.parametrize(("start", "bars", "message"), _B1_UNREADABLE_HISTORIES)
 def test_a_b1_hourly_rv_history_the_bar_cannot_read_is_refused_before_the_arms_and_the_hourly_reads(
     tmp_path, monkeypatch, start, bars, message
@@ -3080,6 +3110,7 @@ _B1_VOLUME_METRIC_KEYS = _B1_VOLUME_ENGAGEMENT | {
 _B1_VOLUME_PREFLIGHT_KEYS = _B1_VOLUME_ENGAGEMENT | _B1_HOURLY_RV_ANCHORS | _ARM_A_BAR_KEYS | {"arm_a_var_trials"}
 
 
+@pytest.mark.retired
 def test_the_b1_volume_subjects_declare_the_4h_grid_the_specs_keys_and_seeds_and_the_trial_alone_a_rule_and_a_count():
     trial, preflight = subjects.SUBJECTS["b1-volume-confirmation"], subjects.SUBJECTS["b1-volume-confirmation-preflight"]
     assert (len(_B1_VOLUME_METRIC_KEYS), len(_B1_VOLUME_PREFLIGHT_KEYS)) == (43, 24)
@@ -3109,6 +3140,7 @@ def test_the_b1_volume_subjects_declare_the_4h_grid_the_specs_keys_and_seeds_and
     assert (preflight.verdict, preflight.no_verdict, preflight.incumbent, preflight.family, preflight.n_trials) == (None,) * 5
 
 
+@pytest.mark.retired
 def test_the_b1_volume_dispersion_reads_records_45_46_and_48s_registered_sharpes():
     assert (
         subjects._B1_VOLUME_RECORDED_PER_PERIOD_SHARPES
@@ -3130,6 +3162,7 @@ _B1_VOLUME_ADOPTING = {
 }
 
 
+@pytest.mark.retired
 @pytest.mark.parametrize(
     ("change", "verdict"),
     [
@@ -3161,6 +3194,7 @@ def test_the_b1_volume_rule_maps_its_metrics_to_a_verdict_or_a_stop(change, verd
     assert subjects._b1_volume_confirmation_verdict({**_B1_VOLUME_ADOPTING, **change}) == verdict
 
 
+@pytest.mark.retired
 @pytest.mark.parametrize(
     ("arm_b_passes", "arm_a_passes"),
     [pytest.param(True, False, id="arm-a-fails-so-the-rule-stops"), pytest.param(False, 7, id="arm-b-fails-so-the-rule-rejects")],
@@ -3355,6 +3389,7 @@ def test_the_b1_volume_subject_registers_each_metric_from_its_own_call(tmp_path,
     assert stored == expected
 
 
+@pytest.mark.retired
 def test_the_b1_volume_preflight_reads_arm_a_and_the_entry_events_and_never_builds_arm_bs_positions(tmp_path, monkeypatch):
     root = _b1_volume_dataset(tmp_path)
     trial = subjects.SUBJECTS["b1-volume-confirmation"].build(ObservedReader(root), "ohlc-test", None)
@@ -3396,6 +3431,7 @@ def test_a_b1_volume_subject_refuses_as_of_before_any_read(tmp_path, monkeypatch
     )
 
 
+@pytest.mark.retired
 def test_b1_volume_names_a_240_file_without_a_volume_column(tmp_path, monkeypatch):
     root = _b1_volume_dataset(tmp_path)
     path = root / "ohlc-test" / "SOL/EUR/240.parquet"
@@ -3416,6 +3452,7 @@ def _a_volume_set(path: Path, value: float | None) -> datetime:
     return frame["ts"][k]
 
 
+@pytest.mark.retired
 @pytest.mark.parametrize(
     ("value", "named"),
     [
@@ -3436,6 +3473,7 @@ def test_b1_volume_refuses_a_volume_it_cannot_gate_naming_the_asset_and_stamp(tm
     assert calls == []
 
 
+@pytest.mark.retired
 def test_b1_volume_refuses_a_build_whose_arm_a_never_trades(tmp_path, monkeypatch):
     _anchor(monkeypatch, _b1_volume_dataset(tmp_path))
     _arm_a_flat(monkeypatch)
@@ -3463,6 +3501,7 @@ def test_a_b1_volume_build_without_an_entry_event_is_refused(tmp_path, monkeypat
     assert f"{name} over the full history: entry_events is 0, and share_rejected divides by it" in result.output
 
 
+@pytest.mark.retired
 @pytest.mark.parametrize(("start", "bars", "message"), _B1_UNREADABLE_HISTORIES)
 def test_a_b1_volume_history_the_bar_cannot_read_is_refused_before_the_arms_and_the_volume_reads(
     tmp_path, monkeypatch, start, bars, message
@@ -3484,6 +3523,7 @@ def test_a_b1_volume_history_the_bar_cannot_read_is_refused_before_the_arms_and_
     assert calls == [] and sorted(read) == sorted(f"{a}/EUR/240.parquet" for a in _B2_ASSETS)
 
 
+@pytest.mark.retired
 def test_b1_volume_reads_its_volumes_under_the_unions_window(tmp_path, monkeypatch):
     root = _b1_volume_dataset(tmp_path)
     first, last = _B1_START + timedelta(hours=4 * 100), _B1_START + timedelta(hours=4 * (_B1_BARS - 1))
@@ -3566,6 +3606,7 @@ _B1_EXIT_METRIC_KEYS = _B1_EXIT_ENGAGEMENT | {
 _B1_EXIT_PREFLIGHT_KEYS = _B1_EXIT_ENGAGEMENT | _B1_HOURLY_RV_ANCHORS | _ARM_A_BAR_KEYS | {"arm_a_var_trials"}
 
 
+@pytest.mark.retired
 def test_the_b1_hourly_exit_subjects_declare_both_grids_the_specs_keys_and_seeds_and_the_trial_alone_a_rule_and_a_count():
     trial, preflight = subjects.SUBJECTS["b1-hourly-channel-exits"], subjects.SUBJECTS["b1-hourly-channel-exits-preflight"]
     assert (len(_B1_EXIT_METRIC_KEYS), len(_B1_EXIT_PREFLIGHT_KEYS)) == (46, 25)
@@ -3591,6 +3632,7 @@ def test_the_b1_hourly_exit_subjects_declare_both_grids_the_specs_keys_and_seeds
     assert (preflight.verdict, preflight.no_verdict, preflight.incumbent, preflight.family, preflight.n_trials) == (None,) * 5
 
 
+@pytest.mark.retired
 def test_the_b1_hourly_exit_dispersion_reads_records_45_46_48_and_49s_registered_sharpes_and_deflates_at_five_trials():
     assert (
         subjects._B1_EXIT_RECORDED_PER_PERIOD_SHARPES
@@ -3614,6 +3656,7 @@ _B1_EXIT_ADOPTING = {
 }
 
 
+@pytest.mark.retired
 @pytest.mark.parametrize(
     ("change", "verdict"),
     [
@@ -3646,6 +3689,7 @@ def test_the_b1_hourly_exit_rule_maps_its_metrics_to_a_verdict_or_a_stop(change,
     assert subjects._b1_hourly_exit_verdict({**_B1_EXIT_ADOPTING, **change}) == verdict
 
 
+@pytest.mark.retired
 @pytest.mark.parametrize(
     ("arm_b_passes", "arm_a_passes"),
     [pytest.param(True, False, id="arm-a-fails-so-the-rule-stops"), pytest.param(False, 7, id="arm-b-fails-so-the-rule-rejects")],
@@ -3837,6 +3881,7 @@ def test_the_b1_hourly_exit_subject_registers_each_metric_from_its_own_call(tmp_
     assert stored == expected
 
 
+@pytest.mark.retired
 def test_the_b1_hourly_exit_preflight_reads_arm_a_and_the_exits_and_never_builds_arm_bs_positions_or_returns(tmp_path, monkeypatch):
     root = _b1_hourly_exit_dataset(tmp_path)
     trial = subjects.SUBJECTS["b1-hourly-channel-exits"].build(ObservedReader(root), "ohlc-test", None)
@@ -3892,6 +3937,7 @@ def _an_hourly_close_set(path: Path, value: float | None) -> datetime:
     return frame["ts"][k]
 
 
+@pytest.mark.retired
 @pytest.mark.parametrize(
     ("value", "shown"), [pytest.param(0.0, "0.0", id="zero-close"), pytest.param(None, "None", id="null-close")]
 )
@@ -3911,6 +3957,7 @@ def test_b1_hourly_exit_refuses_an_hourly_close_it_cannot_check_naming_the_asset
     assert calls == []
 
 
+@pytest.mark.retired
 def test_b1_hourly_exit_refuses_an_hourly_bar_in_a_4h_bar_its_240_file_lacks(tmp_path, monkeypatch):
     root = _b1_hourly_exit_dataset(tmp_path)
     path = root / "ohlc-test" / "ETH/EUR/240.parquet"
@@ -3932,6 +3979,7 @@ def _arm_a_never_draws_down(monkeypatch) -> None:
     monkeypatch.setattr(subjects, "max_drawdown", lambda returns: 0.0)
 
 
+@pytest.mark.retired
 @pytest.mark.parametrize(
     ("freeze", "named"),
     [
@@ -3968,6 +4016,7 @@ def test_a_b1_hourly_exit_build_without_an_exit_event_is_refused(tmp_path, monke
     assert f"{name} over the full history: exit_events is 0, and share_false divides by it" in result.output
 
 
+@pytest.mark.retired
 @pytest.mark.parametrize(
     ("flags", "refused"),
     [
@@ -3993,6 +4042,7 @@ def test_b1_hourly_exit_refuses_a_plain_eval_and_another_count_before_any_read(t
     assert refused in result.output and reads == []
 
 
+@pytest.mark.retired
 def test_b1_hourly_exit_reads_both_grids_under_the_window(tmp_path, monkeypatch):
     root = _b1_hourly_exit_dataset(tmp_path)
     window = (str(_B1_START + timedelta(hours=4 * 100)), str(_B1_START + timedelta(hours=4 * (_B1_BARS - 1))))
@@ -4014,6 +4064,7 @@ def test_b1_hourly_exit_reads_both_grids_under_the_window(tmp_path, monkeypatch)
     assert sorted(reads) == sorted((f"{a}/EUR/{i}.parquet", window) for a in _B2_ASSETS for i in (240, 60))
 
 
+@pytest.mark.retired
 def test_a_b1_hourly_exit_window_off_the_4h_grid_is_refused_naming_an_hourly_bar_its_240_read_lacks(tmp_path, monkeypatch):
     _anchor(monkeypatch, _b1_hourly_exit_dataset(tmp_path))
     start, end = _B1_START + timedelta(hours=2), _B1_START + timedelta(hours=4 * (_B1_BARS - 1))

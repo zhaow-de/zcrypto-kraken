@@ -18,6 +18,7 @@ os.environ["GIT_CEILING_DIRECTORIES"] = str(TMP_ROOT)
 
 import cli.engine.cycle as cycle
 from cli.registry import attempts
+from tests.retired_subjects import names_a_retired_subject
 
 _REAL_LOG_PATH, _REAL_ALLOWED_LOG_IDS = attempts.log_path, attempts.allowed_log_ids
 SLOW_CASES = Path(__file__).resolve().parent / "slow-cases.txt"
@@ -180,6 +181,10 @@ def pytest_collection_modifyitems(config, items):
     slow = [item for item in items if item.nodeid in listed]
     for item in slow:
         item.add_marker(pytest.mark.slow)
+    # `retired` the same way, from the parametrisation: a closed trial's subject case, which CI deselects.
+    for item in items:
+        if names_a_retired_subject(item):
+            item.add_marker(pytest.mark.retired)
     collected = len(items)
     result = yield
     # After the yield, so a run whose `-m` or `-k` left no slow case pays for no `git diff` and no consumers.sh call.
