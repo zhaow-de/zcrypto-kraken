@@ -258,6 +258,44 @@ def test_a_paragraph_dropped_past_a_blank_line_touches_the_text_it_follows(repo)
     assert done.returncode == 0, done.stdout + done.stderr
 
 
+PARAGRAPH = "    A paragraph the pre-review trims, long and twice as wordy as it needs to be, saying what the code says.\n"
+DOC_PY = 'def f():\n    """One line that opens.\n\n' + PARAGRAPH + '    """\n    return 1\n'
+REFLOWED = ["A paragraph the pre-review trims, reflowed by", "the author under the column limit, three lines", "long at the tip."]
+
+
+def _trim(site: str, ship: str) -> list[dict]:
+    return [{"site": site, "survives": "trim", "correct": True, "duplicateOf": "", "ship": ship}]
+
+
+def _doc_fold(repo: tuple[Path, str], ship: str, lines: list[str]):
+    folded = DOC_PY.replace(PARAGRAPH, "".join(f"    {line}\n" for line in lines))
+    return _fold(_pre_reviewed(repo[0], _commit(repo[0], {"d.py": DOC_PY}, "base")), {"d.py": folded}, _trim("d.py:4", ship))
+
+
+@pytest.mark.parametrize(
+    ("ship", "lines"),
+    [
+        (" ".join(REFLOWED), REFLOWED),
+        ("A paragraph the pre-review trims,\nshort at the tip.", ["A paragraph the pre-review trims, short at the tip."]),
+    ],
+    ids=["a one-line ship reflowed over three lines", "a two-line ship joined into one"],
+)
+def test_a_ship_text_whose_words_stand_over_other_lines_passes(repo, ship, lines):
+    done, _ = _doc_fold(repo, ship, lines)
+    assert done.returncode == 0, done.stdout + done.stderr
+
+
+def test_a_reflowed_ship_text_with_one_word_changed_is_refused(repo):
+    done, _ = _doc_fold(repo, " ".join(REFLOWED), [line.replace("three lines", "four lines") for line in REFLOWED])
+    _refused(done, repo, "d.py:4 [trim]: its text is not verbatim in d.py")
+
+
+def test_a_cut_row_carrying_whitespace_alone_ships_nothing(repo):
+    rows = [dict(row, ship=" \n ") if row["survives"] == "cut" else row for row in ROWS]
+    done, _ = _fold(repo, {"a.py": FOLDED_A, "notes.md": FOLDED_NOTES}, rows)
+    assert done.returncode == 0, done.stdout + done.stderr
+
+
 def test_rows_read_at_another_tip_are_refused(repo):
     rows = [dict(row, site="notes.md:70") if row["survives"] == "cut" else row for row in ROWS]
     done, _ = _fold(repo, {"a.py": FOLDED_A, "notes.md": FOLDED_NOTES}, rows)
