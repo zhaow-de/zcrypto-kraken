@@ -72,8 +72,6 @@ branches:
         # before merging, so each merge would stale every other open PR.
         strict: false
         contexts:
-          # `coverage/coveralls` is deliberately NOT required: a third-party status, and
-          # requiring it would put an external service on the merge path.
           - Full test suite
       enforce_admins: true
       required_linear_history: false

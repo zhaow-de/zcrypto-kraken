@@ -26,14 +26,13 @@ RETIRED_SUBJECTS = frozenset(
         "b2-funding-derisk-full-preflight",
     }
 )
-# The file whose cases evaluate a subject. Elsewhere a subject's name is a checker's data -- the registry provenance
-# cases build their records on one -- and those cases are the shared machinery's, which CI keeps.
+# The one file outside the data-gated family whose cases evaluate a subject; elsewhere a subject's name is a checker's
+# data, as in the registry provenance cases, which CI keeps.
 SUBJECT_TESTS = "test_research_command.py"
 
 
 def names_a_retired_subject(item: pytest.Item) -> bool:
-    """A case of `SUBJECT_TESTS` with a parameter whose value is a retired name, or whose id is one or opens with one and
-    a `-`. A function specific to one retired subject that no parameter names carries `@pytest.mark.retired` itself."""
+    """A function specific to one retired subject that no parameter names carries `@pytest.mark.retired` itself."""
     callspec = getattr(item, "callspec", None)
     if callspec is None or item.path.name != SUBJECT_TESTS:
         return False

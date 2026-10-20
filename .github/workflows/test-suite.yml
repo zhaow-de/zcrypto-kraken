@@ -57,5 +57,5 @@ jobs:
       # Four workers for the public runner's four vCPUs. --maxschedchunk 4 hands tests out four at a time, so the
       # slow harness tests spread over the workers; a worker's queue still refills toward a sixteenth of the tests
       # left, and after -x the other workers drain theirs. worksteal deals every test up front, so they drain
-      # whole shares. `-m "not retired"` deselects the closed research trials' subject cases (tests/retired_subjects.py).
+      # whole shares.
       - run: uv run pytest -n 4 --dist load --maxschedchunk 4 -x -m "not retired"

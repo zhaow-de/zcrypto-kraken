@@ -1,30 +1,25 @@
 #!/usr/bin/env python3
 """Run the whole test suite from a checkout where the datasets are present, write the result as JSON, upload its coverage.
 
-CI deselects the `retired` cases and skips every `skipif(not <data>.exists())` test, so this run is the one with the
-whole suite in scope -- CI's cases, the data-gated family and the retired cases -- and so the one coverage report: the
-runner `infra/systemd/zcrypto-data-gated-tests.timer` fires nightly. It runs `pytest -q -p no:cacheprovider -rfEs
---cov=cli --cov-report=` with no path through the TARGET checkout's own environment (`uv run --directory <repo>`), never
-the interpreter that launched it: a hand run from a worktree would otherwise import the worktree's `cli` under the main
-checkout's tests. It writes `.local/data-gated-runs/<UTC stamp>.json` plus `latest.json`. A run in which the whole
-family skipped for want of data is exactly the night this exists to catch, so such a skip is a failure, and a checkout
-with no dataset under `data/` is refused before pytest starts. A run whose summary cannot be parsed -- a usage error, a
-timeout, an interrupted session -- still writes a result, because `zcrypto-daily-ops` has to tell an absent file from a
-failed run. `-rfE` rather than the bare `-rf`: an error at setup is a test that did not run, and its id is as much a
-finding as a failure's.
+CI deselects the `retired` cases and skips every `skipif(not <data>.exists())` test, so this run, which
+`infra/systemd/zcrypto-data-gated-tests.timer` fires nightly, is the one with the whole suite in scope and so the one
+coverage report. It runs pytest with no path through the TARGET checkout's own environment (`uv run --directory
+<repo>`), never the interpreter that launched it: a hand run from a worktree would otherwise import the worktree's `cli`
+under the main checkout's tests. It writes `.local/data-gated-runs/<UTC stamp>.json` plus `latest.json`. A run in which
+the whole family skipped for want of data is exactly the night this exists to catch, so such a skip is a failure, and a
+checkout with no dataset under `data/` is refused before pytest starts. A run whose summary cannot be parsed -- a usage
+error, a timeout, an interrupted session -- still writes a result, because `zcrypto-daily-ops` has to tell an absent
+file from a failed run. `-rfE` rather than the bare `-rf`: an error at setup is a test that did not run, and its id is
+as much a finding as a failure's.
 
-Once pytest has run to a parsed summary, the coverage it measured (`.coverage` at the checkout's root) goes to
-coveralls.io under the repo token the vault's `coveralls_repo_token` holds, read through `grafana_auth.vault_var`. The
-result's `coverage_upload` says it was uploaded (and the job's URL), skipped (and why) or failed (the exception's class
-and its message with the token taken out). The upload never moves the verdict or the exit status, and it is cut off
-after UPLOAD_TIMEOUT_S: the unit is a oneshot, and a run that never ends writes no result and holds off the next night's.
+The coverage upload is cut off after UPLOAD_TIMEOUT_S: the unit is a oneshot, and a run that never ends writes no result
+and holds off the next night's.
 
 Python rather than shell because the parser is the substance and `tests/test_data_gated_run.py` imports it; a JSON
 writer in bash is a hand-rolled serialiser.
 
 Usage: data-gated-run.py [--repo <checkout>] [--timeout <seconds>] [--no-coverage] [-- <extra pytest args>]
-The unit passes nothing: the extra args are for a hand run (`-- -k soak`), never the nightly one. A run given them, or
-`--no-coverage`, measures and uploads no coverage, since a part of the suite's figure would stand in for the whole's.
+The unit passes nothing: the extra args are for a hand run (`-- -k soak`), never the nightly one.
 """
 
 from __future__ import annotations

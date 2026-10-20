@@ -1,6 +1,3 @@
-"""CI's run leaves the retired cases and the coverage to the nightly `infra/scripts/data-gated-run.py`, whose run is the
-one with the whole suite in scope."""
-
 from __future__ import annotations
 
 import json

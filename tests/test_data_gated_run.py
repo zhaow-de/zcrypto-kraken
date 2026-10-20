@@ -1,8 +1,7 @@
 """The nightly runner's parser and result shape: pytest's own summary lines, then the runner driven
 end to end over a synthetic checkout under `tmp_path` -- never this repo's suite or its `.local/` --
 through a `uv` shim that records what it was handed and runs the suite with this test's interpreter.
-The coverage upload is driven in this process with the vault module and the upload faked; every run
-of the script passes `--no-coverage`, so none reaches the vault or coveralls.io."""
+The coverage upload is faked in this process; a run of the script goes through `_run`, which passes `--no-coverage`."""
 
 from __future__ import annotations
 
