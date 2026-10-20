@@ -30,13 +30,12 @@ _REAL_SEND = runner.send_coverage
 @pytest.fixture(autouse=True)
 def _no_vault_and_no_upload(tmp_path, monkeypatch):
     """A case that reaches the token or the upload without faking them meets a vault module that does not exist and an
-    upload that refuses, never the real ones."""
+    upload double that records the reach, which fails the case at teardown."""
     monkeypatch.setattr(runner, "_AUTH", tmp_path / "no-grafana-auth.py")
-
-    def refuse(repo, token):
-        raise AssertionError("a test reached the real coverage upload")
-
-    monkeypatch.setattr(runner, "send_coverage", refuse)
+    reached = []
+    monkeypatch.setattr(runner, "send_coverage", lambda repo, token: reached.append(repo))
+    yield
+    assert not reached, f"the case reached the coverage upload without faking it, for {reached}"
 
 
 # The tail of `pytest -q -p no:cacheprovider -rfEs` over one pass, one fail, three skips, one xfail and
