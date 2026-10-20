@@ -1,18 +1,14 @@
 #!/usr/bin/env python3
 """One line per runbook bullet or numbered step whose prose carries an internal token.
 
-One line per BULLET, its tokens joined -- the count is bullets, as the rule's set clause says, so a bullet
-carrying three tokens is one finding to fix and not three.
+A bullet's tokens are joined on its one line: a bullet carrying three is one finding to fix, not three.
 
     runbook-internal-tokens.py <page>...
 
 prints `path:line <tokens>` per offending bullet and exits 0 whether or not it found any: this is an instrument a
 round runs by hand over the top-level runbook pages, not a gate, and a refusal here would block a runbook fix
-during an incident. A
-non-zero count is the finding -- an operator reaching the page from an alert description cannot
-resolve `T0160` or `spec 00106`, while an HTML comment on the line may carry one, because provenance
-for a claim the tree cannot otherwise re-derive is worth keeping (the owner's ruling of 2026-09-12).
-A declaration's `why` is inside its bullet and takes the rule with it.
+during an incident. Each line is a finding against `infra/runbooks/README.md`'s internal-token bullet, which
+holds the rule and its HTML-comment exception.
 
 Neither half of the reading is defined here, and that is the point -- one definition, two readers:
 
@@ -28,8 +24,8 @@ Neither half of the reading is defined here, and that is the point -- one defini
   this instrument's and the gate's.
 
 Both are loaded by path because neither filename is importable (a hyphen, and a test module outside
-any package). A page this cannot read is reported on stderr and exits 2, so a typo in the count
-list's glob is loud rather than a zero.
+any package). A page this cannot read is reported on stderr and exits 2, so a mistyped page is loud
+rather than a zero.
 """
 
 import importlib.util
