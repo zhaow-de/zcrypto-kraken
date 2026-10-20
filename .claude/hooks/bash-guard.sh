@@ -7,9 +7,7 @@
 #
 # Argv, not text. The command is cut of its heredoc bodies, split into pipelines and into stages, and tokenised,
 # so a flag inside a quoted message, a heredoc or a comment is never an argv element. A substitution -- `$( .. )`,
-# backticks, `<( .. )`, `>( .. )` -- is a command of its own wherever bash performs one, and nowhere else. The scan
-# that cuts the bodies knows single and double quotes, backticks, `$( .. )`, `<( .. )`, `>( .. )`, arithmetic
-# (`$(( .. ))`, `(( .. ))`) and the here-string `<<<`, so a `<<` inside any of them opens no heredoc at the top.
+# backticks, `<( .. )`, `>( .. )` -- is a command of its own wherever bash performs one, and nowhere else.
 # A wrapper is transparent to the bypass arm and opaque to the cap arm: the first finds `git` at any position in a
 # simple command, so `timeout 5 git commit -n` and `/usr/bin/git commit --no-verify` are that one call in its
 # wrapper, path and option spellings; the second reads a stage's program as its first word alone, so
@@ -42,10 +40,7 @@
 # families read an unknown directory as the payload's `cwd`. Scope is not tracked, so a `cd` outlives its subshell.
 #
 # Outside the memo family: every writer its corpus does not refuse -- a wrapper (`sudo tee`), a glob or a brace, a
-# path a variable holds whole, `awk -i inplace`, `rsync`, `ln`, `dd`, `rm`. An interpreter's text naming the memo is
-# refused read-shaped or not, since a write mode is no cheaper to read than the whole body; outside it: a body piped
-# from another stage (`cat <<EOF | python3`), a module (`-m`), a path the body composes from pieces no token or
-# adjacent pair spells, and a script past SCRIPT_CAP characters.
+# path a variable holds whole, an interpreter, `awk -i inplace`, `rsync`, `ln`, `dd`, `rm`.
 #
 # A state-changing git command (`changes_state`; `tag` deliberately not) stamps `zcrypto-git-state-stamp` in the
 # checkout's own git directory -- a worktree's, not the common dir worktrees share -- once per call at admission; a
@@ -88,7 +83,7 @@ ANSI = "$'"
 ANSI_SIMPLE = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v", "\\": "\\", "'": "'", '"': '"', "?": "?"}
 ASSIGN = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", re.S)
 CONFIG_KEY_ENV = re.compile(r"^GIT_CONFIG_KEY_\d+$")
-HEREDOC = re.compile(r"<<(-?)[ \t]*(?:'([^'\n]*)'|\"([^\"\n]*)\"|\\?([^\s'\"()|&;<>]+))")  # a bare delimiter ends at a metacharacter
+HEREDOC = re.compile(r"<<(-?)[ \t]*(?:'([^'\n]*)'|\"([^\"\n]*)\"|\\?([^\s'\"]+))")
 GLOBAL_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env", "--attr-source"}
 GLOBAL_TERMINAL = {"-v", "--version", "-h", "--help", "--exec-path", "--html-path", "--man-path", "--info-path", "--list-cmds"}
 # Per subcommand: short options whose value is the rest of the bundle or else the next token; short options whose
@@ -138,8 +133,7 @@ VAULT_REMEDY = (
 MEMO = [".local", "memo.md"]
 MEMO_REMEDY = (
     "The memo is written through the Edit tool after a Read of it, where memo-guard checks the write against that read; "
-    "a shell write bypasses the check. A read -- `cat`, `grep`, `sed -n`, `head` -- stays open; an interpreter's body "
-    "naming the memo is refused whole, whether it reads or writes."
+    "a shell write bypasses the check. A read -- `cat`, `grep`, `sed -n`, `head` -- stays open."
 )
 SED_VALUE = ("efl", "i", {"expression", "file", "line-length"})
 TRUNCATE_VALUE = ("sr", "", {"size", "reference"})
@@ -149,15 +143,6 @@ MOVERS = {
     "mv": ("a move's", ("St", "", {"suffix", "target-directory"})),
     "install": ("an install's", ("mogSt", "", {"mode", "owner", "group", "suffix", "target-directory"})),
 }
-# Per interpreter: the short options whose value is a body it runs, its other valued short options, and its long
-# options taking a value; node's `--eval` and `--print` are bodies too.
-INTERPRETERS = {
-    "python": ("c", "mWX", set()),
-    "node": ("ep", "r", {"eval", "print", "require", "import"}),
-    "perl": ("eE", "", set()),
-    "ruby": ("e", "rIE", set()),
-}
-SCRIPT_CAP = 1 << 20  # characters of a script file read for the memo's name
 GH_PR_WRITES = {"create", "ready", "merge", "edit", "close", "comment", "review"}
 GH_WRITE_METHODS = {"POST", "PATCH", "PUT", "DELETE"}
 GH_VALUE = {"-R", "--repo"}
@@ -219,14 +204,12 @@ HOOK_DIR = posixpath.dirname(os.path.abspath(sys.argv[1]))
 
 
 class Stage(list):
-    # A stage's words, the files its `<` redirects feed it, its output redirects as (operator, target), the heredoc
-    # bodies and the here-strings on its stdin: no word of its argv.
+    # A stage's words, the files its `<` redirects feed it, and its output redirects as (operator, target): no word of
+    # its argv.
     def __init__(self):
         super().__init__()
         self.inputs = []
         self.outputs = []
-        self.heredocs = []
-        self.herestrings = []
 
 
 def expansions(body):
@@ -293,31 +276,12 @@ def ansi_decode(raw):
 
 
 def cut_heredocs(text):
-    # A `<<` is a heredoc operator outside single quotes, double quotes and `$'..'`, inside backticks as inside
-    # `$( .. )`, and never the tail of `<<<` -- the heredoc inside the documented `-m "$(cat <<'EOF' ... EOF)"` is a
-    # heredoc, and its body carries whatever the message says. Returns the cut text, the command substitutions it
-    # closed -- `$( .. )`, `<( .. )`, `>( .. )`, backticks and arithmetic (`$(( .. ))`, `(( .. ))`, scanned as a
-    # `$( .. )` is), each a command of its own; an unclosed one is bash's to refuse -- and the bodies of the top-level
-    # heredocs in the order of their `<<` operators, which are the only `<<` the cut text keeps; a heredoc inside a
-    # substitution is that substitution's, found when its text is judged as a command, its body read at the
-    # substitution's own newline or dropped unread when the substitution closes first.
-    out, bodies, docs, pending, stack, i, n, sub_close = [], [], [], [], [("top", 0)], 0, len(text), -1
+    # A scan that knows quotes and $(...) -- the heredoc inside the documented `-m "$(cat <<'EOF' ... EOF)"` is a
+    # heredoc, and its body carries whatever the message says. Returns the cut text and the command substitutions
+    # it closed -- `$( .. )` and backticks, each a command of its own; an unclosed one is bash's to refuse.
+    out, bodies, pending, stack, i, n, sub_close = [], [], [], [("top", 0)], 0, len(text), -1
     while i < n:
         ch, st = text[i], stack[-1][0]
-        tick = next((k for k in range(len(stack) - 1, 0, -1) if stack[k][0] == "bq"), None)
-        if tick is not None and ch == "\\" and text[i + 1 : i + 2] == "`":
-            out.append(text[i : i + 2])
-            i += 2
-            continue
-        if tick is not None and ch == "`":
-            # bash ends a backtick at the next unescaped backtick through any quote or substitution open inside it,
-            # and parses the interior afterwards: what was open inside closes with it, a pending `<<` of its own too
-            bodies.append(text[stack[tick][1] : i])
-            del stack[tick:]
-            pending = [p for p in pending if p[3] <= len(stack)]
-            out.append("`")
-            i += 1
-            continue
         if st == "sq":
             if ch == "'":
                 stack.pop()
@@ -347,37 +311,11 @@ def cut_heredocs(text):
         if st != "dq" and text.startswith('$"', i):
             i += 1
             continue
-        if st in ("top", "sub", "paren", "bq") and text.startswith("<<<", i):
-            out.append("<<<")
-            i += 3
-            continue
-        if st in ("top", "sub", "paren", "bq") and text.startswith("<<", i) and (m := HEREDOC.match(text, i)):
-            # A backslash anywhere in the delimiter quotes it (`<<\EOF`): no expansion, like `<<'EOF'`.
-            expands = m.group(4) is not None and "\\" not in m.group(0)
-            pending.append((m.group(2) or m.group(3) or m.group(4), bool(m.group(1)), expands, len(stack)))
-            if len(stack) == 1:
-                out.append(m.group(0))
-            i = m.end()
-            continue
-        if st != "dq" and ch == "\n" and (due := [p for p in pending if p[3] >= len(stack)]):
-            # The bodies a newline opens are those of the `<<` operators at its depth or deeper: one inside a
-            # substitution reads its body at the substitution's own newline, as bash's parser does.
-            out.append("\n")
+        if st == "bq":
+            if ch == "`":
+                bodies.append(text[stack.pop()[1] : i])
+            out.append(ch)
             i += 1
-            pending = [p for p in pending if p[3] < len(stack)]
-            for delim, dash, expands, depth in due:
-                lines = []
-                while i < n:
-                    end = text.find("\n", i)
-                    line = text[i : n if end == -1 else end]
-                    i = n if end == -1 else end + 1
-                    if (line.lstrip("\t") if dash else line) == delim:
-                        break
-                    lines.append(line)
-                if depth == 1:
-                    docs.append("\n".join(lines))
-                    if expands:
-                        bodies.extend(expansions(docs[-1]))
             continue
         if ch == "`":
             stack.append(("bq", i + 1))
@@ -388,12 +326,6 @@ def cut_heredocs(text):
             stack.append(("sub", i + 2))
             out.append("$(")
             i += 2
-            continue
-        if st == "top" and text.startswith("((", i):
-            # an arithmetic command, scanned as `$((` is: the `(` after this one is its paren
-            stack.append(("sub", i + 1))
-            out.append("(")
-            i += 1
             continue
         if st != "dq" and text[i : i + 2] in ("<(", ">("):
             # a process substitution: a command of its own, and its `)` ends a word (bash: `<(true)#x` is one word)
@@ -423,24 +355,46 @@ def cut_heredocs(text):
             stack.pop()
         elif ch == ")" and st == "sub":
             bodies.append(text[stack.pop()[1] : i])
-            pending = [p for p in pending if p[3] <= len(stack)]
             sub_close = i
         elif ch == "#" and (i == 0 or text[i - 1] in " \t\n;&|(" or (text[i - 1] == ")" and sub_close != i - 1)):
             # after a subshell's `)` bash starts a comment; after the `)` that closes `$( .. )` it continues the word
             end = text.find("\n", i)
-            if tick is not None and (close := text.find("`", i)) != -1 and (end == -1 or close < end):
-                end = close
             i = n if end == -1 else end
+            continue
+        elif ch == "<" and text.startswith("<<", i) and not text.startswith("<<<", i):
+            m = HEREDOC.match(text, i)
+            if m:
+                # A backslash anywhere in the delimiter quotes it (`<<\EOF`): no expansion, like `<<'EOF'`.
+                expands = m.group(4) is not None and "\\" not in m.group(0)
+                pending.append((m.group(2) or m.group(3) or m.group(4), bool(m.group(1)), expands))
+                out.append(m.group(0))
+                i = m.end()
+                continue
+        elif ch == "\n" and pending:
+            out.append("\n")
+            i += 1
+            for delim, dash, expands in pending:
+                lines = []
+                while i < n:
+                    end = text.find("\n", i)
+                    line = text[i : n if end == -1 else end]
+                    i = n if end == -1 else end + 1
+                    if (line.lstrip("\t") if dash else line) == delim:
+                        break
+                    lines.append(line)
+                if expands:
+                    bodies.extend(expansions("\n".join(lines)))
+            pending = []
             continue
         out.append(ch)
         i += 1
-    return "".join(out), bodies, docs
+    return "".join(out), bodies
 
 
 def pipelines(text):
     # Each pipeline as its stages, in order: the second arm judges what one stage hands the next, and the first
     # arm reads every stage on its own.
-    cut, bodies, docs = cut_heredocs(text)
+    cut, bodies = cut_heredocs(text)
     lex = shlex.shlex(cut, posix=True, punctuation_chars="".join(sorted(PUNCT)))
     lex.commenters = ""  # bash's comments are cut above; a `#` inside a word (issue#42) is text
     lex.whitespace = " \t\r"
@@ -452,8 +406,6 @@ def pipelines(text):
                 pipes[-1][-1].inputs.append(tok)
             elif skip in OUTPUT:
                 pipes[-1][-1].outputs.append((skip, tok))
-            elif skip == "<<<":
-                pipes[-1][-1].herestrings.append(tok)
             skip = ""
             continue
         if not tok or not set(tok) <= PUNCT:
@@ -467,8 +419,6 @@ def pipelines(text):
                 pipes[-1].append(Stage())
             elif last in SEP and filled:
                 pipes.append([Stage()])
-            elif last == "<<" and docs:
-                pipes[-1][-1].heredocs.append(docs.pop(0))
             tok = tok[len(last) :]
         skip = last if last in REDIRECT else ""
     out = [[stage for stage in pipe if stage or stage.outputs] for pipe in pipes]
@@ -967,51 +917,14 @@ def names_memo(path, where):
     return any(posixpath.normpath(p).split("/")[-2:] == MEMO for p in (path, posixpath.join(where, path)))
 
 
-def refuse_memo(shown, hit, how, raw, verb="writes"):
-    refuse(f"`{shown}` {verb} the memo `{hit}` {how}; in `{raw}`. {MEMO_REMEDY}")
-
-
-def interpreter_texts(words, where):
-    lang, at = None, None
-    for i, w in enumerate(words):
-        p = w.rpartition("/")[2]
-        lang = "python" if INTERPRETER.match(p) else p if p in INTERPRETERS else None
-        if lang:
-            at = i
-            break
-    if lang is None:
-        return []
-    body, valued, longs = INTERPRETERS[lang]
-    flags, values, ops = option_walk(words[at + 1 :], body + valued, "", longs)
-    texts = [
-        (v, f"from its {'-' + f if len(f) == 1 else f} body")
-        for f, v in zip(flags, values)
-        if v is not None and (f in body or f in ("--eval", "--print"))
-    ]
-    scripted = bool(texts)
-    texts += [(doc, "from its heredoc") for doc in getattr(words, "heredocs", [])]
-    texts += [(s, "from its here-string") for s in getattr(words, "herestrings", [])]
-    if ops and ops[0] != "-" and not scripted and "m" not in flags and os.path.isfile(posixpath.join(where, ops[0])):
-        with contextlib.suppress(OSError), open(posixpath.join(where, ops[0]), errors="replace") as f:
-            texts.append((f.read(SCRIPT_CAP), f"from the script `{ops[0]}`"))
-    return texts
-
-
-def text_names_memo(text, where):
-    # A token with no letter or digit (the `/` of `Path(".local") / "memo.md"`) is skipped, so its neighbours pair.
-    parts = [t for t in re.findall(r"[^\s'\"(),;]+", text) if re.search(r"[A-Za-z0-9]", t)]
-    pairs = [posixpath.join(a, b) for a, b in zip(parts, parts[1:])]
-    return next((t for t in parts + pairs if names_memo(t, where)), None)
+def refuse_memo(shown, hit, how, raw):
+    refuse(f"`{shown}` writes the memo `{hit}` {how}; in `{raw}`. {MEMO_REMEDY}")
 
 
 def judge_memo(words, raw, where):
     for op, target in words.outputs:
         if names_memo(target, where):
             refuse_memo(" ".join(filter(None, (spelled(words), op, shlex.quote(target)))), target, "through a redirect", raw)
-    for text, how in interpreter_texts(words, where):
-        hit = text_names_memo(text, where)
-        if hit:
-            refuse_memo(spelled(words), hit, how, raw, verb="names")
     p, rest = argv_of(words)
     if p == "sed":
         flags, _, ops = option_walk(rest, *SED_VALUE)
