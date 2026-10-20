@@ -64,9 +64,16 @@ def load_rows(path: pathlib.Path) -> list[dict]:
 _NAMES_AN_API = re.compile(r"(?<![A-Za-z0-9])(?:websocket|rest)(?![A-Za-z0-9])", re.IGNORECASE)
 
 
+def _update_bodies(entry: dict) -> list[str]:
+    updates = entry.get("incident_updates")
+    return [str(u.get("body") or "") for u in updates if isinstance(u, dict)] if isinstance(updates, list) else []
+
+
 def api_impacting(maintenances: list[dict]) -> list[dict]:
-    """The entries naming WebSocket or REST in a component or in their own name -- an empty
-    `components` is not an absent impact.
+    """The entries naming WebSocket or REST in a component, in their own name or in an update's body -- an empty
+    `components` under a plain name is not an absent impact: the venue has named WebSocket API clients in an
+    entry's `incident_updates[].body` alone. The pair of this reader is `maintenance_conflicts` in
+    `cli/engine/draftplan.py`.
 
     Case-folded because the venue spells the same component `WebSocket` and `Websocket` across
     entries, and word-bounded because `REST` is an API: a substring test reads `restart`,
@@ -75,8 +82,8 @@ def api_impacting(maintenances: list[dict]) -> list[dict]:
     """
     out = []
     for entry in maintenances:
-        names = [c.get("name", "") for c in entry.get("components", [])] + [entry.get("name", "")]
-        if any(_NAMES_AN_API.search(name) for name in names):
+        texts = [c.get("name", "") for c in entry.get("components", [])] + [entry.get("name", "")] + _update_bodies(entry)
+        if any(_NAMES_AN_API.search(text) for text in texts):
             out.append(entry)
     return out
 

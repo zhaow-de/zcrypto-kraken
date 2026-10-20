@@ -8,9 +8,18 @@ You are the executability pass for a spec+plan pair. Work in the detached worktr
 
 Read {SPEC}, {PLAN}, `{REPORT_DIR}/pin-facts.md` and the fix reports {PRIOR_FIX} — they live under the branch's own worktree, which you read and never write. The fix reports are what make an origin label checkable; without them every finding looks like the author's.{TOPIC_LINE} Do not read `.local/memo.md`. Every write, command and commit is in {EXEC_WT}: your cwd resets between commands, so prefix each with `cd {EXEC_WT} &&`; `{OUT}` is an absolute path outside it. Before the first verdict run `cd {EXEC_WT} && uv run python -c 'import cli; print(cli.__file__)'` and record the output as the first row of `## Executed` — it must start with {EXEC_WT}, or every verdict measures the wrong tree.
 
-The semantic reviews are done and their findings fixed. **Do not review what the documents say. Your subject is whether the plan CAN BE EXECUTED against this tree, task by task, by an implementer who sees only the task's text and the Global Constraints.** A plan built of complete code fences is a program; run it. Run each task's stated commands, its test file and its probes; never the suite, which is CI's, and never a pytest over the whole `tests/` tree.
+The semantic reviews are done and their findings fixed. **Do not review what the documents say. Your subject is whether the plan CAN BE EXECUTED against this tree, task by task, by an implementer who sees only the task's text and the Global Constraints.** A plan built of complete code fences is a program. Your mode is **{EXEC_MODE}** — `full` runs the program; `form` checks its form and runs no `Run:` line, test, probe or pre-commit of it, because the plan goes to the SDD task loop, whose per-task review is the run. Do the one list your mode names; the other is not yours.
 
-For every task, in order, in {EXEC_WT}:
+In mode `form`, for every task, in order, in {EXEC_WT}:
+
+1. Apply what the task says to write — create and modify the files with the fenced content, verbatim — so the checks below read the tree as the task leaves it; run nothing it writes.
+1. Every stated command parses — `bash -n` over each `bash` fence, `python -c 'import ast,sys; ast.parse(sys.stdin.read())'` over each Python one — and every path, fixture and symbol it names exists in {EXEC_WT} at that point of the task order; a name a later task defines is the finding.
+1. Every `-k` filter collects its stated count: `uv run pytest --collect-only -q -m "not slow" <path> -k "<expr>"` — collection imports the file, it runs no test.
+1. Every mutation `sed` matches exactly one occurrence of the code the plan's fences write — occurrence-count the pattern over the file as the task leaves it; zero or two is the finding.
+1. Every template renders through every publishing path the tree has.
+1. Commit locally in {EXEC_WT} so a later task's failure is attributable to the task that caused it.
+
+In mode `full`, for every task, in order, in {EXEC_WT} — the stated commands, the test file and the probes; never the suite, which is CI's, and never a pytest over the whole `tests/` tree:
 
 1. Apply what the task says to write — create and modify the files with the fenced content, verbatim.
 1. Run every `Run:` line and compare its output to the task's `Expected:` — the failure text, not the exit code. A measurement — a formatter shift, a coordinate — is taken from {EXEC_WT}'s root with every file an earlier task created present; a scratch root or a missing file measures a different plan.
@@ -22,7 +31,7 @@ For every task, in order, in {EXEC_WT}:
 
 Where a step cannot be performed as written — a missing fixture, a symbol from a later task, an unstated default, a command that assumes a file nothing created — that is the finding, at the severity of what it blocks; the Scenario is what the implementer does next.
 
-Report `{OUT}` in the shape below, preceded by an `## Executed` table — one row per task: commands run, outcome, files committed — so a clean pass is distinguishable from a skipped one. A task with no row was not executed, and the report says so.
+Report `{OUT}` in the shape below, preceded by an `## Executed` table — one row per task: the mode, commands run or checks made, outcome, files committed — so a clean pass is distinguishable from a skipped one. A task with no row was not executed, and the report says so.
 
 {COMMON}
 

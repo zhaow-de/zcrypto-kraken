@@ -54,9 +54,6 @@ emit() {
 # retire when: a pre-commit hook in .pre-commit-config.yaml refuses a staged docs/*.md, the refusal replacing this count
 c_docs_markdown_at_the_root() { git ls-files ':(glob)docs/*.md' | wc -l; }
 
-# retire when: .github/settings.yml's protection on develop is taken as the refusal at the point of use and the count has read 0 for three refine rounds
-c_non_pr_merges() { git log --first-parent --merges develop --format=%s | grep -vc '^Merge pull request'; }
-
 # retire when: the trade key and the Loki password leave the engine container's env for a mounted secrets file in infra/ansible/roles/engine/, so an env dump prints nothing
 c_engine_env_forms() { git grep -nE '\{\{ ?json \.Config(\.Env)? ?\}\}|docker exec [^|;]* env( |$)|docker compose config' -- infra .claude cli ':!*.md' ':!infra/scripts/count-list.sh' | grep -vcE '^[^:]+:[0-9]+:[[:space:]]*#'; }
 
@@ -290,19 +287,6 @@ c_operator_term_allowlist_edits() { git log --oneline -G_WP_CARRIERS -- tests/te
 # retire when: no test under tests/ reaches a venue — tests/test_live_venue_opt_in.py finds no skip gate and is removed
 c_skip_gate_contract() { uv run pytest tests/test_live_venue_opt_in.py -q || return 2; }
 
-# retire when: tests/test_open_topics_frontmatter.py refuses a live topic with no ripe_when, the refusal replacing this count
-c_topics_without_a_trigger() { grep -L '^ripe_when: *[^ ]' docs/open-topics/T*.md | wc -l; }
-
-# The bullets and numbered steps of the top-level runbook pages, `infra/runbooks/README.md` aside, whose own bullets
-# state the rule rather than an operator's step: an internal token --
-# `Phase <N>`, `T<NNNN>`, `iter-<N>`, `spec <NNNNN>`, `WP<N>`, `D<N>` -- inside one is a reference an operator who
-# reached the page from an alert description cannot resolve. An HTML comment on the line may carry one; a
-# declaration's why is inside its bullet and takes the rule with it. The classes and the path exemption are
-# `tests/test_internal_terms_not_operator_visible.py`'s. One line per bullet, its tokens joined, so the count is
-# bullets to fix and not tokens.
-# retire when: three refine rounds at 0 with the rule line kept — the owner's call
-c_runbook_bullets_with_an_internal_token() { git ls-files 'infra/runbooks/*.md' | grep -vE '^infra/runbooks/(README\.md$|[^/]+/)' | xargs uv run python infra/scripts/runbook-internal-tokens.py | wc -l; }
-
 # A deploy-log count that calls this reads the rows stamped at or after the previous refine round's closing commit --
 # its commit date, the anchor `c_claude_commits_since_the_round_closed` finds -- so a row a round has read is not
 # counted again in the next; the capture-pair count pairs every row first and keeps a pair whose later row is so
@@ -386,15 +370,6 @@ c_engine_rows_on_the_completion_floor() {
 # shellcheck disable=SC2016  # $first and $since are jq's, bound by the program and by --arg
 engine_preflight_rows='(map(has("preflight")) | index(true)) as $first | if $first == null then [] else .[$first:] end | map(select(($since == "" or (.ts | fromdate) >= ($since | fromdate)) and .limit == "zcrypto" and (.tags | split(",") | any(. == "engine")) and .extra_vars.engine_image_digest != null))'
 
-# A successful re-pin with nothing gating it and nothing bypassing it: no `preflight`, or one whose rc or provenance an
-# assert let through.
-# retire when: the preflight's rc and first-parent asserts in infra/ansible/roles/engine/tasks/main.yml are each proven by a case in tests/test_infra_converge_guards.py, the role's refusal then the gate
-c_engine_repins_without_a_preflight() {
-  local since
-  since="$(round_closed_at)" || return 2
-  jq -s --arg since "$since" "$engine_preflight_rows"' | map(select(.rc == 0 and .extra_vars.engine_preflight_override == null and (.preflight.rc != 0 or .preflight.first_parent != true))) | length' "${COUNT_LIST_DEPLOY_LOG:-docs/reference/deploy-log.jsonl}"
-}
-
 # retire when: engine_preflight_override is gone from infra/ansible/roles/engine/tasks/main.yml — no bypass left to count
 c_engine_preflight_overrides() {
   local since
@@ -435,12 +410,6 @@ c_runbook_sections_without_a_trigger() { uv run python infra/scripts/runbook-tri
 
 # retire when: infra/scripts/runbook-triggers.py retire-when is a pre-commit hook in .pre-commit-config.yaml, refusing the section at the commit
 c_runbook_sections_without_a_retire_when() { uv run python infra/scripts/runbook-triggers.py retire-when; }
-
-# The runbook pages take the corpus's universal test (the owner, 2026-09-11): the guard's own bullet reader over the
-# tracked top-level pages, the README aside because its own bullets state the rule rather than an operator's steps. It reads 0 and the pages are in the
-# guard's contract set, so this entry is the number behind a gate rather than an instrument in front of one.
-# retire when: three refine rounds at 0 with the rule line kept — the owner's call
-c_runbook_universals_without_a_count() { git ls-files 'infra/runbooks/*.md' | grep -vE '^infra/runbooks/(README\.md$|[^/]+/)' | xargs uv run python infra/scripts/guidance-guard.py --uncounted | wc -l; }  # top-level pages only, the set the guard judges
 
 # Every successful capture-touching row -- a capture tag, or an un-tagged site.yml run -- becomes one
 # restart event per capture host it limits to (the capture_host group is both), and the count is the
@@ -579,15 +548,14 @@ c_hosts_off_the_fleets_alloy_version() { uv run python infra/scripts/alloy-versi
 main() {
   wanted=("$@")
   cd "$(git rev-parse --show-toplevel)" || exit 2
-  # Five counts read the integration branch by name. A checkout without that ref answers 0 from
-  # inside a process substitution, where the failure never reaches the pipeline's status.
+  # A count reading the integration branch by name answers 0 from inside a process substitution when the checkout
+  # lacks that ref, where the failure never reaches the pipeline's status.
   if ! git rev-parse --verify --quiet develop >/dev/null; then
-    echo "count-list: this checkout has no develop ref, and five of the counts read it by name" >&2
+    echo "count-list: this checkout has no develop ref, which counts read by name" >&2
     exit 2
   fi
 
   emit "markdown-directly-under-docs" c_docs_markdown_at_the_root
-  emit "non-pr-merges-on-develop" c_non_pr_merges
   emit "engine-env-forms-invoked" c_engine_env_forms
   emit "ansible-inventory-secret-forms-invoked" c_ansible_inventory_forms
   emit "kraken-cli-on-infra-surfaces" c_kraken_cli_on_infra
@@ -597,8 +565,6 @@ main() {
   emit "spec-hash-provenance" c_spec_hash_provenance
   emit "operator-term-surfaces" c_operator_term_surfaces c_operator_term_allowlist_edits
   emit "skip-gate-contract" c_skip_gate_contract
-  emit "live-topics-without-a-trigger" c_topics_without_a_trigger
-  emit "runbook-bullets-with-an-internal-token" c_runbook_bullets_with_an_internal_token
   emit "canary-bypasses-on-the-primary" c_canary_bypasses
   emit "converges-inside-a-kraken-window" c_converges_inside_a_kraken_window
   emit "drills-on-the-primary" c_drills_on_the_primary
@@ -606,7 +572,6 @@ main() {
   emit "engine-rows-outside-the-gap" c_engine_rows_outside_the_gap
   emit "engine-window-overrides" c_engine_window_overrides
   emit "engine-rows-on-the-completion-floor" c_engine_rows_on_the_completion_floor
-  emit "engine-repins-without-a-preflight" c_engine_repins_without_a_preflight
   emit "engine-preflight-overrides" c_engine_preflight_overrides
   emit "nas-rows-without-compat" c_nas_rows_without_compat
   emit "image-removals-outside-the-pruner" c_image_removals_outside_the_pruner
@@ -615,7 +580,6 @@ main() {
   emit "capture-hosts-converged-within-an-hour" c_capture_hosts_converged_within_an_hour
   emit "runbook-sections-without-a-trigger" c_runbook_sections_without_a_trigger
   emit "runbook-sections-without-a-retire-when" c_runbook_sections_without_a_retire_when
-  emit "runbook-universals-without-a-count" c_runbook_universals_without_a_count
   emit "converge-sh-wrapped-in-timeout" c_converge_sh_wrapped_in_timeout
   emit "claude-commits-since-the-round-closed" c_claude_commits_since_the_round_closed
   emit "ambient-bytes" c_ambient_bytes

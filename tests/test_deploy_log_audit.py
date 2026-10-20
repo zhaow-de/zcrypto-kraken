@@ -62,6 +62,39 @@ def test_api_impacting_does_not_read_rest_inside_a_word(name):
     assert audit.api_impacting([{"name": name, "components": []}]) == []
 
 
+def _order_entry(updates: object = None) -> dict:
+    entry = {"name": "Order Entry System Maintenance", "components": []}
+    if updates is not None:
+        entry["incident_updates"] = updates
+    return entry
+
+
+@pytest.mark.parametrize(
+    ("updates", "impacting"),
+    [
+        (None, False),
+        ([], False),
+        ([{"body": "We will be performing maintenance."}, {"body": "WebSocket API clients will be disconnected."}], True),
+        ([{"body": "A restful pause."}], False),
+        ([{"body": "The westcoast site."}], False),
+        ("WebSocket API clients", False),
+        (["WebSocket API clients", {"body": None}], False),
+    ],
+    ids=[
+        "no updates key",
+        "no update",
+        "WebSocket API clients in an update body",
+        "restful in an update body",
+        "westcoast in an update body",
+        "updates not a list",
+        "a non-object update item",
+    ],
+)
+def test_api_impacting_reads_an_update_body_under_a_plain_name_and_empty_components(updates, impacting):
+    entry = _order_entry(updates)
+    assert audit.api_impacting([entry]) == ([entry] if impacting else [])
+
+
 def test_maintenance_counts_the_row_inside_an_api_impacting_window(tmp_path, capsys):
     """The second row sits inside the fixture's website window, which impacts no API and must not count."""
     log = _log(tmp_path, [_row("2026-08-28T23:40:17Z", limit="nas"), _row("2026-08-20T01:00:00Z")])

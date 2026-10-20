@@ -137,14 +137,19 @@ def _ticker(prices: dict[str, float] = PRICES) -> dict:
     return {PAIR_KEYS[symbol]: {"a": [repr(p), "1", "1.000"], "b": [repr(p), "1", "1.000"]} for symbol, p in prices.items()}
 
 
-def _maintenance(name: str, begins: str, ends: str, components: tuple[str, ...] = ()) -> dict:
-    return {
+def _maintenance(
+    name: str, begins: str, ends: str, components: tuple[str, ...] = (), updates: tuple[str, ...] | None = None
+) -> dict:
+    entry = {
         "name": name,
         "status": "scheduled",
         "scheduled_for": begins,
         "scheduled_until": ends,
         "components": [{"name": c} for c in components],
     }
+    if updates is not None:
+        entry["incident_updates"] = [{"body": body} for body in updates]
+    return entry
 
 
 def _feed(*entries: dict) -> dict:
@@ -610,12 +615,57 @@ def test_the_plan_id_counts_up_within_the_day_from_the_decision_log():
         (_maintenance("Kraken Website and API Maintenance", f"{DAY}T15:01:00Z", f"{DAY}T15:16:00Z", ("REST",)), False),
         (_maintenance("Kraken Website and API Maintenance", f"{DAY}T15:00:00Z", f"{DAY}T15:16:00Z", ("REST",)), True),
         (_maintenance("Restricted funding restart", f"{DAY}T14:00:00Z", f"{DAY}T14:30:00Z", ("Interest",)), False),
+        (_maintenance("Order Entry System Maintenance", f"{DAY}T14:50:00Z", f"{DAY}T15:30:00Z"), False),
+        (_maintenance("Order Entry System Maintenance", f"{DAY}T14:50:00Z", f"{DAY}T15:30:00Z", updates=()), False),
+        (
+            _maintenance(
+                "Order Entry System Maintenance",
+                f"{DAY}T14:50:00Z",
+                f"{DAY}T15:30:00Z",
+                updates=("We will be performing maintenance.", "WebSocket API clients will be disconnected briefly."),
+            ),
+            True,
+        ),
+        (
+            _maintenance("Order Entry System Maintenance", f"{DAY}T14:50:00Z", f"{DAY}T15:30:00Z", updates=("A restful pause.",)),
+            False,
+        ),
+        (
+            _maintenance(
+                "Order Entry System Maintenance", f"{DAY}T14:50:00Z", f"{DAY}T15:30:00Z", updates=("The westcoast site.",)
+            ),
+            False,
+        ),
+    ],
+    ids=[
+        "a WebSocket component",
+        "a REST API component",
+        "REST and WebSocket in the name",
+        "a REST component a minute past the window",
+        "a REST component at the window's end",
+        "rest inside words",
+        "a plain name, empty components, no updates key",
+        "a plain name, empty components, no update",
+        "WebSocket API clients in an update body",
+        "restful in an update body",
+        "westcoast in an update body",
     ],
 )
 def test_a_websocket_or_rest_window_overlapping_the_drop_window_conflicts(entry, conflict):
     slots = drop_slots(BOUNDARY)
 
     assert bool(maintenance_conflicts(_feed(entry), slots[0][0], slots[-1][1])) is conflict
+
+
+@pytest.mark.parametrize(
+    "updates", ["WebSocket API clients", ["WebSocket API clients", {"body": None}]], ids=["not a list", "a non-object item"]
+)
+def test_update_bodies_that_are_not_a_list_of_objects_carry_no_window(updates):
+    entry = _maintenance("Order Entry System Maintenance", f"{DAY}T14:50:00Z", f"{DAY}T15:30:00Z")
+    entry["incident_updates"] = updates
+    slots = drop_slots(BOUNDARY)
+
+    assert maintenance_conflicts(_feed(entry), slots[0][0], slots[-1][1]) == []
 
 
 def test_a_maintenance_overlapping_the_drop_window_refuses_the_draft():

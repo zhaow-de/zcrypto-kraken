@@ -138,20 +138,26 @@ def _to_tip(line: int, hunks: list[Hunk]) -> int:
     return line + sum(h.new_count - h.old_count for h in hunks if line >= h.old + max(h.old_count, 1))
 
 
-def _ship_lines(ship: str) -> list[str]:
-    lines = [line.strip() for line in ship.split("\n")]
-    while lines and not lines[0]:
-        lines.pop(0)
-    while lines and not lines[-1]:
-        lines.pop()
-    return lines
+def _ship_words(ship: str) -> list[str]:
+    return ship.split()
 
 
 def _occurrences(lines: list[str], ship: list[str]) -> list[tuple[int, int]]:
-    """The first and last <tip> line of each place the ship's lines stand in a row."""
-    stripped = [line.strip() for line in lines]
-    n = len(ship)
-    return [(i + 1, i + n) for i in range(len(stripped) - n + 1) if stripped[i : i + n] == ship] if n else []
+    """The first and last <tip> line of each run of whole lines whose words, whitespace collapsed, are the ship's: a
+    grader ships a block as one line, and the author reflows it under the column limit."""
+    words = [line.split() for line in lines]
+    found: list[tuple[int, int]] = []
+    for i, first in enumerate(words):
+        if not ship or not first:
+            continue
+        run: list[str] = []
+        for j in range(i, len(words)):
+            run += words[j]
+            if len(run) >= len(ship):
+                if run == ship:
+                    found.append((i + 1, j + 1))
+                break
+    return found
 
 
 def _touches(hunk: Hunk, spans: list[tuple[int, int]], lines: list[str]) -> bool:
@@ -424,18 +430,18 @@ def check(rows: list[Row], base: str, tip: str) -> list[str]:
     for p in changed:
         hunks[p], beyond = _hunks(base, tip, p)
         fails += [f"{p}: {what}, which no ship text carries" for what in beyond]
-    spans = {r: _occurrences(tip_lines[r.path] or [], _ship_lines(r.ship)) for r in answered if r.survives in SHIPS}
+    spans = {r: _occurrences(tip_lines[r.path] or [], _ship_words(r.ship)) for r in answered if r.survives in SHIPS}
     at_site: dict[Row, list[tuple[int, int]]] = {}
 
     for r in answered:
         tag = f"{r.site} [{r.survives}]"
-        if r.survives == "cut" and _ship_lines(r.ship):
+        if r.survives == "cut" and _ship_words(r.ship):
             fails.append(f"{tag}: a cut ships nothing, and this row carries text")
-        if r.survives in SHIPS and not _ship_lines(r.ship):
+        if r.survives in SHIPS and not _ship_words(r.ship):
             fails.append(f"{tag}: ships no text")
             continue
         if r.survives in SHIPS and not spans[r]:
-            fails.append(f"{tag}: its text is not verbatim in {r.path} at {at_tip}, whole lines compared without indentation")
+            fails.append(f"{tag}: its text is not verbatim in {r.path} at {at_tip}, whole lines compared by their words")
         if base_lines[r.path] is None:
             fails.append(f"{tag}: {r.path} is not at {at_base}, the tip the rows were read at")
             continue

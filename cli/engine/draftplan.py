@@ -181,9 +181,10 @@ def maintenance_conflicts(feed: dict, start: datetime, end: datetime) -> list[st
     for entry in entries:
         if not isinstance(entry, dict):
             raise DraftPlanError(f"the maintenance feed carries an entry that is not an object: {entry!r:.200}")
-        components = entry.get("components") or []
-        names = [str(c.get("name") or "") for c in components if isinstance(c, dict)] + [str(entry.get("name") or "")]
-        if not any(_NAMES_AN_API.search(name) for name in names):
+        components, updates = entry.get("components") or [], entry.get("incident_updates")
+        texts = [str(c.get("name") or "") for c in components if isinstance(c, dict)] + [str(entry.get("name") or "")]
+        texts += [str(u.get("body") or "") for u in updates if isinstance(u, dict)] if isinstance(updates, list) else []
+        if not any(_NAMES_AN_API.search(text) for text in texts):
             continue
         try:
             begins, ends = _instant(entry.get("scheduled_for")), _instant(entry.get("scheduled_until"))

@@ -2,6 +2,12 @@ You are folding review findings into a spec+plan pair in {WORKTREE} (branch {BRA
 
 Read the union report `{UNION}` in full. Then read {SPEC} — the binding authority — then {PLAN}, then `{REPORT_DIR}/pin-facts.md`, then **every file a finding cites**, so you verify each finding against the real code before acting on it.{TOPIC_LINE} Do not read `.local/memo.md`. Your cwd resets between commands: prefix each with `cd {WORKTREE} &&`.
 
+## The controller's rulings
+
+{RULINGS}
+
+A ruling above binds the fix; one that contradicts the contract its executor works under (`references/implementer-contract.md` when the plan goes to the SDD loop) is refused like a wrong finding.
+
 ## The task
 
 **Fix every Critical and Important.** Fold every Minor whose fix is one local hunk that adds no mechanism and moves no cross-reference; skip one only with a one-clause reason — no sweep follows you, so your `## Skipped` is the record of what was left.
@@ -30,7 +36,7 @@ Fixes that introduce defects are what makes these loops long, and the rate does 
 - Did you introduce a sentence asserting a fact about a file other than the one it sits in? (It goes false on the next change to that file, and nothing checks it but a second reader — test docstrings included.)
 - Did your fix add a mechanism — a timer, a lock, a file, a unit, a fallback, a retry? It inherits that mechanism's failure modes, which no review has examined. List it.
 - Did you measure anything over the tree — a formatter shift, a line count, a coordinate? The measurement is taken from the repo root, in the tree as the task order leaves it, with every file an earlier task creates present.
-- Did you touch a fence? Run `zsh -n` over every `bash` fence you edited and `python -c 'import ast,sys; ast.parse(sys.stdin.read())'` over every Python one — a prose edit that lands on a command line dies at paste time while its placeholder tail still reads like an operand.
+- Did you touch a fence? Run `bash -n` over every `bash` fence you edited and `python -c 'import ast,sys; ast.parse(sys.stdin.read())'` over every Python one — a prose edit that lands on a command line dies at paste time while its placeholder tail still reads like an operand.
 - Did you write, move, or trim an enumeration? Re-count every stated number against the list under it — "the following three" above four bullets costs the next round.
 
 ## Constraints
