@@ -3,7 +3,7 @@ name: Full test suite
 on:
   # PRs into develop/main only. Every change reaches those branches via a PR, so the PR run gates
   # each change before merge — and there is no redundant post-merge `push` run of the same suite.
-  # Coverage is uploaded from the PR build (so the README develop-branch badge tracks PR builds).
+  # No coverage is measured here: the nightly `infra/scripts/data-gated-run.py` runs the whole suite and reports it.
   pull_request:
     branches: [develop, main]
 
@@ -15,7 +15,7 @@ jobs:
     # Renaming ALSO strands every pull request open at that moment: their runs already
     # reported under the old name, and a re-run replays the old workflow file, so each
     # needs a fresh run (push a commit, or close and reopen) before it can merge again.
-    # Named for what it gates -- the whole suite; the coverage upload is a by-product.
+    # The name outlives the scope: the run deselects `retired` and skips the data-gated family, which the nightly runs.
     name: Full test suite
     runs-on: ubuntu-latest
     # The suite reads; nothing here writes. `actions/checkout` persists this token in .git/config
@@ -57,16 +57,5 @@ jobs:
       # Four workers for the public runner's four vCPUs. --maxschedchunk 4 hands tests out four at a time, so the
       # slow harness tests spread over the workers; a worker's queue still refills toward a sixteenth of the tests
       # left, and after -x the other workers drain theirs. worksteal deals every test up front, so they drain
-      # whole shares.
-      - run: uv run pytest -n 4 --dist load --maxschedchunk 4 -x --cov=cli --cov-report=lcov:coverage.lcov
-      - name: Upload coverage to Coveralls
-        uses: coverallsapp/github-action@v2
-        with:
-          file: coverage.lcov
-          # The test suite above is the gate; this upload is informational. The action defaults to
-          # fail-on-error: true, which hands a third-party service a veto over every merge in the repo
-          # -- a coveralls.io outage (two 504s on 2026-07-13 alone) turned green test runs into red
-          # checks and blocked PRs that had nothing wrong with them. Degrade the upload to a warning.
-          fail-on-error: false
-        env:
-          COVERALLS_REPO_TOKEN: ${{ secrets.COVERALLS_REPO_TOKEN }}
+      # whole shares. `-m "not retired"` deselects the closed research trials' subject cases (tests/retired_subjects.py).
+      - run: uv run pytest -n 4 --dist load --maxschedchunk 4 -x -m "not retired"
