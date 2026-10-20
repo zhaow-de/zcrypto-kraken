@@ -58,7 +58,7 @@ for feed in ("scheduled-maintenances", "scheduled-maintenances/upcoming"):
 PY
 ```
 
-A `STOP` line stops the act, the test being the converge bullet's in `.claude/rules/fleet-deploys.md`; `venue` marks an entry carrying the word outside the window, and an entry's own name and its `incident_updates[].body` texts are read because an empty `components` array is not an absent impact. A failed fetch, a traceback, `END is not later than START` or `0 entries` on the first feed, the 50 most recent entries, is never evidence the window is clear: fetch again, and check again immediately before the run (§5). `0 entries` on the second feed, the upcoming ones, beside a first feed that printed its entries, is nothing upcoming.
+A `STOP` line stops the act, the test being the converge bullet's in `.claude/rules/fleet-deploys.md`; `venue` marks an entry carrying the word outside the window, and an empty `components` array printed as `[]` is not an absent impact. A failed fetch, a traceback, `END is not later than START` or `0 entries` on the first feed, the 50 most recent entries, is never evidence the window is clear: fetch again, and check again immediately before the run (§5). `0 entries` on the second feed, the upcoming ones, beside a first feed that printed its entries, is nothing upcoming.
 
 #### 1.2 The engine's 4-hour boundary
 
