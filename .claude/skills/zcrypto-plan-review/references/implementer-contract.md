@@ -19,6 +19,7 @@ No subagents, no agent tools; everything runs as plain blocking commands, nothin
 
 ## The probes
 
+- A guard is probed on a `full` tier (`infra/scripts/tier.py`) through its own `-k` case, on `light` one probe per new guard file; never through a `slow` case, the commit recording `probe skipped: slow case`.
 - A red reading is taken in a detached worktree at the base revision, never by hand-swapping a file in the working tree.
 - A `bash -c` probe command's trap names absolute paths.
 - A pattern a plan quotes is described in a commit message without the verdict words `KILLED`, `SURVIVED` or `control proven`.
