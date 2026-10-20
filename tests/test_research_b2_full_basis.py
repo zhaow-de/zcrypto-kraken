@@ -91,8 +91,7 @@ ARM_A = {
 
 
 def coverage() -> dict[str, dict[str, list[int]]]:
-    """`binperp_funding_z30d_coverage` as the basis measured it: no z-score before 2020, every close from 2021 bar SOL's
-    2022 stretch."""
+    """`binperp_funding_z30d_coverage` as the basis measured it."""
     out = {}
     for asset, (_, _, in_2020) in _Z.items():
         held = dict.fromkeys(map(str, range(2013, 2020)), 0) | {"2020": in_2020}
@@ -154,7 +153,6 @@ def test_the_b2_full_inputs_reproduce_the_measured_basis(_reads):
     )
     assert {s for scales in inputs.scales.values() for s in scales} == {0.5, 1.0}
 
-    # Where the overlay can act: no z-score before index 13,825, all ten from 15,419, from k21 all ten bar SOL's stretch.
     any_z = [any(z[a][k] is not None for a in z) for k in range(_RETURN_INDICES)]
     all_z = [all(z[a][k] is not None for a in z) for k in range(_RETURN_INDICES)]
     assert (any_z.index(True), any_z.count(False), any_z[1380:].count(False)) == (13_825, 13_825, 12_445)

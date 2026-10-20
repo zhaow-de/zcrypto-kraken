@@ -1949,7 +1949,7 @@ _B2_FULL_ANCHORS = frozenset(
     }
 )
 _B2_FULL_ENGAGEMENT = frozenset({"engaged_per_asset", "engaged_per_year", "binperp_funding_z30d_coverage"})
-# Spec 00137 D9's twenty keys of the pre-flight, typed from the spec, never read off the subject.
+# Spec 00137 D9's keys of the pre-flight, typed from the spec, never read off the subject.
 _B2_FULL_PREFLIGHT_KEYS = _B2_FULL_ANCHORS | _ARM_A_BAR_KEYS | _B2_FULL_ENGAGEMENT
 
 

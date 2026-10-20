@@ -1804,8 +1804,8 @@ _B1_EXIT_PREFLIGHT_KEYS = _B2_ARM_A_BAR_KEYS | {
 }
 
 
-# docs/specs/00137 D9: the trial on a frozen set's full history — docs/specs/00128's arms, bars, matrix and keys, its slices
-# `calendar_year_slices`' stub years alone.
+# docs/specs/00137 D5, D9: spec 00128's trial on a frozen set's full history, 2020 a slice — the bars call
+# `calendar_year_slices`, never trial 1's `_b2_slices`.
 _B2_FULL_N_TRIALS = 1  # docs/specs/00137 D10: fixed by the spec's hash; a different count is a new subject, never this one raised
 
 
@@ -1975,7 +1975,7 @@ def _build_b2_funding_derisk_full_preflight(
     )
 
 
-# docs/specs/00137 D9's twenty keys of the pre-flight.
+# docs/specs/00137 D9's keys of the pre-flight.
 _B2_FULL_PREFLIGHT_KEYS = _B2_ARM_A_BAR_KEYS | {
     "arm_a_ann_sharpe_noc",
     "arm_a_ann_sharpe_noc_decisive",
