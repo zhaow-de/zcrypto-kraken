@@ -104,7 +104,6 @@ git push --force-with-lease origin "$(git branch --show-current)"
 
 # test-suite.yml runs on pull_request into develop/main (dependabot targets develop), so a
 # Dependabot PR DOES report a "Full test suite" check — wait for it, and merge only when green.
-# The job uploads no coverage (the nightly run reports it), so a red "Full test suite" check is the suite itself.
 #
 # Poll the check-runs OF THE PUSHED SHA. **Never `gh pr view --json statusCheckRollup` here** —
 # it serves the PREVIOUS head's results after a force push, and §2a force-pushes every PR.
