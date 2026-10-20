@@ -7,7 +7,9 @@
 #
 # Argv, not text. The command is cut of its heredoc bodies, split into pipelines and into stages, and tokenised,
 # so a flag inside a quoted message, a heredoc or a comment is never an argv element. A substitution -- `$( .. )`,
-# backticks, `<( .. )`, `>( .. )` -- is a command of its own wherever bash performs one, and nowhere else.
+# backticks, `<( .. )`, `>( .. )` -- is a command of its own wherever bash performs one, and nowhere else. The scan
+# that cuts the bodies knows single and double quotes, backticks, `$( .. )`, `<( .. )`, `>( .. )`, arithmetic
+# (`$(( .. ))`, `(( .. ))`) and the here-string `<<<`, so a `<<` inside any of them opens no heredoc at the top.
 # A wrapper is transparent to the bypass arm and opaque to the cap arm: the first finds `git` at any position in a
 # simple command, so `timeout 5 git commit -n` and `/usr/bin/git commit --no-verify` are that one call in its
 # wrapper, path and option spellings; the second reads a stage's program as its first word alone, so
@@ -86,7 +88,7 @@ ANSI = "$'"
 ANSI_SIMPLE = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v", "\\": "\\", "'": "'", '"': '"', "?": "?"}
 ASSIGN = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", re.S)
 CONFIG_KEY_ENV = re.compile(r"^GIT_CONFIG_KEY_\d+$")
-HEREDOC = re.compile(r"<<(-?)[ \t]*(?:'([^'\n]*)'|\"([^\"\n]*)\"|\\?([^\s'\"]+))")
+HEREDOC = re.compile(r"<<(-?)[ \t]*(?:'([^'\n]*)'|\"([^\"\n]*)\"|\\?([^\s'\"()|&;<>]+))")  # a bare delimiter ends at a metacharacter
 GLOBAL_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env", "--attr-source"}
 GLOBAL_TERMINAL = {"-v", "--version", "-h", "--help", "--exec-path", "--html-path", "--man-path", "--info-path", "--list-cmds"}
 # Per subcommand: short options whose value is the rest of the bundle or else the next token; short options whose
@@ -291,14 +293,31 @@ def ansi_decode(raw):
 
 
 def cut_heredocs(text):
-    # A scan that knows quotes and $(...) -- the heredoc inside the documented `-m "$(cat <<'EOF' ... EOF)"` is a
+    # A `<<` is a heredoc operator outside single quotes, double quotes and `$'..'`, inside backticks as inside
+    # `$( .. )`, and never the tail of `<<<` -- the heredoc inside the documented `-m "$(cat <<'EOF' ... EOF)"` is a
     # heredoc, and its body carries whatever the message says. Returns the cut text, the command substitutions it
-    # closed -- `$( .. )` and backticks, each a command of its own; an unclosed one is bash's to refuse -- and the
-    # bodies of the top-level heredocs in the order of their `<<` operators; a heredoc inside a substitution is that
-    # substitution's, found when its text is judged as a command, and its `<<` is kept out of the cut text.
+    # closed -- `$( .. )`, `<( .. )`, `>( .. )`, backticks and arithmetic (`$(( .. ))`, `(( .. ))`, scanned as a
+    # `$( .. )` is), each a command of its own; an unclosed one is bash's to refuse -- and the bodies of the top-level
+    # heredocs in the order of their `<<` operators, which are the only `<<` the cut text keeps; a heredoc inside a
+    # substitution is that substitution's, found when its text is judged as a command, its body read at the
+    # substitution's own newline or dropped unread when the substitution closes first.
     out, bodies, docs, pending, stack, i, n, sub_close = [], [], [], [], [("top", 0)], 0, len(text), -1
     while i < n:
         ch, st = text[i], stack[-1][0]
+        tick = next((k for k in range(len(stack) - 1, 0, -1) if stack[k][0] == "bq"), None)
+        if tick is not None and ch == "\\" and text[i + 1 : i + 2] == "`":
+            out.append(text[i : i + 2])
+            i += 2
+            continue
+        if tick is not None and ch == "`":
+            # bash ends a backtick at the next unescaped backtick through any quote or substitution open inside it,
+            # and parses the interior afterwards: what was open inside closes with it, a pending `<<` of its own too
+            bodies.append(text[stack[tick][1] : i])
+            del stack[tick:]
+            pending = [p for p in pending if p[3] <= len(stack)]
+            out.append("`")
+            i += 1
+            continue
         if st == "sq":
             if ch == "'":
                 stack.pop()
@@ -328,7 +347,11 @@ def cut_heredocs(text):
         if st != "dq" and text.startswith('$"', i):
             i += 1
             continue
-        if st != "dq" and text.startswith("<<", i) and not text.startswith("<<<", i) and (m := HEREDOC.match(text, i)):
+        if st in ("top", "sub", "paren", "bq") and text.startswith("<<<", i):
+            out.append("<<<")
+            i += 3
+            continue
+        if st in ("top", "sub", "paren", "bq") and text.startswith("<<", i) and (m := HEREDOC.match(text, i)):
             # A backslash anywhere in the delimiter quotes it (`<<\EOF`): no expansion, like `<<'EOF'`.
             expands = m.group(4) is not None and "\\" not in m.group(0)
             pending.append((m.group(2) or m.group(3) or m.group(4), bool(m.group(1)), expands, len(stack)))
@@ -356,12 +379,6 @@ def cut_heredocs(text):
                     if expands:
                         bodies.extend(expansions(docs[-1]))
             continue
-        if st == "bq":
-            if ch == "`":
-                bodies.append(text[stack.pop()[1] : i])
-            out.append(ch)
-            i += 1
-            continue
         if ch == "`":
             stack.append(("bq", i + 1))
             out.append(ch)
@@ -371,6 +388,12 @@ def cut_heredocs(text):
             stack.append(("sub", i + 2))
             out.append("$(")
             i += 2
+            continue
+        if st == "top" and text.startswith("((", i):
+            # an arithmetic command, scanned as `$((` is: the `(` after this one is its paren
+            stack.append(("sub", i + 1))
+            out.append("(")
+            i += 1
             continue
         if st != "dq" and text[i : i + 2] in ("<(", ">("):
             # a process substitution: a command of its own, and its `)` ends a word (bash: `<(true)#x` is one word)
@@ -400,10 +423,13 @@ def cut_heredocs(text):
             stack.pop()
         elif ch == ")" and st == "sub":
             bodies.append(text[stack.pop()[1] : i])
+            pending = [p for p in pending if p[3] <= len(stack)]
             sub_close = i
         elif ch == "#" and (i == 0 or text[i - 1] in " \t\n;&|(" or (text[i - 1] == ")" and sub_close != i - 1)):
             # after a subshell's `)` bash starts a comment; after the `)` that closes `$( .. )` it continues the word
             end = text.find("\n", i)
+            if tick is not None and (close := text.find("`", i)) != -1 and (end == -1 or close < end):
+                end = close
             i = n if end == -1 else end
             continue
         out.append(ch)
