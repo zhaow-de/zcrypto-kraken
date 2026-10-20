@@ -14,7 +14,7 @@ KIND = re.compile(r"^(\.claude/|CLAUDE\.md$)")  # the staged-kind hook's set
 CONTRACT = re.compile(
     r"^(docs/reference/fleet\.md|docs/reference/fleet-pins\.md|\.claude/skills/zcrypto-grooming/references/memo-protocol\.md|infra/runbooks/[^/]+\.md)$"
 )  # read whole by the sessions and skills that act on them: read for universals like the corpus, never counted as ambient.
-# The runbook pages joined on 2026-09-12, once `count-list.sh runbook-universals-without-a-count` read 0 -- the owner's
+# The runbook pages joined on 2026-09-12, once `--uncounted` over the top-level pages read 0 -- the owner's
 # ruling of 2026-09-11 that the test binds them, taken as an instrument first and a gate once the number it reads was 0.
 SKILL_FILE = re.compile(r"^\.claude/skills/[^/]+/SKILL\.md$")
 WORKFLOW_FILE = re.compile(r"^\.claude/workflows/[^/]+\.js$")

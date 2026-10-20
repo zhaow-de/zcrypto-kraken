@@ -854,7 +854,7 @@ OVERRIDDEN = {"at": 1790265660, "floor": 1790265600 + 1800, "arm": "fixed", "ove
 DIGEST = "sha256:" + "ab" * 32
 PASSED = {"engaged": True, "digest": DIGEST, "rc": 0, "revision": "7ab4fc1a" * 5, "first_parent": True, "line": '{"ok": true}'}
 REPIN = {"ts": "2026-09-24T16:30:00Z", "limit": "zcrypto", "tags": "engine", "rc": 0, "extra_vars": {"engine_image_digest": DIGEST}}
-# The log's first row carrying a `preflight` opens both preflight counts' window; a case without it counts nothing.
+# The log's first row carrying a `preflight` opens the override count's window; a case without it counts nothing.
 GATED = {**REPIN, "ts": "2026-09-24T12:00:00Z", "preflight": PASSED}
 BYPASSED = {**REPIN, "extra_vars": {"engine_image_digest": DIGEST, "engine_preflight_override": "an approved hotfix"}}
 WINDOWED = {
@@ -862,7 +862,6 @@ WINDOWED = {
         {"ts": ts, "limit": "zcrypto", "tags": "engine", "rc": 0, "extra_vars": {}}
         for ts in ("2026-09-19T08:12:24Z", "2026-09-25T08:12:24Z")
     ],
-    "engine-repins-without-a-preflight": [GATED, *({**REPIN, "ts": ts} for ts in (BEFORE, AT))],
     "engine-preflight-overrides": [GATED, *({**BYPASSED, "ts": ts} for ts in (BEFORE, AT))],
     "canary-bypasses-on-the-primary": [
         {"ts": ts, "limit": "zcrypto", "tags": "capture", "rc": 0, "extra_vars": {"canary_override": "an approved rollback"}}
@@ -989,43 +988,6 @@ def test_a_deploy_log_count_with_no_closed_round_is_an_error_and_all_still_count
     assert (done.returncode, done.stdout) == (2, f"{entry}\tERROR\n"), done.stderr
     assert "Refine-Round-Closed" in done.stderr
     assert _windowed(tmp_path, entry, git_dir, COUNT_LIST_ALL="1").stdout == f"{entry}\t2\n"
-
-
-@pytest.mark.parametrize(
-    ("rows", "count"),
-    [
-        pytest.param([GATED, REPIN], 1, id="no-preflight"),
-        pytest.param([GATED, {**REPIN, "preflight": {**PASSED, "rc": 1}}], 1, id="preflight-failed"),
-        pytest.param([GATED, {**BYPASSED, "preflight": {**PASSED, "rc": 1}}], 0, id="preflight-failed-overridden"),
-        pytest.param([GATED, {**REPIN, "preflight": {**PASSED, "first_parent": False}}], 1, id="off-the-first-parent-line"),
-        pytest.param(
-            [GATED, {**BYPASSED, "preflight": {**PASSED, "first_parent": False}}], 0, id="off-the-first-parent-line-overridden"
-        ),
-        pytest.param([GATED, {**REPIN, "preflight": PASSED}], 0, id="preflight-passed"),
-        pytest.param(
-            [
-                GATED,
-                {
-                    **REPIN,
-                    "preflight": {**PASSED, "engaged": False, "rc": None, "revision": None, "first_parent": None, "line": None},
-                },
-            ],
-            1,
-            id="not-engaged",
-        ),
-        pytest.param([GATED, {**REPIN, "rc": 2}], 0, id="refused"),
-        pytest.param([GATED, {**REPIN, "tags": "capture"}], 0, id="capture"),
-        pytest.param([GATED, {**REPIN, "extra_vars": {}}], 0, id="no-digest"),
-        pytest.param([GATED, {**REPIN, "tags": "", "skip_tags": "engine"}], 0, id="skip-tags-engine"),
-        pytest.param([GATED, {**REPIN, "limit": "zcrypto-red", "tags": "capture,engine"}], 0, id="secondary"),
-        pytest.param([REPIN], 0, id="no-row-carries-a-preflight"),
-        pytest.param([{**REPIN, "ts": "2026-09-24T08:00:00Z"}, GATED], 0, id="before-the-first-preflight"),
-    ],
-)
-def test_engine_repins_without_a_preflight_counts_only_an_ungated_successful_re_pin(tmp_path, rows, count):
-    git_dir = _history(tmp_path, closes_a_round=True)
-    entry = "engine-repins-without-a-preflight"
-    assert _windowed(tmp_path, entry, git_dir, rows=rows, COUNT_LIST_ALL="1").stdout == f"{entry}\t{count}\n"
 
 
 @pytest.mark.parametrize(
