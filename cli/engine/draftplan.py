@@ -171,11 +171,7 @@ def _instant(raw: object) -> datetime:
 
 
 def maintenance_conflicts(feed: dict, start: datetime, end: datetime) -> list[str]:
-    """Each published WebSocket/REST maintenance overlapping [start, end], named with its own window.
-
-    An entry is a WebSocket/REST maintenance when the word stands in a component's name, in its own name or in an
-    `incident_updates[].body`; the pair of this reader is `api_impacting` in `infra/scripts/deploy-log-audit.py`.
-    """
+    """Each published WebSocket/REST maintenance overlapping [start, end], named with its own window."""
     entries = feed.get("scheduled_maintenances")
     if not isinstance(entries, list) or not entries:
         raise DraftPlanError(
