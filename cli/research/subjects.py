@@ -1804,6 +1804,192 @@ _B1_EXIT_PREFLIGHT_KEYS = _B2_ARM_A_BAR_KEYS | {
 }
 
 
+# docs/specs/00137 D5, D9: spec 00128's trial on a frozen set's full history, 2020 a slice — the bars call
+# `calendar_year_slices`, never trial 1's `_b2_slices`.
+_B2_FULL_N_TRIALS = 1  # docs/specs/00137 D10: fixed by the spec's hash; a different count is a new subject, never this one raised
+
+
+def _b2_full_arm_a_bar(inputs: _B2Inputs) -> tuple[dict, list[float], list[float]]:
+    cost = _B2_COST_PER_SIDE
+    returns = _b2_returns(inputs.h4_prices)
+    net_a = net_of_cost(inputs.arm_a, returns, cost_per_side=cost)
+    net_a_x15 = net_of_cost(inputs.arm_a, returns, cost_per_side=1.5 * cost)
+    bench = benchmark_4h_net_of_cost(inputs.h4_prices, cost_per_side=cost)
+    bar = a1_kill_bar(
+        net_a,
+        bench,
+        n_trials=_B2_FULL_N_TRIALS,
+        var_trials=0.0,
+        mean_block=30,
+        seed=42,
+        cost_stressed_returns=net_a_x15,
+        regime_slices=calendar_year_slices(net_a, inputs.h4_ts),
+        benchmark_slices=calendar_year_slices(bench, inputs.h4_ts),
+        decisive_start=_DECISIVE_START,
+        n_resamples=_N_RESAMPLES,
+    )
+    return bar, net_a, bench
+
+
+def _b2_full_engagement(inputs: _B2Inputs) -> dict:
+    arm_a, scales, close = inputs.arm_a, inputs.scales, inputs.close
+    return {
+        "engaged_per_asset": {a: sum(p > 0 and s < 1 for p, s in zip(arm_a[a], scales[a])) for a in _ASSETS},
+        "engaged_per_year": per_year_engaged_counts(arm_a, scales, close),
+        "binperp_funding_z30d_coverage": {
+            asset: {str(year): [c.non_null, c.total] for year, c in coverage_by_year(close, feature).items()}
+            for asset, feature in inputs.binperp_funding_z30d.items()
+        },
+    }
+
+
+def _b2_full_metrics(inputs: _B2Inputs) -> dict:
+    arm_a, scales, close = inputs.arm_a, inputs.scales, inputs.close
+    arm_b = scale_positions(arm_a, scales)
+    cost = _B2_COST_PER_SIDE
+    returns = _b2_returns(inputs.h4_prices)
+    net_a = net_of_cost(arm_a, returns, cost_per_side=cost)
+    net_b = net_of_cost(arm_b, returns, cost_per_side=cost)
+    net_b_x15 = net_of_cost(arm_b, returns, cost_per_side=1.5 * cost)
+    bench = benchmark_4h_net_of_cost(inputs.h4_prices, cost_per_side=cost)
+    slices_b, slices_bench = calendar_year_slices(net_b, inputs.h4_ts), calendar_year_slices(bench, inputs.h4_ts)
+    k21 = next((k for k, t in enumerate(close) if t >= _FROM_2021), len(close))
+    drawdown_b = max_drawdown(net_b[k21:])
+    drawdown_a = max_drawdown(net_a[k21:])
+    if drawdown_a == 0:
+        raise ValidationError("arm A never draws down from 2021-01-01T00:00Z, so max_drawdown_reduction_pct divides by zero")
+    grid = {
+        (block, seed): a1_kill_bar(
+            net_b,
+            bench,
+            n_trials=_B2_FULL_N_TRIALS,
+            var_trials=0.0,
+            mean_block=block,
+            seed=seed,
+            cost_stressed_returns=net_b_x15,
+            regime_slices=slices_b,
+            benchmark_slices=slices_bench,
+            decisive_start=_DECISIVE_START,
+            n_resamples=_N_RESAMPLES,
+        )
+        for block in (30, 102)
+        for seed in (42, 7, 1234)
+    }
+    headline = grid[(30, 42)]
+    head_to_head = {}
+    for label, start in (("full", 0), ("2021", k21)):
+        verdict = net_of_cost_verdict(net_b[start:], net_a[start:], mean_block=30, seed=42, n_resamples=_N_RESAMPLES)
+        head_to_head[f"head_to_head_mean_outperf_{label}"] = verdict["mean_outperformance"]
+        head_to_head[f"head_to_head_spa_p_{label}"] = verdict["spa_p_value"]
+    positions_differ = per_year_positions_differ(arm_a, arm_b, close)
+    engagement = _b2_full_engagement(inputs)
+    return {
+        "ann_sharpe_noc": sharpe(net_b, periods_per_year=PPY_4H),
+        "ann_sharpe_noc_decisive": sharpe(net_b[_DECISIVE_START:], periods_per_year=PPY_4H),
+        "per_period_sharpe_4h": sharpe(net_b),
+        "arm_a_ann_sharpe_noc": sharpe(net_a, periods_per_year=PPY_4H),
+        "arm_a_ann_sharpe_noc_decisive": sharpe(net_a[_DECISIVE_START:], periods_per_year=PPY_4H),
+        "benchmark_ann_sharpe_noc": sharpe(bench, periods_per_year=PPY_4H),
+        "benchmark_ann_sharpe_noc_decisive": sharpe(bench[_DECISIVE_START:], periods_per_year=PPY_4H),
+        "dsr_corrected": headline["dsr"],
+        "dsr_pass": int(headline["dsr_pass"]),
+        "spa_pass": int(headline["spa_pass"]),
+        "spa_p_full": headline["spa_p_value_full"],
+        "cost_stress_pass": int(headline["cost_stress_pass"]),
+        "worst_slice_relative_pass": int(headline["worst_slice_pass"]),
+        "passes": int(headline["passes"]),
+        "decisive_start": _DECISIVE_START,
+        "n_resamples": _N_RESAMPLES,
+        "arm_a_passes": int(_b2_full_arm_a_bar(inputs)[0]["passes"]),
+        **{f"spa_p_decisive_b{block}_s{seed}": result["spa_p_value"] for (block, seed), result in grid.items()},
+        **head_to_head,
+        "max_drawdown": drawdown_b,
+        "arm_a_max_drawdown": drawdown_a,
+        "max_drawdown_reduction_pct": 100 * (drawdown_a - drawdown_b) / drawdown_a,
+        "turnover_a": book_turnover(arm_a),
+        "turnover_b": book_turnover(arm_b),
+        "stamps_positions_differ": sum(positions_differ.values()),
+        "engaged_per_year": engagement["engaged_per_year"],
+        "positions_differ_per_year": positions_differ,
+        "turnover_a_per_year": per_year_turnover(arm_a, close),
+        "turnover_b_per_year": per_year_turnover(arm_b, close),
+        "max_drawdown_per_year": per_year_max_drawdown(net_b, close),
+        "arm_a_max_drawdown_per_year": per_year_max_drawdown(net_a, close),
+        "binperp_funding_z30d_coverage": engagement["binperp_funding_z30d_coverage"],
+    }
+
+
+def _b2_full_preflight_metrics(inputs: _B2Inputs) -> dict:
+    """Arm A's anchors and bar and the engagement (docs/specs/00137 D7): no position or return of arm B."""
+    bar, net_a, bench = _b2_full_arm_a_bar(inputs)
+    turnover_a = book_turnover(inputs.arm_a)
+    return {
+        "arm_a_ann_sharpe_noc": sharpe(net_a, periods_per_year=PPY_4H),
+        "arm_a_ann_sharpe_noc_decisive": sharpe(net_a[_DECISIVE_START:], periods_per_year=PPY_4H),
+        "arm_a_max_drawdown_full": max_drawdown(net_a),
+        "turnover_a": turnover_a,
+        "arm_a_spot_drag_pct_yr": turnover_a / len(inputs.close) * _B2_COST_PER_SIDE * PPY_4H,
+        "benchmark_ann_sharpe_noc": sharpe(bench, periods_per_year=PPY_4H),
+        "benchmark_ann_sharpe_noc_decisive": sharpe(bench[_DECISIVE_START:], periods_per_year=PPY_4H),
+        **{key: int(bar[key]) if key in _B2_ARM_A_BAR_FLAGS else bar[key] for key in sorted(_B2_ARM_A_BAR_KEYS)},
+        **_b2_full_engagement(inputs),
+    }
+
+
+def _b2_full_build(
+    subject: str,
+    compute: Callable[[_B2Inputs], dict],
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None,
+    accept_holes: bool,
+) -> dict:
+    if as_of is not None:
+        raise SubjectError(
+            f"{subject} evaluates a frozen set's 4h series, never the rolling dataset as of a day: drop --as-of and pass a "
+            "frozen --dataset"
+        )
+    return _b2_build(subject, compute, reader, dataset, window, None, accept_holes)
+
+
+def _build_b2_funding_derisk_full(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    return _b2_full_build("b2-funding-derisk-full", _b2_full_metrics, reader, dataset, window, as_of, accept_holes)
+
+
+def _build_b2_funding_derisk_full_preflight(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    return _b2_full_build(
+        "b2-funding-derisk-full-preflight", _b2_full_preflight_metrics, reader, dataset, window, as_of, accept_holes
+    )
+
+
+# docs/specs/00137 D9's keys of the pre-flight.
+_B2_FULL_PREFLIGHT_KEYS = _B2_ARM_A_BAR_KEYS | {
+    "arm_a_ann_sharpe_noc",
+    "arm_a_ann_sharpe_noc_decisive",
+    "arm_a_max_drawdown_full",
+    "turnover_a",
+    "arm_a_spot_drag_pct_yr",
+    "benchmark_ann_sharpe_noc",
+    "benchmark_ann_sharpe_noc_decisive",
+    "engaged_per_asset",
+    "engaged_per_year",
+    "binperp_funding_z30d_coverage",
+}
+
+
 SUBJECTS: dict[str, Subject] = {
     "record44-crossfreq": Subject(
         "record44-crossfreq",
@@ -1946,6 +2132,31 @@ SUBJECTS: dict[str, Subject] = {
         _build_b1_hourly_exit_preflight,
         spec="docs/specs/00135-b1-hourly-channel-exits-design.md",
         metric_keys=_B1_EXIT_PREFLIGHT_KEYS,
+        seeds=(42,),
+    ),
+    "b2-funding-derisk-full": Subject(
+        "b2-funding-derisk-full",
+        (240,),
+        _ASSETS,
+        _build_b2_funding_derisk_full,
+        spec="docs/specs/00137-b2-trial-2-ohlc-full-design.md",
+        metric_keys=_B2_METRIC_KEYS,
+        seeds=(42, 7, 1234),
+        verdict=_b2_verdict,
+        no_verdict=(
+            "instrument finding: arm A fails the bar this window sets, or the overlay engages at no stamp; no verdict, "
+            "the trial unspent"
+        ),
+        family="B2",
+        n_trials=_B2_FULL_N_TRIALS,
+    ),
+    "b2-funding-derisk-full-preflight": Subject(
+        "b2-funding-derisk-full-preflight",
+        (240,),
+        _ASSETS,
+        _build_b2_funding_derisk_full_preflight,
+        spec="docs/specs/00137-b2-trial-2-ohlc-full-design.md",
+        metric_keys=_B2_FULL_PREFLIGHT_KEYS,
         seeds=(42,),
     ),
 }

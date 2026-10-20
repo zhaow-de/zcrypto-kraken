@@ -401,3 +401,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #735 | 2026-10-19 | feat(research): iter-179 — B1 trial 5: hourly channel exits on A2 | iter-179 | 00135 | T0022 |
 | #736 | 2026-10-19 | docs(research): iter-180 — B1 closed as attributed out; T0022 resolved | iter-180 | — | T0022 |
 | #739 | 2026-10-19 | feat(alpha): 00136 — B2's ratio columns and liquidations leg, 4h grid | — | 00136 | T0023 |
+| #742 | 2026-10-20 | feat(research): iter-181 — B2 trial 2: funding de-risk on ohlc-full | iter-181 | 00137 | T0023 |
