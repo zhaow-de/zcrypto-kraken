@@ -51,7 +51,7 @@ Walk every candidate in the round's table and every standing memory item alike. 
 | → an existing skill | Lands at the step where it applies |
 | → a new skill | Only with the description-is-ambient cost measured and acknowledged |
 | → a hook proposal | Shown to the owner; on approval, lands with the settings change |
-| stays in memory | Personal or session-scoped — not repo-worthy; the default when undecided. An inbox record that stays is written as a memory file in Step 1's shape |
+| stays in memory | Personal or session-scoped — not repo-worthy; the default when undecided. An existing item is updated before a new file is written, two items that overlap are merged, and a round leaves the memory dir no larger than it found it — `ls <memory dir>/*.md \| wc -l` at Step 1 and at Step 5 (the owner's word of 2026-10-20: the auto memory must not keep growing round over round). An inbox record that stays is written as a memory file in Step 1's shape |
 | dropped | With the owner's word; a standing item's file is deleted at Step 5, an inbox record rests in the archive |
 
 A graduated standing item's file is **staged** — moved to `graduated/<round-date>/` under the memory dir — never deleted here: memory is unversioned, and an unverified landing must not be the only copy's obituary; a graduated inbox record is already archived by Step 1's rotation. Record every graduation in a table: *item → disposition → landing path*. Deletion is Step 5's last action.
