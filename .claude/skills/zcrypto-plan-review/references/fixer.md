@@ -6,7 +6,7 @@ Read the union report `{UNION}` in full. Then read {SPEC} — the binding author
 
 {RULINGS}
 
-A ruling above binds the fix, and before it is written it is checked against the contract its executor works under — `references/implementer-contract.md` when the plan goes to the SDD loop — because a ruling that contradicts that contract (a background run, a tool the contract forbids) costs a round.
+A ruling above binds the fix; one that contradicts the contract its executor works under (`references/implementer-contract.md` when the plan goes to the SDD loop) is refused like a wrong finding, with what was checked.
 
 ## The task
 
