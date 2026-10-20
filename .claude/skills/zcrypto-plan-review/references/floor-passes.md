@@ -17,7 +17,6 @@ In mode `form`, for every task, in order, in {EXEC_WT}:
 1. Every `-k` filter collects its stated count: `uv run pytest --collect-only -q -m "not slow" <path> -k "<expr>"` — collection imports the file, it runs no test.
 1. Every mutation `sed` matches exactly one occurrence of the code the plan's fences write — occurrence-count the pattern over the file as the task leaves it; zero or two is the finding.
 1. Every template renders through every publishing path the tree has.
-1. Do not run a `Run:` line, a test file, a probe or `pre-commit`: the SDD loop's implementer and task reviewer run them, task by task.
 1. Commit locally in {EXEC_WT} so a later task's failure is attributable to the task that caused it.
 
 In mode `full`, for every task, in order, in {EXEC_WT} — the stated commands, the test file and the probes; never the suite, which is CI's, and never a pytest over the whole `tests/` tree:
