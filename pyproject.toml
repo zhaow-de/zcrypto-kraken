@@ -38,6 +38,7 @@ nautilus-trader = { index = "nautechsystems" }
 markers = [
     "data: needs a dataset under data/ or a mount CI does not have",
     "slow: a case tests/slow-cases.txt lists; tests/conftest.py marks it",
+    "retired: a closed research trial's subject test; CI deselects it, the nightly runs it",
 ]
 # Without this an unregistered mark is a warning, so `pytest.mark.dta` drops its file out of
 # `-m data` silently -- the one selection nothing else can catch, since a typo is still a valid mark.
@@ -56,6 +57,7 @@ exclude_also = [
 dev = [
     "ansible==14.5.0",
     "ansible-lint==26.10.1",
+    "coveralls==4.1.0",
     "pre-commit==4.7.0",
     "pytest==9.1.1",
     "pytest-cov==7.1.0",

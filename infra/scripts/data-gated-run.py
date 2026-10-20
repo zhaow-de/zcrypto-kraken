@@ -1,23 +1,24 @@
 #!/usr/bin/env python3
-"""Run the whole test suite from a checkout where the datasets are present and write the result as JSON.
+"""Run the whole test suite from a checkout where the datasets are present, write the result as JSON, upload its coverage.
 
-Every `skipif(not <data>.exists())` test skips in CI, so the data-gated family runs nowhere unless a
-workstation runs it: this is the runner `infra/systemd/zcrypto-data-gated-tests.timer` fires nightly.
-It runs `pytest -q -p no:cacheprovider -rfEs` with no path -- the suite CI runs -- through the TARGET
-checkout's own environment (`uv run --directory <repo>`), never the interpreter that launched it: a
-hand run from a worktree would otherwise import the worktree's `cli` under the main checkout's tests.
-It writes `.local/data-gated-runs/<UTC stamp>.json` plus `latest.json`. A run in which the whole
-family skipped for want of data is exactly the night this exists to catch, so such a skip is a
-failure, and a checkout with no dataset under `data/` is refused before pytest starts. A run whose
-summary cannot be parsed -- a usage error, a timeout, an interrupted session -- still writes a
-result, because `zcrypto-daily-ops` has to tell an absent file from a failed run. `-rfE` rather than
-the bare `-rf`: an error at setup is a test that did not run, and its id is as much a finding as a
-failure's.
+CI deselects the `retired` cases and skips every `skipif(not <data>.exists())` test, so this run, which
+`infra/systemd/zcrypto-data-gated-tests.timer` fires nightly, is the one with the whole suite in scope and so the one
+coverage report. It runs pytest with no path through the TARGET checkout's own environment (`uv run --directory
+<repo>`), never the interpreter that launched it: a hand run from a worktree would otherwise import the worktree's `cli`
+under the main checkout's tests. It writes `.local/data-gated-runs/<UTC stamp>.json` plus `latest.json`. A run in which
+the whole family skipped for want of data is exactly the night this exists to catch, so such a skip is a failure, and a
+checkout with no dataset under `data/` is refused before pytest starts. A run whose summary cannot be parsed -- a usage
+error, a timeout, an interrupted session -- still writes a result, because `zcrypto-daily-ops` has to tell an absent
+file from a failed run. `-rfE` rather than the bare `-rf`: an error at setup is a test that did not run, and its id is
+as much a finding as a failure's.
 
-Python rather than shell because the parser is the substance and `tests/test_data_gated_run.py`
-imports it; a JSON writer in bash is a hand-rolled serialiser.
+The coverage upload is cut off after UPLOAD_TIMEOUT_S: the unit is a oneshot, and a run that never ends writes no result
+and holds off the next night's.
 
-Usage: data-gated-run.py [--repo <checkout>] [--timeout <seconds>] [-- <extra pytest args>]
+Python rather than shell because the parser is the substance and `tests/test_data_gated_run.py` imports it; a JSON
+writer in bash is a hand-rolled serialiser.
+
+Usage: data-gated-run.py [--repo <checkout>] [--timeout <seconds>] [--no-coverage] [-- <extra pytest args>]
 The unit passes nothing: the extra args are for a hand run (`-- -k soak`), never the nightly one.
 """
 
@@ -25,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import importlib.util
 import json
 import os
 import re
@@ -32,12 +34,19 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
 PYTEST_ARGS = ("-q", "-p", "no:cacheprovider", "-rfEs")
+# The data file only, `.coverage` at the checkout's root: the upload reads it, and a report would only lengthen the journal.
+COVERAGE_ARGS = ("--cov=cli", "--cov-report=")
+COVERAGE_TOKEN_VAR = "coveralls_repo_token"
+COVERALLS_SERVICE = "zcrypto-nightly"
+UPLOAD_TIMEOUT_S = 120.0
+_AUTH = Path(__file__).resolve().parent / "grafana_auth.py"
 RESULT_DIR = Path(".local") / "data-gated-runs"
-SCHEMA = 2
+SCHEMA = 3
 # `1 failed, 2 passed, 1 error in 0.01s`, `no tests ran in 0.00s`, `3 passed in 65.12s (0:01:05)` --
 # with or without the `=` rule a non-quiet run draws around the line.
 _SUMMARY = re.compile(r"^=*\s*(?P<body>\d+ [a-z]+(?:, \d+ [a-z]+)*|no tests ran) in \d+(?:\.\d+)?s(?: \([\d:]+\))?\s*=*$")
@@ -198,6 +207,71 @@ def build_result(
     }
 
 
+def read_coverage_token() -> str:
+    """`grafana_auth` is loaded here rather than at import, so a load that fails is the upload's failure, never the run's."""
+    spec = importlib.util.spec_from_file_location("grafana_auth", _AUTH)
+    auth = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(auth)
+    return auth.vault_var(COVERAGE_TOKEN_VAR)
+
+
+def send_coverage(repo: Path, token: str) -> dict:
+    """coveralls reads the data file, the files' names and the git head from the working directory, so it runs in `repo`."""
+    from coveralls import Coveralls
+
+    with contextlib.chdir(repo):
+        return Coveralls(repo_token=token, service_name=COVERALLS_SERVICE).wear()
+
+
+def _bounded(call, timeout: float):
+    """`call()` in a daemon thread, so an answer that never comes ends at `timeout` and the process can still exit."""
+    box: dict = {}
+
+    def run() -> None:
+        try:
+            box["value"] = call()
+        except BaseException as exc:  # handed to the caller, which decides what it means
+            box["error"] = exc
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    thread.join(timeout)
+    if thread.is_alive():
+        raise TimeoutError(f"no answer within {timeout:g} s")
+    error = box.get("error")
+    if isinstance(error, Exception):
+        raise error
+    if error is not None:
+        raise RuntimeError(f"{type(error).__name__}: {error}")
+    return box["value"]
+
+
+def coverage_upload(repo: Path, skip: str | None) -> dict:
+    """`{"outcome": "uploaded", "url"}`, `{"outcome": "skipped", "reason"}` or `{"outcome": "failed", "error_class",
+    "message"}` -- never a raise, so no upload decides a verdict."""
+    if skip is not None:
+        return {"outcome": "skipped", "reason": skip}
+    token = ""
+
+    def upload() -> dict:
+        nonlocal token
+        try:
+            token = read_coverage_token()
+        except KeyError as exc:
+            if exc.args != (COVERAGE_TOKEN_VAR,):
+                raise
+            return {"outcome": "skipped", "reason": f"the vault holds no {COVERAGE_TOKEN_VAR}"}
+        if not token:
+            return {"outcome": "skipped", "reason": f"the vault's {COVERAGE_TOKEN_VAR} is empty"}
+        return {"outcome": "uploaded", "url": send_coverage(repo, token)["url"]}
+
+    try:
+        return _bounded(upload, UPLOAD_TIMEOUT_S)
+    except Exception as exc:
+        message = str(exc).replace(token, "<token>") if token else str(exc)
+        return {"outcome": "failed", "error_class": type(exc).__name__, "message": message[:500]}
+
+
 def write_result(result_dir: Path, result: dict) -> tuple[Path, Path]:
     """The stamped file, then `latest.json`, each through a rename so a reader never sees a half-written one."""
     result_dir.mkdir(parents=True, exist_ok=True)
@@ -225,7 +299,8 @@ def main(argv: list[str] | None = None) -> int:
         "--repo", type=Path, default=Path(__file__).resolve().parents[2], help="the checkout to run in (default: this file's)"
     )
     parser.add_argument("--timeout", type=float, default=3 * 3600, help="seconds before pytest is killed and the result says so")
-    parser.add_argument("extra", nargs="*", help="extra pytest args, after `--`")
+    parser.add_argument("--no-coverage", action="store_true", help="measure and upload no coverage")
+    parser.add_argument("extra", nargs="*", help="extra pytest args, after `--`; a run given them measures no coverage")
     args = parser.parse_args(argv)
     repo = args.repo.resolve()
     if not repo.is_dir():
@@ -235,6 +310,12 @@ def main(argv: list[str] | None = None) -> int:
     # a worktree with nothing linked in included, which is exactly the tree this refusal is for.
     data_present = data_dir.is_dir() and any(p.name != ".gitignore" for p in data_dir.iterdir())
     uv = os.environ.get("UV") or shutil.which("uv")
+    if args.no_coverage:
+        coverage_off = "--no-coverage: the run measured none"
+    elif args.extra:
+        coverage_off = "extra pytest args: the run measured none, since a part of the suite is not the whole"
+    else:
+        coverage_off = None
     started = datetime.now(timezone.utc)
     command, exit_code, output, run_error = None, None, "", None
     if not data_present:
@@ -242,7 +323,8 @@ def main(argv: list[str] | None = None) -> int:
     elif uv is None:
         run_error = "uv not found: set UV or put it on PATH; nothing ran"
     else:
-        command, exit_code, output, run_error = run_suite(repo, uv, args.extra, args.timeout)
+        pytest_args = args.extra if coverage_off else list(COVERAGE_ARGS)
+        command, exit_code, output, run_error = run_suite(repo, uv, pytest_args, args.timeout)
     finished = datetime.now(timezone.utc)
     result = build_result(
         started=started,
@@ -254,12 +336,20 @@ def main(argv: list[str] | None = None) -> int:
         output=output,
         run_error=run_error,
     )
-    stamped, latest = write_result(repo / RESULT_DIR, result)
+    # pytest's own output first, so the journal holds it while the upload runs.
     sys.stdout.write(output)
     if output and not output.endswith("\n"):
         sys.stdout.write("\n")
+    sys.stdout.flush()
+    unparsed = None if result["counts"] is not None else f"no parsed pytest summary ({result['error']})"
+    result["coverage_upload"] = coverage_upload(repo, coverage_off or unparsed)
+    stamped, latest = write_result(repo / RESULT_DIR, result)
     verdict = "ok" if result["ok"] else "FAIL"
-    print(f"data-gated-run: {verdict} exit={exit_code} {result['error'] or result['summary_line']} -> {stamped} and {latest}")
+    outcome = result["coverage_upload"]["outcome"]
+    print(
+        f"data-gated-run: {verdict} exit={exit_code} {result['error'] or result['summary_line']} -> {stamped} and {latest};"
+        f" coverage {outcome}"
+    )
     sys.stdout.flush()
     if result["ok"]:
         return 0

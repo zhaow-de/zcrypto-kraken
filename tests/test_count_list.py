@@ -657,8 +657,7 @@ def test_the_script_prints_one_shaped_line_per_entry(tmp_path):
     """Run against recorded inputs, so the whole list reaches no venue and no API from a test.
 
     `Full test suite` is a required check, so a count that calls github.com here would hand the API
-    a veto over every merge — the shape this job's own comment refuses for coveralls. The PR
-    snapshot is the arm `count-list.sh` already carries for that; one row older than the window
+    a veto over every merge. The PR snapshot is the arm `count-list.sh` already carries for that; one row older than the window
     keeps the saturation check satisfied.
     """
     prs = tmp_path / "prs.json"

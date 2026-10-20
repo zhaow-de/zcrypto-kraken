@@ -1,6 +1,7 @@
 """The nightly runner's parser and result shape: pytest's own summary lines, then the runner driven
 end to end over a synthetic checkout under `tmp_path` -- never this repo's suite or its `.local/` --
-through a `uv` shim that records what it was handed and runs the suite with this test's interpreter."""
+through a `uv` shim that records what it was handed and runs the suite with this test's interpreter.
+The coverage upload is faked in this process; a run of the script goes through `_run`, which passes `--no-coverage`."""
 
 from __future__ import annotations
 
@@ -10,6 +11,9 @@ import os
 import subprocess
 import sys
 import textwrap
+import threading
+import time
+import types
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -20,6 +24,19 @@ _spec = importlib.util.spec_from_file_location("data_gated_run", _SCRIPT)
 runner = importlib.util.module_from_spec(_spec)
 sys.modules["data_gated_run"] = runner
 _spec.loader.exec_module(runner)
+_REAL_SEND = runner.send_coverage
+
+
+@pytest.fixture(autouse=True)
+def _no_vault_and_no_upload(tmp_path, monkeypatch):
+    """A raise here would be swallowed into a `failed` outcome by `coverage_upload`, so the double records each reach and
+    the case fails at teardown."""
+    monkeypatch.setattr(runner, "_AUTH", tmp_path / "no-grafana-auth.py")
+    reached = []
+    monkeypatch.setattr(runner, "send_coverage", lambda repo, token: reached.append(repo))
+    yield
+    assert not reached, f"the case reached the coverage upload without faking it, for {reached}"
+
 
 # The tail of `pytest -q -p no:cacheprovider -rfEs` over one pass, one fail, three skips, one xfail and
 # one fixture error, as pytest printed it; the message on a -q short-summary line is cut to the
@@ -230,7 +247,7 @@ def _fake_uv(tmp_path: Path) -> Path:
 def _run(tmp_path: Path, repo: Path, *args: str, env: dict | None = None) -> subprocess.CompletedProcess:
     shim = _fake_uv(tmp_path)
     return subprocess.run(
-        [sys.executable, str(_SCRIPT), "--repo", str(repo), *args],
+        [sys.executable, str(_SCRIPT), "--repo", str(repo), "--no-coverage", *args],
         capture_output=True,
         text=True,
         env={**os.environ, "UV": str(shim), **(env or {})},
@@ -301,7 +318,10 @@ def test_the_runner_writes_the_stamped_file_and_latest_with_the_full_shape(tmp_p
         "data_gated_skipped",
         "error",
         "ok",
+        "coverage_upload",
     }
+    assert latest["schema"] == 3
+    assert latest["coverage_upload"] == {"outcome": "skipped", "reason": "--no-coverage: the run measured none"}
     started, finished = (
         datetime.strptime(latest[k], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc) for k in ("started", "finished")
     )
@@ -442,3 +462,195 @@ def test_an_empty_summary_after_a_kill_never_reads_as_ok():
         run_error=None,
     )
     assert result["ok"] is False and result["error"] == runner.NO_SUMMARY
+
+
+# --- the coverage upload, the vault module and the upload faked ---------------------------------------------------------
+
+TOKEN = "s3cret-repo-token"
+JOB = {"message": "Job #7.1", "url": "https://coveralls.io/jobs/7"}
+
+
+def _vault(tmp_path: Path, monkeypatch, body: str) -> None:
+    """A `grafana_auth` whose `vault_var` is `body`'s, loaded as the runner loads the real one."""
+    module = tmp_path / "fake_grafana_auth.py"
+    module.write_text(textwrap.dedent(body))
+    monkeypatch.setattr(runner, "_AUTH", module)
+
+
+_HOLDS_THE_TOKEN = f"def vault_var(name):\n    return {{'coveralls_repo_token': {TOKEN!r}}}[name]\n"
+
+
+def test_an_upload_records_the_url_coveralls_returns_for_the_vaults_token(tmp_path, monkeypatch):
+    _vault(tmp_path, monkeypatch, _HOLDS_THE_TOKEN)
+    sent = []
+    monkeypatch.setattr(runner, "send_coverage", lambda repo, token: sent.append((repo, token)) or JOB)
+
+    assert runner.coverage_upload(tmp_path, None) == {"outcome": "uploaded", "url": JOB["url"]}
+    assert sent == [(tmp_path, TOKEN)]
+
+
+@pytest.mark.parametrize(
+    ("vault", "skip", "reason"),
+    [
+        pytest.param(_HOLDS_THE_TOKEN, "a reason the run gives", "a reason the run gives", id="the-run-gives-a-reason"),
+        pytest.param("def vault_var(name):\n    return {}[name]\n", None, "the vault holds no coveralls_repo_token", id="absent"),
+        pytest.param("def vault_var(name):\n    return ''\n", None, "the vault's coveralls_repo_token is empty", id="empty"),
+    ],
+)
+def test_a_skipped_upload_says_why_and_sends_nothing(tmp_path, monkeypatch, vault, skip, reason):
+    _vault(tmp_path, monkeypatch, vault)
+
+    assert runner.coverage_upload(tmp_path, skip) == {"outcome": "skipped", "reason": reason}
+
+
+def test_a_failed_upload_records_its_class_and_a_message_without_the_token(tmp_path, monkeypatch):
+    _vault(tmp_path, monkeypatch, _HOLDS_THE_TOKEN)
+
+    def refused(repo, token):
+        raise ConnectionError(f"coveralls.io answered 504 to repo_token={token}")
+
+    monkeypatch.setattr(runner, "send_coverage", refused)
+
+    outcome = runner.coverage_upload(tmp_path, None)
+
+    assert outcome == {
+        "outcome": "failed",
+        "error_class": "ConnectionError",
+        "message": "coveralls.io answered 504 to repo_token=<token>",
+    }
+    assert TOKEN not in json.dumps(outcome)
+
+
+@pytest.mark.parametrize(
+    ("vault", "send", "error_class"),
+    [
+        pytest.param(
+            "def vault_var(name):\n    return {'other': 1}['other_key']\n", None, "KeyError", id="a-keyerror-naming-another-key"
+        ),
+        pytest.param("raise RuntimeError('the password helper exited 1')\n", None, "RuntimeError", id="the-vault-will-not-load"),
+        pytest.param(_HOLDS_THE_TOKEN, lambda repo, token: {"message": "Job #7.1"}, "KeyError", id="an-answer-without-a-url"),
+    ],
+)
+def test_a_vault_that_will_not_give_the_token_or_an_answer_without_a_url_fails(tmp_path, monkeypatch, vault, send, error_class):
+    _vault(tmp_path, monkeypatch, vault)
+    if send is not None:
+        monkeypatch.setattr(runner, "send_coverage", send)
+
+    outcome = runner.coverage_upload(tmp_path, None)
+
+    assert outcome["outcome"] == "failed" and outcome["error_class"] == error_class, outcome
+
+
+def test_an_upload_with_no_answer_is_cut_off_and_fails(tmp_path, monkeypatch):
+    _vault(tmp_path, monkeypatch, _HOLDS_THE_TOKEN)
+    released = threading.Event()
+    monkeypatch.setattr(runner, "send_coverage", lambda repo, token: released.wait(30) and JOB)
+    monkeypatch.setattr(runner, "UPLOAD_TIMEOUT_S", 0.2)
+    began = time.monotonic()
+    try:
+        outcome = runner.coverage_upload(tmp_path, None)
+    finally:
+        released.set()
+
+    assert outcome == {"outcome": "failed", "error_class": "TimeoutError", "message": "no answer within 0.2 s"}
+    assert time.monotonic() - began < 10
+
+
+def test_the_upload_runs_coveralls_in_the_checkout_with_the_token_and_the_service(tmp_path, monkeypatch):
+    seen = {}
+
+    class Coveralls:
+        def __init__(self, **config):
+            seen["config"] = config
+
+        def wear(self):
+            seen["cwd"] = Path.cwd()
+            return JOB
+
+    fake = types.ModuleType("coveralls")
+    fake.Coveralls = Coveralls
+    monkeypatch.setitem(sys.modules, "coveralls", fake)
+    before = Path.cwd()
+
+    assert _REAL_SEND(tmp_path, TOKEN) == JOB
+    assert seen == {"config": {"repo_token": TOKEN, "service_name": runner.COVERALLS_SERVICE}, "cwd": tmp_path}
+    assert Path.cwd() == before
+
+
+_PASSING = "..\n2 passed in 0.10s\n"
+_FAILING = "===== short test summary info =====\nFAILED tests/t.py::t - x\n1 failed, 1 passed in 0.10s\n"
+
+
+def _main(tmp_path: Path, monkeypatch, output: str, exit_code: int, *args: str) -> tuple[int, dict, list[list[str]]]:
+    """`main` over a checkout holding a dataset, with pytest's run replaced by `output` and `exit_code`."""
+    repo = tmp_path / "checkout"
+    (repo / "data" / "ohlc-full").mkdir(parents=True, exist_ok=True)
+    handed = []
+
+    def run_suite(repo, uv, pytest_args, timeout):
+        handed.append(list(pytest_args))
+        return ["pytest", *pytest_args], exit_code, output, None
+
+    monkeypatch.setattr(runner, "run_suite", run_suite)
+    monkeypatch.setenv("UV", "/nonexistent/uv")
+    code = runner.main(["--repo", str(repo), *args])
+    return code, json.loads((repo / ".local" / "data-gated-runs" / "latest.json").read_text()), handed
+
+
+@pytest.mark.parametrize(("output", "exit_code"), [(_PASSING, 0), (_FAILING, 1)], ids=["passing", "failing"])
+def test_an_upload_that_raises_leaves_the_verdict_and_the_exit_status(tmp_path, monkeypatch, output, exit_code):
+    _vault(tmp_path, monkeypatch, _HOLDS_THE_TOKEN)
+    monkeypatch.setattr(runner, "send_coverage", lambda repo, token: JOB)
+    code_up, uploaded, _ = _main(tmp_path, monkeypatch, output, exit_code)
+
+    def raises(repo, token):
+        raise RuntimeError("coveralls.io is down")
+
+    monkeypatch.setattr(runner, "send_coverage", raises)
+    code_down, failed, _ = _main(tmp_path, monkeypatch, output, exit_code)
+
+    assert uploaded["coverage_upload"]["outcome"] == "uploaded" and failed["coverage_upload"]["outcome"] == "failed"
+    assert code_down == code_up == exit_code
+    verdict = ("ok", "error", "exit_code", "counts", "failed", "errors")
+    assert {k: failed[k] for k in verdict} == {k: uploaded[k] for k in verdict}
+
+
+@pytest.mark.parametrize(
+    ("output", "args", "pytest_args", "reason"),
+    [
+        pytest.param(
+            "pytest: error: no such thing\n",
+            [],
+            list(runner.COVERAGE_ARGS),
+            f"no parsed pytest summary ({runner.NO_SUMMARY})",
+            id="no-parsed-summary",
+        ),
+        pytest.param(
+            _PASSING,
+            ["--", "-k", "soak"],
+            ["-k", "soak"],
+            "extra pytest args: the run measured none, since a part of the suite is not the whole",
+            id="extra-args",
+        ),
+        pytest.param(_PASSING, ["--no-coverage"], [], "--no-coverage: the run measured none", id="no-coverage"),
+    ],
+)
+def test_the_run_measures_coverage_whole_and_uploads_only_a_parsed_runs(tmp_path, monkeypatch, output, args, pytest_args, reason):
+    _vault(tmp_path, monkeypatch, _HOLDS_THE_TOKEN)
+    monkeypatch.setattr(runner, "send_coverage", lambda repo, token: JOB)
+
+    _, result, handed = _main(tmp_path, monkeypatch, output, 0, *args)
+
+    assert handed == [pytest_args]
+    assert result["coverage_upload"] == {"outcome": "skipped", "reason": reason}
+
+
+def test_a_whole_parsed_run_measures_coverage_and_uploads_it(tmp_path, monkeypatch):
+    _vault(tmp_path, monkeypatch, _HOLDS_THE_TOKEN)
+    monkeypatch.setattr(runner, "send_coverage", lambda repo, token: JOB)
+
+    code, result, handed = _main(tmp_path, monkeypatch, _PASSING, 0)
+
+    assert handed == [["--cov=cli", "--cov-report="]]
+    assert code == 0 and result["ok"] is True
+    assert result["coverage_upload"] == {"outcome": "uploaded", "url": JOB["url"]}
