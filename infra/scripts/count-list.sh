@@ -548,10 +548,10 @@ c_hosts_off_the_fleets_alloy_version() { uv run python infra/scripts/alloy-versi
 main() {
   wanted=("$@")
   cd "$(git rev-parse --show-toplevel)" || exit 2
-  # Four counts read the integration branch by name. A checkout without that ref answers 0 from
-  # inside a process substitution, where the failure never reaches the pipeline's status.
+  # A count reading the integration branch by name answers 0 from inside a process substitution when the checkout
+  # lacks that ref, where the failure never reaches the pipeline's status.
   if ! git rev-parse --verify --quiet develop >/dev/null; then
-    echo "count-list: this checkout has no develop ref, and four of the counts read it by name" >&2
+    echo "count-list: this checkout has no develop ref, which counts read by name" >&2
     exit 2
   fi
 

@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """One line per runbook bullet or numbered step whose prose carries an internal token.
 
-One line per BULLET, its tokens joined -- the count is bullets, as the entry's name and the rule's
-set clause both say, so a bullet carrying three tokens is one finding to fix and not three.
+One line per BULLET, its tokens joined -- the count is bullets, as the rule's set clause says, so a bullet
+carrying three tokens is one finding to fix and not three.
 
     runbook-internal-tokens.py <page>...
 
-prints `path:line <tokens>` per offending bullet and exits 0 whether or not it found any: this is an instrument the
-count list reads, not a gate, and a refusal here would block a runbook fix during an incident. A
+prints `path:line <tokens>` per offending bullet and exits 0 whether or not it found any: this is an instrument a
+round runs by hand over the top-level runbook pages, not a gate, and a refusal here would block a runbook fix
+during an incident. A
 non-zero count is the finding -- an operator reaching the page from an alert description cannot
 resolve `T0160` or `spec 00106`, while an HTML comment on the line may carry one, because provenance
 for a claim the tree cannot otherwise re-derive is worth keeping (the owner's ruling of 2026-09-12).

@@ -65,7 +65,6 @@ _NAMES_AN_API = re.compile(r"(?<![A-Za-z0-9])(?:websocket|rest)(?![A-Za-z0-9])",
 
 
 def _update_bodies(entry: dict) -> list[str]:
-    """The entry's `incident_updates[].body` texts: none for a missing or non-list key, a non-object item skipped."""
     updates = entry.get("incident_updates")
     return [str(u.get("body") or "") for u in updates if isinstance(u, dict)] if isinstance(updates, list) else []
 
