@@ -123,15 +123,14 @@ def test_done_so_far_marks_a_partial_and_nothing_else(path: Path):
 # The rule and the six shapes a `ripe_when:` may take are CLAUDE.md's topics line. The shapes are
 # semantic -- nothing mechanical separates a milestone from an activity, and a grammar tight enough to
 # try would refuse ordinary triggers -- so the shape is read by hand in `zcrypto-daily-ops` §5b and
-# this decides presence alone, as `grep -L '^ripe_when: *[^ ]'` would.
+# this decides presence alone.
 
 _TRIGGER_LINE = re.compile(r"^ripe_when: *[^ ]")
 
 
 def carries_a_trigger(text: str) -> bool:
-    """One file, line by line as grep reads it: a line opening `ripe_when:` with a value, anywhere in the file --
-    the whole file, not the frontmatter; a key indented, mistyped, absent or carrying no value is none. Lines, not
-    the text under `re.M`: `[^ ]` would match the newline after an empty key there, and grep's never can."""
+    """A line opening `ripe_when:` with a value, anywhere in the file; a key indented, mistyped, absent or carrying
+    no value is none. Lines, not the text under `re.M`: `[^ ]` would match the newline after an empty key there."""
     return any(_TRIGGER_LINE.search(line) for line in text.splitlines())
 
 
