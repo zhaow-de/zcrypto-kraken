@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import os
 import subprocess
 import sys
@@ -55,18 +56,6 @@ def test_neither_kept_subject_is_retired():
     assert not RETIRED_SUBJECTS & set(KEPT)
 
 
-def test_no_other_subject_is_named_a_retired_name_and_a_dash():
-    """The hook reads a case id opening with a retired name and a `-` as that subject's, so such a name would be
-    deselected from CI with the retired one."""
-    clashes = {
-        (name, retired)
-        for name in set(SUBJECTS) - RETIRED_SUBJECTS
-        for retired in RETIRED_SUBJECTS
-        if name.startswith(f"{retired}-")
-    }
-    assert not clashes, clashes
-
-
 def test_a_retired_subjects_cases_are_marked_and_deselected_under_not_retired(collections):
     retired, kept = collections
     cases = _cases_of(RETIRED_SUBJECTS, retired | kept)
@@ -74,11 +63,31 @@ def test_a_retired_subjects_cases_are_marked_and_deselected_under_not_retired(co
     assert cases <= retired and not cases & kept
 
 
+def _kept_subject_functions() -> set[str]:
+    """The test functions of `SUBJECT_TESTS` whose decorators or body name a kept subject."""
+    source = (REPO / SUBJECT_TESTS).read_text()
+    return {
+        node.name
+        for node in ast.parse(source).body
+        if isinstance(node, ast.FunctionDef)
+        and node.name.startswith("test_")
+        and any(name in ast.get_source_segment(source, part) for part in (*node.decorator_list, node) for name in KEPT)
+    }
+
+
 def test_the_kept_subjects_cases_stay_under_not_retired(collections):
+    """A kept subject's case is one of a function naming the subject, or one whose parameter id opens with it; a case
+    whose id opens with a retired name keeps its mark, as a function parametrised over SUBJECTS has."""
     retired, kept = collections
-    cases = _cases_of(KEPT, retired | kept)
+    functions = _kept_subject_functions()
+    assert {
+        "test_record44_refuses_a_grid_it_cannot_feed_naming_the_file_or_the_rolling_pair_and_grid",
+        "test_a_production_subject_honours_window_all_the_way_down_to_the_reads",
+    } <= functions
+    cases = {i for i in retired | kept if i.split("::", 1)[1].split("[", 1)[0] in functions} | _cases_of(KEPT, retired | kept)
     assert f"{SUBJECT_TESTS}::test_every_subjects_metrics_hold_when_the_shared_defaults_move[record44-crossfreq]" in cases
-    assert cases <= kept and not cases & retired
+    marked = (cases & retired) - _cases_of(RETIRED_SUBJECTS, retired)
+    assert not marked, sorted(marked)
 
 
 def test_a_retired_name_in_another_files_parameter_leaves_its_case_unmarked(collections):

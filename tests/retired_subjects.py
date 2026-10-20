@@ -36,6 +36,4 @@ def names_a_retired_subject(item: pytest.Item) -> bool:
     callspec = getattr(item, "callspec", None)
     if callspec is None or item.path.name != SUBJECT_TESTS:
         return False
-    if any(isinstance(value, str) and value in RETIRED_SUBJECTS for value in callspec.params.values()):
-        return True
-    return any(callspec.id == name or callspec.id.startswith(f"{name}-") for name in RETIRED_SUBJECTS)
+    return any(isinstance(value, str) and value in RETIRED_SUBJECTS for value in callspec.params.values())
