@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.14 through uv; polars; numpy; pytest with typer's `CliRunner`; `infra/scripts/mutate-probe.sh`, `infra/scripts/consumers.sh`, `infra/scripts/tier.py`, `infra/scripts/topics-index.py`.
 
-**Spec:** `docs/specs/00138-b2-three-overlays-design.md` — binding; D1–D12 are cited by name and the values below are copied from it. It copies spec 00137's instrument, bar, arms and costing and spec 00128's matrix, both frozen (record 51's and reading 1's `spec_hash`). **Iteration:** iter-182. **Topic:** T0023 under T0016. **Branch:** `research/iter-182-b2-three-overlays`, worktree `.claude/worktrees/iter182`, `data/ohlc-full`, `data/derivatives-funding` and `data/derivatives-oi` linked read-only from the main checkout; Task 3 links `data/liquidations-frozen` and `data/liquidations-daily`, Task 10 `data/ohlc-rolling`. A choice this plan makes that the spec leaves open is marked **Author's call**. Every code fence below was extracted from this file and run against the tree in task order in a detached scratch worktree before this plan was committed — the commands against their `Expected`, each `-k` filter's collect count, each probe row's two seds matching exactly one line of the code the fences write and each probe run to its verdict, one hundred eighteen of one hundred eighteen `KILLED`; Task 3's two freeze programs ran against the live tree read-only with their writes redirected into scratch, the second 603 s after the first and finding the closed span unchanged, its backfill, daily attestation and daily-basis program ran over a synthetic response through an injected opener, written into scratch — the program over the frozen union's arm A positions and that synthetic block, no bar — the network and the vault untouched, and its hub read over the sets already on `hot/`, `ohlc-full`, `derivatives-oi` and the rolling set's line for 2026-10-10, each `rederived`; the three check programs printed over synthetic inputs. Not run: the daily fetch itself (Task 3 step 5, the controller's), the hub push's dry inspection and push (Task 3 step 13, the controller's), any `zcrypto research eval` (Tasks 7–10), the data-gated test and its probes beyond `--collect-only` (Task 5 steps 2 and 4), the check programs beyond a parse and a synthetic print (Task 6 step 5), the replays and the literal probes beyond their seds (Tasks 7–10), the topic edits (Task 11 steps 1–3) and the PR (Task 12).
+**Spec:** `docs/specs/00138-b2-three-overlays-design.md` — binding; D1–D12 are cited by name and the values below are copied from it. It copies spec 00137's instrument, bar, arms and costing and spec 00128's matrix, both frozen (record 51's and reading 1's `spec_hash`). **Iteration:** iter-182. **Topic:** T0023 under T0016. **Branch:** `research/iter-182-b2-three-overlays`, worktree `.claude/worktrees/iter182`, `data/ohlc-full`, `data/derivatives-funding` and `data/derivatives-oi` linked read-only from the main checkout; Task 3 links `data/liquidations-frozen` and `data/liquidations-daily`, Task 10 `data/ohlc-rolling`. A choice this plan makes that the spec leaves open is marked **Author's call**. Every code fence below was extracted from this file and run against the tree in task order in a detached scratch worktree before this plan was committed — the commands against their `Expected`, each `-k` filter's collect count, each probe row's two seds matching exactly one line of the code the fences write and each probe run to its verdict, one hundred nineteen of one hundred nineteen `KILLED`; Task 3's two freeze programs ran against the live tree read-only with their writes redirected into scratch, the second 603 s after the first and finding the closed span unchanged, the first run again with its asserted-hours line as it stands, its backfill, daily attestation and daily-basis program ran over a synthetic response through an injected opener, written into scratch — the program over the frozen union's arm A positions and that synthetic block, no bar — the network and the vault untouched; Task 6 step 1a's hub read ran over the sets already on `hot/`, `ohlc-full`, `derivatives-oi` and the rolling set's line for 2026-10-10, each `rederived`; the three check programs printed over synthetic inputs. Not run: the daily fetch itself (Task 3 step 5, the controller's), the hub push's dry inspection and push (Task 6 step 1a, the controller's), any `zcrypto research eval` (Tasks 7–10), the data-gated test and its probes beyond `--collect-only` (Task 5 steps 2 and 4) but the arm A case's probe row, run to `KILLED` with the frozen union and the OI set linked, the check programs beyond a parse and a synthetic print (Task 6 step 5), the replays and the literal probes beyond their seds (Tasks 7–10), the topic edits (Task 11 steps 1–3) and the PR (Task 12).
 
 ## Global Constraints
 
@@ -20,9 +20,9 @@
 - **The records** (D9): family `B2`; `n_trials_in_family` the count; variants `B2-oi-derisk-a2eq-full-v1`, `B2-ratio-derisk-a2eq-full-v1`, `B2-liq-derisk-a2eq-full-v1`; iteration `iter-182`; seeds (42, 7, 1234); 42 metric keys, `threshold` among them; the OI and ratio records' `dataset_hash` `69d7e9d6b531de063810c35b9a75c6538948f4e526ad2769ad0f961a03f078cf`, the liquidations record's block `ohlc-full`'s ten files beside `liquidations-daily`'s ten; no `--verdict`.
 - **The pre-flight read** (D10), in this order: (a) the block; (b) arm A's seven anchors at record 45's precision — `arm_a_ann_sharpe_noc` 1.405, `arm_a_ann_sharpe_noc_decisive` 1.3716, `arm_a_max_drawdown_full` 0.2154, `arm_a_spot_drag_pct_yr` 0.0703, the benchmark's 1.2128 and 1.2447 at four decimals, `turnover_a` 146.19 at two; (c) `engaged_per_asset`, `engaged_per_year`, the signal's coverage, `primary_returns` and `threshold` the measured basis's — for liquidations the completed basis's `DAILY_BASIS` line; (d) the engaged total above 0; (e) arm A's `passes` 1.
 - **The hash rule** (D10): before Task 6 step 2 takes the spec's sha256, nobody computes arm A's bar or any position or return of arm B over the trials' data, nor runs `b2-liq-tape-reading` over the real sets; the data-gated test (Task 5) and Task 3's daily-basis program compute arm A's positions, the signals and the engagement — the basis's own measures — and no bar; no reader, reviewer or plan-review dispatch runs any of the seven subjects over the real sets before the hash, and every read's dispatch carries this rule. No return of arm B is computed over the trial's data before that trial's `--register` run, and no trial subject is ever run as a plain eval.
-- **Unchanged** (D9): every existing function of `cli/alpha/b2.py`, `cli/research/subjects.py`, `cli/features/*`, `cli/portfolio/*`, `cli/registry/*`, `cli/engine/*` and `cli/liquidations/*` but `fetch_liquidation_history`, whose signature gains `interval` and whose URL reads it; the poller's behaviour; the subjects of trials 1 and 2; any adopted artifact. After every task, from the merge base with develop (moved to develop's tip by a merge of develop), each its own call: `git diff --name-only $(git merge-base HEAD origin/develop) -- cli/` prints `cli/alpha/b2.py` from Task 1 on, `cli/__main__.py` and `cli/liquidations/coinalyze.py` from Task 2 on and `cli/research/subjects.py` from Task 4 on, nothing else; `git diff -U0 $(git merge-base HEAD origin/develop) -- cli/ | grep '^-[^-]'` prints only the lines the tasks replace — from Task 1 `-from cli.validation import max_drawdown`; from Task 2 also `-from cli.liquidations.coinalyze import liquidations_poll`, `-def fetch_liquidation_history(api_key: str, symbols: list[str], frm: int, to: int, *, opener=urllib.request.urlopen) -> list[dict]:` and `-    url = f"{_BASE_URL}?symbols={symbols_csv}&interval=1min&from={frm}&to={to}&convert_to_usd=true"`; from Task 4 also `-from datetime import UTC, datetime` and `-from cli.features.derivatives import coverage_by_year` — 1, 4 and 6 lines. Measured on the transcription, the hunks: `cli/alpha/b2.py`'s `@@ -9,0 +10,2 @@`, `@@ -23 +25 @@`, `@@ -37,0 +40,3 @@`, `@@ -38,0 +44 @@` and `@@ -293,0 +300,126 @@`; `cli/liquidations/coinalyze.py`'s `@@ -113 +113,3 @@`, `@@ -119 +121 @@` and `@@ -361,0 +364,72 @@`; `cli/__main__.py`'s `@@ -12 +12 @@` and `@@ -27,0 +28 @@`; `cli/research/subjects.py`'s `@@ -8,0 +9 @@`, `@@ -12 +13 @@`, `@@ -56,0 +58 @@`, `@@ -57,0 +60 @@`, `@@ -58,0 +62 @@`, `@@ -59,0 +64 @@`, `@@ -63,0 +69,2 @@`, `@@ -71 +78 @@`, `@@ -1992,0 +2000,570 @@` and `@@ -2161,0 +2739,84 @@`. Code citations name a function, never a line.
-- Never edit `docs/specs/00138-b2-three-overlays-design.md` after Task 6 step 2, nor specs 00128 and 00137, nor the spec before then except Task 3's completed basis; never write `docs/reference/trial-registry.jsonl` or `docs/reference/reading-ledger.jsonl`, nor run `--register` or `--reading`, except where Tasks 7–10 name it. Never `git stash`; no amend; a state-changing git command runs alone, the probe setup below excepted.
-- **Data**: `data/ohlc-full`, `data/derivatives-oi`, from Task 3 `data/liquidations-frozen` and `data/liquidations-daily`, and from Task 10 `data/ohlc-rolling`, read-only links, never written under; `data/derivatives-funding` only where an existing test reads it and in Task 3 step 11's `_b2_inputs` call. The live tree `/var/lib/zcrypto-ops/liquidations` is read by Task 3's two freeze programs alone, read-only. The vault is read by Task 3 step 5's one command alone, the key reaching that process's environment by command substitution, never printed, never in a file, a log or a message; the network is touched by that command's one Coinalyze call and by Task 3 step 13's dry inspection and push, each an rsync to `zcrypto.toml`'s `push_dest`; no test and no implementer touches either. Never `data/ohlc-holdout-*`, `/mnt/zhao-crypto/` but Task 3 step 13's read of its `hot/`, ssh or a fleet host but that step's rsync to the NAS's hub, docker, `kraken-cli`, a Grafana or Kraken endpoint, or `tests/test_grafana_push_sh.py`.
+- **Unchanged** (D9): every existing function of `cli/alpha/b2.py`, `cli/research/subjects.py`, `cli/features/*`, `cli/portfolio/*`, `cli/registry/*`, `cli/engine/*` and `cli/liquidations/*` but `fetch_liquidation_history`, whose signature gains `interval` and whose URL reads it; the poller's behaviour; the subjects of trials 1 and 2; any adopted artifact. After every task, from the merge base with develop (moved to develop's tip by a merge of develop), each its own call: `git diff --name-only $(git merge-base HEAD origin/develop) -- cli/` prints `cli/alpha/b2.py` from Task 1 on, `cli/__main__.py` and `cli/liquidations/coinalyze.py` from Task 2 on and `cli/research/subjects.py` from Task 4 on, nothing else; `git diff -U0 $(git merge-base HEAD origin/develop) -- cli/ | grep '^-[^-]'` prints only the lines the tasks replace — from Task 1 `-from cli.validation import max_drawdown`; from Task 2 also `-from cli.liquidations.coinalyze import liquidations_poll`, `-def fetch_liquidation_history(api_key: str, symbols: list[str], frm: int, to: int, *, opener=urllib.request.urlopen) -> list[dict]:` and `-    url = f"{_BASE_URL}?symbols={symbols_csv}&interval=1min&from={frm}&to={to}&convert_to_usd=true"`; from Task 4 also `-from datetime import UTC, datetime` and `-from cli.features.derivatives import coverage_by_year` — 1, 4 and 6 lines. Measured on the transcription, the hunks: `cli/alpha/b2.py`'s `@@ -9,0 +10,2 @@`, `@@ -23 +25 @@`, `@@ -37,0 +40,3 @@`, `@@ -38,0 +44 @@` and `@@ -293,0 +300,126 @@`; `cli/liquidations/coinalyze.py`'s `@@ -113 +113,3 @@`, `@@ -119 +121 @@` and `@@ -361,0 +364,74 @@`; `cli/__main__.py`'s `@@ -12 +12 @@` and `@@ -27,0 +28 @@`; `cli/research/subjects.py`'s `@@ -8,0 +9 @@`, `@@ -12 +13 @@`, `@@ -56,0 +58 @@`, `@@ -57,0 +60 @@`, `@@ -58,0 +62 @@`, `@@ -59,0 +64 @@`, `@@ -63,0 +69,2 @@`, `@@ -71 +78 @@`, `@@ -1992,0 +2000,570 @@` and `@@ -2161,0 +2739,84 @@`. Code citations name a function, never a line.
+- Never edit `docs/specs/00138-b2-three-overlays-design.md` after Task 6 step 2, nor specs 00128 and 00137, nor the spec before then except Task 3's completed basis and a fix commit a read of Task 5 step 7 asks for; never write `docs/reference/trial-registry.jsonl` or `docs/reference/reading-ledger.jsonl`, nor run `--register` or `--reading`, except where Tasks 7–10 name it. Never `git stash`; no amend; a state-changing git command runs alone, the probe setup below excepted.
+- **Data**: `data/ohlc-full`, `data/derivatives-oi`, from Task 3 `data/liquidations-frozen` and `data/liquidations-daily`, and from Task 10 `data/ohlc-rolling`, read-only links, never written under; `data/derivatives-funding` only where an existing test reads it and in Task 3 step 11's `_b2_inputs` call. The live tree `/var/lib/zcrypto-ops/liquidations` is read by Task 3's two freeze programs alone, read-only. The vault is read by Task 3 step 5's one command alone, the key reaching that process's environment by command substitution, never printed, never in a file, a log or a message; the network is touched by that command's one Coinalyze call and by Task 6 step 1a's dry inspection and push, each an rsync to `zcrypto.toml`'s `push_dest`; no test and no implementer touches either. Never `data/ohlc-holdout-*`, `/mnt/zhao-crypto/` but Task 6 step 1a's read of its `hot/`, ssh or a fleet host but that step's rsync to the NAS's hub, docker, `kraken-cli`, a Grafana or Kraken endpoint, or `tests/test_grafana_push_sh.py`.
 - **Executors**: the controller — the orchestrating session, in its own main loop, never a dispatched implementer — runs Task 3, Task 5 step 7's reads, Tasks 6–10 and Task 12's steps 2–4, since `.claude/skills/zcrypto-plan-review/references/implementer-contract.md`, carried by every task-loop dispatch, bars agent dispatches (the reads), the vault (the fetch) and runs awaited in the background to a completion notification (the freeze's second read, the data tests, the pre-flights, the registers, the reading, the replays), and the steps around those runs gate, check or commit them. Every other step is an implementer dispatch under that contract: Tasks 1, 2, 4 and 11, Task 5's steps 1–6 and Task 12's step 1.
 - **Tests**: every pytest run is `mkdir -p .tmp/plan-00138 && uv run pytest <file>::<test> -q -p no:cacheprovider --basetemp=.tmp/plan-00138/pt` (or a file, or `-k`). An implementer's runs are foreground: each run that can pass 120 s is one plain blocking call with the Bash tool's `timeout` at 600000 ms, and a run that could pass 600 s is split by file or node id into parts that cannot, each its own `--basetemp=.tmp/plan-00138/pt-<n>`. The controller's runs that can pass 120 s each run as one Bash call with `run_in_background: true`, acted on only at that call's completion notification: no polling, no `sleep`, one such run at a time and no other command in this worktree while it lives; its output is read from its own file after the notification. Before each commit: new files staged first, then `T=$(bash infra/scripts/consumers.sh --direct <each changed path> | sort -u)` and `[ -n "$T" ] && uv run pytest $T -m "not slow and not data" -q -p no:cacheprovider --basetemp=.tmp/plan-00138/pt`, never a bare `uv run pytest`; a slow case run on purpose takes `ZCRYPTO_RERUN_SLOW=1`. A commit message's test result line is a run over that commit's own tree.
 - **Probes**: the tier is `full`, so each new guard — a test function, and each parametrised row a probe row names — is proven through its own node id with `infra/scripts/mutate-probe.sh`, before its commit and on the commit's own tree; never through a case `tests/slow-cases.txt` lists, whose commit records `probe skipped: slow case` with its node id. After the gate, with the task's files staged, as one call:
@@ -37,7 +37,7 @@ test ! -e .tmp/plan-00138/probe &&
   mkdir -p .tmp/plan-00138/probe/.tmp
 ```
 
-  Then, from `.tmp/plan-00138/probe`, each row of the task's probe block, one at a time, each its own call after the previous verdict is read, every one expected to print `mutate-probe: KILLED (control proven, tree restored byte-identically)`. Before each row, its dry run from the same directory: `sed -e '<mutation>' <file> | uv run python -c 'import ast, sys; ast.parse(sys.stdin.read())'` exits 0 and `diff <(sed -e '<mutation>' <file>) <file> | grep -c '^>'` prints 1, and the same two for the control. Every mutation substitutes and none deletes a line; every control renames a `def` the case reaches, so it fails at import or at its call. After the last verdict, `git worktree remove --force .tmp/plan-00138/probe` — a data link in it unlinked first. The task's commit carries `Probed on this commit's tree, committed in a detached scratch worktree (tree <T>):` and each row's command with its verdict line, `infra/scripts/mutate-probe.sh` named in both, and after the commit `test "$(git rev-parse HEAD^{tree})" = <the hash the setup printed>` passes.
+  Then, from `.tmp/plan-00138/probe`, each row of the task's probe block, one at a time, each its own call after the previous verdict is read, every one expected to print `mutate-probe: KILLED (control proven, tree restored byte-identically)`. Before each row, its dry run from the same directory: `sed -e '<mutation>' <file> | uv run python -c 'import ast, sys; ast.parse(sys.stdin.read())'` exits 0 and `diff <(sed -e '<mutation>' <file>) <file> | grep -c '^>'` prints 1, and the same two for the control. Every mutation substitutes and none deletes a line; every control renames a `def` the case reaches, so it fails at import or at its call. After the last verdict, `git worktree remove --force .tmp/plan-00138/probe` — a data link in it unlinked first. Every removal of a probe worktree that held a data link — Task 5 step 4's, Tasks 7–9 step 6's and each of Task 10 step 5's — is followed by `ls -la /home/zhaow/Projects/zcrypto-kraken/data`, each set it linked still listed. The task's commit carries `Probed on this commit's tree, committed in a detached scratch worktree (tree <T>):` and each row's command with its verdict line, `infra/scripts/mutate-probe.sh` named in both, and after the commit `test "$(git rev-parse HEAD^{tree})" = <the hash the setup printed>` passes.
 - **Commits**: one per task that changes the tree, two for Task 3 (the blocks' attestation, catalog and `authored_sets`, then the spec's completed basis), two for Task 5 (the test, then step 6's conventions entry), one per trial for Tasks 7–9, one for Task 10, two for Task 12 (the decisions-log entry, then the change-index row); Task 6 adds none, a merge of develop aside. Each ends with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` and `Claude-Session: <the executing session's URL>`; an implementer on another model names its own.
 - **The reads**: the trio over the branch through Task 5 (`pre-review`, `review`, `re-review`, as CLAUDE.md orders them; Task 5 step 7) — the completed basis among what it reads — closes with no open Critical or Important before Task 6 step 2, and nothing the runs execute or the records pin changes from that read to the registrations unless a read of the change follows; Tasks 7–12's commits take their own `pre-review`, then the read of the delta from the tip the last read covered (Task 12 step 3) before the push that carries it; the PR is created and edited through `open-pr`, its read line naming the tip read.
 
@@ -58,7 +58,7 @@ test ! -e .tmp/plan-00138/probe &&
 
 - Modify `cli/alpha/b2.py` — two imports, three constants and five functions (Task 1); `tests/test_alpha_b2.py` — their tests.
 - Modify `cli/liquidations/coinalyze.py` — `fetch_liquidation_history`'s `interval`, the backfill and its command; `cli/__main__.py` — the command's registration; `tests/test_liquidations_coinalyze.py`; `README.md` — the command's section (Task 2).
-- Create `data/liquidations-frozen/` and `data/liquidations-daily/` in the main checkout (gitignored) and link them; modify `docs/reference/vouched-dataset-hashes.jsonl` — twenty-one lines; `docs/reference/data-catalog-full.md` — the two blocks' entries; `zcrypto.toml` — the two blocks join `authored_sets`; `docs/specs/00138-b2-three-overlays-design.md` — the completed basis; push the two blocks to the hub's `hot/` (Task 3).
+- Create `data/liquidations-frozen/` and `data/liquidations-daily/` in the main checkout (gitignored) and link them; modify `docs/reference/vouched-dataset-hashes.jsonl` — twenty-one lines; `docs/reference/data-catalog-full.md` — the two blocks' entries; `zcrypto.toml` — the two blocks join `authored_sets`; `docs/specs/00138-b2-three-overlays-design.md` — the completed basis (Task 3); push the two blocks to the hub's `hot/` (Task 6).
 - Modify `cli/research/subjects.py` — the imports, the overlay and reading machinery before `SUBJECTS`, seven entries at its end; `tests/test_research_command.py`, `README.md`, `tests/slow-cases.txt` (Task 4).
 - Create `tests/test_research_b2_overlays_basis.py` (data-gated); modify `tests/slow-cases.txt`, `docs/research/10.phase4-decisions.md` (Task 5).
 - At the runs: `docs/reference/trial-registry.jsonl`, `docs/reference/reading-ledger.jsonl`, `tests/test_trial_registry_provenance.py`, `docs/research/10.phase4-decisions.md`, `tests/slow-cases.txt`, and on an adopt `docs/open-topics/T0123-sleeve-promotion-path.md` and `docs/open-topics/README.md` (Tasks 7–10); `docs/open-topics/T0023-b2-derivatives-data-sourcing.md`, `docs/open-topics/T0016-bucket-b-c-alpha-families.md`, `docs/open-topics/README.md`, `tests/retired_subjects.py`, `tests/test_research_command.py` (Task 11); `docs/research/10.phase4-decisions.md`, `docs/reference/change-index.md` (Task 12). Scratch under `.tmp/plan-00138/`.
@@ -598,6 +598,11 @@ def test_the_daily_backfill_writes_one_file_per_coin_of_its_closed_days(tmp_path
     ("body", "refused"),
     [
         pytest.param(_daily_body(("BTC",)), "the response holds no closed day for ['ETH']", id="a-coin-missing"),
+        pytest.param(
+            [*_daily_body(("BTC",), stamps=(_FEB_27 - _DAY_S,)), *_daily_body()],
+            "BTCUSDT_PERP.A: the response holds the coin twice",
+            id="a-coin-twice",
+        ),
         pytest.param({"error": "nope"}, "malformed Coinalyze liquidation-history response", id="a-non-list-body"),
         pytest.param(_daily_body(stamps=(_FEB_27, _FEB_27 + 3600)), "BTCUSDT_PERP.A: a day stamp off 00:00Z", id="off-midnight"),
         pytest.param(
@@ -705,7 +710,7 @@ def backfill_daily(
     """Coinalyze's daily liquidation history of `coins` from 2018-01-01 to the last day proven closed, one
     `<COIN>/daily.parquet` each — `ts` the day's 00:00Z, `long_usd`, `short_usd` — returning the days written per coin.
     Coinalyze returns about 1,500 days, so the first day is whatever its window holds on the fetch day. Nothing is
-    written unless the whole response passes: `out_dir` absent, every coin present with at least one day, each day stamp
+    written unless the whole response passes: `out_dir` absent, every coin present once with at least one day, each day stamp
     on 00:00Z and strictly increasing, each leg finite and non-negative."""
     if out_dir.exists():
         raise LiquidationsError(f"{out_dir} exists: a backfill never writes over a set")
@@ -719,6 +724,8 @@ def backfill_daily(
         coin = symbol_to_coin.get(entry.get("symbol")) if isinstance(entry, dict) else None
         if coin is None:
             continue
+        if coin in days:
+            raise LiquidationsError(f"{entry['symbol']}: the response holds the coin twice")
         try:
             rows = [(int(b["t"]), float(b["l"]), float(b["s"])) for b in entry.get("history", [])]
         except (KeyError, TypeError, ValueError) as exc:
@@ -774,7 +781,7 @@ def liquidations_backfill(
 ````markdown
 ### `zcrypto liquidations-backfill`<a name="zcrypto-liquidations-backfill"></a>
 
-A one-shot fetch of Coinalyze's **daily** liquidation history for the same 10 USDT perps, from 2018-01-01 to the last day proven closed (`day_end <= now - 120s`), in one batched call. Coinalyze returns about 1,500 points at every interval, so the first day is whatever its window holds on the fetch day. Nothing is written unless every coin is present, each with day stamps on 00:00Z, strictly increasing, and both legs finite and non-negative.
+A one-shot fetch of Coinalyze's **daily** liquidation history for the same 10 USDT perps, from 2018-01-01 to the last day proven closed (`day_end <= now - 120s`), in one batched call. Coinalyze returns about 1,500 points at every interval, so the first day is whatever its window holds on the fetch day. Nothing is written unless every coin is present once, each with day stamps on 00:00Z, strictly increasing, and both legs finite and non-negative.
 
 ```bash
 zcrypto liquidations-backfill --out <PATH>
@@ -787,11 +794,11 @@ zcrypto liquidations-backfill --out <PATH>
 Requires `$COINALYZE_API_KEY` (exits with an error if unset). Writes `<out>/<COIN>/daily.parquet` with columns `ts` (the day's 00:00Z), `long_usd` and `short_usd`, and prints each coin's day count.
 ````
 
-- [ ] **Step 5: Run them to verify they pass** — Step 2's command. Expected: `49 passed`; and `uv run pytest tests/test_liquidations_coinalyze.py -k "interval or daily_backfill or liquidations_backfill" -q -p no:cacheprovider --basetemp=.tmp/plan-00138/pt` prints `14 passed, 35 deselected`, the fourteen new cases.
+- [ ] **Step 5: Run them to verify they pass** — Step 2's command. Expected: `50 passed`; and `uv run pytest tests/test_liquidations_coinalyze.py -k "interval or daily_backfill or liquidations_backfill" -q -p no:cacheprovider --basetemp=.tmp/plan-00138/pt` prints `15 passed, 35 deselected`, the fifteen new cases.
 
-- [ ] **Step 6: Stage, consumers, gate** — `git add cli/liquidations/coinalyze.py cli/__main__.py tests/test_liquidations_coinalyze.py README.md`; `T` over the four paths (measured on the transcription: fifty-one files, `cli/__main__.py`'s readers among them, `5560 passed, 1 skipped, 305 deselected, 4 warnings` in 5 min 57 s, one plain call with `timeout` 600000 ms); `uv run pre-commit run -a` until clean, its rewrites staged; the Unchanged checks.
+- [ ] **Step 6: Stage, consumers, gate** — `git add cli/liquidations/coinalyze.py cli/__main__.py tests/test_liquidations_coinalyze.py README.md`; `T` over the four paths (measured on the transcription: fifty-one files, `cli/__main__.py`'s readers among them, `5561 passed, 1 skipped, 305 deselected, 4 warnings` in 6 min 6 s, one plain call with `timeout` 600000 ms); `uv run pre-commit run -a` until clean, its rewrites staged; the Unchanged checks.
 
-- [ ] **Step 7: Probes** — on the staged tree, in the probe worktree, each row expected `KILLED` (measured on the transcription, sixteen of sixteen):
+- [ ] **Step 7: Probes** — on the staged tree, in the probe worktree, each row expected `KILLED` (measured on the transcription, seventeen of seventeen):
 
 ```bash
 infra/scripts/mutate-probe.sh --file cli/liquidations/coinalyze.py --control 's/^def backfill_daily(/def backfill_daily_gone(/' --mutation 's/&interval={interval}&/\&interval=1min\&/' -- uv run pytest 'tests/test_liquidations_coinalyze.py::test_fetch_liquidation_history_sends_the_interval_it_is_given' -q -p no:cacheprovider --basetemp=.tmp/pt
@@ -800,6 +807,7 @@ infra/scripts/mutate-probe.sh --file cli/liquidations/coinalyze.py --control 's/
 infra/scripts/mutate-probe.sh --file cli/liquidations/coinalyze.py --control 's/^def backfill_daily(/def backfill_daily_gone(/' --mutation '/^def backfill_daily(/,/^def /s/interval="daily", opener=opener/interval="1min", opener=opener/' -- uv run pytest 'tests/test_liquidations_coinalyze.py::test_the_daily_backfill_writes_one_file_per_coin_of_its_closed_days' -q -p no:cacheprovider --basetemp=.tmp/pt
 infra/scripts/mutate-probe.sh --file cli/liquidations/coinalyze.py --control 's/^def backfill_daily(/def backfill_daily_gone(/' --mutation 's/^_BACKFILL_FROM = datetime(2018, 1, 1, tzinfo=UTC)/_BACKFILL_FROM = datetime(2019, 1, 1, tzinfo=UTC)/' -- uv run pytest 'tests/test_liquidations_coinalyze.py::test_the_daily_backfill_writes_one_file_per_coin_of_its_closed_days' -q -p no:cacheprovider --basetemp=.tmp/pt
 infra/scripts/mutate-probe.sh --file cli/liquidations/coinalyze.py --control 's/^def backfill_daily(/def backfill_daily_gone(/' --mutation '/^def backfill_daily(/,/^def /s/    if missing := sorted(coin for coin in coins if not days.get(coin)):/    if missing := []:/' -- uv run pytest 'tests/test_liquidations_coinalyze.py::test_the_daily_backfill_refuses_a_response_it_cannot_trust_and_writes_nothing[a-coin-missing]' -q -p no:cacheprovider --basetemp=.tmp/pt
+infra/scripts/mutate-probe.sh --file cli/liquidations/coinalyze.py --control 's/^def backfill_daily(/def backfill_daily_gone(/' --mutation '/^def backfill_daily(/,/^def /s/        if coin in days:/        if False:/' -- uv run pytest 'tests/test_liquidations_coinalyze.py::test_the_daily_backfill_refuses_a_response_it_cannot_trust_and_writes_nothing[a-coin-twice]' -q -p no:cacheprovider --basetemp=.tmp/pt
 infra/scripts/mutate-probe.sh --file cli/liquidations/coinalyze.py --control 's/^def backfill_daily(/def backfill_daily_gone(/' --mutation 's/    if not isinstance(payload, list):/    if False:/' -- uv run pytest 'tests/test_liquidations_coinalyze.py::test_the_daily_backfill_refuses_a_response_it_cannot_trust_and_writes_nothing[a-non-list-body]' -q -p no:cacheprovider --basetemp=.tmp/pt
 infra/scripts/mutate-probe.sh --file cli/liquidations/coinalyze.py --control 's/^def backfill_daily(/def backfill_daily_gone(/' --mutation '/^def backfill_daily(/,/^def /s/        if any(t % _DAY_SECONDS for t in stamps):/        if False:/' -- uv run pytest 'tests/test_liquidations_coinalyze.py::test_the_daily_backfill_refuses_a_response_it_cannot_trust_and_writes_nothing[off-midnight]' -q -p no:cacheprovider --basetemp=.tmp/pt
 infra/scripts/mutate-probe.sh --file cli/liquidations/coinalyze.py --control 's/^def backfill_daily(/def backfill_daily_gone(/' --mutation '/^def backfill_daily(/,/^def /s/        if any(later <= earlier for earlier, later in zip(stamps, stamps\[1:\])):/        if False:/' -- uv run pytest 'tests/test_liquidations_coinalyze.py::test_the_daily_backfill_refuses_a_response_it_cannot_trust_and_writes_nothing[non-monotone]' -q -p no:cacheprovider --basetemp=.tmp/pt
@@ -830,13 +838,13 @@ EOF
 
 ______________________________________________________________________
 
-### Task 3 (the controller's): the two frozen blocks, their attestations, the tape's coverage proof, the completed basis and the hub push (D7, the completed basis)
+### Task 3 (the controller's): the two frozen blocks, their attestations, the tape's coverage proof and the completed basis (D7, the completed basis)
 
-**Files:** create `/home/zhaow/Projects/zcrypto-kraken/data/liquidations-frozen/` and `/home/zhaow/Projects/zcrypto-kraken/data/liquidations-daily/` (gitignored) and their links in this worktree's `data/`; modify `docs/reference/vouched-dataset-hashes.jsonl` (eleven lines, then ten), `docs/reference/data-catalog-full.md`, `zcrypto.toml` and `docs/specs/00138-b2-three-overlays-design.md`; push both blocks to the hub's `hot/`; scratch `.tmp/plan-00138/freeze-read-1.json`, `.tmp/plan-00138/freeze.out`, `.tmp/plan-00138/freeze-check.out`, `.tmp/plan-00138/backfill.out`, `.tmp/plan-00138/attest-daily.out`, `.tmp/plan-00138/daily-basis.out`, `.tmp/plan-00138/hub-dry.out`, `.tmp/plan-00138/hub-push.out`, `.tmp/plan-00138/hub-read.out`.
+**Files:** create `/home/zhaow/Projects/zcrypto-kraken/data/liquidations-frozen/` and `/home/zhaow/Projects/zcrypto-kraken/data/liquidations-daily/` (gitignored) and their links in this worktree's `data/`; modify `docs/reference/vouched-dataset-hashes.jsonl` (eleven lines, then ten), `docs/reference/data-catalog-full.md`, `zcrypto.toml` and `docs/specs/00138-b2-three-overlays-design.md`; scratch `.tmp/plan-00138/freeze-read-1.json`, `.tmp/plan-00138/freeze.out`, `.tmp/plan-00138/freeze-check.out`, `.tmp/plan-00138/backfill.out`, `.tmp/plan-00138/attest-daily.out`, `.tmp/plan-00138/daily-basis.out`.
 
 **Interfaces:**
-- Consumes: the live tree `/var/lib/zcrypto-ops/liquidations`, read-only — `<COIN>/liquidations-1m/<YYYY>/<MM>/<DD>/<HH>.parquet` finals, each beside `<HH>.parquet.sha256` whose first token is its bytes' sha256 (spec 00136's measured basis); Task 2's `zcrypto liquidations-backfill`; Task 1's `daily_zscore_grid_feature`; `subjects._b2_inputs`, `derisk_scales`, `per_year_engaged_counts`, `coverage_by_year`; `cli.ohlc.dataset.dataset_hash` and `write_parquet`; the sidecar's line shape (`dataset`, `dataset_sha256`, `first_ts`, `last_ts`, `relpath`, `rows`), which `cli/data/sync.py`'s `_sidecar_by_dataset` reads; `infra/scripts/grafana_auth.py`'s `vault_var`; for the push, `cli.config`'s `load_config` and `resolve_push_dest`, `cli.data.sync`'s `push_hot` and the dry-run half it runs before each transfer (`_run_rsync` with `dry_run=True`, `_parse_new_files`, `_verify_outgoing`) and `sidecar_hash_by_path`, and `tests/test_registry_conformance.py`'s `conformance`, `_hub_root` and `FINDING`, the hub pass's own re-hash.
-- Produces: the tape block — `<COIN>/buckets.parquet` for the ten coins and `covered-hours.parquet`, eleven files — and its eleven sidecar lines; `freeze.out` holding the coverage proof (D7); `freeze-check.out` the second read; the daily block — `<COIN>/daily.parquet` for the ten coins — and its ten sidecar lines; `daily-basis.out`, pasted into the spec as its completed basis; both blocks on the hub's `hot/`, and `hub-read.out` holding the read that every file the four citing runs will read is there.
+- Consumes: the live tree `/var/lib/zcrypto-ops/liquidations`, read-only — `<COIN>/liquidations-1m/<YYYY>/<MM>/<DD>/<HH>.parquet` finals, each beside `<HH>.parquet.sha256` whose first token is its bytes' sha256 (spec 00136's measured basis); Task 2's `zcrypto liquidations-backfill`; Task 1's `daily_zscore_grid_feature`; `subjects._b2_inputs`, `derisk_scales`, `per_year_engaged_counts`, `coverage_by_year`; `cli.ohlc.dataset.dataset_hash` and `write_parquet`; the sidecar's line shape (`dataset`, `dataset_sha256`, `first_ts`, `last_ts`, `relpath`, `rows`), which `cli/data/sync.py`'s `_sidecar_by_dataset` reads; `infra/scripts/grafana_auth.py`'s `vault_var`.
+- Produces: the tape block — `<COIN>/buckets.parquet` for the ten coins and `covered-hours.parquet`, eleven files — and its eleven sidecar lines; `freeze.out` holding the coverage proof (D7); `freeze-check.out` the second read; the daily block — `<COIN>/daily.parquet` for the ten coins — and its ten sidecar lines; `daily-basis.out`, pasted into the spec as its completed basis.
 
 - [ ] **Step 1: The gate** — each its own call: `git status --short` prints nothing; `test ! -e /home/zhaow/Projects/zcrypto-kraken/data/liquidations-frozen`, `test ! -e /home/zhaow/Projects/zcrypto-kraken/data/liquidations-daily`, `test ! -e data/liquidations-frozen` and `test ! -e data/liquidations-daily` each exit 0; `git fetch origin develop`, then `git diff --quiet $(git merge-base HEAD origin/develop) origin/develop -- docs/reference/vouched-dataset-hashes.jsonl` exits 0, so develop has appended nothing to the sidecar since this branch's base.
 
@@ -895,7 +903,7 @@ held = set().union(*(set(f) for f in finals.values()))
 first = min(held)
 span = [first + k * H for k in range((closed_before - first) // H)]
 holes = [h for h in span if h not in held]
-asserted = [h for h in span[1:] if h in held]
+asserted = [h for k, h in enumerate(span) if k and h in held and span[k - 1] in held and (k + 1 == len(span) or span[k + 1] in held)]
 at = set(asserted)
 bars = subjects._capturing_union(ObservedReader(Path("data")), "ohlc-full", 240, None, None, False)[0][:-1]
 reach = sum(all(t + k * H in at for k in range(4)) for t in bars)
@@ -985,7 +993,7 @@ echo "exit $?"; cat .tmp/plan-00138/freeze-check.out
 
 - [ ] **Step 4: Link and read back the tape block** — `ln -sn /home/zhaow/Projects/zcrypto-kraken/data/liquidations-frozen data/liquidations-frozen` (`-n`, so an existing link is refused, never followed); then `uv run python -c 'from pathlib import Path; from cli.registry.observed import ObservedReader; r = ObservedReader(Path("data")); [r.read_series("liquidations-frozen", p) for p in ["covered-hours.parquet", *(f"{c}/buckets.parquet" for c in ("ADA", "AVAX", "BTC", "DOGE", "DOT", "ETH", "LINK", "LTC", "SOL", "XRP"))]]; print(r.vouched_status(), {d: (len(e["files"]), e["rows"], e["span"]) for d, e in r.block().items()})'` prints `{'liquidations-frozen': 'checked (11 vouched hashes)'}` and the eleven files.
 
-- [ ] **Step 5: The daily fetch** — the one network call and the one vault read of this plan, one call from this worktree's root, the key set for the backfill's process alone and never printed:
+- [ ] **Step 5: The daily fetch** — the one Coinalyze call and the one vault read of this plan, one call from this worktree's root, the key set for the backfill's process alone and never printed:
 
 ```bash
 COINALYZE_API_KEY="$(uv run python -c 'import sys; sys.path.insert(0, "/home/zhaow/Projects/zcrypto-kraken/infra/scripts"); import grafana_auth; print(grafana_auth.vault_var("coinalyze_api_key", "host_vars/zcrypto-ops/vault.yml"))')" uv run zcrypto liquidations-backfill --out /home/zhaow/Projects/zcrypto-kraken/data/liquidations-daily > .tmp/plan-00138/backfill.out 2>&1; echo "exit $?"; date -u +%FT%TZ; cat .tmp/plan-00138/backfill.out
@@ -1042,9 +1050,9 @@ echo "exit $?"; cat .tmp/plan-00138/attest-daily.out
 ### Binance liquidations, frozen block (`data/liquidations-frozen/`, the live tape's closed span to <the last asserted hour>; written once)
 
 - **Producer:** the freeze of spec/plan `00138` (D7, Task 3): one read-only copy of the live tree's (coin, hour) finals of every hour starting 31 h or more before its read at <the read's time>, each final's bytes checked against its manifest, every bucket checked, the tree read again 600 s later, a whole poll cycle between, and found unchanged over that span.
-- **Schema:** `<COIN>/buckets.parquet` — the coin's closed-span finals concatenated in stamp order, the live schema `ts, symbol, long_usd, short_usd, event_id`; `covered-hours.parquet` — one `ts` column, the hours asserted covered for every coin: each hour of the closed span but its first, partial one that some coin's final holds (<n> hours, <first> → <last>).
+- **Schema:** `<COIN>/buckets.parquet` — the coin's closed-span finals concatenated in stamp order, the live schema `ts, symbol, long_usd, short_usd, event_id`; `covered-hours.parquet` — one `ts` column, the hours asserted covered for every coin: each hour of the closed span that some coin's final holds, but its first, partial one and the held hours beside a hole (<n> hours, <first> → <last>).
 - **Attestation:** eleven path-bound lines in `docs/reference/vouched-dataset-hashes.jsonl`, each file's `dataset_hash`, which `ObservedReader` checks on every read; no manifest. Never rewritten: a re-freeze is a new name under a new spec.
-- **Caveats:** the live stream's lower bound, and the coverage assertion's own (spec `00138` D7): a coin reads low at an hour where a poll raised on its entry in every cycle that fetched the hour, or where a sweep was skipped past 31 h. In `zcrypto.toml`'s `authored_sets`: pushed once to the hub's `hot/`, where `data fetch` carries it to each research node.
+- **Caveats:** the live stream's lower bound, and the coverage assertion's own: the hours at which spec `00138` D7 says a coin can read low. In `zcrypto.toml`'s `authored_sets`: pushed once to the hub's `hot/`, where `data fetch` carries it to each research node.
 - **Consumers:** `b2-liq-tape-reading` (spec `00138` D12); <the 4h grid's reach, off `freeze.out`> of the frozen `ohlc-full` union's bars hold four asserted hours.
 
 ### Binance liquidations, daily history (`data/liquidations-daily/`, Coinalyze's daily window <the first day> → <the last day>; written once)
@@ -1145,96 +1153,6 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: <the executing session's URL>
 EOF
 ```
-
-- [ ] **Step 13: The hub push** (D7's hub) — after step 12's commit and before any record or reading citing either block is committed, three calls, each read before the next. First the dry inspection, which sends nothing:
-
-```bash
-uv run python - > .tmp/plan-00138/hub-dry.out 2>&1 <<'EOF'
-import subprocess
-import sys
-from pathlib import Path
-
-from cli.config import load_config, resolve_push_dest
-from cli.data.errors import DataSyncError
-from cli.data.sync import _parse_new_files, _run_rsync, _verify_outgoing, sidecar_hash_by_path
-
-ROOT = Path("/home/zhaow/Projects/zcrypto-kraken/data")
-cfg = load_config()
-dest = resolve_push_dest(cfg)
-for name in ("liquidations-frozen", "liquidations-daily"):
-    if name not in cfg.data.authored_sets:
-        sys.exit(f"{name} is not in zcrypto.toml's authored_sets")
-    planned = _parse_new_files(_run_rsync(ROOT / name, f"{dest}{name}/", subprocess.run, dry_run=True))
-    attested = sorted(sidecar_hash_by_path(name))
-    if sorted(planned) != attested:
-        sys.exit(f"{name}: the push would send {sorted(planned)}, not the {len(attested)} files its sidecar lines attest")
-    try:
-        _verify_outgoing(ROOT / name, name, planned)
-    except DataSyncError as exc:
-        sys.exit(str(exc))
-    print(f"{name}: {len(planned)} files to send, each re-hashed against its sidecar line: {sorted(planned)}")
-EOF
-echo "exit $?"; cat .tmp/plan-00138/hub-dry.out
-```
-
-  Exit 0 prints eleven files for `liquidations-frozen` and ten for `liquidations-daily`. A `sys.exit` or a traceback sent nothing and is the owner's question with its line quoted — a set already on `hot/`, which the push would not complete, among them. Then the push, a one-way door — `hot/` keeps what lands and no later push corrects it:
-
-```bash
-uv run python - > .tmp/plan-00138/hub-push.out 2>&1 <<'EOF'
-from pathlib import Path
-
-from cli.config import load_config, resolve_push_dest
-from cli.data.sync import push_hot
-
-report = push_hot(
-    Path("/home/zhaow/Projects/zcrypto-kraken/data"),
-    [],
-    resolve_push_dest(load_config()),
-    extra_sets=["liquidations-frozen", "liquidations-daily"],
-)
-print(f"new {len(report.new_files)}, skipped {report.skipped_existing}: {sorted(report.new_files)}")
-EOF
-echo "exit $?"; date -u +%FT%TZ; cat .tmp/plan-00138/hub-push.out
-```
-
-  Exit 0 prints `new 21, skipped 0`; anything else is the owner's question, quoted whole, since what landed stays. **Author's call** — `push_hot` with the two blocks as `extra_sets`, as `data rebuild` pushes what it minted, rather than `zcrypto data push`, which pushes every authored set out of the data root its checkout's `zcrypto.toml` names and refuses one missing: this worktree's `data/` links only the sets the plan reads, and only this branch's sidecar attests the two blocks; the call here reads this worktree's sidecar and the main checkout's data root and touches no other set, `data/ohlc-holdout-*` among them. Then the read of `hot/`, the hub pass's own re-hash over the files the four citing runs will read:
-
-```bash
-uv run python - > .tmp/plan-00138/hub-read.out 2>&1 <<'EOF'
-import sys
-from pathlib import Path
-
-from cli.registry.observed import ObservedReader
-from cli.research import subjects
-from tests.test_registry_conformance import FINDING, _hub_root, conformance
-
-ROOT = Path("/home/zhaow/Projects/zcrypto-kraken/data")
-WINDOW = ("2026-07-14 11:00:00+00:00", "2026-10-10 23:59:59+00:00")
-cited = []
-for label, dataset, relpaths in (
-    ("the OI and ratio records", "derivatives-oi", [f"{subjects.PERP_SYMBOLS[a]}/oi.parquet" for a in subjects._ASSETS]),
-    ("trial 5's record", "liquidations-daily", [f"{a}/daily.parquet" for a in subjects._ASSETS]),
-):
-    reader = ObservedReader(ROOT)
-    subjects._capturing_union(reader, "ohlc-full", 240, None, None, False)
-    for relpath in relpaths:
-        reader.read_series(dataset, relpath)
-    cited.append((label, reader.block()))
-reader = ObservedReader(ROOT)
-for interval in (60, 15):
-    subjects._capturing_union(reader, "ohlc-rolling", interval, WINDOW, "2026-10-10", False)
-for relpath in ("covered-hours.parquet", *(f"{a}/buckets.parquet" for a in subjects._ASSETS)):
-    reader.read_series("liquidations-frozen", relpath)
-cited.append(("the reading", reader.block()))
-verdicts = conformance(cited, _hub_root(), frozenset())
-for v in verdicts:
-    print(v.label, v.dataset, v.verdict, v.detail)
-sys.exit(1 if any(v.verdict == FINDING for v in verdicts) else 0)
-EOF
-echo "exit $?"; cat .tmp/plan-00138/hub-read.out
-```
-
-  Exit 0 prints six lines, each `rederived` — `derivatives-oi` and `ohlc-full` for the OI and ratio records, `liquidations-daily` and `ohlc-full` for trial 5's, `liquidations-frozen` and `ohlc-rolling` for the reading; a `finding`, a file missing from `hot/` or holding other bytes, is the owner's question before Task 6's hash, since the nightly hub pass would fail on the record or reading that cites it. The read computes no return. The three outputs go to the PR body (Task 12 step 4).
 
 ______________________________________________________________________
 
@@ -2981,7 +2899,7 @@ def test_the_daily_block_is_attested_and_its_signal_reproduces_the_completed_bas
     held = inputs._replace(signal=signal, scales=derisk_scales(signal, config=B2Config(z_threshold=threshold)), threshold=threshold)
     keys = ("engaged_per_asset", "engaged_per_year", "binperp_liq_long_z30d_coverage", "primary_returns", "threshold")
     assert subjects._b2_overlay_engagement(held, "binperp_liq_long_z30d") == {key: basis[key] for key in keys}
-    # The window the probe measured, less what the days between it and the backfill drop, is longer than trial 4's.
+    # The fetch's window, wherever its first day falls, is longer than trial 4's.
     assert basis["primary_returns"] > _START["b2-ratio-derisk"][1]
 
 
@@ -3040,7 +2958,7 @@ def test_the_overlays_arm_a_reproduces_records_50_and_51s_arm_a(_reads):
   - `test_the_oi_and_ratio_signals_reproduce_the_measured_basis` — `--control 's/^def coverage(/def coverage_gone(/' --mutation 's/^    "b2-oi-derisk": (datetime(2021, 12, 30, 20, tzinfo=UTC), 9_311),/    "b2-oi-derisk": (datetime(2021, 12, 30, 20, tzinfo=UTC), 9_312),/'`;
   - `test_the_daily_block_is_attested_and_its_signal_reproduces_the_completed_basis` — `--control 's/^def attested(/def attested_gone(/' --mutation 's/"checked (10 vouched hashes)"}/"checked (9 vouched hashes)"}/'`;
   - `test_the_tape_block_is_attested_file_by_file` — `--control 's/^def attested(/def attested_gone(/' --mutation 's/ and len(rows) == 11$/ and len(rows) == 10/'`;
-  - `test_the_overlays_arm_a_reproduces_records_50_and_51s_arm_a` — `--control 's/^def _reads(/def _reads_gone(/'`, the case then failing at its fixture's setup, `--mutation 's/^    "turnover_a": 146.18534602048504,/    "turnover_a": 146.18534602048505,/'`.
+  - `test_the_overlays_arm_a_reproduces_records_50_and_51s_arm_a` — `--control 's/^def _reads(/def _reads_gone(/'`, the case then failing at its fixture's setup, `--mutation 's/^    "turnover_a": 146.18534602048504,/    "turnover_a": 146.18534602048507,/'`, the next float up.
 
 - [ ] **Step 5: Commit**
 
@@ -3076,14 +2994,107 @@ EOF
 
 ______________________________________________________________________
 
-### Task 6 (the controller's): the gate, the spec hash, the develop check, the data tests and the check programs (D10)
+### Task 6 (the controller's): the gate, the hub push, the spec hash, the develop check, the data tests and the check programs (D7's hub, D10)
 
-**Files:** scratch under `.tmp/plan-00138/`.
+**Files:** scratch under `.tmp/plan-00138/`, `hub-dry.out`, `hub-push.out` and `hub-read.out` among it; both blocks pushed to the hub's `hot/` (step 1a).
+
+**Interfaces:** step 1a consumes `cli.config`'s `load_config` and `resolve_push_dest`, `cli.data.sync`'s `push_hot` and the dry-run half it runs before each transfer (`_run_rsync` with `dry_run=True`, `_parse_new_files`, `_verify_outgoing`) and `sidecar_hash_by_path`, and `tests/test_registry_conformance.py`'s `conformance`, `_hub_root` and `FINDING`, the hub pass's own re-hash; it produces both blocks on the hub's `hot/`, and `hub-read.out` holding the read that every file the four citing runs will read is there.
 
 - [ ] **Step 1: The gate** — each check its own call, each read before the next:
   - The reads through Task 5 have closed with no open Critical or Important, and nothing changed since: `git diff --quiet <the tip the last read names> -- cli/ tests/ pyproject.toml uv.lock docs/specs/00138-b2-three-overlays-design.md docs/research/10.phase4-decisions.md docs/reference/vouched-dataset-hashes.jsonl` exits 0; with no report naming a tip, stop: the reads come first.
   - The conventions entry against the spec at that tip, `grep -n "Author's call" docs/specs/00138-b2-three-overlays-design.md`: each call the entry names reads as the spec makes it; where a fix moved one, the entry is corrected in its own `docs(research)` commit and the first check runs again after a read of it.
-  - Arm A's code path since record 51's run: `git log --oneline 044b14d3c0e8e5a247fe70bf25b30f7eb7a65196..HEAD -- cli/alpha cli/features cli/portfolio cli/benchmark cli/validation cli/backtest cli/research/subjects.py cli/registry/observed.py cli/ohlc cli/derivatives uv.lock pyproject.toml .python-version` lists `e8c8e374b` and `358e6da11` (the spec's measured basis), Tasks 1's and 4's commits and their fixes alone; any other commit is named, step 4's data tests deciding whether it moved arm A.
+  - Arm A's code path since record 51's run: `git log --oneline 044b14d3c0e8e5a247fe70bf25b30f7eb7a65196..HEAD -- cli/alpha cli/features cli/portfolio cli/benchmark cli/validation cli/backtest cli/research/subjects.py cli/registry cli/ohlc cli/derivatives cli/data uv.lock pyproject.toml .python-version` lists `e8c8e374b` and `358e6da11` (the spec's measured basis), Tasks 1's and 4's commits and their fixes alone; any other commit is named, step 4's data tests deciding whether it moved arm A.
+
+- [ ] **Step 1a: The hub push** (D7's hub) — after step 1's gate, which reads the trio closed over the blocks' attestation and the completed basis, and before step 2's hash, so no read's finding against a block lands after the block is on `hot/`; three calls, each read before the next. First the dry inspection, which sends nothing:
+
+```bash
+uv run python - > .tmp/plan-00138/hub-dry.out 2>&1 <<'EOF'
+import subprocess
+import sys
+from pathlib import Path
+
+from cli.config import load_config, resolve_push_dest
+from cli.data.errors import DataSyncError
+from cli.data.sync import _parse_new_files, _run_rsync, _verify_outgoing, sidecar_hash_by_path
+
+ROOT = Path("/home/zhaow/Projects/zcrypto-kraken/data")
+cfg = load_config()
+dest = resolve_push_dest(cfg)
+for name in ("liquidations-frozen", "liquidations-daily"):
+    if name not in cfg.data.authored_sets:
+        sys.exit(f"{name} is not in zcrypto.toml's authored_sets")
+    planned = _parse_new_files(_run_rsync(ROOT / name, f"{dest}{name}/", subprocess.run, dry_run=True))
+    attested = sorted(sidecar_hash_by_path(name))
+    if sorted(planned) != attested:
+        sys.exit(f"{name}: the push would send {sorted(planned)}, not the {len(attested)} files its sidecar lines attest")
+    try:
+        _verify_outgoing(ROOT / name, name, planned)
+    except DataSyncError as exc:
+        sys.exit(str(exc))
+    print(f"{name}: {len(planned)} files to send, each re-hashed against its sidecar line: {sorted(planned)}")
+EOF
+echo "exit $?"; cat .tmp/plan-00138/hub-dry.out
+```
+
+  Exit 0 prints eleven files for `liquidations-frozen` and ten for `liquidations-daily`. A `sys.exit` or a traceback sent nothing and is the owner's question with its line quoted — a set already on `hot/`, which the push would not complete, among them. Then the push, a one-way door — `hot/` keeps what lands and no later push corrects it:
+
+```bash
+uv run python - > .tmp/plan-00138/hub-push.out 2>&1 <<'EOF'
+from pathlib import Path
+
+from cli.config import load_config, resolve_push_dest
+from cli.data.sync import push_hot
+
+report = push_hot(
+    Path("/home/zhaow/Projects/zcrypto-kraken/data"),
+    [],
+    resolve_push_dest(load_config()),
+    extra_sets=["liquidations-frozen", "liquidations-daily"],
+)
+print(f"new {len(report.new_files)}, skipped {report.skipped_existing}: {sorted(report.new_files)}")
+EOF
+echo "exit $?"; date -u +%FT%TZ; cat .tmp/plan-00138/hub-push.out
+```
+
+  Exit 0 prints `new 21, skipped 0`; anything else is the owner's question, quoted whole, since what landed stays. **Author's call** — `push_hot` with the two blocks as `extra_sets`, as `data rebuild` pushes what it minted, rather than `zcrypto data push`, which pushes every authored set out of the data root its checkout's `zcrypto.toml` names and refuses one missing: this worktree's `data/` links only the sets the plan reads, and only this branch's sidecar attests the two blocks; the call here reads this worktree's sidecar and the main checkout's data root and touches no other set, `data/ohlc-holdout-*` among them. Then the read of `hot/`, the hub pass's own re-hash over the files the four citing runs will read:
+
+```bash
+uv run python - > .tmp/plan-00138/hub-read.out 2>&1 <<'EOF'
+import sys
+from pathlib import Path
+
+from cli.registry.observed import ObservedReader
+from cli.research import subjects
+from tests.test_registry_conformance import FINDING, _hub_root, conformance
+
+ROOT = Path("/home/zhaow/Projects/zcrypto-kraken/data")
+WINDOW = ("2026-07-14 11:00:00+00:00", "2026-10-10 23:59:59+00:00")
+cited = []
+for label, dataset, relpaths in (
+    ("the OI and ratio records", "derivatives-oi", [f"{subjects.PERP_SYMBOLS[a]}/oi.parquet" for a in subjects._ASSETS]),
+    ("trial 5's record", "liquidations-daily", [f"{a}/daily.parquet" for a in subjects._ASSETS]),
+):
+    reader = ObservedReader(ROOT)
+    subjects._capturing_union(reader, "ohlc-full", 240, None, None, False)
+    for relpath in relpaths:
+        reader.read_series(dataset, relpath)
+    cited.append((label, reader.block()))
+reader = ObservedReader(ROOT)
+for interval in (60, 15):
+    subjects._capturing_union(reader, "ohlc-rolling", interval, WINDOW, "2026-10-10", False)
+for relpath in ("covered-hours.parquet", *(f"{a}/buckets.parquet" for a in subjects._ASSETS)):
+    reader.read_series("liquidations-frozen", relpath)
+cited.append(("the reading", reader.block()))
+verdicts = conformance(cited, _hub_root(), frozenset())
+for v in verdicts:
+    print(v.label, v.dataset, v.verdict, v.detail)
+sys.exit(1 if any(v.verdict == FINDING for v in verdicts) else 0)
+EOF
+echo "exit $?"; cat .tmp/plan-00138/hub-read.out
+```
+
+  Exit 0 prints six lines, each `rederived` — `derivatives-oi` and `ohlc-full` for the OI and ratio records, `liquidations-daily` and `ohlc-full` for trial 5's, `liquidations-frozen` and `ohlc-rolling` for the reading; a `finding`, a file missing from `hot/` or holding other bytes, is the owner's question before step 2's hash, since the nightly hub pass would fail on the record or reading that cites it. The read computes no return. The three outputs go to the PR body (Task 12 step 4), with D7's hub window: until the merge carries the blocks' sidecar lines to develop, another checkout's first `data fetch` into a root without the blocks exits on their refusal.
+
 - [ ] **Step 2: D10 (1), the spec hash** — `sha256sum docs/specs/00138-b2-three-overlays-design.md`; its value, pasted from that call, is every run's `--spec-hash` and every record's and reading's `spec_hash`. From here nobody edits the spec.
 - [ ] **Step 3: D10 (2), the develop check** — `git fetch origin develop`, then `git diff --quiet $(git merge-base HEAD origin/develop) origin/develop -- docs/reference/trial-registry.jsonl docs/reference/reading-ledger.jsonl` exits 0: develop has appended nothing since this branch's base, so each append chains onto the branch's own last line; if not, develop is merged first (`git merge --no-edit origin/develop`, alone, then step 1's checks again). It runs again before each trial's pre-flight and the reading (Tasks 7–10 step 1).
 - [ ] **Step 4: D10 (3), the data tests on the run's tree** — `ZCRYPTO_RERUN_SLOW=1 uv run pytest tests/test_research_b2_overlays_basis.py tests/test_data_vouched_sidecar.py -q -p no:cacheprovider --basetemp=.tmp/plan-00138/pt > .tmp/plan-00138/basis.out 2>&1`, one background call, reads every case passed, never a skip; a failure is the owner's question before the first pre-flight.
@@ -3306,7 +3317,7 @@ ______________________________________________________________________
 - [ ] **Step 2: The window and the set** — each its own call: `uv run python -c 'import json; print([r["first_ts"] for r in map(json.loads, open("docs/reference/vouched-dataset-hashes.jsonl")) if r["dataset"] == "liquidations-frozen" and r["relpath"] == "covered-hours.parquet"])'` prints `['2026-07-14 11:00:00+00:00']`, the window's pre-registered start, any other value the owner's question; `test ! -e data/ohlc-rolling` exits 0, then `ln -sn /home/zhaow/Projects/zcrypto-kraken/data/ohlc-rolling data/ohlc-rolling`; `test -f data/ohlc-rolling/index/2026/10/10.json` exits 0.
 - [ ] **Step 3: The run** — one run, no plain eval before or after it: `uv run zcrypto research eval --subject b2-liq-tape-reading --dataset ohlc-rolling --as-of 2026-10-10 --window "2026-07-14 11:00:00+00:00" "2026-10-10 23:59:59+00:00" --reading --iteration iter-182 --spec-hash <H> --notes "<the notes>" > .tmp/plan-00138/b2-liq-tape-reading.out 2>&1`, one background call, `cat` at its notification; the notes, written before the run: `subject b2-liq-tape-reading over ohlc-rolling as of 2026-10-10, window 2026-07-14 11:00 to 2026-10-10 23:59:59 (the frozen tape's first asserted hour to the rolling set's last bar that day), no holes accepted; descriptive, outside the B2 instrument ruling, no bar, no verdict, no B slot, changing no verdict of trials 3-5; per coin and pooled, the forward 1-, 4- and 24-hour log returns and realized volatility (15-minute closes) from the close of an hour whose 720-hour z-score of liquidated notional (long plus short, the frozen block's covered hours) exceeds 2, against the other hours whose z-score is defined; stationary-bootstrap 95 % bounds of the difference, mean block 24 h, 2000 resamples, seed 42, one draw shared by every series and coin; the return leg mixes long cascades and short squeezes; pre-registered by the spec's sha256 <H>`. A refused build — exit 1 naming `b2-liq-tape-reading over …` or `liquidations-frozen/<file>: …` — keeps no reading and is recorded in T0023 with its line (Task 11); a hole refusal (`… has a hole on …`) contradicts the measured basis and is the owner's question, never re-run with `--accept-holes`; a traceback is the owner's question.
 - [ ] **Step 4: The reading's checks** — `uv run python .tmp/plan-00138/reading_check.py <H>` exits 0; a failed check is the owner's question before step 5.
-- [ ] **Step 5: The records commit** — (i) at the end of `docs/research/10.phase4-decisions.md`, with `iteration-closeout` loaded, the entry `[iter-182] B2's liquidation tape read as an event study on ohlc-rolling as of 2026-10-10 (reading <its reading_id>)`, its header to its first `. ` holding no verdict word; the body: per series the pooled row — events, others, the two means, the difference and its bounds — unrounded, and the coins whose bounds exclude 0, read off the ledger line; `events_per_asset` and `zscore_hours_per_asset`; that the reading is descriptive, outside the instrument ruling, spends no slot and changes no verdict (D12); the return leg's mixing of the two sides and the tape's coverage caveat (D7), stated; in the form of the `[iter-175]` entry that keeps reading 1; (ii) `tests/slow-cases.txt` gains `tests/test_registry_replay.py::test_every_record_past_47_replays_at_head[reading-<its id>]` at its `sorted()` place when the replay below runs 10 s or more, and not otherwise. Then, (i) staged and (ii) not yet, `T` over the staged paths with the two decisions-log tests and `tests/test_slow_cases.py` by path; `uv run pre-commit run -a`; in the probe worktree with `data/ohlc-full`, `data/ohlc-rolling` and `data/liquidations-frozen` linked and unlinked before its removal, `ZCRYPTO_RERUN_SLOW=1 uv run pytest tests/test_registry_replay.py -k 'reading-<its id>' --durations=0 -q -p no:cacheprovider --basetemp=.tmp/pt` passes, one background call — a difference is the owner's question. A call of 10 s or more stages (ii), and the gate, the probe worktree — the old one unlinked and removed first — and the replay run once more over the new staged tree, its line the message's; under 10 s, (ii) stays out and the first run's line is the message's. Committed as `docs(research): B2's liquidation tape — the event-study reading on ohlc-rolling, kept as reading <id>; no trial spent` with the replay's line and call time, `probe skipped: slow case` for its node id when listed, and the line `The replay reads data/ohlc-full, data/ohlc-rolling and data/liquidations-frozen: re-run it with the three sets linked into the worktree (ln -sn) and unlinked before its removal; unlinked, it skips.` The entry adds no guard: no probe.
+- [ ] **Step 5: The records commit** — (i) at the end of `docs/research/10.phase4-decisions.md`, with `iteration-closeout` loaded, the entry `[iter-182] B2's liquidation tape read as an event study on ohlc-rolling as of 2026-10-10 (reading <its reading_id>)`, its header to its first `. ` holding no verdict word; the body: per series the pooled row — events, others, the two means, the difference and its bounds — unrounded, and the coins whose bounds exclude 0, read off the ledger line; `events_per_asset` and `zscore_hours_per_asset`; that the reading is descriptive, outside the instrument ruling, spends no slot and changes no verdict (D12); the return leg's mixing of the two sides and the tape's coverage caveat (D7), stated; in the form of the `[iter-175]` entry that keeps reading 1; (ii) `tests/slow-cases.txt` gains `tests/test_registry_replay.py::test_every_record_past_47_replays_at_head[reading-<its id>]` at its `sorted()` place when the replay's first call below runs 10 s or more, and not otherwise. Then, (i) staged and (ii) not yet, `T` over the staged paths with the two decisions-log tests and `tests/test_slow_cases.py` by path; `uv run pre-commit run -a`; in the probe worktree with `data/ohlc-full`, `data/ohlc-rolling` and `data/liquidations-frozen` linked and unlinked before its removal, `ZCRYPTO_RERUN_SLOW=1 uv run pytest tests/test_registry_replay.py -k 'reading-<its id>' --durations=0 -q -p no:cacheprovider --basetemp=.tmp/pt` passes, one background call — a difference is the owner's question. A call of 10 s or more stages (ii), and the gate, the probe worktree — the old one unlinked and removed first — and the replay run once more over the new staged tree, its line the message's whatever its time, the first call's alone deciding (ii); under 10 s, (ii) stays out and the first run's line is the message's. Committed as `docs(research): B2's liquidation tape — the event-study reading on ohlc-rolling, kept as reading <id>; no trial spent` with the replay's line and call time, `probe skipped: slow case` for its node id when listed, and the line `The replay reads data/ohlc-full, data/ohlc-rolling and data/liquidations-frozen: re-run it with the three sets linked into the worktree (ln -sn) and unlinked before its removal; unlinked, it skips.` The entry adds no guard: no probe.
 
 ______________________________________________________________________
 
@@ -3319,7 +3330,7 @@ ______________________________________________________________________
 - [ ] **Step 1: T0023**, per `topic-ops`, every figure read off the committed records, readings and entries:
   - `## Findings so far` gains one bullet per trial — `**B2 trial 3 <VERDICT> (iter-182, spec 00138, registry trial <N>).**` with the row that fired and the engagement in one or two sentences, or `**B2 trial 3 — instrument finding (iter-182, spec 00138, reading <R>).**` with what failed, or, for an outcome the dispatch passes, `**B2 trial 3 — not run (iter-182, spec 00138).**` with its refused line quoted whole and the trial unspent; trials 4 and 5 alike, trial 5's naming its threshold and window; one for the reading, `**B2's liquidation tape, event study (iter-182, spec 00138, reading <R>).**`, its pooled differences and bounds in a sentence and that it changes no verdict, or, on a refused build, `**B2's liquidation tape, event study — not run (iter-182, spec 00138).**` with its line quoted whole; and one for the two frozen blocks: the tape's eleven files, closed span and asserted hours, and the daily block's ten files and span, each attested and on the hub's `hot/`.
   - `## Done so far` gains a bullet, **B2 trials 3–5 (iter-182, spec/plan 00138)**, naming the ratio z-scores, their all-four maximum, the daily z-score, the hourly totals and the event contrast in `cli/alpha/b2.py`, `zcrypto liquidations-backfill`, the frozen blocks `data/liquidations-frozen/` and `data/liquidations-daily/`, the seven subjects and the data-gated basis test, and the records and readings by id.
-  - `## Suggested next steps`: the item `(owner) B2's next step after trial 2's reject` is replaced by `(owner) B2's next step after trials 3–5` — <the verdicts, stops and trials not run in one clause>; a park's variants, a further leg, a trial on the tape, or closing the family — the owner's pick, recorded as a `[iter-NNN] B2's next step after trial 5` entry; the later-trials item drops the OI leg and the four ratio columns, keeps the funding variants, and says a trial on the 1-minute tape waits on an instrument whose window reaches the frozen block, which re-proves its coverage, the reading's figures beside it; on an adopt, the live feed's spec after the combination trial (D11); on a refusal from the count, an `(owner)` item naming the trial and each orphan or the bucket's figure its line printed, a further count being a new subject under a new spec (D8).
+  - `## Suggested next steps`: the item `(owner) B2's next step after trial 2's reject` is replaced by `(owner) B2's next step after trials 3–5` — <the verdicts, stops and trials not run in one clause>; a park's variants, a further leg, a trial on the tape, a follow-up the reading's figures invite (the daily history reconciled with the tape, the reading at a later as-of or over a longer span, a per-side reading), or closing the family — the owner's pick, recorded as a `[iter-NNN] B2's next step after trial 5` entry; the later-trials item drops the OI leg and the four ratio columns, keeps the funding variants, and says a trial on the 1-minute tape waits on an instrument whose window reaches the frozen block, which re-proves its coverage, the reading's figures beside it; on an adopt, the live feed's spec after the combination trial (D11); on a refusal from the count, an `(owner)` item naming the trial and each orphan or the bucket's figure its line printed, a further count being a new subject under a new spec (D8).
   - `ripe_when` — on no adopt: `an activity: the owner picks B2's next step after trials 3–5 — a park variant, a further leg, or closing the family — recorded in the decisions log; check: grep -c -E '^\[iter-[0-9]+\] B2.s next step after trial 5' docs/research/10.phase4-decisions.md prints at least 1`; on an adopt: `an activity: the P1 combination trial over record 47's book carrying B2 trial <k>'s arm B is picked for an iteration; check: cat docs/research/10.phase4-decisions.md docs/research/13.phase5-decisions.md | grep -c -E '^\[iter-[0-9]+\] [^.]*combination trial over record 47.s book' prints at least 1`. The check is run as committed and prints 0.
 - [ ] **Step 2: T0016** — its budget line reads `B1 spent 5, B2 spent <1 + the records Tasks 7–9 landed>, <19 − those records> remain`, less one for each orphan a record's `attempt.counted` lists, named on that line; its B2 line under `## Done so far` names trials 3–5 and the reading (iter-182, spec/plan `00138`) with their records or readings and verdicts.
 - [ ] **Step 3: The index** — `uv run python infra/scripts/topics-index.py`.
@@ -3356,6 +3367,6 @@ ______________________________________________________________________
   Its gate `uv run pytest tests/test_decisions_log_shape.py tests/test_decisions_log_ties.py -q -p no:cacheprovider --basetemp=.tmp/plan-00138/pt` and `uv run pre-commit run -a`; committed as `docs(research): [iter-182] B2's next step after trial 2 — the owner's pick, one spec with three trials in sequence, trial 5 on the daily history and the tape a reading`. T0023's trigger before Task 11 read this entry's header, which now prints 1 on that check; Task 11 already moved the topic to its next trigger.
 - [ ] **Step 2 (the controller's): The change-index row** — through `open-pr`'s Step 4, the PR title `feat(research): iter-182 — B2 trials 3–5: OI, ratio, liquidation de-risk` (72 characters by `wc -m`, at `open-pr`'s cap), its own commit.
 - [ ] **Step 3 (the controller's): The read** — the `pre-review` of Tasks 7–12's commits, then `review` over `<the tip the last read covered>..HEAD`, since the commits add files outside that read's range, and `re-review` over a fix of it within the branch's two, each `drive` carrying one sentence in words: the data-gated cases and replays the messages record run with the frozen full set, the OI set, the rolling set and the two frozen liquidation blocks linked into the reader's worktree and unlinked by the reader before its report, since unlinked they skip.
-- [ ] **Step 4 (the controller's): The PR and the merge** — the consumer union `open-pr` runs as the last step before the first push, then the push, its own call; the PR through `open-pr`, its body: the three verdicts or stops and the reading, each pre-flight's output and the reading's quoted whole in a fenced block (`.tmp/plan-00138/*-preflight.out`, `.tmp/plan-00138/b2-liq-tape-reading.out`), the freeze's and the backfill's output, the hub push's three (`.tmp/plan-00138/hub-dry.out`, `hub-push.out` and `hub-read.out`), every probe verdict line naming `infra/scripts/mutate-probe.sh`, each `probe skipped: slow case`, the explicit drop of every case the consumer union and `open-pr`'s data-gated run skipped, read off their `-rs` skip lines, and the read line naming the tip the delta's read covered. Merged on the owner's word through `merge-pr`; before it, `git status --short --ignored` read, `.tmp/plan-00138` removed, and `unlink data/ohlc-full`, `unlink data/derivatives-oi`, `unlink data/derivatives-funding`, `unlink data/liquidations-frozen`, `unlink data/liquidations-daily` and `unlink data/ohlc-rolling` run in this worktree and in each reader's checkout whose `data/` holds the link; after it, `ls -la /home/zhaow/Projects/zcrypto-kraken/data` shows `ohlc-full`, `derivatives-oi`, `derivatives-funding`, `ohlc-rolling`, `liquidations-frozen` and `liquidations-daily` still there.
+- [ ] **Step 4 (the controller's): The PR and the merge** — the consumer union `open-pr` runs as the last step before the first push, then the push, its own call; the PR through `open-pr`, its body: the three verdicts or stops and the reading, each pre-flight's output and the reading's quoted whole in a fenced block (`.tmp/plan-00138/*-preflight.out`, `.tmp/plan-00138/b2-liq-tape-reading.out`), the freeze's and the backfill's output, the hub push's three (`.tmp/plan-00138/hub-dry.out`, `hub-push.out` and `hub-read.out`) with D7's hub window, every probe verdict line naming `infra/scripts/mutate-probe.sh`, each `probe skipped: slow case`, the explicit drop of every case the consumer union and `open-pr`'s data-gated run skipped, read off their `-rs` skip lines, and the read line naming the tip the delta's read covered. Merged on the owner's word through `merge-pr`; before it, `git status --short --ignored` read, `.tmp/plan-00138` removed, and `unlink data/ohlc-full`, `unlink data/derivatives-oi`, `unlink data/derivatives-funding`, `unlink data/liquidations-frozen`, `unlink data/liquidations-daily` and `unlink data/ohlc-rolling` run in this worktree and in each reader's checkout whose `data/` holds the link; after it, `ls -la /home/zhaow/Projects/zcrypto-kraken/data` shows `ohlc-full`, `derivatives-oi`, `derivatives-funding`, `ohlc-rolling`, `liquidations-frozen` and `liquidations-daily` still there.
 
 Decisions log: the conventions entry (Task 5 step 6), before the hash; the verdict or instrument-finding entries (Tasks 7–9 step 6), each in its record's commit; the reading's entry (Task 10 step 5); and this task's `[iter-182] B2's next step after trial 2`.
