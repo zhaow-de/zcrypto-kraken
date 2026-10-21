@@ -24,7 +24,6 @@ RETIRED_SUBJECTS = frozenset(
         "b2-arm-a-bar",
         "b2-funding-derisk-full",
         "b2-funding-derisk-full-preflight",
-        # B2's trials 3-5, their pre-flights and the liquidation tape's reading.
         "b2-oi-derisk",
         "b2-oi-derisk-preflight",
         "b2-ratio-derisk",
