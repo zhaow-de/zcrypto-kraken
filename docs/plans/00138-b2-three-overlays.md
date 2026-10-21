@@ -903,7 +903,7 @@ held = set().union(*(set(f) for f in finals.values()))
 first = min(held)
 span = [first + k * H for k in range((closed_before - first) // H)]
 holes = [h for h in span if h not in held]
-asserted = [h for k, h in enumerate(span) if k and h in held and span[k - 1] in held and (k + 1 == len(span) or span[k + 1] in held)]
+asserted = [h for k, h in enumerate(span) if k and h in held and span[k - 1] in held and k + 1 < len(span) and span[k + 1] in held]
 at = set(asserted)
 bars = subjects._capturing_union(ObservedReader(Path("data")), "ohlc-full", 240, None, None, False)[0][:-1]
 reach = sum(all(t + k * H in at for k in range(4)) for t in bars)
@@ -1050,7 +1050,7 @@ echo "exit $?"; cat .tmp/plan-00138/attest-daily.out
 ### Binance liquidations, frozen block (`data/liquidations-frozen/`, the live tape's closed span to <the last asserted hour>; written once)
 
 - **Producer:** the freeze of spec/plan `00138` (D7, Task 3): one read-only copy of the live tree's (coin, hour) finals of every hour starting 31 h or more before its read at <the read's time>, each final's bytes checked against its manifest, every bucket checked, the tree read again 600 s later, a whole poll cycle between, and found unchanged over that span.
-- **Schema:** `<COIN>/buckets.parquet` — the coin's closed-span finals concatenated in stamp order, the live schema `ts, symbol, long_usd, short_usd, event_id`; `covered-hours.parquet` — one `ts` column, the hours asserted covered for every coin: each hour of the closed span that some coin's final holds, but its first, partial one and the held hours beside a hole (<n> hours, <first> → <last>).
+- **Schema:** `<COIN>/buckets.parquet` — the coin's closed-span finals concatenated in stamp order, the live schema `ts, symbol, long_usd, short_usd, event_id`; `covered-hours.parquet` — one `ts` column, the hours asserted covered for every coin: each hour of the closed span that some coin's final holds, but its first and last, partial ones, and the held hours beside a hole (<n> hours, <first> → <last>).
 - **Attestation:** eleven path-bound lines in `docs/reference/vouched-dataset-hashes.jsonl`, each file's `dataset_hash`, which `ObservedReader` checks on every read; no manifest. Never rewritten: a re-freeze is a new name under a new spec.
 - **Caveats:** the live stream's lower bound, and the coverage assertion's own: the hours at which spec `00138` D7 says a coin can read low. In `zcrypto.toml`'s `authored_sets`: pushed once to the hub's `hot/`, where `data fetch` carries it to each research node.
 - **Consumers:** `b2-liq-tape-reading` (spec `00138` D12); <the 4h grid's reach, off `freeze.out`> of the frozen `ohlc-full` union's bars hold four asserted hours.
@@ -2899,7 +2899,7 @@ def test_the_daily_block_is_attested_and_its_signal_reproduces_the_completed_bas
     held = inputs._replace(signal=signal, scales=derisk_scales(signal, config=B2Config(z_threshold=threshold)), threshold=threshold)
     keys = ("engaged_per_asset", "engaged_per_year", "binperp_liq_long_z30d_coverage", "primary_returns", "threshold")
     assert subjects._b2_overlay_engagement(held, "binperp_liq_long_z30d") == {key: basis[key] for key in keys}
-    # The fetch's window, wherever its first day falls, is longer than trial 4's.
+    # The fetch's window is longer than trial 4's for a fetch up to 95 days after the probe (D6).
     assert basis["primary_returns"] > _START["b2-ratio-derisk"][1]
 
 
