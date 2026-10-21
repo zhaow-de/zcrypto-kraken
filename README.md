@@ -14,6 +14,7 @@ Learning-for-Fun quant-trading research project for Kraken (spot + spot-margin).
   - [`zcrypto capture`](#zcrypto-capture)
   - [`zcrypto liquidations`](#zcrypto-liquidations)
   - [`zcrypto liquidations-poll`](#zcrypto-liquidations-poll)
+  - [`zcrypto liquidations-backfill`](#zcrypto-liquidations-backfill)
   - [`zcrypto engine`](#zcrypto-engine)
   - [`zcrypto archive`](#zcrypto-archive)
   - [`zcrypto panel`](#zcrypto-panel)
@@ -99,6 +100,20 @@ zcrypto liquidations-poll [OPTIONS]
 | `--duration <SECS>` | Run for this many seconds then stop cleanly (for smoke-testing; runs at least one poll cycle even with `0`); omit to run until interrupted. |
 
 Requires `$COINALYZE_API_KEY` (exits with an error if unset). Segments land at `<data-dir>/<COIN>/liquidations-1m/<YYYY>/<MM>/<DD>/<HH>.parquet`, with columns `ts, symbol, long_usd, short_usd, event_id`. Only buckets Coinalyze has proven closed (`bucket_end <= now - 120s`) are ingested; each cycle re-polls the last 24h and relies on the synthesized `event_id` (`<symbol>-<bucket_start>`) for de-dup, since Coinalyze's own history only stretches back ~25-33h. Set `LIQUIDATIONS_HEALTHCHECK_URL` to enable the dead-man's-switch liveness ping (sent only after a fully successful cycle); it's optional and skipped when unset.
+
+### `zcrypto liquidations-backfill`<a name="zcrypto-liquidations-backfill"></a>
+
+A one-shot fetch of Coinalyze's **daily** liquidation history for the same 10 USDT perps, from 2018-01-01 to the last day proven closed (`day_end <= now - 120s`), in one batched call. Coinalyze returns about 1,500 points at every interval, so the first day is whatever its window holds on the fetch day. Nothing is written unless every coin is present once, each with day stamps on 00:00Z, strictly increasing, and both legs finite and non-negative.
+
+```bash
+zcrypto liquidations-backfill --out <PATH>
+```
+
+| Option | Description |
+| -- | -- |
+| `--out <PATH>` | The new set's directory; refused if it exists. |
+
+Requires `$COINALYZE_API_KEY` (exits with an error if unset). Writes `<out>/<COIN>/daily.parquet` with columns `ts` (the day's 00:00Z), `long_usd` and `short_usd`, and prints each coin's day count.
 
 ### `zcrypto engine`<a name="zcrypto-engine"></a>
 
