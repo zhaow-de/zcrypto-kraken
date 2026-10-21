@@ -52,7 +52,8 @@ ops_rrsync_shell: /usr/local/sbin/rrsync-shell
 # canonical's daily extension from the tape-bars runner; zhaow authors into it.
 ops_hot_group: zcrypto-hot
 # The interactive-research user (workstation-aligned; created by the research role, NOT this pipeline
-# role). Added to ops_hot_group only when it already exists, so this role never creates it.
+# role). Added to ops_hot_group only when it already exists, so this role never creates it. It is also the
+# account the nightly data-gated user unit runs as, so the Coveralls token env file is rendered into its home.
 ops_research_user: zhaow
 
 # node-exporter-style textfile-collector dir the timers publish their .prom files into --
