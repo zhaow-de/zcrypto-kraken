@@ -28,10 +28,10 @@ _REAL_SEND = runner.send_coverage
 
 
 @pytest.fixture(autouse=True)
-def _no_vault_and_no_upload(tmp_path, monkeypatch):
+def _no_token_file_and_no_upload(tmp_path, monkeypatch):
     """A raise here would be swallowed into a `failed` outcome by `coverage_upload`, so the double records each reach and
     the case fails at teardown."""
-    monkeypatch.setattr(runner, "_AUTH", tmp_path / "no-grafana-auth.py")
+    monkeypatch.setattr(runner, "TOKEN_FILE", tmp_path / "no-token-file" / "coveralls.env")
     reached = []
     monkeypatch.setattr(runner, "send_coverage", lambda repo, token: reached.append(repo))
     yield
@@ -464,24 +464,35 @@ def test_an_empty_summary_after_a_kill_never_reads_as_ok():
     assert result["ok"] is False and result["error"] == runner.NO_SUMMARY
 
 
-# --- the coverage upload, the vault module and the upload faked ---------------------------------------------------------
+# --- the coverage upload, its token file under `tmp_path` and the upload faked ------------------------------------------
 
 TOKEN = "s3cret-repo-token"
 JOB = {"message": "Job #7.1", "url": "https://coveralls.io/jobs/7"}
+_HOLDS_THE_TOKEN = f"# the nightly's upload token\n\nCOVERALLS_REPO_TOKEN={TOKEN}\n"
 
 
-def _vault(tmp_path: Path, monkeypatch, body: str) -> None:
-    """A `grafana_auth` whose `vault_var` is `body`'s, loaded as the runner loads the real one."""
-    module = tmp_path / "fake_grafana_auth.py"
-    module.write_text(textwrap.dedent(body))
-    monkeypatch.setattr(runner, "_AUTH", module)
+def _token_file(tmp_path: Path, monkeypatch, body: str = _HOLDS_THE_TOKEN, mode: int = 0o600) -> Path:
+    path = tmp_path / "coveralls.env"
+    path.write_text(body)
+    path.chmod(mode)
+    monkeypatch.setattr(runner, "TOKEN_FILE", path)
+    return path
 
 
-_HOLDS_THE_TOKEN = f"def vault_var(name):\n    return {{'coveralls_repo_token': {TOKEN!r}}}[name]\n"
+def _absent(tmp_path: Path, monkeypatch) -> Path:
+    path = tmp_path / "coveralls.env"
+    monkeypatch.setattr(runner, "TOKEN_FILE", path)
+    return path
 
 
-def test_an_upload_records_the_url_coveralls_returns_for_the_vaults_token(tmp_path, monkeypatch):
-    _vault(tmp_path, monkeypatch, _HOLDS_THE_TOKEN)
+def _a_directory(tmp_path: Path, monkeypatch) -> Path:
+    path = _absent(tmp_path, monkeypatch)
+    path.mkdir(mode=0o700)
+    return path
+
+
+def test_an_upload_records_the_url_coveralls_returns_for_the_token_files_token(tmp_path, monkeypatch):
+    _token_file(tmp_path, monkeypatch)
     sent = []
     monkeypatch.setattr(runner, "send_coverage", lambda repo, token: sent.append((repo, token)) or JOB)
 
@@ -490,21 +501,64 @@ def test_an_upload_records_the_url_coveralls_returns_for_the_vaults_token(tmp_pa
 
 
 @pytest.mark.parametrize(
-    ("vault", "skip", "reason"),
+    ("setup", "skip", "reason"),
     [
-        pytest.param(_HOLDS_THE_TOKEN, "a reason the run gives", "a reason the run gives", id="the-run-gives-a-reason"),
-        pytest.param("def vault_var(name):\n    return {}[name]\n", None, "the vault holds no coveralls_repo_token", id="absent"),
-        pytest.param("def vault_var(name):\n    return ''\n", None, "the vault's coveralls_repo_token is empty", id="empty"),
+        pytest.param(_token_file, "a reason the run gives", "a reason the run gives", id="the-run-gives-a-reason"),
+        pytest.param(_absent, None, "no token file at {path}", id="absent"),
+        pytest.param(
+            lambda t, m: _token_file(t, m, mode=0o640),
+            None,
+            "{path} has mode 0640: a group or other permission bit is refused",
+            id="group-readable",
+        ),
+        pytest.param(
+            lambda t, m: _token_file(t, m, mode=0o604),
+            None,
+            "{path} has mode 0604: a group or other permission bit is refused",
+            id="other-readable",
+        ),
+        pytest.param(_a_directory, None, "{path} is not a regular file", id="a-directory"),
+        pytest.param(
+            lambda t, m: _token_file(t, m, "COVERALLS_REPO_TOKEN=\n"), None, "{path}'s COVERALLS_REPO_TOKEN is empty", id="empty"
+        ),
+        pytest.param(
+            lambda t, m: _token_file(t, m, "# not yet\n\n"), None, "{path} holds no COVERALLS_REPO_TOKEN line", id="missing"
+        ),
+        pytest.param(
+            lambda t, m: _token_file(t, m, f'# the nightly\'s upload token\nCOVERALLS_REPO_TOKEN="{TOKEN}"\n'),
+            None,
+            "{path} line 2 is not a COVERALLS_REPO_TOKEN=<token> line",
+            id="malformed",
+        ),
+        pytest.param(
+            lambda t, m: _token_file(t, m, f"COVERALLS_REPO_TOKEN={TOKEN}\nCOVERALLS_REPO_TOKEN=another\n"),
+            None,
+            "{path} line 2 is a second COVERALLS_REPO_TOKEN line",
+            id="a-second-token-line",
+        ),
     ],
 )
-def test_a_skipped_upload_says_why_and_sends_nothing(tmp_path, monkeypatch, vault, skip, reason):
-    _vault(tmp_path, monkeypatch, vault)
+def test_a_skipped_upload_says_why_and_sends_nothing(tmp_path, monkeypatch, setup, skip, reason):
+    path = setup(tmp_path, monkeypatch)
 
-    assert runner.coverage_upload(tmp_path, skip) == {"outcome": "skipped", "reason": reason}
+    outcome = runner.coverage_upload(tmp_path, skip)
+
+    assert outcome == {"outcome": "skipped", "reason": reason.format(path=path)}
+    assert TOKEN not in json.dumps(outcome)
+
+
+def test_a_token_file_another_uid_owns_is_refused(tmp_path, monkeypatch):
+    path = _token_file(tmp_path, monkeypatch)
+    mine = os.getuid()
+    monkeypatch.setattr(os, "getuid", lambda: mine + 1)
+
+    outcome = runner.coverage_upload(tmp_path, None)
+
+    assert outcome == {"outcome": "skipped", "reason": f"{path} is owned by uid {mine}, not this run's uid {mine + 1}"}
 
 
 def test_a_failed_upload_records_its_class_and_a_message_without_the_token(tmp_path, monkeypatch):
-    _vault(tmp_path, monkeypatch, _HOLDS_THE_TOKEN)
+    _token_file(tmp_path, monkeypatch)
 
     def refused(repo, token):
         raise ConnectionError(f"coveralls.io answered 504 to repo_token={token}")
@@ -521,28 +575,17 @@ def test_a_failed_upload_records_its_class_and_a_message_without_the_token(tmp_p
     assert TOKEN not in json.dumps(outcome)
 
 
-@pytest.mark.parametrize(
-    ("vault", "send", "error_class"),
-    [
-        pytest.param(
-            "def vault_var(name):\n    return {'other': 1}['other_key']\n", None, "KeyError", id="a-keyerror-naming-another-key"
-        ),
-        pytest.param("raise RuntimeError('the password helper exited 1')\n", None, "RuntimeError", id="the-vault-will-not-load"),
-        pytest.param(_HOLDS_THE_TOKEN, lambda repo, token: {"message": "Job #7.1"}, "KeyError", id="an-answer-without-a-url"),
-    ],
-)
-def test_a_vault_that_will_not_give_the_token_or_an_answer_without_a_url_fails(tmp_path, monkeypatch, vault, send, error_class):
-    _vault(tmp_path, monkeypatch, vault)
-    if send is not None:
-        monkeypatch.setattr(runner, "send_coverage", send)
+def test_an_answer_without_a_url_fails(tmp_path, monkeypatch):
+    _token_file(tmp_path, monkeypatch)
+    monkeypatch.setattr(runner, "send_coverage", lambda repo, token: {"message": "Job #7.1"})
 
     outcome = runner.coverage_upload(tmp_path, None)
 
-    assert outcome["outcome"] == "failed" and outcome["error_class"] == error_class, outcome
+    assert outcome["outcome"] == "failed" and outcome["error_class"] == "KeyError", outcome
 
 
 def test_an_upload_with_no_answer_is_cut_off_and_fails(tmp_path, monkeypatch):
-    _vault(tmp_path, monkeypatch, _HOLDS_THE_TOKEN)
+    _token_file(tmp_path, monkeypatch)
     released = threading.Event()
     monkeypatch.setattr(runner, "send_coverage", lambda repo, token: released.wait(30) and JOB)
     monkeypatch.setattr(runner, "UPLOAD_TIMEOUT_S", 0.2)
@@ -599,7 +642,7 @@ def _main(tmp_path: Path, monkeypatch, output: str, exit_code: int, *args: str) 
 
 @pytest.mark.parametrize(("output", "exit_code"), [(_PASSING, 0), (_FAILING, 1)], ids=["passing", "failing"])
 def test_an_upload_that_raises_leaves_the_verdict_and_the_exit_status(tmp_path, monkeypatch, output, exit_code):
-    _vault(tmp_path, monkeypatch, _HOLDS_THE_TOKEN)
+    _token_file(tmp_path, monkeypatch)
     monkeypatch.setattr(runner, "send_coverage", lambda repo, token: JOB)
     code_up, uploaded, _ = _main(tmp_path, monkeypatch, output, exit_code)
 
@@ -636,7 +679,7 @@ def test_an_upload_that_raises_leaves_the_verdict_and_the_exit_status(tmp_path, 
     ],
 )
 def test_the_run_measures_coverage_whole_and_uploads_only_a_parsed_runs(tmp_path, monkeypatch, output, args, pytest_args, reason):
-    _vault(tmp_path, monkeypatch, _HOLDS_THE_TOKEN)
+    _token_file(tmp_path, monkeypatch)
     monkeypatch.setattr(runner, "send_coverage", lambda repo, token: JOB)
 
     _, result, handed = _main(tmp_path, monkeypatch, output, 0, *args)
@@ -646,7 +689,7 @@ def test_the_run_measures_coverage_whole_and_uploads_only_a_parsed_runs(tmp_path
 
 
 def test_a_whole_parsed_run_measures_coverage_and_uploads_it(tmp_path, monkeypatch):
-    _vault(tmp_path, monkeypatch, _HOLDS_THE_TOKEN)
+    _token_file(tmp_path, monkeypatch)
     monkeypatch.setattr(runner, "send_coverage", lambda repo, token: JOB)
 
     code, result, handed = _main(tmp_path, monkeypatch, _PASSING, 0)
