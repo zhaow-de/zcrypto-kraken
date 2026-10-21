@@ -26,12 +26,12 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import importlib.util
 import json
 import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import threading
@@ -41,10 +41,12 @@ from pathlib import Path
 PYTEST_ARGS = ("-q", "-p", "no:cacheprovider", "-rfEs")
 # The data file only, `.coverage` at the checkout's root: the upload reads it, and a report would only lengthen the journal.
 COVERAGE_ARGS = ("--cov=cli", "--cov-report=")
-COVERAGE_TOKEN_VAR = "coveralls_repo_token"
 COVERALLS_SERVICE = "zcrypto-nightly"
 UPLOAD_TIMEOUT_S = 120.0
-_AUTH = Path(__file__).resolve().parent / "grafana_auth.py"
+# The ops role renders it at this path under its research user's home; tests/test_data_gated_run.py pins the two.
+TOKEN_FILE = Path.home() / ".config" / "zcrypto" / "coveralls.env"
+TOKEN_KEY = "COVERALLS_REPO_TOKEN"
+_TOKEN_LINE = re.compile(rf"{TOKEN_KEY}=(?P<token>[^\s'\"]*)")
 RESULT_DIR = Path(".local") / "data-gated-runs"
 SCHEMA = 3
 # `1 failed, 2 passed, 1 error in 0.01s`, `no tests ran in 0.00s`, `3 passed in 65.12s (0:01:05)` --
@@ -207,12 +209,38 @@ def build_result(
     }
 
 
+class NoToken(Exception):
+    """Why the upload is skipped: the message names the file, never the token or a line's text."""
+
+
 def read_coverage_token() -> str:
-    """`grafana_auth` is loaded here rather than at import, so a load that fails is the upload's failure, never the run's."""
-    spec = importlib.util.spec_from_file_location("grafana_auth", _AUTH)
-    auth = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(auth)
-    return auth.vault_var(COVERAGE_TOKEN_VAR)
+    path = TOKEN_FILE
+    try:
+        st = os.stat(path)
+    except FileNotFoundError:
+        raise NoToken(f"no token file at {path}") from None
+    if not stat.S_ISREG(st.st_mode):
+        raise NoToken(f"{path} is not a regular file")
+    if st.st_uid != os.getuid():
+        raise NoToken(f"{path} is owned by uid {st.st_uid}, not this run's uid {os.getuid()}")
+    if st.st_mode & 0o077:
+        raise NoToken(f"{path} has mode {stat.S_IMODE(st.st_mode):04o}: a group or other permission bit is refused")
+    token = None
+    for number, raw in enumerate(path.read_text().splitlines(), start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        match = _TOKEN_LINE.fullmatch(line)
+        if match is None:
+            raise NoToken(f"{path} line {number} is not a {TOKEN_KEY}=<token> line")
+        if token is not None:
+            raise NoToken(f"{path} line {number} is a second {TOKEN_KEY} line")
+        token = match.group("token")
+    if token is None:
+        raise NoToken(f"{path} holds no {TOKEN_KEY} line")
+    if not token:
+        raise NoToken(f"{path}'s {TOKEN_KEY} is empty")
+    return token
 
 
 def send_coverage(repo: Path, token: str) -> dict:
@@ -257,12 +285,8 @@ def coverage_upload(repo: Path, skip: str | None) -> dict:
         nonlocal token
         try:
             token = read_coverage_token()
-        except KeyError as exc:
-            if exc.args != (COVERAGE_TOKEN_VAR,):
-                raise
-            return {"outcome": "skipped", "reason": f"the vault holds no {COVERAGE_TOKEN_VAR}"}
-        if not token:
-            return {"outcome": "skipped", "reason": f"the vault's {COVERAGE_TOKEN_VAR} is empty"}
+        except NoToken as why:
+            return {"outcome": "skipped", "reason": str(why)}
         return {"outcome": "uploaded", "url": send_coverage(repo, token)["url"]}
 
     try:

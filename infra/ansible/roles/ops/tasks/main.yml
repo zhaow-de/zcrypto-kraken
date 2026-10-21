@@ -307,6 +307,29 @@
     append: true
   when: ops_research_probe.rc == 0
 
+# The nightly data-gated run's Coveralls token. That run is the research user's systemd user unit, and
+# infra/scripts/data-gated-run.py reads TOKEN_FILE only when this uid owns it and no group or other bit is
+# set, so the owner is that user and the modes are owner-only. Ungated on any digest: the runner has no image.
+- name: ensure the research user's zcrypto config directory exists (owner-only)
+  ansible.builtin.file:
+    path: "~{{ ops_research_user }}/.config/zcrypto"
+    state: directory
+    owner: "{{ ops_research_user }}"
+    group: "{{ ops_research_user }}"
+    mode: "0700"
+  when: ops_research_probe.rc == 0
+
+- name: render the nightly's Coveralls token env file (owner-only)
+  ansible.builtin.template:
+    src: coveralls.env.j2
+    dest: "~{{ ops_research_user }}/.config/zcrypto/coveralls.env"
+    owner: "{{ ops_research_user }}"
+    group: "{{ ops_research_user }}"
+    mode: "0600"
+  when: ops_research_probe.rc == 0 and coveralls_repo_token is defined
+  no_log: true
+  diff: false
+
 # --- The four NAS pull channels, now role-provisioned on zcrypto-data (spec 00057; they were
 # hand-installed on deploy). Each `rrsync -ro` pins its own subtree -- least-privilege per channel,
 # mirroring the capture/engine roles' sync forced commands. exclusive:false so these ADD to (do not
