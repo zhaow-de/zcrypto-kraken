@@ -13,7 +13,14 @@ from typer.testing import CliRunner
 
 from cli.__main__ import app
 from cli.capture.segment_writer import LIQ_AGG_SCHEMA, SegmentWriter, verify_manifest
-from cli.liquidations.coinalyze import COINS, fetch_liquidation_history, poll_cycle, prime_bucket_watermarks, symbol_for
+from cli.liquidations.coinalyze import (
+    COINS,
+    backfill_daily,
+    fetch_liquidation_history,
+    poll_cycle,
+    prime_bucket_watermarks,
+    symbol_for,
+)
 from cli.liquidations.errors import LiquidationsError
 
 runner = CliRunner()
@@ -698,3 +705,147 @@ def test_a_healthy_cycle_still_pings_the_dead_man(tmp_path, monkeypatch):
 
     assert list(tmp_path.rglob("*.parquet")), "the healthy cycle must actually write, or the ping proves nothing"
     assert pings == ["https://hc.example/ping"]
+
+
+# --- the daily backfill ------------------------------------------------------------------------
+
+
+def _capturing(body):
+    urls = []
+
+    def _open(request, timeout=None):
+        urls.append(request.full_url)
+        return io.BytesIO(json.dumps(body).encode("utf-8"))
+
+    return _open, urls
+
+
+def test_fetch_liquidation_history_sends_the_interval_it_is_given():
+    opener, urls = _capturing([])
+    fetch_liquidation_history("key", ["BTCUSDT_PERP.A"], 900, 1900, interval="daily", opener=opener)
+    assert "interval=daily" in urls[0] and "interval=1min" not in urls[0]
+
+
+def test_poll_cycle_requests_the_one_minute_interval(tmp_path):
+    opener, urls = _capturing([])
+    writers = {"BTC": SegmentWriter(tmp_path, "BTC", "liquidations-1m", LIQ_AGG_SCHEMA, dedup_key="event_id")}
+    poll_cycle("key", ["BTC"], writers, now=datetime(2024, 3, 1, 12, 5, tzinfo=UTC), opener=opener)
+    writers["BTC"].close()
+    assert len(urls) == 1 and "interval=1min" in urls[0]
+
+
+# 2024-03-01 12:05Z: days to 2024-02-29 are closed, 2024-03-01's is still open.
+_BACKFILL_NOW = datetime(2024, 3, 1, 12, 5, tzinfo=UTC)
+_DAY_S = 86_400
+_FEB_27 = int(datetime(2024, 2, 27, tzinfo=UTC).timestamp())
+
+
+def _daily_body(coins=("BTC", "ETH"), *, stamps=(_FEB_27, _FEB_27 + _DAY_S, _FEB_27 + 2 * _DAY_S, _FEB_27 + 3 * _DAY_S)):
+    return [
+        {
+            "symbol": f"{coin}USDT_PERP.A",
+            "history": [{"t": t, "l": 1000.0 * (i + 1) + k, "s": 10.0 * k} for k, t in enumerate(stamps)],
+        }
+        for i, coin in enumerate(coins)
+    ]
+
+
+def test_the_daily_backfill_writes_one_file_per_coin_of_its_closed_days(tmp_path):
+    opener, urls = _capturing(_daily_body())
+
+    written = backfill_daily("key", ["BTC", "ETH"], tmp_path / "set", now=_BACKFILL_NOW, opener=opener)
+
+    assert written == {"BTC": 3, "ETH": 3}
+    assert "interval=daily" in urls[0] and f"from={int(datetime(2018, 1, 1, tzinfo=UTC).timestamp())}" in urls[0]
+    frame = pl.read_parquet(tmp_path / "set" / "ETH" / "daily.parquet")
+    assert frame.schema == {"ts": pl.Datetime("us", "UTC"), "long_usd": pl.Float64, "short_usd": pl.Float64}
+    assert frame["ts"].to_list() == [datetime(2024, 2, d, tzinfo=UTC) for d in (27, 28, 29)]
+    assert (frame["long_usd"].to_list(), frame["short_usd"].to_list()) == ([2000.0, 2001.0, 2002.0], [0.0, 10.0, 20.0])
+
+
+@pytest.mark.parametrize(
+    ("body", "refused"),
+    [
+        pytest.param(_daily_body(("BTC",)), "the response holds no closed day for ['ETH']", id="a-coin-missing"),
+        pytest.param(
+            [*_daily_body(("BTC",), stamps=(_FEB_27 - _DAY_S,)), *_daily_body()],
+            "BTCUSDT_PERP.A: the response holds the coin twice",
+            id="a-coin-twice",
+        ),
+        pytest.param({"error": "nope"}, "malformed Coinalyze liquidation-history response", id="a-non-list-body"),
+        pytest.param(_daily_body(stamps=(_FEB_27, _FEB_27 + 3600)), "BTCUSDT_PERP.A: a day stamp off 00:00Z", id="off-midnight"),
+        pytest.param(
+            _daily_body(stamps=(_FEB_27 + _DAY_S, _FEB_27)), "BTCUSDT_PERP.A: day stamps not strictly increasing", id="non-monotone"
+        ),
+        pytest.param(
+            [{"symbol": "BTCUSDT_PERP.A", "history": [{"t": _FEB_27, "l": 1.0}]}, *_daily_body(("ETH",))],
+            "BTCUSDT_PERP.A: a malformed daily bucket",
+            id="a-malformed-bucket",
+        ),
+        pytest.param(
+            [{"symbol": "BTCUSDT_PERP.A", "history": [{"t": _FEB_27, "l": float("nan"), "s": 1.0}]}, *_daily_body(("ETH",))],
+            "BTCUSDT_PERP.A: a malformed daily bucket: a leg non-finite or negative",
+            id="a-non-finite-leg",
+        ),
+        pytest.param(
+            [{"symbol": "BTCUSDT_PERP.A", "history": [{"t": _FEB_27, "l": 1.0, "s": -5.0}]}, *_daily_body(("ETH",))],
+            "BTCUSDT_PERP.A: a malformed daily bucket: a leg non-finite or negative",
+            id="a-negative-leg",
+        ),
+    ],
+)
+def test_the_daily_backfill_refuses_a_response_it_cannot_trust_and_writes_nothing(tmp_path, body, refused):
+    opener, _ = _capturing(body)
+
+    with pytest.raises(LiquidationsError, match=re.escape(refused)):
+        backfill_daily("key", ["BTC", "ETH"], tmp_path / "set", now=_BACKFILL_NOW, opener=opener)
+
+    assert not (tmp_path / "set").exists()
+
+
+def test_the_daily_backfill_never_writes_over_a_set(tmp_path):
+    (tmp_path / "set").mkdir()
+
+    def _never(request, timeout=None):
+        raise AssertionError("the backfill fetched before refusing an existing set")
+
+    with pytest.raises(LiquidationsError, match="exists: a backfill never writes over a set"):
+        backfill_daily("key", ["BTC"], tmp_path / "set", now=_BACKFILL_NOW, opener=_never)
+
+
+def test_liquidations_backfill_requires_the_api_key(tmp_path, monkeypatch):
+    monkeypatch.delenv("COINALYZE_API_KEY", raising=False)
+
+    def _never(api_key, coins, out_dir, **kwargs):
+        raise AssertionError("the backfill ran without a key")
+
+    monkeypatch.setattr("cli.liquidations.coinalyze.backfill_daily", _never)
+    result = runner.invoke(app, ["liquidations-backfill", "--out", str(tmp_path / "set")])
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert not (tmp_path / "set").exists()
+
+
+def test_liquidations_backfill_writes_the_ten_coins_and_prints_their_days(tmp_path, monkeypatch):
+    monkeypatch.setenv("COINALYZE_API_KEY", "test-key")
+    calls = []
+
+    def _fake(api_key, coins, out_dir, **kwargs):
+        calls.append((api_key, coins, out_dir))
+        return {coin: 3 for coin in coins}
+
+    monkeypatch.setattr("cli.liquidations.coinalyze.backfill_daily", _fake)
+    result = runner.invoke(app, ["liquidations-backfill", "--out", str(tmp_path / "set")])
+    assert result.exit_code == 0, result.output
+    assert calls == [("test-key", COINS, tmp_path / "set")]
+    assert [line for line in result.output.splitlines() if line] == [f"{coin}: 3 days" for coin in sorted(COINS)]
+
+
+def test_liquidations_backfill_exits_on_a_refusal_naming_it(tmp_path, monkeypatch):
+    monkeypatch.setenv("COINALYZE_API_KEY", "test-key")
+
+    def _refuse(api_key, coins, out_dir, **kwargs):
+        raise LiquidationsError("the response holds no closed day for ['ETH']")
+
+    monkeypatch.setattr("cli.liquidations.coinalyze.backfill_daily", _refuse)
+    result = runner.invoke(app, ["liquidations-backfill", "--out", str(tmp_path / "set")])
+    assert result.exit_code == 1 and "liquidations-backfill: the response holds no closed day for ['ETH']" in result.output

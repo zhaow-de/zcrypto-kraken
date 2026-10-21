@@ -9,7 +9,7 @@ from cli.archive.command import archive_app
 from cli.capture.command import capture
 from cli.data.command import data_app
 from cli.engine.command import engine_app
-from cli.liquidations.coinalyze import liquidations_poll
+from cli.liquidations.coinalyze import liquidations_backfill, liquidations_poll
 from cli.liquidations.command import liquidations
 from cli.logging import ShipConfig, configure, get_logger
 from cli.panel.command import panel_app
@@ -25,6 +25,7 @@ app = typer.Typer(
 app.command(name="capture")(capture)
 app.command(name="liquidations")(liquidations)
 app.command(name="liquidations-poll")(liquidations_poll)
+app.command(name="liquidations-backfill")(liquidations_backfill)
 app.add_typer(engine_app, name="engine")
 app.add_typer(archive_app, name="archive")
 app.add_typer(data_app, name="data")

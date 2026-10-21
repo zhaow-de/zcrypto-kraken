@@ -169,6 +169,22 @@ Unlike the frozen `hot` baskets (pinned at the file level), the accruing operati
 - **Schema:** `ts, symbol, long_usd, short_usd, event_id` per bucket; **zero-liquidation minutes have no bucket** (sparse by source design). Layout `liquidations/<COIN>/liquidations-1m/<YYYY>/…/<HH>.parquet` + manifests; sparse hours finalize at a 31 h wall-clock lag (T0046).
 - **Hard caveat:** the stream is a **lower-bound proxy, not the tape** (Binance's own feed has been lossy since 2021), and Coinalyze retains only ~25–33 h of 1-min bars — **poller downtime beyond ~30 h is a permanent gap** (dead-man `zcrypto-liquidations` pages on silence). Consumer: the B2 derivatives-positioning family ([[T0023]]/[[T0016]]).
 
+### Binance liquidations, frozen block (`data/liquidations-frozen/`, the live tape's closed span to 2026-10-20T03Z; written once)
+
+- **Producer:** the freeze of spec/plan `00138` (D7, Task 3): one read-only copy of the live tree's (coin, hour) finals of every hour starting 31 h or more before its read at 2026-10-21T12:05:45Z, each final's bytes checked against its manifest, every bucket checked, the tree read again 600 s later, a whole poll cycle between, and found unchanged over that span.
+- **Schema:** `<COIN>/buckets.parquet` — the coin's closed-span finals concatenated in stamp order, the live schema `ts, symbol, long_usd, short_usd, event_id`; `covered-hours.parquet` — one `ts` column, the hours asserted covered for every coin: each hour of the closed span that some coin's final holds, but its first, partial one, its last, which a stop may have cut short, and the held hours beside a hole (2,345 hours, 2026-07-14T11Z → 2026-10-20T03Z).
+- **Attestation:** eleven path-bound lines in `docs/reference/vouched-dataset-hashes.jsonl`, each file's `dataset_hash`, which `ObservedReader` checks on every read; no manifest. Never rewritten: a re-freeze is a new name under a new spec.
+- **Caveats:** the live stream's lower bound, and the coverage assertion's own: the hours at which spec `00138` D7 says a coin can read low. In `zcrypto.toml`'s `authored_sets`: pushed once to the hub's `hot/`, where `data fetch` carries it to each research node.
+- **Consumers:** `b2-liq-tape-reading` (spec `00138` D12); 0 of the frozen `ohlc-full` union's 27,337 bars hold four asserted hours.
+
+### Binance liquidations, daily history (`data/liquidations-daily/`, Coinalyze's daily window 2022-08-25 → 2026-10-20; written once)
+
+- **Producer:** `zcrypto liquidations-backfill` (spec/plan `00138`, D7, Task 3), run once at 2026-10-21T12:06:30Z: one batched Coinalyze `/v1/liquidation-history` call at `interval=daily`, `convert_to_usd=true`, for the ten `<COIN>USDT_PERP.A` symbols from 2018-01-01, the days kept once ended 120 s or more before the fetch; Coinalyze's window of about 1,500 points set the first day.
+- **Schema:** `<COIN>/daily.parquet` — `ts` (the day's 00:00Z), `long_usd`, `short_usd`, a row per day the response held (ADA 1,502, AVAX 1,515, BTC 1,501, DOGE 1,502, DOT 1,518, ETH 1,501, LINK 1,502, LTC 1,503, SOL 1,503, XRP 1,501).
+- **Attestation:** ten path-bound lines in `docs/reference/vouched-dataset-hashes.jsonl`, each file's `dataset_hash`, which `ObservedReader` checks on every read. Never rewritten: a second fetch can return another window, so it is another block, under a new name and a new spec.
+- **Caveats:** Coinalyze's day aggregate of Binance's feed, which reports at most the largest liquidation per 1000 ms per symbol, so a lower bound; a day the response lacks is a gap (AVAX 2 days, LTC 1, the other eight none). In `zcrypto.toml`'s `authored_sets`: pushed once to the hub's `hot/`, where `data fetch` carries it to each research node.
+- **Consumers:** `b2-liq-derisk` and its pre-flight (spec `00138` D6).
+
 ## private
 
 This machine's own state; never synced by `zcrypto data` or any other channel.

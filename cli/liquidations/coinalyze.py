@@ -110,13 +110,15 @@ def symbol_for(coin: str) -> str:
     return f"{coin}USDT_PERP.A"
 
 
-def fetch_liquidation_history(api_key: str, symbols: list[str], frm: int, to: int, *, opener=urllib.request.urlopen) -> list[dict]:
+def fetch_liquidation_history(
+    api_key: str, symbols: list[str], frm: int, to: int, *, interval: str = "1min", opener=urllib.request.urlopen
+) -> list[dict]:
     """`frm` and `to` are unix seconds, inclusive at both ends, and nothing is returned unless the whole
     fetch succeeds. The key travels as a header -- never the URL, never logged -- which is why this
     builds a `Request` rather than calling `urlopen(url)`; `urllib` stores the name capitalized, and
     HTTP header names are case-insensitive, so that is not a bug to fix."""
     symbols_csv = ",".join(symbols)
-    url = f"{_BASE_URL}?symbols={symbols_csv}&interval=1min&from={frm}&to={to}&convert_to_usd=true"
+    url = f"{_BASE_URL}?symbols={symbols_csv}&interval={interval}&from={frm}&to={to}&convert_to_usd=true"
     request = urllib.request.Request(url, headers={"api_key": api_key})
     try:
         with opener(request, timeout=_TIMEOUT_SECONDS) as response:
@@ -359,3 +361,75 @@ def liquidations_poll(
     logger.info("starting liquidations-poll data_dir=%s poll_seconds=%d duration=%s", resolved_data_dir, poll_seconds, duration)
     with single_instance_lock(resolved_data_dir):
         _run(resolved_data_dir, api_key, poll_seconds, healthcheck_url, duration)
+
+
+_DAY_SECONDS = 86_400
+_BACKFILL_FROM = datetime(2018, 1, 1, tzinfo=UTC)
+
+
+def backfill_daily(
+    api_key: str, coins: list[str], out_dir: Path, *, now: datetime | None = None, opener=urllib.request.urlopen
+) -> dict[str, int]:
+    """Coinalyze's daily liquidation history of `coins` from 2018-01-01 to the last day proven closed, one
+    `<COIN>/daily.parquet` each — `ts` the day's 00:00Z, `long_usd`, `short_usd` — returning the days written per coin;
+    nothing is written unless the whole response passes."""
+    if out_dir.exists():
+        raise LiquidationsError(f"{out_dir} exists: a backfill never writes over a set")
+    now_s = int((now or datetime.now(UTC)).timestamp())
+    symbol_to_coin = {symbol_for(coin): coin for coin in coins}
+    payload = fetch_liquidation_history(
+        api_key, list(symbol_to_coin), int(_BACKFILL_FROM.timestamp()), now_s, interval="daily", opener=opener
+    )
+    days: dict[str, list[tuple[int, float, float]]] = {}
+    for entry in payload:
+        coin = symbol_to_coin.get(entry.get("symbol")) if isinstance(entry, dict) else None
+        if coin is None:
+            continue
+        if coin in days:
+            raise LiquidationsError(f"{entry['symbol']}: the response holds the coin twice")
+        try:
+            rows = [(int(b["t"]), float(b["l"]), float(b["s"])) for b in entry.get("history", [])]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise LiquidationsError(f"{entry['symbol']}: a malformed daily bucket: {exc!r}") from exc
+        if not all(0.0 <= leg < float("inf") for _, long, short in rows for leg in (long, short)):
+            raise LiquidationsError(f"{entry['symbol']}: a malformed daily bucket: a leg non-finite or negative")
+        # A day is proven closed as a minute bucket is, once its end lies the poller's margin behind the fetch.
+        rows = [row for row in rows if row[0] + _DAY_SECONDS <= now_s - _CLOSE_MARGIN_SECONDS]
+        stamps = [t for t, _, _ in rows]
+        if any(t % _DAY_SECONDS for t in stamps):
+            raise LiquidationsError(f"{entry['symbol']}: a day stamp off 00:00Z")
+        if any(later <= earlier for earlier, later in zip(stamps, stamps[1:])):
+            raise LiquidationsError(f"{entry['symbol']}: day stamps not strictly increasing")
+        days[coin] = rows
+    if missing := sorted(coin for coin in coins if not days.get(coin)):
+        raise LiquidationsError(f"the response holds no closed day for {missing}")
+    for coin, rows in days.items():
+        frame = pl.DataFrame(
+            {
+                "ts": [datetime.fromtimestamp(t, tz=UTC) for t, _, _ in rows],
+                "long_usd": [long for _, long, _ in rows],
+                "short_usd": [short for _, _, short in rows],
+            },
+            schema={"ts": pl.Datetime("us", "UTC"), "long_usd": pl.Float64, "short_usd": pl.Float64},
+        )
+        (out_dir / coin).mkdir(parents=True)
+        frame.write_parquet(out_dir / coin / "daily.parquet")
+    return {coin: len(rows) for coin, rows in days.items()}
+
+
+def liquidations_backfill(
+    out_dir: Path = typer.Option(..., "--out", help="The new set's directory, refused if it exists."),
+) -> None:
+    """Fetch Coinalyze's daily liquidation history for the funding basket's 10 USDT perps, from 2018-01-01 to the last
+    closed day (Coinalyze keeps about 1,500 days), into one parquet per coin under --out, reading $COINALYZE_API_KEY."""
+    api_key = os.environ.get(API_KEY_ENV_VAR)
+    if not api_key:
+        logger.error("%s is required", API_KEY_ENV_VAR)
+        raise typer.Exit(code=1)
+    try:
+        written = backfill_daily(api_key, COINS, out_dir)
+    except LiquidationsError as exc:
+        typer.echo(f"liquidations-backfill: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    for coin, n_days in sorted(written.items()):
+        typer.echo(f"{coin}: {n_days} days")

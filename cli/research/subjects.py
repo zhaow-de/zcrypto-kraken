@@ -6,10 +6,11 @@ Every byte a `build` reads goes through `ObservedReader`."""
 
 from __future__ import annotations
 
+import math
 import statistics
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import NamedTuple
 
@@ -54,13 +55,19 @@ from cli.alpha.b1_volume import (
 from cli.alpha.b2 import (
     B2Config,
     close_grid,
+    daily_zscore_grid_feature,
     derisk_scales,
+    event_contrast,
     funding_grid_feature,
+    liquidation_hourly_totals,
     net_of_cost,
+    oi_zscore_grid_feature,
     per_year_engaged_counts,
     per_year_max_drawdown,
     per_year_positions_differ,
     per_year_turnover,
+    ratio_max_signal,
+    ratio_zscore_grid_features,
     scale_positions,
 )
 from cli.alpha.errors import AlphaError
@@ -68,7 +75,7 @@ from cli.alpha.killbar import a1_kill_bar, net_of_cost_verdict
 from cli.backtest.errors import BacktestError
 from cli.benchmark.errors import BenchmarkError
 from cli.derivatives.funding import PERP_SYMBOLS
-from cli.features.derivatives import coverage_by_year
+from cli.features.derivatives import coverage_by_year, funding_zscore
 from cli.features.errors import FeatureError
 from cli.portfolio.builder import CombinedSystemConfig, build_combined_system
 from cli.portfolio.crossfreq_system import (
@@ -1990,6 +1997,585 @@ _B2_FULL_PREFLIGHT_KEYS = _B2_ARM_A_BAR_KEYS | {
 }
 
 
+# docs/specs/00138 D3-D10: B2's trials 3-5, spec 00128's half-scale de-risk on three signals of their own, each on a frozen
+# set's full history with trial 2's bars.
+_B2_OI_N_TRIALS = 2  # docs/specs/00138 D8: each count fixed by the spec's hash; a different one is a new subject
+_B2_RATIO_N_TRIALS = 3
+_B2_LIQ_N_TRIALS = 4
+_B2_OI_THRESHOLD = 2.5
+_B2_RATIO_THRESHOLD = 2.5
+_B2_LIQ_SET = "liquidations-daily"
+# Spec 00137's measured basis: trial 2's engaged long asset-stamps over those where its funding z-score is defined.
+_B2_TRIAL_2_ENGAGED_SHARE = 3_486 / 70_682
+_B2_RATIO_COLUMNS = (
+    "count_toptrader_long_short_ratio",
+    "sum_toptrader_long_short_ratio",
+    "count_long_short_ratio",
+    "sum_taker_long_short_vol_ratio",
+)
+
+
+class _B2OverlayInputs(NamedTuple):
+    h4_ts: list[datetime]
+    h4_prices: dict[str, list[float | None]]
+    close: list[datetime]
+    arm_a: dict[str, list[float]]
+    signal: dict[str, list[float | None]]
+    scales: dict[str, list[float]]
+    threshold: float
+
+
+def _b2_oi_signal(reader: ObservedReader, h4_ts: list[datetime]) -> dict[str, list[float | None]]:
+    signal = {}
+    for asset in _ASSETS:
+        relpath = f"{PERP_SYMBOLS[asset]}/oi.parquet"
+        try:
+            rows = reader.read_series("derivatives-oi", relpath)
+            signal[asset] = oi_zscore_grid_feature(rows["ts"].to_list(), rows["sum_open_interest"].to_list(), h4_ts)
+        except (pl.exceptions.PolarsError, AlphaError, FeatureError) as exc:
+            raise SubjectError(f"derivatives-oi/{relpath}: {exc}") from exc
+    return signal
+
+
+def _b2_ratio_signal(reader: ObservedReader, h4_ts: list[datetime]) -> dict[str, list[float | None]]:
+    signal = {}
+    for asset in _ASSETS:
+        relpath = f"{PERP_SYMBOLS[asset]}/oi.parquet"
+        try:
+            rows = reader.read_series("derivatives-oi", relpath)
+            ratios = {column: rows[column].to_list() for column in _B2_RATIO_COLUMNS}
+            signal[asset] = ratio_max_signal(ratio_zscore_grid_features(rows["ts"].to_list(), ratios, h4_ts))
+        except (pl.exceptions.PolarsError, AlphaError, FeatureError) as exc:
+            raise SubjectError(f"derivatives-oi/{relpath}: {exc}") from exc
+    return signal
+
+
+def _b2_liq_signal(reader: ObservedReader, h4_ts: list[datetime]) -> dict[str, list[float | None]]:
+    """The long side's daily notional, the side a long-only book's de-risk reads (docs/specs/00138 D6)."""
+    signal = {}
+    for asset in _ASSETS:
+        relpath = f"{asset}/daily.parquet"
+        try:
+            rows = reader.read_series(_B2_LIQ_SET, relpath)
+            signal[asset] = daily_zscore_grid_feature(rows["ts"].to_list(), rows["long_usd"].to_list(), h4_ts)
+        except (pl.exceptions.PolarsError, AlphaError, FeatureError) as exc:
+            raise SubjectError(f"{_B2_LIQ_SET}/{relpath}: {exc}") from exc
+    return signal
+
+
+def _b2_engagement_threshold(signal: dict[str, list[float | None]], arm_a: dict[str, list[float]]) -> float:
+    """Of spec 00128's two thresholds, the one whose share of arm A's long asset-stamps where the signal is defined the
+    signal exceeds lies nearer trial 2's share, 2.5 on a tie or where no long stamp holds the signal (docs/specs/00138
+    D3)."""
+    held = [z for a in _ASSETS for p, z in zip(arm_a[a], signal[a]) if p > 0 and z is not None]
+    if not held:
+        return 2.5
+    return min((2.5, 2.0), key=lambda t: abs(sum(z > t for z in held) / len(held) - _B2_TRIAL_2_ENGAGED_SHARE))
+
+
+def _b2_overlay_inputs(
+    subject: str,
+    read_signal: Callable[[ObservedReader, list[datetime]], dict[str, list[float | None]]],
+    threshold: float | Callable[[dict[str, list[float | None]], dict[str, list[float]]], float],
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    accept_holes: bool,
+) -> _B2OverlayInputs:
+    """Arm A's positions, the signal and its scales, and no return of arm B: the pre-flight reads this half alone."""
+    h4_ts, h4_prices = _capturing_union(reader, dataset, 240, window, None, accept_holes)
+    close = close_grid(h4_ts)
+    if len(close) < _DECISIVE_START + 2:
+        raise SubjectError(
+            f"{_b2_over(subject, window)}: it holds {len(close)} return indices, and the kill bar's decisive window opens at index "
+            f"{_DECISIVE_START} and needs 2"
+        )
+    if not calendar_year_slices([0.0] * len(close), h4_ts):
+        raise SubjectError(
+            f"{_b2_over(subject, window)}: none of its return indices closes in a calendar year the worst-slice leg reads, the "
+            "stub years left out"
+        )
+    signal = read_signal(reader, h4_ts)
+    # `_b2_inputs`' arm A, built here because that half also reads the funding set.
+    fed = _ffill_btc(h4_prices)
+    arms = [
+        a2_book_returns(
+            fed,
+            config=A2Config(
+                lookbacks=lookbacks,
+                short="off",
+                target_vol=target_vol,
+                vol_lookback=_B2_LOOKBACK,
+                basket_lookback=_B2_LOOKBACK,
+                periods_per_year=PPY_4H,
+            ),
+        )["asset_positions"]
+        for lookbacks, target_vol in _B2_A2_ARMS
+    ]
+    arm_a = {a: [statistics.mean(arm[a][k] for arm in arms) for k in range(len(h4_ts) - 1)] for a in _ASSETS}
+    if callable(threshold):
+        threshold = threshold(signal, arm_a)
+    scales = derisk_scales(signal, config=B2Config(z_threshold=threshold))
+    return _B2OverlayInputs(h4_ts, h4_prices, close, arm_a, signal, scales, threshold)
+
+
+def _b2_overlay_start(inputs: _B2OverlayInputs) -> int:
+    """The first return index at which every asset's signal is defined, the length when none is (docs/specs/00138 D8)."""
+    signal = inputs.signal
+    return next((k for k in range(len(inputs.close)) if all(signal[a][k] is not None for a in _ASSETS)), len(inputs.close))
+
+
+def _b2_overlay_arm_a_bar(inputs: _B2OverlayInputs, *, n_trials: int) -> tuple[dict, list[float], list[float]]:
+    cost = _B2_COST_PER_SIDE
+    returns = _b2_returns(inputs.h4_prices)
+    net_a = net_of_cost(inputs.arm_a, returns, cost_per_side=cost)
+    net_a_x15 = net_of_cost(inputs.arm_a, returns, cost_per_side=1.5 * cost)
+    bench = benchmark_4h_net_of_cost(inputs.h4_prices, cost_per_side=cost)
+    bar = a1_kill_bar(
+        net_a,
+        bench,
+        n_trials=n_trials,
+        var_trials=0.0,
+        mean_block=30,
+        seed=42,
+        cost_stressed_returns=net_a_x15,
+        regime_slices=calendar_year_slices(net_a, inputs.h4_ts),
+        benchmark_slices=calendar_year_slices(bench, inputs.h4_ts),
+        decisive_start=_DECISIVE_START,
+        n_resamples=_N_RESAMPLES,
+    )
+    return bar, net_a, bench
+
+
+def _b2_overlay_engagement(inputs: _B2OverlayInputs, signal_key: str) -> dict:
+    arm_a, scales, close = inputs.arm_a, inputs.scales, inputs.close
+    return {
+        "engaged_per_asset": {a: sum(p > 0 and s < 1 for p, s in zip(arm_a[a], scales[a])) for a in _ASSETS},
+        "engaged_per_year": per_year_engaged_counts(arm_a, scales, close),
+        f"{signal_key}_coverage": {
+            asset: {str(year): [c.non_null, c.total] for year, c in coverage_by_year(close, values).items()}
+            for asset, values in inputs.signal.items()
+        },
+        "primary_returns": len(close) - _b2_overlay_start(inputs),
+        "threshold": inputs.threshold,
+    }
+
+
+def _b2_overlay_metrics(inputs: _B2OverlayInputs, *, signal_key: str, n_trials: int) -> dict:
+    arm_a, scales, close = inputs.arm_a, inputs.scales, inputs.close
+    start = _b2_overlay_start(inputs)
+    if len(close) - start < 2:
+        raise ValidationError(
+            f"{len(close) - start} of its return indices carry every asset's {signal_key}, and the head-to-head from the "
+            "signal's own start needs 2"
+        )
+    arm_b = scale_positions(arm_a, scales)
+    cost = _B2_COST_PER_SIDE
+    returns = _b2_returns(inputs.h4_prices)
+    net_a = net_of_cost(arm_a, returns, cost_per_side=cost)
+    net_b = net_of_cost(arm_b, returns, cost_per_side=cost)
+    net_b_x15 = net_of_cost(arm_b, returns, cost_per_side=1.5 * cost)
+    bench = benchmark_4h_net_of_cost(inputs.h4_prices, cost_per_side=cost)
+    slices_b, slices_bench = calendar_year_slices(net_b, inputs.h4_ts), calendar_year_slices(bench, inputs.h4_ts)
+    drawdown_b = max_drawdown(net_b[start:])
+    drawdown_a = max_drawdown(net_a[start:])
+    if drawdown_a == 0:
+        raise ValidationError("arm A never draws down from the signal's own start, so max_drawdown_reduction_pct divides by zero")
+    grid = {
+        (block, seed): a1_kill_bar(
+            net_b,
+            bench,
+            n_trials=n_trials,
+            var_trials=0.0,
+            mean_block=block,
+            seed=seed,
+            cost_stressed_returns=net_b_x15,
+            regime_slices=slices_b,
+            benchmark_slices=slices_bench,
+            decisive_start=_DECISIVE_START,
+            n_resamples=_N_RESAMPLES,
+        )
+        for block in (30, 102)
+        for seed in (42, 7, 1234)
+    }
+    headline = grid[(30, 42)]
+    head_to_head = {}
+    for label, first in (("full", 0), ("primary", start)):
+        verdict = net_of_cost_verdict(net_b[first:], net_a[first:], mean_block=30, seed=42, n_resamples=_N_RESAMPLES)
+        head_to_head[f"head_to_head_mean_outperf_{label}"] = verdict["mean_outperformance"]
+        head_to_head[f"head_to_head_spa_p_{label}"] = verdict["spa_p_value"]
+    positions_differ = per_year_positions_differ(arm_a, arm_b, close)
+    engagement = _b2_overlay_engagement(inputs, signal_key)
+    del engagement["engaged_per_asset"]
+    return {
+        "ann_sharpe_noc": sharpe(net_b, periods_per_year=PPY_4H),
+        "ann_sharpe_noc_decisive": sharpe(net_b[_DECISIVE_START:], periods_per_year=PPY_4H),
+        "per_period_sharpe_4h": sharpe(net_b),
+        "arm_a_ann_sharpe_noc": sharpe(net_a, periods_per_year=PPY_4H),
+        "arm_a_ann_sharpe_noc_decisive": sharpe(net_a[_DECISIVE_START:], periods_per_year=PPY_4H),
+        "benchmark_ann_sharpe_noc": sharpe(bench, periods_per_year=PPY_4H),
+        "benchmark_ann_sharpe_noc_decisive": sharpe(bench[_DECISIVE_START:], periods_per_year=PPY_4H),
+        "dsr_corrected": headline["dsr"],
+        "dsr_pass": int(headline["dsr_pass"]),
+        "spa_pass": int(headline["spa_pass"]),
+        "spa_p_full": headline["spa_p_value_full"],
+        "cost_stress_pass": int(headline["cost_stress_pass"]),
+        "worst_slice_relative_pass": int(headline["worst_slice_pass"]),
+        "passes": int(headline["passes"]),
+        "decisive_start": _DECISIVE_START,
+        "n_resamples": _N_RESAMPLES,
+        "arm_a_passes": int(_b2_overlay_arm_a_bar(inputs, n_trials=n_trials)[0]["passes"]),
+        **{f"spa_p_decisive_b{block}_s{seed}": result["spa_p_value"] for (block, seed), result in grid.items()},
+        **head_to_head,
+        "max_drawdown": drawdown_b,
+        "arm_a_max_drawdown": drawdown_a,
+        "max_drawdown_reduction_pct": 100 * (drawdown_a - drawdown_b) / drawdown_a,
+        "turnover_a": book_turnover(arm_a),
+        "turnover_b": book_turnover(arm_b),
+        "stamps_positions_differ": sum(positions_differ.values()),
+        "positions_differ_per_year": positions_differ,
+        "turnover_a_per_year": per_year_turnover(arm_a, close),
+        "turnover_b_per_year": per_year_turnover(arm_b, close),
+        "max_drawdown_per_year": per_year_max_drawdown(net_b, close),
+        "arm_a_max_drawdown_per_year": per_year_max_drawdown(net_a, close),
+        **engagement,
+    }
+
+
+def _b2_overlay_preflight_metrics(inputs: _B2OverlayInputs, *, signal_key: str, n_trials: int) -> dict:
+    """Arm A's anchors and bar and the engagement (docs/specs/00138 D9): no position or return of arm B."""
+    bar, net_a, bench = _b2_overlay_arm_a_bar(inputs, n_trials=n_trials)
+    turnover_a = book_turnover(inputs.arm_a)
+    return {
+        "arm_a_ann_sharpe_noc": sharpe(net_a, periods_per_year=PPY_4H),
+        "arm_a_ann_sharpe_noc_decisive": sharpe(net_a[_DECISIVE_START:], periods_per_year=PPY_4H),
+        "arm_a_max_drawdown_full": max_drawdown(net_a),
+        "turnover_a": turnover_a,
+        "arm_a_spot_drag_pct_yr": turnover_a / len(inputs.close) * _B2_COST_PER_SIDE * PPY_4H,
+        "benchmark_ann_sharpe_noc": sharpe(bench, periods_per_year=PPY_4H),
+        "benchmark_ann_sharpe_noc_decisive": sharpe(bench[_DECISIVE_START:], periods_per_year=PPY_4H),
+        **{key: int(bar[key]) if key in _B2_ARM_A_BAR_FLAGS else bar[key] for key in sorted(_B2_ARM_A_BAR_KEYS)},
+        **_b2_overlay_engagement(inputs, signal_key),
+    }
+
+
+def _b2_overlay_build(
+    subject: str,
+    signal_key: str,
+    read_signal: Callable[[ObservedReader, list[datetime]], dict[str, list[float | None]]],
+    threshold: float | Callable[[dict[str, list[float | None]], dict[str, list[float]]], float],
+    compute: Callable[..., dict],
+    n_trials: int,
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None,
+    accept_holes: bool,
+) -> dict:
+    if as_of is not None:
+        raise SubjectError(
+            f"{subject} evaluates a frozen set's 4h series, never the rolling dataset as of a day: drop --as-of and pass a "
+            "frozen --dataset"
+        )
+    try:
+        inputs = _b2_overlay_inputs(subject, read_signal, threshold, reader, dataset, window, accept_holes)
+        return compute(inputs, signal_key=signal_key, n_trials=n_trials)
+    except (AlphaError, BacktestError, BenchmarkError, FeatureError, ValidationError) as exc:
+        raise SubjectError(f"{_b2_over(subject, window)}: {exc}") from exc
+
+
+def _build_b2_oi_derisk(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    return _b2_overlay_build(
+        "b2-oi-derisk",
+        "binperp_oi_z30d",
+        _b2_oi_signal,
+        _B2_OI_THRESHOLD,
+        _b2_overlay_metrics,
+        _B2_OI_N_TRIALS,
+        reader,
+        dataset,
+        window,
+        as_of,
+        accept_holes,
+    )
+
+
+def _build_b2_oi_derisk_preflight(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    return _b2_overlay_build(
+        "b2-oi-derisk-preflight",
+        "binperp_oi_z30d",
+        _b2_oi_signal,
+        _B2_OI_THRESHOLD,
+        _b2_overlay_preflight_metrics,
+        _B2_OI_N_TRIALS,
+        reader,
+        dataset,
+        window,
+        as_of,
+        accept_holes,
+    )
+
+
+def _build_b2_ratio_derisk(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    return _b2_overlay_build(
+        "b2-ratio-derisk",
+        "binperp_ratio_max_z30d",
+        _b2_ratio_signal,
+        _B2_RATIO_THRESHOLD,
+        _b2_overlay_metrics,
+        _B2_RATIO_N_TRIALS,
+        reader,
+        dataset,
+        window,
+        as_of,
+        accept_holes,
+    )
+
+
+def _build_b2_ratio_derisk_preflight(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    return _b2_overlay_build(
+        "b2-ratio-derisk-preflight",
+        "binperp_ratio_max_z30d",
+        _b2_ratio_signal,
+        _B2_RATIO_THRESHOLD,
+        _b2_overlay_preflight_metrics,
+        _B2_RATIO_N_TRIALS,
+        reader,
+        dataset,
+        window,
+        as_of,
+        accept_holes,
+    )
+
+
+def _build_b2_liq_derisk(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    return _b2_overlay_build(
+        "b2-liq-derisk",
+        "binperp_liq_long_z30d",
+        _b2_liq_signal,
+        _b2_engagement_threshold,
+        _b2_overlay_metrics,
+        _B2_LIQ_N_TRIALS,
+        reader,
+        dataset,
+        window,
+        as_of,
+        accept_holes,
+    )
+
+
+def _build_b2_liq_derisk_preflight(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    return _b2_overlay_build(
+        "b2-liq-derisk-preflight",
+        "binperp_liq_long_z30d",
+        _b2_liq_signal,
+        _b2_engagement_threshold,
+        _b2_overlay_preflight_metrics,
+        _B2_LIQ_N_TRIALS,
+        reader,
+        dataset,
+        window,
+        as_of,
+        accept_holes,
+    )
+
+
+# docs/specs/00138 D8's matrix, spec 00128's with the head-to-head read from the signal's own start, and the two instrument
+# findings its metrics show: a change to it is a new spec and a new trial, never an edit here.
+def _b2_overlay_verdict(m: dict) -> str | None:
+    if not m["arm_a_passes"] or not any(m["engaged_per_year"].values()):
+        return None
+    if not m["passes"]:
+        return "reject"
+    if m["head_to_head_mean_outperf_primary"] > 0 and m["max_drawdown_reduction_pct"] > 1e-6:
+        return "adopt" if m["head_to_head_spa_p_primary"] < 0.05 else "park"
+    return "reject"
+
+
+# docs/specs/00138 D9's keys.
+def _b2_overlay_metric_keys(signal_key: str) -> frozenset[str]:
+    moved = {"head_to_head_mean_outperf_2021", "head_to_head_spa_p_2021", "binperp_funding_z30d_coverage"}
+    return (_B2_METRIC_KEYS - moved) | {
+        "head_to_head_mean_outperf_primary",
+        "head_to_head_spa_p_primary",
+        "primary_returns",
+        "threshold",
+        f"{signal_key}_coverage",
+    }
+
+
+def _b2_overlay_preflight_keys(signal_key: str) -> frozenset[str]:
+    return (_B2_FULL_PREFLIGHT_KEYS - {"binperp_funding_z30d_coverage"}) | {
+        "primary_returns",
+        "threshold",
+        f"{signal_key}_coverage",
+    }
+
+
+# docs/specs/00138 D12: the 1-minute tape's event study, read on ohlc-rolling: a frozen set misses the tape's span.
+_B2_TAPE_SET = "liquidations-frozen"
+_B2_TAPE_ZSCORE_HOURS = 720
+_B2_TAPE_THRESHOLD = 2.0
+_B2_TAPE_HORIZONS = (1, 4, 24)
+_B2_TAPE_BLOCK = 24
+_HOUR = timedelta(hours=1)
+_QUARTER = timedelta(minutes=15)
+
+
+def _b2_tape_reads(reader: ObservedReader) -> tuple[list[datetime], dict[str, tuple[list, list, list]]]:
+    try:
+        covered = reader.read_series(_B2_TAPE_SET, "covered-hours.parquet")["ts"].to_list()
+    except pl.exceptions.PolarsError as exc:
+        raise SubjectError(f"{_B2_TAPE_SET}/covered-hours.parquet: {exc}") from exc
+    buckets = {}
+    for asset in _ASSETS:
+        relpath = f"{asset}/buckets.parquet"
+        try:
+            rows = reader.read_series(_B2_TAPE_SET, relpath)
+            buckets[asset] = (rows["ts"].to_list(), rows["long_usd"].to_list(), rows["short_usd"].to_list())
+        except pl.exceptions.PolarsError as exc:
+            raise SubjectError(f"{_B2_TAPE_SET}/{relpath}: {exc}") from exc
+    return covered, buckets
+
+
+def _b2_tape_forwards(
+    hours: list[datetime],
+    hourly: dict[str, list[float | None]],
+    quarters: list[datetime],
+    quarterly: dict[str, list[float | None]],
+) -> dict[str, dict[str, list[float | None]]]:
+    """Per hour h, from the price at h + 1 h, the close of h's own hourly bar, forward over each horizon H: the log return
+    to the close of the hourly bar opening at h + H, and the realized volatility from the 15-minute closes at h + 1 h, h +
+    1 h 15 min, ..., h + 1 h + H, each the close of the bar opening 15 minutes before it, a missing one merging its
+    neighbours' returns and a missing first or last one leaving the hour None (docs/specs/00138 D12)."""
+    for prices in (hourly, quarterly):
+        for asset, closes in prices.items():
+            if any(c is not None and c <= 0 for c in closes):
+                raise ValidationError(f"{asset} holds a close at or below zero, which carries no log return")
+    hour_at = {t: k for k, t in enumerate(hours)}
+    quarter_at = {t: k for k, t in enumerate(quarters)}
+    out: dict[str, dict[str, list[float | None]]] = {}
+    for horizon in _B2_TAPE_HORIZONS:
+        returns, vols = {}, {}
+        for asset in _ASSETS:
+            closes, fine = hourly[asset], quarterly[asset]
+            returns[asset], vols[asset] = [], []
+            for h in hours:
+                start, k_end = closes[hour_at[h]], hour_at.get(h + horizon * _HOUR)
+                end = None if k_end is None else closes[k_end]
+                returns[asset].append(None if start is None or end is None else math.log(end / start))
+                opens = [h + 3 * _QUARTER + j * _QUARTER for j in range(4 * horizon + 1)]
+                path = [fine[quarter_at[t]] if t in quarter_at else None for t in opens]
+                if path[0] is None or path[-1] is None:
+                    vols[asset].append(None)
+                    continue
+                kept = [c for c in path if c is not None]
+                vols[asset].append(math.sqrt(sum(math.log(b / a) ** 2 for a, b in zip(kept, kept[1:]))))
+        out[f"fwd_logret_{horizon}h"], out[f"fwd_rv_{horizon}h"] = returns, vols
+    return out
+
+
+def _build_b2_liq_tape_reading(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    subject = "b2-liq-tape-reading"
+    hours, hourly = _capturing_union(reader, dataset, 60, window, as_of, accept_holes)
+    need = _B2_TAPE_ZSCORE_HOURS + max(_B2_TAPE_HORIZONS) + 1
+    if len(hours) < need:
+        raise SubjectError(
+            f"{_b2_over(subject, window)}: it holds {len(hours)} hourly bars, and the {_B2_TAPE_ZSCORE_HOURS}-hour z-score and "
+            f"the {max(_B2_TAPE_HORIZONS)}-hour forward read need {need}"
+        )
+    quarters, quarterly = _capturing_union(reader, dataset, 15, window, as_of, accept_holes)
+    covered, buckets = _b2_tape_reads(reader)
+    flags = {}
+    for asset in _ASSETS:
+        try:
+            totals = liquidation_hourly_totals(*buckets[asset], hours, covered)
+            zscores = funding_zscore(totals, window=_B2_TAPE_ZSCORE_HOURS)
+        except (AlphaError, FeatureError) as exc:
+            raise SubjectError(f"{_B2_TAPE_SET}/{asset}/buckets.parquet: {exc}") from exc
+        flags[asset] = [None if z is None else z > _B2_TAPE_THRESHOLD for z in zscores]
+    try:
+        forwards = _b2_tape_forwards(hours, hourly, quarters, quarterly)
+    except ValidationError as exc:
+        raise SubjectError(f"{_b2_over(subject, window)}: {exc}") from exc
+    longest = forwards[f"fwd_logret_{max(_B2_TAPE_HORIZONS)}h"]
+    if not any(flag is not None and ret is not None for a in _ASSETS for flag, ret in zip(flags[a], longest[a])):
+        span = f"the hours {min(covered)} .. {max(covered)}" if covered else "no hour"
+        raise SubjectError(
+            f"{_b2_over(subject, window)}: no coin holds an hour with both the {_B2_TAPE_ZSCORE_HOURS}-hour z-score and the "
+            f"{max(_B2_TAPE_HORIZONS)}-hour forward log return; the tape asserts {span}"
+        )
+    try:
+        contrast = event_contrast(flags, forwards, mean_block=_B2_TAPE_BLOCK, n_resamples=_N_RESAMPLES, seed=42)
+    except (AlphaError, ValidationError) as exc:
+        raise SubjectError(f"{_b2_over(subject, window)}: {exc}") from exc
+    return {
+        **contrast,
+        "events_per_asset": {a: sum(flag is True for flag in flags[a]) for a in _ASSETS},
+        "zscore_hours_per_asset": {a: sum(flag is not None for flag in flags[a]) for a in _ASSETS},
+        "threshold": _B2_TAPE_THRESHOLD,
+        "zscore_hours": _B2_TAPE_ZSCORE_HOURS,
+        "mean_block": _B2_TAPE_BLOCK,
+        "n_resamples": _N_RESAMPLES,
+    }
+
+
+# docs/specs/00138 D12's keys of the reading.
+_B2_TAPE_KEYS = frozenset(
+    {
+        *(f"fwd_{kind}_{horizon}h" for kind in ("logret", "rv") for horizon in _B2_TAPE_HORIZONS),
+        "events_per_asset",
+        "zscore_hours_per_asset",
+        "threshold",
+        "zscore_hours",
+        "mean_block",
+        "n_resamples",
+    }
+)
+
+
 SUBJECTS: dict[str, Subject] = {
     "record44-crossfreq": Subject(
         "record44-crossfreq",
@@ -2157,6 +2743,90 @@ SUBJECTS: dict[str, Subject] = {
         _build_b2_funding_derisk_full_preflight,
         spec="docs/specs/00137-b2-trial-2-ohlc-full-design.md",
         metric_keys=_B2_FULL_PREFLIGHT_KEYS,
+        seeds=(42,),
+    ),
+    "b2-oi-derisk": Subject(
+        "b2-oi-derisk",
+        (240,),
+        _ASSETS,
+        _build_b2_oi_derisk,
+        spec="docs/specs/00138-b2-three-overlays-design.md",
+        metric_keys=_b2_overlay_metric_keys("binperp_oi_z30d"),
+        seeds=(42, 7, 1234),
+        verdict=_b2_overlay_verdict,
+        no_verdict=(
+            "instrument finding: arm A fails the bar this window sets, or the overlay engages at no stamp; no verdict, "
+            "the trial unspent"
+        ),
+        family="B2",
+        n_trials=_B2_OI_N_TRIALS,
+    ),
+    "b2-oi-derisk-preflight": Subject(
+        "b2-oi-derisk-preflight",
+        (240,),
+        _ASSETS,
+        _build_b2_oi_derisk_preflight,
+        spec="docs/specs/00138-b2-three-overlays-design.md",
+        metric_keys=_b2_overlay_preflight_keys("binperp_oi_z30d"),
+        seeds=(42,),
+    ),
+    "b2-ratio-derisk": Subject(
+        "b2-ratio-derisk",
+        (240,),
+        _ASSETS,
+        _build_b2_ratio_derisk,
+        spec="docs/specs/00138-b2-three-overlays-design.md",
+        metric_keys=_b2_overlay_metric_keys("binperp_ratio_max_z30d"),
+        seeds=(42, 7, 1234),
+        verdict=_b2_overlay_verdict,
+        no_verdict=(
+            "instrument finding: arm A fails the bar this window sets, or the overlay engages at no stamp; no verdict, "
+            "the trial unspent"
+        ),
+        family="B2",
+        n_trials=_B2_RATIO_N_TRIALS,
+    ),
+    "b2-ratio-derisk-preflight": Subject(
+        "b2-ratio-derisk-preflight",
+        (240,),
+        _ASSETS,
+        _build_b2_ratio_derisk_preflight,
+        spec="docs/specs/00138-b2-three-overlays-design.md",
+        metric_keys=_b2_overlay_preflight_keys("binperp_ratio_max_z30d"),
+        seeds=(42,),
+    ),
+    "b2-liq-derisk": Subject(
+        "b2-liq-derisk",
+        (240,),
+        _ASSETS,
+        _build_b2_liq_derisk,
+        spec="docs/specs/00138-b2-three-overlays-design.md",
+        metric_keys=_b2_overlay_metric_keys("binperp_liq_long_z30d"),
+        seeds=(42, 7, 1234),
+        verdict=_b2_overlay_verdict,
+        no_verdict=(
+            "instrument finding: arm A fails the bar this window sets, or the overlay engages at no stamp; no verdict, "
+            "the trial unspent"
+        ),
+        family="B2",
+        n_trials=_B2_LIQ_N_TRIALS,
+    ),
+    "b2-liq-derisk-preflight": Subject(
+        "b2-liq-derisk-preflight",
+        (240,),
+        _ASSETS,
+        _build_b2_liq_derisk_preflight,
+        spec="docs/specs/00138-b2-three-overlays-design.md",
+        metric_keys=_b2_overlay_preflight_keys("binperp_liq_long_z30d"),
+        seeds=(42,),
+    ),
+    "b2-liq-tape-reading": Subject(
+        "b2-liq-tape-reading",
+        (60, 15),
+        _ASSETS,
+        _build_b2_liq_tape_reading,
+        spec="docs/specs/00138-b2-three-overlays-design.md",
+        metric_keys=_B2_TAPE_KEYS,
         seeds=(42,),
     ),
 }
