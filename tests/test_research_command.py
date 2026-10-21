@@ -51,19 +51,25 @@ from cli.alpha.b1_volume import (
 )
 from cli.alpha.b2 import (
     B2Config,
+    daily_zscore_grid_feature,
     derisk_scales,
+    liquidation_hourly_totals,
     net_of_cost,
+    oi_zscore_grid_feature,
     per_year_engaged_counts,
     per_year_max_drawdown,
     per_year_positions_differ,
     per_year_turnover,
+    ratio_max_signal,
+    ratio_zscore_grid_features,
     scale_positions,
 )
 from cli.alpha.errors import AlphaError
 from cli.backtest.errors import BacktestError
 from cli.benchmark.errors import BenchmarkError
+from cli.data import sync
 from cli.derivatives.funding import PERP_SYMBOLS
-from cli.features.derivatives import coverage_by_year
+from cli.features.derivatives import coverage_by_year, funding_zscore
 from cli.features.errors import FeatureError
 from cli.ohlc.dataset import to_frame, write_parquet
 from cli.portfolio.builder import CombinedSystemConfig, build_combined_system
@@ -1422,6 +1428,10 @@ def test_each_subject_declares_the_metric_keys_its_build_returns():
     assert subjects.SUBJECTS["b1-hourly-channel-exits-preflight"].metric_keys == _B1_EXIT_PREFLIGHT_KEYS
     assert subjects.SUBJECTS["b2-funding-derisk-full"].metric_keys == _B2_METRIC_KEYS
     assert subjects.SUBJECTS["b2-funding-derisk-full-preflight"].metric_keys == _B2_FULL_PREFLIGHT_KEYS
+    for name, (signal_key, _, _) in _B2_OVERLAYS.items():
+        assert subjects.SUBJECTS[name].metric_keys == _overlay_metric_keys(signal_key)
+        assert subjects.SUBJECTS[f"{name}-preflight"].metric_keys == _overlay_preflight_keys(signal_key)
+    assert subjects.SUBJECTS["b2-liq-tape-reading"].metric_keys == _B2_TAPE_SPEC_KEYS
 
 
 # One engaged year of two, so a rule reading `all` where it reads `any` turns this adopt into a stop.
@@ -2296,6 +2306,638 @@ def test_the_b2_full_subject_refuses_a_funding_file_it_cannot_read_naming_it(tmp
     assert "File out of specification" in result.output
 
 
+_B2_OVERLAY_SPEC = "docs/specs/00138-b2-three-overlays-design.md"
+_B2_OVERLAY_NO_VERDICT = (
+    "instrument finding: arm A fails the bar this window sets, or the overlay engages at no stamp; no verdict, the trial unspent"
+)
+# Spec 00138's three trials: each signal's key, threshold and count, typed from the spec, never read off a subject; the
+# liquidations trial's threshold is the one its build reads off the engagement rule, `None` here.
+_B2_OVERLAYS = {
+    "b2-oi-derisk": ("binperp_oi_z30d", 2.5, 2),
+    "b2-ratio-derisk": ("binperp_ratio_max_z30d", 2.5, 3),
+    "b2-liq-derisk": ("binperp_liq_long_z30d", None, 4),
+}
+_B2_OVERLAY_RATIOS = (
+    "count_toptrader_long_short_ratio",
+    "sum_toptrader_long_short_ratio",
+    "count_long_short_ratio",
+    "sum_taker_long_short_vol_ratio",
+)
+_B2_OVERLAY_FROM_BAR = 300
+_B2_OVERLAY_SPIKE_BARS = 12
+
+
+def _overlay_metric_keys(signal_key: str) -> frozenset[str]:
+    moved = {"head_to_head_mean_outperf_2021", "head_to_head_spa_p_2021", "binperp_funding_z30d_coverage"}
+    return frozenset(_B2_METRIC_KEYS - moved) | {
+        "head_to_head_mean_outperf_primary",
+        "head_to_head_spa_p_primary",
+        "primary_returns",
+        "threshold",
+        f"{signal_key}_coverage",
+    }
+
+
+def _overlay_preflight_keys(signal_key: str) -> frozenset[str]:
+    return (_B2_FULL_PREFLIGHT_KEYS - {"binperp_funding_z30d_coverage"}) | {
+        "primary_returns",
+        "threshold",
+        f"{signal_key}_coverage",
+    }
+
+
+def _overlay_threshold(name: str):
+    threshold = _B2_OVERLAYS[name][1]
+    return subjects._b2_engagement_threshold if threshold is None else threshold
+
+
+def _overlay_signal(name: str):
+    return {
+        "b2-oi-derisk": subjects._b2_oi_signal,
+        "b2-ratio-derisk": subjects._b2_ratio_signal,
+        "b2-liq-derisk": subjects._b2_liq_signal,
+    }[name]
+
+
+@pytest.fixture(autouse=True)
+def _liquidations_blocks_unattested(monkeypatch):
+    """Keeps the read guard inert over a fixture's synthetic `liquidations-daily` and `liquidations-frozen`."""
+    attested = sync._sidecar_by_dataset()
+    blocks = ("liquidations-daily", "liquidations-frozen")
+    monkeypatch.setattr(sync, "_sidecar_by_dataset", lambda: {name: s for name, s in attested.items() if name not in blocks})
+
+
+def _b2_overlay_dataset(
+    tmp_path: Path, *, start: datetime = _B2_START, flat: bool = False, from_bar: int = _B2_OVERLAY_FROM_BAR
+) -> Path:
+    """`_b2_dataset`'s ten 4h series, a `derivatives-oi` set and a daily liquidations block, each running 30 days past the
+    union: BTC's OI rows open 47 days before it, every other asset's at bar `from_bar` and the daily rows at the first day
+    after it; every asset but one spikes in its OI level and one of its four ratios for twelve bars, and in its long
+    notional for two days, from its own bar inside the second fall, so each overlay de-risks each asset at its own
+    stamps."""
+    root = tmp_path / "data"
+    for i, asset in enumerate(_B2_ASSETS):
+        write_parquet(to_frame(_b2_ohlc_rows(i * 0.7, start, flat)), root / "ohlc-test" / f"{asset}/EUR/240.parquet")
+    opens, end = start + timedelta(hours=4 * from_bar), start + timedelta(hours=4 * _B2_BARS, days=30)
+    day0 = (opens + timedelta(days=1)).replace(hour=0)
+    days = [day0 + timedelta(days=d) for d in range((end - day0) // timedelta(days=1))]
+    for i, asset in enumerate(_B2_ASSETS):
+        spike = start + timedelta(hours=4 * (_B2_FALLS[1][0] + 2 * i))
+
+        def hot(t: datetime) -> bool:
+            return asset != _B2_NEVER_SPIKES and spike <= t < spike + timedelta(hours=4 * _B2_OVERLAY_SPIKE_BARS)
+
+        first = _B2_FUNDING_FROM if asset == "BTC" else opens
+        marks = [first + timedelta(hours=4 * j) for j in range((end - first) // timedelta(hours=4))]
+        columns = {
+            "ts": marks,
+            "sum_open_interest": [2_000.0 if hot(t) else 1_000.0 + 10 * math.sin(j / 3 + i) for j, t in enumerate(marks)],
+            "sum_open_interest_value": [1e7] * len(marks),
+        }
+        for c, ratio in enumerate(_B2_OVERLAY_RATIOS):
+            columns[ratio] = [3.0 if hot(t) and c == i % 4 else 1.0 + 0.05 * math.sin(j / 5 + i + c) for j, t in enumerate(marks)]
+        schema = {"ts": pl.Datetime("us", "UTC")} | dict.fromkeys(list(columns)[1:], pl.Float64)
+        write_parquet(pl.DataFrame(columns, schema=schema), root / "derivatives-oi" / PERP_SYMBOLS[asset] / "oi.parquet")
+        spike_day = spike.replace(hour=0)
+        daily = {
+            "ts": days,
+            "long_usd": [
+                1e7
+                if asset != _B2_NEVER_SPIKES and spike_day <= d <= spike_day + timedelta(days=1)
+                else 1e4 + 3e3 * math.sin(k / 3 + i)
+                for k, d in enumerate(days)
+            ],
+            "short_usd": [8e3 + 2e3 * math.cos(k / 5 + i) for k in range(len(days))],
+        }
+        schema = {"ts": pl.Datetime("us", "UTC"), "long_usd": pl.Float64, "short_usd": pl.Float64}
+        write_parquet(pl.DataFrame(daily, schema=schema), root / "liquidations-daily" / asset / "daily.parquet")
+    return root
+
+
+@pytest.mark.parametrize("name", sorted(_B2_OVERLAYS))
+def test_each_b2_overlay_pair_declares_the_4h_grid_the_specs_keys_and_seeds_and_the_trial_alone_a_rule_and_a_count(name):
+    signal_key, _, count = _B2_OVERLAYS[name]
+    trial, preflight = subjects.SUBJECTS[name], subjects.SUBJECTS[f"{name}-preflight"]
+    builder = f"_build_{name.replace('-', '_')}"
+    assert (len(_overlay_metric_keys(signal_key)), len(_overlay_preflight_keys(signal_key))) == (42, 22)
+    assert (trial.name, trial.intervals, trial.assets, trial.spec, trial.seeds) == (
+        name,
+        (240,),
+        _B2_ASSETS,
+        _B2_OVERLAY_SPEC,
+        (42, 7, 1234),
+    )
+    assert trial.build is getattr(subjects, builder) and trial.metric_keys == _overlay_metric_keys(signal_key)
+    assert (trial.verdict, trial.no_verdict, trial.incumbent) == (subjects._b2_overlay_verdict, _B2_OVERLAY_NO_VERDICT, None)
+    assert (trial.family, trial.n_trials) == ("B2", count)
+    assert (preflight.intervals, preflight.assets, preflight.spec, preflight.seeds) == ((240,), _B2_ASSETS, _B2_OVERLAY_SPEC, (42,))
+    assert preflight.build is getattr(subjects, f"{builder}_preflight")
+    assert preflight.metric_keys == _overlay_preflight_keys(signal_key)
+    assert (preflight.verdict, preflight.no_verdict, preflight.incumbent, preflight.family, preflight.n_trials) == (None,) * 5
+
+
+# Adopting on every key the rule reads, the full-window head-to-head and the block-102 cell set against the verdict, so a
+# rule reading either in place of the primary read or the headline cell moves the first row.
+_B2_OVERLAY_ADOPTING = {
+    "arm_a_passes": 1,
+    "engaged_per_year": {"2013": 0, "2023": 4},
+    "passes": 1,
+    "head_to_head_mean_outperf_primary": 0.001,
+    "head_to_head_spa_p_primary": 0.01,
+    "head_to_head_mean_outperf_full": -0.001,
+    "head_to_head_spa_p_full": 0.9,
+    "spa_p_decisive_b102_s42": 0.9,
+    "max_drawdown_reduction_pct": 5.0,
+}
+_B2_OVERLAY_NEVER_ENGAGED = {"engaged_per_year": {"2013": 0, "2023": 0}}
+
+
+@pytest.mark.parametrize(
+    ("change", "verdict"),
+    [
+        pytest.param({}, "adopt", id="row-1-outperforms-significantly-from-the-start-and-draws-down-less"),
+        pytest.param({"head_to_head_spa_p_primary": 0.0499}, "adopt", id="row-1-p-at-0.0499"),
+        pytest.param({"max_drawdown_reduction_pct": 2e-6}, "adopt", id="row-1-reduction-past-1e-6"),
+        pytest.param({"head_to_head_spa_p_primary": 0.2}, "park", id="row-2-outperforms-insignificantly-from-the-start"),
+        pytest.param({"head_to_head_spa_p_primary": 0.05}, "park", id="row-2-p-at-exactly-0.05"),
+        pytest.param({"head_to_head_mean_outperf_primary": -0.001}, "reject", id="row-3-underperforms-from-the-start"),
+        pytest.param({"head_to_head_mean_outperf_primary": 0.0}, "reject", id="row-3-mean-at-exactly-0"),
+        pytest.param({"max_drawdown_reduction_pct": -5.0}, "reject", id="row-3-draws-down-more"),
+        pytest.param({"max_drawdown_reduction_pct": 1e-6}, "reject", id="row-3-reduction-at-exactly-1e-6"),
+        pytest.param(
+            {"head_to_head_mean_outperf_primary": -0.001, "head_to_head_mean_outperf_full": 0.001, "head_to_head_spa_p_full": 0.01},
+            "reject",
+            id="row-3-outperforms-over-the-full-window-alone",
+        ),
+        pytest.param({"passes": 0}, "reject", id="row-4-arm-b-fails-its-bar"),
+        pytest.param({"arm_a_passes": 0}, None, id="arm-a-fails-its-bar"),
+        pytest.param(_B2_OVERLAY_NEVER_ENGAGED, None, id="the-overlay-never-engages"),
+        pytest.param({"arm_a_passes": 0, "passes": 0}, None, id="arm-a-read-before-passes"),
+        pytest.param({**_B2_OVERLAY_NEVER_ENGAGED, "passes": 0}, None, id="engagement-read-before-passes"),
+    ],
+)
+def test_the_b2_overlay_rule_maps_the_matrix_to_a_verdict_or_a_stop(change, verdict):
+    assert subjects._b2_overlay_verdict({**_B2_OVERLAY_ADOPTING, **change}) == verdict
+
+
+@pytest.mark.parametrize("name", sorted(_B2_OVERLAYS))
+def test_a_b2_overlays_metrics_are_trial_2s_read_from_its_signals_own_start_at_its_count(tmp_path, monkeypatch, name):
+    signal_key, threshold, count = _B2_OVERLAYS[name]
+    scalings = _recording(monkeypatch, "derisk_scales", lambda arguments, result: result)
+    reader = ObservedReader(_b2_overlay_dataset(tmp_path))
+    inputs = subjects._b2_overlay_inputs(name, _overlay_signal(name), _overlay_threshold(name), reader, "ohlc-test", None, False)
+    start = next(k for k in range(len(inputs.close)) if all(inputs.signal[a][k] is not None for a in _B2_ASSETS))
+    assert 0 < start < len(inputs.close) - 2
+    ruled = subjects._b2_engagement_threshold(inputs.signal, inputs.arm_a) if threshold is None else threshold
+    assert [(arguments["z_by_asset"], arguments["config"]) for arguments, _ in scalings] == [
+        (inputs.signal, B2Config(z_threshold=ruled))
+    ]
+    assert inputs.threshold == ruled
+    monkeypatch.setattr(subjects, "a1_kill_bar", _fake_kill_bar)
+    monkeypatch.setattr(subjects, "benchmark_4h_net_of_cost", _fake_benchmark)
+    monkeypatch.setattr(subjects, "net_of_cost_verdict", _fake_head_to_head)
+    bars = _recording(monkeypatch, "a1_kill_bar", lambda arguments, result: result)
+
+    metrics = subjects._b2_overlay_metrics(inputs, signal_key=signal_key, n_trials=count)
+
+    assert set(metrics) == _overlay_metric_keys(signal_key) and {arguments["n_trials"] for arguments, _ in bars} == {count}
+    # Trial 2's metrics over the same positions and signal, its from-2021 read moved to this signal's start and its count to
+    # this trial's: `_b2_full_metrics`' own test proves it against a hand computation.
+    monkeypatch.setattr(subjects, "_FROM_2021", inputs.close[start])
+    monkeypatch.setattr(subjects, "_B2_FULL_N_TRIALS", count)
+    trial_2 = subjects._b2_full_metrics(subjects._B2Inputs(*inputs[:6]))
+    renamed = {
+        "head_to_head_mean_outperf_2021": "head_to_head_mean_outperf_primary",
+        "head_to_head_spa_p_2021": "head_to_head_spa_p_primary",
+        "binperp_funding_z30d_coverage": f"{signal_key}_coverage",
+    }
+    assert {renamed.get(key, key): value for key, value in trial_2.items()} | {
+        "primary_returns": len(inputs.close) - start,
+        "threshold": ruled,
+    } == metrics
+
+
+def test_where_no_signal_crosses_its_threshold_a_b2_overlays_arm_b_is_arm_a_bit_for_bit(tmp_path, monkeypatch):
+    reader = ObservedReader(_b2_overlay_dataset(tmp_path))
+    inputs = subjects._b2_overlay_inputs("b2-oi-derisk", subjects._b2_oi_signal, 2.5, reader, "ohlc-test", None, False)
+    calm = {a: [0.0] * len(inputs.close) for a in _B2_ASSETS}
+    inputs = inputs._replace(signal=calm, scales=derisk_scales(calm, config=B2Config(z_threshold=2.5)))
+    monkeypatch.setattr(subjects, "a1_kill_bar", _fake_kill_bar)
+    monkeypatch.setattr(subjects, "benchmark_4h_net_of_cost", _fake_benchmark)
+    monkeypatch.setattr(subjects, "net_of_cost_verdict", _fake_head_to_head)
+    head_to_heads = _recording(monkeypatch, "net_of_cost_verdict", lambda arguments, result: result)
+
+    metrics = subjects._b2_overlay_metrics(inputs, signal_key="binperp_oi_z30d", n_trials=2)
+
+    assert [arguments["book_net_of_cost"] == arguments["benchmark_net_of_cost"] for arguments, _ in head_to_heads] == [True] * 2
+    assert (
+        metrics["stamps_positions_differ"],
+        metrics["turnover_b"],
+        metrics["max_drawdown"],
+        metrics["max_drawdown_reduction_pct"],
+    ) == (
+        0,
+        metrics["turnover_a"],
+        metrics["arm_a_max_drawdown"],
+        0.0,
+    )
+    assert metrics["primary_returns"] == len(inputs.close) and set(metrics["engaged_per_year"].values()) == {0}
+
+
+@pytest.mark.parametrize("name", sorted(_B2_OVERLAYS))
+def test_a_b2_overlays_preflight_reads_arm_a_and_the_engagement_and_never_builds_arm_b(tmp_path, monkeypatch, name):
+    signal_key, threshold, count = _B2_OVERLAYS[name]
+    monkeypatch.setattr(subjects, "a1_kill_bar", _fake_kill_bar)
+    monkeypatch.setattr(subjects, "benchmark_4h_net_of_cost", _fake_benchmark)
+
+    def arm_b(*args, **kwargs):
+        raise AssertionError("the pre-flight built arm B's positions")
+
+    monkeypatch.setattr(subjects, "scale_positions", arm_b)
+    reads = _recording(monkeypatch, "_b2_overlay_inputs", lambda arguments, result: result)
+    bars = _recording(monkeypatch, "a1_kill_bar", lambda arguments, result: result)
+
+    metrics = subjects.SUBJECTS[f"{name}-preflight"].build(ObservedReader(_b2_overlay_dataset(tmp_path)), "ohlc-test", None)
+
+    ((read, inputs),) = reads
+    assert (read["subject"], read["read_signal"], read["threshold"]) == (
+        f"{name}-preflight",
+        _overlay_signal(name),
+        _overlay_threshold(name),
+    )
+    returns = {a: _asset_returns(_ffill_btc(inputs.h4_prices)[a]) for a in _B2_ASSETS}
+    net_a, net_a_x15 = (net_of_cost(inputs.arm_a, returns, cost_per_side=cost) for cost in (0.006, 1.5 * 0.006))
+    bench = _fake_benchmark(inputs.h4_prices, cost_per_side=0.006)
+    turnover_a, n = book_turnover(inputs.arm_a), len(inputs.close)
+    start = next((k for k in range(n) if all(inputs.signal[a][k] is not None for a in _B2_ASSETS)), n)
+    ((arguments, bar),) = bars
+    assert arguments == {
+        "book_net_returns": net_a,
+        "benchmark_net_returns": bench,
+        "n_trials": count,
+        "var_trials": 0.0,
+        "mean_block": 30,
+        "seed": 42,
+        "cost_stressed_returns": net_a_x15,
+        "regime_slices": calendar_year_slices(net_a, inputs.h4_ts),
+        "benchmark_slices": calendar_year_slices(bench, inputs.h4_ts),
+        "decisive_start": 1380,
+        "n_resamples": 2000,
+    }
+    engaged = {a: sum(p > 0 and s < 1 for p, s in zip(inputs.arm_a[a], inputs.scales[a])) for a in _B2_ASSETS}
+    assert metrics == {
+        "arm_a_ann_sharpe_noc": sharpe(net_a, periods_per_year=2190),
+        "arm_a_ann_sharpe_noc_decisive": sharpe(net_a[1380:], periods_per_year=2190),
+        "arm_a_max_drawdown_full": max_drawdown(net_a),
+        "turnover_a": turnover_a,
+        "arm_a_spot_drag_pct_yr": turnover_a / n * 0.006 * 2190,
+        "benchmark_ann_sharpe_noc": sharpe(bench, periods_per_year=2190),
+        "benchmark_ann_sharpe_noc_decisive": sharpe(bench[1380:], periods_per_year=2190),
+        **{key: int(bar[key]) if key in _ARM_A_BAR_FLAGS else bar[key] for key in _ARM_A_BAR_KEYS},
+        "engaged_per_asset": engaged,
+        "engaged_per_year": per_year_engaged_counts(inputs.arm_a, inputs.scales, inputs.close),
+        f"{signal_key}_coverage": {
+            a: {str(year): [c.non_null, c.total] for year, c in coverage_by_year(inputs.close, inputs.signal[a]).items()}
+            for a in _B2_ASSETS
+        },
+        "primary_returns": n - start,
+        "threshold": inputs.threshold,
+    }
+    assert set(metrics) == _overlay_preflight_keys(signal_key) and 0 < start < n - 2
+    assert inputs.threshold == (subjects._b2_engagement_threshold(inputs.signal, inputs.arm_a) if threshold is None else threshold)
+    assert sum(engaged.values()) == sum(metrics["engaged_per_year"].values()) > 0
+    assert metrics["engaged_per_asset"][_B2_NEVER_SPIKES] == 0
+
+
+def test_a_b2_overlay_preflight_whose_signal_no_close_carries_prints_its_figures_at_zero(tmp_path, monkeypatch):
+    # The daily block opening where the union ends: no close carries the signal, and the rule reads no long stamp.
+    root = _b2_overlay_dataset(tmp_path, from_bar=_B2_BARS)
+    _anchor(monkeypatch, root)
+    monkeypatch.setattr(subjects, "a1_kill_bar", _fake_kill_bar)
+    monkeypatch.setattr(subjects, "benchmark_4h_net_of_cost", _fake_benchmark)
+
+    result = runner.invoke(app, ["research", "eval", "--subject", "b2-liq-derisk-preflight", "--dataset", "ohlc-test"])
+
+    assert result.exit_code == 0, result.output
+    metrics = _block_and_metrics(result.output)["metrics"]
+    assert (metrics["primary_returns"], set(metrics["engaged_per_year"].values()), set(metrics["engaged_per_asset"].values())) == (
+        0,
+        {0},
+        {0},
+    )
+    assert {count for years in metrics["binperp_liq_long_z30d_coverage"].values() for count, _ in years.values()} == {0}
+    assert metrics["threshold"] == 2.5
+
+
+@pytest.mark.parametrize("name", sorted({*_B2_OVERLAYS, *(f"{name}-preflight" for name in _B2_OVERLAYS)}))
+def test_a_b2_overlay_subject_refuses_as_of_before_any_read(tmp_path, monkeypatch, name):
+    _anchor(monkeypatch, _rolling_set(tmp_path))
+
+    def read(*args, **kwargs):
+        raise AssertionError("the subject read a series before refusing --as-of")
+
+    monkeypatch.setattr(subjects, "_capturing_union", read)
+    args = ["research", "eval", "--subject", name, "--dataset", "ohlc-rolling", "--as-of", "2026-10-03"]
+
+    result = runner.invoke(app, [*args, *_as_trial(name, tmp_path)])
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert (
+        f"{name} evaluates a frozen set's 4h series, never the rolling dataset as of a day: drop --as-of and pass a frozen "
+        "--dataset"
+    ) in result.output
+
+
+@pytest.mark.parametrize("name", sorted(_B2_OVERLAYS))
+@pytest.mark.parametrize("plain", [True, False], ids=["plain-eval", "another-count"])
+def test_a_b2_overlay_trial_refuses_a_plain_eval_and_another_count_before_any_read(tmp_path, monkeypatch, name, plain):
+    count = _B2_OVERLAYS[name][2]
+    _anchor(monkeypatch, tmp_path / "no-data", tmp_path / "registry.jsonl")
+    reads = _recording(monkeypatch, "_b2_overlay_inputs", lambda arguments, result: result)
+    flags = [] if plain else ["--register", "--iteration", "iter-182", "--family", "B2", "--n-trials", str(count + 1)]
+    refused = (
+        f"{name} declares a verdict rule, so every run of it is a trial: run it with --register"
+        if plain
+        else f"--n-trials {count + 1} is not {count}, the count {name} declares and deflates at: pass --n-trials {count}"
+    )
+
+    result = runner.invoke(app, ["research", "eval", "--subject", name, "--dataset", "ohlc-test", *flags])
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert refused in result.output and reads == []
+
+
+@pytest.mark.parametrize(
+    ("name", "from_bar", "cause"),
+    [
+        pytest.param(
+            "b2-oi-derisk",
+            1_460,
+            "1 of its return indices carry every asset's binperp_oi_z30d, and the head-to-head from the signal's own start needs 2",
+            id="oi-one-index-from-the-start",
+        ),
+        pytest.param(
+            "b2-liq-derisk",
+            1_460,
+            "0 of its return indices carry every asset's binperp_liq_long_z30d, and the head-to-head from the signal's own "
+            "start needs 2",
+            id="liquidations-no-index-from-the-start",
+        ),
+        pytest.param(
+            "b2-oi-derisk",
+            1_459,
+            "arm A never draws down from the signal's own start, so max_drawdown_reduction_pct divides by zero",
+            id="oi-arm-a-never-draws-down-from-the-start",
+        ),
+    ],
+)
+def test_a_b2_overlay_trial_refuses_a_start_it_cannot_evaluate_before_any_bar(tmp_path, monkeypatch, name, from_bar, cause):
+    _anchor(monkeypatch, _b2_overlay_dataset(tmp_path, from_bar=from_bar))
+    kill_bars = _recording(monkeypatch, "a1_kill_bar", lambda arguments, result: result)
+
+    result = runner.invoke(app, ["research", "eval", "--subject", name, "--dataset", "ohlc-test", *_as_trial(name, tmp_path)])
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert f"{name} over the full history: {cause}" in result.output
+    assert kill_bars == []
+
+
+def _not_parquet(path: Path) -> None:
+    path.write_bytes(b"not a parquet file")
+
+
+@pytest.mark.parametrize(
+    ("name", "relpath", "spoil", "cause"),
+    [
+        pytest.param("b2-oi-derisk", f"derivatives-oi/{_B2_SPOILT}/oi.parquet", _not_parquet, "File out of specification", id="oi"),
+        pytest.param(
+            "b2-ratio-derisk-preflight",
+            f"derivatives-oi/{_B2_SPOILT}/oi.parquet",
+            lambda path: pl.read_parquet(path).drop("count_long_short_ratio").write_parquet(path),
+            '"count_long_short_ratio" not found',
+            id="ratio",
+        ),
+        pytest.param(
+            "b2-liq-derisk",
+            "liquidations-daily/SOL/daily.parquet",
+            lambda path: pl.read_parquet(path).drop("long_usd").write_parquet(path),
+            '"long_usd" not found',
+            id="liquidation-daily",
+        ),
+        pytest.param(
+            "b2-liq-derisk-preflight",
+            "liquidations-daily/BTC/daily.parquet",
+            _not_parquet,
+            "File out of specification",
+            id="liquidation-daily-preflight",
+        ),
+    ],
+)
+def test_a_b2_overlay_subject_refuses_a_file_of_its_signal_it_cannot_read_naming_it(
+    tmp_path, monkeypatch, name, relpath, spoil, cause
+):
+    root = _b2_overlay_dataset(tmp_path)
+    spoil(root / relpath)
+    _anchor(monkeypatch, root)
+
+    result = runner.invoke(app, ["research", "eval", "--subject", name, "--dataset", "ohlc-test", *_as_trial(name, tmp_path)])
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert f"{relpath}: " in result.output and cause in result.output
+
+
+@pytest.mark.parametrize("name", sorted(_B2_OVERLAYS))
+def test_each_b2_overlay_reads_its_signal_off_its_own_columns(tmp_path, name):
+    root = _b2_overlay_dataset(tmp_path)
+    h4_ts, _ = subjects._capturing_union(ObservedReader(root), "ohlc-test", 240, None, None, False)
+    expected = {}
+    for asset in _B2_ASSETS:
+        oi = pl.read_parquet(root / "derivatives-oi" / PERP_SYMBOLS[asset] / "oi.parquet")
+        daily = pl.read_parquet(root / "liquidations-daily" / asset / "daily.parquet")
+        if name == "b2-oi-derisk":
+            expected[asset] = oi_zscore_grid_feature(oi["ts"].to_list(), oi["sum_open_interest"].to_list(), h4_ts)
+        elif name == "b2-ratio-derisk":
+            ratios = {column: oi[column].to_list() for column in _B2_OVERLAY_RATIOS}
+            expected[asset] = ratio_max_signal(ratio_zscore_grid_features(oi["ts"].to_list(), ratios, h4_ts))
+        else:
+            expected[asset] = daily_zscore_grid_feature(daily["ts"].to_list(), daily["long_usd"].to_list(), h4_ts)
+
+    signal = _overlay_signal(name)(ObservedReader(root), h4_ts)
+
+    assert signal == expected
+    assert sum(v is not None and v > 2.5 for v in signal["BTC"]) > 0
+
+
+def _ruled_signal(held: list[float | None], flat: list[float]) -> tuple[dict, dict]:
+    """BTC's signal at its long stamps `held` and at its flat ones `flat`, every other asset's flat and unread."""
+    n = len(held) + len(flat)
+    signal = {a: [None] * n for a in _B2_ASSETS} | {"BTC": [*held, *flat]}
+    arm_a = {a: [0.0] * n for a in _B2_ASSETS} | {"BTC": [0.3] * len(held) + [0.0] * len(flat)}
+    return signal, arm_a
+
+
+@pytest.mark.parametrize(
+    ("held", "flat", "share", "threshold"),
+    [
+        # Shares of 6 % above 2.0 and 2 % above 2.5: the first is nearer 4.93 %.
+        pytest.param([2.2] * 40 + [2.6] * 20 + [0.0] * 940, [], None, 2.0, id="2.0-nearer"),
+        # 15 % and 6 %: the second is nearer.
+        pytest.param([2.2] * 90 + [2.6] * 60 + [0.0] * 850, [], None, 2.5, id="2.5-nearer"),
+        # 50 % and 0 % against a share of 25 %: a tie, read as 2.5.
+        pytest.param([2.2, 2.3, 0.0, 0.0], [], 0.25, 2.5, id="a-tie"),
+        # Flat stamps at 9.0 count for neither share: read over the long stamps alone, 6 % and 2 % again.
+        pytest.param([2.2] * 40 + [2.6] * 20 + [0.0] * 940, [9.0] * 500, None, 2.0, id="flat-stamps-left-out"),
+        # Long stamps the signal does not reach count for neither share: 8 % and 5 % over the 1,000 it reads, 4 % and 2.5 %
+        # over all 2,000.
+        pytest.param([2.2] * 30 + [2.6] * 50 + [0.0] * 920 + [None] * 1000, [], None, 2.5, id="unread-long-stamps-left-out"),
+        pytest.param([], [9.0] * 10, None, 2.5, id="no-long-stamp-holds-the-signal"),
+    ],
+)
+def test_the_engagement_threshold_is_the_nearer_of_2_0_and_2_5_to_trial_2s_share(monkeypatch, held, flat, share, threshold):
+    if share is not None:
+        monkeypatch.setattr(subjects, "_B2_TRIAL_2_ENGAGED_SHARE", share)
+    assert subjects._B2_TRIAL_2_ENGAGED_SHARE == (share if share is not None else 3_486 / 70_682)
+    assert subjects._b2_engagement_threshold(*_ruled_signal(held, flat)) == threshold
+
+
+_B2_TAPE_SPEC_KEYS = frozenset(
+    {
+        "fwd_logret_1h",
+        "fwd_logret_4h",
+        "fwd_logret_24h",
+        "fwd_rv_1h",
+        "fwd_rv_4h",
+        "fwd_rv_24h",
+        "events_per_asset",
+        "zscore_hours_per_asset",
+        "threshold",
+        "zscore_hours",
+        "mean_block",
+        "n_resamples",
+    }
+)
+_B2_TAPE_START = datetime(2026, 7, 14, tzinfo=UTC)
+_B2_TAPE_HOURS = 900
+
+
+def _b2_tape_dataset(tmp_path: Path, *, hours: int = _B2_TAPE_HOURS, gap: range = range(0)) -> Path:
+    """Ten assets' hourly and 15-minute series over `hours` hours, each hourly close its last quarter's, and a 1-minute
+    liquidations block covering every hour but `gap`'s, one bucket an hour: every asset but one liquidates 50 times its
+    usual notional in each of ten hours past the 720-hour warm-up, each from its own hour."""
+    root = tmp_path / "data"
+    start = int(_B2_TAPE_START.timestamp())
+    stamps = [_B2_TAPE_START + timedelta(hours=h) for h in range(hours)]
+    write_parquet(
+        pl.DataFrame({"ts": [t for h, t in enumerate(stamps) if h not in gap]}, schema={"ts": pl.Datetime("us", "UTC")}),
+        root / "liquidations-frozen" / "covered-hours.parquet",
+    )
+    for i, asset in enumerate(_B2_ASSETS):
+        quarter = [100.0 * (1 + 0.02 * math.sin(q / 9 + i)) * (1.0001**q) for q in range(4 * hours)]
+        rows15 = [[start + 900 * q, f"{c}", f"{c * 1.01}", f"{c * 0.99}", f"{c}", f"{c}", "10", 3] for q, c in enumerate(quarter)]
+        rows60 = [
+            [start + 3600 * h, f"{c}", f"{c * 1.01}", f"{c * 0.99}", f"{c}", f"{c}", "40", 12] for h, c in enumerate(quarter[3::4])
+        ]
+        write_parquet(to_frame(rows15), root / "ohlc-test" / f"{asset}/EUR/15.parquet")
+        write_parquet(to_frame(rows60), root / "ohlc-test" / f"{asset}/EUR/60.parquet")
+        hot = set() if asset == _B2_NEVER_SPIKES else {760 + 13 * i + 7 * j for j in range(10)}
+        buckets = {
+            "ts": [t + timedelta(minutes=1) for t in stamps],
+            "symbol": [f"{asset}USDT_PERP.A"] * hours,
+            "long_usd": [5e4 if h in hot else 600.0 + 400 * math.sin(h / 5 + i) for h in range(hours)],
+            "short_usd": [500.0 + 300 * math.cos(h / 7 + i) for h in range(hours)],
+            "event_id": [f"{asset}USDT_PERP.A-{start + 3600 * h + 60}" for h in range(hours)],
+        }
+        schema = {
+            "ts": pl.Datetime("us", "UTC"),
+            "symbol": pl.String,
+            "long_usd": pl.Float64,
+            "short_usd": pl.Float64,
+            "event_id": pl.String,
+        }
+        write_parquet(pl.DataFrame(buckets, schema=schema), root / "liquidations-frozen" / asset / "buckets.parquet")
+    return root
+
+
+def test_the_tape_reading_declares_the_hourly_and_quarter_hour_grids_its_keys_and_no_rule():
+    reading = subjects.SUBJECTS["b2-liq-tape-reading"]
+    assert (reading.intervals, reading.assets, reading.spec, reading.seeds) == ((60, 15), _B2_ASSETS, _B2_OVERLAY_SPEC, (42,))
+    assert reading.build is subjects._build_b2_liq_tape_reading and reading.metric_keys == _B2_TAPE_SPEC_KEYS
+    assert (reading.verdict, reading.no_verdict, reading.incumbent, reading.family, reading.n_trials) == (None,) * 5
+
+
+def test_the_tape_forwards_read_from_the_close_its_hour_ends_on_and_merge_a_missing_quarter():
+    hours = [_B2_TAPE_START + timedelta(hours=h) for h in range(30)]
+    quarters = [_B2_TAPE_START + timedelta(minutes=15 * q) for q in range(120)]
+    fine = [100.0 + q + (q % 3) for q in range(120)]
+    # The quarter opening at 2h 30min is missing; the one opening at 10h 45min, hour 10's anchor, too.
+    fine[10] = fine[43] = None
+    hourly = [fine[4 * h + 3] for h in range(30)]
+    out = subjects._b2_tape_forwards(hours, dict.fromkeys(_B2_ASSETS, hourly), quarters, dict.fromkeys(_B2_ASSETS, fine))
+
+    assert set(out) == {f"fwd_{kind}_{h}h" for kind in ("logret", "rv") for h in (1, 4, 24)}
+    btc = {series: values["BTC"] for series, values in out.items()}
+    # Hour 0 ends at 1h, the close of the quarter opening at 45 min: its 1-hour return runs to the close at 2h.
+    assert btc["fwd_logret_1h"][0] == pytest.approx(math.log(fine[7] / fine[3]))
+    assert btc["fwd_logret_4h"][0] == pytest.approx(math.log(fine[19] / fine[3]))
+    assert btc["fwd_rv_1h"][0] == pytest.approx(math.sqrt(sum(math.log(fine[q + 1] / fine[q]) ** 2 for q in range(3, 7))))
+    # Hour 1's path runs 2h .. 3h: the missing 2h 30min quarter merges its neighbours' returns into one.
+    path = [fine[7], fine[8], fine[9], fine[11]]
+    assert btc["fwd_rv_1h"][1] == pytest.approx(math.sqrt(sum(math.log(b / a) ** 2 for a, b in zip(path, path[1:]))))
+    # Hour 10's anchor quarter is missing, and the last hours lack the closes their horizons end on.
+    assert (btc["fwd_rv_1h"][10], btc["fwd_logret_1h"][29], btc["fwd_logret_24h"][6], btc["fwd_rv_24h"][6]) == (
+        None,
+        None,
+        None,
+        None,
+    )
+    assert btc["fwd_logret_24h"][5] == pytest.approx(math.log(fine[119] / fine[23]))
+
+
+def test_the_tape_reading_flags_an_hour_whose_z_score_exceeds_2_and_hands_its_forwards_to_the_contrast(tmp_path, monkeypatch):
+    # Hours 850-859 are not asserted: each asset's 720-hour z-score is read at hours 719-849 alone, where the gap read as
+    # covered would add hours 850-899.
+    root = _b2_tape_dataset(tmp_path, gap=range(850, 860))
+    contrasts = _recording(monkeypatch, "event_contrast", lambda arguments, result: result)
+
+    metrics = subjects.SUBJECTS["b2-liq-tape-reading"].build(ObservedReader(root), "ohlc-test", None)
+
+    reader = ObservedReader(root)
+    hours, hourly = subjects._capturing_union(reader, "ohlc-test", 60, None, None, False)
+    quarters, quarterly = subjects._capturing_union(reader, "ohlc-test", 15, None, None, False)
+    covered = pl.read_parquet(root / "liquidations-frozen" / "covered-hours.parquet")["ts"].to_list()
+    flags = {}
+    for asset in _B2_ASSETS:
+        rows = pl.read_parquet(root / "liquidations-frozen" / asset / "buckets.parquet")
+        totals = liquidation_hourly_totals(
+            rows["ts"].to_list(), rows["long_usd"].to_list(), rows["short_usd"].to_list(), hours, covered
+        )
+        flags[asset] = [None if z is None else z > 2.0 for z in funding_zscore(totals, window=720)]
+    ((arguments, result),) = contrasts
+    assert arguments == {
+        "flags": flags,
+        "forwards": subjects._b2_tape_forwards(hours, hourly, quarters, quarterly),
+        "mean_block": 24,
+        "n_resamples": 2000,
+        "seed": 42,
+    }
+    assert set(metrics) == _B2_TAPE_SPEC_KEYS and {key: metrics[key] for key in result} == result
+    assert metrics["events_per_asset"] == {a: sum(flag is True for flag in flags[a]) for a in _B2_ASSETS}
+    assert metrics["events_per_asset"][_B2_NEVER_SPIKES] == 0 < metrics["events_per_asset"]["BTC"]
+    assert metrics["zscore_hours_per_asset"] == dict.fromkeys(_B2_ASSETS, 849 - 718)
+    assert (metrics["threshold"], metrics["zscore_hours"], metrics["mean_block"], metrics["n_resamples"]) == (2.0, 720, 24, 2000)
+
+
+def test_the_tape_reading_refuses_a_bucket_file_it_cannot_read_naming_it(tmp_path, monkeypatch):
+    root = _b2_tape_dataset(tmp_path)
+    _not_parquet(root / "liquidations-frozen" / "SOL" / "buckets.parquet")
+    _anchor(monkeypatch, root)
+
+    result = runner.invoke(app, ["research", "eval", "--subject", "b2-liq-tape-reading", "--dataset", "ohlc-test"])
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert "liquidations-frozen/SOL/buckets.parquet: " in result.output and "File out of specification" in result.output
+
+
 # Records 45 and 46's metric keys (docs/specs/00130 D3), pinned against the committed records below.
 _B1_REGISTERED_KEYS = frozenset(
     {
@@ -2533,6 +3175,9 @@ _RULED_FIXTURES = {
     "b1-volume-confirmation": _b1_volume_dataset,
     "b2-funding-derisk": _b2_dataset,
     "b2-funding-derisk-full": _b2_dataset,
+    "b2-liq-derisk": _b2_overlay_dataset,
+    "b2-oi-derisk": _b2_overlay_dataset,
+    "b2-ratio-derisk": _b2_overlay_dataset,
 }
 # Each ruled subject's count constant, which the tie raises so that a literal at a kill-bar site fails it.
 _DECLARED_COUNT = {
@@ -2541,6 +3186,9 @@ _DECLARED_COUNT = {
     "b1-volume-confirmation": "_B1_VOLUME_N_TRIALS",
     "b2-funding-derisk": "_B2_N_TRIALS",
     "b2-funding-derisk-full": "_B2_FULL_N_TRIALS",
+    "b2-liq-derisk": "_B2_LIQ_N_TRIALS",
+    "b2-oi-derisk": "_B2_OI_N_TRIALS",
+    "b2-ratio-derisk": "_B2_RATIO_N_TRIALS",
 }
 
 
@@ -2552,6 +3200,9 @@ def test_the_ruled_subjects_declare_their_families_and_trial_counts():
         "b1-volume-confirmation": ("B1", 4),
         "b2-funding-derisk": ("B2", 1),
         "b2-funding-derisk-full": ("B2", 1),
+        "b2-liq-derisk": ("B2", 4),
+        "b2-oi-derisk": ("B2", 2),
+        "b2-ratio-derisk": ("B2", 3),
     }
     assert set(_RULED_FIXTURES) == set(declared) == set(_DECLARED_COUNT)
 
@@ -4096,6 +4747,13 @@ _CONTRACT_DATASETS = {
     "b2-arm-a-bar": lambda tmp_path, subject: (_b2_dataset(tmp_path), _B2_START),
     "b2-funding-derisk-full": lambda tmp_path, subject: (_b2_dataset(tmp_path), _B2_START),
     "b2-funding-derisk-full-preflight": lambda tmp_path, subject: (_b2_dataset(tmp_path), _B2_START),
+    "b2-oi-derisk": lambda tmp_path, subject: (_b2_overlay_dataset(tmp_path), _B2_START),
+    "b2-oi-derisk-preflight": lambda tmp_path, subject: (_b2_overlay_dataset(tmp_path), _B2_START),
+    "b2-ratio-derisk": lambda tmp_path, subject: (_b2_overlay_dataset(tmp_path), _B2_START),
+    "b2-ratio-derisk-preflight": lambda tmp_path, subject: (_b2_overlay_dataset(tmp_path), _B2_START),
+    "b2-liq-derisk": lambda tmp_path, subject: (_b2_overlay_dataset(tmp_path), _B2_START),
+    "b2-liq-derisk-preflight": lambda tmp_path, subject: (_b2_overlay_dataset(tmp_path), _B2_START),
+    "b2-liq-tape-reading": lambda tmp_path, subject: (_b2_tape_dataset(tmp_path), _B2_TAPE_START),
     "b1-conditioning": lambda tmp_path, subject: (_b1_dataset(tmp_path), _B1_START),
     "b1-window-only": lambda tmp_path, subject: (_b1_dataset(tmp_path, m15=False), _B1_START),
     "b1-hourly-rv": lambda tmp_path, subject: (_b1_hourly_rv_dataset(tmp_path), _B1_START),
