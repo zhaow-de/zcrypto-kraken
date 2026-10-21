@@ -173,7 +173,7 @@ ratio max z: first close every asset defined 2023-01-13 12:00:00+00:00 (index 20
   XRP coverage {2023: 1755, 2024: 1835, 2025: 2009, 2026: 540} of totals {2013: 509, 2014: 2190, 2015: 2190, 2016: 2195, 2017: 2190, 2018: 2183, 2019: 2190, 2020: 2196, 2021: 2190, 2022: 2190, 2023: 2190, 2024: 2195, 2025: 2189, 2026: 540}
 ```
 
-- **The live liquidations tree, its closed span and the grid's reach** — every coin's `liquidations-1m` finals and manifests read in place, each final's bytes hashed against its manifest; the closed span (the hours starting 31 h or more before the read's hour, behind the poller's finalize lag, `cli/liquidations/coinalyze.py:70`), its holes, D7's asserted hours; every bucket's checks; `liquidation_grid_features` (`cli/alpha/b2.py:247-291`) on the frozen union with those hours asserted; and, on the tape's own regular 4h grid, each coin's 180-bar z-score of its per-bar total (`funding_zscore`, `cli/features/derivatives.py:59-76`) and the share of defined bars above 2.0 and 2.5:
+- **The live liquidations tree, its closed span and the grid's reach** — every coin's `liquidations-1m` finals and manifests read in place, each final's bytes hashed against its manifest; the closed span (the hours starting 31 h or more before the read's hour, behind the poller's finalize lag, `cli/liquidations/coinalyze.py:70`), its holes, the asserted hours as then measured (the span less its first, before D7 also dropped its last); every bucket's checks; `liquidation_grid_features` (`cli/alpha/b2.py:247-291`) on the frozen union with those hours asserted; and, on the tape's own regular 4h grid, each coin's 180-bar z-score of its per-bar total (`funding_zscore`, `cli/features/derivatives.py:59-76`) and the share of defined bars above 2.0 and 2.5:
 
 ```
 $ uv run python .tmp/iter182/measure_liq.py data
@@ -254,7 +254,7 @@ fetch 30 days after the probe: first close per coin's signal {ADA: 2022-11-08 00
 union 27338 stamps, 27337 return indices; trial 4's primary window 7039 returns; from-2021 11494
 ```
 
-- **The tape's two sides** — the live tree read in place and read-only, as the block above reads it; per coin each UTC day's and each clock hour's long and short sums over the closed span's whole days and asserted hours; the long side's share of the notional, the daily correlation of the two sides' logs, and the 30-day and 720-hour z-scores (`funding_zscore`) of the long side, the short side and their total, counted above 2:
+- **The tape's two sides** — the live tree read in place and read-only, as the block above reads it; per coin each UTC day's and each clock hour's long and short sums over the closed span's whole days and asserted hours (as then measured, before D7 also dropped the span's last); the long side's share of the notional, the daily correlation of the two sides' logs, and the 30-day and 720-hour z-scores (`funding_zscore`) of the long side, the short side and their total, counted above 2:
 
 ```
 $ uv run python .tmp/iter182/measure_tape_sides.py
