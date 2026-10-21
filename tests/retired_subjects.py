@@ -24,6 +24,14 @@ RETIRED_SUBJECTS = frozenset(
         "b2-arm-a-bar",
         "b2-funding-derisk-full",
         "b2-funding-derisk-full-preflight",
+        # B2's trials 3-5, their pre-flights and the liquidation tape's reading.
+        "b2-oi-derisk",
+        "b2-oi-derisk-preflight",
+        "b2-ratio-derisk",
+        "b2-ratio-derisk-preflight",
+        "b2-liq-derisk",
+        "b2-liq-derisk-preflight",
+        "b2-liq-tape-reading",
     }
 )
 # The one file outside the data-gated family whose cases evaluate a subject; elsewhere a subject's name is a checker's

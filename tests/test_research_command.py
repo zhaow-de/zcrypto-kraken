@@ -2452,6 +2452,7 @@ _B2_OVERLAY_ADOPTING = {
 _B2_OVERLAY_NEVER_ENGAGED = {"engaged_per_year": {"2013": 0, "2023": 0}}
 
 
+@pytest.mark.retired
 @pytest.mark.parametrize(
     ("change", "verdict"),
     [
@@ -2517,6 +2518,7 @@ def test_a_b2_overlays_metrics_are_trial_2s_read_from_its_signals_own_start_at_i
     } == metrics
 
 
+@pytest.mark.retired
 def test_where_no_signal_crosses_its_threshold_a_b2_overlays_arm_b_is_arm_a_bit_for_bit(tmp_path, monkeypatch):
     reader = ObservedReader(_b2_overlay_dataset(tmp_path))
     inputs = subjects._b2_overlay_inputs("b2-oi-derisk", subjects._b2_oi_signal, 2.5, reader, "ohlc-test", None, False)
@@ -2609,6 +2611,7 @@ def test_a_b2_overlays_preflight_reads_arm_a_and_the_engagement_and_never_builds
     assert metrics["engaged_per_asset"][_B2_NEVER_SPIKES] == 0
 
 
+@pytest.mark.retired
 def test_a_b2_overlay_preflight_whose_signal_no_close_carries_prints_its_figures_at_zero(tmp_path, monkeypatch):
     # The daily block opening where the union ends: no close carries the signal, and the rule reads no long stamp.
     root = _b2_overlay_dataset(tmp_path, from_bar=_B2_BARS)
@@ -2776,6 +2779,7 @@ def _ruled_signal(held: list[float | None], flat: list[float]) -> tuple[dict, di
     return signal, arm_a
 
 
+@pytest.mark.retired
 @pytest.mark.parametrize(
     ("held", "flat", "share", "threshold"),
     [
@@ -2856,6 +2860,7 @@ def _b2_tape_dataset(tmp_path: Path, *, hours: int = _B2_TAPE_HOURS, gap: range 
     return root
 
 
+@pytest.mark.retired
 def test_the_tape_reading_declares_the_hourly_and_quarter_hour_grids_its_keys_and_no_rule():
     reading = subjects.SUBJECTS["b2-liq-tape-reading"]
     assert (reading.intervals, reading.assets, reading.spec, reading.seeds) == ((60, 15), _B2_ASSETS, _B2_OVERLAY_SPEC, (42,))
@@ -2863,6 +2868,7 @@ def test_the_tape_reading_declares_the_hourly_and_quarter_hour_grids_its_keys_an
     assert (reading.verdict, reading.no_verdict, reading.incumbent, reading.family, reading.n_trials) == (None,) * 5
 
 
+@pytest.mark.retired
 def test_the_tape_forwards_read_from_the_close_its_hour_ends_on_and_merge_a_missing_quarter():
     hours = [_B2_TAPE_START + timedelta(hours=h) for h in range(30)]
     quarters = [_B2_TAPE_START + timedelta(minutes=15 * q) for q in range(120)]
@@ -2891,6 +2897,7 @@ def test_the_tape_forwards_read_from_the_close_its_hour_ends_on_and_merge_a_miss
     assert btc["fwd_logret_24h"][5] == pytest.approx(math.log(fine[119] / fine[23]))
 
 
+@pytest.mark.retired
 def test_the_tape_reading_flags_an_hour_whose_z_score_exceeds_2_and_hands_its_forwards_to_the_contrast(tmp_path, monkeypatch):
     # Hours 850-859 are not asserted: each asset's 720-hour z-score is read at hours 719-849 alone, where the gap read as
     # covered would add hours 850-899.
@@ -2925,6 +2932,7 @@ def test_the_tape_reading_flags_an_hour_whose_z_score_exceeds_2_and_hands_its_fo
     assert (metrics["threshold"], metrics["zscore_hours"], metrics["mean_block"], metrics["n_resamples"]) == (2.0, 720, 24, 2000)
 
 
+@pytest.mark.retired
 def test_the_tape_reading_refuses_a_bucket_file_it_cannot_read_naming_it(tmp_path, monkeypatch):
     root = _b2_tape_dataset(tmp_path)
     _not_parquet(root / "liquidations-frozen" / "SOL" / "buckets.parquet")
@@ -2936,6 +2944,7 @@ def test_the_tape_reading_refuses_a_bucket_file_it_cannot_read_naming_it(tmp_pat
     assert "liquidations-frozen/SOL/buckets.parquet: " in result.output and "File out of specification" in result.output
 
 
+@pytest.mark.retired
 def test_the_tape_reading_refuses_a_dataset_its_tapes_asserted_hours_miss(tmp_path):
     root = _b2_tape_dataset(tmp_path)
     covered = root / "liquidations-frozen" / "covered-hours.parquet"
@@ -2951,6 +2960,7 @@ def test_the_tape_reading_refuses_a_dataset_its_tapes_asserted_hours_miss(tmp_pa
     )
 
 
+@pytest.mark.retired
 def test_the_tape_reading_refuses_z_scored_hours_none_of_which_holds_a_24_hour_forward(tmp_path):
     # Hours 0-156 are not asserted: the first z-scored hour is 876, one past 875, the last whose 24-hour forward bar the
     # 900-hour union holds.
@@ -2966,6 +2976,7 @@ def test_the_tape_reading_refuses_z_scored_hours_none_of_which_holds_a_24_hour_f
     )
 
 
+@pytest.mark.retired
 def test_the_tape_reading_refuses_744_hourly_bars_and_reads_745_with_no_event(tmp_path):
     reading = subjects.SUBJECTS["b2-liq-tape-reading"]
     with pytest.raises(subjects.SubjectError) as refused:
