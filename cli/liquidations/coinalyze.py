@@ -371,10 +371,8 @@ def backfill_daily(
     api_key: str, coins: list[str], out_dir: Path, *, now: datetime | None = None, opener=urllib.request.urlopen
 ) -> dict[str, int]:
     """Coinalyze's daily liquidation history of `coins` from 2018-01-01 to the last day proven closed, one
-    `<COIN>/daily.parquet` each — `ts` the day's 00:00Z, `long_usd`, `short_usd` — returning the days written per coin.
-    Coinalyze returns about 1,500 days, so the first day is whatever its window holds on the fetch day. Nothing is
-    written unless the whole response passes: `out_dir` absent, every coin present once with at least one day, each day stamp
-    on 00:00Z and strictly increasing, each leg finite and non-negative."""
+    `<COIN>/daily.parquet` each — `ts` the day's 00:00Z, `long_usd`, `short_usd` — returning the days written per coin;
+    nothing is written unless the whole response passes."""
     if out_dir.exists():
         raise LiquidationsError(f"{out_dir} exists: a backfill never writes over a set")
     now_s = int((now or datetime.now(UTC)).timestamp())

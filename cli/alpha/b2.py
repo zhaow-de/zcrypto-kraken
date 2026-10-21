@@ -301,8 +301,7 @@ def ratio_zscore_grid_features(
     oi_ts: list[datetime], ratios: dict[str, list[float | None]], union_ts: list[datetime]
 ) -> dict[str, list[float | None]]:
     """Each ratio's trailing z-score over its level on the OI rows' regular grid, read at a union's closes
-    (docs/specs/00138 D5), through `funding_zscore`, the finite-or-null trailing z-score: a `0.0` taker ratio is a reading
-    and is scored."""
+    (docs/specs/00138 D5)."""
     zscore = partial(funding_zscore, window=_RATIO_ZSCORE_WINDOW)
     return {
         f"{name}_z30d": _rows_at_union_closes(f"{name} z-score", zscore, oi_ts, name, values, union_ts)

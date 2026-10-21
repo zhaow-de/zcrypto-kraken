@@ -2821,10 +2821,7 @@ _B2_TAPE_HOURS = 900
 
 
 def _b2_tape_dataset(tmp_path: Path, *, hours: int = _B2_TAPE_HOURS, gap: range = range(0)) -> Path:
-    """Ten assets' hourly and 15-minute series over `hours` hours, each hourly close its last quarter's, and a 1-minute
-    liquidations block covering every hour but `gap`'s, one bucket an hour: every asset but `_B2_NEVER_SPIKES` carries a
-    50,000 USD long leg, against its usual 200 to 1,000, in each hour 760 + 13 i + 7 j (i its index, j below ten) inside
-    `hours` — past the 720-hour warm-up, and at the default 900 hours fewer than ten for LINK (9), LTC (7) and SOL (6)."""
+    """Hourly and 15-minute series, and a one-bucket-an-hour tape over every hour but `gap`'s, spiking past the warm-up."""
     root = tmp_path / "data"
     start = int(_B2_TAPE_START.timestamp())
     stamps = [_B2_TAPE_START + timedelta(hours=h) for h in range(hours)]

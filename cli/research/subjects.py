@@ -1998,7 +1998,7 @@ _B2_FULL_PREFLIGHT_KEYS = _B2_ARM_A_BAR_KEYS | {
 
 
 # docs/specs/00138 D3-D10: B2's trials 3-5, spec 00128's half-scale de-risk on three signals of their own, each on a frozen
-# set's full history with trial 2's bars, the head-to-head read from the first close every asset's signal is defined.
+# set's full history with trial 2's bars.
 _B2_OI_N_TRIALS = 2  # docs/specs/00138 D8: each count fixed by the spec's hash; a different one is a new subject
 _B2_RATIO_N_TRIALS = 3
 _B2_LIQ_N_TRIALS = 4
@@ -2428,8 +2428,7 @@ def _b2_overlay_verdict(m: dict) -> str | None:
     return "reject"
 
 
-# docs/specs/00138 D9's keys: trial 2's, the head-to-head's from-2021 pair read from the signal's own start, each signal's
-# coverage in the funding z-score's place, and the returns from that start.
+# docs/specs/00138 D9's keys.
 def _b2_overlay_metric_keys(signal_key: str) -> frozenset[str]:
     moved = {"head_to_head_mean_outperf_2021", "head_to_head_spa_p_2021", "binperp_funding_z30d_coverage"}
     return (_B2_METRIC_KEYS - moved) | {
@@ -2449,7 +2448,7 @@ def _b2_overlay_preflight_keys(signal_key: str) -> frozenset[str]:
     }
 
 
-# docs/specs/00138 D12: the 1-minute tape's event study, a reading on the rolling set with no rule, kept by --reading.
+# docs/specs/00138 D12: the 1-minute tape's event study, read on ohlc-rolling: a frozen set misses the tape's span.
 _B2_TAPE_SET = "liquidations-frozen"
 _B2_TAPE_ZSCORE_HOURS = 720
 _B2_TAPE_THRESHOLD = 2.0

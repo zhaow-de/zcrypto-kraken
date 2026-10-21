@@ -1,7 +1,4 @@
-"""B2 trials 3-5's inputs half on the frozen ohlc-full set against spec 00138's measured basis -- the OI and ratio signals'
-coverage, start and engagement, the daily liquidations block's attestation and its signal against the spec's completed
-basis, the 1-minute block's attestation -- and arm A against records 50 and 51's stored figures: no bar, and no position
-or return of arm B."""
+"""B2 trials 3-5's inputs half against spec 00138's bases: no bar, and no position or return of arm B."""
 
 from __future__ import annotations
 
@@ -114,7 +111,7 @@ ENGAGED_PER_YEAR = {
     | {"2020": 39, "2021": 116, "2022": 0, "2023": 1_394, "2024": 1_236, "2025": 1_139, "2026": 232},
 }
 _SIGNAL_KEY = {"b2-oi-derisk": "binperp_oi_z30d", "b2-ratio-derisk": "binperp_ratio_max_z30d"}
-# Records 48-51's arm A and benchmark, stored unrounded; record 51 keys arm_a_max_drawdown as its from-2021 read's.
+# Record 50's arm A and benchmark, unrounded; record 51 lacks the spot drag and keys arm_a_max_drawdown from 2021.
 ARM_A = {
     "arm_a_ann_sharpe_noc": 1.404998307684581,
     "arm_a_ann_sharpe_noc_decisive": 1.3716011675660076,
