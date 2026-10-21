@@ -13,9 +13,9 @@ file from a failed run. `-rfE` rather than the bare `-rf`: an error at setup is 
 as much a finding as a failure's.
 
 The coverage upload is cut off after UPLOAD_TIMEOUT_S: the unit is a oneshot, and a run that never ends writes no result
-and holds off the next night's. Its token is read from TOKEN_FILE, and only from a regular file this uid owns with no
-group or other permission bit, holding one `COVERALLS_REPO_TOKEN=<token>` line beside blank lines and `#` comments; any
-other file or line skips the upload with a reason that never carries the token.
+and holds off the next night's. Its token is read from TOKEN_FILE, which the ops role renders at converge, and only from
+a regular file this uid owns with no group or other permission bit, holding one `COVERALLS_REPO_TOKEN=<token>` line
+beside blank lines and `#` comments; any other file or line skips the upload with a reason that never carries the token.
 
 Python rather than shell because the parser is the substance and `tests/test_data_gated_run.py` imports it; a JSON
 writer in bash is a hand-rolled serialiser.
@@ -45,6 +45,7 @@ PYTEST_ARGS = ("-q", "-p", "no:cacheprovider", "-rfEs")
 COVERAGE_ARGS = ("--cov=cli", "--cov-report=")
 COVERALLS_SERVICE = "zcrypto-nightly"
 UPLOAD_TIMEOUT_S = 120.0
+# The ops role renders it at this path under its research user's home; tests/test_data_gated_run.py pins the two.
 TOKEN_FILE = Path.home() / ".config" / "zcrypto" / "coveralls.env"
 TOKEN_KEY = "COVERALLS_REPO_TOKEN"
 _TOKEN_LINE = re.compile(rf"{TOKEN_KEY}=(?P<token>[^\s'\"]*)")

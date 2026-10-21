@@ -19,12 +19,16 @@ from pathlib import Path
 
 import pytest
 
+from tests.role_render import render
+from tests.test_infra_converge_guards import find_task, iter_tasks, load_tasks, truthy
+
 _SCRIPT = Path(__file__).resolve().parents[1] / "infra" / "scripts" / "data-gated-run.py"
 _spec = importlib.util.spec_from_file_location("data_gated_run", _SCRIPT)
 runner = importlib.util.module_from_spec(_spec)
 sys.modules["data_gated_run"] = runner
 _spec.loader.exec_module(runner)
 _REAL_SEND = runner.send_coverage
+_REAL_TOKEN_FILE = runner.TOKEN_FILE
 
 
 @pytest.fixture(autouse=True)
@@ -697,3 +701,51 @@ def test_a_whole_parsed_run_measures_coverage_and_uploads_it(tmp_path, monkeypat
     assert handed == [["--cov=cli", "--cov-report="]]
     assert code == 0 and result["ok"] is True
     assert result["coverage_upload"] == {"outcome": "uploaded", "url": JOB["url"]}
+
+
+# --- the ops role renders the file the runner reads -------------------------------------------------------------------
+
+_OPS = _SCRIPT.parents[1] / "ansible" / "roles" / "ops"
+_OPS_TASKS = _OPS / "tasks" / "main.yml"
+_TOKEN_DIR_TASK = "ensure the research user's zcrypto config directory exists (owner-only)"
+_TOKEN_RENDER_TASK = "render the nightly's Coveralls token env file (owner-only)"
+_RESEARCH_HOME = "~{{ ops_research_user }}"
+
+
+def test_the_ops_role_renders_the_token_file_where_the_runner_reads_it():
+    tasks = load_tasks(_OPS_TASKS)
+    in_home = _REAL_TOKEN_FILE.relative_to(Path.home())
+
+    assert find_task(tasks, _TOKEN_RENDER_TASK)["ansible.builtin.template"]["dest"] == f"{_RESEARCH_HOME}/{in_home.as_posix()}"
+    assert find_task(tasks, _TOKEN_DIR_TASK)["ansible.builtin.file"]["path"] == f"{_RESEARCH_HOME}/{in_home.parent.as_posix()}"
+
+
+@pytest.mark.parametrize(
+    ("name", "module", "mode"),
+    [(_TOKEN_DIR_TASK, "ansible.builtin.file", "0700"), (_TOKEN_RENDER_TASK, "ansible.builtin.template", "0600")],
+    ids=["directory", "file"],
+)
+def test_the_token_file_and_its_directory_are_the_research_users_alone(name, module, mode):
+    args = find_task(load_tasks(_OPS_TASKS), name)[module]
+
+    assert (args["owner"], args["group"], args["mode"]) == ("{{ ops_research_user }}", "{{ ops_research_user }}", mode)
+
+
+def test_the_token_render_is_never_logged_and_runs_on_a_digestless_converge_once_the_user_and_the_token_exist():
+    tasks = load_tasks(_OPS_TASKS)
+    render_task = find_task(tasks, _TOKEN_RENDER_TASK)
+    gates = {task.get("name"): list(gated) for task, gated in iter_tasks(tasks)}
+    present = {"ops_research_probe": {"rc": 0}, "coveralls_repo_token": TOKEN}
+
+    assert render_task.get("no_log") is True and render_task.get("diff") is False
+    assert truthy(gates[_TOKEN_DIR_TASK], present) and truthy(gates[_TOKEN_RENDER_TASK], present)
+    assert not truthy(gates[_TOKEN_RENDER_TASK], {**present, "ops_research_probe": {"rc": 2}})
+    assert not truthy(gates[_TOKEN_RENDER_TASK], {"ops_research_probe": {"rc": 0}})
+
+
+def test_the_rendered_token_file_is_one_line_the_runner_reads_the_token_from(tmp_path, monkeypatch):
+    rendered = render(_OPS, "coveralls.env.j2", {"coveralls_repo_token": TOKEN})
+
+    assert [line for line in rendered.splitlines() if not line.startswith("#")] == [f"COVERALLS_REPO_TOKEN={TOKEN}"]
+    _token_file(tmp_path, monkeypatch, rendered)
+    assert runner.read_coverage_token() == TOKEN
