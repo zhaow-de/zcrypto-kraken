@@ -2538,6 +2538,16 @@ def _build_b2_liq_tape_reading(
         flags[asset] = [None if z is None else z > _B2_TAPE_THRESHOLD for z in zscores]
     try:
         forwards = _b2_tape_forwards(hours, hourly, quarters, quarterly)
+    except ValidationError as exc:
+        raise SubjectError(f"{_b2_over(subject, window)}: {exc}") from exc
+    longest = forwards[f"fwd_logret_{max(_B2_TAPE_HORIZONS)}h"]
+    if not any(flag is not None and ret is not None for a in _ASSETS for flag, ret in zip(flags[a], longest[a])):
+        span = f"the hours {min(covered)} .. {max(covered)}" if covered else "no hour"
+        raise SubjectError(
+            f"{_b2_over(subject, window)}: no coin holds an hour with both the {_B2_TAPE_ZSCORE_HOURS}-hour z-score and the "
+            f"{max(_B2_TAPE_HORIZONS)}-hour forward log return; the tape asserts {span}"
+        )
+    try:
         contrast = event_contrast(flags, forwards, mean_block=_B2_TAPE_BLOCK, n_resamples=_N_RESAMPLES, seed=42)
     except (AlphaError, ValidationError) as exc:
         raise SubjectError(f"{_b2_over(subject, window)}: {exc}") from exc

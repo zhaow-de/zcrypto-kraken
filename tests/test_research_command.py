@@ -2936,6 +2936,51 @@ def test_the_tape_reading_refuses_a_bucket_file_it_cannot_read_naming_it(tmp_pat
     assert "liquidations-frozen/SOL/buckets.parquet: " in result.output and "File out of specification" in result.output
 
 
+def test_the_tape_reading_refuses_a_dataset_its_tapes_asserted_hours_miss(tmp_path):
+    root = _b2_tape_dataset(tmp_path)
+    covered = root / "liquidations-frozen" / "covered-hours.parquet"
+    moved = [t + timedelta(days=400) for t in pl.read_parquet(covered)["ts"].to_list()]
+    write_parquet(pl.DataFrame({"ts": moved}, schema={"ts": pl.Datetime("us", "UTC")}), covered)
+
+    with pytest.raises(subjects.SubjectError) as refused:
+        subjects.SUBJECTS["b2-liq-tape-reading"].build(ObservedReader(root), "ohlc-test", None)
+
+    assert str(refused.value) == (
+        "b2-liq-tape-reading over the full history: no coin holds an hour with both the 720-hour z-score and the 24-hour "
+        f"forward log return; the tape asserts the hours {moved[0]} .. {moved[-1]}"
+    )
+
+
+def test_the_tape_reading_refuses_z_scored_hours_none_of_which_holds_a_24_hour_forward(tmp_path):
+    # Hours 0-156 are not asserted: the first z-scored hour is 876, one past 875, the last whose 24-hour forward bar the
+    # 900-hour union holds.
+    root = _b2_tape_dataset(tmp_path, gap=range(157))
+
+    with pytest.raises(subjects.SubjectError) as refused:
+        subjects.SUBJECTS["b2-liq-tape-reading"].build(ObservedReader(root), "ohlc-test", None)
+
+    first, last = _B2_TAPE_START + timedelta(hours=157), _B2_TAPE_START + timedelta(hours=_B2_TAPE_HOURS - 1)
+    assert str(refused.value) == (
+        "b2-liq-tape-reading over the full history: no coin holds an hour with both the 720-hour z-score and the 24-hour "
+        f"forward log return; the tape asserts the hours {first} .. {last}"
+    )
+
+
+def test_the_tape_reading_refuses_744_hourly_bars_and_reads_745_with_no_event(tmp_path):
+    reading = subjects.SUBJECTS["b2-liq-tape-reading"]
+    with pytest.raises(subjects.SubjectError) as refused:
+        reading.build(ObservedReader(_b2_tape_dataset(tmp_path / "744", hours=744)), "ohlc-test", None)
+    assert str(refused.value) == (
+        "b2-liq-tape-reading over the full history: it holds 744 hourly bars, and the 720-hour z-score and the 24-hour "
+        "forward read need 745"
+    )
+
+    # Hours 719 and 720 hold a z-score and a 24-hour forward; the fixture's spikes start at hour 760.
+    metrics = reading.build(ObservedReader(_b2_tape_dataset(tmp_path / "745", hours=745)), "ohlc-test", None)
+    assert metrics["zscore_hours_per_asset"] == dict.fromkeys(_B2_ASSETS, 745 - 719)
+    assert metrics["events_per_asset"] == dict.fromkeys(_B2_ASSETS, 0)
+
+
 # Records 45 and 46's metric keys (docs/specs/00130 D3), pinned against the committed records below.
 _B1_REGISTERED_KEYS = frozenset(
     {
