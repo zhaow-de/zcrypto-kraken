@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import partial
 
+import numpy as np
+
 from cli.alpha.errors import AlphaError
 from cli.features.derivatives import (
     align_asof,
@@ -20,7 +22,7 @@ from cli.features.derivatives import (
     ratio_features,
 )
 from cli.logging import get_logger
-from cli.validation import max_drawdown
+from cli.validation import max_drawdown, stationary_bootstrap_indices
 
 logger = get_logger("alpha.b2")
 
@@ -35,7 +37,11 @@ _SETTLEMENT_INTERVAL = timedelta(hours=_FUNDING_INTERVAL_HOURS)
 _CARRY_WINDOW = 90
 _OI_ZSCORE_WINDOW = 180
 _OI_MOMENTUM_LOOKBACK = 180
+# Pre-registered 30-day windows (docs/specs/00138 D5, D6), not knobs: a change to one is a new trial.
+_RATIO_ZSCORE_WINDOW = 180
+_DAILY_ZSCORE_WINDOW = 30
 _HOUR = timedelta(hours=1)
+_DAY = timedelta(days=1)
 # The imbalance carries no lowerbound_: a ratio of two undercounts bounds nothing (docs/specs/00136 D5).
 _LIQUIDATION_COLUMNS = (
     "binperp_liq_lowerbound_long_usd",
@@ -288,6 +294,132 @@ def liquidation_grid_features(
         len(union_ts) - 1,
         out[_LIQUIDATION_COLUMNS[0]].count(None),
     )
+    return out
+
+
+def ratio_zscore_grid_features(
+    oi_ts: list[datetime], ratios: dict[str, list[float | None]], union_ts: list[datetime]
+) -> dict[str, list[float | None]]:
+    """Each ratio's trailing z-score over its level on the OI rows' regular grid, read at a union's closes
+    (docs/specs/00138 D5), through `funding_zscore`, the finite-or-null trailing z-score: a `0.0` taker ratio is a reading
+    and is scored."""
+    zscore = partial(funding_zscore, window=_RATIO_ZSCORE_WINDOW)
+    return {
+        f"{name}_z30d": _rows_at_union_closes(f"{name} z-score", zscore, oi_ts, name, values, union_ts)
+        for name, values in ratio_features(ratios).items()
+    }
+
+
+def ratio_max_signal(z_columns: dict[str, list[float | None]]) -> list[float | None]:
+    """The columns' maximum at each index, None wherever any column is None (docs/specs/00138 D5)."""
+    if not z_columns:
+        raise AlphaError("z_columns is empty: the signal reads at least one column")
+    n = _check_lengths(z_columns)
+    columns = list(z_columns.values())
+    return [None if any(column[k] is None for column in columns) else max(column[k] for column in columns) for k in range(n)]
+
+
+def daily_zscore_grid_feature(day_ts: list[datetime], values: list[float | None], union_ts: list[datetime]) -> list[float | None]:
+    """A daily series' trailing z-score at each union close (docs/specs/00138 D6): a day's value reaches a close once the
+    day has ended, from the close at or after the next day's 00:00Z until the next day's own value is due, and a day the
+    series lacks is None, darkening every window holding it."""
+    if len(day_ts) != len(values):
+        raise AlphaError(f"day_ts and values must be equal length, got {len(day_ts)} and {len(values)}")
+    if not day_ts:
+        raise AlphaError("day_ts is empty: no close would read a day")
+    _validate_stamps("day_ts", day_ts)
+    for i, t in enumerate(day_ts):
+        if (t - _EPOCH) % _DAY:
+            raise AlphaError(f"day_ts[{i}] = {t.isoformat()} is not a UTC day's start")
+    _validate_union_marks(union_ts)
+    first = day_ts[0]
+    grid: list[float | None] = [None] * ((day_ts[-1] - first) // _DAY + 1)
+    for t, v in zip(day_ts, values):
+        grid[(t - first) // _DAY] = v
+    zscores = funding_zscore(grid, window=_DAILY_ZSCORE_WINDOW)
+    # The latest day a close has seen end is the one before the day the close falls in.
+    days = [(c - first) // _DAY - 1 for c in close_grid(union_ts)]
+    return [zscores[k] if 0 <= k < len(grid) else None for k in days]
+
+
+def liquidation_hourly_totals(
+    bucket_ts: list[datetime],
+    long_usd: list[float],
+    short_usd: list[float],
+    hour_ts: list[datetime],
+    covered: Collection[datetime],
+) -> list[float | None]:
+    """One coin's liquidated notional, both legs, in each hour of `hour_ts` (docs/specs/00138 D12): an hour the caller
+    asserts covered sums the buckets stamped inside it, zero where there are none, and any other hour reads None."""
+    if not len(bucket_ts) == len(long_usd) == len(short_usd):
+        raise AlphaError(
+            f"bucket_ts, long_usd and short_usd must be equal length, got {len(bucket_ts)}, {len(long_usd)} and {len(short_usd)}"
+        )
+    if not bucket_ts:
+        raise AlphaError("bucket_ts is empty: every covered hour would sum to zero")
+    _validate_stamps("bucket_ts", bucket_ts)
+    _validate_stamps("hour_ts", hour_ts)
+    for name, stamps in (("hour_ts", hour_ts), ("covered", covered)):
+        for t in stamps:
+            if t.utcoffset() is None or (t - _EPOCH) % _HOUR:
+                raise AlphaError(f"{name} must be tz-aware hour starts, got {t.isoformat()}")
+    asserted = set(covered)
+    out: list[float | None] = []
+    for h in hour_ts:
+        if h not in asserted:
+            out.append(None)
+            continue
+        lo, hi = bisect_left(bucket_ts, h), bisect_left(bucket_ts, h + _HOUR)
+        out.append(sum(long_usd[lo:hi], 0.0) + sum(short_usd[lo:hi], 0.0))
+    return out
+
+
+def event_contrast(
+    flags: dict[str, list[bool | None]],
+    forwards: dict[str, dict[str, list[float | None]]],
+    *,
+    mean_block: float,
+    n_resamples: int,
+    seed: int,
+) -> dict[str, dict[str, list[float]]]:
+    """Per forward series, per asset and pooled over the assets kept: `[events, others, mean after an event, mean after
+    the others, their difference, its 2.5 % and 97.5 % stationary-bootstrap bounds]` over the indices where both the flag
+    and the forward value are read (docs/specs/00138 D12). One set of index draws serves every series and asset, so the
+    pooled bounds keep the assets' common hours together; an asset with fewer than two events or two others in a series is
+    left out of it, and a resample holding no event or no other for a row is skipped for that row."""
+    n = _check_lengths({f"flags[{asset!r}]": values for asset, values in flags.items()})
+    for series, by_asset in forwards.items():
+        _check_paired("flags", flags, f"forwards[{series!r}]", by_asset, n)
+    draws = np.array(stationary_bootstrap_indices(n, mean_block=mean_block, n_resamples=n_resamples, seed=seed))
+    out: dict[str, dict[str, list[float]]] = {}
+    for series, by_asset in forwards.items():
+        kept = {}
+        for asset, flag in flags.items():
+            values = by_asset[asset]
+            event = np.array([f is True and v is not None for f, v in zip(flag, values)])
+            other = np.array([f is False and v is not None for f, v in zip(flag, values)])
+            if event.sum() >= 2 and other.sum() >= 2:
+                kept[asset] = (event, other, np.array([0.0 if v is None else v for v in values]))
+        rows = {}
+        for name, members in [*((asset, [member]) for asset, member in kept.items()), ("pooled", list(kept.values()))]:
+            if not members:
+                continue
+            n_event = sum(int(event.sum()) for event, _, _ in members)
+            n_other = sum(int(other.sum()) for _, other, _ in members)
+            mean_event = sum(float(x[event].sum()) for event, _, x in members) / n_event
+            mean_other = sum(float(x[other].sum()) for _, other, x in members) / n_other
+            resampled = [(event[draws], other[draws], x[draws]) for event, other, x in members]
+            boot_events = sum(e.sum(axis=1) for e, _, _ in resampled)
+            boot_others = sum(o.sum(axis=1) for _, o, _ in resampled)
+            usable = (boot_events > 0) & (boot_others > 0)
+            if not usable.any():
+                continue
+            boot_event_means = sum((x * e).sum(axis=1) for e, _, x in resampled)[usable] / boot_events[usable]
+            boot_other_means = sum((x * o).sum(axis=1) for _, o, x in resampled)[usable] / boot_others[usable]
+            low, high = np.percentile(boot_event_means - boot_other_means, [2.5, 97.5])
+            diff = mean_event - mean_other
+            rows[name] = [n_event, n_other, mean_event, mean_other, diff, float(low), float(high)]
+        out[series] = rows
     return out
 
 

@@ -10,11 +10,14 @@ from cli.alpha.b1 import book_turnover
 from cli.alpha.b2 import (
     B2Config,
     close_grid,
+    daily_zscore_grid_feature,
     derisk_scales,
+    event_contrast,
     funding_carry_grid_feature,
     funding_grid_feature,
     funding_sign_grid_feature,
     liquidation_grid_features,
+    liquidation_hourly_totals,
     net_of_cost,
     oi_grid_levels,
     oi_log_delta_grid_feature,
@@ -25,10 +28,14 @@ from cli.alpha.b2 import (
     per_year_positions_differ,
     per_year_turnover,
     ratio_grid_features,
+    ratio_max_signal,
+    ratio_zscore_grid_features,
     scale_positions,
 )
 from cli.alpha.errors import AlphaError
 from cli.features.errors import FeatureError
+from cli.validation import stationary_bootstrap_indices
+from cli.validation.bootstrap import _percentile
 
 UTC = timezone.utc
 DAY0 = datetime(2024, 3, 1, tzinfo=UTC)
@@ -742,3 +749,216 @@ def test_a_truncated_prefix_of_the_buckets_reproduces_every_liquidation_column_b
             k = sum(t + timedelta(minutes=1) <= cutoff for t in bucket_ts)
             prefix = liquidation_grid_features(bucket_ts[:k], long_usd[:k], short_usd[:k], union_ts[: n + 1], prefix_covered)
             assert prefix == {name: values[:n] for name, values in full[coin].items()}, f"{coin} prefix at n={n} disagrees"
+
+
+def _ratios_on_the_grid(marks: int) -> tuple[list[datetime], dict[str, list[float | None]], list[datetime]]:
+    """Column i holds 1.0 at every mark but mark 180 + i, where it holds 2.0, each level the later of two rows inside its
+    bar, the earlier 1.5 times it: a z-score over the raw rows, or a column read in another's place, differs."""
+    union_ts = _hours(*range(0, 4 * (marks + 1), 4))
+    oi_ts, ratios = [], {name: [] for name in _RATIO_COLUMNS}
+    for k in range(marks):
+        close = union_ts[k] + timedelta(hours=4)
+        oi_ts += [close - timedelta(minutes=10), close - timedelta(minutes=5)]
+        for i, name in enumerate(_RATIO_COLUMNS):
+            level = 2.0 if k == 180 + i else 1.0
+            ratios[name] += [1.5 * level, level]
+    return oi_ts, ratios, union_ts
+
+
+def test_each_ratio_zscore_scores_its_own_columns_level_over_180_grid_marks():
+    spike, after = pytest.approx(179 / math.sqrt(180)), pytest.approx(-1 / math.sqrt(180))
+    expected = {
+        f"binperp_{name}_z30d": [None] * 179 + [0.0] * (1 + i) + [spike] + [after] * (3 - i)
+        for i, name in enumerate(_RATIO_COLUMNS)
+    }
+    assert ratio_zscore_grid_features(*_ratios_on_the_grid(184)) == expected
+
+
+def test_a_zero_taker_ratio_is_scored_where_an_oi_level_gate_would_refuse_it():
+    oi_ts, ratios, union_ts = _ratios_on_the_grid(181)
+    ratios["sum_taker_long_short_vol_ratio"] = [0.0] * len(oi_ts)
+    features = ratio_zscore_grid_features(oi_ts, ratios, union_ts)
+    assert features["binperp_sum_taker_long_short_vol_ratio_z30d"] == [None] * 179 + [0.0, 0.0]
+
+
+def test_a_null_ratio_leaves_every_zscore_window_holding_its_mark_none():
+    oi_ts, ratios, union_ts = _ratios_on_the_grid(181)
+    ratios["count_long_short_ratio"][1] = None
+    # Bar 0's later row is null: fallen back to its earlier row, 1.5, the first window would score.
+    assert ratio_zscore_grid_features(oi_ts, ratios, union_ts)["binperp_count_long_short_ratio_z30d"] == [None] * 180 + [0.0]
+
+
+def test_the_ratio_and_daily_windows_are_the_pre_registered_180_marks_and_30_days():
+    assert (b2._RATIO_ZSCORE_WINDOW, b2._DAILY_ZSCORE_WINDOW) == (180, 30)
+
+
+def test_a_truncated_prefix_of_the_rows_reproduces_the_ratio_zscores_bit_for_bit():
+    oi_ts, oi_values, union_ts = _oi_prefix_fixture()
+    ratios = _each_ratio([None if v == 0.0 else v / 100 for v in oi_values]) | {
+        "sum_taker_long_short_vol_ratio": [v / 100 for v in oi_values]
+    }
+    full = ratio_zscore_grid_features(oi_ts, ratios, union_ts)
+    # Exact: a stale level read in place of None, or a null fallen back to its row's predecessor, defines more closes.
+    assert {name: sum(v is not None for v in values) for name, values in full.items()} == {
+        f"binperp_{name}_z30d": 22 for name in _RATIO_COLUMNS
+    }
+    for n in range(1, len(union_ts)):
+        cutoff = union_ts[n - 1] + timedelta(hours=4)
+        visible = [i for i, t in enumerate(oi_ts) if t <= cutoff]
+        prefix = ratio_zscore_grid_features(
+            [oi_ts[i] for i in visible], {name: [values[i] for i in visible] for name, values in ratios.items()}, union_ts[: n + 1]
+        )
+        assert prefix == {name: values[:n] for name, values in full.items()}, f"prefix at n={n} disagrees with the full run"
+
+
+def test_the_ratio_signal_is_the_columns_maximum_where_every_column_is_read():
+    columns = {"a": [1.0, 3.0, None, -0.5], "b": [2.0, -1.0, 4.0, None], "c": [0.0, 0.0, 0.0, 0.0]}
+    # Their mean reads 1.0 and 0.667 at the first two, their minimum 0.0 and -1.0, the read ones' maximum 4.0 and 0.0 at
+    # the last two.
+    assert ratio_max_signal(columns) == [2.0, 3.0, None, None]
+
+
+@pytest.mark.parametrize(
+    ("columns", "match"),
+    [({}, "z_columns is empty"), ({"a": [1.0], "b": [1.0, 2.0]}, "b has length 2, expected 1")],
+    ids=["no-column", "unequal-length"],
+)
+def test_ratio_max_signal_refuses_no_column_or_columns_of_unequal_length(columns, match):
+    with pytest.raises(AlphaError, match=match):
+        ratio_max_signal(columns)
+
+
+def _days(*days: int) -> list[datetime]:
+    return [DAY0 + timedelta(days=d) for d in days]
+
+
+def test_a_daily_zscore_reaches_a_close_only_once_its_day_has_ended():
+    # Day 30 doubles the 1.0 of days 0-29. Union closes run from day 30 20:00 to day 32 04:00.
+    union = [DAY0 + timedelta(days=30, hours=16 + 4 * k) for k in range(10)]
+    feature = daily_zscore_grid_feature(_days(*range(31)), [1.0] * 30 + [2.0], union)
+    # Day 30 20:00 reads day 29, flat; day 31 00:00 to 20:00 read day 30; day 32 reads day 31, which the series lacks.
+    assert feature == [0.0] + [pytest.approx(29 / math.sqrt(30))] * 6 + [None] * 2
+
+
+def test_a_day_the_series_lacks_darkens_every_window_holding_it():
+    days = [d for d in range(62) if d != 10]
+    union = [DAY0 + timedelta(days=d + 1) for d in range(62)]
+    feature = daily_zscore_grid_feature(_days(*days), [1.0] * len(days), union)
+    # Each close at day d + 1 00:00 reads day d: day 10 is absent, so windows over days 0..39 hold it, and day 40's opens clean.
+    assert [d for d, v in enumerate(feature) if v is not None] == list(range(40, 61))
+
+
+@pytest.mark.parametrize(
+    ("day_ts", "named"),
+    [
+        (_days(0, 1)[:1] + [DAY0 + timedelta(days=1, hours=1)], "day_ts[1] = 2024-03-02T01:00:00+00:00 is not a UTC day's start"),
+        (_days(0) + [DAY0.replace(day=2, tzinfo=timezone(timedelta(hours=5)))], "is not a UTC day's start"),
+        (_days(1, 0), "day_ts must be strictly increasing, violated at index 1"),
+        ([DAY0.replace(tzinfo=None), DAY0.replace(day=2, tzinfo=None)], "day_ts must be tz-aware datetimes"),
+    ],
+    ids=["off-midnight", "a-zone-midnight", "unsorted", "naive"],
+)
+def test_daily_zscore_refuses_a_stamp_off_a_utc_day_start_by_name(day_ts, named):
+    with pytest.raises(AlphaError, match=re.escape(named)):
+        daily_zscore_grid_feature(day_ts, [1.0, 2.0], _hours(0, 4))
+
+
+@pytest.mark.parametrize(
+    ("day_ts", "values", "named"),
+    [(_days(0, 1), [1.0], "day_ts and values must be equal length, got 2 and 1"), ([], [], "day_ts is empty")],
+    ids=["unequal-length", "empty"],
+)
+def test_daily_zscore_refuses_unequal_lengths_and_an_empty_series(day_ts, values, named):
+    with pytest.raises(AlphaError, match=re.escape(named)):
+        daily_zscore_grid_feature(day_ts, values, _hours(0, 4))
+
+
+def test_a_truncated_prefix_of_the_days_reproduces_the_daily_zscore_bit_for_bit():
+    days = [d for d in range(70) if d not in (12, 33)]
+    values = [100.0 + (37 * d) % 23 for d in days]
+    # A union with a hole at day 40's first bar, opening a bar before day 0 ends.
+    union = [t for t in (DAY0 + timedelta(hours=20 + 4 * k) for k in range(6 * 70)) if t != DAY0 + timedelta(days=40)]
+    full = daily_zscore_grid_feature(_days(*days), values, union)
+    # Exact: day 33 is absent, so no window before day 63 is whole; day 63's value enters at day 64's first close.
+    assert [j for j, v in enumerate(full) if v is not None][0] == union.index(DAY0 + timedelta(days=63, hours=20))
+    for n in range(1, len(union)):
+        cutoff = union[n - 1] + timedelta(hours=4)
+        # Two days at least: the z-score reads a list of two or more.
+        k = sum(DAY0 + timedelta(days=d + 1) <= cutoff for d in days)
+        if k < 2:
+            continue
+        prefix = daily_zscore_grid_feature(_days(*days[:k]), values[:k], union[: n + 1])
+        assert prefix == full[:n], f"prefix at n={n} disagrees with the full run"
+
+
+def test_each_covered_hour_sums_both_legs_of_its_buckets_and_any_other_hour_reads_none():
+    bucket_ts, long_usd, short_usd = _buckets(_LIQUIDATIONS["BTC"])
+    # Hour 9 is not asserted covered; hour 16 is, and holds no bucket.
+    hours = _hours(0, 1, 2, 9, 15, 16)
+    covered = [t for t in _hours(*range(17)) if t != DAY0 + timedelta(hours=9)]
+    totals = liquidation_hourly_totals(bucket_ts, long_usd, short_usd, hours, covered)
+    assert totals == [100.0, 300.0, 50.0, None, 6.0, 0.0] and type(totals[-1]) is float
+
+
+@pytest.mark.parametrize(
+    ("hours", "covered", "named"),
+    [
+        (_hours(0, 1) + [DAY0 + timedelta(hours=2, minutes=5)], _hours(0, 1, 2), "hour_ts must be tz-aware hour starts, got"),
+        (_hours(0, 1, 2), _hours(0, 1) + [DAY0 + timedelta(hours=2, minutes=5)], "covered must be tz-aware hour starts, got"),
+    ],
+    ids=["an-hour-off-its-start", "a-covered-stamp-off-its-start"],
+)
+def test_liquidation_hourly_totals_refuses_a_stamp_off_an_hour_start_by_name(hours, covered, named):
+    with pytest.raises(AlphaError, match=re.escape(named)):
+        liquidation_hourly_totals(*_buckets(_LIQUIDATIONS["BTC"]), hours, covered)
+
+
+def _reference_contrast(rows: list[tuple[list, list]], draws: list[list[int]]) -> list[float]:
+    """The contrast's row by hand: point means over the read indices, and the percentile bounds over the resamples that
+    hold an event and another."""
+    events = [v for flags, values in rows for f, v in zip(flags, values) if f is True and v is not None]
+    others = [v for flags, values in rows for f, v in zip(flags, values) if f is False and v is not None]
+    diffs = []
+    for idx in draws:
+        ev = [values[k] for flags, values in rows for k in idx if flags[k] is True and values[k] is not None]
+        ot = [values[k] for flags, values in rows for k in idx if flags[k] is False and values[k] is not None]
+        if ev and ot:
+            diffs.append(sum(ev) / len(ev) - sum(ot) / len(ot))
+    diffs.sort()
+    point = sum(events) / len(events) - sum(others) / len(others)
+    return [
+        len(events),
+        len(others),
+        sum(events) / len(events),
+        sum(others) / len(others),
+        point,
+        _percentile(diffs, 0.025),
+        _percentile(diffs, 0.975),
+    ]
+
+
+def test_the_event_contrast_compares_the_means_after_events_and_after_the_others_with_shared_bootstrap_bounds():
+    flags = {
+        "BTC": [True, False, False, True, None, False, True, False, False, False, True, False],
+        "ETH": [False, True, False, False, True, False, None, True, False, False, False, True],
+        "DOT": [True, False, False, False, False, False, False, False, False, False, False, False],
+    }
+    values = {
+        "BTC": [0.03, 0.01, -0.02, 0.05, 9.0, 0.0, 0.04, 0.02, -0.01, 0.01, None, 0.00],
+        "ETH": [0.01, -0.03, 0.02, 0.00, -0.02, 0.01, 9.0, -0.04, 0.03, 0.01, 0.02, -0.01],
+        "DOT": [0.07, 0.01, 0.0, 0.01, 0.02, 0.0, 0.01, 0.0, 0.02, 0.01, 0.0, 0.03],
+    }
+    out = event_contrast(flags, {"ret": values}, mean_block=3, n_resamples=200, seed=7)
+    draws = stationary_bootstrap_indices(12, mean_block=3, n_resamples=200, seed=7)
+    # DOT holds one event and is left out; BTC's fourth event has no forward value, and an unread flag reads nothing.
+    assert set(out["ret"]) == {"BTC", "ETH", "pooled"}
+    for name, rows in (("BTC", [(flags["BTC"], values["BTC"])]), ("ETH", [(flags["ETH"], values["ETH"])])):
+        assert out["ret"][name] == pytest.approx(_reference_contrast(rows, draws)), name
+    pooled = [(flags[a], values[a]) for a in ("BTC", "ETH")]
+    assert out["ret"]["pooled"] == pytest.approx(_reference_contrast(pooled, draws))
+    assert out["ret"]["BTC"][:2] == [3, 7] and [type(x) for x in out["ret"]["BTC"]] == [int, int] + [float] * 5
+
+
+def test_event_contrast_refuses_a_forward_series_of_another_length():
+    with pytest.raises(AlphaError, match=re.escape("forwards['ret']['BTC'] has length 2, expected 3")):
+        event_contrast({"BTC": [True, False, True]}, {"ret": {"BTC": [0.1, 0.2]}}, mean_block=2, n_resamples=10, seed=1)
