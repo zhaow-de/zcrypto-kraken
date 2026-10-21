@@ -26,6 +26,7 @@ tests/test_prove_inert.py::test_each_spelling_of_a_closure_member_is_refused_nev
 tests/test_record43_book.py::test_both_books_reproduce_every_registered_cost_stress_anchor
 tests/test_record43_book.py::test_record43_stage1_reproduces_the_registered_row
 tests/test_record44_legs.py::test_record44_legs_reproduce_the_registered_basis
+tests/test_registry_replay.py::test_every_record_past_47_replays_at_head[reading-2]
 tests/test_registry_replay.py::test_every_record_past_47_replays_at_head[trial-48]
 tests/test_registry_replay.py::test_every_record_past_47_replays_at_head[trial-49]
 tests/test_registry_replay.py::test_every_record_past_47_replays_at_head[trial-50]
