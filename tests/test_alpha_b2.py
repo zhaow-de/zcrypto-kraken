@@ -1101,6 +1101,14 @@ def test_the_chunked_contrast_is_the_event_contrasts_rows_over_the_same_resample
         assert out["ret"][name][7:] == pytest.approx(_far_bounds(rows, draws)), name
 
 
+def test_the_chunked_draw_yields_at_most_chunk_resamples_at_a_time_and_together_the_whole_draws_resamples():
+    yielded = list(b2._bootstrap_chunks(30, mean_block=3, n_resamples=25, seed=7, chunk=7))
+
+    assert [rows.shape for rows in yielded] == [(7, 30), (7, 30), (7, 30), (4, 30)]
+    whole = stationary_bootstrap_indices(30, mean_block=3, n_resamples=25, seed=7)
+    assert [row for rows in yielded for row in rows.tolist()] == whole
+
+
 @pytest.mark.parametrize(
     ("change", "error", "match"),
     [
