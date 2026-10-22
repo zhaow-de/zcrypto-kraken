@@ -236,8 +236,6 @@ def test_full_long_sizes_is_the_shared_weight_times_the_mean_of_the_arms_levels(
     assert sizes == {"BTC": pytest.approx([0.36, 0.4, 0.0]), "ETH": pytest.approx([0.24, 0.0, 0.0])}
 
 
-# BTC long at 0-1 and 7, flat between, firing while long at 1 and 7 and flat at 2-3, its full-long size moving at every
-# flat close; ETH long at 0 and 3, firing while long at 3 and flat at 1 and 6, its full-long size 0 at indices 2 and 6.
 _REENTRY_ARM_A = {"BTC": [0.4, 0.4, 0.0, 0.0, 0.0, 0.0, 0.0, 0.3], "ETH": [0.2, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0]}
 _REENTRY_FULL = {"BTC": [0.5, 0.5, 0.45, 0.55, 0.5, 0.6, 0.4, 0.5], "ETH": [0.6, 0.6, 0.0, 0.6, 0.6, 0.6, 0.0, 0.6]}
 _REENTRY_FIRES = {

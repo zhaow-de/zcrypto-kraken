@@ -2452,7 +2452,7 @@ def _b2_overlay_preflight_keys(signal_key: str) -> frozenset[str]:
     }
 
 
-# docs/specs/00139 D3-D6: B2's trials 6-7, a full-long re-entry where arm A is flat, held a day from its trigger.
+# docs/specs/00139 D3-D6: B2's trials 6-7.
 _B2_LIQ_REENTRY_THRESHOLD = 2.5
 _B2_LIQ_REENTRY_HOLD = 1
 _B2_LIQ_REENTRY_N_TRIALS = 5  # docs/specs/00139 D5: each count fixed by the spec's hash; a different one is a new subject
@@ -2499,8 +2499,7 @@ def _b2_reentry_inputs(
     window: tuple[str, str] | None,
     accept_holes: bool,
 ) -> _B2ReentryInputs:
-    """Arm A's positions, the signal, the full-long size and arm B's positions, and no return of either arm: the
-    pre-flight reads this half alone."""
+    """No return of either arm: the pre-flight reads this half alone."""
     h4_ts, h4_prices = _capturing_union(reader, dataset, 240, window, None, accept_holes)
     close = close_grid(h4_ts)
     if len(close) < _DECISIVE_START + 2:
@@ -2539,8 +2538,7 @@ def _b2_reentry_inputs(
 
 
 def _b2_reentry_start(inputs: _B2ReentryInputs) -> int:
-    """The later of the first return index every asset's signal holds and the first closing at or after 2021-01-01, the
-    length where either is missing (docs/specs/00139 D5)."""
+    """docs/specs/00139 D5's read start."""
     n = len(inputs.close)
     defined = next((k for k in range(n) if all(inputs.signal[a][k] is not None for a in _ASSETS)), n)
     k21 = next((k for k, t in enumerate(inputs.close) if t >= _FROM_2021), n)
@@ -2783,8 +2781,8 @@ def _build_b2_funding_reentry_preflight(
     )
 
 
-# docs/specs/00139 D5's matrix: the head-to-head from the read's start decides, the drawdown bounded at 1.2 x arm A's; a
-# change to it is a new spec and a new trial, never an edit here.
+# docs/specs/00139 D5's matrix, the drawdown bounded at 1.2 x arm A's: a change to it is a new spec and a new trial, never
+# an edit here.
 def _b2_reentry_verdict(m: dict) -> str | None:
     if not m["arm_a_passes"] or not any(m["engaged_per_year"].values()):
         return None
