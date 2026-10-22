@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import statistics
 from bisect import bisect_left
 from collections.abc import Callable, Collection
 from dataclasses import dataclass
@@ -460,6 +461,55 @@ def derisk_scales(z_by_asset: dict[str, list[float | None]], *, config: B2Config
 def scale_positions(asset_positions: dict[str, list[float]], scales: dict[str, list[float]]) -> dict[str, list[float]]:
     _check_paired("asset_positions", asset_positions, "scales", scales)
     return {asset: [p * s for p, s in zip(asset_positions[asset], scales[asset])] for asset in asset_positions}
+
+
+def full_long_sizes(weights: list[dict[str, float]], levels: list[list[float]], assets: Collection[str]) -> dict[str, list[float]]:
+    """Per asset, the position the A2 ensemble holds where every arm's direction is long: the arms' shared inverse-vol weight
+    times the mean of their vol-target levels (docs/specs/00139 D3); an asset the basket does not weight yet takes 0."""
+    if not levels:
+        raise AlphaError("levels must hold at least one arm's vol-target levels")
+    n = _check_lengths({"weights": weights} | {f"levels[{i}]": level for i, level in enumerate(levels)})
+    return {
+        asset: [weights[k].get(asset, 0.0) * statistics.mean(level[k] for level in levels) for k in range(n)] for asset in assets
+    }
+
+
+def reentry_positions(
+    asset_positions: dict[str, list[float]], full_long: dict[str, list[float]], fires: dict[str, list[bool]], *, hold: int
+) -> dict[str, list[float]]:
+    """Arm A's position where it is long; else the full-long size while a re-entry is open. One opens at a close where arm
+    A is flat and `fires` is set, stays open through `hold` closes counted from the last close that fired, that close
+    included, and closes early where arm A turns long (docs/specs/00139 D3)."""
+    if not isinstance(hold, int) or isinstance(hold, bool) or hold < 1:
+        raise AlphaError(f"hold must be an int >= 1, got {hold!r}")
+    n = _check_paired("asset_positions", asset_positions, "full_long", full_long)
+    _check_paired("asset_positions", asset_positions, "fires", fires, n)
+    out: dict[str, list[float]] = {}
+    for asset, positions in asset_positions.items():
+        left, row = 0, []
+        for k, p in enumerate(positions):
+            if p > 0:
+                left = 0
+            elif fires[asset][k]:
+                left = max(left, hold)
+            row.append(full_long[asset][k] if p == 0 and left > 0 and full_long[asset][k] > 0 else p)
+            if p == 0 and left > 0:
+                left -= 1
+        out[asset] = row
+    return out
+
+
+def reentry_counts_per_year(
+    asset_positions: dict[str, list[float]], reentered: dict[str, list[float]], close_ts: list[datetime]
+) -> dict[str, int]:
+    """Asset-stamps flat in arm A and long in arm B, per close year (docs/specs/00139 D6)."""
+    _check_paired("asset_positions", asset_positions, "reentered", reentered, len(close_ts))
+    counts = dict.fromkeys((str(t.year) for t in close_ts), 0)
+    for asset in asset_positions:
+        for k, (p, q) in enumerate(zip(asset_positions[asset], reentered[asset])):
+            if p == 0 and q > 0:
+                counts[str(close_ts[k].year)] += 1
+    return counts
 
 
 def net_of_cost(
