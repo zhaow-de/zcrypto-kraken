@@ -1,5 +1,6 @@
 import math
 import re
+import weakref
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -1107,6 +1108,23 @@ def test_the_chunked_draw_yields_at_most_chunk_resamples_at_a_time_and_together_
     assert [rows.shape for rows in yielded] == [(7, 30), (7, 30), (7, 30), (4, 30)]
     whole = stationary_bootstrap_indices(30, mean_block=3, n_resamples=25, seed=7)
     assert [row for rows in yielded for row in rows.tolist()] == whole
+
+
+def test_the_chunked_contrast_reads_each_chunk_before_the_next_is_drawn_with_at_most_one_earlier_draw_alive(monkeypatch):
+    refs, alive, draw = [], [], b2._bootstrap_chunks
+
+    def counted(n_obs, **kwargs):
+        for rows in draw(n_obs, **kwargs):
+            refs.append(weakref.ref(rows))
+            yield rows
+            alive.append(sum(ref() is not None for ref in refs))
+
+    monkeypatch.setattr(b2, "_bootstrap_chunks", counted)
+
+    event_contrast_chunked(_CHUNKED_FLAGS, {"ret": _CHUNKED_RET}, mean_block=3, n_resamples=50, seed=7, chunk=7)
+
+    assert len(alive) == len(refs) == 8
+    assert max(alive) <= 1
 
 
 @pytest.mark.parametrize(
