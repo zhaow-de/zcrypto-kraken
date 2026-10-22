@@ -7,6 +7,7 @@ Every byte a `build` reads goes through `ObservedReader`."""
 from __future__ import annotations
 
 import math
+import operator
 import statistics
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -58,6 +59,7 @@ from cli.alpha.b2 import (
     daily_zscore_grid_feature,
     derisk_scales,
     event_contrast,
+    full_long_sizes,
     funding_grid_feature,
     liquidation_hourly_totals,
     net_of_cost,
@@ -68,6 +70,8 @@ from cli.alpha.b2 import (
     per_year_turnover,
     ratio_max_signal,
     ratio_zscore_grid_features,
+    reentry_counts_per_year,
+    reentry_positions,
     scale_positions,
 )
 from cli.alpha.errors import AlphaError
@@ -2448,6 +2452,348 @@ def _b2_overlay_preflight_keys(signal_key: str) -> frozenset[str]:
     }
 
 
+# docs/specs/00139 D3-D6: B2's trials 6-7.
+_B2_LIQ_REENTRY_THRESHOLD = 2.5
+_B2_LIQ_REENTRY_HOLD = 1
+_B2_LIQ_REENTRY_N_TRIALS = 5  # docs/specs/00139 D5: each count fixed by the spec's hash; a different one is a new subject
+_B2_FUNDING_REENTRY_THRESHOLD = -2.0
+_B2_FUNDING_REENTRY_HOLD = 6
+_B2_FUNDING_REENTRY_N_TRIALS = 6
+
+
+class _B2ReentryInputs(NamedTuple):
+    h4_ts: list[datetime]
+    h4_prices: dict[str, list[float | None]]
+    close: list[datetime]
+    arm_a: dict[str, list[float]]
+    signal: dict[str, list[float | None]]
+    full_long: dict[str, list[float]]
+    arm_b: dict[str, list[float]]
+    threshold: float
+
+
+def _b2_funding_signal(reader: ObservedReader, h4_ts: list[datetime]) -> dict[str, list[float | None]]:
+    """Trial 2's funding z-score, `_b2_inputs`' own loop, read whole (docs/specs/00139 D4)."""
+    config = B2Config()
+    signal = {}
+    for asset in _ASSETS:
+        relpath = f"{PERP_SYMBOLS[asset]}/funding.parquet"
+        try:
+            prints = reader.read_series("derivatives-funding", relpath)
+            signal[asset] = funding_grid_feature(
+                prints["ts"].to_list(), prints["funding_rate"].to_list(), prints["interval_hours"].to_list(), h4_ts, config=config
+            )
+        except (pl.exceptions.PolarsError, AlphaError, FeatureError) as exc:
+            raise SubjectError(f"derivatives-funding/{relpath}: {exc}") from exc
+    return signal
+
+
+def _b2_reentry_inputs(
+    subject: str,
+    read_signal: Callable[[ObservedReader, list[datetime]], dict[str, list[float | None]]],
+    fire: Callable[[float, float], bool],
+    hold: int,
+    threshold: float,
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    accept_holes: bool,
+) -> _B2ReentryInputs:
+    """No return of either arm: the pre-flight reads this half alone."""
+    h4_ts, h4_prices = _capturing_union(reader, dataset, 240, window, None, accept_holes)
+    close = close_grid(h4_ts)
+    if len(close) < _DECISIVE_START + 2:
+        raise SubjectError(
+            f"{_b2_over(subject, window)}: it holds {len(close)} return indices, and the kill bar's decisive window opens at index "
+            f"{_DECISIVE_START} and needs 2"
+        )
+    if not calendar_year_slices([0.0] * len(close), h4_ts):
+        raise SubjectError(
+            f"{_b2_over(subject, window)}: none of its return indices closes in a calendar year the worst-slice leg reads, the "
+            "stub years left out"
+        )
+    signal = read_signal(reader, h4_ts)
+    # `_b2_overlay_inputs`' arm A, its books kept for the levels the full-long size reads.
+    fed = _ffill_btc(h4_prices)
+    books = [
+        a2_book_returns(
+            fed,
+            config=A2Config(
+                lookbacks=lookbacks,
+                short="off",
+                target_vol=target_vol,
+                vol_lookback=_B2_LOOKBACK,
+                basket_lookback=_B2_LOOKBACK,
+                periods_per_year=PPY_4H,
+            ),
+        )
+        for lookbacks, target_vol in _B2_A2_ARMS
+    ]
+    arm_a = {a: [statistics.mean(book["asset_positions"][a][k] for book in books) for k in range(len(h4_ts) - 1)] for a in _ASSETS}
+    weights = _inverse_vol_weights(fed, lookback=_B2_LOOKBACK)
+    full_long = full_long_sizes(weights, [book["vol_target_positions"] for book in books], _ASSETS)
+    fires = {a: [z is not None and fire(z, threshold) for z in signal[a]] for a in _ASSETS}
+    arm_b = reentry_positions(arm_a, full_long, fires, hold=hold)
+    return _B2ReentryInputs(h4_ts, h4_prices, close, arm_a, signal, full_long, arm_b, threshold)
+
+
+def _b2_reentry_start(inputs: _B2ReentryInputs) -> int:
+    """docs/specs/00139 D5's read start."""
+    n = len(inputs.close)
+    defined = next((k for k in range(n) if all(inputs.signal[a][k] is not None for a in _ASSETS)), n)
+    k21 = next((k for k, t in enumerate(inputs.close) if t >= _FROM_2021), n)
+    return max(defined, k21)
+
+
+def _b2_reentry_engagement(inputs: _B2ReentryInputs, signal_key: str) -> dict:
+    arm_a, arm_b, close = inputs.arm_a, inputs.arm_b, inputs.close
+    return {
+        "engaged_per_asset": {a: sum(p == 0 and q > 0 for p, q in zip(arm_a[a], arm_b[a])) for a in _ASSETS},
+        "engaged_per_year": reentry_counts_per_year(arm_a, arm_b, close),
+        f"{signal_key}_coverage": {
+            asset: {str(year): [c.non_null, c.total] for year, c in coverage_by_year(close, values).items()}
+            for asset, values in inputs.signal.items()
+        },
+        "primary_returns": len(close) - _b2_reentry_start(inputs),
+        "threshold": inputs.threshold,
+    }
+
+
+def _b2_reentry_metrics(inputs: _B2ReentryInputs, *, signal_key: str, n_trials: int) -> dict:
+    """`_b2_overlay_metrics`' body with arm B the re-entry's positions, the read's start the re-entry's and the
+    engagement the re-entered stamps (docs/specs/00139 D6)."""
+    arm_a, arm_b, close = inputs.arm_a, inputs.arm_b, inputs.close
+    start = _b2_reentry_start(inputs)
+    if len(close) - start < 2:
+        raise ValidationError(
+            f"{len(close) - start} of its return indices lie from the read's start, every asset's {signal_key} held and 2021 "
+            "begun, and the head-to-head from it needs 2"
+        )
+    cost = _B2_COST_PER_SIDE
+    returns = _b2_returns(inputs.h4_prices)
+    net_a = net_of_cost(arm_a, returns, cost_per_side=cost)
+    net_b = net_of_cost(arm_b, returns, cost_per_side=cost)
+    net_b_x15 = net_of_cost(arm_b, returns, cost_per_side=1.5 * cost)
+    bench = benchmark_4h_net_of_cost(inputs.h4_prices, cost_per_side=cost)
+    slices_b, slices_bench = calendar_year_slices(net_b, inputs.h4_ts), calendar_year_slices(bench, inputs.h4_ts)
+    drawdown_b = max_drawdown(net_b[start:])
+    drawdown_a = max_drawdown(net_a[start:])
+    if drawdown_a == 0:
+        raise ValidationError("arm A never draws down from the read's start, so max_drawdown_reduction_pct divides by zero")
+    grid = {
+        (block, seed): a1_kill_bar(
+            net_b,
+            bench,
+            n_trials=n_trials,
+            var_trials=0.0,
+            mean_block=block,
+            seed=seed,
+            cost_stressed_returns=net_b_x15,
+            regime_slices=slices_b,
+            benchmark_slices=slices_bench,
+            decisive_start=_DECISIVE_START,
+            n_resamples=_N_RESAMPLES,
+        )
+        for block in (30, 102)
+        for seed in (42, 7, 1234)
+    }
+    headline = grid[(30, 42)]
+    head_to_head = {}
+    for label, first in (("full", 0), ("primary", start)):
+        verdict = net_of_cost_verdict(net_b[first:], net_a[first:], mean_block=30, seed=42, n_resamples=_N_RESAMPLES)
+        head_to_head[f"head_to_head_mean_outperf_{label}"] = verdict["mean_outperformance"]
+        head_to_head[f"head_to_head_spa_p_{label}"] = verdict["spa_p_value"]
+    positions_differ = per_year_positions_differ(arm_a, arm_b, close)
+    engagement = _b2_reentry_engagement(inputs, signal_key)
+    del engagement["engaged_per_asset"]
+    return {
+        "ann_sharpe_noc": sharpe(net_b, periods_per_year=PPY_4H),
+        "ann_sharpe_noc_decisive": sharpe(net_b[_DECISIVE_START:], periods_per_year=PPY_4H),
+        "per_period_sharpe_4h": sharpe(net_b),
+        "arm_a_ann_sharpe_noc": sharpe(net_a, periods_per_year=PPY_4H),
+        "arm_a_ann_sharpe_noc_decisive": sharpe(net_a[_DECISIVE_START:], periods_per_year=PPY_4H),
+        "benchmark_ann_sharpe_noc": sharpe(bench, periods_per_year=PPY_4H),
+        "benchmark_ann_sharpe_noc_decisive": sharpe(bench[_DECISIVE_START:], periods_per_year=PPY_4H),
+        "dsr_corrected": headline["dsr"],
+        "dsr_pass": int(headline["dsr_pass"]),
+        "spa_pass": int(headline["spa_pass"]),
+        "spa_p_full": headline["spa_p_value_full"],
+        "cost_stress_pass": int(headline["cost_stress_pass"]),
+        "worst_slice_relative_pass": int(headline["worst_slice_pass"]),
+        "passes": int(headline["passes"]),
+        "decisive_start": _DECISIVE_START,
+        "n_resamples": _N_RESAMPLES,
+        "arm_a_passes": int(_b2_overlay_arm_a_bar(inputs, n_trials=n_trials)[0]["passes"]),
+        **{f"spa_p_decisive_b{block}_s{seed}": result["spa_p_value"] for (block, seed), result in grid.items()},
+        **head_to_head,
+        "max_drawdown": drawdown_b,
+        "arm_a_max_drawdown": drawdown_a,
+        "max_drawdown_reduction_pct": 100 * (drawdown_a - drawdown_b) / drawdown_a,
+        "turnover_a": book_turnover(arm_a),
+        "turnover_b": book_turnover(arm_b),
+        "stamps_positions_differ": sum(positions_differ.values()),
+        "positions_differ_per_year": positions_differ,
+        "turnover_a_per_year": per_year_turnover(arm_a, close),
+        "turnover_b_per_year": per_year_turnover(arm_b, close),
+        "max_drawdown_per_year": per_year_max_drawdown(net_b, close),
+        "arm_a_max_drawdown_per_year": per_year_max_drawdown(net_a, close),
+        **engagement,
+    }
+
+
+def _b2_reentry_preflight_metrics(inputs: _B2ReentryInputs, *, signal_key: str, n_trials: int) -> dict:
+    """Arm A's anchors and bar and the engagement (docs/specs/00139 D6): no return of arm B."""
+    bar, net_a, bench = _b2_overlay_arm_a_bar(inputs, n_trials=n_trials)
+    turnover_a = book_turnover(inputs.arm_a)
+    return {
+        "arm_a_ann_sharpe_noc": sharpe(net_a, periods_per_year=PPY_4H),
+        "arm_a_ann_sharpe_noc_decisive": sharpe(net_a[_DECISIVE_START:], periods_per_year=PPY_4H),
+        "arm_a_max_drawdown_full": max_drawdown(net_a),
+        "turnover_a": turnover_a,
+        "arm_a_spot_drag_pct_yr": turnover_a / len(inputs.close) * _B2_COST_PER_SIDE * PPY_4H,
+        "benchmark_ann_sharpe_noc": sharpe(bench, periods_per_year=PPY_4H),
+        "benchmark_ann_sharpe_noc_decisive": sharpe(bench[_DECISIVE_START:], periods_per_year=PPY_4H),
+        **{key: int(bar[key]) if key in _B2_ARM_A_BAR_FLAGS else bar[key] for key in sorted(_B2_ARM_A_BAR_KEYS)},
+        **_b2_reentry_engagement(inputs, signal_key),
+    }
+
+
+def _b2_reentry_build(
+    subject: str,
+    signal_key: str,
+    read_signal: Callable[[ObservedReader, list[datetime]], dict[str, list[float | None]]],
+    fire: Callable[[float, float], bool],
+    hold: int,
+    threshold: float,
+    compute: Callable[..., dict],
+    n_trials: int,
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None,
+    accept_holes: bool,
+) -> dict:
+    if as_of is not None:
+        raise SubjectError(
+            f"{subject} evaluates a frozen set's 4h series, never the rolling dataset as of a day: drop --as-of and pass a "
+            "frozen --dataset"
+        )
+    try:
+        inputs = _b2_reentry_inputs(subject, read_signal, fire, hold, threshold, reader, dataset, window, accept_holes)
+        return compute(inputs, signal_key=signal_key, n_trials=n_trials)
+    except (AlphaError, BacktestError, BenchmarkError, FeatureError, ValidationError) as exc:
+        raise SubjectError(f"{_b2_over(subject, window)}: {exc}") from exc
+
+
+def _build_b2_liq_reentry(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    return _b2_reentry_build(
+        "b2-liq-reentry",
+        "binperp_liq_long_z30d",
+        _b2_liq_signal,
+        operator.gt,
+        _B2_LIQ_REENTRY_HOLD,
+        _B2_LIQ_REENTRY_THRESHOLD,
+        _b2_reentry_metrics,
+        _B2_LIQ_REENTRY_N_TRIALS,
+        reader,
+        dataset,
+        window,
+        as_of,
+        accept_holes,
+    )
+
+
+def _build_b2_liq_reentry_preflight(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    return _b2_reentry_build(
+        "b2-liq-reentry-preflight",
+        "binperp_liq_long_z30d",
+        _b2_liq_signal,
+        operator.gt,
+        _B2_LIQ_REENTRY_HOLD,
+        _B2_LIQ_REENTRY_THRESHOLD,
+        _b2_reentry_preflight_metrics,
+        _B2_LIQ_REENTRY_N_TRIALS,
+        reader,
+        dataset,
+        window,
+        as_of,
+        accept_holes,
+    )
+
+
+def _build_b2_funding_reentry(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    return _b2_reentry_build(
+        "b2-funding-reentry",
+        "binperp_funding_z30d",
+        _b2_funding_signal,
+        operator.lt,
+        _B2_FUNDING_REENTRY_HOLD,
+        _B2_FUNDING_REENTRY_THRESHOLD,
+        _b2_reentry_metrics,
+        _B2_FUNDING_REENTRY_N_TRIALS,
+        reader,
+        dataset,
+        window,
+        as_of,
+        accept_holes,
+    )
+
+
+def _build_b2_funding_reentry_preflight(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    return _b2_reentry_build(
+        "b2-funding-reentry-preflight",
+        "binperp_funding_z30d",
+        _b2_funding_signal,
+        operator.lt,
+        _B2_FUNDING_REENTRY_HOLD,
+        _B2_FUNDING_REENTRY_THRESHOLD,
+        _b2_reentry_preflight_metrics,
+        _B2_FUNDING_REENTRY_N_TRIALS,
+        reader,
+        dataset,
+        window,
+        as_of,
+        accept_holes,
+    )
+
+
+# docs/specs/00139 D5's matrix, the drawdown bounded at 1.2 x arm A's: a change to it is a new spec and a new trial, never
+# an edit here.
+def _b2_reentry_verdict(m: dict) -> str | None:
+    if not m["arm_a_passes"] or not any(m["engaged_per_year"].values()):
+        return None
+    if not m["passes"]:
+        return "reject"
+    if m["head_to_head_mean_outperf_primary"] > 0:
+        bounded = m["max_drawdown_reduction_pct"] >= -20.0
+        return "adopt" if m["head_to_head_spa_p_primary"] < 0.05 and bounded else "park"
+    return "reject"
+
+
 # docs/specs/00138 D12: the 1-minute tape's event study, read on ohlc-rolling: a frozen set misses the tape's span.
 _B2_TAPE_SET = "liquidations-frozen"
 _B2_TAPE_ZSCORE_HOURS = 720
@@ -2827,6 +3173,56 @@ SUBJECTS: dict[str, Subject] = {
         _build_b2_liq_tape_reading,
         spec="docs/specs/00138-b2-three-overlays-design.md",
         metric_keys=_B2_TAPE_KEYS,
+        seeds=(42,),
+    ),
+    "b2-liq-reentry": Subject(
+        "b2-liq-reentry",
+        (240,),
+        _ASSETS,
+        _build_b2_liq_reentry,
+        spec="docs/specs/00139-b2-reentries-design.md",
+        metric_keys=_b2_overlay_metric_keys("binperp_liq_long_z30d"),
+        seeds=(42, 7, 1234),
+        verdict=_b2_reentry_verdict,
+        no_verdict=(
+            "instrument finding: arm A fails the bar this window sets, or the overlay engages at no stamp; no verdict, "
+            "the trial unspent"
+        ),
+        family="B2",
+        n_trials=_B2_LIQ_REENTRY_N_TRIALS,
+    ),
+    "b2-liq-reentry-preflight": Subject(
+        "b2-liq-reentry-preflight",
+        (240,),
+        _ASSETS,
+        _build_b2_liq_reentry_preflight,
+        spec="docs/specs/00139-b2-reentries-design.md",
+        metric_keys=_b2_overlay_preflight_keys("binperp_liq_long_z30d"),
+        seeds=(42,),
+    ),
+    "b2-funding-reentry": Subject(
+        "b2-funding-reentry",
+        (240,),
+        _ASSETS,
+        _build_b2_funding_reentry,
+        spec="docs/specs/00139-b2-reentries-design.md",
+        metric_keys=_b2_overlay_metric_keys("binperp_funding_z30d"),
+        seeds=(42, 7, 1234),
+        verdict=_b2_reentry_verdict,
+        no_verdict=(
+            "instrument finding: arm A fails the bar this window sets, or the overlay engages at no stamp; no verdict, "
+            "the trial unspent"
+        ),
+        family="B2",
+        n_trials=_B2_FUNDING_REENTRY_N_TRIALS,
+    ),
+    "b2-funding-reentry-preflight": Subject(
+        "b2-funding-reentry-preflight",
+        (240,),
+        _ASSETS,
+        _build_b2_funding_reentry_preflight,
+        spec="docs/specs/00139-b2-reentries-design.md",
+        metric_keys=_b2_overlay_preflight_keys("binperp_funding_z30d"),
         seeds=(42,),
     ),
 }

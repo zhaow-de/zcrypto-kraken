@@ -6,6 +6,7 @@ import hashlib
 import inspect
 import json
 import math
+import operator
 import os
 import re
 import shutil
@@ -53,6 +54,7 @@ from cli.alpha.b2 import (
     B2Config,
     daily_zscore_grid_feature,
     derisk_scales,
+    funding_grid_feature,
     liquidation_hourly_totals,
     net_of_cost,
     oi_zscore_grid_feature,
@@ -62,6 +64,8 @@ from cli.alpha.b2 import (
     per_year_turnover,
     ratio_max_signal,
     ratio_zscore_grid_features,
+    reentry_counts_per_year,
+    reentry_positions,
     scale_positions,
 )
 from cli.alpha.errors import AlphaError
@@ -1431,6 +1435,9 @@ def test_each_subject_declares_the_metric_keys_its_build_returns():
     for name, (signal_key, _, _) in _B2_OVERLAYS.items():
         assert subjects.SUBJECTS[name].metric_keys == _overlay_metric_keys(signal_key)
         assert subjects.SUBJECTS[f"{name}-preflight"].metric_keys == _overlay_preflight_keys(signal_key)
+    for name, (signal_key, *_) in _B2_REENTRIES.items():
+        assert subjects.SUBJECTS[name].metric_keys == _overlay_metric_keys(signal_key)
+        assert subjects.SUBJECTS[f"{name}-preflight"].metric_keys == _overlay_preflight_keys(signal_key)
     assert subjects.SUBJECTS["b2-liq-tape-reading"].metric_keys == _B2_TAPE_SPEC_KEYS
 
 
@@ -2771,6 +2778,432 @@ def test_each_b2_overlay_reads_its_signal_off_its_own_columns(tmp_path, name):
     assert sum(v is not None and v > 2.5 for v in signal["BTC"]) > 0
 
 
+_B2_REENTRY_SPEC = "docs/specs/00139-b2-reentries-design.md"
+# Spec 00139's two trials: each signal's key, threshold, comparison, hold and count, typed from the spec, never read off a
+# subject.
+_B2_REENTRIES = {
+    "b2-liq-reentry": ("binperp_liq_long_z30d", 2.5, operator.gt, 1, 5),
+    "b2-funding-reentry": ("binperp_funding_z30d", -2.0, operator.lt, 6, 6),
+}
+
+
+def _reentry_signal(name: str):
+    return {"b2-liq-reentry": subjects._b2_liq_signal, "b2-funding-reentry": subjects._b2_funding_signal}[name]
+
+
+def _b2_reentry_dataset(
+    tmp_path: Path, *, start: datetime = _B2_START, flat: bool = False, from_bar: int = _B2_OVERLAY_FROM_BAR
+) -> Path:
+    """`_b2_overlay_dataset`'s sets and a `derivatives-funding` set whose 8h prints open 47 days before `_B2_START`; every perp
+    but one dips far below its usual rate inside the second fall, each from its own print, so each re-entry takes flat stamps
+    on several assets and none on `_B2_NEVER_SPIKES`."""
+    root = _b2_overlay_dataset(tmp_path, start=start, flat=flat, from_bar=from_bar)
+    stamps = [_B2_FUNDING_FROM + timedelta(hours=8 * j) for j in range(_B2_PRINTS)]
+    second_fall = _B2_START + timedelta(hours=4 * _B2_FALLS[1][0])
+    for i, asset in enumerate(_B2_ASSETS):
+        rates = [0.0001 * (1 + 0.5 * math.sin(j + i)) for j in range(_B2_PRINTS)]
+        if asset != _B2_NEVER_SPIKES:
+            first = stamps.index(second_fall + timedelta(hours=8 * i))
+            rates[first : first + _B2_SPIKE_PRINTS] = [-0.003] * _B2_SPIKE_PRINTS
+        frame = pl.DataFrame(
+            {"ts": stamps, "funding_rate": rates, "interval_hours": [8] * _B2_PRINTS},
+            schema={"ts": pl.Datetime("us", "UTC"), "funding_rate": pl.Float64, "interval_hours": pl.Int64},
+        )
+        write_parquet(frame, root / "derivatives-funding" / PERP_SYMBOLS[asset] / "funding.parquet")
+    return root
+
+
+def _reentry_inputs(name: str, root: Path):
+    _, threshold, fire, hold, _ = _B2_REENTRIES[name]
+    return subjects._b2_reentry_inputs(
+        name, _reentry_signal(name), fire, hold, threshold, ObservedReader(root), "ohlc-test", None, False
+    )
+
+
+@pytest.mark.parametrize("name", sorted(_B2_REENTRIES))
+def test_each_b2_reentry_pair_declares_the_4h_grid_the_specs_keys_and_seeds_and_the_trial_alone_a_rule_and_a_count(name):
+    signal_key, _, _, _, count = _B2_REENTRIES[name]
+    trial, preflight = subjects.SUBJECTS[name], subjects.SUBJECTS[f"{name}-preflight"]
+    builder = f"_build_{name.replace('-', '_')}"
+    assert (trial.name, trial.intervals, trial.assets, trial.spec, trial.seeds) == (
+        name,
+        (240,),
+        _B2_ASSETS,
+        _B2_REENTRY_SPEC,
+        (42, 7, 1234),
+    )
+    assert trial.build is getattr(subjects, builder) and trial.metric_keys == _overlay_metric_keys(signal_key)
+    assert (trial.verdict, trial.no_verdict, trial.incumbent) == (subjects._b2_reentry_verdict, _B2_OVERLAY_NO_VERDICT, None)
+    assert (trial.family, trial.n_trials) == ("B2", count)
+    assert (preflight.intervals, preflight.assets, preflight.spec, preflight.seeds) == ((240,), _B2_ASSETS, _B2_REENTRY_SPEC, (42,))
+    assert preflight.build is getattr(subjects, f"{builder}_preflight")
+    assert preflight.metric_keys == _overlay_preflight_keys(signal_key)
+    assert (preflight.verdict, preflight.no_verdict, preflight.incumbent, preflight.family, preflight.n_trials) == (None,) * 5
+
+
+@pytest.mark.parametrize("name", sorted({*_B2_REENTRIES, *(f"{name}-preflight" for name in _B2_REENTRIES)}))
+def test_each_b2_reentry_subject_builds_on_the_specs_signal_comparison_hold_threshold_and_count(monkeypatch, name):
+    trial = name.removesuffix("-preflight")
+    signal_key, threshold, fire, hold, count = _B2_REENTRIES[trial]
+    compute = subjects._b2_reentry_metrics if name == trial else subjects._b2_reentry_preflight_metrics
+    builds = []
+    monkeypatch.setattr(subjects, "_b2_reentry_build", lambda *arguments: builds.append(arguments) or {})
+    reader, window = object(), ("2024-01-01", "2024-06-30")
+
+    subjects.SUBJECTS[name].build(reader, "ohlc-test", window, as_of="2026-10-03", accept_holes=True)
+
+    instrument = (name, signal_key, _reentry_signal(trial), fire, hold, threshold, compute, count)
+    assert builds == [(*instrument, reader, "ohlc-test", window, "2026-10-03", True)]
+
+
+# Adopting on every key the rule reads, its drawdown a twentieth above arm A's; the full-window head-to-head and the
+# block-102 cell set against the verdict, so a rule reading either in place of the primary read or the headline cell moves
+# the first row.
+_B2_REENTRY_ADOPTING = {
+    "arm_a_passes": 1,
+    "engaged_per_year": {"2013": 0, "2023": 4},
+    "passes": 1,
+    "head_to_head_mean_outperf_primary": 0.001,
+    "head_to_head_spa_p_primary": 0.01,
+    "head_to_head_mean_outperf_full": -0.001,
+    "head_to_head_spa_p_full": 0.9,
+    "spa_p_decisive_b102_s42": 0.9,
+    "max_drawdown_reduction_pct": -5.0,
+}
+
+
+@pytest.mark.retired
+@pytest.mark.parametrize(
+    ("change", "verdict"),
+    [
+        pytest.param({}, "adopt", id="row-1-outperforms-significantly-a-twentieth-more-drawdown"),
+        pytest.param({"head_to_head_spa_p_primary": 0.0499}, "adopt", id="row-1-p-at-0.0499"),
+        pytest.param({"max_drawdown_reduction_pct": -20.0}, "adopt", id="row-1-drawdown-at-exactly-1.2-times"),
+        pytest.param({"max_drawdown_reduction_pct": 5.0}, "adopt", id="row-1-drawdown-below-arm-as"),
+        pytest.param({"head_to_head_spa_p_primary": 0.05}, "park", id="row-2-p-at-exactly-0.05"),
+        pytest.param({"head_to_head_spa_p_primary": 0.2}, "park", id="row-2-outperforms-insignificantly"),
+        pytest.param({"max_drawdown_reduction_pct": -20.001}, "park", id="row-2-significant-but-drawdown-past-1.2-times"),
+        pytest.param(
+            {"head_to_head_mean_outperf_primary": 1e-12, "head_to_head_spa_p_primary": 0.9, "max_drawdown_reduction_pct": -80.0},
+            "park",
+            id="row-2-a-hair-above-arm-a",
+        ),
+        pytest.param({"head_to_head_mean_outperf_primary": 0.0}, "reject", id="row-3-mean-at-exactly-0"),
+        pytest.param({"head_to_head_mean_outperf_primary": -0.001}, "reject", id="row-3-underperforms-from-the-start"),
+        pytest.param(
+            {"head_to_head_mean_outperf_primary": -0.001, "head_to_head_mean_outperf_full": 0.001, "head_to_head_spa_p_full": 0.01},
+            "reject",
+            id="row-3-outperforms-over-the-full-window-alone",
+        ),
+        pytest.param({"passes": 0}, "reject", id="row-4-arm-b-fails-its-bar"),
+        pytest.param({"arm_a_passes": 0}, None, id="arm-a-fails-its-bar"),
+        pytest.param(_B2_OVERLAY_NEVER_ENGAGED, None, id="the-re-entry-never-engages"),
+        pytest.param({"arm_a_passes": 0, "passes": 0}, None, id="arm-a-read-before-passes"),
+        pytest.param({**_B2_OVERLAY_NEVER_ENGAGED, "passes": 0}, None, id="engagement-read-before-passes"),
+    ],
+)
+def test_the_b2_reentry_rule_maps_the_matrix_to_a_verdict_or_a_stop(change, verdict):
+    assert subjects._b2_reentry_verdict({**_B2_REENTRY_ADOPTING, **change}) == verdict
+
+
+@pytest.mark.parametrize("name", sorted(_B2_REENTRIES))
+def test_a_b2_reentrys_inputs_add_the_full_long_size_where_arm_a_is_flat_and_its_signal_fires(tmp_path, monkeypatch, name):
+    _, threshold, fire, hold, _ = _B2_REENTRIES[name]
+    sizes = _recording(monkeypatch, "full_long_sizes", lambda arguments, result: result)
+    reentries = _recording(monkeypatch, "reentry_positions", lambda arguments, result: result)
+    root = _b2_reentry_dataset(tmp_path)
+
+    inputs = _reentry_inputs(name, root)
+
+    overlay = subjects._b2_overlay_inputs(name, _reentry_signal(name), 2.5, ObservedReader(root), "ohlc-test", None, False)
+    assert (inputs.h4_ts, inputs.close, inputs.arm_a, inputs.signal) == (
+        overlay.h4_ts,
+        overlay.close,
+        overlay.arm_a,
+        overlay.signal,
+    )
+    fed = _ffill_btc(inputs.h4_prices)
+    levels = [
+        a2_book_returns(
+            fed,
+            config=A2Config(
+                lookbacks=lookbacks,
+                short="off",
+                target_vol=target_vol,
+                vol_lookback=180,
+                basket_lookback=180,
+                periods_per_year=2190,
+            ),
+        )["vol_target_positions"]
+        for lookbacks, target_vol in (((20, 50, 100), 0.12), ((60, 120, 240), 0.10), ((60, 120, 240), 0.12))
+    ]
+    ((size_arguments, full_long),) = sizes
+    assert size_arguments == {"weights": _inverse_vol_weights(fed, lookback=180), "levels": levels, "assets": _B2_ASSETS}
+    ((reentry_arguments, arm_b),) = reentries
+    fires = {a: [z is not None and fire(z, threshold) for z in inputs.signal[a]] for a in _B2_ASSETS}
+    assert reentry_arguments == {"asset_positions": inputs.arm_a, "full_long": full_long, "fires": fires, "hold": hold}
+    assert (inputs.full_long, inputs.arm_b, inputs.threshold) == (full_long, arm_b, threshold)
+    reentered = {a: sum(p == 0 and q > 0 for p, q in zip(inputs.arm_a[a], arm_b[a])) for a in _B2_ASSETS}
+    assert reentered[_B2_NEVER_SPIKES] == 0 < sum(reentered.values())
+
+
+@pytest.mark.parametrize("name", sorted(_B2_REENTRIES))
+def test_a_b2_reentrys_metrics_are_the_overlays_with_its_positions_its_start_and_its_engagement(tmp_path, monkeypatch, name):
+    signal_key, threshold, _, _, count = _B2_REENTRIES[name]
+    inputs = _reentry_inputs(name, _b2_reentry_dataset(tmp_path))
+    start = subjects._b2_reentry_start(inputs)
+    k21 = next(k for k, t in enumerate(inputs.close) if t >= datetime(2021, 1, 1, tzinfo=UTC))
+    defined = next(k for k in range(len(inputs.close)) if all(inputs.signal[a][k] is not None for a in _B2_ASSETS))
+    assert start == max(defined, k21) and 0 < start < len(inputs.close) - 2
+    monkeypatch.setattr(subjects, "a1_kill_bar", _fake_kill_bar)
+    monkeypatch.setattr(subjects, "benchmark_4h_net_of_cost", _fake_benchmark)
+    monkeypatch.setattr(subjects, "net_of_cost_verdict", _fake_head_to_head)
+    bars = _recording(monkeypatch, "a1_kill_bar", lambda arguments, result: result)
+
+    metrics = subjects._b2_reentry_metrics(inputs, signal_key=signal_key, n_trials=count)
+
+    assert set(metrics) == _overlay_metric_keys(signal_key) and {arguments["n_trials"] for arguments, _ in bars} == {count}
+    # The overlays' metrics over the same arm A and signal, their arm B, start and engagement the re-entry's:
+    # `_b2_overlay_metrics`' own test proves that body.
+    overlay = subjects._B2OverlayInputs(inputs.h4_ts, inputs.h4_prices, inputs.close, inputs.arm_a, inputs.signal, {}, threshold)
+    monkeypatch.setattr(subjects, "scale_positions", lambda positions, scales: inputs.arm_b)
+    monkeypatch.setattr(subjects, "_b2_overlay_start", lambda _: start)
+    monkeypatch.setattr(subjects, "_b2_overlay_engagement", lambda _, key: subjects._b2_reentry_engagement(inputs, key))
+    assert subjects._b2_overlay_metrics(overlay, signal_key=signal_key, n_trials=count) == metrics
+    assert metrics["primary_returns"] == len(inputs.close) - start and metrics["threshold"] == threshold
+
+
+@pytest.mark.retired
+def test_where_no_signal_fires_a_b2_reentrys_arm_b_is_arm_a_bit_for_bit(tmp_path, monkeypatch):
+    inputs = _reentry_inputs("b2-liq-reentry", _b2_reentry_dataset(tmp_path))
+    n = len(inputs.close)
+    calm = {a: [0.0] * n for a in _B2_ASSETS}
+    quiet = {a: [False] * n for a in _B2_ASSETS}
+    inputs = inputs._replace(signal=calm, arm_b=reentry_positions(inputs.arm_a, inputs.full_long, quiet, hold=1))
+    monkeypatch.setattr(subjects, "a1_kill_bar", _fake_kill_bar)
+    monkeypatch.setattr(subjects, "benchmark_4h_net_of_cost", _fake_benchmark)
+    monkeypatch.setattr(subjects, "net_of_cost_verdict", _fake_head_to_head)
+    head_to_heads = _recording(monkeypatch, "net_of_cost_verdict", lambda arguments, result: result)
+
+    metrics = subjects._b2_reentry_metrics(inputs, signal_key="binperp_liq_long_z30d", n_trials=5)
+
+    assert [arguments["book_net_of_cost"] == arguments["benchmark_net_of_cost"] for arguments, _ in head_to_heads] == [True] * 2
+    assert (
+        metrics["stamps_positions_differ"],
+        metrics["turnover_b"],
+        metrics["max_drawdown"],
+        metrics["max_drawdown_reduction_pct"],
+    ) == (0, metrics["turnover_a"], metrics["arm_a_max_drawdown"], 0.0)
+    k21 = next(k for k, t in enumerate(inputs.close) if t >= datetime(2021, 1, 1, tzinfo=UTC))
+    assert metrics["primary_returns"] == n - k21 and set(metrics["engaged_per_year"].values()) == {0}
+
+
+@pytest.mark.retired
+@pytest.mark.parametrize(("left", "refused"), [(0, True), (1, True), (2, False)])
+def test_a_b2_reentry_refuses_fewer_than_2_returns_from_its_start(tmp_path, monkeypatch, left, refused):
+    inputs = _reentry_inputs("b2-liq-reentry", _b2_reentry_dataset(tmp_path))
+    n = len(inputs.close)
+    inputs = inputs._replace(signal={a: [None] * (n - left) + [0.0] * left for a in _B2_ASSETS})
+    monkeypatch.setattr(subjects, "a1_kill_bar", _fake_kill_bar)
+    monkeypatch.setattr(subjects, "benchmark_4h_net_of_cost", _fake_benchmark)
+    monkeypatch.setattr(subjects, "net_of_cost_verdict", _fake_head_to_head)
+    cause = (
+        f"{left} of its return indices lie from the read's start, every asset's binperp_liq_long_z30d held and 2021 begun, and "
+        "the head-to-head from it needs 2"
+    )
+
+    try:
+        subjects._b2_reentry_metrics(inputs, signal_key="binperp_liq_long_z30d", n_trials=5)
+        raised = ""
+    except ValidationError as exc:
+        raised = str(exc)
+
+    assert (raised == cause) is refused
+
+
+@pytest.mark.parametrize("name", sorted(_B2_REENTRIES))
+def test_a_b2_reentrys_preflight_reads_arm_a_and_the_engagement_and_never_a_return_of_arm_b(tmp_path, monkeypatch, name):
+    signal_key, threshold, fire, hold, count = _B2_REENTRIES[name]
+    monkeypatch.setattr(subjects, "a1_kill_bar", _fake_kill_bar)
+    monkeypatch.setattr(subjects, "benchmark_4h_net_of_cost", _fake_benchmark)
+    reads = _recording(monkeypatch, "_b2_reentry_inputs", lambda arguments, result: result)
+    nets = _recording(monkeypatch, "net_of_cost", lambda arguments, result: result)
+    bars = _recording(monkeypatch, "a1_kill_bar", lambda arguments, result: result)
+
+    metrics = subjects.SUBJECTS[f"{name}-preflight"].build(ObservedReader(_b2_reentry_dataset(tmp_path)), "ohlc-test", None)
+
+    ((read, inputs),) = reads
+    assert (read["subject"], read["read_signal"], read["fire"], read["hold"], read["threshold"]) == (
+        f"{name}-preflight",
+        _reentry_signal(name),
+        fire,
+        hold,
+        threshold,
+    )
+    assert [arguments["asset_positions"] is inputs.arm_a for arguments, _ in nets] == [True, True]
+    returns = {a: _asset_returns(_ffill_btc(inputs.h4_prices)[a]) for a in _B2_ASSETS}
+    net_a, net_a_x15 = (net_of_cost(inputs.arm_a, returns, cost_per_side=cost) for cost in (0.006, 1.5 * 0.006))
+    bench = _fake_benchmark(inputs.h4_prices, cost_per_side=0.006)
+    turnover_a, n = book_turnover(inputs.arm_a), len(inputs.close)
+    start = subjects._b2_reentry_start(inputs)
+    ((arguments, bar),) = bars
+    assert arguments == {
+        "book_net_returns": net_a,
+        "benchmark_net_returns": bench,
+        "n_trials": count,
+        "var_trials": 0.0,
+        "mean_block": 30,
+        "seed": 42,
+        "cost_stressed_returns": net_a_x15,
+        "regime_slices": calendar_year_slices(net_a, inputs.h4_ts),
+        "benchmark_slices": calendar_year_slices(bench, inputs.h4_ts),
+        "decisive_start": 1380,
+        "n_resamples": 2000,
+    }
+    reentered = {a: sum(p == 0 and q > 0 for p, q in zip(inputs.arm_a[a], inputs.arm_b[a])) for a in _B2_ASSETS}
+    assert metrics == {
+        "arm_a_ann_sharpe_noc": sharpe(net_a, periods_per_year=2190),
+        "arm_a_ann_sharpe_noc_decisive": sharpe(net_a[1380:], periods_per_year=2190),
+        "arm_a_max_drawdown_full": max_drawdown(net_a),
+        "turnover_a": turnover_a,
+        "arm_a_spot_drag_pct_yr": turnover_a / n * 0.006 * 2190,
+        "benchmark_ann_sharpe_noc": sharpe(bench, periods_per_year=2190),
+        "benchmark_ann_sharpe_noc_decisive": sharpe(bench[1380:], periods_per_year=2190),
+        **{key: int(bar[key]) if key in _ARM_A_BAR_FLAGS else bar[key] for key in _ARM_A_BAR_KEYS},
+        "engaged_per_asset": reentered,
+        "engaged_per_year": reentry_counts_per_year(inputs.arm_a, inputs.arm_b, inputs.close),
+        f"{signal_key}_coverage": {
+            a: {str(year): [c.non_null, c.total] for year, c in coverage_by_year(inputs.close, inputs.signal[a]).items()}
+            for a in _B2_ASSETS
+        },
+        "primary_returns": n - start,
+        "threshold": threshold,
+    }
+    assert set(metrics) == _overlay_preflight_keys(signal_key) and 0 < start < n - 2
+    assert sum(reentered.values()) == sum(metrics["engaged_per_year"].values()) > 0
+    assert metrics["engaged_per_asset"][_B2_NEVER_SPIKES] == 0
+
+
+@pytest.mark.parametrize("name", sorted({*_B2_REENTRIES, *(f"{name}-preflight" for name in _B2_REENTRIES)}))
+def test_a_b2_reentry_subject_refuses_as_of_before_any_read(tmp_path, monkeypatch, name):
+    _anchor(monkeypatch, _rolling_set(tmp_path))
+
+    def read(*args, **kwargs):
+        raise AssertionError("the subject read a series before refusing --as-of")
+
+    monkeypatch.setattr(subjects, "_capturing_union", read)
+    args = ["research", "eval", "--subject", name, "--dataset", "ohlc-rolling", "--as-of", "2026-10-03"]
+
+    result = runner.invoke(app, [*args, *_as_trial(name, tmp_path)])
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert (
+        f"{name} evaluates a frozen set's 4h series, never the rolling dataset as of a day: drop --as-of and pass a frozen "
+        "--dataset"
+    ) in result.output
+
+
+@pytest.mark.parametrize("name", sorted(_B2_REENTRIES))
+@pytest.mark.parametrize("plain", [True, False], ids=["plain-eval", "another-count"])
+def test_a_b2_reentry_trial_refuses_a_plain_eval_and_another_count_before_any_read(tmp_path, monkeypatch, name, plain):
+    count = _B2_REENTRIES[name][4]
+    _anchor(monkeypatch, tmp_path / "no-data", tmp_path / "registry.jsonl")
+    reads = _recording(monkeypatch, "_b2_reentry_inputs", lambda arguments, result: result)
+    flags = [] if plain else ["--register", "--iteration", "iter-183", "--family", "B2", "--n-trials", str(count + 1)]
+    refused = (
+        f"{name} declares a verdict rule, so every run of it is a trial: run it with --register"
+        if plain
+        else f"--n-trials {count + 1} is not {count}, the count {name} declares and deflates at: pass --n-trials {count}"
+    )
+
+    result = runner.invoke(app, ["research", "eval", "--subject", name, "--dataset", "ohlc-test", *flags])
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert refused in result.output and reads == []
+
+
+@pytest.mark.retired
+@pytest.mark.parametrize(
+    ("from_bar", "cause"),
+    [
+        pytest.param(
+            1_458,
+            "0 of its return indices lie from the read's start, every asset's binperp_liq_long_z30d held and 2021 begun, and the "
+            "head-to-head from it needs 2",
+            id="no-index-from-the-start",
+        ),
+        pytest.param(
+            1_452,
+            "arm A never draws down from the read's start, so max_drawdown_reduction_pct divides by zero",
+            id="arm-a-never-draws-down-from-the-start",
+        ),
+    ],
+)
+def test_a_b2_reentry_trial_refuses_a_start_it_cannot_evaluate_before_any_bar(tmp_path, monkeypatch, from_bar, cause):
+    _anchor(monkeypatch, _b2_reentry_dataset(tmp_path, from_bar=from_bar))
+    kill_bars = _recording(monkeypatch, "a1_kill_bar", lambda arguments, result: result)
+    args = ["research", "eval", "--subject", "b2-liq-reentry", "--dataset", "ohlc-test", *_as_trial("b2-liq-reentry", tmp_path)]
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert f"b2-liq-reentry over the full history: {cause}" in result.output
+    assert kill_bars == []
+
+
+@pytest.mark.parametrize(
+    ("name", "relpath", "spoil", "cause"),
+    [
+        pytest.param(
+            "b2-liq-reentry",
+            "liquidations-daily/SOL/daily.parquet",
+            lambda path: pl.read_parquet(path).drop("long_usd").write_parquet(path),
+            '"long_usd" not found',
+            id="liquidation-daily",
+        ),
+        pytest.param(
+            "b2-funding-reentry-preflight",
+            f"derivatives-funding/{_B2_SPOILT}/funding.parquet",
+            _not_parquet,
+            "File out of specification",
+            id="funding-preflight",
+        ),
+    ],
+)
+def test_a_b2_reentry_subject_refuses_a_file_of_its_signal_it_cannot_read_naming_it(
+    tmp_path, monkeypatch, name, relpath, spoil, cause
+):
+    root = _b2_reentry_dataset(tmp_path)
+    spoil(root / relpath)
+    _anchor(monkeypatch, root)
+
+    result = runner.invoke(app, ["research", "eval", "--subject", name, "--dataset", "ohlc-test", *_as_trial(name, tmp_path)])
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert f"{relpath}: " in result.output and cause in result.output
+
+
+@pytest.mark.parametrize("name", sorted(_B2_REENTRIES))
+def test_each_b2_reentry_reads_its_signal_off_its_own_columns(tmp_path, name):
+    root = _b2_reentry_dataset(tmp_path)
+    h4_ts, _ = subjects._capturing_union(ObservedReader(root), "ohlc-test", 240, None, None, False)
+    expected = {}
+    for asset in _B2_ASSETS:
+        if name == "b2-liq-reentry":
+            daily = pl.read_parquet(root / "liquidations-daily" / asset / "daily.parquet")
+            expected[asset] = daily_zscore_grid_feature(daily["ts"].to_list(), daily["long_usd"].to_list(), h4_ts)
+        else:
+            prints = pl.read_parquet(root / "derivatives-funding" / PERP_SYMBOLS[asset] / "funding.parquet")
+            columns = (prints[c].to_list() for c in ("ts", "funding_rate", "interval_hours"))
+            expected[asset] = funding_grid_feature(*columns, h4_ts, config=B2Config())
+
+    signal = _reentry_signal(name)(ObservedReader(root), h4_ts)
+
+    assert signal == expected
+    _, threshold, fire, _, _ = _B2_REENTRIES[name]
+    assert sum(v is not None and fire(v, threshold) for v in signal["BTC"]) > 0
+
+
 def _ruled_signal(held: list[float | None], flat: list[float]) -> tuple[dict, dict]:
     """BTC's signal at its long stamps `held` and at its flat ones `flat`, every other asset's flat and unread."""
     n = len(held) + len(flat)
@@ -3229,7 +3662,9 @@ _RULED_FIXTURES = {
     "b1-volume-confirmation": _b1_volume_dataset,
     "b2-funding-derisk": _b2_dataset,
     "b2-funding-derisk-full": _b2_dataset,
+    "b2-funding-reentry": _b2_reentry_dataset,
     "b2-liq-derisk": _b2_overlay_dataset,
+    "b2-liq-reentry": _b2_reentry_dataset,
     "b2-oi-derisk": _b2_overlay_dataset,
     "b2-ratio-derisk": _b2_overlay_dataset,
 }
@@ -3240,7 +3675,9 @@ _DECLARED_COUNT = {
     "b1-volume-confirmation": "_B1_VOLUME_N_TRIALS",
     "b2-funding-derisk": "_B2_N_TRIALS",
     "b2-funding-derisk-full": "_B2_FULL_N_TRIALS",
+    "b2-funding-reentry": "_B2_FUNDING_REENTRY_N_TRIALS",
     "b2-liq-derisk": "_B2_LIQ_N_TRIALS",
+    "b2-liq-reentry": "_B2_LIQ_REENTRY_N_TRIALS",
     "b2-oi-derisk": "_B2_OI_N_TRIALS",
     "b2-ratio-derisk": "_B2_RATIO_N_TRIALS",
 }
@@ -3254,7 +3691,9 @@ def test_the_ruled_subjects_declare_their_families_and_trial_counts():
         "b1-volume-confirmation": ("B1", 4),
         "b2-funding-derisk": ("B2", 1),
         "b2-funding-derisk-full": ("B2", 1),
+        "b2-funding-reentry": ("B2", 6),
         "b2-liq-derisk": ("B2", 4),
+        "b2-liq-reentry": ("B2", 5),
         "b2-oi-derisk": ("B2", 2),
         "b2-ratio-derisk": ("B2", 3),
     }
@@ -4808,6 +5247,10 @@ _CONTRACT_DATASETS = {
     "b2-liq-derisk": lambda tmp_path, subject: (_b2_overlay_dataset(tmp_path), _B2_START),
     "b2-liq-derisk-preflight": lambda tmp_path, subject: (_b2_overlay_dataset(tmp_path), _B2_START),
     "b2-liq-tape-reading": lambda tmp_path, subject: (_b2_tape_dataset(tmp_path), _B2_TAPE_START),
+    "b2-liq-reentry": lambda tmp_path, subject: (_b2_reentry_dataset(tmp_path), _B2_START),
+    "b2-liq-reentry-preflight": lambda tmp_path, subject: (_b2_reentry_dataset(tmp_path), _B2_START),
+    "b2-funding-reentry": lambda tmp_path, subject: (_b2_reentry_dataset(tmp_path), _B2_START),
+    "b2-funding-reentry-preflight": lambda tmp_path, subject: (_b2_reentry_dataset(tmp_path), _B2_START),
     "b1-conditioning": lambda tmp_path, subject: (_b1_dataset(tmp_path), _B1_START),
     "b1-window-only": lambda tmp_path, subject: (_b1_dataset(tmp_path, m15=False), _B1_START),
     "b1-hourly-rv": lambda tmp_path, subject: (_b1_hourly_rv_dataset(tmp_path), _B1_START),

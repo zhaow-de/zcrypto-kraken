@@ -13,6 +13,7 @@ from cli.alpha.b2 import (
     daily_zscore_grid_feature,
     derisk_scales,
     event_contrast,
+    full_long_sizes,
     funding_carry_grid_feature,
     funding_grid_feature,
     funding_sign_grid_feature,
@@ -30,6 +31,8 @@ from cli.alpha.b2 import (
     ratio_grid_features,
     ratio_max_signal,
     ratio_zscore_grid_features,
+    reentry_counts_per_year,
+    reentry_positions,
     scale_positions,
 )
 from cli.alpha.errors import AlphaError
@@ -223,6 +226,83 @@ def test_per_year_turnover_charges_each_change_from_flat_in_its_index_year():
 def test_per_year_max_drawdown_reads_each_year_from_its_own_peak():
     returns = [0.10, -0.20, 0.05, -0.10, 0.10, -0.05]
     assert per_year_max_drawdown(returns, _CLOSE) == {"2020": pytest.approx(0.2), "2021": pytest.approx(0.1)}
+
+
+def test_full_long_sizes_is_the_shared_weight_times_the_mean_of_the_arms_levels():
+    # The arms' levels average to 0.6, 0.4 (its median 0.3) and 0.6; ETH carries no weight at index 1, and no asset at index 2.
+    weights = [{"BTC": 0.6, "ETH": 0.4}, {"BTC": 1.0}, {}]
+    levels = [[0.9, 0.3, 0.6], [0.6, 0.9, 0.6], [0.3, 0.0, 0.6]]
+    sizes = full_long_sizes(weights, levels, ("BTC", "ETH"))
+    assert sizes == {"BTC": pytest.approx([0.36, 0.4, 0.0]), "ETH": pytest.approx([0.24, 0.0, 0.0])}
+
+
+_REENTRY_ARM_A = {"BTC": [0.4, 0.4, 0.0, 0.0, 0.0, 0.0, 0.0, 0.3], "ETH": [0.2, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0]}
+_REENTRY_FULL = {"BTC": [0.5, 0.5, 0.45, 0.55, 0.5, 0.6, 0.4, 0.5], "ETH": [0.6, 0.6, 0.0, 0.6, 0.6, 0.6, 0.0, 0.6]}
+_REENTRY_FIRES = {
+    "BTC": [False, True, True, True, False, False, False, True],
+    "ETH": [False, True, False, True, False, False, True, False],
+}
+
+
+@pytest.mark.parametrize(
+    ("hold", "expected"),
+    [
+        pytest.param(
+            1,
+            {"BTC": [0.4, 0.4, 0.45, 0.55, 0.0, 0.0, 0.0, 0.3], "ETH": [0.2, 0.6, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0]},
+            id="hold-1-open-only-where-it-fires",
+        ),
+        pytest.param(
+            3,
+            {"BTC": [0.4, 0.4, 0.45, 0.55, 0.5, 0.6, 0.0, 0.3], "ETH": [0.2, 0.6, 0.0, 0.5, 0.0, 0.0, 0.0, 0.6]},
+            id="hold-3-open-three-closes-from-the-last-firing",
+        ),
+    ],
+)
+def test_reentry_positions_take_the_full_long_size_where_arm_a_is_flat_through_the_hold(hold, expected):
+    # A firing while long opens nothing, a re-entry takes the size of its own close, a zero full-long size takes nothing and
+    # still counts toward the hold, a second firing restarts the hold, and arm A turning long closes a re-entry.
+    assert reentry_positions(_REENTRY_ARM_A, _REENTRY_FULL, _REENTRY_FIRES, hold=hold) == expected
+
+
+def test_reentry_counts_per_year_counts_flat_asset_stamps_arm_b_holds_and_never_a_long_one():
+    reentered = {"BTC": [0.4, 0.4, 0.5, 0.0, 0.3, 0.3], "ETH": [0.2, 0.2, 0.2, 0.5, 0.5, 0.6]}
+    assert reentry_counts_per_year(_ARM_A, reentered, _CLOSE) == {"2020": 1, "2021": 1}
+
+
+@pytest.mark.parametrize(
+    ("call", "match"),
+    [
+        pytest.param(lambda: full_long_sizes([{}], [], ("BTC",)), "at least one arm", id="no-levels"),
+        pytest.param(
+            lambda: full_long_sizes([{}, {}], [[0.5]], ("BTC",)), r"levels\[0\] has length 1, expected 2", id="levels-length"
+        ),
+        pytest.param(
+            lambda: reentry_positions(_REENTRY_ARM_A, _REENTRY_FULL, _REENTRY_FIRES, hold=0),
+            "hold must be an int >= 1",
+            id="hold-0",
+        ),
+        pytest.param(
+            lambda: reentry_positions(_REENTRY_ARM_A, _REENTRY_FULL, _REENTRY_FIRES, hold=True),
+            "hold must be an int >= 1",
+            id="hold-bool",
+        ),
+        pytest.param(
+            lambda: reentry_positions(_REENTRY_ARM_A, _REENTRY_FULL, {"BTC": _REENTRY_FIRES["BTC"]}, hold=1),
+            "same assets",
+            id="fires-assets",
+        ),
+        pytest.param(
+            lambda: reentry_positions(_REENTRY_ARM_A, _REENTRY_FULL | {"ETH": [0.6] * 7}, _REENTRY_FIRES, hold=1),
+            r"full_long\['ETH'\] has length 7, expected 8",
+            id="full-long-length",
+        ),
+        pytest.param(lambda: reentry_counts_per_year(_ARM_A, _ARM_B, _CLOSE[:5]), "expected 5", id="counts-close-length"),
+    ],
+)
+def test_the_reentry_functions_refuse_inputs_they_cannot_pair(call, match):
+    with pytest.raises(AlphaError, match=match):
+        call()
 
 
 _POS = {"BTC": [0.4, 0.2], "ETH": [0.3, 0.6]}

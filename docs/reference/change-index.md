@@ -403,3 +403,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #739 | 2026-10-19 | feat(alpha): 00136 — B2's ratio columns and liquidations leg, 4h grid | — | 00136 | T0023 |
 | #742 | 2026-10-20 | feat(research): iter-181 — B2 trial 2: funding de-risk on ohlc-full | iter-181 | 00137 | T0023 |
 | #748 | 2026-10-21 | feat(research): iter-182 — B2 trials 3–5: OI, ratio, liquidation de-risk | iter-182 | 00138 | T0023 |
+| #750 | 2026-10-22 | feat(research): iter-183 — B2 trials 6–7: liquidation, funding re-entry | iter-183 | 00139 | T0023 |
