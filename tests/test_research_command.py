@@ -1439,6 +1439,7 @@ def test_each_subject_declares_the_metric_keys_its_build_returns():
         assert subjects.SUBJECTS[name].metric_keys == _overlay_metric_keys(signal_key)
         assert subjects.SUBJECTS[f"{name}-preflight"].metric_keys == _overlay_preflight_keys(signal_key)
     assert subjects.SUBJECTS["b2-liq-tape-reading"].metric_keys == _B2_TAPE_SPEC_KEYS
+    assert subjects.SUBJECTS["b2-signal-reading"].metric_keys == _B2_READING_SPEC_KEYS
 
 
 # One engaged year of two, so a rule reading `all` where it reads `any` turns this adopt into a stop.
@@ -3202,6 +3203,215 @@ def test_each_b2_reentry_reads_its_signal_off_its_own_columns(tmp_path, name):
     assert signal == expected
     _, threshold, fire, _, _ = _B2_REENTRIES[name]
     assert sum(v is not None and fire(v, threshold) for v in signal["BTC"]) > 0
+
+
+_B2_READING_SPEC = "docs/specs/00140-b2-signal-reading-design.md"
+# Spec 00140's four signals, in the order its keys and its contrasts take them, typed from the spec, never read off the
+# subject.
+_B2_READING_SIGNAL_KEYS = ("binperp_funding_z30d", "binperp_oi_z30d", "binperp_ratio_max_z30d", "binperp_liq_long_z30d")
+_B2_READING_SPEC_KEYS = frozenset(
+    {
+        *(
+            f"{key}_fwd_{kind}_{hours}h"
+            for key in _B2_READING_SIGNAL_KEYS
+            for kind in ("logret", "sumret")
+            for hours in (4, 24, 96)
+        ),
+        "events_per_asset",
+        "others_per_asset",
+        "threshold",
+        "mean_block",
+        "n_resamples",
+    }
+)
+
+
+@pytest.mark.retired
+def test_the_signal_reading_declares_the_4h_grid_its_keys_and_no_rule():
+    reading = subjects.SUBJECTS["b2-signal-reading"]
+    assert (reading.name, reading.intervals, reading.assets, reading.spec, reading.seeds) == (
+        "b2-signal-reading",
+        (240,),
+        _B2_ASSETS,
+        _B2_READING_SPEC,
+        (42,),
+    )
+    assert reading.build is subjects._build_b2_signal_reading and reading.metric_keys == _B2_READING_SPEC_KEYS
+    assert (reading.verdict, reading.no_verdict, reading.incumbent, reading.family, reading.n_trials) == (None,) * 5
+
+
+@pytest.mark.retired
+def test_the_signal_readings_inputs_are_the_overlays_union_and_arm_a_and_each_trials_signal_by_its_own_reader(monkeypatch):
+    calls = []
+    overlay = subjects._B2OverlayInputs(["ts"], {"BTC": [1.0]}, ["close"], {"BTC": [0.0]}, {"BTC": [-3.0]}, {"BTC": [0.5]}, 2.0)
+    monkeypatch.setattr(subjects, "_b2_overlay_inputs", lambda *arguments: calls.append(arguments) or overlay)
+    readers = ("_b2_funding_signal", "_b2_oi_signal", "_b2_ratio_signal", "_b2_liq_signal")
+    for name in readers:
+        monkeypatch.setattr(subjects, name, lambda reader, h4_ts, name=name: calls.append((name, reader, h4_ts)) or name)
+    reader, window = object(), ("2024-01-01", "2024-06-30")
+
+    inputs = subjects._b2_reading_inputs("b2-signal-reading", reader, "ohlc-test", window, True)
+
+    assert calls == [
+        ("b2-signal-reading", subjects._b2_funding_signal, 2.0, reader, "ohlc-test", window, True),
+        *((name, reader, ["ts"]) for name in readers[1:]),
+    ]
+    signals = dict(zip(_B2_READING_SIGNAL_KEYS, (overlay.signal, *readers[1:])))
+    assert inputs == subjects._B2ReadingInputs(overlay.h4_ts, overlay.h4_prices, overlay.close, overlay.arm_a, signals)
+
+
+# Arm A long at 0-2 and 6, flat at 3-5 and 7; the signal past +2 at 0 and 3, past -2 at 1 and 4, on the thresholds
+# themselves at 2 and 5, and read at neither 6 nor 7.
+_READING_ARM_A = {"BTC": [0.3, 0.2, 0.4, 0.0, 0.0, 0.0, 0.1, 0.0]}
+_READING_SIGNAL = {"BTC": [2.5, -2.5, 2.0, 3.0, -3.0, -2.0, None, None]}
+
+
+@pytest.mark.retired
+@pytest.mark.parametrize(
+    ("tail", "state", "expected"),
+    [
+        pytest.param("above", "long", [True, False, False, None, None, None, None, None], id="above-long"),
+        pytest.param("above", "flat", [None, None, None, True, False, False, None, None], id="above-flat"),
+        pytest.param("below", "long", [False, True, False, None, None, None, None, None], id="below-long"),
+        pytest.param("below", "flat", [None, None, None, False, True, False, None, None], id="below-flat"),
+    ],
+)
+def test_a_reading_flag_is_an_event_past_its_tail_in_its_state_another_read_close_in_it_and_none_elsewhere(tail, state, expected):
+    assert subjects._b2_reading_flags(_READING_SIGNAL, _READING_ARM_A, tail, state) == {"BTC": expected}
+
+
+@pytest.mark.retired
+def test_the_reading_counts_each_assets_events_and_others_per_signal_tail_and_state():
+    arm_a = _READING_ARM_A | {"ETH": [0.0] * 8}
+    signal = _READING_SIGNAL | {"ETH": [None, 2.5, 2.5, -2.5, 0.0, 0.0, 0.0, 0.0]}
+    inputs = subjects._B2ReadingInputs([], {}, [], arm_a, {"binperp_oi_z30d": signal})
+
+    counts = subjects._b2_reading_counts(inputs)
+
+    assert counts == {
+        "events_per_asset": {
+            "binperp_oi_z30d": {
+                "above": {"long": {"BTC": 1, "ETH": 0}, "flat": {"BTC": 1, "ETH": 2}},
+                "below": {"long": {"BTC": 1, "ETH": 0}, "flat": {"BTC": 1, "ETH": 1}},
+            }
+        },
+        "others_per_asset": {
+            "binperp_oi_z30d": {
+                "above": {"long": {"BTC": 2, "ETH": 0}, "flat": {"BTC": 2, "ETH": 5}},
+                "below": {"long": {"BTC": 2, "ETH": 0}, "flat": {"BTC": 2, "ETH": 6}},
+            }
+        },
+    }
+
+
+@pytest.mark.retired
+def test_the_reading_forwards_are_the_log_return_and_the_summed_returns_over_the_h_closes_from_k_on_the_arms_filled_prices():
+    # BTC misses its third close, which the arms' BTC fill bridges; ETH misses its fifth, which no fill bridges. Each asset
+    # grows at its own rate, so no asset's forwards are another's.
+    prices = {a: [100.0 * (1 + 0.01 * i) * (1.003 + 0.001 * i) ** k for k in range(30)] for i, a in enumerate(_B2_ASSETS)}
+    prices["BTC"][2] = prices["ETH"][4] = None
+
+    forwards = subjects._b2_reading_forwards(prices)
+
+    assert set(forwards) == {f"fwd_{kind}_{hours}h" for kind in ("logret", "sumret") for hours in (4, 24, 96)}
+    assert {len(values) for series in forwards.values() for values in series.values()} == {29}
+    btc, eth, sol = (forwards["fwd_logret_4h"][a] for a in ("BTC", "ETH", "SOL"))
+    assert (btc[1], btc[2]) == (0.0, math.log(prices["BTC"][3] / prices["BTC"][1]))
+    assert eth[2:6] == [math.log(prices["ETH"][3] / prices["ETH"][2]), None, None, math.log(prices["ETH"][6] / prices["ETH"][5])]
+    assert sol == pytest.approx([math.log1p(r) for r in subjects._b2_returns(prices)["SOL"]], rel=1e-12)
+    day, days = forwards["fwd_logret_24h"]["SOL"], forwards["fwd_logret_96h"]["SOL"]
+    assert (day[23], day[24:]) == (math.log(prices["SOL"][29] / prices["SOL"][23]), [None] * 5)
+    assert (days[5], days[6:]) == (math.log(prices["SOL"][29] / prices["SOL"][5]), [None] * 23)
+    returns = [None if None in pair else pair[1] / pair[0] - 1 for pair in zip(prices["ETH"], prices["ETH"][1:])]
+    crossing = [sum(r for r in returns[k : k + 6] if r is not None) for k in range(4)]
+    assert forwards["fwd_sumret_24h"]["ETH"][:6] == [*crossing, None, sum(returns[5:11])]
+    assert forwards["fwd_sumret_4h"]["BTC"][1:3] == [0.0, prices["BTC"][3] / prices["BTC"][1] - 1]
+    assert forwards["fwd_sumret_4h"]["SOL"] == subjects._b2_returns(prices)["SOL"]
+    total = forwards["fwd_sumret_96h"]["SOL"]
+    assert (total[5], total[6:]) == (sum(subjects._b2_returns(prices)["SOL"][5:29]), [None] * 23)
+
+
+@pytest.mark.retired
+def test_the_signal_reading_hands_each_signal_tail_and_state_to_the_chunked_contrast_and_keys_its_rows(monkeypatch):
+    prices = {a: [100.0 * (1 + 0.01 * i) * 1.003**k for k in range(30)] for i, a in enumerate(_B2_ASSETS)}
+    arm_a = {a: [0.1 if k % 2 == 0 else 0.0 for k in range(29)] for a in _B2_ASSETS}
+    signals = {
+        key: {a: [None if k < j else 3.0 * math.sin(k + i + j) for k in range(29)] for i, a in enumerate(_B2_ASSETS)}
+        for j, key in enumerate(_B2_READING_SIGNAL_KEYS)
+    }
+    inputs = subjects._B2ReadingInputs([], prices, [], arm_a, signals)
+    calls = []
+
+    def contrast(flags, forwards, **kwargs):
+        calls.append((flags, forwards, kwargs))
+        return {series: {"pooled": [len(calls), index]} for index, series in enumerate(forwards)}
+
+    monkeypatch.setattr(subjects, "event_contrast_chunked", contrast)
+
+    metrics = subjects._b2_reading_metrics(inputs)
+
+    forwards = subjects._b2_reading_forwards(inputs.h4_prices)
+    cells = [(key, tail, state) for key in _B2_READING_SIGNAL_KEYS for tail in ("above", "below") for state in ("long", "flat")]
+    assert calls == [
+        (
+            subjects._b2_reading_flags(inputs.signals[key], inputs.arm_a, tail, state),
+            forwards,
+            {"mean_block": 102, "n_resamples": 2000, "seed": 42},
+        )
+        for key, tail, state in cells
+    ]
+    for call, (key, tail, state) in enumerate(cells, start=1):
+        for index, series in enumerate(f"fwd_{kind}_{hours}h" for kind in ("logret", "sumret") for hours in (4, 24, 96)):
+            assert metrics[f"{key}_{series}"][tail][state] == {"pooled": [call, index]}
+    assert set(metrics) == _B2_READING_SPEC_KEYS
+    assert (metrics["threshold"], metrics["mean_block"], metrics["n_resamples"]) == (2.0, 102, 2000)
+    counts = subjects._b2_reading_counts(inputs)
+    assert (metrics["events_per_asset"], metrics["others_per_asset"]) == (counts["events_per_asset"], counts["others_per_asset"])
+
+
+@pytest.mark.retired
+def test_the_signal_reading_refuses_as_of_before_any_read(tmp_path, monkeypatch):
+    _anchor(monkeypatch, _rolling_set(tmp_path))
+
+    def read(*args, **kwargs):
+        raise AssertionError("the reading read a series before refusing --as-of")
+
+    monkeypatch.setattr(subjects, "_capturing_union", read)
+    args = ["research", "eval", "--subject", "b2-signal-reading", "--dataset", "ohlc-rolling", "--as-of", "2026-10-03"]
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert (
+        "b2-signal-reading evaluates a frozen set's 4h series, never the rolling dataset as of a day: drop --as-of and pass a "
+        "frozen --dataset"
+    ) in result.output
+
+
+@pytest.mark.retired
+@pytest.mark.parametrize(
+    ("relpath", "spoil", "cause"),
+    [
+        pytest.param(f"derivatives-funding/{_B2_SPOILT}/funding.parquet", _not_parquet, "File out of specification", id="funding"),
+        pytest.param(f"derivatives-oi/{_B2_SPOILT}/oi.parquet", _not_parquet, "File out of specification", id="oi"),
+        pytest.param(
+            f"derivatives-oi/{_B2_SPOILT}/oi.parquet",
+            lambda path: pl.read_parquet(path).drop("count_long_short_ratio").write_parquet(path),
+            '"count_long_short_ratio" not found',
+            id="ratio",
+        ),
+        pytest.param("liquidations-daily/SOL/daily.parquet", _not_parquet, "File out of specification", id="liquidations-daily"),
+    ],
+)
+def test_the_signal_reading_refuses_a_file_of_a_signals_set_it_cannot_read_naming_it(tmp_path, monkeypatch, relpath, spoil, cause):
+    root = _b2_reentry_dataset(tmp_path)
+    spoil(root / relpath)
+    _anchor(monkeypatch, root)
+
+    result = runner.invoke(app, ["research", "eval", "--subject", "b2-signal-reading", "--dataset", "ohlc-test"])
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert f"{relpath}: " in result.output and cause in result.output
 
 
 def _ruled_signal(held: list[float | None], flat: list[float]) -> tuple[dict, dict]:
@@ -5251,6 +5461,7 @@ _CONTRACT_DATASETS = {
     "b2-liq-reentry-preflight": lambda tmp_path, subject: (_b2_reentry_dataset(tmp_path), _B2_START),
     "b2-funding-reentry": lambda tmp_path, subject: (_b2_reentry_dataset(tmp_path), _B2_START),
     "b2-funding-reentry-preflight": lambda tmp_path, subject: (_b2_reentry_dataset(tmp_path), _B2_START),
+    "b2-signal-reading": lambda tmp_path, subject: (_b2_reentry_dataset(tmp_path), _B2_START),
     "b1-conditioning": lambda tmp_path, subject: (_b1_dataset(tmp_path), _B1_START),
     "b1-window-only": lambda tmp_path, subject: (_b1_dataset(tmp_path, m15=False), _B1_START),
     "b1-hourly-rv": lambda tmp_path, subject: (_b1_hourly_rv_dataset(tmp_path), _B1_START),

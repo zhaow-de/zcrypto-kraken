@@ -1,8 +1,6 @@
-"""The research subjects whose trials are closed. `tests/conftest.py` marks their cases `retired`: CI deselects them
-(`-m "not retired"`), and the nightly `infra/scripts/data-gated-run.py` runs them with the rest of the suite.
-
-A subject joins when no trial still to run evaluates it; one a later trial still evaluates stays out, as the shared
-machinery's cases over the kept subjects do."""
+"""The research subjects no trial still to run evaluates. `tests/conftest.py` marks their cases `retired`: CI
+deselects them (`-m "not retired"`), and the nightly `infra/scripts/data-gated-run.py` runs them with the rest of the
+suite."""
 
 from __future__ import annotations
 
@@ -19,7 +17,7 @@ RETIRED_SUBJECTS = frozenset(
         "b1-volume-confirmation-preflight",
         "b1-hourly-channel-exits",
         "b1-hourly-channel-exits-preflight",
-        # B2's finished trials and the reading between them.
+        # B2's finished trials and the readings beside them.
         "b2-funding-derisk",
         "b2-arm-a-bar",
         "b2-funding-derisk-full",
@@ -35,6 +33,7 @@ RETIRED_SUBJECTS = frozenset(
         "b2-liq-reentry-preflight",
         "b2-funding-reentry",
         "b2-funding-reentry-preflight",
+        "b2-signal-reading",
     }
 )
 # The one file outside the data-gated family whose cases evaluate a subject; elsewhere a subject's name is a checker's

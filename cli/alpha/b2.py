@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import random
 import statistics
 from bisect import bisect_left
 from collections.abc import Callable, Collection
@@ -419,6 +420,86 @@ def event_contrast(
             low, high = np.percentile(boot_event_means - boot_other_means, [2.5, 97.5])
             diff = mean_event - mean_other
             rows[name] = [n_event, n_other, mean_event, mean_other, diff, float(low), float(high)]
+        out[series] = rows
+    return out
+
+
+def _bootstrap_chunks(n_obs: int, *, mean_block: float, n_resamples: int, seed: int, chunk: int):
+    """`stationary_bootstrap_indices`' resamples, `chunk` at a time as the rows of an index array: its generator's calls,
+    in its order, from the same seed."""
+    rng = random.Random(seed)
+    p = 1 / mean_block
+    for first in range(0, n_resamples, chunk):
+        rows = np.empty((min(chunk, n_resamples - first), n_obs), dtype=np.int64)
+        for row in rows:
+            idx = [rng.randrange(n_obs)]
+            for _ in range(n_obs - 1):
+                idx.append(rng.randrange(n_obs) if rng.random() < p else (idx[-1] + 1) % n_obs)
+            row[:] = idx
+        yield rows
+
+
+def event_contrast_chunked(
+    flags: dict[str, list[bool | None]],
+    forwards: dict[str, dict[str, list[float | None]]],
+    *,
+    mean_block: float,
+    n_resamples: int,
+    seed: int,
+    chunk: int = 10,
+) -> dict[str, dict[str, list[float]]]:
+    """`event_contrast`'s rows over the same resamples, drawn and read `chunk` at a time so that memory holds `chunk` of
+    them and never all, each row followed by its 0.05 % and 99.95 % bounds (docs/specs/00140 D6)."""
+    n = _check_lengths({f"flags[{asset!r}]": values for asset, values in flags.items()})
+    for series, by_asset in forwards.items():
+        _check_paired("flags", flags, f"forwards[{series!r}]", by_asset, n)
+    if not isinstance(chunk, int) or isinstance(chunk, bool) or chunk < 1:
+        raise AlphaError(f"chunk must be an int >= 1, got {chunk!r}")
+    # `stationary_bootstrap_indices`' own refusals of the arguments the draw shares with it: the index count's at the cost of
+    # one resample of every index, the others' at the cost of n_resamples resamples of one index.
+    stationary_bootstrap_indices(n, mean_block=1, n_resamples=1, seed=seed)
+    stationary_bootstrap_indices(1, mean_block=mean_block, n_resamples=n_resamples, seed=seed)
+    kept = {}
+    for series, by_asset in forwards.items():
+        for asset, flag in flags.items():
+            values = by_asset[asset]
+            event = np.array([f is True and v is not None for f, v in zip(flag, values)])
+            other = np.array([f is False and v is not None for f, v in zip(flag, values)])
+            if event.sum() >= 2 and other.sum() >= 2:
+                kept[series, asset] = (event, other, np.array([0.0 if v is None else v for v in values]))
+    counts = {key: np.empty((2, n_resamples), dtype=np.int64) for key in kept}
+    sums = {key: np.empty((2, n_resamples)) for key in kept}
+    first = 0
+    for draws in _bootstrap_chunks(n, mean_block=mean_block, n_resamples=n_resamples, seed=seed, chunk=chunk):
+        last = first + len(draws)
+        for key, (event, other, x) in kept.items():
+            e, o, v = event[draws], other[draws], x[draws]
+            counts[key][:, first:last] = e.sum(axis=1), o.sum(axis=1)
+            sums[key][:, first:last] = (v * e).sum(axis=1), (v * o).sum(axis=1)
+        first = last
+    out: dict[str, dict[str, list[float]]] = {}
+    for series in forwards:
+        assets = [asset for asset in flags if (series, asset) in kept]
+        rows = {}
+        for name, members in [*((asset, [asset]) for asset in assets), ("pooled", assets)]:
+            if not members:
+                continue
+            read = [kept[series, asset] for asset in members]
+            n_event = sum(int(event.sum()) for event, _, _ in read)
+            n_other = sum(int(other.sum()) for _, other, _ in read)
+            mean_event = sum(float(x[event].sum()) for event, _, x in read) / n_event
+            mean_other = sum(float(x[other].sum()) for _, other, x in read) / n_other
+            boot_events = sum(counts[series, asset][0] for asset in members)
+            boot_others = sum(counts[series, asset][1] for asset in members)
+            usable = (boot_events > 0) & (boot_others > 0)
+            if not usable.any():
+                continue
+            boot_event_means = sum(sums[series, asset][0] for asset in members)[usable] / boot_events[usable]
+            boot_other_means = sum(sums[series, asset][1] for asset in members)[usable] / boot_others[usable]
+            low, high = np.percentile(boot_event_means - boot_other_means, [2.5, 97.5])
+            far_low, far_high = np.percentile(boot_event_means - boot_other_means, [0.05, 99.95])
+            diff = mean_event - mean_other
+            rows[name] = [n_event, n_other, mean_event, mean_other, diff, float(low), float(high), float(far_low), float(far_high)]
         out[series] = rows
     return out
 
