@@ -161,7 +161,7 @@ whole 200: 4.0 s, peak RSS 731 MiB, 105 MiB once the inputs were built; 33 rows
 
 Six B2 trials on these four signals — two de-risks on the funding z-score's upper tail and one each on the OI, ratio and liquidation signals, two re-entries on the liquidation signal's upper tail and the funding signal's lower — each lost to arm A net of cost, and the decomposition shows each one's gross result carrying the sign exposure alone gives. The reading asks the question beneath them: **after a close at which a signal lies past ±2, and inside one state of arm A — long or flat — does the asset's forward log return differ from its forward return after the other closes at which the signal is read in that state?** A difference that clears the potential criterion (D8) names the trial it would justify; none clearing it is the evidence the owner's family call reads. The reading tests no hypothesis, has no bar, matrix or verdict, spends no B slot, and changes no verdict of trials 2–7.
 
-## D1 — the pick: a reading of the signals before a seventh B2 trial
+## D1 — the pick: a reading of the signals before B2's next trial
 
 - **Author's call, under the owner's run instruction** ("try the trials with potential and do not close any family too early"), among three:
   1. **A re-risk mirror trial** — raise arm A's long position to its full-long size (spec 00139's `full_long_sizes`) where a crowding signal fires and arm A is long below that size. Evidence-led on its face, since every de-risk lost return; but the decomposition shows the de-risks' gross losses and the re-entries' gross gains carrying the signs the ensemble's positive drift alone gives, so the mirror most likely buys drift with extra turnover, spending a slot to learn little.
