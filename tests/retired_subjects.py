@@ -19,7 +19,7 @@ RETIRED_SUBJECTS = frozenset(
         "b1-volume-confirmation-preflight",
         "b1-hourly-channel-exits",
         "b1-hourly-channel-exits-preflight",
-        # B2's finished trials and the reading between them.
+        # B2's finished trials and the readings beside them.
         "b2-funding-derisk",
         "b2-arm-a-bar",
         "b2-funding-derisk-full",
@@ -35,6 +35,7 @@ RETIRED_SUBJECTS = frozenset(
         "b2-liq-reentry-preflight",
         "b2-funding-reentry",
         "b2-funding-reentry-preflight",
+        "b2-signal-reading",
     }
 )
 # The one file outside the data-gated family whose cases evaluate a subject; elsewhere a subject's name is a checker's

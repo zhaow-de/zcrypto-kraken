@@ -3226,6 +3226,7 @@ _B2_READING_SPEC_KEYS = frozenset(
 )
 
 
+@pytest.mark.retired
 def test_the_signal_reading_declares_the_4h_grid_its_keys_and_no_rule():
     reading = subjects.SUBJECTS["b2-signal-reading"]
     assert (reading.name, reading.intervals, reading.assets, reading.spec, reading.seeds) == (
@@ -3239,6 +3240,7 @@ def test_the_signal_reading_declares_the_4h_grid_its_keys_and_no_rule():
     assert (reading.verdict, reading.no_verdict, reading.incumbent, reading.family, reading.n_trials) == (None,) * 5
 
 
+@pytest.mark.retired
 def test_the_signal_readings_inputs_are_the_overlays_union_and_arm_a_and_each_trials_signal_by_its_own_reader(monkeypatch):
     calls = []
     overlay = subjects._B2OverlayInputs(["ts"], {"BTC": [1.0]}, ["close"], {"BTC": [0.0]}, {"BTC": [-3.0]}, {"BTC": [0.5]}, 2.0)
@@ -3264,6 +3266,7 @@ _READING_ARM_A = {"BTC": [0.3, 0.2, 0.4, 0.0, 0.0, 0.0, 0.1, 0.0]}
 _READING_SIGNAL = {"BTC": [2.5, -2.5, 2.0, 3.0, -3.0, -2.0, None, None]}
 
 
+@pytest.mark.retired
 @pytest.mark.parametrize(
     ("tail", "state", "expected"),
     [
@@ -3277,6 +3280,7 @@ def test_a_reading_flag_is_an_event_past_its_tail_in_its_state_another_read_clos
     assert subjects._b2_reading_flags(_READING_SIGNAL, _READING_ARM_A, tail, state) == {"BTC": expected}
 
 
+@pytest.mark.retired
 def test_the_reading_counts_each_assets_events_and_others_per_signal_tail_and_state():
     arm_a = _READING_ARM_A | {"ETH": [0.0] * 8}
     signal = _READING_SIGNAL | {"ETH": [None, 2.5, 2.5, -2.5, 0.0, 0.0, 0.0, 0.0]}
@@ -3300,6 +3304,7 @@ def test_the_reading_counts_each_assets_events_and_others_per_signal_tail_and_st
     }
 
 
+@pytest.mark.retired
 def test_the_reading_forwards_are_the_log_return_and_the_summed_returns_over_the_h_closes_from_k_on_the_arms_filled_prices():
     # BTC misses its third close, which the arms' BTC fill bridges; ETH misses its fifth, which no fill bridges. Each asset
     # grows at its own rate, so no asset's forwards are another's.
@@ -3326,6 +3331,7 @@ def test_the_reading_forwards_are_the_log_return_and_the_summed_returns_over_the
     assert (total[5], total[6:]) == (sum(subjects._b2_returns(prices)["SOL"][5:29]), [None] * 23)
 
 
+@pytest.mark.retired
 def test_the_signal_reading_hands_each_signal_tail_and_state_to_the_chunked_contrast_and_keys_its_rows(monkeypatch):
     prices = {a: [100.0 * (1 + 0.01 * i) * 1.003**k for k in range(30)] for i, a in enumerate(_B2_ASSETS)}
     arm_a = {a: [0.1 if k % 2 == 0 else 0.0 for k in range(29)] for a in _B2_ASSETS}
@@ -3363,6 +3369,7 @@ def test_the_signal_reading_hands_each_signal_tail_and_state_to_the_chunked_cont
     assert (metrics["events_per_asset"], metrics["others_per_asset"]) == (counts["events_per_asset"], counts["others_per_asset"])
 
 
+@pytest.mark.retired
 def test_the_signal_reading_refuses_as_of_before_any_read(tmp_path, monkeypatch):
     _anchor(monkeypatch, _rolling_set(tmp_path))
 
@@ -3381,6 +3388,7 @@ def test_the_signal_reading_refuses_as_of_before_any_read(tmp_path, monkeypatch)
     ) in result.output
 
 
+@pytest.mark.retired
 @pytest.mark.parametrize(
     ("relpath", "spoil", "cause"),
     [
