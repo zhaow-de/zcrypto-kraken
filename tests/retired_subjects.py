@@ -1,8 +1,6 @@
-"""The research subjects whose trials are closed. `tests/conftest.py` marks their cases `retired`: CI deselects them
-(`-m "not retired"`), and the nightly `infra/scripts/data-gated-run.py` runs them with the rest of the suite.
-
-A subject joins when no trial still to run evaluates it; one a later trial still evaluates stays out, as the shared
-machinery's cases over the kept subjects do."""
+"""The research subjects no trial still to run evaluates. `tests/conftest.py` marks their cases `retired`: CI
+deselects them (`-m "not retired"`), and the nightly `infra/scripts/data-gated-run.py` runs them with the rest of the
+suite."""
 
 from __future__ import annotations
 
