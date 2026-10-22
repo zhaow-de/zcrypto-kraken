@@ -1110,7 +1110,7 @@ def test_the_chunked_draw_yields_at_most_chunk_resamples_at_a_time_and_together_
     assert [row for rows in yielded for row in rows.tolist()] == whole
 
 
-def test_the_chunked_contrast_reads_each_chunk_before_the_next_is_drawn_with_at_most_one_earlier_draw_alive(monkeypatch):
+def test_no_chunk_but_the_last_is_alive_when_the_chunked_contrast_draws_the_next(monkeypatch):
     refs, alive, draw = [], [], b2._bootstrap_chunks
 
     def counted(n_obs, **kwargs):
