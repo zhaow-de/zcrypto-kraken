@@ -13,6 +13,7 @@ from cli.alpha.b2 import (
     daily_zscore_grid_feature,
     derisk_scales,
     event_contrast,
+    event_contrast_chunked,
     full_long_sizes,
     funding_carry_grid_feature,
     funding_grid_feature,
@@ -37,7 +38,7 @@ from cli.alpha.b2 import (
 )
 from cli.alpha.errors import AlphaError
 from cli.features.errors import FeatureError
-from cli.validation import stationary_bootstrap_indices
+from cli.validation import ValidationError, stationary_bootstrap_indices
 from cli.validation.bootstrap import _percentile
 
 UTC = timezone.utc
@@ -1042,3 +1043,85 @@ def test_the_event_contrast_compares_the_means_after_events_and_after_the_others
 def test_event_contrast_refuses_a_forward_series_of_another_length():
     with pytest.raises(AlphaError, match=re.escape("forwards['ret']['BTC'] has length 2, expected 3")):
         event_contrast({"BTC": [True, False, True]}, {"ret": {"BTC": [0.1, 0.2]}}, mean_block=2, n_resamples=10, seed=1)
+
+
+# Sixteen indices and two series: ETH holds two events and two others after "ret", so that some resamples draw neither
+# other, and one event after "late", which lacks its second event's forward, so the series keep different assets; DOT
+# holds one event in either, LTC two events and one other, and neither series keeps them.
+_CHUNKED_FLAGS = {
+    "BTC": [True, False, False, True, None, False, True, False, False, False, True, False, False, True, False, False],
+    "ETH": [False, None, False, None, True, None, None, None, None, None, None, True, None, None, None, None],
+    "DOT": [True, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False],
+    "LTC": [True, None, None, True, None, None, None, None, None, None, None, None, None, None, False, None],
+}
+_CHUNKED_RET = {
+    "BTC": [0.03, 0.01, -0.02, 0.05, 9.0, 0.0, 0.04, 0.02, -0.01, 0.01, None, 0.0, 0.02, -0.03, 0.01, 0.0],
+    "ETH": [0.01, -0.03, 0.02, 0.0, -0.02, 0.01, 9.0, -0.04, 0.03, 0.01, 0.02, -0.01, 0.0, 0.02, -0.02, 0.01],
+    "DOT": [0.07, 0.01, 0.0, 0.01, 0.02, 0.0, 0.01, 0.0, 0.02, 0.01, 0.0, 0.03, 0.01, 0.0, 0.02, 0.01],
+    "LTC": [0.04, 0.02, -0.01, 0.06, 0.01, 0.0, 0.03, -0.02, 0.01, 0.0, 0.02, 0.01, -0.01, 0.03, 0.05, 0.0],
+}
+_CHUNKED_LATE = {
+    "BTC": [*_CHUNKED_RET["BTC"][1:], None],
+    "ETH": [*_CHUNKED_RET["ETH"][1:12], None, *_CHUNKED_RET["ETH"][13:], None],
+    "DOT": [*_CHUNKED_RET["DOT"][1:], None],
+    "LTC": [*_CHUNKED_RET["LTC"][1:], None],
+}
+
+
+def _far_bounds(rows: list[tuple[list, list]], draws: list[list[int]]) -> list[float]:
+    """The 0.05 % and 99.95 % percentiles, by hand, of the differences over the resamples holding an event and another."""
+    diffs = []
+    for idx in draws:
+        ev = [values[k] for flags, values in rows for k in idx if flags[k] is True and values[k] is not None]
+        ot = [values[k] for flags, values in rows for k in idx if flags[k] is False and values[k] is not None]
+        if ev and ot:
+            diffs.append(sum(ev) / len(ev) - sum(ot) / len(ot))
+    diffs.sort()
+    return [_percentile(diffs, 0.0005), _percentile(diffs, 0.9995)]
+
+
+@pytest.mark.parametrize("chunk", [1, 7, 10, 200, 500], ids=lambda chunk: f"chunk-{chunk}")
+def test_the_chunked_contrast_is_the_event_contrasts_rows_over_the_same_resamples_each_with_its_far_bounds_after_it(
+    chunk, monkeypatch
+):
+    forwards = {"ret": _CHUNKED_RET, "late": _CHUNKED_LATE, "none": {a: [None] * 16 for a in _CHUNKED_FLAGS}}
+    chunks, draw = [], b2._bootstrap_chunks
+    monkeypatch.setattr(b2, "_bootstrap_chunks", lambda n_obs, **kwargs: chunks.append(kwargs["chunk"]) or draw(n_obs, **kwargs))
+
+    out = event_contrast_chunked(_CHUNKED_FLAGS, forwards, mean_block=3, n_resamples=200, seed=7, chunk=chunk)
+
+    whole = event_contrast(_CHUNKED_FLAGS, forwards, mean_block=3, n_resamples=200, seed=7)
+    assert {series: {name: row[:7] for name, row in rows.items()} for series, rows in out.items()} == whole
+    assert (list(out["ret"]), list(out["late"]), out["none"]) == (["BTC", "ETH", "pooled"], ["BTC", "pooled"], {})
+    assert {type(v) for rows in out.values() for row in rows.values() for v in row} <= {int, float}
+    assert (chunks, event_contrast_chunked.__kwdefaults__["chunk"]) == ([chunk], 10)
+    draws = stationary_bootstrap_indices(16, mean_block=3, n_resamples=200, seed=7)
+    for name, members in (("ETH", ["ETH"]), ("pooled", ["BTC", "ETH"])):
+        rows = [(_CHUNKED_FLAGS[a], _CHUNKED_RET[a]) for a in members]
+        assert out["ret"][name][7:] == pytest.approx(_far_bounds(rows, draws)), name
+
+
+@pytest.mark.parametrize(
+    ("change", "error", "match"),
+    [
+        pytest.param({"chunk": 0}, AlphaError, "chunk must be an int >= 1, got 0", id="chunk-0"),
+        pytest.param({"chunk": True}, AlphaError, "chunk must be an int >= 1, got True", id="chunk-bool"),
+        pytest.param({"n_resamples": 0}, ValidationError, "n_resamples must be an int >= 1, got 0", id="no-resample"),
+        pytest.param({"mean_block": 0.5}, ValidationError, "mean_block must be finite and >= 1, got 0.5", id="block-under-1"),
+        pytest.param({"flags": {"BTC": []}, "forwards": {}}, ValidationError, "n_obs must be an int >= 1, got 0", id="no-index"),
+        pytest.param(
+            {"forwards": {"ret": {"BTC": [0.1, 0.2]}}},
+            AlphaError,
+            re.escape("forwards['ret']['BTC'] has length 2, expected 3"),
+            id="forward-length",
+        ),
+    ],
+)
+def test_the_chunked_contrast_refuses_what_the_event_contrast_refuses_and_a_chunk_below_1(change, error, match):
+    arguments = {"flags": {"BTC": [True, False, True]}, "forwards": {"ret": {"BTC": [0.1, 0.2, 0.3]}}}
+    arguments |= {"mean_block": 2, "n_resamples": 10, "seed": 1} | change
+    with pytest.raises(error, match=match):
+        event_contrast_chunked(**arguments)
+    if "chunk" not in change:
+        with pytest.raises(error, match=match):
+            event_contrast(**arguments)
