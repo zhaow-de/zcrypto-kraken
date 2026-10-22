@@ -59,6 +59,7 @@ from cli.alpha.b2 import (
     daily_zscore_grid_feature,
     derisk_scales,
     event_contrast,
+    event_contrast_chunked,
     full_long_sizes,
     funding_grid_feature,
     liquidation_hourly_totals,
@@ -2922,6 +2923,148 @@ _B2_TAPE_KEYS = frozenset(
 )
 
 
+# docs/specs/00140 D2-D7: B2's signal reading, the four trialled 4h-grid signals' forward returns by tail and by arm A's
+# state, on a frozen set's full history; no rule, no slot.
+_B2_READING_THRESHOLD = 2.0
+_B2_READING_TAILS = ("above", "below")
+_B2_READING_STATES = ("long", "flat")
+_B2_READING_HORIZONS = (1, 6, 24)
+_B2_READING_BLOCK = 102
+_B2_READING_SIGNALS = ("binperp_funding_z30d", "binperp_oi_z30d", "binperp_ratio_max_z30d", "binperp_liq_long_z30d")
+
+
+class _B2ReadingInputs(NamedTuple):
+    h4_ts: list[datetime]
+    h4_prices: dict[str, list[float | None]]
+    close: list[datetime]
+    arm_a: dict[str, list[float]]
+    signals: dict[str, dict[str, list[float | None]]]
+
+
+def _b2_reading_inputs(
+    subject: str, reader: ObservedReader, dataset: str, window: tuple[str, str] | None, accept_holes: bool
+) -> _B2ReadingInputs:
+    """`_b2_overlay_inputs`' union, window refusals and arm A, run on trial 7's funding reader, and the other three trialled
+    signals by their trials' readers over its union: no forward return (docs/specs/00140 D3, D4)."""
+    overlay = _b2_overlay_inputs(subject, _b2_funding_signal, _B2_READING_THRESHOLD, reader, dataset, window, accept_holes)
+    signals = {
+        "binperp_funding_z30d": overlay.signal,
+        "binperp_oi_z30d": _b2_oi_signal(reader, overlay.h4_ts),
+        "binperp_ratio_max_z30d": _b2_ratio_signal(reader, overlay.h4_ts),
+        "binperp_liq_long_z30d": _b2_liq_signal(reader, overlay.h4_ts),
+    }
+    return _B2ReadingInputs(overlay.h4_ts, overlay.h4_prices, overlay.close, overlay.arm_a, signals)
+
+
+def _b2_reading_flags(
+    signal: dict[str, list[float | None]], arm_a: dict[str, list[float]], tail: str, state: str
+) -> dict[str, list[bool | None]]:
+    """True where the signal is past `tail`'s threshold and arm A in `state`, False where it is defined and not past it in
+    that state, None elsewhere (docs/specs/00140 D4, D6)."""
+    threshold = _B2_READING_THRESHOLD
+    past = {"above": lambda z: z > threshold, "below": lambda z: z < -threshold}[tail]
+    held = {"long": lambda p: p > 0, "flat": lambda p: p == 0}[state]
+    return {a: [None if z is None or not held(p) else past(z) for z, p in zip(zs, arm_a[a])] for a, zs in signal.items()}
+
+
+def _b2_reading_counts(inputs: _B2ReadingInputs) -> dict:
+    """Per signal, tail and state, each asset's events and others, read before any forward (docs/specs/00140 D7)."""
+    counts: dict[str, dict] = {"events_per_asset": {}, "others_per_asset": {}}
+    for key, signal in inputs.signals.items():
+        events, others = counts["events_per_asset"].setdefault(key, {}), counts["others_per_asset"].setdefault(key, {})
+        for tail in _B2_READING_TAILS:
+            for state in _B2_READING_STATES:
+                flags = _b2_reading_flags(signal, inputs.arm_a, tail, state)
+                events.setdefault(tail, {})[state] = {a: flag.count(True) for a, flag in flags.items()}
+                others.setdefault(tail, {})[state] = {a: flag.count(False) for a, flag in flags.items()}
+    return counts
+
+
+def _b2_reading_forwards(h4_prices: dict[str, list[float | None]]) -> dict[str, dict[str, list[float | None]]]:
+    """Per horizon H, the log return from return index k's close to the close H indices on, over the prices the arms are
+    charged on, None where either close is missing or the series ends first; then per H the sum of the H returns from k
+    over those prices, a missing one counted 0, None where the log return is (docs/specs/00140 D5)."""
+    fed = _ffill_btc(h4_prices)
+    returns = _b2_returns(h4_prices)
+    out: dict[str, dict[str, list[float | None]]] = {}
+    for horizon in _B2_READING_HORIZONS:
+        out[f"fwd_logret_{4 * horizon}h"] = {
+            a: [
+                None
+                if k + horizon >= len(fed[a]) or fed[a][k] is None or fed[a][k + horizon] is None
+                else math.log(fed[a][k + horizon] / fed[a][k])
+                for k in range(len(fed[a]) - 1)
+            ]
+            for a in _ASSETS
+        }
+    for horizon in _B2_READING_HORIZONS:
+        logret = out[f"fwd_logret_{4 * horizon}h"]
+        out[f"fwd_sumret_{4 * horizon}h"] = {
+            a: [
+                None if v is None else sum(0.0 if r is None else r for r in returns[a][k : k + horizon])
+                for k, v in enumerate(logret[a])
+            ]
+            for a in _ASSETS
+        }
+    return out
+
+
+def _b2_reading_metrics(inputs: _B2ReadingInputs) -> dict:
+    forwards = _b2_reading_forwards(inputs.h4_prices)
+    contrast: dict[str, dict] = {}
+    for key, signal in inputs.signals.items():
+        for tail in _B2_READING_TAILS:
+            for state in _B2_READING_STATES:
+                flags = _b2_reading_flags(signal, inputs.arm_a, tail, state)
+                rows = event_contrast_chunked(flags, forwards, mean_block=_B2_READING_BLOCK, n_resamples=_N_RESAMPLES, seed=42)
+                for series, by_name in rows.items():
+                    contrast.setdefault(f"{key}_{series}", {}).setdefault(tail, {})[state] = by_name
+    return {
+        **contrast,
+        **_b2_reading_counts(inputs),
+        "threshold": _B2_READING_THRESHOLD,
+        "mean_block": _B2_READING_BLOCK,
+        "n_resamples": _N_RESAMPLES,
+    }
+
+
+def _build_b2_signal_reading(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    subject = "b2-signal-reading"
+    if as_of is not None:
+        raise SubjectError(
+            f"{subject} evaluates a frozen set's 4h series, never the rolling dataset as of a day: drop --as-of and pass a "
+            "frozen --dataset"
+        )
+    try:
+        return _b2_reading_metrics(_b2_reading_inputs(subject, reader, dataset, window, accept_holes))
+    except (AlphaError, BacktestError, BenchmarkError, FeatureError, ValidationError) as exc:
+        raise SubjectError(f"{_b2_over(subject, window)}: {exc}") from exc
+
+
+# docs/specs/00140 D7's keys of the reading.
+_B2_READING_KEYS = frozenset(
+    {
+        *(
+            f"{key}_fwd_{kind}_{4 * horizon}h"
+            for key in _B2_READING_SIGNALS
+            for kind in ("logret", "sumret")
+            for horizon in _B2_READING_HORIZONS
+        ),
+        "events_per_asset",
+        "others_per_asset",
+        "threshold",
+        "mean_block",
+        "n_resamples",
+    }
+)
+
+
 SUBJECTS: dict[str, Subject] = {
     "record44-crossfreq": Subject(
         "record44-crossfreq",
@@ -3223,6 +3366,15 @@ SUBJECTS: dict[str, Subject] = {
         _build_b2_funding_reentry_preflight,
         spec="docs/specs/00139-b2-reentries-design.md",
         metric_keys=_b2_overlay_preflight_keys("binperp_funding_z30d"),
+        seeds=(42,),
+    ),
+    "b2-signal-reading": Subject(
+        "b2-signal-reading",
+        (240,),
+        _ASSETS,
+        _build_b2_signal_reading,
+        spec="docs/specs/00140-b2-signal-reading-design.md",
+        metric_keys=_B2_READING_KEYS,
         seeds=(42,),
     ),
 }
