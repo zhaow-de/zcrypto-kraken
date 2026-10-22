@@ -31,6 +31,10 @@ RETIRED_SUBJECTS = frozenset(
         "b2-liq-derisk",
         "b2-liq-derisk-preflight",
         "b2-liq-tape-reading",
+        "b2-liq-reentry",
+        "b2-liq-reentry-preflight",
+        "b2-funding-reentry",
+        "b2-funding-reentry-preflight",
     }
 )
 # The one file outside the data-gated family whose cases evaluate a subject; elsewhere a subject's name is a checker's

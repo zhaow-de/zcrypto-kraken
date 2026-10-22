@@ -2872,6 +2872,7 @@ _B2_REENTRY_ADOPTING = {
 }
 
 
+@pytest.mark.retired
 @pytest.mark.parametrize(
     ("change", "verdict"),
     [
@@ -2972,6 +2973,7 @@ def test_a_b2_reentrys_metrics_are_the_overlays_with_its_positions_its_start_and
     assert metrics["primary_returns"] == len(inputs.close) - start and metrics["threshold"] == threshold
 
 
+@pytest.mark.retired
 def test_where_no_signal_fires_a_b2_reentrys_arm_b_is_arm_a_bit_for_bit(tmp_path, monkeypatch):
     inputs = _reentry_inputs("b2-liq-reentry", _b2_reentry_dataset(tmp_path))
     n = len(inputs.close)
@@ -2996,6 +2998,7 @@ def test_where_no_signal_fires_a_b2_reentrys_arm_b_is_arm_a_bit_for_bit(tmp_path
     assert metrics["primary_returns"] == n - k21 and set(metrics["engaged_per_year"].values()) == {0}
 
 
+@pytest.mark.retired
 @pytest.mark.parametrize(("left", "refused"), [(0, True), (1, True), (2, False)])
 def test_a_b2_reentry_refuses_fewer_than_2_returns_from_its_start(tmp_path, monkeypatch, left, refused):
     inputs = _reentry_inputs("b2-liq-reentry", _b2_reentry_dataset(tmp_path))
@@ -3119,6 +3122,7 @@ def test_a_b2_reentry_trial_refuses_a_plain_eval_and_another_count_before_any_re
     assert refused in result.output and reads == []
 
 
+@pytest.mark.retired
 @pytest.mark.parametrize(
     ("from_bar", "cause"),
     [
