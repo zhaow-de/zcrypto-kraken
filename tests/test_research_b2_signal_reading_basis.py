@@ -1,5 +1,4 @@
-"""B2's signal reading's inputs against spec 00140's measured basis: the block, the signals' starts, arm A's states and
-each cell's events and others; no forward return."""
+"""B2's signal reading's inputs against spec 00140's measured basis; no forward return."""
 
 from __future__ import annotations
 
@@ -123,7 +122,6 @@ def per_asset(cells: dict) -> dict:
 
 
 def reading_inputs():
-    """The reading's inputs over the real sets, with the reader that read them."""
     reader = ObservedReader(_DATA_ROOT)
     return reader, subjects._b2_reading_inputs("b2-signal-reading", reader, "ohlc-full", None, False)
 

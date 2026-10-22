@@ -1,4 +1,4 @@
-"""The evaluable subjects: committed systems, each reproducing a registry record or registering a trial.
+"""The evaluable subjects: committed systems, each a record's reproduction, a trial or a reading.
 
 A subject declares its `--dataset` series, so the command can refuse an incomplete dataset before any read; a second
 dataset its `build` reads goes undeclared, and the build names a file of it that it cannot read.
@@ -2944,8 +2944,8 @@ class _B2ReadingInputs(NamedTuple):
 def _b2_reading_inputs(
     subject: str, reader: ObservedReader, dataset: str, window: tuple[str, str] | None, accept_holes: bool
 ) -> _B2ReadingInputs:
-    """`_b2_overlay_inputs`' union, window refusals and arm A, run on trial 7's funding reader, and the other three trialled
-    signals by their trials' readers over its union: no forward return (docs/specs/00140 D3, D4)."""
+    """The reading's inputs and never a forward return, so the basis test reads the data before the spec's hash
+    (docs/specs/00140 D3, D4, D7)."""
     overlay = _b2_overlay_inputs(subject, _b2_funding_signal, _B2_READING_THRESHOLD, reader, dataset, window, accept_holes)
     signals = {
         "binperp_funding_z30d": overlay.signal,
@@ -2959,8 +2959,6 @@ def _b2_reading_inputs(
 def _b2_reading_flags(
     signal: dict[str, list[float | None]], arm_a: dict[str, list[float]], tail: str, state: str
 ) -> dict[str, list[bool | None]]:
-    """True where the signal is past `tail`'s threshold and arm A in `state`, False where it is defined and not past it in
-    that state, None elsewhere (docs/specs/00140 D4, D6)."""
     threshold = _B2_READING_THRESHOLD
     past = {"above": lambda z: z > threshold, "below": lambda z: z < -threshold}[tail]
     held = {"long": lambda p: p > 0, "flat": lambda p: p == 0}[state]
@@ -2981,9 +2979,8 @@ def _b2_reading_counts(inputs: _B2ReadingInputs) -> dict:
 
 
 def _b2_reading_forwards(h4_prices: dict[str, list[float | None]]) -> dict[str, dict[str, list[float | None]]]:
-    """Per horizon H, the log return from return index k's close to the close H indices on, over the prices the arms are
-    charged on, None where either close is missing or the series ends first; then per H the sum of the H returns from k
-    over those prices, a missing one counted 0, None where the log return is (docs/specs/00140 D5)."""
+    """The log forwards and the summed returns over the prices the arms are charged on, a missing return counted 0 as
+    `net_of_cost` counts it (docs/specs/00140 D5)."""
     fed = _ffill_btc(h4_prices)
     returns = _b2_returns(h4_prices)
     out: dict[str, dict[str, list[float | None]]] = {}
