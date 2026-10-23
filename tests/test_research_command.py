@@ -3628,6 +3628,7 @@ def test_the_second_signal_reading_refuses_a_file_of_a_signals_set_it_cannot_rea
 _B2_RERISK_SIGNAL_KEYS = (*_B2_READING_SIGNAL_KEYS, *_B2_READING_2_SIGNAL_KEYS)
 
 
+@pytest.mark.retired
 def test_the_rerisk_readings_inputs_are_the_overlays_union_and_arm_a_its_full_long_size_and_each_signal_by_its_reader(monkeypatch):
     calls = []
     overlay = subjects._B2OverlayInputs(["ts"], {"BTC": [1.0]}, ["close"], {"BTC": [0.0]}, {"BTC": [-3.0]}, {"BTC": [0.5]}, 2.0)
@@ -3653,6 +3654,7 @@ def test_the_rerisk_readings_inputs_are_the_overlays_union_and_arm_a_its_full_lo
     assert list(inputs.signals) == list(_B2_RERISK_SIGNAL_KEYS)
 
 
+@pytest.mark.retired
 def test_the_rerisk_readings_full_long_size_is_the_reentries_own_over_rebuilt_books(monkeypatch):
     # BTC's missing close exercises the arms' BTC fill, and SOL's late open an asset absent at the start.
     prices = {
@@ -3691,6 +3693,7 @@ _RERISK_ARM_A = [0.3, 0.2, 0.1, 0.4, 0.4 - 1e-13, 0.0, 0.3, 0.25, 0.35, 0.4 - 1e
 _RERISK_SIGNAL = [2.5, -2.5, 2.0, 3.0, -3.0, 2.5, None, -2.0, None, 2.5]
 
 
+@pytest.mark.retired
 @pytest.mark.parametrize(
     ("tail", "expected"),
     [
@@ -3704,6 +3707,7 @@ def test_a_rerisk_flag_is_an_event_past_its_tail_below_full_long_another_read_cl
     assert flags == {"BTC": expected}
 
 
+@pytest.mark.retired
 def test_the_rerisk_reading_counts_each_assets_events_and_others_below_full_long_per_signal_and_tail():
     # ETH's full-long size 0.26 leaves it below that size at 1, 2 and 7 alone.
     arm_a, full_long = {"BTC": _RERISK_ARM_A, "ETH": _RERISK_ARM_A}, {"BTC": _RERISK_FULL_LONG, "ETH": [0.26] * 10}
@@ -3737,6 +3741,7 @@ _B2_RERISK_SPEC_KEYS = frozenset(
 )
 
 
+@pytest.mark.retired
 def test_the_rerisk_reading_declares_the_4h_grid_its_keys_and_no_rule():
     reading = subjects.SUBJECTS["b2-rerisk-reading"]
     assert (reading.name, reading.intervals, reading.assets, reading.spec, reading.seeds) == (
@@ -3750,6 +3755,7 @@ def test_the_rerisk_reading_declares_the_4h_grid_its_keys_and_no_rule():
     assert (reading.verdict, reading.no_verdict, reading.incumbent, reading.family, reading.n_trials) == (None,) * 5
 
 
+@pytest.mark.retired
 def test_the_rerisk_reading_hands_every_cell_one_shared_draw_and_keys_its_rows(monkeypatch):
     prices = {a: [100.0 * (1 + 0.01 * i) * 1.003**k for k in range(30)] for i, a in enumerate(_B2_ASSETS)}
     full_long = {a: [0.2] * 29 for a in _B2_ASSETS}
@@ -3793,6 +3799,7 @@ def test_the_rerisk_reading_hands_every_cell_one_shared_draw_and_keys_its_rows(m
     assert (metrics["events_per_asset"], metrics["others_per_asset"]) == (counts["events_per_asset"], counts["others_per_asset"])
 
 
+@pytest.mark.retired
 def test_the_rerisk_reading_refuses_as_of_before_any_read(tmp_path, monkeypatch):
     _anchor(monkeypatch, _rolling_set(tmp_path))
 
@@ -3811,6 +3818,7 @@ def test_the_rerisk_reading_refuses_as_of_before_any_read(tmp_path, monkeypatch)
     ) in result.output
 
 
+@pytest.mark.retired
 @pytest.mark.parametrize(
     ("relpath", "spoil", "cause"),
     [
