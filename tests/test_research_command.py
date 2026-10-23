@@ -1440,6 +1440,9 @@ def test_each_subject_declares_the_metric_keys_its_build_returns():
     for name, (signal_key, *_) in _B2_REENTRIES.items():
         assert subjects.SUBJECTS[name].metric_keys == _overlay_metric_keys(signal_key)
         assert subjects.SUBJECTS[f"{name}-preflight"].metric_keys == _overlay_preflight_keys(signal_key)
+    for name, (signal_key, *_) in _B2_LIQ_Z3.items():
+        assert subjects.SUBJECTS[name].metric_keys == _overlay_metric_keys(signal_key)
+        assert subjects.SUBJECTS[f"{name}-preflight"].metric_keys == _overlay_preflight_keys(signal_key)
     assert subjects.SUBJECTS["b2-liq-tape-reading"].metric_keys == _B2_TAPE_SPEC_KEYS
     assert subjects.SUBJECTS["b2-signal-reading"].metric_keys == _B2_READING_SPEC_KEYS
     assert subjects.SUBJECTS["b2-second-signal-reading"].metric_keys == _B2_READING_2_SPEC_KEYS
@@ -3843,6 +3846,123 @@ def test_the_rerisk_reading_refuses_a_file_of_a_signals_set_it_cannot_read_namin
     assert f"{relpath}: " in result.output and cause in result.output
 
 
+_B2_LIQ_Z3_SPEC = "docs/specs/00143-b2-liq-derisk-threshold-design.md"
+# Spec 00143's trial: its signal's key, threshold and count, typed from the spec, never read off a subject.
+_B2_LIQ_Z3 = {"b2-liq-z3-derisk": ("binperp_liq_long_z30d", 3.0, 7)}
+
+
+@pytest.mark.parametrize("name", sorted(_B2_LIQ_Z3))
+def test_the_b2_liq_z3_pair_declares_the_4h_grid_the_specs_keys_and_seeds_and_the_trial_alone_a_rule_and_a_count(name):
+    signal_key, _, count = _B2_LIQ_Z3[name]
+    trial, preflight = subjects.SUBJECTS[name], subjects.SUBJECTS[f"{name}-preflight"]
+    builder = f"_build_{name.replace('-', '_')}"
+    assert (trial.name, trial.intervals, trial.assets, trial.spec, trial.seeds) == (
+        name,
+        (240,),
+        _B2_ASSETS,
+        _B2_LIQ_Z3_SPEC,
+        (42, 7, 1234),
+    )
+    assert trial.build is getattr(subjects, builder) and trial.metric_keys == _overlay_metric_keys(signal_key)
+    assert (trial.verdict, trial.no_verdict, trial.incumbent) == (subjects._b2_overlay_verdict, _B2_OVERLAY_NO_VERDICT, None)
+    assert (trial.family, trial.n_trials) == ("B2", count)
+    assert (preflight.name, preflight.intervals, preflight.assets, preflight.spec, preflight.seeds) == (
+        f"{name}-preflight",
+        (240,),
+        _B2_ASSETS,
+        _B2_LIQ_Z3_SPEC,
+        (42,),
+    )
+    assert preflight.build is getattr(subjects, f"{builder}_preflight")
+    assert preflight.metric_keys == _overlay_preflight_keys(signal_key)
+    assert (preflight.verdict, preflight.no_verdict, preflight.incumbent, preflight.family, preflight.n_trials) == (None,) * 5
+
+
+@pytest.mark.parametrize("name", sorted({*_B2_LIQ_Z3, *(f"{name}-preflight" for name in _B2_LIQ_Z3)}))
+def test_each_b2_liq_z3_subject_builds_on_the_specs_signal_threshold_and_count(monkeypatch, name):
+    trial = name.removesuffix("-preflight")
+    signal_key, threshold, count = _B2_LIQ_Z3[trial]
+    compute = subjects._b2_overlay_metrics if name == trial else subjects._b2_overlay_preflight_metrics
+    builds = []
+    monkeypatch.setattr(subjects, "_b2_overlay_build", lambda *arguments: builds.append(arguments) or {})
+    reader, window = object(), ("2024-01-01", "2024-06-30")
+
+    subjects.SUBJECTS[name].build(reader, "ohlc-test", window, as_of="2026-10-03", accept_holes=True)
+
+    instrument = (name, signal_key, subjects._b2_liq_signal, threshold, compute, count)
+    assert builds == [(*instrument, reader, "ohlc-test", window, "2026-10-03", True)]
+    assert type(builds[0][3]) is float
+
+
+@pytest.mark.parametrize("name", sorted(_B2_LIQ_Z3))
+def test_the_b2_liq_z3_preflight_halves_above_its_threshold_and_never_builds_arm_b(tmp_path, monkeypatch, name):
+    signal_key, threshold, count = _B2_LIQ_Z3[name]
+    monkeypatch.setattr(subjects, "a1_kill_bar", _fake_kill_bar)
+    monkeypatch.setattr(subjects, "benchmark_4h_net_of_cost", _fake_benchmark)
+
+    def refused(*args, **kwargs):
+        raise AssertionError("the pre-flight built arm B's positions or read the engagement rule")
+
+    monkeypatch.setattr(subjects, "scale_positions", refused)
+    monkeypatch.setattr(subjects, "_b2_engagement_threshold", refused)
+    scalings = _recording(monkeypatch, "derisk_scales", lambda arguments, result: result)
+    bars = _recording(monkeypatch, "a1_kill_bar", lambda arguments, result: result)
+    # ADA's spikes capped at 2.8, between 2.5 and 3.0: the threshold alone decides whether ADA engages.
+    _recording(
+        monkeypatch,
+        "_b2_liq_signal",
+        lambda arguments, result: result | {"ADA": [None if z is None else min(z, 2.8) for z in result["ADA"]]},
+    )
+
+    metrics = subjects.SUBJECTS[f"{name}-preflight"].build(ObservedReader(_b2_overlay_dataset(tmp_path)), "ohlc-test", None)
+
+    ((scaled, _),) = scalings
+    assert scaled["config"] == B2Config(z_threshold=threshold) and metrics["threshold"] == threshold
+    assert [arguments["n_trials"] for arguments, _ in bars] == [count]
+    assert set(metrics) == _overlay_preflight_keys(signal_key)
+    engaged = metrics["engaged_per_asset"]
+    assert engaged["ADA"] == engaged[_B2_NEVER_SPIKES] == 0 < sum(engaged.values())
+    assert sum(engaged.values()) == sum(metrics["engaged_per_year"].values())
+
+
+@pytest.mark.parametrize("name", sorted({*_B2_LIQ_Z3, *(f"{name}-preflight" for name in _B2_LIQ_Z3)}))
+def test_a_b2_liq_z3_subject_refuses_as_of_before_any_read(tmp_path, monkeypatch, name):
+    _anchor(monkeypatch, _rolling_set(tmp_path))
+
+    def read(*args, **kwargs):
+        raise AssertionError("the subject read a series before refusing --as-of")
+
+    monkeypatch.setattr(subjects, "_capturing_union", read)
+    args = ["research", "eval", "--subject", name, "--dataset", "ohlc-rolling", "--as-of", "2026-10-03"]
+
+    result = runner.invoke(app, [*args, *_as_trial(name, tmp_path)])
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert (
+        f"{name} evaluates a frozen set's 4h series, never the rolling dataset as of a day: drop --as-of and pass a frozen "
+        "--dataset"
+    ) in result.output
+
+
+@pytest.mark.parametrize("name", sorted(_B2_LIQ_Z3))
+@pytest.mark.parametrize("plain", [True, False], ids=["plain-eval", "another-count"])
+def test_the_b2_liq_z3_trial_refuses_a_plain_eval_and_another_count_before_any_read(tmp_path, monkeypatch, name, plain):
+    count = _B2_LIQ_Z3[name][2]
+    _anchor(monkeypatch, tmp_path / "no-data", tmp_path / "registry.jsonl")
+    reads = _recording(monkeypatch, "_b2_overlay_inputs", lambda arguments, result: result)
+    flags = [] if plain else ["--register", "--iteration", "iter-187", "--family", "B2", "--n-trials", str(count + 1)]
+    refused = (
+        f"{name} declares a verdict rule, so every run of it is a trial: run it with --register"
+        if plain
+        else f"--n-trials {count + 1} is not {count}, the count {name} declares and deflates at: pass --n-trials {count}"
+    )
+
+    result = runner.invoke(app, ["research", "eval", "--subject", name, "--dataset", "ohlc-test", *flags])
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert refused in result.output and reads == []
+
+
 def _ruled_signal(held: list[float | None], flat: list[float]) -> tuple[dict, dict]:
     """BTC's signal at its long stamps `held` and at its flat ones `flat`, every other asset's flat and unread."""
     n = len(held) + len(flat)
@@ -4304,6 +4424,7 @@ _RULED_FIXTURES = {
     "b2-funding-reentry": _b2_reentry_dataset,
     "b2-liq-derisk": _b2_overlay_dataset,
     "b2-liq-reentry": _b2_reentry_dataset,
+    "b2-liq-z3-derisk": _b2_overlay_dataset,
     "b2-oi-derisk": _b2_overlay_dataset,
     "b2-ratio-derisk": _b2_overlay_dataset,
 }
@@ -4317,6 +4438,7 @@ _DECLARED_COUNT = {
     "b2-funding-reentry": "_B2_FUNDING_REENTRY_N_TRIALS",
     "b2-liq-derisk": "_B2_LIQ_N_TRIALS",
     "b2-liq-reentry": "_B2_LIQ_REENTRY_N_TRIALS",
+    "b2-liq-z3-derisk": "_B2_LIQ_Z3_N_TRIALS",
     "b2-oi-derisk": "_B2_OI_N_TRIALS",
     "b2-ratio-derisk": "_B2_RATIO_N_TRIALS",
 }
@@ -4333,6 +4455,7 @@ def test_the_ruled_subjects_declare_their_families_and_trial_counts():
         "b2-funding-reentry": ("B2", 6),
         "b2-liq-derisk": ("B2", 4),
         "b2-liq-reentry": ("B2", 5),
+        "b2-liq-z3-derisk": ("B2", 7),
         "b2-oi-derisk": ("B2", 2),
         "b2-ratio-derisk": ("B2", 3),
     }
@@ -5893,6 +6016,8 @@ _CONTRACT_DATASETS = {
     "b2-signal-reading": lambda tmp_path, subject: (_b2_reentry_dataset(tmp_path), _B2_START),
     "b2-second-signal-reading": lambda tmp_path, subject: (_b2_overlay_dataset(tmp_path), _B2_START),
     "b2-rerisk-reading": lambda tmp_path, subject: (_b2_reentry_dataset(tmp_path), _B2_START),
+    "b2-liq-z3-derisk": lambda tmp_path, subject: (_b2_overlay_dataset(tmp_path), _B2_START),
+    "b2-liq-z3-derisk-preflight": lambda tmp_path, subject: (_b2_overlay_dataset(tmp_path), _B2_START),
     "b1-conditioning": lambda tmp_path, subject: (_b1_dataset(tmp_path), _B1_START),
     "b1-window-only": lambda tmp_path, subject: (_b1_dataset(tmp_path, m15=False), _B1_START),
     "b1-hourly-rv": lambda tmp_path, subject: (_b1_hourly_rv_dataset(tmp_path), _B1_START),
