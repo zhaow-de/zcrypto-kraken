@@ -3624,6 +3624,107 @@ def test_the_second_signal_reading_refuses_a_file_of_a_signals_set_it_cannot_rea
     assert f"{relpath}: " in result.output and cause in result.output
 
 
+# Spec 00142's twelve signals, reading 3's four and then reading 4's eight, in the order its keys and its contrasts take them.
+_B2_RERISK_SIGNAL_KEYS = (*_B2_READING_SIGNAL_KEYS, *_B2_READING_2_SIGNAL_KEYS)
+
+
+def test_the_rerisk_readings_inputs_are_the_overlays_union_and_arm_a_its_full_long_size_and_each_signal_by_its_reader(monkeypatch):
+    calls = []
+    overlay = subjects._B2OverlayInputs(["ts"], {"BTC": [1.0]}, ["close"], {"BTC": [0.0]}, {"BTC": [-3.0]}, {"BTC": [0.5]}, 2.0)
+    monkeypatch.setattr(subjects, "_b2_overlay_inputs", lambda *arguments: calls.append(arguments) or overlay)
+    monkeypatch.setattr(subjects, "_b2_full_long", lambda h4_prices: calls.append(("_b2_full_long", h4_prices)) or "full long")
+    ratios = {key: f"ratio {key}" for key in _B2_READING_2_SIGNAL_KEYS[2:6]}
+    sides = {key: f"side {key}" for key in _B2_READING_2_SIGNAL_KEYS[6:]}
+    singles = ("_b2_oi_signal", "_b2_ratio_signal", "_b2_liq_signal", "_b2_oi_log_delta_signal", "_b2_oi_momentum_signal")
+    readers = {name: name for name in singles} | {"_b2_ratio_signals": ratios, "_b2_liq_side_signals": sides}
+    for name, out in readers.items():
+        monkeypatch.setattr(subjects, name, lambda reader, h4_ts, name=name, out=out: calls.append((name, reader, h4_ts)) or out)
+    reader, window = object(), ("2024-01-01", "2024-06-30")
+
+    inputs = subjects._b2_rerisk_inputs("b2-rerisk-reading", reader, "ohlc-test", window, True)
+
+    assert calls == [
+        ("b2-rerisk-reading", subjects._b2_funding_signal, 2.0, reader, "ohlc-test", window, True),
+        ("_b2_full_long", overlay.h4_prices),
+        *((name, reader, ["ts"]) for name in readers),
+    ]
+    signals = dict(zip(_B2_RERISK_SIGNAL_KEYS[:6], (overlay.signal, *singles))) | ratios | sides
+    assert inputs == subjects._B2ReriskInputs(overlay.h4_ts, overlay.h4_prices, overlay.close, overlay.arm_a, "full long", signals)
+    assert list(inputs.signals) == list(_B2_RERISK_SIGNAL_KEYS)
+
+
+def test_the_rerisk_readings_full_long_size_is_the_reentries_own_over_rebuilt_books(monkeypatch):
+    # Three assets over 420 closes, each swinging on its own period; BTC misses close 200, which the arms' BTC fill bridges,
+    # and SOL opens at close 60.
+    prices = {
+        a: [100.0 * (1 + 0.1 * i) * math.exp(0.002 * k + 0.08 * math.sin(k / (9 + 4 * i))) for k in range(420)]
+        for i, a in enumerate(("BTC", "ETH", "SOL"))
+    }
+    prices["BTC"][200] = None
+    prices["SOL"][:60] = [None] * 60
+    sizes = _recording(monkeypatch, "full_long_sizes", lambda arguments, result: result)
+
+    full_long = subjects._b2_full_long(prices)
+
+    fed = _ffill_btc(prices)
+    levels = [
+        a2_book_returns(
+            fed,
+            config=A2Config(
+                lookbacks=lookbacks,
+                short="off",
+                target_vol=target_vol,
+                vol_lookback=180,
+                basket_lookback=180,
+                periods_per_year=2190,
+            ),
+        )["vol_target_positions"]
+        for lookbacks, target_vol in (((20, 50, 100), 0.12), ((60, 120, 240), 0.10), ((60, 120, 240), 0.12))
+    ]
+    ((arguments, result),) = sizes
+    assert arguments == {"weights": _inverse_vol_weights(fed, lookback=180), "levels": levels, "assets": _B2_ASSETS}
+    assert full_long == result and all(any(v > 0 for v in full_long[a]) for a in prices)
+
+
+# Arm A's full-long size 0.4 throughout; arm A below it by more than 1e-12 at 0-2 and 6-9, at it at 3, below it by 1e-13
+# at 4 and flat at 5; the signal past +2 at 0, 3, 5 and 9, past -2 at 1 and 4, on +2 at 2, on -2 at 7, and unread
+# at 6 and 8.
+_RERISK_FULL_LONG = [0.4] * 10
+_RERISK_ARM_A = [0.3, 0.2, 0.1, 0.4, 0.4 - 1e-13, 0.0, 0.3, 0.25, 0.35, 0.4 - 1e-11]
+_RERISK_SIGNAL = [2.5, -2.5, 2.0, 3.0, -3.0, 2.5, None, -2.0, None, 2.5]
+
+
+@pytest.mark.parametrize(
+    ("tail", "expected"),
+    [
+        pytest.param("above", [True, False, False, None, None, None, None, False, None, True], id="above"),
+        pytest.param("below", [False, True, False, None, None, None, None, False, None, False], id="below"),
+    ],
+)
+def test_a_rerisk_flag_is_an_event_past_its_tail_below_full_long_another_read_close_below_it_and_none_elsewhere(tail, expected):
+    flags = subjects._b2_rerisk_flags({"BTC": _RERISK_SIGNAL}, {"BTC": _RERISK_ARM_A}, {"BTC": _RERISK_FULL_LONG}, tail)
+
+    assert flags == {"BTC": expected}
+
+
+def test_the_rerisk_reading_counts_each_assets_events_and_others_below_full_long_per_signal_and_tail():
+    # ETH's full-long size 0.26 leaves it below that size at 1, 2 and 7 alone.
+    arm_a, full_long = {"BTC": _RERISK_ARM_A, "ETH": _RERISK_ARM_A}, {"BTC": _RERISK_FULL_LONG, "ETH": [0.26] * 10}
+    signal = {"BTC": _RERISK_SIGNAL, "ETH": [2.5, 2.5, 3.0, 0.0, 0.0, 0.0, 0.0, -2.5, 0.0, 0.0]}
+    inputs = subjects._B2ReriskInputs([], {}, [], arm_a, full_long, {"binperp_oi_z30d": signal})
+
+    counts = subjects._b2_rerisk_counts(inputs)
+
+    assert counts == {
+        "events_per_asset": {
+            "binperp_oi_z30d": {"above": {"below_full": {"BTC": 2, "ETH": 2}}, "below": {"below_full": {"BTC": 1, "ETH": 1}}}
+        },
+        "others_per_asset": {
+            "binperp_oi_z30d": {"above": {"below_full": {"BTC": 3, "ETH": 1}}, "below": {"below_full": {"BTC": 4, "ETH": 2}}}
+        },
+    }
+
+
 def _ruled_signal(held: list[float | None], flat: list[float]) -> tuple[dict, dict]:
     """BTC's signal at its long stamps `held` and at its flat ones `flat`, every other asset's flat and unread."""
     n = len(held) + len(flat)
