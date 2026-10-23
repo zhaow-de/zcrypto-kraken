@@ -1243,6 +1243,7 @@ def test_the_block_contrast_is_the_chunked_contrasts_rows_with_its_far_bounds_at
     ("change", "match"),
     [
         pytest.param({"n_obs": 4}, "blocks draw over 4 indices and the flags hold 3", id="another-draw"),
+        pytest.param({"n_obs": 2}, "blocks draw over 2 indices and the flags hold 3", id="a-shorter-draw"),
         pytest.param({"far": [0.05, 99.95]}, "got [0.05, 99.95]", id="far-a-list"),
         pytest.param({"far": (0.05, 50, 99.95)}, "got (0.05, 50, 99.95)", id="far-three"),
         pytest.param({"far": (False, 99.95)}, "got (False, 99.95)", id="far-a-bool"),
