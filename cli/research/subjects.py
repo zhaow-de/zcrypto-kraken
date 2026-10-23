@@ -2457,6 +2457,55 @@ def _b2_overlay_preflight_keys(signal_key: str) -> frozenset[str]:
     }
 
 
+# docs/specs/00143 D3-D5: B2's trial 8, trial 5's daily long-side liquidation de-risk at the threshold one step up.
+_B2_LIQ_Z3_THRESHOLD = 3.0
+_B2_LIQ_Z3_N_TRIALS = 7  # docs/specs/00143 D4: fixed by the spec's hash; a different count is a new subject
+
+
+def _build_b2_liq_z3_derisk(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    return _b2_overlay_build(
+        "b2-liq-z3-derisk",
+        "binperp_liq_long_z30d",
+        _b2_liq_signal,
+        _B2_LIQ_Z3_THRESHOLD,
+        _b2_overlay_metrics,
+        _B2_LIQ_Z3_N_TRIALS,
+        reader,
+        dataset,
+        window,
+        as_of,
+        accept_holes,
+    )
+
+
+def _build_b2_liq_z3_derisk_preflight(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    return _b2_overlay_build(
+        "b2-liq-z3-derisk-preflight",
+        "binperp_liq_long_z30d",
+        _b2_liq_signal,
+        _B2_LIQ_Z3_THRESHOLD,
+        _b2_overlay_preflight_metrics,
+        _B2_LIQ_Z3_N_TRIALS,
+        reader,
+        dataset,
+        window,
+        as_of,
+        accept_holes,
+    )
+
+
 # docs/specs/00139 D3-D6: B2's trials 6-7.
 _B2_LIQ_REENTRY_THRESHOLD = 2.5
 _B2_LIQ_REENTRY_HOLD = 1
@@ -3692,6 +3741,31 @@ SUBJECTS: dict[str, Subject] = {
         _build_b2_rerisk_reading,
         spec="docs/specs/00142-b2-rerisk-reading-design.md",
         metric_keys=_B2_RERISK_KEYS,
+        seeds=(42,),
+    ),
+    "b2-liq-z3-derisk": Subject(
+        "b2-liq-z3-derisk",
+        (240,),
+        _ASSETS,
+        _build_b2_liq_z3_derisk,
+        spec="docs/specs/00143-b2-liq-derisk-threshold-design.md",
+        metric_keys=_b2_overlay_metric_keys("binperp_liq_long_z30d"),
+        seeds=(42, 7, 1234),
+        verdict=_b2_overlay_verdict,
+        no_verdict=(
+            "instrument finding: arm A fails the bar this window sets, or the overlay engages at no stamp; no verdict, "
+            "the trial unspent"
+        ),
+        family="B2",
+        n_trials=_B2_LIQ_Z3_N_TRIALS,
+    ),
+    "b2-liq-z3-derisk-preflight": Subject(
+        "b2-liq-z3-derisk-preflight",
+        (240,),
+        _ASSETS,
+        _build_b2_liq_z3_derisk_preflight,
+        spec="docs/specs/00143-b2-liq-derisk-threshold-design.md",
+        metric_keys=_b2_overlay_preflight_keys("binperp_liq_long_z30d"),
         seeds=(42,),
     ),
 }

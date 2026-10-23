@@ -407,3 +407,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #751 | 2026-10-22 | feat(research): iter-184 — B2 signal reading: crowding forward returns | iter-184 | 00140 | T0023 |
 | #752 | 2026-10-23 | feat(research): iter-185 — B2 second signal reading: untested signals | iter-185 | 00141 | T0023 |
 | #755 | 2026-10-23 | feat(research): iter-186 — B2 re-risk reading: below full-long size | iter-186 | 00142 | T0023 |
+| #757 | 2026-10-23 | feat(research): iter-187 — B2 trial 8: liquidation de-risk at 3.0 | iter-187 | 00143 | T0023 |
