@@ -36,6 +36,8 @@ RETIRED_SUBJECTS = frozenset(
         "b2-signal-reading",
         "b2-second-signal-reading",
         "b2-rerisk-reading",
+        "b2-liq-z3-derisk",
+        "b2-liq-z3-derisk-preflight",
     }
 )
 # The one file outside the data-gated family whose cases evaluate a subject; elsewhere a subject's name is a checker's
