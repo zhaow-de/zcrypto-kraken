@@ -3297,6 +3297,73 @@ def _b2_rerisk_counts(inputs: _B2ReriskInputs) -> dict:
     return counts
 
 
+_B2_RERISK_SIGNALS = (*_B2_READING_SIGNALS, *_B2_READING_2_SIGNALS)
+# Bonferroni at 5 % two-sided over the 72 pooled cells: 12 signals, 2 tails, 1 state, 3 horizons.
+_B2_RERISK_FAR = (2.5 / 72, 100 - 2.5 / 72)
+
+
+def _b2_rerisk_metrics(inputs: _B2ReriskInputs) -> dict:
+    forwards = _b2_reading_forwards(inputs.h4_prices)
+    blocks = stationary_bootstrap_blocks(
+        len(inputs.close), mean_block=_B2_READING_BLOCK, n_resamples=_B2_READING_2_RESAMPLES, seed=42
+    )
+    contrast: dict[str, dict] = {}
+    for key, signal in inputs.signals.items():
+        for tail in _B2_READING_TAILS:
+            flags = _b2_rerisk_flags(signal, inputs.arm_a, inputs.full_long, tail)
+            rows = event_contrast_blocks(flags, forwards, blocks, far=_B2_RERISK_FAR)
+            for series, by_name in rows.items():
+                contrast.setdefault(f"{key}_{series}", {})[tail] = {_B2_RERISK_STATE: by_name}
+    return {
+        **contrast,
+        **_b2_rerisk_counts(inputs),
+        "threshold": _B2_READING_THRESHOLD,
+        "full_long_tolerance": _B2_RERISK_TOLERANCE,
+        "mean_block": _B2_READING_BLOCK,
+        "n_resamples": _B2_READING_2_RESAMPLES,
+        "far_percentiles": list(_B2_RERISK_FAR),
+    }
+
+
+def _build_b2_rerisk_reading(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    subject = "b2-rerisk-reading"
+    if as_of is not None:
+        raise SubjectError(
+            f"{subject} evaluates a frozen set's 4h series, never the rolling dataset as of a day: drop --as-of and pass a "
+            "frozen --dataset"
+        )
+    try:
+        return _b2_rerisk_metrics(_b2_rerisk_inputs(subject, reader, dataset, window, accept_holes))
+    except (AlphaError, BacktestError, BenchmarkError, FeatureError, ValidationError) as exc:
+        raise SubjectError(f"{_b2_over(subject, window)}: {exc}") from exc
+
+
+# docs/specs/00142 D7's keys of the reading.
+_B2_RERISK_KEYS = frozenset(
+    {
+        *(
+            f"{key}_fwd_{kind}_{4 * horizon}h"
+            for key in _B2_RERISK_SIGNALS
+            for kind in ("logret", "sumret")
+            for horizon in _B2_READING_HORIZONS
+        ),
+        "events_per_asset",
+        "others_per_asset",
+        "threshold",
+        "full_long_tolerance",
+        "mean_block",
+        "n_resamples",
+        "far_percentiles",
+    }
+)
+
+
 SUBJECTS: dict[str, Subject] = {
     "record44-crossfreq": Subject(
         "record44-crossfreq",
@@ -3616,6 +3683,15 @@ SUBJECTS: dict[str, Subject] = {
         _build_b2_second_signal_reading,
         spec="docs/specs/00141-b2-signal-reading-2-design.md",
         metric_keys=_B2_READING_2_KEYS,
+        seeds=(42,),
+    ),
+    "b2-rerisk-reading": Subject(
+        "b2-rerisk-reading",
+        (240,),
+        _ASSETS,
+        _build_b2_rerisk_reading,
+        spec="docs/specs/00142-b2-rerisk-reading-design.md",
+        metric_keys=_B2_RERISK_KEYS,
         seeds=(42,),
     ),
 }

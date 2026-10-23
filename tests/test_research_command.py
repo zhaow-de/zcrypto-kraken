@@ -1443,6 +1443,7 @@ def test_each_subject_declares_the_metric_keys_its_build_returns():
     assert subjects.SUBJECTS["b2-liq-tape-reading"].metric_keys == _B2_TAPE_SPEC_KEYS
     assert subjects.SUBJECTS["b2-signal-reading"].metric_keys == _B2_READING_SPEC_KEYS
     assert subjects.SUBJECTS["b2-second-signal-reading"].metric_keys == _B2_READING_2_SPEC_KEYS
+    assert subjects.SUBJECTS["b2-rerisk-reading"].metric_keys == _B2_RERISK_SPEC_KEYS
 
 
 # One engaged year of two, so a rule reading `all` where it reads `any` turns this adopt into a stop.
@@ -3725,6 +3726,121 @@ def test_the_rerisk_reading_counts_each_assets_events_and_others_below_full_long
     }
 
 
+_B2_RERISK_SPEC = "docs/specs/00142-b2-rerisk-reading-design.md"
+_B2_RERISK_SPEC_KEYS = frozenset(
+    {
+        *(f"{key}_fwd_{kind}_{hours}h" for key in _B2_RERISK_SIGNAL_KEYS for kind in ("logret", "sumret") for hours in (4, 24, 96)),
+        "events_per_asset",
+        "others_per_asset",
+        "threshold",
+        "full_long_tolerance",
+        "mean_block",
+        "n_resamples",
+        "far_percentiles",
+    }
+)
+
+
+def test_the_rerisk_reading_declares_the_4h_grid_its_keys_and_no_rule():
+    reading = subjects.SUBJECTS["b2-rerisk-reading"]
+    assert (reading.name, reading.intervals, reading.assets, reading.spec, reading.seeds) == (
+        "b2-rerisk-reading",
+        (240,),
+        _B2_ASSETS,
+        _B2_RERISK_SPEC,
+        (42,),
+    )
+    assert reading.build is subjects._build_b2_rerisk_reading and reading.metric_keys == _B2_RERISK_SPEC_KEYS
+    assert (reading.verdict, reading.no_verdict, reading.incumbent, reading.family, reading.n_trials) == (None,) * 5
+
+
+def test_the_rerisk_reading_hands_every_cell_one_shared_draw_and_keys_its_rows(monkeypatch):
+    # Thirty closes on every asset; arm A at its full-long size at every third index, below it at the others but every
+    # fourth, flat at every fourth; each signal read from its own index and swinging through both tails.
+    prices = {a: [100.0 * (1 + 0.01 * i) * 1.003**k for k in range(30)] for i, a in enumerate(_B2_ASSETS)}
+    full_long = {a: [0.2] * 29 for a in _B2_ASSETS}
+    arm_a = {a: [0.0 if k % 4 == 0 else 0.2 if k % 3 == 0 else 0.1 for k in range(29)] for a in _B2_ASSETS}
+    signals = {
+        key: {a: [None if k < j else 3.0 * math.sin(k + i + j) for k in range(29)] for i, a in enumerate(_B2_ASSETS)}
+        for j, key in enumerate(_B2_RERISK_SIGNAL_KEYS)
+    }
+    inputs = subjects._B2ReriskInputs([], prices, ["close"] * 29, arm_a, full_long, signals)
+    draws, calls = [], []
+    monkeypatch.setattr(subjects, "stationary_bootstrap_blocks", lambda n_obs, **kwargs: draws.append((n_obs, kwargs)) or "draw")
+
+    def contrast(flags, forwards, blocks, **kwargs):
+        calls.append((flags, forwards, blocks, kwargs))
+        return {series: {"pooled": [len(calls), index]} for index, series in enumerate(forwards)}
+
+    monkeypatch.setattr(subjects, "event_contrast_blocks", contrast)
+
+    metrics = subjects._b2_rerisk_metrics(inputs)
+
+    assert draws == [(29, {"mean_block": 102, "n_resamples": 40_000, "seed": 42})]
+    forwards = subjects._b2_reading_forwards(inputs.h4_prices)
+    cells = [(key, tail) for key in _B2_RERISK_SIGNAL_KEYS for tail in ("above", "below")]
+    far = (2.5 / 72, 100 - 2.5 / 72)
+    assert calls == [
+        (subjects._b2_rerisk_flags(inputs.signals[key], arm_a, full_long, tail), forwards, "draw", {"far": far})
+        for key, tail in cells
+    ]
+    for call, (key, tail) in enumerate(cells, start=1):
+        for index, series in enumerate(f"fwd_{kind}_{hours}h" for kind in ("logret", "sumret") for hours in (4, 24, 96)):
+            assert metrics[f"{key}_{series}"][tail] == {"below_full": {"pooled": [call, index]}}
+    assert set(metrics) == _B2_RERISK_SPEC_KEYS
+    assert (metrics["threshold"], metrics["full_long_tolerance"], metrics["mean_block"], metrics["n_resamples"]) == (
+        2.0,
+        1e-12,
+        102,
+        40_000,
+    )
+    assert metrics["far_percentiles"] == list(far)
+    counts = subjects._b2_rerisk_counts(inputs)
+    assert (metrics["events_per_asset"], metrics["others_per_asset"]) == (counts["events_per_asset"], counts["others_per_asset"])
+
+
+def test_the_rerisk_reading_refuses_as_of_before_any_read(tmp_path, monkeypatch):
+    _anchor(monkeypatch, _rolling_set(tmp_path))
+
+    def read(*args, **kwargs):
+        raise AssertionError("the reading read a series before refusing --as-of")
+
+    monkeypatch.setattr(subjects, "_capturing_union", read)
+    args = ["research", "eval", "--subject", "b2-rerisk-reading", "--dataset", "ohlc-rolling", "--as-of", "2026-10-03"]
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert (
+        "b2-rerisk-reading evaluates a frozen set's 4h series, never the rolling dataset as of a day: drop --as-of and pass a "
+        "frozen --dataset"
+    ) in result.output
+
+
+@pytest.mark.parametrize(
+    ("relpath", "spoil", "cause"),
+    [
+        pytest.param(f"derivatives-funding/{_B2_SPOILT}/funding.parquet", _not_parquet, "File out of specification", id="funding"),
+        pytest.param(f"derivatives-oi/{_B2_SPOILT}/oi.parquet", _not_parquet, "File out of specification", id="oi"),
+        pytest.param(
+            "liquidations-daily/SOL/daily.parquet",
+            lambda path: pl.read_parquet(path).drop("short_usd").write_parquet(path),
+            '"short_usd" not found',
+            id="liquidation-short",
+        ),
+    ],
+)
+def test_the_rerisk_reading_refuses_a_file_of_a_signals_set_it_cannot_read_naming_it(tmp_path, monkeypatch, relpath, spoil, cause):
+    root = _b2_reentry_dataset(tmp_path)
+    spoil(root / relpath)
+    _anchor(monkeypatch, root)
+
+    result = runner.invoke(app, ["research", "eval", "--subject", "b2-rerisk-reading", "--dataset", "ohlc-test"])
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert f"{relpath}: " in result.output and cause in result.output
+
+
 def _ruled_signal(held: list[float | None], flat: list[float]) -> tuple[dict, dict]:
     """BTC's signal at its long stamps `held` and at its flat ones `flat`, every other asset's flat and unread."""
     n = len(held) + len(flat)
@@ -5774,6 +5890,7 @@ _CONTRACT_DATASETS = {
     "b2-funding-reentry-preflight": lambda tmp_path, subject: (_b2_reentry_dataset(tmp_path), _B2_START),
     "b2-signal-reading": lambda tmp_path, subject: (_b2_reentry_dataset(tmp_path), _B2_START),
     "b2-second-signal-reading": lambda tmp_path, subject: (_b2_overlay_dataset(tmp_path), _B2_START),
+    "b2-rerisk-reading": lambda tmp_path, subject: (_b2_reentry_dataset(tmp_path), _B2_START),
     "b1-conditioning": lambda tmp_path, subject: (_b1_dataset(tmp_path), _B1_START),
     "b1-window-only": lambda tmp_path, subject: (_b1_dataset(tmp_path, m15=False), _B1_START),
     "b1-hourly-rv": lambda tmp_path, subject: (_b1_hourly_rv_dataset(tmp_path), _B1_START),
