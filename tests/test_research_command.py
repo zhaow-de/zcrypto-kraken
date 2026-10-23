@@ -3625,7 +3625,6 @@ def test_the_second_signal_reading_refuses_a_file_of_a_signals_set_it_cannot_rea
     assert f"{relpath}: " in result.output and cause in result.output
 
 
-# Spec 00142's twelve signals, reading 3's four and then reading 4's eight, in the order its keys and its contrasts take them.
 _B2_RERISK_SIGNAL_KEYS = (*_B2_READING_SIGNAL_KEYS, *_B2_READING_2_SIGNAL_KEYS)
 
 
@@ -3655,8 +3654,7 @@ def test_the_rerisk_readings_inputs_are_the_overlays_union_and_arm_a_its_full_lo
 
 
 def test_the_rerisk_readings_full_long_size_is_the_reentries_own_over_rebuilt_books(monkeypatch):
-    # Three assets over 420 closes, each swinging on its own period; BTC misses close 200, which the arms' BTC fill bridges,
-    # and SOL opens at close 60.
+    # BTC's missing close exercises the arms' BTC fill, and SOL's late open an asset absent at the start.
     prices = {
         a: [100.0 * (1 + 0.1 * i) * math.exp(0.002 * k + 0.08 * math.sin(k / (9 + 4 * i))) for k in range(420)]
         for i, a in enumerate(("BTC", "ETH", "SOL"))
@@ -3687,9 +3685,7 @@ def test_the_rerisk_readings_full_long_size_is_the_reentries_own_over_rebuilt_bo
     assert full_long == result and all(any(v > 0 for v in full_long[a]) for a in prices)
 
 
-# Arm A's full-long size 0.4 throughout; arm A below it by more than 1e-12 at 0-2 and 6-9, at it at 3, below it by 1e-13
-# at 4 and flat at 5; the signal past +2 at 0, 3, 5 and 9, past -2 at 1 and 4, on +2 at 2, on -2 at 7, and unread
-# at 6 and 8.
+# Index 3 sits at the full-long size, 4 within the tolerance below it, 9 just past it and 5 flat; 2 and 7 sit on ±2, not past it.
 _RERISK_FULL_LONG = [0.4] * 10
 _RERISK_ARM_A = [0.3, 0.2, 0.1, 0.4, 0.4 - 1e-13, 0.0, 0.3, 0.25, 0.35, 0.4 - 1e-11]
 _RERISK_SIGNAL = [2.5, -2.5, 2.0, 3.0, -3.0, 2.5, None, -2.0, None, 2.5]
@@ -3755,8 +3751,6 @@ def test_the_rerisk_reading_declares_the_4h_grid_its_keys_and_no_rule():
 
 
 def test_the_rerisk_reading_hands_every_cell_one_shared_draw_and_keys_its_rows(monkeypatch):
-    # Thirty closes on every asset; arm A at its full-long size at every third index, below it at the others but every
-    # fourth, flat at every fourth; each signal read from its own index and swinging through both tails.
     prices = {a: [100.0 * (1 + 0.01 * i) * 1.003**k for k in range(30)] for i, a in enumerate(_B2_ASSETS)}
     full_long = {a: [0.2] * 29 for a in _B2_ASSETS}
     arm_a = {a: [0.0 if k % 4 == 0 else 0.2 if k % 3 == 0 else 0.1 for k in range(29)] for a in _B2_ASSETS}
