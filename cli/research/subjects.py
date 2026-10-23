@@ -59,11 +59,14 @@ from cli.alpha.b2 import (
     daily_zscore_grid_feature,
     derisk_scales,
     event_contrast,
+    event_contrast_blocks,
     event_contrast_chunked,
     full_long_sizes,
     funding_grid_feature,
     liquidation_hourly_totals,
     net_of_cost,
+    oi_log_delta_zscore_grid_feature,
+    oi_momentum_zscore_grid_feature,
     oi_zscore_grid_feature,
     per_year_engaged_counts,
     per_year_max_drawdown,
@@ -74,6 +77,7 @@ from cli.alpha.b2 import (
     reentry_counts_per_year,
     reentry_positions,
     scale_positions,
+    stationary_bootstrap_blocks,
 )
 from cli.alpha.errors import AlphaError
 from cli.alpha.killbar import a1_kill_bar, net_of_cost_verdict
@@ -3062,6 +3066,155 @@ _B2_READING_KEYS = frozenset(
 )
 
 
+# docs/specs/00141 D2-D7: B2's second signal reading, the eight crowding signals no trial read, by reading 3's tails, states
+# and forwards; no rule, no slot.
+_B2_READING_2_SIGNALS = (
+    "binperp_oi_log_delta_z30d",
+    "binperp_oi_momentum_z30d",
+    "binperp_count_toptrader_long_short_ratio_z30d",
+    "binperp_sum_toptrader_long_short_ratio_z30d",
+    "binperp_count_long_short_ratio_z30d",
+    "binperp_sum_taker_long_short_vol_ratio_z30d",
+    "binperp_liq_short_z30d",
+    "binperp_liq_total_z30d",
+)
+_B2_READING_2_RESAMPLES = 40_000
+# Bonferroni at 5 % two-sided over the 96 pooled cells: 8 signals, 2 tails, 2 states, 3 horizons.
+_B2_READING_2_FAR = (2.5 / 96, 100 - 2.5 / 96)
+
+
+def _b2_oi_log_delta_signal(reader: ObservedReader, h4_ts: list[datetime]) -> dict[str, list[float | None]]:
+    signal = {}
+    for asset in _ASSETS:
+        relpath = f"{PERP_SYMBOLS[asset]}/oi.parquet"
+        try:
+            rows = reader.read_series("derivatives-oi", relpath)
+            signal[asset] = oi_log_delta_zscore_grid_feature(rows["ts"].to_list(), rows["sum_open_interest"].to_list(), h4_ts)
+        except (pl.exceptions.PolarsError, AlphaError, FeatureError) as exc:
+            raise SubjectError(f"derivatives-oi/{relpath}: {exc}") from exc
+    return signal
+
+
+def _b2_oi_momentum_signal(reader: ObservedReader, h4_ts: list[datetime]) -> dict[str, list[float | None]]:
+    signal = {}
+    for asset in _ASSETS:
+        relpath = f"{PERP_SYMBOLS[asset]}/oi.parquet"
+        try:
+            rows = reader.read_series("derivatives-oi", relpath)
+            signal[asset] = oi_momentum_zscore_grid_feature(rows["ts"].to_list(), rows["sum_open_interest"].to_list(), h4_ts)
+        except (pl.exceptions.PolarsError, AlphaError, FeatureError) as exc:
+            raise SubjectError(f"derivatives-oi/{relpath}: {exc}") from exc
+    return signal
+
+
+def _b2_ratio_signals(reader: ObservedReader, h4_ts: list[datetime]) -> dict[str, dict[str, list[float | None]]]:
+    """Trial 4's four ratio z-scores, each a signal of its own under its z-score's name (docs/specs/00141 D4)."""
+    signals: dict[str, dict[str, list[float | None]]] = {}
+    for asset in _ASSETS:
+        relpath = f"{PERP_SYMBOLS[asset]}/oi.parquet"
+        try:
+            rows = reader.read_series("derivatives-oi", relpath)
+            ratios = {column: rows[column].to_list() for column in _B2_RATIO_COLUMNS}
+            for key, values in ratio_zscore_grid_features(rows["ts"].to_list(), ratios, h4_ts).items():
+                signals.setdefault(key, {})[asset] = values
+        except (pl.exceptions.PolarsError, AlphaError, FeatureError) as exc:
+            raise SubjectError(f"derivatives-oi/{relpath}: {exc}") from exc
+    return signals
+
+
+def _b2_liq_side_signals(reader: ObservedReader, h4_ts: list[datetime]) -> dict[str, dict[str, list[float | None]]]:
+    """The short side's daily notional and the day's total, each z-scored as trial 5's long side is (docs/specs/00141
+    D4)."""
+    signals: dict[str, dict[str, list[float | None]]] = {"binperp_liq_short_z30d": {}, "binperp_liq_total_z30d": {}}
+    for asset in _ASSETS:
+        relpath = f"{asset}/daily.parquet"
+        try:
+            rows = reader.read_series(_B2_LIQ_SET, relpath)
+            days, longs, shorts = rows["ts"].to_list(), rows["long_usd"].to_list(), rows["short_usd"].to_list()
+            totals = [a + b for a, b in zip(longs, shorts)]
+            signals["binperp_liq_short_z30d"][asset] = daily_zscore_grid_feature(days, shorts, h4_ts)
+            signals["binperp_liq_total_z30d"][asset] = daily_zscore_grid_feature(days, totals, h4_ts)
+        except (pl.exceptions.PolarsError, AlphaError, FeatureError) as exc:
+            raise SubjectError(f"{_B2_LIQ_SET}/{relpath}: {exc}") from exc
+    return signals
+
+
+def _b2_reading_2_inputs(
+    subject: str, reader: ObservedReader, dataset: str, window: tuple[str, str] | None, accept_holes: bool
+) -> _B2ReadingInputs:
+    """Reading 3's inputs on the eight signals, the first handed to `_b2_overlay_inputs` for its arm A: never a forward
+    return, so the basis test reads the data before the spec's hash (docs/specs/00141 D3, D4, D7)."""
+    overlay = _b2_overlay_inputs(subject, _b2_oi_log_delta_signal, _B2_READING_THRESHOLD, reader, dataset, window, accept_holes)
+    signals = {
+        "binperp_oi_log_delta_z30d": overlay.signal,
+        "binperp_oi_momentum_z30d": _b2_oi_momentum_signal(reader, overlay.h4_ts),
+        **_b2_ratio_signals(reader, overlay.h4_ts),
+        **_b2_liq_side_signals(reader, overlay.h4_ts),
+    }
+    return _B2ReadingInputs(overlay.h4_ts, overlay.h4_prices, overlay.close, overlay.arm_a, signals)
+
+
+def _b2_reading_2_metrics(inputs: _B2ReadingInputs) -> dict:
+    forwards = _b2_reading_forwards(inputs.h4_prices)
+    blocks = stationary_bootstrap_blocks(
+        len(inputs.close), mean_block=_B2_READING_BLOCK, n_resamples=_B2_READING_2_RESAMPLES, seed=42
+    )
+    contrast: dict[str, dict] = {}
+    for key, signal in inputs.signals.items():
+        for tail in _B2_READING_TAILS:
+            for state in _B2_READING_STATES:
+                flags = _b2_reading_flags(signal, inputs.arm_a, tail, state)
+                rows = event_contrast_blocks(flags, forwards, blocks, far=_B2_READING_2_FAR)
+                for series, by_name in rows.items():
+                    contrast.setdefault(f"{key}_{series}", {}).setdefault(tail, {})[state] = by_name
+    return {
+        **contrast,
+        **_b2_reading_counts(inputs),
+        "threshold": _B2_READING_THRESHOLD,
+        "mean_block": _B2_READING_BLOCK,
+        "n_resamples": _B2_READING_2_RESAMPLES,
+        "far_percentiles": list(_B2_READING_2_FAR),
+    }
+
+
+def _build_b2_second_signal_reading(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    subject = "b2-second-signal-reading"
+    if as_of is not None:
+        raise SubjectError(
+            f"{subject} evaluates a frozen set's 4h series, never the rolling dataset as of a day: drop --as-of and pass a "
+            "frozen --dataset"
+        )
+    try:
+        return _b2_reading_2_metrics(_b2_reading_2_inputs(subject, reader, dataset, window, accept_holes))
+    except (AlphaError, BacktestError, BenchmarkError, FeatureError, ValidationError) as exc:
+        raise SubjectError(f"{_b2_over(subject, window)}: {exc}") from exc
+
+
+# docs/specs/00141 D7's keys of the reading.
+_B2_READING_2_KEYS = frozenset(
+    {
+        *(
+            f"{key}_fwd_{kind}_{4 * horizon}h"
+            for key in _B2_READING_2_SIGNALS
+            for kind in ("logret", "sumret")
+            for horizon in _B2_READING_HORIZONS
+        ),
+        "events_per_asset",
+        "others_per_asset",
+        "threshold",
+        "mean_block",
+        "n_resamples",
+        "far_percentiles",
+    }
+)
+
+
 SUBJECTS: dict[str, Subject] = {
     "record44-crossfreq": Subject(
         "record44-crossfreq",
@@ -3372,6 +3525,15 @@ SUBJECTS: dict[str, Subject] = {
         _build_b2_signal_reading,
         spec="docs/specs/00140-b2-signal-reading-design.md",
         metric_keys=_B2_READING_KEYS,
+        seeds=(42,),
+    ),
+    "b2-second-signal-reading": Subject(
+        "b2-second-signal-reading",
+        (240,),
+        _ASSETS,
+        _build_b2_second_signal_reading,
+        spec="docs/specs/00141-b2-signal-reading-2-design.md",
+        metric_keys=_B2_READING_2_KEYS,
         seeds=(42,),
     ),
 }

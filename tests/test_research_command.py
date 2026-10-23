@@ -57,6 +57,8 @@ from cli.alpha.b2 import (
     funding_grid_feature,
     liquidation_hourly_totals,
     net_of_cost,
+    oi_log_delta_zscore_grid_feature,
+    oi_momentum_zscore_grid_feature,
     oi_zscore_grid_feature,
     per_year_engaged_counts,
     per_year_max_drawdown,
@@ -1440,6 +1442,7 @@ def test_each_subject_declares_the_metric_keys_its_build_returns():
         assert subjects.SUBJECTS[f"{name}-preflight"].metric_keys == _overlay_preflight_keys(signal_key)
     assert subjects.SUBJECTS["b2-liq-tape-reading"].metric_keys == _B2_TAPE_SPEC_KEYS
     assert subjects.SUBJECTS["b2-signal-reading"].metric_keys == _B2_READING_SPEC_KEYS
+    assert subjects.SUBJECTS["b2-second-signal-reading"].metric_keys == _B2_READING_2_SPEC_KEYS
 
 
 # One engaged year of two, so a rule reading `all` where it reads `any` turns this adopt into a stop.
@@ -3409,6 +3412,209 @@ def test_the_signal_reading_refuses_a_file_of_a_signals_set_it_cannot_read_namin
     _anchor(monkeypatch, root)
 
     result = runner.invoke(app, ["research", "eval", "--subject", "b2-signal-reading", "--dataset", "ohlc-test"])
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert f"{relpath}: " in result.output and cause in result.output
+
+
+_B2_READING_2_SPEC = "docs/specs/00141-b2-signal-reading-2-design.md"
+# Spec 00141's eight signals, in the order its keys and its contrasts take them, typed from the spec, never read off the
+# subject.
+_B2_READING_2_SIGNAL_KEYS = (
+    "binperp_oi_log_delta_z30d",
+    "binperp_oi_momentum_z30d",
+    "binperp_count_toptrader_long_short_ratio_z30d",
+    "binperp_sum_toptrader_long_short_ratio_z30d",
+    "binperp_count_long_short_ratio_z30d",
+    "binperp_sum_taker_long_short_vol_ratio_z30d",
+    "binperp_liq_short_z30d",
+    "binperp_liq_total_z30d",
+)
+_B2_READING_2_SPEC_KEYS = frozenset(
+    {
+        *(
+            f"{key}_fwd_{kind}_{hours}h"
+            for key in _B2_READING_2_SIGNAL_KEYS
+            for kind in ("logret", "sumret")
+            for hours in (4, 24, 96)
+        ),
+        "events_per_asset",
+        "others_per_asset",
+        "threshold",
+        "mean_block",
+        "n_resamples",
+        "far_percentiles",
+    }
+)
+
+
+def test_the_second_signal_reading_declares_the_4h_grid_its_keys_and_no_rule():
+    reading = subjects.SUBJECTS["b2-second-signal-reading"]
+    assert (reading.name, reading.intervals, reading.assets, reading.spec, reading.seeds) == (
+        "b2-second-signal-reading",
+        (240,),
+        _B2_ASSETS,
+        _B2_READING_2_SPEC,
+        (42,),
+    )
+    assert reading.build is subjects._build_b2_second_signal_reading and reading.metric_keys == _B2_READING_2_SPEC_KEYS
+    assert (reading.verdict, reading.no_verdict, reading.incumbent, reading.family, reading.n_trials) == (None,) * 5
+
+
+def test_the_second_signal_readings_inputs_are_the_overlays_union_and_arm_a_and_each_untested_signal_by_its_reader(monkeypatch):
+    calls = []
+    overlay = subjects._B2OverlayInputs(["ts"], {"BTC": [1.0]}, ["close"], {"BTC": [0.0]}, {"BTC": [-3.0]}, {"BTC": [0.5]}, 2.0)
+    monkeypatch.setattr(subjects, "_b2_overlay_inputs", lambda *arguments: calls.append(arguments) or overlay)
+    ratios = {key: f"ratio {key}" for key in _B2_READING_2_SIGNAL_KEYS[2:6]}
+    sides = {key: f"side {key}" for key in _B2_READING_2_SIGNAL_KEYS[6:]}
+    readers = {"_b2_oi_momentum_signal": "momentum", "_b2_ratio_signals": ratios, "_b2_liq_side_signals": sides}
+    for name, out in readers.items():
+        monkeypatch.setattr(subjects, name, lambda reader, h4_ts, name=name, out=out: calls.append((name, reader, h4_ts)) or out)
+    reader, window = object(), ("2024-01-01", "2024-06-30")
+
+    inputs = subjects._b2_reading_2_inputs("b2-second-signal-reading", reader, "ohlc-test", window, True)
+
+    assert calls == [
+        ("b2-second-signal-reading", subjects._b2_oi_log_delta_signal, 2.0, reader, "ohlc-test", window, True),
+        *((name, reader, ["ts"]) for name in readers),
+    ]
+    signals = dict(zip(_B2_READING_2_SIGNAL_KEYS[:2], (overlay.signal, "momentum"))) | ratios | sides
+    assert inputs == subjects._B2ReadingInputs(overlay.h4_ts, overlay.h4_prices, overlay.close, overlay.arm_a, signals)
+    assert list(inputs.signals) == list(_B2_READING_2_SIGNAL_KEYS)
+
+
+def _untested_signals(root: Path, h4_ts: list[datetime], reader: str) -> dict:
+    """`reader`'s signals off the fixture's files by the grid features, each keyed by its signal and asset."""
+    expected: dict[str, dict] = {}
+    for asset in _B2_ASSETS:
+        oi = pl.read_parquet(root / "derivatives-oi" / PERP_SYMBOLS[asset] / "oi.parquet")
+        daily = pl.read_parquet(root / "liquidations-daily" / asset / "daily.parquet")
+        marks, levels = oi["ts"].to_list(), oi["sum_open_interest"].to_list()
+        days, longs, shorts = daily["ts"].to_list(), daily["long_usd"].to_list(), daily["short_usd"].to_list()
+        if reader == "oi-log-delta":
+            columns = {_B2_READING_2_SIGNAL_KEYS[0]: oi_log_delta_zscore_grid_feature(marks, levels, h4_ts)}
+        elif reader == "oi-momentum":
+            columns = {_B2_READING_2_SIGNAL_KEYS[1]: oi_momentum_zscore_grid_feature(marks, levels, h4_ts)}
+        elif reader == "ratios":
+            columns = ratio_zscore_grid_features(marks, {column: oi[column].to_list() for column in _B2_OVERLAY_RATIOS}, h4_ts)
+        else:
+            columns = {
+                _B2_READING_2_SIGNAL_KEYS[6]: daily_zscore_grid_feature(days, shorts, h4_ts),
+                _B2_READING_2_SIGNAL_KEYS[7]: daily_zscore_grid_feature(days, [a + b for a, b in zip(longs, shorts)], h4_ts),
+            }
+        for key, values in columns.items():
+            expected.setdefault(key, {})[asset] = values
+    return expected
+
+
+_UNTESTED_READERS = {
+    "oi-log-delta": lambda reader, h4_ts: {_B2_READING_2_SIGNAL_KEYS[0]: subjects._b2_oi_log_delta_signal(reader, h4_ts)},
+    "oi-momentum": lambda reader, h4_ts: {_B2_READING_2_SIGNAL_KEYS[1]: subjects._b2_oi_momentum_signal(reader, h4_ts)},
+    "ratios": lambda reader, h4_ts: subjects._b2_ratio_signals(reader, h4_ts),
+    "liquidation-sides": lambda reader, h4_ts: subjects._b2_liq_side_signals(reader, h4_ts),
+}
+
+
+@pytest.mark.parametrize("reader", sorted(_UNTESTED_READERS))
+def test_each_untested_signal_reader_reads_its_signals_off_their_own_columns(tmp_path, reader):
+    root = _b2_overlay_dataset(tmp_path)
+    h4_ts, _ = subjects._capturing_union(ObservedReader(root), "ohlc-test", 240, None, None, False)
+
+    signals = _UNTESTED_READERS[reader](ObservedReader(root), h4_ts)
+
+    assert signals == _untested_signals(root, h4_ts, reader)
+    assert all(any(v is not None for v in by_asset["BTC"]) for by_asset in signals.values())
+
+
+def test_the_second_signal_reading_hands_every_cell_one_shared_draw_and_keys_its_rows(monkeypatch):
+    # Thirty closes on every asset, arm A long at the even indices, each signal read from its own index and swinging
+    # through both tails.
+    prices = {a: [100.0 * (1 + 0.01 * i) * 1.003**k for k in range(30)] for i, a in enumerate(_B2_ASSETS)}
+    arm_a = {a: [0.1 if k % 2 == 0 else 0.0 for k in range(29)] for a in _B2_ASSETS}
+    signals = {
+        key: {a: [None if k < j else 3.0 * math.sin(k + i + j) for k in range(29)] for i, a in enumerate(_B2_ASSETS)}
+        for j, key in enumerate(_B2_READING_2_SIGNAL_KEYS)
+    }
+    inputs = subjects._B2ReadingInputs([], prices, ["close"] * 29, arm_a, signals)
+    draws, calls = [], []
+    monkeypatch.setattr(subjects, "stationary_bootstrap_blocks", lambda n_obs, **kwargs: draws.append((n_obs, kwargs)) or "draw")
+
+    def contrast(flags, forwards, blocks, **kwargs):
+        calls.append((flags, forwards, blocks, kwargs))
+        return {series: {"pooled": [len(calls), index]} for index, series in enumerate(forwards)}
+
+    monkeypatch.setattr(subjects, "event_contrast_blocks", contrast)
+
+    metrics = subjects._b2_reading_2_metrics(inputs)
+
+    assert draws == [(29, {"mean_block": 102, "n_resamples": 40_000, "seed": 42})]
+    forwards = subjects._b2_reading_forwards(inputs.h4_prices)
+    cells = [(key, tail, state) for key in _B2_READING_2_SIGNAL_KEYS for tail in ("above", "below") for state in ("long", "flat")]
+    far = (2.5 / 96, 100 - 2.5 / 96)
+    assert calls == [
+        (subjects._b2_reading_flags(inputs.signals[key], inputs.arm_a, tail, state), forwards, "draw", {"far": far})
+        for key, tail, state in cells
+    ]
+    for call, (key, tail, state) in enumerate(cells, start=1):
+        for index, series in enumerate(f"fwd_{kind}_{hours}h" for kind in ("logret", "sumret") for hours in (4, 24, 96)):
+            assert metrics[f"{key}_{series}"][tail][state] == {"pooled": [call, index]}
+    assert set(metrics) == _B2_READING_2_SPEC_KEYS
+    assert (metrics["threshold"], metrics["mean_block"], metrics["n_resamples"]) == (2.0, 102, 40_000)
+    assert metrics["far_percentiles"] == list(far)
+    counts = subjects._b2_reading_counts(inputs)
+    assert (metrics["events_per_asset"], metrics["others_per_asset"]) == (counts["events_per_asset"], counts["others_per_asset"])
+
+
+def test_the_second_signal_reading_refuses_as_of_before_any_read(tmp_path, monkeypatch):
+    _anchor(monkeypatch, _rolling_set(tmp_path))
+
+    def read(*args, **kwargs):
+        raise AssertionError("the reading read a series before refusing --as-of")
+
+    monkeypatch.setattr(subjects, "_capturing_union", read)
+    args = ["research", "eval", "--subject", "b2-second-signal-reading", "--dataset", "ohlc-rolling", "--as-of", "2026-10-03"]
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert (
+        "b2-second-signal-reading evaluates a frozen set's 4h series, never the rolling dataset as of a day: drop --as-of and pass "
+        "a frozen --dataset"
+    ) in result.output
+
+
+@pytest.mark.parametrize(
+    ("relpath", "spoil", "cause"),
+    [
+        pytest.param(f"derivatives-oi/{_B2_SPOILT}/oi.parquet", _not_parquet, "File out of specification", id="oi"),
+        pytest.param(
+            f"derivatives-oi/{_B2_SPOILT}/oi.parquet",
+            lambda path: pl.read_parquet(path).drop("sum_taker_long_short_vol_ratio").write_parquet(path),
+            '"sum_taker_long_short_vol_ratio" not found',
+            id="ratio",
+        ),
+        pytest.param(
+            "liquidations-daily/SOL/daily.parquet",
+            lambda path: pl.read_parquet(path).drop("short_usd").write_parquet(path),
+            '"short_usd" not found',
+            id="liquidation-short",
+        ),
+        pytest.param(
+            "liquidations-daily/BTC/daily.parquet",
+            lambda path: pl.read_parquet(path).drop("long_usd").write_parquet(path),
+            '"long_usd" not found',
+            id="liquidation-long",
+        ),
+    ],
+)
+def test_the_second_signal_reading_refuses_a_file_of_a_signals_set_it_cannot_read_naming_it(
+    tmp_path, monkeypatch, relpath, spoil, cause
+):
+    root = _b2_overlay_dataset(tmp_path)
+    spoil(root / relpath)
+    _anchor(monkeypatch, root)
+
+    result = runner.invoke(app, ["research", "eval", "--subject", "b2-second-signal-reading", "--dataset", "ohlc-test"])
 
     assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
     assert f"{relpath}: " in result.output and cause in result.output
@@ -5462,6 +5668,7 @@ _CONTRACT_DATASETS = {
     "b2-funding-reentry": lambda tmp_path, subject: (_b2_reentry_dataset(tmp_path), _B2_START),
     "b2-funding-reentry-preflight": lambda tmp_path, subject: (_b2_reentry_dataset(tmp_path), _B2_START),
     "b2-signal-reading": lambda tmp_path, subject: (_b2_reentry_dataset(tmp_path), _B2_START),
+    "b2-second-signal-reading": lambda tmp_path, subject: (_b2_overlay_dataset(tmp_path), _B2_START),
     "b1-conditioning": lambda tmp_path, subject: (_b1_dataset(tmp_path), _B1_START),
     "b1-window-only": lambda tmp_path, subject: (_b1_dataset(tmp_path, m15=False), _B1_START),
     "b1-hourly-rv": lambda tmp_path, subject: (_b1_hourly_rv_dataset(tmp_path), _B1_START),
