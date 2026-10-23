@@ -3,11 +3,13 @@ from __future__ import annotations
 import math
 import random
 import statistics
+from array import array
 from bisect import bisect_left
 from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import partial
+from typing import NamedTuple
 
 import numpy as np
 
@@ -240,6 +242,30 @@ def oi_zscore_grid_feature(oi_ts: list[datetime], oi_values: list[float | None],
 def oi_momentum_grid_feature(oi_ts: list[datetime], oi_values: list[float | None], union_ts: list[datetime]) -> list[float | None]:
     momentum = partial(oi_momentum, lookback=_OI_MOMENTUM_LOOKBACK)
     return _oi_at_union_closes("momentum", momentum, oi_ts, oi_values, union_ts)
+
+
+def oi_log_delta_zscore_grid_feature(
+    oi_ts: list[datetime], oi_values: list[float | None], union_ts: list[datetime]
+) -> list[float | None]:
+    """The log-delta's trailing z-score over the OI z-score's window, both taken on the OI grid, never at the union's
+    closes (docs/specs/00141 D4)."""
+
+    def zscore(levels: list[float | None]) -> list[float | None]:
+        return funding_zscore(oi_log_delta(levels), window=_OI_ZSCORE_WINDOW)
+
+    return _oi_at_union_closes("log-delta z-score", zscore, oi_ts, oi_values, union_ts)
+
+
+def oi_momentum_zscore_grid_feature(
+    oi_ts: list[datetime], oi_values: list[float | None], union_ts: list[datetime]
+) -> list[float | None]:
+    """The momentum's trailing z-score over the OI z-score's window, both taken on the OI grid, never at the union's
+    closes (docs/specs/00141 D4)."""
+
+    def zscore(levels: list[float | None]) -> list[float | None]:
+        return funding_zscore(oi_momentum(levels, lookback=_OI_MOMENTUM_LOOKBACK), window=_OI_ZSCORE_WINDOW)
+
+    return _oi_at_union_closes("momentum z-score", zscore, oi_ts, oi_values, union_ts)
 
 
 def ratio_grid_features(
@@ -498,6 +524,112 @@ def event_contrast_chunked(
             boot_other_means = sum(sums[series, asset][1] for asset in members)[usable] / boot_others[usable]
             low, high = np.percentile(boot_event_means - boot_other_means, [2.5, 97.5])
             far_low, far_high = np.percentile(boot_event_means - boot_other_means, [0.05, 99.95])
+            diff = mean_event - mean_other
+            rows[name] = [n_event, n_other, mean_event, mean_other, diff, float(low), float(high), float(far_low), float(far_high)]
+        out[series] = rows
+    return out
+
+
+class BootstrapBlocks(NamedTuple):
+    """A stationary-bootstrap draw held as its blocks: resample r's blocks run from `firsts[r]` to the next resample's
+    first, and block b covers `lengths[b]` consecutive indices from `starts[b]`, mod `n_obs`."""
+
+    n_obs: int
+    starts: np.ndarray
+    lengths: np.ndarray
+    firsts: np.ndarray
+
+
+def stationary_bootstrap_blocks(n_obs: int, *, mean_block: float, n_resamples: int, seed: int) -> BootstrapBlocks:
+    """`stationary_bootstrap_indices`' resamples, each as its blocks: its generator's calls in its order, a fresh start
+    opening a block and a step to the next index lengthening it (docs/specs/00141 D6)."""
+    # `stationary_bootstrap_indices`' own refusals, `event_contrast_chunked`'s two calls.
+    stationary_bootstrap_indices(n_obs, mean_block=1, n_resamples=1, seed=seed)
+    stationary_bootstrap_indices(1, mean_block=mean_block, n_resamples=n_resamples, seed=seed)
+    rng = random.Random(seed)
+    uniform, fresh = rng.random, rng.randrange
+    p = 1 / mean_block
+    starts, opens, firsts = array("i"), array("i"), array("i")
+    for _ in range(n_resamples):
+        firsts.append(len(starts))
+        starts.append(fresh(n_obs))
+        opens.append(0)
+        for j in range(1, n_obs):
+            if uniform() < p:
+                starts.append(fresh(n_obs))
+                opens.append(j)
+    opened, first = np.frombuffer(opens, dtype=np.intc), np.frombuffer(firsts, dtype=np.intc)
+    lengths = np.empty_like(opened)
+    lengths[:-1] = opened[1:]
+    lengths[first[1:] - 1] = lengths[-1] = n_obs
+    lengths -= opened
+    return BootstrapBlocks(n_obs, np.frombuffer(starts, dtype=np.intc), lengths, first)
+
+
+def event_contrast_blocks(
+    flags: dict[str, list[bool | None]],
+    forwards: dict[str, dict[str, list[float | None]]],
+    blocks: BootstrapBlocks,
+    *,
+    far: tuple[float, float],
+) -> dict[str, dict[str, list[float]]]:
+    """`event_contrast_chunked`'s rows over `blocks`' resamples, the far bounds at the percentiles `far`: a resample's
+    counts and sums are read off running totals at its blocks' ends, so it costs its blocks, never its indices; its counts
+    are the gathered ones exactly and its sums theirs to rounding (docs/specs/00141 D6)."""
+    n = _check_lengths({f"flags[{asset!r}]": values for asset, values in flags.items()})
+    for series, by_asset in forwards.items():
+        _check_paired("flags", flags, f"forwards[{series!r}]", by_asset, n)
+    if blocks.n_obs != n:
+        raise AlphaError(f"blocks draw over {blocks.n_obs} indices and the flags hold {n}")
+    numbers = isinstance(far, tuple) and len(far) == 2 and all(type(q) in (int, float) for q in far)
+    if not numbers or not 0 <= far[0] < far[1] <= 100:
+        raise AlphaError(f"far must be two percentiles, 0 <= low < high <= 100, got {far!r}")
+    kept = {}
+    for series, by_asset in forwards.items():
+        for asset, flag in flags.items():
+            values = by_asset[asset]
+            event = np.array([f is True and v is not None for f, v in zip(flag, values)])
+            other = np.array([f is False and v is not None for f, v in zip(flag, values)])
+            if event.sum() >= 2 and other.sum() >= 2:
+                kept[series, asset] = (event, other, np.array([0.0 if v is None else v for v in values]))
+    column = {key: 4 * j for j, key in enumerate(kept)}
+    n_resamples = len(blocks.firsts)
+    totals = np.zeros((n_resamples, 4 * len(kept)))
+    if kept:
+        running = np.zeros((n + 1, 4 * len(kept)))
+        for key, (event, other, x) in kept.items():
+            running[1:, column[key] : column[key] + 4] = np.column_stack((event, other, x * event, x * other))
+        np.cumsum(running, axis=0, out=running)
+        bounds = np.append(blocks.firsts, len(blocks.starts))
+        for r in range(n_resamples):
+            starts = blocks.starts[bounds[r] : bounds[r + 1]]
+            ends = starts + blocks.lengths[bounds[r] : bounds[r + 1]]
+            sums = running[np.minimum(ends, n)] - running[starts]
+            wrapped = ends > n
+            sums[wrapped] += running[ends[wrapped] - n]
+            totals[r] = sums.sum(axis=0)
+    out: dict[str, dict[str, list[float]]] = {}
+    for series in forwards:
+        assets = [asset for asset in flags if (series, asset) in kept]
+        rows = {}
+        for name, members in [*((asset, [asset]) for asset in assets), ("pooled", assets)]:
+            if not members:
+                continue
+            read = [kept[series, asset] for asset in members]
+            n_event = sum(int(event.sum()) for event, _, _ in read)
+            n_other = sum(int(other.sum()) for _, other, _ in read)
+            mean_event = sum(float(x[event].sum()) for event, _, x in read) / n_event
+            mean_other = sum(float(x[other].sum()) for _, other, x in read) / n_other
+            at = [column[series, asset] for asset in members]
+            boot_events = sum(totals[:, j] for j in at)
+            boot_others = sum(totals[:, j + 1] for j in at)
+            usable = (boot_events > 0) & (boot_others > 0)
+            if not usable.any():
+                continue
+            boot_event_means = sum(totals[:, j + 2] for j in at)[usable] / boot_events[usable]
+            boot_other_means = sum(totals[:, j + 3] for j in at)[usable] / boot_others[usable]
+            low, high = np.percentile(boot_event_means - boot_other_means, [2.5, 97.5])
+            far_low, far_high = np.percentile(boot_event_means - boot_other_means, list(far))
             diff = mean_event - mean_other
             rows[name] = [n_event, n_other, mean_event, mean_other, diff, float(low), float(high), float(far_low), float(far_high)]
         out[series] = rows
