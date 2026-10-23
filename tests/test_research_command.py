@@ -3527,8 +3527,6 @@ def test_each_untested_signal_reader_reads_its_signals_off_their_own_columns(tmp
 
 
 def test_the_second_signal_reading_hands_every_cell_one_shared_draw_and_keys_its_rows(monkeypatch):
-    # Thirty closes on every asset, arm A long at the even indices, each signal read from its own index and swinging
-    # through both tails.
     prices = {a: [100.0 * (1 + 0.01 * i) * 1.003**k for k in range(30)] for i, a in enumerate(_B2_ASSETS)}
     arm_a = {a: [0.1 if k % 2 == 0 else 0.0 for k in range(29)] for a in _B2_ASSETS}
     signals = {

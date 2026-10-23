@@ -1158,8 +1158,7 @@ def test_the_chunked_contrast_refuses_what_the_event_contrast_refuses_and_a_chun
 
 
 def test_the_oi_log_delta_zscore_is_taken_over_180_grid_log_deltas_and_reads_warm_at_a_late_union():
-    # Each level twice the last, then four times it: every grid log-delta log(2), then log(4); each bar's earlier row, 1.5
-    # times its level, is never read. A union opening at the last two marks reads them warm.
+    # Each level twice the last, then four times it: every grid log-delta log(2), then log(4).
     oi_ts, oi_values, union_ts = _oi_on_the_grid([2.0**k for k in range(181)] + [2.0**182])
     spike = [0.0, pytest.approx(179 / math.sqrt(180))]
     assert oi_log_delta_zscore_grid_feature(oi_ts, oi_values, union_ts) == [None] * 180 + spike

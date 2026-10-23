@@ -247,8 +247,7 @@ def oi_momentum_grid_feature(oi_ts: list[datetime], oi_values: list[float | None
 def oi_log_delta_zscore_grid_feature(
     oi_ts: list[datetime], oi_values: list[float | None], union_ts: list[datetime]
 ) -> list[float | None]:
-    """The log-delta's trailing z-score over the OI z-score's window, both taken on the OI grid, never at the union's
-    closes (docs/specs/00141 D4)."""
+    """The log-delta's trailing z-score over the OI z-score's window, both taken on the OI grid (docs/specs/00141 D4)."""
 
     def zscore(levels: list[float | None]) -> list[float | None]:
         return funding_zscore(oi_log_delta(levels), window=_OI_ZSCORE_WINDOW)
@@ -259,8 +258,7 @@ def oi_log_delta_zscore_grid_feature(
 def oi_momentum_zscore_grid_feature(
     oi_ts: list[datetime], oi_values: list[float | None], union_ts: list[datetime]
 ) -> list[float | None]:
-    """The momentum's trailing z-score over the OI z-score's window, both taken on the OI grid, never at the union's
-    closes (docs/specs/00141 D4)."""
+    """The momentum's trailing z-score over the OI z-score's window, both taken on the OI grid (docs/specs/00141 D4)."""
 
     def zscore(levels: list[float | None]) -> list[float | None]:
         return funding_zscore(oi_momentum(levels, lookback=_OI_MOMENTUM_LOOKBACK), window=_OI_ZSCORE_WINDOW)
@@ -541,8 +539,7 @@ class BootstrapBlocks(NamedTuple):
 
 
 def stationary_bootstrap_blocks(n_obs: int, *, mean_block: float, n_resamples: int, seed: int) -> BootstrapBlocks:
-    """`stationary_bootstrap_indices`' resamples, each as its blocks: its generator's calls in its order, a fresh start
-    opening a block and a step to the next index lengthening it (docs/specs/00141 D6)."""
+    """`stationary_bootstrap_indices`' resamples, each as its blocks (docs/specs/00141 D6)."""
     # `stationary_bootstrap_indices`' own refusals, `event_contrast_chunked`'s two calls.
     stationary_bootstrap_indices(n_obs, mean_block=1, n_resamples=1, seed=seed)
     stationary_bootstrap_indices(1, mean_block=mean_block, n_resamples=n_resamples, seed=seed)
@@ -574,8 +571,8 @@ def event_contrast_blocks(
     far: tuple[float, float],
 ) -> dict[str, dict[str, list[float]]]:
     """`event_contrast_chunked`'s rows over `blocks`' resamples, the far bounds at the percentiles `far`: a resample's
-    counts and sums are read off running totals at its blocks' ends, so it costs its blocks, never its indices; its counts
-    are the gathered ones exactly and its sums theirs to rounding (docs/specs/00141 D6)."""
+    counts and sums are read off running totals at its blocks' ends, so it costs its blocks, never its indices
+    (docs/specs/00141 D6)."""
     n = _check_lengths({f"flags[{asset!r}]": values for asset, values in flags.items()})
     for series, by_asset in forwards.items():
         _check_paired("flags", flags, f"forwards[{series!r}]", by_asset, n)

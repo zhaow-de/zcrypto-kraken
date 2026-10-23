@@ -3143,7 +3143,7 @@ def _b2_reading_2_inputs(
     subject: str, reader: ObservedReader, dataset: str, window: tuple[str, str] | None, accept_holes: bool
 ) -> _B2ReadingInputs:
     """Reading 3's inputs on the eight signals, the first handed to `_b2_overlay_inputs` for its arm A: never a forward
-    return, so the basis test reads the data before the spec's hash (docs/specs/00141 D3, D4, D7)."""
+    return, so the basis test reads no forward (docs/specs/00141 D3, D4, D7)."""
     overlay = _b2_overlay_inputs(subject, _b2_oi_log_delta_signal, _B2_READING_THRESHOLD, reader, dataset, window, accept_holes)
     signals = {
         "binperp_oi_log_delta_z30d": overlay.signal,
