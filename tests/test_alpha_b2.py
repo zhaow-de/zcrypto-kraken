@@ -14,6 +14,7 @@ from cli.alpha.b2 import (
     daily_zscore_grid_feature,
     derisk_scales,
     event_contrast,
+    event_contrast_blocks,
     event_contrast_chunked,
     full_long_sizes,
     funding_carry_grid_feature,
@@ -24,7 +25,9 @@ from cli.alpha.b2 import (
     net_of_cost,
     oi_grid_levels,
     oi_log_delta_grid_feature,
+    oi_log_delta_zscore_grid_feature,
     oi_momentum_grid_feature,
+    oi_momentum_zscore_grid_feature,
     oi_zscore_grid_feature,
     per_year_engaged_counts,
     per_year_max_drawdown,
@@ -36,6 +39,7 @@ from cli.alpha.b2 import (
     reentry_counts_per_year,
     reentry_positions,
     scale_positions,
+    stationary_bootstrap_blocks,
 )
 from cli.alpha.errors import AlphaError
 from cli.features.errors import FeatureError
@@ -1151,3 +1155,107 @@ def test_the_chunked_contrast_refuses_what_the_event_contrast_refuses_and_a_chun
     if "chunk" not in change:
         with pytest.raises(error, match=match):
             event_contrast(**arguments)
+
+
+def test_the_oi_log_delta_zscore_is_taken_over_180_grid_log_deltas_and_reads_warm_at_a_late_union():
+    # Each level twice the last, then four times it: every grid log-delta log(2), then log(4).
+    oi_ts, oi_values, union_ts = _oi_on_the_grid([2.0**k for k in range(181)] + [2.0**182])
+    spike = [0.0, pytest.approx(179 / math.sqrt(180))]
+    assert oi_log_delta_zscore_grid_feature(oi_ts, oi_values, union_ts) == [None] * 180 + spike
+    assert oi_log_delta_zscore_grid_feature(oi_ts, oi_values, union_ts[180:]) == spike
+
+
+def test_the_oi_momentum_zscore_is_taken_over_180_grid_momenta_and_reads_warm_at_a_late_union():
+    # Each level twice the last, then four times it: every 180-bar momentum the same, then the last about twice it.
+    oi_ts, oi_values, union_ts = _oi_on_the_grid([2.0**k for k in range(360)] + [2.0**361])
+    spike = [0.0, pytest.approx(179 / math.sqrt(180))]
+    assert oi_momentum_zscore_grid_feature(oi_ts, oi_values, union_ts) == [None] * 359 + spike
+    assert oi_momentum_zscore_grid_feature(oi_ts, oi_values, union_ts[359:]) == spike
+
+
+@pytest.mark.parametrize(
+    ("n_obs", "mean_block", "n_resamples", "seed"),
+    [(30, 3, 25, 7), (16, 1, 4, 2), (1, 2, 3, 5), (40, 1000, 6, 9)],
+    ids=["short-blocks", "every-index-fresh", "one-index", "long-blocks-wrapping"],
+)
+def test_the_block_draw_holds_each_stationary_bootstrap_resample_as_its_blocks(n_obs, mean_block, n_resamples, seed):
+    blocks = stationary_bootstrap_blocks(n_obs, mean_block=mean_block, n_resamples=n_resamples, seed=seed)
+
+    bounds = [*blocks.firsts.tolist(), len(blocks.starts)]
+    spans = [zip(blocks.starts[a:b].tolist(), blocks.lengths[a:b].tolist()) for a, b in zip(bounds, bounds[1:])]
+    resamples = [[(start + step) % n_obs for start, length in span for step in range(length)] for span in spans]
+    assert blocks.n_obs == n_obs
+    assert resamples == stationary_bootstrap_indices(n_obs, mean_block=mean_block, n_resamples=n_resamples, seed=seed)
+    # Four bytes an entry: the reading's draw holds about 10.8 million blocks.
+    assert {values.dtype.itemsize for values in (blocks.starts, blocks.lengths, blocks.firsts)} == {4}
+
+
+@pytest.mark.parametrize(
+    ("change", "match"),
+    [
+        pytest.param({"n_obs": 0}, "n_obs must be an int >= 1, got 0", id="no-index"),
+        pytest.param({"mean_block": 0.5}, "mean_block must be finite and >= 1, got 0.5", id="block-under-1"),
+        pytest.param({"n_resamples": 0}, "n_resamples must be an int >= 1, got 0", id="no-resample"),
+    ],
+)
+def test_the_block_draw_refuses_what_the_stationary_bootstrap_refuses(change, match):
+    arguments = {"n_obs": 3, "mean_block": 2, "n_resamples": 10, "seed": 1} | change
+    with pytest.raises(ValidationError, match=match):
+        stationary_bootstrap_blocks(**arguments)
+    with pytest.raises(ValidationError, match=match):
+        stationary_bootstrap_indices(**arguments)
+
+
+def _bounds_at(rows: list[tuple[list, list]], draws: list[list[int]], low: float, high: float) -> list[float]:
+    """The percentiles `low` and `high`, as fractions, by hand, of the differences over the resamples holding an event and
+    another."""
+    diffs = []
+    for idx in draws:
+        ev = [values[k] for flags, values in rows for k in idx if flags[k] is True and values[k] is not None]
+        ot = [values[k] for flags, values in rows for k in idx if flags[k] is False and values[k] is not None]
+        if ev and ot:
+            diffs.append(sum(ev) / len(ev) - sum(ot) / len(ot))
+    diffs.sort()
+    return [_percentile(diffs, low), _percentile(diffs, high)]
+
+
+def test_the_block_contrast_is_the_chunked_contrasts_rows_with_its_far_bounds_at_the_percentiles_it_is_given():
+    forwards = {"ret": _CHUNKED_RET, "late": _CHUNKED_LATE, "none": {a: [None] * 16 for a in _CHUNKED_FLAGS}}
+    blocks = stationary_bootstrap_blocks(16, mean_block=3, n_resamples=200, seed=7)
+
+    out = event_contrast_blocks(_CHUNKED_FLAGS, forwards, blocks, far=(0.05, 99.95))
+
+    chunked = event_contrast_chunked(_CHUNKED_FLAGS, forwards, mean_block=3, n_resamples=200, seed=7)
+    assert {series: list(rows) for series, rows in out.items()} == {series: list(rows) for series, rows in chunked.items()}
+    for series, rows in out.items():
+        for name, row in rows.items():
+            assert row[:5] == chunked[series][name][:5], (series, name)
+            assert row[5:] == pytest.approx(chunked[series][name][5:], rel=1e-12, abs=1e-15), (series, name)
+    assert {type(v) for rows in out.values() for row in rows.values() for v in row} <= {int, float}
+    draws = stationary_bootstrap_indices(16, mean_block=3, n_resamples=200, seed=7)
+    at_one = event_contrast_blocks(_CHUNKED_FLAGS, forwards, blocks, far=(1, 99))
+    for name, members in (("ETH", ["ETH"]), ("pooled", ["BTC", "ETH"])):
+        rows = [(_CHUNKED_FLAGS[a], _CHUNKED_RET[a]) for a in members]
+        assert at_one["ret"][name][7:] == pytest.approx(_bounds_at(rows, draws, 0.01, 0.99), rel=1e-12, abs=1e-15), name
+
+
+@pytest.mark.parametrize(
+    ("change", "match"),
+    [
+        pytest.param({"n_obs": 4}, "blocks draw over 4 indices and the flags hold 3", id="another-draw"),
+        pytest.param({"n_obs": 2}, "blocks draw over 2 indices and the flags hold 3", id="a-shorter-draw"),
+        pytest.param({"far": [0.05, 99.95]}, "got [0.05, 99.95]", id="far-a-list"),
+        pytest.param({"far": (0.05, 50, 99.95)}, "got (0.05, 50, 99.95)", id="far-three"),
+        pytest.param({"far": (False, 99.95)}, "got (False, 99.95)", id="far-a-bool"),
+        pytest.param({"far": (-0.05, 99.95)}, "got (-0.05, 99.95)", id="far-below-0"),
+        pytest.param({"far": (99.95, 99.95)}, "got (99.95, 99.95)", id="far-not-rising"),
+        pytest.param({"far": (0.05, 100.05)}, "got (0.05, 100.05)", id="far-above-100"),
+        pytest.param({"forwards": {"ret": {"BTC": [0.1]}}}, "forwards['ret']['BTC'] has length 1, expected 3", id="forward-length"),
+    ],
+)
+def test_the_block_contrast_refuses_a_draw_over_other_indices_far_bounds_it_cannot_read_and_an_unpaired_forward(change, match):
+    arguments = {"flags": {"BTC": [True, False, True]}, "forwards": {"ret": {"BTC": [0.1, 0.2, 0.3]}}, "far": (0.05, 99.95)}
+    arguments |= {key: value for key, value in change.items() if key != "n_obs"}
+    blocks = stationary_bootstrap_blocks(change.get("n_obs", 3), mean_block=2, n_resamples=10, seed=1)
+    with pytest.raises(AlphaError, match=re.escape(match)):
+        event_contrast_blocks(blocks=blocks, **arguments)
