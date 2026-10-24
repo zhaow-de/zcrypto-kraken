@@ -1,6 +1,6 @@
 """B4 trial 1 (docs/specs/00144-b4-ratio-legs-design.md): a ratio leg's EUR return (D4), the per-base exposures an
 instrument book decomposes into and the quote's shortfall and its carry (D5), §10's limits as one factor per bar (D6), the
-legs held to the book's own quote (D7) and the per-year engagement counts (D9).
+legs held to the book's own quote (D7) and the per-year counts, sums and means (D9).
 
 A position is a fraction of NAV in EUR notional held over return index k, from close k to close k + 1."""
 
@@ -26,8 +26,8 @@ def _check_price(name: str, k: int, p: float | None, *, missing: bool) -> None:
 
 def ratio_eur_returns(ratio: list[float | None], quote_eur: list[float]) -> list[float | None]:
     """Per unit of EUR notional set at the bar's open, `(R[k+1]/R[k] - 1) * (Q[k+1]/Q[k])`: the gain in the quote's units
-    converted at the bar's closing quote price, which equals the base's EUR return less the quote's; None where the ratio
-    has no close at either end."""
+    converted at the bar's closing quote price, which equals the base's EUR return less the quote's; None where either end
+    has no close."""
     if len(ratio) != len(quote_eur):
         raise AlphaError(f"the ratio's {len(ratio)} closes and the quote's {len(quote_eur)} must be equal in number")
     for k, (r, q) in enumerate(zip(ratio, quote_eur)):

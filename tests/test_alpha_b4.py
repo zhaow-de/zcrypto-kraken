@@ -1,3 +1,4 @@
+import copy
 import math
 from datetime import UTC, datetime
 
@@ -54,14 +55,16 @@ def test_ratio_eur_returns_refuses_a_close_it_cannot_divide_by(ratio, quote, mat
 def test_base_exposures_nets_each_leg_into_its_base_and_its_quote():
     book = {"BTC": [0.5, 0.125, 0.0], "ETH": [0.25, 0.0, 0.0], "SOL": [0.0, 0.25, 0.0]}
     legs = {"ETH/BTC": [0.125, 0.25, 0.0], "SOL/BTC": [0.0625, 0.0, 0.0]}
+    positions = book | legs
+    unchanged = copy.deepcopy(positions)
 
-    assert base_exposures(book | legs, _LEGS) == {
+    assert base_exposures(positions, _LEGS) == {
         "BTC": [0.3125, -0.125, 0.0],
         "ETH": [0.375, 0.25, 0.0],
         "SOL": [0.0625, 0.25, 0.0],
     }
+    assert positions == unchanged
     assert base_exposures(book, _LEGS) == book
-    assert legs == {"ETH/BTC": [0.125, 0.25, 0.0], "SOL/BTC": [0.0625, 0.0, 0.0]}
 
 
 @pytest.mark.parametrize(
@@ -99,6 +102,11 @@ def test_limit_factors_leave_an_untouched_bar_at_one_and_engage_each_limit_in_it
     scaled, stack = scale_bars(exposures, factors), apply_whole_book_limits(exposures)
     assert [scaled[a][0] for a in exposures] == [exposures[a][0] for a in exposures]
     assert all(math.isclose(scaled[a][k], stack[a][k], rel_tol=1e-12) for a in exposures for k in range(5))
+
+
+def test_scale_bars_refuses_factors_of_another_length_than_the_positions():
+    with pytest.raises(AlphaError, match="factors for positions of another length"):
+        scale_bars({"BTC": [0.5, 0.5], "ETH": [0.25, 0.25]}, [1.0])
 
 
 def test_the_shortfall_and_its_carry_charge_each_rollover_and_each_increase():
