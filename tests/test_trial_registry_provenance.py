@@ -48,6 +48,7 @@ LANDED_N_TRIALS: dict[str, int] = {
     "b2-liq-reentry": 5,
     "b2-funding-reentry": 6,
     "b2-liq-z3-derisk": 7,
+    "b4-ratio-legs": 1,
 }
 
 
@@ -979,6 +980,7 @@ def test_each_landed_subjects_n_trials_is_frozen_at_its_literal():
         "b2-liq-reentry": 5,
         "b2-funding-reentry": 6,
         "b2-liq-z3-derisk": 7,
+        "b4-ratio-legs": 1,
     }, growth
     assert landed == {subject: {n} for subject, n in LANDED_N_TRIALS.items()}, growth
     assert all(SUBJECTS[subject].n_trials == n for subject, n in LANDED_N_TRIALS.items()), growth
