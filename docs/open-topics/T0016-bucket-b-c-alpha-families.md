@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: 'per family — C3: go-live is settled (otherwise ripe; re-deferred 2026-08-23, see `## Done so far`); B4: an activity, the owner picks B4''s next step after trial 1 — a further trial or closing the family — recorded in the decisions log, check: `grep -c -E ''^\[iter-[0-9]+\] B4.s next step after trial 1'' docs/research/10.phase4-decisions.md` prints at least 1; B3: the §10 portfolio-limits code lands; C2: a tick catalog exists; C1: weeks of captured L2 exist'
+ripe_when: 'per family — C3: go-live is settled (otherwise ripe; re-deferred 2026-08-23, see `## Done so far`); B4: ripe — trial 2 on the owner''s pick of 2026-10-24, recorded in the decisions log, check: `grep -c -E ''^\[iter-[0-9]+\] B4.s next step after the leg reading'' docs/research/10.phase4-decisions.md` prints at least 1, then B4 closes; B3: B4 closes after its trial 2 on the owner''s pick of 2026-10-24, check: `grep -c -E ''^\[iter-[0-9]+\] B4 closed'' docs/research/10.phase4-decisions.md` prints at least 1; C2: a tick catalog exists; C1: weeks of captured L2 exist'
 ---
 
 # Bucket-B/C alpha families — the un-started remainder of the §5 queue
@@ -20,6 +20,7 @@ Buckets B (intraday band) and C (long shots) are where the master plan's residua
 - Budgets pre-registered: **B = 25**, shared across Bucket B (B1 spent 5, B2 spent 7, B4 spent 1, 12 remain), and **C = 10**, untouched; A is spent, 40 of 40.
 - Two rulings bind every B and C pre-registration (the owner, 2026-10-15, `10.phase4-decisions.md` `[iter-176]`): the DSR leg binds at every `n_trials`, `var_trials` 0.0 included, as the ratified bar has it; and a search may read the spent holdout's window, 2026-04-01 → 2026-07-09, through `ohlc-rolling`, but no result there is reported as holdout or out-of-sample evidence.
 - **B4 trial 1 REJECT (iter-189, spec 00144, registry trial 58).** Matrix row 5 fired: arm A passed its bar and arm B, the ETH/BTC and SOL/BTC legs added to the A2-4h ensemble, passed the kill bar, but its head-to-head against arm A from the first ratio weight was negative; both legs held a position and the book borrowed the BTC they sold beyond its own — the figures in `10.phase4-decisions.md` `[iter-189] Verdict — B4 trial 1 REJECT`.
+- **B4's leg reading (iter-190, spec 00145, reading 6).** No cell has potential: neither ratio leg alone on the A2 ensemble, as trial 58 costed it or held to the book's own BTC, shows a primary mean outperformance over arm A whose SPA p falls below 0.05/4, so the reading names no trial — SOL/BTC held to the book's own BTC, the nearest, misses that leg alone. Trial 58's loss sat in its costs: gross, arm B's mean outperformance over arm A was positive, its trading cost alone turned it negative, and its BTC carry, the larger of the two costs, made most of the loss — the figures in `10.phase4-decisions.md` `[iter-190] B4's ratio legs read alone and trial 58's head-to-head read by cost on frozen ohlc-full (reading 6)`.
 
 ## Done so far
 
@@ -27,7 +28,7 @@ Buckets B (intraday band) and C (long shots) are where the master plan's residua
 
 - **B2 opened (iter-175, spec/plan `00128`)** on the owner's word of 2026-10-12, its trial 1 stopped unspent at the pre-flight; trials 2–8 (iter-181 to iter-187, registry trials 51–57) each REJECT, readings 2–5 beside them, no slot spent; **closed at iter-188** on the owner's word of 2026-10-23, [T0023](archive/T0023-b2-derivatives-data-sourcing.md) resolved.
 
-- **B4 opened (iter-189, spec/plan `00144`)** on the owner's family pick of 2026-10-23, its trial 1 the loop's pick under the owner's run instruction: the module `cli/alpha/b4.py`, the subjects `b4-ratio-legs` and `b4-ratio-legs-preflight`, the data-gated basis test `tests/test_research_b4_ratio_legs_basis.py`, the family key `B4` in bucket B. Trial 1 (registry trial 58) REJECT.
+- **B4 opened (iter-189, spec/plan `00144`)** on the owner's family pick of 2026-10-23, its trial 1 the loop's pick under the owner's run instruction: the module `cli/alpha/b4.py`, the subjects `b4-ratio-legs` and `b4-ratio-legs-preflight`, the data-gated basis test `tests/test_research_b4_ratio_legs_basis.py`, the family key `B4` in bucket B. Trial 1 (registry trial 58) REJECT. The leg reading (iter-190, spec/plan `00145`, reading 6): the subject `b4-leg-reading` and its data-gated basis test `tests/test_research_b4_leg_reading_basis.py`, no slot spent, the subject retired.
 
 - **C3 is ripe and deliberately NOT picked up (re-deferred 2026-08-23, owner's call).** C3's sourcing has been unblocked since iter-072; the reason is contention: the active front is the Phase-6b go-live run-up ([[T0085]]), and opening an alpha family competes with it for the same attention while the live path is being armed. This is a decision, not an oversight, recorded here so the ripe state stops reading as a miss.
 
@@ -38,4 +39,4 @@ Buckets B (intraday band) and C (long shots) are where the master plan's residua
 
 ## Suggested next steps
 
-- (owner) B4's next step after trial 1's REJECT — a further trial (ETH/BTC alone; the symmetric legs, short the pairs at an ETH or SOL borrow; a further leg or pair; the legs' own vol target or weight cap) or closing the family — recorded as a `[iter-NNN] B4's next step after trial 1` entry; then per §5 ranking: B3 → C2 → C3 → C1 (C1 last: taker economics near-certainly kill it without L2 maker realism).
+- B4 trial 2, the owner's pick of 2026-10-24 (the `[iter-190] B4's next step after the leg reading` entry): SOL/BTC alone, held to the book's own BTC, on `ohlc-rolling`, its own pre-registration against the shared B budget carrying reading 6's contamination (spec 00145 D7); after its verdict, whatever it is, B4 closes on the owner's word and B3 opens, the owner's next-family pick; then per §5 ranking: C2 → C3 → C1 (C1 last: taker economics near-certainly kill it without L2 maker realism).
