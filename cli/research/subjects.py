@@ -3776,6 +3776,194 @@ _B4_PREFLIGHT_KEYS = (
 )
 
 
+# docs/specs/00145 D2-D6: B4's leg reading, trial 58's books taken apart on a frozen set's full history — each ratio leg
+# alone beside the ten EUR assets, as trial 58 costed arm B and as its borrow-free twin, and arm B's head-to-head by cost;
+# no rule, no slot.
+class _B4LegInputs(NamedTuple):
+    trial: _B4Inputs
+    first_weight: dict[str, int]
+    books: dict[str, dict[str, dict[str, list[float]]]]
+    engaged: dict[str, dict[str, dict[str, list[bool]]]]
+
+
+def _b4_leg_inputs(reads: _B4Reads) -> _B4LegInputs:
+    """Trial 58's books and each leg's two, keyed `carried` and `no_borrow`: positions, and no return of a book."""
+    trial = _b4_inputs(reads)
+    fed = _ffill_btc(reads.h4_prices)
+    first_weight: dict[str, int] = {}
+    books: dict[str, dict[str, dict[str, list[float]]]] = {}
+    engaged: dict[str, dict[str, dict[str, list[bool]]]] = {}
+    for leg in _B4_LEGS:
+        priced = fed | {leg: reads.ratios[leg]}
+        raw = _b4_ensemble(priced)
+        weights = _inverse_vol_weights(priced, lookback=_B2_LOOKBACK)
+        first_weight[leg] = next((k for k, w in enumerate(weights) if leg in w), len(weights))
+        carried, engaged_carried = _b4_limited(raw)
+        no_borrow, engaged_no_borrow = _b4_limited(borrow_unavailable(raw, _B4_LEGS, "BTC"))
+        books[leg] = {"carried": carried, "no_borrow": no_borrow}
+        engaged[leg] = {"carried": engaged_carried, "no_borrow": engaged_no_borrow}
+    return _B4LegInputs(trial, first_weight, books, engaged)
+
+
+def _b4_leg_engagement(inputs: _B4LegInputs) -> dict:
+    trial, close = inputs.trial, inputs.trial.close
+    n = len(close)
+    cells: dict[str, dict] = {}
+    for leg, by_funding in inputs.books.items():
+        flat = trial.arm_a | {leg: [0.0] * n}
+        for funding, book in by_funding.items():
+            shortfall = _b4_shortfall(book)
+            cell = {
+                "held_per_year": per_year_counts([p != 0 for p in book[leg]], close),
+                "positions_differ_per_year": per_year_positions_differ(flat, book, close),
+                "turnover": book_turnover(book),
+                "shortfall_stamps_per_year": per_year_counts([s > 0 for s in shortfall], close),
+                "shortfall_mean_per_year": per_year_means(shortfall, close),
+                "carry_per_year": per_year_sums(shortfall_carry(shortfall, rate=_B4_CARRY_RATE), close),
+                "limit_engaged": {name: sum(flags) for name, flags in inputs.engaged[leg][funding].items()},
+            }
+            for key, value in cell.items():
+                cells.setdefault(key, {}).setdefault(leg, {})[funding] = value
+    carry = shortfall_carry(_b4_shortfall(trial.arm_b), rate=_B4_CARRY_RATE)
+    legs_held = [sum(trial.arm_b[leg][k] for leg in _B4_LEGS) for k in range(n)]
+    return {
+        "first_weight": inputs.first_weight,
+        "primary_returns": {leg: n - first for leg, first in inputs.first_weight.items()},
+        **cells,
+        "turnover_a": book_turnover(trial.arm_a),
+        "turnover_b": book_turnover(trial.arm_b),
+        # docs/specs/00145 D5: trial 58's BTC carry apportioned to its legs pro rata to their positions at each bar.
+        "context_carry_by_leg": {
+            leg: math.fsum(c * p / held if held else 0.0 for c, p, held in zip(carry, trial.arm_b[leg], legs_held))
+            for leg in _B4_LEGS
+        },
+        "context_turnover_by_leg": {leg: book_turnover({leg: trial.arm_b[leg]}) for leg in _B4_LEGS}
+        | {"EUR": book_turnover({a: trial.arm_b[a] for a in trial.arm_a})},
+    }
+
+
+def _b4_cost_layers(trial: _B4Inputs) -> dict[str, tuple[list[float], list[float]]]:
+    """Arm B's book and arm A's, gross, net of their trading cost alone, and net of it and the carry, as trial 58 costed
+    them (docs/specs/00145 D5)."""
+
+    def trading(book: dict[str, list[float]], cost_per_side: float) -> list[float]:
+        return net_of_cost(book, {i: trial.returns[i] for i in book}, cost_per_side=cost_per_side)
+
+    return {
+        "gross": (trading(trial.arm_b, 0.0), trading(trial.arm_a, 0.0)),
+        "net_of_trading": (trading(trial.arm_b, _B2_COST_PER_SIDE), trading(trial.arm_a, _B2_COST_PER_SIDE)),
+        "net": (_b4_net(trial.arm_b, trial.returns, stress=1.0), _b4_net(trial.arm_a, trial.returns, stress=1.0)),
+    }
+
+
+def _b4_leg_metrics(inputs: _B4LegInputs) -> dict:
+    trial, close = inputs.trial, inputs.trial.close
+    n = len(close)
+    for leg, first in inputs.first_weight.items():
+        if n - first < 2:
+            raise ValidationError(
+                f"{n - first} of its return indices follow {leg}'s first weight, and the head-to-head from it needs 2"
+            )
+    net_a = _b4_net(trial.arm_a, trial.returns, stress=1.0)
+    cells: dict[str, dict] = {}
+    for leg, by_funding in inputs.books.items():
+        first = inputs.first_weight[leg]
+        for funding, book in by_funding.items():
+            net = _b4_net(book, trial.returns, stress=1.0)
+            primary = net_of_cost_verdict(net[first:], net_a[first:], mean_block=30, seed=42, n_resamples=_N_RESAMPLES)
+            full = net_of_cost_verdict(net, net_a, mean_block=30, seed=42, n_resamples=_N_RESAMPLES)
+            cell = {
+                "head_to_head_mean_outperf_primary": primary["mean_outperformance"],
+                "head_to_head_spa_p_primary": primary["spa_p_value"],
+                "head_to_head_mean_outperf_full": full["mean_outperformance"],
+                "head_to_head_spa_p_full": full["spa_p_value"],
+                "mean_outperf_per_year": per_year_means([x - a for x, a in zip(net, net_a, strict=True)], close),
+                "ann_sharpe_noc_primary": sharpe(net[first:], periods_per_year=PPY_4H),
+                "ann_sharpe_noc_full": sharpe(net, periods_per_year=PPY_4H),
+                "max_drawdown_primary": max_drawdown(net[first:]),
+                "max_drawdown_full": max_drawdown(net),
+            }
+            for key, value in cell.items():
+                cells.setdefault(key, {}).setdefault(leg, {})[funding] = value
+    start = min(trial.first_weight.values())
+    context: dict[str, dict] = {"context_head_to_head_mean_outperf": {}, "context_head_to_head_spa_p": {}}
+    for layer, (book, bench) in _b4_cost_layers(trial).items():
+        verdict = net_of_cost_verdict(book[start:], bench[start:], mean_block=30, seed=42, n_resamples=_N_RESAMPLES)
+        context["context_head_to_head_mean_outperf"][layer] = verdict["mean_outperformance"]
+        context["context_head_to_head_spa_p"][layer] = verdict["spa_p_value"]
+    return {
+        **cells,
+        "arm_a_ann_sharpe_noc_primary": {
+            leg: sharpe(net_a[first:], periods_per_year=PPY_4H) for leg, first in inputs.first_weight.items()
+        },
+        "arm_a_ann_sharpe_noc_full": sharpe(net_a, periods_per_year=PPY_4H),
+        "arm_a_max_drawdown_primary": {leg: max_drawdown(net_a[first:]) for leg, first in inputs.first_weight.items()},
+        "arm_a_max_drawdown_full": max_drawdown(net_a),
+        **context,
+        **_b4_leg_engagement(inputs),
+        "mean_block": 30,
+        "seed": 42,
+        "n_resamples": _N_RESAMPLES,
+    }
+
+
+def _build_b4_leg_reading(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    subject = "b4-leg-reading"
+    if as_of is not None:
+        raise SubjectError(
+            f"{subject} evaluates a frozen set's 4h series, never the rolling dataset as of a day: drop --as-of and pass a "
+            "frozen --dataset"
+        )
+    try:
+        return _b4_leg_metrics(_b4_leg_inputs(_b4_reads(subject, reader, dataset, window, accept_holes)))
+    except (AlphaError, BacktestError, BenchmarkError, FeatureError, RiskError, ValidationError) as exc:
+        raise SubjectError(f"{_b2_over(subject, window)}: {exc}") from exc
+
+
+# docs/specs/00145 D6's keys of the reading.
+_B4_LEG_KEYS = frozenset(
+    {
+        "head_to_head_mean_outperf_primary",
+        "head_to_head_spa_p_primary",
+        "head_to_head_mean_outperf_full",
+        "head_to_head_spa_p_full",
+        "mean_outperf_per_year",
+        "ann_sharpe_noc_primary",
+        "ann_sharpe_noc_full",
+        "max_drawdown_primary",
+        "max_drawdown_full",
+        "arm_a_ann_sharpe_noc_primary",
+        "arm_a_ann_sharpe_noc_full",
+        "arm_a_max_drawdown_primary",
+        "arm_a_max_drawdown_full",
+        "context_head_to_head_mean_outperf",
+        "context_head_to_head_spa_p",
+        "context_carry_by_leg",
+        "context_turnover_by_leg",
+        "first_weight",
+        "primary_returns",
+        "held_per_year",
+        "positions_differ_per_year",
+        "turnover",
+        "shortfall_stamps_per_year",
+        "shortfall_mean_per_year",
+        "carry_per_year",
+        "limit_engaged",
+        "turnover_a",
+        "turnover_b",
+        "mean_block",
+        "seed",
+        "n_resamples",
+    }
+)
+
+
 SUBJECTS: dict[str, Subject] = {
     "record44-crossfreq": Subject(
         "record44-crossfreq",
@@ -4154,6 +4342,15 @@ SUBJECTS: dict[str, Subject] = {
         _build_b4_ratio_legs_preflight,
         spec="docs/specs/00144-b4-ratio-legs-design.md",
         metric_keys=_B4_PREFLIGHT_KEYS,
+        seeds=(42,),
+    ),
+    "b4-leg-reading": Subject(
+        "b4-leg-reading",
+        (240,),
+        _ASSETS,
+        _build_b4_leg_reading,
+        spec="docs/specs/00145-b4-leg-reading-design.md",
+        metric_keys=_B4_LEG_KEYS,
         seeds=(42,),
     ),
 }
