@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: 'per family — C3: go-live is settled (otherwise ripe; re-deferred 2026-08-23, see `## Done so far`); B4: ripe — trial 2 on the owner''s pick of 2026-10-24, recorded in the decisions log, check: `grep -c -E ''^\[iter-[0-9]+\] B4.s next step after the leg reading'' docs/research/10.phase4-decisions.md` prints at least 1, then B4 closes; B3: B4 closes after its trial 2 on the owner''s pick of 2026-10-24, check: `grep -c -E ''^\[iter-[0-9]+\] B4 closed'' docs/research/10.phase4-decisions.md` prints at least 1; C2: a tick catalog exists; C1: weeks of captured L2 exist'
+ripe_when: 'per family — C3: go-live is settled (otherwise ripe; re-deferred 2026-08-23, see `## Done so far`); B4: ripe — trial 2 on the owner''s pick of 2026-10-24, recorded in the decisions log, check: `grep -c -E ''^\[iter-[0-9]+\] B4.s next step after the leg reading'' docs/research/10.phase4-decisions.md` prints at least 1, then B4 closes; B3: B4 closes after its trial 2 on the owner''s pick of 2026-10-24, check: `grep -c -E ''^\[iter-[0-9]+\] B4.s next step after trial 2'' docs/research/10.phase4-decisions.md` prints at least 1; C2: a tick catalog exists; C1: weeks of captured L2 exist'
 ---
 
 # Bucket-B/C alpha families — the un-started remainder of the §5 queue
