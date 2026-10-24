@@ -115,7 +115,7 @@ ENGAGEMENT = {
                 "2025": 621,
                 "2026": 292,
             },
-            # Float rounding: the twin's shortfall is at most 1.39e-17 (the basis).
+            # The twin's shortfall here is float rounding (the basis).
             "no_borrow": _YEARS
             | {
                 "2016": 1,
@@ -188,7 +188,6 @@ def test_the_leg_readings_inputs_reproduce_the_measured_basis_and_record_58s_boo
     assert compute_hash(reader.block()) == BLOCK and reader.vouched_status() == VOUCHED
     trial, n = inputs.trial, len(inputs.trial.close)
     assert n == RETURN_INDICES
-    # Trial 58's books are record 58's: every key its engagement stores, to the last bit.
     record = _trials()[58]["metrics"]
     assert subjects._b4_engagement(trial) == {key: record[key] for key in subjects._B4_ENGAGEMENT_KEYS}
     assert inputs.first_weight == trial.first_weight == FIRST_WEIGHT
@@ -196,7 +195,6 @@ def test_the_leg_readings_inputs_reproduce_the_measured_basis_and_record_58s_boo
     def first_differ(book: dict, other: dict) -> int:
         return next((k for k in range(n) if any(book[i][k] != other.get(i, [0.0] * n)[k] for i in book)), n)
 
-    # Each leg's two books are arm A's until the leg takes weight, and ETH/BTC's trial 58's until SOL/BTC does.
     for leg, first in FIRST_WEIGHT.items():
         assert [first_differ(book, trial.arm_a) for book in inputs.books[leg].values()] == [first, first]
     sol = FIRST_WEIGHT["SOL/BTC"]

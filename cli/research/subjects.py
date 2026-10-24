@@ -3832,7 +3832,7 @@ def _b4_leg_engagement(inputs: _B4LegInputs) -> dict:
         **cells,
         "turnover_a": book_turnover(trial.arm_a),
         "turnover_b": book_turnover(trial.arm_b),
-        # docs/specs/00145 D5: trial 58's one BTC shortfall apportioned to its legs pro rata to their positions at each bar.
+        # docs/specs/00145 D5: trial 58's BTC carry apportioned to its legs pro rata to their positions at each bar.
         "context_carry_by_leg": {
             leg: math.fsum(c * p / held if held else 0.0 for c, p, held in zip(carry, trial.arm_b[leg], legs_held))
             for leg in _B4_LEGS

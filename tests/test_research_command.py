@@ -4565,8 +4565,8 @@ def test_the_b4_leg_reading_declares_the_4h_grid_its_keys_and_no_rule(name):
 
 
 def _b4_leg_short_reads(n: int = 480) -> tuple[list[datetime], dict, dict]:
-    """`_b4_short_reads`' union with BTC's drift taken out, so that each leg alone outweighs the book's BTC at some stamps:
-    BTC missing one stamp, ETH/BTC their cross from the first stamp with one missing, SOL/BTC from stamp 150."""
+    """`_b4_short_reads`' union with BTC's drift taken out, so that each leg alone outweighs the book's BTC at some
+    stamps."""
     h4_ts = [datetime(2017, 1, 1, tzinfo=UTC) + timedelta(hours=4 * k) for k in range(n)]
     shapes = {"BTC": (100.0, 1.0, 0.05, 7.0, 0.0), "ETH": (50.0, 1.002, 0.06, 5.0, 1.0), "SOL": (20.0, 1.0005, 0.08, 9.0, 2.0)}
     h4_prices = {
@@ -4581,8 +4581,7 @@ def _b4_leg_short_reads(n: int = 480) -> tuple[list[datetime], dict, dict]:
 
 
 def _b4_own_leg_books(h4_ts: list[datetime], h4_prices: dict, ratios: dict) -> dict:
-    """Each leg alone beside the reads' EUR assets, built here, never through the reading's halves: its first weight, and
-    its book as trial 58 costed arm B and as the borrow-free twin, each limited, with the limits' engaged bars."""
+    """Each leg alone beside the reads' EUR assets, built here, never through the reading's halves."""
     n = len(h4_ts) - 1
     fed = _ffill_btc(h4_prices)
     configs = [
@@ -4653,10 +4652,7 @@ def test_the_b4_leg_books_are_arm_as_before_their_legs_first_weight_and_eth_btcs
 
 
 def _b4_leg_built_inputs(n: int = 1_400) -> subjects._B4LegInputs:
-    """`_b4_built_inputs`' trial and, per leg, two books made by hand — arm A with the leg at trial 58's arm B's
-    position and BTC at arm B's where the leg is flat, short of BTC wherever the leg outweighs it, and the same with the
-    leg halved and flat at every fourth stamp — each limit engaged at a count of stamps of its own in each book, for the
-    metrics alone."""
+    """`_b4_built_inputs`' trial and each leg's two books made by hand, for the metrics alone."""
     trial = _b4_built_inputs(n)
     books, engaged = {}, {}
     for j, leg in enumerate(_B4_LEGS):
@@ -4721,9 +4717,7 @@ def _b4_own_leg_engagement(inputs: subjects._B4LegInputs) -> dict:
 def test_the_b4_leg_engagement_counts_each_books_holding_shortfall_carry_and_limits_and_trial_58s_by_leg(name):
     inputs = _b4_leg_built_inputs()
     own = _b4_own_leg_engagement(inputs)
-    # Every book the reading counts moves its own figures: each carried book short of BTC, its twin less so and flat at
-    # stamps the carried book holds, both books' BTC off arm A's before the leg is held, so each cell's holding and its
-    # differing stamps part from the other funding's and from each other; and trial 58's carry shared by both legs.
+    # Each funding's turnover and counts part from the other's, and each count from the other key's: a misread fails.
     assert all(sum(own["carry_per_year"][leg]["carried"].values()) > 0 for leg in _B4_LEGS)
     assert all(own["turnover"][leg]["carried"] != own["turnover"][leg]["no_borrow"] for leg in _B4_LEGS)
     for key in ("held_per_year", "positions_differ_per_year"):
@@ -4750,7 +4744,6 @@ def test_the_b4_leg_reading_reads_each_cell_and_each_cost_layer_from_its_own_cal
         ),
         "net": (_b4_own_leg_net(trial, trial.arm_b), net_a),
     }
-    # The three layers part, and each leg's carry moves its carried book's net.
     assert layers["gross"][0] != layers["net_of_trading"][0] != layers["net"][0]
     for leg in _B4_LEGS:
         carried = inputs.books[leg]["carried"]
