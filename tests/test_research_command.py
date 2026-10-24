@@ -4288,7 +4288,6 @@ def _b4_built_inputs(n: int = 1_400) -> subjects._B4Inputs:
 
 
 def _b4_own_net(inputs: subjects._B4Inputs, positions: dict, stress: float) -> list[float]:
-    """Net of each instrument's turnover at 0.006 a side and of the carry on the BTC its legs outweigh, both times `stress`."""
     n = len(inputs.close)
     gross = net_of_cost(positions, {i: inputs.returns[i] for i in positions}, cost_per_side=stress * 0.006)
     held = (

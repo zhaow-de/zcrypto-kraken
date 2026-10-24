@@ -76,7 +76,6 @@ ENGAGEMENT = {
     "limit_engaged_per_year": dict.fromkeys(("gross", "net", "margin"), _YEARS),
     "arm_a_limit_engaged": dict.fromkeys(("gross", "net", "margin"), 0),
 }
-# Arm B's turnover at two decimals, and the carry per close year at six.
 TURNOVER_B = 157.65
 CARRY_PER_YEAR = {
     "2016": 0.001688,
@@ -110,7 +109,6 @@ def test_the_ratio_legs_inputs_reproduce_the_measured_basis_and_record_57s_arm_a
     block = reader.block()
     assert compute_hash(block) == BLOCK and reader.vouched_status() == VOUCHED
     assert len(inputs.close) == RETURN_INDICES
-    # Arm A is record 57's: the same ten files, and its turnover to the last bit.
     record = _trials()[57]
     assert {p: h for p, h in block["ohlc-full"]["files"].items() if "/EUR/" in p} == record["datasets"]["ohlc-full"]["files"]
     assert book_turnover(inputs.arm_a) == record["metrics"]["turnover_a"]

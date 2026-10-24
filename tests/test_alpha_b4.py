@@ -81,8 +81,6 @@ def test_base_exposures_refuses_a_book_it_cannot_decompose(positions, match):
 
 
 def test_limit_factors_leave_an_untouched_bar_at_one_and_engage_each_limit_in_its_order():
-    # Bar 0 breaches nothing; 1 the gross cap and then the net band; 2 the net band alone; 3 the margin floor alone; 4 the
-    # gross cap, which leaves the net band inside, and then the margin floor.
     exposures = {
         "BTC": [0.5, 1.0, 0.5, -0.5, -0.9],
         "ETH": [0.25, 0.5, 0.375, 0.5, 1.05],
