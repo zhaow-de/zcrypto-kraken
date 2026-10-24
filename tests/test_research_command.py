@@ -4654,13 +4654,16 @@ def test_the_b4_leg_books_are_arm_as_before_their_legs_first_weight_and_eth_btcs
 
 def _b4_leg_built_inputs(n: int = 1_400) -> subjects._B4LegInputs:
     """`_b4_built_inputs`' trial and, per leg, two books made by hand — arm A with the leg at trial 58's arm B's
-    position, short of BTC wherever the leg outweighs it, and the same with the leg halved — each limit engaged at a count
-    of stamps of its own in each book, for the metrics alone."""
+    position and BTC at arm B's where the leg is flat, short of BTC wherever the leg outweighs it, and the same with the
+    leg halved and flat at every fourth stamp — each limit engaged at a count of stamps of its own in each book, for the
+    metrics alone."""
     trial = _b4_built_inputs(n)
     books, engaged = {}, {}
     for j, leg in enumerate(_B4_LEGS):
-        carried = trial.arm_a | {leg: trial.arm_b[leg]}
-        books[leg] = {"carried": carried, "no_borrow": carried | {leg: [0.5 * p for p in carried[leg]]}}
+        btc = [b if p == 0 else a for a, b, p in zip(trial.arm_a["BTC"], trial.arm_b["BTC"], trial.arm_b[leg])]
+        carried = trial.arm_a | {"BTC": btc, leg: trial.arm_b[leg]}
+        halved = [0.0 if k % 4 == 0 else 0.5 * p for k, p in enumerate(carried[leg])]
+        books[leg] = {"carried": carried, "no_borrow": carried | {leg: halved}}
         engaged[leg] = {
             funding: {limit: [k < 1 + 3 * (2 * j + f) + m for k in range(n)] for m, limit in enumerate(("gross", "net", "margin"))}
             for f, funding in enumerate(_B4_FUNDINGS)
@@ -4718,10 +4721,14 @@ def _b4_own_leg_engagement(inputs: subjects._B4LegInputs) -> dict:
 def test_the_b4_leg_engagement_counts_each_books_holding_shortfall_carry_and_limits_and_trial_58s_by_leg(name):
     inputs = _b4_leg_built_inputs()
     own = _b4_own_leg_engagement(inputs)
-    # Every book the reading counts moves its own figures: each carried book short of BTC, its twin less so, and trial
-    # 58's carry shared by both legs.
+    # Every book the reading counts moves its own figures: each carried book short of BTC, its twin less so and flat at
+    # stamps the carried book holds, both books' BTC off arm A's before the leg is held, so each cell's holding and its
+    # differing stamps part from the other funding's and from each other; and trial 58's carry shared by both legs.
     assert all(sum(own["carry_per_year"][leg]["carried"].values()) > 0 for leg in _B4_LEGS)
     assert all(own["turnover"][leg]["carried"] != own["turnover"][leg]["no_borrow"] for leg in _B4_LEGS)
+    for key in ("held_per_year", "positions_differ_per_year"):
+        assert all(own[key][leg]["carried"] != own[key][leg]["no_borrow"] for leg in _B4_LEGS)
+    assert all(own["held_per_year"][leg][f] != own["positions_differ_per_year"][leg][f] for leg in _B4_LEGS for f in _B4_FUNDINGS)
     assert all(v > 0 for v in own["context_carry_by_leg"].values())
 
     assert subjects._b4_leg_engagement(inputs) == own
