@@ -391,7 +391,7 @@ def _b4_ratio_legs_verdict(m: dict) -> str | None:
 - **Park** names its variant candidates in the record — ETH/BTC alone, and the symmetric legs — each a new trial of the shared budget, put to the owner through T0016.
 - **Reject** archives the hypothesis in the record and the decisions log.
 - **No verdict** — a pre-flight stop, the rule's stop under `--register`, or a refused build — spends no trial; T0016 records what failed.
-- After any verdict, B4's next step — a park variant, a further leg, or closing the family — is the owner's family call, carried as T0016's B4 arm and recorded as a `[iter-NNN] B4's next step after trial 1` entry. T0016 records the §10 wiring delivered (D6) in the record's topic commit.
+- After any verdict, B4's next step — a park variant, a further leg, or closing the family — is the owner's family call, carried as T0016's B4 arm and recorded as a `[iter-NNN] B4's next step after trial 1` entry. T0016 records the §10 wiring delivered (D6) in the branch's topic commit, whatever the outcome.
 
 ## Out of scope
 
