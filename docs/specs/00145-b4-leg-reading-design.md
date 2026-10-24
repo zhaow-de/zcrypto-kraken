@@ -336,7 +336,7 @@ Trial 1 added both ratio legs to the A2 ensemble at once and recorded one book: 
 - **The loop's pick (Decision: 1 of the `[iter-190]` pick entry)**, under the owner's run instruction, among four:
   1. **A no-slot reading of trial 58's books by leg and by cost** — each leg alone on the A2 ensemble, as trial 58 costed it and as its borrow-free twin, and trial 58's arm B taken apart into its gross, its trading cost and its carry; it screens the untried variants before a slot is spent, as iter-186 did for B2, and spends none of bucket B's 12. Chosen.
   2. **Trial 2 on ETH/BTC alone** — the author's park variant of spec 00144; one slot, with no evidence that ETH/BTC carries what trial 1 lost.
-  3. **Trial 2 on the symmetric legs** — short the pairs as well, at an ETH or SOL borrow of 0.0004 per 4h (about 88 % a year) on any shortfall, where trial 1's BTC carry already took about as much as the legs earned gross; one slot.
+  3. **Trial 2 on the symmetric legs** — short the pairs as well, at an ETH or SOL borrow of 0.0004 per 4h (about 88 % a year) on any shortfall, where trial 1's BTC carry, `carry_per_year` summed, was 0.0831 of NAV over the window beside its head-to-head of −4.700758514095985e-06/bar from the first ratio weight; one slot.
   4. **Closing B4** — the owner's call, never the loop's.
 - The reading closes nothing: whatever it reads, B4 stays open, and a close is the owner's (D7).
 
