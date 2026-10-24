@@ -566,7 +566,7 @@ def test_the_budgets_and_buckets_are_the_master_plans_literals():
         "changes this literal and quotes the ruling"
     )
     assert budget.BUDGET == {"A": 40, "B": 25, "C": 10}, growth
-    assert budget.BUCKET_OF == {"A1": "A", "B1": "B", "B2": "B", "P1": None}, growth
+    assert budget.BUCKET_OF == {"A1": "A", "B1": "B", "B2": "B", "B4": "B", "P1": None}, growth
     assert {bucket for bucket in budget.BUCKET_OF.values() if bucket is not None} <= set(budget.BUDGET), growth
 
 
