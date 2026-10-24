@@ -410,3 +410,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #757 | 2026-10-23 | feat(research): iter-187 — B2 trial 8: liquidation de-risk at 3.0 | iter-187 | 00143 | T0023 |
 | #758 | 2026-10-23 | docs(research): iter-188 — B2 closed; T0023 resolved, B4-legs next | iter-188 | — | T0023 |
 | #759 | 2026-10-24 | feat(research): iter-189 — B4 trial 1: the ratio legs on A2 | iter-189 | 00144 | T0016 |
+| #760 | 2026-10-24 | feat(research): iter-190 — B4 leg reading: each leg alone and by cost | iter-190 | 00145 | T0016 |
