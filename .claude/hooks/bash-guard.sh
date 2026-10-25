@@ -39,6 +39,11 @@
 # variable or a substitution leave it unknown, a relative `cd` after them keeps it so, and the vaulted-file and memo
 # families read an unknown directory as the payload's `cwd`. Scope is not tracked, so a `cd` outlives its subshell.
 #
+# The consumers family refuses a redirect to `/dev/null` on a stage naming `consumers.sh` as any word unless
+# `reads_consumers` admits its program: a read through a program it does not name is refused with the runs, the safe
+# direction. Outside: a reader that runs it (`git bisect run`), the script on stdin (`bash < consumers.sh`,
+# `cat consumers.sh | bash`), a target through a variable, a group's `} 2>/dev/null`, `2>&-`.
+#
 # Outside the memo family: every writer its corpus does not refuse -- a wrapper (`sudo tee`), a glob or a brace, a
 # path a variable holds whole, an interpreter, `awk -i inplace`, `rsync`, `ln`, `dd`, `rm`.
 #
@@ -129,6 +134,11 @@ SEQUENCE = re.compile(r"(-?\d+|[A-Za-z])\.\.(-?\d+|[A-Za-z])(?:\.\.(-?\d+))?")
 VAULT_REMEDY = (
     "A vaulted value is read by `vault_var` through command substitution, never printed; a header or a count by "
     "`grep -c`, `sha256sum`, `wc`, `stat`, `ls` or `git log --`."
+)
+CONSUMERS = "consumers.sh"
+CONSUMERS_READERS = PRINTERS | GREPS | {"ls", "git", "shellcheck", "wc", "diff", "cmp", "stat", "file", "sha256sum"}
+CONSUMERS_REMEDY = (
+    "consumers.sh speaks a refusal on stderr: send it to a file (`2> <file>`) and read the file before the list is used."
 )
 MEMO = [".local", "memo.md"]
 MEMO_REMEDY = (
@@ -955,6 +965,26 @@ def judge_memo(words, raw, where):
         refuse_memo(spelled(words), hit, how, raw)
 
 
+def reads_consumers(words):
+    p, rest = argv_of(words)
+    options = []
+    for w in rest:
+        if not w.startswith("-"):
+            break
+        options.append(w)
+    return p in CONSUMERS_READERS or (p in ("bash", "sh") and "-n" in options)
+
+
+def judge_consumers(words, raw):
+    if not any(posixpath.basename(w) == CONSUMERS for w in words) or reads_consumers(words):
+        return
+    if any(target == "/dev/null" for _, target in words.outputs):
+        refuse(
+            f"`{spelled(words)}` names {CONSUMERS} under no reader the guard knows, a stream sent to /dev/null; in `{raw}`. "
+            f"{CONSUMERS_REMEDY} A read of the script takes `cat`, `grep`, `ls`, `git` or `bash -n`, or no redirect."
+        )
+
+
 def is_gh(w):
     return w == "gh" or (w.endswith("/gh") and not ASSIGN.match(w))
 
@@ -1284,6 +1314,7 @@ try:
             judge(words)
             judge_vault(words, raw, here or cwd)
             judge_memo(words, raw, here or cwd)
+            judge_consumers(words, raw)
             if agent:
                 judge_agent(words, here, raw, call.get("session_id"))
             stages.append((words, here or cwd))

@@ -9,6 +9,7 @@ No subagents, no agent tools; everything runs as plain blocking commands, nothin
 - No `ansible-playbook` run that executes tasks or connects to a host, `--check` included: this workstation is the fleet host `zcrypto-ops`, and `localhost` is a live venue-facing node. A role is proven through the test helpers' renders; the commit gate's ansible-lint syntax check parses only and is allowed.
 - A script's options are read from its argparse with `sed -n` or `python -c`, never by running it with `--help` when its argv is a query or a run.
 - The dispatch's scratch lives under the worktree's `.tmp/<role>/`, its own directory, pytest's through `--basetemp=.tmp/<role>/pt`, never the session's shared scratchpad, and the dispatch removes only what it created there before the report; a process the dispatch starts is stopped before the report, by its PID read from the process tree — never by a pattern the stopping command's own argv carries — and the report names the `pgrep` read before and after.
+- No network call: no `git fetch` or `git pull` (a `--dry-run` fetch contacts the remote all the same), no `gh`, no endpoint. The merge base is the local `origin/develop`; a check that wants a fresher ref reports that instead.
 
 ## The tests
 
