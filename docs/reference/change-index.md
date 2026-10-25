@@ -413,3 +413,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #760 | 2026-10-24 | feat(research): iter-190 — B4 leg reading: each leg alone and by cost | iter-190 | 00145 | T0016 |
 | #761 | 2026-10-25 | feat(research): iter-191 — B4 trial 2: SOL/BTC no-borrow on rolling | iter-191 | 00146 | T0016 |
 | #762 | 2026-10-25 | feat(research): iter-192 — B3 trial 1: the rank tilt on the A2 ensemble | iter-192 | 00147 | T0016 |
+| #764 | 2026-10-25 | feat(research): iter-193 — B3 trial 2: the rank tilt on a 90-day score | iter-193 | 00148 | T0016 |
