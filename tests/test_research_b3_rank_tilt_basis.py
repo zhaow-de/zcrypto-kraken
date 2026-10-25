@@ -71,7 +71,6 @@ def test_the_rank_tilt_inputs_reproduce_the_measured_basis_and_record_58s_arm_a(
     block = reader.block()
     assert compute_hash(block) == BLOCK == _trials()[49]["dataset_hash"] and reader.vouched_status() == VOUCHED
     assert len(inputs.close) == RETURN_INDICES
-    # Arm A is record 58's: its ten EUR files, and its turnover to the last bit.
     record = _trials()[58]
     assert block["ohlc-full"]["files"] == {p: h for p, h in record["datasets"]["ohlc-full"]["files"].items() if "/EUR/" in p}
     assert book_turnover(inputs.arm_a) == record["metrics"]["turnover_a"]

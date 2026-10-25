@@ -49,10 +49,9 @@ def rank_tilt(
     strength: float,
     floor: int,
 ) -> tuple[dict[str, float], int, int]:
-    """The basket — every asset with a weight above 0 and a score — ranked, and when it holds `floor` assets or more,
-    each of its longs' weights, a direction above 0, times `1 + strength * z`, rescaled to their untilted sum; every
-    other weight as it is, and below the floor or with fewer than 2 longs the weights themselves, a single long's
-    rescale being its own weight. Returns the weights, the basket's size and the count of longs tilted."""
+    """The basket — every asset with a weight above 0 and a score — ranked; at `floor` assets or more and 2 longs or more,
+    each long's weight times `1 + strength * z`, rescaled to the longs' untilted sum, every other weight as it is;
+    otherwise the weights themselves. Returns the weights, the basket's size and the count of longs tilted."""
     basket = [a for a, w in weights.items() if w > 0 and scores[a] is not None]
     if len(basket) < floor:
         return weights, len(basket), 0

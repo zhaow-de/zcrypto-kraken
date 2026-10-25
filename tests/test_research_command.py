@@ -5587,7 +5587,7 @@ def test_the_b3_arms_agree_bit_for_bit_until_the_tilt_first_moves_a_position(mon
 def test_the_b3_inputs_build_arm_a_untilted_and_arm_b_tilted_each_through_the_limits(name):
     reads = _b3_short_reads()
     own = _b3_own_books(*reads)
-    # The short union moves the tilt: each arm tilts 2 longs or more at some stamp, so arm B differs from arm A.
+    # Non-vacuity: the fixture tilts every arm, so the equalities below compare moved books.
     assert all(max(counts) >= 2 for counts in own["tilted"].values()) and own["limited_b"][0] != own["limited_a"][0]
 
     inputs = subjects._b3_inputs(reads)
