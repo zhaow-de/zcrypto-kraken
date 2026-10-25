@@ -5549,8 +5549,9 @@ def _b3_own_books(h4_ts: list[datetime], h4_prices: dict) -> dict:
 
 
 def _b3_short_reads(n: int = 480) -> tuple[list[datetime], dict]:
-    """A 480-stamp union of the ten assets, BTC missing one stamp, SOL listing at 250 and AVAX at 330: the basket holds
-    exactly 8 from return index 180 to 429 and 9 after it."""
+    """A 480-stamp union of the ten assets, BTC missing one stamp, DOT listing at 120, SOL at 250 and AVAX at 330: the
+    basket holds exactly 7 from return index 180 to 299, 8 from 300 to 429 and 9 after it, so arm A holds untilted
+    positions from 181 and the tilt first moves one at 300."""
     h4_ts = [datetime(2017, 1, 1, tzinfo=UTC) + timedelta(hours=4 * k) for k in range(n)]
     h4_prices = {
         a: [
@@ -5560,6 +5561,7 @@ def _b3_short_reads(n: int = 480) -> tuple[list[datetime], dict]:
         for i, a in enumerate(_B2_ASSETS)
     }
     h4_prices["BTC"][300] = None
+    h4_prices["DOT"][:120] = [None] * 120
     h4_prices["SOL"][:250] = [None] * 250
     h4_prices["AVAX"][:330] = [None] * 330
     return h4_ts, h4_prices
