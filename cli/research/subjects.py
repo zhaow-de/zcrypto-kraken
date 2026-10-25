@@ -4489,8 +4489,8 @@ _B3_PREFLIGHT_KEYS = (
 )
 
 
-# docs/specs/00148 D2-D8: B3's trial 2, trial 1's tilt on a 540-close momentum score, its strength and floor trial 1's:
-# trial 1's reads, metrics, engagement and rule, trial 58's arm A, limits, costing and bar.
+# docs/specs/00148 D2-D8: B3's trial 2, trial 1's tilt on a 540-close score; trial 1's ensemble, inputs and build
+# copied, not parameterised, since record 60's replay reads them unchanged.
 _B3_SLOW_SCORE_LOOKBACK = 540  # docs/specs/00148 D3: M, 90 days of 4h closes; another value is a new trial
 _B3_SLOW_N_TRIALS = 2  # docs/specs/00148 D7: B3's true count with this trial, fixed by the spec's hash; another is a new subject
 
@@ -4522,7 +4522,7 @@ def _b3_slow_ensemble(
 
 
 def _b3_slow_inputs(reads: tuple[list[datetime], dict[str, list[float | None]]]) -> _B3Inputs:
-    """`_b3_inputs` with arm B on the 540-close score: both arms' positions and the returns, and no return of a book."""
+    """`_b3_inputs` with arm B on the 540-close score."""
     h4_ts, h4_prices = reads
     fed = _ffill_btc(h4_prices)
     arm_a, engaged_a = _b4_limited(_b4_ensemble(fed))

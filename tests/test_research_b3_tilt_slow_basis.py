@@ -1,5 +1,4 @@
-"""B3 trial 2's inputs half against spec 00148's measured basis: positions, the ranked basket, the tilted closes, the
-limits and turnover, and no return of a book."""
+"""B3 trial 2's inputs half against spec 00148's measured basis."""
 
 from __future__ import annotations
 
@@ -68,7 +67,6 @@ ENGAGEMENT = {
 
 
 def trial_inputs():
-    """The trial's inputs half over the real set, with the reader that read it."""
     reader = ObservedReader(_DATA_ROOT)
     return reader, subjects._b3_slow_inputs(subjects._b3_reads("b3-tilt-slow", reader, "ohlc-full", None, False))
 

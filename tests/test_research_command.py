@@ -5892,9 +5892,7 @@ def test_a_b3_slow_subject_reads_through_trial_1s_reads_builds_its_own_inputs_an
 
 
 def _b3_slow_short_reads(n: int = 640) -> tuple[list[datetime], dict]:
-    """A 640-stamp union of the ten assets, BTC missing one stamp, DOT listing at 20, SOL at 250 and AVAX at 330: on a
-    540-close score the basket holds exactly 7 from return index 540 to 559 and 8 from 560, where the tilt first moves a
-    position."""
+    """Ten assets over 640 stamps whose 540-close basket reaches the tilt's floor of 8 only from return index 560."""
     h4_ts = [datetime(2017, 1, 1, tzinfo=UTC) + timedelta(hours=4 * k) for k in range(n)]
     h4_prices = {
         a: [
