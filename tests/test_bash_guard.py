@@ -1124,7 +1124,7 @@ def test_a_consumers_stage_sent_to_dev_null_is_blocked_with_the_remedy(tmp_path:
 
 
 @pytest.mark.parametrize("command", CONSUMERS_ADMITTED)
-def test_a_consumers_stage_whose_stderr_reaches_a_file_is_admitted_silently(tmp_path: Path, command: str):
+def test_a_stage_not_naming_consumers_or_sending_its_stderr_to_a_file_is_admitted_silently(tmp_path: Path, command: str):
     r = run_hook(call(command), cwd=tmp_path)
     assert r.returncode == 0, r.stderr
     assert r.stderr == "" and r.stdout == ""
