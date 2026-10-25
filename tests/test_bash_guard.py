@@ -965,6 +965,20 @@ def git_dir(checkout: str | Path) -> Path:
     )
 
 
+CONSUMERS_SILENCED = [
+    "bash infra/scripts/consumers.sh --direct cli/x.py 2>/dev/null",
+    "infra/scripts/consumers.sh cli/x.py 2>/dev/null | sort -u",
+    "bash infra/scripts/consumers.sh --direct cli/x.py 2>/dev/null | sort -u > .tmp/T.txt",
+    "mkdir -p .tmp && bash infra/scripts/consumers.sh --direct cli/x.py >/dev/null 2>&1",
+    "cd /x && bash infra/scripts/consumers.sh --direct cli/x.py 2> /dev/null",
+    "T=$(bash infra/scripts/consumers.sh --direct cli/x.py 2>/dev/null)",
+]
+CONSUMERS_ADMITTED = [
+    "bash infra/scripts/consumers.sh --direct cli/x.py 2> .tmp/err.txt | sort -u",
+    "bash infra/scripts/consumers.sh --direct cli/x.py",
+    "uv run pytest tests/x.py -q 2>/dev/null",
+    "ls 2>/dev/null; bash infra/scripts/consumers.sh cli/x.py",
+]
 STAMP_NAME = "zcrypto-git-state-stamp"
 # The checkouts the corpus's admitted `git commit`s stamp for the runs-alone arm: the cases run one at a time across
 # xdist workers, each with those stamps gone, or the next admitted commit within 3 s is refused.
@@ -1098,6 +1112,22 @@ def test_stdin_that_is_not_the_call_admits_with_a_note(tmp_path: Path, payload: 
     assert r.stdout == ""
     assert "bash-guard: NOTE" in r.stderr
     assert "unjudged" in r.stderr
+
+
+@pytest.mark.parametrize("command", CONSUMERS_SILENCED)
+def test_a_consumers_stage_sent_to_dev_null_is_blocked_with_the_remedy(tmp_path: Path, command: str):
+    r = run_hook(call(command), cwd=tmp_path)
+    assert r.returncode == 2, r.stderr
+    assert "BLOCKED" in r.stderr and "/dev/null` silences consumers.sh" in r.stderr, r.stderr
+    assert "send it to a file" in r.stderr
+    assert r.stdout == ""
+
+
+@pytest.mark.parametrize("command", CONSUMERS_ADMITTED)
+def test_a_consumers_stage_whose_stderr_reaches_a_file_is_admitted_silently(tmp_path: Path, command: str):
+    r = run_hook(call(command), cwd=tmp_path)
+    assert r.returncode == 0, r.stderr
+    assert r.stderr == "" and r.stdout == ""
 
 
 def test_a_call_with_no_command_is_admitted_silently(tmp_path: Path):
