@@ -978,6 +978,11 @@ CONSUMERS_ADMITTED = [
     "bash infra/scripts/consumers.sh --direct cli/x.py",
     "uv run pytest tests/x.py -q 2>/dev/null",
     "ls 2>/dev/null; bash infra/scripts/consumers.sh cli/x.py",
+    # a read or a check of the script, not a run of it
+    "ls infra/scripts/consumers.sh 2>/dev/null",
+    "git diff --quiet -- infra/scripts/consumers.sh 2>/dev/null",
+    "bash -n infra/scripts/consumers.sh 2>/dev/null",
+    "grep -n direct_readers infra/scripts/consumers.sh >/dev/null && echo yes",
 ]
 STAMP_NAME = "zcrypto-git-state-stamp"
 # The checkouts the corpus's admitted `git commit`s stamp for the runs-alone arm: the cases run one at a time across
@@ -1118,13 +1123,13 @@ def test_stdin_that_is_not_the_call_admits_with_a_note(tmp_path: Path, payload: 
 def test_a_consumers_stage_sent_to_dev_null_is_blocked_with_the_remedy(tmp_path: Path, command: str):
     r = run_hook(call(command), cwd=tmp_path)
     assert r.returncode == 2, r.stderr
-    assert "BLOCKED" in r.stderr and "/dev/null` silences consumers.sh" in r.stderr, r.stderr
+    assert "BLOCKED" in r.stderr and "sends a stream of consumers.sh, which it runs, to /dev/null" in r.stderr, r.stderr
     assert "send it to a file" in r.stderr
     assert r.stdout == ""
 
 
 @pytest.mark.parametrize("command", CONSUMERS_ADMITTED)
-def test_a_command_with_no_dev_null_redirect_on_a_consumers_stage_is_admitted_silently(tmp_path: Path, command: str):
+def test_a_command_that_sends_no_run_of_consumers_to_dev_null_is_admitted_silently(tmp_path: Path, command: str):
     r = run_hook(call(command), cwd=tmp_path)
     assert r.returncode == 0, r.stderr
     assert r.stderr == "" and r.stdout == ""
