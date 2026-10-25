@@ -2,29 +2,29 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task: a fresh implementer per task and a fresh reviewer before the next, the controller's steps the Global Constraints' executors line names aside. Steps use checkbox (`- [ ]`) syntax for tracking. `zcrypto-plan-review` reviews this plan with its spec before Task 1, at the tier its tasks' paths decide: `full` (measured: `uv run python infra/scripts/tier.py --paths cli/alpha/b3.py tests/test_alpha_b3.py cli/research/subjects.py cli/registry/budget.py tests/test_research_command.py tests/test_trial_registry_provenance.py README.md tests/slow-cases.txt tests/test_research_b3_rank_tilt_basis.py docs/research/10.phase4-decisions.md docs/reference/trial-registry.jsonl docs/reference/reading-ledger.jsonl docs/open-topics/T0016-bucket-b-c-alpha-families.md docs/open-topics/T0123-sleeve-promotion-path.md docs/open-topics/README.md docs/reference/change-index.md docs/specs/00147-b3-rank-tilt-design.md docs/plans/00147-b3-rank-tilt.md` prints `tier: full`, for `tests/test_alpha_b3.py` and `tests/test_research_command.py` "a test importing cli.alpha", `cli/registry/budget.py` "under cli/registry/", `tests/test_trial_registry_provenance.py` "a test importing cli.registry", `tests/test_research_b3_rank_tilt_basis.py` "a test importing cli.alpha.b1" once Task 3 has created it, and `docs/reference/trial-registry.jsonl`).
 
-**Goal:** B3's trial 1 (spec 00147) — the adopted A2-4h ensemble with each arm's inverse-vol weights of the assets it holds long tilted at every close by their rank on the trailing 180-close simple return, against the untilted ensemble, on frozen `ohlc-full`: a compute module `cli/alpha/b3.py`; two research subjects in `cli/research/subjects.py`, the trial and its evaluate-only pre-flight twin; the family key `B3` in `cli/registry/budget.py`'s bucket B; the data-gated test of their inputs half; the loop's pick and the trial's conventions in the decisions log before the hash; the trial run through spec 00133's trial-attempts log, its verdict or stop in the registry and the decisions log; then T0016, B3's next step the owner's.
+**Goal:** B3's trial 1 (spec 00147) — the adopted A2-4h ensemble with each arm's inverse-vol weights of the assets it holds long tilted at every close by their rank in the whole basket on the trailing 180-close simple return, where the basket ranks 8 assets or more, against the untilted ensemble, on frozen `ohlc-full`: a compute module `cli/alpha/b3.py`; two research subjects in `cli/research/subjects.py`, the trial and its evaluate-only pre-flight twin; the family key `B3` in `cli/registry/budget.py`'s bucket B; the data-gated test of their inputs half; the loop's pick and the trial's conventions in the decisions log before the hash; the trial run through spec 00133's trial-attempts log, its verdict or stop in the registry and the decisions log; then T0016, B3's next step the owner's.
 
-**Architecture:** `cli/alpha/b3.py` holds pure functions over lists, as `cli/alpha/b4.py` does — the momentum score, the centred ranks, the tilt at one close, and `b3_book_returns`, `a2_book_returns`' body with each close's weights passed through the tilt — importing A2's helpers and editing none. `cli/research/subjects.py` gains three insertions and changes no existing line: the module's import, the B3 block before `SUBJECTS` — `_B3_SCORE_LOOKBACK`, `_B3_STRENGTH`, `_B3_N_TRIALS`, `_B3Inputs`, the build in three halves (`_b3_reads`, `_b3_inputs`, `_b3_metrics` / `_b3_preflight_metrics`), `_b3_ensemble`, `_b3_first_engaged`, `_b3_engagement`, `_b3_build`, the two builders, the rule `_b3_rank_tilt_verdict` and the key sets — and two `SUBJECTS` entries; trial 58's `_b4_ensemble`, `_b4_limited`, `_b4_net` and `_b4_arm_a_bar` are read as they are. `cli/registry/budget.py`'s `BUCKET_OF` gains `"B3": "B"`. Nothing writes a dataset.
+**Architecture:** `cli/alpha/b3.py` holds pure functions over lists, as `cli/alpha/b4.py` does — the momentum score, the centred ranks, the tilt at one close (the basket ranked, the floor, the longs tilted), and `b3_book_returns`, `a2_book_returns`' body with each close's weights passed through the tilt — importing A2's helpers and editing none. `cli/research/subjects.py` gains three insertions and changes no existing line: the module's import, the B3 block before `SUBJECTS` — `_B3_SCORE_LOOKBACK`, `_B3_STRENGTH`, `_B3_FLOOR`, `_B3_N_TRIALS`, `_B3Inputs`, the build in three halves (`_b3_reads`, `_b3_inputs`, `_b3_metrics` / `_b3_preflight_metrics`), `_b3_ensemble`, `_b3_first_engaged`, `_b3_engagement`, `_b3_build`, the two builders, the rule `_b3_rank_tilt_verdict` and the key sets — and two `SUBJECTS` entries; trial 58's `_b4_ensemble`, `_b4_limited`, `_b4_net` and `_b4_arm_a_bar` are read as they are. `cli/registry/budget.py`'s `BUCKET_OF` gains `"B3": "B"`. Nothing writes a dataset.
 
 **Tech Stack:** Python 3.14 through uv; polars; pytest with typer's `CliRunner`; `infra/scripts/mutate-probe.sh`, `infra/scripts/consumers.sh`, `infra/scripts/tier.py`, `infra/scripts/topics-index.py`.
 
-**Spec:** `docs/specs/00147-b3-rank-tilt-design.md` — binding; D1–D10 are cited by name and the values below are copied from it. It reads spec 00144's arm A, limits, costing and bar, frozen by record 58's `spec_hash`. **Iteration:** iter-192. **Topic:** T0016, its B3 arm. **Branch:** `research/iter-192-b3-rank-tilt`, worktree `.claude/worktrees/iter192`, `data/ohlc-full` linked read-only from the main checkout, and no other set. A choice this plan makes that the spec leaves open is marked **Author's call**. Every code fence below was cut from the files the author ran: Tasks 1–3's code and tests were written in this worktree beside the staged spec, then carried, task by task, into a detached scratch worktree at the base whose spec placeholder was committed first; Task 1's tests measured red there against the base (`1 error` at collection) and green with the module (`21 passed`); Task 2's new cases red against Task 1's tree (`28 failed, 877 deselected`, and the budgets literal `1 failed`) and green with Task 2's code (`28 passed, 895 deselected`), the shared rows the two subjects add green (`19 passed, 904 deselected in 114.32s`); Task 2 step 7's four gate parts green; Task 3's data-gated case `1 passed` with a call of 137.46 s on the authoring tree; the slow cases timed; Task 1's 28 and Task 2's 60 probe rows run in that worktree, each task's tree committed there, 88 of 88 `KILLED`; on Task 3's tree committed there, with `ohlc-full` linked, Task 4 step 4's data test and fixture rows (`3 passed in 169.54s`) and record 58's replay (`1 passed in 310.56s`), Task 3's two decisions-log entries appended and run through the decisions-log tests, Task 4's pre-flight check run over a synthetic pre-flight print carrying the real block, and Task 6's T0016 edits and index tried on each outcome's arm, then reverted. The fences applied to the base as the steps say reproduce every authoring file; the files were restored to the base before this plan was committed. Not run: any `zcrypto research eval` of the two subjects (Tasks 4–5), the record's check program beyond a parse, the record's replay and the literal's probe (Task 5), the topic edits as committed (Task 6) and the PR (Task 7).
+**Spec:** `docs/specs/00147-b3-rank-tilt-design.md` — binding; D1–D10 are cited by name and the values below are copied from it. It reads spec 00144's arm A, limits, costing and bar, frozen by record 58's `spec_hash`. **Iteration:** iter-192. **Topic:** T0016, its B3 arm. **Branch:** `research/iter-192-b3-rank-tilt`, worktree `.claude/worktrees/iter192`, `data/ohlc-full` linked read-only from the main checkout, and no other set. A choice this plan makes that the spec leaves open is marked **Author's call**. This version amends the first (commit `b50ebeefd`) with the spec's amendment — the basket ranked, the floor 8, the longs tilted — every fence, literal, test and probe row the amendment reaches re-cut and re-run. Every code fence below was cut from the files the author ran: Tasks 1–3's code and tests were written in this worktree beside the staged spec, then carried, task by task, into a detached scratch worktree at the first plan commit, `b50ebeefd`, its spec tracked; Task 1's tests measured red there against the base module (`1 error` at collection) and green with the module (`23 passed`); Task 2's new cases red against Task 1's tree (`28 failed, 877 deselected`, and the budgets literal `1 failed`) and green with Task 2's code (`28 passed, 895 deselected`), the shared rows the two subjects add green (`19 passed, 904 deselected in 114.86s`); Task 2 step 7's four gate parts green; Task 3's data-gated case `1 passed` with a call of 134.75 s on the authoring tree; the slow cases timed; Task 1's 36 and Task 2's 63 probe rows run in that worktree, each task's tree committed there, 99 of 99 `KILLED`; on Task 3's tree committed there, with `ohlc-full` linked, Task 4 step 4's data test and fixture rows (`3 passed in 169.55s`) and record 58's replay (`1 passed in 301.39s`), Task 3's two decisions-log entries appended and run through the decisions-log tests, Task 4's pre-flight check run over a synthetic pre-flight print carrying the real block, and Task 6's T0016 edits and index tried on each outcome's arm, then reverted. The fences applied to the base as the steps say reproduce every authoring file; the files were restored to the base before this plan was committed. Not run: any `zcrypto research eval` of the two subjects (Tasks 4–5), the record's check program beyond a parse, the record's replay and the literal's probe (Task 5), the topic edits as committed (Task 6) and the PR (Task 7).
 
 ## Global Constraints
 
-- **The books and the costing** (D2–D5): the union `_capturing_union(reader, dataset, 240, window, None, accept_holes)` of the ten EUR assets, no other pair, refused before any book below `_DECISIVE_START` + 2 return indices or with no return index closing outside the stub years, and `--as-of` refused before any read; arm A `_b4_limited(_b4_ensemble(fed))`, arm B `_b4_limited(<the mean of the three arms' b3_book_returns positions>)`, `fed = _ffill_btc(h4_prices)`, the three adopted arms `_B2_A2_ARMS` at `short="off"`, vol and basket lookback 180, 2,190 periods a year, each arm's book `b3_book_returns(fed, config=<its A2Config>, score_lookback=180, strength=0.5)`; the tilt at a close: the ranked assets — an inverse-vol weight above 0, a direction above 0 and a score — each weight times `1 + 0.5·z`, `z = (2·rank − (n + 1)) / (n − 1)` the centred ascending rank of `p[k] / p[k − 180] − 1`, ties at their average rank, rescaled to the ranked weights' untilted sum, fewer than 2 ranked untilted; every book costed by `_b4_net(positions, returns, stress=…)`, `returns = {a: _asset_returns(fed[a])}`, no carry; §10's limits through `_b4_limited`, one factor per bar.
-- **The bars** (D7): every `a1_kill_bar` call `n_trials=1, var_trials=0.0, mean_block=<30 or 102>, seed=<42, 7 or 1234>, cost_stressed_returns=<×1.5 series>, regime_slices=calendar_year_slices(<series>, h4_ts), benchmark_slices=calendar_year_slices(bench, h4_ts), decisive_start=1380, n_resamples=2000`, `bench = benchmark_4h_net_of_cost(h4_prices, cost_per_side=0.006)`, the headline (30, 42); arm A's bar `_b4_arm_a_bar` at (30, 42); the head-to-heads `net_of_cost_verdict(net_b[first:], net_a[first:], mean_block=30, seed=42, n_resamples=2000)` at `first` 0 and at the tilt's first engagement, `tilt_first_engaged`, the first return index at which arm B's positions differ from arm A's (573); refused before any bar: fewer than 2 return indices from the first engagement.
+- **The books and the costing** (D2–D5): the union `_capturing_union(reader, dataset, 240, window, None, accept_holes)` of the ten EUR assets, no other pair, refused before any book below `_DECISIVE_START` + 2 return indices or with no return index closing outside the stub years, and `--as-of` refused before any read; arm A `_b4_limited(_b4_ensemble(fed))`, arm B `_b4_limited(<the mean of the three arms' b3_book_returns positions>)`, `fed = _ffill_btc(h4_prices)`, the three adopted arms `_B2_A2_ARMS` at `short="off"`, vol and basket lookback 180, 2,190 periods a year, each arm's book `b3_book_returns(fed, config=<its A2Config>, score_lookback=180, strength=0.5, floor=8)`; the tilt at a close: the basket — every asset with an inverse-vol weight above 0 and a score, whatever its direction, n of them — ranked, `z = (2·rank − (n + 1)) / (n − 1)` the centred ascending rank of `p[k] / p[k − 180] − 1`, ties at their average rank; where n ≥ 8, each long's — a direction above 0 — weight times `1 + 0.5·z`, the longs rescaled to their untilted sum, the flat assets untouched; below 8, or with fewer than 2 longs, every weight untilted; every book costed by `_b4_net(positions, returns, stress=…)`, `returns = {a: _asset_returns(fed[a])}`, no carry; §10's limits through `_b4_limited`, one factor per bar.
+- **The bars** (D7): every `a1_kill_bar` call `n_trials=1, var_trials=0.0, mean_block=<30 or 102>, seed=<42, 7 or 1234>, cost_stressed_returns=<×1.5 series>, regime_slices=calendar_year_slices(<series>, h4_ts), benchmark_slices=calendar_year_slices(bench, h4_ts), decisive_start=1380, n_resamples=2000`, `bench = benchmark_4h_net_of_cost(h4_prices, cost_per_side=0.006)`, the headline (30, 42); arm A's bar `_b4_arm_a_bar` at (30, 42); the head-to-heads `net_of_cost_verdict(net_b[first:], net_a[first:], mean_block=30, seed=42, n_resamples=2000)` at `first` 0 and at the tilt's first engagement, `tilt_first_engaged`, the first return index at which arm B's positions differ from arm A's (15,672); refused before any bar: fewer than 2 return indices from the first engagement.
 - **The count** (D7): `_B3_N_TRIALS = 1`, `required_n("B3")` as the spec measured it, fixed by the spec's hash; at `var_trials` 0.0 the DSR leg is the PSR against 0.
 - **The rule** (D7): `_b3_rank_tilt_verdict` — `None` when `arm_a_passes` is 0 or `stamps_positions_differ` is 0, `reject` on a failed bar, `adopt` on `head_to_head_mean_outperf_primary > 0` with `head_to_head_spa_p_primary < 0.05`, `park` on the first with the p at or above 0.05, `reject` otherwise; the park variants the tilt at another `M` or `k` and the A1-short BTC overlay.
 - **The record** (D8): family `B3`; `n_trials_in_family` 1; variant `B3-rank-tilt-a2eq-full-v1`; iteration `iter-192`; seeds (42, 7, 1234); 44 metric keys; the block `ff2e5700695b3fbc9e077a3d4bc2c4618720f61cd9c1a024430fbf7501719a69`; no `--verdict`.
 - **The pre-flight read** (D9), in this order: (a) the block and `ohlc-full`'s vouched status (Task 3's `BLOCK` and `VOUCHED`); (b) arm A's seven anchors record 58's stored figures to the last digit — `arm_a_ann_sharpe_noc`, `arm_a_ann_sharpe_noc_decisive`, `arm_a_max_drawdown_full` against its `arm_a_max_drawdown`, `turnover_a`, `benchmark_ann_sharpe_noc`, `benchmark_ann_sharpe_noc_decisive`, and `arm_a_spot_drag_pct_yr` against `turnover_a / 27,337 × 0.006 × 2,190`; (c) the dead knob — `stamps_positions_differ` above 0, read before the engagement; (d) the engagement the measured basis's — Task 3's `ENGAGEMENT`; (e) arm A's `passes` 1.
 - **The hash rule** (D9): before Task 4 step 2 takes the spec's sha256, nobody reads or computes arm B's returns or net-of-cost series, a head-to-head or a bar leg of arm B — by code, a program or arithmetic over a stored figure — nor runs `b3-rank-tilt` or `b3-rank-tilt-preflight` over the real set; weights, ranks, positions, exposures, limit engagement and turnover are allowed — what the data-gated test (Task 3) computes, and no return of a book. `a2_book_returns` and `b3_book_returns` compute each book's base returns, and from them its uncosted `net_returns` and `metrics`, internally on every call that sizes its positions; nothing reads them. No reader, reviewer or plan-review dispatch runs either subject over the real set before the hash, and every read's dispatch carries this rule. No return of arm B is computed over the real data before the trial's `--register` run, and the trial subject is never run as a plain eval; after it, only by its replay case in `tests/test_registry_replay.py`, wherever that case runs with the set linked.
-- **Unchanged** (D8): every existing function of `cli/research/subjects.py` — trial 58's machinery among them — `cli/alpha/a1.py`, `cli/alpha/a2.py`, `cli/alpha/b4.py` and the other `cli/alpha/*` modules but the new one; `cli/features/*`, `cli/portfolio/*`, `cli/risk/*`, `cli/costs/*`, `cli/validation/*`, `cli/engine/*`; `cli/registry/*` but `BUCKET_OF`'s line; the existing subjects; any adopted artifact. After every task, from the merge base with develop (moved to develop's tip by a merge of develop), each its own call: `git diff --name-only $(git merge-base HEAD origin/develop) -- cli/` prints `cli/alpha/b3.py` from Task 1 on and `cli/registry/budget.py` and `cli/research/subjects.py` from Task 2 on, nothing else; from Task 2 on, `test "$(git diff -U0 $(git merge-base HEAD origin/develop) -- cli/research/subjects.py | grep -c '^@@')" = 3` and `test "$(git diff -U0 $(git merge-base HEAD origin/develop) -- cli/research/subjects.py | grep -c '^@@ -[0-9]*,0 ')" = 3` each exit 0 — three hunks, each a pure insertion, so a line changed or added anywhere but at Task 2 step 3's three sites is a fourth hunk or an impure one — and `git diff -U0 $(git merge-base HEAD origin/develop) -- cli/registry/budget.py | grep -c '^[-+][^-+]'` prints 2, `BUCKET_OF`'s old line and its new one. Measured on the authoring tree, `subjects.py`'s hunks: `@@ -81,0 +82 @@`, `@@ -4189,0 +4191,295 @@` and `@@ -4603,0 +4900,25 @@`. Code citations name a function, never a line.
+- **Unchanged** (D8): every existing function of `cli/research/subjects.py` — trial 58's machinery among them — `cli/alpha/a1.py`, `cli/alpha/a2.py`, `cli/alpha/b4.py` and the other `cli/alpha/*` modules but the new one; `cli/features/*`, `cli/portfolio/*`, `cli/risk/*`, `cli/costs/*`, `cli/validation/*`, `cli/engine/*`; `cli/registry/*` but `BUCKET_OF`'s line; the existing subjects; any adopted artifact. After every task, from the merge base with develop (moved to develop's tip by a merge of develop), each its own call: `git diff --name-only $(git merge-base HEAD origin/develop) -- cli/` prints `cli/alpha/b3.py` from Task 1 on and `cli/registry/budget.py` and `cli/research/subjects.py` from Task 2 on, nothing else; from Task 2 on, `test "$(git diff -U0 $(git merge-base HEAD origin/develop) -- cli/research/subjects.py | grep -c '^@@')" = 3` and `test "$(git diff -U0 $(git merge-base HEAD origin/develop) -- cli/research/subjects.py | grep -c '^@@ -[0-9]*,0 ')" = 3` each exit 0 — three hunks, each a pure insertion, so a line changed or added anywhere but at Task 2 step 3's three sites is a fourth hunk or an impure one — and `git diff -U0 $(git merge-base HEAD origin/develop) -- cli/registry/budget.py | grep -c '^[-+][^-+]'` prints 2, `BUCKET_OF`'s old line and its new one. Measured on the authoring tree, `subjects.py`'s hunks: `@@ -81,0 +82 @@`, `@@ -4189,0 +4191,301 @@` and `@@ -4603,0 +4906,25 @@`. Code citations name a function, never a line.
 - Never edit `docs/specs/00147-b3-rank-tilt-design.md` after Task 4 step 2, nor specs 00128, 00133, 00137, 00144 and 00146, nor the spec before then except a fix commit a read of Task 3 step 6 asks for; never write `docs/reference/trial-registry.jsonl` or `docs/reference/reading-ledger.jsonl`, nor run `--register` or `--reading`, except where Task 5 names it. Never `git stash`; no amend; never `--no-verify`; a state-changing git command runs alone, the probe setup below excepted.
 - **Data**: `data/ohlc-full`, a read-only link, never written under. Never `data/ohlc-holdout-*`, `/mnt/zhao-crypto/`, a fleet host, docker, `kraken-cli`, the vault, a Grafana or Kraken endpoint, or `tests/test_grafana_push_sh.py`. The trial, every test and every implementer step make no network call and no ssh connection; the controller's `git fetch origin develop` (Task 4 step 3, Task 5 step 1) and Task 7's `gh` calls, push and `merge-pr` are the exceptions. A data link is removed with `test -L <its absolute path> && unlink <its absolute path>`, never `rm`.
 - **Research only**: nothing is armed, deployed, converged, pinned, rolled out or dropped — no fleet host, image, unit, alert rule or dashboard is touched, and no step of this plan waits on a maintenance window or a converge gap.
 - **Executors**: the controller — the orchestrating session, in its own main loop, never a dispatched implementer — runs Task 3 step 6's reads, Tasks 4–5 and Task 7, since `.claude/skills/zcrypto-plan-review/references/implementer-contract.md`, carried by every task-loop dispatch, bars agent dispatches (the reads) and runs awaited in the background to a completion notification (the data test, the pre-flight, the register, the replay), and the steps around those runs gate, check or commit them. Every other step is an implementer dispatch under that contract: Tasks 1, 2 and 6 and Task 3's steps 1–5.
-- **Tests**: every pytest run is `mkdir -p .tmp/plan-00147 && uv run pytest <file>::<test> -q -p no:cacheprovider --basetemp=.tmp/plan-00147/pt` (or a file, or `-k`): every `--basetemp` under `.tmp/plan-00147/` follows `mkdir -p .tmp/plan-00147 &&` in the same command, since pytest creates the base temp's leaf and never its parents. An implementer's runs are foreground: each run that can pass 120 s is one plain blocking call with the Bash tool's `timeout` at 600000 ms, and a run that could pass 600 s is split by file, node id or `-k` selection into parts that cannot, each its own `--basetemp=.tmp/plan-00147/pt-<n>`. The controller's runs that can pass 120 s each run as one Bash call with `run_in_background: true`, acted on only at that call's completion notification: no polling, no `sleep`, one such run at a time and no other command in this worktree while it lives; its output is read from its own file after the notification. Before each commit: new files staged first, then `mkdir -p .tmp/plan-00147 && bash infra/scripts/consumers.sh --direct <each changed path> | sort -u > .tmp/plan-00147/T.txt`, never with `2>/dev/null`, whose stderr is where a refusal speaks, and `test -s .tmp/plan-00147/T.txt && uv run pytest $(cat .tmp/plan-00147/T.txt) -m "not slow and not data" -q -p no:cacheprovider --basetemp=.tmp/plan-00147/pt`, so that an empty list fails closed and never becomes a bare `uv run pytest`; a slow case run on purpose takes `ZCRYPTO_RERUN_SLOW=1`. Every file a commit carries is staged by explicit path — the registry's line by `--register`, the ledger's by `--reading` or by a stop under `--register`, among them, whose one commit is Task 5 step 6's — since the commit and the probe setup's `git write-tree` read the index while the list reads the working tree. Every list holding `tests/test_research_command.py` runs it in four parts, each one plain blocking call under `-m "not slow and not data"`, `timeout` 600000 ms, so that none can pass 600 s: `tests/test_research_command.py -k "not reentry and not b2"` (`--basetemp=.tmp/plan-00147/pt-1`, measured on Task 2's tree in the scratch worktree, `510 passed, 413 deselected in 212.12s`), `tests/test_research_command.py -k "b2 and not reentry"` (`pt-2`, measured `227 passed, 696 deselected in 311.74s`), `tests/test_research_command.py -k reentry` (`pt-3`, measured `71 passed, 852 deselected in 90.55s`) and the rest of the list, read off `.tmp/plan-00147/T.txt` with that file's line left out (`pt-4`). Every commit message carries the result line of each test command its gate ran, a run over that commit's own tree, and the two trailer lines exactly as the executing session's attribution gives them — `Co-Authored-By:` naming the model that ran the step, and `Claude-Session:`.
+- **Tests**: every pytest run is `mkdir -p .tmp/plan-00147 && uv run pytest <file>::<test> -q -p no:cacheprovider --basetemp=.tmp/plan-00147/pt` (or a file, or `-k`): every `--basetemp` under `.tmp/plan-00147/` follows `mkdir -p .tmp/plan-00147 &&` in the same command, since pytest creates the base temp's leaf and never its parents. An implementer's runs are foreground: each run that can pass 120 s is one plain blocking call with the Bash tool's `timeout` at 600000 ms, and a run that could pass 600 s is split by file, node id or `-k` selection into parts that cannot, each its own `--basetemp=.tmp/plan-00147/pt-<n>`. The controller's runs that can pass 120 s each run as one Bash call with `run_in_background: true`, acted on only at that call's completion notification: no polling, no `sleep`, one such run at a time and no other command in this worktree while it lives; its output is read from its own file after the notification. Before each commit: new files staged first, then `mkdir -p .tmp/plan-00147 && bash infra/scripts/consumers.sh --direct <each changed path> | sort -u > .tmp/plan-00147/T.txt`, never with `2>/dev/null`, whose stderr is where a refusal speaks, and `test -s .tmp/plan-00147/T.txt && uv run pytest $(cat .tmp/plan-00147/T.txt) -m "not slow and not data" -q -p no:cacheprovider --basetemp=.tmp/plan-00147/pt`, so that an empty list fails closed and never becomes a bare `uv run pytest`; a slow case run on purpose takes `ZCRYPTO_RERUN_SLOW=1`. Every file a commit carries is staged by explicit path — the registry's line by `--register`, the ledger's by `--reading` or by a stop under `--register`, among them, whose one commit is Task 5 step 6's — since the commit and the probe setup's `git write-tree` read the index while the list reads the working tree. Every list holding `tests/test_research_command.py` runs it in four parts, each one plain blocking call under `-m "not slow and not data"`, `timeout` 600000 ms, so that none can pass 600 s: `tests/test_research_command.py -k "not reentry and not b2"` (`--basetemp=.tmp/plan-00147/pt-1`, measured on Task 2's tree in the scratch worktree, `510 passed, 413 deselected in 215.21s`), `tests/test_research_command.py -k "b2 and not reentry"` (`pt-2`, measured `227 passed, 696 deselected in 314.68s`), `tests/test_research_command.py -k reentry` (`pt-3`, measured `71 passed, 852 deselected in 91.16s`) and the rest of the list, read off `.tmp/plan-00147/T.txt` with that file's line left out (`pt-4`). Every commit message carries the result line of each test command its gate ran, a run over that commit's own tree, and the two trailer lines exactly as the executing session's attribution gives them — `Co-Authored-By:` naming the model that ran the step, and `Claude-Session:`.
 - **Probes**: the tier is `full`, so each new guard — a test function, and each parametrised row a probe row names — is proven through its own node id with `infra/scripts/mutate-probe.sh`, before its commit and on the commit's own tree; never through a case `tests/slow-cases.txt` lists, whose commit records `probe skipped: slow case` with its node id. After the gate, with the task's files staged, as one call:
 
 ```bash
@@ -101,49 +101,77 @@ def test_centred_ranks_refuse_fewer_than_2_scores():
         centred_ranks({"BTC": 0.1})
 
 
-def test_the_tilt_moves_the_strongest_up_and_the_weakest_down_inside_the_long_weights_sum():
+def test_the_tilt_ranks_the_basket_and_moves_the_longs_inside_their_sum():
     weights = {"BTC": 0.375, "ETH": 0.25, "SOL": 0.25, "XRP": 0.125}
     directions = {"BTC": 1.0, "ETH": 2 / 3, "SOL": 1 / 3, "XRP": 0.0}
     scores = {"BTC": 0.1, "ETH": 0.3, "SOL": 0.2, "XRP": 0.9}
 
-    tilted, ranked = rank_tilt(weights, directions, scores, strength=0.5)
+    tilted, basket, longs = rank_tilt(weights, directions, scores, strength=0.5, floor=4)
 
-    # BTC weakest at 0.5 times, SOL in the middle at 1, ETH strongest at 1.5, rescaled by 0.875 / 0.8125; XRP is flat.
-    assert ranked == 3 and tilted["XRP"] == 0.125
-    for asset, times in (("BTC", 0.5), ("SOL", 1.0), ("ETH", 1.5)):
-        assert math.isclose(tilted[asset], weights[asset] * times * 0.875 / 0.8125, rel_tol=1e-12)
+    # The flat XRP ranks strongest, so ETH, SOL and BTC take z 1/3, -1/3 and -1: 7/6, 5/6 and 0.5 times, rescaled by
+    # 0.875 / 0.6875; XRP's own weight is untouched.
+    assert (basket, longs) == (4, 3) and tilted["XRP"] == 0.125
+    for asset, times in (("BTC", 0.5), ("SOL", 5 / 6), ("ETH", 7 / 6)):
+        assert math.isclose(tilted[asset], weights[asset] * times * 0.875 / 0.6875, rel_tol=1e-12)
     assert math.isclose(math.fsum(tilted[a] for a in ("BTC", "ETH", "SOL")), 0.875, rel_tol=1e-12)
     assert weights == {"BTC": 0.375, "ETH": 0.25, "SOL": 0.25, "XRP": 0.125}
 
 
+_EIGHT = ("ADA", "AVAX", "BTC", "DOGE", "DOT", "ETH", "LINK", "LTC")
+
+
 @pytest.mark.parametrize(
-    ("directions", "scores", "ranked"),
+    ("unscored", "basket", "longs"),
+    [pytest.param("LTC", 7, 0, id="seven-in-the-basket"), pytest.param(None, 8, 8, id="eight-in-the-basket")],
+)
+def test_the_tilt_engages_at_a_basket_of_8_and_not_at_7(unscored, basket, longs):
+    weights = dict.fromkeys(_EIGHT, 0.125)
+    scores = {a: None if a == unscored else 0.01 * i for i, a in enumerate(_EIGHT)}
+
+    tilted, ranked, moved = rank_tilt(weights, dict.fromkeys(_EIGHT, 1.0), scores, strength=0.5, floor=8)
+
+    assert (ranked, moved) == (basket, longs)
+    if not longs:
+        assert tilted is weights
+    else:
+        # Equal weights and every asset long: the rescale is 1, each asset 1 + 0.5 * (2 * rank - 9) / 7 times its weight.
+        for rank, asset in enumerate(_EIGHT, 1):
+            assert math.isclose(tilted[asset], 0.125 * (1 + 0.5 * (2 * rank - 9) / 7), rel_tol=1e-12)
+
+
+@pytest.mark.parametrize(
+    "directions",
     [
-        pytest.param({"BTC": 1.0, "ETH": 0.0}, {"BTC": 0.1, "ETH": 0.2}, 1, id="one-asset-long"),
-        pytest.param({"BTC": 1.0, "ETH": None}, {"BTC": 0.1, "ETH": 0.2}, 1, id="a-direction-missing"),
-        pytest.param({"BTC": 1.0, "ETH": 1.0}, {"BTC": 0.1, "ETH": None}, 1, id="a-score-missing"),
-        pytest.param({"BTC": 0.0, "ETH": 0.0}, {"BTC": 0.1, "ETH": 0.2}, 0, id="none-long"),
+        pytest.param({"BTC": 1.0, "ETH": 0.0, "SOL": 0.0}, id="one-asset-long"),
+        pytest.param({"BTC": 1.0, "ETH": None, "SOL": 0.0}, id="a-direction-missing"),
+        pytest.param({"BTC": 0.0, "ETH": 0.0, "SOL": 0.0}, id="none-long"),
     ],
 )
-def test_the_tilt_leaves_a_close_with_fewer_than_2_ranked_untilted(directions, scores, ranked):
-    weights = {"BTC": 0.75, "ETH": 0.25}
+def test_the_tilt_leaves_a_basket_with_fewer_than_2_longs_untilted(directions):
+    weights = {"BTC": 0.5, "ETH": 0.25, "SOL": 0.25}
 
-    assert rank_tilt(weights, directions, scores, strength=0.5) == (weights, ranked)
+    tilted, basket, moved = rank_tilt(weights, directions, {"BTC": 0.1, "ETH": 0.2, "SOL": 0.3}, strength=0.5, floor=2)
+
+    assert tilted is weights and (basket, moved) == (3, 0)
 
 
-def test_the_tilt_ranks_no_asset_without_a_weight():
-    tilted, ranked = rank_tilt({"BTC": 1.0, "ETH": 0.0}, {"BTC": 1.0, "ETH": 1.0}, {"BTC": 0.1, "ETH": 0.2}, strength=0.5)
+def test_the_tilt_ranks_no_asset_without_a_weight_or_a_score():
+    weights = {"BTC": 0.5, "ETH": 0.0, "SOL": 0.5}
 
-    assert (tilted, ranked) == ({"BTC": 1.0, "ETH": 0.0}, 1)
+    tilted, basket, moved = rank_tilt(
+        weights, dict.fromkeys(weights, 1.0), {"BTC": 0.1, "ETH": 0.2, "SOL": None}, strength=0.5, floor=2
+    )
+
+    assert tilted is weights and (basket, moved) == (1, 0)
 
 
 def test_the_book_at_strength_0_is_a2s_book_to_the_bit():
     prices = _prices()
 
-    book = b3_book_returns(prices, config=_CONFIG, score_lookback=30, strength=0.0)
+    book = b3_book_returns(prices, config=_CONFIG, score_lookback=30, strength=0.0, floor=3)
 
-    assert {key: value for key, value in book.items() if key != "ranked"} == a2_book_returns(prices, config=_CONFIG)
-    assert max(book["ranked"]) >= 2
+    assert {key: value for key, value in book.items() if key not in ("ranked", "tilted")} == a2_book_returns(prices, config=_CONFIG)
+    assert max(book["tilted"]) >= 2
 
 
 def test_the_book_is_a2s_book_on_the_tilted_weights(monkeypatch):
@@ -154,16 +182,16 @@ def test_the_book_is_a2s_book_on_the_tilted_weights(monkeypatch):
     )
     scores = {a: momentum_scores(v, lookback=30) for a, v in prices.items()}
     tilts = [
-        rank_tilt(w, {a: directions[a][k] for a in prices}, {a: scores[a][k] for a in prices}, strength=0.5)
+        rank_tilt(w, {a: directions[a][k] for a in prices}, {a: scores[a][k] for a in prices}, strength=0.5, floor=3)
         for k, w in enumerate(_inverse_vol_weights(prices, lookback=20))
     ]
     untilted = a2_book_returns(prices, config=_CONFIG)
 
-    book = b3_book_returns(prices, config=_CONFIG, score_lookback=30, strength=0.5)
+    book = b3_book_returns(prices, config=_CONFIG, score_lookback=30, strength=0.5, floor=3)
 
-    monkeypatch.setattr(a2_module, "_inverse_vol_weights", lambda prices_by_asset, *, lookback: [w for w, _ in tilts])
-    assert {key: value for key, value in book.items() if key != "ranked"} == a2_book_returns(prices, config=_CONFIG)
-    assert book["ranked"] == [count for _, count in tilts]
+    monkeypatch.setattr(a2_module, "_inverse_vol_weights", lambda prices_by_asset, *, lookback: [w for w, _, _ in tilts])
+    assert {key: value for key, value in book.items() if key not in ("ranked", "tilted")} == a2_book_returns(prices, config=_CONFIG)
+    assert (book["ranked"], book["tilted"]) == ([basket for _, basket, _ in tilts], [longs for _, _, longs in tilts])
     assert book["asset_positions"] != untilted["asset_positions"]
     assert book["book_base_returns"] != untilted["book_base_returns"]
 
@@ -176,31 +204,36 @@ def test_the_book_at_close_k_reads_no_close_after_k():
         a: [*v[: k + 1], *(None if p is None else p * (1 + 0.3 * i) for p in v[k + 1 :])] for i, (a, v) in enumerate(prices.items())
     }
 
-    book = b3_book_returns(prices, config=_CONFIG, score_lookback=30, strength=0.5)
-    moved = b3_book_returns(later, config=_CONFIG, score_lookback=30, strength=0.5)
+    book = b3_book_returns(prices, config=_CONFIG, score_lookback=30, strength=0.5, floor=3)
+    moved = b3_book_returns(later, config=_CONFIG, score_lookback=30, strength=0.5, floor=3)
 
     assert all(book["asset_positions"][a][: k + 1] == moved["asset_positions"][a][: k + 1] for a in prices)
-    assert book["ranked"][: k + 1] == moved["ranked"][: k + 1]
+    assert (book["ranked"][: k + 1], book["tilted"][: k + 1]) == (moved["ranked"][: k + 1], moved["tilted"][: k + 1])
     assert book["asset_positions"] != moved["asset_positions"]
 
 
 @pytest.mark.parametrize("strength", [-0.1, 1.0, math.nan, False], ids=["negative", "one", "nan", "a-bool"])
 def test_the_book_refuses_a_strength_outside_0_to_1(strength):
     with pytest.raises(AlphaError, match="strength must be a number in"):
-        b3_book_returns(_prices(), config=_CONFIG, score_lookback=30, strength=strength)
+        b3_book_returns(_prices(), config=_CONFIG, score_lookback=30, strength=strength, floor=3)
 
 
 def test_the_book_refuses_a_config_that_is_no_a2_config():
     with pytest.raises(AlphaError, match="config must be an A2Config"):
-        b3_book_returns(_prices(), config={"lookbacks": (5, 10)}, score_lookback=30, strength=0.5)
+        b3_book_returns(_prices(), config={"lookbacks": (5, 10)}, score_lookback=30, strength=0.5, floor=3)
 
 
 def test_the_book_refuses_a_score_lookback_below_2():
     with pytest.raises(AlphaError, match="score_lookback must be an int >= 2"):
-        b3_book_returns(_prices(), config=_CONFIG, score_lookback=1, strength=0.5)
+        b3_book_returns(_prices(), config=_CONFIG, score_lookback=1, strength=0.5, floor=3)
+
+
+def test_the_book_refuses_a_floor_below_2():
+    with pytest.raises(AlphaError, match="floor must be an int >= 2"):
+        b3_book_returns(_prices(), config=_CONFIG, score_lookback=30, strength=0.5, floor=1)
 ```
 
-  **Author's call** — every case a known answer: the score on a hand series with a missing close, the same with every close after the last read moved; the centred ranks on three scores, on four with a tie and on a two-way tie; the tilt on four assets — three ranked at strengths 0.5, 1 and 1.5 times, rescaled to the ranked weights' sum, the fourth flat and untouched — each figure written from the definition, never from the code; fewer than 2 ranked untilted, row by row for each condition that unranks an asset, and an asset with a zero weight left unranked; the book on a four-asset fixture — ETH missing one close, SOL listing at 40 — at strength 0 equal to `a2_book_returns` to the bit, at 0.5 equal to `a2_book_returns` run on the weights `rank_tilt` gives (its weight path replaced through `cli.alpha.a2`'s own name), its ranked counts `rank_tilt`'s and its positions and base returns moved off the untilted book's; no look-ahead, every close after 241 moved by a factor of its own asset, the book's positions and ranked counts to 241 unmoved — the close chosen as one where three assets rank and a score read one close late reorders them (measured with that mutation in the probe block); the score lookback 30 against the basket's 20, so a book scoring on the basket's lookback fails; each refusal its own row, matched on a phrase only its own message holds.
+  **Author's call** — every case a known answer: the score on a hand series with a missing close, the same with every close after the last read moved; the centred ranks on three scores, on four with a tie and on a two-way tie; the tilt on a basket of four at a floor of 4 — the flat XRP ranked strongest, so the three longs take z 1/3, −1/3 and −1, at 7/6, 5/6 and 0.5 times, rescaled to the longs' sum, XRP's own weight untouched — each figure written from the definition, never from the code; the floor on eight equal weights, all long, a basket of 7 untilted and of 8 tilted at `1 + 0.5·(2·rank − 9)/7` each; fewer than 2 longs untilted, row by row for each condition that leaves an asset flat; an asset with a zero weight or no score out of the basket; the book on a four-asset fixture at a floor of 3 — ETH missing one close, SOL listing at 40 — at strength 0 equal to `a2_book_returns` to the bit, at 0.5 equal to `a2_book_returns` run on the weights `rank_tilt` gives (its weight path replaced through `cli.alpha.a2`'s own name), its basket sizes and tilted counts `rank_tilt`'s and its positions and base returns moved off the untilted book's; no look-ahead, every close after 241 moved by a factor of its own asset, the book's positions, basket sizes and tilted counts to 241 unmoved — the close chosen as one where the basket holds four and a score read one close late reorders it (measured with that mutation in the probe block); the score lookback 30 against the basket's 20, so a book scoring on the basket's lookback fails; each refusal its own row, matched on a phrase only its own message holds.
 - [ ] **Step 2: Run them to verify they fail** — `mkdir -p .tmp/plan-00147 && uv run pytest tests/test_alpha_b3.py -q -p no:cacheprovider --basetemp=.tmp/plan-00147/pt`: collection stops at the import of `cli.alpha.b3` (measured on the base: `1 error`).
 - [ ] **Step 3: Implement `cli/alpha/b3.py`**, whole:
 
@@ -254,28 +287,34 @@ def rank_tilt(
     scores: dict[str, float | None],
     *,
     strength: float,
-) -> tuple[dict[str, float], int]:
-    """The weights of the assets ranked — a weight above 0, a direction above 0 and a score — each times
-    `1 + strength * z`, rescaled to their untilted sum; every other weight as it is, and with fewer than 2 ranked the
-    weights themselves. Returns the weights and the count ranked."""
-    ranked = [a for a, w in weights.items() if w > 0 and directions[a] is not None and directions[a] > 0 and scores[a] is not None]
-    if len(ranked) < 2:
-        return weights, len(ranked)
-    z = centred_ranks({a: scores[a] for a in ranked})
-    raw = {a: weights[a] * (1 + strength * z[a]) for a in ranked}
-    scale = math.fsum(weights[a] for a in ranked) / math.fsum(raw.values())
-    return weights | {a: w * scale for a, w in raw.items()}, len(ranked)
+    floor: int,
+) -> tuple[dict[str, float], int, int]:
+    """The basket — every asset with a weight above 0 and a score — ranked, and when it holds `floor` assets or more,
+    each of its longs' weights, a direction above 0, times `1 + strength * z`, rescaled to their untilted sum; every
+    other weight as it is, and below the floor or with fewer than 2 longs the weights themselves, a single long's
+    rescale being its own weight. Returns the weights, the basket's size and the count of longs tilted."""
+    basket = [a for a, w in weights.items() if w > 0 and scores[a] is not None]
+    if len(basket) < floor:
+        return weights, len(basket), 0
+    longs = [a for a in basket if directions[a] is not None and directions[a] > 0]
+    if len(longs) < 2:
+        return weights, len(basket), 0
+    z = centred_ranks({a: scores[a] for a in basket})
+    raw = {a: weights[a] * (1 + strength * z[a]) for a in longs}
+    scale = math.fsum(weights[a] for a in longs) / math.fsum(raw.values())
+    return weights | {a: w * scale for a, w in raw.items()}, len(basket), len(longs)
 
 
 def b3_book_returns(
-    prices_by_asset: dict[str, list[float | None]], *, config: A2Config, score_lookback: int, strength: float
+    prices_by_asset: dict[str, list[float | None]], *, config: A2Config, score_lookback: int, strength: float, floor: int
 ) -> dict:
     """`a2_book_returns` with each close's inverse-vol weights passed through `rank_tilt` before the base returns, the vol
-    target and the positions read them; `ranked` holds each close's count of ranked assets."""
+    target and the positions read them; `ranked` holds each close's basket size and `tilted` its count of longs tilted."""
     if not isinstance(config, A2Config):
         raise AlphaError(f"config must be an A2Config, got {type(config)!r}")
     _validate_prices_by_asset(prices_by_asset)
     _check_window("score_lookback", score_lookback)
+    _check_window("floor", floor)
     if not isinstance(strength, (int, float)) or isinstance(strength, bool) or not 0 <= strength < 1:
         raise AlphaError(f"strength must be a number in [0, 1), got {strength!r}")
     length = len(prices_by_asset["BTC"])
@@ -290,15 +329,18 @@ def b3_book_returns(
     scores = {asset: momentum_scores(prices, lookback=score_lookback) for asset, prices in prices_by_asset.items()}
     weights: list[dict[str, float]] = []
     ranked: list[int] = []
+    tilted_longs: list[int] = []
     for k, untilted in enumerate(_inverse_vol_weights(prices_by_asset, lookback=config.basket_lookback)):
-        tilted, count = rank_tilt(
+        tilted, basket, longs = rank_tilt(
             untilted,
             {asset: directions[asset][k] for asset in prices_by_asset},
             {asset: scores[asset][k] for asset in prices_by_asset},
             strength=strength,
+            floor=floor,
         )
         weights.append(tilted)
-        ranked.append(count)
+        ranked.append(basket)
+        tilted_longs.append(longs)
 
     book_base_returns: list[float] = []
     for k in range(length - 1):
@@ -329,12 +371,13 @@ def b3_book_returns(
         "net_returns": backtest["net_returns"],
         "metrics": {k: v for k, v in backtest.items() if k != "net_returns"},
         "ranked": ranked,
+        "tilted": tilted_longs,
     }
 ```
 
-- [ ] **Step 4: Run them to verify they pass** — step 2's command, measured `21 passed`.
-- [ ] **Step 5: Stage, consumers, gate** — `git add cli/alpha/b3.py tests/test_alpha_b3.py`; the Global Constraints' list over the two paths (measured: `tests/test_alpha_b3.py` alone, `21 passed`); `uv run pre-commit run -a` until clean, its rewrites staged; the Unchanged checks.
-- [ ] **Step 6: Probes** — on the staged tree, in the probe worktree, each row expected `KILLED` (measured in the scratch worktree on Task 1's tree, 28 of 28):
+- [ ] **Step 4: Run them to verify they pass** — step 2's command, measured `23 passed`.
+- [ ] **Step 5: Stage, consumers, gate** — `git add cli/alpha/b3.py tests/test_alpha_b3.py`; the Global Constraints' list over the two paths (measured: `tests/test_alpha_b3.py` alone, `23 passed`); `uv run pre-commit run -a` until clean, its rewrites staged; the Unchanged checks.
+- [ ] **Step 6: Probes** — on the staged tree, in the probe worktree, each row expected `KILLED` (measured in the scratch worktree on Task 1's tree, 36 of 36):
 
 ```bash
 infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def momentum_scores(/def momentum_scores_gone(/' --mutation 's/else prices\[k\] \/ prices\[k - lookback\] - 1/else prices[k] \/ prices[k - lookback]/' -- uv run pytest 'tests/test_alpha_b3.py::test_momentum_scores_read_the_close_lookback_back_and_none_where_either_is_missing' -q -p no:cacheprovider --basetemp=.tmp/pt
@@ -346,17 +389,24 @@ infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def centred_r
 infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def centred_ranks(/def centred_ranks_gone(/' --mutation 's/out\[asset\] = (2 \* rank - (n + 1)) \/ (n - 1)/out[asset] = (2 * rank - n) \/ (n - 1)/' -- uv run pytest 'tests/test_alpha_b3.py::test_centred_ranks_run_from_the_weakest_at_minus_1_to_the_strongest_at_plus_1_ties_at_their_average' -q -p no:cacheprovider --basetemp=.tmp/pt
 infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def centred_ranks(/def centred_ranks_gone(/' --mutation 's/order = sorted(scores, key=scores\.__getitem__)/order = sorted(scores, key=scores.__getitem__, reverse=True)/' -- uv run pytest 'tests/test_alpha_b3.py::test_centred_ranks_run_from_the_weakest_at_minus_1_to_the_strongest_at_plus_1_ties_at_their_average' -q -p no:cacheprovider --basetemp=.tmp/pt
 infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def centred_ranks(/def centred_ranks_gone(/' --mutation 's/^    if n < 2:$/    if n < 1:/' -- uv run pytest 'tests/test_alpha_b3.py::test_centred_ranks_refuse_fewer_than_2_scores' -q -p no:cacheprovider --basetemp=.tmp/pt
-infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def rank_tilt(/def rank_tilt_gone(/' --mutation 's/weights\[a\] \* (1 + strength \* z\[a\])/weights[a] * (1 - strength * z[a])/' -- uv run pytest 'tests/test_alpha_b3.py::test_the_tilt_moves_the_strongest_up_and_the_weakest_down_inside_the_long_weights_sum' -q -p no:cacheprovider --basetemp=.tmp/pt
-infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def rank_tilt(/def rank_tilt_gone(/' --mutation 's/^    scale = math\.fsum(weights\[a\] for a in ranked) \/ math\.fsum(raw\.values())$/    scale = 1.0/' -- uv run pytest 'tests/test_alpha_b3.py::test_the_tilt_moves_the_strongest_up_and_the_weakest_down_inside_the_long_weights_sum' -q -p no:cacheprovider --basetemp=.tmp/pt
-infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def rank_tilt(/def rank_tilt_gone(/' --mutation 's/and directions\[a\] > 0 and/and directions[a] >= 0 and/' -- uv run pytest 'tests/test_alpha_b3.py::test_the_tilt_moves_the_strongest_up_and_the_weakest_down_inside_the_long_weights_sum' -q -p no:cacheprovider --basetemp=.tmp/pt
-infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def rank_tilt(/def rank_tilt_gone(/' --mutation 's/and directions\[a\] > 0 and/and directions[a] >= 0 and/' -- uv run pytest 'tests/test_alpha_b3.py::test_the_tilt_leaves_a_close_with_fewer_than_2_ranked_untilted[one-asset-long]' -q -p no:cacheprovider --basetemp=.tmp/pt
-infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def rank_tilt(/def rank_tilt_gone(/' --mutation 's/ and directions\[a\] is not None and / and /' -- uv run pytest 'tests/test_alpha_b3.py::test_the_tilt_leaves_a_close_with_fewer_than_2_ranked_untilted[a-direction-missing]' -q -p no:cacheprovider --basetemp=.tmp/pt
-infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def rank_tilt(/def rank_tilt_gone(/' --mutation 's/ and scores\[a\] is not None\]$/]/' -- uv run pytest 'tests/test_alpha_b3.py::test_the_tilt_leaves_a_close_with_fewer_than_2_ranked_untilted[a-score-missing]' -q -p no:cacheprovider --basetemp=.tmp/pt
-infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def rank_tilt(/def rank_tilt_gone(/' --mutation 's/^    if len(ranked) < 2:$/    if len(ranked) < 1:/' -- uv run pytest 'tests/test_alpha_b3.py::test_the_tilt_leaves_a_close_with_fewer_than_2_ranked_untilted[one-asset-long]' -q -p no:cacheprovider --basetemp=.tmp/pt
-infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def rank_tilt(/def rank_tilt_gone(/' --mutation 's/if w > 0 and directions/if w >= 0 and directions/' -- uv run pytest 'tests/test_alpha_b3.py::test_the_tilt_ranks_no_asset_without_a_weight' -q -p no:cacheprovider --basetemp=.tmp/pt
+infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def rank_tilt(/def rank_tilt_gone(/' --mutation 's/weights\[a\] \* (1 + strength \* z\[a\])/weights[a] * (1 - strength * z[a])/' -- uv run pytest 'tests/test_alpha_b3.py::test_the_tilt_ranks_the_basket_and_moves_the_longs_inside_their_sum' -q -p no:cacheprovider --basetemp=.tmp/pt
+infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def rank_tilt(/def rank_tilt_gone(/' --mutation 's/^    scale = math\.fsum(weights\[a\] for a in longs) \/ math\.fsum(raw\.values())$/    scale = 1.0/' -- uv run pytest 'tests/test_alpha_b3.py::test_the_tilt_ranks_the_basket_and_moves_the_longs_inside_their_sum' -q -p no:cacheprovider --basetemp=.tmp/pt
+infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def rank_tilt(/def rank_tilt_gone(/' --mutation 's/z = centred_ranks({a: scores\[a\] for a in basket})/z = centred_ranks({a: scores[a] for a in longs})/' -- uv run pytest 'tests/test_alpha_b3.py::test_the_tilt_ranks_the_basket_and_moves_the_longs_inside_their_sum' -q -p no:cacheprovider --basetemp=.tmp/pt
+infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def rank_tilt(/def rank_tilt_gone(/' --mutation 's/raw = {a: weights\[a\] \* (1 + strength \* z\[a\]) for a in longs}/raw = {a: weights[a] * (1 + strength * z[a]) for a in basket}/' -- uv run pytest 'tests/test_alpha_b3.py::test_the_tilt_ranks_the_basket_and_moves_the_longs_inside_their_sum' -q -p no:cacheprovider --basetemp=.tmp/pt
+infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def rank_tilt(/def rank_tilt_gone(/' --mutation 's/and directions\[a\] > 0\]/and directions[a] >= 0]/' -- uv run pytest 'tests/test_alpha_b3.py::test_the_tilt_ranks_the_basket_and_moves_the_longs_inside_their_sum' -q -p no:cacheprovider --basetemp=.tmp/pt
+infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def rank_tilt(/def rank_tilt_gone(/' --mutation 's/return weights | {a: w \* scale for a, w in raw\.items()}, len(basket), len(longs)/return weights | {a: w * scale for a, w in raw.items()}, len(basket), len(basket)/' -- uv run pytest 'tests/test_alpha_b3.py::test_the_tilt_ranks_the_basket_and_moves_the_longs_inside_their_sum' -q -p no:cacheprovider --basetemp=.tmp/pt
+infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def rank_tilt(/def rank_tilt_gone(/' --mutation 's/^    if len(basket) < floor:$/    if len(basket) <= floor:/' -- uv run pytest 'tests/test_alpha_b3.py::test_the_tilt_engages_at_a_basket_of_8_and_not_at_7[eight-in-the-basket]' -q -p no:cacheprovider --basetemp=.tmp/pt
+infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def rank_tilt(/def rank_tilt_gone(/' --mutation 's/^    if len(basket) < floor:$/    if len(basket) < floor - 1:/' -- uv run pytest 'tests/test_alpha_b3.py::test_the_tilt_engages_at_a_basket_of_8_and_not_at_7[seven-in-the-basket]' -q -p no:cacheprovider --basetemp=.tmp/pt
+infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def rank_tilt(/def rank_tilt_gone(/' --mutation 's/and directions\[a\] > 0\]/and directions[a] >= 0]/' -- uv run pytest 'tests/test_alpha_b3.py::test_the_tilt_leaves_a_basket_with_fewer_than_2_longs_untilted[one-asset-long]' -q -p no:cacheprovider --basetemp=.tmp/pt
+infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def rank_tilt(/def rank_tilt_gone(/' --mutation 's/ if directions\[a\] is not None and directions\[a\] > 0\]/ if directions[a] > 0]/' -- uv run pytest 'tests/test_alpha_b3.py::test_the_tilt_leaves_a_basket_with_fewer_than_2_longs_untilted[a-direction-missing]' -q -p no:cacheprovider --basetemp=.tmp/pt
+infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def rank_tilt(/def rank_tilt_gone(/' --mutation 's/^    if len(longs) < 2:$/    if len(longs) < 1:/' -- uv run pytest 'tests/test_alpha_b3.py::test_the_tilt_leaves_a_basket_with_fewer_than_2_longs_untilted[one-asset-long]' -q -p no:cacheprovider --basetemp=.tmp/pt
+infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def rank_tilt(/def rank_tilt_gone(/' --mutation 's/if w > 0 and scores\[a\] is not None\]/if w >= 0 and scores[a] is not None]/' -- uv run pytest 'tests/test_alpha_b3.py::test_the_tilt_ranks_no_asset_without_a_weight_or_a_score' -q -p no:cacheprovider --basetemp=.tmp/pt
+infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def rank_tilt(/def rank_tilt_gone(/' --mutation 's/if w > 0 and scores\[a\] is not None\]/if w > 0]/' -- uv run pytest 'tests/test_alpha_b3.py::test_the_tilt_ranks_no_asset_without_a_weight_or_a_score' -q -p no:cacheprovider --basetemp=.tmp/pt
 infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def b3_book_returns(/def b3_book_returns_gone(/' --mutation 's/        max_leverage=config\.max_leverage,/        max_leverage=2.0,/' -- uv run pytest 'tests/test_alpha_b3.py::test_the_book_at_strength_0_is_a2s_book_to_the_bit' -q -p no:cacheprovider --basetemp=.tmp/pt
 infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def b3_book_returns(/def b3_book_returns_gone(/' --mutation 's/^        weights\.append(tilted)$/        weights.append(untilted)/' -- uv run pytest 'tests/test_alpha_b3.py::test_the_book_is_a2s_book_on_the_tilted_weights' -q -p no:cacheprovider --basetemp=.tmp/pt
-infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def b3_book_returns(/def b3_book_returns_gone(/' --mutation 's/^        ranked\.append(count)$/        ranked.append(2)/' -- uv run pytest 'tests/test_alpha_b3.py::test_the_book_is_a2s_book_on_the_tilted_weights' -q -p no:cacheprovider --basetemp=.tmp/pt
+infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def b3_book_returns(/def b3_book_returns_gone(/' --mutation 's/^        ranked\.append(basket)$/        ranked.append(2)/' -- uv run pytest 'tests/test_alpha_b3.py::test_the_book_is_a2s_book_on_the_tilted_weights' -q -p no:cacheprovider --basetemp=.tmp/pt
+infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def b3_book_returns(/def b3_book_returns_gone(/' --mutation 's/^        tilted_longs\.append(longs)$/        tilted_longs.append(2)/' -- uv run pytest 'tests/test_alpha_b3.py::test_the_book_is_a2s_book_on_the_tilted_weights' -q -p no:cacheprovider --basetemp=.tmp/pt
+infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def b3_book_returns(/def b3_book_returns_gone(/' --mutation 's/^            floor=floor,$/            floor=5,/' -- uv run pytest 'tests/test_alpha_b3.py::test_the_book_is_a2s_book_on_the_tilted_weights' -q -p no:cacheprovider --basetemp=.tmp/pt
 infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def b3_book_returns(/def b3_book_returns_gone(/' --mutation 's/momentum_scores(prices, lookback=score_lookback)/momentum_scores(prices, lookback=config.basket_lookback)/' -- uv run pytest 'tests/test_alpha_b3.py::test_the_book_is_a2s_book_on_the_tilted_weights' -q -p no:cacheprovider --basetemp=.tmp/pt
 infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def momentum_scores(/def momentum_scores_gone(/' --mutation 's/None if k < lookback or prices\[k\] is None or prices\[k - lookback\] is None else prices\[k\] \/ prices\[k - lookback\] - 1/None if k < lookback or prices[k + 1] is None or prices[k + 1 - lookback] is None else prices[k + 1] \/ prices[k + 1 - lookback] - 1/' -- uv run pytest 'tests/test_alpha_b3.py::test_the_book_at_close_k_reads_no_close_after_k' -q -p no:cacheprovider --basetemp=.tmp/pt
 infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def b3_book_returns(/def b3_book_returns_gone(/' --mutation 's/or not 0 <= strength < 1:/or not -1 <= strength < 1:/' -- uv run pytest 'tests/test_alpha_b3.py::test_the_book_refuses_a_strength_outside_0_to_1[negative]' -q -p no:cacheprovider --basetemp=.tmp/pt
@@ -365,16 +415,17 @@ infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def b3_book_r
 infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def b3_book_returns(/def b3_book_returns_gone(/' --mutation 's/ or isinstance(strength, bool) or / or /' -- uv run pytest 'tests/test_alpha_b3.py::test_the_book_refuses_a_strength_outside_0_to_1[a-bool]' -q -p no:cacheprovider --basetemp=.tmp/pt
 infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def b3_book_returns(/def b3_book_returns_gone(/' --mutation 's/^    if not isinstance(config, A2Config):$/    if False:/' -- uv run pytest 'tests/test_alpha_b3.py::test_the_book_refuses_a_config_that_is_no_a2_config' -q -p no:cacheprovider --basetemp=.tmp/pt
 infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def b3_book_returns(/def b3_book_returns_gone(/' --mutation 's/^    _check_window("score_lookback", score_lookback)$/    pass/' -- uv run pytest 'tests/test_alpha_b3.py::test_the_book_refuses_a_score_lookback_below_2' -q -p no:cacheprovider --basetemp=.tmp/pt
+infra/scripts/mutate-probe.sh --file cli/alpha/b3.py --control 's/^def b3_book_returns(/def b3_book_returns_gone(/' --mutation 's/^    _check_window("floor", floor)$/    pass/' -- uv run pytest 'tests/test_alpha_b3.py::test_the_book_refuses_a_floor_below_2' -q -p no:cacheprovider --basetemp=.tmp/pt
 ```
 
-  Each row moves one clause D3 gives the module: the score's arithmetic, its first defined index and its refusal on each of three lookbacks (rows 1–5); the ranks' averaging of ties, their scale and their order, and their refusal (rows 6–9); the tilt's sign, its rescale, the direction above 0 seen by two rows, the direction's and the score's presence, the count below 2 and the weight above 0 (rows 10–17); the book's leverage cap, its weights the tilted ones, its ranked counts, its score lookback, the score's look-ahead seen by the book, and each refusal (rows 18–28).
-- [ ] **Step 7: Commit** — `feat(alpha): B3 trial 1's compute — the trailing momentum score, the centred ranks, the rank tilt of a close's long weights and the A2 book on the tilted weights`, the message carrying the test result lines, the probe block's commands and verdicts and the two trailer lines.
+  Each row moves one clause D3 gives the module: the score's arithmetic, its first defined index and its refusal on each of three lookbacks (rows 1–5); the ranks' averaging of ties, their scale and their order, and their refusal (rows 6–9); the tilt's sign, its rescale, the rank over the basket and not the longs, the multiplier on the longs and not the basket, the direction above 0, the longs' count returned, the floor from each side, the direction above 0 at a single long, the direction's presence, the longs below 2, and the basket's weight above 0 and score present (rows 10–22); the book's leverage cap, its weights the tilted ones, its basket sizes, its tilted counts, its floor, its score lookback, the score's look-ahead seen by the book, and each refusal (rows 23–36).
+- [ ] **Step 7: Commit** — `feat(alpha): B3 trial 1's compute — the trailing momentum score, the centred ranks, the tilt of a close's long weights by their basket rank at a floor of names, and the A2 book on the tilted weights`, the message carrying the test result lines, the probe block's commands and verdicts and the two trailer lines.
 
 ## Task 2: the trial subject, its pre-flight twin and the family key `B3` (D2–D8)
 
 **Files:** Modify `cli/research/subjects.py`, `cli/registry/budget.py`, `tests/test_research_command.py`, `tests/test_trial_registry_provenance.py`, `README.md`, `tests/slow-cases.txt`.
 
-**Interfaces:** Consumes Task 1's `b3_book_returns`; `cli/research/subjects.py`'s `_capturing_union`, `_b2_over`, `close_grid`, `calendar_year_slices`, `_ffill_btc`, `_asset_returns`, `A2Config`, `_B2_A2_ARMS`, `_B2_LOOKBACK`, `PPY_4H`, `_B2_COST_PER_SIDE`, `_DECISIVE_START`, `_N_RESAMPLES`, `_b4_ensemble`, `_b4_limited`, `_b4_net`, `_b4_arm_a_bar`, `per_year_counts`, `per_year_positions_differ`, `per_year_turnover`, `per_year_max_drawdown`, `book_turnover`, `a1_kill_bar`, `net_of_cost_verdict`, `sharpe`, `max_drawdown`, `_B2_ARM_A_BAR_KEYS`, `_B2_ARM_A_BAR_FLAGS`, `_ASSETS`, `Subject`, `SubjectError`, `ObservedReader` and the error classes it imports, each called through the module's name so a test's `monkeypatch.setattr(subjects, …)` reaches it; in the tests, `_b2_dataset`, `_b4_dataset`, `_b4_short_reads`, `_B2_START`, `_B2_BARS`, `_B2_IN_2026`, `_B2_ASSETS`, `_B2_GRID`, `_B2_FULL_ANCHORS`, `_ARM_A_BAR_KEYS`, `_ARM_A_BAR_FLAGS`, `_recording`, `_fake_kill_bar`, `_fake_head_to_head`, `_fake_benchmark`, `_anchor`, `_as_trial`, `_rolling_set`, `_RULED_FIXTURES`, `_DECLARED_COUNT`, `_CONTRACT_DATASETS`, `runner` and `app`. Produces the two subjects, the constants `_B3_SCORE_LOOKBACK`, `_B3_STRENGTH` and `_B3_N_TRIALS`, the halves `_b3_reads` and `_b3_inputs` and `_b3_engagement`, which Task 3's test reads, and the family key `B3`; the deflation row reads the count by name (`_DECLARED_COUNT`), and Task 5's literal reads it through the trial's `n_trials`.
+**Interfaces:** Consumes Task 1's `b3_book_returns`; `cli/research/subjects.py`'s `_capturing_union`, `_b2_over`, `close_grid`, `calendar_year_slices`, `_ffill_btc`, `_asset_returns`, `A2Config`, `_B2_A2_ARMS`, `_B2_LOOKBACK`, `PPY_4H`, `_B2_COST_PER_SIDE`, `_DECISIVE_START`, `_N_RESAMPLES`, `_b4_ensemble`, `_b4_limited`, `_b4_net`, `_b4_arm_a_bar`, `per_year_counts`, `per_year_positions_differ`, `per_year_turnover`, `per_year_max_drawdown`, `book_turnover`, `a1_kill_bar`, `net_of_cost_verdict`, `sharpe`, `max_drawdown`, `_B2_ARM_A_BAR_KEYS`, `_B2_ARM_A_BAR_FLAGS`, `_ASSETS`, `Subject`, `SubjectError`, `ObservedReader` and the error classes it imports, each called through the module's name so a test's `monkeypatch.setattr(subjects, …)` reaches it; in the tests, `_b2_dataset`, `_b4_dataset`, `_B2_START`, `_B2_BARS`, `_B2_IN_2026`, `_B2_ASSETS`, `_B2_GRID`, `_B2_FULL_ANCHORS`, `_ARM_A_BAR_KEYS`, `_ARM_A_BAR_FLAGS`, `_recording`, `_fake_kill_bar`, `_fake_head_to_head`, `_fake_benchmark`, `_anchor`, `_as_trial`, `_rolling_set`, `_RULED_FIXTURES`, `_DECLARED_COUNT`, `_CONTRACT_DATASETS`, `runner` and `app`. Produces the two subjects, the constants `_B3_SCORE_LOOKBACK`, `_B3_STRENGTH`, `_B3_FLOOR` and `_B3_N_TRIALS`, the halves `_b3_reads` and `_b3_inputs` and `_b3_engagement`, which Task 3's test reads, and the family key `B3`; the deflation row reads the count by name (`_DECLARED_COUNT`), and Task 5's literal reads it through the trial's `n_trials`.
 
 - [ ] **Step 1: Write the failing tests** — in `tests/test_research_command.py`:
   - after the `from cli.alpha.b2 import (` block's closing `)` and before `from cli.alpha.b4 import`, `from cli.alpha.b3 import b3_book_returns`;
@@ -471,7 +522,7 @@ def test_the_b3_pair_declares_the_4h_grid_the_specs_keys_and_seeds_and_the_trial
     )
     assert preflight.build is subjects._build_b3_rank_tilt_preflight and preflight.metric_keys == _B3_PREFLIGHT_KEYS
     assert (preflight.verdict, preflight.no_verdict, preflight.incumbent, preflight.family, preflight.n_trials) == (None,) * 5
-    assert (subjects._B3_SCORE_LOOKBACK, subjects._B3_STRENGTH) == (180, 0.5)
+    assert (subjects._B3_SCORE_LOOKBACK, subjects._B3_STRENGTH, subjects._B3_FLOOR) == (180, 0.5, 8)
 
 
 # Adopting on every key the rule reads, the full window's head-to-head against it, so a rule reading the full window moves
@@ -570,18 +621,30 @@ def _b3_own_books(h4_ts: list[datetime], h4_prices: dict) -> dict:
         factors, engaged = limit_factors(dict(positions))
         return {i: [p * f for p, f in zip(v, factors)] for i, v in positions.items()}, engaged
 
-    tilted = [b3_book_returns(fed, config=c, score_lookback=180, strength=0.5) for c in configs]
+    tilted = [b3_book_returns(fed, config=c, score_lookback=180, strength=0.5, floor=8) for c in configs]
     return {
         "limited_a": limited(mean([a2_book_returns(fed, config=c)["asset_positions"] for c in configs])),
         "limited_b": limited(mean([book["asset_positions"] for book in tilted])),
         "ranked": dict(zip(_B3_ARMS, (book["ranked"] for book in tilted), strict=True)),
+        "tilted": dict(zip(_B3_ARMS, (book["tilted"] for book in tilted), strict=True)),
         "returns": {a: _asset_returns(fed[a]) for a in h4_prices},
     }
 
 
-def _b3_short_reads() -> tuple[list[datetime], dict]:
-    """`_b4_short_reads`' union and its three assets, BTC missing one stamp, with no ratio leg."""
-    h4_ts, h4_prices, _ = _b4_short_reads()
+def _b3_short_reads(n: int = 480) -> tuple[list[datetime], dict]:
+    """A 480-stamp union of the ten assets, BTC missing one stamp, SOL listing at 250 and AVAX at 330: the basket holds
+    exactly 8 from return index 180 to 429 and 9 after it."""
+    h4_ts = [datetime(2017, 1, 1, tzinfo=UTC) + timedelta(hours=4 * k) for k in range(n)]
+    h4_prices = {
+        a: [
+            10.0 * (i + 1) * (1 + 0.0004 * (i % 4 + 1)) ** k * (1 + (0.04 + 0.01 * (i % 5)) * math.sin(k / (5 + i) + 0.7 * i))
+            for k in range(n)
+        ]
+        for i, a in enumerate(_B2_ASSETS)
+    }
+    h4_prices["BTC"][300] = None
+    h4_prices["SOL"][:250] = [None] * 250
+    h4_prices["AVAX"][:330] = [None] * 330
     return h4_ts, h4_prices
 
 
@@ -594,9 +657,9 @@ def test_the_b3_arms_agree_bit_for_bit_until_the_tilt_first_moves_a_position(mon
 
     inputs = subjects._b3_inputs(reads)
 
-    ((_, raw_a),), ((_, (raw_b, ranked)),) = untilted, tilted
+    ((_, raw_a),), ((_, (raw_b, _, longs)),) = untilted, tilted
     differ = [k for k in range(n) if any(raw_b[a][k] != raw_a[a][k] for a in raw_a)]
-    first_tilted = min(next(k for k, c in enumerate(counts) if c >= 2) for counts in ranked.values())
+    first_tilted = min(next(k for k, c in enumerate(counts) if c) for counts in longs.values())
     assert differ and first_tilted <= differ[0] == subjects._b3_first_engaged(inputs) < n - 2
     assert all(raw_b[a][:first_tilted] == raw_a[a][:first_tilted] for a in raw_a)
 
@@ -605,13 +668,13 @@ def test_the_b3_arms_agree_bit_for_bit_until_the_tilt_first_moves_a_position(mon
 def test_the_b3_inputs_build_arm_a_untilted_and_arm_b_tilted_each_through_the_limits(name):
     reads = _b3_short_reads()
     own = _b3_own_books(*reads)
-    # The short union moves the tilt: each arm ranks 2 assets or more at some stamp, so arm B differs from arm A.
-    assert all(max(counts) >= 2 for counts in own["ranked"].values()) and own["limited_b"][0] != own["limited_a"][0]
+    # The short union moves the tilt: each arm tilts 2 longs or more at some stamp, so arm B differs from arm A.
+    assert all(max(counts) >= 2 for counts in own["tilted"].values()) and own["limited_b"][0] != own["limited_a"][0]
 
     inputs = subjects._b3_inputs(reads)
 
     assert (inputs.h4_ts, inputs.h4_prices, inputs.close) == (reads[0], reads[1], [t + timedelta(hours=4) for t in reads[0][:-1]])
-    assert inputs.returns == own["returns"] and inputs.ranked == own["ranked"]
+    assert inputs.returns == own["returns"] and (inputs.ranked, inputs.tilted) == (own["ranked"], own["tilted"])
     assert (inputs.arm_a, inputs.engaged_a) == own["limited_a"] and (inputs.arm_b, inputs.engaged_b) == own["limited_b"]
 
 
@@ -625,15 +688,15 @@ def test_the_b3_inputs_pass_both_arms_through_the_limits(monkeypatch, name):
 
     inputs = subjects._b3_inputs(reads)
 
-    ((_, raw_a),), ((_, (raw_b, _)),) = untilted, tilted
+    ((_, raw_a),), ((_, (raw_b, _, _)),) = untilted, tilted
     halved = [{i: [p * 0.5 for p in v] for i, v in book.items()} for book in (raw_a, raw_b)]
     assert [inputs.arm_a, inputs.arm_b] == halved
 
 
 def _b3_built_inputs(n: int = 1_400) -> subjects._B3Inputs:
     """Books made by hand over `n` return indices — three assets, arm B moving ETH down from index 200, SOL from 300 and BTC
-    up from 400, each limit engaged at a stamp of its own, each arm's ranked counts a pattern of its own — for the metrics
-    alone."""
+    up from 400, each limit engaged at a stamp of its own, each arm's basket sizes and tilted closes a pattern of its own —
+    for the metrics alone."""
     h4_ts = [datetime(2016, 6, 1, tzinfo=UTC) + timedelta(hours=4 * k) for k in range(n + 1)]
 
     def wave(k: int, phase: float, depth: float) -> float:
@@ -647,9 +710,10 @@ def _b3_built_inputs(n: int = 1_400) -> subjects._B3Inputs:
     engaged_a = {limit: [False] * n for limit in ("gross", "net", "margin")}
     engaged_b = {limit: [k == 900 + j for k in range(n)] for j, limit in enumerate(("gross", "net", "margin"))}
     ranked = {arm: [(k * (j + 1)) % 4 for k in range(n)] for j, arm in enumerate(_B3_ARMS)}
+    tilted = {arm: [2 * ((k + j) % 2) for k in range(n)] for j, arm in enumerate(_B3_ARMS)}
     h4_prices = {"BTC": [100.0 + k for k in range(n + 1)]}
     close = [t + timedelta(hours=4) for t in h4_ts[:-1]]
-    return subjects._B3Inputs(h4_ts, h4_prices, close, returns, arm_a, arm_b, engaged_a, engaged_b, ranked)
+    return subjects._B3Inputs(h4_ts, h4_prices, close, returns, arm_a, arm_b, engaged_a, engaged_b, ranked, tilted)
 
 
 def _b3_own_net(inputs: subjects._B3Inputs, positions: dict, stress: float) -> list[float]:
@@ -666,7 +730,7 @@ def _b3_own_engagement(inputs: subjects._B3Inputs) -> dict:
         "primary_returns": n - start,
         "stamps_positions_differ": sum(differ.values()),
         "positions_differ_per_year": differ,
-        "tilted_per_year": {arm: per_year_counts([c >= 2 for c in counts], close) for arm, counts in inputs.ranked.items()},
+        "tilted_per_year": {arm: per_year_counts([c > 0 for c in counts], close) for arm, counts in inputs.tilted.items()},
         "ranked_assets_histogram": {arm: {str(m): counts.count(m) for m in range(4)} for arm, counts in inputs.ranked.items()},
         "ranked_assets_mean": {arm: statistics.fmean(counts) for arm, counts in inputs.ranked.items()},
         "turnover_b": book_turnover(inputs.arm_b),
@@ -854,7 +918,7 @@ def test_the_b3_trial_refuses_a_plain_eval_and_another_count_before_any_read(tmp
 
   - in `tests/test_trial_registry_provenance.py`, `test_the_budgets_and_buckets_are_the_master_plans_literals`' `assert budget.BUCKET_OF == {"A1": "A", "B1": "B", "B2": "B", "B4": "B", "P1": None}, growth` becomes `assert budget.BUCKET_OF == {"A1": "A", "B1": "B", "B2": "B", "B3": "B", "B4": "B", "P1": None}, growth`.
 
-  **Author's call** — each half on the fixture that moves it, every case but the shared rows in seconds, so each is a probe's target: the declaration, its key counts typed from the spec; the rule row by row on `_B3_ADOPTING`, whose full-window pair stands against the verdict; the reads on `_b4_dataset`, whose two ratio files the reads must leave unread, the union and every close held to the files', the block to the ten EUR files; the two window refusals on `_b2_dataset` from each side of the evaluable window, through the command, before any book, for both subjects; the books on `_b4_short_reads`' three assets, its BTC missing one stamp, a 480-stamp union the reads would refuse — the bit-identity read off the two ensembles the inputs build, the first differing position at or after every arm's first tilted close and equal to `_b3_first_engaged`, and every field of `_b3_inputs` held to `_b3_own_books`, the test's own build through `a2_book_returns`, `b3_book_returns` and `limit_factors`, never the subject's halves; the limits' wiring with the factor rewritten at every bar, so a book the limits never scale is seen; the metrics and the pre-flight's on `_b3_built_inputs`, books made by hand over 1,400 return indices — arm B moving ETH first, at 200, then SOL and BTC, so a first engagement read off every asset or off one side is seen, each limit engaged at a stamp of its own, each arm's ranked counts a pattern of its own — under argument-derived stand-ins for the bar, the head-to-head and the benchmark, every call's arguments and every key held to `_b3_own_net` and `_b3_own_engagement`, the test's own expressions; the refusal bound from both sides, and at a dead knob; the count and the plain eval refused before any read; `--as-of` refused before any read. Every new function is parametrised by the subject's name, so `tests/retired_subjects.py`'s hook marks each case `retired` once a later branch retires the two names. The shared rows — the contract, tracked-spec, shared-defaults and deflation rows, which `_RULED_FIXTURES`, `_DECLARED_COUNT` and `_CONTRACT_DATASETS` reach — run both subjects end to end on `_b2_dataset`, the trial's arm B and bars among them.
+  **Author's call** — each half on the fixture that moves it, every case but the shared rows in seconds, so each is a probe's target: the declaration, its key counts typed from the spec; the rule row by row on `_B3_ADOPTING`, whose full-window pair stands against the verdict; the reads on `_b4_dataset`, whose two ratio files the reads must leave unread, the union and every close held to the files', the block to the ten EUR files; the two window refusals on `_b2_dataset` from each side of the evaluable window, through the command, before any book, for both subjects; the books on `_b3_short_reads`, a 480-stamp union of the ten assets the reads would refuse, its BTC missing one stamp, SOL listing at 250 and AVAX at 330, so the basket holds exactly 8 from return index 180 to 429 and 9 after — a floor read off 9 starts the tilt elsewhere — the bit-identity read off the two ensembles the inputs build, the first differing position at or after every arm's first tilted close and equal to `_b3_first_engaged`, and every field of `_b3_inputs` held to `_b3_own_books`, the test's own build through `a2_book_returns`, `b3_book_returns` and `limit_factors`, never the subject's halves; the limits' wiring with the factor rewritten at every bar, so a book the limits never scale is seen; the metrics and the pre-flight's on `_b3_built_inputs`, books made by hand over 1,400 return indices — arm B moving ETH first, at 200, then SOL and BTC, so a first engagement read off every asset or off one side is seen, each limit engaged at a stamp of its own, each arm's basket sizes and tilted counts a pattern of its own — under argument-derived stand-ins for the bar, the head-to-head and the benchmark, every call's arguments and every key held to `_b3_own_net` and `_b3_own_engagement`, the test's own expressions; the refusal bound from both sides, and at a dead knob; the count and the plain eval refused before any read; `--as-of` refused before any read. Every new function is parametrised by the subject's name, so `tests/retired_subjects.py`'s hook marks each case `retired` once a later branch retires the two names. The shared rows — the contract, tracked-spec, shared-defaults and deflation rows, which `_RULED_FIXTURES`, `_DECLARED_COUNT` and `_CONTRACT_DATASETS` reach — run both subjects end to end on `_b2_dataset`, the trial's arm B and bars among them.
 - [ ] **Step 2: Run them to verify they fail** — `mkdir -p .tmp/plan-00147 && uv run pytest tests/test_research_command.py -k "b3_ or ruled_subjects_declare or declares_the_metric_keys" -m "not data" -q -p no:cacheprovider --basetemp=.tmp/plan-00147/pt`: collection completes and every selected case fails at its call — on a key `SUBJECTS` lacks, a name `subjects` lacks or a subject the CLI does not know (measured on Task 1's tree: `28 failed, 877 deselected`); and `mkdir -p .tmp/plan-00147 && uv run pytest tests/test_trial_registry_provenance.py::test_the_budgets_and_buckets_are_the_master_plans_literals -q -p no:cacheprovider --basetemp=.tmp/plan-00147/pt`, measured `1 failed`.
 - [ ] **Step 3: Implement in `cli/research/subjects.py` and `cli/registry/budget.py`** — after the `from cli.alpha.b2 import (` block's closing `)` and before `from cli.alpha.b4 import (`:
 
@@ -865,10 +929,11 @@ from cli.alpha.b3 import b3_book_returns
   after `_B4_SOL_PREFLIGHT_KEYS`' closing `)` and before `SUBJECTS: dict[str, Subject] = {`, two blank lines on each side:
 
 ```python
-# docs/specs/00147 D2-D9: B3's trial 1, the adopted A2-4h ensemble's long weights tilted at each close by a cross-sectional
-# momentum rank, on a frozen set's full history: trial 58's arm A, limits, costing and bar.
+# docs/specs/00147 D2-D9: B3's trial 1, the adopted A2-4h ensemble's long weights tilted at each close by their rank in the
+# basket on trailing momentum, on a frozen set's full history: trial 58's arm A, limits, costing and bar.
 _B3_SCORE_LOOKBACK = 180  # docs/specs/00147 D3: M, the closes a momentum score spans; another value is a new trial
 _B3_STRENGTH = 0.5  # docs/specs/00147 D3: k, the tilt's strength; another value is a new trial
+_B3_FLOOR = 8  # docs/specs/00147 D3: the basket size below which no close tilts, master plan §3's ~8 names to rank
 _B3_N_TRIALS = 1  # docs/specs/00147 D8: B3's true count with this trial, fixed by the spec's hash; another is a new subject
 
 
@@ -882,6 +947,7 @@ class _B3Inputs(NamedTuple):
     engaged_a: dict[str, list[bool]]
     engaged_b: dict[str, list[bool]]
     ranked: dict[str, list[int]]
+    tilted: dict[str, list[int]]
 
 
 def _b3_reads(
@@ -902,8 +968,11 @@ def _b3_reads(
     return h4_ts, h4_prices
 
 
-def _b3_ensemble(prices: dict[str, list[float | None]]) -> tuple[dict[str, list[float]], dict[str, list[int]]]:
-    """`_b4_ensemble` with each arm's book tilted; each arm's count of ranked assets per close, keyed by the arm."""
+def _b3_ensemble(
+    prices: dict[str, list[float | None]],
+) -> tuple[dict[str, list[float]], dict[str, list[int]], dict[str, list[int]]]:
+    """`_b4_ensemble` with each arm's book tilted; each arm's basket size and count of longs tilted per close, keyed by the
+    arm."""
     books = {
         f"{'-'.join(map(str, lookbacks))}@{target_vol}": b3_book_returns(
             prices,
@@ -917,12 +986,13 @@ def _b3_ensemble(prices: dict[str, list[float | None]]) -> tuple[dict[str, list[
             ),
             score_lookback=_B3_SCORE_LOOKBACK,
             strength=_B3_STRENGTH,
+            floor=_B3_FLOOR,
         )
         for lookbacks, target_vol in _B2_A2_ARMS
     }
     arms = [book["asset_positions"] for book in books.values()]
     positions = {i: [statistics.mean(arm[i][k] for arm in arms) for k in range(len(prices["BTC"]) - 1)] for i in prices}
-    return positions, {arm: book["ranked"] for arm, book in books.items()}
+    return positions, {arm: book["ranked"] for arm, book in books.items()}, {arm: book["tilted"] for arm, book in books.items()}
 
 
 def _b3_inputs(reads: tuple[list[datetime], dict[str, list[float | None]]]) -> _B3Inputs:
@@ -930,10 +1000,10 @@ def _b3_inputs(reads: tuple[list[datetime], dict[str, list[float | None]]]) -> _
     h4_ts, h4_prices = reads
     fed = _ffill_btc(h4_prices)
     arm_a, engaged_a = _b4_limited(_b4_ensemble(fed))
-    raw_b, ranked = _b3_ensemble(fed)
+    raw_b, ranked, tilted = _b3_ensemble(fed)
     arm_b, engaged_b = _b4_limited(raw_b)
     returns = {a: _asset_returns(fed[a]) for a in h4_prices}
-    return _B3Inputs(h4_ts, h4_prices, close_grid(h4_ts), returns, arm_a, arm_b, engaged_a, engaged_b, ranked)
+    return _B3Inputs(h4_ts, h4_prices, close_grid(h4_ts), returns, arm_a, arm_b, engaged_a, engaged_b, ranked, tilted)
 
 
 def _b3_first_engaged(inputs: _B3Inputs) -> int:
@@ -950,7 +1020,7 @@ def _b3_engagement(inputs: _B3Inputs) -> dict:
         "primary_returns": len(close) - start,
         "stamps_positions_differ": sum(differ.values()),
         "positions_differ_per_year": differ,
-        "tilted_per_year": {arm: per_year_counts([c >= 2 for c in counts], close) for arm, counts in inputs.ranked.items()},
+        "tilted_per_year": {arm: per_year_counts([c > 0 for c in counts], close) for arm, counts in inputs.tilted.items()},
         "ranked_assets_histogram": {
             arm: {str(m): counts.count(m) for m in range(len(inputs.arm_a) + 1)} for arm, counts in inputs.ranked.items()
         },
@@ -1194,10 +1264,10 @@ _B3_PREFLIGHT_KEYS = (
 - [ ] **Step 4: `README.md`** — the `research eval` `--subject` row: `` , over a history that runs past 2026-03-31) or `b4-sol-noborrow-rolling-preflight` ( `` becomes `` , over a history that runs past 2026-03-31), `b4-sol-noborrow-rolling-preflight` ( ``, and the row's closing `` with no return of the eleven-instrument book; it has no rule, so its run is kept with `--reading`). | `` becomes:
 
 ```markdown
-with no return of the eleven-instrument book; it has no rule, so its run is kept with `--reading`), `b3-rank-tilt` (the A2 4h ensemble against the same three arms with each arm's inverse-vol weights of the assets it holds long tilted at each 4h close by their rank on the trailing 30-day return, the strongest up by half and the weakest down by half, their sum kept; the 4h series of `--dataset`, a frozen set only) or `b3-rank-tilt-preflight` (that comparison's instrument check: the unconditioned ensemble's figures and bar and the tilt's ranked assets, positions and turnover and the limits it engages, with no return of the tilted book; it has no rule, so its run is kept with `--reading`). |
+with no return of the eleven-instrument book; it has no rule, so its run is kept with `--reading`), `b3-rank-tilt` (the A2 4h ensemble against the same three arms with each arm's inverse-vol weights of the assets it holds long tilted at each 4h close by their rank, among every weighted asset, on the trailing 30-day return, the strongest up by half and the weakest down by half, their sum kept, at the closes where 8 assets or more rank; the 4h series of `--dataset`, a frozen set only) or `b3-rank-tilt-preflight` (that comparison's instrument check: the unconditioned ensemble's figures and bar, and the ranked assets, tilted closes, positions and turnover of the tilt and the limits it engages, with no return of the tilted book; it has no rule, so its run is kept with `--reading`). |
 ```
 
-- [ ] **Step 5: `tests/slow-cases.txt`** — gains at their `sorted()` places the shared rows measured at 10 s or more in the scratch worktree on Task 2's tree (call time: the shared-defaults rows 34.73 s and 29.14 s, the evaluate rows 17.47 s and 14.62 s, the deflation row 14.97 s):
+- [ ] **Step 5: `tests/slow-cases.txt`** — gains at their `sorted()` places the shared rows measured at 10 s or more in the scratch worktree on Task 2's tree (call time: the shared-defaults rows 34.98 s and 29.32 s, the evaluate rows 17.75 s and 14.65 s, the deflation row 15.17 s):
 
 ```text
 tests/test_research_command.py::test_every_ruled_subjects_kill_bar_deflates_at_its_declared_count[b3-rank-tilt]
@@ -1208,9 +1278,9 @@ tests/test_research_command.py::test_every_subjects_metrics_hold_when_the_shared
 ```
 
   A case that times at 10 s or more on the implementer's own run and is not listed joins the list; a listed one under 10 s stays (`tests/test_slow_cases.py` passes).
-- [ ] **Step 6: Run them to verify they pass** — step 2's two commands, measured `28 passed, 895 deselected` (about 5 s) and `1 passed`; then the shared rows, `mkdir -p .tmp/plan-00147 && uv run pytest tests/test_research_command.py -k "b3-rank-tilt and not b3_" -m "not data" --durations=0 -q -p no:cacheprovider --basetemp=.tmp/plan-00147/pt`, one plain blocking call, `timeout` 600000 ms (measured `19 passed, 904 deselected in 114.32s`, every row but the five step 5 lists under 1 s).
-- [ ] **Step 7: Stage, consumers, gate** — `git add cli/research/subjects.py cli/registry/budget.py tests/test_research_command.py tests/test_trial_registry_provenance.py README.md tests/slow-cases.txt`; the Global Constraints' list over the six paths in its four parts (measured on Task 2's tree in the scratch worktree: `510 passed, 413 deselected in 212.12s`, `227 passed, 696 deselected in 311.74s`, `71 passed, 852 deselected in 90.55s`; the other forty-two direct readers `4282 passed, 76 deselected in 124.60s`); `uv run pre-commit run -a` until clean, its rewrites staged; the Unchanged checks.
-- [ ] **Step 8: Probes** — on the staged tree, in the probe worktree, each row expected `KILLED` (measured in the scratch worktree on Task 2's tree, 60 of 60); the metric-keys lines, the ruled-subjects literal and the contract, shared-defaults, deflation and tracked-spec rows are new rows of existing tests, not new guards, and are not probed; the budgets literal is the guard this task changes, and its row is the block's last:
+- [ ] **Step 6: Run them to verify they pass** — step 2's two commands, measured `28 passed, 895 deselected` (about 9 s) and `1 passed`; then the shared rows, `mkdir -p .tmp/plan-00147 && uv run pytest tests/test_research_command.py -k "b3-rank-tilt and not b3_" -m "not data" --durations=0 -q -p no:cacheprovider --basetemp=.tmp/plan-00147/pt`, one plain blocking call, `timeout` 600000 ms (measured `19 passed, 904 deselected in 114.86s`, every row but the five step 5 lists under 1 s).
+- [ ] **Step 7: Stage, consumers, gate** — `git add cli/research/subjects.py cli/registry/budget.py tests/test_research_command.py tests/test_trial_registry_provenance.py README.md tests/slow-cases.txt`; the Global Constraints' list over the six paths in its four parts (measured on Task 2's tree in the scratch worktree: `510 passed, 413 deselected in 215.21s`, `227 passed, 696 deselected in 314.68s`, `71 passed, 852 deselected in 91.16s`; the other forty-two direct readers `4282 passed, 76 deselected in 124.72s`); `uv run pre-commit run -a` until clean, its rewrites staged; the Unchanged checks.
+- [ ] **Step 8: Probes** — on the staged tree, in the probe worktree, each row expected `KILLED` (measured in the scratch worktree on Task 2's tree, 63 of 63); the metric-keys lines, the ruled-subjects literal and the contract, shared-defaults, deflation and tracked-spec rows are new rows of existing tests, not new guards, and are not probed; the budgets literal is the guard this task changes, and its row is the block's last:
 
 ```bash
 infra/scripts/mutate-probe.sh --file cli/research/subjects.py --control 's/^def _build_b3_rank_tilt(/def _build_b3_rank_tilt_gone(/' --mutation 's/^_B3_N_TRIALS = 1\b/_B3_N_TRIALS = 2/' -- uv run pytest 'tests/test_research_command.py::test_the_b3_pair_declares_the_4h_grid_the_specs_keys_and_seeds_and_the_trial_alone_a_rule_and_a_count[b3-rank-tilt]' -q -p no:cacheprovider --basetemp=.tmp/pt
@@ -1221,6 +1291,7 @@ infra/scripts/mutate-probe.sh --file cli/research/subjects.py --control 's/^def 
 infra/scripts/mutate-probe.sh --file cli/research/subjects.py --control 's/^def _build_b3_rank_tilt(/def _build_b3_rank_tilt_gone(/' --mutation '/"b3-rank-tilt": Subject(/,/^    ),/s/family="B3",/family="B4",/' -- uv run pytest 'tests/test_research_command.py::test_the_b3_pair_declares_the_4h_grid_the_specs_keys_and_seeds_and_the_trial_alone_a_rule_and_a_count[b3-rank-tilt]' -q -p no:cacheprovider --basetemp=.tmp/pt
 infra/scripts/mutate-probe.sh --file cli/research/subjects.py --control 's/^def _build_b3_rank_tilt(/def _build_b3_rank_tilt_gone(/' --mutation 's/^_B3_SCORE_LOOKBACK = 180 /_B3_SCORE_LOOKBACK = 120 /' -- uv run pytest 'tests/test_research_command.py::test_the_b3_pair_declares_the_4h_grid_the_specs_keys_and_seeds_and_the_trial_alone_a_rule_and_a_count[b3-rank-tilt]' -q -p no:cacheprovider --basetemp=.tmp/pt
 infra/scripts/mutate-probe.sh --file cli/research/subjects.py --control 's/^def _build_b3_rank_tilt(/def _build_b3_rank_tilt_gone(/' --mutation 's/^_B3_STRENGTH = 0\.5 /_B3_STRENGTH = 0.25 /' -- uv run pytest 'tests/test_research_command.py::test_the_b3_pair_declares_the_4h_grid_the_specs_keys_and_seeds_and_the_trial_alone_a_rule_and_a_count[b3-rank-tilt]' -q -p no:cacheprovider --basetemp=.tmp/pt
+infra/scripts/mutate-probe.sh --file cli/research/subjects.py --control 's/^def _build_b3_rank_tilt(/def _build_b3_rank_tilt_gone(/' --mutation 's/^_B3_FLOOR = 8 /_B3_FLOOR = 9 /' -- uv run pytest 'tests/test_research_command.py::test_the_b3_pair_declares_the_4h_grid_the_specs_keys_and_seeds_and_the_trial_alone_a_rule_and_a_count[b3-rank-tilt]' -q -p no:cacheprovider --basetemp=.tmp/pt
 infra/scripts/mutate-probe.sh --file cli/research/subjects.py --control 's/^def _build_b3_rank_tilt(/def _build_b3_rank_tilt_gone(/' --mutation '/^_B3_ENGAGEMENT_KEYS = /,/^)/s/^        "ranked_assets_mean",$/        "ranked_assets_means",/' -- uv run pytest 'tests/test_research_command.py::test_the_b3_pair_declares_the_4h_grid_the_specs_keys_and_seeds_and_the_trial_alone_a_rule_and_a_count[b3-rank-tilt]' -q -p no:cacheprovider --basetemp=.tmp/pt
 infra/scripts/mutate-probe.sh --file cli/research/subjects.py --control 's/^def _build_b3_rank_tilt(/def _build_b3_rank_tilt_gone(/' --mutation '/^def _b3_rank_tilt_verdict(/,/^_B3_ENGAGEMENT_KEYS/s/"adopt" if m\["head_to_head_spa_p_primary"\] < 0\.05 else "park"/"park"/' -- uv run pytest 'tests/test_research_command.py::test_the_b3_rule_maps_its_metrics_to_a_verdict_or_a_stop[outperforms-significantly-from-the-first-engagement-b3-rank-tilt]' -q -p no:cacheprovider --basetemp=.tmp/pt
 infra/scripts/mutate-probe.sh --file cli/research/subjects.py --control 's/^def _build_b3_rank_tilt(/def _build_b3_rank_tilt_gone(/' --mutation 's/if not m\["arm_a_passes"\] or not m\["stamps_positions_differ"\]:/if not m["stamps_positions_differ"]:/' -- uv run pytest 'tests/test_research_command.py::test_the_b3_rule_maps_its_metrics_to_a_verdict_or_a_stop[arm-a-fails-its-bar-b3-rank-tilt]' -q -p no:cacheprovider --basetemp=.tmp/pt
@@ -1244,12 +1315,14 @@ infra/scripts/mutate-probe.sh --file cli/research/subjects.py --control 's/^def 
 infra/scripts/mutate-probe.sh --file cli/research/subjects.py --control 's/^def _b3_ensemble(/def _b3_ensemble_gone(/' --mutation 's/^        f"{.-.\.join(map(str, lookbacks))}@{target_vol}": b3_book_returns(/        f"{lookbacks}": b3_book_returns(/' -- uv run pytest 'tests/test_research_command.py::test_the_b3_inputs_build_arm_a_untilted_and_arm_b_tilted_each_through_the_limits[b3-rank-tilt]' -q -p no:cacheprovider --basetemp=.tmp/pt
 infra/scripts/mutate-probe.sh --file cli/research/subjects.py --control 's/^def _b3_ensemble(/def _b3_ensemble_gone(/' --mutation 's/^            score_lookback=_B3_SCORE_LOOKBACK,/            score_lookback=120,/' -- uv run pytest 'tests/test_research_command.py::test_the_b3_inputs_build_arm_a_untilted_and_arm_b_tilted_each_through_the_limits[b3-rank-tilt]' -q -p no:cacheprovider --basetemp=.tmp/pt
 infra/scripts/mutate-probe.sh --file cli/research/subjects.py --control 's/^def _b3_ensemble(/def _b3_ensemble_gone(/' --mutation 's/^            strength=_B3_STRENGTH,/            strength=0.25,/' -- uv run pytest 'tests/test_research_command.py::test_the_b3_inputs_build_arm_a_untilted_and_arm_b_tilted_each_through_the_limits[b3-rank-tilt]' -q -p no:cacheprovider --basetemp=.tmp/pt
+infra/scripts/mutate-probe.sh --file cli/research/subjects.py --control 's/^def _b3_ensemble(/def _b3_ensemble_gone(/' --mutation 's/^            floor=_B3_FLOOR,/            floor=9,/' -- uv run pytest 'tests/test_research_command.py::test_the_b3_inputs_build_arm_a_untilted_and_arm_b_tilted_each_through_the_limits[b3-rank-tilt]' -q -p no:cacheprovider --basetemp=.tmp/pt
+infra/scripts/mutate-probe.sh --file cli/research/subjects.py --control 's/^def _b3_ensemble(/def _b3_ensemble_gone(/' --mutation 's/{arm: book\["tilted"\] for arm, book in books\.items()}/{arm: book["ranked"] for arm, book in books.items()}/' -- uv run pytest 'tests/test_research_command.py::test_the_b3_inputs_build_arm_a_untilted_and_arm_b_tilted_each_through_the_limits[b3-rank-tilt]' -q -p no:cacheprovider --basetemp=.tmp/pt
 infra/scripts/mutate-probe.sh --file cli/research/subjects.py --control 's/^def _b3_ensemble(/def _b3_ensemble_gone(/' --mutation '/^def _b3_ensemble(/,/^def /s/                basket_lookback=_B2_LOOKBACK,/                basket_lookback=120,/' -- uv run pytest 'tests/test_research_command.py::test_the_b3_inputs_build_arm_a_untilted_and_arm_b_tilted_each_through_the_limits[b3-rank-tilt]' -q -p no:cacheprovider --basetemp=.tmp/pt
 infra/scripts/mutate-probe.sh --file cli/research/subjects.py --control 's/^def _b3_inputs(/def _b3_inputs_gone(/' --mutation '/^def _b3_inputs(/,/^def /s/^    arm_b, engaged_b = _b4_limited(raw_b)$/    arm_b, engaged_b = raw_b, _b4_limited(raw_b)[1]/' -- uv run pytest 'tests/test_research_command.py::test_the_b3_inputs_pass_both_arms_through_the_limits[b3-rank-tilt]' -q -p no:cacheprovider --basetemp=.tmp/pt
 infra/scripts/mutate-probe.sh --file cli/research/subjects.py --control 's/^def _b3_first_engaged(/def _b3_first_engaged_gone(/' --mutation 's/return next((k for k in range(n) if any(inputs\.arm_b\[a\]\[k\] != inputs\.arm_a\[a\]\[k\] for a in inputs\.arm_a)), n)/return next((k for k in range(n) if all(inputs.arm_b[a][k] != inputs.arm_a[a][k] for a in inputs.arm_a)), n)/' -- uv run pytest 'tests/test_research_command.py::test_the_b3_trial_reads_each_metric_from_its_own_call[b3-rank-tilt]' -q -p no:cacheprovider --basetemp=.tmp/pt
 infra/scripts/mutate-probe.sh --file cli/research/subjects.py --control 's/^def _b3_first_engaged(/def _b3_first_engaged_gone(/' --mutation 's/return next((k for k in range(n) if any(inputs\.arm_b\[a\]\[k\] != inputs\.arm_a\[a\]\[k\] for a in inputs\.arm_a)), n)/return next((k for k in range(n) if any(inputs.arm_b[a][k] > inputs.arm_a[a][k] for a in inputs.arm_a)), n)/' -- uv run pytest 'tests/test_research_command.py::test_the_b3_trial_reads_each_metric_from_its_own_call[b3-rank-tilt]' -q -p no:cacheprovider --basetemp=.tmp/pt
 infra/scripts/mutate-probe.sh --file cli/research/subjects.py --control 's/^def _b3_engagement(/def _b3_engagement_gone(/' --mutation 's/"primary_returns": len(close) - start,/"primary_returns": len(close) - start - 1,/' -- uv run pytest 'tests/test_research_command.py::test_the_b3_trial_reads_each_metric_from_its_own_call[b3-rank-tilt]' -q -p no:cacheprovider --basetemp=.tmp/pt
-infra/scripts/mutate-probe.sh --file cli/research/subjects.py --control 's/^def _b3_engagement(/def _b3_engagement_gone(/' --mutation 's/per_year_counts(\[c >= 2 for c in counts\], close)/per_year_counts([c >= 1 for c in counts], close)/' -- uv run pytest 'tests/test_research_command.py::test_the_b3_trial_reads_each_metric_from_its_own_call[b3-rank-tilt]' -q -p no:cacheprovider --basetemp=.tmp/pt
+infra/scripts/mutate-probe.sh --file cli/research/subjects.py --control 's/^def _b3_engagement(/def _b3_engagement_gone(/' --mutation 's/for arm, counts in inputs\.tilted\.items()},/for arm, counts in inputs.ranked.items()},/' -- uv run pytest 'tests/test_research_command.py::test_the_b3_trial_reads_each_metric_from_its_own_call[b3-rank-tilt]' -q -p no:cacheprovider --basetemp=.tmp/pt
 infra/scripts/mutate-probe.sh --file cli/research/subjects.py --control 's/^def _b3_engagement(/def _b3_engagement_gone(/' --mutation 's/for m in range(len(inputs\.arm_a) + 1)}/for m in range(len(inputs.arm_a))}/' -- uv run pytest 'tests/test_research_command.py::test_the_b3_trial_reads_each_metric_from_its_own_call[b3-rank-tilt]' -q -p no:cacheprovider --basetemp=.tmp/pt
 infra/scripts/mutate-probe.sh --file cli/research/subjects.py --control 's/^def _b3_engagement(/def _b3_engagement_gone(/' --mutation 's/"ranked_assets_mean": {arm: statistics\.fmean(counts)/"ranked_assets_mean": {arm: max(counts)/' -- uv run pytest 'tests/test_research_command.py::test_the_b3_trial_reads_each_metric_from_its_own_call[b3-rank-tilt]' -q -p no:cacheprovider --basetemp=.tmp/pt
 infra/scripts/mutate-probe.sh --file cli/research/subjects.py --control 's/^def _b3_engagement(/def _b3_engagement_gone(/' --mutation 's/"turnover_b": book_turnover(inputs\.arm_b),/"turnover_b": book_turnover(inputs.arm_a),/' -- uv run pytest 'tests/test_research_command.py::test_the_b3_trial_reads_each_metric_from_its_own_call[b3-rank-tilt]' -q -p no:cacheprovider --basetemp=.tmp/pt
@@ -1275,7 +1348,7 @@ infra/scripts/mutate-probe.sh --file cli/research/subjects.py --control 's/^def 
 infra/scripts/mutate-probe.sh --file cli/registry/budget.py --control 's/^BUDGET: dict/BUDGET_gone: dict/' --mutation 's/"B3": "B", //' -- uv run pytest 'tests/test_trial_registry_provenance.py::test_the_budgets_and_buckets_are_the_master_plans_literals' -q -p no:cacheprovider --basetemp=.tmp/pt
 ```
 
-  Each row moves one clause D2–D8 gives the new code. The declaration: the count, the pre-flight's keys, the seeds, the spec, the rule, the family, `M`, `k` and an engagement key (rows 1–9). The rule, row by row (rows 10–19), the last reading the full window in place of the primary read. The reads: the 4h grid (row 20) and each window refusal on both subjects (rows 21–24). The inputs: arm A untilted, the BTC fill, the assets' returns on the filled BTC, the arms' mean, the arms' keys, the score lookback, the strength, the basket lookback, arm B through the limits (rows 25–33). The first engagement read off any asset and off any difference (rows 34–35). The engagement's primary count, tilted closes, histogram, mean, turnover, differing stamps and engaged flags (rows 36–42). The metrics: the primary read from the first engagement, arm B's net, the stressed series, arm A's own `passes`, the full-window SPA p, arm A's drawdown and the count reaching arm A's bar (rows 43–49). The refusal's bound from both sides (rows 50–51). The pre-flight: the count reaching its bar, the spot drag, the drawdown and the engagement's flags (rows 52–55). The `--as-of` refusal on both subjects, the plain eval and the count (rows 56–59). `BUCKET_OF`'s new line (row 60).
+  Each row moves one clause D2–D8 gives the new code. The declaration: the count, the pre-flight's keys, the seeds, the spec, the rule, the family, `M`, `k`, the floor and an engagement key (rows 1–10). The rule, row by row (rows 11–20), the last reading the full window in place of the primary read. The reads: the 4h grid (row 21) and each window refusal on both subjects (rows 22–25). The inputs: arm A untilted, the BTC fill, the assets' returns on the filled BTC, the arms' mean, the arms' keys, the score lookback, the strength, the floor, the tilted counts, the basket lookback, arm B through the limits (rows 26–36). The first engagement read off any asset and off any difference (rows 37–38). The engagement's primary count, tilted closes read off the tilted counts, histogram, mean, turnover, differing stamps and engaged flags (rows 39–45). The metrics: the primary read from the first engagement, arm B's net, the stressed series, arm A's own `passes`, the full-window SPA p, arm A's drawdown and the count reaching arm A's bar (rows 46–52). The refusal's bound from both sides (rows 53–54). The pre-flight: the count reaching its bar, the spot drag, the drawdown and the engagement's flags (rows 55–58). The `--as-of` refusal on both subjects, the plain eval and the count (rows 59–62). `BUCKET_OF`'s new line (row 63).
 - [ ] **Step 9: Commit** — `feat(research): B3 trial 1's subjects — the A2 ensemble's long weights tilted by a cross-sectional momentum rank and their pre-flight twin on a frozen set's full history, and the family key B3 in bucket B`, the message carrying the test result lines, the probe block's commands and verdicts, the owner's ruling the new family joins under, quoted ("B3 (Recommended)"), and the two trailer lines.
 
 ## Task 3: the data-gated basis test, the decisions-log entries before the hash, the reads (D1, D9)
@@ -1287,8 +1360,8 @@ infra/scripts/mutate-probe.sh --file cli/registry/budget.py --control 's/^BUDGET
 - [ ] **Step 1: Write the test** — every literal copied from the spec's measured basis, record 58's and record 49's figures read off the committed records:
 
 ```python
-"""B3 trial 1's inputs half against spec 00147's measured basis: positions, the ranked assets, the limits and turnover,
-and no return of a book."""
+"""B3 trial 1's inputs half against spec 00147's measured basis: positions, the ranked basket, the tilted closes, the
+limits and turnover, and no return of a book."""
 
 from __future__ import annotations
 
@@ -1316,99 +1389,29 @@ _LONG = ("60-120-240@0.1", "60-120-240@0.12")
 BLOCK = "ff2e5700695b3fbc9e077a3d4bc2c4618720f61cd9c1a024430fbf7501719a69"
 VOUCHED = {"ohlc-full": "checked (36 vouched hashes)"}
 RETURN_INDICES = 27_337
-HISTOGRAM = {
-    _SHORT: {
-        "0": 7_292,
-        "1": 6_224,
-        "2": 3_064,
-        "3": 1_885,
-        "4": 1_707,
-        "5": 1_628,
-        "6": 1_013,
-        "7": 950,
-        "8": 1_085,
-        "9": 856,
-        "10": 1_633,
-    },
-    **dict.fromkeys(
-        _LONG,
-        {
-            "0": 7_405,
-            "1": 5_827,
-            "2": 3_142,
-            "3": 1_715,
-            "4": 1_754,
-            "5": 1_870,
-            "6": 1_211,
-            "7": 1_169,
-            "8": 880,
-            "9": 793,
-            "10": 1_571,
-        },
-    ),
-}
+_ARMS = (_SHORT, *_LONG)
+# The basket is the same at every arm: its weights and scores read no direction.
+HISTOGRAM = dict.fromkeys(
+    _ARMS,
+    {"0": 180, "1": 4_336, "2": 3_182, "3": 760, "4": 2_795, "5": 2_605, "6": 1_389, "7": 607, "8": 1_407, "9": 1_254, "10": 8_822},
+)
 ENGAGEMENT = {
-    "tilt_first_engaged": 573,
-    "primary_returns": 26_764,
-    "stamps_positions_differ": 18_835,
+    "tilt_first_engaged": 15_672,
+    "primary_returns": 11_665,
+    "stamps_positions_differ": 9_691,
     "positions_differ_per_year": _YEARS
-    | {
-        "2014": 229,
-        "2015": 102,
-        "2016": 1_661,
-        "2017": 2_115,
-        "2018": 1_343,
-        "2019": 1_790,
-        "2020": 2_018,
-        "2021": 1_904,
-        "2022": 1_762,
-        "2023": 1_962,
-        "2024": 1_807,
-        "2025": 1_754,
-        "2026": 388,
-    },
+    | {"2020": 171, "2021": 1_904, "2022": 1_762, "2023": 1_944, "2024": 1_805, "2025": 1_717, "2026": 388},
     "tilted_per_year": {
-        _SHORT: _YEARS
-        | {
-            "2014": 91,
-            "2015": 24,
-            "2016": 578,
-            "2017": 1_551,
-            "2018": 867,
-            "2019": 1_299,
-            "2020": 1_711,
-            "2021": 1_601,
-            "2022": 1_304,
-            "2023": 1_634,
-            "2024": 1_503,
-            "2025": 1_343,
-            "2026": 315,
-        },
+        _SHORT: _YEARS | {"2020": 145, "2021": 1_601, "2022": 1_304, "2023": 1_634, "2024": 1_415, "2025": 1_343, "2026": 315},
         **dict.fromkeys(
-            _LONG,
-            _YEARS
-            | {
-                "2014": 37,
-                "2015": 24,
-                "2016": 910,
-                "2017": 1_722,
-                "2018": 605,
-                "2019": 1_254,
-                "2020": 1_795,
-                "2021": 1_690,
-                "2022": 1_253,
-                "2023": 1_661,
-                "2024": 1_508,
-                "2025": 1_304,
-                "2026": 342,
-            },
+            _LONG, _YEARS | {"2020": 171, "2021": 1_690, "2022": 1_253, "2023": 1_661, "2024": 1_444, "2025": 1_304, "2026": 342}
         ),
     },
     "ranked_assets_histogram": HISTOGRAM,
     "ranked_assets_mean": {
         arm: math.fsum(int(m) * c for m, c in counts.items()) / RETURN_INDICES for arm, counts in HISTOGRAM.items()
     },
-    "turnover_b": 238.02367495477256,
+    "turnover_b": 188.39442044111686,
     "limit_engaged_per_year": dict.fromkeys(("gross", "net", "margin"), _YEARS),
     "arm_a_limit_engaged": dict.fromkeys(("gross", "net", "margin"), 0),
 }
@@ -1436,34 +1439,31 @@ def test_the_rank_tilt_inputs_reproduce_the_measured_basis_and_record_58s_arm_a(
     assert book_turnover(inputs.arm_a) == record["metrics"]["turnover_a"]
     engagement = subjects._b3_engagement(inputs)
     assert {key: engagement[key] for key in ENGAGEMENT} == ENGAGEMENT
-    assert {arm: round(mean, 4) for arm, mean in engagement["ranked_assets_mean"].items()} == {
-        _SHORT: 2.8685,
-        **dict.fromkeys(_LONG, 2.8883),
-    }
+    assert {arm: round(mean, 4) for arm, mean in engagement["ranked_assets_mean"].items()} == dict.fromkeys(_ARMS, 5.8723)
 ```
 
   **Author's call** — the case holds the subject's inputs half to the spec's books program, which built arm B's three arms by its own expression of `a2_book_returns` with the tilt written out, so the measured figures and the subject's code are two derivations that must agree; the block to record 49's `dataset_hash` and to record 58's ten EUR files, arm A to record 58 by its turnover to the last bit, the stored figures, never a second typing; the integer engagement, arm B's turnover and the ranked means exactly — the means as the histogram's own arithmetic — and the means at the four decimals the basis printed.
-- [ ] **Step 2: Run it** — with `data/ohlc-full` linked in this worktree: `mkdir -p .tmp/plan-00147 && uv run pytest tests/test_research_b3_rank_tilt_basis.py --durations=5 -q -p no:cacheprovider --basetemp=.tmp/plan-00147/pt`, one plain blocking call, `timeout` 600000 ms: `1 passed`, never a skip (measured on the authoring tree, a call of 137.46 s). The case joins `tests/slow-cases.txt` at its `sorted()` place:
+- [ ] **Step 2: Run it** — with `data/ohlc-full` linked in this worktree: `mkdir -p .tmp/plan-00147 && uv run pytest tests/test_research_b3_rank_tilt_basis.py --durations=5 -q -p no:cacheprovider --basetemp=.tmp/plan-00147/pt`, one plain blocking call, `timeout` 600000 ms: `1 passed`, never a skip (measured on the authoring tree, a call of 134.75 s). The case joins `tests/slow-cases.txt` at its `sorted()` place:
 
 ```text
 tests/test_research_b3_rank_tilt_basis.py::test_the_rank_tilt_inputs_reproduce_the_measured_basis_and_record_58s_arm_a
 ```
 
-- [ ] **Step 3: Stage, consumers, gate** — `git add tests/test_research_b3_rank_tilt_basis.py tests/slow-cases.txt`; the Global Constraints' list over the two paths (measured `18 passed, 1 deselected in 26.90s`); the two tree walkers its skip gate and data mark meet, `mkdir -p .tmp/plan-00147 && uv run pytest tests/test_live_venue_opt_in.py::test_every_skip_gate_in_tests_matches_a_form tests/test_data_gated_marker.py -m "not data" -q -p no:cacheprovider --basetemp=.tmp/plan-00147/pt` (measured `331 passed`); `uv run pre-commit run -a` until clean. No probe: the case is slow, recorded `probe skipped: slow case`.
-- [ ] **Step 4: Commit** — `test(research): B3 trial 1's inputs half against the measured basis — the block, the first engagement, the ranked assets per arm, the closes where the books differ, the limits and arm B's turnover, and record 58's arm A`, the message carrying the gate's result line, `probe skipped: slow case — tests/test_research_b3_rank_tilt_basis.py::test_the_rank_tilt_inputs_reproduce_the_measured_basis_and_record_58s_arm_a`, the line `It reads data/ohlc-full: re-run it with the set linked into the worktree (ln -sn) and unlinked before its removal; unlinked, it skips.` and the two trailer lines.
+- [ ] **Step 3: Stage, consumers, gate** — `git add tests/test_research_b3_rank_tilt_basis.py tests/slow-cases.txt`; the Global Constraints' list over the two paths (measured `18 passed, 1 deselected in 26.62s`); the two tree walkers its skip gate and data mark meet, `mkdir -p .tmp/plan-00147 && uv run pytest tests/test_live_venue_opt_in.py::test_every_skip_gate_in_tests_matches_a_form tests/test_data_gated_marker.py -m "not data" -q -p no:cacheprovider --basetemp=.tmp/plan-00147/pt` (measured `331 passed`); `uv run pre-commit run -a` until clean. No probe: the case is slow, recorded `probe skipped: slow case`.
+- [ ] **Step 4: Commit** — `test(research): B3 trial 1's inputs half against the measured basis — the block, the first engagement, the ranked basket, the tilted closes per arm, the closes where the books differ, the limits and arm B's turnover, and record 58's arm A`, the message carrying the gate's result line, `probe skipped: slow case — tests/test_research_b3_rank_tilt_basis.py::test_the_rank_tilt_inputs_reproduce_the_measured_basis_and_record_58s_arm_a`, the line `It reads data/ohlc-full: re-run it with the set linked into the worktree (ln -sn) and unlinked before its removal; unlinked, it skips.` and the two trailer lines.
 - [ ] **Step 5: The decisions-log entries, before the hash** — with `iteration-closeout` loaded, at the end of `docs/research/10.phase4-decisions.md`, after one blank line, the loop's pick (spec 00147's Ruling, D1) and then **Author's call** the trial's conventions, plan 00145's form — one commit, both entries — so that both stand in the log before any return of arm B is read:
 
 ```markdown
 [iter-192] B3's first step — trial 1, the rank tilt alone on the A2-4h ensemble, the loop's pick under the owner's family pick (Decision: 1)
   Said, attended, 2026-10-24, asked which family follows B4: "B3 (Recommended)" (the `[iter-190] B4's next step after the leg reading` entry above); B4 closed on the owner's word (the `[iter-191] B4's next step after trial 2 — closed` entry above). The owner's run instruction of 2026-10-23: "continue working on B4-legs and other research strates. Ignore the wall time clock gate, but do not pick up new topics after 09:00Z". B3 is worked under T0016 and no new topic is registered; its first step is the loop's pick under the owner's family pick. Standing and unchanged: the instrument ruling "Frozen ohlc-full (Recommended)" and the two `[iter-176]` rulings.
-  1. **Trial 1, the rank tilt alone** — the A2-4h ensemble's long weights tilted at each close by a simple cross-sectional momentum rank, long-only, no borrow and no carry; one knob, so a verdict attributes to the tilt; master plan §5's "kill quickly" is one slot. Spec 00147, count 1: the tilt first moves a position at return index 573 of 27,337 and the books differ at 18,835; each arm ranks 2 assets or more at 13,821 or 14,105 closes and 8 or more at 3,574 or 3,244; arm B trades 62.82 % more than arm A (spec 00147's measured basis); one B slot, 11 to 10. Chosen.
+  1. **Trial 1, the rank tilt alone** — the A2-4h ensemble's long weights tilted at each close by a simple cross-sectional momentum rank over the whole basket, at the closes where 8 assets or more rank, long-only, no borrow and no carry; one knob, so a verdict attributes to the tilt; master plan §5's "kill quickly" is one slot. Spec 00147, count 1: the basket ranks 8 or more at 11,483 of 27,337 return indices, the first at return index 15,672 (close 2020-12-03 12:00), where the tilt first moves a position, 11,665 return indices from it; the books differ at 9,691, and arm B trades 28.87 % more than arm A (spec 00147's measured basis); one B slot, 11 to 10. Chosen.
   2. **Trial 1 as master plan §5 writes B3 whole, the tilt with the A1-short BTC overlay** — two knobs in one trial, a reject unattributable; the overlay carries the borrow the A family measured as a structural ~5 %/yr drag (T0016's first finding) and §12's borrow-unavailable stress rung; the adopted ensemble already goes flat per asset in a downtrend.
   3. **A no-slot reading first** — the within-basket rank spread's forward returns by quantile, screening before a slot (iter-186's and iter-190's form); one cell with no alternative cell to choose between, and an iteration spent before the trial the master plan's own prior expects to kill.
 
 [iter-192] B3 trial 1's conventions, pinned by spec 00147 before its hash (Decision: 1)
   The trial's details are fixed in the spec, reviewed, and frozen by its sha256, its record's `spec_hash`, before any return of arm B is read, or a net-of-cost series, head-to-head or bar leg of arm B computed, over the data; each call below is one the spec pins, the loop's or the author's as the spec marks it, every value the owner or specs 00128, 00133, 00137 and 00144 fixed staying theirs.
-  1. **As the spec pins them, the tilt alone at M = 180 closes and k = 0.5** — one trial and its pre-flight twin, the loop's pick (D1); frozen `ohlc-full`, full history, the ten EUR assets' 4h union as records 45–58 read it, no other pair, no as-of (D2); arm A the adopted ensemble, record 58's arm A to the bit; arm B the same three A2 arms, each arm's inverse-vol weights of the assets ranked at a close — a weight, a direction and a score above none — multiplied by 1 + k·z, z each one's centred ascending rank on the trailing simple return over M closes, ties at their average rank, then rescaled to their untilted sum, fewer than 2 ranked untilted, the base returns, the vol target and the positions read off the tilted weights as A2 reads its own; the tilt in a new module, `cli/alpha/b3.py`, `a2_book_returns` unchanged and reproduced to the bit at k = 0 (D3); each asset at 0.006 a side on its own turnover through trial 58's `_b4_net`, no borrow and so no carry (D4); §10's limits as trial 58 wired them, engaging no bar (D5); the contamination stated — B3's first look, its instrument, window, arm A, costing and bar records 45–59's, the master plan's prior "fails to beat equal-weight; kill quickly if so", the prior phases' refuted ML selection and long/short quantile spread not this trial, and the master plan's own breadth line, about 8 names to rank, met at 3,574 and 3,244 of the 27,337 closes (D6); trial 58's bar at count 1 and `var_trials` 0.0, the head-to-head from the tilt's first engagement, return index 573, deciding, the matrix through the trial's own rule `_b3_rank_tilt_verdict`, the park variants the tilt at another M or k and the A1-short BTC overlay, the count fixed by the hash (D7); the family key `B3` in bucket B, the subjects `b3-rank-tilt` and `b3-rank-tilt-preflight`, the variant `B3-rank-tilt-a2eq-full-v1`, 44 and 28 keys, the tilt's engagement recorded, the build in three halves (D8); no `--verdict`, notes naming only what is fixed before the run (D9); an adopt recorded, never deployed, B3's next step the owner's after any verdict, the subjects kept until then (D10). Chosen.
-  2. **The alternatives each weighed** — the tilt with the A1-short BTC overlay, two knobs in one trial; a score window other than the ensemble's own 180 closes, a free window the master plan does not name; a full-strength tilt, k = 1, which zeroes the weakest asset; the tilt without the rescale, which moves the long book's sum; the full window deciding, which adds 573 return indices at which the two books are one to the bit; `_b4_ratio_legs_verdict`, whose holding key the tilt has no counterpart of; a change to `cli/alpha/a2.py`, the adopted code; a borrow-free twin, which a book borrowing nothing does not need; a count raised in place; the subjects retired after the verdict, while a park variant may still run their halves.
+  1. **As the spec pins them, the tilt alone at M = 180 closes, k = 0.5 and a basket of 8** — one trial and its pre-flight twin, the loop's pick (D1); frozen `ohlc-full`, full history, the ten EUR assets' 4h union as records 45–58 read it, no other pair, no as-of (D2); arm A the adopted ensemble, record 58's arm A to the bit; arm B the same three A2 arms, at each close the basket — every asset with a weight and a score, whatever its direction — ranked on the trailing simple return over M closes, z each one's centred ascending rank, ties at their average rank, and where the basket holds 8 or more, master plan §3's "Any cross-sectional tilt needs enough names to rank — meaningful below ~8 it is not", each long's weight multiplied by 1 + k·z and the longs rescaled to their untilted sum, the flat assets untouched, fewer than 2 longs untilted, the base returns, the vol target and the positions read off the tilted weights as A2 reads its own; the tilt in a new module, `cli/alpha/b3.py`, `a2_book_returns` unchanged and reproduced to the bit at k = 0 (D3); each asset at 0.006 a side on its own turnover through trial 58's `_b4_net`, no borrow and so no carry (D4); §10's limits as trial 58 wired them, engaging no bar (D5); the contamination stated — B3's first look, its instrument, window, arm A, costing and bar records 45–59's, the master plan's prior "fails to beat equal-weight; kill quickly if so", the prior phases' refuted ML selection and long/short quantile spread not this trial, and the tilt read only from 2020-12-03, where the basket first holds 8 (D6); trial 58's bar at count 1 and `var_trials` 0.0, the head-to-head from the tilt's first engagement, return index 15,672, deciding, the matrix through the trial's own rule `_b3_rank_tilt_verdict`, the park variants the tilt at another M or k and the A1-short BTC overlay, the count fixed by the hash (D7); the family key `B3` in bucket B, the subjects `b3-rank-tilt` and `b3-rank-tilt-preflight`, the variant `B3-rank-tilt-a2eq-full-v1`, 44 and 28 keys, the tilt's engagement recorded, the build in three halves (D8); no `--verdict`, notes naming only what is fixed before the run (D9); an adopt recorded, never deployed, B3's next step the owner's after any verdict, the subjects kept until then (D10). Chosen.
+  2. **The alternatives each weighed** — the rank among the longs alone, the loop's first form of the tilt (spec 00147's first version), which met the master plan's ~8-name breadth at 3,574 and 3,244 of the 27,337 closes (13.07 % and 11.87 %) and traded 62.82 % more than arm A, its ranks churning with the long set's membership; the tilt with the A1-short BTC overlay, two knobs in one trial; a score window other than the ensemble's own 180 closes, a free window the master plan does not name; a full-strength tilt, k = 1, which zeroes the weakest asset; the tilt without the rescale, which moves the long book's sum; the full window deciding, which adds 15,672 return indices at which the two books are one to the bit; `_b4_ratio_legs_verdict`, whose holding key the tilt has no counterpart of; a change to `cli/alpha/a2.py`, the adopted code; a borrow-free twin, which a book borrowing nothing does not need; a count raised in place; the subjects retired after the verdict, while a park variant may still run their halves.
   Source: spec 00147 (D1–D10), its **Author's call**s and the calls it carries from the owner and specs 00128, 00133, 00137 and 00144; the owner's words quoted in the pick above.
 ```
 
@@ -1475,7 +1475,7 @@ tests/test_research_b3_rank_tilt_basis.py::test_the_rank_tilt_inputs_reproduce_t
 - [ ] **Step 1: The gate** — each check its own call, each read before the next: the reads through Task 3 have closed with no open Critical or Important, and nothing changed since: `git diff --quiet <the tip the last read names> -- cli/ tests/ pyproject.toml uv.lock docs/specs/00147-b3-rank-tilt-design.md docs/research/10.phase4-decisions.md` exits 0; the conventions entry against the spec at that tip, each item where the spec pins it and each call the spec carries under the ruling or spec it names; arm A's code path since record 59's run — the spec's basis lists it from that run's commit to the branch's cut — `git log --oneline 273eaa58ea492220c1faf874cce7123b9599da0b..HEAD -- cli/alpha cli/features cli/portfolio cli/benchmark cli/validation cli/backtest cli/research/subjects.py cli/registry cli/ohlc cli/risk cli/costs cli/data uv.lock pyproject.toml .python-version`, lists Tasks 1–2's commits and their fixes alone (measured at the base: nothing); any other commit is named, step 4 deciding whether it moved the inputs half or trial 58's computes.
 - [ ] **Step 2: D9 (1), the spec hash** — `sha256sum docs/specs/00147-b3-rank-tilt-design.md`; its value, pasted from that call, is the run's `--spec-hash` and the record's `spec_hash`. From here nobody edits the spec.
 - [ ] **Step 3: D9 (2), the develop check** — `git fetch origin develop`, then `git diff --quiet $(git merge-base HEAD origin/develop) origin/develop -- docs/reference/trial-registry.jsonl docs/reference/reading-ledger.jsonl` exits 0. A non-zero exit stops before the run: the controller reads which line moved, the same `git diff` without `--quiet`, and only for a line another writer appended legitimately — a registry record or a reading another branch's merged PR carries — merges develop, alone (`git merge --no-edit origin/develop`) — a conflict confined to `docs/research/10.phase4-decisions.md` or `tests/slow-cases.txt` resolved keeping both sides' lines, in the decisions log develop's entries above this branch's and in the slow-cases file each line at its `sorted()` place, and committed as the merge; a conflict in any other file aborted with `git merge --abort`, which stops the task, T0016's — then takes a delta read of the merge in place of re-running step 1: step 1's code-path log over `<the tip the last read names>..HEAD`, then `pre-review`, then `review` over that range and `re-review` over a fix of it within the branch's two, each `drive` carrying Task 3 step 6's sentence with its "before the spec's hash" read "before Task 5's run, record 58's replay excepted", the commits the log lists, and one sentence more: develop's commits were each read on their own PR, so the read judges the merge's resolution and each listed commit's effect on the trial — whose tip becomes the tip the last read names, and step 4 runs on the merged tree. A B3 record another branch landed raises `required_n("B3")` above 1, and the run is then refused before its fit (D7): the trial stops, T0016's. The check has two sites, this step and Task 5 step 1, and both take this path.
-- [ ] **Step 4: D9 (3), the data test on the run's tree, with the subjects' two fixture rows and record 58's replay** — with `data/ohlc-full` linked: `mkdir -p .tmp/plan-00147 && ZCRYPTO_RERUN_SLOW=1 uv run pytest tests/test_research_b3_rank_tilt_basis.py 'tests/test_research_command.py::test_every_subject_evaluates_its_fixture_and_ends_an_input_it_cannot_evaluate_in_an_exit[b3-rank-tilt-evaluates]' 'tests/test_research_command.py::test_every_subject_evaluates_its_fixture_and_ends_an_input_it_cannot_evaluate_in_an_exit[b3-rank-tilt-preflight-evaluates]' 'tests/test_registry_replay.py::test_every_record_past_47_replays_at_head[trial-58]' -q -p no:cacheprovider --basetemp=.tmp/plan-00147/pt > .tmp/plan-00147/basis.out 2>&1`, one background call: `4 passed`, never a skip or an xfail — the fixture rows run the build end to end on the tree a fix of the reads may have changed, and record 58's replay rebuilds trial 58's stored figures through the arm A, costing, bar and head-to-head code the trial's computes half shares with it (measured on the scratch tree, the first three `3 passed in 169.54s`, the replay `1 passed in 310.56s`); a failure is a finding before the run — the data test's an instrument finding, a fixture row's a defect in the code, the replay's a moved computes half — T0016's, and the run waits.
+- [ ] **Step 4: D9 (3), the data test on the run's tree, with the subjects' two fixture rows and record 58's replay** — with `data/ohlc-full` linked: `mkdir -p .tmp/plan-00147 && ZCRYPTO_RERUN_SLOW=1 uv run pytest tests/test_research_b3_rank_tilt_basis.py 'tests/test_research_command.py::test_every_subject_evaluates_its_fixture_and_ends_an_input_it_cannot_evaluate_in_an_exit[b3-rank-tilt-evaluates]' 'tests/test_research_command.py::test_every_subject_evaluates_its_fixture_and_ends_an_input_it_cannot_evaluate_in_an_exit[b3-rank-tilt-preflight-evaluates]' 'tests/test_registry_replay.py::test_every_record_past_47_replays_at_head[trial-58]' -q -p no:cacheprovider --basetemp=.tmp/plan-00147/pt > .tmp/plan-00147/basis.out 2>&1`, one background call: `4 passed`, never a skip or an xfail — the fixture rows run the build end to end on the tree a fix of the reads may have changed, and record 58's replay rebuilds trial 58's stored figures through the arm A, costing, bar and head-to-head code the trial's computes half shares with it (measured on the scratch tree, the first three `3 passed in 169.55s`, the replay `1 passed in 301.39s`); a failure is a finding before the run — the data test's an instrument finding, a fixture row's a defect in the code, the replay's a moved computes half — T0016's, and the run waits.
 - [ ] **Step 5: The check programs** — written once, never committed: `.tmp/plan-00147/preflight_check.py`, D9's (a)–(e) in order, the dead knob read before the engagement, exit 0 on a pass, else one `sys.exit` naming the step that stopped:
 
 ```python
@@ -1567,9 +1567,9 @@ sys.exit(0 if all(checks.values()) else 1)
 `<H>` is Task 4 step 2's sha256.
 
 - [ ] **Step 1: The develop check** — Task 4 step 3 whole, its stop, its merge path and Task 4 step 4 after a merge with it; `git status --short` prints nothing.
-- [ ] **Step 2: The pre-flight** — `mkdir -p .tmp/plan-00147 && uv run zcrypto research eval --subject b3-rank-tilt-preflight --dataset ohlc-full > .tmp/plan-00147/b3-rank-tilt-preflight.out 2>&1`, a plain eval of a subject with no rule — the inputs half and one bar, about two and a half minutes (the spec's basis: the inputs half 137.46 s, one bar 11.17 s) — one background call; at its notification and on its exit 0, `uv run python .tmp/plan-00147/preflight_check.py`. Exit 0: step 4. A `sys.exit` message naming one of (a)–(e): D9's instrument finding, step 3. A traceback, or a refusal before the build, is a code or environment fault, the step stopped and T0016's with its line; a refused build — exit 1 with no traceback, its output naming `b3-rank-tilt-preflight over the full history: …` — prints no metrics, keeps no reading, and is recorded in Task 6's T0016 findings with its line quoted, the trial unspent.
+- [ ] **Step 2: The pre-flight** — `mkdir -p .tmp/plan-00147 && uv run zcrypto research eval --subject b3-rank-tilt-preflight --dataset ohlc-full > .tmp/plan-00147/b3-rank-tilt-preflight.out 2>&1`, a plain eval of a subject with no rule — the inputs half and one bar, about two and a half minutes (the spec's basis: the inputs half 134.75 s, one bar 11.10 s) — one background call; at its notification and on its exit 0, `uv run python .tmp/plan-00147/preflight_check.py`. Exit 0: step 4. A `sys.exit` message naming one of (a)–(e): D9's instrument finding, step 3. A traceback, or a refusal before the build, is a code or environment fault, the step stopped and T0016's with its line; a refused build — exit 1 with no traceback, its output naming `b3-rank-tilt-preflight over the full history: …` — prints no metrics, keeps no reading, and is recorded in Task 6's T0016 findings with its line quoted, the trial unspent.
 - [ ] **Step 3: On a stop, the reading** — `mkdir -p .tmp/plan-00147 && uv run zcrypto research eval --subject b3-rank-tilt-preflight --dataset ohlc-full --reading --iteration iter-192 --spec-hash <H> --notes "B3 trial 1's pre-flight (spec 00147 D9): <the check's sys.exit line, quoted>; no verdict, the trial unspent" > .tmp/plan-00147/b3-rank-tilt-reading.out 2>&1`, one background call; then step 6's stop arm.
-- [ ] **Step 4: The trial** — one run: `mkdir -p .tmp/plan-00147 && uv run zcrypto research eval --subject b3-rank-tilt --dataset ohlc-full --register --iteration iter-192 --family B3 --n-trials 1 --variant B3-rank-tilt-a2eq-full-v1 --spec-hash <H> --notes "<the notes>" > .tmp/plan-00147/b3-rank-tilt.out 2>&1`, about four minutes (the spec's basis: the inputs half, seven bars and two head-to-heads, about 230 s), one background call, `cat` at its notification. No `--verdict` and no plain eval, before or after. The notes, written before the run, name only what is fixed before it: `subject b3-rank-tilt over ohlc-full, full history, no as-of; arm A the adopted equal-weight A2 4h ensemble on the ten EUR assets, arm B the same three arms with each arm's inverse-vol weights of the assets it holds long tilted at every 4h close by their centred rank on the trailing 180-close simple return, each times 1 + 0.5 z, the strongest 1.5 and the weakest 0.5, rescaled to the long weights' untilted sum, fewer than 2 ranked untilted, long-only, A2's configuration otherwise unchanged; every asset charged 0.006 per side on its own turnover, no borrow and no carry; the section 10 gross cap, net band and margin floor, one factor per bar; the hypothesis: the tilted book has a higher mean net-of-cost return than the untilted ensemble from the first close the tilt moves a position; n_trials 1, var_trials 0.0, the DSR leg binding; the head-to-head from return index 573 (close 2014-01-11 16:00), the tilt's first engagement, decides, the full-window read beside it; the contamination: B3's first look, the instrument, arm A, costing and bar records 45-59's, the master plan's prior "fails to beat equal-weight; kill quickly if so", the master plan's ~8-name breadth met at 3574 and 3244 of 27337 closes, arm B trading 62.82 % more than arm A; pre-flight: block ff2e5700..., arm A <the seven anchors>, the bar's dsr <its dsr> and SPA p <its spa_p_value>, passes 1, the tilt engaged from return index 573 with positions differing at 18835 return indices, no limit engaged, turnover_b <its value>; park variants, pre-registered: the tilt at another M or k, the A1-short BTC overlay; the matrix pre-registered by the spec's sha256 <H>`. A refusal from the count — an orphan, a B3 record landed elsewhere, or bucket B spent — comes before the fit or after the print, naming each orphan, the count or the bucket's figure: no record, no reading; T0016 carries it (Task 6). A stop by the rule writes a reading carrying its attempt, which counts 0: step 6's stop arm. On any other exit — a refused build, a traceback, a signal, a refusal after the print — the attempt check runs, `uv run python -c 'import json; lines = [json.loads(x) for x in open("/home/zhaow/Projects/zcrypto-kraken/.local/trial-attempts.jsonl")]; a = [x for x in lines if x["kind"] == "begin" and x["invocation"]["subject"] == "b3-rank-tilt"][-1]["attempt"]; print(a, [x["failed"] for x in lines if x["kind"] == "end" and x["attempt"] == a] or "open")'`: a refused build ends its attempt failed, counting 0, recorded in T0016 with its line, the trial unspent; any other `failed` text, `open`, or `<id> [None]` stops the task, T0016's with the end of the run's output quoted whole.
+- [ ] **Step 4: The trial** — one run: `mkdir -p .tmp/plan-00147 && uv run zcrypto research eval --subject b3-rank-tilt --dataset ohlc-full --register --iteration iter-192 --family B3 --n-trials 1 --variant B3-rank-tilt-a2eq-full-v1 --spec-hash <H> --notes "<the notes>" > .tmp/plan-00147/b3-rank-tilt.out 2>&1`, about four minutes (the spec's basis: the inputs half, seven bars and two head-to-heads, about 225 s), one background call, `cat` at its notification. No `--verdict` and no plain eval, before or after. The notes, written before the run, name only what is fixed before it: `subject b3-rank-tilt over ohlc-full, full history, no as-of; arm A the adopted equal-weight A2 4h ensemble on the ten EUR assets, arm B the same three arms with each arm's inverse-vol weights of the assets it holds long tilted at every 4h close by their centred rank in the whole basket, every weighted asset whatever its direction, on the trailing 180-close simple return, each long times 1 + 0.5 z, 1.5 at the basket's top and 0.5 at its bottom, the longs rescaled to their untilted sum, the flat assets untouched, at the closes where the basket ranks 8 assets or more, long-only, A2's configuration otherwise unchanged; every asset charged 0.006 per side on its own turnover, no borrow and no carry; the section 10 gross cap, net band and margin floor, one factor per bar; the hypothesis: the tilted book has a higher mean net-of-cost return than the untilted ensemble from the first close the tilt moves a position; n_trials 1, var_trials 0.0, the DSR leg binding; the head-to-head from return index 15672 (close 2020-12-03 12:00), the tilt's first engagement, decides, the full-window read beside it; the contamination: B3's first look, the instrument, arm A, costing and bar records 45-59's, the master plan's prior "fails to beat equal-weight; kill quickly if so", the design amended before the hash on engagement figures alone from the rank among the longs, which met the master plan's ~8-name breadth at 12-13 % of closes, arm B trading 28.87 % more than arm A; pre-flight: block ff2e5700..., arm A <the seven anchors>, the bar's dsr <its dsr> and SPA p <its spa_p_value>, passes 1, the tilt engaged from return index 15672 with positions differing at 9691 return indices, no limit engaged, turnover_b <its value>; park variants, pre-registered: the tilt at another M or k, the A1-short BTC overlay; the matrix pre-registered by the spec's sha256 <H>`. A refusal from the count — an orphan, a B3 record landed elsewhere, or bucket B spent — comes before the fit or after the print, naming each orphan, the count or the bucket's figure: no record, no reading; T0016 carries it (Task 6). A stop by the rule writes a reading carrying its attempt, which counts 0: step 6's stop arm. On any other exit — a refused build, a traceback, a signal, a refusal after the print — the attempt check runs, `uv run python -c 'import json; lines = [json.loads(x) for x in open("/home/zhaow/Projects/zcrypto-kraken/.local/trial-attempts.jsonl")]; a = [x for x in lines if x["kind"] == "begin" and x["invocation"]["subject"] == "b3-rank-tilt"][-1]["attempt"]; print(a, [x["failed"] for x in lines if x["kind"] == "end" and x["attempt"] == a] or "open")'`: a refused build ends its attempt failed, counting 0, recorded in T0016 with its line, the trial unspent; any other `failed` text, `open`, or `<id> [None]` stops the task, T0016's with the end of the run's output quoted whole.
 - [ ] **Step 5: The record's checks** — on a record: `uv run python .tmp/plan-00147/record_check.py <H>` exits 0; its printed `counted` is read, never checked: T0016's line takes every orphan off the count (Task 6 step 1). A failed check stops the task before step 6.
 - [ ] **Step 6: The records commit** — on a record: (i) at the end of `docs/research/10.phase4-decisions.md`, with `iteration-closeout` loaded, the entry `[iter-192] Verdict — B3 trial 1 <ADOPT, PARK or REJECT> (registry trial <its trial_id>, family B3 n=1)`, plus `(attempts counted: <log8>#<id>, …)` when the record's `attempt.counted` lists an entry, its text to its first `. ` holding no other verdict word; the body: the matrix row that fired, read off the record's stored keys beside its stored verdict with D7's table (`sed -n '/^| Arm A.s bar and the tilt/,/^  Every quantity the matrix reads/p' docs/specs/00147-b3-rank-tilt-design.md`), with `arm_a_passes`, `passes`, `head_to_head_mean_outperf_primary` and `head_to_head_spa_p_primary` unrounded, the full-window pair beside them; `n_trials` 1, `var_trials` 0.0 and the DSR leg (`dsr_corrected`, `dsr_pass`); `max_drawdown` beside `arm_a_max_drawdown`; the pre-flight's block, anchors and `passes` from `.tmp/plan-00147/b3-rank-tilt-preflight.out`; the engagement — `tilt_first_engaged`, `primary_returns`, `stamps_positions_differ`, `ranked_assets_mean`, `turnover_a` beside `turnover_b`, `limit_engaged_per_year`'s totals; the contamination D6 states, pointing at the conventions entry above; on a park its variants; on an adopt D10's path in its order; on a reject the hypothesis as the notes word it, archived — in the form of `[iter-189] Verdict — B4 trial 1 REJECT`; (ii) in `tests/test_trial_registry_provenance.py`, `LANDED_N_TRIALS` and the literal `test_each_landed_subjects_n_trials_is_frozen_at_its_literal` asserts each gain `"b3-rank-tilt": 1,` after `"b4-sol-noborrow-rolling": 2,`; (iii) `tests/slow-cases.txt` gains `tests/test_registry_replay.py::test_every_record_past_47_replays_at_head[trial-<its trial_id>]` at its `sorted()` place; on an adopt, (iv) T0123's `ripe_when` gains `— registry trial <N>, B3 trial 1's ADOPT on the A2 ensemble alone, ripens this only once the P1 combination trial over record 47's book that carries its tilt adopts` (D10), and `uv run python infra/scripts/topics-index.py` re-renders `docs/open-topics/README.md`. Then `git add` by path of `docs/reference/trial-registry.jsonl`, the record step 4's run appended, `docs/research/10.phase4-decisions.md`, `tests/test_trial_registry_provenance.py` and `tests/slow-cases.txt`, and on an adopt `docs/open-topics/T0123-sleeve-promotion-path.md` and `docs/open-topics/README.md`; the list over the staged paths with `tests/test_decisions_log_shape.py`, `tests/test_decisions_log_ties.py` and `tests/test_slow_cases.py` by path — `tests/test_open_topics_frontmatter.py` among the index's readers on an adopt; `uv run pre-commit run -a` until clean, its rewrites staged. In the probe worktree, which the Global Constraints' probe setup creates from that index and whose tree it prints, the set linked into it with `ln -sn /home/zhaow/Projects/zcrypto-kraken/data/ohlc-full /home/zhaow/Projects/zcrypto-kraken/.claude/worktrees/iter192/.tmp/plan-00147/probe/data/ohlc-full`, unlinked after the replay and the probe with `test -L <its absolute path> && unlink <its absolute path>` and the worktree removed as the Global Constraints' probe paragraph removes one that held a link: `ZCRYPTO_RERUN_SLOW=1 uv run pytest tests/test_registry_replay.py -k 'trial-<its trial_id>' --durations=0 -q -p no:cacheprovider --basetemp=.tmp/pt` passes, one background call, its result line and call time for the message — a difference stops the task; then the literal's probe, expected `KILLED` (its two seds dry-run on the authoring tree, each changing one line): `infra/scripts/mutate-probe.sh --file cli/research/subjects.py --control 's/^def _b3_rank_tilt_verdict(/def _b3_rank_tilt_verdict_gone(/' --mutation 's/^_B3_N_TRIALS = 1\b/_B3_N_TRIALS = 2/' -- uv run pytest tests/test_trial_registry_provenance.py::test_each_landed_subjects_n_trials_is_frozen_at_its_literal -q -p no:cacheprovider --basetemp=.tmp/pt`. Commit that index, with no `git add` after the setup, as `docs(research): B3 trial 1 registered — <verdict>, the A2 ensemble's long weights tilted by a cross-sectional momentum rank, registry trial <N>`, the message carrying the tie and provenance tests' result line, the replay's with its call time, `Probed on this commit's tree, committed in a detached scratch worktree (tree <T>):`, the literal's `infra/scripts/mutate-probe.sh` command and its verdict line, `probe skipped: slow case — tests/test_registry_replay.py::test_every_record_past_47_replays_at_head[trial-<N>]`, the line `The replay reads data/ohlc-full: re-run it with the set linked into the worktree (ln -sn) and unlinked before its removal; unlinked, it skips.`, and the two trailer lines; after the commit `test "$(git rev-parse HEAD^{tree})" = <the hash the setup printed>` passes.
 
