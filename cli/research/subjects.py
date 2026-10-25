@@ -79,6 +79,7 @@ from cli.alpha.b2 import (
     scale_positions,
     stationary_bootstrap_blocks,
 )
+from cli.alpha.b3 import b3_book_returns
 from cli.alpha.b4 import (
     base_exposures,
     borrow_unavailable,
@@ -4187,6 +4188,307 @@ _B4_SOL_PREFLIGHT_KEYS = (
 )
 
 
+# docs/specs/00147 D2-D9: B3's trial 1, the adopted A2-4h ensemble's long weights tilted at each close by their rank in the
+# basket on trailing momentum, on a frozen set's full history: trial 58's arm A, limits, costing and bar.
+_B3_SCORE_LOOKBACK = 180  # docs/specs/00147 D3: M, the closes a momentum score spans; another value is a new trial
+_B3_STRENGTH = 0.5  # docs/specs/00147 D3: k, the tilt's strength; another value is a new trial
+_B3_FLOOR = 8  # docs/specs/00147 D3: the basket size below which no close tilts, master plan §3's ~8 names to rank
+_B3_N_TRIALS = 1  # docs/specs/00147 D7: B3's true count with this trial, fixed by the spec's hash; another is a new subject
+
+
+class _B3Inputs(NamedTuple):
+    h4_ts: list[datetime]
+    h4_prices: dict[str, list[float | None]]
+    close: list[datetime]
+    returns: dict[str, list[float | None]]
+    arm_a: dict[str, list[float]]
+    arm_b: dict[str, list[float]]
+    engaged_a: dict[str, list[bool]]
+    engaged_b: dict[str, list[bool]]
+    ranked: dict[str, list[int]]
+    tilted: dict[str, list[int]]
+
+
+def _b3_reads(
+    subject: str, reader: ObservedReader, dataset: str, window: tuple[str, str] | None, accept_holes: bool
+) -> tuple[list[datetime], dict[str, list[float | None]]]:
+    h4_ts, h4_prices = _capturing_union(reader, dataset, 240, window, None, accept_holes)
+    close = close_grid(h4_ts)
+    if len(close) < _DECISIVE_START + 2:
+        raise SubjectError(
+            f"{_b2_over(subject, window)}: it holds {len(close)} return indices, and the kill bar's decisive window opens at index "
+            f"{_DECISIVE_START} and needs 2"
+        )
+    if not calendar_year_slices([0.0] * len(close), h4_ts):
+        raise SubjectError(
+            f"{_b2_over(subject, window)}: none of its return indices closes in a calendar year the worst-slice leg reads, the "
+            "stub years left out"
+        )
+    return h4_ts, h4_prices
+
+
+def _b3_ensemble(
+    prices: dict[str, list[float | None]],
+) -> tuple[dict[str, list[float]], dict[str, list[int]], dict[str, list[int]]]:
+    """`_b4_ensemble` with each arm's book tilted; each arm's basket size and count of longs tilted per close, keyed by the
+    arm."""
+    books = {
+        f"{'-'.join(map(str, lookbacks))}@{target_vol}": b3_book_returns(
+            prices,
+            config=A2Config(
+                lookbacks=lookbacks,
+                short="off",
+                target_vol=target_vol,
+                vol_lookback=_B2_LOOKBACK,
+                basket_lookback=_B2_LOOKBACK,
+                periods_per_year=PPY_4H,
+            ),
+            score_lookback=_B3_SCORE_LOOKBACK,
+            strength=_B3_STRENGTH,
+            floor=_B3_FLOOR,
+        )
+        for lookbacks, target_vol in _B2_A2_ARMS
+    }
+    arms = [book["asset_positions"] for book in books.values()]
+    positions = {i: [statistics.mean(arm[i][k] for arm in arms) for k in range(len(prices["BTC"]) - 1)] for i in prices}
+    return positions, {arm: book["ranked"] for arm, book in books.items()}, {arm: book["tilted"] for arm, book in books.items()}
+
+
+def _b3_inputs(reads: tuple[list[datetime], dict[str, list[float | None]]]) -> _B3Inputs:
+    """Both arms' positions and the returns they are costed on, and no return of a book."""
+    h4_ts, h4_prices = reads
+    fed = _ffill_btc(h4_prices)
+    arm_a, engaged_a = _b4_limited(_b4_ensemble(fed))
+    raw_b, ranked, tilted = _b3_ensemble(fed)
+    arm_b, engaged_b = _b4_limited(raw_b)
+    returns = {a: _asset_returns(fed[a]) for a in h4_prices}
+    return _B3Inputs(h4_ts, h4_prices, close_grid(h4_ts), returns, arm_a, arm_b, engaged_a, engaged_b, ranked, tilted)
+
+
+def _b3_first_engaged(inputs: _B3Inputs) -> int:
+    """The first return index at which arm B's positions differ from arm A's, the length when none does."""
+    n = len(inputs.close)
+    return next((k for k in range(n) if any(inputs.arm_b[a][k] != inputs.arm_a[a][k] for a in inputs.arm_a)), n)
+
+
+def _b3_engagement(inputs: _B3Inputs) -> dict:
+    close, start = inputs.close, _b3_first_engaged(inputs)
+    differ = per_year_positions_differ(inputs.arm_a, inputs.arm_b, close)
+    return {
+        "tilt_first_engaged": start,
+        "primary_returns": len(close) - start,
+        "stamps_positions_differ": sum(differ.values()),
+        "positions_differ_per_year": differ,
+        "tilted_per_year": {arm: per_year_counts([c > 0 for c in counts], close) for arm, counts in inputs.tilted.items()},
+        "ranked_assets_histogram": {
+            arm: {str(m): counts.count(m) for m in range(len(inputs.arm_a) + 1)} for arm, counts in inputs.ranked.items()
+        },
+        "ranked_assets_mean": {arm: statistics.fmean(counts) for arm, counts in inputs.ranked.items()},
+        "turnover_b": book_turnover(inputs.arm_b),
+        "turnover_b_per_year": per_year_turnover(inputs.arm_b, close),
+        "limit_engaged_per_year": {name: per_year_counts(flags, close) for name, flags in inputs.engaged_b.items()},
+        "arm_a_limit_engaged": {name: sum(flags) for name, flags in inputs.engaged_a.items()},
+    }
+
+
+def _b3_metrics(inputs: _B3Inputs, *, n_trials: int) -> dict:
+    close, start = inputs.close, _b3_first_engaged(inputs)
+    if len(close) - start < 2:
+        raise ValidationError(
+            f"{len(close) - start} of its return indices follow the tilt's first engagement, and the head-to-head from it needs 2"
+        )
+    net_b = _b4_net(inputs.arm_b, inputs.returns, stress=1.0)
+    net_b_x15 = _b4_net(inputs.arm_b, inputs.returns, stress=1.5)
+    bar_a, net_a, bench = _b4_arm_a_bar(inputs, n_trials=n_trials)
+    slices_b, slices_bench = calendar_year_slices(net_b, inputs.h4_ts), calendar_year_slices(bench, inputs.h4_ts)
+    grid = {
+        (block, seed): a1_kill_bar(
+            net_b,
+            bench,
+            n_trials=n_trials,
+            var_trials=0.0,
+            mean_block=block,
+            seed=seed,
+            cost_stressed_returns=net_b_x15,
+            regime_slices=slices_b,
+            benchmark_slices=slices_bench,
+            decisive_start=_DECISIVE_START,
+            n_resamples=_N_RESAMPLES,
+        )
+        for block in (30, 102)
+        for seed in (42, 7, 1234)
+    }
+    headline = grid[(30, 42)]
+    head_to_head = {}
+    for label, first in (("full", 0), ("primary", start)):
+        verdict = net_of_cost_verdict(net_b[first:], net_a[first:], mean_block=30, seed=42, n_resamples=_N_RESAMPLES)
+        head_to_head[f"head_to_head_mean_outperf_{label}"] = verdict["mean_outperformance"]
+        head_to_head[f"head_to_head_spa_p_{label}"] = verdict["spa_p_value"]
+    return {
+        "ann_sharpe_noc": sharpe(net_b, periods_per_year=PPY_4H),
+        "ann_sharpe_noc_decisive": sharpe(net_b[_DECISIVE_START:], periods_per_year=PPY_4H),
+        "per_period_sharpe_4h": sharpe(net_b),
+        "arm_a_ann_sharpe_noc": sharpe(net_a, periods_per_year=PPY_4H),
+        "arm_a_ann_sharpe_noc_decisive": sharpe(net_a[_DECISIVE_START:], periods_per_year=PPY_4H),
+        "benchmark_ann_sharpe_noc": sharpe(bench, periods_per_year=PPY_4H),
+        "benchmark_ann_sharpe_noc_decisive": sharpe(bench[_DECISIVE_START:], periods_per_year=PPY_4H),
+        "dsr_corrected": headline["dsr"],
+        "dsr_pass": int(headline["dsr_pass"]),
+        "spa_pass": int(headline["spa_pass"]),
+        "spa_p_full": headline["spa_p_value_full"],
+        "cost_stress_pass": int(headline["cost_stress_pass"]),
+        "worst_slice_relative_pass": int(headline["worst_slice_pass"]),
+        "passes": int(headline["passes"]),
+        "decisive_start": _DECISIVE_START,
+        "n_resamples": _N_RESAMPLES,
+        "arm_a_passes": int(bar_a["passes"]),
+        **{f"spa_p_decisive_b{block}_s{seed}": result["spa_p_value"] for (block, seed), result in grid.items()},
+        **head_to_head,
+        "max_drawdown": max_drawdown(net_b),
+        "arm_a_max_drawdown": max_drawdown(net_a),
+        "max_drawdown_per_year": per_year_max_drawdown(net_b, close),
+        "arm_a_max_drawdown_per_year": per_year_max_drawdown(net_a, close),
+        "turnover_a": book_turnover(inputs.arm_a),
+        "turnover_a_per_year": per_year_turnover(inputs.arm_a, close),
+        **_b3_engagement(inputs),
+    }
+
+
+def _b3_preflight_metrics(inputs: _B3Inputs, *, n_trials: int) -> dict:
+    """Arm A's anchors and bar and the engagement: no return of arm B."""
+    bar, net_a, bench = _b4_arm_a_bar(inputs, n_trials=n_trials)
+    turnover_a = book_turnover(inputs.arm_a)
+    return {
+        "arm_a_ann_sharpe_noc": sharpe(net_a, periods_per_year=PPY_4H),
+        "arm_a_ann_sharpe_noc_decisive": sharpe(net_a[_DECISIVE_START:], periods_per_year=PPY_4H),
+        "arm_a_max_drawdown_full": max_drawdown(net_a),
+        "turnover_a": turnover_a,
+        "arm_a_spot_drag_pct_yr": turnover_a / len(inputs.close) * _B2_COST_PER_SIDE * PPY_4H,
+        "benchmark_ann_sharpe_noc": sharpe(bench, periods_per_year=PPY_4H),
+        "benchmark_ann_sharpe_noc_decisive": sharpe(bench[_DECISIVE_START:], periods_per_year=PPY_4H),
+        **{key: int(bar[key]) if key in _B2_ARM_A_BAR_FLAGS else bar[key] for key in sorted(_B2_ARM_A_BAR_KEYS)},
+        **_b3_engagement(inputs),
+    }
+
+
+def _b3_build(
+    subject: str,
+    compute: Callable[..., dict],
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None,
+    accept_holes: bool,
+) -> dict:
+    if as_of is not None:
+        raise SubjectError(
+            f"{subject} evaluates a frozen set's 4h series, never the rolling dataset as of a day: drop --as-of and pass a "
+            "frozen --dataset"
+        )
+    try:
+        return compute(_b3_inputs(_b3_reads(subject, reader, dataset, window, accept_holes)), n_trials=_B3_N_TRIALS)
+    except (AlphaError, BacktestError, BenchmarkError, FeatureError, RiskError, ValidationError) as exc:
+        raise SubjectError(f"{_b2_over(subject, window)}: {exc}") from exc
+
+
+def _build_b3_rank_tilt(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    return _b3_build("b3-rank-tilt", _b3_metrics, reader, dataset, window, as_of, accept_holes)
+
+
+def _build_b3_rank_tilt_preflight(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    return _b3_build("b3-rank-tilt-preflight", _b3_preflight_metrics, reader, dataset, window, as_of, accept_holes)
+
+
+# docs/specs/00147 D7's matrix and the two instrument findings its metrics show: a change to it is a new spec and a new
+# trial, never an edit here.
+def _b3_rank_tilt_verdict(m: dict) -> str | None:
+    if not m["arm_a_passes"] or not m["stamps_positions_differ"]:
+        return None
+    if not m["passes"]:
+        return "reject"
+    if m["head_to_head_mean_outperf_primary"] > 0:
+        return "adopt" if m["head_to_head_spa_p_primary"] < 0.05 else "park"
+    return "reject"
+
+
+# docs/specs/00147 D8's keys: the engagement both subjects carry, the trial's and the pre-flight's.
+_B3_ENGAGEMENT_KEYS = frozenset(
+    {
+        "tilt_first_engaged",
+        "primary_returns",
+        "stamps_positions_differ",
+        "positions_differ_per_year",
+        "tilted_per_year",
+        "ranked_assets_histogram",
+        "ranked_assets_mean",
+        "turnover_b",
+        "turnover_b_per_year",
+        "limit_engaged_per_year",
+        "arm_a_limit_engaged",
+    }
+)
+_B3_METRIC_KEYS = _B3_ENGAGEMENT_KEYS | {
+    "ann_sharpe_noc",
+    "ann_sharpe_noc_decisive",
+    "per_period_sharpe_4h",
+    "arm_a_ann_sharpe_noc",
+    "arm_a_ann_sharpe_noc_decisive",
+    "benchmark_ann_sharpe_noc",
+    "benchmark_ann_sharpe_noc_decisive",
+    "dsr_corrected",
+    "dsr_pass",
+    "spa_pass",
+    "spa_p_full",
+    "cost_stress_pass",
+    "worst_slice_relative_pass",
+    "passes",
+    "decisive_start",
+    "n_resamples",
+    "arm_a_passes",
+    "spa_p_decisive_b30_s42",
+    "spa_p_decisive_b30_s7",
+    "spa_p_decisive_b30_s1234",
+    "spa_p_decisive_b102_s42",
+    "spa_p_decisive_b102_s7",
+    "spa_p_decisive_b102_s1234",
+    "head_to_head_mean_outperf_full",
+    "head_to_head_spa_p_full",
+    "head_to_head_mean_outperf_primary",
+    "head_to_head_spa_p_primary",
+    "max_drawdown",
+    "arm_a_max_drawdown",
+    "max_drawdown_per_year",
+    "arm_a_max_drawdown_per_year",
+    "turnover_a",
+    "turnover_a_per_year",
+}
+_B3_PREFLIGHT_KEYS = (
+    _B2_ARM_A_BAR_KEYS
+    | _B3_ENGAGEMENT_KEYS
+    | {
+        "arm_a_ann_sharpe_noc",
+        "arm_a_ann_sharpe_noc_decisive",
+        "arm_a_max_drawdown_full",
+        "turnover_a",
+        "arm_a_spot_drag_pct_yr",
+        "benchmark_ann_sharpe_noc",
+        "benchmark_ann_sharpe_noc_decisive",
+    }
+)
+
+
 SUBJECTS: dict[str, Subject] = {
     "record44-crossfreq": Subject(
         "record44-crossfreq",
@@ -4599,6 +4901,31 @@ SUBJECTS: dict[str, Subject] = {
         _build_b4_sol_noborrow_rolling_preflight,
         spec="docs/specs/00146-b4-sol-noborrow-rolling-design.md",
         metric_keys=_B4_SOL_PREFLIGHT_KEYS,
+        seeds=(42,),
+    ),
+    "b3-rank-tilt": Subject(
+        "b3-rank-tilt",
+        (240,),
+        _ASSETS,
+        _build_b3_rank_tilt,
+        spec="docs/specs/00147-b3-rank-tilt-design.md",
+        metric_keys=_B3_METRIC_KEYS,
+        seeds=(42, 7, 1234),
+        verdict=_b3_rank_tilt_verdict,
+        no_verdict=(
+            "instrument finding: arm A fails the bar this window sets, or the tilt moves no position at any stamp; no "
+            "verdict, the trial unspent"
+        ),
+        family="B3",
+        n_trials=_B3_N_TRIALS,
+    ),
+    "b3-rank-tilt-preflight": Subject(
+        "b3-rank-tilt-preflight",
+        (240,),
+        _ASSETS,
+        _build_b3_rank_tilt_preflight,
+        spec="docs/specs/00147-b3-rank-tilt-design.md",
+        metric_keys=_B3_PREFLIGHT_KEYS,
         seeds=(42,),
     ),
 }
