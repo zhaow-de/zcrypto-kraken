@@ -26,6 +26,7 @@ A review that must MUTATE to prove a guard is dispatched write-capable in its ow
 - No `ansible-playbook` run that executes tasks or connects to a host, `--check` included: this workstation is the fleet host `zcrypto-ops`, so `localhost` is a live venue-facing node. A role is read through the test helpers' renders; the commit gate's ansible-lint syntax check parses only and is allowed.
 - A dispatch's scratch lives under the worktree's `.tmp/<role>/` and it removes only what it created there; the session's shared scratchpad is the orchestrator's, never listed, written or deleted by a dispatch.
 - No real account export is looked for, opened, counted or quoted anywhere outside the repository's tracked fixtures: the owner's own Kraken exports under `.local/` are financial records, not test data.
+- Nothing is read under `.local/memo.md`, `data/ohlc-holdout-*` or `/mnt/zhao-crypto/`, however the pair's claim invites it — a listing through a read-only mount is a read; a premise that needs one is graded `UNVERIFIABLE` with the command the orchestrator would run.
 - A read-only dispatch touches no other repository on disk — a `git fetch` into a peer clone is a write to its refs — and starts no process it does not stop: a process is stopped by its PID read from the process tree, never by a pattern the stopping command's own argv carries, and the report names the `pgrep` read before and after.
 
 ## Report shape — `{OUT}`

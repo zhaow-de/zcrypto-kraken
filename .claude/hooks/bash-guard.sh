@@ -39,6 +39,10 @@
 # variable or a substitution leave it unknown, a relative `cd` after them keeps it so, and the vaulted-file and memo
 # families read an unknown directory as the payload's `cwd`. Scope is not tracked, so a `cd` outlives its subshell.
 #
+# The consumers family refuses a stage naming `consumers.sh` as any word with a redirect to `/dev/null` -- the
+# script speaks a refusal on stderr, and eight records in five days silenced it (refine round 23). The fd number is
+# its redirection's, so stdout and stderr alike are refused; a target through a variable or `2>&1 >/dev/null` is outside.
+#
 # Outside the memo family: every writer its corpus does not refuse -- a wrapper (`sudo tee`), a glob or a brace, a
 # path a variable holds whole, an interpreter, `awk -i inplace`, `rsync`, `ln`, `dd`, `rm`.
 #
@@ -129,6 +133,11 @@ SEQUENCE = re.compile(r"(-?\d+|[A-Za-z])\.\.(-?\d+|[A-Za-z])(?:\.\.(-?\d+))?")
 VAULT_REMEDY = (
     "A vaulted value is read by `vault_var` through command substitution, never printed; a header or a count by "
     "`grep -c`, `sha256sum`, `wc`, `stat`, `ls` or `git log --`."
+)
+CONSUMERS = "consumers.sh"
+CONSUMERS_REMEDY = (
+    "consumers.sh speaks a refusal on stderr: send it to a file (`2> <file>`) and read the file before the list is used, "
+    "never to /dev/null."
 )
 MEMO = [".local", "memo.md"]
 MEMO_REMEDY = (
@@ -955,6 +964,14 @@ def judge_memo(words, raw, where):
         refuse_memo(spelled(words), hit, how, raw)
 
 
+def judge_consumers(words, raw):
+    if not any(posixpath.basename(w) == CONSUMERS for w in words):
+        return
+    op = next((op for op, target in words.outputs if target.rstrip(")") == "/dev/null"), None)
+    if op:
+        refuse(f"`{spelled(words)} {op} /dev/null` silences {CONSUMERS}; in `{raw}`. {CONSUMERS_REMEDY}")
+
+
 def is_gh(w):
     return w == "gh" or (w.endswith("/gh") and not ASSIGN.match(w))
 
@@ -1284,6 +1301,7 @@ try:
             judge(words)
             judge_vault(words, raw, here or cwd)
             judge_memo(words, raw, here or cwd)
+            judge_consumers(words, raw)
             if agent:
                 judge_agent(words, here, raw, call.get("session_id"))
             stages.append((words, here or cwd))
