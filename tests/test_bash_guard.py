@@ -972,6 +972,12 @@ CONSUMERS_SILENCED = [
     "mkdir -p .tmp && bash infra/scripts/consumers.sh --direct cli/x.py >/dev/null 2>&1",
     "cd /x && bash infra/scripts/consumers.sh --direct cli/x.py 2> /dev/null",
     "T=$(bash infra/scripts/consumers.sh --direct cli/x.py 2>/dev/null)",
+    # the script behind a wrapper or an option is a run all the same
+    "timeout 5 bash infra/scripts/consumers.sh --direct cli/x.py 2>/dev/null",
+    "bash -x infra/scripts/consumers.sh --direct cli/x.py 2>/dev/null",
+    "env FOO=1 bash infra/scripts/consumers.sh --direct cli/x.py 2>/dev/null",
+    "echo cli/x.py | xargs bash infra/scripts/consumers.sh --direct 2>/dev/null",
+    "source infra/scripts/consumers.sh 2>/dev/null",
 ]
 CONSUMERS_ADMITTED = [
     "bash infra/scripts/consumers.sh --direct cli/x.py 2> .tmp/err.txt | sort -u",
@@ -983,9 +989,8 @@ CONSUMERS_ADMITTED = [
     "git diff --quiet -- infra/scripts/consumers.sh 2>/dev/null",
     "bash -n infra/scripts/consumers.sh 2>/dev/null",
     "grep -n direct_readers infra/scripts/consumers.sh >/dev/null && echo yes",
-    # the script behind another program or an option: outside the family, as the header says
-    "timeout 5 bash infra/scripts/consumers.sh --direct cli/x.py 2>/dev/null",
-    "bash -x infra/scripts/consumers.sh --direct cli/x.py 2>/dev/null",
+    "cat infra/scripts/consumers.sh 2>/dev/null",
+    "shellcheck infra/scripts/consumers.sh >/dev/null",
 ]
 STAMP_NAME = "zcrypto-git-state-stamp"
 # The checkouts the corpus's admitted `git commit`s stamp for the runs-alone arm: the cases run one at a time across
@@ -1126,7 +1131,7 @@ def test_stdin_that_is_not_the_call_admits_with_a_note(tmp_path: Path, payload: 
 def test_a_consumers_stage_sent_to_dev_null_is_blocked_with_the_remedy(tmp_path: Path, command: str):
     r = run_hook(call(command), cwd=tmp_path)
     assert r.returncode == 2, r.stderr
-    assert "BLOCKED" in r.stderr and "sends a stream of consumers.sh, which it runs, to /dev/null" in r.stderr, r.stderr
+    assert "BLOCKED" in r.stderr and "names consumers.sh under no reader the guard knows" in r.stderr, r.stderr
     assert "send it to a file" in r.stderr
     assert r.stdout == ""
 
