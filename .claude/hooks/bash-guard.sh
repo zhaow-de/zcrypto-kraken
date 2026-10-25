@@ -39,10 +39,10 @@
 # variable or a substitution leave it unknown, a relative `cd` after them keeps it so, and the vaulted-file and memo
 # families read an unknown directory as the payload's `cwd`. Scope is not tracked, so a `cd` outlives its subshell.
 #
-# The consumers family refuses a run of `consumers.sh` -- the stage's program, or `bash`'s or `sh`'s first operand -- with a
-# redirect to `/dev/null`: the fd number is its redirection's, so stdout and stderr alike are refused, `>/dev/null 2> <file>` and
-# `2>&1 >/dev/null` included. Outside: a read of the script (`ls`, `git diff`, `bash -n`, `grep`), `bash -x <script>`, a target
-# through a variable, a group's `} 2>/dev/null`, `2>&-`.
+# The consumers family refuses a redirect to `/dev/null` on a stage whose program, or `bash`'s or `sh`'s first operand,
+# is `consumers.sh`: the fd number is its redirection's, so stdout and stderr alike are refused. Outside: the script
+# behind another program (`timeout`, `env`, `source`, `xargs`) or an option (`bash -x`), a target through a variable,
+# a group's `} 2>/dev/null`, `2>&-`.
 #
 # Outside the memo family: every writer its corpus does not refuse -- a wrapper (`sudo tee`), a glob or a brace, a
 # path a variable holds whole, an interpreter, `awk -i inplace`, `rsync`, `ln`, `dd`, `rm`.
@@ -138,8 +138,7 @@ VAULT_REMEDY = (
 CONSUMERS = "consumers.sh"
 CONSUMERS_WRAPPERS = {"bash", "sh"}
 CONSUMERS_REMEDY = (
-    "consumers.sh speaks a refusal on stderr: send it to a file (`2> <file>`) and read the file before the list is used; "
-    "no stream of a run of it goes to /dev/null."
+    "consumers.sh speaks a refusal on stderr: send it to a file (`2> <file>`) and read the file before the list is used."
 )
 MEMO = [".local", "memo.md"]
 MEMO_REMEDY = (
@@ -968,7 +967,7 @@ def judge_memo(words, raw, where):
 
 def runs_consumers(words):
     p, rest = argv_of(words)
-    if p in CONSUMERS_WRAPPERS and rest and not rest[0].startswith("-"):
+    if p in CONSUMERS_WRAPPERS and rest:
         p = rest[0].rpartition("/")[2]
     return p == CONSUMERS
 
