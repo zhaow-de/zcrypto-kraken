@@ -144,10 +144,11 @@ def test_the_book_is_a2s_book_on_the_tilted_weights(monkeypatch):
     assert book["book_base_returns"] != untilted["book_base_returns"]
 
 
-def test_the_book_at_close_k_reads_no_close_after_k():
+def test_the_book_at_close_k_reads_no_price_after_k():
     prices = _prices()
     k = 241
-    # Each asset's closes after k move by a factor of its own, so a score read past k reorders the ranks at k.
+    # Each asset's prices after k move by a factor of its own, so a score read past k reorders the ranks at k; every close's
+    # presence is kept, since the weights at k, A2's own, read whether close k + 1 exists.
     later = {
         a: [*v[: k + 1], *(None if p is None else p * (1 + 0.3 * i) for p in v[k + 1 :])] for i, (a, v) in enumerate(prices.items())
     }
