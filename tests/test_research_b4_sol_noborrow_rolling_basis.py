@@ -20,8 +20,7 @@ from tests.test_trial_registry_provenance import _readings, _trials
 
 pytestmark = pytest.mark.data
 
-# Built from this file's path, never taken from the command: the skip-gate guard admits only a literal-rooted root, and the
-# case's first assertion holds it equal to the command's.
+# Built from this file's path, never taken from the command.
 _DATA_ROOT = Path(__file__).resolve().parents[1] / "data"
 _YEARS = dict.fromkeys(map(str, range(2013, 2027)), 0)
 # Copied from the spec's measured basis, never from a run. AS_OF, BLOCK, VOUCHED, TURNOVER_A and ENGAGEMENT are what plan

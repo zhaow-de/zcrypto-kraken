@@ -3979,8 +3979,7 @@ def _b4_sol_reads(
     as_of: str | None,
     accept_holes: bool,
 ) -> _B4Reads:
-    """The union, the window's refusals and SOL/BTC's closes on its stamps, the pair read as the union is — a frozen set
-    file by file, the rolling set as of a day — and no compute."""
+    """The union, the window's refusals and SOL/BTC's closes on its stamps, and no compute."""
     h4_ts, h4_prices = _capturing_union(reader, dataset, 240, window, as_of, accept_holes)
     close = close_grid(h4_ts)
     if len(close) < _DECISIVE_START + 2:
@@ -4020,7 +4019,6 @@ def _b4_sol_inputs(reads: _B4Reads) -> _B4Inputs:
 
 
 def _b4_sol_unseen(close: list[datetime]) -> int:
-    """The first return index whose close is past the last one reading 6 read, the length when none is."""
     return next((k for k, t in enumerate(close) if t > _B4_SOL_SEEN_TO), len(close))
 
 
@@ -4115,7 +4113,6 @@ def _b4_sol_metrics(inputs: _B4Inputs, *, n_trials: int) -> dict:
 
 
 def _b4_sol_preflight_metrics(inputs: _B4Inputs, *, n_trials: int) -> dict:
-    """Arm A's anchors and bar, its figures over the closes reading 6 read, and the engagement: no return of arm B."""
     bar, net_a, bench = _b4_arm_a_bar(inputs, n_trials=n_trials)
     seen = _b4_sol_unseen(inputs.close)
     turnover_a = book_turnover(inputs.arm_a)
@@ -4173,8 +4170,7 @@ def _build_b4_sol_noborrow_rolling_preflight(
     )
 
 
-# docs/specs/00146 D9's keys: record 58's, with no twin, the unseen months' head-to-head, their count and the shortfall's
-# largest value added.
+# docs/specs/00146 D9's keys.
 _B4_SOL_ENGAGEMENT_KEYS = _B4_ENGAGEMENT_KEYS | {"unseen_returns", "shortfall_max"}
 _B4_SOL_METRIC_KEYS = (
     (
