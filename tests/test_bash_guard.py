@@ -972,7 +972,6 @@ CONSUMERS_SILENCED = [
     "mkdir -p .tmp && bash infra/scripts/consumers.sh --direct cli/x.py >/dev/null 2>&1",
     "cd /x && bash infra/scripts/consumers.sh --direct cli/x.py 2> /dev/null",
     "T=$(bash infra/scripts/consumers.sh --direct cli/x.py 2>/dev/null)",
-    # the script behind a wrapper or an option is a run all the same
     "timeout 5 bash infra/scripts/consumers.sh --direct cli/x.py 2>/dev/null",
     "bash -x infra/scripts/consumers.sh --direct cli/x.py 2>/dev/null",
     "env FOO=1 bash infra/scripts/consumers.sh --direct cli/x.py 2>/dev/null",
