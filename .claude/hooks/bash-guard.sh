@@ -39,11 +39,10 @@
 # variable or a substitution leave it unknown, a relative `cd` after them keeps it so, and the vaulted-file and memo
 # families read an unknown directory as the payload's `cwd`. Scope is not tracked, so a `cd` outlives its subshell.
 #
-# The consumers family refuses a redirect to `/dev/null` on a stage naming `consumers.sh` as any word, unless the stage's
-# program is a reader (`CONSUMERS_READERS`, or `bash`/`sh` with `-n` before its operand): a run behind any wrapper or
-# option (`timeout`, `env`, `time`, `xargs`, `source`, `bash -x`) is refused, stdout and stderr alike since the fd number
-# is its redirection's, and so is a read through a program the set does not name. Outside: a target through a variable,
-# a group's `} 2>/dev/null`, `2>&-`.
+# The consumers family refuses a redirect to `/dev/null` on a stage naming `consumers.sh` as any word unless
+# `reads_consumers` admits its program: a read through a program it does not name is refused with the runs, the safe
+# direction. Outside: a reader that runs it (`git bisect run`), the script on stdin (`bash < consumers.sh`,
+# `cat consumers.sh | bash`), a target through a variable, a group's `} 2>/dev/null`, `2>&-`.
 #
 # Outside the memo family: every writer its corpus does not refuse -- a wrapper (`sudo tee`), a glob or a brace, a
 # path a variable holds whole, an interpreter, `awk -i inplace`, `rsync`, `ln`, `dd`, `rm`.
