@@ -39,9 +39,10 @@
 # variable or a substitution leave it unknown, a relative `cd` after them keeps it so, and the vaulted-file and memo
 # families read an unknown directory as the payload's `cwd`. Scope is not tracked, so a `cd` outlives its subshell.
 #
-# The consumers family refuses a redirect to `/dev/null` on a stage whose program, or `bash`'s or `sh`'s first operand,
-# is `consumers.sh`: the fd number is its redirection's, so stdout and stderr alike are refused. Outside: the script
-# behind another program (`timeout`, `env`, `source`, `xargs`) or an option (`bash -x`), a target through a variable,
+# The consumers family refuses a redirect to `/dev/null` on a stage naming `consumers.sh` as any word, unless the stage's
+# program is a reader (`CONSUMERS_READERS`, or `bash`/`sh` with `-n` before its operand): a run behind any wrapper or
+# option (`timeout`, `env`, `time`, `xargs`, `source`, `bash -x`) is refused, stdout and stderr alike since the fd number
+# is its redirection's, and so is a read through a program the set does not name. Outside: a target through a variable,
 # a group's `} 2>/dev/null`, `2>&-`.
 #
 # Outside the memo family: every writer its corpus does not refuse -- a wrapper (`sudo tee`), a glob or a brace, a
@@ -136,7 +137,7 @@ VAULT_REMEDY = (
     "`grep -c`, `sha256sum`, `wc`, `stat`, `ls` or `git log --`."
 )
 CONSUMERS = "consumers.sh"
-CONSUMERS_WRAPPERS = {"bash", "sh"}
+CONSUMERS_READERS = PRINTERS | GREPS | {"ls", "git", "shellcheck", "wc", "diff", "cmp", "stat", "file", "sha256sum"}
 CONSUMERS_REMEDY = (
     "consumers.sh speaks a refusal on stderr: send it to a file (`2> <file>`) and read the file before the list is used."
 )
@@ -965,16 +966,24 @@ def judge_memo(words, raw, where):
         refuse_memo(spelled(words), hit, how, raw)
 
 
-def runs_consumers(words):
+def reads_consumers(words):
     p, rest = argv_of(words)
-    if p in CONSUMERS_WRAPPERS and rest:
-        p = rest[0].rpartition("/")[2]
-    return p == CONSUMERS
+    options = []
+    for w in rest:
+        if not w.startswith("-"):
+            break
+        options.append(w)
+    return p in CONSUMERS_READERS or (p in ("bash", "sh") and "-n" in options)
 
 
 def judge_consumers(words, raw):
-    if runs_consumers(words) and any(target == "/dev/null" for _, target in words.outputs):
-        refuse(f"`{spelled(words)}` sends a stream of {CONSUMERS}, which it runs, to /dev/null; in `{raw}`. {CONSUMERS_REMEDY}")
+    if not any(posixpath.basename(w) == CONSUMERS for w in words) or reads_consumers(words):
+        return
+    if any(target == "/dev/null" for _, target in words.outputs):
+        refuse(
+            f"`{spelled(words)}` names {CONSUMERS} under no reader the guard knows, a stream sent to /dev/null; in `{raw}`. "
+            f"{CONSUMERS_REMEDY} A read of the script takes `cat`, `grep`, `ls`, `git` or `bash -n`, or no redirect."
+        )
 
 
 def is_gh(w):
