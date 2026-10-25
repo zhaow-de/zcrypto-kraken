@@ -1,6 +1,6 @@
 ---
 name: merge-pr
-description: Use when a reviewed pull request is ready to merge and the clone needs cleanup. Merge-commit only, never squash or rebase; Dependabot PRs are the dependabot skill's.
+description: Use when a reviewed pull request is ready to merge and the clone needs cleanup. Merge-commit only; Dependabot PRs are the dependabot skill's.
 allowed-tools: Bash(git status:*), Bash(git checkout:*), Bash(git pull:*), Bash(git branch:*), Bash(git ls-remote:*), Bash(git push:*), Bash(git fetch:*), Bash(gh pr:*), Bash(uv run python infra/scripts/merge-gate.py:*)
 ---
 
