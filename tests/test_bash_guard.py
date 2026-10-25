@@ -983,6 +983,9 @@ CONSUMERS_ADMITTED = [
     "git diff --quiet -- infra/scripts/consumers.sh 2>/dev/null",
     "bash -n infra/scripts/consumers.sh 2>/dev/null",
     "grep -n direct_readers infra/scripts/consumers.sh >/dev/null && echo yes",
+    # the script behind another program or an option: outside the family, as the header says
+    "timeout 5 bash infra/scripts/consumers.sh --direct cli/x.py 2>/dev/null",
+    "bash -x infra/scripts/consumers.sh --direct cli/x.py 2>/dev/null",
 ]
 STAMP_NAME = "zcrypto-git-state-stamp"
 # The checkouts the corpus's admitted `git commit`s stamp for the runs-alone arm: the cases run one at a time across
@@ -1129,7 +1132,7 @@ def test_a_consumers_stage_sent_to_dev_null_is_blocked_with_the_remedy(tmp_path:
 
 
 @pytest.mark.parametrize("command", CONSUMERS_ADMITTED)
-def test_a_command_that_sends_no_run_of_consumers_to_dev_null_is_admitted_silently(tmp_path: Path, command: str):
+def test_a_command_outside_the_consumers_family_is_admitted_silently(tmp_path: Path, command: str):
     r = run_hook(call(command), cwd=tmp_path)
     assert r.returncode == 0, r.stderr
     assert r.stderr == "" and r.stdout == ""
