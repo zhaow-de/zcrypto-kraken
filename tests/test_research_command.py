@@ -92,7 +92,7 @@ from cli.research import subjects
 from cli.risk.errors import RiskError
 from cli.validation import ValidationError, max_drawdown, sharpe
 from cli.validation.dsr import expected_max_sharpe
-from tests.rolling_fixtures import HOLE, write_chain
+from tests.rolling_fixtures import HOLE, line_bytes, write_chain
 from tests.test_trial_attempts import _reaped_pid
 from tests.test_trial_registry_provenance import LEDGER, REGISTRY, _trials, live_entries
 
@@ -1448,6 +1448,8 @@ def test_each_subject_declares_the_metric_keys_its_build_returns():
     assert subjects.SUBJECTS["b4-ratio-legs"].metric_keys == _B4_METRIC_KEYS
     assert subjects.SUBJECTS["b4-ratio-legs-preflight"].metric_keys == _B4_PREFLIGHT_KEYS
     assert subjects.SUBJECTS["b4-leg-reading"].metric_keys == _B4_LEG_SPEC_KEYS
+    assert subjects.SUBJECTS["b4-sol-noborrow-rolling"].metric_keys == _B4_SOL_METRIC_KEYS
+    assert subjects.SUBJECTS["b4-sol-noborrow-rolling-preflight"].metric_keys == _B4_SOL_PREFLIGHT_KEYS
     assert subjects.SUBJECTS["b2-liq-tape-reading"].metric_keys == _B2_TAPE_SPEC_KEYS
     assert subjects.SUBJECTS["b2-signal-reading"].metric_keys == _B2_READING_SPEC_KEYS
     assert subjects.SUBJECTS["b2-second-signal-reading"].metric_keys == _B2_READING_2_SPEC_KEYS
@@ -4863,6 +4865,494 @@ def test_the_b4_leg_reading_refuses_as_of_before_any_read(tmp_path, monkeypatch,
     ) in result.output
 
 
+_B4_SOL_SPEC = "docs/specs/00146-b4-sol-noborrow-rolling-design.md"
+_B4_SOL_NO_VERDICT = (
+    "instrument finding: arm A fails the bar this window sets, or SOL/BTC holds no position at any stamp; no verdict, the "
+    "trial unspent"
+)
+# Spec 00146 D9's keys, typed from the spec as record 58's and their changes, never read off a subject.
+_B4_SOL_ENGAGEMENT_KEYS = _B4_ENGAGEMENT_KEYS | {"unseen_returns", "shortfall_max"}
+_B4_SOL_METRIC_KEYS = (
+    (
+        _B4_METRIC_KEYS
+        - {"no_borrow_head_to_head_mean_outperf_primary", "no_borrow_head_to_head_spa_p_primary", "no_borrow_ann_sharpe_noc"}
+    )
+    | _B4_SOL_ENGAGEMENT_KEYS
+    | {"head_to_head_mean_outperf_unseen", "head_to_head_spa_p_unseen"}
+)
+_B4_SOL_PREFLIGHT_KEYS = (
+    _B4_PREFLIGHT_KEYS
+    | _B4_SOL_ENGAGEMENT_KEYS
+    | {"arm_a_ann_sharpe_noc_seen", "arm_a_ann_sharpe_noc_decisive_seen", "arm_a_max_drawdown_seen"}
+)
+_B4_SOL_SEEN_TO = datetime(2026, 3, 31, 20, tzinfo=UTC)
+# `_b4_sol_dataset`'s bars: 2025's last closes come after the frozen benchmark's gate opens, `record44_legs.BENCH_GATE_WINDOW`
+# bars in, and 54 return indices close after the last close reading 6 read.
+_B4_SOL_START = datetime(2025, 5, 15, tzinfo=UTC)
+_B4_SOL_BARS = 1_980
+_B4_SOL_ROLLING_FROM = datetime(2025, 12, 1, tzinfo=UTC)
+_B4_SOL_HOLE = date(2026, 10, 2)
+
+
+@pytest.mark.parametrize("name", ["b4-sol-noborrow-rolling"])
+def test_the_b4_sol_pair_declares_the_4h_grid_the_specs_keys_and_seeds_and_the_trial_alone_trial_58s_rule_and_a_count(name):
+    trial, preflight = subjects.SUBJECTS[name], subjects.SUBJECTS[f"{name}-preflight"]
+    assert (len(_B4_SOL_METRIC_KEYS), len(_B4_SOL_PREFLIGHT_KEYS)) == (49, 34)
+    assert (trial.name, trial.intervals, trial.assets, trial.spec, trial.seeds) == (
+        name,
+        (240,),
+        _B2_ASSETS,
+        _B4_SOL_SPEC,
+        (42, 7, 1234),
+    )
+    assert trial.build is subjects._build_b4_sol_noborrow_rolling and trial.metric_keys == _B4_SOL_METRIC_KEYS
+    assert (trial.verdict, trial.no_verdict, trial.incumbent) == (subjects._b4_ratio_legs_verdict, _B4_SOL_NO_VERDICT, None)
+    assert (trial.family, trial.n_trials) == ("B4", 2) == ("B4", subjects._B4_SOL_N_TRIALS)
+    assert (preflight.name, preflight.intervals, preflight.assets, preflight.spec, preflight.seeds) == (
+        f"{name}-preflight",
+        (240,),
+        _B2_ASSETS,
+        _B4_SOL_SPEC,
+        (42,),
+    )
+    assert preflight.build is subjects._build_b4_sol_noborrow_rolling_preflight
+    assert preflight.metric_keys == _B4_SOL_PREFLIGHT_KEYS
+    assert (preflight.verdict, preflight.no_verdict, preflight.incumbent, preflight.family, preflight.n_trials) == (None,) * 5
+    assert subjects._B4_SOL_SEEN_TO == _B4_SOL_SEEN_TO
+
+
+# Adopting on every key the rule reads, the full window's and the unseen months' head-to-heads against it, so a rule reading
+# either in place of the primary read moves the adopt row.
+_B4_SOL_ADOPTING = {
+    "arm_a_passes": 1,
+    "ratio_held_per_year": {"SOL/BTC": {"2021": 0, "2022": 3}},
+    "passes": 1,
+    "head_to_head_mean_outperf_primary": 0.001,
+    "head_to_head_spa_p_primary": 0.01,
+    "head_to_head_mean_outperf_full": -0.001,
+    "head_to_head_spa_p_full": 0.9,
+    "head_to_head_mean_outperf_unseen": -0.001,
+    "head_to_head_spa_p_unseen": 0.9,
+}
+_B4_SOL_NEVER_HELD = {"ratio_held_per_year": {"SOL/BTC": {"2021": 0, "2022": 0}}}
+
+
+@pytest.mark.parametrize("name", ["b4-sol-noborrow-rolling"])
+@pytest.mark.parametrize(
+    ("change", "verdict"),
+    [
+        pytest.param({}, "adopt", id="outperforms-significantly-from-the-first-weight"),
+        pytest.param({"arm_a_passes": 0}, None, id="arm-a-fails-its-bar"),
+        pytest.param(_B4_SOL_NEVER_HELD, None, id="sol-btc-never-held"),
+        pytest.param({"arm_a_passes": 0, "passes": 0}, None, id="arm-a-read-before-passes"),
+        pytest.param({**_B4_SOL_NEVER_HELD, "passes": 0}, None, id="holding-read-before-passes"),
+        pytest.param({"passes": 0}, "reject", id="arm-b-fails-its-bar"),
+        pytest.param({"head_to_head_spa_p_primary": 0.05}, "park", id="p-at-exactly-0.05"),
+        pytest.param({"head_to_head_spa_p_primary": 0.2}, "park", id="p-0.2"),
+        pytest.param({"head_to_head_mean_outperf_primary": 0.0}, "reject", id="mean-at-exactly-0"),
+        pytest.param(
+            {
+                "head_to_head_mean_outperf_primary": -0.001,
+                "head_to_head_mean_outperf_full": 0.001,
+                "head_to_head_mean_outperf_unseen": 0.001,
+                "head_to_head_spa_p_unseen": 0.01,
+            },
+            "reject",
+            id="mean-negative",
+        ),
+    ],
+)
+def test_the_b4_sol_rule_maps_its_metrics_to_a_verdict_or_a_stop(name, change, verdict):
+    assert subjects.SUBJECTS[name].verdict({**_B4_SOL_ADOPTING, **change}) == verdict
+
+
+@pytest.mark.parametrize("name", ["b4-sol-noborrow-rolling"])
+def test_the_b4_sol_reads_map_sol_btcs_closes_onto_a_frozen_union_and_read_no_other_pair(tmp_path, name):
+    root = _b4_dataset(tmp_path)
+    frames = {i: pl.read_parquet(root / "ohlc-test" / f"{i}/EUR/240.parquet") for i in _B2_ASSETS}
+    union = sorted(set().union(*(frame["ts"].to_list() for frame in frames.values())))
+    sol = pl.read_parquet(root / "ohlc-test" / "SOL/BTC/240.parquet")
+    closes = dict(zip(sol["ts"].to_list(), sol["close"].to_list()))
+    reader = ObservedReader(root)
+
+    h4_ts, h4_prices, ratios = subjects._b4_sol_reads(name, reader, "ohlc-test", None, None, False)
+
+    assert h4_ts == union and set(h4_prices) == set(_B2_ASSETS)
+    assert ratios == {"SOL/BTC": [closes.get(t) for t in union]}
+    assert next(k for k, r in enumerate(ratios["SOL/BTC"]) if r is not None) == _B4_SOL_FROM
+    assert set(reader.block()["ohlc-test"]["files"]) == {f"{i}/EUR/240.parquet" for i in _B2_ASSETS} | {"SOL/BTC/240.parquet"}
+
+
+def _b4_sol_dataset(tmp_path: Path) -> Path:
+    """The ten 4h series from `_B4_SOL_START` and SOL/BTC, SOL's prices over BTC's from bar `_B4_SOL_FROM`."""
+    root = tmp_path / "data"
+    start = int(_B4_SOL_START.timestamp())
+    rows = {a: _rows(_B4_SOL_BARS, phase=i * 0.7, start=start, step=4 * 3600) for i, a in enumerate(_B2_ASSETS)}
+    for asset, asset_rows in rows.items():
+        write_parquet(to_frame(asset_rows), root / "ohlc-test" / f"{asset}/EUR/240.parquet")
+    ratio = [
+        [row[0], *(f"{float(x) / float(q)}" for x, q in zip(row[1:6], btc[1:6])), *row[6:]]
+        for row, btc in zip(rows["SOL"], rows["BTC"])
+    ]
+    write_parquet(to_frame(ratio[_B4_SOL_FROM:]), root / "ohlc-test" / "SOL/BTC/240.parquet")
+    return root
+
+
+def _b4_sol_rolling_set(tmp_path: Path) -> Path:
+    """A rolling set of the twelve pairs written by hand: a 15-minute base from `_B4_SOL_ROLLING_FROM` through the base
+    day, then three tape days, BTC/EUR and SOL/BTC each with a hole on `_B4_SOL_HOLE`; each pair's closes a wave of its own."""
+    root = tmp_path / "data"
+    pairs = (*_EUR_PAIRS, "ETH/BTC", "SOL/BTC")
+    seam, step = datetime(2026, 10, 1, tzinfo=UTC), timedelta(minutes=15)
+
+    def bars(index: int, start: datetime, end: datetime) -> pl.DataFrame:
+        slots = range((start - _B4_SOL_ROLLING_FROM) // step, (end - _B4_SOL_ROLLING_FROM) // step)
+        close = [10.0 * (index + 1) * (1.5 + math.sin(i / 389 + index)) for i in slots]
+        return pl.DataFrame(
+            {
+                "ts": [_B4_SOL_ROLLING_FROM + i * step for i in slots],
+                **dict.fromkeys(("open", "high", "low", "close", "vwap"), close),
+                "volume": [1.0] * len(close),
+                "count": [1] * len(close),
+            }
+        )
+
+    def put(relpath: str, data: bytes | pl.DataFrame) -> str:
+        path = root / "ohlc-rolling" / relpath
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(data, pl.DataFrame):
+            data.write_parquet(path)
+        else:
+            path.write_bytes(data)
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    base = {f"base/{p}/15.parquet": put(f"base/{p}/15.parquet", bars(i, _B4_SOL_ROLLING_FROM, seam)) for i, p in enumerate(pairs)}
+    notes = {"seam": seam.isoformat(), "base_from": "ohlc-15m-fixture"}
+    prev = put("index/2026/09/30.json", line_bytes({"day": "2026-09-30", "prev": None, "files": base, "holes": {}, "notes": notes}))
+    for offset in range(3):
+        start = seam + timedelta(days=offset)
+        day, holed = start.date(), {"BTC/EUR", "SOL/BTC"} if start.date() == _B4_SOL_HOLE else set()
+        files = {
+            f"days/{p}/{day:%Y/%m/%d}.parquet": put(f"days/{p}/{day:%Y/%m/%d}.parquet", bars(i, start, start + timedelta(days=1)))
+            for i, p in enumerate(pairs)
+            if p not in holed
+        }
+        line = {"day": day.isoformat(), "prev": prev, "files": files, "holes": dict.fromkeys(sorted(holed), HOLE)}
+        prev = put(f"index/{day:%Y/%m/%d}.json", line_bytes(line))
+    return root
+
+
+@pytest.mark.parametrize("name", ["b4-sol-noborrow-rolling"])
+def test_the_b4_sol_reads_read_the_rolling_set_as_of_the_day_across_its_holes_and_no_other_pair(tmp_path, name):
+    root = _b4_sol_rolling_set(tmp_path)
+    own = ObservedReader(root)
+    frames = {p: own.read_rolling("ohlc-rolling", p, 240, "2026-10-03", accept_holes=True) for p in (*_EUR_PAIRS, "SOL/BTC")}
+    by_ts = {p: dict(zip(frame["ts"].to_list(), frame["close"].to_list())) for p, frame in frames.items()}
+    union = sorted(set().union(*(by_ts[p] for p in _EUR_PAIRS)))
+    reader = ObservedReader(root)
+
+    h4_ts, h4_prices, ratios = subjects._b4_sol_reads(name, reader, "ohlc-rolling", None, "2026-10-03", True)
+
+    assert h4_ts == union and h4_prices == {a: [by_ts[f"{a}/EUR"].get(t) for t in union] for a in _B2_ASSETS}
+    assert ratios == {"SOL/BTC": [by_ts["SOL/BTC"].get(t) for t in union]}
+    holed = [k for k, t in enumerate(union) if t.date() == _B4_SOL_HOLE]
+    assert len(holed) == 6 and all(ratios["SOL/BTC"][k] is None and h4_prices["BTC"][k] is None for k in holed)
+    assert sorted(reader.holes()["ohlc-rolling"]) == ["BTC/EUR 2026-10-02", "SOL/BTC 2026-10-02"]
+    assert reader.block() == own.block()
+
+
+@pytest.mark.parametrize("name", ["b4-sol-noborrow-rolling"])
+def test_the_b4_sol_arms_agree_bit_for_bit_until_sol_btc_takes_weight(monkeypatch, name):
+    h4_ts, h4_prices, ratios = _b4_leg_short_reads()
+    n = len(h4_ts) - 1
+    ensembles = _recording(monkeypatch, "_b4_ensemble", lambda arguments, result: result)
+
+    inputs = subjects._b4_sol_inputs(subjects._B4Reads(h4_ts, h4_prices, {"SOL/BTC": ratios["SOL/BTC"]}))
+
+    (_, raw_a), (_, raw_b) = ensembles
+    start = inputs.first_weight["SOL/BTC"]
+    differ = [k for k in range(n) if any(raw_b[a][k] != raw_a[a][k] for a in raw_a)]
+    assert set(raw_b) == {*raw_a, "SOL/BTC"} and 0 < start < n
+    assert differ and differ[0] >= start
+    assert all(p == 0.0 for p in raw_b["SOL/BTC"][:start]) and any(p != 0.0 for p in raw_b["SOL/BTC"])
+
+
+@pytest.mark.parametrize("name", ["b4-sol-noborrow-rolling"])
+def test_the_b4_sol_inputs_hold_sol_btc_to_the_books_own_btc_and_cost_it_on_its_own_return(name):
+    reads = _b4_leg_short_reads()
+    h4_ts, h4_prices, ratios = reads
+    trial, own = _b4_own_books(*reads), _b4_own_leg_books(*reads)["SOL/BTC"]
+    # SOL/BTC outweighs the book's BTC at some stamps of this union, so its book held to the BTC differs from it carried.
+    assert own["no_borrow"][0] != own["carried"][0]
+
+    inputs = subjects._b4_sol_inputs(subjects._B4Reads(h4_ts, h4_prices, {"SOL/BTC": ratios["SOL/BTC"]}))
+
+    assert (inputs.h4_ts, inputs.h4_prices, inputs.close) == (h4_ts, h4_prices, [t + timedelta(hours=4) for t in h4_ts[:-1]])
+    assert inputs.first_weight == {"SOL/BTC": own["first"]}
+    assert inputs.returns == {i: trial["returns"][i] for i in (*h4_prices, "SOL/BTC")}
+    assert (inputs.arm_a, inputs.engaged_a) == trial["limited_a"] and (inputs.arm_b, inputs.engaged_b) == own["no_borrow"]
+    assert inputs.no_borrow is inputs.arm_b
+
+
+def _b4_sol_built_inputs(n: int = 1_600) -> subjects._B4Inputs:
+    """Books made by hand over `n` return indices whose closes cross the last one reading 6 read — three assets and SOL/BTC,
+    arm B short of BTC wherever the leg outweighs its BTC, a missing return on the leg, each limit engaged at a stamp of its
+    own — for the metrics alone."""
+    h4_ts = [datetime(2025, 8, 1, tzinfo=UTC) + timedelta(hours=4 * k) for k in range(n + 1)]
+    first = 600
+
+    def wave(k: int, phase: float, depth: float) -> float:
+        return depth * (1 + math.sin(k / 11 + phase)) / 2
+
+    arm_a = {a: [wave(k, i, 0.2) for k in range(n)] for i, a in enumerate(("BTC", "ETH", "SOL"))}
+    arm_b = {a: [0.9 * p for p in v] for a, v in arm_a.items()}
+    arm_b["SOL/BTC"] = [0.0 if k < first else wave(k, 3, 0.15) for k in range(n)]
+    returns = {i: [0.01 * math.sin(k / (3 + j) + j) for k in range(n)] for j, i in enumerate(arm_b)}
+    returns["SOL/BTC"][first + 7] = None
+    engaged_a = {limit: [False] * n for limit in ("gross", "net", "margin")}
+    engaged_b = {limit: [k == 900 + j for k in range(n)] for j, limit in enumerate(("gross", "net", "margin"))}
+    h4_prices = {"BTC": [100.0 + k for k in range(n + 1)]}
+    close = [t + timedelta(hours=4) for t in h4_ts[:-1]]
+    return subjects._B4Inputs(h4_ts, h4_prices, close, returns, {"SOL/BTC": first}, arm_a, arm_b, arm_b, engaged_a, engaged_b)
+
+
+def _b4_sol_own_net(inputs: subjects._B4Inputs, positions: dict, stress: float) -> list[float]:
+    """Net of each instrument's turnover at 0.006 a side and of the carry on the BTC its SOL/BTC outweighs, both times
+    `stress`."""
+    gross = net_of_cost(positions, {i: inputs.returns[i] for i in positions}, cost_per_side=stress * 0.006)
+    legs = positions.get("SOL/BTC", [0.0] * len(gross))
+    short = [max(0.0, -(b - p)) for b, p in zip(positions["BTC"], legs)]
+    carry = [stress * 0.0002 * (s + max(0.0, s - p)) for s, p in zip(short, [0.0, *short[:-1]])]
+    return [g - c for g, c in zip(gross, carry)]
+
+
+def _b4_sol_own_engagement(inputs: subjects._B4Inputs) -> dict:
+    close, arm_b, n = inputs.close, inputs.arm_b, len(inputs.close)
+    short = [max(0.0, -(b - p)) for b, p in zip(arm_b["BTC"], arm_b["SOL/BTC"])]
+    differ = per_year_positions_differ(inputs.arm_a | {"SOL/BTC": [0.0] * n}, arm_b, close)
+    return {
+        "ratio_first_weight": inputs.first_weight,
+        "primary_returns": n - inputs.first_weight["SOL/BTC"],
+        "unseen_returns": sum(t > _B4_SOL_SEEN_TO for t in close),
+        "ratio_held_per_year": {"SOL/BTC": per_year_counts([p != 0 for p in arm_b["SOL/BTC"]], close)},
+        "stamps_positions_differ": sum(differ.values()),
+        "positions_differ_per_year": differ,
+        "turnover_b": book_turnover(arm_b),
+        "turnover_b_per_year": per_year_turnover(arm_b, close),
+        "shortfall_stamps_per_year": per_year_counts([s > 0 for s in short], close),
+        "shortfall_mean_per_year": per_year_means(short, close),
+        "shortfall_max": max(short),
+        "carry_per_year": per_year_sums([0.0002 * (s + max(0.0, s - p)) for s, p in zip(short, [0.0, *short[:-1]])], close),
+        "limit_engaged_per_year": {limit: per_year_counts(flags, close) for limit, flags in inputs.engaged_b.items()},
+        "arm_a_limit_engaged": {limit: sum(flags) for limit, flags in inputs.engaged_a.items()},
+    }
+
+
+@pytest.mark.parametrize("name", ["b4-sol-noborrow-rolling"])
+def test_the_b4_sol_trial_reads_each_metric_from_its_own_call(monkeypatch, name):
+    inputs = _b4_sol_built_inputs()
+    n, close, start = len(inputs.close), inputs.close, inputs.first_weight["SOL/BTC"]
+    unseen = next(k for k, t in enumerate(close) if t > _B4_SOL_SEEN_TO)
+    net_a, net_b = (_b4_sol_own_net(inputs, book, 1.0) for book in (inputs.arm_a, inputs.arm_b))
+    net_a_x15, net_b_x15 = (_b4_sol_own_net(inputs, book, 1.5) for book in (inputs.arm_a, inputs.arm_b))
+    # Arm B is short of BTC at some stamps, so the carry moves its net.
+    assert net_b != net_of_cost(inputs.arm_b, {i: inputs.returns[i] for i in inputs.arm_b}, cost_per_side=0.006)
+    monkeypatch.setattr(subjects, "a1_kill_bar", _fake_kill_bar)
+    monkeypatch.setattr(subjects, "net_of_cost_verdict", _fake_head_to_head)
+    monkeypatch.setattr(subjects, "benchmark_4h_net_of_cost", _fake_benchmark)
+    bars = _recording(monkeypatch, "a1_kill_bar", lambda arguments, result: result)
+    heads = _recording(monkeypatch, "net_of_cost_verdict", lambda arguments, result: result)
+
+    metrics = subjects._b4_sol_metrics(inputs, n_trials=2)
+
+    bench = _fake_benchmark(inputs.h4_prices, cost_per_side=0.006)
+    common = {"n_trials": 2, "var_trials": 0.0, "benchmark_net_returns": bench, "decisive_start": 1380, "n_resamples": 2000}
+    common |= {"benchmark_slices": calendar_year_slices(bench, inputs.h4_ts)}
+    arm_b_bar = {
+        "book_net_returns": net_b,
+        "cost_stressed_returns": net_b_x15,
+        "regime_slices": calendar_year_slices(net_b, inputs.h4_ts),
+    }
+    assert [arguments for arguments, _ in bars] == [
+        common
+        | {
+            "book_net_returns": net_a,
+            "cost_stressed_returns": net_a_x15,
+            "regime_slices": calendar_year_slices(net_a, inputs.h4_ts),
+            "mean_block": 30,
+            "seed": 42,
+        },
+        *(common | arm_b_bar | {"mean_block": block, "seed": seed} for block, seed in _B2_GRID),
+    ]
+    reads = {"mean_block": 30, "seed": 42, "n_resamples": 2000}
+    assert [arguments for arguments, _ in heads] == [
+        reads | {"book_net_of_cost": net_b, "benchmark_net_of_cost": net_a},
+        reads | {"book_net_of_cost": net_b[start:], "benchmark_net_of_cost": net_a[start:]},
+        reads | {"book_net_of_cost": net_b[unseen:], "benchmark_net_of_cost": net_a[unseen:]},
+    ]
+    bar_a, headline = bars[0][1], bars[1][1]
+    full, primary, after = (result for _, result in heads)
+    assert metrics == {
+        "ann_sharpe_noc": sharpe(net_b, periods_per_year=2190),
+        "ann_sharpe_noc_decisive": sharpe(net_b[1380:], periods_per_year=2190),
+        "per_period_sharpe_4h": sharpe(net_b),
+        "arm_a_ann_sharpe_noc": sharpe(net_a, periods_per_year=2190),
+        "arm_a_ann_sharpe_noc_decisive": sharpe(net_a[1380:], periods_per_year=2190),
+        "benchmark_ann_sharpe_noc": sharpe(bench, periods_per_year=2190),
+        "benchmark_ann_sharpe_noc_decisive": sharpe(bench[1380:], periods_per_year=2190),
+        "dsr_corrected": headline["dsr"],
+        "dsr_pass": headline["dsr_pass"],
+        "spa_pass": headline["spa_pass"],
+        "spa_p_full": headline["spa_p_value_full"],
+        "cost_stress_pass": headline["cost_stress_pass"],
+        "worst_slice_relative_pass": headline["worst_slice_pass"],
+        "passes": headline["passes"],
+        "decisive_start": 1380,
+        "n_resamples": 2000,
+        "arm_a_passes": bar_a["passes"],
+        **{f"spa_p_decisive_b{block}_s{seed}": bars[1 + j][1]["spa_p_value"] for j, (block, seed) in enumerate(_B2_GRID)},
+        "head_to_head_mean_outperf_full": full["mean_outperformance"],
+        "head_to_head_spa_p_full": full["spa_p_value"],
+        "head_to_head_mean_outperf_primary": primary["mean_outperformance"],
+        "head_to_head_spa_p_primary": primary["spa_p_value"],
+        "head_to_head_mean_outperf_unseen": after["mean_outperformance"],
+        "head_to_head_spa_p_unseen": after["spa_p_value"],
+        "max_drawdown": max_drawdown(net_b),
+        "arm_a_max_drawdown": max_drawdown(net_a),
+        "max_drawdown_per_year": per_year_max_drawdown(net_b, close),
+        "arm_a_max_drawdown_per_year": per_year_max_drawdown(net_a, close),
+        "turnover_a": book_turnover(inputs.arm_a),
+        "turnover_a_per_year": per_year_turnover(inputs.arm_a, close),
+        **_b4_sol_own_engagement(inputs),
+    }
+    assert (n - start, n - unseen) == (metrics["primary_returns"], metrics["unseen_returns"]) == (1_000, 143)
+
+
+@pytest.mark.parametrize("name", ["b4-sol-noborrow-rolling"])
+def test_the_b4_sol_preflight_reads_arm_a_over_both_spans_and_the_engagement_and_costs_no_other_book(monkeypatch, name):
+    inputs = _b4_sol_built_inputs()
+    net_a = _b4_sol_own_net(inputs, inputs.arm_a, 1.0)
+    seen = next(k for k, t in enumerate(inputs.close) if t > _B4_SOL_SEEN_TO)
+
+    def refused(*args, **kwargs):
+        raise AssertionError("the pre-flight read a head-to-head")
+
+    monkeypatch.setattr(subjects, "net_of_cost_verdict", refused)
+    monkeypatch.setattr(subjects, "a1_kill_bar", _fake_kill_bar)
+    monkeypatch.setattr(subjects, "benchmark_4h_net_of_cost", _fake_benchmark)
+    costed = _recording(monkeypatch, "_b4_net", lambda arguments, result: result)
+    bars = _recording(monkeypatch, "a1_kill_bar", lambda arguments, result: result)
+
+    metrics = subjects._b4_sol_preflight_metrics(inputs, n_trials=2)
+
+    bench = _fake_benchmark(inputs.h4_prices, cost_per_side=0.006)
+    ((arguments, bar),) = bars
+    assert costed and all(arguments["positions"] is inputs.arm_a for arguments, _ in costed)
+    assert arguments["book_net_returns"] == net_a and arguments["n_trials"] == 2
+    turnover_a = book_turnover(inputs.arm_a)
+    assert metrics == {
+        "arm_a_ann_sharpe_noc": sharpe(net_a, periods_per_year=2190),
+        "arm_a_ann_sharpe_noc_decisive": sharpe(net_a[1380:], periods_per_year=2190),
+        "arm_a_max_drawdown_full": max_drawdown(net_a),
+        "turnover_a": turnover_a,
+        "arm_a_spot_drag_pct_yr": turnover_a / len(inputs.close) * 0.006 * 2190,
+        "benchmark_ann_sharpe_noc": sharpe(bench, periods_per_year=2190),
+        "benchmark_ann_sharpe_noc_decisive": sharpe(bench[1380:], periods_per_year=2190),
+        "arm_a_ann_sharpe_noc_seen": sharpe(net_a[:seen], periods_per_year=2190),
+        "arm_a_ann_sharpe_noc_decisive_seen": sharpe(net_a[1380:seen], periods_per_year=2190),
+        "arm_a_max_drawdown_seen": max_drawdown(net_a[:seen]),
+        **{key: int(bar[key]) if key in _ARM_A_BAR_FLAGS else bar[key] for key in _ARM_A_BAR_KEYS},
+        **_b4_sol_own_engagement(inputs),
+    }
+
+
+@pytest.mark.parametrize("name", ["b4-sol-noborrow-rolling"])
+def test_the_b4_sol_trial_refuses_fewer_than_2_returns_from_the_first_weight_or_after_the_last_close_read_before_any_bar(
+    monkeypatch, name
+):
+    built = _b4_sol_built_inputs()
+    n = len(built.close)
+    bars = _recording(monkeypatch, "a1_kill_bar", lambda arguments, result: result)
+    heads = _recording(monkeypatch, "net_of_cost_verdict", lambda arguments, result: result)
+
+    with pytest.raises(ValidationError) as from_first_weight:
+        subjects._b4_sol_metrics(built._replace(first_weight={"SOL/BTC": n - 1}), n_trials=2)
+    with pytest.raises(ValidationError) as unseen:
+        subjects._b4_sol_metrics(_b4_sol_built_inputs(1_458), n_trials=2)
+
+    assert (
+        str(from_first_weight.value)
+        == "1 of its return indices follow SOL/BTC's first weight, and the head-to-head from it needs 2"
+    )
+    assert str(unseen.value) == (
+        "1 of its return indices close after 2026-03-31 20:00:00+00:00, and the head-to-head over them needs 2"
+    )
+    assert bars == [] and heads == []
+    monkeypatch.setattr(subjects, "a1_kill_bar", _fake_kill_bar)
+    monkeypatch.setattr(subjects, "net_of_cost_verdict", _fake_head_to_head)
+    monkeypatch.setattr(subjects, "benchmark_4h_net_of_cost", _fake_benchmark)
+    admitted = [
+        subjects._b4_sol_metrics(built._replace(first_weight={"SOL/BTC": n - 2}), n_trials=2)["primary_returns"],
+        subjects._b4_sol_metrics(_b4_sol_built_inputs(1_459), n_trials=2)["unseen_returns"],
+    ]
+    assert admitted == [2, 2]
+
+
+@pytest.mark.parametrize("name", ["b4-sol-noborrow-rolling"])
+@pytest.mark.parametrize("plain", [True, False], ids=["plain-eval", "another-count"])
+def test_the_b4_sol_trial_refuses_a_plain_eval_and_another_count_before_any_read(tmp_path, monkeypatch, name, plain):
+    _anchor(monkeypatch, tmp_path / "no-data", tmp_path / "registry.jsonl")
+    reads = _recording(monkeypatch, "_b4_sol_reads", lambda arguments, result: result)
+    flags = [] if plain else ["--register", "--iteration", "iter-191", "--family", "B4", "--n-trials", "1"]
+    refused = (
+        f"{name} declares a verdict rule, so every run of it is a trial: run it with --register"
+        if plain
+        else f"--n-trials 1 is not 2, the count {name} declares and deflates at: pass --n-trials 2"
+    )
+
+    result = runner.invoke(
+        app, ["research", "eval", "--subject", name, "--dataset", "ohlc-rolling", "--as-of", "2026-10-10", *flags]
+    )
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert refused in result.output and reads == []
+
+
+@pytest.mark.parametrize("name", ["b4-sol-noborrow-rolling", "b4-sol-noborrow-rolling-preflight"])
+@pytest.mark.parametrize("spoil", [_no_close_column, _not_parquet], ids=["no-close-column", "not-parquet"])
+def test_a_b4_sol_subject_refuses_a_sol_btc_file_it_cannot_read_naming_it(tmp_path, monkeypatch, name, spoil):
+    root = _b4_sol_dataset(tmp_path)
+    spoil(root / "ohlc-test" / "SOL/BTC/240.parquet")
+    _anchor(monkeypatch, root)
+    books = _recording(monkeypatch, "_b4_sol_inputs", lambda arguments, result: result)
+
+    result = runner.invoke(app, ["research", "eval", "--subject", name, "--dataset", "ohlc-test", *_as_trial(name, tmp_path)])
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert "ohlc-test/SOL/BTC/240.parquet: " in result.output and books == []
+
+
+@pytest.mark.parametrize("name", ["b4-sol-noborrow-rolling", "b4-sol-noborrow-rolling-preflight"])
+def test_a_b4_sol_subject_refuses_a_sol_btc_day_it_cannot_read_on_the_rolling_set_naming_the_pair_and_the_day(
+    tmp_path, monkeypatch, name
+):
+    root = _b4_sol_rolling_set(tmp_path)
+    # The newest line's SOL/BTC day re-hashed into that line, which no later line's prev names, so the chain still verifies.
+    day, index = (root / "ohlc-rolling" / relpath for relpath in ("days/SOL/BTC/2026/10/03.parquet", "index/2026/10/03.json"))
+    _no_close_column(day)
+    line = json.loads(index.read_bytes())
+    line["files"]["days/SOL/BTC/2026/10/03.parquet"] = hashlib.sha256(day.read_bytes()).hexdigest()
+    index.write_bytes(line_bytes(line))
+    _anchor(monkeypatch, root)
+    books = _recording(monkeypatch, "_b4_sol_inputs", lambda arguments, result: result)
+    args = ["research", "eval", "--subject", name, "--dataset", "ohlc-rolling", "--as-of", "2026-10-03", "--accept-holes"]
+
+    result = runner.invoke(app, [*args, *_as_trial(name, tmp_path)])
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert "ohlc-rolling SOL/BTC at 240 minutes as of 2026-10-03: " in result.output and books == []
+
+
 def _ruled_signal(held: list[float | None], flat: list[float]) -> tuple[dict, dict]:
     """BTC's signal at its long stamps `held` and at its flat ones `flat`, every other asset's flat and unread."""
     n = len(held) + len(flat)
@@ -5328,6 +5818,7 @@ _RULED_FIXTURES = {
     "b2-oi-derisk": _b2_overlay_dataset,
     "b2-ratio-derisk": _b2_overlay_dataset,
     "b4-ratio-legs": _b4_dataset,
+    "b4-sol-noborrow-rolling": _b4_sol_dataset,
 }
 # Each ruled subject's count constant, which the tie raises so that a literal at a kill-bar site fails it.
 _DECLARED_COUNT = {
@@ -5343,6 +5834,7 @@ _DECLARED_COUNT = {
     "b2-oi-derisk": "_B2_OI_N_TRIALS",
     "b2-ratio-derisk": "_B2_RATIO_N_TRIALS",
     "b4-ratio-legs": "_B4_N_TRIALS",
+    "b4-sol-noborrow-rolling": "_B4_SOL_N_TRIALS",
 }
 
 
@@ -5361,6 +5853,7 @@ def test_the_ruled_subjects_declare_their_families_and_trial_counts():
         "b2-oi-derisk": ("B2", 2),
         "b2-ratio-derisk": ("B2", 3),
         "b4-ratio-legs": ("B4", 1),
+        "b4-sol-noborrow-rolling": ("B4", 2),
     }
     assert set(_RULED_FIXTURES) == set(declared) == set(_DECLARED_COUNT)
 
@@ -6924,6 +7417,8 @@ _CONTRACT_DATASETS = {
     "b4-ratio-legs": lambda tmp_path, subject: (_b4_dataset(tmp_path), _B2_START),
     "b4-ratio-legs-preflight": lambda tmp_path, subject: (_b4_dataset(tmp_path), _B2_START),
     "b4-leg-reading": lambda tmp_path, subject: (_b4_dataset(tmp_path), _B2_START),
+    "b4-sol-noborrow-rolling": lambda tmp_path, subject: (_b4_sol_dataset(tmp_path), _B4_SOL_START),
+    "b4-sol-noborrow-rolling-preflight": lambda tmp_path, subject: (_b4_sol_dataset(tmp_path), _B4_SOL_START),
     "b1-conditioning": lambda tmp_path, subject: (_b1_dataset(tmp_path), _B1_START),
     "b1-window-only": lambda tmp_path, subject: (_b1_dataset(tmp_path, m15=False), _B1_START),
     "b1-hourly-rv": lambda tmp_path, subject: (_b1_hourly_rv_dataset(tmp_path), _B1_START),

@@ -3964,6 +3964,229 @@ _B4_LEG_KEYS = frozenset(
 )
 
 
+# docs/specs/00146 D2-D9: B4's trial 2, SOL/BTC alone beside the ten EUR assets in the adopted A2-4h ensemble, held each close
+# to the book's own BTC, on the rolling set as of a day: trial 58's books, costing, limits, bar and rule.
+_B4_SOL = "SOL/BTC"
+_B4_SOL_N_TRIALS = 2  # docs/specs/00146 D8: B4's true count with this trial, fixed by the spec's hash; another is a new subject
+_B4_SOL_SEEN_TO = datetime(2026, 3, 31, 20, tzinfo=UTC)  # docs/specs/00146 D6: the last close reading 6 read
+
+
+def _b4_sol_reads(
+    subject: str,
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None,
+    accept_holes: bool,
+) -> _B4Reads:
+    """The union, the window's refusals and SOL/BTC's closes on its stamps, and no compute."""
+    h4_ts, h4_prices = _capturing_union(reader, dataset, 240, window, as_of, accept_holes)
+    close = close_grid(h4_ts)
+    if len(close) < _DECISIVE_START + 2:
+        raise SubjectError(
+            f"{_b2_over(subject, window)}: it holds {len(close)} return indices, and the kill bar's decisive window opens at index "
+            f"{_DECISIVE_START} and needs 2"
+        )
+    if not calendar_year_slices([0.0] * len(close), h4_ts):
+        raise SubjectError(
+            f"{_b2_over(subject, window)}: none of its return indices closes in a calendar year the worst-slice leg reads, the "
+            "stub years left out"
+        )
+    try:
+        if as_of is None:
+            frame = reader.read_series(dataset, f"{_B4_SOL}/240.parquet", window=window)
+        else:
+            frame = reader.read_rolling(dataset, _B4_SOL, 240, as_of, window=window, accept_holes=accept_holes)
+        closes = dict(zip(frame["ts"].to_list(), frame["close"].to_list(), strict=True))
+    except pl.exceptions.PolarsError as exc:
+        where = f"{dataset}/{_B4_SOL}/240.parquet" if as_of is None else f"{dataset} {_B4_SOL} at 240 minutes as of {as_of}"
+        raise SubjectError(f"{where}: {exc}") from exc
+    return _B4Reads(h4_ts, h4_prices, {_B4_SOL: [closes.get(t) for t in h4_ts]})
+
+
+def _b4_sol_inputs(reads: _B4Reads) -> _B4Inputs:
+    """Arm A and arm B in trial 58's shape, arm B — the ten EUR assets and SOL/BTC, the leg held to the book's own BTC — its
+    own borrow-free book, so both `arm_b` and `no_borrow`; positions, and no return of a book."""
+    h4_ts, h4_prices, ratios = reads
+    fed = _ffill_btc(h4_prices)
+    priced = fed | ratios
+    arm_a, engaged_a = _b4_limited(_b4_ensemble(fed))
+    arm_b, engaged_b = _b4_limited(borrow_unavailable(_b4_ensemble(priced), _B4_LEGS, "BTC"))
+    weights = _inverse_vol_weights(priced, lookback=_B2_LOOKBACK)
+    first_weight = {_B4_SOL: next((k for k, w in enumerate(weights) if _B4_SOL in w), len(weights))}
+    returns = {a: _asset_returns(fed[a]) for a in h4_prices} | {_B4_SOL: ratio_eur_returns(ratios[_B4_SOL], fed["BTC"])}
+    return _B4Inputs(h4_ts, h4_prices, close_grid(h4_ts), returns, first_weight, arm_a, arm_b, arm_b, engaged_a, engaged_b)
+
+
+def _b4_sol_unseen(close: list[datetime]) -> int:
+    return next((k for k, t in enumerate(close) if t > _B4_SOL_SEEN_TO), len(close))
+
+
+def _b4_sol_engagement(inputs: _B4Inputs) -> dict:
+    close, arm_b = inputs.close, inputs.arm_b
+    shortfall = _b4_shortfall(arm_b)
+    differ = per_year_positions_differ(inputs.arm_a | {_B4_SOL: [0.0] * len(close)}, arm_b, close)
+    return {
+        "ratio_first_weight": inputs.first_weight,
+        "primary_returns": len(close) - inputs.first_weight[_B4_SOL],
+        "unseen_returns": len(close) - _b4_sol_unseen(close),
+        "ratio_held_per_year": {_B4_SOL: per_year_counts([p != 0 for p in arm_b[_B4_SOL]], close)},
+        "stamps_positions_differ": sum(differ.values()),
+        "positions_differ_per_year": differ,
+        "turnover_b": book_turnover(arm_b),
+        "turnover_b_per_year": per_year_turnover(arm_b, close),
+        "shortfall_stamps_per_year": per_year_counts([s > 0 for s in shortfall], close),
+        "shortfall_mean_per_year": per_year_means(shortfall, close),
+        "shortfall_max": max(shortfall),
+        "carry_per_year": per_year_sums(shortfall_carry(shortfall, rate=_B4_CARRY_RATE), close),
+        "limit_engaged_per_year": {name: per_year_counts(flags, close) for name, flags in inputs.engaged_b.items()},
+        "arm_a_limit_engaged": {name: sum(flags) for name, flags in inputs.engaged_a.items()},
+    }
+
+
+def _b4_sol_metrics(inputs: _B4Inputs, *, n_trials: int) -> dict:
+    close = inputs.close
+    start, unseen = inputs.first_weight[_B4_SOL], _b4_sol_unseen(close)
+    if len(close) - start < 2:
+        raise ValidationError(
+            f"{len(close) - start} of its return indices follow SOL/BTC's first weight, and the head-to-head from it needs 2"
+        )
+    if len(close) - unseen < 2:
+        raise ValidationError(
+            f"{len(close) - unseen} of its return indices close after {_B4_SOL_SEEN_TO}, and the head-to-head over them needs 2"
+        )
+    net_b = _b4_net(inputs.arm_b, inputs.returns, stress=1.0)
+    net_b_x15 = _b4_net(inputs.arm_b, inputs.returns, stress=1.5)
+    bar_a, net_a, bench = _b4_arm_a_bar(inputs, n_trials=n_trials)
+    slices_b, slices_bench = calendar_year_slices(net_b, inputs.h4_ts), calendar_year_slices(bench, inputs.h4_ts)
+    grid = {
+        (block, seed): a1_kill_bar(
+            net_b,
+            bench,
+            n_trials=n_trials,
+            var_trials=0.0,
+            mean_block=block,
+            seed=seed,
+            cost_stressed_returns=net_b_x15,
+            regime_slices=slices_b,
+            benchmark_slices=slices_bench,
+            decisive_start=_DECISIVE_START,
+            n_resamples=_N_RESAMPLES,
+        )
+        for block in (30, 102)
+        for seed in (42, 7, 1234)
+    }
+    headline = grid[(30, 42)]
+    head_to_head = {}
+    for label, first in (("full", 0), ("primary", start), ("unseen", unseen)):
+        verdict = net_of_cost_verdict(net_b[first:], net_a[first:], mean_block=30, seed=42, n_resamples=_N_RESAMPLES)
+        head_to_head[f"head_to_head_mean_outperf_{label}"] = verdict["mean_outperformance"]
+        head_to_head[f"head_to_head_spa_p_{label}"] = verdict["spa_p_value"]
+    return {
+        "ann_sharpe_noc": sharpe(net_b, periods_per_year=PPY_4H),
+        "ann_sharpe_noc_decisive": sharpe(net_b[_DECISIVE_START:], periods_per_year=PPY_4H),
+        "per_period_sharpe_4h": sharpe(net_b),
+        "arm_a_ann_sharpe_noc": sharpe(net_a, periods_per_year=PPY_4H),
+        "arm_a_ann_sharpe_noc_decisive": sharpe(net_a[_DECISIVE_START:], periods_per_year=PPY_4H),
+        "benchmark_ann_sharpe_noc": sharpe(bench, periods_per_year=PPY_4H),
+        "benchmark_ann_sharpe_noc_decisive": sharpe(bench[_DECISIVE_START:], periods_per_year=PPY_4H),
+        "dsr_corrected": headline["dsr"],
+        "dsr_pass": int(headline["dsr_pass"]),
+        "spa_pass": int(headline["spa_pass"]),
+        "spa_p_full": headline["spa_p_value_full"],
+        "cost_stress_pass": int(headline["cost_stress_pass"]),
+        "worst_slice_relative_pass": int(headline["worst_slice_pass"]),
+        "passes": int(headline["passes"]),
+        "decisive_start": _DECISIVE_START,
+        "n_resamples": _N_RESAMPLES,
+        "arm_a_passes": int(bar_a["passes"]),
+        **{f"spa_p_decisive_b{block}_s{seed}": result["spa_p_value"] for (block, seed), result in grid.items()},
+        **head_to_head,
+        "max_drawdown": max_drawdown(net_b),
+        "arm_a_max_drawdown": max_drawdown(net_a),
+        "max_drawdown_per_year": per_year_max_drawdown(net_b, close),
+        "arm_a_max_drawdown_per_year": per_year_max_drawdown(net_a, close),
+        "turnover_a": book_turnover(inputs.arm_a),
+        "turnover_a_per_year": per_year_turnover(inputs.arm_a, close),
+        **_b4_sol_engagement(inputs),
+    }
+
+
+def _b4_sol_preflight_metrics(inputs: _B4Inputs, *, n_trials: int) -> dict:
+    bar, net_a, bench = _b4_arm_a_bar(inputs, n_trials=n_trials)
+    seen = _b4_sol_unseen(inputs.close)
+    turnover_a = book_turnover(inputs.arm_a)
+    return {
+        "arm_a_ann_sharpe_noc": sharpe(net_a, periods_per_year=PPY_4H),
+        "arm_a_ann_sharpe_noc_decisive": sharpe(net_a[_DECISIVE_START:], periods_per_year=PPY_4H),
+        "arm_a_max_drawdown_full": max_drawdown(net_a),
+        "turnover_a": turnover_a,
+        "arm_a_spot_drag_pct_yr": turnover_a / len(inputs.close) * _B2_COST_PER_SIDE * PPY_4H,
+        "benchmark_ann_sharpe_noc": sharpe(bench, periods_per_year=PPY_4H),
+        "benchmark_ann_sharpe_noc_decisive": sharpe(bench[_DECISIVE_START:], periods_per_year=PPY_4H),
+        "arm_a_ann_sharpe_noc_seen": sharpe(net_a[:seen], periods_per_year=PPY_4H),
+        "arm_a_ann_sharpe_noc_decisive_seen": sharpe(net_a[_DECISIVE_START:seen], periods_per_year=PPY_4H),
+        "arm_a_max_drawdown_seen": max_drawdown(net_a[:seen]),
+        **{key: int(bar[key]) if key in _B2_ARM_A_BAR_FLAGS else bar[key] for key in sorted(_B2_ARM_A_BAR_KEYS)},
+        **_b4_sol_engagement(inputs),
+    }
+
+
+def _b4_sol_build(
+    subject: str,
+    compute: Callable[..., dict],
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None,
+    accept_holes: bool,
+) -> dict:
+    try:
+        reads = _b4_sol_reads(subject, reader, dataset, window, as_of, accept_holes)
+        return compute(_b4_sol_inputs(reads), n_trials=_B4_SOL_N_TRIALS)
+    except (AlphaError, BacktestError, BenchmarkError, FeatureError, RiskError, ValidationError) as exc:
+        raise SubjectError(f"{_b2_over(subject, window)}: {exc}") from exc
+
+
+def _build_b4_sol_noborrow_rolling(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    return _b4_sol_build("b4-sol-noborrow-rolling", _b4_sol_metrics, reader, dataset, window, as_of, accept_holes)
+
+
+def _build_b4_sol_noborrow_rolling_preflight(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    return _b4_sol_build(
+        "b4-sol-noborrow-rolling-preflight", _b4_sol_preflight_metrics, reader, dataset, window, as_of, accept_holes
+    )
+
+
+# docs/specs/00146 D9's keys.
+_B4_SOL_ENGAGEMENT_KEYS = _B4_ENGAGEMENT_KEYS | {"unseen_returns", "shortfall_max"}
+_B4_SOL_METRIC_KEYS = (
+    (
+        _B4_METRIC_KEYS
+        - {"no_borrow_head_to_head_mean_outperf_primary", "no_borrow_head_to_head_spa_p_primary", "no_borrow_ann_sharpe_noc"}
+    )
+    | _B4_SOL_ENGAGEMENT_KEYS
+    | {"head_to_head_mean_outperf_unseen", "head_to_head_spa_p_unseen"}
+)
+_B4_SOL_PREFLIGHT_KEYS = (
+    _B4_PREFLIGHT_KEYS
+    | _B4_SOL_ENGAGEMENT_KEYS
+    | {"arm_a_ann_sharpe_noc_seen", "arm_a_ann_sharpe_noc_decisive_seen", "arm_a_max_drawdown_seen"}
+)
+
+
 SUBJECTS: dict[str, Subject] = {
     "record44-crossfreq": Subject(
         "record44-crossfreq",
@@ -4351,6 +4574,31 @@ SUBJECTS: dict[str, Subject] = {
         _build_b4_leg_reading,
         spec="docs/specs/00145-b4-leg-reading-design.md",
         metric_keys=_B4_LEG_KEYS,
+        seeds=(42,),
+    ),
+    "b4-sol-noborrow-rolling": Subject(
+        "b4-sol-noborrow-rolling",
+        (240,),
+        _ASSETS,
+        _build_b4_sol_noborrow_rolling,
+        spec="docs/specs/00146-b4-sol-noborrow-rolling-design.md",
+        metric_keys=_B4_SOL_METRIC_KEYS,
+        seeds=(42, 7, 1234),
+        verdict=_b4_ratio_legs_verdict,
+        no_verdict=(
+            "instrument finding: arm A fails the bar this window sets, or SOL/BTC holds no position at any stamp; no "
+            "verdict, the trial unspent"
+        ),
+        family="B4",
+        n_trials=_B4_SOL_N_TRIALS,
+    ),
+    "b4-sol-noborrow-rolling-preflight": Subject(
+        "b4-sol-noborrow-rolling-preflight",
+        (240,),
+        _ASSETS,
+        _build_b4_sol_noborrow_rolling_preflight,
+        spec="docs/specs/00146-b4-sol-noborrow-rolling-design.md",
+        metric_keys=_B4_SOL_PREFLIGHT_KEYS,
         seeds=(42,),
     ),
 }
