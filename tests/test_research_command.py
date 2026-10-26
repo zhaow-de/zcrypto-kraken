@@ -6206,11 +6206,11 @@ def test_the_b3_overlay_inputs_pass_both_arms_and_the_twin_through_the_limits(mo
 
 
 def _b3_overlay_built_inputs() -> subjects._B3OverlayInputs:
-    """Trial 1's hand-made books with arm B's BTC below 0 over a span and the twin's floored there, a state and a short of
-    their own — for the metrics alone."""
+    """Trial 1's hand-made books with arm B's BTC below 0 over two spans, the second past the decisive start, and the twin's
+    floored there, a state and a short of their own — for the metrics alone."""
     trial = _b3_built_inputs()
     n = len(trial.close)
-    arm_b = trial.arm_b | {"BTC": [p - 0.3 if 500 <= k < 700 else p for k, p in enumerate(trial.arm_b["BTC"])]}
+    arm_b = trial.arm_b | {"BTC": [p - 0.3 if 500 <= k < 700 or k >= 1390 else p for k, p in enumerate(trial.arm_b["BTC"])]}
     no_borrow = arm_b | {"BTC": [max(0.0, p) for p in arm_b["BTC"]]}
     state = [k % 5 < 2 for k in range(n)]
     short = [0.1 + 0.001 * (k % 7) if k % 5 == 0 and k >= 300 else 0.0 for k in range(n)]
@@ -6257,22 +6257,32 @@ def test_the_b3_overlay_trial_reads_trial_1s_metrics_the_twins_head_to_head_from
 
     net_a, net_t = (_b3_own_net(trial, book, 1.0) for book in (trial.arm_a, inputs.no_borrow))
     net_b, net_b_x15 = (_b3_overlay_own_net_b(inputs, stress) for stress in (1.0, 1.5))
-    # Non-vacuity: the fixture's arm B borrows BTC, so the carry moves its net off the carry-free one.
-    assert net_b != _b3_own_net(trial, trial.arm_b, 1.0) and net_b_x15 != _b3_own_net(trial, trial.arm_b, 1.5)
+    # Non-vacuity: the fixture's arm B borrows BTC past the decisive start too, so the carry moves its net's decisive tail
+    # off the carry-free one.
+    assert net_b[1380:] != _b3_own_net(trial, trial.arm_b, 1.0)[1380:] and net_b_x15 != _b3_own_net(trial, trial.arm_b, 1.5)
     reads = {"mean_block": 30, "seed": 42, "n_resamples": 2000}
     assert [arguments for arguments, _ in heads][:2] == [
         reads | {"book_net_of_cost": net_b, "benchmark_net_of_cost": net_a},
         reads | {"book_net_of_cost": net_b[start:], "benchmark_net_of_cost": net_a[start:]},
     ]
-    assert [(arguments["book_net_returns"], arguments["cost_stressed_returns"]) for arguments, _ in bars[1:]] == [
-        (net_b, net_b_x15)
-    ] * len(_B2_GRID)
+    arm_b_bar = {
+        "book_net_returns": net_b,
+        "cost_stressed_returns": net_b_x15,
+        "regime_slices": calendar_year_slices(net_b, trial.h4_ts),
+    }
+    assert [{key: arguments[key] for key in arm_b_bar} for arguments, _ in bars[1:]] == [arm_b_bar] * len(_B2_GRID)
     assert [arguments for arguments, _ in heads][2:] == [
         reads | {"book_net_of_cost": net_t[start:], "benchmark_net_of_cost": net_a[start:]}
     ]
     twin = heads[2][1]
     assert metrics == {
         **trial_1s,
+        # Overriding trial 1's: each key `_b3_metrics` reads off arm B's net, from the hand net.
+        "ann_sharpe_noc": sharpe(net_b, periods_per_year=2190),
+        "ann_sharpe_noc_decisive": sharpe(net_b[1380:], periods_per_year=2190),
+        "per_period_sharpe_4h": sharpe(net_b),
+        "max_drawdown": max_drawdown(net_b),
+        "max_drawdown_per_year": per_year_max_drawdown(net_b, trial.close),
         "no_borrow_ann_sharpe_noc": sharpe(net_t, periods_per_year=2190),
         "no_borrow_head_to_head_mean_outperf_primary": twin["mean_outperformance"],
         "no_borrow_head_to_head_spa_p_primary": twin["spa_p_value"],
