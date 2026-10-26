@@ -1,8 +1,8 @@
 # Fleet pins
 
-The current pin and rollback operand of every service — a state file: a row is re-trued in the change that re-pins or converges it — the digest from that converge's line in `deploy-log.jsonl`, `since` from the container's `.State.StartedAt`, the restart marker — and the converge's evidence goes in the commit message, so `git log --follow` on this file is the deploy chronicle.
+The current pin and rollback operand of every service — a state file: a row is re-trued in the change that converges it — the digest from that converge's line in `deploy-log.jsonl`, `since` from the container's `.State.StartedAt` (the NAS Alloy's `.Created`) — and the converge's evidence goes in the commit message, so `git log --follow` on this file is the deploy chronicle.
 
-`tests/test_fleet_contracts.py` holds the file to state. Every image pin but the NAS's is a converge-time extra-var, so its row is the only record.
+Every image pin but the NAS's and Alloy's is a converge-time extra-var, so its row is the only record.
 
 Reading rules:
 
@@ -41,7 +41,7 @@ Every host's Alloy runs the fleet's version outside a wave (set: the hosts of th
 | alloy | zaccess | `1.21.2-1` | 2026-10-26 | dpkg hold; pinned at 1001 |
 | alloy | zcrypto-mon | `1.21.2-1` | 2026-10-26 | dpkg hold; pinned at 1001 |
 | alloy | zcrypto-hc | `1.21.2-1` | 2026-10-26 | dpkg hold; pinned at 1001 |
-| hc (the healthchecks clone, `ghcr.io/zhaow-de/healthchecks`, by tag) | zcrypto-hc | `v6.3.1` | 2026-10-26 21:05:14 | rolled back by `-e hc_image_tag=v6.2.0` on a converge, `v6.2.0` resident on the node |
+| hc (the healthchecks clone, `ghcr.io/zhaow-de/healthchecks`, by tag) | zcrypto-hc | `v6.3.1` | 2026-10-26 21:05:14 | rollback `v6.2.0`, on the node: `infra/runbooks/hc.md` `hc-patch-pass` step 6 |
 
 ## Standing constraints
 
