@@ -23,7 +23,7 @@ from typer.testing import CliRunner
 
 from cli.__main__ import app
 from cli.alpha import A2Config, a2_book_returns
-from cli.alpha.a1 import _asset_returns, _inverse_vol_weights
+from cli.alpha.a1 import _asset_returns, _btc_market_bear, _inverse_vol_weights
 from cli.alpha.a2 import _asset_directions_a2
 from cli.alpha.b1 import book_turnover
 from cli.alpha.b1_exit import (
@@ -78,6 +78,7 @@ from cli.benchmark.errors import BenchmarkError
 from cli.costs.margin import margin_rate
 from cli.data import sync
 from cli.derivatives.funding import PERP_SYMBOLS
+from cli.features import trend_agreement
 from cli.features.derivatives import coverage_by_year, funding_zscore
 from cli.features.errors import FeatureError
 from cli.ohlc.dataset import to_frame, write_parquet
@@ -1455,6 +1456,8 @@ def test_each_subject_declares_the_metric_keys_its_build_returns():
     assert subjects.SUBJECTS["b3-rank-tilt-preflight"].metric_keys == _B3_PREFLIGHT_KEYS
     assert subjects.SUBJECTS["b3-tilt-slow"].metric_keys == _B3_METRIC_KEYS
     assert subjects.SUBJECTS["b3-tilt-slow-preflight"].metric_keys == _B3_PREFLIGHT_KEYS
+    assert subjects.SUBJECTS["b3-btc-overlay"].metric_keys == _B3_METRIC_KEYS | _B3_OVERLAY_ENGAGEMENT_KEYS | _B3_OVERLAY_TWIN_KEYS
+    assert subjects.SUBJECTS["b3-btc-overlay-preflight"].metric_keys == _B3_PREFLIGHT_KEYS | _B3_OVERLAY_ENGAGEMENT_KEYS
     assert subjects.SUBJECTS["b2-liq-tape-reading"].metric_keys == _B2_TAPE_SPEC_KEYS
     assert subjects.SUBJECTS["b2-signal-reading"].metric_keys == _B2_READING_SPEC_KEYS
     assert subjects.SUBJECTS["b2-second-signal-reading"].metric_keys == _B2_READING_2_SPEC_KEYS
@@ -5793,7 +5796,17 @@ def test_the_b3_preflight_reads_arm_a_and_the_engagement_and_costs_no_other_book
     }
 
 
-@pytest.mark.parametrize("name", ["b3-rank-tilt", "b3-rank-tilt-preflight", "b3-tilt-slow", "b3-tilt-slow-preflight"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "b3-rank-tilt",
+        "b3-rank-tilt-preflight",
+        "b3-tilt-slow",
+        "b3-tilt-slow-preflight",
+        "b3-btc-overlay",
+        "b3-btc-overlay-preflight",
+    ],
+)
 def test_a_b3_subject_refuses_as_of_before_any_read(tmp_path, monkeypatch, name):
     _anchor(monkeypatch, _rolling_set(tmp_path))
 
@@ -5963,6 +5976,347 @@ def test_the_b3_slow_trial_refuses_a_plain_eval_and_another_count_before_any_rea
         f"{name} declares a verdict rule, so every run of it is a trial: run it with --register"
         if plain
         else f"--n-trials 1 is not 2, the count {name} declares and deflates at: pass --n-trials 2"
+    )
+
+    result = runner.invoke(app, ["research", "eval", "--subject", name, "--dataset", "ohlc-test", *flags])
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert refused in result.output
+
+
+_B3_OVERLAY_SPEC = "docs/specs/00149-b3-btc-overlay-design.md"
+_B3_OVERLAY_NO_VERDICT = (
+    "instrument finding: arm A fails the bar this window sets, or the overlay shorts no BTC at any stamp; no verdict, the "
+    "trial unspent"
+)
+# Spec 00149 D9's keys added to trial 1's, typed from the spec, never read off a subject.
+_B3_OVERLAY_ENGAGEMENT_KEYS = frozenset(
+    {
+        "short_state_per_year",
+        "overlay_per_year",
+        "overlay_first_engaged",
+        "shortfall_stamps_per_year",
+        "shortfall_mean_per_year",
+        "shortfall_max",
+        "carry_per_year",
+    }
+)
+_B3_OVERLAY_TWIN_KEYS = frozenset(
+    {"no_borrow_ann_sharpe_noc", "no_borrow_head_to_head_mean_outperf_primary", "no_borrow_head_to_head_spa_p_primary"}
+)
+
+
+@pytest.mark.parametrize("name", ["b3-btc-overlay"])
+def test_the_b3_overlay_pair_declares_trial_1s_keys_with_the_overlays_its_own_spec_rule_and_count_and_a1s_state(name):
+    trial, preflight = subjects.SUBJECTS[name], subjects.SUBJECTS[f"{name}-preflight"]
+    assert (len(trial.metric_keys), len(preflight.metric_keys)) == (54, 35)
+    assert (trial.name, trial.intervals, trial.assets, trial.spec, trial.seeds) == (
+        name,
+        (240,),
+        _B2_ASSETS,
+        _B3_OVERLAY_SPEC,
+        (42, 7, 1234),
+    )
+    assert trial.build is subjects._build_b3_btc_overlay
+    assert trial.metric_keys == _B3_METRIC_KEYS | _B3_OVERLAY_ENGAGEMENT_KEYS | _B3_OVERLAY_TWIN_KEYS
+    assert (trial.verdict, trial.no_verdict, trial.incumbent) == (subjects._b3_btc_overlay_verdict, _B3_OVERLAY_NO_VERDICT, None)
+    assert (trial.family, trial.n_trials) == ("B3", 3) == ("B3", subjects._B3_OVERLAY_N_TRIALS)
+    assert (preflight.name, preflight.intervals, preflight.assets, preflight.spec, preflight.seeds) == (
+        f"{name}-preflight",
+        (240,),
+        _B2_ASSETS,
+        _B3_OVERLAY_SPEC,
+        (42,),
+    )
+    assert preflight.build is subjects._build_b3_btc_overlay_preflight
+    assert preflight.metric_keys == _B3_PREFLIGHT_KEYS | _B3_OVERLAY_ENGAGEMENT_KEYS
+    assert (preflight.verdict, preflight.no_verdict, preflight.incumbent, preflight.family, preflight.n_trials) == (None,) * 5
+    assert (
+        subjects._B3_OVERLAY_WINDOW,
+        subjects._B3_OVERLAY_BAND,
+        subjects._B3_OVERLAY_LOOKBACKS,
+        subjects._B3_OVERLAY_FRACTION,
+    ) == (1200, 0.0, (120, 360, 720), 0.5)
+
+
+# Adopting on every key the rule reads, the full window's head-to-head against it, so a rule reading the full window moves
+# the adopt row.
+_B3_OVERLAY_ADOPTING = {
+    "arm_a_passes": 1,
+    "overlay_per_year": {"2016": 0, "2017": 3},
+    "passes": 1,
+    "head_to_head_mean_outperf_primary": 0.001,
+    "head_to_head_spa_p_primary": 0.01,
+    "head_to_head_mean_outperf_full": -0.001,
+    "head_to_head_spa_p_full": 0.9,
+}
+
+
+@pytest.mark.parametrize("name", ["b3-btc-overlay"])
+@pytest.mark.parametrize(
+    ("change", "verdict"),
+    [
+        pytest.param({}, "adopt", id="outperforms-significantly-from-the-first-engagement"),
+        pytest.param({"arm_a_passes": 0}, None, id="arm-a-fails-its-bar"),
+        pytest.param({"overlay_per_year": {"2016": 0, "2017": 0}}, None, id="the-overlay-never-shorts"),
+        pytest.param({"arm_a_passes": 0, "passes": 0}, None, id="arm-a-read-before-passes"),
+        pytest.param({"overlay_per_year": {"2016": 0, "2017": 0}, "passes": 0}, None, id="the-overlay-read-before-passes"),
+        pytest.param({"passes": 0}, "reject", id="arm-b-fails-its-bar"),
+        pytest.param({"head_to_head_spa_p_primary": 0.05}, "park", id="p-at-exactly-0.05"),
+        pytest.param({"head_to_head_spa_p_primary": 0.2}, "park", id="p-0.2"),
+        pytest.param({"head_to_head_mean_outperf_primary": 0.0}, "reject", id="mean-at-exactly-0"),
+        pytest.param(
+            {"head_to_head_mean_outperf_primary": -0.001, "head_to_head_mean_outperf_full": 0.001}, "reject", id="mean-negative"
+        ),
+    ],
+)
+def test_the_b3_overlay_rule_maps_its_metrics_to_a_verdict_or_a_stop(name, change, verdict):
+    assert subjects.SUBJECTS[name].verdict({**_B3_OVERLAY_ADOPTING, **change}) == verdict
+
+
+@pytest.mark.parametrize(
+    ("name", "compute"),
+    [("b3-btc-overlay", "_b3_overlay_metrics"), ("b3-btc-overlay-preflight", "_b3_overlay_preflight_metrics")],
+)
+def test_a_b3_overlay_subject_reads_through_trial_1s_reads_builds_its_own_inputs_and_computes_at_its_count(
+    monkeypatch, name, compute
+):
+    reader, window, reads, inputs = object(), ("2021-01-01", "2025-12-31"), object(), object()
+    calls = []
+
+    def read(*args, **kwargs):
+        calls.append(("_b3_reads", args, kwargs))
+        return reads
+
+    def build(*args, **kwargs):
+        calls.append(("_b3_overlay_inputs", args, kwargs))
+        return inputs
+
+    def computed(*args, **kwargs):
+        calls.append((compute, args, kwargs))
+        return {"built": name}
+
+    monkeypatch.setattr(subjects, "_b3_reads", read)
+    monkeypatch.setattr(subjects, "_b3_overlay_inputs", build)
+    monkeypatch.setattr(subjects, compute, computed)
+
+    built = subjects.SUBJECTS[name].build(reader, "ohlc-test", window, None, True)
+
+    assert built == {"built": name}
+    assert calls == [
+        ("_b3_reads", (name, reader, "ohlc-test", window, True), {}),
+        ("_b3_overlay_inputs", (reads,), {}),
+        (compute, (inputs,), {"n_trials": 3}),
+    ]
+
+
+def _b3_overlay_short_state(monkeypatch) -> tuple[int, tuple[int, ...]]:
+    """A1's state on a 40-close SMA and trend agreement over 5, 10 and 20 closes, so that on `_b3_short_reads` it holds
+    before arm B's book holds anything long, and the overlay first shorts before the tilt first moves a position."""
+    monkeypatch.setattr(subjects, "_B3_OVERLAY_WINDOW", 40)
+    monkeypatch.setattr(subjects, "_B3_OVERLAY_LOOKBACKS", (5, 10, 20))
+    return 40, (5, 10, 20)
+
+
+def _b3_overlay_own_books(h4_ts: list[datetime], h4_prices: dict, *, window: int, lookbacks: tuple[int, ...]) -> dict:
+    """The books of the reads with the BTC short, built here through `a2_book_returns`, `b3_book_returns`, A1's two state
+    functions and the limits, never through the subject's halves or `cli/alpha/b3_overlay.py`."""
+    n = len(h4_ts) - 1
+    fed = _ffill_btc(h4_prices)
+    configs = [
+        A2Config(lookbacks=lb, short="off", target_vol=tv, vol_lookback=180, basket_lookback=180, periods_per_year=2190)
+        for lb, tv in (((20, 50, 100), 0.12), ((60, 120, 240), 0.10), ((60, 120, 240), 0.12))
+    ]
+
+    def mean(books):
+        return {i: [statistics.mean(book[i][k] for book in books) for k in range(n)] for i in fed}
+
+    def limited(positions):
+        factors, engaged = limit_factors(dict(positions))
+        return {i: [p * f for p, f in zip(v, factors)] for i, v in positions.items()}, engaged
+
+    tilted = [b3_book_returns(fed, config=c, score_lookback=180, strength=0.5, floor=8) for c in configs]
+    raw_b = mean([book["asset_positions"] for book in tilted])
+    bear = _btc_market_bear(fed["BTC"], window=window, band=0.0)
+    agreement = trend_agreement(fed["BTC"], lookbacks=list(lookbacks))
+    state = [b == 1.0 and t < 0 for b, t in zip(bear, agreement)]
+    short = [0.5 * math.fsum(max(0.0, raw_b[i][k]) for i in raw_b) if state[k] else 0.0 for k in range(n)]
+    netted = [p - s for p, s in zip(raw_b["BTC"], short)]
+    return {
+        "limited_a": limited(mean([a2_book_returns(fed, config=c)["asset_positions"] for c in configs])),
+        "limited_b": limited(raw_b | {"BTC": netted}),
+        "no_borrow": limited(raw_b | {"BTC": [max(0.0, p) for p in netted]})[0],
+        "state": state,
+        "short": short,
+        "ranked": dict(zip(_B3_ARMS, (book["ranked"] for book in tilted), strict=True)),
+        "tilted": dict(zip(_B3_ARMS, (book["tilted"] for book in tilted), strict=True)),
+        "returns": {a: _asset_returns(fed[a]) for a in h4_prices},
+    }
+
+
+@pytest.mark.parametrize("name", ["b3-btc-overlay"])
+def test_the_b3_overlay_arms_agree_bit_for_bit_until_the_overlay_first_shorts_and_no_alt_is_shorted(monkeypatch, name):
+    _b3_overlay_short_state(monkeypatch)
+    reads = _b3_short_reads()
+    n = len(reads[0]) - 1
+
+    inputs = subjects._b3_overlay_inputs(reads)
+
+    trial = inputs.trial
+    first = next(k for k, s in enumerate(inputs.short) if s > 0)
+    first_tilted = min(next(k for k, c in enumerate(counts) if c) for counts in trial.tilted.values())
+    differ = [k for k in range(n) if any(trial.arm_b[a][k] != trial.arm_a[a][k] for a in trial.arm_a)]
+    assert any(inputs.state[:first]) and differ[0] == first == subjects._b3_first_engaged(trial) == 191 < first_tilted == 300
+    assert all(trial.arm_b[a][:first] == trial.arm_a[a][:first] for a in trial.arm_a)
+    assert min(trial.arm_b["BTC"]) < 0 and all(p >= 0 for a, v in trial.arm_b.items() if a != "BTC" for p in v)
+
+
+@pytest.mark.parametrize("name", ["b3-btc-overlay"])
+def test_the_b3_overlay_inputs_build_arm_a_and_arm_b_with_the_short_and_its_twin_each_through_the_limits(monkeypatch, name):
+    window, lookbacks = _b3_overlay_short_state(monkeypatch)
+    reads = _b3_short_reads()
+    own = _b3_overlay_own_books(*reads, window=window, lookbacks=lookbacks)
+    # Non-vacuity: the short borrows BTC at some closes, so the twin and arm B differ.
+    assert own["no_borrow"] != own["limited_b"][0] and any(own["short"])
+
+    inputs = subjects._b3_overlay_inputs(reads)
+
+    trial = inputs.trial
+    assert (trial.h4_ts, trial.h4_prices, trial.close) == (reads[0], reads[1], [t + timedelta(hours=4) for t in reads[0][:-1]])
+    assert trial.returns == own["returns"] and (trial.ranked, trial.tilted) == (own["ranked"], own["tilted"])
+    assert (trial.arm_a, trial.engaged_a) == own["limited_a"] and (trial.arm_b, trial.engaged_b) == own["limited_b"]
+    assert (inputs.no_borrow, inputs.state, inputs.short) == (own["no_borrow"], own["state"], own["short"])
+
+
+@pytest.mark.parametrize("name", ["b3-btc-overlay"])
+def test_the_b3_overlay_inputs_pass_both_arms_and_the_twin_through_the_limits(monkeypatch, name):
+    _b3_overlay_short_state(monkeypatch)
+    reads = _b3_short_reads()
+    untilted = _recording(monkeypatch, "_b4_ensemble", lambda arguments, result: result)
+    shorted = _recording(monkeypatch, "with_btc_short", lambda arguments, result: result)
+    # A factor below 1 at every bar, so a book the limits never scale keeps its raw positions and fails the comparison.
+    _recording(monkeypatch, "limit_factors", lambda arguments, result: ([0.5] * len(result[0]), result[1]))
+
+    inputs = subjects._b3_overlay_inputs(reads)
+
+    ((_, raw_a),) = untilted
+    borrowed, held = (result for arguments, result in sorted(shorted, key=lambda call: not call[0]["borrow"]))
+    halved = [{i: [p * 0.5 for p in v] for i, v in book.items()} for book in (raw_a, borrowed, held)]
+    assert [inputs.trial.arm_a, inputs.trial.arm_b, inputs.no_borrow] == halved
+
+
+def _b3_overlay_built_inputs() -> subjects._B3OverlayInputs:
+    """Trial 1's books with arm B's BTC below 0 over two spans, the second past the decisive start — for the metrics alone."""
+    trial = _b3_built_inputs()
+    n = len(trial.close)
+    arm_b = trial.arm_b | {"BTC": [p - 0.3 if 500 <= k < 700 or k >= 1390 else p for k, p in enumerate(trial.arm_b["BTC"])]}
+    no_borrow = arm_b | {"BTC": [max(0.0, p) for p in arm_b["BTC"]]}
+    state = [k % 5 < 2 for k in range(n)]
+    short = [0.1 + 0.001 * (k % 7) if k % 5 == 0 and k >= 300 else 0.0 for k in range(n)]
+    return subjects._B3OverlayInputs(trial._replace(arm_b=arm_b), no_borrow, state, short)
+
+
+def _b3_overlay_own_engagement(inputs: subjects._B3OverlayInputs) -> dict:
+    close = inputs.trial.close
+    shortfall = [max(0.0, -p) for p in inputs.trial.arm_b["BTC"]]
+    opened = [max(0.0, s - p) for s, p in zip(shortfall, [0.0, *shortfall[:-1]])]
+    return {
+        "short_state_per_year": per_year_counts(inputs.state, close),
+        "overlay_per_year": per_year_counts([s > 0 for s in inputs.short], close),
+        "overlay_first_engaged": next(k for k, s in enumerate(inputs.short) if s > 0),
+        "shortfall_stamps_per_year": per_year_counts([s > 0 for s in shortfall], close),
+        "shortfall_mean_per_year": per_year_means(shortfall, close),
+        "shortfall_max": max(shortfall),
+        "carry_per_year": per_year_sums([0.0002 * (s + o) for s, o in zip(shortfall, opened)], close),
+    }
+
+
+def _b3_overlay_own_net_b(inputs: subjects._B3OverlayInputs, stress: float) -> list[float]:
+    arm_b = inputs.trial.arm_b
+    shortfall = [max(0.0, -p) for p in arm_b["BTC"]]
+    opened = [max(0.0, s - p) for s, p in zip(shortfall, [0.0, *shortfall[:-1]])]
+    net = net_of_cost(arm_b, {i: inputs.trial.returns[i] for i in arm_b}, cost_per_side=stress * 0.006)
+    return [x - stress * 0.0002 * (s + o) for x, s, o in zip(net, shortfall, opened, strict=True)]
+
+
+@pytest.mark.parametrize("name", ["b3-btc-overlay"])
+def test_the_b3_overlay_trial_reads_trial_1s_metrics_the_twins_head_to_head_from_the_first_engagement_and_the_short(
+    monkeypatch, name
+):
+    inputs = _b3_overlay_built_inputs()
+    trial, start = inputs.trial, 200
+    monkeypatch.setattr(subjects, "a1_kill_bar", _fake_kill_bar)
+    monkeypatch.setattr(subjects, "net_of_cost_verdict", _fake_head_to_head)
+    monkeypatch.setattr(subjects, "benchmark_4h_net_of_cost", _fake_benchmark)
+    trial_1s = subjects._b3_metrics(trial, n_trials=3)
+    bars = _recording(monkeypatch, "a1_kill_bar", lambda arguments, result: result)
+    heads = _recording(monkeypatch, "net_of_cost_verdict", lambda arguments, result: result)
+
+    metrics = subjects._b3_overlay_metrics(inputs, n_trials=3)
+
+    net_a, net_t = (_b3_own_net(trial, book, 1.0) for book in (trial.arm_a, inputs.no_borrow))
+    net_b, net_b_x15 = (_b3_overlay_own_net_b(inputs, stress) for stress in (1.0, 1.5))
+    # Non-vacuity: the carry moves arm B's net off the carry-free one, its decisive tail included.
+    assert net_b[1380:] != _b3_own_net(trial, trial.arm_b, 1.0)[1380:] and net_b_x15 != _b3_own_net(trial, trial.arm_b, 1.5)
+    reads = {"mean_block": 30, "seed": 42, "n_resamples": 2000}
+    assert [arguments for arguments, _ in heads][:2] == [
+        reads | {"book_net_of_cost": net_b, "benchmark_net_of_cost": net_a},
+        reads | {"book_net_of_cost": net_b[start:], "benchmark_net_of_cost": net_a[start:]},
+    ]
+    arm_b_bar = {
+        "book_net_returns": net_b,
+        "cost_stressed_returns": net_b_x15,
+        "regime_slices": calendar_year_slices(net_b, trial.h4_ts),
+    }
+    assert [{key: arguments[key] for key in arm_b_bar} for arguments, _ in bars[1:]] == [arm_b_bar] * len(_B2_GRID)
+    assert [arguments for arguments, _ in heads][2:] == [
+        reads | {"book_net_of_cost": net_t[start:], "benchmark_net_of_cost": net_a[start:]}
+    ]
+    twin = heads[2][1]
+    assert metrics == {
+        **trial_1s,
+        # Overriding trial 1's: the keys `_b3_metrics` computes straight off arm B's net.
+        "ann_sharpe_noc": sharpe(net_b, periods_per_year=2190),
+        "ann_sharpe_noc_decisive": sharpe(net_b[1380:], periods_per_year=2190),
+        "per_period_sharpe_4h": sharpe(net_b),
+        "max_drawdown": max_drawdown(net_b),
+        "max_drawdown_per_year": per_year_max_drawdown(net_b, trial.close),
+        "no_borrow_ann_sharpe_noc": sharpe(net_t, periods_per_year=2190),
+        "no_borrow_head_to_head_mean_outperf_primary": twin["mean_outperformance"],
+        "no_borrow_head_to_head_spa_p_primary": twin["spa_p_value"],
+        **_b3_overlay_own_engagement(inputs),
+    }
+    assert (metrics["tilt_first_engaged"], metrics["overlay_first_engaged"]) == (200, 300)
+
+
+@pytest.mark.parametrize("name", ["b3-btc-overlay-preflight"])
+def test_the_b3_overlay_preflight_reads_trial_1s_preflight_and_the_short_and_costs_no_other_book(monkeypatch, name):
+    inputs = _b3_overlay_built_inputs()
+
+    def refused(*args, **kwargs):
+        raise AssertionError("the pre-flight read a head-to-head")
+
+    monkeypatch.setattr(subjects, "net_of_cost_verdict", refused)
+    monkeypatch.setattr(subjects, "a1_kill_bar", _fake_kill_bar)
+    monkeypatch.setattr(subjects, "benchmark_4h_net_of_cost", _fake_benchmark)
+    trial_1s = subjects._b3_preflight_metrics(inputs.trial, n_trials=3)
+    costed = _recording(monkeypatch, "_b4_net", lambda arguments, result: result)
+
+    metrics = subjects._b3_overlay_preflight_metrics(inputs, n_trials=3)
+
+    assert costed and all(arguments["positions"] is inputs.trial.arm_a for arguments, _ in costed)
+    assert metrics == trial_1s | _b3_overlay_own_engagement(inputs)
+
+
+@pytest.mark.parametrize("name", ["b3-btc-overlay"])
+@pytest.mark.parametrize("plain", [True, False], ids=["plain-eval", "another-count"])
+def test_the_b3_overlay_trial_refuses_a_plain_eval_and_another_count_before_any_read(tmp_path, monkeypatch, name, plain):
+    _anchor(monkeypatch, tmp_path / "no-data", tmp_path / "registry.jsonl")
+    flags = [] if plain else ["--register", "--iteration", "iter-194", "--family", "B3", "--n-trials", "2"]
+    refused = (
+        f"{name} declares a verdict rule, so every run of it is a trial: run it with --register"
+        if plain
+        else f"--n-trials 2 is not 3, the count {name} declares and deflates at: pass --n-trials 3"
     )
 
     result = runner.invoke(app, ["research", "eval", "--subject", name, "--dataset", "ohlc-test", *flags])
@@ -6437,6 +6791,7 @@ _RULED_FIXTURES = {
     "b2-ratio-derisk": _b2_overlay_dataset,
     "b3-rank-tilt": _b2_dataset,
     "b3-tilt-slow": _b2_dataset,
+    "b3-btc-overlay": _b2_dataset,
     "b4-ratio-legs": _b4_dataset,
     "b4-sol-noborrow-rolling": _b4_sol_dataset,
 }
@@ -6455,6 +6810,7 @@ _DECLARED_COUNT = {
     "b2-ratio-derisk": "_B2_RATIO_N_TRIALS",
     "b3-rank-tilt": "_B3_N_TRIALS",
     "b3-tilt-slow": "_B3_SLOW_N_TRIALS",
+    "b3-btc-overlay": "_B3_OVERLAY_N_TRIALS",
     "b4-ratio-legs": "_B4_N_TRIALS",
     "b4-sol-noborrow-rolling": "_B4_SOL_N_TRIALS",
 }
@@ -6476,6 +6832,7 @@ def test_the_ruled_subjects_declare_their_families_and_trial_counts():
         "b2-ratio-derisk": ("B2", 3),
         "b3-rank-tilt": ("B3", 1),
         "b3-tilt-slow": ("B3", 2),
+        "b3-btc-overlay": ("B3", 3),
         "b4-ratio-legs": ("B4", 1),
         "b4-sol-noborrow-rolling": ("B4", 2),
     }
@@ -8047,6 +8404,8 @@ _CONTRACT_DATASETS = {
     "b3-rank-tilt-preflight": lambda tmp_path, subject: (_b2_dataset(tmp_path), _B2_START),
     "b3-tilt-slow": lambda tmp_path, subject: (_b2_dataset(tmp_path), _B2_START),
     "b3-tilt-slow-preflight": lambda tmp_path, subject: (_b2_dataset(tmp_path), _B2_START),
+    "b3-btc-overlay": lambda tmp_path, subject: (_b2_dataset(tmp_path), _B2_START),
+    "b3-btc-overlay-preflight": lambda tmp_path, subject: (_b2_dataset(tmp_path), _B2_START),
     "b1-conditioning": lambda tmp_path, subject: (_b1_dataset(tmp_path), _B1_START),
     "b1-window-only": lambda tmp_path, subject: (_b1_dataset(tmp_path, m15=False), _B1_START),
     "b1-hourly-rv": lambda tmp_path, subject: (_b1_hourly_rv_dataset(tmp_path), _B1_START),

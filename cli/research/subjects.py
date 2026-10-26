@@ -80,6 +80,7 @@ from cli.alpha.b2 import (
     stationary_bootstrap_blocks,
 )
 from cli.alpha.b3 import b3_book_returns
+from cli.alpha.b3_overlay import btc_short_state, overlay_short, with_btc_short
 from cli.alpha.b4 import (
     base_exposures,
     borrow_unavailable,
@@ -4572,6 +4573,146 @@ def _build_b3_tilt_slow_preflight(
     return _b3_slow_build("b3-tilt-slow-preflight", _b3_preflight_metrics, reader, dataset, window, as_of, accept_holes)
 
 
+# docs/specs/00149 D2-D9: B3's trial 3, trial 1's tilt with a BTC short while A1's confirmed-bear state holds on BTC: trial
+# 1's reads, ensemble, metrics and engagement, trial 58's arm A, limits, costing and bar.
+_B3_OVERLAY_WINDOW = 1200  # docs/specs/00149 D3: A1's 200-day SMA in 4h closes; another value is a new trial
+_B3_OVERLAY_BAND = 0.0  # docs/specs/00149 D3: A1's short band, records 15-16's; another value is a new trial
+_B3_OVERLAY_LOOKBACKS = (120, 360, 720)  # docs/specs/00149 D3: A1's 20, 60 and 120 days in 4h closes
+_B3_OVERLAY_FRACTION = 0.5  # docs/specs/00149 D3: the short, a fraction of the book's long gross; another is a new trial
+_B3_OVERLAY_N_TRIALS = 3  # docs/specs/00149 D8: B3's true count with this trial, fixed by the spec's hash; another is a new subject
+
+
+class _B3OverlayInputs(NamedTuple):
+    trial: _B3Inputs
+    no_borrow: dict[str, list[float]]
+    state: list[bool]
+    short: list[float]
+
+
+def _b3_overlay_inputs(reads: tuple[list[datetime], dict[str, list[float | None]]]) -> _B3OverlayInputs:
+    """`_b3_inputs` with arm B carrying the BTC short, its borrow-free twin beside it, and no return of a book."""
+    h4_ts, h4_prices = reads
+    fed = _ffill_btc(h4_prices)
+    arm_a, engaged_a = _b4_limited(_b4_ensemble(fed))
+    raw_b, ranked, tilted = _b3_ensemble(fed)
+    state = btc_short_state(fed["BTC"], window=_B3_OVERLAY_WINDOW, band=_B3_OVERLAY_BAND, lookbacks=_B3_OVERLAY_LOOKBACKS)
+    short = overlay_short(raw_b, state, fraction=_B3_OVERLAY_FRACTION)
+    arm_b, engaged_b = _b4_limited(with_btc_short(raw_b, short, borrow=True))
+    no_borrow, _ = _b4_limited(with_btc_short(raw_b, short, borrow=False))
+    returns = {a: _asset_returns(fed[a]) for a in h4_prices}
+    trial = _B3Inputs(h4_ts, h4_prices, close_grid(h4_ts), returns, arm_a, arm_b, engaged_a, engaged_b, ranked, tilted)
+    return _B3OverlayInputs(trial, no_borrow, state, short)
+
+
+def _b3_overlay_engagement(inputs: _B3OverlayInputs) -> dict:
+    close, short = inputs.trial.close, inputs.short
+    shortfall = _b4_shortfall(inputs.trial.arm_b)
+    return {
+        "short_state_per_year": per_year_counts(inputs.state, close),
+        "overlay_per_year": per_year_counts([s > 0 for s in short], close),
+        "overlay_first_engaged": next((k for k, s in enumerate(short) if s > 0), len(close)),
+        "shortfall_stamps_per_year": per_year_counts([s > 0 for s in shortfall], close),
+        "shortfall_mean_per_year": per_year_means(shortfall, close),
+        "shortfall_max": max(shortfall),
+        "carry_per_year": per_year_sums(shortfall_carry(shortfall, rate=_B4_CARRY_RATE), close),
+    }
+
+
+def _b3_overlay_metrics(inputs: _B3OverlayInputs, *, n_trials: int) -> dict:
+    trial = inputs.trial
+    metrics = _b3_metrics(trial, n_trials=n_trials)
+    start = _b3_first_engaged(trial)
+    net_a = _b4_net(trial.arm_a, trial.returns, stress=1.0)
+    net_t = _b4_net(inputs.no_borrow, trial.returns, stress=1.0)
+    verdict = net_of_cost_verdict(net_t[start:], net_a[start:], mean_block=30, seed=42, n_resamples=_N_RESAMPLES)
+    return {
+        **metrics,
+        "no_borrow_ann_sharpe_noc": sharpe(net_t, periods_per_year=PPY_4H),
+        "no_borrow_head_to_head_mean_outperf_primary": verdict["mean_outperformance"],
+        "no_borrow_head_to_head_spa_p_primary": verdict["spa_p_value"],
+        **_b3_overlay_engagement(inputs),
+    }
+
+
+def _b3_overlay_preflight_metrics(inputs: _B3OverlayInputs, *, n_trials: int) -> dict:
+    """No return of arm B or of its twin."""
+    return {**_b3_preflight_metrics(inputs.trial, n_trials=n_trials), **_b3_overlay_engagement(inputs)}
+
+
+def _b3_overlay_build(
+    subject: str,
+    compute: Callable[..., dict],
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None,
+    accept_holes: bool,
+) -> dict:
+    if as_of is not None:
+        raise SubjectError(
+            f"{subject} evaluates a frozen set's 4h series, never the rolling dataset as of a day: drop --as-of and pass a "
+            "frozen --dataset"
+        )
+    try:
+        return compute(_b3_overlay_inputs(_b3_reads(subject, reader, dataset, window, accept_holes)), n_trials=_B3_OVERLAY_N_TRIALS)
+    except (AlphaError, BacktestError, BenchmarkError, FeatureError, RiskError, ValidationError) as exc:
+        raise SubjectError(f"{_b2_over(subject, window)}: {exc}") from exc
+
+
+def _build_b3_btc_overlay(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    return _b3_overlay_build("b3-btc-overlay", _b3_overlay_metrics, reader, dataset, window, as_of, accept_holes)
+
+
+def _build_b3_btc_overlay_preflight(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    return _b3_overlay_build(
+        "b3-btc-overlay-preflight", _b3_overlay_preflight_metrics, reader, dataset, window, as_of, accept_holes
+    )
+
+
+# docs/specs/00149 D8's matrix and the two instrument findings its metrics show: a change to it is a new spec and a new
+# trial, never an edit here.
+def _b3_btc_overlay_verdict(m: dict) -> str | None:
+    if not m["arm_a_passes"] or not any(m["overlay_per_year"].values()):
+        return None
+    if not m["passes"]:
+        return "reject"
+    if m["head_to_head_mean_outperf_primary"] > 0:
+        return "adopt" if m["head_to_head_spa_p_primary"] < 0.05 else "park"
+    return "reject"
+
+
+# docs/specs/00149 D9's keys.
+_B3_OVERLAY_ENGAGEMENT_KEYS = frozenset(
+    {
+        "short_state_per_year",
+        "overlay_per_year",
+        "overlay_first_engaged",
+        "shortfall_stamps_per_year",
+        "shortfall_mean_per_year",
+        "shortfall_max",
+        "carry_per_year",
+    }
+)
+_B3_OVERLAY_METRIC_KEYS = (
+    _B3_METRIC_KEYS
+    | _B3_OVERLAY_ENGAGEMENT_KEYS
+    | {"no_borrow_ann_sharpe_noc", "no_borrow_head_to_head_mean_outperf_primary", "no_borrow_head_to_head_spa_p_primary"}
+)
+_B3_OVERLAY_PREFLIGHT_KEYS = _B3_PREFLIGHT_KEYS | _B3_OVERLAY_ENGAGEMENT_KEYS
+
+
 SUBJECTS: dict[str, Subject] = {
     "record44-crossfreq": Subject(
         "record44-crossfreq",
@@ -5034,6 +5175,31 @@ SUBJECTS: dict[str, Subject] = {
         _build_b3_tilt_slow_preflight,
         spec="docs/specs/00148-b3-tilt-slow-design.md",
         metric_keys=_B3_PREFLIGHT_KEYS,
+        seeds=(42,),
+    ),
+    "b3-btc-overlay": Subject(
+        "b3-btc-overlay",
+        (240,),
+        _ASSETS,
+        _build_b3_btc_overlay,
+        spec="docs/specs/00149-b3-btc-overlay-design.md",
+        metric_keys=_B3_OVERLAY_METRIC_KEYS,
+        seeds=(42, 7, 1234),
+        verdict=_b3_btc_overlay_verdict,
+        no_verdict=(
+            "instrument finding: arm A fails the bar this window sets, or the overlay shorts no BTC at any stamp; no "
+            "verdict, the trial unspent"
+        ),
+        family="B3",
+        n_trials=_B3_OVERLAY_N_TRIALS,
+    ),
+    "b3-btc-overlay-preflight": Subject(
+        "b3-btc-overlay-preflight",
+        (240,),
+        _ASSETS,
+        _build_b3_btc_overlay_preflight,
+        spec="docs/specs/00149-b3-btc-overlay-design.md",
+        metric_keys=_B3_OVERLAY_PREFLIGHT_KEYS,
         seeds=(42,),
     ),
 }
