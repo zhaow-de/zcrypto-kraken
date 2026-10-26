@@ -1,6 +1,6 @@
 # Fleet pins
 
-The current pin and rollback operand of every service — a state file: a row is re-trued in the change that converges it — the digest from that converge's line in `deploy-log.jsonl`, `since` from the container's `.State.StartedAt` (the NAS Alloy's `.Created`) — and the converge's evidence goes in the commit message, so `git log --follow` on this file is the deploy chronicle.
+The current pin and rollback operand of every service — a state file: a row is re-trued in the change that converges it — the digest from that converge's line in `deploy-log.jsonl`, `since` from `.State.StartedAt` unless the row's procedure names another — and the converge's evidence goes in the commit message, so `git log --follow` on this file is the deploy chronicle.
 
 Every image pin but the NAS's and Alloy's is a converge-time extra-var, so its row is the only record.
 
