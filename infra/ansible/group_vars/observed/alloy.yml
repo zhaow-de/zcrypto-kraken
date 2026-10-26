@@ -2,6 +2,6 @@
 # The fleet's one Alloy version: every Alloy of the `observed` group runs it outside a wave or a hold. A bump
 # writes the three together from one reading of the gate, `uv run python infra/scripts/alloy-version.py gate`,
 # and moves `nas_alloy_image` with them; no value is derived from another.
-alloy_version: "1.20.1"
-alloy_image_digest: sha256:2aa2099af76c0098d4af7a4d6e48f86cb66dc1a000222ad927a1c67c6542d13f
-alloy_deb_version: "1.20.1-1"
+alloy_version: "1.21.2"
+alloy_image_digest: sha256:89a5a320168387336b9ac3c850609c3ba7757eadd4ae5f1d819deb35e9854b18
+alloy_deb_version: "1.21.2-1"
