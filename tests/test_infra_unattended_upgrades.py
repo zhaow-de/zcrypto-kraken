@@ -19,6 +19,7 @@ INVENTORY = REPO / "infra/ansible/inventory/hosts.yml"
 
 VAR = "base_unattended_upgrades_automatic_reboot"
 BASE_TASKS = REPO / "infra/ansible/roles/base/tasks/main.yml"
+SITE = REPO / "infra/ansible/site.yml"
 CACHE_GROUP_VARS = REPO / "infra/ansible/group_vars/cache_host/vars.yml"
 HOST_VARS = REPO / "infra/ansible/host_vars"
 OPS_HOST_VARS = HOST_VARS / "zcrypto-ops/vars.yml"
@@ -161,13 +162,37 @@ def test_every_reboot_slot_is_an_hour_from_every_other_and_from_a_bar_boundary()
 _BLACKLIST_BLOCK = re.compile(r"\{% if base_unattended_upgrades_package_blacklist %\}\n.*?\{% endif %\}\n", re.DOTALL)
 
 
-def test_an_empty_blacklist_renders_the_file_the_fleet_already_has():
+def test_an_empty_blacklist_renders_no_blacklist_block():
     source = TEMPLATE.read_text()
     before = _BLACKLIST_BLOCK.sub("", source, count=1)
     assert before != source, "the blacklist block was not found, so this compares the template with itself"
     context = {VAR: "true", "base_unattended_upgrades_reboot_time": "21:25", "base_unattended_upgrades_mail_to": "root"}
     assert _render(**{VAR: "true"}) == _ENV.from_string(before).render(**context)
-    assert _yaml(BASE_DEFAULTS)[BLACKLIST] == []
+
+
+def _groups_applying(*roles: str) -> set[str]:
+    groups = set()
+    for play in yaml.safe_load(SITE.read_text()):
+        applied = {entry["role"] if isinstance(entry, dict) else entry for entry in play.get("roles", [])}
+        if set(roles) <= applied:
+            groups.add(play["hosts"])
+    return groups
+
+
+def _blacklist_of(host: str, group: str) -> list[str]:
+    for path in (HOST_VARS / host / "vars.yml", HOST_VARS.parent / "group_vars" / group / "vars.yml"):
+        if path.exists() and BLACKLIST in _yaml(path):
+            return _yaml(path)[BLACKLIST]
+    return _yaml(BASE_DEFAULTS)[BLACKLIST]
+
+
+def test_every_host_running_docker_behind_the_firewall_keeps_nftables_from_unattended_upgrades():
+    groups = _groups_applying("firewall", "docker")
+    assert groups, "no play applies both the firewall and the docker role"
+    for group in sorted(groups):
+        for host in sorted(_group_hosts(group)):
+            entries = _blacklist_of(host, group)
+            assert any(re.match(entry, "nftables") for entry in entries), f"{host} ({group}) lets nftables upgrade: {entries}"
 
 
 def test_a_non_empty_blacklist_renders_each_entry_quoted_on_its_own_line():
