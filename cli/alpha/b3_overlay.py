@@ -37,7 +37,7 @@ def overlay_short(positions: Mapping[str, list[float]], state: list[bool], *, fr
 
 def with_btc_short(positions: Mapping[str, list[float]], short: list[float], *, borrow: bool) -> dict[str, list[float]]:
     """The book with `short` sold out of its BTC, netted against the BTC the book holds; with `borrow` False the BTC is
-    floored at 0, so the book sells only the BTC it holds. Every other instrument as it is."""
+    floored at 0, so the book sells only the BTC it holds."""
     if "BTC" not in positions:
         raise AlphaError("the book holds no BTC to carry the short")
     if len(short) != _check_lengths(positions):

@@ -4635,7 +4635,7 @@ def _b3_overlay_metrics(inputs: _B3OverlayInputs, *, n_trials: int) -> dict:
 
 
 def _b3_overlay_preflight_metrics(inputs: _B3OverlayInputs, *, n_trials: int) -> dict:
-    """Trial 1's pre-flight figures and the overlay's engagement: no return of arm B or of its twin."""
+    """No return of arm B or of its twin."""
     return {**_b3_preflight_metrics(inputs.trial, n_trials=n_trials), **_b3_overlay_engagement(inputs)}
 
 
@@ -4693,7 +4693,7 @@ def _b3_btc_overlay_verdict(m: dict) -> str | None:
     return "reject"
 
 
-# docs/specs/00149 D9's keys: trial 1's, the overlay's engagement and the borrow-free twin's.
+# docs/specs/00149 D9's keys.
 _B3_OVERLAY_ENGAGEMENT_KEYS = frozenset(
     {
         "short_state_per_year",

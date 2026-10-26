@@ -6112,8 +6112,7 @@ def test_a_b3_overlay_subject_reads_through_trial_1s_reads_builds_its_own_inputs
 
 def _b3_overlay_short_state(monkeypatch) -> tuple[int, tuple[int, ...]]:
     """A1's state on a 40-close SMA and trend agreement over 5, 10 and 20 closes, so that on `_b3_short_reads` it holds
-    from return index 59, arm B's book holds nothing long until 181, the overlay first shorts at 191 and the tilt first
-    moves a position at 300."""
+    before arm B's book holds anything long, and the overlay first shorts before the tilt first moves a position."""
     monkeypatch.setattr(subjects, "_B3_OVERLAY_WINDOW", 40)
     monkeypatch.setattr(subjects, "_B3_OVERLAY_LOOKBACKS", (5, 10, 20))
     return 40, (5, 10, 20)
@@ -6207,8 +6206,8 @@ def test_the_b3_overlay_inputs_pass_both_arms_and_the_twin_through_the_limits(mo
 
 
 def _b3_overlay_built_inputs() -> subjects._B3OverlayInputs:
-    """Trial 1's hand-made books with arm B's BTC moved below 0 from return index 500 to 699 and the twin's floored there,
-    the state and the short each a pattern of their own, the short's first at 300 — for the metrics alone."""
+    """Trial 1's hand-made books with arm B's BTC below 0 over a span and the twin's floored there, a state and a short of
+    their own — for the metrics alone."""
     trial = _b3_built_inputs()
     n = len(trial.close)
     arm_b = trial.arm_b | {"BTC": [p - 0.3 if 500 <= k < 700 else p for k, p in enumerate(trial.arm_b["BTC"])]}
