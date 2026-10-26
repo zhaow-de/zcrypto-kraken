@@ -45,4 +45,4 @@ Buckets B (intraday band) and C (long shots) are where the master plan's residua
 
 ## Suggested next steps
 
-- B3 closed on the owner's sequence of 2026-10-25 (the `[iter-194] B3 closed` entry); per §5 ranking: C2 → C3 → C1 (C1 last: taker economics near-certainly kill it without L2 maker realism).
+- Per §5 ranking: C2 → C3 → C1 (C1 last: taker economics near-certainly kill it without L2 maker realism).
