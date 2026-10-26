@@ -6232,6 +6232,16 @@ def _b3_overlay_own_engagement(inputs: subjects._B3OverlayInputs) -> dict:
     }
 
 
+def _b3_overlay_own_net_b(inputs: subjects._B3OverlayInputs, stress: float) -> list[float]:
+    """Arm B's net of each asset's turnover at 0.006 a side and of the carry on the BTC it borrows, 0.0002 a bar on the
+    amount borrowed and on what the bar adds to it, both times `stress`."""
+    arm_b = inputs.trial.arm_b
+    shortfall = [max(0.0, -p) for p in arm_b["BTC"]]
+    opened = [max(0.0, s - p) for s, p in zip(shortfall, [0.0, *shortfall[:-1]])]
+    net = net_of_cost(arm_b, {i: inputs.trial.returns[i] for i in arm_b}, cost_per_side=stress * 0.006)
+    return [x - stress * 0.0002 * (s + o) for x, s, o in zip(net, shortfall, opened, strict=True)]
+
+
 @pytest.mark.parametrize("name", ["b3-btc-overlay"])
 def test_the_b3_overlay_trial_reads_trial_1s_metrics_the_twins_head_to_head_from_the_first_engagement_and_the_short(
     monkeypatch, name
@@ -6242,12 +6252,23 @@ def test_the_b3_overlay_trial_reads_trial_1s_metrics_the_twins_head_to_head_from
     monkeypatch.setattr(subjects, "net_of_cost_verdict", _fake_head_to_head)
     monkeypatch.setattr(subjects, "benchmark_4h_net_of_cost", _fake_benchmark)
     trial_1s = subjects._b3_metrics(trial, n_trials=3)
+    bars = _recording(monkeypatch, "a1_kill_bar", lambda arguments, result: result)
     heads = _recording(monkeypatch, "net_of_cost_verdict", lambda arguments, result: result)
 
     metrics = subjects._b3_overlay_metrics(inputs, n_trials=3)
 
     net_a, net_t = (_b3_own_net(trial, book, 1.0) for book in (trial.arm_a, inputs.no_borrow))
+    net_b, net_b_x15 = (_b3_overlay_own_net_b(inputs, stress) for stress in (1.0, 1.5))
+    # Non-vacuity: arm B borrows BTC from return index 500 to 699, so the carry moves its net off the carry-free one.
+    assert net_b != _b3_own_net(trial, trial.arm_b, 1.0) and net_b_x15 != _b3_own_net(trial, trial.arm_b, 1.5)
     reads = {"mean_block": 30, "seed": 42, "n_resamples": 2000}
+    assert [arguments for arguments, _ in heads][:2] == [
+        reads | {"book_net_of_cost": net_b, "benchmark_net_of_cost": net_a},
+        reads | {"book_net_of_cost": net_b[start:], "benchmark_net_of_cost": net_a[start:]},
+    ]
+    assert [(arguments["book_net_returns"], arguments["cost_stressed_returns"]) for arguments, _ in bars[1:]] == [
+        (net_b, net_b_x15)
+    ] * len(_B2_GRID)
     assert [arguments for arguments, _ in heads][2:] == [
         reads | {"book_net_of_cost": net_t[start:], "benchmark_net_of_cost": net_a[start:]}
     ]
