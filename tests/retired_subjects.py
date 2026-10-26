@@ -44,6 +44,13 @@ RETIRED_SUBJECTS = frozenset(
         "b4-leg-reading",
         "b4-sol-noborrow-rolling",
         "b4-sol-noborrow-rolling-preflight",
+        # B3's finished trials.
+        "b3-rank-tilt",
+        "b3-rank-tilt-preflight",
+        "b3-tilt-slow",
+        "b3-tilt-slow-preflight",
+        "b3-btc-overlay",
+        "b3-btc-overlay-preflight",
     }
 )
 # The one file outside the data-gated family whose cases evaluate a subject; elsewhere a subject's name is a checker's
