@@ -26,8 +26,8 @@ nas_docker: /usr/local/bin/docker
 
 nas_stack_dir: /volume1/docker/zcrypto-archive
 
-# ALWAYS the `-compat` (no-AVX) build: this Atom dies instantly on the default build with `Illegal
-# instruction` (T0029). Prove it by RUNNING polars in the pulled image, never by reading the label.
+# nas_capture_image is ALWAYS a `-compat` (no-AVX) build: the Atom dies on the default build with
+# `Illegal instruction` (T0029). Prove it by RUNNING polars in the pulled image, never by the label.
 # Verify a re-pin off the CONTAINER, never off this file -- the .env task is no_log with diff false,
 # so `--check --diff` reports .env changed with the digest invisible.
 # A deploy that widens the engine's record format converges the NAS BEFORE the engine: gate-export
