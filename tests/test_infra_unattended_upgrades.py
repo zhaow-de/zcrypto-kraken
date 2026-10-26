@@ -8,6 +8,7 @@ by intention.
 
 from __future__ import annotations
 
+import fnmatch
 import re
 import subprocess
 from pathlib import Path
@@ -196,6 +197,39 @@ def test_no_other_host_declares_a_blacklist():
         if BLACKLIST in _yaml(path)
     )
     assert declaring == ["infra/ansible/host_vars/zcrypto-mon/vars.yml"], declaring
+
+
+# --- the origin: the pattern unattended-upgrades matches each archive's Release fields against.
+# The fields `apt-cache policy` prints for Debian 13's security archive and its main archive.
+_SECURITY_ARCHIVE = {
+    "origin": "Debian",
+    "codename": "trixie-security",
+    "label": "Debian-Security",
+    "archive": "stable-security",
+    "component": "main",
+}
+_MAIN_ARCHIVE = {"origin": "Debian", "codename": "trixie", "label": "Debian", "archive": "stable", "component": "main"}
+_FIELDS = {"o": "origin", "origin": "origin", "n": "codename", "codename": "codename", "l": "label", "label": "label"}
+_FIELDS |= {"a": "archive", "suite": "archive", "archive": "archive", "c": "component", "component": "component"}
+
+
+def _origin_patterns(rendered: str) -> list[str]:
+    block = re.search(r"^Unattended-Upgrade::Origins-Pattern \{\n(.*?)^\};", rendered, re.S | re.M)
+    assert block, "no Origins-Pattern block"
+    return re.findall(r'^\s*"([^"]*)";', block.group(1), re.M)
+
+
+def _admits(pattern: str, archive: dict[str, str]) -> bool:
+    """unattended-upgrades' own test: every `key=value` token fnmatches the archive's field, case-sensitively."""
+    tokens = [token.split("=", 1) for token in pattern.replace("${distro_codename}", "trixie").split(",")]
+    return all(fnmatch.fnmatchcase(archive[_FIELDS[key.strip()]], value.strip()) for key, value in tokens)
+
+
+def test_the_origin_pattern_admits_the_security_archive_and_not_the_main_one():
+    patterns = _origin_patterns(_render(**{VAR: "true"}))
+    assert patterns, "the Origins-Pattern block is empty"
+    assert any(_admits(p, _SECURITY_ARCHIVE) for p in patterns), f"no pattern admits the security archive: {patterns}"
+    assert not any(_admits(p, _MAIN_ARCHIVE) for p in patterns), f"a pattern admits the main archive: {patterns}"
 
 
 def _attended_hosts_with_automatic_reboot(tree: Path) -> int:
