@@ -244,7 +244,9 @@ def _admits(pattern: str, archive: dict[str, str]) -> bool:
 
 
 def test_the_origin_pattern_admits_the_security_archive_and_not_the_main_one():
-    patterns = _origin_patterns(_render(**{VAR: "true"}))
+    rendered = _render(**{VAR: "true"})
+    assert "Allowed-Origins" not in rendered, "a second admission route the patterns below do not read"
+    patterns = _origin_patterns(rendered)
     assert patterns, "the Origins-Pattern block is empty"
     assert any(_admits(p, _SECURITY_ARCHIVE) for p in patterns), f"no pattern admits the security archive: {patterns}"
     assert not any(_admits(p, _MAIN_ARCHIVE) for p in patterns), f"a pattern admits the main archive: {patterns}"
