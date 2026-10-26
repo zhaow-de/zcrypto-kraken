@@ -1453,6 +1453,8 @@ def test_each_subject_declares_the_metric_keys_its_build_returns():
     assert subjects.SUBJECTS["b4-sol-noborrow-rolling-preflight"].metric_keys == _B4_SOL_PREFLIGHT_KEYS
     assert subjects.SUBJECTS["b3-rank-tilt"].metric_keys == _B3_METRIC_KEYS
     assert subjects.SUBJECTS["b3-rank-tilt-preflight"].metric_keys == _B3_PREFLIGHT_KEYS
+    assert subjects.SUBJECTS["b3-tilt-slow"].metric_keys == _B3_METRIC_KEYS
+    assert subjects.SUBJECTS["b3-tilt-slow-preflight"].metric_keys == _B3_PREFLIGHT_KEYS
     assert subjects.SUBJECTS["b2-liq-tape-reading"].metric_keys == _B2_TAPE_SPEC_KEYS
     assert subjects.SUBJECTS["b2-signal-reading"].metric_keys == _B2_READING_SPEC_KEYS
     assert subjects.SUBJECTS["b2-second-signal-reading"].metric_keys == _B2_READING_2_SPEC_KEYS
@@ -5455,7 +5457,7 @@ _B3_ADOPTING = {
 }
 
 
-@pytest.mark.parametrize("name", ["b3-rank-tilt"])
+@pytest.mark.parametrize("name", ["b3-rank-tilt", "b3-tilt-slow"])
 @pytest.mark.parametrize(
     ("change", "verdict"),
     [
@@ -5521,7 +5523,7 @@ def test_a_b3_subject_refuses_a_window_it_cannot_evaluate_before_any_book(tmp_pa
     assert f"{name} over the window {start} .. {end}: {cause}" in result.output and books == []
 
 
-def _b3_own_books(h4_ts: list[datetime], h4_prices: dict) -> dict:
+def _b3_own_books(h4_ts: list[datetime], h4_prices: dict, *, score_lookback: int = 180) -> dict:
     """The books of the reads, built here through `a2_book_returns`, `b3_book_returns` and the limits, never through the
     subject's halves."""
     n = len(h4_ts) - 1
@@ -5538,7 +5540,7 @@ def _b3_own_books(h4_ts: list[datetime], h4_prices: dict) -> dict:
         factors, engaged = limit_factors(dict(positions))
         return {i: [p * f for p, f in zip(v, factors)] for i, v in positions.items()}, engaged
 
-    tilted = [b3_book_returns(fed, config=c, score_lookback=180, strength=0.5, floor=8) for c in configs]
+    tilted = [b3_book_returns(fed, config=c, score_lookback=score_lookback, strength=0.5, floor=8) for c in configs]
     return {
         "limited_a": limited(mean([a2_book_returns(fed, config=c)["asset_positions"] for c in configs])),
         "limited_b": limited(mean([book["asset_positions"] for book in tilted])),
@@ -5791,7 +5793,7 @@ def test_the_b3_preflight_reads_arm_a_and_the_engagement_and_costs_no_other_book
     }
 
 
-@pytest.mark.parametrize("name", ["b3-rank-tilt", "b3-rank-tilt-preflight"])
+@pytest.mark.parametrize("name", ["b3-rank-tilt", "b3-rank-tilt-preflight", "b3-tilt-slow", "b3-tilt-slow-preflight"])
 def test_a_b3_subject_refuses_as_of_before_any_read(tmp_path, monkeypatch, name):
     _anchor(monkeypatch, _rolling_set(tmp_path))
 
@@ -5826,6 +5828,147 @@ def test_the_b3_trial_refuses_a_plain_eval_and_another_count_before_any_read(tmp
 
     assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
     assert refused in result.output and reads == []
+
+
+_B3_SLOW_SPEC = "docs/specs/00148-b3-tilt-slow-design.md"
+
+
+@pytest.mark.parametrize("name", ["b3-tilt-slow"])
+def test_the_b3_slow_pair_declares_trial_1s_keys_seeds_and_rule_its_own_spec_and_count_and_the_540_close_score(name):
+    trial, preflight = subjects.SUBJECTS[name], subjects.SUBJECTS[f"{name}-preflight"]
+    assert (trial.name, trial.intervals, trial.assets, trial.spec, trial.seeds) == (
+        name,
+        (240,),
+        _B2_ASSETS,
+        _B3_SLOW_SPEC,
+        (42, 7, 1234),
+    )
+    assert trial.build is subjects._build_b3_tilt_slow and trial.metric_keys == _B3_METRIC_KEYS
+    assert (trial.verdict, trial.no_verdict, trial.incumbent) == (subjects._b3_rank_tilt_verdict, _B3_NO_VERDICT, None)
+    assert (trial.family, trial.n_trials) == ("B3", 2) == ("B3", subjects._B3_SLOW_N_TRIALS)
+    assert (preflight.name, preflight.intervals, preflight.assets, preflight.spec, preflight.seeds) == (
+        f"{name}-preflight",
+        (240,),
+        _B2_ASSETS,
+        _B3_SLOW_SPEC,
+        (42,),
+    )
+    assert preflight.build is subjects._build_b3_tilt_slow_preflight and preflight.metric_keys == _B3_PREFLIGHT_KEYS
+    assert (preflight.verdict, preflight.no_verdict, preflight.incumbent, preflight.family, preflight.n_trials) == (None,) * 5
+    assert (subjects._B3_SLOW_SCORE_LOOKBACK, subjects._B3_STRENGTH, subjects._B3_FLOOR) == (540, 0.5, 8)
+
+
+@pytest.mark.parametrize(
+    ("name", "compute"), [("b3-tilt-slow", "_b3_metrics"), ("b3-tilt-slow-preflight", "_b3_preflight_metrics")]
+)
+def test_a_b3_slow_subject_reads_through_trial_1s_reads_builds_its_own_inputs_and_computes_at_its_count(monkeypatch, name, compute):
+    reader, window, reads, inputs = object(), ("2021-01-01", "2025-12-31"), object(), object()
+    calls = []
+
+    def read(*args, **kwargs):
+        calls.append(("_b3_reads", args, kwargs))
+        return reads
+
+    def build(*args, **kwargs):
+        calls.append(("_b3_slow_inputs", args, kwargs))
+        return inputs
+
+    def computed(*args, **kwargs):
+        calls.append((compute, args, kwargs))
+        return {"built": name}
+
+    monkeypatch.setattr(subjects, "_b3_reads", read)
+    monkeypatch.setattr(subjects, "_b3_slow_inputs", build)
+    monkeypatch.setattr(subjects, compute, computed)
+
+    built = subjects.SUBJECTS[name].build(reader, "ohlc-test", window, None, True)
+
+    assert built == {"built": name}
+    assert calls == [
+        ("_b3_reads", (name, reader, "ohlc-test", window, True), {}),
+        ("_b3_slow_inputs", (reads,), {}),
+        (compute, (inputs,), {"n_trials": 2}),
+    ]
+
+
+def _b3_slow_short_reads(n: int = 640) -> tuple[list[datetime], dict]:
+    """Ten assets over 640 stamps whose 540-close basket reaches the tilt's floor of 8 only from return index 560."""
+    h4_ts = [datetime(2017, 1, 1, tzinfo=UTC) + timedelta(hours=4 * k) for k in range(n)]
+    h4_prices = {
+        a: [
+            10.0 * (i + 1) * (1 + 0.0004 * (i % 4 + 1)) ** k * (1 + (0.04 + 0.01 * (i % 5)) * math.sin(k / (5 + i) + 0.7 * i))
+            for k in range(n)
+        ]
+        for i, a in enumerate(_B2_ASSETS)
+    }
+    h4_prices["BTC"][600] = None
+    h4_prices["DOT"][:20] = [None] * 20
+    h4_prices["SOL"][:250] = [None] * 250
+    h4_prices["AVAX"][:330] = [None] * 330
+    return h4_ts, h4_prices
+
+
+@pytest.mark.parametrize("name", ["b3-tilt-slow"])
+def test_the_b3_slow_arms_agree_bit_for_bit_until_the_tilt_first_moves_a_position(monkeypatch, name):
+    reads = _b3_slow_short_reads()
+    n = len(reads[0]) - 1
+    untilted = _recording(monkeypatch, "_b4_ensemble", lambda arguments, result: result)
+    tilted = _recording(monkeypatch, "_b3_slow_ensemble", lambda arguments, result: result)
+
+    inputs = subjects._b3_slow_inputs(reads)
+
+    ((_, raw_a),), ((_, (raw_b, _, longs)),) = untilted, tilted
+    differ = [k for k in range(n) if any(raw_b[a][k] != raw_a[a][k] for a in raw_a)]
+    first_tilted = min(next(k for k, c in enumerate(counts) if c) for counts in longs.values())
+    assert differ and first_tilted <= differ[0] == subjects._b3_first_engaged(inputs) == 560 < n - 2
+    assert all(raw_b[a][:first_tilted] == raw_a[a][:first_tilted] for a in raw_a)
+    assert all(sizes == [0] * 540 + [7] * 20 + [8] * (n - 560) for sizes in inputs.ranked.values())
+
+
+@pytest.mark.parametrize("name", ["b3-tilt-slow"])
+def test_the_b3_slow_inputs_build_arm_a_untilted_and_arm_b_tilted_on_the_540_close_score_each_through_the_limits(name):
+    reads = _b3_slow_short_reads()
+    own = _b3_own_books(*reads, score_lookback=540)
+    # Non-vacuity: the fixture tilts every arm, so the equalities below compare moved books.
+    assert all(max(counts) >= 2 for counts in own["tilted"].values()) and own["limited_b"][0] != own["limited_a"][0]
+
+    inputs = subjects._b3_slow_inputs(reads)
+
+    assert (inputs.h4_ts, inputs.h4_prices, inputs.close) == (reads[0], reads[1], [t + timedelta(hours=4) for t in reads[0][:-1]])
+    assert inputs.returns == own["returns"] and (inputs.ranked, inputs.tilted) == (own["ranked"], own["tilted"])
+    assert (inputs.arm_a, inputs.engaged_a) == own["limited_a"] and (inputs.arm_b, inputs.engaged_b) == own["limited_b"]
+
+
+@pytest.mark.parametrize("name", ["b3-tilt-slow"])
+def test_the_b3_slow_inputs_pass_both_arms_through_the_limits(monkeypatch, name):
+    reads = _b3_slow_short_reads()
+    untilted = _recording(monkeypatch, "_b4_ensemble", lambda arguments, result: result)
+    tilted = _recording(monkeypatch, "_b3_slow_ensemble", lambda arguments, result: result)
+    # A factor below 1 at every bar, so a book the limits never scale keeps its raw positions and fails the comparison.
+    _recording(monkeypatch, "limit_factors", lambda arguments, result: ([0.5] * len(result[0]), result[1]))
+
+    inputs = subjects._b3_slow_inputs(reads)
+
+    ((_, raw_a),), ((_, (raw_b, _, _)),) = untilted, tilted
+    halved = [{i: [p * 0.5 for p in v] for i, v in book.items()} for book in (raw_a, raw_b)]
+    assert [inputs.arm_a, inputs.arm_b] == halved
+
+
+@pytest.mark.parametrize("name", ["b3-tilt-slow"])
+@pytest.mark.parametrize("plain", [True, False], ids=["plain-eval", "another-count"])
+def test_the_b3_slow_trial_refuses_a_plain_eval_and_another_count_before_any_read(tmp_path, monkeypatch, name, plain):
+    _anchor(monkeypatch, tmp_path / "no-data", tmp_path / "registry.jsonl")
+    flags = [] if plain else ["--register", "--iteration", "iter-193", "--family", "B3", "--n-trials", "1"]
+    refused = (
+        f"{name} declares a verdict rule, so every run of it is a trial: run it with --register"
+        if plain
+        else f"--n-trials 1 is not 2, the count {name} declares and deflates at: pass --n-trials 2"
+    )
+
+    result = runner.invoke(app, ["research", "eval", "--subject", name, "--dataset", "ohlc-test", *flags])
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert refused in result.output
 
 
 def _ruled_signal(held: list[float | None], flat: list[float]) -> tuple[dict, dict]:
@@ -6293,6 +6436,7 @@ _RULED_FIXTURES = {
     "b2-oi-derisk": _b2_overlay_dataset,
     "b2-ratio-derisk": _b2_overlay_dataset,
     "b3-rank-tilt": _b2_dataset,
+    "b3-tilt-slow": _b2_dataset,
     "b4-ratio-legs": _b4_dataset,
     "b4-sol-noborrow-rolling": _b4_sol_dataset,
 }
@@ -6310,6 +6454,7 @@ _DECLARED_COUNT = {
     "b2-oi-derisk": "_B2_OI_N_TRIALS",
     "b2-ratio-derisk": "_B2_RATIO_N_TRIALS",
     "b3-rank-tilt": "_B3_N_TRIALS",
+    "b3-tilt-slow": "_B3_SLOW_N_TRIALS",
     "b4-ratio-legs": "_B4_N_TRIALS",
     "b4-sol-noborrow-rolling": "_B4_SOL_N_TRIALS",
 }
@@ -6330,6 +6475,7 @@ def test_the_ruled_subjects_declare_their_families_and_trial_counts():
         "b2-oi-derisk": ("B2", 2),
         "b2-ratio-derisk": ("B2", 3),
         "b3-rank-tilt": ("B3", 1),
+        "b3-tilt-slow": ("B3", 2),
         "b4-ratio-legs": ("B4", 1),
         "b4-sol-noborrow-rolling": ("B4", 2),
     }
@@ -7899,6 +8045,8 @@ _CONTRACT_DATASETS = {
     "b4-sol-noborrow-rolling-preflight": lambda tmp_path, subject: (_b4_sol_dataset(tmp_path), _B4_SOL_START),
     "b3-rank-tilt": lambda tmp_path, subject: (_b2_dataset(tmp_path), _B2_START),
     "b3-rank-tilt-preflight": lambda tmp_path, subject: (_b2_dataset(tmp_path), _B2_START),
+    "b3-tilt-slow": lambda tmp_path, subject: (_b2_dataset(tmp_path), _B2_START),
+    "b3-tilt-slow-preflight": lambda tmp_path, subject: (_b2_dataset(tmp_path), _B2_START),
     "b1-conditioning": lambda tmp_path, subject: (_b1_dataset(tmp_path), _B1_START),
     "b1-window-only": lambda tmp_path, subject: (_b1_dataset(tmp_path, m15=False), _B1_START),
     "b1-hourly-rv": lambda tmp_path, subject: (_b1_hourly_rv_dataset(tmp_path), _B1_START),

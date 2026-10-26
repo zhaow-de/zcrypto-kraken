@@ -4489,6 +4489,89 @@ _B3_PREFLIGHT_KEYS = (
 )
 
 
+# docs/specs/00148 D2-D8: B3's trial 2, trial 1's tilt on a 540-close score; trial 1's ensemble, inputs and build
+# copied, not parameterised, since record 60's replay reads them unchanged.
+_B3_SLOW_SCORE_LOOKBACK = 540  # docs/specs/00148 D3: M, 90 days of 4h closes; another value is a new trial
+_B3_SLOW_N_TRIALS = 2  # docs/specs/00148 D7: B3's true count with this trial, fixed by the spec's hash; another is a new subject
+
+
+def _b3_slow_ensemble(
+    prices: dict[str, list[float | None]],
+) -> tuple[dict[str, list[float]], dict[str, list[int]], dict[str, list[int]]]:
+    """`_b3_ensemble` on the 540-close score."""
+    books = {
+        f"{'-'.join(map(str, lookbacks))}@{target_vol}": b3_book_returns(
+            prices,
+            config=A2Config(
+                lookbacks=lookbacks,
+                short="off",
+                target_vol=target_vol,
+                vol_lookback=_B2_LOOKBACK,
+                basket_lookback=_B2_LOOKBACK,
+                periods_per_year=PPY_4H,
+            ),
+            score_lookback=_B3_SLOW_SCORE_LOOKBACK,
+            strength=_B3_STRENGTH,
+            floor=_B3_FLOOR,
+        )
+        for lookbacks, target_vol in _B2_A2_ARMS
+    }
+    arms = [book["asset_positions"] for book in books.values()]
+    positions = {i: [statistics.mean(arm[i][k] for arm in arms) for k in range(len(prices["BTC"]) - 1)] for i in prices}
+    return positions, {arm: book["ranked"] for arm, book in books.items()}, {arm: book["tilted"] for arm, book in books.items()}
+
+
+def _b3_slow_inputs(reads: tuple[list[datetime], dict[str, list[float | None]]]) -> _B3Inputs:
+    """`_b3_inputs` with arm B on the 540-close score."""
+    h4_ts, h4_prices = reads
+    fed = _ffill_btc(h4_prices)
+    arm_a, engaged_a = _b4_limited(_b4_ensemble(fed))
+    raw_b, ranked, tilted = _b3_slow_ensemble(fed)
+    arm_b, engaged_b = _b4_limited(raw_b)
+    returns = {a: _asset_returns(fed[a]) for a in h4_prices}
+    return _B3Inputs(h4_ts, h4_prices, close_grid(h4_ts), returns, arm_a, arm_b, engaged_a, engaged_b, ranked, tilted)
+
+
+def _b3_slow_build(
+    subject: str,
+    compute: Callable[..., dict],
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None,
+    accept_holes: bool,
+) -> dict:
+    if as_of is not None:
+        raise SubjectError(
+            f"{subject} evaluates a frozen set's 4h series, never the rolling dataset as of a day: drop --as-of and pass a "
+            "frozen --dataset"
+        )
+    try:
+        return compute(_b3_slow_inputs(_b3_reads(subject, reader, dataset, window, accept_holes)), n_trials=_B3_SLOW_N_TRIALS)
+    except (AlphaError, BacktestError, BenchmarkError, FeatureError, RiskError, ValidationError) as exc:
+        raise SubjectError(f"{_b2_over(subject, window)}: {exc}") from exc
+
+
+def _build_b3_tilt_slow(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    return _b3_slow_build("b3-tilt-slow", _b3_metrics, reader, dataset, window, as_of, accept_holes)
+
+
+def _build_b3_tilt_slow_preflight(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    return _b3_slow_build("b3-tilt-slow-preflight", _b3_preflight_metrics, reader, dataset, window, as_of, accept_holes)
+
+
 SUBJECTS: dict[str, Subject] = {
     "record44-crossfreq": Subject(
         "record44-crossfreq",
@@ -4925,6 +5008,31 @@ SUBJECTS: dict[str, Subject] = {
         _ASSETS,
         _build_b3_rank_tilt_preflight,
         spec="docs/specs/00147-b3-rank-tilt-design.md",
+        metric_keys=_B3_PREFLIGHT_KEYS,
+        seeds=(42,),
+    ),
+    "b3-tilt-slow": Subject(
+        "b3-tilt-slow",
+        (240,),
+        _ASSETS,
+        _build_b3_tilt_slow,
+        spec="docs/specs/00148-b3-tilt-slow-design.md",
+        metric_keys=_B3_METRIC_KEYS,
+        seeds=(42, 7, 1234),
+        verdict=_b3_rank_tilt_verdict,
+        no_verdict=(
+            "instrument finding: arm A fails the bar this window sets, or the tilt moves no position at any stamp; no "
+            "verdict, the trial unspent"
+        ),
+        family="B3",
+        n_trials=_B3_SLOW_N_TRIALS,
+    ),
+    "b3-tilt-slow-preflight": Subject(
+        "b3-tilt-slow-preflight",
+        (240,),
+        _ASSETS,
+        _build_b3_tilt_slow_preflight,
+        spec="docs/specs/00148-b3-tilt-slow-design.md",
         metric_keys=_B3_PREFLIGHT_KEYS,
         seeds=(42,),
     ),

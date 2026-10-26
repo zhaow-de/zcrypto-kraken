@@ -51,6 +51,7 @@ LANDED_N_TRIALS: dict[str, int] = {
     "b4-ratio-legs": 1,
     "b4-sol-noborrow-rolling": 2,
     "b3-rank-tilt": 1,
+    "b3-tilt-slow": 2,
 }
 
 
@@ -985,6 +986,7 @@ def test_each_landed_subjects_n_trials_is_frozen_at_its_literal():
         "b4-ratio-legs": 1,
         "b4-sol-noborrow-rolling": 2,
         "b3-rank-tilt": 1,
+        "b3-tilt-slow": 2,
     }, growth
     assert landed == {subject: {n} for subject, n in LANDED_N_TRIALS.items()}, growth
     assert all(SUBJECTS[subject].n_trials == n for subject, n in LANDED_N_TRIALS.items()), growth
