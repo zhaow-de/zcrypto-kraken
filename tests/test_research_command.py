@@ -6233,8 +6233,6 @@ def _b3_overlay_own_engagement(inputs: subjects._B3OverlayInputs) -> dict:
 
 
 def _b3_overlay_own_net_b(inputs: subjects._B3OverlayInputs, stress: float) -> list[float]:
-    """Arm B's net of each asset's turnover at 0.006 a side and of the carry on the BTC it borrows, 0.0002 a bar on the
-    amount borrowed and on what the bar adds to it, both times `stress`."""
     arm_b = inputs.trial.arm_b
     shortfall = [max(0.0, -p) for p in arm_b["BTC"]]
     opened = [max(0.0, s - p) for s, p in zip(shortfall, [0.0, *shortfall[:-1]])]
@@ -6259,7 +6257,7 @@ def test_the_b3_overlay_trial_reads_trial_1s_metrics_the_twins_head_to_head_from
 
     net_a, net_t = (_b3_own_net(trial, book, 1.0) for book in (trial.arm_a, inputs.no_borrow))
     net_b, net_b_x15 = (_b3_overlay_own_net_b(inputs, stress) for stress in (1.0, 1.5))
-    # Non-vacuity: arm B borrows BTC from return index 500 to 699, so the carry moves its net off the carry-free one.
+    # Non-vacuity: the fixture's arm B borrows BTC, so the carry moves its net off the carry-free one.
     assert net_b != _b3_own_net(trial, trial.arm_b, 1.0) and net_b_x15 != _b3_own_net(trial, trial.arm_b, 1.5)
     reads = {"mean_block": 30, "seed": 42, "n_resamples": 2000}
     assert [arguments for arguments, _ in heads][:2] == [
