@@ -1,10 +1,4 @@
-"""The unattended-upgrades auto-reboot flip (spec 00071 D4, T0027).
-
-`Automatic-Reboot` is a variable so the attended hosts reboot by hand while the cache nodes and the bridgehead
-keep the role default and reboot themselves. The value must be a quoted string: a bare YAML `false` renders through Jinja as Python's
-`False`, emitting `Automatic-Reboot "False";`, which apt reads as not-true by accident rather than
-by intention.
-"""
+"""The base role's 50unattended-upgrades: auto-reboot flip (spec 00071 D4, T0027), package blacklist, origin pattern."""
 
 from __future__ import annotations
 
@@ -199,8 +193,7 @@ def test_no_other_host_declares_a_blacklist():
     assert declaring == ["infra/ansible/host_vars/zcrypto-mon/vars.yml"], declaring
 
 
-# --- the origin: the pattern unattended-upgrades matches each archive's Release fields against.
-# The fields `apt-cache policy` prints for Debian 13's security archive and its main archive.
+# --- the origin pattern, against the fields `apt-cache policy` prints for Debian 13's security archive and its main archive.
 _SECURITY_ARCHIVE = {
     "origin": "Debian",
     "codename": "trixie-security",
