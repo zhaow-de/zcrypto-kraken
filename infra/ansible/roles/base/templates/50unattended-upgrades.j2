@@ -1,7 +1,7 @@
 # Managed by Ansible (roles/base) — do not edit by hand.
 
 Unattended-Upgrade::Origins-Pattern {
-        "origin=Debian,codename=${distro_codename},label=Debian-security";
+        "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
 };
 {% if base_unattended_upgrades_package_blacklist %}
 

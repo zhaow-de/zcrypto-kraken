@@ -1,13 +1,8 @@
-"""The unattended-upgrades auto-reboot flip (spec 00071 D4, T0027).
-
-`Automatic-Reboot` is a variable so the attended hosts reboot by hand while the cache nodes and the bridgehead
-keep the role default and reboot themselves. The value must be a quoted string: a bare YAML `false` renders through Jinja as Python's
-`False`, emitting `Automatic-Reboot "False";`, which apt reads as not-true by accident rather than
-by intention.
-"""
+"""The base role's 50unattended-upgrades: auto-reboot flip (spec 00071 D4, T0027), package blacklist, origin pattern."""
 
 from __future__ import annotations
 
+import fnmatch
 import re
 import subprocess
 from pathlib import Path
@@ -24,6 +19,7 @@ INVENTORY = REPO / "infra/ansible/inventory/hosts.yml"
 
 VAR = "base_unattended_upgrades_automatic_reboot"
 BASE_TASKS = REPO / "infra/ansible/roles/base/tasks/main.yml"
+SITE = REPO / "infra/ansible/site.yml"
 CACHE_GROUP_VARS = REPO / "infra/ansible/group_vars/cache_host/vars.yml"
 HOST_VARS = REPO / "infra/ansible/host_vars"
 OPS_HOST_VARS = HOST_VARS / "zcrypto-ops/vars.yml"
@@ -166,13 +162,37 @@ def test_every_reboot_slot_is_an_hour_from_every_other_and_from_a_bar_boundary()
 _BLACKLIST_BLOCK = re.compile(r"\{% if base_unattended_upgrades_package_blacklist %\}\n.*?\{% endif %\}\n", re.DOTALL)
 
 
-def test_an_empty_blacklist_renders_the_file_the_fleet_already_has():
+def test_an_empty_blacklist_renders_no_blacklist_block():
     source = TEMPLATE.read_text()
     before = _BLACKLIST_BLOCK.sub("", source, count=1)
     assert before != source, "the blacklist block was not found, so this compares the template with itself"
     context = {VAR: "true", "base_unattended_upgrades_reboot_time": "21:25", "base_unattended_upgrades_mail_to": "root"}
     assert _render(**{VAR: "true"}) == _ENV.from_string(before).render(**context)
-    assert _yaml(BASE_DEFAULTS)[BLACKLIST] == []
+
+
+def _groups_applying(*roles: str) -> set[str]:
+    groups = set()
+    for play in yaml.safe_load(SITE.read_text()):
+        applied = {entry["role"] if isinstance(entry, dict) else entry for entry in play.get("roles", [])}
+        if set(roles) <= applied:
+            groups.add(play["hosts"])
+    return groups
+
+
+def _blacklist_of(host: str, group: str) -> list[str]:
+    for path in (HOST_VARS / host / "vars.yml", HOST_VARS.parent / "group_vars" / group / "vars.yml"):
+        if path.exists() and BLACKLIST in _yaml(path):
+            return _yaml(path)[BLACKLIST]
+    return _yaml(BASE_DEFAULTS)[BLACKLIST]
+
+
+def test_every_host_running_docker_behind_the_firewall_keeps_nftables_from_unattended_upgrades():
+    groups = _groups_applying("firewall", "docker")
+    assert groups, "no play applies both the firewall and the docker role"
+    for group in sorted(groups):
+        for host in sorted(_group_hosts(group)):
+            entries = _blacklist_of(host, group)
+            assert any(re.match(entry, "nftables") for entry in entries), f"{host} ({group}) lets nftables upgrade: {entries}"
 
 
 def test_a_non_empty_blacklist_renders_each_entry_quoted_on_its_own_line():
@@ -196,6 +216,40 @@ def test_no_other_host_declares_a_blacklist():
         if BLACKLIST in _yaml(path)
     )
     assert declaring == ["infra/ansible/host_vars/zcrypto-mon/vars.yml"], declaring
+
+
+# --- the origin pattern, against the fields `apt-cache policy` prints for Debian 13's security archive and its main archive.
+_SECURITY_ARCHIVE = {
+    "origin": "Debian",
+    "codename": "trixie-security",
+    "label": "Debian-Security",
+    "archive": "stable-security",
+    "component": "main",
+}
+_MAIN_ARCHIVE = {"origin": "Debian", "codename": "trixie", "label": "Debian", "archive": "stable", "component": "main"}
+_FIELDS = {"o": "origin", "origin": "origin", "n": "codename", "codename": "codename", "l": "label", "label": "label"}
+_FIELDS |= {"a": "archive", "suite": "archive", "archive": "archive", "c": "component", "component": "component"}
+
+
+def _origin_patterns(rendered: str) -> list[str]:
+    block = re.search(r"^Unattended-Upgrade::Origins-Pattern \{\n(.*?)^\};", rendered, re.S | re.M)
+    assert block, "no Origins-Pattern block"
+    return re.findall(r'^\s*"([^"]*)";', block.group(1), re.M)
+
+
+def _admits(pattern: str, archive: dict[str, str]) -> bool:
+    """unattended-upgrades' own test: every `key=value` token fnmatches the archive's field, case-sensitively."""
+    tokens = [token.split("=", 1) for token in pattern.replace("${distro_codename}", "trixie").split(",")]
+    return all(fnmatch.fnmatchcase(archive[_FIELDS[key.strip()]], value.strip()) for key, value in tokens)
+
+
+def test_the_origin_pattern_admits_the_security_archive_and_not_the_main_one():
+    rendered = _render(**{VAR: "true"})
+    assert "Allowed-Origins" not in rendered, "a second admission route the patterns below do not read"
+    patterns = _origin_patterns(rendered)
+    assert patterns, "the Origins-Pattern block is empty"
+    assert any(_admits(p, _SECURITY_ARCHIVE) for p in patterns), f"no pattern admits the security archive: {patterns}"
+    assert not any(_admits(p, _MAIN_ARCHIVE) for p in patterns), f"a pattern admits the main archive: {patterns}"
 
 
 def _attended_hosts_with_automatic_reboot(tree: Path) -> int:

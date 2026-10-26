@@ -14,7 +14,11 @@ base_unattended_upgrades_automatic_reboot: "true"
 
 # Packages unattended-upgrades leaves alone on this host, each a Python regex matched from the start
 # of the package name, so a bare name also holds every package it prefixes: end it with `$`.
-base_unattended_upgrades_package_blacklist: []
+# `nftables`: its postinst try-restarts nftables.service, whose ExecStop flushes the whole ruleset and
+# Docker's tables with it, cutting container egress where the firewall role runs beside docker; it is
+# upgraded in a hand pass.
+base_unattended_upgrades_package_blacklist:
+  - nftables$
 
 # The slot is spec 00050's measured book-row trough: at least an hour from any 4h bar boundary, off
 # the hour, lowest book traffic. `zcrypto-red` declares 22:25, so no two hosts share one; on a host
