@@ -8299,9 +8299,7 @@ def test_the_week_is_scored_from_the_journaled_book_with_the_ledger_short_of_its
 
 @pytest.mark.parametrize("unbooked", [_IN_WEEK + timedelta(hours=8), _TRACK_EVAL], ids=["mid-week", "the-boundary-after"])
 def test_a_week_holding_a_boundary_that_journaled_no_book_is_refused_naming_it(tmp_path, unbooked):
-    """The breaching week with one record journaling no book -- its venue read failed -- at a later boundary of the week
-    or at the boundary after it, each the book one of the week's cycles is scored against: refused, the boundary named,
-    nothing tripped."""
+    """A later boundary of the week or the boundary after it, each the book one of the week's cycles is scored against."""
     _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6, overrides={unbooked: {"held": None}})
 
     with _executor_errors(logging.WARNING) as records:
@@ -8313,8 +8311,7 @@ def test_a_week_holding_a_boundary_that_journaled_no_book_is_refused_naming_it(t
 
 
 def test_a_week_whose_first_boundary_journaled_no_book_is_scored(tmp_path, kill_trip_expected):
-    """The breaching week with no book at its first boundary: that book is the one the week before scores its last cycle
-    against, and each of this week's cycles has its own, so the week is scored and trips at 317.4."""
+    """That book is the one the week before scores its last cycle against; each of this week's cycles has its own."""
     _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6, overrides={_TRACK_MONDAY: {"held": None}})
 
     tripped, states = _tracking_states(tmp_path)

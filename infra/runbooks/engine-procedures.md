@@ -574,7 +574,7 @@ The box plans no engine restart. What restarts the engine inside it is a restart
 #### 7. Each Monday from 2026-10-12 — the weekly read
 
 1. **Export Kraken's ledger** (Kraken → History → Export → Ledgers) from 2026-10-05 to the Sunday just closed.
-2. **Run the tracking report from the box's first day**, not from the week's, so each Monday's read carries the box's earlier weeks beside the new one; the report scores each cycle against the book the next boundary's record journals, so where the window starts changes no week's figure.
+2. **Run the tracking report from the box's first day**, not from the week's, so each Monday's read carries the box's earlier weeks beside the new one.
    ```
    uv run zcrypto engine tracking-report \
      --journal-dir /mnt/zhao-crypto/engine-journal --since 2026-10-05 --until <the Sunday just closed> \
@@ -684,7 +684,7 @@ Entry is a Monday 00Z boundary, so the weekly read's first week is whole. The si
       ```
       mkdir -p data/rung3 && mkdir data/rung3/<stamp> && kraken extended-balance -o json > data/rung3/<stamp>/balance.json && ssh zcrypto sudo tar -C /var/lib/zcrypto-engine/journal/<the cycle record's day> -cf - cycle-<HH>.json | tar -C data/rung3/<stamp> -xf -
       ```
-   3. **The opening holdings**, written on the workstation, `<birth>` the stamp's boundary as an instant, `<entry Monday>T00:00:00+00:00` here — the record's `birth` is how `tracking-report` learns the series' start, and neither the trip nor the report uses its balance rows:
+   3. **The opening holdings**, written on the workstation, `<birth>` the stamp's boundary as an instant, `<entry Monday>T00:00:00+00:00` here:
       ```
       uv run zcrypto engine opening-holdings --balance data/rung3/<stamp>/balance.json --cycle data/rung3/<stamp>/cycle-<HH>.json --birth '<birth>' --out data/rung3/<stamp>/opening-holdings.json
       ```
@@ -757,7 +757,7 @@ What restarts the engine inside the rung is a crash or a start the supervisor he
    ```
    The first week, the drills', is reported and not decided, by the owner's ruling: its drills are each a boundary below `full` or an induced fault, and the engine's own trip refuses the same week, the one `exec/series-start` holds. The report reads beside that trip, both scoring each cycle against the book the next boundary's cycle record journals. Its `Gate boundary:` echo, its placed weeks and its verdict line are read as [the probe-window procedure](#engine-probe-window)'s verify item 8 reads them.
 3. **Read the ledger reconciliation**: each unmatched id explained — a repair, or an act on the account you took ([step 6](#rung-3-hand-act)). A trade nobody can account for is a stop: pause ([step 4](#rung-3-pause)) and take it to the owner. The `rows with no fill behind them by construction:` line carries the week's reward credits as `earn <n>`.
-4. **Record the week** in `docs/reference/rung3/days.md`: its labels, its drift and `within` column, the cost lines and the reconciliation's verdict. The week's entries reach `develop` in a records pull request that week, on a branch `records/rung3-week-<N>` carrying that file alone (`docs/reference/rung3/README.md`). A re-birth moves the next read's `--since` and `--opening-holdings` to its own birth ([step 7](#rung-3-re-birth)): the record whose `birth` is the instant `exec/series-start` names on the host, the pair the trip and the read each take one half of.
+4. **Record the week** in `docs/reference/rung3/days.md`: its labels, its drift and `within` column, the cost lines and the reconciliation's verdict. The week's entries reach `develop` in a records pull request that week, on a branch `records/rung3-week-<N>` carrying that file alone (`docs/reference/rung3/README.md`). A re-birth moves the next read's `--since` and `--opening-holdings` to its own birth ([step 7](#rung-3-re-birth)).
 
 <a name="rung-3-hand-act"></a>
 
@@ -773,13 +773,13 @@ What restarts the engine inside the rung is a crash or a start the supervisor he
 
 After an attended act that changes the book outside the engine's fills — a flatten, drill B's among them, a conversion, a hand sell — the entry's re-date is taken again with the first boundary after it as the birth: `exec/series-start` rewritten to that boundary, so the engine's trip refuses the week holding the act and each week before, and the weekly read moved to the new opening holdings.
 
-1. **The plan read: no plan running, and none that can start before the birth.** The writer refuses an export taken beside a resting order, and a fill landing after the export lands in the next boundary's book, which is what the series reads. On the host, the current boundary's draft record and exec record:
+1. **The plan read: no plan running, and none that can start before the birth.** The writer refuses an export taken beside a resting order. On the host, the current boundary's draft record and exec record:
    ```
    sudo cat /var/lib/zcrypto-engine/journal/$(date -u +%F)/accum-$(printf %02d $(( $(date -u +%-H) / 4 * 4 ))).json
    sudo cat /var/lib/zcrypto-engine/journal/$(date -u +%F)/exec-$(printf %02d $(( $(date -u +%-H) / 4 * 4 ))).json
    ```
    Clear when the draft record is written — the draft has run — and its `plan_id` is `null`, or names a plan whose entry under `plans` in the exec record lists no intent with `outcome` `pending`: past the boundary's submission window, three and a half hours on, the intents not started read `carried`. Clear too when the engine started more than 25 minutes past the boundary — [the restart step](#rung-3-after-a-restart) item 2's `StartedAt` — and the day directory holds no `cycle-<HH>.json` for it: no process started then runs that boundary's cycle, and the first tick's re-draft needs the record. A draft record not yet written, or an intent `pending`, is a stop beside an open order and a position: wait for the plan to end.
-2. **The entry's re-date taken again** — [the entry](#rung-3-entry)'s item 6, its reads, snapshot, opening holdings and series start — with the first boundary after the export as the birth and its stamp as `<stamp>`, all before that boundary. The opening holdings record is written to the same instant as `exec/series-start` in this one step: the trip reads the file and the weekly read the record's `birth`, and nothing checks the two agree. The writer refuses a `--birth` other than the first boundary after the export's file time, so an export that lands at or after the boundary meant as the birth is refused: go back to item 1 with the next boundary as the birth. The new birth's directory sits beside the earlier births', each left standing; a snapshot taken again for the same birth is set aside first and the copy deleted once the record is written, as at the entry.
+2. **The entry's re-date taken again** — [the entry](#rung-3-entry)'s item 6, its reads, snapshot, opening holdings and series start — with the first boundary after the export as the birth and its stamp as `<stamp>`, all before that boundary. The opening holdings record and `exec/series-start` name that one instant, and nothing checks the two agree. The writer refuses a `--birth` other than the first boundary after the export's file time, so an export that lands at or after the boundary meant as the birth is refused: go back to item 1 with the next boundary as the birth. The new birth's directory sits beside the earlier births', each left standing; a snapshot taken again for the same birth is set aside first and the copy deleted once the record is written, as at the entry.
 3. **An engine restart between the export and the birth sends this step back to item 1**: its first tick drafts again a boundary inside its window whose draft record names no plan.
 4. **Record the birth** in `docs/reference/rung3/days.md`: the opening holdings' EUR sum, `exec/series-start` before and after, and the record's `birth` beside the after, the same instant. The weekly read's `--since` and `--opening-holdings` move to the new birth's day and directory.
 
@@ -830,7 +830,7 @@ Worth knowing before you touch anything:
 - **It carries no scoring checkpoint.** The week is re-derived from the journal every four hours (no count command: `on_boundary` in `cli/engine/executor.py` calls `_evaluate_tracking` at each boundary).
 - **It refuses far more often than it decides.** Every refusal is `NOT SCORED`, its reason one line in the engine log (no count command: the refusals are `_refuse_tracking`'s callers in `cli/engine/executor.py`). Each is a deliberate refusal: refusing costs a week of coverage, guessing halts live trading.
 - **It has no alert rule of its own, deliberately.** The only value that is a fault — the band breached — latches the kill file, and `zcrypto-engine-exec-kill-tripped` already pages on exactly that (no count command: `tests/test_infra_alert_rules.py`'s `NOT_A_FAULT_SIGNAL` entry for `zcrypto_exec_tracking_state` holds it). A rule here would double-page one event and would page on nothing else.
-- **The journal's retention bounds nothing it scores.** A week is scored from the books journaled by its own 42 cycle records and the next boundary's, so the journal prune at `engine_journal_retention_days` (60) takes nothing a week still scored needs (no count command: `_score_closed_week` in `cli/engine/executor.py` reads no book outside those 43 records).
+- **The journal's retention bounds nothing it scores.** A week is scored from its own 42 cycle records and the next boundary's book, so the journal prune at `engine_journal_retention_days` (60) takes nothing a week still scored needs (no count command: `_score_closed_week` in `cli/engine/executor.py` reads no book outside those 43 records).
 
 ### What to do
 
