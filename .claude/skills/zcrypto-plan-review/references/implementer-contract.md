@@ -29,4 +29,5 @@ No subagents, no agent tools; everything runs as plain blocking commands, nothin
 ## The record
 
 - Never an amend: a fix is a new commit. A hash, a sha or a trailer in a message is pasted from the command that printed it in the same call, never typed or completed by hand.
+- One state-changing git command per Bash call, nothing beside it — an `add`, a `commit`, a `worktree` or `branch` operation each its own call, its result read before the next; bash-guard refuses the batch it can see, and the batch it cannot see is the same fault.
 - The report is written whole at the path the dispatch names, or, for an implementer in its own worktree, returned as the text; the return is status, commits, one test line and concerns.
