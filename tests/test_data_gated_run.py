@@ -366,6 +366,7 @@ def test_the_runner_writes_the_stamped_file_and_latest_with_the_full_shape(tmp_p
         "branch",
         "develop",
         "origin_develop",
+        "behind_origin_develop",
         "sha_at_end",
         "tree_moved",
         "worktree",
@@ -395,7 +396,9 @@ def test_the_runner_writes_the_stamped_file_and_latest_with_the_full_shape(tmp_p
     head = _git(repo, "rev-parse", "HEAD")
     assert latest["sha"] == head and latest["dirty"] is False and latest["git_error"] is None
     assert latest["branch"] == "develop" and latest["develop"] == head, "the pin is the checkout's own develop, at HEAD here"
-    assert latest["origin_develop"] is None, "the synthetic checkout has no origin/develop"
+    assert latest["origin_develop"] is None and latest["behind_origin_develop"] is None, (
+        "the synthetic checkout has no origin/develop"
+    )
     assert latest["sha_at_end"] == head and latest["tree_moved"] is False
     assert latest["repo"] == str(repo) and latest["data_present"] is True
     worktree = latest["worktree"]
@@ -545,6 +548,28 @@ def test_the_pin_handed_to_the_suite_is_the_checkouts_own_develop_even_when_orig
     assert _probe_out(tmp_path)[3] == head
     latest = _latest(repo)
     assert latest["develop"] == head and latest["origin_develop"] == fetched
+    assert latest["behind_origin_develop"] == 0, "ahead of origin/develop is not behind it"
+
+
+def test_a_checkout_one_commit_behind_origin_develop_reads_behind_one_and_still_passes(tmp_path):
+    repo = _checkout(tmp_path, "def test_ok(): pass\n")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "merged on the remote, fetched, not pulled")
+    _git(repo, "update-ref", "refs/remotes/origin/develop", _git(repo, "rev-parse", "HEAD"))
+    _git(repo, "reset", "-q", "--hard", "HEAD~1")
+    head = _git(repo, "rev-parse", "HEAD")
+    proc = _run(tmp_path, repo)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    latest = _latest(repo)
+    assert latest["behind_origin_develop"] == 1
+    assert latest["develop"] == head and latest["ok"] is True and latest["error"] is None, "a note, never a fault"
+
+
+def test_a_checkout_level_with_origin_develop_reads_behind_zero(tmp_path):
+    repo = _checkout(tmp_path, "def test_ok(): pass\n")
+    _git(repo, "update-ref", "refs/remotes/origin/develop", _git(repo, "rev-parse", "HEAD"))
+    proc = _run(tmp_path, repo)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert _latest(repo)["behind_origin_develop"] == 0
 
 
 def test_a_checkout_with_only_an_origin_develop_pins_that(tmp_path):
@@ -556,6 +581,7 @@ def test_a_checkout_with_only_an_origin_develop_pins_that(tmp_path):
     assert _probe_out(tmp_path)[3] == head
     latest = _latest(repo)
     assert latest["develop"] == head and latest["origin_develop"] == head and latest["branch"] == "trunk"
+    assert latest["behind_origin_develop"] is None, "no local develop to be behind with"
 
 
 def test_a_checkout_with_neither_develop_ref_hands_the_suite_no_pin_not_an_inherited_one(tmp_path):
@@ -564,7 +590,7 @@ def test_a_checkout_with_neither_develop_ref_hands_the_suite_no_pin_not_an_inher
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert _probe_out(tmp_path)[3] == "unset"
     latest = _latest(repo)
-    assert latest["develop"] is None and latest["origin_develop"] is None
+    assert latest["develop"] is None and latest["origin_develop"] is None and latest["behind_origin_develop"] is None
 
 
 def test_a_real_directory_under_the_worktrees_data_is_left_by_the_unlink_and_reported(tmp_path):
@@ -768,6 +794,7 @@ _STATE = {
     "branch": "develop",
     "develop": None,
     "origin_develop": None,
+    "behind_origin_develop": None,
     "sha_at_end": "a" * 40,
     "tree_moved": False,
 }

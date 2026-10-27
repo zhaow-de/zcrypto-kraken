@@ -138,7 +138,15 @@ def git_state(repo: Path) -> dict:
     head = _git(repo, "rev-parse", "HEAD")
     if head.returncode != 0:
         error = head.stderr.strip() or f"git rev-parse exited {head.returncode}"
-        return {"sha": None, "dirty": None, "branch": None, "develop": None, "origin_develop": None, "git_error": error}
+        return {
+            "sha": None,
+            "dirty": None,
+            "branch": None,
+            "develop": None,
+            "origin_develop": None,
+            "behind_origin_develop": None,
+            "git_error": error,
+        }
     status = _git(repo, "status", "--porcelain", "--untracked-files=no")
     branch = _git(repo, "branch", "--show-current").stdout.strip()
     # The pin the suite is judged against is the line the checkout's HEAD sits on -- its own `develop` -- so a fetch the
@@ -147,12 +155,18 @@ def git_state(repo: Path) -> dict:
     local = _git(repo, "rev-parse", "--verify", "--quiet", "develop").stdout.strip() or None
     origin_develop = _git(repo, "rev-parse", "--verify", "--quiet", "origin/develop").stdout.strip() or None
     develop = local or origin_develop
+    # How far the checkout's develop is behind the fetched one: a note for the daily pass, never the run's fault.
+    behind = None
+    if local and origin_develop:
+        counted = _git(repo, "rev-list", "--count", "develop..origin/develop")
+        behind = int(counted.stdout.strip()) if counted.returncode == 0 else None
     return {
         "sha": head.stdout.strip(),
         "dirty": bool(status.stdout.strip()),
         "branch": branch or None,
         "develop": develop,
         "origin_develop": origin_develop,
+        "behind_origin_develop": behind,
         "git_error": None,
     }
 
@@ -360,6 +374,7 @@ def build_result(
         "branch": state["branch"],
         "develop": state["develop"],
         "origin_develop": state["origin_develop"],
+        "behind_origin_develop": state["behind_origin_develop"],
         "sha_at_end": state["sha_at_end"],
         "tree_moved": state["tree_moved"],
         "worktree": worktree,
