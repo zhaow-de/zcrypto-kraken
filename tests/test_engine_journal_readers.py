@@ -34,6 +34,7 @@ READERS = {
     ("cli/engine/command.py", "_seed_cycle_state"): "completed_at only, plus the startup gauge it seeds",
     ("cli/engine/command.py", "_read_draft_record"): "validates",
     ("cli/engine/command.py", "_window_records"): "validates",
+    ("cli/engine/command.py", "_journaled_books"): "validates",
     ("cli/engine/cycle.py", "_previous_success"): "validates",
     ("cli/engine/executor.py", "_cycle_records_through"): "validates",
     ("cli/engine/executor.py", "_read_cycle_record"): "validates",

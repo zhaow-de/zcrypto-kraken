@@ -956,6 +956,16 @@ def test_replay_stages_carries_the_records_journaled_nav():
     assert replay_stages(replace(record, nav=None), reader).nav is None
 
 
+def test_replay_stages_carries_the_records_journaled_held():
+    """The report scores a cycle against the book the next record journaled, as the engine's trip does (`executor._stage`
+    carries it): a record that journaled none hands none through."""
+    from dataclasses import replace
+
+    record, reader, _ = _v2_record_and_reader()
+    assert replay_stages(replace(record, held={"BTC": 0.25, "ETH": -1.5}), reader).held == {"BTC": 0.25, "ETH": -1.5}
+    assert replay_stages(replace(record, held=None), reader).held is None
+
+
 def test_decompose_and_accum_replay_survive_a_schema_2_record():
     """Both feeder reports, end to end on a v2 record."""
     record, reader, _ = _v2_record_and_reader()

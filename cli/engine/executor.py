@@ -884,9 +884,9 @@ def _cycle_records_through(journal_dir: Path, until: datetime) -> dict[datetime,
     """Every success record stamped at or before `until`, keyed by the boundary it names.
 
     Keyed by the record's OWN `cycle_ts`, not by its path, because that is the stamp
-    `tracking.extract_fills` gives a fill and `realized_drift` matches the two on: a record filed
-    under a path that disagrees with its content must miss rather than silently pair a fill with a
-    different cycle's targets.
+    `realized_drift` pairs a cycle with the next boundary's book on: a record filed under a path
+    that disagrees with its content must miss rather than silently pair one cycle's targets with
+    another's book.
 
     Sidecars are `failed-cycle-<HH>.json` and this glob never sees them -- a boundary the engine
     failed has no targets to compare anything against, and it reads here as the absence it is.
@@ -911,7 +911,7 @@ def _cycle_records_through(journal_dir: Path, until: datetime) -> dict[datetime,
 def _stage(record: CycleRecord) -> CycleStages:
     """One journaled cycle as the shape `tracking.realized_drift` reads.
 
-    Only `cycle_ts`, `final`, `closes` and `nav` are read there; the remaining fields are structural and
+    Only `cycle_ts`, `final`, `closes`, `nav` and `held` are read there; the remaining fields are structural and
     carry no meaning for this caller -- the alternative, a private per-cycle drift loop here, is the
     one thing this must not be: the number a human bands and the number the engine trips on have to
     come from the same function.
@@ -946,6 +946,7 @@ def _stage(record: CycleRecord) -> CycleStages:
         # Carried through so the boundary scores each cycle under the NAV it actually priced
         # against (T0150). None for records written before the key existed.
         nav=record.nav,
+        held=None if record.held is None else dict(record.held),
     )
 
 
@@ -3870,10 +3871,7 @@ class ProbeExecutor:
         drift exceeds the configured band.
 
         Carries no durable state whatsoever: the week is re-derived from immutable journal artifacts
-        at every boundary, and idempotence comes from the kill file plus `_kill_tripped`. A
-        checkpoint would be strictly worse -- `update_submitted_row` files a fill under the boundary
-        its ORDER was filed under, so a fill can land in an already-scored boundary days later,
-        which a checkpoint loses permanently and a re-derivation folds in at the next boundary.
+        at every boundary, and idempotence comes from the kill file plus `_kill_tripped`.
 
         Eligibility is each boundary's JOURNALED level and its draft record (`_undrafted`), never live
         config: `restart_hold` is written unconditionally at every engine start and cleared only by
@@ -3900,9 +3898,9 @@ class ProbeExecutor:
         try:
             self._score_closed_week(_aware_utc(boundary), band)
         except EngineError as exc:
-            # Every refusal this arithmetic can raise (a hole in the cycle span, a fill on a symbol
-            # outside the basket, a record that cannot be priced) is a reason not to decide -- not a
-            # reason to take the engine's telemetry down with a traceback every four hours.
+            # Every refusal this arithmetic can raise (a fill on a symbol outside the basket, a record
+            # that cannot be priced, a book missing a leg) is a reason not to decide -- not a reason
+            # to take the engine's telemetry down with a traceback every four hours.
             self._refuse_tracking(str(exc))
 
     def _undrafted(self, boundary: datetime) -> bool:
@@ -3922,11 +3920,9 @@ class ProbeExecutor:
         label = f"{week_start.isocalendar().year}-W{week_start.isocalendar().week:02d}"
         expected = [week_start + timedelta(hours=_H4 * i) for i in range(_WEEK_BOUNDARIES)]
 
-        # Everything through the week's last boundary, never just the week: `held` is cumulative
-        # from the series' birth, so a week-scoped read would report the book bought earlier as
-        # drift it never had.
         exec_docs = exec_records_through(self._journal_dir, last)
-        cycles = _cycle_records_through(self._journal_dir, last)
+        # Through the boundary after the week: its record journals the book the week's last cycle traded to.
+        cycles = _cycle_records_through(self._journal_dir, week_end)
         week = [b for b in expected if b in exec_docs and b in cycles]
         if len(week) < _WEEK_BOUNDARIES:
             self._refuse_tracking(
@@ -3939,6 +3935,21 @@ class ProbeExecutor:
             self._refuse_tracking(
                 f"{label} spent {len(held_back)} of its {_WEEK_BOUNDARIES} boundaries below the full "
                 f"level or undrafted (first at {held_back[0].isoformat()}) -- the engine was not free to trade it"
+            )
+            return
+        # Each cycle is scored against the book the NEXT boundary's venue read journaled, which its plan has ended
+        # before (`_SUBMISSION_WINDOW`). A boundary whose read failed journals none, and no other position is honest
+        # there, so a week holding one -- or whose following boundary does -- is refused, never scored.
+        if week_end not in cycles:
+            self._refuse_tracking(
+                f"{label}'s last cycle is scored against the book journaled at {week_end.isoformat()}, which no cycle record holds"
+            )
+            return
+        unbooked = [b for b in (*expected, week_end) if cycles[b].held is None]
+        if unbooked:
+            self._refuse_tracking(
+                f"{label} is scored against the book each boundary journals, and the cycle record at "
+                f"{unbooked[0].isoformat()} journals none -- the venue read failed there"
             )
             return
 
@@ -3982,8 +3993,7 @@ class ProbeExecutor:
                 f"the opening holdings were taken for the series born at {opening.birth.isoformat()}, not {birth.isoformat()}"
             )
             return
-        # Every fill before the birth is a prior series': outside `held`, and outside the span
-        # `realized_drift` is handed, which would refuse it as a truncated window.
+        # Every fill before the birth is a prior series', and the series' first fill is read after it.
         fills = [f for f in fills if f.boundary >= birth]
         first_fill = min((f.boundary for f in fills if f.base is not None), default=None)
         if first_fill is None:
@@ -3998,9 +4008,8 @@ class ProbeExecutor:
             # containing it fully scored, ramp and all, which is the one week D10 excludes by name.
             # The week holding the series' first fill is not comparable to a settled one whichever
             # way it is read: its cycles before the fill hold a book the engine had not yet traded
-            # toward its targets -- nothing, or the opening holdings -- so counting them mixes an
-            # untraded book into the mean, while dropping them -- which is exactly what the span
-            # below does -- scores a fraction of a week under a whole week's name. A week entirely
+            # toward its targets, so counting them mixes an untraded book into the mean, while
+            # dropping them scores a fraction of a week under a whole week's name. A week entirely
             # before the first fill is not measured at all, and takes the same exit.
             self._refuse_tracking(
                 f"the realized series born at {birth.isoformat()} made its first fill at {first_fill.isoformat()}, "
@@ -4009,20 +4018,14 @@ class ProbeExecutor:
             )
             return
 
-        # The span starts at the first fill, not at the journal's start: earlier cycles contribute
-        # nothing to `held`, and requiring them to be priceable would make every artifact written
-        # before `closes` existed refuse a week it cannot affect.
-        stages = [_stage(cycles[b]) for b in sorted(cycles) if first_fill <= b <= last]
         # NAV sets both halves of the comparison (a target is `weight * nav / close`, and the
         # drift is divided by `nav`), so a `shadow_nav_eur` converge used to re-score weeks that
         # closed under the OLD value against the new one. Each record now journals the NAV it was
         # priced against and is scored under THAT; the scalar below is the fallback for records
         # written before the field existed, which age out with the journal's retention.
-        rows = realized_drift(stages, fills, self._config.shadow_nav_eur, opening=opening.held)["cycles"]
-        scored = set(week)
-        # The straddle refusal above is what guarantees every one of the week's boundaries is in the
-        # span, and so what makes this a mean over the WHOLE week rather than over its tail.
-        values = [row["drift_bps"] for row in rows if datetime.fromisoformat(row["cycle_ts"]) in scored]
+        stages = [_stage(cycles[b]) for b in expected]
+        rows = realized_drift(stages, self._config.shadow_nav_eur, books={week_end: cycles[week_end].held})["cycles"]
+        values = [row["drift_bps"] for row in rows]
         mean = sum(values) / len(values)
         logger.info("%s tracked %.1f bps of NAV across %d cycles, against a %.1f bps band", label, mean, len(values), band)
         if mean > band:

@@ -88,6 +88,7 @@ from cli.engine.instruments import INSTRUMENT_IDS, BelowMinimum, SizedOrder, siz
 from cli.engine.journal import CycleRecord, SnapshotEntry, from_json, to_json
 from cli.engine.node import ShadowStrategy
 from cli.engine.probeplan import MODES, PLAN_FILENAME, ProbeIntent, parse_plan
+from cli.engine.tracking import extract_fills
 from cli.engine.venue import VenueStatus
 from cli.engine.venueledger import write_venue_record
 from cli.engine.venuestate import ConcordanceVerdict, InstrumentConstraints, VenueState
@@ -8159,17 +8160,32 @@ def _track_fill_row(index, symbol, side, qty):
 
 def _journal_week(tmp_path, *, fills, start=_TRACK_MONDAY, n_cycles=42, lead=0, level="full", overrides=None):
     """`lead` boundaries before `start` plus `n_cycles` from it, each with the cycle record AND the
-    exec record the engine writes at that boundary. `fills` maps a boundary to (symbol, side, qty)
-    tuples; `overrides` maps a boundary to any of `level`/`weights`/`closes`."""
+    exec record the engine writes at that boundary, and the cycle record of the boundary after them.
+    `fills` maps a boundary to (symbol, side, qty) tuples; `overrides` maps a boundary to any of
+    `level`/`weights`/`closes`/`held`. Each cycle record journals the book the venue read holds then,
+    as the writer does: every fill on disk filed under an earlier boundary, the ten bases at 0.0 else."""
     journal = tmp_path / "journal"
     overrides = overrides or {}
     boundaries = [start - timedelta(hours=4 * (lead - i)) for i in range(lead)]
     boundaries += [start + timedelta(hours=4 * i) for i in range(n_cycles)]
     index = 0
     for boundary in boundaries:
+        verdict = GateVerdict(level=overrides.get(boundary, {}).get("level", level), reasons=(), inputs={})
+        write_exec_record(journal, boundary, verdict, evaluated_at=boundary)
+        for symbol, side, qty in fills.get(boundary, ()):
+            index += 1
+            row = _track_fill_row(index, symbol, side, qty)
+            row["events"][0]["at"] = (boundary + timedelta(minutes=3)).isoformat()
+            append_submitted_row(journal, boundary, row, verdict=verdict, evaluated_at=boundary)
+    on_disk, _notes = extract_fills(list(execledger_module.exec_records_through(journal, boundaries[-1]).values()))
+    for boundary in (*boundaries, boundaries[-1] + timedelta(hours=4)):
         override = overrides.get(boundary, {})
         weights = override.get("weights", _TRACK_WEIGHTS)
         closes = override.get("closes", _TRACK_CLOSES) if "closes" in override else _TRACK_CLOSES
+        book = dict.fromkeys(_TRACK_BASES, 0.0)
+        for fill in on_disk:
+            if fill.base is not None and fill.boundary < boundary:
+                book[fill.base] += fill.credited if fill.side == "buy" else -fill.credited
         record = CycleRecord(
             schema_version=2,
             cycle_ts=boundary,
@@ -8180,17 +8196,11 @@ def _journal_week(tmp_path, *, fills, start=_TRACK_MONDAY, n_cycles=42, lead=0, 
             code_version="1.0.0",
             builder_path="fast",
             closes=None if closes is None else dict(closes),
+            held=override["held"] if "held" in override else book,
         )
         day = journal / f"{boundary:%Y-%m-%d}"
         day.mkdir(parents=True, exist_ok=True)
         (day / f"cycle-{boundary:%H}.json").write_text(to_json(record))
-        verdict = GateVerdict(level=override.get("level", level), reasons=(), inputs={})
-        write_exec_record(journal, boundary, verdict, evaluated_at=boundary)
-        for symbol, side, qty in fills.get(boundary, ()):
-            index += 1
-            row = _track_fill_row(index, symbol, side, qty)
-            row["events"][0]["at"] = (boundary + timedelta(minutes=3)).isoformat()
-            append_submitted_row(journal, boundary, row, verdict=verdict, evaluated_at=boundary)
     return journal
 
 
@@ -8291,6 +8301,51 @@ def test_a_complete_week_beyond_the_band_latches_the_kill_file(tmp_path, kill_tr
     text = _kill_file(tmp_path).read_text()
     assert "2026-W37" in text and "317" in text and "120" in text
     assert states == [executor_module._TRACKING_BREACHED]
+
+
+def test_the_week_is_scored_from_the_journaled_book_with_the_ledger_short_of_its_fills(tmp_path, kill_trip_expected):
+    """The breaching week with the build-out's and the in-week top-up's fills taken off the ledger: the books the records
+    journaled still read 317.4 bps, so the position is the journal's, never the fills'. 317.4 is each cycle scored
+    against the NEXT boundary's book -- its own, read before its trading, puts the top-up a cycle late at 316.8."""
+    journal = _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
+    for boundary in (_BUILD_OUT, _IN_WEEK):
+        path = exec_record_path(journal, boundary)
+        doc = read_exec_record(path)
+        doc["submitted"] = []
+        path.write_text(json.dumps(doc))
+
+    tripped, states = _tracking_states(tmp_path)
+
+    assert tripped and states == [executor_module._TRACKING_BREACHED]
+    assert "2026-W37 tracked 317.4 bps" in _kill_file(tmp_path).read_text()
+
+
+@pytest.mark.parametrize(
+    "unbooked", [_TRACK_MONDAY, _IN_WEEK + timedelta(hours=8), _TRACK_EVAL], ids=["first", "mid-week", "the-boundary-after"]
+)
+def test_a_week_holding_a_boundary_that_journaled_no_book_is_refused_naming_it(tmp_path, unbooked):
+    """The breaching week with one record journaling no book -- its venue read failed -- in the week or at the boundary
+    after it, whose book the week's last cycle is scored against: refused, the boundary named, nothing tripped."""
+    _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6, overrides={unbooked: {"held": None}})
+
+    with _executor_errors(logging.WARNING) as records:
+        tripped, states = _tracking_states(tmp_path)
+
+    assert not tripped and states == [executor_module._TRACKING_UNSCORED]
+    refused = [m for m in (r.getMessage() for r in records) if "is not scored" in m]
+    assert f"the cycle record at {unbooked.isoformat()} journals none" in refused[-1], refused
+
+
+def test_a_week_whose_following_boundary_has_no_cycle_record_is_refused(tmp_path):
+    journal = _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
+    (journal / f"{_TRACK_EVAL:%Y-%m-%d}" / f"cycle-{_TRACK_EVAL:%H}.json").unlink()
+
+    with _executor_errors(logging.WARNING) as records:
+        tripped, states = _tracking_states(tmp_path)
+
+    assert not tripped and states == [executor_module._TRACKING_UNSCORED]
+    refused = [m for m in (r.getMessage() for r in records) if "is not scored" in m]
+    assert f"the book journaled at {_TRACK_EVAL.isoformat()}, which no cycle record holds" in refused[-1], refused
 
 
 def test_a_healthy_complete_week_does_not_trip(tmp_path):
@@ -8443,6 +8498,8 @@ def test_the_idle_tick_never_evaluates_tracking(tmp_path):
     (`_refresh_gate`); the three ticks here precede the period's first elapse from the executor's
     construction."""
     _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
+    # The boundary the ticks fall in has drafted, so the first tick re-arms no draft (`_rearm_cycle_draft`).
+    write_accum_record(tmp_path / "journal", _TRACK_EVAL, _accum_doc(_TRACK_EVAL, "ok", plan_id="r3-20260914-00"))
     gate = CountingGate()
     executor = _tracking_executor(tmp_path)
     executor._gate = gate
@@ -8554,37 +8611,6 @@ def test_a_pruned_head_is_refused_when_no_birth_record_survives(tmp_path):
     assert not tripped
     assert states == [executor_module._TRACKING_UNSCORED]
     assert not (exec_dir(tmp_path) / executor_module.FIRST_FILL_FILE).exists()
-
-
-def test_a_re_dated_birth_scores_the_series_from_it_and_reads_an_earlier_fill_as_a_prior_series(tmp_path):
-    """`_journal_week(tmp_path, fills=..., lead=12)` with the healthy fixture's fills and, before them, a prior series'
-    lone BTC/EUR sell of 0.01 at `_TRACK_MONDAY - timedelta(hours=40)` -- the shape the journal holds once the prune has
-    taken a prior series' buys and not yet its sells -- and the birth record and its opening holdings, ten zero rows,
-    written by hand at `_OPENING`, as the entry's re-date writes them, with no mint (`mint_at=None`): the week scores
-    within the band."""
-    prior = _TRACK_MONDAY - timedelta(hours=40)
-    _journal_week(tmp_path, fills={prior: [("BTC/EUR", "sell", 0.01)], **_HEALTHY_FILLS}, lead=12)
-    _write_birth(tmp_path, _OPENING)
-    _write_opening_holdings(tmp_path, _OPENING)
-
-    tripped, states = _tracking_states(tmp_path, mint_at=None)
-
-    assert not tripped
-    assert states == [executor_module._TRACKING_WITHIN_BAND]
-
-
-def test_the_opening_holdings_start_held_at_the_birth_and_a_residual_held_there_is_not_drift(tmp_path):
-    """The healthy build-out alone, `_journal_week(tmp_path, fills={_BUILD_OUT: _HEALTHY_FILLS[_BUILD_OUT]}, lead=6)`,
-    the birth written by hand at `_OPENING` and the opening holdings beside it carrying BTC 0.00042 -- the residual
-    Kraken held at the re-date, the slice the healthy fixture fills at `_OPENING`: the week scores within the band."""
-    _journal_week(tmp_path, fills={_BUILD_OUT: _HEALTHY_FILLS[_BUILD_OUT]}, lead=6)
-    _write_birth(tmp_path, _OPENING)
-    _write_opening_holdings(tmp_path, _OPENING, BTC=0.00042)
-
-    tripped, states = _tracking_states(tmp_path, mint_at=None)
-
-    assert not tripped
-    assert states == [executor_module._TRACKING_WITHIN_BAND]
 
 
 def test_an_absent_opening_holdings_record_or_one_stamped_for_another_birth_refuses_the_week(tmp_path):

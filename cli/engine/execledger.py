@@ -252,10 +252,9 @@ def _exec_records_in_window(journal_dir: Path, now: datetime, since: datetime | 
 
 def exec_records_through(journal_dir: Path, until: datetime) -> dict[datetime, dict]:
     """Every exec record filed at or before `until`, keyed by its boundary -- a second window over the same files, not a
-    widening of `_exec_records_in_window`'s two-day dedup/re-attach horizon: `held` is cumulative from the tracking
-    series' birth, which can lie anywhere before the window, so a window-scoped read reports everything bought since it
-    as drift. One unreadable record refuses the whole scan, its fills being a position nothing accounts for; an
-    unparseable name is skipped, this engine writing only `%Y-%m-%d`."""
+    widening of `_exec_records_in_window`'s two-day dedup/re-attach horizon: the tracking trip reads the series' first
+    fill from it, which can lie anywhere before the window. One unreadable record refuses the whole scan, its fills being
+    ones nothing accounts for; an unparseable name is skipped, this engine writing only `%Y-%m-%d`."""
     out: dict[datetime, dict] = {}
     for path in sorted(Path(journal_dir).glob(f"*/{_PREFIX}-*.json")):
         try:
