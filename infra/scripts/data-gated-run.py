@@ -311,7 +311,7 @@ def build_result(
     output: str,
     run_error: str | None,
     teardown: dict | None,
-    data_listing: tuple[list[str] | None, list[str] | None],
+    data_listing: tuple[list[list] | None, list[list] | None],
     swept: list[str],
     sweep_left: list[str],
     sweep_error: str | None,
