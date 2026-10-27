@@ -11,7 +11,9 @@ checkout's `.venv` holds an editable install whose `.pth` resolves `cli` and `te
 through it would measure the live tree again. The suite sees `origin/develop`'s sha at the start as
 ZCRYPTO_DATA_GATED_DEVELOP, for the test that compares the checkout with it. The worktree goes whatever happened --
 each link unlinked, a path that is not a link left and named, then `git worktree remove --force` -- and the checkout's
-`data/` listing is compared with the one taken at the start; a teardown fault or a changed listing is the run's error.
+`data/` listing is compared with the one taken at the start; a night that never reached its teardown leaves its
+worktree, which the next start sweeps the same way and records; a sweep fault, a teardown fault or a changed listing is
+the run's error.
 It writes `.local/data-gated-runs/<UTC stamp>.json` plus `latest.json` in the checkout. A run in which the whole family
 skipped for want of data is exactly the night this exists to catch, so such a skip is a failure, and a checkout with no
 dataset under `data/` is refused before pytest starts. A run whose summary cannot be parsed -- a usage error, a timeout,
@@ -216,6 +218,24 @@ def remove_worktree(repo: Path, worktree: Path) -> dict:
     }
 
 
+def sweep_stale_worktrees(repo: Path) -> tuple[list[str], str | None]:
+    """Each `wt-*` a night that never reached its teardown left under WORKTREE_DIR, removed as the night's own is, then
+    `git worktree prune`; the names swept and the faults joined, or None."""
+    root = repo / WORKTREE_DIR
+    swept: list[str] = []
+    faults: list[str] = []
+    if root.is_dir():
+        for stale in sorted(p for p in root.iterdir() if p.name.startswith("wt-")):
+            record = remove_worktree(repo, stale)
+            swept.append(stale.name)
+            if record["error"]:
+                faults.append(f"{stale.name}: {record['error']}")
+    pruned = _git(repo, "worktree", "prune")
+    if pruned.returncode != 0:
+        faults.append(f"git worktree prune exited {pruned.returncode}: {pruned.stderr.strip()}")
+    return swept, "; ".join(faults) or None
+
+
 def pytest_command(repo: Path, uv: str, extra_args: list[str]) -> list[str]:
     """Through the target tree's own environment -- `uv run --directory` enters and syncs that tree's `.venv` -- never
     `sys.executable`, which is whatever environment launched this runner."""
@@ -274,15 +294,20 @@ def build_result(
     run_error: str | None,
     teardown: dict | None,
     data_listing: tuple[list[str] | None, list[str] | None],
+    swept: list[str],
+    sweep_error: str | None,
 ) -> dict:
     """`state` is `git_state` at the start plus `sha_at_end` and `tree_moved`; `data_listing` the checkout's `data/` names at
-    the start and at the end. A teardown fault or a changed listing joins `error`, after the suite's own, and so denies `ok`."""
+    the start and at the end. A sweep fault, a teardown fault or a changed listing joins `error`, after the suite's own, and
+    so denies `ok`."""
     parsed = parse_summary(output)
     counts = parsed["counts"]
     skipped_for_data = sum(entry["count"] for entry in parsed["data_gated_skipped"])
     faults = [
         run_error or parsed["error"] or (f"{skipped_for_data} data-gated tests skipped: data absent" if skipped_for_data else None)
     ]
+    if sweep_error:
+        faults.append(f"sweep: {sweep_error}")
     if teardown is not None and teardown["error"]:
         faults.append(f"teardown: {teardown['error']}")
     listing_start, listing_end = data_listing
@@ -312,6 +337,8 @@ def build_result(
         "failed": parsed["failed"],
         "errors": parsed["errors"],
         "data_gated_skipped": parsed["data_gated_skipped"],
+        "swept": swept,
+        "sweep_error": sweep_error,
         "teardown": teardown,
         "data_listing_intact": intact,
         "data_listing": None if intact else {"start": listing_start, "end": listing_end},
@@ -470,6 +497,7 @@ def main(argv: list[str] | None = None) -> int:
     started = datetime.now(timezone.utc)
     state = git_state(repo)
     listing_start = data_listing(repo)
+    swept, sweep_error = sweep_stale_worktrees(repo)
     command, exit_code, output, run_error = None, None, "", None
     worktree = teardown = None
     if not data_present:
@@ -515,6 +543,8 @@ def main(argv: list[str] | None = None) -> int:
         run_error=run_error,
         teardown=teardown,
         data_listing=(listing_start, data_listing(repo)),
+        swept=swept,
+        sweep_error=sweep_error,
     )
     result["coverage_upload"] = upload
     stamped, latest = write_result(repo / RESULT_DIR, result)

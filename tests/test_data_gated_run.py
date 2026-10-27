@@ -360,6 +360,8 @@ def test_the_runner_writes_the_stamped_file_and_latest_with_the_full_shape(tmp_p
         "failed",
         "errors",
         "data_gated_skipped",
+        "swept",
+        "sweep_error",
         "teardown",
         "data_listing_intact",
         "data_listing",
@@ -548,6 +550,30 @@ def test_a_real_directory_under_the_worktrees_data_is_left_by_the_unlink_and_rep
     _no_worktree_left(repo)
 
 
+def test_a_stale_worktree_from_a_night_that_never_tore_down_is_swept_at_start_and_recorded(tmp_path):
+    repo = _checkout(tmp_path, "def test_ok(): pass\n")
+    stale = repo / runner.WORKTREE_DIR / "wt-20260101T000000Z"
+    stale.parent.mkdir(parents=True)
+    _git(repo, "worktree", "add", "--detach", str(stale), "HEAD")
+    os.symlink(repo / "data" / "ohlc-full", stale / "data" / "ohlc-full")
+    assert len(_worktrees(repo)) == 2
+    proc = _run(tmp_path, repo)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    latest = _latest(repo)
+    assert latest["swept"] == ["wt-20260101T000000Z"] and latest["sweep_error"] is None
+    assert latest["ok"] is True and latest["worktree"] != str(stale)
+    assert sorted(p.name for p in (repo / "data").iterdir()) == [".gitignore", "ohlc-full"]
+    _no_worktree_left(repo)
+
+
+def test_a_clean_start_sweeps_nothing_and_records_the_empty_list(tmp_path):
+    repo = _checkout(tmp_path, "def test_ok(): pass\n")
+    proc = _run(tmp_path, repo)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    latest = _latest(repo)
+    assert latest["swept"] == [] and latest["sweep_error"] is None and latest["ok"] is True
+
+
 def test_a_suite_that_writes_into_the_checkouts_data_is_caught_by_the_listing_and_fails_the_run(tmp_path):
     repo = _checkout(
         tmp_path, "import os\ndef test_intrudes(): os.mkdir(os.path.join(os.environ['SYNTH_REPO'], 'data', 'intruder'))\n"
@@ -646,6 +672,8 @@ def _result(**overrides) -> dict:
                 "error": None,
             },
             "data_listing": _LISTING,
+            "swept": [],
+            "sweep_error": None,
             **overrides,
         }
     )
@@ -654,6 +682,13 @@ def _result(**overrides) -> dict:
 def test_an_empty_summary_after_a_kill_never_reads_as_ok():
     result = _result(output="")
     assert result["ok"] is False and result["error"] == runner.NO_SUMMARY
+
+
+def test_a_sweep_fault_is_the_runs_error_and_denies_ok():
+    swept = _result(swept=["wt-20260101T000000Z"])
+    assert swept["ok"] is True and swept["swept"] == ["wt-20260101T000000Z"] and swept["error"] is None
+    faulted = _result(swept=["wt-20260101T000000Z"], sweep_error="wt-20260101T000000Z: git worktree remove exited 128: locked")
+    assert faulted["ok"] is False and faulted["error"] == "sweep: wt-20260101T000000Z: git worktree remove exited 128: locked"
 
 
 def test_a_teardown_fault_is_the_runs_error_beside_the_suites_own_and_fails_it():
