@@ -129,8 +129,8 @@ def test_an_unmeasurable_corpus_fails_rather_than_skips() -> None:
     raise AssertionError("returned instead of failing")
 
 
-# The nightly runner (infra/scripts/data-gated-run.py) sets it to the checkout's develop sha as its run started
-# (origin/develop's where there is no local branch), so a merge landing while the suite runs is not this guard's finding.
+# The nightly runner (infra/scripts/data-gated-run.py) sets it to the checkout's develop sha as its run started, so a
+# merge landing while the suite runs is not this guard's finding.
 DEVELOP_PIN = "ZCRYPTO_DATA_GATED_DEVELOP"
 
 

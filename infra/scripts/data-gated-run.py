@@ -149,9 +149,8 @@ def git_state(repo: Path) -> dict:
         }
     status = _git(repo, "status", "--porcelain", "--untracked-files=no")
     branch = _git(repo, "branch", "--show-current").stdout.strip()
-    # The pin the suite is judged against is the line the checkout's HEAD sits on -- its own `develop` -- so a fetch the
-    # checkout has not pulled past is not a missing row or record of the frozen tree; `origin/develop` only where there is
-    # no local branch.
+    # The checkout's own `develop` before `origin/develop`: a fetch the checkout has not pulled past is no row or record
+    # the frozen tree lacks.
     local = _git(repo, "rev-parse", "--verify", "--quiet", "develop").stdout.strip() or None
     origin_develop = _git(repo, "rev-parse", "--verify", "--quiet", "origin/develop").stdout.strip() or None
     develop = local or origin_develop
@@ -194,8 +193,7 @@ class WorktreeError(Exception):
 
 
 def add_worktree(repo: Path, sha: str, worktree: Path) -> None:
-    """The detached worktree at `sha`; a path already taken -- another run's, started in the same second -- is a raise, and
-    the caller then owns nothing there."""
+    """The detached worktree at `sha`; a path already taken -- another run's, started in the same second -- is a raise."""
     worktree.parent.mkdir(parents=True, exist_ok=True)
     added = _git(repo, "worktree", "add", "--detach", str(worktree), sha)
     if added.returncode != 0:
