@@ -14,7 +14,7 @@ import textwrap
 import threading
 import time
 import types
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -37,7 +37,7 @@ def _no_token_file_and_no_upload(tmp_path, monkeypatch):
     the case fails at teardown."""
     monkeypatch.setattr(runner, "TOKEN_FILE", tmp_path / "no-token-file" / "coveralls.env")
     reached = []
-    monkeypatch.setattr(runner, "send_coverage", lambda repo, token: reached.append(repo))
+    monkeypatch.setattr(runner, "send_coverage", lambda repo, token, branch: reached.append(repo))
     yield
     assert not reached, f"the case reached the coverage upload without faking it, for {reached}"
 
@@ -205,14 +205,22 @@ def test_the_last_matching_line_is_the_summary_even_when_a_test_printed_one():
 def test_the_command_runs_through_the_target_checkouts_environment_not_this_one():
     command = runner.pytest_command(Path("/srv/main"), "/opt/uv", ["-k", "soak"])
     assert command[:5] == ["/opt/uv", "run", "--directory", "/srv/main", "python"]
-    assert command[5:] == ["-m", "pytest", "-q", "-p", "no:cacheprovider", "-rfEs", "-k", "soak"]
+    assert command[5:] == ["-m", "pytest", "-q", "-p", "no:cacheprovider", "-rfEs", "-n", "8", "-k", "soak"]
     assert sys.executable not in command
 
 
 # --- end to end over a synthetic checkout -----------------------------------------------------------
 
+_GIT_IDENTITY = ("-c", "user.email=t@example.invalid", "-c", "user.name=t")
 
-def _checkout(tmp_path: Path, body: str, *, data: bool = True, datasets: bool = True) -> Path:
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repo), *_GIT_IDENTITY, *args], capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+
+def _checkout(tmp_path: Path, body: str, *, data: bool = True, datasets: bool = True, branch: str = "develop") -> Path:
     repo = tmp_path / "checkout"
     (repo / "tests").mkdir(parents=True)
     (repo / "tests" / "test_synthetic.py").write_text(textwrap.dedent(body))
@@ -221,11 +229,17 @@ def _checkout(tmp_path: Path, body: str, *, data: bool = True, datasets: bool = 
         (repo / "data" / ".gitignore").write_text("*\n!.gitignore\n")
         if datasets:
             (repo / "data" / "ohlc-full").mkdir()
-    git = ["git", "-C", str(repo), "-c", "user.email=t@example.invalid", "-c", "user.name=t"]
-    subprocess.run(["git", "init", "-q", str(repo)], check=True)
-    subprocess.run([*git, "add", "-A"], check=True)
-    subprocess.run([*git, "commit", "-q", "-m", "synthetic"], check=True)
+            (repo / "data" / "ohlc-full" / "manifest.json").write_text("{}\n")
+    subprocess.run(["git", "init", "-q", "-b", branch, str(repo)], check=True)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "synthetic")
     return repo
+
+
+def _worktrees(repo: Path) -> list[str]:
+    return [
+        line.split(" ", 1)[1] for line in _git(repo, "worktree", "list", "--porcelain").splitlines() if line.startswith("worktree ")
+    ]
 
 
 def _fake_uv(tmp_path: Path) -> Path:
@@ -249,12 +263,14 @@ def _fake_uv(tmp_path: Path) -> Path:
 
 
 def _run(tmp_path: Path, repo: Path, *args: str, env: dict | None = None) -> subprocess.CompletedProcess:
+    """`SYNTH_REPO` and `PROBE_OUT` are for the synthetic suite, which runs with the worktree as its cwd: the checkout it
+    came from, and a file outside both trees to write what it saw."""
     shim = _fake_uv(tmp_path)
     return subprocess.run(
         [sys.executable, str(_SCRIPT), "--repo", str(repo), "--no-coverage", *args],
         capture_output=True,
         text=True,
-        env={**os.environ, "UV": str(shim), **(env or {})},
+        env={**os.environ, "UV": str(shim), "SYNTH_REPO": str(repo), "PROBE_OUT": str(tmp_path / "probe-out.txt"), **(env or {})},
     )
 
 
@@ -263,8 +279,42 @@ def _handed_to_uv(tmp_path: Path) -> list[str] | None:
     return record.read_text().splitlines() if record.is_file() else None
 
 
+def _probe_out(tmp_path: Path) -> list[str]:
+    return (tmp_path / "probe-out.txt").read_text().splitlines()
+
+
 def _latest(repo: Path) -> dict:
     return json.loads((repo / ".local" / "data-gated-runs" / "latest.json").read_text())
+
+
+def _other_run(repo: Path, name: str, deadline: str | None) -> Path:
+    other = repo / runner.WORKTREE_DIR / name
+    other.parent.mkdir(parents=True, exist_ok=True)
+    _git(repo, "worktree", "add", "--detach", str(other), "HEAD")
+    os.symlink(repo / "data" / "ohlc-full", other / "data" / "ohlc-full")
+    if deadline is not None:
+        (other / runner.DEADLINE_FILE).write_text(deadline + "\n")
+    return other
+
+
+def _iso_in(seconds: float) -> str:
+    return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _no_worktree_left(repo: Path) -> None:
+    assert _worktrees(repo) == [str(repo)], "the run's worktree is deregistered"
+    left = sorted(p.name for p in (repo / runner.WORKTREE_DIR).iterdir()) if (repo / runner.WORKTREE_DIR).is_dir() else []
+    assert left == [], f"the run's worktree directory is gone: {left}"
+
+
+# What a synthetic test writes to PROBE_OUT, one value per line, read by `_probe_out`.
+SEES_THE_TREE = """\
+    import os
+    from pathlib import Path
+    def test_where(): Path(os.environ["PROBE_OUT"]).write_text(
+        f"{os.getcwd()}\\n{os.path.realpath('data/ohlc-full')}\\n{Path('data/ohlc-full').is_symlink()}\\n"
+        f"{os.environ.get('ZCRYPTO_DATA_GATED_DEVELOP', 'unset')}\\n{Path('.deadline').read_text().strip()}\\n")
+    """
 
 
 MIXED_SUITE = """\
@@ -313,6 +363,13 @@ def test_the_runner_writes_the_stamped_file_and_latest_with_the_full_shape(tmp_p
         "sha",
         "dirty",
         "git_error",
+        "branch",
+        "develop",
+        "origin_develop",
+        "behind_origin_develop",
+        "sha_at_end",
+        "tree_moved",
+        "worktree",
         "command",
         "exit_code",
         "summary_line",
@@ -320,24 +377,37 @@ def test_the_runner_writes_the_stamped_file_and_latest_with_the_full_shape(tmp_p
         "failed",
         "errors",
         "data_gated_skipped",
+        "swept",
+        "sweep_left",
+        "sweep_error",
+        "teardown",
+        "data_listing_intact",
+        "data_listing",
         "error",
         "ok",
         "coverage_upload",
     }
-    assert latest["schema"] == 3
+    assert latest["schema"] == 4
     assert latest["coverage_upload"] == {"outcome": "skipped", "reason": "--no-coverage: the run measured none"}
     started, finished = (
         datetime.strptime(latest[k], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc) for k in ("started", "finished")
     )
     assert before <= started <= finished
-    head = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+    head = _git(repo, "rev-parse", "HEAD")
     assert latest["sha"] == head and latest["dirty"] is False and latest["git_error"] is None
+    assert latest["branch"] == "develop" and latest["develop"] == head, "the pin is the checkout's own develop, at HEAD here"
+    assert latest["origin_develop"] is None and latest["behind_origin_develop"] is None, (
+        "the synthetic checkout has no origin/develop"
+    )
+    assert latest["sha_at_end"] == head and latest["tree_moved"] is False
     assert latest["repo"] == str(repo) and latest["data_present"] is True
+    worktree = latest["worktree"]
+    assert worktree == str(repo / runner.WORKTREE_DIR / f"wt-{stamped[0].stem}")
     assert latest["command"] == [
         str(tmp_path / "uvbin" / "uv"),
         "run",
         "--directory",
-        str(repo),
+        worktree,
         "python",
         "-m",
         "pytest",
@@ -345,6 +415,9 @@ def test_the_runner_writes_the_stamped_file_and_latest_with_the_full_shape(tmp_p
     ]
     assert latest["command"][1:] == _handed_to_uv(tmp_path), "the recorded command is the one uv was handed"
     assert sys.executable not in latest["command"]
+    assert latest["teardown"] == {"worktree": worktree, "unlinked": ["ohlc-full"], "left": [], "removed": True, "error": None}
+    assert latest["data_listing_intact"] is True and latest["data_listing"] is None
+    _no_worktree_left(repo)
     assert latest["exit_code"] == 1
     assert latest["counts"]["passed"] == 1 and latest["counts"]["failed"] == 1 and latest["counts"]["skipped"] == 1
     assert latest["failed"] == ["tests/test_synthetic.py::test_fail"]
@@ -370,7 +443,8 @@ def test_a_data_gated_skip_fails_the_run_and_names_its_sites(tmp_path):
     assert proc.returncode == 1, proc.stdout + proc.stderr
     latest = _latest(repo)
     assert latest["exit_code"] == 0 and latest["counts"]["skipped"] == 2 and latest["counts"]["passed"] == 1
-    assert latest["data_gated_skipped"] == [
+    # Sorted: eight workers report their skips in the order they finish.
+    assert sorted(latest["data_gated_skipped"], key=lambda s: s["site"]) == [
         {"site": "tests/test_synthetic.py:3", "reason": "canonical dataset not present", "count": 1},
         {"site": "tests/test_synthetic.py:5", "reason": "canonical dataset not present", "count": 1},
     ]
@@ -417,11 +491,231 @@ def test_a_repo_that_is_not_a_directory_is_a_usage_error_and_writes_nothing(tmp_
     assert not (tmp_path / "nowhere").exists(), "a typo in --repo must not create a tree"
 
 
-def test_a_dirty_checkout_is_recorded_as_such(tmp_path):
+def test_a_dirty_checkout_is_recorded_as_such_and_its_uncommitted_change_is_not_run(tmp_path):
     repo = _checkout(tmp_path, "def test_ok(): pass\n")
-    (repo / "tests" / "test_synthetic.py").write_text("def test_ok(): pass\ndef test_two(): pass\n")
-    _run(tmp_path, repo)
-    assert _latest(repo)["dirty"] is True
+    (repo / "tests" / "test_synthetic.py").write_text("def test_ok(): pass\ndef test_uncommitted(): assert False\n")
+    proc = _run(tmp_path, repo)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    latest = _latest(repo)
+    assert latest["dirty"] is True
+    assert latest["ok"] is True and latest["counts"]["passed"] == 1 and latest["counts"]["failed"] == 0
+
+
+def test_the_suite_runs_in_a_detached_worktree_at_the_start_sha_with_the_datasets_linked(tmp_path):
+    repo = _checkout(tmp_path, SEES_THE_TREE)
+    proc = _run(tmp_path, repo)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    latest = _latest(repo)
+    cwd, dataset, is_link, _, deadline = _probe_out(tmp_path)
+    assert cwd == latest["worktree"] != str(repo)
+    assert cwd.startswith(str(repo / runner.WORKTREE_DIR / "wt-"))
+    assert dataset == str(repo / "data" / "ohlc-full") and is_link == "True"
+    assert "--directory" in _handed_to_uv(tmp_path) and str(repo) not in _handed_to_uv(tmp_path)
+    started = datetime.strptime(latest["started"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    own_bound = started + timedelta(seconds=3 * 3600 + runner.SWEEP_SLACK_S)
+    assert deadline == own_bound.strftime("%Y-%m-%dT%H:%M:%SZ"), "the worktree carries its own run's deadline"
+
+
+def test_a_head_that_moves_during_the_run_leaves_sha_at_the_start_and_reads_tree_moved(tmp_path):
+    repo = _checkout(
+        tmp_path,
+        """\
+        import os, subprocess
+        def test_moves_the_tree():
+            subprocess.run(["git", "-C", os.environ["SYNTH_REPO"], "-c", "user.email=t@example.invalid", "-c", "user.name=t",
+                            "commit", "-q", "--allow-empty", "-m", "landed during the run"], check=True)
+        """,
+    )
+    start = _git(repo, "rev-parse", "HEAD")
+    proc = _run(tmp_path, repo)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    end = _git(repo, "rev-parse", "HEAD")
+    assert end != start
+    latest = _latest(repo)
+    assert latest["sha"] == start and latest["sha_at_end"] == end and latest["tree_moved"] is True
+    assert latest["ok"] is True
+
+
+def test_the_pin_handed_to_the_suite_is_the_checkouts_own_develop_even_when_origin_develop_is_behind_it(tmp_path):
+    repo = _checkout(tmp_path, SEES_THE_TREE)
+    fetched = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "update-ref", "refs/remotes/origin/develop", fetched)
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "local develop moved on")
+    head = _git(repo, "rev-parse", "HEAD")
+    assert head != fetched
+    proc = _run(tmp_path, repo)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert _probe_out(tmp_path)[3] == head
+    latest = _latest(repo)
+    assert latest["develop"] == head and latest["origin_develop"] == fetched
+    assert latest["behind_origin_develop"] == 0, "ahead of origin/develop is not behind it"
+
+
+def test_a_checkout_one_commit_behind_origin_develop_reads_behind_one_and_still_passes(tmp_path):
+    repo = _checkout(tmp_path, "def test_ok(): pass\n")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "merged on the remote, fetched, not pulled")
+    _git(repo, "update-ref", "refs/remotes/origin/develop", _git(repo, "rev-parse", "HEAD"))
+    _git(repo, "reset", "-q", "--hard", "HEAD~1")
+    head = _git(repo, "rev-parse", "HEAD")
+    proc = _run(tmp_path, repo)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    latest = _latest(repo)
+    assert latest["behind_origin_develop"] == 1
+    assert latest["develop"] == head and latest["ok"] is True and latest["error"] is None, "a note, never a fault"
+
+
+def test_a_checkout_level_with_origin_develop_reads_behind_zero(tmp_path):
+    repo = _checkout(tmp_path, "def test_ok(): pass\n")
+    _git(repo, "update-ref", "refs/remotes/origin/develop", _git(repo, "rev-parse", "HEAD"))
+    proc = _run(tmp_path, repo)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert _latest(repo)["behind_origin_develop"] == 0
+
+
+def test_a_checkout_with_only_an_origin_develop_pins_that(tmp_path):
+    repo = _checkout(tmp_path, SEES_THE_TREE, branch="trunk")
+    head = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "update-ref", "refs/remotes/origin/develop", head)
+    proc = _run(tmp_path, repo)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert _probe_out(tmp_path)[3] == head
+    latest = _latest(repo)
+    assert latest["develop"] == head and latest["origin_develop"] == head and latest["branch"] == "trunk"
+    assert latest["behind_origin_develop"] is None, "no local develop to be behind with"
+
+
+def test_a_checkout_with_neither_develop_ref_hands_the_suite_no_pin_not_an_inherited_one(tmp_path):
+    repo = _checkout(tmp_path, SEES_THE_TREE, branch="trunk")
+    proc = _run(tmp_path, repo, env={runner.DEVELOP_ENV: "stale-from-the-runners-own-environment"})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert _probe_out(tmp_path)[3] == "unset"
+    latest = _latest(repo)
+    assert latest["develop"] is None and latest["origin_develop"] is None and latest["behind_origin_develop"] is None
+
+
+def test_a_real_directory_under_the_worktrees_data_is_left_by_the_unlink_and_reported(tmp_path):
+    repo = _checkout(
+        tmp_path,
+        """\
+        import os
+        def test_writes_under_data():
+            os.mkdir("data/real-dir")
+            open("data/real-dir/file", "w").write("x")
+        """,
+    )
+    proc = _run(tmp_path, repo)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    latest = _latest(repo)
+    assert latest["teardown"]["unlinked"] == ["ohlc-full"] and latest["teardown"]["left"] == ["real-dir"]
+    assert latest["teardown"]["removed"] is True and latest["teardown"]["error"] is None
+    assert sorted(p.name for p in (repo / "data").iterdir()) == [".gitignore", "ohlc-full"]
+    assert (repo / "data" / "ohlc-full" / "manifest.json").read_text() == "{}\n", "the dataset behind the link is whole"
+    assert latest["data_listing_intact"] is True and latest["ok"] is True
+    _no_worktree_left(repo)
+
+
+def test_a_stale_worktree_from_a_night_that_never_tore_down_is_swept_at_start_and_recorded(tmp_path):
+    repo = _checkout(tmp_path, "def test_ok(): pass\n")
+    stale = _other_run(repo, "wt-20260101T000000Z", "2026-01-01T03:10:00Z")
+    assert len(_worktrees(repo)) == 2
+    proc = _run(tmp_path, repo)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    latest = _latest(repo)
+    assert latest["swept"] == ["wt-20260101T000000Z"] and latest["sweep_left"] == [] and latest["sweep_error"] is None
+    assert latest["ok"] is True and latest["worktree"] != str(stale)
+    assert sorted(p.name for p in (repo / "data").iterdir()) == [".gitignore", "ohlc-full"]
+    assert (repo / "data" / "ohlc-full" / "manifest.json").read_text() == "{}\n", "the dataset behind the swept link is whole"
+    assert latest["data_listing_intact"] is True
+    _no_worktree_left(repo)
+
+
+def _left_alive(repo: Path, latest: dict, other: Path) -> None:
+    assert latest["swept"] == [] and latest["sweep_left"] == [other.name] and latest["sweep_error"] is None
+    assert latest["ok"] is True and latest["worktree"] != str(other)
+    assert (other / "data" / "ohlc-full").is_symlink(), "the live run's link is untouched"
+    assert sorted(_worktrees(repo)) == sorted([str(repo), str(other)])
+
+
+def test_a_short_bound_hand_run_leaves_the_nightly_an_hour_into_its_three_hours(tmp_path):
+    repo = _checkout(tmp_path, "def test_ok(): pass\n")
+    nightly = _other_run(repo, "wt-20261027T023005Z", _iso_in(2 * 3600 + runner.SWEEP_SLACK_S))
+    proc = _run(tmp_path, repo, "--timeout", "60")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    _left_alive(repo, _latest(repo), nightly)
+
+
+def test_the_nightly_leaves_a_hand_run_four_hours_into_its_six(tmp_path):
+    repo = _checkout(tmp_path, "def test_ok(): pass\n")
+    hand = _other_run(repo, "wt-20261026T223005Z", _iso_in(2 * 3600 + runner.SWEEP_SLACK_S))
+    proc = _run(tmp_path, repo)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    _left_alive(repo, _latest(repo), hand)
+
+
+def test_a_wt_directory_without_a_readable_deadline_is_left_and_named_not_removed(tmp_path):
+    repo = _checkout(tmp_path, "def test_ok(): pass\n")
+    no_file = _other_run(repo, "wt-20260101T000000Z", None)
+    garbled = _other_run(repo, "wt-20260102T000000Z", "tomorrow-ish")
+    by_hand = repo / runner.WORKTREE_DIR / "wt-by-hand"
+    by_hand.mkdir()
+    (by_hand / "keep").write_text("x")
+    proc = _run(tmp_path, repo)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    latest = _latest(repo)
+    assert latest["swept"] == [] and latest["sweep_left"] == [no_file.name, garbled.name, "wt-by-hand"]
+    assert latest["sweep_error"] is None and latest["ok"] is True
+    assert (no_file / "data" / "ohlc-full").is_symlink() and (garbled / "data" / "ohlc-full").is_symlink()
+    assert (by_hand / "keep").read_text() == "x"
+    assert sorted(_worktrees(repo)) == sorted([str(repo), str(no_file), str(garbled)])
+
+
+def test_a_wt_directory_git_does_not_register_is_never_named_swept_and_its_fault_is_recorded(tmp_path):
+    repo = _checkout(tmp_path, "def test_ok(): pass\n")
+    orphan = repo / runner.WORKTREE_DIR / "wt-20260101T000000Z"
+    (orphan / "data").mkdir(parents=True)
+    (orphan / runner.DEADLINE_FILE).write_text("2026-01-01T03:10:00Z\n")
+    os.symlink(repo / "data" / "ohlc-full", orphan / "data" / "ohlc-full")
+    proc = _run(tmp_path, repo)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    latest = _latest(repo)
+    assert latest["swept"] == [] and latest["sweep_left"] == [orphan.name]
+    assert latest["sweep_error"].startswith(f"{orphan.name}: git worktree remove exited 128"), latest["sweep_error"]
+    assert latest["ok"] is False and latest["error"].startswith(f"sweep: {orphan.name}: ")
+    assert orphan.is_dir() and (repo / "data" / "ohlc-full" / "manifest.json").read_text() == "{}\n"
+    assert _worktrees(repo) == [str(repo)]
+
+
+def test_a_clean_start_sweeps_nothing_and_records_the_empty_list(tmp_path):
+    repo = _checkout(tmp_path, "def test_ok(): pass\n")
+    proc = _run(tmp_path, repo)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    latest = _latest(repo)
+    assert latest["swept"] == [] and latest["sweep_left"] == [] and latest["sweep_error"] is None and latest["ok"] is True
+
+
+def test_a_suite_that_writes_into_the_checkouts_data_is_caught_by_the_listing_and_fails_the_run(tmp_path):
+    # One level down, as a write through the worktree's dataset link lands: a top-level listing would miss it.
+    repo = _checkout(
+        tmp_path,
+        """\
+        import os
+        def test_intrudes():
+            open(os.path.join(os.environ["SYNTH_REPO"], "data", "ohlc-full", "intruder.parquet"), "w").write("x")
+        """,
+    )
+    proc = _run(tmp_path, repo)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    latest = _latest(repo)
+    assert latest["counts"]["passed"] == 1 and latest["exit_code"] == 0
+    assert latest["data_listing_intact"] is False
+    start, end = latest["data_listing"]["start"], latest["data_listing"]["end"]
+    assert {entry[0] for entry in start} == {"data/.gitignore", "data/ohlc-full", "data/ohlc-full/manifest.json"}
+    assert {entry[0] for entry in end} - {entry[0] for entry in start} == {"data/ohlc-full/intruder.parquet"}
+    assert all(len(entry) == 3 and isinstance(entry[1], int) and isinstance(entry[2], int) for entry in start + end)
+    assert latest["error"].startswith("the checkout's data/ listing changed during the run: ")
+    assert "data/ohlc-full/intruder.parquet" in latest["error"]
+    assert latest["ok"] is False
+    assert proc.stdout.rstrip().splitlines()[-1].startswith("data-gated-run: FAIL exit=0 the checkout's data/ listing changed")
 
 
 def test_a_run_that_cannot_parse_its_summary_writes_a_result_saying_so(tmp_path):
@@ -436,7 +730,7 @@ def test_a_run_that_cannot_parse_its_summary_writes_a_result_saying_so(tmp_path)
     assert latest["command"][-1] == "--no-such-flag"
 
 
-def test_a_timeout_writes_a_result_saying_so_with_no_exit_code(tmp_path):
+def test_a_timeout_writes_a_result_saying_so_with_no_exit_code_and_the_worktree_still_goes(tmp_path):
     repo = _checkout(tmp_path, "import time\ndef test_slow(): time.sleep(30)\n")
     proc = _run(tmp_path, repo, "--timeout", "2")
     assert proc.returncode == 1, proc.stdout + proc.stderr
@@ -445,27 +739,117 @@ def test_a_timeout_writes_a_result_saying_so_with_no_exit_code(tmp_path):
     assert latest["error"] == "timed out after 2 s; pytest was killed"
     assert latest["counts"] is None and latest["ok"] is False
     assert latest["duration_s"] < 10, "the kill reached pytest itself, not only the uv in front of it"
+    assert latest["teardown"]["unlinked"] == ["ohlc-full"] and latest["teardown"]["removed"] is True
+    assert sorted(p.name for p in (repo / "data").iterdir()) == [".gitignore", "ohlc-full"]
+    _no_worktree_left(repo)
+
+
+def test_an_exception_in_the_run_is_recorded_and_the_worktree_still_goes(tmp_path, monkeypatch):
+    repo = _checkout(tmp_path, "def test_ok(): pass\n")
+
+    def raises(worktree, uv, pytest_args, timeout, *, develop):
+        assert Path(worktree).is_dir() and (Path(worktree) / "data" / "ohlc-full").is_symlink()
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(runner, "run_suite", raises)
+    monkeypatch.setenv("UV", "/nonexistent/uv")
+    code = runner.main(["--repo", str(repo), "--no-coverage"])
+    latest = _latest(repo)
+    assert code == 1 and latest["ok"] is False
+    assert latest["error"] == "the runner raised RuntimeError: boom" and latest["exit_code"] is None
+    assert latest["teardown"]["unlinked"] == ["ohlc-full"] and latest["teardown"]["removed"] is True
+    _no_worktree_left(repo)
+
+
+def test_a_run_whose_worktree_path_is_another_live_runs_leaves_it_whole_and_records_the_collision(tmp_path, monkeypatch):
+    repo = _checkout(tmp_path, "def test_ok(): pass\n")
+    other = _other_run(repo, "wt-20261027T023005Z", _iso_in(3600))
+    monkeypatch.setattr(runner, "worktree_path", lambda repo, started: other)
+
+    def never(*args, **kwargs):
+        raise AssertionError("the suite ran in another run's worktree")
+
+    monkeypatch.setattr(runner, "run_suite", never)
+    monkeypatch.setenv("UV", "/nonexistent/uv")
+    code = runner.main(["--repo", str(repo), "--no-coverage"])
+    latest = _latest(repo)
+    assert code == 1 and latest["ok"] is False
+    assert latest["error"].startswith("the runner raised WorktreeError: git worktree add exited 128"), latest["error"]
+    assert latest["teardown"] is None, "nothing of the other run's was torn down"
+    assert (other / "data" / "ohlc-full").is_symlink() and (other / runner.DEADLINE_FILE).is_file()
+    assert sorted(_worktrees(repo)) == sorted([str(repo), str(other)])
 
 
 def test_the_uv_directory_is_put_on_the_suite_path(tmp_path):
-    repo = _checkout(tmp_path, "import os\ndef test_path(): open('path.txt', 'w').write(os.environ['PATH'])\n")
+    repo = _checkout(tmp_path, "import os\ndef test_path(): open(os.environ['PROBE_OUT'], 'w').write(os.environ['PATH'])\n")
     proc = _run(tmp_path, repo)
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert (repo / "path.txt").read_text().split(os.pathsep)[0] == str(tmp_path / "uvbin")
+    assert _probe_out(tmp_path)[0].split(os.pathsep)[0] == str(tmp_path / "uvbin")
+
+
+_STATE = {
+    "sha": "a" * 40,
+    "dirty": False,
+    "git_error": None,
+    "branch": "develop",
+    "develop": None,
+    "origin_develop": None,
+    "behind_origin_develop": None,
+    "sha_at_end": "a" * 40,
+    "tree_moved": False,
+}
+_LISTING = ([["data/.gitignore", 12, 1], ["data/ohlc-full", 4096, 1]], [["data/.gitignore", 12, 1], ["data/ohlc-full", 4096, 1]])
+
+
+def _result(**overrides) -> dict:
+    return runner.build_result(
+        **{
+            "started": datetime(2026, 9, 14, 2, 30, tzinfo=timezone.utc),
+            "finished": datetime(2026, 9, 14, 2, 31, tzinfo=timezone.utc),
+            "repo": _SCRIPT.parents[2],
+            "data_present": True,
+            "state": _STATE,
+            "worktree": "/srv/main/.tmp/data-gated-run/wt-x",
+            "command": ["pytest"],
+            "exit_code": 0,
+            "output": _PASSING,
+            "run_error": None,
+            "teardown": {
+                "worktree": "/srv/main/.tmp/data-gated-run/wt-x",
+                "unlinked": ["ohlc-full"],
+                "left": [],
+                "removed": True,
+                "error": None,
+            },
+            "data_listing": _LISTING,
+            "swept": [],
+            "sweep_left": [],
+            "sweep_error": None,
+            **overrides,
+        }
+    )
 
 
 def test_an_empty_summary_after_a_kill_never_reads_as_ok():
-    result = runner.build_result(
-        started=datetime(2026, 9, 14, 2, 30, tzinfo=timezone.utc),
-        finished=datetime(2026, 9, 14, 2, 31, tzinfo=timezone.utc),
-        repo=_SCRIPT.parents[2],
-        data_present=True,
-        command=["pytest"],
-        exit_code=0,
-        output="",
-        run_error=None,
-    )
+    result = _result(output="")
     assert result["ok"] is False and result["error"] == runner.NO_SUMMARY
+
+
+def test_a_sweep_fault_is_the_runs_error_and_denies_ok():
+    swept = _result(swept=["wt-20260101T000000Z"])
+    assert swept["ok"] is True and swept["swept"] == ["wt-20260101T000000Z"] and swept["error"] is None
+    faulted = _result(swept=["wt-20260101T000000Z"], sweep_error="wt-20260101T000000Z: git worktree remove exited 128: locked")
+    assert faulted["ok"] is False and faulted["error"] == "sweep: wt-20260101T000000Z: git worktree remove exited 128: locked"
+
+
+def test_a_teardown_fault_is_the_runs_error_beside_the_suites_own_and_fails_it():
+    assert _result()["ok"] is True
+    failed = _result(teardown={**_result()["teardown"], "removed": False, "error": "git worktree remove exited 128: locked"})
+    assert failed["ok"] is False and failed["error"] == "teardown: git worktree remove exited 128: locked"
+    both = _result(output=_FAILING, exit_code=1, teardown=failed["teardown"])
+    assert both["error"] == "teardown: git worktree remove exited 128: locked" and both["failed"] == ["tests/t.py::t"]
+    both = _result(run_error="timed out after 2 s; pytest was killed", output="", exit_code=None, teardown=failed["teardown"])
+    assert both["error"] == "timed out after 2 s; pytest was killed; teardown: git worktree remove exited 128: locked"
 
 
 # --- the coverage upload, its token file under `tmp_path` and the upload faked ------------------------------------------
@@ -498,7 +882,7 @@ def _a_directory(tmp_path: Path, monkeypatch) -> Path:
 def test_an_upload_records_the_url_coveralls_returns_for_the_token_files_token(tmp_path, monkeypatch):
     _token_file(tmp_path, monkeypatch)
     sent = []
-    monkeypatch.setattr(runner, "send_coverage", lambda repo, token: sent.append((repo, token)) or JOB)
+    monkeypatch.setattr(runner, "send_coverage", lambda repo, token, branch: sent.append((repo, token)) or JOB)
 
     assert runner.coverage_upload(tmp_path, None) == {"outcome": "uploaded", "url": JOB["url"]}
     assert sent == [(tmp_path, TOKEN)]
@@ -564,7 +948,7 @@ def test_a_token_file_another_uid_owns_is_refused(tmp_path, monkeypatch):
 def test_a_failed_upload_records_its_class_and_a_message_without_the_token(tmp_path, monkeypatch):
     _token_file(tmp_path, monkeypatch)
 
-    def refused(repo, token):
+    def refused(repo, token, branch):
         raise ConnectionError(f"coveralls.io answered 504 to repo_token={token}")
 
     monkeypatch.setattr(runner, "send_coverage", refused)
@@ -581,7 +965,7 @@ def test_a_failed_upload_records_its_class_and_a_message_without_the_token(tmp_p
 
 def test_an_answer_without_a_url_fails(tmp_path, monkeypatch):
     _token_file(tmp_path, monkeypatch)
-    monkeypatch.setattr(runner, "send_coverage", lambda repo, token: {"message": "Job #7.1"})
+    monkeypatch.setattr(runner, "send_coverage", lambda repo, token, branch: {"message": "Job #7.1"})
 
     outcome = runner.coverage_upload(tmp_path, None)
 
@@ -591,7 +975,7 @@ def test_an_answer_without_a_url_fails(tmp_path, monkeypatch):
 def test_an_upload_with_no_answer_is_cut_off_and_fails(tmp_path, monkeypatch):
     _token_file(tmp_path, monkeypatch)
     released = threading.Event()
-    monkeypatch.setattr(runner, "send_coverage", lambda repo, token: released.wait(30) and JOB)
+    monkeypatch.setattr(runner, "send_coverage", lambda repo, token, branch: released.wait(30) and JOB)
     monkeypatch.setattr(runner, "UPLOAD_TIMEOUT_S", 0.2)
     began = time.monotonic()
     try:
@@ -612,16 +996,18 @@ def test_the_upload_runs_coveralls_in_the_checkout_with_the_token_and_the_servic
 
         def wear(self):
             seen["cwd"] = Path.cwd()
+            seen["branch"] = os.environ.get("GIT_BRANCH")
             return JOB
 
     fake = types.ModuleType("coveralls")
     fake.Coveralls = Coveralls
     monkeypatch.setitem(sys.modules, "coveralls", fake)
+    monkeypatch.delenv("GIT_BRANCH", raising=False)
     before = Path.cwd()
 
-    assert _REAL_SEND(tmp_path, TOKEN) == JOB
-    assert seen == {"config": {"repo_token": TOKEN, "service_name": runner.COVERALLS_SERVICE}, "cwd": tmp_path}
-    assert Path.cwd() == before
+    assert _REAL_SEND(tmp_path, TOKEN, "develop") == JOB
+    assert seen == {"config": {"repo_token": TOKEN, "service_name": runner.COVERALLS_SERVICE}, "cwd": tmp_path, "branch": "develop"}
+    assert Path.cwd() == before and "GIT_BRANCH" not in os.environ
 
 
 _PASSING = "..\n2 passed in 0.10s\n"
@@ -630,11 +1016,10 @@ _FAILING = "===== short test summary info =====\nFAILED tests/t.py::t - x\n1 fai
 
 def _main(tmp_path: Path, monkeypatch, output: str, exit_code: int, *args: str) -> tuple[int, dict, list[list[str]]]:
     """`main` over a checkout holding a dataset, with pytest's run replaced by `output` and `exit_code`."""
-    repo = tmp_path / "checkout"
-    (repo / "data" / "ohlc-full").mkdir(parents=True, exist_ok=True)
+    repo = tmp_path / "checkout" if (tmp_path / "checkout").is_dir() else _checkout(tmp_path, "def test_ok(): pass\n")
     handed = []
 
-    def run_suite(repo, uv, pytest_args, timeout):
+    def run_suite(worktree, uv, pytest_args, timeout, *, develop):
         handed.append(list(pytest_args))
         return ["pytest", *pytest_args], exit_code, output, None
 
@@ -644,13 +1029,27 @@ def _main(tmp_path: Path, monkeypatch, output: str, exit_code: int, *args: str) 
     return code, json.loads((repo / ".local" / "data-gated-runs" / "latest.json").read_text()), handed
 
 
+def test_the_coverage_upload_runs_in_the_worktree_before_it_goes(tmp_path, monkeypatch):
+    _token_file(tmp_path, monkeypatch)
+    seen = []
+    monkeypatch.setattr(
+        runner, "send_coverage", lambda repo, token, branch: seen.append((repo, Path(repo).is_dir(), branch)) or JOB
+    )
+
+    code, result, _ = _main(tmp_path, monkeypatch, _PASSING, 0)
+
+    assert code == 0 and result["coverage_upload"] == {"outcome": "uploaded", "url": JOB["url"]}
+    assert seen == [(Path(result["worktree"]), True, "develop")]
+    assert result["worktree"] != str(tmp_path / "checkout") and not Path(result["worktree"]).exists()
+
+
 @pytest.mark.parametrize(("output", "exit_code"), [(_PASSING, 0), (_FAILING, 1)], ids=["passing", "failing"])
 def test_an_upload_that_raises_leaves_the_verdict_and_the_exit_status(tmp_path, monkeypatch, output, exit_code):
     _token_file(tmp_path, monkeypatch)
-    monkeypatch.setattr(runner, "send_coverage", lambda repo, token: JOB)
+    monkeypatch.setattr(runner, "send_coverage", lambda repo, token, branch: JOB)
     code_up, uploaded, _ = _main(tmp_path, monkeypatch, output, exit_code)
 
-    def raises(repo, token):
+    def raises(repo, token, branch):
         raise RuntimeError("coveralls.io is down")
 
     monkeypatch.setattr(runner, "send_coverage", raises)
@@ -684,7 +1083,7 @@ def test_an_upload_that_raises_leaves_the_verdict_and_the_exit_status(tmp_path, 
 )
 def test_the_run_measures_coverage_whole_and_uploads_only_a_parsed_runs(tmp_path, monkeypatch, output, args, pytest_args, reason):
     _token_file(tmp_path, monkeypatch)
-    monkeypatch.setattr(runner, "send_coverage", lambda repo, token: JOB)
+    monkeypatch.setattr(runner, "send_coverage", lambda repo, token, branch: JOB)
 
     _, result, handed = _main(tmp_path, monkeypatch, output, 0, *args)
 
@@ -694,7 +1093,7 @@ def test_the_run_measures_coverage_whole_and_uploads_only_a_parsed_runs(tmp_path
 
 def test_a_whole_parsed_run_measures_coverage_and_uploads_it(tmp_path, monkeypatch):
     _token_file(tmp_path, monkeypatch)
-    monkeypatch.setattr(runner, "send_coverage", lambda repo, token: JOB)
+    monkeypatch.setattr(runner, "send_coverage", lambda repo, token, branch: JOB)
 
     code, result, handed = _main(tmp_path, monkeypatch, _PASSING, 0)
 

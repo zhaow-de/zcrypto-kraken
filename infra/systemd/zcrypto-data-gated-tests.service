@@ -1,6 +1,6 @@
-# zcrypto data-gated tests -- a systemd USER unit template: the whole test suite, nightly, from the
-# workstation checkout whose data/ holds the datasets, so every test that skips in CI for want of a
-# dataset runs for real. infra/scripts/data-gated-run.py is the runner; the result lands in
+# zcrypto data-gated tests -- a systemd USER unit template: the whole test suite, nightly, so every
+# test that skips in CI for want of a dataset runs for real. infra/scripts/data-gated-run.py is the
+# runner, run against the workstation checkout whose data/ holds the datasets; the result lands in
 # .local/data-gated-runs/latest.json in that checkout, which zcrypto-daily-ops reads. The timer
 # beside this file is what gets enabled; the service carries no [Install] section on purpose, so it
 # cannot be enabled to run at login by mistake.
@@ -33,7 +33,7 @@
 #   journalctl --user -u zcrypto-data-gated-tests.service -f       # follow it; the last line names the files written
 
 [Unit]
-Description=zcrypto data-gated tests: the whole suite nightly from the workstation checkout
+Description=zcrypto data-gated tests: the whole suite nightly from a detached worktree at the checkout's HEAD
 
 [Service]
 Type=oneshot

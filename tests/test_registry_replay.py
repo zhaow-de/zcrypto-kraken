@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import subprocess
 from dataclasses import replace
 from pathlib import Path
@@ -144,22 +145,42 @@ def test_every_record_past_47_replays_at_head(kind, entry):
         raise ReplayDiffers("\n".join(found))
 
 
+# The nightly runner (infra/scripts/data-gated-run.py) sets it to the checkout's develop sha as its run started, so a
+# merge landing while the suite runs is not this check's finding.
+DEVELOP_PIN = "ZCRYPTO_DATA_GATED_DEVELOP"
+
+
+def _develop() -> str:
+    return os.environ.get(DEVELOP_PIN) or "origin/develop"
+
+
 @pytest.mark.skipif(not _CANONICAL.is_dir(), reason="data/ohlc-full absent — the replay runs on the data host only")
 def test_this_checkout_holds_every_record_origin_develop_holds():
-    _git("rev-parse", "--verify", "origin/develop")
+    develop = _develop()
+    _git("rev-parse", "--verify", develop)
     behind = {}
     for path, id_key in _ENUMERATED:
         relpath = path.relative_to(REPO).as_posix()
-        held = _git("ls-tree", "--name-only", "origin/develop", "--", relpath)
-        develop_text = _git("show", f"origin/develop:{relpath}") if held else ""
+        held = _git("ls-tree", "--name-only", develop, "--", relpath)
+        develop_text = _git("show", f"{develop}:{relpath}") if held else ""
         head_text = path.read_text(encoding="utf-8") if path.exists() else ""
         if ids := _behind(head_text, develop_text, id_key):
             behind[relpath] = sorted(ids)
     if behind:
         pytest.fail(
-            f"origin/develop holds ids this checkout's files lack, so no replay here reads them: {behind}; pull develop into "
-            f"{REPO} (`git -C {REPO} pull --ff-only` on develop) before the replay runs again"
+            f"{develop} holds ids this checkout's files lack, so no replay here reads them: {behind}; pull develop into "
+            "the data checkout (`git pull --ff-only` there) before the replay runs again"
         )
+
+
+def test_the_develop_check_reads_the_runners_pin_when_set_and_the_live_ref_otherwise(monkeypatch):
+    monkeypatch.delenv(DEVELOP_PIN, raising=False)
+    assert _develop() == "origin/develop"
+    monkeypatch.setenv(DEVELOP_PIN, "no-such-ref-the-runner-pinned")
+    with pytest.raises(pytest.fail.Exception, match="rev-parse --verify no-such-ref-the-runner-pinned failed"):
+        test_this_checkout_holds_every_record_origin_develop_holds()
+    monkeypatch.setenv(DEVELOP_PIN, _git("rev-parse", "HEAD").strip())
+    test_this_checkout_holds_every_record_origin_develop_holds()
 
 
 def test_a_record_leaves_the_head_replay_only_once_the_script_replaying_it_at_its_commit_exists():
