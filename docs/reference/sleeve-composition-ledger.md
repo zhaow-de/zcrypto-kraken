@@ -40,7 +40,7 @@ The consequences were measured at the transition rather than assumed — see [T0
 | `sleeve_gross{sleeve="A2"}` | 0.004541113427651558 | 0 |
 | **final book gross** (Σ\|target weight\|, governed) | **0.08507788318405463** | **0.08432103094611271** |
 
-The book equals the summed sleeve gross ÷ 6 on both sides, exactly, so nothing cancelled between the sleeves at this step either.
+The book equals the summed sleeve gross ÷ 6 on both sides, to within one ulp, so nothing cancelled between the sleeves at this step either.
 
 ### 2026-10-27 — A2 re-arms; the three sleeves again
 
@@ -52,4 +52,4 @@ The book equals the summed sleeve gross ÷ 6 on both sides, exactly, so nothing 
 | `sleeve_gross{sleeve="A2"}` | 0 | 0.007155053701170019 |
 | **final book gross** (Σ\|target weight\|, governed) | **0.08526840614703204** | **0.08444517607103927** |
 
-The book again equals the summed sleeve gross ÷ 6 on both sides, to within one ulp. The two-sleeve stretch lasted ten cycles, far short of the three complete ISO weeks a band needs, and the book is back on the composition it had before it, so this pair of transitions owes no re-derivation under the runbook's step 3.
+The book again equals the summed sleeve gross ÷ 6 on both sides, to within one ulp. The two-sleeve stretch lasted ten cycles, 2026-10-25 08Z through 2026-10-26 20Z; the band the next go-live decision reads is derived over the whole box window (`accum-replay --since 2026-10-05`), which carries those cycles, so no separate re-derivation follows this pair. The re-arm is the 00Z cycle's read; whether it holds is the daily pass's step-1 read, as the flat's was.
