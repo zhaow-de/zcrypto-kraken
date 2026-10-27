@@ -46,7 +46,7 @@ PYTEST_ARGS = ("-q", "-p", "no:cacheprovider", "-rfEs", "-n", "8")
 COVERAGE_ARGS = ("--cov=cli", "--cov-report=")
 WORKTREE_DIR = Path(".tmp") / "data-gated-run"
 DEADLINE_FILE = ".deadline"
-# A `wt-<stamp>` this much older than the run's own bound cannot be a live run's: the runner kills pytest at the bound.
+# A run's time outside its pytest bound -- worktree add, upload, teardown -- with room to spare.
 SWEEP_SLACK_S = 600.0
 DEVELOP_ENV = "ZCRYPTO_DATA_GATED_DEVELOP"
 COVERALLS_SERVICE = "zcrypto-nightly"
@@ -193,8 +193,7 @@ def add_worktree(repo: Path, sha: str, worktree: Path, deadline: datetime) -> li
 
 
 def remove_worktree(repo: Path, worktree: Path) -> dict:
-    """Each symlink under the worktree's `data/` unlinked, a path that is not one named in `left` and removed with the
-    worktree. Never a raise: the record is the result's `teardown`."""
+    """Each symlink in the worktree's `data/` unlinked, another entry named in `left`, then the worktree removed; never a raise."""
     unlinked: list[str] = []
     left: list[str] = []
     faults: list[str] = []
@@ -317,8 +316,7 @@ def build_result(
     sweep_left: list[str],
     sweep_error: str | None,
 ) -> dict:
-    """`state` is `git_state` at the start plus `sha_at_end` and `tree_moved`; `data_listing` the checkout's `data/` names at
-    the start and at the end."""
+    """`state` is `git_state` at the start plus `sha_at_end` and `tree_moved`; `data_listing` the two `data_listing()` reads."""
     parsed = parse_summary(output)
     counts = parsed["counts"]
     skipped_for_data = sum(entry["count"] for entry in parsed["data_gated_skipped"])
