@@ -3874,7 +3874,7 @@ class ProbeExecutor:
         unbooked = [b for b in (*expected[1:], week_end) if cycles[b].held is None]
         if unbooked:
             self._refuse_tracking(
-                f"{label} is scored against the book each boundary journals, and the cycle record at "
+                f"{label} is scored against the next boundary's book, and the cycle record at "
                 f"{unbooked[0].isoformat()} journals none -- the venue read failed there"
             )
             return

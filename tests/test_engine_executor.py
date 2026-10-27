@@ -8298,7 +8298,7 @@ def test_the_week_is_scored_from_the_journaled_book_with_the_ledger_short_of_its
 
 
 @pytest.mark.parametrize("unbooked", [_IN_WEEK + timedelta(hours=8), _TRACK_EVAL], ids=["mid-week", "the-boundary-after"])
-def test_a_week_holding_a_boundary_that_journaled_no_book_is_refused_naming_it(tmp_path, unbooked):
+def test_a_week_whose_cycle_scores_against_a_boundary_that_journaled_no_book_is_refused_naming_it(tmp_path, unbooked):
     """A later boundary of the week or the boundary after it, each the book one of the week's cycles is scored against."""
     _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6, overrides={unbooked: {"held": None}})
 
