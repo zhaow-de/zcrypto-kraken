@@ -643,6 +643,22 @@ def test_a_wt_directory_without_a_readable_deadline_is_left_and_named_not_remove
     assert sorted(_worktrees(repo)) == sorted([str(repo), str(no_file), str(garbled)])
 
 
+def test_a_wt_directory_git_does_not_register_is_never_named_swept_and_its_fault_is_recorded(tmp_path):
+    repo = _checkout(tmp_path, "def test_ok(): pass\n")
+    orphan = repo / runner.WORKTREE_DIR / "wt-20260101T000000Z"
+    (orphan / "data").mkdir(parents=True)
+    (orphan / runner.DEADLINE_FILE).write_text("2026-01-01T03:10:00Z\n")
+    os.symlink(repo / "data" / "ohlc-full", orphan / "data" / "ohlc-full")
+    proc = _run(tmp_path, repo)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    latest = _latest(repo)
+    assert latest["swept"] == [] and latest["sweep_left"] == [orphan.name]
+    assert latest["sweep_error"].startswith(f"{orphan.name}: git worktree remove exited 128"), latest["sweep_error"]
+    assert latest["ok"] is False and latest["error"].startswith(f"sweep: {orphan.name}: ")
+    assert orphan.is_dir() and (repo / "data" / "ohlc-full" / "manifest.json").read_text() == "{}\n"
+    assert _worktrees(repo) == [str(repo)]
+
+
 def test_a_clean_start_sweeps_nothing_and_records_the_empty_list(tmp_path):
     repo = _checkout(tmp_path, "def test_ok(): pass\n")
     proc = _run(tmp_path, repo)
@@ -717,6 +733,25 @@ def test_an_exception_in_the_run_is_recorded_and_the_worktree_still_goes(tmp_pat
     assert latest["error"] == "the runner raised RuntimeError: boom" and latest["exit_code"] is None
     assert latest["teardown"]["unlinked"] == ["ohlc-full"] and latest["teardown"]["removed"] is True
     _no_worktree_left(repo)
+
+
+def test_a_run_whose_worktree_path_is_another_live_runs_leaves_it_whole_and_records_the_collision(tmp_path, monkeypatch):
+    repo = _checkout(tmp_path, "def test_ok(): pass\n")
+    other = _other_run(repo, "wt-20261027T023005Z", _iso_in(3600))
+    monkeypatch.setattr(runner, "worktree_path", lambda repo, started: other)
+
+    def never(*args, **kwargs):
+        raise AssertionError("the suite ran in another run's worktree")
+
+    monkeypatch.setattr(runner, "run_suite", never)
+    monkeypatch.setenv("UV", "/nonexistent/uv")
+    code = runner.main(["--repo", str(repo), "--no-coverage"])
+    latest = _latest(repo)
+    assert code == 1 and latest["ok"] is False
+    assert latest["error"].startswith("the runner raised WorktreeError: git worktree add exited 128"), latest["error"]
+    assert latest["teardown"] is None, "nothing of the other run's was torn down"
+    assert (other / "data" / "ohlc-full").is_symlink() and (other / runner.DEADLINE_FILE).is_file()
+    assert sorted(_worktrees(repo)) == sorted([str(repo), str(other)])
 
 
 def test_the_uv_directory_is_put_on_the_suite_path(tmp_path):

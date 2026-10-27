@@ -179,13 +179,18 @@ class WorktreeError(Exception):
     """The worktree could not be made whole: what `git worktree add` or a link said."""
 
 
-def add_worktree(repo: Path, sha: str, worktree: Path, deadline: datetime) -> list[str]:
-    """The detached worktree at `sha` with its `.deadline`, and every entry of the checkout's `data/` but its tracked
-    `.gitignore` symlinked into the worktree's; the names linked."""
+def add_worktree(repo: Path, sha: str, worktree: Path) -> None:
+    """The detached worktree at `sha`; a path already taken -- another run's, started in the same second -- is a raise, and
+    the caller then owns nothing there."""
     worktree.parent.mkdir(parents=True, exist_ok=True)
     added = _git(repo, "worktree", "add", "--detach", str(worktree), sha)
     if added.returncode != 0:
         raise WorktreeError(f"git worktree add exited {added.returncode}: {added.stderr.strip()}")
+
+
+def link_datasets(repo: Path, worktree: Path, deadline: datetime) -> list[str]:
+    """The worktree's `.deadline`, and every entry of the checkout's `data/` but its tracked `.gitignore` symlinked into the
+    worktree's; the names linked."""
     linked = []
     try:
         (worktree / DEADLINE_FILE).write_text(_iso(deadline) + "\n")
@@ -251,9 +256,12 @@ def sweep_stale_worktrees(repo: Path, now: datetime) -> tuple[list[str], list[st
                 left.append(entry.name)
                 continue
             record = remove_worktree(repo, entry)
-            swept.append(entry.name)
             if record["error"]:
                 faults.append(f"{entry.name}: {record['error']}")
+            if entry.exists():
+                left.append(entry.name)
+            else:
+                swept.append(entry.name)
     pruned = _git(repo, "worktree", "prune")
     if pruned.returncode != 0:
         faults.append(f"git worktree prune exited {pruned.returncode}: {pruned.stderr.strip()}")
@@ -527,6 +535,7 @@ def main(argv: list[str] | None = None) -> int:
     deadline = started + timedelta(seconds=args.timeout + SWEEP_SLACK_S)
     command, exit_code, output, run_error = None, None, "", None
     worktree = teardown = None
+    created = False
     if not data_present:
         run_error = f"data absent: {data_dir} holds no dataset; nothing ran"
     elif uv is None:
@@ -538,7 +547,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if worktree is not None:
             try:
-                add_worktree(repo, state["sha"], worktree, deadline)
+                add_worktree(repo, state["sha"], worktree)
+                created = True
+                link_datasets(repo, worktree, deadline)
                 pytest_args = args.extra if coverage_off else list(COVERAGE_ARGS)
                 command, exit_code, output, run_error = run_suite(worktree, uv, pytest_args, args.timeout, develop=state["develop"])
             except Exception as exc:
@@ -554,7 +565,8 @@ def main(argv: list[str] | None = None) -> int:
         unparsed = None if parsed["counts"] is not None else f"no parsed pytest summary ({run_error or parsed['error']})"
         upload = coverage_upload(worktree if worktree is not None else repo, coverage_off or unparsed, state["branch"])
     finally:
-        if worktree is not None and worktree.exists():
+        # Only a worktree this run made: a path another run holds is that run's to remove.
+        if created and worktree.exists():
             teardown = remove_worktree(repo, worktree)
     result = build_result(
         started=started,
