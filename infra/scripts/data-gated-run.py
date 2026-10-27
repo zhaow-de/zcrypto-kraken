@@ -3,14 +3,21 @@
 
 CI deselects the `retired` cases and skips every `skipif(not <data>.exists())` test, so this run, which
 `infra/systemd/zcrypto-data-gated-tests.timer` fires nightly, is the one with the whole suite in scope and so the one
-coverage report. It runs pytest with no path through the TARGET checkout's own environment (`uv run --directory
-<repo>`), never the interpreter that launched it: a hand run from a worktree would otherwise import the worktree's `cli`
-under the main checkout's tests. It writes `.local/data-gated-runs/<UTC stamp>.json` plus `latest.json`. A run in which
-the whole family skipped for want of data is exactly the night this exists to catch, so such a skip is a failure, and a
-checkout with no dataset under `data/` is refused before pytest starts. A run whose summary cannot be parsed -- a usage
-error, a timeout, an interrupted session -- still writes a result, because `zcrypto-daily-ops` has to tell an absent
-file from a failed run. `-rfE` rather than the bare `-rf`: an error at setup is a test that did not run, and its id is
-as much a finding as a failure's.
+coverage report. The suite runs in a detached worktree at the checkout's HEAD as the run started, under
+`<repo>/.tmp/data-gated-run/`, every entry of the checkout's `data/` symlinked into the worktree's: a pull or merge into
+the checkout while the suite runs moves nothing under it, and `sha` names what ran. It runs pytest with no path through
+the WORKTREE's own environment (`uv run --directory <worktree>`), never the interpreter that launched it: the main
+checkout's `.venv` holds an editable install whose `.pth` resolves `cli` and `tests` back to the checkout, so a run
+through it would measure the live tree again. The suite sees `origin/develop`'s sha at the start as
+ZCRYPTO_DATA_GATED_DEVELOP, for the test that compares the checkout with it. The worktree goes whatever happened --
+each link unlinked, a path that is not a link left and named, then `git worktree remove --force` -- and the checkout's
+`data/` listing is compared with the one taken at the start; a teardown fault or a changed listing is the run's error.
+It writes `.local/data-gated-runs/<UTC stamp>.json` plus `latest.json` in the checkout. A run in which the whole family
+skipped for want of data is exactly the night this exists to catch, so such a skip is a failure, and a checkout with no
+dataset under `data/` is refused before pytest starts. A run whose summary cannot be parsed -- a usage error, a timeout,
+an interrupted session -- still writes a result, because `zcrypto-daily-ops` has to tell an absent file from a failed
+run. `-rfE` rather than the bare `-rf`: an error at setup is a test that did not run, and its id is as much a finding as
+a failure's.
 
 The coverage upload is cut off after UPLOAD_TIMEOUT_S: the unit is a oneshot, and a run that never ends writes no result
 and holds off the next night's.
@@ -38,9 +45,12 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-PYTEST_ARGS = ("-q", "-p", "no:cacheprovider", "-rfEs")
-# The data file only, `.coverage` at the checkout's root: the upload reads it, and a report would only lengthen the journal.
+# Eight xdist workers: serial, the suite outgrew the three-hour bound.
+PYTEST_ARGS = ("-q", "-p", "no:cacheprovider", "-rfEs", "-n", "8")
+# The data file only, `.coverage` at the worktree's root: the upload reads it there, and a report would only lengthen the journal.
 COVERAGE_ARGS = ("--cov=cli", "--cov-report=")
+WORKTREE_DIR = Path(".tmp") / "data-gated-run"
+DEVELOP_ENV = "ZCRYPTO_DATA_GATED_DEVELOP"
 COVERALLS_SERVICE = "zcrypto-nightly"
 UPLOAD_TIMEOUT_S = 120.0
 # The ops role renders it at this path under its research user's home; tests/test_data_gated_run.py pins the two.
@@ -48,7 +58,7 @@ TOKEN_FILE = Path.home() / ".config" / "zcrypto" / "coveralls.env"
 TOKEN_KEY = "COVERALLS_REPO_TOKEN"
 _TOKEN_LINE = re.compile(rf"{TOKEN_KEY}=(?P<token>[^\s'\"]*)")
 RESULT_DIR = Path(".local") / "data-gated-runs"
-SCHEMA = 3
+SCHEMA = 4
 # `1 failed, 2 passed, 1 error in 0.01s`, `no tests ran in 0.00s`, `3 passed in 65.12s (0:01:05)` --
 # with or without the `=` rule a non-quiet run draws around the line.
 _SUMMARY = re.compile(r"^=*\s*(?P<body>\d+ [a-z]+(?:, \d+ [a-z]+)*|no tests ran) in \d+(?:\.\d+)?s(?: \([\d:]+\))?\s*=*$")
@@ -122,24 +132,99 @@ def _id(rest: str) -> str:
     return m.group("id") if m else rest.strip()
 
 
-def git_state(repo: Path) -> dict:
-    def git(*args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True)
+def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True)
 
-    head = git("rev-parse", "HEAD")
+
+def git_state(repo: Path) -> dict:
+    """`sha`, `dirty`, `branch` and `develop` -- `origin/develop`'s sha, None where the checkout has no such ref."""
+    head = _git(repo, "rev-parse", "HEAD")
     if head.returncode != 0:
-        return {"sha": None, "dirty": None, "git_error": head.stderr.strip() or f"git rev-parse exited {head.returncode}"}
-    status = git("status", "--porcelain", "--untracked-files=no")
-    return {"sha": head.stdout.strip(), "dirty": bool(status.stdout.strip()), "git_error": None}
+        error = head.stderr.strip() or f"git rev-parse exited {head.returncode}"
+        return {"sha": None, "dirty": None, "branch": None, "develop": None, "git_error": error}
+    status = _git(repo, "status", "--porcelain", "--untracked-files=no")
+    branch = _git(repo, "branch", "--show-current").stdout.strip()
+    develop = _git(repo, "rev-parse", "--verify", "--quiet", "origin/develop").stdout.strip()
+    return {
+        "sha": head.stdout.strip(),
+        "dirty": bool(status.stdout.strip()),
+        "branch": branch or None,
+        "develop": develop or None,
+        "git_error": None,
+    }
+
+
+def data_listing(repo: Path) -> list[str] | None:
+    data = repo / "data"
+    return sorted(p.name for p in data.iterdir()) if data.is_dir() else None
+
+
+def worktree_path(repo: Path, started: datetime) -> Path:
+    return repo / WORKTREE_DIR / f"wt-{_stamp(_iso(started))}"
+
+
+class WorktreeError(Exception):
+    """The worktree could not be made whole: what `git worktree add` or a link said."""
+
+
+def add_worktree(repo: Path, sha: str, worktree: Path) -> list[str]:
+    """The detached worktree at `sha`, with every entry of the checkout's `data/` but its tracked `.gitignore` symlinked
+    into the worktree's; the names linked."""
+    worktree.parent.mkdir(parents=True, exist_ok=True)
+    added = _git(repo, "worktree", "add", "--detach", str(worktree), sha)
+    if added.returncode != 0:
+        raise WorktreeError(f"git worktree add exited {added.returncode}: {added.stderr.strip()}")
+    linked = []
+    try:
+        (worktree / "data").mkdir(exist_ok=True)
+        for entry in sorted(p for p in (repo / "data").iterdir() if p.name != ".gitignore"):
+            os.symlink(entry, worktree / "data" / entry.name)
+            linked.append(entry.name)
+    except OSError as exc:
+        raise WorktreeError(f"linking {repo / 'data'} into the worktree: {exc}") from None
+    return linked
+
+
+def remove_worktree(repo: Path, worktree: Path) -> dict:
+    """Every symlink under the worktree's `data/` unlinked -- a path that is not one is left and named, never deleted
+    by this step -- then the worktree removed. Never a raise: the record is the result's `teardown`."""
+    unlinked: list[str] = []
+    left: list[str] = []
+    faults: list[str] = []
+    data = worktree / "data"
+    if data.is_dir():
+        for entry in sorted(p for p in data.iterdir() if p.name != ".gitignore"):
+            if not entry.is_symlink():
+                left.append(entry.name)
+                continue
+            try:
+                entry.unlink()
+                unlinked.append(entry.name)
+            except OSError as exc:
+                faults.append(f"unlink {entry.name}: {exc}")
+    removed = _git(repo, "worktree", "remove", "--force", str(worktree))
+    if removed.returncode != 0:
+        faults.append(f"git worktree remove exited {removed.returncode}: {removed.stderr.strip()}")
+    if worktree.exists():
+        faults.append(f"{worktree} still exists")
+    return {
+        "worktree": str(worktree),
+        "unlinked": unlinked,
+        "left": left,
+        "removed": not worktree.exists(),
+        "error": "; ".join(faults) or None,
+    }
 
 
 def pytest_command(repo: Path, uv: str, extra_args: list[str]) -> list[str]:
-    """Through the target checkout's own environment -- `uv run --directory` enters and syncs that
-    checkout's `.venv` -- never `sys.executable`, which is whatever environment launched this runner."""
+    """Through the target tree's own environment -- `uv run --directory` enters and syncs that tree's `.venv` -- never
+    `sys.executable`, which is whatever environment launched this runner."""
     return [uv, "run", "--directory", str(repo), "python", "-m", "pytest", *PYTEST_ARGS, *extra_args]
 
 
-def run_suite(repo: Path, uv: str, extra_args: list[str], timeout: float | None) -> tuple[list[str], int | None, str, str | None]:
+def run_suite(
+    worktree: Path, uv: str, extra_args: list[str], timeout: float | None, *, develop: str | None
+) -> tuple[list[str], int | None, str, str | None]:
     """`(command, exit code, combined output, why there is no exit code)`.
 
     A user unit carries the manager's bare PATH, so the directory of the `uv` this run goes through is
@@ -149,12 +234,15 @@ def run_suite(repo: Path, uv: str, extra_args: list[str], timeout: float | None)
     # An inherited `VIRTUAL_ENV` names the environment that launched this runner; `uv` ignores it for
     # the target's own and says so on every run -- dropped, so the journal carries the suite alone.
     env.pop("VIRTUAL_ENV", None)
+    env.pop(DEVELOP_ENV, None)
+    if develop is not None:
+        env[DEVELOP_ENV] = develop
     uv_dir = os.path.dirname(uv)
     if uv_dir and uv_dir not in env.get("PATH", "").split(os.pathsep):
         env["PATH"] = uv_dir + os.pathsep + env.get("PATH", "")
-    command = pytest_command(repo, uv, extra_args)
+    command = pytest_command(worktree, uv, extra_args)
     proc = subprocess.Popen(
-        command, cwd=repo, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True
+        command, cwd=worktree, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True
     )
     try:
         output, _ = proc.communicate(timeout=timeout)
@@ -178,17 +266,30 @@ def build_result(
     finished: datetime,
     repo: Path,
     data_present: bool,
+    state: dict,
+    worktree: str | None,
     command: list[str] | None,
     exit_code: int | None,
     output: str,
     run_error: str | None,
+    teardown: dict | None,
+    data_listing: tuple[list[str] | None, list[str] | None],
 ) -> dict:
+    """`state` is `git_state` at the start plus `sha_at_end` and `tree_moved`; `data_listing` the checkout's `data/` names at
+    the start and at the end. A teardown fault or a changed listing joins `error`, after the suite's own, and so denies `ok`."""
     parsed = parse_summary(output)
     counts = parsed["counts"]
     skipped_for_data = sum(entry["count"] for entry in parsed["data_gated_skipped"])
-    error = (
+    faults = [
         run_error or parsed["error"] or (f"{skipped_for_data} data-gated tests skipped: data absent" if skipped_for_data else None)
-    )
+    ]
+    if teardown is not None and teardown["error"]:
+        faults.append(f"teardown: {teardown['error']}")
+    listing_start, listing_end = data_listing
+    intact = listing_start == listing_end
+    if not intact:
+        faults.append(f"the checkout's data/ listing changed during the run: {listing_start} -> {listing_end}")
+    error = "; ".join(f for f in faults if f) or None
     return {
         "schema": SCHEMA,
         "started": _iso(started),
@@ -196,7 +297,14 @@ def build_result(
         "duration_s": round((finished - started).total_seconds(), 1),
         "repo": str(repo),
         "data_present": data_present,
-        **git_state(repo),
+        "sha": state["sha"],
+        "dirty": state["dirty"],
+        "git_error": state["git_error"],
+        "branch": state["branch"],
+        "develop": state["develop"],
+        "sha_at_end": state["sha_at_end"],
+        "tree_moved": state["tree_moved"],
+        "worktree": worktree,
         "command": command,
         "exit_code": exit_code,
         "summary_line": parsed["summary_line"],
@@ -204,6 +312,9 @@ def build_result(
         "failed": parsed["failed"],
         "errors": parsed["errors"],
         "data_gated_skipped": parsed["data_gated_skipped"],
+        "teardown": teardown,
+        "data_listing_intact": intact,
+        "data_listing": None if intact else {"start": listing_start, "end": listing_end},
         "error": error,
         "ok": error is None and exit_code == 0 and counts["failed"] == 0 and counts["errors"] == 0,
     }
@@ -243,11 +354,27 @@ def read_coverage_token() -> str:
     return token
 
 
-def send_coverage(repo: Path, token: str) -> dict:
-    """coveralls reads the data file, the files' names and the git head from the working directory, so it runs in `repo`."""
+@contextlib.contextmanager
+def _environ(**values: str):
+    before = {key: os.environ.get(key) for key in values}
+    os.environ.update(values)
+    try:
+        yield
+    finally:
+        for key, value in before.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def send_coverage(repo: Path, token: str, branch: str | None) -> dict:
+    """coveralls reads the data file, the files' names and the git head from the working directory, so it runs in `repo` --
+    the detached worktree, whose `git rev-parse --abbrev-ref HEAD` is `HEAD`, so the checkout's branch is handed over as
+    `GIT_BRANCH`, which coveralls reads first."""
     from coveralls import Coveralls
 
-    with contextlib.chdir(repo):
+    with contextlib.chdir(repo), _environ(**({} if branch is None else {"GIT_BRANCH": branch})):
         return Coveralls(repo_token=token, service_name=COVERALLS_SERVICE).wear()
 
 
@@ -274,7 +401,7 @@ def _bounded(call, timeout: float):
     return box["value"]
 
 
-def coverage_upload(repo: Path, skip: str | None) -> dict:
+def coverage_upload(repo: Path, skip: str | None, branch: str | None = None) -> dict:
     """`{"outcome": "uploaded", "url"}`, `{"outcome": "skipped", "reason"}` or `{"outcome": "failed", "error_class",
     "message"}` -- never a raise, so no upload decides a verdict."""
     if skip is not None:
@@ -287,7 +414,7 @@ def coverage_upload(repo: Path, skip: str | None) -> dict:
             token = read_coverage_token()
         except NoToken as why:
             return {"outcome": "skipped", "reason": str(why)}
-        return {"outcome": "uploaded", "url": send_coverage(repo, token)["url"]}
+        return {"outcome": "uploaded", "url": send_coverage(repo, token, branch)["url"]}
 
     try:
         return _bounded(upload, UPLOAD_TIMEOUT_S)
@@ -341,32 +468,55 @@ def main(argv: list[str] | None = None) -> int:
     else:
         coverage_off = None
     started = datetime.now(timezone.utc)
+    state = git_state(repo)
+    listing_start = data_listing(repo)
     command, exit_code, output, run_error = None, None, "", None
+    worktree = teardown = None
     if not data_present:
         run_error = f"data absent: {data_dir} holds no dataset; nothing ran"
     elif uv is None:
         run_error = "uv not found: set UV or put it on PATH; nothing ran"
+    elif state["sha"] is None:
+        run_error = f"git: {state['git_error']}; nothing ran"
     else:
-        pytest_args = args.extra if coverage_off else list(COVERAGE_ARGS)
-        command, exit_code, output, run_error = run_suite(repo, uv, pytest_args, args.timeout)
-    finished = datetime.now(timezone.utc)
+        worktree = worktree_path(repo, started)
+    try:
+        if worktree is not None:
+            try:
+                add_worktree(repo, state["sha"], worktree)
+                pytest_args = args.extra if coverage_off else list(COVERAGE_ARGS)
+                command, exit_code, output, run_error = run_suite(worktree, uv, pytest_args, args.timeout, develop=state["develop"])
+            except Exception as exc:
+                run_error = f"the runner raised {type(exc).__name__}: {exc}"
+        finished = datetime.now(timezone.utc)
+        end = git_state(repo)
+        # pytest's own output first, so the journal holds it while the upload runs.
+        sys.stdout.write(output)
+        if output and not output.endswith("\n"):
+            sys.stdout.write("\n")
+        sys.stdout.flush()
+        parsed = parse_summary(output)
+        unparsed = None if parsed["counts"] is not None else f"no parsed pytest summary ({run_error or parsed['error']})"
+        # In the worktree, where `.coverage` and the files it names are, before the worktree goes.
+        upload = coverage_upload(worktree if worktree is not None else repo, coverage_off or unparsed, state["branch"])
+    finally:
+        if worktree is not None and worktree.exists():
+            teardown = remove_worktree(repo, worktree)
     result = build_result(
         started=started,
         finished=finished,
         repo=repo,
         data_present=data_present,
+        state={**state, "sha_at_end": end["sha"], "tree_moved": None if state["sha"] is None else state["sha"] != end["sha"]},
+        worktree=None if worktree is None else str(worktree),
         command=command,
         exit_code=exit_code,
         output=output,
         run_error=run_error,
+        teardown=teardown,
+        data_listing=(listing_start, data_listing(repo)),
     )
-    # pytest's own output first, so the journal holds it while the upload runs.
-    sys.stdout.write(output)
-    if output and not output.endswith("\n"):
-        sys.stdout.write("\n")
-    sys.stdout.flush()
-    unparsed = None if result["counts"] is not None else f"no parsed pytest summary ({result['error']})"
-    result["coverage_upload"] = coverage_upload(repo, coverage_off or unparsed)
+    result["coverage_upload"] = upload
     stamped, latest = write_result(repo / RESULT_DIR, result)
     verdict = "ok" if result["ok"] else "FAIL"
     outcome = result["coverage_upload"]["outcome"]
