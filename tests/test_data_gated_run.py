@@ -220,7 +220,7 @@ def _git(repo: Path, *args: str) -> str:
     ).stdout.strip()
 
 
-def _checkout(tmp_path: Path, body: str, *, data: bool = True, datasets: bool = True) -> Path:
+def _checkout(tmp_path: Path, body: str, *, data: bool = True, datasets: bool = True, branch: str = "develop") -> Path:
     repo = tmp_path / "checkout"
     (repo / "tests").mkdir(parents=True)
     (repo / "tests" / "test_synthetic.py").write_text(textwrap.dedent(body))
@@ -230,7 +230,7 @@ def _checkout(tmp_path: Path, body: str, *, data: bool = True, datasets: bool = 
         if datasets:
             (repo / "data" / "ohlc-full").mkdir()
             (repo / "data" / "ohlc-full" / "manifest.json").write_text("{}\n")
-    subprocess.run(["git", "init", "-q", "-b", "develop", str(repo)], check=True)
+    subprocess.run(["git", "init", "-q", "-b", branch, str(repo)], check=True)
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "synthetic")
     return repo
@@ -365,6 +365,7 @@ def test_the_runner_writes_the_stamped_file_and_latest_with_the_full_shape(tmp_p
         "git_error",
         "branch",
         "develop",
+        "origin_develop",
         "sha_at_end",
         "tree_moved",
         "worktree",
@@ -393,7 +394,8 @@ def test_the_runner_writes_the_stamped_file_and_latest_with_the_full_shape(tmp_p
     assert before <= started <= finished
     head = _git(repo, "rev-parse", "HEAD")
     assert latest["sha"] == head and latest["dirty"] is False and latest["git_error"] is None
-    assert latest["branch"] == "develop" and latest["develop"] is None, "the synthetic checkout has no origin/develop"
+    assert latest["branch"] == "develop" and latest["develop"] == head, "the pin is the checkout's own develop, at HEAD here"
+    assert latest["origin_develop"] is None, "the synthetic checkout has no origin/develop"
     assert latest["sha_at_end"] == head and latest["tree_moved"] is False
     assert latest["repo"] == str(repo) and latest["data_present"] is True
     worktree = latest["worktree"]
@@ -531,22 +533,38 @@ def test_a_head_that_moves_during_the_run_leaves_sha_at_the_start_and_reads_tree
     assert latest["ok"] is True
 
 
-def test_the_origin_develop_sha_at_start_is_handed_to_the_suite(tmp_path):
+def test_the_pin_handed_to_the_suite_is_the_checkouts_own_develop_even_when_origin_develop_is_behind_it(tmp_path):
     repo = _checkout(tmp_path, SEES_THE_TREE)
+    fetched = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "update-ref", "refs/remotes/origin/develop", fetched)
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "local develop moved on")
+    head = _git(repo, "rev-parse", "HEAD")
+    assert head != fetched
+    proc = _run(tmp_path, repo)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert _probe_out(tmp_path)[3] == head
+    latest = _latest(repo)
+    assert latest["develop"] == head and latest["origin_develop"] == fetched
+
+
+def test_a_checkout_with_only_an_origin_develop_pins_that(tmp_path):
+    repo = _checkout(tmp_path, SEES_THE_TREE, branch="trunk")
     head = _git(repo, "rev-parse", "HEAD")
     _git(repo, "update-ref", "refs/remotes/origin/develop", head)
     proc = _run(tmp_path, repo)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert _probe_out(tmp_path)[3] == head
-    assert _latest(repo)["develop"] == head
+    latest = _latest(repo)
+    assert latest["develop"] == head and latest["origin_develop"] == head and latest["branch"] == "trunk"
 
 
-def test_without_an_origin_develop_the_suite_sees_no_pin_not_an_inherited_one(tmp_path):
-    repo = _checkout(tmp_path, SEES_THE_TREE)
+def test_a_checkout_with_neither_develop_ref_hands_the_suite_no_pin_not_an_inherited_one(tmp_path):
+    repo = _checkout(tmp_path, SEES_THE_TREE, branch="trunk")
     proc = _run(tmp_path, repo, env={runner.DEVELOP_ENV: "stale-from-the-runners-own-environment"})
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert _probe_out(tmp_path)[3] == "unset"
-    assert _latest(repo)["develop"] is None
+    latest = _latest(repo)
+    assert latest["develop"] is None and latest["origin_develop"] is None
 
 
 def test_a_real_directory_under_the_worktrees_data_is_left_by_the_unlink_and_reported(tmp_path):
@@ -714,6 +732,7 @@ _STATE = {
     "git_error": None,
     "branch": "develop",
     "develop": None,
+    "origin_develop": None,
     "sha_at_end": "a" * 40,
     "tree_moved": False,
 }

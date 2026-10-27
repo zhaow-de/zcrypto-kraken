@@ -145,8 +145,8 @@ def test_every_record_past_47_replays_at_head(kind, entry):
         raise ReplayDiffers("\n".join(found))
 
 
-# The nightly runner (infra/scripts/data-gated-run.py) sets it to origin/develop's sha as its run started, so a merge
-# landing while the suite runs is not this check's finding.
+# The nightly runner (infra/scripts/data-gated-run.py) sets it to the checkout's develop sha as its run started
+# (origin/develop's where there is no local branch), so a merge landing while the suite runs is not this check's finding.
 DEVELOP_PIN = "ZCRYPTO_DATA_GATED_DEVELOP"
 
 

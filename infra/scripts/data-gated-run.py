@@ -138,15 +138,21 @@ def git_state(repo: Path) -> dict:
     head = _git(repo, "rev-parse", "HEAD")
     if head.returncode != 0:
         error = head.stderr.strip() or f"git rev-parse exited {head.returncode}"
-        return {"sha": None, "dirty": None, "branch": None, "develop": None, "git_error": error}
+        return {"sha": None, "dirty": None, "branch": None, "develop": None, "origin_develop": None, "git_error": error}
     status = _git(repo, "status", "--porcelain", "--untracked-files=no")
     branch = _git(repo, "branch", "--show-current").stdout.strip()
-    develop = _git(repo, "rev-parse", "--verify", "--quiet", "origin/develop").stdout.strip()
+    # The pin the suite is judged against is the line the checkout's HEAD sits on -- its own `develop` -- so a fetch the
+    # checkout has not pulled past is not a missing row or record of the frozen tree; `origin/develop` only where there is
+    # no local branch.
+    local = _git(repo, "rev-parse", "--verify", "--quiet", "develop").stdout.strip() or None
+    origin_develop = _git(repo, "rev-parse", "--verify", "--quiet", "origin/develop").stdout.strip() or None
+    develop = local or origin_develop
     return {
         "sha": head.stdout.strip(),
         "dirty": bool(status.stdout.strip()),
         "branch": branch or None,
-        "develop": develop or None,
+        "develop": develop,
+        "origin_develop": origin_develop,
         "git_error": None,
     }
 
@@ -345,6 +351,7 @@ def build_result(
         "git_error": state["git_error"],
         "branch": state["branch"],
         "develop": state["develop"],
+        "origin_develop": state["origin_develop"],
         "sha_at_end": state["sha_at_end"],
         "tree_moved": state["tree_moved"],
         "worktree": worktree,
