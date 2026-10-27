@@ -29,3 +29,27 @@ B had held exactly zero since ~2025-10-30 and A1 since ~2025-11-09 — dates T01
 Context worth carrying: the book had already risen ~5× over 2026-08-19 → 08-20 on A2 alone (0.0483 → 0.2177 **before** the governor, i.e. 0.0241 → 0.1090 on the governed basis the table above uses), before any composition change — so the book was re-risking for three days before this transition, and the transition is not what put it where it is.
 
 The consequences were measured at the transition rather than assumed — see [T0149](../open-topics/archive/T0149-sleeve-reversal-invalidates-the-one-sleeve-derivations.md), which carries the re-derived drift band, the re-measured placeability (placement is rare and tracks target-move size — 63 of 1,572 intended orders journal-wide — with `ordermin`, not `costmin`, the binding floor), and the re-measured expected-gross parameter.
+
+### 2026-10-25 — A2 goes flat; the book runs on B and A1
+
+| | last pre-transition cycle<br>2026-10-25 04Z | first post-transition cycle<br>2026-10-25 08Z |
+| --- | --- | --- |
+| `zcrypto_engine_active_sleeves` | 3 | **2** |
+| `sleeve_gross{sleeve="B"}` | 0.2736749476376006 | 0.2736749476376006 |
+| `sleeve_gross{sleeve="A1"}` | 0.23225123803907569 | 0.23225123803907569 |
+| `sleeve_gross{sleeve="A2"}` | 0.004541113427651558 | 0 |
+| **final book gross** (Σ\|target weight\|, governed) | **0.08507788318405463** | **0.08432103094611271** |
+
+The book equals the summed sleeve gross ÷ 6 on both sides, to within one ulp, so nothing cancelled between the sleeves at this step either.
+
+### 2026-10-27 — A2 re-arms; the three sleeves again
+
+| | last pre-transition cycle<br>2026-10-26 20Z | first post-transition cycle<br>2026-10-27 00Z |
+| --- | --- | --- |
+| `zcrypto_engine_active_sleeves` | 2 | **3** |
+| `sleeve_gross{sleeve="B"}` | 0.28306223023886007 | 0.28186353398379443 |
+| `sleeve_gross{sleeve="A1"}` | 0.2285482066433322 | 0.21765246874127114 |
+| `sleeve_gross{sleeve="A2"}` | 0 | 0.007155053701170019 |
+| **final book gross** (Σ\|target weight\|, governed) | **0.08526840614703204** | **0.08444517607103927** |
+
+The book again equals the summed sleeve gross ÷ 6 on both sides, to within one ulp. The band the next go-live decision reads is derived over the whole box window (plan 00092's R0 item 6, `--since 2026-10-05`), which carries the two-sleeve stretch, so no separate re-derivation follows this pair.
