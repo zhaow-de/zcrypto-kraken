@@ -3879,8 +3879,7 @@ class ProbeExecutor:
             )
             return
 
-        # `>=`, never `>`, in both refusals: a start or first fill ON the Monday boundary leaves its week, the one D10
-        # excludes, scored.
+        # `>=`, never `>`, in both refusals: a start or first fill ON the Monday boundary leaves its week, the one D10 excludes, scored.
         start = self._tracking_series_start()
         if start >= week_start:
             where = f"inside {label}" if start < week_end else f"after {label} ended"
