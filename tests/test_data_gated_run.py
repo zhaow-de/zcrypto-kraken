@@ -287,6 +287,21 @@ def _latest(repo: Path) -> dict:
     return json.loads((repo / ".local" / "data-gated-runs" / "latest.json").read_text())
 
 
+def _other_run(repo: Path, name: str, deadline: str | None) -> Path:
+    """Another run's worktree as the runner leaves one mid-run: registered, the dataset linked, its `.deadline` as given."""
+    other = repo / runner.WORKTREE_DIR / name
+    other.parent.mkdir(parents=True, exist_ok=True)
+    _git(repo, "worktree", "add", "--detach", str(other), "HEAD")
+    os.symlink(repo / "data" / "ohlc-full", other / "data" / "ohlc-full")
+    if deadline is not None:
+        (other / runner.DEADLINE_FILE).write_text(deadline + "\n")
+    return other
+
+
+def _iso_in(seconds: float) -> str:
+    return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _no_worktree_left(repo: Path) -> None:
     assert _worktrees(repo) == [str(repo)], "the run's worktree is deregistered"
     left = sorted(p.name for p in (repo / runner.WORKTREE_DIR).iterdir()) if (repo / runner.WORKTREE_DIR).is_dir() else []
@@ -299,7 +314,7 @@ SEES_THE_TREE = """\
     from pathlib import Path
     def test_where(): Path(os.environ["PROBE_OUT"]).write_text(
         f"{os.getcwd()}\\n{os.path.realpath('data/ohlc-full')}\\n{Path('data/ohlc-full').is_symlink()}\\n"
-        f"{os.environ.get('ZCRYPTO_DATA_GATED_DEVELOP', 'unset')}\\n")
+        f"{os.environ.get('ZCRYPTO_DATA_GATED_DEVELOP', 'unset')}\\n{Path('.deadline').read_text().strip()}\\n")
     """
 
 
@@ -487,11 +502,14 @@ def test_the_suite_runs_in_a_detached_worktree_at_the_start_sha_with_the_dataset
     proc = _run(tmp_path, repo)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     latest = _latest(repo)
-    cwd, dataset, is_link, _ = _probe_out(tmp_path)
+    cwd, dataset, is_link, _, deadline = _probe_out(tmp_path)
     assert cwd == latest["worktree"] != str(repo)
     assert cwd.startswith(str(repo / runner.WORKTREE_DIR / "wt-"))
     assert dataset == str(repo / "data" / "ohlc-full") and is_link == "True"
     assert "--directory" in _handed_to_uv(tmp_path) and str(repo) not in _handed_to_uv(tmp_path)
+    started = datetime.strptime(latest["started"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    own_bound = started + timedelta(seconds=3 * 3600 + runner.SWEEP_SLACK_S)
+    assert deadline == own_bound.strftime("%Y-%m-%dT%H:%M:%SZ"), "the worktree carries its own run's deadline"
 
 
 def test_a_head_that_moves_during_the_run_leaves_sha_at_the_start_and_reads_tree_moved(tmp_path):
@@ -555,10 +573,7 @@ def test_a_real_directory_under_the_worktrees_data_is_left_by_the_unlink_and_rep
 
 def test_a_stale_worktree_from_a_night_that_never_tore_down_is_swept_at_start_and_recorded(tmp_path):
     repo = _checkout(tmp_path, "def test_ok(): pass\n")
-    stale = repo / runner.WORKTREE_DIR / "wt-20260101T000000Z"
-    stale.parent.mkdir(parents=True)
-    _git(repo, "worktree", "add", "--detach", str(stale), "HEAD")
-    os.symlink(repo / "data" / "ohlc-full", stale / "data" / "ohlc-full")
+    stale = _other_run(repo, "wt-20260101T000000Z", "2026-01-01T03:10:00Z")
     assert len(_worktrees(repo)) == 2
     proc = _run(tmp_path, repo)
     assert proc.returncode == 0, proc.stdout + proc.stderr
@@ -571,33 +586,44 @@ def test_a_stale_worktree_from_a_night_that_never_tore_down_is_swept_at_start_an
     _no_worktree_left(repo)
 
 
-def test_a_worktree_younger_than_the_bound_may_be_a_live_run_and_is_left_and_named(tmp_path):
+def _left_alive(repo: Path, latest: dict, other: Path) -> None:
+    assert latest["swept"] == [] and latest["sweep_left"] == [other.name] and latest["sweep_error"] is None
+    assert latest["ok"] is True and latest["worktree"] != str(other)
+    assert (other / "data" / "ohlc-full").is_symlink(), "the live run's link is untouched"
+    assert sorted(_worktrees(repo)) == sorted([str(repo), str(other)])
+
+
+def test_a_short_bound_hand_run_leaves_the_nightly_an_hour_into_its_three_hours(tmp_path):
     repo = _checkout(tmp_path, "def test_ok(): pass\n")
-    # A minute ago: inside the bound plus slack, and never the stamp the run picks for its own worktree.
-    a_minute_ago = datetime.now(timezone.utc) - timedelta(seconds=60)
-    young = repo / runner.WORKTREE_DIR / f"wt-{a_minute_ago.strftime('%Y%m%dT%H%M%SZ')}"
-    young.parent.mkdir(parents=True)
-    _git(repo, "worktree", "add", "--detach", str(young), "HEAD")
-    os.symlink(repo / "data" / "ohlc-full", young / "data" / "ohlc-full")
-    proc = _run(tmp_path, repo, "--timeout", "2")
+    nightly = _other_run(repo, "wt-20261027T023005Z", _iso_in(2 * 3600 + runner.SWEEP_SLACK_S))
+    proc = _run(tmp_path, repo, "--timeout", "60")
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    latest = _latest(repo)
-    assert latest["swept"] == [] and latest["sweep_left"] == [young.name] and latest["sweep_error"] is None
-    assert latest["ok"] is True and latest["worktree"] != str(young)
-    assert (young / "data" / "ohlc-full").is_symlink(), "the live run's link is untouched"
-    assert sorted(_worktrees(repo)) == sorted([str(repo), str(young)])
+    _left_alive(repo, _latest(repo), nightly)
 
 
-def test_a_wt_directory_whose_name_is_not_a_stamp_is_left_and_named_not_removed(tmp_path):
+def test_the_nightly_leaves_a_hand_run_four_hours_into_its_six(tmp_path):
     repo = _checkout(tmp_path, "def test_ok(): pass\n")
-    odd = repo / runner.WORKTREE_DIR / "wt-by-hand"
-    odd.mkdir(parents=True)
-    (odd / "keep").write_text("x")
+    hand = _other_run(repo, "wt-20261026T223005Z", _iso_in(2 * 3600 + runner.SWEEP_SLACK_S))
+    proc = _run(tmp_path, repo)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    _left_alive(repo, _latest(repo), hand)
+
+
+def test_a_wt_directory_without_a_readable_deadline_is_left_and_named_not_removed(tmp_path):
+    repo = _checkout(tmp_path, "def test_ok(): pass\n")
+    no_file = _other_run(repo, "wt-20260101T000000Z", None)
+    garbled = _other_run(repo, "wt-20260102T000000Z", "tomorrow-ish")
+    by_hand = repo / runner.WORKTREE_DIR / "wt-by-hand"
+    by_hand.mkdir()
+    (by_hand / "keep").write_text("x")
     proc = _run(tmp_path, repo)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     latest = _latest(repo)
-    assert latest["swept"] == [] and latest["sweep_left"] == ["wt-by-hand"] and latest["sweep_error"] is None
-    assert latest["ok"] is True and (odd / "keep").read_text() == "x"
+    assert latest["swept"] == [] and latest["sweep_left"] == [no_file.name, garbled.name, "wt-by-hand"]
+    assert latest["sweep_error"] is None and latest["ok"] is True
+    assert (no_file / "data" / "ohlc-full").is_symlink() and (garbled / "data" / "ohlc-full").is_symlink()
+    assert (by_hand / "keep").read_text() == "x"
+    assert sorted(_worktrees(repo)) == sorted([str(repo), str(no_file), str(garbled)])
 
 
 def test_a_clean_start_sweeps_nothing_and_records_the_empty_list(tmp_path):

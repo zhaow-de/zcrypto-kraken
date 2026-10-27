@@ -37,7 +37,7 @@ import stat
 import subprocess
 import sys
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # Eight xdist workers: serial, the suite outgrew the three-hour bound.
@@ -45,7 +45,7 @@ PYTEST_ARGS = ("-q", "-p", "no:cacheprovider", "-rfEs", "-n", "8")
 # The data file only, `.coverage` at the worktree's root: the upload reads it there, and a report would only lengthen the journal.
 COVERAGE_ARGS = ("--cov=cli", "--cov-report=")
 WORKTREE_DIR = Path(".tmp") / "data-gated-run"
-_WT_STAMP = re.compile(r"^wt-(\d{8}T\d{6})Z$")
+DEADLINE_FILE = ".deadline"
 # A `wt-<stamp>` this much older than the run's own bound cannot be a live run's: the runner kills pytest at the bound.
 SWEEP_SLACK_S = 600.0
 DEVELOP_ENV = "ZCRYPTO_DATA_GATED_DEVELOP"
@@ -173,15 +173,16 @@ class WorktreeError(Exception):
     """The worktree could not be made whole: what `git worktree add` or a link said."""
 
 
-def add_worktree(repo: Path, sha: str, worktree: Path) -> list[str]:
-    """The detached worktree at `sha`, with every entry of the checkout's `data/` but its tracked `.gitignore` symlinked
-    into the worktree's; the names linked."""
+def add_worktree(repo: Path, sha: str, worktree: Path, deadline: datetime) -> list[str]:
+    """The detached worktree at `sha`, its `.deadline` the instant this run is over whatever happens, and every entry of the
+    checkout's `data/` but its tracked `.gitignore` symlinked into the worktree's; the names linked."""
     worktree.parent.mkdir(parents=True, exist_ok=True)
     added = _git(repo, "worktree", "add", "--detach", str(worktree), sha)
     if added.returncode != 0:
         raise WorktreeError(f"git worktree add exited {added.returncode}: {added.stderr.strip()}")
     linked = []
     try:
+        (worktree / DEADLINE_FILE).write_text(_iso(deadline) + "\n")
         (worktree / "data").mkdir(exist_ok=True)
         for entry in sorted(p for p in (repo / "data").iterdir() if p.name != ".gitignore"):
             os.symlink(entry, worktree / "data" / entry.name)
@@ -222,19 +223,26 @@ def remove_worktree(repo: Path, worktree: Path) -> dict:
     }
 
 
-def sweep_stale_worktrees(repo: Path, started: datetime, bound_s: float) -> tuple[list[str], list[str], str | None]:
-    """Each `wt-<stamp>` under WORKTREE_DIR whose stamp is more than `bound_s` + SWEEP_SLACK_S before `started` -- a night
-    that never reached its teardown -- removed as the night's own is, then `git worktree prune`; a younger one may be a run
-    still going, and a name that is not a stamp is nobody's to remove, so both are left and named. `(swept, left, faults)`."""
+def _deadline(worktree: Path) -> datetime | None:
+    try:
+        text = (worktree / DEADLINE_FILE).read_text().strip()
+        return datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except OSError, ValueError:
+        return None
+
+
+def sweep_stale_worktrees(repo: Path, now: datetime) -> tuple[list[str], list[str], str | None]:
+    """Each `wt-*` under WORKTREE_DIR whose own `.deadline` has passed, removed as the night's own is, then `git worktree
+    prune`; one whose deadline is still ahead may be a run going on, and one with no readable deadline is not this runner's,
+    so both are left and named. `(swept, left, faults)`."""
     root = repo / WORKTREE_DIR
     swept: list[str] = []
     left: list[str] = []
     faults: list[str] = []
     if root.is_dir():
         for entry in sorted(p for p in root.iterdir() if p.name.startswith("wt-")):
-            match = _WT_STAMP.match(entry.name)
-            stamped = datetime.strptime(match.group(1), "%Y%m%dT%H%M%S").replace(tzinfo=timezone.utc) if match else None
-            if stamped is None or (started - stamped).total_seconds() <= bound_s + SWEEP_SLACK_S:
+            deadline = _deadline(entry)
+            if deadline is None or deadline > now:
                 left.append(entry.name)
                 continue
             record = remove_worktree(repo, entry)
@@ -510,7 +518,8 @@ def main(argv: list[str] | None = None) -> int:
     started = datetime.now(timezone.utc)
     state = git_state(repo)
     listing_start = data_listing(repo)
-    swept, sweep_left, sweep_error = sweep_stale_worktrees(repo, started, args.timeout)
+    swept, sweep_left, sweep_error = sweep_stale_worktrees(repo, started)
+    deadline = started + timedelta(seconds=args.timeout + SWEEP_SLACK_S)
     command, exit_code, output, run_error = None, None, "", None
     worktree = teardown = None
     if not data_present:
@@ -524,7 +533,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if worktree is not None:
             try:
-                add_worktree(repo, state["sha"], worktree)
+                add_worktree(repo, state["sha"], worktree, deadline)
                 pytest_args = args.extra if coverage_off else list(COVERAGE_ARGS)
                 command, exit_code, output, run_error = run_suite(worktree, uv, pytest_args, args.timeout, develop=state["develop"])
             except Exception as exc:
