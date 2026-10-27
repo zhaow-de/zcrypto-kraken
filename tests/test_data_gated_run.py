@@ -229,6 +229,7 @@ def _checkout(tmp_path: Path, body: str, *, data: bool = True, datasets: bool = 
         (repo / "data" / ".gitignore").write_text("*\n!.gitignore\n")
         if datasets:
             (repo / "data" / "ohlc-full").mkdir()
+            (repo / "data" / "ohlc-full" / "manifest.json").write_text("{}\n")
     subprocess.run(["git", "init", "-q", "-b", "develop", str(repo)], check=True)
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "synthetic")
@@ -547,6 +548,7 @@ def test_a_real_directory_under_the_worktrees_data_is_left_by_the_unlink_and_rep
     assert latest["teardown"]["unlinked"] == ["ohlc-full"] and latest["teardown"]["left"] == ["real-dir"]
     assert latest["teardown"]["removed"] is True and latest["teardown"]["error"] is None
     assert sorted(p.name for p in (repo / "data").iterdir()) == [".gitignore", "ohlc-full"]
+    assert (repo / "data" / "ohlc-full" / "manifest.json").read_text() == "{}\n", "the dataset behind the link is whole"
     assert latest["data_listing_intact"] is True and latest["ok"] is True
     _no_worktree_left(repo)
 
@@ -564,6 +566,8 @@ def test_a_stale_worktree_from_a_night_that_never_tore_down_is_swept_at_start_an
     assert latest["swept"] == ["wt-20260101T000000Z"] and latest["sweep_left"] == [] and latest["sweep_error"] is None
     assert latest["ok"] is True and latest["worktree"] != str(stale)
     assert sorted(p.name for p in (repo / "data").iterdir()) == [".gitignore", "ohlc-full"]
+    assert (repo / "data" / "ohlc-full" / "manifest.json").read_text() == "{}\n", "the dataset behind the swept link is whole"
+    assert latest["data_listing_intact"] is True
     _no_worktree_left(repo)
 
 
@@ -605,16 +609,26 @@ def test_a_clean_start_sweeps_nothing_and_records_the_empty_list(tmp_path):
 
 
 def test_a_suite_that_writes_into_the_checkouts_data_is_caught_by_the_listing_and_fails_the_run(tmp_path):
+    # One level down, as a write through the worktree's dataset link lands: a top-level listing would miss it.
     repo = _checkout(
-        tmp_path, "import os\ndef test_intrudes(): os.mkdir(os.path.join(os.environ['SYNTH_REPO'], 'data', 'intruder'))\n"
+        tmp_path,
+        """\
+        import os
+        def test_intrudes():
+            open(os.path.join(os.environ["SYNTH_REPO"], "data", "ohlc-full", "intruder.parquet"), "w").write("x")
+        """,
     )
     proc = _run(tmp_path, repo)
     assert proc.returncode == 1, proc.stdout + proc.stderr
     latest = _latest(repo)
     assert latest["counts"]["passed"] == 1 and latest["exit_code"] == 0
     assert latest["data_listing_intact"] is False
-    assert latest["data_listing"] == {"start": [".gitignore", "ohlc-full"], "end": [".gitignore", "intruder", "ohlc-full"]}
+    start, end = latest["data_listing"]["start"], latest["data_listing"]["end"]
+    assert {entry[0] for entry in start} == {"data/.gitignore", "data/ohlc-full", "data/ohlc-full/manifest.json"}
+    assert {entry[0] for entry in end} - {entry[0] for entry in start} == {"data/ohlc-full/intruder.parquet"}
+    assert all(len(entry) == 3 and isinstance(entry[1], int) and isinstance(entry[2], int) for entry in start + end)
     assert latest["error"].startswith("the checkout's data/ listing changed during the run: ")
+    assert "data/ohlc-full/intruder.parquet" in latest["error"]
     assert latest["ok"] is False
     assert proc.stdout.rstrip().splitlines()[-1].startswith("data-gated-run: FAIL exit=0 the checkout's data/ listing changed")
 
@@ -678,7 +692,7 @@ _STATE = {
     "sha_at_end": "a" * 40,
     "tree_moved": False,
 }
-_LISTING = ([".gitignore", "ohlc-full"], [".gitignore", "ohlc-full"])
+_LISTING = ([["data/.gitignore", 12, 1], ["data/ohlc-full", 4096, 1]], [["data/.gitignore", 12, 1], ["data/ohlc-full", 4096, 1]])
 
 
 def _result(**overrides) -> dict:

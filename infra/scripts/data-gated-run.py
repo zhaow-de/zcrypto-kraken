@@ -159,9 +159,18 @@ def git_state(repo: Path) -> dict:
     }
 
 
-def data_listing(repo: Path) -> list[str] | None:
+def data_listing(repo: Path) -> list[list] | None:
+    """Every directory and file under the checkout's `data/`, links not followed: `[repo-relative path, size, mtime_ns]`."""
     data = repo / "data"
-    return sorted(p.name for p in data.iterdir()) if data.is_dir() else None
+    if not data.is_dir():
+        return None
+    listing = []
+    for root, dirs, files in os.walk(data):
+        for name in (*dirs, *files):
+            path = Path(root) / name
+            st = os.lstat(path)
+            listing.append([path.relative_to(repo).as_posix(), st.st_size, st.st_mtime_ns])
+    return sorted(listing)
 
 
 def worktree_path(repo: Path, started: datetime) -> Path:
@@ -324,7 +333,8 @@ def build_result(
     listing_start, listing_end = data_listing
     intact = listing_start == listing_end
     if not intact:
-        faults.append(f"the checkout's data/ listing changed during the run: {listing_start} -> {listing_end}")
+        differing = {tuple(e) for e in listing_start or []} ^ {tuple(e) for e in listing_end or []}
+        faults.append(f"the checkout's data/ listing changed during the run: {sorted({e[0] for e in differing})}")
     error = "; ".join(f for f in faults if f) or None
     return {
         "schema": SCHEMA,
