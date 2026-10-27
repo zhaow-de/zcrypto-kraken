@@ -8363,6 +8363,19 @@ def test_the_week_after_the_series_start_is_scored(tmp_path, kill_trip_expected)
     assert tripped and states == [executor_module._TRACKING_BREACHED]
 
 
+def test_the_series_first_fill_is_the_first_at_or_after_its_start(tmp_path):
+    """The breaching week with the series started at Sunday 20Z, after the opening slice and the build-out: its first fill
+    is the in-week top-up, so the week is the one that fill falls in and is refused, where the opening slice would date
+    the series before it and score the week."""
+    _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
+
+    with _executor_errors(logging.WARNING) as records:
+        tripped, states = _tracking_states(tmp_path, series_start=_BUILD_OUT + timedelta(hours=4))
+
+    assert not tripped and states == [executor_module._TRACKING_UNSCORED]
+    assert f"the realized series made its first fill at {_IN_WEEK.isoformat()}, at or after 2026-W37 began" in _refusal(records)
+
+
 def test_an_absent_series_start_refuses_the_week_naming_the_file(tmp_path):
     _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
 
