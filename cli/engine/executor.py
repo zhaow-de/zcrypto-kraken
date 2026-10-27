@@ -27,6 +27,7 @@ import asyncio
 import json
 import math
 import os
+import re
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -133,6 +134,10 @@ _TRIPPED_REFUSAL = "the kill switch tripped in this process"
 # so the owner re-mints the series by removing it -- after a deposit or a withdrawal taken with the loop
 # paused, or a drawdown trip's post-mortem -- and the next mark writes it again; nothing here rewrites it.
 EQUITY_SERIES_FILE = "equity-series-start"
+# The tracking series' first boundary, one `YYYY-MM-DDTHH:MM:SSZ` line beside the arm and kill files. The operator writes
+# it at rung 3's entry and again after each attended act on the book; the engine only reads it, and never mints one.
+TRACKING_SERIES_START_FILE = "series-start"
+_TRACKING_SERIES_START_LINE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\n?")
 # The two drawdown trips, in basis points of the cycle record's NAV, the book the draft sizes, never of
 # the account's equity, whose EUR above the book would dilute every loss: a fall from the series'
 # high-water mark that latches the kill switch, and a UTC day's loss that holds opens for the rest of
@@ -3767,6 +3772,24 @@ class ProbeExecutor:
         except Exception:
             logger.exception("executor gap publish raised -- continuing")
 
+    def _tracking_series_start(self) -> datetime:
+        """The instant `TRACKING_SERIES_START_FILE` names, or EngineError naming the file: absent, unreadable, or not one
+        `YYYY-MM-DDTHH:MM:SSZ` line on a 4-hourly boundary."""
+        path = exec_dir(self._state_dir) / TRACKING_SERIES_START_FILE
+        try:
+            text = path.read_text()
+        except FileNotFoundError:
+            raise EngineError(f"no series start is recorded: {path} is absent") from None
+        except (OSError, UnicodeDecodeError) as exc:
+            raise EngineError(f"the series start {path} could not be read: {type(exc).__name__}") from exc
+        try:
+            start = datetime.strptime(text.strip(), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        except ValueError:
+            start = None
+        if _TRACKING_SERIES_START_LINE.fullmatch(text) is None or start is None or start.hour % _H4 or start.minute or start.second:
+            raise EngineError(f"the series start {path} is not one YYYY-MM-DDTHH:MM:SSZ line naming a 4-hourly boundary")
+        return start
+
     def _refuse_tracking(self, reason: str) -> None:
         """No verdict this boundary. Published as its own state so an operator can tell a week that
         was measured and passed from one nothing could score."""
@@ -3860,22 +3883,30 @@ class ProbeExecutor:
             )
             return
 
-        # The series' first fill is the earliest the journal holds: a prune that has taken earlier ones leaves this
-        # later than the truth, which can only refuse a week, never score one.
+        # `>=`, never `>`, in both refusals below: a start or a first fill exactly ON the Monday
+        # boundary -- what arming at a week boundary produces -- would otherwise leave the week
+        # holding it fully scored, ramp and all, which is the one week D10 excludes by name. That
+        # week is not comparable to a settled one whichever way it is read: its cycles before the
+        # start's trading hold a book the engine had not yet traded toward its targets, so counting
+        # them mixes an untraded book into the mean, while dropping them scores a fraction of a week
+        # under a whole week's name. A week entirely before the start is not the series', and takes
+        # the same exit.
+        start = self._tracking_series_start()
+        if start >= week_start:
+            where = f"inside {label}" if start < week_end else f"after {label} ended"
+            self._refuse_tracking(
+                f"the tracking series started at {start.isoformat()}, {where} -- a week holding or before the series' start is not scored"
+            )
+            return
         fills, _notes = extract_fills([exec_docs[b] for b in sorted(exec_docs)])
-        first_fill = min((f.boundary for f in fills if f.base is not None), default=None)
+        first_fill = min((f.boundary for f in fills if f.base is not None and f.boundary >= start), default=None)
         if first_fill is None:
-            self._refuse_tracking("no model-leg fill has been journaled yet -- the realized series has not started")
+            self._refuse_tracking(
+                f"no model-leg fill has been journaled since the series started at {start.isoformat()} -- the realized "
+                "series has not started"
+            )
             return
         if first_fill >= week_start:
-            # `>=`, never `>`: a first fill landing exactly ON the Monday boundary -- what an
-            # operator arming at a week boundary produces -- would otherwise leave the week
-            # containing it fully scored, ramp and all, which is the one week D10 excludes by name.
-            # The week holding the series' first fill is not comparable to a settled one whichever
-            # way it is read: its cycles before the fill hold a book the engine had not yet traded
-            # toward its targets, so counting them mixes an untraded book into the mean, while
-            # dropping them scores a fraction of a week under a whole week's name. A week entirely
-            # before the first fill is not measured at all, and takes the same exit.
             self._refuse_tracking(
                 f"the realized series made its first fill at {first_fill.isoformat()}, "
                 f"at or after {label} began -- the week the series' first fill falls in is measurable on only the "

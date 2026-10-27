@@ -8210,8 +8210,22 @@ def _tracking_executor(tmp_path, *, band=_TRACK_BAND, armed=True, clock=None, ga
     return _executor(tmp_path, config=config, clock=clock or (lambda: at + timedelta(minutes=2)), gate=gate)
 
 
-def _tracking_states(tmp_path, boundary=_TRACK_EVAL, **kwargs):
-    """Fire one boundary alert against a fresh executor and return (kill-file-exists, states)."""
+def _write_series_start(tmp_path, start):
+    """`exec/series-start` as the operator writes it: `start`'s instant as its one line, a string written as it stands, or
+    no file for None. Spelled as the procedures spell it, never through the module's constant: the operator writes it."""
+    path = exec_dir(tmp_path) / "series-start"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if start is None:
+        path.unlink(missing_ok=True)
+    else:
+        path.write_text(start if isinstance(start, str) else f"{start:%Y-%m-%dT%H:%M:%SZ}\n")
+    return path
+
+
+def _tracking_states(tmp_path, boundary=_TRACK_EVAL, series_start=_TRACK_LEAD, **kwargs):
+    """Fire one boundary alert against a fresh executor and return (kill-file-exists, states), with `exec/series-start`
+    written by `_write_series_start` -- the journal's first boundary unless the case names another."""
+    _write_series_start(tmp_path, series_start)
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
     _tracking_executor(tmp_path, at=boundary, **kwargs).on_boundary(boundary)
@@ -8224,6 +8238,7 @@ def test_the_boundary_alert_reaches_the_executors_tracking_trip_with_no_plan_fil
     driven here, so a trip hooked on the tick's `_evaluate` could not fire here -- and the kill file
     has no other producer in this construction."""
     _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
+    _write_series_start(tmp_path, _TRACK_LEAD)
     assert not _plan_path(tmp_path).exists()
     executor = _tracking_executor(tmp_path)
     strategy = SimpleNamespace(
@@ -8310,6 +8325,76 @@ def test_a_week_whose_following_boundary_has_no_cycle_record_is_refused(tmp_path
     assert f"the book journaled at {_TRACK_EVAL.isoformat()}, which no cycle record holds" in refused[-1], refused
 
 
+def _refusal(records) -> str:
+    refused = [m for m in (r.getMessage() for r in records) if "is not scored" in m]
+    assert refused, "the scorer refused nothing -- the week was scored, or its refusal wording moved"
+    return refused[-1]
+
+
+@pytest.mark.parametrize("start", [_TRACK_MONDAY, _IN_WEEK], ids=["its-first-boundary", "mid-week"])
+def test_a_week_holding_the_series_start_is_refused_naming_it(tmp_path, start):
+    """The breaching week with the series started inside it -- on its first boundary, the `>=` edge, or mid-week."""
+    _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
+
+    with _executor_errors(logging.WARNING) as records:
+        tripped, states = _tracking_states(tmp_path, series_start=start)
+
+    assert not tripped and states == [executor_module._TRACKING_UNSCORED]
+    assert f"the tracking series started at {start.isoformat()}, inside 2026-W37" in _refusal(records)
+
+
+def test_a_week_before_the_series_start_is_refused_naming_it(tmp_path):
+    start = _TRACK_EVAL + timedelta(hours=8)
+    _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
+
+    with _executor_errors(logging.WARNING) as records:
+        tripped, states = _tracking_states(tmp_path, series_start=start)
+
+    assert not tripped and states == [executor_module._TRACKING_UNSCORED]
+    assert f"the tracking series started at {start.isoformat()}, after 2026-W37 ended" in _refusal(records)
+
+
+def test_the_week_after_the_series_start_is_scored(tmp_path, kill_trip_expected):
+    """The breaching week with the series started at the build-out, the Sunday before it: scored, and it trips."""
+    _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
+
+    tripped, states = _tracking_states(tmp_path, series_start=_BUILD_OUT)
+
+    assert tripped and states == [executor_module._TRACKING_BREACHED]
+
+
+def test_an_absent_series_start_refuses_the_week_naming_the_file(tmp_path):
+    _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
+
+    with _executor_errors(logging.WARNING) as records:
+        tripped, states = _tracking_states(tmp_path, series_start=None)
+
+    assert not tripped and states == [executor_module._TRACKING_UNSCORED]
+    assert f"no series start is recorded: {exec_dir(tmp_path) / 'series-start'} is absent" in _refusal(records)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "2026-09-06T00:00:00+00:00\n",
+        "2026-09-06T00:00:00Z\n\n",
+        "2026-09-06T01:00:00Z\n",
+        "2026-02-30T00:00:00Z\n",
+        "",
+    ],
+    ids=["an-offset", "a-second-line", "off-the-4-hourly-grid", "no-such-day", "empty"],
+)
+def test_a_malformed_series_start_refuses_the_week_naming_the_file(tmp_path, line):
+    _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
+
+    with _executor_errors(logging.WARNING) as records:
+        tripped, states = _tracking_states(tmp_path, series_start=line)
+
+    assert not tripped and states == [executor_module._TRACKING_UNSCORED]
+    path = exec_dir(tmp_path) / "series-start"
+    assert f"the series start {path} is not one YYYY-MM-DDTHH:MM:SSZ line naming a 4-hourly boundary" in _refusal(records)
+
+
 def test_a_healthy_complete_week_does_not_trip(tmp_path):
     """THE TRUE POSITIVE, and the reason the band is compared in the direction it is: the same
     fixture with the book fully deployed reads ~46 bps, strictly the other side of 120, and must
@@ -8375,12 +8460,13 @@ def test_the_week_containing_the_first_fill_is_not_scored(tmp_path):
 
 
 def test_a_journal_pruned_of_the_series_first_fill_still_scores_the_healthy_week_within_band(tmp_path):
-    """The healthy week opened a day early, with the day-dir holding the opening slice deleted whole, as the retention
-    prune cuts: the books the week's records journaled still hold it, so the week scores within the band."""
+    """The healthy week opened a day early, the series starting at its opening slice, with the day-dir holding that slice
+    deleted whole, as the retention prune cuts: the books the week's records journaled still hold it, so the week scores
+    within the band."""
     journal = _journal_week(tmp_path, fills=_PRUNABLE_FILLS, lead=12)
     shutil.rmtree(journal / f"{_EARLY_OPENING:%Y-%m-%d}")
 
-    tripped, states = _tracking_states(tmp_path)
+    tripped, states = _tracking_states(tmp_path, series_start=_EARLY_OPENING)
 
     assert not tripped
     assert states == [executor_module._TRACKING_WITHIN_BAND]
@@ -8436,6 +8522,7 @@ def test_the_trip_keeps_the_first_reason_across_a_restart(tmp_path, kill_trip_ex
     re-derives the same breaching week and must leave the first reason exactly as it found it: that
     text, with its timestamp, is what the operator reads to know when the engine stopped."""
     _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
+    _write_series_start(tmp_path, _TRACK_LEAD)
     _tracking_executor(tmp_path).on_boundary(_TRACK_EVAL)
     first = _kill_file(tmp_path).read_text()
 
