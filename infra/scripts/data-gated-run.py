@@ -154,7 +154,6 @@ def git_state(repo: Path) -> dict:
     local = _git(repo, "rev-parse", "--verify", "--quiet", "develop").stdout.strip() or None
     origin_develop = _git(repo, "rev-parse", "--verify", "--quiet", "origin/develop").stdout.strip() or None
     develop = local or origin_develop
-    # How far the checkout's develop is behind the fetched one: a note for the daily pass, never the run's fault.
     behind = None
     if local and origin_develop:
         counted = _git(repo, "rev-list", "--count", "develop..origin/develop")
