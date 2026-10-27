@@ -1607,14 +1607,13 @@ def _window_exec_records(journal_root: Path, since: str | None, until: str | Non
 
 
 def _journaled_books(journal_root: Path, records: list[CycleRecord]) -> dict[datetime, dict[str, float] | None]:
-    """The book each window record journaled, by boundary, and the book the boundary after the window's last record
-    journaled -- the one the window's last cycle traded to, read past the window. That record ABORTS when it will not read,
-    as a window record does; absent, the last cycle is not scored."""
-    books: dict[datetime, dict[str, float] | None] = {record.cycle_ts: record.held for record in records}
-    after = max(books) + timedelta(hours=4)
+    """The book the boundary after the window's last record journaled -- the one the window's last cycle traded to, read
+    past the window; the window's own books are its stages'. That record ABORTS when it will not read, as a window record
+    does; absent, the last cycle is not scored."""
+    after = max(record.cycle_ts for record in records) + timedelta(hours=4)
     path = journal_root / f"{after:%Y-%m-%d}" / f"cycle-{after:%H}.json"
     if not path.exists():
-        return books
+        return {}
     try:
         record = from_json(path.read_text())
         validate_record(record)
@@ -1623,8 +1622,7 @@ def _journaled_books(journal_root: Path, records: list[CycleRecord]) -> dict[dat
             f"unreadable cycle record {path}: {exc} -- it journals the book the window's last cycle traded to; repair the "
             "record or end the window a day earlier with --until"
         ) from exc
-    books[record.cycle_ts] = record.held
-    return books
+    return {record.cycle_ts: record.held}
 
 
 def _parse_gate_from(raw: str | None) -> str | None:
