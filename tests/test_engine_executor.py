@@ -88,6 +88,7 @@ from cli.engine.instruments import INSTRUMENT_IDS, BelowMinimum, SizedOrder, siz
 from cli.engine.journal import CycleRecord, SnapshotEntry, from_json, to_json
 from cli.engine.node import ShadowStrategy
 from cli.engine.probeplan import MODES, PLAN_FILENAME, ProbeIntent, parse_plan
+from cli.engine.tracking import extract_fills
 from cli.engine.venue import VenueStatus
 from cli.engine.venueledger import write_venue_record
 from cli.engine.venuestate import ConcordanceVerdict, InstrumentConstraints, VenueState
@@ -8064,10 +8065,9 @@ _TRACK_CLOSES = {
 }
 _TRACK_BASES = tuple(_TRACK_CLOSES)
 
-_OPENING = _TRACK_LEAD + timedelta(hours=4)  # the journal's oldest boundary carries NO fill
+_OPENING = _TRACK_LEAD + timedelta(hours=4)  # the fixtures' first fill, a boundary after the journal's oldest
 _BUILD_OUT = _TRACK_LEAD + timedelta(hours=16)
 _IN_WEEK = _TRACK_MONDAY + timedelta(hours=40)  # 2026-09-08 16:00, boundary 10 of the week
-_MINT_AT = _OPENING + timedelta(hours=4)  # the boundary a live engine dates itself at: the next one
 
 # Asymmetric by construction: ten different sizes, one sell, and BTC arriving in two slices at two
 # different boundaries -- so a reader that ignored the boundary a fill was filed under, or summed
@@ -8159,17 +8159,32 @@ def _track_fill_row(index, symbol, side, qty):
 
 def _journal_week(tmp_path, *, fills, start=_TRACK_MONDAY, n_cycles=42, lead=0, level="full", overrides=None):
     """`lead` boundaries before `start` plus `n_cycles` from it, each with the cycle record AND the
-    exec record the engine writes at that boundary. `fills` maps a boundary to (symbol, side, qty)
-    tuples; `overrides` maps a boundary to any of `level`/`weights`/`closes`."""
+    exec record the engine writes at that boundary, and the cycle record of the boundary after them.
+    `fills` maps a boundary to (symbol, side, qty) tuples; `overrides` maps a boundary to any of
+    `level`/`weights`/`closes`/`held`. Each cycle record journals the book the venue read holds then,
+    as the writer does: every fill on disk filed under an earlier boundary, the ten bases at 0.0 else."""
     journal = tmp_path / "journal"
     overrides = overrides or {}
     boundaries = [start - timedelta(hours=4 * (lead - i)) for i in range(lead)]
     boundaries += [start + timedelta(hours=4 * i) for i in range(n_cycles)]
     index = 0
     for boundary in boundaries:
+        verdict = GateVerdict(level=overrides.get(boundary, {}).get("level", level), reasons=(), inputs={})
+        write_exec_record(journal, boundary, verdict, evaluated_at=boundary)
+        for symbol, side, qty in fills.get(boundary, ()):
+            index += 1
+            row = _track_fill_row(index, symbol, side, qty)
+            row["events"][0]["at"] = (boundary + timedelta(minutes=3)).isoformat()
+            append_submitted_row(journal, boundary, row, verdict=verdict, evaluated_at=boundary)
+    on_disk, _notes = extract_fills(list(execledger_module.exec_records_through(journal, boundaries[-1]).values()))
+    for boundary in (*boundaries, boundaries[-1] + timedelta(hours=4)):
         override = overrides.get(boundary, {})
         weights = override.get("weights", _TRACK_WEIGHTS)
         closes = override.get("closes", _TRACK_CLOSES) if "closes" in override else _TRACK_CLOSES
+        book = dict.fromkeys(_TRACK_BASES, 0.0)
+        for fill in on_disk:
+            if fill.base is not None and fill.boundary < boundary:
+                book[fill.base] += fill.credited if fill.side == "buy" else -fill.credited
         record = CycleRecord(
             schema_version=2,
             cycle_ts=boundary,
@@ -8180,65 +8195,37 @@ def _journal_week(tmp_path, *, fills, start=_TRACK_MONDAY, n_cycles=42, lead=0, 
             code_version="1.0.0",
             builder_path="fast",
             closes=None if closes is None else dict(closes),
+            held=override["held"] if "held" in override else book,
         )
         day = journal / f"{boundary:%Y-%m-%d}"
         day.mkdir(parents=True, exist_ok=True)
         (day / f"cycle-{boundary:%H}.json").write_text(to_json(record))
-        verdict = GateVerdict(level=override.get("level", level), reasons=(), inputs={})
-        write_exec_record(journal, boundary, verdict, evaluated_at=boundary)
-        for symbol, side, qty in fills.get(boundary, ()):
-            index += 1
-            row = _track_fill_row(index, symbol, side, qty)
-            row["events"][0]["at"] = (boundary + timedelta(minutes=3)).isoformat()
-            append_submitted_row(journal, boundary, row, verdict=verdict, evaluated_at=boundary)
     return journal
 
 
 def _tracking_executor(tmp_path, *, band=_TRACK_BAND, armed=True, clock=None, gate=None, at=_TRACK_EVAL):
     # The clock sits just past the boundary being scored, as the live one does: the alert fires at
-    # `boundary + settle delay`, and the birth recorder reads the journal "through now".
+    # `boundary + settle delay`.
     config = _config(tmp_path, exec_armed=armed, tracking_band_bps=band, shadow_nav_eur=_TRACK_NAV)
     return _executor(tmp_path, config=config, clock=clock or (lambda: at + timedelta(minutes=2)), gate=gate)
 
 
-def _mint_birth(tmp_path, at=_MINT_AT, **kwargs):
-    """Run the boundary the live engine would have DATED ITSELF at -- the first one after its first
-    fill. Every fixture below is a journal the engine lived through boundary by boundary, so a test
-    that jumped straight to the scoring boundary a week later would be asking the recorder to date a
-    week-old fill, which is the one thing it refuses. The owner's opening holdings then follow the
-    birth it minted, ten zero rows -- the book held nothing before its first fill."""
-    _tracking_executor(tmp_path, at=at, **kwargs).on_boundary(at)
-    birth = exec_dir(tmp_path) / executor_module.FIRST_FILL_FILE
-    if birth.exists():
-        _write_opening_holdings(tmp_path, datetime.fromisoformat(birth.read_text().strip()))
-
-
-def _write_birth(tmp_path, at):
-    """The birth record written by hand, as the entry's re-date writes it."""
-    path = exec_dir(tmp_path) / executor_module.FIRST_FILL_FILE
+def _write_series_start(tmp_path, start):
+    """`exec/series-start` as the operator writes it: `start`'s instant as its one line, a string written as it stands, or
+    no file for None. Spelled as the procedures spell it, never through the module's constant: the operator writes it."""
+    path = exec_dir(tmp_path) / "series-start"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"{at.isoformat()}\n")
+    if start is None:
+        path.unlink(missing_ok=True)
+    else:
+        path.write_text(start if isinstance(start, str) else f"{start:%Y-%m-%dT%H:%M:%SZ}\n")
+    return path
 
 
-def _write_opening_holdings(tmp_path, birth, **held):
-    """The opening holdings stamped at `birth`: one row per basket base, `held`'s balance or 0.0, at the fixture's close."""
-    rows = [
-        {"base": base, "codes": [base], "balance": held.get(base, 0.0), "close": close} for base, close in _TRACK_CLOSES.items()
-    ]
-    # Spelled as the owner's procedures spell it, never through the module's constant: the owner installs it by hand.
-    path = exec_dir(tmp_path) / "opening-holdings.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"schema_version": 1, "birth": birth.isoformat(), "rows": rows}))
-
-
-def _tracking_states(tmp_path, boundary=_TRACK_EVAL, mint_at=_MINT_AT, **kwargs):
-    """Fire one boundary alert against a fresh executor and return (kill-file-exists, states).
-
-    `mint_at=None` is the engine that never witnessed its own first fill -- no record, and whatever
-    the journal still holds is all it has."""
-    set_executor_hooks()  # the mint is setup, not the measurement -- it publishes into nobody's list
-    if mint_at is not None:
-        _mint_birth(tmp_path, at=mint_at, **kwargs)
+def _tracking_states(tmp_path, boundary=_TRACK_EVAL, series_start=_TRACK_LEAD, **kwargs):
+    """Fire one boundary alert against a fresh executor and return (kill-file-exists, states), with `exec/series-start`
+    written by `_write_series_start` -- the journal's first boundary unless the case names another."""
+    _write_series_start(tmp_path, series_start)
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
     _tracking_executor(tmp_path, at=boundary, **kwargs).on_boundary(boundary)
@@ -8251,7 +8238,7 @@ def test_the_boundary_alert_reaches_the_executors_tracking_trip_with_no_plan_fil
     driven here, so a trip hooked on the tick's `_evaluate` could not fire here -- and the kill file
     has no other producer in this construction."""
     _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
-    _mint_birth(tmp_path)
+    _write_series_start(tmp_path, _TRACK_LEAD)
     assert not _plan_path(tmp_path).exists()
     executor = _tracking_executor(tmp_path)
     strategy = SimpleNamespace(
@@ -8291,6 +8278,143 @@ def test_a_complete_week_beyond_the_band_latches_the_kill_file(tmp_path, kill_tr
     text = _kill_file(tmp_path).read_text()
     assert "2026-W37" in text and "317" in text and "120" in text
     assert states == [executor_module._TRACKING_BREACHED]
+
+
+def test_the_week_is_scored_from_the_journaled_book_with_the_ledger_short_of_its_fills(tmp_path, kill_trip_expected):
+    """The breaching week with the build-out's and the in-week top-up's fills taken off the ledger: the books the records
+    journaled still read 317.4 bps, so the position is the journal's, never the fills'. 317.4 is each cycle scored
+    against the NEXT boundary's book -- its own, read before its trading, puts the top-up a cycle late at 316.8."""
+    journal = _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
+    for boundary in (_BUILD_OUT, _IN_WEEK):
+        path = exec_record_path(journal, boundary)
+        doc = read_exec_record(path)
+        doc["submitted"] = []
+        path.write_text(json.dumps(doc))
+
+    tripped, states = _tracking_states(tmp_path)
+
+    assert tripped and states == [executor_module._TRACKING_BREACHED]
+    assert "2026-W37 tracked 317.4 bps" in _kill_file(tmp_path).read_text()
+
+
+@pytest.mark.parametrize("unbooked", [_IN_WEEK + timedelta(hours=8), _TRACK_EVAL], ids=["mid-week", "the-boundary-after"])
+def test_a_week_whose_cycle_scores_against_a_boundary_that_journaled_no_book_is_refused_naming_it(tmp_path, unbooked):
+    """A later boundary of the week or the boundary after it, each the book one of the week's cycles is scored against."""
+    _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6, overrides={unbooked: {"held": None}})
+
+    with _executor_errors(logging.WARNING) as records:
+        tripped, states = _tracking_states(tmp_path)
+
+    assert not tripped and states == [executor_module._TRACKING_UNSCORED]
+    refused = [m for m in (r.getMessage() for r in records) if "is not scored" in m]
+    assert f"the cycle record at {unbooked.isoformat()} journals none" in refused[-1], refused
+
+
+def test_a_week_whose_first_boundary_journaled_no_book_is_scored(tmp_path, kill_trip_expected):
+    """That book is the one the week before scores its last cycle against; each of this week's cycles has its own."""
+    _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6, overrides={_TRACK_MONDAY: {"held": None}})
+
+    tripped, states = _tracking_states(tmp_path)
+
+    assert tripped and states == [executor_module._TRACKING_BREACHED]
+    assert "2026-W37 tracked 317.4 bps" in _kill_file(tmp_path).read_text()
+
+
+def test_a_week_whose_following_boundary_has_no_cycle_record_is_refused(tmp_path):
+    journal = _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
+    (journal / f"{_TRACK_EVAL:%Y-%m-%d}" / f"cycle-{_TRACK_EVAL:%H}.json").unlink()
+
+    with _executor_errors(logging.WARNING) as records:
+        tripped, states = _tracking_states(tmp_path)
+
+    assert not tripped and states == [executor_module._TRACKING_UNSCORED]
+    refused = [m for m in (r.getMessage() for r in records) if "is not scored" in m]
+    assert f"the book journaled at {_TRACK_EVAL.isoformat()}, which no cycle record holds" in refused[-1], refused
+
+
+def _refusal(records) -> str:
+    refused = [m for m in (r.getMessage() for r in records) if "is not scored" in m]
+    assert refused, "the scorer refused nothing -- the week was scored, or its refusal wording moved"
+    return refused[-1]
+
+
+@pytest.mark.parametrize("start", [_TRACK_MONDAY, _IN_WEEK], ids=["its-first-boundary", "mid-week"])
+def test_a_week_holding_the_series_start_is_refused_naming_it(tmp_path, start):
+    """The breaching week with the series started inside it -- on its first boundary, the `>=` edge, or mid-week."""
+    _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
+
+    with _executor_errors(logging.WARNING) as records:
+        tripped, states = _tracking_states(tmp_path, series_start=start)
+
+    assert not tripped and states == [executor_module._TRACKING_UNSCORED]
+    assert f"the tracking series started at {start.isoformat()}, inside 2026-W37" in _refusal(records)
+
+
+def test_a_week_before_the_series_start_is_refused_naming_it(tmp_path):
+    start = _TRACK_EVAL + timedelta(hours=8)
+    _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
+
+    with _executor_errors(logging.WARNING) as records:
+        tripped, states = _tracking_states(tmp_path, series_start=start)
+
+    assert not tripped and states == [executor_module._TRACKING_UNSCORED]
+    assert f"the tracking series started at {start.isoformat()}, after 2026-W37 ended" in _refusal(records)
+
+
+def test_the_week_after_the_series_start_is_scored(tmp_path, kill_trip_expected):
+    """The breaching week with the series started at the build-out, the Sunday before it: scored, and it trips."""
+    _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
+
+    tripped, states = _tracking_states(tmp_path, series_start=_BUILD_OUT)
+
+    assert tripped and states == [executor_module._TRACKING_BREACHED]
+
+
+def test_the_series_first_fill_is_the_first_at_or_after_its_start(tmp_path):
+    """The breaching week with the series started at Sunday 20Z, after the opening slice and the build-out: its first fill
+    is the in-week top-up, so the week is the one that fill falls in and is refused, where the opening slice would date
+    the series before it and score the week."""
+    _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
+
+    with _executor_errors(logging.WARNING) as records:
+        tripped, states = _tracking_states(tmp_path, series_start=_BUILD_OUT + timedelta(hours=4))
+
+    assert not tripped and states == [executor_module._TRACKING_UNSCORED]
+    assert f"the realized series made its first fill at {_IN_WEEK.isoformat()}, at or after 2026-W37 began" in _refusal(records)
+
+
+def test_an_absent_series_start_refuses_the_week_naming_the_file(tmp_path):
+    _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
+
+    with _executor_errors(logging.WARNING) as records:
+        tripped, states = _tracking_states(tmp_path, series_start=None)
+
+    assert not tripped and states == [executor_module._TRACKING_UNSCORED]
+    assert f"no series start is recorded: {exec_dir(tmp_path) / 'series-start'} is absent" in _refusal(records)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "2026-09-06T00:00:00+00:00\n",
+        "2026-09-06T00:00:00Z\n\n",
+        "2026-09-06T01:00:00Z\n",
+        "2026-09-06T04:01:00Z\n",
+        "2026-09-06T04:00:30Z\n",
+        "2026-02-30T00:00:00Z\n",
+        "",
+    ],
+    ids=["an-offset", "a-second-line", "off-the-4-hourly-grid", "a-minute-past-it", "a-second-past-it", "no-such-day", "empty"],
+)
+def test_a_malformed_series_start_refuses_the_week_naming_the_file(tmp_path, line):
+    _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
+
+    with _executor_errors(logging.WARNING) as records:
+        tripped, states = _tracking_states(tmp_path, series_start=line)
+
+    assert not tripped and states == [executor_module._TRACKING_UNSCORED]
+    path = exec_dir(tmp_path) / "series-start"
+    assert f"the series start {path} is not one YYYY-MM-DDTHH:MM:SSZ line naming a 4-hourly boundary" in _refusal(records)
 
 
 def test_a_healthy_complete_week_does_not_trip(tmp_path):
@@ -8357,20 +8481,17 @@ def test_the_week_containing_the_first_fill_is_not_scored(tmp_path):
     assert not settled and settled_states == [executor_module._TRACKING_WITHIN_BAND]
 
 
-def test_a_fill_at_the_journals_oldest_boundary_is_refused(tmp_path):
-    """The truncated journal: the same HEALTHY week with everything before the build-out pruned
-    away, so the opening slice is gone and `held` is short. Nothing on disk distinguishes that from
-    a real breach, so it is refused by `_score_closed_week`'s birth-record arm -- which REPLACED
-    asking whether the oldest surviving boundary carries a fill."""
-    journal = _journal_week(tmp_path, fills=_HEALTHY_FILLS, lead=6)
-    for boundary in (_TRACK_LEAD, _OPENING, _TRACK_LEAD + timedelta(hours=8), _TRACK_LEAD + timedelta(hours=12)):
-        (journal / f"{boundary:%Y-%m-%d}" / f"cycle-{boundary:%H}.json").unlink()
-        (journal / f"{boundary:%Y-%m-%d}" / f"exec-{boundary:%H}.json").unlink()
+def test_a_journal_pruned_of_the_series_first_fill_still_scores_the_healthy_week_within_band(tmp_path):
+    """The healthy week opened a day early, the series starting at its opening slice, with the day-dir holding that slice
+    deleted whole, as the retention prune cuts: the books the week's records journaled still hold it, so the week scores
+    within the band."""
+    journal = _journal_week(tmp_path, fills=_PRUNABLE_FILLS, lead=12)
+    shutil.rmtree(journal / f"{_EARLY_OPENING:%Y-%m-%d}")
 
-    tripped, states = _tracking_states(tmp_path)
+    tripped, states = _tracking_states(tmp_path, series_start=_EARLY_OPENING)
 
     assert not tripped
-    assert states == [executor_module._TRACKING_UNSCORED]
+    assert states == [executor_module._TRACKING_WITHIN_BAND]
 
 
 def test_it_is_refused_while_exec_armed_is_false(tmp_path):
@@ -8423,7 +8544,7 @@ def test_the_trip_keeps_the_first_reason_across_a_restart(tmp_path, kill_trip_ex
     re-derives the same breaching week and must leave the first reason exactly as it found it: that
     text, with its timestamp, is what the operator reads to know when the engine stopped."""
     _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
-    _mint_birth(tmp_path)
+    _write_series_start(tmp_path, _TRACK_LEAD)
     _tracking_executor(tmp_path).on_boundary(_TRACK_EVAL)
     first = _kill_file(tmp_path).read_text()
 
@@ -8443,6 +8564,8 @@ def test_the_idle_tick_never_evaluates_tracking(tmp_path):
     (`_refresh_gate`); the three ticks here precede the period's first elapse from the executor's
     construction."""
     _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
+    # The boundary the ticks fall in has drafted, so the first tick re-arms no draft (`_rearm_cycle_draft`).
+    write_accum_record(tmp_path / "journal", _TRACK_EVAL, _accum_doc(_TRACK_EVAL, "ok", plan_id="r3-20260914-00"))
     gate = CountingGate()
     executor = _tracking_executor(tmp_path)
     executor._gate = gate
@@ -8461,41 +8584,6 @@ _BOUNDARY_RAMP_FILLS = {
     _TRACK_MONDAY: [("BTC/EUR", "buy", 0.00042)],
     _IN_WEEK: [("BTC/EUR", "buy", 0.00290), *_NINE_LEGS],
 }
-# NOT the shared `_MINT_AT`, which predates this ramp's own first fill: with no birth record the
-# birth arm refuses the week, and the week-start arm this fixture exists for is never reached.
-_RAMP_MINT_AT = _TRACK_MONDAY + timedelta(hours=4)
-
-
-def test_a_pruned_journal_head_refuses_instead_of_scoring_a_short_held(tmp_path):
-    """The retention prune turns the true positive into a latched false kill, and this is that
-    construction: the HEALTHY fixture -- the week that must pass -- with the two oldest boundaries
-    deleted. The opening slice goes with them, `held` is short by it, and the journal reads a
-    breach.
-
-    Nothing on disk distinguishes that from a real breach, and asking whether the oldest surviving
-    boundary carries a fill passes whenever the prune cuts at a quiet one. The birth record answers
-    the question actually being asked."""
-    journal = _journal_week(tmp_path, fills=_HEALTHY_FILLS, lead=6)
-    healthy, healthy_states = _tracking_states(tmp_path)
-    assert not healthy and healthy_states == [executor_module._TRACKING_WITHIN_BAND]
-    birth = exec_dir(tmp_path) / executor_module.FIRST_FILL_FILE
-    assert birth.read_text().strip() == _OPENING.isoformat()
-
-    # Cut per BOUNDARY, which is the granularity the check itself works at -- not a replica of the
-    # prune, which removes whole day-dirs. The shape a real prune produces is the same one: a first
-    # fill late on day D, and a quiet 00:00 on D+1 left as the oldest survivor. The sibling test
-    # below builds exactly that, with the whole day-dir deleted.
-    for boundary in (_TRACK_LEAD, _OPENING):
-        for prefix in ("cycle", "exec"):
-            (journal / f"{boundary:%Y-%m-%d}" / f"{prefix}-{boundary:%H}.json").unlink()
-
-    tripped, states = _tracking_states(tmp_path)
-
-    assert not tripped
-    assert states == [executor_module._TRACKING_UNSCORED]
-    # Write-once: the record still names the fill that is no longer on disk, which is the whole of
-    # what it knows and the only reason the refusal above is possible.
-    assert birth.read_text().strip() == _OPENING.isoformat()
 
 
 def test_the_first_fill_landing_on_the_week_boundary_is_not_scored_either(tmp_path):
@@ -8505,13 +8593,12 @@ def test_the_first_fill_landing_on_the_week_boundary_is_not_scored_either(tmp_pa
     _journal_week(tmp_path, fills=_BOUNDARY_RAMP_FILLS, lead=6)
 
     with _executor_errors(logging.WARNING) as records:
-        tripped, states = _tracking_states(tmp_path, mint_at=_RAMP_MINT_AT)
+        tripped, states = _tracking_states(tmp_path)
 
     assert not tripped
     assert states == [executor_module._TRACKING_UNSCORED]
     refused = [m for m in (r.getMessage() for r in records) if "is not scored" in m]
     assert refused, "the scorer refused nothing -- the week was scored, or its refusal wording moved"
-    # `[-1]`: `_tracking_states` mints inside this block, and that boundary refuses the week before.
     assert f"at or after {_TRACK_MONDAY:%G-W%V} began" in refused[-1], refused
 
 
@@ -8532,80 +8619,6 @@ def test_a_malformed_fill_event_does_not_raise_onto_the_trade_path(tmp_path):
 
     assert not tripped
     assert states == [executor_module._TRACKING_UNSCORED]
-
-
-def test_a_pruned_head_is_refused_when_no_birth_record_survives(tmp_path):
-    """The missing-file path, which is NOT the same event as "the series has not started".
-
-    The recorder is gated on the record being absent, so an engine that lost it -- a rebuilt state
-    directory, a restore -- runs the mint against whatever the journal still holds. Here the day-dir
-    carrying the opening slice is gone and the surviving day opens on a QUIET 00:00, so the "oldest
-    boundary carries no fill" evidence is satisfied perfectly and the earliest surviving fill would
-    be minted as a birth it never was.
-
-    What stops it is that a birth is something a boundary WITNESSES hours after the fill, so a
-    week-old candidate is refused and nothing is written: an engine that cannot date itself must not
-    invent a date."""
-    journal = _journal_week(tmp_path, fills=_PRUNABLE_FILLS, lead=12)
-    shutil.rmtree(journal / f"{_EARLY_OPENING:%Y-%m-%d}")
-
-    tripped, states = _tracking_states(tmp_path, mint_at=None)
-
-    assert not tripped
-    assert states == [executor_module._TRACKING_UNSCORED]
-    assert not (exec_dir(tmp_path) / executor_module.FIRST_FILL_FILE).exists()
-
-
-def test_a_re_dated_birth_scores_the_series_from_it_and_reads_an_earlier_fill_as_a_prior_series(tmp_path):
-    """`_journal_week(tmp_path, fills=..., lead=12)` with the healthy fixture's fills and, before them, a prior series'
-    lone BTC/EUR sell of 0.01 at `_TRACK_MONDAY - timedelta(hours=40)` -- the shape the journal holds once the prune has
-    taken a prior series' buys and not yet its sells -- and the birth record and its opening holdings, ten zero rows,
-    written by hand at `_OPENING`, as the entry's re-date writes them, with no mint (`mint_at=None`): the week scores
-    within the band."""
-    prior = _TRACK_MONDAY - timedelta(hours=40)
-    _journal_week(tmp_path, fills={prior: [("BTC/EUR", "sell", 0.01)], **_HEALTHY_FILLS}, lead=12)
-    _write_birth(tmp_path, _OPENING)
-    _write_opening_holdings(tmp_path, _OPENING)
-
-    tripped, states = _tracking_states(tmp_path, mint_at=None)
-
-    assert not tripped
-    assert states == [executor_module._TRACKING_WITHIN_BAND]
-
-
-def test_the_opening_holdings_start_held_at_the_birth_and_a_residual_held_there_is_not_drift(tmp_path):
-    """The healthy build-out alone, `_journal_week(tmp_path, fills={_BUILD_OUT: _HEALTHY_FILLS[_BUILD_OUT]}, lead=6)`,
-    the birth written by hand at `_OPENING` and the opening holdings beside it carrying BTC 0.00042 -- the residual
-    Kraken held at the re-date, the slice the healthy fixture fills at `_OPENING`: the week scores within the band."""
-    _journal_week(tmp_path, fills={_BUILD_OUT: _HEALTHY_FILLS[_BUILD_OUT]}, lead=6)
-    _write_birth(tmp_path, _OPENING)
-    _write_opening_holdings(tmp_path, _OPENING, BTC=0.00042)
-
-    tripped, states = _tracking_states(tmp_path, mint_at=None)
-
-    assert not tripped
-    assert states == [executor_module._TRACKING_WITHIN_BAND]
-
-
-def test_an_absent_opening_holdings_record_or_one_stamped_for_another_birth_refuses_the_week(tmp_path):
-    _journal_week(tmp_path, fills=_HEALTHY_FILLS, lead=6)
-    _write_birth(tmp_path, _OPENING)
-    earlier = _OPENING - timedelta(hours=4)
-    refusals = {
-        None: f"no opening holdings are recorded for the series born at {_OPENING.isoformat()} -- the owner records them with the birth",
-        earlier: f"the opening holdings were taken for the series born at {earlier.isoformat()}, not {_OPENING.isoformat()}",
-    }
-    for stamp, refusal in refusals.items():
-        if stamp is not None:
-            _write_opening_holdings(tmp_path, stamp)
-        with _executor_errors(logging.WARNING) as records:
-            tripped, states = _tracking_states(tmp_path, mint_at=None)
-        assert not tripped and states == [executor_module._TRACKING_UNSCORED], stamp
-        assert f"the most recently closed week is not scored: {refusal}" in [r.getMessage() for r in records]
-
-    _write_opening_holdings(tmp_path, _OPENING)
-    tripped, states = _tracking_states(tmp_path, mint_at=None)
-    assert not tripped and states == [executor_module._TRACKING_WITHIN_BAND]
 
 
 # --- _reconcile_terminal is scoped to this engine's own position (the operator's hand settle) ----

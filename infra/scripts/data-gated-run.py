@@ -40,8 +40,8 @@ import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-# Eight xdist workers: serial, the suite outgrew the three-hour bound.
-PYTEST_ARGS = ("-q", "-p", "no:cacheprovider", "-rfEs", "-n", "8")
+# Eight xdist workers: serial, the suite outgrew the three-hour bound. `--durations` feeds `parse_slowest`.
+PYTEST_ARGS = ("-q", "-p", "no:cacheprovider", "-rfEs", "-n", "8", "--durations=25", "--durations-min=1.0")
 # The data file only, `.coverage` at the worktree's root: the upload reads it there, and a report would only lengthen the journal.
 COVERAGE_ARGS = ("--cov=cli", "--cov-report=")
 WORKTREE_DIR = Path(".tmp") / "data-gated-run"
@@ -80,6 +80,9 @@ _DATA_ABSENCE = re.compile(
 _PLURAL = {"error": "errors", "warning": "warnings"}
 COUNT_KEYS = ("passed", "failed", "skipped", "errors", "xfailed", "xpassed", "deselected", "warnings")
 NO_SUMMARY = "no pytest summary line in the output"
+# `--durations` draws `==== slowest 25 durations ====` and then one `12.34s call     <node id>` line per phase.
+_SLOWEST_RULE = re.compile(r"^=+ slowest (?:\d+ )?durations =+$")
+_SLOWEST_LINE = re.compile(r"^(?P<seconds>\d+(?:\.\d+)?)s (?P<when>setup|call|teardown)\s+(?P<id>\S.*)$")
 
 
 def is_data_absence(reason: str) -> bool:
@@ -123,6 +126,21 @@ def parse_summary(output: str) -> dict:
         "data_gated_skipped": data_gated,
         "error": None,
     }
+
+
+def parse_slowest(output: str) -> list[list]:
+    """`[[seconds, phase, node id], ...]` from the last `slowest durations` block, in pytest's order; empty where pytest
+    printed none, as a killed run does."""
+    lines = output.splitlines()
+    rule_at = next((i for i in range(len(lines) - 1, -1, -1) if _SLOWEST_RULE.match(lines[i].strip())), None)
+    slowest: list[list] = []
+    if rule_at is not None:
+        for raw in lines[rule_at + 1 :]:
+            m = _SLOWEST_LINE.match(raw.strip())
+            if m is None:
+                break
+            slowest.append([float(m.group("seconds")), m.group("when"), m.group("id")])
+    return slowest
 
 
 def _id(rest: str) -> str:
@@ -382,6 +400,7 @@ def build_result(
         "failed": parsed["failed"],
         "errors": parsed["errors"],
         "data_gated_skipped": parsed["data_gated_skipped"],
+        "slowest": parse_slowest(output),
         "swept": swept,
         "sweep_left": sweep_left,
         "sweep_error": sweep_error,

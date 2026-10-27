@@ -415,3 +415,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #762 | 2026-10-25 | feat(research): iter-192 — B3 trial 1: the rank tilt on the A2 ensemble | iter-192 | 00147 | T0016 |
 | #764 | 2026-10-25 | feat(research): iter-193 — B3 trial 2: the rank tilt on a 90-day score | iter-193 | 00148 | T0016 |
 | #767 | 2026-10-26 | feat(research): iter-194 — B3 trial 3: the BTC overlay, B3 closed | iter-194 | 00149 | T0016 |
+| #778 | 2026-10-27 | feat(engine): the tracking trip and report score the journaled book | — | — | T0150 |

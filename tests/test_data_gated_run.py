@@ -205,7 +205,20 @@ def test_the_last_matching_line_is_the_summary_even_when_a_test_printed_one():
 def test_the_command_runs_through_the_target_checkouts_environment_not_this_one():
     command = runner.pytest_command(Path("/srv/main"), "/opt/uv", ["-k", "soak"])
     assert command[:5] == ["/opt/uv", "run", "--directory", "/srv/main", "python"]
-    assert command[5:] == ["-m", "pytest", "-q", "-p", "no:cacheprovider", "-rfEs", "-n", "8", "-k", "soak"]
+    assert command[5:] == [
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "-rfEs",
+        "-n",
+        "8",
+        "--durations=25",
+        "--durations-min=1.0",
+        "-k",
+        "soak",
+    ]
     assert sys.executable not in command
 
 
@@ -377,6 +390,7 @@ def test_the_runner_writes_the_stamped_file_and_latest_with_the_full_shape(tmp_p
         "failed",
         "errors",
         "data_gated_skipped",
+        "slowest",
         "swept",
         "sweep_left",
         "sweep_error",
@@ -828,6 +842,31 @@ def _result(**overrides) -> dict:
             **overrides,
         }
     )
+
+
+# The tail of a `--durations=25 --durations-min=1.0` run: the block pytest draws above the short summary, a phase
+# under the minimum hidden, and a parametrized id carrying a spaced dash.
+SLOWEST = textwrap.dedent("""\
+    ............                                                             [100%]
+    ============================= slowest 25 durations =============================
+    12.34s call     tests/test_slow.py::test_replays_a_week
+    3.10s setup    tests/test_slow.py::test_with_a_fixture[a - b]
+    1.00s teardown tests/test_slow.py::test_with_a_fixture[a - b]
+
+    (9 durations < 1s hidden.)
+    =========================== short test summary info ============================
+    SKIPPED [1] tests/test_x.py:3: root bypasses directory permissions
+    12 passed, 1 skipped in 20.01s
+    """)
+
+
+def test_the_slowest_block_is_recorded_as_seconds_phase_and_node_id_and_a_killed_run_records_none():
+    assert _result(output=SLOWEST)["slowest"] == [
+        [12.34, "call", "tests/test_slow.py::test_replays_a_week"],
+        [3.1, "setup", "tests/test_slow.py::test_with_a_fixture[a - b]"],
+        [1.0, "teardown", "tests/test_slow.py::test_with_a_fixture[a - b]"],
+    ]
+    assert _result(output="", exit_code=None)["slowest"] == []
 
 
 def test_an_empty_summary_after_a_kill_never_reads_as_ok():

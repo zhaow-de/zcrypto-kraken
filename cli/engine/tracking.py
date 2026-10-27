@@ -1,4 +1,4 @@
-"""The realized half of the weekly tracking comparison: what the ledger says actually happened.
+"""The realized half of the weekly tracking comparison: what the journal says happened.
 
 Pure -- it writes nothing and reaches no venue -- and it refuses rather than return a number nobody
 can stand behind, because that number will be read as a gate input."""
@@ -8,7 +8,7 @@ from __future__ import annotations
 import csv
 import json
 import math
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import NamedTuple
 
@@ -31,7 +31,8 @@ _SIDES = frozenset({"buy", "sell"})
 # symbol with none, so it maps to base None -- counted, but excluded from drift.
 _BASE_BY_SYMBOL = {s: (s.split("/")[0] if s.endswith("/EUR") else None) for s in BASKET}
 _GATE_MIN_WEEKS = 3
-# The opening holdings record's shape: one row per basket base, the ten the drift half reads.
+_H4 = timedelta(hours=4)
+# The opening holdings record's shape: one row per basket base, the model's ten.
 _OPENING_SCHEMA_VERSION = 1
 _OPENING_KEYS = frozenset({"schema_version", "birth", "rows"})
 _OPENING_ROW_KEYS = frozenset({"base", "codes", "balance", "close"})
@@ -48,14 +49,14 @@ class Fill(NamedTuple):
     fee: float | None  # None when not euro-denominated or the side is unpriceable
     liquidity: str
     trade_id: str
-    # What the fill moved its row's `filled_qty` by (`execledger.credited_qty`), the figure `held` sums, where `qty` stays
-    # the blend's weight and the venue's figure; None on a Fill built by hand, which moved its row by `qty`.
+    # What the fill moved its row's `filled_qty` by (`execledger.credited_qty`), where `qty` stays the blend's weight and
+    # the venue's figure; None on a Fill built by hand, which moved its row by `qty`.
     credited: float | None = None
 
 
 class OpeningHoldings(NamedTuple):
-    """A tracking series' opening holdings: the instant the series was born and, per basket base, the spot balance the
-    account held then, in base units -- where `held` starts at the birth instead of at zero."""
+    """A tracking series' opening holdings: the instant the series was born, where the weekly report starts reading it,
+    and per basket base the spot balance the account held then, in base units."""
 
     birth: datetime
     held: dict[str, float]
@@ -152,15 +153,11 @@ def extract_fills(records: list[dict]) -> tuple[list[Fill], list[str]]:
                 kind = ev.get("event")
                 if kind == "reconciled":
                     # An adopted order that filled at the venue while this process was down: the ONLY non-fill event
-                    # that moves `filled_qty`, so skipping it would make `held` under-report the repair. It is a
-                    # Fill, not a note, because `held` is base units only; no price or fee exists by construction,
-                    # and the row's own side signs it (`filled_qty` is a magnitude in the ORDER's direction).
+                    # that moves `filled_qty`. No price or fee exists by construction, and the row's own side signs it
+                    # (`filled_qty` is a magnitude in the ORDER's direction).
                     qty = float(ev["qty"])
                     client_order_id = row.get("client_order_id")
-                    note(
-                        f"{symbol} carries a venue repair of {qty:.10g} base units on "
-                        f"{client_order_id} -- counted in the drift half, with no price"
-                    )
+                    note(f"{symbol} carries a venue repair of {qty:.10g} base units on {client_order_id} -- counted, with no price")
                     out.append(
                         Fill(
                             boundary,
@@ -234,44 +231,25 @@ def drift_bps(final: dict[str, float], closes: dict[str, float], held: dict[str,
     return drift_eur / nav * 10_000
 
 
-def realized_drift(stages: list[CycleStages], fills: list[Fill], nav: float, *, opening: dict[str, float] | None = None) -> dict:
-    """Per-cycle drift with `held` taken from REAL fills instead of the modelled policy.
-
-    `held` is SIGNED base units, and a fill counts at the BOUNDARY its row was journaled under -- the decision that produced it.
-    `opening`, the series' opening holdings per base, is `held` before the first stage; None starts it at zero."""
+def realized_drift(stages: list[CycleStages], nav: float, *, books: dict[datetime, dict[str, float] | None] | None = None) -> dict:
+    """Per-cycle drift against the `held` journaled at the next boundary, `books`' over the stage's; a cycle with none is
+    unscored."""
     if not math.isfinite(nav) or nav <= 0:
         raise EngineError(f"NAV must be finite and positive, got {nav!r} -- a negative one signs every drift_bps")
     ordered = sorted(stages, key=lambda s: s.cycle_ts)
-    by_boundary: dict[datetime, list[Fill]] = {}
-    for f in fills:
-        if f.base is None:  # a /BTC leg: no model target, so no drift contribution
-            continue
-        by_boundary.setdefault(f.boundary, []).append(f)
-    # A fill whose boundary matches no stage never enters `held` and silently overstates drift for every later cycle -- a
-    # spurious kill trip on the engine -- so it is refused, separately for the two cases because only one is repairable by
-    # widening the window. A fill after the last cycle is harmless, but only a span the caller chose tells it from one
-    # before the first. Boundaries compare as datetime INSTANTS, never as isoformat text, which spells one instant two ways.
-    orphans = sorted(set(by_boundary) - {s.cycle_ts for s in ordered})
-    if orphans:
-        span = (ordered[0].cycle_ts, ordered[-1].cycle_ts) if ordered else None
-        inside = [b for b in orphans if span is not None and span[0] <= b <= span[1]]
-        if inside:
-            raise EngineError(
-                f"{len(inside)} fill boundary(ies) fall INSIDE the cycle span but match no cycle "
-                f"({[b.isoformat() for b in inside[:3]]}) -- a hole, not a truncation: a cycle whose "
-                "replay failed was dropped, and widening the window cannot recover its position"
-            )
-        raise EngineError(
-            f"{len(orphans)} fill boundary(ies) fall OUTSIDE the cycle span "
-            f"({[b.isoformat() for b in orphans[:3]]}) -- a truncated window: widen it rather than "
-            "report a drift that omits their position"
-        )
-    held: dict[str, float] = dict(opening or {})
+    held_at = {**{s.cycle_ts: s.held for s in ordered}, **(books or {})}
     rows: list[dict] = []
+    unscored: list[str] = []
     for s in ordered:
-        for f in by_boundary.get(s.cycle_ts, []):
-            moved = f.qty if f.credited is None else f.credited
-            held[f.base] = held.get(f.base, 0.0) + (moved if f.side == "buy" else -moved)
+        after = s.cycle_ts + _H4
+        held = held_at.get(after)
+        if held is None:
+            unscored.append(s.cycle_ts.isoformat())
+            continue
+        # A leg the book does not carry would read as flat, which is a real position.
+        missing = sorted(set(s.final) - set(held))
+        if missing:
+            raise EngineError(f"the book journaled at {after.isoformat()} carries no {', '.join(missing)}")
         # Each cycle is scored under the NAV that was LIVE for it (T0150): a `shadow_nav_eur` change
         # must not re-price a closed week, and the caller's scalar is the fallback for older records.
         cycle_nav = nav if s.nav is None else s.nav
@@ -280,15 +258,15 @@ def realized_drift(stages: list[CycleStages], fills: list[Fill], nav: float, *, 
                 f"NAV must be finite and positive, got {cycle_nav!r} for cycle {s.cycle_ts.isoformat()} "
                 "-- a negative one signs every drift_bps"
             )
-        bps = drift_bps(s.final, s.closes, held, cycle_nav)
+        bps = drift_bps(s.final, s.closes, {a: held[a] for a in s.final}, cycle_nav)
         rows.append({"cycle_ts": s.cycle_ts.isoformat(), "drift_bps": bps, "drift_eur": bps / 10_000 * cycle_nav})
     values = [r["drift_bps"] for r in rows]
     # NaN on an empty window, never None: `_median`/`_p95` do the same, and the renderer `feeders._bps` raises TypeError on None.
     return {
         "cycles": rows,
+        "unscored": unscored,
         "median_drift_bps": _median(values),
         "p95_drift_bps": _p95(values),
-        "n_fills": len(fills),
     }
 
 
@@ -300,10 +278,9 @@ def weekly_tracking(
     *,
     rung_by_week: dict[str, int] | None = None,
     opening: OpeningHoldings | None = None,
+    books: dict[datetime, dict[str, float] | None] | None = None,
 ) -> dict:
-    """That week's floor p95 against that week's realized MEAN drift. With `opening`, the series starts at its birth:
-    the stages and fills before it are a prior series' and are left out of both halves, and `held` starts from its
-    balances there."""
+    """That week's floor p95 against its realized MEAN drift (`realized_drift`), from `opening`'s birth when given."""
     rung_by_week = rung_by_week or {}
     ordered = sorted(stages, key=lambda s: s.cycle_ts)
     if opening is not None:
@@ -314,9 +291,9 @@ def weekly_tracking(
     # past tense and scored per journaled cycle, so do NOT thread per-cycle NAV into the floor. Across a `shadow_nav_eur` change
     # the two are quoted at different NAVs, so that week's `within_band` is advisory; `--simulated-fills` shares the seam.
     floor = accumulation_payload(ordered, minimums, [nav])["by_nav"][nav]
-    real = realized_drift(ordered, fills, nav, opening=None if opening is None else opening.held)
+    real = realized_drift(ordered, nav, books=books)
+    scored = {datetime.fromisoformat(row["cycle_ts"]): row["drift_bps"] for row in real["cycles"]}
     floor_weeks = {(w["iso_year"], w["iso_week"]): w for w in _weekly_drift(ordered, floor["cycles"])}
-    real_weeks = {(w["iso_year"], w["iso_week"]): w for w in _weekly_drift(ordered, real["cycles"])}
     floor_cycles: dict[tuple[int, int], list[float]] = {}
     for stage, row in zip(ordered, floor["cycles"], strict=True):
         floor_cycles.setdefault(_iso_key(stage.cycle_ts), []).append(row["drift_bps"])
@@ -333,14 +310,15 @@ def weekly_tracking(
         started = first_fill is not None and any(t >= first_fill for t in week_cycles)
         # A week holding cycles on BOTH sides of the first fill averages a cycle-level series over a
         # week-level flag -- every pre-fill cycle contributes a book not yet traded toward its targets,
-        # nothing or the opening holdings, biasing the first live week toward `fail` -- so it is
-        # measured and reported but excluded, like a partial week.
+        # biasing the first live week toward `fail` -- so it is measured and reported but excluded,
+        # like a partial week.
         straddles = started and any(t < first_fill for t in week_cycles)
         # `rung == 3`, never `rung != 2`: an absent rung must read INELIGIBLE, and the inverted form
         # is a false `pass` on a live-trading gate. `rung_by_week` fails closed -- a caller that
         # supplies nothing decides nothing, while every week still carries its floor p95 and mean.
         gate_eligible = complete and rung == 3 and not straddles
-        realized_mean = real_weeks[key]["mean_drift_bps"] if started else None
+        unscored = [t for t in week_cycles if t not in scored]
+        realized_mean = sum(scored[t] for t in week_cycles) / len(week_cycles) if started and not unscored else None
         # p95, not a median: the edge was pinned by the T0116 amendment (spec 00091), not chosen here.
         floor_p95 = _p95(floor_cycles[key])
         weeks.append(
@@ -353,6 +331,7 @@ def weekly_tracking(
                 "floor_p95_bps": floor_p95,
                 "realized_mean_bps": realized_mean,
                 "within_band": (realized_mean <= floor_p95) if (gate_eligible and realized_mean is not None) else None,
+                "unscored_from": unscored[0].isoformat() if unscored else None,
             }
         )
     decided = [w for w in weeks if w["within_band"] is not None]

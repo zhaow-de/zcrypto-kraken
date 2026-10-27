@@ -41,6 +41,9 @@ class CycleStages:
     # The NAV this cycle priced against, when the record journaled one (T0150); None otherwise, where
     # `realized_drift` falls back to the caller's scalar.
     nav: float | None = None
+    # The venue's book the record journaled at this boundary, base-keyed (T0150); None where the read failed
+    # or the record predates the key. `realized_drift` scores the PREVIOUS boundary's cycle against it.
+    held: dict[str, float] | None = None
 
 
 def stage_grosses(sleeve_positions: dict[str, dict[str, float]]) -> dict[str, float]:
@@ -178,9 +181,10 @@ def replay_stages(record: CycleRecord, reader: Reader, *, config: CrossfreqSyste
         multiplier=multiplier,
         closes=closes,
         cap_bound=any(abs(capped[a] - combined[a]) > 1e-15 for a in c.assets),
-        # The number a human bands and the number the engine trips on must come from the same NAV
-        # (`executor._stage` carries it for that reason); omitting it bands the report at the LIVE value.
+        # The number a human bands and the number the engine trips on must come from the same NAV and
+        # book (`executor._stage` carries both for that reason); omitting either bands the report off another.
         nav=record.nav,
+        held=None if record.held is None else dict(record.held),
     )
 
 

@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: "not before 2026-10-25 — the engine converge carrying the `held` widening is due 2026-08-24/25, the journal keeps a 60-day tail, and the prune works in whole day-directories, so that date is converge + 60d + a day of granularity. The DATE IS A HANDLE, NOT THE TEST — the test is that the oldest `cycle-<HH>.json` on the engine host postdates that converge, which is what stays right if the converge slips, the retention changes, or `zcrypto_engine_journal_prune_deleted_days` shows the prune stalled"
+status: resolved
 ---
 
 # The cycle record carries `closes` but not the NAV or the position the drift was computed against
@@ -29,7 +28,7 @@ Both were found by construction, not argument: the pruned-head case made spec `0
 - Any change here re-enters the NAS gate-export's replay closure (`cli/engine/journal.py` and `cli/engine/cycle.py` are both inside it), so the gate-export replays cold. Size that window as `docs/reference/fleet-pins.md`'s standing constraint reads it, from the live series, never an older cold figure from a smaller journal.
 - `evidence_fingerprint` enumerates its payload explicitly and does not read `closes`; check whether it should read either new field before assuming the same.
 
-## Done so far
+## Resolution
 
 **The schema widening landed — `nav` and `held` are journaled on every cycle record.** Additive, in the pattern `closes` established: optional on `CycleRecord`, validated when present, omitted from `to_json` when absent so records predating the keys re-serialize byte-identically (the v1 golden pins that), and read back absence-tolerantly. `nav` is refused unless finite and positive, because it sets both halves of drift; `held` is refused for a pair key, and admits zero and negative because flat and short are real books.
 
@@ -47,12 +46,4 @@ Both were found by construction, not argument: the pruned-head case made spec `0
 
 **Deploy cost, unchanged from this topic's warning**: `cli/engine/journal.py` is inside the gate-export replay closure (transitively, via `command.py` from `_REPLAY_ROOTS`), so the NAS gate-export replays cold. Size the window as `docs/reference/fleet-pins.md`'s standing constraint reads it, from the live series.
 
-## Suggested next steps
-
-**What remains is the position half's CONSUMPTION, and it is gated on time rather than on work.**
-
-- **Decide first what a `held=None` cycle means to the consumer, because that case never goes away.** A venue read can fail at any boundary, and the writer journals no book rather than a zeroed one (a zeroed book reads as FLAT, which is a real position). So the consumer cannot simply require the field — it needs a defined behaviour for a hole in the middle of an otherwise journaled week, and "fall back to fill accumulation for that cycle" is not one, since accumulation is cumulative and cannot be restarted mid-week. Refusing the week is the honest candidate; settle it before writing the consumption.
-- Make the trip read the journaled `held` instead of accumulating fills, then retire the birth record, the mint recency bound, and the oldest-boundary refusal — all three exist only to detect a truncated fill history, which a journaled position removes the need for entirely.
-- **This cannot be done at the widening, and the reason is the straddle.** A week scored shortly after deploy can span cycles written before it, which carry no `held`; a scorer reading the journaled value for some cycles and accumulating fills for others would mix two position sources inside one week. The change becomes safe only once every record inside the 60-day retention carries the field — that is the `ripe_when`, and it is a clock, not a task.
-- **Re-true the runbook's arming section IN THE DEPLOY that ships this, not before.** `infra/runbooks/engine.md` requires the band disarmed across any `shadow_nav_eur` change; that instruction is still CORRECT while the engine runs an image without the per-cycle NAV, and an operator who reads a re-trued runbook against the old image would skip a disarm that is still owed. The code comment it cited has already been re-trued, since it describes the code it sits in. **Rewrite that whole bullet, do not patch clauses out of it.** Every part of it is falsified at once: the instruction, its rationale ("read live rather than journaled per cycle"), its consequence ("a NAV converge re-scores weeks that closed under the old value"), and its forward-looking clause calling the journaling "the durable fix" belonging "with the next schema widening". Counting the stale pieces is how one gets left behind.
-- Until then the three guards stay live and correct: they convert a truncated fill history into a loud refusal rather than a false kill, which is exactly what is still needed while some cycles have no journaled position.
+**The position half is consumed — the trip and the weekly report score each cycle from the journaled book** (`feat/t0150-held-consumption`, on the owner's rulings of 2026-10-27, recorded in `docs/research/14.phase6-decisions.md`): cycle B is scored against the book journaled at B+4h, the venue read after B's plan has ended (a668f7d15); a cycle whose next boundary journals `held=None` refuses the week, naming the boundary, never a kill; the `first-fill` birth record, the 7-day mint window and the oldest-boundary refusal retired with the fill accumulation they guarded (6b8d91f27); the series' start is an operator-written `exec/series-start`, read only for the start-week refusal — written at entry, rewritten to the next boundary after any attended act on the book, so a flatten's week is never scored (0fce5bd73); `engine-procedures.md` and drill B rewritten to it (418ce9489, 76b4ff84f). The clock had run: every cycle record in the engine host's 60-day retention carried `held` and `nav`, none `None`, read 2026-10-27. The running image already scored per-cycle NAV and `engine.md` carried no NAV-disarm bullet, so nothing was owed there. The deployment is the engine's next image, the fleet's concern: `executor.py`, `tracking.py`, `feeders.py` and `command.py` are in the NAS gate-export replay closure, so that deploy replays the gate export cold.

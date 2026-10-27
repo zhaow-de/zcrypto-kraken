@@ -1581,8 +1581,8 @@ def accum_replay(
 def _window_exec_records(journal_root: Path, since: str | None, until: str | None, birth: datetime | None = None) -> list[dict]:
     """Every journaled execution record in the same inclusive UTC day window `_window_records` uses,
     and past a series' `birth` as it reads it. An unreadable or schema-invalid record ABORTS rather
-    than being skipped: the fills it carries move `held` for every LATER cycle, so dropping one
-    quietly overstates the drift of the whole window."""
+    than being skipped: the fills it carries are the cost blend's and the reconciliation's, so
+    dropping one quietly prices and reconciles a book short of them."""
     since_day = _parse_day(since, "--since")
     until_day = _parse_day(until, "--until")
     out: list[dict] = []
@@ -1598,12 +1598,30 @@ def _window_exec_records(journal_root: Path, since: str | None, until: str | Non
             validate_exec_record(doc)
         except (OSError, ValueError, EngineJournalError) as exc:
             raise _abort(
-                f"unreadable execution record {path}: {exc} -- its fills move the position every later cycle "
-                "is measured against, so skipping it would overstate the drift of the rest of the window; "
+                f"unreadable execution record {path}: {exc} -- its fills are counted in the cost blend and the "
+                "reconciliation, so skipping it would report both over a book short of them; "
                 "repair the record or exclude its day with --since/--until"
             ) from exc
         out.append(doc)
     return out
+
+
+def _journaled_books(journal_root: Path, records: list[CycleRecord]) -> dict[datetime, dict[str, float] | None]:
+    """The book the boundary after the window's last record journaled -- the one the window's last cycle traded to; the
+    window's own books are its stages'."""
+    after = max(record.cycle_ts for record in records) + timedelta(hours=4)
+    path = journal_root / f"{after:%Y-%m-%d}" / f"cycle-{after:%H}.json"
+    if not path.exists():
+        return {}
+    try:
+        record = from_json(path.read_text())
+        validate_record(record)
+    except (OSError, EngineJournalError) as exc:
+        raise _abort(
+            f"unreadable cycle record {path}: {exc} -- it journals the book the window's last cycle traded to; repair the "
+            "record or end the window a day earlier with --until"
+        ) from exc
+    return {record.cycle_ts: record.held}
 
 
 def _parse_gate_from(raw: str | None) -> str | None:
@@ -1628,13 +1646,16 @@ def _rung_by_week(stages: list[CycleStages], gate_from: str | None) -> dict[str,
     return {label: (3 if label >= gate_from else 2) for label in labels}
 
 
-def _simulated_fills(stages: list[CycleStages], floor_cycles: list[dict], minimums: dict[str, tuple[float, float]]) -> list[Fill]:
-    """The drift floor's own placements, dressed as fills at the journaled close -- the true-positive for the whole realized half,
-    since with zero journaled fills every refusal in the tracking module is indistinguishable from a guard that always refuses. Fees
-    are MODELLED at the builder's own maker rate, so the fee this yields is the current one by construction -- real-shaped, never a
-    recalibration input."""
+def _simulated_fills(
+    stages: list[CycleStages], floor_cycles: list[dict], minimums: dict[str, tuple[float, float]]
+) -> tuple[list[Fill], dict[datetime, dict[str, float] | None]]:
+    """The drift floor's own placements, dressed as fills at the journaled close, and the book they leave at each cycle's next
+    boundary -- the true-positive for the whole realized half, since with no journaled book every week is unscored and the realized
+    half is indistinguishable from one that always refuses. Fees are MODELLED at the builder's own maker rate, so the fee this
+    yields is the current one by construction -- real-shaped, never a recalibration input."""
     cfg = CrossfreqSystemConfig()
-    held: dict[str, float] = {}
+    held: dict[str, float] = dict.fromkeys(minimums, 0.0)
+    books: dict[datetime, dict[str, float] | None] = {}
     out: list[Fill] = []
     for stage, row in zip(sorted(stages, key=lambda s: s.cycle_ts), floor_cycles, strict=True):
         for asset, target in row["target_qty"].items():
@@ -1661,7 +1682,8 @@ def _simulated_fills(stages: list[CycleStages], floor_cycles: list[dict], minimu
                     trade_id=f"simulated:{asset}:{stage.cycle_ts.isoformat()}",
                 )
             )
-    return out
+        books[stage.cycle_ts + timedelta(hours=4)] = dict(held)
+    return out, books
 
 
 def _cost_over(fills: list[Fill], reconciliation: dict | None) -> dict:
@@ -1700,6 +1722,8 @@ def _tracking_note(week: dict) -> str:
         return "before the gate boundary"
     if not week["gate_eligible"]:
         return "straddles the first fill"
+    if week["unscored_from"] is not None:
+        return f"no journaled book after {week['unscored_from']}"
     if week["realized_mean_bps"] is None:
         return "no realized data yet"
     return ""
@@ -1715,8 +1739,7 @@ def _render_tracking(payload: dict) -> str:
     ]
     if payload["opening_birth"] is not None:
         lines.append(
-            f"The series was born at {payload['opening_birth']}: held starts from its opening holdings there, and every "
-            "figure below leaves out the cycles and fills before it."
+            f"The series was born at {payload['opening_birth']}: every figure below leaves out the cycles and fills before it."
         )
     if payload["simulated"]:
         lines += [
@@ -1750,7 +1773,8 @@ def _render_tracking(payload: dict) -> str:
         "-" * len(header),
         f"Verdict: {tracking['verdict']} at {payload['nav']:,.0f} EUR -- "
         f"{tracking['complete_gate_eligible_weeks']} decided week(s); a verdict needs at least 3, and a week is "
-        "decided only when it is complete, sits on or after the gate boundary, and does not straddle the first fill.",
+        "decided only when it is complete, sits on or after the gate boundary, does not straddle the first fill, and has a "
+        "journaled book after every cycle.",
     ]
     if payload["gate_from"] is None:
         lines.append(
@@ -1906,7 +1930,7 @@ def tracking_report(
     opening_holdings: Optional[Path] = typer.Option(
         None,
         "--opening-holdings",
-        help="The series' opening holdings record, the balances held at its birth: held starts from them there, and the "
+        help="The series' opening holdings record: the report reads the series from the birth it is stamped for, and the "
         "cycles and fills before the birth belong to an earlier series and are left out.",
     ),
 ) -> None:
@@ -1938,19 +1962,21 @@ def tracking_report(
             failures.append({"cycle_ts": record.cycle_ts.isoformat(), "error": str(exc)})
 
     notes: list[str] = []
-    # Both halves inside one catch: `accumulation_report` drops a record whose replay raises, a fill
-    # journaled under that dropped boundary then orphans, and `realized_drift` refuses rather than
-    # overstating every later cycle -- that refusal must surface as a clean one-line exit.
+    # Both halves inside one catch: a refusal from either -- a fill `extract_fills` will not attribute, a book
+    # `realized_drift` finds a leg missing from -- must surface as a clean one-line exit.
     try:
         floor = accumulation_payload(stages, floors, [nav_value])["by_nav"][nav_value]
         if simulated_fills:
-            fills = _simulated_fills(stages, floor["cycles"], floors)
+            fills, books = _simulated_fills(stages, floor["cycles"], floors)
         else:
             exec_docs = _window_exec_records(journal_root, since, until, birth)
             fills, notes = extract_fills(
                 [doc for doc in exec_docs if birth is None or datetime.fromisoformat(doc["cycle_ts"]) >= birth]
             )
-        tracking = weekly_tracking(stages, fills, floors, nav_value, rung_by_week=_rung_by_week(stages, gate_week), opening=opening)
+            books = _journaled_books(journal_root, records)
+        tracking = weekly_tracking(
+            stages, fills, floors, nav_value, rung_by_week=_rung_by_week(stages, gate_week), opening=opening, books=books
+        )
     except EngineError as exc:
         raise _abort(str(exc)) from exc
 

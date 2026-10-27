@@ -155,7 +155,7 @@ def test_a_btc_denominated_fee_disables_pricing_without_aborting():
 
 def test_the_btc_quoted_legs_are_excluded_from_the_drift_half_and_counted():
     # select_model_inputs DROPS ETH/BTC and SOL/BTC, so the model's targets are ten EUR bases.
-    # Folding such a fill into held["ETH"] would inflate held against a target that never had it.
+    # Such a fill carries no model base, so it never dates the series' first model-leg fill.
     fills, notes = extract_fills([_rec([_fill()], symbol="ETH/BTC")])
     assert fills[0].base is None
     assert any("ETH/BTC" in n for n in notes)
@@ -178,9 +178,9 @@ def test_every_fill_of_every_row_of_every_record_is_read():
     assert [f.trade_id for f in fills] == ["T-1", "T-2", "T-3", "T-4"]
 
 
-def test_a_venue_repair_is_real_base_quantity_and_reaches_the_drift_half():
+def test_a_venue_repair_is_real_base_quantity_and_is_counted():
     # `_reconcile_adopted_rows` credits its delta to the row's `filled_qty` -- the only non-fill
-    # event that does. Skipping it would make `held` under-report by exactly the repaired amount.
+    # event that does.
     fills, notes = extract_fills([_rec([_repair()])])
     assert len(fills) == 1
     f = fills[0]
@@ -212,8 +212,8 @@ def test_a_lifecycle_event_that_moves_no_quantity_is_skipped():
 def test_a_fill_line_carrying_credited_is_read_by_what_it_moved_the_row():
     """A line carries `credited` beside `qty` where a writer's cap moved the row by less than the fill -- 0.0 for a
     replay of the fill a `reconciled` repair already carried -- and nowhere else. `Fill.credited` is that figure, or
-    `qty` where the line carries none, so `held` counts each fill once while `qty` stays the blend's weight and the
-    venue's figure; a repair's is its own quantity."""
+    `qty` where the line carries none, while `qty` stays the blend's weight and the venue's figure; a repair's is its
+    own quantity."""
     fills, _ = extract_fills([_rec([_repair(), _fill(credited=0.0), _fill(trade_id="T-2", at="2026-09-01T00:03:00+00:00")])])
     assert [(f.trade_id[:10], f.qty, f.credited) for f in fills] == [
         ("reconciled", 0.002, 0.002),
@@ -227,9 +227,9 @@ def test_a_fill_line_carrying_credited_is_read_by_what_it_moved_the_row():
 _MINIMUMS = {"BTC": (0.00005, 0.45)}
 
 
-def _stage(ts, *, weight=1.0, close=50000.0):
-    # CycleStages is a frozen dataclass with NINE required fields (plus `nav`, which defaults); supplying
-    # three raises TypeError at construction, before any assertion is reached.
+def _stage(ts, *, weight=1.0, close=50000.0, held=None):
+    # CycleStages is a frozen dataclass with NINE required fields (plus `nav` and `held`, which default); supplying
+    # three raises TypeError at construction, before any assertion is reached. `held` is the BTC the boundary's book holds.
     return CycleStages(
         cycle_ts=datetime.fromisoformat(ts),
         sleeve_positions={},
@@ -240,7 +240,14 @@ def _stage(ts, *, weight=1.0, close=50000.0):
         multiplier=1.0,
         closes={"BTC": close},
         cap_bound=False,
+        held=None if held is None else {"BTC": held},
     )
+
+
+def _after(stages, btc):
+    """The book `btc` -- one figure, or one per stage -- journaled at each stage's next boundary."""
+    figures = btc if isinstance(btc, list) else [btc] * len(stages)
+    return {s.cycle_ts + timedelta(hours=4): {"BTC": q} for s, q in zip(stages, figures, strict=True)}
 
 
 def _mk(boundary, qty, side="buy", px=50000.0, credited=None):
@@ -248,27 +255,34 @@ def _mk(boundary, qty, side="buy", px=50000.0, credited=None):
     return Fill(b, b, "BTC", side, qty, px, 0.05, "MAKER", f"T-{boundary}-{side}", credited=credited)
 
 
-def test_a_fill_matching_the_target_leaves_zero_drift():
+def test_a_book_on_the_target_leaves_zero_drift():
     # NAV 1000 at 50k -> target 0.02 BTC.
-    out = realized_drift([_stage("2026-08-31T00:00:00+00:00")], [_mk("2026-08-31T00:00:00+00:00", 0.02)], 1000.0)
+    stages = [_stage("2026-08-31T00:00:00+00:00")]
+    out = realized_drift(stages, 1000.0, books=_after(stages, 0.02))
     assert out["cycles"][0]["drift_bps"] == pytest.approx(0.0)
 
 
-def test_realized_drift_sums_what_a_fill_credited_the_row_not_the_streams_quantity():
-    # The target's fill, then the stream's replay of it credited nothing: `held` stays at the target, where summing
-    # the replay's quantity would count the fill twice and read a drift of the target's own size.
-    b = "2026-08-31T00:00:00+00:00"
-    out = realized_drift([_stage(b)], [_mk(b, 0.02), _mk(b, 0.02, credited=0.0)], 1000.0)
-    assert out["cycles"][0]["drift_bps"] == pytest.approx(0.0)
+def test_a_cycle_is_scored_against_the_next_boundarys_book_not_its_own():
+    """00Z's own book, read before its trading, holds nothing; 04Z's holds the 0.02 BTC target 00Z's trading bought. 00Z
+    reads 0 bps against 04Z's book, where its own would read the whole NAV, 10000."""
+    stages = [_stage("2026-08-31T00:00:00+00:00", held=0.0), _stage("2026-08-31T04:00:00+00:00", held=0.02)]
+    out = realized_drift(stages, 1000.0, books={datetime.fromisoformat("2026-08-31T08:00:00+00:00"): {"BTC": 0.02}})
+    assert [r["drift_bps"] for r in out["cycles"]] == [pytest.approx(0.0), pytest.approx(0.0)]
 
 
-def test_realized_drift_seeds_held_from_the_opening_holdings():
-    """One stage and no fill: an opening of 0.02 BTC reads the drift a 0.02 BTC fill at that stage reads."""
-    b = "2026-08-31T00:00:00+00:00"
-    seeded = tracking_module.realized_drift([_stage(b, weight=0.25)], [], 1000.0, opening={"BTC": 0.02})
-    filled = realized_drift([_stage(b, weight=0.25)], [_mk(b, 0.02)], 1000.0)
-    # NAV 1000 at 50k and weight 0.25 -> target 0.005 BTC: 0.02 held is 0.015 over, 7500 bps, where none held is 2500.
-    assert seeded["cycles"][0]["drift_bps"] == filled["cycles"][0]["drift_bps"] == pytest.approx(7500.0)
+def test_a_cycle_whose_next_boundary_journaled_no_book_is_unscored_not_read_as_flat():
+    """04Z's record journals no book -- its venue read failed -- so 00Z is not scored, where a flat read would put the
+    whole NAV, 10000 bps, on it; 04Z, with no next boundary at all, is not scored either."""
+    stages = [_stage("2026-08-31T00:00:00+00:00", held=0.0), _stage("2026-08-31T04:00:00+00:00")]
+    out = realized_drift(stages, 1000.0)
+    assert out["cycles"] == []
+    assert out["unscored"] == ["2026-08-31T00:00:00+00:00", "2026-08-31T04:00:00+00:00"]
+
+
+def test_a_book_missing_a_model_leg_is_refused():
+    stages = [_stage("2026-08-31T00:00:00+00:00")]
+    with pytest.raises(EngineError, match="carries no BTC"):
+        realized_drift(stages, 1000.0, books={stages[0].cycle_ts + timedelta(hours=4): {"ETH": 0.5}})
 
 
 _OPENING_BIRTH = "2026-11-09T00:00:00+00:00"
@@ -336,75 +350,30 @@ def test_a_price_move_moves_realized_drift_and_that_is_the_signal():
     # stays put -> 0.003333 BTC * 60000 = 200 EUR = 2000 bps. An engine that kept placing would
     # have re-placed; one that stopped accumulates exactly this. It is the measurement, not a bug.
     stages = [_stage("2026-08-31T00:00:00+00:00"), _stage("2026-08-31T04:00:00+00:00", close=60000.0)]
-    out = realized_drift(stages, [_mk("2026-08-31T00:00:00+00:00", 0.02)], 1000.0)
+    out = realized_drift(stages, 1000.0, books=_after(stages, 0.02))
     assert out["cycles"][0]["drift_bps"] == pytest.approx(0.0)
     assert out["cycles"][1]["drift_bps"] == pytest.approx(2000.0)
 
 
-def test_a_sell_reduces_held_and_a_round_trip_returns_it_to_zero():
-    # The buy OVERSHOOTS the 0.02 target on purpose. Round-tripping a fill that exactly meets the
-    # target leaves held at `target - q` when signed and `target + q` when unsigned, and drift is an
-    # absolute value -- both read the same number, so the sign error would be unobservable.
-    stages = [_stage("2026-08-31T00:00:00+00:00"), _stage("2026-08-31T04:00:00+00:00")]
-    fills = [_mk("2026-08-31T00:00:00+00:00", 0.05), _mk("2026-08-31T04:00:00+00:00", 0.05, side="sell")]
-    out = realized_drift(stages, fills, 1000.0)
-    assert out["cycles"][0]["drift_bps"] == pytest.approx(15000.0)  # 0.03 BTC over target
-    # held back to 0 against a 0.02 target -> the whole NAV undeployed -> 10000 bps.
-    assert out["cycles"][1]["drift_bps"] == pytest.approx(10000.0)
+def test_a_short_book_is_read_signed():
+    # Short 0.01 BTC against a 0.02 target is 0.03 BTC off, 1500 EUR or 15000 bps; read unsigned, it is 0.01 off and 5000.
+    stages = [_stage("2026-08-31T00:00:00+00:00")]
+    out = realized_drift(stages, 1000.0, books=_after(stages, -0.01))
+    assert out["cycles"][0]["drift_bps"] == pytest.approx(15000.0)
 
 
-def test_a_fill_is_attributed_to_its_own_boundary_not_a_later_one():
-    stages = [_stage("2026-08-31T00:00:00+00:00"), _stage("2026-08-31T04:00:00+00:00")]
-    out = realized_drift(stages, [_mk("2026-08-31T04:00:00+00:00", 0.02)], 1000.0)
-    assert out["cycles"][0]["drift_bps"] == pytest.approx(10000.0)  # nothing held yet
-    assert out["cycles"][1]["drift_bps"] == pytest.approx(0.0)
-
-
-def test_a_fill_past_the_last_cycle_is_refused_as_a_truncated_window():
-    # Dropping it would overstate drift for every later cycle with no note and no refusal. Naming
-    # the truncation is the point: widening the window fixes this one and cannot fix a hole.
-    with pytest.raises(EngineError, match="OUTSIDE the cycle span"):
-        realized_drift([_stage("2026-08-31T00:00:00+00:00")], [_mk("2026-08-31T04:00:00+00:00", 0.02)], 1000.0)
-
-
-def test_a_fill_inside_the_span_whose_cycle_is_missing_is_refused_as_a_hole():
-    # The reachable trigger: `accumulation_report` drops a record whose `replay_stages` raises and
-    # counts it in `n_failed`, so a fill journaled under that boundary has no stage to land on. No
-    # widening recovers it, which is why it must not read as a truncation.
-    stages = [_stage("2026-08-31T00:00:00+00:00"), _stage("2026-08-31T08:00:00+00:00")]
-    with pytest.raises(EngineError, match="INSIDE the cycle span"):
-        realized_drift(stages, [_mk("2026-08-31T04:00:00+00:00", 0.02)], 1000.0)
-
-
-def test_a_boundary_written_in_another_offset_is_one_instant_not_an_orphan():
-    # `by_boundary`'s lookup is keyed by datetime INSTANT while the refusal once compared isoformat
-    # text. 02:00+02:00 and 00:00+00:00 are one instant and two strings, so a text comparison
-    # refuses a fill that the accumulation loop then goes on to apply.
-    b = datetime.fromisoformat("2026-08-31T02:00:00+02:00")
-    shifted = Fill(b, b, "BTC", "buy", 0.02, 50000.0, 0.05, "MAKER", "T-tz")
-    out = realized_drift([_stage("2026-08-31T00:00:00+00:00")], [shifted], 1000.0)
+def test_a_book_keyed_in_another_offset_is_one_instant():
+    # 06:00+02:00 is 04:00Z, the boundary after 00:00Z: the books are keyed by instant, never by isoformat text.
+    stages = [_stage("2026-08-31T00:00:00+00:00")]
+    out = realized_drift(stages, 1000.0, books={datetime.fromisoformat("2026-08-31T06:00:00+02:00"): {"BTC": 0.02}})
     assert out["cycles"][0]["drift_bps"] == pytest.approx(0.0)
 
 
 def test_an_empty_window_answers_nan_rather_than_none():
     # One convention for "nothing to average" across both halves: `feeders._bps` renders NaN as
     # `n/a` and raises TypeError on None, and it is the renderer this payload feeds.
-    out = realized_drift([], [], 1000.0)
+    out = realized_drift([], 1000.0)
     assert math.isnan(out["median_drift_bps"]) and math.isnan(out["p95_drift_bps"])
-
-
-def test_a_fill_on_a_btc_quoted_leg_is_counted_but_never_aborts_the_report():
-    # The "inflating a base" half is unfalsifiable by construction -- a base of None is never a key
-    # in `final`, so `held[None]` is unreadable and the skip moves no drift number. What the skip
-    # DOES decide is the second leg here, whose boundary no cycle covers: a leg carrying no model
-    # target must not take the whole report down through the orphan refusal.
-    b = datetime.fromisoformat("2026-08-31T00:00:00+00:00")
-    orphan_b = datetime.fromisoformat("2026-08-31T04:00:00+00:00")
-    excluded = Fill(b, b, None, "buy", 5.0, 3000.0, None, "MAKER", "T-X")
-    off_window = Fill(orphan_b, orphan_b, None, "buy", 5.0, 3000.0, None, "MAKER", "T-Y")
-    out = realized_drift([_stage("2026-08-31T00:00:00+00:00")], [excluded, off_window], 1000.0)
-    assert out["cycles"][0]["drift_bps"] == pytest.approx(10000.0)
-    assert out["n_fills"] == 2  # excluded from the drift half, still counted
 
 
 def test_a_partial_iso_week_is_marked_and_carries_no_verdict():
@@ -420,7 +389,7 @@ def test_no_data_means_the_series_never_started_not_a_quiet_week():
     stages = [_stage(f"2026-08-31T{h:02d}:00:00+00:00") for h in (0, 4, 8, 12, 16, 20)] + [
         _stage(f"2026-09-07T{h:02d}:00:00+00:00") for h in (0, 4, 8, 12, 16, 20)
     ]
-    out = weekly_tracking(stages, [_mk("2026-08-31T00:00:00+00:00", 0.02)], _MINIMUMS, 1000.0)
+    out = weekly_tracking(stages, [_mk("2026-08-31T00:00:00+00:00", 0.02)], _MINIMUMS, 1000.0, books=_after(stages, 0.02))
     weeks = {w["iso_week"]: w for w in out["weeks"]}
     assert weeks["2026-W36"]["realized_mean_bps"] is not None
     assert weeks["2026-W37"]["realized_mean_bps"] is not None, "a quiet week is not 'no data'"
@@ -431,14 +400,15 @@ def test_before_any_fill_the_series_has_not_started():
     assert out["weeks"][0]["realized_mean_bps"] is None
 
 
-def test_weekly_tracking_starts_the_series_at_the_opening_window_and_seeds_held_from_it():
-    # NAV 1000 at 50k and weight 1: a target of 0.02 BTC. The series is born at 08Z holding 0.015 and its first fill buys
-    # the 0.005 left, so 08Z sits on target; 12Z's close of 60k re-prices the 0.02 held against a target of 0.01667, EUR 200
-    # or 2000 bps -- a mean of 1000 over the series' two cycles. The 00Z fill is an earlier series'.
+def test_weekly_tracking_starts_the_series_at_the_opening_birth():
+    # NAV 1000 at 50k and weight 1: a target of 0.02 BTC. The series is born at 08Z, whose trading leaves the book on target;
+    # 12Z's close of 60k re-prices the 0.02 held against a target of 0.01667, EUR 200 or 2000 bps -- a mean of 1000 over the
+    # series' two cycles. 00Z and 04Z, off target, are an earlier series', and so is the 00Z fill.
     stages = [_stage(f"2026-08-31T{h:02d}:00:00+00:00") for h in (0, 4, 8)] + [_stage("2026-08-31T12:00:00+00:00", close=60000.0)]
     fills = [_mk("2026-08-31T00:00:00+00:00", 0.01), _mk("2026-08-31T08:00:00+00:00", 0.005)]
     opening = OpeningHoldings(birth=datetime.fromisoformat("2026-08-31T08:00:00+00:00"), held={"BTC": 0.015})
-    (week,) = weekly_tracking(stages, fills, _MINIMUMS, 1000.0, opening=opening)["weeks"]
+    books = _after(stages, [0.5, 0.5, 0.02, 0.02])
+    (week,) = weekly_tracking(stages, fills, _MINIMUMS, 1000.0, opening=opening, books=books)["weeks"]
     assert week["realized_mean_bps"] == pytest.approx(1000.0)
     assert week["cycles"] == 2
 
@@ -457,47 +427,36 @@ def _full_week(monday="2026-08-31", **kw):
 _RUNGS = {"2026-W36": 3, "2026-W37": 3, "2026-W38": 3}
 
 
-def _tracking_fills(stages, nav=1000.0):
-    # A fill at every boundary that exactly meets that cycle's target -> realized drift 0.
-    out = []
-    for st in stages:
-        held = (nav * st.final["BTC"]) / st.closes["BTC"]
-        prev = sum(f.qty if f.side == "buy" else -f.qty for f in out)
-        delta = held - prev
-        if delta:
-            out.append(
-                Fill(
-                    st.cycle_ts,
-                    st.cycle_ts,
-                    "BTC",
-                    "buy" if delta > 0 else "sell",
-                    abs(delta),
-                    st.closes["BTC"],
-                    0.05,
-                    "MAKER",
-                    f"T-{st.cycle_ts}",
-                )
-            )
-    return out
-
-
-def test_a_fill_whose_at_is_skewed_past_the_next_boundary_still_counts_at_its_own():
-    # Every other fixture sets at == boundary, which makes the "attribute by wall clock"
-    # mutation unobservable. This skew IS the defect being guarded.
-    b = datetime.fromisoformat("2026-08-31T00:00:00+00:00")
-    late = Fill(b, datetime.fromisoformat("2026-08-31T05:30:00+00:00"), "BTC", "buy", 0.02, 50000.0, 0.05, "MAKER", "T-late")
-    stages = [_stage("2026-08-31T00:00:00+00:00"), _stage("2026-08-31T04:00:00+00:00")]
-    out = realized_drift(stages, [late], 1000.0)
-    assert out["cycles"][0]["drift_bps"] == pytest.approx(0.0)
+def _on_target(stages, nav=1000.0):
+    """The series started by a fill at the first boundary, and the book each cycle's trading left exactly on its target ->
+    realized drift 0. Returns (fills, books)."""
+    first = stages[0]
+    fill = Fill(first.cycle_ts, first.cycle_ts, "BTC", "buy", 0.02, first.closes["BTC"], 0.05, "MAKER", "T-first")
+    return [fill], _after(stages, [(nav * st.final["BTC"]) / st.closes["BTC"] for st in stages])
 
 
 def test_three_complete_weeks_within_band_read_pass():
     # The only test that reaches a `pass` verdict -- without it the _GATE_MIN_WEEKS probe has
     # nothing to fail against, since every other fixture yields insufficient-data either way.
     stages = _full_week("2026-08-31") + _full_week("2026-09-07") + _full_week("2026-09-14")
-    out = weekly_tracking(stages, _tracking_fills(stages), _MINIMUMS, 1000.0, rung_by_week=_RUNGS)
+    fills, books = _on_target(stages)
+    out = weekly_tracking(stages, fills, _MINIMUMS, 1000.0, rung_by_week=_RUNGS, books=books)
     assert out["complete_gate_eligible_weeks"] == 3
     assert out["verdict"] == "pass"
+
+
+def test_a_week_holding_a_cycle_with_no_book_after_it_carries_no_realized_mean():
+    """The three passing weeks with the book after one W37 cycle missing -- its next boundary's venue read failed: W37
+    carries no realized mean and names that cycle, so two weeks decide and the verdict waits."""
+    stages = _full_week("2026-08-31") + _full_week("2026-09-07") + _full_week("2026-09-14")
+    fills, books = _on_target(stages)
+    books[stages[50].cycle_ts + timedelta(hours=4)] = None
+    out = weekly_tracking(stages, fills, _MINIMUMS, 1000.0, rung_by_week=_RUNGS, books=books)
+    weeks = {w["iso_week"]: w for w in out["weeks"]}
+    assert weeks["2026-W37"]["realized_mean_bps"] is None and weeks["2026-W37"]["within_band"] is None
+    assert weeks["2026-W37"]["unscored_from"] == stages[50].cycle_ts.isoformat()
+    assert weeks["2026-W36"]["unscored_from"] is None and weeks["2026-W36"]["within_band"] is True
+    assert out["complete_gate_eligible_weeks"] == 2 and out["verdict"] == "insufficient-data"
 
 
 def test_two_complete_weeks_are_not_enough_for_a_verdict():
@@ -505,7 +464,8 @@ def test_two_complete_weeks_are_not_enough_for_a_verdict():
     # two in-band weeks read `pass` on less evidence than the gate requires, and no other fixture
     # notices: every remaining one has `decided == []`, which is short of any threshold.
     stages = _full_week("2026-08-31") + _full_week("2026-09-07")
-    out = weekly_tracking(stages, _tracking_fills(stages), _MINIMUMS, 1000.0, rung_by_week=_RUNGS)
+    fills, books = _on_target(stages)
+    out = weekly_tracking(stages, fills, _MINIMUMS, 1000.0, rung_by_week=_RUNGS, books=books)
     assert out["complete_gate_eligible_weeks"] == 2
     assert out["verdict"] == "insufficient-data"
 
@@ -526,10 +486,13 @@ def _light_weeks():
 
 
 def test_a_realized_mean_strictly_inside_the_floor_band_reads_pass():
-    # A single 1e-9 BTC fill against a 2e-7 target leaves the realized side at 0.0995 bps -- inside
+    # A book of 1e-9 BTC against a 2e-7 target leaves the realized side at 0.0995 bps -- inside
     # a 0.1 floor, and inside it strictly. `<=` reads True here and `>=` reads False, which is the
     # only thing in the suite that pins which way the band comparison runs.
-    out = weekly_tracking(_light_weeks(), [_mk("2026-08-31T00:00:00+00:00", 1e-9)], _MINIMUMS, 1000.0, rung_by_week=_RUNGS)
+    stages = _light_weeks()
+    out = weekly_tracking(
+        stages, [_mk("2026-08-31T00:00:00+00:00", 1e-9)], _MINIMUMS, 1000.0, rung_by_week=_RUNGS, books=_after(stages, 1e-9)
+    )
     wk = out["weeks"][0]
     assert wk["floor_p95_bps"] == pytest.approx(0.1)
     assert wk["realized_mean_bps"] == pytest.approx(0.0995)
@@ -538,9 +501,12 @@ def test_a_realized_mean_strictly_inside_the_floor_band_reads_pass():
 
 
 def test_a_realized_mean_outside_the_floor_band_reads_fail():
-    # The only fixture that reaches `fail`. Same non-placing 0.1 bps floor; a 0.02 BTC fill against a
-    # 2e-7 target leaves the book vastly over-deployed at 9999.9 bps.
-    out = weekly_tracking(_light_weeks(), [_mk("2026-08-31T00:00:00+00:00", 0.02)], _MINIMUMS, 1000.0, rung_by_week=_RUNGS)
+    # The only fixture that reaches `fail`. Same non-placing 0.1 bps floor; a 0.02 BTC book against a
+    # 2e-7 target is vastly over-deployed at 9999.9 bps.
+    stages = _light_weeks()
+    out = weekly_tracking(
+        stages, [_mk("2026-08-31T00:00:00+00:00", 0.02)], _MINIMUMS, 1000.0, rung_by_week=_RUNGS, books=_after(stages, 0.02)
+    )
     assert out["weeks"][0]["realized_mean_bps"] == pytest.approx(9999.9)
     assert all(w["within_band"] is False for w in out["weeks"])
     assert out["verdict"] == "fail"
@@ -550,7 +516,9 @@ def test_the_bands_edge_is_the_floors_p95_not_its_median():
     # The realized mean lands at 0.1638 -- inside the p95 edge at 1.0, outside a median edge at 0.1 --
     # so the two statistics return opposite verdicts on identical data.
     stages = _uneven_week("2026-08-31") + _uneven_week("2026-09-07") + _uneven_week("2026-09-14")
-    out = weekly_tracking(stages, [_mk("2026-08-31T00:00:00+00:00", 1e-9)], _MINIMUMS, 1000.0, rung_by_week=_RUNGS)
+    out = weekly_tracking(
+        stages, [_mk("2026-08-31T00:00:00+00:00", 1e-9)], _MINIMUMS, 1000.0, rung_by_week=_RUNGS, books=_after(stages, 1e-9)
+    )
     wk = out["weeks"][0]
     assert wk["floor_p95_bps"] == pytest.approx(1.0)
     assert wk["realized_mean_bps"] == pytest.approx(0.1637857142857143)
@@ -563,7 +531,8 @@ def test_a_week_straddling_the_first_fill_is_measured_but_not_gate_eligible():
     # tracking, and it would bias the first live week toward `fail`. Ruled like a partial week:
     # reported, excluded from the verdict. `complete` is True, so only the straddle rule can do it.
     stages = _full_week("2026-08-31")
-    out = weekly_tracking(stages, [_mk(stages[20].cycle_ts.isoformat(), 0.02)], _MINIMUMS, 1000.0, rung_by_week=_RUNGS)
+    books = _after(stages, [0.0] * 20 + [0.02] * 22)
+    out = weekly_tracking(stages, [_mk(stages[20].cycle_ts.isoformat(), 0.02)], _MINIMUMS, 1000.0, rung_by_week=_RUNGS, books=books)
     wk = out["weeks"][0]
     # rung 3 AND complete, so the straddle rule is the only remaining way to make it ineligible.
     assert wk["complete"] is True and wk["rung"] == 3
@@ -577,7 +546,8 @@ def test_with_no_rung_boundary_nothing_is_gate_eligible():
     # week must NOT count toward the verdict. The measurement half still runs -- withholding the
     # verdict is safe, withholding the numbers is merely unhelpful.
     stages = _full_week("2026-08-31")
-    out = weekly_tracking(stages, _tracking_fills(stages), _MINIMUMS, 1000.0)
+    fills, books = _on_target(stages)
+    out = weekly_tracking(stages, fills, _MINIMUMS, 1000.0, books=books)
     wk = out["weeks"][0]
     assert wk["complete"] is True and wk["rung"] is None and wk["gate_eligible"] is False
     assert wk["floor_p95_bps"] is not None and wk["realized_mean_bps"] is not None
@@ -588,9 +558,8 @@ def test_a_rung_2_week_is_measured_but_not_gate_eligible():
     # Given a FILL, so the exclusion is what makes it ineligible -- without one this test would
     # pass with the rung-2 rule entirely removed.
     stages = _full_week("2026-08-31")
-    out = weekly_tracking(
-        stages, _tracking_fills(stages), _MINIMUMS, 1000.0, rung_by_week={"2026-W36": 2}
-    )  # explicitly 2, not absent
+    fills, books = _on_target(stages)
+    out = weekly_tracking(stages, fills, _MINIMUMS, 1000.0, rung_by_week={"2026-W36": 2}, books=books)  # explicitly 2, not absent
     wk = out["weeks"][0]
     assert wk["complete"] is True, "a partial week would be ineligible whatever the rung rule"
     assert wk["rung"] == 2 and wk["gate_eligible"] is False
@@ -1198,11 +1167,11 @@ def test_simulated_fills_produce_a_non_degenerate_report(tracking_json):
     assert payload["tracking"]["complete_gate_eligible_weeks"] == 3
     assert payload["tracking"]["verdict"] == "pass"
     assert payload["cost"]["n_fills"] > 0 and payload["cost"]["realized_fee_per_side"] > 0
-    # And the realized half must reproduce the book it was HANDED, week for week. Fed the floor
-    # policy's own placements, `realized_drift` rebuilds the same held quantities from signed fills
-    # attributed to boundaries, so its weekly mean must equal the floor's -- the one assertion here
-    # that a wrong side, a wrong quantity or a fill booked at the wrong boundary cannot survive,
-    # while "it produced three decided weeks" survives all three.
+    # And the realized half must reproduce the book it was HANDED, week for week. Fed the books the
+    # floor policy's own placements leave, `realized_drift` scores each cycle against the book after
+    # it, so its weekly mean must equal the floor's -- the one assertion here that a wrong side, a
+    # wrong quantity or a book read at the wrong boundary cannot survive, while "it produced three
+    # decided weeks" survives all three.
     floor_means = [w["mean_drift_bps"] for w in sorted(payload["floor"]["weeks"], key=lambda w: (w["iso_year"], w["iso_week"]))]
     assert [w["realized_mean_bps"] for w in weeks] == pytest.approx(floor_means, rel=1e-9)
 
@@ -1445,38 +1414,87 @@ def test_an_export_whose_header_cannot_be_mapped_aborts_the_command(tmp_path, mi
 _SERIES_BIRTH = datetime(2026, 7, 10, 20, tzinfo=UTC)
 
 
-def test_tracking_report_reads_the_opening_window_and_refuses_one_that_starts_after_the_birth(tmp_path):
-    # Three identical synthetic cycles from the birth, Friday 20Z to Saturday 04Z. The series opens holding three
-    # quarters of its heaviest leg's target and its first fill buys the last quarter: with the record that leg sits on
-    # target, and without it the opening's three quarters, 7500 bps per unit of weight, are drift in every cycle.
+def test_tracking_report_reads_the_series_from_its_birth_and_refuses_a_window_that_starts_after_it(tmp_path):
+    # Three synthetic cycles from the birth, Friday 20Z to Saturday 04Z, and the opening holdings stamped for it.
     sliced = _synth_slice(tmp_path / "opening", (2, 2, 2), start=_SERIES_BIRTH)
-    targets = json.loads((sliced.journal / "2026-07-10" / "cycle-20.json").read_text())["final_targets"]
-    symbol = max((s for s in targets if s.endswith("/EUR")), key=lambda s: targets[s])
-    base, weight = symbol.split("/")[0], targets[symbol]
-    close = basket_fixture.grids(_SERIES_BIRTH)[240][1][symbol][-1]
-    target = weight * 1000.0 / close
-    fill = _fill(at="2026-07-10T20:01:00+00:00", qty=target / 4, px=close, trade_id="T-open")
-    (sliced.journal / "2026-07-10" / "exec-20.json").write_text(
-        json.dumps(_rec([fill], symbol=symbol, cycle_ts=_SERIES_BIRTH.isoformat()))
-    )
     doc = _opening_doc()
     doc["birth"] = _SERIES_BIRTH.isoformat()
-    for row in doc["rows"]:
-        row["balance"] = 3 * target / 4 if row["base"] == base else 0.0
     record = tmp_path / "opening-holdings.json"
     record.write_text(json.dumps(doc))
 
-    without = _invoke(sliced, _tracking_argv(sliced, "--json"))
     opened = _invoke(sliced, _tracking_argv(sliced, "--opening-holdings", str(record), "--json"))
-    assert without.exit_code == 0 and opened.exit_code == 0, without.stdout + opened.stdout
-    (plain_week,) = json.loads(without.stdout)["tracking"]["weeks"]
-    (opened_week,) = json.loads(opened.stdout)["tracking"]["weeks"]
-    assert opened_week["realized_mean_bps"] == pytest.approx(plain_week["realized_mean_bps"] - 7500.0 * weight)
+    assert opened.exit_code == 0, opened.stdout
     assert json.loads(opened.stdout)["opening_birth"] == _SERIES_BIRTH.isoformat()
 
     late = _invoke(sliced, _tracking_argv(sliced, "--opening-holdings", str(record), "--since", "2026-07-11"))
     assert late.exit_code != 0
     assert "--since 2026-07-11 starts after the series' birth at 2026-07-10T20:00:00+00:00" in late.stdout
+
+
+def test_tracking_report_scores_each_cycle_against_the_book_the_next_record_journaled(tmp_path):
+    # Four synthetic cycles, Friday 16Z to Saturday 04Z, the window ending on Friday, a fill at 16Z starting the series.
+    # 16Z is scored against the book 20Z's record journals and 20Z against Saturday 00Z's, read past the window. Each book
+    # is the target of the cycle before it, so the week reads 0 bps, where 16Z's own book, flat, reads the whole of its
+    # target. Without Saturday 00Z's record 20Z is not scored, and the week carries no realized mean and names it.
+    start = _SERIES_BIRTH - timedelta(hours=4)
+    sliced = _synth_slice(tmp_path / "books", (2, 2, 2, 2), start=start)
+    fill = _fill(at=(start + timedelta(minutes=1)).isoformat(), trade_id="T-16")
+    (sliced.journal / f"{start:%Y-%m-%d}" / f"exec-{start:%H}.json").write_text(
+        json.dumps(_rec([fill], cycle_ts=start.isoformat()))
+    )
+    argv = _tracking_argv(sliced, "--until", start.date().isoformat(), "--json")
+    targets = [cycle["target_qty"] for cycle in json.loads(_invoke(sliced, argv).stdout)["floor"]["cycles"]]
+    assert len(targets) == 2
+    for offset, book in enumerate((dict.fromkeys(targets[0], 0.0), targets[0], targets[1])):
+        at = start + timedelta(hours=4 * offset)
+        path = sliced.journal / f"{at:%Y-%m-%d}" / f"cycle-{at:%H}.json"
+        path.write_text(json.dumps(json.loads(path.read_text()) | {"held": book}))
+
+    run = _invoke(sliced, argv)
+    assert run.exit_code == 0, run.stdout
+    (week,) = json.loads(run.stdout)["tracking"]["weeks"]
+    assert (week["realized_mean_bps"], week["unscored_from"]) == (pytest.approx(0.0, abs=1e-6), None)
+
+    after = start + timedelta(hours=8)
+    (sliced.journal / f"{after:%Y-%m-%d}" / f"cycle-{after:%H}.json").unlink()
+    (week,) = json.loads(_invoke(sliced, argv).stdout)["tracking"]["weeks"]
+    assert (week["realized_mean_bps"], week["unscored_from"]) == (None, _SERIES_BIRTH.isoformat())
+
+
+def test_tracking_report_aborts_on_an_unreadable_record_past_the_window_naming_it(tmp_path):
+    # Two synthetic cycles, Friday 16Z and 20Z, the window ending on Friday, and Saturday 00Z's record past it corrupt.
+    start = _SERIES_BIRTH - timedelta(hours=4)
+    sliced = _synth_slice(tmp_path / "corrupt", (2, 2), start=start)
+    after = start + timedelta(hours=8)
+    path = sliced.journal / f"{after:%Y-%m-%d}" / f"cycle-{after:%H}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("not json")
+
+    run = _invoke(sliced, _tracking_argv(sliced, "--until", start.date().isoformat()))
+
+    assert run.exit_code == 1
+    assert f"unreadable cycle record {path}: invalid journal JSON" in run.stdout
+    assert "it journals the book the window's last cycle traded to" in run.stdout
+
+
+def test_tracking_report_notes_a_week_whose_record_past_it_journals_no_book(tmp_path):
+    # Next Monday's record, the 43rd and past the window, keeps the fixture's `held=None` and the week's 42 a flat book, so
+    # the week's last cycle is the first it cannot score.
+    sliced = _synth_slice(tmp_path / "week", (2,) * 43, start=_SYNTH_WEEK_START)
+    last = _SYNTH_WEEK_START + timedelta(days=7) - timedelta(hours=4)
+    for offset in range(42):
+        at = _SYNTH_WEEK_START + timedelta(hours=4 * offset)
+        record = sliced.journal / f"{at:%Y-%m-%d}" / f"cycle-{at:%H}.json"
+        record.write_text(json.dumps(json.loads(record.read_text()) | {"held": dict.fromkeys(_MODEL_BASES, 0.0)}))
+    fill = _fill(at=(_SYNTH_WEEK_START + timedelta(minutes=1)).isoformat(), trade_id="T-00")
+    (sliced.journal / f"{_SYNTH_WEEK_START:%Y-%m-%d}" / "exec-00.json").write_text(
+        json.dumps(_rec([fill], cycle_ts=_SYNTH_WEEK_START.isoformat()))
+    )
+
+    run = _invoke(sliced, _tracking_argv(sliced, "--until", last.date().isoformat(), "--gate-from", _SYNTH_WEEK))
+
+    assert run.exit_code == 0, run.stdout
+    assert f"no journaled book after {last.isoformat()}" in run.stdout
 
 
 def test_tracking_report_with_an_opening_record_leaves_the_earlier_series_out_of_every_block(tmp_path):
@@ -1572,6 +1590,11 @@ def _stage_at(ts, *, nav=None):
     )
 
 
+def _flat_after(*stamps):
+    """A flat book -- no BTC -- at the boundary after each stamp."""
+    return {ts + timedelta(hours=4): {"BTC": 0.0} for ts in stamps}
+
+
 def test_the_journaled_nav_moves_drift_bps_itself_not_only_the_eur_restatement():
     """`drift_bps` -- the operand the kill switch trips on -- must come from the journaled NAV.
 
@@ -1584,14 +1607,14 @@ def test_the_journaled_nav_moves_drift_bps_itself_not_only_the_eur_restatement()
     # Holding exactly the target the journaled NAV implies: 1.0 * 1000 / 100 = 10 BTC. Under the
     # journaled 1000 the book is perfectly on target -> 0 bps. Under the live 2000 the target
     # would be 20 BTC, so the same book is 10 BTC short -> 1000 EUR / 2000 NAV = 5000 bps.
-    held_the_journaled_target = [Fill(ts, ts, "BTC", "buy", 10.0, 100.0, 0.0, "MAKER", "T-nav")]
-    out = realized_drift([_stage_at(ts, nav=1000.0)], held_the_journaled_target, 2000.0)
+    held_the_journaled_target = {ts + timedelta(hours=4): {"BTC": 10.0}}
+    out = realized_drift([_stage_at(ts, nav=1000.0)], 2000.0, books=held_the_journaled_target)
     assert out["cycles"][0]["drift_bps"] == pytest.approx(0.0)
     assert out["cycles"][0]["drift_eur"] == pytest.approx(0.0)
 
     # The same book scored with NO journaled NAV falls back to the live scalar, and then reads the
     # full 5000 bps -- which is what the assertion above is discriminating against.
-    fallback = realized_drift([_stage_at(ts, nav=None)], held_the_journaled_target, 2000.0)
+    fallback = realized_drift([_stage_at(ts, nav=None)], 2000.0, books=held_the_journaled_target)
     assert fallback["cycles"][0]["drift_bps"] == pytest.approx(5000.0)
 
 
@@ -1602,7 +1625,7 @@ def test_a_cycle_is_scored_under_its_own_journaled_nav():
     # Journaled 1000, live 2000. Flat book, so drift is the whole target: 1000/100 * 100 = 1000 EUR
     # over a 1000 NAV = 10_000 bps. Scored under the LIVE nav it would read 10_000 too (2000/100*100
     # over 2000) -- so the discriminating assertion is drift_eur, which is bps/10_000 * nav.
-    out = realized_drift([_stage_at(ts, nav=1000.0)], [], 2000.0)
+    out = realized_drift([_stage_at(ts, nav=1000.0)], 2000.0, books=_flat_after(ts))
     assert out["cycles"][0]["drift_eur"] == pytest.approx(1000.0)  # journaled, not the live 2000
 
 
@@ -1610,7 +1633,7 @@ def test_a_cycle_without_a_journaled_nav_falls_back_to_the_live_one():
     """Every record written before the key existed. The fallback is what keeps those weeks
     scoreable at all, and it reproduces exactly today's behaviour."""
     ts = datetime(2026, 8, 1, tzinfo=UTC)
-    out = realized_drift([_stage_at(ts, nav=None)], [], 2000.0)
+    out = realized_drift([_stage_at(ts, nav=None)], 2000.0, books=_flat_after(ts))
     assert out["cycles"][0]["drift_eur"] == pytest.approx(2000.0)
 
 
@@ -1618,7 +1641,7 @@ def test_a_week_straddling_the_widening_scores_each_cycle_under_its_own_nav():
     """The straddle case: some cycles predate the key, some carry it. Each is scored under the NAV
     that was live for IT -- mixing is correct here, because drift is a per-cycle quantity."""
     a, b = datetime(2026, 8, 1, tzinfo=UTC), datetime(2026, 8, 1, 4, tzinfo=UTC)
-    out = realized_drift([_stage_at(a, nav=None), _stage_at(b, nav=1000.0)], [], 2000.0)
+    out = realized_drift([_stage_at(a, nav=None), _stage_at(b, nav=1000.0)], 2000.0, books=_flat_after(a, b))
     assert [r["drift_eur"] for r in out["cycles"]] == [pytest.approx(2000.0), pytest.approx(1000.0)]
 
 
@@ -1627,4 +1650,4 @@ def test_a_journaled_nav_that_is_not_positive_is_refused():
     ts = datetime(2026, 8, 1, tzinfo=UTC)
     for bad in (0.0, -1.0, float("nan")):
         with pytest.raises(EngineError, match="NAV"):
-            realized_drift([_stage_at(ts, nav=bad)], [], 2000.0)
+            realized_drift([_stage_at(ts, nav=bad)], 2000.0, books=_flat_after(ts))
