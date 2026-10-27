@@ -52,4 +52,4 @@ The book equals the summed sleeve gross ÷ 6 on both sides, to within one ulp, s
 | `sleeve_gross{sleeve="A2"}` | 0 | 0.007155053701170019 |
 | **final book gross** (Σ\|target weight\|, governed) | **0.08526840614703204** | **0.08444517607103927** |
 
-The book again equals the summed sleeve gross ÷ 6 on both sides, to within one ulp. The two-sleeve stretch lasted ten cycles, 2026-10-25 08Z through 2026-10-26 20Z; the band the next go-live decision reads is derived over the whole box window (`accum-replay --since 2026-10-05`), which carries those cycles, so no separate re-derivation follows this pair. The re-arm is the 00Z cycle's read; whether it holds is the daily pass's step-1 read, as the flat's was.
+The book again equals the summed sleeve gross ÷ 6 on both sides, to within one ulp. The band the next go-live decision reads is derived over the whole box window (plan 00092's R0 item 6, `--since 2026-10-05`), which carries the two-sleeve stretch, so no separate re-derivation follows this pair.
