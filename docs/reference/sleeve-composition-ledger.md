@@ -32,7 +32,7 @@ The consequences were measured at the transition rather than assumed — see [T0
 
 ### 2026-10-25 — A2 goes flat; the book runs on B and A1
 
-| | last pre-transition cycle<br>2026-10-25 04Z (published by 04:02Z) | first post-transition cycle<br>2026-10-25 08Z (published by 08:02Z) |
+| | last pre-transition cycle<br>2026-10-25 04Z | first post-transition cycle<br>2026-10-25 08Z |
 | --- | --- | --- |
 | `zcrypto_engine_active_sleeves` | 3 | **2** |
 | `sleeve_gross{sleeve="B"}` | 0.2736749476376006 | 0.2736749476376006 |
@@ -40,11 +40,11 @@ The consequences were measured at the transition rather than assumed — see [T0
 | `sleeve_gross{sleeve="A2"}` | 0.004541113427651558 | 0 |
 | **final book gross** (Σ\|target weight\|, governed) | **0.08507788318405463** | **0.08432103094611271** |
 
-A2's gross had wound down over three days (about 0.037 on 10-22, 0.0295 and 0.0156 on the next two, 0.0045 from the 10-24 17Z cycle) and read 0 from the 08Z cycle. The book moved ×0.991 at the step, the size of A2's own last contribution: B and A1 stood exactly where they were. The book equals the summed sleeve gross ÷ 6 on both sides (0.08507788318405463 and 0.08432103094611271 against the read figures, ratios 1.000000 and 1.000000), so nothing cancelled between the sleeves at this step either. `zcrypto-engine-sleeve-count-changed` fired at 08:07:30Z (Pending 08:02:30Z); the flat was read as sustained through 2026-10-26 15:00Z, seven cycles, and held ten cycles in all, 2026-10-25 08Z through 2026-10-26 20Z.
+The book equals the summed sleeve gross ÷ 6 on both sides, exactly, so nothing cancelled between the sleeves at this step either.
 
 ### 2026-10-27 — A2 re-arms; the three sleeves again
 
-| | last pre-transition cycle<br>2026-10-26 20Z | first post-transition cycle<br>2026-10-27 00Z (published by 00:02Z) |
+| | last pre-transition cycle<br>2026-10-26 20Z | first post-transition cycle<br>2026-10-27 00Z |
 | --- | --- | --- |
 | `zcrypto_engine_active_sleeves` | 2 | **3** |
 | `sleeve_gross{sleeve="B"}` | 0.28306223023886007 | 0.28186353398379443 |
@@ -52,4 +52,4 @@ A2's gross had wound down over three days (about 0.037 on 10-22, 0.0295 and 0.01
 | `sleeve_gross{sleeve="A2"}` | 0 | 0.007155053701170019 |
 | **final book gross** (Σ\|target weight\|, governed) | **0.08526840614703204** | **0.08444517607103927** |
 
-The book fell ×0.990 as A2 re-armed: B and A1 stepped down at their own daily 00Z update by more than A2's new gross added. The book again equals the summed sleeve gross ÷ 6 on both sides (0.08526840614703206 and 0.08444517607103925, ratios 1.000000 and 1.000000). `zcrypto-engine-sleeve-count-changed` fired from 00:07:30Z. The composition is back to the three sleeves the drift band was derived on after under two days, so the band re-derivation the runbook's step 3 asks for after three complete weeks in a changed composition is not owed by this pair of transitions.
+The book again equals the summed sleeve gross ÷ 6 on both sides, to within one ulp. The two-sleeve stretch lasted ten cycles, far short of the three complete ISO weeks a band needs, and the book is back on the composition it had before it, so this pair of transitions owes no re-derivation under the runbook's step 3.
