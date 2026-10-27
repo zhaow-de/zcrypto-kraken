@@ -146,7 +146,7 @@ def test_every_record_past_47_replays_at_head(kind, entry):
 
 
 # The nightly runner (infra/scripts/data-gated-run.py) sets it to origin/develop's sha as its run started, so a merge
-# landing while the suite runs is not this check's finding; unset, the live ref is read.
+# landing while the suite runs is not this check's finding.
 DEVELOP_PIN = "ZCRYPTO_DATA_GATED_DEVELOP"
 
 
@@ -169,7 +169,7 @@ def test_this_checkout_holds_every_record_origin_develop_holds():
     if behind:
         pytest.fail(
             f"{develop} holds ids this checkout's files lack, so no replay here reads them: {behind}; pull develop into "
-            f"{REPO} (`git -C {REPO} pull --ff-only` on develop) before the replay runs again"
+            "the data checkout (`git pull --ff-only` there) before the replay runs again"
         )
 
 

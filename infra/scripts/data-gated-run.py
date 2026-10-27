@@ -5,15 +5,8 @@ CI deselects the `retired` cases and skips every `skipif(not <data>.exists())` t
 `infra/systemd/zcrypto-data-gated-tests.timer` fires nightly, is the one with the whole suite in scope and so the one
 coverage report. The suite runs in a detached worktree at the checkout's HEAD as the run started, under
 `<repo>/.tmp/data-gated-run/`, every entry of the checkout's `data/` symlinked into the worktree's: a pull or merge into
-the checkout while the suite runs moves nothing under it, and `sha` names what ran. It runs pytest with no path through
-the WORKTREE's own environment (`uv run --directory <worktree>`), never the interpreter that launched it: the main
-checkout's `.venv` holds an editable install whose `.pth` resolves `cli` and `tests` back to the checkout, so a run
-through it would measure the live tree again. The suite sees `origin/develop`'s sha at the start as
-ZCRYPTO_DATA_GATED_DEVELOP, for the test that compares the checkout with it. The worktree goes whatever happened --
-each link unlinked, a path that is not a link left and named, then `git worktree remove --force` -- and the checkout's
-`data/` listing is compared with the one taken at the start; a night that never reached its teardown leaves its
-worktree, which the next start sweeps the same way and records; a sweep fault, a teardown fault or a changed listing is
-the run's error.
+the checkout while the suite runs moves nothing under it, and `sha` names what ran. The worktree goes whatever happened;
+one a night left behind is swept at the next start.
 It writes `.local/data-gated-runs/<UTC stamp>.json` plus `latest.json` in the checkout. A run in which the whole family
 skipped for want of data is exactly the night this exists to catch, so such a skip is a failure, and a checkout with no
 dataset under `data/` is refused before pytest starts. A run whose summary cannot be parsed -- a usage error, a timeout,
@@ -142,7 +135,6 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
 
 
 def git_state(repo: Path) -> dict:
-    """`sha`, `dirty`, `branch` and `develop` -- `origin/develop`'s sha, None where the checkout has no such ref."""
     head = _git(repo, "rev-parse", "HEAD")
     if head.returncode != 0:
         error = head.stderr.strip() or f"git rev-parse exited {head.returncode}"
@@ -200,8 +192,8 @@ def add_worktree(repo: Path, sha: str, worktree: Path) -> list[str]:
 
 
 def remove_worktree(repo: Path, worktree: Path) -> dict:
-    """Every symlink under the worktree's `data/` unlinked -- a path that is not one is left and named, never deleted
-    by this step -- then the worktree removed. Never a raise: the record is the result's `teardown`."""
+    """Each symlink under the worktree's `data/` unlinked, a path that is not one named in `left` and removed with the
+    worktree. Never a raise: the record is the result's `teardown`."""
     unlinked: list[str] = []
     left: list[str] = []
     faults: list[str] = []
@@ -318,8 +310,7 @@ def build_result(
     sweep_error: str | None,
 ) -> dict:
     """`state` is `git_state` at the start plus `sha_at_end` and `tree_moved`; `data_listing` the checkout's `data/` names at
-    the start and at the end. A sweep fault, a teardown fault or a changed listing joins `error`, after the suite's own, and
-    so denies `ok`."""
+    the start and at the end."""
     parsed = parse_summary(output)
     counts = parsed["counts"]
     skipped_for_data = sum(entry["count"] for entry in parsed["data_gated_skipped"])
@@ -418,9 +409,9 @@ def _environ(**values: str):
 
 
 def send_coverage(repo: Path, token: str, branch: str | None) -> dict:
-    """coveralls reads the data file, the files' names and the git head from the working directory, so it runs in `repo` --
-    the detached worktree, whose `git rev-parse --abbrev-ref HEAD` is `HEAD`, so the checkout's branch is handed over as
-    `GIT_BRANCH`, which coveralls reads first."""
+    """coveralls reads the data file, the files' names and the git head from the working directory, so it runs in `repo`, the
+    detached worktree, whose HEAD names no branch: the checkout's is handed over as `GIT_BRANCH`, read before coveralls's own
+    `git rev-parse`."""
     from coveralls import Coveralls
 
     with contextlib.chdir(repo), _environ(**({} if branch is None else {"GIT_BRANCH": branch})):
@@ -547,7 +538,6 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.flush()
         parsed = parse_summary(output)
         unparsed = None if parsed["counts"] is not None else f"no parsed pytest summary ({run_error or parsed['error']})"
-        # In the worktree, where `.coverage` and the files it names are, before the worktree goes.
         upload = coverage_upload(worktree if worktree is not None else repo, coverage_off or unparsed, state["branch"])
     finally:
         if worktree is not None and worktree.exists():
