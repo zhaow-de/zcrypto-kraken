@@ -1461,6 +1461,43 @@ def test_tracking_report_scores_each_cycle_against_the_book_the_next_record_jour
     assert (week["realized_mean_bps"], week["unscored_from"]) == (None, _SERIES_BIRTH.isoformat())
 
 
+def test_tracking_report_aborts_on_an_unreadable_record_past_the_window_naming_it(tmp_path):
+    # Two synthetic cycles, Friday 16Z and 20Z, the window ending on Friday, and Saturday 00Z's record past it corrupt.
+    start = _SERIES_BIRTH - timedelta(hours=4)
+    sliced = _synth_slice(tmp_path / "corrupt", (2, 2), start=start)
+    after = start + timedelta(hours=8)
+    path = sliced.journal / f"{after:%Y-%m-%d}" / f"cycle-{after:%H}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("not json")
+
+    run = _invoke(sliced, _tracking_argv(sliced, "--until", start.date().isoformat()))
+
+    assert run.exit_code == 1
+    assert f"unreadable cycle record {path}: invalid journal JSON" in run.stdout
+    assert "it journals the book the window's last cycle traded to" in run.stdout
+
+
+def test_tracking_report_notes_a_week_whose_record_past_it_journals_no_book(tmp_path):
+    # One complete synthetic week, its records journaling a flat book, a fill at its first boundary starting the series,
+    # and the next Monday's record, past the window, journaling none: the week's last cycle has no book to score against,
+    # so the gate-eligible week carries no realized mean and its row says why.
+    sliced = _synth_slice(tmp_path / "week", (2,) * 43, start=_SYNTH_WEEK_START)
+    last = _SYNTH_WEEK_START + timedelta(days=7) - timedelta(hours=4)
+    for offset in range(42):
+        at = _SYNTH_WEEK_START + timedelta(hours=4 * offset)
+        record = sliced.journal / f"{at:%Y-%m-%d}" / f"cycle-{at:%H}.json"
+        record.write_text(json.dumps(json.loads(record.read_text()) | {"held": dict.fromkeys(_MODEL_BASES, 0.0)}))
+    fill = _fill(at=(_SYNTH_WEEK_START + timedelta(minutes=1)).isoformat(), trade_id="T-00")
+    (sliced.journal / f"{_SYNTH_WEEK_START:%Y-%m-%d}" / "exec-00.json").write_text(
+        json.dumps(_rec([fill], cycle_ts=_SYNTH_WEEK_START.isoformat()))
+    )
+
+    run = _invoke(sliced, _tracking_argv(sliced, "--until", last.date().isoformat(), "--gate-from", _SYNTH_WEEK))
+
+    assert run.exit_code == 0, run.stdout
+    assert f"no journaled book after {last.isoformat()}" in run.stdout
+
+
 def test_tracking_report_with_an_opening_record_leaves_the_earlier_series_out_of_every_block(tmp_path):
     # Four synthetic cycles, Friday 16Z to Saturday 04Z, the series born at 20Z: a fill at 16Z, an earlier series', at
     # 0.5 % of its notional, and one at the birth at 0.1 %. Only the birth's cycles and its fill reach the payload.

@@ -8399,10 +8399,12 @@ def test_an_absent_series_start_refuses_the_week_naming_the_file(tmp_path):
         "2026-09-06T00:00:00+00:00\n",
         "2026-09-06T00:00:00Z\n\n",
         "2026-09-06T01:00:00Z\n",
+        "2026-09-06T04:01:00Z\n",
+        "2026-09-06T04:00:30Z\n",
         "2026-02-30T00:00:00Z\n",
         "",
     ],
-    ids=["an-offset", "a-second-line", "off-the-4-hourly-grid", "no-such-day", "empty"],
+    ids=["an-offset", "a-second-line", "off-the-4-hourly-grid", "a-minute-past-it", "a-second-past-it", "no-such-day", "empty"],
 )
 def test_a_malformed_series_start_refuses_the_week_naming_the_file(tmp_path, line):
     _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
