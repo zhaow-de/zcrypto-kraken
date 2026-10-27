@@ -14,7 +14,7 @@ import textwrap
 import threading
 import time
 import types
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -361,6 +361,7 @@ def test_the_runner_writes_the_stamped_file_and_latest_with_the_full_shape(tmp_p
         "errors",
         "data_gated_skipped",
         "swept",
+        "sweep_left",
         "sweep_error",
         "teardown",
         "data_listing_intact",
@@ -560,10 +561,39 @@ def test_a_stale_worktree_from_a_night_that_never_tore_down_is_swept_at_start_an
     proc = _run(tmp_path, repo)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     latest = _latest(repo)
-    assert latest["swept"] == ["wt-20260101T000000Z"] and latest["sweep_error"] is None
+    assert latest["swept"] == ["wt-20260101T000000Z"] and latest["sweep_left"] == [] and latest["sweep_error"] is None
     assert latest["ok"] is True and latest["worktree"] != str(stale)
     assert sorted(p.name for p in (repo / "data").iterdir()) == [".gitignore", "ohlc-full"]
     _no_worktree_left(repo)
+
+
+def test_a_worktree_younger_than_the_bound_may_be_a_live_run_and_is_left_and_named(tmp_path):
+    repo = _checkout(tmp_path, "def test_ok(): pass\n")
+    # A minute ago: inside the bound plus slack, and never the stamp the run picks for its own worktree.
+    a_minute_ago = datetime.now(timezone.utc) - timedelta(seconds=60)
+    young = repo / runner.WORKTREE_DIR / f"wt-{a_minute_ago.strftime('%Y%m%dT%H%M%SZ')}"
+    young.parent.mkdir(parents=True)
+    _git(repo, "worktree", "add", "--detach", str(young), "HEAD")
+    os.symlink(repo / "data" / "ohlc-full", young / "data" / "ohlc-full")
+    proc = _run(tmp_path, repo, "--timeout", "2")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    latest = _latest(repo)
+    assert latest["swept"] == [] and latest["sweep_left"] == [young.name] and latest["sweep_error"] is None
+    assert latest["ok"] is True and latest["worktree"] != str(young)
+    assert (young / "data" / "ohlc-full").is_symlink(), "the live run's link is untouched"
+    assert sorted(_worktrees(repo)) == sorted([str(repo), str(young)])
+
+
+def test_a_wt_directory_whose_name_is_not_a_stamp_is_left_and_named_not_removed(tmp_path):
+    repo = _checkout(tmp_path, "def test_ok(): pass\n")
+    odd = repo / runner.WORKTREE_DIR / "wt-by-hand"
+    odd.mkdir(parents=True)
+    (odd / "keep").write_text("x")
+    proc = _run(tmp_path, repo)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    latest = _latest(repo)
+    assert latest["swept"] == [] and latest["sweep_left"] == ["wt-by-hand"] and latest["sweep_error"] is None
+    assert latest["ok"] is True and (odd / "keep").read_text() == "x"
 
 
 def test_a_clean_start_sweeps_nothing_and_records_the_empty_list(tmp_path):
@@ -571,7 +601,7 @@ def test_a_clean_start_sweeps_nothing_and_records_the_empty_list(tmp_path):
     proc = _run(tmp_path, repo)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     latest = _latest(repo)
-    assert latest["swept"] == [] and latest["sweep_error"] is None and latest["ok"] is True
+    assert latest["swept"] == [] and latest["sweep_left"] == [] and latest["sweep_error"] is None and latest["ok"] is True
 
 
 def test_a_suite_that_writes_into_the_checkouts_data_is_caught_by_the_listing_and_fails_the_run(tmp_path):
@@ -673,6 +703,7 @@ def _result(**overrides) -> dict:
             },
             "data_listing": _LISTING,
             "swept": [],
+            "sweep_left": [],
             "sweep_error": None,
             **overrides,
         }

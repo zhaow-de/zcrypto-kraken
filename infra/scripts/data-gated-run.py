@@ -52,6 +52,9 @@ PYTEST_ARGS = ("-q", "-p", "no:cacheprovider", "-rfEs", "-n", "8")
 # The data file only, `.coverage` at the worktree's root: the upload reads it there, and a report would only lengthen the journal.
 COVERAGE_ARGS = ("--cov=cli", "--cov-report=")
 WORKTREE_DIR = Path(".tmp") / "data-gated-run"
+_WT_STAMP = re.compile(r"^wt-(\d{8}T\d{6})Z$")
+# A `wt-<stamp>` this much older than the run's own bound cannot be a live run's: the runner kills pytest at the bound.
+SWEEP_SLACK_S = 600.0
 DEVELOP_ENV = "ZCRYPTO_DATA_GATED_DEVELOP"
 COVERALLS_SERVICE = "zcrypto-nightly"
 UPLOAD_TIMEOUT_S = 120.0
@@ -218,22 +221,29 @@ def remove_worktree(repo: Path, worktree: Path) -> dict:
     }
 
 
-def sweep_stale_worktrees(repo: Path) -> tuple[list[str], str | None]:
-    """Each `wt-*` a night that never reached its teardown left under WORKTREE_DIR, removed as the night's own is, then
-    `git worktree prune`; the names swept and the faults joined, or None."""
+def sweep_stale_worktrees(repo: Path, started: datetime, bound_s: float) -> tuple[list[str], list[str], str | None]:
+    """Each `wt-<stamp>` under WORKTREE_DIR whose stamp is more than `bound_s` + SWEEP_SLACK_S before `started` -- a night
+    that never reached its teardown -- removed as the night's own is, then `git worktree prune`; a younger one may be a run
+    still going, and a name that is not a stamp is nobody's to remove, so both are left and named. `(swept, left, faults)`."""
     root = repo / WORKTREE_DIR
     swept: list[str] = []
+    left: list[str] = []
     faults: list[str] = []
     if root.is_dir():
-        for stale in sorted(p for p in root.iterdir() if p.name.startswith("wt-")):
-            record = remove_worktree(repo, stale)
-            swept.append(stale.name)
+        for entry in sorted(p for p in root.iterdir() if p.name.startswith("wt-")):
+            match = _WT_STAMP.match(entry.name)
+            stamped = datetime.strptime(match.group(1), "%Y%m%dT%H%M%S").replace(tzinfo=timezone.utc) if match else None
+            if stamped is None or (started - stamped).total_seconds() <= bound_s + SWEEP_SLACK_S:
+                left.append(entry.name)
+                continue
+            record = remove_worktree(repo, entry)
+            swept.append(entry.name)
             if record["error"]:
-                faults.append(f"{stale.name}: {record['error']}")
+                faults.append(f"{entry.name}: {record['error']}")
     pruned = _git(repo, "worktree", "prune")
     if pruned.returncode != 0:
         faults.append(f"git worktree prune exited {pruned.returncode}: {pruned.stderr.strip()}")
-    return swept, "; ".join(faults) or None
+    return swept, left, "; ".join(faults) or None
 
 
 def pytest_command(repo: Path, uv: str, extra_args: list[str]) -> list[str]:
@@ -295,6 +305,7 @@ def build_result(
     teardown: dict | None,
     data_listing: tuple[list[str] | None, list[str] | None],
     swept: list[str],
+    sweep_left: list[str],
     sweep_error: str | None,
 ) -> dict:
     """`state` is `git_state` at the start plus `sha_at_end` and `tree_moved`; `data_listing` the checkout's `data/` names at
@@ -338,6 +349,7 @@ def build_result(
         "errors": parsed["errors"],
         "data_gated_skipped": parsed["data_gated_skipped"],
         "swept": swept,
+        "sweep_left": sweep_left,
         "sweep_error": sweep_error,
         "teardown": teardown,
         "data_listing_intact": intact,
@@ -497,7 +509,7 @@ def main(argv: list[str] | None = None) -> int:
     started = datetime.now(timezone.utc)
     state = git_state(repo)
     listing_start = data_listing(repo)
-    swept, sweep_error = sweep_stale_worktrees(repo)
+    swept, sweep_left, sweep_error = sweep_stale_worktrees(repo, started, args.timeout)
     command, exit_code, output, run_error = None, None, "", None
     worktree = teardown = None
     if not data_present:
@@ -544,6 +556,7 @@ def main(argv: list[str] | None = None) -> int:
         teardown=teardown,
         data_listing=(listing_start, data_listing(repo)),
         swept=swept,
+        sweep_left=sweep_left,
         sweep_error=sweep_error,
     )
     result["coverage_upload"] = upload
