@@ -8297,12 +8297,11 @@ def test_the_week_is_scored_from_the_journaled_book_with_the_ledger_short_of_its
     assert "2026-W37 tracked 317.4 bps" in _kill_file(tmp_path).read_text()
 
 
-@pytest.mark.parametrize(
-    "unbooked", [_TRACK_MONDAY, _IN_WEEK + timedelta(hours=8), _TRACK_EVAL], ids=["first", "mid-week", "the-boundary-after"]
-)
+@pytest.mark.parametrize("unbooked", [_IN_WEEK + timedelta(hours=8), _TRACK_EVAL], ids=["mid-week", "the-boundary-after"])
 def test_a_week_holding_a_boundary_that_journaled_no_book_is_refused_naming_it(tmp_path, unbooked):
-    """The breaching week with one record journaling no book -- its venue read failed -- in the week or at the boundary
-    after it, whose book the week's last cycle is scored against: refused, the boundary named, nothing tripped."""
+    """The breaching week with one record journaling no book -- its venue read failed -- at a later boundary of the week
+    or at the boundary after it, each the book one of the week's cycles is scored against: refused, the boundary named,
+    nothing tripped."""
     _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6, overrides={unbooked: {"held": None}})
 
     with _executor_errors(logging.WARNING) as records:
@@ -8311,6 +8310,17 @@ def test_a_week_holding_a_boundary_that_journaled_no_book_is_refused_naming_it(t
     assert not tripped and states == [executor_module._TRACKING_UNSCORED]
     refused = [m for m in (r.getMessage() for r in records) if "is not scored" in m]
     assert f"the cycle record at {unbooked.isoformat()} journals none" in refused[-1], refused
+
+
+def test_a_week_whose_first_boundary_journaled_no_book_is_scored(tmp_path, kill_trip_expected):
+    """The breaching week with no book at its first boundary: that book is the one the week before scores its last cycle
+    against, and each of this week's cycles has its own, so the week is scored and trips at 317.4."""
+    _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6, overrides={_TRACK_MONDAY: {"held": None}})
+
+    tripped, states = _tracking_states(tmp_path)
+
+    assert tripped and states == [executor_module._TRACKING_BREACHED]
+    assert "2026-W37 tracked 317.4 bps" in _kill_file(tmp_path).read_text()
 
 
 def test_a_week_whose_following_boundary_has_no_cycle_record_is_refused(tmp_path):

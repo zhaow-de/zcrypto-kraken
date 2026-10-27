@@ -3871,7 +3871,7 @@ class ProbeExecutor:
                 f"{label}'s last cycle is scored against the book journaled at {week_end.isoformat()}, which no cycle record holds"
             )
             return
-        unbooked = [b for b in (*expected, week_end) if cycles[b].held is None]
+        unbooked = [b for b in (*expected[1:], week_end) if cycles[b].held is None]
         if unbooked:
             self._refuse_tracking(
                 f"{label} is scored against the book each boundary journals, and the cycle record at "
