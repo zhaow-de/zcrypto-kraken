@@ -7,6 +7,7 @@ path by construction, which is what keeps a rename sweep from ever having to edi
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -128,6 +129,16 @@ def test_an_unmeasurable_corpus_fails_rather_than_skips() -> None:
     raise AssertionError("returned instead of failing")
 
 
+# The nightly runner (infra/scripts/data-gated-run.py) sets it to origin/develop's sha as its run started, so a merge
+# landing while the suite runs is not this guard's finding.
+DEVELOP_PIN = "ZCRYPTO_DATA_GATED_DEVELOP"
+
+
+def _develop_candidates() -> tuple[str, ...]:
+    pinned = os.environ.get(DEVELOP_PIN)
+    return (pinned,) if pinned else ("develop", "origin/develop")
+
+
 def test_every_keyed_merge_on_develop_has_a_row() -> None:
     """Every first-parent merge whose branch name carries a key is a row in the index."""
     shallow = subprocess.run(
@@ -138,16 +149,17 @@ def test_every_keyed_merge_on_develop_has_a_row() -> None:
     ).stdout.strip()
     if shallow == "true":
         _unmeasurable("shallow clone: develop's merge history is absent here")
+    candidates = _develop_candidates()
     ref = next(
         (
             candidate
-            for candidate in ("develop", "origin/develop")
+            for candidate in candidates
             if subprocess.run(["git", "-C", str(REPO), "rev-parse", "--verify", "--quiet", candidate]).returncode == 0
         ),
         None,
     )
     if ref is None:
-        _unmeasurable("no develop ref in this checkout")
+        _unmeasurable(f"no develop ref in this checkout: none of {', '.join(candidates)} resolves")
     subjects = subprocess.run(
         ["git", "-C", str(REPO), "log", "--merges", "--first-parent", "--format=%s", ref],
         capture_output=True,
@@ -170,6 +182,17 @@ def test_every_keyed_merge_on_develop_has_a_row() -> None:
     assert not missing, "a keyed merge on develop with no row in the index:\n  " + "\n  ".join(
         f"PR #{number} (branch {keyed[number]})" for number in missing
     )
+
+
+def test_the_develop_ref_is_the_runners_pin_when_set_and_the_live_ref_otherwise(monkeypatch) -> None:
+    monkeypatch.delenv(DEVELOP_PIN, raising=False)
+    assert _develop_candidates() == ("develop", "origin/develop")
+    monkeypatch.setenv(DEVELOP_PIN, "no-such-sha-the-runner-pinned")
+    with pytest.raises(pytest.fail.Exception, match="no-such-sha-the-runner-pinned"):
+        test_every_keyed_merge_on_develop_has_a_row()
+    head = subprocess.run(["git", "-C", str(REPO), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+    monkeypatch.setenv(DEVELOP_PIN, head)
+    test_every_keyed_merge_on_develop_has_a_row()
 
 
 def test_the_header_names_the_skill_that_writes_a_row() -> None:
