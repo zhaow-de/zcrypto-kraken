@@ -174,8 +174,8 @@ class WorktreeError(Exception):
 
 
 def add_worktree(repo: Path, sha: str, worktree: Path, deadline: datetime) -> list[str]:
-    """The detached worktree at `sha`, its `.deadline` the instant this run is over whatever happens, and every entry of the
-    checkout's `data/` but its tracked `.gitignore` symlinked into the worktree's; the names linked."""
+    """The detached worktree at `sha` with its `.deadline`, and every entry of the checkout's `data/` but its tracked
+    `.gitignore` symlinked into the worktree's; the names linked."""
     worktree.parent.mkdir(parents=True, exist_ok=True)
     added = _git(repo, "worktree", "add", "--detach", str(worktree), sha)
     if added.returncode != 0:
@@ -231,9 +231,9 @@ def _deadline(worktree: Path) -> datetime | None:
 
 
 def sweep_stale_worktrees(repo: Path, now: datetime) -> tuple[list[str], list[str], str | None]:
-    """Each `wt-*` under WORKTREE_DIR whose own `.deadline` has passed, removed as the night's own is, then `git worktree
-    prune`; one whose deadline is still ahead may be a run going on, and one with no readable deadline is not this runner's,
-    so both are left and named. `(swept, left, faults)`."""
+    """Each `wt-*` under WORKTREE_DIR removed as the night's own is, then `git worktree prune`; one whose `.deadline` is
+    still ahead may be a run going on, and one with no readable deadline is not this runner's, so both are left and named.
+    `(swept, left, faults)`."""
     root = repo / WORKTREE_DIR
     swept: list[str] = []
     left: list[str] = []

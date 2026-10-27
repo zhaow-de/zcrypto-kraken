@@ -288,7 +288,6 @@ def _latest(repo: Path) -> dict:
 
 
 def _other_run(repo: Path, name: str, deadline: str | None) -> Path:
-    """Another run's worktree as the runner leaves one mid-run: registered, the dataset linked, its `.deadline` as given."""
     other = repo / runner.WORKTREE_DIR / name
     other.parent.mkdir(parents=True, exist_ok=True)
     _git(repo, "worktree", "add", "--detach", str(other), "HEAD")
