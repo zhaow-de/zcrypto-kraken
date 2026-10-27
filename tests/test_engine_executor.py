@@ -8065,10 +8065,9 @@ _TRACK_CLOSES = {
 }
 _TRACK_BASES = tuple(_TRACK_CLOSES)
 
-_OPENING = _TRACK_LEAD + timedelta(hours=4)  # the journal's oldest boundary carries NO fill
+_OPENING = _TRACK_LEAD + timedelta(hours=4)  # the fixtures' first fill, a boundary after the journal's oldest
 _BUILD_OUT = _TRACK_LEAD + timedelta(hours=16)
 _IN_WEEK = _TRACK_MONDAY + timedelta(hours=40)  # 2026-09-08 16:00, boundary 10 of the week
-_MINT_AT = _OPENING + timedelta(hours=4)  # the boundary a live engine dates itself at: the next one
 
 # Asymmetric by construction: ten different sizes, one sell, and BTC arriving in two slices at two
 # different boundaries -- so a reader that ignored the boundary a fill was filed under, or summed
@@ -8206,49 +8205,13 @@ def _journal_week(tmp_path, *, fills, start=_TRACK_MONDAY, n_cycles=42, lead=0, 
 
 def _tracking_executor(tmp_path, *, band=_TRACK_BAND, armed=True, clock=None, gate=None, at=_TRACK_EVAL):
     # The clock sits just past the boundary being scored, as the live one does: the alert fires at
-    # `boundary + settle delay`, and the birth recorder reads the journal "through now".
+    # `boundary + settle delay`.
     config = _config(tmp_path, exec_armed=armed, tracking_band_bps=band, shadow_nav_eur=_TRACK_NAV)
     return _executor(tmp_path, config=config, clock=clock or (lambda: at + timedelta(minutes=2)), gate=gate)
 
 
-def _mint_birth(tmp_path, at=_MINT_AT, **kwargs):
-    """Run the boundary the live engine would have DATED ITSELF at -- the first one after its first
-    fill. Every fixture below is a journal the engine lived through boundary by boundary, so a test
-    that jumped straight to the scoring boundary a week later would be asking the recorder to date a
-    week-old fill, which is the one thing it refuses. The owner's opening holdings then follow the
-    birth it minted, ten zero rows -- the book held nothing before its first fill."""
-    _tracking_executor(tmp_path, at=at, **kwargs).on_boundary(at)
-    birth = exec_dir(tmp_path) / executor_module.FIRST_FILL_FILE
-    if birth.exists():
-        _write_opening_holdings(tmp_path, datetime.fromisoformat(birth.read_text().strip()))
-
-
-def _write_birth(tmp_path, at):
-    """The birth record written by hand, as the entry's re-date writes it."""
-    path = exec_dir(tmp_path) / executor_module.FIRST_FILL_FILE
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"{at.isoformat()}\n")
-
-
-def _write_opening_holdings(tmp_path, birth, **held):
-    """The opening holdings stamped at `birth`: one row per basket base, `held`'s balance or 0.0, at the fixture's close."""
-    rows = [
-        {"base": base, "codes": [base], "balance": held.get(base, 0.0), "close": close} for base, close in _TRACK_CLOSES.items()
-    ]
-    # Spelled as the owner's procedures spell it, never through the module's constant: the owner installs it by hand.
-    path = exec_dir(tmp_path) / "opening-holdings.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"schema_version": 1, "birth": birth.isoformat(), "rows": rows}))
-
-
-def _tracking_states(tmp_path, boundary=_TRACK_EVAL, mint_at=_MINT_AT, **kwargs):
-    """Fire one boundary alert against a fresh executor and return (kill-file-exists, states).
-
-    `mint_at=None` is the engine that never witnessed its own first fill -- no record, and whatever
-    the journal still holds is all it has."""
-    set_executor_hooks()  # the mint is setup, not the measurement -- it publishes into nobody's list
-    if mint_at is not None:
-        _mint_birth(tmp_path, at=mint_at, **kwargs)
+def _tracking_states(tmp_path, boundary=_TRACK_EVAL, **kwargs):
+    """Fire one boundary alert against a fresh executor and return (kill-file-exists, states)."""
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
     _tracking_executor(tmp_path, at=boundary, **kwargs).on_boundary(boundary)
@@ -8261,7 +8224,6 @@ def test_the_boundary_alert_reaches_the_executors_tracking_trip_with_no_plan_fil
     driven here, so a trip hooked on the tick's `_evaluate` could not fire here -- and the kill file
     has no other producer in this construction."""
     _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
-    _mint_birth(tmp_path)
     assert not _plan_path(tmp_path).exists()
     executor = _tracking_executor(tmp_path)
     strategy = SimpleNamespace(
@@ -8412,20 +8374,16 @@ def test_the_week_containing_the_first_fill_is_not_scored(tmp_path):
     assert not settled and settled_states == [executor_module._TRACKING_WITHIN_BAND]
 
 
-def test_a_fill_at_the_journals_oldest_boundary_is_refused(tmp_path):
-    """The truncated journal: the same HEALTHY week with everything before the build-out pruned
-    away, so the opening slice is gone and `held` is short. Nothing on disk distinguishes that from
-    a real breach, so it is refused by `_score_closed_week`'s birth-record arm -- which REPLACED
-    asking whether the oldest surviving boundary carries a fill."""
-    journal = _journal_week(tmp_path, fills=_HEALTHY_FILLS, lead=6)
-    for boundary in (_TRACK_LEAD, _OPENING, _TRACK_LEAD + timedelta(hours=8), _TRACK_LEAD + timedelta(hours=12)):
-        (journal / f"{boundary:%Y-%m-%d}" / f"cycle-{boundary:%H}.json").unlink()
-        (journal / f"{boundary:%Y-%m-%d}" / f"exec-{boundary:%H}.json").unlink()
+def test_a_journal_pruned_of_the_series_first_fill_still_scores_the_healthy_week_within_band(tmp_path):
+    """The healthy week opened a day early, with the day-dir holding the opening slice deleted whole, as the retention
+    prune cuts: the books the week's records journaled still hold it, so the week scores within the band."""
+    journal = _journal_week(tmp_path, fills=_PRUNABLE_FILLS, lead=12)
+    shutil.rmtree(journal / f"{_EARLY_OPENING:%Y-%m-%d}")
 
     tripped, states = _tracking_states(tmp_path)
 
     assert not tripped
-    assert states == [executor_module._TRACKING_UNSCORED]
+    assert states == [executor_module._TRACKING_WITHIN_BAND]
 
 
 def test_it_is_refused_while_exec_armed_is_false(tmp_path):
@@ -8478,7 +8436,6 @@ def test_the_trip_keeps_the_first_reason_across_a_restart(tmp_path, kill_trip_ex
     re-derives the same breaching week and must leave the first reason exactly as it found it: that
     text, with its timestamp, is what the operator reads to know when the engine stopped."""
     _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
-    _mint_birth(tmp_path)
     _tracking_executor(tmp_path).on_boundary(_TRACK_EVAL)
     first = _kill_file(tmp_path).read_text()
 
@@ -8518,41 +8475,6 @@ _BOUNDARY_RAMP_FILLS = {
     _TRACK_MONDAY: [("BTC/EUR", "buy", 0.00042)],
     _IN_WEEK: [("BTC/EUR", "buy", 0.00290), *_NINE_LEGS],
 }
-# NOT the shared `_MINT_AT`, which predates this ramp's own first fill: with no birth record the
-# birth arm refuses the week, and the week-start arm this fixture exists for is never reached.
-_RAMP_MINT_AT = _TRACK_MONDAY + timedelta(hours=4)
-
-
-def test_a_pruned_journal_head_refuses_instead_of_scoring_a_short_held(tmp_path):
-    """The retention prune turns the true positive into a latched false kill, and this is that
-    construction: the HEALTHY fixture -- the week that must pass -- with the two oldest boundaries
-    deleted. The opening slice goes with them, `held` is short by it, and the journal reads a
-    breach.
-
-    Nothing on disk distinguishes that from a real breach, and asking whether the oldest surviving
-    boundary carries a fill passes whenever the prune cuts at a quiet one. The birth record answers
-    the question actually being asked."""
-    journal = _journal_week(tmp_path, fills=_HEALTHY_FILLS, lead=6)
-    healthy, healthy_states = _tracking_states(tmp_path)
-    assert not healthy and healthy_states == [executor_module._TRACKING_WITHIN_BAND]
-    birth = exec_dir(tmp_path) / executor_module.FIRST_FILL_FILE
-    assert birth.read_text().strip() == _OPENING.isoformat()
-
-    # Cut per BOUNDARY, which is the granularity the check itself works at -- not a replica of the
-    # prune, which removes whole day-dirs. The shape a real prune produces is the same one: a first
-    # fill late on day D, and a quiet 00:00 on D+1 left as the oldest survivor. The sibling test
-    # below builds exactly that, with the whole day-dir deleted.
-    for boundary in (_TRACK_LEAD, _OPENING):
-        for prefix in ("cycle", "exec"):
-            (journal / f"{boundary:%Y-%m-%d}" / f"{prefix}-{boundary:%H}.json").unlink()
-
-    tripped, states = _tracking_states(tmp_path)
-
-    assert not tripped
-    assert states == [executor_module._TRACKING_UNSCORED]
-    # Write-once: the record still names the fill that is no longer on disk, which is the whole of
-    # what it knows and the only reason the refusal above is possible.
-    assert birth.read_text().strip() == _OPENING.isoformat()
 
 
 def test_the_first_fill_landing_on_the_week_boundary_is_not_scored_either(tmp_path):
@@ -8562,13 +8484,12 @@ def test_the_first_fill_landing_on_the_week_boundary_is_not_scored_either(tmp_pa
     _journal_week(tmp_path, fills=_BOUNDARY_RAMP_FILLS, lead=6)
 
     with _executor_errors(logging.WARNING) as records:
-        tripped, states = _tracking_states(tmp_path, mint_at=_RAMP_MINT_AT)
+        tripped, states = _tracking_states(tmp_path)
 
     assert not tripped
     assert states == [executor_module._TRACKING_UNSCORED]
     refused = [m for m in (r.getMessage() for r in records) if "is not scored" in m]
     assert refused, "the scorer refused nothing -- the week was scored, or its refusal wording moved"
-    # `[-1]`: `_tracking_states` mints inside this block, and that boundary refuses the week before.
     assert f"at or after {_TRACK_MONDAY:%G-W%V} began" in refused[-1], refused
 
 
@@ -8589,49 +8510,6 @@ def test_a_malformed_fill_event_does_not_raise_onto_the_trade_path(tmp_path):
 
     assert not tripped
     assert states == [executor_module._TRACKING_UNSCORED]
-
-
-def test_a_pruned_head_is_refused_when_no_birth_record_survives(tmp_path):
-    """The missing-file path, which is NOT the same event as "the series has not started".
-
-    The recorder is gated on the record being absent, so an engine that lost it -- a rebuilt state
-    directory, a restore -- runs the mint against whatever the journal still holds. Here the day-dir
-    carrying the opening slice is gone and the surviving day opens on a QUIET 00:00, so the "oldest
-    boundary carries no fill" evidence is satisfied perfectly and the earliest surviving fill would
-    be minted as a birth it never was.
-
-    What stops it is that a birth is something a boundary WITNESSES hours after the fill, so a
-    week-old candidate is refused and nothing is written: an engine that cannot date itself must not
-    invent a date."""
-    journal = _journal_week(tmp_path, fills=_PRUNABLE_FILLS, lead=12)
-    shutil.rmtree(journal / f"{_EARLY_OPENING:%Y-%m-%d}")
-
-    tripped, states = _tracking_states(tmp_path, mint_at=None)
-
-    assert not tripped
-    assert states == [executor_module._TRACKING_UNSCORED]
-    assert not (exec_dir(tmp_path) / executor_module.FIRST_FILL_FILE).exists()
-
-
-def test_an_absent_opening_holdings_record_or_one_stamped_for_another_birth_refuses_the_week(tmp_path):
-    _journal_week(tmp_path, fills=_HEALTHY_FILLS, lead=6)
-    _write_birth(tmp_path, _OPENING)
-    earlier = _OPENING - timedelta(hours=4)
-    refusals = {
-        None: f"no opening holdings are recorded for the series born at {_OPENING.isoformat()} -- the owner records them with the birth",
-        earlier: f"the opening holdings were taken for the series born at {earlier.isoformat()}, not {_OPENING.isoformat()}",
-    }
-    for stamp, refusal in refusals.items():
-        if stamp is not None:
-            _write_opening_holdings(tmp_path, stamp)
-        with _executor_errors(logging.WARNING) as records:
-            tripped, states = _tracking_states(tmp_path, mint_at=None)
-        assert not tripped and states == [executor_module._TRACKING_UNSCORED], stamp
-        assert f"the most recently closed week is not scored: {refusal}" in [r.getMessage() for r in records]
-
-    _write_opening_holdings(tmp_path, _OPENING)
-    tripped, states = _tracking_states(tmp_path, mint_at=None)
-    assert not tripped and states == [executor_module._TRACKING_WITHIN_BAND]
 
 
 # --- _reconcile_terminal is scoped to this engine's own position (the operator's hand settle) ----
