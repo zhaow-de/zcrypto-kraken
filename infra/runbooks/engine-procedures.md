@@ -574,7 +574,7 @@ The box plans no engine restart. What restarts the engine inside it is a restart
 #### 7. Each Monday from 2026-10-12 — the weekly read
 
 1. **Export Kraken's ledger** (Kraken → History → Export → Ledgers) from 2026-10-05 to the Sunday just closed.
-2. **Run the tracking report from the box's first day**, not from the week's: the report takes held from the fills inside its window, so a window that starts mid-box scores a book without the buys before it.
+2. **Run the tracking report from the box's first day**, not from the week's, so each Monday's read carries the box's earlier weeks beside the new one; the report scores each cycle against the book the next boundary's record journals, so where the window starts changes no week's figure.
    ```
    uv run zcrypto engine tracking-report \
      --journal-dir /mnt/zhao-crypto/engine-journal --since 2026-10-05 --until <the Sunday just closed> \
