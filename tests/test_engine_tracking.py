@@ -1478,9 +1478,8 @@ def test_tracking_report_aborts_on_an_unreadable_record_past_the_window_naming_i
 
 
 def test_tracking_report_notes_a_week_whose_record_past_it_journals_no_book(tmp_path):
-    # One complete synthetic week, its records journaling a flat book, a fill at its first boundary starting the series,
-    # and the next Monday's record, past the window, journaling none: the week's last cycle has no book to score against,
-    # so the gate-eligible week carries no realized mean and its row says why.
+    # Next Monday's record, the 43rd and past the window, keeps the fixture's `held=None` and the week's 42 a flat book, so
+    # the week's last cycle is the first it cannot score.
     sliced = _synth_slice(tmp_path / "week", (2,) * 43, start=_SYNTH_WEEK_START)
     last = _SYNTH_WEEK_START + timedelta(days=7) - timedelta(hours=4)
     for offset in range(42):

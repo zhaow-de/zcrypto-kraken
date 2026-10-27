@@ -1607,9 +1607,8 @@ def _window_exec_records(journal_root: Path, since: str | None, until: str | Non
 
 
 def _journaled_books(journal_root: Path, records: list[CycleRecord]) -> dict[datetime, dict[str, float] | None]:
-    """The book the boundary after the window's last record journaled -- the one the window's last cycle traded to, read
-    past the window; the window's own books are its stages'. That record ABORTS when it will not read, as a window record
-    does; absent, the last cycle is not scored."""
+    """The book the boundary after the window's last record journaled -- the one the window's last cycle traded to; the
+    window's own books are its stages'."""
     after = max(record.cycle_ts for record in records) + timedelta(hours=4)
     path = journal_root / f"{after:%Y-%m-%d}" / f"cycle-{after:%H}.json"
     if not path.exists():
