@@ -1,4 +1,4 @@
-"""The realized half of the weekly tracking comparison: what the ledger says actually happened.
+"""The realized half of the weekly tracking comparison: what the journal says happened.
 
 Pure -- it writes nothing and reaches no venue -- and it refuses rather than return a number nobody
 can stand behind, because that number will be read as a gate input."""
@@ -232,12 +232,8 @@ def drift_bps(final: dict[str, float], closes: dict[str, float], held: dict[str,
 
 
 def realized_drift(stages: list[CycleStages], nav: float, *, books: dict[datetime, dict[str, float] | None] | None = None) -> dict:
-    """Per-cycle drift against the book the cycle's own trading left: the `held` journaled at the NEXT boundary, whose venue
-    read the cycle's plan has ended before. That book is the stage's there, or `books`' for a boundary no stage holds --
-    the one after the last stage, or one whose cycle could not be staged.
-
-    A cycle whose next boundary journaled no book is not scored and is named under `unscored`: the writer journals none when
-    the venue read failed, and no other position stands in for it."""
+    """Per-cycle drift against the `held` journaled at the next boundary, `books`' over the stage's; a cycle with none is
+    unscored."""
     if not math.isfinite(nav) or nav <= 0:
         raise EngineError(f"NAV must be finite and positive, got {nav!r} -- a negative one signs every drift_bps")
     ordered = sorted(stages, key=lambda s: s.cycle_ts)
@@ -284,9 +280,7 @@ def weekly_tracking(
     opening: OpeningHoldings | None = None,
     books: dict[datetime, dict[str, float] | None] | None = None,
 ) -> dict:
-    """That week's floor p95 against that week's realized MEAN drift (`realized_drift`, `books` handed through). A week
-    holding a cycle that drift is not scored for carries no realized mean, and names the first such cycle. With `opening`,
-    the series starts at its birth: the stages and fills before it are a prior series' and are left out of both halves."""
+    """That week's floor p95 against its realized MEAN drift (`realized_drift`), from `opening`'s birth when given."""
     rung_by_week = rung_by_week or {}
     ordered = sorted(stages, key=lambda s: s.cycle_ts)
     if opening is not None:

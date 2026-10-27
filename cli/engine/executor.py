@@ -134,8 +134,8 @@ _TRIPPED_REFUSAL = "the kill switch tripped in this process"
 # so the owner re-mints the series by removing it -- after a deposit or a withdrawal taken with the loop
 # paused, or a drawdown trip's post-mortem -- and the next mark writes it again; nothing here rewrites it.
 EQUITY_SERIES_FILE = "equity-series-start"
-# The tracking series' first boundary, one `YYYY-MM-DDTHH:MM:SSZ` line beside the arm and kill files. The operator writes
-# it at rung 3's entry and again after each attended act on the book; the engine only reads it, and never mints one.
+# The tracking series' first boundary, beside the arm and kill files: written by the operator at rung 3's entry and after
+# each attended act on the book, and only read here.
 TRACKING_SERIES_START_FILE = "series-start"
 _TRACKING_SERIES_START_LINE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\n?")
 # The two drawdown trips, in basis points of the cycle record's NAV, the book the draft sizes, never of
@@ -3773,8 +3773,7 @@ class ProbeExecutor:
             logger.exception("executor gap publish raised -- continuing")
 
     def _tracking_series_start(self) -> datetime:
-        """The instant `TRACKING_SERIES_START_FILE` names, or EngineError naming the file: absent, unreadable, or not one
-        `YYYY-MM-DDTHH:MM:SSZ` line on a 4-hourly boundary."""
+        """The instant `TRACKING_SERIES_START_FILE` names, or EngineError naming the file."""
         path = exec_dir(self._state_dir) / TRACKING_SERIES_START_FILE
         try:
             text = path.read_text()
@@ -3800,8 +3799,8 @@ class ProbeExecutor:
         """Score the most recently CLOSED ISO week and latch the kill switch when its realized mean
         drift exceeds the configured band.
 
-        Carries no durable state whatsoever: the week is re-derived from immutable journal artifacts
-        at every boundary, and idempotence comes from the kill file plus `_kill_tripped`.
+        Carries no durable state whatsoever: the week is re-derived at every boundary, and idempotence comes from the kill
+        file plus `_kill_tripped`.
 
         Eligibility is each boundary's JOURNALED level and its draft record (`_undrafted`), never live
         config: `restart_hold` is written unconditionally at every engine start and cleared only by
@@ -3828,9 +3827,8 @@ class ProbeExecutor:
         try:
             self._score_closed_week(_aware_utc(boundary), band)
         except EngineError as exc:
-            # Every refusal this arithmetic can raise (a fill on a symbol outside the basket, a record
-            # that cannot be priced, a book missing a leg) is a reason not to decide -- not a reason
-            # to take the engine's telemetry down with a traceback every four hours.
+            # Every refusal this scoring can raise is a reason not to decide -- not a reason to take the engine's telemetry
+            # down with a traceback every four hours.
             self._refuse_tracking(str(exc))
 
     def _undrafted(self, boundary: datetime) -> bool:
@@ -3867,9 +3865,7 @@ class ProbeExecutor:
                 f"level or undrafted (first at {held_back[0].isoformat()}) -- the engine was not free to trade it"
             )
             return
-        # Each cycle is scored against the book the NEXT boundary's venue read journaled, which its plan has ended
-        # before (`_SUBMISSION_WINDOW`). A boundary whose read failed journals none, and no other position is honest
-        # there, so a week holding one -- or whose following boundary does -- is refused, never scored.
+        # Each cycle is scored against the NEXT boundary's book, which its plan has ended before (`_SUBMISSION_WINDOW`).
         if week_end not in cycles:
             self._refuse_tracking(
                 f"{label}'s last cycle is scored against the book journaled at {week_end.isoformat()}, which no cycle record holds"
@@ -3883,14 +3879,8 @@ class ProbeExecutor:
             )
             return
 
-        # `>=`, never `>`, in both refusals below: a start or a first fill exactly ON the Monday
-        # boundary -- what arming at a week boundary produces -- would otherwise leave the week
-        # holding it fully scored, ramp and all, which is the one week D10 excludes by name. That
-        # week is not comparable to a settled one whichever way it is read: its cycles before the
-        # start's trading hold a book the engine had not yet traded toward its targets, so counting
-        # them mixes an untraded book into the mean, while dropping them scores a fraction of a week
-        # under a whole week's name. A week entirely before the start is not the series', and takes
-        # the same exit.
+        # `>=`, never `>`, in both refusals: a start or first fill ON the Monday boundary leaves its week, the one D10
+        # excludes, scored.
         start = self._tracking_series_start()
         if start >= week_start:
             where = f"inside {label}" if start < week_end else f"after {label} ended"

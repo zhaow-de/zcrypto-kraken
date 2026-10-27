@@ -4,8 +4,7 @@ Scope is the `from_json` sites under `cli/` -- `CycleRecord` readers. A sidecar,
 reader is a different artifact and is not covered here.
 
 `from_json` leaves schema keying, the snapshot no-peek invariant and `final_targets` finiteness to its caller
-(its own docstring says so), so the guarantee is a property of each call site. T0194 enumerated the call sites;
-this test keeps the enumeration true, because a census in a topic file rots the first time someone adds a reader.
+(its own docstring says so), so the guarantee is a property of each call site, and this test keeps their enumeration true.
 """
 
 import ast

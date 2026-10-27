@@ -40,8 +40,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-# Eight xdist workers: serial, the suite outgrew the three-hour bound. The slowest 25 phases of a second or more are
-# printed for `parse_slowest`.
+# Eight xdist workers: serial, the suite outgrew the three-hour bound. `--durations` feeds `parse_slowest`.
 PYTEST_ARGS = ("-q", "-p", "no:cacheprovider", "-rfEs", "-n", "8", "--durations=25", "--durations-min=1.0")
 # The data file only, `.coverage` at the worktree's root: the upload reads it there, and a report would only lengthen the journal.
 COVERAGE_ARGS = ("--cov=cli", "--cov-report=")
