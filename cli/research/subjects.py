@@ -4878,6 +4878,15 @@ _C2_READING_KEYS = frozenset(
 
 
 # docs/specs/00151 D3-D5: C1's maker-fill reading. The columns known at the post, the inputs half's whole view of a row.
+_C1_FILL_PARAMS = {
+    "grid_s": 15,
+    "horizon_s": 900,
+    "cancel_after_s": 5,
+    "stale_s": 30,
+    "size_rungs": [0, 1],
+    "mid_offsets_s": [60, 900, 3600],
+    "depth": 100,
+}
 _C1_INPUT_COLUMNS = (
     "ts",
     "pair",
@@ -4927,6 +4936,11 @@ def _c1_reads(reader: ObservedReader, dataset: str, subject: str) -> tuple[dict,
     lacking = [pair for pair in alpha_c1.PAIRS if not isinstance(records, dict) or not isinstance(records.get(pair), dict)]
     if lacking:
         raise SubjectError(f"{over}: {dataset}/manifest.json's provenance holds no day records for {', '.join(lacking)}")
+    params = manifest.provenance.get("params")
+    params = params if isinstance(params, dict) else {}
+    off = [f"{name} {params.get(name)!r}, not {value!r}" for name, value in _C1_FILL_PARAMS.items() if params.get(name) != value]
+    if off:
+        raise SubjectError(f"{over}: {dataset}/manifest.json's params are not the fill model's: {'; '.join(off)}")
     frames = {}
     for pair in alpha_c1.PAIRS:
         days = []

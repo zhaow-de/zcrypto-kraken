@@ -244,6 +244,11 @@ def test_an_unparseable_or_absent_manifest_ends_in_an_exit(tmp_path, monkeypatch
         del manifest["provenance"]["pairs"]["DOT/EUR"]
         (dataset / "manifest.json").write_text(json.dumps(manifest))
 
+    def produced_at_another_depth(dataset):
+        manifest = json.loads((dataset / "manifest.json").read_text())
+        manifest["provenance"]["params"]["depth"] = 10
+        (dataset / "manifest.json").write_text(json.dumps(manifest))
+
     def a_day_file_removed(dataset):
         (dataset / "ETH" / "EUR" / "2026" / "09" / "01.parquet").unlink()
 
@@ -251,6 +256,7 @@ def test_an_unparseable_or_absent_manifest_ends_in_an_exit(tmp_path, monkeypatch
         (unparseable, f"{DATASET}/manifest.json cannot be read: "),
         (absent, f"{DATASET}/manifest.json cannot be read: "),
         (without_a_pairs_records, f"{DATASET}/manifest.json's provenance holds no day records for DOT/EUR"),
+        (produced_at_another_depth, f"{DATASET}/manifest.json's params are not the fill model's: depth 10, not 100"),
         (a_day_file_removed, f"{DATASET}/ETH/EUR/2026/09/01.parquet: "),
     ):
         root = tmp_path / spoil.__name__ / "data"
