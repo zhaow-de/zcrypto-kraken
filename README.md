@@ -309,6 +309,37 @@ Each pair is watermarked at its newest existing panel hour; a sweep only materia
 
 `OrderBook` state is threaded across hours per pair: Kraken snapshots arrive on subscribe, not once per capture hour, so an hour opening with a plain update continues from the previous hour's end-of-hour book (persisted as a `<HH>.state.json` sidecar next to its parquet, enabling O(1) resume) rather than being rebuilt from nothing. An hour that cannot anchor — an update-opening hour with no carried book, e.g. after a gap in the archive — is counted in `hours_unanchored`: an honest gap, not a failure, logged once per contiguous run of them. A per-hour failure of any other kind is isolated and logged (`panel hour failed pair=... hour=...: ...`); the sweep continues past it. Exits **1** iff any hour errored (`hours_unanchored` never affects the exit code), else **0**.
 
+`fills` runs the queue-position fill model over one pair's canonical book and trades, both read reconciled-first, and writes its rows as a dataset: every 15 s a passive bid and ask join the back of the queue at the touch, at the first two rungs of the quote's notional ladder. An order fills once the prints at or through its price have met the queue ahead and its whole quantity — the queue ahead never more than the level's resting quantity a second before, no partial fill credited — and cancels once its side's best quote has stood a tick or more away for 5 s, or at 900 s. Each order is one row, written once the mid an hour after its post is read: the fill or the cancel, the time to it, and the mids 60 s and 900 s after the fill and 900 s and 3600 s after the post — null where the data ends first, an order still open there censored.
+
+```bash
+zcrypto panel fills <primary_root> <out_root> [--reconciled-root <path>] --panel-root <path> --pair <PAIR> --since <hour> --until <hour>
+```
+
+| Argument / Option | Description |
+| -- | -- |
+| `primary_root` | The primary (raw) canonical archive: its `book` and `trades` hours. |
+| `out_root` | The dataset root to write into; created with its parents when absent. |
+| `--reconciled-root` | Optional healed overlay; both kinds' hours are read reconciled-first. Omit to read the primary alone. |
+| `--panel-root` | The panel tree whose `<HH>.state.json` sidecars seed the book at the run's first hour and after a gap (required). |
+| `--pair` | The one pair this run produces (e.g. `BTC/EUR`); its quote must have a notional ladder (EUR, BTC). |
+| `--since` | The first hour, inclusive: a `YYYY-MM-DD` date or an ISO-8601 hour. |
+| `--until` | The end hour, exclusive, in the same form. |
+| `--depth` | Book depth the archive was captured at (default `100`). |
+
+A pair's rows land one UTC day per file, `<out_root>/<BASE>/<QUOTE>/<YYYY>/<MM>/<DD>.parquet`, beside a `.sha256` sidecar holding the frame's content hash (never the file bytes' sha256), and its run record `<out_root>/<BASE>/<QUOTE>/fills-run.json` holds the run's parameters, its code ref and each day's counts: the orders posted and skipped (no two-sided quote, a book stale past 30 s), the hours posted on, unanchored (an update-opening hour with no seed) and absent, the trades hours absent, and the hours each kind read from the overlay. A run resumes after the pair's newest day file; a run whose parameters or code differ from the record refuses — a change is a new out root. Prints the run's counts as one JSON line. Exits **1** on a refusal — a root that cannot be read as a directory, a seed sidecar present but unreadable, a run that leaves the pair no day file — else **0**.
+
+`fills-manifest` writes `<out_root>/manifest.json` once every pair's run has exited. It refuses a day file its sidecar or its record's counts disagree with, run records that disagree across pairs, and an hour a second listing of the archive holds from another root than the run recorded — absent at the run, or read from the primary where the overlay now holds it: the run's listing dropped it, and the frozen set would keep the hole. Exits **1** on a refusal, else **0**.
+
+```bash
+zcrypto panel fills-manifest <primary_root> <out_root> [--reconciled-root <path>]
+```
+
+| Argument / Option | Description |
+| -- | -- |
+| `primary_root` | The primary (raw) canonical archive the runs read. |
+| `out_root` | The dataset root the runs wrote. |
+| `--reconciled-root` | The healed overlay the runs read, if any; omitted, every hour a run read from it is refused. |
+
 ### `zcrypto data`<a name="zcrypto-data"></a>
 
 The hot-cluster dataset exchange: every research node — the workstation, the ops node — fetches the same small `hot/` working set from the NAS hub and pushes back only what it authored, save the rolling canonical, which the ops node writes into its outbox and the NAS pulls; a revision never overwrites a published file, it mints a sibling instead. Three clusters make up the full topology: **custody** (the unbackfillable capture archive + raw dumps, replicated once to the NAS, read in place), **hot** (the small working set every node fetches/pushes via this command), and **private** (per-node state — the engine store/journal — that never syncs). See `docs/reference/data-catalog-full.md` for the full inventory.

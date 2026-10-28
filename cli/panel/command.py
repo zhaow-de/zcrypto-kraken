@@ -11,6 +11,8 @@ import typer
 
 from cli.archive.reader import canonical_segments
 from cli.logging import get_logger
+from cli.panel.errors import PanelError
+from cli.panel.fills import produce_pair, write_fills_manifest
 from cli.panel.materialize import K_LEVELS, SCHEMA_VERSION, panel_watermark, write_meta
 from cli.panel.materialize import materialize as materialize_hours
 from cli.panel.primitives import NOTIONALS_BY_QUOTE
@@ -19,7 +21,7 @@ logger = get_logger("panel.command")
 
 panel_app = typer.Typer(
     no_args_is_help=True,
-    help="The 1s L2 primitive panel: materialize the canonical book archive into it.",
+    help="The 1s L2 primitive panel: materialize the canonical book archive into it; run the queue-position fill model over it.",
 )
 
 
@@ -29,7 +31,7 @@ def _abort(message: str) -> typer.Exit:
     return typer.Exit(code=1)
 
 
-def _parse_since(raw: str) -> datetime:
+def _parse_since(raw: str, *, flag: str = "--since") -> datetime:
     try:
         return datetime.strptime(raw, "%Y-%m-%d").replace(tzinfo=UTC)
     except ValueError:
@@ -37,12 +39,20 @@ def _parse_since(raw: str) -> datetime:
     try:
         parsed = datetime.fromisoformat(raw)
     except ValueError as exc:
-        raise typer.BadParameter(f"--since {raw!r} is not a YYYY-MM-DD date or an ISO-8601 hour") from exc
+        raise typer.BadParameter(f"{flag} {raw!r} is not a YYYY-MM-DD date or an ISO-8601 hour") from exc
     parsed = parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
     parsed = parsed.astimezone(UTC)
     if parsed.minute or parsed.second or parsed.microsecond:
-        raise typer.BadParameter(f"--since {raw!r} is not on an hour boundary")
+        raise typer.BadParameter(f"{flag} {raw!r} is not on an hour boundary")
     return parsed
+
+
+def _check_pair(pair: str) -> None:
+    if pair.count("/") != 1:
+        raise typer.BadParameter(f"--pair {pair}: expected BASE/QUOTE (e.g. BTC/EUR)")
+    if pair.split("/")[-1] not in NOTIONALS_BY_QUOTE:
+        # Refuse loudly: the sweep would skip it, and the fill model has no rung to size an order by.
+        raise typer.BadParameter(f"--pair {pair}: its quote has no notional ladder ({', '.join(NOTIONALS_BY_QUOTE)})")
 
 
 def _expected_generation() -> dict[str, object]:
@@ -189,11 +199,8 @@ def materialize(
 
     Exits non-zero iff any hour errored (mirroring `archive verify-replay`) or a guard refused the run outright.
     """
-    if pair is not None and pair.count("/") != 1:
-        raise typer.BadParameter(f"--pair {pair}: expected BASE/QUOTE (e.g. BTC/EUR)")
-    if pair is not None and pair.split("/")[-1] not in NOTIONALS_BY_QUOTE:
-        # Refuse loudly: the sweep would skip it, so proceeding would exit 0 having done nothing.
-        raise typer.BadParameter(f"--pair {pair}: its quote has no notional ladder ({', '.join(NOTIONALS_BY_QUOTE)})")
+    if pair is not None:
+        _check_pair(pair)
 
     since_dt = _parse_since(since) if since is not None else None
     affected_pairs = _affected_pairs(primary_root, reconciled_root, pair)
@@ -222,3 +229,66 @@ def materialize(
     )
     if result.errors:
         raise typer.Exit(1)
+
+
+@panel_app.command()
+def fills(
+    primary_root: Path = typer.Argument(..., help="The primary (raw) canonical archive: its book and trades hours."),
+    out_root: Path = typer.Argument(..., help="The dataset root to write into; created with its parents when absent."),
+    reconciled_root: Optional[Path] = typer.Option(
+        None,
+        "--reconciled-root",
+        help="The healed overlay; both kinds' hours are read reconciled-first. Omit to read the primary alone.",
+    ),
+    panel_root: Path = typer.Option(
+        ..., "--panel-root", help="The panel tree whose state sidecars seed the book at the run's first hour and after a gap."
+    ),
+    pair: str = typer.Option(
+        ...,
+        "--pair",
+        help=f"The one pair this run produces (e.g. BTC/EUR); its quote must have a notional ladder ({', '.join(NOTIONALS_BY_QUOTE)}).",
+    ),
+    since: str = typer.Option(
+        ..., "--since", help="The first hour, inclusive: a YYYY-MM-DD date or an ISO-8601 hour (e.g. 2026-08-01T00)."
+    ),
+    until: str = typer.Option(..., "--until", help="The end hour, exclusive: a YYYY-MM-DD date or an ISO-8601 hour."),
+    depth: int = typer.Option(100, "--depth", help="Book depth the archive was captured at."),
+) -> None:
+    """Run the queue-position fill model over one pair's canonical book and trades, and write its rows one UTC day per file.
+
+    Every 15 s a passive bid and ask join the back of the queue at the touch, at the first two rungs of the quote's
+    notional ladder; each row is one order -- filled, cancelled or still open where the data ends -- with the mids after
+    it. Resumes after the pair's newest day file. Prints the run's counts as one JSON line; exits 1 on a refusal.
+    """
+    _check_pair(pair)
+    since_hour = _parse_since(since)
+    until_hour = _parse_since(until, flag="--until")
+    try:
+        counts = produce_pair(
+            primary_root, reconciled_root, panel_root, out_root, pair, since=since_hour, until=until_hour, depth=depth
+        )
+    except PanelError as exc:
+        raise _abort(f"panel fills: {exc}") from exc
+    typer.echo(json.dumps(counts))
+
+
+@panel_app.command("fills-manifest")
+def fills_manifest(
+    primary_root: Path = typer.Argument(..., help="The primary (raw) canonical archive the fills runs read."),
+    out_root: Path = typer.Argument(..., help="The dataset root the fills runs wrote."),
+    reconciled_root: Optional[Path] = typer.Option(
+        None, "--reconciled-root", help="The healed overlay the fills runs read, if any."
+    ),
+) -> None:
+    """Write the fills dataset's manifest, once every pair's run has exited.
+
+    Refuses a day file its sidecar or its run record disagrees with, run records that disagree across pairs, and an hour
+    a second listing of the archive holds from another root than the run recorded for it; exits 1 on a refusal.
+    """
+    try:
+        path = write_fills_manifest(
+            out_root, primary_root, reconciled_root, written_at=datetime.now(UTC).isoformat(timespec="seconds")
+        )
+    except PanelError as exc:
+        raise _abort(f"panel fills-manifest: {exc}") from exc
+    typer.echo(str(path))

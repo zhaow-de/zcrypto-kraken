@@ -5,20 +5,35 @@ the touch. An order fills once the prints at or through its price have met its w
 it cancels once its side's best quote has stood a tick or more away for `CANCEL_AFTER_S` seconds, or at `HORIZON_S`.
 Each post becomes one row once the mid an hour after it is read. Prices compare as `Decimal`, the book's own type, and
 are written as Float64.
+
+The producer runs the model over one pair's canonical book and trades hours, reconciled-first, and writes its rows one UTC
+day per file with a `.sha256` sidecar, beside a run record holding the run's parameters, its code and each day's counts;
+the manifest is written once every pair's run has exited, against a second listing of the archive.
 """
 
 from __future__ import annotations
 
 import heapq
 import itertools
+import json
+import os
+import re
+import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import polars as pl
 
+from cli.archive.reader import canonical_segments
+from cli.archive.replay import regroup_messages
 from cli.capture.book import OrderBook
-from cli.panel.materialize import SECONDS_PER_HOUR
+from cli.capture.segment_writer import _replace_durably
+from cli.data.manifest import build_manifest, series_entry
+from cli.ohlc.dataset import dataset_hash
+from cli.panel.errors import PanelError
+from cli.panel.materialize import SECONDS_PER_HOUR, _code_ref, _state_path, load_state
 from cli.panel.primitives import notionals_for
 
 GRID_S = 15
@@ -316,3 +331,380 @@ def flush(carried: list[Order]) -> list[dict]:
 
 def rows_frame(rows: list[dict]) -> pl.DataFrame:
     return pl.DataFrame(rows, schema=_SCHEMA).sort("ts", "side", "size")
+
+
+RUN_RECORD = "fills-run.json"
+PRODUCER = "zcrypto panel fills"
+_HOUR = timedelta(hours=1)
+_DAY = timedelta(days=1)
+_POSTS_PER_HOUR = SECONDS_PER_HOUR // GRID_S * _ORDERS_PER_POST
+_DAY_NAME = re.compile(r"^(\d{2})\.parquet$")
+_LISTS = ("hours_unanchored", "hours_absent", "trades_absent", "book_reconciled", "trades_reconciled")
+
+
+def _require_root(root: Path) -> None:
+    """Refuse a root that cannot be listed as a directory: a stat passes a directory the mount cannot scan, and
+    `canonical_segments` reads an overlay it cannot stat as no overlay and a root it cannot scan as empty."""
+    try:
+        os.listdir(root)
+    except OSError as exc:
+        raise PanelError(f"{root} cannot be read as a directory: {exc}") from exc
+
+
+def _midnight(day: date) -> datetime:
+    return datetime(day.year, day.month, day.day, tzinfo=UTC)
+
+
+def _hours(start: datetime, until: datetime) -> list[datetime]:
+    hours = []
+    hour = start
+    while hour < until:
+        hours.append(hour)
+        hour += _HOUR
+    return hours
+
+
+def _pair_root(out_root: Path, pair: str) -> Path:
+    base, quote = pair.split("/")
+    return out_root / base / quote
+
+
+def _day_files(pair_root: Path) -> dict[date, Path]:
+    days = {}
+    for path in pair_root.glob("*/*/*.parquet"):
+        if (match := _DAY_NAME.match(path.name)) is None:
+            continue
+        try:
+            days[date(int(path.parts[-3]), int(path.parts[-2]), int(match.group(1)))] = path
+        except ValueError:  # a hand-made directory that is not a date -- not ours
+            continue
+    return days
+
+
+def _read_record(pair_root: Path) -> dict | None:
+    path = pair_root / RUN_RECORD
+    try:
+        return json.loads(path.read_text())
+    except FileNotFoundError:
+        return None
+    except ValueError as exc:
+        raise PanelError(f"{path} is not a run record: {exc}") from exc
+
+
+def _check_run_record(pair_root: Path, params: dict, code_ref: str) -> None:
+    """A resume continues only the run that wrote the pair's record: a record of other params or code refuses the run, as
+    do day files with no record beside them -- a change is a new out root."""
+    record = _read_record(pair_root)
+    if record is None:
+        if stray := sorted(_day_files(pair_root).values()):
+            raise PanelError(
+                f"{pair_root} holds day files (e.g. {stray[0]}) and no {RUN_RECORD}: the run that wrote them is unknown"
+            )
+        return
+    if record["params"] != params or record["code_ref"] != code_ref:
+        raise PanelError(
+            f"{pair_root / RUN_RECORD}: written with params {record['params']} at code {record['code_ref']}, "
+            f"not this run's params {params} at code {code_ref} -- a change is a new out root"
+        )
+
+
+def _healed(path: Path, reconciled_root: Path | None) -> bool:
+    return reconciled_root is not None and path.is_relative_to(reconciled_root)
+
+
+def _listing(
+    primary_root: Path, reconciled_root: Path | None, pair: str, hours: set[datetime], *, kind: str
+) -> dict[datetime, Path]:
+    return {
+        hour: path
+        for seg_pair, hour, path in canonical_segments(primary_root, reconciled_root, kind=kind)
+        if seg_pair == pair and hour in hours
+    }
+
+
+def seed_book(panel_root: Path, pair: str, hour: datetime, *, depth: int) -> tuple[OrderBook | None, datetime | None]:
+    """The panel's book and clock as the hour before `hour` left them, `(None, None)` where the panel holds no state for
+    that hour. A state the read cannot open, or one `load_state` returns no book for, refuses the run: over the soft mount
+    a read error is an exit 1, never a counted gap."""
+    before = hour - _HOUR
+    path = _state_path(panel_root, pair, before)
+    try:
+        path.read_bytes()
+    except FileNotFoundError:
+        return None, None
+    except OSError as exc:
+        raise PanelError(f"{pair}: the panel state {path} cannot be read: {exc}") from exc
+    book, last_msg_ts = load_state(panel_root, pair, before, depth=depth)
+    if book is None:
+        raise PanelError(f"{pair}: the panel state {path} holds no book")
+    return book, last_msg_ts
+
+
+def write_day(
+    out_root: Path, pair: str, day: date, frame: pl.DataFrame, entry: dict, *, params: dict, code_ref: str
+) -> Path | None:
+    """Write `pair`'s day: its entry into the run record first, then, unless `frame` is empty, the day file as
+    `write_hour` publishes an hour -- the sidecar before the rename, so a kill leaves no day file and the re-run computes
+    the day again. The sidecar holds the frame's `dataset_hash`, the grade a manifest vouches, never the bytes' sha256."""
+    pair_root = _pair_root(out_root, pair)
+    pair_root.mkdir(parents=True, exist_ok=True)
+    days = (_read_record(pair_root) or {}).get("days", {})
+    days[day.isoformat()] = entry
+    record = pair_root / RUN_RECORD
+    record_tmp = record.with_name(f"{RUN_RECORD}.{os.getpid()}.tmp")
+    record_tmp.write_text(json.dumps({"params": params, "code_ref": code_ref, "days": days}, indent=1, sort_keys=True) + "\n")
+    _replace_durably(record_tmp, record)
+    if frame.height == 0:
+        return None
+    directory = pair_root / f"{day:%Y}" / f"{day:%m}"
+    directory.mkdir(parents=True, exist_ok=True)
+    final = directory / f"{day:%d}.parquet"
+    tmp = directory / f"{final.name}.{os.getpid()}.tmp"
+    frame.write_parquet(tmp, compression="zstd")
+    sidecar_tmp = directory / f"{final.name}.sha256.{os.getpid()}.tmp"
+    sidecar_tmp.write_text(f"{dataset_hash(pl.read_parquet(tmp))}  {final.name}\n")
+    _replace_durably(sidecar_tmp, final.with_name(f"{final.name}.sha256"))
+    _replace_durably(tmp, final)  # published last
+    return final
+
+
+def _new_entry() -> dict:
+    return {"hours": 0, "posts": 0, "skipped_no_quote": 0, "skipped_stale": 0, **{name: [] for name in _LISTS}}
+
+
+def _file(rows_by_day: dict[date, list[dict]], rows: list[dict]) -> None:
+    for row in rows:
+        rows_by_day.setdefault(row["ts"].date(), []).append(row)
+
+
+def produce_pair(
+    primary_root: Path,
+    reconciled_root: Path | None,
+    panel_root: Path,
+    out_root: Path,
+    pair: str,
+    *,
+    since: datetime,
+    until: datetime,
+    depth: int = 100,
+) -> dict:
+    """Run the fill model over `pair`'s hours of `[since, until)` -- resuming at the 00Z after its newest day file -- and
+    write its days (spec 00151 D2).
+
+    Every hour of the span is posted on, unanchored or absent, each filed in its own day's entry with the root each
+    kind's listing gave it, so `write_fills_manifest` can hold a second listing against the record. The book is seeded
+    from the panel's state of the hour before at the run's first present hour and after a gap, threaded in memory
+    across consecutive hours, and re-anchored by an hour opening with a snapshot; without a seed an update-opening hour
+    and its successors up to the first snapshot are unanchored. A gap and `until` flush every carried order; day D is
+    written once the hour reached is D+1 00Z or later and no carried order was posted on D, so the days land in order.
+
+    Returns the run's counts; `seconds` is the wall time from the first hour's read to the last day written."""
+    params = {
+        "grid_s": GRID_S,
+        "horizon_s": HORIZON_S,
+        "cancel_after_s": CANCEL_AFTER_S,
+        "stale_s": STALE_S,
+        "size_rungs": list(SIZE_RUNGS),
+        "mid_offsets_s": list(MID_OFFSETS_S),
+        "depth": depth,
+        "since": since.isoformat(),
+        "until": until.isoformat(),
+    }
+    code_ref = _code_ref()
+    for root in (primary_root, reconciled_root, panel_root):
+        if root is not None:
+            _require_root(root)
+    out_root.mkdir(parents=True, exist_ok=True)
+    pair_root = _pair_root(out_root, pair)
+    _check_run_record(pair_root, params, code_ref)
+    written = _day_files(pair_root)
+    start = _midnight(max(written) + _DAY) if written else since
+    span = _hours(start, until)
+    book_paths = _listing(primary_root, reconciled_root, pair, set(span), kind="book")
+    trades_paths = _listing(primary_root, reconciled_root, pair, set(span), kind="trades")
+
+    entries: dict[date, dict] = {}
+    pending: list[date] = []
+    rows_by_day: dict[date, list[dict]] = {}
+    carried: list[Order] = []
+    book: OrderBook | None = None
+    last_msg_ts: datetime | None = None
+    threaded = False  # whether `book` is the one the hour before left in memory
+    days_written = 0
+    clock: float | None = None
+
+    def land(day: date) -> int:
+        frame = rows_frame(rows_by_day.pop(day, []))
+        return write_day(out_root, pair, day, frame, entries[day], params=params, code_ref=code_ref) is not None
+
+    for hour in span:
+        if hour.date() not in entries:
+            entries[hour.date()] = _new_entry()
+            pending.append(hour.date())
+        entry = entries[hour.date()]
+        iso = hour.isoformat()
+        trades_path = trades_paths.get(hour)
+        if trades_path is None:
+            entry["trades_absent"].append(iso)
+        elif _healed(trades_path, reconciled_root):
+            entry["trades_reconciled"].append(iso)
+        book_path = book_paths.get(hour)
+        if book_path is None:
+            entry["hours_absent"].append(iso)
+            _file(rows_by_day, flush(carried))
+            carried, book, last_msg_ts, threaded = [], None, None, False
+        else:
+            if _healed(book_path, reconciled_root):
+                entry["book_reconciled"].append(iso)
+            if clock is None:
+                clock = time.monotonic()
+            if not threaded:
+                book, last_msg_ts = seed_book(panel_root, pair, hour, depth=depth)
+            threaded = True
+            messages = regroup_messages(pl.read_parquet(book_path))
+            if messages and messages[0]["type"] == "snapshot":
+                book = OrderBook(pair, depth)
+            if book is None:
+                entry["hours_unanchored"].append(iso)
+                last_msg_ts = None
+            else:
+                trades = pl.read_parquet(trades_path).sort("ts", maintain_order=True).to_dicts() if trades_path is not None else []
+                rows, carried, book, last_msg_ts, counts = simulate_hour(
+                    messages, trades, book, hour, pair=pair, carried=carried, last_msg_ts=last_msg_ts
+                )
+                _file(rows_by_day, rows)
+                entry["hours"] += 1
+                for name, value in counts.items():
+                    entry[name] += value
+        while pending and hour >= _midnight(pending[0]) + _DAY and all(order.ts.date() != pending[0] for order in carried):
+            days_written += land(pending.pop(0))
+    _file(rows_by_day, flush(carried))
+    for day in pending:
+        days_written += land(day)
+    seconds = time.monotonic() - clock if clock is not None else 0.0
+
+    if not _day_files(pair_root):
+        raise PanelError(
+            f"{pair}: the run left no day file in {pair_root} -- the archive holds no hour of the pair in "
+            f"[{since.isoformat()}, {until.isoformat()}), or none anchored"
+        )
+    totals = {
+        name: sum(entry[name] for entry in entries.values()) for name in ("hours", "posts", "skipped_no_quote", "skipped_stale")
+    }
+    absent = {
+        name: sum(len(entry[name]) for entry in entries.values()) for name in ("hours_unanchored", "hours_absent", "trades_absent")
+    }
+    return {
+        "hours": totals["hours"],
+        **absent,
+        "posts": totals["posts"],
+        "skipped_no_quote": totals["skipped_no_quote"],
+        "skipped_stale": totals["skipped_stale"],
+        "days_written": days_written,
+        "seconds": seconds,
+    }
+
+
+def _recorded_root(entry: dict | None, iso: str, kind: str) -> str:
+    if entry is None:
+        return "no entry"
+    absent, healed = ("hours_absent", "book_reconciled") if kind == "book" else ("trades_absent", "trades_reconciled")
+    if iso in entry[absent]:
+        return "absent"
+    return "reconciled" if iso in entry[healed] else "primary"
+
+
+def _relisting_disputes(records: dict[str, dict], primary_root: Path, reconciled_root: Path | None) -> list[str]:
+    """Every hour of a recorded pair's `[since, until)` the archive lists now from another root than the run recorded
+    for it -- absent, the overlay, the primary, or a day with no entry; an hour this listing lacks is not compared."""
+    spans = {
+        pair: set(_hours(datetime.fromisoformat(r["params"]["since"]), datetime.fromisoformat(r["params"]["until"])))
+        for pair, r in records.items()
+    }
+    disputes = []
+    for kind in ("book", "trades"):
+        for pair, hour, path in canonical_segments(primary_root, reconciled_root, kind=kind):
+            if hour not in spans.get(pair, ()):
+                continue
+            listed = "reconciled" if _healed(path, reconciled_root) else "primary"
+            recorded = _recorded_root(records[pair]["days"].get(hour.date().isoformat()), hour.isoformat(), kind)
+            if listed != recorded:
+                disputes.append((pair, kind, hour, f"{pair} {kind} {hour.isoformat()}: run {recorded}, second listing {listed}"))
+    return [dispute for *_, dispute in sorted(disputes)]
+
+
+def write_fills_manifest(out_root: Path, primary_root: Path, reconciled_root: Path | None, *, written_at: str) -> Path:
+    """Write the dataset's conformant `manifest.json` once every pair's run has exited (spec 00151 D2): each day file held
+    against its sidecar and its record's entry, each entry against the hours and posts its day must add up to, the
+    records against one another, and the archive listed a second time against the root each record names per hour --
+    an hour from another root is the run's listing dropping it, which the frozen set would keep."""
+    for root in (primary_root, reconciled_root):
+        if root is not None:
+            _require_root(root)
+    pair_roots = {f"{path.parent.name}/{path.name}": path for path in sorted(out_root.glob("*/*")) if path.is_dir()}
+    records = {pair: record for pair, root in pair_roots.items() if (record := _read_record(root)) is not None}
+    base_pair = min(records, default=None)
+    for pair, record in sorted(records.items()):
+        base = records[base_pair]
+        if record["params"] != base["params"] or record["code_ref"] != base["code_ref"]:
+            raise PanelError(
+                f"{pair_roots[base_pair] / RUN_RECORD} and {pair_roots[pair] / RUN_RECORD} disagree: params "
+                f"{base['params']} at code {base['code_ref']} against {record['params']} at code {record['code_ref']}"
+            )
+    files = {(pair, day): path for pair, root in pair_roots.items() for day, path in _day_files(root).items()}
+    if not files:
+        raise PanelError(f"{out_root} holds no day file: nothing for a manifest to attest")
+
+    series = {}
+    for (pair, day), path in sorted(files.items()):
+        if pair not in records:
+            raise PanelError(f"{pair} {day}: {path} has no run record beside it")
+        entry = records[pair]["days"].get(day.isoformat())
+        if entry is None:
+            raise PanelError(f"{pair} {day}: {path} has no entry in its pair's run record")
+        frame = pl.read_parquet(path)
+        if frame.height != entry["posts"]:
+            raise PanelError(f"{pair} {day}: {path} holds {frame.height} rows, its record's entry {entry['posts']} posts")
+        relpath = path.relative_to(out_root).as_posix()
+        leaf = series_entry(frame, relpath)
+        sidecar = path.with_name(f"{path.name}.sha256")
+        if sidecar.read_text().split()[:1] != [leaf["sha256"]]:
+            raise PanelError(f"{pair} {day}: the sidecar {sidecar} does not hold the frame hash of {path}")
+        series[relpath] = leaf
+
+    for pair, record in sorted(records.items()):
+        since, until = (datetime.fromisoformat(record["params"][bound]) for bound in ("since", "until"))
+        for iso_day, entry in sorted(record["days"].items()):
+            day = date.fromisoformat(iso_day)
+            if entry["posts"] and (pair, day) not in files:
+                raise PanelError(f"{pair} {iso_day}: its record's entry holds {entry['posts']} posts and no day file")
+            if entry["posts"] + entry["skipped_no_quote"] + entry["skipped_stale"] != _POSTS_PER_HOUR * entry["hours"]:
+                raise PanelError(
+                    f"{pair} {iso_day}: the entry's posts and skips are not {_POSTS_PER_HOUR} for each of its {entry['hours']} hours"
+                )
+            span_hours = len(_hours(max(since, _midnight(day)), min(until, _midnight(day) + _DAY)))
+            if entry["hours"] + len(entry["hours_unanchored"]) + len(entry["hours_absent"]) != span_hours:
+                raise PanelError(
+                    f"{pair} {iso_day}: the entry's hours posted, unanchored and absent are not the day's {span_hours} in the span"
+                )
+
+    if disputes := _relisting_disputes(records, primary_root, reconciled_root):
+        raise PanelError(
+            f"{out_root}: a second listing of the archive holds hours from another root than the runs recorded -- the run's "
+            f"listing dropped the hour or its overlay directory, and the set would freeze the hole or the un-healed copy: "
+            f"{'; '.join(disputes)}"
+        )
+
+    base = records[base_pair]
+    provenance = {
+        "producer": PRODUCER,
+        "code_ref": base["code_ref"],
+        "params": base["params"],
+        "pairs": {pair: record["days"] for pair, record in sorted(records.items())},
+    }
+    manifest = build_manifest(series, written_at=written_at, identity="set", provenance=provenance)
+    path = out_root / "manifest.json"
+    tmp = path.with_name(f"manifest.json.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    _replace_durably(tmp, path)
+    return path
