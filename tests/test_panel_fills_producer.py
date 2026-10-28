@@ -57,12 +57,12 @@ def _write(path: Path, frame: pl.DataFrame) -> None:
     frame.write_parquet(path)
 
 
-def _book_hour(root: Path, pair: str, hour: datetime, *, bids=BIDS, asks=ASKS, snapshot=True, messages=()) -> None:
+def _book_hour(root: Path, pair: str, hour: datetime, *, bids=BIDS, asks=ASKS, snapshot=True, messages=(), last=3600) -> None:
     """`pair`'s book hour under `root`: a snapshot of `bids` and `asks` at :00 unless the hour continues the one before,
-    the deepest bid restated every 5 s, and the planted `messages` -- `(offset, bids, asks)`, a level of qty 0 removing
-    it."""
+    the deepest bid restated every 5 s before the `last` second, and the planted `messages` -- `(offset, bids, asks)`, a
+    level of qty 0 removing it."""
     planned = [(0.0, "snapshot", bids, asks)] if snapshot else []
-    planned += [(float(s), "update", [min(bids)], []) for s in range(5 if snapshot else 0, 3600, 5)]
+    planned += [(float(s), "update", [min(bids)], []) for s in range(5 if snapshot else 0, last, 5)]
     planned += [(float(offset), "update", b, a) for offset, b, a in messages]
     planned.sort(key=lambda message: message[0])
     rows = [
@@ -274,6 +274,19 @@ def test_a_days_last_hour_lands_in_its_own_file_with_mids_from_the_next_day(prod
     last = _row(frame, LATE, 3585, "bid")
     assert (last["mid_at_post"], last["mid_at_post_plus_3600s"]) == (1000.5, 1001.0)
     assert pl.read_parquet(_day_path(out, PAIR, NEXT))["ts"].min() == NEXT
+
+
+def test_a_day_waits_for_the_mids_of_its_last_posts_a_stale_next_hour_defers(tmp_path):
+    primary, _, panel = _roots(tmp_path)
+    after = NEXT + timedelta(hours=1)
+    _book_hour(primary, PAIR, LATE)
+    _book_hour(primary, PAIR, NEXT, snapshot=False, last=3500)
+    _book_hour(primary, PAIR, after, snapshot=False)
+    out = tmp_path / "out"
+    _produce(primary, panel, out, until=after + timedelta(hours=1))
+    frame = pl.read_parquet(_day_path(out, PAIR, D))
+    assert frame.height == 960
+    assert _row(frame, LATE, 3585, "bid")["mid_at_post_plus_3600s"] == 1000.5
 
 
 def test_the_data_end_flushes_the_last_day_with_its_unreached_mids_null(produced):
