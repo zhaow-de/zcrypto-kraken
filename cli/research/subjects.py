@@ -4768,7 +4768,7 @@ def _c2_reads(reader: ObservedReader, dataset: str, subject: str) -> dict[str, t
 
 
 def _c2_reading_inputs(reads: dict[str, tuple[list[datetime], list[float]]], subject: str) -> _C2ReadingInputs:
-    """No forward return is computed here: the data-gated case runs this half before the spec's hash (docs/specs/00150 D6, D7)."""
+    """The half the data-gated case runs over the real set, so it computes no forward return (docs/specs/00150 D6, D7)."""
     grid, leader_close = reads[LEADER]
     returns = log_returns(grid, leader_close)
     sigma = trailing_std(returns, window=SIGMA_WINDOW)
