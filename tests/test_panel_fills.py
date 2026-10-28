@@ -409,6 +409,16 @@ def test_an_order_carried_across_the_hour_keeps_its_clock():
     assert (row["filled"], row["time_to_fill_s"]) == (True, 18.0)
 
 
+def test_the_last_fractional_second_is_drained_for_the_next_hour():
+    first = _hour(BIDS, ASKS, messages=[(3599.5, [(1000.0, 0.0)], [])], trades=[(3599.5, "sell", 1000.0, 1.1)])
+    _, carried, book, last, _ = _run(first)
+    assert max(book.bids) == Decimal("999")
+    second = _hour(BIDS, ASKS, hour=H2, snapshot=False)
+    rows, *_ = _run(second, hour=H2, carried=carried, book=book, last_msg_ts=last)
+    row = _row_of(rows, 3585, "bid")
+    assert (row["filled"], row["time_to_fill_s"]) == (True, 14.5)
+
+
 def test_pair_tick_is_the_smallest_level_gap_and_zero_on_a_one_level_book():
     book = _book([(100.0, 1.0), (99.5, 1.0), (99.0, 1.0), (97.0, 1.0)], [(100.7, 1.0), (100.8, 1.0), (101.5, 1.0)])
     assert pair_tick(book) == Decimal("0.1")
