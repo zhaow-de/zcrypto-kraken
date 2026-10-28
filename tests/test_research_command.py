@@ -8370,6 +8370,14 @@ def _declared_series(tmp_path: Path, subject: subjects.Subject) -> tuple[Path, d
     return root, datetime.fromtimestamp(_EPOCH_2020, UTC)
 
 
+def _c2_dataset(tmp_path: Path, subject: subjects.Subject) -> tuple[Path, datetime]:
+    root = tmp_path / "data"
+    relpaths = [f"{asset}/EUR/15.parquet" for asset in subject.assets] + ["ETH/BTC/15.parquet", "SOL/BTC/15.parquet"]
+    for i, relpath in enumerate(relpaths):
+        _write_series(root, "ohlc-test", relpath, 200, phase=i * 0.7, step=900)
+    return root, datetime.fromtimestamp(_EPOCH_2020, UTC)
+
+
 # A subject whose build reads a dataset it does not declare brings its own fixture here, and b1-window-only shares
 # b1-conditioning's; the ruled B1 subjects and their pre-flights bring theirs, shorter than their declared series —
 # `_B1_BARS` 4h bars against `_declared_series`' 600 days — because each row that evaluates them runs arm A's kill bar,
@@ -8414,6 +8422,7 @@ _CONTRACT_DATASETS = {
     "b1-volume-confirmation-preflight": lambda tmp_path, subject: (_b1_volume_dataset(tmp_path), _B1_START),
     "b1-hourly-channel-exits": lambda tmp_path, subject: (_b1_hourly_exit_dataset(tmp_path), _B1_START),
     "b1-hourly-channel-exits-preflight": lambda tmp_path, subject: (_b1_hourly_exit_dataset(tmp_path), _B1_START),
+    "c2-lead-lag-reading": _c2_dataset,
 }
 
 

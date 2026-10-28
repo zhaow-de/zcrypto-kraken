@@ -93,6 +93,30 @@ from cli.alpha.b4 import (
     scale_bars,
     shortfall_carry,
 )
+from cli.alpha.c2 import (
+    COST_ROUND_TRIP,
+    FOLLOWERS,
+    HORIZONS,
+    LAGS,
+    LEADER,
+    MEAN_BLOCK,
+    N_RESAMPLES,
+    SEED,
+    SIDES,
+    SIGMA_WINDOW,
+    STEP,
+    THRESHOLDS,
+    cell_name,
+    cell_reads,
+    forward_returns,
+    log_returns,
+    moves,
+    on_grid,
+    per_year,
+    rank_ic,
+    signals,
+    trailing_std,
+)
 from cli.alpha.errors import AlphaError
 from cli.alpha.killbar import a1_kill_bar, net_of_cost_verdict
 from cli.backtest.errors import BacktestError
@@ -4713,6 +4737,143 @@ _B3_OVERLAY_METRIC_KEYS = (
 _B3_OVERLAY_PREFLIGHT_KEYS = _B3_PREFLIGHT_KEYS | _B3_OVERLAY_ENGAGEMENT_KEYS
 
 
+# docs/specs/00150 D2-D6: C2's lead-lag reading.
+class _C2ReadingInputs(NamedTuple):
+    grid: list[datetime]
+    years: list[int]
+    leader: dict
+    returns: list[float | None]
+    sigma: list[float | None]
+    signals: dict[str, list[int]]
+    followers: dict[str, dict]
+
+
+def _c2_reads(reader: ObservedReader, dataset: str, subject: str) -> dict[str, tuple[list[datetime], list[float]]]:
+    reads = {}
+    for pair in (LEADER, *FOLLOWERS):
+        relpath = f"{pair}/15.parquet"
+        try:
+            frame = reader.read_series(dataset, relpath)
+            ts, close = frame["ts"].to_list(), frame["close"].to_list()
+        except (pl.exceptions.PolarsError, OSError) as exc:
+            raise SubjectError(f"{dataset}/{relpath}: {exc}") from exc
+        for stamp, value in zip(ts, close, strict=True):
+            if value is None or not value > 0:
+                raise SubjectError(
+                    f"{_b2_over(subject, None)}: {dataset}/{relpath}: a close that is not a positive number at {stamp.isoformat()}"
+                )
+        reads[pair] = (ts, close)
+    return reads
+
+
+def _c2_reading_inputs(reads: dict[str, tuple[list[datetime], list[float]]], subject: str) -> _C2ReadingInputs:
+    """The half the data-gated case runs over the real set, so it computes no forward return (docs/specs/00150 D6, D7)."""
+    grid, leader_close = reads[LEADER]
+    returns = log_returns(grid, leader_close)
+    sigma = trailing_std(returns, window=SIGMA_WINDOW)
+    signed = {
+        f"L{lag}|th{threshold}": signals(moves(returns, lag=lag), sigma, lag=lag, threshold=threshold)
+        for lag in LAGS
+        for threshold in THRESHOLDS
+    }
+    followers = {}
+    for follower in FOLLOWERS:
+        ts, close = reads[follower]
+        closes, n_on, n_off = on_grid(grid, ts, close)
+        if n_on == 0:
+            raise SubjectError(f"{subject}: {follower} has no stamp on the leader's grid")
+        followers[follower] = {
+            "closes": closes,
+            "bars": len(ts),
+            "first_stamp": int(ts[0].timestamp()),
+            "on_grid": n_on,
+            "off_grid": n_off,
+        }
+    leader = {
+        "bars": len(grid),
+        "first_stamp": int(grid[0].timestamp()),
+        "last_stamp": int(grid[-1].timestamp()),
+        "non_15m_steps": sum(grid[i] - grid[i - 1] != STEP for i in range(1, len(grid))),
+        "sigma_warm_index": next((i for i, s in enumerate(sigma) if s is not None), -1),
+    }
+    return _C2ReadingInputs(grid, [stamp.year for stamp in grid], leader, returns, sigma, signed, followers)
+
+
+def _c2_reading_metrics(inputs: _C2ReadingInputs) -> dict:
+    grid, years = inputs.grid, inputs.years
+    forward = {f: {h: forward_returns(grid, c["closes"], horizon=h) for h in HORIZONS} for f, c in inputs.followers.items()}
+    cells = {}
+    for follower in FOLLOWERS:
+        for lag in LAGS:
+            for threshold in THRESHOLDS:
+                signal = inputs.signals[f"L{lag}|th{threshold}"]
+                for horizon in HORIZONS:
+                    for side in SIDES:
+                        cell = cell_reads(signal, side, forward[follower][horizon], years)
+                        cells[cell_name(follower, lag, threshold, horizon, side)] = cell
+    move = {lag: moves(inputs.returns, lag=lag) for lag in LAGS}
+    # Each year's moves masked to None outside it, so each meets its own stamp's forward return in `rank_ic`.
+    masked = {
+        lag: {year: [x if y == year else None for x, y in zip(move[lag], years, strict=True)] for year in set(years)}
+        for lag in LAGS
+    }
+    context: dict[str, dict] = {}
+    for follower in FOLLOWERS:
+        for lag in LAGS:
+            for horizon in HORIZONS:
+                ahead = forward[follower][horizon]
+                ics = {str(year): rank_ic(masked[lag][year], ahead) for year in sorted(set(years))}
+                context.setdefault(follower, {})[f"L{lag}|H{horizon}"] = {
+                    "rank_ic_per_year": {year: ic for year, ic in ics.items() if ic is not None},
+                    "drift_per_year": {year: statistics.fmean(ys) for year, ys in per_year(ahead, years).items() if ys},
+                }
+    counts = {}
+    for key, signal in inputs.signals.items():
+        for side in SIDES:
+            want = 1 if side == "up" else -1
+            by_year = {year: len(hits) for year, hits in per_year([1.0 if s == want else None for s in signal], years).items()}
+            counts[f"{key}|{side}"] = {"per_year": by_year, "total": sum(by_year.values())}
+    return {
+        "cells": cells,
+        "context": context,
+        "signals": counts,
+        "followers": {f: {k: v for k, v in c.items() if k != "closes"} for f, c in inputs.followers.items()},
+        "leader": inputs.leader,
+        "cost_round_trip": COST_ROUND_TRIP,
+        "sigma_window": SIGMA_WINDOW,
+        "mean_block": MEAN_BLOCK,
+        "n_resamples": N_RESAMPLES,
+        "seed": SEED,
+    }
+
+
+def _build_c2_lead_lag_reading(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    subject = "c2-lead-lag-reading"
+    if as_of is not None:
+        raise SubjectError(f"{subject} evaluates the frozen 15m set whole, never the rolling dataset as of a day: drop --as-of")
+    if window is not None:
+        raise SubjectError(
+            f"{_b2_over(subject, window)}: it reads the frozen 15m set whole, and the scale's trailing day reaches back past any "
+            "window's first stamp; drop --window"
+        )
+    try:
+        return _c2_reading_metrics(_c2_reading_inputs(_c2_reads(reader, dataset, subject), subject))
+    except (AlphaError, ValidationError) as exc:
+        raise SubjectError(f"{_b2_over(subject, window)}: {exc}") from exc
+
+
+# docs/specs/00150 D6's keys.
+_C2_READING_KEYS = frozenset(
+    {"cells", "context", "signals", "followers", "leader", "cost_round_trip", "sigma_window", "mean_block", "n_resamples", "seed"}
+)
+
+
 SUBJECTS: dict[str, Subject] = {
     "record44-crossfreq": Subject(
         "record44-crossfreq",
@@ -5201,6 +5362,15 @@ SUBJECTS: dict[str, Subject] = {
         spec="docs/specs/00149-b3-btc-overlay-design.md",
         metric_keys=_B3_OVERLAY_PREFLIGHT_KEYS,
         seeds=(42,),
+    ),
+    "c2-lead-lag-reading": Subject(
+        "c2-lead-lag-reading",
+        (15,),
+        _ASSETS,
+        _build_c2_lead_lag_reading,
+        spec="docs/specs/00150-c2-lead-lag-reading-design.md",
+        metric_keys=_C2_READING_KEYS,
+        seeds=(SEED,),
     ),
 }
 
