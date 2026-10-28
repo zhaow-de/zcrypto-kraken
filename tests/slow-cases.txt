@@ -1,6 +1,6 @@
 # The cases tests/conftest.py marks `slow`: one pytest node id per line, every case whose own time is 10 s or more in a
-# timed full run's junit (`uv run pytest --junitxml=<file>`, data linked) -- its id the classname resolved to its tests/
 # file, then any class, then the name with its parametrize brackets, sorted.
+# timed full run's junit (`uv run pytest --junitxml=<file>`, data linked) -- its id the classname resolved to its tests/
 tests/test_b1_records_reproduce.py::test_the_b1_subject_reproduces_its_record[record-45]
 tests/test_b1_records_reproduce.py::test_the_b1_subject_reproduces_its_record[record-46]
 tests/test_cache_restart.py::test_a_doge_lot_held_across_two_restarts_fails_the_account_load_on_the_second_and_the_account_still_carries_it
@@ -31,6 +31,7 @@ tests/test_registry_replay.py::test_every_record_past_47_replays_at_head[reading
 tests/test_registry_replay.py::test_every_record_past_47_replays_at_head[reading-4]
 tests/test_registry_replay.py::test_every_record_past_47_replays_at_head[reading-5]
 tests/test_registry_replay.py::test_every_record_past_47_replays_at_head[reading-6]
+tests/test_registry_replay.py::test_every_record_past_47_replays_at_head[reading-7]
 tests/test_registry_replay.py::test_every_record_past_47_replays_at_head[trial-48]
 tests/test_registry_replay.py::test_every_record_past_47_replays_at_head[trial-49]
 tests/test_registry_replay.py::test_every_record_past_47_replays_at_head[trial-50]
