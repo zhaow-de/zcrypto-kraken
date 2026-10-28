@@ -329,6 +329,7 @@ _DAY = timedelta(days=1)
 _POSTS_PER_HOUR = SECONDS_PER_HOUR // GRID_S * _ORDERS_PER_POST
 _DAY_NAME = re.compile(r"^(\d{2})\.parquet$")
 _LISTS = ("hours_unanchored", "hours_absent", "trades_absent", "book_reconciled", "trades_reconciled")
+_COUNTS = ("hours", "posts", "skipped_no_quote", "skipped_stale")
 
 
 def _require_root(root: Path) -> None:
@@ -373,13 +374,38 @@ def _day_files(pair_root: Path) -> dict[date, Path]:
 def _read_record(pair_root: Path) -> dict | None:
     path = pair_root / RUN_RECORD
     try:
-        return json.loads(path.read_text())
+        record = json.loads(path.read_text())
     except FileNotFoundError:
         return None
     except OSError as exc:
         raise PanelError(f"{path} cannot be read: {exc}") from exc
     except ValueError as exc:
         raise PanelError(f"{path} is not a run record: {exc}") from exc
+    if (fault := _record_fault(record)) is not None:
+        raise PanelError(f"{path} is not a run record: {fault}")
+    return record
+
+
+def _record_fault(record: object) -> str | None:
+    if not isinstance(record, dict):
+        return "not an object"
+    params, days = record.get("params"), record.get("days")
+    if not isinstance(params, dict) or not isinstance(record.get("code_ref"), str) or not isinstance(days, dict):
+        return "it lacks its params, code_ref or days"
+    try:
+        for bound in ("since", "until"):
+            datetime.fromisoformat(params[bound])
+        for iso_day, entry in days.items():
+            date.fromisoformat(iso_day)
+            if not isinstance(entry, dict) or set(_new_entry()) - entry.keys():
+                return f"the day {iso_day} holds no entry"
+            if any(type(entry[name]) is not int for name in _COUNTS) or any(
+                not isinstance(entry[name], list) or not all(isinstance(iso, str) for iso in entry[name]) for name in _LISTS
+            ):
+                return f"the day {iso_day}'s entry holds a count or a list of another type"
+    except (KeyError, TypeError, ValueError) as exc:
+        return f"{type(exc).__name__}: {exc}"
+    return None
 
 
 def _check_run_record(pair_root: Path, params: dict, code_ref: str) -> None:
@@ -462,7 +488,7 @@ def write_day(
 
 
 def _new_entry() -> dict:
-    return {"hours": 0, "posts": 0, "skipped_no_quote": 0, "skipped_stale": 0, **{name: [] for name in _LISTS}}
+    return {**dict.fromkeys(_COUNTS, 0), **{name: [] for name in _LISTS}}
 
 
 def _file(rows_by_day: dict[date, list[dict]], rows: list[dict]) -> None:
@@ -671,7 +697,7 @@ def write_fills_manifest(out_root: Path, primary_root: Path, reconciled_root: Pa
         sidecar = path.with_name(f"{path.name}.sha256")
         try:
             held = sidecar.read_text().split()[:1]
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             raise PanelError(f"{pair} {day}: the sidecar {sidecar} cannot be read: {exc}") from exc
         if held != [leaf["sha256"]]:
             raise PanelError(f"{pair} {day}: the sidecar {sidecar} does not hold the frame hash of {path}")

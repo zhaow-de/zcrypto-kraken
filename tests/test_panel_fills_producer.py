@@ -400,6 +400,38 @@ def test_a_run_record_it_cannot_read_refuses_the_run_and_the_manifest(produced, 
         _produce(primary, panel, out, until=END, overlay=overlay)
 
 
+def test_a_run_record_or_sidecar_it_cannot_parse_refuses_by_name(produced, tmp_path):
+    primary, overlay, source, _ = produced
+    day = D.date().isoformat()
+
+    def entry_edit(edit):
+        return lambda record: (edit(record["days"][day]), record)[1]
+
+    spoils = (
+        ("a-list", lambda record: [], "not an object"),
+        ("no-params", lambda record: {**record, "params": None}, "lacks its params"),
+        ("a-bad-since", lambda record: (record["params"].update(since="soon"), record)[1], "ValueError"),
+        ("no-posts", entry_edit(lambda entry: entry.pop("posts")), f"the day {day} holds no entry"),
+        ("a-text-count", entry_edit(lambda entry: entry.update(posts="960")), "a count or a list of another type"),
+        ("a-bad-day", lambda record: (record["days"].update({"not-a-day": record["days"].pop(day)}), record)[1], "ValueError"),
+    )
+    for name, spoil, fault in spoils:
+        out = _copy(source, tmp_path / name)
+        record = _record_path(out, PAIR)
+        record.write_text(json.dumps(spoil(json.loads(record.read_text()))))
+        with pytest.raises(PanelError, match=re.escape(f"{record} is not a run record: ") + ".*" + re.escape(fault)):
+            _manifest(out, primary, overlay)
+    panel = tmp_path / "panel"
+    panel.mkdir()
+    with pytest.raises(PanelError, match=re.escape(f"{_record_path(tmp_path / 'a-list', PAIR)} is not a run record")):
+        _produce(primary, panel, tmp_path / "a-list", until=END, overlay=overlay)
+    out = _copy(source, tmp_path / "sidecar")
+    sidecar = _sidecar(_day_path(out, PAIR, D))
+    sidecar.write_bytes(b"\xff\xfe")
+    with pytest.raises(PanelError, match=re.escape(f"the sidecar {sidecar} cannot be read")):
+        _manifest(out, primary, overlay)
+
+
 def test_an_out_root_or_a_day_it_cannot_write_refuses_the_run(tmp_path, monkeypatch):
     primary, _, panel = _roots(tmp_path)
     _book_hour(primary, PAIR, LATE)
