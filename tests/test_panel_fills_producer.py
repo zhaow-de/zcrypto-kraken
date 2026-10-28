@@ -374,6 +374,18 @@ def test_a_run_whose_params_or_code_differ_from_the_record_is_refused(produced, 
         _produce(primary, panel, out, until=END, overlay=overlay)
 
 
+def test_an_unreadable_book_or_trades_hour_refuses_the_run_naming_it(tmp_path):
+    for kind in ("book", "trades"):
+        (tmp_path / kind).mkdir()
+        primary, _, panel = _roots(tmp_path / kind)
+        _book_hour(primary, PAIR, LATE)
+        _trades_hour(primary, PAIR, LATE, [(7, "sell", 1000.0, 1.2)])
+        path = _segment(primary, PAIR, kind, LATE)
+        path.write_bytes(path.read_bytes()[: path.stat().st_size // 2])
+        with pytest.raises(PanelError, match=re.escape(f"{PAIR} {LATE.isoformat()}: {path} cannot be read")):
+            _produce(primary, panel, tmp_path / kind / "out")
+
+
 def test_a_pair_left_with_no_day_file_is_refused(tmp_path):
     primary, _, panel = _roots(tmp_path)
     _book_hour(primary, PAIR, LATE, snapshot=False)
@@ -408,6 +420,21 @@ def test_the_manifest_refuses_a_sidecar_that_disagrees(produced, tmp_path):
     sidecar = _sidecar(_day_path(out, PAIR, D))
     sidecar.write_text(f"{'0' * 64}  02.parquet\n")
     with pytest.raises(PanelError, match=re.escape(str(sidecar))):
+        _manifest(out, primary, overlay)
+    assert not (out / "manifest.json").exists()
+
+
+def test_the_manifest_refuses_a_day_file_or_sidecar_it_cannot_read(produced, tmp_path):
+    primary, overlay, source, _ = produced
+    out = _copy(source, tmp_path / "truncated")
+    path = _day_path(out, PAIR, D)
+    path.write_bytes(path.read_bytes()[: path.stat().st_size // 2])
+    with pytest.raises(PanelError, match=re.escape(f"{PAIR} {D.date()}: {path} cannot be read")):
+        _manifest(out, primary, overlay)
+    out = _copy(source, tmp_path / "no-sidecar")
+    sidecar = _sidecar(_day_path(out, PAIR, D))
+    sidecar.unlink()
+    with pytest.raises(PanelError, match=re.escape(f"the sidecar {sidecar} cannot be read")):
         _manifest(out, primary, overlay)
     assert not (out / "manifest.json").exists()
 

@@ -546,14 +546,18 @@ def produce_pair(
             if not threaded:
                 book, last_msg_ts = seed_book(panel_root, pair, hour, depth=depth)
             threaded = True
-            messages = regroup_messages(pl.read_parquet(book_path))
+            messages = regroup_messages(_read_hour(book_path, f"{pair} {iso}"))
             if messages and messages[0]["type"] == "snapshot":
                 book = OrderBook(pair, depth)
             if book is None:
                 entry["hours_unanchored"].append(iso)
                 last_msg_ts = None
             else:
-                trades = pl.read_parquet(trades_path).sort("ts", maintain_order=True).to_dicts() if trades_path is not None else []
+                trades = (
+                    _read_hour(trades_path, f"{pair} {iso}").sort("ts", maintain_order=True).to_dicts()
+                    if trades_path is not None
+                    else []
+                )
                 rows, carried, book, last_msg_ts, counts = simulate_hour(
                     messages, trades, book, hour, pair=pair, carried=carried, last_msg_ts=last_msg_ts
                 )
@@ -588,6 +592,13 @@ def produce_pair(
         "days_written": days_written,
         "seconds": seconds,
     }
+
+
+def _read_hour(path: Path, what: str) -> pl.DataFrame:
+    try:
+        return pl.read_parquet(path)
+    except (pl.exceptions.PolarsError, OSError) as exc:
+        raise PanelError(f"{what}: {path} cannot be read: {exc}") from exc
 
 
 def _recorded_root(entry: dict | None, iso: str, kind: str) -> str:
@@ -644,13 +655,17 @@ def write_fills_manifest(out_root: Path, primary_root: Path, reconciled_root: Pa
         entry = records[pair]["days"].get(day.isoformat())
         if entry is None:
             raise PanelError(f"{pair} {day}: {path} has no entry in its pair's run record")
-        frame = pl.read_parquet(path)
+        frame = _read_hour(path, f"{pair} {day}")
         if frame.height != entry["posts"]:
             raise PanelError(f"{pair} {day}: {path} holds {frame.height} rows, its record's entry {entry['posts']} posts")
         relpath = path.relative_to(out_root).as_posix()
         leaf = series_entry(frame, relpath)
         sidecar = path.with_name(f"{path.name}.sha256")
-        if sidecar.read_text().split()[:1] != [leaf["sha256"]]:
+        try:
+            held = sidecar.read_text().split()[:1]
+        except OSError as exc:
+            raise PanelError(f"{pair} {day}: the sidecar {sidecar} cannot be read: {exc}") from exc
+        if held != [leaf["sha256"]]:
             raise PanelError(f"{pair} {day}: the sidecar {sidecar} does not hold the frame hash of {path}")
         series[relpath] = leaf
 
