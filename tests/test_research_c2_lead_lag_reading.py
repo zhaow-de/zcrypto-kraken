@@ -8,6 +8,8 @@ from cli.alpha.c2 import FOLLOWERS, HORIZONS, LAGS, LEADER, SIDES, STEP, THRESHO
 from cli.registry.record import validate_metrics
 from cli.research import subjects
 
+pytestmark = pytest.mark.retired
+
 SUBJECT = "c2-lead-lag-reading"
 # 2023 holds the 96 bars before the leader's scale warms, 2024 the other 304.
 START, BARS, GAP_AT, LTC_MISSES, SOL_BTC_FROM = datetime(2023, 12, 31, tzinfo=UTC), 400, 200, 50, 96

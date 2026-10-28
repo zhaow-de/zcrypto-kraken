@@ -51,10 +51,13 @@ RETIRED_SUBJECTS = frozenset(
         "b3-tilt-slow-preflight",
         "b3-btc-overlay",
         "b3-btc-overlay-preflight",
+        # C2's reading.
+        "c2-lead-lag-reading",
     }
 )
-# The one file outside the data-gated family whose cases evaluate a subject; elsewhere a subject's name is a checker's
-# data, as in the registry provenance cases, which CI keeps.
+# The file whose cases evaluate a subject named in a parameter; a subject's own test file outside the data-gated family
+# is marked `retired` whole once its subject retires, and elsewhere a subject's name is a checker's data, as in the
+# registry provenance cases, which CI keeps.
 SUBJECT_TESTS = "test_research_command.py"
 
 
