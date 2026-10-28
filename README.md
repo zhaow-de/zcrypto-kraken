@@ -338,7 +338,7 @@ zcrypto panel fills-manifest <primary_root> <out_root> [--reconciled-root <path>
 | -- | -- |
 | `primary_root` | The primary (raw) canonical archive the runs read. |
 | `out_root` | The dataset root the runs wrote. |
-| `--reconciled-root` | The healed overlay the runs read, if any; omitted, every hour a run read from it is refused. |
+| `--reconciled-root` | The healed overlay the runs read, if any; omitted, every hour a run read from it that the primary also holds is refused. |
 
 ### `zcrypto data`<a name="zcrypto-data"></a>
 
