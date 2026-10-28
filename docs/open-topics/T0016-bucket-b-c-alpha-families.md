@@ -48,4 +48,4 @@ Buckets B (intraday band) and C (long shots) are where the master plan's residua
 
 ## Suggested next steps
 
-- Per §5 ranking: C2 → C3 → C1 (C1 last: taker economics near-certainly kill it without L2 maker realism).
+- C2 is open and read (reading 7, iter-195): its next step is the pick's — the owner's family call, hold or close, since the reading names no trial — recorded as a `[iter-NNN] C2's next step after the lead-lag reading` entry; then, per §5's ranking, C3 → C1 (C1 last: taker economics near-certainly kill it without L2 maker realism).
