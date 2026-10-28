@@ -61,4 +61,4 @@ Master plan §5's C1: short-term reversal at 15m–1h, "only testable as maker-o
 
 ## Out of scope
 
-Any trial; a taker cost model; partial fills, order identities or cancellations ahead credited; a posting price inside the spread; sizes above €1k; a horizon past one hour; the live execution scheduler; C3; any change to the capture pipeline, the panel materializer or an existing dataset.
+Any trial; a taker cost model; partial fills, order identities or cancellations ahead credited; a posting price inside the spread — an order there is its side's best quote alone, and the captured prints were made against a book without it, so the prints that would have met it are not the captured ones; sizes above €1k — a full per-name position at the account's capital is about €1,000–1,400 (master plan §3); a horizon past one hour — §5's C1 is a 15m–1h reversal; the live execution scheduler — master plan §6's 15m execution layer, which this reading informs and never changes; C3; any change to the capture pipeline, the panel materializer or an existing dataset.
