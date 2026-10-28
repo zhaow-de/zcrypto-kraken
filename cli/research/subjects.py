@@ -4737,8 +4737,7 @@ _B3_OVERLAY_METRIC_KEYS = (
 _B3_OVERLAY_PREFLIGHT_KEYS = _B3_PREFLIGHT_KEYS | _B3_OVERLAY_ENGAGEMENT_KEYS
 
 
-# docs/specs/00150 D2-D6: C2's lead-lag reading — each follower's forward return after a move of the BTC/EUR leader beyond
-# its trailing daily scale, taken in the move's direction, over 176 cells on the frozen 15m set, whole; no rule, no slot.
+# docs/specs/00150 D2-D6: C2's lead-lag reading.
 class _C2ReadingInputs(NamedTuple):
     grid: list[datetime]
     years: list[int]

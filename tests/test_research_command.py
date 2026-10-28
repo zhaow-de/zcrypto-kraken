@@ -8371,7 +8371,6 @@ def _declared_series(tmp_path: Path, subject: subjects.Subject) -> tuple[Path, d
 
 
 def _c2_dataset(tmp_path: Path, subject: subjects.Subject) -> tuple[Path, datetime]:
-    """The subject's ten 15m EUR series and the two crosses, 200 bars each."""
     root = tmp_path / "data"
     relpaths = [f"{asset}/EUR/15.parquet" for asset in subject.assets] + ["ETH/BTC/15.parquet", "SOL/BTC/15.parquet"]
     for i, relpath in enumerate(relpaths):

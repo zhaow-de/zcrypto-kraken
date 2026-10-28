@@ -11,8 +11,8 @@ from cli.research import subjects
 SUBJECT = "c2-lead-lag-reading"
 # 2023 holds the 96 bars before the leader's scale warms, 2024 the other 304.
 START, BARS, GAP_AT, LTC_MISSES, SOL_BTC_FROM = datetime(2023, 12, 31, tzinfo=UTC), 400, 200, 50, 96
-# The coverage spec D6's `leader` and `followers` keys carry for the series below: the one 30-minute step puts the last
-# stamp BARS steps after the first, LTC/EUR is one bar short and SOL/BTC opens at bar SOL_BTC_FROM.
+# Spec D6's `leader` and `followers` keys for the series below: the one 30-minute step puts the last stamp BARS steps
+# after the first.
 LEADER_COVERAGE = {
     "bars": BARS,
     "first_stamp": int(START.timestamp()),

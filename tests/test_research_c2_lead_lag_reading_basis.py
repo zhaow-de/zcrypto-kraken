@@ -20,8 +20,7 @@ def _epoch(iso: str) -> int:
     return int(datetime.fromisoformat(iso).timestamp())
 
 
-# Copied from spec 00150's measured basis, never from a run: the leader's figures, each follower's bars, first stamp,
-# on-grid and off-grid counts, and each signal's count per calendar year 2013 through 2026.
+# Copied from spec 00150's measured basis, never from a run.
 LEADER_BASIS = {
     "bars": 430_560,
     "first_stamp": _epoch("2013-09-10T23:45:00+00:00"),
@@ -63,7 +62,7 @@ def test_the_inputs_half_reads_the_specs_measured_basis():
     assert inputs.leader == LEADER_BASIS
     basis = {f: (bars, _epoch(first), on, off) for f, (bars, first, on, off) in FOLLOWER_BASIS.items()}
     assert {f: (v["bars"], v["first_stamp"], v["on_grid"], v["off_grid"]) for f, v in inputs.followers.items()} == basis
-    # The computes half is never called here: it is past the hash rule.
+    # Never the computes half here: D7's hash rule.
     for key, per_year in SIGNAL_BASIS.items():
         signal, side = key.rsplit("|", 1)
         want = 1 if side == "up" else -1

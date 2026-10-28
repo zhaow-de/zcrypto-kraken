@@ -103,7 +103,6 @@ def test_cell_reads_file_each_trade_under_its_own_bars_year_and_bootstrap_the_ne
 
 
 def test_a_planted_lead_is_recovered_and_a_null_reads_zero():
-    # Leader moves +1 at even bars; the follower's next bar return equals the leader's move: gross 0.05 a trade, net 0.038.
     years = [2024] * 200
     sig = [1 if i % 2 == 0 else 0 for i in range(200)]
     fwd = [0.05 if i % 2 == 0 else -0.05 for i in range(200)]
