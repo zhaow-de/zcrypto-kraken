@@ -67,5 +67,5 @@ def test_the_inputs_half_reads_the_specs_measured_basis():
     for key, per_year in SIGNAL_BASIS.items():
         signal, side = key.rsplit("|", 1)
         want = 1 if side == "up" else -1
-        counts = Counter(y for s, y in zip(inputs.signals[signal], inputs.years) if s == want)
+        counts = Counter(y for s, y in zip(inputs.signals[signal], inputs.years, strict=True) if s == want)
         assert [counts[y] for y in range(2013, 2027)] == per_year, key
