@@ -21,7 +21,7 @@ logger = get_logger("panel.command")
 
 panel_app = typer.Typer(
     no_args_is_help=True,
-    help="The 1s L2 primitive panel: materialize the canonical book archive into it; run the queue-position fill model over it.",
+    help="The 1s L2 primitive panel: materialize the canonical book archive into it; run the queue-position fill model.",
 )
 
 

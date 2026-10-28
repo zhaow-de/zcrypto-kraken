@@ -4893,8 +4893,7 @@ _C1_INPUT_COLUMNS = (
 
 
 def _c1_reads(reader: ObservedReader, dataset: str, subject: str) -> tuple[dict, dict[str, pl.DataFrame]]:
-    """The set's own manifest names its day files, so no relpath is derived; the build receives the reader alone, whose
-    root is the data root the manifest sits under."""
+    """The build receives the reader alone, whose root is the data root the manifest sits under."""
     over = _b2_over(subject, None)
     try:
         manifest = read_manifest(reader._root / dataset / "manifest.json")
@@ -4941,8 +4940,6 @@ def _c1_reads(reader: ObservedReader, dataset: str, subject: str) -> tuple[dict,
 
 
 def _c1_reading_inputs(frames: dict[str, pl.DataFrame], provenance: dict) -> dict:
-    """The half the data-gated case runs over the real set: each frame holds `_C1_INPUT_COLUMNS` alone, so it reads no
-    fill outcome and no mid after the post (docs/specs/00151 D3, D6)."""
     coverage = {}
     for pair, frame in frames.items():
         entries = list(provenance["pairs"][pair].values())

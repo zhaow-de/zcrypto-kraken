@@ -8444,8 +8444,7 @@ def _first_bar_dropped(path: Path) -> None:
     pl.read_parquet(path).slice(1).write_parquet(path)
 
 
-# Each spoils the named asset's file at one declared interval per row, so a guard holding one grid and not another fails;
-# a subject that declares no asset reads no such file and has no spoil row.
+# Each spoils the named asset's file at one declared interval per row, so a guard holding one grid and not another fails.
 _CONTRACT_SPOILS = {
     "a-zero-close": ("ETH", _a_close_zeroed),
     "an-asset-never-closes": ("ETH", _no_close),

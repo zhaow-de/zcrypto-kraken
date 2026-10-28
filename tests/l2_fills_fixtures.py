@@ -41,13 +41,9 @@ UP_MEDIUM = (102, 106, 110, 114, 118)
 DOWN_BIG = (150, 156, 162)
 UP_BIG = (153, 159)
 HALF_SPREAD = 1e-4
-# The k-th pair of PAIRS, k from 1, fills its rung-0 bid at the first k medium down moves; every pair fills its rung-1 bid
-# at the big down moves, its rung-0 ask at the medium up moves and its rung-1 ask at the big up moves.
 FILL_S = {("bid", 0): 30.0, ("bid", 1): 200.0, ("ask", 0): 600.0, ("ask", 1): 200.0}
 QUEUE_NOTIONAL = {("bid", 0): 1000.0, ("bid", 1): 2000.0, ("ask", 0): 1500.0, ("ask", 1): 2500.0}
 SECOND_DAY_QUEUE = 100.0
-# With `gaps`, the first pair's first day posts on 21 hours: hour 5 unanchored, hours 6 and 7 absent, and its trades hours
-# 1, 2 and 3 absent.
 UNANCHORED_HOURS, ABSENT_HOURS, TRADES_ABSENT_HOURS = (5,), (6, 7), (1, 2, 3)
 
 

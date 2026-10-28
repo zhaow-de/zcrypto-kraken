@@ -1,14 +1,6 @@
 """The queue-position fill model over the replayed depth-100 book and the healed trades (spec 00151 D2).
 
-Every `GRID_S` seconds four passive orders -- bid and ask, at each rung of `SIZE_RUNGS` -- join the back of the queue at
-the touch. An order fills once the prints at or through its price have met its whole quantity, the queue ahead first;
-it cancels once its side's best quote has stood a tick or more away for `CANCEL_AFTER_S` seconds, or at `HORIZON_S`.
-Each post becomes one row once the mid an hour after it is read. Prices compare as `Decimal`, the book's own type, and
-are written as Float64.
-
-The producer runs the model over one pair's canonical book and trades hours, reconciled-first, and writes its rows one UTC
-day per file with a `.sha256` sidecar, beside a run record holding the run's parameters, its code and each day's counts;
-the manifest is written once every pair's run has exited, against a second listing of the archive.
+Prices compare as `Decimal`, the book's own type, and are written as Float64.
 """
 
 from __future__ import annotations
@@ -146,7 +138,7 @@ def apply_trade(order: Order, trade: dict) -> None:
     """Meet an open order with one print of the trades frame -- a sell at or below a bid's price, a buy at or above an
     ask's. At the price the print meets the queue ahead first; through it, price priority has met every order resting
     at the price already, so its whole quantity meets ours. The order fills, whole or not at all, once what the prints
-    have met of it reaches `our_qty`; any other print, and any print on a closed order, changes nothing."""
+    have met of it reaches `our_qty`."""
     if not order.is_open:
         return
     price = Decimal(str(trade["price"]))  # the conversion `OrderBook` makes of a level's Float64 price
@@ -266,11 +258,8 @@ def simulate_hour(
     last_msg_ts: datetime | None,
 ) -> tuple[list[dict], list[Order], OrderBook, datetime | None, dict]:
     """Run one hour of the fill model over the book hour's `regroup_messages` and the trades hour's rows sorted by `ts`,
-    in `materialize_hour`'s loop: at each second boundary of the hour apply the messages up to it, then meet every open
-    order with the prints up to it, then run each open order's cap and cancel clock, then read each order's pending mids
-    whose instant has come -- at a fresh book, both sides quoted -- turning an order into a row once its `post + 3600 s`
-    mid is read; then, on a grid second, post the four orders unless the book is stale or one-sided. The messages and
-    prints after the last boundary are applied after the loop, for the next hour to carry.
+    on `materialize_hour`'s second boundaries; the messages and prints after the last boundary are applied after the
+    loop, for the next hour to carry.
 
     Returns `(rows, carried, book, last_msg_ts, counts)`: `carried` every open order and every closed one whose
     `post + 3600 s` mid is unread, `counts` the posts and the skips, in orders."""
@@ -392,8 +381,7 @@ def _read_record(pair_root: Path) -> dict | None:
 
 
 def _check_run_record(pair_root: Path, params: dict, code_ref: str) -> None:
-    """A resume continues only the run that wrote the pair's record: a record of other params or code refuses the run, as
-    do day files with no record beside them -- a change is a new out root."""
+    """A resume continues only the run that wrote the pair's record."""
     record = _read_record(pair_root)
     if record is None:
         if stray := sorted(_day_files(pair_root).values()):
@@ -464,7 +452,7 @@ def write_day(
     sidecar_tmp = directory / f"{final.name}.sha256.{os.getpid()}.tmp"
     sidecar_tmp.write_text(f"{dataset_hash(pl.read_parquet(tmp))}  {final.name}\n")
     _replace_durably(sidecar_tmp, final.with_name(f"{final.name}.sha256"))
-    _replace_durably(tmp, final)  # published last
+    _replace_durably(tmp, final)
     return final
 
 
@@ -492,11 +480,8 @@ def produce_pair(
     write its days (spec 00151 D2).
 
     Every hour of the span is posted on, unanchored or absent, each filed in its own day's entry with the root each
-    kind's listing gave it, so `write_fills_manifest` can hold a second listing against the record. The book is seeded
-    from the panel's state of the hour before at the run's first present hour and after a gap, threaded in memory
-    across consecutive hours, and re-anchored by an hour opening with a snapshot; without a seed an update-opening hour
-    and its successors up to the first snapshot are unanchored. A gap and `until` flush every carried order; day D is
-    written once the hour reached is D+1 00Z or later and no carried order was posted on D, so the days land in order.
+    kind's listing gave it, so `write_fills_manifest` can hold a second listing against the record. Days land in order,
+    which the resume's start at the 00Z after the newest day file relies on.
 
     Returns the run's counts; `seconds` is the wall time from the first hour's read to the last day written."""
     params = {
@@ -616,7 +601,7 @@ def _recorded_root(entry: dict | None, iso: str, kind: str) -> str:
 
 def _relisting_disputes(records: dict[str, dict], primary_root: Path, reconciled_root: Path | None) -> list[str]:
     """Every hour of a recorded pair's `[since, until)` the archive lists now from another root than the run recorded
-    for it -- absent, the overlay, the primary, or a day with no entry; an hour this listing lacks is not compared."""
+    for it; an hour this listing lacks is not compared."""
     spans = {
         pair: set(_hours(datetime.fromisoformat(r["params"]["since"]), datetime.fromisoformat(r["params"]["until"])))
         for pair, r in records.items()
@@ -634,10 +619,7 @@ def _relisting_disputes(records: dict[str, dict], primary_root: Path, reconciled
 
 
 def write_fills_manifest(out_root: Path, primary_root: Path, reconciled_root: Path | None, *, written_at: str) -> Path:
-    """Write the dataset's conformant `manifest.json` once every pair's run has exited (spec 00151 D2): each day file held
-    against its sidecar and its record's entry, each entry against the hours and posts its day must add up to, the
-    records against one another, and the archive listed a second time against the root each record names per hour --
-    an hour from another root is the run's listing dropping it, which the frozen set would keep."""
+    """Write the dataset's conformant `manifest.json`, once every pair's run has exited (spec 00151 D2)."""
     for root in (primary_root, reconciled_root):
         if root is not None:
             _require_root(root)
