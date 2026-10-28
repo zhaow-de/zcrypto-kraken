@@ -410,7 +410,11 @@ def test_a_run_record_or_sidecar_it_cannot_parse_refuses_by_name(produced, tmp_p
     spoils = (
         ("a-list", lambda record: [], "not an object"),
         ("no-params", lambda record: {**record, "params": None}, "lacks its params"),
+        ("no-code-ref", lambda record: {**record, "code_ref": None}, "lacks its params, code_ref or days"),
+        ("no-days", lambda record: {**record, "days": None}, "lacks its params, code_ref or days"),
         ("a-bad-since", lambda record: (record["params"].update(since="soon"), record)[1], "ValueError"),
+        ("no-since", lambda record: (record["params"].pop("since"), record)[1], "KeyError"),
+        ("a-number-since", lambda record: (record["params"].update(since=5), record)[1], "TypeError"),
         (
             "a-naive-since",
             lambda record: (record["params"].update(since="2026-09-02T23:00:00"), record)[1],
@@ -441,6 +445,11 @@ def test_a_run_record_or_sidecar_it_cannot_parse_refuses_by_name(produced, tmp_p
         record.write_text(json.dumps(spoil(json.loads(record.read_text()))))
         with pytest.raises(PanelError, match=re.escape(f"{record} is not a run record: ") + ".*" + re.escape(fault)):
             _manifest(out, primary, overlay)
+    out = _copy(source, tmp_path / "not-json")
+    record = _record_path(out, PAIR)
+    record.write_text("{not json")
+    with pytest.raises(PanelError, match=re.escape(f"{record} is not a run record: Expecting")):
+        _manifest(out, primary, overlay)
     out = _copy(source, tmp_path / "too-deep")
     record = _record_path(out, PAIR)
 
