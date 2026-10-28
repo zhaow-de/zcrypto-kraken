@@ -400,7 +400,7 @@ def test_a_run_record_it_cannot_read_refuses_the_run_and_the_manifest(produced, 
         _produce(primary, panel, out, until=END, overlay=overlay)
 
 
-def test_a_run_record_or_sidecar_it_cannot_parse_refuses_by_name(produced, tmp_path):
+def test_a_run_record_or_sidecar_it_cannot_parse_refuses_by_name(produced, tmp_path, monkeypatch):
     primary, overlay, source, _ = produced
     day = D.date().isoformat()
 
@@ -418,6 +418,11 @@ def test_a_run_record_or_sidecar_it_cannot_parse_refuses_by_name(produced, tmp_p
         ),
         ("no-posts", entry_edit(lambda entry: entry.pop("posts")), f"the day {day}'s entry is not four integer counts"),
         ("a-text-count", entry_edit(lambda entry: entry.update(posts="960")), f"the day {day}'s entry is not four integer counts"),
+        (
+            "a-text-list",
+            entry_edit(lambda entry: entry.update(hours_absent="22")),
+            f"the day {day}'s entry is not four integer counts",
+        ),
         ("a-bad-day", lambda record: (record["days"].update({"not-a-day": record["days"].pop(day)}), record)[1], "ValueError"),
     )
     for name, spoil, fault in spoils:
@@ -428,9 +433,14 @@ def test_a_run_record_or_sidecar_it_cannot_parse_refuses_by_name(produced, tmp_p
             _manifest(out, primary, overlay)
     out = _copy(source, tmp_path / "too-deep")
     record = _record_path(out, PAIR)
-    record.write_text("[" * 100_000 + "]" * 100_000)
-    with pytest.raises(PanelError, match=re.escape(f"{record} is not a run record")):
-        _manifest(out, primary, overlay)
+
+    def too_deep(text):
+        raise RecursionError("maximum recursion depth exceeded while decoding a JSON array from a unicode string")
+
+    with monkeypatch.context() as patch:
+        patch.setattr("cli.panel.fills.json.loads", too_deep)
+        with pytest.raises(PanelError, match=re.escape(f"{record} is not a run record: maximum recursion depth exceeded")):
+            _manifest(out, primary, overlay)
     panel = tmp_path / "panel"
     panel.mkdir()
     with pytest.raises(PanelError, match=re.escape(f"{_record_path(tmp_path / 'a-list', PAIR)} is not a run record")):
