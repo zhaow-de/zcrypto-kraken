@@ -688,8 +688,8 @@ def write_fills_manifest(out_root: Path, primary_root: Path, reconciled_root: Pa
     if disputes := _relisting_disputes(records, primary_root, reconciled_root):
         raise PanelError(
             f"{out_root}: a second listing of the archive holds hours from another root than the runs recorded -- the run's "
-            f"listing dropped the hour or its overlay directory, and the set would freeze the hole or the un-healed copy; a run "
-            f"holding 'no entry' for an hour stopped before it, and a re-run of the pair completes it: "
+            f"listing dropped the hour or its overlay directory, and the set would freeze the hole or the un-healed copy; "
+            f"'no entry': the run stopped before the hour's day landed, and a re-run completes it: "
             f"{'; '.join(disputes)}"
         )
 
