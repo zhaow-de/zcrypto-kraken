@@ -84,7 +84,8 @@ def test_the_build_returns_exactly_the_declared_keys_and_176_cells():
     )
 
 
-def test_the_inputs_half_reads_no_forward_return():
+def test_the_inputs_half_reads_no_forward_return(monkeypatch):
+    monkeypatch.setattr(subjects, "forward_returns", lambda *a, **k: pytest.fail("forward return in the inputs half"))
     inputs = subjects._c2_reading_inputs(subjects._c2_reads(_Reader(), "ohlc-15m", SUBJECT), SUBJECT)
     assert set(inputs._fields) == {"grid", "years", "leader", "returns", "sigma", "signals", "followers"}
     assert inputs.leader == LEADER_COVERAGE
