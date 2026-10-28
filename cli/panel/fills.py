@@ -376,6 +376,8 @@ def _read_record(pair_root: Path) -> dict | None:
         return json.loads(path.read_text())
     except FileNotFoundError:
         return None
+    except OSError as exc:
+        raise PanelError(f"{path} cannot be read: {exc}") from exc
     except ValueError as exc:
         raise PanelError(f"{path} is not a run record: {exc}") from exc
 
@@ -435,24 +437,27 @@ def write_day(
     `write_hour` publishes an hour -- the sidecar before the rename, so a kill leaves no day file and the re-run computes
     the day again. The sidecar holds the frame's `dataset_hash`, the grade a manifest vouches, never the bytes' sha256."""
     pair_root = _pair_root(out_root, pair)
-    pair_root.mkdir(parents=True, exist_ok=True)
-    days = (_read_record(pair_root) or {}).get("days", {})
-    days[day.isoformat()] = entry
-    record = pair_root / RUN_RECORD
-    record_tmp = record.with_name(f"{RUN_RECORD}.{os.getpid()}.tmp")
-    record_tmp.write_text(json.dumps({"params": params, "code_ref": code_ref, "days": days}, indent=1, sort_keys=True) + "\n")
-    _replace_durably(record_tmp, record)
-    if frame.height == 0:
-        return None
-    directory = pair_root / f"{day:%Y}" / f"{day:%m}"
-    directory.mkdir(parents=True, exist_ok=True)
-    final = directory / f"{day:%d}.parquet"
-    tmp = directory / f"{final.name}.{os.getpid()}.tmp"
-    frame.write_parquet(tmp, compression="zstd")
-    sidecar_tmp = directory / f"{final.name}.sha256.{os.getpid()}.tmp"
-    sidecar_tmp.write_text(f"{dataset_hash(pl.read_parquet(tmp))}  {final.name}\n")
-    _replace_durably(sidecar_tmp, final.with_name(f"{final.name}.sha256"))
-    _replace_durably(tmp, final)
+    try:
+        pair_root.mkdir(parents=True, exist_ok=True)
+        days = (_read_record(pair_root) or {}).get("days", {})
+        days[day.isoformat()] = entry
+        record = pair_root / RUN_RECORD
+        record_tmp = record.with_name(f"{RUN_RECORD}.{os.getpid()}.tmp")
+        record_tmp.write_text(json.dumps({"params": params, "code_ref": code_ref, "days": days}, indent=1, sort_keys=True) + "\n")
+        _replace_durably(record_tmp, record)
+        if frame.height == 0:
+            return None
+        directory = pair_root / f"{day:%Y}" / f"{day:%m}"
+        directory.mkdir(parents=True, exist_ok=True)
+        final = directory / f"{day:%d}.parquet"
+        tmp = directory / f"{final.name}.{os.getpid()}.tmp"
+        frame.write_parquet(tmp, compression="zstd")
+        sidecar_tmp = directory / f"{final.name}.sha256.{os.getpid()}.tmp"
+        sidecar_tmp.write_text(f"{dataset_hash(pl.read_parquet(tmp))}  {final.name}\n")
+        _replace_durably(sidecar_tmp, final.with_name(f"{final.name}.sha256"))
+        _replace_durably(tmp, final)
+    except (OSError, pl.exceptions.PolarsError) as exc:
+        raise PanelError(f"{pair} {day}: the day cannot be written under {pair_root}: {exc}") from exc
     return final
 
 
@@ -499,7 +504,10 @@ def produce_pair(
     for root in (primary_root, reconciled_root, panel_root):
         if root is not None:
             _require_root(root)
-    out_root.mkdir(parents=True, exist_ok=True)
+    try:
+        out_root.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise PanelError(f"{pair}: the out root {out_root} cannot be created: {exc}") from exc
     pair_root = _pair_root(out_root, pair)
     _check_run_record(pair_root, params, code_ref)
     written = _day_files(pair_root)
@@ -703,6 +711,9 @@ def write_fills_manifest(out_root: Path, primary_root: Path, reconciled_root: Pa
     manifest = build_manifest(series, written_at=written_at, identity="set", provenance=provenance)
     path = out_root / "manifest.json"
     tmp = path.with_name(f"manifest.json.{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
-    _replace_durably(tmp, path)
+    try:
+        tmp.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        _replace_durably(tmp, path)
+    except OSError as exc:
+        raise PanelError(f"{path} cannot be written: {exc}") from exc
     return path

@@ -386,6 +386,49 @@ def test_an_unreadable_book_or_trades_hour_refuses_the_run_naming_it(tmp_path):
             _produce(primary, panel, tmp_path / kind / "out")
 
 
+def test_a_run_record_it_cannot_read_refuses_the_run_and_the_manifest(produced, tmp_path):
+    primary, overlay, source, _ = produced
+    out = _copy(source, tmp_path / "out")
+    record = _record_path(out, PAIR)
+    record.unlink()
+    record.symlink_to(record.name)
+    with pytest.raises(PanelError, match=re.escape(f"{record} cannot be read")):
+        _manifest(out, primary, overlay)
+    panel = tmp_path / "panel"
+    panel.mkdir()
+    with pytest.raises(PanelError, match=re.escape(f"{record} cannot be read")):
+        _produce(primary, panel, out, until=END, overlay=overlay)
+
+
+def test_an_out_root_or_a_day_it_cannot_write_refuses_the_run(tmp_path, monkeypatch):
+    primary, _, panel = _roots(tmp_path)
+    _book_hour(primary, PAIR, LATE)
+    blocked = tmp_path / "blocked"
+    blocked.write_text("")
+    with pytest.raises(PanelError, match=re.escape(f"the out root {blocked} cannot be created")):
+        _produce(primary, panel, blocked)
+
+    def eio(source, destination):
+        raise OSError(errno.EIO, "Input/output error", str(destination))
+
+    monkeypatch.setattr("cli.panel.fills._replace_durably", eio)
+    out = tmp_path / "out"
+    with pytest.raises(PanelError, match=re.escape(f"{PAIR} {D.date()}: the day cannot be written under {out / 'BTC' / 'EUR'}")):
+        _produce(primary, panel, out)
+
+
+def test_the_manifest_refuses_a_manifest_it_cannot_write(produced, tmp_path, monkeypatch):
+    primary, overlay, source, _ = produced
+    out = _copy(source, tmp_path / "out")
+
+    def eio(source, destination):
+        raise OSError(errno.EIO, "Input/output error", str(destination))
+
+    monkeypatch.setattr("cli.panel.fills._replace_durably", eio)
+    with pytest.raises(PanelError, match=re.escape(f"{out / 'manifest.json'} cannot be written")):
+        _manifest(out, primary, overlay)
+
+
 def test_a_pair_left_with_no_day_file_is_refused(tmp_path):
     primary, _, panel = _roots(tmp_path)
     _book_hour(primary, PAIR, LATE, snapshot=False)
