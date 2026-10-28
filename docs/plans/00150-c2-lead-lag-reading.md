@@ -19,16 +19,19 @@
 - Commits: Conventional Commits, one subject per change; the message says what changed and the result line of the test command it names, run over the commit's own tree, pasted; one state-changing git command per Bash call; never an amend, `--no-verify` or `git stash`; every commit ends with the two trailer lines the dispatch names.
 - A comment or docstring stays only where a reader would do something differently without it, and has to be correct; a spec citation names the D-section.
 - `tests/test_research_c2_lead_lag_reading_basis.py` is data-gated as `tests/test_research_b4_leg_reading_basis.py` is — `pytestmark = pytest.mark.data`, the literal-rooted `_DATA_ROOT` form `tests/skip_gates.py` admits, a `nothing_found_under` skip gate whose reason names `data/`, and `_DATA_ROOT == research_command._DATA_ROOT` as the case's first assertion; every other new test is not and runs in CI.
-- The worktree is `.claude/worktrees/iter195`; `data/ohlc-15m` — and, for the reading's replay, `data/ohlc-full` beside it — is linked into it by the controller for the data-gated steps alone (`ln -sn`, unlinked after).
+- The worktree is `/home/zhaow/Projects/zcrypto-kraken/.claude/worktrees/iter195`. A frozen set is linked into a checkout — by the controller into this worktree or Task 4's scratch one, by a reader into its own — for a data-gated step alone, both paths absolute and with `-T`, so a destination that is already a directory refuses the link instead of taking it inside: `ln -snT /home/zhaow/Projects/zcrypto-kraken/data/<set> <checkout>/data/<set>`; it is removed by `test -L <checkout>/data/<set> && unlink <checkout>/data/<set>`, never `rm`; each its own call, and the main checkout's `data/` listing read after the last removal (13 entries). `<set>` is `ohlc-15m`, with `ohlc-full` beside it wherever a replay runs, whose skip gate reads it.
+- **Probes** — the tier is `full`, so each new test function is a guard probed through its own node id, on a committed tree (`git status --porcelain` empty: `infra/scripts/mutate-probe.sh` refuses a dirty tree and restores by `git checkout`), each row its own call after the previous verdict is read: `infra/scripts/mutate-probe.sh --file <the row's file> --control '<sed>' --mutation '<sed>' -- uv run pytest <the case's node id> -q -p no:cacheprovider`, each printing `KILLED (control proven, …)`. Every mutation substitutes the condition, value or operand its row names on one line and deletes none, so the module still imports and every name it uses stays defined; before each row, `sed -e '<mutation>' <file> | uv run python -c 'import ast, sys; ast.parse(sys.stdin.read())'` exits 0 and `diff <(sed -e '<mutation>' <file>) <file> | grep -c '^>'` prints 1, and the same two for the control. A mutation in `cli/research/subjects.py`, whose other builders hold the same lines, carries its own function's address, `/^def <name>(/,/^def /`, or the `SUBJECTS` entry's; a pattern holding `'` writes it as `.`. Every control renames a `def` the case reaches, `s/^def <name>(/def <name>_renamed(/`, so the case fails at import or at its call. The verdict lines, each with its command, go in the next commit's message (no amend).
 
 ## Review Focus
 
 1. A follower's bar at a stamp the leader lacks (the basis: 649 across the eleven) — dropped from the grid, counted in `off_grid`, never shifting a close onto a neighbouring stamp. Pinned in Task 1's `test_on_grid_drops_a_follower_bar_the_leader_lacks`.
 2. A leader gap inside a forward window (the basis: 3,002 non-15m steps) — the forward return is `None`, never computed across the gap. Pinned in Task 1's `test_forward_return_is_none_across_a_leader_gap`.
-3. A `None` return inside the 96-bar scale window — the scale is `None`, and every signal at that bar is none (no threshold against a `None` scale). Pinned in Task 1's `test_scale_is_none_while_a_gap_sits_inside_its_window`.
+3. A `None` return inside the 96-bar scale window — the scale is `None`, and every signal at that bar is none (no threshold against a `None` scale). Pinned in Task 1's `test_scale_is_none_while_a_gap_sits_inside_its_window` (the scale) and `test_signals_fire_beyond_threshold_times_sigma_times_sqrt_lag_on_either_side` (no signal against a `None` scale).
 4. A cell with fewer than 2 trades — no `p` key, no mean key at 0 trades, never a `null`, which the registry refuses, and no `ValidationError` escapes. Pinned in Task 1's `test_cell_reads_with_no_trade_and_with_one_trade` and Task 2's `test_the_metrics_hold_only_leaves_the_registry_stores`.
 5. A trade's alignment — a trade at signal index `t` reads `forward[t]`, never a neighbour's: the planted lead's signals moved one bar read the opposite bars. Pinned in Task 1's `test_a_trade_reads_the_forward_return_at_its_own_signal_index`.
 6. The context rows' pairing — a year's rank IC pairs each move with its own stamp's forward return, never two lists grouped by year apart. Pinned in Task 2's `test_the_context_rows_pair_each_move_with_its_own_forward_return`.
+7. A per-year read files each value under the year of its own grid index, and a net read subtracts the cost — the members, each pinned: a cell's per-year `n`, `mean_gross` and `mean_net`, a trade under its signal bar's year and a signal whose forward return is absent left uncounted, and the bootstrap's rows `g − cost`, in Task 1's `test_cell_reads_file_each_trade_under_its_own_bars_year_and_bootstrap_the_net`; `per_year`'s strict zip, which refuses a list off the grid's index, in `test_per_year_groups_present_values_keys_every_year_and_refuses_unequal_lengths`; the span's `mean_net` in `test_cell_reads_with_no_trade_and_with_one_trade`; the signals' per-year counts in Task 2's `test_the_signals_keys_carry_both_sides_and_the_basis_shape`; the context's rank IC and drift per year in Task 2's `test_the_context_rows_pair_each_move_with_its_own_forward_return`.
+8. A key names the coordinates its read was taken at — in the fixture the leader's L1 and L4 masks differ, as do its th1 and th2 masks at L4, and an EUR alt's H4 forward returns differ from its H1 ones, so a crossed loop variable moves a pinned figure; the members, each pinned in Task 2: a cell's follower, lag, threshold, horizon and side (`test_each_cell_is_read_at_its_own_lag_threshold_and_horizon`, the planted cell and the flat cross in `test_a_planted_follower_reads_potential_and_a_flat_cross_reads_none`, the empty `down` cell in `test_the_metrics_hold_only_leaves_the_registry_stores`); a context row's lag and horizon, through its move and its forward return each, in `test_the_context_rows_pair_each_move_with_its_own_forward_return`, and its key set in `test_the_build_returns_exactly_the_declared_keys_and_176_cells`; a signal count's lag, threshold and side in `test_the_signals_keys_carry_both_sides_and_the_basis_shape`.
 
 ---
 
@@ -49,7 +52,7 @@
   - `forward_returns(grid: list[datetime], close_on_grid: list[float | None], *, horizon: int) -> list[float | None]` — `ln(close[t+horizon]/close[t])` when both closes are present, every one of the `horizon` steps from `t` is exactly `STEP`, and every intermediate close is present; else `None`; the last `horizon` indices `None`.
   - `cell_reads(signal: list[int], side: str, forward: list[float | None], years: list[int], *, cost: float = COST_ROUND_TRIP, mean_block: float = MEAN_BLOCK, n_resamples: int = N_RESAMPLES, seed: int = SEED) -> dict` — the trades are the indices with `signal == +1` for `"up"`, `== -1` for `"down"`, and `forward` not `None`; gross `forward` for `up`, `-forward` for `down`; returns `{"per_year": {str(year): {"n", "mean_gross", "mean_net"}} over every year in `years`, "n", "mean_gross", "mean_net", "p"}` with the `mean_*` keys absent at `n` 0, in `per_year` and over the span, and `p` absent at `n` < 2, else `reality_check_pvalue([[g - cost] for g in gross_in_index_order], mean_block=mean_block, n_resamples=n_resamples, seed=seed)["p_value"]` — never a `None` value, since the registry refuses a `null` leaf (spec D6).
   - `rank_ic(x: list[float | None], y: list[float | None]) -> float | None` — Spearman over the indices where both are present, `statistics.correlation(xs, ys, method="ranked")`; `None` at fewer than 2 pairs or when either has no variance (`StatisticsError` caught).
-  - `per_year(values: list[float | None], years: list[int]) -> dict[str, list[float]]` — the present values grouped by year, keyed `str(year)`, every year in `years` keyed.
+  - `per_year(values: list[float | None], years: list[int]) -> dict[str, list[float]]` — the present values grouped by year, keyed `str(year)`, every year in `years` keyed; `values` and `years` zipped with `strict=True`, so a list off the grid's index — a cell's trades against the grid's years — raises `ValueError`.
   - `cell_name(follower: str, lag: int, threshold: int, horizon: int, side: str) -> str`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -124,6 +127,14 @@ def test_cell_reads_take_the_down_side_short_and_skip_an_absent_forward():
     assert c["n"] == 2 and c["mean_gross"] == pytest.approx(0.03) and c["mean_net"] == pytest.approx(0.018)
     assert 0.0 < c["p"] <= 1.0
 
+def test_cell_reads_file_each_trade_under_its_own_bars_year_and_bootstrap_the_net():
+    c = cell_reads([0, 1, 1, 1, 1], "up", [0.5, 0.01, 0.03, None, 0.05], [2023, 2024, 2024, 2025, 2025], n_resamples=50)
+    assert c["per_year"]["2023"] == {"n": 0}
+    assert c["per_year"]["2024"] == pytest.approx({"n": 2, "mean_gross": 0.02, "mean_net": 0.008})
+    assert c["per_year"]["2025"] == pytest.approx({"n": 1, "mean_gross": 0.05, "mean_net": 0.038})
+    below = cell_reads([1] * 40, "up", [0.004, 0.008] * 20, [2024] * 40, n_resamples=50)
+    assert below["mean_gross"] == pytest.approx(0.006) and below["p"] > 0.5
+
 def test_a_planted_lead_is_recovered_and_a_null_reads_zero():
     # Leader moves +1 at even bars; the follower's next bar return equals the leader's move: gross 0.05 a trade, net 0.038.
     years = [2024] * 200
@@ -147,9 +158,11 @@ def test_rank_ic_is_spearman_and_none_without_two_pairs_or_variance():
     assert rank_ic([1.0, None], [1.0, 2.0]) is None
     assert rank_ic([1.0, 1.0, 1.0], [1.0, 2.0, 3.0]) is None
 
-def test_per_year_groups_present_values_and_keys_every_year():
+def test_per_year_groups_present_values_keys_every_year_and_refuses_unequal_lengths():
     assert per_year([1.0, None, 3.0], [2023, 2023, 2024]) == {"2023": [1.0], "2024": [3.0]}
     assert per_year([None, 3.0], [2023, 2024]) == {"2023": [], "2024": [3.0]}
+    with pytest.raises(ValueError):
+        per_year([1.0], [2023, 2024])
 
 def test_cell_name():
     assert cell_name("ETH/EUR", 1, 2, 4, "up") == "ETH/EUR|L1|th2|H4|up"
@@ -165,11 +178,27 @@ Expected: FAIL — `ImportError` on `cli.alpha.c2`.
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `uv run pytest tests/test_alpha_c2.py -q -p no:cacheprovider`
-Expected: `15 passed`.
+Expected: `16 passed`.
 
 - [ ] **Step 5: Commit** — `feat(alpha): c2's pure functions — the 15m leader's scale, moves and signals, a follower's grid and forward returns, a cell's reads` with the test line.
 
-- [ ] **Step 6: Probe the three guards on Step 5's committed tree** (`git status --porcelain` empty: `mutate-probe.sh` refuses a dirty tree and restores by `git checkout`) — `on_grid`'s duplicate refusal (mutation: the `raise` removed; control: the message changed) through `-k duplicate_leader_stamp`; `forward_returns`' gap arm (mutation: the step check removed) and its intermediate-close arm (mutation: the check that every close between is present removed), each with the control the forward return's value changed, through `-k across_a_leader_gap`; each its own call, `infra/scripts/mutate-probe.sh --file cli/alpha/c2.py --control '<sed>' --mutation '<sed>' -- uv run pytest tests/test_alpha_c2.py -q -p no:cacheprovider -k <case>`, each sed touching exactly one line of the committed file — a pattern `grep -c` counts once, or a line address; each must print `KILLED (control proven, …)`. The three verdict lines, each with its command, go in Task 2's commit message (no amend).
+- [ ] **Step 6: Probe each case on Step 5's committed tree**, in the Global Constraints' probe form, `--file cli/alpha/c2.py`, the node id `tests/test_alpha_c2.py::<case>`; the eighteen verdict lines, each with its command, go in Task 2's commit message. The rows, each a case and the mutation it must kill:
+  - `test_log_returns_are_none_at_index_0_and_across_a_non_15m_step` — the return's 15-minute step comparison made `True`;
+  - `test_trailing_std_is_the_sample_std_and_none_until_the_window_fills` — `min_samples=window` written `min_samples=window - 1`;
+  - `test_scale_is_none_while_a_gap_sits_inside_its_window` — the series' nulls filled with `0.0` (`.fill_null(0.0)`) before `rolling_std`;
+  - `test_moves_sum_the_last_lag_returns_and_are_none_over_a_gap` — a `None` inside the lag's window summed as `0.0`;
+  - `test_signals_fire_beyond_threshold_times_sigma_times_sqrt_lag_on_either_side` — the up side's `sqrt(lag)` written `1`;
+  - `test_on_grid_drops_a_follower_bar_the_leader_lacks` — the off-grid count's increment written `0`;
+  - `test_on_grid_refuses_a_duplicate_leader_stamp` — the duplicate's condition made `False`;
+  - `test_forward_return_is_none_across_a_leader_gap`, two rows — the step check made `True`; then the intermediate-close check narrowed to the closes at `t` and `t + horizon`;
+  - `test_cell_reads_with_no_trade_and_with_one_trade` — the `p` bound `>= 2` written `>= 1`, so the utility's `ValidationError` escapes at one trade;
+  - `test_cell_reads_take_the_down_side_short_and_skip_an_absent_forward` — the down side's gross left un-negated;
+  - `test_cell_reads_file_each_trade_under_its_own_bars_year_and_bootstrap_the_net`, two rows — the bootstrap's rows written `[g]`, the gross; then each trade filed under `years[0]`;
+  - `test_a_planted_lead_is_recovered_and_a_null_reads_zero` — the bootstrap's rows written `[cost - g]`;
+  - `test_a_trade_reads_the_forward_return_at_its_own_signal_index` — each trade's gross read at `forward[i - 1]`;
+  - `test_rank_ic_is_spearman_and_none_without_two_pairs_or_variance` — the caught `statistics.StatisticsError` written `ZeroDivisionError`;
+  - `test_per_year_groups_present_values_keys_every_year_and_refuses_unequal_lengths` — `per_year`'s `strict=True` written `strict=False`;
+  - `test_cell_name` — the lag and the horizon swapped in the name.
 
 ---
 
@@ -242,6 +271,8 @@ def test_the_build_returns_exactly_the_declared_keys_and_176_cells():
     out = subjects._build_c2_lead_lag_reading(_Reader(), "ohlc-15m", None)
     assert set(out) == subjects._C2_READING_KEYS and len(out["cells"]) == 176
     assert set(out["cells"]) == {cell_name(f, L, th, H, s) for f in FOLLOWERS for L in LAGS for th in THRESHOLDS for H in HORIZONS for s in SIDES}
+    assert set(out["context"]) == set(FOLLOWERS) and all(set(rows) == {f"L{L}|H{H}" for L in LAGS for H in HORIZONS} for rows in out["context"].values())
+    assert (out["cost_round_trip"], out["sigma_window"], out["mean_block"], out["n_resamples"], out["seed"]) == (0.012, 96, 30, 4000, 42)
 
 def test_the_inputs_half_reads_no_forward_return():
     inputs = subjects._c2_reading_inputs(subjects._c2_reads(_Reader(), "ohlc-15m", SUBJECT), SUBJECT)
@@ -253,21 +284,30 @@ def test_the_signals_keys_carry_both_sides_and_the_basis_shape():
     out = subjects._build_c2_lead_lag_reading(_Reader(), "ohlc-15m", None)
     assert set(out["signals"]) == {f"L{L}|th{th}|{s}" for L in LAGS for th in THRESHOLDS for s in SIDES}
     assert all(set(v) == {"per_year", "total"} for v in out["signals"].values())
+    assert out["signals"]["L4|th1|up"] == {"per_year": {"2023": 0, "2024": 80}, "total": 80}
+    assert out["signals"]["L4|th2|up"]["total"] == out["signals"]["L1|th1|down"]["total"] == 0
 
 def test_a_planted_follower_reads_potential_and_a_flat_cross_reads_none():
     out = subjects._build_c2_lead_lag_reading(_Reader(), "ohlc-15m", None)
     planted = out["cells"]["ETH/EUR|L1|th1|H1|up"]
-    assert planted["mean_gross"] > 0.012 and planted["p"] < 0.05 / 176  # leg 3's bound, reachable at 4,000 resamples
+    assert planted["mean_gross"] > 0.012 and planted["p"] < 0.05 / 176
     assert out["cells"]["ETH/BTC|L1|th1|H1|up"]["mean_gross"] == pytest.approx(0.0, abs=1e-12)
+
+def test_each_cell_is_read_at_its_own_lag_threshold_and_horizon():
+    cells = subjects._build_c2_lead_lag_reading(_Reader(), "ohlc-15m", None)["cells"]
+    assert cells["ETH/EUR|L1|th1|H4|up"]["mean_gross"] == pytest.approx(0.042)
+    assert cells["ETH/EUR|L4|th1|H1|up"]["n"] == 80 and cells["ETH/EUR|L4|th2|H1|up"]["n"] == 0
 
 def test_the_metrics_hold_only_leaves_the_registry_stores():
     out = subjects._build_c2_lead_lag_reading(_Reader(), "ohlc-15m", None)
-    validate_metrics(out, "metrics")  # what --reading applies before it writes the line
+    validate_metrics(out, "metrics")
     assert out["cells"]["ETH/EUR|L1|th1|H1|down"] == {"per_year": {"2023": {"n": 0}, "2024": {"n": 0}}, "n": 0}
 
 def test_the_context_rows_pair_each_move_with_its_own_forward_return():
     context = subjects._build_c2_lead_lag_reading(_Reader(), "ohlc-15m", None)["context"]
-    assert context["ETH/EUR"]["L1|H1"]["rank_ic_per_year"]["2023"] > 0
+    eth = context["ETH/EUR"]
+    assert eth["L1|H1"]["rank_ic_per_year"]["2023"] > 0 and eth["L1|H4"]["rank_ic_per_year"]["2023"] > 0 and eth["L4|H1"]["rank_ic_per_year"]["2023"] > 0
+    assert eth["L1|H4"]["drift_per_year"]["2024"] > 3 * eth["L1|H1"]["drift_per_year"]["2024"]
     assert context["ETH/BTC"]["L1|H1"]["drift_per_year"] == {"2023": 0.0, "2024": 0.0}
     assert context["SOL/BTC"]["L1|H1"] == {"rank_ic_per_year": {}, "drift_per_year": {"2024": 0.0}}
 
@@ -295,6 +335,13 @@ def test_a_follower_with_no_stamp_on_the_leaders_grid_is_refused():
     with pytest.raises(subjects.SubjectError, match="AVAX/EUR has no stamp on the leader's grid"):
         subjects._build_c2_lead_lag_reading(_Reader(series), "ohlc-15m", None)
 
+def test_a_duplicate_leader_stamp_is_refused_through_the_builds_wrap():
+    series = _series()
+    ts, close = series[LEADER]
+    series[LEADER] = ([*ts[:5], ts[4], *ts[6:]], close)
+    with pytest.raises(subjects.SubjectError, match="c2-lead-lag-reading over the full history: .*duplicate"):
+        subjects._build_c2_lead_lag_reading(_Reader(series), "ohlc-15m", None)
+
 def test_the_subject_is_registered_as_a_reading():
     s = subjects.SUBJECTS["c2-lead-lag-reading"]
     assert s.verdict is None and s.family is None and s.n_trials is None and s.intervals == (15,) and s.seeds == (42,)
@@ -310,7 +357,7 @@ Expected: FAIL — `AttributeError: module 'cli.research.subjects' has no attrib
 
 ```python
 def _c2_dataset(tmp_path: Path, subject: subjects.Subject) -> tuple[Path, datetime]:
-    """The twelve 15m series c2-lead-lag-reading reads, its ten declared and the two crosses, 200 bars each."""
+    """The subject's ten 15m EUR series and the two crosses, 200 bars each."""
     root = tmp_path / "data"
     relpaths = [f"{asset}/EUR/15.parquet" for asset in subject.assets] + ["ETH/BTC/15.parquet", "SOL/BTC/15.parquet"]
     for i, relpath in enumerate(relpaths):
@@ -321,14 +368,27 @@ def _c2_dataset(tmp_path: Path, subject: subjects.Subject) -> tuple[Path, dateti
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `uv run pytest tests/test_research_c2_lead_lag_reading.py tests/test_alpha_c2.py -q -p no:cacheprovider`
-Expected: `26 passed`.
+Expected: `29 passed`.
 
 - [ ] **Step 5: Run the changed files' direct readers** — the new files staged first, so the list sees them: `mkdir -p .tmp && T=$(bash infra/scripts/consumers.sh --direct cli/research/subjects.py README.md tests/test_research_command.py 2> .tmp/consumers.err | sort -u)`, `.tmp/consumers.err` read for a refusal, then `[ -n "$T" ] && uv run pytest $T -m "not slow and not data" -q -p no:cacheprovider`, `tests/test_research_command.py` among them with the subject's nine contract rows, split by file into calls under 600 s where one would pass it.
 Expected: all pass.
 
-- [ ] **Step 6: Commit** — `feat(research): the reading subject c2-lead-lag-reading — spec 00150's 176 cells on the frozen 15m set, no rule, no slot` with the test lines and Task 1 Step 6's three probe verdict lines with their commands.
+- [ ] **Step 6: Commit** — `feat(research): the reading subject c2-lead-lag-reading — spec 00150's 176 cells on the frozen 15m set, no rule, no slot` with the test lines and Task 1 Step 6's eighteen probe verdict lines with their commands.
 
-- [ ] **Step 7: Probe** the two refusals on Step 6's committed tree through `-k as_of_and_window` — the `as_of` check removed, then the `window` check removed, each its own `infra/scripts/mutate-probe.sh --file cli/research/subjects.py` call with the control the `--as-of` message changed, each sed touching exactly one line — a pattern `grep -c` counts once, or a line address — each `KILLED (control proven, …)`. The two verdict lines, each with its command, go in Task 3's commit message (no amend).
+- [ ] **Step 7: Probe each case on Step 6's committed tree**, in the Global Constraints' probe form, `--file cli/research/subjects.py` unless the row names another, each mutation addressed to its own function's range, the node id `tests/test_research_c2_lead_lag_reading.py::<case>`; the fourteen verdict lines, each with its command, go in Task 3's commit message. The rows, each a case and the mutation it must kill:
+  - `test_the_build_returns_exactly_the_declared_keys_and_176_cells` — the context row's key written with the lag in the horizon's place, `|H{L}` for `|H{H}`;
+  - `test_the_inputs_half_reads_no_forward_return` — `non_15m_steps` counting the steps equal to `STEP`;
+  - `test_the_signals_keys_carry_both_sides_and_the_basis_shape` — the side a signal count counts flipped, `-1` for `up`;
+  - `test_a_planted_follower_reads_potential_and_a_flat_cross_reads_none` — `--file cli/alpha/c2.py`, `N_RESAMPLES = 4000` written `N_RESAMPLES = 2000`;
+  - `test_each_cell_is_read_at_its_own_lag_threshold_and_horizon` — the cell reading the forward return at its lag in place of its horizon;
+  - `test_the_metrics_hold_only_leaves_the_registry_stores` — a signal count's year key written as the `int` year;
+  - `test_the_context_rows_pair_each_move_with_its_own_forward_return` — the rank IC's moves taken at the horizon in place of the lag;
+  - `test_as_of_and_window_are_refused_before_any_read`, two rows — the `as_of` condition made `False`; then the `window` condition made `False`;
+  - `test_an_unreadable_file_names_its_relpath` — `OSError` dropped from the read's `except`;
+  - `test_a_close_that_is_not_a_positive_number_is_refused_naming_its_file` — the close check's condition made `False`;
+  - `test_a_follower_with_no_stamp_on_the_leaders_grid_is_refused` — the `on_grid` 0 condition made `False`;
+  - `test_a_duplicate_leader_stamp_is_refused_through_the_builds_wrap` — the wrap's `except` naming `ValidationError` alone;
+  - `test_the_subject_is_registered_as_a_reading` — the entry's `seeds=(SEED,)` written `seeds=()`.
 
 ---
 
@@ -362,8 +422,13 @@ pytestmark = pytest.mark.data
 # Literal-rooted, the form the skip-gate guard admits; the case's first assertion makes it the run's own root.
 _DATA_ROOT = Path(__file__).resolve().parents[1] / "data"
 SUBJECT = "c2-lead-lag-reading"
-# Copied from spec 00150's measured basis, never from a run: each follower's bars, first stamp, on-grid and off-grid
-# counts, and each signal's count per calendar year 2013 through 2026.
+
+def _epoch(iso: str) -> int:
+    return int(datetime.fromisoformat(iso).timestamp())
+
+# Copied from spec 00150's measured basis, never from a run: the leader's figures, each follower's bars, first stamp,
+# on-grid and off-grid counts, and each signal's count per calendar year 2013 through 2026.
+LEADER_BASIS = {"bars": 430_560, "first_stamp": _epoch("2013-09-10T23:45:00+00:00"), "last_stamp": _epoch("2026-03-31T23:45:00+00:00"), "non_15m_steps": 3_002, "sigma_warm_index": 2_831}
 FOLLOWER_BASIS = {
     "ADA/EUR": (254_419, "2018-09-28T13:15:00+00:00", 254_419, 0),
     "AVAX/EUR": (133_305, "2021-12-21T15:30:00+00:00", 133_305, 0),
@@ -388,14 +453,11 @@ SIGNAL_BASIS = {
     "L4|th2|down": [1, 74, 291, 490, 932, 1_052, 933, 871, 986, 1_109, 900, 1_075, 1_097, 266],
 }
 
-def _epoch(iso: str) -> int:
-    return int(datetime.fromisoformat(iso).timestamp())
-
 @pytest.mark.skipif(nothing_found_under(_DATA_ROOT, "ohlc-15m/*/*/15.parquet"), reason="the frozen ohlc-15m set is absent under data/")
 def test_the_inputs_half_reads_the_specs_measured_basis():
     assert _DATA_ROOT == research_command._DATA_ROOT
     inputs = subjects._c2_reading_inputs(subjects._c2_reads(ObservedReader(_DATA_ROOT), "ohlc-15m", SUBJECT), SUBJECT)
-    assert inputs.leader == {"bars": 430_560, "first_stamp": _epoch("2013-09-10T23:45:00+00:00"), "last_stamp": _epoch("2026-03-31T23:45:00+00:00"), "non_15m_steps": 3_002, "sigma_warm_index": 2_831}
+    assert inputs.leader == LEADER_BASIS
     basis = {f: (bars, _epoch(first), on, off) for f, (bars, first, on, off) in FOLLOWER_BASIS.items()}
     assert {f: (v["bars"], v["first_stamp"], v["on_grid"], v["off_grid"]) for f, v in inputs.followers.items()} == basis
     # The computes half is never called here: it is past the hash rule.
@@ -409,36 +471,97 @@ def test_the_inputs_half_reads_the_specs_measured_basis():
 - [ ] **Step 2: Run it without the data linked** — `uv run pytest tests/test_research_c2_lead_lag_reading_basis.py -q -p no:cacheprovider -rs`. Expected: `1 skipped`, its reason `the frozen ohlc-15m set is absent under data/` (not a failure); then, the controller having linked `data/ohlc-15m`, run it — Expected: `1 passed` in under 3 minutes. (The implementer runs the unlinked form only and reports; the linked run is the controller's at Task 4.)
 
 - [ ] **Step 3: Append the two decisions-log entries** to `docs/research/10.phase4-decisions.md`, the `[iter-195]` key, in the log's shape (question, 2–3 options with tradeoffs, `(Decision: N)`, the `Logged` line):
-  1. `[iter-195] C2 opened on the owner's family pick — C2's first step, a no-slot reading of the gross lead-lag surface, the loop's pick under the owner's run instruction (Decision: 1)` — the three options of spec D1, verbatim in substance; the Logged line quoting the owner's words of 2026-10-27 verbatim from the plan review's ledger (`.tmp/plan-review/00150/ledger.md`) — the family pick, an AskUserQuestion answer: "C2 — BTC→alt lead-lag on 15m (Recommended)"; the run instruction: "skip the questions, write the pre-registration. Ignore the wall clock time gate, but do not start a new task after 10:00Z" — and naming spec 00150 D1.
-  2. `[iter-195] C2's lead-lag reading's conventions, pinned by spec 00150 before its hash (Decision: 1)` — one option taken, the alternatives named: entry at the signal bar's close against a one-bar delay (D4); overlapping trades counted apart against a merged hold (D4); the √L scaling of the threshold (D3); the floor at 100 per complete year over 2015–2025 against every complete year (D5); Bonferroni over 176 against no correction (D5); gross against net in legs 1 and 2 (D5).
+  1. `[iter-195] C2 opened on the owner's family pick — C2's first step, a no-slot reading of the gross lead-lag surface, the loop's pick under the owner's run instruction (Decision: 1)` — the three options of spec D1, verbatim in substance; the Logged line quoting the owner's words of 2026-10-27 verbatim from the plan review's ledger (`.tmp/plan-review/00150/ledger.md`, copied before the merge to the main checkout's `.local/reads-archive/research/iter-195-c2-lead-lag/plan-review-00150/ledger.md`, Task 6 Step 3) — the family pick, an AskUserQuestion answer: "C2 — BTC→alt lead-lag on 15m (Recommended)"; the run instruction: "skip the questions, write the pre-registration. Ignore the wall clock time gate, but do not start a new task after 10:00Z" — and naming spec 00150 D1.
+  2. `[iter-195] C2's lead-lag reading's conventions, pinned by spec 00150 before its hash (Decision: 1)` — one option taken, the alternatives named: entry at the signal bar's close against a one-bar delay (D4); overlapping trades counted apart against a merged hold (D4); the √L scaling of the threshold (D3); the floor at 100 per complete year over 2015–2025 against every complete year (D5); Bonferroni over 176 against no correction (D5); gross against net in legs 1 and 2 (D5); and the four calls the plan review ruled, each named as ruled there — 4,000 resamples against 2,000, at which leg 3 cannot hold (1/2,001 is above 0.05/176), its bound holding at 4,000 only at a bootstrap count of 0 (D4, D5); the 0.012 read as the registered maker-plus-spread basis against a tier-1 taker round trip of 0.016 plus the spread, so a cell clearing it is not yet one a taker clears (D4); the criterion read off a scratch program's printed table against a read by eye off the line, never by the subject's code (D5); a refused run, a failed check of the line or a failed replay a stop before any commit against a fix and a second run on the branch (D7).
 
 - [ ] **Step 4: Run the log's guards and the two walkers the new file's mark and gate meet** — `uv run pytest tests/test_decisions_log_shape.py tests/test_decisions_log_ties.py tests/test_data_gated_marker.py tests/test_live_venue_opt_in.py -q -p no:cacheprovider`. Expected: all pass.
 
-- [ ] **Step 5: Commit** — `docs(research): the two [iter-195] entries before spec 00150's hash, and C2's data-gated basis case` with both test lines (the basis case's `skipped` line named as the unlinked run) and Task 2 Step 7's two probe verdict lines with their commands.
+- [ ] **Step 5: Commit** — `docs(research): the two [iter-195] entries before spec 00150's hash, and C2's data-gated basis case` with both test lines (the basis case's `skipped` line named as the unlinked run) and Task 2 Step 7's fourteen probe verdict lines with their commands.
 
-- [ ] **Step 6 (the controller's): The reads** — the trio over the whole branch, `develop..HEAD` — the spec, this plan, Tasks 1–3 — `pre-review`, then `review`, then over each fix range — each fix its own commit, never an amend — `pre-review` and `re-review`, within the branch's two, each on Opus, model named; every `review` and `re-review` `drive` carries the hash rule as one sentence in words: nothing reads or computes any follower's forward return conditioned on a signal, any cell's means or p, or the context rows — through the code, a program or arithmetic — or runs the reading over the real set, before the spec's hash, and the data-gated case runs with `data/ohlc-15m` linked into the reader's worktree and unlinked by the reader before its report, since unlinked it skips. Each report names the tip it read, the tip Task 4 Step 1 diffs from. Task 4 waits until the trio has closed with no open Critical or Important.
+- [ ] **Step 6 (the controller's): The reads** — the trio over the whole branch, `develop..HEAD` — the spec, this plan, Tasks 1–3 — `pre-review`, then `review`, then over each fix range — each fix its own commit, never an amend — `pre-review` and `re-review`, within the branch's two, each on Opus, model named; every `review` and `re-review` `drive` carries the hash rule as one sentence in words: nothing reads or computes any follower's forward return conditioned on a signal, any cell's means or p, or the context rows — through the code, a program or arithmetic — or runs the reading over the real set, before the spec's hash, and the data-gated case runs with the frozen 15m set linked into the reader's worktree by `ln -snT /home/zhaow/Projects/zcrypto-kraken/data/ohlc-15m <the reader's worktree>/data/ohlc-15m` and unlinked by `test -L <the reader's worktree>/data/ohlc-15m && unlink <the reader's worktree>/data/ohlc-15m` before its report, since unlinked it skips. Each report names the tip it read, the tip Task 4 Step 1 diffs from. Task 4 waits until the trio has closed with no open Critical or Important.
 
 ---
 
-### Task 4 (the controller's): the gate, the spec hash, the develop check, the data test and the run
+### Task 4 (the controller's): the gate, the spec hash, the develop check, the data test, the run, its read and its commit
+
+`<H>` is Step 2's sha256. **The stop** (spec D7): a refused run (Step 6), a failed check of the line (Step 7) or a failed replay (Step 10) stops the task before any commit — any line the run appended stays uncommitted in the worktree, neither committed nor reverted; every data link the task made is removed in the Global Constraints' form, Step 10's scratch worktree after its links; the refusal or the failing check is quoted whole, from the output file its step names, in the SDD ledger and in a `## Findings so far` bullet of T0016 headed `**C2's lead-lag reading (iter-195, spec 00150) — stopped before any commit, no reading kept.**`, written into the worktree and left uncommitted beside it; the steps after it, Task 5 and Task 6 do not run; and the reading's design stands unrun until the cause is fixed as new work with its own reads.
 
 - [ ] **Step 1: The gate** — the plan review closed (`zcrypto-plan-review`); Task 3 Step 6's reads closed with no open Critical or Important, and nothing changed since: `git diff --quiet <the tip the last read names> -- cli/ tests/ docs/specs/00150-c2-lead-lag-reading-design.md docs/research/10.phase4-decisions.md` exits 0, its own call; `git status --porcelain` empty.
 - [ ] **Step 2: The spec hash** — `sha256sum docs/specs/00150-c2-lead-lag-reading-design.md`, pasted; the spec never edited after.
 - [ ] **Step 3: The develop check** — `git fetch origin develop && git diff --quiet $(git merge-base HEAD origin/develop) origin/develop -- docs/reference/trial-registry.jsonl docs/reference/reading-ledger.jsonl; echo rc=$?` — `rc=0`, else STOP.
-- [ ] **Step 4: Link the data, run the basis case and probe it** — `ln -sn /home/zhaow/Projects/zcrypto-kraken/data/ohlc-15m data/ohlc-15m` and `ln -sn /home/zhaow/Projects/zcrypto-kraken/data/ohlc-full data/ohlc-full`, each its own call (`ohlc-full` for Step 10's replay alone); `uv run pytest tests/test_research_c2_lead_lag_reading_basis.py -q -p no:cacheprovider -rs` → `1 passed`, never a skip. Then, on this clean tree (the links are ignored), the new guard file's probe: `infra/scripts/mutate-probe.sh --file cli/research/subjects.py --control '<sed>' --mutation '<sed>' -- uv run pytest tests/test_research_c2_lead_lag_reading_basis.py -q -p no:cacheprovider`, the mutation `non_15m_steps` counting the steps equal to `STEP`, the control `sigma_warm_index` one index past the first warm one, each sed touching exactly one line — a pattern `grep -c` counts once, or a line address — `KILLED (control proven, …)`, its verdict line and command carried in Step 9's commit message. The probe runs the inputs half alone, which the hash rule admits.
-- [ ] **Step 5: The notes, written before the run** (spec D7), to `.local/iter195/notes.txt`.
-- [ ] **Step 6: The one run** — `uv run zcrypto research eval --subject c2-lead-lag-reading --dataset ohlc-15m --reading --iteration iter-195 --spec-hash <Step 2> --notes "$(cat .local/iter195/notes.txt)"`, backgrounded, its output to `.local/iter195/run.out`; no plain eval before or after.
-- [ ] **Step 7: The ledger line's checks** — the last line of `docs/reference/reading-ledger.jsonl`: `reading_id` 7, `iteration` `iter-195`, `spec_hash` Step 2's, `attempt` `null`; `metrics.leader`, `metrics.followers` and `metrics.signals` equal to the basis's figures, every stamp the epoch seconds of the basis's; 176 cells, every `p` present in `(0, 1]` at `n` 2 or more and absent below.
-- [ ] **Step 8: Read the criterion** (spec D5) off the line: the floor per cell over its follower's complete years as D5 lists them, then the three legs, leg 1 over the same years; the cells with potential, if any, named.
-- [ ] **Step 9: Commit the line with its entry** — `docs/reference/reading-ledger.jsonl`; `docs/research/10.phase4-decisions.md`'s third entry, `[iter-195] BTC→alt lead-lag read on frozen ohlc-15m (reading 7)` in the `[iter-190]` reading entry's form: the subject, the set, the spec hash, the 176 cells' headline — how many cells the floor admits, how many clear each leg, the cells with potential (or none), the strongest cell's figures quoted unrounded — and what the criterion leaves for C2's next step, the pick's and not this entry's (spec D5): a cell with potential names trial 1, pre-registered in a new spec; with none, the owner's family call, hold or close C2, beside a 1m reading once a tick catalog exists; and `tests/slow-cases.txt` gaining `tests/test_registry_replay.py::test_every_record_past_47_replays_at_head[reading-7]` at its `sorted()` place. Message `docs(research): reading 7 — C2's lead-lag surface on ohlc-15m; [iter-195] its entry`, carrying Step 4's probe verdict line and command.
-- [ ] **Step 10: The replay, then unlink** — on Step 9's commit, `git status --porcelain` empty, since the replay fails a tree with uncommitted changes under the paths it reads: `ZCRYPTO_RERUN_SLOW=1 uv run pytest tests/test_registry_replay.py -k 'reading-7' -q -p no:cacheprovider -rs` → `1 passed`, never a skip; a difference stops the task before any push, T0016's. Then `test -L data/ohlc-15m && unlink data/ohlc-15m` and `test -L data/ohlc-full && unlink data/ohlc-full`, each its own call; the main checkout's `data/` listing read (13 entries).
+- [ ] **Step 4: Link the data, run the basis case and probe it** — `ln -snT /home/zhaow/Projects/zcrypto-kraken/data/ohlc-15m /home/zhaow/Projects/zcrypto-kraken/.claude/worktrees/iter195/data/ohlc-15m`, its own call; `uv run pytest tests/test_research_c2_lead_lag_reading_basis.py -q -p no:cacheprovider -rs` → `1 passed`, never a skip. Then, on this clean tree (the link is ignored), the new guard file's one case probed in the Global Constraints' probe form, `--file cli/research/subjects.py`, the node id `tests/test_research_c2_lead_lag_reading_basis.py::test_the_inputs_half_reads_the_specs_measured_basis`, the mutation `non_15m_steps` counting the steps equal to `STEP`, its verdict line and command carried in Step 11's commit message. The probe runs the inputs half alone, which the hash rule admits.
+- [ ] **Step 5: The notes, written before the run** (spec D7) — `mkdir -p .local/iter195`, its own call; the text below, `<H>` replaced by Step 2's hash, written with `cat > .local/iter195/notes.txt <<'EOF'` … `EOF`; then `test -s .local/iter195/notes.txt` exits 0, its own call:
+
+```text
+subject c2-lead-lag-reading over ohlc-15m, the frozen 15m set read whole, no window and no as-of; descriptive: no hypothesis, no bar, no verdict and no C slot; the leader BTC/EUR, its 15m log return, its scale the sample standard deviation of its trailing 96 returns, its move the sum of its last 1 or 4 returns, and a signal, up or down, where the move passes 1 or 2 scales times the square root of the lag; the eleven followers ADA/EUR, AVAX/EUR, DOGE/EUR, DOT/EUR, ETH/EUR, LINK/EUR, LTC/EUR, SOL/EUR, XRP/EUR, ETH/BTC and SOL/BTC, each mapped onto the leader's stamps by exact stamp; 176 cells, follower by lag by threshold by horizon (1 or 4 bars) by side, each trade entered at the signal bar's close, long the follower after an up move and short it after a down move, its gross return the follower's forward log return in the move's direction and its net the gross less the round trip 0.012 at the registered 0.006 a side; per cell, per calendar year and over the whole span, the trades and their mean gross and net return, and over the span the stationary bootstrap p that the mean net return per trade is at or below zero, at mean block 30, 4000 resamples and seed 42; the potential criterion pre-registered by spec 00150's sha256 <H>: its floor at least 100 trades in each complete calendar year the follower spans within 2015 through 2025, then three legs, the mean gross return above 0.012 in every year the floor counts and over the whole span, and the bootstrap p below 0.05/176, Bonferroni over the 176 cells; read by the closeout's pick off a printed table, never by the subject's code.
+```
+
+- [ ] **Step 6: The one run** — no plain eval before or after it: `uv run zcrypto research eval --subject c2-lead-lag-reading --dataset ohlc-15m --reading --iteration iter-195 --spec-hash <H> --notes "$(cat .local/iter195/notes.txt)" > .local/iter195/run.out 2>&1; echo "rc=$?" >> .local/iter195/run.out`, one Bash call with `run_in_background: true` — its bootstrap bounded at about 24 minutes (the spec's measured basis) — acted on only at its completion notification, no polling and no other command in this worktree while it lives; then `cat .local/iter195/run.out`. The task continues only on `rc=0` with `recorded reading 7`; every other end — a refusal, `rc=1` naming the subject, a file, the tree, the spec hash, the dataset or the registry's refusal of the metrics; a traceback; a signal — is the stop, `.local/iter195/run.out` quoted.
+- [ ] **Step 7: The line's checks and the table** — the program below, written with `mkdir -p .tmp/iter195 && cat > .tmp/iter195/reading_7.py <<'EOF'` … `EOF` from its fence and parsed by `uv run python -c 'import ast, sys; ast.parse(open(sys.argv[1]).read())' .tmp/iter195/reading_7.py`; then `uv run python .tmp/iter195/reading_7.py <H> > .local/iter195/reading_7.out 2>&1; echo "rc=$?" >> .local/iter195/reading_7.out` and `cat .local/iter195/reading_7.out`. `rc=0` follows every check printed `True` with one line per cell the floor admits and the counts; `rc=1` is the stop, the checks line quoted. Spec D5's criterion is read off this table, never by the subject's code; the floor's years are D5's rule applied to the basis's first stamps.
+
+```python
+"""Reading 7 off the ledger's last line: its checks against spec 00150's measured basis, then, every check holding, the
+table spec 00150 D5's criterion is read off — one line per cell the floor admits, its three legs' values and whether
+each holds, then the counts; exit 0 only when every check holds."""
+
+import json
+import sys
+from pathlib import Path
+
+from cli.alpha.c2 import FOLLOWERS, HORIZONS, LAGS, SIDES, THRESHOLDS, cell_name
+from cli.research.subjects import SUBJECTS
+from tests.test_research_c2_lead_lag_reading_basis import FOLLOWER_BASIS, LEADER_BASIS, SIGNAL_BASIS, _epoch
+
+YEARS = range(2013, 2027)
+r = json.loads(Path("docs/reference/reading-ledger.jsonl").read_text().splitlines()[-1])
+m = r["metrics"]
+names = {cell_name(f, L, th, H, s) for f in FOLLOWERS for L in LAGS for th in THRESHOLDS for H in HORIZONS for s in SIDES}
+checks = {
+    "labels": (r["reading_id"], r["iteration"], r["spec_hash"], r["attempt"]) == (7, "iter-195", sys.argv[1], None),
+    "keys": set(m) == SUBJECTS["c2-lead-lag-reading"].metric_keys,
+    "leader": m["leader"] == LEADER_BASIS,
+    "followers": m["followers"]
+    == {f: {"bars": b, "first_stamp": _epoch(s), "on_grid": on, "off_grid": off} for f, (b, s, on, off) in FOLLOWER_BASIS.items()},
+    "signals": m["signals"]
+    == {k: {"per_year": {str(y): n for y, n in zip(YEARS, v, strict=True)}, "total": sum(v)} for k, v in SIGNAL_BASIS.items()},
+    "cells": set(m["cells"]) == names and all(set(c["per_year"]) == {str(y) for y in YEARS} for c in m["cells"].values()),
+    "p": all(("p" in c) == (c["n"] >= 2) and ("p" not in c or 0 < c["p"] <= 1) for c in m["cells"].values()),
+    "context": set(m["context"]) == set(FOLLOWERS)
+    and all(set(rows) == {f"L{L}|H{H}" for L in LAGS for H in HORIZONS} for rows in m["context"].values()),
+    "constants": (m["cost_round_trip"], m["sigma_window"], m["mean_block"], m["n_resamples"], m["seed"]) == (0.012, 96, 30, 4000, 42),
+}
+print(r["reading_id"], checks)
+if not all(checks.values()):
+    sys.exit(1)
+cost, bound = m["cost_round_trip"], 0.05 / len(names)
+admitted, held = [], [0, 0, 0]
+for name in sorted(names):
+    c = m["cells"][name]
+    floor = [str(y) for y in range(max(int(FOLLOWER_BASIS[name.split("|")[0]][1][:4]) + 1, 2015), 2026)]
+    if not floor or any(c["per_year"][y]["n"] < 100 for y in floor):
+        continue
+    legs = (all(c["per_year"][y]["mean_gross"] > cost for y in floor), c["mean_gross"] > cost, c["p"] < bound)
+    admitted.append((name, all(legs)))
+    held = [h + leg for h, leg in zip(held, legs, strict=True)]
+    per_year = {y: (c["per_year"][y]["n"], c["per_year"][y]["mean_gross"]) for y in floor}
+    print(name, "| floor", floor[0], "to", floor[-1], "| (n, mean gross) per year", per_year, "| span mean gross", c["mean_gross"],
+          "| p", c["p"], "| legs 1, 2, 3", legs, "| potential", all(legs))
+print("cells", len(names), "| the floor admits", len(admitted), "| hold legs 1, 2, 3", held, "| potential", [n for n, p in admitted if p] or "none")
+```
+
+- [ ] **Step 8: Read the criterion** (spec D5) off Step 7's table: the cells the floor admits, how many hold each leg, and the cells with potential, each named, or none.
+- [ ] **Step 9: The entry, the slow-cases line and their gate** — `docs/research/10.phase4-decisions.md`'s third entry, `[iter-195] BTC→alt lead-lag read on frozen ohlc-15m (reading 7)`, in the `[iter-190]` reading entry's form: the subject, the set, the spec hash, the headline — how many cells the floor admits, how many hold each leg, the cells with potential (or none) — Step 7's table pasted whole below it, each line indented two spaces as the log's continuation lines are, and what the criterion leaves for C2's next step, the pick's and not this entry's (spec D5): a cell with potential names trial 1, pre-registered in a new spec; with none, the owner's family call, hold or close C2, beside a 1m reading once a tick catalog exists; and `tests/slow-cases.txt` gaining `tests/test_registry_replay.py::test_every_record_past_47_replays_at_head[reading-7]` at its `sorted()` place. Then `git add docs/reference/reading-ledger.jsonl docs/research/10.phase4-decisions.md tests/slow-cases.txt`, its own call; `uv run pytest tests/test_decisions_log_ties.py tests/test_decisions_log_shape.py tests/test_slow_cases.py -q -p no:cacheprovider`, every case passing, its result line for the message; `uv run pre-commit run -a` until clean, each rewrite staged by path.
+- [ ] **Step 10: The replay, before the commit, on the tree the commit will hold** — the replay refuses a checkout whose ledger line is uncommitted, so it runs in a detached scratch worktree that holds Step 9's index committed, `<R>` written out in each call as `/home/zhaow/Projects/zcrypto-kraken/.claude/worktrees/iter195/.tmp/iter195/replay`. Each its own call, in order: `git write-tree`, its printed hash the tree; `git worktree add --detach <R> HEAD`; `git -C <R> read-tree -u --reset <the tree>`; `git -C <R> commit -q -m "test: reading 7's replay at <the tree>"`; the Global Constraints' links of `ohlc-15m` and `ohlc-full` into `<R>`; then `(cd <R> && ZCRYPTO_RERUN_SLOW=1 uv run pytest tests/test_registry_replay.py -k 'reading-7' -q -p no:cacheprovider -rs) > /home/zhaow/Projects/zcrypto-kraken/.claude/worktrees/iter195/.local/iter195/replay.out 2>&1; echo "rc=$?" >> /home/zhaow/Projects/zcrypto-kraken/.claude/worktrees/iter195/.local/iter195/replay.out`, one Bash call with `run_in_background: true`, as long as the run, acted on only at its completion notification: `1 passed`, never a skip, and any other result is the stop, `.local/iter195/replay.out` quoted; then, whatever the result, both links removed from `<R>` in the Global Constraints' form, `git worktree remove --force <R>`, and the main checkout's `data/` listing read.
+- [ ] **Step 11: The commit** — with no `git add` since Step 10's `git write-tree`: `git commit`, its own call, message `docs(research): reading 7 — C2's lead-lag surface on ohlc-15m; [iter-195] its entry`, carrying Step 9's result line, Step 10's replay result line, `probe skipped: slow case — tests/test_registry_replay.py::test_every_record_past_47_replays_at_head[reading-7]`, and Step 4's probe verdict line and command; then `test "$(git rev-parse HEAD^{tree})" = <the tree Step 10 printed>` exits 0, its own call; then this worktree's `ohlc-15m` link removed in the Global Constraints' form.
 
 ---
 
 ### Task 5: T0016, the retirement and the index
 
+Runs only once Task 4 Step 11's commit exists. On Task 4's stop it does not run: T0016's bullet quoting the refusal or the failing check is the controller's, written at the stop and left uncommitted, and `tests/retired_subjects.py` stays untouched, since a run still to come evaluates the subject.
+
 **Files:**
-- Modify: `docs/open-topics/T0016-bucket-b-c-alpha-families.md` — `ripe_when:`'s C2 clause `C2: a tick catalog exists;` becomes ``C2: an activity, C2''s next step after the lead-lag reading is picked — the loop''s pick under a run instruction, else the owner''s, a close the owner''s — reading spec 00150''s potential criterion, recorded in the decisions log, check: `grep -c -E ''^\[iter-[0-9]+\] C2.s next step after the lead-lag reading'' docs/research/10.phase4-decisions.md` prints at least 1; C2''s 1m horizon: a tick catalog exists;`` — in the frontmatter's single quotes, each `'` inside it doubled as written here, the check in its own backticks (measured on the base: the frontmatter parses, `infra/scripts/topics-index.py` renders, the check prints 0); a `## Findings so far` bullet for reading 7 (its headline figures, from the ledger line); a `## Done so far` bullet "C2 opened (iter-195, spec/plan 00150) on the owner's pick of 2026-10-27 …: the module `cli/alpha/c2.py`, the subject `c2-lead-lag-reading`, the data-gated basis test …; reading 7 …; the subject retired."
+- Modify: `docs/open-topics/T0016-bucket-b-c-alpha-families.md` — `ripe_when:`'s C2 clause `C2: a tick catalog exists;` becomes ``C2: an activity, C2''s next step after the lead-lag reading is picked — the loop''s pick under a run instruction, else the owner''s, a close the owner''s — reading spec 00150''s potential criterion, recorded in the decisions log, check: `grep -c -E ''^\[iter-[0-9]+\] C2.s next step after the lead-lag reading'' docs/research/10.phase4-decisions.md` prints at least 1; C2''s 1m horizon: a tick catalog exists;`` — in the frontmatter's single quotes, each `'` inside it doubled as written here, the check in its own backticks (measured on the base: the frontmatter parses, `infra/scripts/topics-index.py` renders, the check prints 0); a `## Findings so far` bullet for reading 7 (its headline figures, from Task 4 Step 7's table); a `## Done so far` bullet "C2 opened (iter-195, spec/plan 00150) on the owner's pick of 2026-10-27 …: the module `cli/alpha/c2.py`, the subject `c2-lead-lag-reading`, the data-gated basis test …; reading 7 …; the subject retired."
 - Modify: `tests/retired_subjects.py` — `"c2-lead-lag-reading"` added under a `# C2's reading.` comment.
 - Modify: `docs/open-topics/README.md` — re-rendered by `uv run python infra/scripts/topics-index.py` (the `ripe_when` moved).
 
@@ -451,6 +574,6 @@ def test_the_inputs_half_reads_the_specs_measured_basis():
 ### Task 6 (the controller's): the change-index row, the reads and the PR
 
 - [ ] **Step 1:** `open-pr` Steps 1, 2 and 4 — title `feat(research): iter-195 — C2 lead-lag surface on ohlc-15m (reading 7)` (70 characters by `printf '%s' <it> | wc -m`, under the cap), the row `| #<n> | <date> | <title> | iter-195 | 00150 | T0016 |`, committed.
-- [ ] **Step 2:** the delta read — `pre-review` of Tasks 4–5's commits and the row's, folds by `fold-check`, then `review` over `<the tip the last read names>..HEAD` and `re-review` over a fix of it within the branch's two, each on Opus, model named, each `review` and `re-review` `drive` carrying one sentence in words: the data-gated case and the replay the messages record run with `data/ohlc-15m` and `data/ohlc-full` linked into the reader's worktree and unlinked by the reader before its report, since unlinked they skip.
-- [ ] **Step 3:** on the tip it pushes, Task 4 Step 10's replay again, its links made and removed as there — `1 passed`, never a skip; then the push, the PR through `open-pr` (body: Summary; Spec / Plan naming 00150 and T0016; the read line; `## Changes`; `## Test plan` with every result line pasted; `## Reads`; the reading's headline and what the criterion leaves for C2's next step under `## Changes`), the CI watch, `merge-pr` when green.
-- [ ] **Step 4:** the memo's T0016 item and the coordination table; the reads, and the plan review's `.tmp/plan-review/00150/` — its ledger the source spec D1 quotes — archived to `.local/reads-archive/research/iter-195-c2-lead-lag/`; the worktree removed.
+- [ ] **Step 2:** the delta read — `pre-review` of Tasks 4–5's commits and the row's, folds by `fold-check`, then `review` over `<the tip the last read names>..HEAD` and `re-review` over a fix of it within the branch's two, each on Opus, model named, each `review` and `re-review` `drive` carrying one sentence in words: the data-gated case runs with the frozen 15m set linked into the reader's worktree by `ln -snT /home/zhaow/Projects/zcrypto-kraken/data/ohlc-15m <the reader's worktree>/data/ohlc-15m` and unlinked by `test -L <the reader's worktree>/data/ohlc-15m && unlink <the reader's worktree>/data/ohlc-15m` before its report, since unlinked it skips, and the replay the messages record, a rebuild of every cell as long as the run, is the controller's (Step 3), never a reader's.
+- [ ] **Step 3:** on the tip it pushes, `git status --porcelain` empty, the replay again in this worktree: the Global Constraints' links of `ohlc-15m` and `ohlc-full` into it, then `ZCRYPTO_RERUN_SLOW=1 uv run pytest tests/test_registry_replay.py -k 'reading-7' -q -p no:cacheprovider -rs > .local/iter195/replay-tip.out 2>&1; echo "rc=$?" >> .local/iter195/replay-tip.out`, one Bash call with `run_in_background: true`, acted on only at its completion notification — `1 passed`, never a skip; a difference stops the task before the push, T0016's — then both links removed in the Global Constraints' form; then the push, the PR through `open-pr` (body: Summary; Spec / Plan naming 00150 and T0016; the read line; `## Changes`, holding the reading's headline, Task 4 Step 7's table whole in a fenced block, and what the criterion leaves for C2's next step; `## Test plan` with every result line pasted; `## Reads`), the CI watch; before `merge-pr`, the plan review's `.tmp/plan-review/00150/` — its ledger the source spec D1 quotes — copied whole, `mkdir -p /home/zhaow/Projects/zcrypto-kraken/.local/reads-archive/research/iter-195-c2-lead-lag && cp -r /home/zhaow/Projects/zcrypto-kraken/.claude/worktrees/iter195/.tmp/plan-review/00150 /home/zhaow/Projects/zcrypto-kraken/.local/reads-archive/research/iter-195-c2-lead-lag/plan-review-00150`; then `merge-pr` when green.
+- [ ] **Step 4:** after `merge-pr`, the memo's T0016 item and the coordination table.
