@@ -411,8 +411,13 @@ def test_a_run_record_or_sidecar_it_cannot_parse_refuses_by_name(produced, tmp_p
         ("a-list", lambda record: [], "not an object"),
         ("no-params", lambda record: {**record, "params": None}, "lacks its params"),
         ("a-bad-since", lambda record: (record["params"].update(since="soon"), record)[1], "ValueError"),
-        ("no-posts", entry_edit(lambda entry: entry.pop("posts")), f"the day {day} holds no entry"),
-        ("a-text-count", entry_edit(lambda entry: entry.update(posts="960")), "a count or a list of another type"),
+        (
+            "a-naive-since",
+            lambda record: (record["params"].update(since="2026-09-02T23:00:00"), record)[1],
+            "its since carries no UTC offset",
+        ),
+        ("no-posts", entry_edit(lambda entry: entry.pop("posts")), f"the day {day}'s entry is not four integer counts"),
+        ("a-text-count", entry_edit(lambda entry: entry.update(posts="960")), f"the day {day}'s entry is not four integer counts"),
         ("a-bad-day", lambda record: (record["days"].update({"not-a-day": record["days"].pop(day)}), record)[1], "ValueError"),
     )
     for name, spoil, fault in spoils:
@@ -421,6 +426,11 @@ def test_a_run_record_or_sidecar_it_cannot_parse_refuses_by_name(produced, tmp_p
         record.write_text(json.dumps(spoil(json.loads(record.read_text()))))
         with pytest.raises(PanelError, match=re.escape(f"{record} is not a run record: ") + ".*" + re.escape(fault)):
             _manifest(out, primary, overlay)
+    out = _copy(source, tmp_path / "too-deep")
+    record = _record_path(out, PAIR)
+    record.write_text("[" * 100_000 + "]" * 100_000)
+    with pytest.raises(PanelError, match=re.escape(f"{record} is not a run record")):
+        _manifest(out, primary, overlay)
     panel = tmp_path / "panel"
     panel.mkdir()
     with pytest.raises(PanelError, match=re.escape(f"{_record_path(tmp_path / 'a-list', PAIR)} is not a run record")):

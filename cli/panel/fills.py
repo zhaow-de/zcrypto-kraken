@@ -379,7 +379,7 @@ def _read_record(pair_root: Path) -> dict | None:
         return None
     except OSError as exc:
         raise PanelError(f"{path} cannot be read: {exc}") from exc
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         raise PanelError(f"{path} is not a run record: {exc}") from exc
     if (fault := _record_fault(record)) is not None:
         raise PanelError(f"{path} is not a run record: {fault}")
@@ -394,15 +394,17 @@ def _record_fault(record: object) -> str | None:
         return "it lacks its params, code_ref or days"
     try:
         for bound in ("since", "until"):
-            datetime.fromisoformat(params[bound])
+            if datetime.fromisoformat(params[bound]).tzinfo is None:
+                return f"its {bound} carries no UTC offset"
         for iso_day, entry in days.items():
             date.fromisoformat(iso_day)
-            if not isinstance(entry, dict) or set(_new_entry()) - entry.keys():
-                return f"the day {iso_day} holds no entry"
-            if any(type(entry[name]) is not int for name in _COUNTS) or any(
-                not isinstance(entry[name], list) or not all(isinstance(iso, str) for iso in entry[name]) for name in _LISTS
+            if (
+                not isinstance(entry, dict)
+                or set(_new_entry()) - entry.keys()
+                or any(type(entry[name]) is not int for name in _COUNTS)
+                or any(not isinstance(entry[name], list) or not all(isinstance(iso, str) for iso in entry[name]) for name in _LISTS)
             ):
-                return f"the day {iso_day}'s entry holds a count or a list of another type"
+                return f"the day {iso_day}'s entry is not four integer counts and five lists of strings"
     except (KeyError, TypeError, ValueError) as exc:
         return f"{type(exc).__name__}: {exc}"
     return None
@@ -611,9 +613,7 @@ def produce_pair(
             f"{pair}: the run left no day file in {pair_root} -- the archive holds no hour of the pair in "
             f"[{since.isoformat()}, {until.isoformat()}), or none anchored"
         )
-    totals = {
-        name: sum(entry[name] for entry in entries.values()) for name in ("hours", "posts", "skipped_no_quote", "skipped_stale")
-    }
+    totals = {name: sum(entry[name] for entry in entries.values()) for name in _COUNTS}
     absent = {
         name: sum(len(entry[name]) for entry in entries.values()) for name in ("hours_unanchored", "hours_absent", "trades_absent")
     }
