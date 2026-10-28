@@ -423,6 +423,16 @@ def test_a_run_record_or_sidecar_it_cannot_parse_refuses_by_name(produced, tmp_p
             entry_edit(lambda entry: entry.update(hours_absent="22")),
             f"the day {day}'s entry is not four integer counts",
         ),
+        (
+            "a-number-in-a-list",
+            entry_edit(lambda entry: entry.update(hours_absent=[5])),
+            f"the day {day}'s entry is not four integer counts",
+        ),
+        (
+            "a-number-entry",
+            lambda record: (record["days"].update({day: 5}), record)[1],
+            f"the day {day}'s entry is not four integer counts",
+        ),
         ("a-bad-day", lambda record: (record["days"].update({"not-a-day": record["days"].pop(day)}), record)[1], "ValueError"),
     )
     for name, spoil, fault in spoils:
