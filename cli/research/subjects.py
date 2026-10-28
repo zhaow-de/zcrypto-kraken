@@ -1,8 +1,7 @@
 """The evaluable subjects: committed systems, each a record's reproduction, a trial or a reading.
 
 A subject declares its `--dataset` series, so the command can refuse an incomplete dataset before any read; a second
-dataset its `build` reads goes undeclared, and the build names a file of it that it cannot read.
-Every byte a `build` reads goes through `ObservedReader`."""
+dataset its `build` reads goes undeclared, and the build names a file of it that it cannot read."""
 
 from __future__ import annotations
 
@@ -126,7 +125,6 @@ from cli.data.manifest import ManifestError, read_manifest
 from cli.derivatives.funding import PERP_SYMBOLS
 from cli.features.derivatives import coverage_by_year, funding_zscore
 from cli.features.errors import FeatureError
-from cli.panel.fills import GRID_S, HORIZON_S
 from cli.portfolio.builder import CombinedSystemConfig, build_combined_system
 from cli.portfolio.crossfreq_system import (
     CrossfreqSystemConfig,
@@ -4878,15 +4876,6 @@ _C2_READING_KEYS = frozenset(
 
 
 # docs/specs/00151 D3-D5: C1's maker-fill reading. The columns known at the post, the inputs half's whole view of a row.
-_C1_FILL_PARAMS = {
-    "grid_s": 15,
-    "horizon_s": 900,
-    "cancel_after_s": 5,
-    "stale_s": 30,
-    "size_rungs": [0, 1],
-    "mid_offsets_s": [60, 900, 3600],
-    "depth": 100,
-}
 _C1_INPUT_COLUMNS = (
     "ts",
     "pair",
@@ -4899,6 +4888,15 @@ _C1_INPUT_COLUMNS = (
     "queue_ahead_notional",
     "our_qty",
 )
+_C1_FILL_PARAMS = {
+    "grid_s": 15,
+    "horizon_s": 900,
+    "cancel_after_s": 5,
+    "stale_s": 30,
+    "size_rungs": [0, 1],
+    "mid_offsets_s": [60, 900, 3600],
+    "depth": 100,
+}
 
 
 def _c1_reads(reader: ObservedReader, dataset: str, subject: str) -> tuple[dict, dict[str, pl.DataFrame]]:
@@ -4999,8 +4997,8 @@ def _c1_reading_metrics(frames: dict[str, pl.DataFrame]) -> dict:
             "mean_block": alpha_c1.MEAN_BLOCK,
             "n_resamples": alpha_c1.N_RESAMPLES,
             "seed": alpha_c1.SEED,
-            "grid_s": GRID_S,
-            "horizon_s": HORIZON_S,
+            "grid_s": _C1_FILL_PARAMS["grid_s"],
+            "horizon_s": _C1_FILL_PARAMS["horizon_s"],
         },
     }
 
