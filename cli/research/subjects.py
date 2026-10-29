@@ -134,6 +134,13 @@ from cli.portfolio.crossfreq_system import (
 )
 from cli.portfolio.errors import PortfolioError
 from cli.portfolio.record44_legs import benchmark_4h_net_of_cost, calendar_year_slices, load_union
+from cli.portfolio.revalidation import (
+    BENCH_COST_PER_SIDE,
+    METRIC_KEYS,
+    RevalidationError,
+    revalidation_metrics,
+    revalidation_verdict,
+)
 from cli.registry.observed import ObservedReader
 from cli.risk.errors import RiskError
 from cli.validation import ValidationError, max_drawdown, reality_check_pvalue, sharpe
@@ -5030,6 +5037,29 @@ def _build_c1_maker_fill_reading(
 _C1_READING_KEYS = frozenset({"fill_table", "cells", "coverage", "constants"})
 
 
+# docs/specs/00152 D7: P1's true count with this record, the one its deflated Sharpe reads.
+_P1_REVALIDATION_N_TRIALS = 6
+
+
+def _build_p1_revalidation(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    if window is not None:
+        raise SubjectError(
+            f"{_b2_over('p1-revalidation', window)}: it scores a slice of the full build, so it reads no window; drop --window"
+        )
+    *_, h4_ts, h4_prices, result = _crossfreq_book(reader, dataset, None, as_of, accept_holes)
+    bench = benchmark_4h_net_of_cost(h4_prices, cost_per_side=BENCH_COST_PER_SIDE)
+    try:
+        return revalidation_metrics(result.governed_net, result.ungoverned_net, bench, h4_ts, n_trials=_P1_REVALIDATION_N_TRIALS)
+    except RevalidationError as exc:
+        raise SubjectError(f"{_b2_over('p1-revalidation', None)} of {dataset}: {exc}") from exc
+
+
 SUBJECTS: dict[str, Subject] = {
     "record44-crossfreq": Subject(
         "record44-crossfreq",
@@ -5537,6 +5567,22 @@ SUBJECTS: dict[str, Subject] = {
         spec="docs/specs/00151-c1-maker-fill-reading-design.md",
         metric_keys=_C1_READING_KEYS,
         seeds=(alpha_c1.SEED,),
+    ),
+    "p1-revalidation": Subject(
+        "p1-revalidation",
+        (1440, 240),
+        _ASSETS,
+        _build_p1_revalidation,
+        spec="docs/specs/00152-deployable-revalidation-design.md",
+        metric_keys=METRIC_KEYS,
+        seeds=(),
+        verdict=revalidation_verdict,
+        no_verdict=(
+            "instrument finding: the read's in-sample prefix does not rebuild record 47's book, 27337 returns at Sharpe 1.5609; "
+            "no verdict, the trial unspent"
+        ),
+        family="P1",
+        n_trials=_P1_REVALIDATION_N_TRIALS,
     ),
 }
 
