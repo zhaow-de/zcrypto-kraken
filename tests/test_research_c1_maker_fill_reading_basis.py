@@ -55,7 +55,7 @@ TRADES_ABSENT = {
     ],
 }
 
-# Read from the set and the overlay by a scratch program over polars and os.walk, never through subjects.py:
+# Read from the set and the overlay, never through subjects.py:
 # (orders skipped with no two-sided quote, skipped stale, overlay book hours, overlay trades hours) per pair.
 COUNTS = {
     "ADA/EUR": (8, 528, 9, 3),
