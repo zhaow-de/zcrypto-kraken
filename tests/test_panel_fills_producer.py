@@ -496,6 +496,28 @@ def test_a_run_marks_its_set_in_production_and_the_manifest_lifts_the_mark(produ
     assert (out / "manifest.json").is_file() and not (out / PRODUCING_MARKER).exists()
 
 
+def test_a_run_into_a_set_whose_manifest_landed_is_refused_and_leaves_it_unmarked(produced, tmp_path):
+    primary, overlay, source, _ = produced
+    out = _copy(source, tmp_path / "out")
+    _manifest(out, primary, overlay)
+    panel = tmp_path / "panel"
+    panel.mkdir()
+    with pytest.raises(PanelError, match=re.escape(f"{PAIR}: {out / 'manifest.json'} is present")):
+        _produce(primary, panel, out, until=END, overlay=overlay)
+    assert not (out / PRODUCING_MARKER).exists()
+
+
+def test_a_run_its_record_refuses_leaves_an_unmarked_set_unmarked(produced, tmp_path):
+    primary, overlay, source, _ = produced
+    out = _copy(source, tmp_path / "out")
+    (out / PRODUCING_MARKER).unlink()
+    panel = tmp_path / "panel"
+    panel.mkdir()
+    with pytest.raises(PanelError, match="'depth': 100.*'depth': 50"):
+        _produce(primary, panel, out, until=END, overlay=overlay, depth=50)
+    assert not (out / PRODUCING_MARKER).exists()
+
+
 def test_a_refused_manifest_leaves_the_set_marked(produced, tmp_path):
     primary, overlay, source, _ = produced
     out = _copy(source, tmp_path / "out")

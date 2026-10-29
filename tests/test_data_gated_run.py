@@ -985,6 +985,14 @@ def test_every_difference_under_a_set_marked_in_production_at_the_start_is_admit
     assert result["data_listing_intact"] is True and result["error"] is None and result["ok"] is True
 
 
+def test_a_marked_set_already_holding_its_manifest_at_the_start_is_not_admitted():
+    start = _PRESENT + _MARKED + [["data/l2-fills-x/manifest.json", 1, 1]]
+    end = start + [["data/l2-fills-x/b.parquet", 1, 2]]
+    result = _result(data_listing=(start, end), linked=["ohlc-full", "l2-fills-x"])
+    assert result["data_listing_producing"] == []
+    assert result["error"] == "the checkout's data/ listing changed during the run: ['data/l2-fills-x/b.parquet']"
+
+
 def test_a_change_beside_a_set_in_production_still_fails_the_night_naming_only_it():
     end = _PRESENT[:2] + [["data/ohlc-full/manifest.json", 4, 2]] + _MARKED + [["data/l2-fills-x/b.parquet", 1, 2]]
     result = _result(data_listing=(_PRESENT + _MARKED, end), linked=["ohlc-full", "l2-fills-x"])

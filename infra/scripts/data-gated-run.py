@@ -369,9 +369,7 @@ def build_result(
     sweep_left: list[str],
     sweep_error: str | None,
 ) -> dict:
-    """`state` is `git_state` at the start plus `sha_at_end` and `tree_moved`; `data_listing` the two `data_listing()` reads;
-    `linked` the names `link_datasets` linked into the worktree, which are never born; a set marked in production at the
-    start is admitted whole, whether linked or not."""
+    """`state` is `git_state` at the start plus `sha_at_end` and `tree_moved`; `data_listing` the two `data_listing()` reads."""
     parsed = parse_summary(output)
     counts = parsed["counts"]
     skipped_for_data = sum(entry["count"] for entry in parsed["data_gated_skipped"])
@@ -386,7 +384,9 @@ def build_result(
     start, end = ({tuple(e) for e in listing or []} for listing in data_listing)
     present = {_set_of(e[0]) for e in start} | set(linked)
     born = sorted({_set_of(e[0]) for e in end if e[0].count("/") > 1} - present)
-    producing = sorted({_set_of(e[0]) for e in start if e[0].count("/") == 2 and e[0].endswith("/" + PRODUCING_MARKER)})
+    manifested = {_set_of(e[0]) for e in start if e[0].count("/") == 2 and e[0].endswith("/manifest.json")}
+    marked = {_set_of(e[0]) for e in start if e[0].count("/") == 2 and e[0].endswith("/" + PRODUCING_MARKER)}
+    producing = sorted(marked - manifested)
     admitted = {*born, *producing}
     changed = sorted({e[0] for e in start ^ end if _set_of(e[0]) not in admitted})
     intact = not changed
