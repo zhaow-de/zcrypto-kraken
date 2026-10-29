@@ -22,7 +22,7 @@ Measured 2026-10-29 on `zcrypto-ops`, the workstation, by the controller.
 
 ## The question (no hypothesis, no bar)
 
-When the engine's maker-first ladder places a €100 or €1,000 order on a pair as a cycle plan's first leg — posted at the touch two minutes after the boundary, resting unchased for 15 minutes, then crossing at the opposite touch — how often does it fill as a maker, and what does a side cost against the mid at the post, per pair and side, and over the ten EUR legs, against the registered 0.006?
+When the engine's maker-first ladder places a €100 or €1,000 order on a pair as a cycle plan's first leg — posted at the touch two minutes after the boundary, resting unchased for 15 minutes, then crossing at the opposite touch — how often does it fill as a maker, per pair and side, and what does a side cost against the mid at the post, per pair and side and over the ten EUR legs, against the registered 0.006?
 
 ## D1 — the pick
 
@@ -42,7 +42,7 @@ When the engine's maker-first ladder places a €100 or €1,000 order on a pair
 
 ## D3 — the reading
 
-- **Per pair × side × size**, over the span and per month window (2026-08, 2026-09, 2026-10 through the 25th): the posts; the maker share, filled by `post + 900 s`, over the posts; the median time to fill; and the cost of a side against `mid_at_post`, signed against the order, in return units: a maker fill `s·(fill_price − mid_at_post)/mid_at_post + 0.0040`, a fallback `s·(box_end_touch_price − mid_at_post)/mid_at_post + 0.0080`, `s` +1 for a buy and −1 for a sell; the mean cost over the priced posts — a fallback with no touch recorded is counted unpriced, outside the mean — and its 95 % interval from `cli/validation/bootstrap.py`'s `bootstrap_ci` over those posts in boundary order, mean block 6 (one day), 2,000 resamples, seed 42; the share of fallbacks larger than their touch.
+- **Per pair × side × size**, over the span and per month window (2026-08, 2026-09, 2026-10 through the 25th): the posts; the maker share, filled by `post + 900 s`, over the posts; the median time to fill; and the cost of a side against `mid_at_post`, signed against the order, in return units: a maker fill `s·(fill_price − mid_at_post)/mid_at_post + 0.0040`, a fallback `s·(box_end_touch_price − mid_at_post)/mid_at_post + 0.0080`, `s` +1 for a buy and −1 for a sell; the mean cost over the priced posts — a fallback with no touch recorded is counted unpriced, outside the mean — and its 95 % interval from `cli/validation/bootstrap.py`'s `bootstrap_ci` over those posts in boundary order, mean block 6 (one day), 2,000 resamples, seed 42; the share of the priced fallbacks larger than their touch.
 - **No separate adverse-selection figure**, which the owner's item 2 names (D1): against `mid_at_post` a side's cost is its whole shortfall from the same position taken at that mid — once an order fills, the position moves as that one would, and an order the price leaves pays the move at the fallback — so the mean over the priced posts already carries the selection of which orders fill.
 - **The blend**: per size, at each boundary the mean over the ten EUR legs of each leg's mean cost over its priced sides — each leg weighted equally, a leg with no priced side at that boundary left out, and a boundary with no priced leg left out of the series; the blend is that per-boundary series' mean, its interval by the same bootstrap over the series in boundary order.
 - **Read against the registered 0.006 a side, never a verdict**: the reading prices; re-pricing the registered basis is T0214's decision, the owner's, as a new registry record.
@@ -53,7 +53,7 @@ When the engine's maker-first ladder places a €100 or €1,000 order on a pair
 
 ## D5 — what the reading changes
 
-- Nothing on the live path. Its figures go to T0214 beside rung 2's measured point, for the owner's re-pricing decision, and to T0122 as the expected execution error the paired live-minus-simulation harness will read against.
+- Nothing on the live path. Its figures go to T0214 beside rung 2's measured point, for the owner's re-pricing decision, and to T0122 as the fees-and-slippage part of the execution error the paired live-minus-simulation harness will read against; measured from the mid at the post, it leaves out the drift from `B` to the post, part of that error's timing.
 
 ## Out of scope
 
