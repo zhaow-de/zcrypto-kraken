@@ -94,6 +94,7 @@ from cli.research import subjects
 from cli.risk.errors import RiskError
 from cli.validation import ValidationError, max_drawdown, sharpe
 from cli.validation.dsr import expected_max_sharpe
+from tests.l2_fills_fixtures import write_l2_fills_set
 from tests.rolling_fixtures import HOLE, line_bytes, write_chain
 from tests.test_trial_attempts import _reaped_pid
 from tests.test_trial_registry_provenance import LEDGER, REGISTRY, _trials, live_entries
@@ -8423,6 +8424,7 @@ _CONTRACT_DATASETS = {
     "b1-hourly-channel-exits": lambda tmp_path, subject: (_b1_hourly_exit_dataset(tmp_path), _B1_START),
     "b1-hourly-channel-exits-preflight": lambda tmp_path, subject: (_b1_hourly_exit_dataset(tmp_path), _B1_START),
     "c2-lead-lag-reading": _c2_dataset,
+    "c1-maker-fill-reading": lambda tmp_path, subject: (tmp_path / "data", write_l2_fills_set(tmp_path / "data", "ohlc-test")),
 }
 
 
@@ -8459,6 +8461,7 @@ def _contract_rows() -> list:
             pytest.param(name, case, interval, id=f"{name}-{case}-on-{interval}")
             for interval in subjects.SUBJECTS[name].intervals
             for case in _CONTRACT_SPOILS
+            if subjects.SUBJECTS[name].assets
         ]
     return rows
 

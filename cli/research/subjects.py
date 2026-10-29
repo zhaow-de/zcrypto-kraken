@@ -1,8 +1,7 @@
 """The evaluable subjects: committed systems, each a record's reproduction, a trial or a reading.
 
 A subject declares its `--dataset` series, so the command can refuse an incomplete dataset before any read; a second
-dataset its `build` reads goes undeclared, and the build names a file of it that it cannot read.
-Every byte a `build` reads goes through `ObservedReader`."""
+dataset its `build` reads goes undeclared, and the build names a file of it that it cannot read."""
 
 from __future__ import annotations
 
@@ -18,6 +17,7 @@ from typing import NamedTuple
 import polars as pl
 
 from cli.alpha import A2Config, a2_book_returns
+from cli.alpha import c1 as alpha_c1
 from cli.alpha.a1 import _asset_returns, _inverse_vol_weights
 from cli.alpha.a2 import _asset_directions_a2
 from cli.alpha.b1 import (
@@ -121,6 +121,7 @@ from cli.alpha.errors import AlphaError
 from cli.alpha.killbar import a1_kill_bar, net_of_cost_verdict
 from cli.backtest.errors import BacktestError
 from cli.benchmark.errors import BenchmarkError
+from cli.data.manifest import ManifestError, read_manifest
 from cli.derivatives.funding import PERP_SYMBOLS
 from cli.features.derivatives import coverage_by_year, funding_zscore
 from cli.features.errors import FeatureError
@@ -4874,6 +4875,161 @@ _C2_READING_KEYS = frozenset(
 )
 
 
+# docs/specs/00151 D3-D5: C1's maker-fill reading. The columns known at the post, the inputs half's whole view of a row.
+_C1_INPUT_COLUMNS = (
+    "ts",
+    "pair",
+    "side",
+    "size",
+    "mid_at_post",
+    "spread_at_post_bps",
+    "stale_seconds_at_post",
+    "queue_ahead_qty",
+    "queue_ahead_notional",
+    "our_qty",
+)
+_C1_FILL_PARAMS = {
+    "grid_s": 15,
+    "horizon_s": 900,
+    "cancel_after_s": 5,
+    "stale_s": 30,
+    "size_rungs": [0, 1],
+    "mid_offsets_s": [60, 900, 3600],
+    "depth": 100,
+}
+
+
+def _c1_reads(reader: ObservedReader, dataset: str, subject: str) -> tuple[dict, dict[str, pl.DataFrame]]:
+    """The build receives the reader alone, whose root is the data root the manifest sits under."""
+    over = _b2_over(subject, None)
+    try:
+        manifest = read_manifest(reader._root / dataset / "manifest.json")
+    except (ManifestError, OSError) as exc:
+        raise SubjectError(f"{over}: {dataset}/manifest.json cannot be read: {exc}") from exc
+    relpaths: dict[str, list[str]] = {}
+    for relpath in sorted(manifest.series):
+        relpaths.setdefault("/".join(relpath.split("/")[:2]), []).append(relpath)
+    missing = [pair for pair in alpha_c1.PAIRS if pair not in relpaths]
+    extra = sorted(set(relpaths) - set(alpha_c1.PAIRS))
+    if missing or extra:
+        raise SubjectError(
+            f"{over}: {dataset}/manifest.json's pairs are not the twelve it reads: missing {', '.join(missing) or 'none'}, "
+            f"extra {', '.join(extra) or 'none'}"
+        )
+    outside = [
+        relpath
+        for relpath, leaf in sorted(manifest.series.items())
+        if leaf["first_ts"] is not None
+        and (
+            datetime.fromisoformat(leaf["first_ts"]) < alpha_c1.SPAN[0]
+            or datetime.fromisoformat(leaf["last_ts"]) >= alpha_c1.SPAN[1]
+        )
+    ]
+    if outside:
+        raise SubjectError(
+            f"{over}: {dataset}/manifest.json's day files {', '.join(outside)} lie outside the span "
+            f"[{alpha_c1.SPAN[0].isoformat()}, {alpha_c1.SPAN[1].isoformat()})"
+        )
+    records = manifest.provenance.get("pairs")
+    lacking = [pair for pair in alpha_c1.PAIRS if not isinstance(records, dict) or not isinstance(records.get(pair), dict)]
+    if lacking:
+        raise SubjectError(f"{over}: {dataset}/manifest.json's provenance holds no day records for {', '.join(lacking)}")
+    params = manifest.provenance.get("params")
+    params = params if isinstance(params, dict) else {}
+    off = [f"{name} {params.get(name)!r}, not {value!r}" for name, value in _C1_FILL_PARAMS.items() if params.get(name) != value]
+    if off:
+        raise SubjectError(f"{over}: {dataset}/manifest.json's params are not the fill model's: {'; '.join(off)}")
+    frames = {}
+    for pair in alpha_c1.PAIRS:
+        days = []
+        for relpath in relpaths[pair]:
+            try:
+                days.append(reader.read_series(dataset, relpath))
+            except (pl.exceptions.PolarsError, OSError) as exc:
+                raise SubjectError(f"{dataset}/{relpath}: {exc}") from exc
+        frames[pair] = pl.concat(days)
+    return manifest.provenance, frames
+
+
+def _c1_reading_inputs(frames: dict[str, pl.DataFrame], provenance: dict) -> dict:
+    coverage = {}
+    for pair, frame in frames.items():
+        entries = list(provenance["pairs"][pair].values())
+        posts = frame.with_columns(month=pl.col("ts").dt.strftime("%Y-%m"))
+        months: dict[str, dict] = {}
+        for month in alpha_c1.MONTHS:
+            for side in alpha_c1.SIDES:
+                for size in alpha_c1.SIZES:
+                    rows = posts.filter((pl.col("month") == month) & (pl.col("side") == side) & (pl.col("size") == size))
+                    leaves = {"posts": rows.height, "stale_seconds_null": rows["stale_seconds_at_post"].null_count()}
+                    if rows.height:
+                        leaves["queue_ahead_notional_mean"] = rows["queue_ahead_notional"].mean()
+                        leaves["spread_at_post_bps_mean"] = rows["spread_at_post_bps"].mean()
+                    months.setdefault(month, {})[f"{side}|S{size}"] = leaves
+        coverage[pair] = {
+            "days": frame["ts"].dt.date().n_unique(),
+            "skipped_no_quote": sum(entry["skipped_no_quote"] for entry in entries),
+            "skipped_stale": sum(entry["skipped_stale"] for entry in entries),
+            "hours_unanchored": sum(len(entry["hours_unanchored"]) for entry in entries),
+            "hours_absent": sum(len(entry["hours_absent"]) for entry in entries),
+            "trades_absent": sum(len(entry["trades_absent"]) for entry in entries),
+            "months": months,
+        }
+    return coverage
+
+
+def _c1_reading_metrics(frames: dict[str, pl.DataFrame]) -> dict:
+    return {
+        "fill_table": {pair: alpha_c1.fill_table(frame) for pair, frame in frames.items()},
+        "cells": {
+            alpha_c1.cell_name(pair, threshold, size, side): alpha_c1.reversal_cells(
+                frame, threshold=threshold, size=size, side=side
+            )
+            for pair, frame in frames.items()
+            for threshold in alpha_c1.THRESHOLDS
+            for size in alpha_c1.SIZES
+            for side in alpha_c1.SIDES
+        },
+        "constants": {
+            "maker_round_trip": alpha_c1.MAKER_ROUND_TRIP,
+            "horizons_s": list(alpha_c1.HORIZONS_S),
+            "thresholds": list(alpha_c1.THRESHOLDS),
+            "mean_block": alpha_c1.MEAN_BLOCK,
+            "n_resamples": alpha_c1.N_RESAMPLES,
+            "seed": alpha_c1.SEED,
+            "grid_s": _C1_FILL_PARAMS["grid_s"],
+            "horizon_s": _C1_FILL_PARAMS["horizon_s"],
+        },
+    }
+
+
+def _build_c1_maker_fill_reading(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    subject = "c1-maker-fill-reading"
+    if as_of is not None:
+        raise SubjectError(f"{subject} evaluates a frozen l2-fills set whole, never the rolling dataset as of a day: drop --as-of")
+    if window is not None:
+        raise SubjectError(
+            f"{_b2_over(subject, window)}: it reads the frozen l2-fills set whole, and the scale's trailing day reaches back "
+            "past any window's first stamp; drop --window"
+        )
+    try:
+        provenance, frames = _c1_reads(reader, dataset, subject)
+        coverage = _c1_reading_inputs({pair: frame.select(_C1_INPUT_COLUMNS) for pair, frame in frames.items()}, provenance)
+        return {**_c1_reading_metrics(frames), "coverage": coverage}
+    except (AlphaError, ValidationError) as exc:
+        raise SubjectError(f"{_b2_over(subject, window)}: {exc}") from exc
+
+
+# docs/specs/00151 D3 and D4's keys.
+_C1_READING_KEYS = frozenset({"fill_table", "cells", "coverage", "constants"})
+
+
 SUBJECTS: dict[str, Subject] = {
     "record44-crossfreq": Subject(
         "record44-crossfreq",
@@ -5371,6 +5527,16 @@ SUBJECTS: dict[str, Subject] = {
         spec="docs/specs/00150-c2-lead-lag-reading-design.md",
         metric_keys=_C2_READING_KEYS,
         seeds=(SEED,),
+    ),
+    # No assets: the set's own manifest names the files it reads, so `required_relpaths` asks for none.
+    "c1-maker-fill-reading": Subject(
+        "c1-maker-fill-reading",
+        (15,),
+        (),
+        _build_c1_maker_fill_reading,
+        spec="docs/specs/00151-c1-maker-fill-reading-design.md",
+        metric_keys=_C1_READING_KEYS,
+        seeds=(alpha_c1.SEED,),
     ),
 }
 

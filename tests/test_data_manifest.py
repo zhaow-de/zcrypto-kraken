@@ -401,12 +401,20 @@ def _drive_convert(tmp_path):
     return root / "manifest.json"
 
 
+def _drive_fills(tmp_path):
+    from tests.l2_fills_fixtures import write_l2_fills_set
+
+    write_l2_fills_set(tmp_path, "l2-fills-test")
+    return tmp_path / "l2-fills-test" / "manifest.json"
+
+
 _PRODUCERS = {
     "cli/backfill/backfill.py": _drive_backfill,
     "cli/data/manifest.py": _drive_convert,
     "cli/derivatives/funding.py": _drive_funding,
     "cli/derivatives/oi.py": _drive_oi,
     "cli/ohlc/ingest.py": _drive_ingest,
+    "cli/panel/fills.py": _drive_fills,
 }
 
 
