@@ -24,7 +24,7 @@ Does record 47's book, scored on the 659 returns after the spent holdout window 
 
 ## D1 — the pick: the owner's word
 
-- The owner's word of 2026-10-29, verbatim: "go ahead with 1 and 2, the window from 2026-07-10 is fine" — item 1 being "Revalidate the deployable on data it never saw", put to the owner beside three other items, its window choice the owner's to confirm because the read is of the adopted system. Item 2, the engine's execution cost from the kept fill model, is its own iteration.
+- The owner's word of 2026-10-29, verbatim: "go ahead with 1 and 2, the window from 2026-07-10 is fine" — item 1 being "Revalidate the deployable on data it never saw", put to the owner beside three other items, its window choice the owner's to confirm because the read is of the adopted system. Item 2, the engine's execution cost from the kept fill model, is its own iteration, under T0214.
 - The owner's second word of 2026-10-29, told that the local rolling set ended at 2026-10-10, verbatim: "extend the rolling set first, then rerun the revalidation" — the read is as of 2026-10-27, the hub's head (the measured basis). Both words stand in the phase-6 decisions log's `[iter-198]` pick entry.
 
 ## D2 — the instrument
@@ -75,4 +75,4 @@ Does record 47's book, scored on the 659 returns after the spent holdout window 
 
 ## Out of scope
 
-Extending `ohlc-rolling` past 2026-10-27; the live engine's long-only spot book and the paired live-versus-simulation harness (T0122's other next steps); any change to record 47, the deployable, the engine or a rung; any read of `data/ohlc-holdout-2026-07-10`; the execution-cost reading over the fill model, its own iteration.
+Extending `ohlc-rolling` past 2026-10-27; the live engine's long-only spot book and the paired live-versus-simulation harness (T0122's other next steps); any change to record 47, the deployable, the engine or a rung; any read of `data/ohlc-holdout-2026-07-10`; the execution-cost reading over the fill model, its own iteration under T0214.
