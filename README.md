@@ -340,6 +340,37 @@ zcrypto panel fills-manifest <primary_root> <out_root> [--reconciled-root <path>
 | `out_root` | The dataset root the runs wrote. |
 | `--reconciled-root` | The healed overlay the runs read, if any; omitted, every hour a run read from it that the primary also holds is refused. |
 
+`ladder` replays the engine's maker-first ladder over one pair's canonical book and trades, both read reconciled-first, at each cycle boundary — 00, 04, 08, 12, 16 and 20Z — and writes its rows as a dataset. Each boundary's episode is seeded from the panel's `<HH>.state.json` of the hour before it, or opens on its hour's snapshot; an hour opening with an update and no seed is counted unanchored. Two minutes after the boundary a bid and an ask join the back of the queue at the touch, at the first two rungs of the quote's notional ladder, unless the book is stale past 30 s or one-sided; each rests at its first price — never cancelled when the touch moves away — until the prints at or through its price have met the queue ahead and its whole quantity, the same fill rule as `fills`, or until its 15-minute time box ends. Each order is one row: the fill and its time, the quantity the prints met, and at the box end the mid and the opposite touch's price and quantity — the fallback's price, null where the book is stale or one-sided there.
+
+```bash
+zcrypto panel ladder <primary_root> <out_root> [--reconciled-root <path>] --panel-root <path> --pair <PAIR> --since <hour> --until <hour>
+```
+
+| Argument / Option | Description |
+| -- | -- |
+| `primary_root` | The primary (raw) canonical archive: its `book` and `trades` hours. |
+| `out_root` | The dataset root to write into; created with its parents when absent. |
+| `--reconciled-root` | Optional healed overlay; both kinds' hours are read reconciled-first. Omit to read the primary alone. |
+| `--panel-root` | The panel tree whose `<HH>.state.json` sidecars seed the book at each cycle boundary (required). |
+| `--pair` | The one pair this run produces (e.g. `BTC/EUR`); its quote must have a notional ladder (EUR, BTC). |
+| `--since` | The first hour, inclusive: a `YYYY-MM-DD` date or an ISO-8601 hour. |
+| `--until` | The end hour, exclusive, in the same form. |
+| `--depth` | Book depth the archive was captured at (default `100`). |
+
+A pair's rows land one UTC day per file in the layout `fills` writes, beside the same `.sha256` sidecar, and its run record `<out_root>/<BASE>/<QUOTE>/ladder-run.json` holds the run's parameters, its code ref and each day's counts over its boundary hours: the episodes replayed, the orders posted and skipped, the boundary hours unanchored and absent (no book hour: the episode is skipped), the trades hours absent (the episode is replayed with no print), and the boundary hours each kind read from the overlay. A run resumes after the pair's newest day file, refuses a run whose parameters or code differ from the record or an out root already holding its `manifest.json`, and marks the out root with a `.producing` file at its start and at each day it lands, as `fills` does. Prints the run's counts as one JSON line. Exits **1** on a refusal — a root that cannot be read as a directory, a panel state it cannot read or that holds no book, a file present but unreadable or one it cannot write — else **0**.
+
+`ladder-manifest` writes `<out_root>/manifest.json` once every pair's run has exited, with the refusals `fills-manifest` makes, its counts read as four orders an episode and its second listing of the archive held to the boundary hours alone; it lifts the `.producing` mark once the manifest lands. Exits **1** on a refusal, else **0**.
+
+```bash
+zcrypto panel ladder-manifest <primary_root> <out_root> [--reconciled-root <path>]
+```
+
+| Argument / Option | Description |
+| -- | -- |
+| `primary_root` | The primary (raw) canonical archive the runs read. |
+| `out_root` | The dataset root the runs wrote. |
+| `--reconciled-root` | The healed overlay the runs read, if any; omitted, every boundary hour a run read from it that the primary also holds is refused. |
+
 ### `zcrypto data`<a name="zcrypto-data"></a>
 
 The hot-cluster dataset exchange: every research node — the workstation, the ops node — fetches the same small `hot/` working set from the NAS hub and pushes back only what it authored, save the rolling canonical, which the ops node writes into its outbox and the NAS pulls; a revision never overwrites a published file, it mints a sibling instead. Three clusters make up the full topology: **custody** (the unbackfillable capture archive + raw dumps, replicated once to the NAS, read in place), **hot** (the small working set every node fetches/pushes via this command), and **private** (per-node state — the engine store/journal — that never syncs). See `docs/reference/data-catalog-full.md` for the full inventory.

@@ -379,19 +379,19 @@ def _day_files(pair_root: Path) -> dict[date, Path]:
     return days
 
 
-def _read_record(pair_root: Path) -> dict | None:
-    path = pair_root / RUN_RECORD
+def _read_record(pair_root: Path, *, record: str = RUN_RECORD) -> dict | None:
+    path = pair_root / record
     try:
-        record = json.loads(path.read_text())
+        held = json.loads(path.read_text())
     except FileNotFoundError:
         return None
     except OSError as exc:
         raise PanelError(f"{path} cannot be read: {exc}") from exc
     except (ValueError, RecursionError) as exc:
         raise PanelError(f"{path} is not a run record: {exc}") from exc
-    if (fault := _record_fault(record)) is not None:
+    if (fault := _record_fault(held)) is not None:
         raise PanelError(f"{path} is not a run record: {fault}")
-    return record
+    return held
 
 
 def _record_fault(record: object) -> str | None:
@@ -418,18 +418,16 @@ def _record_fault(record: object) -> str | None:
     return None
 
 
-def _check_run_record(pair_root: Path, params: dict, code_ref: str) -> None:
+def _check_run_record(pair_root: Path, params: dict, code_ref: str, *, record: str = RUN_RECORD) -> None:
     """A resume continues only the run that wrote the pair's record."""
-    record = _read_record(pair_root)
-    if record is None:
+    held = _read_record(pair_root, record=record)
+    if held is None:
         if stray := sorted(_day_files(pair_root).values()):
-            raise PanelError(
-                f"{pair_root} holds day files (e.g. {stray[0]}) and no {RUN_RECORD}: the run that wrote them is unknown"
-            )
+            raise PanelError(f"{pair_root} holds day files (e.g. {stray[0]}) and no {record}: the run that wrote them is unknown")
         return
-    if record["params"] != params or record["code_ref"] != code_ref:
+    if held["params"] != params or held["code_ref"] != code_ref:
         raise PanelError(
-            f"{pair_root / RUN_RECORD}: written with params {record['params']} at code {record['code_ref']}, "
+            f"{pair_root / record}: written with params {held['params']} at code {held['code_ref']}, "
             f"not this run's params {params} at code {code_ref} -- a change is a new out root"
         )
 
@@ -475,7 +473,7 @@ def _mark(out_root: Path, pair: str) -> None:
 
 
 def write_day(
-    out_root: Path, pair: str, day: date, frame: pl.DataFrame, entry: dict, *, params: dict, code_ref: str
+    out_root: Path, pair: str, day: date, frame: pl.DataFrame, entry: dict, *, params: dict, code_ref: str, record: str = RUN_RECORD
 ) -> Path | None:
     """Write `pair`'s day: its entry into the run record first, then, unless `frame` is empty, the day file as
     `write_hour` publishes an hour -- the sidecar before the rename, so a kill leaves no day file and the re-run computes
@@ -483,12 +481,12 @@ def write_day(
     pair_root = _pair_root(out_root, pair)
     try:
         pair_root.mkdir(parents=True, exist_ok=True)
-        days = (_read_record(pair_root) or {}).get("days", {})
+        days = (_read_record(pair_root, record=record) or {}).get("days", {})
         days[day.isoformat()] = entry
-        record = pair_root / RUN_RECORD
-        record_tmp = record.with_name(f"{RUN_RECORD}.{os.getpid()}.tmp")
+        record_path = pair_root / record
+        record_tmp = record_path.with_name(f"{record}.{os.getpid()}.tmp")
         record_tmp.write_text(json.dumps({"params": params, "code_ref": code_ref, "days": days}, indent=1, sort_keys=True) + "\n")
-        _replace_durably(record_tmp, record)
+        _replace_durably(record_tmp, record_path)
         if frame.height == 0:
             return None
         directory = pair_root / f"{day:%Y}" / f"{day:%m}"
@@ -666,11 +664,17 @@ def _recorded_root(entry: dict | None, iso: str, kind: str) -> str:
     return "reconciled" if iso in entry[healed] else "primary"
 
 
-def _relisting_disputes(records: dict[str, dict], primary_root: Path, reconciled_root: Path | None) -> list[str]:
-    """Every hour of a recorded pair's `[since, until)` the archive lists now from another root than the run recorded
-    for it; an hour this listing lacks is not compared."""
+def _relisting_disputes(
+    records: dict[str, dict], primary_root: Path, reconciled_root: Path | None, *, hours_of_day: tuple[int, ...] = tuple(range(24))
+) -> list[str]:
+    """Every hour of a recorded pair's `[since, until)` at `hours_of_day` the archive lists now from another root than the
+    run recorded for it; an hour this listing lacks is not compared."""
     spans = {
-        pair: set(_hours(datetime.fromisoformat(r["params"]["since"]), datetime.fromisoformat(r["params"]["until"])))
+        pair: {
+            hour
+            for hour in _hours(datetime.fromisoformat(r["params"]["since"]), datetime.fromisoformat(r["params"]["until"]))
+            if hour.hour in hours_of_day
+        }
         for pair, r in records.items()
     }
     disputes = []
