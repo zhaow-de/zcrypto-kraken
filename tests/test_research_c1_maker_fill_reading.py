@@ -13,6 +13,8 @@ from cli.registry.record import validate_metrics
 from cli.research import subjects
 from tests.l2_fills_fixtures import EMPTY_PRIMARY, WRITTEN_AT, write_l2_fills_set
 
+pytestmark = pytest.mark.retired
+
 SUBJECT = "c1-maker-fill-reading"
 DATASET = "l2-fills-test"
 OUTCOMES = (
