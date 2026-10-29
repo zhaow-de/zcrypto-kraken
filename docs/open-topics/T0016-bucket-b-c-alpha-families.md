@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: 'C3: a milestone, rung 3''s entry recorded — the owner''s pick of 2026-10-29 for the deferral of 2026-08-23 (see `## Done so far`), `docs/reference/rung3/days.md` being born with the rung''s first entry (`engine-rung-3` in `infra/runbooks/engine-procedures.md`); check: `test -f docs/reference/rung3/days.md` exits 0'
+ripe_when: 'C3: an activity — rung 3''s entry recorded, `docs/reference/rung3/days.md` reaching `develop` with week 1''s records pull request, its first entry the birth; check: `test -f docs/reference/rung3/days.md` exits 0'
 ---
 
 # Bucket-B/C alpha families — the un-started remainder of the §5 queue
@@ -42,7 +42,7 @@ Buckets B (intraday band) and C (long shots) are where the master plan's residua
 
 - **C1 opened (iter-196, spec/plan `00151`)** on the owner's family pick of 2026-10-28, its first step a no-slot reading, the loop's pick under the owner's run instruction: the producer `cli/panel/fills.py` with `zcrypto panel fills` and `zcrypto panel fills-manifest`, the set `l2-fills-20261029T000157Z`, the module `cli/alpha/c1.py`, the subject `c1-maker-fill-reading` and its data-gated basis test `tests/test_research_c1_maker_fill_reading_basis.py`; the maker-fill reading (reading 8), no slot spent, bucket C's 10 untouched; the subject retired; **closed at iter-197** on the owner's pick of 2026-10-29, the producer and the set kept as an execution-research instrument.
 
-- **C3 is ripe and deliberately NOT picked up (re-deferred 2026-08-23, owner's call).** C3's sourcing has been unblocked since iter-072; the reason is contention: the active front is the Phase-6b go-live run-up ([[T0085]]), and opening an alpha family competes with it for the same attention while the live path is being armed. This is a decision, not an oversight, recorded here so the ripe state stops reading as a miss.
+- **C3 deferred on the owner's call of 2026-08-23.** C3's sourcing has been unblocked since iter-072; the reason is contention: the active front is the Phase-6b go-live run-up ([[T0085]]), and opening an alpha family competes with it for the same attention while the live path is being armed.
 
 ## Standing prerequisites for any short-carrying or levered family (registered here because this topic's families fire them)
 
@@ -51,4 +51,4 @@ Buckets B (intraday band) and C (long shots) are where the master plan's residua
 
 ## Suggested next steps
 
-- C3 is bucket C's last family, deferred on the owner's call of 2026-08-23 until go-live is settled, and ripe once rung 3's entry is recorded (the owner's pick of 2026-10-29).
+- C3 is bucket C's last family, deferred on the owner's call of 2026-08-23 and ripe once rung 3's entry is recorded (the owner's pick of 2026-10-29).
