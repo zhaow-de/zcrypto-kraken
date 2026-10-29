@@ -7,11 +7,11 @@ Iteration `iter-198`, family P1 (master plan §12, "Ongoing — Operate, Monitor
 Measured 2026-10-29 on `zcrypto-ops`, the workstation, in the branch's worktree over a symlink to the main checkout's `data/ohlc-rolling`, read-only.
 
 - **The deployable** is registry record 47 (`P1-crossfreq-fixedthird-twelve-leg-basket-btczero`, iter-139, adopted 2026-08-15T00:30:58Z, family P1, `n_trials_in_family` 5), read over `ohlc-full` through 2026-03-31: `ann_sharpe_noc` 1.5609, `n_bars_compared_4h` 27337, `cap_breach_bars` 1318, `maxdd` 0.1357, `decisive_start` 1380 — the decisive window's first return index, `k ≥ 230` daily bars under B3 + vt-dynamic (master plan §12, Phase 4's kill bar). `cli/research/subjects.py`'s `LEGACY_INCUMBENTS` maps 47 to the subject `record44-crossfreq`, whose builder `_crossfreq_book` rebuilds that book at its own cost literal, `_RECORD44_CONFIG` (fee 0.0040 and spread 0.0020 a side).
-- **The rolling set as of 2026-10-10**, the newest index line in the main checkout: `uv run zcrypto data rolling verify --as-of 2026-10-10 --root data/ohlc-rolling` → `2026-10-10 fcb62a79fab7b58626f0cbd96ae40093a6dfc9e6ff51384cf25a5e9759dc44c4 files=132`, rc 0; the line's `holes` is `{}`. Its frame is Kraken's quarterly dump through 2026-09-30, then the captured tape's daily bars from 2026-10-01 (README, `zcrypto data rolling`). No later line exists locally: extending the set writes under `data/`, an operator act outside this change.
-- **The known answer**: `uv run zcrypto research eval --subject record44-crossfreq --dataset ohlc-rolling --as-of 2026-10-10 --window '2010-01-01 00:00:00+00:00' '2026-03-31 23:59:59+00:00'` → `ann_sharpe_noc` 1.560907676587497, `n_periods` 27337, `cap_breach_bars` 1318, `governor_engaged_bars` 7302, span 2013-09-10 00:00 → 2026-03-31 20:00, rc 0, in 3 s. The rolling set reproduces record 47's in-sample book: the same Sharpe to four places, the same period count, the same cap breaches.
+- **The rolling set as of 2026-10-27**, the hub's head, brought to the main checkout on the owner's second word (D1) by `uv run zcrypto data fetch` there (new=221, rc 0), the lines 2026-10-11 → 2026-10-27 each 12 files and no hole: `uv run zcrypto data rolling verify --as-of 2026-10-27 --root data/ohlc-rolling` → `2026-10-27 89ab2d72cfffe52befa7fc767c522e945ebeb3b78bb0f379e25d72f419c812c4 files=336`, rc 0. Its frame is Kraken's quarterly dump through 2026-09-30, then the captured tape's daily bars from 2026-10-01 (README, `zcrypto data rolling`).
+- **The known answer**: `uv run zcrypto research eval --subject record44-crossfreq --dataset ohlc-rolling --as-of 2026-10-27 --window '2010-01-01 00:00:00+00:00' '2026-03-31 23:59:59+00:00'` → `ann_sharpe_noc` 1.560907676587497, `n_periods` 27337, `cap_breach_bars` 1318, `governor_engaged_bars` 7302, span 2013-09-10 00:00 → 2026-03-31 20:00. The rolling set reproduces record 47's in-sample book: the same Sharpe to four places, the same period count, the same cap breaches.
 - **The union's stamps** are bar opens and the net series has one value fewer than the bars: return `i` runs from bar `i`'s close to bar `i + 1`'s (`cli/alpha/b2.py`'s `funding_grid_feature` docstring: "the union's bar-open stamps in, `len(union_ts) - 1` values out").
-- **The slice's bars**, read through the subject's own loader `_capturing_union` over `ohlc-rolling` as of 2026-10-10 with the window 2026-07-10 00:00 → 2026-10-10 23:59:59, no return computed: 558 four-hour bars, stamped 2026-07-10 00:00 → 2026-10-10 20:00, and 93 daily bars, 2026-07-10 → 2026-10-10, for each of the ten assets (ADA, AVAX, BTC, DOGE, DOT, ETH, LINK, LTC, SOL, XRP), no null close in either grid.
-- **The in-sample band at the slice's length**, from the known answer's build alone (no return after 2026-03-31 computed), the decisive window's 25957 returns cut into every run of 557 consecutive returns starting every 6 returns, one day: 4234 windows; their annualized Sharpe (`cli/validation/metrics.py`'s `sharpe`, 2190 periods a year) has 5th percentile −3.2424, median 0.7549, and 42.04 % of them are below zero; their max drawdown (`max_drawdown`) has median 0.0373 and 95th percentile 0.0704. Over three months the deployable's own history spans a wide range: the book earns in a few strong stretches and gives a little back between them.
+- **The slice's bars**, read through the subject's own loader `_capturing_union` over `ohlc-rolling` as of 2026-10-27 with the window 2026-07-10 00:00 → 2026-10-27 23:59:59, no return computed: 660 four-hour bars, stamped 2026-07-10 00:00 → 2026-10-27 20:00, so 659 returns, and 110 daily bars, 2026-07-10 → 2026-10-27, for each of the ten assets (ADA, AVAX, BTC, DOGE, DOT, ETH, LINK, LTC, SOL, XRP), no null close in either grid.
+- **The in-sample band at the slice's length**, from the known answer's build alone (no return after 2026-03-31 computed), the decisive window's 25957 returns cut into every run of 659 consecutive returns starting every 6 returns, one day: 4217 windows; their annualized Sharpe (`cli/validation/metrics.py`'s `sharpe`, 2190 periods a year) has 5th percentile −2.8851, median 0.8707, and 40.08 % of them are below zero; their max drawdown (`max_drawdown`) has median 0.0402 and 95th percentile 0.0736. Over 110 days the deployable's own history spans a wide range: the book earns in a few strong stretches and gives a little back between them.
 
 ## Operating model
 
@@ -20,26 +20,27 @@ Measured 2026-10-29 on `zcrypto-ops`, the workstation, in the branch's worktree 
 
 ## The question and its rule
 
-Does record 47's book, scored on the 557 returns after the spent holdout window that its adoption never saw, stay inside the band its own in-sample history draws for a run of that length? At three months the band is wide (the measured basis): the reading can show a book that broke, never confirm an edge. Each later monthly run scores the whole span from 2026-07-10 to its as-of day, so the slice grows and the band narrows with it.
+Does record 47's book, scored on the 659 returns after the spent holdout window that its adoption never saw, stay inside the band its own in-sample history draws for a run of that length? At 110 days the band is wide (the measured basis): the reading can show a book that broke, never confirm an edge. Each later monthly run scores the whole span from 2026-07-10 to its as-of day, so the slice grows and the band narrows with it.
 
 ## D1 — the pick: the owner's word
 
 - The owner's word of 2026-10-29, verbatim: "go ahead with 1 and 2, the window from 2026-07-10 is fine" — item 1 being "Revalidate the deployable on data it never saw", put to the owner beside three other items, its window choice the owner's to confirm because the read is of the adopted system. Item 2, the engine's execution cost from the kept fill model, is its own iteration.
+- The owner's second word of 2026-10-29, told that the local rolling set ended at 2026-10-10, verbatim: "extend the rolling set first, then rerun the revalidation" — the read is as of 2026-10-27, the hub's head (the measured basis). Both words stand in the phase-6 decisions log's `[iter-198]` pick entry.
 
 ## D2 — the instrument
 
-- **The book**: record 47's, built by `_crossfreq_book` over `ohlc-rolling` as of 2026-10-10, full history from 2013-09-10, no window, at `_RECORD44_CONFIG`; the governed net-of-cost series is the scored series.
+- **The book**: record 47's, built by `_crossfreq_book` over `ohlc-rolling` as of 2026-10-27, full history from 2013-09-10, no window, at `_RECORD44_CONFIG`; the governed net-of-cost series is the scored series.
 - **No hole is crossed**: the run takes no `--accept-holes`; the as-of line records none.
 
 ## D3 — the slice
 
-- **The 557 returns between the closes of consecutive bars both stamped at or after 2026-07-10 00:00Z**, through the as-of day's last bar: the first runs from the close of the 2026-07-10 00:00 bar to the close of the 04:00 bar, the last from the close of the 2026-10-10 16:00 bar to the close of the 20:00 bar. No return has an end at a bar stamped inside the spent holdout window.
+- **The 659 returns between the closes of consecutive bars both stamped at or after 2026-07-10 00:00Z**, through the as-of day's last bar: the first runs from the close of the 2026-07-10 00:00 bar to the close of the 04:00 bar, the last from the close of the 2026-10-27 16:00 bar to the close of the 20:00 bar. No return has an end at a bar stamped inside the spent holdout window.
 - **The spent holdout window, 2026-04-01 → 2026-07-09, is read as history and never scored**, as `[iter-176]` rules ("the adopted system is never re-evaluated on it"): its bars feed the signals the slice's first positions are formed from, and no metric, band window or reported read covers a return inside it.
 
 ## D4 — the band
 
 - **The reference**: the same build's governed net returns with index at or above record 47's `decisive_start` (1380) whose bars are stamped at or before 2026-03-31 20:00 — the decisive window record 47 was adopted on, 25957 returns.
-- **The windows**: every run of `L` consecutive reference returns starting at reference offset 0, 6, 12, …, `L` the slice's length (557 here); per window, the annualized Sharpe and the max drawdown as the measured basis computes them.
+- **The windows**: every run of `L` consecutive reference returns starting at reference offset 0, 6, 12, …, `L` the slice's length (659 as of 2026-10-27); per window, the annualized Sharpe and the max drawdown as the measured basis computes them.
 - **The band**: the 5th percentile of the windows' Sharpes and the 95th percentile of their max drawdowns, `numpy.percentile` with its default linear interpolation.
 
 ## D5 — the rule, pre-registered
@@ -51,7 +52,7 @@ Does record 47's book, scored on the 557 returns after the spent holdout window 
 
 ## D6 — the reported reads, beside the rule and never in it
 
-- The slice's length; the band's window count; the slice's Sharpe rank, the share of band windows whose Sharpe is at or below the slice's; the slice's ungoverned Sharpe; the frozen 4h benchmark's Sharpe over the same slice (`cli/portfolio/record44_legs.py`'s `benchmark_4h_net_of_cost` at 0.006 a side, its returns indexed as the book's) and the mean per-return difference, governed book less benchmark; the slice's deflated Sharpe ratio (`cli/validation/dsr.py`'s `deflated_sharpe_ratio`, the slice's per-period Sharpe, its 557 observations, P1's true count with this record, 6, `var_trials` 0.0, skew and kurtosis at their defaults as `cli/alpha/killbar.py` calls it), the master plan's "DSR at true trial count", read and never binding: at 557 returns no Sharpe this book has shown reaches it.
+- The slice's length; the band's window count; the slice's Sharpe rank, the share of band windows whose Sharpe is at or below the slice's; the slice's ungoverned Sharpe; the frozen 4h benchmark's Sharpe over the same slice (`cli/portfolio/record44_legs.py`'s `benchmark_4h_net_of_cost` at 0.006 a side, its returns indexed as the book's) and the mean per-return difference, governed book less benchmark; the slice's deflated Sharpe ratio (`cli/validation/dsr.py`'s `deflated_sharpe_ratio`, the slice's per-period Sharpe, its observation count, the slice's length, P1's true count with this record, 6, and P1's registered cross-trial variance of per-period Sharpes, 1.3058096692086857e-05 — the `var_trials_4h` records 43, 44 and 47 carry, under which the count deflates — skew and kurtosis at their defaults as `cli/alpha/killbar.py` calls it), T0122's "DSR at true trial count", read and never binding.
 
 ## D7 — the family, the count and the record
 
@@ -66,12 +67,12 @@ Does record 47's book, scored on the 557 returns after the spent holdout window 
 
 ## D9 — the hash rule and the order of work
 
-- Before this spec's hash nobody computes a return after 2026-03-31 over the real data: the known answer and the band above read through 2026-03-31 alone, and the subject is proven on synthetic series. After the hash: the run with `--register`, the record, the entry, T0122's next steps, the replay case for the record.
+- Before this spec's hash nobody computes a return after 2026-03-31 over the real data: the known answer and the band above read through 2026-03-31 alone, the module's own reads over that build — the prefix's count and Sharpe, the reference's length and the band at 659 — are checked against them, and the subject is proven on synthetic series. After the hash: the run with `--register`, the record, the entry, T0122's next steps, the replay case for the record.
 
 ## D10 — what a verdict changes
 
-- Nothing on the live path. `adopt` adds the first out-of-time evidence beside record 47; `park` is a finding to the owner, read by value, with the production kill criteria unchanged. Either way T0122's monthly bullet records this run as its first and names the next: a new subject over the same build and this spec, its `n_trials` one higher — the command refuses a further trial of a subject whose count a landed record froze (`cli/research/command.py`) — run on the rolling set's first as-of a month or more after 2026-10-10, once an operator has extended the set.
+- Nothing on the live path. `adopt` adds the first out-of-time evidence beside record 47; `park` is a finding to the owner, read by value, with the production kill criteria unchanged. Either way T0122's monthly bullet records this run as its first and names the next: a new subject over the same build and this spec, its `n_trials` one higher — the command refuses a further trial of a subject whose count a landed record froze (`cli/research/command.py`) — run on the rolling set's first as-of a month or more after 2026-10-27, once an operator has extended the set.
 
 ## Out of scope
 
-Extending `ohlc-rolling` past 2026-10-10; the live engine's long-only spot book and the paired live-versus-simulation harness (T0122's other next steps); any change to record 47, the deployable, the engine or a rung; any read of `data/ohlc-holdout-2026-07-10`; the execution-cost reading over the fill model, its own iteration.
+Extending `ohlc-rolling` past 2026-10-27; the live engine's long-only spot book and the paired live-versus-simulation harness (T0122's other next steps); any change to record 47, the deployable, the engine or a rung; any read of `data/ohlc-holdout-2026-07-10`; the execution-cost reading over the fill model, its own iteration.
