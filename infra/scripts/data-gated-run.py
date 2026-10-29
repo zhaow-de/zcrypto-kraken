@@ -56,7 +56,11 @@ TOKEN_FILE = Path.home() / ".config" / "zcrypto" / "coveralls.env"
 TOKEN_KEY = "COVERALLS_REPO_TOKEN"
 _TOKEN_LINE = re.compile(rf"{TOKEN_KEY}=(?P<token>[^\s'\"]*)")
 RESULT_DIR = Path(".local") / "data-gated-runs"
-SCHEMA = 4
+SCHEMA = 5
+# A producer's mark at a set's root while it writes the set (cli/panel/fills.py).
+PRODUCING_MARKER = ".producing"
+# A mark untouched this long before the run's start is a dead run's, not a live producer's: it admits nothing.
+MARK_FRESH = timedelta(hours=6)
 # `1 failed, 2 passed, 1 error in 0.01s`, `no tests ran in 0.00s`, `3 passed in 65.12s (0:01:05)` --
 # with or without the `=` rule a non-quiet run draws around the line.
 _SUMMARY = re.compile(r"^=*\s*(?P<body>\d+ [a-z]+(?:, \d+ [a-z]+)*|no tests ran) in \d+(?:\.\d+)?s(?: \([\d:]+\))?\s*=*$")
@@ -196,9 +200,16 @@ def data_listing(repo: Path) -> list[list] | None:
     for root, dirs, files in os.walk(data):
         for name in (*dirs, *files):
             path = Path(root) / name
-            st = os.lstat(path)
+            try:
+                st = os.lstat(path)
+            except FileNotFoundError:
+                continue
             listing.append([path.relative_to(repo).as_posix(), st.st_size, st.st_mtime_ns])
     return sorted(listing)
+
+
+def _set_of(path: str) -> str:
+    return path.split("/")[1]
 
 
 def worktree_path(repo: Path, started: datetime) -> Path:
@@ -355,6 +366,7 @@ def build_result(
     run_error: str | None,
     teardown: dict | None,
     data_listing: tuple[list[list] | None, list[list] | None],
+    linked: list[str],
     swept: list[str],
     sweep_left: list[str],
     sweep_error: str | None,
@@ -371,10 +383,18 @@ def build_result(
     if teardown is not None and teardown["error"]:
         faults.append(f"teardown: {teardown['error']}")
     listing_start, listing_end = data_listing
-    intact = listing_start == listing_end
-    if not intact:
-        differing = {tuple(e) for e in listing_start or []} ^ {tuple(e) for e in listing_end or []}
-        faults.append(f"the checkout's data/ listing changed during the run: {sorted({e[0] for e in differing})}")
+    start, end = ({tuple(e) for e in listing or []} for listing in data_listing)
+    present = {_set_of(e[0]) for e in start} | set(linked)
+    born = sorted({_set_of(e[0]) for e in end if e[0].count("/") > 1} - present)
+    manifested = {_set_of(e[0]) for e in start if e[0].count("/") == 2 and e[0].endswith("/manifest.json")}
+    fresh_ns = (started - MARK_FRESH - datetime(1970, 1, 1, tzinfo=timezone.utc)) // timedelta(microseconds=1) * 1000
+    marked = {_set_of(e[0]) for e in start if e[0].count("/") == 2 and e[0].endswith("/" + PRODUCING_MARKER) and e[2] >= fresh_ns}
+    producing = sorted(marked - manifested)
+    admitted = {*born, *producing}
+    changed = sorted({e[0] for e in start ^ end if _set_of(e[0]) not in admitted})
+    intact = not changed
+    if changed:
+        faults.append(f"the checkout's data/ listing changed during the run: {changed}")
     error = "; ".join(f for f in faults if f) or None
     return {
         "schema": SCHEMA,
@@ -407,6 +427,8 @@ def build_result(
         "teardown": teardown,
         "data_listing_intact": intact,
         "data_listing": None if intact else {"start": listing_start, "end": listing_end},
+        "data_listing_born": born,
+        "data_listing_producing": producing,
         "error": error,
         "ok": error is None and exit_code == 0 and counts["failed"] == 0 and counts["errors"] == 0,
     }
@@ -567,6 +589,7 @@ def main(argv: list[str] | None = None) -> int:
     command, exit_code, output, run_error = None, None, "", None
     worktree = teardown = None
     created = False
+    linked = []
     if not data_present:
         run_error = f"data absent: {data_dir} holds no dataset; nothing ran"
     elif uv is None:
@@ -580,7 +603,7 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 add_worktree(repo, state["sha"], worktree)
                 created = True
-                link_datasets(repo, worktree, deadline)
+                linked = link_datasets(repo, worktree, deadline)
                 pytest_args = args.extra if coverage_off else list(COVERAGE_ARGS)
                 command, exit_code, output, run_error = run_suite(worktree, uv, pytest_args, args.timeout, develop=state["develop"])
             except Exception as exc:
@@ -612,6 +635,7 @@ def main(argv: list[str] | None = None) -> int:
         run_error=run_error,
         teardown=teardown,
         data_listing=(listing_start, data_listing(repo)),
+        linked=linked,
         swept=swept,
         sweep_left=sweep_left,
         sweep_error=sweep_error,

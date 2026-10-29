@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from cli.panel import fills
 from tests.role_render import render
 from tests.test_infra_converge_guards import find_task, iter_tasks, load_tasks, truthy
 
@@ -397,11 +398,13 @@ def test_the_runner_writes_the_stamped_file_and_latest_with_the_full_shape(tmp_p
         "teardown",
         "data_listing_intact",
         "data_listing",
+        "data_listing_born",
+        "data_listing_producing",
         "error",
         "ok",
         "coverage_upload",
     }
-    assert latest["schema"] == 4
+    assert latest["schema"] == 5
     assert latest["coverage_upload"] == {"outcome": "skipped", "reason": "--no-coverage: the run measured none"}
     started, finished = (
         datetime.strptime(latest[k], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc) for k in ("started", "finished")
@@ -431,6 +434,7 @@ def test_the_runner_writes_the_stamped_file_and_latest_with_the_full_shape(tmp_p
     assert sys.executable not in latest["command"]
     assert latest["teardown"] == {"worktree": worktree, "unlinked": ["ohlc-full"], "left": [], "removed": True, "error": None}
     assert latest["data_listing_intact"] is True and latest["data_listing"] is None
+    assert latest["data_listing_born"] == [] and latest["data_listing_producing"] == []
     _no_worktree_left(repo)
     assert latest["exit_code"] == 1
     assert latest["counts"]["passed"] == 1 and latest["counts"]["failed"] == 1 and latest["counts"]["skipped"] == 1
@@ -707,7 +711,7 @@ def test_a_clean_start_sweeps_nothing_and_records_the_empty_list(tmp_path):
     assert latest["swept"] == [] and latest["sweep_left"] == [] and latest["sweep_error"] is None and latest["ok"] is True
 
 
-def test_a_suite_that_writes_into_the_checkouts_data_is_caught_by_the_listing_and_fails_the_run(tmp_path):
+def test_a_suite_that_writes_into_a_set_the_checkouts_data_held_is_caught_by_the_listing_and_fails_the_run(tmp_path):
     # One level down, as a write through the worktree's dataset link lands: a top-level listing would miss it.
     repo = _checkout(
         tmp_path,
@@ -730,6 +734,149 @@ def test_a_suite_that_writes_into_the_checkouts_data_is_caught_by_the_listing_an
     assert "data/ohlc-full/intruder.parquet" in latest["error"]
     assert latest["ok"] is False
     assert proc.stdout.rstrip().splitlines()[-1].startswith("data-gated-run: FAIL exit=0 the checkout's data/ listing changed")
+
+
+def test_a_set_born_under_the_checkouts_data_during_the_run_is_named_and_the_night_passes(tmp_path):
+    repo = _checkout(
+        tmp_path,
+        """\
+        import os
+        def test_a_producer_writes_a_new_set():
+            day = os.path.join(os.environ["SYNTH_REPO"], "data", "l2-fills-born", "day")
+            os.makedirs(day)
+            open(os.path.join(day, "2026-10-29.parquet"), "w").write("x")
+        """,
+    )
+    proc = _run(tmp_path, repo)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    latest = _latest(repo)
+    assert latest["data_listing_born"] == ["l2-fills-born"]
+    assert latest["data_listing_intact"] is True and latest["data_listing"] is None
+    assert latest["error"] is None and latest["ok"] is True
+
+
+def test_a_file_removed_from_a_set_present_at_the_start_fails_the_night(tmp_path):
+    repo = _checkout(
+        tmp_path,
+        """\
+        import os
+        def test_removes():
+            os.remove(os.path.join(os.environ["SYNTH_REPO"], "data", "ohlc-full", "manifest.json"))
+        """,
+    )
+    proc = _run(tmp_path, repo)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    latest = _latest(repo)
+    assert latest["data_listing_intact"] is False and latest["data_listing_born"] == []
+    assert "data/ohlc-full/manifest.json" in latest["error"]
+    assert latest["ok"] is False
+
+
+def test_a_set_landing_before_the_link_is_linked_never_born_and_a_write_through_it_fails_the_night(tmp_path, monkeypatch):
+    repo = _checkout(tmp_path, "def test_ok(): pass\n")
+    add_worktree = runner.add_worktree
+
+    def add_then_a_set_lands(repo_, sha, worktree):
+        add_worktree(repo_, sha, worktree)
+        (repo / "data" / "l2-fills-late").mkdir()
+        (repo / "data" / "l2-fills-late" / "a.parquet").write_text("x")
+
+    def run_suite(worktree, uv, pytest_args, timeout, *, develop):
+        (worktree / "data" / "l2-fills-late" / "written-by-the-suite.parquet").write_text("x")
+        return ["pytest"], 0, _PASSING, None
+
+    monkeypatch.setattr(runner, "add_worktree", add_then_a_set_lands)
+    monkeypatch.setattr(runner, "run_suite", run_suite)
+    monkeypatch.setenv("UV", "/nonexistent/uv")
+    assert runner.main(["--repo", str(repo), "--no-coverage"]) == 1
+    latest = _latest(repo)
+    assert latest["data_listing_born"] == [] and latest["data_listing_intact"] is False and latest["ok"] is False
+    assert "data/l2-fills-late/written-by-the-suite.parquet" in latest["error"]
+
+
+def test_a_producer_writing_through_the_night_into_the_set_it_marked_passes_the_night(tmp_path):
+    repo = _checkout(
+        tmp_path,
+        """\
+        import os
+        def test_the_producer_writes_on():
+            root = os.path.join(os.environ["SYNTH_REPO"], "data", "l2-fills-prod")
+            open(os.path.join(root, "BTC", "EUR", "fills-run.json"), "w").write("{}")
+            os.makedirs(os.path.join(root, "ETH", "EUR"))
+            open(os.path.join(root, "ETH", "EUR", "fills-run.json"), "w").write("{}")
+        """,
+    )
+    prod = repo / "data" / "l2-fills-prod"
+    (prod / "BTC" / "EUR").mkdir(parents=True)
+    (prod / fills.PRODUCING_MARKER).write_text("")
+    (prod / "BTC" / "EUR" / "fills-run.json").write_text("{}\n")
+    proc = _run(tmp_path, repo)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    latest = _latest(repo)
+    assert latest["data_listing_producing"] == ["l2-fills-prod"] and latest["data_listing_born"] == []
+    assert latest["data_listing_intact"] is True and latest["error"] is None and latest["ok"] is True
+
+
+def test_the_runner_and_the_fill_producer_name_one_marker():
+    assert runner.PRODUCING_MARKER == fills.PRODUCING_MARKER
+
+
+def test_a_name_renamed_away_between_the_walk_and_its_lstat_is_left_out_of_the_listing(tmp_path, monkeypatch):
+    (tmp_path / "data" / "l2-fills-x").mkdir(parents=True)
+    (tmp_path / "data" / "l2-fills-x" / "a.parquet").write_text("x")
+    (tmp_path / "data" / "l2-fills-x" / "b.parquet.7.tmp").write_text("x")
+    lstat = os.lstat
+
+    def renamed_away(path, *args, **kwargs):
+        if str(path).endswith(".tmp"):
+            raise FileNotFoundError(2, "No such file or directory", str(path))
+        return lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(runner.os, "lstat", renamed_away)
+    assert [entry[0] for entry in runner.data_listing(tmp_path)] == ["data/l2-fills-x", "data/l2-fills-x/a.parquet"]
+
+
+_PRESENT = [["data/.gitignore", 12, 1], ["data/ohlc-full", 4096, 1], ["data/ohlc-full/manifest.json", 3, 1]]
+_BORN = [["data/l2-fills-x", 4096, 2], ["data/l2-fills-x/a.parquet", 1, 2]]
+
+
+@pytest.mark.parametrize(
+    ("end", "born", "changed"),
+    [
+        (_PRESENT + _BORN, ["l2-fills-x"], []),
+        (_PRESENT + [["data/ohlc-full/intruder.parquet", 1, 2]], [], ["data/ohlc-full/intruder.parquet"]),
+        (_PRESENT[:2], [], ["data/ohlc-full/manifest.json"]),
+        (_PRESENT[:2] + [["data/ohlc-full/manifest.json", 4, 2]], [], ["data/ohlc-full/manifest.json"]),
+        ([["data/.gitignore", 13, 2], *_PRESENT[1:]], [], ["data/.gitignore"]),
+        (_PRESENT[:1], [], ["data/ohlc-full", "data/ohlc-full/manifest.json"]),
+        (None, [], ["data/.gitignore", "data/ohlc-full", "data/ohlc-full/manifest.json"]),
+        (_PRESENT[:2] + [["data/ohlc-full/manifest.json", 4, 2]] + _BORN, ["l2-fills-x"], ["data/ohlc-full/manifest.json"]),
+        (_PRESENT + [["data/stray.json", 2, 2]], [], ["data/stray.json"]),
+        (_PRESENT + _BORN[:1], [], ["data/l2-fills-x"]),
+    ],
+    ids=[
+        "born",
+        "added-under-a-present-set",
+        "removed",
+        "changed-in-place",
+        "a-top-level-file-changed",
+        "a-present-set-removed-whole",
+        "data-gone",
+        "born-beside-a-change",
+        "a-top-level-file-is-no-set",
+        "an-empty-directory-is-no-set",
+    ],
+)
+def test_only_a_set_absent_at_the_start_is_admitted_and_every_other_difference_fails(end, born, changed):
+    result = _result(data_listing=(_PRESENT, end))
+    assert result["data_listing_born"] == born
+    assert result["data_listing_intact"] is (not changed)
+    if changed:
+        assert result["error"] == f"the checkout's data/ listing changed during the run: {changed}"
+        assert result["data_listing"] == {"start": _PRESENT, "end": end}
+        assert result["ok"] is False
+    else:
+        assert result["error"] is None and result["data_listing"] is None and result["ok"] is True
 
 
 def test_a_run_that_cannot_parse_its_summary_writes_a_result_saying_so(tmp_path):
@@ -815,6 +962,91 @@ _STATE = {
 _LISTING = ([["data/.gitignore", 12, 1], ["data/ohlc-full", 4096, 1]], [["data/.gitignore", 12, 1], ["data/ohlc-full", 4096, 1]])
 
 
+def test_a_set_linked_into_the_worktree_is_never_born_though_the_start_listing_lacked_it():
+    result = _result(data_listing=(_PRESENT, _PRESENT + _BORN), linked=["ohlc-full", "l2-fills-x"])
+    assert result["data_listing_born"] == [] and result["ok"] is False
+    assert (
+        result["error"] == "the checkout's data/ listing changed during the run: ['data/l2-fills-x', 'data/l2-fills-x/a.parquet']"
+    )
+
+
+# `_result`'s start, in ns.
+_RUN_START_NS = (
+    (datetime(2026, 9, 14, 2, 30, tzinfo=timezone.utc) - datetime(1970, 1, 1, tzinfo=timezone.utc))
+    // timedelta(microseconds=1)
+    * 1000
+)
+_SIX_HOURS_NS = 6 * 3600 * 10**9
+_MARKED = [
+    ["data/l2-fills-x", 4096, 1],
+    ["data/l2-fills-x/.producing", 0, _RUN_START_NS - 60 * 10**9],
+    ["data/l2-fills-x/a.parquet", 1, 1],
+]
+
+
+def test_every_difference_under_a_set_marked_in_production_at_the_start_is_admitted_and_the_set_named():
+    end = _PRESENT + [
+        ["data/l2-fills-x", 4096, 2],
+        ["data/l2-fills-x/a.parquet", 2, 2],
+        ["data/l2-fills-x/b.parquet", 1, 2],
+        ["data/l2-fills-x/manifest.json", 1, 2],
+    ]
+    result = _result(data_listing=(_PRESENT + _MARKED, end), linked=["ohlc-full", "l2-fills-x"])
+    assert result["data_listing_producing"] == ["l2-fills-x"] and result["data_listing_born"] == []
+    assert result["data_listing_intact"] is True and result["error"] is None and result["ok"] is True
+
+
+def test_a_marked_set_already_holding_its_manifest_at_the_start_is_not_admitted():
+    start = _PRESENT + _MARKED + [["data/l2-fills-x/manifest.json", 1, 1]]
+    end = start + [["data/l2-fills-x/b.parquet", 1, 2]]
+    result = _result(data_listing=(start, end), linked=["ohlc-full", "l2-fills-x"])
+    assert result["data_listing_producing"] == []
+    assert result["error"] == "the checkout's data/ listing changed during the run: ['data/l2-fills-x/b.parquet']"
+
+
+@pytest.mark.parametrize(("age_ns", "admitted"), [(_SIX_HOURS_NS, True), (_SIX_HOURS_NS + 1, False)], ids=["six-hours", "older"])
+def test_a_mark_untouched_for_more_than_six_hours_before_the_run_admits_nothing(age_ns, admitted):
+    start = _PRESENT + [_MARKED[0], [_MARKED[1][0], 0, _RUN_START_NS - age_ns], _MARKED[2]]
+    end = start + [["data/l2-fills-x/b.parquet", 1, 2]]
+    result = _result(data_listing=(start, end), linked=["ohlc-full", "l2-fills-x"])
+    assert result["data_listing_producing"] == (["l2-fills-x"] if admitted else [])
+    assert result["ok"] is admitted
+    if not admitted:
+        assert result["error"] == "the checkout's data/ listing changed during the run: ['data/l2-fills-x/b.parquet']"
+
+
+def test_a_change_beside_a_set_in_production_still_fails_the_night_naming_only_it():
+    end = _PRESENT[:2] + [["data/ohlc-full/manifest.json", 4, 2]] + _MARKED + [["data/l2-fills-x/b.parquet", 1, 2]]
+    result = _result(data_listing=(_PRESENT + _MARKED, end), linked=["ohlc-full", "l2-fills-x"])
+    assert result["data_listing_producing"] == ["l2-fills-x"]
+    assert result["error"] == "the checkout's data/ listing changed during the run: ['data/ohlc-full/manifest.json']"
+
+
+_UNFINISHED = [["data/l2-fills-y", 4096, 1], ["data/l2-fills-y/a.parquet", 1, 1]]
+
+
+def test_a_mark_landing_during_the_run_admits_nothing():
+    start = _PRESENT + _UNFINISHED
+    end = start + [["data/l2-fills-y/.producing", 0, _RUN_START_NS - 60 * 10**9], ["data/l2-fills-y/b.parquet", 1, 2]]
+    result = _result(data_listing=(start, end), linked=["ohlc-full", "l2-fills-y"])
+    assert result["data_listing_producing"] == []
+    assert result["error"] == (
+        "the checkout's data/ listing changed during the run: ['data/l2-fills-y/.producing', 'data/l2-fills-y/b.parquet']"
+    )
+
+
+def test_a_mark_below_a_sets_root_admits_nothing():
+    start = (
+        _PRESENT
+        + _UNFINISHED
+        + [["data/l2-fills-y/sub", 4096, 1], ["data/l2-fills-y/sub/.producing", 0, _RUN_START_NS - 60 * 10**9]]
+    )
+    end = start + [["data/l2-fills-y/b.parquet", 1, 2]]
+    result = _result(data_listing=(start, end), linked=["ohlc-full", "l2-fills-y"])
+    assert result["data_listing_producing"] == []
+    assert result["error"] == "the checkout's data/ listing changed during the run: ['data/l2-fills-y/b.parquet']"
+
+
 def _result(**overrides) -> dict:
     return runner.build_result(
         **{
@@ -836,6 +1068,7 @@ def _result(**overrides) -> dict:
                 "error": None,
             },
             "data_listing": _LISTING,
+            "linked": ["ohlc-full"],
             "swept": [],
             "sweep_left": [],
             "sweep_error": None,

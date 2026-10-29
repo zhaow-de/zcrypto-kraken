@@ -21,7 +21,7 @@ from cli.capture.segment_writer import BOOK_SCHEMA, TRADE_SCHEMA
 from cli.data.manifest import read_manifest
 from cli.ohlc.dataset import dataset_hash
 from cli.panel.errors import PanelError
-from cli.panel.fills import RUN_RECORD, produce_pair, rows_frame, write_fills_manifest
+from cli.panel.fills import PRODUCING_MARKER, RUN_RECORD, produce_pair, rows_frame, write_fills_manifest
 from cli.panel.materialize import _code_ref, _state_path, write_state
 from cli.registry.observed import ObservedReader
 
@@ -486,6 +486,88 @@ def test_an_out_root_or_a_day_it_cannot_write_refuses_the_run(tmp_path, monkeypa
     out = tmp_path / "out"
     with pytest.raises(PanelError, match=re.escape(f"{PAIR} {D.date()}: the day cannot be written under {out / 'BTC' / 'EUR'}")):
         _produce(primary, panel, out)
+
+
+def test_a_run_marks_its_set_in_production_and_the_manifest_lifts_the_mark(produced, tmp_path):
+    primary, overlay, source, _ = produced
+    assert (source / PRODUCING_MARKER).is_file()
+    out = _copy(source, tmp_path / "out")
+    _manifest(out, primary, overlay)
+    assert (out / "manifest.json").is_file() and not (out / PRODUCING_MARKER).exists()
+
+
+def test_a_run_into_a_set_whose_manifest_landed_is_refused_and_leaves_it_unmarked(produced, tmp_path):
+    primary, overlay, source, _ = produced
+    out = _copy(source, tmp_path / "out")
+    _manifest(out, primary, overlay)
+    panel = tmp_path / "panel"
+    panel.mkdir()
+    with pytest.raises(PanelError, match=re.escape(f"{PAIR}: {out / 'manifest.json'} is present")):
+        _produce(primary, panel, out, until=END, overlay=overlay)
+    assert not (out / PRODUCING_MARKER).exists()
+
+
+def test_a_run_its_record_refuses_leaves_an_unmarked_set_unmarked(produced, tmp_path):
+    primary, overlay, source, _ = produced
+    out = _copy(source, tmp_path / "out")
+    (out / PRODUCING_MARKER).unlink()
+    panel = tmp_path / "panel"
+    panel.mkdir()
+    with pytest.raises(PanelError, match="'depth': 100.*'depth': 50"):
+        _produce(primary, panel, out, until=END, overlay=overlay, depth=50)
+    assert not (out / PRODUCING_MARKER).exists()
+
+
+def test_each_day_a_run_lands_refreshes_the_mark(tmp_path, monkeypatch):
+    primary, _, panel = _roots(tmp_path)
+    _book_hour(primary, PAIR, LATE)
+    _trades_hour(primary, PAIR, LATE, [(7, "sell", 1000.0, 1.2)])
+    _book_hour(primary, PAIR, NEXT, snapshot=False, messages=[(1800, [], [(1001.0, 0.0)])])
+    touch, touched = Path.touch, []
+
+    def counted(self, *args, **kwargs):
+        if self.name == PRODUCING_MARKER:
+            touched.append(self)
+        return touch(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "touch", counted)
+    out = tmp_path / "out"
+    _produce(primary, panel, out, until=END)
+    assert len(_record(out, PAIR)["days"]) == 2
+    assert len(touched) == 3
+
+
+def test_a_refused_manifest_leaves_the_set_marked(produced, tmp_path):
+    primary, overlay, source, _ = produced
+    out = _copy(source, tmp_path / "out")
+    _edit_record(out, OTHER, lambda record: record.update(code_ref="0000000"))
+    with pytest.raises(PanelError):
+        _manifest(out, primary, overlay)
+    assert (out / PRODUCING_MARKER).is_file()
+
+
+def test_a_mark_it_cannot_write_or_lift_refuses_by_name(produced, tmp_path, monkeypatch):
+    primary, overlay, source, _ = produced
+    out = _copy(source, tmp_path / "out")
+    touch, unlink = Path.touch, Path.unlink
+
+    def eio_on_the_mark(original):
+        def call(self, *args, **kwargs):
+            if self.name == PRODUCING_MARKER:
+                raise OSError(errno.EIO, "Input/output error", str(self))
+            return original(self, *args, **kwargs)
+
+        return call
+
+    monkeypatch.setattr(Path, "unlink", eio_on_the_mark(unlink))
+    with pytest.raises(PanelError, match=re.escape(f"{out / PRODUCING_MARKER} cannot be removed")):
+        _manifest(out, primary, overlay)
+    assert (out / "manifest.json").is_file()
+    monkeypatch.setattr(Path, "touch", eio_on_the_mark(touch))
+    fresh, panel = tmp_path / "fresh", tmp_path / "panel"
+    panel.mkdir()
+    with pytest.raises(PanelError, match=re.escape(f"{PAIR}: {fresh / PRODUCING_MARKER} cannot be written")):
+        _produce(primary, panel, fresh)
 
 
 def test_the_manifest_refuses_a_manifest_it_cannot_write(produced, tmp_path, monkeypatch):

@@ -323,6 +323,8 @@ def rows_frame(rows: list[dict]) -> pl.DataFrame:
 
 
 RUN_RECORD = "fills-run.json"
+# infra/scripts/data-gated-run.py admits every change under a set holding this, touched within 6 hours, and no manifest.json at its start.
+PRODUCING_MARKER = ".producing"
 PRODUCER = "zcrypto panel fills"
 _HOUR = timedelta(hours=1)
 _DAY = timedelta(days=1)
@@ -458,6 +460,14 @@ def seed_book(panel_root: Path, pair: str, hour: datetime, *, depth: int) -> tup
     return book, last_msg_ts
 
 
+def _mark(out_root: Path, pair: str) -> None:
+    marker = out_root / PRODUCING_MARKER
+    try:
+        marker.touch()
+    except OSError as exc:
+        raise PanelError(f"{pair}: {marker} cannot be written: {exc}") from exc
+
+
 def write_day(
     out_root: Path, pair: str, day: date, frame: pl.DataFrame, entry: dict, *, params: dict, code_ref: str
 ) -> Path | None:
@@ -536,8 +546,12 @@ def produce_pair(
         out_root.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         raise PanelError(f"{pair}: the out root {out_root} cannot be created: {exc}") from exc
+    manifest = out_root / "manifest.json"
+    if manifest.exists():
+        raise PanelError(f"{pair}: {manifest} is present: the set is finished, and a change is a new out root")
     pair_root = _pair_root(out_root, pair)
     _check_run_record(pair_root, params, code_ref)
+    _mark(out_root, pair)
     written = _day_files(pair_root)
     start = _midnight(max(written) + _DAY) if written else since
     span = _hours(start, until)
@@ -556,7 +570,9 @@ def produce_pair(
 
     def land(day: date) -> int:
         frame = rows_frame(rows_by_day.pop(day, []))
-        return write_day(out_root, pair, day, frame, entries[day], params=params, code_ref=code_ref) is not None
+        landed = write_day(out_root, pair, day, frame, entries[day], params=params, code_ref=code_ref) is not None
+        _mark(out_root, pair)
+        return landed
 
     for hour in span:
         if hour.date() not in entries:
@@ -742,4 +758,9 @@ def write_fills_manifest(out_root: Path, primary_root: Path, reconciled_root: Pa
         _replace_durably(tmp, path)
     except OSError as exc:
         raise PanelError(f"{path} cannot be written: {exc}") from exc
+    marker = out_root / PRODUCING_MARKER
+    try:
+        marker.unlink(missing_ok=True)
+    except OSError as exc:
+        raise PanelError(f"{marker} cannot be removed: {exc}") from exc
     return path
