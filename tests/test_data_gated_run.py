@@ -1000,14 +1000,25 @@ def test_a_change_beside_a_set_in_production_still_fails_the_night_naming_only_i
     assert result["error"] == "the checkout's data/ listing changed during the run: ['data/ohlc-full/manifest.json']"
 
 
-def test_a_mark_landing_during_the_run_or_below_a_sets_root_admits_nothing():
-    start = _PRESENT + [["data/ohlc-full/sub", 4096, 1], ["data/ohlc-full/sub/.producing", 0, 1]]
-    end = start + [["data/ohlc-full/.producing", 0, 2], ["data/ohlc-full/intruder.parquet", 1, 2]]
-    result = _result(data_listing=(start, end))
+_UNFINISHED = [["data/l2-fills-y", 4096, 1], ["data/l2-fills-y/a.parquet", 1, 1]]
+
+
+def test_a_mark_landing_during_the_run_admits_nothing():
+    start = _PRESENT + _UNFINISHED
+    end = start + [["data/l2-fills-y/.producing", 0, 2], ["data/l2-fills-y/b.parquet", 1, 2]]
+    result = _result(data_listing=(start, end), linked=["ohlc-full", "l2-fills-y"])
     assert result["data_listing_producing"] == []
     assert result["error"] == (
-        "the checkout's data/ listing changed during the run: ['data/ohlc-full/.producing', 'data/ohlc-full/intruder.parquet']"
+        "the checkout's data/ listing changed during the run: ['data/l2-fills-y/.producing', 'data/l2-fills-y/b.parquet']"
     )
+
+
+def test_a_mark_below_a_sets_root_admits_nothing():
+    start = _PRESENT + _UNFINISHED + [["data/l2-fills-y/sub", 4096, 1], ["data/l2-fills-y/sub/.producing", 0, 1]]
+    end = start + [["data/l2-fills-y/b.parquet", 1, 2]]
+    result = _result(data_listing=(start, end), linked=["ohlc-full", "l2-fills-y"])
+    assert result["data_listing_producing"] == []
+    assert result["error"] == "the checkout's data/ listing changed during the run: ['data/l2-fills-y/b.parquet']"
 
 
 def _result(**overrides) -> dict:
