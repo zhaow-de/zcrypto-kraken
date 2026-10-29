@@ -79,9 +79,16 @@ def test_the_maker_share_median_and_fallback_shares_read_their_own_denominators(
         for i, fill_s in enumerate((30.0, 60.0, 90.0, 300.0))
     ]
     unfilled = [
-        _row(START + (4 + i) * STEP, "bid", touch_price=None if touch_qty is None else 100.1, touch_qty=touch_qty, met_qty=met_qty)
+        _row(
+            START + (4 + i) * STEP,
+            "bid",
+            touch_price=None if touch_qty is None else 100.1,
+            touch_qty=touch_qty,
+            our_qty=2.0,
+            met_qty=met_qty,
+        )
         for i, (touch_qty, met_qty) in enumerate(
-            ((None, 0.5), (0.4, 0.5), (0.6, 0.5), (0.8, 2e-9), (1.0, 0.5), (2.0, 2.8e-17)),
+            ((None, 1.0), (0.8, 1.0), (1.2, 1.0), (1.6, 4e-9), (2.0, 1.0), (4.0, 1.5e-9)),
         )
     ]
 
