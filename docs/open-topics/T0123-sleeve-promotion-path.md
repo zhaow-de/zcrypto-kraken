@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: "a post-deploy family reaches an ADOPT verdict in `docs/reference/trial-registry.jsonl` on a book other than record 47's — the first candidate that needs the ruled path; a revalidation of record 47's own book (`p1-revalidation`, trial 63, and its monthly successors) promotes nothing — check: a record past trial 63 with verdict `adopt` whose subject is no revalidation of record 47. The shadow-alongside capability (running the candidate's contract beside the live record; no `builder_contract`/`contract_version` symbol in `cli/` today) is built then, against a real promotion."
+ripe_when: "a post-deploy family reaches an ADOPT verdict in `docs/reference/trial-registry.jsonl` on a book other than record 47's — the first candidate that needs the ruled path — check: a record past trial 63 with verdict `adopt` whose subject is no revalidation of record 47. The shadow-alongside capability (running the candidate's contract beside the live record; no `builder_contract`/`contract_version` symbol in `cli/` today) is built then, against a real promotion."
 ---
 
 # How a newly validated sleeve enters the live book
@@ -15,7 +15,7 @@ The stated goal of the whole 6b structure is that the live stack runs while rese
 
 ## Findings so far
 
-- Trial 63 (iter-198, 2026-10-29), P1's first monthly revalidation, is the first ADOPT since record 47, and it is not a promotion: it scores record 47's own unchanged book on the data after the spent holdout, so no record supersedes 47 and no contract changes — the ruled path has nothing to promote. The trigger names a book other than record 47's so that neither it nor a later revalidation that passes reads as the first candidate; the owner asked on 2026-10-29 that this topic be weighed in iter-198's scope on an ADOPT.
+- Trial 63 (iter-198), P1's first monthly revalidation, is the first ADOPT since record 47 and promotes nothing: it scores record 47's own unchanged book on the data after the spent holdout, so no record supersedes 47 and no contract changes — hence the trigger names a book other than record 47's.
 - The pieces all exist separately: Phase-5 assembly produced the deployable's weights; the builder-contract mechanism versions records; Stage 6a defined shadow concordance as the parity gate; the ramp defined criteria-gated capital steps. The promotion path is their composition for a *changed* book, plus the answer to how much shadow evidence a change needs (a full 14-day re-gate? proportional to the change?).
 - §12 already forbids the alternative ("new research = new Phase 4 sprints under the same registry") — so promotion governance is an amendment-shaped decision — the same shape as [[T0116]]'s, which was ruled and landed in §12 on 2026-08-02.
 
