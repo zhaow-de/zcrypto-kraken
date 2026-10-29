@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: 'C3: go-live is settled (otherwise ripe; re-deferred 2026-08-23, see `## Done so far`)'
+ripe_when: 'C3: a milestone, rung 3''s entry recorded — the owner''s pick of 2026-10-29 for the deferral of 2026-08-23 (see `## Done so far`), `docs/reference/rung3/days.md` being born with the rung''s first entry (`engine-rung-3` in `infra/runbooks/engine-procedures.md`); check: `test -f docs/reference/rung3/days.md` exits 0'
 ---
 
 # Bucket-B/C alpha families — the un-started remainder of the §5 queue
@@ -51,4 +51,4 @@ Buckets B (intraday band) and C (long shots) are where the master plan's residua
 
 ## Suggested next steps
 
-- C3 is bucket C's last family, deferred on the owner's call of 2026-08-23 until go-live is settled.
+- C3 is bucket C's last family, deferred on the owner's call of 2026-08-23 until go-live is settled, and ripe once rung 3's entry is recorded (the owner's pick of 2026-10-29).
