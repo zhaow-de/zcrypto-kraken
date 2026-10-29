@@ -56,7 +56,7 @@ TOKEN_FILE = Path.home() / ".config" / "zcrypto" / "coveralls.env"
 TOKEN_KEY = "COVERALLS_REPO_TOKEN"
 _TOKEN_LINE = re.compile(rf"{TOKEN_KEY}=(?P<token>[^\s'\"]*)")
 RESULT_DIR = Path(".local") / "data-gated-runs"
-SCHEMA = 4
+SCHEMA = 5
 # `1 failed, 2 passed, 1 error in 0.01s`, `no tests ran in 0.00s`, `3 passed in 65.12s (0:01:05)` --
 # with or without the `=` rule a non-quiet run draws around the line.
 _SUMMARY = re.compile(r"^=*\s*(?P<body>\d+ [a-z]+(?:, \d+ [a-z]+)*|no tests ran) in \d+(?:\.\d+)?s(?: \([\d:]+\))?\s*=*$")
@@ -199,6 +199,10 @@ def data_listing(repo: Path) -> list[list] | None:
             st = os.lstat(path)
             listing.append([path.relative_to(repo).as_posix(), st.st_size, st.st_mtime_ns])
     return sorted(listing)
+
+
+def _set_of(path: str) -> str:
+    return path.split("/")[1]
 
 
 def worktree_path(repo: Path, started: datetime) -> Path:
@@ -359,7 +363,8 @@ def build_result(
     sweep_left: list[str],
     sweep_error: str | None,
 ) -> dict:
-    """`state` is `git_state` at the start plus `sha_at_end` and `tree_moved`; `data_listing` the two `data_listing()` reads."""
+    """`state` is `git_state` at the start plus `sha_at_end` and `tree_moved`; `data_listing` the two `data_listing()` reads,
+    any difference between them failing the run but a set the first read did not hold, which is named in `data_listing_born`."""
     parsed = parse_summary(output)
     counts = parsed["counts"]
     skipped_for_data = sum(entry["count"] for entry in parsed["data_gated_skipped"])
@@ -371,10 +376,13 @@ def build_result(
     if teardown is not None and teardown["error"]:
         faults.append(f"teardown: {teardown['error']}")
     listing_start, listing_end = data_listing
-    intact = listing_start == listing_end
-    if not intact:
-        differing = {tuple(e) for e in listing_start or []} ^ {tuple(e) for e in listing_end or []}
-        faults.append(f"the checkout's data/ listing changed during the run: {sorted({e[0] for e in differing})}")
+    start, end = ({tuple(e) for e in listing or []} for listing in data_listing)
+    present = {_set_of(e[0]) for e in start}
+    born = sorted({_set_of(e[0]) for e in end} - present)
+    changed = sorted({e[0] for e in start ^ end if _set_of(e[0]) in present})
+    intact = not changed
+    if changed:
+        faults.append(f"the checkout's data/ listing changed during the run: {changed}")
     error = "; ".join(f for f in faults if f) or None
     return {
         "schema": SCHEMA,
@@ -407,6 +415,7 @@ def build_result(
         "teardown": teardown,
         "data_listing_intact": intact,
         "data_listing": None if intact else {"start": listing_start, "end": listing_end},
+        "data_listing_born": born,
         "error": error,
         "ok": error is None and exit_code == 0 and counts["failed"] == 0 and counts["errors"] == 0,
     }

@@ -397,11 +397,12 @@ def test_the_runner_writes_the_stamped_file_and_latest_with_the_full_shape(tmp_p
         "teardown",
         "data_listing_intact",
         "data_listing",
+        "data_listing_born",
         "error",
         "ok",
         "coverage_upload",
     }
-    assert latest["schema"] == 4
+    assert latest["schema"] == 5
     assert latest["coverage_upload"] == {"outcome": "skipped", "reason": "--no-coverage: the run measured none"}
     started, finished = (
         datetime.strptime(latest[k], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc) for k in ("started", "finished")
@@ -431,6 +432,7 @@ def test_the_runner_writes_the_stamped_file_and_latest_with_the_full_shape(tmp_p
     assert sys.executable not in latest["command"]
     assert latest["teardown"] == {"worktree": worktree, "unlinked": ["ohlc-full"], "left": [], "removed": True, "error": None}
     assert latest["data_listing_intact"] is True and latest["data_listing"] is None
+    assert latest["data_listing_born"] == []
     _no_worktree_left(repo)
     assert latest["exit_code"] == 1
     assert latest["counts"]["passed"] == 1 and latest["counts"]["failed"] == 1 and latest["counts"]["skipped"] == 1
@@ -730,6 +732,81 @@ def test_a_suite_that_writes_into_the_checkouts_data_is_caught_by_the_listing_an
     assert "data/ohlc-full/intruder.parquet" in latest["error"]
     assert latest["ok"] is False
     assert proc.stdout.rstrip().splitlines()[-1].startswith("data-gated-run: FAIL exit=0 the checkout's data/ listing changed")
+
+
+def test_a_set_born_under_the_checkouts_data_during_the_run_is_named_and_the_night_passes(tmp_path):
+    repo = _checkout(
+        tmp_path,
+        """\
+        import os
+        def test_a_producer_writes_a_new_set():
+            day = os.path.join(os.environ["SYNTH_REPO"], "data", "l2-fills-born", "day")
+            os.makedirs(day)
+            open(os.path.join(day, "2026-10-29.parquet"), "w").write("x")
+        """,
+    )
+    proc = _run(tmp_path, repo)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    latest = _latest(repo)
+    assert latest["data_listing_born"] == ["l2-fills-born"]
+    assert latest["data_listing_intact"] is True and latest["data_listing"] is None
+    assert latest["error"] is None and latest["ok"] is True
+
+
+def test_a_file_removed_from_a_set_present_at_the_start_fails_the_night(tmp_path):
+    repo = _checkout(
+        tmp_path,
+        """\
+        import os
+        def test_removes():
+            os.remove(os.path.join(os.environ["SYNTH_REPO"], "data", "ohlc-full", "manifest.json"))
+        """,
+    )
+    proc = _run(tmp_path, repo)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    latest = _latest(repo)
+    assert latest["data_listing_intact"] is False and latest["data_listing_born"] == []
+    assert "data/ohlc-full/manifest.json" in latest["error"]
+    assert latest["ok"] is False
+
+
+_PRESENT = [["data/.gitignore", 12, 1], ["data/ohlc-full", 4096, 1], ["data/ohlc-full/manifest.json", 3, 1]]
+_BORN = [["data/l2-fills-x", 4096, 2], ["data/l2-fills-x/a.parquet", 1, 2]]
+
+
+@pytest.mark.parametrize(
+    ("end", "born", "changed"),
+    [
+        (_PRESENT + _BORN, ["l2-fills-x"], []),
+        (_PRESENT + [["data/ohlc-full/intruder.parquet", 1, 2]], [], ["data/ohlc-full/intruder.parquet"]),
+        (_PRESENT[:2], [], ["data/ohlc-full/manifest.json"]),
+        (_PRESENT[:2] + [["data/ohlc-full/manifest.json", 4, 2]], [], ["data/ohlc-full/manifest.json"]),
+        ([["data/.gitignore", 13, 2], *_PRESENT[1:]], [], ["data/.gitignore"]),
+        (_PRESENT[:1], [], ["data/ohlc-full", "data/ohlc-full/manifest.json"]),
+        (None, [], ["data/.gitignore", "data/ohlc-full", "data/ohlc-full/manifest.json"]),
+        (_PRESENT[:2] + [["data/ohlc-full/manifest.json", 4, 2]] + _BORN, ["l2-fills-x"], ["data/ohlc-full/manifest.json"]),
+    ],
+    ids=[
+        "born",
+        "added-under-a-present-set",
+        "removed",
+        "changed-in-place",
+        "a-top-level-file-changed",
+        "a-present-set-removed-whole",
+        "data-gone",
+        "born-beside-a-change",
+    ],
+)
+def test_only_a_set_absent_at_the_start_is_admitted_and_every_other_difference_fails(end, born, changed):
+    result = _result(data_listing=(_PRESENT, end))
+    assert result["data_listing_born"] == born
+    assert result["data_listing_intact"] is (not changed)
+    if changed:
+        assert result["error"] == f"the checkout's data/ listing changed during the run: {changed}"
+        assert result["data_listing"] == {"start": _PRESENT, "end": end}
+        assert result["ok"] is False
+    else:
+        assert result["error"] is None and result["data_listing"] is None and result["ok"] is True
 
 
 def test_a_run_that_cannot_parse_its_summary_writes_a_result_saying_so(tmp_path):
