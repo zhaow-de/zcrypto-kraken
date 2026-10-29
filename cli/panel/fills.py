@@ -89,7 +89,7 @@ class Order:
     filled_at: datetime | None = None
     cancelled_at: datetime | None = None
     mids: dict[str, float] = field(default_factory=dict)  # the mids read so far, by column name
-    ahead_qty: float = field(init=False)  # the queue ahead's bound: `apply_trade` lowers it, `tick_cancel` caps it
+    ahead_qty: float = field(init=False)  # the queue ahead's bound: `apply_trade` lowers it, `cap_queue` caps it
     level_qty: float = field(init=False)  # the level's resting quantity at `price` as the last boundary left it
 
     def __post_init__(self) -> None:
@@ -159,6 +159,16 @@ def apply_trade(order: Order, trade: dict) -> None:
         order.filled_at = trade["ts"]
 
 
+def cap_queue(order: Order, book: OrderBook) -> None:
+    """At a boundary, after its prints: cap an open order's queue ahead at its level as the boundary before left it,
+    then read the level for the next boundary's cap."""
+    own = book.bids if order.side == "bid" else book.asks
+    # The level is read a second late (spec 00151 D2): a print's book update can land at the boundary before the
+    # print, and a level read at the print's own boundary would count that print against the queue ahead twice.
+    order.ahead_qty = min(order.ahead_qty, order.level_qty)
+    order.level_qty = float(own.get(order.price, 0))
+
+
 def tick_cancel(order: Order, book: OrderBook, ts: datetime, tick: Decimal) -> None:
     """At the boundary `ts`, after its prints: cap an open order's queue ahead at its level as the boundary before left
     it, read the level for the next boundary's cap, then run the cancel clock -- away while the order's side is empty
@@ -166,11 +176,7 @@ def tick_cancel(order: Order, book: OrderBook, ts: datetime, tick: Decimal) -> N
     the horizon."""
     if not order.is_open:
         return
-    own = book.bids if order.side == "bid" else book.asks
-    # The level is read a second late (spec 00151 D2): a print's book update can land at the boundary before the
-    # print, and a level read at the print's own boundary would count that print against the queue ahead twice.
-    order.ahead_qty = min(order.ahead_qty, order.level_qty)
-    order.level_qty = float(own.get(order.price, 0))
+    cap_queue(order, book)
     best = max(book.bids, default=None) if order.side == "bid" else min(book.asks, default=None)
     away = best is None or (best != order.price and abs(best - order.price) >= tick)
     if not away:
