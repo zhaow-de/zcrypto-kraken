@@ -6779,8 +6779,7 @@ def _b1_hourly_exit_dataset(tmp_path: Path, *, start: datetime = _B1_START, bars
 
 
 def _p1_revalidation_dataset(tmp_path: Path, *, end: datetime = datetime(2026, 10, 10, 20, tzinfo=UTC)) -> Path:
-    """The ten assets at both grids from 2025-01-01 through `end`, every price from 2026-08-20 on scaled by 0.75: a drop
-    the governor engages on inside the slice."""
+    """The drop from 2026-08-20 is one the governor engages on inside the slice."""
     root = tmp_path / "data"
     start, drop = datetime(2025, 1, 1, tzinfo=UTC), int(datetime(2026, 8, 20, tzinfo=UTC).timestamp())
     for i, asset in enumerate(subjects._ASSETS):

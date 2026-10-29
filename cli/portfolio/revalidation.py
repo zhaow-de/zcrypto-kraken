@@ -22,7 +22,6 @@ RECORD_47_SHARPE = 1.5609
 SHARPE_TOLERANCE = 0.00005
 BENCH_COST_PER_SIDE = 0.006
 PPY_4H = 2190
-# The `var_trials_4h` records 43, 44 and 47 carry (spec D6).
 P1_VAR_TRIALS = 1.3058096692086857e-05
 
 METRIC_KEYS: frozenset[str] = frozenset(
@@ -90,14 +89,12 @@ def revalidation_metrics(
 ) -> dict:
     lo, hi = slice_bounds(h4_ts, SLICE_START)
     slice_returns = hi - lo
-    # Refused before the band: at 0 returns a band of length 0 would raise sharpe's ValidationError instead.
     if slice_returns < MIN_SLICE:
         raise RevalidationError(
             f"the slice from {SLICE_START:%Y-%m-%d %H:%M}Z holds {slice_returns} returns, fewer than the {MIN_SLICE} it needs"
         )
     in_sample_returns = prefix_end(h4_ts, REFERENCE_LAST_BAR)
     reference = governed[DECISIVE_START:in_sample_returns]
-    # Not `band`: assigning that name makes this line's call to band() raise UnboundLocalError.
     ref_band = band(reference, slice_returns, step=BAND_STEP)
     band_windows = len(ref_band.sharpes)
     slice_sharpe = sharpe(governed[lo:hi], periods_per_year=PPY_4H)
@@ -118,7 +115,6 @@ def revalidation_metrics(
         # A flat benchmark slice reads 0.0, decided before sharpe, which refuses zero variance (spec D6).
         "slice_bench4h_sharpe": 0.0 if not any(bench[lo:hi]) else sharpe(bench[lo:hi], periods_per_year=PPY_4H),
         "slice_mean_diff_vs_bench4h": statistics.fmean(governed[lo:hi]) - statistics.fmean(bench[lo:hi]),
-        # The per-period Sharpe, never the annualized one.
         "slice_dsr": deflated_sharpe_ratio(sharpe(governed[lo:hi]), slice_returns, n_trials=n_trials, var_trials=P1_VAR_TRIALS),
         "leg_sharpe_pass": leg_sharpe_pass,
         "leg_maxdd_pass": leg_maxdd_pass,
@@ -126,7 +122,6 @@ def revalidation_metrics(
 
 
 def revalidation_verdict(metrics: dict) -> str | None:
-    # Off record 47's prefix the set no longer rebuilds its book: an instrument finding, no verdict (spec D5).
     if metrics["in_sample_returns"] == RECORD_47_RETURNS and abs(metrics["in_sample_sharpe"] - RECORD_47_SHARPE) < SHARPE_TOLERANCE:
         return "adopt" if metrics["leg_sharpe_pass"] and metrics["leg_maxdd_pass"] else "park"
     return None

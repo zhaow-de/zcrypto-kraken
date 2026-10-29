@@ -5037,7 +5037,7 @@ def _build_c1_maker_fill_reading(
 _C1_READING_KEYS = frozenset({"fill_table", "cells", "coverage", "constants"})
 
 
-# docs/specs/00152 D7: P1's true count with this record, the one its deflated Sharpe reads.
+# docs/specs/00152 D7: P1's true count with this record.
 _P1_REVALIDATION_N_TRIALS = 6
 
 
