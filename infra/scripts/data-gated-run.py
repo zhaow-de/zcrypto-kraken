@@ -362,11 +362,13 @@ def build_result(
     run_error: str | None,
     teardown: dict | None,
     data_listing: tuple[list[list] | None, list[list] | None],
+    linked: list[str],
     swept: list[str],
     sweep_left: list[str],
     sweep_error: str | None,
 ) -> dict:
-    """`state` is `git_state` at the start plus `sha_at_end` and `tree_moved`; `data_listing` the two `data_listing()` reads."""
+    """`state` is `git_state` at the start plus `sha_at_end` and `tree_moved`; `data_listing` the two `data_listing()` reads;
+    `linked` the names `link_datasets` linked into the worktree, which are never born."""
     parsed = parse_summary(output)
     counts = parsed["counts"]
     skipped_for_data = sum(entry["count"] for entry in parsed["data_gated_skipped"])
@@ -379,7 +381,7 @@ def build_result(
         faults.append(f"teardown: {teardown['error']}")
     listing_start, listing_end = data_listing
     start, end = ({tuple(e) for e in listing or []} for listing in data_listing)
-    present = {_set_of(e[0]) for e in start}
+    present = {_set_of(e[0]) for e in start} | set(linked)
     born = sorted({_set_of(e[0]) for e in end if e[0].count("/") > 1} - present)
     changed = sorted({e[0] for e in start ^ end if _set_of(e[0]) not in born})
     intact = not changed
@@ -578,6 +580,7 @@ def main(argv: list[str] | None = None) -> int:
     command, exit_code, output, run_error = None, None, "", None
     worktree = teardown = None
     created = False
+    linked = []
     if not data_present:
         run_error = f"data absent: {data_dir} holds no dataset; nothing ran"
     elif uv is None:
@@ -591,7 +594,7 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 add_worktree(repo, state["sha"], worktree)
                 created = True
-                link_datasets(repo, worktree, deadline)
+                linked = link_datasets(repo, worktree, deadline)
                 pytest_args = args.extra if coverage_off else list(COVERAGE_ARGS)
                 command, exit_code, output, run_error = run_suite(worktree, uv, pytest_args, args.timeout, develop=state["develop"])
             except Exception as exc:
@@ -623,6 +626,7 @@ def main(argv: list[str] | None = None) -> int:
         run_error=run_error,
         teardown=teardown,
         data_listing=(listing_start, data_listing(repo)),
+        linked=linked,
         swept=swept,
         sweep_left=sweep_left,
         sweep_error=sweep_error,

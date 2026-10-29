@@ -770,6 +770,28 @@ def test_a_file_removed_from_a_set_present_at_the_start_fails_the_night(tmp_path
     assert latest["ok"] is False
 
 
+def test_a_set_landing_before_the_link_is_linked_never_born_and_a_write_through_it_fails_the_night(tmp_path, monkeypatch):
+    repo = _checkout(tmp_path, "def test_ok(): pass\n")
+    add_worktree = runner.add_worktree
+
+    def add_then_a_set_lands(repo_, sha, worktree):
+        add_worktree(repo_, sha, worktree)
+        (repo / "data" / "l2-fills-late").mkdir()
+        (repo / "data" / "l2-fills-late" / "a.parquet").write_text("x")
+
+    def run_suite(worktree, uv, pytest_args, timeout, *, develop):
+        (worktree / "data" / "l2-fills-late" / "written-by-the-suite.parquet").write_text("x")
+        return ["pytest"], 0, _PASSING, None
+
+    monkeypatch.setattr(runner, "add_worktree", add_then_a_set_lands)
+    monkeypatch.setattr(runner, "run_suite", run_suite)
+    monkeypatch.setenv("UV", "/nonexistent/uv")
+    assert runner.main(["--repo", str(repo), "--no-coverage"]) == 1
+    latest = _latest(repo)
+    assert latest["data_listing_born"] == [] and latest["data_listing_intact"] is False and latest["ok"] is False
+    assert "data/l2-fills-late/written-by-the-suite.parquet" in latest["error"]
+
+
 def test_a_name_renamed_away_between_the_walk_and_its_lstat_is_left_out_of_the_listing(tmp_path, monkeypatch):
     (tmp_path / "data" / "l2-fills-x").mkdir(parents=True)
     (tmp_path / "data" / "l2-fills-x" / "a.parquet").write_text("x")
@@ -911,6 +933,14 @@ _STATE = {
 _LISTING = ([["data/.gitignore", 12, 1], ["data/ohlc-full", 4096, 1]], [["data/.gitignore", 12, 1], ["data/ohlc-full", 4096, 1]])
 
 
+def test_a_set_linked_into_the_worktree_is_never_born_though_the_start_listing_lacked_it():
+    result = _result(data_listing=(_PRESENT, _PRESENT + _BORN), linked=["ohlc-full", "l2-fills-x"])
+    assert result["data_listing_born"] == [] and result["ok"] is False
+    assert (
+        result["error"] == "the checkout's data/ listing changed during the run: ['data/l2-fills-x', 'data/l2-fills-x/a.parquet']"
+    )
+
+
 def _result(**overrides) -> dict:
     return runner.build_result(
         **{
@@ -932,6 +962,7 @@ def _result(**overrides) -> dict:
                 "error": None,
             },
             "data_listing": _LISTING,
+            "linked": ["ohlc-full"],
             "swept": [],
             "sweep_left": [],
             "sweep_error": None,
