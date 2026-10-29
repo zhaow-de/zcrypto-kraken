@@ -770,6 +770,21 @@ def test_a_file_removed_from_a_set_present_at_the_start_fails_the_night(tmp_path
     assert latest["ok"] is False
 
 
+def test_a_name_renamed_away_between_the_walk_and_its_lstat_is_left_out_of_the_listing(tmp_path, monkeypatch):
+    (tmp_path / "data" / "l2-fills-x").mkdir(parents=True)
+    (tmp_path / "data" / "l2-fills-x" / "a.parquet").write_text("x")
+    (tmp_path / "data" / "l2-fills-x" / "b.parquet.7.tmp").write_text("x")
+    lstat = os.lstat
+
+    def renamed_away(path, *args, **kwargs):
+        if str(path).endswith(".tmp"):
+            raise FileNotFoundError(2, "No such file or directory", str(path))
+        return lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(runner.os, "lstat", renamed_away)
+    assert [entry[0] for entry in runner.data_listing(tmp_path)] == ["data/l2-fills-x", "data/l2-fills-x/a.parquet"]
+
+
 _PRESENT = [["data/.gitignore", 12, 1], ["data/ohlc-full", 4096, 1], ["data/ohlc-full/manifest.json", 3, 1]]
 _BORN = [["data/l2-fills-x", 4096, 2], ["data/l2-fills-x/a.parquet", 1, 2]]
 

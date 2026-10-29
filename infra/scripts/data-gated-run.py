@@ -196,7 +196,10 @@ def data_listing(repo: Path) -> list[list] | None:
     for root, dirs, files in os.walk(data):
         for name in (*dirs, *files):
             path = Path(root) / name
-            st = os.lstat(path)
+            try:
+                st = os.lstat(path)
+            except FileNotFoundError:
+                continue
             listing.append([path.relative_to(repo).as_posix(), st.st_size, st.st_mtime_ns])
     return sorted(listing)
 
