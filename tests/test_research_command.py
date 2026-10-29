@@ -6778,6 +6778,21 @@ def _b1_hourly_exit_dataset(tmp_path: Path, *, start: datetime = _B1_START, bars
     return root
 
 
+def _p1_revalidation_dataset(tmp_path: Path, *, end: datetime = datetime(2026, 10, 10, 20, tzinfo=UTC)) -> Path:
+    """The drop from 2026-08-20 is one the governor engages on inside the slice."""
+    root = tmp_path / "data"
+    start, drop = datetime(2025, 1, 1, tzinfo=UTC), int(datetime(2026, 8, 20, tzinfo=UTC).timestamp())
+    for i, asset in enumerate(subjects._ASSETS):
+        for interval in (1440, 240):
+            n = (end - start) // timedelta(minutes=interval) + 1
+            rows = [
+                [row[0], *(f"{float(x) * 0.75}" if row[0] >= drop else x for x in row[1:6]), *row[6:]]
+                for row in _rows(n, phase=i * 0.7, start=int(start.timestamp()), step=60 * interval)
+            ]
+            write_parquet(to_frame(rows), root / "ohlc-test" / f"{asset}/EUR/{interval}.parquet")
+    return root
+
+
 _RULED_FIXTURES = {
     "b1-hourly-channel-exits": _b1_hourly_exit_dataset,
     "b1-hourly-rv": _b1_hourly_rv_dataset,
@@ -6795,8 +6810,10 @@ _RULED_FIXTURES = {
     "b3-btc-overlay": _b2_dataset,
     "b4-ratio-legs": _b4_dataset,
     "b4-sol-noborrow-rolling": _b4_sol_dataset,
+    "p1-revalidation": _p1_revalidation_dataset,
 }
-# Each ruled subject's count constant, which the tie raises so that a literal at a kill-bar site fails it.
+# Each ruled subject's count constant, which the tie raises so that a literal at a kill-bar site, or at p1-revalidation's
+# deflated Sharpe, fails it.
 _DECLARED_COUNT = {
     "b1-hourly-channel-exits": "_B1_EXIT_N_TRIALS",
     "b1-hourly-rv": "_B1_HOURLY_RV_N_TRIALS",
@@ -6814,6 +6831,7 @@ _DECLARED_COUNT = {
     "b3-btc-overlay": "_B3_OVERLAY_N_TRIALS",
     "b4-ratio-legs": "_B4_N_TRIALS",
     "b4-sol-noborrow-rolling": "_B4_SOL_N_TRIALS",
+    "p1-revalidation": "_P1_REVALIDATION_N_TRIALS",
 }
 
 
@@ -6836,6 +6854,7 @@ def test_the_ruled_subjects_declare_their_families_and_trial_counts():
         "b3-btc-overlay": ("B3", 3),
         "b4-ratio-legs": ("B4", 1),
         "b4-sol-noborrow-rolling": ("B4", 2),
+        "p1-revalidation": ("P1", 6),
     }
     assert set(_RULED_FIXTURES) == set(declared) == set(_DECLARED_COUNT)
 
@@ -6852,7 +6871,12 @@ def test_every_ruled_subjects_kill_bar_deflates_at_its_declared_count(tmp_path, 
         counts.append(n_trials)
         return _b1_hourly_rv_bar_sentinels("B", passes=True)
 
+    def dsr_recorder(*args, n_trials, **kwargs):
+        counts.append(n_trials)
+        return 0.5
+
     monkeypatch.setattr(subjects, "a1_kill_bar", recorder)
+    monkeypatch.setattr("cli.portfolio.revalidation.deflated_sharpe_ratio", dsr_recorder)
 
     subjects.SUBJECTS[name].build(ObservedReader(_RULED_FIXTURES[name](tmp_path)), "ohlc-test", None)
 
@@ -8382,7 +8406,8 @@ def _c2_dataset(tmp_path: Path, subject: subjects.Subject) -> tuple[Path, dateti
 # A subject whose build reads a dataset it does not declare brings its own fixture here, and b1-window-only shares
 # b1-conditioning's; the ruled B1 subjects and their pre-flights bring theirs, shorter than their declared series —
 # `_B1_BARS` 4h bars against `_declared_series`' 600 days — because each row that evaluates them runs arm A's kill bar,
-# and the trial's arm B's too, over the whole series; any other is fed its declared series.
+# and the trial's arm B's too, over the whole series; p1-revalidation brings its own, its slice reading bars from
+# 2026-07-10 that the declared series' 600 days from 2020 never reach; any other is fed its declared series.
 _CONTRACT_DATASETS = {
     "b2-funding-derisk": lambda tmp_path, subject: (_b2_dataset(tmp_path), _B2_START),
     "b2-arm-a-bar": lambda tmp_path, subject: (_b2_dataset(tmp_path), _B2_START),
@@ -8425,6 +8450,7 @@ _CONTRACT_DATASETS = {
     "b1-hourly-channel-exits-preflight": lambda tmp_path, subject: (_b1_hourly_exit_dataset(tmp_path), _B1_START),
     "c2-lead-lag-reading": _c2_dataset,
     "c1-maker-fill-reading": lambda tmp_path, subject: (tmp_path / "data", write_l2_fills_set(tmp_path / "data", "ohlc-test")),
+    "p1-revalidation": lambda tmp_path, subject: (_p1_revalidation_dataset(tmp_path), datetime(2025, 1, 1, tzinfo=UTC)),
 }
 
 
