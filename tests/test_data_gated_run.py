@@ -970,7 +970,18 @@ def test_a_set_linked_into_the_worktree_is_never_born_though_the_start_listing_l
     )
 
 
-_MARKED = [["data/l2-fills-x", 4096, 1], ["data/l2-fills-x/.producing", 0, 1], ["data/l2-fills-x/a.parquet", 1, 1]]
+# `_result`'s start, 2026-09-14T02:30Z, in ns, and the six hours a mark stays fresh before it.
+_RUN_START_NS = (
+    (datetime(2026, 9, 14, 2, 30, tzinfo=timezone.utc) - datetime(1970, 1, 1, tzinfo=timezone.utc))
+    // timedelta(microseconds=1)
+    * 1000
+)
+_SIX_HOURS_NS = 6 * 3600 * 10**9
+_MARKED = [
+    ["data/l2-fills-x", 4096, 1],
+    ["data/l2-fills-x/.producing", 0, _RUN_START_NS - 60 * 10**9],
+    ["data/l2-fills-x/a.parquet", 1, 1],
+]
 
 
 def test_every_difference_under_a_set_marked_in_production_at_the_start_is_admitted_and_the_set_named():
@@ -993,6 +1004,17 @@ def test_a_marked_set_already_holding_its_manifest_at_the_start_is_not_admitted(
     assert result["error"] == "the checkout's data/ listing changed during the run: ['data/l2-fills-x/b.parquet']"
 
 
+@pytest.mark.parametrize(("age_ns", "admitted"), [(_SIX_HOURS_NS, True), (_SIX_HOURS_NS + 1, False)], ids=["six-hours", "older"])
+def test_a_mark_untouched_for_more_than_six_hours_before_the_run_admits_nothing(age_ns, admitted):
+    start = _PRESENT + [_MARKED[0], [_MARKED[1][0], 0, _RUN_START_NS - age_ns], _MARKED[2]]
+    end = start + [["data/l2-fills-x/b.parquet", 1, 2]]
+    result = _result(data_listing=(start, end), linked=["ohlc-full", "l2-fills-x"])
+    assert result["data_listing_producing"] == (["l2-fills-x"] if admitted else [])
+    assert result["ok"] is admitted
+    if not admitted:
+        assert result["error"] == "the checkout's data/ listing changed during the run: ['data/l2-fills-x/b.parquet']"
+
+
 def test_a_change_beside_a_set_in_production_still_fails_the_night_naming_only_it():
     end = _PRESENT[:2] + [["data/ohlc-full/manifest.json", 4, 2]] + _MARKED + [["data/l2-fills-x/b.parquet", 1, 2]]
     result = _result(data_listing=(_PRESENT + _MARKED, end), linked=["ohlc-full", "l2-fills-x"])
@@ -1005,7 +1027,7 @@ _UNFINISHED = [["data/l2-fills-y", 4096, 1], ["data/l2-fills-y/a.parquet", 1, 1]
 
 def test_a_mark_landing_during_the_run_admits_nothing():
     start = _PRESENT + _UNFINISHED
-    end = start + [["data/l2-fills-y/.producing", 0, 2], ["data/l2-fills-y/b.parquet", 1, 2]]
+    end = start + [["data/l2-fills-y/.producing", 0, _RUN_START_NS - 60 * 10**9], ["data/l2-fills-y/b.parquet", 1, 2]]
     result = _result(data_listing=(start, end), linked=["ohlc-full", "l2-fills-y"])
     assert result["data_listing_producing"] == []
     assert result["error"] == (
@@ -1014,7 +1036,11 @@ def test_a_mark_landing_during_the_run_admits_nothing():
 
 
 def test_a_mark_below_a_sets_root_admits_nothing():
-    start = _PRESENT + _UNFINISHED + [["data/l2-fills-y/sub", 4096, 1], ["data/l2-fills-y/sub/.producing", 0, 1]]
+    start = (
+        _PRESENT
+        + _UNFINISHED
+        + [["data/l2-fills-y/sub", 4096, 1], ["data/l2-fills-y/sub/.producing", 0, _RUN_START_NS - 60 * 10**9]]
+    )
     end = start + [["data/l2-fills-y/b.parquet", 1, 2]]
     result = _result(data_listing=(start, end), linked=["ohlc-full", "l2-fills-y"])
     assert result["data_listing_producing"] == []

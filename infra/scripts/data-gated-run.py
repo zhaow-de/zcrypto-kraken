@@ -59,6 +59,8 @@ RESULT_DIR = Path(".local") / "data-gated-runs"
 SCHEMA = 5
 # A producer's mark at a set's root while it writes the set (cli/panel/fills.py).
 PRODUCING_MARKER = ".producing"
+# A mark untouched this long before the run's start is a dead run's, not a live producer's: it admits nothing.
+MARK_FRESH = timedelta(hours=6)
 # `1 failed, 2 passed, 1 error in 0.01s`, `no tests ran in 0.00s`, `3 passed in 65.12s (0:01:05)` --
 # with or without the `=` rule a non-quiet run draws around the line.
 _SUMMARY = re.compile(r"^=*\s*(?P<body>\d+ [a-z]+(?:, \d+ [a-z]+)*|no tests ran) in \d+(?:\.\d+)?s(?: \([\d:]+\))?\s*=*$")
@@ -385,7 +387,8 @@ def build_result(
     present = {_set_of(e[0]) for e in start} | set(linked)
     born = sorted({_set_of(e[0]) for e in end if e[0].count("/") > 1} - present)
     manifested = {_set_of(e[0]) for e in start if e[0].count("/") == 2 and e[0].endswith("/manifest.json")}
-    marked = {_set_of(e[0]) for e in start if e[0].count("/") == 2 and e[0].endswith("/" + PRODUCING_MARKER)}
+    fresh_ns = (started - MARK_FRESH - datetime(1970, 1, 1, tzinfo=timezone.utc)) // timedelta(microseconds=1) * 1000
+    marked = {_set_of(e[0]) for e in start if e[0].count("/") == 2 and e[0].endswith("/" + PRODUCING_MARKER) and e[2] >= fresh_ns}
     producing = sorted(marked - manifested)
     admitted = {*born, *producing}
     changed = sorted({e[0] for e in start ^ end if _set_of(e[0]) not in admitted})

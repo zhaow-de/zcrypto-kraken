@@ -518,6 +518,25 @@ def test_a_run_its_record_refuses_leaves_an_unmarked_set_unmarked(produced, tmp_
     assert not (out / PRODUCING_MARKER).exists()
 
 
+def test_each_day_a_run_lands_refreshes_the_mark(tmp_path, monkeypatch):
+    primary, _, panel = _roots(tmp_path)
+    _book_hour(primary, PAIR, LATE)
+    _trades_hour(primary, PAIR, LATE, [(7, "sell", 1000.0, 1.2)])
+    _book_hour(primary, PAIR, NEXT, snapshot=False, messages=[(1800, [], [(1001.0, 0.0)])])
+    touch, touched = Path.touch, []
+
+    def counted(self, *args, **kwargs):
+        if self.name == PRODUCING_MARKER:
+            touched.append(self)
+        return touch(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "touch", counted)
+    out = tmp_path / "out"
+    _produce(primary, panel, out, until=END)
+    assert len(_record(out, PAIR)["days"]) == 2
+    assert len(touched) == 3
+
+
 def test_a_refused_manifest_leaves_the_set_marked(produced, tmp_path):
     primary, overlay, source, _ = produced
     out = _copy(source, tmp_path / "out")
