@@ -363,8 +363,7 @@ def build_result(
     sweep_left: list[str],
     sweep_error: str | None,
 ) -> dict:
-    """`state` is `git_state` at the start plus `sha_at_end` and `tree_moved`; `data_listing` the two `data_listing()` reads,
-    any difference between them failing the run but a set the first read did not hold, which is named in `data_listing_born`."""
+    """`state` is `git_state` at the start plus `sha_at_end` and `tree_moved`; `data_listing` the two `data_listing()` reads."""
     parsed = parse_summary(output)
     counts = parsed["counts"]
     skipped_for_data = sum(entry["count"] for entry in parsed["data_gated_skipped"])
@@ -378,8 +377,8 @@ def build_result(
     listing_start, listing_end = data_listing
     start, end = ({tuple(e) for e in listing or []} for listing in data_listing)
     present = {_set_of(e[0]) for e in start}
-    born = sorted({_set_of(e[0]) for e in end} - present)
-    changed = sorted({e[0] for e in start ^ end if _set_of(e[0]) in present})
+    born = sorted({_set_of(e[0]) for e in end if e[0].count("/") > 1} - present)
+    changed = sorted({e[0] for e in start ^ end if _set_of(e[0]) not in born})
     intact = not changed
     if changed:
         faults.append(f"the checkout's data/ listing changed during the run: {changed}")

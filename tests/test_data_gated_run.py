@@ -709,7 +709,7 @@ def test_a_clean_start_sweeps_nothing_and_records_the_empty_list(tmp_path):
     assert latest["swept"] == [] and latest["sweep_left"] == [] and latest["sweep_error"] is None and latest["ok"] is True
 
 
-def test_a_suite_that_writes_into_the_checkouts_data_is_caught_by_the_listing_and_fails_the_run(tmp_path):
+def test_a_suite_that_writes_into_a_set_the_checkouts_data_held_is_caught_by_the_listing_and_fails_the_run(tmp_path):
     # One level down, as a write through the worktree's dataset link lands: a top-level listing would miss it.
     repo = _checkout(
         tmp_path,
@@ -785,6 +785,8 @@ _BORN = [["data/l2-fills-x", 4096, 2], ["data/l2-fills-x/a.parquet", 1, 2]]
         (_PRESENT[:1], [], ["data/ohlc-full", "data/ohlc-full/manifest.json"]),
         (None, [], ["data/.gitignore", "data/ohlc-full", "data/ohlc-full/manifest.json"]),
         (_PRESENT[:2] + [["data/ohlc-full/manifest.json", 4, 2]] + _BORN, ["l2-fills-x"], ["data/ohlc-full/manifest.json"]),
+        (_PRESENT + [["data/stray.json", 2, 2]], [], ["data/stray.json"]),
+        (_PRESENT + _BORN[:1], [], ["data/l2-fills-x"]),
     ],
     ids=[
         "born",
@@ -795,6 +797,8 @@ _BORN = [["data/l2-fills-x", 4096, 2], ["data/l2-fills-x/a.parquet", 1, 2]]
         "a-present-set-removed-whole",
         "data-gone",
         "born-beside-a-change",
+        "a-top-level-file-is-no-set",
+        "an-empty-directory-is-no-set",
     ],
 )
 def test_only_a_set_absent_at_the_start_is_admitted_and_every_other_difference_fails(end, born, changed):
