@@ -970,7 +970,7 @@ def test_a_set_linked_into_the_worktree_is_never_born_though_the_start_listing_l
     )
 
 
-# `_result`'s start, 2026-09-14T02:30Z, in ns, and the six hours a mark stays fresh before it.
+# `_result`'s start, in ns.
 _RUN_START_NS = (
     (datetime(2026, 9, 14, 2, 30, tzinfo=timezone.utc) - datetime(1970, 1, 1, tzinfo=timezone.utc))
     // timedelta(microseconds=1)
