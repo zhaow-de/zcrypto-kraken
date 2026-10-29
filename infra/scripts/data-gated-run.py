@@ -57,6 +57,8 @@ TOKEN_KEY = "COVERALLS_REPO_TOKEN"
 _TOKEN_LINE = re.compile(rf"{TOKEN_KEY}=(?P<token>[^\s'\"]*)")
 RESULT_DIR = Path(".local") / "data-gated-runs"
 SCHEMA = 5
+# A producer's mark at a set's root while it writes the set (cli/panel/fills.py).
+PRODUCING_MARKER = ".producing"
 # `1 failed, 2 passed, 1 error in 0.01s`, `no tests ran in 0.00s`, `3 passed in 65.12s (0:01:05)` --
 # with or without the `=` rule a non-quiet run draws around the line.
 _SUMMARY = re.compile(r"^=*\s*(?P<body>\d+ [a-z]+(?:, \d+ [a-z]+)*|no tests ran) in \d+(?:\.\d+)?s(?: \([\d:]+\))?\s*=*$")
@@ -368,7 +370,8 @@ def build_result(
     sweep_error: str | None,
 ) -> dict:
     """`state` is `git_state` at the start plus `sha_at_end` and `tree_moved`; `data_listing` the two `data_listing()` reads;
-    `linked` the names `link_datasets` linked into the worktree, which are never born."""
+    `linked` the names `link_datasets` linked into the worktree, which are never born; a set marked in production at the
+    start is admitted whole, whether linked or not."""
     parsed = parse_summary(output)
     counts = parsed["counts"]
     skipped_for_data = sum(entry["count"] for entry in parsed["data_gated_skipped"])
@@ -383,7 +386,9 @@ def build_result(
     start, end = ({tuple(e) for e in listing or []} for listing in data_listing)
     present = {_set_of(e[0]) for e in start} | set(linked)
     born = sorted({_set_of(e[0]) for e in end if e[0].count("/") > 1} - present)
-    changed = sorted({e[0] for e in start ^ end if _set_of(e[0]) not in born})
+    producing = sorted({_set_of(e[0]) for e in start if e[0].count("/") == 2 and e[0].endswith("/" + PRODUCING_MARKER)})
+    admitted = {*born, *producing}
+    changed = sorted({e[0] for e in start ^ end if _set_of(e[0]) not in admitted})
     intact = not changed
     if changed:
         faults.append(f"the checkout's data/ listing changed during the run: {changed}")
@@ -420,6 +425,7 @@ def build_result(
         "data_listing_intact": intact,
         "data_listing": None if intact else {"start": listing_start, "end": listing_end},
         "data_listing_born": born,
+        "data_listing_producing": producing,
         "error": error,
         "ok": error is None and exit_code == 0 and counts["failed"] == 0 and counts["errors"] == 0,
     }

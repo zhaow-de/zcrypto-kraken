@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from cli.panel import fills
 from tests.role_render import render
 from tests.test_infra_converge_guards import find_task, iter_tasks, load_tasks, truthy
 
@@ -398,6 +399,7 @@ def test_the_runner_writes_the_stamped_file_and_latest_with_the_full_shape(tmp_p
         "data_listing_intact",
         "data_listing",
         "data_listing_born",
+        "data_listing_producing",
         "error",
         "ok",
         "coverage_upload",
@@ -432,7 +434,7 @@ def test_the_runner_writes_the_stamped_file_and_latest_with_the_full_shape(tmp_p
     assert sys.executable not in latest["command"]
     assert latest["teardown"] == {"worktree": worktree, "unlinked": ["ohlc-full"], "left": [], "removed": True, "error": None}
     assert latest["data_listing_intact"] is True and latest["data_listing"] is None
-    assert latest["data_listing_born"] == []
+    assert latest["data_listing_born"] == [] and latest["data_listing_producing"] == []
     _no_worktree_left(repo)
     assert latest["exit_code"] == 1
     assert latest["counts"]["passed"] == 1 and latest["counts"]["failed"] == 1 and latest["counts"]["skipped"] == 1
@@ -792,6 +794,33 @@ def test_a_set_landing_before_the_link_is_linked_never_born_and_a_write_through_
     assert "data/l2-fills-late/written-by-the-suite.parquet" in latest["error"]
 
 
+def test_a_producer_writing_through_the_night_into_the_set_it_marked_passes_the_night(tmp_path):
+    repo = _checkout(
+        tmp_path,
+        """\
+        import os
+        def test_the_producer_writes_on():
+            root = os.path.join(os.environ["SYNTH_REPO"], "data", "l2-fills-prod")
+            open(os.path.join(root, "BTC", "EUR", "fills-run.json"), "w").write("{}")
+            os.makedirs(os.path.join(root, "ETH", "EUR"))
+            open(os.path.join(root, "ETH", "EUR", "fills-run.json"), "w").write("{}")
+        """,
+    )
+    prod = repo / "data" / "l2-fills-prod"
+    (prod / "BTC" / "EUR").mkdir(parents=True)
+    (prod / fills.PRODUCING_MARKER).write_text("")
+    (prod / "BTC" / "EUR" / "fills-run.json").write_text("{}\n")
+    proc = _run(tmp_path, repo)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    latest = _latest(repo)
+    assert latest["data_listing_producing"] == ["l2-fills-prod"] and latest["data_listing_born"] == []
+    assert latest["data_listing_intact"] is True and latest["error"] is None and latest["ok"] is True
+
+
+def test_the_runner_and_the_fill_producer_name_one_marker():
+    assert runner.PRODUCING_MARKER == fills.PRODUCING_MARKER
+
+
 def test_a_name_renamed_away_between_the_walk_and_its_lstat_is_left_out_of_the_listing(tmp_path, monkeypatch):
     (tmp_path / "data" / "l2-fills-x").mkdir(parents=True)
     (tmp_path / "data" / "l2-fills-x" / "a.parquet").write_text("x")
@@ -938,6 +967,38 @@ def test_a_set_linked_into_the_worktree_is_never_born_though_the_start_listing_l
     assert result["data_listing_born"] == [] and result["ok"] is False
     assert (
         result["error"] == "the checkout's data/ listing changed during the run: ['data/l2-fills-x', 'data/l2-fills-x/a.parquet']"
+    )
+
+
+_MARKED = [["data/l2-fills-x", 4096, 1], ["data/l2-fills-x/.producing", 0, 1], ["data/l2-fills-x/a.parquet", 1, 1]]
+
+
+def test_every_difference_under_a_set_marked_in_production_at_the_start_is_admitted_and_the_set_named():
+    end = _PRESENT + [
+        ["data/l2-fills-x", 4096, 2],
+        ["data/l2-fills-x/a.parquet", 2, 2],
+        ["data/l2-fills-x/b.parquet", 1, 2],
+        ["data/l2-fills-x/manifest.json", 1, 2],
+    ]
+    result = _result(data_listing=(_PRESENT + _MARKED, end), linked=["ohlc-full", "l2-fills-x"])
+    assert result["data_listing_producing"] == ["l2-fills-x"] and result["data_listing_born"] == []
+    assert result["data_listing_intact"] is True and result["error"] is None and result["ok"] is True
+
+
+def test_a_change_beside_a_set_in_production_still_fails_the_night_naming_only_it():
+    end = _PRESENT[:2] + [["data/ohlc-full/manifest.json", 4, 2]] + _MARKED + [["data/l2-fills-x/b.parquet", 1, 2]]
+    result = _result(data_listing=(_PRESENT + _MARKED, end), linked=["ohlc-full", "l2-fills-x"])
+    assert result["data_listing_producing"] == ["l2-fills-x"]
+    assert result["error"] == "the checkout's data/ listing changed during the run: ['data/ohlc-full/manifest.json']"
+
+
+def test_a_mark_landing_during_the_run_or_below_a_sets_root_admits_nothing():
+    start = _PRESENT + [["data/ohlc-full/sub", 4096, 1], ["data/ohlc-full/sub/.producing", 0, 1]]
+    end = start + [["data/ohlc-full/.producing", 0, 2], ["data/ohlc-full/intruder.parquet", 1, 2]]
+    result = _result(data_listing=(start, end))
+    assert result["data_listing_producing"] == []
+    assert result["error"] == (
+        "the checkout's data/ listing changed during the run: ['data/ohlc-full/.producing', 'data/ohlc-full/intruder.parquet']"
     )
 
 

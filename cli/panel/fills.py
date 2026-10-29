@@ -323,6 +323,9 @@ def rows_frame(rows: list[dict]) -> pl.DataFrame:
 
 
 RUN_RECORD = "fills-run.json"
+# A set's mark while its runs write it: the nightly data-gated run admits every change under a set marked at its start
+# (infra/scripts/data-gated-run.py).
+PRODUCING_MARKER = ".producing"
 PRODUCER = "zcrypto panel fills"
 _HOUR = timedelta(hours=1)
 _DAY = timedelta(days=1)
@@ -536,6 +539,11 @@ def produce_pair(
         out_root.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         raise PanelError(f"{pair}: the out root {out_root} cannot be created: {exc}") from exc
+    marker = out_root / PRODUCING_MARKER
+    try:
+        marker.touch()
+    except OSError as exc:
+        raise PanelError(f"{pair}: {marker} cannot be written: {exc}") from exc
     pair_root = _pair_root(out_root, pair)
     _check_run_record(pair_root, params, code_ref)
     written = _day_files(pair_root)
@@ -742,4 +750,9 @@ def write_fills_manifest(out_root: Path, primary_root: Path, reconciled_root: Pa
         _replace_durably(tmp, path)
     except OSError as exc:
         raise PanelError(f"{path} cannot be written: {exc}") from exc
+    marker = out_root / PRODUCING_MARKER
+    try:
+        marker.unlink(missing_ok=True)
+    except OSError as exc:
+        raise PanelError(f"{marker} cannot be removed: {exc}") from exc
     return path
