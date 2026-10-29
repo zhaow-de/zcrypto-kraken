@@ -323,7 +323,7 @@ def rows_frame(rows: list[dict]) -> pl.DataFrame:
 
 
 RUN_RECORD = "fills-run.json"
-# The nightly data-gated run (infra/scripts/data-gated-run.py) admits every change under a set holding this at its start.
+# infra/scripts/data-gated-run.py admits every change under a set holding this and no manifest.json at its start.
 PRODUCING_MARKER = ".producing"
 PRODUCER = "zcrypto panel fills"
 _HOUR = timedelta(hours=1)
