@@ -418,3 +418,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #778 | 2026-10-27 | feat(engine): the tracking trip and report score the journaled book | — | — | T0150 |
 | #779 | 2026-10-28 | feat(research): iter-195 — C2 lead-lag surface on ohlc-15m (reading 7) | iter-195 | 00150 | T0016 |
 | #782 | 2026-10-29 | feat(research): iter-196 — C1 maker-fill realism on L2 (reading 8) | iter-196 | 00151 | T0016 |
+| #783 | 2026-10-29 | docs(research): iter-197 — C1 and C2 closed after the maker-fill reading | iter-197 | — | T0016 |
