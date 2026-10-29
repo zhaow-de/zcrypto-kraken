@@ -402,7 +402,6 @@ def _drive_convert(tmp_path):
 
 
 def _drive_fills(tmp_path):
-    """The fill-model producer: a two-day l2-fills set through `write_day` and `write_fills_manifest`."""
     from tests.l2_fills_fixtures import write_l2_fills_set
 
     write_l2_fills_set(tmp_path, "l2-fills-test")
