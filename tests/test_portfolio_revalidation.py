@@ -178,6 +178,12 @@ def test_a_short_slice_is_refused_before_any_metric(returns):
         revalidation_metrics(series, series, series, grid, n_trials=6)
 
 
+def test_a_slice_of_exactly_a_month_is_admitted():
+    grid = _grid(_FIRST, _slice(_span())[0] + 180 + 1)
+    series = [0.001 * math.sin(i) for i in range(len(grid) - 1)]
+    assert revalidation_metrics(series, series, series, grid, n_trials=6)["slice_returns"] == 180
+
+
 def test_the_metrics_carry_exactly_the_declared_keys():
     grid, governed, ungoverned, bench = _planted()
     metrics = revalidation_metrics(governed, ungoverned, bench, grid, n_trials=6)

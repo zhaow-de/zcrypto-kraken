@@ -85,6 +85,25 @@ def test_a_window_is_refused():
     assert str(refused.value).endswith("drop --window")
 
 
+def test_the_build_forwards_its_as_of_and_accept_holes(monkeypatch):
+    class _Stop(Exception):
+        pass
+
+    books = []
+
+    def _record(*arguments):
+        books.append(arguments)
+        raise _Stop
+
+    monkeypatch.setattr(subjects, "_crossfreq_book", _record)
+    reader = object()
+
+    with pytest.raises(_Stop):
+        subjects.SUBJECTS[SUBJECT].build(reader, "ohlc-test", None, as_of="2026-10-03", accept_holes=True)
+
+    assert books == [(reader, "ohlc-test", None, "2026-10-03", True)]
+
+
 def test_a_set_ending_before_a_month_of_slice_is_refused(tmp_path, monkeypatch):
     monkeypatch.setattr(subjects, "benchmark_4h_net_of_cost", partial(_bench_recorder, []))
     root = _p1_revalidation_dataset(tmp_path, end=datetime(2026, 8, 8, 20, tzinfo=UTC))
