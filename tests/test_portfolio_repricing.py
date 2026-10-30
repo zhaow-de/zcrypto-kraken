@@ -104,9 +104,10 @@ def _figure_run(monkeypatch) -> types.SimpleNamespace:
         run.dsr_returns.append(deflated_sharpe_ratio(sr, n_obs, n_trials, var_trials))
         return run.dsr_returns[-1]
 
+    # The real bar passes every leg on these prices: three flags are planted at 0, or a hard-coded flag would pass.
     def flags(**kwargs):
         run.flag_calls.append(kwargs)
-        run.flag_returns.append(bar_flags(**kwargs))
+        run.flag_returns.append({**bar_flags(**kwargs), "dsr_pass": 0, "spa_pass": 0, "cost_stress_pass": 0})
         return run.flag_returns[-1]
 
     monkeypatch.setattr(repricing, "build_crossfreq_system_fast", build)
@@ -193,7 +194,9 @@ def test_each_figure_is_the_picked_basis_builds_and_the_check_the_registered_bui
         "spa": {key: metrics[key] for key in _SPA_KEYS},
         "stress_15": metrics["cost_stress_1_5x_sharpe_ann"],
     }
-    assert {key: metrics[key] for key in _FLAG_KEYS} == run.flag_returns[0]
+    planted = run.flag_returns[0]
+    assert (planted["dsr_pass"], planted["spa_pass"], planted["cost_stress_pass"]) == (0, 0, 0)
+    assert {key: metrics[key] for key in _FLAG_KEYS} == planted
     assert (metrics["fee_per_side"], metrics["spread_per_side"], metrics["cost_per_side"]) == (0.0030, 0.0005, _BASIS.cost_per_side)
 
 
