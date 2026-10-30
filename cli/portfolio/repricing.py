@@ -194,8 +194,8 @@ def repricing_metrics(
         "worst_book_sharpe": float(relative["worst_book_sharpe"]),
         "worst_benchmark_sharpe": float(relative["worst_benchmark_sharpe"]),
         "conditional_live_sharpe": conditional_live(g, live),
-        "conditional_live_bars": len(live),
-        "multipliers_moved": multipliers_moved(reg, bas),
+        "conditional_live_bars": int(len(live)),
+        "multipliers_moved": int(multipliers_moved(reg, bas)),
     }
 
 
