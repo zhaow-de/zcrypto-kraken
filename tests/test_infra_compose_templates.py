@@ -195,8 +195,7 @@ def test_every_logship_guard_renders_its_whole_branch_on_the_nodes_password(
     off = _render(template, context)["services"][service]
     assert _logship_branch(on, logship_file) == (True, True, ships_by_entrypoint)
     assert _logship_branch(off, logship_file) == (False, False, False)
-    # Compose lets `environment:` and a later `env_file` entry outrank the logship file, so each of its names reaches
-    # the push from that file alone.
+    # Compose lets `environment:` and a later `env_file` entry outrank the logship file.
     names = {line.split("=", 1)[0] for line in _LOGSHIP_LINES}
     assert not names & (set(on["environment"]) | set(off["environment"]))
     assert _env_file_paths(on)[-1] == logship_file
