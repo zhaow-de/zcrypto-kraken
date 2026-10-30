@@ -420,3 +420,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #782 | 2026-10-29 | feat(research): iter-196 — C1 maker-fill realism on L2 (reading 8) | iter-196 | 00151 | T0016 |
 | #783 | 2026-10-29 | docs(research): iter-197 — C1 and C2 closed after the maker-fill reading | iter-197 | — | T0016 |
 | #785 | 2026-10-29 | feat(research): iter-198 — record 47 revalidated on data it never saw | iter-198 | 00152 | T0122 |
+| #787 | 2026-10-30 | feat(research): iter-199 — the engine's execution cost from its ladder | iter-199 | 00153 | T0214 |
