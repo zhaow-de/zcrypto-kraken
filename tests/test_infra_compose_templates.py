@@ -194,7 +194,7 @@ def test_every_logship_guard_renders_its_whole_branch_on_the_nodes_password(
     assert _logship_branch(off, logship_file) == (False, False, False)
     if not ships_by_entrypoint:
         # An `entrypoint:` override replaces the image's, the one that adds `--ship-logs`, and an `environment:`
-        # ZCRYPTO_SHIP_LOGS outranks the logship file's, so either stops the push.
+        # ZCRYPTO_SHIP_LOGS outranks the logship file's; either can stop the push.
         assert "entrypoint" not in on and "entrypoint" not in off
         assert "ZCRYPTO_SHIP_LOGS" not in on["environment"] and "ZCRYPTO_SHIP_LOGS" not in off["environment"]
 
