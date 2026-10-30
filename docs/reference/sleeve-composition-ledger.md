@@ -53,3 +53,15 @@ The book equals the summed sleeve gross ÷ 6 on both sides, to within one ulp, s
 | **final book gross** (Σ\|target weight\|, governed) | **0.08526840614703204** | **0.08444517607103927** |
 
 The book again equals the summed sleeve gross ÷ 6 on both sides, to within one ulp. The band the next go-live decision reads is derived over the whole box window (plan 00092's R0 item 6, `--since 2026-10-05`), which carries the two-sleeve stretch, so no separate re-derivation follows this pair.
+
+### 2026-10-29 — A2 goes flat again; the book runs on B and A1
+
+| | last pre-transition cycle<br>2026-10-29 16Z | first post-transition cycle<br>2026-10-29 20Z |
+| --- | --- | --- |
+| `zcrypto_engine_active_sleeves` | 3 | **2** |
+| `sleeve_gross{sleeve="B"}` | 0.27680137117579956 | 0.27680137117579956 |
+| `sleeve_gross{sleeve="A1"}` | 0.23175786405427282 | 0.23175786405427282 |
+| `sleeve_gross{sleeve="A2"}` | 0.009001193899437303 | 0 |
+| **final book gross** (Σ\|target weight\|, governed) | **0.08626007152158495** | **0.0847598725383454** |
+
+Read off the series by the daily pass of 2026-10-30 (`zcrypto_engine_active_sleeves` stepped 3 → 2 at 20:02:00Z; the 16Z cycle read at 19:30Z, the 20Z cycle at 20:05Z). The book equals the summed sleeve gross ÷ 6 on both sides, exactly. A2 held weight from the 2026-10-27 00Z cycle through 2026-10-29 16Z and reads 0 through the 20Z, 00Z, 04Z and 08Z cycles after it.
