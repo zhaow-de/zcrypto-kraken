@@ -192,6 +192,9 @@ def test_every_logship_guard_renders_its_whole_branch_on_the_nodes_password(
     off = _render(template, context)["services"][service]
     assert _logship_branch(on, logship_file) == (True, True, ships_by_entrypoint)
     assert _logship_branch(off, logship_file) == (False, False, False)
+    if not ships_by_entrypoint:
+        # An `entrypoint:` override replaces the image's, the one that adds `--ship-logs`.
+        assert "entrypoint" not in on and "entrypoint" not in off
 
 
 @pytest.mark.parametrize("role", ["capture", "ops"])
