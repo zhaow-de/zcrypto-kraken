@@ -1,6 +1,6 @@
 """`write_l2_ladder_set`: an l2-ladder set written through the producer's own `write_day` and `write_ladder_manifest`, so
-the reading's tests read a tree the code under test did not write -- the twelve pairs' six episodes a day, each pair's
-prices, box-end touches and absent trades hours planted apart by its place k in `PAIRS`, from 1."""
+the reading's tests read a tree the code under test did not write -- each pair's prices, box-end touches and absent trades
+hours planted apart by its place k in `PAIRS`, from 1."""
 
 from __future__ import annotations
 

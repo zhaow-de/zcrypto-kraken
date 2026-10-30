@@ -349,9 +349,7 @@ def ladder_manifest(
 ) -> None:
     """Write the ladder dataset's manifest, once every pair's run has exited.
 
-    Refuses a day file, sidecar or run record it cannot read, a day file its sidecar or its run record disagrees with, run
-    records that disagree across pairs, and a boundary hour a second listing of the archive holds from another root than
-    the run recorded for it; exits 1 on a refusal.
+    Refuses what `fills-manifest` refuses, over the ladder's run records and boundary hours; exits 1 on a refusal.
     """
     try:
         path = write_ladder_manifest(

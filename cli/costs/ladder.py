@@ -22,8 +22,7 @@ _SIZES = (0, 1)
 
 
 def side_costs(frame: pl.DataFrame) -> pl.DataFrame:
-    """A filled order is priced at its fill and the maker's fee, an unfilled one at its box-end touch and the taker's;
-    `cost` is null on an unfilled row whose box end recorded no touch, an unpriced one."""
+    """`cost` is null on an unfilled row whose box end recorded no touch, an unpriced one."""
     sign = pl.when(pl.col("side") == "bid").then(1.0).otherwise(-1.0)
     fallback = ~pl.col("filled")
     price = pl.when(fallback).then(pl.col("box_end_touch_price")).otherwise(pl.col("fill_price"))
@@ -73,10 +72,7 @@ def cost_table(frame: pl.DataFrame) -> dict:
 
 
 def blend(frames: dict[str, pl.DataFrame], legs: tuple[str, ...]) -> dict:
-    """At each boundary the mean over the legs, each weighted equally, of a leg's mean over its sides. polars' mean skips
-    a null: an unpriced side drops out of its leg's mean and a leg with no priced side out of its boundary's, and a
-    boundary with no priced leg, null, is dropped from the series. A boundary's legs are summed in name order: polars
-    leaves a group_by's order unfixed, and a float sum moves with the order it adds in."""
+    """Legs sum in name order: polars leaves a group_by's order unfixed, and a float sum moves with it."""
     costs = pl.concat([side_costs(frames[leg]).select("ts", "side", "size", "cost").with_columns(leg=pl.lit(leg)) for leg in legs])
     table = {}
     for size in _SIZES:

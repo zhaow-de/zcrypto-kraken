@@ -5068,15 +5068,13 @@ def _build_p1_revalidation(
         raise SubjectError(f"{_b2_over('p1-revalidation', None)} of {dataset}: {exc}") from exc
 
 
-# docs/specs/00153 D3: the engine's execution cost read from its ladder replayed at the cycle boundaries; the blend's legs
-# the deployable's ten EUR assets.
+# docs/specs/00153 D3: the engine's execution cost read from its ladder replayed at the cycle boundaries.
 _ENGINE_COST_PARAMS = {**panel_ladder.LADDER_PARAMS, "depth": 100}
 _ENGINE_COST_LEGS = tuple(f"{asset}/EUR" for asset in _ASSETS)
 _ENGINE_COST_KEYS = frozenset({"cost_table", "blend", "coverage", "constants"})
 
 
 def _engine_cost_coverage(records: dict) -> dict:
-    """A pair's day entries counted whole: a day entered with no row is a day."""
     entries = list(records.values())
     return {
         "days": len(entries),

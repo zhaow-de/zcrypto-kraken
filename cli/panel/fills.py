@@ -170,10 +170,9 @@ def cap_queue(order: Order, book: OrderBook) -> None:
 
 
 def tick_cancel(order: Order, book: OrderBook, ts: datetime, tick: Decimal) -> None:
-    """At the boundary `ts`, after its prints: cap an open order's queue ahead at its level as the boundary before left
-    it, read the level for the next boundary's cap, then run the cancel clock -- away while the order's side is empty
-    or its best quote stands `tick` or more from the order's price; cancelled on the sixth away second in a row, or at
-    the horizon."""
+    """At the boundary `ts`, after its prints: `cap_queue`, then run the cancel clock -- away while the order's side is
+    empty or its best quote stands `tick` or more from the order's price; cancelled on the sixth away second in a row, or
+    at the horizon."""
     if not order.is_open:
         return
     cap_queue(order, book)
