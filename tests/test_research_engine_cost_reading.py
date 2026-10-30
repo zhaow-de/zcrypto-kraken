@@ -14,6 +14,8 @@ from cli.research import subjects
 from tests.l2_fills_fixtures import DAYS, EMPTY_PRIMARY, WRITTEN_AT
 from tests.l2_ladder_fixtures import STALE_PAIR, write_l2_ladder_set
 
+pytestmark = pytest.mark.retired
+
 SUBJECT = "engine-cost-reading"
 DATASET = "l2-ladder-test"
 OVER = f"{SUBJECT} over the full history: {DATASET}/manifest.json's"
