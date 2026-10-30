@@ -118,8 +118,8 @@ def _figure_run(monkeypatch) -> types.SimpleNamespace:
     return run
 
 
-def _at_record_47(**fields_: float) -> dict:
-    return {**dict.fromkeys(METRIC_KEYS, 0), "registered_basis_returns": 27337, "registered_basis_sharpe": 1.5609, **fields_}
+def _at_record_47(**changes: float) -> dict:
+    return {**dict.fromkeys(METRIC_KEYS, 0), "registered_basis_returns": 27337, "registered_basis_sharpe": 1.5609, **changes}
 
 
 def test_a_bar_past_the_in_sample_end_is_refused_before_any_build(monkeypatch):
@@ -151,9 +151,9 @@ def test_a_bar_past_the_in_sample_end_is_refused_before_any_build(monkeypatch):
 def test_the_stressed_basis_scales_both_terms_and_keeps_every_other_field():
     stressed = stressed_config(replace(_BASIS, long_cap=0.15), 1.5)
     assert (stressed.fee_per_side, stressed.spread_per_side, stressed.long_cap) == (0.0030 * 1.5, 0.0005 * 1.5, 0.15)
-    scaled = ("fee_per_side", "spread_per_side", "long_cap")
-    assert {f.name: getattr(stressed, f.name) for f in fields(stressed) if f.name not in scaled} == {
-        f.name: getattr(_BASIS, f.name) for f in fields(_BASIS) if f.name not in scaled
+    read_above = ("fee_per_side", "spread_per_side", "long_cap")
+    assert {f.name: getattr(stressed, f.name) for f in fields(stressed) if f.name not in read_above} == {
+        f.name: getattr(_BASIS, f.name) for f in fields(_BASIS) if f.name not in read_above
     }
 
 
