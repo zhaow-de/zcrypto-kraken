@@ -173,11 +173,14 @@ _LOGSHIP_GUARDS = [
 ]
 
 
+def _env_file_paths(service: dict) -> list[str]:
+    return [e["path"] if isinstance(e, dict) else e for e in service.get("env_file", [])]
+
+
 def _logship_branch(service: dict, logship_file: str) -> tuple[bool, bool, bool]:
-    paths = [e["path"] if isinstance(e, dict) else e for e in service.get("env_file", [])]
     return (
         "ZCRYPTO_LOG_HOST" in service["environment"],
-        logship_file in paths,
+        logship_file in _env_file_paths(service),
         "--ship-logs" in service.get("entrypoint", []),
     )
 
@@ -193,10 +196,12 @@ def test_every_logship_guard_renders_its_whole_branch_on_the_nodes_password(
     assert _logship_branch(on, logship_file) == (True, True, ships_by_entrypoint)
     assert _logship_branch(off, logship_file) == (False, False, False)
     if not ships_by_entrypoint:
-        # An `entrypoint:` override replaces the image's, the one that adds `--ship-logs`, and an `environment:`
-        # ZCRYPTO_SHIP_LOGS outranks the logship file's; either can stop the push.
+        # The flag reaches the image's ENTRYPOINT, the one that adds `--ship-logs`, from the logship file alone: an
+        # `entrypoint:` override replaces the image's, and Compose lets `environment:` and a later `env_file` entry
+        # outrank the logship file; any of them can stop the push.
         assert "entrypoint" not in on and "entrypoint" not in off
         assert "ZCRYPTO_SHIP_LOGS" not in on["environment"] and "ZCRYPTO_SHIP_LOGS" not in off["environment"]
+        assert _env_file_paths(on)[-1] == logship_file
 
 
 @pytest.mark.parametrize("role", ["capture", "ops"])
