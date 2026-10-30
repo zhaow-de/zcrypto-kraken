@@ -20,7 +20,7 @@ CACHE_DEFAULTS = yaml.safe_load((REPO / "infra/ansible/roles/cache/defaults/main
 _ENV = jinja2.Environment(trim_blocks=True, lstrip_blocks=False, undefined=jinja2.StrictUndefined)
 
 # Dummy but complete contexts: every variable each template references (outside the
-# `logship_loki_token is defined` guard), so a render under StrictUndefined only ever fails on a
+# `mon_ingest_logship_password is defined` guard), so a render under StrictUndefined only ever fails on a
 # genuine template bug, never a missing fixture variable.
 CAPTURE_CONTEXT = {
     "capture_image": "ghcr.io/zhaow-de/zcrypto-capture",
@@ -96,17 +96,17 @@ def _render(template_path: Path, context: dict) -> dict:
 
 
 @pytest.mark.parametrize(("template", "context"), _CASES, ids=_IDS)
-def test_renders_valid_yaml_without_logship_token(template, context):
-    # The `logship_loki_token is defined` guard's FALSE branch (00068 D5/D7): a converge landing
-    # before the vault carries the token, or a host that never gets it.
+def test_renders_valid_yaml_without_the_nodes_logship_password(template, context):
+    # The logship guard's FALSE branch (00068 D5/D7): a converge landing before the vault carries
+    # the node's logship password, or a host that never gets it.
     _render(template, context)
 
 
 @pytest.mark.parametrize(("template", "context"), _CASES, ids=_IDS)
-def test_renders_valid_yaml_with_logship_token(template, context):
-    # The guard's TRUE branch -- exercises the un-nesting of `environment:`/`entrypoint:` out from
-    # under it, this branch's riskiest edit on the trade-key host's engine template.
-    _render(template, {**context, "logship_loki_token": "dummy-token"})
+def test_renders_valid_yaml_with_the_nodes_logship_password(template, context):
+    # The guard's TRUE branch. It reads only that the render parses, which either branch does: the
+    # guard's name is held by test_every_logship_guard_renders_its_whole_branch_on_the_nodes_password.
+    _render(template, {**context, "mon_ingest_logship_password": "x"})
 
 
 def test_capture_metrics_port_and_publish_land_on_the_capture_service():
@@ -152,19 +152,84 @@ def test_the_engine_compose_file_carries_neither_cache_secret():
 
 
 def test_engine_logship_guard_moves_environment_and_entrypoint_together():
-    # The riskiest edit this test guards: `environment:` un-nested out of the
-    # logship guard on the TRADE-KEY host. ZCRYPTO_METRICS_PORT (spec 00069 D6, unguarded) must
-    # stay present either way; --ship-logs/ZCRYPTO_LOG_HOST must appear only with the token.
-    without_token = _render(ENGINE_TEMPLATE, ENGINE_CONTEXT)["services"]["engine"]
-    with_token = _render(ENGINE_TEMPLATE, {**ENGINE_CONTEXT, "logship_loki_token": "dummy-token"})["services"]["engine"]
+    without_password = _render(ENGINE_TEMPLATE, ENGINE_CONTEXT)["services"]["engine"]
+    with_password = _render(ENGINE_TEMPLATE, {**ENGINE_CONTEXT, "mon_ingest_logship_password": "x"})["services"]["engine"]
 
-    assert without_token["environment"]["ZCRYPTO_METRICS_PORT"] == "9102"
-    assert "ZCRYPTO_LOG_HOST" not in without_token["environment"]
-    assert without_token["entrypoint"] == ["zcrypto", "engine", "run"]
+    assert without_password["environment"]["ZCRYPTO_METRICS_PORT"] == "9102"
+    assert "ZCRYPTO_LOG_HOST" not in without_password["environment"]
+    assert without_password["entrypoint"] == ["zcrypto", "engine", "run"]
 
-    assert with_token["environment"]["ZCRYPTO_METRICS_PORT"] == "9102"
-    assert with_token["environment"]["ZCRYPTO_LOG_HOST"] == "zcrypto"
-    assert with_token["entrypoint"] == ["zcrypto", "--ship-logs", "engine", "run"]
+    assert with_password["environment"]["ZCRYPTO_METRICS_PORT"] == "9102"
+    assert with_password["environment"]["ZCRYPTO_LOG_HOST"] == "zcrypto"
+    assert with_password["entrypoint"] == ["zcrypto", "--ship-logs", "engine", "run"]
+
+
+# The capture service ships through its image's own ENTRYPOINT, which reads `ZCRYPTO_SHIP_LOGS` from the logship
+# file, so its true branch carries no `--ship-logs` of its own.
+_LOGSHIP_GUARDS = [
+    (CAPTURE_TEMPLATE, CAPTURE_CONTEXT, "capture", "/opt/zcrypto-capture/logship-secrets.env", False),
+    (OPS_TEMPLATE, OPS_CONTEXT, "liquidations", "/etc/zcrypto-ops/logship-secrets.env", True),
+    (ENGINE_TEMPLATE, ENGINE_CONTEXT, "engine", "/opt/zcrypto-capture/logship-secrets.env", True),
+]
+
+
+def _env_file_paths(service: dict) -> list[str]:
+    return [e["path"] if isinstance(e, dict) else e for e in service.get("env_file", [])]
+
+
+def _logship_branch(service: dict, logship_file: str) -> tuple[bool, bool, bool]:
+    return (
+        "ZCRYPTO_LOG_HOST" in service["environment"],
+        logship_file in _env_file_paths(service),
+        "--ship-logs" in service.get("entrypoint", []),
+    )
+
+
+@pytest.mark.parametrize(
+    ("template", "context", "service", "logship_file", "ships_by_entrypoint"), _LOGSHIP_GUARDS, ids=["capture", "ops", "engine"]
+)
+def test_every_logship_guard_renders_its_whole_branch_on_the_nodes_password(
+    template, context, service, logship_file, ships_by_entrypoint
+):
+    on = _render(template, {**context, "mon_ingest_logship_password": "x"})["services"][service]
+    off = _render(template, context)["services"][service]
+    assert _logship_branch(on, logship_file) == (True, True, ships_by_entrypoint)
+    assert _logship_branch(off, logship_file) == (False, False, False)
+    # Compose lets `environment:` and a later `env_file` entry outrank the logship file.
+    names = {line.split("=", 1)[0] for line in _LOGSHIP_LINES}
+    assert not names & (set(on["environment"]) | set(off["environment"]))
+    assert _env_file_paths(on)[-1] == logship_file
+    if not ships_by_entrypoint:
+        # An `entrypoint:` override replaces the image's, the one that adds `--ship-logs`.
+        assert "entrypoint" not in on and "entrypoint" not in off
+
+
+@pytest.mark.parametrize("role", ["capture", "ops"])
+def test_the_logship_file_renders_on_the_nodes_password(role):
+    tasks = yaml.safe_load((REPO / f"infra/ansible/roles/{role}/tasks/main.yml").read_text())
+    (render,) = [t for t in tasks if t.get("name") == "render the logship secrets env file"]
+    assert render["when"] == "mon_ingest_logship_password is defined"
+
+
+_LOGSHIP_LINES = [
+    "ZCRYPTO_LOKI_URL={{ mon_ingest_loki_url }}",
+    "ZCRYPTO_LOKI_USERNAME={{ mon_ingest_logship_user }}",
+    "ZCRYPTO_LOKI_PASSWORD={{ mon_ingest_logship_password }}",
+    "ZCRYPTO_SHIP_LOGS=1",
+]
+
+
+@pytest.mark.parametrize("role", ["capture", "ops"])
+def test_the_logship_files_push_to_the_nodes_loki_as_its_logship_user(role):
+    text = (REPO / f"infra/ansible/roles/{role}/templates/logship-secrets.env.j2").read_text()
+    assert [line for line in text.splitlines() if not line.startswith("#")] == _LOGSHIP_LINES
+    assert "grafana_loki_" not in text and "logship_loki_token" not in text
+
+
+def test_no_role_reads_grafana_clouds_logship_token():
+    roles = REPO / "infra/ansible/roles"
+    readers = sorted(str(p.relative_to(roles)) for p in roles.rglob("*") if p.is_file() and b"logship_loki_token" in p.read_bytes())
+    assert readers == [], "\n".join(readers)
 
 
 @pytest.mark.parametrize(
@@ -205,6 +270,7 @@ ALLOY_COMPOSE_FILES = (
 @pytest.mark.parametrize("path", ALLOY_COMPOSE_FILES, ids=lambda p: p.parent.name)
 def test_the_alloy_config_is_never_bind_mounted_as_a_single_file(path):
     text = path.read_text()
+    # config-selector-ok: a sweep of every non-comment line for the single-file mount, not a value selected
     offenders = [ln.strip() for ln in text.splitlines() if ":/etc/alloy/config.alloy" in ln and not ln.lstrip().startswith("#")]
     assert not offenders, (
         f"{path.name} bind-mounts the Alloy config as a single FILE: {offenders}. That binds the "
