@@ -4908,7 +4908,9 @@ _C1_FILL_PARAMS = {
 }
 
 
-def _c1_reads(reader: ObservedReader, dataset: str, subject: str) -> tuple[dict, dict[str, pl.DataFrame]]:
+def _frozen_pair_set_reads(
+    reader: ObservedReader, dataset: str, subject: str, *, params: dict, whose: str
+) -> tuple[dict, dict[str, pl.DataFrame]]:
     """The build receives the reader alone, whose root is the data root the manifest sits under."""
     over = _b2_over(subject, None)
     try:
@@ -4943,11 +4945,11 @@ def _c1_reads(reader: ObservedReader, dataset: str, subject: str) -> tuple[dict,
     lacking = [pair for pair in alpha_c1.PAIRS if not isinstance(records, dict) or not isinstance(records.get(pair), dict)]
     if lacking:
         raise SubjectError(f"{over}: {dataset}/manifest.json's provenance holds no day records for {', '.join(lacking)}")
-    params = manifest.provenance.get("params")
-    params = params if isinstance(params, dict) else {}
-    off = [f"{name} {params.get(name)!r}, not {value!r}" for name, value in _C1_FILL_PARAMS.items() if params.get(name) != value]
+    held = manifest.provenance.get("params")
+    held = held if isinstance(held, dict) else {}
+    off = [f"{name} {held.get(name)!r}, not {value!r}" for name, value in params.items() if held.get(name) != value]
     if off:
-        raise SubjectError(f"{over}: {dataset}/manifest.json's params are not the fill model's: {'; '.join(off)}")
+        raise SubjectError(f"{over}: {dataset}/manifest.json's params are not {whose}: {'; '.join(off)}")
     frames = {}
     for pair in alpha_c1.PAIRS:
         days = []
@@ -4958,6 +4960,10 @@ def _c1_reads(reader: ObservedReader, dataset: str, subject: str) -> tuple[dict,
                 raise SubjectError(f"{dataset}/{relpath}: {exc}") from exc
         frames[pair] = pl.concat(days)
     return manifest.provenance, frames
+
+
+def _c1_reads(reader: ObservedReader, dataset: str, subject: str) -> tuple[dict, dict[str, pl.DataFrame]]:
+    return _frozen_pair_set_reads(reader, dataset, subject, params=_C1_FILL_PARAMS, whose="the fill model's")
 
 
 def _c1_reading_inputs(frames: dict[str, pl.DataFrame], provenance: dict) -> dict:
@@ -5069,60 +5075,6 @@ _ENGINE_COST_LEGS = tuple(f"{asset}/EUR" for asset in _ASSETS)
 _ENGINE_COST_KEYS = frozenset({"cost_table", "blend", "coverage", "constants"})
 
 
-def _engine_cost_reads(reader: ObservedReader, dataset: str, subject: str) -> tuple[dict, dict[str, pl.DataFrame]]:
-    """The build receives the reader alone, whose root is the data root the manifest sits under."""
-    over = _b2_over(subject, None)
-    try:
-        manifest = read_manifest(reader._root / dataset / "manifest.json")
-    except (ManifestError, OSError) as exc:
-        raise SubjectError(f"{over}: {dataset}/manifest.json cannot be read: {exc}") from exc
-    relpaths: dict[str, list[str]] = {}
-    for relpath in sorted(manifest.series):
-        relpaths.setdefault("/".join(relpath.split("/")[:2]), []).append(relpath)
-    missing = [pair for pair in alpha_c1.PAIRS if pair not in relpaths]
-    extra = sorted(set(relpaths) - set(alpha_c1.PAIRS))
-    if missing or extra:
-        raise SubjectError(
-            f"{over}: {dataset}/manifest.json's pairs are not the twelve it reads: missing {', '.join(missing) or 'none'}, "
-            f"extra {', '.join(extra) or 'none'}"
-        )
-    outside = [
-        relpath
-        for relpath, leaf in sorted(manifest.series.items())
-        if leaf["first_ts"] is not None
-        and (
-            datetime.fromisoformat(leaf["first_ts"]) < alpha_c1.SPAN[0]
-            or datetime.fromisoformat(leaf["last_ts"]) >= alpha_c1.SPAN[1]
-        )
-    ]
-    if outside:
-        raise SubjectError(
-            f"{over}: {dataset}/manifest.json's day files {', '.join(outside)} lie outside the span "
-            f"[{alpha_c1.SPAN[0].isoformat()}, {alpha_c1.SPAN[1].isoformat()})"
-        )
-    records = manifest.provenance.get("pairs")
-    lacking = [pair for pair in alpha_c1.PAIRS if not isinstance(records, dict) or not isinstance(records.get(pair), dict)]
-    if lacking:
-        raise SubjectError(f"{over}: {dataset}/manifest.json's provenance holds no day records for {', '.join(lacking)}")
-    params = manifest.provenance.get("params")
-    params = params if isinstance(params, dict) else {}
-    off = [
-        f"{name} {params.get(name)!r}, not {value!r}" for name, value in _ENGINE_COST_PARAMS.items() if params.get(name) != value
-    ]
-    if off:
-        raise SubjectError(f"{over}: {dataset}/manifest.json's params are not the ladder's: {'; '.join(off)}")
-    frames = {}
-    for pair in alpha_c1.PAIRS:
-        days = []
-        for relpath in relpaths[pair]:
-            try:
-                days.append(reader.read_series(dataset, relpath))
-            except (pl.exceptions.PolarsError, OSError) as exc:
-                raise SubjectError(f"{dataset}/{relpath}: {exc}") from exc
-        frames[pair] = pl.concat(days)
-    return manifest.provenance, frames
-
-
 def _engine_cost_coverage(records: dict) -> dict:
     """A pair's day entries counted whole: a day entered with no row is a day."""
     entries = list(records.values())
@@ -5148,7 +5100,7 @@ def _build_engine_cost_reading(
         raise SubjectError(
             f"{_b2_over(subject, window)}: it reads the frozen l2-ladder set whole, its span and its months fixed; drop --window"
         )
-    provenance, frames = _engine_cost_reads(reader, dataset, subject)
+    provenance, frames = _frozen_pair_set_reads(reader, dataset, subject, params=_ENGINE_COST_PARAMS, whose="the ladder's")
     try:
         return {
             "cost_table": {pair: costs_ladder.cost_table(frame) for pair, frame in frames.items()},
