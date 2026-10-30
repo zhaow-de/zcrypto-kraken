@@ -632,14 +632,19 @@ def test_the_alloy_config_is_validated_and_alloy_restarted_on_a_change():
 OBSERVED_VARS = ANSIBLE / "group_vars/observed/vars.yml"
 
 
-def test_the_fleets_ingest_names_are_the_nodes_public_name_its_two_authenticated_paths_and_its_fleet_user():
+def test_the_fleets_ingest_names_are_the_nodes_public_name_its_two_authenticated_paths_its_fleet_user_and_its_logship_user():
     observed = {key: value for key, value in yaml.safe_load(OBSERVED_VARS.read_text()).items() if key.startswith("mon_")}
     assert observed == {
         "mon_ingest_prom_url": f"https://{DEFAULTS['mon_hostname']}/api/v1/write",
         "mon_ingest_loki_url": f"https://{DEFAULTS['mon_hostname']}/loki/api/v1/push",
         "mon_ingest_fleet_user": DEFAULTS["mon_ingest_fleet_user"],
+        "mon_ingest_logship_user": DEFAULTS["mon_ingest_logship_user"],
     }, observed
     site = _site()
+    users = {}
     for url in (observed["mon_ingest_prom_url"], observed["mon_ingest_loki_url"]):
         path = url.removeprefix(f"https://{DEFAULTS['mon_hostname']}")
-        assert observed["mon_ingest_fleet_user"] in role_render.users(site[f"handle {path}"]), path
+        users[path] = role_render.users(site[f"handle {path}"])
+        assert observed["mon_ingest_fleet_user"] in users[path], path
+    assert observed["mon_ingest_logship_user"] in users["/loki/api/v1/push"]
+    assert observed["mon_ingest_logship_user"] not in users["/api/v1/write"]
