@@ -75,7 +75,8 @@ def cost_table(frame: pl.DataFrame) -> dict:
 def blend(frames: dict[str, pl.DataFrame], legs: tuple[str, ...]) -> dict:
     """At each boundary the mean over the legs, each weighted equally, of a leg's mean over its sides. polars' mean skips
     a null: an unpriced side drops out of its leg's mean and a leg with no priced side out of its boundary's, and a
-    boundary with no priced leg, null, is dropped from the series."""
+    boundary with no priced leg, null, is dropped from the series. A boundary's legs are summed in name order: polars
+    leaves a group_by's order unfixed, and a float sum moves with the order it adds in."""
     costs = pl.concat([side_costs(frames[leg]).select("ts", "side", "size", "cost").with_columns(leg=pl.lit(leg)) for leg in legs])
     table = {}
     for size in _SIZES:
@@ -83,7 +84,8 @@ def blend(frames: dict[str, pl.DataFrame], legs: tuple[str, ...]) -> dict:
             costs.filter(pl.col("size") == size)
             .group_by("ts", "leg")
             .agg(leg_cost=pl.col("cost").mean())
-            .group_by("ts")
+            .sort("ts", "leg")
+            .group_by("ts", maintain_order=True)
             .agg(cost=pl.col("leg_cost").mean())
             .drop_nulls("cost")
             .sort("ts")["cost"]

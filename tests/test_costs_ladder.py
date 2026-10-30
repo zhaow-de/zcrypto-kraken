@@ -164,6 +164,18 @@ def test_the_blend_weights_each_leg_equally():
     assert blended["S1"] == {"boundaries": 0}
 
 
+def test_the_blend_sums_each_boundarys_legs_in_their_name_order():
+    # In name order the two 1e16 legs cancel before the 1.0 joins them and the mean is 1/3; a sum that meets the 1.0 first
+    # loses it against 1e16 and reads 0.0. Polars' group order moves from call to call, so one call can land on the name
+    # order by chance.
+    costs = {"ADA/EUR": 1e16, "AVAX/EUR": -1e16, "BTC/EUR": 1.0}
+    frames = {leg: rows_frame([_priced(START, side, cost, pair=leg) for side in ("bid", "ask")]) for leg, cost in costs.items()}
+
+    means = [blend(frames, ("BTC/EUR", "ADA/EUR", "AVAX/EUR"))["S0"]["mean_cost"] for _ in range(20)]
+
+    assert means == [1 / 3] * 20
+
+
 def test_the_interval_is_bootstrap_ci_at_the_constants():
     cell_costs = [0.004, 0.012, 0.001, 0.009, 0.003, 0.030, 0.002, 0.007, 0.005, 0.011, 0.006, 0.008]
     blend_costs = [0.020, 0.003, 0.006, 0.001, 0.009, 0.004, 0.002, 0.012, 0.005, 0.007, 0.010, 0.008]
