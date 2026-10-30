@@ -95,6 +95,7 @@ from cli.risk.errors import RiskError
 from cli.validation import ValidationError, max_drawdown, sharpe
 from cli.validation.dsr import expected_max_sharpe
 from tests.l2_fills_fixtures import write_l2_fills_set
+from tests.l2_ladder_fixtures import write_l2_ladder_set
 from tests.rolling_fixtures import HOLE, line_bytes, write_chain
 from tests.test_trial_attempts import _reaped_pid
 from tests.test_trial_registry_provenance import LEDGER, REGISTRY, _trials, live_entries
@@ -8451,6 +8452,7 @@ _CONTRACT_DATASETS = {
     "c2-lead-lag-reading": _c2_dataset,
     "c1-maker-fill-reading": lambda tmp_path, subject: (tmp_path / "data", write_l2_fills_set(tmp_path / "data", "ohlc-test")),
     "p1-revalidation": lambda tmp_path, subject: (_p1_revalidation_dataset(tmp_path), datetime(2025, 1, 1, tzinfo=UTC)),
+    "engine-cost-reading": lambda tmp_path, subject: (tmp_path / "data", write_l2_ladder_set(tmp_path / "data", "ohlc-test")),
 }
 
 
