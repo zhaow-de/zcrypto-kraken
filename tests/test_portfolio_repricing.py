@@ -23,7 +23,7 @@ from cli.portfolio.repricing import (
 )
 from cli.portfolio.revalidation import P1_VAR_TRIALS
 from cli.research import subjects
-from cli.validation import deflated_sharpe_ratio, max_drawdown, sharpe
+from cli.validation import max_drawdown, sharpe
 
 _LAST_H4 = datetime(2026, 3, 31, 20, tzinfo=UTC)
 _REGISTERED = subjects._RECORD44_CONFIG
@@ -78,7 +78,6 @@ def _figure_run(monkeypatch) -> types.SimpleNamespace:
         bench_calls=[],
         spa_calls=[],
         dsr_calls=[],
-        dsr_returns=[],
         flag_calls=[],
         flag_returns=[],
     )
@@ -99,10 +98,10 @@ def _figure_run(monkeypatch) -> types.SimpleNamespace:
         )
         return run.kept[t]
 
+    # The real DSR is 1.0 on these prices: the recorder returns 0.5, or a literal 1.0 would pass.
     def dsr(sr, n_obs, *, n_trials, var_trials):
         run.dsr_calls.append((sr, n_obs, n_trials, var_trials))
-        run.dsr_returns.append(deflated_sharpe_ratio(sr, n_obs, n_trials, var_trials))
-        return run.dsr_returns[-1]
+        return 0.5
 
     # The real bar passes every leg on these prices: three flags are planted at 0, or a hard-coded flag would pass.
     def flags(**kwargs):
@@ -181,7 +180,7 @@ def test_each_figure_is_the_picked_basis_builds_and_the_check_the_registered_bui
     assert metrics["bench4h_sharpe_decisive"] == sharpe(bench[1380:], periods_per_year=2190)
     assert run.bench_calls == [_BASIS.cost_per_side]
     assert run.dsr_calls == [(sharpe(g), len(g), 5, P1_VAR_TRIALS)]
-    assert metrics["dsr"] == run.dsr_returns[0]
+    assert metrics["dsr"] == 0.5
     assert metrics["var_trials_4h"] == P1_VAR_TRIALS
     outperformance = [[b - m] for b, m in zip(g, bench, strict=True)]
     matrices = [call[0] for call in run.spa_calls]
