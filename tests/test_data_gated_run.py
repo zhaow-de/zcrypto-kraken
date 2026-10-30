@@ -215,6 +215,8 @@ def test_the_command_runs_through_the_target_checkouts_environment_not_this_one(
         "-rfEs",
         "-n",
         "8",
+        "--dist",
+        "worksteal",
         "--durations=25",
         "--durations-min=1.0",
         "-k",
