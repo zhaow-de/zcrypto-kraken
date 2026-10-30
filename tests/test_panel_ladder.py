@@ -115,14 +115,17 @@ def test_an_order_the_touch_leaves_and_returns_to_is_filled_by_a_later_print():
 def test_the_box_end_reads_the_opposite_touch_at_post_plus_900s():
     touches = [
         (1019, [(1000.2, 0.21)], [(1001.8, 0.31)]),
-        (1020, [(1000.4, 0.22)], [(1001.6, 0.32)]),
+        (1020, [(1000.4, 0.22)], [(1001.7, 0.32)]),
         (1021, [(1000.6, 0.23)], [(1001.4, 0.33)]),
     ]
     rows, _ = _episode(touches)
     touch = ("box_end_touch_price", "box_end_touch_qty")
     for size in (0, 1):
-        assert [_row(rows, "bid", size)[name] for name in touch] == [1001.6, 0.32]
+        assert [_row(rows, "bid", size)[name] for name in touch] == [1001.7, 0.32]
         assert [_row(rows, "ask", size)[name] for name in touch] == [1000.4, 0.22]
+    box_end_mid = (1000.4 + 1001.7) / 2
+    assert [row["box_end_mid"] for row in rows] == [box_end_mid] * 4
+    assert all(row["mid_at_post"] != box_end_mid for row in rows)
 
 
 def test_a_print_at_the_box_end_second_fills_and_one_after_does_not():
