@@ -104,10 +104,8 @@ def test_renders_valid_yaml_without_the_nodes_logship_password(template, context
 
 @pytest.mark.parametrize(("template", "context"), _CASES, ids=_IDS)
 def test_renders_valid_yaml_with_the_nodes_logship_password(template, context):
-    # The guard's TRUE branch -- exercises the un-nesting of `environment:`/`entrypoint:` out from
-    # under it, this branch's riskiest edit on the trade-key host's engine template. It reads only that
-    # the render parses, which either branch does: the guard's name is held by
-    # test_every_logship_guard_renders_its_whole_branch_on_the_nodes_password.
+    # The guard's TRUE branch. It reads only that the render parses, which either branch does: the
+    # guard's name is held by test_every_logship_guard_renders_its_whole_branch_on_the_nodes_password.
     _render(template, {**context, "mon_ingest_logship_password": "x"})
 
 
@@ -154,9 +152,6 @@ def test_the_engine_compose_file_carries_neither_cache_secret():
 
 
 def test_engine_logship_guard_moves_environment_and_entrypoint_together():
-    # The riskiest edit this test guards: `environment:` un-nested out of the
-    # logship guard on the TRADE-KEY host. ZCRYPTO_METRICS_PORT (spec 00069 D6, unguarded) must
-    # stay present either way; --ship-logs/ZCRYPTO_LOG_HOST must appear only with the node's logship password.
     without_password = _render(ENGINE_TEMPLATE, ENGINE_CONTEXT)["services"]["engine"]
     with_password = _render(ENGINE_TEMPLATE, {**ENGINE_CONTEXT, "mon_ingest_logship_password": "x"})["services"]["engine"]
 
@@ -206,8 +201,6 @@ def test_the_logship_file_renders_on_the_nodes_password(role):
     assert render["when"] == "mon_ingest_logship_password is defined"
 
 
-# `ZCRYPTO_SHIP_LOGS=1` is the capture daemon's only way to ship: its image's ENTRYPOINT adds `--ship-logs` when the
-# flag is set, and the capture compose bakes none in.
 _LOGSHIP_LINES = [
     "ZCRYPTO_LOKI_URL={{ mon_ingest_loki_url }}",
     "ZCRYPTO_LOKI_USERNAME={{ mon_ingest_logship_user }}",

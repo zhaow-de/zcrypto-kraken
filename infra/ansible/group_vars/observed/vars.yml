@@ -1,7 +1,6 @@
-# The node's ingest: the public name and the two paths roles/edge/templates/Caddyfile.j2 authenticates, the user
-# it admits on both for the fleet's Alloys, and the user it admits on the Loki path alone for the applications' own
-# log push. Their passwords are `mon_ingest_fleet_password` and `mon_ingest_logship_password` in vault.yml beside
-# this file. The two users repeat the mon role's defaults, which no other role's template can read.
+# The node's ingest, as roles/edge/templates/Caddyfile.j2 authenticates it; the passwords are
+# `mon_ingest_fleet_password` and `mon_ingest_logship_password` in vault.yml beside this file. The two
+# users repeat the mon role's defaults, which no other role's template can read.
 mon_ingest_prom_url: https://zcrypto-mon.zhaow.me/api/v1/write
 mon_ingest_loki_url: https://zcrypto-mon.zhaow.me/loki/api/v1/push
 mon_ingest_fleet_user: fleet

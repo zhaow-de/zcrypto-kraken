@@ -44,8 +44,7 @@ ALERTS = _HERE.parents[1] / "infra" / "grafana" / "alerts.yaml"
 EXCLUDED_GROUPS = ("zcrypto-mon", "zcrypto-hc")
 EXCLUDED_HOSTS = ("zcrypto-mon", "zcrypto-hc")
 # The rules that select a direct shipper's log stream, which reaches the node at its hand-over and Grafana Cloud no
-# longer after it, so they stay outside the comparison; the test holds this tuple to the measured basis's listing over
-# the rule file, so an eighth such rule fails the test, not a run.
+# longer after it, so they stay outside the comparison.
 DIRECT_SHIPPED_RULES = (
     "zcrypto-engine-error-logs",
     "zcrypto-engine-log-dead",

@@ -26,9 +26,7 @@
 # zcrypto-deploy, not root: unlike capture (whose `docker compose up` runs as root via a systemd
 # unit), nothing on this host starts the liquidations poller as root -- OPS-2 below is a manual,
 # attended `docker compose up -d` by the zcrypto-deploy operator, the same account that already
-# owns compose.yaml.j2 itself. `mon_ingest_logship_password is defined` is the structural safety net,
-# matching the same guard on the compose file's entrypoint/environment/env_file additions that
-# reference this file.
+# owns compose.yaml.j2 itself.
 - name: render the logship secrets env file
   ansible.builtin.template:
     src: logship-secrets.env.j2
