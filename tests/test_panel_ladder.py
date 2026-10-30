@@ -96,6 +96,11 @@ def test_orders_post_at_boundary_plus_120s():
     assert len(rows) == 4 and {row["ts"] for row in rows} == {_at(120)} and counts["posts"] == 4
     for size in (0, 1):
         assert (_row(rows, "bid", size)["price"], _row(rows, "bid", size)["queue_ahead_qty"]) == (1000.5, 0.7)
+    bid, ask = 1000.5, 1002.0
+    for size, notional in ((0, 100.0), (1, 1000.0)):
+        assert (_row(rows, "bid", size)["our_qty"], _row(rows, "ask", size)["our_qty"]) == (notional / bid, notional / ask)
+    spread_bps = (ask - bid) / ((bid + ask) / 2) * 1e4
+    assert [(row["spread_at_post_bps"], row["pair"]) for row in rows] == [(spread_bps, PAIR)] * 4
 
 
 def test_a_print_at_second_300_fills_the_bid_and_never_the_ask():
