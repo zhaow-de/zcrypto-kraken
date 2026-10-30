@@ -13,6 +13,7 @@ from cli.archive.reader import canonical_segments
 from cli.logging import get_logger
 from cli.panel.errors import PanelError
 from cli.panel.fills import produce_pair, write_fills_manifest
+from cli.panel.ladder import produce_ladder_pair, write_ladder_manifest
 from cli.panel.materialize import K_LEVELS, SCHEMA_VERSION, panel_watermark, write_meta
 from cli.panel.materialize import materialize as materialize_hours
 from cli.panel.primitives import NOTIONALS_BY_QUOTE
@@ -21,7 +22,8 @@ logger = get_logger("panel.command")
 
 panel_app = typer.Typer(
     no_args_is_help=True,
-    help="The 1s L2 primitive panel: materialize the canonical book archive into it; run the queue-position fill model.",
+    help="The 1s L2 primitive panel: materialize the canonical book archive into it; run the queue-position fill model "
+    "and the maker-first ladder replay.",
 )
 
 
@@ -292,4 +294,67 @@ def fills_manifest(
         )
     except PanelError as exc:
         raise _abort(f"panel fills-manifest: {exc}") from exc
+    typer.echo(str(path))
+
+
+@panel_app.command()
+def ladder(
+    primary_root: Path = typer.Argument(..., help="The primary (raw) canonical archive: its book and trades hours."),
+    out_root: Path = typer.Argument(..., help="The dataset root to write into; created with its parents when absent."),
+    reconciled_root: Optional[Path] = typer.Option(
+        None,
+        "--reconciled-root",
+        help="The healed overlay; both kinds' hours are read reconciled-first. Omit to read the primary alone.",
+    ),
+    panel_root: Path = typer.Option(
+        ..., "--panel-root", help="The panel tree whose state sidecars seed the book at each cycle boundary."
+    ),
+    pair: str = typer.Option(
+        ...,
+        "--pair",
+        help=f"The one pair this run produces (e.g. BTC/EUR); its quote must have a notional ladder ({', '.join(NOTIONALS_BY_QUOTE)}).",
+    ),
+    since: str = typer.Option(
+        ..., "--since", help="The first hour, inclusive: a YYYY-MM-DD date or an ISO-8601 hour (e.g. 2026-08-01T00)."
+    ),
+    until: str = typer.Option(..., "--until", help="The end hour, exclusive: a YYYY-MM-DD date or an ISO-8601 hour."),
+    depth: int = typer.Option(100, "--depth", help="Book depth the archive was captured at."),
+) -> None:
+    """Replay the engine's maker-first ladder at one pair's cycle boundaries, and write its rows one UTC day per file.
+
+    Two minutes after each 00, 04, 08, 12, 16 and 20Z boundary a bid and an ask join the back of the queue at the touch,
+    at the first two rungs of the quote's notional ladder, and rest unchased for 15 minutes; each row is one order --
+    filled or not -- with the opposite touch and the mid at the box end, the fallback's price. Resumes after the pair's
+    newest day file. Prints the run's counts as one JSON line; exits 1 on a refusal.
+    """
+    _check_pair(pair)
+    since_hour = _parse_since(since)
+    until_hour = _parse_since(until, flag="--until")
+    try:
+        counts = produce_ladder_pair(
+            primary_root, reconciled_root, panel_root, out_root, pair, since=since_hour, until=until_hour, depth=depth
+        )
+    except PanelError as exc:
+        raise _abort(f"panel ladder: {exc}") from exc
+    typer.echo(json.dumps(counts))
+
+
+@panel_app.command("ladder-manifest")
+def ladder_manifest(
+    primary_root: Path = typer.Argument(..., help="The primary (raw) canonical archive the ladder runs read."),
+    out_root: Path = typer.Argument(..., help="The dataset root the ladder runs wrote."),
+    reconciled_root: Optional[Path] = typer.Option(
+        None, "--reconciled-root", help="The healed overlay the ladder runs read, if any."
+    ),
+) -> None:
+    """Write the ladder dataset's manifest, once every pair's run has exited.
+
+    Refuses what `fills-manifest` refuses, over the ladder's run records and boundary hours; exits 1 on a refusal.
+    """
+    try:
+        path = write_ladder_manifest(
+            out_root, primary_root, reconciled_root, written_at=datetime.now(UTC).isoformat(timespec="seconds")
+        )
+    except PanelError as exc:
+        raise _abort(f"panel ladder-manifest: {exc}") from exc
     typer.echo(str(path))

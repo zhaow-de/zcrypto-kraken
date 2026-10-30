@@ -33,6 +33,7 @@ tests/test_registry_replay.py::test_every_record_past_47_replays_at_head[reading
 tests/test_registry_replay.py::test_every_record_past_47_replays_at_head[reading-6]
 tests/test_registry_replay.py::test_every_record_past_47_replays_at_head[reading-7]
 tests/test_registry_replay.py::test_every_record_past_47_replays_at_head[reading-8]
+tests/test_registry_replay.py::test_every_record_past_47_replays_at_head[reading-9]
 tests/test_registry_replay.py::test_every_record_past_47_replays_at_head[trial-48]
 tests/test_registry_replay.py::test_every_record_past_47_replays_at_head[trial-49]
 tests/test_registry_replay.py::test_every_record_past_47_replays_at_head[trial-50]

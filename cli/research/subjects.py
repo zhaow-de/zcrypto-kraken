@@ -121,10 +121,12 @@ from cli.alpha.errors import AlphaError
 from cli.alpha.killbar import a1_kill_bar, net_of_cost_verdict
 from cli.backtest.errors import BacktestError
 from cli.benchmark.errors import BenchmarkError
+from cli.costs import ladder as costs_ladder
 from cli.data.manifest import ManifestError, read_manifest
 from cli.derivatives.funding import PERP_SYMBOLS
 from cli.features.derivatives import coverage_by_year, funding_zscore
 from cli.features.errors import FeatureError
+from cli.panel import ladder as panel_ladder
 from cli.portfolio.builder import CombinedSystemConfig, build_combined_system
 from cli.portfolio.crossfreq_system import (
     CrossfreqSystemConfig,
@@ -4906,7 +4908,9 @@ _C1_FILL_PARAMS = {
 }
 
 
-def _c1_reads(reader: ObservedReader, dataset: str, subject: str) -> tuple[dict, dict[str, pl.DataFrame]]:
+def _frozen_pair_set_reads(
+    reader: ObservedReader, dataset: str, subject: str, *, params: dict, whose: str
+) -> tuple[dict, dict[str, pl.DataFrame]]:
     """The build receives the reader alone, whose root is the data root the manifest sits under."""
     over = _b2_over(subject, None)
     try:
@@ -4941,11 +4945,11 @@ def _c1_reads(reader: ObservedReader, dataset: str, subject: str) -> tuple[dict,
     lacking = [pair for pair in alpha_c1.PAIRS if not isinstance(records, dict) or not isinstance(records.get(pair), dict)]
     if lacking:
         raise SubjectError(f"{over}: {dataset}/manifest.json's provenance holds no day records for {', '.join(lacking)}")
-    params = manifest.provenance.get("params")
-    params = params if isinstance(params, dict) else {}
-    off = [f"{name} {params.get(name)!r}, not {value!r}" for name, value in _C1_FILL_PARAMS.items() if params.get(name) != value]
+    held = manifest.provenance.get("params")
+    held = held if isinstance(held, dict) else {}
+    off = [f"{name} {held.get(name)!r}, not {value!r}" for name, value in params.items() if held.get(name) != value]
     if off:
-        raise SubjectError(f"{over}: {dataset}/manifest.json's params are not the fill model's: {'; '.join(off)}")
+        raise SubjectError(f"{over}: {dataset}/manifest.json's params are not {whose}: {'; '.join(off)}")
     frames = {}
     for pair in alpha_c1.PAIRS:
         days = []
@@ -4956,6 +4960,10 @@ def _c1_reads(reader: ObservedReader, dataset: str, subject: str) -> tuple[dict,
                 raise SubjectError(f"{dataset}/{relpath}: {exc}") from exc
         frames[pair] = pl.concat(days)
     return manifest.provenance, frames
+
+
+def _c1_reads(reader: ObservedReader, dataset: str, subject: str) -> tuple[dict, dict[str, pl.DataFrame]]:
+    return _frozen_pair_set_reads(reader, dataset, subject, params=_C1_FILL_PARAMS, whose="the fill model's")
 
 
 def _c1_reading_inputs(frames: dict[str, pl.DataFrame], provenance: dict) -> dict:
@@ -5058,6 +5066,55 @@ def _build_p1_revalidation(
         return revalidation_metrics(result.governed_net, result.ungoverned_net, bench, h4_ts, n_trials=_P1_REVALIDATION_N_TRIALS)
     except RevalidationError as exc:
         raise SubjectError(f"{_b2_over('p1-revalidation', None)} of {dataset}: {exc}") from exc
+
+
+# docs/specs/00153 D3: the engine's execution cost read from its ladder replayed at the cycle boundaries.
+_ENGINE_COST_PARAMS = {**panel_ladder.LADDER_PARAMS, "depth": 100}
+_ENGINE_COST_LEGS = tuple(f"{asset}/EUR" for asset in _ASSETS)
+_ENGINE_COST_KEYS = frozenset({"cost_table", "blend", "coverage", "constants"})
+
+
+def _engine_cost_coverage(records: dict) -> dict:
+    entries = list(records.values())
+    return {
+        "days": len(entries),
+        "episodes": sum(entry["hours"] for entry in entries),
+        **{name: sum(entry[name] for entry in entries) for name in ("posts", "skipped_no_quote", "skipped_stale")},
+        **{name: sum(len(entry[name]) for entry in entries) for name in ("hours_unanchored", "hours_absent", "trades_absent")},
+    }
+
+
+def _build_engine_cost_reading(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    subject = "engine-cost-reading"
+    if as_of is not None:
+        raise SubjectError(f"{subject} evaluates a frozen l2-ladder set whole, never the rolling dataset as of a day: drop --as-of")
+    if window is not None:
+        raise SubjectError(
+            f"{_b2_over(subject, window)}: it reads the frozen l2-ladder set whole, its span and its months fixed; drop --window"
+        )
+    provenance, frames = _frozen_pair_set_reads(reader, dataset, subject, params=_ENGINE_COST_PARAMS, whose="the ladder's")
+    try:
+        return {
+            "cost_table": {pair: costs_ladder.cost_table(frame) for pair, frame in frames.items()},
+            "blend": costs_ladder.blend(frames, _ENGINE_COST_LEGS),
+            "coverage": {pair: _engine_cost_coverage(provenance["pairs"][pair]) for pair in frames},
+            "constants": {
+                "maker_fee": costs_ladder.MAKER_FEE,
+                "taker_fee": costs_ladder.TAKER_FEE,
+                "registered_per_side": costs_ladder.REGISTERED_PER_SIDE,
+                "mean_block": costs_ladder.MEAN_BLOCK,
+                "n_resamples": costs_ladder.N_RESAMPLES,
+                "seed": costs_ladder.SEED,
+            },
+        }
+    except ValidationError as exc:
+        raise SubjectError(f"{_b2_over(subject, window)}: {exc}") from exc
 
 
 SUBJECTS: dict[str, Subject] = {
@@ -5583,6 +5640,15 @@ SUBJECTS: dict[str, Subject] = {
         ),
         family="P1",
         n_trials=_P1_REVALIDATION_N_TRIALS,
+    ),
+    "engine-cost-reading": Subject(
+        "engine-cost-reading",
+        (15,),
+        (),
+        _build_engine_cost_reading,
+        spec="docs/specs/00153-engine-execution-cost-design.md",
+        metric_keys=_ENGINE_COST_KEYS,
+        seeds=(costs_ladder.SEED,),
     ),
 }
 

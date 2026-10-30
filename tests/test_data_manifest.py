@@ -408,6 +408,13 @@ def _drive_fills(tmp_path):
     return tmp_path / "l2-fills-test" / "manifest.json"
 
 
+def _drive_ladder(tmp_path):
+    from tests.l2_ladder_fixtures import write_l2_ladder_set
+
+    write_l2_ladder_set(tmp_path, "l2-ladder-test")
+    return tmp_path / "l2-ladder-test" / "manifest.json"
+
+
 _PRODUCERS = {
     "cli/backfill/backfill.py": _drive_backfill,
     "cli/data/manifest.py": _drive_convert,
@@ -415,6 +422,7 @@ _PRODUCERS = {
     "cli/derivatives/oi.py": _drive_oi,
     "cli/ohlc/ingest.py": _drive_ingest,
     "cli/panel/fills.py": _drive_fills,
+    "cli/panel/ladder.py": _drive_ladder,
 }
 
 

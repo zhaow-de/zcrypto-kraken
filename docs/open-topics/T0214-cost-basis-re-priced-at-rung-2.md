@@ -1,5 +1,5 @@
 ---
-status: open
+status: partial
 ripe_when: '`uv run zcrypto engine tracking-report --journal-dir <pulled journal> --since <first day of rung 2> --until <the last Sunday>` reports a realized maker share on at least 30 euro-denominated fills — the count the `basis:` line names'
 ---
 
@@ -18,9 +18,13 @@ Applying the tracking report's proposed rate to the builder default invalidates 
 - The venue's fee on a margin open is the spot fee plus a 2 bps margin-opening fee that the fee term does not carry; a re-pricing states which fees the term covers.
 - The engine journal rounds a fill's fee to the cent — up to ±2.5 bps on a 20 EUR leg — so the re-pricing reads the fee from the venue's rows, or from fills large enough that the cent does not move the figure.
 - A margin open's fee can be charged in EURC: the venue converts euro to EURC at par beside the row (a `collateralconversion` pair) and charges the fee in EURC, seen on the 2026-09-24 hand open and the 2026-09-25 BTC/EUR open. The tracking report's `fees on the matched rows` figure counts such a fee at par under `_EURO_FEE_ASSETS` in `cli/engine/tracking.py` (spec `00119` D8), and the journal reports that fill's fee in euro, so the re-pricing reads one euro figure; a rollover charged in EURC has not been seen, and the same set would count it.
+- **Reading 9 (iter-199, spec `00153`): the engine's blend read from its own ladder replayed at the cycle boundaries over the capture**, 2026-08-01 → 2026-10-25, the ten EUR legs weighted equally: €100 0.005844 a side (95 % interval 0.005734 to 0.005945) and €1,000 0.006572 (0.006465 to 0.006672), against the registered 0.006 — beside rung 2's measured point to 2026-10-25, maker 96.3 % / taker 3.7 % of the priceable book over 25 fills, where the replay's maker share on those legs runs 0.242 to 0.907. Its departures from the engine leave the sign of its net bias unread (the `[iter-199]` entry in `docs/research/14.phase6-decisions.md`).
+
+## Done so far
+
+- The capture's reading of the blend, item 2 of the owner's word of 2026-10-29: reading 9 on `docs/reference/reading-ledger.jsonl` over `l2-ladder-20261030T020429Z` (iter-199, spec/plan `00153`).
 
 ## Suggested next steps
 
 - **(autonomous, at the trigger)** Run the tracking report over rung 2's first complete ISO weeks from a pulled copy of the engine journal, read the maker share, the per-fill spread and the proposed rate, and record them in this file beside T0090's measured point.
-- **(decision)** Put the proposed rate to the owner as a new registry record: the spec that re-prices `fee_per_side` and `spread_per_side`, its `spec_hash` stored on a new `docs/reference/trial-registry.jsonl` record, the registered figures re-validated at the new basis; T0090's rows are re-quoted against that record, never edited in place.
-- **(autonomous, its own iteration — item 2 of the owner's word of 2026-10-29, "go ahead with 1 and 2")** The engine's execution cost from the kept fill model — `l2-fills-20261029T000157Z` and its producer, kept by `[iter-197]` as an execution-research instrument for the live engine's maker share and cost model — a measurement of the blend this topic re-prices, read from the capture rather than from rung 2's fills.
+- **(decision)** Put the proposed rate to the owner as a new registry record: the spec that re-prices `fee_per_side` and `spread_per_side`, its `spec_hash` stored on a new `docs/reference/trial-registry.jsonl` record, the registered figures re-validated at the new basis; T0090's rows are re-quoted against that record, never edited in place. Beside it, reading 9's blend per size as a candidate re-pricing ahead of the trigger, the owner's to weigh.
