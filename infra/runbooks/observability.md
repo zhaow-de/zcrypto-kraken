@@ -407,7 +407,7 @@ Grafana Cloud itself is unreadable — the boards, the alert rules, and `infra/s
 
 **DERIVED — a dark destination**, from `config.alloy` rather than from a drill; no induction here has taken Grafana Cloud away. The planes swap. `prometheus.remote_write "grafana"` keeps a WAL, so metrics scraped while the endpoint is unreachable are buffered and re-sent on recovery, bounded by that WAL's retention. `loki.write "grafana"` declares **no `wal` block at all**, so logs are bounded by whatever the running Alloy's default is — read that off the version actually deployed rather than trusting a number written here, and treat the direct-shipped daemon logs separately per the paragraph below. **Neither half of this bound has been drilled.**
 
-**The direct-shipped daemon logs are on neither of those planes.** The capture daemon, the engine and the liquidations poller push to Loki themselves, so what they lose is bounded by `ship.py`'s ring and counted by `zcrypto_logship_dropped_lines_total` — read that counter's level on return, not the shipper's Alloy.
+**The direct-shipped daemon logs are on neither of those planes.** The capture daemon, the engine and the liquidations poller push to Loki themselves: a stream moved to the node ([`mon.md#mon-stream-handover`](mon.md#mon-stream-handover)) is outside a Grafana Cloud outage entirely, and what a stream not yet moved loses is bounded by `ship.py`'s ring and counted by `zcrypto_logship_dropped_lines_total` — read that counter's level on return, not the shipper's Alloy.
 
 ### What to do
 
