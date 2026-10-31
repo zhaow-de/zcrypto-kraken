@@ -182,6 +182,12 @@ def test_a_listed_instrument_carries_no_fee(venue):
     assert [(str(row.id), name) for row in rows for name in ("maker_fee", "taker_fee") if hasattr(row, name)] == []
 
 
+def test_the_quote_currency_is_the_code_the_listing_mints_for_the_euro(venue):
+    """The position reads pass `flatten.QUOTE_CURRENCY` as `quote_currency`, and the loopback answers them
+    alike whatever it carries, so the listing is where it is pinned."""
+    assert {row.quote_currency.code for row in _listing(venue)} == {flatten.QUOTE_CURRENCY}
+
+
 @pytest.mark.parametrize(
     ("sent", "on_the_wire"),
     [
