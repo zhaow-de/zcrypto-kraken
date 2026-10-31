@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: 'a milestone: before rung 3''s first armed boundary, when the loop places orders unattended — ripe once rung 2''s exit report is recorded, a read of rung 3''s entry gate (`engine-rung-3` step 1, item 1, in `infra/runbooks/engine-procedures.md`), and owed before that step''s item 2, the arm pull request; check: `docs/research/14.phase6-decisions.md` carries the exit report entry, due by Fri 2026-11-06, while `grep -c "^engine_accumulation_enabled: true" infra/ansible/host_vars/zcrypto/vars.yml` reads 0'
+ripe_when: 'a milestone: rung 2''s exit report recorded, a read of rung 3''s entry gate (`engine-rung-3` step 1, item 1, in `infra/runbooks/engine-procedures.md`); check: `docs/research/14.phase6-decisions.md` carries the exit report entry, due by Fri 2026-11-06'
 ---
 
 # The engine and the helper read Kraken's live ordermin
@@ -15,7 +15,7 @@ The 2026-10-30 ETH/EUR sell of 0.00109968 cleared the engine's 0.001 floor and w
 
 ## Findings so far
 
-- Reference-data sweep #4 (2026-10-31, the log in `docs/reference/kraken-snapshot-register.md`) found `ordermin` moved on eight of the twelve legs since #3 (2026-10-01): raised on BTC/EUR 0.00005 → 0.00006, ETH/EUR 0.001 → 0.002, XRP/EUR 1.65 → 4 and ETH/BTC 0.001 → 0.002; lowered on SOL/EUR 0.06 → 0.05, LINK/EUR 0.55 → 0.35, LTC/EUR 0.1 → 0.08 and SOL/BTC 0.06 → 0.05. `costmin` did not move.
+- Reference-data sweep #4 (2026-10-31, the log in `docs/reference/kraken-snapshot-register.md`) found `ordermin` moved on eight of the twelve legs since #3 (2026-10-01), four raised and four lowered; `costmin` did not move.
 - On 2026-10-31 `zcrypto engine probe-plan --check` printed ETH 0.001, LTC 0.1 and XRP 1.65, the floors before the move.
 - Each boundary's `read_venue_book` (`cli/engine/executor.py`) already fetches Kraken's full instrument listing, `request_instruments()`, on its own client, and uses it only to resolve the margin positions' rows; the draft that follows reads the Cache's `min_quantity`.
 - `costmin` is a committed constant (`cli/engine/instruments.py::COSTMIN`) under `tests/test_costmin_drift.py`, which fires only in a sweep, since it skips without `data/snapshots/`; `ordermin` has no such guard.
