@@ -464,7 +464,7 @@ def _logging_config() -> LoggerConfig:
 
 
 def _exec_engine_config() -> LiveExecutionEngineConfig:
-    """Every knob explicit (all are library defaults) because all are load-bearing here.
+    """Every knob explicit (each at its library default but the lookback) because all are load-bearing here.
     Reconciliation is live exactly when exec_enabled flips on at deployment. `load_cache` is the
     restore itself: with a backing attached, `run()` loads the store's orders, positions and
     instruments before any client connects.
@@ -474,6 +474,13 @@ def _exec_engine_config() -> LiveExecutionEngineConfig:
     external-events path would go dark without one ERROR anywhere. Pinned by the config-shape
     test. Necessary and NOT sufficient: what populates the cache with such an order is the
     reconciliation read -- `executor._cancel_resting` states which resting orders that read drops.
+
+    `reconciliation_lookback_mins` bounds a start's ClosedOrders and TradesHistory read to the last
+    twelve hours: unset, a start imports the account's whole history as EXTERNAL orders and the
+    positions their fills net to, and once set it stays set, since unsetting it imports that history
+    again; inside the window a restart's fill moves a position only on an instrument with an
+    OpenPositions row (#5209), so under MARGIN every unleveraged spot fill is projected order-only,
+    its order filled and no position moved.
 
     The three in-flight knobs together set how long the engine waits on an unanswered order before
     it mints that order's terminal event itself -- roughly the threshold plus the retries times the
@@ -493,6 +500,7 @@ def _exec_engine_config() -> LiveExecutionEngineConfig:
         reconciliation=True,
         load_cache=True,
         filter_unclaimed_external_orders=False,
+        reconciliation_lookback_mins=720,
         inflight_check_interval_ms=2000,
         inflight_check_threshold_ms=5000,
         inflight_check_retries=5,
