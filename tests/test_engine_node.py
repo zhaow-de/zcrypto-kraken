@@ -1035,11 +1035,11 @@ _EXTERNAL_DISPATCH_PROBE = """
 import json
 import os
 import sys
-from decimal import Decimal
 from pathlib import Path
 
 from nautilus_trader.backtest import BacktestEngine, BacktestEngineConfig
 from nautilus_trader.common import LoggerConfig
+from nautilus_trader.execution import MakerTakerFeeModel
 from nautilus_trader.model import (
     AccountType,
     Currency,
@@ -1073,8 +1073,6 @@ instrument = CurrencyPair(
     size_increment=Quantity(0.000001, 6),
     ts_event=0,
     ts_init=0,
-    maker_fee=Decimal("0"),
-    taker_fee=Decimal("0"),
 )
 
 
@@ -1109,6 +1107,7 @@ engine.add_venue(
     oms_type=OmsType.NETTING,
     account_type=AccountType.CASH,
     starting_balances=[Money(1_000_000, eur), Money(10, btc)],
+    fee_model=MakerTakerFeeModel(0, 0),
 )
 engine.add_instrument(instrument)
 t0 = 1_577_836_800_000_000_000
