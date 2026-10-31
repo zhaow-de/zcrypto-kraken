@@ -42,14 +42,20 @@ API_SECRET = base64.b64encode(bytes(64)).decode()
 # ClosedOrders' page size, as the adapter pages it.
 _PAGE = 50
 
+# The stamp a row carries unless its builder is handed one: a fixed 2025-09-23, older than the twelve-hour
+# window a node start reads, so a row a start must see under `bound_by_start` is handed a stamp of its own.
+_STAMP = 1758600000.0
 
-def open_order(pair: str, *, price: str, volume: str, side: str = "buy", cl_ord_id: str | None = None) -> dict[str, Any]:
+
+def open_order(
+    pair: str, *, price: str, volume: str, side: str = "buy", cl_ord_id: str | None = None, opentm: float | None = None
+) -> dict[str, Any]:
     """One OpenOrders row, `pair` spelled as Kraken spells it there -- the altname (`XBTEUR`)."""
     row: dict[str, Any] = {
         "refid": None,
         "userref": 0,
         "status": "open",
-        "opentm": 1758600000.0,
+        "opentm": _STAMP if opentm is None else opentm,
         "starttm": 0,
         "expiretm": 0,
         "descr": {
@@ -86,11 +92,14 @@ def closed_order(
     status: str = "canceled",
     vol_exec: str = "0.00000000",
     cl_ord_id: str | None = None,
+    opentm: float | None = None,
+    closetm: float | None = None,
 ) -> dict[str, Any]:
     """One ClosedOrders row: by default a limit order cancelled unfilled; `status="closed"` with
     `vol_exec` is one that filled."""
-    row = open_order(pair, price=price, volume=volume, side=side, cl_ord_id=cl_ord_id)
-    row.update(status=status, vol_exec=vol_exec, closetm=1758603600.0, reason="User requested" if status == "canceled" else None)
+    row = open_order(pair, price=price, volume=volume, side=side, cl_ord_id=cl_ord_id, opentm=opentm)
+    closed = _STAMP + 3600 if closetm is None else closetm
+    row.update(status=status, vol_exec=vol_exec, closetm=closed, reason="User requested" if status == "canceled" else None)
     return row
 
 
@@ -104,13 +113,13 @@ def balance(amount: str, *, hold: str = "0.00000000") -> dict[str, str]:
     return {"balance": amount, "hold_trade": hold}
 
 
-def margin_position(pair: str, *, volume: str, side: str = "buy") -> dict[str, Any]:
+def margin_position(pair: str, *, volume: str, side: str = "buy", time: float | None = None) -> dict[str, Any]:
     """One OpenPositions row, `pair` spelled however the test needs it."""
     return {
         "ordertxid": "OQCLML-BW3P3-BUCMWZ",
         "posstatus": "open",
         "pair": pair,
-        "time": 1758600000.0,
+        "time": _STAMP if time is None else time,
         "type": side,
         "ordertype": "market",
         "cost": "3.00000",
@@ -127,7 +136,9 @@ def margin_position(pair: str, *, volume: str, side: str = "buy") -> dict[str, A
     }
 
 
-def trade_row(txid: str, pair: str, *, vol: str, price: str, trade_id: int, side: str = "buy") -> dict[str, Any]:
+def trade_row(
+    txid: str, pair: str, *, vol: str, price: str, trade_id: int, side: str = "buy", time: float | None = None
+) -> dict[str, Any]:
     """One TradesHistory row for a margin fill of `txid` -- `posstatus` open and a `postxid`; `pair`
     spelled as the AssetPairs key."""
     cost = f"{float(vol) * float(price):.5f}"
@@ -135,7 +146,7 @@ def trade_row(txid: str, pair: str, *, vol: str, price: str, trade_id: int, side
         "ordertxid": txid,
         "postxid": "TPOSLP-AAAAA-BBBBBB",
         "pair": pair,
-        "time": 1758600000.0,
+        "time": _STAMP if time is None else time,
         "type": side,
         "ordertype": "limit",
         "price": price,
@@ -151,10 +162,12 @@ def trade_row(txid: str, pair: str, *, vol: str, price: str, trade_id: int, side
     }
 
 
-def spot_trade_row(txid: str, pair: str, *, vol: str, price: str, trade_id: int, side: str = "buy") -> dict[str, Any]:
+def spot_trade_row(
+    txid: str, pair: str, *, vol: str, price: str, trade_id: int, side: str = "buy", time: float | None = None
+) -> dict[str, Any]:
     """One TradesHistory row for a spot fill of `txid`: Kraken still sends `postxid` and `margin` on one,
     and the adapter's model requires both."""
-    row = trade_row(txid, pair, vol=vol, price=price, trade_id=trade_id, side=side)
+    row = trade_row(txid, pair, vol=vol, price=price, trade_id=trade_id, side=side, time=time)
     row.update(postxid="TKH2SE-M7IF5-CFI7LT", margin="0.00000")
     del row["leverage"], row["posstatus"]
     return row
@@ -203,6 +216,10 @@ class KrakenLoopback:
     # AddOrder mints `OLOOP<txid_base + n>`, so a loopback serving a venue an earlier one took orders
     # for mints past them.
     txid_base: int = 0
+    # On, ClosedOrders and TradesHistory serve only the rows at or after a request's `start` -- a closed
+    # order by its `closetm`, a trade by its `time` -- and count only those; off, every row held, whatever
+    # the request bounds.
+    bound_by_start: bool = False
     base_url: str = ""
 
     def holdings(self) -> dict[str, Any]:
@@ -213,6 +230,12 @@ class KrakenLoopback:
     def hold(self, holdings: dict[str, Any]) -> None:
         for name, value in copy.deepcopy(holdings).items():
             setattr(self, name, value)
+
+    def _since(self, rows: dict[str, dict[str, Any]], form: dict[str, str], stamp: str) -> dict[str, dict[str, Any]]:
+        if not self.bound_by_start or "start" not in form:
+            return rows
+        start = float(form["start"])
+        return {key: row for key, row in rows.items() if row[stamp] >= start}
 
     def answer(self, method: str, path: str, query: dict[str, list[str]], form: dict[str, str]) -> tuple[Any, list[str]]:
         name = path.rsplit("/", 1)[-1]
@@ -236,9 +259,10 @@ class KrakenLoopback:
             return {"open": dict(self.open_orders)}, []
         if path == "/0/private/ClosedOrders":
             self.closed_order_forms.append(form)
+            closed = self._since(self.closed_orders, form, "closetm")
             offset = int(form.get("ofs", "0"))
-            page = dict(list(self.closed_orders.items())[offset : offset + _PAGE])
-            return {"closed": page, "count": len(self.closed_orders)}, []
+            page = dict(list(closed.items())[offset : offset + _PAGE])
+            return {"closed": page, "count": len(closed)}, []
         if path == "/0/private/OpenPositions":
             return dict(self.positions), []
         if path == "/0/private/GetWebSocketsToken":
@@ -256,9 +280,10 @@ class KrakenLoopback:
                 "mf": "1000.0",
             }, []
         if path == "/0/private/TradesHistory":
+            trades = self._since(self.trades, form, "time")
             offset = int(form.get("ofs", "0"))
-            page = dict(list(self.trades.items())[offset : offset + _PAGE])
-            return {"trades": page, "count": len(self.trades)}, []
+            page = dict(list(trades.items())[offset : offset + _PAGE])
+            return {"trades": page, "count": len(trades)}, []
         if path == "/0/private/AddOrder":
             self.add_orders.append(form)
             txid = f"OLOOP{self.txid_base + len(self.add_orders)}-AAAAA-BBBBBB"
