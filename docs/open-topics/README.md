@@ -5,6 +5,7 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 ## Open
 
 - [T0221 — engine-procedures.md without the one-time rungs](T0221-engine-procedures-without-the-rungs.md) — ripe when: a milestone: rung 3's go/no-go decided, `engine-rung-3` step 9; check: `grep -c -i -E "rung 3.s go/no-go.*\(Decision:" docs/research/14.phase6-decisions.md` prints at least 1
+- [T0224 — The engine and the helper read Kraken's live ordermin](T0224-the-engine-and-the-helper-read-krakens-live-ordermin.md) — ripe when: a milestone: before rung 3's first armed boundary, when the loop places orders unattended — ripe once rung 2's exit report is recorded, a read of rung 3's entry gate (`engine-rung-3` step 1, item 1, in `infra/runbooks/engine-procedures.md`), and owed before that step's item 2, the arm pull request; check: `docs/research/14.phase6-decisions.md` carries the exit report entry, due by Fri 2026-11-06, while `grep -c "^engine_accumulation_enabled: true" infra/ansible/host_vars/zcrypto/vars.yml` reads 0
 
 ## Partially done
 
