@@ -1287,8 +1287,8 @@ def test_the_builder_is_given_the_production_client_and_engine_configs(tmp_path,
     assert exec_config.spot_account_type == AccountType.MARGIN
     assert exec_config.margin_balance_asset == "ZEUR"
     # Unread under MARGIN (the comment at the field in cli/engine/node.py). Pinned so a switch off it does not
-    # inherit the adapter's "USDT" default; there it is matched literally against the instrument's
-    # `quote_currency.code`, "ZEUR" for every EUR pair, so "EUR" would match no instrument.
+    # inherit the adapter's "USDT" default; there it is matched against the instrument's `quote_currency.code`,
+    # which this wheel spells "EUR" for every EUR pair, so that switch re-reads this value first.
     assert exec_config.spot_positions_quote_currency == "ZEUR"
     # D10: submission stays on REST. The library default is True; `_KRAKEN_ERROR_MARKERS` and
     # `_on_rejected`'s three-way verdict in cli/engine/executor.py are derived against REST
@@ -1575,8 +1575,6 @@ _BUILD_PROBE = """
 import asyncio, json, os, sys
 from pathlib import Path
 
-from nautilus_trader.model import Currency
-
 from cli.config import CacheSettings, EngineConfig
 import cli.engine.node as node_module
 
@@ -1618,19 +1616,9 @@ node = node_module.build_shadow_node(
 )
 
 
-def resolves(code):
-    try:
-        Currency.from_str(code, strict=True)
-    except ValueError:
-        return False
-    return True
-
-
 (root / "facts.json").write_text(
     json.dumps(
         {
-            # Read after the build: which of the table's codes a strict lookup resolves in this process.
-            "registered": sorted(c.code for c in node_module._KRAKEN_CURRENCIES if resolves(c.code)),
             "trader_id": str(node.trader_id),
             "environment": str(node.environment),
             "is_running": node.is_running,
@@ -1728,83 +1716,6 @@ def test_build_shadow_node_refuses_execution_with_an_empty_environment(tmp_path)
     assert result.returncode != 0, f"the build should have refused; stdout={result.stdout!r}"
     assert "KRAKEN_SPOT_API_KEY" in result.stderr and "KRAKEN_SPOT_API_SECRET" in result.stderr
     assert not (tmp_path / "facts.json").exists()
-
-
-@pytest.mark.parametrize("cache_enabled", [False, True], ids=["disabled-registers-nothing", "enabled-registers-the-six"])
-def test_a_build_with_the_cache_enabled_registers_the_kraken_codes_a_fresh_process_cannot_resolve(tmp_path, cache_enabled):
-    """A build with the cache disabled registers nothing: the differential that shows the registration
-    is the build's, not the import's."""
-    facts = _node_build_facts(tmp_path, exec_enabled=False, cache_enabled=cache_enabled)
-    six = ["XETH", "XLTC", "XXBT", "XXDG", "XXRP", "ZEUR"]
-    five = ["ADA", "AVAX", "DOT", "LINK", "SOL"]
-    assert facts["registered"] == (sorted(five + six) if cache_enabled else sorted(five))
-
-
-_CURRENCY_PROBE = """
-import asyncio, json, os, sys
-from pathlib import Path
-
-from nautilus_trader.model import Currency
-
-from cli.engine.node import _KRAKEN_CURRENCIES
-from cli.engine.store import PAIR_KEYS
-from tests import kraken_loopback
-
-root = Path(sys.argv[1])
-snapshot = json.loads(Path("tests/fixtures/kraken_assetpairs.json").read_text())
-basket_codes = sorted({snapshot[key][side] for key in PAIR_KEYS.values() for side in ("base", "quote")})
-
-
-def fields(c):
-    return [c.code, c.precision, c.iso4217, c.name, str(c.currency_type).rsplit(".", 1)[-1]]
-
-
-def strict(code):
-    try:
-        return fields(Currency.from_str(code, strict=True))
-    except ValueError:
-        return None
-
-
-before = {code: strict(code) for code in basket_codes}
-with kraken_loopback.serve(json.loads(Path("tests/fixtures/kraken_assetpairs_basket.json").read_text())) as venue:
-    async def parse():
-        client = kraken_loopback.client(venue)
-        return await client.request_instruments()
-
-    minted = {}
-    for instrument in asyncio.run(parse()):
-        for currency in (instrument.base_currency, instrument.quote_currency):
-            minted[currency.code] = fields(currency)
-(root / "currencies.json").write_text(
-    json.dumps({"basket_codes": basket_codes, "before": before, "minted": minted, "table": [fields(c) for c in _KRAKEN_CURRENCIES]})
-)
-os._exit(0)
-"""
-
-
-def test_the_currency_table_covers_the_baskets_codes_at_the_values_the_adapter_mints(tmp_path):
-    """Read before the parse, which registers what it mints; red on a bump that reshapes a minted currency."""
-    result = subprocess.run(
-        [sys.executable, "-c", _CURRENCY_PROBE, str(tmp_path)], capture_output=True, text=True, timeout=120, cwd=Path.cwd()
-    )
-    recorded = tmp_path / "currencies.json"
-    detail = f"exit={result.returncode}\n--- stdout ---\n{result.stdout[-2000:]}\n--- stderr ---\n{result.stderr[-2000:]}"
-    assert recorded.exists(), f"the currency probe produced no result: {detail}"
-    facts = json.loads(recorded.read_text())
-    table = {row[0]: row for row in facts["table"]}
-
-    assert (
-        sorted(table)
-        == facts["basket_codes"]
-        == ["ADA", "AVAX", "DOT", "LINK", "SOL", "XETH", "XLTC", "XXBT", "XXDG", "XXRP", "ZEUR"]
-    )
-    resolved = {code: row for code, row in facts["before"].items() if row is not None}
-    assert sorted(resolved) == ["ADA", "AVAX", "DOT", "LINK", "SOL"], detail
-    assert all(resolved[code] == table[code] for code in resolved), (resolved, table)
-    assert facts["minted"] == table, (facts["minted"], table)
-    for code in ("XETH", "XLTC", "XXBT", "XXDG", "XXRP", "ZEUR"):
-        assert table[code] == [code, 8, 0, code, "CRYPTO"], table[code]
 
 
 def test_a_real_build_never_prints_the_credentials(tmp_path):

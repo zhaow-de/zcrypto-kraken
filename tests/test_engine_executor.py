@@ -7411,7 +7411,7 @@ def test_read_venue_holdings_answers_every_traded_symbol_with_its_margin_positio
     """The reader's contract on the pinned wheel, offline: the listing is cached first, so a position
     Kraken spells by its altname resolves; a margin position is signed by its side under its
     instrument; a traded coin's spot balance -- its total, the part held against a resting order
-    included, under the code the adapter strips the venue's prefix to -- lands under the coin's EUR
+    included, under the standard code the adapter reports it by, `XXBT` as `BTC` -- lands under the coin's EUR
     pair; and every basket symbol is answered, 0.0 where the account holds nothing. SOL's short
     against its held lot nets to zero by the total alone: the free part would read -0.01."""
     with kraken_loopback.serve() as venue:

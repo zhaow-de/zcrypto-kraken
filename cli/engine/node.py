@@ -26,7 +26,7 @@ from nautilus_trader.common import CacheConfig, Environment, LogLevel, Serializa
 from nautilus_trader.config import LiveExecutionEngineConfig, LoggerConfig
 from nautilus_trader.infrastructure import RedisCacheConfig
 from nautilus_trader.live import LiveNode, LiveNodeBuilder
-from nautilus_trader.model import AccountId, AccountType, Currency, CurrencyType, StrategyId, TraderId
+from nautilus_trader.model import AccountId, AccountType, StrategyId, TraderId
 from nautilus_trader.trading import Strategy, StrategyConfig
 
 from cli.config import EngineConfig
@@ -72,31 +72,6 @@ _EXEC_TIMER_NAME = "exec-probe-tick"
 # `StrategyId` rather than spelled as a literal, so a rename surfaces in tests/test_engine_node.py
 # instead of as an observer nothing ever reaches and total silence in production.
 _EXTERNAL_STRATEGY_ID = StrategyId("EXTERNAL")
-# Every base and quote code the basket's twelve pairs carry on Kraken's AssetPairs, at the value the
-# adapter mints for it: the store saves a currency as its bare code and the loader resolves that code
-# against this process's registry before the adapter has parsed AssetPairs, so a code the library's
-# own table lacks fails the load of every instrument, order and position priced in it. A value that
-# disagreed with the adapter's would poison its instruments, since a registered code is read rather
-# than minted; tests/test_engine_node.py pins the set and each value against the adapter's parse.
-_KRAKEN_CURRENCIES: tuple[Currency, ...] = (
-    Currency("ADA", 6, 0, "Cardano", CurrencyType.CRYPTO),
-    Currency("AVAX", 8, 0, "Avalanche", CurrencyType.CRYPTO),
-    Currency("DOT", 8, 0, "Polkadot", CurrencyType.CRYPTO),
-    Currency("LINK", 8, 0, "Chainlink", CurrencyType.CRYPTO),
-    Currency("SOL", 8, 0, "Solana", CurrencyType.CRYPTO),
-    Currency("XETH", 8, 0, "XETH", CurrencyType.CRYPTO),
-    Currency("XLTC", 8, 0, "XLTC", CurrencyType.CRYPTO),
-    Currency("XXBT", 8, 0, "XXBT", CurrencyType.CRYPTO),
-    Currency("XXDG", 8, 0, "XXDG", CurrencyType.CRYPTO),
-    Currency("XXRP", 8, 0, "XXRP", CurrencyType.CRYPTO),
-    Currency("ZEUR", 8, 0, "ZEUR", CurrencyType.CRYPTO),
-)
-
-
-def _register_kraken_currencies() -> None:
-    """Register each of `_KRAKEN_CURRENCIES`, leaving one the registry already holds as it is."""
-    for currency in _KRAKEN_CURRENCIES:
-        Currency.register(currency)
 
 
 def _utc_now() -> datetime:
@@ -568,9 +543,9 @@ def _cache_password() -> str | None:
 
 
 def _exec_client_config(credentials: tuple[str, str]) -> KrakenExecutionClientConfig:
-    """Both currency fields read ZEUR: margin summary figures are denominated in it, and
-    `spot_positions_quote_currency` is unread under `spot_account_type=MARGIN`, where the adapter takes the
-    OpenPositions branch and builds no spot position report."""
+    """Both currency fields read ZEUR, Kraken's own code for the euro: `margin_balance_asset` goes to the venue
+    raw, and `spot_positions_quote_currency` is unread under `spot_account_type=MARGIN`, where the adapter takes
+    the OpenPositions branch and builds no spot position report."""
     api_key, api_secret = credentials
     return KrakenExecutionClientConfig(
         account_id=AccountId(_ACCOUNT_ID),
@@ -582,20 +557,16 @@ def _exec_client_config(credentials: tuple[str, str]) -> KrakenExecutionClientCo
         api_secret=api_secret,
         spot_account_type=AccountType.MARGIN,
         margin_balance_asset="ZEUR",
-        # Matched literally against the loaded instrument's `quote_currency.code`, which for
-        # every EUR pair is "ZEUR" -- Kraken's AssetPairs returns quote "ZEUR" for modern
-        # (ADAEUR) and legacy (XETHZEUR) alike, and the code survives into the Currency object
-        # unchanged. Measured against the live public instrument set: 546 instruments carry
-        # code ZEUR and ZERO carry EUR. Only the instrument ID is normalized (ADA/EUR.KRAKEN),
-        # and that ID-vs-Currency split is the trap -- "EUR" here would match nothing, as would
-        # the adapter's own "USDT" default.
-        # NOT a tradeability constraint -- measured 2026-08-14 against the installed adapter
+        # The one currency this config sends Kraken raw: the adapter passes it as TradeBalance's
+        # `asset` and normalizes it for its own use, so the account summary reads `EUR` whichever
+        # spelling is set here; every currency the engine reads on this wheel is the standard code.
+        # NOT a tradeability constraint -- measured 2026-08-14 against the adapter then installed
         # (T0137's survey). `margin_balance_asset` has exactly ONE call site,
         # `_update_account_state` -> `request_account_state_with_metrics`: it selects the
         # currency the ACCOUNT SUMMARY is denominated in, and appears nowhere in order
         # submission, instrument handling, or position reporting. The OpenPositions branch this
         # config takes is quote-agnostic -- it reports side and net base quantity only -- so this
-        # single client already SEES the XXBT-quoted ETH/BTC and SOL/BTC. Both legs are now IN
+        # single client already SEES the BTC-quoted ETH/BTC and SOL/BTC. Both legs are now IN
         # the basket (spec 00094), and what holds them at zero is engine-side and structural:
         # `CrossfreqSystemConfig.assets` stays the ten EUR bases so no sleeve ever computes a
         # /BTC weight, and `cli/engine/cycle.py::_expand_to_basket` emits exactly 0.0 for every
@@ -607,6 +578,8 @@ def _exec_client_config(credentials: tuple[str, str]) -> KrakenExecutionClientCo
         # now: an inherited wrong mechanism is exactly what keeps going wrong here.
         # Currently unread: the adapter consults it only when spot_account_type is NOT MARGIN
         # AND use_spot_position_reports is True; under MARGIN it takes the OpenPositions branch.
+        # A switch off MARGIN reads first what it is matched against: on this wheel every EUR
+        # pair's `quote_currency.code` is `EUR`.
         spot_positions_quote_currency="ZEUR",
         # Explicit, not inherited: the library default is True, which would move order submission
         # from REST to WebSocket. `_KRAKEN_ERROR_MARKERS` and `_on_rejected`'s three-way verdict in
@@ -704,8 +677,6 @@ def build_shadow_node(config: EngineConfig) -> LiveNode:
     """Assembles the shadow node without reaching the network -- nothing connects until `node.run()` -- and hands
     the observer THIS strategy's forwarder, because the filter scoping external events is the executor's and
     a strategy wired without one drops them."""
-    if config.cache.enabled:
-        _register_kraken_currencies()
     node = _node_builder(config).build()
     strategy = ShadowStrategy(config, executor_factory=_probe_executor_factory(config))
     node.add_strategy(strategy)
