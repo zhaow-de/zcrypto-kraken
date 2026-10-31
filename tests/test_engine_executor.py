@@ -2072,6 +2072,7 @@ def _cache_reads_at_dispatch() -> dict:
     The readings are RECORDED and asserted by the caller, never here -- the library swallows a raising
     handler, so an assertion inside one is invisible and its test passes green."""
     from nautilus_trader.backtest import BacktestEngine, BacktestEngineConfig
+    from nautilus_trader.execution import MakerTakerFeeModel
     from nautilus_trader.model import AccountType, OmsType, Venue
     from nautilus_trader.trading import Strategy
 
@@ -2133,6 +2134,7 @@ def _cache_reads_at_dispatch() -> dict:
         account_type=AccountType.CASH,
         base_currency=None,
         starting_balances=[Money(100_000, Currency.from_str("EUR")), Money(10, Currency.from_str("BTC"))],
+        fee_model=MakerTakerFeeModel(0, 0),
     )
     engine.add_instrument(instrument)
     engine.add_strategy(_Probe())
@@ -2192,6 +2194,7 @@ def _pending_cancel_read_at_dispatch(tmp_path) -> dict:
     observer's `on_start`, where the client is not borrowed, as the node's factory builds it.
     Recorded, never asserted here: the library swallows a raising handler."""
     from nautilus_trader.backtest import BacktestEngine, BacktestEngineConfig
+    from nautilus_trader.execution import MakerTakerFeeModel
     from nautilus_trader.model import AccountType, OmsType, StrategyId, Venue
     from nautilus_trader.trading import Strategy, StrategyConfig
 
@@ -2263,6 +2266,7 @@ def _pending_cancel_read_at_dispatch(tmp_path) -> dict:
         account_type=AccountType.CASH,
         base_currency=None,
         starting_balances=[Money(100_000, Currency.from_str("EUR")), Money(10, Currency.from_str("BTC"))],
+        fee_model=MakerTakerFeeModel(0, 0),
     )
     engine.add_instrument(instrument)
     engine.add_strategy(_Observer(canceller))
