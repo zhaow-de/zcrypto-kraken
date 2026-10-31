@@ -819,7 +819,7 @@ def _open_positions(dump: dict) -> list[tuple[str, float]]:
 
 
 _SOL = {"pair": PAIR, "symbol": SYMBOL, "coin": "SOL", "quote": SOL_QUOTE}
-# Kraken's own spellings: the pair `XDGEUR`, the BalanceEx code `XXDG`, which the adapter reports as `XDG`.
+# Kraken's own spellings: the pair `XDGEUR`, the BalanceEx code `XXDG`, which the adapter reports as `DOGE`.
 _DOGE = {"pair": "XDGEUR", "symbol": "DOGE/EUR", "coin": "XXDG", "quote": ("DOGE/EUR.KRAKEN", "0.2", "0.3")}
 _EUR_ONLY = {"balances": {"ZEUR": lb.balance("1000.00000000")}}
 
