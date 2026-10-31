@@ -624,10 +624,11 @@ def _node_builder(config: EngineConfig) -> LiveNodeBuilder:
     credentials are never read; on with either variable absent, this REFUSES rather than substituting a
     placeholder that would defer the failure to the first submission. `cache.enabled` reads the cache
     password the same way."""
+    exec_engine = _exec_engine_config()
     builder = (
         LiveNode.builder(name=_NODE_NAME, trader_id=TraderId(_TRADER_ID), environment=Environment.LIVE)
         .with_logging(_logging_config())
-        .with_exec_engine_config(_exec_engine_config())
+        .with_exec_engine_config(exec_engine)
         .add_data_client(name=KRAKEN, factory=KrakenDataClientFactory(), config=_data_client_config())
     )
     if config.cache.enabled:
@@ -664,6 +665,8 @@ def _node_builder(config: EngineConfig) -> LiveNodeBuilder:
         builder = builder.add_exec_client(
             name=KRAKEN, factory=KrakenExecutionClientFactory(), config=_exec_client_config(credentials)
         )
+    # The library logs the window it reads at DEBUG only; this line is where the engine's log shows it.
+    logger.info("reconciliation lookback: %d min", exec_engine.reconciliation_lookback_mins)
     return builder
 
 

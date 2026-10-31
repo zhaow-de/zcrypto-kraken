@@ -1577,7 +1577,11 @@ import asyncio, json, os, sys
 from pathlib import Path
 
 from cli.config import CacheSettings, EngineConfig
+from cli.logging import configure
 import cli.engine.node as node_module
+
+# The engine's own log shape, as `zcrypto` configures it by default: plain text on stdout at INFO.
+configure(None, "INFO", None)
 
 root = Path(sys.argv[1])
 # Nautilus wants a current event loop and refuses to create one itself.
@@ -1727,6 +1731,15 @@ def test_a_real_build_never_prints_the_credentials(tmp_path):
     assert result.returncode == 0, f"exit={result.returncode} stderr={result.stderr[-2000:]}"
     assert secret not in result.stdout
     assert secret not in result.stderr
+
+
+def test_a_real_build_logs_the_reconciliation_lookback_once_at_info(tmp_path):
+    result = _run_build_probe(tmp_path, exec_enabled=True, credentials=("a-key", "a-secret"))
+    assert result.returncode == 0, f"exit={result.returncode} stderr={result.stderr[-2000:]}"
+    lines = [line for line in (result.stdout + result.stderr).splitlines() if "reconciliation lookback" in line]
+    minutes = node._exec_engine_config().reconciliation_lookback_mins
+    assert len(lines) == 1, lines
+    assert re.search(rf" INFO zcrypto\.engine\.node \[node\.py:\d+\] - reconciliation lookback: {minutes} min$", lines[0]), lines
 
 
 # --- the twelve instruments reach the Cache before the trader starts (spec 00100 D5) ------------
