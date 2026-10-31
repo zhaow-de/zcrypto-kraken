@@ -499,10 +499,10 @@ def run_log_path(evidence_dir: str | Path, stamp: str) -> Path:
 
 
 # The adapter's WARN when the credentialed TradeVolume call fails and the listing takes the public
-# fee schedule instead; the exec client makes that call once for the regular pairs and once more
-# when the tokenized listing is not empty. The DEBUG nonce line counts the calls, and the exec
-# client's `Loaded N Spot instruments` says its listing finished, which is what lets an absent WARN
-# mean "no fallback" rather than "never got that far".
+# fee schedule instead. The DEBUG nonce line counts the calls, and the exec client's `Loaded N Spot
+# instruments` says its listing finished, which is what lets an absent WARN mean "no fallback" rather
+# than "never got that far". The pinned wheel's listing makes no TradeVolume call, and a finished
+# listing with none is described as such, never as every call answering.
 TRADEVOLUME_FALLBACK = "falling back to public rates"
 _TRADEVOLUME_CALL = re.compile(r"Generated nonce \d+ for /0/private/TradeVolume")
 _EXEC_LISTING_LOADED = re.compile(r"nautilus_kraken::execution::spot: Loaded \d+ Spot instruments")
@@ -544,6 +544,8 @@ def describe_tradevolume_fallback(fallback: dict) -> str:
             f"{fallback['tradevolume_calls']} call(s) -- {fallback['warnings'][0]} {log}"
         )
     if fallback["fell_back"] is False:
+        if not fallback["tradevolume_calls"]:
+            return f"TradeVolume: the credentialed listing finished without a TradeVolume call, so nothing fell back {log}"
         return f"TradeVolume: the account's fee rates answered all {fallback['tradevolume_calls']} call(s), no fallback {log}"
     why = fallback.get("why") or "the exec client's listing never finished"
     return f"TradeVolume: the log cannot say whether the listing fell back -- {why} {log}"
