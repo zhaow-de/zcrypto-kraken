@@ -1151,3 +1151,50 @@ def test_the_cache_killed_mid_run_leaves_the_engine_trading_and_the_store_behind
     ), log[-3000:]
     second = fills[1][0]
     assert f"trader-SHADOW-001:orders:{second}" not in keys_at_return, keys_at_return
+
+
+# What reconciliation imported is in `at_start`, taken when the strategy starts, so no executor tick is waited for.
+IMPORT_WINDOW = 1
+HISTORY_TXID, HISTORY_TRADE = "OHIST1-AAAAA-BBBBBB", "THIST1-AAAAA-AAAAAA"
+
+
+def _start_over_one_history_fill(node: _Node, phase: int, *, minutes_before: int) -> dict:
+    """One start over a venue whose history is one spot buy of 0.5, closed filled `minutes_before` the
+    child is launched, so at least that long before the start's own clock."""
+    with _venue() as (venue, data, exec_):
+        venue.balances = {"ZEUR": lb.balance("1000.00000000")}
+        at = time.time() - minutes_before * 60
+        closed = lb.closed_order(
+            PAIR, price=f"{PRICE:.2f}", volume="0.50000000", status="closed", vol_exec="0.50000000", opentm=at, closetm=at
+        )
+        venue.closed_orders[HISTORY_TXID] = dict(closed, oflags="fciq", price=f"{PRICE:.5f}", cost=f"{0.5 * PRICE:.5f}")
+        venue.trades[HISTORY_TRADE] = lb.spot_trade_row(
+            HISTORY_TXID, PAIR, vol="0.50000000", price=f"{PRICE:.2f}", trade_id=2001, time=at
+        )
+        return node.run(phase, venue, data, exec_, window=IMPORT_WINDOW)
+
+
+def test_a_start_imports_a_history_fill_from_719_minutes_before_it_and_nothing_of_the_same_fill_from_721(tmp_path):
+    valkey = _Valkey(tmp_path / "valkey")
+    try:
+        valkey.start()
+        node = _Node(tmp_path / "node", valkey.port)
+        outside = _start_over_one_history_fill(node, 1, minutes_before=721)
+        valkey.kill()
+        valkey.start()
+        inside = _start_over_one_history_fill(node, 2, minutes_before=719)
+    finally:
+        valkey.stop()
+
+    for record in (outside, inside):
+        assert record["errors"] == [], record["errors"]
+        assert _restore_lines(record["log"]) == ["0 order(s), 0 position(s) restored"]
+    assert (outside["at_start"]["orders"], outside["at_start"]["positions"]) == ([], [])
+    [order] = inside["at_start"]["orders"]
+    assert (order["venue_order_id"], order["strategy_id"], order["status"], order["filled_qty"], order["trade_ids"]) == (
+        HISTORY_TXID,
+        "EXTERNAL",
+        "FILLED",
+        "0.50000000",
+        [HISTORY_TRADE],
+    )

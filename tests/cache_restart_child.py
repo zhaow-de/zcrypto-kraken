@@ -177,6 +177,7 @@ def _dump(cache) -> dict:
             "status": _s(order.status),
             "quantity": _s(order.quantity),
             "filled_qty": _s(order.filled_qty),
+            "trade_ids": [_s(trade_id) for trade_id in order.trade_ids],
             "is_open": order.is_open,
         }
         for order in cache.orders()
