@@ -548,13 +548,13 @@ wheels = [
 
 [[package]]
 name = "nautilus-trader"
-version = "2.0.0rc6.dev20260921"
+version = "2.0.0rc9.dev20261030"
 source = { registry = "https://packages.nautechsystems.io/simple" }
 wheels = [
-    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-2.0.0rc6.dev20260921-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:f69d69396fa49356d7aa806338fdb19406b30133d1aad961708f850612afb544" },
-    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-2.0.0rc6.dev20260921-cp314-cp314-manylinux_2_34_aarch64.whl", hash = "sha256:b0a3d45594f8caada070420effc93d7cd5bb287056c4adfe3625178b1368148e" },
-    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-2.0.0rc6.dev20260921-cp314-cp314-manylinux_2_34_x86_64.whl", hash = "sha256:d706a9b44eb21d4743464b8df254d3d77d558795b5701633b9be933e1580f66b" },
-    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-2.0.0rc6.dev20260921-cp314-cp314-win_amd64.whl", hash = "sha256:070ca4272f60b37079abce9d7878d62afeee14f2355113f29785413b05006e4f" },
+    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-2.0.0rc9.dev20261030-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:d0c9e8e3e5e605d3e9e02b300051e6e20acff9a955b45427a9a83f6f1a50faf6" },
+    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-2.0.0rc9.dev20261030-cp314-cp314-manylinux_2_34_aarch64.whl", hash = "sha256:028816398df4067ec4612f76071c8f25a7606647a04558d63ba619d466ada724" },
+    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-2.0.0rc9.dev20261030-cp314-cp314-manylinux_2_34_x86_64.whl", hash = "sha256:eb20a712dc9f09c4ac90bf10aef5dde7ef74d6e164432003bc178cad28f8f02e" },
+    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-2.0.0rc9.dev20261030-cp314-cp314-win_amd64.whl", hash = "sha256:48f7c326bd75dd4b8711d4f99ee8b35943d3d6a79b9207a282f0083c6d4536b5" },
 ]
 
 [[package]]
@@ -1082,7 +1082,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "nautilus-trader", specifier = "===2.0.0rc6.dev20260921", index = "https://packages.nautechsystems.io/simple" },
+    { name = "nautilus-trader", specifier = "===2.0.0rc9.dev20261030", index = "https://packages.nautechsystems.io/simple" },
     { name = "numpy", specifier = "==2.5.4" },
     { name = "polars", specifier = "==2.0.0" },
     { name = "prometheus-client", specifier = "==0.26.0" },
