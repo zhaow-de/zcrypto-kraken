@@ -133,10 +133,10 @@ def test_after_the_listing_is_cached_a_margin_position_resolves_under_either_spe
     assert [(r.instrument_id, str(r.position_side), str(r.quantity)) for r in reports] == [(BTC, "LONG", "0.06000000")]
 
 
-def test_a_scoped_read_skips_the_two_way_spelled_leg_before_resolving_it(venue):
-    """Upstream #5067, pinned so the bump that fixes it goes red here: the scoped BTC/EUR read then
-    reports its order, and the window reads' scoped contrast line stops reading 0 on BTC/EUR. SOL/EUR,
-    whose key and altname agree, is the control that the scoped read works at all."""
+def test_a_scoped_read_reports_the_two_way_spelled_leg(venue):
+    """Upstream #5067, fixed on this wheel for open orders: the scoped BTC/EUR read reports the order
+    Kraken spells `XBTEUR`, as the window reads' scoped contrast line does. SOL/EUR, whose key and
+    altname agree, is the control that the scoped read works at all."""
 
     async def run():
         client = await _primed(venue)
@@ -145,7 +145,7 @@ def test_a_scoped_read_skips_the_two_way_spelled_leg_before_resolving_it(venue):
             for iid in (BTC, SOL)
         ]
 
-    assert asyncio.run(run()) == [[], [SOL_TXID]]
+    assert asyncio.run(run()) == [[BTC_TXID], [SOL_TXID]]
 
 
 def test_an_order_report_carries_no_client_order_id(venue):

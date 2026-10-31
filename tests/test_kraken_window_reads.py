@@ -79,15 +79,15 @@ def test_orders_reads_safe_when_both_unscoped_shapes_see_each_target_once(venue,
 
 
 def test_the_scoped_read_is_printed_as_a_contrast_and_never_decides(venue, capsys):
-    """On this wheel the scoped BTC/EUR read comes back empty while the order rests, and the verdict
-    is still SAFE: that is the case the contrast line exists for."""
+    """On this wheel the scoped BTC/EUR read reports the resting order its `XBTEUR` spelling once hid
+    (upstream #5067), one line per scoped instrument, and the verdict is the unscoped shapes'."""
     assert _run("orders", venue, BTC_TXID, SOL_TXID) == 0
     lines = capsys.readouterr().out.splitlines()
     scoped = {
         iid: [line for line in lines if f"-- contrast, not the verdict: scoped {iid}, open_only=True:" in line] for iid in wr.SCOPED
     }
     assert all(len(found) == 1 for found in scoped.values()), scoped
-    assert scoped["BTC/EUR.KRAKEN"][0].endswith("-> 0 row(s)")
+    assert scoped["BTC/EUR.KRAKEN"][0].endswith("-> 1 row(s)")
     assert lines[-1] == "SAFE"
 
 
