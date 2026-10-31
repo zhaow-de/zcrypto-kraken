@@ -2690,7 +2690,6 @@ def test_a_symbol_listed_under_two_keys_resolves_under_either_spelling_once_the_
 
     with kraken_loopback.serve(_TWO_KEYS["currency"]) as venue:
         venue.tokenized_asset_pairs = _TWO_KEYS["tokenized"]
-        venue.errors["TradeVolume"] = "EGeneral:Permission denied"
         venue.open_orders["OAAAAA-BBBBB-CCCC01"] = kraken_loopback.open_order(spelling, price="1.00", volume="1.00000000")
         client = kraken_loopback.client(venue)
 

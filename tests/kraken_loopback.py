@@ -172,8 +172,7 @@ class KrakenLoopback:
     # whatever ladder it carries, as Kraken serves both listings.
     asset_pairs: dict[str, Any]
     # AssetPairs rows answered to `aclass_base=tokenized_asset`, which the adapter asks for beside the
-    # currency listing. TradeVolume here carries no fee for them, which fails the whole listing: a
-    # test serving them refuses TradeVolume through `errors`.
+    # currency listing.
     tokenized_asset_pairs: dict[str, Any] = field(default_factory=dict)
     open_orders: dict[str, dict[str, Any]] = field(default_factory=dict)
     closed_orders: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -194,13 +193,6 @@ class KrakenLoopback:
     errors: dict[str, str] = field(default_factory=dict)
     # Endpoint name -> seconds its answer waits, for a caller's own bound to fire first.
     stalls: dict[str, float] = field(default_factory=dict)
-    # AssetPairs keys TradeVolume leaves out of an otherwise well-formed answer.
-    trade_volume_omits: set[str] = field(default_factory=set)
-    # A TradeVolume result served verbatim in place of the well-formed one.
-    trade_volume_answer: dict[str, Any] | None = None
-    # The account's own tier, in percent as TradeVolume states it.
-    taker_fee_pct: str = "0.2600"
-    maker_fee_pct: str = "0.1600"
     private_calls: list[str] = field(default_factory=list)
     add_orders: list[dict[str, str]] = field(default_factory=list)
     closed_order_forms: list[dict[str, str]] = field(default_factory=list)
@@ -240,8 +232,6 @@ class KrakenLoopback:
             return {pair: self.books[pair]}, []
         if path == "/0/private/BalanceEx":
             return dict(self.balances), []
-        if path == "/0/private/TradeVolume":
-            return self._trade_volume(), []
         if path == "/0/private/OpenOrders":
             return {"open": dict(self.open_orders)}, []
         if path == "/0/private/ClosedOrders":
@@ -282,21 +272,6 @@ class KrakenLoopback:
             return {"count": self.cancel_count}, []
         return None, ["EGeneral:Unknown method"]
 
-    def _trade_volume(self) -> dict[str, Any]:
-        if self.trade_volume_answer is not None:
-            return self.trade_volume_answer
-
-        def tier(pct: str) -> dict[str, Any]:
-            return {"fee": pct, "minfee": "0.1000", "maxfee": "0.4000", "nextfee": None, "tiervolume": "0", "nextvolume": None}
-
-        keys = [key for key in self.asset_pairs if key not in self.trade_volume_omits]
-        return {
-            "currency": "ZUSD",
-            "volume": "0.0000",
-            "fees": {key: tier(self.taker_fee_pct) for key in keys},
-            "fees_maker": {key: tier(self.maker_fee_pct) for key in keys},
-        }
-
 
 def _handler(venue: KrakenLoopback) -> type[BaseHTTPRequestHandler]:
     class _Handler(BaseHTTPRequestHandler):
@@ -315,11 +290,7 @@ def _handler(venue: KrakenLoopback) -> type[BaseHTTPRequestHandler]:
 
         def do_POST(self) -> None:
             raw = self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode()
-            # TradeVolume goes out as JSON; every other private call is form-encoded.
-            if raw.startswith("{"):
-                form = {key: value if isinstance(value, str) else json.dumps(value) for key, value in json.loads(raw).items()}
-            else:
-                form = {key: values[-1] for key, values in urllib.parse.parse_qs(raw).items()}
+            form = {key: values[-1] for key, values in urllib.parse.parse_qs(raw).items()}
             self._respond(form)
 
         def log_message(self, format: str, *args: Any) -> None:

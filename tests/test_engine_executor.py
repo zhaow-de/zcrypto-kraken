@@ -7422,7 +7422,7 @@ def test_read_venue_holdings_answers_every_traded_symbol_with_its_margin_positio
         held = _read_venue_holdings(base_url=venue.base_url)
 
     assert held == pytest.approx(dict.fromkeys(INSTRUMENT_IDS, 0.0) | {"BTC/EUR": 0.0013, "DOGE/EUR": 12.5})
-    assert venue.private_calls == ["TradeVolume", "OpenPositions", "BalanceEx"]
+    assert venue.private_calls == ["OpenPositions", "BalanceEx"]
 
 
 def test_read_venue_holdings_reads_an_empty_positions_list_as_a_flat_margin_book_and_the_settle_publishes_the_coins_spot_lot(
@@ -7443,7 +7443,7 @@ def test_read_venue_holdings_reads_an_empty_positions_list_as_a_flat_margin_book
 
     assert [book.held for book in reads] == [pytest.approx(dict.fromkeys(INSTRUMENT_IDS, 0.0) | {"BTC/EUR": 0.0003})]
     assert metrics.positions == sorted(reads[0].held.items())
-    assert venue.private_calls == ["TradeVolume", "OpenPositions", "BalanceEx"]
+    assert venue.private_calls == ["OpenPositions", "BalanceEx"]
 
 
 def test_read_venue_holdings_refuses_without_credentials_before_building_a_client(monkeypatch):

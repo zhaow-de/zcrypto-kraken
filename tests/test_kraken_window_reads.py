@@ -151,11 +151,11 @@ def test_absent_reads_hazard_when_the_read_raises(venue, capsys):
 
 
 def test_both_modes_send_nothing_but_reads(venue):
-    """What reached the venue, read off the wire: the listing's fee read and the order reads, and
-    nothing else -- the check that also covers a client the script might build for itself."""
+    """What reached the venue, read off the wire: the order reads and nothing else, the listing
+    making no private call -- the check that also covers a client the script might build for itself."""
     _run("orders", venue, BTC_TXID, SOL_TXID)
     _run("absent", venue, BTC_TXID, SOL_TXID)
-    assert set(venue.private_calls) == {"TradeVolume", "OpenOrders", "ClosedOrders"}
+    assert set(venue.private_calls) == {"OpenOrders", "ClosedOrders"}
 
 
 @pytest.mark.parametrize("argv", [[], ["orders"], ["absent", " "], ["cancel", BTC_TXID]])

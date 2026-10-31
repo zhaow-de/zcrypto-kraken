@@ -10,7 +10,6 @@ it goes red here before it reaches the venue. Nothing here leaves 127.0.0.1.
 from __future__ import annotations
 
 import asyncio
-from decimal import Decimal
 
 import pytest
 from nautilus_trader.model import (
@@ -163,39 +162,24 @@ def test_an_order_report_carries_no_client_order_id(venue):
     assert {str(r.venue_order_id): r.client_order_id for r in asyncio.run(run())} == {BTC_TXID: None, SOL_TXID: None}
 
 
-def _fees(venue) -> dict[str, tuple[Decimal, Decimal]]:
+def _listing(venue):
     async def run():
-        rows = await kraken_loopback.client(venue).request_instruments()
-        return {str(row.id): (row.maker_fee, row.taker_fee) for row in rows}
+        return await kraken_loopback.client(venue).request_instruments()
 
     return asyncio.run(run())
 
 
-def test_the_listing_takes_the_account_s_fee_tier_from_trade_volume(venue):
-    account_tier = (Decimal(venue.maker_fee_pct) / 100, Decimal(venue.taker_fee_pct) / 100)
-    assert _fees(venue) == {"BTC/EUR.KRAKEN": account_tier, "SOL/EUR.KRAKEN": account_tier}
+def test_a_credentialed_listing_makes_no_private_call(venue):
+    """The red button's first read, `flatten.read_listing`, is this listing on a credentialed client:
+    with no private call in it, the key's permissions do not stand between a press and that read."""
+    assert sorted(str(row.id) for row in _listing(venue)) == ["BTC/EUR.KRAKEN", "SOL/EUR.KRAKEN"]
+    assert venue.private_calls == []
 
 
-@pytest.mark.parametrize(
-    "fault",
-    [
-        pytest.param({"errors": {"TradeVolume": "EGeneral:Permission denied"}}, id="trade-volume-errors"),
-        pytest.param({"trade_volume_answer": {"currency": "ZUSD"}}, id="trade-volume-answer-does-not-parse"),
-    ],
-)
-def test_a_trade_volume_failure_yields_the_listing_at_zero_fees(venue, fault):
-    for name, value in fault.items():
-        setattr(venue, name, value)
-    zero = (Decimal(0), Decimal(0))
-    assert _fees(venue) == {"BTC/EUR.KRAKEN": zero, "SOL/EUR.KRAKEN": zero}
-    assert "TradeVolume" in venue.private_calls
-
-
-def test_a_trade_volume_answer_missing_a_pair_s_fee_fails_the_whole_listing(venue):
-    """The one fee failure that is fatal, and on the red button's first read it is exit 3."""
-    venue.trade_volume_omits = {"XXBTZEUR"}
-    with pytest.raises(RuntimeError, match="TradeVolume response missing taker fee for XXBTZEUR$"):
-        _fees(venue)
+def test_a_listed_instrument_carries_no_fee(venue):
+    rows = _listing(venue)
+    assert len(rows) == 2
+    assert [(str(row.id), name) for row in rows for name in ("maker_fee", "taker_fee") if hasattr(row, name)] == []
 
 
 @pytest.mark.parametrize(
