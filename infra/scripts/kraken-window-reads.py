@@ -9,8 +9,8 @@
         shape and each round trip inside one engine tick. The verdict never reads a row's instrument_id:
         each target row is printed with it, and a spelling other than BTC/EUR.KRAKEN on the BTC order
         is the operator's to catch. The scoped read (instrument_id given) is printed as a contrast and
-        never counts: on this wheel it skips a two-way-spelled leg before resolving it (upstream #5067),
-        so BTC/EUR reads 0 rows there while the unscoped shapes see it.
+        never counts. On this wheel it reports the BTC/EUR order Kraken spells `XBTEUR`, as the unscoped
+        shapes do (upstream #5067, fixed for open orders).
   absent <TXID>...  After the restart: SAFE when none of the TXIDs is still open at the venue.
 
 Every row of the listing is read and cached first: a bare client's unscoped read raises on the first

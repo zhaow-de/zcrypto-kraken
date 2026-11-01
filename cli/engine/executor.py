@@ -2734,9 +2734,9 @@ class ProbeExecutor:
                 "probe plan %s waits for a tick with nothing in flight -- its opening intents take a venue read", plan.plan_id
             )
             return "waiting"
-        # Live balances spell the free-cash currency `EUR`, so this resolves on its SECOND arm in
-        # production; the `ZEUR` arm stays first because the adapter's instrument quote currency spells
-        # the euro `ZEUR`. Both absent reads 0.0, which refuses any margin intent.
+        # The adapter reports the free cash, as every euro, as `EUR`, so this resolves on its SECOND
+        # arm; the `ZEUR` arm reads nothing on this wheel. Both absent reads 0.0, which refuses any
+        # margin intent.
         free_zeur = state.balances.get("ZEUR", 0.0) or state.balances.get("EUR", 0.0)
         reasons = plan_refusals(
             plan,

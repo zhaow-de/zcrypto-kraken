@@ -528,8 +528,17 @@ def test_a_listing_that_finished_without_the_warn_did_not_fall_back():
     assert probe.tradevolume_fallback("\n".join([_NONCE, _LOADED]))["fell_back"] is False
 
 
+def test_a_listing_that_finished_with_no_trade_volume_call_is_described_as_making_none():
+    got = {"log_file": "probe-x.log", **probe.tradevolume_fallback(_LOADED)}
+
+    assert (got["fell_back"], got["tradevolume_calls"]) == (False, 0)
+    assert probe.describe_tradevolume_fallback(got) == (
+        "TradeVolume: the credentialed listing finished without a TradeVolume call, so nothing fell back (log: probe-x.log)"
+    )
+
+
 def test_a_log_that_never_saw_the_listing_finish_cannot_say():
-    """A partial TradeVolume answer fails the exec client's connect outright; no WARN there is not "no fallback"."""
+    """A connect that fails before the listing finishes logs no WARN either; that is not "no fallback"."""
     assert probe.tradevolume_fallback(_NONCE)["fell_back"] is None
 
 

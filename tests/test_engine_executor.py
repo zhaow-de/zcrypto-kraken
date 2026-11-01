@@ -2072,6 +2072,7 @@ def _cache_reads_at_dispatch() -> dict:
     The readings are RECORDED and asserted by the caller, never here -- the library swallows a raising
     handler, so an assertion inside one is invisible and its test passes green."""
     from nautilus_trader.backtest import BacktestEngine, BacktestEngineConfig
+    from nautilus_trader.execution import MakerTakerFeeModel
     from nautilus_trader.model import AccountType, OmsType, Venue
     from nautilus_trader.trading import Strategy
 
@@ -2133,6 +2134,7 @@ def _cache_reads_at_dispatch() -> dict:
         account_type=AccountType.CASH,
         base_currency=None,
         starting_balances=[Money(100_000, Currency.from_str("EUR")), Money(10, Currency.from_str("BTC"))],
+        fee_model=MakerTakerFeeModel(0, 0),
     )
     engine.add_instrument(instrument)
     engine.add_strategy(_Probe())
@@ -2192,6 +2194,7 @@ def _pending_cancel_read_at_dispatch(tmp_path) -> dict:
     observer's `on_start`, where the client is not borrowed, as the node's factory builds it.
     Recorded, never asserted here: the library swallows a raising handler."""
     from nautilus_trader.backtest import BacktestEngine, BacktestEngineConfig
+    from nautilus_trader.execution import MakerTakerFeeModel
     from nautilus_trader.model import AccountType, OmsType, StrategyId, Venue
     from nautilus_trader.trading import Strategy, StrategyConfig
 
@@ -2263,6 +2266,7 @@ def _pending_cancel_read_at_dispatch(tmp_path) -> dict:
         account_type=AccountType.CASH,
         base_currency=None,
         starting_balances=[Money(100_000, Currency.from_str("EUR")), Money(10, Currency.from_str("BTC"))],
+        fee_model=MakerTakerFeeModel(0, 0),
     )
     engine.add_instrument(instrument)
     engine.add_strategy(_Observer(canceller))
@@ -7407,7 +7411,7 @@ def test_read_venue_holdings_answers_every_traded_symbol_with_its_margin_positio
     """The reader's contract on the pinned wheel, offline: the listing is cached first, so a position
     Kraken spells by its altname resolves; a margin position is signed by its side under its
     instrument; a traded coin's spot balance -- its total, the part held against a resting order
-    included, under the code the adapter strips the venue's prefix to -- lands under the coin's EUR
+    included, under the standard code the adapter reports it by, `XXBT` as `BTC` -- lands under the coin's EUR
     pair; and every basket symbol is answered, 0.0 where the account holds nothing. SOL's short
     against its held lot nets to zero by the total alone: the free part would read -0.01."""
     with kraken_loopback.serve() as venue:
@@ -7422,7 +7426,7 @@ def test_read_venue_holdings_answers_every_traded_symbol_with_its_margin_positio
         held = _read_venue_holdings(base_url=venue.base_url)
 
     assert held == pytest.approx(dict.fromkeys(INSTRUMENT_IDS, 0.0) | {"BTC/EUR": 0.0013, "DOGE/EUR": 12.5})
-    assert venue.private_calls == ["TradeVolume", "OpenPositions", "BalanceEx"]
+    assert venue.private_calls == ["OpenPositions", "BalanceEx"]
 
 
 def test_read_venue_holdings_reads_an_empty_positions_list_as_a_flat_margin_book_and_the_settle_publishes_the_coins_spot_lot(
@@ -7443,7 +7447,7 @@ def test_read_venue_holdings_reads_an_empty_positions_list_as_a_flat_margin_book
 
     assert [book.held for book in reads] == [pytest.approx(dict.fromkeys(INSTRUMENT_IDS, 0.0) | {"BTC/EUR": 0.0003})]
     assert metrics.positions == sorted(reads[0].held.items())
-    assert venue.private_calls == ["TradeVolume", "OpenPositions", "BalanceEx"]
+    assert venue.private_calls == ["OpenPositions", "BalanceEx"]
 
 
 def test_read_venue_holdings_refuses_without_credentials_before_building_a_client(monkeypatch):

@@ -2175,9 +2175,9 @@ def probe_plan(
     _echo_gate_verdict(gate.evaluate(now))
     typer.echo(f"venue snapshot: {record['state']['snapshot_at']}")
 
-    # The live balances spell the free-cash currency `EUR` (read from a live balance record), so this
-    # resolves on its SECOND arm; the `ZEUR` arm stays because the adapter's other surface spells the
-    # euro `ZEUR`. Both absent reads 0.0, which refuses any margin intent.
+    # The venue record's balances carry the free cash as `EUR`, the code the adapter reports every euro
+    # under, so this resolves on its SECOND arm; the `ZEUR` arm reads nothing on this wheel. Both absent
+    # reads 0.0, which refuses any margin intent.
     free_zeur = balances.get("ZEUR", 0.0) or balances.get("EUR", 0.0)
     refusals = list(
         plan_refusals(

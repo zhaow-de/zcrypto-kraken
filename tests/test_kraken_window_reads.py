@@ -79,15 +79,15 @@ def test_orders_reads_safe_when_both_unscoped_shapes_see_each_target_once(venue,
 
 
 def test_the_scoped_read_is_printed_as_a_contrast_and_never_decides(venue, capsys):
-    """On this wheel the scoped BTC/EUR read comes back empty while the order rests, and the verdict
-    is still SAFE: that is the case the contrast line exists for."""
+    """On this wheel the scoped BTC/EUR read reports the resting order its `XBTEUR` spelling once hid
+    (upstream #5067), one line per scoped instrument, and the verdict is the unscoped shapes'."""
     assert _run("orders", venue, BTC_TXID, SOL_TXID) == 0
     lines = capsys.readouterr().out.splitlines()
     scoped = {
         iid: [line for line in lines if f"-- contrast, not the verdict: scoped {iid}, open_only=True:" in line] for iid in wr.SCOPED
     }
     assert all(len(found) == 1 for found in scoped.values()), scoped
-    assert scoped["BTC/EUR.KRAKEN"][0].endswith("-> 0 row(s)")
+    assert scoped["BTC/EUR.KRAKEN"][0].endswith("-> 1 row(s)")
     assert lines[-1] == "SAFE"
 
 
@@ -151,11 +151,11 @@ def test_absent_reads_hazard_when_the_read_raises(venue, capsys):
 
 
 def test_both_modes_send_nothing_but_reads(venue):
-    """What reached the venue, read off the wire: the listing's fee read and the order reads, and
-    nothing else -- the check that also covers a client the script might build for itself."""
+    """What reached the venue, read off the wire: the order reads and nothing else, the listing
+    making no private call -- the check that also covers a client the script might build for itself."""
     _run("orders", venue, BTC_TXID, SOL_TXID)
     _run("absent", venue, BTC_TXID, SOL_TXID)
-    assert set(venue.private_calls) == {"TradeVolume", "OpenOrders", "ClosedOrders"}
+    assert set(venue.private_calls) == {"OpenOrders", "ClosedOrders"}
 
 
 @pytest.mark.parametrize("argv", [[], ["orders"], ["absent", " "], ["cancel", BTC_TXID]])

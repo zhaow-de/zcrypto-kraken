@@ -19,6 +19,8 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -271,8 +273,10 @@ class _Node:
 def _script_first_fill(venue: lb.KrakenLoopback, exec_: lb.WsPeer, *, last_qty: float = 0.4, wire: dict, fill: bool = True) -> None:
 
     def on_add_order(form: dict, txid: str) -> None:
-        wire.update(txid=txid, cl_ord_id=form.get("cl_ord_id"))
-        venue.open_orders[txid] = dict(lb.open_order(PAIR, price=f"{PRICE:.2f}", volume=f"{QTY:.8f}"), oflags="fciq")
+        wire.update(txid=txid, cl_ord_id=form.get("cl_ord_id"), opened_at=time.time())
+        venue.open_orders[txid] = dict(
+            lb.open_order(PAIR, price=f"{PRICE:.2f}", volume=f"{QTY:.8f}", opentm=wire["opened_at"]), oflags="fciq"
+        )
 
         def frames() -> None:
             time.sleep(0.3)
@@ -282,6 +286,7 @@ def _script_first_fill(venue: lb.KrakenLoopback, exec_: lb.WsPeer, *, last_qty: 
             if not fill:
                 return
             time.sleep(0.7)
+            wire["filled_at"] = time.time()
             exec_.send_execution(
                 lb.exec_trade(
                     txid, wire["cl_ord_id"], symbol=SYMBOL, qty=QTY, price=PRICE, last_qty=last_qty, cum_qty=last_qty,
@@ -290,10 +295,12 @@ def _script_first_fill(venue: lb.KrakenLoopback, exec_: lb.WsPeer, *, last_qty: 
             )  # fmt: skip
             venue.open_orders[txid].update(vol_exec=f"{last_qty:.8f}", price=f"{PRICE:.5f}", cost=f"{last_qty * PRICE:.5f}")
             venue.trades["TLOOP1-AAAAA-AAAAAA"] = lb.trade_row(
-                txid, PAIR, vol=f"{last_qty:.8f}", price=f"{PRICE:.2f}", trade_id=1001
+                txid, PAIR, vol=f"{last_qty:.8f}", price=f"{PRICE:.2f}", trade_id=1001, time=wire["filled_at"]
             )
             venue.positions["TPOSLP-AAAAA-BBBBBB"] = dict(
-                lb.margin_position(PAIR, volume=f"{last_qty:.8f}"), ordertxid=txid, cost=f"{last_qty * PRICE:.5f}"
+                lb.margin_position(PAIR, volume=f"{last_qty:.8f}", time=wire["filled_at"]),
+                ordertxid=txid,
+                cost=f"{last_qty * PRICE:.5f}",
             )
 
         threading.Thread(target=frames, daemon=True).start()
@@ -307,10 +314,16 @@ def _script_cancel_ack(venue: lb.KrakenLoopback, exec_: lb.WsPeer, wire: dict) -
         txid = wire["txid"]
         row = venue.open_orders.pop(txid, None)
         cum = float(row["vol_exec"]) if row else 0.0
-        venue.closed_orders[txid] = dict(
-            lb.closed_order(PAIR, price=f"{PRICE:.2f}", volume=f"{QTY:.8f}", status="canceled", vol_exec=f"{cum:.8f}"),
-            oflags="fciq",
+        closed = lb.closed_order(
+            PAIR,
+            price=f"{PRICE:.2f}",
+            volume=f"{QTY:.8f}",
+            status="canceled",
+            vol_exec=f"{cum:.8f}",
+            opentm=wire["opened_at"],
+            closetm=time.time(),
         )
+        venue.closed_orders[txid] = dict(closed, oflags="fciq")
 
         def frame() -> None:
             time.sleep(0.3)
@@ -330,7 +343,8 @@ def _script_spot_fills(venue: lb.KrakenLoopback, exec_: lb.WsPeer, *, pair: str,
         n = venue.txid_base + len(venue.add_orders)
         cl_ord_id = form.get("cl_ord_id")
         fills.append({"txid": txid, "side": side, "qty": qty, "price": px})
-        venue.open_orders[txid] = dict(lb.open_order(pair, price=price, volume=volume, side=side), oflags="fciq")
+        opened_at = time.time()
+        venue.open_orders[txid] = dict(lb.open_order(pair, price=price, volume=volume, side=side, opentm=opened_at), oflags="fciq")
 
         def frames() -> None:
             time.sleep(0.3)
@@ -338,6 +352,7 @@ def _script_spot_fills(venue: lb.KrakenLoopback, exec_: lb.WsPeer, *, pair: str,
                 return
             exec_.send_execution(lb.exec_new(txid, cl_ord_id, symbol=symbol, qty=qty, price=px, side=side))
             time.sleep(0.7)
+            filled_at = time.time()
             exec_.send_execution(
                 lb.exec_trade(
                     txid, cl_ord_id, symbol=symbol, qty=qty, price=px, last_qty=qty, cum_qty=qty,
@@ -345,14 +360,12 @@ def _script_spot_fills(venue: lb.KrakenLoopback, exec_: lb.WsPeer, *, pair: str,
                 )
             )  # fmt: skip
             del venue.open_orders[txid]
-            venue.closed_orders[txid] = dict(
-                lb.closed_order(pair, price=price, volume=volume, side=side, status="closed", vol_exec=volume),
-                oflags="fciq",
-                price=f"{px:.5f}",
-                cost=f"{qty * px:.5f}",
+            closed = lb.closed_order(
+                pair, price=price, volume=volume, side=side, status="closed", vol_exec=volume, opentm=opened_at, closetm=filled_at
             )
+            venue.closed_orders[txid] = dict(closed, oflags="fciq", price=f"{px:.5f}", cost=f"{qty * px:.5f}")
             venue.trades[f"TLOOP{n}-AAAAA-AAAAAA"] = lb.spot_trade_row(
-                txid, pair, vol=volume, price=price, trade_id=1000 + n, side=side
+                txid, pair, vol=volume, price=price, trade_id=1000 + n, side=side, time=filled_at
             )
             held = float(venue.balances.get(coin, lb.balance("0"))["balance"])
             held = round(held + qty if side == "buy" else held - qty, 8)
@@ -370,21 +383,34 @@ def _basket_pairs() -> dict:
     return json.loads(BASKET_FIXTURE.read_text())
 
 
+@contextmanager
+def _venue(pairs: dict | None = None) -> Iterator[tuple[lb.KrakenLoopback, lb.WsPeer, lb.WsPeer]]:
+    """The loopback and its two peers, ClosedOrders and TradesHistory bounded by a request's `start`: every
+    row this file builds is stamped at the moment its venue event happened in the run, so a start's
+    reconciliation lookback reads the history it would read at Kraken."""
+    with lb.serve_with_sockets(pairs or _basket_pairs()) as (venue, data, exec_):
+        venue.bound_by_start = True
+        yield venue, data, exec_
+
+
 def _restore_lines(log: str) -> list[str]:
     return [line.split("cache restore: ", 1)[1] for line in log.splitlines() if "cache restore: " in line]
 
 
 def _phase_one(valkey: _Valkey, tmp_path: Path) -> tuple[_Node, dict, dict]:
     """A node that placed one leveraged order, filled 0.4 of 1.0, and stopped with it resting: the
-    store holds the order, the fill and the margin position."""
+    store holds the order, the fill and the margin position. `wire` carries the venue's stamps --
+    `opened_at`, `filled_at`, and `stopped_at`, a moment the node was down, after the fill and before
+    any restart -- for a later venue to serve the same history."""
     valkey.start()
     node = _Node(tmp_path / "node", valkey.port)
     node.drop_plan("p-phase-1")
     wire: dict = {}
-    with lb.serve_with_sockets(_basket_pairs()) as (venue, data, exec_):
+    with _venue() as (venue, data, exec_):
         venue.balances = {"ZEUR": lb.balance("1000.00000000")}
         _script_first_fill(venue, exec_, wire=wire)
         record = node.run(1, venue, data, exec_, window=PHASE1_WINDOW)
+    wire["stopped_at"] = time.time()
     assert record["errors"] == [], record["errors"]
     assert [e["type"] for e in record["own"]][:4] == ["OrderInitialized", "OrderSubmitted", "OrderAccepted", "OrderFilled"], record[
         "own"
@@ -481,18 +507,20 @@ def test_the_child_refuses_a_bare_venue_client_off_the_loopback_whichever_read_a
 def test_a_resting_order_and_a_margin_position_are_restored_across_a_restart(phase_one):
     """No `Unresolved positions` line: the failure the operating rule stands against."""
     valkey, node, wire, _ = phase_one
-    with lb.serve_with_sockets(_basket_pairs()) as (venue, data, exec_):
+    with _venue() as (venue, data, exec_):
         venue.balances = {"ZEUR": lb.balance("1000.00000000")}
         venue.open_orders[wire["txid"]] = dict(
-            lb.open_order(PAIR, price=f"{PRICE:.2f}", volume=f"{QTY:.8f}"),
+            lb.open_order(PAIR, price=f"{PRICE:.2f}", volume=f"{QTY:.8f}", opentm=wire["opened_at"]),
             oflags="fciq",
             vol_exec="0.40000000",
             price="150.00000",
             cost="60.00000",
         )
-        venue.trades["TLOOP1-AAAAA-AAAAAA"] = lb.trade_row(wire["txid"], PAIR, vol="0.40000000", price="150.00", trade_id=1001)
+        venue.trades["TLOOP1-AAAAA-AAAAAA"] = lb.trade_row(
+            wire["txid"], PAIR, vol="0.40000000", price="150.00", trade_id=1001, time=wire["filled_at"]
+        )
         venue.positions["TPOSLP-AAAAA-BBBBBB"] = dict(
-            lb.margin_position(PAIR, volume="0.40000000"), ordertxid=wire["txid"], cost="60.00000"
+            lb.margin_position(PAIR, volume="0.40000000", time=wire["filled_at"]), ordertxid=wire["txid"], cost="60.00000"
         )
         _script_cancel_ack(venue, exec_, wire)
         record = node.run(2, venue, data, exec_, window=PHASE2_WINDOW)
@@ -534,19 +562,23 @@ def test_a_resting_order_and_a_margin_position_are_restored_across_a_restart(pha
 
 def test_a_fill_made_while_the_engine_was_down_is_booked_from_the_trade_history(phase_one):
     valkey, node, wire, _ = phase_one
-    with lb.serve_with_sockets(_basket_pairs()) as (venue, data, exec_):
+    with _venue() as (venue, data, exec_):
         venue.balances = {"ZEUR": lb.balance("1000.00000000")}
         venue.open_orders[wire["txid"]] = dict(
-            lb.open_order(PAIR, price=f"{PRICE:.2f}", volume=f"{QTY:.8f}"),
+            lb.open_order(PAIR, price=f"{PRICE:.2f}", volume=f"{QTY:.8f}", opentm=wire["opened_at"]),
             oflags="fciq",
             vol_exec="0.70000000",
             price="150.00000",
             cost="105.00000",
         )
-        venue.trades["TLOOP1-AAAAA-AAAAAA"] = lb.trade_row(wire["txid"], PAIR, vol="0.40000000", price="150.00", trade_id=1001)
-        venue.trades["TLOOP2-AAAAA-AAAAAA"] = lb.trade_row(wire["txid"], PAIR, vol="0.30000000", price="150.00", trade_id=1002)
+        venue.trades["TLOOP1-AAAAA-AAAAAA"] = lb.trade_row(
+            wire["txid"], PAIR, vol="0.40000000", price="150.00", trade_id=1001, time=wire["filled_at"]
+        )
+        venue.trades["TLOOP2-AAAAA-AAAAAA"] = lb.trade_row(
+            wire["txid"], PAIR, vol="0.30000000", price="150.00", trade_id=1002, time=wire["stopped_at"]
+        )
         venue.positions["TPOSLP-AAAAA-BBBBBB"] = dict(
-            lb.margin_position(PAIR, volume="0.70000000"), ordertxid=wire["txid"], cost="105.00000"
+            lb.margin_position(PAIR, volume="0.70000000", time=wire["filled_at"]), ordertxid=wire["txid"], cost="105.00000"
         )
         _script_cancel_ack(venue, exec_, wire)
         record = node.run(2, venue, data, exec_, window=PHASE2_WINDOW)
@@ -577,15 +609,23 @@ def test_an_order_cancelled_while_the_engine_was_down_is_never_closed_by_the_lib
     """Mass status reads open orders only on this pin and never requests ClosedOrders, so the restored
     copy stays open in the Cache -- the shape the startup pass settles from the venue's report."""
     valkey, node, wire, _ = phase_one
-    with lb.serve_with_sockets(_basket_pairs()) as (venue, data, exec_):
+    with _venue() as (venue, data, exec_):
         venue.balances = {"ZEUR": lb.balance("1000.00000000")}
-        venue.closed_orders[wire["txid"]] = dict(
-            lb.closed_order(PAIR, price=f"{PRICE:.2f}", volume=f"{QTY:.8f}", status="canceled", vol_exec="0.40000000"),
-            oflags="fciq",
+        closed = lb.closed_order(
+            PAIR,
+            price=f"{PRICE:.2f}",
+            volume=f"{QTY:.8f}",
+            status="canceled",
+            vol_exec="0.40000000",
+            opentm=wire["opened_at"],
+            closetm=wire["stopped_at"],
         )
-        venue.trades["TLOOP1-AAAAA-AAAAAA"] = lb.trade_row(wire["txid"], PAIR, vol="0.40000000", price="150.00", trade_id=1001)
+        venue.closed_orders[wire["txid"]] = dict(closed, oflags="fciq")
+        venue.trades["TLOOP1-AAAAA-AAAAAA"] = lb.trade_row(
+            wire["txid"], PAIR, vol="0.40000000", price="150.00", trade_id=1001, time=wire["filled_at"]
+        )
         venue.positions["TPOSLP-AAAAA-BBBBBB"] = dict(
-            lb.margin_position(PAIR, volume="0.40000000"), ordertxid=wire["txid"], cost="60.00000"
+            lb.margin_position(PAIR, volume="0.40000000", time=wire["filled_at"]), ordertxid=wire["txid"], cost="60.00000"
         )
         record = node.run(2, venue, data, exec_, window=PHASE2_WINDOW)
         private_calls = list(venue.private_calls)
@@ -612,18 +652,20 @@ def test_a_trade_frame_on_a_restored_open_order_is_booked_twice_by_the_library(p
     open when the `trade` frame lands."""
     valkey, node, wire, _ = phase_one
     node.mark_row_reducer(wire["client_order_id"])
-    with lb.serve_with_sockets(_basket_pairs()) as (venue, data, exec_):
+    with _venue() as (venue, data, exec_):
         venue.balances = {"ZEUR": lb.balance("1000.00000000")}
         venue.open_orders[wire["txid"]] = dict(
-            lb.open_order(PAIR, price=f"{PRICE:.2f}", volume=f"{QTY:.8f}"),
+            lb.open_order(PAIR, price=f"{PRICE:.2f}", volume=f"{QTY:.8f}", opentm=wire["opened_at"]),
             oflags="fciq",
             vol_exec="0.40000000",
             price="150.00000",
             cost="60.00000",
         )
-        venue.trades["TLOOP1-AAAAA-AAAAAA"] = lb.trade_row(wire["txid"], PAIR, vol="0.40000000", price="150.00", trade_id=1001)
+        venue.trades["TLOOP1-AAAAA-AAAAAA"] = lb.trade_row(
+            wire["txid"], PAIR, vol="0.40000000", price="150.00", trade_id=1001, time=wire["filled_at"]
+        )
         venue.positions["TPOSLP-AAAAA-BBBBBB"] = dict(
-            lb.margin_position(PAIR, volume="0.40000000"), ordertxid=wire["txid"], cost="60.00000"
+            lb.margin_position(PAIR, volume="0.40000000", time=wire["filled_at"]), ordertxid=wire["txid"], cost="60.00000"
         )
 
         def later() -> None:
@@ -637,7 +679,9 @@ def test_a_trade_frame_on_a_restored_open_order_is_booked_twice_by_the_library(p
                 )
             )  # fmt: skip
             venue.open_orders[wire["txid"]].update(vol_exec="0.60000000", cost="90.00000")
-            venue.trades["TLOOP3-AAAAA-AAAAAA"] = lb.trade_row(wire["txid"], PAIR, vol="0.20000000", price="150.00", trade_id=1003)
+            venue.trades["TLOOP3-AAAAA-AAAAAA"] = lb.trade_row(
+                wire["txid"], PAIR, vol="0.20000000", price="150.00", trade_id=1003, time=time.time()
+            )
 
         threading.Thread(target=later, daemon=True).start()
         record = node.run(2, venue, data, exec_, window=PHASE2_WINDOW)
@@ -675,18 +719,20 @@ def test_a_trade_frame_on_a_restored_opener_racing_the_passs_cancel_is_booked_tw
     credit the row nothing, the pass repairs it to the venue's 0.6 and closes it `canceled`, and the
     intent the sweep wrote at the cancel stays `revoked`."""
     valkey, node, wire, _ = phase_one
-    with lb.serve_with_sockets(_basket_pairs()) as (venue, data, exec_):
+    with _venue() as (venue, data, exec_):
         venue.balances = {"ZEUR": lb.balance("1000.00000000")}
         venue.open_orders[wire["txid"]] = dict(
-            lb.open_order(PAIR, price=f"{PRICE:.2f}", volume=f"{QTY:.8f}"),
+            lb.open_order(PAIR, price=f"{PRICE:.2f}", volume=f"{QTY:.8f}", opentm=wire["opened_at"]),
             oflags="fciq",
             vol_exec="0.40000000",
             price="150.00000",
             cost="60.00000",
         )
-        venue.trades["TLOOP1-AAAAA-AAAAAA"] = lb.trade_row(wire["txid"], PAIR, vol="0.40000000", price="150.00", trade_id=1001)
+        venue.trades["TLOOP1-AAAAA-AAAAAA"] = lb.trade_row(
+            wire["txid"], PAIR, vol="0.40000000", price="150.00", trade_id=1001, time=wire["filled_at"]
+        )
         venue.positions["TPOSLP-AAAAA-BBBBBB"] = dict(
-            lb.margin_position(PAIR, volume="0.40000000"), ordertxid=wire["txid"], cost="60.00000"
+            lb.margin_position(PAIR, volume="0.40000000", time=wire["filled_at"]), ordertxid=wire["txid"], cost="60.00000"
         )
         _script_cancel_ack(venue, exec_, wire)
         ack = venue.on_cancel_order
@@ -700,7 +746,9 @@ def test_a_trade_frame_on_a_restored_opener_racing_the_passs_cancel_is_booked_tw
                 )
             )  # fmt: skip
             venue.open_orders[wire["txid"]].update(vol_exec="0.60000000", cost="90.00000")
-            venue.trades["TLOOP3-AAAAA-AAAAAA"] = lb.trade_row(wire["txid"], PAIR, vol="0.20000000", price="150.00", trade_id=1003)
+            venue.trades["TLOOP3-AAAAA-AAAAAA"] = lb.trade_row(
+                wire["txid"], PAIR, vol="0.20000000", price="150.00", trade_id=1003, time=time.time()
+            )
             venue.positions["TPOSLP-AAAAA-BBBBBB"].update(vol="0.60000000", cost="90.00000")
             ack(form)
 
@@ -748,7 +796,7 @@ def test_an_empty_cache_beside_open_ledger_rows_is_a_cold_start_the_pass_reconci
         node = _Node(tmp_path / "node", valkey.port)
         node.drop_plan("p-spot", leverage=None)
         wire: dict = {}
-        with lb.serve_with_sockets(_basket_pairs()) as (venue, data, exec_):
+        with _venue() as (venue, data, exec_):
             venue.balances = {"ZEUR": lb.balance("1000.00000000")}
             _script_first_fill(venue, exec_, wire=wire)
             record = node.run(1, venue, data, exec_, window=PHASE1_WINDOW)
@@ -761,16 +809,18 @@ def test_an_empty_cache_beside_open_ledger_rows_is_a_cold_start_the_pass_reconci
         valkey.kill()
         valkey.start()
         assert _keys(valkey.port) == []
-        with lb.serve_with_sockets(_basket_pairs()) as (venue, data, exec_):
+        with _venue() as (venue, data, exec_):
             venue.balances = {"ZEUR": lb.balance("1000.00000000"), "SOL": lb.balance("0.40000000")}
             venue.open_orders[wire["txid"]] = dict(
-                lb.open_order(PAIR, price=f"{PRICE:.2f}", volume=f"{QTY:.8f}"),
+                lb.open_order(PAIR, price=f"{PRICE:.2f}", volume=f"{QTY:.8f}", opentm=wire["opened_at"]),
                 oflags="fciq",
                 vol_exec="0.40000000",
                 price="150.00000",
                 cost="60.00000",
             )
-            venue.trades["TLOOP1-AAAAA-AAAAAA"] = lb.trade_row(wire["txid"], PAIR, vol="0.40000000", price="150.00", trade_id=1001)
+            venue.trades["TLOOP1-AAAAA-AAAAAA"] = lb.trade_row(
+                wire["txid"], PAIR, vol="0.40000000", price="150.00", trade_id=1001, time=wire["filled_at"]
+            )
             _script_cancel_ack(venue, exec_, wire)
             record = node.run(2, venue, data, exec_, window=PHASE2_WINDOW)
             cancels = list(venue.cancel_forms)
@@ -819,7 +869,7 @@ def _open_positions(dump: dict) -> list[tuple[str, float]]:
 
 
 _SOL = {"pair": PAIR, "symbol": SYMBOL, "coin": "SOL", "quote": SOL_QUOTE}
-# Kraken's own spellings: the pair `XDGEUR`, the BalanceEx code `XXDG`, which the adapter reports as `XDG`.
+# Kraken's own spellings: the pair `XDGEUR`, the BalanceEx code `XXDG`, which the adapter reports as `DOGE`.
 _DOGE = {"pair": "XDGEUR", "symbol": "DOGE/EUR", "coin": "XXDG", "quote": ("DOGE/EUR.KRAKEN", "0.2", "0.3")}
 _EUR_ONLY = {"balances": {"ZEUR": lb.balance("1000.00000000")}}
 
@@ -828,7 +878,7 @@ def _spot_process(node: _Node, n: int, holdings: dict, leg: dict = _SOL, *, pair
     """One node process over a venue holding `holdings`: its record, the venue's holdings afterwards,
     and the fills."""
     fills: list = []
-    with lb.serve_with_sockets(pairs or _basket_pairs()) as (venue, data, exec_):
+    with _venue(pairs) as (venue, data, exec_):
         venue.hold(holdings)
         _script_spot_fills(venue, exec_, pair=leg["pair"], symbol=leg["symbol"], coin=leg["coin"], fills=fills)
         record = node.run(n, venue, data, exec_, window=PHASE1_WINDOW, quote=leg["quote"])
@@ -1028,14 +1078,17 @@ def test_the_cache_killed_mid_run_leaves_the_engine_trading_and_the_store_behind
     threads: list[threading.Thread] = []
     try:
         valkey.start()
-        with lb.serve_with_sockets(_basket_pairs()) as (venue, data, exec_):
+        with _venue() as (venue, data, exec_):
             venue.balances = {"ZEUR": lb.balance("1000.00000000")}
 
             def on_add_order(form: dict, txid: str) -> None:
                 orders.append(txid)
                 n = len(orders)
                 wire[txid] = form.get("cl_ord_id")
-                venue.open_orders[txid] = dict(lb.open_order(PAIR, price=f"{PRICE:.2f}", volume=f"{QTY:.8f}"), oflags="fciq")
+                opened_at = time.time()
+                venue.open_orders[txid] = dict(
+                    lb.open_order(PAIR, price=f"{PRICE:.2f}", volume=f"{QTY:.8f}", opentm=opened_at), oflags="fciq"
+                )
 
                 def frames() -> None:
                     time.sleep(0.3)
@@ -1043,6 +1096,7 @@ def test_the_cache_killed_mid_run_leaves_the_engine_trading_and_the_store_behind
                         return
                     exec_.send_execution(lb.exec_new(txid, wire[txid], symbol=SYMBOL, qty=QTY, price=PRICE))
                     time.sleep(0.7)
+                    filled_at = time.time()
                     exec_.send_execution(
                         lb.exec_trade(
                             txid, wire[txid], symbol=SYMBOL, qty=QTY, price=PRICE, last_qty=QTY, cum_qty=QTY,
@@ -1050,10 +1104,16 @@ def test_the_cache_killed_mid_run_leaves_the_engine_trading_and_the_store_behind
                         )
                     )  # fmt: skip
                     venue.open_orders.pop(txid, None)
-                    venue.closed_orders[txid] = dict(
-                        lb.closed_order(PAIR, price=f"{PRICE:.2f}", volume=f"{QTY:.8f}", status="closed", vol_exec=f"{QTY:.8f}"),
-                        oflags="fciq",
+                    closed = lb.closed_order(
+                        PAIR,
+                        price=f"{PRICE:.2f}",
+                        volume=f"{QTY:.8f}",
+                        status="closed",
+                        vol_exec=f"{QTY:.8f}",
+                        opentm=opened_at,
+                        closetm=filled_at,
                     )
+                    venue.closed_orders[txid] = dict(closed, oflags="fciq")
                     if n == 1:
                         time.sleep(2)
                         valkey.kill()
@@ -1091,3 +1151,50 @@ def test_the_cache_killed_mid_run_leaves_the_engine_trading_and_the_store_behind
     ), log[-3000:]
     second = fills[1][0]
     assert f"trader-SHADOW-001:orders:{second}" not in keys_at_return, keys_at_return
+
+
+# What reconciliation imported is in `at_start`, taken when the strategy starts, so no executor tick is waited for.
+IMPORT_WINDOW = 1
+HISTORY_TXID, HISTORY_TRADE = "OHIST1-AAAAA-BBBBBB", "THIST1-AAAAA-AAAAAA"
+
+
+def _start_over_one_history_fill(node: _Node, phase: int, *, minutes_before: int) -> dict:
+    """One start over a venue whose history is one spot buy of 0.5, closed filled `minutes_before` the
+    child is launched, so at least that long before the start's own clock."""
+    with _venue() as (venue, data, exec_):
+        venue.balances = {"ZEUR": lb.balance("1000.00000000")}
+        at = time.time() - minutes_before * 60
+        closed = lb.closed_order(
+            PAIR, price=f"{PRICE:.2f}", volume="0.50000000", status="closed", vol_exec="0.50000000", opentm=at, closetm=at
+        )
+        venue.closed_orders[HISTORY_TXID] = dict(closed, oflags="fciq", price=f"{PRICE:.5f}", cost=f"{0.5 * PRICE:.5f}")
+        venue.trades[HISTORY_TRADE] = lb.spot_trade_row(
+            HISTORY_TXID, PAIR, vol="0.50000000", price=f"{PRICE:.2f}", trade_id=2001, time=at
+        )
+        return node.run(phase, venue, data, exec_, window=IMPORT_WINDOW)
+
+
+def test_a_start_imports_a_history_fill_from_719_minutes_before_it_and_nothing_of_the_same_fill_from_721(tmp_path):
+    valkey = _Valkey(tmp_path / "valkey")
+    try:
+        valkey.start()
+        node = _Node(tmp_path / "node", valkey.port)
+        outside = _start_over_one_history_fill(node, 1, minutes_before=721)
+        valkey.kill()
+        valkey.start()
+        inside = _start_over_one_history_fill(node, 2, minutes_before=719)
+    finally:
+        valkey.stop()
+
+    for record in (outside, inside):
+        assert record["errors"] == [], record["errors"]
+        assert _restore_lines(record["log"]) == ["0 order(s), 0 position(s) restored"]
+    assert (outside["at_start"]["orders"], outside["at_start"]["positions"]) == ([], [])
+    [order] = inside["at_start"]["orders"]
+    assert (order["venue_order_id"], order["strategy_id"], order["status"], order["filled_qty"], order["trade_ids"]) == (
+        HISTORY_TXID,
+        "EXTERNAL",
+        "FILLED",
+        "0.50000000",
+        [HISTORY_TRADE],
+    )

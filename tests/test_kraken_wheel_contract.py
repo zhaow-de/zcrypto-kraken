@@ -10,7 +10,6 @@ it goes red here before it reaches the venue. Nothing here leaves 127.0.0.1.
 from __future__ import annotations
 
 import asyncio
-from decimal import Decimal
 
 import pytest
 from nautilus_trader.model import (
@@ -133,10 +132,10 @@ def test_after_the_listing_is_cached_a_margin_position_resolves_under_either_spe
     assert [(r.instrument_id, str(r.position_side), str(r.quantity)) for r in reports] == [(BTC, "LONG", "0.06000000")]
 
 
-def test_a_scoped_read_skips_the_two_way_spelled_leg_before_resolving_it(venue):
-    """Upstream #5067, pinned so the bump that fixes it goes red here: the scoped BTC/EUR read then
-    reports its order, and the window reads' scoped contrast line stops reading 0 on BTC/EUR. SOL/EUR,
-    whose key and altname agree, is the control that the scoped read works at all."""
+def test_a_scoped_read_reports_the_two_way_spelled_leg(venue):
+    """Upstream #5067, fixed on this wheel for open orders: the scoped BTC/EUR read reports the order
+    Kraken spells `XBTEUR`, as the window reads' scoped contrast line does. SOL/EUR, whose key and
+    altname agree, is the control that the scoped read works at all."""
 
     async def run():
         client = await _primed(venue)
@@ -145,7 +144,7 @@ def test_a_scoped_read_skips_the_two_way_spelled_leg_before_resolving_it(venue):
             for iid in (BTC, SOL)
         ]
 
-    assert asyncio.run(run()) == [[], [SOL_TXID]]
+    assert asyncio.run(run()) == [[BTC_TXID], [SOL_TXID]]
 
 
 def test_an_order_report_carries_no_client_order_id(venue):
@@ -163,39 +162,30 @@ def test_an_order_report_carries_no_client_order_id(venue):
     assert {str(r.venue_order_id): r.client_order_id for r in asyncio.run(run())} == {BTC_TXID: None, SOL_TXID: None}
 
 
-def _fees(venue) -> dict[str, tuple[Decimal, Decimal]]:
+def _listing(venue):
     async def run():
-        rows = await kraken_loopback.client(venue).request_instruments()
-        return {str(row.id): (row.maker_fee, row.taker_fee) for row in rows}
+        return await kraken_loopback.client(venue).request_instruments()
 
     return asyncio.run(run())
 
 
-def test_the_listing_takes_the_account_s_fee_tier_from_trade_volume(venue):
-    account_tier = (Decimal(venue.maker_fee_pct) / 100, Decimal(venue.taker_fee_pct) / 100)
-    assert _fees(venue) == {"BTC/EUR.KRAKEN": account_tier, "SOL/EUR.KRAKEN": account_tier}
+def test_a_credentialed_listing_makes_no_private_call(venue):
+    """The red button's first read, `flatten.read_listing`, is this listing on a credentialed client:
+    with no private call in it, the key's permissions do not stand between a press and that read."""
+    assert sorted(str(row.id) for row in _listing(venue)) == ["BTC/EUR.KRAKEN", "SOL/EUR.KRAKEN"]
+    assert venue.private_calls == []
 
 
-@pytest.mark.parametrize(
-    "fault",
-    [
-        pytest.param({"errors": {"TradeVolume": "EGeneral:Permission denied"}}, id="trade-volume-errors"),
-        pytest.param({"trade_volume_answer": {"currency": "ZUSD"}}, id="trade-volume-answer-does-not-parse"),
-    ],
-)
-def test_a_trade_volume_failure_yields_the_listing_at_zero_fees(venue, fault):
-    for name, value in fault.items():
-        setattr(venue, name, value)
-    zero = (Decimal(0), Decimal(0))
-    assert _fees(venue) == {"BTC/EUR.KRAKEN": zero, "SOL/EUR.KRAKEN": zero}
-    assert "TradeVolume" in venue.private_calls
+def test_a_listed_instrument_carries_no_fee(venue):
+    rows = _listing(venue)
+    assert len(rows) == 2
+    assert [(str(row.id), name) for row in rows for name in ("maker_fee", "taker_fee") if hasattr(row, name)] == []
 
 
-def test_a_trade_volume_answer_missing_a_pair_s_fee_fails_the_whole_listing(venue):
-    """The one fee failure that is fatal, and on the red button's first read it is exit 3."""
-    venue.trade_volume_omits = {"XXBTZEUR"}
-    with pytest.raises(RuntimeError, match="TradeVolume response missing taker fee for XXBTZEUR$"):
-        _fees(venue)
+def test_the_quote_currency_is_the_code_the_listing_mints_for_the_euro(venue):
+    """The position reads pass `flatten.QUOTE_CURRENCY` as `quote_currency`, and the loopback answers them
+    alike whatever it carries, so the listing is where it is pinned."""
+    assert {row.quote_currency.code for row in _listing(venue)} == {flatten.QUOTE_CURRENCY}
 
 
 @pytest.mark.parametrize(

@@ -60,9 +60,10 @@ CONFIRM_WORD = "FLATTEN"
 # routing would otherwise treat an ack of ours as its own.
 CLIENT_ORDER_ID_PREFIX = "FLT"
 BOOK_DEPTH = 1
-# The venue-alias spelling of the euro on the quote surfaces (546 live instruments carry `ZEUR`,
-# zero carry `EUR` -- docs/reference/adapter-verification/2.0.0rc4.dev20260825.md observation 4).
-QUOTE_CURRENCY = "ZEUR"
+# The euro as the pinned adapter spells it on every engine-side surface -- instrument quotes, balances,
+# Money. Kraken's own `ZEUR` reaches the venue raw only through the exec client's `margin_balance_asset`
+# (`cli/engine/node.py`), and this wheel does not resolve it as a currency.
+QUOTE_CURRENCY = "EUR"
 # The rung-1 leverage, and the only value ever accepted live from this repo (probes 4c/4d in
 # docs/reference/adapter-verification/2.0.0rc4.dev20260825.md). PositionStatusReport carries no
 # leverage field, so a closer cannot echo the position's; what the venue does with a mismatched

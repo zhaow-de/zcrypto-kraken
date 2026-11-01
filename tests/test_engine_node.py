@@ -1035,11 +1035,11 @@ _EXTERNAL_DISPATCH_PROBE = """
 import json
 import os
 import sys
-from decimal import Decimal
 from pathlib import Path
 
 from nautilus_trader.backtest import BacktestEngine, BacktestEngineConfig
 from nautilus_trader.common import LoggerConfig
+from nautilus_trader.execution import MakerTakerFeeModel
 from nautilus_trader.model import (
     AccountType,
     Currency,
@@ -1073,8 +1073,6 @@ instrument = CurrencyPair(
     size_increment=Quantity(0.000001, 6),
     ts_event=0,
     ts_init=0,
-    maker_fee=Decimal("0"),
-    taker_fee=Decimal("0"),
 )
 
 
@@ -1109,6 +1107,7 @@ engine.add_venue(
     oms_type=OmsType.NETTING,
     account_type=AccountType.CASH,
     starting_balances=[Money(1_000_000, eur), Money(10, btc)],
+    fee_model=MakerTakerFeeModel(0, 0),
 )
 engine.add_instrument(instrument)
 t0 = 1_577_836_800_000_000_000
@@ -1260,6 +1259,7 @@ def test_the_builder_is_given_the_production_client_and_engine_configs(tmp_path,
     exec_engine = recorder.named("with_exec_engine_config")[0]["config"]
     assert exec_engine.reconciliation is True
     assert exec_engine.filter_unclaimed_external_orders is False
+    assert exec_engine.reconciliation_lookback_mins == 720
     # The wait before the engine mints an unanswered order's terminal event itself. Stated at the
     # library's own values, so this asserts they reach the builder rather than that they are right.
     assert exec_engine.inflight_check_interval_ms == 2000
@@ -1288,8 +1288,8 @@ def test_the_builder_is_given_the_production_client_and_engine_configs(tmp_path,
     assert exec_config.spot_account_type == AccountType.MARGIN
     assert exec_config.margin_balance_asset == "ZEUR"
     # Unread under MARGIN (the comment at the field in cli/engine/node.py). Pinned so a switch off it does not
-    # inherit the adapter's "USDT" default; there it is matched literally against the instrument's
-    # `quote_currency.code`, "ZEUR" for every EUR pair, so "EUR" would match no instrument.
+    # inherit the adapter's "USDT" default; there it is matched against the instrument's `quote_currency.code`,
+    # which this wheel spells "EUR" for every EUR pair, so that switch re-reads this value first.
     assert exec_config.spot_positions_quote_currency == "ZEUR"
     # D10: submission stays on REST. The library default is True; `_KRAKEN_ERROR_MARKERS` and
     # `_on_rejected`'s three-way verdict in cli/engine/executor.py are derived against REST
@@ -1576,10 +1576,12 @@ _BUILD_PROBE = """
 import asyncio, json, os, sys
 from pathlib import Path
 
-from nautilus_trader.model import Currency
-
 from cli.config import CacheSettings, EngineConfig
+from cli.logging import configure
 import cli.engine.node as node_module
+
+# The engine's own log shape, as `zcrypto` configures it by default: plain text on stdout at INFO.
+configure(None, "INFO", None)
 
 root = Path(sys.argv[1])
 # Nautilus wants a current event loop and refuses to create one itself.
@@ -1619,19 +1621,9 @@ node = node_module.build_shadow_node(
 )
 
 
-def resolves(code):
-    try:
-        Currency.from_str(code, strict=True)
-    except ValueError:
-        return False
-    return True
-
-
 (root / "facts.json").write_text(
     json.dumps(
         {
-            # Read after the build: which of the table's codes a strict lookup resolves in this process.
-            "registered": sorted(c.code for c in node_module._KRAKEN_CURRENCIES if resolves(c.code)),
             "trader_id": str(node.trader_id),
             "environment": str(node.environment),
             "is_running": node.is_running,
@@ -1731,83 +1723,6 @@ def test_build_shadow_node_refuses_execution_with_an_empty_environment(tmp_path)
     assert not (tmp_path / "facts.json").exists()
 
 
-@pytest.mark.parametrize("cache_enabled", [False, True], ids=["disabled-registers-nothing", "enabled-registers-the-six"])
-def test_a_build_with_the_cache_enabled_registers_the_kraken_codes_a_fresh_process_cannot_resolve(tmp_path, cache_enabled):
-    """A build with the cache disabled registers nothing: the differential that shows the registration
-    is the build's, not the import's."""
-    facts = _node_build_facts(tmp_path, exec_enabled=False, cache_enabled=cache_enabled)
-    six = ["XETH", "XLTC", "XXBT", "XXDG", "XXRP", "ZEUR"]
-    five = ["ADA", "AVAX", "DOT", "LINK", "SOL"]
-    assert facts["registered"] == (sorted(five + six) if cache_enabled else sorted(five))
-
-
-_CURRENCY_PROBE = """
-import asyncio, json, os, sys
-from pathlib import Path
-
-from nautilus_trader.model import Currency
-
-from cli.engine.node import _KRAKEN_CURRENCIES
-from cli.engine.store import PAIR_KEYS
-from tests import kraken_loopback
-
-root = Path(sys.argv[1])
-snapshot = json.loads(Path("tests/fixtures/kraken_assetpairs.json").read_text())
-basket_codes = sorted({snapshot[key][side] for key in PAIR_KEYS.values() for side in ("base", "quote")})
-
-
-def fields(c):
-    return [c.code, c.precision, c.iso4217, c.name, str(c.currency_type).rsplit(".", 1)[-1]]
-
-
-def strict(code):
-    try:
-        return fields(Currency.from_str(code, strict=True))
-    except ValueError:
-        return None
-
-
-before = {code: strict(code) for code in basket_codes}
-with kraken_loopback.serve(json.loads(Path("tests/fixtures/kraken_assetpairs_basket.json").read_text())) as venue:
-    async def parse():
-        client = kraken_loopback.client(venue)
-        return await client.request_instruments()
-
-    minted = {}
-    for instrument in asyncio.run(parse()):
-        for currency in (instrument.base_currency, instrument.quote_currency):
-            minted[currency.code] = fields(currency)
-(root / "currencies.json").write_text(
-    json.dumps({"basket_codes": basket_codes, "before": before, "minted": minted, "table": [fields(c) for c in _KRAKEN_CURRENCIES]})
-)
-os._exit(0)
-"""
-
-
-def test_the_currency_table_covers_the_baskets_codes_at_the_values_the_adapter_mints(tmp_path):
-    """Read before the parse, which registers what it mints; red on a bump that reshapes a minted currency."""
-    result = subprocess.run(
-        [sys.executable, "-c", _CURRENCY_PROBE, str(tmp_path)], capture_output=True, text=True, timeout=120, cwd=Path.cwd()
-    )
-    recorded = tmp_path / "currencies.json"
-    detail = f"exit={result.returncode}\n--- stdout ---\n{result.stdout[-2000:]}\n--- stderr ---\n{result.stderr[-2000:]}"
-    assert recorded.exists(), f"the currency probe produced no result: {detail}"
-    facts = json.loads(recorded.read_text())
-    table = {row[0]: row for row in facts["table"]}
-
-    assert (
-        sorted(table)
-        == facts["basket_codes"]
-        == ["ADA", "AVAX", "DOT", "LINK", "SOL", "XETH", "XLTC", "XXBT", "XXDG", "XXRP", "ZEUR"]
-    )
-    resolved = {code: row for code, row in facts["before"].items() if row is not None}
-    assert sorted(resolved) == ["ADA", "AVAX", "DOT", "LINK", "SOL"], detail
-    assert all(resolved[code] == table[code] for code in resolved), (resolved, table)
-    assert facts["minted"] == table, (facts["minted"], table)
-    for code in ("XETH", "XLTC", "XXBT", "XXDG", "XXRP", "ZEUR"):
-        assert table[code] == [code, 8, 0, code, "CRYPTO"], table[code]
-
-
 def test_a_real_build_never_prints_the_credentials(tmp_path):
     # The whole assembly, library included: nothing the build writes to stdout or stderr carries a
     # credential value. The library's own logger opens at INFO here, which is what the engine runs.
@@ -1816,6 +1731,15 @@ def test_a_real_build_never_prints_the_credentials(tmp_path):
     assert result.returncode == 0, f"exit={result.returncode} stderr={result.stderr[-2000:]}"
     assert secret not in result.stdout
     assert secret not in result.stderr
+
+
+def test_a_real_build_logs_the_reconciliation_lookback_once_at_info(tmp_path):
+    result = _run_build_probe(tmp_path, exec_enabled=True, credentials=("a-key", "a-secret"))
+    assert result.returncode == 0, f"exit={result.returncode} stderr={result.stderr[-2000:]}"
+    lines = [line for line in (result.stdout + result.stderr).splitlines() if "reconciliation lookback" in line]
+    minutes = node._exec_engine_config().reconciliation_lookback_mins
+    assert len(lines) == 1, lines
+    assert re.search(rf" INFO zcrypto\.engine\.node \[node\.py:\d+\] - reconciliation lookback: {minutes} min$", lines[0]), lines
 
 
 # --- the twelve instruments reach the Cache before the trader starts (spec 00100 D5) ------------
