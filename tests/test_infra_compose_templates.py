@@ -7,6 +7,8 @@ import jinja2
 import pytest
 import yaml
 
+from cli.__main__ import _LOKI_ENV_NAMES
+
 REPO = Path(__file__).resolve().parents[1]
 
 CAPTURE_TEMPLATE = REPO / "infra/ansible/roles/capture/templates/compose.yaml.j2"
@@ -177,9 +179,9 @@ def _env_file_paths(service: dict) -> list[str]:
     return [e["path"] if isinstance(e, dict) else e for e in service.get("env_file", [])]
 
 
-def _logship_branch(service: dict, logship_file: str) -> tuple[bool, bool, bool]:
+def _logship_branch(service: dict, logship_file: str) -> tuple[frozenset[str], bool, bool]:
     return (
-        "ZCRYPTO_LOG_HOST" in service["environment"],
+        frozenset(_ENV_SET_NAMES & set(service["environment"])),
         logship_file in _env_file_paths(service),
         "--ship-logs" in service.get("entrypoint", []),
     )
@@ -193,8 +195,8 @@ def test_every_logship_guard_renders_its_whole_branch_on_the_nodes_password(
 ):
     on = _render(template, {**context, "mon_ingest_logship_password": "x"})["services"][service]
     off = _render(template, context)["services"][service]
-    assert _logship_branch(on, logship_file) == (True, True, ships_by_entrypoint)
-    assert _logship_branch(off, logship_file) == (False, False, False)
+    assert _logship_branch(on, logship_file) == (_ENV_SET_NAMES, True, ships_by_entrypoint)
+    assert _logship_branch(off, logship_file) == (frozenset(), False, False)
     # Compose lets `environment:` and a later `env_file` entry outrank the logship file.
     names = {line.split("=", 1)[0] for line in _LOGSHIP_LINES}
     assert not names & (set(on["environment"]) | set(off["environment"]))
@@ -217,6 +219,9 @@ _LOGSHIP_LINES = [
     "ZCRYPTO_LOKI_PASSWORD={{ mon_ingest_logship_password }}",
     "ZCRYPTO_SHIP_LOGS=1",
 ]
+# `--ship-logs` refuses to start without each of the CLI's names; those the logship file does not carry come from
+# the service's `environment:`.
+_ENV_SET_NAMES = frozenset(_LOKI_ENV_NAMES) - {line.split("=", 1)[0] for line in _LOGSHIP_LINES}
 
 
 @pytest.mark.parametrize("role", ["capture", "ops"])
