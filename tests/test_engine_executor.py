@@ -30,6 +30,7 @@ from nautilus_trader.model import (
     LiquiditySide,
     Money,
     OrderAccepted,
+    OrderCancelDenied,
     OrderCanceled,
     OrderCancelRejected,
     OrderExpired,
@@ -1062,6 +1063,7 @@ _EVENT_DEFAULTS = {
     OrderPendingCancel: {"account_id": _ACCOUNT_ID, "reconciliation": False},
     OrderRejected: {"account_id": _ACCOUNT_ID, "reason": "the venue said no", "reconciliation": False},
     OrderCancelRejected: {"reason": "the venue said no", "reconciliation": False},
+    OrderCancelDenied: {"reason": "NoExecutionClient"},
     OrderFilled: {
         "account_id": _ACCOUNT_ID,
         "order_side": OrderSide.BUY,
@@ -3507,6 +3509,33 @@ def test_a_cancel_rejection_parks_the_intent_ambiguous_and_halts_the_plan(tmp_pa
     assert _intent_outcome(tmp_path, 1) == "refused"
 
 
+def test_a_cancel_the_client_denied_before_sending_parks_the_intent_ambiguous_at_once_and_halts_the_plan(tmp_path):
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)])
+    ex.on_order_event(_accepted(client.last_order_id))
+    (exec_dir(tmp_path) / KILL_FILE).touch()
+    clock.now = NOW + timedelta(seconds=5)
+    ex.on_quote(_quote())
+    ex.on_timer(clock.now)
+    assert client.canceled
+
+    with _executor_errors(level=logging.CRITICAL) as records:
+        ex.on_order_event(_event(OrderCancelDenied, client_order_id=client.last_order_id, reason="NoExecutionClient"))
+
+    assert [r.getMessage() for r in records] == [
+        f"cancel of {client.last_order_id} was DENIED before it was sent (NoExecutionClient) -- the order may still rest; "
+        "the plan stops here",
+        "plan p-1 dropped after intent 0 ended ambiguous -- 1 later intent(s) will not run",
+    ]
+    assert len(client.submitted) == 1
+    intent = _intent_entry(tmp_path, 0)  # read on the denial's own tick, 25 s inside the cancel's ack deadline
+    assert (intent["outcome"], intent["reasons"]) == ("ambiguous", ["cancel denied before it was sent: NoExecutionClient"])
+    row = _record(tmp_path)["submitted"][0]
+    assert (row["state"], row["events"][-1]["type"]) == ("accepted", "OrderCancelDenied")
+    assert _intent_entry(tmp_path, 1)["reasons"] == [
+        "not run -- intent 0 ended ambiguous, so the venue state this plan was authorized against is unknown"
+    ]
+
+
 def test_a_cancel_the_venue_never_answers_ends_ambiguous_and_frees_the_engine(tmp_path):
     """Without a bound on our own bookkeeping the intent parks forever -- and the plan pointer stays
     non-None, so the executor silently ignores EVERY later plan file until a process restart: a dead
@@ -4914,6 +4943,30 @@ def test_a_cancel_the_venue_refused_on_an_adopted_order_logs_the_hand_cancel_and
     assert (row["state"], [e["type"] for e in row["events"]]) == ("accepted", ["OrderAccepted", "OrderCancelRejected"])
     assert client.cache.order(ClientOrderId(_TXID)).status == OrderStatus.ACCEPTED
     assert _intent_outcome(tmp_path, 0, earlier) == "revoked"  # the pass's write stands; the line sends the operator to the page
+
+
+def test_a_cancel_the_client_denied_on_an_adopted_order_logs_the_hand_cancel_and_leaves_the_row_accepted(tmp_path):
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-opener", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    client = StubClient(StubCache(open_orders=[_resting_limit_order(_TXID, venue_order_id=_TXID)]))
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY))
+    ex.on_timer(NOW)
+    assert [str(cid) for cid in client.canceled] == [_TXID] and _intent_outcome(tmp_path, 0, earlier) == "revoked"
+
+    with _executor_errors(level=logging.WARNING) as records:
+        _deliver_external_event(ex, client, _event(OrderCancelDenied, client_order_id=_TXID, reason="NoExecutionClient"))
+
+    assert [(r.levelno, r.getMessage()) for r in records] == [
+        (
+            logging.CRITICAL,
+            f"cancel of adopted order {_TXID} was DENIED before it was sent (NoExecutionClient) -- the order may still rest, "
+            "and the cancel is not re-sent: cancel it by hand on Kraken's open-orders page",
+        )
+    ]
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert (row["state"], [e["type"] for e in row["events"]]) == ("accepted", ["OrderAccepted", "OrderCancelDenied"])
+    assert _intent_outcome(tmp_path, 0, earlier) == "revoked"
 
 
 def test_a_mint_landing_detached_after_the_ack_deadline_stranded_the_intent_records_the_flag_on_its_row(tmp_path):

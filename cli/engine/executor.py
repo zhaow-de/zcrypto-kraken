@@ -4158,7 +4158,7 @@ class ProbeExecutor:
         the next order against a position it cannot describe.
 
         DELIBERATELY NOT reached from the five ambiguous exits (a raising submit, an unclassifiable
-        rejection, a cancel the venue rejected, a cancel or IOC it never answered, and a terminal
+        rejection, a cancel the venue rejected or the client denied, a cancel or IOC it never answered, and a terminal
         this engine minted for itself rather than received): each of those
         means an order may still be live and may still legitimately fill, so `filled` is not an
         expectation to hold the Cache to, and checking there would fire on a delayed venue answer
@@ -4302,17 +4302,22 @@ class ProbeExecutor:
             self._on_cancel_ack(active, payload)
             return
 
-        if name == "OrderCancelRejected":
-            # The venue positively says the cancel did NOT take, so the order may still rest --
-            # while whatever asked for the cancel (a kill file, the time-box) says it must not.
-            # Nothing further may be submitted against a position this process can no longer
-            # describe. The row keeps its OPEN state; only the intent is journaled.
+        if name in ("OrderCancelRejected", "OrderCancelDenied"):
+            # The venue positively says the cancel did NOT take (`OrderCancelRejected`), or the
+            # client refused it before sending (`OrderCancelDenied`) and the venue never saw it.
+            # Either way the order may still rest -- while whatever asked for the cancel (a kill
+            # file, the time-box) says it must not. Nothing further may be submitted against a
+            # position this process can no longer describe. The row keeps its OPEN state; only the
+            # intent is journaled, its reason naming which of the two refused the cancel.
+            denied = name == "OrderCancelDenied"
             logger.critical(
-                "cancel of %s was REJECTED by the venue -- the order may still rest; the plan stops here",
+                "cancel of %s was %s -- the order may still rest; the plan stops here",
                 active.client_order_id,
+                f"DENIED before it was sent ({reason})" if denied else "REJECTED by the venue",
             )
             self._update_row(active, event=payload)
-            self._journal_intent(active.index, "ambiguous", (f"cancel rejected: {reason}",), active.filled)
+            refusal = "cancel denied before it was sent" if denied else "cancel rejected"
+            self._journal_intent(active.index, "ambiguous", (f"{refusal}: {reason}",), active.filled)
             _inc_order("ambiguous")
             self._drop_remainder_after_ambiguity(active)
             return
@@ -4467,14 +4472,22 @@ class ProbeExecutor:
             )
             self._arm_reread_after_mint()
             return "ambiguous"
-        if type(event).__name__ == "OrderCancelRejected":
-            # The venue positively says the cancel did not take, so the order may still rest where the cancel is not re-sent
-            # and, where the pass cancelled it and its sweep ran, after the sweep has written its intent; absent from Kraken's
-            # open orders, the venue had already ended it. The hand cancel is the operator's, the own-order path's line.
+        if type(event).__name__ in ("OrderCancelRejected", "OrderCancelDenied"):
+            # The venue positively says the cancel did not take (`OrderCancelRejected`), or the client refused it before
+            # sending (`OrderCancelDenied`) and the venue never saw it. Either way the order may still rest where the cancel
+            # is not re-sent and, where the pass cancelled it and its sweep ran, after the sweep has written its intent;
+            # absent from Kraken's open orders, the venue had already ended it. The hand cancel is the operator's, the
+            # own-order path's line.
+            refusal = (
+                f"DENIED before it was sent ({getattr(event, 'reason', None)})"
+                if type(event).__name__ == "OrderCancelDenied"
+                else "REJECTED by the venue"
+            )
             logger.critical(
-                "cancel of adopted order %s was REJECTED by the venue -- the order may still rest, and the cancel is not "
-                "re-sent: cancel it by hand on Kraken's open-orders page",
+                "cancel of adopted order %s was %s -- the order may still rest, and the cancel is not re-sent: cancel it "
+                "by hand on Kraken's open-orders page",
                 getattr(event, "client_order_id", "?"),
+                refusal,
             )
             return None
         try:
@@ -5015,7 +5028,7 @@ class ProbeExecutor:
         stopping is a re-drop after reading the venue.
 
         Five callers, one meaning -- "this process cannot say what reached the venue": a raising
-        submit, an unclassifiable rejection, a cancel the venue rejected, a cancel or IOC it never
+        submit, an unclassifiable rejection, a cancel the venue rejected or the client denied, a cancel or IOC it never
         answered, and a terminal this engine minted for itself rather than received. Each has
         already journaled its own intent by the time it gets here, and each leaves the row in one of
         `execledger._OPEN_ORDER_STATES` so re-attach still sees the order.
