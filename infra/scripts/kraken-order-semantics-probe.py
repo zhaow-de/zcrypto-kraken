@@ -1813,11 +1813,11 @@ def exec_client_config() -> KrakenExecutionClientConfig:
 
 
 def logger_config(args, stamp: str) -> LoggerConfig:
-    """The terminal at `--log-level`, and every run's DEBUG log into `--evidence-dir` beside its
+    """The terminal at `--log-level`, and every run's log at `--file-log-level` into `--evidence-dir` beside its
     evidence JSON -- the TradeVolume fallback WARN is read back out of that file, not scrollback."""
     return LoggerConfig(
         stdout_level=LogLevel(args.log_level),
-        fileout_level=LogLevel.DEBUG,
+        fileout_level=LogLevel(args.file_log_level),
         file_config=FileWriterConfig(directory=str(args.evidence_dir), file_name=run_log_path(args.evidence_dir, stamp).stem),
     )
 
@@ -2266,6 +2266,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--log-level", default="WARNING", help="nautilus log level (default: WARNING; use INFO to see the adapter's own narration)"
+    )
+    p.add_argument(
+        "--file-log-level",
+        default="DEBUG",
+        help="level of the run's log file in --evidence-dir (default: DEBUG); use TRACE to read Kraken's own error strings "
+        "for failed private calls -- a TRACE file is large",
     )
     p.add_argument(
         "--expect-nautilus",

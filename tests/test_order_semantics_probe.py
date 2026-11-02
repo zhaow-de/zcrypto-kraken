@@ -516,6 +516,18 @@ def test_every_run_logs_at_debug_into_the_evidence_dir_beside_its_evidence():
     assert probe.run_log_path("/evid", "20260923-120000") == Path("/evid/probe-20260923-120000.log")
 
 
+@pytest.mark.parametrize(
+    ("flag", "level"),
+    [([], "DEBUG"), (["--file-log-level", "DEBUG"], "DEBUG"), (["--file-log-level", "TRACE"], "TRACE")],
+)
+def test_the_file_log_is_at_file_log_level_debug_by_default_and_the_terminal_stays_at_log_level(flag, level):
+    args = probe.build_parser().parse_args(["--evidence-dir", "/evid", "--log-level", "INFO", *flag])
+
+    config = probe.logger_config(args, "20260923-120000")
+
+    assert (config.fileout_level, config.stdout_level) == (probe.LogLevel(level), probe.LogLevel.INFO)
+
+
 def test_a_fallback_warn_reads_as_fell_back_with_its_reason_and_its_call_count():
     got = probe.tradevolume_fallback("\n".join([_NONCE, _FELL_BACK, _NONCE, _FELL_BACK, _LOADED]))
 
