@@ -82,8 +82,8 @@ def _figure_run(monkeypatch) -> types.SimpleNamespace:
         flag_returns=[],
     )
 
-    # The synthetic prices leave the governor idle at every basis: each build's counts, its ungoverned return 100 and
-    # its first 3t multipliers are set apart here, or a figure read off the wrong build would pass.
+    # The synthetic prices leave the governor idle at every basis: each build is set apart here, or a figure read off the
+    # wrong build would pass.
     def build(daily_prices, daily_ts, h4_prices, h4_ts, *, config):
         assert config in configs, config
         t = configs.index(config) + 1
