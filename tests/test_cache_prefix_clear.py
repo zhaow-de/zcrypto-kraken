@@ -192,6 +192,21 @@ def test_a_list_naming_a_key_outside_the_prefix_is_refused_whole(tmp_path, valke
     assert not log.exists()
 
 
+def test_a_list_naming_a_key_twice_is_refused_whole(tmp_path, valkey, capsys):
+    docker, log = _docker(tmp_path, "absent")
+    host = _host(tmp_path, valkey, docker)
+    listed = tmp_path / "hand.keys"
+    listed.write_text(
+        "trader-SHADOW-001:accounts:KRAKEN-001\ntrader-SHADOW-001:currencies:ZEUR\ntrader-SHADOW-001:accounts:KRAKEN-001\n"
+    )
+
+    rc, out = _run(capsys, host, "clear", str(listed))
+
+    assert (rc, out.splitlines()) == (1, [f"REFUSED: {listed} names a key twice, which no inventory writes: nothing was deleted"])
+    assert _keys(valkey.port) == set(INSIDE) | set(OUTSIDE)
+    assert not log.exists()
+
+
 def test_verify_passes_after_the_clear_and_fails_on_a_key_written_since(tmp_path, valkey, capsys):
     docker, _ = _docker(tmp_path, "absent")
     host = _host(tmp_path, valkey, docker)
