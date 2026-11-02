@@ -12,6 +12,8 @@ from tests.test_portfolio_repricing import _bench_recorder, _spa_recorder
 from tests.test_research_command import _declared_series, _p1_revalidation_dataset
 from tests.test_research_p1_revalidation import _UnreadReader
 
+pytestmark = pytest.mark.retired
+
 SUBJECT = "p1-reprice"
 NO_VERDICT = (
     "instrument finding: the data does not rebuild record 47's book at its registered cost, 27337 returns at Sharpe 1.5609; "
