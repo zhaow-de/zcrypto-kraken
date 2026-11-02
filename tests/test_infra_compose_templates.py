@@ -219,8 +219,7 @@ _LOGSHIP_LINES = [
     "ZCRYPTO_LOKI_PASSWORD={{ mon_ingest_logship_password }}",
     "ZCRYPTO_SHIP_LOGS=1",
 ]
-# `--ship-logs` refuses to start without each of the CLI's names; those the logship file does not carry come from
-# the service's `environment:`.
+# `--ship-logs` refuses to start without each of the CLI's names.
 _ENV_SET_NAMES = frozenset(_LOKI_ENV_NAMES) - {line.split("=", 1)[0] for line in _LOGSHIP_LINES}
 
 
