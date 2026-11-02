@@ -568,9 +568,11 @@ def _log_resting_outside_the_cache(label: str, report) -> None:
 def read_venue_orders(since: datetime, *, base_url: str | None = None) -> list:
     """Every order the venue reports open, or closed since `since`, as the adapter's
     `OrderStatusReport`s: the startup pass's only source for an order the Cache cannot hold. The
-    startup reconciliation reads open orders only, and nothing on the strategy's surface reaches the
-    execution client's closed-order read, so this is a bare HTTP client beside that one, on the same
-    trade credentials -- the construction `zcrypto engine flatten` uses. `base_url` is None on the
+    startup reconciliation reads closed orders and trades only inside its 720-minute lookback
+    (`_exec_engine_config` in `cli/engine/node.py`), importing what closed there, and the ledger rows
+    this read is for can reach back past it; nothing on the strategy's surface reaches the execution
+    client's closed-order read, so this is a bare HTTP client beside that one, on the same trade
+    credentials -- the construction `zcrypto engine flatten` uses. `base_url` is None on the
     engine, which is the venue's own.
 
     A second client on one key is a nonce hazard: the adapter serialises signed requests per client,
@@ -1701,10 +1703,11 @@ class ProbeExecutor:
         tests/test_engine_executor.py drives a real order through a real engine and reads the Cache
         from inside the handler.
 
-        The classification population below is `orders_open`, but the row sweep is NOT: an order that
-        filled, was canceled or expired while this process was down is not in the Cache at all when the
-        cache is off -- the startup reconciliation reads open orders only -- so the pass cannot return
-        early when nothing is resting: an idle startup can still owe row repairs.
+        The classification population below is `orders_open`, but the row sweep is NOT: with the cache
+        off, an order that filled, was canceled or expired while this process was down is in the Cache,
+        closed, only when it closed inside the startup reconciliation's 720-minute lookback, and not at
+        all when it closed earlier -- so the pass cannot return early when nothing is resting: an idle
+        startup can still owe row repairs.
 
         With the cache enabled the Cache may already hold this engine's OWN orders and positions from a
         previous process (spec 00120 D6, D7): the sweep takes the venue's report over the Cache's copy for
