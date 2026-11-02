@@ -4,9 +4,11 @@
 its own client did not place, a MARGIN POSITION, and a NON-EUR SPOT BALANCE for the sell path.
 This mints those and stops. It has no cancel path -- not for its own legs, not for anything else
 -- so it cannot unmake a fixture, its own or a hand-placed one.
-EVERY LEG IS ON A SAME-KEY PAIR. Kraken spells five basket pairs two ways, and a read scoped to
-one of those pairs sees none of its open orders -- so a fixture resting there is invisible to any
-reader that asks about its pair by name, though an unscoped read sees it.
+EVERY LEG IS ON A SAME-KEY PAIR. Kraken spells five basket pairs two ways, and a position read
+scoped to one of those pairs reads a position spelled by the altname (`XBTEUR`) as flat -- so a
+position fixture there is invisible to any reader that asks about its pair by name, though an
+unscoped read sees it. A scoped open-order read reports such a pair's orders on this pin
+(upstream #5067, fixed for open orders).
 `SCOPED_ORDER_READ_BLIND_LEGS` names those pairs and states the mechanism.
 EVERY SIZE COMES FROM THE VENUE'S OWN ROW AT RUN TIME, never from a remembered figure -- which is
 rejected at submit if it has fallen below a floor and silently accepted at a notional nobody chose
@@ -57,10 +59,11 @@ API_SECRET_VAR = "KRAKEN_SPOT_API_SECRET"
 
 DEFAULT_PAIR = "SOL/EUR"
 
-# The basket pairs Kraken spells two ways: an AssetPairs key and a different altname. A read scoped
-# to one instrument keeps only the rows whose pair is that instrument's key, while an open order
-# names the altname (upstream #5067), so a scoped read on these pairs sees none of their orders. An
-# unscoped read resolves both spellings.
+# The basket pairs Kraken spells two ways: an AssetPairs key and a different altname. A position
+# read scoped to one instrument keeps only the rows whose pair is that instrument's key, so a
+# position spelled by the altname (`XBTEUR`) reads flat there. A scoped open-order read reports the
+# altname-spelled order on this pin (upstream #5067, fixed for open orders). An unscoped read
+# resolves both spellings.
 SCOPED_ORDER_READ_BLIND_LEGS = ("BTC/EUR", "ETH/EUR", "XRP/EUR", "LTC/EUR", "ETH/BTC")
 
 # The resting leg sits this far below the run's own best bid. Far enough that it cannot fill while

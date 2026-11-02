@@ -9319,9 +9319,10 @@ def test_the_startup_pass_asks_the_venue_over_a_restored_orders_cache_copy_and_t
 
 
 def test_a_restored_order_the_venue_reports_closed_has_its_row_written_from_the_report_and_no_cancel_sent(tmp_path):
-    """Mass status reads open orders only, so an order that filled while the engine was down comes back
-    open in the Cache; the venue's report writes the row, settles the intent through the sweep, and the
-    stale open copy is left where it is with no cancel through the handle."""
+    """Mass status reads closed orders only inside its 720-minute lookback, so an order that filled while
+    the engine was down, before that window, comes back open in the Cache; the venue's report writes the
+    row, settles the intent through the sweep, and the stale open copy is left where it is with no cancel
+    through the handle."""
     earlier = NOW - timedelta(hours=4)
     _pending_plan_entry(tmp_path, earlier, n_intents=1)
     _submitted_row(tmp_path, "O-restored", reduce_only=False, when=earlier, venue_order_id=_TXID)
