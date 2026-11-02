@@ -1,15 +1,14 @@
 """The engine's venue instrument map, the committed costmin constant, and the pure sizing and FX terms (spec
 00089, widened by spec 00094).
 
-`INSTRUMENT_IDS` was probed at nautilus-trader 1.230.0 against its Kraken adapter `normalize_spot_symbol`
-(re-probe when the pin moves), which
-renames the legacy `XBT`/`XDG` codes and STRIPS the venue alias whichever currency is the quote -- so
-`ETH/BTC`'s InstrumentId is `ETH/BTC.KRAKEN`, never an XBT form, though the venue's own wire pair key is
-`XETHXXBT` (`cli.engine.store.PAIR_KEYS["ETH/BTC"]`). The tests pin the dict below, not the adapter's parse,
-so re-probe this agreement when the nautilus pin moves.
+`INSTRUMENT_IDS` is each basket symbol under the `KRAKEN` venue. The pinned adapter mints the standard code
+for instruments and spot balances alike -- `BTC`, `ETH`, `DOGE`, `LTC`, `XRP` and `EUR`, never `XBT`, `XXBT`,
+`XDG`, `XXDG` or `ZEUR` -- whichever currency is the quote, so `ETH/BTC`'s InstrumentId is `ETH/BTC.KRAKEN`
+though the venue's own wire pair key is `XETHXXBT` (`cli.engine.store.PAIR_KEYS["ETH/BTC"]`). The tests pin
+the dict below, not the adapter's parse, so re-probe this agreement when the nautilus pin moves.
 
-`COSTMIN`'s quote currency is spelled the way the refdata snapshot spells it (`"EUR"`/`"BTC"`, never the
-venue-alias forms `ZEUR`/`XXBT`) -- a consumer that needs the adapter's alias maps it at its own read site."""
+`COSTMIN`'s quote currency is spelled the way the refdata snapshot spells it (`"EUR"`/`"BTC"`, never
+Kraken's own `ZEUR`/`XXBT`)."""
 
 from __future__ import annotations
 

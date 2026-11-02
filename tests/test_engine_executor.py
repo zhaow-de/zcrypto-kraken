@@ -2026,9 +2026,9 @@ def _fill(
     types.
 
     `fee_code` is `EUR`, the currency a Kraken fill's commission carries
-    (`docs/reference/adapter-verification/2.0.0rc4.dev20260825.md`, observation 4); the venue's
-    `ZEUR` spelling belongs to its asset and instrument-quote surfaces, and
-    `cli.engine.instruments.EUR_CODES` accepts both. Fee values are amounts two decimals can hold,
+    (`docs/reference/adapter-verification/2.0.0rc4.dev20260825.md`, observation 4) and the pinned
+    adapter's every euro; `ZEUR` is Kraken's own code, which an earlier adapter reported on instrument
+    quotes, and `cli.engine.instruments.EUR_CODES` accepts both. Fee values are amounts two decimals can hold,
     for the reason `test_a_real_money_answers_both_accessors_the_fill_row_reads` measures; `fee=None`
     builds the commission-less fill that reaches the row builder's absent-fee branch.
 

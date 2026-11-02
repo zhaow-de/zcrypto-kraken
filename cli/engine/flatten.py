@@ -447,9 +447,11 @@ def step_precision(step: float) -> int:
     return max(0, -Decimal(str(step)).as_tuple().exponent)
 
 
-# Kraken's legacy codes, renamed by the adapter's own `normalize_spot_symbol` before an
-# InstrumentId is built (`cli/engine/instruments.py`'s module docstring). The `X`/`Z` strip below
-# handles the mechanical prefixes; these two renames it cannot derive.
+# Kraken's legacy codes. The pinned adapter mints the standard code for instruments and spot balances
+# alike (`cli/engine/instruments.py`'s module docstring), so these reach `resolve_base` from Kraken's own
+# balance export and from the stem of an earn code, which the adapter keeps as Kraken spells it
+# (`XBT.M`, `XDG.F`). The `X`/`Z` strip below handles the mechanical prefixes; these two renames it
+# cannot derive.
 ASSET_ALIASES = {"XBT": "BTC", "XXBT": "BTC", "XDG": "DOGE", "XXDG": "DOGE"}
 
 
@@ -488,9 +490,9 @@ def earn_wallet_base(code: str, bases: frozenset[str]) -> str | None:
 
 def wallet_base(code: str, bases: frozenset[str]) -> tuple[str, bool] | None:
     """`(base, False)` for a spot code `resolve_base` maps, `(base, True)` for an earn or staking code
-    `earn_wallet_base` maps, else None. The earn arm reads the code again with a leading `X` restored:
-    the pinned adapter's CASH read strips one from Kraken's code (`XBT.M` reads `BT.M`, `XDG.F` `DG.F`,
-    `XRP.F` `RP.F`), which the rule does not map as spelled."""
+    `earn_wallet_base` maps, else None. The pinned adapter's CASH read keeps an earn code as Kraken spells
+    it (`XBT.M`, `XDG.F`, `XRP.F`), which the earn arm's first read maps. Its second read, the code with a
+    leading `X` restored, maps the spelling an earlier adapter gave (`XBT.M` read `BT.M`)."""
     base = resolve_base(code, bases)
     if base is not None:
         return base, False

@@ -675,7 +675,7 @@ class VenueBook:
         earn or staking code is outside the spot wallet, so a book short by it drafts a buy of coin the
         account holds, at every boundary. It refuses what the loop can draft and sell against, never
         what the account is worth, which the mark counts `earn` into. It names the first such base in
-        sorted order and no code: the adapter's spelling of the code (`BT.M`) is one Kraken never shows."""
+        sorted order and no code."""
         if not self.earn:
             return None
         base = min(self.earn)
