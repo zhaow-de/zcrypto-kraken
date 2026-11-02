@@ -1011,15 +1011,14 @@ def test_a_doge_lot_held_across_two_restarts_loads_the_account_at_each_start_and
     qqqz = [[key for key in keys if "QQQZ" in key] for keys in stored]
     assert qqqz == [held, held], (
         f"{_BUMP}: the store no longer holds the unregistered pair's currency and instrument before the two starts that "
-        f"load them, so the ERROR count below no longer reads a load that met them: {qqqz}"
+        f"load them, so the burst below no longer reads a load that met them: {qqqz}"
     )
 
-    # Any line naming the pair, not one build's wording: 2.0.0rc6.dev20260921 logged `Failed to deserialize currency`
-    # and this build formats `Failed to load currency` / `Failed to load instrument`.
+    # Any line naming the pair, not one build's wording: the load-failure wording moves between builds.
     burst = [_lines(record["log"], "QQQZ") for record in (bought, first, second)]
     assert burst == [[], [], []], (
-        f"{_BUMP}: a pair whose base currency no process registers is now named by a start's log, as the ERROR burst "
-        f"an engine start logged over a full cache on 2.0.0rc6.dev20260921 named it: {burst}"
+        f"{_BUMP}: a pair whose base currency no process registers is now named by a start's log, as "
+        f"2.0.0rc6.dev20260921's start-up ERROR burst named such pairs: {burst}"
     )
 
 
