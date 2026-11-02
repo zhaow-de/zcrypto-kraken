@@ -131,9 +131,6 @@ class AccountState:
 
 
 def assert_same_key(pair: str) -> None:
-    """Refuse a pair whose Kraken altname differs from its AssetPairs key: a position read scoped to
-    it reads a position spelled by the altname as flat, so a position fixture there is invisible to
-    any reader that asks about that pair by name."""
     if pair not in INSTRUMENT_IDS:
         raise Refusal(
             f"REFUSING: {pair} is not one of the basket's instruments, so this guard has no opinion "
@@ -142,8 +139,8 @@ def assert_same_key(pair: str) -> None:
     if pair in SCOPED_ORDER_READ_BLIND_LEGS:
         raise Refusal(
             f"REFUSING: {pair} is spelled two ways at the venue, so a position read scoped to {pair} "
-            f"reads a position spelled by its altname as flat and a position fixture there is invisible "
-            f"to it. Mint on a same-key pair; {DEFAULT_PAIR} is the default.",
+            f"reads a position spelled by its altname as flat. Mint on a same-key pair; {DEFAULT_PAIR} "
+            f"is the default.",
         )
 
 
@@ -170,7 +167,7 @@ def assert_row_is_same_key(pair: str, pair_key: str, row: dict) -> None:
     raise Refusal(
         f"REFUSING (measured from the listing, not from the list): {pair} is keyed {pair_key} and "
         f"spelled {altname}, so a position read scoped to {pair} reads a position spelled {altname} "
-        f"as flat and a position fixture there is invisible to it; {remembered}.",
+        f"as flat; {remembered}.",
     )
 
 

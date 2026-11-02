@@ -1,9 +1,3 @@
-"""The fixture minter's pure core — the rails that decide what reaches a live account: a leg minted
-on a two-way-spelled pair rests where a read scoped to that pair cannot see it, a size taken
-from a remembered figure rather than the venue's own `ordermin` is rejected at submit or accepted at
-a notional nobody chose, and leverage reaching a leg meant to be spot is a position nobody planned.
-"""
-
 from __future__ import annotations
 
 import importlib.util
@@ -68,8 +62,6 @@ def _no_unintended_dialling(monkeypatch):
 
 
 class TestTheSameKeyGuard:
-    """A position on a pair Kraken spells two ways reads flat to a position read scoped to that pair."""
-
     @pytest.mark.parametrize("pair", ["BTC/EUR", "ETH/EUR", "XRP/EUR", "LTC/EUR", "ETH/BTC"])
     def test_it_refuses_every_two_way_spelled_leg(self, pair: str) -> None:
         with pytest.raises(mint.Refusal) as exc:
@@ -81,9 +73,8 @@ class TestTheSameKeyGuard:
         mint.assert_same_key("SOL/EUR")
 
     def test_the_blind_legs_are_the_two_way_spelled_basket_legs(self) -> None:
-        """The list is frozen text; recomputing it keeps a basket change from leaving it stale. A scoped
-        position read keeps the rows whose pair is the instrument's `raw_symbol` -- the AssetPairs KEY,
-        which `PAIR_KEYS` carries -- while a position can name the altname `dump_pair_name` derives."""
+        """Recomputed, so a basket change cannot leave the frozen list stale: `PAIR_KEYS` carries the
+        AssetPairs key a scoped position read keeps, `dump_pair_name` the altname a row can name instead."""
         from cli.backfill.read import dump_pair_name
         from cli.engine.store import BASKET, PAIR_KEYS
 
