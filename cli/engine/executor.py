@@ -2023,8 +2023,9 @@ class ProbeExecutor:
         Each row finds its order by the id this engine minted and, when that misses, by the txid the
         row recorded at acceptance: in the Cache first (`_cached_order`), where a restart leaves every
         resting order under its txid alone, and then in `venue_orders` -- the venue's own report, by
-        txid, for an order that filled, was canceled or expired while this process was down, which the
-        startup reconciliation never puts in the Cache because it reads open orders only. Both answers
+        txid, for an order that filled, was canceled or expired while this process was down before the
+        startup reconciliation's 720-minute lookback, which that reconciliation does not import; one that
+        closed inside the lookback it imports under its txid, and the Cache answers first. Both answers
         take the same arms in `_reconcile_adopted_row`, so a closed-while-down order gets its repair,
         its terminal state and both trips exactly as a resting one does. A report that is still open
         is an order reconciliation dropped, which `_log_resting_outside_the_cache` logs CRITICAL at
