@@ -1014,17 +1014,12 @@ def test_a_doge_lot_held_across_two_restarts_loads_the_account_at_each_start_and
         f"load them, so the ERROR count below no longer reads a load that met them: {qqqz}"
     )
 
-    burst = [
-        (
-            len(_lines(record["log"], "Failed to deserialize currency QQQZ")),
-            len(_lines(record["log"], "Failed to load instrument QQQZ/EUR.KRAKEN")),
-        )
-        for record in (bought, first, second)
-    ]
-    assert burst == [(0, 0), (0, 0), (0, 0)], (
-        f"{_BUMP}: a pair whose base currency no process registers now logs `Failed to deserialize currency` or `Failed "
-        "to load instrument` at a start, the two lines of the ERROR burst an engine start logged over a full cache on "
-        f"2.0.0rc6.dev20260921: {burst}"
+    # Any line naming the pair, not one build's wording: 2.0.0rc6.dev20260921 logged `Failed to deserialize currency`
+    # and this build formats `Failed to load currency` / `Failed to load instrument`.
+    burst = [_lines(record["log"], "QQQZ") for record in (bought, first, second)]
+    assert burst == [[], [], []], (
+        f"{_BUMP}: a pair whose base currency no process registers is now named by a start's log, as the ERROR burst "
+        f"an engine start logged over a full cache on 2.0.0rc6.dev20260921 named it: {burst}"
     )
 
 
