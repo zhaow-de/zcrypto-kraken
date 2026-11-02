@@ -6812,9 +6812,10 @@ _RULED_FIXTURES = {
     "b4-ratio-legs": _b4_dataset,
     "b4-sol-noborrow-rolling": _b4_sol_dataset,
     "p1-revalidation": _p1_revalidation_dataset,
+    "p1-reprice": lambda tmp_path: _declared_series(tmp_path, subjects.SUBJECTS["p1-reprice"])[0],
 }
 # Each ruled subject's count constant, which the tie raises so that a literal at a kill-bar site, or at p1-revalidation's
-# deflated Sharpe, fails it.
+# or p1-reprice's deflated Sharpe, fails it.
 _DECLARED_COUNT = {
     "b1-hourly-channel-exits": "_B1_EXIT_N_TRIALS",
     "b1-hourly-rv": "_B1_HOURLY_RV_N_TRIALS",
@@ -6833,6 +6834,7 @@ _DECLARED_COUNT = {
     "b4-ratio-legs": "_B4_N_TRIALS",
     "b4-sol-noborrow-rolling": "_B4_SOL_N_TRIALS",
     "p1-revalidation": "_P1_REVALIDATION_N_TRIALS",
+    "p1-reprice": "_P1_REPRICE_N_TRIALS",
 }
 
 
@@ -6856,6 +6858,7 @@ def test_the_ruled_subjects_declare_their_families_and_trial_counts():
         "b4-ratio-legs": ("B4", 1),
         "b4-sol-noborrow-rolling": ("B4", 2),
         "p1-revalidation": ("P1", 6),
+        "p1-reprice": ("P1", 7),
     }
     assert set(_RULED_FIXTURES) == set(declared) == set(_DECLARED_COUNT)
 
@@ -6878,6 +6881,7 @@ def test_every_ruled_subjects_kill_bar_deflates_at_its_declared_count(tmp_path, 
 
     monkeypatch.setattr(subjects, "a1_kill_bar", recorder)
     monkeypatch.setattr("cli.portfolio.revalidation.deflated_sharpe_ratio", dsr_recorder)
+    monkeypatch.setattr("cli.portfolio.repricing.deflated_sharpe_ratio", dsr_recorder)
 
     subjects.SUBJECTS[name].build(ObservedReader(_RULED_FIXTURES[name](tmp_path)), "ohlc-test", None)
 
