@@ -6814,8 +6814,7 @@ _RULED_FIXTURES = {
     "p1-revalidation": _p1_revalidation_dataset,
     "p1-reprice": lambda tmp_path: _declared_series(tmp_path, subjects.SUBJECTS["p1-reprice"])[0],
 }
-# Each ruled subject's count constant, which the tie raises so that a literal at a kill-bar site, or at p1-revalidation's
-# or p1-reprice's deflated Sharpe, fails it.
+# Each ruled subject's count constant, which the tie raises so that a literal at a kill-bar site or a deflated Sharpe fails it.
 _DECLARED_COUNT = {
     "b1-hourly-channel-exits": "_B1_EXIT_N_TRIALS",
     "b1-hourly-rv": "_B1_HOURLY_RV_N_TRIALS",

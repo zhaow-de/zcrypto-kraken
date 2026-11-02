@@ -5083,7 +5083,7 @@ def _build_p1_revalidation(
 
 # docs/specs/00154 D7: P1's true count with this record.
 _P1_REPRICE_N_TRIALS = 7
-# docs/specs/00154 D3's pick, a-rung2-box: its two terms are that bullet's, every other field record 47's (D2).
+# docs/specs/00154 D3's pick, a-rung2-box.
 _P1_REPRICE_CONFIG = replace(_RECORD44_CONFIG, fee_per_side=0.004124, spread_per_side=0.0020)
 
 

@@ -1,7 +1,4 @@
-"""Record 47's book re-priced at a picked cost basis (spec 00154 D2–D6): every registered figure over the picked basis's
-build, the instrument check over the registered basis's, read against the benchmark-relative bar it passed. Return `k`
-runs from bar `k`'s close to bar `k + 1`'s; a result's sleeve positions and multipliers carry `n_periods + 1` rows, the
-last the forming one."""
+"""Record 47's book re-priced at a picked cost basis (spec 00154 D2–D6): every registered figure over the picked basis's build, the instrument check over the registered basis's, read against the benchmark-relative bar it passed."""
 
 from __future__ import annotations
 
