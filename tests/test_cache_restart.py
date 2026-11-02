@@ -536,15 +536,16 @@ def test_a_resting_order_and_a_margin_position_are_restored_across_a_restart(pha
         "0.40000000",
     )
     [position] = record["at_start"]["positions"]
+    # The wheel's Position carries Decimal fields, which the child's dump writes as strings.
     assert (position["instrument_id"], position["strategy_id"], position["signed_qty"], position["avg_px_open"]) == (
         INSTRUMENT,
         "ShadowStrategy-000",
-        0.4,
-        150.0,
+        "0.4",
+        "150",
     )
     assert _restore_lines(record["log"]) == [
         "1 order(s), 1 position(s) restored",
-        "position SOL/EUR.KRAKEN 0.4 @ 150.0 (ShadowStrategy-000)",
+        "position SOL/EUR.KRAKEN 0.4 @ 150 (ShadowStrategy-000)",
         f"order {wire['client_order_id']} partial, 0.40000000 of 1.00000000 filled @ 150.00",
     ]
     assert record["external"] == [], record["external"]  # every later event reaches the own topic
@@ -587,14 +588,15 @@ def test_a_fill_made_while_the_engine_was_down_is_booked_from_the_trade_history(
     assert "Unresolved positions" not in record["log"]
     orders = {o["strategy_id"]: o for o in record["at_start"]["orders"]}
     positions = {p["strategy_id"]: p for p in record["at_start"]["positions"]}
-    assert (orders[record["strategy_id"]]["filled_qty"], orders[record["strategy_id"]]["status"]) == ("0.70000000", "ACCEPTED")
-    assert {(p["signed_qty"], p["avg_px_open"]) for p in positions.values()} == {(0.4, 150.0), (0.3, 150.0)}
-    assert positions["EXTERNAL"]["signed_qty"] == 0.3
+    assert (orders[record["strategy_id"]]["filled_qty"], orders[record["strategy_id"]]["status"]) == (
+        "0.70000000",
+        "PARTIALLY_FILLED",
+    )
+    assert {sid: (p["signed_qty"], p["avg_px_open"]) for sid, p in positions.items()} == {"ShadowStrategy-000": ("0.7", "150")}
     assert {tuple(p) for p in record["metrics"]["positions"] if p[0] == "SOL/EUR"} == {("SOL/EUR", 0.7)}
     assert _restore_lines(record["log"]) == [
-        "1 order(s), 2 position(s) restored",
-        "position SOL/EUR.KRAKEN 0.3 @ 150.0 (EXTERNAL)",
-        "position SOL/EUR.KRAKEN 0.4 @ 150.0 (ShadowStrategy-000)",
+        "1 order(s), 1 position(s) restored",
+        "position SOL/EUR.KRAKEN 0.7 @ 150 (ShadowStrategy-000)",
         f"order {wire['client_order_id']} partial, 0.70000000 of 1.00000000 filled @ 150.00",
     ]
     # The executor: the venue's report repairs the row to the venue's figure before the pass's cancel.
@@ -605,9 +607,9 @@ def test_a_fill_made_while_the_engine_was_down_is_booked_from_the_trade_history(
     assert [e["qty"] for e in row["events"] if e.get("event") == "reconciled"] == [pytest.approx(0.3)]
 
 
-def test_an_order_cancelled_while_the_engine_was_down_is_never_closed_by_the_library(phase_one):
-    """Mass status reads open orders only on this pin and never requests ClosedOrders, so the restored
-    copy stays open in the Cache -- the shape the startup pass settles from the venue's report."""
+def test_an_order_cancelled_while_the_engine_was_down_is_closed_by_the_librarys_start(phase_one):
+    """Mass status reads ClosedOrders before OpenPositions on this pin, so the start closes the restored
+    copy from the venue's report and the startup pass finds nothing resting to cancel."""
     valkey, node, wire, _ = phase_one
     with _venue() as (venue, data, exec_):
         venue.balances = {"ZEUR": lb.balance("1000.00000000")}
@@ -632,16 +634,18 @@ def test_an_order_cancelled_while_the_engine_was_down_is_never_closed_by_the_lib
 
     assert record["errors"] == [], record["errors"]
     assert "OpenPositions" in private_calls, private_calls
-    assert "ClosedOrders" not in private_calls[: private_calls.index("OpenPositions") + 1], private_calls
+    assert "ClosedOrders" in private_calls[: private_calls.index("OpenPositions")], private_calls
     [order] = record["at_start"]["orders"]
-    assert (order["is_open"], order["filled_qty"]) == (True, "0.40000000")
-    assert _restore_lines(record["log"])[0] == "1 order(s), 1 position(s) restored"
-    # The executor: the row written from the venue's report, the stale copy left, no cancel sent.
-    assert "ClosedOrders" in private_calls and "CancelOrder" not in private_calls, private_calls
-    assert (
-        f"restored order {wire['client_order_id']} is canceled at the venue -- its stale open copy stays in the Cache and no cancel is sent"
-        in record["log"]
-    )
+    assert (order["status"], order["is_open"], order["filled_qty"]) == ("CANCELED", False, "0.40000000")
+    assert f"(matched by venue_order_id {wire['txid']}) {INSTRUMENT} [PARTIALLY_FILLED] -> [CANCELED]" in record["log"]
+    assert _restore_lines(record["log"]) == [
+        "0 order(s), 1 position(s) restored",
+        f"position {INSTRUMENT} 0.4 @ 150 (ShadowStrategy-000)",
+    ]
+    # The executor: the row written from its own venue read, no stale copy left, no cancel sent.
+    assert "ClosedOrders" in private_calls[private_calls.index("OpenPositions") :], private_calls
+    assert "CancelOrder" not in private_calls, private_calls
+    assert "its stale open copy stays in the Cache" not in record["log"]
     [row] = node.rows()
     [intent] = node.intents()
     assert (row["state"], row["filled_qty"], intent["outcome"]) == ("canceled", 0.4, "revoked")
@@ -785,11 +789,10 @@ def test_a_trade_frame_on_a_restored_opener_racing_the_passs_cancel_is_booked_tw
 def test_an_empty_cache_beside_open_ledger_rows_is_a_cold_start_the_pass_reconciles_as_today(tmp_path):
     """The owner's ruling: an empty namespace is a cold start, never a refusal. The order is a spot
     one, so the venue has no margin position for the start to fail on, and it filled 0.4 before the
-    stop: the library creates the EXTERNAL copy from the venue's report at ACCEPTED with no fill
-    applied, and the venue's own report, 0.4, answers for the copy as for every order the Cache holds
-    at construction -- no trip. The restarted node reads zero, reconciliation names the order by its
-    txid under EXTERNAL, the pass cancels it as an order the ledger carries as no reducer, and the
-    fill the library infers at the cancel's ack credits the row nothing, a restored row's credit."""
+    stop: the library creates the EXTERNAL copy from the venue's report with that fill applied,
+    PARTIALLY_FILLED and no position -- no trip. The restarted node reads zero, reconciliation names
+    the order by its txid under EXTERNAL, the pass cancels it as an order the ledger carries as no
+    reducer, and the cancel's ack infers no second fill."""
     valkey = _Valkey(tmp_path / "valkey")
     try:
         valkey.start()
@@ -837,28 +840,28 @@ def test_an_empty_cache_beside_open_ledger_rows_is_a_cold_start_the_pass_reconci
         external["strategy_id"],
         external["venue_order_id"],
         external["status"],
+        external["filled_qty"],
         external["is_open"],
     ) == (
         wire["txid"],
         "EXTERNAL",
         wire["txid"],
-        "ACCEPTED",
+        "PARTIALLY_FILLED",
+        "0.40000000",
         True,
     )
+    assert record["at_start"]["positions"] == []
     assert "execution kill switch tripped" not in record["log"]
-    # The EXTERNAL copy reads 0 filled; the venue's report, 0.4, answers for it as for every order the
-    # Cache holds at construction, so the withdrawal check reads no shortfall and the trade history is
-    # not consulted -- the copy's zero reaches the check only outside the restored set, where the
-    # executor file's cold-start cases pin it.
+    # The EXTERNAL copy reads the venue's 0.4, so the withdrawal check reads no shortfall and the trade
+    # history is not consulted.
     assert "reads 0 filled on its order figure" not in record["log"]
     assert f"canceling adopted resting order {wire['txid']} -- the ledger does not carry it as a resting reducer" in record["log"]
     assert [form.get("txid") for form in cancels] == [wire["txid"]]
     assert [e["client_order_id"] for e in record["external"]][:1] == [wire["txid"]]
-    # The fill the library infers at the cancel's ack, 0.4 again, credits the row nothing, a restored
-    # row's credit; the row settles at the venue's 0.4, canceled by the pass.
+    # The cancel's ack infers no second fill; the row settles at the venue's 0.4, canceled by the pass.
     [row] = node.rows()
     fills = [e for e in row["events"] if e.get("event") == "fill"]
-    assert [(e["qty"], e.get("credited")) for e in fills] == [(0.4, None), (0.4, 0.0)], fills
+    assert [(e["qty"], e.get("credited")) for e in fills] == [(0.4, None)], fills
     assert (row["filled_qty"], row["state"]) == (0.4, "canceled")
     [intent] = node.intents()
     assert intent["outcome"] == "revoked"
@@ -889,7 +892,7 @@ def _spot_process(node: _Node, n: int, holdings: dict, leg: dict = _SOL, *, pair
 _BUMP = "the nautilus build the tree pins no longer does what this test recorded of it"
 
 
-def test_a_restored_spot_lot_is_offset_by_an_external_short_until_sold_and_restarted_and_the_account_keeps_its_coin(tmp_path):
+def test_a_restored_spot_lot_comes_back_at_the_lot_with_no_external_short_and_the_account_keeps_its_coin(tmp_path):
     valkey = _Valkey(tmp_path / "valkey")
     try:
         valkey.start()
@@ -913,28 +916,26 @@ def test_a_restored_spot_lot_is_offset_by_an_external_short_until_sold_and_resta
 
     assert "OpenPositions" in held["private_calls"] and holdings["positions"] == {}, held["private_calls"]
     assert (_restore_lines(held["log"]), _open_positions(held["at_start"])) == (
-        [
-            "0 order(s), 2 position(s) restored",
-            f"position {INSTRUMENT} {-QTY} @ {PRICE} (EXTERNAL)",
-            f"position {INSTRUMENT} {QTY} @ {PRICE} (ShadowStrategy-000)",
-        ],
-        [("EXTERNAL", -QTY), ("ShadowStrategy-000", QTY)],
+        ["0 order(s), 1 position(s) restored", f"position {INSTRUMENT} 1 @ 150 (ShadowStrategy-000)"],
+        [("ShadowStrategy-000", "1")],
     ), (
-        f"{_BUMP}: a restart over a spot lot under spot_account_type=MARGIN no longer books an EXTERNAL short equal to the "
-        "lot beside the strategy's long. The rung-2 procedure's held-figures rule and its exit by engine sells and one "
-        "restart (infra/runbooks/engine-procedures.md) rest on that offset -- re-read both against what a restart "
-        f"restores now: {_restore_lines(held['log'])}"
+        f"{_BUMP}: a restart over a spot lot under spot_account_type=MARGIN no longer restores the lot alone, under the "
+        "strategy and at the lot; an EXTERNAL line beside it is upstream #5181's offset back. Rung 3's held figure "
+        "(docs/research/00.master-plan.md §12) rests on this restore -- re-read it against what a restart restores now: "
+        f"{_restore_lines(held['log'])}"
     )
-    assert held["venue_state_at_start"]["positions"][SYMBOL] == 0.0, (
-        f"{_BUMP}: the venue record's position for a spot lot held across a restart is no longer the Cache's net of 0"
+    assert held["venue_state_at_start"]["positions"][SYMBOL] == QTY, (
+        f"{_BUMP}: the venue record's position for a spot lot held across a restart is no longer the lot"
     )
-    assert f"the venue holds {QTY} {SYMBOL} where the Cache reads 0.0 -- the position gauge takes the venue's figure" in held["log"]
+    assert "the venue holds" not in held["log"], (
+        f"{_BUMP}: the startup pass now reads Kraken's balance and the Cache apart over a restored spot lot"
+    )
     gauge = [qty for symbol, qty in held["metrics"]["positions"] if symbol == SYMBOL]
     assert (gauge[0], gauge[-1]) == (QTY, 0.0), gauge
 
-    assert _open_positions(held["at_end"]) == [("EXTERNAL", -QTY)], (
-        f"{_BUMP}: the engine's sale of a restored spot lot no longer closes the strategy's long and leaves the EXTERNAL "
-        f"short alone, the Cache at minus the lot until the next restart: {_open_positions(held['at_end'])}"
+    assert _open_positions(held["at_end"]) == [], (
+        f"{_BUMP}: the engine's sale of a restored spot lot no longer leaves the Cache with nothing open: "
+        f"{_open_positions(held['at_end'])}"
     )
     settled = [qty for symbol, qty in flat["metrics"]["positions"] if symbol == SYMBOL]
     assert (_restore_lines(flat["log"]), _open_positions(flat["at_start"]), settled, "the venue holds" in flat["log"]) == (
@@ -943,8 +944,8 @@ def test_a_restored_spot_lot_is_offset_by_an_external_short_until_sold_and_resta
         [0.0],
         False,
     ), (
-        f"{_BUMP}: one restart after a restored spot lot was sold whole no longer leaves the Cache with nothing open, "
-        f"which the exit by engine sells followed by one restart rests on: {_restore_lines(flat['log'])}"
+        f"{_BUMP}: a restart after a restored spot lot was sold whole no longer leaves the Cache with nothing open: "
+        f"{_restore_lines(flat['log'])}"
     )
 
     stale = (
@@ -971,8 +972,8 @@ def _lines(log: str, text: str) -> list[str]:
     return [line for line in log.splitlines() if text in line]
 
 
-def test_a_doge_lot_held_across_two_restarts_fails_the_account_load_on_the_second_and_the_account_still_carries_it(tmp_path):
-    # A pair whose base no process registers, cached by the first process and unreadable by every later one.
+def test_a_doge_lot_held_across_two_restarts_loads_the_account_at_each_start_and_the_account_carries_it_as_doge(tmp_path):
+    # A pair whose base no process registers, listed beside the basket: no start may log an ERROR over it.
     basket = _basket_pairs()
     pairs = basket | {"QQQZEUR": basket["ADAEUR"] | {"base": "QQQZ", "altname": "QQQZEUR", "wsname": "QQQZ/EUR"}}
     valkey = _Valkey(tmp_path / "valkey")
@@ -993,19 +994,14 @@ def test_a_doge_lot_held_across_two_restarts_fails_the_account_load_on_the_secon
     assert holdings["balances"]["XXDG"]["balance"] == f"{lot:.8f}"
 
     failed_loads = [_lines(record["log"], "Failed to load account") for record in (bought, first, second)]
-    assert failed_loads[:2] == [[], []], failed_loads
-    assert len(failed_loads[2]) == 1 and failed_loads[2][0].endswith(
-        "[ERROR] SHADOW-001.nautilus_infrastructure::redis::queries: Failed to load account KRAKEN-001: "
-        "Failed to convert value to target type: Unknown currency: XDG"
-    ), (
-        f"{_BUMP}: the second restart with DOGE held no longer fails the stored account's load on the code `XDG`. An "
-        "account that loads is replayed from the store at every start, so read what the venue record then carries "
-        f"for a coin the venue stopped listing: {failed_loads}"
+    assert failed_loads == [[], [], []], (
+        f"{_BUMP}: a restart with DOGE held fails the stored account's load again, as 2.0.0rc6.dev20260921 did on the "
+        f"code `XDG` -- read what the venue record then carries for the coin: {failed_loads}"
     )
-    carried = [record["venue_state_at_start"]["balances"].get("XDG") for record in (first, second)]
-    assert carried == [lot, lot], (
-        f"{_BUMP}: the account no longer carries DOGE, as `XDG`, at the lot after each restart, the failed load "
-        f"included -- the venue record's balance for DOGE is read from it: {carried}"
+    balances = [record["venue_state_at_start"]["balances"] for record in (first, second)]
+    assert [b.get("DOGE") for b in balances] == [lot, lot] and not any("XDG" in b for b in balances), (
+        f"{_BUMP}: the account no longer carries the coin as `DOGE`, and only as `DOGE`, at the lot after each restart "
+        f"-- the venue record's balance for DOGE is read from it: {balances}"
     )
 
     burst = [
@@ -1015,10 +1011,10 @@ def test_a_doge_lot_held_across_two_restarts_fails_the_account_load_on_the_secon
         )
         for record in (bought, first, second)
     ]
-    assert burst == [(0, 0), (1, 1), (1, 1)], (
-        f"{_BUMP}: a cached instrument whose base currency no process registers no longer logs one `Failed to deserialize "
-        "currency` ERROR and one `Failed to load instrument` ERROR at every start after the one that cached it, the "
-        f"two lines of the ERROR burst an engine start logs over a full cache: {burst}"
+    assert burst == [(0, 0), (0, 0), (0, 0)], (
+        f"{_BUMP}: a pair whose base currency no process registers now logs `Failed to deserialize currency` or `Failed "
+        "to load instrument` at a start, the two lines of the ERROR burst an engine start logged over a full cache on "
+        f"2.0.0rc6.dev20260921: {burst}"
     )
 
 
