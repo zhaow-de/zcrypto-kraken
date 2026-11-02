@@ -83,7 +83,7 @@ def _figure_run(monkeypatch) -> types.SimpleNamespace:
     )
 
     # The synthetic prices leave the governor idle at every basis: each build's counts, its ungoverned return 100 and
-    # its first t multipliers are set apart here, or a figure read off the wrong build would pass.
+    # its first 3t multipliers are set apart here, or a figure read off the wrong build would pass.
     def build(daily_prices, daily_ts, h4_prices, h4_ts, *, config):
         assert config in configs, config
         t = configs.index(config) + 1
@@ -94,7 +94,7 @@ def _figure_run(monkeypatch) -> types.SimpleNamespace:
             cap_breach_bars=t,
             governor_engaged_bars=10 * t,
             ungoverned_net=[r - 0.01 * t if k == 100 else r for k, r in enumerate(real.ungoverned_net)],
-            multipliers=[0.5 if k < t else m for k, m in enumerate(real.multipliers)],
+            multipliers=[0.5 if k < 3 * t else m for k, m in enumerate(real.multipliers)],
         )
         return run.kept[t]
 
@@ -186,7 +186,7 @@ def test_each_figure_is_the_picked_basis_builds_and_the_check_the_registered_bui
     matrices = [call[0] for call in run.spa_calls]
     assert (len(matrices), matrices.count(outperformance), matrices.count(outperformance[1380:])) == (7, 1, 6)
     assert (metrics["conditional_live_sharpe"], metrics["conditional_live_bars"]) == (conditional_live(g, live), len(live))
-    assert metrics["multipliers_moved"] == 1
+    assert metrics["multipliers_moved"] == 3
     (flag_call,) = run.flag_calls
     assert {key: flag_call[key] for key in ("dsr", "spa", "stress_15")} == {
         "dsr": metrics["dsr"],

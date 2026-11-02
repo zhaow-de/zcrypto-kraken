@@ -81,6 +81,22 @@ def test_the_crossfreq_book_is_its_inputs_built_at_the_registered_basis(tmp_path
     )
 
 
+def test_the_crossfreq_book_forwards_its_as_of_and_accept_holes(monkeypatch):
+    reads = []
+
+    def _record(*arguments):
+        reads.append(arguments)
+        return [], {}, [], {}
+
+    monkeypatch.setattr("cli.research.subjects._crossfreq_inputs", _record)
+    monkeypatch.setattr("cli.research.subjects.build_crossfreq_system_fast", lambda *inputs, **kwargs: None)
+    reader = object()
+
+    subjects._crossfreq_book(reader, "ohlc-test", None, as_of="2026-03-31", accept_holes=True)
+
+    assert reads == [(reader, "ohlc-test", None, "2026-03-31", True)]
+
+
 def test_a_synthetic_book_is_no_record_47_and_gets_no_verdict(tmp_path, monkeypatch):
     _, build = _built(tmp_path, monkeypatch)
 
