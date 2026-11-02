@@ -2,15 +2,14 @@
 """The open-order reads for the attended window, read-only: it sends no order and no cancel.
 
   orders <TXID>...  Before the restart: does the read the engine itself issues see each named order?
-        The verdict reads only the UNSCOPED shapes. open_only=True is startup reconciliation's and
-        query_order's read (upstream `70d887545790`, execution/spot.rs:1356 and :1433); open_only=False
-        is the engine's single-report read (spot.rs:1263-1265), which also pages the whole ClosedOrders
-        history, so its round trip is timed on its own. SAFE needs exactly one row per TXID in each
-        shape and each round trip inside one engine tick. The verdict never reads a row's instrument_id:
+        The verdict reads only the UNSCOPED shapes: open_only=True, the open orders alone, and
+        open_only=False, the shape of the executor's own order read (`read_venue_orders`), which also
+        pages the whole ClosedOrders history, so its round trip is timed on its own. SAFE needs exactly
+        one row per TXID in each shape and each round trip inside one engine tick. The verdict never reads a row's instrument_id:
         each target row is printed with it, and a spelling other than BTC/EUR.KRAKEN on the BTC order
         is the operator's to catch. The scoped read (instrument_id given) is printed as a contrast and
-        never counts: on this wheel it skips a two-way-spelled leg before resolving it (upstream #5067),
-        so BTC/EUR reads 0 rows there while the unscoped shapes see it.
+        never counts. On this wheel it reports the BTC/EUR order Kraken spells `XBTEUR`, as the unscoped
+        shapes do (upstream #5067, fixed for open orders).
   absent <TXID>...  After the restart: SAFE when none of the TXIDs is still open at the venue.
 
 Every row of the listing is read and cached first: a bare client's unscoped read raises on the first

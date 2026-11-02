@@ -516,6 +516,18 @@ def test_every_run_logs_at_debug_into_the_evidence_dir_beside_its_evidence():
     assert probe.run_log_path("/evid", "20260923-120000") == Path("/evid/probe-20260923-120000.log")
 
 
+@pytest.mark.parametrize(
+    ("flag", "level"),
+    [([], "DEBUG"), (["--file-log-level", "DEBUG"], "DEBUG"), (["--file-log-level", "TRACE"], "TRACE")],
+)
+def test_the_file_log_is_at_file_log_level_debug_by_default_and_the_terminal_stays_at_log_level(flag, level):
+    args = probe.build_parser().parse_args(["--evidence-dir", "/evid", "--log-level", "INFO", *flag])
+
+    config = probe.logger_config(args, "20260923-120000")
+
+    assert (config.fileout_level, config.stdout_level) == (probe.LogLevel(level), probe.LogLevel.INFO)
+
+
 def test_a_fallback_warn_reads_as_fell_back_with_its_reason_and_its_call_count():
     got = probe.tradevolume_fallback("\n".join([_NONCE, _FELL_BACK, _NONCE, _FELL_BACK, _LOADED]))
 
@@ -528,8 +540,17 @@ def test_a_listing_that_finished_without_the_warn_did_not_fall_back():
     assert probe.tradevolume_fallback("\n".join([_NONCE, _LOADED]))["fell_back"] is False
 
 
+def test_a_listing_that_finished_with_no_trade_volume_call_is_described_as_making_none():
+    got = {"log_file": "probe-x.log", **probe.tradevolume_fallback(_LOADED)}
+
+    assert (got["fell_back"], got["tradevolume_calls"]) == (False, 0)
+    assert probe.describe_tradevolume_fallback(got) == (
+        "TradeVolume: the credentialed listing finished without a TradeVolume call, so nothing fell back (log: probe-x.log)"
+    )
+
+
 def test_a_log_that_never_saw_the_listing_finish_cannot_say():
-    """A partial TradeVolume answer fails the exec client's connect outright; no WARN there is not "no fallback"."""
+    """A connect that fails before the listing finishes logs no WARN either; that is not "no fallback"."""
     assert probe.tradevolume_fallback(_NONCE)["fell_back"] is None
 
 
@@ -772,6 +793,44 @@ def test_a_running_sequence_still_advances():
 
     assert ran == ["4a"]
     assert state.notes == []
+
+
+# ---------------------------------------------------------------------------------------------
+# What the node's start reads
+# ---------------------------------------------------------------------------------------------
+
+
+class _Assembly:
+    """`LiveNode` as `build_node` chains it, keeping only the engine configs it is handed."""
+
+    def __init__(self):
+        self.exec_engine = []
+
+    def builder(self, **_identity):
+        return self
+
+    def with_exec_engine_config(self, config):
+        self.exec_engine.append(config)
+        return self
+
+    def __getattr__(self, _call):
+        return lambda *_args, **_kwargs: self
+
+    def build(self):
+        return SimpleNamespace(add_strategy=lambda strategy: None)
+
+
+def test_the_harness_reconciles_over_the_engines_lookback_window(monkeypatch):
+    from cli.engine.node import _exec_engine_config
+
+    strategy, _state = _strategy()
+    assembly = _Assembly()
+    monkeypatch.setattr(probe, "LiveNode", assembly)
+
+    probe.build_node(strategy.args, strategy)
+
+    [config] = assembly.exec_engine
+    assert config.reconciliation_lookback_mins == _exec_engine_config().reconciliation_lookback_mins
 
 
 # ---------------------------------------------------------------------------------------------

@@ -274,6 +274,7 @@ EXEC_ENGINE_DEFAULTS = {
     "purge_closed_orders_interval_mins": None,
     "purge_closed_positions_buffer_mins": None,
     "purge_closed_positions_interval_mins": None,
+    "purge_from_database": False,
     "reconciliation": True,
     "reconciliation_instrument_ids": None,
     "reconciliation_lookback_mins": None,

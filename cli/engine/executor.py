@@ -568,9 +568,11 @@ def _log_resting_outside_the_cache(label: str, report) -> None:
 def read_venue_orders(since: datetime, *, base_url: str | None = None) -> list:
     """Every order the venue reports open, or closed since `since`, as the adapter's
     `OrderStatusReport`s: the startup pass's only source for an order the Cache cannot hold. The
-    startup reconciliation reads open orders only, and nothing on the strategy's surface reaches the
-    execution client's closed-order read, so this is a bare HTTP client beside that one, on the same
-    trade credentials -- the construction `zcrypto engine flatten` uses. `base_url` is None on the
+    startup reconciliation reads closed orders and trades only inside its 720-minute lookback
+    (`_exec_engine_config` in `cli/engine/node.py`), importing what closed there, and the ledger rows
+    this read is for can reach back past it; nothing on the strategy's surface reaches the execution
+    client's closed-order read, so this is a bare HTTP client beside that one, on the same trade
+    credentials -- the construction `zcrypto engine flatten` uses. `base_url` is None on the
     engine, which is the venue's own.
 
     A second client on one key is a nonce hazard: the adapter serialises signed requests per client,
@@ -675,7 +677,7 @@ class VenueBook:
         earn or staking code is outside the spot wallet, so a book short by it drafts a buy of coin the
         account holds, at every boundary. It refuses what the loop can draft and sell against, never
         what the account is worth, which the mark counts `earn` into. It names the first such base in
-        sorted order and no code: the adapter's spelling of the code (`BT.M`) is one Kraken never shows."""
+        sorted order and no code."""
         if not self.earn:
             return None
         base = min(self.earn)
@@ -1701,10 +1703,11 @@ class ProbeExecutor:
         tests/test_engine_executor.py drives a real order through a real engine and reads the Cache
         from inside the handler.
 
-        The classification population below is `orders_open`, but the row sweep is NOT: an order that
-        filled, was canceled or expired while this process was down is not in the Cache at all when the
-        cache is off -- the startup reconciliation reads open orders only -- so the pass cannot return
-        early when nothing is resting: an idle startup can still owe row repairs.
+        The classification population below is `orders_open`, but the row sweep is NOT: with the cache
+        off, an order that filled, was canceled or expired while this process was down is in the Cache,
+        closed, only when it closed inside the startup reconciliation's 720-minute lookback, and not at
+        all when it closed earlier -- so the pass cannot return early when nothing is resting: an idle
+        startup can still owe row repairs.
 
         With the cache enabled the Cache may already hold this engine's OWN orders and positions from a
         previous process (spec 00120 D6, D7): the sweep takes the venue's report over the Cache's copy for
@@ -2020,8 +2023,9 @@ class ProbeExecutor:
         Each row finds its order by the id this engine minted and, when that misses, by the txid the
         row recorded at acceptance: in the Cache first (`_cached_order`), where a restart leaves every
         resting order under its txid alone, and then in `venue_orders` -- the venue's own report, by
-        txid, for an order that filled, was canceled or expired while this process was down, which the
-        startup reconciliation never puts in the Cache because it reads open orders only. Both answers
+        txid, for an order that filled, was canceled or expired while this process was down before the
+        startup reconciliation's 720-minute lookback, which that reconciliation does not import; one that
+        closed inside the lookback it imports under its txid, and the Cache answers first. Both answers
         take the same arms in `_reconcile_adopted_row`, so a closed-while-down order gets its repair,
         its terminal state and both trips exactly as a resting one does. A report that is still open
         is an order reconciliation dropped, which `_log_resting_outside_the_cache` logs CRITICAL at
@@ -2734,9 +2738,9 @@ class ProbeExecutor:
                 "probe plan %s waits for a tick with nothing in flight -- its opening intents take a venue read", plan.plan_id
             )
             return "waiting"
-        # Live balances spell the free-cash currency `EUR`, so this resolves on its SECOND arm in
-        # production; the `ZEUR` arm stays first because the adapter's instrument quote currency spells
-        # the euro `ZEUR`. Both absent reads 0.0, which refuses any margin intent.
+        # The adapter reports the free cash, as every euro, as `EUR`, so this resolves on its SECOND
+        # arm; the `ZEUR` arm reads nothing on this wheel. Both absent reads 0.0, which refuses any
+        # margin intent.
         free_zeur = state.balances.get("ZEUR", 0.0) or state.balances.get("EUR", 0.0)
         reasons = plan_refusals(
             plan,
@@ -4158,7 +4162,7 @@ class ProbeExecutor:
         the next order against a position it cannot describe.
 
         DELIBERATELY NOT reached from the five ambiguous exits (a raising submit, an unclassifiable
-        rejection, a cancel the venue rejected, a cancel or IOC it never answered, and a terminal
+        rejection, a cancel the venue rejected or the client denied, a cancel or IOC it never answered, and a terminal
         this engine minted for itself rather than received): each of those
         means an order may still be live and may still legitimately fill, so `filled` is not an
         expectation to hold the Cache to, and checking there would fire on a delayed venue answer
@@ -4302,17 +4306,22 @@ class ProbeExecutor:
             self._on_cancel_ack(active, payload)
             return
 
-        if name == "OrderCancelRejected":
-            # The venue positively says the cancel did NOT take, so the order may still rest --
-            # while whatever asked for the cancel (a kill file, the time-box) says it must not.
-            # Nothing further may be submitted against a position this process can no longer
-            # describe. The row keeps its OPEN state; only the intent is journaled.
+        if name in ("OrderCancelRejected", "OrderCancelDenied"):
+            # The venue positively says the cancel did NOT take (`OrderCancelRejected`), or the
+            # client refused it before sending (`OrderCancelDenied`) and the venue never saw it.
+            # Either way the order may still rest -- while whatever asked for the cancel (a kill
+            # file, the time-box) says it must not. Nothing further may be submitted against a
+            # position this process can no longer describe. The row keeps its OPEN state; only the
+            # intent is journaled.
+            denied = name == "OrderCancelDenied"
             logger.critical(
-                "cancel of %s was REJECTED by the venue -- the order may still rest; the plan stops here",
+                "cancel of %s was %s -- the order may still rest; the plan stops here",
                 active.client_order_id,
+                f"DENIED before it was sent ({reason})" if denied else "REJECTED by the venue",
             )
             self._update_row(active, event=payload)
-            self._journal_intent(active.index, "ambiguous", (f"cancel rejected: {reason}",), active.filled)
+            refusal = "cancel denied before it was sent" if denied else "cancel rejected"
+            self._journal_intent(active.index, "ambiguous", (f"{refusal}: {reason}",), active.filled)
             _inc_order("ambiguous")
             self._drop_remainder_after_ambiguity(active)
             return
@@ -4467,14 +4476,22 @@ class ProbeExecutor:
             )
             self._arm_reread_after_mint()
             return "ambiguous"
-        if type(event).__name__ == "OrderCancelRejected":
-            # The venue positively says the cancel did not take, so the order may still rest where the cancel is not re-sent
-            # and, where the pass cancelled it and its sweep ran, after the sweep has written its intent; absent from Kraken's
-            # open orders, the venue had already ended it. The hand cancel is the operator's, the own-order path's line.
+        if type(event).__name__ in ("OrderCancelRejected", "OrderCancelDenied"):
+            # The venue positively says the cancel did not take (`OrderCancelRejected`), or the client refused it before
+            # sending (`OrderCancelDenied`) and the venue never saw it. Either way the order may still rest where the cancel
+            # is not re-sent and, where the pass cancelled it and its sweep ran, after the sweep has written its intent;
+            # absent from Kraken's open orders, the venue had already ended it. The hand cancel is the operator's, the
+            # own-order path's line.
+            refusal = (
+                f"DENIED before it was sent ({getattr(event, 'reason', None)})"
+                if type(event).__name__ == "OrderCancelDenied"
+                else "REJECTED by the venue"
+            )
             logger.critical(
-                "cancel of adopted order %s was REJECTED by the venue -- the order may still rest, and the cancel is not "
-                "re-sent: cancel it by hand on Kraken's open-orders page",
+                "cancel of adopted order %s was %s -- the order may still rest, and the cancel is not re-sent: cancel it "
+                "by hand on Kraken's open-orders page",
                 getattr(event, "client_order_id", "?"),
+                refusal,
             )
             return None
         try:
@@ -5015,7 +5032,7 @@ class ProbeExecutor:
         stopping is a re-drop after reading the venue.
 
         Five callers, one meaning -- "this process cannot say what reached the venue": a raising
-        submit, an unclassifiable rejection, a cancel the venue rejected, a cancel or IOC it never
+        submit, an unclassifiable rejection, a cancel the venue rejected or the client denied, a cancel or IOC it never
         answered, and a terminal this engine minted for itself rather than received. Each has
         already journaled its own intent by the time it gets here, and each leaves the row in one of
         `execledger._OPEN_ORDER_STATES` so re-attach still sees the order.
