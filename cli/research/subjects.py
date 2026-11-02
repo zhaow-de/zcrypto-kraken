@@ -9,7 +9,7 @@ import math
 import operator
 import statistics
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import NamedTuple
@@ -136,6 +136,8 @@ from cli.portfolio.crossfreq_system import (
 )
 from cli.portfolio.errors import PortfolioError
 from cli.portfolio.record44_legs import benchmark_4h_net_of_cost, calendar_year_slices, load_union
+from cli.portfolio.repricing import METRIC_KEYS as REPRICING_KEYS
+from cli.portfolio.repricing import RepricingError, repricing_metrics, repricing_verdict
 from cli.portfolio.revalidation import (
     BENCH_COST_PER_SIDE,
     METRIC_KEYS,
@@ -244,6 +246,19 @@ _RECORD44_CONFIG = CrossfreqSystemConfig(fee_per_side=0.0040, spread_per_side=0.
 _RECORD33_CONFIG = CombinedSystemConfig(spot_fee_per_side=0.006)
 
 
+def _crossfreq_inputs(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> tuple[list[datetime], dict[str, list[float | None]], list[datetime], dict[str, list[float | None]]]:
+    daily_ts, daily_prices = _capturing_union(reader, dataset, 1440, window, as_of, accept_holes)
+    h4_ts, h4_prices = _capturing_union(reader, dataset, 240, window, as_of, accept_holes)
+    _refuse_unfed_grids(dataset, as_of, daily_ts, daily_prices, h4_prices)
+    return daily_ts, daily_prices, h4_ts, h4_prices
+
+
 def _crossfreq_book(
     reader: ObservedReader,
     dataset: str,
@@ -251,9 +266,7 @@ def _crossfreq_book(
     as_of: str | None = None,
     accept_holes: bool = False,
 ) -> tuple[list[datetime], dict[str, list[float | None]], list[datetime], dict[str, list[float | None]], CrossfreqSystemResult]:
-    daily_ts, daily_prices = _capturing_union(reader, dataset, 1440, window, as_of, accept_holes)
-    h4_ts, h4_prices = _capturing_union(reader, dataset, 240, window, as_of, accept_holes)
-    _refuse_unfed_grids(dataset, as_of, daily_ts, daily_prices, h4_prices)
+    daily_ts, daily_prices, h4_ts, h4_prices = _crossfreq_inputs(reader, dataset, window, as_of, accept_holes)
     result = build_crossfreq_system_fast(daily_prices, daily_ts, h4_prices, h4_ts, config=_RECORD44_CONFIG)
     return daily_ts, daily_prices, h4_ts, h4_prices, result
 
@@ -5068,6 +5081,35 @@ def _build_p1_revalidation(
         raise SubjectError(f"{_b2_over('p1-revalidation', None)} of {dataset}: {exc}") from exc
 
 
+# docs/specs/00154 D7: P1's true count with this record.
+_P1_REPRICE_N_TRIALS = 7
+# docs/specs/00154 D3's pick, a-rung2-box.
+_P1_REPRICE_CONFIG = replace(_RECORD44_CONFIG, fee_per_side=0.004124, spread_per_side=0.0020)
+
+
+def _build_p1_reprice(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    if window is not None:
+        raise SubjectError(
+            f"{_b2_over('p1-reprice', window)}: it rebuilds record 47's book over the full history, so it reads no window; "
+            "drop --window"
+        )
+    try:
+        return repricing_metrics(
+            *_crossfreq_inputs(reader, dataset, None, as_of, accept_holes),
+            registered=_RECORD44_CONFIG,
+            basis=_P1_REPRICE_CONFIG,
+            n_trials=_P1_REPRICE_N_TRIALS,
+        )
+    except RepricingError as exc:
+        raise SubjectError(f"{_b2_over('p1-reprice', None)} of {dataset}: {exc}") from exc
+
+
 # docs/specs/00153 D3: the engine's execution cost read from its ladder replayed at the cycle boundaries.
 _ENGINE_COST_PARAMS = {**panel_ladder.LADDER_PARAMS, "depth": 100}
 _ENGINE_COST_LEGS = tuple(f"{asset}/EUR" for asset in _ASSETS)
@@ -5640,6 +5682,22 @@ SUBJECTS: dict[str, Subject] = {
         ),
         family="P1",
         n_trials=_P1_REVALIDATION_N_TRIALS,
+    ),
+    "p1-reprice": Subject(
+        "p1-reprice",
+        (1440, 240),
+        _ASSETS,
+        _build_p1_reprice,
+        spec="docs/specs/00154-cost-basis-repricing-design.md",
+        metric_keys=REPRICING_KEYS,
+        seeds=(42, 7, 1234),
+        verdict=repricing_verdict,
+        no_verdict=(
+            "instrument finding: the data does not rebuild record 47's book at its registered cost, 27337 returns at Sharpe "
+            "1.5609; no verdict, the trial unspent"
+        ),
+        family="P1",
+        n_trials=_P1_REPRICE_N_TRIALS,
     ),
     "engine-cost-reading": Subject(
         "engine-cost-reading",
