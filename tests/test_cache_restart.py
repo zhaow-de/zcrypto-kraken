@@ -973,16 +973,19 @@ def _lines(log: str, text: str) -> list[str]:
 
 
 def test_a_doge_lot_held_across_two_restarts_loads_the_account_at_each_start_and_the_account_carries_it_as_doge(tmp_path):
-    # A pair whose base no process registers, listed beside the basket: no start may log an ERROR over it.
+    # A pair whose base no process registers, beside the basket and stored before each later start: none may log an ERROR over it.
     basket = _basket_pairs()
     pairs = basket | {"QQQZEUR": basket["ADAEUR"] | {"base": "QQQZ", "altname": "QQQZEUR", "wsname": "QQQZ/EUR"}}
     valkey = _Valkey(tmp_path / "valkey")
+    stored: list[list[str]] = []
     try:
         valkey.start()
         node = _Node(tmp_path / "node", valkey.port)
         node.drop_plan("p-doge-buy", leverage=None, notional_eur=25.0, symbol=_DOGE["symbol"])
         bought, holdings, [fill] = _spot_process(node, 1, _EUR_ONLY, _DOGE, pairs=pairs)
+        stored.append(_keys(valkey.port))
         first, _, _ = _spot_process(node, 2, holdings, _DOGE, pairs=pairs)
+        stored.append(_keys(valkey.port))
         second, _, _ = _spot_process(node, 3, holdings, _DOGE, pairs=pairs)
     finally:
         valkey.stop()
@@ -1002,6 +1005,13 @@ def test_a_doge_lot_held_across_two_restarts_loads_the_account_at_each_start_and
     assert [b.get("DOGE") for b in balances] == [lot, lot] and not any("XDG" in b for b in balances), (
         f"{_BUMP}: the account no longer carries the coin as `DOGE`, and only as `DOGE`, at the lot after each restart "
         f"-- the venue record's balance for DOGE is read from it: {balances}"
+    )
+
+    held = ["trader-SHADOW-001:currencies:QQQZ", "trader-SHADOW-001:instruments:QQQZ/EUR.KRAKEN"]
+    qqqz = [[key for key in keys if "QQQZ" in key] for keys in stored]
+    assert qqqz == [held, held], (
+        f"{_BUMP}: the store no longer holds the unregistered pair's currency and instrument before the two starts that "
+        f"load them, so the ERROR count below no longer reads a load that met them: {qqqz}"
     )
 
     burst = [
