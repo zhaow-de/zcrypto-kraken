@@ -9,7 +9,8 @@
     "2.0.0rc4.dev20260825",
     "2.0.0rc6.dev20260915",
     "2.0.0rc6.dev20260918",
-    "2.0.0rc6.dev20260921"
+    "2.0.0rc6.dev20260921",
+    "2.0.0rc9.dev20261101"
   ],
   "_notes": {
     "1.230.0": "docs/reference/adapter-verification/1.230.0.md -- PASS on all six probes, attended 2026-07-10.",
@@ -17,6 +18,7 @@
     "2.0.0rc4.dev20260825": "docs/reference/adapter-verification/2.0.0rc4.dev20260825.md -- PASS on all six probes, attended 2026-08-26. A development wheel, deployed deliberately at probe scale under spec 00100 D1 as amended.",
     "2.0.0rc6.dev20260915": "docs/reference/adapter-verification/2.0.0rc6.dev20260915.md -- PASS on all six probes, attended 2026-09-15. A development wheel, deployed deliberately at probe scale under spec 00100 D1 as amended.",
     "2.0.0rc6.dev20260918": "docs/reference/adapter-verification/2.0.0rc6.dev20260918.md -- PASS on all six probes, attended 2026-09-18. A development wheel, deployed deliberately at probe scale under spec 00100 D1 as amended.",
-    "2.0.0rc6.dev20260921": "docs/reference/adapter-verification/2.0.0rc6.dev20260921.md -- PASS on all six probes, attended 2026-09-24. Taken for nautechsystems/nautilus_trader #5034. A development wheel, deployed deliberately at probe scale under spec 00100 D1 as amended. The pin is FROZEN at this string until the engine is armed on it."
+    "2.0.0rc6.dev20260921": "docs/reference/adapter-verification/2.0.0rc6.dev20260921.md -- PASS on all six probes, attended 2026-09-24. Taken for nautechsystems/nautilus_trader #5034. A development wheel, deployed deliberately at probe scale under spec 00100 D1 as amended. The pin is FROZEN at this string until the engine is armed on it.",
+    "2.0.0rc9.dev20261101": "docs/reference/adapter-verification/2.0.0rc9.dev20261101.md -- PASS on all six probes, attended 2026-11-02. Taken for the engine's first converge after rung 2's box, the rc6 pin pruned from the index; carries nautechsystems/nautilus_trader #5065, #5155 and #5315. A development wheel, deployed deliberately at probe scale under spec 00100 D1 as amended. The pin is FROZEN at this string until the engine is armed on it."
   }
 }
