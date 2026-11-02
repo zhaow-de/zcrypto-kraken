@@ -68,7 +68,7 @@ def _no_unintended_dialling(monkeypatch):
 
 
 class TestTheSameKeyGuard:
-    """A leg on a pair Kraken spells two ways rests where a read scoped to that pair cannot see it."""
+    """A position on a pair Kraken spells two ways reads flat to a position read scoped to that pair."""
 
     @pytest.mark.parametrize("pair", ["BTC/EUR", "ETH/EUR", "XRP/EUR", "LTC/EUR", "ETH/BTC"])
     def test_it_refuses_every_two_way_spelled_leg(self, pair: str) -> None:
@@ -82,8 +82,8 @@ class TestTheSameKeyGuard:
 
     def test_the_blind_legs_are_the_two_way_spelled_basket_legs(self) -> None:
         """The list is frozen text; recomputing it keeps a basket change from leaving it stale. A scoped
-        read keeps the rows whose pair is the instrument's `raw_symbol` -- the AssetPairs KEY, which
-        `PAIR_KEYS` carries -- while an open order names the altname `dump_pair_name` derives."""
+        position read keeps the rows whose pair is the instrument's `raw_symbol` -- the AssetPairs KEY,
+        which `PAIR_KEYS` carries -- while a position can name the altname `dump_pair_name` derives."""
         from cli.backfill.read import dump_pair_name
         from cli.engine.store import BASKET, PAIR_KEYS
 
