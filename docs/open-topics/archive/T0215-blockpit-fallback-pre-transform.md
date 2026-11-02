@@ -24,6 +24,6 @@ At rung 3 every PnL-carrying close loses its fee from the deductible sums and ev
 - The transform: `zcrypto tax blockpit` (`cli/tax/`), spec `docs/specs/00126-blockpit-fallback-transform-design.md`, plan `docs/plans/00126-blockpit-fallback-transform.md`, pull request #684.
 - The monthly procedure and its daily-pass reminder: `infra/runbooks/bookkeeping.md`.
 - The tracking report reads the export's `earn` reward rows (spec 00126 D10).
-- The first window, `2026-07-01_2026-11-01`, run by `infra/runbooks/bookkeeping.md` steps 1 to 5 on 2026-11-02 and imported into the fresh manual integration `Kraken manual import` by the owner, every asset's balance equal to the provenance's `closing`.
-- Step 7's five criteria re-read on that integration by the owner on 2026-11-02, each a PASS — the verdict beside `[iter-172]` in `docs/research/14.phase6-decisions.md`, the first `[T0215]` entry; with the connector's integration hidden, it left the Steuerbericht.
-- The connector's integration: the owner's decision of 2026-11-02 is its deletion, the owner's act in Blockpit (the second `[T0215]` entry); the manual integration carries the account's whole history, each later month by the runbook's monthly window.
+- The first window, `2026-07-01_2026-11-01`, imported on 2026-11-02 into the fresh manual integration `Kraken manual import`.
+- Step 7's five criteria, each a PASS on that integration: the first `[T0215]` entry in `docs/research/14.phase6-decisions.md`.
+- The connector's integration deleted on the owner's decision: the second `[T0215]` entry.
