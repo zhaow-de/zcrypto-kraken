@@ -1343,6 +1343,41 @@ Read the boot line where the restart rule at the head of this page reads it, on 
 
 9. **Delete the aside copy** once that record reads right: `acct drop`, which prints `DEL -> 1` and `DROPPED`, and refuses while the key itself is absent. Until then the way back is: stop the engine and bring the proxy up as in step 4, `acct restore`, then step 7; the next start replays the old list as before the clear.
 
+<a name="engine-clear-stored-account-prefix-wide"></a>
+
+### The prefix-wide form — the whole trader store, before a new wheel's first start
+
+A nautilus-trader wheel that changes what the store holds — a record's shape, or the asset codes the instruments and the account are keyed by — starts on a store rebuilt for it, by the owner's decision of 2026-10-11: with the engine stopped and the account flat, every key under `trader-SHADOW-001:` is deleted, one DEL per key the inventory listed, and the first start builds the store again from Kraken's reads. `flush_on_start` is not the means: it runs FLUSHDB on the whole logical database. The engine's cache writes its collections under that prefix and nothing outside it, so the prefix is the whole key set. The tool is `infra/scripts/cache-prefix-clear.py`, run from the repository's root on the workstation; it connects and authenticates as the `acct` block does (*What it means*), entering the proxy container's network namespace itself, and prints neither the password nor the env file.
+
+**Rollback.** A `--rdb` dump of the primary taken before step 3 is the only way back to the old data: unlike the single-key form, the clear keeps no aside copy, and nothing on this page restores one.
+
+1. **Admit the run, each read written into the run's entry (step 7) before step 3's first DEL.**
+   - Kraken flat: on the workstation, `kraken open-orders -o json` lists nothing and `kraken positions -o json` prints `{}`.
+   - The engine stopped: *What to do* step 4, its stop and the proxy brought back alone, inside the inter-cycle gap and with the maintenance feed read as *What to do* step 1 reads them. Step 3 reads the container again and refuses while it runs.
+   - `flush_on_start` false: no config key sets it, `_cache_config` in `cli/engine/node.py` passes `False`, and `tests/test_engine_node.py` pins it. On the workstation, `git show <revision>:cli/engine/node.py | grep -c 'flush_on_start=False'` prints 1 for the revision of the image the first start runs.
+2. **Inventory**, which changes nothing in the store:
+   ```
+   ssh zcrypto sudo python3 - inventory < infra/scripts/cache-prefix-clear.py
+   ```
+   It prints `answering: role master, …`, `DBSIZE <n>`, `keys under trader-SHADOW-001: <m>` with a count per collection beneath it, `keys outside trader-SHADOW-001: <k>, 0 expected` with those keys named, and `list: /var/lib/zcrypto-engine/cache-prefix-clear-<stamp>.keys, <m> line(s)`. Write the three numbers and the list's path into the entry; the list file stays until step 6 passes. The clear leaves an outside key where it is: an `aside:` copy is an earlier single-key clear's, which *What to do* step 9 deletes; another is a writer that is not the engine, which goes to the owner before step 3.
+3. **Clear**, the path step 2 printed:
+   ```
+   ssh zcrypto sudo python3 - clear /var/lib/zcrypto-engine/cache-prefix-clear-<stamp>.keys < infra/scripts/cache-prefix-clear.py
+   ```
+   It prints `engine container: absent`, the unit's stop having removed it, then the answering line, `replicas acknowledging -> 2 of 2` and last `listed=<m> deleted=<m> failed=0`, and exits 0. A `REFUSED:` line with no `listed=` line before it deleted nothing and says why: a running engine container, a state it could not read, or a list line outside the prefix among them. A key it could not delete is named on a `not deleted (0):` or `DEL refused (<word>):` line; `deleted` short of `listed`, `failed` above 0, or a `FAILED:` line after the `listed=` line exits non-zero: start nothing, run step 2 again, and take both outputs to the owner.
+4. **Verify**, with step 2's `DBSIZE` and step 3's `deleted`:
+   ```
+   ssh zcrypto sudo python3 - verify <n> <m> < infra/scripts/cache-prefix-clear.py
+   ```
+   It prints `keys under trader-SHADOW-001: 0, 0 expected`, `DBSIZE <k>, <k> expected (<n> less <m>)` and `VERIFIED`. `NOT VERIFIED` names what is left under the prefix: something wrote while the engine was stopped, and the run goes to the owner with the engine still down.
+5. **The first start**: *What to do* step 7's start, the proxy taken down first and the unit started. On the host:
+   ```
+   sudo docker logs --since 30m zcrypto-engine 2>&1 | grep -E 'Loaded cache in|Integrity check passed|Skipping currency|Reconciliation complete|Stored currency|Failed to load account|nautilus_infrastructure::redis::queries'
+   ```
+   It shows `Loaded cache in <n>ms` and `Integrity check passed`, no `Skipping currency` line, and `Reconciliation complete for KRAKEN: …` reading `external=0`. The WARN `Stored currency EUR differs from the registered definition` is expected. On the cache primary, with [`cache.md`](cache.md)'s `vk`, `vk SCARD trader-SHADOW-001:index:positions_open` prints 0: the account is flat, so no position is open in the store.
+6. **The second start**, the next restart by whichever procedure takes it: step 5's read again, with no `[ERROR]` line from `nautilus_infrastructure::redis::queries`, no `Failed to load account`, the EUR WARN expected again, and `vk SCARD trader-SHADOW-001:index:positions_open` still 0. A start reading otherwise goes to the owner. Once it passes, `ssh zcrypto sudo rm /var/lib/zcrypto-engine/cache-prefix-clear-<stamp>.keys`.
+7. **Record the run as an entry in `docs/reference/drill-log.md`**, in *What to do* step 8's shape, its *host* clause opening `` `zcrypto`, the engine ``: step 1's reads, step 2's three numbers and the list's path, step 3's last line, step 4's, and step 5's and step 6's lines with each start's time.
+
 ### Retire when
 
 The engine on `zcrypto` runs an image whose `_classify_spot_close` no longer reads the venue record's balances, which the first converge of the accumulation loop's image puts there: with the engine row of `docs/reference/fleet-pins.md` re-trued from the running container, `sudo docker inspect --format '{{.Config.Image}}' zcrypto-engine`, `git show <that row's revision>:cli/engine/executor.py | grep -c _newest_venue_balances` reads 0. `persist_account_events` in `_cache_config` (`cli/engine/node.py`) is no such condition: with it off the stored account is still kept and replayed, as the offline restart harness measured.
