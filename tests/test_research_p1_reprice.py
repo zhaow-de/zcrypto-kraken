@@ -109,6 +109,22 @@ def test_a_window_is_refused():
     assert str(refused.value).endswith("drop --window")
 
 
+def test_the_build_forwards_its_as_of_and_accept_holes(monkeypatch):
+    reads = []
+
+    def _record(*arguments):
+        reads.append(arguments)
+        return ()
+
+    monkeypatch.setattr("cli.research.subjects._crossfreq_inputs", _record)
+    monkeypatch.setattr("cli.research.subjects.repricing_metrics", lambda *inputs, **kwargs: {})
+    reader = object()
+
+    subjects.SUBJECTS[SUBJECT].build(reader, "ohlc-test", None, as_of="2026-03-31", accept_holes=True)
+
+    assert reads == [(reader, "ohlc-test", None, "2026-03-31", True)]
+
+
 def test_a_set_reaching_past_the_in_sample_end_is_refused_before_any_build(tmp_path, monkeypatch):
     def unbuilt(*args, **kwargs):
         raise AssertionError("a read past the in-sample end builds no book")
