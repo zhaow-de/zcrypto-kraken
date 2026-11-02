@@ -1288,8 +1288,7 @@ def test_the_builder_is_given_the_production_client_and_engine_configs(tmp_path,
     assert exec_config.spot_account_type == AccountType.MARGIN
     assert exec_config.margin_balance_asset == "ZEUR"
     # Unread under MARGIN (the comment at the field in cli/engine/node.py). Pinned so a switch off it does not
-    # inherit the adapter's "USDT" default; there it is matched against the instrument's `quote_currency.code`,
-    # which this wheel spells "EUR" for every EUR pair, so that switch re-reads this value first.
+    # inherit the adapter's "USDT" default.
     assert exec_config.spot_positions_quote_currency == "ZEUR"
     # D10: submission stays on REST. The library default is True; `_KRAKEN_ERROR_MARKERS` and
     # `_on_rejected`'s three-way verdict in cli/engine/executor.py are derived against REST

@@ -858,7 +858,7 @@ def test_an_empty_cache_beside_open_ledger_rows_is_a_cold_start_the_pass_reconci
     assert f"canceling adopted resting order {wire['txid']} -- the ledger does not carry it as a resting reducer" in record["log"]
     assert [form.get("txid") for form in cancels] == [wire["txid"]]
     assert [e["client_order_id"] for e in record["external"]][:1] == [wire["txid"]]
-    # The cancel's ack infers no second fill; the row settles at the venue's 0.4, canceled by the pass.
+    # The row settles at the venue's 0.4, canceled by the pass.
     [row] = node.rows()
     fills = [e for e in row["events"] if e.get("event") == "fill"]
     assert [(e["qty"], e.get("credited")) for e in fills] == [(0.4, None)], fills

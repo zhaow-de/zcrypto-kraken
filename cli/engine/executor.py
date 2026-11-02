@@ -4312,7 +4312,7 @@ class ProbeExecutor:
             # Either way the order may still rest -- while whatever asked for the cancel (a kill
             # file, the time-box) says it must not. Nothing further may be submitted against a
             # position this process can no longer describe. The row keeps its OPEN state; only the
-            # intent is journaled, its reason naming which of the two refused the cancel.
+            # intent is journaled.
             denied = name == "OrderCancelDenied"
             logger.critical(
                 "cancel of %s was %s -- the order may still rest; the plan stops here",

@@ -7,13 +7,10 @@ Run from the workstation, each mode its own call, in this order:
     ssh zcrypto sudo python3 - clear <list-file> < infra/scripts/cache-prefix-clear.py
     ssh zcrypto sudo python3 - verify <dbsize-before> <deleted> < infra/scripts/cache-prefix-clear.py
 
-  inventory  DBSIZE; the keys under `trader-SHADOW-001:` per collection, the second `:` field; the keys
-             outside it, 0 expected; and the keys under it written one per line to a new file,
-             /var/lib/zcrypto-engine/cache-prefix-clear-<UTC stamp>.keys, whose path and line count it prints.
-  clear      Refused while `zcrypto-engine` runs, read with a docker inspect of `{{.State.Running}}` and no
-             other field. Then one DEL per key the list names, never a scan piped into DEL. It prints
-             `listed=… deleted=… failed=…` and exits 1 unless every listed key was deleted.
-  verify     No key left under the prefix, and DBSIZE the inventory's less the deleted count.
+  inventory  writes the keys under `trader-SHADOW-001:` one per line to a new file under /var/lib/zcrypto-engine.
+  clear      refused while `zcrypto-engine` runs, read with a docker inspect of `{{.State.Running}}` and no
+             other field; then one DEL per listed key, never a scan piped into DEL.
+  verify     no key left under the prefix, and DBSIZE the inventory's less the deleted count.
 
 The process enters the cache proxy container's network namespace, where the proxy listens on loopback, so
 every command reaches the node the Sentinels name as the primary, the one the engine loads from. It

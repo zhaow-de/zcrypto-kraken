@@ -475,12 +475,9 @@ def _exec_engine_config() -> LiveExecutionEngineConfig:
     test. Necessary and NOT sufficient: what populates the cache with such an order is the
     reconciliation read -- `executor._cancel_resting` states which resting orders that read drops.
 
-    `reconciliation_lookback_mins` bounds a start's ClosedOrders and TradesHistory read to the last
-    twelve hours: unset, a start imports the account's whole history as EXTERNAL orders and the
-    positions their fills net to, and once set it stays set, since unsetting it imports that history
-    again; inside the window a restart's fill moves a position only on an instrument with an
-    OpenPositions row (#5209), so under MARGIN every unleveraged spot fill is projected order-only,
-    its order filled and no position moved.
+    `reconciliation_lookback_mins` bounds a start's ClosedOrders and TradesHistory read: unset, a start
+    imports the account's whole history as EXTERNAL orders and the positions their fills net to, and
+    once set it stays set, since unsetting it imports that history again.
 
     The three in-flight knobs together set how long the engine waits on an unanswered order before
     it mints that order's terminal event itself -- roughly the threshold plus the retries times the
@@ -551,9 +548,6 @@ def _cache_password() -> str | None:
 
 
 def _exec_client_config(credentials: tuple[str, str]) -> KrakenExecutionClientConfig:
-    """Both currency fields read ZEUR, Kraken's own code for the euro: `margin_balance_asset` goes to the venue
-    raw, and `spot_positions_quote_currency` is unread under `spot_account_type=MARGIN`, where the adapter takes
-    the OpenPositions branch and builds no spot position report."""
     api_key, api_secret = credentials
     return KrakenExecutionClientConfig(
         account_id=AccountId(_ACCOUNT_ID),
@@ -565,11 +559,9 @@ def _exec_client_config(credentials: tuple[str, str]) -> KrakenExecutionClientCo
         api_secret=api_secret,
         spot_account_type=AccountType.MARGIN,
         margin_balance_asset="ZEUR",
-        # The one currency this config sends Kraken raw: the adapter passes it as TradeBalance's
-        # `asset` and normalizes it for its own use, so the account summary reads `EUR` whichever
-        # spelling is set here; every currency the engine reads on this wheel is the standard code.
-        # NOT a tradeability constraint -- measured 2026-08-14 against the adapter then installed
-        # (T0137's survey). `margin_balance_asset` has exactly ONE call site,
+        # `margin_balance_asset`, above, goes to Kraken raw as TradeBalance's `asset`; the adapter
+        # normalizes it, so the account summary reads `EUR` whichever spelling is set there.
+        # NOT a tradeability constraint (T0137's survey). `margin_balance_asset` has exactly ONE call site,
         # `_update_account_state` -> `request_account_state_with_metrics`: it selects the
         # currency the ACCOUNT SUMMARY is denominated in, and appears nowhere in order
         # submission, instrument handling, or position reporting. The OpenPositions branch this
@@ -579,11 +571,7 @@ def _exec_client_config(credentials: tuple[str, str]) -> KrakenExecutionClientCo
         # `CrossfreqSystemConfig.assets` stays the ten EUR bases so no sleeve ever computes a
         # /BTC weight, and `cli/engine/cycle.py::_expand_to_basket` emits exactly 0.0 for every
         # basket member the model produced no output for. Order emission is delta-driven, so a
-        # 0.0 target against a 0.0 predecessor writes no row at all. The mechanisms earlier
-        # revisions of this comment named -- first "this field can never cover them alongside
-        # the EUR book", then base-keyed PAIR_KEYS / the root/<base>/EUR store path / a
-        # EUR-only cost floor -- are each gone. Rewritten in place rather than annotated, twice
-        # now: an inherited wrong mechanism is exactly what keeps going wrong here.
+        # 0.0 target against a 0.0 predecessor writes no row at all.
         # Currently unread: the adapter consults it only when spot_account_type is NOT MARGIN
         # AND use_spot_position_reports is True; under MARGIN it takes the OpenPositions branch.
         # A switch off MARGIN reads first what it is matched against: on this wheel every EUR

@@ -503,8 +503,7 @@ def run_log_path(evidence_dir: str | Path, stamp: str) -> Path:
 # The adapter's WARN when the credentialed TradeVolume call fails and the listing takes the public
 # fee schedule instead. The DEBUG nonce line counts the calls, and the exec client's `Loaded N Spot
 # instruments` says its listing finished, which is what lets an absent WARN mean "no fallback" rather
-# than "never got that far". The pinned wheel's listing makes no TradeVolume call, and a finished
-# listing with none is described as such, never as every call answering.
+# than "never got that far".
 TRADEVOLUME_FALLBACK = "falling back to public rates"
 _TRADEVOLUME_CALL = re.compile(r"Generated nonce \d+ for /0/private/TradeVolume")
 _EXEC_LISTING_LOADED = re.compile(r"nautilus_kraken::execution::spot: Loaded \d+ Spot instruments")
@@ -2270,8 +2269,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--file-log-level",
         default="DEBUG",
-        help="level of the run's log file in --evidence-dir (default: DEBUG); use TRACE to read Kraken's own error strings "
-        "for failed private calls -- a TRACE file is large",
+        help="level of the run's log file in --evidence-dir (default: DEBUG); a release wheel compiles TRACE out, so TRACE adds nothing there",
     )
     p.add_argument(
         "--expect-nautilus",

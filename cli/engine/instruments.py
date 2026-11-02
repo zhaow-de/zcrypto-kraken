@@ -2,8 +2,7 @@
 00089, widened by spec 00094).
 
 `INSTRUMENT_IDS` is each basket symbol under the `KRAKEN` venue. The pinned adapter mints the standard code
-for instruments and spot balances alike -- `BTC`, `ETH`, `DOGE`, `LTC`, `XRP` and `EUR`, never `XBT`, `XXBT`,
-`XDG`, `XXDG` or `ZEUR` -- whichever currency is the quote, so `ETH/BTC`'s InstrumentId is `ETH/BTC.KRAKEN`
+for instruments and spot balances alike, whichever currency is the quote, so `ETH/BTC`'s InstrumentId is `ETH/BTC.KRAKEN`
 though the venue's own wire pair key is `XETHXXBT` (`cli.engine.store.PAIR_KEYS["ETH/BTC"]`). The tests pin
 the dict below, not the adapter's parse, so re-probe this agreement when the nautilus pin moves.
 
