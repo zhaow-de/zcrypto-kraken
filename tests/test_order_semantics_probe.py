@@ -784,6 +784,44 @@ def test_a_running_sequence_still_advances():
 
 
 # ---------------------------------------------------------------------------------------------
+# What the node's start reads
+# ---------------------------------------------------------------------------------------------
+
+
+class _Assembly:
+    """`LiveNode` as `build_node` chains it, keeping only the engine configs it is handed."""
+
+    def __init__(self):
+        self.exec_engine = []
+
+    def builder(self, **_identity):
+        return self
+
+    def with_exec_engine_config(self, config):
+        self.exec_engine.append(config)
+        return self
+
+    def __getattr__(self, _call):
+        return lambda *_args, **_kwargs: self
+
+    def build(self):
+        return SimpleNamespace(add_strategy=lambda strategy: None)
+
+
+def test_the_harness_reconciles_over_the_engines_lookback_window(monkeypatch):
+    from cli.engine.node import _exec_engine_config
+
+    strategy, _state = _strategy()
+    assembly = _Assembly()
+    monkeypatch.setattr(probe, "LiveNode", assembly)
+
+    probe.build_node(strategy.args, strategy)
+
+    [config] = assembly.exec_engine
+    assert config.reconciliation_lookback_mins == _exec_engine_config().reconciliation_lookback_mins
+
+
+# ---------------------------------------------------------------------------------------------
 # The version the run binds to
 # ---------------------------------------------------------------------------------------------
 

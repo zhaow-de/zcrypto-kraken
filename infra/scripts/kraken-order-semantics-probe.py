@@ -157,6 +157,8 @@ RECONCILE_BLIND_LEGS = ("BTC/EUR", "ETH/EUR", "XRP/EUR", "LTC/EUR", "ETH/BTC")
 ENGINE_TRADER_ID = "SHADOW-001"
 ENGINE_ORDER_ID_INFIX = "-001-000-"
 
+RECONCILIATION_LOOKBACK_MINS = 720
+
 PROBE_TRADER_ID = "P6PROBE-901"
 PROBE_TRADER_TAG = "901"
 PROBE_ORDER_TAG = "P6V"
@@ -1825,14 +1827,21 @@ def build_node(args, strategy: ProbeStrategy) -> LiveNode:
 
     The adapter loads the venue's instrument universe itself on connect, so nothing here selects
     it. `filter_unclaimed_external_orders=False` keeps venue-tagged unclaimed orders in the cache,
-    which is what lets probe 6 see state this harness did not place.
+    which is what lets probe 6 see state this harness did not place. `reconciliation_lookback_mins`
+    is the engine's, so the start reads the engine's window, not the account's whole history.
 
     `delay_post_stop_secs` is the window in which a cancel issued from `on_stop` can still reach
     the venue, so it is sized to the same timeout the sequence gives a cancel to confirm."""
     builder: LiveNodeBuilder = (
         LiveNode.builder(name=PROBE_NODE_NAME, trader_id=TraderId(PROBE_TRADER_ID), environment=Environment.LIVE)
         .with_logging(logger_config(args, strategy.stamp))
-        .with_exec_engine_config(LiveExecutionEngineConfig(reconciliation=True, filter_unclaimed_external_orders=False))
+        .with_exec_engine_config(
+            LiveExecutionEngineConfig(
+                reconciliation=True,
+                filter_unclaimed_external_orders=False,
+                reconciliation_lookback_mins=RECONCILIATION_LOOKBACK_MINS,
+            )
+        )
         .with_timeout_connection(int(args.connect_timeout))
         .with_delay_post_stop_secs(int(max(10.0, args.order_timeout)))
         .add_data_client(
