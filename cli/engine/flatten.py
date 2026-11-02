@@ -60,9 +60,10 @@ CONFIRM_WORD = "FLATTEN"
 # routing would otherwise treat an ack of ours as its own.
 CLIENT_ORDER_ID_PREFIX = "FLT"
 BOOK_DEPTH = 1
-# The venue-alias spelling of the euro on the quote surfaces (546 live instruments carry `ZEUR`,
-# zero carry `EUR` -- docs/reference/adapter-verification/2.0.0rc4.dev20260825.md observation 4).
-QUOTE_CURRENCY = "ZEUR"
+# The euro as the pinned adapter spells it on every engine-side surface -- instrument quotes, balances,
+# Money. Kraken's own `ZEUR` reaches the venue raw only through the exec client's `margin_balance_asset`
+# (`cli/engine/node.py`), and this wheel does not resolve it as a currency.
+QUOTE_CURRENCY = "EUR"
 # The rung-1 leverage, and the only value ever accepted live from this repo (probes 4c/4d in
 # docs/reference/adapter-verification/2.0.0rc4.dev20260825.md). PositionStatusReport carries no
 # leverage field, so a closer cannot echo the position's; what the venue does with a mismatched
@@ -446,9 +447,11 @@ def step_precision(step: float) -> int:
     return max(0, -Decimal(str(step)).as_tuple().exponent)
 
 
-# Kraken's legacy codes, renamed by the adapter's own `normalize_spot_symbol` before an
-# InstrumentId is built (`cli/engine/instruments.py`'s module docstring). The `X`/`Z` strip below
-# handles the mechanical prefixes; these two renames it cannot derive.
+# Kraken's legacy codes. The pinned adapter mints the standard code for instruments and spot balances
+# alike (`cli/engine/instruments.py`'s module docstring), so these reach `resolve_base` from Kraken's own
+# balance export and from the stem of an earn code, which the adapter keeps as Kraken spells it
+# (`XBT.M`, `XDG.F`). The `X`/`Z` strip below handles the mechanical prefixes; these two renames it
+# cannot derive.
 ASSET_ALIASES = {"XBT": "BTC", "XXBT": "BTC", "XDG": "DOGE", "XXDG": "DOGE"}
 
 
@@ -487,9 +490,9 @@ def earn_wallet_base(code: str, bases: frozenset[str]) -> str | None:
 
 def wallet_base(code: str, bases: frozenset[str]) -> tuple[str, bool] | None:
     """`(base, False)` for a spot code `resolve_base` maps, `(base, True)` for an earn or staking code
-    `earn_wallet_base` maps, else None. The earn arm reads the code again with a leading `X` restored:
-    the pinned adapter's CASH read strips one from Kraken's code (`XBT.M` reads `BT.M`, `XDG.F` `DG.F`,
-    `XRP.F` `RP.F`), which the rule does not map as spelled."""
+    `earn_wallet_base` maps, else None. The pinned adapter's CASH read keeps an earn code as Kraken spells
+    it (`XBT.M`, `XDG.F`, `XRP.F`), which the earn arm's first read maps. Its second read, the code with a
+    leading `X` restored, maps the spelling an earlier adapter gave (`XBT.M` read `BT.M`)."""
     base = resolve_base(code, bases)
     if base is not None:
         return base, False

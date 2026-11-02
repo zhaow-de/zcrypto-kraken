@@ -4,10 +4,8 @@
 its own client did not place, a MARGIN POSITION, and a NON-EUR SPOT BALANCE for the sell path.
 This mints those and stops. It has no cancel path -- not for its own legs, not for anything else
 -- so it cannot unmake a fixture, its own or a hand-placed one.
-EVERY LEG IS ON A SAME-KEY PAIR. Kraken spells five basket pairs two ways, and a read scoped to
-one of those pairs sees none of its open orders -- so a fixture resting there is invisible to any
-reader that asks about its pair by name, though an unscoped read sees it.
-`SCOPED_ORDER_READ_BLIND_LEGS` names those pairs and states the mechanism.
+EVERY LEG IS ON A SAME-KEY PAIR, so no fixture is invisible to a reader that asks about its pair by
+name: `SCOPED_ORDER_READ_BLIND_LEGS` names the pairs Kraken spells two ways and states the mechanism.
 EVERY SIZE COMES FROM THE VENUE'S OWN ROW AT RUN TIME, never from a remembered figure -- which is
 rejected at submit if it has fallen below a floor and silently accepted at a notional nobody chose
 if it has not -- and never from the adapter's instrument object, which is a TRANSLATION of that
@@ -57,10 +55,10 @@ API_SECRET_VAR = "KRAKEN_SPOT_API_SECRET"
 
 DEFAULT_PAIR = "SOL/EUR"
 
-# The basket pairs Kraken spells two ways: an AssetPairs key and a different altname. A read scoped
-# to one instrument keeps only the rows whose pair is that instrument's key, while an open order
-# names the altname (upstream #5067), so a scoped read on these pairs sees none of their orders. An
-# unscoped read resolves both spellings.
+# The basket pairs Kraken spells two ways: an AssetPairs key and a different altname. A position
+# read scoped to one instrument keeps only the rows whose pair is that instrument's key, so a
+# position spelled by the altname (`XBTEUR`) reads flat there. An unscoped read resolves both
+# spellings.
 SCOPED_ORDER_READ_BLIND_LEGS = ("BTC/EUR", "ETH/EUR", "XRP/EUR", "LTC/EUR", "ETH/BTC")
 
 # The resting leg sits this far below the run's own best bid. Far enough that it cannot fill while
@@ -133,9 +131,6 @@ class AccountState:
 
 
 def assert_same_key(pair: str) -> None:
-    """Refuse a pair whose Kraken altname differs from its AssetPairs key: a read scoped to it
-    sees none of its open orders, so a fixture there is invisible to any reader that asks about
-    that pair by name."""
     if pair not in INSTRUMENT_IDS:
         raise Refusal(
             f"REFUSING: {pair} is not one of the basket's instruments, so this guard has no opinion "
@@ -143,9 +138,9 @@ def assert_same_key(pair: str) -> None:
         )
     if pair in SCOPED_ORDER_READ_BLIND_LEGS:
         raise Refusal(
-            f"REFUSING: {pair} is spelled two ways at the venue, so a read scoped to {pair} sees "
-            f"none of its open orders and a fixture resting there is invisible to it. Mint on a "
-            f"same-key pair; {DEFAULT_PAIR} is the default.",
+            f"REFUSING: {pair} is spelled two ways at the venue, so a position read scoped to {pair} "
+            f"reads a position spelled by its altname as flat. Mint on a same-key pair; {DEFAULT_PAIR} "
+            f"is the default.",
         )
 
 
@@ -171,8 +166,8 @@ def assert_row_is_same_key(pair: str, pair_key: str, row: dict) -> None:
     )
     raise Refusal(
         f"REFUSING (measured from the listing, not from the list): {pair} is keyed {pair_key} and "
-        f"spelled {altname}, so a read scoped to {pair} sees none of its open orders and a fixture "
-        f"there is invisible to it; {remembered}.",
+        f"spelled {altname}, so a position read scoped to {pair} reads a position spelled {altname} "
+        f"as flat; {remembered}.",
     )
 
 

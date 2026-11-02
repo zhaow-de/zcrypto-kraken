@@ -30,6 +30,7 @@ from nautilus_trader.model import (
     LiquiditySide,
     Money,
     OrderAccepted,
+    OrderCancelDenied,
     OrderCanceled,
     OrderCancelRejected,
     OrderExpired,
@@ -1062,6 +1063,7 @@ _EVENT_DEFAULTS = {
     OrderPendingCancel: {"account_id": _ACCOUNT_ID, "reconciliation": False},
     OrderRejected: {"account_id": _ACCOUNT_ID, "reason": "the venue said no", "reconciliation": False},
     OrderCancelRejected: {"reason": "the venue said no", "reconciliation": False},
+    OrderCancelDenied: {"reason": "NoExecutionClient"},
     OrderFilled: {
         "account_id": _ACCOUNT_ID,
         "order_side": OrderSide.BUY,
@@ -2024,9 +2026,8 @@ def _fill(
     types.
 
     `fee_code` is `EUR`, the currency a Kraken fill's commission carries
-    (`docs/reference/adapter-verification/2.0.0rc4.dev20260825.md`, observation 4); the venue's
-    `ZEUR` spelling belongs to its asset and instrument-quote surfaces, and
-    `cli.engine.instruments.EUR_CODES` accepts both. Fee values are amounts two decimals can hold,
+    (`docs/reference/adapter-verification/2.0.0rc4.dev20260825.md`, observation 4); `cli.engine.instruments.EUR_CODES`
+    also accepts Kraken's own `ZEUR`. Fee values are amounts two decimals can hold,
     for the reason `test_a_real_money_answers_both_accessors_the_fill_row_reads` measures; `fee=None`
     builds the commission-less fill that reaches the row builder's absent-fee branch.
 
@@ -2072,6 +2073,7 @@ def _cache_reads_at_dispatch() -> dict:
     The readings are RECORDED and asserted by the caller, never here -- the library swallows a raising
     handler, so an assertion inside one is invisible and its test passes green."""
     from nautilus_trader.backtest import BacktestEngine, BacktestEngineConfig
+    from nautilus_trader.execution import MakerTakerFeeModel
     from nautilus_trader.model import AccountType, OmsType, Venue
     from nautilus_trader.trading import Strategy
 
@@ -2133,6 +2135,7 @@ def _cache_reads_at_dispatch() -> dict:
         account_type=AccountType.CASH,
         base_currency=None,
         starting_balances=[Money(100_000, Currency.from_str("EUR")), Money(10, Currency.from_str("BTC"))],
+        fee_model=MakerTakerFeeModel(0, 0),
     )
     engine.add_instrument(instrument)
     engine.add_strategy(_Probe())
@@ -2192,6 +2195,7 @@ def _pending_cancel_read_at_dispatch(tmp_path) -> dict:
     observer's `on_start`, where the client is not borrowed, as the node's factory builds it.
     Recorded, never asserted here: the library swallows a raising handler."""
     from nautilus_trader.backtest import BacktestEngine, BacktestEngineConfig
+    from nautilus_trader.execution import MakerTakerFeeModel
     from nautilus_trader.model import AccountType, OmsType, StrategyId, Venue
     from nautilus_trader.trading import Strategy, StrategyConfig
 
@@ -2263,6 +2267,7 @@ def _pending_cancel_read_at_dispatch(tmp_path) -> dict:
         account_type=AccountType.CASH,
         base_currency=None,
         starting_balances=[Money(100_000, Currency.from_str("EUR")), Money(10, Currency.from_str("BTC"))],
+        fee_model=MakerTakerFeeModel(0, 0),
     )
     engine.add_instrument(instrument)
     engine.add_strategy(_Observer(canceller))
@@ -3501,6 +3506,33 @@ def test_a_cancel_rejection_parks_the_intent_ambiguous_and_halts_the_plan(tmp_pa
     # The order may still rest, so the row stays OPEN for re-attach -- never a terminal state.
     assert _record(tmp_path)["submitted"][0]["state"] == "accepted"
     assert _intent_outcome(tmp_path, 1) == "refused"
+
+
+def test_a_cancel_the_client_denied_before_sending_parks_the_intent_ambiguous_at_once_and_halts_the_plan(tmp_path):
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)])
+    ex.on_order_event(_accepted(client.last_order_id))
+    (exec_dir(tmp_path) / KILL_FILE).touch()
+    clock.now = NOW + timedelta(seconds=5)
+    ex.on_quote(_quote())
+    ex.on_timer(clock.now)
+    assert client.canceled
+
+    with _executor_errors(level=logging.CRITICAL) as records:
+        ex.on_order_event(_event(OrderCancelDenied, client_order_id=client.last_order_id, reason="NoExecutionClient"))
+
+    assert [r.getMessage() for r in records] == [
+        f"cancel of {client.last_order_id} was DENIED before it was sent (NoExecutionClient) -- the order may still rest; "
+        "the plan stops here",
+        "plan p-1 dropped after intent 0 ended ambiguous -- 1 later intent(s) will not run",
+    ]
+    assert len(client.submitted) == 1
+    intent = _intent_entry(tmp_path, 0)  # read on the denial's own tick, 25 s inside the cancel's ack deadline
+    assert (intent["outcome"], intent["reasons"]) == ("ambiguous", ["cancel denied before it was sent: NoExecutionClient"])
+    row = _record(tmp_path)["submitted"][0]
+    assert (row["state"], row["events"][-1]["type"]) == ("accepted", "OrderCancelDenied")
+    assert _intent_entry(tmp_path, 1)["reasons"] == [
+        "not run -- intent 0 ended ambiguous, so the venue state this plan was authorized against is unknown"
+    ]
 
 
 def test_a_cancel_the_venue_never_answers_ends_ambiguous_and_frees_the_engine(tmp_path):
@@ -4910,6 +4942,30 @@ def test_a_cancel_the_venue_refused_on_an_adopted_order_logs_the_hand_cancel_and
     assert (row["state"], [e["type"] for e in row["events"]]) == ("accepted", ["OrderAccepted", "OrderCancelRejected"])
     assert client.cache.order(ClientOrderId(_TXID)).status == OrderStatus.ACCEPTED
     assert _intent_outcome(tmp_path, 0, earlier) == "revoked"  # the pass's write stands; the line sends the operator to the page
+
+
+def test_a_cancel_the_client_denied_on_an_adopted_order_logs_the_hand_cancel_and_leaves_the_row_accepted(tmp_path):
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-opener", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    client = StubClient(StubCache(open_orders=[_resting_limit_order(_TXID, venue_order_id=_TXID)]))
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY))
+    ex.on_timer(NOW)
+    assert [str(cid) for cid in client.canceled] == [_TXID] and _intent_outcome(tmp_path, 0, earlier) == "revoked"
+
+    with _executor_errors(level=logging.WARNING) as records:
+        _deliver_external_event(ex, client, _event(OrderCancelDenied, client_order_id=_TXID, reason="NoExecutionClient"))
+
+    assert [(r.levelno, r.getMessage()) for r in records] == [
+        (
+            logging.CRITICAL,
+            f"cancel of adopted order {_TXID} was DENIED before it was sent (NoExecutionClient) -- the order may still rest, "
+            "and the cancel is not re-sent: cancel it by hand on Kraken's open-orders page",
+        )
+    ]
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert (row["state"], [e["type"] for e in row["events"]]) == ("accepted", ["OrderAccepted", "OrderCancelDenied"])
+    assert _intent_outcome(tmp_path, 0, earlier) == "revoked"
 
 
 def test_a_mint_landing_detached_after_the_ack_deadline_stranded_the_intent_records_the_flag_on_its_row(tmp_path):
@@ -7407,7 +7463,7 @@ def test_read_venue_holdings_answers_every_traded_symbol_with_its_margin_positio
     """The reader's contract on the pinned wheel, offline: the listing is cached first, so a position
     Kraken spells by its altname resolves; a margin position is signed by its side under its
     instrument; a traded coin's spot balance -- its total, the part held against a resting order
-    included, under the code the adapter strips the venue's prefix to -- lands under the coin's EUR
+    included, under the standard code the adapter reports it by, `XXBT` as `BTC` -- lands under the coin's EUR
     pair; and every basket symbol is answered, 0.0 where the account holds nothing. SOL's short
     against its held lot nets to zero by the total alone: the free part would read -0.01."""
     with kraken_loopback.serve() as venue:
@@ -7422,7 +7478,7 @@ def test_read_venue_holdings_answers_every_traded_symbol_with_its_margin_positio
         held = _read_venue_holdings(base_url=venue.base_url)
 
     assert held == pytest.approx(dict.fromkeys(INSTRUMENT_IDS, 0.0) | {"BTC/EUR": 0.0013, "DOGE/EUR": 12.5})
-    assert venue.private_calls == ["TradeVolume", "OpenPositions", "BalanceEx"]
+    assert venue.private_calls == ["OpenPositions", "BalanceEx"]
 
 
 def test_read_venue_holdings_reads_an_empty_positions_list_as_a_flat_margin_book_and_the_settle_publishes_the_coins_spot_lot(
@@ -7443,7 +7499,7 @@ def test_read_venue_holdings_reads_an_empty_positions_list_as_a_flat_margin_book
 
     assert [book.held for book in reads] == [pytest.approx(dict.fromkeys(INSTRUMENT_IDS, 0.0) | {"BTC/EUR": 0.0003})]
     assert metrics.positions == sorted(reads[0].held.items())
-    assert venue.private_calls == ["TradeVolume", "OpenPositions", "BalanceEx"]
+    assert venue.private_calls == ["OpenPositions", "BalanceEx"]
 
 
 def test_read_venue_holdings_refuses_without_credentials_before_building_a_client(monkeypatch):
@@ -9263,9 +9319,6 @@ def test_the_startup_pass_asks_the_venue_over_a_restored_orders_cache_copy_and_t
 
 
 def test_a_restored_order_the_venue_reports_closed_has_its_row_written_from_the_report_and_no_cancel_sent(tmp_path):
-    """Mass status reads open orders only, so an order that filled while the engine was down comes back
-    open in the Cache; the venue's report writes the row, settles the intent through the sweep, and the
-    stale open copy is left where it is with no cancel through the handle."""
     earlier = NOW - timedelta(hours=4)
     _pending_plan_entry(tmp_path, earlier, n_intents=1)
     _submitted_row(tmp_path, "O-restored", reduce_only=False, when=earlier, venue_order_id=_TXID)

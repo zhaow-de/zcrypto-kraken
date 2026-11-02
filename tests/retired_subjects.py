@@ -57,6 +57,8 @@ RETIRED_SUBJECTS = frozenset(
         "c1-maker-fill-reading",
         # The engine's execution-cost reading.
         "engine-cost-reading",
+        # The deployable's re-pricing.
+        "p1-reprice",
     }
 )
 # The file whose cases evaluate a subject named in a parameter; a subject's own test file outside the data-gated family

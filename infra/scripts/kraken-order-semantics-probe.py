@@ -157,6 +157,8 @@ RECONCILE_BLIND_LEGS = ("BTC/EUR", "ETH/EUR", "XRP/EUR", "LTC/EUR", "ETH/BTC")
 ENGINE_TRADER_ID = "SHADOW-001"
 ENGINE_ORDER_ID_INFIX = "-001-000-"
 
+RECONCILIATION_LOOKBACK_MINS = 720
+
 PROBE_TRADER_ID = "P6PROBE-901"
 PROBE_TRADER_TAG = "901"
 PROBE_ORDER_TAG = "P6V"
@@ -494,15 +496,14 @@ def verdict_after_run(split: OpenOrderSplit, open_positions: int, anchored: bool
 
 
 def run_log_path(evidence_dir: str | Path, stamp: str) -> Path:
-    """The run's DEBUG file log, beside its evidence JSON. The logger appends `.log` to the stem."""
+    """The run's file log, beside its evidence JSON. The logger appends `.log` to the stem."""
     return Path(evidence_dir) / f"probe-{stamp}.log"
 
 
 # The adapter's WARN when the credentialed TradeVolume call fails and the listing takes the public
-# fee schedule instead; the exec client makes that call once for the regular pairs and once more
-# when the tokenized listing is not empty. The DEBUG nonce line counts the calls, and the exec
-# client's `Loaded N Spot instruments` says its listing finished, which is what lets an absent WARN
-# mean "no fallback" rather than "never got that far".
+# fee schedule instead. The DEBUG nonce line counts the calls, and the exec client's `Loaded N Spot
+# instruments` says its listing finished, which is what lets an absent WARN mean "no fallback" rather
+# than "never got that far".
 TRADEVOLUME_FALLBACK = "falling back to public rates"
 _TRADEVOLUME_CALL = re.compile(r"Generated nonce \d+ for /0/private/TradeVolume")
 _EXEC_LISTING_LOADED = re.compile(r"nautilus_kraken::execution::spot: Loaded \d+ Spot instruments")
@@ -544,6 +545,8 @@ def describe_tradevolume_fallback(fallback: dict) -> str:
             f"{fallback['tradevolume_calls']} call(s) -- {fallback['warnings'][0]} {log}"
         )
     if fallback["fell_back"] is False:
+        if not fallback["tradevolume_calls"]:
+            return f"TradeVolume: the credentialed listing finished without a TradeVolume call, so nothing fell back {log}"
         return f"TradeVolume: the account's fee rates answered all {fallback['tradevolume_calls']} call(s), no fallback {log}"
     why = fallback.get("why") or "the exec client's listing never finished"
     return f"TradeVolume: the log cannot say whether the listing fell back -- {why} {log}"
@@ -1809,11 +1812,11 @@ def exec_client_config() -> KrakenExecutionClientConfig:
 
 
 def logger_config(args, stamp: str) -> LoggerConfig:
-    """The terminal at `--log-level`, and every run's DEBUG log into `--evidence-dir` beside its
+    """The terminal at `--log-level`, and every run's log at `--file-log-level` into `--evidence-dir` beside its
     evidence JSON -- the TradeVolume fallback WARN is read back out of that file, not scrollback."""
     return LoggerConfig(
         stdout_level=LogLevel(args.log_level),
-        fileout_level=LogLevel.DEBUG,
+        fileout_level=LogLevel(args.file_log_level),
         file_config=FileWriterConfig(directory=str(args.evidence_dir), file_name=run_log_path(args.evidence_dir, stamp).stem),
     )
 
@@ -1823,14 +1826,21 @@ def build_node(args, strategy: ProbeStrategy) -> LiveNode:
 
     The adapter loads the venue's instrument universe itself on connect, so nothing here selects
     it. `filter_unclaimed_external_orders=False` keeps venue-tagged unclaimed orders in the cache,
-    which is what lets probe 6 see state this harness did not place.
+    which is what lets probe 6 see state this harness did not place. `reconciliation_lookback_mins`
+    is the engine's, so the start reads the engine's window, not the account's whole history.
 
     `delay_post_stop_secs` is the window in which a cancel issued from `on_stop` can still reach
     the venue, so it is sized to the same timeout the sequence gives a cancel to confirm."""
     builder: LiveNodeBuilder = (
         LiveNode.builder(name=PROBE_NODE_NAME, trader_id=TraderId(PROBE_TRADER_ID), environment=Environment.LIVE)
         .with_logging(logger_config(args, strategy.stamp))
-        .with_exec_engine_config(LiveExecutionEngineConfig(reconciliation=True, filter_unclaimed_external_orders=False))
+        .with_exec_engine_config(
+            LiveExecutionEngineConfig(
+                reconciliation=True,
+                filter_unclaimed_external_orders=False,
+                reconciliation_lookback_mins=RECONCILIATION_LOOKBACK_MINS,
+            )
+        )
         .with_timeout_connection(int(args.connect_timeout))
         .with_delay_post_stop_secs(int(max(10.0, args.order_timeout)))
         .add_data_client(
@@ -2255,6 +2265,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--log-level", default="WARNING", help="nautilus log level (default: WARNING; use INFO to see the adapter's own narration)"
+    )
+    p.add_argument(
+        "--file-log-level",
+        default="DEBUG",
+        help="level of the run's log file in --evidence-dir (default: DEBUG); a release wheel compiles TRACE out, so TRACE adds nothing there",
     )
     p.add_argument(
         "--expect-nautilus",

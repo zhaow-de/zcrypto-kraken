@@ -40,6 +40,7 @@ from nautilus_trader.adapters.kraken import (  # noqa: E402
 from nautilus_trader.model import AccountId, AccountType, InstrumentId, Price, Quantity, QuoteTick  # noqa: E402
 
 from cli.config import CacheSettings, EngineConfig  # noqa: E402
+from cli.engine import execgate as execgate_module  # noqa: E402
 from cli.engine import executor as executor_module  # noqa: E402
 from cli.engine import node as node_module  # noqa: E402
 from cli.engine.venue import VenueStatus  # noqa: E402
@@ -112,6 +113,10 @@ def _loopback_bare_client(base_url):
 
 
 executor_module._bare_client = _loopback_bare_client
+# The gate refuses a build no attended order-semantics pass has registered, as a bump's candidate is until
+# its pass: the installed build is admitted in this process alone, never in the committed record.
+_recorded_versions = execgate_module._verified_nautilus_versions
+execgate_module._verified_nautilus_versions = lambda: _recorded_versions() | {execgate_module._installed_nautilus_version()}
 
 
 def _refuse_production_defaults() -> None:
@@ -172,6 +177,7 @@ def _dump(cache) -> dict:
             "status": _s(order.status),
             "quantity": _s(order.quantity),
             "filled_qty": _s(order.filled_qty),
+            "trade_ids": [_s(trade_id) for trade_id in order.trade_ids],
             "is_open": order.is_open,
         }
         for order in cache.orders()
