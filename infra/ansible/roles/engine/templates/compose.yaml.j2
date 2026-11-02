@@ -19,7 +19,7 @@ services:
     # nautilus_live waits ten seconds for residual events before it disconnects its clients, and Docker's
     # default grace of ten would force-kill it.
     stop_grace_period: 20s
-{% if logship_loki_token is defined %}
+{% if mon_ingest_logship_password is defined %}
     # --ship-logs is spelled out here, not left to the image's own shell-ENTRYPOINT conveyance
     # (Dockerfile's `${ZCRYPTO_SHIP_LOGS:+--ship-logs}`, spec 00068 D3/T4): this service's
     # exec-form `entrypoint:` REPLACES the image's ENTRYPOINT wholesale, so that shell expansion
@@ -46,7 +46,7 @@ services:
       # by the `engine_app` job in roles/capture/files/config.alloy (the engine shares the
       # PRIMARY capture host, so one config file serves both apps -- see that file's own comment).
       ZCRYPTO_METRICS_PORT: "9102"
-{% if logship_loki_token is defined %}
+{% if mon_ingest_logship_password is defined %}
       # Literal "zcrypto", NOT a `base_hostname` reference (review finding, 00068 T6/T7/T8 review
       # Critical 1): the engine only ever runs on the primary, and role defaults are PLAY-SCOPED --
       # site.yml's engine_host play applies `roles: [engine]` only, with no `base` role and no
@@ -67,7 +67,7 @@ services:
       - "127.0.0.1:9102:9102"
     env_file:
       - /opt/zcrypto-engine/engine.env
-{% if logship_loki_token is defined %}
+{% if mon_ingest_logship_password is defined %}
       # The zcrypto CLI's own Loki push creds -- REUSES the capture role's rendered copy (spec
       # 00068 D5/T7): the engine and the primary capture daemon share one host (host_vars:
       # engine_host = {zcrypto}, a subset of capture_host), so the `capture` role already renders

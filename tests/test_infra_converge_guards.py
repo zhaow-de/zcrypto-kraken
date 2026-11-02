@@ -2190,7 +2190,7 @@ def test_ops_pins_probe_inspects_the_container_the_compose_template_names():
     # liquidations-poll`, and naming THAT is the exact defect this test exists to prevent
     assert rendered != "liquidations-poll", "ops_liquidations_container is the entrypoint command, not a container name"
     # and EVERY entrypoint the template can render still ends in that subcommand. Asserted over
-    # both branches, not one: the ops host defines `logship_loki_token`, so production renders
+    # both branches, not one: the ops host defines `mon_ingest_logship_password`, so production renders
     # ["zcrypto", "--ship-logs", "liquidations-poll"] and a check for the bare
     # '"zcrypto", "liquidations-poll"' fragment would pin only the branch production never takes.
     entrypoints = [l.strip() for l in template.splitlines() if l.strip().startswith("entrypoint:")]

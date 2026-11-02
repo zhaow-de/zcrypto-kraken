@@ -223,7 +223,7 @@
     owner: root
     group: root
     mode: "0600"
-  when: logship_loki_token is defined
+  when: mon_ingest_logship_password is defined
   no_log: true
   diff: false
 

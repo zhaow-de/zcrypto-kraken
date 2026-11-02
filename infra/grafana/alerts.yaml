@@ -4282,8 +4282,8 @@ rules:
     data:
       # Loki, level LABEL not a text grep -- no regex anywhere in this path (spec 00068 D4). The
       # capture daemon's logs get their level label from its OWN direct-ship handler
-      # (cli/logging/ship.py: `level` = `record.levelname` at the source, pushed straight to Grafana
-      # Cloud Loki -- Alloy is not in this path at all). Scoped to container="capture": the daemon on
+      # (cli/logging/ship.py: `level` = `record.levelname` at the source, pushed straight to the Loki
+      # ZCRYPTO_LOKI_URL names -- Alloy is not in this path at all). Scoped to container="capture": the daemon on
       # both hosts, whose errors (desync storms, ENOSPC, reconnect failures) are the soak-critical
       # signal. Out of scope here: Alloy self-errors, a separate instrument-health concern, and the
       # engine's logs, owned by `zcrypto-engine-error-logs`. `sum by (host, ...)` names the firing
