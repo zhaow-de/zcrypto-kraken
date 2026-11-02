@@ -496,8 +496,7 @@ def verdict_after_run(split: OpenOrderSplit, open_positions: int, anchored: bool
 
 
 def run_log_path(evidence_dir: str | Path, stamp: str) -> Path:
-    """The run's file log at `--file-log-level`, DEBUG by default, beside its evidence JSON. The logger appends
-    `.log` to the stem."""
+    """The run's file log, beside its evidence JSON. The logger appends `.log` to the stem."""
     return Path(evidence_dir) / f"probe-{stamp}.log"
 
 
