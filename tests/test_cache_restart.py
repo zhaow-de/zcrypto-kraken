@@ -973,7 +973,7 @@ def _lines(log: str, text: str) -> list[str]:
 
 
 def test_a_doge_lot_held_across_two_restarts_loads_the_account_at_each_start_and_the_account_carries_it_as_doge(tmp_path):
-    # A pair whose base no process registers, beside the basket and stored before each later start: none may log an ERROR over it.
+    # A pair whose base no process registers, beside the basket: no start may log an ERROR over it.
     basket = _basket_pairs()
     pairs = basket | {"QQQZEUR": basket["ADAEUR"] | {"base": "QQQZ", "altname": "QQQZEUR", "wsname": "QQQZ/EUR"}}
     valkey = _Valkey(tmp_path / "valkey")
