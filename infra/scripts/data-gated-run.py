@@ -40,8 +40,21 @@ import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-# Eight xdist workers: serial, the suite outgrew the three-hour bound. `--durations` feeds `parse_slowest`.
-PYTEST_ARGS = ("-q", "-p", "no:cacheprovider", "-rfEs", "-n", "8", "--durations=25", "--durations-min=1.0")
+# Eight xdist workers: serial, the suite outgrew the three-hour bound. `worksteal`, never the default `load`, which
+# sends a block of consecutive ids to one worker and never takes it back, so the replay cases run back to back there
+# while the other workers idle. `--durations` feeds `parse_slowest`.
+PYTEST_ARGS = (
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "-rfEs",
+    "-n",
+    "8",
+    "--dist",
+    "worksteal",
+    "--durations=25",
+    "--durations-min=1.0",
+)
 # The data file only, `.coverage` at the worktree's root: the upload reads it there, and a report would only lengthen the journal.
 COVERAGE_ARGS = ("--cov=cli", "--cov-report=")
 WORKTREE_DIR = Path(".tmp") / "data-gated-run"
