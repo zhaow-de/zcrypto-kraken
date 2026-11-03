@@ -15,8 +15,7 @@ import pytest
 CONFTEST = Path(__file__).resolve().parent / "conftest.py"
 THREE_TESTS = "def test_alpha():\n    assert True\n\n\ndef test_beta():\n    assert True\n\n\ndef test_gamma():\n    assert True\n"
 BANNER = "conftest: NO TEST SELECTED"
-# A mark the checkout registers and no scratch test carries: the tree inherits its --strict-markers, which refuses
-# an unregistered name in `-m` with exit 4.
+# The tree inherits the checkout's --strict-markers, which refuses an unregistered name in `-m` with exit 4.
 EMPTYING_MARK = "data"
 
 
