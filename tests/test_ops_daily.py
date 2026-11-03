@@ -580,6 +580,24 @@ def test_the_deploy_window_holds_only_lines_inside_it(tmp_path):
     assert [d["limit"] for d in lines] == ["ops"]
 
 
+def test_the_deploy_log_is_the_main_checkouts_where_a_worktree_runs_the_pass(tmp_path):
+    main, worktree, plain = tmp_path / "main", tmp_path / "wt", tmp_path / "plain"
+    main.mkdir()
+    plain.mkdir()
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=main, check=True, capture_output=True, text=True)
+
+    git("init", "-q", "-b", "develop")
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "root")
+    git("worktree", "add", "-q", "--detach", str(worktree))
+
+    assert ops_daily.main_checkout(worktree) == main.resolve()
+    assert ops_daily.main_checkout(main) == main.resolve()
+    assert ops_daily.main_checkout(plain) == plain
+    assert ops_daily.DEPLOY_LOG == ops_daily.main_checkout(ops_daily.REPO_ROOT) / "docs/reference/deploy-log.jsonl"
+
+
 # --- Task 14 (spec 00104): the report, the exit codes -------------------------------------------------------
 
 
