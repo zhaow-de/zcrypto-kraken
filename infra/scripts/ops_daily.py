@@ -317,18 +317,18 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 def main_checkout(root: Path) -> Path:
     """The checkout `root`'s worktrees hang off: `converge.sh` run there appends the deploy rows a records pull
-    request has not yet committed."""
+    request has not yet committed. A common dir with no checkout beside it, a `--separate-git-dir` store's, is no
+    such checkout, and `root` answers."""
+
+    def git(cwd: Path, *args: str) -> str:
+        return subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True, check=True, timeout=10).stdout.strip()
+
     try:
-        common = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "--path-format=absolute", "--git-common-dir"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=10,
-        ).stdout.strip()
+        parent = Path(git(root, "rev-parse", "--path-format=absolute", "--git-common-dir")).parent
+        top = git(parent, "rev-parse", "--show-toplevel")
     except OSError, subprocess.SubprocessError:
         return root
-    return Path(common).parent if common else root
+    return parent if Path(top).resolve() == parent.resolve() else root
 
 
 DEPLOY_LOG = main_checkout(REPO_ROOT) / "docs/reference/deploy-log.jsonl"

@@ -606,6 +606,13 @@ def test_the_deploy_log_is_the_main_checkouts_where_a_worktree_runs_the_pass(tmp
     assert ops_daily.main_checkout(plain) == plain
     assert in_worktree.DEPLOY_LOG == main.resolve() / "docs/reference/deploy-log.jsonl"
 
+    separate, store = tmp_path / "separate", tmp_path / "store"
+    store.mkdir()
+    subprocess.run(
+        ["git", "init", "-q", "--separate-git-dir", str(store / "repo.git"), str(separate)], check=True, capture_output=True
+    )
+    assert ops_daily.main_checkout(separate) == separate
+
 
 # --- Task 14 (spec 00104): the report, the exit codes -------------------------------------------------------
 
