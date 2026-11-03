@@ -1,0 +1,65 @@
+# Every shipped log line carries a level, and a WARNING or ERROR line is one an operator reads as such
+
+Branch `fix/fleet-log-levels-and-noise`, cut from `develop` 8e4a6da66 on 2026-11-03, on the owner's word. No topic: the work was asked for directly. It began as one alert rule's noise, `Monitor · Grafana ERROR logs` paging on browsing after the node's Grafana moved 13.2.4 → 13.3.0 in the owner's accidental apt run of 2026-11-02 (21:14:10–21:15:10Z by `grafana_build_info`; the `mon` role follows Grafana from apt, `infra/ansible/roles/mon/tasks/main.yml:82`), and the owner widened it the same hour: "also the in the branch, investigate **ALL* the WARN, ERROR, and UNK log entries, eliminate them if applicable, especially the UNK ones."
+
+## The measured set
+
+Read on the node's Loki for the 24 hours to 2026-11-03T16:40:00Z, every host, by exact LogQL counts at that instant and by line shape with the numbers, timestamps and hex masked. UNK is a line with no `level` label, which Grafana draws as level unknown; the node's Loki holds no `UNK` value.
+
+- **By level**: CRITICAL 5, ERROR 2417, WARNING 3163, INFO 6145, no level 766.
+- **No level (766)**: `zcrypto-mon-selfcheck` 288 and `zcrypto-hc-selfcheck` 288, one line per five-minute run; `cache-proxy` 67; `zcrypto-tape-bars` 48; the hc node's own `alloy` 36; `valkey` 10 and `sentinel` 10 over the three cache nodes; `zcrypto-verified-replay` 7; `zcrypto-sqlite-backup` 3; `hc` 3, uWSGI's cron; `zcrypto-verify-replay` 2; `zcrypto-capture-prune` 2, one per capture host; `zcrypto-archive-pull` 1; `zcrypto-engine-journal-prune` 1.
+- **ERROR (2417) and CRITICAL (5)**: `engine-nautilus` 2347, every one at 2026-11-02T21:10Z, the old image starting on the unflushed store at the accidental dockerd restart, and none in the 16 h 40 min from 2026-11-03T00:00Z, the store cleared and the engine re-pinned since; Grafana 42 — `plugin.loki`'s `Partial data response error` with a cancelled context 23, `Request Completed … path=/apis/quotas.grafana.app/… status=501` 2 at 16:32:41Z (the 13.3.0 dashboards page asking for an API this OSS build does not serve), `ngalert.notifier … receiver= … msg="Missing notification reason"` 2 at 10:00:00Z and 10:00:19Z (the owner's two contact-point tests), each bundled plugin's `plugin process exited … error="signal: terminated"` at 21:14Z (the upgrade's restart), and one `end time can't be in the past` at 09:57Z (a silence edit the node refused); Loki 28 — a cancelled query 17, `error notifying scheduler about finished query … err=EOF` 11, both 16:32–16:38Z; HAProxy's `[ALERT] backend 'node<N>' has no server available!` 5, CRITICAL, one per cache-node restart or the primary's reboot.
+- **WARNING (3163)**: Grafana 2804 — `logger=search-manifest-watcher` 2792, two lines a minute since the 13.3.0 start (`zero manifests, keeping previous set`, `source listed zero manifests`) and the logger's only lines, `Failed to authenticate request … user token not found` 10 at 09:55Z (a stale browser session), the `[security] x_xss_protection` deprecation notice 1 at the start, one gzip write refusal; Sentinel 132 and Valkey 34 (`Error condition on socket for SYNC` 29), every one at a cache-node restart; HAProxy 76 — its two start-up warnings 6 (`started as root without any 'chroot' directive`, `log format ignored for frontend 'metrics' since it has no log address`) and the server, proxy and worker state lines of its restarts; Loki 52 — a cancelled query 48, `maximum number of series (500)` 4 at 10:48Z (a read of mine that `infra/runbooks/mon.md`'s read 6 now narrows); nautilus 49 — the venue's `Connection closed by peer (no close frame)` 25 and the old store's residual-position and valuation lines at its starts before the clear; the engine 8 — `the venue holds <dust> <pair> where the Cache reads 0` 6 (three starts × SOL/EUR and ETH/EUR, 1e-08-scale balances) and a user-stream socket down and back 2 at 16:36Z; capture 4, the venue's socket closes; hc 4, three of them `django.security.csrf`, a login without a Referer.
+- **Where each unlevelled line comes from** — its emitter, its path to Loki, the stage that skips it, and every rule, dashboard, runbook and test reading its text — is in the branch's `.tmp/lognoise/sources.md`, with file and line citations; the plan's tasks cite the same lines.
+
+## Operating model
+
+Each host's Alloy is the one place a line gets its `level`: `loki.process` stages per container, ending in `stage.labels { values = { level = "level" } }`. A source a host's config names no stage for ships with no level. Grafana Cloud and the node read the same labels, the alert rules select on them (`level=~"ERROR|CRITICAL"` pages; `level=~".+"` is one canary's proof of parsing), and the logs dashboard's level filter reads them.
+
+## D1 — a level for every line, set in Alloy, keyed on the text the source already prints
+
+Every source in the measured set gets its level from a stage in its host's Alloy config, matched on the line shape the source already prints. No source's text changes: tests pin it (`tests/test_mon_selfcheck.py:68`, `tests/test_hc_selfcheck.py:53`), a rule reads it (`zcrypto-hc-service-down` matches `|= "web=ok"`), and runbooks grep it (`infra/runbooks/hc.md:383`, `infra/ansible/roles/ops/templates/tape-bars.sh.j2:49`). Each stage is a trailing `stage.match` on `{container="<name>", level=""}` with a line filter, setting the level by `stage.static_labels`, after the host's parsing stages, so it never overwrites a level a parser set. A line a source prints on failure takes the level of what it reports: a self-check's `=FAIL`, `-> not pinging` or `ping failed` is WARNING (its dead-man check pages the failure, the line explains it); a prune unit's refusal, which never matches its success shape, is ERROR.
+
+## D2 — journald's priority is never the level
+
+The journal's priority does not carry the level for any of these sources: a systemd unit logs stdout and stderr alike at `SyslogLevel=`, info by default, and no unit here sets it; HAProxy reaches the journal only as `docker compose up`'s stdout; Docker's journald driver writes a container's stderr at err, so a priority fallback would raise every harmless stderr notice of Valkey or uWSGI to ERROR, and the ops error rule would page it. No config reads `__journal_priority` today, and none starts to.
+
+## D3 — the ops parse canary keeps its meaning
+
+`Ops · unit log parse dead` (`zcrypto-ops-unit-parse-dead`) reads any levelled `zcrypto-*` line on ops in 26 hours as proof the regex stage parses. D1's fallback levels would satisfy it with the regex stage broken. Its selector takes, besides `level=~".+"`, the Python line shape the regex stage parses — `|~ "^\\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d:\\d\\d,\\d{3} "` — so only that stage's lines count, and a mutation of the stage still trips it. Its two dashboard copies (`infra/grafana/zcrypto-logs-dashboard.json:408,430`) follow. `Ops · log pipeline dead` keeps Alloy's own lines as they are.
+
+## D4 — a duplicate is dropped, not levelled
+
+Three sources print a line twice, once levelled and once not, and the unlevelled copy is dropped in Alloy: HAProxy's log target repeats each server state event (`Server … is UP|DOWN`, `Proxy … stopped`, `backend … has no server available!`) that its stderr already prints as `[WARNING]` or `[ALERT]`; `zcrypto-verify-replay` and `zcrypto-archive-pull` `cat` a captured file whose `typer.echo` lines repeat their `logger.info` lines (`cli/archive/command.py:1301-1305,1330-1331`, `:1362-1370` against `cli/trades/backfill.py:300-305`). HAProxy's connection log lines, which have no other copy, are INFO.
+
+## D5 — a cancelled query, an unserved probe and a test notification are not errors
+
+The node's Alloy re-levels to INFO, at ingestion, four line shapes that report no fault: a Grafana or Loki line whose error is a cancelled context (`context canceled`, bare or wrapped as `Get "<url>": context canceled`, the browser leaving a panel); Grafana's `Request Completed` for `path=/apis/quotas.grafana.app/` with `status=501`, the 13.3.0 dashboards page asking an API the OSS build does not serve; Grafana's `Missing notification reason` with an empty `receiver=`, a contact-point test; a bundled plugin's `plugin process exited` with `error="signal: terminated"`, Grafana stopping. Re-levelling at ingestion fixes the logs view and the rule together, where a rule exclusion would leave the ERROR in every view; `zcrypto-mon-grafana-error-logs` and its panel 911 then need no new exclusion, and its existing `error="context canceled"` exclusion stays as written. Loki's `error notifying scheduler about finished query … err=EOF`, which comes with the cancellations, keeps its level: an EOF from the scheduler is also what a scheduler failure looks like.
+
+## D6 — the node Grafana's configuration noise
+
+`grafana.ini`'s `[log]` takes `filters = search-manifest-watcher:error`, which leaves that logger's two warnings a minute out and keeps any error it logs; `[security]` takes `x_xss_protection = false`, the setting browsers dropped, which 13.3.0 announces as deprecated at every start.
+
+## D7 — HAProxy's start-up warnings
+
+`option tcplog` moves from `defaults` into `frontend cache`, the one frontend that logs, so `frontend metrics` (`no log`) no longer inherits a format it cannot use. The chroot warning is answered by `chroot /var/lib/haproxy` in `global`, a directory the image carries, with HAProxy still dropping to `user haproxy` after start. The file is the `engine` role's (`infra/ansible/roles/engine/templates/haproxy.cfg.j2`), so it reaches `zcrypto` only with an engine converge, inside the inter-cycle gap: it rides the next one, the nautilus bump half a day before rung 3's entry, the owner's word of 2026-11-03, and never a converge of its own.
+
+## D8 — what stays at its level
+
+A real event keeps its level, and no stage touches it: the cache failovers and HAProxy's `no server available` at each node restart; Valkey's and Sentinel's failover lines; the venue's socket closes as nautilus and capture log them; a stale browser session; a CSRF refusal; a Loki series-limit refusal; a silence edit the node refused; the old store's residual-position lines, the true report of the store before it was cleared. Each is the true report of something that happened, and each comes with a restart, a reboot or the venue.
+
+## D9 — UNK stays at zero
+
+A node rule, `Fleet · log lines with no level` (uid `zcrypto-mon-unlevelled-log-lines`, warning, the `logs` receiver, `for: 0s`, `noDataState: OK`), pages when any host ships a line with no level in 15 minutes — `topk(5, sum by (host, container) (count_over_time({host=~".+", level=""} [15m])))` — one instance per source, so a new script or a changed line shape is classified when it first ships rather than discovered in a view. Its runbook section in `infra/runbooks/mon.md` says to read the line, find its stage per D1, and add the source's stage.
+
+## D10 — the engine's dust warning is the owner's
+
+The engine warns at each start that the venue holds a balance the Cache reads as 0 — 1e-08-scale SOL and ETH after the store clear. The statement is true, and the dust sits below the pair's order minimum, so nothing trades it away. Silencing it means engine code, a dust threshold read from the instrument, and so an image and an engine converge: it is offered to the owner as a choice and, unanswered, stays as it is. This branch carries no engine code.
+
+## D11 — the rollout is the owner's, host by host
+
+Every change but D7 is an Alloy config, `grafana.ini` or a rule, each reaching its host by that host's converge with `--tags alloy` or the `mon` role's own tag, read by the owner: the node first, then hc, ops, the three cache nodes, and the capture pair's Alloy last, the secondary first, outside any Kraken window. D9's rule reaches the node by the push skill. Verification is by value on the node after each host: `sum by (host, container) (count_over_time({host="<host>", level=""} [1h]))` reads no series once an hour of the host's sources has passed, and the levels the stages set are read back on a sample line of each source.
+
+## Out of scope
+
+The engine's dust warning (D10, the owner's choice); the nautilus `Connection closed by peer` warnings, upstream's logging of a venue event; a change to any source's printed text (D1).
