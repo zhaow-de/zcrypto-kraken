@@ -7,7 +7,8 @@ Run from the workstation, each mode its own call, in this order:
     ssh zcrypto sudo python3 - clear <list-file> < infra/scripts/cache-prefix-clear.py
     ssh zcrypto sudo python3 - verify <dbsize-before> <deleted> < infra/scripts/cache-prefix-clear.py
 
-  inventory  writes the keys under `trader-SHADOW-001:` one per line to a new file under /var/lib/zcrypto-engine.
+  inventory  writes the keys under `trader-SHADOW-001:` one per line to a new file under /var/lib/zcrypto-engine,
+             and says whether the open-positions index is present: the first start's read after a clear.
   clear      refused while `zcrypto-engine` runs, read with a docker inspect of `{{.State.Running}}` and no
              other field; then one DEL per listed key, never a scan piped into DEL.
   verify     no key left under the prefix, and DBSIZE the inventory's less the deleted count.
@@ -35,6 +36,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 PREFIX = "trader-SHADOW-001:"
+POSITIONS_OPEN = f"{PREFIX}index:positions_open"
 PASSWORD_LINE = "ZCRYPTO_CACHE_PASSWORD="
 USER = "engine"
 ENGINE_CONTAINER = "zcrypto-engine"
@@ -208,6 +210,7 @@ def inventory(host: Host) -> int:
         print(f"  {n:7d} {collection}")
     print(f"keys outside {PREFIX} {len(outside)}, 0 expected")
     _name(outside)
+    print(f"{POSITIONS_OPEN} {'present' if POSITIONS_OPEN in keys else 'absent'}")
     path = Path(host.out_dir) / f"cache-prefix-clear-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.keys"
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape") as f:

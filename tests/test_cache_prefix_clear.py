@@ -4,6 +4,7 @@ answers the one inspect and records what it was asked."""
 
 from __future__ import annotations
 
+import dataclasses
 import importlib.util
 import re
 import sys
@@ -129,6 +130,21 @@ def test_the_inventory_counts_the_store_by_collection_and_lists_the_prefixed_key
     path = _list_file(out)
     assert path.parent == Path(host.out_dir) and re.fullmatch(r"cache-prefix-clear-\d{8}T\d{6}Z\.keys", path.name)
     assert path.read_text().splitlines() == sorted(INSIDE)
+
+
+def test_the_inventory_reads_the_open_positions_index_present_before_a_clear_and_absent_after(tmp_path, valkey, capsys):
+    docker, _ = _docker(tmp_path, "absent")
+    host = _host(tmp_path, valkey, docker)
+    _, out = _run(capsys, host, "inventory")
+    assert "trader-SHADOW-001:index:positions_open present" in out.splitlines()
+
+    _run(capsys, host, "clear", str(_list_file(out)))
+    again = tmp_path / "again"
+    again.mkdir()
+    rc, out = _run(capsys, dataclasses.replace(host, out_dir=str(again)), "inventory")
+
+    assert rc == 0, out
+    assert "trader-SHADOW-001:index:positions_open absent" in out.splitlines()
 
 
 @pytest.mark.parametrize("state", ["absent", "stopped"])
