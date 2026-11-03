@@ -606,7 +606,7 @@ def test_the_deploy_log_is_the_main_checkouts_where_a_worktree_runs_the_pass(tmp
     assert ops_daily.main_checkout(plain) == plain
     assert in_worktree.DEPLOY_LOG == main.resolve() / "docs/reference/deploy-log.jsonl"
 
-    separate, store = tmp_path / "separate", tmp_path / "store"
+    separate, store = tmp_path / "separate", main / "store"
     store.mkdir()
     subprocess.run(
         ["git", "init", "-q", "--separate-git-dir", str(store / "repo.git"), str(separate)], check=True, capture_output=True
