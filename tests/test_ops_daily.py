@@ -2255,7 +2255,7 @@ def test_the_real_register_yields_a_refdata_reminder():
     giving it a `tmp_path` fixture would move it off the path `main` takes."""
     read = ops_daily.read_reminders(now=NOW)
     assert read.unreadable is None, read.unreadable
-    # The committed deploy log decides which nodes' patch passes join them.
+    # The main checkout's deploy log, committed rows or not, decides which nodes' patch passes join them.
     assert {r.name for r in read.reminders} - set(_PATCH_PASS_NAMES.values()) == {
         "refdata sweep",
         "kraken bookkeeping",
