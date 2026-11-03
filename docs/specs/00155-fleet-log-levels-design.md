@@ -26,7 +26,7 @@ The journal's priority does not carry the level for any of these sources: a syst
 
 ## D3 — the ops parse canary keeps its meaning
 
-`Ops · unit log parse dead` (`zcrypto-ops-unit-parse-dead`) reads any levelled `zcrypto-*` line on ops in 26 hours as proof the regex stage parses. D1's fallback levels would satisfy it with the regex stage broken. Its selector takes, besides `level=~".+"`, the Python line shape the regex stage parses — `|~ "^\\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d:\\d\\d,\\d{3} "` — so only that stage's lines count, and a mutation of the stage still trips it. Its two dashboard copies (`infra/grafana/zcrypto-logs-dashboard.json:408,430`) follow. `Ops · log pipeline dead` keeps Alloy's own lines as they are.
+`Ops · unit log parse dead` (`zcrypto-ops-unit-parse-dead`) reads any levelled `zcrypto-*` line on ops in 26 hours as proof the regex stage parses. D1's fallback levels would satisfy it with the regex stage broken. Its selector takes, besides `level=~".+"`, the shape the regex stage ships: the stage ends in `stage.output { source = "rest" }` (`infra/ansible/roles/ops/files/config.alloy`), so a parsed line leaves Alloy as `<logger> [<file>:<line>] - <message>`, its timestamp and level cut, and the canary's line filter is `|~ "^\\S+ \\[\\S+\\] - "`. Only that stage's lines count, no fallback's line has that shape, and a mutation of the stage still trips it. Its one dashboard copy, the logs board's `ops units, leveled lines` target (`infra/grafana/zcrypto-logs-dashboard.json`, refId F), follows; the board's other ops target is `Ops · log pipeline dead`'s, which keeps Alloy's own lines as they are.
 
 ## D4 — a duplicate is dropped, not levelled
 
