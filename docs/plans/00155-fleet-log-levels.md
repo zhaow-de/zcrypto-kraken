@@ -20,11 +20,11 @@
 - Fixtures are the measured shapes (the spec's measured basis), the sources' own format strings and the shapes existing tests pin, numbers filled in; an address is `192.0.2.x` or loopback, a user name `example-admin`. The fixture lines below are exact; ruff rewraps the code around them.
 - A comment or docstring stays only where a reader would act differently without it, and is correct; an event goes to the PR body. Runbook text, alert summaries and dashboard text carry no `spec <NNNNN>`, `D<N>`, `T<NNNN>`, `iter-<N>` or `Phase <N>` token (`tests/test_internal_terms_not_operator_visible.py`). A runbook page's list item carrying *every*, *never*, *always*, *only*, *any* or *cannot* names its count or declares none (the commit-msg guidance guard reads every top-level runbook page); the runbook texts below carry none of the words in a list item. Load `zcrypto-refine-rules` before editing a page under `infra/runbooks/`, as its description asks.
 - The levels command is `uv run pytest tests/test_infra_alloy_levels.py -q -p no:cacheprovider --basetemp=.tmp/implementer/pt -rs`; a step's expected count is its result line unless the step names another command.
-- Tests per commit: `T="$(infra/scripts/consumers.sh --direct <the commit's changed paths>) <the task's test files>"`, every path the commit changes passed, its test files among them, then `[ -n "$T" ] && uv run pytest $T -m "not slow" -q -p no:cacheprovider --basetemp=.tmp/implementer/pt -rs`; the gate is `uv run pre-commit run -a`, re-run until clean, its rewrites staged. Before each task's first pytest run, `mkdir -p .tmp/implementer .local/fleet-log-levels`, its own call.
+- Tests per commit: `T="$(infra/scripts/consumers.sh --direct <the commit's changed paths>) <the task's test files>"`, every path the commit changes passed, its test files among them, then `[ -n "$T" ] && uv run pytest $T -m "not slow" -q -p no:cacheprovider --basetemp=.tmp/implementer/pt -rs`, the two in one call, since `T` does not outlive its call; the gate is `uv run pre-commit run -a`, re-run until clean, its rewrites staged. Before each task's first pytest run, `mkdir -p .tmp/implementer .local/fleet-log-levels`, its own call.
 - No `alloy` binary is on the workstation or in CI (`.github/workflows/test-suite.yml` installs none): the model cases are the guard in every commit, and each `test_alloy_itself_agrees_with_the_level_model` case skips in the implementer's runs. The controller runs the harness against the fleet's release binary twice (Task 11 Steps 1–3): right after Task 1, over the node's blocks, before Task 2 starts; and over all six configs after Task 10.
 - Commits: Conventional Commits, one subject per change, after a `git -C <the worktree> add <every path the commit changes>` of its own, through `git -C <the worktree> commit -F - <<'EOF'` — the subject, a blank line, the body, a blank line, the result line, a blank line, the two trailers below, `EOF` — as Task 1 Step 7's fence shows; the message says what changed and pastes the result line of the test command it names, run over the commit's own tree; one state-changing git command per Bash call, nothing beside it; never an amend, `--no-verify` or `git stash`; every message ends with `Co-Authored-By: Claude <actual executing model> <noreply@anthropic.com>` — the implementer's own model in place of the placeholder — and `Claude-Session: https://claude.ai/code/session_018eFiE9ZzjweN7A4N9yBCTV`.
 - Probes (this plan's tier is `full`, `infra/scripts/tier.py`): each arm a task lists runs as its own call on the committed tree — `infra/scripts/mutate-probe.sh --file <file> --control '<control>' --mutation '<mutation>' -- uv run pytest <test file> -k '<selection>' -q -p no:cacheprovider --basetemp=.tmp/implementer/pt` — the test file `tests/test_infra_alloy_levels.py` and the control `1,$d` unless the arm or its step names others. Before each arm, `grep -c '<address or pattern>' <file>` prints `1`, and for an addressed substitution `sed -n '/<address>/p' <file> | grep -c '<the substitution's pattern>'` prints `1` (a `^` inside a pattern is written `\^`); an append arm checks its address alone, and one with none (`$a …`) rests on the script's own refusal of a no-op sed. `: > .local/fleet-log-levels/probes-task-<N>.txt` before a task's arms; after each arm its id and the script's last line are appended, `printf '%s\n' '<arm>: <that line>' >> <file>`, its own call. A task's verdicts ride an empty commit, `git commit --allow-empty -F <message file>`, subject `test(<scope>): <task> proven by infra/scripts/mutate-probe.sh`, its body the probes file whole and the trailers. A case that skips without the binary is not probed (`probe skipped: the case skips without an alloy binary`).
-- No `ansible-playbook` run, converge, push, `grafana-query.py` read or network call in a task but Task 11 Step 1's two downloads; the rollout is the owner's.
+- No `ansible-playbook` run, converge, push, `grafana-query.py` read or network call in a task but Task 11 Step 1's two downloads and Step 7's push and pull request; the rollout is the owner's.
 
 ## Rulings where the spec is silent, and where it cannot be implemented as written
 
@@ -47,7 +47,7 @@
 ## File structure
 
 - Create `tests/test_infra_alloy_levels.py`: the level model, the fixtures, the structural guards over all six configs, the D2 guard and the real-Alloy harness.
-- Modify the six configs `infra/ansible/roles/{mon,hc,ops,capture,cache}/files/config.alloy` and `infra/nas/config.alloy`: trailing blocks per host; hc also takes the fleet's logfmt block for its own Alloy; the capture and cache configs' comments that the change makes false.
+- Modify the six configs `infra/ansible/roles/{mon,hc,ops,capture,cache}/files/config.alloy` and `infra/nas/config.alloy`: trailing blocks per host; hc also takes the fleet's logfmt block for its own Alloy; the node's, the capture and the cache configs' comments that the change makes false.
 - Modify `infra/grafana/alerts.yaml` (`zcrypto-ops-unit-parse-dead`'s expression, the new `zcrypto-mon-unlevelled-log-lines`), `infra/grafana/zcrypto-logs-dashboard.json` (refId F), `infra/grafana/fleet-health-dashboard.json` (panel 912 and the row's shift).
 - Modify `infra/ansible/roles/mon/templates/grafana.ini.j2`, `infra/ansible/roles/engine/templates/haproxy.cfg.j2`.
 - Modify tests `tests/test_infra_alert_rules.py`, `tests/test_infra_mon_role.py`, `tests/test_infra_cache_proxy.py`, and `tests/test_infra_alloy_stages.py`, its `alloy run` command shared with the new harness.
@@ -55,7 +55,7 @@
 
 ## Review Focus
 
-1. A shape a source prints on a path the 24-hour read did not see — a self-check with no ping URL, a prune's refusal, a replay stopped on an unpulled journal, an `AUDIT MISMATCH` — takes the level of what it reports. Pinned by Tasks 1–5's fixtures `hc_selfcheck_no_ping_url`, `capture_prune_refused`, `engine_journal_prune_refused`, `ops_verified_replay_journal_behind`, `ops_verify_replay_audit_mismatch`.
+1. A shape a source prints on a path the 24-hour read did not see — a self-check with no ping URL, a prune's refusal, a replay stopped on an unpulled journal, an `AUDIT MISMATCH` — takes the level of what it reports. Pinned by Tasks 1–5's fixtures `mon_selfcheck_no_ping_url`, `hc_selfcheck_no_ping_url`, `capture_prune_refused`, `engine_journal_prune_refused`, `ops_verified_replay_journal_behind`, `ops_verify_replay_audit_mismatch`.
 2. A line that already carries a level reaching a trailing block — a Valkey `#` line, HAProxy's `[WARNING]` copy, a parsed ops record — is left as it is. Pinned by Task 1's `test_a_trailing_stage_sets_a_level_only_where_none_is_set` and `test_a_level_is_set_after_every_parse`, and by Tasks 3 and 5's `test_a_dropped_line_is_a_copy_its_source_ships_with_a_level`.
 3. A real failure whose text resembles a no-fault shape — Loki's `err=EOF`, the quotas API at 500, a notifier line naming its receiver, a plugin killed by another signal, a stale session's `error="user token not found"` — keeps its level. Pinned by Task 1's `mon_loki_scheduler_eof`, `mon_grafana_quotas_500`, `mon_grafana_notifier_failure`, `mon_grafana_plugin_killed`, `mon_grafana_stale_session`.
 4. The ops regex stage broken while the trailing blocks still level the bare echoes — the canary still reads 0 and pages. Pinned by Task 4's `test_the_unit_parse_canary_counts_the_lines_the_regex_stage_parsed`.
@@ -68,7 +68,7 @@
 
 **Files:**
 - Create: `tests/test_infra_alloy_levels.py`
-- Modify: `infra/ansible/roles/mon/files/config.alloy` (inside `loki.process "parse"`, after the `{container="caddy"}` match, before the component's closing brace)
+- Modify: `infra/ansible/roles/mon/files/config.alloy` (inside `loki.process "parse"`, after the `{container="caddy"}` match, before the component's closing brace; the comment above the logfmt match)
 - Modify: `infra/runbooks/mon.md` (`zcrypto-mon-grafana-error-logs`, *What it means*, first paragraph)
 - Modify: `tests/test_infra_alloy_stages.py` (`_run_alloy`'s command, moved into `_alloy_run_command`)
 
@@ -118,6 +118,7 @@ FIXTURES: list[Fixture] = [
     Fixture("mon_selfcheck_ok", "mon", {"container": "zcrypto-mon-selfcheck"}, "selfcheck: rules=ok (114 rules scheduled, last tick 4 s ago) fleet=ok (8 fleet hosts shipping) loki=ok (ready) -> pinged", "INFO"),
     Fixture("mon_selfcheck_fail", "mon", {"container": "zcrypto-mon-selfcheck"}, "selfcheck: rules=FAIL (unreadable: URLError) fleet=FAIL (unreadable: URLError) loki=FAIL (unreadable: URLError) -> not pinging", "WARNING"),
     Fixture("mon_selfcheck_ping_failed", "mon", {"container": "zcrypto-mon-selfcheck"}, "selfcheck: rules=ok (114 rules scheduled, last tick 4 s ago) fleet=ok (8 fleet hosts shipping) loki=ok (ready) -> ping failed: URLError", "WARNING"),
+    Fixture("mon_selfcheck_no_ping_url", "mon", {"container": "zcrypto-mon-selfcheck"}, "selfcheck: rules=ok (114 rules scheduled, last tick 4 s ago) fleet=ok (8 fleet hosts shipping) loki=ok (ready) -> healthy, and no ping URL is set", "WARNING"),
     Fixture("mon_grafana_panel_cancelled", "mon", {"container": "grafana-server", "level": "ERROR"}, r'logger=plugin.loki t=2026-11-03T16:37:12.345678901Z level=error msg="Partial data response error" dsName=Loki dsUid=grafanacloud-logs error="Get \"http://127.0.0.1:3100/loki/api/v1/query_range?direction=backward&end=1762187832000000000&query=sum%28rate%28%7Bhost%3D~%22zcrypto%22%7D%5B5m%5D%29%29&start=1762184232000000000&step=60000ms\": context canceled"', "INFO"),
     Fixture("mon_loki_mapping_cancelled", "mon", {"container": "loki", "level": "WARNING"}, r'ts=2026-11-03T16:37:30.123456789Z caller=spanlogger.go:111 middleware=QueryShard.astMapperware org_id=fake user=fake level=warn msg="failed mapping AST" err="context canceled" query="sum(rate({host=~\"zcrypto|zcrypto-red|ops\"} [5m]))"', "INFO"),
     Fixture("mon_loki_scheduler_cancelled", "mon", {"container": "loki", "level": "ERROR"}, 'level=error ts=2026-11-03T16:33:01.123456789Z caller=scheduler_processor.go:111 component=querier msg="error processing requests from scheduler" err="rpc error: code = Canceled desc = context canceled" addr=127.0.0.1:9095', "INFO"),
@@ -375,9 +376,9 @@ def _alloy_run_command(alloy: str, tmp_path: Path, config: Path) -> list[str]:
 
 with `_run_alloy`'s `cmd = [` list, `alloy` through `str(tmp_path / "harness.alloy")`, replaced by `cmd = _alloy_run_command(alloy, tmp_path, tmp_path / "harness.alloy")`.
 
-- [ ] **Step 2: Run it to see it fail** — the levels command; expected `14 failed, 29 passed, 1 skipped`: the failures are `test_each_line_takes_the_level_its_source_reports` for `mon_selfcheck_ok`, `mon_selfcheck_fail`, `mon_selfcheck_ping_failed`, `mon_grafana_panel_cancelled`, `mon_loki_mapping_cancelled`, `mon_loki_scheduler_cancelled`, `mon_grafana_quotas_501`, `mon_grafana_contact_point_test`, `mon_grafana_plugin_stop`, `mon_alloy_start`, `mon_caddy_env_home`, `mon_caddy_env_version`, `mon_grafana_store_not_ready`, `mon_grafana_store_unreachable`; the six counter-fixtures and every other case pass; `[mon]` of the harness skips.
+- [ ] **Step 2: Run it to see it fail** — the levels command; expected `15 failed, 30 passed, 1 skipped`: the failures are `test_each_line_takes_the_level_its_source_reports` for `mon_selfcheck_ok`, `mon_selfcheck_fail`, `mon_selfcheck_ping_failed`, `mon_selfcheck_no_ping_url`, `mon_grafana_panel_cancelled`, `mon_loki_mapping_cancelled`, `mon_loki_scheduler_cancelled`, `mon_grafana_quotas_501`, `mon_grafana_contact_point_test`, `mon_grafana_plugin_stop`, `mon_alloy_start`, `mon_caddy_env_home`, `mon_caddy_env_version`, `mon_grafana_store_not_ready`, `mon_grafana_store_unreachable`; the six counter-fixtures and every other case pass; `[mon]` of the harness skips.
 
-- [ ] **Step 3: Add the node's blocks** — in `infra/ansible/roles/mon/files/config.alloy`, after the `{container="caddy"}` match's closing `  }` and a blank line, before the `}` that closes `loki.process "parse"`:
+- [ ] **Step 3: Add the node's blocks and correct the comment** — in `infra/ansible/roles/mon/files/config.alloy`, after the `{container="caddy"}` match's closing `  }` and a blank line, before the `}` that closes `loki.process "parse"`:
 
 ```
   // Four shapes Grafana or Loki log at ERROR or WARNING that report no fault, re-levelled to INFO after the parse
@@ -462,7 +463,20 @@ with `_run_alloy`'s `cmd = [` list, `alloy` through `str(tmp_path / "harness.all
   }
 ```
 
-- [ ] **Step 4: Run it to see it pass** — the levels command; expected `43 passed, 1 skipped`.
+and the comment above the `{container=~"grafana-server|prometheus|loki|alloy"}` match, its last sentence:
+
+```
+  // Grafana, Prometheus, Loki and Alloy log logfmt with a `level` key. A line of another shape renders
+  // an empty level, which the labels stage drops, so it ships with no `level` label.
+```
+
+```
+  // Grafana, Prometheus, Loki and Alloy log logfmt with a `level` key. A line of another shape renders
+  // an empty level, which the labels stage drops; the blocks at the end of this component level two
+  // such shapes, Alloy's start line and Grafana's wait for its stores.
+```
+
+- [ ] **Step 4: Run it to see it pass** — the levels command; expected `45 passed, 1 skipped`.
 
 - [ ] **Step 5: The runbook** — in `infra/runbooks/mon.md`, section `zcrypto-mon-grafana-error-logs`, *What it means*, first paragraph, replace the text from `So are a restart's plugin stops:` through `still shows it.` (the two sentences on the plugin stops and the cancelled context) with:
 
@@ -517,6 +531,7 @@ EOF
   - 1q: `-k 'takes_the_level and mon_caddy_env_home'`; mutation `/container=\\"caddy\\", level=/s/level=\\"\\"/level=\\"X\\"/`
   - 1r: `-k 'takes_the_level and mon_grafana_store_not_ready'`; mutation `/\^curl: /s/level=\\"\\"/level=\\"X\\"/`
   - 1s: `-k 'reaches_the_level_stages and mon_caddy_json_line'`; mutation `/container=\\"caddy\\"}"$/,/stage.labels/s/expressions = { level = "level" }/expressions = { level = "severity" }/`
+  - 1t: `-k 'takes_the_level and mon_selfcheck_no_ping_url'`; mutation `/no ping URL is set/s/|-> healthy, and no ping URL is set)/)/`
   - The harness case and `_alloy_run_command`: not probed, they run only with the binary.
 
 - [ ] **Step 9: Record the verdicts** — the empty commit, subject `test(alloy): the node's level stages proven by infra/scripts/mutate-probe.sh`, its body `.local/fleet-log-levels/probes-task-1.txt` whole and the trailers.
@@ -606,7 +621,7 @@ def test_the_dead_man_nodes_alloy_parses_its_logfmt_as_the_fleets_do():
     assert hc == fleet
 ```
 
-- [ ] **Step 2: Run them to see them fail** — the levels command; expected `56 failed, 100 passed, 2 skipped`: the hc fixtures of `test_each_line_takes_the_level_its_source_reports` but `hc_django_text_line`, `hc_alloy_series_gc` and `hc_alloy_usage_report`; the reach cases of those two, which no hc block parses yet; and the logfmt case on `ValueError` (no `{container="alloy"}` match on hc).
+- [ ] **Step 2: Run them to see them fail** — the levels command; expected `56 failed, 102 passed, 2 skipped`: the hc fixtures of `test_each_line_takes_the_level_its_source_reports` but `hc_django_text_line`, `hc_alloy_series_gc` and `hc_alloy_usage_report`; the reach cases of those two, which no hc block parses yet; and the logfmt case on `ValueError` (no `{container="alloy"}` match on hc).
 
 - [ ] **Step 3: Add the dead-man node's blocks** — in `infra/ansible/roles/hc/files/config.alloy`, after the `{container="hc"}` match's closing `  }` and a blank line:
 
@@ -717,7 +732,7 @@ def test_the_dead_man_nodes_alloy_parses_its_logfmt_as_the_fleets_do():
   }
 ```
 
-- [ ] **Step 4: Run them to see them pass** — the levels command; expected `156 passed, 2 skipped`; then `uv run pytest tests/test_infra_hc_role.py tests/test_infra_alloy_stages.py -q -p no:cacheprovider --basetemp=.tmp/implementer/pt` passes unchanged (the `{container="hc"}` match is still the one `_hc_match` finds, its stages `replace`, `json`, `labels`).
+- [ ] **Step 4: Run them to see them pass** — the levels command; expected `158 passed, 2 skipped`; then `uv run pytest tests/test_infra_hc_role.py tests/test_infra_alloy_stages.py -q -p no:cacheprovider --basetemp=.tmp/implementer/pt` passes unchanged (the `{container="hc"}` match is still the one `_hc_match` finds, its stages `replace`, `json`, `labels`).
 
 - [ ] **Step 5: The runbook** — in `infra/runbooks/hc.md`, `zcrypto-hc-service-down` step 3, replace `The second counts lines that are not the service's JSON records, uWSGI's own among them.` with:
 
@@ -779,13 +794,13 @@ The second counts lines that are neither the service's JSON records nor uWSGI's 
     Fixture("ops_verify_replay_summary", "ops", {"container": "zcrypto-verify-replay"}, "replayed 8772 hour(s): 8772 ok, 0 failed", DROP),
     Fixture("ops_verify_replay_audit_mismatch", "ops", {"container": "zcrypto-verify-replay"}, "AUDIT MISMATCH  BTC/EUR 2026-11-02T13  -- the re-replayed hour disagrees with the verdict served from cache", "WARNING"),
     Fixture("ops_archive_pull_backfill_echo", "ops", {"container": "zcrypto-archive-pull"}, "trade backfill complete pairs=10 gaps=0 trades_missing=0 duplicate_rows_found=0 recovered=0 unrecoverable=0 deferred=0 fetch_failed=0 mint_failed=0 duplicates_collapsed=0 duplicates_cross_hour=0 hours_minted=0 hours_repaired_after_loss=0 errors=0", DROP),
+    Fixture("ops_archive_pull_traceback", "ops", {"container": "zcrypto-archive-pull"}, "Traceback (most recent call last):", None),
 ```
 
 and at the end of the module:
 
 ```python
-# Each dropped copy beside the line its source ships levelled: the logged record on ops, HAProxy's stderr copy on the
-# engine host.
+# Each dropped copy beside the line its source ships levelled: the logged record on ops.
 TWINS = {
     "ops_verify_replay_census": "2026-11-03 02:31:07,123 INFO zcrypto.archive.command [command.py:1305] - verify-replay census replayed=12 reused=8748 audited=24 mismatches=0 pending=0 evicted=0 duration_s=312",
     "ops_verify_replay_summary": "2026-11-03 02:31:07,124 INFO zcrypto.archive.command [command.py:1331] - verify-replay complete hours=8772 ok=8772 failed=0",
@@ -799,7 +814,7 @@ def test_a_dropped_line_is_a_copy_its_source_ships_with_a_level(fixture):
     assert _parsed_level(fixture.host, fixture.labels, TWINS[fixture.id]) in {"INFO", "WARNING", "CRITICAL"}
 ```
 
-- [ ] **Step 2: Run them to see them fail** — the levels command; expected `18 failed, 179 passed, 3 skipped`: every ops fixture of `test_each_line_takes_the_level_its_source_reports` but `ops_tape_bars_docker_refusal`; the twins and reach cases pass (they read the parse, which this task leaves).
+- [ ] **Step 2: Run them to see them fail** — the levels command; expected `18 failed, 183 passed, 3 skipped`: every ops fixture of `test_each_line_takes_the_level_its_source_reports` but `ops_tape_bars_docker_refusal` and `ops_archive_pull_traceback`; the twins and reach cases pass (they read the parse, which this task leaves).
 
 - [ ] **Step 3: Add the ops blocks** — in `infra/ansible/roles/ops/files/config.alloy`, after the `{container="alloy"}` match's closing `  }` and a blank line:
 
@@ -860,7 +875,7 @@ def test_a_dropped_line_is_a_copy_its_source_ships_with_a_level(fixture):
   }
 ```
 
-- [ ] **Step 4: Run them to see them pass** — the levels command; expected `197 passed, 3 skipped`; then `uv run pytest tests/test_error_paths_are_logged.py tests/test_infra_archive_pull_template.py -q -p no:cacheprovider --basetemp=.tmp/implementer/pt` passes unchanged (one `stage.regex` on ops, the first `{container=~"zcrypto-.*"}` selector still the regex stage's).
+- [ ] **Step 4: Run them to see them pass** — the levels command; expected `201 passed, 3 skipped`; then `uv run pytest tests/test_error_paths_are_logged.py tests/test_infra_archive_pull_template.py -q -p no:cacheprovider --basetemp=.tmp/implementer/pt` passes unchanged (one `stage.regex` on ops, the first `{container=~"zcrypto-.*"}` selector still the regex stage's).
 
 - [ ] **Step 5: The runbook** — in `infra/runbooks/ops-node.md`, replace the paragraph opening `**Silence here is not a clean bill, and the reason is mechanical.**` with:
 
@@ -883,6 +898,7 @@ def test_a_dropped_line_is_a_copy_its_source_ships_with_a_level(fixture):
   - 3h: `-k 'takes_the_level and ops_archive_pull_backfill_echo'`; mutation `/trade backfill complete/s/level=\\"\\"/level=\\"X\\"/`
   - 3i: `-k 'reaches_the_level_stages and ops_tape_bars_summary'`; mutation `s/expression = "\^(?P<ts>.*$/expression = "^(?P<level>[a-z_]+)=(?P<rest>.*)$"/`
   - 3j: `-k 'is_a_copy_its_source_ships and ops_verify_replay_census'`; mutation `s/(?P<level>\[A-Z\]+)/(?P<level>[a-z]+)/`
+  - 3k: `-k 'takes_the_level and ops_archive_pull_traceback'`; mutation `/trade backfill complete/s/ |~ .*"$/"/`
 
 - [ ] **Step 9: Record the verdicts** — the empty commit, subject `test(alloy): the ops units' level stages proven by infra/scripts/mutate-probe.sh`.
 
@@ -1007,7 +1023,7 @@ Step 4 under **For `unit-parse-dead` (the level label)**, whole:
 
 **Files:**
 - Modify: `infra/ansible/roles/capture/files/config.alloy` (inside `loki.process "parse"`, after the `{container="alloy"}` match, before the closing brace; the comment above `loki.process "parse"` and the cache-proxy block's comment)
-- Modify: `tests/test_infra_alloy_levels.py` (fixtures; four `TWINS` entries)
+- Modify: `tests/test_infra_alloy_levels.py` (fixtures; four `TWINS` entries and the comment above `TWINS`)
 
 **Interfaces:**
 - Consumes: Task 1's model; Task 3's `TWINS` and twins test.
@@ -1027,7 +1043,7 @@ Step 4 under **For `unit-parse-dead` (the level label)**, whole:
     Fixture("cache_proxy_session_cut", "capture", {"container": "cache-proxy"}, "192.0.2.10:51236 [03/Nov/2026:14:19:02.456] cache node1/via-node1 1/0/1201 87 DC 2/2/1/1/0 0/0", "INFO"),
 ```
 
-and to `TWINS`:
+and to `TWINS`, its comment becoming the two lines `# Each dropped copy beside the line its source ships levelled: the logged record on ops, HAProxy's stderr copy on the` and `# engine host.`:
 
 ```python
     "cache_proxy_server_up": '[WARNING]  (8) : Server node1/via-node1 is UP, reason: Layer7 check passed, code: 0, info: "(tcp-check)", check duration: 2ms. 3 active and 0 backup servers online. 0 sessions requeued, 0 total in queue.',
@@ -1036,7 +1052,7 @@ and to `TWINS`:
     "cache_proxy_no_server": "[ALERT]    (8) : backend 'node1' has no server available!",
 ```
 
-- [ ] **Step 2: Run them to see them fail** — the levels command; expected `10 failed, 211 passed, 4 skipped`: the ten capture fixtures of `test_each_line_takes_the_level_its_source_reports`.
+- [ ] **Step 2: Run them to see them fail** — the levels command; expected `10 failed, 215 passed, 4 skipped`: the ten capture fixtures of `test_each_line_takes_the_level_its_source_reports`.
 
 - [ ] **Step 3: Add the capture blocks and correct two comments** — in `infra/ansible/roles/capture/files/config.alloy`, after the `{container="alloy"}` match's closing `  }` and a blank line:
 
@@ -1114,7 +1130,7 @@ and the cache-proxy block's comment, its last three lines:
   // drop a state line, which the proxy's stderr ships levelled.
 ```
 
-- [ ] **Step 4: Run them to see them pass** — the levels command; expected `221 passed, 4 skipped`; then `uv run pytest tests/test_infra_alloy_stages.py tests/test_infra_alloy_series.py tests/test_engine_journal_prune.py -q -p no:cacheprovider --basetemp=.tmp/implementer/pt` passes unchanged (one nautilus stage and its drop; the proxy's block before the engine's).
+- [ ] **Step 4: Run them to see them pass** — the levels command; expected `225 passed, 4 skipped`; then `uv run pytest tests/test_infra_alloy_stages.py tests/test_infra_alloy_series.py tests/test_engine_journal_prune.py -q -p no:cacheprovider --basetemp=.tmp/implementer/pt` passes unchanged (one nautilus stage and its drop; the proxy's block before the engine's).
 
 - [ ] **Step 5: Run the commit's tests and the gate** — `T="$(infra/scripts/consumers.sh --direct tests/test_infra_alloy_levels.py infra/ansible/roles/capture/files/config.alloy) tests/test_infra_alloy_levels.py"`, the pytest line, the gate.
 
@@ -1146,7 +1162,7 @@ and the cache-proxy block's comment, its last three lines:
     Fixture("cache_sentinel_monotonic", "cache", {"container": "sentinel"}, "monotonic: x86 linux, 'constant_tsc' flag not present", "INFO"),
 ```
 
-- [ ] **Step 2: Run them to see them fail** — the levels command; expected `4 failed, 225 passed, 5 skipped`: the four cache fixtures.
+- [ ] **Step 2: Run them to see them fail** — the levels command; expected `4 failed, 229 passed, 5 skipped`: the four cache fixtures.
 
 - [ ] **Step 3: Add the cache blocks and correct the comment** — after the `{container=~"valkey|sentinel"}` match's closing `  }` and a blank line:
 
@@ -1183,7 +1199,7 @@ and the comment above the `{container=~"valkey|sentinel"}` match, its last sente
   // level the two such shapes the containers print.
 ```
 
-- [ ] **Step 4: Run them to see them pass** — the levels command; expected `229 passed, 5 skipped`; then `uv run pytest tests/test_infra_alloy_series.py -k cache -q -p no:cacheprovider --basetemp=.tmp/implementer/pt` passes (one drop stage in the cache pipeline).
+- [ ] **Step 4: Run them to see them pass** — the levels command; expected `233 passed, 5 skipped`; then `uv run pytest tests/test_infra_alloy_series.py -k cache -q -p no:cacheprovider --basetemp=.tmp/implementer/pt` passes (one drop stage in the cache pipeline).
 
 - [ ] **Step 5: Run the commit's tests and the gate** — `T="$(infra/scripts/consumers.sh --direct tests/test_infra_alloy_levels.py infra/ansible/roles/cache/files/config.alloy) tests/test_infra_alloy_levels.py"`, the pytest line, the gate.
 
@@ -1455,7 +1471,7 @@ frontend cache
 
 - [ ] **Step 5: Commit** — after `T="$(infra/scripts/consumers.sh --direct infra/ansible/roles/engine/templates/haproxy.cfg.j2 tests/test_infra_cache_proxy.py) tests/test_infra_cache_proxy.py"`, the pytest line and the gate; subject `fix(engine): the cache proxy chroots and logs connections on its cache frontend alone, its two start-up warnings answered`.
 
-- [ ] **Step 6: Probe** — `: > .local/fleet-log-levels/probes-task-9.txt`; the file `infra/ansible/roles/engine/templates/haproxy.cfg.j2`, `-k test_haproxy_chroots_and_logs_connections_on_the_cache_frontend_alone` for each arm:
+- [ ] **Step 6: Probe** — `: > .local/fleet-log-levels/probes-task-9.txt`; the file `infra/ansible/roles/engine/templates/haproxy.cfg.j2`, the test file `tests/test_infra_cache_proxy.py`, `-k test_haproxy_chroots_and_logs_connections_on_the_cache_frontend_alone` for each arm:
   - 9a: mutation `/^    chroot \/var\/lib\/haproxy$/d`
   - 9b: mutation `/^    log global$/a\    option tcplog`
   - 9c: mutation `/^    no log$/a\    option tcplog`
@@ -1511,7 +1527,7 @@ def test_the_fixtures_hold_every_source_the_30_day_read_found_without_a_level():
     assert sorted(MEASURED - covered) == []
 ```
 
-- [ ] **Step 2: Run them to see them fail** — the levels command; expected `6 failed, 238 passed, 6 skipped`: the six NAS fixtures of `test_each_line_takes_the_level_its_source_reports` but `nas_archive_pull_traceback`; the measured-set case passes, its fixtures in, and its probe (10c) is its proof.
+- [ ] **Step 2: Run them to see them fail** — the levels command; expected `6 failed, 242 passed, 6 skipped`: the six NAS fixtures of `test_each_line_takes_the_level_its_source_reports` but `nas_archive_pull_traceback`; the measured-set case passes, its fixtures in, and its probe (10c) is its proof.
 
 - [ ] **Step 3: Add the NAS block** — in `infra/nas/config.alloy`, after the `{container="alloy"}` match's closing `  }` and a blank line:
 
@@ -1528,7 +1544,7 @@ def test_the_fixtures_hold_every_source_the_30_day_read_found_without_a_level():
   }
 ```
 
-- [ ] **Step 4: Run them to see them pass** — the levels command; expected `244 passed, 6 skipped`; then `uv run pytest tests/test_error_paths_are_logged.py tests/test_infra_alloy_stages.py tests/test_infra_alloy_series.py -q -p no:cacheprovider --basetemp=.tmp/implementer/pt` passes unchanged (one `stage.regex` on the NAS).
+- [ ] **Step 4: Run them to see them pass** — the levels command; expected `248 passed, 6 skipped`; then `uv run pytest tests/test_error_paths_are_logged.py tests/test_infra_alloy_stages.py tests/test_infra_alloy_series.py -q -p no:cacheprovider --basetemp=.tmp/implementer/pt` passes unchanged (one `stage.regex` on the NAS).
 
 - [ ] **Step 5: Run the commit's tests and the gate** — `T="$(infra/scripts/consumers.sh --direct tests/test_infra_alloy_levels.py infra/nas/config.alloy) tests/test_infra_alloy_levels.py"`, the pytest line, the gate.
 
@@ -1547,15 +1563,15 @@ Steps 1–3 run twice: right after Task 1's verdict commit, over the node's bloc
 
 - [ ] **Step 1: The fleet's release binary** — `grep '^alloy_version:' infra/ansible/group_vars/observed/alloy.yml` prints `alloy_version: "1.21.2"` (a later value is used in its place); then, each its own call, `mkdir -p .tmp/alloy-dry .tmp/controller`, `curl -fsSL --max-time 30 -o .tmp/alloy-dry/SHA256SUMS https://github.com/grafana/alloy/releases/download/v1.21.2/SHA256SUMS`, `curl -fsSL --max-time 120 -o .tmp/alloy-dry/alloy-linux-amd64.zip https://github.com/grafana/alloy/releases/download/v1.21.2/alloy-linux-amd64.zip`, `grep -E '^[0-9a-f]{64}  alloy-linux-amd64\.zip$' .tmp/alloy-dry/SHA256SUMS | sed 's|  |  .tmp/alloy-dry/|' | sha256sum -c -` printing `.tmp/alloy-dry/alloy-linux-amd64.zip: OK` — any other output holds the step, the zip deleted unread —, `unzip -o .tmp/alloy-dry/alloy-linux-amd64.zip -d .tmp/alloy-dry`, `chmod +x .tmp/alloy-dry/alloy-linux-amd64`, `ln -sf alloy-linux-amd64 .tmp/alloy-dry/alloy`, and `.tmp/alloy-dry/alloy --version` printing `v1.21.2`.
 - [ ] **Step 2: Each changed config loads** — `.tmp/alloy-dry/alloy validate infra/ansible/roles/<host>/files/config.alloy` for `mon`, `hc`, `ops`, `capture`, `cache`, and `.tmp/alloy-dry/alloy validate infra/nas/config.alloy`, each its own call, exit 0. A refusal naming the syntax holds the branch: the fix is a commit on it and Tasks' tests re-run; a refusal naming an environment read or a host path, not the syntax, is recorded and Step 3 is the check.
-- [ ] **Step 3: The harness runs** — `PATH="$PWD/.tmp/alloy-dry:$PATH" uv run pytest tests/test_infra_alloy_levels.py tests/test_infra_alloy_stages.py -q -rs -p no:cacheprovider --basetemp=.tmp/controller/pt`; expected every case passes and `-rs` names no skip. A disagreement between Alloy and the model is fixed on the branch, its own commit — the config where Alloy's reading is the spec's, the model where the model misread a selector — and the run repeated.
+- [ ] **Step 3: The harness runs** — `PATH="$PWD/.tmp/alloy-dry:$PATH" uv run pytest tests/test_infra_alloy_levels.py tests/test_infra_alloy_stages.py -q -rs -p no:cacheprovider --basetemp=.tmp/controller/pt`; expected every case passes and `-rs` names no skip. A disagreement between Alloy and the model is fixed on the branch, its own commit — the config where Alloy's reading is the spec's, the model where the model misread a selector — and the run repeated. The fix commit is followed by a `docs(plans)` commit giving every fence and probe arm of this plan that carries the corrected form the same correction — after the first run, before Task 2 starts — and then by the probe arms of every task whose config or test code the fix changed, run again on the committed tree, their verdicts on an empty commit of their own.
 - [ ] **Step 4: Clean up** — `ls -la .tmp/alloy-dry .tmp/controller` read first; then `rm -rf .tmp/alloy-dry .tmp/controller/pt`, `.tmp/controller` itself kept for Step 7's union.
-- [ ] **Step 5: D10 to the owner** — put to the owner in the session, by value: the engine warns at each start that the venue holds a 1e-08-scale SOL/EUR and ETH/EUR balance the Cache reads as 0; silencing it is engine code, a dust threshold read from the instrument, an image and an engine converge; unanswered, it stays as it is. The answer, or none, goes to the PR body verbatim.
+- [ ] **Step 5: D10 to the owner** — put to the owner in the session, by value: the engine warns at each start that the venue holds a 1e-08-scale SOL/EUR and ETH/EUR balance the Cache reads as 0; silencing it is engine code, a dust threshold read from the instrument, an image and an engine converge; unanswered, it stays as it is. A yes is the owner's word to register the engine dust change as a topic, done in this step through `topic-ops` and the topic named in the PR body; a no, or no answer, leaves it as spec D10 says. The answer, or none, goes to the PR body verbatim.
 - [ ] **Step 6: The proxy's chroot directory, by the owner's read** — the owner's host line of 2026-11-03, `ssh zcrypto "sudo docker exec zcrypto-cache-proxy ls -ld /var/lib/haproxy"`, printed `drwxr-xr-x 2 haproxy haproxy 4096 Sep 24 21:02 /var/lib/haproxy`; that line and the command go into the PR body verbatim before the merge. A proxy image re-pinned before the merge takes the read again, handed to the owner as a host line, and a `No such file or directory` holds the merge for the owner, since D7's `chroot` would then stop the proxy at the engine converge that carries it (R11).
-- [ ] **Step 7: The reads and the pull request** — the branch's whole read by a different agent through `pre-review`, `review` and `re-review` as the repository's skills run them; the consumer union once before the push, its test files held in `T`: `T="$(infra/scripts/consumers.sh $(git diff --name-only develop...HEAD) 2> .tmp/controller/consumers.err | grep -E '^tests/test_[^/]*\.py$' | sort -u)"`, `.tmp/controller/consumers.err` read, then `[ -n "$T" ] && uv run pytest $T -m "not slow" -q -p no:cacheprovider --basetemp=.tmp/controller/pt-union`; then `open-pr`, the body carrying both runs' Steps 1–3 readings by value (the zip's check, the version, each validate's exit, the harness's result line), Step 5's offer and answer, Step 6's line, and this plan's *Rulings* by reference, D3's flagged first.
+- [ ] **Step 7: The reads and the pull request** — the branch's whole read by a different agent through `pre-review`, `review` and `re-review` as the repository's skills run them; the consumer union once before the push, its test files listed in `.tmp/controller/union.txt`: `infra/scripts/consumers.sh $(git diff --name-only develop...HEAD) 2> .tmp/controller/consumers.err | grep -E '^tests/test_[^/]*\.py$' | sort -u > .tmp/controller/union.txt`, `.tmp/controller/consumers.err` read, then `[ -s .tmp/controller/union.txt ] && uv run pytest $(cat .tmp/controller/union.txt) -m "not slow" -q -p no:cacheprovider --basetemp=.tmp/controller/pt-union`; then `open-pr`, the body carrying both runs' Steps 1–3 readings by value (the zip's check, the version, each validate's exit, the harness's result line), Step 5's offer and answer, Step 6's line, and this plan's *Rulings* by reference, D3's flagged first.
 
 ### Task 12: Decisions log
 
-- [ ] **Decisions log: none** — the branch is telemetry engineering on the owner's direction, "investigate **ALL* the WARN, ERROR, and UNK log entries, eliminate them if applicable, especially the UNK ones", not a ruling on its design; `iteration-closeout` logs the fleet infrastructure under phase 6 only when the owner rules its design, and skips engineering that touches none of a phase's subjects. An answer to Task 11 Step 5 that rules the engine's dust warning is a phase-6 decision on the engine's behaviour and takes its entry through `iteration-closeout` on the branch that carries it.
+- [ ] **Decisions log: none** — the branch is telemetry engineering on the owner's direction, "investigate **ALL* the WARN, ERROR, and UNK log entries, eliminate them if applicable, especially the UNK ones", not a ruling on its design; `iteration-closeout` logs the fleet infrastructure under phase 6 only when the owner rules its design, and skips engineering that touches none of a phase's subjects. An answer to Task 11 Step 5 that rules the engine's dust warning is a phase-6 decision on the engine's behaviour and takes its entry through `iteration-closeout` on the branch that carries the change, the one for the topic Task 11 Step 5 registers.
 
 ## Rollout — the owner's, from merged `develop`, host by host (D11)
 
@@ -1569,17 +1585,18 @@ The converges and the pushes are the owner's; the reads by value are taken from 
 curl -fsS -o /dev/null -w '%{http_code}\n' https://apt.zaccess.zhaow.me/dists/any-version/Release   # 200
 ssh mon 'systemctl show -p ActiveEnterTimestamp --value prometheus loki caddy'
 infra/ansible/scripts/converge.sh site.yml --limit zcrypto-mon --tags mon
+date -u +%Y-%m-%dT%H:%M:%SZ   # the converge's end
 ssh mon 'systemctl show -p ActiveEnterTimestamp --value prometheus loki caddy'   # the same three lines
 ssh mon 'systemctl is-active grafana-server'   # active
 ssh mon 'sudo systemctl start zcrypto-mon-selfcheck.service && sudo journalctl -u zcrypto-mon-selfcheck --no-pager -o cat | grep -E "^selfcheck:" | tail -1'   # rules=ok (…)
 ```
 
-The preview names `/etc/grafana/grafana.ini` (the `x_xss_protection` and `filters` lines) and `/etc/alloy/config.alloy`; the real pass restarts `grafana-server` and `alloy`. The fence's last two lines, immediately after the converge, are Grafana's start on the new ini: `active`, and the self-check's line run by hand reading `rules=ok`, the node's rules evaluating. Either read otherwise, or the converge failing at a task that starts Grafana or waits on it — the `restart grafana` handler, `grafana-server enabled + started` or `wait for grafana to answer` — holds the wave and rolls the ini back, whatever `systemctl status grafana-server` prints: its `ExecStartPre=/usr/bin/curl` lines read `code=exited` on a passing curl too, so no status text separates a store that did not answer from a refused ini, and the rollback's own converge, which runs every task the failed one did not reach, is the read of both. The rollback: Task 8's `fix(mon)` commit reverted on a branch from `develop` (`git revert --no-edit <its hash>`), the same converge run from that branch at once, and the fence's last two lines read again; the node's rules evaluate nothing from the refused start until that converge. The revert's pull request then merges into `develop` before any further converge of the node: until it does, no `--tags mon` or un-tagged converge of `zcrypto-mon` runs from `develop`, each rendering the refused ini again, and the wave holds on the node. Once the rollback's two reads pass and the revert has merged, the wave goes on to R3, the first Verify bullet below not taken — the two settings are off the node — and the other four taken. Verify by value, `uv run python infra/scripts/grafana-query.py --stack mon --loki '<q>'` for each:
-- fifteen minutes after the restart, `sum(count_over_time({host="zcrypto-mon", container="grafana-server"} |= "logger=search-manifest-watcher" [15m]))` reads `(no series)`, and `sum(count_over_time({host="zcrypto-mon", container="grafana-server"} |= "x_xss_protection" [15m]))` over the restart reads `(no series)` — a non-empty read of either is Grafana 13.3.0 not honouring that setting, which costs only the noise the setting was for: the wave goes on to R3, and the setting is reworked on a branch of its own;
-- over the restart, `sum by (level) (count_over_time({host="zcrypto-mon", container="alloy"} |= "Alloy starting in" [15m]))` reads `{level="INFO"}` 1;
-- fifteen minutes after the restart, `sum by (level) (count_over_time({host="zcrypto-mon", container="zcrypto-mon-selfcheck"} [15m]))` reads `{level="INFO"}` about 4, the hand run's line among them;
-- an hour after, `sum by (host, container) (count_over_time({host="zcrypto-mon", level=""} [1h]))` reads `(no series)`;
-- the no-fault shapes at their next line — the Logs board opened on the node and left before its panels load logs cancellations — `sum by (level) (count_over_time({host="zcrypto-mon", container=~"grafana-server|loki"} |= "context canceled" [1h]))` reads `level="INFO"` rows and no ERROR or WARNING row.
+The preview names `/etc/grafana/grafana.ini` (the `x_xss_protection` and `filters` lines) and `/etc/alloy/config.alloy`; the real pass restarts `grafana-server` at its handler flush and `alloy` after it, and the `date` line stamps the converge's end. The fence's last two lines, immediately after the converge, are Grafana's start on the new ini: `active`, and the self-check's line run by hand reading `rules=ok`, the node's rules evaluating. Either read otherwise, or the converge failing at a task that starts Grafana or waits on it — the `restart grafana` handler, `grafana-server enabled + started` or `wait for grafana to answer` — holds the wave, and the exit status of the unit's two `ExecStartPre=/usr/bin/curl` waits for the stores separates the two causes, read at once by `ssh mon 'sudo systemctl status grafana-server --no-pager -n 20'`. A curl that failed exits non-zero — `22` on a store answering not ready, `7` on a refused connection — which the status prints in its log lines as `Control process exited, code=exited, status=22` (or `status=7`), and on that curl's `ExecStartPre=/usr/bin/curl` process line only until `Restart=on-failure` starts the unit again, which resets those lines to the attempt under way; the converge's own `Job for grafana-server.service failed because the control process exited with error code` is the same exit. A non-zero curl status is a store that did not answer ready: `infra/runbooks/mon.md`'s `mon-store-restart` step 3 takes it with the ini kept, and once Grafana has started the same converge runs again — a failed one stopped before the node's Alloy config — its `date` line and the fence's last two lines taken after it and either read otherwise rolling the ini back. Every other failed start, its curls at `status=0/SUCCESS`, rolls the ini back. The rollback: Task 8's `fix(mon)` commit reverted on a branch from `develop` (`git revert --no-edit <its hash>`), the same converge run from that branch at once, its `date` line and the fence's last two lines taken again; the node's rules evaluate nothing from the refused start until that converge. The revert's pull request then merges into `develop` before any further converge of the node: until it does, no `--tags mon` or un-tagged converge of `zcrypto-mon` runs from `develop`, each rendering the refused ini again, and the wave holds on the node. Once the rollback's two reads pass and the revert has merged, the wave goes on to R3, the first Verify bullet below not taken — the two settings are off the node — and the other four taken. Verify by value, `uv run python infra/scripts/grafana-query.py --stack mon --loki '<q>'` for each, its window starting at the converge's end — the last `date` line's stamp, a re-run's or the rollback's where one followed — so no line Grafana printed at its restart, which ships through the node's old Alloy config until Alloy restarts after it, is counted; the two reads whose subject is a start line, Grafana's `x_xss_protection` notice and Alloy's own, hold that start instead:
+- fifteen minutes after the converge's end, `sum(count_over_time({host="zcrypto-mon", container="grafana-server"} |= "logger=search-manifest-watcher" [15m]))` reads `(no series)`, and within fifteen minutes of Grafana's last start, `sum(count_over_time({host="zcrypto-mon", container="grafana-server"} |= "x_xss_protection" [15m]))` reads `(no series)` — a non-empty read of either is Grafana 13.3.0 not honouring that setting, which costs only the noise the setting was for: the wave goes on to R3, and the setting is reworked on a branch of its own;
+- within fifteen minutes of Alloy's restart, `sum by (level) (count_over_time({host="zcrypto-mon", container="alloy"} |= "Alloy starting in" [15m]))` reads `{level="INFO"}` 1;
+- fifteen minutes after the converge's end, `sum by (level) (count_over_time({host="zcrypto-mon", container="zcrypto-mon-selfcheck"} [15m]))` reads `{level="INFO"}` about 4, the hand run's line among them;
+- an hour after the converge's end, `sum by (host, container) (count_over_time({host="zcrypto-mon", level=""} [1h]))` reads `(no series)`;
+- the no-fault shapes at their next line — the Logs board opened on the node and left before its panels load, inside the fifteen minutes after the converge's end, logs cancellations — fifteen minutes after the converge's end, `sum by (level) (count_over_time({host="zcrypto-mon", container=~"grafana-server|loki"} |= "context canceled" [15m]))` reads `level="INFO"` rows and no ERROR or WARNING row.
 
 **R3. The dead-man node, `zcrypto-hc`:**
 
@@ -1590,7 +1607,7 @@ infra/ansible/scripts/converge.sh site.yml --limit zcrypto-hc --tags alloy
 ssh hc "sudo docker inspect zcrypto-hc --format '{{.RestartCount}} {{.State.StartedAt}}'; systemctl show -p ActiveEnterTimestamp --value caddy"   # the same two lines
 ```
 
-Verify: an hour after, `sum by (host, container) (count_over_time({host="zcrypto-hc", level=""} [1h]))` reads `(no series)`, and `sum by (container, level) (count_over_time({host="zcrypto-hc", container=~"alloy|zcrypto-hc-selfcheck"} [1h]))` reads INFO rows (WARNING beside them only for a failing self-check); after the next nightly runs (the backup about 02:47Z, uWSGI's prune about 03:17Z), `sum by (container, level) (count_over_time({host="zcrypto-hc", container=~"zcrypto-sqlite-backup|hc"} |~ "backed up|Cop(ying|ied)|uwsgi-cron|Deleted api_ping" [24h]))` reads INFO rows and no level-less row.
+Verify: an hour after, `sum by (host, container) (count_over_time({host="zcrypto-hc", level=""} [1h]))` reads `(no series)`, and `sum by (container, level) (count_over_time({host="zcrypto-hc", container=~"alloy|zcrypto-hc-selfcheck"} [1h]))` reads INFO rows (WARNING beside them for a failing self-check, or for an Alloy `level=warn` line read by its `msg`); after the next nightly runs (the backup about 02:47Z, uWSGI's prune about 03:17Z), `sum by (container, level) (count_over_time({host="zcrypto-hc", container=~"zcrypto-sqlite-backup|hc"} |~ "backed up|Cop(ying|ied)|uwsgi-cron|Deleted api_ping" [24h]))` reads INFO rows and no level-less row.
 
 **R4. Ops, `zcrypto-ops`** — the Kraken feed read immediately before:
 
