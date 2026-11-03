@@ -15,11 +15,14 @@ import pytest
 CONFTEST = Path(__file__).resolve().parent / "conftest.py"
 THREE_TESTS = "def test_alpha():\n    assert True\n\n\ndef test_beta():\n    assert True\n\n\ndef test_gamma():\n    assert True\n"
 BANNER = "conftest: NO TEST SELECTED"
+# pytest refuses an unregistered marker in `-m` with exit 4, so the mark that empties a selection is registered.
+MARKER_INI = "[pytest]\nmarkers =\n    nosuchmark: a mark no test in this tree carries\n"
 
 
 @pytest.fixture
 def tree(tmp_path: Path) -> Path:
     (tmp_path / "conftest.py").write_text(CONFTEST.read_text())
+    (tmp_path / "pytest.ini").write_text(MARKER_INI)
     (tmp_path / "test_scratch.py").write_text(THREE_TESTS)
     return tmp_path
 
