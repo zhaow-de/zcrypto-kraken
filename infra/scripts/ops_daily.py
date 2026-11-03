@@ -316,8 +316,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def main_checkout(root: Path) -> Path:
-    """The checkout `root`'s worktrees hang off, where `converge.sh` appends its rows before a records pull request
-    commits them; `root` itself outside git."""
+    """The checkout `root`'s worktrees hang off: `converge.sh` run there appends the deploy rows a records pull
+    request has not yet committed."""
     try:
         common = subprocess.run(
             ["git", "-C", str(root), "rev-parse", "--path-format=absolute", "--git-common-dir"],
