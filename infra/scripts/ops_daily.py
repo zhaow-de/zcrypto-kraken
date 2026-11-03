@@ -317,8 +317,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 def main_checkout(root: Path) -> Path:
     """The checkout `root`'s worktrees hang off: `converge.sh` run there appends the deploy rows a records pull
-    request has not yet committed. A common dir with no checkout beside it, a `--separate-git-dir` store's, is no
-    such checkout, and `root` answers."""
+    request has not yet committed."""
 
     def git(cwd: Path, *args: str) -> str:
         return subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True, check=True, timeout=10).stdout.strip()

@@ -7,8 +7,7 @@ Run from the workstation, each mode its own call, in this order:
     ssh zcrypto sudo python3 - clear <list-file> < infra/scripts/cache-prefix-clear.py
     ssh zcrypto sudo python3 - verify <dbsize-before> <deleted> < infra/scripts/cache-prefix-clear.py
 
-  inventory  writes the keys under `trader-SHADOW-001:` one per line to a new file under /var/lib/zcrypto-engine,
-             and says whether the open-positions index is present: the first start's read after a clear.
+  inventory  writes the keys under `trader-SHADOW-001:` one per line to a new file under /var/lib/zcrypto-engine.
   clear      refused while `zcrypto-engine` runs, read with a docker inspect of `{{.State.Running}}` and no
              other field; then one DEL per listed key, never a scan piped into DEL.
   verify     no key left under the prefix, and DBSIZE the inventory's less the deleted count.
