@@ -35,6 +35,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 PREFIX = "trader-SHADOW-001:"
+POSITIONS_OPEN = f"{PREFIX}index:positions_open"
 PASSWORD_LINE = "ZCRYPTO_CACHE_PASSWORD="
 USER = "engine"
 ENGINE_CONTAINER = "zcrypto-engine"
@@ -208,6 +209,7 @@ def inventory(host: Host) -> int:
         print(f"  {n:7d} {collection}")
     print(f"keys outside {PREFIX} {len(outside)}, 0 expected")
     _name(outside)
+    print(f"{POSITIONS_OPEN} {'present' if POSITIONS_OPEN in keys else 'absent'}")
     path = Path(host.out_dir) / f"cache-prefix-clear-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.keys"
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape") as f:

@@ -416,14 +416,18 @@ def test_the_log_path_is_the_main_checkouts_from_any_worktree(tmp_path, monkeypa
     assert _real_log_path(main) == _real_log_path(tmp_path / "wt") == expected
 
 
-def test_a_common_dir_with_no_checkout_is_refused(tmp_path):
+@pytest.mark.parametrize("store_in_a_checkout", [False, True], ids=["git-refuses-the-store", "git-names-another-top"])
+def test_a_common_dir_with_no_checkout_is_refused(tmp_path, monkeypatch, store_in_a_checkout):
     work = tmp_path / "work"
-    (tmp_path / "store").mkdir()
+    store = (_repo(tmp_path / "host") if store_in_a_checkout else tmp_path) / "store"
+    store.mkdir()
     subprocess.run(
-        ["git", "init", "-q", "--separate-git-dir", str(tmp_path / "store" / "repo.git"), str(work)],
+        ["git", "init", "-q", "--separate-git-dir", str(store / "repo.git"), str(work)],
         check=True,
         capture_output=True,
     )
+    # git's empty answer resolves to the cwd: at the store, the comparison accepts it and git's refusal alone refuses.
+    monkeypatch.chdir(store)
 
     with pytest.raises(
         AttemptLogError,

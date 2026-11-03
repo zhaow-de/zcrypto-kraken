@@ -580,6 +580,40 @@ def test_the_deploy_window_holds_only_lines_inside_it(tmp_path):
     assert [d["limit"] for d in lines] == ["ops"]
 
 
+def test_the_deploy_log_is_the_main_checkouts_where_a_worktree_runs_the_pass(tmp_path, monkeypatch):
+    main, worktree, plain = tmp_path / "main", tmp_path / "wt", tmp_path / "plain"
+    main.mkdir()
+    plain.mkdir()
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=main, check=True, capture_output=True, text=True)
+
+    git("init", "-q", "-b", "develop")
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "root")
+    git("worktree", "add", "-q", "--detach", str(worktree))
+    scripts = worktree / "infra/scripts"
+    scripts.mkdir(parents=True)
+    for name in ("ops_daily.py", "grafana_auth.py"):
+        (scripts / name).write_bytes((ops_daily.REPO_ROOT / "infra/scripts" / name).read_bytes())
+    monkeypatch.setitem(sys.modules, "grafana_auth", sys.modules["grafana_auth"])
+    spec = importlib.util.spec_from_file_location("ops_daily_in_a_worktree", scripts / "ops_daily.py")
+    in_worktree = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, "ops_daily_in_a_worktree", in_worktree)
+    spec.loader.exec_module(in_worktree)
+
+    assert ops_daily.main_checkout(worktree) == main.resolve()
+    assert ops_daily.main_checkout(main) == main.resolve()
+    assert ops_daily.main_checkout(plain) == plain
+    assert in_worktree.DEPLOY_LOG == main.resolve() / "docs/reference/deploy-log.jsonl"
+
+    separate, store = tmp_path / "separate", main / "store"
+    store.mkdir()
+    subprocess.run(
+        ["git", "init", "-q", "--separate-git-dir", str(store / "repo.git"), str(separate)], check=True, capture_output=True
+    )
+    assert ops_daily.main_checkout(separate) == separate
+
+
 # --- Task 14 (spec 00104): the report, the exit codes -------------------------------------------------------
 
 
@@ -2221,7 +2255,7 @@ def test_the_real_register_yields_a_refdata_reminder():
     giving it a `tmp_path` fixture would move it off the path `main` takes."""
     read = ops_daily.read_reminders(now=NOW)
     assert read.unreadable is None, read.unreadable
-    # The committed deploy log decides which nodes' patch passes join them.
+    # The deploy log decides which nodes' patch passes join them.
     assert {r.name for r in read.reminders} - set(_PATCH_PASS_NAMES.values()) == {
         "refdata sweep",
         "kraken bookkeeping",
