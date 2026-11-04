@@ -425,3 +425,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #798 | 2026-11-02 | feat(research): iter-200 — the deployable re-priced at the box's rate | iter-200 | 00154 | T0214 |
 | #800 | 2026-11-02 | docs(tax): T0215 — the first window passes, the connector deleted | — | 00126 | T0215 |
 | #810 | 2026-11-04 | fix(observability): every shipped log line carries a level | — | 00155 | — |
+| #812 | 2026-11-04 | fix(observability): no-fault lines dropped, the Logs board lightened | — | 00155 | — |

@@ -259,6 +259,25 @@ loki.source.journal "capture_units" {
 loki.process "parse" {
   forward_to = [loki.write.grafana.receiver, loki.write.mon.receiver]
 
+  stage.match {
+    selector = "{container=\"alloy\"}"
+
+    stage.logfmt {
+      mapping = { "level" = "" }
+    }
+
+    stage.template {
+      source   = "level"
+      template = "{{ if eq .Value \"warn\" }}WARNING{{ else if eq .Value \"fatal\" }}CRITICAL{{ else }}{{ ToUpper .Value }}{{ end }}"
+    }
+
+    stage.labels {
+      values = { level = "level" }
+    }
+
+    // No stage.output: the line ships as written, every logfmt key kept in its body.
+  }
+
   // The cache proxy's lines share the unit's journal with the engine's, under the compose prefix of
   // their own container: the prefix comes off, HAProxy's own level word is read where a line carries
   // one, and every survivor is labelled container="cache-proxy" here, before the engine's block below
@@ -353,29 +372,11 @@ loki.process "parse" {
     action   = "drop"
   }
 
-  // Alloy's own logs are logfmt: `ts=<t> level=<lvl> msg="<text>" k=v k=v ...`, arriving via the
-  // journald logging driver (D6). `{container="alloy"}` matches because the journal_units
-  // container-name rule above relabels CONTAINER_NAME=grafana-alloy to container="alloy".
+  // Alloy's finished node evaluation, one line per component at every start or reload, reports no event.
   stage.match {
-    selector = "{container=\"alloy\"}"
-
-    stage.logfmt {
-      mapping = { "level" = "" }
-    }
-
-    stage.template {
-      source   = "level"
-      template = "{{ if eq .Value \"warn\" }}WARNING{{ else if eq .Value \"fatal\" }}CRITICAL{{ else }}{{ ToUpper .Value }}{{ end }}"
-    }
-
-    stage.labels {
-      values = { level = "level" }
-    }
-
-    // No stage.output: the line ships UNMODIFIED. Unlike the old regex-and-reassemble approach,
-    // this keeps every logfmt attribute in the body (msg= plus whatever k=v pairs followed), and a
-    // non-logfmt line (a panic, a bare traceback) simply passes through with no `level` label rather
-    // than being mangled by a stage that assumed logfmt shape.
+    selector            = "{container=\"alloy\", level=\"INFO\"} |= \"msg=\\\"finished node evaluation\\\"\""
+    action              = "drop"
+    drop_counter_reason = "alloy_node_evaluation"
   }
 
   // A prune's line other than its summary reports a failure. The log target repeats each server and proxy state event

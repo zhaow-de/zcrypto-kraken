@@ -383,6 +383,13 @@ loki.process "parse" {
     // than being mangled by a stage that assumed logfmt shape.
   }
 
+  // Alloy's finished node evaluation, one line per component at every start or reload, reports no event.
+  stage.match {
+    selector            = "{container=\"alloy\", level=\"INFO\"} |= \"msg=\\\"finished node evaluation\\\"\""
+    action              = "drop"
+    drop_counter_reason = "alloy_node_evaluation"
+  }
+
   // A day the tape-bars sweep failed is ERROR, a condition another rule pages is WARNING. An echo that copies a record the
   // CLI also logs is dropped, since the record ships levelled.
   stage.match {

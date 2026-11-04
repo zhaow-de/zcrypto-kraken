@@ -134,39 +134,37 @@ loki.process "parse" {
     }
   }
 
-  // Four shapes Grafana or Loki log at ERROR or WARNING that report no fault, re-levelled to INFO: an error that is a
-  // cancelled context (a panel the browser left), the dashboards page asking for the quotas API this build does not
-  // serve, a contact-point test's empty receiver, and a bundled plugin stopped with Grafana.
+  // Four shapes Grafana or Loki log at ERROR or WARNING that report no fault, each named by its drop reason, are dropped
+  // rather than shipped at a level their text does not print.
   stage.match {
-    selector = "{container=~\"grafana-server|loki\", level=~\"ERROR|WARNING\"} |~ \"\\\\berr(or)?=\\\"(?:[^\\\"\\\\\\\\]|\\\\\\\\.)*context canceled\\\"\""
-
-    stage.static_labels {
-      values = { level = "INFO" }
-    }
+    selector            = "{container=~\"grafana-server|loki\", level=~\"ERROR|WARNING\"} |~ \"\\\\berr(or)?=\\\"(?:[^\\\"\\\\\\\\]|\\\\\\\\.)*context canceled\\\"\""
+    action              = "drop"
+    drop_counter_reason = "cancelled_context"
   }
 
   stage.match {
-    selector = "{container=\"grafana-server\", level=\"ERROR\"} |= \"msg=\\\"Request Completed\\\"\" |= \" path=/apis/quotas.grafana.app/\" |= \" status=501 \""
-
-    stage.static_labels {
-      values = { level = "INFO" }
-    }
+    selector            = "{container=\"grafana-server\", level=\"ERROR\"} |= \"msg=\\\"Request Completed\\\"\" |= \" path=/apis/quotas.grafana.app/\" |= \" status=501 \""
+    action              = "drop"
+    drop_counter_reason = "quotas_api_unserved"
   }
 
   stage.match {
-    selector = "{container=\"grafana-server\", level=\"ERROR\"} |= \"logger=ngalert.notifier \" |= \" receiver= \" |= \"msg=\\\"Missing notification reason\\\"\""
-
-    stage.static_labels {
-      values = { level = "INFO" }
-    }
+    selector            = "{container=\"grafana-server\", level=\"ERROR\"} |= \"logger=ngalert.notifier \" |= \" receiver= \" |= \"msg=\\\"Missing notification reason\\\"\""
+    action              = "drop"
+    drop_counter_reason = "contact_point_test"
   }
 
   stage.match {
-    selector = "{container=\"grafana-server\", level=\"ERROR\"} |= \"msg=\\\"plugin process exited\\\"\" |= \"signal: terminated\""
+    selector            = "{container=\"grafana-server\", level=\"ERROR\"} |= \"msg=\\\"plugin process exited\\\"\" |= \"signal: terminated\""
+    action              = "drop"
+    drop_counter_reason = "plugin_stopped_with_grafana"
+  }
 
-    stage.static_labels {
-      values = { level = "INFO" }
-    }
+  // Alloy's finished node evaluation, one line per component at every start or reload, reports no event.
+  stage.match {
+    selector            = "{container=\"alloy\", level=\"INFO\"} |= \"msg=\\\"finished node evaluation\\\"\""
+    action              = "drop"
+    drop_counter_reason = "alloy_node_evaluation"
   }
 
   // The self-check prints one line a run and no level; a failing probe's line explains the page its missing ping raises.
