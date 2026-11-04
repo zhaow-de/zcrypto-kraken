@@ -107,6 +107,13 @@ FIXTURES: list[Fixture] = [
         DROP_NO_FAULT,
     ),
     Fixture(
+        "mon_grafana_loki_request_failed",
+        "mon",
+        {"container": "grafana-server", "level": "ERROR"},
+        'logger=plugin.loki t=2026-11-04T13:56:53.502074533Z level=error msg="Plugin Request Completed" dsUid=grafanacloud-logs pluginId=loki status=error statusSource=plugin dsName=Loki duration=113.707769ms endpoint=queryData pluginVersion=13.2.2 error="failed to query data: rpc error: code = Unavailable desc = connection error" uname=example-admin',
+        "ERROR",
+    ),
+    Fixture(
         "mon_grafana_prometheus_request_summary",
         "mon",
         {"container": "grafana-server", "level": "ERROR"},

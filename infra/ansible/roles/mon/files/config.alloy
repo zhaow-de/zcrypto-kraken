@@ -169,7 +169,7 @@ loki.process "parse" {
   }
 
   stage.match {
-    selector            = "{container=\"grafana-server\", level=\"ERROR\"} |= \"logger=plugin.loki \" |= \"msg=\\\"Plugin Request Completed\\\"\" |= \" status=error \""
+    selector            = "{container=\"grafana-server\", level=\"ERROR\"} |= \"logger=plugin.loki \" |= \"msg=\\\"Plugin Request Completed\\\"\" |= \" status=error \" != \" error=\""
     action              = "drop"
     drop_counter_reason = "loki_plugin_request_summary"
   }
