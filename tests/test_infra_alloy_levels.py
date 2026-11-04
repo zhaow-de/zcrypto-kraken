@@ -366,6 +366,124 @@ FIXTURES: list[Fixture] = [
     Fixture("hc_migrate_running", "hc", {"container": "hc"}, "Running migrations:", "INFO"),
     Fixture("hc_migrate_applying", "hc", {"container": "hc"}, "  Applying api.0001_initial... OK", "INFO"),
     Fixture("hc_migrate_none", "hc", {"container": "hc"}, "  No migrations to apply.", "INFO"),
+    Fixture(
+        "ops_tape_bars_summary",
+        "ops",
+        {"container": "zcrypto-tape-bars"},
+        "days_written=1 days_skipped=0 days_unsettled=0 days_unhealed=0 days_gap=0 rows=4320 errors=0",
+        "INFO",
+    ),
+    Fixture("ops_tape_bars_head", "ops", {"container": "zcrypto-tape-bars"}, "head=2026-11-02 days_written=1 holes=0", "INFO"),
+    Fixture(
+        "ops_tape_bars_day_error",
+        "ops",
+        {"container": "zcrypto-tape-bars"},
+        "  ERROR BTC/EUR 2026-11-02: no settled trades file for the day",
+        "ERROR",
+    ),
+    Fixture(
+        "ops_tape_bars_docker_refusal",
+        "ops",
+        {"container": "zcrypto-tape-bars"},
+        'docker: Error response from daemon: Conflict. The container name "/zcrypto-tape-bars" is already in use by container "0123abcd".',
+        None,
+    ),
+    Fixture(
+        "ops_verified_replay_ok",
+        "ops",
+        {"container": "zcrypto-verified-replay"},
+        "2026-11-02T00:00:00+00:00  ok (worst |diff| 0.00e+00)",
+        "INFO",
+    ),
+    Fixture(
+        "ops_verified_replay_mismatch",
+        "ops",
+        {"container": "zcrypto-verified-replay"},
+        "2026-11-02T04:00:00+00:00  MISMATCH: worst BTC |diff| 1.20e-03",
+        "WARNING",
+    ),
+    Fixture(
+        "ops_verified_replay_invalid",
+        "ops",
+        {"container": "zcrypto-verified-replay"},
+        "2026-11-02T08:00:00+00:00  VALIDATION-FAILED: cycle record carries no final targets",
+        "WARNING",
+    ),
+    Fixture(
+        "ops_verified_replay_failed_cycle",
+        "ops",
+        {"container": "zcrypto-verified-replay"},
+        "2026-11-02T12:00:00+00:00  failed cycle (venue read failed)",
+        "INFO",
+    ),
+    Fixture(
+        "ops_verified_replay_summary",
+        "ops",
+        {"container": "zcrypto-verified-replay"},
+        "replayed 6 success record(s) via the verified path: 6 ok, 0 mismatch(es), 0 validation failure(s); 0 failed cycle(s) (sidecars)",
+        "INFO",
+    ),
+    Fixture("ops_verified_replay_none_found", "ops", {"container": "zcrypto-verified-replay"}, "no journaled cycles found", "INFO"),
+    Fixture(
+        "ops_verified_replay_capped",
+        "ops",
+        {"container": "zcrypto-verified-replay"},
+        "verified-replay: capped at 30 day(s) this run; 4 day(s) still unverified, resuming tomorrow",
+        "INFO",
+    ),
+    Fixture(
+        "ops_verified_replay_journal_behind",
+        "ops",
+        {"container": "zcrypto-verified-replay"},
+        "verified-replay: journal has not caught up: /mnt/zhao-crypto/engine-journal/2026-11-02 holds no cycle artifacts; stopping without advancing the watermark (day 2026-11-02 retries next run)",
+        "WARNING",
+    ),
+    Fixture(
+        "ops_verified_replay_freshness_unproven",
+        "ops",
+        {"container": "zcrypto-verified-replay"},
+        "verified-replay: journal freshness unproven: no 2026-11-03 artifacts yet, so 2026-11-02 may be partially pulled; stopping without advancing the watermark (day 2026-11-02 retries next run)",
+        "WARNING",
+    ),
+    Fixture(
+        "ops_verified_replay_corrupt_evidence",
+        "ops",
+        {"container": "zcrypto-verified-replay"},
+        "2026-11-02T16:00:00+00:00  MISMATCH (corrupt evidence): content hash mismatch for pair='BTC/EUR' grid='240' -- corrupt evidence",
+        "WARNING",
+    ),
+    Fixture(
+        "ops_verified_replay_structural",
+        "ops",
+        {"container": "zcrypto-verified-replay"},
+        "2026-11-02T20:00:00+00:00  MISMATCH: structural (asset sets differ)",
+        "WARNING",
+    ),
+    Fixture(
+        "ops_verify_replay_census",
+        "ops",
+        {"container": "zcrypto-verify-replay"},
+        "verify-replay census replayed=12 reused=8748 audited=24 mismatches=0 pending=0 evicted=0 duration_s=312",
+        DROP,
+    ),
+    Fixture(
+        "ops_verify_replay_summary", "ops", {"container": "zcrypto-verify-replay"}, "replayed 8772 hour(s): 8772 ok, 0 failed", DROP
+    ),
+    Fixture(
+        "ops_verify_replay_audit_mismatch",
+        "ops",
+        {"container": "zcrypto-verify-replay"},
+        "AUDIT MISMATCH  BTC/EUR 2026-11-02T13  -- the re-replayed hour disagrees with the verdict served from cache",
+        "WARNING",
+    ),
+    Fixture(
+        "ops_archive_pull_backfill_echo",
+        "ops",
+        {"container": "zcrypto-archive-pull"},
+        "trade backfill complete pairs=10 gaps=0 trades_missing=0 duplicate_rows_found=0 recovered=0 unrecoverable=0 deferred=0 fetch_failed=0 mint_failed=0 duplicates_collapsed=0 duplicates_cross_hour=0 hours_minted=0 hours_repaired_after_loss=0 errors=0",
+        DROP,
+    ),
+    Fixture("ops_archive_pull_traceback", "ops", {"container": "zcrypto-archive-pull"}, "Traceback (most recent call last):", None),
 ]
 
 _STRING = r'"((?:[^"\\]|\\.)*)"'
@@ -557,3 +675,17 @@ def test_alloy_itself_agrees_with_the_level_model(host, tmp_path):
     ]
     survivors = _run_alloy(shutil.which("alloy"), tmp_path, groups, blocks)
     assert [[(echoed.get("level"), entry) for echoed, entry in group] for group in survivors] == expected
+
+
+# Each dropped copy beside the line its source ships levelled: the logged record on ops.
+TWINS = {
+    "ops_verify_replay_census": "2026-11-03 02:31:07,123 INFO zcrypto.archive.command [command.py:1305] - verify-replay census replayed=12 reused=8748 audited=24 mismatches=0 pending=0 evicted=0 duration_s=312",
+    "ops_verify_replay_summary": "2026-11-03 02:31:07,124 INFO zcrypto.archive.command [command.py:1331] - verify-replay complete hours=8772 ok=8772 failed=0",
+    "ops_archive_pull_backfill_echo": "2026-11-03 00:14:05,123 INFO zcrypto.trades.backfill [backfill.py:300] - trade backfill complete pairs=10 gaps=0 trades_missing=0 duplicate_rows_found=0 recovered=0 unrecoverable=0 deferred=0 fetch_failed=0 mint_failed=0 duplicates_collapsed=0 duplicates_cross_hour=0 hours_minted=0 hours_repaired_after_loss=0 errors=0",
+}
+
+
+@pytest.mark.parametrize("fixture", [pytest.param(f, id=f.id) for f in FIXTURES if f.expected == DROP])
+def test_a_dropped_line_is_a_copy_its_source_ships_with_a_level(fixture):
+    assert set(TWINS) == {f.id for f in FIXTURES if f.expected == DROP}
+    assert _parsed_level(fixture.host, fixture.labels, TWINS[fixture.id]) in {"INFO", "WARNING", "CRITICAL"}
