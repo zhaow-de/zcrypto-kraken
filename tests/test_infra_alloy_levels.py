@@ -62,6 +62,13 @@ FIXTURES: list[Fixture] = [
         "WARNING",
     ),
     Fixture(
+        "mon_selfcheck_unnamed_shape",
+        "mon",
+        {"container": "zcrypto-mon-selfcheck"},
+        "an unclassified line from zcrypto-mon-selfcheck",
+        None,
+    ),
+    Fixture(
         "mon_grafana_panel_cancelled",
         "mon",
         {"container": "grafana-server", "level": "ERROR"},
@@ -139,6 +146,7 @@ FIXTURES: list[Fixture] = [
         "WARNING",
     ),
     Fixture("mon_alloy_start", "mon", {"container": "alloy"}, "Alloy starting in Default Engine mode", "INFO"),
+    Fixture("mon_alloy_unnamed_shape", "mon", {"container": "alloy"}, "an unclassified line from alloy", None),
     Fixture("mon_caddy_env_home", "mon", {"container": "caddy"}, "HOME=/var/lib/caddy", "INFO"),
     Fixture(
         "mon_caddy_env_version",
@@ -154,6 +162,7 @@ FIXTURES: list[Fixture] = [
         '{"level":"info","ts":1762187832.1234567,"logger":"http.log","msg":"server running","name":"srv0","protocols":["h1","h2","h3"]}',
         "INFO",
     ),
+    Fixture("mon_caddy_unnamed_shape", "mon", {"container": "caddy"}, "an unclassified line from caddy", None),
     Fixture(
         "mon_grafana_store_not_ready",
         "mon",
@@ -168,6 +177,7 @@ FIXTURES: list[Fixture] = [
         "curl: (7) Failed to connect to 127.0.0.1 port 9090 after 0 ms: Could not connect to server",
         "WARNING",
     ),
+    Fixture("mon_grafana_unnamed_shape", "mon", {"container": "grafana-server"}, "an unclassified line from grafana-server", None),
     Fixture("hc_selfcheck_ok", "hc", {"container": "zcrypto-hc-selfcheck"}, "selfcheck: web=ok (answered OK) -> pinged", "INFO"),
     Fixture(
         "hc_selfcheck_fail",
@@ -189,6 +199,13 @@ FIXTURES: list[Fixture] = [
         {"container": "zcrypto-hc-selfcheck"},
         "selfcheck: web=ok (answered OK) -> healthy, and no ping URL is set",
         "WARNING",
+    ),
+    Fixture(
+        "hc_selfcheck_unnamed_shape",
+        "hc",
+        {"container": "zcrypto-hc-selfcheck"},
+        "an unclassified line from zcrypto-hc-selfcheck",
+        None,
     ),
     Fixture(
         "hc_sqlite_backup_done",
@@ -247,6 +264,13 @@ FIXTURES: list[Fixture] = [
         "INFO",
     ),
     Fixture(
+        "hc_sqlite_backup_unnamed_shape",
+        "hc",
+        {"container": "zcrypto-sqlite-backup"},
+        "an unclassified line from zcrypto-sqlite-backup",
+        None,
+    ),
+    Fixture(
         "hc_alloy_series_gc",
         "hc",
         {"container": "alloy", "level": "INFO"},
@@ -261,6 +285,7 @@ FIXTURES: list[Fixture] = [
         "INFO",
     ),
     Fixture("hc_alloy_start", "hc", {"container": "alloy"}, "Alloy starting in Default Engine mode", "INFO"),
+    Fixture("hc_alloy_unnamed_shape", "hc", {"container": "alloy"}, "an unclassified line from alloy", None),
     Fixture(
         "hc_uwsgi_body_read",
         "hc",
@@ -460,6 +485,13 @@ FIXTURES: list[Fixture] = [
         "WARNING",
     ),
     Fixture(
+        "ops_verified_replay_unnamed_shape",
+        "ops",
+        {"container": "zcrypto-verified-replay"},
+        "an unclassified line from zcrypto-verified-replay",
+        None,
+    ),
+    Fixture(
         "ops_verify_replay_census",
         "ops",
         {"container": "zcrypto-verify-replay"},
@@ -475,6 +507,13 @@ FIXTURES: list[Fixture] = [
         {"container": "zcrypto-verify-replay"},
         "AUDIT MISMATCH  BTC/EUR 2026-11-02T13  -- the re-replayed hour disagrees with the verdict served from cache",
         "WARNING",
+    ),
+    Fixture(
+        "ops_verify_replay_unnamed_shape",
+        "ops",
+        {"container": "zcrypto-verify-replay"},
+        "an unclassified line from zcrypto-verify-replay",
+        None,
     ),
     Fixture(
         "ops_archive_pull_backfill_echo",
@@ -548,6 +587,7 @@ FIXTURES: list[Fixture] = [
         "192.0.2.10:51236 [03/Nov/2026:14:19:02.456] cache node1/via-node1 1/0/1201 87 DC 2/2/1/1/0 0/0",
         "INFO",
     ),
+    Fixture("cache_proxy_unnamed_shape", "capture", {"container": "cache-proxy"}, "an unclassified line from cache-proxy", None),
     Fixture(
         "cache_valkey_sigterm",
         "cache",
@@ -572,6 +612,8 @@ FIXTURES: list[Fixture] = [
         "monotonic: x86 linux, 'constant_tsc' flag not present",
         "INFO",
     ),
+    Fixture("cache_valkey_crash_report", "cache", {"container": "valkey"}, "------ STACK TRACE ------", None),
+    Fixture("cache_sentinel_crash_report", "cache", {"container": "sentinel"}, "------ STACK TRACE ------", None),
     Fixture(
         "nas_archive_pull_file_vanished",
         "nas",
@@ -614,6 +656,7 @@ FIXTURES: list[Fixture] = [
         "ssh: connect to host zcrypto-red.zhaow.me port 22: Cannot assign requested address",
         "WARNING",
     ),
+    Fixture("nas_archive_pull_host_key", "nas", {"container": "archive-pull"}, "Host key verification failed.", None),
     Fixture("nas_archive_pull_traceback", "nas", {"container": "archive-pull"}, "Traceback (most recent call last):", None),
 ]
 
