@@ -117,3 +117,10 @@ def test_a_rule_table_names_each_series_row_after_its_targets_legend(panel_id, r
         series = {t["refId"]: label_sets if t is target else [{}] for t in panel["targets"]}
         expected = [_legend(t["legendFormat"], s) for t in panel["targets"] for s in series[t["refId"]]]
         assert sorted(_rows(panel, series)) == sorted(expected)
+
+
+def test_every_query_variable_on_the_logs_board_resolves_on_dashboard_load():
+    # 2, on time range change, re-runs the variable's query on every auto-refresh, and Grafana then cancels and re-runs
+    # every panel that reads it.
+    refresh = {v["name"]: v.get("refresh") for v in BOARD["templating"]["list"] if v["type"] == "query"}
+    assert refresh and set(refresh.values()) == {1}, refresh
