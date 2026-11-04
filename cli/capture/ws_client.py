@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
+import time
 from collections.abc import AsyncIterator, Callable
 from decimal import Decimal
 
@@ -31,6 +33,9 @@ _ACK_TIMEOUT_SECONDS = 5.0
 # WebSocket close code 1012 "service restart" -- the venue announcing its own restart. Measured
 # twice in 19.3 days (2026-07-13, 2026-07-27), both times arriving AFTER the silence, not before.
 _WS_CLOSE_SERVICE_RESTART = 1012
+# A reconnect that took one attempt and no longer than the restart floor is the venue's ordinary random drop and
+# logs at INFO; one that took longer or needed more attempts logs at WARNING. Raising it hides a degrading link.
+_ROUTINE_RECONNECT_MAX_SECONDS = _SERVICE_RESTART_MIN_DELAY_SECONDS
 
 
 def build_subscribe_message(
@@ -122,11 +127,18 @@ def compute_backoff(
     return delay
 
 
+def _log_reconnected(attempts: int, seconds: float) -> None:
+    if attempts == 1 and seconds <= _ROUTINE_RECONNECT_MAX_SECONDS:
+        logger.info("reconnected after %.1f s", seconds)
+    else:
+        logger.warning("reconnected after %d %s, %.1f s", attempts, "attempt" if attempts == 1 else "attempts", seconds)
+
+
 class CaptureClient:
     """Thin async client for Kraken's public WS v2 feed: subscribes `book` (at `depth`) + `trade`
     for `pairs`, auto-reconnecting with exponential backoff on any drop.
 
-    `connect_fn`/`sleep_fn` are injectable so the reconnect/backoff orchestration is unit-testable
+    `connect_fn`/`sleep_fn`/`clock_fn` are injectable so the reconnect/backoff orchestration is unit-testable
     without a real socket or real delays.
     """
 
@@ -138,6 +150,7 @@ class CaptureClient:
         uri: str = DEFAULT_URI,
         connect_fn: Callable[[str], object] | None = None,
         sleep_fn: Callable[[float], object] | None = None,
+        clock_fn: Callable[[], float] | None = None,
         ack_timeout: float = _ACK_TIMEOUT_SECONDS,
     ) -> None:
         if depth not in ALLOWED_DEPTHS:
@@ -149,6 +162,7 @@ class CaptureClient:
         self._uri = uri
         self._connect = connect_fn or websockets.connect
         self._sleep = sleep_fn or asyncio.sleep
+        self._clock = clock_fn or time.monotonic
         self._ws = None
         # Additive, state-only (spec 00069 D5/T3): no behavioral change, plain ints a metrics
         # collector reads at scrape time -- never mutated from anywhere but the two sites below.
@@ -177,11 +191,15 @@ class CaptureClient:
         consuming task to stop — there is no internal stop condition."""
         attempt = 0
         service_restart = False
+        dropped_at: float | None = None
         while True:
             try:
                 async with self._connect(self._uri) as ws:
                     self._ws = ws
                     await self._subscribe_all(ws)
+                    if dropped_at is not None:
+                        _log_reconnected(attempt, self._clock() - dropped_at)
+                        dropped_at = None
                     attempt = 0
                     service_restart = False
                     async for raw in ws:
@@ -190,8 +208,10 @@ class CaptureClient:
                 # A 1012 is the venue announcing its own restart; reconnecting at 1.0 s into it is
                 # what earned the HTTP 503 on 2026-07-27. Sticky across attempts until a connection
                 # actually succeeds -- the endpoint stays unready for longer than one attempt.
-                service_restart = service_restart or getattr(exc.rcvd, "code", None) == _WS_CLOSE_SERVICE_RESTART
-                logger.warning("WS connection closed, reconnecting: %s", exc)
+                restart_close = getattr(exc.rcvd, "code", None) == _WS_CLOSE_SERVICE_RESTART
+                service_restart = service_restart or restart_close
+                # Any other close is the venue's random drop, several a day; the reconnect line says whether it healed.
+                logger.log(logging.WARNING if restart_close else logging.INFO, "WS connection closed, reconnecting: %s", exc)
             except (WebSocketException, OSError, TimeoutError) as exc:
                 # A failed connection *attempt* — e.g. InvalidStatus on the HTTP 503 Kraken's
                 # endpoint answers with while restarting (T0035), a refused/unroutable connect
@@ -201,6 +221,8 @@ class CaptureClient:
                 logger.warning("WS connect attempt failed, reconnecting: %s", exc)
             finally:
                 self._ws = None
+            if dropped_at is None:
+                dropped_at = self._clock()
             self.reconnects_total += 1
             delay = compute_backoff(attempt, after_service_restart=service_restart)
             attempt += 1
