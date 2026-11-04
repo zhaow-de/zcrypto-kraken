@@ -57,7 +57,7 @@ A node rule, `Fleet · log lines with no level` (uid `zcrypto-mon-unlevelled-log
 
 ## D10 — the engine's dust warning is the owner's
 
-The engine warns at each start that the venue holds a balance the Cache reads as 0 — 1e-08-scale SOL and ETH after the store clear. The statement is true, and the dust sits below the pair's order minimum, so nothing trades it away. Silencing it means engine code, a dust threshold read from the instrument, and so an image and an engine converge: it is offered to the owner as a choice and, unanswered, stays as it is. This branch carries no engine code.
+The engine warns at each start that the venue holds a balance the Cache reads as 0 — 1e-08-scale SOL and ETH after the store clear. The statement is true, and the dust sits below the pair's order minimum, so nothing trades it away. Silencing it means engine code, a dust threshold read from the instrument, and so an image and an engine converge: it is offered to the owner as a choice and, unanswered, stays as it is. The branch's engine change is D8's two socket-line levels; a dust threshold is engine logic beyond them.
 
 ## D11 — the rollout is the owner's, host by host
 
