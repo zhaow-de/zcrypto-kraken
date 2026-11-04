@@ -995,6 +995,16 @@ def test_a_no_fault_drop_leaves_a_near_miss_of_its_source_at_its_level(fixture):
     assert model(near.host, near.labels, near.line) == near.labels["level"]
 
 
+def test_every_no_fault_drop_admits_a_fixture_with_a_near_miss():
+    for host in CONFIGS:
+        for text, action in level_blocks(host):
+            if action == DROP_NO_FAULT:
+                assert any(f.host == host and f.id in NEAR_MISSES and _admits(text, f.labels, f.line) for f in FIXTURES), (
+                    host,
+                    text,
+                )
+
+
 MEASURED = {
     ("mon", "zcrypto-mon-selfcheck"),
     ("mon", "alloy"),
