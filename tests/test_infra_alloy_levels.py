@@ -548,6 +548,30 @@ FIXTURES: list[Fixture] = [
         "192.0.2.10:51236 [03/Nov/2026:14:19:02.456] cache node1/via-node1 1/0/1201 87 DC 2/2/1/1/0 0/0",
         "INFO",
     ),
+    Fixture(
+        "cache_valkey_sigterm",
+        "cache",
+        {"container": "valkey"},
+        "1:signal-handler (1762161901) Received SIGTERM scheduling shutdown...",
+        "WARNING",
+    ),
+    Fixture(
+        "cache_sentinel_sigterm",
+        "cache",
+        {"container": "sentinel"},
+        "1:signal-handler (1762161901) Received SIGTERM scheduling shutdown...",
+        "WARNING",
+    ),
+    Fixture(
+        "cache_valkey_monotonic", "cache", {"container": "valkey"}, "monotonic: x86 linux, 'constant_tsc' flag not present", "INFO"
+    ),
+    Fixture(
+        "cache_sentinel_monotonic",
+        "cache",
+        {"container": "sentinel"},
+        "monotonic: x86 linux, 'constant_tsc' flag not present",
+        "INFO",
+    ),
 ]
 
 _STRING = r'"((?:[^"\\]|\\.)*)"'

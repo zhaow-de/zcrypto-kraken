@@ -209,7 +209,8 @@ loki.process "parse" {
 
   // Valkey's and Sentinel's line is `<pid>:<role> <dd Mon yyyy hh:mm:ss.mmm> <mark> <message>`, the
   // mark `#` for a warning, `*` for a notice, `-` verbose and `.` debug. A line of another shape
-  // renders an empty level, which the labels stage drops, so it ships with no `level` label.
+  // renders an empty level, which the labels stage drops; the blocks at the end of this component
+  // level the two such shapes the containers print.
   stage.match {
     selector = "{container=~\"valkey|sentinel\"}"
 
@@ -224,6 +225,24 @@ loki.process "parse" {
 
     stage.labels {
       values = { level = "mark" }
+    }
+  }
+
+  // Two shapes Valkey and Sentinel print outside the line format above: the signal handler's, at the warning level
+  // Valkey logs it at, and the clock notice at start.
+  stage.match {
+    selector = "{container=~\"valkey|sentinel\", level=\"\"} |~ \"^\\\\d+:signal-handler \\\\(\""
+
+    stage.static_labels {
+      values = { level = "WARNING" }
+    }
+  }
+
+  stage.match {
+    selector = "{container=~\"valkey|sentinel\", level=\"\"} |~ \"^monotonic: \""
+
+    stage.static_labels {
+      values = { level = "INFO" }
     }
   }
 }
