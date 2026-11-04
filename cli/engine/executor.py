@@ -1531,7 +1531,9 @@ class ProbeExecutor:
                     self._reread_tries = 0  # a mint's arm, or this endpoint's own return's: a return arms the pass again
                     self._reread_owed = False
                     self._reread_armed_by = None
-                logger.warning(
+                # INFO, as is the return's: the execution socket drops about hourly, and one held down past the grace
+                # freezes the loop at CRITICAL (`_watch_sockets`).
+                logger.info(
                     "socket %s is down -- an order whose terminal this engine mints meanwhile is re-read at the venue "
                     "once a socket is back",
                     endpoint,
@@ -1545,7 +1547,7 @@ class ProbeExecutor:
                     self._reread_tries = _REREAD_ATTEMPTS
                 else:
                     self._reread_owed = True
-                logger.warning(
+                logger.info(
                     "socket %s is back%s -- %s",
                     endpoint,
                     f" ({', '.join(sorted(self._sockets_down))} still down)" if self._sockets_down else " and none is down",
