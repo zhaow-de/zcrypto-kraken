@@ -134,10 +134,8 @@ loki.process "parse" {
     }
   }
 
-  // Four shapes Grafana or Loki log at ERROR or WARNING report no fault, and are dropped rather than shipped at a level
-  // their text does not print: an error that is a cancelled context (a panel the browser left), the dashboards page
-  // asking for the quotas API this build does not serve, a contact-point test's empty receiver, and a bundled plugin
-  // stopped with Grafana.
+  // Four shapes Grafana or Loki log at ERROR or WARNING that report no fault, each named by its drop reason, are dropped
+  // rather than shipped at a level their text does not print.
   stage.match {
     selector            = "{container=~\"grafana-server|loki\", level=~\"ERROR|WARNING\"} |~ \"\\\\berr(or)?=\\\"(?:[^\\\"\\\\\\\\]|\\\\\\\\.)*context canceled\\\"\""
     action              = "drop"
@@ -162,7 +160,7 @@ loki.process "parse" {
     drop_counter_reason = "plugin_stopped_with_grafana"
   }
 
-  // Alloy's finished node evaluation, one line per component at every start or reload, reports no event: it is dropped.
+  // Alloy's finished node evaluation, one line per component at every start or reload, reports no event.
   stage.match {
     selector            = "{container=\"alloy\", level=\"INFO\"} |= \"msg=\\\"finished node evaluation\\\"\""
     action              = "drop"

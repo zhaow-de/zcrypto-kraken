@@ -973,7 +973,6 @@ def test_a_dropped_line_is_a_copy_its_source_ships_with_a_level(fixture):
     assert _parsed_level(fixture.host, fixture.labels, TWINS[fixture.id]) in {"INFO", "WARNING", "CRITICAL"}
 
 
-# Each line dropped as no fault beside a line of its source under the same labels, which the drop leaves at its level.
 NEAR_MISSES = {
     "mon_grafana_panel_cancelled": "mon_grafana_panel_failed",
     "mon_loki_mapping_cancelled": "mon_loki_mapping_failed",

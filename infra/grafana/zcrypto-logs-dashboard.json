@@ -2,7 +2,7 @@
   "id": null,
   "uid": "zcrypto-logs",
   "title": "Logs",
-  "description": "Every log line the fleet ships, and the line rate that says whether anything is arriving at all. Filter by machine, container, level and a substring. The log panel shows each line's message, parsing a JSON or key=value line at query time; the stored lines are unchanged. Every panel that serves an alert evaluates that alert's own expression once per refresh and colours its value by that alert's threshold, so what you see here is the number the page was computed from.",
+  "description": "Every log line the fleet ships, and the line rate that says whether anything is arriving at all. Filter by machine, container, level and a substring. Every panel that serves an alert evaluates that alert's own expression once per refresh and colours its value by that alert's threshold, so what you see here is the number the page was computed from.",
   "tags": [],
   "schemaVersion": 39,
   "version": 0,
@@ -15,7 +15,7 @@
       "id": 101,
       "type": "timeseries",
       "title": "Total lines/min",
-      "description": "Is anything arriving at all? One line, every selected stream summed \u2014 the transport canary, and the panel a \"no lines in the last six hours\" page lands on. A flat zero here while the fleet is otherwise healthy means the shipping path is down, not that the fleet went quiet. Context panel: no alert evaluates this expression, so it carries no threshold line \u2014 the silence rules and the count each of them computes are in the silence-rule table at the lower right. Counted per minute; the shipping paths here are low-volume by design, so a healthy total is a small number.",
+      "description": "Is anything arriving at all? One line, every selected stream summed \u2014 the transport canary. A flat zero here while the fleet is otherwise healthy means the shipping path is down, not that the fleet went quiet. Context panel: no alert evaluates this expression, so it carries no threshold line \u2014 the silence rules and the count each of them computes are in the silence-rule table at the lower right. Counted per minute; the shipping paths here are low-volume by design, so a healthy total is a small number.",
       "datasource": {
         "type": "loki",
         "uid": "grafanacloud-logs"
@@ -205,7 +205,7 @@
       "id": 103,
       "type": "table",
       "title": "Silence rules \u2014 lines in each rule's window",
-      "description": "Which stream went quiet? Each row is one silence rule's own expression, evaluated once per refresh as the rule evaluates it: six hours for the two capture daemons, for the trading engine, for the shipping agent's own stream on the ops machine and for the liquidations poller; twenty-six hours for the scheduled ops units, one row per unit, and for the ops journal transport; three hours for the archive-pull success line. A row turns red below one line, where its rule fires, with no pending period. Any count from one up is healthy: the trading engine logs in bursts on its four-hourly cycle, so its count sits far below the capture daemons' and is still healthy, dead only at 0. Container names are not symmetric across machines \u2014 the archive-pull loop is `archive-pull` on the NAS and `zcrypto-archive-pull` on the ops machine \u2014 and the archive-pull success row carries no machine filter because that container name exists only on the NAS. A zero and a stream that never existed read the same here; the last-line table above tells them apart.",
+      "description": "Which stream went quiet? Each row is one silence rule's own expression, evaluated once per refresh as the rule evaluates it, its window in its name. A row turns red below one line, where its rule fires, with no pending period. The trading engine logs in bursts on its four-hourly cycle, so its count sits far below the capture daemons' and is healthy from 1. A zero and a stream that never existed read the same here; the last-line table above tells them apart.",
       "datasource": {
         "type": "loki",
         "uid": "grafanacloud-logs"
@@ -467,7 +467,7 @@
       "id": 1,
       "type": "logs",
       "title": "Logs \u2014 $container / $level",
-      "description": "Every line, newest first, shown as its message, parsed here at query time; the stored line is unchanged. A JSON line \u2014 the capture daemon, the trading engine and the liquidations poller push one JSON object per record \u2014 shows its message, with any stack trace beneath it. A key=value line \u2014 the shipping agent's own and the monitoring node's services' \u2014 shows its message, after its logger or its source location where it names one, and the error it carries. Any other line, the scheduled jobs' and the other services' own, shows as it was collected. Level is a real stream label on every path, so filtering and colouring work the same way for all of them. Expand a row to see the fields parsed out of it: a JSON line's logger, source file and line and its structured fields, a key=value line's logger, source location and error.",
+      "description": "Every line, newest first, shown as its message, parsed here at query time; the stored line is unchanged. A JSON line shows its message with any stack trace beneath it, a key=value line its logger or source location, its message and its error, and any other line shows as it was collected. Level is a real stream label on every path, so filtering and colouring work the same way for all of them. Expand a row to see the fields parsed out of it.",
       "datasource": {
         "type": "loki",
         "uid": "grafanacloud-logs"

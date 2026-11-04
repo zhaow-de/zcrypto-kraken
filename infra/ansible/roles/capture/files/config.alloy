@@ -378,7 +378,7 @@ loki.process "parse" {
     // than being mangled by a stage that assumed logfmt shape.
   }
 
-  // Alloy's finished node evaluation, one line per component at every start or reload, reports no event: it is dropped.
+  // Alloy's finished node evaluation, one line per component at every start or reload, reports no event.
   stage.match {
     selector            = "{container=\"alloy\", level=\"INFO\"} |= \"msg=\\\"finished node evaluation\\\"\""
     action              = "drop"
