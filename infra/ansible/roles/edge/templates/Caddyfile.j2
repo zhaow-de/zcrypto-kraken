@@ -12,6 +12,9 @@
 		}
 	}
 
+	# Every response the site serves is compressed here: the observability node's Grafana leaves its own gzip off for it.
+	encode zstd gzip
+
 {% for route in edge_basic_auth_routes %}
 	handle {{ route.path }} {
 		basic_auth {
