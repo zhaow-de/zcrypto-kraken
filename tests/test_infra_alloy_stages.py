@@ -228,16 +228,19 @@ def _unquoted(value: str) -> str:
 
 
 def _run_alloy(
-    alloy: str, tmp_path: Path, lines: list[str], blocks: list[str], labels: dict[str, str], carried: str
-) -> list[tuple[str | None, str]]:
-    """Feed `lines` through `loki.source.file` under `labels` -> `blocks` as committed -> `loki.echo`, and read each
-    survivor's `level` label and entry off Alloy's stdout after a fixed window; every survivor carries `carried`."""
-    sample = tmp_path / "sample.log"
-    sample.write_text("".join(line + "\n" for line in lines))
-    targets = "".join(f', {name} = "{value}"' for name, value in labels.items())
+    alloy: str, tmp_path: Path, groups: list[tuple[dict[str, str], list[str]]], blocks: list[str]
+) -> list[list[tuple[dict[str, str], str]]]:
+    """Each group's lines in a file of its own under its labels, through `blocks` as committed, into `loki.echo`; each
+    group's survivors, every label Alloy echoed and the entry, read off its output after a fixed window, in the order
+    the group's file holds them."""
+    files = [tmp_path / f"group-{i}.log" for i in range(len(groups))]
+    targets = []
+    for path, (labels, lines) in zip(files, groups, strict=True):
+        path.write_text("".join(line + "\n" for line in lines))
+        targets.append("{" + ", ".join([f'__path__ = "{path}"', *(f'{k} = "{v}"' for k, v in labels.items())]) + "}")
     (tmp_path / "harness.alloy").write_text(
         'loki.source.file "sample" {\n'
-        f'  targets    = [{{__path__ = "{sample}"{targets}}}]\n'
+        f"  targets    = [{', '.join(targets)}]\n"
         "  forward_to = [loki.process.parse.receiver]\n"
         "}\n\n"
         'loki.process "parse" {\n'
@@ -252,16 +255,14 @@ def _run_alloy(
         streams = [exc.stdout, exc.stderr]
     # Alloy's component logs, loki.echo's lines among them, go to stderr; read both streams.
     out = "".join(s.decode() if isinstance(s, bytes) else (s or "") for s in streams)
-    survivors = []
+    rows = []
     for line in out.splitlines():
         if "component_id=loki.echo.out" not in line:
             continue
+        echoed = _unquoted(re.search(r' labels="((?:[^"\\]|\\.)*)"', line).group(1))
         entry = _unquoted(re.search(r' entry="((?:[^"\\]|\\.)*)"', line).group(1))
-        echoed = re.search(r' labels="((?:[^"\\]|\\.)*)"', line).group(1)
-        assert carried in echoed, echoed
-        level = re.search(r'level=\\"([A-Z]+)\\"', echoed)
-        survivors.append((level.group(1) if level else None, entry))
-    return survivors
+        rows.append((dict(re.findall(r'(\w+)="([^"]*)"', echoed)), entry))
+    return [[(labels, entry) for labels, entry in rows if labels["filename"] == str(path)] for path in files]
 
 
 def test_alloy_itself_agrees_with_the_model(tmp_path):
@@ -269,10 +270,9 @@ def test_alloy_itself_agrees_with_the_model(tmp_path):
         pytest.skip("no alloy binary on PATH; the model above is the guard, this is its check against the real stage engine")
     lines = [line for line, _ in SAMPLE]
     labels = {"container": "zcrypto-engine", "host": "zcrypto"}
-    assert (
-        _run_alloy(shutil.which("alloy"), tmp_path, lines, list(_engine_blocks()), labels, 'container=\\"engine-nautilus\\"')
-        == EXPECTED
-    )
+    (survivors,) = _run_alloy(shutil.which("alloy"), tmp_path, [(labels, lines)], list(_engine_blocks()))
+    assert {echoed["container"] for echoed, _ in survivors} == {"engine-nautilus"}, survivors
+    assert [(echoed.get("level"), entry) for echoed, entry in survivors] == EXPECTED
 
 
 # --- the dead-man node's container stage: the ping path's key written over, each JSON record's level lifted --------
@@ -396,8 +396,9 @@ def test_alloy_itself_agrees_with_the_container_model(tmp_path):
     if no_binary("alloy"):
         pytest.skip("no alloy binary on PATH; the model above is the guard, this is its check against the real stage engine")
     labels = {"container": "hc", "host": "zcrypto-hc"}
-    survivors = _run_alloy(shutil.which("alloy"), tmp_path, HC_SAMPLE, [_hc_match()], labels, 'container=\\"hc\\"')
-    assert survivors == [hc_model(line) for line in HC_SAMPLE]
+    (survivors,) = _run_alloy(shutil.which("alloy"), tmp_path, [(labels, HC_SAMPLE)], [_hc_match()])
+    assert {echoed["container"] for echoed, _ in survivors} == {"hc"}, survivors
+    assert [(echoed.get("level"), entry) for echoed, entry in survivors] == [hc_model(line) for line in HC_SAMPLE]
 
 
 # --- every timestamp stage keeps the journal's time on a miss --------------------------------------

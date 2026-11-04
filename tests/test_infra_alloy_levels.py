@@ -6,7 +6,6 @@ from __future__ import annotations
 import json
 import re
 import shutil
-import subprocess
 from pathlib import Path
 from typing import NamedTuple
 
@@ -14,15 +13,7 @@ import pytest
 
 from tests.alloy_text import live_alloy_text
 from tests.skip_gates import no_binary
-from tests.test_infra_alloy_stages import (
-    ALLOY_CONFIGS,
-    _alloy_run_command,
-    _assigned,
-    _blocks,
-    _parse_body,
-    _stage_blocks,
-    _unquoted,
-)
+from tests.test_infra_alloy_stages import ALLOY_CONFIGS, _assigned, _blocks, _parse_body, _run_alloy, _stage_blocks
 
 REPO = Path(__file__).resolve().parents[1]
 CONFIGS = {host: REPO / f"infra/ansible/roles/{host}/files/config.alloy" for host in ("mon", "hc", "ops", "capture", "cache")} | {
@@ -343,48 +334,6 @@ def test_no_alloy_config_reads_the_journal_priority():
 
 
 # --- the same blocks, through Alloy itself ---------------------------------------------------------------------------
-def _echoed(out: str) -> list[tuple[str, str | None, str]]:
-    """Each `loki.echo` line Alloy wrote: its file, its level label, its entry."""
-    rows = []
-    for line in out.splitlines():
-        if "component_id=loki.echo.out" not in line:
-            continue
-        labels = re.search(r' labels="((?:[^"\\]|\\.)*)"', line).group(1)
-        level = re.search(r'level=\\"([A-Z]+)\\"', labels)
-        entry = _unquoted(re.search(r' entry="((?:[^"\\]|\\.)*)"', line).group(1))
-        rows.append((re.search(r'filename=\\"([^"\\]+)\\"', labels).group(1), level and level.group(1), entry))
-    return rows
-
-
-def _run_alloy_groups(
-    alloy: str, tmp_path: Path, groups: list[tuple[dict[str, str], list[str]]], blocks: list[str]
-) -> list[list[tuple[str | None, str]]]:
-    """Each group's lines in a file of its own under its labels, through `blocks` as committed, into `loki.echo`; each
-    group's survivors, read off Alloy's output after a fixed window, in the order its file holds them."""
-    files = [tmp_path / f"group-{i}.log" for i in range(len(groups))]
-    targets = []
-    for path, (labels, lines) in zip(files, groups, strict=True):
-        path.write_text("".join(line + "\n" for line in lines))
-        targets.append("{" + ", ".join([f'__path__ = "{path}"', *(f'{k} = "{v}"' for k, v in labels.items())]) + "}")
-    (tmp_path / "harness.alloy").write_text(
-        'loki.source.file "sample" {\n'
-        f"  targets    = [{', '.join(targets)}]\n"
-        "  forward_to = [loki.process.parse.receiver]\n"
-        "}\n\n"
-        'loki.process "parse" {\n'
-        "  forward_to = [loki.echo.out.receiver]\n\n" + "\n".join(blocks) + "}\n\n"
-        'loki.echo "out" {}\n'
-    )
-    cmd = _alloy_run_command(alloy, tmp_path, tmp_path / "harness.alloy")
-    try:
-        done = subprocess.run(cmd, capture_output=True, text=True, timeout=6, cwd=tmp_path)
-        streams = [done.stdout, done.stderr]
-    except subprocess.TimeoutExpired as exc:  # Alloy runs until killed; the window is the read
-        streams = [exc.stdout, exc.stderr]
-    rows = _echoed("".join(s.decode() if isinstance(s, bytes) else (s or "") for s in streams))
-    return [[(level, entry) for name, level, entry in rows if name == str(path)] for path in files]
-
-
 @pytest.mark.parametrize("host", sorted({f.host for f in FIXTURES}))
 def test_alloy_itself_agrees_with_the_level_model(host, tmp_path):
     if no_binary("alloy"):
@@ -398,4 +347,5 @@ def test_alloy_itself_agrees_with_the_level_model(host, tmp_path):
     expected = [
         [(f.expected, f.line) for f in fixtures if json.dumps(f.labels, sort_keys=True) == k and f.expected != DROP] for k in keys
     ]
-    assert _run_alloy_groups(shutil.which("alloy"), tmp_path, groups, blocks) == expected
+    survivors = _run_alloy(shutil.which("alloy"), tmp_path, groups, blocks)
+    assert [[(echoed.get("level"), entry) for echoed, entry in group] for group in survivors] == expected
