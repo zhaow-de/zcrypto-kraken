@@ -8,6 +8,8 @@ from websockets.exceptions import ConnectionClosedError, InvalidStatus
 from websockets.frames import Close
 from websockets.http11 import Response
 
+from cli.capture import ws_client as capture_ws_client
+from cli.liquidations import ws_client as liquidations_ws_client
 from cli.liquidations.errors import LiquidationsError
 from cli.liquidations.ws_client import DEFAULT_URI, BinanceLiquidationClient, compute_backoff
 
@@ -306,3 +308,7 @@ def test_a_second_drop_times_its_reconnect_from_its_own_close(caplog):
     )
     close = ("INFO", "WS connection closed, reconnecting: no close frame received or sent")
     assert lines == [close, ("INFO", "reconnected after 1.10 s"), close, ("INFO", "reconnected after 1.10 s")]
+
+
+def test_the_poller_s_routine_reconnect_bound_is_the_capture_client_s():
+    assert liquidations_ws_client._ROUTINE_RECONNECT_MAX_SECONDS == capture_ws_client._ROUTINE_RECONNECT_MAX_SECONDS
