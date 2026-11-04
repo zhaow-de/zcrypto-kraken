@@ -4072,7 +4072,7 @@
       "id": 1002,
       "type": "timeseries",
       "title": "Silence rules — lines in each rule's window",
-      "description": "Which stream went quiet? Each series is one of the eight silence rules' own expression, plotted as the rule evaluates it, its window in its name. Below the bar at one line the rule fires, with no pending period. Most of these counts run into the hundreds on a healthy stream; the trading engine logs in bursts on its four-hourly cycle, so its count sits far below the capture daemons' and is healthy from 1 — read the line at 1, not the height. A zero and a stream that never existed draw the same here; the Logs board's last-line table tells them apart.",
+      "description": "Which stream went quiet? Each series is one of the eight silence rules' own expression, plotted as the rule evaluates it, its window in its name. Below the bar at one line the rule fires, with no pending period. The trading engine logs in bursts on its four-hourly cycle, so its count sits far below the capture daemons' \u2014 read the line at 1, not the height. A zero and a stream that never existed draw the same here; the Logs board's last-line table tells them apart.",
       "datasource": {
         "type": "loki",
         "uid": "grafanacloud-logs"
