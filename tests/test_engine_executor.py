@@ -5279,7 +5279,7 @@ def test_each_socket_reported_down_arms_the_pass_on_its_own_return_and_the_conne
     its endpoint, the line F2's Record and the rollout's first hour read the execution socket's off."""
     venue = _VenueOrders(_report(_TXID, OrderStatus.CANCELED))
     ex, client, clock = _minted_after_a_cut(tmp_path, venue_orders=venue, venue_cancel=_VenueCancel())
-    with _executor_errors(level=logging.WARNING) as records:
+    with _executor_errors(level=logging.INFO) as records:
         ex.on_socket_state(_socket(SocketState.DISCONNECTED, "a-second-endpoint"))  # holds the arm the mint set
 
         ex.on_socket_state(_socket(SocketState.CONNECTED))  # the connect itself: not held down
