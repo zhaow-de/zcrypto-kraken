@@ -995,6 +995,20 @@ def test_a_no_fault_drop_leaves_a_near_miss_of_its_source_at_its_level(fixture):
     assert model(near.host, near.labels, near.line) == near.labels["level"]
 
 
+def test_the_node_counts_each_grafana_or_loki_drop_under_a_reason_its_runbook_names():
+    runbook = (REPO / "infra/runbooks/mon.md").read_text()
+    reasons = [
+        _assigned(b, "drop_counter_reason")
+        for b in _top_blocks("mon")
+        if _assigned(b, "action") == "drop"
+        and any(
+            k == "container" and set(v.split("|")) & {"grafana-server", "loki"} for k, _, v in selector(_assigned(b, "selector"))[0]
+        )
+    ]
+    assert len(reasons) == len(set(reasons)) == 4, reasons
+    assert all(r and re.search(rf'reason="{r}"|`{r}`', runbook) for r in reasons), reasons
+
+
 def test_every_no_fault_drop_admits_a_fixture_with_a_near_miss():
     for host in CONFIGS:
         for text, action in level_blocks(host):
