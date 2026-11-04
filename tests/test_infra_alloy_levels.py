@@ -900,11 +900,9 @@ def test_each_line_reaches_the_level_stages_as_its_hosts_parse_leaves_it(fixture
 
 def test_a_level_is_set_after_every_parse():
     for host in CONFIGS:
-        blocks = _top_blocks(host)
-        parses = [i for i, b in enumerate(blocks) if not _keys_on_level(b)]
-        levels = [
-            i for i, b in enumerate(blocks) if _static_level(b) or ("level", "=", "") in selector(_assigned(b, "selector"))[0]
-        ]
+        keyed = [_keys_on_level(b) for b in _top_blocks(host)]
+        parses = [i for i, k in enumerate(keyed) if not k]
+        levels = [i for i, k in enumerate(keyed) if k]
         assert not levels or max(parses) < min(levels), f"{host}: a parse runs after a level stage, blocks {parses} and {levels}"
 
 

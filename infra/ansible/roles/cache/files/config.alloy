@@ -207,13 +207,6 @@ loki.process "parse" {
     }
   }
 
-  // Alloy's finished node evaluation, one line per component at every start or reload, reports no event.
-  stage.match {
-    selector            = "{container=\"alloy\", level=\"INFO\"} |= \"msg=\\\"finished node evaluation\\\"\""
-    action              = "drop"
-    drop_counter_reason = "alloy_node_evaluation"
-  }
-
   // Valkey's and Sentinel's line is `<pid>:<role> <dd Mon yyyy hh:mm:ss.mmm> <mark> <message>`, the
   // mark `#` for a warning, `*` for a notice, `-` verbose and `.` debug. A line of another shape
   // renders an empty level, which the labels stage drops; the blocks at the end of this component
@@ -233,6 +226,13 @@ loki.process "parse" {
     stage.labels {
       values = { level = "mark" }
     }
+  }
+
+  // Alloy's finished node evaluation, one line per component at every start or reload, reports no event.
+  stage.match {
+    selector            = "{container=\"alloy\", level=\"INFO\"} |= \"msg=\\\"finished node evaluation\\\"\""
+    action              = "drop"
+    drop_counter_reason = "alloy_node_evaluation"
   }
 
   // Two shapes Valkey and Sentinel print outside the line format above: the signal handler's, at the warning level
