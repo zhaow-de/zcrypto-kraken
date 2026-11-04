@@ -578,3 +578,28 @@ The node's self-check reads the rules' evaluation, the fleet's samples and Loki'
 ### Retire when
 
 `zcrypto-mon-grafana-error-logs` is absent from `infra/grafana/alerts.yaml`.
+
+______________________________________________________________________
+
+<a name="zcrypto-mon-unlevelled-log-lines"></a>
+
+## zcrypto-mon-unlevelled-log-lines — ALERT
+
+### What you are seeing
+
+A **warning** Grafana alert from the node, `Fleet · log lines with no level`, on the `logs` receiver, `for: 0s`, `noDataState: OK`: a host shipped a log line with no `level` label to the node in the last fifteen minutes. Each instance names the `host` and the `container` the line came from, at most five of them; Grafana's logs view draws such a line as level unknown. The Fleet health board's *Monitor — log lines with no level* panel (912) draws the count per host and container.
+
+### What it means
+
+Each host's Alloy gives a line its `level` in its `loki.process "parse"` block, in `infra/ansible/roles/<role>/files/config.alloy`: a parsing stage per source reads the level a line carries, and for a source that prints none a trailing `stage.match` on `{container="<name>", level=""}`, its line filter keyed on the shape the source prints, sets it by `stage.static_labels`. A line no stage names ships with no `level`, and the ERROR rules' `level=~"ERROR|CRITICAL"` does not read it: a new script or unit, a source whose printed line changed, or a parse stage that broke. The line is not lost, only unclassified. A burst — a crash's traceback, a service's start-up banner — is one instance with its count.
+
+### What to do
+
+1. **Read the lines**, from the workstation, the day's set with each line's first 200 characters: `uv run python infra/scripts/grafana-query.py --stack mon --loki 'topk(20, sum by (host, container, msg) (count_over_time({host=~".+", level=""} | regexp "^(?P<msg>.{1,200})" [24h])))'`.
+2. **Find the source's stage** in its host's config: `config.alloy` under `infra/ansible/roles/mon`, `hc`, `ops`, `capture` (both capture hosts and the engine's cache proxy) or `cache`, or the NAS's `infra/nas/config.alloy`, and the trailing `stage.match` blocks at the end of its `loki.process "parse"`. A container with no such block is a source the config has not classified; a container with one printed a shape it does not name, or is on a host not converged since that block merged, whose converge is step 4's. A source whose whole stream lost its level is a parse stage that broke: `git log -5 --` that config and the source's own file, and for the ops units `observability.md`'s `zcrypto-ops-log-plane`.
+3. **Classify the shape by what the line reports**, in a branch: INFO for a run that did its job; WARNING for a failure another rule pages, which the line explains; ERROR for a failure no other rule pages; a line that repeats one its source already ships with a level is dropped, `action = "drop"`, rather than levelled. The block goes after the host's parsing blocks with `level=""` in its selector, its fixture line in `tests/test_infra_alloy_levels.py`; the source's printed text stays as it is, since rules, tests and runbooks read it.
+4. **Ship it** by that host's converge as `.claude/skills/zcrypto-bump-alloy/SKILL.md`'s *What this is* gives a `config.alloy` edit, and **confirm by value**: `uv run python infra/scripts/grafana-query.py --stack mon --loki 'sum by (host, container) (count_over_time({host="<host>", level=""} [1h]))'` reads `(no series)` once an hour of the source's lines has passed, and the rule is back to **Normal**.
+
+### Retire when
+
+`zcrypto-mon-unlevelled-log-lines` is absent from `infra/grafana/alerts.yaml`.

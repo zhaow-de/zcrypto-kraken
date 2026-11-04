@@ -2238,6 +2238,7 @@ _MON_RULES = {
     "zcrypto-mon-shipper-loss": ("warning", "909"),
     "zcrypto-mon-alloy-versions-split": ("warning", "910"),
     "zcrypto-mon-grafana-error-logs": ("warning", "911"),
+    "zcrypto-mon-unlevelled-log-lines": ("warning", "912"),
 }
 _HC_RULES = {
     "zcrypto-alloy-dark-hc": ("critical", "921"),
@@ -2306,6 +2307,10 @@ def test_a_rule_reads_the_node_exactly_when_it_is_in_the_nodes_group():
         if rule["uid"] == "zcrypto-mon-ingest-dark":
             # It counts every shipper but the observability node, the dead-man node among them.
             assert matchers == [("!=", "zcrypto-mon")], matchers
+            continue
+        if rule["uid"] == "zcrypto-mon-unlevelled-log-lines":
+            # It reads each host's lines the node holds, the two nodes' own among them.
+            assert matchers == [("=~", ".+")], matchers
             continue
         for group, host in NODE_ONLY_GROUPS.items():
             admits = [(op, value) for op, value in matchers if _admits(op, value, host)]
@@ -2523,6 +2528,22 @@ def test_the_grafana_error_rule_and_its_panel_leave_out_a_context_canceled_line(
     exclusions = '!= "error=\\"signal: terminated\\"" != "error=\\"context canceled\\"" | json'
     for expr in (_log_expr("zcrypto-mon-grafana-error-logs"), *(t["expr"] for t in panel["targets"])):
         assert exclusions in expr, expr
+
+
+_UNLEVELLED = 'topk(5, sum by (host, container) (count_over_time({host=~".+", level=""} [15m])))'
+
+
+def test_the_unlevelled_rule_pages_each_source_that_ships_a_line_with_no_level():
+    rule = _rule("zcrypto-mon-unlevelled-log-lines")
+    assert (rule["title"], rule["ruleGroup"]) == ("Fleet · log lines with no level", "zcrypto-mon")
+    assert _log_expr(rule["uid"]) == _UNLEVELLED
+    assert rule["data"][0]["relativeTimeRange"] == {"from": 900, "to": 0}
+    assert _evaluator(rule) == {"type": "gt", "params": [0]}
+    assert (rule["for"], rule["noDataState"], rule["execErrState"]) == ("0s", "OK", "Alerting")
+    assert (rule["labels"]["severity"], rule["notification_settings"]["receiver"]) == ("warning", "logs")
+    board = json.loads((REPO / "infra/grafana/fleet-health-dashboard.json").read_text())
+    (panel,) = [p for p in board["panels"] if p.get("id") == 912]
+    assert [t["expr"] for t in panel["targets"]] == [_UNLEVELLED]
 
 
 def _container_label_of_the_clones_stream() -> str:
