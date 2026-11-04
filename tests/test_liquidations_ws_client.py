@@ -201,6 +201,7 @@ def test_connected_property_tracks_the_socket():
 #
 # Each script item is what one connect returns or raises and the seconds it takes; the fake sleep advances
 # the same clock, so the reconnect line's seconds run from the close to the reopened socket.
+# `healthy` advances it after each message the consumer reads, the time a connection stays up.
 
 
 class _ClosingConnection(_FakeConnection):
@@ -214,7 +215,7 @@ class _ClosingConnection(_FakeConnection):
         raise ConnectionClosedError(Close(self._close_code, "service restart"), None)
 
 
-def _outcome_lines(caplog, *script, rows):
+def _outcome_lines(caplog, *script, rows, healthy=0.0):
     now = [0.0]
     remaining = list(script)
 
@@ -235,6 +236,7 @@ def _outcome_lines(caplog, *script, rows):
             seen += 1
             if seen == rows:
                 break
+            now[0] += healthy
 
     with caplog.at_level(logging.INFO, logger="zcrypto.liquidations.ws_client"):
         asyncio.run(run())
@@ -291,3 +293,16 @@ def test_a_first_attempt_reconnect_slower_than_the_bound_logs_at_warning(caplog)
         ("INFO", "WS connection closed, reconnecting: no close frame received or sent"),
         ("WARNING", "reconnected after 1 attempt, 5.50 s"),
     ]
+
+
+def test_a_second_drop_times_its_reconnect_from_its_own_close(caplog):
+    lines = _outcome_lines(
+        caplog,
+        (_FakeConnection([_force_order(t_ms=1568014460000)], raise_at_end=True), 0.0),
+        (_FakeConnection([_force_order(t_ms=1568014461000)], raise_at_end=True), 0.1),
+        (_FakeConnection([_force_order(t_ms=1568014462000)]), 0.1),
+        rows=3,
+        healthy=3600.0,
+    )
+    close = ("INFO", "WS connection closed, reconnecting: no close frame received or sent")
+    assert lines == [close, ("INFO", "reconnected after 1.10 s"), close, ("INFO", "reconnected after 1.10 s")]

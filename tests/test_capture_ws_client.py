@@ -399,11 +399,12 @@ def test_an_ordinary_close_still_reconnects_fast():
 #
 # Each script item is what one connect returns or raises and the seconds it takes; the fake sleep advances
 # the same clock, so the reconnect line's seconds run from the close to the subscribe.
+# `healthy` advances it after each message the consumer reads, the time a connection stays up.
 
 _HEARTBEAT = json.dumps({"channel": "heartbeat"})
 
 
-def _outcome_lines(caplog, *script, messages):
+def _outcome_lines(caplog, *script, messages, healthy=0.0):
     now = [0.0]
     remaining = list(script)
 
@@ -426,6 +427,7 @@ def _outcome_lines(caplog, *script, messages):
             seen += 1
             if seen == messages:
                 break
+            now[0] += healthy
 
     with caplog.at_level(logging.INFO, logger="zcrypto.capture.ws_client"):
         asyncio.run(run())
@@ -482,6 +484,19 @@ def test_a_first_attempt_reconnect_slower_than_the_restart_floor_logs_at_warning
         ("INFO", "WS connection closed, reconnecting: no close frame received or sent"),
         ("WARNING", "reconnected after 1 attempt, 5.50 s"),
     ]
+
+
+def test_a_second_drop_times_its_reconnect_from_its_own_close(caplog):
+    lines = _outcome_lines(
+        caplog,
+        (_FakeConnection([_HEARTBEAT], raise_at_end=True), 0.0),
+        (_FakeConnection([_HEARTBEAT], raise_at_end=True), 0.1),
+        (_FakeConnection([_HEARTBEAT]), 0.1),
+        messages=3,
+        healthy=3600.0,
+    )
+    close = ("INFO", "WS connection closed, reconnecting: no close frame received or sent")
+    assert lines == [close, ("INFO", "reconnected after 1.10 s"), close, ("INFO", "reconnected after 1.10 s")]
 
 
 # --- T0102: req_id-correlated resubscribe (observability + prevention) ---------------------------
