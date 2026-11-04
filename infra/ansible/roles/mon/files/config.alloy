@@ -188,8 +188,8 @@ loki.process "parse" {
     drop_counter_reason = "health_check_connection_closing"
   }
 
-  // Loki's warning on a range under a second, the last piece of a query Grafana split at its step: the node's one
-  // schema period starts in 2020, so no query a panel sends falls outside it.
+  // Loki's warning that a query overlaps none of its schema periods: the node's one period holds every line its Loki
+  // stores, so the warning reports no fault.
   stage.match {
     selector            = "{container=\"loki\", level=\"WARNING\"} |= \" caller=limits.go:\" |= \"msg=\\\"could not determine query overlaps on tsdb vs non-tsdb schemas\""
     action              = "drop"
