@@ -782,14 +782,14 @@
           "uid": "grafanacloud-logs"
         },
         "query": "label_values({host=~\"$host\"}, container)",
-        "refresh": 2,
+        "refresh": 1,
         "multi": true,
         "includeAll": true,
         "allValue": ".+",
         "sort": 1,
         "hide": 0,
         "skipUrlSync": false,
-        "description": "Container or unit that produced the line. The names are not symmetric across machines: the archive-pull loop appears in this list as `archive-pull` on the NAS and as `zcrypto-archive-pull` on the ops machine, so picking one of them silently blanks the other machine. Leave it on All unless you are chasing a single stream.",
+        "description": "Container or unit that produced the line. The names are not symmetric across machines: the archive-pull loop appears in this list as `archive-pull` on the NAS and as `zcrypto-archive-pull` on the ops machine, so picking one of them silently blanks the other machine. Leave it on All unless you are chasing a single stream. The list is read when the board loads and when the machine picker changes, not on every refresh, so a container that started shipping after the page loaded appears here after a reload.",
         "current": {
           "selected": true,
           "text": [
@@ -810,14 +810,14 @@
           "uid": "grafanacloud-logs"
         },
         "query": "label_values({host=~\"$host\", container=~\"$container\"}, level)",
-        "refresh": 2,
+        "refresh": 1,
         "multi": true,
         "includeAll": true,
         "allValue": ".*",
         "sort": 1,
         "hide": 0,
         "skipUrlSync": false,
-        "description": "Log level, carried as a real stream label on both paths \u2014 set by the shipping agent for the streams it collects, and by the daemon itself for the ones that push straight to the log store. Multi-select; All stays a match-anything pattern on purpose, so lines that carry no level label at all \u2014 the pull loop's own shell output \u2014 still appear.",
+        "description": "Log level, carried as a real stream label on both paths \u2014 set by the shipping agent for the streams it collects, and by the daemon itself for the ones that push straight to the log store. Multi-select; All stays a match-anything pattern on purpose, so lines that carry no level label at all \u2014 the pull loop's own shell output \u2014 still appear. The list is read when the board loads and when the machine or container picker changes, not on every refresh, so a level first shipped after the page loaded appears here after a reload.",
         "current": {
           "selected": true,
           "text": [
