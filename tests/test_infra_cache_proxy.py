@@ -78,6 +78,24 @@ def test_the_timeouts_the_logging_and_the_metrics_endpoint():
     assert "bind 0.0.0.0:6379" in lines
 
 
+def _sections(text: str) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    current: list[str] = []
+    for line in _lines(text):
+        if line.split()[0] in ("global", "defaults", "frontend", "backend"):
+            current = out.setdefault(line, [])
+        else:
+            current.append(line)
+    return out
+
+
+def test_haproxy_chroots_and_logs_connections_on_the_cache_frontend_alone():
+    sections = _sections(_render())
+    assert "chroot /var/lib/haproxy" in sections["global"] and "user haproxy" in sections["global"]
+    assert [name for name, lines in sections.items() if "option tcplog" in lines] == ["frontend cache"]
+    assert "no log" in sections["frontend metrics"]
+
+
 def test_converge_sh_admits_the_proxy_digest_as_an_extra_var():
     text = (ANSIBLE / "scripts/converge.sh").read_text()
     evkeys = re.search(r'^EVKEYS="([^"]*)"', text, re.M | re.S).group(1).replace("\\\n", " ").split()

@@ -382,6 +382,60 @@ loki.process "parse" {
     // non-logfmt line (a panic, a bare traceback) simply passes through with no `level` label rather
     // than being mangled by a stage that assumed logfmt shape.
   }
+
+  // A day the tape-bars sweep failed is ERROR, a condition another rule pages is WARNING. An echo that copies a record the
+  // CLI also logs is dropped, since the record ships levelled.
+  stage.match {
+    selector = "{container=\"zcrypto-tape-bars\", level=\"\"} |~ \"^  ERROR \""
+
+    stage.static_labels {
+      values = { level = "ERROR" }
+    }
+  }
+
+  stage.match {
+    selector = "{container=\"zcrypto-tape-bars\", level=\"\"} |~ \"^(days_written|head)=\""
+
+    stage.static_labels {
+      values = { level = "INFO" }
+    }
+  }
+
+  stage.match {
+    selector = "{container=\"zcrypto-verified-replay\", level=\"\"} |~ \"^\\\\S+  (MISMATCH|VALIDATION-FAILED)|^verified-replay: journal \""
+
+    stage.static_labels {
+      values = { level = "WARNING" }
+    }
+  }
+
+  stage.match {
+    selector = "{container=\"zcrypto-verified-replay\", level=\"\"} |~ \"^\\\\S+  (ok \\\\(worst |failed cycle \\\\()|^replayed \\\\d+ success record|^no journaled cycles found$|^verified-replay: capped at \""
+
+    stage.static_labels {
+      values = { level = "INFO" }
+    }
+  }
+
+  stage.match {
+    selector            = "{container=\"zcrypto-verify-replay\", level=\"\"} |~ \"^(verify-replay census |replayed \\\\d+ hour\\\\(s\\\\): )\""
+    action              = "drop"
+    drop_counter_reason = "typer_echo_copy"
+  }
+
+  stage.match {
+    selector = "{container=\"zcrypto-verify-replay\", level=\"\"} |~ \"^AUDIT MISMATCH  \""
+
+    stage.static_labels {
+      values = { level = "WARNING" }
+    }
+  }
+
+  stage.match {
+    selector            = "{container=\"zcrypto-archive-pull\", level=\"\"} |~ \"^trade backfill complete \""
+    action              = "drop"
+    drop_counter_reason = "typer_echo_copy"
+  }
 }
 
 loki.write "grafana" {

@@ -3,6 +3,7 @@ which rejects a malformed rule with a bare HTTP 400 whose body the script discar
 attended push can reach, and one that names neither rule nor field."""
 
 import json
+import logging
 import re
 import shutil
 import subprocess
@@ -11,8 +12,10 @@ from pathlib import Path
 import pytest
 import yaml
 
+from cli.logging.formatters import PlainTextFormatter
 from tests.alloy_text import live_alloy_text
-from tests.test_infra_alloy_stages import HC_ALLOY, HC_DISPATCH_FAILURE, hc_model
+from tests.test_infra_alloy_levels import DROP, FIXTURES
+from tests.test_infra_alloy_stages import HC_ALLOY, HC_DISPATCH_FAILURE, _assigned, _blocks, _expressions, _parse_body, hc_model
 
 REPO = Path(__file__).resolve().parents[1]
 ALERTS = REPO / "infra/grafana/alerts.yaml"
@@ -1336,6 +1339,43 @@ def test_the_ops_error_rule_selects_every_container_the_ops_log_plane_can_emit()
     assert not unmatched, f"the ops log plane can label {unmatched}; the ERROR rule's selector {selector.group(1)!r} misses them"
 
 
+_PARSE_CANARY = (
+    'sum by (host, container) (count_over_time({host="ops", container=~"zcrypto-.*", level=~".+"}'
+    r' |~ "^\\S+ \\[\\S+\\] - " [26h])) or on() vector(0)'
+)
+
+
+def test_the_unit_parse_canary_counts_the_lines_the_regex_stage_parsed():
+    assert _log_expr("zcrypto-ops-unit-parse-dead") == _PARSE_CANARY
+
+    def panels(ps):
+        for p in ps:
+            yield p
+            yield from panels(p.get("panels", []))
+
+    board = json.loads((REPO / "infra/grafana/zcrypto-logs-dashboard.json").read_text())
+    copies = [
+        t["expr"] for p in panels(board["panels"]) for t in p.get("targets", []) if 'container=~"zcrypto-.*"' in t.get("expr", "")
+    ]
+    assert copies == [_PARSE_CANARY]
+    (shape,) = [re.sub(r"\\(.)", r"\1", s) for s in re.findall(r'\|~ "((?:[^"\\]|\\.)*)"', _PARSE_CANARY)]
+    (stage,) = [
+        b
+        for b in _blocks(_parse_body(live_alloy_text(OPS_ALLOY)), "stage.match")
+        if _assigned(b, "selector") == '{container=~"zcrypto-.*"}'
+    ]
+    assert re.search(r'stage\.output \{\s*source = "rest"\s*\}', stage), stage
+    (regex,) = _expressions(stage)
+    record = logging.LogRecord(
+        "zcrypto.archive.command", logging.INFO, "command.py", 1331, "verify-replay complete hours=1 ok=1 failed=0", (), None
+    )
+    shell = "2026-11-03 05:24:01,123 WARNING zcrypto.verified-replay [verified-replay.sh] - 2026-11-02 verified but its watermark could not be persisted"
+    shipped = [re.match(regex, line).group("rest") for line in (PlainTextFormatter().format(record), shell)]
+    assert all(re.search(shape, line) for line in shipped), shipped
+    levelled = [f.line for f in FIXTURES if f.host == "ops" and f.expected not in (None, DROP)]
+    assert levelled and not [line for line in levelled if re.search(shape, line)]
+
+
 # --- every memory-LIMITED job has a headroom leg, or is named absent with its reason ----------------
 # compose source carrying a `memory:` limit -> the (host, job) pairs it renders to. The local
 # infra/docker compose is nobody's host.
@@ -2196,6 +2236,7 @@ _MON_RULES = {
     "zcrypto-mon-shipper-loss": ("warning", "909"),
     "zcrypto-mon-alloy-versions-split": ("warning", "910"),
     "zcrypto-mon-grafana-error-logs": ("warning", "911"),
+    "zcrypto-mon-unlevelled-log-lines": ("warning", "912"),
 }
 _HC_RULES = {
     "zcrypto-alloy-dark-hc": ("critical", "921"),
@@ -2264,6 +2305,10 @@ def test_a_rule_reads_the_node_exactly_when_it_is_in_the_nodes_group():
         if rule["uid"] == "zcrypto-mon-ingest-dark":
             # It counts every shipper but the observability node, the dead-man node among them.
             assert matchers == [("!=", "zcrypto-mon")], matchers
+            continue
+        if rule["uid"] == "zcrypto-mon-unlevelled-log-lines":
+            # It reads each host's lines the node holds, the two nodes' own among them.
+            assert matchers == [("=~", ".+")], matchers
             continue
         for group, host in NODE_ONLY_GROUPS.items():
             admits = [(op, value) for op, value in matchers if _admits(op, value, host)]
@@ -2481,6 +2526,22 @@ def test_the_grafana_error_rule_and_its_panel_leave_out_a_context_canceled_line(
     exclusions = '!= "error=\\"signal: terminated\\"" != "error=\\"context canceled\\"" | json'
     for expr in (_log_expr("zcrypto-mon-grafana-error-logs"), *(t["expr"] for t in panel["targets"])):
         assert exclusions in expr, expr
+
+
+_UNLEVELLED = 'topk(5, sum by (host, container) (count_over_time({host=~".+", level=""} [15m])))'
+
+
+def test_the_unlevelled_rule_pages_each_source_that_ships_a_line_with_no_level():
+    rule = _rule("zcrypto-mon-unlevelled-log-lines")
+    assert (rule["title"], rule["ruleGroup"]) == ("Fleet · log lines with no level", "zcrypto-mon")
+    assert _log_expr(rule["uid"]) == _UNLEVELLED
+    assert rule["data"][0]["relativeTimeRange"] == {"from": 900, "to": 0}
+    assert _evaluator(rule) == {"type": "gt", "params": [0]}
+    assert (rule["for"], rule["noDataState"], rule["execErrState"]) == ("0s", "OK", "Alerting")
+    assert (rule["labels"]["severity"], rule["notification_settings"]["receiver"]) == ("warning", "logs")
+    board = json.loads((REPO / "infra/grafana/fleet-health-dashboard.json").read_text())
+    (panel,) = [p for p in board["panels"] if p.get("id") == 912]
+    assert [t["expr"] for t in panel["targets"]] == [_UNLEVELLED]
 
 
 def _container_label_of_the_clones_stream() -> str:

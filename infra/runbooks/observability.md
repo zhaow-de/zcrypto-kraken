@@ -227,7 +227,7 @@ One of four **critical** Grafana alerts on the ops node's log plane. All four ar
 | -- | -- | -- | -- |
 | `zcrypto-ops-log-pipeline-dead` | `Ops · log pipeline dead (no parsed lines)` | `{host="ops", container="alloy", level=~".+"}` | 6 h |
 | `zcrypto-ops-poller-log-dead` | `Ops · poller log pipeline dead (no lines)` | `{host="ops", container="liquidations", level=~".+"}` | 6 h |
-| `zcrypto-ops-unit-parse-dead` | `Ops · unit log parse dead (no leveled lines)` | `{host="ops", container=~"zcrypto-.*", level=~".+"}` | 26 h |
+| `zcrypto-ops-unit-parse-dead` | `Ops · unit log parse dead (no leveled lines)` | `{host="ops", container=~"zcrypto-.*", level=~".+"}`, its lines in the parse stage's output shape `^\S+ \[\S+\] - ` | 26 h |
 | `zcrypto-ops-journal-transport-dead` | `Ops · journal transport dead (no unit lines)` | `{host="ops", container="zcrypto-archive-pull"}` — **any** line, no level filter | 26 h |
 
 Each is `count_over_time(...) or on() vector(0)` below 1. The `by (host)` / `by (host, container)` groupings are inert at fire time — the unlabelled fallback is what crosses the threshold — so each summary names its subject literally.
@@ -238,13 +238,13 @@ Each is `count_over_time(...) or on() vector(0)` below 1. The `by (host)` / `by 
 
 The ops node carries **two independent log paths**, and these four rules exist because no single query can watch both:
 
-- **Through Alloy**: the `zcrypto-*.service` units the keep-regex above names and Alloy's own container stream, both read by one `loki.source.journal "zcrypto_units"` component off `/var/log/journal`, then labelled and level-parsed by two separate `stage.match` blocks (`{container=~"zcrypto-.*"}` for the units' Python logging shape, `{container="alloy"}` for Alloy's logfmt).
+- **Through Alloy**: the `zcrypto-*.service` units the keep-regex above names and Alloy's own container stream, both read by one `loki.source.journal "zcrypto_units"` component off `/var/log/journal`, then labelled and level-parsed by two separate `stage.match` blocks (`{container=~"zcrypto-.*"}` for the units' Python logging shape, `{container="alloy"}` for Alloy's logfmt), and the scripts' bare echoes levelled after both by blocks keyed on each echo's own shape.
 - **Bypassing Alloy entirely**: the liquidations poller direct-ships (`--ship-logs`, `ZCRYPTO_LOG_SERVICE=liquidations`), stamping `level` at the source.
 
 **Read the combination, not the single page:**
 
 - **`journal-transport-dead` + `unit-parse-dead`** ⇒ the **journal transport**. The reader is seeing nothing at all; the parse rule is a downstream casualty. Go to the transport steps.
-- **`unit-parse-dead` alone** ⇒ the **parse stage regressed**. Lines are arriving without a `level` label, which means the `stage.regex` line-shape no longer matches what the CLI emits, or the container selector or label scheme changed. `zcrypto-ops-error-logs` now reads 0 = healthy forever for those units — that is the fault this rule exists to catch.
+- **`unit-parse-dead` alone** ⇒ the **parse stage regressed**. The units' Python-shaped lines are arriving without a `level` label — the observability node's `zcrypto-mon-unlevelled-log-lines` pages them beside it — which means the `stage.regex` line-shape no longer matches what the CLI emits, or the container selector or label scheme changed. `zcrypto-ops-error-logs` now reads 0 = healthy forever for those units — that is the fault this rule exists to catch.
 - **`log-pipeline-dead` too** ⇒ **Alloy itself** is dead or cannot reach Loki (no count command: a reading of the live host, which the tree does not hold). Check whether metrics still flow (`node_load1{host="ops"}` freshness); if they are gone as well, `zcrypto-alloy-dark-ops` owns it.
 - **`poller-log-dead` alone** ⇒ the poller's own ship path. The Alloy-side rules say nothing about it and never could (no count command: the three Alloy-side exprs in `infra/grafana/alerts.yaml` select no `liquidations` stream).
 - **All four** ⇒ the host or its egress, not any one component (no count command: a reading of the live host, which the tree does not hold).
@@ -281,7 +281,7 @@ The ops node carries **two independent log paths**, and these four rules exist b
 1. Query Loki **without** the level filter: `{host="ops", container="zcrypto-archive-pull"}` over the last 2 h. Lines present but carrying no `level` ⇒ the parse stage. No lines at all ⇒ this is the transport, above.
 2. Compare a raw line against the regex: `sudo journalctl -u zcrypto-panel-materialize.service -n 3 -o cat`, against the `stage.regex` under `loki.process "parse"` in `infra/ansible/roles/ops/files/config.alloy`. The shape must be `YYYY-MM-DD HH:MM:SS,mmm` then an upper-case level then the message.
 3. Check what moved: `git log -5 -- cli/logging infra/ansible/roles/ops/files/config.alloy`. A logging-format change in `cli/` breaks this stage silently, which is precisely the regression this rule was added for.
-4. Unparsed lines are **not** lost: `action_on_failure = "skip"` keeps their journal capture time, so the scripts' own echoes still arrive — they simply carry no `level`.
+4. Unparsed lines keep their journal capture time (`action_on_failure = "skip"`): a Python-shaped line the regex misses arrives with no `level`; the scripts' echoes are levelled or dropped by their own shape, outside this rule's count.
 
 **For `poller-log-dead` (the direct-ship path):**
 

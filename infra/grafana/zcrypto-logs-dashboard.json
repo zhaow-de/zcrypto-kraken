@@ -427,7 +427,7 @@
             "type": "loki",
             "uid": "grafanacloud-logs"
           },
-          "expr": "sum by (host, container) (count_over_time({host=\"ops\", container=~\"zcrypto-.*\", level=~\".+\"} [26h])) or on() vector(0)",
+          "expr": "sum by (host, container) (count_over_time({host=\"ops\", container=~\"zcrypto-.*\", level=~\".+\"} |~ \"^\\\\S+ \\\\[\\\\S+\\\\] - \" [26h])) or on() vector(0)",
           "refId": "F",
           "legendFormat": "dead-man \u00b7 ops units, leveled lines (26h) {{container}}",
           "queryType": "range",

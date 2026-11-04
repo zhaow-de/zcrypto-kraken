@@ -108,6 +108,105 @@ loki.process "parse" {
       values = { level = "level" }
     }
   }
+
+  // Alloy's own logs are logfmt with a `level` key, parsed as on the fleet's other hosts.
+  stage.match {
+    selector = "{container=\"alloy\"}"
+
+    stage.logfmt {
+      mapping = { "level" = "" }
+    }
+
+    stage.template {
+      source   = "level"
+      template = "{{ if eq .Value \"warn\" }}WARNING{{ else if eq .Value \"fatal\" }}CRITICAL{{ else }}{{ ToUpper .Value }}{{ end }}"
+    }
+
+    stage.labels {
+      values = { level = "level" }
+    }
+  }
+
+  // A failing self-check and an abandoned ping body are WARNING: each costs the dead-man a ping.
+  stage.match {
+    selector = "{container=\"zcrypto-hc-selfcheck\", level=\"\"} |~ \"^selfcheck: .*(=FAIL|-> not pinging|-> ping failed|-> healthy, and no ping URL is set)\""
+
+    stage.static_labels {
+      values = { level = "WARNING" }
+    }
+  }
+
+  stage.match {
+    selector = "{container=\"zcrypto-hc-selfcheck\", level=\"\"} |~ \"^selfcheck: \""
+
+    stage.static_labels {
+      values = { level = "INFO" }
+    }
+  }
+
+  stage.match {
+    selector = "{container=\"zcrypto-sqlite-backup\", level=\"\"} |~ \"^\\\\d{4}-\\\\d{2}-\\\\d{2} \\\\d{2}:\\\\d{2}:\\\\d{2},\\\\d{3} ERROR \""
+
+    stage.static_labels {
+      values = { level = "ERROR" }
+    }
+  }
+
+  stage.match {
+    selector = "{container=\"zcrypto-sqlite-backup\", level=\"\"} |~ \"^\\\\d{4}-\\\\d{2}-\\\\d{2} \\\\d{2}:\\\\d{2}:\\\\d{2},\\\\d{3} INFO \""
+
+    stage.static_labels {
+      values = { level = "INFO" }
+    }
+  }
+
+  stage.match {
+    selector = "{container=\"zcrypto-sqlite-backup\", level=\"\"} |~ \"^ \\\\S+ Cop(ying|ied) \""
+
+    stage.static_labels {
+      values = { level = "INFO" }
+    }
+  }
+
+  stage.match {
+    selector = "{container=\"hc\", level=\"\"} |~ \"\\\\[uwsgi-cron\\\\] |^Deleted api_ping \\\\d+, \""
+
+    stage.static_labels {
+      values = { level = "INFO" }
+    }
+  }
+
+  stage.match {
+    selector = "{container=\"alloy\", level=\"\"} |~ \"^Alloy starting in \""
+
+    stage.static_labels {
+      values = { level = "INFO" }
+    }
+  }
+
+  stage.match {
+    selector = "{container=\"hc\", level=\"\"} |~ \"^\\\\[uwsgi-body-read\\\\] Error reading \""
+
+    stage.static_labels {
+      values = { level = "WARNING" }
+    }
+  }
+
+  stage.match {
+    selector = "{container=\"hc\", level=\"\"} |~ \"^(\\\\*\\\\*\\\\* (Starting uWSGI |Operational MODE: |uWSGI is running in multiple interpreter mode)|!!! no internal routing support|\\\\[uWSGI\\\\] getting INI configuration from |\\\\[uwsgi-daemons\\\\] (spawning|stopping daemon) |spawned uWSGI (master process|worker \\\\d+) |uwsgi socket \\\\d+ bound to |WSGI app \\\\d+ \\\\(mountpoint=|worker \\\\d+ buried after |goodbye to uWSGI|SIGINT/SIGTERM received|Python (version|main interpreter initialized)|python threads support enabled|chdir\\\\(\\\\) to |(clock source|compiled with version|current working directory|detected binary path|detected max file descriptor number|detected number of CPU cores|lock engine|machine|nodename|os|thunder lock): |mapped \\\\d+ bytes |setting request body buffering size |your (memory page size|mercy for graceful operations|server socket listen backlog) |running .exec:)\""
+
+    stage.static_labels {
+      values = { level = "INFO" }
+    }
+  }
+
+  stage.match {
+    selector = "{container=\"hc\", level=\"\"} |~ \"^(Operations to perform:$|Running migrations:$|  Apply all migrations: |  Applying \\\\S+\\\\.\\\\.\\\\. OK$|  No migrations to apply\\\\.$)\""
+
+    stage.static_labels {
+      values = { level = "INFO" }
+    }
+  }
 }
 
 loki.write "mon" {

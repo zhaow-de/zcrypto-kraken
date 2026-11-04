@@ -2771,6 +2771,10 @@ rules:
       # Level-filtered, over `zcrypto-ops-journal-transport-dead`'s 26h window below: every
       # archive-pull tick logs a leveled line, a gate skip at WARNING, so a streak cannot false-fire it.
       #
+      # The line filter keeps what the ops config's stage.regex parsed, in the shape its stage.output ships, timestamp
+      # and level cut: the stages after it level the runners' bare echoes by their own shape, and a broken regex must
+      # still leave this count at 0.
+      #
       # `by (host, container)` -- container is a REGEX here, so it is real information on the label
       # line rather than something the rule already knows. It does not change when this rule fires:
       # `count_over_time` yields no series at all for a silent container (never a zero), so one live
@@ -2782,7 +2786,7 @@ rules:
         datasourceUid: "${GRAFANA_LOKI_DS_UID}"
         model:
           expr: >-
-            sum by (host, container) (count_over_time({host="ops", container=~"zcrypto-.*", level=~".+"} [26h])) or on() vector(0)
+            sum by (host, container) (count_over_time({host="ops", container=~"zcrypto-.*", level=~".+"} |~ "^\\S+ \\[\\S+\\] - " [26h])) or on() vector(0)
           queryType: instant
           refId: A
       - refId: B
@@ -6261,6 +6265,56 @@ rules:
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "911"
       unit: "ERROR or CRITICAL lines in the last 15 minutes"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: logs
+
+  - uid: zcrypto-mon-unlevelled-log-lines
+    title: "Fleet · log lines with no level"
+    ruleGroup: zcrypto-mon
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: instant
+        relativeTimeRange: {from: 900, to: 0}
+        datasourceUid: "${GRAFANA_LOKI_DS_UID}"
+        model:
+          expr: >-
+            topk(5, sum by (host, container) (count_over_time({host=~".+", level=""} [15m])))
+          queryType: instant
+          refId: A
+      - refId: B
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: reduce
+          reducer: last
+          expression: "A"
+          refId: B
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "B"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    noDataState: OK  # a window with no such line returns no series, the healthy state
+    execErrState: Alerting
+    for: 0s
+    annotations:
+      summary: "A host shipped a log line with no level to the observability node in the last 15 minutes: a source whose line shape no stage of that host's Alloy names, so the logs view draws it as level unknown and no ERROR rule reads it. One alert instance per host and container, at most 5. Read the line, then level its shape in that host's config.alloy. Runbook: infra/runbooks/mon.md#zcrypto-mon-unlevelled-log-lines"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "912"
+      unit: "lines with no level in the last 15 minutes"
     labels:
       severity: warning
     notification_settings:

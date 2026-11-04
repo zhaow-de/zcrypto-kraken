@@ -17,6 +17,8 @@ cookie_secure = true
 # `lax`, Grafana's default: cross-site POSTs and subresources go without the cookie under `strict` and `lax` alike.
 cookie_samesite = lax
 disable_brute_force_login_protection = false
+# Browsers dropped the header this setting sends; Grafana announces the setting as deprecated at each start.
+x_xss_protection = false
 
 [auth]
 disable_login_form = false
@@ -63,6 +65,8 @@ wal = true
 # Warnings and above only: at info Grafana and its datasource plugins log every query, scheduler tick
 # and notification hand-off, and the node's Loki stores each line.
 level = warn
+# The manifest watcher warns without end about an empty search manifest it keeps; its errors still log.
+filters = search-manifest-watcher:error
 
 [unified_alerting.state_history]
 enabled = true

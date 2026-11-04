@@ -3510,6 +3510,68 @@
       }
     },
     {
+      "id": 912,
+      "type": "timeseries",
+      "title": "Monitor — log lines with no level",
+      "description": "Is every line the fleet ships given a level? One line per host and container that shipped a line with no level in the fifteen minutes before each point, at most five. The alert pages on the first one. A source shows here when its host's Alloy names no stage for the shape it printed — a new script, a changed line, a parse that broke — and Grafana's logs view draws its lines as level unknown. No line at all is the healthy state.",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 144
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "expr": "topk(5, sum by (host, container) (count_over_time({host=~\".+\", level=\"\"} [15m])))",
+          "refId": "A",
+          "legendFormat": "{{host}} {{container}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
       "id": 920,
       "type": "row",
       "title": "Dead-man node",
@@ -3519,7 +3581,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 144
+        "y": 152
       }
     },
     {
@@ -3535,7 +3597,7 @@
         "h": 8,
         "w": 6,
         "x": 0,
-        "y": 145
+        "y": 153
       },
       "targets": [
         {
@@ -3597,7 +3659,7 @@
         "h": 8,
         "w": 6,
         "x": 6,
-        "y": 145
+        "y": 153
       },
       "targets": [
         {
@@ -3659,7 +3721,7 @@
         "h": 8,
         "w": 6,
         "x": 12,
-        "y": 145
+        "y": 153
       },
       "targets": [
         {
@@ -3722,7 +3784,7 @@
         "h": 8,
         "w": 6,
         "x": 18,
-        "y": 145
+        "y": 153
       },
       "targets": [
         {
@@ -3784,7 +3846,7 @@
         "h": 8,
         "w": 6,
         "x": 0,
-        "y": 153
+        "y": 161
       },
       "targets": [
         {
@@ -3846,7 +3908,7 @@
         "h": 8,
         "w": 18,
         "x": 6,
-        "y": 153
+        "y": 161
       },
       "targets": [
         {

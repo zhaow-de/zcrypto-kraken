@@ -261,6 +261,16 @@ loki.process "parse" {
     // non-logfmt line (a panic, a bare traceback) simply passes through with no `level` label rather
     // than being mangled by a stage that assumed logfmt shape.
   }
+
+  // The pull's rsync and ssh print no level: rsync's vanished-file lines are its own warning, and a failed transfer's
+  // lines explain the failure the CLI logs beside them, which pages at ERROR.
+  stage.match {
+    selector = "{container=\"archive-pull\", level=\"\"} |~ \"^(file has vanished: |rsync( warning| error)?: |ssh: )\""
+
+    stage.static_labels {
+      values = { level = "WARNING" }
+    }
+  }
 }
 
 loki.write "grafana" {
