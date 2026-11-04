@@ -160,8 +160,8 @@ loki.process "parse" {
     drop_counter_reason = "plugin_stopped_with_grafana"
   }
 
-  // Grafana's Loki plugin on a panel query whose connection to the node's Loki closed under it, and the summary line
-  // that follows any failed query and never names its cause; another failure keeps its Partial data line at ERROR.
+  // Grafana's Loki plugin on a panel query whose connection to the node's Loki closed under it, and a failed query's
+  // summary line with no error= field; a summary carrying error= and any other Partial data line keep ERROR.
   stage.match {
     selector            = "{container=\"grafana-server\", level=\"ERROR\"} |= \"logger=plugin.loki \" |= \"msg=\\\"Partial data response error\\\"\" |= \"error=\\\"read tcp 127.0.0.1:\" |= \"->127.0.0.1:3100: use of closed network connection\\\"\""
     action              = "drop"
