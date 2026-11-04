@@ -177,6 +177,20 @@ FIXTURES: list[Fixture] = [
         "ERROR",
     ),
     Fixture(
+        "mon_loki_schema_overlap_sliver",
+        "mon",
+        {"container": "loki", "level": "WARNING"},
+        'level=warn ts=2026-11-04T15:00:00.975465676Z caller=limits.go:723 org_id=fake msg="could not determine query overlaps on tsdb vs non-tsdb schemas, likely due to query not overlapping any of the schema configs,letting downstream code handle it gracefully" start=1793804400 end=1793804400.772',
+        DROP_NO_FAULT,
+    ),
+    Fixture(
+        "mon_loki_series_limit",
+        "mon",
+        {"container": "loki", "level": "WARNING"},
+        'level=warn ts=2026-11-04T15:00:00.975465676Z caller=limits.go:410 org_id=fake msg="maximum number of series (500) reached for a single query; consider reducing query cardinality by adding more filters"',
+        "WARNING",
+    ),
+    Fixture(
         "mon_grafana_quotas_501",
         "mon",
         {"container": "grafana-server", "level": "ERROR"},
@@ -1042,6 +1056,7 @@ NEAR_MISSES = {
     "mon_loki_scheduler_cancelled": "mon_loki_scheduler_unavailable",
     "mon_loki_scheduler_eof": "mon_loki_scheduler_notify_failed",
     "mon_loki_health_check_closing": "mon_loki_health_check_failed",
+    "mon_loki_schema_overlap_sliver": "mon_loki_series_limit",
     "mon_grafana_quotas_501": "mon_grafana_quotas_500",
     "mon_grafana_contact_point_test": "mon_grafana_notifier_failure",
     "mon_grafana_plugin_stop": "mon_grafana_plugin_killed",
@@ -1072,7 +1087,7 @@ def test_the_node_counts_each_grafana_or_loki_drop_under_a_reason_its_runbook_na
             k == "container" and set(v.split("|")) & {"grafana-server", "loki"} for k, _, v in selector(_assigned(b, "selector"))[0]
         )
     ]
-    assert len(reasons) == len(set(reasons)) == 8, reasons
+    assert len(reasons) == len(set(reasons)) == 9, reasons
     assert all(r and re.search(rf'reason="{r}"|`{r}`', runbook) for r in reasons), reasons
 
 
