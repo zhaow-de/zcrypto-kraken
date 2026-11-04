@@ -23,8 +23,7 @@ _BACKOFF_MAX_SECONDS = 60.0
 _RECONNECT_ERROR_EVERY = 10  # log an ERROR every N consecutive failed reconnect attempts
 # WebSocket close code 1012 "service restart": a close worth a warning on its own, as the capture client logs it.
 _WS_CLOSE_SERVICE_RESTART = 1012
-# A reconnect that took one attempt and no longer than this is an ordinary drop and logs at INFO; one that took
-# longer or needed more attempts logs at WARNING. The capture client's bound, Kraken's 5 s restart floor.
+# The capture client's bound, Kraken's 5 s restart floor; raising it hides a degrading link.
 _ROUTINE_RECONNECT_MAX_SECONDS = 5.0
 
 

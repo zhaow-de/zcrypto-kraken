@@ -33,8 +33,7 @@ _ACK_TIMEOUT_SECONDS = 5.0
 # WebSocket close code 1012 "service restart" -- the venue announcing its own restart. Measured
 # twice in 19.3 days (2026-07-13, 2026-07-27), both times arriving AFTER the silence, not before.
 _WS_CLOSE_SERVICE_RESTART = 1012
-# A reconnect that took one attempt and no longer than the restart floor is the venue's ordinary random drop and
-# logs at INFO; one that took longer or needed more attempts logs at WARNING. Raising it hides a degrading link.
+# Raising it hides a degrading link.
 _ROUTINE_RECONNECT_MAX_SECONDS = _SERVICE_RESTART_MIN_DELAY_SECONDS
 
 
@@ -210,7 +209,7 @@ class CaptureClient:
                 # actually succeeds -- the endpoint stays unready for longer than one attempt.
                 restart_close = getattr(exc.rcvd, "code", None) == _WS_CLOSE_SERVICE_RESTART
                 service_restart = service_restart or restart_close
-                # Any other close is the venue's random drop, several a day; the reconnect line says whether it healed.
+                # The reconnect line, not the close, says whether the link healed.
                 logger.log(logging.WARNING if restart_close else logging.INFO, "WS connection closed, reconnecting: %s", exc)
             except (WebSocketException, OSError, TimeoutError) as exc:
                 # A failed connection *attempt* — e.g. InvalidStatus on the HTTP 503 Kraken's
