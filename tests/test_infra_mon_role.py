@@ -209,6 +209,11 @@ def test_the_edge_listens_on_443_alone_and_takes_its_certificate_there():
     assert not re.search(r"(?m)^\s*(http://|:80\b)", _caddyfile_text())
 
 
+def test_grafana_leaves_compression_to_the_edge_which_encodes_every_response():
+    assert _ini().get("server", "enable_gzip", fallback=None) == "false"
+    assert _site()["encode zstd gzip"] == []
+
+
 def test_the_caddyfile_is_validated_before_it_replaces_the_live_one_and_never_shown():
     task = find_task(load_tasks(EDGE / "tasks/main.yml"), "Caddyfile — the one public listener's routes")
     template = task["ansible.builtin.template"]
