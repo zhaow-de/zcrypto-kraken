@@ -164,6 +164,20 @@ FIXTURES: list[Fixture] = [
     ),
     Fixture("mon_alloy_start", "mon", {"container": "alloy"}, "Alloy starting in Default Engine mode", "INFO"),
     Fixture("mon_alloy_unnamed_shape", "mon", {"container": "alloy"}, "an unclassified line from alloy", None),
+    Fixture(
+        "mon_alloy_node_evaluation",
+        "mon",
+        {"container": "alloy", "level": "INFO"},
+        'ts=2026-11-04T09:22:01.123456789Z level=info msg="finished node evaluation" controller_path=/ controller_id="" trace_id=0a1b2c3d4e5f60718293a4b5c6d7e8f9 node_id=loki.process.parse duration=1.234567ms',
+        DROP_NO_FAULT,
+    ),
+    Fixture(
+        "mon_alloy_graph_evaluation",
+        "mon",
+        {"container": "alloy", "level": "INFO"},
+        'ts=2026-11-04T09:22:01.234567891Z level=info msg="finished complete graph evaluation" controller_path=/ controller_id="" trace_id=0a1b2c3d4e5f60718293a4b5c6d7e8f9 duration=12.345678ms',
+        "INFO",
+    ),
     Fixture("mon_caddy_env_home", "mon", {"container": "caddy"}, "HOME=/var/lib/caddy", "INFO"),
     Fixture(
         "mon_caddy_env_version",
@@ -303,6 +317,20 @@ FIXTURES: list[Fixture] = [
     ),
     Fixture("hc_alloy_start", "hc", {"container": "alloy"}, "Alloy starting in Default Engine mode", "INFO"),
     Fixture("hc_alloy_unnamed_shape", "hc", {"container": "alloy"}, "an unclassified line from alloy", None),
+    Fixture(
+        "hc_alloy_node_evaluation",
+        "hc",
+        {"container": "alloy", "level": "INFO"},
+        'ts=2026-11-04T09:22:01.123456789Z level=info msg="finished node evaluation" controller_path=/ controller_id="" trace_id=0a1b2c3d4e5f60718293a4b5c6d7e8f9 node_id=prometheus.scrape.host duration=1.234567ms',
+        DROP_NO_FAULT,
+    ),
+    Fixture(
+        "hc_alloy_graph_evaluation",
+        "hc",
+        {"container": "alloy", "level": "INFO"},
+        'ts=2026-11-04T09:22:01.234567891Z level=info msg="finished complete graph evaluation" controller_path=/ controller_id="" trace_id=0a1b2c3d4e5f60718293a4b5c6d7e8f9 duration=12.345678ms',
+        "INFO",
+    ),
     Fixture(
         "hc_uwsgi_body_read",
         "hc",
@@ -541,6 +569,20 @@ FIXTURES: list[Fixture] = [
     ),
     Fixture("ops_archive_pull_traceback", "ops", {"container": "zcrypto-archive-pull"}, "Traceback (most recent call last):", None),
     Fixture(
+        "ops_alloy_node_evaluation",
+        "ops",
+        {"container": "alloy", "level": "INFO"},
+        'ts=2026-11-04T09:22:01.123456789Z level=info msg="finished node evaluation" controller_path=/ controller_id="" trace_id=0a1b2c3d4e5f60718293a4b5c6d7e8f9 node_id=loki.source.journal.zcrypto_units duration=1.234567ms',
+        DROP_NO_FAULT,
+    ),
+    Fixture(
+        "ops_alloy_graph_evaluation",
+        "ops",
+        {"container": "alloy", "level": "INFO"},
+        'ts=2026-11-04T09:22:01.234567891Z level=info msg="finished complete graph evaluation" controller_path=/ controller_id="" trace_id=0a1b2c3d4e5f60718293a4b5c6d7e8f9 duration=12.345678ms',
+        "INFO",
+    ),
+    Fixture(
         "capture_prune_done",
         "capture",
         {"container": "zcrypto-capture-prune"},
@@ -606,6 +648,20 @@ FIXTURES: list[Fixture] = [
     ),
     Fixture("cache_proxy_unnamed_shape", "capture", {"container": "cache-proxy"}, "an unclassified line from cache-proxy", None),
     Fixture(
+        "capture_alloy_node_evaluation",
+        "capture",
+        {"container": "alloy", "level": "INFO"},
+        'ts=2026-11-04T09:22:01.123456789Z level=info msg="finished node evaluation" controller_path=/ controller_id="" trace_id=0a1b2c3d4e5f60718293a4b5c6d7e8f9 node_id=loki.source.journal.capture_units duration=1.234567ms',
+        DROP_NO_FAULT,
+    ),
+    Fixture(
+        "capture_alloy_graph_evaluation",
+        "capture",
+        {"container": "alloy", "level": "INFO"},
+        'ts=2026-11-04T09:22:01.234567891Z level=info msg="finished complete graph evaluation" controller_path=/ controller_id="" trace_id=0a1b2c3d4e5f60718293a4b5c6d7e8f9 duration=12.345678ms',
+        "INFO",
+    ),
+    Fixture(
         "cache_valkey_sigterm",
         "cache",
         {"container": "valkey"},
@@ -631,6 +687,20 @@ FIXTURES: list[Fixture] = [
     ),
     Fixture("cache_valkey_crash_report", "cache", {"container": "valkey"}, "------ STACK TRACE ------", None),
     Fixture("cache_sentinel_crash_report", "cache", {"container": "sentinel"}, "------ STACK TRACE ------", None),
+    Fixture(
+        "cache_alloy_node_evaluation",
+        "cache",
+        {"container": "alloy", "level": "INFO"},
+        'ts=2026-11-04T09:22:01.123456789Z level=info msg="finished node evaluation" controller_path=/ controller_id="" trace_id=0a1b2c3d4e5f60718293a4b5c6d7e8f9 node_id=loki.source.journal.cache_units duration=1.234567ms',
+        DROP_NO_FAULT,
+    ),
+    Fixture(
+        "cache_alloy_graph_evaluation",
+        "cache",
+        {"container": "alloy", "level": "INFO"},
+        'ts=2026-11-04T09:22:01.234567891Z level=info msg="finished complete graph evaluation" controller_path=/ controller_id="" trace_id=0a1b2c3d4e5f60718293a4b5c6d7e8f9 duration=12.345678ms',
+        "INFO",
+    ),
     Fixture(
         "nas_archive_pull_file_vanished",
         "nas",
@@ -675,6 +745,20 @@ FIXTURES: list[Fixture] = [
     ),
     Fixture("nas_archive_pull_host_key", "nas", {"container": "archive-pull"}, "Host key verification failed.", None),
     Fixture("nas_archive_pull_traceback", "nas", {"container": "archive-pull"}, "Traceback (most recent call last):", None),
+    Fixture(
+        "nas_alloy_node_evaluation",
+        "nas",
+        {"container": "alloy", "level": "INFO"},
+        'ts=2026-11-04T09:22:01.123456789Z level=info msg="finished node evaluation" controller_path=/ controller_id="" trace_id=0a1b2c3d4e5f60718293a4b5c6d7e8f9 node_id=loki.source.journal.containers duration=1.234567ms',
+        DROP_NO_FAULT,
+    ),
+    Fixture(
+        "nas_alloy_graph_evaluation",
+        "nas",
+        {"container": "alloy", "level": "INFO"},
+        'ts=2026-11-04T09:22:01.234567891Z level=info msg="finished complete graph evaluation" controller_path=/ controller_id="" trace_id=0a1b2c3d4e5f60718293a4b5c6d7e8f9 duration=12.345678ms',
+        "INFO",
+    ),
 ]
 
 _STRING = r'"((?:[^"\\]|\\.)*)"'
@@ -897,6 +981,12 @@ NEAR_MISSES = {
     "mon_grafana_quotas_501": "mon_grafana_quotas_500",
     "mon_grafana_contact_point_test": "mon_grafana_notifier_failure",
     "mon_grafana_plugin_stop": "mon_grafana_plugin_killed",
+    "mon_alloy_node_evaluation": "mon_alloy_graph_evaluation",
+    "hc_alloy_node_evaluation": "hc_alloy_graph_evaluation",
+    "ops_alloy_node_evaluation": "ops_alloy_graph_evaluation",
+    "capture_alloy_node_evaluation": "capture_alloy_graph_evaluation",
+    "cache_alloy_node_evaluation": "cache_alloy_graph_evaluation",
+    "nas_alloy_node_evaluation": "nas_alloy_graph_evaluation",
 }
 
 

@@ -162,6 +162,13 @@ loki.process "parse" {
     drop_counter_reason = "plugin_stopped_with_grafana"
   }
 
+  // Alloy's finished node evaluation, one line per component at every start or reload, reports no event: it is dropped.
+  stage.match {
+    selector            = "{container=\"alloy\", level=\"INFO\"} |= \"msg=\\\"finished node evaluation\\\"\""
+    action              = "drop"
+    drop_counter_reason = "alloy_node_evaluation"
+  }
+
   // The self-check prints one line a run and no level; a failing probe's line explains the page its missing ping raises.
   stage.match {
     selector = "{container=\"zcrypto-mon-selfcheck\", level=\"\"} |~ \"^selfcheck: .*(=FAIL|-> not pinging|-> ping failed|-> healthy, and no ping URL is set)\""

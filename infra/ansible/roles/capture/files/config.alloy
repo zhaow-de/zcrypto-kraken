@@ -378,6 +378,13 @@ loki.process "parse" {
     // than being mangled by a stage that assumed logfmt shape.
   }
 
+  // Alloy's finished node evaluation, one line per component at every start or reload, reports no event: it is dropped.
+  stage.match {
+    selector            = "{container=\"alloy\", level=\"INFO\"} |= \"msg=\\\"finished node evaluation\\\"\""
+    action              = "drop"
+    drop_counter_reason = "alloy_node_evaluation"
+  }
+
   // A prune's line other than its summary reports a failure. The log target repeats each server and proxy state event
   // the proxy's stderr already shipped levelled, so its copy is dropped; a connection line has no other copy.
   stage.match {
