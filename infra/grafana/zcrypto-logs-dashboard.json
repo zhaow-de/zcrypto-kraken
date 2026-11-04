@@ -467,7 +467,7 @@
       "id": 1,
       "type": "logs",
       "title": "Logs \u2014 $container / $level",
-      "description": "Every line, newest first, shown as its message, parsed here at query time; the stored line is unchanged. A line with a message key shows that message with any stack trace beneath it, a line with a msg key, every key=value line and Caddy's JSON, its logger or source location, its message and its error, and any other line shows as it was collected. Level is a real stream label on every path, so filtering and colouring work the same way for all of them. Expand a row to see every key the parse read out of the line.",
+      "description": "Every line, newest first, shown as its message, parsed here at query time; the stored line is unchanged. A line with a message key shows that message with any stack trace beneath it, a line with a msg key its logger or source location, its message and its error, and any other line shows as it was collected. Level is a real stream label on every path, so filtering and colouring work the same way for all of them. Expand a row to see every key the parse read out of the line.",
       "datasource": {
         "type": "loki",
         "uid": "grafanacloud-logs"
