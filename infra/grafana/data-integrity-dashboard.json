@@ -4454,14 +4454,14 @@
           "uid": "grafanacloud-prom"
         },
         "query": "label_values(zcrypto_capture_book_desynced{host=~\"$capture_host\"}, pair)",
-        "refresh": 2,
+        "refresh": 1,
         "multi": true,
         "includeAll": true,
         "allValue": "",
         "sort": 1,
         "hide": 0,
         "skipUrlSync": false,
-        "description": "Chained to the capture-machine picker, so deselecting a machine drops its pairs. At twelve pairs across two machines the All view is legible; narrowing is for chasing one stuck stream.",
+        "description": "Chained to the capture-machine picker, so deselecting a machine drops its pairs. At twelve pairs across two machines the All view is legible; narrowing is for chasing one stuck stream. The list is read when the board loads and when the capture-machine picker changes, so a pair first published after the page loaded appears here after a reload.",
         "current": {
           "selected": true,
           "text": [
@@ -4482,14 +4482,14 @@
           "uid": "grafanacloud-prom"
         },
         "query": "label_values(zcrypto_logship_last_cycle_timestamp_seconds, host)",
-        "refresh": 2,
+        "refresh": 1,
         "multi": true,
         "includeAll": true,
         "allValue": "",
         "sort": 1,
         "hide": 0,
         "skipUrlSync": false,
-        "description": "Scopes the two log-shipping panels and nothing else — named for its scope on purpose, because a picker called Host that governs two of thirty panels is a trap. Derived from a shipping family, so its domain is exactly the machines that run a shipping worker; four daemons across three machines publish it, which is why those legends name the daemon as well.",
+        "description": "Scopes the two log-shipping panels and nothing else — named for its scope on purpose, because a picker called Host that governs two of thirty panels is a trap. Derived from a shipping family, so its domain is exactly the machines that run a shipping worker; four daemons across three machines publish it, which is why those legends name the daemon as well. The list is read when the board loads, so a machine that started shipping after the page loaded appears here after a reload.",
         "current": {
           "selected": true,
           "text": [

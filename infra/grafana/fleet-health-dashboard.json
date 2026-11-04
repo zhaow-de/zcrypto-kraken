@@ -4293,14 +4293,14 @@
         },
         "query": "label_values(process_resident_memory_bytes, host)",
         "regex": "/^(zcrypto|zcrypto-red|ops|nas)$/",
-        "refresh": 2,
+        "refresh": 1,
         "multi": true,
         "includeAll": true,
         "allValue": "",
         "sort": 1,
         "hide": 0,
         "skipUrlSync": false,
-        "description": "Machines that publish per-process metrics. Derived from the process family itself, not from the Host picker — the edge machine publishes no process metrics at all, so a Host-driven repeat would render an empty tile indistinguishable from a quiet daemon. Resolves to four machines; the NAS tile shows the telemetry agent's own process, not an application daemon.",
+        "description": "Machines that publish per-process metrics. Derived from the process family itself, not from the Host picker — the edge machine publishes no process metrics at all, so a Host-driven repeat would render an empty tile indistinguishable from a quiet daemon. Resolves to four machines; the NAS tile shows the telemetry agent's own process, not an application daemon. The list is read when the board loads, so a machine that started publishing process metrics after the page loaded appears here after a reload.",
         "current": {
           "selected": true,
           "text": [
