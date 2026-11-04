@@ -87,13 +87,101 @@
       },
       "transformations": [
         {
+          "id": "partitionByValues",
+          "filter": {
+            "id": "byRefId",
+            "options": "C"
+          },
+          "options": {
+            "fields": [
+              "container",
+              "host",
+              "level",
+              "msg"
+            ],
+            "keepFields": false,
+            "naming": {
+              "asLabels": true
+            }
+          }
+        },
+        {
+          "id": "partitionByValues",
+          "filter": {
+            "id": "byRefId",
+            "options": "D"
+          },
+          "options": {
+            "fields": [
+              "container",
+              "host",
+              "level",
+              "msg"
+            ],
+            "keepFields": false,
+            "naming": {
+              "asLabels": true
+            }
+          }
+        },
+        {
+          "id": "partitionByValues",
+          "filter": {
+            "id": "byRefId",
+            "options": "F"
+          },
+          "options": {
+            "fields": [
+              "container",
+              "host",
+              "level",
+              "msg"
+            ],
+            "keepFields": false,
+            "naming": {
+              "asLabels": true
+            }
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "/^Value #C(?: \\{container=\"[^\"]*\", host=\"([^\"]*)\", level=\"[^\"]*\", msg=\"(.*)\"\\})?$/s",
+            "renamePattern": "error window \u00b7 capture daemon $1 $2"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "/^Value #D(?: \\{container=\"([^\"]*)\", host=\"[^\"]*\", level=\"[^\"]*\", msg=\"(.*)\"\\})?$/s",
+            "renamePattern": "error window \u00b7 ops $1 $2"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "/^Value #E$/",
+            "renamePattern": "error window \u00b7 archive-pull loop"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "/^Value #F(?: \\{container=\"[^\"]*\", host=\"[^\"]*\", level=\"[^\"]*\", msg=\"(.*)\"\\})?$/s",
+            "renamePattern": "error window \u00b7 trading engine $1"
+          }
+        },
+        {
           "id": "reduce",
           "options": {
             "mode": "seriesToRows",
             "reducers": [
               "lastNotNull"
             ],
-            "includeTimeField": false
+            "includeTimeField": false,
+            "fields": {
+              "id": "numeric"
+            }
           }
         },
         {
@@ -102,6 +190,16 @@
             "renameByName": {
               "Field": "Rule"
             }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "Rule"
+              }
+            ]
           }
         }
       ],
@@ -218,13 +316,89 @@
       },
       "transformations": [
         {
+          "id": "partitionByValues",
+          "filter": {
+            "id": "byRefId",
+            "options": "F"
+          },
+          "options": {
+            "fields": [
+              "container",
+              "host"
+            ],
+            "keepFields": false,
+            "naming": {
+              "asLabels": true
+            }
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "/^Value #B$/",
+            "renamePattern": "dead-man \u00b7 capture daemon, primary (6h)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "/^Value #C$/",
+            "renamePattern": "dead-man \u00b7 capture daemon, secondary (6h)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "/^Value #D$/",
+            "renamePattern": "dead-man \u00b7 shipping agent's own stream, ops (6h)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "/^Value #E$/",
+            "renamePattern": "dead-man \u00b7 liquidations poller (6h)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "/^Value #F(?: \\{container=\"([^\"]*)\", host=\"[^\"]*\"\\})?$/s",
+            "renamePattern": "dead-man \u00b7 ops units, leveled lines (26h) $1"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "/^Value #G$/",
+            "renamePattern": "dead-man \u00b7 ops journal transport (26h)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "/^Value #H$/",
+            "renamePattern": "dead-man \u00b7 archive-pull success line (3h)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "/^Value #I$/",
+            "renamePattern": "dead-man \u00b7 trading engine (6h)"
+          }
+        },
+        {
           "id": "reduce",
           "options": {
             "mode": "seriesToRows",
             "reducers": [
               "lastNotNull"
             ],
-            "includeTimeField": false
+            "includeTimeField": false,
+            "fields": {
+              "id": "numeric"
+            }
           }
         },
         {
@@ -233,6 +407,16 @@
             "renameByName": {
               "Field": "Rule"
             }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "Rule"
+              }
+            ]
           }
         }
       ],
