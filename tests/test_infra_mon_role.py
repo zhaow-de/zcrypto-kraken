@@ -119,13 +119,20 @@ def test_the_ini_names_the_secret_files_and_carries_none_of_their_values():
 # --- what the node's Grafana and Loki log ------------------------------------------------------------------------
 
 
-def test_grafana_logs_warnings_and_above_in_every_mode_with_no_logger_filter():
+def test_grafana_logs_warnings_and_above_and_a_filter_only_raises_a_logger():
     ini = _ini()
     assert ini.get("log", "level", fallback=None) == "warn"
+    assert ini.get("log", "filters", fallback=None) == "search-manifest-watcher:error"
     for section in [s for s in ini.sections() if s == "log" or s.startswith("log.")]:
-        assert not ini.has_option(section, "filters"), f"[{section}] filters can raise a logger back below warn"
         level = (ini.get(section, "level", fallback="") or "warn").lower()
         assert level in ("warn", "error", "critical"), f"[{section}] level = {level}"
+        for entry in ini.get(section, "filters", fallback="").split():
+            logger, _, floor = entry.partition(":")
+            assert logger and floor.lower() in ("error", "critical"), f"[{section}] filters {entry!r} lowers a logger below warn"
+
+
+def test_the_ini_turns_off_the_header_browsers_dropped():
+    assert _ini().get("security", "x_xss_protection", fallback=None) == "false"
 
 
 def test_loki_logs_warnings_and_above():
