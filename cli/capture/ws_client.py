@@ -128,9 +128,9 @@ def compute_backoff(
 
 def _log_reconnected(attempts: int, seconds: float) -> None:
     if attempts == 1 and seconds <= _ROUTINE_RECONNECT_MAX_SECONDS:
-        logger.info("reconnected after %.1f s", seconds)
+        logger.info("reconnected after %.2f s", seconds)
     else:
-        logger.warning("reconnected after %d %s, %.1f s", attempts, "attempt" if attempts == 1 else "attempts", seconds)
+        logger.warning("reconnected after %d %s, %.2f s", attempts, "attempt" if attempts == 1 else "attempts", seconds)
 
 
 class CaptureClient:

@@ -250,7 +250,7 @@ def test_a_routine_drop_and_its_first_attempt_reconnect_log_at_info(caplog):
     )
     assert lines == [
         ("INFO", "WS connection closed, reconnecting: no close frame received or sent"),
-        ("INFO", "reconnected after 1.1 s"),
+        ("INFO", "reconnected after 1.10 s"),
     ]
 
 
@@ -262,7 +262,7 @@ def test_a_service_restart_close_logs_at_warning(caplog):
         rows=2,
     )
     assert lines[0][0] == "WARNING" and lines[0][1].startswith("WS connection closed, reconnecting: received 1012"), lines
-    assert lines[1] == ("INFO", "reconnected after 1.1 s")
+    assert lines[1] == ("INFO", "reconnected after 1.10 s")
 
 
 def test_a_failed_attempt_and_a_reconnect_that_took_two_attempts_log_at_warning(caplog):
@@ -276,7 +276,7 @@ def test_a_failed_attempt_and_a_reconnect_that_took_two_attempts_log_at_warning(
     assert lines == [
         ("INFO", "WS connection closed, reconnecting: no close frame received or sent"),
         ("WARNING", "WS connect attempt failed, reconnecting: server rejected WebSocket connection: HTTP 503"),
-        ("WARNING", "reconnected after 2 attempts, 3.2 s"),
+        ("WARNING", "reconnected after 2 attempts, 3.20 s"),
     ]
 
 
@@ -289,5 +289,5 @@ def test_a_first_attempt_reconnect_slower_than_the_bound_logs_at_warning(caplog)
     )
     assert lines == [
         ("INFO", "WS connection closed, reconnecting: no close frame received or sent"),
-        ("WARNING", "reconnected after 1 attempt, 5.5 s"),
+        ("WARNING", "reconnected after 1 attempt, 5.50 s"),
     ]
