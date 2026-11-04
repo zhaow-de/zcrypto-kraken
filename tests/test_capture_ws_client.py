@@ -499,6 +499,23 @@ def test_a_second_drop_times_its_reconnect_from_its_own_close(caplog):
     assert lines == [close, ("INFO", "reconnected after 1.10 s"), close, ("INFO", "reconnected after 1.10 s")]
 
 
+def test_an_ordinary_drop_after_a_healed_restart_reconnects_fast_at_info(caplog):
+    lines = _outcome_lines(
+        caplog,
+        (_ClosingConnection([_HEARTBEAT], 1012), 0.0),
+        (_FakeConnection([_HEARTBEAT], raise_at_end=True), 0.1),
+        (_FakeConnection([_HEARTBEAT]), 0.1),
+        messages=3,
+        healthy=3600.0,
+    )
+    assert lines[0][0] == "WARNING", lines
+    assert lines[1:] == [
+        ("WARNING", "reconnected after 1 attempt, 5.10 s"),
+        ("INFO", "WS connection closed, reconnecting: no close frame received or sent"),
+        ("INFO", "reconnected after 1.10 s"),
+    ]
+
+
 # --- T0102: req_id-correlated resubscribe (observability + prevention) ---------------------------
 #
 # `resubscribe_book` NEVER awaits its ack: rung 1 calls it from inside the message handler, i.e. from
