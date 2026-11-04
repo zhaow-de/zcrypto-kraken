@@ -3,6 +3,7 @@ which rejects a malformed rule with a bare HTTP 400 whose body the script discar
 attended push can reach, and one that names neither rule nor field."""
 
 import json
+import logging
 import re
 import shutil
 import subprocess
@@ -11,8 +12,10 @@ from pathlib import Path
 import pytest
 import yaml
 
+from cli.logging.formatters import PlainTextFormatter
 from tests.alloy_text import live_alloy_text
-from tests.test_infra_alloy_stages import HC_ALLOY, HC_DISPATCH_FAILURE, hc_model
+from tests.test_infra_alloy_levels import DROP, FIXTURES
+from tests.test_infra_alloy_stages import HC_ALLOY, HC_DISPATCH_FAILURE, _assigned, _blocks, _expressions, _parse_body, hc_model
 
 REPO = Path(__file__).resolve().parents[1]
 ALERTS = REPO / "infra/grafana/alerts.yaml"
@@ -1334,6 +1337,45 @@ def test_the_ops_error_rule_selects_every_container_the_ops_log_plane_can_emit()
     assert len(admitted) >= 5, f"the log plane derivation found only {sorted(admitted)} -- vacuous"
     unmatched = sorted(c for c in admitted if not re.fullmatch(selector.group(1), c))  # Loki's =~ is anchored
     assert not unmatched, f"the ops log plane can label {unmatched}; the ERROR rule's selector {selector.group(1)!r} misses them"
+
+
+_PARSE_CANARY = (
+    'sum by (host, container) (count_over_time({host="ops", container=~"zcrypto-.*", level=~".+"}'
+    r' |~ "^\\S+ \\[\\S+\\] - " [26h])) or on() vector(0)'
+)
+
+
+def test_the_unit_parse_canary_counts_the_lines_the_regex_stage_parsed():
+    """The trailing stages level the runners' bare echoes, so a level alone no longer proves the regex parsed: the
+    canary counts the shape the stage's output ships, which no echo the trailing stages level carries."""
+    assert _log_expr("zcrypto-ops-unit-parse-dead") == _PARSE_CANARY
+
+    def panels(ps):
+        for p in ps:
+            yield p
+            yield from panels(p.get("panels", []))
+
+    board = json.loads((REPO / "infra/grafana/zcrypto-logs-dashboard.json").read_text())
+    copies = [
+        t["expr"] for p in panels(board["panels"]) for t in p.get("targets", []) if 'container=~"zcrypto-.*"' in t.get("expr", "")
+    ]
+    assert copies == [_PARSE_CANARY]
+    (shape,) = [re.sub(r"\\(.)", r"\1", s) for s in re.findall(r'\|~ "((?:[^"\\]|\\.)*)"', _PARSE_CANARY)]
+    (stage,) = [
+        b
+        for b in _blocks(_parse_body(live_alloy_text(OPS_ALLOY)), "stage.match")
+        if _assigned(b, "selector") == '{container=~"zcrypto-.*"}'
+    ]
+    assert re.search(r'stage\.output \{\s*source = "rest"\s*\}', stage), stage
+    (regex,) = _expressions(stage)
+    record = logging.LogRecord(
+        "zcrypto.archive.command", logging.INFO, "command.py", 1331, "verify-replay complete hours=1 ok=1 failed=0", (), None
+    )
+    shell = "2026-11-03 05:24:01,123 WARNING zcrypto.verified-replay [verified-replay.sh] - 2026-11-02 verified but its watermark could not be persisted"
+    shipped = [re.match(regex, line).group("rest") for line in (PlainTextFormatter().format(record), shell)]
+    assert all(re.search(shape, line) for line in shipped), shipped
+    levelled = [f.line for f in FIXTURES if f.host == "ops" and f.expected not in (None, DROP)]
+    assert levelled and not [line for line in levelled if re.search(shape, line)]
 
 
 # --- every memory-LIMITED job has a headroom leg, or is named absent with its reason ----------------

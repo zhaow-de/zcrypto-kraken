@@ -2771,6 +2771,10 @@ rules:
       # Level-filtered, over `zcrypto-ops-journal-transport-dead`'s 26h window below: every
       # archive-pull tick logs a leveled line, a gate skip at WARNING, so a streak cannot false-fire it.
       #
+      # The line filter keeps what the ops config's stage.regex parsed, in the shape its stage.output ships, timestamp
+      # and level cut: the stages after it level the runners' bare echoes by their own shape, and a broken regex must
+      # still leave this count at 0.
+      #
       # `by (host, container)` -- container is a REGEX here, so it is real information on the label
       # line rather than something the rule already knows. It does not change when this rule fires:
       # `count_over_time` yields no series at all for a silent container (never a zero), so one live
@@ -2782,7 +2786,7 @@ rules:
         datasourceUid: "${GRAFANA_LOKI_DS_UID}"
         model:
           expr: >-
-            sum by (host, container) (count_over_time({host="ops", container=~"zcrypto-.*", level=~".+"} [26h])) or on() vector(0)
+            sum by (host, container) (count_over_time({host="ops", container=~"zcrypto-.*", level=~".+"} |~ "^\\S+ \\[\\S+\\] - " [26h])) or on() vector(0)
           queryType: instant
           refId: A
       - refId: B
