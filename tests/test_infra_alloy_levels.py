@@ -86,6 +86,34 @@ FIXTURES: list[Fixture] = [
         "ERROR",
     ),
     Fixture(
+        "mon_grafana_loki_connection_closed",
+        "mon",
+        {"container": "grafana-server", "level": "ERROR"},
+        'logger=plugin.loki t=2026-11-04T13:56:53.50144968Z level=error msg="Partial data response error" error="read tcp 127.0.0.1:45606->127.0.0.1:3100: use of closed network connection" pluginId=loki refID=A pluginVersion=13.2.2 status=500 statusSource=plugin uname=example-admin dsName=Loki dsUid=grafanacloud-logs endpoint=queryData',
+        DROP_NO_FAULT,
+    ),
+    Fixture(
+        "mon_grafana_loki_connection_reset",
+        "mon",
+        {"container": "grafana-server", "level": "ERROR"},
+        'logger=plugin.loki t=2026-11-04T13:56:53.50144968Z level=error msg="Partial data response error" error="read tcp 127.0.0.1:45606->127.0.0.1:3100: read: connection reset by peer" pluginId=loki refID=A pluginVersion=13.2.2 status=500 statusSource=plugin uname=example-admin dsName=Loki dsUid=grafanacloud-logs endpoint=queryData',
+        "ERROR",
+    ),
+    Fixture(
+        "mon_grafana_loki_request_summary",
+        "mon",
+        {"container": "grafana-server", "level": "ERROR"},
+        'logger=plugin.loki t=2026-11-04T13:56:53.502074533Z level=error msg="Plugin Request Completed" dsUid=grafanacloud-logs pluginId=loki status=error statusSource=plugin dsName=Loki duration=113.707769ms endpoint=queryData pluginVersion=13.2.2 uname=example-admin',
+        DROP_NO_FAULT,
+    ),
+    Fixture(
+        "mon_grafana_prometheus_request_summary",
+        "mon",
+        {"container": "grafana-server", "level": "ERROR"},
+        'logger=plugin.prometheus t=2026-11-04T13:56:53.502074533Z level=error msg="Plugin Request Completed" dsUid=grafanacloud-prom pluginId=prometheus status=error statusSource=downstream dsName=Prometheus duration=113.707769ms endpoint=queryData pluginVersion=13.2.4 uname=example-admin',
+        "ERROR",
+    ),
+    Fixture(
         "mon_loki_mapping_cancelled",
         "mon",
         {"container": "loki", "level": "WARNING"},
@@ -1001,6 +1029,8 @@ def test_a_dropped_line_is_a_copy_its_source_ships_with_a_level(fixture):
 
 NEAR_MISSES = {
     "mon_grafana_panel_cancelled": "mon_grafana_panel_failed",
+    "mon_grafana_loki_connection_closed": "mon_grafana_loki_connection_reset",
+    "mon_grafana_loki_request_summary": "mon_grafana_prometheus_request_summary",
     "mon_loki_mapping_cancelled": "mon_loki_mapping_failed",
     "mon_loki_scheduler_cancelled": "mon_loki_scheduler_unavailable",
     "mon_loki_scheduler_eof": "mon_loki_scheduler_notify_failed",
@@ -1035,7 +1065,7 @@ def test_the_node_counts_each_grafana_or_loki_drop_under_a_reason_its_runbook_na
             k == "container" and set(v.split("|")) & {"grafana-server", "loki"} for k, _, v in selector(_assigned(b, "selector"))[0]
         )
     ]
-    assert len(reasons) == len(set(reasons)) == 6, reasons
+    assert len(reasons) == len(set(reasons)) == 8, reasons
     assert all(r and re.search(rf'reason="{r}"|`{r}`', runbook) for r in reasons), reasons
 
 

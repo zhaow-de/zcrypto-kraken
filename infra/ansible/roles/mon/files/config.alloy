@@ -160,6 +160,20 @@ loki.process "parse" {
     drop_counter_reason = "plugin_stopped_with_grafana"
   }
 
+  // Grafana's Loki plugin on a panel query whose connection to the node's Loki closed under it, and the summary line
+  // that follows any failed query and never names its cause; another failure keeps its Partial data line at ERROR.
+  stage.match {
+    selector            = "{container=\"grafana-server\", level=\"ERROR\"} |= \"logger=plugin.loki \" |= \"msg=\\\"Partial data response error\\\"\" |= \"error=\\\"read tcp 127.0.0.1:\" |= \"->127.0.0.1:3100: use of closed network connection\\\"\""
+    action              = "drop"
+    drop_counter_reason = "loki_plugin_closed_connection"
+  }
+
+  stage.match {
+    selector            = "{container=\"grafana-server\", level=\"ERROR\"} |= \"logger=plugin.loki \" |= \"msg=\\\"Plugin Request Completed\\\"\" |= \" status=error \""
+    action              = "drop"
+    drop_counter_reason = "loki_plugin_request_summary"
+  }
+
   // Loki's querier on a scheduler connection a cancelled query closed: the EOF notifying the scheduler and the health
   // check on the closing connection. A scheduler failure that reports nothing but that EOF is dropped with them.
   stage.match {
