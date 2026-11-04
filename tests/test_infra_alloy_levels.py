@@ -168,6 +168,204 @@ FIXTURES: list[Fixture] = [
         "curl: (7) Failed to connect to 127.0.0.1 port 9090 after 0 ms: Could not connect to server",
         "WARNING",
     ),
+    Fixture("hc_selfcheck_ok", "hc", {"container": "zcrypto-hc-selfcheck"}, "selfcheck: web=ok (answered OK) -> pinged", "INFO"),
+    Fixture(
+        "hc_selfcheck_fail",
+        "hc",
+        {"container": "zcrypto-hc-selfcheck"},
+        "selfcheck: web=FAIL (answered 500) -> not pinging",
+        "WARNING",
+    ),
+    Fixture(
+        "hc_selfcheck_ping_failed",
+        "hc",
+        {"container": "zcrypto-hc-selfcheck"},
+        "selfcheck: web=ok (answered OK) -> ping failed: HTTPError",
+        "WARNING",
+    ),
+    Fixture(
+        "hc_selfcheck_no_ping_url",
+        "hc",
+        {"container": "zcrypto-hc-selfcheck"},
+        "selfcheck: web=ok (answered OK) -> healthy, and no ping URL is set",
+        "WARNING",
+    ),
+    Fixture(
+        "hc_sqlite_backup_done",
+        "hc",
+        {"container": "zcrypto-sqlite-backup"},
+        "2026-11-03 02:47:01,234 INFO zcrypto.sqlite-backup [zcrypto-sqlite-backup.sh] - backed up /data/hc.sqlite to /data/backups/hc-2026-11-03T024701Z.sqlite and copied it into /var/backups/zcrypto-hc",
+        "INFO",
+    ),
+    Fixture(
+        "hc_sqlite_backup_failed",
+        "hc",
+        {"container": "zcrypto-sqlite-backup"},
+        "2026-11-03 02:47:01,234 ERROR zcrypto.sqlite-backup [zcrypto-sqlite-backup.sh] - VACUUM INTO /data/backups/hc-2026-11-03T024701Z.sqlite from /data/hc.sqlite failed",
+        "ERROR",
+    ),
+    Fixture(
+        "hc_uwsgi_cron_start",
+        "hc",
+        {"container": "hc"},
+        'Tue Nov  3 03:17:01 2026 - [uwsgi-cron] running "./manage.py prune --skip-checks" (pid 4321)',
+        "INFO",
+    ),
+    Fixture(
+        "hc_uwsgi_cron_exit",
+        "hc",
+        {"container": "hc"},
+        '[uwsgi-cron] command "./manage.py prune --skip-checks" running with pid 4321 exited after 3 second(s)',
+        "INFO",
+    ),
+    Fixture(
+        "hc_prune_summary",
+        "hc",
+        {"container": "hc"},
+        "Deleted api_ping 1440, api_notification 0, api_flip 2, api_tokenbucket 0, django_session 3, django_admin_log 0; freed 12 SQLite pages, 0 left free; checkpointed 12 of 12 WAL frames",
+        "INFO",
+    ),
+    Fixture(
+        "hc_django_text_line",
+        "hc",
+        {"container": "hc"},
+        "2026-10-05 18:01:02,345 ERROR django.request Internal Server Error: /ping/REDACTED/zcrypto-capture",
+        None,
+    ),
+    Fixture(
+        "hc_sqlite_backup_copying",
+        "hc",
+        {"container": "zcrypto-sqlite-backup"},
+        " zcrypto-hc Copying zcrypto-hc:/data/backups/hc-2026-11-03T024701Z.sqlite to /var/backups/zcrypto-hc.incoming/",
+        "INFO",
+    ),
+    Fixture(
+        "hc_sqlite_backup_copied",
+        "hc",
+        {"container": "zcrypto-sqlite-backup"},
+        " zcrypto-hc Copied zcrypto-hc:/data/backups/hc-2026-11-03T024701Z.sqlite to /var/backups/zcrypto-hc.incoming/",
+        "INFO",
+    ),
+    Fixture(
+        "hc_alloy_series_gc",
+        "hc",
+        {"container": "alloy", "level": "INFO"},
+        'ts=2026-11-03T15:08:01.234567891Z level=info msg="series GC completed" component_path=/ component_id=prometheus.remote_write.mon subcomponent=wal duration=1.234ms',
+        "INFO",
+    ),
+    Fixture(
+        "hc_alloy_usage_report",
+        "hc",
+        {"container": "alloy", "level": "INFO"},
+        'ts=2026-11-03T15:57:01.234567891Z level=info msg="usage report sent with success"',
+        "INFO",
+    ),
+    Fixture("hc_alloy_start", "hc", {"container": "alloy"}, "Alloy starting in Default Engine mode", "INFO"),
+    Fixture(
+        "hc_uwsgi_body_read",
+        "hc",
+        {"container": "hc"},
+        "[uwsgi-body-read] Error reading 65536 bytes. Content-Length: 1048576 consumed: 0 left: 1048576 message: Client closed connection",
+        "WARNING",
+    ),
+    Fixture(
+        "hc_uwsgi_starting",
+        "hc",
+        {"container": "hc"},
+        "*** Starting uWSGI 2.0.31 (64bit) on [Mon Nov  3 17:22:01 2026] ***",
+        "INFO",
+    ),
+    Fixture("hc_uwsgi_mode", "hc", {"container": "hc"}, "*** Operational MODE: preforking ***", "INFO"),
+    Fixture("hc_uwsgi_interpreters", "hc", {"container": "hc"}, "*** uWSGI is running in multiple interpreter mode ***", "INFO"),
+    Fixture(
+        "hc_uwsgi_no_routing", "hc", {"container": "hc"}, "!!! no internal routing support, rebuild with pcre support !!!", "INFO"
+    ),
+    Fixture(
+        "hc_uwsgi_ini",
+        "hc",
+        {"container": "hc"},
+        "[uWSGI] getting INI configuration from /opt/healthchecks/docker/uwsgi.ini",
+        "INFO",
+    ),
+    Fixture(
+        "hc_uwsgi_daemon_spawning",
+        "hc",
+        {"container": "hc"},
+        '[uwsgi-daemons] spawning "./manage.py sendalerts --skip-checks" (uid: 999 gid: 999)',
+        "INFO",
+    ),
+    Fixture(
+        "hc_uwsgi_daemon_stopping",
+        "hc",
+        {"container": "hc"},
+        "[uwsgi-daemons] stopping daemon (pid: 42): ./manage.py sendreports --loop --skip-checks",
+        "INFO",
+    ),
+    Fixture("hc_uwsgi_master", "hc", {"container": "hc"}, "spawned uWSGI master process (pid: 1)", "INFO"),
+    Fixture("hc_uwsgi_worker_spawned", "hc", {"container": "hc"}, "spawned uWSGI worker 1 (pid: 43, cores: 1)", "INFO"),
+    Fixture("hc_uwsgi_socket", "hc", {"container": "hc"}, "uwsgi socket 0 bound to TCP address :8000 fd 3", "INFO"),
+    Fixture(
+        "hc_uwsgi_app_ready",
+        "hc",
+        {"container": "hc"},
+        "WSGI app 0 (mountpoint='') ready in 2 seconds on interpreter 0x7f3a12fad40e60 pid: 1 (default app)",
+        "INFO",
+    ),
+    Fixture("hc_uwsgi_worker_buried", "hc", {"container": "hc"}, "worker 1 buried after 1 seconds", "INFO"),
+    Fixture("hc_uwsgi_goodbye", "hc", {"container": "hc"}, "goodbye to uWSGI.", "INFO"),
+    Fixture("hc_uwsgi_sigterm", "hc", {"container": "hc"}, "SIGINT/SIGTERM received...killing workers...", "INFO"),
+    Fixture(
+        "hc_uwsgi_python_version",
+        "hc",
+        {"container": "hc"},
+        "Python version: 3.12.8 (main, Oct 15 2025, 21:12:34) [GCC 12.2.0]",
+        "INFO",
+    ),
+    Fixture(
+        "hc_uwsgi_python_interpreter", "hc", {"container": "hc"}, "Python main interpreter initialized at 0x7f3a12fad40e60", "INFO"
+    ),
+    Fixture("hc_uwsgi_python_threads", "hc", {"container": "hc"}, "python threads support enabled", "INFO"),
+    Fixture("hc_uwsgi_chdir", "hc", {"container": "hc"}, "chdir() to /opt/healthchecks", "INFO"),
+    Fixture("hc_uwsgi_clock_source", "hc", {"container": "hc"}, "clock source: unix", "INFO"),
+    Fixture("hc_uwsgi_compiled", "hc", {"container": "hc"}, "compiled with version: 12.2.0 on 15 October 2025 20:41:07", "INFO"),
+    Fixture("hc_uwsgi_cwd", "hc", {"container": "hc"}, "current working directory: /opt/healthchecks", "INFO"),
+    Fixture("hc_uwsgi_binary_path", "hc", {"container": "hc"}, "detected binary path: /opt/venv/bin/uwsgi", "INFO"),
+    Fixture("hc_uwsgi_max_fd", "hc", {"container": "hc"}, "detected max file descriptor number: 65536", "INFO"),
+    Fixture("hc_uwsgi_cpu_cores", "hc", {"container": "hc"}, "detected number of CPU cores: 2", "INFO"),
+    Fixture("hc_uwsgi_lock_engine", "hc", {"container": "hc"}, "lock engine: pthread robust mutexes", "INFO"),
+    Fixture("hc_uwsgi_machine", "hc", {"container": "hc"}, "machine: x86_64", "INFO"),
+    Fixture("hc_uwsgi_nodename", "hc", {"container": "hc"}, "nodename: 4f2a9c1e7b3d", "INFO"),
+    Fixture(
+        "hc_uwsgi_os",
+        "hc",
+        {"container": "hc"},
+        "os: Linux-6.12.148+deb13-amd64 #1 SMP PREEMPT_DYNAMIC Debian 6.12.148-1 (2026-10-20)",
+        "INFO",
+    ),
+    Fixture("hc_uwsgi_thunder_lock", "hc", {"container": "hc"}, "thunder lock: enabled", "INFO"),
+    Fixture("hc_uwsgi_mapped", "hc", {"container": "hc"}, "mapped 416880 bytes (407 KB) for 4 cores", "INFO"),
+    Fixture("hc_uwsgi_body_buffering", "hc", {"container": "hc"}, "setting request body buffering size to 65536 bytes", "INFO"),
+    Fixture("hc_uwsgi_page_size", "hc", {"container": "hc"}, "your memory page size is 4096 bytes", "INFO"),
+    Fixture("hc_uwsgi_mercy", "hc", {"container": "hc"}, "your mercy for graceful operations on workers is 60 seconds", "INFO"),
+    Fixture(
+        "hc_uwsgi_listen_backlog",
+        "hc",
+        {"container": "hc"},
+        "your server socket listen backlog is limited to 100 connections",
+        "INFO",
+    ),
+    Fixture("hc_uwsgi_exec_migrate", "hc", {"container": "hc"}, 'running "exec:./manage.py migrate" (asap)...', "INFO"),
+    Fixture("hc_migrate_operations", "hc", {"container": "hc"}, "Operations to perform:", "INFO"),
+    Fixture(
+        "hc_migrate_apply_all",
+        "hc",
+        {"container": "hc"},
+        "  Apply all migrations: accounts, admin, api, auth, contenttypes, sessions",
+        "INFO",
+    ),
+    Fixture("hc_migrate_running", "hc", {"container": "hc"}, "Running migrations:", "INFO"),
+    Fixture("hc_migrate_applying", "hc", {"container": "hc"}, "  Applying api.0001_initial... OK", "INFO"),
+    Fixture("hc_migrate_none", "hc", {"container": "hc"}, "  No migrations to apply.", "INFO"),
 ]
 
 _STRING = r'"((?:[^"\\]|\\.)*)"'
@@ -331,6 +529,16 @@ def test_a_trailing_stage_sets_a_level_only_where_none_is_set():
 def test_no_alloy_config_reads_the_journal_priority():
     readers = [c.relative_to(REPO).as_posix() for c in ALLOY_CONFIGS if "__journal_priority" in live_alloy_text(c)]
     assert not readers, f"the journal's priority is no line's level: {readers}"
+
+
+def _alloy_match(host: str) -> str:
+    (match,) = [b for b in _top_blocks(host) if _assigned(b, "selector") == '{container="alloy"}']
+    return match
+
+
+def test_the_dead_man_nodes_alloy_parses_its_logfmt_as_the_fleets_do():
+    hc, fleet = ([" ".join(stage.split()) for stage in _stage_blocks(_alloy_match(host))] for host in ("hc", "cache"))
+    assert hc == fleet
 
 
 # --- the same blocks, through Alloy itself ---------------------------------------------------------------------------
