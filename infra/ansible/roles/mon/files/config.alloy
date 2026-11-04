@@ -97,7 +97,8 @@ loki.process "parse" {
   forward_to = [loki.write.mon.receiver]
 
   // Grafana, Prometheus, Loki and Alloy log logfmt with a `level` key. A line of another shape renders
-  // an empty level, which the labels stage drops, so it ships with no `level` label.
+  // an empty level, which the labels stage drops; the blocks at the end of this component level two
+  // such shapes, Alloy's start line and Grafana's wait for its stores.
   stage.match {
     selector = "{container=~\"grafana-server|prometheus|loki|alloy\"}"
 
@@ -130,6 +131,87 @@ loki.process "parse" {
 
     stage.labels {
       values = { level = "level" }
+    }
+  }
+
+  // Four shapes Grafana or Loki log at ERROR or WARNING that report no fault, re-levelled to INFO after the parse
+  // above: an error that is a cancelled context (a panel the browser left), the dashboards page asking for the quotas
+  // API this build does not serve, a contact-point test's empty receiver, and a bundled plugin stopped with Grafana.
+  // Loki's EOF from the scheduler beside the cancellations keeps its level.
+  stage.match {
+    selector = "{container=~\"grafana-server|loki\", level=~\"ERROR|WARNING\"} |~ \"\\\\berr(or)?=\\\"(?:[^\\\"\\\\\\\\]|\\\\\\\\.)*context canceled\\\"\""
+
+    stage.static_labels {
+      values = { level = "INFO" }
+    }
+  }
+
+  stage.match {
+    selector = "{container=\"grafana-server\", level=\"ERROR\"} |= \"msg=\\\"Request Completed\\\"\" |= \" path=/apis/quotas.grafana.app/\" |= \" status=501 \""
+
+    stage.static_labels {
+      values = { level = "INFO" }
+    }
+  }
+
+  stage.match {
+    selector = "{container=\"grafana-server\", level=\"ERROR\"} |= \"logger=ngalert.notifier \" |= \" receiver= \" |= \"msg=\\\"Missing notification reason\\\"\""
+
+    stage.static_labels {
+      values = { level = "INFO" }
+    }
+  }
+
+  stage.match {
+    selector = "{container=\"grafana-server\", level=\"ERROR\"} |= \"msg=\\\"plugin process exited\\\"\" |= \"signal: terminated\""
+
+    stage.static_labels {
+      values = { level = "INFO" }
+    }
+  }
+
+  // The self-check prints one line a run and no level; levelled after every parse above, so a parsed level is never
+  // overwritten. A failing probe's line explains the page its missing ping raises.
+  stage.match {
+    selector = "{container=\"zcrypto-mon-selfcheck\", level=\"\"} |~ \"^selfcheck: .*(=FAIL|-> not pinging|-> ping failed|-> healthy, and no ping URL is set)\""
+
+    stage.static_labels {
+      values = { level = "WARNING" }
+    }
+  }
+
+  stage.match {
+    selector = "{container=\"zcrypto-mon-selfcheck\", level=\"\"} |~ \"^selfcheck: \""
+
+    stage.static_labels {
+      values = { level = "INFO" }
+    }
+  }
+
+  // Three shapes the node's own services print with no level at a start: Alloy's start line and Caddy's environment
+  // dump report the start; the curl wait for Prometheus and Loki before Grafana starts warns, its last failure leaving
+  // Grafana down for the self-check to page.
+  stage.match {
+    selector = "{container=\"alloy\", level=\"\"} |~ \"^Alloy starting in \""
+
+    stage.static_labels {
+      values = { level = "INFO" }
+    }
+  }
+
+  stage.match {
+    selector = "{container=\"caddy\", level=\"\"} |~ \"^[A-Za-z_][A-Za-z0-9_.]*=\""
+
+    stage.static_labels {
+      values = { level = "INFO" }
+    }
+  }
+
+  stage.match {
+    selector = "{container=\"grafana-server\", level=\"\"} |~ \"^curl: \\\\(\\\\d+\\\\) \""
+
+    stage.static_labels {
+      values = { level = "WARNING" }
     }
   }
 }

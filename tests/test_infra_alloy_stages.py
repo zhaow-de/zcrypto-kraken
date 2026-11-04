@@ -205,6 +205,21 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
+def _alloy_run_command(alloy: str, tmp_path: Path, config: Path) -> list[str]:
+    """`alloy run` over `config` on a free loopback port, its state under `tmp_path`; a test run sends Grafana no usage
+    report."""
+    return [
+        alloy,
+        "run",
+        "--disable-reporting",
+        "--storage.path",
+        str(tmp_path / "storage"),
+        "--server.http.listen-addr",
+        f"127.0.0.1:{_free_port()}",
+        str(config),
+    ]
+
+
 _LOGFMT_ESCAPES = {"n": "\n", "t": "\t", "r": "\r"}
 
 
@@ -229,15 +244,7 @@ def _run_alloy(
         "  forward_to = [loki.echo.out.receiver]\n\n" + "\n".join(blocks) + "}\n\n"
         'loki.echo "out" {}\n'
     )
-    cmd = [
-        alloy,
-        "run",
-        "--storage.path",
-        str(tmp_path / "storage"),
-        "--server.http.listen-addr",
-        f"127.0.0.1:{_free_port()}",
-        str(tmp_path / "harness.alloy"),
-    ]
+    cmd = _alloy_run_command(alloy, tmp_path, tmp_path / "harness.alloy")
     try:
         done = subprocess.run(cmd, capture_output=True, text=True, timeout=6, cwd=tmp_path)
         streams = [done.stdout, done.stderr]
