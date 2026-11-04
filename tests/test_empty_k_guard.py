@@ -15,6 +15,8 @@ import pytest
 CONFTEST = Path(__file__).resolve().parent / "conftest.py"
 THREE_TESTS = "def test_alpha():\n    assert True\n\n\ndef test_beta():\n    assert True\n\n\ndef test_gamma():\n    assert True\n"
 BANNER = "conftest: NO TEST SELECTED"
+# The tree inherits the checkout's --strict-markers, which refuses an unregistered name in `-m` with exit 4.
+EMPTYING_MARK = "data"
 
 
 @pytest.fixture
@@ -57,10 +59,10 @@ def test_a_selector_that_matches_is_silent(tree: Path):
 
 
 def test_a_mark_that_empties_a_matched_selection_is_named_beside_the_k(tree: Path):
-    r = run(tree, "-k", "alpha", "-m", "nosuchmark")
+    r = run(tree, "-k", "alpha", "-m", EMPTYING_MARK)
     assert r.returncode == 5, r.stdout + r.stderr
     assert "0 of 3 collected" in r.stderr, r.stderr
-    assert "Selectors this hook reads: -k 'alpha', -m 'nosuchmark'." in r.stderr, r.stderr
+    assert f"Selectors this hook reads: -k 'alpha', -m '{EMPTYING_MARK}'." in r.stderr, r.stderr
 
 
 def test_a_deselect_that_empties_a_matched_selection_is_named_beside_the_k(tree: Path):
@@ -72,7 +74,7 @@ def test_a_deselect_that_empties_a_matched_selection_is_named_beside_the_k(tree:
 
 def test_a_run_with_no_selector_is_silent(tree: Path):
     # Emptied by a mark over the three collected, not by collecting nothing: only the missing `-k` keeps this silent.
-    r = run(tree, "-m", "nosuchmark")
+    r = run(tree, "-m", EMPTYING_MARK)
     assert r.returncode == 5, r.stdout + r.stderr
     assert BANNER not in r.stderr, r.stderr
 
