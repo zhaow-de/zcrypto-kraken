@@ -254,18 +254,18 @@ loki.source.journal "capture_units" {
   max_age       = "48h"
 }
 
-// Parse ONCE, here at ingest -- never at query time. The prune and reboot-check units' bash lines
-// fall through this component unmatched (no selector here admits them), keeping their journal
-// capture time and no level label.
+// Parse ONCE, here at ingest -- never at query time. The prune and reboot-check units' bash lines are parsed by no
+// stage and keep their journal capture time; the prunes' lines take their level at the end of this component.
 loki.process "parse" {
   forward_to = [loki.write.grafana.receiver, loki.write.mon.receiver]
 
   // The cache proxy's lines share the unit's journal with the engine's, under the compose prefix of
   // their own container: the prefix comes off, HAProxy's own level word is read where a line carries
   // one, and every survivor is labelled container="cache-proxy" here, before the engine's block below
-  // claims what is left of the unit. A traffic line and a server state line carry no level word and
-  // ship with no level label: the inner match takes only a line opening with the word, since a
-  // template over an absent value would label the rest "<no value>".
+  // claims what is left of the unit. A traffic line and a server state line carry no level word: the
+  // inner match takes only a line opening with the word, since a template over an absent value would
+  // label the rest "<no value>"; the blocks at the end of this component level a traffic line and
+  // drop a state line, which the proxy's stderr ships levelled.
   stage.match {
     selector      = "{container=\"zcrypto-engine\"} |~ \"^zcrypto-cache-proxy +\\\\| \""
     pipeline_name = "cache_proxy"
@@ -377,6 +377,56 @@ loki.process "parse" {
     // this keeps every logfmt attribute in the body (msg= plus whatever k=v pairs followed), and a
     // non-logfmt line (a panic, a bare traceback) simply passes through with no `level` label rather
     // than being mangled by a stage that assumed logfmt shape.
+  }
+
+  // The prunes' lines and the proxy's log-target lines, levelled by their shape after every parse above, so a parsed
+  // level is never overwritten. A prune's line other than its summary is a refusal. The log target repeats each server
+  // and proxy state event the proxy's stderr already shipped levelled, so its copy is dropped; a connection line has no
+  // other copy.
+  stage.match {
+    selector = "{container=\"zcrypto-capture-prune\", level=\"\"} |~ \"^zcrypto-capture-prune: deleted=\\\\d+ \""
+
+    stage.static_labels {
+      values = { level = "INFO" }
+    }
+  }
+
+  stage.match {
+    selector = "{container=\"zcrypto-capture-prune\", level=\"\"}"
+
+    stage.static_labels {
+      values = { level = "ERROR" }
+    }
+  }
+
+  stage.match {
+    selector = "{container=\"zcrypto-engine-journal-prune\", level=\"\"} |~ \"^zcrypto-engine-journal-prune: deleted=\\\\d+ \""
+
+    stage.static_labels {
+      values = { level = "INFO" }
+    }
+  }
+
+  stage.match {
+    selector = "{container=\"zcrypto-engine-journal-prune\", level=\"\"}"
+
+    stage.static_labels {
+      values = { level = "ERROR" }
+    }
+  }
+
+  stage.match {
+    selector            = "{container=\"cache-proxy\", level=\"\"} |~ \"^(Server \\\\S+ is |Proxy \\\\S+ stopped |backend \\\\S+ has no server available!)\""
+    action              = "drop"
+    drop_counter_reason = "haproxy_log_target_copy"
+  }
+
+  stage.match {
+    selector = "{container=\"cache-proxy\", level=\"\"} |~ \"^\\\\S+:\\\\d+ \\\\[\""
+
+    stage.static_labels {
+      values = { level = "INFO" }
+    }
   }
 }
 

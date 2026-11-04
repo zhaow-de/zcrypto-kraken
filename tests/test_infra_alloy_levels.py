@@ -484,6 +484,70 @@ FIXTURES: list[Fixture] = [
         DROP,
     ),
     Fixture("ops_archive_pull_traceback", "ops", {"container": "zcrypto-archive-pull"}, "Traceback (most recent call last):", None),
+    Fixture(
+        "capture_prune_done",
+        "capture",
+        {"container": "zcrypto-capture-prune"},
+        'zcrypto-capture-prune: deleted=24 retention_days=14 cutoff="2026-10-20 03:17:01 UTC" dir=/var/lib/zcrypto-capture',
+        "INFO",
+    ),
+    Fixture(
+        "capture_prune_refused",
+        "capture",
+        {"container": "zcrypto-capture-prune"},
+        "capture data dir not found: /var/lib/zcrypto-capture",
+        "ERROR",
+    ),
+    Fixture(
+        "engine_journal_prune_done",
+        "capture",
+        {"container": "zcrypto-engine-journal-prune"},
+        'zcrypto-engine-journal-prune: deleted=1 kept=30 retention_days=30 cutoff="2026-10-04 UTC" dir=/var/lib/zcrypto-engine/journal',
+        "INFO",
+    ),
+    Fixture(
+        "engine_journal_prune_refused",
+        "capture",
+        {"container": "zcrypto-engine-journal-prune"},
+        "engine journal dir not found: /var/lib/zcrypto-engine/journal",
+        "ERROR",
+    ),
+    Fixture(
+        "cache_proxy_server_up",
+        "capture",
+        {"container": "cache-proxy"},
+        'Server node1/via-node1 is UP, reason: Layer7 check passed, code: 0, info: "(tcp-check)", check duration: 2ms. 3 active and 0 backup servers online. 0 sessions requeued, 0 total in queue.',
+        DROP,
+    ),
+    Fixture(
+        "cache_proxy_server_down",
+        "capture",
+        {"container": "cache-proxy"},
+        'Server node2/via-node3 is DOWN, reason: Layer4 timeout, info: " at step 1 of tcp-check (connect)", check duration: 2001ms. 2 active and 0 backup servers left. 0 sessions active, 0 requeued, 0 remaining in queue.',
+        DROP,
+    ),
+    Fixture(
+        "cache_proxy_proxy_stopped",
+        "capture",
+        {"container": "cache-proxy"},
+        "Proxy node1 stopped (cumulated conns: FE: 0, BE: 12).",
+        DROP,
+    ),
+    Fixture("cache_proxy_no_server", "capture", {"container": "cache-proxy"}, "backend node1 has no server available!", DROP),
+    Fixture(
+        "cache_proxy_session",
+        "capture",
+        {"container": "cache-proxy"},
+        "192.0.2.10:51234 [03/Nov/2026:14:14:05.123] cache node1/via-node1 1/0/3601234 1234 -- 1/1/0/0/0 0/0",
+        "INFO",
+    ),
+    Fixture(
+        "cache_proxy_session_cut",
+        "capture",
+        {"container": "cache-proxy"},
+        "192.0.2.10:51236 [03/Nov/2026:14:19:02.456] cache node1/via-node1 1/0/1201 87 DC 2/2/1/1/0 0/0",
+        "INFO",
+    ),
 ]
 
 _STRING = r'"((?:[^"\\]|\\.)*)"'
@@ -677,11 +741,16 @@ def test_alloy_itself_agrees_with_the_level_model(host, tmp_path):
     assert [[(echoed.get("level"), entry) for echoed, entry in group] for group in survivors] == expected
 
 
-# Each dropped copy beside the line its source ships levelled: the logged record on ops.
+# Each dropped copy beside the line its source ships levelled: the logged record on ops, HAProxy's stderr copy on the
+# engine host.
 TWINS = {
     "ops_verify_replay_census": "2026-11-03 02:31:07,123 INFO zcrypto.archive.command [command.py:1305] - verify-replay census replayed=12 reused=8748 audited=24 mismatches=0 pending=0 evicted=0 duration_s=312",
     "ops_verify_replay_summary": "2026-11-03 02:31:07,124 INFO zcrypto.archive.command [command.py:1331] - verify-replay complete hours=8772 ok=8772 failed=0",
     "ops_archive_pull_backfill_echo": "2026-11-03 00:14:05,123 INFO zcrypto.trades.backfill [backfill.py:300] - trade backfill complete pairs=10 gaps=0 trades_missing=0 duplicate_rows_found=0 recovered=0 unrecoverable=0 deferred=0 fetch_failed=0 mint_failed=0 duplicates_collapsed=0 duplicates_cross_hour=0 hours_minted=0 hours_repaired_after_loss=0 errors=0",
+    "cache_proxy_server_up": '[WARNING]  (8) : Server node1/via-node1 is UP, reason: Layer7 check passed, code: 0, info: "(tcp-check)", check duration: 2ms. 3 active and 0 backup servers online. 0 sessions requeued, 0 total in queue.',
+    "cache_proxy_server_down": '[WARNING]  (8) : Server node2/via-node3 is DOWN, reason: Layer4 timeout, info: " at step 1 of tcp-check (connect)", check duration: 2001ms. 2 active and 0 backup servers left. 0 sessions active, 0 requeued, 0 remaining in queue.',
+    "cache_proxy_proxy_stopped": "[WARNING]  (8) : Proxy node1 stopped (cumulated conns: FE: 0, BE: 12).",
+    "cache_proxy_no_server": "[ALERT]    (8) : backend 'node1' has no server available!",
 }
 
 
