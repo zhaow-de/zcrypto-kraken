@@ -65,7 +65,7 @@ wal = true
 # Warnings and above only: at info Grafana and its datasource plugins log every query, scheduler tick
 # and notification hand-off, and the node's Loki stores each line.
 level = warn
-# The manifest watcher logs two warnings a minute about an empty search manifest it keeps; its errors still log.
+# The manifest watcher warns without end about an empty search manifest it keeps; its errors still log.
 filters = search-manifest-watcher:error
 
 [unified_alerting.state_history]

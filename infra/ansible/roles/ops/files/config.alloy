@@ -383,9 +383,8 @@ loki.process "parse" {
     // than being mangled by a stage that assumed logfmt shape.
   }
 
-  // The runners' bare echoes, levelled by their own shape after the parse above, so a parsed level is never
-  // overwritten: a day the tape-bars sweep failed is ERROR, a condition another rule pages is WARNING. An echo that
-  // copies a record the CLI also logs is dropped, since the record ships levelled.
+  // A day the tape-bars sweep failed is ERROR, a condition another rule pages is WARNING. An echo that copies a record the
+  // CLI also logs is dropped, since the record ships levelled.
   stage.match {
     selector = "{container=\"zcrypto-tape-bars\", level=\"\"} |~ \"^  ERROR \""
 

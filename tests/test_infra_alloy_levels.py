@@ -633,7 +633,7 @@ _LINE_OPS = {
 
 
 def _unquote(literal: str) -> str:
-    """A LogQL string literal's value; LogQL refuses an escape other than these two, and so does the model."""
+    """A LogQL string literal's value; the model reads the configs' two escapes and refuses any other."""
     assert re.fullmatch(r'(?:[^\\]|\\[\\"])*', literal), f"an escape LogQL refuses: {literal!r}"
     return re.sub(r"\\(.)", r"\1", literal)
 
@@ -827,7 +827,6 @@ def test_a_dropped_line_is_a_copy_its_source_ships_with_a_level(fixture):
     assert _parsed_level(fixture.host, fixture.labels, TWINS[fixture.id]) in {"INFO", "WARNING", "CRITICAL"}
 
 
-# The sources the node's 30-day read found shipping lines with no level, by the config's host key and the container.
 MEASURED = {
     ("mon", "zcrypto-mon-selfcheck"),
     ("mon", "alloy"),

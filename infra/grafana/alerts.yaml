@@ -6277,8 +6277,6 @@ rules:
     orgId: 1
     condition: C
     data:
-      # Each host that ships its logs to the node, the node and the dead-man node among them: a line no stage of its
-      # host's Alloy levelled is a source to classify, one instance per source.
       - refId: A
         queryType: instant
         relativeTimeRange: {from: 900, to: 0}

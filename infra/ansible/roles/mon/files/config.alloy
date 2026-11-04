@@ -98,7 +98,7 @@ loki.process "parse" {
 
   // Grafana, Prometheus, Loki and Alloy log logfmt with a `level` key. A line of another shape renders
   // an empty level, which the labels stage drops; the blocks at the end of this component level two
-  // such shapes, Alloy's start line and Grafana's wait for its stores.
+  // such shapes.
   stage.match {
     selector = "{container=~\"grafana-server|prometheus|loki|alloy\"}"
 
@@ -134,10 +134,9 @@ loki.process "parse" {
     }
   }
 
-  // Four shapes Grafana or Loki log at ERROR or WARNING that report no fault, re-levelled to INFO after the parse
-  // above: an error that is a cancelled context (a panel the browser left), the dashboards page asking for the quotas
-  // API this build does not serve, a contact-point test's empty receiver, and a bundled plugin stopped with Grafana.
-  // Loki's EOF from the scheduler beside the cancellations keeps its level.
+  // Four shapes Grafana or Loki log at ERROR or WARNING that report no fault, re-levelled to INFO: an error that is a
+  // cancelled context (a panel the browser left), the dashboards page asking for the quotas API this build does not
+  // serve, a contact-point test's empty receiver, and a bundled plugin stopped with Grafana.
   stage.match {
     selector = "{container=~\"grafana-server|loki\", level=~\"ERROR|WARNING\"} |~ \"\\\\berr(or)?=\\\"(?:[^\\\"\\\\\\\\]|\\\\\\\\.)*context canceled\\\"\""
 
@@ -170,8 +169,7 @@ loki.process "parse" {
     }
   }
 
-  // The self-check prints one line a run and no level; levelled after every parse above, so a parsed level is never
-  // overwritten. A failing probe's line explains the page its missing ping raises.
+  // The self-check prints one line a run and no level; a failing probe's line explains the page its missing ping raises.
   stage.match {
     selector = "{container=\"zcrypto-mon-selfcheck\", level=\"\"} |~ \"^selfcheck: .*(=FAIL|-> not pinging|-> ping failed|-> healthy, and no ping URL is set)\""
 

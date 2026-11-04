@@ -1346,8 +1346,6 @@ _PARSE_CANARY = (
 
 
 def test_the_unit_parse_canary_counts_the_lines_the_regex_stage_parsed():
-    """The trailing stages level the runners' bare echoes, so a level alone no longer proves the regex parsed: the
-    canary counts the shape the stage's output ships, which no echo the trailing stages level carries."""
     assert _log_expr("zcrypto-ops-unit-parse-dead") == _PARSE_CANARY
 
     def panels(ps):

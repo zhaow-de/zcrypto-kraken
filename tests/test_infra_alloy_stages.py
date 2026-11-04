@@ -206,8 +206,7 @@ def _free_port() -> int:
 
 
 def _alloy_run_command(alloy: str, tmp_path: Path, config: Path) -> list[str]:
-    """`alloy run` over `config` on a free loopback port, its state under `tmp_path`; a test run sends Grafana no usage
-    report."""
+    """A test run sends Grafana no usage report."""
     return [
         alloy,
         "run",

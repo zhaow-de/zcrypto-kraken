@@ -238,7 +238,7 @@ Each is `count_over_time(...) or on() vector(0)` below 1. The `by (host)` / `by 
 
 The ops node carries **two independent log paths**, and these four rules exist because no single query can watch both:
 
-- **Through Alloy**: the `zcrypto-*.service` units the keep-regex above names and Alloy's own container stream, both read by one `loki.source.journal "zcrypto_units"` component off `/var/log/journal`, then labelled and level-parsed by two separate `stage.match` blocks (`{container=~"zcrypto-.*"}` for the units' Python logging shape, `{container="alloy"}` for Alloy's logfmt), and the scripts' bare echoes levelled after both by blocks keyed on each echo's own shape, which `unit-parse-dead`'s line filter leaves out of its count.
+- **Through Alloy**: the `zcrypto-*.service` units the keep-regex above names and Alloy's own container stream, both read by one `loki.source.journal "zcrypto_units"` component off `/var/log/journal`, then labelled and level-parsed by two separate `stage.match` blocks (`{container=~"zcrypto-.*"}` for the units' Python logging shape, `{container="alloy"}` for Alloy's logfmt), and the scripts' bare echoes levelled after both by blocks keyed on each echo's own shape.
 - **Bypassing Alloy entirely**: the liquidations poller direct-ships (`--ship-logs`, `ZCRYPTO_LOG_SERVICE=liquidations`), stamping `level` at the source.
 
 **Read the combination, not the single page:**
@@ -281,7 +281,7 @@ The ops node carries **two independent log paths**, and these four rules exist b
 1. Query Loki **without** the level filter: `{host="ops", container="zcrypto-archive-pull"}` over the last 2 h. Lines present but carrying no `level` ⇒ the parse stage. No lines at all ⇒ this is the transport, above.
 2. Compare a raw line against the regex: `sudo journalctl -u zcrypto-panel-materialize.service -n 3 -o cat`, against the `stage.regex` under `loki.process "parse"` in `infra/ansible/roles/ops/files/config.alloy`. The shape must be `YYYY-MM-DD HH:MM:SS,mmm` then an upper-case level then the message.
 3. Check what moved: `git log -5 -- cli/logging infra/ansible/roles/ops/files/config.alloy`. A logging-format change in `cli/` breaks this stage silently, which is precisely the regression this rule was added for.
-4. Unparsed lines are **not** lost: `action_on_failure = "skip"` keeps their journal capture time; a Python-shaped line the regex misses arrives with no `level`, and the scripts' own echoes arrive levelled by their own shape, outside this rule's count.
+4. Unparsed lines keep their journal capture time (`action_on_failure = "skip"`): a Python-shaped line the regex misses arrives with no `level`; the scripts' echoes are levelled or dropped by their own shape, outside this rule's count.
 
 **For `poller-log-dead` (the direct-ship path):**
 

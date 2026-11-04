@@ -127,13 +127,10 @@ loki.process "parse" {
     }
   }
 
-  // The sources that print no level, levelled by the shape they print after every parse above, so a parsed level is
-  // never overwritten: the self-check's failing line explains the page its missing ping raises; the backup prints the
-  // fleet's Python line shape with its own level word, and its copy command two progress lines; uWSGI's cron lines and
-  // the prune command's summary report a run, as do Alloy's start line, uWSGI's own lines at a start, a stop and a
-  // worker's recycle, and the migrate command's at a start, each arm naming one line uWSGI prints, so a crash's line of
-  // another text ships with no level; a client that abandoned a ping's body is a warning, the dead-man paging a ping
-  // that never lands.
+  // The sources below print no level and take one by the shape they print: a self-check's failing line and a client that
+  // abandoned a ping's body are warnings, each explaining a page the dead-man raises for the ping it cost; the backup's
+  // lines carry their own level word; uWSGI's arm names each line it prints, so a crash's line of another text ships
+  // with no level.
   stage.match {
     selector = "{container=\"zcrypto-hc-selfcheck\", level=\"\"} |~ \"^selfcheck: .*(=FAIL|-> not pinging|-> ping failed|-> healthy, and no ping URL is set)\""
 
