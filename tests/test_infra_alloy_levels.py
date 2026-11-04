@@ -572,6 +572,49 @@ FIXTURES: list[Fixture] = [
         "monotonic: x86 linux, 'constant_tsc' flag not present",
         "INFO",
     ),
+    Fixture(
+        "nas_archive_pull_file_vanished",
+        "nas",
+        {"container": "archive-pull"},
+        'file has vanished: "/var/lib/zcrypto-capture/BTC/EUR/book/2026/10/23/14.part3.parquet"',
+        "WARNING",
+    ),
+    Fixture(
+        "nas_archive_pull_rsync_warning",
+        "nas",
+        {"container": "archive-pull"},
+        "rsync warning: some files vanished before they could be transferred (code 24) at main.c(1338) [generator=3.4.1]",
+        "WARNING",
+    ),
+    Fixture(
+        "nas_archive_pull_rsync_error",
+        "nas",
+        {"container": "archive-pull"},
+        "rsync error: unexplained error (code 255) at io.c(232) [Receiver=3.4.1]",
+        "WARNING",
+    ),
+    Fixture(
+        "nas_archive_pull_connection_closed",
+        "nas",
+        {"container": "archive-pull"},
+        "rsync: connection unexpectedly closed (0 bytes received so far) [Receiver]",
+        "WARNING",
+    ),
+    Fixture(
+        "nas_archive_pull_ssh_resolve",
+        "nas",
+        {"container": "archive-pull"},
+        "ssh: Could not resolve hostname zcrypto-red.zhaow.me: Temporary failure in name resolution",
+        "WARNING",
+    ),
+    Fixture(
+        "nas_archive_pull_ssh_connect",
+        "nas",
+        {"container": "archive-pull"},
+        "ssh: connect to host zcrypto-red.zhaow.me port 22: Cannot assign requested address",
+        "WARNING",
+    ),
+    Fixture("nas_archive_pull_traceback", "nas", {"container": "archive-pull"}, "Traceback (most recent call last):", None),
 ]
 
 _STRING = r'"((?:[^"\\]|\\.)*)"'
@@ -782,3 +825,31 @@ TWINS = {
 def test_a_dropped_line_is_a_copy_its_source_ships_with_a_level(fixture):
     assert set(TWINS) == {f.id for f in FIXTURES if f.expected == DROP}
     assert _parsed_level(fixture.host, fixture.labels, TWINS[fixture.id]) in {"INFO", "WARNING", "CRITICAL"}
+
+
+# The sources the node's 30-day read found shipping lines with no level, by the config's host key and the container.
+MEASURED = {
+    ("mon", "zcrypto-mon-selfcheck"),
+    ("mon", "alloy"),
+    ("mon", "caddy"),
+    ("mon", "grafana-server"),
+    ("hc", "zcrypto-hc-selfcheck"),
+    ("hc", "zcrypto-sqlite-backup"),
+    ("hc", "hc"),
+    ("hc", "alloy"),
+    ("ops", "zcrypto-tape-bars"),
+    ("ops", "zcrypto-verified-replay"),
+    ("ops", "zcrypto-verify-replay"),
+    ("ops", "zcrypto-archive-pull"),
+    ("capture", "zcrypto-capture-prune"),
+    ("capture", "zcrypto-engine-journal-prune"),
+    ("capture", "cache-proxy"),
+    ("cache", "valkey"),
+    ("cache", "sentinel"),
+    ("nas", "archive-pull"),
+}
+
+
+def test_the_fixtures_hold_every_source_the_30_day_read_found_without_a_level():
+    covered = {(f.host, f.labels["container"]) for f in FIXTURES if "level" not in f.labels}
+    assert sorted(MEASURED - covered) == []
