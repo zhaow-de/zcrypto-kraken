@@ -19,7 +19,10 @@ REPO = Path(__file__).resolve().parents[1]
 CONFIGS = {host: REPO / f"infra/ansible/roles/{host}/files/config.alloy" for host in ("mon", "hc", "ops", "capture", "cache")} | {
     "nas": REPO / "infra/nas/config.alloy"
 }
+# A dropped line: DROP where the drop admits a line with no level, the unlevelled copy of a record its source ships
+# levelled; DROP_NO_FAULT where it admits only a level the parse set, a line that reports no fault.
 DROP = "DROP"
+DROP_NO_FAULT = "DROP_NO_FAULT"
 
 
 class Fixture(NamedTuple):
@@ -73,21 +76,35 @@ FIXTURES: list[Fixture] = [
         "mon",
         {"container": "grafana-server", "level": "ERROR"},
         r'logger=plugin.loki t=2026-11-03T16:37:12.345678901Z level=error msg="Partial data response error" dsName=Loki dsUid=grafanacloud-logs error="Get \"http://127.0.0.1:3100/loki/api/v1/query_range?direction=backward&end=1762187832000000000&query=sum%28rate%28%7Bhost%3D~%22zcrypto%22%7D%5B5m%5D%29%29&start=1762184232000000000&step=60000ms\": context canceled"',
-        "INFO",
+        DROP_NO_FAULT,
+    ),
+    Fixture(
+        "mon_grafana_panel_failed",
+        "mon",
+        {"container": "grafana-server", "level": "ERROR"},
+        r'logger=plugin.loki t=2026-11-03T16:37:12.345678901Z level=error msg="Partial data response error" dsName=Loki dsUid=grafanacloud-logs error="Get \"http://127.0.0.1:3100/loki/api/v1/query_range?direction=backward&end=1762187832000000000&query=sum%28rate%28%7Bhost%3D~%22zcrypto%22%7D%5B5m%5D%29%29&start=1762184232000000000&step=60000ms\": dial tcp 127.0.0.1:3100: connect: connection refused"',
+        "ERROR",
     ),
     Fixture(
         "mon_loki_mapping_cancelled",
         "mon",
         {"container": "loki", "level": "WARNING"},
         r'ts=2026-11-03T16:37:30.123456789Z caller=spanlogger.go:111 middleware=QueryShard.astMapperware org_id=fake user=fake level=warn msg="failed mapping AST" err="context canceled" query="sum(rate({host=~\"zcrypto|zcrypto-red|ops\"} [5m]))"',
-        "INFO",
+        DROP_NO_FAULT,
+    ),
+    Fixture(
+        "mon_loki_mapping_failed",
+        "mon",
+        {"container": "loki", "level": "WARNING"},
+        r'ts=2026-11-03T16:37:30.123456789Z caller=spanlogger.go:111 middleware=QueryShard.astMapperware org_id=fake user=fake level=warn msg="failed mapping AST" err="rpc error: code = DeadlineExceeded desc = context deadline exceeded" query="sum(rate({host=~\"zcrypto|zcrypto-red|ops\"} [5m]))"',
+        "WARNING",
     ),
     Fixture(
         "mon_loki_scheduler_cancelled",
         "mon",
         {"container": "loki", "level": "ERROR"},
         'level=error ts=2026-11-03T16:33:01.123456789Z caller=scheduler_processor.go:111 component=querier msg="error processing requests from scheduler" err="rpc error: code = Canceled desc = context canceled" addr=127.0.0.1:9095',
-        "INFO",
+        DROP_NO_FAULT,
     ),
     Fixture(
         "mon_loki_scheduler_eof",
@@ -101,7 +118,7 @@ FIXTURES: list[Fixture] = [
         "mon",
         {"container": "grafana-server", "level": "ERROR"},
         'logger=context userId=2 orgId=1 uname=example-admin t=2026-11-03T16:32:41.123456789Z level=error msg="Request Completed" method=GET path=/apis/quotas.grafana.app/v0alpha1/namespaces/default/usage status=501 remote_addr=192.0.2.20 time_ms=1 duration=1.234567ms size=81',
-        "INFO",
+        DROP_NO_FAULT,
     ),
     Fixture(
         "mon_grafana_quotas_500",
@@ -115,7 +132,7 @@ FIXTURES: list[Fixture] = [
         "mon",
         {"container": "grafana-server", "level": "ERROR"},
         'logger=ngalert.notifier t=2026-11-03T10:00:00.123456789Z level=error component=alertmanager orgID=1 receiver= integration=slack[0] version=v1 aggrGroup=slack-0a1b2c3d4e5f-6a7b8c9d0e1f msg="Missing notification reason"',
-        "INFO",
+        DROP_NO_FAULT,
     ),
     Fixture(
         "mon_grafana_notifier_failure",
@@ -129,7 +146,7 @@ FIXTURES: list[Fixture] = [
         "mon",
         {"container": "grafana-server", "level": "ERROR"},
         'logger=plugin.grafana-pyroscope-datasource t=2026-11-02T21:14:10.123456789Z level=error msg="plugin process exited" path=/usr/share/grafana/plugins-bundled/grafana-pyroscope-datasource/gpx_grafana-pyroscope-datasource_linux_amd64 pid=1234 error="signal: terminated"',
-        "INFO",
+        DROP_NO_FAULT,
     ),
     Fixture(
         "mon_grafana_plugin_killed",
@@ -709,14 +726,20 @@ def _static_level(block: str) -> str | None:
     return m and m.group(1)
 
 
+def _drop(block: str) -> str:
+    level_matchers = [(op, v) for k, op, v in selector(_assigned(block, "selector"))[0] if k == "level"]
+    return DROP if all(_LABEL_OPS[op]("", v) for op, v in level_matchers) else DROP_NO_FAULT
+
+
 def level_blocks(host: str) -> list[tuple[str, str]]:
-    """The host's top-level blocks that key on `level`, in pipeline order: each selector with its level or DROP."""
+    """The host's top-level blocks that key on `level`, in pipeline order: each selector with its level, or the drop it
+    makes."""
     out = []
     for block in _top_blocks(host):
         if not _keys_on_level(block):
             continue
         if _assigned(block, "action") == "drop":
-            out.append((_assigned(block, "selector"), DROP))
+            out.append((_assigned(block, "selector"), _drop(block)))
             continue
         assert len(_stage_blocks(block)) == 1 and _static_level(block), f"a level-keyed block the model does not read:\n{block}"
         out.append((_assigned(block, "selector"), _static_level(block)))
@@ -724,12 +747,12 @@ def level_blocks(host: str) -> list[tuple[str, str]]:
 
 
 def model(host: str, labels: dict[str, str], line: str) -> str | None:
-    """The level the host's level-keyed blocks leave on a line, None for none, DROP for a dropped line."""
+    """The level the host's level-keyed blocks leave on a line, None for none, DROP or DROP_NO_FAULT for a dropped line."""
     labels = dict(labels)
     for text, action in level_blocks(host):
         if _admits(text, labels, line):
-            if action == DROP:
-                return DROP
+            if action in (DROP, DROP_NO_FAULT):
+                return action
             labels["level"] = action
     return labels.get("level")
 
@@ -801,21 +824,12 @@ def test_a_level_is_set_after_every_parse():
         assert not levels or max(parses) < min(levels), f"{host}: a parse runs after a level stage, blocks {parses} and {levels}"
 
 
-_RELEVELLED = {("level", "=", "ERROR"), ("level", "=~", "ERROR|WARNING")}
-
-
 def test_a_trailing_stage_sets_a_level_only_where_none_is_set():
     for host in CONFIGS:
         for block in _top_blocks(host):
-            if not _static_level(block):
-                continue
-            matchers = selector(_assigned(block, "selector"))[0]
-            on_level = {m for m in matchers if m[0] == "level"}
-            if on_level == {("level", "=", "")}:
-                continue
-            containers = [v for k, _, v in matchers if k == "container"]
-            assert host == "mon" and on_level and on_level <= _RELEVELLED and _static_level(block) == "INFO", (host, block)
-            assert containers and all(set(c.split("|")) <= {"grafana-server", "loki"} for c in containers), block
+            if _static_level(block):
+                on_level = {m for m in selector(_assigned(block, "selector"))[0] if m[0] == "level"}
+                assert on_level == {("level", "=", "")}, (host, block)
 
 
 def test_no_alloy_config_reads_the_journal_priority():
@@ -845,7 +859,12 @@ def test_alloy_itself_agrees_with_the_level_model(host, tmp_path):
     ]
     blocks = [b for b in _top_blocks(host) if _keys_on_level(b)]
     expected = [
-        [(f.expected, f.line) for f in fixtures if json.dumps(f.labels, sort_keys=True) == k and f.expected != DROP] for k in keys
+        [
+            (f.expected, f.line)
+            for f in fixtures
+            if json.dumps(f.labels, sort_keys=True) == k and f.expected not in (DROP, DROP_NO_FAULT)
+        ]
+        for k in keys
     ]
     survivors = _run_alloy(shutil.which("alloy"), tmp_path, groups, blocks)
     assert [[(echoed.get("level"), entry) for echoed, entry in group] for group in survivors] == expected
@@ -868,6 +887,25 @@ TWINS = {
 def test_a_dropped_line_is_a_copy_its_source_ships_with_a_level(fixture):
     assert set(TWINS) == {f.id for f in FIXTURES if f.expected == DROP}
     assert _parsed_level(fixture.host, fixture.labels, TWINS[fixture.id]) in {"INFO", "WARNING", "CRITICAL"}
+
+
+# Each line dropped as no fault beside a line of its source under the same labels, which the drop leaves at its level.
+NEAR_MISSES = {
+    "mon_grafana_panel_cancelled": "mon_grafana_panel_failed",
+    "mon_loki_mapping_cancelled": "mon_loki_mapping_failed",
+    "mon_loki_scheduler_cancelled": "mon_loki_scheduler_eof",
+    "mon_grafana_quotas_501": "mon_grafana_quotas_500",
+    "mon_grafana_contact_point_test": "mon_grafana_notifier_failure",
+    "mon_grafana_plugin_stop": "mon_grafana_plugin_killed",
+}
+
+
+@pytest.mark.parametrize("fixture", [pytest.param(f, id=f.id) for f in FIXTURES if f.expected == DROP_NO_FAULT])
+def test_a_no_fault_drop_leaves_a_near_miss_of_its_source_at_its_level(fixture):
+    assert set(NEAR_MISSES) == {f.id for f in FIXTURES if f.expected == DROP_NO_FAULT}
+    (near,) = [f for f in FIXTURES if f.id == NEAR_MISSES[fixture.id]]
+    assert (near.host, near.labels) == (fixture.host, fixture.labels)
+    assert model(near.host, near.labels, near.line) == near.labels["level"]
 
 
 MEASURED = {
