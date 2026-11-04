@@ -127,7 +127,7 @@ loki.process "parse" {
     }
   }
 
-  // A failing self-check and an abandoned ping body are WARNING: the dead-man pages the ping each one cost.
+  // A failing self-check and an abandoned ping body are WARNING: each costs the dead-man a ping.
   stage.match {
     selector = "{container=\"zcrypto-hc-selfcheck\", level=\"\"} |~ \"^selfcheck: .*(=FAIL|-> not pinging|-> ping failed|-> healthy, and no ping URL is set)\""
 
