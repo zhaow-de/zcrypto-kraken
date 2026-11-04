@@ -893,5 +893,5 @@ MEASURED = {
 
 
 def test_the_fixtures_hold_every_source_the_30_day_read_found_without_a_level():
-    covered = {(f.host, f.labels["container"]) for f in FIXTURES if "level" not in f.labels}
+    covered = {(f.host, f.labels["container"]) for f in FIXTURES if "level" not in f.labels and f.expected is not None}
     assert sorted(MEASURED - covered) == []
