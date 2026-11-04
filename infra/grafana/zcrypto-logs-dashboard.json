@@ -467,7 +467,7 @@
       "id": 1,
       "type": "logs",
       "title": "Logs \u2014 $container / $level",
-      "description": "Every line, newest first, shown as its message, parsed here at query time; the stored line is unchanged. A JSON line shows its message with any stack trace beneath it, a key=value line its logger or source location, its message and its error, and any other line shows as it was collected. Level is a real stream label on every path, so filtering and colouring work the same way for all of them. Expand a row to see the fields parsed out of it.",
+      "description": "Every line, newest first, shown as its message, parsed here at query time; the stored line is unchanged. A line with a message key shows that message with any stack trace beneath it, a line with a msg key, every key=value line and Caddy's JSON, its logger or source location, its message and its error, and any other line shows as it was collected. Level is a real stream label on every path, so filtering and colouring work the same way for all of them. Expand a row to see every key the parse read out of the line.",
       "datasource": {
         "type": "loki",
         "uid": "grafanacloud-logs"
@@ -486,7 +486,7 @@
           },
           "refId": "A",
           "queryType": "range",
-          "expr": "{host=~\"$host\", container=~\"$container\", level=~\"$level\"} |= \"$search\" | json jmessage=\"message\", jexception=\"exception\", jmsg=\"msg\", jlogger=\"logger\", jfile=\"file\", jline=\"line\", jextra=\"extra\" | logfmt lmsg=\"msg\", llogger=\"logger\", lcaller=\"caller\", lerror=\"error\", lerr=\"err\" | drop __error__, __error_details__ | line_format \"{{ if .jmessage }}{{ .jmessage }}{{ if .jexception }}\\n{{ .jexception }}{{ end }}{{ else if .jmsg }}{{ .jmsg }}{{ else if .lmsg }}{{ if .llogger }}{{ .llogger }} - {{ else if .lcaller }}[{{ .lcaller }}] - {{ end }}{{ .lmsg }}{{ if .lerror }}: {{ .lerror }}{{ else if .lerr }}: {{ .lerr }}{{ end }}{{ else }}{{ __line__ }}{{ end }}\""
+          "expr": "{host=~\"$host\", container=~\"$container\", level=~\"$level\"} |= \"$search\" | json | logfmt | drop __error__, __error_details__ | line_format \"{{ if .message }}{{ .message }}{{ if .exception }}\\n{{ .exception }}{{ end }}{{ else if .msg }}{{ if .logger }}{{ .logger }} - {{ else if .caller }}[{{ .caller }}] - {{ end }}{{ .msg }}{{ if .error }}: {{ .error }}{{ else if .err }}: {{ .err }}{{ end }}{{ else }}{{ __line__ }}{{ end }}\""
         }
       ],
       "options": {
