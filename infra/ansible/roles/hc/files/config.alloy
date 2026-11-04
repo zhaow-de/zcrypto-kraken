@@ -127,10 +127,7 @@ loki.process "parse" {
     }
   }
 
-  // The sources below print no level and take one by the shape they print: a self-check's failing line and a client that
-  // abandoned a ping's body are warnings, each explaining a page the dead-man raises for the ping it cost; the backup's
-  // lines carry their own level word; uWSGI's arm names each line it prints, so a crash's line of another text ships
-  // with no level.
+  // A failing self-check and an abandoned ping body are WARNING: the dead-man pages the ping each one cost.
   stage.match {
     selector = "{container=\"zcrypto-hc-selfcheck\", level=\"\"} |~ \"^selfcheck: .*(=FAIL|-> not pinging|-> ping failed|-> healthy, and no ping URL is set)\""
 

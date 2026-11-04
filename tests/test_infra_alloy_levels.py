@@ -677,7 +677,7 @@ _LINE_OPS = {
 
 def _unquote(literal: str) -> str:
     """A LogQL string literal's value; the model reads the configs' two escapes and refuses any other."""
-    assert re.fullmatch(r'(?:[^\\]|\\[\\"])*', literal), f"an escape LogQL refuses: {literal!r}"
+    assert re.fullmatch(r'(?:[^\\]|\\[\\"])*', literal), f"an unmodelled escape: {literal!r}"
     return re.sub(r"\\(.)", r"\1", literal)
 
 
