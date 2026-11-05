@@ -4624,12 +4624,15 @@ class ProbeExecutor:
         self._settle_from_book(book, moment)
         return True
 
-    def _is_flat_dust(self, symbol: str, venue_qty: float, cache_qty: float) -> bool:
+    def _is_flat_dust(self, symbol: str, book: VenueBook, cache_qty: float) -> bool:
         """The Cache flat and the venue under the pair's `ordermin`: a balance no order can sell."""
-        if abs(cache_qty) > FLAT_TOLERANCE:
+        base = symbol.split("/")[0]
+        venue_qty = book.held[symbol]
+        # `held` folds margin into the coin's spot figure, and the two are summed alike: equal is spot alone.
+        if abs(cache_qty) > FLAT_TOLERANCE or _SPOT_SYMBOL_BY_BASE.get(base) != symbol or venue_qty != book.balances.get(base):
             return False
         instrument = self._cache.instrument(InstrumentId.from_str(INSTRUMENT_IDS[symbol]))
-        return instrument is not None and instrument.min_quantity is not None and abs(venue_qty) < float(instrument.min_quantity)
+        return instrument is not None and instrument.min_quantity is not None and 0.0 < venue_qty < float(instrument.min_quantity)
 
     def _settle_from_book(self, book: VenueBook, moment: str) -> None:
         """The settle's apply half over a book in hand: the venue's figure is published for every symbol
@@ -4641,7 +4644,7 @@ class ProbeExecutor:
             for symbol, venue_qty in sorted(book.held.items()):
                 cache_qty = self._cache_net(symbol)
                 self._venue_correction[symbol] = venue_qty - cache_qty
-                if abs(venue_qty - cache_qty) > FLAT_TOLERANCE and not self._is_flat_dust(symbol, venue_qty, cache_qty):
+                if abs(venue_qty - cache_qty) > FLAT_TOLERANCE and not self._is_flat_dust(symbol, book, cache_qty):
                     logger.warning(
                         "the venue holds %s %s where the Cache reads %s -- the position gauge takes the venue's figure at %s",
                         venue_qty,

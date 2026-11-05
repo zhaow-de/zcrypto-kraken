@@ -7708,15 +7708,41 @@ def _venue_holds_warnings(tmp_path, cache, held):
     return metrics.positions, [r.getMessage() for r in warnings if "the venue holds" in r.getMessage()]
 
 
-@pytest.mark.parametrize("held", [1e-08, -1e-08, 0.00009999])
+@pytest.mark.parametrize("held", [1e-08, 0.00009999])
 def test_a_balance_under_ordermin_on_a_leg_the_cache_holds_flat_logs_nothing_and_the_gauge_still_takes_it(tmp_path, held):
     assert _venue_holds_warnings(tmp_path, StubCache(), held) == ([("BTC/EUR", held)], [])
 
 
-@pytest.mark.parametrize("held", [0.0001, -0.0001])
-def test_a_balance_at_ordermin_on_a_leg_the_cache_holds_flat_still_warns(tmp_path, held):
-    assert _venue_holds_warnings(tmp_path, StubCache(), held)[1] == [
-        f"the venue holds {held} BTC/EUR where the Cache reads 0 -- the position gauge takes the venue's figure at the startup pass"
+def test_a_balance_at_ordermin_on_a_leg_the_cache_holds_flat_still_warns(tmp_path):
+    assert _venue_holds_warnings(tmp_path, StubCache(), 0.0001)[1] == [
+        "the venue holds 0.0001 BTC/EUR where the Cache reads 0 -- the position gauge takes the venue's figure at the startup pass"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("symbol", "held", "spot"),
+    [
+        pytest.param("BTC/EUR", 5e-05, {}, id="margin-long-remainder"),
+        pytest.param("BTC/EUR", -5e-05, {}, id="margin-short-remainder"),
+        pytest.param("BTC/EUR", 0.01 - 0.00999, {"BTC": 0.01}, id="spot-lot-beside-an-offsetting-margin-short"),
+        pytest.param("ETH/BTC", 5e-05, {"ETH": 5e-05}, id="a-pair-that-is-not-the-coins-spot-symbol"),
+        pytest.param("BTC/EUR", -1e-08, {"BTC": -1e-08}, id="a-negative-spot-balance"),
+    ],
+)
+def test_a_reading_under_ordermin_that_is_not_a_spot_balance_alone_still_warns(tmp_path, symbol, held, spot):
+    book = executor_module.VenueBook(
+        held={symbol: held},
+        balances=dict.fromkeys(executor_module._SPOT_SYMBOL_BY_BASE, 0.0) | spot,
+        earn={},
+        eur_total=0.0,
+        eur_free=0.0,
+        read_at=NOW,
+    )
+    ex = _executor(tmp_path, client=StubClient(StubCache()), venue_holdings=_VenueHoldings())
+    with _executor_errors(logging.WARNING) as warnings:
+        ex._settle_from_book(book, "the startup pass")
+    assert [r.getMessage() for r in warnings if "the venue holds" in r.getMessage()] == [
+        f"the venue holds {held} {symbol} where the Cache reads 0 -- the position gauge takes the venue's figure at the startup pass"
     ]
 
 
