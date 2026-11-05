@@ -36,7 +36,7 @@ Run on the bump branch, before any money:
 - `tests/test_kraken_wheel_contract.py`, `tests/test_kraken_order_semantics_probe.py` and `tests/test_order_semantics_probe.py` — the harness and its contract against the new wheel.
 - `tests/test_cache_restart.py` — the two-process restart harness against a real `valkey-server`, the library's restore and reconciliation paths on this build. Its spot-lot and DOGE cases record what `2.0.0rc6.dev20260921` does and are expected red where that is fixed: `docs/reference/adapter-verification/2.0.0rc6.dev20260921.md`'s `## For the next pin` says what each red is, and each is written to the new record before its case is re-recorded.
 - `tests/test_engine_stub_fidelity.py` — each engine-suite double classified against the installed type, the guard that catches a real type moving under a stub; with it `tests/test_engine_node.py`, `tests/test_kraken_window_reads.py` and `tests/test_engine_flatten.py`, which build the node or drive the client on this wheel.
-- `ZCRYPTO_LIVE_VENUE_TESTS=1 uv run pytest tests/test_engine_node.py -k test_the_listing_the_book_reads -q -p no:cacheprovider` — the floors the venue book keeps against public `AssetPairs` on all twelve legs; the flag is what opens it, and without the flag it reads as a skip.
+- `ZCRYPTO_LIVE_VENUE_TESTS=1 uv run pytest tests/test_engine_node.py -k test_the_listing_the_book_reads -q -p no:cacheprovider` — the floors the venue book keeps against public `AssetPairs` on all twelve legs; without the flag it reads as a skip.
 
 A change one of these reports is read, then either absorbed on the branch or the reason the build is held; the guard is re-pinned to the new shape, not loosened.
 
