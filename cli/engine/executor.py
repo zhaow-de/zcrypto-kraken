@@ -666,7 +666,7 @@ def _bare_client(base_url: str | None):
 @dataclass(frozen=True)
 class VenueBook:
     held: dict[str, float]  # per INSTRUMENT_IDS symbol: spot plus signed margin
-    balances: dict[str, float]  # per basket base, the CASH read's spot totals alone: the sell check's figure
+    balances: dict[str, float]  # per basket base, the CASH read's spot totals alone: the sell check's figure and the dust check's
     earn: dict[str, float]  # per basket base held under an earn or staking code, its total: the mark's, never held
     eur_total: float  # the spot EUR row's total and EUR.M's, no other EUR row: the equity mark's figure
     eur_free: float  # the spot EUR row's free, net of hold_trade: one bound of the cash budget
