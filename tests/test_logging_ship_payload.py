@@ -131,10 +131,10 @@ def test_a_push_sends_no_connection_close(monkeypatch):
         raise OSError("stopped before the network")
 
     monkeypatch.setattr(http.client.HTTPConnection, "request", request)
-    req = urllib.request.Request("https://node.invalid/loki/api/v1/push", data=b"payload")
+    req = urllib.request.Request("https://node.invalid/loki/api/v1/push", data=b"payload", headers={"Authorization": "Basic t"})
     with pytest.raises(urllib.error.URLError):
         _build_opener().open(req, timeout=1)
 
     assert (sent["method"], sent["url"], sent["body"]) == ("POST", "/loki/api/v1/push", b"payload")
-    assert sent["headers"]["Host"] == "node.invalid"
-    assert "Connection" not in sent["headers"]
+    assert sorted(sent["headers"]) == ["Authorization", "Content-Length", "Content-Type", "Host", "User-Agent"]
+    assert sent["headers"]["Authorization"] == "Basic t"

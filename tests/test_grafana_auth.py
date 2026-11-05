@@ -18,7 +18,14 @@ _spec.loader.exec_module(ga)
 TOKEN = "glsa_TOTALLY_NOT_A_REAL_TOKEN_0123456789"
 
 
-def test_urlopen_sends_no_connection_close_once_this_module_is_loaded(monkeypatch):
+@pytest.mark.parametrize(
+    ("data", "method", "headers"),
+    [
+        (None, "GET", ["Authorization", "Host", "User-Agent"]),
+        (b"payload", "POST", ["Authorization", "Content-Length", "Content-Type", "Host", "User-Agent"]),
+    ],
+)
+def test_urlopen_sends_no_connection_close_once_this_module_is_loaded(monkeypatch, data, method, headers):
     sent = {}
 
     def request(self, method, url, body=None, headers={}, *, encode_chunked=False):
@@ -27,12 +34,13 @@ def test_urlopen_sends_no_connection_close_once_this_module_is_loaded(monkeypatc
 
     monkeypatch.setattr(http.client.HTTPConnection, "request", request)
     _spec.loader.exec_module(ga)
+    req = urllib.request.Request("https://node.invalid/api/health", data=data, headers={"Authorization": "Bearer t"})
     with pytest.raises(urllib.error.URLError):
-        urllib.request.urlopen(urllib.request.Request("https://node.invalid/api/health", data=b"payload"), timeout=1)
+        urllib.request.urlopen(req, timeout=1)
 
-    assert (sent["method"], sent["url"], sent["body"]) == ("POST", "/api/health", b"payload")
-    assert sent["headers"]["Host"] == "node.invalid"
-    assert "Connection" not in sent["headers"]
+    assert (sent["method"], sent["url"], sent["body"]) == (method, "/api/health", data)
+    assert sorted(sent["headers"]) == headers
+    assert sent["headers"]["Authorization"] == "Bearer t"
 
 
 def test_the_vault_password_file_comes_from_ansible_cfg_not_a_hardcoded_path():
