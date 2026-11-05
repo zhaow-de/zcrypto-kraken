@@ -7746,7 +7746,7 @@ def test_a_reading_under_ordermin_that_is_not_a_spot_balance_alone_still_warns(t
     ]
 
 
-@pytest.mark.parametrize(("cache_net", "held"), [(0.001, 0.00100001), (0.00005, 0.00006), (-0.00005, 0.00006)])
+@pytest.mark.parametrize(("cache_net", "held"), [(0.001, 0.00100001), (0.00005, 0.00006), (-0.00005, 0.00006), (1e-08, 0.00005)])
 def test_a_difference_under_ordermin_on_a_leg_the_cache_holds_still_warns(tmp_path, cache_net, held):
     cache = StubCache()
     cache.set_position("BTC/EUR", cache_net)
