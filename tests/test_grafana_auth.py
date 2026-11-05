@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import http.client
 import importlib.util
 import subprocess
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -13,6 +16,22 @@ ga = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(ga)
 
 TOKEN = "glsa_TOTALLY_NOT_A_REAL_TOKEN_0123456789"
+
+
+def test_urlopen_sends_no_connection_close_once_this_module_is_loaded(monkeypatch):
+    sent = {}
+
+    def request(self, method, url, body=None, headers={}, *, encode_chunked=False):  # noqa: B006 -- the library's own signature
+        sent.update(headers)
+        raise OSError("stopped before the network")
+
+    monkeypatch.setattr(http.client.HTTPConnection, "request", request)
+    _spec.loader.exec_module(ga)
+    with pytest.raises(urllib.error.URLError):
+        urllib.request.urlopen("https://node.invalid/api/health", timeout=1)
+
+    assert sent["Host"] == "node.invalid"
+    assert "Connection" not in sent
 
 
 def test_the_vault_password_file_comes_from_ansible_cfg_not_a_hardcoded_path():

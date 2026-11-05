@@ -10,13 +10,34 @@ it.
 from __future__ import annotations
 
 import configparser
+import http.client
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
 from typing import NamedTuple
 
 ANSIBLE_DIR = Path(__file__).resolve().parents[1] / "ansible"
 VAULT_FILE = "group_vars/all/vault.yml"
+
+
+class _ClientClosesFirst(http.client.HTTPSConnection):
+    """Drops the `Connection: close` urllib hard-codes. With it the server closes first and keeps state on a public port the
+    workstation's NAT hands out again at once, and about one later connection in twelve lands on that state and hangs in its
+    TLS handshake. Without it this side closes when the response has been read, and the server keeps nothing."""
+
+    def request(self, method, url, body=None, headers={}, *, encode_chunked=False):  # noqa: B006 -- the library's own signature
+        kept = {name: value for name, value in headers.items() if name.lower() != "connection"}
+        super().request(method, url, body, kept, encode_chunked=encode_chunked)
+
+
+class _ClientClosesFirstHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_ClientClosesFirst, req, context=self._context)
+
+
+# Process-wide, so every tool that loads this module and calls `urlopen` closes first, a new call site included.
+urllib.request.install_opener(urllib.request.build_opener(_ClientClosesFirstHandler()))
 
 
 class Stack(NamedTuple):
