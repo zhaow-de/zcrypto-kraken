@@ -395,6 +395,127 @@ def test_an_ordinary_close_still_reconnects_fast():
     assert _delays_after_close(1006, messages=[msg]) == [1.0]
 
 
+# --- a close is logged at the level its outcome deserves ------------------------------------------
+#
+# Each script item is what one connect returns or raises and the seconds it takes; the fake sleep advances
+# the same clock, so the reconnect line's seconds run from the close to the subscribe.
+# `healthy` advances it after each message the consumer reads, the time a connection stays up.
+
+_HEARTBEAT = json.dumps({"channel": "heartbeat"})
+
+
+def _outcome_lines(caplog, *script, messages, healthy=0.0):
+    now = [0.0]
+    remaining = list(script)
+
+    def connect_fn(uri):
+        item, took = remaining.pop(0)
+        now[0] += took
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+    async def fake_sleep(delay):
+        now[0] += delay
+
+    async def run():
+        client = CaptureClient(
+            ["BTC/EUR"], 100, uri="wss://fake", connect_fn=connect_fn, sleep_fn=fake_sleep, clock_fn=lambda: now[0]
+        )
+        seen = 0
+        async for _ in client.stream():
+            seen += 1
+            if seen == messages:
+                break
+            now[0] += healthy
+
+    with caplog.at_level(logging.INFO, logger="zcrypto.capture.ws_client"):
+        asyncio.run(run())
+    return [(r.levelname, r.getMessage()) for r in caplog.records if not r.getMessage().startswith("reconnecting in")]
+
+
+def test_a_routine_drop_and_its_first_attempt_reconnect_log_at_info(caplog):
+    lines = _outcome_lines(
+        caplog,
+        (_FakeConnection([_HEARTBEAT], raise_at_end=True), 0.0),
+        (_FakeConnection([_HEARTBEAT]), 0.1),
+        messages=2,
+    )
+    assert lines == [
+        ("INFO", "WS connection closed, reconnecting: no close frame received or sent"),
+        ("INFO", "reconnected after 1.10 s"),
+    ]
+
+
+def test_a_service_restart_close_logs_at_warning(caplog):
+    lines = _outcome_lines(
+        caplog,
+        (_ClosingConnection([_HEARTBEAT], 1012), 0.0),
+        (_FakeConnection([_HEARTBEAT]), 0.1),
+        messages=2,
+    )
+    assert [level for level, _ in lines] == ["WARNING", "WARNING"], lines
+    assert lines[1][1] == "reconnected after 1 attempt, 5.10 s"
+
+
+def test_a_failed_attempt_and_a_reconnect_that_took_two_attempts_log_at_warning(caplog):
+    lines = _outcome_lines(
+        caplog,
+        (_FakeConnection([_HEARTBEAT], raise_at_end=True), 0.0),
+        (_invalid_status_503(), 0.1),
+        (_FakeConnection([_HEARTBEAT]), 0.1),
+        messages=2,
+    )
+    assert lines == [
+        ("INFO", "WS connection closed, reconnecting: no close frame received or sent"),
+        ("WARNING", "WS connect attempt failed, reconnecting: server rejected WebSocket connection: HTTP 503"),
+        ("WARNING", "reconnected after 2 attempts, 3.20 s"),
+    ]
+
+
+def test_a_first_attempt_reconnect_slower_than_the_restart_floor_logs_at_warning(caplog):
+    lines = _outcome_lines(
+        caplog,
+        (_FakeConnection([_HEARTBEAT], raise_at_end=True), 0.0),
+        (_FakeConnection([_HEARTBEAT]), 4.5),
+        messages=2,
+    )
+    assert lines == [
+        ("INFO", "WS connection closed, reconnecting: no close frame received or sent"),
+        ("WARNING", "reconnected after 1 attempt, 5.50 s"),
+    ]
+
+
+def test_a_second_drop_times_its_reconnect_from_its_own_close(caplog):
+    lines = _outcome_lines(
+        caplog,
+        (_FakeConnection([_HEARTBEAT], raise_at_end=True), 0.0),
+        (_FakeConnection([_HEARTBEAT], raise_at_end=True), 0.1),
+        (_FakeConnection([_HEARTBEAT]), 0.1),
+        messages=3,
+        healthy=3600.0,
+    )
+    close = ("INFO", "WS connection closed, reconnecting: no close frame received or sent")
+    assert lines == [close, ("INFO", "reconnected after 1.10 s"), close, ("INFO", "reconnected after 1.10 s")]
+
+
+def test_an_ordinary_drop_after_a_healed_restart_reconnects_fast_at_info(caplog):
+    lines = _outcome_lines(
+        caplog,
+        (_ClosingConnection([_HEARTBEAT], 1012), 0.0),
+        (_FakeConnection([_HEARTBEAT], raise_at_end=True), 0.1),
+        (_FakeConnection([_HEARTBEAT]), 0.1),
+        messages=3,
+        healthy=3600.0,
+    )
+    assert lines[0][0] == "WARNING", lines
+    assert lines[1:] == [
+        ("WARNING", "reconnected after 1 attempt, 5.10 s"),
+        ("INFO", "WS connection closed, reconnecting: no close frame received or sent"),
+        ("INFO", "reconnected after 1.10 s"),
+    ]
+
+
 # --- T0102: req_id-correlated resubscribe (observability + prevention) ---------------------------
 #
 # `resubscribe_book` NEVER awaits its ack: rung 1 calls it from inside the message handler, i.e. from

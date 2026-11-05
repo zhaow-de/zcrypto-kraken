@@ -6,6 +6,9 @@ http_addr = 127.0.0.1
 http_port = {{ mon_grafana_port }}
 domain = {{ mon_hostname }}
 root_url = https://{{ mon_hostname }}/
+# Off: the edge compresses what it proxies, and Grafana's own gzip, on by default, tries to write a body into each
+# 304 a browser's revalidation draws and warns "Failed to write gzipped response".
+enable_gzip = false
 
 [security]
 # A generated name, never the default one: the lockout below is by account name, and a name a stranger

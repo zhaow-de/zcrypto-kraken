@@ -160,6 +160,42 @@ loki.process "parse" {
     drop_counter_reason = "plugin_stopped_with_grafana"
   }
 
+  // Grafana's Loki plugin on a panel query whose connection to the node's Loki closed under it, and a failed query's
+  // summary line with no error= field; a summary carrying error= and any other Partial data line keep ERROR.
+  stage.match {
+    selector            = "{container=\"grafana-server\", level=\"ERROR\"} |= \"logger=plugin.loki \" |= \"msg=\\\"Partial data response error\\\"\" |= \"error=\\\"read tcp 127.0.0.1:\" |= \"->127.0.0.1:3100: use of closed network connection\\\"\""
+    action              = "drop"
+    drop_counter_reason = "loki_plugin_closed_connection"
+  }
+
+  stage.match {
+    selector            = "{container=\"grafana-server\", level=\"ERROR\"} |= \"logger=plugin.loki \" |= \"msg=\\\"Plugin Request Completed\\\"\" |= \" status=error \" != \" error=\""
+    action              = "drop"
+    drop_counter_reason = "loki_plugin_request_summary"
+  }
+
+  // Loki's querier on a scheduler connection a cancelled query closed: the EOF notifying the scheduler and the health
+  // check on the closing connection. A scheduler failure that reports nothing but that EOF is dropped with them.
+  stage.match {
+    selector            = "{container=\"loki\", level=\"ERROR\"} |= \"msg=\\\"error notifying scheduler about finished query\\\"\" |= \" err=EOF \""
+    action              = "drop"
+    drop_counter_reason = "scheduler_notify_eof"
+  }
+
+  stage.match {
+    selector            = "{container=\"loki\", level=\"ERROR\"} |= \"msg=\\\"error health checking\\\"\" |= \"err=\\\"rpc error: code = Canceled desc = grpc: the client connection is closing\\\"\""
+    action              = "drop"
+    drop_counter_reason = "health_check_connection_closing"
+  }
+
+  // Loki's warning that a query overlaps none of its schema periods: the node's one period holds every line its Loki
+  // stores, so the warning reports no fault.
+  stage.match {
+    selector            = "{container=\"loki\", level=\"WARNING\"} |= \" caller=limits.go:\" |= \"msg=\\\"could not determine query overlaps on tsdb vs non-tsdb schemas\""
+    action              = "drop"
+    drop_counter_reason = "query_outside_schema_periods"
+  }
+
   // Alloy's finished node evaluation, one line per component at every start or reload, reports no event.
   stage.match {
     selector            = "{container=\"alloy\", level=\"INFO\"} |= \"msg=\\\"finished node evaluation\\\"\""

@@ -12,6 +12,9 @@
 		}
 	}
 
+	# The observability node's Grafana leaves its own gzip off and relies on this.
+	encode zstd gzip
+
 {% for route in edge_basic_auth_routes %}
 	handle {{ route.path }} {
 		basic_auth {

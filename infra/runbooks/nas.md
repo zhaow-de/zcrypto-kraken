@@ -114,7 +114,7 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-A warning Grafana alert on the **logs** receiver (`NAS · archive-pull ERROR logs`, panel `zcrypto-logs`/102): at least one line labelled `level="ERROR"` or `"CRITICAL"` from `{container="archive-pull"}` in the last 15 minutes.
+A warning Grafana alert on the **logs** receiver (`NAS · archive-pull ERROR logs`, panel `zcrypto-fleet`/1001): at least one line labelled `level="ERROR"` or `"CRITICAL"` from `{container="archive-pull"}` in the last 15 minutes.
 
 The rule selects on the `level` **label** Alloy attaches at ingest, not on the text "ERROR" — Alloy strips the level out of the message, so a text grep would match nothing. The `container` label value is `archive-pull`: `infra/nas/config.alloy` relabels the journald container name `zcrypto-archive-pull` to it deliberately, so the selector is correct as written.
 
@@ -168,7 +168,7 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-A critical Grafana alert on the **metrics** receiver (`NAS · archive-pull stalled (dead-man)`, panel `zcrypto-logs`/103): Loki holds no line matching `pull complete` **and** `failed=0` from `{container="archive-pull"}` in the last 3 hours.
+A critical Grafana alert on the **metrics** receiver (`NAS · archive-pull stalled (dead-man)`, panel `zcrypto-fleet`/1002): Loki holds no line matching `pull complete` **and** `failed=0` from `{container="archive-pull"}` in the last 3 hours.
 
 The value is `0`, and the `host` label on the page is **empty** — the firing arm is the rule's `or on() vector(0)` fallback, which carries no labels. The host is the NAS; the summary names it in words for this reason.
 

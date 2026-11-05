@@ -644,8 +644,8 @@ rules:
     for: 0s
     annotations:
       summary: "ERROR/CRITICAL log lines from the trading engine on the capture primary in the last 15 minutes -- the cycle rules see only a cycle's final outcome, so everything that goes wrong between boundaries (key or API failures, refresh errors, order-path exceptions) surfaces here first, on the host that holds the live trade key. Zero is the healthy baseline. One alert instance per distinct line, and at most 5 of them -- a storm may carry more lines than are shown here. Runbook: infra/runbooks/engine.md#zcrypto-engine-error-logs"
-      __dashboardUid__: "zcrypto-logs"
-      __panelId__: "102"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "1001"
       unit: "ERROR or CRITICAL log lines in the last 15 minutes"
     labels:
       severity: warning
@@ -719,8 +719,8 @@ rules:
     for: 0s
     annotations:
       summary: "Not one log line of any level from the trading engine on host zcrypto (container `engine`) in 6h. The engine logs in bursts at its 4-hourly cycle boundaries, so 6h means at least one whole cycle produced nothing -- its log-shipping path is dead (Loki credentials, the ship handler, or the container gone). The Engine · ERROR logs rule is blind until this is fixed, on the host that holds the live trade key. Check whether cycles are still completing: if they are, this is the log plane alone; if they are not, the engine itself is down and the cycle rules are the ones to read. Runbook: infra/runbooks/engine.md#zcrypto-engine-log-dead"
-      __dashboardUid__: "zcrypto-logs"
-      __panelId__: "103"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "1002"
       unit: "engine log lines of any level in the last 6 hours"
     labels:
       severity: critical
@@ -1278,8 +1278,8 @@ rules:
     for: 0s
     annotations:
       summary: "ERROR-level log lines from the archive-pull container on the NAS in the last 15 minutes. Runbook: infra/runbooks/nas.md#zcrypto-nas-archive-pull-errors"
-      __dashboardUid__: "zcrypto-logs"
-      __panelId__: "102"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "1001"
       unit: "ERROR or CRITICAL log lines in the last 15 minutes"
     labels:
       severity: warning
@@ -1360,8 +1360,8 @@ rules:
     for: 0s
     annotations:
       summary: "The archive-pull container on the NAS has not reported a successful pull for 3h -- the loop, the container, the NAS, or the log pipeline is down. The L2 archive is unbackfillable; the NAS mirror is going stale. Runbook: infra/runbooks/nas.md#zcrypto-nas-archive-pull-stalled"
-      __dashboardUid__: "zcrypto-logs"
-      __panelId__: "103"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "1002"
     labels:
       severity: critical
     notification_settings:
@@ -2620,8 +2620,8 @@ rules:
     for: 0s
     annotations:
       summary: "{{ if $labels.container }}ERROR/CRITICAL log lines from `{{ $labels.container }}` on the ops node in the last 15 minutes.{{ else }}ERROR/CRITICAL log lines from a container on the ops node in the last 15 minutes.{{ end }} One alert instance per distinct line, and at most 5 of them -- a storm may carry more lines than are shown here. For the liquidations poller this is the only error signal -- its failures flip no exit-code metric. Runbook: infra/runbooks/ops-node.md#zcrypto-ops-error-logs"
-      __dashboardUid__: "zcrypto-logs"
-      __panelId__: "102"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "1001"
       unit: "ERROR or CRITICAL log lines in the last 15 minutes"
     labels:
       severity: warning
@@ -2688,8 +2688,8 @@ rules:
     for: 0s
     annotations:
       summary: "Not one PARSED Alloy log line (any level label) from the ops node in 6h -- Alloy is quiet but never silent while alive, so this means Alloy itself is dead, its parse stage has regressed to level=-, or it cannot reach Loki. The margin here is thin and deliberately so: a healthy 6h window measured 7 to 9 lines over 14 days, roughly 1.5 an hour, so read a low count on this stream as a signal to look rather than as headroom. Scoped to Alloy only: the liquidations poller direct-ships and is watched separately (`Ops · poller log pipeline dead`), and the `zcrypto-*` units' own level-parse health is watched separately too (`Ops · unit log parse dead`). Runbook: infra/runbooks/observability.md#zcrypto-ops-log-pipeline-dead"
-      __dashboardUid__: "zcrypto-logs"
-      __panelId__: "103"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "1002"
     labels:
       severity: critical
     notification_settings:
@@ -2749,8 +2749,8 @@ rules:
     for: 0s
     annotations:
       summary: "Not one PARSED log line from the liquidations poller (container=liquidations) on the ops node in 6h -- it direct-ships and runs continuously on a ~5-min cycle, so silence means its ship path is dead (the --ship-logs flag, its Loki credentials, or the container itself), not a quiet host. Runbook: infra/runbooks/observability.md#zcrypto-ops-poller-log-dead"
-      __dashboardUid__: "zcrypto-logs"
-      __panelId__: "103"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "1002"
     labels:
       severity: critical
     notification_settings:
@@ -2816,8 +2816,8 @@ rules:
     for: 0s
     annotations:
       summary: "Not one LEVEL-PARSED line from any zcrypto-* ops unit in 26h -- they run on independent schedules (half-hourly/hourly/daily) so at least one always produces a leveled line inside that window while Alloy's zcrypto parse stage is intact; silence means that stage regressed (the line-shape regex, the container selector, or the label scheme) even though Alloy itself and its own logs (watched by `Ops · log pipeline dead`) stay healthy. Runbook: infra/runbooks/observability.md#zcrypto-ops-unit-parse-dead"
-      __dashboardUid__: "zcrypto-logs"
-      __panelId__: "103"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "1002"
     labels:
       severity: critical
     notification_settings:
@@ -2886,8 +2886,8 @@ rules:
     for: 0s
     annotations:
       summary: "Not one journal-path log line from zcrypto-archive-pull on the ops node in 26h -- the half-hourly unit writes at least one line every run, so the journal transport (loki.source.journal) is dead: empty/volatile host journal, gid drift, or a stale keep regex. The `zcrypto-*` units' logs -- including the reconcile skip-gate warning -- are invisible until this is fixed. Runbook: infra/runbooks/observability.md#zcrypto-ops-journal-transport-dead"
-      __dashboardUid__: "zcrypto-logs"
-      __panelId__: "103"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "1002"
     labels:
       severity: critical
     notification_settings:
@@ -4348,8 +4348,8 @@ rules:
     for: 0s
     annotations:
       summary: "ERROR/CRITICAL log lines from the capture daemon (container=capture) on a capture host in the last 15 minutes -- desync storms, ENOSPC, or reconnect failures on the unbackfillable stream. Zero is the healthy baseline. One alert instance per distinct line, and at most 5 of them -- a storm may carry more lines than are shown here. Runbook: infra/runbooks/capture-daemon.md#zcrypto-capture-error-logs"
-      __dashboardUid__: "zcrypto-logs"
-      __panelId__: "102"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "1001"
       unit: "ERROR or CRITICAL log lines in the last 15 minutes"
     labels:
       severity: warning
@@ -4415,8 +4415,8 @@ rules:
     for: 0s
     annotations:
       summary: "Not one PARSED capture-daemon log line (any level) from the capture PRIMARY in 6h -- the daemon emits ~35/hr, so its log plane is dead (the daemon's --ship-logs path down, its Loki credentials dead, or the container gone). The Capture · daemon ERROR logs rule is blind on this host until fixed. Runbook: infra/runbooks/observability.md#zcrypto-capture-log-dead-primary"
-      __dashboardUid__: "zcrypto-logs"
-      __panelId__: "103"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "1002"
     labels:
       severity: critical
     notification_settings:
@@ -4464,8 +4464,8 @@ rules:
     for: 0s
     annotations:
       summary: "Not one PARSED capture-daemon log line (any level) from the capture SECONDARY in 6h -- the daemon emits ~35/hr, so its log plane is dead (the daemon's --ship-logs path down, its Loki credentials dead, or the container gone). The Capture · daemon ERROR logs rule is blind on this host until fixed. Runbook: infra/runbooks/observability.md#zcrypto-capture-log-dead-secondary"
-      __dashboardUid__: "zcrypto-logs"
-      __panelId__: "103"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "1002"
     labels:
       severity: critical
     notification_settings:

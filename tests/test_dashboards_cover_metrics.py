@@ -729,6 +729,18 @@ def test_a_single_target_merged_table_matches_its_value_by_type():
     )
 
 
+# 2, on time range change, re-runs a variable's query on every auto-refresh, and Grafana then cancels and re-runs every
+# panel that reads it.
+def test_every_query_variable_on_every_board_resolves_on_dashboard_load():
+    refresh = {
+        f"{filename} ${v['name']}": v.get("refresh")
+        for filename, dash in dashboards()
+        for v in (dash.get("templating") or {}).get("list") or []
+        if v.get("type") == "query"
+    }
+    assert refresh and set(refresh.values()) == {1}, {name: r for name, r in refresh.items() if r != 1}
+
+
 def _unscoped(expr: str) -> str:
     """A panel may pin the rule's own expression to the ops exporter with `{host="ops"}`, and an
     ops-only rule carries it in its own; the pairing compares the two without that one matcher on

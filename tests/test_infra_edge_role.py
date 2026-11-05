@@ -89,6 +89,17 @@ def test_the_head_matcher_renders_only_with_paths_and_carries_the_cookie_name():
     assert site[f"handle {HEAD_MATCHER}"] == [("respond 200", [])]
 
 
+def test_every_parameter_set_compresses_the_whole_site_at_its_top_level():
+    every = {
+        "edge_basic_auth_routes": [ONE_USER],
+        "edge_paths_404": ["/metrics"],
+        "edge_head_paths": ["/d/*"],
+        "edge_session_cookie": "sid",
+    }
+    for site in (_site(), _site(**every)):
+        assert site["encode zstd gzip"] == []
+
+
 def test_every_parameter_set_routes_the_authenticated_paths_first_and_the_upstream_last():
     site = _site(
         edge_basic_auth_routes=[ONE_USER], edge_paths_404=["/metrics"], edge_head_paths=["/d/*"], edge_session_cookie="sid"

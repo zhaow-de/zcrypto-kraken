@@ -5279,7 +5279,7 @@ def test_each_socket_reported_down_arms_the_pass_on_its_own_return_and_the_conne
     its endpoint, the line F2's Record and the rollout's first hour read the execution socket's off."""
     venue = _VenueOrders(_report(_TXID, OrderStatus.CANCELED))
     ex, client, clock = _minted_after_a_cut(tmp_path, venue_orders=venue, venue_cancel=_VenueCancel())
-    with _executor_errors(level=logging.WARNING) as records:
+    with _executor_errors(level=logging.INFO) as records:
         ex.on_socket_state(_socket(SocketState.DISCONNECTED, "a-second-endpoint"))  # holds the arm the mint set
 
         ex.on_socket_state(_socket(SocketState.CONNECTED))  # the connect itself: not held down
@@ -5306,6 +5306,30 @@ def test_each_socket_reported_down_arms_the_pass_on_its_own_return_and_the_conne
         "socket kraken-spot-data-streams is back (a-second-endpoint still down) -- the re-read pass runs on the next tick "
         "with nothing in flight",
         "socket a-second-endpoint is back and none is down -- the re-read pass runs on the next tick with nothing in flight",
+    ]
+
+
+def test_a_socket_down_and_back_log_at_info_and_one_held_down_past_the_grace_freezes_at_critical(tmp_path):
+    venue = _VenueOrders(_report(_TXID, OrderStatus.CANCELED))
+    ex, client, clock = _minted_after_a_cut(tmp_path, venue_orders=venue, venue_cancel=_VenueCancel())
+    with _executor_errors(level=logging.DEBUG) as records:
+        ex.on_socket_state(_socket(SocketState.DISCONNECTED, "kraken-spot-data-streams"))
+        ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-data-streams"))
+        ex.on_socket_state(_socket(SocketState.DISCONNECTED, "kraken-spot-user-streams"))
+        clock.now += timedelta(seconds=31)
+        ex.on_timer(clock.now)
+        assert ex._frozen
+
+    lines = [
+        (r.levelname, r.getMessage().split(" -- ")[0])
+        for r in records
+        if r.getMessage().startswith(("socket ", "the execution watchdog froze the loop"))
+    ]
+    assert lines == [
+        ("INFO", "socket kraken-spot-data-streams is down"),
+        ("INFO", "socket kraken-spot-data-streams is back and none is down"),
+        ("INFO", "socket kraken-spot-user-streams is down"),
+        ("CRITICAL", "the execution watchdog froze the loop"),
     ]
 
 

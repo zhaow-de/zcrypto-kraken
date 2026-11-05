@@ -1353,9 +1353,13 @@ def test_the_unit_parse_canary_counts_the_lines_the_regex_stage_parsed():
             yield p
             yield from panels(p.get("panels", []))
 
-    board = json.loads((REPO / "infra/grafana/zcrypto-logs-dashboard.json").read_text())
+    boards = [json.loads(f.read_text()) for f in sorted((REPO / "infra/grafana").glob("*dashboard*.json"))]
     copies = [
-        t["expr"] for p in panels(board["panels"]) for t in p.get("targets", []) if 'container=~"zcrypto-.*"' in t.get("expr", "")
+        t["expr"]
+        for board in boards
+        for p in panels(board["panels"])
+        for t in p.get("targets", [])
+        if 'container=~"zcrypto-.*"' in t.get("expr", "")
     ]
     assert copies == [_PARSE_CANARY]
     (shape,) = [re.sub(r"\\(.)", r"\1", s) for s in re.findall(r'\|~ "((?:[^"\\]|\\.)*)"', _PARSE_CANARY)]

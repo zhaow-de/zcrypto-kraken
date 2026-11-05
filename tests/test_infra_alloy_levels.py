@@ -86,6 +86,41 @@ FIXTURES: list[Fixture] = [
         "ERROR",
     ),
     Fixture(
+        "mon_grafana_loki_connection_closed",
+        "mon",
+        {"container": "grafana-server", "level": "ERROR"},
+        'logger=plugin.loki t=2026-11-04T13:56:53.50144968Z level=error msg="Partial data response error" error="read tcp 127.0.0.1:45606->127.0.0.1:3100: use of closed network connection" pluginId=loki refID=A pluginVersion=13.2.2 status=500 statusSource=plugin uname=example-admin dsName=Loki dsUid=grafanacloud-logs endpoint=queryData',
+        DROP_NO_FAULT,
+    ),
+    Fixture(
+        "mon_grafana_loki_connection_reset",
+        "mon",
+        {"container": "grafana-server", "level": "ERROR"},
+        'logger=plugin.loki t=2026-11-04T13:56:53.50144968Z level=error msg="Partial data response error" error="read tcp 127.0.0.1:45606->127.0.0.1:3100: read: connection reset by peer" pluginId=loki refID=A pluginVersion=13.2.2 status=500 statusSource=plugin uname=example-admin dsName=Loki dsUid=grafanacloud-logs endpoint=queryData',
+        "ERROR",
+    ),
+    Fixture(
+        "mon_grafana_loki_request_summary",
+        "mon",
+        {"container": "grafana-server", "level": "ERROR"},
+        'logger=plugin.loki t=2026-11-04T13:56:53.502074533Z level=error msg="Plugin Request Completed" dsUid=grafanacloud-logs pluginId=loki status=error statusSource=plugin dsName=Loki duration=113.707769ms endpoint=queryData pluginVersion=13.2.2 uname=example-admin',
+        DROP_NO_FAULT,
+    ),
+    Fixture(
+        "mon_grafana_loki_request_failed",
+        "mon",
+        {"container": "grafana-server", "level": "ERROR"},
+        'logger=plugin.loki t=2026-11-04T13:56:53.502074533Z level=error msg="Plugin Request Completed" dsUid=grafanacloud-logs pluginId=loki status=error statusSource=plugin dsName=Loki duration=113.707769ms endpoint=queryData pluginVersion=13.2.2 error="failed to query data: rpc error: code = Unavailable desc = connection error" uname=example-admin',
+        "ERROR",
+    ),
+    Fixture(
+        "mon_grafana_prometheus_request_summary",
+        "mon",
+        {"container": "grafana-server", "level": "ERROR"},
+        'logger=plugin.prometheus t=2026-11-04T13:56:53.502074533Z level=error msg="Plugin Request Completed" dsUid=grafanacloud-prom pluginId=prometheus status=error statusSource=downstream dsName=Prometheus duration=113.707769ms endpoint=queryData pluginVersion=13.2.4 uname=example-admin',
+        "ERROR",
+    ),
+    Fixture(
         "mon_loki_mapping_cancelled",
         "mon",
         {"container": "loki", "level": "WARNING"},
@@ -111,7 +146,49 @@ FIXTURES: list[Fixture] = [
         "mon",
         {"container": "loki", "level": "ERROR"},
         'level=error ts=2026-11-03T16:33:02.123456789Z caller=scheduler_processor.go:175 component=querier org_id=fake msg="error notifying scheduler about finished query" err=EOF addr=127.0.0.1:9095',
+        DROP_NO_FAULT,
+    ),
+    Fixture(
+        "mon_loki_scheduler_unavailable",
+        "mon",
+        {"container": "loki", "level": "ERROR"},
+        r'level=error ts=2026-11-03T16:33:01.123456789Z caller=scheduler_processor.go:111 component=querier msg="error processing requests from scheduler" err="rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 127.0.0.1:9095: connect: connection refused\"" addr=127.0.0.1:9095',
         "ERROR",
+    ),
+    Fixture(
+        "mon_loki_scheduler_notify_failed",
+        "mon",
+        {"container": "loki", "level": "ERROR"},
+        r'level=error ts=2026-11-03T16:33:02.123456789Z caller=scheduler_processor.go:175 component=querier org_id=fake msg="error notifying scheduler about finished query" err="rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 127.0.0.1:9095: connect: connection refused\"" addr=127.0.0.1:9095',
+        "ERROR",
+    ),
+    Fixture(
+        "mon_loki_health_check_closing",
+        "mon",
+        {"container": "loki", "level": "ERROR"},
+        'level=error ts=2026-11-04T09:31:55.314893014Z caller=scheduler_processor.go:304 component=querier org_id=fake frontend=127.0.0.1:9096 msg="error health checking" err="rpc error: code = Canceled desc = grpc: the client connection is closing"',
+        DROP_NO_FAULT,
+    ),
+    Fixture(
+        "mon_loki_health_check_failed",
+        "mon",
+        {"container": "loki", "level": "ERROR"},
+        'level=error ts=2026-11-04T09:31:55.314893014Z caller=scheduler_processor.go:304 component=querier org_id=fake frontend=127.0.0.1:9096 msg="error health checking" err="rpc error: code = DeadlineExceeded desc = context deadline exceeded"',
+        "ERROR",
+    ),
+    Fixture(
+        "mon_loki_schema_overlap_sliver",
+        "mon",
+        {"container": "loki", "level": "WARNING"},
+        'level=warn ts=2026-11-04T15:00:00.975465676Z caller=limits.go:723 org_id=fake msg="could not determine query overlaps on tsdb vs non-tsdb schemas, likely due to query not overlapping any of the schema configs,letting downstream code handle it gracefully" start=1793804400 end=1793804400.772',
+        DROP_NO_FAULT,
+    ),
+    Fixture(
+        "mon_loki_series_limit",
+        "mon",
+        {"container": "loki", "level": "WARNING"},
+        'level=warn ts=2026-11-04T15:00:00.975465676Z caller=limits.go:410 org_id=fake msg="maximum number of series (500) reached for a single query; consider reducing query cardinality by adding more filters"',
+        "WARNING",
     ),
     Fixture(
         "mon_grafana_quotas_501",
@@ -973,8 +1050,13 @@ def test_a_dropped_line_is_a_copy_its_source_ships_with_a_level(fixture):
 
 NEAR_MISSES = {
     "mon_grafana_panel_cancelled": "mon_grafana_panel_failed",
+    "mon_grafana_loki_connection_closed": "mon_grafana_loki_connection_reset",
+    "mon_grafana_loki_request_summary": "mon_grafana_prometheus_request_summary",
     "mon_loki_mapping_cancelled": "mon_loki_mapping_failed",
-    "mon_loki_scheduler_cancelled": "mon_loki_scheduler_eof",
+    "mon_loki_scheduler_cancelled": "mon_loki_scheduler_unavailable",
+    "mon_loki_scheduler_eof": "mon_loki_scheduler_notify_failed",
+    "mon_loki_health_check_closing": "mon_loki_health_check_failed",
+    "mon_loki_schema_overlap_sliver": "mon_loki_series_limit",
     "mon_grafana_quotas_501": "mon_grafana_quotas_500",
     "mon_grafana_contact_point_test": "mon_grafana_notifier_failure",
     "mon_grafana_plugin_stop": "mon_grafana_plugin_killed",
@@ -1005,7 +1087,7 @@ def test_the_node_counts_each_grafana_or_loki_drop_under_a_reason_its_runbook_na
             k == "container" and set(v.split("|")) & {"grafana-server", "loki"} for k, _, v in selector(_assigned(b, "selector"))[0]
         )
     ]
-    assert len(reasons) == len(set(reasons)) == 4, reasons
+    assert len(reasons) == len(set(reasons)) == 9, reasons
     assert all(r and re.search(rf'reason="{r}"|`{r}`', runbook) for r in reasons), reasons
 
 

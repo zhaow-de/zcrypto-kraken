@@ -5,8 +5,11 @@ import logging
 import pytest
 from websockets.datastructures import Headers
 from websockets.exceptions import ConnectionClosedError, InvalidStatus
+from websockets.frames import Close
 from websockets.http11 import Response
 
+from cli.capture import ws_client as capture_ws_client
+from cli.liquidations import ws_client as liquidations_ws_client
 from cli.liquidations.errors import LiquidationsError
 from cli.liquidations.ws_client import DEFAULT_URI, BinanceLiquidationClient, compute_backoff
 
@@ -194,3 +197,118 @@ def test_stream_logs_error_every_10_consecutive_failed_reconnects(caplog):
 def test_connected_property_tracks_the_socket():
     client = BinanceLiquidationClient(connect_fn=lambda uri: None, sleep_fn=asyncio.sleep)
     assert client.connected is False
+
+
+# --- a close is logged at the level its outcome deserves ------------------------------------------
+#
+# Each script item is what one connect returns or raises and the seconds it takes; the fake sleep advances
+# the same clock, so the reconnect line's seconds run from the close to the reopened socket.
+# `healthy` advances it after each message the consumer reads, the time a connection stays up.
+
+
+class _ClosingConnection(_FakeConnection):
+    def __init__(self, messages, close_code):
+        super().__init__(messages)
+        self._close_code = close_code
+
+    async def _gen(self):
+        for m in self._messages:
+            yield m
+        raise ConnectionClosedError(Close(self._close_code, "service restart"), None)
+
+
+def _outcome_lines(caplog, *script, rows, healthy=0.0):
+    now = [0.0]
+    remaining = list(script)
+
+    def connect_fn(uri):
+        item, took = remaining.pop(0)
+        now[0] += took
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+    async def fake_sleep(delay):
+        now[0] += delay
+
+    async def run():
+        client = BinanceLiquidationClient(uri="wss://fake", connect_fn=connect_fn, sleep_fn=fake_sleep, clock_fn=lambda: now[0])
+        seen = 0
+        async for _ in client.stream():
+            seen += 1
+            if seen == rows:
+                break
+            now[0] += healthy
+
+    with caplog.at_level(logging.INFO, logger="zcrypto.liquidations.ws_client"):
+        asyncio.run(run())
+    return [(r.levelname, r.getMessage()) for r in caplog.records if not r.getMessage().startswith("reconnecting in")]
+
+
+def test_a_routine_drop_and_its_first_attempt_reconnect_log_at_info(caplog):
+    lines = _outcome_lines(
+        caplog,
+        (_FakeConnection([_force_order(t_ms=1568014460000)], raise_at_end=True), 0.0),
+        (_FakeConnection([_force_order(t_ms=1568014461000)]), 0.1),
+        rows=2,
+    )
+    assert lines == [
+        ("INFO", "WS connection closed, reconnecting: no close frame received or sent"),
+        ("INFO", "reconnected after 1.10 s"),
+    ]
+
+
+def test_a_service_restart_close_logs_at_warning(caplog):
+    lines = _outcome_lines(
+        caplog,
+        (_ClosingConnection([_force_order(t_ms=1568014460000)], 1012), 0.0),
+        (_FakeConnection([_force_order(t_ms=1568014461000)]), 0.1),
+        rows=2,
+    )
+    assert lines[0][0] == "WARNING" and lines[0][1].startswith("WS connection closed, reconnecting: received 1012"), lines
+    assert lines[1] == ("INFO", "reconnected after 1.10 s")
+
+
+def test_a_failed_attempt_and_a_reconnect_that_took_two_attempts_log_at_warning(caplog):
+    lines = _outcome_lines(
+        caplog,
+        (_FakeConnection([_force_order(t_ms=1568014460000)], raise_at_end=True), 0.0),
+        (_invalid_status_503(), 0.1),
+        (_FakeConnection([_force_order(t_ms=1568014461000)]), 0.1),
+        rows=2,
+    )
+    assert lines == [
+        ("INFO", "WS connection closed, reconnecting: no close frame received or sent"),
+        ("WARNING", "WS connect attempt failed, reconnecting: server rejected WebSocket connection: HTTP 503"),
+        ("WARNING", "reconnected after 2 attempts, 3.20 s"),
+    ]
+
+
+def test_a_first_attempt_reconnect_slower_than_the_bound_logs_at_warning(caplog):
+    lines = _outcome_lines(
+        caplog,
+        (_FakeConnection([_force_order(t_ms=1568014460000)], raise_at_end=True), 0.0),
+        (_FakeConnection([_force_order(t_ms=1568014461000)]), 4.5),
+        rows=2,
+    )
+    assert lines == [
+        ("INFO", "WS connection closed, reconnecting: no close frame received or sent"),
+        ("WARNING", "reconnected after 1 attempt, 5.50 s"),
+    ]
+
+
+def test_a_second_drop_times_its_reconnect_from_its_own_close(caplog):
+    lines = _outcome_lines(
+        caplog,
+        (_FakeConnection([_force_order(t_ms=1568014460000)], raise_at_end=True), 0.0),
+        (_FakeConnection([_force_order(t_ms=1568014461000)], raise_at_end=True), 0.1),
+        (_FakeConnection([_force_order(t_ms=1568014462000)]), 0.1),
+        rows=3,
+        healthy=3600.0,
+    )
+    close = ("INFO", "WS connection closed, reconnecting: no close frame received or sent")
+    assert lines == [close, ("INFO", "reconnected after 1.10 s"), close, ("INFO", "reconnected after 1.10 s")]
+
+
+def test_the_poller_s_routine_reconnect_bound_is_the_capture_client_s():
+    assert liquidations_ws_client._ROUTINE_RECONNECT_MAX_SECONDS == capture_ws_client._ROUTINE_RECONNECT_MAX_SECONDS
