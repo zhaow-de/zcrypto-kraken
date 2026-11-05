@@ -21,7 +21,7 @@ TOKEN = "glsa_TOTALLY_NOT_A_REAL_TOKEN_0123456789"
 def test_urlopen_sends_no_connection_close_once_this_module_is_loaded(monkeypatch):
     sent = {}
 
-    def request(self, method, url, body=None, headers={}, *, encode_chunked=False):  # noqa: B006 -- the library's own signature
+    def request(self, method, url, body=None, headers={}, *, encode_chunked=False):
         sent.update(headers)
         raise OSError("stopped before the network")
 

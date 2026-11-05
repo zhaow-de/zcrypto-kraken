@@ -60,9 +60,9 @@ class _RedirectRefused(urllib.request.HTTPRedirectHandler):
 class _ClientClosesFirst(http.client.HTTPSConnection):
     """Drops the `Connection: close` urllib hard-codes. With it the server closes first and keeps state on a public port a
     NAT in front of this host may hand out again at once, and a later connection landing on that state hangs in its TLS
-    handshake. Without it this side closes when the response has been read, and the server keeps nothing."""
+    handshake. Without it this side closes first, and the server keeps nothing."""
 
-    def request(self, method, url, body=None, headers={}, *, encode_chunked=False):  # noqa: B006 -- the library's own signature
+    def request(self, method, url, body=None, headers={}, *, encode_chunked=False):  # the library's own signature
         kept = {name: value for name, value in headers.items() if name.lower() != "connection"}
         super().request(method, url, body, kept, encode_chunked=encode_chunked)
 
