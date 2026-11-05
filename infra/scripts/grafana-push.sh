@@ -11,10 +11,9 @@
 #
 # GRAFANA_SA_TOKEN is the one variable with no default. Obtain it with `grafana_auth.py`'s
 # `vault_var("grafana_sa_token")`, loaded by path the way `grafana-query.py` loads it -- it
-# encapsulates the two decrypt footguns its own docstring records, so do not hand-roll the
-# extraction. Assign it by command substitution and nothing else: the value must never reach a
-# file, a log or argv. For a PromQL or LogQL read-back use `infra/scripts/grafana-query.py`, which needs no
-# token from you at all.
+# encapsulates two decrypt footguns, so do not hand-roll the extraction. Assign it by command
+# substitution and nothing else: the value must never reach a file, a log or argv. For a PromQL or
+# LogQL read-back use `infra/scripts/grafana-query.py`, which needs no token from you at all.
 #
 # PATH note, which the PyYAML refusal below points at: this script calls bare `python3`, and PyYAML
 # lives in the project venv, so run it with that venv first on PATH --
