@@ -1,22 +1,39 @@
-"""Resolve vaulted credentials for the Grafana scripts.
-Two decrypt footguns whose failures MISLEAD: reading `vault_password_file` instead of executing it
-surfaces as "no vault secrets were found that could decrypt", which reads as a wrong key rather
-than a wrong method; and reading a `!vault` scalar without an initialized `VaultSecretsContext`
-raises ReferenceError rather than a vault error. Credentials are returned as locals for the caller
-to place in a request header: never printed, never written, never in argv where `ps` would show
-it.
+"""Resolve vaulted credentials for the Grafana scripts, and on load make their `urlopen` close first.
+Credentials are returned as locals for the caller to place in a request header: never printed, never written,
+never in argv where `ps` would show it.
 """
 
 from __future__ import annotations
 
 import configparser
+import http.client
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
 from typing import NamedTuple
 
 ANSIBLE_DIR = Path(__file__).resolve().parents[1] / "ansible"
 VAULT_FILE = "group_vars/all/vault.yml"
+
+
+class _ClientClosesFirst(http.client.HTTPSConnection):
+    """Drops the `Connection: close` urllib hard-codes. With it the server closes first and keeps state on a public port the
+    workstation's NAT hands out again at once, and a later connection landing on that state hangs in its TLS handshake.
+    Without it this side closes first, and the server keeps nothing."""
+
+    def request(self, method, url, body=None, headers={}, *, encode_chunked=False):  # the library's own signature
+        kept = {name: value for name, value in headers.items() if name.lower() != "connection"}
+        super().request(method, url, body, kept, encode_chunked=encode_chunked)
+
+
+class _ClientClosesFirstHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_ClientClosesFirst, req, context=self._context)
+
+
+# Process-wide, so a tool that loads this module and calls `urlopen` on an https URL with no `context` closes first.
+urllib.request.install_opener(urllib.request.build_opener(_ClientClosesFirstHandler()))
 
 
 class Stack(NamedTuple):

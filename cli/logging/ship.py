@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import http.client
 import json
 import logging
 import threading
@@ -56,10 +57,25 @@ class _RedirectRefused(urllib.request.HTTPRedirectHandler):
         return None
 
 
+class _ClientClosesFirst(http.client.HTTPSConnection):
+    """Drops the `Connection: close` urllib hard-codes. With it the server closes first and keeps state on a public port a
+    NAT in front of this host may hand out again at once, and a later connection landing on that state hangs in its TLS
+    handshake. Without it this side closes first, and the server keeps nothing."""
+
+    def request(self, method, url, body=None, headers={}, *, encode_chunked=False):  # the library's own signature
+        kept = {name: value for name, value in headers.items() if name.lower() != "connection"}
+        super().request(method, url, body, kept, encode_chunked=encode_chunked)
+
+
+class _ClientClosesFirstHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_ClientClosesFirst, req, context=self._context)
+
+
 def _build_opener() -> urllib.request.OpenerDirector:
     # ProxyHandler({}) disables env-proxy pickup; without it a stray http_proxy would
     # reroute credentialed log traffic (spec 00068 D3).
-    return urllib.request.build_opener(urllib.request.ProxyHandler({}), _RedirectRefused())
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}), _RedirectRefused(), _ClientClosesFirstHandler())
 
 
 class LokiShipHandler(logging.Handler):

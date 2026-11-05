@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import http.client
 import importlib.util
 import subprocess
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -13,6 +16,31 @@ ga = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(ga)
 
 TOKEN = "glsa_TOTALLY_NOT_A_REAL_TOKEN_0123456789"
+
+
+@pytest.mark.parametrize(
+    ("data", "method", "headers"),
+    [
+        (None, "GET", ["Authorization", "Host", "User-Agent"]),
+        (b"payload", "POST", ["Authorization", "Content-Length", "Content-Type", "Host", "User-Agent"]),
+    ],
+)
+def test_urlopen_sends_no_connection_close_once_this_module_is_loaded(monkeypatch, data, method, headers):
+    sent = {}
+
+    def request(self, method, url, body=None, headers={}, *, encode_chunked=False):
+        sent.update(method=method, url=url, body=body, headers=headers)
+        raise OSError("stopped before the network")
+
+    monkeypatch.setattr(http.client.HTTPConnection, "request", request)
+    _spec.loader.exec_module(ga)
+    req = urllib.request.Request("https://node.invalid/api/health", data=data, headers={"Authorization": "Bearer t"})
+    with pytest.raises(urllib.error.URLError):
+        urllib.request.urlopen(req, timeout=1)
+
+    assert (sent["method"], sent["url"], sent["body"]) == (method, "/api/health", data)
+    assert sorted(sent["headers"]) == headers
+    assert (sent["headers"]["Host"], sent["headers"]["Authorization"]) == ("node.invalid", "Bearer t")
 
 
 def test_the_vault_password_file_comes_from_ansible_cfg_not_a_hardcoded_path():
