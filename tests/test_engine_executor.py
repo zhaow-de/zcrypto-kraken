@@ -7713,17 +7713,19 @@ def test_a_balance_under_ordermin_on_a_leg_the_cache_holds_flat_logs_nothing_and
     assert _venue_holds_warnings(tmp_path, StubCache(), held) == ([("BTC/EUR", held)], [])
 
 
-def test_a_balance_at_ordermin_on_a_leg_the_cache_holds_flat_still_warns(tmp_path):
-    assert _venue_holds_warnings(tmp_path, StubCache(), 0.0001)[1] == [
-        "the venue holds 0.0001 BTC/EUR where the Cache reads 0 -- the position gauge takes the venue's figure at the startup pass"
+@pytest.mark.parametrize("held", [0.0001, -0.0001])
+def test_a_balance_at_ordermin_on_a_leg_the_cache_holds_flat_still_warns(tmp_path, held):
+    assert _venue_holds_warnings(tmp_path, StubCache(), held)[1] == [
+        f"the venue holds {held} BTC/EUR where the Cache reads 0 -- the position gauge takes the venue's figure at the startup pass"
     ]
 
 
-def test_a_difference_under_ordermin_on_a_leg_the_cache_holds_still_warns(tmp_path):
+@pytest.mark.parametrize(("cache_net", "held"), [(0.001, 0.00100001), (0.00005, 0.00006)])
+def test_a_difference_under_ordermin_on_a_leg_the_cache_holds_still_warns(tmp_path, cache_net, held):
     cache = StubCache()
-    cache.set_position("BTC/EUR", 0.001)
-    assert _venue_holds_warnings(tmp_path, cache, 0.00100001)[1] == [
-        "the venue holds 0.00100001 BTC/EUR where the Cache reads 0.001 -- the position gauge takes the venue's figure at the startup pass"
+    cache.set_position("BTC/EUR", cache_net)
+    assert _venue_holds_warnings(tmp_path, cache, held)[1] == [
+        f"the venue holds {held} BTC/EUR where the Cache reads {cache_net} -- the position gauge takes the venue's figure at the startup pass"
     ]
 
 
