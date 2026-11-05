@@ -613,7 +613,7 @@ Recorded in `docs/research/14.phase6-decisions.md`, from these readings:
 6. **The account reconciliation** — Kraken's equity at entry and at exit, fees, and the realized result, from the ledger export, with no deposit or withdrawal between them.
 7. **The governor over the box**: `uv run zcrypto engine decompose --journal-dir /mnt/zhao-crypto/engine-journal --since 2026-10-05 --until 2026-11-01`.
 8. **The ops log** — the box's entries in `docs/reference/ops-journal/2026-10.md` and `2026-11.md`.
-9. **The Blockpit re-sync** — the Kraken depot re-synced, as the probe-window procedure's execute step 7 does it, with pass or fail.
+9. **The Blockpit re-sync** — the Kraken depot's manual integration read over the window that holds the box's rows ([`bookkeeping.md`](bookkeeping.md)), with pass or fail, naming the rows a later window holds.
 
 <a name="rung-2-what-not-to-do"></a>
 
@@ -665,7 +665,7 @@ Entry is a Monday 00Z boundary, so the weekly read's first week is whole. The si
 
 1. **The gate — six reads, each a stop.** Recorded in `docs/research/14.phase6-decisions.md` beside the entry ruling.
    - **The nautilus build restores a spot lot at Kraken's quantity.** On a checkout at the engine's pin, `ZCRYPTO_RERUN_SLOW=1 uv run pytest tests/test_cache_restart.py -k test_a_restored_spot_lot -q -p no:cacheprovider` passes `test_a_restored_spot_lot_comes_back_at_the_lot_with_no_external_short_and_the_account_keeps_its_coin`, the case re-recorded on `2.0.0rc9.dev20261101`, whose record, `docs/reference/adapter-verification/2.0.0rc9.dev20261101.md`, carries the rc6-era restore assertion's red reading; and that build's record under `docs/reference/adapter-verification/` carries the live read, one spot lot held across an engine restart restored at Kraken's quantity with no `EXTERNAL` line in the boot's `cache restore` lines.
-   - **Rung 2's exit report is recorded**, with the slots the box's exit owes filled.
+   - **Rung 2's exit report is recorded**, with the slots the box's exit owes filled. Its ruling reads S8 at [drill G](drills-order-path.md#drill-g) in the first attended week and closes S12 with no source, D15's live read replacing it, and both, so recorded, count as filled here.
    - **The November engine rollout's record reads its two items deployed**: the start-up ERROR burst and the `XDG` account-load line upstream #5155 retires. The sell check that reads Kraken's own balances is in that image too; the loop stays switched off there until step 3's converge.
    - **The whole-book limits and the sleeves read by value**: `uv run python infra/scripts/grafana-query.py 'zcrypto_engine_limit_bound_total{host="zcrypto"}' 'zcrypto_engine_active_sleeves{host="zcrypto"}'` prints a number for each.
    - **The reference-data sweep inside the week of entry**: the `zcrypto-refdata-sweep` routine, its verdict read from the rendered tables of `docs/reference/kraken-snapshot-register.md`.
