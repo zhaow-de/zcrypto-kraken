@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import http.client
 import json
 import urllib.error
 import urllib.request
@@ -120,3 +121,18 @@ def test_module_constants_are_the_spec_values():
         30.0,
         2.0,
     )
+
+
+def test_a_push_sends_no_connection_close(monkeypatch):
+    sent = {}
+
+    def request(self, method, url, body=None, headers={}, *, encode_chunked=False):  # noqa: B006 -- the library's own signature
+        sent.update(headers)
+        raise OSError("stopped before the network")
+
+    monkeypatch.setattr(http.client.HTTPConnection, "request", request)
+    with pytest.raises(urllib.error.URLError):
+        _build_opener().open("https://node.invalid/loki/api/v1/push", timeout=1)
+
+    assert sent["Host"] == "node.invalid"
+    assert "Connection" not in sent
