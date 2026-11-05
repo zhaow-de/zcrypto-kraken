@@ -1,5 +1,4 @@
-# The access_ops role (spec 00075): the ops-node end of the zaccess WireGuard link -- WG client,
-# the NAS relay, the managed tmux conf (D15), and the ops-side tunnel/cert probe (D11/D12).
+# The access_ops role (spec 00075): the ops-node end of the zaccess WireGuard link.
 
 # The G1 relay makes THIS host's sshd internet-reachable, and D6's byte-copy relay rewrites the
 # client source, so per-IP throttling is impossible on this path and fail2ban cannot see the real
@@ -73,6 +72,9 @@
   notify: reload systemd
 - name: ops-side probe timer enabled
   ansible.builtin.systemd: {name: zaccess-probe-ops.timer, enabled: true, state: started, daemon_reload: true}
+
+- name: agentboard -- ripgrep and tmux on PATH (its session-log matcher runs rg, its terminals run in tmux)
+  ansible.builtin.apt: {name: [ripgrep, tmux], state: present}
 
 # Idempotency is keyed on the pinned version being present under nvm's CURRENT node, not on a
 # hardcoded path, which `creates:` would pin. `npm ls` exits non-zero when the exact version is
