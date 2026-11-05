@@ -29,7 +29,7 @@
 - **`_listing_floors` runs last in `_read`,** after the positions and account reads, so a positions answer of `None` still raises first, and `client.calls` in `test_read_venue_holdings_refuses_a_positions_answer_of_none_and_the_settle_publishes_nothing` keeps its list. A stub listing row that reaches it without `id` or `min_quantity` takes them in the test, never a `getattr` in the reader.
 - **A zero or negative listing floor is no floor** (D4 says "no positive"): `runtime_concordance` already treats a non-positive floor as a failure, `held_ordermin` leaves the Cache's floor standing over one either way, and leaving it out is what gives the leg its WARNING.
 - **The WARNING's text names no spec or topic**, and reads as an operator would act on it: the leg stays on the floor the engine loaded at its start.
-- **Eight docstrings the change makes false or short are corrected, as state and not history:** `cli/engine/venuestate.py`'s module docstring, `InstrumentConstraints`, `VenueState` and `runtime_concordance` (Task 2); `_VenueHoldings` in `tests/test_engine_executor.py` (Task 1); `_venue_state` in `tests/cache_restart_child.py` (Task 4); `_boundary_executor` in `tests/test_engine_executor.py` `size_probe_order` in `cli/engine/executor.py`, whose "on the Cache-fresh constraints", wrapped over two lines, reads "on the constraints `venue_state_from_cache` froze" (Task 3).
+- **Eight docstrings the change makes false or short are corrected, as state and not history:** `cli/engine/venuestate.py`'s module docstring, `InstrumentConstraints`, `VenueState` and `runtime_concordance` (Task 2); `_VenueHoldings` in `tests/test_engine_executor.py` (Task 1); `_venue_state` in `tests/cache_restart_child.py` (Task 4); `_boundary_executor` in `tests/test_engine_executor.py` and `size_probe_order` in `cli/engine/executor.py`, whose "on the Cache-fresh constraints", wrapped over two lines, reads "on the constraints `venue_state_from_cache` froze" (Task 3).
 - **The runbook's `engine-rung-3` section takes the operator's text, never `engine-rung-2-box`, whose box is over:** a sub-item of the daily read saying when a moved floor takes effect, since an operator reading a carried leg's reason against a sweep's figure would otherwise read a lowered floor's dust as a fault and restart for it, which latches the hold; `The loop`'s floors clause; and the entry gate's two reads of D6, added to its reference-data sweep item so the gate stays six reads, plan 00092's R0 (5), the gate's other carrier, pointing at that item rather than restating it. `docs/reference/kraken-snapshot-register.md`'s sweep #4 row is a dated record and is left as it is.
 
 ## File structure
@@ -107,11 +107,11 @@ Above `read_venue_book`:
 def _listing_floors(instruments) -> dict[str, float]:
     """Each `INSTRUMENT_IDS` leg's `ordermin` off the venue's listing. A leg with no positive floor there is logged
     and left out."""
-    listed = {str(instrument.id): instrument.min_quantity for instrument in instruments}
+    listed = {str(instrument.id): instrument for instrument in instruments}
     floors: dict[str, float] = {}
     for symbol, instrument_id in INSTRUMENT_IDS.items():
-        raw = listed.get(instrument_id)
-        floor = 0.0 if raw is None else float(raw)
+        instrument = listed.get(instrument_id)
+        floor = 0.0 if instrument is None or instrument.min_quantity is None else float(instrument.min_quantity)
         if floor > 0.0:
             floors[symbol] = floor
         else:
@@ -128,6 +128,7 @@ In `read_venue_book`'s `_read`, `return list(positions), state, _listing_floors(
 - [ ] **Step 6: Probes.** Arms, each against `tests/test_engine_executor.py`:
   - `floors-kept`: file `cli/engine/executor.py`, mutation `s/ordermin=floors/ordermin={}/`, `-k 'test_read_venue_book_keeps_each_legs_floor'`.
   - `positive-only`: file `cli/engine/executor.py`, mutation `s/if floor > 0.0:/if floor >= -2.0:/`, `-k 'test_a_listing_row_with_no_positive_floor'`.
+  - `basket-only`: file `cli/engine/executor.py`, mutation `s/    floors: dict\[str, float\] = {}/    floors: dict[str, float] = {str(k): 1.0 for k in listed}/`, `-k 'test_a_listing_floor_outside_the_basket'`.
   - `warned`: file `cli/engine/executor.py`, mutation `/floors\[symbol\] = floor/,/listing gives %s no ordermin/s/logger.warning/logger.debug/`, `-k 'test_a_leg_the_listing_leaves_out'`.
 
   Then the empty commit, `test(engine): the book's floors proven by infra/scripts/mutate-probe.sh`.
@@ -190,6 +191,7 @@ def held_ordermin(cached: object, listed: float | None) -> float:
 - [ ] **Step 6: Probes.** Arms against `tests/test_engine_venuestate.py`:
   - `higher-of-two`: file `cli/engine/venuestate.py`, mutation `s/max(floor, listed)/listed/`, `-k 'test_a_listed_floor_under_the_caches or test_the_floor_held_is_the_higher'`.
   - `overlay-applied`: file `cli/engine/venuestate.py`, mutation `s/ordermin=held_ordermin(instrument.min_quantity, listed.get(symbol)),/ordermin=_to_float(instrument.min_quantity),/`, `-k 'test_a_listed_floor_over_the_caches or test_the_payload_carries'`.
+  - `per-leg`: file `cli/engine/venuestate.py`, mutation `s/listed.get(symbol))/next(iter(listed.values()), None))/`, `-k 'test_a_leg_the_listing_names_no_floor_for'`.
 
   Then the empty commit, `test(engine): the floor rule proven by infra/scripts/mutate-probe.sh`.
 
@@ -378,7 +380,7 @@ In `cli/engine/node.py`, `_snapshot_venue_state`'s `try`:
             return venue_state_from_cache(self.cache, clock=self._now, listed=listed)
 ```
 
-Its docstring's first clause names the wrapped call and stays true.
+Its docstring's first clause names the wrapped call and stays true. `size_probe_order`'s docstring, in `cli/engine/executor.py`, whose "on the Cache-fresh constraints" is wrapped over two lines, reads "on the constraints `venue_state_from_cache` froze".
 
 - [ ] **Step 4: Run them, expect pass,** then the existing dust and node cases: `uv run pytest tests/test_engine_executor.py -k 'dust or under_ordermin or flat' -q -p no:cacheprovider --basetemp=.tmp/implementer/pt -rs` and `uv run pytest tests/test_engine_node.py -q -p no:cacheprovider --basetemp=.tmp/implementer/pt -rs`. A stub executor in `tests/test_engine_node.py` lacking `listed_ordermin` takes it in the test (Rulings).
 
@@ -393,8 +395,8 @@ Its docstring's first clause names the wrapped call and stays true.
   - `composed-link`: file `cli/engine/node.py`, the same mutation, test `tests/test_engine_executor.py`, `-k 'test_a_boundarys_snapshot_holds_the_floor'`.
   - `boundary-overlay`: file `cli/engine/executor.py`, mutation `s/clock=self._now, listed=book.ordermin)/clock=self._now)/`, test `tests/test_engine_executor.py`, `-k 'test_the_boundary_carries_the_ten_thirty_sell'`.
   - `lowered-at-the-boundary`: file `cli/engine/venuestate.py`, mutation `s/max(floor, listed)/listed/`, test `tests/test_engine_executor.py`, `-k 'test_the_boundary_holds_a_lowered_floor'`.
-  - `no-book`: file `cli/engine/executor.py`, mutation `s/return None if self._venue_book is None else self._venue_book.ordermin/return {}/`, test `tests/test_engine_executor.py`, `-k 'test_a_process_that_has_read_no_book'`.
-  - `failed-read`: file `cli/engine/executor.py`, mutation `/holdings could not be read at %s/,/return False/s/return False/self._venue_book = None; return False/`, test `tests/test_engine_executor.py`, `-k 'test_a_book_read_that_fails'`.
+  - `no-book`: file `cli/engine/executor.py`, mutation `s/return None if self._venue_book is None else self._venue_book.ordermin/return {}/`, test `tests/test_engine_executor.py`, `-k 'test_a_process_that_has_read_no_book_lists_no_floors'`.
+  - `failed-read`: file `cli/engine/executor.py`, mutation `/holdings could not be read at %s/,/return False/s/return False/self._venue_book = None; return False/`, test `tests/test_engine_executor.py`, `-k 'test_a_book_read_that_fails_leaves_the_previous_floors'`.
   - `no-executor`: file `cli/engine/node.py`, mutation `s/listed = None if self._executor is None else self._executor.listed_ordermin()/listed = self._executor.listed_ordermin()/`, test `tests/test_engine_node.py`, `-k 'test_a_strategy_with_no_executor_snapshots'`.
 
   Then the empty commit, `test(engine): the floors' readers proven by infra/scripts/mutate-probe.sh`.
@@ -487,10 +489,10 @@ Commit it alone, `claude(skills): the nautilus bump runs the listing's floor aga
 
 - [ ] **Step 1: Read the surfaces.** Load `zcrypto-refine-rules` before editing a runbook page, as its description asks, `topic-ops` before the topic, and `iteration-closeout` before the decisions-log entry. `grep -n 'min_quantity\|Cache instrument' infra/runbooks/*.md .claude/skills/zcrypto-refdata-sweep/SKILL.md` names any other page that states the floor's source; a page it names is corrected in this task and the commit says so.
 
-- [ ] **Step 2: The runbook's three edits, in `infra/runbooks/engine-procedures.md`'s `engine-rung-3` section, each found by its text, never a line number.** In `### What it means`, `The loop`'s "a leg is carried when its delta is under the venue's floors" reads "under the floors the engine holds". In the entry gate, the item that opens `**The reference-data sweep inside the week of entry**`, after its sentence, gains: "With it, the engine's floors, each on the workstation: the engine row of `docs/reference/fleet-pins.md` names a revision holding the rule, `git show <revision>:cli/engine/venuestate.py | grep -c held_ordermin` above 0, at 0 the stop clearing by rolling the newest `develop` build under `zcrypto-rollout-image`, ahead of the sweep; and the newest venue record's twelve floors, `jq '.state.instruments | map_values(.ordermin)' /mnt/zhao-crypto/engine-journal/<day>/venue-<HH>.json`, match that register's `Ordermin` column by `Symbol`, a difference settled by the leg's row in public `AssetPairs`: a floor above Kraken's on a leg Kraken lowered since the engine's start is the limit the daily read names, which step 3's converge reloads, and another floor above Kraken's is the stop. The record reads the same on a revision without the rule: the revision's read shows the rule, and the record's shows no floor above Kraken's." In the daily read, item 1, directly under its paragraph, one sub-item:
+- [ ] **Step 2: The runbook's three edits, in `infra/runbooks/engine-procedures.md`'s `engine-rung-3` section, each found by its text, never a line number.** In `### What it means`, `The loop`'s "a leg is carried when its delta is under the venue's floors" reads "under the floors the engine holds". In the entry gate, the item that opens `**The reference-data sweep inside the week of entry**`, after its sentence, gains: "With it, the engine's floors, each on the workstation: the engine row of `docs/reference/fleet-pins.md` names a revision holding the rule, `git show <revision>:cli/engine/venuestate.py | grep -c held_ordermin` above 0, at 0 the stop clearing by rolling the newest `develop` build under `zcrypto-rollout-image`, ahead of the sweep; and the newest venue record's twelve floors, `jq '.state.instruments | map_values(.ordermin)' /mnt/zhao-crypto/engine-journal/<day>/venue-<HH>.json`, match that register's `Ordermin` column by `Symbol`, a difference settled by the leg's row in public `AssetPairs`: on a leg Kraken moved since the engine's start it is no stop, step 3's converge reloading it, and another difference is the stop. The record reads the same on a revision without the rule: the revision's read shows the rule, and the record's shows the floors the engine loaded." In the daily read, item 1, directly under its paragraph, one sub-item:
 
 ```markdown
-   - A carried leg's `ordermin` is the higher of the floor the engine loaded at its start and the floor in the venue listing it last read. A floor Kraken raised holds from the next read, and one it lowered holds from the next start, so until then a remainder between the two floors is carried though Kraken would take it, a limit that owes no restart of its own.
+   - The `ordermin` a carried sell's `reason` names, and the EUR buy floor a carried buy's derives from it, is the higher of the floor the engine loaded at its start and the floor in the venue listing it last read. A floor Kraken raised holds from the next read, and one it lowered holds from the next start, so until then a remainder between the two floors is carried though Kraken would take it, a limit that owes no restart of its own. The WARNING `the venue's listing gives <leg> no ordermin` says that leg stands on the floor the engine loaded: read the leg's row in public `AssetPairs`, and a raised floor there is held by hand until the listing answers.
 ```
 
 In `docs/plans/00092-rung-3-accumulation.md`'s R0, read (5)'s "`zcrypto-refdata-sweep`'s verdict read from the rendered tables." reads "`zcrypto-refdata-sweep`'s verdict read from the rendered tables, and the engine's floors as the reference-data sweep item of `infra/runbooks/engine-procedures.md`'s `engine-rung-3` step 1 reads them."
@@ -513,7 +515,7 @@ In `docs/plans/00092-rung-3-accumulation.md`'s R0, read (5)'s "`zcrypto-refdata-
 
 [00156] What does rung 3's entry gate read of the engine's floors? (Decision: 2)
   1. **The venue record against public `AssetPairs` alone** — one read, which reads the same with this change absent, since a disarmed engine's one book read follows the Cache's own load.
-  2. **The pin row's revision holding the rule, and the record against the sweep's register** — the revision shows the rule, the record shows no floor above Kraken's on a leg Kraken did not lower, and an offline case composing a real executor with the node's snapshot proves the path.
+  2. **The pin row's revision holding the rule, and the record against the sweep's register** — the revision shows the rule, the record shows the floors the engine loaded, and an offline case composing a real executor with the node's snapshot proves the path.
   3. **The same, and the revision read again at the arm converge** — a second copy of one read, since each later `develop` build descends from the revision the gate read.
   Decided by the implementing session: the reads that can tell the states apart, each at the gate that can stop on them.
 
@@ -523,4 +525,4 @@ In `docs/plans/00092-rung-3-accumulation.md`'s R0, read (5)'s "`zcrypto-refdata-
   Decided by the implementing session: the book read is what the draft's other reads depend on, and a leg's floor is not.
 ```
 
-- [ ] **Step 5: Commit, each its own:** `docs(runbooks): rung 3 says when a moved ordermin takes effect and its gate reads the floors`, `docs(plans): plan 00092's R0 reads the engine's floors at its sweep`, and `docs(open-topics): T0224 resolved by spec 00156`, carrying the topic, the index and the log entry, each with the result line of `T="$(infra/scripts/consumers.sh --direct <its paths>)"; [ -n "$T" ] && uv run pytest $T -m "not slow" -q -p no:cacheprovider --basetemp=.tmp/implementer/pt -rs`, or its message says the list is empty, after the gate. The decisions-log entry is this plan's closing task; the change-index row is `open-pr`'s.
+- [ ] **Step 5: Commit, each its own:** `docs(runbooks): rung 3 says when a moved ordermin takes effect and its gate reads the floors`, `docs(plans): plan 00092's R0 reads the engine's floors at its sweep`, and `docs(open-topics): T0224 resolved by spec 00156`, carrying the topic, the index and the log entry, each with the result line of `T="$(infra/scripts/consumers.sh --direct <its paths>)"; [ -n "$T" ] && uv run pytest $T -m "not slow" -q -p no:cacheprovider --basetemp=.tmp/implementer/pt -rs`, or its message says the list is empty, after the gate. The `git mv` has staged the topic's old path, so that commit's `add` names the archived file, the index and the log. The decisions-log entry is this plan's closing task; the change-index row is `open-pr`'s.
