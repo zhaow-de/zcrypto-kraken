@@ -57,7 +57,7 @@ A node rule, `Fleet · log lines with no level` (uid `zcrypto-mon-unlevelled-log
 
 ## D10 — the engine's dust warning is silenced
 
-The engine warned at each start, and on each re-read pass a socket's return arms, that the venue holds a balance the Cache reads as 0 — 1e-08-scale SOL and ETH after the store clear. The statement is true, and the dust sits below the pair's order minimum, so nothing trades it away. The owner's word of 2026-11-05: "Re D10, silence the dust warning". `the venue holds` no longer logs for a leg the Cache reads flat whose venue balance is under the `ordermin` of the Cache's instrument; the position gauge still takes the venue's figure. Every other disagreement keeps its WARNING: a balance at `ordermin` or above, a difference of any size on a leg the Cache holds, and a leg whose `ordermin` the Cache cannot answer. It reaches the engine through the next bulk image rollout, with D8's engine line.
+The engine warned at each start, and on each re-read pass a socket's return arms, that the venue holds a balance the Cache reads as 0 — 1e-08-scale SOL and ETH after the store clear. The statement is true, and the dust sits below the pair's order minimum, so nothing trades it away. The owner's word of 2026-11-05: "Re D10, silence the dust warning". `the venue holds` no longer logs for a spot balance under the `ordermin` of the Cache's instrument on a leg the Cache reads flat; every other disagreement keeps its WARNING, and the position gauge still takes the venue's figure. It reaches the engine through the next bulk image rollout, with D8's engine line.
 
 ## D11 — the rollout is the owner's, host by host
 
