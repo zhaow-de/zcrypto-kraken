@@ -73,8 +73,8 @@
 - name: ops-side probe timer enabled
   ansible.builtin.systemd: {name: zaccess-probe-ops.timer, enabled: true, state: started, daemon_reload: true}
 
-- name: agentboard -- ripgrep on PATH (its session-log matcher runs rg)
-  ansible.builtin.apt: {name: [ripgrep], state: present}
+- name: agentboard -- ripgrep and tmux on PATH (its session-log matcher runs rg, its terminals run in tmux)
+  ansible.builtin.apt: {name: [ripgrep, tmux], state: present}
 
 # Idempotency is keyed on the pinned version being present under nvm's CURRENT node, not on a
 # hardcoded path, which `creates:` would pin. `npm ls` exits non-zero when the exact version is
