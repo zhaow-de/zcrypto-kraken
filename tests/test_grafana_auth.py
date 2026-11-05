@@ -40,7 +40,7 @@ def test_urlopen_sends_no_connection_close_once_this_module_is_loaded(monkeypatc
 
     assert (sent["method"], sent["url"], sent["body"]) == (method, "/api/health", data)
     assert sorted(sent["headers"]) == headers
-    assert sent["headers"]["Authorization"] == "Bearer t"
+    assert (sent["headers"]["Host"], sent["headers"]["Authorization"]) == ("node.invalid", "Bearer t")
 
 
 def test_the_vault_password_file_comes_from_ansible_cfg_not_a_hardcoded_path():

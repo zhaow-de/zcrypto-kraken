@@ -137,4 +137,4 @@ def test_a_push_sends_no_connection_close(monkeypatch):
 
     assert (sent["method"], sent["url"], sent["body"]) == ("POST", "/loki/api/v1/push", b"payload")
     assert sorted(sent["headers"]) == ["Authorization", "Content-Length", "Content-Type", "Host", "User-Agent"]
-    assert sent["headers"]["Authorization"] == "Basic t"
+    assert (sent["headers"]["Host"], sent["headers"]["Authorization"]) == ("node.invalid", "Basic t")
