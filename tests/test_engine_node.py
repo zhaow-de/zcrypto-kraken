@@ -1885,6 +1885,35 @@ def test_the_twelve_instruments_are_in_the_cache_when_the_strategy_starts(tmp_pa
     )
 
 
+def test_the_listing_the_book_reads_carries_krakens_ordermin_on_every_leg():
+    """The floors the venue book keeps are Kraken's own on all twelve legs of the real listing."""
+    if os.environ.get("ZCRYPTO_LIVE_VENUE_TESTS") != "1":
+        pytest.skip("needs a live venue: set ZCRYPTO_LIVE_VENUE_TESTS=1 to run it")
+    if not _kraken_public_reachable():
+        pytest.fail("ZCRYPTO_LIVE_VENUE_TESTS=1 was set but Kraken's public endpoint is unreachable")
+    import asyncio
+    import urllib.request
+
+    from nautilus_trader.adapters.kraken import KrakenSpotHttpClient
+
+    from cli.engine.executor import _listing_floors
+    from cli.engine.instruments import INSTRUMENT_IDS
+    from cli.snapshot.assetpairs import _COMMON_TO_KRAKEN
+
+    def wsname(symbol: str) -> str:
+        base, quote = symbol.split("/")
+        return f"{_COMMON_TO_KRAKEN.get(base, base)}/{_COMMON_TO_KRAKEN.get(quote, quote)}"
+
+    async def listing():
+        return await KrakenSpotHttpClient(api_key=None, api_secret=None).request_instruments()
+
+    floors = _listing_floors(asyncio.run(asyncio.wait_for(listing(), 60)))
+    with urllib.request.urlopen("https://api.kraken.com/0/public/AssetPairs", timeout=30) as response:
+        pairs = json.load(response)["result"]
+    by_wsname = {row["wsname"]: float(row["ordermin"]) for row in pairs.values() if row.get("wsname")}
+    assert floors == pytest.approx({symbol: by_wsname[wsname(symbol)] for symbol in INSTRUMENT_IDS})
+
+
 def test_the_shipped_idle_value_survives_krakens_own_inactivity_close(tmp_path):
     """What the loopback fixture in test_engine_data_socket.py cannot show: Kraken closes an
     inactive socket at ~60 s, and a local peer never does. With the idle timer off, the heartbeat

@@ -198,9 +198,14 @@ def _dump(cache) -> dict:
 
 
 def _venue_state(cache) -> dict:
-    """The positions and balances a venue record written now would carry, by the engine's own reader."""
+    """The positions and balances a venue record written now would carry, by the engine's own reader,
+    and `ordermin`, the Cache's floor, with no listing passed."""
     state = venue_state_from_cache(cache, clock=lambda: datetime.now(timezone.utc))
-    return {"positions": dict(state.positions), "balances": dict(state.balances)}
+    return {
+        "positions": dict(state.positions),
+        "balances": dict(state.balances),
+        "ordermin": {symbol: constraints.ordermin for symbol, constraints in state.instruments.items()},
+    }
 
 
 class _Recorder:
