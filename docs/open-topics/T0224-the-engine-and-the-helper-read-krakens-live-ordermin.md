@@ -7,7 +7,7 @@ ripe_when: 'a milestone: rung 2''s exit report recorded, a read of rung 3''s ent
 
 ## Context — what
 
-The engine and the plan helper hold an intent's quantity against an `ordermin` that does not follow the venue: the Cache instrument's `min_quantity` (`cli/engine/venuestate.py`), loaded when the adapter connects. Rung 3's drafting loop reads it there (`cli/engine/executor.py::_draft_table`), and `zcrypto engine draft-plan` (`cli/engine/draftplan.py::venue_view`) and `zcrypto engine probe-plan --check` read it from each boundary's venue record. Kraken moves its minimums without notice.
+The engine and the plan helper hold an intent's quantity against an `ordermin` that does not follow the venue: the Cache instrument's `min_quantity` (`cli/engine/venuestate.py`), loaded when the adapter connects. Rung 3's drafting loop reads it there (`cli/engine/executor.py::_draft_table`), and `zcrypto engine draft-plan` (`cli/engine/draftplan.py::venue_view`) and `zcrypto engine probe-plan --check` read it from each boundary's venue record. Kraken moves its minimums without notice. The dust check, `cli/engine/executor.py::_is_flat_dust`, reads the Cache instrument's `min_quantity` directly.
 
 ## Why this matters
 
