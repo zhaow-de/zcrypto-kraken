@@ -15,15 +15,10 @@ D7): absence is loud, never blocking.
 where no listing floor stands over it, for `runtime_concordance` to flag per leg, so one broken leg degrades
 to a per-symbol concordance failure instead of discarding the whole snapshot.
 
-`costmin` is NOT Cache-supplied at all (spec 00089 D5a): the nautilus-trader 1.230.0 Kraken adapter's
-compiled parser, loopback-probed, never maps `costmin` into `min_notional` -- it reads back `None` for every
-pair -- and Kraken's costmin is not one venue constant either, so it is read from the committed
-`cli.engine.instruments.COSTMIN`, labelled `"costmin_source": "snapshot-constant"` in `to_payload()`, and
-left to `tests/test_costmin_drift.py`; `runtime_concordance` deliberately never checks it (a constant
-failing all twelve legs on the first cycle would hold D6's alert red forever, the exact T0135 failure D2
-exists to avoid). Only `instrument` and `account_for_venue` are None-checked; `positions_open` is not,
-because it returns `[]` for a flat leg rather than raising -- probed at nautilus-trader 1.230.0;
-re-probe when the pin moves."""
+`costmin` is NOT Cache-supplied at all (spec 00089 D5a): the Kraken adapter never maps it into `min_notional` --
+it reads back `None` for every pair -- and Kraken's costmin is not one venue constant either, so it is read from
+the committed `cli.engine.instruments.COSTMIN`, labelled `"costmin_source": "snapshot-constant"` in `to_payload()`,
+and left to `tests/test_costmin_drift.py`; `runtime_concordance` deliberately never checks it."""
 
 from __future__ import annotations
 
@@ -87,8 +82,6 @@ class ConcordanceVerdict:
 
 
 def _to_float(value: object) -> float:
-    # `None` is a legitimate Cache reading for a numeric constraint -- freeze it as 0.0 and let
-    # runtime_concordance's `> 0` check flag it, rather than raising here.
     return 0.0 if value is None else float(value)
 
 
@@ -100,12 +93,8 @@ def held_ordermin(cached: object, listed: float | None) -> float:
 
 
 def venue_state_from_cache(cache, *, clock: Callable[[], datetime], listed: Mapping[str, float] | None = None) -> VenueState:
-    """Raises `EngineError` on a structural read failure -- an `INSTRUMENT_IDS` symbol's instrument absent from
-    the Cache, the Cache's own instrument id disagreeing with the expected one, or no account cached for the
-    venue (each named in the message). The caller converts the raise to `None`; this function never narrows
-    a failure into a partial/silent result. `costmin` is never read from `cache` at all (module docstring,
-    D5a) -- it comes from the committed `COSTMIN`. `listed` is the newest venue book's floors, and
-    `held_ordermin` decides each leg's."""
+    """Raises `EngineError` on a structural read failure, each named in the message (module docstring). `listed` is
+    the newest venue book's floors, and `held_ordermin` decides each leg's."""
     listed = {} if listed is None else listed
     instruments: dict[str, InstrumentConstraints] = {}
     positions: dict[str, float] = {}

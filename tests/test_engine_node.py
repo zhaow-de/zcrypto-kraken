@@ -1886,7 +1886,6 @@ def test_the_twelve_instruments_are_in_the_cache_when_the_strategy_starts(tmp_pa
 
 
 def test_the_listing_the_book_reads_carries_krakens_ordermin_on_every_leg():
-    """The floors the venue book keeps are Kraken's own on all twelve legs of the real listing."""
     if os.environ.get("ZCRYPTO_LIVE_VENUE_TESTS") != "1":
         pytest.skip("needs a live venue: set ZCRYPTO_LIVE_VENUE_TESTS=1 to run it")
     if not _kraken_public_reachable():

@@ -397,8 +397,7 @@ def size_probe_order(target_qty: float, touch_price: float, constraints: Instrum
     module makes is EUR-denominated end to end (an EUR intent notional, an EUR-quoted touch), so the
     guard T0138 holds lands immediately where the notional meets constraints.costmin: a floor
     denominated in anything but EUR must never be compared here -- a /BTC leg's 2e-05 BTC floor
-    against a EUR notional passes everything silently (the fail-open defect). Route a future
-    /BTC-leg notional through fx_eur_notional first; until then this raises."""
+    against a EUR notional passes everything silently (the fail-open defect)."""
     if constraints.costmin_quote != "EUR":
         raise EngineError(
             f"{constraints.symbol}: costmin is denominated in {constraints.costmin_quote!r} but this "
@@ -696,8 +695,6 @@ _MARKED_EUR_EARN_CODES = frozenset({"EUR.M"})
 
 
 def _listing_floors(instruments) -> dict[str, float]:
-    """Each `INSTRUMENT_IDS` leg's `ordermin` off the venue's listing. A leg with no positive floor there is logged
-    and left out."""
     listed = {str(instrument.id): instrument for instrument in instruments}
     floors: dict[str, float] = {}
     for symbol, instrument_id in INSTRUMENT_IDS.items():
@@ -4625,7 +4622,6 @@ class ProbeExecutor:
         return sum(float(p.signed_qty) for p in held)
 
     def listed_ordermin(self) -> dict[str, float] | None:
-        """The newest venue book's floors, or None before this process has read one."""
         return None if self._venue_book is None else self._venue_book.ordermin
 
     def _settle_positions_from_venue(self, moment: str) -> bool:
