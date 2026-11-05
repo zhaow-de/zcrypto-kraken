@@ -44,11 +44,11 @@ A leg the listing leaves out, or lists with no positive `min_quantity`, is logge
 
 ## D5 — two cases hold the two premises
 
-A `nautilus-trader` bump could break either premise with every other offline test still green. That the adapter's `min_quantity` is Kraken's `ordermin`: `tests/test_engine_node.py` gains one case behind `ZCRYPTO_LIVE_VENUE_TESTS`, comparing the floors `read_venue_book` would keep with public `AssetPairs`' `ordermin` on all twelve legs, which fails, never skips, when the flag is set and the venue is unreachable, as its neighbours do. That a start takes the venue's floor over the stored instrument, which D2's lowered half rests on: `tests/test_cache_restart.py` gains one case, two processes on one store with the venue's floor moved between them.
+A `nautilus-trader` bump could break either premise. That the adapter's `min_quantity` is Kraken's `ordermin`: a loopback case holds the field's mapping offline on two rows, and what it cannot hold, all twelve legs on the real listing, takes one case in `tests/test_engine_node.py` behind `ZCRYPTO_LIVE_VENUE_TESTS`, comparing the floors `read_venue_book` would keep with public `AssetPairs`' `ordermin`. It fails, never skips, when the flag is set and the venue is unreachable, as its neighbours do, and `zcrypto-bump-nautilus`' Step 3 runs it opted in, since nothing else sets the flag. That a start takes the venue's floor over the stored instrument, which D2's lowered half rests on: `tests/test_cache_restart.py` gains one case, two processes on one store with the venue's floor moved between them.
 
 ## D6 — the rollout rides the held bulk image
 
-No converge of its own: this lands on `develop` and the engine takes it with the bulk image, in its inter-cycle gap, outside a Kraken window, as `.claude/rules/fleet-deploys.md` has it. After the engine's first start on it, the first venue record's `state.instruments` is read against public `AssetPairs` on the twelve legs, by value. A lowered floor since the Cache's load cannot show in that read, the start having just reloaded it, so the read proves the path and not a move.
+No converge of its own: this lands on `develop` and the engine takes it with the bulk image, in its inter-cycle gap, outside a Kraken window, as `.claude/rules/fleet-deploys.md` has it. The read that proves it on the real engine is the entry gate's, beside the reference-data sweep in `engine-rung-3` step 1: the newest venue record's twelve `state.instruments[*].ordermin` against public `AssetPairs`, by value. A floor moved since the engine's last book read differs there and is read against the sweep's moves; the read proves the path, not a move.
 
 ## Out of scope
 
