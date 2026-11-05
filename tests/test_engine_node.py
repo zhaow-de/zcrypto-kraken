@@ -461,7 +461,7 @@ def test_snapshot_venue_state_logs_and_returns_none_on_any_exception(tmp_path, m
     config = _config(tmp_path)
     strategy = ShadowStrategy(config)
 
-    def boom(cache, *, clock):
+    def boom(cache, *, clock, listed):
         raise RuntimeError("cache blew up")
 
     monkeypatch.setattr(node, "venue_state_from_cache", boom)
@@ -478,6 +478,23 @@ class _CacheReadableStrategy(ShadowStrategy):
     cache = None
 
 
+def test_the_boundarys_snapshot_carries_the_executors_floors(tmp_path, monkeypatch):
+    strategy = _CacheReadableStrategy(_config(tmp_path))
+    strategy._executor = types.SimpleNamespace(listed_ordermin=lambda: {"ETH/EUR": 7.0})
+    seen = []
+    monkeypatch.setattr(node, "venue_state_from_cache", lambda cache, *, clock, listed: seen.append(listed))
+    strategy._snapshot_venue_state()
+    assert seen == [{"ETH/EUR": 7.0}]
+
+
+def test_a_strategy_with_no_executor_snapshots_on_no_listing(tmp_path, monkeypatch):
+    strategy = _CacheReadableStrategy(_config(tmp_path))
+    seen = []
+    monkeypatch.setattr(node, "venue_state_from_cache", lambda cache, *, clock, listed: seen.append(listed))
+    strategy._snapshot_venue_state()
+    assert seen == [None]
+
+
 def test_an_engine_error_at_the_boundary_journals_the_error_venue_record(tmp_path, monkeypatch):
     """The EngineError-to-None degrade, entered at the Cache read itself, leaves the boundary's
     venue-<HH>.json reading status "error" with the reason, never nothing at all."""
@@ -485,7 +502,7 @@ def test_an_engine_error_at_the_boundary_journals_the_error_venue_record(tmp_pat
     strategy = _CacheReadableStrategy(config)
     reads: list = []
 
-    def unreadable_cache(cache, *, clock):
+    def unreadable_cache(cache, *, clock, listed):
         reads.append(cache)
         raise EngineError("BTC/EUR is absent from the Cache")
 

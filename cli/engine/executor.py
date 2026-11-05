@@ -88,7 +88,7 @@ from cli.engine.journal import CycleRecord, from_json, require_comparable_cycle_
 from cli.engine.probeplan import MODES, PLAN_FILENAME, ProbeIntent, ProbePlanError, parse_plan, plan_refusals
 from cli.engine.store import BASKET
 from cli.engine.tracking import extract_fills, realized_drift
-from cli.engine.venuestate import InstrumentConstraints, venue_state_from_cache
+from cli.engine.venuestate import InstrumentConstraints, held_ordermin, venue_state_from_cache
 from cli.logging import get_logger
 
 logger = get_logger("engine.executor")
@@ -392,8 +392,8 @@ def _boundary(now: datetime) -> datetime:
 
 
 def size_probe_order(target_qty: float, touch_price: float, constraints: InstrumentConstraints) -> SizedOrder | BelowMinimum:
-    """THE sizing call site (spec 00090 D8): every probe order is sized here, on the Cache-fresh
-    constraints and the committed costmin, through the one proven size_order. The comparison this
+    """THE sizing call site (spec 00090 D8): every probe order is sized here, on the constraints
+    `venue_state_from_cache` froze and the committed costmin, through the one proven size_order. The comparison this
     module makes is EUR-denominated end to end (an EUR intent notional, an EUR-quoted touch), so the
     guard T0138 holds lands immediately where the notional meets constraints.costmin: a floor
     denominated in anything but EUR must never be compared here -- a /BTC leg's 2e-05 BTC floor
@@ -2743,7 +2743,7 @@ class ProbeExecutor:
             return "refused"
 
         try:
-            state = venue_state_from_cache(self._cache, clock=self._now)
+            state = venue_state_from_cache(self._cache, clock=self._now, listed=self.listed_ordermin())
         except Exception:
             logger.warning("venue truth unavailable -- refusing plan %s", plan.plan_id, exc_info=True)
             if self._journal_plan(
@@ -2962,7 +2962,7 @@ class ProbeExecutor:
             return
 
         try:
-            state = venue_state_from_cache(self._cache, clock=self._now)
+            state = venue_state_from_cache(self._cache, clock=self._now, listed=self.listed_ordermin())
         except Exception:
             logger.warning("venue truth unavailable -- refusing intent %d of plan %s", index, plan.plan_id, exc_info=True)
             self._refuse_intent(index, ("no venue truth",))
@@ -3574,7 +3574,7 @@ class ProbeExecutor:
             try:
                 book = (self._venue_holdings or read_venue_book)()
                 statuses = (self._instrument_statuses or read_instrument_statuses)()
-                state = venue_state_from_cache(self._cache, clock=self._now)
+                state = venue_state_from_cache(self._cache, clock=self._now, listed=book.ordermin)
             except Exception as exc:
                 self._spend_draft_try(
                     now, f"the venue's book could not be read -- {type(exc).__name__}: {exc}", "book-unread", figures, exc
@@ -4624,6 +4624,10 @@ class ProbeExecutor:
         held = self._cache.positions_open(instrument_id=InstrumentId.from_str(INSTRUMENT_IDS[symbol]))
         return sum(float(p.signed_qty) for p in held)
 
+    def listed_ordermin(self) -> dict[str, float] | None:
+        """The newest venue book's floors, or None before this process has read one."""
+        return None if self._venue_book is None else self._venue_book.ordermin
+
     def _settle_positions_from_venue(self, moment: str) -> bool:
         """The venue's own book, read and kept on `self._venue_book`, settles the position gauge where the
         Cache disagrees (`_settle_from_book`): at the startup pass, after its order read and before its
@@ -4652,7 +4656,7 @@ class ProbeExecutor:
         if abs(cache_qty) > FLAT_TOLERANCE or _SPOT_SYMBOL_BY_BASE.get(base) != symbol or venue_qty != book.balances.get(base):
             return False
         instrument = self._cache.instrument(InstrumentId.from_str(INSTRUMENT_IDS[symbol]))
-        return instrument is not None and instrument.min_quantity is not None and 0.0 < venue_qty < float(instrument.min_quantity)
+        return instrument is not None and 0.0 < venue_qty < held_ordermin(instrument.min_quantity, book.ordermin.get(symbol))
 
     def _settle_from_book(self, book: VenueBook, moment: str) -> None:
         """The settle's apply half over a book in hand: the venue's figure is published for every symbol

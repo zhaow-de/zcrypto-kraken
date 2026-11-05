@@ -241,7 +241,8 @@ class ShadowStrategy(Strategy):
         """venue_state_from_cache(self.cache, ...) wrapped so ANY exception logs and degrades to
         None (00089 D7): venue-truth availability can never cost the engine a boundary."""
         try:
-            return venue_state_from_cache(self.cache, clock=self._now)
+            listed = None if self._executor is None else self._executor.listed_ordermin()
+            return venue_state_from_cache(self.cache, clock=self._now, listed=listed)
         except Exception:
             logger.exception("shadow node: venue_state_from_cache raised; snapshot degrades to None")
             return None
