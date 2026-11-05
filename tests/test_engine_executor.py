@@ -7699,6 +7699,45 @@ def test_a_close_filled_while_the_engine_was_down_with_no_catch_up_reads_flat_fr
     assert _record(tmp_path, earlier)["submitted"][0]["state"] == "filled"
 
 
+def _venue_holds_warnings(tmp_path, cache, held):
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    ex = _executor(tmp_path, client=StubClient(cache), venue_holdings=_VenueHoldings())
+    with _executor_errors(logging.WARNING) as warnings:
+        ex._settle_from_book(_VenueHoldings({"BTC/EUR": held})(), "the startup pass")
+    return metrics.positions, [r.getMessage() for r in warnings if "the venue holds" in r.getMessage()]
+
+
+@pytest.mark.parametrize("held", [1e-08, -1e-08, 0.00009999])
+def test_a_balance_under_ordermin_on_a_leg_the_cache_holds_flat_logs_nothing_and_the_gauge_still_takes_it(tmp_path, held):
+    assert _venue_holds_warnings(tmp_path, StubCache(), held) == ([("BTC/EUR", held)], [])
+
+
+def test_a_balance_at_ordermin_on_a_leg_the_cache_holds_flat_still_warns(tmp_path):
+    assert _venue_holds_warnings(tmp_path, StubCache(), 0.0001)[1] == [
+        "the venue holds 0.0001 BTC/EUR where the Cache reads 0 -- the position gauge takes the venue's figure at the startup pass"
+    ]
+
+
+def test_a_difference_under_ordermin_on_a_leg_the_cache_holds_still_warns(tmp_path):
+    cache = StubCache()
+    cache.set_position("BTC/EUR", 0.001)
+    assert _venue_holds_warnings(tmp_path, cache, 0.00100001)[1] == [
+        "the venue holds 0.00100001 BTC/EUR where the Cache reads 0.001 -- the position gauge takes the venue's figure at the startup pass"
+    ]
+
+
+def test_a_leg_the_cache_holds_no_instrument_for_still_warns(tmp_path):
+    instruments = {key: value for key, value in _all_instruments().items() if key != INSTRUMENT_IDS["BTC/EUR"]}
+    assert len(_venue_holds_warnings(tmp_path, StubCache(instruments=instruments), 1e-08)[1]) == 1
+
+
+def test_a_leg_whose_instrument_carries_no_ordermin_still_warns(tmp_path):
+    btc = INSTRUMENT_IDS["BTC/EUR"]
+    instruments = _all_instruments() | {btc: _fake_instrument(btc, ordermin=None)}
+    assert len(_venue_holds_warnings(tmp_path, StubCache(instruments=instruments), 1e-08)[1]) == 1
+
+
 def test_an_opposing_hand_trade_the_running_engine_refused_settles_from_the_venues_holdings_at_the_re_read_pass_and_the_next_fill_moves_from_that_figure(
     tmp_path,
 ):

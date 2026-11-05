@@ -4624,6 +4624,14 @@ class ProbeExecutor:
         self._settle_from_book(book, moment)
         return True
 
+    def _is_flat_dust(self, symbol: str, venue_qty: float, cache_qty: float) -> bool:
+        """The Cache flat and the venue under the pair's `ordermin`: a balance no order can sell. A leg whose
+        `ordermin` the Cache cannot answer is never dust."""
+        if abs(cache_qty) > FLAT_TOLERANCE:
+            return False
+        instrument = self._cache.instrument(InstrumentId.from_str(INSTRUMENT_IDS[symbol]))
+        return instrument is not None and instrument.min_quantity is not None and abs(venue_qty) < float(instrument.min_quantity)
+
     def _settle_from_book(self, book: VenueBook, moment: str) -> None:
         """The settle's apply half over a book in hand: the venue's figure is published for every symbol
         `book.held` answers, and its difference from the Cache's net is kept for `_publish_fill`, so a fill
@@ -4631,13 +4639,14 @@ class ProbeExecutor:
         margin open or a fill made while the engine was down, reads here; what it never let go, a hand
         close it refused or a settled lot it holds as a margin position, reads here too, the settled lot by
         the coin's spot balance. A disagreement logs WARNING per symbol, since it names a hand act or a
-        fill this engine never saw. Wrapped as `_publish_fill` is: telemetry never alters what this engine
-        does."""
+        fill this engine never saw; dust on a leg the Cache holds flat (`_is_flat_dust`) names neither, and
+        logs nothing while the gauge still takes it. Wrapped as `_publish_fill` is: telemetry never alters
+        what this engine does."""
         try:
             for symbol, venue_qty in sorted(book.held.items()):
                 cache_qty = self._cache_net(symbol)
                 self._venue_correction[symbol] = venue_qty - cache_qty
-                if abs(venue_qty - cache_qty) > FLAT_TOLERANCE:
+                if abs(venue_qty - cache_qty) > FLAT_TOLERANCE and not self._is_flat_dust(symbol, venue_qty, cache_qty):
                     logger.warning(
                         "the venue holds %s %s where the Cache reads %s -- the position gauge takes the venue's figure at %s",
                         venue_qty,
