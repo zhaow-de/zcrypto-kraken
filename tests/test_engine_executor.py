@@ -7699,12 +7699,12 @@ def test_a_close_filled_while_the_engine_was_down_with_no_catch_up_reads_flat_fr
     assert _record(tmp_path, earlier)["submitted"][0]["state"] == "filled"
 
 
-def _venue_holds_warnings(tmp_path, cache, held):
+def _venue_holds_warnings(tmp_path, cache, held, symbol="BTC/EUR"):
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
     ex = _executor(tmp_path, client=StubClient(cache), venue_holdings=_VenueHoldings())
     with _executor_errors(logging.WARNING) as warnings:
-        ex._settle_from_book(_VenueHoldings({"BTC/EUR": held})(), "the startup pass")
+        ex._settle_from_book(_VenueHoldings({symbol: held})(), "the startup pass")
     return metrics.positions, [r.getMessage() for r in warnings if "the venue holds" in r.getMessage()]
 
 
@@ -7746,13 +7746,20 @@ def test_a_reading_under_ordermin_that_is_not_a_spot_balance_alone_still_warns(t
     ]
 
 
-@pytest.mark.parametrize(("cache_net", "held"), [(0.001, 0.00100001), (0.00005, 0.00006)])
+@pytest.mark.parametrize(("cache_net", "held"), [(0.001, 0.00100001), (0.00005, 0.00006), (-0.00005, 0.00006)])
 def test_a_difference_under_ordermin_on_a_leg_the_cache_holds_still_warns(tmp_path, cache_net, held):
     cache = StubCache()
     cache.set_position("BTC/EUR", cache_net)
     assert _venue_holds_warnings(tmp_path, cache, held)[1] == [
         f"the venue holds {held} BTC/EUR where the Cache reads {cache_net} -- the position gauge takes the venue's figure at the startup pass"
     ]
+
+
+@pytest.mark.parametrize(("ordermin", "held", "lines"), [(0.02, 0.01, 0), (0.00001, 0.00005, 1)])
+def test_the_dust_floor_is_the_legs_own_ordermin(tmp_path, ordermin, held, lines):
+    sol = INSTRUMENT_IDS["SOL/EUR"]
+    instruments = _all_instruments() | {sol: _fake_instrument(sol, ordermin=ordermin)}
+    assert len(_venue_holds_warnings(tmp_path, StubCache(instruments=instruments), held, symbol="SOL/EUR")[1]) == lines
 
 
 def test_a_leg_the_cache_holds_no_instrument_for_still_warns(tmp_path):
