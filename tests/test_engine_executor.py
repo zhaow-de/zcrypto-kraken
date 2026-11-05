@@ -913,15 +913,16 @@ def _cancel_venue_order(*args, **kwargs):
 
 class _VenueHoldings:
     """The executor's `venue_holdings` reader: answers a book of `held`, which a test moves between two
-    passes as the account moves, and of the EUR and earn figures it is handed, or raises `raises`
-    instead, and counts its calls. A stub carries no margin, so its spot `balances` are its `held` per
-    base, and 0.0 for every other basket base, as `read_venue_book` seeds them."""
+    passes as the account moves, and of the EUR and earn figures and the listing's floors it is handed,
+    or raises `raises` instead, and counts its calls. A stub carries no margin, so its spot `balances`
+    are its `held` per base, and 0.0 for every other basket base, as `read_venue_book` seeds them."""
 
-    def __init__(self, held=None, *, raises=None, eur_total=0.0, eur_free=0.0, earn=None):
+    def __init__(self, held=None, *, raises=None, eur_total=0.0, eur_free=0.0, earn=None, ordermin=None):
         self.held = {} if held is None else dict(held)
         self.eur_total = eur_total
         self.eur_free = eur_free
         self.earn = {} if earn is None else dict(earn)
+        self.ordermin = {} if ordermin is None else dict(ordermin)
         self.calls = 0
         self._raises = raises
 
@@ -937,6 +938,7 @@ class _VenueHoldings:
             eur_free=self.eur_free,
             earn=dict(self.earn),
             read_at=NOW,
+            ordermin=dict(self.ordermin),
         )
 
 
@@ -7612,6 +7614,35 @@ def test_read_venue_book_keeps_a_basket_coins_earn_coded_balance_apart_and_the_d
         assert re.search(rf"2 {base} is held outside the spot wallet.*move it back to spot", book.earn_refusal() or "")
         del venue.balances[earn]
         assert executor_module.read_venue_book(base_url=venue.base_url).earn_refusal() is None
+
+
+def test_read_venue_book_keeps_each_legs_floor_off_the_listing_and_a_moved_row_moves_it(_loopback_credentials):
+    with kraken_loopback.serve() as venue:
+        venue.asset_pairs["SOLEUR"]["ordermin"] = "0.20000000"
+        book = executor_module.read_venue_book(base_url=venue.base_url)
+    assert book.ordermin == {"BTC/EUR": 0.00005, "SOL/EUR": 0.2}
+
+
+def test_a_leg_the_listing_leaves_out_has_no_floor_in_the_book_and_warns_naming_it(_loopback_credentials):
+    with kraken_loopback.serve() as venue:
+        del venue.asset_pairs["SOLEUR"]
+        with _executor_errors(logging.WARNING) as warnings:
+            book = executor_module.read_venue_book(base_url=venue.base_url)
+    assert book.ordermin == {"BTC/EUR": 0.00005}
+    assert [r.getMessage() for r in warnings if "SOL/EUR" in r.getMessage()] == [
+        "the venue's listing gives SOL/EUR no ordermin -- the leg stays on the floor the engine loaded at its start"
+    ]
+
+
+@pytest.mark.parametrize("floor", [None, 0.0, -1.0])
+def test_a_listing_row_with_no_positive_floor_is_no_floor(floor):
+    row = SimpleNamespace(id=INSTRUMENT_IDS["ETH/EUR"], min_quantity=floor)
+    assert "ETH/EUR" not in executor_module._listing_floors([row])
+
+
+def test_a_listing_floor_outside_the_basket_is_not_kept():
+    row = SimpleNamespace(id="PEPE/EUR.KRAKEN", min_quantity=1000.0)
+    assert set(executor_module._listing_floors([row])) == set()
 
 
 def test_every_basket_base_has_a_euro_pair_that_carries_its_spot_balance():
