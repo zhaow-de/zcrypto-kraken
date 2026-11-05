@@ -437,7 +437,7 @@ sudo systemctl start zcrypto-engine
 
 ### Record
 
-Entry `G`, and one reading beyond the log's clauses, discharged into `docs/reference/adapter-verification/<the running version>.md` beside that version's probe table:
+Entry `G`, and one reading beyond the log's clauses, discharged into `docs/reference/adapter-verification/<the running version>.md` beside that version's probe table. In rung 3's first attended week the form below also takes slot S8 into that record: the boot's `unmatched` baseline, `engine-probe-window`'s pre-probe step 4 read before and after this restart, unselected. The reading:
 
 ```
 uv run python infra/scripts/grafana-query.py 'zcrypto_exec_external_events_total{host="zcrypto", disposition="matched"}'
@@ -453,7 +453,7 @@ uv run python infra/scripts/grafana-query.py 'zcrypto_exec_external_events_total
 
 ### Rung-3 form
 
-On rung 3's armed loop the restart is [`engine-procedures.md#rung-3-after-a-restart`](engine-procedures.md#rung-3-after-a-restart)'s, inside a gap once the boundary's plan has ended, the book held and the arm file left in place; no order rests, so deliverable 1 and the adopt pass's lines are not this form's. Its reads: the boot's `cache restore: position <instrument> <quantity> @ <entry price> (ShadowStrategy-000)` line per held leg at Kraken's quantity, against `kraken extended-balance -o json` on the workstation, with no `(EXTERNAL)` line — the restore the build's spot-lot fix gives; the gate at `level=reduce_only`, `reasons=restart_hold`; the hold left standing through the next boundary, whose plan places its sells and journals each buy `refused` with `restart_hold`, the buys' legs carried; then the hold cleared, the gate at `level=full`, once that plan has ended and inside about four and a half hours of the restart, before the disarmed rule, which reads `reduce_only` as below `full`, pages about 4h40m on as drill H's *Must fire* derives it. `zcrypto-fleet-daemon-restarted` pages on the restart as above.
+On rung 3's armed loop the restart is [`engine-procedures.md#rung-3-after-a-restart`](engine-procedures.md#rung-3-after-a-restart)'s, inside a gap once the boundary's plan has ended, the book held and the arm file left in place; no order rests, so deliverable 1 and the adopt pass's lines are not this form's. Its reads: the boot's `cache restore: position <instrument> <quantity> @ <entry price> (ShadowStrategy-000)` line per held leg at Kraken's quantity, against `kraken extended-balance -o json` on the workstation, with no `(EXTERNAL)` line — the restore the build's spot-lot fix gives; the gate at `level=reduce_only`, `reasons=restart_hold`; the hold left standing through the next boundary, whose plan places its sells and journals each buy `refused` with `restart_hold`, the buys' legs carried; then the hold cleared, the gate at `level=full`, once that plan has ended and inside about four and a half hours of the restart, before the disarmed rule, which reads `reduce_only` as below `full`, pages about 4h40m on as drill H's *Must fire* derives it. Slot S8's baseline is read as the record above says. `zcrypto-fleet-daemon-restarted` pages on the restart as above.
 
 ### Retire when
 
