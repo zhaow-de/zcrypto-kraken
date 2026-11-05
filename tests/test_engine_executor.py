@@ -7637,7 +7637,12 @@ def test_a_leg_the_listing_leaves_out_has_no_floor_in_the_book_and_warns_naming_
 @pytest.mark.parametrize("floor", [None, 0.0, -1.0])
 def test_a_listing_row_with_no_positive_floor_is_no_floor(floor):
     row = SimpleNamespace(id=INSTRUMENT_IDS["ETH/EUR"], min_quantity=floor)
-    assert "ETH/EUR" not in executor_module._listing_floors([row])
+    with _executor_errors(logging.WARNING) as warnings:
+        floors = executor_module._listing_floors([row])
+    assert "ETH/EUR" not in floors
+    assert [r.getMessage() for r in warnings if "ETH/EUR" in r.getMessage()] == [
+        "the venue's listing gives ETH/EUR no ordermin -- the leg stays on the floor the engine loaded at its start"
+    ]
 
 
 def test_a_listing_floor_outside_the_basket_is_not_kept():
@@ -11457,8 +11462,6 @@ def test_the_mixed_inventory_floor_is_the_floor_the_engine_holds(tmp_path, liste
 )
 def test_the_dust_floor_is_the_floor_the_engine_holds(tmp_path, cached, listed, held, lines):
     btc = INSTRUMENT_IDS["BTC/EUR"]
-    metrics = RecordingMetrics()
-    set_executor_hooks(metrics=metrics)
     instruments = _all_instruments() | {btc: _fake_instrument(btc, ordermin=cached)}
     ex = _executor(tmp_path, client=StubClient(StubCache(instruments=instruments)), venue_holdings=_VenueHoldings())
     book = _VenueHoldings({"BTC/EUR": held}, ordermin={"BTC/EUR": listed})()
