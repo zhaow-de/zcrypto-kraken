@@ -17,7 +17,7 @@ It is the quiet direction of the gauge's error: a hand-opened position the engin
 
 - Split out of `T0187` at its resolution: this span is the staleness its acceptance of 2026-09-09 priced.
 - The acceptance's other grounds: a hand act during an armed window is the owner's attended act; and the alert-layer alternative, a presence-aware node A, pages on a book the engine reported flat (`T0187`'s replay, `tests/test_infra_alert_rules.py`).
-- The WARNING `the venue holds <qty> <symbol> where the Cache reads <qty>` marks each read that moved the gauge.
+- The WARNING `the venue holds <qty> <symbol> where the Cache reads <qty>` marks each read that moved the gauge, spot dust on a leg the Cache reads flat excepted.
 
 ## Done so far
 
