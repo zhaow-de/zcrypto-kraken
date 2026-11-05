@@ -4,7 +4,7 @@
 
 **Goal:** Every quantity the engine holds against `ordermin` is held against the higher of the Cache's floor and the floor in the venue listing its book read just fetched, so a floor Kraken raised stops the order before submission, and the venue record the helpers read carries the same figure.
 
-**Architecture:** `read_venue_book` keeps the listing's floors on `VenueBook.ordermin` (D1, D4). `venuestate.held_ordermin` is the one rule and `venue_state_from_cache(..., listed=...)` applies it, so every existing reader of `InstrumentConstraints.ordermin` follows (D2, D3). The executor hands the newest book's floors to its venue-truth reads, the node hands them to the boundary's snapshot, and `_is_flat_dust` takes the same rule (D3). Two cases hold the two premises, a live opt-in one and a restart over a real store (D5).
+**Architecture:** `read_venue_book` keeps the listing's floors on `VenueBook.ordermin` (D1, D4). `venuestate.held_ordermin` is the one rule and `venue_state_from_cache(..., listed=...)` applies it, so every existing reader of `InstrumentConstraints.ordermin` follows (D2, D3). The executor hands the newest book's floors to its venue-truth reads, the node hands them to the boundary's snapshot, and `_is_flat_dust` takes the same rule (D3). Two cases hold the two premises, a live opt-in one the nautilus bump runs and a restart over a real store (D5), and the rung-3 entry gate reads the floors on the real engine (D6).
 
 **Tech Stack:** Python 3.14, pytest, `nautilus-trader` 2.0.0rc9.dev20261101, `infra/scripts/mutate-probe.sh`.
 
@@ -29,8 +29,8 @@
 - **`_listing_floors` runs last in `_read`,** after the positions and account reads, so a positions answer of `None` still raises first, and `client.calls` in `test_read_venue_holdings_refuses_a_positions_answer_of_none_and_the_settle_publishes_nothing` keeps its list. A stub listing row that reaches it without `id` or `min_quantity` takes them in the test, never a `getattr` in the reader.
 - **A zero or negative listing floor is no floor** (D4 says "no positive"): `runtime_concordance` already treats a non-positive floor as a failure, and overlaying one would pass an order the venue refuses.
 - **The WARNING's text names no spec or topic**, and reads as an operator would act on it: the leg stays on the floor the engine loaded at its start.
-- **The venue-state module docstring and `InstrumentConstraints`' docstring are corrected** where they say `ordermin` is read live from the Cache; the correction is state, not history.
-- **The runbook takes one clause** beside the `under ordermin` reasons in `infra/runbooks/engine-procedures.md`, saying when a moved floor takes effect, since an operator reading a leg's reason against a sweep's figure would otherwise read a lowered floor's dust as a fault. `docs/reference/kraken-snapshot-register.md`'s sweep #4 row is a dated record and is left as it is.
+- **Six docstrings the change makes false or short are corrected, as state and not history:** `cli/engine/venuestate.py`'s module docstring, `InstrumentConstraints`, `VenueState` and `runtime_concordance` (Task 2); `_VenueHoldings` in `tests/test_engine_executor.py` (Task 1); `_venue_state` in `tests/cache_restart_child.py` (Task 4).
+- **The runbook's `engine-rung-3` section takes the operator's text, never `engine-rung-2-box`, whose box is over:** a sub-item of the daily read saying when a moved floor takes effect, since an operator reading a carried leg's reason against a sweep's figure would otherwise read a lowered floor's dust as a fault and restart for it, which latches the hold; `The loop`'s floors clause; and the entry gate's read of D6, added to its reference-data sweep item so the gate stays six reads. `docs/reference/kraken-snapshot-register.md`'s sweep #4 row is a dated record and is left as it is.
 
 ## File structure
 
@@ -38,14 +38,14 @@
 - Modify `cli/engine/executor.py`: `VenueBook.ordermin`, `_listing_floors`, `read_venue_book`, `listed_ordermin`, the three `venue_state_from_cache` calls, `_is_flat_dust`.
 - Modify `cli/engine/node.py`: `_snapshot_venue_state`.
 - Modify tests `tests/test_engine_venuestate.py`, `tests/test_engine_executor.py`, `tests/test_engine_node.py`, `tests/test_cache_restart.py`, its child `tests/cache_restart_child.py`, and `tests/slow-cases.txt`.
-- Modify `infra/runbooks/engine-procedures.md`, `docs/research/14.phase6-decisions.md`; move `docs/open-topics/T0224-the-engine-and-the-helper-read-krakens-live-ordermin.md` to `docs/open-topics/archive/`; re-render `docs/open-topics/README.md`.
+- Modify `.claude/skills/zcrypto-bump-nautilus/SKILL.md`, `infra/runbooks/engine-procedures.md`, `docs/research/14.phase6-decisions.md`; move `docs/open-topics/T0224-the-engine-and-the-helper-read-krakens-live-ordermin.md` to `docs/open-topics/archive/`; re-render `docs/open-topics/README.md`.
 
 ## Review Focus
 
 1. The 2026-10-30 order, Cache floor 0.001 and listing floor 0.002, is stopped on both paths, the boundary's draft and an operator's plan, and the control without the listing still places it, so the case proves the listing did it. Pinned by Task 3's `test_the_boundary_carries_the_ten_thirty_sell_under_the_listings_raised_floor` and `test_a_plan_holding_the_ten_thirty_sell_is_refused_under_the_listings_raised_floor`.
 2. A lowered floor never reaches the library's risk engine as a quantity it denies. Pinned by Task 2's `test_a_listed_floor_under_the_caches_leaves_the_caches_held` and Task 3's `test_the_boundary_holds_a_lowered_floor_at_the_caches_and_drafts_no_sell_between_them`.
 3. The boundary's call uses the book it just read, not the previous one: its `venue_state_from_cache` precedes `self._venue_book = book`. Pinned by Task 3's `test_the_boundary_holds_the_floor_of_the_book_it_just_read`, whose startup pass reads no listing floor and whose boundary read does.
-4. A failed book read leaves the previous floors standing, and a process that has read none holds the Cache's. Pinned by Task 3's `test_a_process_that_has_read_no_book_lists_no_floors`.
+4. A failed book read leaves the previous floors standing, and a process that has read none holds the Cache's. Pinned by Task 3's `test_a_book_read_that_fails_leaves_the_previous_floors_standing` and `test_a_process_that_has_read_no_book_lists_no_floors`.
 5. `_is_flat_dust` and `venue_state_from_cache` cannot disagree: both go through `held_ordermin`. Pinned by Task 3's `test_the_dust_floor_is_the_floor_the_engine_holds`.
 6. The venue record carries the held floor. Pinned by Task 3's `test_the_boundarys_snapshot_carries_the_executors_floors`.
 7. A start takes the venue's floor over the stored instrument, which the lowered half of the rule rests on. Pinned by Task 4's `test_a_start_holds_the_venues_floor_over_the_stored_instrument`.
@@ -58,7 +58,7 @@
 - Modify: `cli/engine/executor.py`
 - Test: `tests/test_engine_executor.py`
 
-- [ ] **Step 1: Write the failing tests**, in `tests/test_engine_executor.py` directly after `test_read_venue_book_keeps_a_basket_coins_earn_coded_balance_apart_and_the_draft_refuses_its_held`, and give `_VenueHoldings` the floors (`ordermin=None` beside `earn=None`, `self.ordermin = {} if ordermin is None else dict(ordermin)`, `ordermin=dict(self.ordermin)` in the `VenueBook` it builds):
+- [ ] **Step 1: Write the failing tests**, in `tests/test_engine_executor.py` directly after `test_read_venue_book_keeps_a_basket_coins_earn_coded_balance_apart_and_the_draft_refuses_its_held`, and give `_VenueHoldings` the floors (`ordermin=None` beside `earn=None`, `self.ordermin = {} if ordermin is None else dict(ordermin)`, `ordermin=dict(self.ordermin)` in the `VenueBook` it builds, and its docstring's "the EUR and earn figures it is handed" takes the listing's floors):
 
 ```python
 def test_read_venue_book_keeps_each_legs_floor_off_the_listing_and_a_moved_row_moves_it(_loopback_credentials):
@@ -106,7 +106,7 @@ Above `read_venue_book`:
 ```python
 def _listing_floors(instruments) -> dict[str, float]:
     """Each `INSTRUMENT_IDS` leg's `ordermin` off the venue's listing. A leg with no positive floor there is logged
-    and left out, so it stays on the Cache's."""
+    and left out."""
     listed = {str(instrument.id): instrument.min_quantity for instrument in instruments}
     floors: dict[str, float] = {}
     for symbol, instrument_id in INSTRUMENT_IDS.items():
@@ -175,14 +175,13 @@ def test_the_payload_carries_the_floor_held(fake_cache):
 
 ```python
 def held_ordermin(cached: object, listed: float | None) -> float:
-    """The floor a quantity is held against: the venue listing's, never under the Cache's. The library's risk
-    engine denies an order under the Cache instrument's `min_quantity`, which a start reloads, so a floor the
-    venue lowered holds from the next start."""
+    """The floor a quantity is held against: the venue listing's, never under the Cache's, so a floor the venue
+    raised holds from the next book read and one it lowered from the next start (spec 00156 D2)."""
     floor = _to_float(cached)
     return floor if listed is None else max(floor, listed)
 ```
 
-`def venue_state_from_cache(cache, *, clock: Callable[[], datetime], listed: Mapping[str, float] | None = None) -> VenueState:`, `listed = {} if listed is None else listed` as its first line, and `ordermin=held_ordermin(instrument.min_quantity, listed.get(symbol)),`. Its docstring gains one sentence: `listed` is the newest venue book's floors, and `held_ordermin` decides each leg's. Correct `InstrumentConstraints`' docstring, whose `ordermin`/`lot_step`/`tick_size` "are read live from the Cache": `lot_step`/`tick_size` are the Cache's and `ordermin` is `held_ordermin`'s. The module docstring's second bullet stays true of `lot_step` and `tick_size`, and of `ordermin` where no listing names one: add "where no listing floor stands over it" to it.
+`def venue_state_from_cache(cache, *, clock: Callable[[], datetime], listed: Mapping[str, float] | None = None) -> VenueState:`, `listed = {} if listed is None else listed` as its first line, and `ordermin=held_ordermin(instrument.min_quantity, listed.get(symbol)),`. Its docstring gains one sentence: `listed` is the newest venue book's floors, and `held_ordermin` decides each leg's. Correct `InstrumentConstraints`' docstring, whose `ordermin`/`lot_step`/`tick_size` "are read live from the Cache": `lot_step`/`tick_size` are the Cache's and `ordermin` is `held_ordermin`'s. The module docstring's second bullet stays true of `lot_step` and `tick_size`, and of `ordermin` where no listing names one: add "where no listing floor stands over it" to it. `VenueState`'s "A frozen, single-instant read of the Cache" gains "with each `ordermin` as `held_ordermin` holds it", and `runtime_concordance`'s "its three **Cache-supplied** `ordermin`/`lot_step`/`tick_size`" reads "venue-supplied" for "Cache-supplied".
 
 - [ ] **Step 4: Run them, expect pass.**
 
@@ -274,7 +273,9 @@ def test_the_boundary_holds_the_floor_of_the_book_it_just_read(tmp_path):
     ex._venue_holdings = lambda: dataclasses.replace(holdings(), ordermin={}) if holdings.calls == 0 else holdings()
     ex.on_boundary(_RUNG2_12Z)
     ex.on_timer(clock.now)
-    assert holdings.calls == 2 and _legs(tmp_path)["ETH/EUR"]["outcome"] == "carried"
+    leg = _legs(tmp_path)["ETH/EUR"]
+    assert holdings.calls == 2 and leg["outcome"] == "carried"
+    assert leg["reason"] == f"sell {_TEN_THIRTY_QTY:.10g} is under ordermin 0.002"
 
 
 @pytest.mark.parametrize(("listed", "disposition"), [(None, "refused"), ({"BTC/EUR": 0.001}, "accepted")])
@@ -343,7 +344,7 @@ def test_a_strategy_with_no_executor_snapshots_on_no_listing(tmp_path, monkeypat
 
 The same step gives the three existing stubs of `venue_state_from_cache` the new keyword, so each still does its own work and not a `TypeError` a catch would hide: `boom` in `test_snapshot_venue_state_logs_and_returns_none_on_any_exception` and `unreadable_cache` in `test_an_engine_error_at_the_boundary_journals_the_error_venue_record` (`tests/test_engine_node.py`), and `_stateless` in `test_an_intent_symbol_absent_from_venue_truth_is_refused` (`tests/test_engine_executor.py`), each `(cache, *, clock, listed)`.
 
-- [ ] **Step 2: Run them, expect failure.** `uv run pytest tests/test_engine_executor.py -k 'ten_thirty or lowered_floor or dust_floor_is_the_floor or lists_no_floors or previous_floors or book_it_just_read or mixed_inventory_floor' -q -p no:cacheprovider --basetemp=.tmp/implementer/pt -rs`. 14 cases: the two `..._on_the_caches_floor_alone` controls and the four that pin the Cache's floor standing pass already, `test_the_boundary_holds_a_lowered_floor_at_the_caches_and_drafts_no_sell_between_them`, `test_the_mixed_inventory_floor_is_the_floor_the_engine_holds[None-refused]`, `test_the_dust_floor_is_the_floor_the_engine_holds[0.0001-0.001-0.005-1]` and `[0.02-0.001-0.01-0]`; the other eight fail.
+- [ ] **Step 2: Run them, expect failure.** `uv run pytest tests/test_engine_executor.py -k 'ten_thirty or lowered_floor or dust_floor_is_the_floor or lists_no_floors or previous_floors or book_it_just_read or mixed_inventory_floor' -q -p no:cacheprovider --basetemp=.tmp/implementer/pt -rs`. 14 cases: the two `..._on_the_caches_floor_alone` controls and the four that pin the Cache's floor standing pass already, `test_the_boundary_holds_a_lowered_floor_at_the_caches_and_drafts_no_sell_between_them`, `test_the_mixed_inventory_floor_is_the_floor_the_engine_holds[None-refused]`, `test_the_dust_floor_is_the_floor_the_engine_holds[0.0001-0.001-0.005-1]` and `[0.02-0.001-0.01-0]`; the other eight fail. Then `uv run pytest tests/test_engine_node.py -k 'test_the_boundarys_snapshot_carries or test_a_strategy_with_no_executor_snapshots' -q -p no:cacheprovider --basetemp=.tmp/implementer/pt -rs`, expect 2 failed.
 
 - [ ] **Step 3: Implement.** In `cli/engine/executor.py`, `from cli.engine.venuestate import InstrumentConstraints, held_ordermin, venue_state_from_cache`, and on `ProbeExecutor`, directly above `_settle_positions_from_venue`:
 
@@ -386,14 +387,14 @@ Its docstring's first clause names the wrapped call and stays true.
 
 **Files:**
 - Test: `tests/test_engine_node.py`, `tests/test_cache_restart.py`
-- Modify: `tests/cache_restart_child.py`, `tests/slow-cases.txt`
+- Modify: `tests/cache_restart_child.py`, `tests/slow-cases.txt`, `.claude/skills/zcrypto-bump-nautilus/SKILL.md`
 
 - [ ] **Step 1: Write the case**, after `test_the_twelve_instruments_are_in_the_cache_when_the_strategy_starts`, in the form that case's gate takes, which `tests/test_live_venue_opt_in.py` matches. Kraken's `wsname` spells BTC and DOGE as `XBT` and `XDG`, the mapping `cli/snapshot/assetpairs.py` keeps at its head:
 
 ```python
 def test_the_listing_the_book_reads_carries_krakens_ordermin_on_every_leg():
-    """The floors the venue book keeps are Kraken's own, on the pinned adapter: a bump that remapped
-    `min_quantity` would leave every offline case green."""
+    """The floors the venue book keeps are Kraken's own on all twelve legs of the real listing, which the two-row
+    loopback cannot hold."""
     if os.environ.get("ZCRYPTO_LIVE_VENUE_TESTS") != "1":
         pytest.skip("needs a live venue: set ZCRYPTO_LIVE_VENUE_TESTS=1 to run it")
     if not _kraken_public_reachable():
@@ -423,7 +424,7 @@ def test_the_listing_the_book_reads_carries_krakens_ordermin_on_every_leg():
 
 - [ ] **Step 2: Run the live case opted in, expect pass.** `ZCRYPTO_LIVE_VENUE_TESTS=1 uv run pytest tests/test_engine_node.py -k 'test_the_listing_the_book_reads' -q -p no:cacheprovider --basetemp=.tmp/implementer/pt -rs`, and without the flag, expect one skip. Then `uv run pytest tests/test_live_venue_opt_in.py -q -p no:cacheprovider --basetemp=.tmp/implementer/pt -rs`, expect pass, since it walks the skip gates.
 
-- [ ] **Step 3: Write the restart case.** In `tests/cache_restart_child.py`, `_venue_state`'s return gains the floors the engine's reader freezes: `"ordermin": {symbol: constraints.ordermin for symbol, constraints in state.instruments.items()}`. In `tests/test_cache_restart.py`, after `_spot_process` and `_BUMP`, which it reads:
+- [ ] **Step 3: Write the restart case.** In `tests/cache_restart_child.py`, `_venue_state`'s return gains the floors the engine's reader freezes: `"ordermin": {symbol: constraints.ordermin for symbol, constraints in state.instruments.items()}`, and its docstring gains "and `ordermin`, the Cache's floor, with no listing passed". In `tests/test_cache_restart.py`, after `_spot_process` and `_BUMP`, which it reads:
 
 ```python
 def test_a_start_holds_the_venues_floor_over_the_stored_instrument(tmp_path):
@@ -453,7 +454,15 @@ Its id goes in `tests/slow-cases.txt`, in sorted place, since it starts two proc
 
 - [ ] **Step 4: Run it, expect pass.** `uv run pytest tests/test_cache_restart.py -k 'test_a_start_holds_the_venues_floor' -q -p no:cacheprovider --basetemp=.tmp/implementer/pt -rs`, about a minute, then `uv run pytest tests/test_slow_cases.py -q -p no:cacheprovider --basetemp=.tmp/implementer/pt -rs`.
 
-- [ ] **Step 5: Commit** `test(engine): two cases hold the listing's floor and a start's reload of it`, the opted-in run's result line, the restart case's and the two guards' in the body, after the gate. Its message records the two skipped probes, as the Global Constraints say.
+- [ ] **Step 5: Commit** `test(engine): two cases hold the listing's floor and a start's reload of it`, the per-commit run's result line, the opted-in run's, the restart case's and the two guards' in the body, after the gate. Its message records the two skipped probes, as the Global Constraints say.
+
+- [ ] **Step 6: The bump runs the live case.** Load `zcrypto-refine-rules` before editing a skill file, as its description asks. In `.claude/skills/zcrypto-bump-nautilus/SKILL.md`, the list under `## Step 3 — the static guards and the premises` gains, after the item that opens `` `tests/test_engine_stub_fidelity.py` ``:
+
+```markdown
+- `ZCRYPTO_LIVE_VENUE_TESTS=1 uv run pytest tests/test_engine_node.py -k test_the_listing_the_book_reads -q -p no:cacheprovider` — the floors the venue book keeps against public `AssetPairs` on all twelve legs, on public endpoints with no key; the flag is what opens it, and without the flag it reads as a skip.
+```
+
+Commit it alone, `claude(skills): the nautilus bump runs the listing's floor against Kraken`, the `staged-kind` hook refusing it beside any other kind, after the gate, with the result line of `T="$(infra/scripts/consumers.sh --direct .claude/skills/zcrypto-bump-nautilus/SKILL.md)"; [ -n "$T" ] && uv run pytest $T -m "not slow" -q -p no:cacheprovider --basetemp=.tmp/implementer/pt -rs`, or its message says the list is empty.
 
 ### Task 5: The runbook's clause, the topic's close and the decisions-log entry
 
@@ -463,13 +472,13 @@ Its id goes in `tests/slow-cases.txt`, in sorted place, since it starts two proc
 
 - [ ] **Step 1: Read the surfaces.** Load `zcrypto-refine-rules` before editing a runbook page, as its description asks, and `topic-ops` before the topic. `grep -n 'min_quantity\|Cache instrument' infra/runbooks/*.md .claude/skills/zcrypto-refdata-sweep/SKILL.md` names any other page that states the floor's source; a page it names is corrected in this task and the commit says so.
 
-- [ ] **Step 2: The runbook's clause.** In `infra/runbooks/engine-procedures.md`, after the list item that opens `` `the venue record's b <b> is under the sell qty <qty> `` (found by that text, never a line number), the same list gains one item:
+- [ ] **Step 2: The runbook's three edits, in `infra/runbooks/engine-procedures.md`'s `engine-rung-3` section, each found by its text, never a line number.** In `### What it means`, `The loop`'s "a leg is carried when its delta is under the venue's floors" reads "under the floors the engine holds". In the entry gate, the item that opens `**The reference-data sweep inside the week of entry**`, after its sentence, gains: "With it, the newest venue record's twelve `state.instruments[*].ordermin` against public `AssetPairs`, by value: each equal, a difference read against a move since the engine's last book read." In the daily read, item 1, directly under its paragraph, one sub-item:
 
 ```markdown
-   - A leg's `ordermin` is the higher of the floor the engine loaded at its start and the floor in the venue listing it last read. A floor Kraken raised holds from the next read, and one it lowered holds from the next start, so until then a remainder between the two floors is dust here though Kraken would take it.
+   - A carried leg's `ordermin` is the higher of the floor the engine loaded at its start and the floor in the venue listing it last read. A floor Kraken raised holds from the next read, and one it lowered holds from the next start, so until then a remainder between the two floors is carried though Kraken would take it, a limit that owes no restart of its own.
 ```
 
-- [ ] **Step 3: Close the topic.** `git mv` it to `docs/open-topics/archive/`; `status: resolved`, `ripe_when:` deleted; `## Suggested next steps` gone; a `## Resolution` section: spec 00156 and this branch's pull request; a raised floor holds from the next book read and a lowered one from the next start, the lowered half bounded by the owner's ruling and not open (spec D2), the 2026-10-30 case proved by `test_the_boundary_carries_the_ten_thirty_sell_under_the_listings_raised_floor` and `test_a_plan_holding_the_ten_thirty_sell_is_refused_under_the_listings_raised_floor`. Then `uv run python infra/scripts/topics-index.py`.
+- [ ] **Step 3: Close the topic.** `git mv` it to `docs/open-topics/archive/`; `status: resolved`, `ripe_when:` deleted; `## Suggested next steps` gone; a `## Resolution` section: spec 00156 and this branch's pull request; a raised floor holds from the next book read and a lowered one from the next start, the lowered half bounded by the owner's ruling and not open (spec D2), the real engine's read owed at `engine-rung-3`'s entry gate, the 2026-10-30 case proved by `test_the_boundary_carries_the_ten_thirty_sell_under_the_listings_raised_floor` and `test_a_plan_holding_the_ten_thirty_sell_is_refused_under_the_listings_raised_floor`. Then `uv run python infra/scripts/topics-index.py`.
 
 - [ ] **Step 4: The decisions-log entry**, appended to `docs/research/14.phase6-decisions.md`, keyed `[00156]`, verbatim as written here:
 
