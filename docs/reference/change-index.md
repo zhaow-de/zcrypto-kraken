@@ -427,3 +427,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #810 | 2026-11-04 | fix(observability): every shipped log line carries a level | — | 00155 | — |
 | #812 | 2026-11-04 | fix(observability): no-fault lines dropped, the Logs board lightened | — | 00155 | — |
 | #813 | 2026-11-04 | fix(observability): rule charts to Fleet health, cancel lines dropped | — | 00155 | — |
+| #816 | 2026-11-05 | fix(engine): dust under ordermin on a flat leg logs no venue-holds line | — | 00155 | — |

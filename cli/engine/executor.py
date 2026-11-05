@@ -666,7 +666,7 @@ def _bare_client(base_url: str | None):
 @dataclass(frozen=True)
 class VenueBook:
     held: dict[str, float]  # per INSTRUMENT_IDS symbol: spot plus signed margin
-    balances: dict[str, float]  # per basket base, the CASH read's spot totals alone: the sell check's figure
+    balances: dict[str, float]  # per basket base, the CASH read's spot totals alone
     earn: dict[str, float]  # per basket base held under an earn or staking code, its total: the mark's, never held
     eur_total: float  # the spot EUR row's total and EUR.M's, no other EUR row: the equity mark's figure
     eur_free: float  # the spot EUR row's free, net of hold_trade: one bound of the cash budget
@@ -4624,20 +4624,27 @@ class ProbeExecutor:
         self._settle_from_book(book, moment)
         return True
 
+    def _is_flat_dust(self, symbol: str, book: VenueBook, cache_qty: float) -> bool:
+        """The Cache flat and the venue under the pair's `ordermin`: a balance no order can sell."""
+        base = symbol.split("/")[0]
+        venue_qty = book.held[symbol]
+        # `held` folds margin into the coin's spot figure, and the two are summed alike: equal is spot alone.
+        if abs(cache_qty) > FLAT_TOLERANCE or _SPOT_SYMBOL_BY_BASE.get(base) != symbol or venue_qty != book.balances.get(base):
+            return False
+        instrument = self._cache.instrument(InstrumentId.from_str(INSTRUMENT_IDS[symbol]))
+        return instrument is not None and instrument.min_quantity is not None and 0.0 < venue_qty < float(instrument.min_quantity)
+
     def _settle_from_book(self, book: VenueBook, moment: str) -> None:
         """The settle's apply half over a book in hand: the venue's figure is published for every symbol
         `book.held` answers, and its difference from the Cache's net is kept for `_publish_fill`, so a fill
-        between two passes moves the gauge from the venue's figure. What the Cache never took, a hand
-        margin open or a fill made while the engine was down, reads here; what it never let go, a hand
-        close it refused or a settled lot it holds as a margin position, reads here too, the settled lot by
-        the coin's spot balance. A disagreement logs WARNING per symbol, since it names a hand act or a
-        fill this engine never saw. Wrapped as `_publish_fill` is: telemetry never alters what this engine
-        does."""
+        between two passes moves the gauge from the venue's figure. A disagreement logs WARNING per symbol,
+        since it names a hand act or a fill this engine never saw, `_is_flat_dust` excepted. Wrapped as
+        `_publish_fill` is: telemetry never alters what this engine does."""
         try:
             for symbol, venue_qty in sorted(book.held.items()):
                 cache_qty = self._cache_net(symbol)
                 self._venue_correction[symbol] = venue_qty - cache_qty
-                if abs(venue_qty - cache_qty) > FLAT_TOLERANCE:
+                if abs(venue_qty - cache_qty) > FLAT_TOLERANCE and not self._is_flat_dust(symbol, book, cache_qty):
                     logger.warning(
                         "the venue holds %s %s where the Cache reads %s -- the position gauge takes the venue's figure at %s",
                         venue_qty,

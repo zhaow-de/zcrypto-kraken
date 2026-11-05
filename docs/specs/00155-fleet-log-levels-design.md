@@ -55,9 +55,9 @@ A real event keeps its level, and no stage touches it: the cache failovers and H
 
 A node rule, `Fleet · log lines with no level` (uid `zcrypto-mon-unlevelled-log-lines`, warning, the `logs` receiver, `for: 0s`, `noDataState: OK`), pages when any host ships a line with no level in 15 minutes — `topk(5, sum by (host, container) (count_over_time({host=~".+", level=""} [15m])))` — one instance per source, so a new script or a changed line shape is classified when it first ships rather than discovered in a view. Its runbook section in `infra/runbooks/mon.md` says to read the line, find its stage per D1, and add the source's stage.
 
-## D10 — the engine's dust warning is the owner's
+## D10 — the engine's dust warning is silenced
 
-The engine warns at each start, and on each re-read pass a socket's return arms, that the venue holds a balance the Cache reads as 0 — 1e-08-scale SOL and ETH after the store clear. The statement is true, and the dust sits below the pair's order minimum, so nothing trades it away. Silencing it means engine code, a dust threshold read from the instrument, and so an image and an engine converge: it is offered to the owner as a choice and, unanswered, stays as it is.
+The engine warned at each start, and on each re-read pass a socket's return arms, that the venue holds a balance the Cache reads as 0 — 1e-08-scale SOL and ETH after the store clear. The statement is true, and the dust sits below the pair's order minimum, so nothing trades it away. The owner's word of 2026-11-05: "Re D10, silence the dust warning". `the venue holds` no longer logs for a spot balance under the `ordermin` of the Cache's instrument on a leg the Cache reads flat; every other disagreement keeps its WARNING, and the position gauge still takes the venue's figure. It reaches the engine through the next bulk image rollout, with D8's engine line.
 
 ## D11 — the rollout is the owner's, host by host
 
@@ -65,4 +65,4 @@ Each Alloy config and `grafana.ini` reaches its host by that host's converge wit
 
 ## Out of scope
 
-The engine's dust warning (D10, the owner's choice); the nautilus `Connection closed by peer` warnings, upstream's logging of a venue event; a change to any source's printed text (D1), but for the capture daemon's and the liquidations poller's new `reconnected after` line (D8).
+The nautilus `Connection closed by peer` warnings, upstream's logging of a venue event; a change to any source's printed text (D1), but for the capture daemon's and the liquidations poller's new `reconnected after` line (D8).
