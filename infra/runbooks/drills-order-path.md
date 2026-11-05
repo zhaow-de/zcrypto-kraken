@@ -437,7 +437,7 @@ sudo systemctl start zcrypto-engine
 
 ### Record
 
-Entry `G`, and one reading beyond the log's clauses, discharged into `docs/reference/adapter-verification/<the running version>.md` beside that version's probe table. In rung 3's first attended week this boot, with the book held, is also spec `00092`'s slot S8, the unmatched-external baseline, read before anything is thresholded on it (the exit report's ruling, `[00092]` in `docs/research/14.phase6-decisions.md`):
+Entry `G`, and one reading beyond the log's clauses, discharged into `docs/reference/adapter-verification/<the running version>.md` beside that version's probe table. In rung 3's first attended week the form below also takes slot S8 into that record: the boot's `unmatched` baseline, `engine-probe-window`'s pre-probe step 4 read before and after this restart, unselected. The reading:
 
 ```
 uv run python infra/scripts/grafana-query.py 'zcrypto_exec_external_events_total{host="zcrypto", disposition="matched"}'

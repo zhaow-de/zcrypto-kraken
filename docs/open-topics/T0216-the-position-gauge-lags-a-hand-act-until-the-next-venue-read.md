@@ -28,4 +28,4 @@ It is the quiet direction of the gauge's error: a hand-opened position the engin
 
 ## Suggested next steps
 
-- **(measurement — rung 3's first hand act on a basket coin)** The same span on the image carrying the read, the engine armed: within a tick plus one holdings read of the act, and the topic resolves on that reading; past it, the engine's log names why (the arm, the pass's tries, a socket held down) before a shorter standing read is weighed again.
+- **(measurement — rung 3's first hand act on a basket coin)** The span from its Kraken trade time to the WARNING that moved the gauge, the engine armed: within a tick plus one holdings read of the act, and the topic resolves on that reading; past it, the engine's log names why before a shorter standing read is weighed again.
