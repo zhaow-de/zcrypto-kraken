@@ -1,5 +1,4 @@
-# The access_ops role (spec 00075): the ops-node end of the zaccess WireGuard link -- WG client,
-# the NAS relay, the managed tmux conf (D15), and the ops-side tunnel/cert probe (D11/D12).
+# The access_ops role (spec 00075): the ops-node end of the zaccess WireGuard link.
 
 # The G1 relay makes THIS host's sshd internet-reachable, and D6's byte-copy relay rewrites the
 # client source, so per-IP throttling is impossible on this path and fail2ban cannot see the real
