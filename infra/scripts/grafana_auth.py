@@ -32,7 +32,7 @@ class _ClientClosesFirstHandler(urllib.request.HTTPSHandler):
         return self.do_open(_ClientClosesFirst, req, context=self._context)
 
 
-# Process-wide, so every tool that loads this module and calls `urlopen` closes first, a new call site included.
+# Process-wide, so a tool that loads this module and calls `urlopen` on an https URL with no `context` closes first.
 urllib.request.install_opener(urllib.request.build_opener(_ClientClosesFirstHandler()))
 
 

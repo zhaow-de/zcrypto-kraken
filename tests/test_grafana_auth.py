@@ -22,16 +22,17 @@ def test_urlopen_sends_no_connection_close_once_this_module_is_loaded(monkeypatc
     sent = {}
 
     def request(self, method, url, body=None, headers={}, *, encode_chunked=False):
-        sent.update(headers)
+        sent.update(method=method, url=url, body=body, headers=headers)
         raise OSError("stopped before the network")
 
     monkeypatch.setattr(http.client.HTTPConnection, "request", request)
     _spec.loader.exec_module(ga)
     with pytest.raises(urllib.error.URLError):
-        urllib.request.urlopen("https://node.invalid/api/health", timeout=1)
+        urllib.request.urlopen(urllib.request.Request("https://node.invalid/api/health", data=b"payload"), timeout=1)
 
-    assert sent["Host"] == "node.invalid"
-    assert "Connection" not in sent
+    assert (sent["method"], sent["url"], sent["body"]) == ("POST", "/api/health", b"payload")
+    assert sent["headers"]["Host"] == "node.invalid"
+    assert "Connection" not in sent["headers"]
 
 
 def test_the_vault_password_file_comes_from_ansible_cfg_not_a_hardcoded_path():
