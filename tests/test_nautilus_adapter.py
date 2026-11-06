@@ -10,6 +10,7 @@ from nautilus_trader.adapters.kraken import (
     KrakenExecutionClientConfig,
     KrakenExecutionClientFactory,
 )
+from packaging.version import Version
 
 _REPO = Path(__file__).resolve().parents[1]
 
@@ -39,6 +40,22 @@ def test_pinned_version():
     execution gate the RUNNING interpreter's version, both in `cli/engine/order-semantics-verified.json`.
     """
     assert nautilus_trader.__version__ == _pinned_nautilus_version()
+
+
+# The last pin read for upstream dd8afce410, which sends a recovered close order-only behind an `EXTERNAL`
+# reconciliation position, with no log line and a net that still reads right, so no other test here would see it.
+_LAST_PIN_BEFORE_THE_TWO_START_ROUTE = Version("2.0.0rc9.dev20261103")
+_TWO_START_CASE = "def test_a_close_a_first_start_missed_is_booked_by_the_second"
+
+
+def test_a_pin_past_the_two_start_route_carries_its_case():
+    pinned = Version(_pinned_nautilus_version())
+    assert (
+        pinned <= _LAST_PIN_BEFORE_THE_TWO_START_ROUTE or _TWO_START_CASE in (_REPO / "tests/test_cache_restart.py").read_text()
+    ), (
+        f"nautilus-trader {pinned} is past {_LAST_PIN_BEFORE_THE_TWO_START_ROUTE}: write `{_TWO_START_CASE}` in tests/test_cache_restart.py "
+        "on this bump's branch, driving the two-start route on this wheel, and read what it does before the engine runs it"
+    )
 
 
 def test_the_arming_gate_consults_this_interpreter_and_the_committed_record(tmp_path):
