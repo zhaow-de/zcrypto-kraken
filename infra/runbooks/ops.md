@@ -125,7 +125,7 @@ It is **not** an urgent outage. Nothing is degrading; a day that was already mis
 
 ### Retire when
 
-`zcrypto-ops-tapebars-permanent-gap` is absent from `infra/grafana/alerts.yaml`, or `zcrypto_tapebars_days_gap` is no longer in the ops role's keep-list (`infra/ansible/roles/ops/files/config.alloy`).
+`zcrypto-ops-tapebars-permanent-gap` is absent from `infra/grafana/alerts.yaml`.
 
 ______________________________________________________________________
 
@@ -302,7 +302,7 @@ Both bars are provisional and say so in `infra/grafana/alerts.yaml`: they come f
 ### What to do
 
 1. **Re-measure before deciding anything.** `uv run python infra/scripts/bench-ledger-scan.py` reproduces the curve at sizes the live ledger has not reached, so the question is a command rather than an estimate. Compare what it reports against the live `zcrypto_reconcile_ledger_records` — if the fit still holds, the remaining headroom is arithmetic; if it has bent, the fit was the wrong model and the bars need re-deriving from the new curve.
-2. **Read the host's MemAvailable — never MemFree**, because that is what the critical bar encodes and it moves independently of this repo (no count command: an operator's read of a live gauge, which nothing in the tree records). The two differ about tenfold on a busy box, so reading the wrong one turns a healthy host into an apparent three-times over-commit. Query `node_memory_MemAvailable_bytes{host="ops"}` via `uv run python infra/scripts/grafana-query.py`, or read `MemAvailable` in `/proc/meminfo` on `ssh hp`. The reconciler runs uncapped, so its ceiling is whatever the host has available.
+2. **Read the host's MemAvailable — never MemFree**, because that is what the critical bar encodes and it moves independently of this repo (no count command: an operator's read of a live gauge, which nothing in the tree records). The two differ about tenfold on a busy box, so reading the wrong one turns a healthy host into an apparent three-times over-commit. Query `uv run python infra/scripts/grafana-query.py 'node_memory_MemAvailable_bytes{host="ops"}'`, or read `MemAvailable` in `/proc/meminfo` on `ssh hp`. The reconciler runs uncapped, so its ceiling is whatever the host has available.
 3. **Then renovate, not before.** The shape that preserves the counters is a compaction that folds everything older than the retention horizon into a single opening `carried_forward` record, so the sums stay exact while the scanned file stays bounded. Do NOT simply truncate — that resets every counter (no count command: `_totals` in `cli/archive/command.py` sums the whole ledger into each), and that reset **blinds** the permanent-loss rule for 24 h rather than paging it: `zcrypto-reconcile-residual-gap` conjoins `resets(...) == 0` with its increase, and `-healable-gap-rate` carries the same guard, so a truncation buys silence over unbackfillable L2 loss, not noise. One obligation comes with it: a compaction must not look like a ledger correction, since `zcrypto_reconcile_ledger_records` falling is what explains a counter reset.
 4. **A one-off spike with a flat record count is not this alert's subject** — that is host contention, and the record count beside it on the panel is what tells the two apart.
 

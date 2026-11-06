@@ -361,11 +361,11 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-Nothing — that is the point. The two capture silence rules above carry `execErrState: OK`, so when Grafana Cloud cannot execute their query they stay silent instead of paging.
+Nothing — that is the point. The two capture silence rules above carry `execErrState: OK`, so when Grafana cannot execute their query they stay silent instead of paging.
 
 ### What it means
 
-Grafana Cloud intermittently fails to reach its own Prometheus. `Alerting` here would not *report* a blackout, it would assert one — a named host, every stream silent for minutes — that the query never ran to observe. Both rules carry `for: 0s`, load-bearing for their detection arithmetic, so a one-minute hiccup fired instantly. A correlated datasource outage is still reported loudly: four other `for: 0s` rules in the `zcrypto-capture` group keep `execErrState: Alerting`. A rule-scoped error on these two — an expression broken by a later edit, a permission or cardinality failure on this query alone — pages nothing, and is read instead by the daily pass's `## Rules not evaluating` report (`infra/scripts/ops_daily.py`).
+A Grafana can fail for a moment to reach its own Prometheus, as the hosted stack that first ran these rules did. `Alerting` here would not *report* a blackout, it would assert one — a named host, every stream silent for minutes — that the query never ran to observe. Both rules carry `for: 0s`, load-bearing for their detection arithmetic, so a one-minute hiccup fired instantly. A correlated datasource outage is still reported loudly: four other `for: 0s` rules in the `zcrypto-capture` group keep `execErrState: Alerting`. A rule-scoped error on these two — an expression broken by a later edit, a permission or cardinality failure on this query alone — pages nothing, and is read instead by the daily pass's `## Rules not evaluating` report (`infra/scripts/ops_daily.py`).
 
 ### What to do
 

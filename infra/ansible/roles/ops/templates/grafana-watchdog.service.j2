@@ -3,10 +3,14 @@
 # instead.
 # Traceability: T0083
 [Unit]
-Description=Grafana Cloud availability probe gating the zcrypto-grafana-watchdog dead-man
+Description=Availability probe of the Grafana that pages and the dead-man service, gating the zcrypto-grafana-watchdog dead-man
 Wants=network-online.target
 After=network-online.target
 
 [Service]
 Type=oneshot
+# Sourced rather than interpolated into the runner script. `-` so a unit started before the file exists
+# still probes and pings.
+EnvironmentFile=-{{ ops_compose_dir }}/grafana-watchdog-secrets.env
+StateDirectory=zcrypto-grafana-watchdog
 ExecStart=/usr/local/sbin/zcrypto-grafana-watchdog

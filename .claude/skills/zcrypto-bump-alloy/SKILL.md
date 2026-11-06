@@ -27,12 +27,12 @@ A `config.alloy` edit outside a bump ships by the same converge, the host's `--t
 
 ## The hosts — three naming schemes, one map
 
-| host | ssh alias | ansible `--limit` | Cloud `host=` label | Alloy, and the operand its role takes |
+| host | ssh alias | ansible `--limit` | `host=` label | Alloy, and the operand its role takes |
 |---|---|---|---|---|
 | ops node | `hp` | `zcrypto-ops` | `ops` | container, `ops_alloy_digest` |
-| observability node | `mon` | `zcrypto-mon` | `zcrypto-mon`, on the node's own stack | apt, none |
+| observability node | `mon` | `zcrypto-mon` | `zcrypto-mon` | apt, none |
 | bridgehead | `access` | `zaccess` | `zaccess` | apt, none |
-| dead-man node | `hc` | `zcrypto-hc` | `zcrypto-hc`, on the observability node's stack | apt, none |
+| dead-man node | `hc` | `zcrypto-hc` | `zcrypto-hc` | apt, none |
 | NAS | `nas` | `nas` | `nas` | container, none: the pin is `nas_alloy_image` |
 | cache node 1 | `db1` | `zcrypto-valkey1` | `zcrypto-valkey1` | container, `cache_alloy_digest` |
 | cache node 2 | `db2` | `zcrypto-valkey2` | `zcrypto-valkey2` | container, `cache_alloy_digest` |
@@ -40,7 +40,7 @@ A `config.alloy` edit outside a bump ships by the same converge, the host's `--t
 | capture secondary | `red` | `zcrypto-red` | `zcrypto-red` | container, `capture_alloy_digest` |
 | capture primary | `zcrypto` | `zcrypto` | `zcrypto` | container, `capture_alloy_digest` |
 
-`up{host="hp"}` returns silence, not an error — query the label column. Grafana Cloud holds no `host="zcrypto-mon"` or `host="zcrypto-hc"` series: the two nodes' are read with `uv run python infra/scripts/grafana-query.py --stack mon`.
+`up{host="hp"}` returns silence, not an error — query the label column.
 
 ## Step 0 — The gate: the target, the dry-starts, the baseline
 
@@ -169,7 +169,7 @@ ssh hc 'sudo systemctl restart alloy'       # the dead-man node
 
 ### The wave's close
 
-The wave closes when the last `observed` host's `alloy` row in `fleet-pins.md` reads the fleet's version, re-trued from its converge (*Closeout*): `infra/scripts/count-list.sh hosts-off-the-fleets-alloy-version` reads `0`. At the close the observability node reads one version by value, `uv run python infra/scripts/grafana-query.py --stack mon 'count by (host, version) (alloy_build_info{job="integrations/self"})'`, each host that ships to it on the fleet's `alloy_version`; and the wave's venue-facing rows are read against Kraken's windows, `uv run python infra/scripts/deploy-log-audit.py maintenance --venue-facing --since <the instant kept before the first converge>`, owed `0` over the wave's rows.
+The wave closes when the last `observed` host's `alloy` row in `fleet-pins.md` reads the fleet's version, re-trued from its converge (*Closeout*): `infra/scripts/count-list.sh hosts-off-the-fleets-alloy-version` reads `0`. At the close the observability node reads one version by value, `uv run python infra/scripts/grafana-query.py 'count by (host, version) (alloy_build_info{job="integrations/self"})'`, each host that ships to it on the fleet's `alloy_version`; and the wave's venue-facing rows are read against Kraken's windows, `uv run python infra/scripts/deploy-log-audit.py maintenance --venue-facing --since <the instant kept before the first converge>`, owed `0` over the wave's rows.
 
 ## Step 3 — Per-host verification
 
@@ -190,35 +190,36 @@ ssh <mon|access|hc> 'sudo readlink "/proc/$(systemctl show -p MainPID --value al
 # /usr/bin/alloy with no " (deleted)", rc=0 — under sudo, since the deb's unit runs Alloy as the alloy user
 ```
 
-Shipping health — **read on the host** (`127.0.0.1:12345`; Grafana Cloud admits none of these counters):
+Shipping health — **read on the node**, from the workstation, `<label>` from the table above and `<hostname>` the machine's own:
 
 ```bash
-curl -s http://127.0.0.1:12345/metrics | grep -E \
-  '^prometheus_remote_storage_samples_(failed_total|pending|total)|^loki_write_(sent|dropped)_entries_total'
-# Per destination the host ships to: the sample counters by `remote_name` (`mon` is the observability
-# node's endpoint), the entry counters by `host`, the destination's host and port. On EACH destination:
-# failed_total 0, pending 0, samples_total CLIMBING on a second read; sent_entries >= 1, dropped 0
-# Leave >60 s between reads and >60 s after the recreate: the scrape interval is 60 s, so a fresh
-# container legitimately reports samples_total=0 until its first scrape lands. `pending` briefly
-# non-zero is in-flight, not failure — only `failed_total` matters. The bridgehead ships no logs,
-# so it prints no loki_write line.
+uv run python infra/scripts/grafana-query.py 'sum by (host, url) (prometheus_remote_storage_samples_failed_total{host="<label>", job="integrations/self"})' 'sum by (host, url) (prometheus_remote_storage_samples_pending{host="<label>", job="integrations/self"})' 'sum by (host, url) (prometheus_remote_storage_samples_total{host="<label>", job="integrations/self"})'
+uv run python infra/scripts/grafana-query.py 'sum by (instance, host) (loki_write_sent_entries_total{instance="<hostname>", job="integrations/self"})' 'sum by (instance, host) (loki_write_dropped_entries_total{instance="<hostname>", job="integrations/self"})'
+# On the sample counters `host` is the shipper and `url` the destination; on the entry counters `instance` is the
+# shipper and `host` the destination. failed_total 0, pending 0, samples_total CLIMBING on a second read;
+# sent_entries >= 1, dropped 0. Leave >60 s between reads and >60 s after the recreate: the scrape interval is 60 s,
+# so a fresh container legitimately reports samples_total=0 until its first scrape lands. `pending` briefly
+# non-zero is in-flight, not failure — only `failed_total` matters. `(no series)` on the first line is a FAIL: the
+# counters reach the node by the path they measure, so read `sudo docker logs grafana-alloy --since 15m` on the host,
+# `sudo journalctl -u alloy --since -15min --no-pager` on an apt host. The bridgehead ships no logs, so it has no
+# loki_write series.
 ```
 
-In Cloud, per host (the positive traces the alert stack itself keys on); the observability node's and the dead-man node's on the observability node, `--stack mon`:
+On the observability node, per host (the positive traces the alert stack itself keys on):
 
 - `uv run python infra/scripts/grafana-query.py 'count(up{host="<label>"})'` reads 1 or more and the host's `Fleet · Alloy dark` rule is back to **Normal** — the canonical proof; `(no series)` is a FAIL, not a zero.
-- A **fresh** Loki line for the host — proves the whole journald → `loki.source.journal` → parse → write path end-to-end (verify end-to-end, not at endpoints: a metric on `:12345` plus a keep-list admitting it does not mean the path between them exists). **Do not filter on `container="alloy"` in a short window**: Alloy logs at startup and then goes quiet, so `{host=…, container="alloy"}` over 15 m reads empty on a healthy host bumped 30 min ago. Query `{host="<label>", level=~".+"}`, whichever container, for the liveness proof, and widen to 60 m for Alloy's own startup lines. The bridgehead ships no logs and has no such line.
-- Alloy's own `job="integrations/self"` families present for the host — `tests/test_infra_alloy_series.py` is the authoritative per-host series checklist: read `NAS_REQUIRED`, `OPS_REQUIRED`, `CAPTURE_REQUIRED`, `ACCESS_REQUIRED` and `CACHE_REQUIRED` there rather than a list copied here.
+- A **fresh** Loki line for the host — proves the whole journald → `loki.source.journal` → parse → write path end-to-end (verify end-to-end, not at endpoints: a metric on `:12345` does not mean the path after it exists). **Do not filter on `container="alloy"` in a short window**: Alloy logs at startup and then goes quiet, so `{host=…, container="alloy"}` over 15 m reads empty on a healthy host bumped 30 min ago. Query `{host="<label>", level=~".+"}`, whichever container, for the liveness proof, and widen to 60 m for Alloy's own startup lines. The bridgehead ships no logs and has no such line.
+- The host's families present: `uv run python infra/scripts/grafana-query.py 'count by (job) ({host="<label>"})'` lists each job the host's `config.alloy` scrapes, `integrations/self` among them.
 
 Host-specific additions:
 
 - **ops**: `zcrypto-hcio-watchdog` back to Normal (it races you); `up{job="liquidations_app"} == 1`; the leg's two liquidations reads the same.
 - **the observability node**: `zcrypto-alloy-dark-mon` Normal on the node's rules endpoint; the leg's two `systemctl` reads the same.
-- **the bridgehead**: `count(up{host="zaccess"})` read on Cloud and on the node; the leg's two `systemctl` reads the same.
+- **the bridgehead**: `count(up{host="zaccess"})` read on the node; the leg's two `systemctl` reads the same.
 - **the dead-man node**: `zcrypto-alloy-dark-hc` Normal on the observability node's rules endpoint; the leg's two reads the same.
 - **NAS**: the next `archive-pull` cycle logs `pull complete … failed=0` for each verified channel, and the leg's two `zcrypto-archive-pull` reads are the same — the narrow run left it running; `zcrypto_gate_*` series still arriving (the NAS unix exporter's textfile collector scrapes `/textfile/gate.prom`).
 - **capture hosts**: `up{job="capture_app"} == 1`; the leg's two capture reads the same and its newest parquet still advancing (`sudo find /var/lib/zcrypto-capture -name '*.parquet' -mmin -3 | wc -l` > 0) — proving the bump did not touch the daemon. On the primary `up{job="engine_app"} == 1` and the engine's read the same; on the secondary `up{job="engine_app"}` reads 0 by design.
-- **cache nodes**: the node's series list is `CACHE_REQUIRED`; `redis_up{host="<host>"}` reads 1 on two series, `job="valkey"` and `job="sentinel"`; the leg's two `docker inspect` reads print the same lines, proving the bump did not touch Valkey or Sentinel.
+- **cache nodes**: `redis_up{host="<host>"}` reads 1 on two series, `job="valkey"` and `job="sentinel"`; the leg's two `docker inspect` reads print the same lines, proving the bump did not touch Valkey or Sentinel.
 
 **Expect `Fleet · a daemon restarted` (`zcrypto-fleet-daemon-restarted`, `job="integrations/self"`) once per host on ops, the NAS and the capture pair, ~3–8 min after each recreate** — Alloy's own `process_start_time_seconds` moved, and that rule is the bump's own record in the channel; it self-clears within 15 min and needs nothing. A firing that outlives the 15 minutes, or clears and returns with no bump, is a crash loop — under a restart loop `changes(process_start_time_seconds[15m])` never empties, so the instance stays firing rather than firing a second time. The rule selects no cache node, bridgehead, observability node or dead-man node, so their recreate or restart pages nothing.
 

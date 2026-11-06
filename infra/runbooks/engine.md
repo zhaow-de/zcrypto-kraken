@@ -47,7 +47,7 @@ It does not fire when the engine goes dark: `noDataState` is `OK`, because engin
 
 ### Retire when
 
-`zcrypto-engine-sleeve-count-changed` is absent from `infra/grafana/alerts.yaml`, or `zcrypto_engine_active_sleeves` is no longer in the capture role's keep-list (`infra/ansible/roles/capture/files/config.alloy`). Either way the rule can no longer fire and this section describes nothing.
+`zcrypto-engine-sleeve-count-changed` is absent from `infra/grafana/alerts.yaml`: the rule can no longer fire and this section describes nothing.
 
 ______________________________________________________________________
 
@@ -127,7 +127,7 @@ This is the heartbeat for the execution envelope's boundary path, not a reading 
 
 ### Retire when
 
-`zcrypto-engine-exec-not-evaluated` is absent from `infra/grafana/alerts.yaml`, or `zcrypto_exec_last_evaluation_timestamp_seconds` is no longer in the capture role's keep-list (`infra/ansible/roles/capture/files/config.alloy`) — either way the rule can no longer fire and this section describes nothing.
+`zcrypto-engine-exec-not-evaluated` is absent from `infra/grafana/alerts.yaml`: the rule can no longer fire and this section describes nothing.
 
 ______________________________________________________________________
 
@@ -154,7 +154,7 @@ A Kraken maintenance is a word Kraken answered — `maintenance`, `cancel_only`,
 
 ### Retire when
 
-`zcrypto-engine-exec-venue-diverged` is absent from `infra/grafana/alerts.yaml`, or `zcrypto_exec_venue_read_failed` is no longer in the capture role's keep-list (`infra/ansible/roles/capture/files/config.alloy`) — either way the rule can no longer fire and this section describes nothing.
+`zcrypto-engine-exec-venue-diverged` is absent from `infra/grafana/alerts.yaml`: the rule can no longer fire and this section describes nothing.
 
 ______________________________________________________________________
 
@@ -369,7 +369,7 @@ Three shapes produce it, and the order you rule them out matters:
 
 ### Retire when
 
-`zcrypto-engine-cycle-stale` is absent from `infra/grafana/alerts.yaml`, or `zcrypto_engine_cycle_completed_at_seconds` is no longer in the capture role's keep-list (`infra/ansible/roles/capture/files/config.alloy`).
+`zcrypto-engine-cycle-stale` is absent from `infra/grafana/alerts.yaml`.
 
 ______________________________________________________________________
 
@@ -403,11 +403,11 @@ The two ways `$B` reaches 0 arrive on different clocks: a dead container at the 
 
 ### What to do
 
-1. **Rule out the telemetry plane FIRST — before touching the position.** When the page's links are under `https://zcrypto-mon.zhaow.me/`, it is the observability node's copy: read `zcrypto-mon-ingest-dark` there first, from the workstation:
+1. **Rule out the telemetry plane FIRST — before touching the position.** Read `zcrypto-mon-ingest-dark` first, from the workstation:
    ```
-   uv run python infra/scripts/grafana-query.py --stack mon 'count(up{host!="zcrypto-mon"}) or on() vector(0)'
+   uv run python infra/scripts/grafana-query.py 'count(up{host!="zcrypto-mon"}) or on() vector(0)'
    ```
-   A reading of 0, or a read that fails to connect — a refused connection, a TLS error or a timeout, since the read travels the same edge — is the node's edge or certificate, with every host absent at once ([`mon.md#zcrypto-mon-ingest-dark`](mon.md#zcrypto-mon-ingest-dark) step 1). The page's two halves are then read on Grafana Cloud's copy, `grafana-query.py` with no `--stack`, before the route split that follows. From the workstation:
+   A reading of 0, or a read that fails to connect — a refused connection, a TLS error or a timeout, since the read travels the same edge — is the node's edge or certificate, with every host absent at once ([`mon.md#zcrypto-mon-ingest-dark`](mon.md#zcrypto-mon-ingest-dark) step 1). There is then no remote store to read: the page's two halves are the hand read of [`observability.md#grafana-dark`](observability.md#grafana-dark) step 3. With the edge clear, from the workstation:
    ```
    uv run python infra/scripts/grafana-query.py 'count(up{host="zcrypto"}) or on() vector(0)' 'up{job="engine_app",host="zcrypto"}' 'max(abs(last_over_time(zcrypto_exec_position{host="zcrypto"}[24h])))'
    ```
@@ -425,7 +425,7 @@ The two ways `$B` reaches 0 arrive on different clocks: a dead container at the 
 
 ### Retire when
 
-`zcrypto-engine-dark-with-exposure` is absent from `infra/grafana/alerts.yaml`, or `zcrypto_exec_position` is no longer in the capture role's keep-list (`infra/ansible/roles/capture/files/config.alloy`), or `engine_app` stops being a static scrape target there: the value read in `$B` exists because nothing removes that target when the container stops.
+`zcrypto-engine-dark-with-exposure` is absent from `infra/grafana/alerts.yaml`, or `engine_app` stops being a static scrape target in `infra/ansible/roles/capture/files/config.alloy`: the value read in `$B` exists because nothing removes that target when the container stops.
 
 ______________________________________________________________________
 
@@ -540,11 +540,9 @@ A **critical** Grafana alert (`Engine · log pipeline dead`) on the `metrics` re
 - **The log plane is dead while the engine is fine.** Then `Engine · ERROR logs` is blind, the only rule paging on ERROR lines from the process holding the live trade key sees nothing, until this is fixed (no count command: it is the one `infra/grafana/alerts.yaml` rule selecting the engine's `ERROR|CRITICAL` level).
 - **The engine missed a cycle.** The engine is a **burst emitter**: a burst of lines around each 4-hourly boundary and nothing between, so a missed burst empties the window, and `Engine · cycles have stopped` will already have fired on the same fault.
 
-**A rebuilt node fires it too.** Once the engine's stream is on the node, a rebuild of the node ([`mon.md#mon-dark`](mon.md#mon-dark)), whose Loki starts empty, fires the rule there from the rebuild's push until the next boundary's burst reaches it: read it against `mon-dark`, not as a fault of the engine or its push path.
+**A rebuilt node fires it too.** A rebuild of the node ([`mon.md#mon-dark`](mon.md#mon-dark)), whose Loki starts empty, fires the rule there from the rebuild's push until the next boundary's burst reaches it: read it against `mon-dark`, not as a fault of the engine or its push path.
 
 ### What to do
-
-**A stream already on the node, before step 1.** Read the rule's own query there: `uv run python infra/scripts/grafana-query.py --stack mon --loki 'sum by (host) (count_over_time({host="zcrypto", container="engine", level=~".+"} [6h]))'`. A row above 0 is the engine's stream already moved, and a Grafana Cloud page or `firing` read for it is [`mon.md#mon-stream-handover`](mon.md#mon-stream-handover)'s, whose *What you are seeing* separates a stream an unplanned restart moved early from one whose sitting has run; without this read, step 4 would take Grafana Cloud's capture dead-man, silenced once the primary's capture stream has moved, for the engine alone. `(no series)` or 0, and step 1 below.
 
 1. **Which state? Read the cycle age and the shipper's own gauges together**, from the workstation. **Scope the logship series by `job`**: the capture daemon and the engine both publish them on this host and both carry `host="zcrypto"`, so an unscoped query returns two series and answers about the wrong process:
    ```
@@ -563,8 +561,8 @@ A **critical** Grafana alert (`Engine · log pipeline dead`) on the `metrics` re
    ```
    A non-zero count means the process is logging and the shipper is what failed; the ship handler's own failures are visible locally only (no count command: the ship handler hands its own failures to `logging.Handler.handleError` at `cli/logging/ship.py:118`, whose stderr write is the stdlib's and reaches no shipper). **Print that count before trusting any conclusion drawn from an empty grep.**
 4. **Check whether capture went dark with it.** Both `zcrypto-capture-log-dead-primary` and this rule firing ⇒ the host's push path or the node's edge and Loki, not the engine; the two services read Loki creds from the same rendered file. Engine alone ⇒ the engine container or its env.
-5. **A credential fix is a converge, never a hand edit**: the engine's Loki env comes from the render, and the file is read at container create, so a rotation of the node's `logship` password, `mon_ingest_logship_password`, is rendered by the primary's capture converge and reaches the engine at its recreate, [`mon.md#mon-stream-handover`](mon.md#mon-stream-handover)'s engine form. That is attended, needs `-e converge_primary=true`, and the recreate runs inside the inter-cycle gap only, with no Kraken margin position open beyond those [the restart rule](engine-procedures.md#engine-restart-margin-position)'s test admits (set: deploy-log rows whose `tags` include `engine`, or `cache-link` with a `limit` reaching an `engine_host` member (an empty `limit` reaches every host), since the last refine round closed; count: `infra/scripts/count-list.sh engine-rows-outside-the-gap`; a hand edit or a hand restart is an operator action nothing records, and whether a margin position is open an operator read nothing records).
-6. **All-clear by value**: after the next boundary's burst, the rule's own query returns a count above 0, the threshold being `< 1`: `sum by (host) (count_over_time({host="zcrypto", container="engine", level=~".+"} [6h]))`, read on the node once the stream has moved, `uv run python infra/scripts/grafana-query.py --stack mon --loki` with that query. Confirm the number; an empty result is not a zero.
+5. **A credential fix is a converge, never a hand edit**: the engine's Loki env comes from the render, and the file is read at container create, so a rotation of the node's `logship` password, `mon_ingest_logship_password`, is rendered by the primary's capture converge and reaches the engine at its recreate, [`mon.md#mon-secrets`](mon.md#mon-secrets) step 4's engine form. That is attended, needs `-e converge_primary=true`, and the recreate runs inside the inter-cycle gap only, with no Kraken margin position open beyond those [the restart rule](engine-procedures.md#engine-restart-margin-position)'s test admits (set: deploy-log rows whose `tags` include `engine`, or `cache-link` with a `limit` reaching an `engine_host` member (an empty `limit` reaches every host), since the last refine round closed; count: `infra/scripts/count-list.sh engine-rows-outside-the-gap`; a hand edit or a hand restart is an operator action nothing records, and whether a margin position is open an operator read nothing records).
+6. **All-clear by value**: after the next boundary's burst, the rule's own query returns a count above 0, the threshold being `< 1`: `sum by (host) (count_over_time({host="zcrypto", container="engine", level=~".+"} [6h]))`, read by `uv run python infra/scripts/grafana-query.py --loki 'sum by (host) (count_over_time({host="zcrypto", container="engine", level=~".+"} [6h]))'`. Confirm the number; an empty result is not a zero.
 
 ### Retire when
 

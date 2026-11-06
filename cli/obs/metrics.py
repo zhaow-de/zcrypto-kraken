@@ -14,7 +14,7 @@ logger = get_logger("obs.metrics")
 
 METRICS_PORT_ENV_VAR = "ZCRYPTO_METRICS_PORT"
 
-# `_created` series (one per `Counter`, e.g. `zcrypto_engine_orders_created`) are in no daemon's keep-list, so they scrape as
+# `_created` series (one per `Counter`, e.g. `zcrypto_engine_orders_created`) are read by no panel or rule, so they would scrape as
 # unregistered noise (spec 00069 D2); `_use_created` is process-global and read at render time, so this one call covers all.
 disable_created_metrics()
 

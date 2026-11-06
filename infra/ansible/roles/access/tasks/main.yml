@@ -194,7 +194,7 @@
     owner: root
     group: alloy
     mode: '0640'
-  no_log: true # renders the Grafana Cloud push credentials — keep them out of --diff output
+  no_log: true # renders the node's push credentials — keep them out of --diff output
   notify: restart alloy
   tags: [alloy]
 - name: >-

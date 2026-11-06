@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import http.client
 import importlib.util
+import re
 import subprocess
 import urllib.error
 import urllib.request
@@ -89,11 +90,11 @@ def test_the_vault_context_is_initialized_before_a_scalar_is_read(monkeypatch):
 
         def load_from_file(self, path):
             assert "init" in seen, "the scalar was read before the context was initialized"
-            return {"grafana_sa_token": TOKEN}
+            return {"a_vaulted_token": TOKEN}
 
     monkeypatch.setattr(dl, "DataLoader", FakeLoader)
 
-    assert ga.vault_var("grafana_sa_token") == TOKEN
+    assert ga.vault_var("a_vaulted_token") == TOKEN
     assert seen.get("init") is not None and seen.get("secrets")
 
 
@@ -117,11 +118,11 @@ def test_reading_a_second_credential_does_not_crash_on_the_once_only_initialize(
     class FakeLoader:
         def set_vault_secrets(self, secrets): ...
         def load_from_file(self, path):
-            return {"grafana_sa_token": TOKEN, "slack_webhook_url": "https://hooks.example/x"}
+            return {"a_vaulted_token": TOKEN, "slack_webhook_url": "https://hooks.example/x"}
 
     monkeypatch.setattr(dl, "DataLoader", FakeLoader)
 
-    assert ga.vault_var("grafana_sa_token") == TOKEN
+    assert ga.vault_var("a_vaulted_token") == TOKEN
     assert ga.vault_var("slack_webhook_url").startswith("https://")  # would RuntimeError unguarded
     assert len(calls) == 1
 
@@ -145,16 +146,29 @@ def test_vault_var_reads_the_file_it_is_given(monkeypatch):
     assert seen["path"].endswith("group_vars/engine_host/vault.yml")
 
 
-# --- the stack table: one tree feeds two Grafanas until the Grafana Cloud leg retires --------------
-MON_DEFAULTS = Path(__file__).resolve().parents[1] / "infra/ansible/roles/mon/defaults/main.yml"
+# --- the stack table: the observability node, and what follows it --------------------------------
+REPO = Path(__file__).resolve().parents[1]
+MON_DEFAULTS = REPO / "infra/ansible/roles/mon/defaults/main.yml"
+OPS_DEFAULTS = REPO / "infra/ansible/roles/ops/defaults/main.yml"
+PUSH = REPO / "infra/scripts/grafana-push.sh"
 
 
-def test_the_table_holds_the_two_stacks_and_reads_cloud_when_none_is_named():
-    assert set(ga.STACKS) == {"cloud", "mon"}
-    assert ga.DEFAULT_STACK == "cloud", "the default moves at the cutover, with the push script's own"
-    assert ga.stack() is ga.STACKS["cloud"] and ga.GRAFANA_URL == ga.STACKS["cloud"].url
-    cloud = ga.STACKS["cloud"]
-    assert (cloud.url, cloud.token_var, cloud.vault_file) == ("https://zcrypto2026.grafana.net", "grafana_sa_token", ga.VAULT_FILE)
+def test_the_table_holds_the_node_alone_and_reads_it_when_none_is_named():
+    assert set(ga.STACKS) == {"mon"}
+    assert ga.DEFAULT_STACK == "mon"
+    assert ga.stack() is ga.STACKS["mon"] and ga.GRAFANA_URL == ga.STACKS["mon"].url
+
+
+def test_the_push_scripts_default_url_is_the_default_stacks():
+    (default,) = re.findall(r'^export GRAFANA_URL="\$\{GRAFANA_URL:-([^}]+)\}"$', PUSH.read_text(), re.M)
+    assert default == ga.STACKS[ga.DEFAULT_STACK].url
+
+
+def test_the_ops_watchdog_probes_the_stack_that_pages():
+    assert (
+        yaml.safe_load(OPS_DEFAULTS.read_text())["ops_grafana_watchdog_probe_url"]
+        == f"{ga.STACKS[ga.DEFAULT_STACK].url}/api/health"
+    )
 
 
 def test_the_mon_stack_is_the_role_s_public_name_and_the_cache_the_role_writes():
@@ -170,7 +184,7 @@ def test_the_mon_stack_is_the_role_s_public_name_and_the_cache_the_role_writes()
 def test_an_unknown_stack_is_refused_by_name():
     with pytest.raises(SystemExit) as refused:
         ga.stack("grafana-cloud")
-    assert str(refused.value) == "unknown stack 'grafana-cloud': one of cloud, mon"
+    assert str(refused.value) == "unknown stack 'grafana-cloud': one of mon"
 
 
 def test_a_stack_s_token_is_read_from_its_own_file(monkeypatch):
@@ -193,33 +207,28 @@ def test_token_reads_the_named_stacks_token_var_from_its_own_file(monkeypatch):
     seen = []
     monkeypatch.setattr(ga, "vault_var", lambda name, vault_file: seen.append((name, vault_file)) or TOKEN)
     assert ga.token("mon") == TOKEN and ga.token() == TOKEN
-    assert seen == [(ga.STACKS["mon"].token_var, ga.STACKS["mon"].vault_file), ("grafana_sa_token", ga.VAULT_FILE)]
+    assert seen == [(ga.STACKS["mon"].token_var, ga.STACKS["mon"].vault_file)] * 2
 
 
-@pytest.mark.parametrize(
-    ("name", "remedy"),
-    [
-        ("mon", "the node's converge writes it (infra/runbooks/mon.md, mon-token-rotate)"),
-        ("cloud", "it is tracked: git checkout -- infra/ansible/group_vars/all/vault.yml"),
-    ],
-)
-def test_token_over_a_missing_vault_file_is_one_stderr_line_with_the_stacks_own_remedy_then_exit_1(
-    monkeypatch, capsys, tmp_path, name, remedy
-):
+def test_token_over_a_missing_vault_file_is_one_stderr_line_with_the_stacks_own_remedy_then_exit_1(monkeypatch, capsys, tmp_path):
     import ansible.parsing.vault as v
 
     monkeypatch.setattr(ga, "vault_password", lambda: b"pw")
     monkeypatch.setattr(ga, "_CONTEXT_READY", False)
     monkeypatch.setattr(v.VaultSecretsContext, "initialize", classmethod(lambda cls, ctx: None))
-    missing = tmp_path / "not-there" / Path(ga.STACKS[name].vault_file).name
-    monkeypatch.setitem(ga.STACKS, name, ga.STACKS[name]._replace(vault_file=str(missing)))
+    missing = tmp_path / "not-there" / Path(ga.STACKS["mon"].vault_file).name
+    monkeypatch.setitem(ga.STACKS, "mon", ga.STACKS["mon"]._replace(vault_file=str(missing)))
 
     with pytest.raises(SystemExit) as refused:
-        ga.token(name)
+        ga.token()
     out = capsys.readouterr()
 
     assert refused.value.code == 1
-    assert out.out == "" and out.err == f"no token for stack {name!r}: {missing} is missing; {remedy}\n"
+    assert out.out == ""
+    assert (
+        out.err
+        == f"no token for stack 'mon': {missing} is missing; the node's converge writes it (infra/runbooks/mon.md, mon-token-rotate)\n"
+    )
 
 
 def test_token_keeps_the_traceback_of_a_vault_failure_that_is_not_a_missing_file(monkeypatch):

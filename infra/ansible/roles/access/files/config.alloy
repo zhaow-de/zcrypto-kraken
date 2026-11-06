@@ -34,7 +34,7 @@ prometheus.exporter.unix "host" {
   }
 }
 
-// Alloy's own counters, among them what each endpoint below failed to deliver, which the node's
+// Alloy's own counters, among them what the endpoint below failed to deliver, which the node's
 // shipper-loss rule reads.
 prometheus.exporter.self "alloy" {}
 
@@ -51,35 +51,6 @@ prometheus.remote_write "grafana" {
   // every other host's external_labels.
   external_labels = {
     host = "zaccess",
-  }
-
-  endpoint {
-    url = sys.env("GRAFANA_PROM_URL")
-
-    basic_auth {
-      username = sys.env("GRAFANA_PROM_USERNAME")
-      password = sys.env("GRAFANA_PROM_PASSWORD")
-    }
-
-    // Series minimization (00043), the same two-stage shape as every other host: drop Alloy's own
-    // `go_*`/`alloy_*` self-metrics, then keep-only the host + textfile series this stack actually
-    // wants; the keep alone already excludes the self-metrics, so the drop is parity, not load.
-    // T0051: a `keep` action drops everything it does not list, so a series missing here does not
-    // merely go undashboarded -- it does not exist. `node_textfile_mtime_seconds` and
-    // `node_textfile_scrape_error` are the did-the-timer-RUN discriminators (the ops
-    // green-when-blind lesson, 2026-07-28): without them a dead probe timer serves its last gauges
-    // forever and the tunnel-stale/cert alerts can never fire.
-    write_relabel_config {
-      source_labels = ["__name__"]
-      regex         = "go_.*|alloy_.*"
-      action        = "drop"
-    }
-
-    write_relabel_config {
-      source_labels = ["__name__"]
-      regex         = "up|node_cpu_seconds_total|node_load1|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_scrape_collector_success|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_textfile_mtime_seconds|node_textfile_scrape_error|zaccess_wireguard_handshake_age_seconds|zaccess_tls_not_after_seconds"
-      action        = "keep"
-    }
   }
 
   endpoint {

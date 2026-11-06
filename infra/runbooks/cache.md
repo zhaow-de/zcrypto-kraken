@@ -129,7 +129,7 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-A **critical** Grafana alert, one of three — `Fleet · Alloy dark — Cache 1` / `— Cache 2` / `— Cache 3`. The named node's `up` series has been absent from Grafana Cloud for over 10 minutes: `count(up{host="zcrypto-valkey<N>"}) or on() vector(0)` fell below 1.
+A **critical** Grafana alert, one of three — `Fleet · Alloy dark — Cache 1` / `— Cache 2` / `— Cache 3`. The named node's `up` series has been absent on the observability node for over 10 minutes: `count(up{host="zcrypto-valkey<N>"}) or on() vector(0)` fell below 1.
 
 ### What it means
 
@@ -149,7 +149,7 @@ A **critical** Grafana alert, one of three — `Fleet · Alloy dark — Cache 1`
 
 ### Retire when
 
-All three uids — `zcrypto-alloy-dark-cache-1`, `-2`, `-3` — are absent from `infra/grafana/alerts.yaml`, or `up` leaves the keep regex in `infra/ansible/roles/cache/files/config.alloy`.
+All three uids — `zcrypto-alloy-dark-cache-1`, `-2`, `-3` — are absent from `infra/grafana/alerts.yaml`.
 
 ______________________________________________________________________
 
@@ -300,7 +300,7 @@ A **warning** Grafana alert, `Cache · mesh peer handshake stale`: a mesh member
 
 ### Retire when
 
-`zcrypto-cache-wg-handshake-stale` is absent from `infra/grafana/alerts.yaml`, or `zcache_wireguard_handshake_age_seconds` leaves the keep regex in `infra/ansible/roles/cache/files/config.alloy`.
+`zcrypto-cache-wg-handshake-stale` is absent from `infra/grafana/alerts.yaml`.
 
 ______________________________________________________________________
 
@@ -326,7 +326,7 @@ Two causes read the same. The daemon's process is down inside `zcrypto-cache.ser
 
 ### Retire when
 
-`zcrypto-cache-daemon-down` is absent from `infra/grafana/alerts.yaml`, or `redis_up` leaves the keep regex in `infra/ansible/roles/cache/files/config.alloy`.
+`zcrypto-cache-daemon-down` is absent from `infra/grafana/alerts.yaml`.
 
 ______________________________________________________________________
 
@@ -352,7 +352,7 @@ Valkey's resident memory runs above its used memory by fragmentation, or by the 
 
 ### Retire when
 
-`zcrypto-cache-valkey-rss-headroom` is absent from `infra/grafana/alerts.yaml`, or `redis_memory_used_rss_bytes` leaves the keep regex in `infra/ansible/roles/cache/files/config.alloy`.
+`zcrypto-cache-valkey-rss-headroom` is absent from `infra/grafana/alerts.yaml`.
 
 ______________________________________________________________________
 

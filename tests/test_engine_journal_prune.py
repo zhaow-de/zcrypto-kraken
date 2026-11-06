@@ -199,23 +199,6 @@ def test_the_published_file_is_readable_by_the_non_root_collector(tmp_path):
     assert mode == 0o644, f"published {oct(mode)}; a non-root collector cannot read it"
 
 
-def test_every_published_series_is_admitted_by_the_keep_regex(tmp_path):
-    """The allow-list has no `node_.*` wildcard, so a published-but-unadmitted series is dropped at
-    the remote-write boundary and looks exactly like a producer that never ran (spec 00071 D2).
-    Derived from what the script ACTUALLY emits rather than from a hand-kept list."""
-    _day(tmp_path, 40)
-    for n in range(1, 15):
-        _day(tmp_path, n)
-    prom = tmp_path.parent / "admitted.prom"
-    assert _prune(tmp_path, "14", "--textfile", str(prom)).returncode == 0
-    emitted = {line.split()[0] for line in prom.read_text().splitlines() if line and not line.startswith("#")}
-
-    alloy = (ROLE.parent / "capture/files/config.alloy").read_text()
-    regex = next(line for line in alloy.splitlines() if line.strip().startswith("regex") and "node_load1" in line).split('"')[1]
-    admitted = set(regex.split("|"))
-    assert not (emitted - admitted), f"published but dropped at remote_write: {sorted(emitted - admitted)}"
-
-
 def test_writes_a_textfile_metric_when_asked(tmp_path):
     _day(tmp_path, 40)
     for n in range(1, 15):

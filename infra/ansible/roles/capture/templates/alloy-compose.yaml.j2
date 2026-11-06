@@ -39,7 +39,7 @@ services:
       # Go's GC otherwise overshoots a small `memory` cap under default behavior (00043).
       GOMEMLIMIT: 460MiB
     env_file:
-      # Grafana Cloud's and the node's remote_write + Loki creds (alloy-secrets.env.j2) -- 0600,
+      # The node's remote_write + Loki creds (alloy-secrets.env.j2) -- 0600,
       # never committed, rendered by this role, owned by the `zcrypto-alloy` user (Alloy's container
       # `user:` above) so it can read a 0600 file it does not own by default.
       - ./alloy-secrets.env
@@ -83,7 +83,7 @@ services:
           # ceiling actually holds; 0.5 is ample for shipping 10 pairs' logs + host metrics and leaves
           # the daemon its headroom on both hosts.
           cpus: "0.5"
-    # journald, not json-file (D6): Alloy's own logs now reach Grafana Cloud through the same
+    # journald, not json-file (D6): Alloy's own logs now reach the node through the same
     # journal + `loki.source.journal` pipeline (config.alloy) that already carries the prune unit's
     # lines -- so its stdout has no json.log to rotate any more, and rotation is the host journal's
     # job instead.

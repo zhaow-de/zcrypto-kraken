@@ -44,8 +44,8 @@ services:
       # Go's GC otherwise overshoots a small `memory` cap under default behavior (00043).
       GOMEMLIMIT: "{{ ops_alloy_gomemlimit }}"
     env_file:
-      # Grafana Cloud remote_write + Loki creds (GRAFANA_PROM_URL/USERNAME/PASSWORD,
-      # GRAFANA_LOKI_URL/USERNAME/PASSWORD) -- 0600, never committed, rendered by this role
+      # The node's remote_write + Loki creds (MON_PROM_URL/USERNAME/PASSWORD,
+      # MON_LOKI_URL/USERNAME/PASSWORD) -- 0600, never committed, rendered by this role
       # (tasks/main.yml, from group_vars/observed/vault.yml) with no_log: true + diff: false so a
       # converge never prints the values, owned by the `zcrypto-alloy` user (Alloy's container
       # `user:` above) so it can read a 0600 file it does not own by default -- see
@@ -99,7 +99,7 @@ services:
           # and Alloy must never contend with it for CPU. 2.0 of the box's 24
           # threads is ample for a metrics/logs shipper.
           cpus: "2.0"
-    # journald, not json-file (00068 D6): Alloy's own logs now reach Grafana Cloud through the
+    # journald, not json-file (00068 D6): Alloy's own logs now reach the node through the
     # same journal + `loki.source.journal` pipeline (config.alloy) that already carries the
     # zcrypto-*.service units' lines -- so its stdout has no json.log to rotate any more, and
     # rotation is the host journal's job instead.

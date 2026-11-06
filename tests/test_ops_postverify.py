@@ -149,14 +149,11 @@ def test_header_containing_comparison_cannot_mint_a_value(tmp_path):
 
 
 def test_counter_names_match_the_exporter():
-    """The two increase() queries must name series the exporter publishes and the Alloy keep-list
-    admits by regex -- a name outside it never reaches Cloud and the check reads (no series)."""
+    """The two increase() queries must name series the exporter publishes -- another name exists
+    nowhere and the check reads (no series)."""
     script = SCRIPT.read_text()
     repo = SCRIPT.parent.parent.parent
     exporter = (repo / "cli" / "archive" / "command.py").read_text()
-    alloy = (repo / "infra" / "ansible" / "roles" / "ops" / "files" / "config.alloy").read_text()
-    alternatives = [alt for k in re.findall(r'regex\s*=\s*"([^"]*)"', alloy) for alt in k.split("|")]
     for name in ("zcrypto_reconcile_residual_gap_seconds_total", "zcrypto_reconcile_healable_gap_seconds_total"):
         assert name in re.findall(r"increase\((\w+)\[", script), f"{name} is not a counter this script queries"
-        assert any(re.fullmatch(alt, name) for alt in alternatives), f"{name} not admitted by any keep regex"
         assert name.removeprefix("zcrypto_reconcile_") in exporter  # command.py assembles prefix + leg

@@ -30,12 +30,13 @@ RUNTIME_FACTS = {
     # the render has no other source for them.
     "engine_uid": "998",
     "engine_gid": "998",
+    # Its default reads `hc_hostname` from group_vars/observed/, which this render does not load.
+    "ops_grafana_watchdog_hc_probe_url": "https://zcrypto-hc.zhaow.me/api/v3/status/",
 }
 
 # Every roles/*/templates/*.sh.j2 must appear here, so a new one cannot land unguarded.
 REGISTERED = {
     "archive-pull.sh.j2",
-    "grafana-keepalive.sh.j2",
     "grafana-watchdog.sh.j2",
     "panel-materialize.sh.j2",
     "panel-regenerate.sh.j2",

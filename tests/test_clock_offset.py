@@ -259,35 +259,6 @@ def test_the_unit_writes_into_the_directory_alloy_actually_scrapes():
     assert directory == f"/host/root{host_dir}", f"unit writes {host_dir}, collector reads {directory} — a .prom nobody scrapes"
 
 
-def _keep_list(alloy: str) -> list[str]:
-    """The names the remote_write keep rule admits; the drop rule carries a `regex` line too."""
-    blocks, cur = [], None
-    for line in alloy.splitlines():
-        s = line.strip()
-        if cur is None:
-            if s.startswith("write_relabel_config"):
-                cur = {}
-        elif s == "}":
-            blocks.append(cur)
-            cur = None
-        elif m := re.fullmatch(r'(action|regex)\s*=\s*"((?:[^"\\]|\\.)*)"', s):
-            cur[m.group(1)] = m.group(2)
-    keeps = [b for b in blocks if b.get("action") == "keep"]
-    assert len(keeps) == 1 and "regex" in keeps[0], f"expected one keep write_relabel_config with a regex, found {keeps}"
-    return keeps[0]["regex"].split("|")
-
-
-def test_every_series_the_script_emits_is_admitted_by_the_capture_keep_regex(tmp_path):
-    """The T0051 trap: the keep is an allow-list, so a name it does not carry is dropped at
-    remote_write and the alert watching it reads no data forever — rendering identically to healthy.
-    The names come from an actual run, not a literal, so a rename in the script is caught here."""
-    prom = tmp_path / "clock-offset.prom"
-    assert _run(_chronyc(tmp_path, TRACKING.format(magnitude="0.1", direction="fast", leap="Normal")), prom).returncode == 0
-    keep = _keep_list((ROLE / "files/config.alloy").read_text())
-    missing = [name for name in _series(prom) if name not in keep]
-    assert not missing, f"{missing} are written to the textfile dir but dropped at remote_write"
-
-
 def test_protectsystem_strict_still_permits_the_two_writes_the_probe_needs():
     """`chronyc` binds its own reply socket beside chronyd's in /run/chrony, so a read-only /run
     breaks the READ as well as the publish — and the exporter would then report an unknown offset
@@ -416,16 +387,3 @@ def test_the_cache_unit_writes_into_the_directory_the_cache_alloy_scrapes():
     alloy = (REPO / "infra/ansible/roles/cache/files/config.alloy").read_text()
     directory = next(line for line in alloy.splitlines() if line.strip().startswith("directory")).split('"')[1]
     assert directory == f"/host/root{host_dir}", f"unit writes {host_dir}, collector reads {directory}"
-
-
-@pytest.mark.parametrize(
-    "config",
-    [REPO / "infra/ansible/roles/ops/files/config.alloy", REPO / "infra/ansible/roles/cache/files/config.alloy"],
-    ids=["ops", "cache"],
-)
-def test_every_series_the_script_emits_is_admitted_by_the_copying_hosts_keep_regex(config, tmp_path):
-    prom = tmp_path / "clock-offset.prom"
-    assert _run(_chronyc(tmp_path, TRACKING.format(magnitude="0.1", direction="fast", leap="Normal")), prom).returncode == 0
-    keep = _keep_list(config.read_text())
-    missing = [name for name in _series(prom) if name not in keep]
-    assert not missing, f"{config}: {missing} are written to the textfile dir but dropped at remote_write"

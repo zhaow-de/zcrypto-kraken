@@ -14,6 +14,7 @@ import yaml
 
 from cli.logging.formatters import PlainTextFormatter
 from tests.alloy_text import live_alloy_text
+from tests.test_dashboards_cover_metrics import panel_families, published_app_families
 from tests.test_infra_alloy_levels import DROP, FIXTURES
 from tests.test_infra_alloy_stages import HC_ALLOY, HC_DISPATCH_FAILURE, _assigned, _blocks, _expressions, _parse_body, hc_model
 
@@ -302,19 +303,31 @@ def test_notification_settings_survive_the_payload_the_push_sends():
 
 
 # --- A shipped metric that nothing watches ------------------------------------------------------
-# `test_infra_alloy_series.py` proves a metric REACHES Grafana; this proves something looks at it
-# (T0008, T0100). The candidate set is DERIVED, never hand-listed, from the two sources that name
-# series one by one -- the capture hosts' keep-regex and the nightly sweep runner's `# TYPE` lines;
-# the ops keep-regex admits that family by wildcard, which names nothing. Every candidate is a fault
+# This proves something looks at what the fleet ships (T0008, T0100). The candidate set is DERIVED,
+# never hand-listed, from three sources: what the capture hosts' daemons and units publish, by the
+# publisher scan; the exporter families a board draws, since no file in the tree publishes those; and
+# the nightly sweep runner's `# TYPE` lines. The ops and NAS jobs' namespaces stay outside it: widening
+# the namespaces owes each family that no rule reads its written reason. Every candidate is a fault
 # signal until excluded below with a written reason.
 CAPTURE_ALLOY = REPO / "infra/ansible/roles/capture/files/config.alloy"
 VERIFY_REPLAY_RUNNER = REPO / "infra/ansible/roles/ops/templates/verify-replay.sh.j2"
+_CAPTURE_HOST_NAMESPACES = (
+    "zcrypto_capture_",
+    "zcrypto_engine_",
+    "zcrypto_exec_",
+    "zcrypto_venue_",
+    "zcrypto_logship_",
+    "zcrypto_clock_",
+    "zcache_",
+)
+_EXPORTER_NAMESPACES = ("node_", "process_", "haproxy_")
 
 
-def _admitted_series() -> list[str]:
-    """Every metric name the capture hosts' keep-regex admits to remote_write."""
-    line = next(ln for ln in CAPTURE_ALLOY.read_text().splitlines() if ln.strip().startswith("regex") and "node_load1" in ln)
-    return line.split('"')[1].split("|")
+def _capture_host_series() -> set[str]:
+    """What the capture hosts' daemons and units publish, and the exporter families a board draws."""
+    published = {family for family in published_app_families() if family.startswith(_CAPTURE_HOST_NAMESPACES)}
+    drawn = {family for family in panel_families() if family == "up" or family.startswith(_EXPORTER_NAMESPACES)}
+    return published | drawn
 
 
 def _verify_replay_series() -> list[str]:
@@ -336,14 +349,11 @@ NOT_A_FAULT_SIGNAL = {
     # the conditions that matter already have their own rules (disk-low, load-high).
     "up",
     "node_load1",
-    "node_load5",
-    "node_load15",
     "node_memory_MemTotal_bytes",
     "node_memory_MemAvailable_bytes",
     "node_memory_MemFree_bytes",
     "node_filesystem_avail_bytes",
     "node_filesystem_size_bytes",
-    "node_filesystem_free_bytes",
     "node_network_receive_bytes_total",
     "node_network_transmit_bytes_total",
     "node_cpu_seconds_total",
@@ -479,21 +489,44 @@ NOT_A_FAULT_SIGNAL = {
     "haproxy_server_check_failures_total",
 }
 
-_ADMITTED = frozenset(_admitted_series()) | frozenset(_verify_replay_series())
-FAULT_SIGNAL_METRICS = sorted(_ADMITTED - NOT_A_FAULT_SIGNAL)
+_CANDIDATES = frozenset(_capture_host_series()) | frozenset(_verify_replay_series())
+FAULT_SIGNAL_METRICS = sorted(_CANDIDATES - NOT_A_FAULT_SIGNAL)
 
 
 def test_the_exclusion_list_has_not_gone_stale():
-    """Every exclusion must name a series the keep-regex still admits — otherwise a rename leaves a
-    dead entry silently excusing nothing, and the metric it was renamed to is unguarded."""
-    stale = NOT_A_FAULT_SIGNAL - _ADMITTED
-    assert not stale, f"excluded but no longer admitted (rename? removal?): {sorted(stale)}"
+    """Every exclusion must name a candidate still found — otherwise a rename leaves a dead entry
+    silently excusing nothing, and the metric it was renamed to is unguarded."""
+    stale = NOT_A_FAULT_SIGNAL - _CANDIDATES
+    assert not stale, f"excluded but no longer found (rename? removal?): {sorted(stale)}"
+
+
+@pytest.mark.parametrize(
+    "family",
+    [
+        "zcrypto_capture_book_desynced",
+        "zcrypto_engine_cycle_success",
+        "zcrypto_exec_armed",
+        "zcrypto_venue_concordance_failures",
+        "zcrypto_logship_dropped_lines_total",
+        "zcrypto_clock_offset_seconds",
+        "zcache_wireguard_handshake_age_seconds",
+        "up",
+        "node_reboot_required",
+        "process_resident_memory_bytes",
+        "haproxy_backend_active_servers",
+        "ops_verify_replay_run_ok",
+    ],
+)
+def test_each_source_still_reaches_the_candidates(family):
+    assert family in _CANDIDATES, (
+        f"{family} is no longer a candidate: its source went blind, and the guard above reads nothing for it"
+    )
 
 
 @pytest.mark.parametrize("metric", FAULT_SIGNAL_METRICS)
 def test_every_fault_signal_metric_is_watched_by_a_rule(metric):
     """A fault signal nobody alerts on is a metric that renders green while the fault is live."""
-    # Word-boundary, not substring: `node_load1` is a strict prefix of `node_load15` (both admitted),
+    # Word-boundary, not substring: `node_load1` is a strict prefix of `node_load15`,
     # so a plain `in` lets a node_load15 rule satisfy a node_load1 entry. Same for
     # process_virtual_memory_bytes / _max_bytes.
     pattern = re.compile(rf"\b{re.escape(metric)}\b(?!_)")
@@ -501,9 +534,8 @@ def test_every_fault_signal_metric_is_watched_by_a_rule(metric):
         r["uid"] for r in _rules() if any(pattern.search(str(q.get("model", {}).get("expr", ""))) for q in r.get("data", []))
     ]
     assert watching, (
-        f"{metric} reaches Grafana (the capture keep-list or the ops sweep's textfile) but no alert rule queries it — nothing "
-        f"would surface it, since no dashboard panel carries the app-metric families either. Add a "
-        f"rule, or add it to NOT_A_FAULT_SIGNAL with the reason."
+        f"{metric} reaches Grafana (a capture host's publisher, a board's exporter family or the ops sweep's textfile) but "
+        f"no alert rule queries it. Add a rule, or add it to NOT_A_FAULT_SIGNAL with the reason."
     )
 
 
@@ -2049,7 +2081,7 @@ def test_every_rule_routes_to_its_OWN_runbook_section() -> None:
     )
 
 
-# Grafana Cloud's free tier retains 14 days of metrics AND logs. A query past that does not error --
+# The stores' retention bounds every query (`mon_retention_days`). A query past it does not error --
 # it returns a SHORTER series -- so the window is truncated in silence and any figure derived from it
 # is recorded at the width it asked for (`T0129`, resolved, re-derived two thresholds on that).
 #
@@ -2225,9 +2257,9 @@ def test_the_ops_inode_rule_pages_with_an_hour_left_on_tmp_at_the_fastest_fill_s
     assert left_at_page >= _FILL_PER_HOUR, f"{left_at_page:.0f} inodes left at the page, under an hour at {_FILL_PER_HOUR}/h"
 
 
-# --- the node-only groups: evaluated on the observability node alone ----------------------------
-# The groups the push leaves off Grafana Cloud, each to the host its rules name.
-NODE_ONLY_GROUPS = {"zcrypto-mon": "zcrypto-mon", "zcrypto-hc": "zcrypto-hc"}
+# --- the node groups: the rules over the two self-hosted nodes ---------------------------------
+# Each group to the host its rules name.
+NODE_GROUPS = {"zcrypto-mon": "zcrypto-mon", "zcrypto-hc": "zcrypto-hc"}
 _MON_RULES = {
     "zcrypto-alloy-dark-mon": ("critical", "901"),
     "zcrypto-mon-disk-low": ("warning", "902"),
@@ -2281,12 +2313,8 @@ def test_a_node_group_is_its_rules_each_with_its_own_section_and_panel(group):
         assert anchors.get(rule["uid"]) == [page], f"{page} defines no section for {rule['uid']}"
 
 
-def test_the_push_keeps_the_node_groups_off_grafana_cloud_by_default():
-    (skipped,) = re.findall(r'^  \*\.grafana\.net\) skip_default="([^"]*)" ;;$', PUSH.read_text(), re.M)
-    assert sorted(skipped.split()) == sorted(NODE_ONLY_GROUPS)
-    dead_men = {
-        group: sorted(r["uid"] for r in _group_rules(group) if r["noDataState"] == "Alerting") for group in NODE_ONLY_GROUPS
-    }
+def test_the_rules_that_page_a_node_groups_no_data_are_its_dead_men():
+    dead_men = {group: sorted(r["uid"] for r in _group_rules(group) if r["noDataState"] == "Alerting") for group in NODE_GROUPS}
     assert dead_men == {
         "zcrypto-mon": ["zcrypto-alloy-dark-mon", "zcrypto-mon-ingest-dark"],
         "zcrypto-hc": ["zcrypto-alloy-dark-hc", "zcrypto-hc-backup-stale", "zcrypto-hc-service-down"],
@@ -2314,21 +2342,21 @@ def test_a_rule_reads_the_node_exactly_when_it_is_in_the_nodes_group():
             # It reads each host's lines the node holds, the two nodes' own among them.
             assert matchers == [("=~", ".+")], matchers
             continue
-        for group, host in NODE_ONLY_GROUPS.items():
+        for group, host in NODE_GROUPS.items():
             admits = [(op, value) for op, value in matchers if _admits(op, value, host)]
             if rule["ruleGroup"] != group:
                 assert not admits, f"{rule['uid']} is outside {group} and its matcher {admits} admits {host}"
         if rule["uid"] in ("zcrypto-mon-shipper-loss", "zcrypto-mon-alloy-versions-split"):
             assert matchers == [], f"it reads each shipper the node holds, and names none: {matchers}"
-        elif rule["ruleGroup"] in NODE_ONLY_GROUPS:
-            assert matchers and set(matchers) == {("=", NODE_ONLY_GROUPS[rule["ruleGroup"]])}, (rule["uid"], matchers)
+        elif rule["ruleGroup"] in NODE_GROUPS:
+            assert matchers and set(matchers) == {("=", NODE_GROUPS[rule["ruleGroup"]])}, (rule["uid"], matchers)
 
 
 def test_ingest_dark_pages_ahead_of_every_per_host_alloy_dark_rule():
     ingest = _rule("zcrypto-mon-ingest-dark")
     assert _prom_exprs(ingest) == ['count(up{host!="zcrypto-mon"}) or on() vector(0)']
     assert _evaluator(ingest) == {"type": "lt", "params": [1]}
-    per_host = [r for r in _rules() if r["uid"].startswith("zcrypto-alloy-dark-") and r["ruleGroup"] not in NODE_ONLY_GROUPS]
+    per_host = [r for r in _rules() if r["uid"].startswith("zcrypto-alloy-dark-") and r["ruleGroup"] not in NODE_GROUPS]
     assert len(per_host) == 8, [r["uid"] for r in per_host]
     assert all(_duration_seconds(ingest["for"]) < _duration_seconds(r["for"]) for r in per_host)
     assert _duration_seconds(ingest["for"]) < _duration_seconds(_rule("zcrypto-engine-dark-with-exposure")["for"])
