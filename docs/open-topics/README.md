@@ -5,6 +5,7 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 ## Open
 
 - [T0221 — engine-procedures.md without the one-time rungs](T0221-engine-procedures-without-the-rungs.md) — ripe when: a milestone: rung 3's go/no-go decided, `engine-rung-3` step 9; check: `grep -c -i -E "rung 3.s go/no-go.*\(Decision:" docs/research/14.phase6-decisions.md` prints at least 1
+- [T0225 — Python 3.15 once ansible 15 ships](T0225-python-3-15-once-ansible-15-ships.md) — ripe when: an activity: a bump of `ansible` to 15, which Dependabot opens at its stable release and not at a pre-release; check: `uv.lock`'s `ansible` package reads version 15 or later, or `gh pr list --state all --search "Bump ansible from"` names a bump to 15
 
 ## Partially done
 
