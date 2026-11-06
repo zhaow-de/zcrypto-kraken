@@ -144,9 +144,8 @@ class GapMonitor:
 
 
 def ping_healthcheck(url: str | None, *, timeout: int = DEFAULT_HEALTHCHECK_TIMEOUT_SECS) -> None:
-    """Best-effort liveness ping to a dead-man URL, a no-op on a falsy `url` since the feature is optional.
-    Never raises: a dead-man's-switch alerts on a MISSED ping, so any failure is logged and swallowed, and a raise
-    here would end the daemon's health task until a restart."""
+    """Best-effort liveness ping to a dead-man URL. Never raises: a dead-man's-switch alerts on a MISSED ping, so a
+    failure is logged and swallowed, and a raise here would end the caller's loop until a restart."""
     if not url:
         return
     try:
