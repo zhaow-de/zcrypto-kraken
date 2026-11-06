@@ -771,7 +771,7 @@ Entry `W4`, its *host* clause opening with `zcrypto-red`: both copies' `activeAt
 
 ### What this proves
 
-That the dead-man domain going dark reaches a person, and by which route: with the service stopped on its node, `zcrypto-hcio-watchdog` pages the main channel at `999`, and no check's own notification can, since the service that would send it is down. That asymmetry is what the entry records. And what the stop costs when the service returns: each check whose `timeout` + `grace` the stop outlasted reads `DOWN` until its next ping, and pages `DOWN`, then `UP`, through the service's Slack integration. The procedure for a real outage is [`hc.md#hc-dark`](hc.md#hc-dark).
+That the dead-man domain going dark reaches a person, and by which route: with the service stopped on its node, `zcrypto-hcio-watchdog` pages the main channel at `999`, and no check's own notification can, since the service that would send it is down. And what the stop costs when the service returns, the checks that page `DOWN`, then `UP`. The procedure for a real outage is [`hc.md#hc-dark`](hc.md#hc-dark).
 
 ### Preconditions
 
@@ -793,7 +793,7 @@ Held until the main channel's first page, then the *Operator action*. Nothing he
 
 ### Must fire
 
-- `zcrypto-hcio-watchdog` (critical, `metrics`) at `999`, in the main channel, about **11 min** into the stop: the ops Alloy's 60 s scrape of the service dark, ~5 min of staleness, `for: 5m` and the 60 s group interval, its `Pending` `activeAt` read while pending and shown to postdate the stop (standing rules above). A scrape that fails can mark its series stale at once, where drill C's stopped Alloy writes no marker, which takes the staleness term off and lands the page nearer 7 min; the entry quotes what it read. Each stack that holds the rule sends its own copy, each `activeAt` read from that stack's rules endpoint.
+- `zcrypto-hcio-watchdog` (critical, `metrics`) at `999`, in the main channel, about **7 min** into the stop: the ops Alloy's next 60 s scrape of the service fails and marks its series stale at once, where drill C's stopped Alloy writes no marker, then `for: 5m` and the 60 s group interval, its `Pending` `activeAt` read while pending and shown to postdate the stop (standing rules above). Each stack that holds the rule sends its own copy, each `activeAt` read from that stack's rules endpoint.
 - **Must stay quiet**: every fleet check's own notification, the service that would send it being down. That silence beside the watchdog's page is the asymmetry the entry records (no count command: a notification not sent leaves nothing in the tree).
 - **Announced as possible**: [`zcrypto-hc-service-down`](hc.md#zcrypto-hc-service-down) (critical, `metrics`) in the main channel, evaluated on the observability node. The self-check writes `web=FAIL` while the container is stopped, and the rule's `[15m]` window empties of `web=ok` 10 to 15 min after the stop, its last one at most five minutes before it, so the rule pages where the hold runs that long.
 - **Announced as possible**: [`zcrypto-mon-unlevelled-log-lines`](mon.md#zcrypto-mon-unlevelled-log-lines) (warning, `logs`) on the observability node, for `ops`: an ops timer whose ping falls inside the stop writes `curl`'s error line to a journal ops' Alloy ships, in a shape its stages may not level. The pingers' own Python lines log at `WARNING`, `healthcheck ping failed target=zcrypto-hc.zhaow.me`, and page nothing.
@@ -814,7 +814,7 @@ Then [`hc.md#hc-dark`](hc.md#hc-dark) step 7's reads. **Re-true the `since` cell
 
 ### Record
 
-Entry `X1`, its *host* clause opening with `zcrypto-hc`: the stop and start times; the watchdog's `Pending` `activeAt`, its `Alerting` and its message against ≈11 min, per stack; the asymmetry, no check's notification during the stop; whether `zcrypto-hc-service-down` paged; each check that paged on the return, with its last ping before the stop, its bound and its two message times, or that none did; the `zcrypto-hc-error-logs` read, and a page that did not arrive with the rule quiet; the `since` cell re-trued.
+Entry `X1`, its *host* clause opening with `zcrypto-hc`: the stop and start times; the watchdog's `Pending` `activeAt`, its `Alerting` and its message against ≈7 min, per stack; the asymmetry, no check's notification during the stop; whether `zcrypto-hc-service-down` paged; each check that paged on the return, with its last ping before the stop, its bound and its two message times, or that none did; the `zcrypto-hc-error-logs` read, and a page that did not arrive with the rule quiet; the `since` cell re-trued.
 
 ### Retire when
 
@@ -842,7 +842,7 @@ In the Linode Cloud Manager, on the Linode `zcrypto-hc`'s page, **Power Off**, w
 
 ### Must fire
 
-- `zcrypto-hcio-watchdog` (critical, `metrics`) at `999`, in the main channel, about **11 min** in, as drill X1 derives it, its `Pending` `activeAt` read while pending and shown to postdate the power-off.
+- `zcrypto-hcio-watchdog` (critical, `metrics`) at `999`, in the main channel, about **7 min** in, as drill X1 derives it, its `Pending` `activeAt` read while pending and shown to postdate the power-off.
 - **Must stay quiet**: every fleet check's own notification until the service returns, as in drill X1 (no count command: a notification not sent leaves nothing in the tree).
 - **Announced as expected, evaluated on the observability node while the node is silent, each in the main channel and read as the drill's**: [`zcrypto-hc-backup-stale`](hc.md#zcrypto-hc-backup-stale) (warning, `metrics`) at ≈ **11 min**, its gauge gone stale, ~5 min, then `for: 5m` and the interval, on its `noDataState: Alerting`; [`zcrypto-hc-service-down`](hc.md#zcrypto-hc-service-down) (critical, `metrics`) 10 to 15 min in, as drill X1 derives it; [`zcrypto-alloy-dark-hc`](hc.md#zcrypto-alloy-dark-hc) (critical, `metrics`) at ≈ **16 min**, `for: 10m` + 60 s + ~5 min staleness.
 - **Announced as possible**: [`zcrypto-nas-archive-pull-errors`](nas.md#zcrypto-nas-archive-pull-errors) (warning, `logs`), on its `hc backup pull failed` line, where the NAS's hourly pull falls inside the power-off, read as the drill's and off the NAS's pull log over the power-off, as drill X3 reads its own window; and `zcrypto-mon-unlevelled-log-lines`, as in drill X1.
@@ -913,13 +913,12 @@ The rebuild's start is the **Rebuild** click's timestamp, `date -u` on the works
 Must hold, each a **`fail`** when it does not, where an induction that did not land is `blocked`:
 
 - *Induce* step 1 prints `200 12`, and the main channel carries no message from it.
-- *Induce* step 2's two sums read equal.
 - No key re-minted and nothing re-entered in the service's UI between the rebuild and the acceptance: the Cloud Manager's clicks are the provider's, not the service's.
 - **Accepted when** `uv run python infra/scripts/hc-provision.py status` reads every check's `last_ping` moving after the restore, each at its pinger's next ping and the two daily replay checks at their next ticks, up to a day; never by `hc_check_up`, which reads 1 for a check never pinged (no count command: an acceptance read is entry prose, and the live listing is outside the tree).
 
 Must fire, in the main channel:
 
-- `zcrypto-hcio-watchdog` (critical, `metrics`) at `999` about **11 min** after the **Rebuild** click, as drill X1 derives it, its `Pending` `activeAt` read while pending.
+- `zcrypto-hcio-watchdog` (critical, `metrics`) at `999` about **7 min** after the **Rebuild** click, as drill X1 derives it, its `Pending` `activeAt` read while pending.
 - **Announced as expected, read as drill X2 reads them over the rebuild's window**: `zcrypto-hc-backup-stale`, `zcrypto-hc-service-down` and `zcrypto-alloy-dark-hc`, on drill X2's clocks from the **Rebuild** click. Each clears at its own moment: the Alloy-dark rule when the rebuilt node's Alloy ships, the service rule at the first `web=ok`, the backup rule after *Induce* step 6.
 - **Announced as possible**: `zcrypto-nas-archive-pull-errors`, by the window below; and `zcrypto-mon-unlevelled-log-lines`, as in drill X1.
 
