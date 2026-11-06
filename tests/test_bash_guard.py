@@ -1186,7 +1186,7 @@ def state_repo(tmp_path: Path) -> tuple[dict, Path]:
 
 # On the wall clock a stamp ages while its case queues behind `run_hook`'s lock, so the age the hook prints and judges
 # is the queue's.
-FROZEN_NOW = 1_800_000_000.0
+FROZEN_NOW = 1_800_000_000.5
 
 
 @pytest.fixture
@@ -1205,33 +1205,31 @@ def stamped(payload: dict, stamp: Path, age: float) -> dict:
 STATE_CHANGERS = ["git commit -m x", "git cherry-pick abc1234"]
 
 
+@pytest.mark.parametrize("age", [0.4, 2.9])
 @pytest.mark.parametrize("command", STATE_CHANGERS)
-def test_a_state_changing_git_command_within_the_gap_of_another_is_refused(tmp_path: Path, frozen_env: dict, command: str):
+def test_a_state_changing_git_command_within_the_gap_of_another_is_refused(
+    tmp_path: Path, frozen_env: dict, command: str, age: float
+):
     payload, stamp = state_repo(tmp_path)
-    payload = stamped(payload, stamp, 0.4)
+    payload = stamped(payload, stamp, age)
     before = stamp.read_text()
     payload["tool_input"]["command"] = command
     r = run_hook(payload, cwd=tmp_path, env=frozen_env)
     assert r.returncode == 2, r.stderr
     assert (
-        f"BLOCKED — `{command}`: a state-changing git command started 0.4 s ago in this checkout and each runs alone — "
+        f"BLOCKED — `{command}`: a state-changing git command started {age} s ago in this checkout and each runs alone — "
         "if that one has already returned, re-send this one after the gap"
     ) in r.stderr
     assert stamp.read_text() == before and r.stdout == ""
 
 
-@pytest.mark.parametrize(("age", "rc"), [(2.9, 2), (3.0, 0)])
-def test_the_gap_ends_at_three_seconds(tmp_path: Path, frozen_env: dict, age: float, rc: int):
+@pytest.mark.parametrize("age", [3.0, 5.0])
+@pytest.mark.parametrize("command", STATE_CHANGERS)
+def test_a_state_changing_git_command_past_the_gap_is_admitted_and_restamps(
+    tmp_path: Path, frozen_env: dict, command: str, age: float
+):
     payload, stamp = state_repo(tmp_path)
     payload = stamped(payload, stamp, age)
-    payload["tool_input"]["command"] = STATE_CHANGERS[0]
-    assert run_hook(payload, cwd=tmp_path, env=frozen_env).returncode == rc
-
-
-@pytest.mark.parametrize("command", STATE_CHANGERS)
-def test_a_state_changing_git_command_past_the_gap_is_admitted_and_restamps(tmp_path: Path, frozen_env: dict, command: str):
-    payload, stamp = state_repo(tmp_path)
-    payload = stamped(payload, stamp, 5.0)
     payload["tool_input"]["command"] = command
     r = run_hook(payload, cwd=tmp_path, env=frozen_env)
     assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
