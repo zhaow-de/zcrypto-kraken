@@ -2507,6 +2507,16 @@ def test_the_engines_venue_read_failing_for_fifteen_minutes_pages_and_a_venue_ma
     assert not fires(maintenance)
 
 
+def test_a_position_the_library_booked_pages_at_one_and_reads_nothing_at_zero():
+    rule = _rule("zcrypto-engine-reconciliation-position")
+    assert _evaluator(rule) == {"type": "gt", "params": [0.5]}
+    assert rule["data"][0]["model"]["expr"] == 'zcrypto_exec_reconciliation_positions{host="zcrypto"}'
+    assert rule["for"] == "5m", "a pending period keeps one failed evaluation from firing a critical page, and costs no detection"
+    assert (rule["noDataState"], rule["execErrState"]) == ("OK", "Alerting")
+    assert rule["labels"]["severity"] == "critical"
+    assert (rule["notification_settings"]["receiver"], rule["ruleGroup"]) == ("metrics", "zcrypto-gate")
+
+
 def test_the_split_rule_counts_versions_across_every_host_for_a_day():
     rule = _rule("zcrypto-mon-alloy-versions-split")
     assert _prom_exprs(rule) == ['count(count by (version) (alloy_build_info{job="integrations/self"}))']

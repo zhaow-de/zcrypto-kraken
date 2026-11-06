@@ -158,6 +158,34 @@ A Kraken maintenance is a word Kraken answered — `maintenance`, `cancel_only`,
 
 ______________________________________________________________________
 
+<a name="zcrypto-engine-reconciliation-position"></a>
+
+## zcrypto-engine-reconciliation-position — ALERT
+
+### What you are seeing
+
+A critical Grafana alert (`Engine · a position holds an order the library's reconciliation minted`): `zcrypto_exec_reconciliation_positions{host="zcrypto"}` has read above 0 for five minutes, and the Engine board's `Positions the library's reconciliation booked` tile reads the count. The engine logged one WARNING per position per process: `position <id> under <strategy>, <quantity>, holds an order nautilus's reconciliation minted, [<order>] -- see infra/runbooks/engine.md#zcrypto-engine-reconciliation-position`.
+
+### What it means
+
+Kraken reported a position the library could not explain, and the library booked the difference as a position under `EXTERNAL` holding an order tagged `RECONCILIATION`. The engine's net stays right where the library books the difference alone; where it also credits a restored opener, as the absent-from-history shape does, the Cache reads above Kraken and the `the venue holds` WARNING names the leg. Nothing the engine does reads this count, so it trades on. The danger is a later build. By a trace of upstream on a mock client on 2026-11-06, not archived, and proven by no run on a build at or before `dev20261103`, upstream commit dd8afce410 sends a reconciliation fill older than such a position's opening to the order alone, so on a nautilus build carrying it a second start can hide a close behind this position with no log line. `dev20261103` predates that commit, and `_NEWEST_PIN_WITHOUT_THE_TWO_START_CASE` in `tests/test_nautilus_adapter.py` is the bump's limit there, which is why the clear is owed before a restart past `dev20261103`.
+
+The engine reads the count before each book read and once a minute while no plan runs. The WARNING's time dates its first read in this process: at the start's first pass it says a start booked it, this one or an earlier one, and later says it opened while the engine ran, which no measured run has shown, so take that one to the owner.
+
+### What to do
+
+1. **Read the facts.** The WARNING, on the `Logs` panel of the `zcrypto-logs` board with the container filter at `engine` and the range reaching back to the engine's start, the line being one per process; on the workstation, `kraken positions -o json` and the balance export, `kraken extended-balance -o json`.
+2. **Explain the gap as one of the shapes a measured start booked:** a leveraged row the Cache did not hold at a cold start; a leveraged row differing from the Cache's net; a fill made while the engine was down and absent from the trade history; a store lost with the fill past the 720-minute lookback; the engine's dust lot beside its own margin fill; a later mismatch on a hand-opened position, its opener untagged. An unexplained one goes to the owner, and so, on a build past `dev20261103`, does a count first read after a converge that started a stopped engine and changed a rendered file, as a re-pin does: that converge starts it twice, so its second start has been.
+3. **A flat book: clear the store before a restart past `dev20261103`.** Flat reads as `kraken open-orders -o json` listing nothing, `kraken positions -o json` printing `{}` and `kraken extended-balance -o json` showing no lot: the positions read prints `{}` with a spot lot held too, and a coin under its pair's `ordermin` is dust and no lot, [`zcrypto-engine-dark-with-exposure`](#zcrypto-engine-dark-with-exposure). The clear is [the prefix-wide form](engine-procedures.md#engine-clear-stored-account-prefix-wide); [the single-key form](engine-procedures.md#engine-clear-stored-account) deletes the account key and leaves the position, so this rule keeps firing after it. This read decides to start the form, and the form's own read, after its stop, admits the clear.
+4. **A lot or a margin position held: no clear.** On a build at or before `dev20261103` the position may stand, with no bump past `dev20261103` until it is cleared at a flat book. On a build past it, the next restart you schedule goes to the owner first, since it is the second start above. Flattening to clear is the owner's decision.
+5. **It resolves** when the position closes, within a minute of the close while no plan runs, or when the store is cleared. A stopped engine resolves it too, the series being absent, and the start pages it again five minutes after its first read: that resolve is no all-clear. A start without the cache resolves it the same way, publishing no series while the store keeps the position, until the next start on the cache. While it fires, the page repeats on the node's `metrics` policy.
+
+### Retire when
+
+`zcrypto-engine-reconciliation-position` is absent from `infra/grafana/alerts.yaml`: the rule can no longer fire and this section describes nothing.
+
+______________________________________________________________________
+
 <a name="zcrypto-engine-exec-watchdog-frozen"></a>
 
 ## zcrypto-engine-exec-watchdog-frozen — ALERT
@@ -505,6 +533,7 @@ Note what does **not** appear here: a controlled cycle failure logs at WARNING, 
    - **`the execution watchdog froze the loop -- socket … down past the 30s grace …`**: the watchdog's freeze, which lifts by itself, `the execution watchdog's freeze lifted …` in the log; [`zcrypto-engine-exec-watchdog-frozen`](#zcrypto-engine-exec-watchdog-frozen) is the section, its rule paging after fifteen minutes frozen. No disarm is owed for this line alone (no count command: the line is `_watch_sockets`'s in `cli/engine/executor.py`, and a cut is the network's act).
    - **`the re-read pass could not read the venue's holdings on 3 ticks …`**: the position gauge keeps its last reading; where the line closes `and the execution watchdog's freeze stands`, [`zcrypto-engine-exec-watchdog-frozen`](#zcrypto-engine-exec-watchdog-frozen) step 3 reads it. No disarm is owed for this line alone (no count command: the line is `_reread_pass`'s in `cli/engine/executor.py`, and the venue's answer is the venue's act).
    - **`RuntimeError: failed to create cache database backing`** under `unhandled exception -- aborting`: the node's `run()` could not open its cache backing — the cache proxy routing no backend, or the set unreachable — and the unit restarts into the same failure ten seconds on, so no start succeeds until the route is back: [`cache.md#zcrypto-cache-proxy-no-backend`](cache.md#zcrypto-cache-proxy-no-backend) is the incident, and an engine that must run before then takes a re-converge with the running digests and `-e engine_cache_enabled=false`, a start without the cache (no count command: the raise is the library's, logged by `cli/__main__.py`'s catch-all).
+   - **`the reconciliation position read raised -- continuing`**: telemetry, the read alone, with no order path touched. No disarm is owed for this line alone. `zcrypto_exec_reconciliation_positions` says nothing while the line stands, so read Kraken's positions by hand, [`zcrypto-engine-reconciliation-position`](#zcrypto-engine-reconciliation-position) step 1, and take the traceback to the owner (no count command: the line is `_publish_reconciliation_positions`'s in `cli/engine/executor.py`, and nothing the engine does reads that read).
    - **Anything naming the executor, an order, a fill, the ledger, or the kill switch is the execution path, and it is the one to act on now.** Continue at step 3.
 3. **An execution-path error while ARMED is a live money situation.** Read the gate on the host, which prints `reasons` live; it never reaches a gauge, and `zcrypto_exec_armed` conflates the two arming keys into one gauge (no count command: `cli/engine/command.py`'s `_ExecGauges` publishes no `reasons` and ANDs the two keys):
    ```

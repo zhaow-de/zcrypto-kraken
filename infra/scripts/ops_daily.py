@@ -75,6 +75,7 @@ _UID_HOST = {
     "zcrypto-engine-exec-kill-tripped": "zcrypto",
     "zcrypto-engine-exec-not-evaluated": "zcrypto",
     "zcrypto-engine-exec-venue-diverged": "zcrypto",
+    "zcrypto-engine-reconciliation-position": "zcrypto",
     "zcrypto-engine-exec-watchdog-frozen": "zcrypto",
     "zcrypto-engine-exec-boundary-not-drafted": "zcrypto",
     "zcrypto-engine-journal-prune-dead": "zcrypto",

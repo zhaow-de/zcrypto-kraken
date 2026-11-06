@@ -679,6 +679,11 @@ def test_the_venue_tiles_read_failure_shows_its_firing_value_red_and_not_as_onli
     assert mapped.get("1", {}).get("color") == "red" and mapped["1"].get("text") != "ONLINE", mapped
 
 
+def test_the_reconciliation_tile_reads_not_read_yet_with_no_series():
+    (panel,) = [panel for uid, panel, *_ in _rule_panel_pairs() if uid == "zcrypto-engine-reconciliation-position"]
+    assert panel["fieldConfig"]["defaults"]["noValue"] == "NOT READ YET"
+
+
 def test_the_slack_template_and_the_logs_board_name_every_host_of_the_topology():
     """A host the template's map lacks reaches a phone as its raw label, and one the Logs board's list lacks ships log
     lines that board cannot select."""
