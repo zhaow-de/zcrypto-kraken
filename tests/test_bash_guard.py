@@ -1186,6 +1186,7 @@ def state_repo(tmp_path: Path) -> tuple[dict, Path]:
 
 # On the wall clock a stamp ages while its case queues behind `run_hook`'s lock, so the age the hook prints and judges
 # is the queue's.
+# The fraction is what shows a whole-second truncation of the clock or the stamp.
 FROZEN_NOW = 1_800_000_000.5
 
 
