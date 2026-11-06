@@ -166,6 +166,15 @@ def _event(event) -> dict:
     return out
 
 
+def _order_tags(cache, position) -> dict:
+    """Each of `position`'s orders by id, to its tags, `None` for an order the Cache does not return."""
+    tags = {}
+    for client_order_id in position.client_order_ids():
+        order = cache.order(client_order_id)
+        tags[_s(client_order_id)] = None if order is None else order.tags
+    return tags
+
+
 def _dump(cache) -> dict:
     orders = [
         {
@@ -189,6 +198,7 @@ def _dump(cache) -> dict:
             "avg_px_open": position.avg_px_open,
             "realized_pnl": _s(position.realized_pnl),
             "is_open": position.is_open,
+            "order_tags": _order_tags(cache, position),
         }
         for position in cache.positions()
     ]
