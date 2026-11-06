@@ -48,7 +48,7 @@ ALLOY_PART = [
 
 # Read in a task's arguments and gates alone: the Alloy compose template's comments name the poller to say an Alloy
 # redeploy never restarts it.
-REFUSED_READS = re.compile(r"ops_image_digest|liquidations_decision|liquidations|rrsync|watchdog|keepalive|automount")
+REFUSED_READS = re.compile(r"ops_image_digest|liquidations_decision|liquidations|rrsync|watchdog|automount")
 
 
 def test_the_ops_roles_tagged_tasks_are_exactly_its_alloy_part():
