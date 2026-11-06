@@ -352,7 +352,7 @@ The harness prints the table under `PROBE RESULTS -- paste these rows into docs/
 3. The arming step in [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window): pre-probe step 4, whose unmatched-external baseline and live-orders-boot caveat both name the version they were taken on.
 4. The previous version's `docs/reference/adapter-verification/` record, cross-linked so the series reads as one and neither file claims to be current.
 
-`tests/test_nautilus_adapter.py` and `tests/test_nautilus_pin_verified.py` are deliberately not on this list: the first compares the installed version with the pin, and its one version string is the limit past which a bump owes the two-start case in `tests/test_cache_restart.py`, which a bump does not move; the second reads the record.
+`tests/test_nautilus_adapter.py` and `tests/test_nautilus_pin_verified.py` are deliberately not on this list: the first compares the installed version with the pin, and its one version string is §1.6's two-start limit, which a bump does not move; the second reads the record.
 
 Paste the table; leave the evidence JSON where `--evidence-dir` put it (`$EVID`, outside the repo tree) and never commit it.
 

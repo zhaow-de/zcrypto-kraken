@@ -79,7 +79,7 @@ def test_a_pin_past_the_limit_carries_the_two_start_case():
         (_REPO / "tests/test_cache_restart.py").read_text()
     ), (
         f"nautilus-trader {pinned} is past {_NEWEST_PIN_WITHOUT_THE_TWO_START_CASE}: write `{_TWO_START_CASE}` in tests/test_cache_restart.py "
-        "on this bump's branch, driving the two-start route on this wheel, and read what it does before the engine runs it"
+        "as an undecorated def, driving the two-start route on this wheel, and read what it does before the engine runs it"
     )
 
 
