@@ -1509,10 +1509,9 @@ class ProbeExecutor:
         """The idle refresh: one evaluation, published, once `_GATE_REFRESH` has passed since the last
         -- the tick a plan runs on evaluates anyway and stamps it. What it publishes is what the gate
         reads, its own fail-closed readings included, and not the heartbeat; it journals nothing, the
-        exec record's verdict being the boundary's (`on_boundary`). It reads the reconciliation count
-        first (`_publish_reconciliation_positions`), since with the gate unarmed and no boundary drafting
-        no other read recurs, and the gauge would not fall when the position closes. Wrapped as
-        `_publish_resting_age` is: telemetry may never end a plan."""
+        exec record's verdict being the boundary's (`on_boundary`).
+        It reads the reconciliation count too: with the gate unarmed and no boundary drafting, no other read of it recurs.
+        Wrapped as `_publish_resting_age` is: telemetry may never end a plan."""
         try:
             if now - self._gate_evaluated_at >= _GATE_REFRESH:
                 self._publish_reconciliation_positions()
@@ -4636,8 +4635,8 @@ class ProbeExecutor:
         return None if self._venue_book is None else self._venue_book.ordermin
 
     def _publish_reconciliation_positions(self) -> None:
-        """A raise is logged and dropped; the callers ignore it (spec 00157 D3). An engine without the
-        cache publishes no series, the count there reading this boot's memory and not the store (D4)."""
+        """Page-only (spec 00157 D3): nothing the engine does reads this. No series without the cache:
+        the count there reads this boot's memory and not the store (D4)."""
         if not self._cache_enabled:
             return
         try:

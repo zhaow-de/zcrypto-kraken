@@ -467,7 +467,7 @@ class StubCache:
 
     def hold_tagged_position(self, symbol, signed_qty):
         """An `EXTERNAL` position under the id the real wheel gives it, holding an untagged order and one
-        the library's reconciliation minted, both served by `order`: spec 00157 D1's count of one."""
+        the library's reconciliation minted."""
         instrument_id = INSTRUMENT_IDS[symbol]
         plain, tagged = ClientOrderId("O-PLAIN"), ClientOrderId("O-TAGGED")
         self._closed_orders.extend(
@@ -808,9 +808,9 @@ def _intent_entry(tmp_path: Path, index: int, when: datetime = NOW) -> dict:
 
 
 def _held(**by_symbol):
-    """`StubCache(positions=...)`: constructed `signed_qty`/`realized_pnl`/`client_order_ids` namespaces
-    keyed by instrument id -- exactly the shape `Cache.positions_open(instrument_id=...)` returns (negative =
-    SHORT). `realized_pnl` is `Money | None` on a real Position and None is the ordinary case."""
+    """`StubCache(positions=...)`: namespaces keyed by instrument id -- exactly the shape
+    `Cache.positions_open(instrument_id=...)` returns (negative = SHORT). `realized_pnl` is
+    `Money | None` on a real Position and None is the ordinary case."""
     return {
         INSTRUMENT_IDS[symbol]: [SimpleNamespace(signed_qty=qty, realized_pnl=None, client_order_ids=list)]
         for symbol, qty in by_symbol.items()
@@ -12879,8 +12879,7 @@ def test_the_gauge_falls_to_zero_when_the_position_goes(tmp_path):
 
 def test_a_raise_in_the_reconciliation_read_changes_nothing_the_engine_does(tmp_path):
     class _ReaderRaises(StubCache):
-        # By instrument it answers: `_cache_net` reads the same accessor that way, and on the executor's path the reader
-        # alone reads it whole.
+        # `_cache_net` reads this accessor by instrument; on the executor's path the reader alone reads it whole.
         def positions_open(self, *, instrument_id=None, **kwargs):
             if instrument_id is None:
                 raise RuntimeError("the position store is not readable")

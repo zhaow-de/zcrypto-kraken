@@ -2511,7 +2511,7 @@ def test_a_position_the_library_booked_pages_at_one_and_reads_nothing_at_zero():
     rule = _rule("zcrypto-engine-reconciliation-position")
     assert _evaluator(rule) == {"type": "gt", "params": [0.5]}
     assert rule["data"][0]["model"]["expr"] == 'zcrypto_exec_reconciliation_positions{host="zcrypto"}'
-    assert rule["for"] == "5m", "a pending period keeps one failed evaluation from firing a critical page, and costs no detection"
+    assert rule["for"] == "5m"
     assert (rule["noDataState"], rule["execErrState"]) == ("OK", "Alerting")
     assert rule["labels"]["severity"] == "critical"
     assert (rule["notification_settings"]["receiver"], rule["ruleGroup"]) == ("metrics", "zcrypto-gate")

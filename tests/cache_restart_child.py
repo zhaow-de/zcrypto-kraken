@@ -167,7 +167,6 @@ def _event(event) -> dict:
 
 
 def _order_tags(cache, position) -> dict:
-    """Each of `position`'s orders by id, to its tags, `None` for an order the Cache does not return."""
     tags = {}
     for client_order_id in position.client_order_ids():
         order = cache.order(client_order_id)
@@ -217,7 +216,7 @@ def _venue_state(cache) -> dict:
 
 
 class _Recorder:
-    """The executor's metrics hook, recording the position, realized and reconciliation-count readings it publishes."""
+    """The executor's metrics hook, recording the readings `_write` puts in the record."""
 
     def __init__(self):
         self.positions: list = []

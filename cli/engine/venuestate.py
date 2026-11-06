@@ -153,8 +153,7 @@ RECONCILIATION_TAG = "RECONCILIATION"
 
 
 def reconciliation_tagged_orders(cache, position) -> list:
-    """The ids of the orders of `position` the library minted to book a difference it could not explain (spec 00157 D1): any
-    order of the position, since a later mismatch tags an order on a position whose opener carries none."""
+    """Ids of `position`'s orders the library minted (spec 00157 D1): any order, as a later mismatch leaves the opener untagged."""
     return [cid for cid in position.client_order_ids() if RECONCILIATION_TAG in ((order := cache.order(cid)) and order.tags or [])]
 
 
