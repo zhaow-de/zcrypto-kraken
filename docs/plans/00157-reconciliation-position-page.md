@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A position holding an order nautilus's reconciliation minted pages the main channel, at the first start that books it, and changes nothing the engine does.
+**Goal:** A position holding an order nautilus's reconciliation minted pages the main channel, at the first start on the cache that books it, and changes nothing the engine does.
 
 **Architecture:** `venuestate.reconciliation_booked_positions(cache)` is the one reader (D1). `ProbeExecutor._publish_reconciliation_positions` reads it before each book read and on the idle refresh, logs one WARNING per position per process and sets `zcrypto_exec_reconciliation_positions`, an engine without the cache publishing no series (D2, D3, D4). `zcrypto-engine-reconciliation-position` pages on that gauge, and `engine.md` says what to do (D4, D5). `zcrypto-bump-nautilus` reads the gauge at 0 before the merge of a pin past `dev20261103` and again before that wheel rolls, and `zcrypto-rollout-image` before a converge that starts such a wheel (D5). A case on the real wheel holds the tag (D6).
 
@@ -248,7 +248,7 @@ def _publish_reconciliation_positions(self) -> None:
 
 Three call sites: the first statement of `_settle_positions_from_venue`; in `_draft_cycle_plan` immediately before its `book = (self._venue_holdings or read_venue_book)()`; and the first statement inside the `if` of `_refresh_gate`, its docstring gaining that read.
 
-- [ ] **Step 5: Run the tests, the direct readers with `tests/test_engine_stub_fidelity.py`.** These doubles widen, so that the one existing test still logging the exception is `test_a_raising_fill_metrics_hook_never_costs_the_fill_its_row`, whose metrics double stays without the setter, its hooks raising by design:
+- [ ] **Step 5: Run the tests, the direct readers with `tests/test_engine_stub_fidelity.py`.** These doubles widen, so that no existing test logs the exception, the read reaching only the cases on the cache:
   - `StubCache.positions_open` answers a call with neither `instrument_id` nor `strategy_id` with every own and external position it holds, its refusal of a mistyped id kept;
   - `_held`, `StubCache.set_position` and `set_external_position` build their namespaces with `client_order_ids=list`, a name the real `Position` carries, and `_held`'s docstring names that field beside `signed_qty` and `realized_pnl`;
   - `tests/cache_restart_child.py`'s `_Recorder` gains `set_reconciliation_positions`, appending to a list `_write()` puts in `RECORD["metrics"]` as `reconciliation_positions`, and its docstring names that count beside the position and realized readings.
@@ -298,7 +298,7 @@ A wheel past `dev20261103` takes item 1's read again immediately before the roll
 - [ ] **Step 4: `zcrypto-rollout-image`'s *Engine converges*,** a bullet directly after its *The inter-cycle gap*, verbatim:
 
 ```markdown
-- **A converge that starts an engine image whose `pyproject.toml` pins `nautilus-trader` past `dev20261103`,** a cache proxy bump's among them, owes an owner's read immediately before it, nothing the engine does: from the workstation, `uv run python infra/scripts/grafana-query.py 'zcrypto_exec_reconciliation_positions{host="zcrypto"}'` reads 0 by value. Above 0, or at `(no series)` on a running engine, a read not yet run or an engine without the cache, which publishes none, the converge waits and the owner decides. On an engine stopped for this converge, the read taken before its stop stands unless `infra/runbooks/engine-procedures.md#engine-clear-stored-account-prefix-wide` has cleared the store since, at `(no series)` or with none the owner deciding, and a converge that changes a rendered file, as a re-pin does, starts it twice with no read between. An engine crash-looping goes to the owner.
+- **A converge that starts an engine image whose `pyproject.toml` pins `nautilus-trader` past `dev20261103`,** a cache proxy bump's among them, owes an owner's read immediately before it, nothing the engine does: from the workstation, `uv run python infra/scripts/grafana-query.py 'zcrypto_exec_reconciliation_positions{host="zcrypto"}'` reads 0 by value. Above 0, or at `(no series)` on a running engine, a read not yet run or raised, or an engine without the cache, which publishes none, the converge waits and the owner decides. On an engine stopped for this converge, the read taken before its stop stands unless `infra/runbooks/engine-procedures.md#engine-clear-stored-account-prefix-wide` has cleared the store since, at `(no series)` or with none the owner deciding, and a converge that changes a rendered file, as a re-pin does, starts it twice with no read between. An engine crash-looping goes to the owner.
 ```
 
 - [ ] **Step 5: `T`, which the rollout skill's direct readers fill, with `tests/test_guidance_guard.py` and `tests/test_guidance_refs_resolve.py`, the gate, commit** `claude(skills): a pin past dev20261103 reads the reconciliation count at 0 before its merge and its rollout`. Both frontmatters stay as they are, so the message carries no `Ambient grows by` line; this task lists no arm, since no check reads these sentences.
@@ -323,8 +323,9 @@ A wheel past `dev20261103` takes item 1's read again immediately before the roll
 
 [00157] What does the reconciliation count read on an engine without the cache? (Decision: 2)
   1. **The in-memory count** — a WARNING and a page over a row that boot minted; it reads 0 over a position the store keeps, so every owner's read needs a clause saying so.
-  2. **No series** — `(no series)` and `NOT READ YET` already hold each read; such a start's mint reaches no store a later start reads, so the trap has nothing to stand on, and the tile stays at its third reading while the engine runs that way.
+  2. **No series** — `(no series)` and `NOT READ YET` already hold each read ahead of a start; such a start's mint reaches no store a later start reads, so the trap has nothing to stand on, and the tile stays at its third reading while the engine runs that way.
   Decided by the session running the plan's review: "an engine without the cache publishes no series, gated on the executor's own `_cache_enabled`, so `(no series)` and `NOT READ YET`, which every read already holds on, carry that state."
+
 [00157] Does the reconciliation position's page advise a silence? (Decision: 2)
   1. **Advise one, its comment naming the position and its end the next restart** — a read position stops repeating on the phone; the series is one unlabelled count, so the silence outlives its position and covers what the next start books.
   2. **Advise none** — the page repeats on the node's `metrics` policy while the rule fires, and the restart and daily reads pass at 0 alone; noisier over a standing position, and an owner may still silence by hand.
@@ -341,7 +342,7 @@ The push, the image and the host read are the owner's, none of them inside a tas
 
 **R2. The image.** On the bulk rollout the owner's word of 2026-11-06 defers, if this has merged before it, else the next engine image, through `zcrypto-rollout-image`. The engine's pin stays `dev20261101` until half a day before rung 3, then `dev20261103`. A `cli/engine/` change moves `replay_fingerprint`, so that image's gate export replays cold, as the weekend's does already.
 
-**R3. The proof, by value, after the engine's first start on that image.** The series reads 0, which a read alone can have set, and the tile reads 0; `(no series)` is a read that has not run or has raised, the raise paging through `zcrypto-engine-error-logs`, and a value above 0 is `engine.md#zcrypto-engine-reconciliation-position`. The second line is the owner's container read for the one-process premise, which prints `running` and the restart count:
+**R3. The proof, by value, after the engine's first start on that image.** The series reads 0, which a read alone can have set, and the tile reads 0; `(no series)` is a read that has not run or has raised, the raise paging through `zcrypto-engine-error-logs`, or an engine without the cache, and a value above 0 is `engine.md#zcrypto-engine-reconciliation-position`. The second line is the owner's container read for the one-process premise, which prints `running` and the restart count:
 
 ```bash
 uv run python infra/scripts/grafana-query.py 'zcrypto_exec_reconciliation_positions{host="zcrypto"}'   # on the workstation
