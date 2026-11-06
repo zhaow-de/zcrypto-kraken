@@ -42,8 +42,8 @@ def test_pinned_version():
     assert nautilus_trader.__version__ == _pinned_nautilus_version()
 
 
-# The last pin read for upstream dd8afce410, which sends a recovered close order-only behind an `EXTERNAL`
-# reconciliation position, with no log line and a net that still reads right, so no other test here would see it.
+# The last pin read for upstream dd8afce410: a first start can book a missed close as an `EXTERNAL` reconciliation
+# position, the second sends its older fill order-only behind it, no log line and the net still right.
 _LAST_PIN_BEFORE_THE_TWO_START_ROUTE = Version("2.0.0rc9.dev20261103")
 _TWO_START_CASE = "def test_a_close_a_first_start_missed_is_booked_by_the_second"
 
