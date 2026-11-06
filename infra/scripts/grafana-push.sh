@@ -10,7 +10,7 @@
 # every other push and every prune until it merges or closes, and a prune runs from develop alone.
 #
 # GRAFANA_SA_TOKEN is the one variable with no default. Obtain it with `grafana_auth.py`'s
-# `vault_var("grafana_sa_token")`, loaded by path the way `grafana-query.py` loads it -- it
+# `token()`, loaded by path the way `grafana-query.py` loads it -- it
 # encapsulates two decrypt footguns, so do not hand-roll the extraction. Assign it by command
 # substitution and nothing else: the value must never reach a file, a log or argv. For a PromQL or
 # LogQL read-back use `infra/scripts/grafana-query.py`, which needs no token from you at all.
@@ -20,56 +20,25 @@
 # `PATH="$PWD/.venv/bin:$PATH" ./infra/scripts/grafana-push.sh` from the repo root -- rather than
 # installing PyYAML into the system python, where a second copy drifts unseen.
 #
-# Two stacks take this push until the Grafana Cloud leg retires. With no GRAFANA_URL it goes to Grafana
-# Cloud and leaves out the rule groups the observability node alone evaluates, which have no data there;
-# the node's push is `infra/runbooks/mon.md#mon-push`.
-#
 # Rules go one per call through Grafana's Alerting Provisioning HTTP API; the `apiVersion: 1` /
-# `groups:` file-provisioning shape is not accepted here and is not available on Grafana Cloud SaaS.
+# `groups:` file-provisioning shape is not accepted here.
 #
-# Verify a DASHBOARD by RENDERING it, never by reading its JSON back: a read-back proves what was
-# stored, not what a panel DISPLAYS, and a unit that reaches a string column renders every cell `NaN`
-# while the stored JSON looks perfect.
-#
-#   printf 'header = "Authorization: Bearer %s"\n' "$(uv run python -c '<the vault_var("grafana_sa_token") one-liner>')" \
-#     | curl -fsS -K - -o panel.png \
-#     "$GRAFANA_URL/render/d-solo/<dashboard-uid>/x?panelId=<id>&width=1100&height=420&from=now-6h&to=now"
-#
-# Append &var-<name>=<value> per template variable, and render the NARROWED case too: a query
-# returning a single series yields one frame whose value field is named `Value` rather than `Value
-# #<refId>`, so name-matched renames and overrides miss there and only there.
+# Verify a DASHBOARD by reading each panel's query by value and looking at the panel, never by reading
+# its JSON back: a read-back proves what was stored, not what a panel DISPLAYS, and a unit that reaches
+# a string column renders every cell `NaN` while the stored JSON looks perfect. The node runs no image
+# renderer. Pick each template variable's narrowed value too: a query returning a single series yields
+# one frame whose value field is named `Value` rather than `Value #<refId>`, so name-matched renames
+# and overrides miss there and only there.
 set -euo pipefail
 
 : "${GRAFANA_SA_TOKEN:?GRAFANA_SA_TOKEN is required}"
 # `export` is load-bearing: the python3 heredocs below read these from os.environ, so a plain shell
 # assignment is invisible to them (they used to be exported by whoever supplied them).
-export GRAFANA_URL="${GRAFANA_URL:-https://zcrypto2026.grafana.net}"
+export GRAFANA_URL="${GRAFANA_URL:-https://zcrypto-mon.zhaow.me}"
 export GRAFANA_PROM_DS_UID="${GRAFANA_PROM_DS_UID:-grafanacloud-prom}"
 export GRAFANA_LOKI_DS_UID="${GRAFANA_LOKI_DS_UID:-grafanacloud-logs}"
 export GRAFANA_ALERT_FOLDER_UID="${GRAFANA_ALERT_FOLDER_UID:-bfrxdfoybx98gb}"
-# The rule groups this push leaves out, space-separated: none of their rules is sent, and one found live is
-# reported as an orphan, which a prune deletes. `-`, never `:-`: set and empty skips no group whatever the host.
-push_host="${GRAFANA_URL#*://}"; push_host="${push_host%%/*}"; push_host="${push_host##*@}"; push_host="${push_host%%:*}"; push_host="${push_host%.}"; push_host="${push_host,,}"
-case "${push_host}" in
-  *.grafana.net) skip_default="zcrypto-mon zcrypto-hc" ;;
-  *) skip_default="" ;;
-esac
-export GRAFANA_SKIP_RULE_GROUPS="${GRAFANA_SKIP_RULE_GROUPS-${skip_default}}"
-echo "grafana-push: stack=$GRAFANA_URL prom=$GRAFANA_PROM_DS_UID loki=$GRAFANA_LOKI_DS_UID folder=$GRAFANA_ALERT_FOLDER_UID skip-groups=${GRAFANA_SKIP_RULE_GROUPS:-<none>}" >&2
-# Grafana Cloud takes none of these groups: a rule of one that fires on no data would page the main channel.
-case "${push_host}" in
-  *.grafana.net)
-    for group in ${skip_default}; do
-      case " ${GRAFANA_SKIP_RULE_GROUPS} " in
-        *" ${group} "*) ;;
-        *)
-          echo "grafana-push: refusing to push to Grafana Cloud without skipping the ${group} rule group -- GRAFANA_SKIP_RULE_GROUPS is set and does not name it: unset it for a Grafana Cloud push, or name the node in GRAFANA_URL" >&2
-          exit 1
-          ;;
-      esac
-    done
-    ;;
-esac
+echo "grafana-push: stack=$GRAFANA_URL prom=$GRAFANA_PROM_DS_UID loki=$GRAFANA_LOKI_DS_UID folder=$GRAFANA_ALERT_FOLDER_UID" >&2
 
 command -v python3 >/dev/null 2>&1 || { echo "grafana-push: python3 is required" >&2; exit 1; }
 python3 -c "import yaml" >/dev/null 2>&1 \
@@ -211,17 +180,10 @@ echo "grafana-push: pushing alert rules"
 # after this is plain JSON handled by jq, substituting the ${GRAFANA_*_UID} placeholder tokens
 # from this script's own environment (the provisioning API has no template substitution of its
 # own).
-rules_split=$(python3 -c '
-import json, os, sys, yaml
-skipped = os.environ["GRAFANA_SKIP_RULE_GROUPS"]
-rules = yaml.safe_load(open(sys.argv[1]))["rules"]
-kept = [r for r in rules if r.get("ruleGroup") not in skipped.split()]
-if len(kept) != len(rules):
-    print(f"grafana-push: skipping {len(rules) - len(kept)} rule(s) of group(s): {skipped}", file=sys.stderr)
-print(json.dumps({"kept": kept, "skipped": {r["uid"]: r["ruleGroup"] for r in rules if r.get("ruleGroup") in skipped.split()}}))
+rules_json=$(python3 -c '
+import json, sys, yaml
+print(json.dumps(yaml.safe_load(open(sys.argv[1]))["rules"]))
 ' "${root}/infra/grafana/alerts.yaml")
-rules_json=$(jq -c '.kept' <<<"${rules_split}")
-skipped_json=$(jq -c '.skipped' <<<"${rules_split}")
 
 rule_uids=$(jq -r '.[].uid' <<<"${rules_json}")
 
@@ -290,12 +252,7 @@ else
       gcurl -fsS -X DELETE "${GRAFANA_URL}/api/v1/provisioning/alert-rules/${uid}" >/dev/null
       echo "grafana-push: DELETED orphaned rule ${uid}" >&2
     else
-      skipped_group=$(jq -r --arg uid "${uid}" '.[$uid] // empty' <<<"${skipped_json}")
-      if [ -n "${skipped_group}" ]; then
-        echo "grafana-push: ORPHAN (live, of skipped group ${skipped_group}): ${uid}  — re-run with GRAFANA_PRUNE=1 under .claude/skills/zcrypto-grafana-push/SKILL.md's Step 4 to delete" >&2
-      else
-        echo "grafana-push: ORPHAN (live but not in alerts.yaml): ${uid}  — re-run with GRAFANA_PRUNE=1 under .claude/skills/zcrypto-grafana-push/SKILL.md's Step 4 to delete" >&2
-      fi
+      echo "grafana-push: ORPHAN (live but not in alerts.yaml): ${uid}  — re-run with GRAFANA_PRUNE=1 under .claude/skills/zcrypto-grafana-push/SKILL.md's Step 4 to delete" >&2
     fi
   done <<<"${orphans}"
 fi

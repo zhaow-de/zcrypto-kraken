@@ -366,13 +366,11 @@ _BECAUSE_SELECTED = "selects that host"
 _BECAUSE_FLEET_WIDE = "names no host, so it is a fleet-wide guard over the whole topology"
 _BECAUSE_PUBLISHED = "names no host, and this repo publishes the family on that host"
 _BECAUSE_NODE_ONLY = "names no host and is pushed to the observability node alone, whose own leg carries no filter"
-PUSH = REPO / "infra/scripts/grafana-push.sh"
 
 
 def node_only_groups() -> frozenset[str]:
-    """The rule groups a push addressed to Grafana Cloud leaves out by default, so that they are evaluated on the observability node alone."""
-    (skipped,) = re.findall(r'^  \*\.grafana\.net\) skip_default="([^"]*)" ;;$', PUSH.read_text(), re.M)
-    return frozenset(skipped.split())
+    """The rule groups whose rules read the two self-hosted nodes."""
+    return frozenset({"zcrypto-mon", "zcrypto-hc"})
 
 
 def _admission_expectations() -> list[tuple[str, str, frozenset[str] | None, str]]:

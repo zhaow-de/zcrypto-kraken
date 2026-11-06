@@ -2225,9 +2225,9 @@ def test_the_ops_inode_rule_pages_with_an_hour_left_on_tmp_at_the_fastest_fill_s
     assert left_at_page >= _FILL_PER_HOUR, f"{left_at_page:.0f} inodes left at the page, under an hour at {_FILL_PER_HOUR}/h"
 
 
-# --- the node-only groups: evaluated on the observability node alone ----------------------------
-# The groups the push leaves off Grafana Cloud, each to the host its rules name.
-NODE_ONLY_GROUPS = {"zcrypto-mon": "zcrypto-mon", "zcrypto-hc": "zcrypto-hc"}
+# --- the node groups: the rules over the two self-hosted nodes ---------------------------------
+# Each group to the host its rules name.
+NODE_GROUPS = {"zcrypto-mon": "zcrypto-mon", "zcrypto-hc": "zcrypto-hc"}
 _MON_RULES = {
     "zcrypto-alloy-dark-mon": ("critical", "901"),
     "zcrypto-mon-disk-low": ("warning", "902"),
@@ -2281,12 +2281,8 @@ def test_a_node_group_is_its_rules_each_with_its_own_section_and_panel(group):
         assert anchors.get(rule["uid"]) == [page], f"{page} defines no section for {rule['uid']}"
 
 
-def test_the_push_keeps_the_node_groups_off_grafana_cloud_by_default():
-    (skipped,) = re.findall(r'^  \*\.grafana\.net\) skip_default="([^"]*)" ;;$', PUSH.read_text(), re.M)
-    assert sorted(skipped.split()) == sorted(NODE_ONLY_GROUPS)
-    dead_men = {
-        group: sorted(r["uid"] for r in _group_rules(group) if r["noDataState"] == "Alerting") for group in NODE_ONLY_GROUPS
-    }
+def test_the_rules_that_page_a_node_groups_no_data_are_its_dead_men():
+    dead_men = {group: sorted(r["uid"] for r in _group_rules(group) if r["noDataState"] == "Alerting") for group in NODE_GROUPS}
     assert dead_men == {
         "zcrypto-mon": ["zcrypto-alloy-dark-mon", "zcrypto-mon-ingest-dark"],
         "zcrypto-hc": ["zcrypto-alloy-dark-hc", "zcrypto-hc-backup-stale", "zcrypto-hc-service-down"],
@@ -2314,21 +2310,21 @@ def test_a_rule_reads_the_node_exactly_when_it_is_in_the_nodes_group():
             # It reads each host's lines the node holds, the two nodes' own among them.
             assert matchers == [("=~", ".+")], matchers
             continue
-        for group, host in NODE_ONLY_GROUPS.items():
+        for group, host in NODE_GROUPS.items():
             admits = [(op, value) for op, value in matchers if _admits(op, value, host)]
             if rule["ruleGroup"] != group:
                 assert not admits, f"{rule['uid']} is outside {group} and its matcher {admits} admits {host}"
         if rule["uid"] in ("zcrypto-mon-shipper-loss", "zcrypto-mon-alloy-versions-split"):
             assert matchers == [], f"it reads each shipper the node holds, and names none: {matchers}"
-        elif rule["ruleGroup"] in NODE_ONLY_GROUPS:
-            assert matchers and set(matchers) == {("=", NODE_ONLY_GROUPS[rule["ruleGroup"]])}, (rule["uid"], matchers)
+        elif rule["ruleGroup"] in NODE_GROUPS:
+            assert matchers and set(matchers) == {("=", NODE_GROUPS[rule["ruleGroup"]])}, (rule["uid"], matchers)
 
 
 def test_ingest_dark_pages_ahead_of_every_per_host_alloy_dark_rule():
     ingest = _rule("zcrypto-mon-ingest-dark")
     assert _prom_exprs(ingest) == ['count(up{host!="zcrypto-mon"}) or on() vector(0)']
     assert _evaluator(ingest) == {"type": "lt", "params": [1]}
-    per_host = [r for r in _rules() if r["uid"].startswith("zcrypto-alloy-dark-") and r["ruleGroup"] not in NODE_ONLY_GROUPS]
+    per_host = [r for r in _rules() if r["uid"].startswith("zcrypto-alloy-dark-") and r["ruleGroup"] not in NODE_GROUPS]
     assert len(per_host) == 8, [r["uid"] for r in per_host]
     assert all(_duration_seconds(ingest["for"]) < _duration_seconds(r["for"]) for r in per_host)
     assert _duration_seconds(ingest["for"]) < _duration_seconds(_rule("zcrypto-engine-dark-with-exposure")["for"])

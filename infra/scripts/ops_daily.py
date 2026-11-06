@@ -575,7 +575,7 @@ def _proxy_query(ds_uid: str, expr: str, token: str, opener, api_path: str = _PR
 
 
 def loki_ds_uid(env: dict | None = None) -> str:
-    """By UID, never by type: a Cloud stack ships several Loki datasources, and picking 'the first
+    """By UID, never by type: a stack can ship several Loki datasources, and picking 'the first
     of each type' once silently repointed every rule."""
     import os
 
@@ -1130,40 +1130,6 @@ def read_rolling_head(*, now: datetime, root: Path, tape_root: Path) -> Check:
         return Check(ROLLING_CHECK, expr, ok=False, value=str(exc))
 
 
-# The first day the markdown report compares the two stacks, derived in plan 00123's R12; retirement ends the
-# comparison by leaving the stack table one stack, so the constant is never unset again.
-COMPARISON_FROM: date | None = date(2026, 10, 10)
-COMPARE_SCRIPT = Path(__file__).resolve().parent / "grafana-compare.py"
-# Four times a run's length and more, so Grafana Cloud's query path can slow that far before a run is cut; the
-# daily-ops skill runs the report in the background for the same reason.
-COMPARE_TIMEOUT_SECONDS = 2700
-_COMPARE_SUMMARY = re.compile(r"^compare: (\d+ nodes × \d+ instants, \d+ differences|failed: .+)$")
-
-
-def compare_run(day: date) -> str:
-    """The live runner: the comparison's stdout whatever its exit code, since it ends on its summary line at 0, 1 and 2."""
-    command = (sys.executable, str(COMPARE_SCRIPT), "--day", day.isoformat())
-    done = subprocess.run(command, cwd=REPO_ROOT, capture_output=True, text=True, timeout=COMPARE_TIMEOUT_SECONDS)
-    return done.stdout
-
-
-def read_comparison(*, now: datetime, runner) -> str:
-    try:
-        lines = runner(now.date() - timedelta(days=1)).strip().splitlines()
-    except subprocess.TimeoutExpired:
-        return f"compare: failed: the comparison ran past its {COMPARE_TIMEOUT_SECONDS} s bound"
-    except Exception as exc:  # noqa: BLE001 -- the section reports the failure; the pass goes on
-        return f"compare: failed: {type(exc).__name__}: {exc}"
-    last = lines[-1] if lines else ""
-    if _COMPARE_SUMMARY.match(last):
-        return last
-    return f"compare: failed: the comparison's last line is not its summary: {last!r}"
-
-
-def comparison_due(now: datetime) -> bool:
-    return COMPARISON_FROM is not None and now.date() >= COMPARISON_FROM and len(grafana_auth.STACKS) == 2
-
-
 def read_deploys(window: timedelta, *, now: datetime, path: Path | None = None) -> list[dict]:
     log = path or DEPLOY_LOG
     if not log.exists():
@@ -1193,7 +1159,6 @@ class Report:
     verdict: list[Check]
     deploys: list[dict]
     reminders: RemindersRead
-    comparison: str | None = None
 
     @property
     def unreadable(self) -> list[str]:
@@ -1298,8 +1263,6 @@ class Report:
         out += ["", "## Deploys in window"] + (
             [f"- {d.get('ts')} {d.get('playbook')} --limit {d.get('limit')}" for d in self.deploys] or ["- none"]
         )
-        if self.comparison is not None:
-            out += ["", "## Comparison", self.comparison]
         return "\n".join(out)
 
     def journal_paragraph(self) -> str:
@@ -1342,7 +1305,7 @@ class Report:
         )
 
 
-def build_report(*, alerts, logs, deadmen, verdict, deploys, reminders, now, window=timedelta(hours=24), comparison=None) -> Report:
+def build_report(*, alerts, logs, deadmen, verdict, deploys, reminders, now, window=timedelta(hours=24)) -> Report:
     return Report(
         now=now,
         window=window,
@@ -1352,7 +1315,6 @@ def build_report(*, alerts, logs, deadmen, verdict, deploys, reminders, now, win
         verdict=verdict,
         deploys=deploys,
         reminders=reminders,
-        comparison=comparison,
     )
 
 
@@ -1375,26 +1337,15 @@ def main(argv: list[str]) -> int:
         print(tier.value)
         return 0 if tier is Tier.AUTONOMOUS else 3
     if not argv or argv[0] != "report":
-        print(
-            "usage: ops-daily.py report [--since 24h] [--journal-entry] [--stack cloud|mon] [--compare]\n"
-            '       ops-daily.py classify --host <host> "<command>"'
-        )
+        print('usage: ops-daily.py report [--since 24h] [--journal-entry]\n       ops-daily.py classify --host <host> "<command>"')
         return 2
     try:
         window = _parse_since(argv[argv.index("--since") + 1]) if "--since" in argv else timedelta(hours=24)
     except (KeyError, ValueError, IndexError) as exc:
         print(f"--since takes a count and h or d, like 24h or 3d: {exc}")
         return 2
-    # One stack per pass: the three endpoint builders read `GRAFANA_URL` when called, so the name is rebound here.
-    global GRAFANA_URL
-    try:
-        named = argv[argv.index("--stack") + 1] if "--stack" in argv else grafana_auth.DEFAULT_STACK
-        stack = grafana_auth.STACKS[named]
-    except KeyError, IndexError:
-        print(f"--stack takes one of {', '.join(sorted(grafana_auth.STACKS))}")
-        return 2
-    GRAFANA_URL = stack.url
     now = datetime.now(timezone.utc)
+    stack = grafana_auth.stack()
     # The vault is a SOURCE like any other. A locked GPG agent raises `CalledProcessError`, which is
     # a `SubprocessError` and NOT an `OSError`, so `_UNREACHABLE` does not cover it -- and uncaught
     # it exits 1, the attention code, for a credential the pass could not read.
@@ -1414,9 +1365,6 @@ def main(argv: list[str]) -> int:
     verdict.append(read_agentboard_cgroup(runner=ssh_read))
     verdict.append(read_soak_verdict(now=now, runner=soak_run))
     verdict.append(read_rolling_head(now=now, root=ROLLING_HUB, tape_root=ROLLING_TAPE))
-    # The markdown run alone compares, and once a pass: the daily-ops skill's step 1 passes the flag, the runbooks' confirm
-    # reads and the `--journal-entry` run do not.
-    compares = "--compare" in argv and "--journal-entry" not in argv and comparison_due(now)
     report = build_report(
         alerts=read_alerts(token, now=now, window=window),
         logs=read_logs(token, window=window),
@@ -1426,7 +1374,6 @@ def main(argv: list[str]) -> int:
         reminders=read_reminders(now=now),
         now=now,
         window=window,
-        comparison=read_comparison(now=now, runner=compare_run) if compares else None,
     )
     print(report.journal_paragraph() if "--journal-entry" in argv else report.markdown())
     return report.exit_code
@@ -1656,9 +1603,8 @@ _FIRST_STAGE_SHAPES = (
     _Shape(("date",), {"-u": None, "--utc": None}, arity=(0, 1), classes=(_DATEFMT,)),
     _Shape(("hostname",)),
     # The repo's own read-only instruments.
-    _Shape(("grafana-query.py",), {"--since": _SINCE, "--step": _NAME, "--stack": _NAME}, arity=(1, 6), classes=(_QUOTED,)),
-    _Shape(("grafana-query.py",), {"--loki": None, "--stack": _NAME}, arity=(1, 6), classes=(_QUOTED,)),
-    _Shape(("grafana-compare.py",), {"--day": _DAY}),
+    _Shape(("grafana-query.py",), {"--since": _SINCE, "--step": _NAME}, arity=(1, 6), classes=(_QUOTED,)),
+    _Shape(("grafana-query.py",), {"--loki": None}, arity=(1, 6), classes=(_QUOTED,)),
     _Shape(("continuity.py",), {"--root": _PATH, "--since": _SINCE, "--until": _SINCE}, arity=(0, 3), classes=(_PATH,)),
     _Shape(("zcrypto", "data", "rolling", "verify"), {"--root": _PATH, "--as-of": _DAY}),
     _Shape(("ops-postverify.sh",), {"--since": _SINCE}, arity=(0, 3), classes=(_QUOTED,)),
