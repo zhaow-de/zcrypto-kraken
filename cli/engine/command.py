@@ -694,6 +694,8 @@ class _ExecutionMetrics:
         # high-water mark, and a seeded 0 drawdown as a measured one.
         self.equity_eur: Gauge | None = None
         self.drawdown_bps: Gauge | None = None
+        # Registered on first use, as `tracking_state` is: the series at 0 then says a read ran.
+        self.reconciliation_positions: Gauge | None = None
         self.watchdog_frozen = Gauge(
             "zcrypto_exec_watchdog_frozen",
             "Whether the stale-socket watchdog holds the loop frozen: 1 = a venue socket stayed down past its grace, so no "
@@ -736,6 +738,15 @@ class _ExecutionMetrics:
 
     def set_position(self, symbol: str, qty: float) -> None:
         self.position.labels(symbol=symbol).set(qty)
+
+    def set_reconciliation_positions(self, count: int) -> None:
+        if self.reconciliation_positions is None:
+            self.reconciliation_positions = Gauge(
+                "zcrypto_exec_reconciliation_positions",
+                "Open positions holding an order nautilus's reconciliation minted.",
+                registry=self._registry,
+            )
+        self.reconciliation_positions.set(count)
 
     def set_realized(self, value: float) -> None:
         self.realized_pnl.set(value)

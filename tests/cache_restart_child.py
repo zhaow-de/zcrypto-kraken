@@ -207,11 +207,15 @@ def _venue_state(cache) -> dict:
 
 
 class _Recorder:
-    """The executor's metrics hook, recording the position and realized readings it publishes."""
+    """The executor's metrics hook, recording the position, realized and reconciliation-count readings it publishes."""
 
     def __init__(self):
         self.positions: list = []
         self.realized: list = []
+        self.reconciliation_positions: list = []
+
+    def set_reconciliation_positions(self, count):
+        self.reconciliation_positions.append(count)
 
     def inc_order(self, outcome):
         pass
@@ -254,7 +258,11 @@ METRICS = _Recorder()
 
 
 def _write() -> None:
-    RECORD["metrics"] = {"positions": METRICS.positions, "realized": METRICS.realized}
+    RECORD["metrics"] = {
+        "positions": METRICS.positions,
+        "realized": METRICS.realized,
+        "reconciliation_positions": METRICS.reconciliation_positions,
+    }
     Path(CONFIG["out"]).write_text(json.dumps(RECORD, indent=1, default=str))
 
 

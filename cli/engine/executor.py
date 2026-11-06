@@ -88,7 +88,13 @@ from cli.engine.journal import CycleRecord, from_json, require_comparable_cycle_
 from cli.engine.probeplan import MODES, PLAN_FILENAME, ProbeIntent, ProbePlanError, parse_plan, plan_refusals
 from cli.engine.store import BASKET
 from cli.engine.tracking import extract_fills, realized_drift
-from cli.engine.venuestate import InstrumentConstraints, held_ordermin, venue_state_from_cache
+from cli.engine.venuestate import (
+    InstrumentConstraints,
+    held_ordermin,
+    reconciliation_booked_positions,
+    reconciliation_tagged_orders,
+    venue_state_from_cache,
+)
 from cli.logging import get_logger
 
 logger = get_logger("engine.executor")
@@ -1178,6 +1184,7 @@ class ProbeExecutor:
         # The rows the re-read pass repaired from the venue's report in this process, whose later
         # fills `_fill_credit` caps at what the Cache's order holds beyond the row.
         self._rows_the_pass_repaired: set[str] = set()
+        self._reconciliation_positions_logged: set[str] = set()
         # When the gate was last evaluated, for the idle refresh: the process's startup evaluation
         # published moments before this construction.
         self._gate_evaluated_at: datetime = self._now()
@@ -1502,10 +1509,13 @@ class ProbeExecutor:
         """The idle refresh: one evaluation, published, once `_GATE_REFRESH` has passed since the last
         -- the tick a plan runs on evaluates anyway and stamps it. What it publishes is what the gate
         reads, its own fail-closed readings included, and not the heartbeat; it journals nothing, the
-        exec record's verdict being the boundary's (`on_boundary`). Wrapped as `_publish_resting_age`
+        exec record's verdict being the boundary's (`on_boundary`). It reads the reconciliation count
+        first (`_publish_reconciliation_positions`), since no other read recurs while no boundary drafts
+        and the gauge would not fall when the position closes. Wrapped as `_publish_resting_age`
         is: telemetry may never end a plan."""
         try:
             if now - self._gate_evaluated_at >= _GATE_REFRESH:
+                self._publish_reconciliation_positions()
                 self._evaluate(now, heartbeat=False)
         except Exception:
             logger.exception("executor gate refresh raised -- continuing")
@@ -3569,6 +3579,7 @@ class ProbeExecutor:
         figures: dict = {"nav": record.nav}
         try:
             try:
+                self._publish_reconciliation_positions()
                 book = (self._venue_holdings or read_venue_book)()
                 statuses = (self._instrument_statuses or read_instrument_statuses)()
                 state = venue_state_from_cache(self._cache, clock=self._now, listed=book.ordermin)
@@ -4624,6 +4635,28 @@ class ProbeExecutor:
     def listed_ordermin(self) -> dict[str, float] | None:
         return None if self._venue_book is None else self._venue_book.ordermin
 
+    def _publish_reconciliation_positions(self) -> None:
+        """A raise is logged and dropped; the callers ignore it (spec 00157 D3). An engine without the
+        cache publishes no series, the count there reading this boot's memory and not the store (D4)."""
+        if not self._cache_enabled:
+            return
+        try:
+            positions = reconciliation_booked_positions(self._cache)
+            for position in positions:
+                if str(position.id) not in self._reconciliation_positions_logged:
+                    self._reconciliation_positions_logged.add(str(position.id))
+                    logger.warning(
+                        "position %s under %s, %s, holds an order nautilus's reconciliation minted, %s -- see infra/runbooks/engine.md#zcrypto-engine-reconciliation-position",
+                        position.id,
+                        position.strategy_id,
+                        position.signed_qty,
+                        [str(cid) for cid in reconciliation_tagged_orders(self._cache, position)],
+                    )
+            if _metrics is not None:
+                _metrics.set_reconciliation_positions(len(positions))
+        except Exception:
+            logger.exception("the reconciliation position read raised -- continuing")
+
     def _settle_positions_from_venue(self, moment: str) -> bool:
         """The venue's own book, read and kept on `self._venue_book`, settles the position gauge where the
         Cache disagrees (`_settle_from_book`): at the startup pass, after its order read and before its
@@ -4631,6 +4664,7 @@ class ProbeExecutor:
         terms, nothing of this process sent or in flight. A read that fails logs WARNING and returns False,
         the previous book and the gauge's reading standing until the next pass, the seed's fold at the
         first; a read that answers returns True."""
+        self._publish_reconciliation_positions()
         try:
             book = (self._venue_holdings or read_venue_book)()
         except Exception:

@@ -432,6 +432,8 @@ class StubCache:
         `_reconcile_terminal` from a broken one."""
         if strategy_id is not None and not isinstance(strategy_id, StrategyId):
             raise TypeError(f"Argument 'strategy_id' has incorrect type (expected StrategyId, got {type(strategy_id).__name__})")
+        if instrument_id is None and strategy_id is None:
+            return [position for held in (self._positions, self._external) for each in held.values() for position in each]
         key = self._position_key(instrument_id)
         own = self._positions.get(key, [])
         external = self._external.get(key, [])
@@ -453,13 +455,33 @@ class StubCache:
         needs to make the venue disagree with the ledger, or to land a holding the engine never
         ordered (the manual settle). `realized_pnl` is `Money | None` on a real Position, and the
         None is the ordinary case for a leg with no closed round trip yet."""
-        self._positions[INSTRUMENT_IDS[symbol]] = [SimpleNamespace(signed_qty=signed_qty, realized_pnl=realized_pnl)]
+        self._positions[INSTRUMENT_IDS[symbol]] = [
+            SimpleNamespace(signed_qty=signed_qty, realized_pnl=realized_pnl, client_order_ids=list)
+        ]
 
     def set_external_position(self, symbol, signed_qty):
         """A holding attributed to `StrategyId("EXTERNAL")` -- what an operator's hand settle, or
         any order this engine never placed, leaves in the Cache. Instrument-scoped reads see it;
         reads scoped to this engine's own strategy must not."""
-        self._external[INSTRUMENT_IDS[symbol]] = [SimpleNamespace(signed_qty=signed_qty, realized_pnl=None)]
+        self._external[INSTRUMENT_IDS[symbol]] = [SimpleNamespace(signed_qty=signed_qty, realized_pnl=None, client_order_ids=list)]
+
+    def hold_tagged_position(self, symbol, signed_qty):
+        """An `EXTERNAL` position under the id the real wheel gives it, holding an untagged order and one
+        the library's reconciliation minted, both served by `order`: spec 00157 D1's count of one."""
+        instrument_id = INSTRUMENT_IDS[symbol]
+        plain, tagged = ClientOrderId("O-PLAIN"), ClientOrderId("O-TAGGED")
+        self._closed_orders.extend(
+            [SimpleNamespace(client_order_id=plain, tags=None), SimpleNamespace(client_order_id=tagged, tags=["RECONCILIATION"])]
+        )
+        self._external[instrument_id] = [
+            SimpleNamespace(
+                id=PositionId(f"{instrument_id}-EXTERNAL"),
+                strategy_id=StrategyId("EXTERNAL"),
+                signed_qty=signed_qty,
+                realized_pnl=None,
+                client_order_ids=lambda: [plain, tagged],
+            )
+        ]
 
     def hold_strategy_order(self, client_order_id, *, strategy_id, venue_order_id=None):
         """A REAL resting order under `strategy_id`, which `order` serves by `client_order_id` and the
@@ -786,10 +808,13 @@ def _intent_entry(tmp_path: Path, index: int, when: datetime = NOW) -> dict:
 
 
 def _held(**by_symbol):
-    """`StubCache(positions=...)`: constructed `signed_qty`/`realized_pnl` namespaces keyed by
-    instrument id -- exactly the shape `Cache.positions_open(instrument_id=...)` returns (negative =
+    """`StubCache(positions=...)`: constructed `signed_qty`/`realized_pnl`/`client_order_ids` namespaces
+    keyed by instrument id -- exactly the shape `Cache.positions_open(instrument_id=...)` returns (negative =
     SHORT). `realized_pnl` is `Money | None` on a real Position and None is the ordinary case."""
-    return {INSTRUMENT_IDS[symbol]: [SimpleNamespace(signed_qty=qty, realized_pnl=None)] for symbol, qty in by_symbol.items()}
+    return {
+        INSTRUMENT_IDS[symbol]: [SimpleNamespace(signed_qty=qty, realized_pnl=None, client_order_ids=list)]
+        for symbol, qty in by_symbol.items()
+    }
 
 
 def _venue_record(tmp_path: Path, *, balances, positions=None, when: datetime = NOW) -> Path:
@@ -1261,6 +1286,10 @@ class RecordingMetrics:
         self.frozen = []
         self.not_drafted = []
         self.verdicts = []
+        self.reconciliation_positions = []
+
+    def set_reconciliation_positions(self, count):
+        self.reconciliation_positions.append(count)
 
     def set_gap(self, symbol, eur):
         self.gaps.append((symbol, eur))
@@ -9233,6 +9262,7 @@ _STUB_CACHE_PLUMBING = frozenset(
         "_position_key",
         "set_position",
         "set_external_position",
+        "hold_tagged_position",
         "hold_strategy_order",
         "close_position",
         "move_position",
@@ -12798,3 +12828,126 @@ def test_a_re_armed_draft_that_minted_the_series_and_ends_on_a_tick_that_marks_n
     ex._venue_holdings.earn = {}
     _boundary_drafts(ex, clock, later, _rung2_record(tmp_path, final_targets=flat, cycle_ts=later))
     assert not _kill_file(tmp_path).exists() and _accum(tmp_path, later)["drawdown_bps"] == pytest.approx(0.0, abs=1.0)
+
+
+# --- a position the library's reconciliation booked (spec 00157 D2 to D4) -------------------------
+
+
+def _reconciliation_line(position_id, quantity):
+    return (
+        f"position {position_id} under EXTERNAL, {quantity}, holds an order nautilus's reconciliation minted, ['O-TAGGED'] "
+        "-- see infra/runbooks/engine.md#zcrypto-engine-reconciliation-position"
+    )
+
+
+def test_a_position_the_library_booked_sets_the_gauge_and_logs_one_warning_per_process(tmp_path):
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    cache = StubCache()
+    cache.hold_tagged_position("BTC/EUR", 0.5)
+    cache.hold_tagged_position("ETH/EUR", -0.25)
+    cache.set_position("SOL/EUR", 1.5)
+    ex = _executor(tmp_path, client=StubClient(cache), config=_cache_config(tmp_path))
+
+    with _executor_errors(logging.WARNING) as records:
+        ex._publish_reconciliation_positions()
+        ex._publish_reconciliation_positions()
+
+    assert metrics.reconciliation_positions == [2, 2]
+    assert [(r.levelno, r.getMessage()) for r in records] == [
+        (logging.WARNING, _reconciliation_line("BTC/EUR.KRAKEN-EXTERNAL", 0.5)),
+        (logging.WARNING, _reconciliation_line("ETH/EUR.KRAKEN-EXTERNAL", -0.25)),
+    ]
+
+
+def test_the_gauge_falls_to_zero_when_the_position_goes(tmp_path):
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    cache = StubCache()
+    cache.hold_tagged_position("BTC/EUR", 0.5)
+    clock = _Clock()
+    ex = _executor(tmp_path, client=StubClient(cache), config=_cache_config(tmp_path), clock=clock)
+
+    ex.on_timer(clock.now)
+    assert metrics.reconciliation_positions == [1]
+
+    cache._external.clear()
+    clock.now += executor_module._GATE_REFRESH
+    ex.on_timer(clock.now)
+    assert metrics.reconciliation_positions == [1, 0]
+
+
+def test_a_raise_in_the_reconciliation_read_changes_nothing_the_engine_does(tmp_path):
+    class _ReaderRaises(StubCache):
+        # By instrument it answers: `_cache_net` reads the same accessor that way, and the reader alone reads it whole.
+        def positions_open(self, *, instrument_id=None, **kwargs):
+            if instrument_id is None:
+                raise RuntimeError("the position store is not readable")
+            return super().positions_open(instrument_id=instrument_id, **kwargs)
+
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    ex = _executor(
+        tmp_path,
+        client=StubClient(_ReaderRaises()),
+        config=_cache_config(tmp_path),
+        venue_holdings=_VenueHoldings({"BTC/EUR": 0.0}),
+    )
+
+    with _executor_errors() as errors:
+        settled = ex._settle_positions_from_venue("the startup pass")
+
+    assert settled is True
+    assert [r.getMessage() for r in errors] == ["the reconciliation position read raised -- continuing"]
+    assert metrics.positions == [("BTC/EUR", 0.0)]
+
+
+def test_the_read_runs_before_a_book_read_that_fails(tmp_path):
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    cache = StubCache()
+    cache.hold_tagged_position("BTC/EUR", 0.5)
+    ex = _executor(
+        tmp_path,
+        client=StubClient(cache),
+        config=_cache_config(tmp_path),
+        venue_holdings=_VenueHoldings(raises=EngineError("the read failed")),
+    )
+
+    assert ex._settle_positions_from_venue("the startup pass") is False
+    assert metrics.reconciliation_positions == [1]
+
+
+def test_the_boundary_read_reads_it_before_its_book(tmp_path):
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=RUNG2 / "cycle-12.json",
+        holdings={},
+        eur_total=1500.0,
+        eur_free=1500.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+        cache=CacheSettings(enabled=True),
+    )
+    client.cache.hold_tagged_position("BTC/EUR", 0.5)
+    ex._venue_holdings._raises = RuntimeError("EAPI:Invalid nonce")
+
+    ex.on_boundary(_RUNG2_12Z)
+    ex._draft_cycle_plan(clock.now)
+
+    assert metrics.reconciliation_positions == [1]
+
+
+def test_an_engine_without_the_cache_publishes_no_series(tmp_path):
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    cache = StubCache()
+    cache.hold_tagged_position("BTC/EUR", 0.5)
+    ex = _executor(tmp_path, client=StubClient(cache))
+
+    with _executor_errors(logging.WARNING) as records:
+        ex._publish_reconciliation_positions()
+
+    assert metrics.reconciliation_positions == []
+    assert records == []
