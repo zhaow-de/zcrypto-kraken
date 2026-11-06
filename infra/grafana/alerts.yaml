@@ -3,7 +3,7 @@
 # `POST`/`PUT /api/v1/provisioning/alert-rules[/:uid]` call against Grafana's **Alerting
 # Provisioning HTTP API** -- that endpoint takes a single alert-rule JSON object per call and
 # REJECTS the `apiVersion: 1` / `groups:` file-provisioning shape, which is for Grafana's
-# config-file provisioner and is not usable on Grafana Cloud SaaS anyway. This file is YAML
+# config-file provisioner. This file is YAML
 # (superset of JSON) purely for the inline comments -- the script converts it to the API's per-rule
 # JSON before each push. See:
 #   https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/http-api-provisioning/
@@ -1369,9 +1369,8 @@ rules:
 
   # --- Reconciler: the redundant capture secondary + gap healing (spec 00050 Role C) ---------------
   # A rule armed before its metric exists evaluates against nothing and sits silent forever, looking
-  # healthy (T0034) -- push only once the series are visible. Alloy's keep-regex on the WRITER's host
-  # must carry `zcrypto_reconcile_.*` or the series never ship; the overlay writer runs on ops
-  # (infra/ansible/roles/ops/files/config.alloy).
+  # healthy (T0034) -- push only once the series are visible. The overlay writer runs on ops, so its
+  # series ship through infra/ansible/roles/ops/files/config.alloy.
 
   - uid: zcrypto-reconcile-exporter-stale
     title: "Reconciler · exporter stale"
@@ -3013,7 +3012,6 @@ rules:
       # Raised when the collector cannot parse OR cannot OPEN a .prom. The open case is not
       # theoretical: mktemp creates 0600 and `mv` preserves it, so a publisher missing an explicit
       # chmod publishes root-only and the non-root collector gets EACCES -- metrics silently gone.
-      # This series was admitted to the keep-list before any rule watched it; this is that rule.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 3600, to: 0}
@@ -5729,10 +5727,8 @@ rules:
       receiver: logs
 
   # ---- zcrypto-mon: the observability node's own rules -------------------------------------------
-  # Pushed to the node alone: grafana-push.sh leaves this group out of a push that names no stack
-  # (GRAFANA_SKIP_RULE_GROUPS), since Grafana Cloud holds no `host="zcrypto-mon"` series and the two
-  # dead-men here would page there for good. A rule cannot page the death of the node it runs on:
-  # only the self-check's healthchecks.io ping can, once its URL is set.
+  # A rule cannot page the death of the node it runs on: the dead-man service does, through the node's
+  # self-check and the ops watchdog, and the ops watchdog itself when that service is dark too.
   - uid: zcrypto-alloy-dark-mon
     title: "Fleet · Alloy dark — Monitor"
     ruleGroup: zcrypto-mon
@@ -5824,8 +5820,7 @@ rules:
     data:
       # The node runs unattended-upgrades with Automatic-Reboot "false": patches install, the reboot is
       # a human act, and this rule is what makes the pending one visible. The capture pair's rule,
-      # zcrypto-capture-reboot-pending, cannot carry this host: it is pushed to Grafana Cloud too,
-      # where this host has no series.
+      # zcrypto-capture-reboot-pending, reads the pair alone.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 3600, to: 0}
@@ -6279,9 +6274,6 @@ rules:
       receiver: logs
 
   # ---- zcrypto-hc: the dead-man node's rules, evaluated on the observability node ---------------------------------
-  # The node ships its telemetry to the observability node alone, so grafana-push.sh leaves this group out of a push
-  # that names no stack, as it does zcrypto-mon: Grafana Cloud holds no `host="zcrypto-hc"` series, and the rules
-  # whose noDataState is Alerting would page there for good.
   - uid: zcrypto-alloy-dark-hc
     title: "Fleet · Alloy dark — Dead-man"
     ruleGroup: zcrypto-hc
@@ -6313,7 +6305,7 @@ rules:
     execErrState: Alerting
     for: 10m
     annotations:
-      summary: "The dead-man node's Alloy has shipped no metrics to the observability node for >10m. The node's host series, its backup gauge, its units' journals and the service's records are dark there, so the node's other rules are blind, or page the absence, until this clears. The service itself is not read through this Alloy: Grafana Cloud's dead-man watchdog reads it through the ops node's scrape. First checks on the node: `systemctl status alloy`, then `journalctl -u alloy -n 50`; a restart is the usual fix. Runbook: infra/runbooks/hc.md#zcrypto-alloy-dark-hc"
+      summary: "The dead-man node's Alloy has shipped no metrics to the observability node for >10m. The node's host series, its backup gauge, its units' journals and the service's records are dark there, so the node's other rules are blind, or page the absence, until this clears. The service itself is not read through this Alloy: the dead-man watchdog rule reads it through the ops node's scrape. First checks on the node: `systemctl status alloy`, then `journalctl -u alloy -n 50`; a restart is the usual fix. Runbook: infra/runbooks/hc.md#zcrypto-alloy-dark-hc"
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "921"
     labels:

@@ -2527,7 +2527,7 @@
       "id": 901,
       "type": "timeseries",
       "title": "Monitor — its own Alloy shipping",
-      "description": "Is the observability node's own Alloy shipping? The count of scrape targets it reports, 0 when it reports none: the alert pages below the green line at 1, held for ten minutes. On Grafana Cloud this row is empty, zero or Cloud's own fleet, never the node: read it on the node's Grafana. A dark Alloy here blinds this row and nothing else: the fleet's panels read the fleet's own shippers.",
+      "description": "Is the observability node's own Alloy shipping? The count of scrape targets it reports, 0 when it reports none: the alert pages below the green line at 1, held for ten minutes. A dark Alloy here blinds this row and nothing else: the fleet's panels read the fleet's own shippers.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -3376,7 +3376,7 @@
       "id": 921,
       "type": "timeseries",
       "title": "Dead-man node — its Alloy shipping",
-      "description": "Is the dead-man node's own Alloy shipping? The count of scrape targets it reports, 0 when it reports none: the alert pages below the green line at 1, held for ten minutes. The node ships to the observability node alone, so this row is empty on Grafana Cloud: read it on the observability node's Grafana. A dark Alloy blinds this row and not the service, which Grafana Cloud reads through the ops node's scrape.",
+      "description": "Is the dead-man node's own Alloy shipping? The count of scrape targets it reports, 0 when it reports none: the alert pages below the green line at 1, held for ten minutes. A dark Alloy blinds this row and not the service, which the dead-man watchdog rule reads through the ops node's scrape.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -3625,7 +3625,7 @@
       "id": 925,
       "type": "timeseries",
       "title": "Dead-man node — age of the last backup",
-      "description": "How long since the dead-man node last backed up its database. It runs nightly, so a healthy line climbs to a day and drops; the red line is 26 hours, one night's run and two hours' grace. The node ships its metrics to the observability node alone, so this panel stays empty on Grafana Cloud; on the observability node's Grafana, no line means the node is not built yet, no backup has succeeded since it was built, or its telemetry is not arriving.",
+      "description": "How long since the dead-man node last backed up its database. It runs nightly, so a healthy line climbs to a day and drops; the red line is 26 hours, one night's run and two hours' grace. No line means no backup has succeeded since the node was built, or its telemetry is not arriving.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
