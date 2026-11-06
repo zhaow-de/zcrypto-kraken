@@ -956,6 +956,12 @@ def test_a_restored_spot_lot_comes_back_at_the_lot_with_no_external_short_and_th
         "(docs/research/00.master-plan.md §12) rests on this restore -- re-read it against what a restart restores now: "
         f"{_restore_lines(held['log'])}"
     )
+    buy = node.rows()[0]["client_order_id"]
+    orders = [order["client_order_id"] for order in held["at_start"]["orders"]]
+    assert buy in orders, (
+        f"{_BUMP}: the buy behind a spot lot held across a restart no longer comes back with its order in the store, "
+        f"so the 0 below would not read its tags: {buy}, {orders}"
+    )
     _reads_nothing(held)
     assert held["venue_state_at_start"]["positions"][SYMBOL] == QTY, (
         f"{_BUMP}: the venue record's position for a spot lot held across a restart is no longer the lot"

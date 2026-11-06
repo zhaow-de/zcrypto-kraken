@@ -12860,6 +12860,37 @@ def test_a_position_the_library_booked_sets_the_gauge_and_logs_one_warning_per_p
     ]
 
 
+def test_a_raise_while_the_warnings_arguments_are_built_leaves_the_warning_to_the_next_read(tmp_path):
+    class _ArgumentsReadRaisesOnce(StubCache):
+        # The reader reads the position's two orders first, so the third read is the WARNING's arguments'.
+        order_reads = 0
+
+        def order(self, client_order_id):
+            self.order_reads += 1
+            if self.order_reads == 3:
+                raise RuntimeError("the order store is not readable")
+            return super().order(client_order_id)
+
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    cache = _ArgumentsReadRaisesOnce()
+    cache.hold_tagged_position("BTC/EUR", 0.5)
+    ex = _executor(tmp_path, client=StubClient(cache), config=_cache_config(tmp_path))
+
+    with _executor_errors(logging.WARNING) as records:
+        ex._publish_reconciliation_positions()
+        assert [(r.levelno, r.getMessage()) for r in records] == [
+            (logging.ERROR, "the reconciliation position read raised -- continuing"),
+        ]
+        assert metrics.reconciliation_positions == []
+        ex._publish_reconciliation_positions()
+
+    assert [(r.levelno, r.getMessage()) for r in records[1:]] == [
+        (logging.WARNING, _reconciliation_line("BTC/EUR.KRAKEN-EXTERNAL", 0.5)),
+    ]
+    assert metrics.reconciliation_positions == [1]
+
+
 def test_the_gauge_falls_to_zero_when_the_position_goes(tmp_path):
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
