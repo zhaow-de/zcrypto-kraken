@@ -653,13 +653,14 @@
         path: /etc/systemd/system/zcrypto-grafana-keepalive.timer
         get_checksum: false
       register: ops_grafana_keepalive_timer
+      failed_when: false
 
     - name: stop + disable the grafana keep-alive timer
       ansible.builtin.systemd_service:
         name: zcrypto-grafana-keepalive.timer
         enabled: false
         state: stopped
-      when: ops_grafana_keepalive_timer.stat.exists
+      when: ops_grafana_keepalive_timer.stat.exists | default(false)
 
     - name: remove the grafana keep-alive's units, script, secrets env file and textfile metric
       ansible.builtin.file:
@@ -676,7 +677,7 @@
     - name: reload systemd without the grafana keep-alive's units
       ansible.builtin.systemd_service:
         daemon_reload: true
-      when: ops_grafana_keepalive_timer.stat.exists
+      when: ops_grafana_keepalive_timer.stat.exists | default(false)
 
 # --- OPS-2/3/4 (specs 00051/00052): the liquidations-poller compose file + the daily
 # continuity-replay/verified-path replay timers + the hourly panel-materialize and tape-bars
