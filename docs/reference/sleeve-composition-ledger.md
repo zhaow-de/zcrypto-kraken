@@ -65,3 +65,15 @@ The book again equals the summed sleeve gross ÷ 6 on both sides, to within one 
 | **final book gross** (Σ\|target weight\|, governed) | **0.08626007152158495** | **0.0847598725383454** |
 
 The book equals the summed sleeve gross ÷ 6 on both sides, exactly.
+
+### 2026-11-04 — A2 re-arms; the three sleeves again
+
+| | last pre-transition cycle<br>2026-11-04 12Z | first post-transition cycle<br>2026-11-04 16Z |
+| --- | --- | --- |
+| `zcrypto_engine_active_sleeves` | 2 | **3** |
+| `sleeve_gross{sleeve="B"}` | 0.2331803027478531 | 0.2331803027478531 |
+| `sleeve_gross{sleeve="A1"}` | 0.1529826832310278 | 0.1529826832310278 |
+| `sleeve_gross{sleeve="A2"}` | 0 | 0.012834323780066924 |
+| **final book gross** (Σ\|target weight\|, governed) | **0.0643604976631468** | **0.0664995516264913** |
+
+The book equals the summed sleeve gross ÷ 6 on both sides, to within one ulp, and equals each cycle record's `sum|final_targets|`. A2 sat flat from 2026-10-29's 20Z cycle through this 12Z one.
