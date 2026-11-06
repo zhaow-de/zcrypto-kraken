@@ -4,7 +4,7 @@
 
 **Goal:** A position holding an order nautilus's reconciliation minted pages the main channel, at the first start that books it, and changes nothing the engine does.
 
-**Architecture:** `venuestate.reconciliation_booked_positions(cache)` is the one reader (D1). `ProbeExecutor._publish_reconciliation_positions` reads it before each book read and on the idle refresh, logs one WARNING per position per process and sets `zcrypto_exec_reconciliation_positions` (D2, D3, D4). `zcrypto-engine-reconciliation-position` pages on that gauge, and `engine.md` says what to do (D4, D5). A case on the real wheel holds the tag (D6).
+**Architecture:** `venuestate.reconciliation_booked_positions(cache)` is the one reader (D1). `ProbeExecutor._publish_reconciliation_positions` reads it before each book read and on the idle refresh, logs one WARNING per position per process and sets `zcrypto_exec_reconciliation_positions` (D2, D3, D4). `zcrypto-engine-reconciliation-position` pages on that gauge, and `engine.md` says what to do (D4, D5). `zcrypto-bump-nautilus` reads the gauge at 0 before a wheel past `dev20261103` rolls (D5). A case on the real wheel holds the tag (D6).
 
 **Tech Stack:** Python 3.14, pytest, `nautilus-trader` 2.0.0rc9.dev20261101, `infra/scripts/mutate-probe.sh`.
 
@@ -28,6 +28,7 @@
 - Modify: `cli/engine/venuestate.py`, `cli/engine/executor.py`, `cli/engine/command.py`, `infra/scripts/ops_daily.py`.
 - Modify: `tests/test_engine_venuestate.py`, `tests/test_engine_executor.py`, `tests/test_engine_metrics.py`, `tests/test_infra_alert_rules.py`, `tests/test_cache_restart.py`, `tests/cache_restart_child.py`, `tests/slow-cases.txt`.
 - Modify: `infra/grafana/alerts.yaml`, `infra/grafana/engine-dashboard.json`, `infra/runbooks/engine.md`, `infra/runbooks/engine-procedures.md`, `docs/research/14.phase6-decisions.md`.
+- Modify, in its own `claude(skills)` commit: `.claude/skills/zcrypto-bump-nautilus/SKILL.md`.
 
 ## Review Focus
 
@@ -35,6 +36,7 @@
 - Is the read reached at a start whose book read fails, and does the gauge fall when no pass or boundary recurs (D2)?
 - Do the existing executor tests' stub caches still pass without a logged exception, and does `tests/test_engine_stub_fidelity.py` classify what the reader touches?
 - Does `RATIO` hold after the runbook edits?
+- What a standing position's silence passes is stated at D4, at D5, at the section's steps 3 to 5, at the restart section's items 1 and 3, at the daily item through item 3, and at the bump's read: does each hold the one bar, `dev20261103`, and does each read beside a count read the comment's position ids?
 
 ---
 
@@ -107,11 +109,15 @@ def test_a_position_the_library_booked_pages_at_one_and_reads_nothing_at_zero():
     assert (rule["notification_settings"]["receiver"], rule["ruleGroup"]) == ("metrics", "zcrypto-gate")
 ```
 
-- [ ] **Step 3: The rule,** in `infra/grafana/alerts.yaml` after `zcrypto-engine-exec-venue-diverged`, copying its shape: uid `zcrypto-engine-reconciliation-position`, title `Engine · a position holds an order the library's reconciliation minted`, group `zcrypto-gate`, expression `zcrypto_exec_reconciliation_positions{host="zcrypto"}`, evaluator `{type: gt, params: [0.5]}`, `noDataState: OK` with the neighbour's comment, `execErrState: Alerting`, `severity: critical`, receiver `metrics`, `__dashboardUid__: "zcrypto-engine"`, its summary saying what it means in one line with no internal term and closing `Runbook: infra/runbooks/engine.md#zcrypto-engine-reconciliation-position`, and:
+- [ ] **Step 3: The rule,** in `infra/grafana/alerts.yaml` after `zcrypto-engine-exec-venue-diverged`, copying its shape: uid `zcrypto-engine-reconciliation-position`, title `Engine · a position holds an order the library's reconciliation minted`, group `zcrypto-gate`, expression `zcrypto_exec_reconciliation_positions{host="zcrypto"}`, evaluator `{type: gt, params: [0.5]}` without the neighbour's `== 1` remark, since this gauge is a count, `severity: critical`, receiver `metrics`, `__dashboardUid__: "zcrypto-engine"`, its summary saying what it means in one line with no internal term and closing `Runbook: infra/runbooks/engine.md#zcrypto-engine-reconciliation-position`, and, in place of the neighbour's `OK, not Alerting` comment, `noDataState`, `execErrState` and `for`:
 
 ```yaml
-    # 5m absorbs the one-minute datasource transients and no more: the count opens no faster than a
-    # start and stands until the position goes, so the wait costs no detection.
+    # OK, not Alerting: the series is absent until the first read after a start, a raising read
+    # pages through zcrypto-engine-error-logs, and a down engine is zcrypto-engine-cycle-stale's.
+    noDataState: OK
+    execErrState: Alerting
+    # 5m absorbs the one-minute datasource transients and no more: the count stands until the
+    # position goes, so the wait costs no detection.
     for: 5m
 ```
 
@@ -138,9 +144,9 @@ The engine reads the count before each book read and once a minute while no plan
 
 1. **Read the facts.** The WARNING, on the `Logs` panel of the `zcrypto-logs` board with the container filter at `engine`; on the workstation, `kraken positions -o json` and the balance export, `kraken extended-balance -o json`.
 2. **Explain the gap as one of the shapes a measured start booked:** a leveraged row the Cache did not hold at a cold start; a leveraged row differing from the Cache's net; a fill made while the engine was down and absent from the trade history; a store lost with the fill past the 720-minute lookback; the engine's dust lot beside its own margin fill; a later mismatch on a hand-opened position, its opener untagged. An unexplained one goes to the owner.
-3. **Silence the rule once it is explained,** in the node's UI, on `__alert_rule_uid__=zcrypto-engine-reconciliation-position`, with a dated end no later than the next restart taken by hand and a comment naming the position id and the count it explains. The series is one unlabelled count, so the silence hides a later position too: [the restart read](engine-procedures.md#rung-3-after-a-restart) and [the daily read](engine-procedures.md#rung-3-the-daily-read) compare the gauge with the count it explained.
+3. **Silence the rule once it is explained,** in the node's UI, on `__alert_rule_uid__=zcrypto-engine-reconciliation-position`, with a dated end no later than the next restart you schedule, whatever its cause, a converge included, and a comment naming the position id and the count it explains. The series is one unlabelled count, so the silence hides a later position too: [the restart read](engine-procedures.md#rung-3-after-a-restart) and [the daily read](engine-procedures.md#rung-3-the-daily-read) compare the gauge and the WARNING with that comment.
 4. **A flat book: clear the store before a restart past `dev20261103`.** Flat reads as `kraken open-orders -o json` listing nothing, `kraken positions -o json` printing `{}` and `kraken extended-balance -o json` showing no lot: the positions read prints `{}` with a spot lot held too. The clear is [the prefix-wide form](engine-procedures.md#engine-clear-stored-account-prefix-wide); [the single-key form](engine-procedures.md#engine-clear-stored-account) deletes the account key and leaves the position, so this rule keeps firing after it.
-5. **A lot or a margin position held: no clear.** On a build without dd8afce410 the position may stand, silenced as in step 3, with no bump past `dev20261103` until it is cleared at a flat book. Flattening to clear is the owner's decision.
+5. **A lot or a margin position held: no clear.** On a build at or before `dev20261103` the position may stand, silenced as in step 3, with no bump past `dev20261103` until it is cleared at a flat book. Flattening to clear is the owner's decision.
 6. **It resolves** when the position closes, within a minute of the close while no plan runs, or when the store is cleared.
 
 ### Retire when
@@ -154,9 +160,10 @@ And in `#zcrypto-engine-error-logs` step 2, directly above its `Anything naming 
    - **`the reconciliation position read raised -- continuing`**: telemetry, the read alone, with no order path touched. No disarm is owed for this line alone. `zcrypto_exec_reconciliation_positions` says nothing while the line stands, so read Kraken's positions by hand, [`zcrypto-engine-reconciliation-position`](#zcrypto-engine-reconciliation-position) step 1, and take the traceback to the owner (no count command: the line is `_publish_reconciliation_positions`'s in `cli/engine/executor.py`, and nothing the engine does reads that read).
 ```
 
-- [ ] **Step 6: `engine-procedures.md`,** four edits, verbatim:
+- [ ] **Step 6: `engine-procedures.md`,** five edits, verbatim:
   - the prefix-wide form's step 1 bullet, whole: `` Kraken flat: on the workstation, `kraken open-orders -o json` lists nothing, `kraken positions -o json` prints `{}`, and the balance export, `kraken extended-balance -o json`, shows no lot held: the positions read prints `{}` with a spot lot held too. ``
-  - the rung-3 restart section's item 3, *Read the boot*, its paragraph under the fence closing with: `` `zcrypto_exec_reconciliation_positions` on the Engine board reads 0 or the count a standing silence explained; a higher count is a new position, [`engine.md#zcrypto-engine-reconciliation-position`](engine.md#zcrypto-engine-reconciliation-position) step 1. ``
+  - the rung-3 restart section's item 1, *A restart by your own hand*, closing with: `` A silence on `zcrypto-engine-reconciliation-position` dated past this restart is expired now, so the start re-pages what it still counts. ``
+  - the rung-3 restart section's item 3, *Read the boot*, its paragraph under the fence closing with: `` `zcrypto_exec_reconciliation_positions` on the Engine board reads 0, or, on a build at or before `dev20261103`, the count the comment of the rule's latest silence explains, with the WARNING ([`engine.md#zcrypto-engine-reconciliation-position`](engine.md#zcrypto-engine-reconciliation-position) step 1) naming that comment's position ids and no other. Another reading is a new position, that section's step 1 on. An `(EXTERNAL)` line on the instrument of a position that comment names is that silence's, and another `(EXTERNAL)` line stays the restore's defect above. ``
   - the daily read's item 4, *The Cache against Kraken*, closing with: `` `zcrypto_exec_reconciliation_positions` reads as [the restart read](#rung-3-after-a-restart) item 3 has it. ``
   - the go/no-go's item 2, its close becoming: `` each unmatched ledger row explained at the weekly reads, and each position `zcrypto_exec_reconciliation_positions` counted explained in `docs/reference/rung3/days.md`. ``
 - [ ] **Step 7: `WALKERS`, `tests/test_dashboards_cover_metrics.py`, `tests/test_drill_log.py`, `RATIO` again, the gate, commit** `feat(grafana): a position the library's reconciliation booked pages`.
@@ -265,6 +272,19 @@ Three call sites: the first statement of `_settle_positions_from_venue`; in `_dr
 
 - [ ] **Step 2: `tests/test_decisions_log_shape.py`, `tests/test_decisions_log_ties.py`, the gate, commit** `docs(research): the owner's word that the reconciliation position pages and stops nothing`.
 
+### Task 6: The bump's read (D5)
+
+**Files:** `.claude/skills/zcrypto-bump-nautilus/SKILL.md`.
+
+- [ ] **Step 1: Load `zcrypto-refine-rules`** and read its *Before you write guidance*.
+- [ ] **Step 2: Step 6 item 2,** directly after its first sentence, verbatim:
+
+```markdown
+For a wheel past `dev20261103`, before the rollout and from the workstation, `uv run python infra/scripts/grafana-query.py 'zcrypto_exec_reconciliation_positions{host="zcrypto"}'` reads 0 by value, a silence on `zcrypto-engine-reconciliation-position` notwithstanding: on a wheel carrying upstream dd8afce410 a start can hide a close behind a position that count holds, with no log line. Above 0, the rollout waits on `infra/runbooks/engine.md#zcrypto-engine-reconciliation-position`; `(no series)` is a read that has not completed, and the rollout waits for one.
+```
+
+- [ ] **Step 3: `tests/test_guidance_guard.py`, `tests/test_guidance_refs_resolve.py`, the gate, commit** `claude(skills): a bump past dev20261103 reads the reconciliation count at 0 before it rolls`. The frontmatter stays as it is, so the message carries no `Ambient grows by` line; this task lists no arm, since no check reads this sentence.
+
 ## Rollout — the owner's, from merged `develop` (D7)
 
 The push, the image and the host read are the owner's, none of them inside a task; the reads by value are taken from the workstation in the same sitting. The rule goes first and the image second.
@@ -273,7 +293,7 @@ The push, the image and the host read are the owner's, none of them inside a tas
 
 **R2. The image.** On the bulk rollout the owner's word of 2026-11-06 defers, if this has merged before it, else the next engine image, through `zcrypto-rollout-image`. The engine's pin stays `dev20261101` until half a day before rung 3, then `dev20261103`.
 
-**R3. The proof, by value, after the engine's first start on that image.** The series reads 0, which a read alone can have set, and the tile reads 0; `(no series)` is a read that has not run, and a value above 0 is `engine.md#zcrypto-engine-reconciliation-position`. The second line is the owner's container read for the one-process premise, which prints `running` and the restart count:
+**R3. The proof, by value, after the engine's first start on that image.** The series reads 0, which a read alone can have set, and the tile reads 0; `(no series)` is a read that has not run or has raised, the raise paging through `zcrypto-engine-error-logs`, and a value above 0 is `engine.md#zcrypto-engine-reconciliation-position`. The second line is the owner's container read for the one-process premise, which prints `running` and the restart count:
 
 ```bash
 uv run python infra/scripts/grafana-query.py 'zcrypto_exec_reconciliation_positions{host="zcrypto"}'   # on the workstation
