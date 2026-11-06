@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from nautilus_trader.model import Currency, CurrencyPair, InstrumentId, Money, Price, Quantity, Symbol
+from nautilus_trader.model import ClientOrderId, Currency, CurrencyPair, InstrumentId, Money, Price, Quantity, Symbol
 
 from cli.engine.errors import EngineError
 from cli.engine.instruments import COSTMIN, INSTRUMENT_IDS
@@ -16,6 +16,8 @@ from cli.engine.venuestate import (
     InstrumentConstraints,
     VenueState,
     held_ordermin,
+    reconciliation_booked_positions,
+    reconciliation_tagged_orders,
     runtime_concordance,
     venue_state_from_cache,
 )
@@ -336,6 +338,26 @@ def test_runtime_concordance_flags_a_base_missing_from_the_snapshot():
 #
 # tests/test_engine_stub_fidelity.py classifies every test double in the engine suite and names the
 # guard below; the reasoning that makes it worth having lives there.
+
+
+@pytest.mark.parametrize(
+    ("orders", "tagged"),
+    [
+        ({"a": ["RECONCILIATION"]}, ["a"]),  # the opener tagged
+        ({"a": None, "b": ["RECONCILIATION"]}, ["b"]),  # a later order tagged, the opener not
+        ({"a": ["VENUE"]}, []),
+        ({"a": None}, []),
+        ({}, []),  # the Cache holds neither order
+    ],
+)
+def test_a_position_counts_when_it_holds_a_tagged_order(orders, tagged):
+    position = SimpleNamespace(client_order_ids=lambda: [ClientOrderId("a"), ClientOrderId("b")])
+    cache = SimpleNamespace(
+        positions_open=lambda: [position],
+        order=lambda cid: SimpleNamespace(tags=orders[cid.value]) if cid.value in orders else None,
+    )
+    assert [cid.value for cid in reconciliation_tagged_orders(cache, position)] == tagged
+    assert reconciliation_booked_positions(cache) == ([position] if tagged else [])
 
 
 def _library_standins():
