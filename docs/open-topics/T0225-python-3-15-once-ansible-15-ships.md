@@ -17,11 +17,11 @@ Nothing forces the move today, and a runtime change just before rung 3 adds risk
 
 The locked set on Python 3.15.2 in a scratch venv, 2026-11-05:
 
-- The 62 pins not named below have a Linux wheel or are pure Python.
+- The pins not named below have a Linux wheel or are pure Python.
 - `ansible-core` 2.21.5 fails on 3.15, `dataclasses._is_type` being gone. 2.22.0 works, but `ansible` 14 pins `~=2.21.x`, and 15.x was in beta, `15.0.0b1`.
 - `nautilus-trader`'s pin then, `2.0.0rc9.dev20261101`, had `cp313` and `cp314` wheels alone; nightlies from `dev20261102` carry `cp315`.
 - `pyyaml` 6.0.3 has no `cp315` wheel and builds from source without the libyaml speedups: it works, slower.
-- With the first nightly carrying a `cp315` wheel in nautilus's place, all 65 installed and every `cli` module imported; the sampled tests' only failures were that `ansible-core` error, gone on 2.22.0. No full suite, no data-gated test, no live engine and no order path ran on 3.15.
+- With the first nightly carrying a `cp315` wheel in nautilus's place, the set installed and every `cli` module imported; the sampled tests' only failures were that `ansible-core` error, gone on 2.22.0. No full suite, no data-gated test, no live engine and no order path ran on 3.15.
 
 ## Suggested next steps
 
