@@ -641,44 +641,6 @@
         state: started
       ignore_errors: "{{ ansible_check_mode }}"
 
-# --- The keep-alive's retirement. A role that stops managing a unit leaves it running on the host, so
-# this block stops the timer and removes what the role installed. It can go once every ops host has
-# converged it.
-- name: retire the grafana keep-alive
-  block:
-    # A host without the timer, or a second converge, skips the stop, which refuses a unit it cannot
-    # find, and the reload, which has nothing left to do. Each task also runs under `--check`.
-    - name: probe — is the grafana keep-alive timer still installed
-      ansible.builtin.stat:
-        path: /etc/systemd/system/zcrypto-grafana-keepalive.timer
-        get_checksum: false
-      register: ops_grafana_keepalive_timer
-      failed_when: false
-
-    - name: stop + disable the grafana keep-alive timer
-      ansible.builtin.systemd_service:
-        name: zcrypto-grafana-keepalive.timer
-        enabled: false
-        state: stopped
-      when: ops_grafana_keepalive_timer.stat.exists | default(false)
-
-    - name: remove the grafana keep-alive's units, script, secrets env file and textfile metric
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: absent
-      loop:
-        - /etc/systemd/system/zcrypto-grafana-keepalive.timer
-        - /etc/systemd/system/zcrypto-grafana-keepalive.service
-        - /usr/local/sbin/zcrypto-grafana-keepalive
-        - "{{ ops_compose_dir }}/grafana-keepalive-secrets.env"
-        - "{{ ops_textfile_dir }}/grafana-keepalive.prom"
-        - "{{ ops_textfile_dir }}/grafana-keepalive.prom.tmp"
-
-    - name: reload systemd without the grafana keep-alive's units
-      ansible.builtin.systemd_service:
-        daemon_reload: true
-      when: ops_grafana_keepalive_timer.stat.exists | default(false)
-
 # --- OPS-2/3/4 (specs 00051/00052): the liquidations-poller compose file + the daily
 # continuity-replay/verified-path replay timers + the hourly panel-materialize and tape-bars
 # (spec 00087 D6) materialize timers. Digest-gated for the same reason as the overlay-writer block

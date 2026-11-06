@@ -47,12 +47,6 @@ hcio_capture_healthcheck_url: !vault |
           34363863313961656136623964623465326138326534323936376164626366646535373330356536
           343032623638626339316133656137383535
 
-# The Grafana Cloud Alloy credentials (grafana_prom_* / grafana_loki_*) MOVED to
-# group_vars/observed/vault.yml (spec 00054): the ops node ships telemetry too and could not see
-# them here. grafana_sa_token and slack_webhook_url MOVED to group_vars/all/vault.yml: neither is
-# capture-specific — both are read by infra/scripts/grafana-push.sh from the workstation, by path,
-# not by any managed host.
-#
 # The LIVE TRADE KEY (kraken_trade_api_key / kraken_trade_api_secret) and hcio_engine_healthcheck_url
 # MOVED to group_vars/engine_host/vault.yml (T0061, 2026-07-17). They are consumed only by the
 # engine play's engine.env.j2, and holding them here meant the capture-only secondary `zcrypto-red`

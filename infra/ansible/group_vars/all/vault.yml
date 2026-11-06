@@ -1,60 +1,35 @@
 # group_vars/all — PROJECT-LEVEL SECRETS, MIXED CUSTODY.
 #
-# MIXED CUSTODY — do not read this file as workstation-only. Ten values ARE
+# MIXED CUSTODY — do not read this file as workstation-only. Eleven values ARE
 # rendered onto managed hosts through inventory. Seven are WireGuard secrets, three of them the zaccess tunnel's:
 # `zaccess_wg_bridgehead_private_key` and `zaccess_wg_preshared_key` by `roles/access`,
-# `zaccess_wg_ops_private_key` and the same preshared key by `roles/access_ops`, both templating
-# `/etc/wireguard/zaccess0.conf`. **Editing any of those three needs a converge of BOTH ends** —
-# `--limit zaccess` and `--limit zcrypto-ops` (the host is `zcrypto-ops`; there is no host or group
-# called `ops`) — or an end keeps the old key. Both, because each peer block carries the other end's
+# `zaccess_wg_ops_private_key` and the same preshared key by `roles/access_ops`. **Editing any of those three needs a converge of BOTH ends** —
+# `--limit zaccess` and `--limit zcrypto-ops` — or an end keeps the old key. Both, because each peer block carries the other end's
 # public key. The four `cache_wg_<member>_private_key` render each onto its own member of the zcache
 # mesh by `roles/cache_link`, templating `/etc/wireguard/zcache0.conf`; rotating one needs a converge
 # of all four members, since every other member's peer block carries its public key. The eighth is
-# `grafana_ro_token`, rendered onto `zcrypto-ops` alone by `roles/ops`'s
-# `render the grafana keep-alive secrets env file`; editing it needs `--limit zcrypto-ops` only. The
+# `slack_webhook_url`, rendered onto `zcrypto-ops` alone by `roles/ops`'s
+# `render the grafana-watchdog secrets env file`; editing it needs `--limit zcrypto-ops`. The
 # ninth and tenth are the cache's `cache_engine_password` and `cache_sentinel_requirepass`, rendered onto
 # `zcrypto` by `roles/engine` (engine.env and haproxy.cfg) and read by `roles/cache` on the three nodes;
-# rotating either is `infra/runbooks/cache.md`'s `cache-password-rotation`.
+# rotating either is `infra/runbooks/cache.md`'s `cache-password-rotation`. The eleventh is
+# `coveralls_repo_token`, onto `zcrypto-ops` by `roles/ops`.
 #
-# The rest never reach a host. Five are read from the WORKSTATION BY FILE PATH:
-# `grafana_sa_token` by `infra/scripts/grafana-query.py` and `infra/scripts/ops_daily.py`,
+# The other four never reach a host, read from the WORKSTATION BY FILE PATH:
 # `healthchecks_readonly_api_key` by `infra/scripts/hc-provision.py`'s reads of healthchecks.io until
-# retirement, `hc_readwrite_api_key` by its writes to the dead-man service (all four through
+# retirement, `hc_readwrite_api_key` by its writes to the dead-man service (both through
 # `grafana_auth.vault_var`, whose default IS this file), and `zaccess_client_p12_b64` +
 # `zaccess_client_p12_pass` by `infra/scripts/zaccess-extract-client-cert.sh`.
 #
-# `slack_webhook_url` is the odd one, `slack_shadow_webhook_url` at the end of this file its sibling: NOTHING in production reads it from this file. It is vaulted
-# here and reaches `grafana-push.sh` through the environment as `GRAFANA_SLACK_WEBHOOK_URL`, the
-# same way that script takes `GRAFANA_SA_TOKEN` — grafana-push.sh opens no vault at all and only
-# documents the read recipe in a comment. Its only file-path reader is a test.
+# `slack_webhook_url` is the odd one: it also reaches `grafana-push.sh` through the environment as
+# `GRAFANA_SLACK_WEBHOOK_URL`, the same way that script takes `GRAFANA_SA_TOKEN`
+# (`infra/runbooks/mon.md#mon-push` step 2) — grafana-push.sh opens no vault at all.
 #
 # `all` is the honest scope because it is the only group that includes `workstation` AND covers the
 # access hosts.
 #
 # Per-VALUE vault encryption (not whole-file): the variable NAMES stay readable, every value stays
 # `!vault`-encrypted at rest. Read/write mechanics: see group_vars/capture_host/vault.yml's header.
-
-grafana_sa_token: !vault |
-          $ANSIBLE_VAULT;1.1;AES256
-          62616661616432366262346462653239633965353265333635663632366236303838643631643739
-          6633383431323066666362613438353839353538386435350a656631343235663931346232336165
-          65393835383331653966616136363630383264646165316530366466643062346239366130623436
-          3939666566383866390a316239666461373238303532393130363537663966343737393261363233
-          66323566333036666663333830616262343166336235306639363131323836326264303230633232
-          6265356530323136323864643137636634323133646439373934
-
-# The keep-alive's Viewer-scoped service account (`sa-1-zcrypto-keepalive`). Deliberately NOT
-# `grafana_sa_token`: this one is rendered onto `zcrypto-ops` by `roles/ops`'s `render the grafana
-# keep-alive secrets env file`, so its blast radius is a host rather than the workstation, and Viewer
-# is all `/api/search` needs.
-grafana_ro_token: !vault |
-          $ANSIBLE_VAULT;1.1;AES256
-          37633838663531376336323736663065663536303965376561656230326434386462666337373238
-          6236363034333962326465303964323139396265386461660a393530643838333530663232376432
-          37323965333665663361366166323133306537376163333038323534333836396438376131376566
-          6132383665613234350a353833616564353764356165393161313161303666353039366561353732
-          38373464666665383662633430363933366462356337306464323462643565343834636365323938
-          3931366533346338633432336563616339383534316535626364
 
 # Slack incoming-webhook URL (app `zcrypto-alerts`, minted + vaulted by the owner 2026-07-15,
 # T0047). Consumed by grafana-push.sh's contact-point provisioning; treat as a credential.
@@ -69,12 +44,6 @@ slack_webhook_url: !vault |
           38653936376330363030386466663662633561613061656439353563393562643231373062336537
           30383437363939323464313261386563633933663761356163363231663266383030626532333835
           6333
-
-# The Grafana Cloud Alloy credentials (grafana_prom_* / grafana_loki_*) MOVED to
-# group_vars/observed/vault.yml (spec 00054): the ops node ships telemetry too and could not see
-# them here. grafana_sa_token and slack_webhook_url stay — neither reaches a managed host. (The
-# 00054 move predates their current readers; who reads what today is the paragraph at the top, not
-# this one.)
 
 # zaccess WireGuard link (spec 00075): tunnel privates + psk; publics in group_vars/all/vars.yml
 zaccess_wg_bridgehead_private_key: !vault |
@@ -294,18 +263,6 @@ cache_sentinel_requirepass: !vault |
           62353039316433663039633734333761303833326236386230333661366364386536616630643932
           663666343165666564363632333365613266
 
-# The shadow Slack channel's incoming-webhook URL (spec 00121), for the observability node's two contact points. Treat as a credential.
-slack_shadow_webhook_url: !vault |
-          $ANSIBLE_VAULT;1.1;AES256
-          65663465336165393434316338633638323730393239633665303531653637323665336164303335
-          3037336630373232323534363764343732616531366439310a306264343063326166386462316339
-          65343031316161313438333266393534313530316362393437366232633235323563373735383463
-          3630326563346630350a383036636439653137643233316137326334323834313965343632303239
-          31643733643561633038656132383964353863313838366661363638373739303233363762303036
-          32316135383530646364303066633366326466623863396563663762633434373863373162396436
-          61383230316133353032313134656562383530323335303063343763323537396666363433323436
-          64373863383333303230656430613666633661313965653665623064333462656137633835343161
-          3933
 hc_readwrite_api_key: !vault |
           $ANSIBLE_VAULT;1.1;AES256
           33313432626232353938653630653364343965386638363936336639326435616136643230323334
