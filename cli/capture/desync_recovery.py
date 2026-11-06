@@ -19,7 +19,7 @@ Three properties the design rests on:
    N seconds later" can see it. This is why the ladder cannot be replaced by `req_id` correlation.
 2. **It terminates.** One escalation per pair per cooldown. Cycling would turn one stuck pair into a
    reconnect loop, and a reconnect drops all 12 pairs — strictly worse than the defect.
-3. **It is bounded in wall clock.** A desynced pair withholds the host's healthchecks.io ping for
+3. **It is bounded in wall clock.** A desynced pair withholds the host's dead-man ping for
    EVERY pair (`gap_monitor.is_healthy` is all-or-nothing), so time-to-terminal is a fleet-wide
    liveness budget, not a per-pair nicety.
 """

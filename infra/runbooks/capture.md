@@ -369,7 +369,7 @@ Grafana Cloud intermittently fails to reach its own Prometheus. `Alerting` here 
 
 ### What to do
 
-Several `zcrypto-capture-*` rules firing and auto-resolving within about a minute, with no host-side symptom, is a datasource error rather than a fleet event, and these two are deliberately absent from that storm. If you suspect the alerting pipeline is blind rather than the fleet quiet, check the datasource directly: `uv run python infra/scripts/grafana-query.py 'up{job="capture_app"}'` (a workstation step, it needs the repo and the vaulted token), and the healthchecks.io dead-man switches, an independent failure domain unaffected by Grafana.
+Several `zcrypto-capture-*` rules firing and auto-resolving within about a minute, with no host-side symptom, is a datasource error rather than a fleet event, and these two are deliberately absent from that storm. If you suspect the alerting pipeline is blind rather than the fleet quiet, check the datasource directly: `uv run python infra/scripts/grafana-query.py 'up{job="capture_app"}'` (a workstation step, it needs the repo and the vaulted token), and the dead-man service's switches, an independent failure domain unaffected by Grafana.
 
 ### Retire when
 

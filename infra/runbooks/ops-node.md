@@ -30,7 +30,7 @@ Two Grafana alerts on the same unit, `zcrypto-archive-pull.service` — despite 
 
 **A persistent skip pages nowhere here.** A skipped cycle never rewrites `reconcile.prom`, so `zcrypto_reconcile_last_success_timestamp_seconds` ages until `Reconciler · exporter stale` (uid `zcrypto-reconcile-exporter-stale`, critical at 3 h, its section in `infra/runbooks/ops.md`) pages. The same rule is what escalates a reconcile step that keeps failing — the CLI publishes no textfile on a failed cycle, so exit-nonzero at warning is the early notice and exporter-stale at critical is the follow-up.
 
-**The cycle feeds a healthchecks.io dead-man on rc 0** — `curl` to `ops_archive_pull_healthcheck_url` at the tail of `infra/ansible/roles/ops/templates/archive-pull.sh.j2`, with gate-skips deliberately included, so that dead-man measures this unit's own liveness and not the upstream's. Whether the URL is non-empty on the live host is a vaulted host var, not readable from the repo.
+**The cycle feeds its check on the dead-man service on rc 0** — `curl` to `ops_archive_pull_healthcheck_url` at the tail of `infra/ansible/roles/ops/templates/archive-pull.sh.j2`, with gate-skips deliberately included, so that dead-man measures this unit's own liveness and not the upstream's. The URL is rendered from the project's ping key and the slug `zcrypto-archive-pull`, in `infra/ansible/host_vars/zcrypto-ops/vars.yml`.
 
 ### What to do
 
@@ -125,7 +125,7 @@ Two Grafana alerts on `zcrypto-verified-replay.service`, the daily verified-path
 
 **A mismatch is retried nightly and blocks everything after it.** The loop breaks on the first failing day without advancing, so no later day is verified past the gap — which is why `-stale` follows about 48 h behind a persistent `-exit-nonzero`.
 
-The healthchecks.io dead-man for this timer is fed only on a clean, fully-caught-up run, so hc.io silence during a stall is consistent with these pages, not a second incident.
+The dead-man for this timer is fed only on a clean, fully-caught-up run, so its silence during a stall is consistent with these pages, not a second incident.
 
 ### What to do
 
@@ -160,7 +160,7 @@ A **warning** Grafana alert (`Ops · Grafana keep-alive stopped running`): `time
 
 ### What it means
 
-`zcrypto-grafana-keepalive.timer` fires four times an hour and its unit makes one authenticated call to Grafana Cloud, writing `/var/lib/zcrypto-ops/textfile/grafana-keepalive.prom` and one `status=… duration=…` line to its journal, which step 4 reads. The gauge this rule reads is the stamp of the last completed **run**, whatever that run got back, so it advances on a 503 and on a 401 exactly as it does on a 200. **This rule is about the keep-alive service, not about Grafana.** A hibernating or dark Grafana Cloud leaves the service running and this rule quiet, by design. **No Grafana rule pages on that state** — a rule cannot page about the system that evaluates it — so what reaches you is the healthchecks.io dead-man, a separate failure domain on purpose. The procedure for it is [`observability.md#grafana-cloud-dark`](observability.md#grafana-cloud-dark).
+`zcrypto-grafana-keepalive.timer` fires four times an hour and its unit makes one authenticated call to Grafana Cloud, writing `/var/lib/zcrypto-ops/textfile/grafana-keepalive.prom` and one `status=… duration=…` line to its journal, which step 4 reads. The gauge this rule reads is the stamp of the last completed **run**, whatever that run got back, so it advances on a 503 and on a 401 exactly as it does on a 200. **This rule is about the keep-alive service, not about Grafana.** A hibernating or dark Grafana Cloud leaves the service running and this rule quiet, by design. **No Grafana rule pages on that state** — a rule cannot page about the system that evaluates it — so what reaches you is the dead-man service, a separate failure domain on purpose. The procedure for it is [`observability.md#grafana-cloud-dark`](observability.md#grafana-cloud-dark).
 
 The threshold tolerates one skipped tick. A healthy value sawtooths from about 0 up to 900, one missed slot peaks near 1800, and the timer carries no `Persistent=`, so a converge landing on a slot legitimately skips it. Two consecutive misses are not a schedule artefact.
 
@@ -197,7 +197,7 @@ A **warning** Grafana alert (`Ops · panel non-zero exit`): `ops_panel_exit_code
 
 The CLI exits 1 **iff at least one hour errored**, and logs each failure at ERROR as `panel hour failed pair=… hour=… : …` — so `Ops · ERROR logs` usually pages the same event with the message attached, which is where the actual cause is. A generation/manifest refusal is different: it aborts before any hour runs and prints its own instruction. Do not "fix" that by deleting `panel-meta.json` alone — the refusal exists precisely because that would stamp this code's generation onto hours another one wrote.
 
-**There is no panel staleness rule, and that is deliberate.** `panel-materialize.sh.j2` publishes `ops_panel_last_success_timestamp` and no rule in `infra/grafana/alerts.yaml` reads it, so a timer that stops firing altogether trips no Grafana rule at all — the exit code freezes at its last value and the textfile is re-served forever. The only thing that catches it is the healthchecks.io dead-man for the panel check, pinged only on a clean run and only when `ops_panel_healthcheck_url` is set (a vaulted host var, not readable from the repo), surfacing through `Fleet · healthchecks.io watchdog` (uid `zcrypto-hcio-watchdog`) and hc.io's own Slack integration. Drill O established that the dead-man catches it alone, so **no staleness rule is owed**, and that the cost is a notice window of three hours from the last clean ping (`docs/reference/drill-log.md`, entry `O`, holds the check's timeout and grace and the measured time-to-page). **Do not close or reopen this gap from this runbook** — a rule found owed is a change to `alerts.yaml`.
+**There is no panel staleness rule, and that is deliberate.** `panel-materialize.sh.j2` publishes `ops_panel_last_success_timestamp` and no rule in `infra/grafana/alerts.yaml` reads it, so a timer that stops firing altogether trips no Grafana rule at all — the exit code freezes at its last value and the textfile is re-served forever. The only thing that catches it is the dead-man for the panel check, pinged only on a clean run and only when `ops_panel_healthcheck_url` is set (`infra/ansible/host_vars/zcrypto-ops/vars.yml`, from the project's ping key and the slug `zcrypto-panel`), surfacing through `Fleet · dead-man watchdog (check down, or the service dark)` (uid `zcrypto-hcio-watchdog`) and the dead-man service's own Slack integration. Drill O established that the dead-man catches it alone, so **no staleness rule is owed**, and that the cost is a notice window of three hours from the last clean ping (`docs/reference/drill-log.md`, entry `O`, holds the check's timeout and grace and the measured time-to-page). **Do not close or reopen this gap from this runbook** — a rule found owed is a change to `alerts.yaml`.
 
 ### What to do
 
