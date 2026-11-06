@@ -559,6 +559,7 @@ def test_a_resting_order_and_a_margin_position_are_restored_across_a_restart(pha
     [row] = node.rows()
     [intent] = node.intents()
     assert (row["state"], row["filled_qty"], intent["outcome"]) == ("canceled", 0.4, "revoked")
+    _reads_nothing(record)
 
 
 def test_a_fill_made_while_the_engine_was_down_is_booked_from_the_trade_history(phase_one):
@@ -892,6 +893,14 @@ def _spot_process(node: _Node, n: int, holdings: dict, leg: dict = _SOL, *, pair
 _BUMP = "the nautilus build the tree pins no longer does what this test recorded of it"
 
 
+def _reads_nothing(record: dict) -> None:
+    counts = record["metrics"]["reconciliation_positions"]
+    assert counts and not any(counts), (
+        f"{_BUMP}: a position the library's reconciliation did not book no longer reads 0 on the count the page reads, "
+        f"or no read of it ran: {counts}"
+    )
+
+
 def test_a_start_holds_the_venues_floor_over_the_stored_instrument(tmp_path):
     basket = _basket_pairs()
     eth = next(key for key, row in basket.items() if row.get("altname") == "ETHEUR")
@@ -947,6 +956,13 @@ def test_a_restored_spot_lot_comes_back_at_the_lot_with_no_external_short_and_th
         "(docs/research/00.master-plan.md §12) rests on this restore -- re-read it against what a restart restores now: "
         f"{_restore_lines(held['log'])}"
     )
+    buy = node.rows()[0]["client_order_id"]
+    orders = [order["client_order_id"] for order in held["at_start"]["orders"]]
+    assert buy in orders, (
+        f"{_BUMP}: the buy behind a spot lot held across a restart no longer comes back with its order in the store, "
+        f"so the 0 below would not read its tags: {buy}, {orders}"
+    )
+    _reads_nothing(held)
     assert held["venue_state_at_start"]["positions"][SYMBOL] == QTY, (
         f"{_BUMP}: the venue record's position for a spot lot held across a restart is no longer the lot"
     )
@@ -1221,3 +1237,115 @@ def test_a_start_imports_a_history_fill_from_719_minutes_before_it_and_nothing_o
         "0.50000000",
         [HISTORY_TRADE],
     )
+
+
+HAND_TXID, HAND_TRADE = "OHAND1-AAAAA-BBBBBB", "THAND1-AAAAA-AAAAAA"
+
+
+def _script_hand_buy(venue: lb.KrakenLoopback, exec_: lb.WsPeer) -> None:
+    """A buy of 0.5 no plan placed, filling whole while the node runs: neither frame carries a client order id."""
+
+    def later() -> None:
+        if not exec_.subscribed.wait(60):
+            return
+        time.sleep(8)  # past the startup pass
+        opened_at = time.time()
+        exec_.send_execution(lb.exec_new(HAND_TXID, None, symbol=SYMBOL, qty=0.5, price=PRICE))
+        time.sleep(0.5)
+        exec_.send_execution(
+            lb.exec_trade(
+                HAND_TXID, None, symbol=SYMBOL, qty=0.5, price=PRICE, last_qty=0.5, cum_qty=0.5, exec_id=HAND_TRADE, trade_id=7001,
+            )
+        )  # fmt: skip
+        filled_at = time.time()
+        closed = lb.closed_order(
+            PAIR,
+            price=f"{PRICE:.2f}",
+            volume="0.50000000",
+            status="closed",
+            vol_exec="0.50000000",
+            opentm=opened_at,
+            closetm=filled_at,
+        )
+        venue.closed_orders[HAND_TXID] = dict(closed, oflags="fciq", price=f"{PRICE:.5f}", cost=f"{0.5 * PRICE:.5f}")
+        venue.trades[HAND_TRADE] = lb.spot_trade_row(
+            HAND_TXID, PAIR, vol="0.50000000", price=f"{PRICE:.2f}", trade_id=7001, time=filled_at
+        )
+        venue.balances["SOL"] = lb.balance("0.50000000")
+
+    threading.Thread(target=later, daemon=True).start()
+
+
+def test_a_position_the_library_booked_is_counted_and_a_hand_orders_is_not(tmp_path):
+    # No order or trade behind the row: with its fill in the history a start imports that order as `VENUE` and mints nothing.
+    row = dict(lb.margin_position(PAIR, volume="0.50000000", time=time.time()), ordertxid=HAND_TXID, cost="75.00000")
+    starts = []
+    valkey = _Valkey(tmp_path / "leveraged" / "valkey")
+    try:
+        valkey.start()
+        node = _Node(tmp_path / "leveraged" / "node", valkey.port)
+        for phase in (1, 2):
+            with _venue() as (venue, data, exec_):
+                venue.balances = {"ZEUR": lb.balance("1000.00000000")}
+                venue.positions["THANDP-AAAAA-BBBBBB"] = row
+                starts.append(node.run(phase, venue, data, exec_, window=PHASE2_WINDOW))
+    finally:
+        valkey.stop()
+
+    tagged = []
+    for record in starts:
+        assert record["errors"] == [], record["errors"]
+        held = [p for p in record["at_start"]["positions"] if p["is_open"]]
+        assert [(p["id"], p["strategy_id"], p["signed_qty"]) for p in held] == [(f"{INSTRUMENT}-EXTERNAL", "EXTERNAL", "0.5")], (
+            f"{_BUMP}: a leveraged row the Cache does not hold no longer comes back from a start as one position under `EXTERNAL`: {held}"
+        )
+        tagged.append([cid for cid, tags in held[0]["order_tags"].items() if "RECONCILIATION" in (tags or [])])
+        counts = record["metrics"]["reconciliation_positions"]
+        assert counts == [1], (
+            f"{_BUMP}: the count the page reads no longer reads that position once, at the cold start and again out of the "
+            f"store at the next, where a lost tag would quiet the page at the one start it exists for: {counts}, {held}"
+        )
+        warnings = [line.split(" - ", 1)[1] for line in _lines(record["log"], "reconciliation minted") if " WARNING " in line]
+        assert warnings == [
+            f"position {INSTRUMENT}-EXTERNAL under EXTERNAL, 0.5, holds an order nautilus's reconciliation minted, {tagged[-1]} "
+            "-- see infra/runbooks/engine.md#zcrypto-engine-reconciliation-position"
+        ], f"{_BUMP}: the WARNING no longer names that position's id, strategy, quantity and tagged order: {warnings}"
+    assert len(tagged[0]) == 1 and tagged[0] == tagged[1], (
+        f"{_BUMP}: the one order the first start minted no longer carries `RECONCILIATION`, or the next start no longer "
+        f"reads it back from the store: {tagged}"
+    )
+
+    valkey = _Valkey(tmp_path / "hand" / "valkey")
+    try:
+        valkey.start()
+        node = _Node(tmp_path / "hand" / "node", valkey.port)
+        with _venue() as (venue, data, exec_):
+            venue.balances = {"ZEUR": lb.balance("1000.00000000")}
+            _script_hand_buy(venue, exec_)
+            live = node.run(1, venue, data, exec_, window=PHASE2_WINDOW)
+            holdings = venue.holdings()
+        with _venue() as (venue, data, exec_):
+            venue.hold(holdings)
+            restart = node.run(2, venue, data, exec_, window=PHASE2_WINDOW)
+    finally:
+        valkey.stop()
+
+    assert live["errors"] == [] and restart["errors"] == [], (live["errors"], restart["errors"])
+    held = [
+        (p["id"], p["strategy_id"], p["signed_qty"], list(p["order_tags"]))
+        for p in restart["at_start"]["positions"]
+        if p["is_open"]
+    ]
+    assert (_open_positions(live["at_end"]), held) == (
+        [("EXTERNAL", "0.5")],
+        [(f"{INSTRUMENT}-EXTERNAL", "EXTERNAL", "0.5", [HAND_TXID])],
+    ), (
+        f"{_BUMP}: a hand order's fill seen live no longer comes back from a restart as a position under `EXTERNAL` "
+        f"holding that order: {_open_positions(live['at_end'])}, {held}"
+    )
+    orders = [order["client_order_id"] for order in restart["at_start"]["orders"]]
+    assert HAND_TXID in orders, (
+        f"{_BUMP}: a hand order's fill seen live no longer comes back from a restart with the order in the store, "
+        f"so the 0 below would not read its tags: {orders}"
+    )
+    _reads_nothing(restart)

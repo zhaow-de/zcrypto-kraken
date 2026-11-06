@@ -166,6 +166,14 @@ def _event(event) -> dict:
     return out
 
 
+def _order_tags(cache, position) -> dict:
+    tags = {}
+    for client_order_id in position.client_order_ids():
+        order = cache.order(client_order_id)
+        tags[_s(client_order_id)] = None if order is None else order.tags
+    return tags
+
+
 def _dump(cache) -> dict:
     orders = [
         {
@@ -189,6 +197,7 @@ def _dump(cache) -> dict:
             "avg_px_open": position.avg_px_open,
             "realized_pnl": _s(position.realized_pnl),
             "is_open": position.is_open,
+            "order_tags": _order_tags(cache, position),
         }
         for position in cache.positions()
     ]
@@ -207,11 +216,15 @@ def _venue_state(cache) -> dict:
 
 
 class _Recorder:
-    """The executor's metrics hook, recording the position and realized readings it publishes."""
+    """The executor's metrics hook, recording the readings `_write` puts in the record."""
 
     def __init__(self):
         self.positions: list = []
         self.realized: list = []
+        self.reconciliation_positions: list = []
+
+    def set_reconciliation_positions(self, count):
+        self.reconciliation_positions.append(count)
 
     def inc_order(self, outcome):
         pass
@@ -254,7 +267,11 @@ METRICS = _Recorder()
 
 
 def _write() -> None:
-    RECORD["metrics"] = {"positions": METRICS.positions, "realized": METRICS.realized}
+    RECORD["metrics"] = {
+        "positions": METRICS.positions,
+        "realized": METRICS.realized,
+        "reconciliation_positions": METRICS.reconciliation_positions,
+    }
     Path(CONFIG["out"]).write_text(json.dumps(RECORD, indent=1, default=str))
 
 

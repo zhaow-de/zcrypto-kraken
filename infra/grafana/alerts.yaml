@@ -908,6 +908,49 @@ rules:
     notification_settings:
       receiver: metrics
 
+  - uid: zcrypto-engine-reconciliation-position
+    title: "Engine · a position holds an order the library's reconciliation minted"
+    ruleGroup: zcrypto-gate
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'zcrypto_exec_reconciliation_positions{host="zcrypto"}'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0.5]}
+    # OK, not Alerting: the series is absent until the first read after a start and on an engine
+    # without the cache, a raising read pages through zcrypto-engine-error-logs, and a down engine
+    # is zcrypto-engine-cycle-stale's.
+    noDataState: OK
+    execErrState: Alerting
+    # 5m absorbs the one-minute datasource transients and no more: the count stands while the
+    # engine can read the position, so the wait costs no detection.
+    for: 5m
+    annotations:
+      summary: "An open position in the engine holds an order the library's reconciliation minted: Kraken reported a position the library could not explain, and the library booked the difference. Runbook: infra/runbooks/engine.md#zcrypto-engine-reconciliation-position"
+      __dashboardUid__: "zcrypto-engine"
+      __panelId__: "58"
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
   # The accumulation loop's two rules, over gauges `_ExecutionMetrics` publishes (cli/engine/command.py).
   # `exec-status` builds its own gate in a fresh process and shows neither the watchdog's freeze nor a
   # boundary's draft, so these summaries send the responder to the engine's log and the boundary's

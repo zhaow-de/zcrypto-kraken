@@ -2041,6 +2041,30 @@ def test_the_freeze_and_the_undrafted_boundary_are_eager_at_zero_and_the_equity_
     assert registry.get_sample_value("zcrypto_exec_boundary_not_drafted") == 0.0
 
 
+def test_the_reconciliation_count_is_absent_until_the_first_read_and_the_read_moves_the_real_gauge(tmp_path):
+    from test_engine_executor import StubCache, StubClient, _cache_config, _executor, _executor_errors
+
+    registry = CollectorRegistry()
+    metrics = command._ExecutionMetrics(registry)
+    assert "zcrypto_exec_reconciliation_positions" not in {name for name, _ in _exposed(registry)}
+
+    cache = StubCache()
+    cache.hold_tagged_position("BTC/EUR", 0.5)
+    ex = _executor(tmp_path, client=StubClient(cache), config=_cache_config(tmp_path))
+    executor_module.set_executor_hooks(metrics=metrics)
+    try:
+        with _executor_errors() as errors:
+            ex._publish_reconciliation_positions()
+            assert registry.get_sample_value("zcrypto_exec_reconciliation_positions") == 1
+
+            cache._external.clear()
+            ex._publish_reconciliation_positions()
+            assert registry.get_sample_value("zcrypto_exec_reconciliation_positions") == 0
+        assert errors == []
+    finally:
+        executor_module.set_executor_hooks()
+
+
 def test_a_gap_for_a_symbol_outside_the_ten_raises_nothing_and_mints_no_series():
     registry = CollectorRegistry()
     metrics = command._ExecutionMetrics(registry)

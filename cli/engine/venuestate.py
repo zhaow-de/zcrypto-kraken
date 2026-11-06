@@ -147,3 +147,15 @@ def runtime_concordance(state: VenueState) -> ConcordanceVerdict:
             if not value > 0:
                 failures.append(f"{base}: {field_name} is {value}, not > 0")
     return ConcordanceVerdict(ok=not failures, failures=tuple(failures))
+
+
+RECONCILIATION_TAG = "RECONCILIATION"
+
+
+def reconciliation_tagged_orders(cache, position) -> list:
+    """Ids of `position`'s orders the library minted (spec 00157 D1): any order, as a later mismatch leaves the opener untagged."""
+    return [cid for cid in position.client_order_ids() if RECONCILIATION_TAG in ((order := cache.order(cid)) and order.tags or [])]
+
+
+def reconciliation_booked_positions(cache) -> list:
+    return [position for position in cache.positions_open() if reconciliation_tagged_orders(cache, position)]

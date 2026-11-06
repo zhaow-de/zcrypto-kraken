@@ -1966,6 +1966,72 @@
       }
     },
     {
+      "id": 58,
+      "type": "stat",
+      "title": "Positions the library's reconciliation booked",
+      "description": "How many open positions in the engine hold an order the library's reconciliation minted: Kraken reported a position the library could not explain, and the library booked the difference. 0 is the healthy reading. The series is absent, and the tile reads NOT READ YET, until the engine's first read after a start and on an engine without the cache. Runbook: infra/runbooks/engine.md#zcrypto-engine-reconciliation-position",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 8,
+        "y": 60
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_exec_reconciliation_positions{host=\"zcrypto\"}",
+          "refId": "A",
+          "legendFormat": "positions booked",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 0.5
+              }
+            ]
+          },
+          "noValue": "NOT READ YET"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "colorMode": "background",
+        "orientation": "auto",
+        "graphMode": "none"
+      }
+    },
+    {
       "id": 60,
       "type": "row",
       "title": "Execution — what actually happened at the venue",
