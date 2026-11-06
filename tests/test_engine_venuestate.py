@@ -15,6 +15,7 @@ from cli.engine.venuestate import (
     ConcordanceVerdict,
     InstrumentConstraints,
     VenueState,
+    held_ordermin,
     runtime_concordance,
     venue_state_from_cache,
 )
@@ -156,6 +157,37 @@ def test_venue_state_freezes_the_twelve_legs(fake_cache):
     assert vs.snapshot_at == FIXED_NOW
     with pytest.raises(dataclasses.FrozenInstanceError):
         vs.snapshot_at = FIXED_NOW
+
+
+def test_a_listed_floor_over_the_caches_is_held(fake_cache):
+    cached = venue_state_from_cache(fake_cache, clock=lambda: FIXED_NOW).instruments["ETH/EUR"].ordermin
+    vs = venue_state_from_cache(fake_cache, clock=lambda: FIXED_NOW, listed={"ETH/EUR": cached * 2})
+    assert vs.instruments["ETH/EUR"].ordermin == cached * 2
+
+
+def test_a_listed_floor_under_the_caches_leaves_the_caches_held(fake_cache):
+    cached = venue_state_from_cache(fake_cache, clock=lambda: FIXED_NOW).instruments["ETH/EUR"].ordermin
+    vs = venue_state_from_cache(fake_cache, clock=lambda: FIXED_NOW, listed={"ETH/EUR": cached / 2})
+    assert vs.instruments["ETH/EUR"].ordermin == cached
+
+
+def test_a_leg_the_listing_names_no_floor_for_keeps_the_caches(fake_cache):
+    plain = venue_state_from_cache(fake_cache, clock=lambda: FIXED_NOW).instruments
+    vs = venue_state_from_cache(fake_cache, clock=lambda: FIXED_NOW, listed={"ETH/EUR": plain["ETH/EUR"].ordermin * 2})
+    assert vs.instruments["BTC/EUR"] == plain["BTC/EUR"]
+
+
+@pytest.mark.parametrize(
+    ("cached", "listed", "held"),
+    [(0.001, 0.002, 0.002), (0.002, 0.001, 0.002), (0.001, None, 0.001), (None, 0.002, 0.002), (None, None, 0.0)],
+)
+def test_the_floor_held_is_the_higher_of_the_two(cached, listed, held):
+    assert held_ordermin(cached, listed) == held
+
+
+def test_the_payload_carries_the_floor_held(fake_cache):
+    payload = venue_state_from_cache(fake_cache, clock=lambda: FIXED_NOW, listed={"ETH/EUR": 7.0}).to_payload()
+    assert payload["instruments"]["ETH/EUR"]["ordermin"] == 7.0
 
 
 def test_a_missing_instrument_raises_rather_than_silently_narrowing(fake_cache_missing_dot):

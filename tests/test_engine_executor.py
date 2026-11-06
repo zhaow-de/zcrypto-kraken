@@ -913,15 +913,16 @@ def _cancel_venue_order(*args, **kwargs):
 
 class _VenueHoldings:
     """The executor's `venue_holdings` reader: answers a book of `held`, which a test moves between two
-    passes as the account moves, and of the EUR and earn figures it is handed, or raises `raises`
-    instead, and counts its calls. A stub carries no margin, so its spot `balances` are its `held` per
-    base, and 0.0 for every other basket base, as `read_venue_book` seeds them."""
+    passes as the account moves, and of the EUR and earn figures and the listing's floors it is handed,
+    or raises `raises` instead, and counts its calls. A stub carries no margin, so its spot `balances`
+    are its `held` per base, and 0.0 for every other basket base, as `read_venue_book` seeds them."""
 
-    def __init__(self, held=None, *, raises=None, eur_total=0.0, eur_free=0.0, earn=None):
+    def __init__(self, held=None, *, raises=None, eur_total=0.0, eur_free=0.0, earn=None, ordermin=None):
         self.held = {} if held is None else dict(held)
         self.eur_total = eur_total
         self.eur_free = eur_free
         self.earn = {} if earn is None else dict(earn)
+        self.ordermin = {} if ordermin is None else dict(ordermin)
         self.calls = 0
         self._raises = raises
 
@@ -937,6 +938,7 @@ class _VenueHoldings:
             eur_free=self.eur_free,
             earn=dict(self.earn),
             read_at=NOW,
+            ordermin=dict(self.ordermin),
         )
 
 
@@ -1721,7 +1723,7 @@ def test_an_intent_symbol_absent_from_venue_truth_is_refused(tmp_path, monkeypat
     client = StubClient()
     ex = _executor(tmp_path, client=client)
 
-    def _stateless(cache, *, clock):
+    def _stateless(cache, *, clock, listed):
         return VenueState(snapshot_at=clock(), instruments={}, positions={}, balances={"ZEUR": 1000.0})
 
     monkeypatch.setattr(executor_module, "venue_state_from_cache", _stateless)
@@ -7614,6 +7616,48 @@ def test_read_venue_book_keeps_a_basket_coins_earn_coded_balance_apart_and_the_d
         assert executor_module.read_venue_book(base_url=venue.base_url).earn_refusal() is None
 
 
+def test_read_venue_book_keeps_each_legs_floor_off_the_listing_and_a_moved_row_moves_it(_loopback_credentials):
+    with kraken_loopback.serve() as venue:
+        venue.asset_pairs["SOLEUR"]["ordermin"] = "0.20000000"
+        book = executor_module.read_venue_book(base_url=venue.base_url)
+    assert book.ordermin == {"BTC/EUR": 0.00005, "SOL/EUR": 0.2}
+
+
+def test_a_leg_the_listing_leaves_out_has_no_floor_in_the_book_and_warns_naming_it(_loopback_credentials):
+    with kraken_loopback.serve() as venue:
+        del venue.asset_pairs["SOLEUR"]
+        with _executor_errors(logging.WARNING) as warnings:
+            book = executor_module.read_venue_book(base_url=venue.base_url)
+    assert book.ordermin == {"BTC/EUR": 0.00005}
+    assert [r.getMessage() for r in warnings if "SOL/EUR" in r.getMessage()] == [
+        "the venue's listing gives SOL/EUR no ordermin -- the leg stays on the floor the engine loaded at its start"
+    ]
+
+
+@pytest.mark.parametrize("floor", [None, 0.0, -1.0])
+def test_a_listing_row_with_no_positive_floor_is_no_floor(floor):
+    row = SimpleNamespace(id=INSTRUMENT_IDS["ETH/EUR"], min_quantity=floor)
+    with _executor_errors(logging.WARNING) as warnings:
+        floors = executor_module._listing_floors([row])
+    assert "ETH/EUR" not in floors
+    assert [r.getMessage() for r in warnings if "ETH/EUR" in r.getMessage()] == [
+        "the venue's listing gives ETH/EUR no ordermin -- the leg stays on the floor the engine loaded at its start"
+    ]
+
+
+def test_a_listing_row_with_a_positive_floor_is_kept_and_warns_nothing_naming_it():
+    row = SimpleNamespace(id=INSTRUMENT_IDS["ETH/EUR"], min_quantity=0.002)
+    with _executor_errors(logging.WARNING) as warnings:
+        floors = executor_module._listing_floors([row])
+    assert floors == {"ETH/EUR": 0.002}
+    assert [r.getMessage() for r in warnings if "ETH/EUR" in r.getMessage()] == []
+
+
+def test_a_listing_floor_outside_the_basket_is_not_kept():
+    row = SimpleNamespace(id="PEPE/EUR.KRAKEN", min_quantity=1000.0)
+    assert set(executor_module._listing_floors([row])) == set()
+
+
 def test_every_basket_base_has_a_euro_pair_that_carries_its_spot_balance():
     # A base without one would have its lot unread, and the read says nothing about it.
     assert set(executor_module._SPOT_SYMBOL_BY_BASE) == {symbol.split("/")[0] for symbol in INSTRUMENT_IDS}
@@ -11215,13 +11259,27 @@ def _accum_doc(at: datetime, status: str, **fields) -> dict:
 
 
 def _boundary_executor(
-    tmp_path, *, record_path, holdings, eur_total, eur_free, now, statuses=None, earn=None, series=(), plan_cap=1000.0, **settings
+    tmp_path,
+    *,
+    record_path,
+    holdings,
+    eur_total,
+    eur_free,
+    now,
+    statuses=None,
+    earn=None,
+    series=(),
+    plan_cap=1000.0,
+    cache_ordermin=None,
+    listed_floors=None,
+    **settings,
 ):
     """An executor at a boundary whose cycle record is `record_path`'s, journaled under its own day: the venue truth
-    is `venue-12.json`'s instruments, the book every `INSTRUMENT_IDS` symbol -- 0.0 where `holdings` names none, as
-    `read_venue_book` answers all twelve -- and every leg `TRADING` but the ones `statuses` names. `series` is the
-    equities of the boundaries before it, oldest first, journaled as their `ok` draft records, the equity series
-    started at the first of them; with none, the boundary's mark starts it."""
+    is `venue-12.json`'s instruments, `cache_ordermin` overriding those floors and `listed_floors` being the book's,
+    the book every `INSTRUMENT_IDS` symbol -- 0.0 where `holdings` names none, as `read_venue_book` answers all twelve
+    -- and every leg `TRADING` but the ones `statuses` names. `series` is the equities of the boundaries before it,
+    oldest first, journaled as their `ok` draft records, the equity series started at the first of them; with none,
+    the boundary's mark starts it."""
     record = _journal_cycle_record(tmp_path, record_path)
     for i, equity in enumerate(series):
         at = record.cycle_ts - timedelta(hours=4 * (len(series) - i))
@@ -11231,9 +11289,12 @@ def _boundary_executor(
     venue = _rung2_venue()["state"]
     instruments = {
         entry["instrument_id"]: _fake_instrument(
-            entry["instrument_id"], ordermin=entry["ordermin"], lot_step=entry["lot_step"], tick_size=entry["tick_size"]
+            entry["instrument_id"],
+            ordermin=(cache_ordermin or {}).get(symbol, entry["ordermin"]),
+            lot_step=entry["lot_step"],
+            tick_size=entry["tick_size"],
         )
-        for entry in venue["instruments"].values()
+        for symbol, entry in venue["instruments"].items()
     }
     client = StubClient(StubCache(instruments=instruments, balances=venue["balances"]))
     clock = _Clock(now)
@@ -11244,7 +11305,11 @@ def _boundary_executor(
         clock=clock,
         config=_config(tmp_path, exec_max_plan_notional_eur=plan_cap, **settings),
         venue_holdings=_VenueHoldings(
-            dict.fromkeys(INSTRUMENT_IDS, 0.0) | dict(holdings), eur_total=eur_total, eur_free=eur_free, earn=earn
+            dict.fromkeys(INSTRUMENT_IDS, 0.0) | dict(holdings),
+            eur_total=eur_total,
+            eur_free=eur_free,
+            earn=earn,
+            ordermin=listed_floors,
         ),
         instrument_statuses=lambda: dict(listed),
     )
@@ -11306,6 +11371,134 @@ def test_rung_twos_entry_day_drafts_the_ten_legs_at_nav_1000_with_the_notionals_
     record = _accum(tmp_path)
     assert record["status"] == "ok" and record["nav"] == 1000.0 and record["eur_free"] == 1500.0
     assert record["plan_id"] == "r3-20261005-12" and all(leg["outcome"] == "placed" for leg in record["legs"])
+
+
+_TEN_THIRTY_QTY = 0.00109968
+
+
+def _sell_all_eth(tmp_path, **kwargs):
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=_rung2_record(tmp_path, final_targets=_only("BTC/EUR")),
+        holdings={"ETH/EUR": kwargs.pop("held", _TEN_THIRTY_QTY)},
+        eur_total=1500.0,
+        eur_free=1500.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+        **kwargs,
+    )
+    ex.on_boundary(_RUNG2_12Z)
+    ex.on_timer(clock.now)
+    return _legs(tmp_path)["ETH/EUR"]
+
+
+def test_the_boundary_places_the_ten_thirty_sell_on_the_caches_floor_alone(tmp_path):
+    assert _sell_all_eth(tmp_path)["outcome"] == "placed"
+
+
+def test_the_boundary_carries_the_ten_thirty_sell_under_the_listings_raised_floor(tmp_path):
+    leg = _sell_all_eth(tmp_path, listed_floors={"ETH/EUR": 0.002})
+    assert leg["outcome"] == "carried" and leg["qty"] is None
+    assert leg["reason"] == f"sell {_TEN_THIRTY_QTY:.10g} is under ordermin 0.002"
+
+
+def test_the_boundary_holds_a_lowered_floor_at_the_caches_and_drafts_no_sell_between_them(tmp_path):
+    leg = _sell_all_eth(tmp_path, held=0.0015, cache_ordermin={"ETH/EUR": 0.002}, listed_floors={"ETH/EUR": 0.001})
+    assert leg["outcome"] == "carried" and leg["reason"] == "sell 0.0015 is under ordermin 0.002"
+
+
+def _ten_thirty_plan_run(tmp_path, listed):
+    eth = INSTRUMENT_IDS["ETH/EUR"]
+    client = StubClient(StubCache(instruments=_all_instruments() | {eth: _fake_instrument(eth, ordermin=0.001)}))
+    ex = _executor(tmp_path, client=client, venue_holdings=_VenueHoldings({"ETH/EUR": _TEN_THIRTY_QTY}, ordermin=listed))
+    _drop_plan(
+        tmp_path,
+        _plan_dict(intents=[_intent(symbol="ETH/EUR", side="sell", action="close", notional_eur=None, qty=_TEN_THIRTY_QTY)]),
+    )
+    ex.on_timer(NOW)
+    ex.on_quote(_quote(eth, bid=3000.0, ask=3001.0))
+    return client
+
+
+def test_a_plan_holding_the_ten_thirty_sell_is_submitted_on_the_caches_floor_alone(tmp_path):
+    assert len(_ten_thirty_plan_run(tmp_path, None).submitted) == 1
+
+
+def test_a_plan_holding_the_ten_thirty_sell_is_refused_under_the_listings_raised_floor(tmp_path):
+    client = _ten_thirty_plan_run(tmp_path, {"ETH/EUR": 0.002})
+    assert client.submitted == []
+    assert "is below ordermin 0.002" in _intent_entry(tmp_path, 0)["reasons"][0]
+
+
+def test_the_boundary_holds_the_floor_of_the_book_it_just_read(tmp_path):
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=_rung2_record(tmp_path, final_targets=_only("BTC/EUR")),
+        holdings={"ETH/EUR": _TEN_THIRTY_QTY},
+        eur_total=1500.0,
+        eur_free=1500.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+        listed_floors={"ETH/EUR": 0.002},
+    )
+    holdings = ex._venue_holdings
+    # The startup pass's book names no floor, the boundary's the raised one.
+    ex._venue_holdings = lambda: dataclasses.replace(holdings(), ordermin={}) if holdings.calls == 0 else holdings()
+    ex.on_boundary(_RUNG2_12Z)
+    ex.on_timer(clock.now)
+    leg = _legs(tmp_path)["ETH/EUR"]
+    assert holdings.calls == 2 and leg["outcome"] == "carried"
+    assert leg["reason"] == f"sell {_TEN_THIRTY_QTY:.10g} is under ordermin 0.002"
+
+
+@pytest.mark.parametrize(("listed", "disposition"), [(None, "refused"), ({"BTC/EUR": 0.001}, "accepted")])
+def test_the_mixed_inventory_floor_is_the_floor_the_engine_holds(tmp_path, listed, disposition):
+    """0.0005 BTC is over the stub's 0.0001 and under a listing floor of 0.001: inventory on the Cache's floor alone, dust under the one held."""
+    ex = _executor(
+        tmp_path,
+        client=StubClient(),
+        config=_cache_config(tmp_path),
+        venue_holdings=_VenueHoldings({"BTC/EUR": 0.0005}, ordermin=listed),
+        venue_positions=_VenuePositions({}),
+    )
+    _drop_plan(tmp_path, _plan_dict(intents=[_intent(leverage=2)]))
+    ex.on_timer(NOW)
+    assert _plan_entry(tmp_path)["disposition"] == disposition
+
+
+@pytest.mark.parametrize(
+    ("cached", "listed", "held", "lines"),
+    [(0.0001, 0.01, 0.005, 0), (0.0001, 0.001, 0.005, 1), (0.02, 0.001, 0.01, 0), (None, 0.01, 0.005, 0)],
+)
+def test_the_dust_floor_is_the_floor_the_engine_holds(tmp_path, cached, listed, held, lines):
+    btc = INSTRUMENT_IDS["BTC/EUR"]
+    instruments = _all_instruments() | {btc: _fake_instrument(btc, ordermin=cached)}
+    ex = _executor(tmp_path, client=StubClient(StubCache(instruments=instruments)), venue_holdings=_VenueHoldings())
+    book = _VenueHoldings({"BTC/EUR": held}, ordermin={"BTC/EUR": listed})()
+    with _executor_errors(logging.WARNING) as warnings:
+        ex._settle_from_book(book, "the startup pass")
+    assert len([r for r in warnings if "the venue holds" in r.getMessage()]) == lines
+
+
+def test_a_boundarys_snapshot_holds_the_floor_of_the_executors_newest_book(tmp_path):
+    eth = INSTRUMENT_IDS["ETH/EUR"]
+    cache = StubCache(instruments=_all_instruments() | {eth: _fake_instrument(eth, ordermin=0.001)})
+    ex = _executor(tmp_path, client=StubClient(cache), venue_holdings=_VenueHoldings({}, ordermin={"ETH/EUR": 0.002}))
+    strategy = SimpleNamespace(cache=cache, _now=lambda: NOW, _executor=ex)
+    assert ShadowStrategy._snapshot_venue_state(strategy).instruments["ETH/EUR"].ordermin == 0.001
+    ex._settle_positions_from_venue("the startup pass")
+    assert ShadowStrategy._snapshot_venue_state(strategy).instruments["ETH/EUR"].ordermin == 0.002
+
+
+def test_a_process_that_has_read_no_book_lists_no_floors(tmp_path):
+    assert _executor(tmp_path, venue_holdings=_VenueHoldings()).listed_ordermin() is None
+
+
+def test_a_book_read_that_fails_leaves_the_previous_floors_standing(tmp_path):
+    holdings = _VenueHoldings({}, ordermin={"ETH/EUR": 0.002})
+    ex = _executor(tmp_path, venue_holdings=holdings)
+    assert ex._settle_positions_from_venue("the startup pass") is True
+    holdings._raises = EngineError("the read failed")
+    assert ex._settle_positions_from_venue("the re-read pass") is False
+    assert ex.listed_ordermin() == {"ETH/EUR": 0.002}
 
 
 def test_the_loops_rows_at_eur_720_on_the_nine_legs_equal_the_helpers_decision_rows(tmp_path, monkeypatch):

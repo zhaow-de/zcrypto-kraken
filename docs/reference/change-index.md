@@ -429,3 +429,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #813 | 2026-11-04 | fix(observability): rule charts to Fleet health, cancel lines dropped | — | 00155 | — |
 | #816 | 2026-11-05 | fix(engine): dust under ordermin on a flat leg logs no venue-holds line | — | 00155 | — |
 | #818 | 2026-11-05 | docs(research): rung 2's exit report, spec 00092's slots read | — | 00092 | T0120 |
+| #820 | 2026-11-06 | feat(engine): 00156, the engine holds Kraken's current ordermin | — | 00156 | T0224 |

@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: 'a milestone: rung 2''s exit report recorded, a read of rung 3''s entry gate (`engine-rung-3` step 1, item 1, in `infra/runbooks/engine-procedures.md`); check: `docs/research/14.phase6-decisions.md` carries the exit report entry, due by Fri 2026-11-06'
+status: resolved
 ---
 
 # The engine and the helper read Kraken's live ordermin
@@ -20,8 +19,10 @@ The 2026-10-30 ETH/EUR sell of 0.00109968 cleared the engine's 0.001 floor and w
 - Each boundary's `read_venue_book` (`cli/engine/executor.py`) already fetches Kraken's full instrument listing, `request_instruments()`, on its own client, and uses it only to resolve the margin positions' rows; the draft that follows reads the Cache's `min_quantity`.
 - `costmin` is a committed constant (`cli/engine/instruments.py::COSTMIN`) under `tests/test_costmin_drift.py`, which fires only in a sweep, since it skips without `data/snapshots/`; `ordermin` has no such guard.
 
-## Suggested next steps
+## Resolution
 
-- Choose the source, the design choice this topic leaves open: the engine and the helper read the live `ordermin` — Kraken's public `AssetPairs`, or the listing the boundary's venue read already fetches — or a committed per-leg `ordermin` beside `COSTMIN`, refreshed from each sweep under a drift guard like `tests/test_costmin_drift.py`.
-- Prove it on the 2026-10-30 case: an ETH/EUR sell of 0.00109968 against a 0.002 floor is carried or refused before submission, never sent.
-- Land it before rung 3's arm pull request (`engine-rung-3` step 1, item 2, in `infra/runbooks/engine-procedures.md`).
+Delivered by the pull request from `feat/00156-boundary-ordermin` (spec 00156, plan 00156): the source is the listing the boundary's venue read already fetches, and the engine and both helpers hold a quantity against the higher of that listing's floor and the Cache's.
+
+- A raised floor holds from the next book read and a lowered one from the next start. The lowered half, the second harm above, is bounded by the owner's ruling and is not open (spec D2).
+- `engine-rung-3`'s entry gate reads the pin row's revision and the venue record's floors (`infra/runbooks/engine-procedures.md`, step 1).
+- The 2026-10-30 case is proved by `test_the_boundary_carries_the_ten_thirty_sell_under_the_listings_raised_floor` and `test_a_plan_holding_the_ten_thirty_sell_is_refused_under_the_listings_raised_floor`, in `tests/test_engine_executor.py`.

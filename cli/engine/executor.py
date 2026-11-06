@@ -28,7 +28,7 @@ import json
 import math
 import os
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -88,7 +88,7 @@ from cli.engine.journal import CycleRecord, from_json, require_comparable_cycle_
 from cli.engine.probeplan import MODES, PLAN_FILENAME, ProbeIntent, ProbePlanError, parse_plan, plan_refusals
 from cli.engine.store import BASKET
 from cli.engine.tracking import extract_fills, realized_drift
-from cli.engine.venuestate import InstrumentConstraints, venue_state_from_cache
+from cli.engine.venuestate import InstrumentConstraints, held_ordermin, venue_state_from_cache
 from cli.logging import get_logger
 
 logger = get_logger("engine.executor")
@@ -392,13 +392,12 @@ def _boundary(now: datetime) -> datetime:
 
 
 def size_probe_order(target_qty: float, touch_price: float, constraints: InstrumentConstraints) -> SizedOrder | BelowMinimum:
-    """THE sizing call site (spec 00090 D8): every probe order is sized here, on the Cache-fresh
-    constraints and the committed costmin, through the one proven size_order. The comparison this
+    """THE sizing call site (spec 00090 D8): every probe order is sized here, on the constraints
+    `venue_state_from_cache` froze and the committed costmin, through the one proven size_order. The comparison this
     module makes is EUR-denominated end to end (an EUR intent notional, an EUR-quoted touch), so the
     guard T0138 holds lands immediately where the notional meets constraints.costmin: a floor
     denominated in anything but EUR must never be compared here -- a /BTC leg's 2e-05 BTC floor
-    against a EUR notional passes everything silently (the fail-open defect). Route a future
-    /BTC-leg notional through fx_eur_notional first; until then this raises."""
+    against a EUR notional passes everything silently (the fail-open defect)."""
     if constraints.costmin_quote != "EUR":
         raise EngineError(
             f"{constraints.symbol}: costmin is denominated in {constraints.costmin_quote!r} but this "
@@ -671,6 +670,7 @@ class VenueBook:
     eur_total: float  # the spot EUR row's total and EUR.M's, no other EUR row: the equity mark's figure
     eur_free: float  # the spot EUR row's free, net of hold_trade: one bound of the cash budget
     read_at: datetime
+    ordermin: dict[str, float] = field(default_factory=dict)  # per INSTRUMENT_IDS symbol, the listing's floor where it gave one
 
     def earn_refusal(self) -> str | None:
         """Why the draft may not read `held`, or None while `earn` holds nothing: a basket coin under an
@@ -694,6 +694,21 @@ class VenueBook:
 _MARKED_EUR_EARN_CODES = frozenset({"EUR.M"})
 
 
+def _listing_floors(instruments) -> dict[str, float]:
+    listed = {str(instrument.id): instrument for instrument in instruments}
+    floors: dict[str, float] = {}
+    for symbol, instrument_id in INSTRUMENT_IDS.items():
+        instrument = listed.get(instrument_id)
+        floor = 0.0 if instrument is None or instrument.min_quantity is None else float(instrument.min_quantity)
+        if floor > 0.0:
+            floors[symbol] = floor
+        else:
+            logger.warning(
+                "the venue's listing gives %s no ordermin -- the leg stays on the floor the engine loaded at its start", symbol
+            )
+    return floors
+
+
 def read_venue_book(*, base_url: str | None = None) -> VenueBook:
     """The account's book from the venue's own two reads on a client each call builds for itself
     (`_bare_client`). `held` is what the account holds under every `INSTRUMENT_IDS` symbol: each margin
@@ -705,11 +720,12 @@ def read_venue_book(*, base_url: str | None = None) -> VenueBook:
     outside it, are not read: the gauge's children are the basket's. A symbol within `FLAT_TOLERANCE` of
     zero reads 0.0, the seed's own snap.
 
-    The listing is cached first because the position read resolves its rows through it. Anything short
-    of both answers inside `_VENUE_READ_TIMEOUT_SECONDS` raises, and so does a position side that is
-    not LONG, SHORT or FLAT. An empty listing, through which no margin position resolves, and a
-    positions answer of `None` raise too, the two shapes `zcrypto engine flatten` refuses: neither is
-    read as a flat margin book, which an empty positions list from a venue that answered is."""
+    The listing is cached first because the position read resolves its rows through it, and its floors
+    are kept as `ordermin`. Anything short of both answers inside `_VENUE_READ_TIMEOUT_SECONDS` raises,
+    and so does a position side that is not LONG, SHORT or FLAT. An empty listing, through which no
+    margin position resolves, and a positions answer of `None` raise too, the two shapes
+    `zcrypto engine flatten` refuses: neither is read as a flat margin book, which an empty positions
+    list from a venue that answered is."""
     from cli.engine.flatten import QUOTE_CURRENCY, wallet_base
     from cli.engine.node import _ACCOUNT_ID
 
@@ -727,9 +743,9 @@ def read_venue_book(*, base_url: str | None = None) -> VenueBook:
         if positions is None:
             raise EngineError("the venue answered nothing for the margin positions -- it is never read as a flat margin book")
         state = await client.request_account_state(AccountId(_ACCOUNT_ID), account_type=AccountType.CASH)
-        return list(positions), state
+        return list(positions), state, _listing_floors(instruments)
 
-    positions, state = asyncio.run(asyncio.wait_for(_read(), timeout=_VENUE_READ_TIMEOUT_SECONDS))
+    positions, state, floors = asyncio.run(asyncio.wait_for(_read(), timeout=_VENUE_READ_TIMEOUT_SECONDS))
     read_at = _utc_now()
     held = _margin_positions(positions)
     balances = dict.fromkeys(_SPOT_SYMBOL_BY_BASE, 0.0)
@@ -762,6 +778,7 @@ def read_venue_book(*, base_url: str | None = None) -> VenueBook:
         eur_total=eur_total,
         eur_free=eur_free,
         read_at=read_at,
+        ordermin=floors,
     )
 
 
@@ -2723,7 +2740,7 @@ class ProbeExecutor:
             return "refused"
 
         try:
-            state = venue_state_from_cache(self._cache, clock=self._now)
+            state = venue_state_from_cache(self._cache, clock=self._now, listed=self.listed_ordermin())
         except Exception:
             logger.warning("venue truth unavailable -- refusing plan %s", plan.plan_id, exc_info=True)
             if self._journal_plan(
@@ -2942,7 +2959,7 @@ class ProbeExecutor:
             return
 
         try:
-            state = venue_state_from_cache(self._cache, clock=self._now)
+            state = venue_state_from_cache(self._cache, clock=self._now, listed=self.listed_ordermin())
         except Exception:
             logger.warning("venue truth unavailable -- refusing intent %d of plan %s", index, plan.plan_id, exc_info=True)
             self._refuse_intent(index, ("no venue truth",))
@@ -3554,7 +3571,7 @@ class ProbeExecutor:
             try:
                 book = (self._venue_holdings or read_venue_book)()
                 statuses = (self._instrument_statuses or read_instrument_statuses)()
-                state = venue_state_from_cache(self._cache, clock=self._now)
+                state = venue_state_from_cache(self._cache, clock=self._now, listed=book.ordermin)
             except Exception as exc:
                 self._spend_draft_try(
                     now, f"the venue's book could not be read -- {type(exc).__name__}: {exc}", "book-unread", figures, exc
@@ -4604,6 +4621,9 @@ class ProbeExecutor:
         held = self._cache.positions_open(instrument_id=InstrumentId.from_str(INSTRUMENT_IDS[symbol]))
         return sum(float(p.signed_qty) for p in held)
 
+    def listed_ordermin(self) -> dict[str, float] | None:
+        return None if self._venue_book is None else self._venue_book.ordermin
+
     def _settle_positions_from_venue(self, moment: str) -> bool:
         """The venue's own book, read and kept on `self._venue_book`, settles the position gauge where the
         Cache disagrees (`_settle_from_book`): at the startup pass, after its order read and before its
@@ -4632,7 +4652,7 @@ class ProbeExecutor:
         if abs(cache_qty) > FLAT_TOLERANCE or _SPOT_SYMBOL_BY_BASE.get(base) != symbol or venue_qty != book.balances.get(base):
             return False
         instrument = self._cache.instrument(InstrumentId.from_str(INSTRUMENT_IDS[symbol]))
-        return instrument is not None and instrument.min_quantity is not None and 0.0 < venue_qty < float(instrument.min_quantity)
+        return instrument is not None and 0.0 < venue_qty < held_ordermin(instrument.min_quantity, book.ordermin.get(symbol))
 
     def _settle_from_book(self, book: VenueBook, moment: str) -> None:
         """The settle's apply half over a book in hand: the venue's figure is published for every symbol

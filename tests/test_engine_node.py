@@ -461,7 +461,7 @@ def test_snapshot_venue_state_logs_and_returns_none_on_any_exception(tmp_path, m
     config = _config(tmp_path)
     strategy = ShadowStrategy(config)
 
-    def boom(cache, *, clock):
+    def boom(cache, *, clock, listed):
         raise RuntimeError("cache blew up")
 
     monkeypatch.setattr(node, "venue_state_from_cache", boom)
@@ -478,6 +478,23 @@ class _CacheReadableStrategy(ShadowStrategy):
     cache = None
 
 
+def test_the_boundarys_snapshot_carries_the_executors_floors(tmp_path, monkeypatch):
+    strategy = _CacheReadableStrategy(_config(tmp_path))
+    strategy._executor = types.SimpleNamespace(listed_ordermin=lambda: {"ETH/EUR": 7.0})
+    seen = []
+    monkeypatch.setattr(node, "venue_state_from_cache", lambda cache, *, clock, listed: seen.append(listed))
+    strategy._snapshot_venue_state()
+    assert seen == [{"ETH/EUR": 7.0}]
+
+
+def test_a_strategy_with_no_executor_snapshots_on_no_listing(tmp_path, monkeypatch):
+    strategy = _CacheReadableStrategy(_config(tmp_path))
+    seen = []
+    monkeypatch.setattr(node, "venue_state_from_cache", lambda cache, *, clock, listed: seen.append(listed))
+    strategy._snapshot_venue_state()
+    assert seen == [None]
+
+
 def test_an_engine_error_at_the_boundary_journals_the_error_venue_record(tmp_path, monkeypatch):
     """The EngineError-to-None degrade, entered at the Cache read itself, leaves the boundary's
     venue-<HH>.json reading status "error" with the reason, never nothing at all."""
@@ -485,7 +502,7 @@ def test_an_engine_error_at_the_boundary_journals_the_error_venue_record(tmp_pat
     strategy = _CacheReadableStrategy(config)
     reads: list = []
 
-    def unreadable_cache(cache, *, clock):
+    def unreadable_cache(cache, *, clock, listed):
         reads.append(cache)
         raise EngineError("BTC/EUR is absent from the Cache")
 
@@ -1866,6 +1883,34 @@ def test_the_twelve_instruments_are_in_the_cache_when_the_strategy_starts(tmp_pa
         f"{missing} were absent from the Cache when the strategy started, out of {facts['total']} "
         f"instruments loaded -- every cycle's venue-state read would degrade to None"
     )
+
+
+def test_the_listing_the_book_reads_carries_krakens_ordermin_on_every_leg():
+    if os.environ.get("ZCRYPTO_LIVE_VENUE_TESTS") != "1":
+        pytest.skip("needs a live venue: set ZCRYPTO_LIVE_VENUE_TESTS=1 to run it")
+    if not _kraken_public_reachable():
+        pytest.fail("ZCRYPTO_LIVE_VENUE_TESTS=1 was set but Kraken's public endpoint is unreachable")
+    import asyncio
+    import urllib.request
+
+    from nautilus_trader.adapters.kraken import KrakenSpotHttpClient
+
+    from cli.engine.executor import _listing_floors
+    from cli.engine.instruments import INSTRUMENT_IDS
+    from cli.snapshot.assetpairs import _COMMON_TO_KRAKEN
+
+    def wsname(symbol: str) -> str:
+        base, quote = symbol.split("/")
+        return f"{_COMMON_TO_KRAKEN.get(base, base)}/{_COMMON_TO_KRAKEN.get(quote, quote)}"
+
+    async def listing():
+        return await KrakenSpotHttpClient(api_key=None, api_secret=None).request_instruments()
+
+    floors = _listing_floors(asyncio.run(asyncio.wait_for(listing(), 60)))
+    with urllib.request.urlopen("https://api.kraken.com/0/public/AssetPairs", timeout=30) as response:
+        pairs = json.load(response)["result"]
+    by_wsname = {row["wsname"]: float(row["ordermin"]) for row in pairs.values() if row.get("wsname")}
+    assert floors == pytest.approx({symbol: by_wsname[wsname(symbol)] for symbol in INSTRUMENT_IDS})
 
 
 def test_the_shipped_idle_value_survives_krakens_own_inactivity_close(tmp_path):

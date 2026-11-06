@@ -5,7 +5,6 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 ## Open
 
 - [T0221 — engine-procedures.md without the one-time rungs](T0221-engine-procedures-without-the-rungs.md) — ripe when: a milestone: rung 3's go/no-go decided, `engine-rung-3` step 9; check: `grep -c -i -E "rung 3.s go/no-go.*\(Decision:" docs/research/14.phase6-decisions.md` prints at least 1
-- [T0224 — The engine and the helper read Kraken's live ordermin](T0224-the-engine-and-the-helper-read-krakens-live-ordermin.md) — ripe when: a milestone: rung 2's exit report recorded, a read of rung 3's entry gate (`engine-rung-3` step 1, item 1, in `infra/runbooks/engine-procedures.md`); check: `docs/research/14.phase6-decisions.md` carries the exit report entry, due by Fri 2026-11-06
 
 ## Partially done
 
@@ -231,3 +230,4 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 - [T0220 — Retire the August stamped sets and the legacy universe at the next universe refresh](archive/T0220-retire-august-stamped-sets-and-legacy-universe.md)
 - [T0222 — A trial run on a branch that never merges spends uncounted](archive/T0222-a-trial-on-an-unmerged-branch-spends-uncounted.md)
 - [T0223 — Records 45 and 46 rebuilt as a B1 subject](archive/T0223-records-45-and-46-rebuilt-as-a-b1-subject.md)
+- [T0224 — The engine and the helper read Kraken's live ordermin](archive/T0224-the-engine-and-the-helper-read-krakens-live-ordermin.md)

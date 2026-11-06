@@ -892,6 +892,29 @@ def _spot_process(node: _Node, n: int, holdings: dict, leg: dict = _SOL, *, pair
 _BUMP = "the nautilus build the tree pins no longer does what this test recorded of it"
 
 
+def test_a_start_holds_the_venues_floor_over_the_stored_instrument(tmp_path):
+    basket = _basket_pairs()
+    eth = next(key for key, row in basket.items() if row.get("altname") == "ETHEUR")
+
+    def listing(floor: str) -> dict:
+        return basket | {eth: basket[eth] | {"ordermin": floor}}
+
+    valkey = _Valkey(tmp_path / "valkey")
+    try:
+        valkey.start()
+        node = _Node(tmp_path / "node", valkey.port)
+        first, _, _ = _spot_process(node, 1, _EUR_ONLY, pairs=listing("0.002"))
+        stored = _keys(valkey.port)
+        second, _, _ = _spot_process(node, 2, _EUR_ONLY, pairs=listing("0.001"))
+    finally:
+        valkey.stop()
+
+    assert first["errors"] == [] and second["errors"] == []
+    assert "trader-SHADOW-001:instruments:ETH/EUR.KRAKEN" in stored
+    floors = [record["venue_state_at_start"]["ordermin"]["ETH/EUR"] for record in (first, second)]
+    assert floors == [0.002, 0.001], f"{_BUMP}: a start no longer takes the venue's floor over the stored instrument: {floors}"
+
+
 def test_a_restored_spot_lot_comes_back_at_the_lot_with_no_external_short_and_the_account_keeps_its_coin(tmp_path):
     valkey = _Valkey(tmp_path / "valkey")
     try:

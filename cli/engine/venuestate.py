@@ -11,23 +11,18 @@ venue-truth divergence in its own right, never narrowed silently), or no account
 caller (the strategy hook) converts the raise to `None` and the cycle proceeds without venue truth (00089
 D7): absence is loud, never blocking.
 - A present instrument's Cache-supplied numeric constraint
-(`ordermin`/`lot_step`/`tick_size`) that reads back `None` does NOT raise here -- it freezes as `0.0` for
-`runtime_concordance` to flag per leg, so one broken leg degrades to a per-symbol concordance failure
-instead of discarding the whole snapshot.
+(`ordermin`/`lot_step`/`tick_size`) that reads back `None` does NOT raise here -- it freezes as `0.0`,
+where no listing floor stands over it, for `runtime_concordance` to flag per leg, so one broken leg degrades
+to a per-symbol concordance failure instead of discarding the whole snapshot.
 
-`costmin` is NOT Cache-supplied at all (spec 00089 D5a): the nautilus-trader 1.230.0 Kraken adapter's
-compiled parser, loopback-probed, never maps `costmin` into `min_notional` -- it reads back `None` for every
-pair -- and Kraken's costmin is not one venue constant either, so it is read from the committed
-`cli.engine.instruments.COSTMIN`, labelled `"costmin_source": "snapshot-constant"` in `to_payload()`, and
-left to `tests/test_costmin_drift.py`; `runtime_concordance` deliberately never checks it (a constant
-failing all twelve legs on the first cycle would hold D6's alert red forever, the exact T0135 failure D2
-exists to avoid). Only `instrument` and `account_for_venue` are None-checked; `positions_open` is not,
-because it returns `[]` for a flat leg rather than raising -- probed at nautilus-trader 1.230.0;
-re-probe when the pin moves."""
+`costmin` is NOT Cache-supplied at all (spec 00089 D5a): the Kraken adapter never maps it into `min_notional` --
+it reads back `None` for every pair -- and Kraken's costmin is not one venue constant either, so it is read from
+the committed `cli.engine.instruments.COSTMIN`, labelled `"costmin_source": "snapshot-constant"` in `to_payload()`,
+and left to `tests/test_costmin_drift.py`; `runtime_concordance` deliberately never checks it."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from datetime import datetime
 
@@ -42,8 +37,8 @@ _VENUE = Venue("KRAKEN")
 @dataclass(frozen=True)
 class InstrumentConstraints:
     """One symbol's venue-quoted order constraints, evidence -- not live-precision, hence float.
-    `ordermin`/`lot_step`/`tick_size` are read live from the Cache; `costmin` is NOT (module
-    docstring, D5a) -- it comes from the committed `COSTMIN` constant, and `costmin_quote` (spec
+    `lot_step`/`tick_size` are the Cache's and `ordermin` is `held_ordermin`'s; `costmin` is neither
+    (module docstring, D5a) -- it comes from the committed `COSTMIN` constant, and `costmin_quote` (spec
     00094 D4) is that same `COSTMIN` entry's quote currency, so no consumer can compare `costmin`
     against a notional denominated in the wrong currency without noticing."""
 
@@ -58,8 +53,9 @@ class InstrumentConstraints:
 
 @dataclass(frozen=True)
 class VenueState:
-    """A frozen, single-instant read of the Cache: what the venue said we could trade, held, and
-    had free to spend at `snapshot_at`. Plain data -- no Nautilus type reachable from here."""
+    """A frozen, single-instant read of the Cache, with each `ordermin` as `held_ordermin` holds it:
+    what the venue said we could trade, held, and had free to spend at `snapshot_at`. Plain data --
+    no Nautilus type reachable from here."""
 
     snapshot_at: datetime
     instruments: dict[str, InstrumentConstraints]
@@ -86,17 +82,20 @@ class ConcordanceVerdict:
 
 
 def _to_float(value: object) -> float:
-    # `None` is a legitimate Cache reading for a numeric constraint -- freeze it as 0.0 and let
-    # runtime_concordance's `> 0` check flag it, rather than raising here.
     return 0.0 if value is None else float(value)
 
 
-def venue_state_from_cache(cache, *, clock: Callable[[], datetime]) -> VenueState:
-    """Raises `EngineError` on a structural read failure -- an `INSTRUMENT_IDS` symbol's instrument absent from
-    the Cache, the Cache's own instrument id disagreeing with the expected one, or no account cached for the
-    venue (each named in the message). The caller converts the raise to `None`; this function never narrows
-    a failure into a partial/silent result. `costmin` is never read from `cache` at all (module docstring,
-    D5a) -- it comes from the committed `COSTMIN`."""
+def held_ordermin(cached: object, listed: float | None) -> float:
+    """The floor a quantity is held against: the venue listing's, never under the Cache's, so a floor the venue
+    raised holds from the next book read and one it lowered from the next start (spec 00156 D2)."""
+    floor = _to_float(cached)
+    return floor if listed is None else max(floor, listed)
+
+
+def venue_state_from_cache(cache, *, clock: Callable[[], datetime], listed: Mapping[str, float] | None = None) -> VenueState:
+    """Raises `EngineError` on a structural read failure, each named in the message (module docstring). `listed` is
+    the newest venue book's floors, and `held_ordermin` decides each leg's."""
+    listed = {} if listed is None else listed
     instruments: dict[str, InstrumentConstraints] = {}
     positions: dict[str, float] = {}
     for symbol, instrument_id_str in INSTRUMENT_IDS.items():
@@ -112,7 +111,7 @@ def venue_state_from_cache(cache, *, clock: Callable[[], datetime]) -> VenueStat
         instruments[symbol] = InstrumentConstraints(
             symbol=symbol,
             instrument_id=str(instrument.id),
-            ordermin=_to_float(instrument.min_quantity),
+            ordermin=held_ordermin(instrument.min_quantity, listed.get(symbol)),
             costmin=COSTMIN[symbol][0],
             costmin_quote=COSTMIN[symbol][1],
             lot_step=_to_float(instrument.size_increment),
@@ -131,7 +130,7 @@ def venue_state_from_cache(cache, *, clock: Callable[[], datetime]) -> VenueStat
 
 def runtime_concordance(state: VenueState) -> ConcordanceVerdict:
     """Per `INSTRUMENT_IDS` symbol (never `state.instruments`, so a hand-built state missing a
-    symbol is caught too): the instrument is present, and its three **Cache-supplied**
+    symbol is caught too): the instrument is present, and its three **venue-supplied**
     `ordermin`/`lot_step`/`tick_size` are all `> 0`. `costmin` is deliberately NOT checked here
     (D5a): it is snapshot-sourced, not venue-read, so its correctness is
     `tests/test_costmin_drift.py`'s job -- checking it here would fail all twelve legs on the first

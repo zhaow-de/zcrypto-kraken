@@ -9,10 +9,8 @@ landing in the record's `errors`. The strategy the engine registers is subclasse
 executor its quotes on a timer, since the data peer sends none, and to stop the node at the window's
 end; its executor, its startup pass and its ledger writes are the engine's own.
 
-argv[1] is a JSON object: `phase`, `journal_dir`, `store_dir`, `port`, `username`, `password`,
-`api_key`, `api_secret`, `base_url`, `ws_public`, `ws_private`, `instrument`, `bid`, `ask`,
-`quote_every`, `window_secs`, `out`, and `max_plan_notional_eur`. It writes `out` at the window's end
-and again after `run()` returns, and exits 0 whatever `run()` did: the driver reads the record.
+argv[1] is a JSON object of what the driver passes. It writes `out` at the window's end and again after `run()`
+returns, and exits 0 whatever `run()` did: the driver reads the record.
 """
 
 from __future__ import annotations
@@ -198,9 +196,14 @@ def _dump(cache) -> dict:
 
 
 def _venue_state(cache) -> dict:
-    """The positions and balances a venue record written now would carry, by the engine's own reader."""
+    """The positions and balances a venue record written now would carry, by the engine's own reader,
+    and `ordermin`, the Cache's floor, with no listing passed."""
     state = venue_state_from_cache(cache, clock=lambda: datetime.now(timezone.utc))
-    return {"positions": dict(state.positions), "balances": dict(state.balances)}
+    return {
+        "positions": dict(state.positions),
+        "balances": dict(state.balances),
+        "ordermin": {symbol: constraints.ordermin for symbol, constraints in state.instruments.items()},
+    }
 
 
 class _Recorder:
