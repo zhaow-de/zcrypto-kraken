@@ -1,8 +1,7 @@
 """The PreToolUse[Bash] guard's families, driven with synthetic stdin JSON.
 
-The hook is `.claude/hooks/bash-guard.sh`; its header carries only what this corpus and the code cannot say. Every
-family is driven in both directions: the spelling an arm refuses (exit 2, `BLOCKED` and the spelling on stderr) beside
-the ordinary shape nearest to it that it must admit (exit 0, silent).
+Every family is driven in both directions: the spelling an arm refuses (exit 2, `BLOCKED` and the spelling on stderr)
+beside the ordinary shape nearest to it that it must admit (exit 0, silent).
 """
 
 from __future__ import annotations
@@ -12,7 +11,6 @@ import json
 import os
 import re
 import subprocess
-import time
 from pathlib import Path
 
 import pytest
@@ -1186,55 +1184,75 @@ def state_repo(tmp_path: Path) -> tuple[dict, Path]:
     return {"tool_name": "Bash", "tool_input": {"command": ""}, "cwd": str(repo)}, git_dir(repo) / STAMP_NAME
 
 
+# On the wall clock a stamp ages while its case queues behind `run_hook`'s lock, so the age the hook prints and judges
+# is the queue's.
+# The fraction is what shows a whole-second truncation of the clock or the stamp.
+FROZEN_NOW = 1_800_000_000.5
+
+
+@pytest.fixture
+def frozen_env(tmp_path: Path) -> dict:
+    shim = tmp_path / "frozen-clock"
+    shim.mkdir()
+    (shim / "sitecustomize.py").write_text(f"import time\n\ntime.time = lambda: {FROZEN_NOW!r}\n")
+    return {**os.environ, "PYTHONPATH": str(shim)}
+
+
 def stamped(payload: dict, stamp: Path, age: float) -> dict:
-    stamp.write_text(repr(time.time() - age))
+    stamp.write_text(repr(FROZEN_NOW - age))
     return payload
 
 
 STATE_CHANGERS = ["git commit -m x", "git cherry-pick abc1234"]
 
 
+@pytest.mark.parametrize("age", [0.4, 2.9])
 @pytest.mark.parametrize("command", STATE_CHANGERS)
-def test_a_state_changing_git_command_within_the_gap_of_another_is_refused(tmp_path: Path, command: str):
+def test_a_state_changing_git_command_within_the_gap_of_another_is_refused(
+    tmp_path: Path, frozen_env: dict, command: str, age: float
+):
     payload, stamp = state_repo(tmp_path)
-    payload = stamped(payload, stamp, 0.4)
+    payload = stamped(payload, stamp, age)
     before = stamp.read_text()
     payload["tool_input"]["command"] = command
-    r = run_hook(payload, cwd=tmp_path)
+    r = run_hook(payload, cwd=tmp_path, env=frozen_env)
     assert r.returncode == 2, r.stderr
-    assert re.search(
-        rf"BLOCKED — `{re.escape(command)}`: a state-changing git command started 0\.[4-9] s ago in this checkout and ", r.stderr
-    ), r.stderr
-    assert "each runs alone — if that one has already returned, re-send this one after the gap" in r.stderr
+    assert (
+        f"BLOCKED — `{command}`: a state-changing git command started {age} s ago in this checkout and each runs alone — "
+        "if that one has already returned, re-send this one after the gap"
+    ) in r.stderr
     assert stamp.read_text() == before and r.stdout == ""
 
 
+@pytest.mark.parametrize("age", [3.0, 5.0])
 @pytest.mark.parametrize("command", STATE_CHANGERS)
-def test_a_state_changing_git_command_past_the_gap_is_admitted_and_restamps(tmp_path: Path, command: str):
+def test_a_state_changing_git_command_past_the_gap_is_admitted_and_restamps(
+    tmp_path: Path, frozen_env: dict, command: str, age: float
+):
     payload, stamp = state_repo(tmp_path)
-    payload = stamped(payload, stamp, 5.0)
+    payload = stamped(payload, stamp, age)
     payload["tool_input"]["command"] = command
-    r = run_hook(payload, cwd=tmp_path)
+    r = run_hook(payload, cwd=tmp_path, env=frozen_env)
     assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
-    assert time.time() - float(stamp.read_text()) < 3.0
+    assert float(stamp.read_text()) == FROZEN_NOW
 
 
-def test_a_git_read_within_the_gap_is_admitted_and_leaves_the_stamp(tmp_path: Path):
+def test_a_git_read_within_the_gap_is_admitted_and_leaves_the_stamp(tmp_path: Path, frozen_env: dict):
     payload, stamp = state_repo(tmp_path)
     payload = stamped(payload, stamp, 0.4)
     before = stamp.read_text()
     payload["tool_input"]["command"] = "git status"
-    r = run_hook(payload, cwd=tmp_path)
+    r = run_hook(payload, cwd=tmp_path, env=frozen_env)
     assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
     assert stamp.read_text() == before
 
 
-def test_a_state_changing_git_command_with_no_stamp_is_admitted_and_stamps(tmp_path: Path):
+def test_a_state_changing_git_command_with_no_stamp_is_admitted_and_stamps(tmp_path: Path, frozen_env: dict):
     payload, stamp = state_repo(tmp_path)
     payload["tool_input"]["command"] = "git add . && git commit -m x"
-    r = run_hook(payload, cwd=tmp_path)
+    r = run_hook(payload, cwd=tmp_path, env=frozen_env)
     assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
-    assert time.time() - float(stamp.read_text()) < 3.0
+    assert float(stamp.read_text()) == FROZEN_NOW
 
 
 def test_the_stamp_is_not_in_the_tree_an_admitted_commit_commits(tmp_path: Path):
