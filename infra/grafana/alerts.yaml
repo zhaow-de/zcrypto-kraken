@@ -3225,11 +3225,7 @@ rules:
       # within the window has a 0 in it, so only a pair desynced for the whole 15 min fires -- the
       # stuck shape, not the transient one the daemon handles by itself.
       #
-      # This is not one pair's problem. `gap_monitor.is_healthy()` is False while ANY pair has an
-      # open gap and the healthcheck ping is gated on it, so one stuck pair silences this host's
-      # dead-man for every pair -- its check and zcrypto-hcio-watchdog then fire and STAY fired, and any later,
-      # worse fault on the same host produces no new page while that signal is saturated. This rule
-      # is what names the pair; the dead-man only says the host went quiet.
+      # This rule is what names the pair; the dead-man only says the host went quiet.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 3600, to: 0}
@@ -3598,15 +3594,7 @@ rules:
     orgId: 1
     condition: C
     data:
-      # A breached watermark does not merely warn: cli/capture/command.py's book and trade handlers
-      # `continue`/`return` past the writers while it holds, so incoming L2 and trades are DROPPED.
-      # That data is unbackfillable -- every second breached is permanent loss.
-      #
-      # It also gates the dead-man ping, so its check does fire -- but that page says "this host went
-      # quiet", not "the disk hit the watermark and capture is discarding", and without this rule the
-      # operator cannot tell those apart. The 1 GiB watermark sits BELOW the `Capture · spool disk
-      # low` early warning (10% free), so that rule fires first only if the fill is gradual; a sudden
-      # consumer can breach the watermark with disk-low still green.
+      # The watermark also gates the dead-man ping, so its check fires -- but that page says "this host went quiet", not "the disk hit the watermark and capture is discarding", and without this rule the operator cannot tell those apart. The 1 GiB watermark sits BELOW the `Capture · spool disk low` early warning (10% free), so that rule fires first only if the fill is gradual.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 3600, to: 0}
