@@ -431,3 +431,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #818 | 2026-11-05 | docs(research): rung 2's exit report, spec 00092's slots read | — | 00092 | T0120 |
 | #820 | 2026-11-06 | feat(engine): 00156, the engine holds Kraken's current ordermin | — | 00156 | T0224 |
 | #824 | 2026-11-06 | docs(runbooks): 00122, the dead-man service's drills and surfaces' sweep | — | 00122 | T0218 |
+| #826 | 2026-11-06 | refactor(infra): T0217, the fleet ships to the node, Grafana Cloud goes | — | 00121 | T0217 |
