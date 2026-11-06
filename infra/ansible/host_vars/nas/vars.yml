@@ -48,7 +48,7 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 # run, which deploys no entrypoint) pairs the tree's entrypoint with whatever image runs, and a
 # roll back to an image built before that merge breaks it. The signature is `gate-export`
 # exiting 2 on `No such option: --slice` on every cycle:
-# `NAS · archive-pull ERROR logs` inside 15 min, `zcrypto-gate-exporter-stale` at 2 h, and the hc.io
+# `NAS · archive-pull ERROR logs` inside 15 min, `zcrypto-gate-exporter-stale` at 2 h, and the
 # `zcrypto-gate-verify` dead-man stops pinging; the gate metrics freeze and the re-verification
 # rotation is STOPPED until the pin moves.
 nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:41cd06b47528a4b8b1dc8d5866bc96004971b61856e9e6dcd87a30d4cec705e4

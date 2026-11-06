@@ -90,7 +90,7 @@
     fail_msg: "nas_archive_pull_hash_scope must be full or incremental, got '{{ nas_archive_pull_hash_scope }}'"
 
 # The deploy-time env: the image pins compose.yaml refuses to start without, the pull sources and
-# ports, and the vaulted gate dead-man URL. no_log with diff false, because a healthchecks.io ping
+# ports, and the vaulted gate dead-man URL. no_log with diff false, because a dead-man ping
 # URL is a bearer capability, so neither the rendered content nor a diff may reach the terminal or a
 # log capturing the run.
 - name: render the stack .env (image pins, pull sources, the vaulted gate dead-man URL)

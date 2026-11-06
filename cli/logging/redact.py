@@ -1,6 +1,6 @@
-"""What a log line may say about a healthchecks.io ping that failed. The URL's path is the check's
+"""What a log line may say about a dead-man ping that failed. The URL's path is the check's
 capability -- whoever holds it can keep the dead-man fed through an outage -- and these lines ship
-to a third party, so the line carries the host and the /fail flag and nothing of the path, and the
+off the host, so the line carries the host and the /fail flag and nothing of the path, and the
 exception's text only where its class cannot quote the URL."""
 
 from __future__ import annotations

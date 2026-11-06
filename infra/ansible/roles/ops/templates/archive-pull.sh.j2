@@ -2,14 +2,7 @@
 # Rendered by the `ops` Ansible role at /usr/local/sbin/zcrypto-archive-pull — do not hand-edit on
 # the host, edit infra/ansible/roles/ops/templates/archive-pull.sh.j2 and re-converge instead.
 #
-# The overlay-WRITER cycle (spec 00054 D2, re-plumbed by T0058): reconcile + daily trade-backfill,
-# reading the canonical trees straight from the NAS's read-only NFS export ({{ ops_nas_mount }}).
-# This script PULLS NOTHING any more — the hourly 3-tree rsync mirror it was named for is retired
-# (T0058 consensus #2). The unit/script/metric names keep the historical `archive-pull` /
-# ops_archive_pull_* identity because the Grafana alert rules are provisioned against them;
-# renaming is registered follow-up cleanup, not this change. The write-back direction is
-# unchanged: the overlay stays LOCAL under {{ ops_data_dir }} and the NAS re-acquires it via its
-# own hash-verified, no-delete rrsync pull (custody stays NAS-initiated).
+# The overlay-WRITER cycle (spec 00054 D2, re-plumbed by T0058): reconcile + daily trade-backfill, reading the canonical trees straight from the NAS's read-only NFS export ({{ ops_nas_mount }}). This script PULLS NOTHING: the unit/script/metric names keep the historical `archive-pull` / ops_archive_pull_* identity because the Grafana alert rules are provisioned against them. The overlay stays LOCAL under {{ ops_data_dir }} and the NAS re-acquires it via its own hash-verified, no-delete rrsync pull (custody stays NAS-initiated).
 #
 # Soft-mount safety: the NFS mount is ro,soft, so a hung NAS surfaces EIO instead of a D-state
 # hang. Categorically safe here: the CLI treats any unreadable segment as a loud integrity fact,
@@ -189,7 +182,7 @@ else
         # over arbitrary stdout, and a bare $(( )) reads 08 as OCTAL. That is not a wrong number --
         # the expansion error leaves the variable UNSET, and `set -u` then aborts the shell at the
         # next printf, so the mv never runs, trade-backfill.prom keeps stale content with exit_code
-        # still 0, ops-archive-pull.prom is never rewritten, and the hc.io ping is skipped. Unlike
+        # still 0, ops-archive-pull.prom is never rewritten, and the dead-man ping is skipped. Unlike
         # last_success, which only ever reaches printf %d and degrades to 0 with the shell alive.
         backfill_repaired=$(sed -n 's/.*hours_repaired_after_loss=\([0-9][0-9]*\).*/\1/p' "$backfill_log" | tail -1)
         rm -f "$backfill_log"
@@ -243,11 +236,7 @@ tmp="$PROM.tmp"
 } > "$tmp"
 mv "$tmp" "$PROM"
 
-# Dead-man ping on a clean cycle (healthchecks.io — the independent failure domain; restored
-# 2026-07-17 after the T0058 rewrite dropped it and the check starved into DOWN). rc=0 includes
-# gate-skips DELIBERATELY: a skip means THIS unit is alive and correctly refusing stale input — the
-# upstream problem pages through its own channels (NAS silence alert, reconcile staleness). Feeding
-# the dead-man on skips keeps it measuring what it names: the writer cycle's own liveness.
+# Dead-man ping on a clean cycle (the independent failure domain). rc=0 includes gate-skips DELIBERATELY: a skip means THIS unit is alive and correctly refusing stale input — the upstream problem pages through its own channels (NAS silence alert, reconcile staleness). Feeding the dead-man on skips keeps it measuring what it names: the writer cycle's own liveness.
 if [ "$rc" -eq 0 ] && [ -n "$URL" ]; then
     curl -fsS -m 10 -o /dev/null "$URL" || true
 fi
