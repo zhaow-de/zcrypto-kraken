@@ -189,7 +189,7 @@ tmp="$PROM.tmp"
 mv "$tmp" "$PROM"
 
 # D5: gate on run_ok, NOT on rc. Once any bad hour exists rc is 1 forever; gating the ping on it
-# withholds the dead-man forever and pages through healthchecks.io indefinitely -- the same defect
+# withholds the dead-man forever and pages through the dead-man service indefinitely -- the same defect
 # the exit-code alert had, in a second channel. A sweep that completed and reported bad hours RAN.
 if [ "$run_ok" -eq 1 ] && [ -n "$URL" ]; then
     curl -fsS -m 10 -o /dev/null "$URL" || true

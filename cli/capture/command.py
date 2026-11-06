@@ -299,9 +299,9 @@ async def _healthcheck_loop(
     while True:
         await asyncio.sleep(interval)
         # Dead-man's-switch: ping only while the WS is connected AND books are healthy, so a connectivity loss stops the ping and
-        # healthchecks.io alerts -- not just checksum desyncs. `not watermark.breached` is load-bearing (T0032): on a breach the
+        # the dead-man alerts -- not just checksum desyncs. `not watermark.breached` is load-bearing (T0032): on a breach the
         # handlers return early and NOTHING is written while the WS stays connected and no gap opens. `watermark.measurable` holds
-        # it while the probe fails -- "cannot measure" is not "healthy", and the healthchecks.io grace absorbs a transient blip.
+        # it while the probe fails -- "cannot measure" is not "healthy", and the check's grace absorbs a transient blip.
         if client.connected and monitor.is_healthy(pairs) and not watermark.breached and watermark.measurable:
             await asyncio.to_thread(ping_healthcheck, url)
 

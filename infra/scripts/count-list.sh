@@ -454,9 +454,9 @@ c_ambient_bytes() { uv run python infra/scripts/guidance-guard.py --ambient-byte
 # retire when: docs/reference/deploy-log.jsonl is rotated past the rows written before infra/ansible/scripts/converge.sh's empty-digest refusal — the only rows the count can read
 c_deploy_rows_with_an_empty_digest_var() { jq -s '[.[] | select((.extra_vars // {}) | to_entries | any((.key | endswith("_digest")) and ((.value | tostring) | test("^[[:space:]]*$"))))] | length' docs/reference/deploy-log.jsonl; }
 
-# The service's read-only key, or healthchecks.io's (healthchecks_readonly_api_key), named on a non-comment line of a
+# The service's read-only key, or its predecessor's (healthchecks_readonly_api_key), named on a non-comment line of a
 # role outside the service key's one render, ops' Alloy secrets template.
-# retire when: the healthchecks.io scrape leaves ops' Alloy — infra/ansible/roles/ops/templates/alloy-secrets.env.j2 no longer renders the key
+# retire when: the dead-man scrape leaves ops' Alloy — infra/ansible/roles/ops/templates/alloy-secrets.env.j2 no longer renders the key
 c_hc_readonly_key_in_a_role() { git grep -nE '(hc|healthchecks)_readonly_api_key' -- infra/ansible/roles ':!infra/ansible/roles/ops/templates/alloy-secrets.env.j2' | grep -vcE '^[^:]+:[0-9]+:[[:space:]]*#'; }
 
 # A write to one of the seven gate gauges from outside `_ExecGauges.update`, whose one call publishes the

@@ -139,19 +139,19 @@ class GapMonitor:
 
     def is_healthy(self, pairs: list[str]) -> bool:
         """True iff none of `pairs` currently has an open gap; DELIBERATELY not `is_silent` (spec 00073 D3), because
-        this gates the healthchecks.io ping for EVERY pair at once and an unfitted silence bar would darken the fleet's
+        this gates the dead-man ping for EVERY pair at once and an unfitted silence bar would darken the fleet's
         last-resort liveness signal — silence pages through its own Grafana rules instead."""
         return not any(self.is_open(pair) for pair in pairs)
 
 
 def ping_healthcheck(url: str | None, *, timeout: int = DEFAULT_HEALTHCHECK_TIMEOUT_SECS) -> None:
-    """Best-effort liveness ping to a healthchecks.io URL, a no-op on a falsy `url` since the feature is optional.
+    """Best-effort liveness ping to a dead-man URL, a no-op on a falsy `url` since the feature is optional.
     Never raises on a transport failure: a dead-man's-switch alerts on a MISSED ping, so the failure is
     logged and swallowed."""
     if not url:
         return
     try:
-        urllib.request.urlopen(url, timeout=timeout)  # noqa: S310 - fixed https healthchecks.io URL from env
+        urllib.request.urlopen(url, timeout=timeout)  # noqa: S310 - fixed https dead-man URL from env
     except (urllib.error.URLError, OSError) as exc:
         logger.warning(ping_failure(url, exc))
 
