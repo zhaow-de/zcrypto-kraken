@@ -64,7 +64,7 @@ The owner's ruling. The read is wrapped as `_publish_fill` and `_settle_from_boo
 
 ## D6 — two proofs
 
-- A case in `tests/test_cache_restart.py` on the real wheel: a leveraged row the Cache does not hold at a cold start counts 1, and, in their own runs since a cold start restores nothing, a restored margin position, a spot lot and a hand order count 0. `zcrypto-bump-nautilus` Step 3 already runs this file, so a wheel that renames the tag or moves the read goes red at the bump.
+- A case in `tests/test_cache_restart.py` on the real wheel: a leveraged row the Cache does not hold at a cold start counts 1, at that start and at the next, the tag having come back from the store, and, in their own runs since a cold start restores nothing, a restored margin position, a spot lot and a hand order count 0. `zcrypto-bump-nautilus` Step 3 already runs this file, so a wheel that renames the tag or moves the read goes red at the bump.
 - Unit cases on the reader and the executor's wrapper, with `tests/test_engine_stub_fidelity.py` classifying any double the reader touches.
 
 ## D7 — the rollout
