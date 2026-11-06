@@ -33,47 +33,21 @@ DASHBOARD_GLOB = "*-dashboard.json"
 # is exact and needs no LogQL parsing.
 PROM_DS = "${GRAFANA_PROM_DS_UID}"
 
-# `host` LABEL VALUE -> the config.alloy that renders that host's keep-regex. The two capture hosts
-# share one file: one role serves both, and `host=~"zcrypto|zcrypto-red"` selects them by label.
-#
-# This dict is also the FLEET TOPOLOGY, and that second job is why it is hand-pinned rather than
-# globbed: it is what an unscoped `node_*` rule is measured against. Deriving that set from the
-# keep-regexes instead makes the whole assertion circular.
-KEEP_REGEX_FILES = {
-    "nas": REPO / "infra/nas/config.alloy",
-    "ops": REPO / "infra/ansible/roles/ops/files/config.alloy",
-    "zcrypto": REPO / "infra/ansible/roles/capture/files/config.alloy",
-    "zcrypto-red": REPO / "infra/ansible/roles/capture/files/config.alloy",
-    "zaccess": REPO / "infra/ansible/roles/access/files/config.alloy",
-    "zcrypto-valkey1": REPO / "infra/ansible/roles/cache/files/config.alloy",
-    "zcrypto-valkey2": REPO / "infra/ansible/roles/cache/files/config.alloy",
-    "zcrypto-valkey3": REPO / "infra/ansible/roles/cache/files/config.alloy",
-    "zcrypto-mon": REPO / "infra/ansible/roles/mon/files/config.alloy",
-    "zcrypto-hc": REPO / "infra/ansible/roles/hc/files/config.alloy",
-}
-# The hosts whose config ships with no keep and no drop list, so every family they publish exists.
-UNFILTERED_HOSTS = frozenset({"zcrypto-mon", "zcrypto-hc"})
-
-# Where a producer LIVES -> the hosts that run it, so an unscoped rule over an app family can still
-# be pinned per host. Ansible roles carry the deployment target in their path, which makes this
-# derivable from `published_app_families()` rather than from a per-host list of series.
-#
-# `cli/**` maps to nothing on purpose: a daemon's source says nothing about which machine runs it,
-# and guessing would be worse than the honest "admitted somewhere on the fleet".
-PUBLISHER_HOSTS = (
-    ("infra/ansible/roles/access/", ("zaccess",)),
-    # The ops-side half of the same probe pair. Both ends publish `zaccess_wireguard_handshake_age_
-    # seconds` and `zaccess_tls_not_after_seconds` (spec 00084 D11) and `host` tells them apart, so
-    # "the publisher" is genuinely two hosts and either end can go dark on its own.
-    ("infra/ansible/roles/access_ops/", ("ops",)),
-    ("infra/ansible/roles/ops/", ("ops",)),
-    ("infra/ansible/roles/capture/", ("zcrypto", "zcrypto-red")),
-    # The engine runs on the capture primary only; its textfiles are admitted by the shared capture
-    # keep-regex, so both capture hosts satisfy the requirement either way.
-    ("infra/ansible/roles/engine/", ("zcrypto",)),
-    # The zcache mesh probe runs on the engine host and the three cache nodes, never on zcrypto-red.
-    ("infra/ansible/roles/cache_link/", ("zcrypto", "zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3")),
-    ("infra/nas/", ("nas",)),
+# The fleet's `host` label values, hand-pinned rather than globbed: the Slack template's map and the
+# Logs board's list are held to them.
+FLEET_HOSTS = frozenset(
+    {
+        "nas",
+        "ops",
+        "zcrypto",
+        "zcrypto-red",
+        "zaccess",
+        "zcrypto-valkey1",
+        "zcrypto-valkey2",
+        "zcrypto-valkey3",
+        "zcrypto-mon",
+        "zcrypto-hc",
+    }
 )
 
 
@@ -138,34 +112,6 @@ def promql_families(expr: str) -> set[str]:
     return found
 
 
-_HOST_MATCHER = re.compile(r'\bhost\s*(=~|=)\s*"([^"]*)"')
-# `|` is the only metacharacter a host matcher uses in this repo; anything else and the value is not
-# an alternation this file may enumerate.
-_PLAIN_ALTERNATION = re.compile(r"[A-Za-z0-9_.-]+(?:\|[A-Za-z0-9_.-]+)*\Z")
-
-
-def selected_hosts(expr: str, family: str) -> frozenset[str] | None:
-    """The `host` label values `family`'s selectors name in `expr`, or None when any occurrence of
-    it is host-unscoped (no matcher, a negative matcher, or a regex this file will not enumerate).
-
-    Per-occurrence rather than per-expression: `node_load1{host=~"zcrypto|zcrypto-red"} / on(host)
-    ... node_cpu_seconds_total{host=~"zcrypto|zcrypto-red", mode="idle"}` scopes two families, and
-    an expression-wide read would hand each of them the other's hosts."""
-    hosts: set[str] = set()
-    for selector in _selectors(expr, family):
-        matcher = _HOST_MATCHER.search(selector)
-        if matcher is None or not _PLAIN_ALTERNATION.match(matcher.group(2)):
-            return None
-        hosts.update(matcher.group(2).split("|"))
-    return frozenset(hosts) or None
-
-
-def _selectors(expr: str, family: str) -> list[str]:
-    """The label selector of each occurrence of `family` in `expr`, "" where it has none."""
-    occurrence = re.compile(rf"(?<![A-Za-z0-9_:]){re.escape(family)}(?![A-Za-z0-9_:])\s*(\{{[^{{}}]*\}})?")
-    return [match.group(1) or "" for match in occurrence.finditer(expr)]
-
-
 # --- Sources -------------------------------------------------------------------------------------
 @cache
 def _rules() -> tuple[dict, ...]:
@@ -226,56 +172,6 @@ def panel_families() -> dict[str, frozenset[str]]:
     return {k: frozenset(v) for k, v in found.items()}
 
 
-# --- Where a reader can select a cache node ---------------------------------------------------------
-CACHE_NODES = frozenset(host for host, path in KEEP_REGEX_FILES.items() if path == KEEP_REGEX_FILES["zcrypto-valkey1"])
-_ANY_HOST_MATCHER = re.compile(r'\bhost\s*(=~|!~|!=|=)\s*"([^"]*)"')
-_VARIABLE = re.compile(r"\$(\w+)|\$\{(\w+)(?::\w+)?\}")
-_LABEL_VALUES_HOST = re.compile(r"\s*label_values\((?:(.*),)?\s*host\s*\)\s*")
-
-
-def _host_variables(dash: dict) -> dict[str, frozenset[str]]:
-    """Each template variable's reach among the cache nodes."""
-    reach = {}
-    for variable in (dash.get("templating") or {}).get("list") or []:
-        query = variable.get("query")
-        query = query.get("query", "") if isinstance(query, dict) else str(query or "")
-        if variable.get("type") == "custom":
-            reach[variable["name"]] = CACHE_NODES & {option.split(" : ")[-1].strip() for option in query.split(",")}
-        elif variable.get("type") == "query" and (values := _LABEL_VALUES_HOST.fullmatch(query)):
-            families = promql_families(values.group(1) or "")
-            if not families or any(keep_regexes()["zcrypto-valkey1"].match(family) for family in families):
-                reach[variable["name"]] = _nodes_selected(values.group(1) or "", {})
-        if (name := variable.get("name")) in reach and (regex := str(variable.get("regex") or "").strip("/")):
-            reach[name] = frozenset(node for node in reach[name] if re.search(regex, node))
-    return reach
-
-
-def _nodes_selected(selector: str, variables: dict[str, frozenset[str]]) -> frozenset[str]:
-    """The cache nodes a label selector's `host` matchers let through."""
-    nodes = CACHE_NODES
-    for op, value in _ANY_HOST_MATCHER.findall(selector):
-        if variable := _VARIABLE.fullmatch(value):
-            if op in ("=", "=~"):
-                nodes &= variables.get(variable.group(1) or variable.group(2), frozenset())
-            continue
-        matched = {node for node in nodes if (re.fullmatch(value, node) if "~" in op else node == value)}
-        nodes = frozenset(matched) if op in ("=", "=~") else nodes - matched
-    return nodes
-
-
-@cache
-def cache_node_readers() -> dict[str, frozenset[str]]:
-    """family -> the panels and rules whose selector of it can take a cache node's series."""
-    found: dict[str, set[str]] = {}
-    readers = [(where, expr, _host_variables(dash)) for dash, where, expr in _panel_expressions()]
-    readers += [(rule["uid"], expr, {}) for rule in _rules() for expr in _prom_expressions(rule)]
-    for where, expr, variables in readers:
-        for family in promql_families(expr):
-            if any(_nodes_selected(selector, variables) for selector in _selectors(expr, family)):
-                found.setdefault(family, set()).add(where)
-    return {k: frozenset(v) for k, v in found.items()}
-
-
 # --- What this repo publishes ---------------------------------------------------------------------
 # Four publication mechanisms (patterns), numbered below. Eight
 # canaries in `test_the_publisher_scan_still_finds_each_source_kind` -- one per discovery path,
@@ -284,7 +180,7 @@ def cache_node_readers() -> dict[str, frozenset[str]]:
 # Scope is the four namespaces this repo's own producers publish into. `node_*`, `process_*`, `hc_*`
 # and `redis_*` come from node-exporter, prometheus_client, the dead-man service and Alloy's Redis
 # exporter -- not ours to chart exhaustively, and the alert layer (assertion 1) already pulls in the
-# ones that matter; the cache nodes' keep list is held below to what a reader of a cache node reads.
+# ones that matter.
 _APP = r"(?:zcrypto|ops|zaccess|zcache)_[a-z0-9_]*[a-z0-9]"
 # (1) an exposition HELP/TYPE line, wherever it is printed from.
 _HELP_LINE = re.compile(rf"#\s+(?:HELP|TYPE)\s+({_APP})\b")
@@ -331,71 +227,6 @@ def published_app_families() -> dict[str, frozenset[str]]:
     return {k: frozenset(v) for k, v in found.items()}
 
 
-# --- Keep-regex admission --------------------------------------------------------------------------
-@cache
-def keep_regexes() -> dict[str, re.Pattern[str]]:
-    """host -> the anchored keep-regex its config.alloy installs on the remote_write path."""
-    compiled = {}
-    for host, path in KEEP_REGEX_FILES.items():
-        blocks = re.findall(r"write_relabel_config\s*\{(.*?)\}", path.read_text(), re.DOTALL)
-        if host in UNFILTERED_HOSTS:
-            assert blocks == [], f"{path}: {host} is listed as unfiltered and its config carries a relabel block"
-            compiled[host] = re.compile(r"\A.*\Z", re.DOTALL)
-            continue
-        keeps = [b for b in blocks if "action" in b and '"keep"' in b]
-        assert len(keeps) == 1, f"{path}: expected exactly one keep block, found {len(keeps)}"
-        match = re.search(r'regex\s*=\s*"([^"]+)"', keeps[0])
-        assert match, f"{path}: keep block has no regex"
-        compiled[host] = re.compile(r"\A(?:" + match.group(1) + r")\Z")  # relabel regexes are fully anchored
-    return compiled
-
-
-def publishing_hosts(family: str) -> frozenset[str] | None:
-    """The hosts that run `family`'s producer, read off the publishing file's path via
-    `PUBLISHER_HOSTS`. None when no path maps."""
-    hosts: set[str] = set()
-    for where in published_app_families().get(family, ()):
-        for prefix, mapped in PUBLISHER_HOSTS:
-            if where.startswith(prefix):
-                hosts.update(mapped)
-    return frozenset(hosts) or None
-
-
-# Why each host in an expectation is on the hook, carried through so the failure message can say it.
-_BECAUSE_SELECTED = "selects that host"
-_BECAUSE_FLEET_WIDE = "names no host, so it is a fleet-wide guard over the whole topology"
-_BECAUSE_PUBLISHED = "names no host, and this repo publishes the family on that host"
-_BECAUSE_NODE_ONLY = "names no host and is pushed to the observability node alone, whose own leg carries no filter"
-
-
-def node_only_groups() -> frozenset[str]:
-    """The rule groups whose rules read the two self-hosted nodes."""
-    return frozenset({"zcrypto-mon", "zcrypto-hc"})
-
-
-def _admission_expectations() -> list[tuple[str, str, frozenset[str] | None, str]]:
-    """`(rule uid, family, hosts that must admit it, why)` for every alerted family, once per rule
-    that names it. `None` hosts means "somewhere on the fleet" -- the honest bar when the rule names
-    no host AND nothing in the tree says which machine publishes the family."""
-    expectations = []
-    for rule in _rules():
-        for expr in _prom_expressions(rule):
-            for family in promql_families(expr):
-                hosts, why = selected_hosts(expr, family), _BECAUSE_SELECTED
-                if hosts is None and rule["ruleGroup"] in node_only_groups():
-                    hosts, why = UNFILTERED_HOSTS, _BECAUSE_NODE_ONLY
-                if hosts is None:
-                    # An unscoped `node_*` rule is fleet-wide: every host runs a node exporter, and a
-                    # host whose keep-list omits the family is structurally unable to fail the rule.
-                    # The topology comes from KEEP_REGEX_FILES, NEVER from the regexes it audits.
-                    if family.startswith("node_"):
-                        hosts, why = frozenset(KEEP_REGEX_FILES), _BECAUSE_FLEET_WIDE
-                    else:
-                        hosts, why = publishing_hosts(family), _BECAUSE_PUBLISHED
-                expectations.append((rule["uid"], family, hosts, why))
-    return expectations
-
-
 def _describe(family: str) -> str:
     lines = []
     if family in alerted_families():
@@ -433,44 +264,7 @@ def test_every_published_app_family_is_charted():
     )
 
 
-# --- (3) every alerted family is admitted where its rule selects -----------------------------------
-def test_every_alerted_family_is_admitted_where_its_rule_selects():
-    """A `keep` relabel drops every series it does not list, so a family missing from a host's
-    keep-regex does not go unwatched on that host -- it does not EXIST there, and a rule selecting
-    that host can never match it. The rule stays green, the host stays invisible, and nothing
-    distinguishes that from a healthy fleet."""
-    keeps, problems = keep_regexes(), []
-    for uid, family, hosts, why in sorted(_admission_expectations()):
-        if hosts is None:
-            # An unfiltered host admits every family, so its admitting this one is no evidence the family exists.
-            if not any(keep.match(family) for host, keep in keeps.items() if host not in UNFILTERED_HOSTS):
-                problems.append(
-                    f"    {family} -- rule {uid} names no host, and NO host's keep-regex admits it, so the"
-                    f" rule reads NoData forever"
-                )
-            continue
-        for host in sorted(hosts):
-            if host not in keeps:
-                problems.append(
-                    f"    {family} on {host} -- rule {uid} {why}, but {host!r} is not in KEEP_REGEX_FILES, so"
-                    f" this file cannot say whether it admits the family. Add the host and its config.alloy,"
-                    f" or correct the matcher (`host` carries a MIRROR SIDE on some reconcile series)."
-                )
-                continue
-            if not keeps[host].match(family):
-                problems.append(
-                    f"    {family} on {host} -- rule {uid} {why}, but {KEEP_REGEX_FILES[host].relative_to(REPO)}'s"
-                    f" keep-regex drops it: that host is structurally unable to fail this alert"
-                )
-    assert not problems, (
-        "alert rules select hosts whose keep-regex drops the family they watch:\n"
-        + "\n".join(problems)
-        + "\n  Fix: add the family to that host's config.alloy keep-regex (and to the host's `required`"
-        " list in test_infra_alloy_series.py), or scope the rule to the hosts that do publish it."
-    )
-
-
-# --- (4) the alert points at the panel -------------------------------------------------------------
+# --- (3) the alert points at the panel -------------------------------------------------------------
 # A rule whose signal is genuinely not panel-shaped (a pure log-content rule) may name a runbook
 # section instead. `test_infra_alert_rules.py` already proves that every cited anchor resolves; this
 # only asks whether one is cited at all.
@@ -611,18 +405,6 @@ def test_the_publisher_scan_still_finds_each_source_kind(family):
         f" renamed (update this canary) or a discovery path broke -- in which case every family that"
         f" path used to find is now silently exempt from coverage."
     )
-
-
-def test_every_family_the_cache_nodes_admit_is_charted_or_alerted():
-    """The cache keep regex is written as the families a panel or rule reads on a cache node. One
-    admitted that no such reader reads is series budget spent on nothing, and the per-host lists in
-    test_infra_alloy_series.py cannot see that."""
-    text = KEEP_REGEX_FILES["zcrypto-valkey1"].read_text()
-    block = next(b for b in re.findall(r"write_relabel_config\s*\{(.*?)\}", text, re.DOTALL) if '"keep"' in b)
-    admitted = set(re.search(r'regex\s*=\s*"([^"]+)"', block).group(1).split("|"))
-    assert len(admitted) >= 30, f"only {len(admitted)} families parsed from the cache keep regex -- the parse broke"
-    unread = sorted(admitted - set(cache_node_readers()))
-    assert not unread, f"the cache nodes admit {unread}, which no panel or rule that can select a cache node reads"
 
 
 # A table's frame mixes string label columns with the numeric value, and `fieldConfig.defaults`
@@ -897,68 +679,17 @@ def test_the_venue_tiles_read_failure_shows_its_firing_value_red_and_not_as_onli
     assert mapped.get("1", {}).get("color") == "red" and mapped["1"].get("text") != "ONLINE", mapped
 
 
-def test_a_label_values_host_variable_reaches_only_the_nodes_its_selector_admits():
-    def reach(query: str) -> frozenset[str]:
-        return _host_variables({"templating": {"list": [{"name": "h", "type": "query", "query": query}]}})["h"]
-
-    assert reach("label_values(up, host)") == CACHE_NODES
-    assert reach('label_values(up{host=~"zcrypto-valkey1|ops"}, host)') == frozenset({"zcrypto-valkey1"})
-    assert reach('label_values(up{host=~"zcrypto|ops"}, host)') == frozenset()
-    unadmitted = {"name": "h", "type": "query", "query": "label_values(process_resident_memory_bytes, host)"}
-    assert "h" not in _host_variables({"templating": {"list": [unadmitted]}})
-    variable = {
-        "name": "h",
-        "type": "query",
-        "query": "label_values(up, host)",
-        "regex": "/^(zcrypto|ops)$/",
-    }
-    assert _host_variables({"templating": {"list": [variable]}})["h"] == frozenset()
-    assert _host_variables({"templating": {"list": [{**variable, "regex": "/valkey[12]/"}]}})["h"] == CACHE_NODES - {
-        "zcrypto-valkey3"
-    }
-
-
-def test_an_unfiltered_host_admits_every_family_and_a_filtered_one_does_not():
-    keeps = keep_regexes()
-    for family in ("node_filesystem_avail_bytes", "prometheus_tsdb_head_series", "grafana_alerting_rule_evaluations_total"):
-        assert keeps["zcrypto-mon"].match(family), family
-    assert not keeps["zaccess"].match("prometheus_tsdb_head_series")
-    assert UNFILTERED_HOSTS <= set(KEEP_REGEX_FILES)
-
-
-def test_a_family_only_an_unfiltered_host_admits_is_still_refused(monkeypatch):
-    family = "zcrypto_family_no_keep_list_admits_total"
-    assert keep_regexes()["zcrypto-mon"].match(family) and publishing_hosts(family) is None
-    monkeypatch.setitem(globals(), "_admission_expectations", lambda: [("a-rule", family, None, _BECAUSE_PUBLISHED)])
-    with pytest.raises(AssertionError, match="NO host's keep-regex admits it"):
-        test_every_alerted_family_is_admitted_where_its_rule_selects()
-
-
 def test_the_slack_template_and_the_logs_board_name_every_host_of_the_topology():
     """A host the template's map lacks reaches a phone as its raw label, and one the Logs board's list lacks ships log
     lines that board cannot select."""
     template = (REPO / "infra/grafana/notification-templates/zcrypto-slack.tmpl").read_text()
     define = template[template.index('{{ define "zcrypto.host" -}}') :]
     named = dict(re.findall(r'eq \. "([^"]+)" \}\}(.+)', define[: define.index("{{- end -}}")]))
-    assert set(named) == set(KEEP_REGEX_FILES), (
-        f"only in the template {sorted(set(named) - set(KEEP_REGEX_FILES))}, only in the topology {sorted(set(KEEP_REGEX_FILES) - set(named))}"
+    assert set(named) == FLEET_HOSTS, (
+        f"only in the template {sorted(set(named) - FLEET_HOSTS)}, only in the topology {sorted(FLEET_HOSTS - set(named))}"
     )
     (board,) = [dash for filename, dash in dashboards() if filename == "zcrypto-logs-dashboard.json"]
     (variable,) = [v for v in board["templating"]["list"] if v["name"] == "host"]
     listed = {value: text for text, value in (option.split(" : ") for option in variable["query"].split(", "))}
     offered = {option["value"]: option["text"] for option in variable["options"] if option["value"] != "$__all"}
     assert listed == offered == named, f"the query lists {listed}, the options offer {offered}, the template names {named}"
-
-
-def test_a_rule_that_names_no_host_is_held_to_the_unfiltered_hosts_only_in_a_group_pushed_to_the_node_alone(monkeypatch):
-    family = "zcrypto_family_no_keep_list_admits_total"
-
-    def rule(group: str) -> dict:
-        return {"uid": f"a-rule-of-{group}", "ruleGroup": group, "data": [{"datasourceUid": PROM_DS, "model": {"expr": family}}]}
-
-    for node_only in sorted(node_only_groups()):
-        monkeypatch.setitem(globals(), "_rules", lambda group=node_only: (rule(group), rule("zcrypto-fleet")))
-        assert _admission_expectations() == [
-            (f"a-rule-of-{node_only}", family, UNFILTERED_HOSTS, _BECAUSE_NODE_ONLY),
-            ("a-rule-of-zcrypto-fleet", family, None, _BECAUSE_PUBLISHED),
-        ]

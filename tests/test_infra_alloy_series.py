@@ -1,5 +1,4 @@
-"""Guard: a `keep` relabel drops every series it does not list (T0051), so a series missing from
-the keep-regex does not exist in Grafana Cloud."""
+"""Guard: what each host's Alloy config ships to the observability node, and the names its secrets template renders."""
 
 import re
 from pathlib import Path
@@ -9,7 +8,6 @@ import yaml
 
 from tests.alloy_text import live_alloy_text as _live_alloy_text
 from tests.alloy_text import live_j2_text as _live_j2_text
-from tests.test_infra_converge_guards import iter_tasks, load_tasks
 
 REPO = Path(__file__).resolve().parents[1]
 NAS_ALLOY = REPO / "infra/nas/config.alloy"
@@ -19,7 +17,6 @@ OPS_ALLOY = REPO / "infra/ansible/roles/ops/files/config.alloy"
 CAPTURE_ALLOY = REPO / "infra/ansible/roles/capture/files/config.alloy"
 ACCESS_ALLOY = REPO / "infra/ansible/roles/access/files/config.alloy"
 CACHE_ALLOY = REPO / "infra/ansible/roles/cache/files/config.alloy"
-MON_ALLOY = REPO / "infra/ansible/roles/mon/files/config.alloy"
 HC_ALLOY = REPO / "infra/ansible/roles/hc/files/config.alloy"
 CACHE_SECRETS = REPO / "infra/ansible/roles/cache/templates/alloy-secrets.env.j2"
 OPS_SECRETS = REPO / "infra/ansible/roles/ops/templates/alloy-secrets.env.j2"
@@ -27,375 +24,6 @@ ACCESS_SECRETS = REPO / "infra/ansible/roles/access/templates/alloy-env.j2"
 HC_ENV = REPO / "infra/ansible/roles/hc/templates/alloy-env.j2"
 NAS_SECRETS = REPO / "infra/ansible/roles/nas/templates/alloy-secrets.env.j2"
 CAPTURE_SECRETS = REPO / "infra/ansible/roles/capture/templates/alloy-secrets.env.j2"
-
-# Named constants only so the retired-pair exclusion test below can reference them.
-_SD_SERIES = "prometheus_sd_refresh_duration_seconds_count"
-_SD_FAILURES = "prometheus_sd_refresh_failures_total"
-# T0079: `up` is alert-bearing on EVERY host -- the `Fleet · Alloy dark` rules fire on its silence
-# (`count(up{...}) or on() vector(0)` below 1). Dropping it from any keep-list would leave that
-# host's rule permanently unable to fire while still provisioned: green-when-blind.
-
-# Every app endpoint's six ProcessCollector families, also admitted for Alloy's own self-scrape on the NAS, ops and capture.
-PROCESS_FAMILIES = [
-    "process_cpu_seconds_total",
-    "process_max_fds",
-    "process_open_fds",
-    "process_resident_memory_bytes",
-    "process_start_time_seconds",
-    "process_virtual_memory_bytes",
-]
-# The 00068 ship-handler internals, shared by every daemon that runs with `--ship-logs` (capture
-# x2, engine, the liquidations poller).
-LOGSHIP_SERIES = [
-    "zcrypto_logship_dropped_lines_total",
-    "zcrypto_logship_shipped_lines_total",
-    "zcrypto_logship_last_success_timestamp_seconds",
-    "zcrypto_logship_last_cycle_timestamp_seconds",
-]
-CAPTURE_APP_SERIES = [
-    "zcrypto_capture_reconnects_total",
-    "zcrypto_capture_resubscribes_total",
-    "zcrypto_capture_segments_written_total",
-    "zcrypto_capture_segment_bytes_total",
-    "zcrypto_capture_rows_held_total",
-    "zcrypto_capture_rows_quarantined_total",
-    "zcrypto_capture_gap_seconds_total",
-    "zcrypto_capture_seconds_since_last_book_message",
-    "zcrypto_capture_venue_status_total",
-    "zcrypto_capture_book_desynced",
-    "zcrypto_capture_disk_watermark_breached",
-]
-# Scraped from the capture role's config.alloy on BOTH capture hosts (one file serves both,
-# `engine_app` included on the secondary too even though nothing listens there -- see that file's
-# own `engine_app` scrape comment).
-ENGINE_APP_SERIES = [
-    "zcrypto_engine_target_weight",
-    "zcrypto_engine_orders_total",
-    "zcrypto_engine_order_notional_eur",
-    "zcrypto_engine_cycle_success",
-    "zcrypto_engine_cycle_completed_at_seconds",
-    "zcrypto_engine_cycle_duration_seconds",
-    # T0124: `active_sleeves` is alert-bearing (zcrypto-engine-sleeve-count-changed), so dropping it
-    # from the keep-regex would leave that rule permanently NoData -- indistinguishable from a
-    # composition that never changes. `sleeve_gross` is the per-sleeve detail the page's responder
-    # reads to see WHICH sleeve moved.
-    "zcrypto_engine_sleeve_gross",
-    "zcrypto_engine_active_sleeves",
-    # The execution safety envelope's published state (cli/engine/command.py's `_ExecGauges`).
-    # Dropping one from the keep-regex leaves its dashboard panel permanently NoData and any rule
-    # over it quiet or firing forever, as its `noDataState` reads.
-    "zcrypto_exec_gate_level",
-    "zcrypto_exec_armed",
-    "zcrypto_exec_kill_tripped",
-    "zcrypto_exec_venue_ok",
-    "zcrypto_exec_last_evaluation_timestamp_seconds",
-    "zcrypto_exec_restart_hold",
-    "zcrypto_exec_venue_read_failed",
-    # The execution instruments (cli/engine/command.py's `_ExecutionMetrics`), plus the intent-side
-    # limit counter. Bar the position, which zcrypto-engine-dark-with-exposure reads, and the two
-    # accumulation gauges named below, none is alert-bearing by design, which is exactly why they are
-    # pinned HERE: nothing else would notice them being dropped from the keep-regex.
-    "zcrypto_exec_orders_total",
-    "zcrypto_exec_fills_total",
-    "zcrypto_exec_fees_eur_total",
-    "zcrypto_exec_position",
-    # spec 00108: rest-hold's only observable. The mode leaves an order at the venue for up to an
-    # hour on purpose, so dropped from the keep-regex a resting order and no order at all render
-    # identically -- and there is no rule to notice, by design.
-    "zcrypto_exec_resting_order_age_seconds",
-    "zcrypto_exec_realized_pnl_eur",
-    # The external-events counter is pinned on the same grounds and one more: it is the only
-    # observable of a restart adoption doing anything at all, and its `unmatched` label is the
-    # forensic trace of an event belonging to no vouched-for order.
-    "zcrypto_exec_external_events_total",
-    # The weekly tracking-error verdict, pinned on the same grounds and one more: it is the ONLY
-    # rendering of a trip that is meant to sit disarmed for months. Dropped from the keep-regex, a
-    # disarmed trip and a trip that was never deployed at all read identically -- and there is no
-    # rule to notice, by design (tests/test_infra_alert_rules.py's NOT_A_FAULT_SIGNAL entry).
-    "zcrypto_exec_tracking_state",
-    "zcrypto_engine_limit_bound_total",
-    # The accumulation loop's families. Two are alert-bearing (zcrypto-engine-exec-watchdog-frozen,
-    # -exec-boundary-not-drafted), each `noDataState: OK`, so dropped from the keep-regex either rule
-    # reads quiet forever; the gap, the equity and the drawdown carry no rule and are pinned on the
-    # grounds above.
-    "zcrypto_exec_gap_eur",
-    "zcrypto_exec_equity_eur",
-    "zcrypto_exec_drawdown_bps",
-    "zcrypto_exec_watchdog_frozen",
-    "zcrypto_exec_boundary_not_drafted",
-    # 00089: venue truth -- the executor's ratified basket vs what Kraken's own instrument set and
-    # constraints actually report. Two are alert-bearing (zcrypto-venue-concordance-failed,
-    # zcrypto-venue-snapshot-stale).
-    "zcrypto_venue_snapshot_timestamp_seconds",
-    "zcrypto_venue_instruments_loaded",
-    "zcrypto_venue_instruments_expected",
-    "zcrypto_venue_concordance_failures",
-]
-LIQUIDATIONS_APP_SERIES = [
-    "zcrypto_liquidations_polls_total",
-    "zcrypto_liquidations_api_errors_total",
-    "zcrypto_liquidations_last_success_timestamp_seconds",
-]
-
-NAS_REQUIRED = [
-    "up",
-    "node_load1",
-    "node_filesystem_avail_bytes",
-    "zcrypto_gate_streak_days",
-    "zcrypto_archive_pull_files_walked",
-    "node_textfile_mtime_seconds",
-    *PROCESS_FAMILIES,
-]
-# ADMITTED by the NAS keep-regex but NOT published there any more: these families publish from ops
-# ONLY (the one-publisher invariant -- a resurrected NAS twin would freeze and page the
-# host-unscoped exporter-stale rule forever). Listed separately so this guard never claims the NAS
-# "must ship" them: trimming them -- so a hand-deploy regression (T0056) could never resurrect the
-# frozen twin -- is a deliberate hardening decision that would move these entries out of this list,
-# not a regression this test should block.
-NAS_LEGACY_ADMITTED = [
-    "zcrypto_reconcile_last_success_timestamp_seconds",
-    "zcrypto_trade_backfill_exit_code",
-]
-# Names assembled at runtime never appear as literals, so the scan cannot derive them. cli/archive/
-# command.py builds every reconcile series as f"zcrypto_reconcile_{name}", which yields only the
-# meaningless stem below -- and `zcrypto_reconcile_.*` admits that stem vacuously while the real
-# names are absent from the candidate set entirely. They are fed to BOTH the union guard and the
-# per-host OPS list: the union bar alone would not catch the realistic drift, since narrowing the
-# wildcard on ops -- the host that actually publishes them -- still leaves NAS's copy satisfying the
-# union.
-INTERPOLATED_METRIC_NAMES = [
-    # Includes last_success_timestamp_seconds, which the scan only ever picked up because an
-    # unrelated comment in archive-pull.sh.j2 happens to spell it out -- accidental coverage, not
-    # derivation.
-    "zcrypto_reconcile_last_success_timestamp_seconds",
-    # spec 00097: alert-bearing (the cycle-duration rule). Admitted today only by the same
-    # `zcrypto_reconcile_.*` wildcard, so narrowing it must fail here rather than silently
-    # NoData-ing the rule -- which renders identically to a healthy cycle.
-    "zcrypto_reconcile_cycle_duration_seconds",
-    # spec 00097: alert-ADJACENT -- the cycle-duration rule's runbook triage reads this gauge first,
-    # to tell "the skip cache stopped engaging" from "the window's volume genuinely grew". It is the
-    # only Prometheus-side observable of a cache that degrades silently (a pair dropped from capture
-    # makes every window hour incomplete, and nothing errors).
-    "zcrypto_reconcile_hours_skipped",
-    # spec 00096: the name appears nowhere under _SOURCE_GLOBS, so the scan cannot derive it. It is
-    # where the residual-gap alert summary sends triage.
-    "zcrypto_reconcile_dark_episode_seconds_total",
-    "zcrypto_reconcile_source_lag_seconds",
-    "zcrypto_reconcile_healed_gap_seconds_total",
-    "zcrypto_reconcile_healable_gap_seconds_total",
-    "zcrypto_reconcile_residual_gap_seconds_total",
-    "zcrypto_reconcile_spliced_hours_total",
-    "zcrypto_reconcile_union_hours_total",
-    "zcrypto_reconcile_trade_dedup_rows_total",
-    "zcrypto_reconcile_trade_deficit_rows_total",
-    "zcrypto_reconcile_ledger_records",
-]
-
-OPS_REQUIRED = [
-    "up",
-    "node_load1",
-    "node_filesystem_avail_bytes",
-    "node_filesystem_files",
-    "node_filesystem_files_free",
-    "ops_archive_pull_exit_code",
-    "ops_archive_pull_last_success_timestamp",
-    "ops_panel_exit_code",
-    "ops_verify_replay_exit_code",
-    # spec 00077: failed_hours/hours_total/run_ok are new series, and two of the three are now
-    # alert-bearing. Admitted today only by the `ops_verify_replay_.*` wildcard -- pinned by name
-    # so narrowing that wildcard fails here rather than silently NoData-ing both new rules.
-    "ops_verify_replay_failed_hours",
-    "ops_verify_replay_hours_total",
-    "ops_verify_replay_run_ok",
-    # The stale rule's stamp (`Ops · verify-replay stale`): alert-bearing, admitted today only by the
-    # same wildcard, pinned by name for the same reason.
-    "ops_verify_replay_last_run_timestamp",
-    # spec 00078: the incremental sweep's census. `pending_hours` is alert-bearing (the backlog-stuck
-    # rule) and `duration_seconds` is the runway trend the whole spec exists to make observable --
-    # both admitted today only by the same `ops_verify_replay_.*` wildcard, so narrowing it must fail
-    # here rather than silently NoData-ing the rule and flat-lining the trend.
-    "ops_verify_replay_replayed_hours",
-    "ops_verify_replay_reused_hours",
-    "ops_verify_replay_pending_hours",
-    "ops_verify_replay_duration_seconds",
-    # The audit-mismatch count: on that run the summary is withheld, so run_ok=0 is the only other
-    # trace and it cannot tell a mismatch from a crash.
-    "ops_verify_replay_audit_mismatches",
-    "ops_verified_replay_exit_code",
-    "ops_verified_replay_last_success_timestamp",
-    # The "did the timer RUN?" discriminator.
-    "node_textfile_mtime_seconds",
-    "zcrypto_trade_backfill_exit_code",
-    "zcrypto_trade_backfill_last_success_timestamp",
-    *INTERPOLATED_METRIC_NAMES,
-    # T0043: the repair count, exported as a monotone total by archive-pull.sh.j2. Admitted today
-    # only by the `zcrypto_trade_backfill_.*` wildcard — pinned by name so narrowing that wildcard
-    # fails here rather than silently dropping the series.
-    "zcrypto_trade_backfill_hours_repaired_after_loss_total",
-    # spec 00087: the tape-bars materializer's gauges. Admitted today only by the
-    # `zcrypto_tapebars_.*` wildcard, and the alert-bearing ones are pinned by name because this
-    # timer's failure mode is a GREEN SILENCE -- the not-yet-healed path exits 0 by design, so
-    # narrowing that wildcard would disarm the only two signals that can see a stalled healer:
-    # days_gap (a day just became permanently unpublishable, and nothing else will ever say so) and
-    # last_publish (the dataset stopped growing while every run kept exiting clean).
-    "zcrypto_tapebars_exit_code",
-    "zcrypto_tapebars_days_gap",
-    "zcrypto_tapebars_last_success_timestamp_seconds",
-    "zcrypto_tapebars_last_publish_timestamp_seconds",
-    # T0083: the hc.io watchdog scrape's series. zcrypto-hcio-watchdog alerts on
-    # hc_checks_down_total — dropping THAT silently disarms the Grafana half of the mutual
-    # watchdog; hc_check_up is the per-check triage detail the page's responder reads. Names read
-    # from the live hc.io Prometheus endpoint 2026-07-21 — the endpoint exposes
-    # hc_checks_down_total, NOT the bare hc_checks_down a reasonable guess produces.
-    "hc_check_up",
-    "hc_checks_down_total",
-    *LIQUIDATIONS_APP_SERIES,
-    *LOGSHIP_SERIES,
-    *PROCESS_FAMILIES,
-    # D11: the ops-side tunnel/cert probe (access_ops role) publishes the SAME two names the
-    # bridgehead does (ACCESS_APP_SERIES below) -- host="ops" vs host="zaccess" tells them apart.
-    "zaccess_wireguard_handshake_age_seconds",
-    "zaccess_tls_not_after_seconds",
-    # The clock exporter, a copy of the capture role's on this host; both are alert-bearing
-    # (zcrypto-node-clock-skew), so dropping either leaves that rule unable to see ops.
-    "zcrypto_clock_offset_seconds",
-    "zcrypto_clock_synchronised",
-    # The reboot-check copy's flag: this node never reboots itself, and the pending-reboot rule pages on it.
-    "node_reboot_required",
-]
-# One-off timers publish a .prom, not a /metrics endpoint (spec 00071 D1) -- a daily oneshot runs
-# for a second and has no process to scrape. The keep-regex is an ALLOW-list with no `node_.*`
-# wildcard (D2), so a published-but-unadmitted series is dropped at the remote-write boundary and
-# looks exactly like a producer that never ran.
-ONEOFF_TEXTFILE_SERIES = [
-    "node_reboot_required",
-    # A MALFORMED .prom raises this; a STALE one does not (D3).
-    "node_textfile_scrape_error",
-    # ...staleness is `node_textfile_mtime_seconds{file=...}`, which the collector emits for EVERY
-    # .prom it reads. Free, standard, and the only signal that distinguishes "the timer stopped" from
-    # "the timer ran and had nothing to report" -- a stopped timer leaves its last file in place and
-    # the collector serves those values forever.
-    "node_textfile_mtime_seconds",
-    "zcrypto_engine_journal_prune_deleted_days",
-    "zcrypto_engine_journal_prune_kept_days",
-    "zcrypto_engine_journal_prune_oldest_day_age_seconds",
-    "zcrypto_engine_journal_prune_last_run_timestamp_seconds",
-]
-
-# The engine's cache proxy, HAProxy's Prometheus endpoint scraped as `cache_proxy` on the capture
-# hosts (zcrypto-red admits a family it never publishes, as it does the engine's). Two are
-# alert-bearing (zcrypto-cache-proxy-no-backend, -no-engine-session) and the other four are the
-# detail the Cache board's proxy row draws; dropped from the keep-regex, the rules read 0 forever.
-CACHE_PROXY_SERIES = [
-    "haproxy_backend_status",
-    "haproxy_backend_active_servers",
-    "haproxy_backend_current_sessions",
-    "haproxy_server_status",
-    "haproxy_server_check_status",
-    "haproxy_server_check_failures_total",
-]
-
-# The capture host's own alert-bearing node families: `Capture · spool disk low` reads
-# node_filesystem_avail_bytes/node_filesystem_size_bytes, and `Capture · node load high` reads
-# node_load1/node_cpu_seconds_total.
-CAPTURE_REQUIRED = [
-    "up",
-    "node_load1",
-    "node_cpu_seconds_total",
-    "node_filesystem_avail_bytes",
-    "node_filesystem_size_bytes",
-    # The zcache mesh probe (roles/cache_link) on the engine host: its end of each link is watched from its own
-    # side too. zcrypto-red shares this keep list and runs no cache_link, so it admits a family it never publishes.
-    "zcache_wireguard_handshake_age_seconds",
-    # The clock-skew pair (spec 00103 D4) is deliberately absent from this hand-maintained list: the
-    # source-derived guard at the bottom of this file covers every zcrypto_* name automatically. A
-    # node_* name would have needed an entry here.
-    *ONEOFF_TEXTFILE_SERIES,
-    *CAPTURE_APP_SERIES,
-    *ENGINE_APP_SERIES,
-    *CACHE_PROXY_SERIES,
-    *LOGSHIP_SERIES,
-    *PROCESS_FAMILIES,
-]
-
-# The bridgehead's own probe-textfile series (zaccess-probe.sh.j2, spec 00075 D11): WireGuard
-# tunnel handshake age + edge TLS cert notAfter, per target.
-ACCESS_APP_SERIES = [
-    "zaccess_wireguard_handshake_age_seconds",
-    "zaccess_tls_not_after_seconds",
-]
-
-ACCESS_REQUIRED = [
-    "up",
-    "node_load1",
-    "node_cpu_seconds_total",
-    "node_memory_MemAvailable_bytes",
-    "node_memory_MemTotal_bytes",
-    "node_filesystem_avail_bytes",
-    "node_filesystem_size_bytes",
-    "node_network_receive_bytes_total",
-    "node_network_transmit_bytes_total",
-    # The `Node · a node-exporter collector is failing` rule (alerts.yaml) evaluates
-    # `min by (host) (node_scrape_collector_success)` with no host selector -- meant to cover
-    # every host. Without this admitted here, zaccess is structurally invisible to that rule.
-    "node_scrape_collector_success",
-    # The did-the-timer-RUN discriminators: without them a dead probe timer serves its last gauges
-    # forever and the tunnel-stale/cert alerts can never fire.
-    "node_textfile_mtime_seconds",
-    "node_textfile_scrape_error",
-    *ACCESS_APP_SERIES,
-]
-
-# The cache nodes' Valkey and Sentinel families, through Alloy's embedded Redis exporter.
-CACHE_REDIS_SERIES = [
-    "redis_up",
-    "redis_instance_info",
-    "redis_uptime_in_seconds",
-    "redis_connected_slaves",
-    "redis_master_repl_offset",
-    "redis_connected_slave_offset_bytes",
-    "redis_master_link_up",
-    "redis_memory_used_bytes",
-    "redis_memory_max_bytes",
-    "redis_memory_used_rss_bytes",
-    "redis_commands_processed_total",
-    "redis_connected_clients",
-    "redis_aof_enabled",
-    "redis_aof_last_write_status",
-    "redis_aof_last_bgrewrite_status",
-    "redis_rdb_last_bgsave_status",
-    "redis_sentinel_masters",
-    "redis_sentinel_master_status",
-    "redis_sentinel_master_sentinels",
-    "redis_sentinel_master_ok_sentinels",
-    "redis_sentinel_master_slaves",
-]
-
-# Exact, not a floor: the cache keep regex admits these and nothing else (the equality test below).
-CACHE_REQUIRED = [
-    "up",
-    "node_load1",
-    "node_cpu_seconds_total",
-    "node_memory_MemAvailable_bytes",
-    "node_memory_MemTotal_bytes",
-    "node_filesystem_avail_bytes",
-    "node_filesystem_size_bytes",
-    "node_network_receive_bytes_total",
-    "node_network_transmit_bytes_total",
-    "node_scrape_collector_success",
-    "node_reboot_required",
-    "node_textfile_mtime_seconds",
-    "node_textfile_scrape_error",
-    "zcache_wireguard_handshake_age_seconds",
-    # The clock exporter, a copy of the capture role's on each node (zcrypto-node-clock-skew).
-    "zcrypto_clock_offset_seconds",
-    "zcrypto_clock_synchronised",
-    # The two families the fleet's Alloy headroom rule reads on a cache node, in place of RSS.
-    "go_memstats_sys_bytes",
-    "go_memstats_heap_released_bytes",
-    *CACHE_REDIS_SERIES,
-]
-
 
 _LIVE_REGEX_LINE = re.compile(r'^\s*regex\s*=\s*"(.*)"\s*$', re.M)
 _LIVE_SEPARATOR_LINE = re.compile(r'^\s*separator\s*=\s*";"\s*$', re.M)
@@ -409,326 +37,6 @@ def _live_regex(block: str, where: str) -> str:
     m = _LIVE_REGEX_LINE.search(block)
     assert m, f"{where}: no live regex line"
     return m.group(1)
-
-
-def _keep_regex(path: Path) -> re.Pattern:
-    """Extract the `keep` write_relabel_config's regex from an Alloy config."""
-    text = _live_alloy_text(path)
-    blocks = re.findall(r"^\s*write_relabel_config\s*\{(.*?)\}", text, re.M | re.DOTALL)
-    keeps = [b for b in blocks if re.search(r'^\s*action\s*=\s*"keep"\s*$', b, re.M)]
-    assert len(keeps) == 1, f"{path}: expected exactly one keep block, found {len(keeps)}"
-    # Prometheus relabel regexes are fully anchored.
-    return re.compile(r"\A(?:" + _live_regex(keeps[0], f"{path}: keep block") + r")\Z")
-
-
-def _drop_regex(path: Path) -> re.Pattern:
-    """Extract the `drop` write_relabel_config's regex from an Alloy config."""
-    text = _live_alloy_text(path)
-    blocks = re.findall(r"^\s*write_relabel_config\s*\{(.*?)\}", text, re.M | re.DOTALL)
-    drops = [b for b in blocks if re.search(r'^\s*action\s*=\s*"drop"\s*$', b, re.M)]
-    assert len(drops) == 1, f"{path}: expected exactly one drop block, found {len(drops)}"
-    # Prometheus relabel regexes are fully anchored.
-    return re.compile(r"\A(?:" + _live_regex(drops[0], f"{path}: drop block") + r")\Z")
-
-
-@pytest.mark.parametrize(
-    ("path", "required"),
-    [
-        (NAS_ALLOY, NAS_REQUIRED + NAS_LEGACY_ADMITTED),
-        (OPS_ALLOY, OPS_REQUIRED),
-        (CAPTURE_ALLOY, CAPTURE_REQUIRED),
-        (ACCESS_ALLOY, ACCESS_REQUIRED),
-        (CACHE_ALLOY, CACHE_REQUIRED),
-    ],
-    ids=["nas", "ops", "capture", "access", "cache"],
-)
-def test_keep_regex_admits_every_published_series(path, required):
-    keep = _keep_regex(path)
-    missing = [s for s in required if not keep.match(s)]
-    assert not missing, f"{path}: keep-regex drops {missing} -- those series will NOT exist"
-
-
-@pytest.mark.parametrize(
-    ("path", "required"),
-    [
-        (NAS_ALLOY, NAS_REQUIRED + NAS_LEGACY_ADMITTED),
-        (OPS_ALLOY, OPS_REQUIRED),
-        (CAPTURE_ALLOY, CAPTURE_REQUIRED),
-        (ACCESS_ALLOY, ACCESS_REQUIRED),
-        (CACHE_ALLOY, CACHE_REQUIRED),
-    ],
-    ids=["nas", "ops", "capture", "access", "cache"],
-)
-def test_drop_regex_does_not_shadow_the_keep_list(path, required):
-    """The drop stage runs before the keep stage, so a required series the drop rule eats never
-    reaches the keep-regex at all."""
-    drop = _drop_regex(path)
-    shadowed = [s for s in required if drop.match(s)]
-    assert not shadowed, f"{path}: the drop rule eats {shadowed} before the keep stage sees them"
-
-
-@pytest.mark.parametrize(
-    ("path", "excluded"),
-    [
-        # No daemon runs on the NAS at all (00069 T7) -- none of the app/logship families exist there.
-        (NAS_ALLOY, [*CAPTURE_APP_SERIES, *ENGINE_APP_SERIES, *CACHE_PROXY_SERIES, *LIQUIDATIONS_APP_SERIES, *LOGSHIP_SERIES]),
-        # The poller runs on ops, not capture or engine.
-        (OPS_ALLOY, [*CAPTURE_APP_SERIES, *ENGINE_APP_SERIES, *CACHE_PROXY_SERIES]),
-        # Capture/engine run on the capture hosts, not the poller.
-        (CAPTURE_ALLOY, LIQUIDATIONS_APP_SERIES),
-        # No app daemon runs on the bridgehead; its Alloy's process families go to the node alone.
-        (
-            ACCESS_ALLOY,
-            [
-                *CAPTURE_APP_SERIES,
-                *ENGINE_APP_SERIES,
-                *CACHE_PROXY_SERIES,
-                *LIQUIDATIONS_APP_SERIES,
-                *LOGSHIP_SERIES,
-                *PROCESS_FAMILIES,
-            ],
-        ),
-        (CACHE_ALLOY, [*CAPTURE_APP_SERIES, *ENGINE_APP_SERIES, *CACHE_PROXY_SERIES, *LIQUIDATIONS_APP_SERIES, *LOGSHIP_SERIES]),
-    ],
-    ids=["nas", "ops", "capture", "access", "cache"],
-)
-def test_keep_regex_excludes_families_not_published_on_this_host(path, excluded):
-    """The keep-regex admits nothing this host does not publish -- an admitted family is silent
-    go-ahead for a future daemon to ship there unreviewed."""
-    keep = _keep_regex(path)
-    admitted = [s for s in excluded if keep.match(s)]
-    assert not admitted, f"{path}: keep-regex admits {admitted}, which nothing on this host publishes"
-
-
-@pytest.mark.parametrize(
-    "path", [NAS_ALLOY, OPS_ALLOY, CAPTURE_ALLOY, ACCESS_ALLOY, CACHE_ALLOY], ids=["nas", "ops", "capture", "access", "cache"]
-)
-def test_keep_regex_excludes_the_retired_sd_pair(path):
-    """discovery.docker is gone fleet-wide (00068 D6/D8), so no host's keep-regex may admit its
-    series."""
-    keep = _keep_regex(path)
-    assert not keep.match(_SD_SERIES) and not keep.match(_SD_FAILURES)
-
-
-@pytest.mark.parametrize(
-    "path", [NAS_ALLOY, OPS_ALLOY, CAPTURE_ALLOY, ACCESS_ALLOY, CACHE_ALLOY], ids=["nas", "ops", "capture", "access", "cache"]
-)
-def test_alloy_self_metrics_are_dropped_before_the_keep(path):
-    text = path.read_text()
-    drop = re.search(r'^\s*action\s*=\s*"drop"\s*$', text, re.M)
-    keep = re.search(r'^\s*action\s*=\s*"keep"\s*$', text, re.M)
-    assert drop, f"{path}: no drop block"
-    assert keep, f"{path}: no keep block"
-    assert drop.start() < keep.start(), f"{path}: the drop block must come before the keep block"
-
-
-# ---------------------------------------------------------------------------
-# This guard DERIVES its candidates from the source tree, where the hand-maintained lists above can
-# only prove the keep-regex still admits the names someone remembered to list. Membership is
-# MATCHED, not compared -- keep entries are regexes, and the NAS admits the whole gate family as
-# `zcrypto_gate_.*`. The union of the configs is the bar, since a metric may legitimately be
-# admitted only on the host that publishes it.
-_SOURCE_GLOBS = ("cli/**/*.py", "infra/**/*.j2", "infra/**/*.sh", "infra/**/*.py")
-
-# Name-shaped tokens that are not published metrics. Each states why: an unexamined exclusion is how
-# the trap grows back.
-
-NOT_A_PUBLISHED_METRIC = {
-    "zcrypto_ed25519",  # the vaulted deploy-key filename in infra/ansible/scripts/run.sh
-    "zcrypto_window_record",  # the extra-var converge.sh names the engine play's window record file by
-    "zcrypto_owned",  # the logger-ownership marker in cli/logging/config.py, never exported
-    "zcrypto_reconcile_",  # the f-string STEM, not a series -- the real names are listed above
-    "zcrypto_selfcheck",  # the shared self-check module's import name, in a node self-check script's import line
-    # Named only in a cli/obs/metrics.py comment explaining why it is SUPPRESSED: prometheus_client
-    # adds a `_created` series per Counter by default and `_use_created = False` disables them
-    # process-wide.
-    "zcrypto_engine_orders_created",
-}
-
-# Published by a node that ships unfiltered to the observability node and never to Grafana Cloud, so no Cloud keep-regex
-# admits it. Each maps to the node_common task file that installs its one publisher.
-PUBLISHED_TO_A_NODE_ALONE = {
-    "zcrypto_sqlite_backup_last_success_timestamp_seconds": "sqlite-backup",
-}
-
-
-# `[A-Za-z0-9_]`, not `[a-z0-9_]`: capitals are legal in a metric name (ACCESS_REQUIRED's
-# node_memory_MemAvailable_bytes), and against a `zcrypto_` name carrying one right after the prefix
-# the lowercase class matches nothing at all -- such a name never reaches the classification below.
-def _tokens_in_tree_raw() -> dict[str, set[str]]:
-    raw: dict[str, set[str]] = {}
-    for glob in _SOURCE_GLOBS:
-        for path in REPO.glob(glob):
-            for m in re.finditer(r"zcrypto_[A-Za-z0-9_]{4,}", path.read_text()):
-                raw.setdefault(m.group(0), set()).add(str(path.relative_to(REPO)))
-    return raw
-
-
-# Keyed by `.lower()`, so a capitalised spelling classifies as the name it canonicalises to. Derived
-# from the raw dict rather than walking again: one narrowing cannot blind the refusal while the sweep
-# keeps classifying.
-def _tokens_in_tree() -> dict[str, set[str]]:
-    found: dict[str, set[str]] = {}
-    for name, where in _tokens_in_tree_raw().items():
-        found.setdefault(name.lower(), set()).update(where)
-    return found
-
-
-def test_no_zcrypto_metric_name_is_spelled_with_a_capital():
-    """A capitalised `zcrypto_` name is one the sweep below cannot answer for."""
-    capitalised = sorted((name, sorted(where)) for name, where in _tokens_in_tree_raw().items() if name != name.lower())
-    assert not capitalised, (
-        f"a zcrypto_ metric name carries a capital: {capitalised} -- Prometheus names are case-sensitive, "
-        "so this is a different series from its lowercase twin, and the sweep below keys on `.lower()` "
-        "and would classify it as that twin"
-    )
-
-
-# Deliberately a shape match over the whole source, not a scan of definition sites: scanning
-# `MetricFamily(` and `# HELP` misses how cli/engine/command.py, cli/liquidations/coinalyze.py and
-# archive-pull.sh.j2 each publish.
-PUBLISHED_METRIC_NAMES = sorted({n for n in _tokens_in_tree() if n not in NOT_A_PUBLISHED_METRIC} | set(INTERPOLATED_METRIC_NAMES))
-
-# pytest SKIPS an empty parametrize by default, so a glob that stops matching (a cli/ reorg, a
-# rename) would silently evaporate this guard with the suite still green. The floor is deliberately
-# a real count, not `> 0`: the staleness test below cannot serve as the backstop, since emptying
-# NOT_A_PUBLISHED_METRIC makes it pass vacuously too.
-assert len(PUBLISHED_METRIC_NAMES) >= 30, (
-    f"only {len(PUBLISHED_METRIC_NAMES)} metric names found -- the source globs have drifted and this guard would pass vacuously"
-)
-
-
-def test_the_not_a_published_metric_list_has_not_gone_stale():
-    """Every exclusion still names a token in the tree -- a rename otherwise leaves the new name unguarded."""
-    stale = NOT_A_PUBLISHED_METRIC - set(_tokens_in_tree())
-    assert not stale, f"excluded but no longer in the tree (rename? removal?): {sorted(stale)}"
-
-
-def test_the_published_to_a_node_alone_list_has_not_gone_stale():
-    stale = PUBLISHED_TO_A_NODE_ALONE.keys() - set(_tokens_in_tree())
-    assert not stale, f"admitted as published to a node alone but no longer in the tree (rename? removal?): {sorted(stale)}"
-
-
-_NODE_COMMON = REPO / "infra/ansible/roles/node_common"
-_INCLUDE_KEYS = ("ansible.builtin.include_role", "include_role", "ansible.builtin.import_role", "import_role")
-_PATH_INCLUDE_KEYS = ("ansible.builtin.include_tasks", "include_tasks", "ansible.builtin.import_tasks", "import_tasks")
-_PLAYBOOKS = (REPO / "infra/ansible/site.yml", REPO / "infra/ansible/bootstrap.yml")
-_PLAY_TASK_LISTS = ("pre_tasks", "tasks", "post_tasks", "handlers")
-# The observability node's receivers as the tree writes them: a fleet host's endpoint reads the node's URL from its env
-# file (_MON_PROM_LINES), and the node's own Alloy writes to its loopback.
-_NODE_PROM_URLS = {'sys.env("MON_PROM_URL")', '"http://127.0.0.1:9090/api/v1/write"'}
-
-
-def _includes(tasks: list[dict] | None, tasks_from: str) -> bool:
-    for task, _ in iter_tasks(tasks or []):
-        for include in (task.get(key) for key in _INCLUDE_KEYS):
-            if (
-                isinstance(include, dict)
-                and include.get("name") == "node_common"
-                and str(include.get("tasks_from")).removesuffix(".yml") == tasks_from
-            ):
-                return True
-        for include in (task.get(key) for key in _PATH_INCLUDE_KEYS):
-            if str(include.get("file") if isinstance(include, dict) else include).endswith(f"node_common/tasks/{tasks_from}.yml"):
-                return True
-    return False
-
-
-def _play_roles(play: dict) -> set[str]:
-    return {entry if isinstance(entry, str) else entry.get("role", entry.get("name")) for entry in play.get("roles") or []}
-
-
-def _plays() -> list[tuple[str, dict]]:
-    return [(f"{path.name}'s play over {play.get('hosts')}", play) for path in _PLAYBOOKS for play in load_tasks(path) or []]
-
-
-def _alloy_config(role: str) -> Path:
-    return REPO / f"infra/ansible/roles/{role}/files/config.alloy"
-
-
-# A play's hosts ship through the files/config.alloy of whichever of the play's roles owns one.
-def _carriers_including(tasks_from: str) -> dict[str, set[str]]:
-    carriers = {}
-    for kind in ("tasks", "handlers"):
-        for path in sorted((REPO / "infra/ansible/roles").glob(f"*/{kind}/*.yml")):
-            if _includes(load_tasks(path), tasks_from):
-                carriers[str(path.relative_to(REPO))] = {path.parts[-3]}
-    for where, play in _plays():
-        if any(_includes(play.get(key), tasks_from) for key in _PLAY_TASK_LISTS):
-            carriers[where] = {role for role in _play_roles(play) if _alloy_config(role).is_file()}
-    return carriers
-
-
-def _copied_by(tasks_from: str) -> set[str]:
-    return {
-        str((_NODE_COMMON / "files" / task["ansible.builtin.copy"]["src"]).relative_to(REPO))
-        for task, _ in iter_tasks(load_tasks(_NODE_COMMON / f"tasks/{tasks_from}.yml"))
-        if "ansible.builtin.copy" in task
-    }
-
-
-def _ships_to_the_node_alone(config: Path) -> bool:
-    components = re.findall(r'^prometheus\.remote_write "\w+" \{\n(.*?)^\}', _live_alloy_text(config), re.M | re.S)
-    urls = {url for component in components for url in re.findall(r"^\s*url\s*=\s*(.+?)\s*$", component, re.M)}
-    filtered = any("write_relabel_config" in component for component in components)
-    return bool(urls) and urls <= _NODE_PROM_URLS and not filtered
-
-
-@pytest.mark.parametrize(
-    ("config", "node_alone"),
-    [
-        (NAS_ALLOY, False),
-        (OPS_ALLOY, False),
-        (CAPTURE_ALLOY, False),
-        (ACCESS_ALLOY, False),
-        (CACHE_ALLOY, False),
-        (MON_ALLOY, True),
-        (HC_ALLOY, True),
-    ],
-    ids=["nas", "ops", "capture", "access", "cache", "mon", "hc"],
-)
-def test_the_node_alone_reading_tells_each_cloud_config_from_the_nodes_own(config, node_alone):
-    assert _ships_to_the_node_alone(config) is node_alone
-
-
-@pytest.mark.parametrize("metric", sorted(PUBLISHED_TO_A_NODE_ALONE))
-def test_every_role_publishing_a_metric_to_a_node_alone_ships_to_the_node_alone(metric):
-    tasks_from = PUBLISHED_TO_A_NODE_ALONE[metric]
-    spelled, installed = _tokens_in_tree().get(metric, set()), _copied_by(tasks_from)
-    assert spelled <= installed, (
-        f"{metric} is spelled in {sorted(spelled - installed)}, outside what node_common's {tasks_from} installs: a "
-        f"publisher this exemption does not hold to the observability node"
-    )
-    assert any("mon" in roles for roles in _carriers_including("selfcheck").values()), (
-        "the walk finds mon's self-check include nowhere: it is broken, not the tree clean"
-    )
-    assert any("mon" in _play_roles(play) for _, play in _plays()), (
-        "the play walk resolves no play to the mon role: it is broken, not the tree clean"
-    )
-    for carrier, roles in sorted(_carriers_including(tasks_from).items()):
-        assert roles, (
-            f"{carrier} includes node_common's {tasks_from}, so its hosts publish {metric}, and none of the play's "
-            f"roles owns a files/config.alloy: no Cloud keep-regex admits the name"
-        )
-        for role in sorted(roles):
-            config = _alloy_config(role)
-            assert config.is_file() and _ships_to_the_node_alone(config), (
-                f"{carrier} includes node_common's {tasks_from}, so the {role} role's hosts publish {metric}, and "
-                f"{'its config.alloy writes elsewhere, filters or nowhere' if config.is_file() else 'it owns no files/config.alloy'}: "
-                f"no Cloud keep-regex admits the name"
-            )
-
-
-@pytest.mark.parametrize("metric", PUBLISHED_METRIC_NAMES)
-def test_every_published_metric_is_admitted_by_some_hosts_keep_regex(metric):
-    keeps = [_keep_regex(p) for p in (NAS_ALLOY, OPS_ALLOY, CAPTURE_ALLOY, ACCESS_ALLOY, CACHE_ALLOY)]
-    assert metric in PUBLISHED_TO_A_NODE_ALONE or any(k.match(metric) for k in keeps), (
-        f"{metric} is published by this repo but matches no keep-regex on any host, so it is "
-        f"dropped silently at remote_write and any rule watching it reads no data forever. Add it "
-        f"to the keep-regex of the host that publishes it, or -- if it is not a metric -- to "
-        f"NOT_A_PUBLISHED_METRIC with the reason, or -- if its one publisher ships to the "
-        f"observability node alone -- to PUBLISHED_TO_A_NODE_ALONE with the node_common task file that installs it."
-    )
 
 
 # --- the ops journal keep-regex is a census too (T0178) -------------------------------------------
@@ -857,17 +165,6 @@ def test_the_capture_config_scrapes_the_cache_proxy_and_labels_its_journal_lines
         assert re.search(rf'^\s*{key}\s*=\s*".*NOTICE\|WARNING\|ALERT\|INFO.*"\s*$', block, re.M), (key, block)
 
 
-def test_the_cache_keep_regex_admits_exactly_the_cache_required_list():
-    """Both directions, where the per-host admission test reads one: a family the regex admits that the
-    list lacks fails here as well as a listed one the regex drops. Whether each is read by a panel or a
-    rule is test_dashboards_cover_metrics.py's."""
-    admitted = _keep_regex(CACHE_ALLOY).pattern.removeprefix(r"\A(?:").removesuffix(r")\Z").split("|")
-    assert sorted(admitted) == sorted(CACHE_REQUIRED), (
-        f"the cache keep regex and CACHE_REQUIRED differ: admitted only {sorted(set(admitted) - set(CACHE_REQUIRED))}, "
-        f"listed only {sorted(set(CACHE_REQUIRED) - set(admitted))}"
-    )
-
-
 def _env_names_read(config: Path) -> set[str]:
     return set(re.findall(r'sys\.env\("([A-Z_]+)"\)', _live_alloy_text(config)))
 
@@ -944,7 +241,7 @@ def test_the_cache_log_pipeline_drops_the_sentinel_exporters_latency_error_and_a
     assert sorted(selectors) == sorted(_CACHE_DROPS), drops
 
 
-# --- the node's leg: a second endpoint beside the Cloud one, and the names each reads ---------------
+# --- the node's leg: each host's one endpoint, and the names it reads ---------------------------------
 def _endpoint_blocks(path: Path) -> list[str]:
     component = re.search(r'\nprometheus\.remote_write "grafana" \{(.*?)\n\}\n', _live_alloy_text(path), re.S).group(1)
     return re.findall(r"\n  endpoint \{(.*?)\n  \}", component, re.S)
@@ -953,13 +250,8 @@ def _endpoint_blocks(path: Path) -> list[str]:
 @pytest.mark.parametrize(
     "path", [ACCESS_ALLOY, OPS_ALLOY, CACHE_ALLOY, NAS_ALLOY, CAPTURE_ALLOY], ids=["access", "ops", "cache", "nas", "capture"]
 )
-def test_the_nodes_endpoint_carries_no_relabel_block_and_the_cloud_one_keeps_its_pair(path):
-    cloud, mon = _endpoint_blocks(path)
-    assert len(re.findall(r"^\s*write_relabel_config\s*\{\s*$", cloud, re.M)) == 2 and "MON_" not in cloud
-    assert all(
-        re.search(rf'^\s*{n.lower()}\s*=\s*sys\.env\("GRAFANA_PROM_{n}"\)\s*$', cloud, re.M)
-        for n in ("URL", "USERNAME", "PASSWORD")
-    )
+def test_the_one_endpoint_is_the_nodes_and_carries_no_relabel_block(path):
+    (mon,) = _endpoint_blocks(path)
     assert "write_relabel_config" not in mon and "GRAFANA_" not in mon
     assert re.search(r'^\s*name\s*=\s*"mon"\s*$', mon, re.M)
     assert all(
@@ -982,16 +274,7 @@ def test_alloys_own_targets_are_concatenated_into_the_scrape_that_feeds_the_remo
     assert re.search(r"^\s*forward_to\s*=\s*\[prometheus\.remote_write\.grafana\.receiver\]$", carrying[0], re.M), carrying[0]
 
 
-# Held by literal, so a Cloud name repointed at the node, or a node name bound to another group var,
-# fails here before it is a converge.
-_GRAFANA_LINES = [
-    "GRAFANA_PROM_URL={{ grafana_prom_url }}",
-    "GRAFANA_PROM_USERNAME={{ grafana_prom_user }}",
-    "GRAFANA_PROM_PASSWORD={{ grafana_prom_token }}",
-    "GRAFANA_LOKI_URL={{ grafana_loki_url }}",
-    "GRAFANA_LOKI_USERNAME={{ grafana_loki_user }}",
-    "GRAFANA_LOKI_PASSWORD={{ grafana_loki_token }}",
-]
+# Held by literal, so a node name bound to another group var fails here before it is a converge.
 _MON_PROM_LINES = [
     "MON_PROM_URL={{ mon_ingest_prom_url }}",
     "MON_PROM_USERNAME={{ mon_ingest_fleet_user }}",
@@ -1011,20 +294,20 @@ _HC_LINES = [
 
 
 @pytest.mark.parametrize(
-    ("template", "grafana_lines", "mon_lines", "hc_lines"),
+    ("template", "mon_lines", "hc_lines"),
     [
-        (ACCESS_SECRETS, _GRAFANA_LINES, _MON_PROM_LINES, []),
-        (OPS_SECRETS, _GRAFANA_LINES, _MON_PROM_LINES + _MON_LOKI_LINES, _HC_LINES),
-        (CACHE_SECRETS, _GRAFANA_LINES, _MON_PROM_LINES + _MON_LOKI_LINES, []),
-        (HC_ENV, [], _MON_PROM_LINES + _MON_LOKI_LINES, []),
-        (NAS_SECRETS, _GRAFANA_LINES, _MON_PROM_LINES + _MON_LOKI_LINES, []),
-        (CAPTURE_SECRETS, _GRAFANA_LINES, _MON_PROM_LINES + _MON_LOKI_LINES, []),
+        (ACCESS_SECRETS, _MON_PROM_LINES, []),
+        (OPS_SECRETS, _MON_PROM_LINES + _MON_LOKI_LINES, _HC_LINES),
+        (CACHE_SECRETS, _MON_PROM_LINES + _MON_LOKI_LINES, []),
+        (HC_ENV, _MON_PROM_LINES + _MON_LOKI_LINES, []),
+        (NAS_SECRETS, _MON_PROM_LINES + _MON_LOKI_LINES, []),
+        (CAPTURE_SECRETS, _MON_PROM_LINES + _MON_LOKI_LINES, []),
     ],
     ids=["access", "ops", "cache", "hc", "nas", "capture"],
 )
-def test_the_secrets_lines_are_held_by_literal(template, grafana_lines, mon_lines, hc_lines):
+def test_the_secrets_lines_are_held_by_literal(template, mon_lines, hc_lines):
     lines = _live_j2_text(template).splitlines()
-    assert [line for line in lines if line.startswith("GRAFANA_")] == grafana_lines
+    assert [line for line in lines if line.startswith("GRAFANA_")] == []
     assert [line for line in lines if line.startswith("MON_")] == mon_lines
     assert [line for line in lines if line.startswith("HC_")] == hc_lines
 
@@ -1050,11 +333,7 @@ def test_the_ops_scrape_reads_the_dead_man_service_with_the_read_only_key_as_its
 @pytest.mark.parametrize(
     ("config", "template", "unread"),
     [
-        (
-            ACCESS_ALLOY,
-            ACCESS_SECRETS,
-            {"CONFIG_FILE", "CUSTOM_ARGS", "GRAFANA_LOKI_URL", "GRAFANA_LOKI_USERNAME", "GRAFANA_LOKI_PASSWORD"},
-        ),
+        (ACCESS_ALLOY, ACCESS_SECRETS, {"CONFIG_FILE", "CUSTOM_ARGS"}),
         (OPS_ALLOY, OPS_SECRETS, set()),
         (HC_ALLOY, HC_ENV, {"CONFIG_FILE", "CUSTOM_ARGS"}),
         (NAS_ALLOY, NAS_SECRETS, set()),
@@ -1068,7 +347,7 @@ def test_each_secrets_template_renders_the_names_its_config_reads(config, templa
     assert rendered - read == unread, f"{template.name} renders {sorted(rendered - read)} that {config.name} does not read"
 
 
-# --- the node's log leg: a second loki.write fed by the parse stage, beside the Cloud one ----------------
+# --- the node's log leg: the one loki.write the parse stage feeds --------------------------------------
 def _loki_write_block(path: Path, name: str) -> str:
     block = re.search(rf'\nloki\.write "{name}" \{{(.*?)\n\}}\n', _live_alloy_text(path) + "\n", re.S)
     assert block, f'{path}: no loki.write "{name}" component'
@@ -1082,14 +361,13 @@ def _one_endpoint_reading(block: str, names: tuple[str, str, str]) -> None:
 
 
 @pytest.mark.parametrize("path", [OPS_ALLOY, CACHE_ALLOY, NAS_ALLOY, CAPTURE_ALLOY], ids=["ops", "cache", "nas", "capture"])
-def test_the_parse_stage_feeds_both_loki_writes_and_each_reads_its_own_names(path):
+def test_the_parse_stage_feeds_the_nodes_loki_write_alone(path):
     parse = re.search(r'^loki\.process "parse" \{\n(.*?)\n\}', _live_alloy_text(path), re.M | re.S)
     assert parse, f'{path}: no loki.process "parse"'
     forward = re.search(r"^  forward_to\s*=\s*\[(.*?)\]\s*$", parse.group(1), re.M)
-    assert forward and forward.group(1) == "loki.write.grafana.receiver, loki.write.mon.receiver", parse.group(1)
-    grafana, mon = _loki_write_block(path, "grafana"), _loki_write_block(path, "mon")
-    _one_endpoint_reading(grafana, ("GRAFANA_LOKI_URL", "GRAFANA_LOKI_USERNAME", "GRAFANA_LOKI_PASSWORD"))
-    assert "MON_" not in grafana
+    assert forward and forward.group(1) == "loki.write.mon.receiver", parse.group(1)
+    assert re.findall(r'^loki\.write "(\w+)" \{$', _live_alloy_text(path), re.M) == ["mon"]
+    mon = _loki_write_block(path, "mon")
     _one_endpoint_reading(mon, ("MON_LOKI_URL", "MON_LOKI_USERNAME", "MON_LOKI_PASSWORD"))
     assert "GRAFANA_" not in mon
 

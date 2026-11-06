@@ -195,8 +195,6 @@ fi
 
 # Atomic publish (tmp in the same dir, then rename): a textfile is scraped in place, so a
 # half-written one is scraped as garbage — same pattern as the reconcile exporter's _write_textfile.
-# ops_verified_replay_days_behind is the one new series here; the Alloy keep-regex already admits
-# it via `ops_verified_replay_.*`, so no config change is needed for it to reach Grafana.
 tmp="$PROM.tmp"
 {
     printf '# HELP ops_verified_replay_exit_code Exit code of the last attempted day of verified-path journal replay (0 = no mismatch, no validation failure).\n'

@@ -360,8 +360,8 @@ def test_metrics_port_set_serves_process_and_capture_series(tmp_path, monkeypatc
         "zcrypto_capture_hour_finalized_early_total",
         "zcrypto_capture_ts_past_dated_hour_total",
         "zcrypto_capture_gap_seconds_total",
-        # T0101: without these two here, dropping either from the producer or from the
-        # keep-regex leaves every test green while the series goes dark -- the T0051 trap.
+        # T0101: without these two here, dropping either from the producer leaves every test
+        # green while the series goes dark.
         "zcrypto_capture_seconds_since_last_book_message",
         "zcrypto_capture_venue_status_total",
         "zcrypto_capture_book_desynced",

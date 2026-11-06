@@ -368,7 +368,7 @@
     fail_msg: >-
       The Alloy config on this node does not match the repo. A converge that omits
       `cache_alloy_digest` skips the config copy and still exits 0, so the node can serve a stale
-      keep regex while every other check passes. Converge this node with `--tags alloy
+      config while every other check passes. Converge this node with `--tags alloy
       -e cache_alloy_digest={{ alloy_image_digest }}`, the digest committed for it: that run copies the
       file and brings the container to the digest, and its handler reloads a running Alloy.
     success_msg: "deployed Alloy config matches the repo"

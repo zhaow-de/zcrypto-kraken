@@ -820,7 +820,7 @@
     fail_msg: >-
       The Alloy config on this host does NOT match the repo. A converge that omits
       `ops_alloy_digest` skips the config copy and still exits 0, so the host can serve a stale
-      keep-regex indefinitely while every other check passes. Converge this host with `--tags alloy
+      config indefinitely while every other check passes. Converge this host with `--tags alloy
       -e ops_alloy_digest={{ alloy_image_digest }}`, the digest committed for it: that run copies the
       file and brings the container to the digest, and its handler reloads a running Alloy. Runbook
       context: docs/open-topics/archive/T0109-alloy-config-changes-never-reach-the-capture-hosts.md

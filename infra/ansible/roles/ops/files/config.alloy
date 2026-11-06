@@ -6,7 +6,7 @@
 // (tests/test_infra_alloy_series.py reads this files/ path). Structurally this mirrors
 // infra/ansible/roles/capture/files/config.alloy (spec 00068 D6) and infra/nas/config.alloy (spec
 // 00049 Role B) -- same unix exporter / textfile / scrape / remote_write / journal-logs pipeline --
-// with two deliberate divergences, each called out in the comments below. Grafana Cloud's and the
+// with two deliberate divergences, each called out in the comments below. The
 // node's credentials are NOT in this file: they arrive as environment variables from a rendered,
 // 0600, never-committed secrets file (alloy-secrets.env.j2, see infra/ops/README.md), read here via
 // the `sys.env(...)` stdlib function; no hand-placed copy exists anywhere.
@@ -46,11 +46,11 @@
 // telemetry-class data. (The docker-socket group_add this used to sit alongside is gone: the
 // socket mount + `discovery.docker` retired with the docker log path, spec 00068 D6 -- the
 // liquidations poller now ships its own logs directly, and Alloy's own container logs reach
-// Grafana Cloud through this same journal mount instead.)
+// the node through this same journal mount instead.)
 prometheus.exporter.unix "host" {
   set_collectors = ["cpu", "loadavg", "meminfo", "filesystem", "netdev", "textfile"]
 
-  // Docker's per-container veth and bridge devices stay at the source, on both legs: no rule reads
+  // Docker's per-container veth and bridge devices stay at the source: no rule reads
   // them, and the network panels would plot each one.
   netdev {
     device_exclude = "^(veth|br-)"
@@ -94,19 +94,6 @@ prometheus.scrape "liquidations_app" {
 }
 
 // ---- Scrape -> remote_write ------------------------------------------------------------------
-// T0048 defect 1's SD-wedge detection RETIRED with `discovery.docker` (00068 D6/D8): the alert it
-// fed (zcrypto-alloy-docker-sd-wedged) watched prometheus_sd_refresh_duration_seconds_count /
-// _failures_total, which only this self-scrape ever produced -- with no discovery.* component left
-// on this host, neither series exists any more, and both are gone from the keep-regex below too (a
-// keep-list entry for a series that cannot exist is the T0051 trap). The drop rule below no longer
-// discards process_* (00069 T6): that family moved to the keep-list below, admitted explicitly
-// alongside the poller endpoint's own six process_* names (spec D4/D5) -- Alloy's own
-// `client_golang` ProcessCollector on Linux is a SUPERSET of `prometheus_client`'s six (it also
-// publishes at least `process_virtual_memory_max_bytes`), so the six-name keep-list is a deliberate
-// SUBSET FILTER on Alloy's own self-scrape: all six Python names exist in client_golang too (no
-// admitted-but-unpublishable gap), and the extras it drops (e.g.
-// `process_virtual_memory_max_bytes`) are unwanted here. This target's surviving contribution is
-// therefore its own `up` plus those six process_* names, nothing more.
 prometheus.exporter.self "alloy" {}
 
 prometheus.scrape "host" {
@@ -134,10 +121,7 @@ prometheus.remote_write "grafana" {
   // carries a `host` label at all (the `host` label the logs pipeline attaches below, in
   // loki.relabel "journal_units", is Loki-only and never reaches Prometheus), so
   // `infra/grafana/alerts.yaml`'s "Ops · node load high" rule
-  // (`node_load1{host="ops"}`) selects nothing and can never fire. `external_labels` is applied
-  // component-wide, before the write_relabel_config blocks below run -- so it does not touch the
-  // drop/keep pair (both match on `__name__` only) and does not change the number of relabel
-  // blocks.
+  // (`node_load1{host="ops"}`) selects nothing and can never fire.
   //
   // UPDATE (spec 00069 D7): the NAS's config.alloy now ALSO sets `host="nas"` -- this paragraph
   // used to explain why it deliberately did not, and that reasoning is recorded here for the
@@ -159,46 +143,6 @@ prometheus.remote_write "grafana" {
     host = "ops",
   }
 
-  endpoint {
-    url = sys.env("GRAFANA_PROM_URL")
-
-    basic_auth {
-      username = sys.env("GRAFANA_PROM_USERNAME")
-      password = sys.env("GRAFANA_PROM_PASSWORD")
-    }
-
-    // Series minimization (00043): drop Alloy's own `go_*`/`alloy_*` self-metrics, then keep-only
-    // the host + textfile + app series this stack actually wants; the keep alone already excludes
-    // the self-metrics, so the drop is parity, not load. T0051 (spec 00054): a `keep` action drops
-    // everything it does not list, so a series missing here does not merely go undashboarded -- it
-    // does not exist. OPS_REQUIRED in tests/test_infra_alloy_series.py names the series it must
-    // admit, the reconcile/trade-backfill families among them. The six ProcessCollector families
-    // are both the poller's own and Alloy's own self-scrape.
-    write_relabel_config {
-      source_labels = ["__name__"]
-      regex         = "go_.*|alloy_.*"
-      action        = "drop"
-    }
-
-    // zaccess_wireguard_handshake_age_seconds / zaccess_tls_not_after_seconds (spec 00075 D11): the
-    // tunnel/cert gauges the ops-side probe (access_ops role) writes into the textfile dir. The
-    // bridgehead publishes the same two names under host="zaccess" (roles/access/files/config.alloy);
-    // this host's copy carries host="ops", so the two are distinguishable in Grafana.
-    //
-    // zcrypto_clock_offset_seconds / zcrypto_clock_synchronised: the clock exporter this role
-    // installs as a copy of the capture role's; `Node · the host clock cannot be trusted (ops,
-    // cache)` reads them here.
-    //
-    // node_reboot_required: the pending-reboot flag of the reboot-check copy this role installs;
-    // this node never reboots itself, and the pending-reboot rule reads the flag here.
-    write_relabel_config {
-      source_labels = ["__name__"]
-      regex         = "up|node_load1|node_load5|node_load15|node_memory_MemTotal_bytes|node_memory_MemAvailable_bytes|node_memory_MemFree_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_free_bytes|node_filesystem_files|node_filesystem_files_free|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_cpu_seconds_total|node_textfile_mtime_seconds|node_textfile_scrape_error|node_reboot_required|node_scrape_collector_success|node_scrape_collector_duration_seconds|ops_archive_pull_.*|ops_panel_.*|ops_verify_replay_.*|ops_verified_replay_.*|zcrypto_reconcile_.*|zcrypto_trade_backfill_.*|zcrypto_tapebars_.*|hc_check_up|hc_checks_down_total|zcrypto_liquidations_polls_total|zcrypto_liquidations_api_errors_total|zcrypto_liquidations_last_success_timestamp_seconds|zcrypto_logship_dropped_lines_total|zcrypto_logship_shipped_lines_total|zcrypto_logship_last_cycle_timestamp_seconds|zcrypto_logship_last_success_timestamp_seconds|process_cpu_seconds_total|process_max_fds|process_open_fds|process_resident_memory_bytes|process_start_time_seconds|process_virtual_memory_bytes|zaccess_wireguard_handshake_age_seconds|zaccess_tls_not_after_seconds|zcrypto_clock_offset_seconds|zcrypto_clock_synchronised"
-      action        = "keep"
-    }
-  }
-
-  // The node's leg, unfiltered: its own queue, so a dead endpoint does not hold the other.
   endpoint {
     name = "mon"
     url  = sys.env("MON_PROM_URL")
@@ -235,7 +179,7 @@ prometheus.remote_write "grafana" {
 // /host/journal by alloy-compose.yaml.j2.
 //
 // The liquidations poller (compose service `liquidations`) is deliberately NOT kept here: it now
-// ships its OWN logs straight to Grafana Cloud (--ship-logs, spec 00068 D3/T6) rather than through
+// ships its OWN logs straight to the node's Loki (--ship-logs, spec 00068 D3/T6) rather than through
 // Alloy at all, so it needs no transport on this host's telemetry stack any more.
 loki.relabel "journal_units" {
   // Rules-only component: `forward_to` is a required argument, but nothing streams THROUGH this
@@ -310,7 +254,7 @@ loki.source.journal "zcrypto_units" {
 // timestamped log line (the zcrypto-*.service units the keep rule above admits), and Alloy's own
 // logfmt output.
 loki.process "parse" {
-  forward_to = [loki.write.grafana.receiver, loki.write.mon.receiver]
+  forward_to = [loki.write.mon.receiver]
 
   // Our Python services: `2026-07-14 13:18:27,562 INFO zcrypto.archive.command [command.py:75] - msg`
   // Scoped by container, so a container with a different format can never be mangled by this regex.
@@ -319,7 +263,7 @@ loki.process "parse" {
   // dead: no `level` label on any ops stream, no ERROR-logs alert possible (T0060). Every named
   // `zcrypto-*` job emits the same zcrypto Python-logging line shape this stage's regex parses.
   // The liquidations poller used to feed this stage too (its docker-path container label was
-  // "liquidations"), but it now ships its own logs directly to Grafana Cloud (--ship-logs, spec
+  // "liquidations"), but it now ships its own logs directly to the node's Loki (--ship-logs, spec
   // 00068 D3/T6) rather than through Alloy at all, so `liquidations` is dropped from the selector
   // below -- keeping a dead alternative that can never match would be the T0051 trap one level up.
   stage.match {
@@ -445,19 +389,6 @@ loki.process "parse" {
   }
 }
 
-loki.write "grafana" {
-  endpoint {
-    url = sys.env("GRAFANA_LOKI_URL")
-
-    basic_auth {
-      username = sys.env("GRAFANA_LOKI_USERNAME")
-      password = sys.env("GRAFANA_LOKI_PASSWORD")
-    }
-  }
-}
-
-// The node's leg is its own component, fed by the parse stage beside the Cloud one: a second
-// endpoint inside loki.write "grafana" would be fed in succession and could stall it.
 loki.write "mon" {
   endpoint {
     url = sys.env("MON_LOKI_URL")

@@ -1654,9 +1654,9 @@ def test_every_outcome_and_liquidity_series_exists_before_anything_happens():
     assert position_family.samples == []
 
 
-def test_the_execution_families_carry_the_names_and_labels_the_keep_regex_admits():
-    """Parsed out of the exposition text, not off the objects: the keep-regex and every panel match
-    the EXPOSED series name, which for a Counter is not the family name."""
+def test_the_execution_families_carry_the_names_and_labels_the_panels_read():
+    """Parsed out of the exposition text, not off the objects: every panel matches the EXPOSED series
+    name, which for a Counter is not the family name."""
     registry = CollectorRegistry()
     metrics = command._ExecutionMetrics(registry)
 
@@ -1681,8 +1681,7 @@ def test_the_execution_families_carry_the_names_and_labels_the_keep_regex_admits
 
 
 def test_the_resting_age_gauge_exposes_the_name_and_label_the_panel_reads():
-    """Parsed off the registry, not the object: the keep-regex and the panel both match the EXPOSED
-    series name and its label."""
+    """Parsed off the registry, not the object: the panel matches the EXPOSED series name and its label."""
     registry = CollectorRegistry()
     metrics = command._ExecutionMetrics(registry)
 
