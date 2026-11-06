@@ -1510,9 +1510,9 @@ class ProbeExecutor:
         -- the tick a plan runs on evaluates anyway and stamps it. What it publishes is what the gate
         reads, its own fail-closed readings included, and not the heartbeat; it journals nothing, the
         exec record's verdict being the boundary's (`on_boundary`). It reads the reconciliation count
-        first (`_publish_reconciliation_positions`), since no other read recurs while no boundary drafts
-        and the gauge would not fall when the position closes. Wrapped as `_publish_resting_age`
-        is: telemetry may never end a plan."""
+        first (`_publish_reconciliation_positions`), since with the gate unarmed and no boundary drafting
+        no other read recurs, and the gauge would not fall when the position closes. Wrapped as
+        `_publish_resting_age` is: telemetry may never end a plan."""
         try:
             if now - self._gate_evaluated_at >= _GATE_REFRESH:
                 self._publish_reconciliation_positions()
@@ -4644,7 +4644,6 @@ class ProbeExecutor:
             positions = reconciliation_booked_positions(self._cache)
             for position in positions:
                 if str(position.id) not in self._reconciliation_positions_logged:
-                    self._reconciliation_positions_logged.add(str(position.id))
                     logger.warning(
                         "position %s under %s, %s, holds an order nautilus's reconciliation minted, %s -- see infra/runbooks/engine.md#zcrypto-engine-reconciliation-position",
                         position.id,
@@ -4652,6 +4651,7 @@ class ProbeExecutor:
                         position.signed_qty,
                         [str(cid) for cid in reconciliation_tagged_orders(self._cache, position)],
                     )
+                    self._reconciliation_positions_logged.add(str(position.id))
             if _metrics is not None:
                 _metrics.set_reconciliation_positions(len(positions))
         except Exception:
