@@ -31,7 +31,8 @@ async def _healthcheck_loop(url: str | None, client: BinanceLiquidationClient, i
         # breach (writes stop) and an unmeasurable probe ("cannot measure" is not "healthy") each
         # withhold the ping so the disk failure pages.
         if client.connected and not watermark.breached and watermark.measurable:
-            ping_healthcheck(url)
+            # Off the loop: a dark dead-man service holds a ping for its whole timeout, and the stream's consumer shares this loop.
+            await asyncio.to_thread(ping_healthcheck, url)
 
 
 async def _disk_watermark_loop(watermark: DiskWatermark, interval: int) -> None:

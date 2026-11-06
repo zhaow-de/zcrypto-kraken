@@ -5,6 +5,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -395,6 +396,37 @@ def test_healthcheck_withheld_when_disk_watermark_breached(monkeypatch):
     # Breached: the daemon is writing NOTHING. The dead-man must fire, not report healthy.
     pings = _run_healthcheck_once(monkeypatch, free_bytes=10)  # below min_free_bytes
     assert pings == [], "a watermark breach stops all writes -- the dead-man must NOT keep pinging"
+
+
+@pytest.mark.parametrize("which", ["capture", "liquidations"])
+def test_a_hanging_ping_leaves_the_event_loop_running(monkeypatch, which):
+    from cli.capture import command as capture
+    from cli.capture.gap_monitor import DiskWatermark, GapMonitor
+    from cli.liquidations import command as liquidations
+
+    module = capture if which == "capture" else liquidations
+    released = threading.Event()
+    answered: list[bool] = []
+    # On the event loop this wait holds the coroutine that releases it, and it times out False.
+    monkeypatch.setattr(module, "ping_healthcheck", lambda url: answered.append(released.wait(timeout=10)))
+    watermark = DiskWatermark(Path("/tmp"), min_free_bytes=1024, usage_fn=lambda p: _FakeUsage(free=10_000))
+    watermark.check()
+    url = "https://hc.invalid/x"
+    args = (
+        (url, _StubClient(), GapMonitor(), ["BTC/EUR"], 0.01, watermark)
+        if which == "capture"
+        else (url, _StubClient(), 0.01, watermark)
+    )
+
+    async def drive():
+        task = asyncio.create_task(module._healthcheck_loop(*args))
+        await asyncio.sleep(0.05)
+        released.set()
+        await asyncio.sleep(0.05)
+        task.cancel()
+
+    asyncio.run(drive())
+    assert answered and all(answered)
 
 
 def test_healthcheck_withheld_when_disk_probe_cannot_measure(monkeypatch):
