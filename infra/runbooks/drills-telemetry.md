@@ -789,7 +789,7 @@ On the node (`ssh hc`), with `date -u` beside it:
 sudo systemctl stop zcrypto-hc.service
 ```
 
-Held until `zcrypto-hcio-watchdog`'s `999` page, past any earlier page *Must fire* announces as possible, then the *Operator action*. Nothing heavier (standing rules above).
+Held until `zcrypto-hcio-watchdog`'s `999` page from each stack, past any earlier page, then the *Operator action*. Nothing heavier (standing rules above).
 
 ### Must fire
 
@@ -804,7 +804,7 @@ Held until `zcrypto-hcio-watchdog`'s `999` page, past any earlier page *Must fir
 
 ### Operator action
 
-At the watchdog's page, with `date -u` beside it:
+At the hold's end, with `date -u` beside it:
 
 ```
 sudo systemctl start zcrypto-hc.service
@@ -831,7 +831,7 @@ That the node's death pages as the service's does, at `999`, with the node's own
 ### Preconditions
 
 - An attended window; standing rules above; drill X1 passed before it.
-- Both capture daemons and ops' liquidations recorder run an image whose dead-man ping waits off the event loop: `git grep -c 'asyncio.to_thread(ping_healthcheck' <the running image's revision> -- cli/capture/command.py cli/liquidations/command.py` lists each file with `:1`. On an older image a powered-off node holds up to 5 s a minute on live L2 capture's event loop, which takes the owner's word in the entry, or waits for the rollout.
+- Both capture daemons run an image whose dead-man ping waits off the event loop: `git grep -c 'asyncio.to_thread(ping_healthcheck' <the running image's revision> -- cli/capture/command.py` ends `:1`. On an older image a powered-off node holds up to 5 s a minute on live L2 capture's event loop, which takes the owner's word in the entry, or waits for the rollout.
 - X1's reads of the service: `max(hc_checks_down_total) == 0` immediately before, `hc-provision.py status` written down, and the self-check's last line ending `-> pinged`. Not 0 ⇒ clear the down check first, or record **`blocked`** with the reason.
 - The node ships to the observability node, `uv run python infra/scripts/grafana-query.py --stack mon 'count(up{host="zcrypto-hc"})'` reading 2, and the node's rules read clean (drill W1's read): a page from the `zcrypto-hc` group is a reading, and it has to be this drill's.
 - **Announced in the main channel beforehand**: the watchdog's `999`; the three rules on the observability node below, as expected; `zcrypto-nas-archive-pull-errors` and `zcrypto-mon-unlevelled-log-lines` as possible; and, on the return, each check's `DOWN` then `UP`, to be read as the drill's and as no host's.
@@ -839,7 +839,7 @@ That the node's death pages as the service's does, at `999`, with the node's own
 
 ### Induce
 
-In the Linode Cloud Manager, on the Linode `zcrypto-hc`'s page, **Power Off**, with `date -u` on the workstation beside the click; thirty minutes later, **Power On**, timestamped the same way. Nothing from inside the host: the induction is the provider's, as a lost host's would be. Nothing on the fleet is touched but the pings, each waiting out its 5 s timeout off its daemon's event loop.
+In the Linode Cloud Manager, on the Linode `zcrypto-hc`'s page, **Power Off**, with `date -u` on the workstation beside the click; thirty minutes later, **Power On**, timestamped the same way. Nothing from inside the host: the induction is the provider's, as a lost host's would be. Nothing on the fleet is touched but the pings, each waiting out its own timeout.
 
 ### Must fire
 
@@ -873,7 +873,7 @@ That a lost node comes back from the repository and an off-host backup with no k
 ### Preconditions
 
 - An attended window; standing rules above; drill X2 passed before it.
-- Both capture daemons and ops' liquidations recorder run an image whose dead-man ping waits off the event loop: `git grep -c 'asyncio.to_thread(ping_healthcheck' <the running image's revision> -- cli/capture/command.py cli/liquidations/command.py` lists each file with `:1`. On an older image a powered-off node holds up to 5 s a minute on live L2 capture's event loop, which takes the owner's word in the entry, or waits for the rollout.
+- Drill X2's read of the capture daemons' image, by its rule.
 - X1's reads of the service: `max(hc_checks_down_total) == 0` immediately before, `hc-provision.py status` written down, and the self-check's last line ending `-> pinged`. Not 0 ⇒ clear the down check first, or record **`blocked`** with the reason.
 - The bridgehead's Caddy mirror answers, and no Caddy rollback holds it: [`hc.md#hc-dark`](hc.md#hc-dark) step 5's two reads.
 - In the Cloud Manager: the Linode `zcrypto-hc` with Backups enabled, read on its Backups tab, and the firewall `zcrypto-hc` attached to it with inbound Accept TCP `10022` and TCP `443` for both families and ICMP, the state the node's first converge left it in.
