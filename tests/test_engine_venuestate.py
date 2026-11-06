@@ -334,12 +334,6 @@ def test_runtime_concordance_flags_a_base_missing_from_the_snapshot():
     assert verdict.failures == ("DOT/EUR: instrument not present in snapshot",)
 
 
-# --- this file's library stand-ins, checked against the library ----------------------------------
-#
-# tests/test_engine_stub_fidelity.py classifies every test double in the engine suite and names the
-# guard below; the reasoning that makes it worth having lives there.
-
-
 @pytest.mark.parametrize(
     ("orders", "tagged"),
     [
@@ -358,6 +352,12 @@ def test_a_position_counts_when_it_holds_a_tagged_order(orders, tagged):
     )
     assert [cid.value for cid in reconciliation_tagged_orders(cache, position)] == tagged
     assert reconciliation_booked_positions(cache) == ([position] if tagged else [])
+
+
+# --- this file's library stand-ins, checked against the library ----------------------------------
+#
+# tests/test_engine_stub_fidelity.py classifies every test double in the engine suite and names the
+# guard below; the reasoning that makes it worth having lives there.
 
 
 def _library_standins():

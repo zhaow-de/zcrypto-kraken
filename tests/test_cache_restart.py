@@ -1337,4 +1337,9 @@ def test_a_position_the_library_booked_is_counted_and_a_hand_orders_is_not(tmp_p
         f"{_BUMP}: a hand order's fill seen live no longer comes back from a restart as a position under `EXTERNAL` "
         f"holding that order: {_open_positions(live['at_end'])}, {held}"
     )
+    orders = [order["client_order_id"] for order in restart["at_start"]["orders"]]
+    assert HAND_TXID in orders, (
+        f"{_BUMP}: a hand order's fill seen live no longer comes back from a restart with the order in the store, "
+        f"so the 0 below would not read its tags: {orders}"
+    )
     _reads_nothing(restart)

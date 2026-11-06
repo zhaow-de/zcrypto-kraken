@@ -12879,7 +12879,8 @@ def test_the_gauge_falls_to_zero_when_the_position_goes(tmp_path):
 
 def test_a_raise_in_the_reconciliation_read_changes_nothing_the_engine_does(tmp_path):
     class _ReaderRaises(StubCache):
-        # By instrument it answers: `_cache_net` reads the same accessor that way, and the reader alone reads it whole.
+        # By instrument it answers: `_cache_net` reads the same accessor that way, and on the executor's path the reader
+        # alone reads it whole.
         def positions_open(self, *, instrument_id=None, **kwargs):
             if instrument_id is None:
                 raise RuntimeError("the position store is not readable")
