@@ -2,7 +2,7 @@
 
 You are here because **an alert fired in Slack**, or because **a guard in the code pointed you here**. Find the section whose anchor matches the alert `uid` or the anchor in the comment that sent you. Each section is written to be actioned without opening any other document.
 
-Everything below is produced on one host, `zcrypto-ops`, reached as `ssh hp`. Its project timers are this role's, each firing a `Type=oneshot` unit — rendered from `infra/ansible/roles/ops/templates/*.timer.j2`, plus `zcrypto-clock-offset.timer` from its `files/` — beside `zaccess-probe-ops.timer`, which the `access_ops` role owns. The two `grafana-*` units and `zcrypto-clock-offset` are plain scripts; the rest run the repo CLI as an ephemeral, digest-pinned `docker run --rm --pull never`. All but `grafana-watchdog` publish a node-exporter textfile under `/var/lib/zcrypto-ops/textfile/`; the host's Alloy scrapes those files and ships their series to Grafana Cloud, and ships the units' journal lines to Loki. Every rule in this file reads one of those textfile series, or those log lines, or the host's own load average and filesystems. The host has **no `uv`** — it runs containers, not the repo CLI.
+Everything below is produced on one host, `zcrypto-ops`, reached as `ssh hp`. Its project timers are this role's, each firing a `Type=oneshot` unit — rendered from `infra/ansible/roles/ops/templates/*.timer.j2`, plus `zcrypto-clock-offset.timer` from its `files/` — beside `zaccess-probe-ops.timer`, which the `access_ops` role owns. `grafana-watchdog`, which probes both nodes, and `zcrypto-clock-offset` are plain scripts; the rest run the repo CLI as an ephemeral, digest-pinned `docker run --rm --pull never`. All but `grafana-watchdog` publish a node-exporter textfile under `/var/lib/zcrypto-ops/textfile/`; the host's Alloy scrapes those files and ships their series to the observability node, and ships the units' journal lines to its Loki. Every rule in this file reads one of those textfile series, or those log lines, or the host's own load average and filesystems. The host has **no `uv`** — it runs containers, not the repo CLI.
 
 `README.md` beside this file states what belongs in a runbook at all; an alert or a guard names a section by file and anchor, and a procedure is found by its file and heading.
 
@@ -89,7 +89,7 @@ Only the trade tape is affected. Book data — the unbackfillable part — is un
    sudo systemctl start zcrypto-archive-pull.service
    ```
    Both steps are safe to repeat — the reconcile ledger dedupes and the backfill is watermarked — but reconcile MINTS here, so repeating it is a write to custody, not a no-op. If the gate is skipping, this run will skip too and change nothing; fix the `.pull-status` cause first.
-7. **Verify the metric moved, not the unit's exit status**: `zcrypto_trade_backfill_exit_code` back at 0 and `zcrypto_trade_backfill_last_success_timestamp` advanced, read through `uv run python infra/scripts/grafana-query.py` from the workstation. The unit exits 0 on a failed backfill, so `$?` proves nothing here.
+7. **Verify the metric moved, not the unit's exit status**: `zcrypto_trade_backfill_exit_code` back at 0 and `zcrypto_trade_backfill_last_success_timestamp` advanced, read through `uv run python infra/scripts/grafana-query.py 'zcrypto_trade_backfill_exit_code' 'zcrypto_trade_backfill_last_success_timestamp'` from the workstation. The unit exits 0 on a failed backfill, so `$?` proves nothing here.
 8. **Expect the downstream page if this persists.** tape-bars defers any day whose trade tape is not heal-complete and exits 0 while doing so (no count command: `cli/tick/command.py` books it as `days_unhealed`, a deferral, and exits 0), so a stalled healer surfaces next as `Ops · tape-bars not advancing` — `infra/runbooks/ops.md#zcrypto-ops-tapebars-not-advancing`.
 
 ### Retire when
@@ -147,37 +147,6 @@ The dead-man for this timer is fed only on a clean, fully-caught-up run, so its 
 ### Retire when
 
 `zcrypto-ops-verified-replay-stale` and `zcrypto-ops-verified-replay-exit-nonzero` are both absent from `infra/grafana/alerts.yaml`, or `ops_verified_replay_last_success_timestamp` and `ops_verified_replay_exit_code` are no longer written by `infra/ansible/roles/ops/templates/verified-replay.sh.j2`.
-
-______________________________________________________________________
-
-<a name="zcrypto-ops-grafana-keepalive-stale"></a>
-
-## zcrypto-ops-grafana-keepalive-stale — ALERT
-
-### What you are seeing
-
-A **warning** Grafana alert (`Ops · Grafana keep-alive stopped running`): `time() - zcrypto_grafana_keepalive_last_run_timestamp_seconds > 2250`, `for: 5m`, `noDataState: Alerting`, panel `zcrypto-fleet`/803.
-
-### What it means
-
-`zcrypto-grafana-keepalive.timer` fires four times an hour and its unit makes one authenticated call to Grafana Cloud, writing `/var/lib/zcrypto-ops/textfile/grafana-keepalive.prom` and one `status=… duration=…` line to its journal, which step 4 reads. The gauge this rule reads is the stamp of the last completed **run**, whatever that run got back, so it advances on a 503 and on a 401 exactly as it does on a 200. **This rule is about the keep-alive service, not about Grafana.** A hibernating or dark Grafana Cloud leaves the service running and this rule quiet, by design. **No Grafana rule pages on that state** — a rule cannot page about the system that evaluates it — so what reaches you is the dead-man service, a separate failure domain on purpose. The procedure for it is [`observability.md#grafana-cloud-dark`](observability.md#grafana-cloud-dark).
-
-The threshold tolerates one skipped tick. A healthy value sawtooths from about 0 up to 900, one missed slot peaks near 1800, and the timer carries no `Persistent=`, so a converge landing on a slot legitimately skips it. Two consecutive misses are not a schedule artefact.
-
-**`noDataState: Alerting` is deliberate**: no series at all means the host is down, its Alloy is dark, the unit has never run since the textfile was last cleared, the role has not yet been converged onto the host, or **the timer is firing and the runner is exiting before it writes because no token was rendered** — each of which is the alarm rather than an absence of one. It is the only one of those five causes where the unit runs, succeeds and leaves no file.
-
-**The un-converged cause makes the push order load-bearing.** Until an ops converge installs the units and the first scrape lands, this rule has no series and will page within `for: 5m` of being pushed, asserting a run that never happened. Push it after the metric's first record, or accept one self-healing page knowingly; the ops-node block comment in `infra/grafana/alerts.yaml` states the rule and this is a case of it. A retune that moves the timer and the threshold together takes the order that keeps the pushed threshold tolerant of whichever timer is running: a threshold tightened for a faster timer goes after the converge, once a run at the new cadence has landed; one loosened for a slower timer — a revert to hourly included — goes before it.
-
-### What to do
-
-1. **Read the timer and the unit on the host.** `ssh hp`, then `sudo systemctl list-timers zcrypto-grafana-keepalive.timer --all` for its last and next elapse, and `sudo systemctl status zcrypto-grafana-keepalive.service` for the last run's result.
-2. **Read the file the rule reads.** `grep zcrypto_grafana_keepalive /var/lib/zcrypto-ops/textfile/grafana-keepalive.prom`. An absent file with the timer enabled means the runner is exiting before it writes, which it does when its token is missing — the secrets file is rendered only when `grafana_ro_token` is defined (no count command: that task's `when:` in `infra/ansible/roles/ops/tasks/main.yml` holds it), so a converge that ran without the vault variable leaves the unit exiting 0 and silent.
-3. **A present file with a stale stamp** means the unit is not being started: check the timer is enabled, and that the last converge did not leave it masked or the calendar edited on the host.
-4. **Read the journal with `sudo`, and print the count first**: `sudo journalctl -u zcrypto-grafana-keepalive.service --since -6h --no-pager | wc -l`, then the same without `wc`; an empty unprivileged result is the permissions artifact step 2 of the archive-pull section describes. Each run prints one `status=… duration=…` line; a start that succeeded without one had no token.
-
-### Retire when
-
-`zcrypto-ops-grafana-keepalive-stale` is absent from `infra/grafana/alerts.yaml`, or `zcrypto_grafana_keepalive_last_run_timestamp_seconds` is no longer written by `infra/ansible/roles/ops/templates/grafana-keepalive.sh.j2`.
 
 ______________________________________________________________________
 
@@ -293,7 +262,7 @@ The bar leaves time to act: at the fastest fill seen on `/tmp`, the page lands w
 
 ### Retire when
 
-`zcrypto-ops-inodes-low` is absent from `infra/grafana/alerts.yaml`, or `node_filesystem_files_free` is no longer admitted by the keep regex in `infra/ansible/roles/ops/files/config.alloy`.
+`zcrypto-ops-inodes-low` is absent from `infra/grafana/alerts.yaml`.
 
 ______________________________________________________________________
 
@@ -315,7 +284,7 @@ The `container` label names the source, and that is your routing:
 - **`zcrypto-panel-materialize`** — a per-hour panel failure (`panel hour failed pair=… hour=…`); the panel section above.
 - **`zcrypto-verify-replay`** / **`zcrypto-verified-replay`** — that sweep's CLI; `infra/runbooks/ops.md#zcrypto-ops-verify-replay-new-breakage` and the verified-replay section above.
 - **`zcrypto-tape-bars`** — the tape-bars sweep; its sections are in `infra/runbooks/ops.md`.
-- **`alloy`** — Alloy's own logfmt `level=error`, typically a remote-write or Loki-push failure. The telemetry plane is complaining about itself. A line carrying `component_id=loki.write.mon` (`final error sending batch, no retries left, dropping data`) or `remote_name=mon` (`non-recoverable error`) is the node's ingest failing ops' second leg — the node's Loki or its edge down past about seven minutes, or a 401 from an ingest password changed on the node and not yet on ops — while the Cloud leg, the one this page is read through, is unaffected: `mon.md#mon-dark`, and `mon.md#mon-secrets` step 4 for the 401.
+- **`alloy`** — Alloy's own logfmt `level=error`, typically a remote-write or Loki-push failure. The telemetry plane is complaining about itself. A line carrying `component_id=loki.write.mon` (`final error sending batch, no retries left, dropping data`) or `remote_name=mon` (`non-recoverable error`) is the node's ingest failing — the node's Loki or its edge down past about seven minutes, or a 401 from an ingest password changed on the node and not yet on ops: `mon.md#mon-dark`, and `mon.md#mon-secrets` step 4 for the 401. Such a line reaches this rule by a later batch that delivers, after the fault has cleared.
 - **`liquidations`** — the poller. **This rule is the only channel its ERROR lines have**: it is a long-lived daemon that flips no exit-code metric, and it direct-ships its own lines to Loki without passing through Alloy at all (no count command: `alerts.yaml` selects its ERROR lines in `zcrypto-ops-error-logs` alone).
 
 **Silence here is not a clean bill, and the reason is mechanical.** The `level` label is set by Alloy's parse stage, which matches only the Python-logging line shape (`YYYY-MM-DD HH:MM:SS,mmm LEVEL …`), and by the stages after it that level the runners' bare echoes by their own shape. `archive-pull.sh` and `verified-replay.sh` write the Python shape for their own warnings, at **WARNING**, so they show under the board's WARNING filter and never page here. Of the echoes, only a tape-bars line reporting a failed day pages here; an echo of a shape no stage names ships with no level, which the observability node's `zcrypto-mon-unlevelled-log-lines` pages. A gate-skip streak produces no ERROR page by construction.

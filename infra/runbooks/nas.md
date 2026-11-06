@@ -46,7 +46,7 @@ The tree only grows by design: the pulls run `rsync -a` with **no** `--delete`, 
 
 ### Retire when
 
-`zcrypto-nas-disk-low` is absent from `infra/grafana/alerts.yaml`, or `node_filesystem_avail_bytes` / `node_filesystem_size_bytes` are no longer in the keep-regex in `infra/nas/config.alloy`.
+`zcrypto-nas-disk-low` is absent from `infra/grafana/alerts.yaml`.
 
 ______________________________________________________________________
 
@@ -104,7 +104,7 @@ DSM's own jobs — a RAID scrub, media indexing, snapshot replication — share 
 
 ### Retire when
 
-`zcrypto-nas-load-high` is absent from `infra/grafana/alerts.yaml`, or `node_load1` leaves the keep-regex in `infra/nas/config.alloy`. The `gt 4` bar belongs to a 4-core host: it retires with that hardware.
+`zcrypto-nas-load-high` is absent from `infra/grafana/alerts.yaml`. The `gt 4` bar belongs to a 4-core host: it retires with that hardware.
 
 ______________________________________________________________________
 
