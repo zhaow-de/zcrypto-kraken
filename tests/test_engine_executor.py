@@ -7645,6 +7645,14 @@ def test_a_listing_row_with_no_positive_floor_is_no_floor(floor):
     ]
 
 
+def test_a_listing_row_with_a_positive_floor_is_kept_and_warns_nothing_naming_it():
+    row = SimpleNamespace(id=INSTRUMENT_IDS["ETH/EUR"], min_quantity=0.002)
+    with _executor_errors(logging.WARNING) as warnings:
+        floors = executor_module._listing_floors([row])
+    assert floors == {"ETH/EUR": 0.002}
+    assert [r.getMessage() for r in warnings if "ETH/EUR" in r.getMessage()] == []
+
+
 def test_a_listing_floor_outside_the_basket_is_not_kept():
     row = SimpleNamespace(id="PEPE/EUR.KRAKEN", min_quantity=1000.0)
     assert set(executor_module._listing_floors([row])) == set()
