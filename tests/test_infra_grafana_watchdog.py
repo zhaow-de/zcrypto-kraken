@@ -212,3 +212,26 @@ def test_the_drill_fence_replaces_exactly_the_urls_the_runner_probes():
     replaced = re.findall(r"-e 's\|(https://[^|]+)\|https://both-dark-drill\.invalid/\|'", fence)
 
     assert len(probed) == 2 and sorted(replaced) == sorted(probed)
+
+
+def test_the_secrets_file_carries_the_name_the_runner_reads():
+    secrets = (ROLE / "templates/grafana-watchdog-secrets.env.j2").read_text()
+    (name,) = re.findall(
+        r"^([A-Z_]+)=https://hooks\.invalid/x$",
+        ansible_render(secrets, {"slack_webhook_url": "https://hooks.invalid/x"}),
+        re.MULTILINE,
+    )
+    assert f'"${name}"' in TEMPLATE.read_text()
+
+
+def test_the_drill_fence_blanks_the_runners_ping_and_reads_the_file_the_role_renders():
+    (task,) = [
+        task
+        for task, _ in iter_tasks(load_tasks(ROLE / "tasks/main.yml"))
+        if task.get("name") == "render the grafana-watchdog secrets env file"
+    ]
+    dest = ansible_render(task["ansible.builtin.template"]["dest"], role_variables(TEMPLATE))
+    drill = (REPO / "infra/runbooks/drills-telemetry.md").read_text(encoding="utf-8")
+    fence = drill.split('<a name="drill-w5"></a>')[1].split('<a name="')[0]
+    assert "-e 's|^URL=.*|URL=\"\"|'" in fence and re.search(r"^URL=", TEMPLATE.read_text(), re.MULTILINE)
+    assert f"-p EnvironmentFile={dest} " in fence

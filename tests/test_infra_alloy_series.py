@@ -43,7 +43,7 @@ def _live_regex(block: str, where: str) -> str:
 _OPS_ROLE = REPO / "infra/ansible/roles/ops"
 # Deliberately unshipped: the parse stage below the keep rule reads the Python logging shape.
 _JOURNAL_NOT_SHIPPED = {
-    "zcrypto-grafana-watchdog": "a shell probe; its output is echoes, and its failure is a metric, not a log line",
+    "zcrypto-grafana-watchdog": "a shell probe; a failed probe pages through the check it pings, and a refused post is curl's one line, read on the host",
     "zcrypto-clock-offset": "a shell probe; its output is the .prom it writes, and a chronyc failure is the unknown offset it publishes",
     "zcrypto-reboot-check": "a shell probe; its output is the .prom it writes, and a failed write is the absence the publisher count pages on",
 }
