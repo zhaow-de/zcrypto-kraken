@@ -1349,3 +1349,115 @@ def test_a_position_the_library_booked_is_counted_and_a_hand_orders_is_not(tmp_p
         f"so the 0 below would not read its tags: {orders}"
     )
     _reads_nothing(restart)
+
+
+CLOSE_TXID, CLOSE_TRADE = "OCLOSE-AAAAA-BBBBBB", "TCLOSE-AAAAA-AAAAAA"
+
+
+def test_a_close_the_first_start_missed_across_two_starts(tmp_path):
+    valkey = _Valkey(tmp_path / "valkey")
+    try:
+        node, wire, _ = _phase_one(valkey, tmp_path)
+        closed_at = time.time()
+
+        def held(venue: lb.KrakenLoopback) -> None:
+            venue.balances = {"ZEUR": lb.balance("1000.00000000")}
+            canceled = lb.closed_order(
+                PAIR,
+                price=f"{PRICE:.2f}",
+                volume=f"{QTY:.8f}",
+                status="canceled",
+                vol_exec="0.40000000",
+                opentm=wire["opened_at"],
+                closetm=wire["stopped_at"],
+            )
+            venue.closed_orders[wire["txid"]] = dict(canceled, oflags="fciq")
+            venue.trades["TLOOP1-AAAAA-AAAAAA"] = lb.trade_row(
+                wire["txid"], PAIR, vol="0.40000000", price="150.00", trade_id=1001, time=wire["filled_at"]
+            )
+            # A part-close in Kraken's row shape: a pair left with no row is compared with nothing, and mints nothing.
+            venue.positions["TPOSLP-AAAAA-BBBBBB"] = dict(
+                lb.margin_position(PAIR, volume="0.40000000", time=wire["filled_at"]),
+                vol_closed="0.15000000",
+                ordertxid=wire["txid"],
+                cost="60.00000",
+            )
+
+        with _venue() as (venue, data, exec_):
+            held(venue)
+            first = node.run(2, venue, data, exec_, window=PHASE1_WINDOW)
+        with _venue() as (venue, data, exec_):
+            held(venue)
+            closing = lb.closed_order(
+                PAIR, price=f"{PRICE:.2f}", volume="0.15000000", side="sell", status="closed", vol_exec="0.15000000", opentm=closed_at, closetm=closed_at
+            )  # fmt: skip
+            venue.closed_orders[CLOSE_TXID] = dict(closing, oflags="fciq", price=f"{PRICE:.5f}", cost=f"{0.15 * PRICE:.5f}")
+            venue.trades[CLOSE_TRADE] = dict(
+                lb.trade_row(CLOSE_TXID, PAIR, vol="0.15000000", price="150.00", trade_id=1009, side="sell", time=closed_at),
+                posstatus="closed",
+            )
+            second = node.run(3, venue, data, exec_, window=PHASE1_WINDOW)
+    finally:
+        valkey.stop()
+
+    completes = [
+        [line.split("KRAKEN: ", 1)[1] for line in _lines(record["log"], "Reconciliation complete")] for record in (first, second)
+    ]
+    assert first["errors"] == [] and second["errors"] == [], (first["errors"], second["errors"])
+    assert completes == [
+        ["reconciled=1, external=0, open=0, fills=0, positions=1, skipped=0, filtered=0"],
+        ["reconciled=0, external=1, open=0, fills=1, positions=0, skipped=0, filtered=0"],
+    ], (
+        f"{_BUMP}: the first start no longer books the close it missed as one position difference, or the second no longer "
+        f"takes the closing order and its fill with no second difference: {completes}"
+    )
+
+    [minted] = [p for p in first["at_start"]["positions"] if p["strategy_id"] == "EXTERNAL"]
+    tags = list(minted["order_tags"].values())
+    assert (minted["signed_qty"], tags, closed_at * 1e9 < minted["ts_opened"]) == ("-0.15", [["RECONCILIATION"]], True), (
+        f"{_BUMP}: the first start no longer books the gap as one `RECONCILIATION` order under `EXTERNAL`, opened after the "
+        f"close it missed, so the second start below no longer holds the fill older than that position: {minted}, {closed_at}"
+    )
+
+    counts = [record["metrics"]["reconciliation_positions"] for record in (first, second)]
+    assert counts == [[1], [1]], (
+        f"{_BUMP}: the count the page reads no longer stands at 1 across both starts of the route it exists for: {counts}"
+    )
+
+    held_at_end = second["at_end"]
+    [closing_order] = [order for order in held_at_end["orders"] if order["client_order_id"] == CLOSE_TXID]
+    assert (
+        closing_order["strategy_id"],
+        closing_order["status"],
+        closing_order["filled_qty"],
+        closing_order["trade_ids"],
+        closing_order["tags"],
+    ) == ("EXTERNAL", "FILLED", "0.15000000", [CLOSE_TRADE], ["VENUE"]), (
+        f"{_BUMP}: the closing fill no longer lands on its order, imported under `EXTERNAL` with `VENUE`: {closing_order}"
+    )
+    reached = [p["id"] for p in held_at_end["positions"] if CLOSE_TRADE in p["trade_ids"]]
+    assert reached == [], (
+        f"{_BUMP}: the closing fill older than the minted position now reaches a position, where it went to the order "
+        f"alone. A later fill reaches the minted position and a second mint puts the quantity back, so read the "
+        f"`trade_ids`, not the quantity: {reached}"
+    )
+
+    assert _open_positions(held_at_end) == [("EXTERNAL", "-0.15"), ("ShadowStrategy-000", "0.4")], (
+        f"{_BUMP}: the engine's own position no longer stands at the 0.4 Kraken no longer holds, beside the minted offset, "
+        f"after the second start: {_open_positions(held_at_end)}"
+    )
+    netted = [record["venue_state_at_start"]["positions"][SYMBOL] for record in (first, second)]
+    assert netted == [0.25, 0.25], (
+        f"{_BUMP}: the venue record no longer nets the own position and the offset to Kraken's 0.25, the figure sizing reads: {netted}"
+    )
+
+    said = {
+        "venue_holds": _lines(second["log"], "the venue holds"),
+        "order_state_only": _lines(second["log"], "to order state only"),
+        "the_order_above_info": [line for line in _lines(second["log"], CLOSE_TXID) if "[INFO]" not in line],
+        "the_trade_above_info": [line for line in _lines(second["log"], CLOSE_TRADE) if "[INFO]" not in line],
+    }
+    assert said == {"venue_holds": [], "order_state_only": [], "the_order_above_info": [], "the_trade_above_info": []}, (
+        f"{_BUMP}: a line now says the closing fill went to the order alone, where the second start said nothing above INFO "
+        f"-- read it, and whether the page's runbook can now name this route: {said}"
+    )

@@ -185,6 +185,7 @@ def _dump(cache) -> dict:
             "filled_qty": _s(order.filled_qty),
             "trade_ids": [_s(trade_id) for trade_id in order.trade_ids],
             "is_open": order.is_open,
+            "tags": order.tags,
         }
         for order in cache.orders()
     ]
@@ -198,6 +199,8 @@ def _dump(cache) -> dict:
             "realized_pnl": _s(position.realized_pnl),
             "is_open": position.is_open,
             "order_tags": _order_tags(cache, position),
+            "trade_ids": [_s(trade_id) for trade_id in position.trade_ids()],
+            "ts_opened": position.ts_opened,
         }
         for position in cache.positions()
     ]

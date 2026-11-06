@@ -3,6 +3,7 @@
 # file, then any class, then the name with its parametrize brackets, sorted.
 tests/test_b1_records_reproduce.py::test_the_b1_subject_reproduces_its_record[record-45]
 tests/test_b1_records_reproduce.py::test_the_b1_subject_reproduces_its_record[record-46]
+tests/test_cache_restart.py::test_a_close_the_first_start_missed_across_two_starts
 tests/test_cache_restart.py::test_a_doge_lot_held_across_two_restarts_loads_the_account_at_each_start_and_the_account_carries_it_as_doge
 tests/test_cache_restart.py::test_a_fill_made_while_the_engine_was_down_is_booked_from_the_trade_history
 tests/test_cache_restart.py::test_a_position_the_library_booked_is_counted_and_a_hand_orders_is_not
