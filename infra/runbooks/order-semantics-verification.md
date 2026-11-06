@@ -98,7 +98,7 @@ The sweep of `docs/open-topics/README.md` and `.local/memo.md` for anything that
 Decide this first; it can predate everything above. A pass binds to one exact version string (§2.1), so the freeze runs from the pass to the bump's merge.
 
 - Freeze before the pass. Cut the bump branch from develop, land the pin and the lock on it, and run the probes from its worktree (§2). Do not re-pin or re-lock that branch after the pass: the record would then name a build the branch no longer installs.
-- The bump's PR stays red until its write-up (§7.4) lands on the same branch: `tests/test_nautilus_pin_verified.py` fails the required `Full test suite` check on a tree whose installed nautilus-trader the record lacks. Adding the version to the record ahead of the pass is the move §7.4 (1) forbids.
+- The bump's PR stays red until its write-up (§7.4) lands on the same branch: `tests/test_nautilus_pin_verified.py` fails the required `Full test suite` check on a tree whose installed nautilus-trader the record lacks. Past `2.0.0rc9.dev20261103` `tests/test_nautilus_adapter.py` fails it too, until the two-start case lands in `tests/test_cache_restart.py`. Adding the version to the record ahead of the pass is the move §7.4 (1) forbids.
 - A bump in the repo does not touch a running container, so an engine armed on the old version keeps trading on it until an image built from the merged tree is deployed; the converge assert and the runtime gate still check that image before it arms.
 - A bump after a pass owes its own pass, at the full attended cost, or the pin stays. There is no third option: a bump can move fill, cancel, post-only or reconciliation behaviour without moving anything the suite can see (no count command: the adapter's venue behaviour is upstream; the attended probes are what read it).
 
@@ -352,7 +352,7 @@ The harness prints the table under `PROBE RESULTS -- paste these rows into docs/
 3. The arming step in [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window): pre-probe step 4, whose unmatched-external baseline and live-orders-boot caveat both name the version they were taken on.
 4. The previous version's `docs/reference/adapter-verification/` record, cross-linked so the series reads as one and neither file claims to be current.
 
-`tests/test_nautilus_adapter.py` and `tests/test_nautilus_pin_verified.py` are deliberately not on this list: neither carries a version string to sweep; the first compares the installed version with the pin, the second reads the record.
+`tests/test_nautilus_adapter.py` and `tests/test_nautilus_pin_verified.py` are deliberately not on this list: the first compares the installed version with the pin, and its one version string is §1.6's two-start limit, which a bump does not move; the second reads the record.
 
 Paste the table; leave the evidence JSON where `--evidence-dir` put it (`$EVID`, outside the repo tree) and never commit it.
 

@@ -1,15 +1,18 @@
+import ast
 import re
 import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 
 import nautilus_trader
+import pytest
 from nautilus_trader.adapters.kraken import (
     KrakenDataClientConfig,
     KrakenDataClientFactory,
     KrakenExecutionClientConfig,
     KrakenExecutionClientFactory,
 )
+from packaging.version import Version
 
 _REPO = Path(__file__).resolve().parents[1]
 
@@ -39,6 +42,45 @@ def test_pinned_version():
     execution gate the RUNNING interpreter's version, both in `cli/engine/order-semantics-verified.json`.
     """
     assert nautilus_trader.__version__ == _pinned_nautilus_version()
+
+
+# Upstream dd8afce410: a first start can book a missed close as an `EXTERNAL` reconciliation position, the second sends
+# its older fill order-only behind it, no log line and the net still right. The owner's word bars every pin past this
+# version until the case below exists, whether or not that wheel carries the commit.
+_NEWEST_PIN_WITHOUT_THE_TWO_START_CASE = Version("2.0.0rc9.dev20261103")
+_TWO_START_CASE = "test_a_close_the_first_start_missed_across_two_starts"
+
+
+def _carries_the_two_start_case(source: str) -> bool:
+    return any(
+        isinstance(node, ast.FunctionDef) and node.name == _TWO_START_CASE and not node.decorator_list
+        for node in ast.parse(source).body
+    )
+
+
+@pytest.mark.parametrize(
+    ("source", "carries"),
+    [
+        (f"def {_TWO_START_CASE}(tmp_path):\n    assert True\n", True),
+        (f"# def {_TWO_START_CASE}(tmp_path):\n", False),
+        (f"'def {_TWO_START_CASE}(tmp_path):'\n", False),
+        (f"@pytest.mark.skip\ndef {_TWO_START_CASE}(tmp_path):\n    pass\n", False),
+        (f"def {_TWO_START_CASE}_placeholder(tmp_path):\n    pass\n", False),
+        (f"class Other:\n    def {_TWO_START_CASE}(self):\n        pass\n", False),
+    ],
+)
+def test_only_a_bare_module_level_def_counts_as_the_two_start_case(source, carries):
+    assert _carries_the_two_start_case(source) is carries
+
+
+def test_a_pin_past_the_limit_carries_the_two_start_case():
+    pinned = Version(_pinned_nautilus_version())
+    assert pinned <= _NEWEST_PIN_WITHOUT_THE_TWO_START_CASE or _carries_the_two_start_case(
+        (_REPO / "tests/test_cache_restart.py").read_text()
+    ), (
+        f"nautilus-trader {pinned} is past {_NEWEST_PIN_WITHOUT_THE_TWO_START_CASE}: write `{_TWO_START_CASE}` in tests/test_cache_restart.py "
+        "as an undecorated def, driving the two-start route on this wheel, and read what it does before the engine runs it"
+    )
 
 
 def test_the_arming_gate_consults_this_interpreter_and_the_committed_record(tmp_path):
