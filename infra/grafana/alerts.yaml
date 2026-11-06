@@ -2944,7 +2944,7 @@ rules:
     execErrState: Alerting
     for: 5m
     annotations:
-      summary: "A capture host's root filesystem (the unbackfillable L2 spool, /var/lib/zcrypto-capture) is below 10% free. Early warning -- the daemon's 1 GiB watermark + healthchecks dead-man are the last line. Check both prune timers (zcrypto-capture-prune for the spool, zcrypto-engine-journal-prune for the engine journal) and for an unexpected disk consumer. Runbook: infra/runbooks/hosts.md#zcrypto-capture-disk-low"
+      summary: "A capture host's root filesystem (the unbackfillable L2 spool, /var/lib/zcrypto-capture) is below 10% free. Early warning -- the daemon's 1 GiB watermark + dead-man are the last line. Check both prune timers (zcrypto-capture-prune for the spool, zcrypto-engine-journal-prune for the engine journal) and for an unexpected disk consumer. Runbook: infra/runbooks/hosts.md#zcrypto-capture-disk-low"
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "301"
       unit: "of the spool filesystem still free (a fraction, not a percent)"

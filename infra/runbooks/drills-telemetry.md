@@ -789,7 +789,7 @@ On the node (`ssh hc`), with `date -u` beside it:
 sudo systemctl stop zcrypto-hc.service
 ```
 
-Held until the main channel's first page, then the *Operator action*. Nothing heavier (standing rules above).
+Held until `zcrypto-hcio-watchdog`'s `999` page, past any earlier page *Must fire* announces as possible, then the *Operator action*. Nothing heavier (standing rules above).
 
 ### Must fire
 
@@ -798,13 +798,13 @@ Held until the main channel's first page, then the *Operator action*. Nothing he
 - **Announced as possible**: [`zcrypto-hc-service-down`](hc.md#zcrypto-hc-service-down) (critical, `metrics`) in the main channel, evaluated on the observability node. The self-check writes `web=FAIL` while the container is stopped, and the rule's `[15m]` window empties of `web=ok` 10 to 15 min after the stop, its last one at most five minutes before it, so the rule pages where the hold runs that long.
 - **Announced as possible**: [`zcrypto-mon-unlevelled-log-lines`](mon.md#zcrypto-mon-unlevelled-log-lines) (warning, `logs`) on the observability node, for `ops`: an ops timer whose ping falls inside the stop writes `curl`'s error line to a journal ops' Alloy ships, in a shape its stages may not level. The pingers' own Python lines log at `WARNING`, `healthcheck ping failed target=zcrypto-hc.zhaow.me`, and page nothing.
 
-**On the return, measured, announced beforehand and read as the drill's**: each check whose `timeout` + `grace`, counted from its own last ping, the stop outlasted reads `DOWN` until its next ping and pages `DOWN`, then `UP`, through the service's Slack integration. The shortest bound on the service is 600 s + 600 s, so a stop ended at the first page may outlast none, which the entry says; drill X2's thirty minutes outlasts that bound.
+**On the return, measured, announced beforehand and read as the drill's**: each check whose `timeout` + `grace`, counted from its own last ping, the stop outlasted reads `DOWN` until its next ping and pages `DOWN`, then `UP`, through the service's Slack integration. The shortest bound on the service is 600 s + 600 s, so a stop ended at the watchdog's page may outlast none, which the entry says; drill X2's thirty minutes outlasts that bound.
 
 **How a page from the service is read**: arriving in the main channel, beside [`zcrypto-hc-error-logs`](hc.md#zcrypto-hc-error-logs) on the observability node, by that section's step 2 read. A page that does not arrive is a dispatch failure, which that rule pages; one that does not arrive with the rule quiet is the defect of the clone that section names, recorded in the entry. The check's own log on the service, on its page, says which flips it recorded.
 
 ### Operator action
 
-At the first page, with `date -u` beside it:
+At the watchdog's page, with `date -u` beside it:
 
 ```
 sudo systemctl start zcrypto-hc.service
@@ -831,6 +831,7 @@ That the node's death pages as the service's does, at `999`, with the node's own
 ### Preconditions
 
 - An attended window; standing rules above; drill X1 passed before it.
+- Both capture daemons and ops' liquidations recorder run an image whose dead-man ping waits off the event loop: `git grep -c 'asyncio.to_thread(ping_healthcheck' <the running image's revision> -- cli/capture/command.py cli/liquidations/command.py` lists each file with `:1`. On an older image a powered-off node holds up to 5 s a minute on live L2 capture's event loop, which takes the owner's word in the entry, or waits for the rollout.
 - X1's reads of the service: `max(hc_checks_down_total) == 0` immediately before, `hc-provision.py status` written down, and the self-check's last line ending `-> pinged`. Not 0 ⇒ clear the down check first, or record **`blocked`** with the reason.
 - The node ships to the observability node, `uv run python infra/scripts/grafana-query.py --stack mon 'count(up{host="zcrypto-hc"})'` reading 2, and the node's rules read clean (drill W1's read): a page from the `zcrypto-hc` group is a reading, and it has to be this drill's.
 - **Announced in the main channel beforehand**: the watchdog's `999`; the three rules on the observability node below, as expected; `zcrypto-nas-archive-pull-errors` and `zcrypto-mon-unlevelled-log-lines` as possible; and, on the return, each check's `DOWN` then `UP`, to be read as the drill's and as no host's.
@@ -838,7 +839,7 @@ That the node's death pages as the service's does, at `999`, with the node's own
 
 ### Induce
 
-In the Linode Cloud Manager, on the Linode `zcrypto-hc`'s page, **Power Off**, with `date -u` on the workstation beside the click; thirty minutes later, **Power On**, timestamped the same way. Nothing from inside the host: the induction is the provider's, as a lost host's would be. Nothing on the fleet is touched.
+In the Linode Cloud Manager, on the Linode `zcrypto-hc`'s page, **Power Off**, with `date -u` on the workstation beside the click; thirty minutes later, **Power On**, timestamped the same way. Nothing from inside the host: the induction is the provider's, as a lost host's would be. Nothing on the fleet is touched but the pings, each waiting out its 5 s timeout off its daemon's event loop.
 
 ### Must fire
 
@@ -872,6 +873,7 @@ That a lost node comes back from the repository and an off-host backup with no k
 ### Preconditions
 
 - An attended window; standing rules above; drill X2 passed before it.
+- Both capture daemons and ops' liquidations recorder run an image whose dead-man ping waits off the event loop: `git grep -c 'asyncio.to_thread(ping_healthcheck' <the running image's revision> -- cli/capture/command.py cli/liquidations/command.py` lists each file with `:1`. On an older image a powered-off node holds up to 5 s a minute on live L2 capture's event loop, which takes the owner's word in the entry, or waits for the rollout.
 - X1's reads of the service: `max(hc_checks_down_total) == 0` immediately before, `hc-provision.py status` written down, and the self-check's last line ending `-> pinged`. Not 0 ⇒ clear the down check first, or record **`blocked`** with the reason.
 - The bridgehead's Caddy mirror answers, and no Caddy rollback holds it: [`hc.md#hc-dark`](hc.md#hc-dark) step 5's two reads.
 - In the Cloud Manager: the Linode `zcrypto-hc` with Backups enabled, read on its Backups tab, and the firewall `zcrypto-hc` attached to it with inbound Accept TCP `10022` and TCP `443` for both families and ICMP, the state the node's first converge left it in.
@@ -926,7 +928,7 @@ Must fire, in the main channel:
 
 ### Operator action
 
-The induction is its own restore. Confirm by value: [`hc.md#hc-dark`](hc.md#hc-dark) step 7's reads; [`hc.md#hc-backup`](hc.md#hc-backup) step 5 over the next pull; the firewall's rule list without TCP `22`; and `ssh hc hostname` printing `zcrypto-hc`. Once the acceptance's first reads are green, [`hc-restore`](hc.md#hc-restore) step 6 removes the node's copies, and `rm -f .tmp/hc-YYYY-MM-DDTHHMMSSZ.sqlite` the workstation's. **Re-true the `since` cells of the `hc` and `alloy` rows for the node in [`fleet-pins.md`](../../docs/reference/fleet-pins.md) in the same step** (standing rules above): `ssh hc "sudo docker inspect zcrypto-hc --format '{{.State.StartedAt}}'"`.
+The induction is its own restore. Confirm by value: [`hc.md#hc-dark`](hc.md#hc-dark) step 7's reads; [`hc.md#hc-backup`](hc.md#hc-backup) step 5 over the next pull after *Induce* step 6, its `--since` narrowed to that run, since each earlier pull fails by the window below; the firewall's rule list without TCP `22`; and `ssh hc hostname` printing `zcrypto-hc`. The node's converges being un-tagged, [`hc-patch-pass`](hc.md#hc-patch-pass) follows in the same sitting. Once the acceptance's first reads are green, [`hc-restore`](hc.md#hc-restore) step 6 removes the node's copies, and `rm -f .tmp/hc-YYYY-MM-DDTHHMMSSZ.sqlite` the workstation's. **Re-true the `since` cells of the `hc` and `alloy` rows for the node in [`fleet-pins.md`](../../docs/reference/fleet-pins.md) in the same step** (standing rules above): `ssh hc "sudo docker inspect zcrypto-hc --format '{{.State.StartedAt}}'"`.
 
 **The NAS pull's window against its loop, measured.** Every pull of the node's backups fails from the rebuild's start until the rebuilt node's first backup run, *Induce* step 6: past the `known_hosts` line's replacement, on the rebuilt node's `rrsync -ro`, which refuses the pull until that run creates `/var/backups/zcrypto-hc`. So `zcrypto-nas-archive-pull-errors` pages its `hc backup pull failed` line only where the loop's pull falls inside the window, certain only for a window longer than a cycle, the gap between two consecutive cycle lines the read below lists. The read, on the NAS as that run closes the window, its `--since` the window's start less two hours, written as that full UTC timestamp, so it reaches the cycle before the window:
 
