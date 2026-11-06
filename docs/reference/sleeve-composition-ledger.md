@@ -2,7 +2,7 @@
 
 Every observed change in which of the deployable's sleeves carry exposure, with the gross on each side of it.
 
-The deployable (registry record 47, superseding 44) combines three sleeves — **B**, **A1**, **A2** — at fixed one-third weights, which the exposure governor scales down two independent ways — five bars at half after a bar losing the daily limit or more, and a drawdown ladder — and leaves at 1.0 otherwise. A sleeve sitting flat contributes zero and costs nothing to carry; it re-arms on its own signal, with no deploy and no config change. So the book's *structure* changes without anything in this repo changing, and nothing but this file records that it did.
+The deployable (registry record 47, superseding 44) combines three sleeves — **B**, **A1**, **A2** — at fixed one-third weights, which the exposure governor scales down. A sleeve sitting flat contributes zero and costs nothing to carry; it re-arms on its own signal, with no deploy and no config change. So the book's *structure* changes without anything in this repo changing, and nothing but this file records that it did.
 
 **Why the file exists.** The `zcrypto-engine-sleeve-count-changed` alert ages out within a day and is not a record; its runbook's step 4 writes each transition here, and a later go-live gate reads this history, not the alert.
 
@@ -76,4 +76,4 @@ The book equals the summed sleeve gross ÷ 6 on both sides, exactly.
 | `sleeve_gross{sleeve="A2"}` | 0 | 0.012834323780066924 |
 | **final book gross** (Σ\|target weight\|, governed) | **0.0643604976631468** | **0.0664995516264913** |
 
-The book equals the summed sleeve gross ÷ 6 on both sides, to within one ulp, and equals each cycle record's `sum|final_targets|`. A2 sat flat from 2026-10-29's 20Z cycle through this 12Z one.
+The book equals the summed sleeve gross ÷ 6 on both sides, to within one ulp.
