@@ -303,7 +303,7 @@ async def _healthcheck_loop(
         # handlers return early and NOTHING is written while the WS stays connected and no gap opens. `watermark.measurable` holds
         # it while the probe fails -- "cannot measure" is not "healthy", and the check's grace absorbs a transient blip.
         if client.connected and monitor.is_healthy(pairs) and not watermark.breached and watermark.measurable:
-            ping_healthcheck(url)
+            await asyncio.to_thread(ping_healthcheck, url)
 
 
 # How often the recovery ladder is evaluated; well under its grace, so a retry fires close to when it is due.

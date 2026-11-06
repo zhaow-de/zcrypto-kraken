@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import shutil
-import urllib.error
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -145,14 +144,13 @@ class GapMonitor:
 
 
 def ping_healthcheck(url: str | None, *, timeout: int = DEFAULT_HEALTHCHECK_TIMEOUT_SECS) -> None:
-    """Best-effort liveness ping to a dead-man URL, a no-op on a falsy `url` since the feature is optional.
-    Never raises on a transport failure: a dead-man's-switch alerts on a MISSED ping, so the failure is
-    logged and swallowed."""
+    """Best-effort liveness ping to a dead-man URL. Never raises: a dead-man's-switch alerts on a MISSED ping, so a
+    failure is logged and swallowed, and a raise here would end the caller's loop until a restart."""
     if not url:
         return
     try:
         urllib.request.urlopen(url, timeout=timeout)  # noqa: S310 - fixed https dead-man URL from env
-    except (urllib.error.URLError, OSError) as exc:
+    except Exception as exc:
         logger.warning(ping_failure(url, exc))
 
 
