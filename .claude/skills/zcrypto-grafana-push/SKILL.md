@@ -28,7 +28,7 @@ The script pushes the working tree it runs from, whole, and its prune deletes th
 ## Step 3 — verify
 
 - Read each new or changed rule's first sample by value with `grafana-query.py`, `--loki` for a Loki rule; `(no series)` is a fail, not a zero.
-- Read each new or changed panel's query the same way and look at the panel in the node's UI, the narrowed-variable case included, as the script's header says: the node runs no image renderer.
+- Read each new or changed panel's query the same way and look at the panel in the node's UI, the narrowed-variable case included, as the script's header says.
 
 ## Step 4 — the prune
 
