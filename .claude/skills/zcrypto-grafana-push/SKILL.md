@@ -1,6 +1,6 @@
 ---
 name: zcrypto-grafana-push
-description: Push the committed dashboards and alert rules to Grafana Cloud: the one invocation with its credentials, the preflight, verification by value, the prune.
+description: Push the committed dashboards and alert rules to the observability node: the invocation, the preflight, verification by value, the prune.
 ---
 
 # zcrypto-grafana-push
@@ -9,21 +9,13 @@ description: Push the committed dashboards and alert rules to Grafana Cloud: the
 
 ## Step 0 — the invocation
 
-From the repo root, once Steps 1 and 2 pass:
+From the repo root, once Steps 1 and 2 pass: the line in `infra/runbooks/mon.md#mon-push` step 1.
 
-```bash
-GRAFANA_SLACK_WEBHOOK_URL= \
-  GRAFANA_SA_TOKEN="$(uv run python -c 'import sys; sys.path.insert(0, "infra/scripts"); from grafana_auth import vault_var; print(vault_var("grafana_sa_token"))')" \
-  PATH="$PWD/.venv/bin:$PATH" ./infra/scripts/grafana-push.sh
-```
-
-A routine push passes `GRAFANA_SLACK_WEBHOOK_URL` empty: the receivers are live, and a shell that exported a webhook then leaves Grafana Cloud's receivers where they point.
-
-In the dual period — while `infra/scripts/grafana_auth.py`'s `STACKS` holds both stacks — a push is two, from the one checkout that passed Step 2, in the same sitting: the Grafana Cloud push above, whose first line reads `skip-groups=zcrypto-mon zcrypto-hc`, then the node's, `infra/runbooks/mon.md#mon-push` step 1. A push that reached one stack and not the other is followed by the other from the same checkout.
+A routine push passes `GRAFANA_SLACK_WEBHOOK_URL` empty: the receivers are live, and a shell that exported a webhook then leaves the node's receivers where they point.
 
 ## Step 1 — the preflight over the series the rules read
 
-For each rule the push adds or changes (`git diff <base> -- infra/grafana/alerts.yaml`), read what its expression selects on each host it targets: a Prometheus rule's selector with `uv run python infra/scripts/grafana-query.py '<selector>'`, a Loki rule's metric expression, less its `or on() vector(0)`, with `uv run python infra/scripts/grafana-query.py --loki '<logql>'`. `(no series)` where a healthy host always publishes holds the push until a converge makes it publish. `noDataState` does not decide this: it covers a query that returns nothing, while an `or on() vector(0)`, or a `count()` across hosts one of which is absent, returns a value and fires the rule. A rule of a group the push skips (`GRAFANA_SKIP_RULE_GROUPS`, by default the groups the observability node alone evaluates, `zcrypto-mon` and `zcrypto-hc`) is not sent by this push and is not read here: it is read the same way with `--stack mon`, before the node's push.
+For each rule the push adds or changes (`git diff <base> -- infra/grafana/alerts.yaml`), read what its expression selects on each host it targets: a Prometheus rule's selector with `uv run python infra/scripts/grafana-query.py '<selector>'`, a Loki rule's metric expression, less its `or on() vector(0)`, with `uv run python infra/scripts/grafana-query.py --loki '<logql>'`. `(no series)` where a healthy host always publishes holds the push until a converge makes it publish. `noDataState` does not decide this: it covers a query that returns nothing, while an `or on() vector(0)`, or a `count()` across hosts one of which is absent, returns a value and fires the rule.
 
 ## Step 2 — where to push from
 
@@ -35,13 +27,13 @@ The script pushes the working tree it runs from, whole, and its prune deletes th
 
 ## Step 3 — verify
 
-- Read each new or changed rule's first sample by value with `grafana-query.py`, `--loki` for a Loki rule, and each new panel's query the same way; `(no series)` is a fail, not a zero. A rule the push skipped, and a panel of the Fleet health board's `Observability node` or `Dead-man node` row, read series the observability node holds and Grafana Cloud does not: they are read the same way with `--stack mon`, after the node's push.
-- Render each new or changed dashboard as the script's header says, the narrowed-variable case included; `GRAFANA_URL` is `https://zcrypto2026.grafana.net`, the script's default, which the rendering shell does not hold.
+- Read each new or changed rule's first sample by value with `grafana-query.py`, `--loki` for a Loki rule; `(no series)` is a fail, not a zero.
+- Read each new or changed panel's query the same way and look at the panel in the node's UI, the narrowed-variable case included, as the script's header says: the node runs no image renderer.
 
 ## Step 4 — the prune
 
-`GRAFANA_PRUNE=1` turns the script's orphan report into deletions, scoped to our folder, from a `develop` checkout that passes Step 2's freshness test and its open-PR hold; a superseded rule is pruned only in `.claude/rules/fleet-deploys.md`'s order. In the dual period the prune runs on each stack's own invocation from Step 0, and Grafana Cloud's `ORPHAN (live, of skipped group zcrypto-mon)` rules are deleted with the rest: the group is the node's alone.
+`GRAFANA_PRUNE=1` turns the script's orphan report into deletions, scoped to our folder, from a `develop` checkout that passes Step 2's freshness test and its open-PR hold; a superseded rule is pruned only in `.claude/rules/fleet-deploys.md`'s order.
 
 ## Closeout
 
-The PR body's `## Grafana push` section (Step 2) is the record: nothing in the tree records a push, and Grafana Cloud carries no identifier to match one against. In the dual period the section names both stacks' pushes, or the one still owed.
+The PR body's `## Grafana push` section (Step 2) is the record: nothing in the tree records a push, and the node carries no identifier to match one against.
