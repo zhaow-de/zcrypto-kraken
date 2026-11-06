@@ -2,7 +2,7 @@
 
 Every observed change in which of the deployable's sleeves carry exposure, with the gross on each side of it.
 
-The deployable (registry record 47, superseding 44) combines three sleeves — **B**, **A1**, **A2** — at fixed one-third weights, which the exposure governor scales down two independent ways — five bars at half after a bar losing the daily limit or more, and a drawdown ladder — and leaves at 1.0 otherwise. A sleeve sitting flat contributes zero and costs nothing to carry; it re-arms on its own signal, with no deploy and no config change. So the book's *structure* changes without anything in this repo changing, and nothing but this file records that it did.
+The deployable (registry record 47, superseding 44) combines three sleeves — **B**, **A1**, **A2** — at fixed one-third weights, which the exposure governor scales down. A sleeve sitting flat contributes zero and costs nothing to carry; it re-arms on its own signal, with no deploy and no config change. So the book's *structure* changes without anything in this repo changing, and nothing but this file records that it did.
 
 **Why the file exists.** The `zcrypto-engine-sleeve-count-changed` alert ages out within a day and is not a record; its runbook's step 4 writes each transition here, and a later go-live gate reads this history, not the alert.
 
@@ -65,3 +65,27 @@ The book again equals the summed sleeve gross ÷ 6 on both sides, to within one 
 | **final book gross** (Σ\|target weight\|, governed) | **0.08626007152158495** | **0.0847598725383454** |
 
 The book equals the summed sleeve gross ÷ 6 on both sides, exactly.
+
+### 2026-11-04 — A2 re-arms; the three sleeves again
+
+| | last pre-transition cycle<br>2026-11-04 12Z | first post-transition cycle<br>2026-11-04 16Z |
+| --- | --- | --- |
+| `zcrypto_engine_active_sleeves` | 2 | **3** |
+| `sleeve_gross{sleeve="B"}` | 0.2331803027478531 | 0.2331803027478531 |
+| `sleeve_gross{sleeve="A1"}` | 0.1529826832310278 | 0.1529826832310278 |
+| `sleeve_gross{sleeve="A2"}` | 0 | 0.012834323780066924 |
+| **final book gross** (Σ\|target weight\|, governed) | **0.0643604976631468** | **0.0664995516264913** |
+
+The book equals the summed sleeve gross ÷ 6 on both sides, to within one ulp.
+
+### 2026-11-06 — A2 goes flat again; the book runs on B and A1
+
+| | last pre-transition cycle<br>2026-11-05 20Z | first post-transition cycle<br>2026-11-06 00Z |
+| --- | --- | --- |
+| `zcrypto_engine_active_sleeves` | 3 | **2** |
+| `sleeve_gross{sleeve="B"}` | 0.22201612480558255 | 0.1988646935144358 |
+| `sleeve_gross{sleeve="A1"}` | 0.14337346393053554 | 0.12618508297147388 |
+| `sleeve_gross{sleeve="A2"}` | 0.012509402400102607 | 0 |
+| **final book gross** (Σ\|target weight\|, governed) | **0.06298316518937011** | **0.054174962747651614** |
+
+The book equals the summed sleeve gross ÷ 6 on both sides, to within one ulp. A2's step is about a quarter of the book's fall at this cycle: B and A1 fell with it.
