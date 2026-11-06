@@ -75,10 +75,12 @@ ops_verify_replay_state_subdir: verify-replay-state
 ops_verify_replay_healthcheck_url: ""
 ops_verified_replay_healthcheck_url: ""
 
-# T0083 mutual watchdog: the zcrypto-grafana-watchdog check's ping URL (set per host) and the
-# Grafana health endpoint the pinger probes. Empty URL skips the ping, same semantics as above.
+# T0083 mutual watchdog: the zcrypto-grafana-watchdog check's ping URL (set per host), the health
+# endpoint of the Grafana that pages, whose answer decides the ping, and the dead-man service's,
+# read beside it for the both-dark page. Empty URL skips the ping, same semantics as above.
 ops_grafana_watchdog_healthcheck_url: ""
-ops_grafana_watchdog_probe_url: "https://zcrypto2026.grafana.net/api/health"
+ops_grafana_watchdog_probe_url: "https://zcrypto-mon.zhaow.me/api/health"
+ops_grafana_watchdog_hc_probe_url: "https://{{ hc_hostname }}/api/v3/status/"
 
 # The keep-alive's target. `/api/search?limit=1` is the cheapest call that exercises the Grafana APP
 # rather than an edge -- which is the whole point, since the unauthenticated `/api/health` probe above

@@ -149,6 +149,7 @@ def test_vault_var_reads_the_file_it_is_given(monkeypatch):
 # --- the stack table: the observability node, and what follows it --------------------------------
 REPO = Path(__file__).resolve().parents[1]
 MON_DEFAULTS = REPO / "infra/ansible/roles/mon/defaults/main.yml"
+OPS_DEFAULTS = REPO / "infra/ansible/roles/ops/defaults/main.yml"
 PUSH = REPO / "infra/scripts/grafana-push.sh"
 
 
@@ -161,6 +162,13 @@ def test_the_table_holds_the_node_alone_and_reads_it_when_none_is_named():
 def test_the_push_scripts_default_url_is_the_default_stacks():
     (default,) = re.findall(r'^export GRAFANA_URL="\$\{GRAFANA_URL:-([^}]+)\}"$', PUSH.read_text(), re.M)
     assert default == ga.STACKS[ga.DEFAULT_STACK].url
+
+
+def test_the_ops_watchdog_probes_the_stack_that_pages():
+    assert (
+        yaml.safe_load(OPS_DEFAULTS.read_text())["ops_grafana_watchdog_probe_url"]
+        == f"{ga.STACKS[ga.DEFAULT_STACK].url}/api/health"
+    )
 
 
 def test_the_mon_stack_is_the_role_s_public_name_and_the_cache_the_role_writes():
