@@ -31,7 +31,7 @@ An attended session for the pass (`order-semantics-verification.md` §0: ~EUR 0.
 
 Run on the bump branch, before any money:
 
-- `tests/test_nautilus_adapter.py` — the installed version equals the pin, and a pin past its limit, `2.0.0rc9.dev20261103`, owes `test_a_close_the_first_start_missed_across_two_starts` in `tests/test_cache_restart.py` on the bump's branch, driving that route on this wheel. The limit is not moved to clear the red.
+- `tests/test_nautilus_adapter.py` — the installed version equals the pin, and a pin past `_NEWEST_PIN_WITHOUT_THE_TWO_START_CASE` owes the two-start case its red names, on the bump's branch. That limit is not moved to clear the red.
 - `tests/test_nautilus_interface_pin.py` — the symbols, shapes and values `cli/` depends on, at the paths it imports them from; this file answers "what changed under us" in one run.
 - `tests/test_kraken_wheel_contract.py`, `tests/test_kraken_order_semantics_probe.py` and `tests/test_order_semantics_probe.py` — the harness and its contract against the new wheel.
 - `tests/test_cache_restart.py` — the two-process restart harness against a real `valkey-server`, the library's restore and reconciliation paths on this build. Its spot-lot and DOGE cases record what `2.0.0rc6.dev20260921` does and are expected red where that is fixed: `docs/reference/adapter-verification/2.0.0rc6.dev20260921.md`'s `## For the next pin` says what each red is, and each is written to the new record before its case is re-recorded.
