@@ -145,7 +145,7 @@ rules:
             # ceiling + one worst-case missed cycle + margin; a genuinely stalled pull grows lag
             # without bound, so that margin costs ~1h of detection, not correctness, and a
             # re-derivation gains nothing until the engine's cadence changes. Keep in lockstep with
-            # gate-export's --lag-fail-seconds default -- that one gates the hc.io dead-man ping.
+            # gate-export's --lag-fail-seconds default -- that one gates the dead-man ping.
     noDataState: Alerting
     execErrState: Alerting
     for: 5m
@@ -312,7 +312,7 @@ rules:
     # unpublished until the first cycle actually measures a composition (an unlabelled Gauge would
     # otherwise publish 0.0 from process start, i.e. "every sleeve is flat", which is a claim and a
     # false one). Absence is the dead-man's business: the engine going dark is owned by the
-    # healthchecks.io switch and the cycle-completed staleness, not by this rule.
+    # dead-man switch and the cycle-completed staleness, not by this rule.
     noDataState: OK
     execErrState: Alerting
     for: 5m
@@ -351,7 +351,7 @@ rules:
   # engine runs and nothing listens on 9102 -- that series reads 0 permanently and an unscoped rule
   # would page forever on the secondary. An UNSCOPED, unconditional scrape-liveness rule is refused
   # outright: unattended engine liveness rides zcrypto-engine-cycle-stale below, zcrypto-engine-log-
-  # dead, and the healthchecks.io dead-man switch, and a bare `up == 0` page would only add detection
+  # dead, and the dead-man switch, and a bare `up == 0` page would only add detection
   # latency nothing needs. What the scrape-level signal DOES buy is a conjunction nothing else can
   # express -- zcrypto-engine-dark-with-exposure below pairs it with a position open at last
   # sight, scoped `host="zcrypto"` on both halves for exactly the reason above.
@@ -2902,7 +2902,7 @@ rules:
   # making each content rule page on NoData -- which would false-page on a transient Alloy
   # remote_write gap. Division of labor: the content rules own "bad while alive"; the canaries own
   # "this host's capture log plane is dark" -- a parse-chain regression on a live daemon (the T0060
-  # class, which silently blinds the ERROR rule) OR that host's Alloy dying; the healthchecks.io
+  # class, which silently blinds the ERROR rule) OR that host's Alloy dying; the host's
   # dead-man (withheld-ping, T0032; an independent failure domain) owns "the daemon itself died / the
   # disk actually filled". The canaries are PER-HOST (not one collective) because a SINGLE host's
   # Alloy death is otherwise invisible to everything: the content rules go NoData->OK and the daemon
@@ -3227,7 +3227,7 @@ rules:
       #
       # This is not one pair's problem. `gap_monitor.is_healthy()` is False while ANY pair has an
       # open gap and the healthcheck ping is gated on it, so one stuck pair silences this host's
-      # dead-man for every pair -- the hc.io watchdog then fires and STAYS fired, and any later,
+      # dead-man for every pair -- its check and zcrypto-hcio-watchdog then fire and STAY fired, and any later,
       # worse fault on the same host produces no new page while that signal is saturated. This rule
       # is what names the pair; the dead-man only says the host went quiet.
       - refId: A
@@ -3253,7 +3253,7 @@ rules:
     execErrState: Alerting
     for: 5m
     annotations:
-      summary: "A capture pair's order book has been desynced for 15 min straight (paged after 20 min: a 15m window plus a 5m hold) -- the bounded recovery ladder ran and did not recover it. That pair's L2 is still being written but is no longer certified against Kraken's checksum, AND the desync silences this host's dead-man for all 12 pairs (is_healthy gates the ping), so hc.io is now saturated and will not page for anything else on this host. Fix: `docker restart zcrypto-capture` on the named host. The `pair` label names the stuck pair. Runbook: infra/runbooks/capture-daemon.md#zcrypto-capture-book-desync-stuck"
+      summary: "A capture pair's order book has been desynced for 15 min straight (paged after 20 min: a 15m window plus a 5m hold) -- the bounded recovery ladder ran and did not recover it. That pair's L2 is still being written but is no longer certified against Kraken's checksum, AND the desync silences this host's dead-man for all 12 pairs (is_healthy gates the ping), so that dead-man check is now saturated and will not page for anything else on this host. Fix: `docker restart zcrypto-capture` on the named host. The `pair` label names the stuck pair. Runbook: infra/runbooks/capture-daemon.md#zcrypto-capture-book-desync-stuck"
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "101"
     labels:
@@ -3602,7 +3602,7 @@ rules:
       # `continue`/`return` past the writers while it holds, so incoming L2 and trades are DROPPED.
       # That data is unbackfillable -- every second breached is permanent loss.
       #
-      # It also gates the dead-man ping, so hc.io does fire -- but that page says "this host went
+      # It also gates the dead-man ping, so its check does fire -- but that page says "this host went
       # quiet", not "the disk hit the watermark and capture is discarding", and without this rule the
       # operator cannot tell those apart. The 1 GiB watermark sits BELOW the `Capture · spool disk
       # low` early warning (10% free), so that rule fires first only if the fill is gradual; a sudden
@@ -3641,7 +3641,7 @@ rules:
     # means the handlers are ALREADY dropping messages.
     for: 0s
     annotations:
-      summary: "CAPTURE IS DISCARDING DATA on this host: the disk watermark is breached, so the book and trade handlers drop every incoming message instead of writing it, and L2 is unbackfillable. This also withholds the dead-man ping, so hc.io is saturated and will not page for anything else here. Free space on the capture spool NOW -- check both prune timers and for an unexpected consumer. Runbook: infra/runbooks/capture-daemon.md#zcrypto-capture-watermark-breached"
+      summary: "CAPTURE IS DISCARDING DATA on this host: the disk watermark is breached, so the book and trade handlers drop every incoming message instead of writing it, and L2 is unbackfillable. This also withholds the dead-man ping, so that check is saturated and will not page for anything else here. Free space on the capture spool NOW -- check both prune timers and for an unexpected consumer. Runbook: infra/runbooks/capture-daemon.md#zcrypto-capture-watermark-breached"
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "108"
     labels:
@@ -5774,7 +5774,7 @@ rules:
   # Pushed to the node alone: grafana-push.sh leaves this group out of a push that names no stack
   # (GRAFANA_SKIP_RULE_GROUPS), since Grafana Cloud holds no `host="zcrypto-mon"` series and the two
   # dead-men here would page there for good. A rule cannot page the death of the node it runs on:
-  # only the self-check's healthchecks.io ping can, once its URL is set.
+  # only the self-check's ping to the dead-man service can.
   - uid: zcrypto-alloy-dark-mon
     title: "Fleet · Alloy dark — Monitor"
     ruleGroup: zcrypto-mon

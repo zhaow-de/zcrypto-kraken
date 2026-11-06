@@ -28,7 +28,7 @@ So a pair still desynced at 15 minutes is post-ladder: a reconnect with a fresh 
 
 The cooldown is not permanent. When it expires the ladder re-arms and the pair retries on the very next tick with no help from you (`desynced_at` is deliberately not reset). A pair that heals and re-desyncs inside that hour keeps the escalation record (`note_recovered` deliberately does not clear it), so it gets the transition resubscribe and nothing else until the cooldown expires.
 
-**The blast radius is the whole host, not the pair.** `GapMonitor.is_healthy()` is False while any pair has an open gap, and the healthchecks.io ping (`HEALTHCHECK_INTERVAL_SECONDS = 60`) is gated on it, so this one pair withholds the host's dead-man for all 12. That check (`zcrypto-capture` or `zcrypto-capture-red`) has already gone down and stays down, and nothing worse on this host will produce a new dead-man page while it is saturated.
+**The blast radius is the whole host, not the pair.** `GapMonitor.is_healthy()` is False while any pair has an open gap, and the dead-man ping (`HEALTHCHECK_INTERVAL_SECONDS = 60`) is gated on it, so this one pair withholds the host's dead-man for all 12. That check (`zcrypto-capture` or `zcrypto-capture-red`) has already gone down and stays down, and nothing worse on this host will produce a new dead-man page while it is saturated.
 
 **The rows keep being written; what the desync costs is certification.** In `_handle_book_message` only a watermark breach skips the writer, so a desynced pair keeps appending every update row. The transition opens a `checksum_resync` gap in `GapMonitor`, so the window is booked into `zcrypto_capture_gap_seconds_total{pair=…}`, and the book replayed across it no longer reconciles against Kraken's checksum. Treat the window as unverified L2 on that pair, not as an empty one.
 
@@ -137,11 +137,11 @@ A **critical** Grafana alert, `Capture · disk watermark breached -- DISCARDING 
 
 Free space on the spool's filesystem fell below `DEFAULT_MIN_FREE_BYTES = 1 GiB` (`cli/capture/gap_monitor.py`). While breached, `_handle_book_message` `continue`s and `_handle_trade_message` `return`s before reaching the writers: every incoming book and trade message is dropped, while the WebSocket stays connected and healthy-looking. L2 is unbackfillable, so every second breached is permanent loss.
 
-It also withholds the host's healthchecks.io ping, so that dead-man fires and stays fired: saturated, and blind to anything worse on this host. The breached interval is booked as a watermark gap in `GapMonitor`, so the lost time reaches the gap accounting instead of reading clean.
+It also withholds the host's dead-man ping, so that dead-man fires and stays fired: saturated, and blind to anything worse on this host. The breached interval is booked as a watermark gap in `GapMonitor`, so the lost time reaches the gap accounting instead of reading clean.
 
 The spool is `/var/lib/zcrypto-capture`, on the root filesystem on both hosts. The 1 GiB watermark sits below `zcrypto-capture-disk-low`'s 10 %-free early warning, so disk-low only fires first when the fill is gradual; a sudden consumer (one pulled capture image — `infra/scripts/prune-host-images.py <host>`'s dry run prints each removable image's size) breaches the watermark with disk-low still green.
 
-**One line is not this alert**: `disk watermark UNMEASURABLE path=… -- treating as not-healthy (probe failing)` means the probe itself raised, a flaky mount. That withholds the ping but does not set this gauge, so this critical rule stays silent and only hc.io speaks.
+**One line is not this alert**: `disk watermark UNMEASURABLE path=… -- treating as not-healthy (probe failing)` means the probe itself raised, a flaky mount. That withholds the ping but does not set this gauge, so this critical rule stays silent and only the dead-man service speaks.
 
 ### What to do
 

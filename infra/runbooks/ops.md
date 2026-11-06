@@ -20,7 +20,7 @@ Two critical-severity Grafana alerts, both scoped to the ops node's nightly cano
 
 ### What it means
 
-Every run, the nightly sweep publishes how many hours failed, how many hours it checked in total, and whether it produced a parseable summary at all. The first alert watches the change in the failed-hour count over the last 25 hours — an hour that failed yesterday and still fails today contributes nothing to that change and stays quiet; only an hour that newly starts failing moves it. The second alert watches whether the run produced a summary at all — it goes critical on a crash, an I/O error against the read-only archive mount, a run that never started, or a run that silently found no hours to check. A failed hour is logged as a warning, not an error, specifically so it does not also trip the separate ops error-log alert — only a genuinely broken run does that. The healthchecks.io dead-man for this timer is withheld on the same no-summary condition and is its own channel ([`observability.md#zcrypto-hcio-watchdog`](observability.md#zcrypto-hcio-watchdog)).
+Every run, the nightly sweep publishes how many hours failed, how many hours it checked in total, and whether it produced a parseable summary at all. The first alert watches the change in the failed-hour count over the last 25 hours — an hour that failed yesterday and still fails today contributes nothing to that change and stays quiet; only an hour that newly starts failing moves it. The second alert watches whether the run produced a summary at all — it goes critical on a crash, an I/O error against the read-only archive mount, a run that never started, or a run that silently found no hours to check. A failed hour is logged as a warning, not an error, specifically so it does not also trip the separate ops error-log alert — only a genuinely broken run does that. The dead-man for this timer is withheld on the same no-summary condition and is its own channel ([`observability.md#zcrypto-hcio-watchdog`](observability.md#zcrypto-hcio-watchdog)).
 
 ### What to do
 
@@ -78,7 +78,7 @@ A warning-severity Grafana alert (`Ops · verify-replay stale`): the nightly can
 
 ### What it means
 
-`zcrypto-verify-replay.timer` fires daily at `03:41` UTC with `Persistent=true`, so a host that was down at 03:41 runs the sweep at its next boot instead of skipping the day. Every run, clean or not, stamps `ops_verify_replay_last_run_timestamp` when it publishes its textfile; this rule reads the age of that stamp. The three sibling rules cannot see a timer that has stopped firing — their gauges hold their last value between runs, so a stopped sweep leaves all three reading healthy indefinitely. The healthchecks.io dead-man for this timer is a separate channel: it is pinged only when a run produces a summary, so it may be silent or paging independently of this rule.
+`zcrypto-verify-replay.timer` fires daily at `03:41` UTC with `Persistent=true`, so a host that was down at 03:41 runs the sweep at its next boot instead of skipping the day. Every run, clean or not, stamps `ops_verify_replay_last_run_timestamp` when it publishes its textfile; this rule reads the age of that stamp. The three sibling rules cannot see a timer that has stopped firing — their gauges hold their last value between runs, so a stopped sweep leaves all three reading healthy indefinitely. The dead-man for this timer is a separate channel: it is pinged only when a run produces a summary, so it may be silent or paging independently of this rule.
 
 It reads the last-*run* stamp and not the last-*clean* one on purpose: a known bad hour in the archive makes every run exit non-zero and freezes the last-clean stamp for as long as the hour stands. A sweep that ran and did not complete is the run-broken rule's finding; a sweep that ran and found a new bad hour is the new-breakage rule's; this one only says the sweep did not run.
 
@@ -332,7 +332,7 @@ The overlay-writer cycle runs at `*:12` and `*:42`, so 3 h is roughly six missed
 - **`Ops · archive-pull non-zero exit` also firing** ⇒ the reconcile container ran and failed. **A failed cycle publishes no textfile at all** — `cli/archive/command.py`'s reconcile raises `Exit(1)` on any integrity failure *before* `_write_textfile` is reached (no count command: `reconcile`'s `if failures:` exit precedes it in `cli/archive/command.py`), and exits 2 before that when a mirror root is missing. That is deliberate: fresh-looking numbers from a cycle that could not read its inputs would be worse than none. So `last_success_timestamp` freezes, and this alert is the escalation of a failure that has persisted 3 h.
 - **Neither sibling firing** ⇒ **the fail-closed gate is skipping every cycle**, and this rule is the ONLY pager for that (no count command: a dead or skipped cycle leaves `reconcile.prom` unwritten; a skip keeps rc 0, `archive-pull.sh.j2`).
 
-**What a persistent gate skip looks like, because nothing else says it out loud:** the unit is green, `ops_archive_pull_exit_code` is 0, `ops_archive_pull_last_success_timestamp` keeps advancing, the healthchecks.io dead-man keeps being pinged, and one line per tick goes into the unit journal —
+**What a persistent gate skip looks like, because nothing else says it out loud:** the unit is green, `ops_archive_pull_exit_code` is 0, `ops_archive_pull_last_success_timestamp` keeps advancing, the dead-man keeps being pinged, and one line per tick goes into the unit journal —
 
 ```
 YYYY-MM-DD HH:MM:SS,mmm WARNING zcrypto.archive-pull [archive-pull.sh] - writer cycle SKIPPED (fail-closed gate): <reason>
@@ -370,7 +370,7 @@ The value is the age of that mirror's **newest committed final of any pair, book
 
 ### What it means
 
-This is a **dataflow** dead-man, and that is what makes it worth its own rule: it is independent of both capture hosts' healthchecks.io pings, and a host can keep pinging happily while writing nothing.
+This is a **dataflow** dead-man, and that is what makes it worth its own rule: it is independent of both capture hosts' dead-man pings, and a host can keep pinging happily while writing nothing.
 
 Read the `source` label first, because the two directions mean very different things:
 
