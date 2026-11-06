@@ -3,14 +3,17 @@ its argv and stdin and answers per URL."""
 
 import json
 import pathlib
+import re
 import subprocess
 
 import pytest
+import yaml
 
 from tests.test_infra_converge_guards import iter_tasks, load_tasks
 from tests.test_infra_shell_templates_render import ansible_render, role_variables
 
-ROLE = pathlib.Path(__file__).resolve().parent.parent / "infra/ansible/roles/ops"
+REPO = pathlib.Path(__file__).resolve().parent.parent
+ROLE = REPO / "infra/ansible/roles/ops"
 TEMPLATE = ROLE / "templates/grafana-watchdog.sh.j2"
 STATE = "/var/lib/zcrypto-grafana-watchdog/both-dark"
 MON = "https://mon.invalid/api/health"
@@ -186,3 +189,26 @@ def test_the_unit_makes_the_state_directory_and_sources_the_file_the_role_render
     module = task["ansible.builtin.template"]
     assert _unit_value("EnvironmentFile") == f"-{module['dest']}"
     assert (module["src"], module["mode"], task["no_log"], task["diff"]) == ("grafana-watchdog-secrets.env.j2", "0600", True, False)
+
+
+def test_the_runbook_the_message_names_resolves_to_its_anchor(tmp_path):
+    watchdog = _Watchdog(tmp_path)
+    watchdog.run(MON, HC)
+    watchdog.run(MON, HC)
+    (page,) = _posted(watchdog.run(MON, HC))
+    path, anchor = page.rsplit("Runbook: ", 1)[1].split("#")
+    assert f'<a name="{anchor}"></a>' in (REPO / path).read_text(encoding="utf-8")
+
+
+def test_the_drill_fence_replaces_exactly_the_urls_the_runner_probes():
+    defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
+    observed = yaml.safe_load((REPO / "infra/ansible/group_vars/observed/vars.yml").read_text())
+    hc_probe = ansible_render(defaults["ops_grafana_watchdog_hc_probe_url"], {"hc_hostname": observed["hc_hostname"]})
+    variables = role_variables(TEMPLATE) | {"ops_grafana_watchdog_hc_probe_url": hc_probe}
+    probed = re.findall(r'^probe "(.+)" \|\|', ansible_render(TEMPLATE.read_text(), variables), re.MULTILINE)
+
+    drill = (REPO / "infra/runbooks/drills-telemetry.md").read_text(encoding="utf-8")
+    fence = drill.split('<a name="drill-w5"></a>')[1].split('<a name="')[0]
+    replaced = re.findall(r"-e 's\|(https://[^|]+)\|https://both-dark-drill\.invalid/\|'", fence)
+
+    assert len(probed) == 2 and sorted(replaced) == sorted(probed)
