@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: "a milestone: the pull request removing Grafana Cloud from the tree merges into develop, which opens the next steps below — check: `git log develop --oneline --grep=t0217-retire-grafana-cloud` prints a line"
+status: resolved
 ---
 
 # Self-hosting the metrics, logs and alerting stack in place of Grafana Cloud's free tier
@@ -39,7 +38,7 @@ The assessment of 2026-10-01 is `docs/research/92.self-hosted-observability-asse
 - **The cutover's gate, read on 2026-10-16 (plan 00121-paging-cutover's Task 1).** Seven consecutive journal entries on `ops-journal`, 2026-10-10 through 2026-10-16, each comparing the day before it and each carrying `compare: 105 nodes × 24 instants, 0 differences`, so no difference needs a class and R1 compared no day again. The four drills are in `docs/reference/drill-log.md`: `## 2026-10-04 — W1 — pass`, `## 2026-10-04 — W2 — pass`, `## 2026-10-04 — W3 — pass` and `## 2026-10-08 — W4 — pass`. The range-selector boundary, read on 2026-10-07 in spec 00121's measured basis, gave 5 on Grafana Cloud and 6 on the node. No un-tagged `site.yml` row on `zcrypto-mon` since the primary's recreate names a rebuild of the node.
 - **Grafana Cloud's rules deleted, 2026-11-06.** The owner's word of that day dropped D23's gate and R10's wait. The owner's receiver push moved Grafana Cloud's contact points to the shadow channel first; then the fleet's folder's rules were deleted by uid, each read 404.
 
-## Done so far
+## Resolution
 
 - Phase 1, the node taking a shadow push: spec `docs/specs/00121-self-hosted-observability-design.md` and plan `docs/plans/00121-mon-node.md`, merged as PR #652 and rolled out 2026-10-03; the node `zcrypto-mon` (`docs/reference/fleet.md`) carries every rule at `https://zcrypto-mon.zhaow.me`, paging the shadow channel, and its acceptance's two findings were fixed as PRs #653 and #654.
 - Phase 2 inside the box: plan `docs/plans/00121-dual-shipping.md`; PR #656 (the bridgehead dual-ships, the comparison script, the drill sections, the push's orphan line naming a skipped group's live rule), PR #657 (ops dual-ships, the node pings its own dead-man, the self-check naming the series it did not find), PR #658 (the cache nodes dual-ship) and PR #659 (`prometheus$` out of the node's blacklist, W1's reading); R1, the bridgehead, and R2, ops, on 2026-10-04; R3, the three node drills W1, W2 and W3, the same day, each an entry in `docs/reference/drill-log.md`; R4, the three cache nodes, `db1` on 2026-10-04 and `db2` and `db3` on 2026-10-05.
@@ -47,12 +46,5 @@ The assessment of 2026-10-01 is `docs/research/92.self-hosted-observability-asse
 - W4, the shipper-stop drill on the secondary (plan 00123's R11), on 2026-10-08, its entry in `docs/reference/drill-log.md`: both copies of the Alloy-dark rule `Alerting` 15 min 16 s from the stop against about 16 minutes, the node reading `up{host="zcrypto-red"}` absent and not 0; the secondary's Alloy `since` cell re-trued in `docs/reference/fleet-pins.md`.
 - Phase 3's first pull request: plan `docs/plans/00121-paging-cutover.md`'s Tasks 1 to 3a, merged as PR #725, the gate recorded and the node's Grafana-error rule leaving `context canceled` lines unpaged; R3 on 2026-10-16 moved the node's two contact points to the main channel.
 - The removal from the tree, in one pull request in place of plan 00121-paging-cutover's Tasks 6 to 9 and phase 4: the configs ship to the node alone, the stack table holds one row, the keep-alive and the comparison go, and the ops watchdog probes both nodes and pages itself when both are dark.
-
-## Suggested next steps
-
-All from merged `develop`, the owner's hands, each host's Kraken read immediately before it where the host is venue-facing:
-
-- The push to the node, `infra/runbooks/mon.md#mon-push`, the keep-alive rule pruned there and its uid read 404, before the ops converge removes its units.
-- One converge per host: `zcrypto-ops`, `zaccess`, the NAS under `-e nas_apply_compose=true`, the three cache nodes, `zcrypto-red`, and `zcrypto` last and attended. Each recreates that host's Alloy, since its secrets file changes; the node's series for the host read unchanged after it, and the Alloy's start time shows the recreate.
-- Drill W5 on `zcrypto-ops`, its entry in `docs/reference/drill-log.md`.
-- Grafana Cloud's values out of the vault, `slack_shadow_webhook_url` among them, and the comment naming `logship-secrets.env.j2` as their reader; the custody comments of `group_vars/all/vault.yml` and `group_vars/capture_host/vault.yml` re-trued, since the ops role now renders `slack_webhook_url` onto `zcrypto-ops`; the ops role's keep-alive retirement block removed; Grafana Cloud's tokens revoked and its account closed; T0085's rotation scope re-trued. That pull request resolves this topic.
+- The removal's rollout, on the owner's word of 2026-11-06, "i don't see any value to keep the dual stacks running either for hc or grafana. not sure what new insight or proof it would bring by waiting for one more week. let's do all the needful to resolve both topics now.": PR #826 merged at 13:30:30Z; the node push and the keep-alive rule's prune, its uid read 404, 126 rules on the node; one converge per host from aff0b6d30, each rc 0, 15:02:47Z to 15:18:57Z; at 15:25:24Z no Grafana Cloud endpoint or log target reads on any host. Drill W5 passed, `docs/reference/drill-log.md`. The ten values left the vault in the pull request that closes this topic.
+- The owner revoked Grafana Cloud's tokens and closed its account, read from their word of 2026-11-06, "tokens revoked and account closed".
