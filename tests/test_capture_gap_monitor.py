@@ -145,6 +145,16 @@ def test_ping_healthcheck_swallows_transport_errors(monkeypatch):
     ping_healthcheck("https://hc-ping.com/abc")  # must not raise
 
 
+def test_ping_healthcheck_swallows_a_reply_that_is_not_http(monkeypatch):
+    import http.client
+
+    def fake_urlopen(url, timeout):
+        raise http.client.BadStatusLine("garbage")
+
+    monkeypatch.setattr("cli.capture.gap_monitor.urllib.request.urlopen", fake_urlopen)
+    ping_healthcheck("https://hc.invalid/abc")
+
+
 # --- T0032: a disk-watermark breach must be BOOKED into the exit-bar gap accounting -------------
 #
 # A breach stops every write for every pair; unbooked into `gap_seconds`, it leaves the <0.1% gap-time
