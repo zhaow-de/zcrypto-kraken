@@ -443,7 +443,7 @@ def test_an_instance_host_label_wins_over_the_uid_map():
 
 
 def test_the_loki_uid_defaults_to_the_named_datasource_and_is_overridable():
-    """A lookup BY TYPE is the T0034 defect: a Cloud stack ships several Loki datasources, and
+    """A lookup BY TYPE is the T0034 defect: a stack can ship several Loki datasources, and
     'the first of each type' silently repointed every rule once."""
     assert ops_daily.loki_ds_uid({}) == "grafanacloud-logs"
     assert ops_daily.loki_ds_uid({"GRAFANA_LOKI_DS_UID": "other-loki"}) == "other-loki"

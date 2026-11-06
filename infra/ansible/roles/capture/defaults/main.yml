@@ -22,7 +22,7 @@ capture_healthcheck_url: ""
 # the timer refuses.
 capture_retention_days: 14
 
-# Alloy (spec 00057, T0020), this host's own Grafana Cloud shipper. Gated on `capture_alloy_digest`,
+# Alloy (spec 00057, T0020), this host's own shipper to the node. Gated on `capture_alloy_digest`,
 # which has no default and is passed per run: a converge without it skips the whole Alloy block
 # rather than rendering a compose file pointing at a broken image reference. The secrets file has no
 # role var because alloy-compose.yaml.j2 hardcodes its relative `env_file`.
