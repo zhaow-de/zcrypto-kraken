@@ -1,12 +1,10 @@
 # group_vars/all — PROJECT-LEVEL SECRETS, MIXED CUSTODY.
 #
-# MIXED CUSTODY — do not read this file as workstation-only. Ten values ARE
+# MIXED CUSTODY — do not read this file as workstation-only. Eleven values ARE
 # rendered onto managed hosts through inventory. Seven are WireGuard secrets, three of them the zaccess tunnel's:
 # `zaccess_wg_bridgehead_private_key` and `zaccess_wg_preshared_key` by `roles/access`,
-# `zaccess_wg_ops_private_key` and the same preshared key by `roles/access_ops`, both templating
-# `/etc/wireguard/zaccess0.conf`. **Editing any of those three needs a converge of BOTH ends** —
-# `--limit zaccess` and `--limit zcrypto-ops` (the host is `zcrypto-ops`; there is no host or group
-# called `ops`) — or an end keeps the old key. Both, because each peer block carries the other end's
+# `zaccess_wg_ops_private_key` and the same preshared key by `roles/access_ops`. **Editing any of those three needs a converge of BOTH ends** —
+# `--limit zaccess` and `--limit zcrypto-ops` — or an end keeps the old key. Both, because each peer block carries the other end's
 # public key. The four `cache_wg_<member>_private_key` render each onto its own member of the zcache
 # mesh by `roles/cache_link`, templating `/etc/wireguard/zcache0.conf`; rotating one needs a converge
 # of all four members, since every other member's peer block carries its public key. The eighth is
@@ -14,9 +12,10 @@
 # `render the grafana-watchdog secrets env file`; editing it needs `--limit zcrypto-ops`. The
 # ninth and tenth are the cache's `cache_engine_password` and `cache_sentinel_requirepass`, rendered onto
 # `zcrypto` by `roles/engine` (engine.env and haproxy.cfg) and read by `roles/cache` on the three nodes;
-# rotating either is `infra/runbooks/cache.md`'s `cache-password-rotation`.
+# rotating either is `infra/runbooks/cache.md`'s `cache-password-rotation`. The eleventh is
+# `coveralls_repo_token`, onto `zcrypto-ops` by `roles/ops`.
 #
-# The rest never reach a host. Four are read from the WORKSTATION BY FILE PATH:
+# The other four never reach a host, read from the WORKSTATION BY FILE PATH:
 # `healthchecks_readonly_api_key` by `infra/scripts/hc-provision.py`'s reads of healthchecks.io until
 # retirement, `hc_readwrite_api_key` by its writes to the dead-man service (both through
 # `grafana_auth.vault_var`, whose default IS this file), and `zaccess_client_p12_b64` +

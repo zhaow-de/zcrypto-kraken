@@ -1,7 +1,7 @@
 # group_vars/observed — SECRETS shared by every host that ships telemetry.
 #
 # The `observed` group (inventory/hosts.yml) is every host that runs Alloy. The telemetry
-# endpoints + credentials below are NOT host-specific, so scoping them to a group states exactly who
+# credentials below are NOT host-specific, so scoping them to a group states exactly who
 # may read them. The ops node is deliberately in THIS group and NOT in engine_host: it ships
 # telemetry, and it must never hold the trade key (spec 00051 D10).
 #
