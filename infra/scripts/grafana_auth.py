@@ -43,9 +43,8 @@ class Stack(NamedTuple):
     missing: str
 
 
-# Baked in rather than re-guessed: a wrong datasource uid is accepted happily and still reports
-# health=ok, so a guess fails silently. The one stack is the observability node; its token is minted by
-# the `mon` role into its `mon_token_cache`, outside the tree.
+# The one stack is the observability node; its token is minted by the `mon` role into its
+# `mon_token_cache`, outside the tree.
 STACKS = {
     "mon": Stack(
         "https://zcrypto-mon.zhaow.me",
@@ -54,7 +53,6 @@ STACKS = {
         "the node's converge writes it (infra/runbooks/mon.md, mon-token-rotate)",
     ),
 }
-# The stack a tool reads when none is named: the one that pages.
 DEFAULT_STACK = "mon"
 GRAFANA_URL = STACKS[DEFAULT_STACK].url
 

@@ -2,13 +2,10 @@
 # Rendered by the `ops` Ansible role at /usr/local/sbin/zcrypto-grafana-watchdog — do not
 # hand-edit on the host, edit infra/ansible/roles/ops/templates/grafana-watchdog.sh.j2 instead.
 #
-# The dead-man service's half of the mutual watchdog: pings the zcrypto-grafana-watchdog check when
-# the Grafana that pages answers and <url>/fail when it does not; if this host or the timer dies the
-# ping stops and the check pages by staleness.
+# The dead-man service's half of the mutual watchdog: if this host or the timer dies the ping stops and
+# the check pages by staleness.
 # The page of last resort: Grafana and the dead-man service are the two things that page, and neither
-# can say both are dark. After BOTH_DARK_AFTER runs in a row with both down this posts to Slack itself,
-# and once more when either answers again. Without this host's own internet the post fails and is
-# retried on the next run; it stays silent until then.
+# can say both are dark, so this posts to Slack itself; without this host's own internet it stays silent.
 set -euo pipefail
 
 URL="{{ ops_grafana_watchdog_healthcheck_url }}"
@@ -18,7 +15,6 @@ RUNBOOK="infra/runbooks/observability.md#both-nodes-dark"
 
 probe() { curl -fsS -m 20 --retry 2 --retry-delay 5 -o /dev/null "$1"; }
 
-# The webhook goes through stdin so it is on no process's argv.
 post() {
   [ -n "${ZCRYPTO_SLACK_WEBHOOK_URL:-}" ] || return 1
   printf 'url = "%s"\n' "$ZCRYPTO_SLACK_WEBHOOK_URL" |

@@ -9,8 +9,8 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-# The main channel's webhook, 0600 and owned by root, sourced rather than interpolated into the runner
-# script. `-` so a unit started before the file exists still probes and pings.
+# Sourced rather than interpolated into the runner script. `-` so a unit started before the file exists
+# still probes and pings.
 EnvironmentFile=-{{ ops_compose_dir }}/grafana-watchdog-secrets.env
 StateDirectory=zcrypto-grafana-watchdog
 ExecStart=/usr/local/sbin/zcrypto-grafana-watchdog

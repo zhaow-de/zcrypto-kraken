@@ -50,7 +50,7 @@ def test_the_token_never_reaches_stdout(monkeypatch, capsys):
 
 def test_an_empty_result_is_reported_as_absent_never_as_a_zero(monkeypatch, capsys):
     """A gate reading `up == 1` must tell "the series says 0" -- a down host -- from "there is no
-    series", a scrape or keep-list that never admitted the metric."""
+    series", a scrape that never reached the metric."""
     monkeypatch.setattr(gq.grafana_auth, "vault_var", lambda name, vault_file: TOKEN)
     monkeypatch.setattr(gq, "query", lambda expr, token, **kw: [])
 

@@ -26,7 +26,7 @@ prometheus.exporter.unix "host" {
 }
 
 // Alloy's own families (job="integrations/self"): the fleet's Alloy memory-headroom rule reads the
-// two go_memstats_*, and nothing reads RSS here.
+// two go_memstats_*.
 prometheus.exporter.self "alloy" {}
 
 // No `job_name` here: exporter targets carry their own `job` label (integrations/unix, integrations/self),

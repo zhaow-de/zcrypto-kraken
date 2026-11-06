@@ -453,7 +453,7 @@ The 5-minute watchdog on `zcrypto-ops` failed both of its probes, `https://zcryp
 
 **What it does not cover, plainly**: if `zcrypto-ops` or the home connection is down too, the watchdog stays silent, retries on each run, and posts when it can.
 
-A second message says either answers again: the other, if still dark, then pages through the one that came back. The state file is `/var/lib/zcrypto-grafana-watchdog/both-dark`, two integers, the failed run count and whether it paged.
+A second message says either answers again: the other, if still dark, then pages through the one that came back.
 
 ### What to do
 
