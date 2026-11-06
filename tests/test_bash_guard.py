@@ -1,8 +1,7 @@
 """The PreToolUse[Bash] guard's families, driven with synthetic stdin JSON.
 
-The hook is `.claude/hooks/bash-guard.sh`; its header carries only what this corpus and the code cannot say. Every
-family is driven in both directions: the spelling an arm refuses (exit 2, `BLOCKED` and the spelling on stderr) beside
-the ordinary shape nearest to it that it must admit (exit 0, silent).
+Every family is driven in both directions: the spelling an arm refuses (exit 2, `BLOCKED` and the spelling on stderr)
+beside the ordinary shape nearest to it that it must admit (exit 0, silent).
 """
 
 from __future__ import annotations
@@ -1185,8 +1184,8 @@ def state_repo(tmp_path: Path) -> tuple[dict, Path]:
     return {"tool_name": "Bash", "tool_input": {"command": ""}, "cwd": str(repo)}, git_dir(repo) / STAMP_NAME
 
 
-# The instant the runs-alone cases' hook reads. On the wall clock a stamp ages while its case queues behind `run_hook`'s
-# lock, so under a loaded -n auto the age the hook prints and judges is the queue's.
+# On the wall clock a stamp ages while its case queues behind `run_hook`'s lock, so the age the hook prints and judges
+# is the queue's.
 FROZEN_NOW = 1_800_000_000.0
 
 
