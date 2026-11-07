@@ -46,7 +46,7 @@ class Fill(NamedTuple):
     side: str
     qty: float
     px: float | None  # None for a venue repair, which has no price by construction
-    fee: float | None  # None when not euro-denominated or the side is unpriceable
+    fee: float | None  # None when unreported, non-euro or the side is unpriceable
     liquidity: str
     trade_id: str
     # What the fill moved its row's `filled_qty` by (`execledger.credited_qty`), where `qty` stays the blend's weight and
@@ -188,10 +188,10 @@ def extract_fills(records: list[dict]) -> tuple[list[Fill], list[str]]:
                 cur = ev.get("fee_currency")
                 fee: float | None = None if ev["fee"] is None else float(ev["fee"])
                 if fee is None:
-                    note(f"a fill on {symbol} reports no fee -- counted, but excluded from the cost blend")
+                    note(f"a fill on {symbol} reports no fee -- counted, but excluded from the fee rate")
                 elif cur not in EUR_CODES:
                     fee = None
-                    note(f"fee on {symbol} is denominated in {cur}, not euro -- excluded from the cost blend")
+                    note(f"fee on {symbol} is denominated in {cur}, not euro -- excluded from the fee rate")
                 if liq not in _PRICEABLE_LIQUIDITY:
                     fee = None
                     note(f"a fill on {symbol} carries {liq} -- counted, but excluded from the cost blend")
