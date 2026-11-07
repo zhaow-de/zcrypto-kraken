@@ -11,7 +11,7 @@ After a restart with an engine order resting, a part-fill's stream frame landing
 
 ## Why this matters
 
-Rung 3's post-only orders rest up to the 15-minute time box, so a crash inside it reaches this, with a fill in the seconds before the pass's cancel. The remainder rests with no time box and nothing managing it, and only Kraken's open-orders page shows it. The harm is bounded: sizing reads Kraken's book, so the next plan sees what filled. The owner's word of 2026-11-07, verbatim: "handle the unmanged remainder as recommended", which was the runbook's read for entry and this engine fix after the first attended week.
+Rung 3's post-only orders rest up to the 15-minute time box, so a crash inside it reaches this, with a fill in the seconds before the pass's cancel. The remainder rests with no time box, and only Kraken's open-orders page shows it. The harm is bounded: sizing reads Kraken's book, and the open row carries that leg. The owner's word of 2026-11-07, verbatim: "handle the unmanged remainder as recommended", which was the runbook's read for entry and this engine fix after the first attended week.
 
 ## Findings so far
 
