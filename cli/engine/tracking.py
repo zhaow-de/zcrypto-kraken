@@ -186,8 +186,10 @@ def extract_fills(records: list[dict]) -> tuple[list[Fill], list[str]]:
                         "is not a name the venue's enum yields -- refusing to blend an unlabelled side"
                     )
                 cur = ev.get("fee_currency")
-                fee: float | None = float(ev["fee"])
-                if cur not in EUR_CODES:
+                fee: float | None = None if ev["fee"] is None else float(ev["fee"])
+                if fee is None:
+                    note(f"a fill on {symbol} reports no fee -- counted, but excluded from the cost blend")
+                elif cur not in EUR_CODES:
                     fee = None
                     note(f"fee on {symbol} is denominated in {cur}, not euro -- excluded from the cost blend")
                 if liq not in _PRICEABLE_LIQUIDITY:

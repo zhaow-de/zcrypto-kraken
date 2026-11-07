@@ -142,6 +142,13 @@ def test_no_liquidity_side_is_counted_but_unpriced_and_never_aborts():
     assert any("NO_LIQUIDITY_SIDE" in n for n in notes)
 
 
+def test_a_fill_reporting_no_fee_is_counted_but_unpriced_and_never_aborts():
+    # The line an inferred fill on a restored order leaves: `_fill_payload` writes `fee: None`.
+    fills, notes = extract_fills([_rec([_fill(fee=None, fee_currency=None)])])
+    assert [(f.qty, f.fee) for f in fills] == [(0.001, None)]
+    assert any("reports no fee" in n for n in notes)
+
+
 def test_zeur_is_a_euro():
     fills, notes = extract_fills([_rec([_fill(fee_currency="ZEUR")])])
     assert notes == [] and fills[0].fee == 0.05
