@@ -7,11 +7,6 @@
 # --tests keeps only the tests/test_*.py lines, so the output is a pytest argument list.
 # A bare `$(...)` inside a pytest line drops the rc and hands pytest no argument, which is the whole suite: hold the
 # list first, `T="$(infra/scripts/consumers.sh --tests --direct <path>)" || exit`, then run pytest over `$T`.
-# direct readers' -- so the output is a pytest argument list with no runbook or skill in it; with none kept it prints
-# `consumers: --tests found no test file for <paths>` on stderr and exits 2 with nothing on stdout. The caller reads
-# that rc: a bare `$(...)` inside a pytest line drops it and hands pytest no argument, which is the whole suite, so the
-# list is held first -- `T="$(infra/scripts/consumers.sh --tests --direct <path>)"` under `set -e`, or `|| exit` after
-# it -- and pytest runs under `[ -n "$T" ]`.
 # Usage: infra/scripts/consumers.sh [--tests] [--direct] <path>...   (a path as the tree names it: infra/scripts/foo.sh, cli/engine/x.py)
 #   rc: 0 printed, 2 usage, not in a repository, or --tests with no test file kept.
 set -euo pipefail
