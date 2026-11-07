@@ -37,7 +37,7 @@ The human gates below attach to the operations themselves, not to whichever skil
 - **Status marker.** A queue item's line opens with ⬜ while nothing of it has landed, 🔄 once part has, ✅ when it is done; the sub-bullet that records a landing carries the marker of what it records.
 - **The list IS the schedule**: ordered as the suggested execution sequence, the next work item on top, and nothing above something it depends on.
 - **A `DependsOn:` that names an artifact states whether the artifact EXISTS.** "Read X first" and "build X first" compress to the same reference and fail differently. The work to produce a missing prerequisite is itself a queue item, sequenced above its consumer.
-- **Milestones carry no `DependsOn:` line.** A milestone's dependency is weak and its line went stale beside its items; milestones appear in dependency-true order, and an item is eligible for pickup when its own `DependsOn:` is satisfied.
+- **Milestones carry no `DependsOn:` line**, their dependency being weak; milestones appear in dependency-true order, and an item is eligible for pickup when its own `DependsOn:` is satisfied.
 - An added item takes the index's title wording as its subject and **condenses** the topic's own text into `Why` — the clauses that matter for this milestone, not a paste; detail stays in the topic file, reachable through the `T<NNNN>` reference.
 - **Every live topic has its own item.** Each `docs/open-topics/T*.md` whose status is open or partial heads one queue item by its serial, since the memo is where a topic is picked and a topic without a line is invisible at pick time (no count command: the memo is unversioned; per live topic, an item head under `## WORK-ITEMS QUEUE` matches `^- (🔄|⬜) \*\*T<NNNN>\b`).
 
