@@ -10,7 +10,8 @@
     "2.0.0rc6.dev20260915",
     "2.0.0rc6.dev20260918",
     "2.0.0rc6.dev20260921",
-    "2.0.0rc9.dev20261101"
+    "2.0.0rc9.dev20261101",
+    "2.0.0rc9.dev20261106"
   ],
   "_notes": {
     "1.230.0": "docs/reference/adapter-verification/1.230.0.md -- PASS on all six probes, attended 2026-07-10.",
@@ -19,6 +20,7 @@
     "2.0.0rc6.dev20260915": "docs/reference/adapter-verification/2.0.0rc6.dev20260915.md -- PASS on all six probes, attended 2026-09-15. A development wheel, deployed deliberately at probe scale under spec 00100 D1 as amended.",
     "2.0.0rc6.dev20260918": "docs/reference/adapter-verification/2.0.0rc6.dev20260918.md -- PASS on all six probes, attended 2026-09-18. A development wheel, deployed deliberately at probe scale under spec 00100 D1 as amended.",
     "2.0.0rc6.dev20260921": "docs/reference/adapter-verification/2.0.0rc6.dev20260921.md -- PASS on all six probes, attended 2026-09-24. Taken for nautechsystems/nautilus_trader #5034. A development wheel, deployed deliberately at probe scale under spec 00100 D1 as amended. The pin is FROZEN at this string until the engine is armed on it.",
-    "2.0.0rc9.dev20261101": "docs/reference/adapter-verification/2.0.0rc9.dev20261101.md -- PASS on all six probes, attended 2026-11-02. Taken for the engine's first converge after rung 2's box, the rc6 pin pruned from the index; carries nautechsystems/nautilus_trader #5065, #5155 and #5315. A development wheel, deployed deliberately at probe scale under spec 00100 D1 as amended. The pin is FROZEN at this string until the engine is armed on it."
+    "2.0.0rc9.dev20261101": "docs/reference/adapter-verification/2.0.0rc9.dev20261101.md -- PASS on all six probes, attended 2026-11-02. Taken for the engine's first converge after rung 2's box, the rc6 pin pruned from the index; carries nautechsystems/nautilus_trader #5065, #5155 and #5315. A development wheel, deployed deliberately at probe scale under spec 00100 D1 as amended. The pin is FROZEN at this string until the engine is armed on it.",
+    "2.0.0rc9.dev20261106": "docs/reference/adapter-verification/2.0.0rc9.dev20261106.md -- PASS on all six probes, attended 2026-11-07. Taken for rung 3's entry by the owner's ruling of 2026-11-07; carries upstream b1611548dc, 21d3ec6425 and dd8afce410, the last with the second-start route tests/test_cache_restart.py pins. A development wheel: spec 00100 D1's amendment argues from probe scale, and rung 3 enters on this one by that ruling."
   }
 }
