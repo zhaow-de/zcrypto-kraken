@@ -19,8 +19,7 @@ firewall_extra_udp_ports: [51821]
 cache_link_address: 10.98.0.1
 cache_link_private_key: "{{ cache_wg_zcrypto_private_key }}"
 
-# Rung 3's arming (spec 00092 D6, the plan's R1): reviewed lines, which the engine role renders at this
-# host's next engine converge and no `-e` through converge.sh reaches. The arm file stays the second key.
+# Rung 3's arming (spec 00092 D6, the plan's R1).
 # The band is `zcrypto engine accum-replay --floor-shorts`'s p95 at NAV 1,000, on sweep 5's floors.
 engine_exec_armed: true
 engine_accumulation_enabled: true
