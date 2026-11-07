@@ -1,20 +1,19 @@
 # Kraken Reference-Data Snapshot Register
 
-**Iteration:** iter-002 · **Phase:** 0 (Preparation) · **Scope:** ground-truth Kraken **public** reference data for the
+**Scope:** ground-truth Kraken **public** reference data for the
 candidate basket (master-plan §3) — per-pair margin/leverage/order-minimum facts and the Kraken internal symbol-alias
 ledger, fetched live from Kraken's public `AssetPairs`/`Assets` endpoints (no API key) and rendered by `cli/snapshot/`
 (see `docs/specs/00001-snapshot-register-design.md`). This reconfirms the master-plan §14 ⏱ facts that are derivable
-without a live account; the account-gated facts remain parked (see below).
+without a live account; the account-gated facts are under *Deferred* below.
 
 **Fetched from:** `GET https://api.kraken.com/0/public/AssetPairs`, `GET https://api.kraken.com/0/public/Assets`
-(1464 pairs / 859 assets in the full response at fetch time).
+(1468 pairs / 860 assets in the full response at fetch time).
 
-**Fetched at:** 2026-10-31T14:55:40+00:00 (UTC)
-**Raw snapshot sha256:** `64c45e02b8b62dc0da3b3e5649f10363729dfb3103a494f420b0717fd21e8c13`
+**Fetched at:** 2026-11-07T20:05:43+00:00 (UTC)
+**Raw snapshot sha256:** `f8f0d92d7bfdf607dc50b2e99be8999d07d4a0bb68d2fe5e47b0b5ea458e9722`
 
 > **This header always carries the LATEST sweep.** The re-confirmation log at the foot of this file
-> records every sweep with its own counts and hash, so "re-confirmed, identical" is distinguishable
-> from "never re-run" — the failure mode \[[T0113]\] exists to prevent.
+> records every sweep with its own counts and hash.
 
 ## Candidate-basket margin & leverage ground truth
 
@@ -53,11 +52,11 @@ to be pulled from `AssetPairs` as ground truth" note.
 | ETH/EUR | - | - | - | 0.02 | 0.02 | 0.99 | 80 | 40 | 2300 | 2300 |
 | SOL/EUR | - | - | - | 0.02 | 0.02 | 0.925 | 80 | 40 | 16000 | 16000 |
 | XRP/EUR | - | - | - | 0.02 | 0.02 | 0.95 | 80 | 40 | 1400000 | 1400000 |
-| ADA/EUR | - | - | - | 0.02 | 0.02 | 0.925 | 80 | 40 | 5300000 | 2500000 |
-| LINK/EUR | - | - | - | 0.02 | 0.02 | 0.9 | 80 | 40 | 95000 | 53000 |
-| DOGE/EUR | - | - | - | 0.02 | 0.02 | 0.925 | 80 | 40 | 16000000 | 7000000 |
-| LTC/EUR | - | - | - | 0.02 | 0.02 | 0.925 | 80 | 40 | 20000 | 9300 |
-| DOT/EUR | - | - | - | 0.02 | 0.02 | 0.925 | 80 | 40 | 380000 | 270000 |
+| ADA/EUR | - | - | - | 0.02 | 0.02 | 0.925 | 80 | 40 | 7300000 | 4800000 |
+| LINK/EUR | - | - | - | 0.02 | 0.02 | 0.9 | 80 | 40 | 95000 | 59000 |
+| DOGE/EUR | - | - | - | 0.02 | 0.02 | 0.925 | 80 | 40 | 14000000 | 6200000 |
+| LTC/EUR | - | - | - | 0.02 | 0.02 | 0.925 | 80 | 40 | 17000 | 9300 |
+| DOT/EUR | - | - | - | 0.02 | 0.02 | 0.925 | 80 | 40 | 340000 | 270000 |
 | AVAX/EUR | - | - | - | 0.02 | 0.02 | 0.9 | 80 | 40 | 110000 | 71000 |
 | ETH/BTC | - | - | - | 0.02 | 0.01 | 0.99 | 80 | 40 | 1000 | 800 |
 | SOL/BTC | - | - | - | 0.02 | 0.01 | 0.925 | 80 | 40 | 4300 | 3100 |
@@ -94,11 +93,9 @@ asset's Kraken altname matches its common ticker directly (no alias).
 
 ## Provenance
 
-- **Raw snapshot file:** `data/snapshots/kraken-refdata-20261031T145540Z.json` (gitignored; not committed — regenerate
-  via `cli.snapshot.fetch_public("AssetPairs")` + `fetch_public("Assets")` fed into `build_snapshot(...)`).
-- **Raw snapshot sha256:** `64c45e02b8b62dc0da3b3e5649f10363729dfb3103a494f420b0717fd21e8c13` — a sha256 over the
-  canonical JSON of the raw `AssetPairs`/`Assets` results only (not `fetched_at`), so it is reproducible from the raw
-  responses alone.
+- **Raw snapshot file:** `data/snapshots/kraken-refdata-20261107T200543Z.json` (gitignored; not committed — `uv run zcrypto snapshot sweep` archives each sweep's).
+- **Raw snapshot sha256** (the header's): a sha256 over the canonical JSON of the raw `AssetPairs`/`Assets` results
+  only (not `fetched_at`), so it is reproducible from the raw responses alone.
 - **Derivation code:** `cli/snapshot/` (`fetch.py`, `assetpairs.py`, `register.py`), unit-tested against a trimmed,
   real (fetched-once-live) fixture under `tests/fixtures/` — see `docs/specs/00001-snapshot-register-design.md`.
 
@@ -116,6 +113,7 @@ changed** — otherwise the next reader cannot tell a re-confirmed register from
 | #2 (monthly, 2026-09-04) | 2026-09-04T08:11:18+00:00 | 1446 pairs / 840 assets | `bb84ee1a…8c9fbc` | **UNCHANGED (basket)** — all 12 still online and margin-enabled; leverage bands, `ordermin`, `costmin` and the alias ledger identical cell-by-cell. **The endpoint's borrow and limit columns moved**: `margin_rate` for shorts fell to 0.02 on ADA (was 0.04), AVAX (0.03) and DOT (0.024), so all nine alts now sit at the FLOOR of `kraken-fee-schedule.md`'s 0.02–0.04 % band — inside it, so no downstream figure is re-priced and `cli/costs/margin.py`'s bands still bound it; position limits moved on 7 legs (nothing outside this table reads them). Fee columns unchanged, so the drift detector is quiet. Venue churn: 4 pairs / 2 assets gone (CGN, ICX), 21 / 18 added — no candidate among them | **Tier 1, \$46.71 30-day spot volume** (futures \$0.00; AoP \$115.25) — read from the logged-in Fee tab 2026-09-04. Tier unchanged since #0, so nothing re-prices: \$46.71 selects the same tier-1 rates as \$0.00 (`cli/costs/fees.py`, run rather than assumed). AoP \$115.25 sits below the \$20,000 rung, the lowest the AoP ladder has, so it grants no tier; futures volume is \$0.00, below any threshold. Qualification takes the most favourable of the three, and none clears |
 | #3 (pre-entry, rung 2, 2026-10-01) | 2026-10-01T10:11:46+00:00 | 1455 pairs / 852 assets | `0d642fc5…632860` | **UNCHANGED (basket)** — all 12 still online and margin-enabled; leverage bands, `ordermin`, `costmin` and the alias ledger identical cell-by-cell, and `tests/test_costmin_drift.py` green on this snapshot. **The endpoint's fee ladder is gone**: `fees` and `fees_maker` are empty on all 1455 pairs, where all 1446 carried one at #2, so the fee columns read `-` and the drift detector they were has nothing left to detect; the fee level now comes from the account read alone. **Borrow and limits moved**: AVAX's `margin_rate` for shorts rose to 0.034 (was 0.02), inside `kraken-fee-schedule.md`'s 0.02–0.04 % band and below `cli/costs/margin.py`'s high bound, and the model has never held a short, so nothing re-prices; position limits moved on 7 legs (nothing outside this table reads them). Venue churn: 1 pair gone (MONAUSD), 10 added; no asset gone, 12 added — no candidate among them | **Tier 1, \$1,832.80 30-day spot volume** (futures \$0.00; AoP \$1,629.98) — read by authenticated `kraken volume` on 2026-10-01: maker 0.40 %, taker 0.80 %, the next tier at \$2,500 (maker 0.30 %, taker 0.60 %). Tier unchanged since #0, so nothing re-prices. The volume sits \$667 below tier 2, so trading inside rung 2's box could cross it and move the maker rate the box's fills are priced at. AoP \$1,629.98 sits below the \$20,000 rung, so it grants no tier. The attended remainder — the ladder's shape and the AoP ladder — not re-read |
 | #4 (monthly, 2026-10-31, after rung 2's exit) | 2026-10-31T14:55:40+00:00 | 1464 pairs / 859 assets | `64c45e02…1e8c13` | **`ordermin` MOVED on 8 of 12 legs** — all 12 still online and margin-enabled; leverage bands, `costmin` and the alias ledger identical cell-by-cell, and `tests/test_costmin_drift.py` green on this snapshot. **Raised**: BTC/EUR 0.00005 → 0.00006, ETH/EUR 0.001 → 0.002, XRP/EUR 1.65 → 4, ETH/BTC 0.001 → 0.002. **Lowered**: SOL/EUR 0.06 → 0.05, LINK/EUR 0.55 → 0.35, LTC/EUR 0.1 → 0.08, SOL/BTC 0.06 → 0.05. **What it moves**: the engine's `ordermin` — the Cache instrument's `min_quantity`, loaded when the adapter connects — still read the floors before this move on 2026-10-31. The fix is T0224's; no code moves in this sweep. **Borrow moved**: AVAX's `margin_rate` for shorts fell to 0.02 (was 0.034), back to the floor of `kraken-fee-schedule.md`'s 0.02–0.04 % band, so nothing re-prices. Position limits moved on 7 legs (nothing outside this table reads them). Venue churn: no pair or asset gone; 9 pairs / 7 assets added — no candidate among them | **Tier 1, \$365.50 30-day spot volume** (futures \$0.00; AoP \$1,594.99) — read by authenticated `kraken volume` on 2026-10-31: maker 0.40 %, taker 0.80 %, the next tier at \$2,500 (maker 0.30 %, taker 0.60 %). Tier unchanged since #0, so nothing re-prices; the volume sits \$2,134.50 below tier 2. AoP \$1,594.99 sits below the \$20,000 rung, so it grants no tier. The attended remainder — the ladder's shape and the AoP ladder — not re-read |
+| #5 (entry week, rung 3, 2026-11-07) | 2026-11-07T20:05:43+00:00 | 1468 pairs / 860 assets | `f8f0d92d…8e9722` | **UNCHANGED (basket)** — all 12 still online and margin-enabled; leverage bands, `ordermin`, `costmin` and the alias ledger identical cell-by-cell, and `tests/test_costmin_drift.py` green on this snapshot. `margin_rate` and collateral unchanged, so nothing re-prices; no announced delisting. Position limits moved on 5 legs (nothing outside the margin-bands table reads them). Venue churn: 6 pairs / 2 assets added (`EURCV`, `KOR`), 2 pairs / 1 asset gone (`VELODROME`) — no candidate among them | **Tier 1, \$159.61 30-day spot volume** (futures \$0.00; AoP \$1,587.50) — read by authenticated `kraken volume` on 2026-11-07: maker 0.40 %, taker 0.80 %, the next tier at \$2,500 (maker 0.30 %, taker 0.60 %). Tier unchanged since #0, so nothing re-prices; the volume sits \$2,340.39 below tier 2. AoP \$1,587.50 sits below the \$20,000 rung, so it grants no tier. The attended remainder — the ladder's shape and the AoP ladder — not re-read |
 
 The last column exists because the account's own tier is the one fact here the **public** endpoints cannot supply — authenticated `kraken volume` serves it, and `cli/costs/fees.py` encodes the ladder it selects from. A sweep that silently carried the previous row's tier forward would manufacture exactly the false confirmation this log was built to make impossible, so an unperformed read is recorded as *not re-read*, never as unchanged.
 
