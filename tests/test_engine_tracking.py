@@ -145,7 +145,9 @@ def test_no_liquidity_side_is_counted_but_unpriced_and_never_aborts():
 def test_a_fill_reporting_no_fee_is_counted_but_unpriced_and_never_aborts():
     fills, notes = extract_fills([_rec([_fill(fee=None, fee_currency=None)])])
     assert [(f.qty, f.fee) for f in fills] == [(0.001, None)]
-    assert any("reports no fee" in n for n in notes)
+    assert notes == [
+        "a fill on BTC/EUR reports no fee -- excluded from the fee rate, and in the maker/taker share it may duplicate a real fill"
+    ]
 
 
 def test_zeur_is_a_euro():

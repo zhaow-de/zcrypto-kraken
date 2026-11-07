@@ -188,7 +188,9 @@ def extract_fills(records: list[dict]) -> tuple[list[Fill], list[str]]:
                 cur = ev.get("fee_currency")
                 fee: float | None = None if ev["fee"] is None else float(ev["fee"])
                 if fee is None:
-                    note(f"a fill on {symbol} reports no fee -- counted, but excluded from the fee rate")
+                    note(
+                        f"a fill on {symbol} reports no fee -- excluded from the fee rate, and in the maker/taker share it may duplicate a real fill"
+                    )
                 elif cur not in EUR_CODES:
                     fee = None
                     note(f"fee on {symbol} is denominated in {cur}, not euro -- excluded from the fee rate")
