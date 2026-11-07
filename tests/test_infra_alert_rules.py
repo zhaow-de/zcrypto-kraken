@@ -2537,9 +2537,11 @@ def test_a_gate_held_below_full_beside_a_kill_file_stays_quiet():
 def test_the_disarmed_rule_keeps_its_window_its_wait_and_its_route():
     rule = _rule(_DISARMED)
     a, b = rule["data"][0], rule["data"][1]
-    assert a["model"]["expr"] == 'max_over_time(zcrypto_exec_gate_level{host="zcrypto"}[4h30m])'
+    assert a["model"]["expr"] == 'max(max_over_time(zcrypto_exec_gate_level{host="zcrypto"}[4h30m]))'
     assert a["relativeTimeRange"]["from"] == _promql_seconds(a["model"]["expr"])
-    assert b["model"]["expr"] == 'zcrypto_exec_kill_tripped{host="zcrypto"}'
+    assert b["model"]["expr"] == 'max(zcrypto_exec_kill_tripped{host="zcrypto"})'
+    by_ref = {n["refId"]: n.get("model", {}) for n in rule["data"]}
+    assert by_ref["D"].get("expression") == "C", "the threshold must read the math node, not a raw query"
     assert (rule["condition"], _evaluator(rule)) == ("D", {"type": "gt", "params": [0]})
     assert (rule["for"], rule["noDataState"], rule["execErrState"]) == ("10m", "OK", "Alerting")
     assert (rule["labels"]["severity"], rule["notification_settings"]["receiver"], rule["ruleGroup"]) == (

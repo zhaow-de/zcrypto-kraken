@@ -1421,7 +1421,7 @@
               "options": {
                 "0": {
                   "text": "NOTHING MAY SUBMIT",
-                  "color": "green",
+                  "color": "red",
                   "index": 0
                 },
                 "1": {
@@ -1431,7 +1431,7 @@
                 },
                 "2": {
                   "text": "ANYTHING MAY SUBMIT",
-                  "color": "orange",
+                  "color": "green",
                   "index": 2
                 }
               }
@@ -1500,12 +1500,12 @@
               "options": {
                 "0": {
                   "text": "DISARMED",
-                  "color": "green",
+                  "color": "orange",
                   "index": 0
                 },
                 "1": {
                   "text": "ARMED",
-                  "color": "orange",
+                  "color": "green",
                   "index": 1
                 }
               }

@@ -751,7 +751,7 @@ rules:
         relativeTimeRange: {from: 16200, to: 0}  # 4h30m, matching the max_over_time window below
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          expr: 'max_over_time(zcrypto_exec_gate_level{host="zcrypto"}[4h30m])'
+          expr: 'max(max_over_time(zcrypto_exec_gate_level{host="zcrypto"}[4h30m]))'
           instant: true
           refId: A
       - refId: B
@@ -759,7 +759,7 @@ rules:
         relativeTimeRange: {from: 600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          expr: 'zcrypto_exec_kill_tripped{host="zcrypto"}'
+          expr: 'max(zcrypto_exec_kill_tripped{host="zcrypto"})'
           instant: true
           refId: B
       - refId: C
