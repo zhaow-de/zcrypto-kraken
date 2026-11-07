@@ -155,7 +155,7 @@ PY
 
    **Zero is the expected reading while nothing has been submitted and no adopted order was cancelled at a startup, and it is still worth taking.** A non-zero one before any order exists, with no adopted cancel behind it, means the machinery is firing on something nobody has modelled — read the log lines and understand them before arming, rather than after. Record the numbers in this version's `docs/reference/adapter-verification/<version>.md` record beside the baseline.
 
-6. **Confirm funding covers the plan, by hand, before the tooling does it for you.** Take the free EUR balance from the venue-truth read — the live balances spell that key **`EUR`**, not `ZEUR`; the engine still tries `ZEUR` first because the adapter's instrument-quote surface does spell the euro that way, so both keys are read and whichever the record carries is used. The plan's total `notional_eur` must be at or under `exec_max_plan_notional_eur` in `/opt/zcrypto-engine/zcrypto.toml` (rendered `100.0`, and `1000.0` from rung 3's arm converge), and `sum(notional ÷ leverage) × 2.5` over the margin intents must fit under that free balance. `probe-plan --check` recomputes both below and refuses on either — this step is so you learn it before the window, not during it.
+6. **Confirm funding covers the plan, by hand, before the tooling does it for you.** Take the free EUR balance from the venue-truth read — the live balances spell that key **`EUR`**, not `ZEUR`; the engine still tries `ZEUR` first because the adapter's instrument-quote surface does spell the euro that way, so both keys are read and whichever the record carries is used. The plan's total `notional_eur` must be at or under `exec_max_plan_notional_eur` in `/opt/zcrypto-engine/zcrypto.toml`, and `sum(notional ÷ leverage) × 2.5` over the margin intents must fit under that free balance. `probe-plan --check` recomputes both below and refuses on either — this step is so you learn it before the window, not during it.
 
 7. **Only the account owner authors and places a plan.** (no count command: who authors and places a plan is an operator act nothing in the tree records) A plan file the owner did not place does not exist to this process.
 
@@ -704,14 +704,14 @@ Entry is a Monday 00Z boundary, so the weekly read's first week is whole. The si
 
 ##### The gate's live read — one spot lot across a restart
 
-By the owner's ruling of 2026-11-07 ([`14.phase6-decisions.md`](../../docs/research/14.phase6-decisions.md)): one gap after item 4's boundary and before item 5's sitting, its bounds and first reads [the restart step](#rung-3-after-a-restart) item 1's. The probe window's arm steps 1 to 3 do not run: the host's config is armed.
+By the owner's ruling of 2026-11-07 ([`14.phase6-decisions.md`](../../docs/research/14.phase6-decisions.md)): one gap after item 4's boundary and before item 5's sitting, its bounds and first reads [the restart step](#rung-3-after-a-restart) item 1's.
 
 1. **Both keys up, for this plan alone.** `sudo rm /var/lib/zcrypto-engine/exec/restart-hold`, then `sudo touch /var/lib/zcrypto-engine/exec/armed`; the gate reads `level=full`, `reasons=-`. The arm file comes off again before the gap's close, whatever the plan has done: an armed boundary drafts and places the book.
-2. **One spot lot.** The probe-window procedure's plan file, through its `--check` and its `mv`, this intent alone, on a leg whose target holds a lot at the floors, BTC/EUR on the 2026-11-07 book:
+2. **One spot lot.** The probe-window procedure's plan file, through its `--check` and its `mv`, under its first execute rule, this intent alone, on a leg whose target holds a lot at the floors, BTC/EUR on the 2026-11-07 book:
    ```json
    {"symbol": "BTC/EUR", "side": "buy", "action": "open", "mode": "execute", "notional_eur": 10.0}
    ```
-   The ledger read shows its `filled_qty` above 0 and its order row terminal; on the workstation, `kraken extended-balance -o json` shows the lot and `kraken open-orders -o json` lists nothing. A `filled_qty` of 0 takes one more plan under a fresh `plan_id`, inside the gap; 0 again is the next gap's, the arm file off first.
+   The ledger read shows its `filled_qty` above 0 and its order row terminal; on the workstation, `kraken extended-balance -o json` shows the lot and `kraken open-orders -o json` lists nothing. An `unfilled` at 0 takes one more plan under a fresh `plan_id`; 0 again is the next gap's.
 3. **The arm file off.** `sudo rm /var/lib/zcrypto-engine/exec/armed`; the gate reads `level=none`, `reasons=arm_file_absent`.
 4. **The restart and the read**, the restart step's items 2 and 3. The boot shows `cache restore: 0 order(s), 1 position(s) restored` and the BTC/EUR line that item 3 takes; the gate reads `level=none`, `reasons=arm_file_absent,restart_hold`. The reading goes into the record of the engine's pin under `docs/reference/adapter-verification/`, and the hold stands for item 7. An `(EXTERNAL)` line or another quantity is the gate's stop: the entry moves a week, and the lot goes to the owner. A clean read leaves the lot in the book, for item 6's snapshot and the first armed draft.
 
