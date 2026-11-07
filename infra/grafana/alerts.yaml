@@ -732,49 +732,64 @@ rules:
       receiver: metrics
 
   # The execution safety envelope (cli/engine/execgate.py, `_ExecGauges` in cli/engine/command.py):
-  # the next rules, over its `zcrypto_exec_*` gauges. `reasons` never reaches Grafana and
-  # `zcrypto_exec_armed` deliberately conflates its two arming keys into one gauge, so each rule's
-  # runbook section sends the responder to `zcrypto engine exec-status` on the engine host for
-  # the breakdown remote telemetry cannot show. The gauges carrying no rule are recorded with
-  # their reason in NOT_A_FAULT_SIGNAL (tests/test_infra_alert_rules.py).
-  - uid: zcrypto-engine-exec-armed-too-long
-    title: "Engine · order submission has been armed for over six hours"
+  # the next rules, over its `zcrypto_exec_*` gauges. `reasons` never reaches Grafana, so each
+  # rule's runbook section sends the responder to the engine host for the breakdown remote
+  # telemetry cannot show. The gauges carrying no rule are recorded with their reason in
+  # NOT_A_FAULT_SIGNAL (tests/test_infra_alert_rules.py).
+  - uid: zcrypto-engine-exec-disarmed-boundary
+    title: "Engine · the execution gate has not read full across a whole boundary"
     ruleGroup: zcrypto-gate
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
-    # min_over_time == 1 means it was armed for the WHOLE window: a single dip to 0 (a disarm)
-    # clears it. `> 0` on an average would fire on a brief, correct probe window.
-    condition: C
+    # max_over_time below 1.5 means no sample in the window read `full` (2): the window is wider than
+    # the 4h between boundaries, so a dip below `full` that ends inside it stays quiet. The kill half
+    # leaves a kill file to zcrypto-engine-exec-kill-tripped, which pages on it in its own right.
+    condition: D
     data:
       - refId: A
         queryType: ""
-        relativeTimeRange: {from: 21600, to: 0}  # 6h, matching the min_over_time window below
+        relativeTimeRange: {from: 16200, to: 0}  # 4h30m, matching the max_over_time window below
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          expr: 'min_over_time(zcrypto_exec_armed{host="zcrypto"}[6h])'
+          expr: 'max_over_time(zcrypto_exec_gate_level{host="zcrypto"}[4h30m])'
           instant: true
           refId: A
+      - refId: B
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'zcrypto_exec_kill_tripped{host="zcrypto"}'
+          instant: true
+          refId: B
       - refId: C
         queryType: ""
         relativeTimeRange: {from: 0, to: 0}
         datasourceUid: "__expr__"
         model:
           datasource: {type: "__expr__", uid: "__expr__"}
-          type: threshold
-          expression: "A"
+          type: math
+          expression: "$A < 1.5 && $B < 0.5"
           refId: C
+      - refId: D
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "C"
+          refId: D
           conditions:
-            - evaluator: {type: gt, params: [0.5]}  # stands in for == 1 -- this file's evaluators are gt/lt only
-    # OK, not Alerting: absence means the engine itself is down, which zcrypto-engine-cycle-stale
-    # already pages on. This rule's job is the ARMED-too-long condition specifically, and a fresh
-    # process (or one between restarts) legitimately starts disarmed with no history to alarm on.
+            - evaluator: {type: gt, params: [0]}  # the math node is 1 iff BOTH halves hold
+    # OK, not Alerting: absence means the engine itself is down (owned by zcrypto-engine-cycle-stale).
     noDataState: OK
     execErrState: Alerting
-    for: 15m
+    for: 10m
     annotations:
-      summary: "The engine has been armed to submit orders continuously for more than six hours. Arming is expected only inside an attended probe window and is normally removed when it ends, so this most likely means an arm was left on. Deleting the arm file on the engine host disarms it immediately, with no deploy and no restart. This is not itself an incident — several other conditions must also be permissive before anything could be submitted — but an engine left armed removes one of the two keys that are supposed to stand between a mistake and real money. Runbook: infra/runbooks/engine.md#zcrypto-engine-exec-armed-too-long"
+      summary: "The engine's execution gate has not read full, anything may submit, at any sample of the last four and a half hours, a whole 4-hourly boundary's span, while no kill file stands (the kill switch pages on its own rule). Every boundary in that span drafted its plan and carried its legs while the targets moved. The causes: the arm file removed, a deliberate pause among them, which is silenced for its span; the restart hold left in place after a restart; the config's arming key off after a rollout; Kraken not online, or the engine's read of its status failing; an unverified library version; and three holds the engine folds into the level: the stale-socket watchdog's freeze, a startup reconciliation it could not read, and the day-loss hold. Read which on the engine host: the newest boundary's exec record lists every reason in its reasons, the three folded holds among them, and the exec-status command shows the gate's own reasons but never those three. On the Engine board the gate-level tile shows the level alone and the watchdog tile the freeze. Runbook: infra/runbooks/engine.md#zcrypto-engine-exec-disarmed-boundary"
       __dashboardUid__: "zcrypto-engine"
-      __panelId__: "52"
+      __panelId__: "51"
     labels:
       severity: warning
     notification_settings:

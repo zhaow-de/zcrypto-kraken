@@ -71,7 +71,7 @@ _UID_HOST = {
     "zcrypto-engine-cycle-stale": "zcrypto",
     "zcrypto-engine-cycle-failed": "zcrypto",
     "zcrypto-engine-error-logs": "zcrypto",
-    "zcrypto-engine-exec-armed-too-long": "zcrypto",
+    "zcrypto-engine-exec-disarmed-boundary": "zcrypto",
     "zcrypto-engine-exec-kill-tripped": "zcrypto",
     "zcrypto-engine-exec-not-evaluated": "zcrypto",
     "zcrypto-engine-exec-venue-diverged": "zcrypto",
