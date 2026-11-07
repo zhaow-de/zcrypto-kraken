@@ -2489,9 +2489,7 @@ def _promql_seconds(expr: str) -> int:
 
 
 def _disarmed_fire_minute(level, kill=((0, 0),)):
-    """The minute the disarmed rule fires over step series `[(at, value)]` scraped each minute from 0, or None:
-    A the highest level sample in the window, B the kill gauge, C the rule's own math, D its threshold, and
-    Grafana's `for` counted from the first minute D holds."""
+    """The minute the disarmed rule fires over step series `[(at, value)]` scraped each minute from 0, or None, Grafana's `for` counted from the first minute D holds."""
     rule = _rule(_DISARMED)
     model = {q["refId"]: q["model"] for q in rule["data"]}
     window = _promql_seconds(model["A"]["expr"])
