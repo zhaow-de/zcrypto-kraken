@@ -514,6 +514,7 @@ def test_the_committed_record_is_the_one_the_ansible_backstop_reads(tmp_path):
             "2.0.0rc6.dev20260918",
             "2.0.0rc6.dev20260921",
             "2.0.0rc9.dev20261101",
+            "2.0.0rc9.dev20261106",
         }
     ), (
         "the record changed. If an attended order-semantics pass really ran, update this "
