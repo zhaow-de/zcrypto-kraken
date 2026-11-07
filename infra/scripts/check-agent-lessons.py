@@ -9,7 +9,6 @@ import json
 import sys
 
 REQUIRED = {"ts", "session", "branch", "kind", "cites", "what", "why"}
-# A placeholder `what` passed every shape check and reached a live inbox (three `a thing` records, 2026-09-07).
 MIN_LESSON_CHARS = 40
 KINDS = {"self-correction", "rule-deviation", "rule-feedback", "skill-feedback", "miscount"}
 # A lesson field is one line; every other check accepts a multi-line one as a non-empty string of the right type.

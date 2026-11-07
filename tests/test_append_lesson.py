@@ -161,11 +161,17 @@ class TestTheSessionNamesOneFileInTheInbox:
 
 
 class TestItCannotResolveTheCheckout:
-    def test_outside_a_checkout_it_refuses_legibly_and_not_as_a_validation_failure(self, tmp_path: pathlib.Path, capsys) -> None:
-        """Exit 2, not 1: a caller must tell 'not a git repo' from 'your record is malformed'."""
+    def test_outside_a_checkout_it_refuses_legibly_and_not_as_a_validation_failure(
+        self, tmp_path: pathlib.Path, capsys, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Exit 2, not 1: a caller must tell 'not a git repo' from 'your record is malformed'. The ceiling keeps git from
+        climbing out of the temp dir: under a base temp inside a checkout the record would otherwise land in that
+        checkout's live inbox, which is where three fixture records were found in 2026-11."""
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
         outside = tmp_path / "nowhere"
         outside.mkdir()
         assert al.run(_argv(), cwd=outside, now=NOW) == 2
+        assert not (outside / ".local").exists()
         assert "cannot resolve the main checkout" in capsys.readouterr().err
 
     def test_a_checkout_path_with_a_space_is_parsed_whole(self, tmp_path: pathlib.Path) -> None:

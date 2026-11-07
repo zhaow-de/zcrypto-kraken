@@ -166,7 +166,7 @@ def test_a_clear_deletes_exactly_the_listed_keys_and_leaves_the_rest(tmp_path, v
     ("state", "refusal"),
     [
         ("running", "REFUSED: the engine container is running: stop the unit first; nothing was deleted"),
-        ("unreachable", "REFUSED: the engine container's state could not be read (docker inspect exited 1)"),
+        ("unreachable", "REFUSED: the engine container's state could not be read (the inspect exited 1)"),
     ],
 )
 def test_a_clear_is_refused_unless_the_engine_container_reads_stopped_or_absent(tmp_path, valkey, capsys, state, refusal):
