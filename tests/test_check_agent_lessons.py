@@ -14,8 +14,8 @@ OK = {
     "branch": "fix/x",
     "kind": "self-correction",
     "cites": ["a.md"],
-    "what": "a thing",
-    "why": "a reason",
+    "what": "a thing I did that the next session should not: the placeholder stands in for one",
+    "why": "a reason long enough to carry what the record is for",
 }
 
 
@@ -111,3 +111,10 @@ def test_a_malformed_record_still_fails_and_names_its_line(tmp_path: pathlib.Pat
     done = _run(_inbox(tmp_path, OK, {**OK, "kind": "rule-not-followed"}))
     assert done.returncode == 1
     assert ":2:" in done.stdout
+
+
+def test_a_placeholder_what_or_why_is_a_malformed_record(tmp_path: pathlib.Path) -> None:
+    short_what = _run(_inbox(tmp_path, dict(OK, what="a thing")))
+    assert short_what.returncode == 1 and "what must carry at least" in short_what.stdout, short_what
+    short_why = _run(_inbox(tmp_path, dict(OK, why="because")))
+    assert short_why.returncode == 1 and "why must carry at least" in short_why.stdout, short_why

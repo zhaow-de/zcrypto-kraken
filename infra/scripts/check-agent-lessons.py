@@ -9,6 +9,8 @@ import json
 import sys
 
 REQUIRED = {"ts", "session", "branch", "kind", "cites", "what", "why"}
+# A placeholder `what` passed every shape check and reached a live inbox (three `a thing` records, 2026-09-07).
+MIN_LESSON_CHARS = 40
 KINDS = {"self-correction", "rule-deviation", "rule-feedback", "skill-feedback", "miscount"}
 # A lesson field is one line; every other check accepts a multi-line one as a non-empty string of the right type.
 _ONE_LINE = "%s must be one line, but contains a newline (if a shell substitution ran in your argument, single-quote it)"
@@ -30,6 +32,8 @@ def record_errors(rec: object) -> list[str]:
             out.append(f"{key} must be a non-empty string")
         elif "\n" in rec[key]:
             out.append(_ONE_LINE % key)
+        elif key in ("what", "why") and len(rec[key].strip()) < MIN_LESSON_CHARS:
+            out.append(f"{key} must carry at least {MIN_LESSON_CHARS} characters, a lesson and not a placeholder")
     return out
 
 
