@@ -847,9 +847,6 @@ SLUGS = {
     ("host_vars/zcrypto-hc/vars.yml", "hc_selfcheck_healthcheck_url"): "zcrypto-hc",
     **{("host_vars/zcrypto-ops/vars.yml", f"ops_{x}_healthcheck_url"): "zcrypto-" + x.replace("_", "-") for x in OPS_CHECKS},
 }
-# A row a rollback in the sitting points back at its healthchecks.io value: (file, variable) -> the name its vars line
-# reads, e.g. "hcio_capture_healthcheck_url". The row's slug stays in the set.
-ROLLED_BACK: dict[tuple[str, str], str] = {}
 
 
 def _var_files(name: str) -> list[Path]:
@@ -874,11 +871,6 @@ def _vaulted() -> set[str]:
     return set().union(*(_vault_keys(path) for path in _var_files("vault.yml")))
 
 
-def _assert_rolled_back(value: str, name: str) -> None:
-    assert value == "{{ " + name + " }}"
-    assert name in _vaulted(), f"{name} is no vault key: the rolled-back line would render undefined at the converge"
-
-
 def _clone_shape() -> str:
     (entry,) = [
         e for e in _include(PLAIN_PREFLIGHT)["vars"]["node_common_secrets_preflight"] if e["key"] == "hc_selfcheck_healthcheck_url"
@@ -892,14 +884,6 @@ def test_the_mon_roles_ping_url_shape_is_this_roles():
     assert (entry["key"], entry["shape"]) == ("mon_selfcheck_healthcheck_url", _clone_shape())
 
 
-def test_a_rolled_back_row_names_a_vaulted_key_and_its_line_reads_it():
-    _assert_rolled_back("{{ hcio_capture_healthcheck_url }}", "hcio_capture_healthcheck_url")
-    with pytest.raises(AssertionError, match="no vault key"):
-        _assert_rolled_back("{{ hcio_capture_healthcheck_uri }}", "hcio_capture_healthcheck_uri")
-    with pytest.raises(AssertionError):
-        _assert_rolled_back("{{ hc_ping_base }}/zcrypto-capture", "hcio_capture_healthcheck_url")
-
-
 def test_the_ping_url_variables_are_the_twelve_rows_and_their_slugs_the_fixtures_names_with_zcrypto_hc():
     assert set(_ping_url_vars()) == set(SLUGS)
     names = {check["name"] for check in json.loads(FIXTURE.read_text())}
@@ -910,9 +894,6 @@ def test_the_ping_url_variables_are_the_twelve_rows_and_their_slugs_the_fixtures
 @pytest.mark.parametrize("row", sorted(SLUGS), ids=lambda row: f"{row[0]}:{row[1]}")
 def test_each_ping_url_renders_from_the_project_key_to_its_own_checks_slug(row):
     value = _ping_url_vars()[row]
-    if row in ROLLED_BACK:
-        _assert_rolled_back(value, ROLLED_BACK[row])
-        return
     observed = role_render.trusted(yaml.safe_load(OBSERVED_VARS.read_text()))
     rendered = Templar(loader=DataLoader(), variables={**observed, "hc_ping_key": DUMMY_PING_KEY}).template(
         trust_as_template(value)

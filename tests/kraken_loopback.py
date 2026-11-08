@@ -14,6 +14,7 @@ import asyncio
 import base64
 import copy
 import json
+import sys
 import threading
 import time
 import urllib.parse
@@ -45,6 +46,8 @@ _PAGE = 50
 # The stamp a row carries unless its builder is handed one: a fixed 2025-09-23, older than the twelve-hour
 # window a node start reads, so a row a start must see under `bound_by_start` is handed a stamp of its own.
 _STAMP = 1758600000.0
+
+_HANDLER_TIMEOUT = 10.0
 
 
 def open_order(
@@ -206,6 +209,7 @@ class KrakenLoopback:
     errors: dict[str, str] = field(default_factory=dict)
     # Endpoint name -> seconds its answer waits, for a caller's own bound to fire first.
     stalls: dict[str, float] = field(default_factory=dict)
+    closing: threading.Event = field(default_factory=threading.Event, repr=False, compare=False)
     private_calls: list[str] = field(default_factory=list)
     add_orders: list[dict[str, str]] = field(default_factory=list)
     closed_order_forms: list[dict[str, str]] = field(default_factory=list)
@@ -241,7 +245,7 @@ class KrakenLoopback:
         name = path.rsplit("/", 1)[-1]
         if path.startswith("/0/private/"):
             self.private_calls.append(name)
-        time.sleep(self.stalls.get(name, 0.0))
+        self.closing.wait(self.stalls.get(name, 0.0))
         if name in self.errors:
             return None, [self.errors[name]]
         if path == "/0/public/AssetPairs":
@@ -300,6 +304,8 @@ class KrakenLoopback:
 
 def _handler(venue: KrakenLoopback) -> type[BaseHTTPRequestHandler]:
     class _Handler(BaseHTTPRequestHandler):
+        timeout = _HANDLER_TIMEOUT
+
         def _respond(self, form: dict[str, str]) -> None:
             url = urllib.parse.urlsplit(self.path)
             result, error = venue.answer(self.command, url.path, urllib.parse.parse_qs(url.query), form)
@@ -324,18 +330,30 @@ def _handler(venue: KrakenLoopback) -> type[BaseHTTPRequestHandler]:
     return _Handler
 
 
+class _Server(ThreadingHTTPServer):
+    # Not daemon: `server_close` joins every handler, so none outlives `serve` to raise into whatever
+    # test or stream is current once its client has gone.
+    daemon_threads = False
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        # A client that hung up first, as one whose own bound fired does, is no fault of the venue's.
+        if not isinstance(sys.exception(), ConnectionError):
+            super().handle_error(request, client_address)
+
+
 @contextmanager
 def serve(asset_pairs: dict[str, Any] | None = None) -> Iterator[KrakenLoopback]:
     """A running loopback venue listing `asset_pairs` (the committed AssetPairs fixture by default)."""
     pairs = json.loads(ASSET_PAIRS_FIXTURE.read_text()) if asset_pairs is None else asset_pairs
     venue = KrakenLoopback(asset_pairs=pairs)
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _handler(venue))
+    server = _Server(("127.0.0.1", 0), _handler(venue))
     thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
     thread.start()
     venue.base_url = f"http://127.0.0.1:{server.server_port}"
     try:
         yield venue
     finally:
+        venue.closing.set()
         server.shutdown()
         thread.join()
         server.server_close()
