@@ -1,13 +1,8 @@
 #!/usr/bin/env python3
-"""Write the fleet's dead-man checks to the dead-man service from the committed fixture, and read them there.
-
-    uv run python infra/scripts/hc-provision.py apply    write the twelve checks, then read each one back
-    uv run python infra/scripts/hc-provision.py fixture  rewrite the fixture from the service's listing
-    uv run python infra/scripts/hc-provision.py status   per check, its status, ping count and last ping
+"""Write the fleet's dead-man checks to the dead-man service from the fixture, and read them there.
 
 The fleet's checks are the definitions in tests/fixtures/healthchecks_descriptions.json; zcrypto-hc, the service's
-own, is defined here. Exit 0 done, 2 refused: a refusal names a key, an endpoint by its kind and a check by its name,
-never a key's value nor a check's uuid, the secret half of its ping URL.
+own, is defined here.
 """
 
 from __future__ import annotations
@@ -287,7 +282,7 @@ def status() -> None:
 
 
 VERBS = {
-    "apply": (apply, "write the twelve checks from the committed fixture, then read each one back"),
+    "apply": (apply, "write the twelve checks from the fixture, then read each one back"),
     "fixture": (fixture, "rewrite the fixture from the service's listing"),
     "status": (status, "per check, its status, ping count and last ping, `moved` once pinged and up"),
 }

@@ -66,8 +66,8 @@ R14, 2026-11-03: the engine's move rode the box's deferred disarm converge, rc 0
 
 The fourth pull request, #824, merged 2026-11-06 as 7811fd755: Task 15, the three drills' sections and the surfaces' sweep. Beside it, #825, merged 2026-11-06 as 73318c00d, takes the capture daemons' ping off the event loop, the precondition drill X2 reads.
 
-R15, the three drills, each a pass, each an entry in `docs/reference/drill-log.md`: X1 on 2026-11-06, the service stopped; X2 on 2026-11-07, the node powered off for thirty minutes; X3 on 2026-11-08, the node rebuilt from Debian 13 and its database restored from the last backup, 24 min 30 s from the rebuild to the first stored ping. The two figures are `infra/runbooks/hc.md#hc-dark`'s.
+R15, the three drills, each a pass, each an entry in `docs/reference/drill-log.md`: X1 on 2026-11-06, the service stopped; X2 on 2026-11-07, the node powered off for thirty minutes; X3 on 2026-11-08, the node rebuilt from Debian 13 and its database restored from the last backup.
 
-R16, 2026-11-08: `hc-provision.py retire` deleted healthchecks.io's eleven checks at 10:33Z, each read back 404; the owner revoked both of its keys and deleted the account the same morning. Its pull request is R-records-2's: the owner's removal of the fourteen vault values and their comments, the slug case's rollback arm, `healthchecks_project_id`, `hc-provision.py` reading the service alone with `apply` writing from the committed fixture, and T0085's rotation re-trued to the service's two keys.
+R16, 2026-11-08: `hc-provision.py retire` deleted healthchecks.io's eleven checks at 10:33Z, each read back 404; the owner revoked both of its keys and deleted the account the same morning.
 
-R-records-2, the same pull request: the three drill-log entries, the `hc` and the node's `alloy` rows in `docs/reference/fleet-pins.md`, the deploy rows of X3's converges, `hc.md`'s two figures, the deploy-log audit reading 0 over the day's rows in both arms, and the measured basis's sweep of the operator surfaces naming healthchecks.io reading 0.
+R-records-2, this pull request: the three drills' records, healthchecks.io's fourteen vault values, `healthchecks_project_id` and the code that read the account removed, and T0085's rotation re-trued to the service's two keys.
