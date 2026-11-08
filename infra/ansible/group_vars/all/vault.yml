@@ -194,24 +194,6 @@ zaccess_client_p12_pass: !vault |
           3437393566616432620a626630313864376236653962356137653962366533383034356537313662
           39316133323536643635643765333234346136333665343732313261363930346637
 
-# The healthchecks.io READ-ONLY key (`hcr_` prefix; the `hcw_` admin key is
-# `healthchecks_api_key` in group_vars/capture_host/). Read by hc-provision.py's reads of healthchecks.io
-# until retirement; the daily pass reads the dead-man service's own key, hc_readonly_api_key.
-#
-# DUPLICATED BY CONSTRUCTION, and nothing keeps the two in sync: this is the same secret as the
-# last path segment of `hc_prometheus_metrics_path` in group_vars/observed/vault.yml, which embeds
-# the read-only key in its last PATH segment, kept for the ops scrape's rollback alone. Rotate them AS ONE -- a
-# rotation that rewrites only one leaves hc-provision.py's read or a rolled-back scrape presenting a
-# revoked key.
-healthchecks_readonly_api_key: !vault |
-          $ANSIBLE_VAULT;1.1;AES256
-          62633638626463353264373466633739643936313961656136396565663666393663636435326131
-          6366356331363964646530626261623639366237643931330a623963336563653164643662666436
-          31363631656163396337663161353865316636333938363463306334306338376137363934643861
-          3334363261643561300a303633336636656237313264643230646133383136373264353962613761
-          64666439656637323463613964653039626337623738353761336532326333623634633666316631
-          3263383535333862656362633361326235613430366234643762
-
 cache_wg_zcrypto_private_key: !vault |
           $ANSIBLE_VAULT;1.1;AES256
           64653230343437303335303333346662653563333765646138303337636164373663353435633936
