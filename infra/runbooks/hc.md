@@ -22,7 +22,7 @@ The node is unreachable, powered off or being rebuilt, or the service on it does
 
 While the service is down, the fleet's dead-man domain is dark: no check is evaluated, no check's page is sent, and the fleet's pings to the service are refused and recorded nowhere. The observability node's rules page the main channel throughout, and the watchdog's `999` is the one page of the dark domain; with that node dark too, the ops watchdog posts, `observability.md#both-nodes-dark`. When the service returns, each check whose `timeout` + `grace` the outage outlasted reads `DOWN` until its next ping and pages `DOWN`, then `UP`, through the service's Slack integration: those pages are the outage's, not their hosts'. A rebuild starts the service on an empty database until `hc-restore` puts the last backup back, and on a database lost with its backups, `hc-lost-database`.
 
-The two figures the drills measured: a thirty-minute power-off read `[[ROLLOUT: R15's X2 reading — the page and the self-check's first -> pinged after boot]]`, and a rebuild from nothing took `[[ROLLOUT: R15's X3 reading — the time from the rebuild to the first stored ping]]` from the rebuild to the first stored ping (`drills-telemetry.md`'s dead-man node drills).
+The two figures the drills measured: a thirty-minute power-off paged at `999` **6 min 23 s** in, and the self-check's first `-> pinged` came **2 min 2 s** after the power-on (`drills-telemetry.md#drill-x2`), and a rebuild from nothing took **24 min 30 s** from the **Rebuild** click to the first stored ping (`drills-telemetry.md#drill-x3`).
 
 ### What to do
 
@@ -267,7 +267,7 @@ The project, its uuid, its three keys and its Slack integration live in the data
 
    Write the project's uuid, read off the same page, over `hc_project_uuid` in `infra/ansible/group_vars/observed/vars.yml`. Then ops' Alloy converge with its recreate, `hc-keys` step 6's converge, which takes the new key and the new project's metrics path to the scrape.
 
-5. **Create the checks again**: `uv run python infra/scripts/hc-provision.py apply --from-fixture`, or `apply` alone while the fixture lacks each check's period and grace, writes the twelve checks, each on the Slack integration alone, and reads each back. Grafana's series keep each check's `name` label; its uuid is new.
+5. **Create the checks again**: `uv run python infra/scripts/hc-provision.py apply` writes the twelve checks from the fixture, each on the Slack integration alone, and reads each back. Grafana's series keep each check's `name` label; its uuid is new.
 
 6. **Run a backup**: `hc-restore` step 4.
 
@@ -275,7 +275,7 @@ The project, its uuid, its three keys and its Slack integration live in the data
 
 ### Retire when
 
-`infra/scripts/hc-provision.py` no longer takes `apply --from-fixture`, the step that creates the checks again.
+`infra/scripts/hc-provision.py` no longer takes `apply`, the step that creates the checks again.
 
 ______________________________________________________________________
 
@@ -462,7 +462,7 @@ A page that did not arrive with this rule quiet is a dispatch failure the servic
 1. **Act on the message on the page first.** It names the check and the integration's kind, or the request's path.
 2. **Get the full set out of the observability node** — `topk(5, …)` truncates a storm, so five instances is a floor, not a count. Read the set with `uv run python infra/scripts/grafana-query.py --loki 'sum by (level, message) (count_over_time({host="zcrypto-hc", container="hc", level=~"ERROR|CRITICAL"} | json message="message" | drop __error__, __error_details__ [1h]))'`.
 3. **A `Notification failed` record**: open the project's Integrations page in the service's UI and read the integration's last error beside the record. A disabled integration is marked there, and `uv run python infra/scripts/hc-provision.py status` refuses while the project's Slack integration is disabled.
-4. **A disabled Slack integration is removed and added again**, in the service's UI, at the page: a disabled Slack integration can be neither edited nor re-enabled (the service's `https://zcrypto-hc.zhaow.me/docs/configuring_notifications/`, Disabled Integrations). Add it with the main channel's webhook — a new incoming webhook minted in Slack for the service alone when Slack's `404` says the old one is gone — and no email or other integration beside it; send its test notification and read it arriving in the main channel. Then `uv run python infra/scripts/hc-provision.py apply`, or `apply --from-fixture` once the fixture carries each check's period and grace, puts each check on it and reads each back on it alone.
+4. **A disabled Slack integration is removed and added again**, in the service's UI, at the page: a disabled Slack integration can be neither edited nor re-enabled (the service's `https://zcrypto-hc.zhaow.me/docs/configuring_notifications/`, Disabled Integrations). Add it with the main channel's webhook — a new incoming webhook minted in Slack for the service alone when Slack's `404` says the old one is gone — and no email or other integration beside it; send its test notification and read it arriving in the main channel. Then `uv run python infra/scripts/hc-provision.py apply` puts each check on it from the fixture and reads each back on it alone.
 5. **An `Internal Server Error` record**: the path names the route; a record that recurs is a defect of the clone, taken to its repository with the record's message.
 
 ### Retire when

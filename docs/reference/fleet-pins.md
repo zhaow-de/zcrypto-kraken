@@ -40,8 +40,8 @@ Every host's Alloy runs the fleet's version outside a wave (set: the hosts of th
 | agentboard | zcrypto-ops | `0.5.3` (`@gbasin/agentboard`, npm global as `zhaow`) | 2026-09-17 | restarted by a tunnel-conf converge (`Requires=wg-quick@zaccess0`), not by a role task; re-pins attended, no bake; read-back and upgrade: `infra/runbooks/ops-node.md`'s `agentboard-node-upgrade` |
 | alloy | zaccess | `1.21.2-1` | 2026-11-06 | dpkg hold; pinned at 1001 |
 | alloy | zcrypto-mon | `1.21.2-1` | 2026-10-26 | dpkg hold; pinned at 1001 |
-| alloy | zcrypto-hc | `1.21.2-1` | 2026-10-26 | dpkg hold; pinned at 1001 |
-| hc (the healthchecks clone, `ghcr.io/zhaow-de/healthchecks`, by tag) | zcrypto-hc | `v6.3.1` | 2026-10-26 21:05:14 | rollback `v6.2.0`, on the node: `infra/runbooks/hc.md` `hc-patch-pass` step 6 |
+| alloy | zcrypto-hc | `1.21.2-1` | 2026-11-08 | dpkg hold; pinned at 1001 |
+| hc (the healthchecks clone, `ghcr.io/zhaow-de/healthchecks`, by tag) | zcrypto-hc | `v6.3.1` | 2026-11-08 10:29:13 | rollback `v6.2.0`, pulled from the registry first, the node rebuilt 2026-11-08 holding `v6.3.1` alone: `infra/runbooks/hc.md` `hc-patch-pass` step 6 |
 
 ## Standing constraints
 
