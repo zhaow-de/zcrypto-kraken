@@ -128,8 +128,6 @@ def test_reading_a_second_credential_does_not_crash_on_the_once_only_initialize(
 
 
 def test_vault_var_reads_the_file_it_is_given(monkeypatch):
-    """The dead-man service's read-only key lives in a per-group vault file, `observed/`, not `all/`; a
-    resolver fixed to one file cannot reach it."""
     seen = {}
 
     class FakeLoader:
