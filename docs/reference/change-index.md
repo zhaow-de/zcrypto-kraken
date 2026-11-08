@@ -435,3 +435,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #828 | 2026-11-06 | chore(fleet): T0217, Cloud's values leave the vault, the topic resolves | — | — | T0217 |
 | #829 | 2026-11-06 | feat(engine): page a position the library's reconciliation booked | — | 00157 | — |
 | #833 | 2026-11-07 | feat(engine): rung 3's arm lines, the band, the gate's live read | — | 00092 | — |
+| #840 | 2026-11-08 | docs(topics): T0226 carries the #5315 capture's triggered fill | — | — | T0226 |
