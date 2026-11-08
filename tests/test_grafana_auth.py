@@ -128,8 +128,8 @@ def test_reading_a_second_credential_does_not_crash_on_the_once_only_initialize(
 
 
 def test_vault_var_reads_the_file_it_is_given(monkeypatch):
-    """The engine's vaulted healthchecks.io URL and the healthchecks admin key live in per-group vault files,
-    not `all/`; a resolver fixed to one file cannot reach them."""
+    """The dead-man service's read-only key lives in a per-group vault file, `observed/`, not `all/`; a
+    resolver fixed to one file cannot reach it."""
     seen = {}
 
     class FakeLoader:
@@ -137,13 +137,13 @@ def test_vault_var_reads_the_file_it_is_given(monkeypatch):
 
         def load_from_file(self, path):
             seen["path"] = path
-            return {"hcio_engine_healthcheck_url": "https://example.invalid/abc"}
+            return {"hc_readonly_api_key": "hcr_example"}
 
     monkeypatch.setattr(ga, "_load_ansible_vault", lambda: (FakeLoader(), object()))
 
-    got = ga.vault_var("hcio_engine_healthcheck_url", vault_file="group_vars/engine_host/vault.yml")
-    assert got == "https://example.invalid/abc"
-    assert seen["path"].endswith("group_vars/engine_host/vault.yml")
+    got = ga.vault_var("hc_readonly_api_key", vault_file="group_vars/observed/vault.yml")
+    assert got == "hcr_example"
+    assert seen["path"].endswith("group_vars/observed/vault.yml")
 
 
 # --- the stack table: the observability node, and what follows it --------------------------------

@@ -313,6 +313,10 @@ def test_a_fixture_fetched_from_the_service_writes_the_same_twelve_again(fleet, 
     assert fleet.creates() == first == _the_twelve(fleet)
 
 
+def test_the_committed_fixture_reads_as_the_twelve_definitions_apply_writes():
+    assert [definition["name"] for definition in hp._twelve("the fixture")] == TWELVE
+
+
 def test_two_slack_integrations_are_refused_before_any_write(fleet, capsys):
     fleet.clone.integration("slack")
     rc, out, err = _run(capsys, "apply")
