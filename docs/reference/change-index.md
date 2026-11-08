@@ -435,3 +435,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #828 | 2026-11-06 | chore(fleet): T0217, Cloud's values leave the vault, the topic resolves | — | — | T0217 |
 | #829 | 2026-11-06 | feat(engine): page a position the library's reconciliation booked | — | 00157 | — |
 | #833 | 2026-11-07 | feat(engine): rung 3's arm lines, the band, the gate's live read | — | 00092 | — |
+| #837 | 2026-11-08 | chore(fleet): T0218 resolved, healthchecks.io retired, X1 to X3 recorded | — | 00122 | T0218 |

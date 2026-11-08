@@ -303,7 +303,7 @@ READER_PROGRAMS = [
     ("awk '$0 ~ /vault.yml/' infra/runbooks/fleet.md", "awk '$0 ~ /vault.yml/' infra/ansible/host_vars/zcrypto-ops/vault.yml"),
     ("awk -v f=vault.yml '$2 == f' docs/reference/fleet.md", "awk -v f=vault.yml '$2 == f' infra/ansible/group_vars/all/vault.yml"),
     ("less -p vault.yml docs/reference/fleet.md", "less -p vault.yml infra/ansible/group_vars/all/vault.yml"),
-    ("less +/vault.yml docs/reference/fleet.md", "less +/vault.yml infra/ansible/host_vars/nas/vault.yml"),
+    ("less +/vault.yml docs/reference/fleet.md", "less +/vault.yml infra/ansible/group_vars/observed/vault.yml"),
     ("more +/vault.yml docs/reference/fleet.md", "more +/vault.yml infra/ansible/group_vars/all/vault.yml"),
 ]
 
