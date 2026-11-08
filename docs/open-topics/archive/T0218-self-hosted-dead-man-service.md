@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: "2026-11-01, the last day of the rung-2 box (`infra/runbooks/engine-procedures.md#engine-rung-2-box`), on or after which R14 moves the engine at the box's deferred disarm converge — check `date -u +%F` reads 2026-11-01 or later"
+status: resolved
 ---
 
 # Self-hosting the dead-man service: a tailor-made healthchecks.io replacement
@@ -21,7 +20,9 @@ The dead-man checks are the fleet's last line: they page when a host, a daemon o
 - The first sitting's R0 to R5 readings, 2026-10-07, stand in the plan's R0 to R5.
 - The cutover sitting converged the primary's capture three minutes after the secondary's, against spec 00122 D5's hour.
 
-## Done so far
+## Resolution
+
+The fleet's twelve dead-man checks run on the owner's service at `zcrypto-hc.zhaow.me` alone, healthchecks.io's account closed on 2026-11-08; the pull requests and sittings below delivered it, in order.
 
 The first pull request, #663 from `docs/t0218-self-hosted-deadman`, merged 2026-10-06 as 414097c23, carries the pair and the plan's Tasks 1 to 7.
 
@@ -59,8 +60,14 @@ The cutover, 2026-10-08, from `develop` at 118b88f62, its six converges `rc 0`: 
 - R13's Slack-link read: the cookieless reads answered the login redirect, so the records pull request carries the edge's cookieless-`HEAD` route over `/checks/*` and `/cloaked/*` (spec Open question 8).
 - R13's morning read, 2026-10-09, which completes R13, as the plan's R13 records it; the records pull request re-fetched the fixture after the read (382ce8f3e).
 
-## Suggested next steps
+The records pull request, #682, merged 2026-10-09 as 134085f50, carries R-records-1 and the edge's cookieless-`HEAD` route, which the node's converges render from then on, the rebuild's of 2026-11-08 among them.
 
-- After the records pull request's merge, the node's converge `infra/ansible/scripts/converge.sh site.yml --limit zcrypto-hc --tags hc -e hc_image_tag=v6.2.0`, which renders the edge route.
-- The fourth pull request: Task 15 (the drills and the surfaces' sweep), merged before R15.
-- On or after 2026-11-01, the box's last day: R14 (the engine's move at the box's deferred disarm converge, inside the inter-cycle gap), R15 (the three drills), R16 (retirement, after R14's first clean day and R15's three drill entries) and R-records-2.
+R14, 2026-11-03: the engine's move rode the box's deferred disarm converge, rc 0 at 14:06:34Z; after the 16Z cycle the clone read `zcrypto-engine-shadow` moved, and its healthchecks.io twin was paused.
+
+The fourth pull request, #824, merged 2026-11-06 as 7811fd755: Task 15, the three drills' sections and the surfaces' sweep. Beside it, #825, merged 2026-11-06 as 73318c00d, takes the capture daemons' ping off the event loop, the precondition drill X2 reads.
+
+R15, the three drills, each a pass, each an entry in `docs/reference/drill-log.md`: X1 on 2026-11-06, the service stopped; X2 on 2026-11-07, the node powered off for thirty minutes; X3 on 2026-11-08, the node rebuilt from Debian 13 and its database restored from the last backup, 24 min 30 s from the rebuild to the first stored ping. The two figures are `infra/runbooks/hc.md#hc-dark`'s.
+
+R16, 2026-11-08: `hc-provision.py retire` deleted healthchecks.io's eleven checks at 10:33Z, each read back 404; the owner revoked both of its keys and deleted the account the same morning. Its pull request is R-records-2's: the owner's removal of the fourteen vault values and their comments, the slug case's rollback arm, `healthchecks_project_id`, `hc-provision.py` reading the service alone with `apply` writing from the committed fixture, and T0085's rotation re-trued to the service's two keys.
+
+R-records-2, the same pull request: the three drill-log entries, the `hc` and the node's `alloy` rows in `docs/reference/fleet-pins.md`, the deploy rows of X3's converges, `hc.md`'s two figures, the deploy-log audit reading 0 over the day's rows in both arms, and the measured basis's sweep of the operator surfaces naming healthchecks.io reading 0.
