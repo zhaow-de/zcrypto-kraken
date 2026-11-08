@@ -11,7 +11,7 @@ At a boundary the engine's metrics sink (`cli/engine/command.py`, `_make_exec_si
 
 ## Why this matters
 
-`zcrypto-engine-exec-disarmed-boundary`, the rule #834 lands, reads that level over a span, so a bare 2 under a hold makes it wait one more span before it pages. Spec 00092's D6 has the gate level, D11's rule and the board read one figure, and for that scrape they read two. The fix is the sink's, an engine change on a new image.
+`zcrypto-engine-exec-disarmed-boundary`, the rule #834 lands, reads that level over a span, so a bare 2 under a hold makes it wait one more span before it pages. Spec 00092's D6 has the gate level, D11's rule and the board read one figure, and for that scrape they read two.
 
 ## Findings so far
 
@@ -19,5 +19,5 @@ At a boundary the engine's metrics sink (`cli/engine/command.py`, `_make_exec_si
 
 ## Suggested next steps
 
-- Publish the gate level once per boundary, after `on_boundary` folds the holds, and on a raise publish the gate's level with its holds rather than leave the bare one; prove it with a case whose sink is scraped between the two publishes today and reads the folded level, probed by `infra/scripts/mutate-probe.sh`.
+- Publish the gate level once per boundary, after `on_boundary` folds the holds, and on a raise publish the gate's level with its holds rather than leave the bare one; prove it with a case whose sink is scraped between the two publishes today and reads the folded level.
 - Ship it on the image that carries [[T0226]]'s fix, so one engine converge takes both.
