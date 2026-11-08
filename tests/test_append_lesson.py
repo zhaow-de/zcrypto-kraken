@@ -24,7 +24,13 @@ def _load(path: pathlib.Path, name: str):
 
 al = _load(_SCRIPT, "append_lesson")
 NOW = "2026-09-07T09:00:00Z"
-OK = dict(session="zcrypto-bravo", branch="fix/x", kind="self-correction", what="a thing", why="a reason")
+OK = dict(
+    session="zcrypto-bravo",
+    branch="fix/x",
+    kind="self-correction",
+    what="a thing I did that the next session should not do again",
+    why="a reason long enough to carry what the record is for",
+)
 
 
 def _argv(**over) -> list[str]:
@@ -53,7 +59,7 @@ class TestTheHappyPath:
 
     def test_a_second_append_adds_one_line(self, checkout: pathlib.Path) -> None:
         assert al.run(_argv(), cwd=checkout, now=NOW) == 0
-        assert al.run(_argv(what="another"), cwd=checkout, now=NOW) == 0
+        assert al.run(_argv(what="another thing I did that the next session should not do"), cwd=checkout, now=NOW) == 0
         assert len(_inbox(checkout).read_text().splitlines()) == 2
 
     def test_no_cites_is_an_empty_list_not_an_empty_string(self, checkout: pathlib.Path) -> None:
@@ -155,8 +161,12 @@ class TestTheSessionNamesOneFileInTheInbox:
 
 
 class TestItCannotResolveTheCheckout:
-    def test_outside_a_checkout_it_refuses_legibly_and_not_as_a_validation_failure(self, tmp_path: pathlib.Path, capsys) -> None:
-        """Exit 2, not 1: a caller must tell 'not a git repo' from 'your record is malformed'."""
+    def test_outside_a_checkout_it_refuses_legibly_and_not_as_a_validation_failure(
+        self, tmp_path: pathlib.Path, capsys, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Exit 2, not 1: a caller must tell 'not a git repo' from 'your record is malformed'. The ceiling holds git at
+        tmp_path when --basetemp sits outside conftest's `.tmp/` ceiling, where the record would land in a live inbox."""
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
         outside = tmp_path / "nowhere"
         outside.mkdir()
         assert al.run(_argv(), cwd=outside, now=NOW) == 2
@@ -215,7 +225,13 @@ class TestASubstitutedFieldIsRefused:
         escaped inside one physical line as a JSON-serialising writer stores it."""
         stored = tmp_path / "zcrypto-x.jsonl"
         rec = dict(
-            ts="2026-09-08T00:00:00Z", session="zcrypto-x", branch="fix/x", kind="miscount", cites=[], what="a\nb", why="fine"
+            ts="2026-09-08T00:00:00Z",
+            session="zcrypto-x",
+            branch="fix/x",
+            kind="miscount",
+            cites=[],
+            what="a\nb",
+            why="fine, a reason long enough to carry what the record is for",
         )
         stored.write_text(json.dumps(rec) + "\n")
         chk = _load(_CHECKER, "chk_harvest")
@@ -227,7 +243,14 @@ class TestASubstitutedFieldIsRefused:
     def test_a_legitimate_one_line_lesson_still_writes(self, checkout: pathlib.Path) -> None:
         """The true positive: the guard must not refuse the records it exists to protect."""
         assert (
-            al.run(_argv(what="backticks in a double-quoted arg run", why="so pass prose single-quoted"), cwd=checkout, now=NOW)
+            al.run(
+                _argv(
+                    what="backticks in a double-quoted arg run, so the shell expands them",
+                    why="so pass prose single-quoted, and the record keeps the text",
+                ),
+                cwd=checkout,
+                now=NOW,
+            )
             == 0
         )
-        assert json.loads(_inbox(checkout).read_text())["what"] == "backticks in a double-quoted arg run"
+        assert json.loads(_inbox(checkout).read_text())["what"] == "backticks in a double-quoted arg run, so the shell expands them"

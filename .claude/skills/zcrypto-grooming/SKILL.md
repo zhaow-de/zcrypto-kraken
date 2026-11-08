@@ -64,7 +64,7 @@ Per `###` milestone under `WORK-ITEMS QUEUE`, in order:
 1. **Ask the goal question — "what do we have to do to achieve this?"** The milestone's items plus their referenced T-topics are the **full picture**: all drained ⇒ milestone reached.
 2. **Completeness sweep.** Walk the open topics (`docs/open-topics/README.md`'s `## Open` / `## Partially done` lists, every `ripe_when`): every live topic heads an item in some milestone (the protocol's *Every live topic has its own item*), and anything relevant to the milestone and not on its list is added — jointly. If the user asks to queue a resolved topic anyway, surface its resolved status first and confirm: the right shape is usually a NEW topic referencing the archived one, not a revival.
 3. **Formats per the protocol**: short list → per-topic sub-bullet entries; ~8+ active items → `#### WP<N>:` groups.
-4. Settle sizes, `DependsOn` edges, and the sequence jointly — the list is the schedule, and milestones themselves order dependency-true with their own `DependsOn:` lines (protocol § *Item shape and sequencing*).
+4. Settle sizes, `DependsOn` edges, and the sequence jointly — the list is the schedule, milestones ordered by their place (protocol § *Item shape and sequencing*).
 
 ### Close — full runs only
 

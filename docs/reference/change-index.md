@@ -434,4 +434,5 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #826 | 2026-11-06 | refactor(infra): T0217, the fleet ships to the node, Grafana Cloud goes | — | 00121 | T0217 |
 | #828 | 2026-11-06 | chore(fleet): T0217, Cloud's values leave the vault, the topic resolves | — | — | T0217 |
 | #829 | 2026-11-06 | feat(engine): page a position the library's reconciliation booked | — | 00157 | — |
+| #833 | 2026-11-07 | feat(engine): rung 3's arm lines, the band, the gate's live read | — | 00092 | — |
 | #834 | 2026-11-08 | feat(grafana): rung 3's disarmed-boundary rule replaces armed-too-long | — | 00092 | — |

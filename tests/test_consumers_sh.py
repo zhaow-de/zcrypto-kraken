@@ -281,3 +281,30 @@ def test_direct_reads_a_top_level_package_only_in_an_import_statement(tmp_path):
 def test_direct_without_a_path_is_usage(tmp_path):
     r = _run(_repo(tmp_path), "--direct")
     assert r.returncode == 2 and "usage" in r.stderr
+
+
+def test_tests_drops_the_non_test_consumers_the_union_lists(tmp_path):
+    repo = _repo(tmp_path)
+    union = _run(repo, "infra/scripts/thing.sh").stdout.splitlines()
+    assert f"{_SKILL_DIR}/SKILL.md" in union
+    r = _run(repo, "--tests", "infra/scripts/thing.sh")
+    assert r.returncode == 0, r.stderr
+    kept = r.stdout.splitlines()
+    assert "tests/test_thing_sh.py" in kept and f"{_SKILL_DIR}/SKILL.md" not in kept
+    assert kept == [line for line in union if line.startswith("tests/test_") and line.endswith(".py")]
+    assert not any(line.startswith("#") for line in kept)
+
+
+def test_tests_direct_with_no_test_file_exits_2_with_the_stderr_line_and_an_empty_stdout(tmp_path):
+    r = _run(_repo(tmp_path), "--tests", "--direct", "infra/scripts/lonely.py")
+    assert r.returncode == 2
+    assert "consumers: --tests found no test file for infra/scripts/lonely.py" in r.stderr.splitlines()
+    assert r.stdout == ""
+
+
+def test_without_tests_the_union_keeps_its_non_test_consumers(tmp_path):
+    r = _run(_repo(tmp_path), "infra/scripts/thing.sh")
+    assert r.returncode == 0, r.stderr
+    assert f"{_SKILL_DIR}/SKILL.md" in r.stdout.splitlines()
+    r = _run(_repo(tmp_path / "again"), "--direct", "infra/scripts/lonely.py")
+    assert r.returncode == 0 and r.stdout == ""
