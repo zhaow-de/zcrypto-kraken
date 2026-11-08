@@ -51,30 +51,39 @@ It does not fire when the engine goes dark: `noDataState` is `OK`, because engin
 
 ______________________________________________________________________
 
-<a name="zcrypto-engine-exec-armed-too-long"></a>
+<a name="zcrypto-engine-exec-disarmed-boundary"></a>
 
-## zcrypto-engine-exec-armed-too-long — ALERT
+## zcrypto-engine-exec-disarmed-boundary — ALERT
 
 ### What you are seeing
 
-A warning-severity Grafana alert (`Engine · order submission has been armed for over six hours`): `zcrypto_exec_armed` has read 1 continuously for the whole of the last six hours.
+A warning-severity Grafana alert (`Engine · the execution gate has not read full across a whole boundary`): `max_over_time(zcrypto_exec_gate_level{host="zcrypto"}[4h30m])` has read under 1.5 for ten minutes while `zcrypto_exec_kill_tripped{host="zcrypto"}` read 0, so no sample of the last four and a half hours read `full` (2) and no kill file stands. The Engine board's `Execution gate level` tile reads REDUCING ORDERS ONLY or NOTHING MAY SUBMIT.
 
 ### What it means
 
-The engine may submit orders only when both arming keys are present: the `armed` flag baked into its deployed config, and an arm file the operator places on the engine host. `zcrypto_exec_armed` conflates the two into one 0/1 gauge: remote telemetry can say that the engine is armed, never which key set it. The alert reads `min_over_time(zcrypto_exec_armed{host="zcrypto"}[6h]) > 0.5`, the minimum over the window and not an average, so a single dip to 0 (a disarm at any point) clears the condition; only a gauge that read 1 at every sample for the whole six hours trips it.
+The engine trades continuously from rung 3's entry, both arming keys left up, and its gate reads `full` between pauses. A gate below `full` refuses the intents a boundary's plan starts — at `reduce_only` its buys, at `none` all of them — and the legs carry to the next boundary while the targets move. The window is wider than the four hours between boundaries, so the rule pages about 4h40m after the gate's last `full` sample, the window's 4h30m and the rule's ten minutes, by which time at least one boundary has passed below `full`; a dip that ends inside the window stays quiet. A kill file pages on [`zcrypto-engine-exec-kill-tripped`](#zcrypto-engine-exec-kill-tripped), so this rule stays quiet beside it.
 
-Arming is expected only inside an attended probe window, and is normally removed by the operator when that window ends. The alert exists because the failure mode is forgetting to remove it, not the arming itself, so firing does not by itself mean an order was submitted. But an engine left armed for six unattended hours has quietly removed one of the two keys that are supposed to stand between a mistake and real money, which is worth resolving even when nothing downstream has gone wrong yet.
+The causes, each a reason the boundary's exec record carries, and what puts the gate back at `full`:
+
+- `arm_file_absent` — the arm file removed. A pause is deliberate and the owner's, and this page is silenced for its span ([`engine-procedures.md#rung-3-pause`](engine-procedures.md#rung-3-pause)); an arm file removed by no one's pause is the finding to take to the owner. Lift: `sudo touch /var/lib/zcrypto-engine/exec/armed` on the owner's word.
+- `restart_hold` — the hold a restart writes, left in place, the gate at `reduce_only`. Lift: the hold's clear after the restart's reads, [`engine-procedures.md#rung-3-after-a-restart`](engine-procedures.md#rung-3-after-a-restart) item 6.
+- `config_not_armed` — a converge rendered `exec_armed = false` into `/opt/zcrypto-engine/zcrypto.toml`, the host's `engine_exec_armed: true` absent from `infra/ansible/host_vars/zcrypto/vars.yml` at that converge. Lift: the line back in the tree by a reviewed pull request and an engine converge inside the inter-cycle gap, the owner's.
+- `venue_not_online` — Kraken's answered word other than `online`, a maintenance the capture side pages on ([`capture.md#zcrypto-capture-venue-not-online`](capture.md#zcrypto-capture-venue-not-online)), or the engine's read of it failing, which pages on [`zcrypto-engine-exec-venue-diverged`](#zcrypto-engine-exec-venue-diverged). Lift: the read answering `online` again, at the gate's next refresh.
+- `nautilus_unverified` — the running library version has no recorded order-semantics pass, after a bump. Lift: the owner's — the version's pass recorded, [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window) pre-probe step 3, or the pin rolled back.
+- `socket_down` — the stale-socket watchdog's freeze, folded into the level at `none`. Lift: [`zcrypto-engine-exec-watchdog-frozen`](#zcrypto-engine-exec-watchdog-frozen), which pages on the freeze in its own right after fifteen minutes.
+- `reconciliation_unread` — the startup pass could not read Kraken's orders or the Cache's restored set, so the process refuses each plan for its life, folded at `none`; the boot's `could not be read` CRITICAL names which read. Lift: a restart inside the inter-cycle gap by [`engine-procedures.md#rung-3-after-a-restart`](engine-procedures.md#rung-3-after-a-restart).
+- `daily_loss_hold` — the day's loss reached the hold's bar, folded at `reduce_only`, the boundary's `accum-<HH>.json` reading `day_loss_hold: true`. Lift: the next UTC date's first boundary, which marks a new day.
 
 ### What to do
 
-1. **Read the full picture on the engine host**: `zcrypto engine exec-status`. This re-evaluates the gate and prints `reasons` and the two arming keys separately; the dashboard and this page can show only that the engine is armed, never which key put it there (no count command: `cli/engine/command.py`'s `_ExecGauges` publishes no `reasons` and ANDs the two keys).
-2. **If the probe window is over, remove the arm file.** Deleting it disarms the engine immediately: no deploy, no restart, no engine downtime. `zcrypto_exec_armed` reads 0 on the engine's next gate evaluation — the executor's idle refresh within a minute, or its next tick while a plan runs — and because the rule reads `min_over_time` over the window, a single 0 sample is enough to drop it. The alert clears at the next rule evaluation after that disarmed reading lands, not after six more hours.
-3. **If the probe window is still legitimately open, leave it and let the alert ride.** Its `for: 15m` is a pending period before the first page, not a re-arming clock: it stays firing while the condition holds and re-pages at the default notification policy's repeat interval (no count command: the rule in `infra/grafana/alerts.yaml` sets no `repeat_interval` of its own), so expect it to keep paging for the length of a long window; that repetition is intentional.
-4. **If you did not expect the engine to be armed at all**, treat this as a live safety-envelope breach: read the engine log and the `exec-status` output together, remove the arm file, and confirm nothing was submitted through the same window. Two places say so: the Engine board's **Execution — what actually happened at the venue** row, where `zcrypto_exec_orders_total{outcome="submitted"}` flat across the window is the answer you want, and the exec ledger's own `submitted` rows for the boundaries the window spans (the ledger read in [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window) prints them by value). The ledger is the authority; the board is the fast read.
+1. **Read the reasons from the newest boundary's exec record**, on the engine host: `sudo cat` of the boundary just past's `exec-<HH>.json` under `/var/lib/zcrypto-engine/journal/<YYYY-MM-DD>/`, its `level` and `reasons` — the folded verdict as of that boundary, and the one read that names each cause above. `sudo docker exec zcrypto-engine zcrypto engine exec-status` reads the gate now in a fresh process and shows the gate's own reasons beside its inputs; `socket_down`, `reconciliation_unread` and `daily_loss_hold` are the engine process's state, which that fresh process does not hold (no count command: `cli/engine/executor.py`'s `_fold_holds` appends the three, outside `cli/engine/execgate.py`'s gate). In Grafana, `zcrypto_exec_gate_level` shows the level alone, `socket_down` and `reconciliation_unread` both at 0, and `zcrypto_exec_watchdog_frozen` separates the freeze.
+2. **A pause you or the owner took**: silence this rule in Grafana for the pause's span, by the owner's ruling, and record the silence beside the pause ([`engine-procedures.md#rung-3-pause`](engine-procedures.md#rung-3-pause) item 2).
+3. **Otherwise, take the lift the reason above names**, and record the cause and its time in `docs/reference/rung3/days.md`. A restart is taken inside the inter-cycle gap ([`zcrypto-engine-cycle-stale`](#zcrypto-engine-cycle-stale) step 4 says how to read where it opens), and the restarted process stays at `reduce_only` under its restart hold until you clear it, so this page stands until that clear.
+4. **It clears** at the rule's next evaluation after a `full` sample lands in the window: the gate's next refresh within a minute of the lift, then a scrape. The legs the boundaries below `full` carried are drafted again at the next boundary as its own `target − held`.
 
 ### Retire when
 
-The engine begins arming continuously as its normal operating mode (order submission goes live and stays live). At that point a duration-based "armed too long" rule fires forever, and this rule must be **replaced** by one shaped for continuous arming, never silenced in place. Until then, `zcrypto-engine-exec-armed-too-long` retires only if it is absent from `infra/grafana/alerts.yaml`.
+`zcrypto-engine-exec-disarmed-boundary` is absent from `infra/grafana/alerts.yaml`: the rule can no longer fire and this section describes nothing.
 
 ______________________________________________________________________
 

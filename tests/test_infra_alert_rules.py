@@ -394,13 +394,12 @@ NOT_A_FAULT_SIGNAL = {
     "zcrypto_engine_journal_prune_kept_days",
     "zcrypto_engine_journal_prune_oldest_day_age_seconds",
     # The execution safety envelope's unwatched families; every other one carries a rule, and this list is what keeps that true.
-    #   gate_level is the SUMMARY its inputs (armed, kill switch, restart hold, venue) already reduce
-    #   to -- every value is legitimate depending on which input is active -- and the two worth
-    #   paging on have their own rules.
-    "zcrypto_exec_gate_level",
+    #   armed reads 1 standing under continuous arming, both keys left up; the gate level it reduces to
+    #   is what pages, through zcrypto-engine-exec-disarmed-boundary.
+    "zcrypto_exec_armed",
     # A LEVEL, not an event: HELD is the expected reading immediately after every restart and
-    # self-clears only by a human decision, so no duration or presence threshold on it means
-    # anything the two arming/kill rules do not already cover more precisely.
+    # self-clears only by a human decision. A hold left in place keeps the gate level below `full`,
+    # which zcrypto-engine-exec-disarmed-boundary pages on across a whole boundary.
     "zcrypto_exec_restart_hold",
     # A gating INPUT, not the venue alert itself: the underlying condition already pages from the
     # capture side via zcrypto-capture-venue-not-online, which reads the daemon's own
@@ -409,17 +408,16 @@ NOT_A_FAULT_SIGNAL = {
     # failing CLOSED parks this gauge at 0 while the venue is online -- is watched through
     # zcrypto_exec_venue_read_failed, which zcrypto-engine-exec-venue-diverged reads.
     "zcrypto_exec_venue_ok",
-    # The execution instruments (spec 00090 D12). Attended-window instruments: arming is episodic, so
-    # between windows these are legitimately flat and any rule on them is alarm fatigue, while inside
-    # a window an operator is on the board; the two states that OUTLIVE a window already page
-    # (zcrypto-engine-exec-kill-tripped, zcrypto-engine-exec-armed-too-long).
+    # The execution instruments (spec 00090 D12): counters whose every value is legitimate, read on the
+    # board. The states that stop the engine trading page instead (zcrypto-engine-exec-kill-tripped,
+    # zcrypto-engine-exec-disarmed-boundary).
     "zcrypto_exec_orders_total",
     "zcrypto_exec_fills_total",
     "zcrypto_exec_fees_eur_total",
     # `zcrypto_exec_position` keeps its exclusion for its BARE VALUE, which stays no fault at any
     # level -- but it is no longer unwatched: zcrypto-engine-dark-with-exposure pages on it above its
-    # dust floor at last sight WITH the engine's scrape gone, a conjunction the attended-window reasoning above
-    # does not cover, since nobody is watching the board when the engine is the thing that left.
+    # dust floor at last sight WITH the engine's scrape gone, a conjunction a board read does not cover,
+    # since nobody is watching the board when the engine is the thing that left.
     "zcrypto_exec_position",
     "zcrypto_exec_realized_pnl_eur",
     # The resting order's age. NO rule, deliberately and not by omission (spec 00108 D7, which
@@ -2477,6 +2475,81 @@ def test_two_consecutive_undrafted_boundaries_page_and_one_followed_by_an_ok_bou
     assert fire_minute([(0, 0), (3600, 1), (3600 + h4, 0)]) is None
     assert fire_minute([(0, 0)]) is None
     assert rule["data"][0]["relativeTimeRange"]["from"] == window
+
+
+# --- the gate below `full` across a whole boundary -----------------------------------------------
+
+_DISARMED = "zcrypto-engine-exec-disarmed-boundary"
+_H4 = 4 * 3600
+
+
+def _promql_seconds(expr: str) -> int:
+    (window,) = re.findall(r"\[(\w+)\]", expr)
+    return sum(int(n) * {"h": 3600, "m": 60}[u] for n, u in re.findall(r"(\d+)([hm])", window))
+
+
+def _disarmed_fire_minute(level, kill=((0, 0),)):
+    """The minute the disarmed rule fires over step series `[(at, value)]` scraped each minute from 0, or None, Grafana's `for` counted from the first minute D holds."""
+    rule = _rule(_DISARMED)
+    model = {q["refId"]: q["model"] for q in rule["data"]}
+    window = _promql_seconds(model["A"]["expr"])
+    hold_for = _duration_seconds(rule["for"])
+    terms = [re.fullmatch(r"\$(\w) ([<>]) ([\d.]+)", t.strip()) for t in model["C"]["expression"].split("&&")]
+    assert all(terms), model["C"]["expression"]
+    threshold = _evaluator(rule)
+
+    def value_at(series, s):
+        return next(v for at, v in reversed(series) if at <= s)
+
+    since = None
+    for t in range(0, 14 * 3600, 60):
+        values = {
+            "A": max(value_at(level, s) for s in range(max(0, t - window + 60), t + 1, 60)),
+            "B": value_at(kill, t),
+        }
+        c = all(
+            (values[ref] < float(bar)) if op == "<" else (values[ref] > float(bar)) for ref, op, bar in (m.groups() for m in terms)
+        )
+        if {"gt": float(c) > threshold["params"][0], "lt": float(c) < threshold["params"][0]}[threshold["type"]]:
+            since = t if since is None else since
+            if t - since >= hold_for:
+                return t
+        else:
+            since = None
+    return None
+
+
+def test_a_gate_held_below_full_pages_4h40m_after_its_last_full_sample():
+    assert _disarmed_fire_minute([(0, 2)]) is None
+    last_full = 3600 - 60
+    for held in (1, 0):  # the restart hold's reduce-only, the arm file gone
+        assert _disarmed_fire_minute([(0, 2), (3600, held)]) == last_full + _H4 + 40 * 60
+
+
+def test_a_dip_below_full_that_a_boundary_does_not_span_stays_quiet():
+    assert _disarmed_fire_minute([(0, 2), (3600, 1), (3600 + _H4 + 15 * 60, 2)]) is None
+
+
+def test_a_gate_held_below_full_beside_a_kill_file_stays_quiet():
+    assert _disarmed_fire_minute([(0, 2), (3600, 0)], kill=[(0, 0), (3600, 1)]) is None
+
+
+def test_the_disarmed_rule_keeps_its_window_its_wait_and_its_route():
+    rule = _rule(_DISARMED)
+    a, b = rule["data"][0], rule["data"][1]
+    assert a["model"]["expr"] == 'max(max_over_time(zcrypto_exec_gate_level{host="zcrypto"}[4h30m]))'
+    assert a["relativeTimeRange"]["from"] == _promql_seconds(a["model"]["expr"])
+    assert b["model"]["expr"] == 'max(zcrypto_exec_kill_tripped{host="zcrypto"})'
+    by_ref = {n["refId"]: n.get("model", {}) for n in rule["data"]}
+    assert by_ref["D"].get("expression") == "C", "the threshold must read the math node, not a raw query"
+    assert (rule["condition"], _evaluator(rule)) == ("D", {"type": "gt", "params": [0]})
+    assert (rule["for"], rule["noDataState"], rule["execErrState"]) == ("10m", "OK", "Alerting")
+    assert (rule["labels"]["severity"], rule["notification_settings"]["receiver"], rule["ruleGroup"]) == (
+        "warning",
+        "metrics",
+        "zcrypto-gate",
+    )
+    assert rule["annotations"]["__panelId__"] == "51"
 
 
 # --- the engine's own read of the venue's status -------------------------------------------------

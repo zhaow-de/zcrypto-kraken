@@ -1389,7 +1389,7 @@
       "id": 51,
       "type": "stat",
       "title": "Execution gate level",
-      "description": "What the engine may submit right now, decoded from the raw 0/1/2 the gate publishes: 0 = nothing may be submitted, 1 = reducing orders only, 2 = anything. This is the SUMMARY the gate computed from the four inputs beside it (armed, kill switch, restart hold, venue) -- it says THAT the envelope sits at a given level, never WHICH input put it there, because `reasons` never reaches Grafana and this board cannot show it. Read `zcrypto engine exec-status` on the engine host for the full breakdown. No alert reads this tile directly -- the two conditions that matter most, an unexpected arm and a tripped kill switch, have their own rules on the tiles beside it. Absence here means the exporter itself is gone, the same fault the cycle-age reading at the top of this board covers. Published only by the trading engine on the capture primary.",
+      "description": "What the engine may submit right now, decoded from the raw 0/1/2 the gate publishes: 0 = nothing may be submitted, 1 = reducing orders only, 2 = anything. This is the SUMMARY of the gate's inputs beside it (armed, kill switch, restart hold, venue) and of three holds the engine folds in (the stale-socket watchdog's freeze, a startup reconciliation it could not read, the day-loss hold) -- it says THAT the envelope sits at a given level, never WHICH input put it there, because `reasons` never reaches Grafana and this board cannot show it. Read the newest boundary's exec record on the engine host for every reason, the folded holds among them; `zcrypto engine exec-status` shows the gate's own reasons and not the three folded holds. Pages when it stays below 2 across a whole boundary's span while no kill file stands -- a tripped kill switch has its own rule on the tile beside it. Runbook: infra/runbooks/engine.md#zcrypto-engine-exec-disarmed-boundary. Absence here means the exporter itself is gone, the same fault the cycle-age reading at the top of this board covers. Published only by the trading engine on the capture primary.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1421,7 +1421,7 @@
               "options": {
                 "0": {
                   "text": "NOTHING MAY SUBMIT",
-                  "color": "green",
+                  "color": "red",
                   "index": 0
                 },
                 "1": {
@@ -1431,7 +1431,7 @@
                 },
                 "2": {
                   "text": "ANYTHING MAY SUBMIT",
-                  "color": "orange",
+                  "color": "green",
                   "index": 2
                 }
               }
@@ -1468,7 +1468,7 @@
       "id": 52,
       "type": "stat",
       "title": "Order submission armed",
-      "description": "Whether BOTH arming keys are present: the `armed` config flag and the arm file on the engine host. Deliberately conflated into one gauge -- this tile can say THAT the engine is armed or disarmed, never WHICH of the two keys is set, so `zcrypto engine exec-status` on the host is the next step whenever this needs explaining. Pages after six continuous hours armed, because arming is expected only inside an attended probe window and is normally removed when the window ends -- an armed reading is not itself an incident, but it removes one of the two keys standing between a mistake and real money. Runbook: infra/runbooks/engine.md#zcrypto-engine-exec-armed-too-long. Published only by the trading engine on the capture primary, and the expression carries that machine's own matcher because the alert does.",
+      "description": "Whether BOTH arming keys are present: the `armed` config flag and the arm file on the engine host. Deliberately conflated into one gauge -- this tile can say THAT the engine is armed or disarmed, never WHICH of the two keys is set, so `zcrypto engine exec-status` on the host is the next step whenever this needs explaining. Under continuous arming ARMED is the standing reading, both keys left up from rung 3's entry on, and DISARMED is a pause or a fault. No alert reads this tile: the gate level it reduces to is what pages, a whole boundary's span below anything-may-submit on the gate-level tile beside it. Runbook: infra/runbooks/engine.md#zcrypto-engine-exec-disarmed-boundary. Published only by the trading engine on the capture primary.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1500,12 +1500,12 @@
               "options": {
                 "0": {
                   "text": "DISARMED",
-                  "color": "green",
+                  "color": "orange",
                   "index": 0
                 },
                 "1": {
                   "text": "ARMED",
-                  "color": "orange",
+                  "color": "green",
                   "index": 1
                 }
               }

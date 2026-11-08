@@ -15,7 +15,7 @@ Every drill below has the same seven parts: *What this proves* · *Preconditions
 - **One induction at a time. Revert it and verify the revert by value before the next one starts.** An instrument is never widened (no count command: it lands in a drill-log body, which `tests/test_drill_log.py` does not read): each *Induce* names exactly what to do, and anything heavier is a different act with a different blast radius (the same rule in `drills-telemetry.md`).
 - **A start or a reboot moves the `.State.StartedAt` of every container it touches, which is what a `since` cell of [`fleet-pins.md`](../../docs/reference/fleet-pins.md) records — re-true every row it moved, with the revert** (no count command: a drill entry's *operator action* clause is prose). One `docker inspect <name> --format '{{.State.StartedAt}}'` per row is the whole cost; skipped, the cell keeps a value the container no longer has and no later reader can tell it from a converge-clock value.
 - **The engine's own money guards are not suspended for a drill.** A kill trip during one of these is real: resting orders cancelled, every further intent refused (no count command: the kill-switch tests in `tests/test_engine_execgate.py` and `tests/test_engine_executor.py` hold it), and nothing continues until a human reads and removes the file. Work [`engine.md#zcrypto-engine-exec-kill-tripped`](engine.md#zcrypto-engine-exec-kill-tripped) when that happens; do not treat it as drill noise.
-- **A drill held for hours, D above all, is held inside a window a warning page reaches** (`metrics`). Until rung 3's entry that page is `zcrypto-engine-exec-armed-too-long`, a window that stays armed past six hours; rung 3's entry replaces it with `zcrypto-engine-exec-disarmed-across-a-boundary`, an engine whose gate reads below `full` across a whole 4-hourly boundary while no kill file stands. Either page is the rule working, not a fault, and the rule's section in [`engine.md`](engine.md) is its runbook.
+- **A drill held for hours, D above all, is held inside a window a warning page reaches** (`metrics`). Until rung 3's entry that page is `zcrypto-engine-exec-armed-too-long`, a window that stays armed past six hours; rung 3's entry replaces it with `zcrypto-engine-exec-disarmed-boundary`, an engine whose gate reads below `full` across a whole 4-hourly boundary while no kill file stands. Either page is the rule working, not a fault, and the rule's section in [`engine.md`](engine.md) is its runbook.
 - **The four statuses are fixed at `pass`, `fail`, `partial`, `blocked`**, and every run gets an entry in `docs/reference/drill-log.md` (no count command: a run with no entry leaves nothing in the tree to count); that file's own preamble is the entry contract. On this page the *time-to-alert* clause's device timestamp is usually this drill's to carry, D above all; where another drill measures the same route, name that drill and carry none.
 
 ### How every bound on this page was derived
@@ -465,7 +465,7 @@ On rung 3's armed loop the restart is [`engine-procedures.md#rung-3-after-a-rest
 
 ### What this proves
 
-That a boundary the engine reaches disarmed carries its legs and pages: its plan is drafted and accepted, each intent refused where it would start, each leg's gap left standing for the next boundary to draft again armed, and `zcrypto-engine-exec-disarmed-across-a-boundary` pages on the hours the loop could not trade. An engine disarmed unnoticed, carrying each cycle while the targets move, is continuous arming's own failure.
+That a boundary the engine reaches disarmed carries its legs and pages: its plan is drafted and accepted, each intent refused where it would start, each leg's gap left standing for the next boundary to draft again armed, and `zcrypto-engine-exec-disarmed-boundary` pages on the hours the loop could not trade. An engine disarmed unnoticed, carrying each cycle while the targets move, is continuous arming's own failure.
 
 ### Preconditions
 
@@ -490,7 +490,7 @@ The gate reads `level=none`, `reasons=arm_file_absent`.
 ### Must fire
 
 - **At the boundary reached disarmed**, its plan entry in `exec-<HH>.json` reads `accepted` with each intent `refused` under `arm_file_absent` — the walls that accept a plan judge no level, and each intent is refused where it would start — and its `accum-<HH>.json` reads `status: ok` with the plan's id and its legs `placed`, `zcrypto_exec_gap_eur` holding each leg's whole delta.
-- [`zcrypto-engine-exec-disarmed-across-a-boundary`](engine.md) (warning, `metrics`) at about 4h40m after the file's removal: about 1h40m to 3h40m after the boundary, before the next one. Derived: the gate publishes the removal at its next evaluation, within a minute, and a scrape later the window's last `full` sample is in; the window holds none 4h30m on, its `[4h30m]`, + `for: 10m` + the group's 60 s.
+- [`zcrypto-engine-exec-disarmed-boundary`](engine.md) (warning, `metrics`) at about 4h40m after the file's removal: about 1h40m to 3h40m after the boundary, before the next one. Derived: the gate publishes the removal at its next evaluation, within a minute, and a scrape later the window's last `full` sample is in; the window holds none 4h30m on, its `[4h30m]`, + `for: 10m` + the group's 60 s.
 - **Nothing else.** `zcrypto-engine-exec-boundary-not-drafted` reads the boundary's `ok` record and stays quiet, and `zcrypto-engine-exec-kill-tripped` has no kill file to read.
 
 ### Operator action
@@ -505,4 +505,4 @@ Entry `H`: the removal's time, the boundary reached disarmed with its records' r
 
 ### Retire when
 
-The disarmed rule leaves `infra/grafana/alerts.yaml` again after rung 3's entry has added it: `git log --oneline -S 'zcrypto-engine-exec-disarmed-across-a-boundary' -- infra/grafana/alerts.yaml` lists the commit that removed it, and `grep -c 'zcrypto-engine-exec-disarmed-across-a-boundary' infra/grafana/alerts.yaml` reads 0.
+The disarmed rule leaves `infra/grafana/alerts.yaml` again after rung 3's entry has added it: `git log --oneline -S 'zcrypto-engine-exec-disarmed-boundary' -- infra/grafana/alerts.yaml` lists the commit that removed it, and `grep -c 'zcrypto-engine-exec-disarmed-boundary' infra/grafana/alerts.yaml` reads 0.
