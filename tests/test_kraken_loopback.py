@@ -78,7 +78,9 @@ def test_a_client_that_sends_nothing_cannot_hold_the_close(monkeypatch):
     closer = threading.Thread(target=close_a_venue_holding_a_silent_client, daemon=True)
     closer.start()
     deadline = time.monotonic() + 5
-    while not any("process_request_thread" in name for name in _started_since(before)) and time.monotonic() < deadline:
+    while (
+        not (handling := any("process_request_thread" in name for name in _started_since(before))) and time.monotonic() < deadline
+    ):
         time.sleep(0.01)
     accepted.set()
     held = not closed.wait(5)
@@ -86,4 +88,5 @@ def test_a_client_that_sends_nothing_cannot_hold_the_close(monkeypatch):
         sock.close()
     closer.join(5)
 
+    assert handling
     assert not held
