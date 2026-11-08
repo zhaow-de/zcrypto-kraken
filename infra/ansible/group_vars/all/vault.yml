@@ -15,9 +15,8 @@
 # rotating either is `infra/runbooks/cache.md`'s `cache-password-rotation`. The eleventh is
 # `coveralls_repo_token`, onto `zcrypto-ops` by `roles/ops`.
 #
-# The other four never reach a host, read from the WORKSTATION BY FILE PATH:
-# `healthchecks_readonly_api_key` by `infra/scripts/hc-provision.py`'s reads of healthchecks.io until
-# retirement, `hc_readwrite_api_key` by its writes to the dead-man service (both through
+# The other three never reach a host, read from the WORKSTATION BY FILE PATH:
+# `hc_readwrite_api_key` by `infra/scripts/hc-provision.py`'s writes to the dead-man service (through
 # `grafana_auth.vault_var`, whose default IS this file), and `zaccess_client_p12_b64` +
 # `zaccess_client_p12_pass` by `infra/scripts/zaccess-extract-client-cert.sh`.
 #

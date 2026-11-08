@@ -13,7 +13,7 @@
 # form worked only for a var with another var beneath it: for the LAST var in a file the trailing
 # comments got slurped into the ciphertext and ansible-vault died unhexlifying `#`. That failure
 # invites the operator to reach for `ansible-inventory --host` — the one command this header forbids.
-# `f && NF` drops the blank separator line for the same reason. Verified on every var in this file.)
+# `f && NF` drops the blank separator line for the same reason.)
 #
 # Write ONE value (stdin, so it never lands in shell history or `ps`), then paste the block below:
 #   uv run ansible-vault encrypt_string --vault-password-file infra/ansible/scripts/vault-pass.sh \
@@ -29,9 +29,3 @@ ansible_host: !vault |
           30383164333532386161303838323763656634633931666564373865646637333432653836356461
           3038636439393062370a623965396239656336633037313434363362646539396663353065656537
           64616666363761663332323832333830343462623262326338373039616339613264
-
-# The LIVE TRADE KEY (kraken_trade_api_key / kraken_trade_api_secret) and hcio_engine_healthcheck_url
-# MOVED to group_vars/engine_host/vault.yml (T0061, 2026-07-17). They are consumed only by the
-# engine play's engine.env.j2, and holding them here meant the capture-only secondary `zcrypto-red`
-# resolved the live trading credential — the group boundary the inventory's comments claimed did
-# not exist until that move. Nothing capture-specific left this file.

@@ -1,14 +1,9 @@
 # group_vars/engine_host — the LIVE TRADING SECRETS.
 #
 # `engine_host` is `zcrypto` alone, and it exists precisely so that adding a capture host can never
-# put the live Kraken trade key on it (inventory/hosts.yml). This file is what makes that true:
-# before it, the key lived in group_vars/capture_host, so the capture-only secondary `zcrypto-red`
-# RESOLVED the live trading credential — only play targeting (site.yml's engine play converges
-# engine_host, and engine.env.j2 is the sole consumer) kept it off that host's disk. Membership,
-# not targeting, is what the inventory's own comments presented as the boundary; T0061 closed the
-# gap between the claim and the fact. Each variable here but hcio_engine_healthcheck_url, read by none, is
-# consumed by exactly one template: roles/engine/templates/engine.env.j2, rendered 0600 root-only with
-# `no_log: true` + `diff: false`.
+# put the live Kraken trade key on it (inventory/hosts.yml). Each variable here is consumed by exactly
+# one template: roles/engine/templates/engine.env.j2, rendered 0600 root-only with `no_log: true` +
+# `diff: false`.
 #
 # Adding a host to engine_host therefore GRANTS IT THE LIVE TRADE KEY. That is the whole point of
 # the group, and the reason it has exactly one member.
@@ -20,11 +15,6 @@
 # zcrypto-red again — silently undoing T0061 while every file here still looks correct. The same
 # caveat applies to adding a GROUP under engine_host, not just a host: the inventory's warning names
 # only hosts.
-#
-# Moved here from group_vars/capture_host/ (T0061, 2026-07-17, owner-gated because it is the live
-# trading credential). The ciphertext is UNCHANGED — same vault password, so the blocks moved
-# verbatim and were never decrypted. Verified by boolean probe: `zcrypto` resolves these,
-# `zcrypto-red` and `zcrypto-ops` do not.
 #
 # Per-VALUE vault encryption (not whole-file): the variable NAMES stay readable so anyone can see
 # what this host group needs, while every value stays `!vault`-encrypted at rest. Read/write
