@@ -47,8 +47,6 @@ _PAGE = 50
 # window a node start reads, so a row a start must see under `bound_by_start` is handed a stamp of its own.
 _STAMP = 1758600000.0
 
-# Each socket read or write a handler makes gives up after this many seconds, so a client that connects
-# and sends nothing cannot hold `serve`'s join of its handlers.
 _HANDLER_TIMEOUT = 10.0
 
 
@@ -209,8 +207,7 @@ class KrakenLoopback:
     balances: dict[str, dict[str, str]] = field(default_factory=dict)
     # Endpoint name -> the Kraken error string it answers with instead of a result.
     errors: dict[str, str] = field(default_factory=dict)
-    # Endpoint name -> seconds its answer waits, for a caller's own bound to fire first; a wait still
-    # running when `serve` closes ends then.
+    # Endpoint name -> seconds its answer waits, for a caller's own bound to fire first.
     stalls: dict[str, float] = field(default_factory=dict)
     closing: threading.Event = field(default_factory=threading.Event, repr=False, compare=False)
     private_calls: list[str] = field(default_factory=list)
