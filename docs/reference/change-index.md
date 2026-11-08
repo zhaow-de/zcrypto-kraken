@@ -438,3 +438,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #837 | 2026-11-08 | chore(fleet): T0218 resolved, healthchecks.io retired, X1 to X3 recorded | — | 00122 | T0218 |
 | #838 | 2026-11-08 | docs(reference): rung 3's live spot-lot restore and the arming baselines | — | 00092 | — |
 | #840 | 2026-11-08 | docs(topics): T0226 carries the #5315 capture's triggered fill | — | — | T0226 |
+| #841 | 2026-11-08 | docs(topics): T0227, the gate level published before the holds fold | — | — | — |
