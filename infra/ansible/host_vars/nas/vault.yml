@@ -1,2 +1,0 @@
-# host_vars/nas — SECRETS. Per-VALUE vault encryption; read/write mechanics:
-# see group_vars/capture_host/vault.yml. NEVER run ansible-inventory --host/--list.
