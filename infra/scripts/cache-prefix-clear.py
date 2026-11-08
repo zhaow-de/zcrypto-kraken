@@ -8,7 +8,7 @@ Run from the workstation, each mode its own call, in this order:
     ssh zcrypto sudo python3 - verify <dbsize-before> <deleted> < infra/scripts/cache-prefix-clear.py
 
   inventory  writes the keys under `trader-SHADOW-001:` one per line to a new file under /var/lib/zcrypto-engine.
-  clear      refused while `zcrypto-engine` runs, read with a docker inspect of `{{.State.Running}}` and no
+  clear      refused while `zcrypto-engine` runs, its state read with `--format '{{.State.Running}}'` and no
              other field; then one DEL per listed key, never a scan piped into DEL.
   verify     no key left under the prefix, and DBSIZE the inventory's less the deleted count.
 
@@ -125,7 +125,7 @@ def engine_state(docker: tuple[str, ...]) -> str:
         return "running" if out == "true" else "stopped"
     if proc.returncode != 0 and "no such" in proc.stderr.lower():
         return "absent"
-    raise Refused(f"the engine container's state could not be read (docker inspect exited {proc.returncode})")
+    raise Refused(f"the engine container's state could not be read (the inspect exited {proc.returncode})")
 
 
 def _enter_proxy_namespace(docker: tuple[str, ...]) -> None:
