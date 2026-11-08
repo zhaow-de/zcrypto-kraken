@@ -22,7 +22,7 @@ The node is unreachable, powered off or being rebuilt, or the service on it does
 
 While the service is down, the fleet's dead-man domain is dark: no check is evaluated, no check's page is sent, and the fleet's pings to the service are refused and recorded nowhere. The observability node's rules page the main channel throughout, and the watchdog's `999` is the one page of the dark domain; with that node dark too, the ops watchdog posts, `observability.md#both-nodes-dark`. When the service returns, each check whose `timeout` + `grace` the outage outlasted reads `DOWN` until its next ping and pages `DOWN`, then `UP`, through the service's Slack integration: those pages are the outage's, not their hosts'. A rebuild starts the service on an empty database until `hc-restore` puts the last backup back, and on a database lost with its backups, `hc-lost-database`.
 
-The two figures the drills measured: a thirty-minute power-off read `[[ROLLOUT: R15's X2 reading — the page and the self-check's first -> pinged after boot]]`, and a rebuild from nothing took `[[ROLLOUT: R15's X3 reading — the time from the rebuild to the first stored ping]]` from the rebuild to the first stored ping (`drills-telemetry.md`'s dead-man node drills).
+The two figures the drills measured: a thirty-minute power-off paged at `999` **6 min 23 s** in, and the self-check's first `-> pinged` came **2 min 2 s** after the power-on (`drills-telemetry.md#drill-x2`), and a rebuild from nothing took **24 min 30 s** from the **Rebuild** click to the first stored ping (`drills-telemetry.md#drill-x3`).
 
 ### What to do
 
