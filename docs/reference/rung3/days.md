@@ -9,3 +9,4 @@
 - Item 6.4: no snapshot set aside, nothing deleted.
 - Item 6.5, on the host by the owner: `exec/series-start` before, absent (`No such file or directory`); after, `2026-11-09T00:00:00Z`.
 - 2026-11-08T20:31:25Z, item 5: Kraken Pro's balance page 1423.76 EUR, the owner's read, beside the engine's equity mark 1423.7685329980895 EUR at the 20Z boundary and the equity series born 2026-11-08T08:00:00+00:00.
+- Item 7, on the host by the owner: the restart hold removed, `exec-status` `level=none`, `reasons=arm_file_absent`, `restart_hold=False`, `nautilus_version=2.0.0rc9.dev20261106` verified, `venue_status=online`; then the arm file placed, `level=full`, `reasons=-`, `arm_file=True`. From the workstation `zcrypto_exec_gate_level` read 0 from 20:32:22Z and 2 at 20:34:00Z; `zcrypto_exec_armed` 1. The loop is armed; Monday 00Z is its first armed boundary.
