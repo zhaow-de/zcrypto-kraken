@@ -89,3 +89,15 @@ The book equals the summed sleeve gross ÷ 6 on both sides, to within one ulp.
 | **final book gross** (Σ\|target weight\|, governed) | **0.06298316518937011** | **0.054174962747651614** |
 
 The book equals the summed sleeve gross ÷ 6 on both sides, to within one ulp. A2's step is about a quarter of the book's fall at this cycle: B and A1 fell with it.
+
+### 2026-11-09 — A2 re-arms; the three sleeves again
+
+| | last pre-transition cycle<br>2026-11-09 12Z | first post-transition cycle<br>2026-11-09 16Z |
+| --- | --- | --- |
+| `zcrypto_engine_active_sleeves` | 2 | **3** |
+| `sleeve_gross{sleeve="B"}` | 0.21115017275314488 | 0.21115017275314488 |
+| `sleeve_gross{sleeve="A1"}` | 0.0813969207123157 | 0.0813969207123157 |
+| `sleeve_gross{sleeve="A2"}` | 0 | 0.00805303780452022 |
+| **final book gross** (Σ\|target weight\|, governed) | **0.048757848910910104** | **0.05010002187833014** |
+
+The book equals the summed sleeve gross ÷ 6 on both sides, to within one ulp. This is the first change of composition inside rung 3's tracking series, whose birth, 2026-11-09 00Z, fell on two sleeves. The band in force, 204.9 bps, is `accum-replay`'s p95 over the box's 168 cycles (`docs/research/14.phase6-decisions.md`, rung 3's gate read 6), a window carrying both compositions, so as at 2026-10-27 no separate re-derivation follows.
