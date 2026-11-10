@@ -9,7 +9,7 @@ dependencies = [
     "numpy==2.5.4",
     "polars==2.1.0",
     "prometheus-client==0.26.0",
-    "typer==0.27.3",
+    "typer==0.28.0",
     "websockets==17.4",
 ]
 
