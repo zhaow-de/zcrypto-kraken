@@ -137,8 +137,11 @@ def _apply(blob: bytes, into: Path) -> None:
             if whiteout is not None:
                 names.append(whiteout)
             refused = [name for name in names if not _member_ok(name)]
+            # Either names the directory holding the marker, which a whiteout never removes.
+            if whiteout in ("", "."):
+                refused.append(whiteout)
             if refused:
-                raise FetchRefused(f"layer member {member.name!r} names {refused[0]!r}, outside the tree")
+                raise FetchRefused(f"layer member {member.name!r} names {refused[0]!r}, which no layer may act on")
             directory = _inside(into, os.path.dirname(member.name))
             if member.islnk():
                 _inside(into, member.linkname)

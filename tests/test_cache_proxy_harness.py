@@ -138,6 +138,8 @@ ESCAPES = {
     "member-through-a-link": {"link/pointer": b"x"},
     "whiteout-through-a-link": {"link/.wh.victim": b""},
     "whiteout-of-dotdot": {"etc/.wh...": b""},
+    "whiteout-of-nothing": {"etc/.wh.": b""},
+    "whiteout-of-a-dot": {"etc/.wh..": b""},
     "hard-link-out": {"x": ("hard", "../outside/victim")},
     "hard-link-through-a-link": {"x": ("hard", "link/victim")},
 }
