@@ -161,6 +161,8 @@ def test_haproxy_chroots_and_logs_connections_on_the_cache_frontend_alone():
     assert [name for name, lines in sections.items() if "option tcplog" in lines] == ["frontend cache"]
     assert "no log" in sections["frontend metrics"]
     assert "no log" in sections["frontend quorum"]
+    stateful = ("stats socket", "server-state-file", "load-server-state-from-file")
+    assert not [ln for ln in _lines(_render()) if ln.startswith(stateful)]
 
 
 def test_converge_sh_admits_the_proxy_digest_as_an_extra_var():
