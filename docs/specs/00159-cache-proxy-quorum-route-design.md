@@ -423,7 +423,7 @@ The proxy, container `zcrypto-cache-proxy` in the engine's compose project on `z
 *What to do*, step 2, whole:
 
 ```
-2. **Read the proxy's checks**, on `zcrypto`: `sudo docker ps --filter name=zcrypto-cache-proxy` for the container, then `curl -s 127.0.0.1:9104/metrics | grep -E 'haproxy_server_(status|check_status)'` for each server's last check. Each `votes-node<N>` backend holds one server per Sentinel, `via-node1` to `via-node3`, passing while that Sentinel names node `<N>`; each `node<N>` backend holds the route, server `valkey`, whose check reads `L7STS` while the votes contradict that node. Every route failing at once while two votes pass for one node is the proxy's own route check: a config fault, step 5's converge. The Cache board's proxy row shows the same per node and Sentinel.
+2. **Read the proxy's checks**, on `zcrypto`: `sudo docker ps --filter name=zcrypto-cache-proxy` for the container, then `curl -s 127.0.0.1:9104/metrics | grep -E 'haproxy_server_(status|check_status)'` for each server's last check. Each `votes-node<N>` backend holds one server per Sentinel, `via-node1` to `via-node3`, passing while that Sentinel names node `<N>`; each `node<N>` backend holds the route, server `valkey`, whose check reads `L7STS` while the votes contradict that node. All three routes failing at once while two votes pass for one node is the proxy's own route check: a config fault, step 5's converge. The Cache board's proxy row shows the same per node and Sentinel.
 ```
 
 *Verify by value*, whole:
@@ -481,3 +481,7 @@ Its step 1's "(`Backend status per node` moved)" becomes "(`Route per node` move
 - The role's `haproxy -c` refusing warnings (`-dW`): the harness reads them, and a refusal there would turn a cosmetic warning a re-pin brings into a refused converge.
 - The harness in CI.
 - The library's lazy reconnect and its dropped first write.
+
+## Spec amendments
+
+- 2026-11-11, before the plan review (the plan's P0): *Runbook texts*, the `zcrypto-cache-proxy-no-backend` step-2 fence reads "All three routes failing at once" where it read "Every route failing at once": a numbered item of `infra/runbooks/cache.md` carrying a universal with no count is refused by the guidance guard at the commit, and the set here is the three routes.
