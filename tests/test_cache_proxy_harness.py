@@ -203,6 +203,22 @@ def test_a_directory_without_owner_write_takes_its_mode_after_its_members(tmp_pa
     assert [stat.S_IMODE((tree / name).stat().st_mode) for name in ("ro", "ro/sub")] == [0o555, 0o555]
 
 
+def test_a_directory_without_owner_search_takes_its_mode_after_the_directory_beneath_it(tmp_path):
+    digest, get, _ = _registry(_layer({"ro": 0o644, "ro/sub": 0o555}))
+    tree = tmp_path / "tree"
+    harness.fetch(digest, tree, get=get)
+    assert stat.S_IMODE((tree / "ro").stat().st_mode) == 0o644
+    (tree / "ro").chmod(0o755)
+    assert stat.S_IMODE((tree / "ro/sub").stat().st_mode) == 0o555
+
+
+def test_a_directory_keeps_only_the_mode_bits_the_tar_filter_keeps(tmp_path):
+    digest, get, _ = _registry(_layer({"wide": 0o1777}))
+    tree = tmp_path / "tree"
+    harness.fetch(digest, tree, get=get)
+    assert stat.S_IMODE((tree / "wide").stat().st_mode) == 0o755
+
+
 def test_a_deferred_mode_never_follows_a_link_a_later_member_made(tmp_path):
     outside = tmp_path / "outside"
     (outside / "sub").mkdir(parents=True)
