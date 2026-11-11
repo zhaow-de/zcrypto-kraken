@@ -11,7 +11,7 @@ Kraken can close an order with a remainder too small to trade: the order reads `
 
 ## Why this matters
 
-Each occurrence costs the boundary its remaining legs, which wait for the next boundary's draft, and leaves a stale open copy of the order in the Cache until a restart's startup pass settles its row. Nothing fills wrongly, and nothing pages: the loop trades up to four hours late with no fault.
+Each occurrence costs the boundary its remaining legs, which wait for the next boundary's draft, and leaves the order's row `accepted` until a restart's startup pass settles it. Nothing fills wrongly; the refused cancel's CRITICAL line pages `zcrypto-engine-error-logs`.
 
 ## Findings so far
 
