@@ -39,10 +39,11 @@ repos:
         exclude: '^infra/ansible/(group_vars/.*/vault\.yml|host_vars/.*/vault\.yml|vault-password\.sops\.yaml)$'
       - id: debug-statements
       - id: detect-private-key
-      # A recorded file keeps its source's bytes: a digest file or a test holds its sha256.
+      # A recorded file keeps its source's bytes, and a generated fixture its generator's: a digest file or a test
+      # holds its sha256 or regenerates it.
       - id: end-of-file-fixer
         stages: [pre-commit]
-        exclude: &recorded-index '^tests/fixtures/(alloy_version/index-[^/]*\.json|tax_blockpit/blockpit-template-gid0\.csv)$'
+        exclude: &recorded-index '^tests/fixtures/(alloy_version/index-[^/]*\.json|tax_blockpit/blockpit-template-gid0\.csv|vintage/.*)$'
       - id: mixed-line-ending
         args: ["--fix=lf"]
         exclude: *recorded-index
