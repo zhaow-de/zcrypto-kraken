@@ -3634,6 +3634,8 @@ class ProbeExecutor:
     def _draft_table(self, draft: _PendingDraft, book: VenueBook, statuses: dict, state, now: datetime) -> list | None:
         """The ten EUR legs' decisions, in symbol order, or None -- at WARNING -- when the record or the venue truth
         lacks one of them: a half-drafted book is the drift the loop exists to close."""
+        from cli.engine.flatten import certain_balance
+
         record = draft.record
         symbols = sorted(_SPOT_SYMBOL_BY_BASE.values())
         for symbol in symbols:
@@ -3686,6 +3688,16 @@ class ProbeExecutor:
                     notional_eur=None,
                     reason=f"the venue lists the instrument {status}, not TRADING",
                 )
+            if leg.outcome == "placed" and leg.side == "sell":
+                # The spot balance, never `held` (spot plus margin): Kraken's funds check for a spot sell reads spot.
+                balance = book.balances[base]
+                bound = certain_balance(balance, pair.lot_step)
+                if leg.qty > bound:
+                    cut = f"one unit under the venue's {balance:.8f}, which the adapter rounds to 8 decimals"
+                    if bound >= pair.ordermin:
+                        leg = replace(leg, qty=bound, reason="; ".join(filter(None, (leg.reason, cut))))
+                    else:
+                        leg = replace(leg, outcome="carried", qty=None, reason=f"{cut}, is under ordermin {pair.ordermin:.10g}")
             decisions.append(leg)
         return decisions
 
