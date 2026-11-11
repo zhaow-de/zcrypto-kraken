@@ -767,7 +767,7 @@ def test_a_balance_the_adapter_rounded_up_is_sold_one_unit_short_so_the_venue_ca
     assert [(sent["instrument_id"], sent["quantity"]) for sent in client.submitted] == [("SOL/EUR.KRAKEN", 0.09999999)]
 
 
-def test_a_balance_the_adapter_rounded_up_onto_ordermin_is_never_sent_and_exits_two(tmp_path):
+def test_a_balance_the_adapter_rounded_up_onto_ordermin_is_sent_whole_on_each_pass_and_exits_two(tmp_path):
     _armed(tmp_path)
     held = _balance_as_the_adapter_reports_it("SOL", "0.0599999951")
     assert float(held.free) == 0.06
@@ -780,21 +780,21 @@ def test_a_balance_the_adapter_rounded_up_onto_ordermin_is_never_sent_and_exits_
         if row.id.startswith("SOL"):
             row.min_quantity = 0.06
     assert _run(client, tmp_path) == 2
-    assert client.submitted == []
+    assert [(sent["instrument_id"], sent["quantity"]) for sent in client.submitted] == [("SOL/EUR.KRAKEN", 0.06)] * 2
     (path,) = list(_exec_dir(tmp_path).glob("flatten-*.json"))
     record = json.loads(path.read_text())
-    assert [(row["sent"], row["reason"]) for row in record["legs"]] == [(False, "within_one_unit_of_minimum")] * 2
+    assert [(row["pass_name"], row["sent"], row["reason"]) for row in record["legs"]] == [
+        ("spot-1", True, None),
+        ("spot-2", True, None),
+    ]
     assert [(row["code"], row["reason"]) for row in record["residuals"]] == [("SOL", "sellable_balance")]
 
 
-def test_a_balance_exactly_at_ordermin_is_held_back_and_never_shaved_into_dust():
+def test_a_balance_exactly_at_ordermin_is_sent_at_the_reported_figure_and_never_shaved_into_dust():
     leg = flatten.Leg("spot", "SOL", "SOL/EUR", "SELL", 0.06, "CASH", "account_state.free")
     assert flatten.classify_balance(0.06, _SOL, 150.0) == "residual"
     sized = flatten.size_leg(leg, _SOL, 150.0)
-    assert (sized.send, sized.reason, sized.qty) == (False, "within_one_unit_of_minimum", 0.06)
-    assert flatten._leg_line(sized).endswith(
-        "-- one unit less is under the venue minimum, and the account may hold less than this: not sent"
-    )
+    assert (sized.send, sized.reason, sized.qty) == (True, None, 0.06)
 
 
 def test_a_float_reading_under_its_8_decimal_figure_is_shaved_by_one_unit_and_not_two():
@@ -809,33 +809,30 @@ def test_a_coarse_lot_float_reading_under_its_figure_loses_one_lot_step_and_not_
     assert (sized.send, sized.reason, sized.qty) == (True, None, 1.99999)
 
 
-def test_the_shave_is_withheld_and_the_leg_held_back_where_it_would_fall_under_the_notional_floor():
+def test_the_shave_is_withheld_and_the_leg_sent_whole_where_it_would_fall_under_the_notional_floor():
     """The notional floor binds on its own: 1 ADA at 0.45 EUR is exactly the 0.45 EUR costmin and
     well over this pair's 0.5 ordermin, so only costmin can refuse the shaved 0.99999999."""
     loose = flatten.PairConstraints("ADA/EUR", "ADA/EUR.KRAKEN", ordermin=0.5, lot_step=0.00000001, tick_size=0.000001)
     leg = flatten.Leg("spot", "ADA", "ADA/EUR", "SELL", 1.0, "CASH", "account_state.free")
     sized = flatten.size_leg(leg, loose, 0.45)
-    assert (sized.send, sized.reason, sized.qty) == (False, "within_one_unit_of_minimum", 1.0)
+    assert (sized.send, sized.reason, sized.qty) == (True, None, 1.0)
 
 
-@pytest.mark.parametrize(("free", "send", "reason"), [(1.5, True, None), (1.0, False, "within_one_unit_of_minimum")])
-def test_a_coarse_lot_at_the_floor_is_sent_only_where_its_floor_is_a_unit_under_the_reported_figure(free, send, reason):
+@pytest.mark.parametrize("free", [1.5, 1.0])
+def test_a_coarse_lot_at_the_floor_sends_one_lot_whether_the_balance_reads_over_it_or_on_it(free):
     coarse = flatten.PairConstraints("X/EUR", "X/EUR.KRAKEN", ordermin=1.0, lot_step=1.0, tick_size=0.01)
     leg = flatten.Leg("spot", "X", "X/EUR", "SELL", free, "CASH", "account_state.free")
     sized = flatten.size_leg(leg, coarse, 100.0)
-    assert (sized.send, sized.reason, sized.qty) == (send, reason, 1.0)
+    assert (sized.send, sized.reason, sized.qty) == (True, None, 1.0)
 
 
 def test_the_send_decision_and_the_residual_verdict_cannot_disagree():
     """One predicate serves both, so a balance skipped as dust can never be reported as a residual
-    -- the contradiction that would tell an operator the account is both flat and not. 15.0 is the
-    pair's ordermin, a leg held back unsent and still a residual."""
+    -- the contradiction that would tell an operator the account is both flat and not."""
     for free in (0.0, 5.0, 14.999, 15.0, 1200.0):
         leg = flatten.Leg("spot", "ADA", "ADA/EUR", "SELL", free, "CASH", "account_state.free")
         sized = flatten.size_leg(leg, _ADA, 0.40)
-        verdict = flatten.classify_balance(free, _ADA, 0.40)
-        assert (sized.reason == "dust_below_venue_minimum") is (verdict != "residual")
-        assert sized.send is (verdict == "residual" and free != 15.0)
+        assert sized.send is (flatten.classify_balance(free, _ADA, 0.40) == "residual")
 
 
 def test_the_estimate_is_computed_at_the_tick_floored_price_never_the_raw_book_one():

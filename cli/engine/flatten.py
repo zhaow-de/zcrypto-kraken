@@ -714,10 +714,9 @@ def size_leg(leg: Leg, constraints: PairConstraints, reference_price: float | No
     A spot leg below any applicable floor is listed and not sent; the venue would reject it, and it
     does not make the account not-flat.
 
-    A spot sell asks for no more than `certain_balance`, the adapter's figure being possibly rounded up; where no
-    quantity inside it clears every floor, nothing is sent and the leg reads `within_one_unit_of_minimum`. The leg is
-    judged on the reported figure (`classify_balance`), so neither the shave nor the hold-back turns a sellable
-    balance into dust: a leg held back stays a residual in the final read.
+    A spot sell asks for `certain_balance`, the adapter's figure being possibly rounded up, where that is above zero and
+    clears every floor; otherwise it goes out at the reported figure floored to the lot step, and the venue rules on it.
+    The leg is judged on the reported figure (`classify_balance`), so the shave never turns a sellable balance into dust.
     """
     from cli.engine.instruments import BelowMinimum, _floor_to_step
 
@@ -737,8 +736,6 @@ def size_leg(leg: Leg, constraints: PairConstraints, reference_price: float | No
         bound = certain_balance(leg.quantity, constraints.lot_step)
         if bound > 0.0 and not isinstance(_size(bound, constraints, price), BelowMinimum):
             qty = bound
-        else:
-            send, reason = False, "within_one_unit_of_minimum"
     estimate = qty * price if price is not None else None
     fee = estimate * TAKER_RATE if estimate is not None else None
     return SizedLeg(
@@ -862,8 +859,6 @@ def _order_line(order: Any) -> str:
 
 def _leg_line(sized: SizedLeg) -> str:
     head = f"  {sized.leg.kind:<6} {sized.leg.symbol} {sized.leg.side} {sized.qty:.8f}".rstrip()
-    if not sized.send and sized.reason == "within_one_unit_of_minimum":
-        return f"{head} -- one unit less is under the venue minimum, and the account may hold less than this: not sent"
     if not sized.send:
         return f"{head} -- below the venue minimum: not sent"
     tail = "market, reduce-only" if sized.leg.kind == "margin" else "market"
