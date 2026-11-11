@@ -846,8 +846,6 @@ def test_the_estimate_is_computed_at_the_tick_floored_price_never_the_raw_book_o
 
 
 def test_a_spot_quantity_is_floored_to_the_lot_step_before_it_is_sent():
-    """The order quantity is the floored one on the spot path too, not only the margin one: a free
-    balance carries more precision than the venue accepts, and flooring may only reduce it."""
     leg = flatten.Leg("spot", "ADA", "ADA/EUR", "SELL", 1200.123456789, "CASH", "account_state.free")
     sized = flatten.size_leg(leg, _ADA, 0.40)
     assert sized.send is True
