@@ -11504,10 +11504,11 @@ def _boundary_over(tmp_path, holdings, targets=None, **kwargs):
 @pytest.mark.parametrize(
     ("coin", "venue_figure", "ordermin", "reported", "sent", "touch"),
     [
-        ("SOL", "0.0533535388", 0.05, 0.05335354, 0.05335353, (186.4, 186.41)),
-        ("DOGE", "60.27949807", 50.0, 60.27949807, 60.27949806, (0.2137, 0.2138)),
-        ("BTC", "0.0001465538", 5e-05, 0.00014655, 0.00014654, (98250.0, 98250.1)),
-        ("DOT", "5.1890957849", 3.9, 5.18909578, 5.18909577, (3.871, 3.8711)),
+        ("SOL", "0.0533535388", 0.05, "0.05335354", "0.05335353", (186.4, 186.41)),
+        ("DOGE", "60.27949807", 50.0, "60.27949807", "60.27949806", (0.2137, 0.2138)),
+        ("BTC", "0.0001465538", 5e-05, "0.00014655", "0.00014654", (98250.0, 98250.1)),
+        ("DOT", "5.1890957849", 3.9, "5.18909578", "5.18909577", (3.871, 3.8711)),
+        ("DOGE", "1500.1234567849", 50.0, "1500.12345678", "1500.12345677", (0.2137, 0.2138)),
     ],
 )
 def test_a_whole_leg_sell_goes_out_one_unit_under_the_venues_rounded_figure(
@@ -11515,21 +11516,27 @@ def test_a_whole_leg_sell_goes_out_one_unit_under_the_venues_rounded_figure(
 ):
     symbol = f"{coin}/EUR"
     held = _adapter_figure(coin, venue_figure)
-    assert held == reported
+    assert held == float(reported)
     ex, client = _boundary_over(tmp_path, {symbol: held}, cache_ordermin={symbol: ordermin})
     leg = _legs(tmp_path)[symbol]
-    assert (leg["outcome"], leg["held_qty"], leg["qty"]) == ("placed", reported, sent)
-    assert leg["reason"].startswith("the whole leg: the remainder would be under ordermin")
-    assert [(i["symbol"], i["qty"]) for i in _plan_entry(tmp_path, when=_RUNG2_12Z)["plan"]["intents"]] == [(symbol, sent)]
+    assert (leg["outcome"], leg["held_qty"], leg["qty"]) == ("placed", float(reported), float(sent))
+    assert leg["reason"] == (
+        f"the whole leg: the remainder would be under ordermin; one unit under the venue's {reported}, which the adapter "
+        "rounds to 8 decimals"
+    )
+    intents = _plan_entry(tmp_path, when=_RUNG2_12Z)["plan"]["intents"]
+    assert [(i["symbol"], i["qty"]) for i in intents] == [(symbol, float(sent))]
     ex.on_quote(_quote(f"{symbol}.KRAKEN", bid=touch[0], ask=touch[1]))
-    assert str(client.submitted[-1][0].quantity) == str(sent)
+    assert str(client.submitted[-1][0].quantity) == sent
 
 
 def test_a_whole_leg_whose_one_unit_cut_falls_under_ordermin_is_carried_and_never_sent(tmp_path):
     ex, client = _boundary_over(tmp_path, {"SOL/EUR": 0.05}, cache_ordermin={"SOL/EUR": 0.05})
     sol = _legs(tmp_path)["SOL/EUR"]
     assert (sol["outcome"], sol["side"], sol["qty"]) == ("carried", "sell", None)
-    assert sol["reason"] == "one unit under the venue's 0.05, which the adapter rounds to 8 decimals, is under ordermin 0.05"
+    assert sol["reason"] == (
+        "one unit under the venue's 0.05000000, which the adapter rounds to 8 decimals, is under ordermin 0.05"
+    )
     assert _accum(tmp_path)["plan_id"] is None
     ex.on_quote(_quote("SOL/EUR.KRAKEN", bid=186.4, ask=186.41))
     assert client.submitted == []
@@ -11573,6 +11580,10 @@ def test_the_cut_bounds_a_sell_by_the_spot_balance_where_a_margin_long_sits_on_t
     ex.on_timer(clock.now)
     sol = _legs(tmp_path)["SOL/EUR"]
     assert (sol["outcome"], sol["held_qty"], sol["qty"]) == ("placed", 0.15335354, 0.05335353)
+    assert sol["reason"] == (
+        "the whole leg: the remainder would be under ordermin; one unit under the venue's 0.05335354, which the adapter "
+        "rounds to 8 decimals"
+    )
     ex.on_quote(_quote("SOL/EUR.KRAKEN", bid=186.4, ask=186.41))
     assert str(client.submitted[-1][0].quantity) == "0.05335353"
 

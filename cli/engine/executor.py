@@ -3695,7 +3695,7 @@ class ProbeExecutor:
                 balance = book.balances[base]
                 bound = certain_balance(balance, pair.lot_step)
                 if leg.qty > bound:
-                    cut = f"one unit under the venue's {balance:.10g}, which the adapter rounds to 8 decimals"
+                    cut = f"one unit under the venue's {balance:.8f}, which the adapter rounds to 8 decimals"
                     if bound >= pair.ordermin:
                         leg = replace(leg, qty=bound, reason="; ".join(filter(None, (leg.reason, cut))))
                     else:
