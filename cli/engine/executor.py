@@ -30,6 +30,7 @@ import os
 import re
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 
 from nautilus_trader.common import SocketState
@@ -83,7 +84,7 @@ from cli.engine.execledger import (
     write_exec_record,
 )
 from cli.engine.feeders import CycleStages
-from cli.engine.instruments import EUR_CODES, INSTRUMENT_IDS, BelowMinimum, SizedOrder, size_order
+from cli.engine.instruments import EUR_CODES, INSTRUMENT_IDS, BelowMinimum, SizedOrder, _floor_to_step, size_order
 from cli.engine.journal import CycleRecord, from_json, require_comparable_cycle_ts, validate_record
 from cli.engine.probeplan import MODES, PLAN_FILENAME, ProbeIntent, ProbePlanError, parse_plan, plan_refusals
 from cli.engine.store import BASKET
@@ -3634,6 +3635,8 @@ class ProbeExecutor:
     def _draft_table(self, draft: _PendingDraft, book: VenueBook, statuses: dict, state, now: datetime) -> list | None:
         """The ten EUR legs' decisions, in symbol order, or None -- at WARNING -- when the record or the venue truth
         lacks one of them: a half-drafted book is the drift the loop exists to close."""
+        from cli.engine.flatten import _BALANCE_UNIT
+
         record = draft.record
         symbols = sorted(_SPOT_SYMBOL_BY_BASE.values())
         for symbol in symbols:
@@ -3686,6 +3689,25 @@ class ProbeExecutor:
                     notional_eur=None,
                     reason=f"the venue lists the instrument {status}, not TRADING",
                 )
+            if leg.outcome == "placed" and leg.side == "sell":
+                # The adapter rounds Kraken's 10-decimal balance to 8, half to even, so `held` can read up to half a unit
+                # over the account.
+                held = book.held[symbol]
+                bound = _floor_to_step(float(Decimal(str(held)) - _BALANCE_UNIT), pair.lot_step)
+                if leg.qty > bound:
+                    if bound >= pair.ordermin:
+                        leg = replace(
+                            leg,
+                            qty=bound,
+                            reason=f"{leg.reason}; one unit under the venue's {held:.10g}, which the adapter rounds to 8 decimals",
+                        )
+                    else:
+                        leg = replace(
+                            leg,
+                            outcome="carried",
+                            qty=None,
+                            reason=f"the whole leg {leg.qty:.10g} is the venue's figure rounded to 8 decimals, and one unit under it is under ordermin {pair.ordermin:.10g}",
+                        )
             decisions.append(leg)
         return decisions
 
