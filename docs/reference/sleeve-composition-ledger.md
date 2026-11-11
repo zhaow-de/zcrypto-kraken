@@ -101,3 +101,15 @@ The book equals the summed sleeve gross ÷ 6 on both sides, to within one ulp. A
 | **final book gross** (Σ\|target weight\|, governed) | **0.048757848910910104** | **0.05010002187833014** |
 
 The book equals the summed sleeve gross ÷ 6 on both sides, to within one ulp. This is the first change of composition inside rung 3's tracking series, whose birth, 2026-11-09 00Z, fell on two sleeves. The band in force (`docs/research/14.phase6-decisions.md`, rung 3's gate read 6) is read over the box's whole window, which carries both compositions, so as at 2026-10-27 no separate re-derivation follows.
+
+### 2026-11-11 — B goes flat; the book runs on A1 and A2
+
+| | last pre-transition cycle<br>2026-11-10 20Z | first post-transition cycle<br>2026-11-11 00Z |
+| --- | --- | --- |
+| `zcrypto_engine_active_sleeves` | 3 | **2** |
+| `sleeve_gross{sleeve="B"}` | 0.21129528130350228 | 0 |
+| `sleeve_gross{sleeve="A1"}` | 0.088225435982652 | 0.0743129249240008 |
+| `sleeve_gross{sleeve="A2"}` | 0.008058035667649899 | 0.008054022895045664 |
+| **final book gross** (Σ\|target weight\|, governed) | **0.0512631254923007** | **0.013727824636507742** |
+
+The book equals the summed sleeve gross ÷ 6 on both sides, to within one ulp. This is B's first row since its re-arm of 2026-08-22, and the book's largest step in this ledger: the governed gross fell to 0.268 of its level, B having carried two thirds of the summed sleeve gross. The pre-transition column was read at 21:00Z: the engine restarted at 21:36Z of 2026-11-10, and a read at 23:59Z found no sleeve series until the next cycle published. The band in force, 204.9 bps, was derived over the box's window, across which this ledger shows no B transition, so it does not carry this composition, and by `infra/runbooks/engine.md`'s `zcrypto-engine-sleeve-count-changed` step 3 a band the gate rests on needs three complete ISO weeks in it.
