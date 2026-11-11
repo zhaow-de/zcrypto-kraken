@@ -827,8 +827,6 @@ def test_a_coarse_lot_at_the_floor_sends_one_lot_whether_the_balance_reads_over_
 
 
 def test_the_send_decision_and_the_residual_verdict_cannot_disagree():
-    """One predicate serves both, so a balance skipped as dust can never be reported as a residual
-    -- the contradiction that would tell an operator the account is both flat and not."""
     for free in (0.0, 5.0, 14.999, 15.0, 1200.0):
         leg = flatten.Leg("spot", "ADA", "ADA/EUR", "SELL", free, "CASH", "account_state.free")
         sized = flatten.size_leg(leg, _ADA, 0.40)
