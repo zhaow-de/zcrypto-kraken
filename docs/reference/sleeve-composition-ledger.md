@@ -4,7 +4,7 @@ Every observed change in which of the deployable's sleeves carry exposure, with 
 
 The deployable (registry record 47, superseding 44) combines three sleeves — **B**, **A1**, **A2** — at fixed one-third weights, which the exposure governor scales down. A sleeve sitting flat contributes zero and costs nothing to carry; it re-arms on its own signal, with no deploy and no config change. So the book's *structure* changes without anything in this repo changing, and nothing but this file records that it did.
 
-**Why the file exists.** The `zcrypto-engine-sleeve-count-changed` alert ages out within a day and is not a record; its runbook's step 4 writes each transition here, and a later go-live gate reads this history, not the alert.
+**Why the file exists.** The `zcrypto-engine-sleeve-count-changed` alert is not a record: its runbook's step 4 writes each transition here, and a later go-live gate reads this history.
 
 **How to add a row.** Read the transition off the series rather than reconstructing it: `zcrypto_engine_active_sleeves` for the count and `zcrypto_engine_sleeve_gross` for the per-sleeve figures, bracketing the 4-hourly cycle that published the step (cycles publish a few minutes past the boundary). Record the last pre-transition cycle and the first post-transition one, at full precision. `zcrypto_engine_sleeve_gross` is each sleeve's **own** gross, before the ⅓ combination weight and before the governor. Do **not** derive the book from it: the ⅓ combination nets opposing sleeve positions away asset by asset, so the combined gross is not in general the summed sleeve gross ÷ 3 (`cli/engine/feeders.py::cancellation_ratio` exists to name how much survives). Read the book directly instead — `sum(abs(zcrypto_engine_target_weight))`, the final governed book after combination, caps and limits, within one ulp of the journal record's `sum|final_targets|`.
 
@@ -101,3 +101,15 @@ The book equals the summed sleeve gross ÷ 6 on both sides, to within one ulp. A
 | **final book gross** (Σ\|target weight\|, governed) | **0.048757848910910104** | **0.05010002187833014** |
 
 The book equals the summed sleeve gross ÷ 6 on both sides, to within one ulp. This is the first change of composition inside rung 3's tracking series, whose birth, 2026-11-09 00Z, fell on two sleeves. The band in force (`docs/research/14.phase6-decisions.md`, rung 3's gate read 6) is read over the box's whole window, which carries both compositions, so as at 2026-10-27 no separate re-derivation follows.
+
+### 2026-11-11 — B goes flat; the book runs on A1 and A2
+
+| | last pre-transition cycle<br>2026-11-10 20Z | first post-transition cycle<br>2026-11-11 00Z |
+| --- | --- | --- |
+| `zcrypto_engine_active_sleeves` | 3 | **2** |
+| `sleeve_gross{sleeve="B"}` | 0.21129528130350228 | 0 |
+| `sleeve_gross{sleeve="A1"}` | 0.088225435982652 | 0.0743129249240008 |
+| `sleeve_gross{sleeve="A2"}` | 0.008058035667649899 | 0.008054022895045664 |
+| **final book gross** (Σ\|target weight\|, governed) | **0.0512631254923007** | **0.013727824636507742** |
+
+The book equals the summed sleeve gross ÷ 6 on both sides, to within one ulp. The band in force (`docs/research/14.phase6-decisions.md`, rung 3's gate read 6) was derived over the box's window, which carries no stretch with B flat, so it does not carry this composition: `infra/runbooks/engine.md`'s `zcrypto-engine-sleeve-count-changed` step 3 re-derives it, and the expected order notionals, before the next go-live decision reads them.
