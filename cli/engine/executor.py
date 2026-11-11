@@ -3689,24 +3689,17 @@ class ProbeExecutor:
                     reason=f"the venue lists the instrument {status}, not TRADING",
                 )
             if leg.outcome == "placed" and leg.side == "sell":
-                # The adapter rounds Kraken's 10-decimal balance to 8, half to even, so `held` can read up to half a unit
-                # over the account.
-                held = book.held[symbol]
-                bound = certain_balance(held, pair.lot_step)
+                # The adapter hands Kraken's 10-decimal balance on rounded to 8 decimals, up as well as down, so `balance`
+                # can read more than the account holds. It is the spot balance, never `held`, which counts a margin
+                # position too: the venue's funds check for a spot sell reads the spot balance.
+                balance = book.balances[base]
+                bound = certain_balance(balance, pair.lot_step)
                 if leg.qty > bound:
+                    cut = f"one unit under the venue's {balance:.10g}, which the adapter rounds to 8 decimals"
                     if bound >= pair.ordermin:
-                        leg = replace(
-                            leg,
-                            qty=bound,
-                            reason=f"{leg.reason}; one unit under the venue's {held:.10g}, which the adapter rounds to 8 decimals",
-                        )
+                        leg = replace(leg, qty=bound, reason="; ".join(filter(None, (leg.reason, cut))))
                     else:
-                        leg = replace(
-                            leg,
-                            outcome="carried",
-                            qty=None,
-                            reason=f"the whole leg {leg.qty:.10g} is the venue's figure rounded to 8 decimals, and one unit under it is under ordermin {pair.ordermin:.10g}",
-                        )
+                        leg = replace(leg, outcome="carried", qty=None, reason=f"{cut}, is under ordermin {pair.ordermin:.10g}")
             decisions.append(leg)
         return decisions
 

@@ -11529,9 +11529,7 @@ def test_a_whole_leg_whose_one_unit_cut_falls_under_ordermin_is_carried_and_neve
     ex, client = _boundary_over(tmp_path, {"SOL/EUR": 0.05}, cache_ordermin={"SOL/EUR": 0.05})
     sol = _legs(tmp_path)["SOL/EUR"]
     assert (sol["outcome"], sol["side"], sol["qty"]) == ("carried", "sell", None)
-    assert sol["reason"] == (
-        "the whole leg 0.05 is the venue's figure rounded to 8 decimals, and one unit under it is under ordermin 0.05"
-    )
+    assert sol["reason"] == "one unit under the venue's 0.05, which the adapter rounds to 8 decimals, is under ordermin 0.05"
     assert _accum(tmp_path)["plan_id"] is None
     ex.on_quote(_quote("SOL/EUR.KRAKEN", bid=186.4, ask=186.41))
     assert client.submitted == []
@@ -11556,6 +11554,27 @@ def test_a_whole_leg_over_a_thousand_units_goes_out_one_unit_under_and_never_two
     assert leg["reason"] == "the whole leg: the remainder would be under ordermin"
     ex.on_quote(_quote("DOGE/EUR.KRAKEN", bid=0.2137, ask=0.2138))
     assert str(client.submitted[-1][0].quantity) == "1236.22007513"
+
+
+def test_the_cut_bounds_a_sell_by_the_spot_balance_where_a_margin_long_sits_on_the_pair(tmp_path):
+    spot = _adapter_figure("SOL", "0.0533535388")
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=_rung2_record(tmp_path, final_targets=_the_ten_at(0.0)),
+        holdings={"SOL/EUR": spot},
+        eur_total=1500.0,
+        eur_free=1500.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+        cache_ordermin={"SOL/EUR": 0.05},
+    )
+    holdings = ex._venue_holdings
+    ex._venue_holdings = lambda: dataclasses.replace(holdings(), held=holdings.held | {"SOL/EUR": 0.15335354})
+    ex.on_boundary(_RUNG2_12Z)
+    ex.on_timer(clock.now)
+    sol = _legs(tmp_path)["SOL/EUR"]
+    assert (sol["outcome"], sol["held_qty"], sol["qty"]) == ("placed", 0.15335354, 0.05335353)
+    ex.on_quote(_quote("SOL/EUR.KRAKEN", bid=186.4, ask=186.41))
+    assert str(client.submitted[-1][0].quantity) == "0.05335353"
 
 
 def test_the_cut_leaves_buys_partial_sells_and_the_venues_figure_alone(tmp_path):
