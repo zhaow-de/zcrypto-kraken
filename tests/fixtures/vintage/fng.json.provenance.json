@@ -1,0 +1,15 @@
+{
+  "attribution": "Crypto Fear & Greed Index, alternative.me",
+  "committed": "real",
+  "file": "fng.json",
+  "how": null,
+  "licence": "alternative.me API: \"You are free to use our API and data from our API in any way you like, this includes commercial projects of any kind\"",
+  "real": {
+    "bytes": 301997,
+    "fetched_at": "2026-11-11T16:56:10Z",
+    "file": "fng.json",
+    "sha256": "6842297ff07028814f5aa0d83514479d6ce1b60c622807e1d14f96cfcfe56a81",
+    "url": "https://api.alternative.me/fng/?limit=0"
+  },
+  "source": "fng"
+}

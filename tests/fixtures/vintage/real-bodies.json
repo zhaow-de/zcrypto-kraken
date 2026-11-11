@@ -1,0 +1,154 @@
+{
+  "bg-asopr.json": {
+    "bytes": 78390,
+    "fetched_at": "2026-11-11T16:57:03Z",
+    "sha256": "61e133483713eb40837d9ef493ef34a21f4deff1d4264c18c01e802b01e0a190",
+    "source": "bg-asopr",
+    "status": 200,
+    "url": "https://api.bitcoin-data.com/v1/asopr"
+  },
+  "bg-lth-sopr.json": {
+    "bytes": 81267,
+    "fetched_at": "2026-11-11T16:57:07Z",
+    "sha256": "98df146d1a321991e003d870361bf9fb062f83ef4a790d98cb2a3f2793640b9e",
+    "source": "bg-lth-sopr",
+    "status": 200,
+    "url": "https://api.bitcoin-data.com/v1/lth-sopr"
+  },
+  "bg-sopr-invalid-bearer.json": {
+    "bytes": 76952,
+    "fetched_at": "2026-11-11T16:57:17Z",
+    "sha256": "621ea457aec23ee3b2cbfbd2dc4835b0b8b129bd98ebf65904cf7473d34b7695",
+    "source": "bg-sopr",
+    "status": 200,
+    "url": "https://api.bitcoin-data.com/v1/sopr"
+  },
+  "bg-sopr.json": {
+    "bytes": 76952,
+    "fetched_at": "2026-11-11T16:57:00Z",
+    "sha256": "621ea457aec23ee3b2cbfbd2dc4835b0b8b129bd98ebf65904cf7473d34b7695",
+    "source": "bg-sopr",
+    "status": 200,
+    "url": "https://api.bitcoin-data.com/v1/sopr"
+  },
+  "bg-sth-sopr.json": {
+    "bytes": 81305,
+    "fetched_at": "2026-11-11T16:57:05Z",
+    "sha256": "875df9f52b02c1ec6f852a2206b689320e7555ae6608057a5b3402efb5a6af14",
+    "source": "bg-sth-sopr",
+    "status": 200,
+    "url": "https://api.bitcoin-data.com/v1/sth-sopr"
+  },
+  "cm-ada.jsonl": {
+    "bytes": 2090936,
+    "fetched_at": "2026-11-11T16:56:27Z",
+    "sha256": "7b651522e2ebacac13bb309600f1cb2edaa5bdc219ac9786439dd9d1e640e38e",
+    "source": "cm-ada",
+    "status": 200,
+    "url": "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics?assets=ada&metrics=AdrActCnt,AdrBalCnt,AssetCompletionTime,AssetEODCompletionTime,BlkCnt,CapMVRVCur,CapMrktCurUSD,CapMrktEstUSD,FeeTotNtv,IssTotNtv,IssTotUSD,PriceBTC,PriceUSD,ROI1yr,ROI30d,ReferenceRate,ReferenceRateBTC,ReferenceRateETH,ReferenceRateEUR,ReferenceRateUSD,SplyCur,TxCnt,TxTfrCnt,volume_reported_spot_usd_1d&frequency=1d&format=json_stream&ignore_forbidden_errors=true&ignore_unsupported_errors=true"
+  },
+  "cm-avaxc.jsonl": {
+    "bytes": 1295591,
+    "fetched_at": "2026-11-11T16:56:43Z",
+    "sha256": "7b3763fcebeb68a8f5459a7ed7d53ad1646deb268764ea45d5a957952d52e5ed",
+    "source": "cm-avaxc",
+    "status": 200,
+    "url": "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics?assets=avaxc&metrics=AdrActCnt,AdrBalCnt,AssetCompletionTime,AssetEODCompletionTime,BlkCnt,CapMVRVCur,CapMrktCurUSD,FeeTotNtv,IssTotNtv,IssTotUSD,PriceBTC,PriceUSD,ROI1yr,ROI30d,SplyCur,TxCnt,TxTfrCnt&frequency=1d&format=json_stream&ignore_forbidden_errors=true&ignore_unsupported_errors=true"
+  },
+  "cm-avaxp.jsonl": {
+    "bytes": 1247259,
+    "fetched_at": "2026-11-11T16:56:46Z",
+    "sha256": "6b99bce7dad7aa660b98d2731f74981ac1de11e6a94635c341105c379cbaddf2",
+    "source": "cm-avaxp",
+    "status": 200,
+    "url": "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics?assets=avaxp&metrics=AdrActCnt,AdrBalCnt,AssetCompletionTime,AssetEODCompletionTime,BlkCnt,CapMVRVCur,CapMrktCurUSD,FeeTotNtv,IssTotNtv,IssTotUSD,PriceBTC,PriceUSD,ROI1yr,ROI30d,SplyCur,TxCnt,TxTfrCnt&frequency=1d&format=json_stream&ignore_forbidden_errors=true&ignore_unsupported_errors=true"
+  },
+  "cm-btc.jsonl": {
+    "bytes": 8342808,
+    "fetched_at": "2026-11-11T16:56:17Z",
+    "sha256": "e04186503e9464271e33a84f8a54bf1ac836a76d658a750822c029f8cea5e14d",
+    "source": "cm-btc",
+    "status": 200,
+    "url": "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics?assets=btc&metrics=AdrActCnt,AdrBalCnt,AssetCompletionTime,AssetEODCompletionTime,BlkCnt,CapMVRVCur,CapMrktCurUSD,CapMrktEstUSD,FeeTotNtv,FlowInExNtv,FlowInExUSD,FlowOutExNtv,FlowOutExUSD,HashRate,IssTotNtv,IssTotUSD,PriceBTC,PriceUSD,ROI1yr,ROI30d,ReferenceRate,ReferenceRateETH,ReferenceRateEUR,ReferenceRateUSD,SplyCur,SplyExNtv,SplyExUSD,SplyExpFut10yr,TxCnt,TxTfrCnt,volume_reported_spot_usd_1d&frequency=1d&format=json_stream&ignore_forbidden_errors=true&ignore_unsupported_errors=true"
+  },
+  "cm-catalog.json": {
+    "bytes": 67569,
+    "fetched_at": "2026-11-11T16:56:13Z",
+    "sha256": "1b3caf7bad1b1234ccf245b61eb6403fc7dc5802f790a8b33de30fdcfa6e511c",
+    "source": "cm-catalog",
+    "status": 200,
+    "url": "https://community-api.coinmetrics.io/v4/catalog-v2/asset-metrics?assets=btc,eth,sol,xrp,ada,link,doge,ltc,dot,avax,avaxc,avaxp&page_size=2000"
+  },
+  "cm-doge.jsonl": {
+    "bytes": 3343751,
+    "fetched_at": "2026-11-11T16:56:34Z",
+    "sha256": "edec281e97b2c56748f56f33525629aa227596b71a4a7d3e7210ddbdbad9c944",
+    "source": "cm-doge",
+    "status": 200,
+    "url": "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics?assets=doge&metrics=AdrActCnt,AdrBalCnt,AssetCompletionTime,AssetEODCompletionTime,BlkCnt,CapMVRVCur,CapMrktCurUSD,CapMrktEstUSD,FeeTotNtv,HashRate,IssTotNtv,IssTotUSD,PriceBTC,PriceUSD,ROI1yr,ROI30d,ReferenceRate,ReferenceRateBTC,ReferenceRateETH,ReferenceRateEUR,ReferenceRateUSD,SplyCur,SplyExpFut10yr,TxCnt,TxTfrCnt,volume_reported_spot_usd_1d&frequency=1d&format=json_stream&ignore_forbidden_errors=true&ignore_unsupported_errors=true"
+  },
+  "cm-dot.jsonl": {
+    "bytes": 988496,
+    "fetched_at": "2026-11-11T16:56:41Z",
+    "sha256": "a3f1c911631ff4778bb32df98a294642a8f46c695c92790f8982719934da9017",
+    "source": "cm-dot",
+    "status": 200,
+    "url": "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics?assets=dot&metrics=AdrActCnt,AdrBalCnt,AssetCompletionTime,AssetEODCompletionTime,CapMVRVCur,CapMrktCurUSD,CapMrktEstUSD,IssTotNtv,IssTotUSD,PriceBTC,PriceUSD,ROI1yr,ROI30d,ReferenceRate,ReferenceRateBTC,ReferenceRateETH,ReferenceRateEUR,ReferenceRateUSD,SplyCur,TxCnt,TxTfrCnt,volume_reported_spot_usd_1d&frequency=1d&format=json_stream&ignore_forbidden_errors=true&ignore_unsupported_errors=true"
+  },
+  "cm-eth.jsonl": {
+    "bytes": 6206698,
+    "fetched_at": "2026-11-11T16:56:20Z",
+    "sha256": "57b8dbdda06e096c83d3d5efc39b92c832c7a52b64ba3a039499869ad789b6ab",
+    "source": "cm-eth",
+    "status": 200,
+    "url": "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics?assets=eth&metrics=AdrActCnt,AdrBalCnt,AssetCompletionTime,AssetEODCompletionTime,BlkCnt,CapMVRVCur,CapMrktCurUSD,CapMrktEstUSD,FeeTotNtv,FlowInExNtv,FlowInExUSD,FlowOutExNtv,FlowOutExUSD,HashRate,IssTotNtv,IssTotUSD,PriceBTC,PriceUSD,ROI1yr,ROI30d,ReferenceRate,ReferenceRateBTC,ReferenceRateEUR,ReferenceRateUSD,SplyCur,SplyExNtv,SplyExUSD,SplyExpFut10yr,TxCnt,TxTfrCnt,volume_reported_spot_usd_1d&frequency=1d&format=json_stream&ignore_forbidden_errors=true&ignore_unsupported_errors=true"
+  },
+  "cm-link.jsonl": {
+    "bytes": 1800314,
+    "fetched_at": "2026-11-11T16:56:30Z",
+    "sha256": "fee5df21628236245dd1cc9a6b815940f69b82957adf3160aad1cc78efd302e6",
+    "source": "cm-link",
+    "status": 200,
+    "url": "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics?assets=link&metrics=AdrActCnt,AdrBalCnt,AssetCompletionTime,AssetEODCompletionTime,CapMVRVCur,CapMrktCurUSD,CapMrktEstUSD,IssTotNtv,IssTotUSD,PriceBTC,PriceUSD,ROI1yr,ROI30d,ReferenceRate,ReferenceRateBTC,ReferenceRateETH,ReferenceRateEUR,ReferenceRateUSD,SplyCur,TxCnt,TxTfrCnt,volume_reported_spot_usd_1d&frequency=1d&format=json_stream&ignore_forbidden_errors=true&ignore_unsupported_errors=true"
+  },
+  "cm-ltc.jsonl": {
+    "bytes": 3569728,
+    "fetched_at": "2026-11-11T16:56:37Z",
+    "sha256": "55cbeabf6dad4d6f64c915956b5b972d64e5779a829706a1af51b10036a1d734",
+    "source": "cm-ltc",
+    "status": 200,
+    "url": "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics?assets=ltc&metrics=AdrActCnt,AdrBalCnt,AssetCompletionTime,AssetEODCompletionTime,BlkCnt,CapMVRVCur,CapMrktCurUSD,CapMrktEstUSD,FeeTotNtv,HashRate,IssTotNtv,IssTotUSD,PriceBTC,PriceUSD,ROI1yr,ROI30d,ReferenceRate,ReferenceRateBTC,ReferenceRateETH,ReferenceRateEUR,ReferenceRateUSD,SplyCur,SplyExpFut10yr,TxCnt,TxTfrCnt,volume_reported_spot_usd_1d&frequency=1d&format=json_stream&ignore_forbidden_errors=true&ignore_unsupported_errors=true"
+  },
+  "cm-status.atom": {
+    "bytes": 35889,
+    "fetched_at": "2026-11-11T16:56:48Z",
+    "sha256": "fd2f684217e4a79669a305e66f7d77e4cd397e1ba888a9a87a57f894e9cf977a",
+    "source": "cm-status",
+    "status": 200,
+    "url": "https://status.coinmetrics.io/history.atom"
+  },
+  "cm-xrp.jsonl": {
+    "bytes": 2891535,
+    "fetched_at": "2026-11-11T16:56:24Z",
+    "sha256": "322a0397da14fa7149570d784917237ef07aa69c2671788688f054308c87aea5",
+    "source": "cm-xrp",
+    "status": 200,
+    "url": "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics?assets=xrp&metrics=AdrActCnt,AdrBalCnt,AssetCompletionTime,AssetEODCompletionTime,BlkCnt,CapMVRVCur,CapMrktCurUSD,CapMrktEstUSD,FeeTotNtv,PriceBTC,PriceUSD,ROI1yr,ROI30d,ReferenceRate,ReferenceRateBTC,ReferenceRateETH,ReferenceRateEUR,ReferenceRateUSD,SplyCur,SplyExpFut10yr,TxCnt,TxTfrCnt,volume_reported_spot_usd_1d&frequency=1d&format=json_stream&ignore_forbidden_errors=true&ignore_unsupported_errors=true"
+  },
+  "fng.json": {
+    "bytes": 301997,
+    "fetched_at": "2026-11-11T16:56:10Z",
+    "sha256": "6842297ff07028814f5aa0d83514479d6ce1b60c622807e1d14f96cfcfe56a81",
+    "source": "fng",
+    "status": 200,
+    "url": "https://api.alternative.me/fng/?limit=0"
+  },
+  "mempool-hashrate.json": {
+    "bytes": 431799,
+    "fetched_at": "2026-11-11T16:56:50Z",
+    "sha256": "68480a74862c5e28aa5a1fd1b2adfd204f939efe4f3d0ac2087bf06fa0b17d37",
+    "source": "mempool-hashrate",
+    "status": 200,
+    "url": "https://mempool.space/api/v1/mining/hashrate/all"
+  }
+}
