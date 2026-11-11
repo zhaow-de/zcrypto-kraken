@@ -3689,9 +3689,7 @@ class ProbeExecutor:
                     reason=f"the venue lists the instrument {status}, not TRADING",
                 )
             if leg.outcome == "placed" and leg.side == "sell":
-                # The adapter hands Kraken's 10-decimal balance on rounded to 8 decimals, up as well as down, so `balance`
-                # can read more than the account holds. It is the spot balance, never `held`, which counts a margin
-                # position too: the venue's funds check for a spot sell reads the spot balance.
+                # The spot balance, never `held` (spot plus margin): Kraken's funds check for a spot sell reads spot.
                 balance = book.balances[base]
                 bound = certain_balance(balance, pair.lot_step)
                 if leg.qty > bound:

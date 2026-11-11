@@ -788,10 +788,6 @@ def test_a_balance_the_adapter_rounded_up_onto_ordermin_is_never_sent_and_exits_
 
 
 def test_a_balance_exactly_at_ordermin_is_held_back_and_never_shaved_into_dust():
-    """The fixture's spot SOL is exactly SOL/EUR's 0.06 ordermin, a figure the adapter may have rounded up. Shaved, it
-    would be 0.05999999, under the floor, so no quantity both clears the floor and stays inside what the account is
-    certain to hold: nothing is sent. Judged on the reported figure, it stays a residual, so the account never reads
-    flat with the SOL still held."""
     leg = flatten.Leg("spot", "SOL", "SOL/EUR", "SELL", 0.06, "CASH", "account_state.free")
     assert flatten.classify_balance(0.06, _SOL, 150.0) == "residual"
     sized = flatten.size_leg(leg, _SOL, 150.0)
@@ -812,8 +808,6 @@ def test_the_shave_is_withheld_and_the_leg_held_back_where_it_would_fall_under_t
 
 @pytest.mark.parametrize(("free", "send", "reason"), [(1.5, True, None), (1.0, False, "within_one_unit_of_minimum")])
 def test_a_coarse_lot_at_the_floor_is_sent_only_where_its_floor_is_a_unit_under_the_reported_figure(free, send, reason):
-    """A one-unit lot floors 1.5 to 1.0, a whole unit under it and so inside what the account holds, though the shaved
-    0.0 clears no floor; 1.0 itself is on the lot and is the figure the adapter may have rounded up."""
     coarse = flatten.PairConstraints("X/EUR", "X/EUR.KRAKEN", ordermin=1.0, lot_step=1.0, tick_size=0.01)
     leg = flatten.Leg("spot", "X", "X/EUR", "SELL", free, "CASH", "account_state.free")
     sized = flatten.size_leg(leg, coarse, 100.0)
