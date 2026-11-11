@@ -30,7 +30,7 @@ def _digest(body: bytes) -> str:
     return "sha256:" + hashlib.sha256(body).hexdigest()
 
 
-def _layer(entries: dict[str, bytes | str | None | tuple[str, str]]) -> bytes:
+def _layer(entries: dict[str, bytes | str | None | int | tuple[str, str]]) -> bytes:
     out = io.BytesIO()
     with tarfile.open(fileobj=out, mode="w:gz") as tar:
         for name, value in entries.items():
@@ -43,6 +43,8 @@ def _layer(entries: dict[str, bytes | str | None | tuple[str, str]]) -> bytes:
                 info.type, info.linkname = tarfile.SYMTYPE, value
             elif value is None:
                 info.type, info.mode = tarfile.DIRTYPE, 0o755
+            elif isinstance(value, int):
+                info.type, info.mode = tarfile.DIRTYPE, value
             else:
                 info.type, info.linkname = tarfile.LNKTYPE, value[1]
             tar.addfile(info)
@@ -194,20 +196,23 @@ def test_a_later_layers_whiteouts_remove_what_they_name(tmp_path):
 
 
 def test_a_directory_without_owner_write_takes_its_mode_after_its_members(tmp_path):
-    out = io.BytesIO()
-    with tarfile.open(fileobj=out, mode="w:gz") as tar:
-        for name in ("ro", "ro/sub"):
-            directory = tarfile.TarInfo(name)
-            directory.type, directory.mode = tarfile.DIRTYPE, 0o555
-            tar.addfile(directory)
-        member = tarfile.TarInfo("ro/sub/f")
-        member.size = 1
-        tar.addfile(member, io.BytesIO(b"f"))
-    digest, get, _ = _registry(out.getvalue())
+    digest, get, _ = _registry(_layer({"ro": 0o555, "ro/sub": 0o555, "ro/sub/f": b"f"}))
     tree = tmp_path / "tree"
     harness.fetch(digest, tree, get=get)
     assert (tree / "ro/sub/f").read_bytes() == b"f"
     assert [stat.S_IMODE((tree / name).stat().st_mode) for name in ("ro", "ro/sub")] == [0o555, 0o555]
+
+
+def test_a_deferred_mode_never_follows_a_link_a_later_member_made(tmp_path):
+    outside = tmp_path / "outside"
+    (outside / "sub").mkdir(parents=True)
+    (outside / "sub").chmod(0o755)
+    digest, get, _ = _registry(_layer({"a/sub": 0o700, "a": str(outside)}))
+    tree = tmp_path / "tree"
+    harness.fetch(digest, tree, get=get)
+    assert stat.S_IMODE((outside / "sub").stat().st_mode) == 0o755
+    assert os.readlink(tree / "a") == str(outside)
+    assert (tree / harness.IMAGE_DIGEST_FILE).read_text().strip() == digest
 
 
 def test_the_fetch_refuses_a_layer_whose_bytes_are_not_its_digest(tmp_path):

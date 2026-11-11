@@ -165,9 +165,12 @@ def _apply(blob: bytes, into: Path) -> None:
             if member.isdir():
                 modes[existing] = member.mode & TAR_FILTER_MODE
         # A directory's mode waits for its members, as `extractall` defers it: one without owner-write would
-        # refuse them. Deepest first, so a parent without owner-search still lets its children be set.
+        # refuse them. Deepest first, so a parent without owner-search still lets its children be set. A later
+        # member may have replaced the directory or an ancestor with a link, an absolute one included: the mode is
+        # set only where the path still resolves to itself, a directory, and is skipped otherwise, the later member
+        # having removed the directory it was for.
         for path, mode in sorted(modes.items(), key=lambda item: len(item[0].parts), reverse=True):
-            if path.is_dir(follow_symlinks=False):
+            if os.path.realpath(path) == str(path) and path.is_dir(follow_symlinks=False):
                 path.chmod(mode)
 
 
