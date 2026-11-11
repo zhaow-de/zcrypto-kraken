@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 import os
+import stat
 import tarfile
 from collections.abc import Callable
 from pathlib import Path
@@ -190,6 +191,23 @@ def test_a_later_layers_whiteouts_remove_what_they_name(tmp_path):
     assert (tree / "etc/b").read_bytes() == b"b"
     assert os.listdir(tree / "opt/x") == ["new"]
     assert list(tree.rglob(".wh.*")) == []
+
+
+def test_a_directory_without_owner_write_takes_its_mode_after_its_members(tmp_path):
+    out = io.BytesIO()
+    with tarfile.open(fileobj=out, mode="w:gz") as tar:
+        for name in ("ro", "ro/sub"):
+            directory = tarfile.TarInfo(name)
+            directory.type, directory.mode = tarfile.DIRTYPE, 0o555
+            tar.addfile(directory)
+        member = tarfile.TarInfo("ro/sub/f")
+        member.size = 1
+        tar.addfile(member, io.BytesIO(b"f"))
+    digest, get, _ = _registry(out.getvalue())
+    tree = tmp_path / "tree"
+    harness.fetch(digest, tree, get=get)
+    assert (tree / "ro/sub/f").read_bytes() == b"f"
+    assert [stat.S_IMODE((tree / name).stat().st_mode) for name in ("ro", "ro/sub")] == [0o555, 0o555]
 
 
 def test_the_fetch_refuses_a_layer_whose_bytes_are_not_its_digest(tmp_path):

@@ -61,6 +61,8 @@ ACCEPT = ", ".join(
 )
 WHITEOUT = ".wh."
 OPAQUE = ".wh..wh..opq"
+# The bits the `tar` filter keeps of a member's mode: no setuid, setgid or sticky, no group or other write.
+TAR_FILTER_MODE = 0o755
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 
 
@@ -127,6 +129,7 @@ def _empty(directory: Path, written: set[Path]) -> None:
 
 def _apply(blob: bytes, into: Path) -> None:
     written: set[Path] = set()
+    modes: dict[Path, int] = {}
     with tarfile.open(fileobj=io.BytesIO(blob)) as layer:
         for member in layer:
             base = os.path.basename(member.name)
@@ -155,10 +158,17 @@ def _apply(blob: bytes, into: Path) -> None:
             if not (member.isdir() and existing.is_dir(follow_symlinks=False)):
                 _remove(existing)
             try:
-                layer.extract(member, into, filter="tar")
+                layer.extract(member, into, set_attrs=not member.isdir(), filter="tar")
             except tarfile.FilterError as exc:
                 raise FetchRefused(str(exc)) from exc
             written.add(existing)
+            if member.isdir():
+                modes[existing] = member.mode & TAR_FILTER_MODE
+        # A directory's mode waits for its members, as `extractall` defers it: one without owner-write would
+        # refuse them. Deepest first, so a parent without owner-search still lets its children be set.
+        for path, mode in sorted(modes.items(), key=lambda item: len(item[0].parts), reverse=True):
+            if path.is_dir(follow_symlinks=False):
+                path.chmod(mode)
 
 
 def fetch(digest: str, into: Path, get: Callable[[str, Mapping[str, str]], bytes] = _urllib_get) -> None:
