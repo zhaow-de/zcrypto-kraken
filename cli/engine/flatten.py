@@ -76,8 +76,9 @@ MARGIN_LEVERAGE = 2
 _ANSWER_REPR_LIMIT = 4000
 # The adapter rounds a balance's total and its held amount to 8 decimals each, and takes free as
 # their difference, while Kraken keeps SOL and BTC to 10: a reported free balance can exceed the
-# venue's by up to one whole unit, half from each rounding, which is why the shave is a whole unit. Unshaved, a sell of the reported figure is refused for insufficient funds on every
-# pass and every re-run.
+# venue's by up to one whole unit, half from each rounding, which is why the shave is a whole unit.
+# Unshaved, a sell of the reported figure is refused for insufficient funds on every pass and every
+# re-run.
 _BALANCE_UNIT = Decimal("0.00000001")
 
 # Real nautilus types reach the client; the journal records their string forms. A plain `str` where
