@@ -797,6 +797,12 @@ def test_a_balance_exactly_at_ordermin_is_held_back_and_never_shaved_into_dust()
     )
 
 
+def test_a_holding_over_a_thousand_units_is_shaved_by_one_unit_of_its_8_decimal_figure_and_not_two():
+    leg = flatten.Leg("spot", "ADA", "ADA/EUR", "SELL", 1236.2200751399998, "CASH", "account_state.free")
+    sized = flatten.size_leg(leg, _ADA, 0.4)
+    assert (sized.send, sized.reason, sized.qty) == (True, None, 1236.22007513)
+
+
 def test_the_shave_is_withheld_and_the_leg_held_back_where_it_would_fall_under_the_notional_floor():
     """The notional floor binds on its own: 1 ADA at 0.45 EUR is exactly the 0.45 EUR costmin and
     well over this pair's 0.5 ordermin, so only costmin can refuse the shaved 0.99999999."""
@@ -845,7 +851,7 @@ def test_a_spot_quantity_is_floored_to_the_lot_step_before_it_is_sent():
     leg = flatten.Leg("spot", "ADA", "ADA/EUR", "SELL", 1200.123456789, "CASH", "account_state.free")
     sized = flatten.size_leg(leg, _ADA, 0.40)
     assert sized.send is True
-    assert sized.qty == 1200.12345677  # floored to the lot step, then one 8-decimal unit short
+    assert sized.qty == 1200.12345678  # one unit under the balance's 8-decimal figure, 1200.12345679
     assert sized.qty < leg.quantity
 
 
