@@ -11,7 +11,7 @@ Kraken can close an order with a remainder too small to trade: the order reads `
 
 ## Why this matters
 
-Each occurrence costs the boundary its remaining legs, which wait for the next boundary's draft, and leaves the order's row `accepted` until a restart's startup pass settles it. Nothing fills wrongly; the refused cancel's CRITICAL line pages `zcrypto-engine-error-logs`. Until then, on the order's UTC day and the next, the open row turns its symbol's placed leg `carried` in each draft and holds a disarmed engine's watchdog freeze (`_stranded_rows`), naming the order for a hand cancel Kraken no longer needs.
+Each occurrence costs the boundary its remaining legs, which wait for the next boundary's draft, and leaves the order's row `accepted` until a restart's startup pass settles it. Nothing fills wrongly; the refused cancel's CRITICAL line pages `zcrypto-engine-error-logs`. Until then, on the order's UTC day and the next, the open row turns its symbol's placed leg `carried` in each draft; and a socket cut on either of those days while the engine is disarmed leaves its watchdog freeze standing for as long as it stays disarmed (`_stranded_rows`), naming the order for a hand cancel Kraken no longer needs.
 
 ## Findings so far
 
