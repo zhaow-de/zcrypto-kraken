@@ -11537,6 +11537,16 @@ def test_a_whole_leg_whose_one_unit_cut_falls_under_ordermin_is_carried_and_neve
     assert client.submitted == []
 
 
+def test_a_whole_leg_whose_one_unit_cut_lands_on_ordermin_is_sent_at_ordermin(tmp_path):
+    held = _adapter_figure("SOL", "0.0500000100")
+    assert held == 0.05000001
+    ex, client = _boundary_over(tmp_path, {"SOL/EUR": held}, cache_ordermin={"SOL/EUR": 0.05})
+    sol = _legs(tmp_path)["SOL/EUR"]
+    assert (sol["outcome"], sol["held_qty"], sol["qty"]) == ("placed", 0.05000001, 0.05)
+    ex.on_quote(_quote("SOL/EUR.KRAKEN", bid=186.4, ask=186.41))
+    assert str(client.submitted[-1][0].quantity) == "0.05000000"
+
+
 def test_the_cut_leaves_buys_partial_sells_and_the_venues_figure_alone(tmp_path):
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
