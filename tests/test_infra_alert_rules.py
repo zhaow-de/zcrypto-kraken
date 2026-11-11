@@ -916,9 +916,9 @@ def test_the_cache_proxy_rules_read_the_primary_and_the_write_rule_reads_the_lib
         assert exprs and all('host="zcrypto"' in e for e in exprs), (rule["uid"], exprs)
     assert (backend["for"], backend["labels"]["severity"]) == ("2m", "critical")
     assert 'max(haproxy_backend_active_servers{host="zcrypto"})' in backend["data"][0]["model"]["expr"]
-    # The threshold is the frontend's own routing bound: a backend below `nbsrv ... ge N` routes nothing.
+    # The threshold is the frontend's votes bound: a node below `nbsrv(votes-...) ge N` routes nothing.
     haproxy_cfg = (REPO / "infra/ansible/roles/engine/templates/haproxy.cfg.j2").read_text()
-    bound = {int(n) for n in re.findall(r"nbsrv\(\{\{ node\.name \}\}\) ge (\d+)", haproxy_cfg)}
+    bound = {int(n) for n in re.findall(r"nbsrv\(votes-\{\{ node\.name \}\}\) ge (\d+)", haproxy_cfg)}
     assert bound == {2}, bound
     assert backend["data"][1]["model"]["conditions"] == [{"evaluator": {"type": "lt", "params": [bound.pop()]}}]
     assert (session["for"], session["labels"]["severity"], session["condition"]) == ("15m", "warning", "D")
