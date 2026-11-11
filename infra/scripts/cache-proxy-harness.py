@@ -10,8 +10,8 @@ fetch  a network read: pulls `library/haproxy` anonymously from Docker Hub by it
        `.harness-image-digest` is written last, so a tree without it is a fetch that did not finish. The tree is
        read as a filesystem image only: nothing Python is ever run from inside it.
 
-Exit: 0 fetched, 2 refused (a digest that does not match, a member reaching outside the tree, a non-empty
-<dir>), 1 any other error, printed.
+Exit: 0 fetched, 2 refused (a digest that does not match, a member reaching outside the tree, a whiteout naming
+the directory that holds it, a non-empty <dir>), 1 any other error, printed.
 """
 
 from __future__ import annotations
