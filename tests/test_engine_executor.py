@@ -11552,7 +11552,7 @@ def test_a_whole_leg_whose_one_unit_cut_lands_on_ordermin_is_sent_at_ordermin(tm
     assert str(client.submitted[-1][0].quantity) == "0.05000000"
 
 
-def test_a_whole_leg_over_a_thousand_units_goes_out_one_unit_under_and_never_two(tmp_path):
+def test_a_whole_leg_whose_float_reads_under_its_8_decimal_figure_goes_out_one_unit_under_and_never_two(tmp_path):
     held = _adapter_figure("DOGE", "1236.2200751449")
     assert f"{held:.8f}" == "1236.22007514" and held < 1236.22007514
     ex, client = _boundary_over(tmp_path, {"DOGE/EUR": held}, cache_ordermin={"DOGE/EUR": 50.0})

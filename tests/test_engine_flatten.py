@@ -803,7 +803,7 @@ def test_a_float_reading_under_its_8_decimal_figure_is_shaved_by_one_unit_and_no
     assert (sized.send, sized.reason, sized.qty) == (True, None, 1236.22007513)
 
 
-def test_a_coarse_lot_float_reading_under_its_figure_loses_one_lot_step_and_not_two():
+def test_a_coarse_lot_balance_a_hair_under_a_step_is_shaved_before_its_lot_floor_and_loses_one_step_not_two():
     leg = flatten.Leg("spot", "ETH", "ETH/BTC", "SELL", 2.0 - 1e-12, "CASH", "account_state.free")
     sized = flatten.size_leg(leg, _ETHBTC, 0.03)
     assert (sized.send, sized.reason, sized.qty) == (True, None, 1.99999)
