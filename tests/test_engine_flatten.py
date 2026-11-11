@@ -797,10 +797,16 @@ def test_a_balance_exactly_at_ordermin_is_held_back_and_never_shaved_into_dust()
     )
 
 
-def test_a_holding_over_a_thousand_units_is_shaved_by_one_unit_of_its_8_decimal_figure_and_not_two():
+def test_a_float_reading_under_its_8_decimal_figure_is_shaved_by_one_unit_and_not_two():
     leg = flatten.Leg("spot", "ADA", "ADA/EUR", "SELL", 1236.2200751399998, "CASH", "account_state.free")
     sized = flatten.size_leg(leg, _ADA, 0.4)
     assert (sized.send, sized.reason, sized.qty) == (True, None, 1236.22007513)
+
+
+def test_a_coarse_lot_float_reading_under_its_figure_loses_one_lot_step_and_not_two():
+    leg = flatten.Leg("spot", "ETH", "ETH/BTC", "SELL", 2.0 - 1e-12, "CASH", "account_state.free")
+    sized = flatten.size_leg(leg, _ETHBTC, 0.03)
+    assert (sized.send, sized.reason, sized.qty) == (True, None, 1.99999)
 
 
 def test_the_shave_is_withheld_and_the_leg_held_back_where_it_would_fall_under_the_notional_floor():
@@ -845,7 +851,7 @@ def test_the_estimate_is_computed_at_the_tick_floored_price_never_the_raw_book_o
     assert sized.estimate < flatten.costmin_for("ADA/EUR")
 
 
-def test_a_spot_quantity_is_floored_to_the_lot_step_before_it_is_sent():
+def test_a_balance_with_a_ninth_decimal_is_sold_one_unit_under_its_rounded_figure_and_under_itself():
     leg = flatten.Leg("spot", "ADA", "ADA/EUR", "SELL", 1200.123456789, "CASH", "account_state.free")
     sized = flatten.size_leg(leg, _ADA, 0.40)
     assert sized.send is True

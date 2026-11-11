@@ -737,7 +737,7 @@ def size_leg(leg: Leg, constraints: PairConstraints, reference_price: float | No
         bound = certain_balance(leg.quantity, constraints.lot_step)
         if bound > 0.0 and not isinstance(_size(bound, constraints, price), BelowMinimum):
             qty = bound
-        elif qty > bound:
+        else:
             send, reason = False, "within_one_unit_of_minimum"
     estimate = qty * price if price is not None else None
     fee = estimate * TAKER_RATE if estimate is not None else None
