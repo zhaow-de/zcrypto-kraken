@@ -701,6 +701,15 @@ def classify_balance(free: float, constraints: PairConstraints, reference_price:
     return "dust" if isinstance(_size(free, constraints, reference_price), BelowMinimum) else "residual"
 
 
+def certain_balance(reported: float, lot_step: float) -> float:
+    """The most the account is certain to hold of a balance the adapter reported as `reported`: one `_BALANCE_UNIT`
+    under it, floored to the lot step. The figure is taken at 8 decimals first, so a float that reads a hair under it
+    loses one unit, never two."""
+    from cli.engine.instruments import _floor_to_step
+
+    return _floor_to_step(float(Decimal(str(reported)).quantize(_BALANCE_UNIT) - _BALANCE_UNIT), lot_step)
+
+
 def size_leg(leg: Leg, constraints: PairConstraints, reference_price: float | None) -> SizedLeg:
     """One leg's order quantity and whether it is sent at all.
 
