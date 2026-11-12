@@ -24,7 +24,7 @@ from cli.vintage.chain import STAMP_RE, TickFile, chain, check_head, scan
 from cli.vintage.derive import DERIVE_GENERATION, KINDS, LATER_FACTS_SCHEMA, DeriveError, DeriveState, derive_tick, frames
 from cli.vintage.fetch import Clock, SystemClock
 from cli.vintage.sources import LinkAcknowledgment
-from cli.vintage.storage import create_exclusive, fsync_dir, publish_table_dir, refuse_table_root
+from cli.vintage.storage import AFTER_RENAME, create_exclusive, fsync_dir, publish_table_dir, refuse_table_root
 
 FRAME_HASH_VERSION = 1
 STAGING_SUBDIR = "staging"
@@ -466,6 +466,12 @@ def _rows(previous: dict | None, versions: list[dict], coverage: list[dict]) -> 
     }
 
 
+def _after_rename(exc: OSError) -> str | None:
+    """The step that failed after a publishing rename, with the error's class; None for a failure before it."""
+    steps = [note.removeprefix(AFTER_RENAME) for note in getattr(exc, "__notes__", ()) if note.startswith(AFTER_RENAME)]
+    return f"{steps[0]} ({type(exc).__name__})" if steps else None
+
+
 def _outcome(
     complete: bool, read: bool, last: dict | None, last_raw: bytes | None, added: int, at: str | None, reason: str | None
 ) -> DeriveOutcome:
@@ -579,7 +585,15 @@ def derive_table(
             os.mkdir(staged, 0o755)
             create_exclusive(staged / HEAD_JSON, head_raw)
             fsync_dir(staged)
-            publish_table_dir(staged, _dated(gen_dir / "heads", tick.stamp), **walls)
+            try:
+                publish_table_dir(staged, _dated(gen_dir / "heads", tick.stamp), **walls)
+            except OSError as exc:
+                failed = _after_rename(exc)
+                if failed is None:
+                    raise
+                prev_raw, last = head_raw, entry
+                added += 1
+                return _outcome(False, read, last, prev_raw, added, at, f"the head was published, then {failed} failed")
             prev_raw, last = head_raw, entry
             added += 1
     except TableError as exc:

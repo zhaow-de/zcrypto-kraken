@@ -47,14 +47,9 @@ def _make_parents(target: Path) -> None:
             os.chmod(directory, 0o755)
 
 
-def publish_tick(staged: Path, target: Path) -> None:
-    """Moves the assembled tick to its target by one rename; `os.rename` replaces an empty directory, so the target's
-    absence is checked here, under the caller's lock. An OSError raised after the rename carries a note naming the
-    step, the tick being published by then."""
-    if target.exists():
-        raise FileExistsError(errno.EEXIST, "the tick's target exists", str(target))
-    _make_parents(target)
-    os.rename(staged, target)
+def _seal_renamed(target: Path) -> None:
+    """The parent's fsync and the chmod to 0555 after a publishing rename; an OSError carries a note naming the step,
+    the directory being published by then."""
     step = "the parent's fsync"
     try:
         fsync_dir(target.parent)
@@ -63,6 +58,17 @@ def publish_tick(staged: Path, target: Path) -> None:
     except OSError as exc:
         exc.add_note(f"{AFTER_RENAME}{step}")
         raise
+
+
+def publish_tick(staged: Path, target: Path) -> None:
+    """Moves the assembled tick to its target by one rename; `os.rename` replaces an empty directory, so the target's
+    absence is checked here, under the caller's lock. An OSError raised after the rename carries a note naming the
+    step, the tick being published by then."""
+    if target.exists():
+        raise FileExistsError(errno.EEXIST, "the tick's target exists", str(target))
+    _make_parents(target)
+    os.rename(staged, target)
+    _seal_renamed(target)
 
 
 def refuse_table_root(table_root: Path, record_root: Path, nas_mount: Path) -> str | None:
@@ -77,7 +83,8 @@ def refuse_table_root(table_root: Path, record_root: Path, nas_mount: Path) -> s
 
 def publish_table_dir(staged: Path, target: Path, *, table_root: Path, record_root: Path, nas_mount: Path) -> None:
     """Moves a staged generation, part or head directory to its target in the table by one rename, then sets it 0555;
-    `os.rename` replaces an empty directory, so the target's absence is checked here, under the caller's lock."""
+    `os.rename` replaces an empty directory, so the target's absence is checked here, under the caller's lock. An
+    OSError raised after the rename carries a note naming the step, the directory being published by then."""
     refusal = refuse_table_root(table_root, record_root, nas_mount)
     if refusal is not None:
         raise PermissionError(refusal)
@@ -85,8 +92,7 @@ def publish_table_dir(staged: Path, target: Path, *, table_root: Path, record_ro
         raise FileExistsError(errno.EEXIST, "the table directory's target exists", str(target))
     _make_parents(target)
     os.rename(staged, target)
-    fsync_dir(target.parent)
-    os.chmod(target, 0o555)
+    _seal_renamed(target)
 
 
 def publish_prom(path: Path, text: str) -> None:

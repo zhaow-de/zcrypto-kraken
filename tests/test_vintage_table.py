@@ -21,6 +21,7 @@ import pytest
 
 import cli.vintage.command as command_module
 import cli.vintage.derive as derive_module
+import cli.vintage.storage as storage_module
 import cli.vintage.table as table_module
 from cli.capture.command import LOCKFILE_NAME
 from cli.config import load_config
@@ -643,6 +644,29 @@ def test_a_part_without_its_head_is_adopted_or_refused(standard, tmp_path, monke
         assert reason in outcome.reason
         assert not _head_file(table, stamp).exists()
     assert list((table / "staging").iterdir()) == []
+
+
+def test_a_step_after_a_heads_rename_fails_and_the_stop_names_that_head(standard, tmp_path, monkeypatch):
+    table = tmp_path / "versions"
+    stamps = _stamps(standard)
+    fsync_dir = storage_module.fsync_dir
+
+    def failing(path: Path) -> None:
+        if "heads" in path.parts:
+            raise OSError("fsync failed")
+        fsync_dir(path)
+
+    monkeypatch.setattr(storage_module, "fsync_dir", failing)
+    outcome = _derive(standard, table)
+    published = _head_file(table, stamps[0])
+    assert (outcome.complete, outcome.at, outcome.parts_added) == (False, stamps[0], 1)
+    assert outcome.head == json.loads(published.read_bytes())
+    assert outcome.head_sha256 == _sha(published.read_bytes())
+    assert "the parent's fsync" in outcome.reason
+    monkeypatch.setattr(storage_module, "fsync_dir", fsync_dir)
+    outcome = _derive(standard, table)
+    assert (outcome.complete, outcome.parts_added) == (True, len(stamps) - 1)
+    assert stat.S_IMODE(published.parent.stat().st_mode) == 0o555
 
 
 def test_a_torn_generation_and_a_differing_generation_json(standard, tmp_path, monkeypatch, caplog):
