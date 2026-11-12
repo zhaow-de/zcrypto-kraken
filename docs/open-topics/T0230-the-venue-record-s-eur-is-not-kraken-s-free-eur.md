@@ -7,16 +7,15 @@ ripe_when: 'a milestone: rung 3''s first attended week closes; check: `git log -
 
 ## Context — what
 
-The engine refuses a margin intent whose margin floor exceeds `free_zeur`, and it reads `free_zeur` from the venue state's `balances` (`cli/engine/command.py:2192`, `cli/engine/executor.py:2772`, checked at `cli/engine/probeplan.py:223`). Under rung 3 that figure is not Kraken's free EUR. The venue record's `state.balances.EUR` read 1419.6371 from 2026-11-11 00Z to 12Z, while Kraken's free EUR moved from 1382.0421 to 1401.6011 and 1405.2758 across 00Z's fills. From 16Z, after drill G's restart, it read 1421.1027. Every `accum` record's `eur_free` equals Kraken's figure over the same span (1405.2758 since 08Z). The record is `docs/reference/rung3/days.md`, 2026-11-12.
+The engine refuses a margin intent whose margin floor exceeds `free_zeur`, and it reads `free_zeur` from the venue state's `balances` (`cli/engine/command.py:2192`, `cli/engine/executor.py:2772`, checked at `cli/engine/probeplan.py:223`). Under rung 3 that figure is not Kraken's free EUR: the venue record's `state.balances.EUR` stood still across rung 3's fills and stepped at drill G's restart, while every `accum` record's `eur_free` tracked Kraken's. The figures are `docs/reference/rung3/days.md`'s entry for 2026-11-12, which reaches `develop` with the week's records.
 
 ## Why this matters
 
-The figure overstates free cash by about the value of the coins held, so a margin intent can pass the engine's floor check and then be refused by Kraken, or be sized against cash the account does not have. No margin intent rode any plan in the span, so nothing has gone wrong yet. Rung 3's loop is spot-only today; the check matters the first time a plan carries a margin intent.
+The figure overstates free cash by about the value of the coins held, so a margin intent can pass the engine's floor check and then be refused by Kraken. Rung 3's loop is spot-only today; the check matters the first time a plan carries a margin intent.
 
 ## Findings so far
 
 - Inferred, not proven: the adapter seeds the balance at start from Kraken's equivalent balance, and spot fills do not move it. A restart re-seeds it, which fits the step at drill G's restart.
-- The `accum` records read the right figure, so a source of Kraken's free EUR already exists inside the engine.
 
 ## Suggested next steps
 
