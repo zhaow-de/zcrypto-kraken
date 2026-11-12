@@ -29,18 +29,20 @@ ops_verified_replay_healthcheck_url: "{{ hc_ping_base }}/zcrypto-verified-replay
 ops_archive_pull_healthcheck_url: "{{ hc_ping_base }}/zcrypto-archive-pull"
 ops_panel_healthcheck_url: "{{ hc_ping_base }}/zcrypto-panel"
 ops_grafana_watchdog_healthcheck_url: "{{ hc_ping_base }}/zcrypto-grafana-watchdog"
+ops_vintage_record_healthcheck_url: "{{ hc_ping_base }}/zcrypto-vintage-record"
 
 # The operator's fleet-wide deploy pubkey, from the same files/ dir group_vars/capture_host reads —
 # a key rotation edits the .pub once. The bootstrap play installs it for zcrypto-deploy.
 deploy_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/deploy_zcrypto-ops_ed25519.pub') }}"
 
-# The four NAS pull-channel public keys the ops role installs on zcrypto-data as `rrsync -ro` forced
+# The NAS pull-channel public keys the ops role installs on zcrypto-data as `rrsync -ro` forced
 # commands (spec 00057). Public material only — the private halves live on the NAS under
 # /volume1/docker/zcrypto-archive/keys. The forced-command roots are in roles/ops/tasks/main.yml.
 ops_sync_liquidations_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/sync_liquidations_ed25519.pub') }}"
 ops_sync_panel_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/sync_panel_ed25519.pub') }}"
 ops_sync_reconciled_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/sync_reconciled_ed25519.pub') }}"
 ops_sync_hot_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/sync_hot_ed25519.pub') }}"
+ops_sync_vintages_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/sync_vintages_ed25519.pub') }}"
 
 # Lets the reconciler mint healed hours (flipped 2026-07-17, owner present; derivation T0039). The
 # silence threshold that governs a mint is ops_reconcile_min_gap_seconds in

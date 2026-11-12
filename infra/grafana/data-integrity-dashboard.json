@@ -4395,6 +4395,371 @@
           "sort": "none"
         }
       }
+    },
+    {
+      "id": 700,
+      "type": "row",
+      "title": "Free-source vintages",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 129
+      }
+    },
+    {
+      "id": 701,
+      "type": "timeseries",
+      "title": "Last good fetch age by source",
+      "description": "How long since each recorded free source last had a good fetch, one series per source, with the critical page's own bar at 25 hours (90000 seconds, after `for: 5m`). A fetch that ended after 19:57 UTC is counted from 19:57 of its day, so a late hand start reads younger here than the clock says and the next day still pages before its midnight. The recorder fetches twice a day, so a healthy series saw-tooths below about 12 hours; one failed fetch lifts it to about 24 hours and never across the bar. A series that never had a good fetch reads as time since the epoch. No series at all is itself the page: the recorder's textfile, the ops machine's collector or the machine is gone. A source past the bar loses that UTC day's snapshot for good at midnight. Published only by the ops machine.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 130
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - zcrypto_vintage_last_ok_timestamp_seconds",
+          "refId": "A",
+          "legendFormat": "{{source}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 90000
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 702,
+      "type": "timeseries",
+      "title": "Outcome by source",
+      "description": "The newest recorder run's grade of each source: 0 is a good fetch, 1 is a fetch that failed (a transport error, a timeout, an HTTP error, the request budget or a credential), 2 is a body stored whole whose shape no longer matches what the recorder expects, which needs a code acknowledgment. No alert reads this series; it is the first read when the last-good-fetch page fires, since a provider outage and a stopped recorder page alike. Published only by the ops machine.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 130
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_vintage_outcome",
+          "refId": "A",
+          "legendFormat": "{{source}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 703,
+      "type": "timeseries",
+      "title": "Body bytes by source",
+      "description": "The raw size of the body the newest recorder run stored for each source, whatever its status, or 0 when none was kept. A sudden fall against a source's own history is a truncated or emptied answer, which the recorder still stores. No alert reads this series. Published only by the ops machine.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 137
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_vintage_body_bytes",
+          "refId": "A",
+          "legendFormat": "{{source}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 704,
+      "type": "timeseries",
+      "title": "Days missing by source",
+      "description": "UTC days, from each source's first recorded run through yesterday, with no good fetch: each is a day whose snapshot no later run can record. A day whose only bodies were stored with a shape mismatch counts, since none was good. The count only grows; no alert reads it, because it would fire for ever after the first hole, and each hole was paged by the last-good-fetch rule while it was still preventable. Published only by the ops machine.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 137
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_vintage_days_missing",
+          "refId": "A",
+          "legendFormat": "{{source}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 705,
+      "type": "timeseries",
+      "title": "Values changed since the previous good body",
+      "description": "Per source, the values this run's good body restated, withdrew or filled in behind the newest day of the source's previous good body; a newly published day is not counted. It is how often a provider rewrites its own history, the quantity the record exists to measure. A source whose body this run was not good has no point, so a gap is a failed or mismatched fetch, not zero changes. No alert reads this series. Published only by the ops machine.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 144
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_vintage_changed_values",
+          "refId": "A",
+          "legendFormat": "{{source}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 706,
+      "type": "timeseries",
+      "title": "Versions table head age",
+      "description": "How long since the recorder tick that the versions table's newest head holds was taken; the table is derived from the record after every recorder run. A healthy table saw-tooths below about 12 hours, like the last-good-fetch ages. No alert reads this series, so it carries no bar: a derive that fails logs an error, which pages through the ops error-log rule, and the record itself is untouched. A head that keeps ageing past a recorder run while the derive's unit stays active has hung. A reading of time since the epoch means the table is still empty. Published only by the ops machine.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 144
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - zcrypto_vintage_derive_head_timestamp_seconds",
+          "refId": "A",
+          "legendFormat": "versions table head age"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
     }
   ],
   "refresh": "1m",

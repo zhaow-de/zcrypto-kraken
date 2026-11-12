@@ -2511,7 +2511,7 @@ def test_clean_descriptions_say_so_in_the_report_and_stay_out_of_the_paragraph()
 def test_todays_real_descriptions_all_pass():
     """The true positive: a check that refuses everything is not a check."""
     checks = json.loads((Path(__file__).resolve().parent / "fixtures" / "healthchecks_descriptions.json").read_text())
-    assert len(checks) == 12, len(checks)
+    assert len(checks) == 13, len(checks)
     assert ops_daily.check_descriptions(checks) == []
 
 

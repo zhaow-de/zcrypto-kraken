@@ -1,0 +1,22 @@
+{
+  "attribution": "BGeometrics",
+  "committed": "synthesised",
+  "edit": "the newest row dropped",
+  "file": "second/bg-sopr-newest-back.json",
+  "from": "bg-sopr.json",
+  "how": {
+    "generator": "tests/vintage_fixtures.py",
+    "seed": 159014,
+    "shape": "shapes/bg-sopr.shape.json"
+  },
+  "licence": "BGeometrics terms: no redistribution \"in any format\", no derivative works \"without prior written permission\"",
+  "real": {
+    "bytes": 76952,
+    "fetched_at": "2026-11-11T16:57:00Z",
+    "file": "bg-sopr.json",
+    "sha256": "621ea457aec23ee3b2cbfbd2dc4835b0b8b129bd98ebf65904cf7473d34b7695",
+    "url": "https://api.bitcoin-data.com/v1/sopr"
+  },
+  "source": "bg-sopr",
+  "synthetic_second_tick": true
+}

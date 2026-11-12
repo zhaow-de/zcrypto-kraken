@@ -20,6 +20,18 @@
     group: zcrypto-deploy
     mode: "0755"
 
+# Ungated, so a converge without a digest still lands a rotated key. It stays outside ops_data_dir, where
+# no container mount and no rrsync pull root reaches it; the vintage runner hands it to the container on stdin.
+- name: render the BGeometrics key file (root-only; never logged, never diffed)
+  ansible.builtin.template:
+    src: vintage-bgeometrics.token.j2
+    dest: "{{ ops_compose_dir }}/vintage-bgeometrics.token"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  diff: false
+
 # The zcrypto CLI's own Loki push creds for the ops-node LIQUIDATIONS container (spec 00068 D5/T6)
 # -- distinct from the alloy secrets rendered further below, and NOT gated on `ops_image_digest`:
 # this render is unrelated to whether the liquidations poller is deployed at all. Owned by
@@ -256,6 +268,22 @@
     group: "{{ ops_hot_group }}"
     mode: "2775"
 
+# staging/ is made here at 0750 because the recorder's own mkdir would take its umask. record/ and staging/
+# are siblings, so the record pull never carries a tick being assembled; the versions table is vintages/'s
+# sibling, outside the recorder's mount and every pull root.
+- name: ensure the vintage record, staging and versions-table directories exist
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ ops_data_user }}"
+    group: "{{ ops_data_user }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ ops_data_dir }}/{{ ops_vintages_subdir }}", mode: "0755" }
+    - { path: "{{ ops_data_dir }}/{{ ops_vintages_subdir }}/record", mode: "0755" }
+    - { path: "{{ ops_data_dir }}/{{ ops_vintages_subdir }}/staging", mode: "0750" }
+    - { path: "{{ ops_data_dir }}/{{ ops_vintage_versions_subdir }}", mode: "0755" }
+
 # --- Fleet users/groups (spec 00057, ops phase): the zcrypto-data m2m identity + the hot-out
 # authoring bridge. Created in the unconditional preamble (no digest gate) -- these accounts must
 # exist before any data ownership or container-user change.
@@ -328,10 +356,8 @@
   no_log: true
   diff: false
 
-# --- The four NAS pull channels, now role-provisioned on zcrypto-data (spec 00057; they were
-# hand-installed on deploy). Each `rrsync -ro` pins its own subtree -- least-privilege per channel,
-# mirroring the capture/engine roles' sync forced commands. exclusive:false so these ADD to (do not
-# replace) zcrypto-data's keys; deploy kept its copies through the NAS-repoint cutover, then dropped.
+# --- The NAS pull channels on zcrypto-data: each `rrsync -ro` pins its own subtree, and
+# exclusive:false keeps the user's other keys.
 - name: install the liquidations pull key (rrsync -ro) on zcrypto-data
   ansible.posix.authorized_key:
     user: "{{ ops_data_user }}"
@@ -359,6 +385,14 @@
     exclusive: false
     key: "{{ ops_sync_hot_authorized_key }}"
     key_options: 'command="/usr/bin/rrsync -ro {{ ops_data_dir }}/{{ ops_hot_out_subdir }}",restrict'
+
+# record/ alone: staging/ and the lock beside it never ride to the NAS.
+- name: install the vintages pull key (rrsync -ro) on zcrypto-data
+  ansible.posix.authorized_key:
+    user: "{{ ops_data_user }}"
+    exclusive: false
+    key: "{{ ops_sync_vintages_authorized_key }}"
+    key_options: 'command="/usr/bin/rrsync -ro {{ ops_data_dir }}/{{ ops_vintages_subdir }}/record",restrict'
 
 # Hoisted above ALL THREE digest-gated blocks below (spec 00054 Task 1, extended by OPS-5 D2;
 # spec 00057): the Alloy block needs ops_uid/ops_gid for its container `user:` mapping and the
@@ -714,6 +748,52 @@
       # enables, hiding e.g. a manually-stopped verify-replay the real run would restart. Safe (real
       # runs are never gated) but the preview under-reports in a wider window than "first install".
       when: not (ansible_check_mode and ops_unit_install is changed)
+
+# Its own block rather than the loops above, whose task names other guards pin. Digest-gated: the
+# runners name the pinned image, and a converge without the digest leaves the timer as it was.
+- name: install the vintage recorder and its versions-table refresh (needs the pinned image digest)
+  when: ops_image_digest is defined
+  block:
+    # The script carries the dead-man ping URL, and its unit runs as root.
+    - name: install the vintage recorder runner script
+      ansible.builtin.template:
+        src: vintage-record.sh.j2
+        dest: /usr/local/sbin/zcrypto-vintage-record
+        owner: root
+        group: root
+        mode: "0700"
+      no_log: true
+      diff: false
+
+    # No secret and no ping URL, so it renders with its diff.
+    - name: install the versions-table refresh runner script
+      ansible.builtin.template:
+        src: vintage-derive.sh.j2
+        dest: /usr/local/sbin/zcrypto-vintage-derive
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: render the vintage recorder and refresh units and the recorder timer
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "/etc/systemd/system/zcrypto-{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: [vintage-record.service, vintage-record.timer, vintage-derive.service]
+      register: ops_vintage_unit_install
+
+    # Only the timer is enabled: the record service is the oneshot it fires, and the derive unit has
+    # no [Install] and is pulled in by the record unit. The guard lets a first install's --check
+    # preview pass, where the never-written timer would not resolve.
+    - name: enable + start the vintage recorder timer
+      ansible.builtin.systemd_service:
+        name: zcrypto-vintage-record.timer
+        daemon_reload: true
+        enabled: true
+        state: started
+      when: not (ansible_check_mode and ops_vintage_unit_install is changed)
 
 # Deliberately OUTSIDE the digest gate above: this script consumes no image reference (it drives
 # systemd and rm), and the operator needs it on the host regardless of whether the converge that

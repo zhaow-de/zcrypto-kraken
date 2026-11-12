@@ -37,6 +37,11 @@ ops_hot_out_subdir: hot-out
 ops_rolling_staging_subdir: hot-out-staging
 # The liquidations tree (OPS-2), under ops_data_dir; the sync_liquidations pull pins this root.
 ops_liquidations_subdir: liquidations
+# The vintage recorder's root under ops_data_dir (record/, staging/ and the lock), mounted whole at
+# /data in its container, and the derived versions table's root, its sibling, which the recorder's
+# container never sees.
+ops_vintages_subdir: vintages
+ops_vintage_versions_subdir: vintage-versions
 
 # Fleet users and groups (spec 00057): the machine-to-machine data user runs the data containers,
 # owns the data trees and serves the NAS pulls via rrsync forced-command keys, with no sudo and no
@@ -92,6 +97,7 @@ ops_liquidations_healthcheck_url: ""
 ops_nas_mount: /mnt/zhao-crypto
 
 ops_panel_healthcheck_url: ""
+ops_vintage_record_healthcheck_url: ""
 
 # --- Alloy (spec 00054 D1/D7): the ops node's telemetry stack. D1 is an ORDERING constraint --
 # this lands, and its series are confirmed in Grafana, BEFORE the overlay writer moves here

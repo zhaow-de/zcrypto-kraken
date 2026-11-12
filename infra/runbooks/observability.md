@@ -90,13 +90,13 @@ From `infra/grafana/alerts.yaml`, the dependents per collector, and which of the
 | `loadavg` | `zcrypto-capture-load-high`, `zcrypto-ops-load-high`, `zcrypto-nas-load-high` | `zcrypto-nas-load-high` |
 | `cpu` | `zcrypto-capture-load-high` again — `cpu` supplies its per-core denominator | none |
 | `textfile`, on a capture host | `zcrypto-capture-textfile-unreadable`, `zcrypto-reboot-probe-stale`, `zcrypto-capture-clock-exporter-stale`, `zcrypto-oneoff-textfile-stale`, `zcrypto-capture-reboot-pending`, `zcrypto-capture-clock-skew`, and on the primary `zcrypto-engine-journal-prune-dead` and the engine host's rows of `zcrypto-cache-wg-handshake-stale` | `zcrypto-engine-journal-prune-dead` |
-| `textfile`, on ops | the 20 rules reading `ops_*`, `zcrypto_reconcile_*`, `zcrypto_trade_backfill_*` and `zcrypto_tapebars_*` (the command below lists them), the ops-side rows of `zaccess-tunnel-stale` and `zaccess-cert-expiring`, the ops rows of `zcrypto-node-clock-skew` and `zcrypto-node-clock-exporter-stale`, and the ops rows of `zcrypto-capture-reboot-pending`, `zcrypto-reboot-probe-stale` and `zcrypto-capture-textfile-unreadable` | `zcrypto-reconcile-exporter-stale`, `zcrypto-trade-backfill-stale`, `zcrypto-ops-archive-pull-stalled`, `zcrypto-ops-verify-replay-stale`, `zcrypto-ops-verified-replay-stale` |
+| `textfile`, on ops | the 21 rules reading `ops_*`, `zcrypto_reconcile_*`, `zcrypto_trade_backfill_*`, `zcrypto_tapebars_*` and `zcrypto_vintage_*` (the command below lists them), the ops-side rows of `zaccess-tunnel-stale` and `zaccess-cert-expiring`, the ops rows of `zcrypto-node-clock-skew` and `zcrypto-node-clock-exporter-stale`, and the ops rows of `zcrypto-capture-reboot-pending`, `zcrypto-reboot-probe-stale` and `zcrypto-capture-textfile-unreadable` | `zcrypto-reconcile-exporter-stale`, `zcrypto-trade-backfill-stale`, `zcrypto-ops-archive-pull-stalled`, `zcrypto-ops-verify-replay-stale`, `zcrypto-ops-verified-replay-stale`, `zcrypto-ops-vintage-not-recorded` |
 | `textfile`, on the NAS | the whole `zcrypto_gate_*` family and its five gate rules: `zcrypto-gate-streak-reset`, `zcrypto-gate-mismatch`, `zcrypto-gate-pull-lag`, `zcrypto-gate-exporter-stale`, `zcrypto-gate-cache-reverify-stalled` | `zcrypto-gate-mismatch`, `zcrypto-gate-pull-lag`, `zcrypto-gate-exporter-stale` |
 | `textfile`, on the bridgehead | `zaccess-tunnel-stale`, `zaccess-cert-expiring` | none |
 | `textfile`, on a cache node | that node's rows of `zcrypto-cache-wg-handshake-stale`, `zcrypto-node-clock-skew` and `zcrypto-node-clock-exporter-stale` | none |
 | `meminfo`, `netdev` | no alert rule reads them today; the panels go blank | none |
 
-The ops row's 20 rules are the uids this prints: `awk '/^ +- uid: /{u=$3} /expr: .*(ops_(archive_pull|panel|verify_replay|verified_replay)|zcrypto_(reconcile|trade_backfill|tapebars))_/{print u}' infra/grafana/alerts.yaml | sort -u`.
+The ops row's 21 rules are the uids this prints: `awk '/^ +- uid: /{u=$3} /expr: .*(ops_(archive_pull|panel|verify_replay|verified_replay)|zcrypto_(reconcile|trade_backfill|tapebars|vintage))_/{print u}' infra/grafana/alerts.yaml | sort -u`.
 
 `zcrypto-capture-textfile-missing` is the one exception that still bites: it is shaped as `count(node_reboot_required{…}) < 3` over the capture pair and ops, so one of the three losing its textfile collector drops the count to 2 and that rule fires on its own.
 
@@ -230,7 +230,7 @@ One of four **critical** Grafana alerts on the ops node's log plane. All four ar
 
 Each is `count_over_time(...) or on() vector(0)` below 1. The `by (host)` / `by (host, container)` groupings are inert at fire time — the unlabelled fallback is what crosses the threshold — so each summary names its subject literally.
 
-`zcrypto-ops-unit-parse-dead`'s scope is the journal keep-regex in `roles/ops/files/config.alloy`, which keeps `archive-pull`, `verify-replay`, `verified-replay`, `panel-materialize` and `tape-bars`.
+`zcrypto-ops-unit-parse-dead`'s scope is the journal keep-regex in `roles/ops/files/config.alloy`, which keeps `archive-pull`, `verify-replay`, `verified-replay`, `panel-materialize`, `tape-bars`, `vintage-record` and `vintage-derive`.
 
 ### What it means
 
@@ -339,6 +339,7 @@ Panel 103 on the `zcrypto-fleet` board shows the same number, and `hc_check_up` 
 | `ops` | `panel` | the panel-materialize unit | the run did not complete cleanly | `ops-node.md#zcrypto-ops-panel-exit-nonzero` |
 | `ops` | `verify-replay` | the nightly canonical-archive sweep | the run produced no summary — **withheld independently of both Grafana rules for that timer** | `ops.md#zcrypto-ops-verify-replay-run-broken` |
 | `ops` | `verified-replay` | the verified-replay unit | the run did not reach its clean-exit ping | `ops-node.md#zcrypto-ops-verified-replay-stale` |
+| `ops` | `vintage-record` (check `zcrypto-vintage-record`) | the free-source vintage recorder's unit, ticking at 07:37 and 19:37 UTC; pings when a tick was published, whichever of its sources failed; 90000 s timeout / 21600 s grace | the recorder stopped, crashed before publishing, or could not start its container; it goes down about 31 h after the last published tick, after Grafana's 25 h rule, so it is the page that still comes when Grafana is dark | `ops-node.md#zcrypto-ops-vintage-not-recorded` |
 | `ops` | `liquidations` | the poller (`LIQUIDATIONS_HEALTHCHECK_URL`) | not cycling, watermark breached, or a sweep left an hour unwritten | `observability.md#zcrypto-ops-poller-log-dead` |
 | `ops` | `grafana-watchdog` | the ops timer probing both nodes every 5 min, the observability node's Grafana and the service's status endpoint; pings on the Grafana's success, `/fail` on its failure; 600 s timeout / 600 s grace | Grafana is unreachable from ops, **or** the pinger itself died (then it pages by staleness) | this section |
 | `mon` | `selfcheck` (check `zcrypto-mon`) | the observability node's self-check timer, every 5 min; pings when the node's rules were evaluated within 60 s, a fleet host has a fresh sample on the node, and Loki is ready; 600 s timeout / 600 s grace | rule evaluation stale, no fleet sample fresh, Loki not ready — **or** the node is dead (then it pages by staleness) | `mon.md#mon-dark` |

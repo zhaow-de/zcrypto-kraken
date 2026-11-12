@@ -43,6 +43,8 @@ REGISTERED = {
     "tape-bars.sh.j2",
     "verified-replay.sh.j2",
     "verify-replay.sh.j2",
+    "vintage-derive.sh.j2",
+    "vintage-record.sh.j2",
     "zaccess-agentboard-start.sh.j2",
     "zaccess-probe-ops.sh.j2",
     "zaccess-probe.sh.j2",

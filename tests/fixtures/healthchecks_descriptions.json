@@ -94,5 +94,13 @@
     "grace": 21600,
     "manual_resume": false,
     "timeout": 90000
+  },
+  {
+    "name": "zcrypto-vintage-record",
+    "tags": "ops vintage-record",
+    "desc": "The free-source vintage recorder on the ops node, ticking at 07:37 and 19:37 UTC: it pings only when a tick was published, whichever of its sources failed. Withheld when the recorder stopped, crashed before publishing, or could not start its container; it goes down about 31 h after the last published tick, after Grafana's 25 h rule, so it is the page that still comes when Grafana is dark. Runbook: infra/runbooks/ops-node.md#zcrypto-ops-vintage-not-recorded",
+    "grace": 21600,
+    "manual_resume": false,
+    "timeout": 90000
   }
 ]

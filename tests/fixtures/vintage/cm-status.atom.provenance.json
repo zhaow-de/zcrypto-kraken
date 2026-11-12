@@ -1,0 +1,19 @@
+{
+  "attribution": "Coin Metrics status page",
+  "committed": "synthesised",
+  "file": "cm-status.atom",
+  "how": {
+    "generator": "tests/vintage_fixtures.py",
+    "seed": 158005,
+    "shape": "shapes/cm-status.shape.json"
+  },
+  "licence": "none stated",
+  "real": {
+    "bytes": 35889,
+    "fetched_at": "2026-11-11T16:56:48Z",
+    "file": "cm-status.atom",
+    "sha256": "fd2f684217e4a79669a305e66f7d77e4cd397e1ba888a9a87a57f894e9cf977a",
+    "url": "https://status.coinmetrics.io/history.atom"
+  },
+  "source": "cm-status"
+}

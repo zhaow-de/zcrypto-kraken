@@ -837,7 +837,7 @@ OBSERVED_VARS = ANSIBLE / "group_vars/observed/vars.yml"
 FIXTURE = REPO / "tests/fixtures/healthchecks_descriptions.json"
 # Shaped like the minted key; not a credential.
 DUMMY_PING_KEY = "aB3_-" * 4 + "x9"
-OPS_CHECKS = ("liquidations", "verify_replay", "verified_replay", "archive_pull", "panel", "grafana_watchdog")
+OPS_CHECKS = ("liquidations", "verify_replay", "verified_replay", "archive_pull", "panel", "grafana_watchdog", "vintage_record")
 SLUGS = {
     ("group_vars/capture_host/vars.yml", "capture_healthcheck_url"): "zcrypto-capture",
     ("host_vars/zcrypto-red/vars.yml", "capture_healthcheck_url"): "zcrypto-capture-red",
@@ -884,11 +884,11 @@ def test_the_mon_roles_ping_url_shape_is_this_roles():
     assert (entry["key"], entry["shape"]) == ("mon_selfcheck_healthcheck_url", _clone_shape())
 
 
-def test_the_ping_url_variables_are_the_twelve_rows_and_their_slugs_the_fixtures_names_with_zcrypto_hc():
+def test_the_ping_url_variables_are_the_fixtures_rows_and_their_slugs_its_names_with_zcrypto_hc():
     assert set(_ping_url_vars()) == set(SLUGS)
     names = {check["name"] for check in json.loads(FIXTURE.read_text())}
     assert set(SLUGS.values()) == names | {"zcrypto-hc"}
-    assert len(set(SLUGS.values())) == len(SLUGS) == 12
+    assert len(set(SLUGS.values())) == len(SLUGS) == 13
 
 
 @pytest.mark.parametrize("row", sorted(SLUGS), ids=lambda row: f"{row[0]}:{row[1]}")
@@ -922,6 +922,7 @@ PING_RENDERS = {
     ("ops", "install the archive-pull runner script"),
     ("ops", "install the replay + panel + tape-bars runner scripts"),
     ("ops", "install the grafana-watchdog runner script"),
+    ("ops", "install the vintage recorder runner script"),
     ("node_common", "render the self-check's ping URL, read by systemd alone"),
 }
 PAIR_LIST_PROBES = {

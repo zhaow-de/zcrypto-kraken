@@ -70,11 +70,11 @@ The stop reaches nothing else. Each Alloy is its own compose project and its own
 
 ### Must fire
 
-**Ops half — eight pages.** An entry that names fewer books an eight-page blackout as a smaller one, and teaches the next responder to discount the rest.
+**Ops half — nine pages.** An entry that names fewer books a nine-page blackout as a smaller one, and teaches the next responder to discount the rest.
 
 - `zcrypto-alloy-dark-ops` (critical, `metrics`): `for: 10m` + 60 s + ~5 min staleness ≈ **16 min**.
 - `zcrypto-hcio-watchdog` (critical, `metrics`), **ahead of it, at ≈11 min**: the ops Alloy *is* the dead-man service's scrape, so `hc_checks_down_total` goes stale with it and the rule's `or on() vector(999)` fallback trips at ~5 min staleness + `for: 5m` + 60 s. This is the one route where the watchdog leads rather than trails.
-- Five instant rules page by **NoData** at ≈11 min each (~5 min staleness + `for: 5m` + 60 s), because every series only the ops Alloy carries goes stale with it (no count command: upstream Prometheus staleness over the ops `config.alloy` scrapes) and each carries `noDataState: Alerting`: [`zcrypto-ops-archive-pull-stalled`](ops-node.md#zcrypto-ops-archive-pull-stalled) (critical), [`zcrypto-reconcile-exporter-stale`](ops.md#zcrypto-reconcile-exporter-stale) (critical), [`zcrypto-trade-backfill-stale`](ops-node.md#zcrypto-trade-backfill-stale) (critical), [`zcrypto-ops-verified-replay-stale`](ops-node.md#zcrypto-ops-verified-replay-stale) (warning) and [`zcrypto-ops-verify-replay-stale`](ops.md#zcrypto-ops-verify-replay-stale) (warning). They are self-attributing: `zcrypto-alloy-dark-ops` fires in the same window and names the cause.
+- Six instant rules page by **NoData** at ≈11 min each (~5 min staleness + `for: 5m` + 60 s), because every series only the ops Alloy carries goes stale with it (no count command: upstream Prometheus staleness over the ops `config.alloy` scrapes) and each carries `noDataState: Alerting`: [`zcrypto-ops-archive-pull-stalled`](ops-node.md#zcrypto-ops-archive-pull-stalled) (critical), [`zcrypto-reconcile-exporter-stale`](ops.md#zcrypto-reconcile-exporter-stale) (critical), [`zcrypto-trade-backfill-stale`](ops-node.md#zcrypto-trade-backfill-stale) (critical), [`zcrypto-ops-vintage-not-recorded`](ops-node.md#zcrypto-ops-vintage-not-recorded) (critical), [`zcrypto-ops-verified-replay-stale`](ops-node.md#zcrypto-ops-verified-replay-stale) (warning) and [`zcrypto-ops-verify-replay-stale`](ops.md#zcrypto-ops-verify-replay-stale) (warning). They are self-attributing: `zcrypto-alloy-dark-ops` fires in the same window and names the cause.
 - `zcrypto-capture-textfile-missing` (warning, `metrics`), **last, at ≈26 min**: ops publishes the reboot probe the rule counts, so the count falls to 2 once its series goes stale (~5 min), then `for: 20m` + 60 s. A **value** page, not a NoData one; its summary names the capture hosts beside ops, and when ops alone is induced the host that stopped is ops.
 - **Not** the Grafana watchdog check. It `curl`s Grafana from the host, not through Alloy, and keeps pinging success throughout.
 - The ops Loki rules stay quiet: their `[6h]`/`[26h]` windows still hold hours of prior lines.
@@ -286,7 +286,7 @@ sudo docker stop grafana-alloy
 
 ### Must fire
 
-Seven of the eight pages drill C's ops half lists, on the same clocks: `zcrypto-hcio-watchdog` at ≈11 min, `zcrypto-alloy-dark-ops` at ≈16 min, and the five NoData rules at ≈11 min. Each trips inside K's shorter hold, which is why K is the induction that times them; `zcrypto-capture-textfile-missing`'s ≈26 min falls past a hold ended at ≈16 min, and it stays quiet here.
+Eight of the nine pages drill C's ops half lists, on the same clocks: `zcrypto-hcio-watchdog` at ≈11 min, `zcrypto-alloy-dark-ops` at ≈16 min, and the six NoData rules at ≈11 min. Each trips inside K's shorter hold, which is why K is the induction that times them; `zcrypto-capture-textfile-missing`'s ≈26 min falls past a hold ended at ≈16 min, and it stays quiet here.
 
 ### Operator action
 
@@ -300,7 +300,7 @@ Then restore with the recipe from [`observability.md#zcrypto-alloy-dark-ops`](ob
 sudo docker restart grafana-alloy
 ```
 
-Not `sudo docker start grafana-alloy`: it restores the container but exercises no recipe, and verifying the recipe by value is half of what this drill is for. Read the recovery back by value, `sudo docker ps --format '{{.Names}} {{.Status}}'`, then the five NoData rules resolving.
+Not `sudo docker start grafana-alloy`: it restores the container but exercises no recipe, and verifying the recipe by value is half of what this drill is for. Read the recovery back by value, `sudo docker ps --format '{{.Names}} {{.Status}}'`, then the six NoData rules resolving.
 
 ### Record
 
@@ -566,7 +566,7 @@ Each restart of legs 1 and 2 is read twice: the rules endpoint first, `mon_get /
 Legs 1 to 3 have no *Must fire*: a page in leg 1 or 2 is the reading, and a page in leg 3 is a `fail`. Leg 4, on the node's clocks, into the main channel:
 
 - `zcrypto-mon-ingest-dark` (critical, `metrics`) at ≈ **10 min** from the stop: `count(up{host!="zcrypto-mon"}) or on() vector(0)` reads 0 once the fleet's series go stale, ~5 min, then `for: 5m`, then up to the 60 s group interval. It must have fired before the first per-host page below, the order `zcrypto-mon-ingest-dark`'s section rests on; the entry says which order it saw.
-- `zcrypto-hcio-watchdog` (critical, `metrics`) and the five NoData rules drill C's ops half lists, six pages in the main channel about a minute before `zcrypto-mon-ingest-dark`, their groups' ticks a phase apart from the `zcrypto-mon` group's, on the sum drill C derives for them: the series ops alone carries, those of the dead-man service's scrape among them, go stale on the node with the edge.
+- `zcrypto-hcio-watchdog` (critical, `metrics`) and the six NoData rules drill C's ops half lists, seven pages in the main channel about a minute before `zcrypto-mon-ingest-dark`, their groups' ticks a phase apart from the `zcrypto-mon` group's, on the sum drill C derives for them: the series ops alone carries, those of the dead-man service's scrape among them, go stale on the node with the edge.
 - `zcrypto-alloy-dark-ops` and `zcrypto-alloy-dark-zaccess` (critical, `metrics`), the first of them at ≈ **16 min**: the same staleness term, then `for: 10m`, then the interval. The hold ends at the first; the second may land after Caddy is back and resolves with the first.
 - `zcrypto-grafana-watchdog`, natively through the dead-man service, in the main channel within five minutes of the stop: the ops timer's next probe of `/api/health` passes the edge and fails, and it pings `/fail`. The first run after Caddy is back brings it up.
 - The node's check on the dead-man service, down for at most one timer period, in the main channel. The self-check pings on its timer, `OnCalendar=*:0/5:23`, the `node_common_selfcheck_on_calendar` that `infra/ansible/roles/mon/tasks/main.yml` passes to `node_common`'s `selfcheck` task file, and while a fleet sample is under five minutes old, the reach of `FLEET_QUERY` in `infra/ansible/roles/mon/files/zcrypto-mon-selfcheck.py`: its last ping, the last `-> pinged` line of the unit's journal before its first `-> not pinging`, falls between about a minute before the stop and five minutes after it, and the check goes down 20 min after that ping, its `timeout` 600 s + `grace` 600 s, unless the run 15 min after it finds Caddy back. A start at the first Alloy-dark page, ≈16 min after the stop, can miss that run: the check is then down until the first run after the start pings, at most one timer period.
@@ -579,11 +579,11 @@ Expected after the leg, not held for:
 
 ### Operator action
 
-Legs 1 to 3 are their own restore: the store comes back, and a rule in error returns to `health=ok` at its next evaluation. Leg 4's restore is `sudo systemctl start caddy` at the first Alloy-dark page, then by value from the workstation: the precondition's `count by (host)` read back to the same hosts; `zcrypto-mon-ingest-dark`, the two Alloy-dark rules, `zcrypto-hcio-watchdog` and the five NoData rules, nine in all, back to **Normal** on the rules endpoint and the unhealthy list `[]`, `zcrypto-capture-textfile-missing` Normal throughout; the self-check's next line `-> pinged`, and both checks up on the dead-man service. `zcrypto-mon-shipper-loss` is read when it fires, not reverted: that section's step 4 records the gap.
+Legs 1 to 3 are their own restore: the store comes back, and a rule in error returns to `health=ok` at its next evaluation. Leg 4's restore is `sudo systemctl start caddy` at the first Alloy-dark page, then by value from the workstation: the precondition's `count by (host)` read back to the same hosts; `zcrypto-mon-ingest-dark`, the two Alloy-dark rules, `zcrypto-hcio-watchdog` and the six NoData rules, ten in all, back to **Normal** on the rules endpoint and the unhealthy list `[]`, `zcrypto-capture-textfile-missing` Normal throughout; the self-check's next line `-> pinged`, and both checks up on the dead-man service. `zcrypto-mon-shipper-loss` is read when it fires, not reverted: that section's step 4 records the gap.
 
 ### Record
 
-Entry `W1`, its *host* clause opening with `zcrypto-mon`, with each leg's reading: the three Prometheus restarts and the Loki one, each with its duration, whether it spanned an evaluation, and which rules paged or none; the ordered restart paging nothing; leg 4's page times against ≈10 and ≈16 min and their order, the six beside `zcrypto-mon-ingest-dark` named rule by rule; both checks' down and up times from the dead-man service; the shipper-loss page; the textfile rule's clear and re-fire, and whether `Ops · ERROR logs` fired.
+Entry `W1`, its *host* clause opening with `zcrypto-mon`, with each leg's reading: the three Prometheus restarts and the Loki one, each with its duration, whether it spanned an evaluation, and which rules paged or none; the ordered restart paging nothing; leg 4's page times against ≈10 and ≈16 min and their order, the seven beside `zcrypto-mon-ingest-dark` named rule by rule; both checks' down and up times from the dead-man service; the shipper-loss page; the textfile rule's clear and re-fire, and whether `Ops · ERROR logs` fired.
 
 The Prometheus leg decides the blacklist: three silent restarts keep it empty, the entry saying so; one page puts `prometheus$` back into `host_vars/zcrypto-mon/vars.yml` in a pull request of its own, named in the entry's *follow-ups*, the entry naming the rule that paged and the comment beside the variable re-trued in the same change. A page in leg 3 is `fail`: the ordered restart is what `mon-store-restart` and the role's handlers rest on.
 
@@ -940,7 +940,7 @@ That a lost node comes back from the repository and an off-host backup with no k
 
 The rebuild's start is the **Rebuild** click's timestamp, `date -u` on the workstation beside each click.
 
-1. **[`hc-restore`](hc.md#hc-restore)'s first half, over the last backup**: its step 1 on the node with `f` the newest file under `/var/backups/zcrypto-hc/`, then its step 2, whose one-shot container counts the twelve checks, printing `200 12`, with no network and no notifier, so the main channel carries no message from it.
+1. **[`hc-restore`](hc.md#hc-restore)'s first half, over the last backup**: its step 1 on the node with `f` the newest file under `/var/backups/zcrypto-hc/`, then its step 2, whose one-shot container counts the thirteen checks, printing `200 13`, with no network and no notifier, so the main channel carries no message from it.
 
 2. **That backup fetched to the workstation from the NAS's copy**, from the repo root, the file carrying the project's keys and the Slack webhook, `hc-YYYY-MM-DDTHHMMSSZ.sqlite` standing for its name:
 
@@ -968,9 +968,9 @@ The rebuild's start is the **Rebuild** click's timestamp, `date -u` on the works
 
 Must hold, each a **`fail`** when it does not, where an induction that did not land is `blocked`:
 
-- *Induce* step 1 prints `200 12`, and the main channel carries no message from it.
+- *Induce* step 1 prints `200 13`, and the main channel carries no message from it.
 - No key re-minted and nothing re-entered in the service's UI between the rebuild and the acceptance: the Cloud Manager's clicks are the provider's, not the service's.
-- **Accepted when** `uv run python infra/scripts/hc-provision.py status` reads every check's `last_ping` moving after the restore, each at its pinger's next ping and the two daily replay checks at their next ticks, up to a day; never by `hc_check_up`, which reads 1 for a check never pinged (no count command: an acceptance read is entry prose, and the live listing is outside the tree).
+- **Accepted when** `uv run python infra/scripts/hc-provision.py status` reads every check's `last_ping` moving after the restore, each at its pinger's next ping and the two daily replay checks at their next ticks and the vintage recorder's at its next published tick, up to a day; never by `hc_check_up`, which reads 1 for a check never pinged (no count command: an acceptance read is entry prose, and the live listing is outside the tree).
 
 Must fire, in the main channel:
 

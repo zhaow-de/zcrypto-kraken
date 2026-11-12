@@ -1,0 +1,22 @@
+{
+  "attribution": "Coin Metrics Community Network Data",
+  "committed": "synthesised",
+  "edit": "a next_page_url added",
+  "file": "second/cm-catalog-paginated.json",
+  "from": "cm-catalog.json",
+  "how": {
+    "generator": "tests/vintage_fixtures.py",
+    "seed": 159010,
+    "shape": "shapes/cm-catalog.shape.json"
+  },
+  "licence": "CC BY-NC 4.0",
+  "real": {
+    "bytes": 67569,
+    "fetched_at": "2026-11-11T16:56:13Z",
+    "file": "cm-catalog.json",
+    "sha256": "1b3caf7bad1b1234ccf245b61eb6403fc7dc5802f790a8b33de30fdcfa6e511c",
+    "url": "https://community-api.coinmetrics.io/v4/catalog-v2/asset-metrics?assets=btc,eth,sol,xrp,ada,link,doge,ltc,dot,avax,avaxc,avaxp&page_size=2000"
+  },
+  "source": "cm-catalog",
+  "synthetic_second_tick": true
+}

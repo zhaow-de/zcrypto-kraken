@@ -1,0 +1,15 @@
+# Rendered by the `ops` Ansible role at /etc/systemd/system/zcrypto-vintage-record.timer — do not
+# hand-edit on the host, edit infra/ansible/roles/ops/templates/vintage-record.timer.j2 instead.
+#
+# 07:37 and 19:37 UTC, each 23 minutes before an engine cycle, a slot clear of every other ops timer's,
+# which nothing checks. Persistent=true runs one missed slot at boot; no RandomizedDelaySec, since fixed
+# slots are the only collision control, and no TimeoutStartSec, since the recorder's own deadlines end
+# every tick. The [Install] section is what keeps the enable armed across a reboot.
+[Timer]
+OnCalendar=*-*-* 07:37:00
+OnCalendar=*-*-* 19:37:00
+Persistent=true
+Unit=zcrypto-vintage-record.service
+
+[Install]
+WantedBy=timers.target
