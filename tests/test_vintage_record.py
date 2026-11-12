@@ -1223,13 +1223,20 @@ def _call_breaches(call: ast.Call, bound: dict[str, set[str]], module: str, func
         yield "fs"
 
 
-def _breaches(node: ast.AST, bound: dict[str, set[str]], module: str, function: str | None):
-    """Each (rule, node) breach under `node`, a call's place being the innermost function whose body holds it."""
+def _breaches(node: ast.AST, bound: dict[str, set[str]], module: str, function: str | None, owner: str | None = None):
+    """Each (rule, node) breach under `node`, a call's place being the innermost function whose body holds it; a class
+    body is no function's, and a method is named `<class>.<name>`, so neither is a helper."""
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
         for outside in (*node.decorator_list, *node.type_params, node.args, *([node.returns] if node.returns else [])):
-            yield from _breaches(outside, bound, module, function)
+            yield from _breaches(outside, bound, module, function, owner)
         for statement in node.body:
-            yield from _breaches(statement, bound, module, node.name)
+            yield from _breaches(statement, bound, module, node.name if owner is None else f"{owner}.{node.name}")
+        return
+    if isinstance(node, ast.ClassDef):
+        for outside in (*node.decorator_list, *node.type_params, *node.bases, *node.keywords):
+            yield from _breaches(outside, bound, module, function, owner)
+        for statement in node.body:
+            yield from _breaches(statement, bound, module, None, node.name if owner is None else f"{owner}.{node.name}")
         return
     if isinstance(node, ast.ImportFrom) and node.level == 0 and _in_fs(node.module):
         if any(not _fs_allowed(f"{node.module}.{alias.name}") for alias in node.names):
@@ -1238,7 +1245,7 @@ def _breaches(node: ast.AST, bound: dict[str, set[str]], module: str, function: 
         for rule in _call_breaches(node, bound, module, function):
             yield rule, node
     for child in ast.iter_child_nodes(node):
-        yield from _breaches(child, bound, module, function)
+        yield from _breaches(child, bound, module, function, owner)
 
 
 def _write_guard(paths) -> dict[str, list[str]]:
@@ -1286,6 +1293,10 @@ def test_a_rename_lives_only_in_the_three_helpers(tmp_path):
             ("def f(p, q): p.rename(target=q)", True),
             ("def publish_tick(a, b):", False),
             ("    def inner(): os.rename(a, b)", True),
+            ("class Publisher:", False),
+            ("    def publish_tick(self, a, b): os.rename(a, b)", True),
+            ("def publish_prom(a, b):", False),
+            ("    class Inner: os.replace(a, b)", True),
             ("def f(s): s.replace('a', 'b')", False),
             ("def f(b): b.replace(b'/', b'\\\\/')", False),
             ("def f(t): t.replace(microsecond=0)", False),
