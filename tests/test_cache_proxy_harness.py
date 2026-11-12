@@ -343,3 +343,12 @@ def test_a_mapping_outside_the_tree_is_foreign():
         ]
     )
     assert harness.foreign_mappings(maps, "/x/root") == ["/usr/lib/x86_64-linux-gnu/libssl.so.3", "/x/rootfs/lib/libz.so.1"]
+
+
+def test_the_mapping_read_covers_every_descendant_of_the_process(tmp_path):
+    tasks = {10: {10: "11 12 ", 13: "14 "}, 11: {11: ""}, 12: {12: "15 "}, 14: {14: ""}, 15: {15: ""}}
+    for pid, threads in tasks.items():
+        for tid, children in threads.items():
+            (tmp_path / f"{pid}/task/{tid}").mkdir(parents=True)
+            (tmp_path / f"{pid}/task/{tid}/children").write_text(children)
+    assert sorted(harness.process_tree(10, proc=tmp_path)) == [10, 11, 12, 14, 15]

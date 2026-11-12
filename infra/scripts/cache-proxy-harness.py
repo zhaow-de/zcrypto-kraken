@@ -940,8 +940,21 @@ def _bench_body(run: Run, name: str, procs: Procs) -> tuple[bool, str]:
         bench.close()
 
 
+def process_tree(pid: int, proc: Path = Path("/proc")) -> list[int]:
+    """`pid` and every descendant, from each task's `children`; a process gone meanwhile is left out of the walk."""
+    found, pending = [], [pid]
+    while pending:
+        current = pending.pop()
+        found.append(current)
+        for task in sorted((proc / str(current) / "task").glob("*")):
+            with contextlib.suppress(OSError):
+                pending += [int(child) for child in (task / "children").read_text().split()]
+    return found
+
+
 def _mapping_read(run: Run, rootfs: Path) -> list[str]:
-    """The code the once-per-run HAProxy maps from outside the tree; none read when it exits before it listens."""
+    """The code the once-per-run HAProxy maps from outside the tree, over the master and every process under it, the
+    worker that parses the render among them; none read when it exits before it listens."""
     directory = run.directory / "maps"
     directory.mkdir()
     (directory / "haproxy.cfg").write_text(run.render)
@@ -951,7 +964,12 @@ def _mapping_read(run: Run, rootfs: Path) -> list[str]:
         if not _listening(process, time.monotonic() + START):
             print(f"the once-per-run HAProxy did not listen within {START:.2f} s: no mapping read", file=sys.stderr)
             return []
-        return foreign_mappings(Path(f"/proc/{process.pid}/maps").read_text(), str(rootfs))
+        foreign: list[str] = []
+        for pid in process_tree(process.pid):
+            with contextlib.suppress(OSError):
+                maps = Path(f"/proc/{pid}/maps").read_text()
+                foreign += [path for path in foreign_mappings(maps, str(rootfs)) if path not in foreign]
+        return foreign
     finally:
         procs.stop_all()
 
