@@ -12,6 +12,7 @@ from cli.vintage.asof import as_of
 from cli.vintage.derive import (
     COVERAGE_SCHEMA,
     LATER_FACTS_SCHEMA,
+    SERIES_KINDS,
     VERSIONS_SCHEMA,
     changed_values,
     derive_record,
@@ -27,7 +28,6 @@ from tests.vintage_stub import Reply, build_record, standard_record
 T0 = BASE_TICK_START
 HOUR = timedelta(hours=1)
 CM_BTC = SOURCE_BY_ID["cm-btc"]
-SERIES_KINDS = ("fng", "cm-asset", "mempool-hashrate", "bg")
 
 
 def _second(name: str) -> bytes:
