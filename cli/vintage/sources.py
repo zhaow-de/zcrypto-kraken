@@ -254,7 +254,8 @@ def _read_kind(source: Source, body: bytes) -> tuple[BodySummary, bool]:
     match source.kind:
         case "fng":
             doc = _object(_json(body))
-            metadata = _object(doc.get("metadata") or {})
+            metadata = doc.get("metadata")
+            metadata = _object({} if metadata is None else metadata)
             if metadata.get("error") is not None:
                 raise _Unreadable("metadata.error is set")
             rows = _rows(doc.get("data"), "data", ("value", "timestamp"))

@@ -732,9 +732,20 @@ def test_a_broken_body_grades_2(case):
     assert check.reason and check.summary is None
 
 
-@pytest.mark.parametrize("edit", [lambda d: d.pop("metadata"), lambda d: d.update(metadata=None)], ids=["missing", "null"])
-def test_an_fng_metadata_missing_or_null_carries_no_error(edit):
-    assert _graded(_check("fng", _fng_edited(edit))) == (0, (), ())
+@pytest.mark.parametrize(
+    ("edit", "expected"),
+    [
+        (lambda d: d.pop("metadata"), (0, (), ())),
+        (lambda d: d.update(metadata=None), (0, (), ())),
+        (lambda d: d.update(metadata=[]), (2, (), (("*", "shape"),))),
+        (lambda d: d.update(metadata=""), (2, (), (("*", "shape"),))),
+    ],
+    ids=["missing", "null", "list", "empty-string"],
+)
+def test_only_a_missing_or_null_fng_metadata_reads_as_empty(edit, expected):
+    check = _check("fng", _fng_edited(edit))
+    assert _graded(check) == expected
+    assert (check.reason or "").startswith("shape") == (expected[0] == 2)
 
 
 WRONG_SHAPE = {
