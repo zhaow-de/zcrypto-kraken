@@ -870,6 +870,7 @@ def test_the_bg_check():
         assert _graded(check) == expected, name
         tokens = _value_tokens(loads_tokens(body(name)))
         assert check.reason is None or not any(token in check.reason for token in tokens), name
+        assert SENTINEL_KEY not in (check.reason or ""), name
     assert SENTINEL_KEY.encode() in body("second/bg-sopr-401-echo")
 
 
