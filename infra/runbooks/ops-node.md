@@ -156,9 +156,10 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-One Grafana alert on `zcrypto-vintage-record.service`, the free-source vintage recorder, which stores the bytes four free data providers serve, twice a day, so that their later restatements can be measured.
+Two pages on `zcrypto-vintage-record.service`, the free-source vintage recorder, which stores the bytes four free data providers serve, twice a day, so that their later restatements can be measured: a Grafana alert and a healthchecks dead-man check.
 
 - **`Ops · vintage source not recorded`** (uid `zcrypto-ops-vintage-not-recorded`) — **critical**. `time() - zcrypto_vintage_last_ok_timestamp_seconds > 90000` (25 h), `for: 5m`, `noDataState: Alerting`. It fires per source: one instance per source arrives in one message whose label lines name the sources, and a no-data instance names none. No series at all is itself the alarm: the recorder's textfile, the host's Alloy, or the host is gone. A good fetch that ended after 19:57 UTC is counted from 19:57 of its day.
+- **`zcrypto-vintage-record`**, the healthchecks dead-man check, which pages from outside Grafana. The recorder's runner pings it when a tick was published, whichever of its sources failed, and on no other run. Its timeout is 90000 s and its grace 21600 s, so it goes down about 31 h after the last published tick, after the 25 h Grafana rule: it is the page that still comes when Grafana is dark, and it means the recorder stopped, crashed before publishing, or could not start its container. Its triage is the same steps below.
 
 ### What it means
 

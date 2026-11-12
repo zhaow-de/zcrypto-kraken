@@ -970,7 +970,7 @@ Must hold, each a **`fail`** when it does not, where an induction that did not l
 
 - *Induce* step 1 prints `200 13`, and the main channel carries no message from it.
 - No key re-minted and nothing re-entered in the service's UI between the rebuild and the acceptance: the Cloud Manager's clicks are the provider's, not the service's.
-- **Accepted when** `uv run python infra/scripts/hc-provision.py status` reads every check's `last_ping` moving after the restore, each at its pinger's next ping and the two daily replay checks at their next ticks, up to a day; never by `hc_check_up`, which reads 1 for a check never pinged (no count command: an acceptance read is entry prose, and the live listing is outside the tree).
+- **Accepted when** `uv run python infra/scripts/hc-provision.py status` reads every check's `last_ping` moving after the restore, each at its pinger's next ping and the two daily replay checks at their next ticks and the vintage recorder's at its next published tick, up to a day; never by `hc_check_up`, which reads 1 for a check never pinged (no count command: an acceptance read is entry prose, and the live listing is outside the tree).
 
 Must fire, in the main channel:
 
