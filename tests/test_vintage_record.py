@@ -794,6 +794,11 @@ def _render_prom_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(command_module, "render_prom", _raises)
 
 
+def _fsync_fails_after_the_rename(tmp_path, monkeypatch):
+    _fsync_fails(monkeypatch)
+    return "after its rename"
+
+
 @pytest.mark.parametrize(
     ("setup", "replies", "code", "published"),
     [
@@ -803,8 +808,17 @@ def _render_prom_raises(tmp_path, monkeypatch):
         (_body_damaged_earlier, {}, 1, True),
         (_fetch_all_raises, {}, 2, False),
         (_render_prom_raises, {}, 1, True),
+        (_fsync_fails_after_the_rename, {}, 1, True),
     ],
-    ids=["all-ok", "one-503", "textfile-read-only", "body-damaged-earlier", "fetch-all-raises", "render-prom-raises"],
+    ids=[
+        "all-ok",
+        "one-503",
+        "textfile-read-only",
+        "body-damaged-earlier",
+        "fetch-all-raises",
+        "render-prom-raises",
+        "after-rename",
+    ],
 )
 def test_the_exit_codes(tmp_path, monkeypatch, caplog, setup, replies, code, published):
     named = setup(tmp_path, monkeypatch)
