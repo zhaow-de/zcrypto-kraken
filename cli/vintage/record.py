@@ -191,10 +191,14 @@ def _fetch_entry(exchange: Exchange, staged: Path, stamp: str, order: tuple[Tick
 
 
 def _seal(ticks: list[TickFile]) -> None:
-    """A published tick a crash left writable, between its rename and its chmod, set to 0555; no byte changes."""
+    """A published tick a crash left writable, between its rename and its chmod, set to 0555; no byte changes, and a
+    tick it cannot seal is named and passed over, never stopping the tick."""
     for tick in ticks:
-        if stat.S_IMODE(tick.dir.stat().st_mode) & 0o222:
-            os.chmod(tick.dir, 0o555)
+        try:
+            if stat.S_IMODE(tick.dir.stat().st_mode) & 0o222:
+                os.chmod(tick.dir, 0o555)
+        except OSError as exc:
+            log.error("vintage could not seal a published tick dir=%s: %s", tick.dir, type(exc).__name__)
 
 
 def _name_leftovers(staging: Path) -> None:

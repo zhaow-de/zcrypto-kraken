@@ -458,6 +458,18 @@ def test_crash_leftovers_are_named_and_a_0755_tick_is_set_0555(tmp_path):
     assert _mode(first.dir) == 0o555
 
 
+def test_a_tick_that_cannot_be_sealed_is_named_and_the_tick_still_runs(tmp_path, monkeypatch):
+    first = run_tick(tmp_path, T0)
+    _opened(first.dir)
+    monkeypatch.setattr(record_module, "os", _Os(chmod=_eio))
+    with _logged() as records:
+        following = run_tick(tmp_path, T0 + 12 * HOUR)
+    assert following.dir.is_dir()
+    errors = _at(records, logging.ERROR)
+    assert len(errors) == 1 and str(first.dir) in errors[0]
+    assert _mode(first.dir) == 0o755
+
+
 def test_the_scan_skips_what_is_not_a_tick(tmp_path):
     first, head = build_record(tmp_path, [(T0, {}), (T0 + 7 * HOUR, {})])
     root = tmp_path / "record"
