@@ -221,7 +221,7 @@ def test_every_shape_names_a_recorded_body():
 def test_every_synthesised_body_parses_in_its_format():
     for path in _synthesised_bodies():
         data = path.read_bytes()
-        match _format(_provenance(path)["source"]):
+        match fmt := _format(_provenance(path)["source"]):
             case "json":
                 json.loads(data)
             case "json_stream":
@@ -229,6 +229,8 @@ def test_every_synthesised_body_parses_in_its_format():
                     json.loads(line)
             case "atom":
                 ET.fromstring(data)
+            case _:
+                pytest.fail(f"{path.name}: unknown format {fmt!r}")
 
 
 def _counted_rows(source: str, data: bytes) -> list[int]:
@@ -243,7 +245,9 @@ def _counted_rows(source: str, data: bytes) -> list[int]:
         return [len(doc.get("hashrates", [])), len(doc.get("difficulty", []))]
     if source.startswith("bg-"):
         return [len(doc) if isinstance(doc, list) else 0]
-    return []
+    if source == "fng":
+        return []
+    pytest.fail(f"no row count for source {source!r}")
 
 
 def test_every_fixture_holds_the_bound():
