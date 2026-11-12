@@ -11,8 +11,8 @@ The engine refuses a plan whose margin floor exceeds `free_zeur` (`cli/engine/pr
 
 ## Why this matters
 
-1. **The figure goes stale between connects.** The floor is checked against free margin as it stood at the last connect, so a plan can pass on margin Kraken no longer has, or be refused on margin it does have. The pass comes back as a venue rejection, the intent ending `rejected` (the owner's decision of 2026-09-23, `docs/research/14.phase6-decisions.md:841`); the refusal stops a plan Kraken would take.
-2. **The spec's wording is not the decided basis.** The same decision names free margin the right measure for `free_zeur`, as the code has it, while spec 00090 still writes the floor as `sum(notional_i / leverage_i) × 2.5 ≤ free ZEUR balance` (`docs/specs/00090-rung-1-order-path-design.md:68`); no test pins the basis.
+1. **The figure goes stale between connects.** The floor is checked against free margin as it stood at the last connect, so a plan can pass on margin Kraken no longer has, or be refused on margin it does have.
+2. **The spec's wording is not the decided basis.** The owner's decision of 2026-09-23 (`docs/research/14.phase6-decisions.md:841`) names free margin the right measure for `free_zeur`, as the code has it, while spec 00090 still writes the floor as `sum(notional_i / leverage_i) × 2.5 ≤ free ZEUR balance` (`docs/specs/00090-rung-1-order-path-design.md:68`); no test pins the basis.
 
 Rung 3's loop is spot-only, so neither gap has bitten yet. Both matter the first time a plan carries a margin intent.
 
