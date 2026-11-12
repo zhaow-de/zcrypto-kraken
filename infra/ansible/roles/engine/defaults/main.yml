@@ -42,9 +42,9 @@ engine_cache_proxy_memory_limit: "32m"
 # same value is committed in host_vars/zcrypto/vars.yml, since the next engine converge reads this
 # default again. The proxy service renders either way.
 engine_cache_enabled: true
-# The set's Sentinel master name and the three cache nodes on the zcache mesh, one backend each: the
-# cache role's `cache_master_name` and the cache_link role's peers, neither loaded in the engine play,
-# which tests/test_infra_cache_proxy.py holds equal.
+# The set's Sentinel master name and the three cache nodes on the zcache mesh, a votes backend and a
+# route backend each: the cache role's `cache_master_name` and the cache_link role's peers, neither
+# loaded in the engine play, which tests/test_infra_cache_proxy.py holds equal.
 engine_cache_proxy_master_name: zcache
 engine_cache_proxy_nodes:
   - {name: node1, address: 10.98.0.11}
