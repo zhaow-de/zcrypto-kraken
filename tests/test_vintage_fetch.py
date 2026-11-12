@@ -111,7 +111,11 @@ def test_a_socket_timeout_is_retried_and_named(failure):
     assert len(exchanges["fng"].attempts) == 3
 
 
-@pytest.mark.parametrize("value", ["0", "-5", _http_date(-60), "soon"], ids=["zero", "negative", "past-date", "unparseable"])
+@pytest.mark.parametrize(
+    "value",
+    ["0", "-5", _http_date(-60), "soon", "9" * 5000],
+    ids=["zero", "negative", "past-date", "unparseable", "too-many-digits"],
+)
 def test_a_retry_after_in_the_past_or_unparseable_falls_back(value):
     replies = [Reply(503, b"busy", [("Retry-After", value)]), Reply(200, b"ok")]
     exchanges, _, clock = _run({"fng": replies}, sources=[SOURCE_BY_ID["fng"]])
@@ -428,8 +432,9 @@ def test_a_429_401_or_403_on_the_keyed_host_trips_its_breaker(reply):
         ("X-RateLimit-Remaining-Hour", "0", True),
         ("x-ratelimit-remaining-day", "0", True),
         ("X-RateLimit-Remaining-Day", "soon", False),
+        ("X-RateLimit-Remaining-Day", "0" * 5000, False),
     ],
-    ids=["day", "hour", "lower-case", "not-a-number"],
+    ids=["day", "hour", "lower-case", "not-a-number", "too-many-digits"],
 )
 def test_a_remaining_header_at_zero_stops_the_keyed_host(name, value, stops):
     served = body("bg-sopr")

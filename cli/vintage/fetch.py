@@ -38,8 +38,10 @@ READ_BYTES = 65536
 REDACTED = "<redacted>"
 _KEYED_TRIPS = frozenset({401, 403, 429})
 _REMAINING = ("X-RateLimit-Remaining-Day", "X-RateLimit-Remaining-Hour")
-_DECIMAL = re.compile(r"[0-9]+")
-_DELTA_SECONDS = re.compile(r"-?[0-9]+")
+# A server's integer header is read only up to this many digits: past Python's 4,300-digit limit `int()` raises.
+_MAX_DIGITS = 18
+_DECIMAL = re.compile(rf"[0-9]{{1,{_MAX_DIGITS}}}")
+_DELTA_SECONDS = re.compile(rf"-?[0-9]{{1,{_MAX_DIGITS}}}")
 _HTTP_VERSIONS = {10: "HTTP/1.0", 11: "HTTP/1.1"}
 _UNCOUNTED = frozenset({"tick deadline", "credential echoed", "credential unscannable"})
 _SCAN = frozenset({"credential echoed", "credential unscannable"})
