@@ -1335,13 +1335,13 @@ def _reference_breaches(expr: ast.Name | ast.Attribute, bound: dict[str, set[str
         yield "fs"
 
 
-def _chain_root_breaches(expr: ast.expr, bound: dict[str, set[str]], module: str, function: str | None, owner: str | None):
+def _chain_root_breaches(expr: ast.expr, bound: dict[str, set[str]], module: str, function: str | None, scope: str | None):
     """The breaches beneath a dotted name, which is resolved whole: those of whatever its chain of attributes starts
     from when that is not a bare name."""
     while isinstance(expr, ast.Attribute):
         expr = expr.value
     if not isinstance(expr, ast.Name):
-        yield from _breaches(expr, bound, module, function, owner)
+        yield from _breaches(expr, bound, module, function, scope)
 
 
 def _names_a_file_handler(expr: ast.expr, bound: dict[str, set[str]]) -> bool:
@@ -1355,20 +1355,21 @@ def _imported(node: ast.Import | ast.ImportFrom) -> list[str]:
     return ["." * node.level + (node.module or "")]
 
 
-def _breaches(node: ast.AST, bound: dict[str, set[str]], module: str, function: str | None, owner: str | None = None):
-    """Each (rule, node) breach under `node`, a call's place being the innermost function whose body holds it; a class
-    body is no function's, and a method is named `<class>.<name>`, so neither is a helper."""
-    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        for outside in (*node.decorator_list, *node.type_params, node.args, *([node.returns] if node.returns else [])):
-            yield from _breaches(outside, bound, module, function, owner)
+def _breaches(node: ast.AST, bound: dict[str, set[str]], module: str, function: str | None, scope: str | None = None):
+    """Each (rule, node) breach under `node`, a call's place being the innermost function whose body holds it, named
+    by its dotted path from the module (`outer.inner`, `Class.method`), so only a module-level def is a helper; a class
+    body is no function's."""
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        qualified = node.name if scope is None else f"{scope}.{node.name}"
+        if isinstance(node, ast.ClassDef):
+            outside = (*node.decorator_list, *node.type_params, *node.bases, *node.keywords)
+        else:
+            outside = (*node.decorator_list, *node.type_params, node.args, *([node.returns] if node.returns else []))
+        for part in outside:
+            yield from _breaches(part, bound, module, function, scope)
+        body_function = None if isinstance(node, ast.ClassDef) else qualified
         for statement in node.body:
-            yield from _breaches(statement, bound, module, node.name if owner is None else f"{owner}.{node.name}")
-        return
-    if isinstance(node, ast.ClassDef):
-        for outside in (*node.decorator_list, *node.type_params, *node.bases, *node.keywords):
-            yield from _breaches(outside, bound, module, function, owner)
-        for statement in node.body:
-            yield from _breaches(statement, bound, module, None, node.name if owner is None else f"{owner}.{node.name}")
+            yield from _breaches(statement, bound, module, body_function, qualified)
         return
     if isinstance(node, ast.ImportFrom) and node.level == 0 and _in_fs(node.module):
         if any(not _fs_allowed(f"{node.module}.{alias.name}") for alias in node.names):
@@ -1385,19 +1386,19 @@ def _breaches(node: ast.AST, bound: dict[str, set[str]], module: str, function: 
         to_a_file = "logging.basicConfig" in names and any(keyword.arg == "filename" for keyword in node.keywords)
         if to_a_file or _names_a_file_handler(node.func, bound):
             yield "logging_file", node
-        yield from _chain_root_breaches(node.func, bound, module, function, owner)
+        yield from _chain_root_breaches(node.func, bound, module, function, scope)
         for child in (*node.args, *node.keywords):
-            yield from _breaches(child, bound, module, function, owner)
+            yield from _breaches(child, bound, module, function, scope)
         return
     if isinstance(node, (ast.Name, ast.Attribute)) and isinstance(node.ctx, ast.Load):
         for rule in _reference_breaches(node, bound, module, function):
             yield rule, node
         if _names_a_file_handler(node, bound):
             yield "logging_file", node
-        yield from _chain_root_breaches(node, bound, module, function, owner)
+        yield from _chain_root_breaches(node, bound, module, function, scope)
         return
     for child in ast.iter_child_nodes(node):
-        yield from _breaches(child, bound, module, function, owner)
+        yield from _breaches(child, bound, module, function, scope)
 
 
 def _write_guard(paths, root: Path) -> dict[str, list[str]]:
@@ -1450,6 +1451,11 @@ def test_a_rename_lives_only_in_the_three_helpers(tmp_path):
             ("    def publish_tick(self, a, b): os.rename(a, b)", True),
             ("def publish_prom(a, b):", False),
             ("    class Inner: os.replace(a, b)", True),
+            ("class Holder:", False),
+            ("    def method(self, a, b):", False),
+            ("        def publish_tick(): os.rename(a, b)", True),
+            ("def outer(a, b):", False),
+            ("    def publish_tick(): os.rename(a, b)", True),
             ("def f(s): s.replace('a', 'b')", False),
             ("def f(b): b.replace(b'/', b'\\\\/')", False),
             ("def f(t): t.replace(microsecond=0)", False),
