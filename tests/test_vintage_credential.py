@@ -171,9 +171,13 @@ def test_an_ok_tick_holds_no_key(tmp_path, caplog, capsys):
     assert [seen.url for seen in run.https.seen if KEYED_HOST in seen.url] == [source.url for source in KEYED]
 
 
-def test_a_retried_answer_echoing_the_key_keeps_no_head(tmp_path, caplog, capsys):
+@pytest.mark.parametrize(
+    ("offset", "whole_in_head"), [(1000, True), (4096 - 10, False)], ids=["inside-the-head", "straddling-the-cut"]
+)
+def test_a_retried_answer_echoing_the_key_keeps_no_head(tmp_path, caplog, capsys, offset, whole_in_head):
+    echoing = b"x" * offset + SENTINEL_FORMS[0] + b"y" * 9000
+    assert _holds(echoing[:4096]) is whole_in_head
     caplog.set_level(logging.DEBUG)
-    echoing = b"x" * 1000 + SENTINEL_FORMS[0] + b"y" * 9000
     run = _run(tmp_path, {"bg-sopr": [Reply(503, echoing, reason="Service Unavailable"), Reply(200, BG_SOPR)]})
     assert run.code == 0
     fetch = _assert_holds_no_key(run, caplog, capsys, WITNESS)["bg-sopr"]
