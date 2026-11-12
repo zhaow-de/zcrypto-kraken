@@ -25,7 +25,6 @@ SENTINEL_FORMS = (
     b"vintage.Sentinel-key_0~9%2B%2Fx%3D%3D",
     b"vintage.Sentinel-key_0~9%2b%2fx%3d%3d",
 )
-# The order fixes each shape's seed, 158001 onward.
 SYNTHESISED = ("cm-btc", "cm-dot", "cm-avaxc", "cm-catalog", "cm-status", "mempool-hashrate", "bg-sopr")
 GENERATOR = "tests/vintage_fixtures.py"
 VARIANT_SEED = 159000
