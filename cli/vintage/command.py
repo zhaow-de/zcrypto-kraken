@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import contextlib
+import importlib.metadata
 import logging
+import os
 import sys
 import traceback
 import urllib.request
-from datetime import UTC
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import BinaryIO, Optional
 
@@ -15,15 +17,18 @@ import typer
 
 from cli.capture.command import single_instance_lock
 from cli.capture.errors import CaptureError
+from cli.config import load_config
 from cli.logging import get_logger
 from cli.vintage import chain as chain_mod
 from cli.vintage import verify as verify_mod
 from cli.vintage.credential import read_key
+from cli.vintage.derive import DERIVE_GENERATION
 from cli.vintage.fetch import Clock, SystemClock
 from cli.vintage.gauges import render_prom
 from cli.vintage.record import RECORD_SUBDIR, Published, RecordRefused, record_tick
 from cli.vintage.sources import SOURCE_BY_ID
-from cli.vintage.storage import publish_prom
+from cli.vintage.storage import publish_prom, refuse_table_root
+from cli.vintage.table import DeriveOutcome, derive_table, head_sha256
 
 # The ops re-verify after each tick: the newest ticks along the chain, and the slice the count of published ticks names.
 OPS_VERIFY_NEWEST = 4
@@ -31,6 +36,10 @@ OPS_VERIFY_SLICES = 14
 
 log = get_logger("vintage.verify")
 record_log = get_logger("vintage.record")
+derive_log = get_logger("vintage.derive")
+
+DERIVE_HEAD = "zcrypto_vintage_derive_head_timestamp_seconds"
+DERIVE_HEAD_HELP = "Unix time of the tick the derived versions table's newest head holds; 0 while the table is empty."
 
 vintage_app = typer.Typer(help="The vintage record: every byte the free on-chain and sentiment sources serve, twice a day.")
 
@@ -209,3 +218,100 @@ def record_cmd(
         sources=tuple(source or ()),
     )
     raise typer.Exit(code=code)
+
+
+def _stamp_seconds(stamp: str) -> int:
+    return int(datetime.strptime(stamp, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC).timestamp())
+
+
+def _derive_stopped(generation: int, head: dict | None, at: str | None, reason: str | None) -> int:
+    derive_log.error(
+        "vintage derive stopped generation=%d head=%s at=%s reason=%s",
+        generation,
+        "none" if head is None else head["tick"],
+        at or "none",
+        reason,
+    )
+    return 1
+
+
+def run_derive(
+    record: Path,
+    table: Path,
+    *,
+    textfile: Path | None,
+    through: str | None,
+    clock: Clock | None = None,
+    version: str | None = None,
+    revision: str | None = None,
+) -> int:
+    """One derive run into the table under its lock, ending with one summary line; the exit code: 0 the table reached
+    the record's head, 1 otherwise. No exception leaves it."""
+    clock = SystemClock() if clock is None else clock
+    generation = DERIVE_GENERATION
+    try:
+        version = importlib.metadata.version("zcrypto") if version is None else version
+        revision = os.environ.get("ZCRYPTO_BUILD_REVISION", "") if revision is None else revision
+        nas_mount = load_config().nfs_mount_dir
+        refusal = refuse_table_root(table, record, nas_mount)
+        if refusal is not None:
+            return _derive_stopped(generation, None, None, f"table root refused: {refusal}")
+        with contextlib.ExitStack() as held:
+            try:
+                held.enter_context(single_instance_lock(table))
+            except CaptureError:
+                derive_log.error(
+                    "another vintage derive holds %s; refusing. Read the zcrypto-vintage-derive.service journal and docker ps -a --filter name=zcrypto-vintage-derive",
+                    table,
+                )
+                return _derive_stopped(generation, None, None, "lock held")
+            outcome: DeriveOutcome = derive_table(
+                record,
+                table,
+                through=through,
+                nas_mount=nas_mount,
+                generation=generation,
+                opened_by=f"{version}+{revision[:12]}" if revision else version,
+                clock=clock,
+            )
+    except Exception as exc:
+        return _derive_stopped(generation, None, None, _failure(exc))
+    written = True
+    if textfile is not None:
+        seconds = 0 if outcome.head is None else _stamp_seconds(outcome.head["tick"])
+        try:
+            publish_prom(
+                textfile, f"# HELP {DERIVE_HEAD} {DERIVE_HEAD_HELP}\n# TYPE {DERIVE_HEAD} gauge\n{DERIVE_HEAD} {seconds}\n"
+            )
+        except Exception as exc:
+            derive_log.error("vintage derive gauge not written path=%s: %s", textfile, _failure(exc))
+            written = False
+    if not outcome.complete:
+        return _derive_stopped(generation, outcome.head, outcome.at, outcome.reason)
+    if not written:
+        return _derive_stopped(generation, outcome.head, None, "the gauge was not written")
+    derive_log.info(
+        "vintage derive complete generation=%d head=%s head_sha256=%s parts_added=%d",
+        generation,
+        "none" if outcome.head is None else outcome.head["tick"],
+        "none" if outcome.head is None else head_sha256(outcome.head),
+        outcome.parts_added,
+    )
+    return 0
+
+
+@vintage_app.command("derive")
+def derive_cmd(
+    record: Path = typer.Option(..., "--record", help="A copy of the record: the directory holding <year>/<month>/<day>/<stamp>/."),
+    table: Path = typer.Option(..., "--table", help="The versions table's root: its generations, staging/ and the lock."),
+    textfile: Optional[Path] = typer.Option(None, "--textfile", help="The .prom file the table head's time is written to."),
+    through: Optional[str] = typer.Option(
+        None,
+        "--through",
+        metavar="STAMP",
+        help="Rebuild along the chain that ends at this tick, into a table root holding nothing but the lockfile.",
+    ),
+) -> None:
+    """Derive the versions table from the record: one part and one head per tick on its chain after the table's head;
+    exit 0 when the table reaches the record's head, 1 otherwise."""
+    raise typer.Exit(code=run_derive(record, table, textfile=textfile, through=through))

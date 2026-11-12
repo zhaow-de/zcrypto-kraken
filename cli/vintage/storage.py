@@ -1,5 +1,5 @@
 """The record's write primitives: a file created exclusive and read-only, gzip with no clock in its bytes, a directory's
-fsync, and the two renames that publish a tick and a `.prom`."""
+fsync, and the three renames that publish a tick, a `.prom` and a versions-table directory."""
 
 from __future__ import annotations
 
@@ -58,6 +58,33 @@ def publish_tick(staged: Path, target: Path) -> None:
     except OSError as exc:
         exc.add_note(f"{AFTER_RENAME}{step}")
         raise
+
+
+def refuse_table_root(table_root: Path, record_root: Path, nas_mount: Path) -> str | None:
+    """Why the table root is refused, None when it is admitted: the resolved table root may lie neither in the record
+    root, nor in its parent, the recorder's own data root, nor under the NAS mount."""
+    table, record, nas = (path.resolve() for path in (table_root, record_root, nas_mount))
+    for name, wall in (("the record root", record), ("the record root's parent", record.parent), ("the NAS mount", nas)):
+        if table.is_relative_to(wall):
+            return f"the table root {table} lies in {name} {wall}"
+    return None
+
+
+def publish_table_dir(staged: Path, target: Path, *, table_root: Path, record_root: Path, nas_mount: Path) -> None:
+    """Moves a staged generation, part or head directory to its target in the table by one rename, then sets it 0555;
+    `os.rename` replaces an empty directory, so the target's absence is checked here, under the caller's lock."""
+    refusal = refuse_table_root(table_root, record_root, nas_mount)
+    if refusal is not None:
+        raise PermissionError(refusal)
+    if target.exists():
+        raise FileExistsError(errno.EEXIST, "the table directory's target exists", str(target))
+    for directory in reversed(target.parents):
+        if not directory.exists():
+            directory.mkdir(mode=0o755)
+            os.chmod(directory, 0o755)
+    os.rename(staged, target)
+    fsync_dir(target.parent)
+    os.chmod(target, 0o555)
 
 
 def publish_prom(path: Path, text: str) -> None:

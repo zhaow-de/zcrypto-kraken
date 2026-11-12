@@ -21,6 +21,11 @@ from cli.vintage.fetch import header
 from cli.vintage.sources import SOURCE_BY_ID, LinkAcknowledgment, Source, as_object, date_day, epoch_day, iso_day, rows
 
 DERIVE_GENERATION = 1
+# Per generation, the link entries every tick of it is derived with; a shipped generation's entries are never edited, a
+# new entry ships with a new generation.
+GENERATION_ENTRIES: dict[int, tuple[LinkAcknowledgment, ...]] = {1: ()}
+# Per generation, the sha256 of the head the standard fixture record derives to; a shipped pin is never edited.
+HEAD_PINS: dict[int, str] = {1: "27331fdf15757ea337d00e917fe7e6bc2f345e56db65a1e405f4d3829e25c02a"}
 KINDS = ("inherited", "first_publication", "backfill", "restatement", "retraction", "restoration")
 _FIRST_APPEARANCES = frozenset({"first_publication", "backfill"})
 CLOCK_OFFSET_BAR_SECONDS = 10
