@@ -125,27 +125,28 @@ def _inside(into: Path, path: str) -> Path:
     raise FetchRefused(f"{path!r} resolves to {resolved}, outside the tree")
 
 
-def _remove(path: Path) -> None:
+def _remove(path: Path, modes: dict[Path, int]) -> None:
+    for gone in [kept for kept in modes if kept == path or path in kept.parents]:
+        del modes[gone]
     if path.is_dir(follow_symlinks=False):
         shutil.rmtree(path)
     elif os.path.lexists(path):
         path.unlink()
 
 
-def _empty(directory: Path, written: set[Path]) -> None:
+def _empty(directory: Path, written: set[Path], modes: dict[Path, int]) -> None:
     """Remove what lower layers put under `directory`, keeping what this layer wrote."""
     if not directory.is_dir(follow_symlinks=False):
         return
     for entry in directory.iterdir():
         if entry not in written:
-            _remove(entry)
+            _remove(entry, modes)
         elif entry.is_dir(follow_symlinks=False):
-            _empty(entry, written)
+            _empty(entry, written, modes)
 
 
-def _apply(blob: bytes, into: Path) -> None:
+def _apply(blob: bytes, into: Path, modes: dict[Path, int]) -> None:
     written: set[Path] = set()
-    modes: dict[Path, int] = {}
     with tarfile.open(fileobj=io.BytesIO(blob)) as layer:
         for member in layer:
             base = os.path.basename(member.name)
@@ -165,14 +166,14 @@ def _apply(blob: bytes, into: Path) -> None:
             if member.islnk():
                 _inside(into, member.linkname)
             if base == OPAQUE:
-                _empty(directory, written)
+                _empty(directory, written, modes)
                 continue
             if whiteout is not None:
-                _remove(directory / whiteout)
+                _remove(directory / whiteout, modes)
                 continue
             existing = directory / base
             if not (member.isdir() and existing.is_dir(follow_symlinks=False)):
-                _remove(existing)
+                _remove(existing, modes)
             try:
                 layer.extract(member, into, set_attrs=not member.isdir(), filter="tar")
             except tarfile.FilterError as exc:
@@ -180,11 +181,14 @@ def _apply(blob: bytes, into: Path) -> None:
             written.add(existing)
             if member.isdir():
                 modes[existing] = member.mode & TAR_FILTER_MODE
-        # Modes are set after the layer's members, deepest first, as `extractall` defers them, and only on a path a
-        # later member has not replaced with a link.
-        for path, mode in sorted(modes.items(), key=lambda item: len(item[0].parts), reverse=True):
-            if os.path.realpath(path) == str(path) and path.is_dir(follow_symlinks=False):
-                path.chmod(mode)
+
+
+def _set_modes(modes: dict[Path, int]) -> None:
+    # Modes are set after the last layer's members, deepest first, as `extractall` defers them, and only on a path a
+    # later member has not replaced with a link.
+    for path, mode in sorted(modes.items(), key=lambda item: len(item[0].parts), reverse=True):
+        if os.path.realpath(path) == str(path) and path.is_dir(follow_symlinks=False):
+            path.chmod(mode)
 
 
 def fetch(digest: str, into: Path, get: Callable[[str, Mapping[str, str]], bytes] = _urllib_get) -> None:
@@ -207,8 +211,10 @@ def fetch(digest: str, into: Path, get: Callable[[str, Mapping[str, str]], bytes
         layers.append(_verified(get(f"{REPOSITORY}/blobs/{layer['digest']}", headers), layer["digest"]))
         print(f"verified {layer['digest']}")
     into.mkdir(parents=True, exist_ok=True)
+    modes: dict[Path, int] = {}
     for blob in layers:
-        _apply(blob, into)
+        _apply(blob, into, modes)
+    _set_modes(modes)
     (into / IMAGE_DIGEST_FILE).write_text(digest + "\n")
 
 

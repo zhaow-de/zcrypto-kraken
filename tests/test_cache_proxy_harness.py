@@ -216,6 +216,37 @@ def test_a_directory_without_owner_write_takes_its_mode_after_its_members(tmp_pa
                 (tree / name).chmod(stat.S_IMODE((tree / name).stat().st_mode) | stat.S_IWUSR)
 
 
+def test_a_later_layer_writes_into_a_directory_a_lower_layer_left_without_owner_write(tmp_path):
+    digest, get, _ = _registry(
+        _layer({"ro": 0o555, "ro/gone": b"g", "ro/sub": 0o555, "ro/sub/old": b"o", "wide": 0o555}),
+        _layer({"ro/f": b"x", "ro/.wh.gone": b"", "ro/sub/.wh..wh..opq": b"", "wide": 0o700}),
+    )
+    tree = tmp_path / "tree"
+    try:
+        harness.fetch(digest, tree, get=get)
+        assert (tree / "ro/f").read_bytes() == b"x"
+        assert sorted(os.listdir(tree / "ro")) == ["f", "sub"]
+        assert os.listdir(tree / "ro/sub") == []
+        modes = [stat.S_IMODE((tree / name).stat().st_mode) for name in ("ro", "ro/sub", "wide")]
+        assert modes == [0o555, 0o555, 0o700]
+    finally:
+        for name in ("ro", "ro/sub"):
+            if (tree / name).is_dir(follow_symlinks=False):
+                (tree / name).chmod(stat.S_IMODE((tree / name).stat().st_mode) | stat.S_IWUSR)
+
+
+def test_a_directory_a_later_layer_removes_keeps_no_mode_of_the_lower_one(tmp_path):
+    digest, get, _ = _registry(_layer({"ro": 0o555, "ro/a": b"a"}), _layer({".wh.ro": b"", "ro/b": b"b"}))
+    tree = tmp_path / "tree"
+    try:
+        harness.fetch(digest, tree, get=get)
+        assert os.listdir(tree / "ro") == ["b"]
+        assert stat.S_IMODE((tree / "ro").stat().st_mode) != 0o555
+    finally:
+        if (tree / "ro").is_dir(follow_symlinks=False):
+            (tree / "ro").chmod(stat.S_IMODE((tree / "ro").stat().st_mode) | stat.S_IWUSR)
+
+
 def test_a_directory_without_owner_search_takes_its_mode_after_the_directory_beneath_it(tmp_path):
     digest, get, _ = _registry(_layer({"ro": 0o644, "ro/sub": 0o555}))
     tree = tmp_path / "tree"
