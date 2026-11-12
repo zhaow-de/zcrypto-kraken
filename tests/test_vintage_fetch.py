@@ -493,6 +493,16 @@ def test_a_remaining_header_at_zero_stops_the_keyed_host(name, value, stops):
     assert len([url for url in _urls(https) if KEYED_HOST in url]) == (1 if stops else 4)
 
 
+def test_a_remaining_header_at_zero_stops_a_keyed_retry():
+    spent = Reply(503, b"down", [("X-RateLimit-Remaining-Day", "0")])
+    exchanges, https, _ = _run({"bg-sopr": [spent, Reply(200, b"[]")]}, sources=SOURCES[:4])
+    assert exchanges["bg-sopr"].not_fetched == "HTTP 503 after 1 attempts"
+    assert len(exchanges["bg-sopr"].attempts) == 1
+    for source_id in KEYED_IDS[1:]:
+        assert exchanges[source_id].not_fetched == "budget exhausted"
+    assert _urls(https) == [_url("bg-sopr")]
+
+
 def test_a_repeated_remaining_header_is_read_whole():
     headers = [("X-RateLimit-Remaining-Day", "3"), ("X-RateLimit-Remaining-Day", "0")]
     exchanges, https, _ = _run({"bg-sopr": [Reply(200, body("bg-sopr"), headers)]})
