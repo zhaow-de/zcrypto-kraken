@@ -74,11 +74,7 @@ MARGIN_LEVERAGE = 2
 # `request_instruments()` alone answers with ~1600 rows -- around 110 KB at the installed adapter's
 # ~68-char `CurrencyPair.__repr__`. Capped so the incident artifact stays openable mid-incident.
 _ANSWER_REPR_LIMIT = 4000
-# The adapter rounds a balance's total and its held amount to 8 decimals each, half to even, and
-# takes free as their difference, while Kraken keeps SOL and BTC to 10: a reported free balance can
-# exceed the venue's by up to one whole unit, half from each rounding, which is why the shave is a
-# whole unit. Unshaved, a sell of the reported figure is refused for insufficient funds on every
-# pass and every re-run.
+# The adapter's free is total minus held, each rounded to 8 decimals: up to one unit over Kraken's.
 _BALANCE_UNIT = Decimal("0.00000001")
 
 # Real nautilus types reach the client; the journal records their string forms. A plain `str` where
@@ -701,6 +697,14 @@ def classify_balance(free: float, constraints: PairConstraints, reference_price:
     return "dust" if isinstance(_size(free, constraints, reference_price), BelowMinimum) else "residual"
 
 
+def certain_balance(reported: float, lot_step: float) -> float:
+    """The most the account is certain to hold of a balance the adapter reported: one `_BALANCE_UNIT` under
+    its 8-decimal figure, floored to the lot step."""
+    from cli.engine.instruments import _floor_to_step
+
+    return _floor_to_step(float(Decimal(str(reported)).quantize(_BALANCE_UNIT) - _BALANCE_UNIT), lot_step)
+
+
 def size_leg(leg: Leg, constraints: PairConstraints, reference_price: float | None) -> SizedLeg:
     """One leg's order quantity and whether it is sent at all.
 
@@ -710,12 +714,9 @@ def size_leg(leg: Leg, constraints: PairConstraints, reference_price: float | No
     A spot leg below any applicable floor is listed and not sent; the venue would reject it, and it
     does not make the account not-flat.
 
-    A spot sell goes out one `_BALANCE_UNIT` short of the floored balance, floored to the lot step
-    again -- a whole step on a pair whose lot is coarser than eight decimals -- whenever that still
-    clears every floor, so a figure the adapter rounded up cannot be refused. Where it would not --
-    a balance exactly at `ordermin` -- the balance goes out as reported and the venue rules on it.
-    Whether the leg is sent at all is still judged on the reported figure (`classify_balance`), so
-    the shave can never turn a sellable balance into dust.
+    A spot sell asks for `certain_balance`, the adapter's figure being possibly rounded up, where that is above zero and
+    clears every floor; otherwise it goes out at the reported figure floored to the lot step, and the venue rules on it.
+    The leg is judged on the reported figure (`classify_balance`), so the shave never turns a sellable balance into dust.
     """
     from cli.engine.instruments import BelowMinimum, _floor_to_step
 
@@ -732,9 +733,9 @@ def size_leg(leg: Leg, constraints: PairConstraints, reference_price: float | No
     elif classify_balance(leg.quantity, constraints, price) != "residual":
         send, reason = False, "dust_below_venue_minimum"
     else:
-        shaved = _floor_to_step(float(Decimal(str(qty)) - _BALANCE_UNIT), constraints.lot_step)
-        if shaved > 0.0 and not isinstance(_size(shaved, constraints, price), BelowMinimum):
-            qty = shaved
+        bound = certain_balance(leg.quantity, constraints.lot_step)
+        if bound > 0.0 and not isinstance(_size(bound, constraints, price), BelowMinimum):
+            qty = bound
     estimate = qty * price if price is not None else None
     fee = estimate * TAKER_RATE if estimate is not None else None
     return SizedLeg(

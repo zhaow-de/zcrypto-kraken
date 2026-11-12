@@ -24,6 +24,7 @@ from nautilus_trader.model import (
     ClientOrderId,
     Currency,
     CurrencyPair,
+    CurrencyType,
     FillReport,
     InstrumentId,
     LimitOrder,
@@ -11477,6 +11478,134 @@ def test_the_boundary_holds_the_floor_of_the_book_it_just_read(tmp_path):
     leg = _legs(tmp_path)["ETH/EUR"]
     assert holdings.calls == 2 and leg["outcome"] == "carried"
     assert leg["reason"] == f"sell {_TEN_THIRTY_QTY:.10g} is under ordermin 0.002"
+
+
+def _adapter_figure(code: str, venue_figure: str) -> float:
+    """Kraken's balance as `read_venue_book` hands it on, rounded into the adapter's 8-decimal `Money`. A raw 10-decimal
+    float would let `decide_leg`'s own floor cut the sell, and a fix that changed nothing would pass."""
+    return float(Money.from_decimal(Decimal(venue_figure), Currency(code, 8, 0, code, CurrencyType.CRYPTO)))
+
+
+def _boundary_over(tmp_path, holdings, targets=None, **kwargs):
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=_rung2_record(tmp_path, final_targets=_the_ten_at(0.0) if targets is None else targets),
+        holdings=holdings,
+        eur_total=1500.0,
+        eur_free=1500.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+        **kwargs,
+    )
+    ex.on_boundary(_RUNG2_12Z)
+    ex.on_timer(clock.now)
+    return ex, client
+
+
+@pytest.mark.parametrize(
+    ("coin", "venue_figure", "ordermin", "reported", "sent", "touch"),
+    [
+        ("SOL", "0.0533535388", 0.05, "0.05335354", "0.05335353", (186.4, 186.41)),
+        ("DOGE", "60.27949807", 50.0, "60.27949807", "60.27949806", (0.2137, 0.2138)),
+        ("BTC", "0.0001465538", 5e-05, "0.00014655", "0.00014654", (98250.0, 98250.1)),
+        ("DOT", "5.1890957849", 3.9, "5.18909578", "5.18909577", (3.871, 3.8711)),
+        ("DOGE", "1500.1234567849", 50.0, "1500.12345678", "1500.12345677", (0.2137, 0.2138)),
+    ],
+)
+def test_a_whole_leg_sell_goes_out_one_unit_under_the_venues_rounded_figure(
+    tmp_path, coin, venue_figure, ordermin, reported, sent, touch
+):
+    symbol = f"{coin}/EUR"
+    held = _adapter_figure(coin, venue_figure)
+    assert held == float(reported)
+    ex, client = _boundary_over(tmp_path, {symbol: held}, cache_ordermin={symbol: ordermin})
+    leg = _legs(tmp_path)[symbol]
+    assert (leg["outcome"], leg["held_qty"], leg["qty"]) == ("placed", float(reported), float(sent))
+    assert leg["reason"] == (
+        f"the whole leg: the remainder would be under ordermin; one unit under the venue's {reported}, which the adapter "
+        "rounds to 8 decimals"
+    )
+    intents = _plan_entry(tmp_path, when=_RUNG2_12Z)["plan"]["intents"]
+    assert [(i["symbol"], i["qty"]) for i in intents] == [(symbol, float(sent))]
+    ex.on_quote(_quote(f"{symbol}.KRAKEN", bid=touch[0], ask=touch[1]))
+    assert str(client.submitted[-1][0].quantity) == sent
+
+
+def test_a_whole_leg_whose_one_unit_cut_falls_under_ordermin_is_carried_and_never_sent(tmp_path):
+    ex, client = _boundary_over(tmp_path, {"SOL/EUR": 0.05}, cache_ordermin={"SOL/EUR": 0.05})
+    sol = _legs(tmp_path)["SOL/EUR"]
+    assert (sol["outcome"], sol["side"], sol["qty"]) == ("carried", "sell", None)
+    assert sol["reason"] == (
+        "one unit under the venue's 0.05000000, which the adapter rounds to 8 decimals, is under ordermin 0.05"
+    )
+    assert _accum(tmp_path)["plan_id"] is None
+    ex.on_quote(_quote("SOL/EUR.KRAKEN", bid=186.4, ask=186.41))
+    assert client.submitted == []
+
+
+def test_a_whole_leg_whose_one_unit_cut_lands_on_ordermin_is_sent_at_ordermin(tmp_path):
+    held = _adapter_figure("SOL", "0.0500000100")
+    assert held == 0.05000001
+    ex, client = _boundary_over(tmp_path, {"SOL/EUR": held}, cache_ordermin={"SOL/EUR": 0.05})
+    sol = _legs(tmp_path)["SOL/EUR"]
+    assert (sol["outcome"], sol["held_qty"], sol["qty"]) == ("placed", 0.05000001, 0.05)
+    ex.on_quote(_quote("SOL/EUR.KRAKEN", bid=186.4, ask=186.41))
+    assert str(client.submitted[-1][0].quantity) == "0.05000000"
+
+
+def test_a_whole_leg_whose_float_reads_under_its_8_decimal_figure_goes_out_one_unit_under_and_never_two(tmp_path):
+    held = _adapter_figure("DOGE", "1236.2200751449")
+    assert f"{held:.8f}" == "1236.22007514" and held < 1236.22007514
+    ex, client = _boundary_over(tmp_path, {"DOGE/EUR": held}, cache_ordermin={"DOGE/EUR": 50.0})
+    leg = _legs(tmp_path)["DOGE/EUR"]
+    assert (leg["outcome"], leg["qty"]) == ("placed", 1236.22007513)
+    assert leg["reason"] == "the whole leg: the remainder would be under ordermin"
+    ex.on_quote(_quote("DOGE/EUR.KRAKEN", bid=0.2137, ask=0.2138))
+    assert str(client.submitted[-1][0].quantity) == "1236.22007513"
+
+
+def test_the_cut_bounds_a_sell_by_the_spot_balance_where_a_margin_long_sits_on_the_pair(tmp_path):
+    spot = _adapter_figure("SOL", "0.0533535388")
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=_rung2_record(tmp_path, final_targets=_the_ten_at(0.0)),
+        holdings={"SOL/EUR": spot},
+        eur_total=1500.0,
+        eur_free=1500.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+        cache_ordermin={"SOL/EUR": 0.05},
+    )
+    holdings = ex._venue_holdings
+    ex._venue_holdings = lambda: dataclasses.replace(holdings(), held=holdings.held | {"SOL/EUR": 0.15335354})
+    ex.on_boundary(_RUNG2_12Z)
+    ex.on_timer(clock.now)
+    sol = _legs(tmp_path)["SOL/EUR"]
+    assert (sol["outcome"], sol["held_qty"], sol["qty"]) == ("placed", 0.15335354, 0.05335353)
+    assert sol["reason"] == (
+        "the whole leg: the remainder would be under ordermin; one unit under the venue's 0.05335354, which the adapter "
+        "rounds to 8 decimals"
+    )
+    ex.on_quote(_quote("SOL/EUR.KRAKEN", bid=186.4, ask=186.41))
+    assert str(client.submitted[-1][0].quantity) == "0.05335353"
+
+
+def test_the_cut_leaves_buys_partial_sells_and_the_venues_figure_alone(tmp_path):
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    sol = _adapter_figure("SOL", "0.0533535388")
+    assert sol == 0.05335354
+    holdings = {"SOL/EUR": sol, "ETH/EUR": 0.02, "DOT/EUR": 3e-08}
+    with _executor_errors(level=logging.WARNING) as records:
+        _boundary_over(tmp_path, holdings, _only("BTC/EUR", "ETH/EUR"), cache_ordermin={"SOL/EUR": 0.05})
+    legs = _legs(tmp_path)
+    assert (legs["ETH/EUR"]["outcome"], legs["ETH/EUR"]["qty"], legs["ETH/EUR"]["reason"]) == ("placed", 0.01213909, "")
+    assert (legs["BTC/EUR"]["outcome"], legs["BTC/EUR"]["notional_eur"]) == ("placed", 38.64)
+    assert legs["SOL/EUR"]["held_qty"] == 0.05335354
+    assert (
+        "the venue holds 0.05335354 SOL/EUR where the Cache reads 0 -- the position gauge takes the venue's figure at the boundary read"
+    ) in [r.getMessage() for r in records]
+    assert {("SOL/EUR", 0.05335354), ("DOT/EUR", 3e-08)} <= set(metrics.positions)
+    dot = legs["DOT/EUR"]
+    assert (dot["held_qty"], dot["outcome"], dot["reason"]) == (3e-08, "carried", "sell 3e-08 is under ordermin 3.9")
 
 
 @pytest.mark.parametrize(("listed", "disposition"), [(None, "refused"), ({"BTC/EUR": 0.001}, "accepted")])
