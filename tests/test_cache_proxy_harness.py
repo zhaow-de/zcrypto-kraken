@@ -416,6 +416,8 @@ def test_a_process_that_will_not_stop_leaves_the_rest_of_the_teardown_to_run(mon
     second = signalled.start([sys.executable, "-c", "import time; time.sleep(30)", str(tmp_path)])
     signalled.processes.append(_Stuck())
     signalled.processes[1].wait = lambda timeout=None: sys.exit(143)
+    # Stopped first, a process that will not stop fails before the signal lands; the signal must still unwind.
+    signalled.processes.append(_Stuck())
     signalled.table_made = True
     try:
         with pytest.raises(SystemExit):
