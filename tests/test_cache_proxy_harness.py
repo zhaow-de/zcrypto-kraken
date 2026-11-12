@@ -484,7 +484,10 @@ def test_the_run_command_unwinds_on_sigterm_and_sighup(monkeypatch):
 def test_the_run_refuses_when_no_unprivileged_namespace_can_be_made(monkeypatch, tmp_path):
     (tmp_path / harness.IMAGE_DIGEST_FILE).write_text("sha256:" + "0" * 64 + "\n")
 
+    asked = []
+
     def unshare(argv, **kwargs):
+        asked.append(argv)
         return subprocess.CompletedProcess(argv, 1, "", "unshare: unshare failed: Operation not permitted\n")
 
     def execv(*args):
@@ -494,6 +497,8 @@ def test_the_run_refuses_when_no_unprivileged_namespace_can_be_made(monkeypatch,
     monkeypatch.setattr(harness.subprocess, "run", unshare)
     monkeypatch.setattr(harness.os, "execv", execv)
     assert harness.run(tmp_path, tmp_path / "scratch", ["parse"]) == 2
+    # Every process a run starts carries its scratch, so a read by command line finds it.
+    assert [str((tmp_path / "scratch").resolve()) in argv for argv in asked] == [True]
 
 
 def test_a_run_that_breaks_outside_its_cases_still_prints_its_summary(monkeypatch, tmp_path, capsys):

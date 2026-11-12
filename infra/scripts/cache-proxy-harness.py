@@ -1067,7 +1067,10 @@ def run(rootfs: Path, scratch: Path, cases: Sequence[str]) -> int:
     if missing:
         return _refused(f"no {', '.join(missing)}")
     try:
-        made = subprocess.run([UNSHARE, "-rn", sys.executable, "-c", ""], capture_output=True, text=True, timeout=START)
+        # The scratch path, unread by the empty program, puts this process too in a read by command line.
+        made = subprocess.run(
+            [UNSHARE, "-rn", sys.executable, "-c", "", str(scratch)], capture_output=True, text=True, timeout=START
+        )
     except subprocess.TimeoutExpired:
         return _refused(f"{UNSHARE} -rn did not return within {START:.2f} s")
     if made.returncode != 0:
