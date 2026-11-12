@@ -1,0 +1,452 @@
+from __future__ import annotations
+
+import gzip
+from datetime import UTC, date, datetime, timedelta
+from email.utils import format_datetime
+from pathlib import Path
+
+import polars as pl
+import pytest
+
+from cli.vintage.asof import as_of
+from cli.vintage.derive import (
+    COVERAGE_SCHEMA,
+    LATER_FACTS_SCHEMA,
+    VERSIONS_SCHEMA,
+    changed_values,
+    derive_record,
+    flags,
+    frames,
+    parse_series,
+)
+from cli.vintage.record import Published
+from cli.vintage.sources import SOURCE_BY_ID
+from tests.vintage_fixtures import BASE_TICK_START, FROZEN_METRIC, GAP_METRIC, GONE_METRIC, body, dumps_compact, loads_tokens
+from tests.vintage_stub import Reply, build_record, standard_record
+
+T0 = BASE_TICK_START
+HOUR = timedelta(hours=1)
+CM_BTC = SOURCE_BY_ID["cm-btc"]
+SERIES_KINDS = ("fng", "cm-asset", "mempool-hashrate", "bg")
+
+
+def _second(name: str) -> bytes:
+    return body(f"second/{name}")
+
+
+def _record(root: Path, ticks: list[dict]) -> tuple[list[Published], tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]]:
+    """One tick per entry at `T0 + 3 h × i`, every source its default body but where the entry names its own."""
+    published = build_record(root, [(T0 + 3 * i * HOUR, replies) for i, replies in enumerate(ticks)])
+    return published, derive_record(root / "record")
+
+
+def _fetch(published: Published, source_id: str) -> dict:
+    (fetch,) = (fetch for fetch in published.manifest["fetches"] if fetch["source"] == source_id)
+    return fetch
+
+
+def _ended(published: Published, source_id: str) -> datetime:
+    return datetime.fromisoformat(_fetch(published, source_id)["attempts"][-1]["ended_at"])
+
+
+def _after(published: Published) -> datetime:
+    return datetime.fromisoformat(published.manifest["ended_at"])
+
+
+def _stored(published: Published, source_id: str) -> bytes:
+    return gzip.decompress((published.dir / _fetch(published, source_id)["body"]["file"]).read_bytes())
+
+
+def _view(derived: tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame], t: datetime) -> pl.DataFrame:
+    """The values as of t: the last-seen time is left out, since a later observation that held the day moves it."""
+    return as_of(*derived, t).drop("last_seen_at")
+
+
+def _at(frame: pl.DataFrame, position: int) -> pl.DataFrame:
+    return frame.filter(pl.col("position") == position)
+
+
+def _day(frame: pl.DataFrame, series: str, day: date) -> pl.DataFrame:
+    return frame.filter((pl.col("series") == series) & (pl.col("ts") == datetime(day.year, day.month, day.day, tzinfo=UTC)))
+
+
+def _rows(lines: bytes) -> list[dict]:
+    return [loads_tokens(line) for line in lines.split(b"\n") if line.strip()]
+
+
+def _stream(rows: list[dict]) -> bytes:
+    return b"\n".join(dumps_compact(row) for row in rows)
+
+
+def _carrying(rows: list[dict], key: str) -> list[int]:
+    return [i for i, row in enumerate(rows) if key in row]
+
+
+def test_as_of_never_returns_a_version_before_its_knowable_time(tmp_path):
+    restated = _second("cm-btc-restatement")
+    probe = build_record(tmp_path / "probe", [(T0, {}), (T0 + 3 * HOUR, {"cm-btc": restated})])
+    ended = _ended(probe[1], "cm-btc")
+    server = ended.replace(microsecond=0) + timedelta(seconds=5)
+    served = Reply(200, restated, headers=[("Date", format_datetime(server, usegmt=True))])
+    published, derived = _record(tmp_path / "real", [{}, {"cm-btc": served}])
+    assert _ended(published[1], "cm-btc") == ended
+    (restatement,) = derived[0].filter(pl.col("kind") == "restatement").iter_rows(named=True)
+    day = restatement["ts"].date()
+    base_token = parse_series(CM_BTC, body("cm-btc"))[restatement["series"]][day]
+
+    def token(t: datetime) -> str:
+        return _day(as_of(*derived, t), restatement["series"], day)["token"].item()
+
+    assert token(ended) == base_token
+    assert token(server) == base_token
+    assert token(server + timedelta(seconds=1)) == restatement["token"] != base_token
+
+
+def test_an_outcome_2_body_that_lost_history_leaves_as_of_unchanged(tmp_path):
+    published, derived = _record(tmp_path, [{}, {"cm-btc": _second("cm-btc-lost-newest")}])
+    assert _fetch(published[1], "cm-btc")["check"]["outcome"] == 2
+    assert _view(derived, _after(published[1])).equals(_view(derived, _after(published[0])))
+    # Its losses lie above each series' new range, so they read as no retraction either way; what tells its absences
+    # apart is the last-seen time, which a row with a hole and no evidence leaves where it was.
+    lost = parse_series(CM_BTC, _second("cm-btc-lost-newest"))
+    holed = [series for series, days in lost.items() if len(days) < (max(days) - min(days)).days + 1]
+    assert holed
+    kept = (pl.col("source") == "cm-btc") & pl.col("series").is_in(holed)
+    assert as_of(*derived, _after(published[1])).filter(kept).equals(as_of(*derived, _after(published[0])).filter(kept))
+
+
+def test_a_value_its_retraction_and_the_same_value_again(tmp_path):
+    published, derived = _record(tmp_path, [{}, {"cm-btc": _second("cm-btc-retraction")}, {}])
+    (retraction,) = derived[0].filter(pl.col("kind") == "retraction").iter_rows(named=True)
+    series, day = retraction["series"], retraction["ts"].date()
+    assert _day(derived[0], series, day)["kind"].to_list() == ["inherited", "retraction", "restoration"]
+    now = _day(as_of(*derived, _after(published[2]) + 24 * HOUR), series, day)
+    assert now["kind"].item() == "restoration"
+    assert now["token"].item() == parse_series(CM_BTC, body("cm-btc"))[series][day]
+
+
+def test_inherited_is_set_per_series_at_its_first_carrying_observation(tmp_path):
+    _, (versions, _, _) = _record(tmp_path, [{"cm-btc": _second("cm-btc-metric-gone")}, {}])
+    gone = f"cm/btc/{GONE_METRIC}"
+    second = _at(versions, 1)
+    assert set(second["series"]) == {gone}
+    assert set(second["kind"]) == {"inherited"}
+    assert second.height == len(parse_series(CM_BTC, body("cm-btc"))[gone])
+    assert versions.filter((pl.col("series") == gone) & (pl.col("kind") == "first_publication")).is_empty()
+
+
+def test_the_kinds_are_told_apart(tmp_path):
+    _, (versions, _, _) = _record(tmp_path, [{}, {"cm-btc": _second("cm-btc-next")}, {"cm-btc": _second("cm-btc-restatement")}])
+    base, after = parse_series(CM_BTC, body("cm-btc")), parse_series(CM_BTC, _second("cm-btc-next"))
+    new = {(series, day) for series, days in after.items() for day in days if day not in base.get(series, {})}
+    assert new
+    second = _at(versions, 1)
+    assert set(second["kind"]) == {"first_publication"}
+    assert {(row["series"], row["ts"].date()) for row in second.iter_rows(named=True)} == new
+    assert _at(versions, 2)["kind"].to_list() == ["restatement"]
+
+
+def test_a_gap_filled_after_a_truncated_outcome_2_body_is_a_backfill(tmp_path):
+    published, (versions, _, _) = _record(
+        tmp_path, [{"cm-btc": _second("cm-btc-gap")}, {"cm-btc": _second("cm-btc-lost-newest")}, {}]
+    )
+    series = f"cm/btc/{GAP_METRIC}"
+    (gap,) = parse_series(CM_BTC, body("cm-btc"))[series].keys() - parse_series(CM_BTC, _second("cm-btc-gap"))[series].keys()
+    assert max(parse_series(CM_BTC, _second("cm-btc-lost-newest"))[series]) < gap
+    assert _fetch(published[1], "cm-btc")["check"]["outcome"] == 2
+    filled = _day(versions, series, gap)
+    assert filled["kind"].to_list() == ["backfill"]
+    assert filled["position"].to_list() == [2]
+
+
+def test_a_value_gone_and_restored_changed_is_a_restatement(tmp_path):
+    _, (versions, _, _) = _record(
+        tmp_path, [{}, {"cm-btc": _second("cm-btc-metric-gone")}, {"cm-btc": _second("cm-btc-metric-back-changed")}]
+    )
+    assert _at(versions, 1).is_empty()
+    third = _at(versions, 2)
+    assert third["kind"].to_list() == ["restatement"]
+    assert third["series"].to_list() == [f"cm/btc/{GONE_METRIC}"]
+
+
+def test_an_outcome_2_bodys_absences_are_evidence_only_for_the_series_it_does_not_name(tmp_path):
+    rows = _rows(_second("cm-btc-frozen"))
+    frozen_rows = _carrying(rows, FROZEN_METRIC)
+    del rows[frozen_rows[len(frozen_rows) // 2]][FROZEN_METRIC]
+    other = "TxTfrCnt"
+    other_rows = _carrying(rows, other)
+    withdrawn = rows[other_rows[len(other_rows) // 2]]
+    del withdrawn[other]
+    published, (versions, _, _) = _record(tmp_path, [{}, {"cm-btc": _stream(rows)}])
+    check = _fetch(published[1], "cm-btc")["check"]
+    assert check["outcome"] == 2
+    assert {failure[0] for failure in check["metrics_failed"]} == {FROZEN_METRIC}
+    second = _at(versions, 1)
+    assert second["kind"].to_list() == ["retraction"]
+    assert second["series"].to_list() == [f"cm/btc/{other}"]
+    assert second["ts"].item().date() == date.fromisoformat(withdrawn["time"][:10])
+
+
+def test_a_source_level_outcome_2_bodys_absences_are_no_evidence_for_any_series(tmp_path):
+    published, derived = _record(tmp_path, [{}, {"cm-btc": _second("cm-btc-collapse")}])
+    assert _fetch(published[1], "cm-btc")["check"]["metrics_failed"] == [["*", "collapse"]]
+    assert derived[0].filter(pl.col("kind") == "retraction").is_empty()
+    assert _view(derived, _after(published[1])).equals(_view(derived, _after(published[0])))
+
+
+def _gzip(data: bytes) -> bytes:
+    return gzip.compress(data, compresslevel=9, mtime=0)
+
+
+UNPARSEABLE = {
+    "cm-btc-gzip": ("cm-btc", Reply(200, _gzip(body("cm-btc")), headers=[("Content-Encoding", "gzip")])),
+    "cm-btc-html": ("cm-btc", b"<!DOCTYPE html><html><body>Service moved</body></html>"),
+    "fng-empty": ("fng", b""),
+    "bg-sopr-object": ("bg-sopr", b'{"d":"2026-11-01","unixTs":1793491200,"sopr":1.01}'),
+    "cm-btc-array-line": ("cm-btc", body("cm-btc") + b"\n[]"),
+    "fng-data-object": ("fng", b'{"name":"Fear and Greed Index","data":{"value":"29"},"metadata":{"error":null}}'),
+    "cm-btc-not-utf-8": ("cm-btc", b"\xff\xfe" + body("cm-btc")),
+}
+
+
+@pytest.mark.parametrize("case", list(UNPARSEABLE))
+def test_an_unparseable_observation_adds_no_version_and_never_stops_the_derive(tmp_path, case):
+    source_id, served = UNPARSEABLE[case]
+    published, derived = _record(tmp_path, [{}, {source_id: served}, {}])
+    versions, coverage, _ = derived
+    assert _at(versions, 1).filter(pl.col("source") == source_id).is_empty()
+    rows = _at(coverage, 1).filter(pl.col("source") == source_id)
+    assert rows.select("series", "outcome", "evidence").rows() == [("*", 2, False)]
+    assert _view(derived, _after(published[1])).equals(_view(derived, _after(published[0])))
+    assert _at(versions, 2).filter(pl.col("source") == source_id).is_empty()
+
+
+def test_a_key_holding_an_object_in_any_row_is_no_series_of_that_body():
+    rows = _rows(body("cm-btc"))
+    (row,) = [row for row in rows if "FlowInExNtv-status" in row][-1:]
+    row["FlowInExNtv-status"] = {"state": "flash"}
+    parsed = parse_series(CM_BTC, _stream(rows))
+    base = parse_series(CM_BTC, body("cm-btc"))
+    assert "cm/btc/FlowInExNtv-status" in base
+    assert parsed == {series: days for series, days in base.items() if series != "cm/btc/FlowInExNtv-status"}
+
+
+def test_the_coverage_rows_by_value(tmp_path):
+    failing = [Reply(503, b"busy", reason="Service Unavailable")] * 3
+    published, (_, coverage, _) = _record(
+        tmp_path,
+        [{}, {"cm-btc": _second("cm-btc-frozen")}, {"cm-btc": _second("cm-btc-collapse")}, {"fng": failing}],
+    )
+    assert {failure[0] for failure in _fetch(published[1], "cm-btc")["check"]["metrics_failed"]} == {FROZEN_METRIC}
+    assert {failure[0] for failure in _fetch(published[2], "cm-btc")["check"]["metrics_failed"]} == {"*"}
+    expected = {}
+    for position, tick in enumerate(published):
+        for fetch in tick.manifest["fetches"]:
+            source = SOURCE_BY_ID[fetch["source"]]
+            if source.kind not in SERIES_KINDS or fetch["check"]["outcome"] == 1:
+                continue
+            for series, days in parse_series(source, _stored(tick, source.id)).items():
+                expected[(position, source.id, series)] = (min(days), max(days), len(days))
+    unevidenced = {(1, "cm-btc", f"cm/btc/{FROZEN_METRIC}")} | {key for key in expected if key[:2] == (2, "cm-btc")}
+    observed = coverage.filter(pl.col("series") != "*")
+    found = {
+        (row["position"], row["source"], row["series"]): (row["first_day"], row["last_day"], row["days"])
+        for row in observed.iter_rows(named=True)
+    }
+    assert observed.height == len(found)
+    assert found == expected
+    assert {
+        (row["position"], row["source"], row["series"]) for row in observed.filter(~pl.col("evidence")).iter_rows(named=True)
+    } == unevidenced
+    assert coverage.filter(pl.col("series") == "*").select(
+        "position", "source", "series", "outcome", "reason", "evidence"
+    ).rows() == [(3, "fng", "*", 1, "HTTP 503 after 3 attempts", False)]
+
+
+def test_q3_brackets_a_day_first_held_at_the_second_tick(tmp_path):
+    published, (versions, _, _) = _record(tmp_path, [{}, {"cm-btc": _second("cm-btc-next")}])
+    new = _at(versions, 1)
+    assert not new.is_empty()
+    assert set(new["appeared_after"]) == {_ended(published[0], "cm-btc")}
+    assert set(new["ended_at"]) == {_ended(published[1], "cm-btc")}
+    inherited = versions.filter(pl.col("kind") == "inherited")
+    assert inherited["appeared_after"].null_count() == inherited.height > 0
+
+
+def test_q3s_lower_end_passes_over_an_observation_that_names_the_series(tmp_path):
+    published, (versions, _, _) = _record(tmp_path, [{}, {"cm-btc": _second("cm-btc-frozen")}, {"cm-btc": _second("cm-btc-next")}])
+    assert {failure[0] for failure in _fetch(published[1], "cm-btc")["check"]["metrics_failed"]} == {FROZEN_METRIC}
+    series = f"cm/btc/{FROZEN_METRIC}"
+    newest = max(parse_series(CM_BTC, _second("cm-btc-next"))[series])
+    assert newest not in parse_series(CM_BTC, body("cm-btc"))[series]
+    first = _day(versions, series, newest)
+    assert first.select("kind", "position").rows() == [("first_publication", 2)]
+    assert first["appeared_after"].item() == _ended(published[0], "cm-btc")
+
+
+def test_a_change_of_time_format_keeps_every_key(tmp_path):
+    _, (versions, _, _) = _record(tmp_path, [{}, {"cm-btc": _second("cm-btc-time-format")}])
+    assert set(versions["position"]) == {0}
+
+
+def test_a_token_beyond_2_53_survives(tmp_path):
+    restated = _second("mempool-hashrate-restated-big")
+    _, (versions, _, _) = _record(tmp_path, [{}, {"mempool-hashrate": restated}])
+    before = loads_tokens(body("mempool-hashrate"))["hashrates"]
+    after = loads_tokens(restated)["hashrates"]
+    (changed,) = [row["avgHashrate"] for old, row in zip(before, after, strict=True) if old["avgHashrate"] != row["avgHashrate"]]
+    assert int(changed) > 2**53
+    (restatement,) = versions.filter(pl.col("kind") == "restatement").iter_rows(named=True)
+    assert restatement["series"] == "mempool/avgHashrate"
+    assert restatement["token"] == changed
+    assert f'"avgHashrate":{changed}}}'.encode() in restated
+
+
+def test_a_bg_day_leaving_the_window_is_no_retraction(tmp_path):
+    rolled = _second("bg-sopr-rolled")
+    _, (versions, _, _) = _record(tmp_path, [{}, {"bg-sopr": rolled}])
+    dropped = loads_tokens(body("bg-sopr"))[0]["d"]
+    assert dropped not in {row["d"] for row in loads_tokens(rolled)}
+    assert versions.filter(pl.col("kind") == "retraction").is_empty()
+    assert _at(versions, 1).select("series", "kind").rows() == [("bg/sopr", "first_publication")]
+
+
+def _hand_frames(second_evidence: bool, second_days: int) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+    """One version of (S, D) at position 0, and coverage at positions 0 and 1 each holding D in a 10-day range, the
+    second graded 2 with `second_evidence` and holding `second_days` of its 10 days."""
+    ts = datetime(2026, 11, 5, tzinfo=UTC)
+    first, last = date(2026, 11, 1), date(2026, 11, 10)
+    stamps = ("20261112T003700Z", "20261112T033700Z")
+    ended = (datetime(2026, 11, 12, 0, 38, tzinfo=UTC), datetime(2026, 11, 12, 3, 38, tzinfo=UTC))
+    version = {
+        "ts": ts,
+        "provider": "coinmetrics",
+        "source": "cm-btc",
+        "series": "cm/btc/TxCnt",
+        "kind": "inherited",
+        "token": "7",
+        "tick": stamps[0],
+        "position": 0,
+        "ended_at": ended[0],
+        "knowable_at": ended[0],
+        "appeared_after": None,
+        "outcome": 0,
+        "flags": "",
+    }
+    coverage = [
+        {
+            "ts": ended[i] - timedelta(minutes=1),
+            "provider": "coinmetrics",
+            "tick": stamps[i],
+            "position": i,
+            "tick_json_sha256": "0" * 64,
+            "source": "cm-btc",
+            "series": "cm/btc/TxCnt",
+            "outcome": (0, 2)[i],
+            "reason": (None, "TxCnt top")[i],
+            "ended_at": ended[i],
+            "knowable_at": ended[i],
+            "first_day": first,
+            "last_day": last,
+            "days": (10, second_days)[i],
+            "evidence": (True, second_evidence)[i],
+            "flags": "",
+        }
+        for i in range(2)
+    ]
+    return frames([version], coverage, [])
+
+
+@pytest.mark.parametrize(
+    ("second_evidence", "second_days", "seen"),
+    [(False, 9, 0), (True, 9, 1), (False, 10, 1)],
+    ids=["a-hole-and-no-evidence-skipped", "evidence-counts", "unbroken-days-count"],
+)
+def test_last_seen_reads_only_rows_known_to_have_held_the_day(second_evidence, second_days, seen):
+    derived = _hand_frames(second_evidence, second_days)
+    t = datetime(2026, 11, 13, tzinfo=UTC)
+    assert as_of(*derived, t)["last_seen_at"].to_list() == [derived[1]["ended_at"][seen]]
+
+
+def test_every_versions_token_is_its_ticks_body_token(tmp_path):
+    published = standard_record(tmp_path)
+    versions, _, _ = derive_record(tmp_path / "record")
+    by_stamp = {tick.stamp: tick for tick in published}
+    assert set(versions["kind"]) == {"inherited", "first_publication", "restatement", "retraction", "restoration"}
+    parsed = {}
+    for row in versions.iter_rows(named=True):
+        key = (row["tick"], row["source"])
+        if key not in parsed:
+            parsed[key] = parse_series(SOURCE_BY_ID[row["source"]], _stored(by_stamp[row["tick"]], row["source"]))
+        held = parsed[key].get(row["series"], {}).get(row["ts"].date())
+        assert (row["token"] is None) == (row["kind"] == "retraction")
+        assert row["token"] == held
+
+
+def test_changed_values_counts_restatement_retraction_and_backfill_never_a_first_publication():
+    def parsed(name: str) -> dict:
+        return parse_series(CM_BTC, body(name))
+
+    base = parsed("cm-btc")
+    assert changed_values(base, parsed("second/cm-btc-restatement")) == 1
+    assert changed_values(base, parsed("second/cm-btc-retraction")) == 1
+    assert changed_values(parsed("second/cm-btc-gap"), base) == 1
+    assert changed_values(base, parsed("second/cm-btc-next")) == 0
+    assert changed_values(parsed("second/cm-btc-retraction"), base) == 1
+    assert changed_values(base, parsed("second/cm-btc-metric-back-changed")) == 1
+
+
+def test_the_status_companions_are_series_of_their_own():
+    assert "cm/btc/FlowInExNtv-status" in parse_series(CM_BTC, body("cm-btc"))
+
+
+def test_a_json_stream_body_parses_with_or_without_a_trailing_newline():
+    base = body("cm-btc")
+    lines = base.split(b"\n")
+    blank = b"\n".join([*lines[:3], b"", *lines[3:]])
+    assert parse_series(CM_BTC, base) == parse_series(CM_BTC, base + b"\n") == parse_series(CM_BTC, blank)
+
+
+ENDED = datetime(2026, 11, 12, 0, 37, 30, tzinfo=UTC)
+
+
+def _flags(*, offset: float | None = 0.0, synchronised: int = 1, age: float = 30.0, skew: int = 0) -> tuple[str, ...]:
+    manifest = {"clock": {"offset_seconds": offset, "synchronised": synchronised, "prom_age_seconds": age, "error": None}}
+    fetch = {
+        "attempts": [{"ended_at": ENDED.strftime("%Y-%m-%dT%H:%M:%S.%fZ")}],
+        "headers": [["Date", format_datetime(ENDED - timedelta(seconds=skew), usegmt=True)]],
+    }
+    return flags(manifest, fetch)
+
+
+def test_the_flags(tmp_path):
+    assert _flags(synchronised=0) == ("clock-unsynchronised",)
+    assert _flags(offset=11) == ("clock-offset",)
+    assert _flags(offset=-11) == ("clock-offset",)
+    assert _flags(offset=None) == ("clock-offset",)
+    assert _flags(age=601) == ("clock-file-stale",)
+    assert _flags(skew=301) == ("date-skew",)
+    assert _flags(offset=10, age=600, skew=300) == ()
+
+    published = build_record(tmp_path, [(T0, {}), (T0 + 12 * HOUR, {}), (T0 + 11 * HOUR, {})])
+    _, coverage, facts = derive_record(tmp_path / "record")
+    regressed = coverage.with_columns(pl.col("flags").str.split(",").list.contains("stamp-regression").alias("regressed"))
+    assert set(regressed.filter(pl.col("position") == 2)["regressed"]) == {True}
+    assert set(regressed.filter(pl.col("position") < 2)["regressed"]) == {False}
+    assert facts.rows(named=True) == [
+        {"tick": published[1].stamp, "fact": "regression-predecessor", "taught_by": published[2].stamp, "taught_position": 2}
+    ]
+
+
+def test_the_frames_carry_the_specs_columns_in_order():
+    versions, coverage, facts = frames([], [], [])
+    assert versions.columns == list(VERSIONS_SCHEMA) == [
+        "ts", "provider", "source", "series", "kind", "token", "tick", "position",
+        "ended_at", "knowable_at", "appeared_after", "outcome", "flags",
+    ]  # fmt: skip
+    assert coverage.columns == list(COVERAGE_SCHEMA) == [
+        "ts", "provider", "tick", "position", "tick_json_sha256", "source", "series", "outcome", "reason",
+        "ended_at", "knowable_at", "first_day", "last_day", "days", "evidence", "flags",
+    ]  # fmt: skip
+    assert facts.columns == list(LATER_FACTS_SCHEMA) == ["tick", "fact", "taught_by", "taught_position"]
+    assert versions.schema["knowable_at"] == coverage.schema["knowable_at"] == pl.Datetime("us", "UTC")

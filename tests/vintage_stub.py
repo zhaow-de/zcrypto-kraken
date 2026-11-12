@@ -1,6 +1,6 @@
 """The vintage fetch's test doubles: a clock whose time moves only when told, and a fake HTTPS handler that sits under
-urllib's real opener, so the redirect and header paths a test proves are the ones that ship; and the record builder,
-one tick per call over a body per source."""
+urllib's real opener, so the redirect and header paths a test proves are the ones that ship; and the record builders,
+one tick per call over a body per source, and the standard six-tick record."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from cli.vintage.credential import ApiKey
 from cli.vintage.fetch import Deadline
 from cli.vintage.record import Published, record_tick
 from cli.vintage.sources import ASSET_METRICS, SOURCE_BY_ID, SOURCES
-from tests.vintage_fixtures import SENTINEL_KEY, body, dumps_compact, loads_tokens
+from tests.vintage_fixtures import BASE_TICK_START, SENTINEL_KEY, body, dumps_compact, loads_tokens
 
 STALL_SECONDS = 3000.0
 
@@ -193,8 +193,8 @@ def _cm_avaxp() -> bytes:
     return _stream_like(base, [{**row, "asset": "avaxp"} for row in _lines(base)])
 
 
-def _bg_renamed(value_key: str) -> bytes:
-    return dumps_compact([{(value_key if k == "sopr" else k): v for k, v in row.items()} for row in loads_tokens(body("bg-sopr"))])
+def _bg_renamed(value_key: str, data: bytes) -> bytes:
+    return dumps_compact([{(value_key if k == "sopr" else k): v for k, v in row.items()} for row in loads_tokens(data)])
 
 
 @cache
@@ -202,7 +202,7 @@ def _default_bodies() -> tuple[tuple[str, bytes], ...]:
     bodies = {}
     for source in SOURCES:
         if source.id in _BG_VALUE_KEYS:
-            bodies[source.id] = _bg_renamed(_BG_VALUE_KEYS[source.id])
+            bodies[source.id] = _bg_renamed(_BG_VALUE_KEYS[source.id], body("bg-sopr"))
         elif source.id == "cm-avaxp":
             bodies[source.id] = _cm_avaxp()
         elif source.kind == "cm-asset" and source.id not in _OWN_FIXTURE:
@@ -249,3 +249,32 @@ def run_tick(
 
 def build_record(data_dir: Path, plan: Sequence[tuple[datetime, Mapping]]) -> list[Published]:
     return [run_tick(data_dir, at, replies) for at, replies in plan]
+
+
+STANDARD_HOURS = (0, 3, 7, 10, 18, 22)
+# Each leg puts every body edited from the base before the one whose newer days the base would fall behind, so every
+# body grades ok against the last ok body before it but cm-btc-metric-gone and bg-sopr-newest-back, graded 2 by design.
+_STANDARD_LEGS = {
+    "cm-btc": ("cm-btc", "cm-btc-restatement", "cm-btc-retraction", "cm-btc", "cm-btc-metric-gone", "cm-btc-next"),
+    "bg": ("bg-sopr", "bg-sopr-restatement", "bg-sopr-newest-back", "bg-sopr", "bg-sopr-rolled", "bg-sopr-rolled"),
+    "mempool-hashrate": ("mempool-hashrate", "mempool-hashrate-restated-big", *["mempool-hashrate"] * 4),
+    "fng": ("fng", *["fng-next"] * 5),
+}
+
+
+def _leg_body(name: str) -> bytes:
+    return body(name if name in SOURCE_BY_ID else f"second/{name}")
+
+
+def standard_record(data_dir: Path) -> list[Published]:
+    """Six ticks on `BASE_TICK_START`'s date at uneven gaps, each source's body along its leg, every other source its
+    `default_bodies()` body."""
+    plan = []
+    for i, hours in enumerate(STANDARD_HOURS):
+        replies = {source_id: _leg_body(leg[i]) for source_id, leg in _STANDARD_LEGS.items() if source_id != "bg"}
+        bg = _leg_body(_STANDARD_LEGS["bg"][i])
+        for source in SOURCES:
+            if source.kind == "bg":
+                replies[source.id] = _bg_renamed(_BG_VALUE_KEYS[source.id], bg) if source.id in _BG_VALUE_KEYS else bg
+        plan.append((BASE_TICK_START + timedelta(hours=hours), replies))
+    return build_record(data_dir, plan)
