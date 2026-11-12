@@ -1,5 +1,6 @@
 """The vintage fetch's test doubles: a clock whose time moves only when told, and a fake HTTPS handler that sits under
-urllib's real opener, so the redirect and header paths a test proves are the ones that ship."""
+urllib's real opener, so the redirect and header paths a test proves are the ones that ship; and the record builder,
+one tick per call over a body per source."""
 
 from __future__ import annotations
 
@@ -10,8 +11,14 @@ from collections import deque
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from functools import cache
+from pathlib import Path
 
+from cli.vintage.credential import ApiKey
 from cli.vintage.fetch import Deadline
+from cli.vintage.record import Published, record_tick
+from cli.vintage.sources import ASSET_METRICS, SOURCE_BY_ID, SOURCES
+from tests.vintage_fixtures import SENTINEL_KEY, body, dumps_compact, loads_tokens
 
 STALL_SECONDS = 3000.0
 
@@ -152,3 +159,93 @@ class FakeHTTPS(urllib.request.HTTPSHandler):
         if item.stall_open:
             self._clock.stall()
         return _Response(item, url, self._clock)
+
+
+_BG_VALUE_KEYS = {"bg-asopr": "asopr", "bg-sth-sopr": "sthSopr", "bg-lth-sopr": "lthSopr"}
+_OWN_FIXTURE = ("cm-btc", "cm-dot", "cm-avaxc")
+
+
+def _lines(data: bytes) -> list[dict]:
+    return [loads_tokens(line) for line in data.split(b"\n") if line.strip()]
+
+
+def _stream_like(base: bytes, rows: list[dict]) -> bytes:
+    return b"\n".join(dumps_compact(row) for row in rows) + (b"\n" if base.endswith(b"\n") else b"")
+
+
+def _cm_from_btc(asset: str) -> bytes:
+    """`cm-btc`'s rows carrying the asset's pinned metrics alone; a `ReferenceRate*` btc lacks takes `ReferenceRate`'s token."""
+    base = body("cm-btc")
+    rows = []
+    for row in _lines(base):
+        out = {"asset": asset, "time": row["time"]}
+        for metric in ASSET_METRICS[asset]:
+            if metric in row:
+                out[metric] = row[metric]
+            elif metric.startswith("ReferenceRate") and "ReferenceRate" in row:
+                out[metric] = row["ReferenceRate"]
+        rows.append(out)
+    return _stream_like(base, rows)
+
+
+def _cm_avaxp() -> bytes:
+    base = body("cm-avaxc")
+    return _stream_like(base, [{**row, "asset": "avaxp"} for row in _lines(base)])
+
+
+def _bg_renamed(value_key: str) -> bytes:
+    return dumps_compact([{(value_key if k == "sopr" else k): v for k, v in row.items()} for row in loads_tokens(body("bg-sopr"))])
+
+
+@cache
+def _default_bodies() -> tuple[tuple[str, bytes], ...]:
+    bodies = {}
+    for source in SOURCES:
+        if source.id in _BG_VALUE_KEYS:
+            bodies[source.id] = _bg_renamed(_BG_VALUE_KEYS[source.id])
+        elif source.id == "cm-avaxp":
+            bodies[source.id] = _cm_avaxp()
+        elif source.kind == "cm-asset" and source.id not in _OWN_FIXTURE:
+            bodies[source.id] = _cm_from_btc(source.asset)
+        else:
+            bodies[source.id] = body(source.id)
+    return tuple(bodies.items())
+
+
+def default_bodies() -> dict[str, bytes]:
+    """A body per source id, each meeting its check at `BASE_TICK_START`."""
+    return dict(_default_bodies())
+
+
+def _replies(items: Reply | bytes | BaseException | Sequence) -> list[Reply | BaseException]:
+    if isinstance(items, (Reply, bytes, BaseException)):
+        items = [items]
+    return [Reply(200, item) if isinstance(item, bytes) else item for item in items]
+
+
+def run_tick(
+    data_dir: Path,
+    at: datetime,
+    replies: Mapping[str, Reply | bytes | BaseException | Sequence] | None = None,
+    *,
+    key: str | None = SENTINEL_KEY,
+) -> Published:
+    """One tick at `at`, every source answering 200 with its default body but where `replies` names its own."""
+    clock = FakeClock(at)
+    script = {SOURCE_BY_ID[source_id].url: [Reply(200, data)] for source_id, data in default_bodies().items()}
+    for source_id, items in (replies or {}).items():
+        script[SOURCE_BY_ID[source_id].url] = _replies(items)
+    return record_tick(
+        data_dir,
+        key=None if key is None else ApiKey(key),
+        key_reason="no credential" if key is None else None,
+        clock_prom=None,
+        https_handler=FakeHTTPS(script, clock),
+        clock=clock,
+        version="0.0.0",
+        revision="",
+    )
+
+
+def build_record(data_dir: Path, plan: Sequence[tuple[datetime, Mapping]]) -> list[Published]:
+    return [run_tick(data_dir, at, replies) for at, replies in plan]
