@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import base64
 import errno
+import fcntl
 import gzip
 import hashlib
+import io
 import itertools
 import json
 import logging
@@ -12,20 +14,26 @@ import re
 import shutil
 import stat
 from contextlib import contextmanager
-from datetime import timedelta
+from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from typer.testing import CliRunner
 
+import cli.vintage.command as command_module
+import cli.vintage.gauges as gauges_module
 import cli.vintage.record as record_module
 import cli.vintage.storage as storage_module
+from cli.__main__ import app
+from cli.capture.command import LOCKFILE_NAME
 from cli.vintage.chain import Scan, chain, scan
 from cli.vintage.credential import ApiKey
+from cli.vintage.gauges import last_ok_value
 from cli.vintage.record import RecordRefused, record_tick
 from cli.vintage.sources import SOURCE_BY_ID, SOURCES
 from cli.vintage.storage import create_exclusive, publish_tick
-from tests.vintage_fixtures import BASE_TICK_START, SENTINEL_KEY, body
+from tests.vintage_fixtures import BASE_TICK_START, SENTINEL_KEY, body, dumps_compact, loads_tokens
 from tests.vintage_stub import FakeClock, FakeHTTPS, Reply, build_record, default_bodies, run_tick
 
 T0 = BASE_TICK_START
@@ -619,3 +627,384 @@ def test_the_catalog_endpoint_answering_503_all_tick_leaves_every_asset_recorded
     assert _url("cm-catalog") in seen
     assert (catalog["check"]["reason"], len(catalog["attempts"])) == ("tick deadline", 2)
     assert 0 < clock.slept[-1] < 300
+
+
+SAMPLE = re.compile(r'^(zcrypto_vintage_[a-z_]+)\{source="([^"]+)"\} (\S+)$')
+FAMILIES = (
+    "zcrypto_vintage_last_ok_timestamp_seconds",
+    "zcrypto_vintage_outcome",
+    "zcrypto_vintage_body_bytes",
+    "zcrypto_vintage_days_missing",
+    "zcrypto_vintage_changed_values",
+)
+LAST_OK, OUTCOME, BODY_BYTES, DAYS_MISSING, CHANGED = FAMILIES
+WITNESS = re.compile(r"vintage tick published tick=(\S+) tick_json_sha256=([0-9a-f]{64})$")
+SUMMARY = re.compile(
+    r"vintage record complete tick=(\S+) tick_json_sha256=([0-9a-f]{64}) ok=\d+ not_fetched=\d+ failed_checks=\d+ bytes=\d+$"
+)
+BUSY = [Reply(503, b"busy" * n, reason="Service Unavailable") for n in (1, 2, 3)]
+runner = CliRunner()
+
+
+def _vintages(tmp_path: Path) -> Path:
+    return tmp_path / "vintages"
+
+
+def _textfile(tmp_path: Path) -> Path:
+    (tmp_path / "textfile").mkdir(exist_ok=True)
+    return tmp_path / "textfile" / "vintage.prom"
+
+
+def _recorded(tmp_path: Path, at=T0, replies=None, *, key: str | None = SENTINEL_KEY, sources: tuple[str, ...] = ()):
+    """One `run_record` at `at`, every source answering its default body but where `replies` names its own."""
+    script = {}
+    for source_id, items in (replies or {}).items():
+        items = items if isinstance(items, list) else [items]
+        script[_url(source_id)] = [Reply(200, item) if isinstance(item, bytes) else item for item in items]
+    https, clock = _handler(at, script)
+    textfile = _textfile(tmp_path)
+    code = command_module.run_record(
+        _vintages(tmp_path),
+        textfile,
+        tmp_path / "clock-offset.prom",
+        key_stream=None if key is None else io.BytesIO(key.encode() + b"\n"),
+        https_handler=https,
+        clock=clock,
+        version="0.0.0",
+        revision="",
+        sources=sources,
+    )
+    return SimpleNamespace(code=code, https=https, textfile=textfile)
+
+
+def _tick_dir(tmp_path: Path, at) -> Path:
+    stamp = at.strftime("%Y%m%dT%H%M%SZ")
+    return _vintages(tmp_path) / "record" / stamp[:4] / stamp[4:6] / stamp[6:8] / stamp
+
+
+def _prom(textfile: Path) -> dict[str, dict[str, float]]:
+    found: dict[str, dict[str, float]] = {}
+    for line in textfile.read_text().splitlines():
+        if match := SAMPLE.match(line):
+            found.setdefault(match[1], {})[match[2]] = float(match[3])
+    return found
+
+
+def _ended(tick_dir: Path, source_id: str) -> datetime:
+    fetch = next(fetch for fetch in json.loads((tick_dir / "tick.json").read_bytes())["fetches"] if fetch["source"] == source_id)
+    return datetime.fromisoformat(fetch["attempts"][-1]["ended_at"])
+
+
+def _damage(tick_dir: Path, name: str) -> Path:
+    _opened(tick_dir)
+    _replace(tick_dir / name, gzip.compress(b"other bytes", compresslevel=9, mtime=0))
+    os.chmod(tick_dir, 0o555)
+    return tick_dir / name
+
+
+def _cli_args(tmp_path: Path) -> list[str]:
+    return [
+        "vintage",
+        "record",
+        "--data-dir",
+        str(_vintages(tmp_path)),
+        "--textfile",
+        str(_textfile(tmp_path)),
+        "--clock-prom",
+        str(tmp_path / "clock-offset.prom"),
+    ]
+
+
+def test_the_flag_reads_the_key_from_stdin(tmp_path, monkeypatch):
+    handed = []
+
+    def capture(*args, key_stream, **kwargs):
+        handed.append(None if key_stream is None else key_stream.read())
+        return 0
+
+    monkeypatch.setattr(command_module, "run_record", capture)
+    flagged = runner.invoke(app, [*_cli_args(tmp_path), "--bgeometrics-key-stdin"], input=SENTINEL_KEY + "\n")
+    plain = runner.invoke(app, _cli_args(tmp_path), input=SENTINEL_KEY + "\n")
+    assert (flagged.exit_code, plain.exit_code) == (0, 0)
+    assert handed == [(SENTINEL_KEY + "\n").encode(), None]
+
+
+def test_the_source_option_repeats(tmp_path, monkeypatch):
+    handed = []
+
+    def capture(*args, sources, **kwargs):
+        handed.append(sources)
+        return 2
+
+    monkeypatch.setattr(command_module, "run_record", capture)
+    named = runner.invoke(app, [*_cli_args(tmp_path), "--source", "cm-eth", "--source", "fng"])
+    unnamed = runner.invoke(app, _cli_args(tmp_path))
+    assert (named.exit_code, unnamed.exit_code) == (2, 2)
+    assert handed == [("cm-eth", "fng"), ()]
+
+
+def test_a_named_source_is_recorded_while_another_assets_query_answers_503(tmp_path):
+    result = _recorded(tmp_path, replies={"cm-btc": RETRY_300}, sources=("cm-eth",))
+    assert result.code == 1
+    tick_dir = _tick_dir(tmp_path, T0)
+    fetches = {fetch["source"]: fetch for fetch in json.loads((tick_dir / "tick.json").read_bytes())["fetches"]}
+    assert list(fetches) == [source.id for source in SOURCES] and len(fetches) == 18
+    assert fetches["cm-eth"]["check"]["outcome"] == 0
+    assert gzip.decompress((tick_dir / "cm-eth.jsonl.gz").read_bytes()) == default_bodies()["cm-eth"]
+    for source_id, fetch in fetches.items():
+        if source_id != "cm-eth":
+            assert (fetch["check"]["outcome"], fetch["check"]["reason"], fetch["attempts"]) == (1, "not selected", []), source_id
+    assert [seen.url for seen in result.https.seen] == [_url("cm-eth")]
+
+
+def test_an_unknown_source_refuses_before_any_fetch(tmp_path, caplog):
+    caplog.set_level(logging.DEBUG)
+    result = _recorded(tmp_path, sources=("cm-eth", "cm-nope"))
+    assert result.code == 2
+    errors = [record.getMessage() for record in caplog.records if record.levelno == logging.ERROR]
+    assert len(errors) == 1 and "cm-nope" in errors[0]
+    assert result.https.seen == []
+    assert scan(_vintages(tmp_path) / "record") == Scan([], ())
+    assert not result.textfile.exists()
+
+
+def _all_ok(tmp_path, monkeypatch):
+    return None
+
+
+def _textfile_read_only(tmp_path, monkeypatch):
+    if os.geteuid() == 0:
+        pytest.skip("root writes into a read-only directory")
+    os.chmod(_textfile(tmp_path).parent, 0o555)
+
+
+def _body_damaged_earlier(tmp_path, monkeypatch):
+    return _damage(run_tick(_vintages(tmp_path), T0).dir, "fng.json.gz")
+
+
+def _raises(*args, **kwargs):
+    raise RuntimeError("a message the ERROR never carries")
+
+
+def _fetch_all_raises(tmp_path, monkeypatch):
+    monkeypatch.setattr(record_module, "fetch_all", _raises)
+
+
+def _render_prom_raises(tmp_path, monkeypatch):
+    monkeypatch.setattr(command_module, "render_prom", _raises)
+
+
+@pytest.mark.parametrize(
+    ("setup", "replies", "code", "published"),
+    [
+        (_all_ok, {}, 0, True),
+        (_all_ok, {"fng": BUSY}, 1, True),
+        (_textfile_read_only, {}, 1, True),
+        (_body_damaged_earlier, {}, 1, True),
+        (_fetch_all_raises, {}, 2, False),
+        (_render_prom_raises, {}, 1, True),
+    ],
+    ids=["all-ok", "one-503", "textfile-read-only", "body-damaged-earlier", "fetch-all-raises", "render-prom-raises"],
+)
+def test_the_exit_codes(tmp_path, monkeypatch, caplog, setup, replies, code, published):
+    named = setup(tmp_path, monkeypatch)
+    caplog.set_level(logging.DEBUG)
+    result = _recorded(tmp_path, T0 + HOUR, replies)
+    assert result.code == code
+    assert _tick_dir(tmp_path, T0 + HOUR).is_dir() is published
+    errors = [record.getMessage() for record in caplog.records if record.levelno == logging.ERROR]
+    if named is not None:
+        assert any(str(named) in error for error in errors), errors
+    if code == 0:
+        assert errors == []
+    assert not any("a message the ERROR never carries" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    ("index", "code"), [(2, 1), (12, 1), (1, 0), (11, 0)], ids=["slice", "fourth-newest", "neither-1", "neither-11"]
+)
+def test_the_re_verify_reads_the_newest_four_and_the_slice_the_tick_count_names(tmp_path, caplog, index, code):
+    ticks = build_record(_vintages(tmp_path), [(T0 + n * HOUR, {}) for n in range(15)])
+    damaged = _damage(ticks[index].dir, "fng.json.gz")
+    caplog.set_level(logging.DEBUG)
+    result = _recorded(tmp_path, T0 + 15 * HOUR)
+    assert len(scan(_vintages(tmp_path) / "record").ticks) == 16
+    assert result.code == code
+    errors = [record.getMessage() for record in caplog.records if record.levelno == logging.ERROR]
+    if code == 1:
+        assert any(str(damaged) in error for error in errors), errors
+    else:
+        assert errors == []
+
+
+def test_a_held_lock_exits_2_with_the_recorders_own_message(tmp_path, caplog):
+    _vintages(tmp_path).mkdir()
+    fd = os.open(_vintages(tmp_path) / LOCKFILE_NAME, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        caplog.set_level(logging.DEBUG)
+        result = _recorded(tmp_path)
+    finally:
+        os.close(fd)
+    assert result.code == 2
+    errors = [record.getMessage() for record in caplog.records if record.levelno == logging.ERROR]
+    assert len(errors) == 1 and "zcrypto-vintage-record.service" in errors[0]
+    assert "zcrypto-capture" not in errors[0] and "systemctl stop" not in errors[0]
+    assert result.https.seen == [] and not result.textfile.exists()
+
+
+def test_a_failed_source_logs_a_warning_and_a_refusal_an_error(tmp_path, caplog):
+    caplog.set_level(logging.DEBUG)
+    failed = _recorded(tmp_path, replies={"fng": BUSY})
+    assert failed.code == 1
+    warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+    assert len(warnings) == 1 and "fng" in warnings[0] and "1" in warnings[0] and "HTTP 503 after 3 attempts" in warnings[0]
+    assert [record for record in caplog.records if record.levelno >= logging.ERROR] == []
+
+    caplog.clear()
+    refused = _recorded(tmp_path)
+    assert refused.code == 2
+    errors = [record.getMessage() for record in caplog.records if record.levelno == logging.ERROR]
+    assert len(errors) == 1 and "its target exists" in errors[0]
+
+
+def test_the_witness_precedes_the_gauges_and_the_summary_repeats_it(tmp_path, monkeypatch, caplog):
+    caplog.set_level(logging.DEBUG)
+    published = command_module.publish_prom
+    at_publish = []
+
+    def spy(path, text):
+        at_publish.append((path.exists(), list(caplog.messages)))
+        published(path, text)
+
+    monkeypatch.setattr(command_module, "publish_prom", spy)
+    result = _recorded(tmp_path)
+    assert result.code == 0
+    ((existed, before),) = at_publish
+    assert not existed
+    witnesses = [match for message in before if (match := WITNESS.search(message))]
+    assert len(witnesses) == 1
+    summaries = [match for message in caplog.messages if (match := SUMMARY.search(message))]
+    assert len(summaries) == 1
+    assert summaries[0].groups() == witnesses[0].groups()
+    assert witnesses[0][2] == _sha((_tick_dir(tmp_path, T0) / "tick.json").read_bytes())
+
+
+def test_the_prom_is_0644_and_holds_the_five_families(tmp_path):
+    result = _recorded(tmp_path, replies={"cm-btc": BUSY}, key=None)
+    assert _mode(result.textfile) == 0o644
+    text = result.textfile.read_text()
+    for family in FAMILIES:
+        assert re.search(rf"^# HELP {family} \S", text, re.M), family
+        assert f"\n# TYPE {family} gauge\n" in text, family
+    prom = _prom(result.textfile)
+    bg = [source.id for source in SOURCES if source.kind == "bg"]
+    assert len(bg) == 4
+    assert {source_id: prom[OUTCOME][source_id] for source_id in ["cm-btc", *bg, "fng"]} == {
+        "cm-btc": 1,
+        **dict.fromkeys(bg, 1),
+        "fng": 0,
+    }
+    stored = gzip.decompress((_tick_dir(tmp_path, T0) / "cm-btc.jsonl.gz").read_bytes())
+    assert stored == BUSY[-1].body
+    assert prom[BODY_BYTES]["fng"] == len(default_bodies()["fng"])
+    assert prom[BODY_BYTES]["cm-btc"] == len(stored)
+    assert [prom[BODY_BYTES][source_id] for source_id in bg] == [0] * 4
+    assert re.search(r'^zcrypto_vintage_last_ok_timestamp_seconds\{source="bg-sopr"\} \S+$', text, re.M)
+    assert prom[LAST_OK]["bg-sopr"] == 0
+
+
+def test_last_ok_reads_along_the_chain(tmp_path):
+    future = run_tick(_vintages(tmp_path), T0 + 24 * HOUR)
+    result = _recorded(tmp_path, T0)
+    head = _tick_dir(tmp_path, T0)
+    assert json.loads((head / "tick.json").read_bytes())["prev"]["tick"] == future.stamp
+    fng = _prom(result.textfile)[LAST_OK]["fng"]
+    assert fng == last_ok_value(_ended(head, "fng"))
+    assert fng < last_ok_value(_ended(future.dir, "fng"))
+
+
+def test_last_ok_is_capped_at_1957_utc():
+    day = T0.date()
+    late = datetime.combine(day, time(23, 30), UTC)
+    early = datetime.combine(day, time(19, 38), UTC)
+    assert last_ok_value(late) == datetime.combine(day, time(19, 57), UTC).timestamp()
+    assert last_ok_value(early) == early.timestamp()
+
+
+def _mempool_503() -> list[Reply]:
+    return BUSY
+
+
+def _mempool_graded_2() -> bytes:
+    doc = loads_tokens(default_bodies()["mempool-hashrate"])
+    doc["hashrates"] = []
+    return dumps_compact(doc)
+
+
+@pytest.mark.parametrize(("middle", "outcome"), [(_mempool_503, 1), (_mempool_graded_2, 2)], ids=["503", "graded-2"])
+def test_days_missing_is_read_off_the_record(tmp_path, middle, outcome):
+    run_tick(_vintages(tmp_path), T0)
+    between = run_tick(_vintages(tmp_path), T0 + 24 * HOUR, {"mempool-hashrate": middle()})
+    assert _fetches(between)["mempool-hashrate"]["check"]["outcome"] == outcome
+    result = _recorded(tmp_path, T0 + 48 * HOUR)
+    prom = _prom(result.textfile)
+    assert prom[OUTCOME]["mempool-hashrate"] == 0
+    assert prom[DAYS_MISSING]["mempool-hashrate"] == 1
+
+
+def test_changed_values_is_the_two_body_reading(tmp_path):
+    run_tick(_vintages(tmp_path), T0)
+    restated = _recorded(tmp_path, T0 + HOUR, {"cm-btc": body("second/cm-btc-restatement")})
+    assert _prom(restated.textfile)[CHANGED]["cm-btc"] == 1
+    failed = _recorded(tmp_path, T0 + 2 * HOUR, {"cm-btc": BUSY})
+    changed = _prom(failed.textfile)[CHANGED]
+    assert "cm-btc" not in changed and changed["fng"] == 0
+
+
+def test_a_body_that_does_not_parse_leaves_no_changed_values_line(tmp_path, monkeypatch, caplog):
+    run_tick(_vintages(tmp_path), T0)
+    previous = default_bodies()["cm-btc"]
+    parse = gauges_module.parse_series
+
+    def refusing(source, data):
+        if source.id == "cm-btc" and data == previous:
+            raise ValueError("cm-btc refused")
+        return parse(source, data)
+
+    monkeypatch.setattr(gauges_module, "parse_series", refusing)
+    caplog.set_level(logging.DEBUG)
+    result = _recorded(tmp_path, T0 + HOUR, {"cm-btc": body("second/cm-btc-restatement")})
+    assert result.code == 0
+    changed = _prom(result.textfile)[CHANGED]
+    compared = [source.id for source in SOURCES if source.kind in ("fng", "cm-asset", "mempool-hashrate", "bg")]
+    assert len(compared) == 16
+    assert sorted(changed) == sorted(source_id for source_id in compared if source_id != "cm-btc")
+    warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+    assert len(warnings) == 1 and "cm-btc" in warnings[0]
+
+
+def test_a_refusal_writes_no_prom(tmp_path):
+    _tick_dir(tmp_path, T0).mkdir(parents=True)
+    result = _recorded(tmp_path)
+    assert result.code == 2
+    assert result.https.seen == []
+    assert list(result.textfile.parent.iterdir()) == []
+
+
+def test_an_unreadable_tick_json_logs_an_error_and_counts_no_ok_fetch(tmp_path, caplog):
+    a, b, _ = build_record(_vintages(tmp_path), [(T0, {}), (T0 + HOUR, {}), (T0 + 2 * HOUR, {"fng": BUSY})])
+    _opened(b.dir)
+    _unparseable(b.dir)
+    os.chmod(b.dir, 0o555)
+    caplog.set_level(logging.DEBUG)
+    result = _recorded(tmp_path, T0 + 3 * HOUR, {"fng": BUSY})
+    unreadable = str(b.dir / "tick.json")
+    naming = [
+        record.getMessage() for record in caplog.records if record.levelno == logging.ERROR and unreadable in record.getMessage()
+    ]
+    assert naming and all("unreadable manifest" in message for message in naming), naming
+    assert result.code == 1
+    prom = _prom(result.textfile)
+    assert prom[LAST_OK]["fng"] == last_ok_value(_ended(a.dir, "fng"))
+    assert prom[LAST_OK]["cm-btc"] == last_ok_value(_ended(_tick_dir(tmp_path, T0 + 3 * HOUR), "cm-btc"))
