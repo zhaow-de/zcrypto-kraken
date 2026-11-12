@@ -205,7 +205,7 @@ def test_no_shape_holds_a_value():
 
 def test_every_shape_names_a_recorded_body():
     recorded = json.loads(REAL_BODIES.read_text())
-    reals = {source: shape for source, shape in _shapes().items()} | {"fng": _provenance(FNG)}
+    reals = _shapes() | {"fng": _provenance(FNG)}
     for source, holder in reals.items():
         real = holder["real"]
         entry = recorded[real["file"]]
