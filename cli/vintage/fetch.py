@@ -157,11 +157,10 @@ def _open(opener: urllib.request.OpenerDirector, request: urllib.request.Request
 
 
 def _header(headers: list[tuple[str, str]], name: str) -> str | None:
+    """Every field line of `name`, in any case, joined in order with a comma, as RFC 9110 combines repeated lines."""
     wanted = name.lower()
-    for key, value in headers:
-        if key.lower() == wanted:
-            return value
-    return None
+    values = [value for key, value in headers if key.lower() == wanted]
+    return ", ".join(values) if values else None
 
 
 def _endpoint(url: str) -> tuple[str, str, str]:
@@ -219,7 +218,7 @@ def _retry_after(value: str | None, now: datetime) -> float | None:
 def _budget_spent(headers: list[tuple[str, str]]) -> bool:
     for name in _REMAINING:
         value = _header(headers, name)
-        if value is not None and _DECIMAL.fullmatch(value.strip()) and int(value) == 0:
+        if value is not None and any(_DECIMAL.fullmatch(part.strip()) and int(part) == 0 for part in value.split(",")):
             return True
     return False
 

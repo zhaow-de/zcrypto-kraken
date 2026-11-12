@@ -450,6 +450,14 @@ def test_a_remaining_header_at_zero_stops_the_keyed_host(name, value, stops):
     assert len([url for url in _urls(https) if KEYED_HOST in url]) == (1 if stops else 4)
 
 
+def test_a_repeated_remaining_header_is_read_whole():
+    headers = [("X-RateLimit-Remaining-Day", "3"), ("X-RateLimit-Remaining-Day", "0")]
+    exchanges, https, _ = _run({"bg-sopr": [Reply(200, body("bg-sopr"), headers)]})
+    for source_id in KEYED_IDS[1:]:
+        assert exchanges[source_id].not_fetched == "budget exhausted"
+    assert [url for url in _urls(https) if KEYED_HOST in url] == [_url("bg-sopr")]
+
+
 def test_a_keyed_request_follows_no_redirect():
     moved = Reply(302, b"moved", [("Location", "https://elsewhere.example/v1/sopr")], reason="Found")
     exchanges, https, _ = _run({"bg-sopr": [moved]}, sources=[SOURCE_BY_ID["bg-sopr"]])
@@ -571,8 +579,9 @@ def test_an_echoing_reason_phrase_or_header_name_is_redacted():
         (_echo(SENTINEL_FORMS[3]), []),
         (gzip.compress(_echo(SENTINEL_FORMS[0])), [("Content-Encoding", "gzip")]),
         (gzip.compress(_echo(SENTINEL_FORMS[0])), [("content-encoding", "gzip")]),
+        (gzip.compress(gzip.compress(_echo(SENTINEL_FORMS[0]))), [("Content-Encoding", "gzip"), ("Content-Encoding", "gzip")]),
     ],
-    ids=["raw", "json-escaped", "percent-upper", "percent-lower", "gzip", "gzip-lower-case-name"],
+    ids=["raw", "json-escaped", "percent-upper", "percent-lower", "gzip", "gzip-lower-case-name", "gzip-on-two-lines"],
 )
 def test_an_echoing_keyed_answer_is_withheld(served, headers):
     bg_sopr = [SOURCE_BY_ID["bg-sopr"]]
