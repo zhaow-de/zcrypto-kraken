@@ -407,7 +407,7 @@ def check_body(
         newest_day=summary.newest if summary else None,
         rows=summary.rows if summary else None,
         metrics_absent=tuple(metric for metric, rule in failures if rule == "absent"),
-        metrics_failed=tuple(f for f in failures if f[1] != "absent"),
+        metrics_failed=tuple(failures),
         acknowledged=tuple(applied),
         summary=summary,
     )

@@ -35,6 +35,7 @@ from tests.vintage_fixtures import (
     MAX_FILE_BYTES,
     MAX_ROWS,
     SENTINEL_KEY,
+    SYNTHESISED,
     VARIANTS,
     body,
     loads_tokens,
@@ -759,10 +760,24 @@ def test_a_non_identity_encoding_grades_2():
 
 def test_an_absent_pinned_metric_grades_2_and_names_it():
     check = _check("cm-btc", body("second/cm-btc-metric-gone"))
-    assert _graded(check) == (2, (GONE_METRIC,), ())
+    assert _graded(check) == (2, (GONE_METRIC,), ((GONE_METRIC, "absent"),))
     assert GONE_METRIC in check.reason
     block = check_block(check)
-    assert block["metrics_absent"] == [GONE_METRIC] and block["metrics_failed"] == [] and block["outcome"] == 2
+    assert block["metrics_absent"] == [GONE_METRIC] and block["metrics_failed"] == [[GONE_METRIC, "absent"]]
+    assert block["outcome"] == 2
+
+
+def test_every_outcome_2_check_names_a_failed_entry():
+    graded = []
+    for name in ["fng", *SYNTHESISED, *(f"second/{v}" for v in VARIANTS)]:
+        source_id = VARIANTS[name.removeprefix("second/")].base if name.startswith("second/") else name
+        base = body(source_id)
+        for last_ok in (None, summarise(SOURCE_BY_ID[source_id], base)):
+            check = _check(source_id, body(name), last_ok=last_ok, last_ok_tick=EARLIER_TICK)
+            graded.append((name, check.outcome))
+            assert check.outcome in (0, 2), name
+            assert check.outcome == 0 or check.metrics_failed, name
+    assert ("second/cm-btc-metric-gone", 2) in graded and ("cm-btc", 0) in graded
 
 
 def test_a_metric_past_its_freshness_bound_grades_2():
