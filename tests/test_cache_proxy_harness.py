@@ -8,6 +8,7 @@ import importlib.util
 import io
 import json
 import os
+import signal
 import stat
 import subprocess
 import sys
@@ -430,3 +431,43 @@ def test_a_read_inside_a_window_ends_at_the_windows_end(monkeypatch):
     harness._scrape()
     harness._scrape(time.monotonic() + 0.25)
     assert asked[0] == harness.MARGIN and 0 < asked[1] <= 0.25, asked
+
+
+def test_a_terminated_run_still_stops_what_its_case_started(tmp_path):
+    script = f"""
+import importlib.util, sys, time
+spec = importlib.util.spec_from_file_location("harness", {str(REPO / "infra/scripts/cache-proxy-harness.py")!r})
+harness = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(harness)
+harness.unwind_on_signals()
+
+def body(procs):
+    print(procs.start([sys.executable, "-c", "import time; time.sleep(30)", {str(tmp_path)!r}]).pid, flush=True)
+    time.sleep(30)
+
+harness.run_case("start", body)
+"""
+    runner = subprocess.Popen([sys.executable, "-c", script], stdout=subprocess.PIPE, text=True)
+    child = int(runner.stdout.readline())
+    try:
+        runner.terminate()
+        runner.wait(timeout=5)
+        with pytest.raises(ProcessLookupError):
+            os.kill(child, 0)
+    finally:
+        runner.stdout.close()
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(child, signal.SIGKILL)
+
+
+def test_the_run_command_unwinds_on_sigterm_and_sighup(monkeypatch):
+    signals = (signal.SIGTERM, signal.SIGHUP)
+    seen = {}
+    monkeypatch.setattr(harness, "run", lambda *args: seen.update({s: signal.getsignal(s) for s in signals}) or 0)
+    before = {s: signal.getsignal(s) for s in signals}
+    try:
+        assert harness.main(["run", "--rootfs", "tree", "--scratch", "scratch"]) == 0
+    finally:
+        for signum, handler in before.items():
+            signal.signal(signum, handler)
+    assert list(seen.values()) == [harness._exit_on_signal] * 2

@@ -38,6 +38,7 @@ import os
 import re
 import select
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -996,6 +997,16 @@ def _mapping_read(run: Run, rootfs: Path) -> list[str]:
         procs.stop_all()
 
 
+def _exit_on_signal(signum: int, frame: object) -> None:
+    raise SystemExit(128 + signum)
+
+
+def unwind_on_signals() -> None:
+    """SIGTERM and SIGHUP raise SystemExit, so every `finally` stops by PID what the run started."""
+    for signum in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(signum, _exit_on_signal)
+
+
 def _refused(reason: str) -> int:
     print(f"refused: {reason}", file=sys.stderr)
     return 2
@@ -1179,6 +1190,7 @@ def main(argv: list[str] | None = None) -> int:
     peer_command.add_argument("directory", type=Path)
     args = parser.parse_args(argv)
     if args.command == "run":
+        unwind_on_signals()
         cases = args.cases or list(CASES)
         return run_inside(args.rootfs, args.scratch, cases) if args.inside else run(args.rootfs, args.scratch, cases)
     if args.command == "peer":
