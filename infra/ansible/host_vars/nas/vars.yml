@@ -26,8 +26,6 @@ nas_docker: /usr/local/bin/docker
 
 nas_stack_dir: /volume1/docker/zcrypto-archive
 
-# nas_capture_image is ALWAYS a `-compat` (no-AVX) build: the Atom dies on the default build with
-# `Illegal instruction` (T0029). Prove it by RUNNING polars in the pulled image, never by the label.
 # Verify a re-pin off the CONTAINER, never off this file -- the .env task is no_log with diff false,
 # so `--check --diff` reports .env changed with the digest invisible.
 # A deploy that widens the engine's record format converges the NAS BEFORE the engine: gate-export
@@ -51,7 +49,11 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 # `NAS · archive-pull ERROR logs` inside 15 min, `zcrypto-gate-exporter-stale` at 2 h, and the
 # `zcrypto-gate-verify` dead-man stops pinging; the gate metrics freeze and the re-verification
 # rotation is STOPPED until the pin moves.
-nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:c365dae0afee6d83b7f5569ae4d5bc9cc3b36f99c447ae38166ea81e381e83be
+# The pinned image MUST carry `zcrypto vintage` (spec 00158): the entrypoint runs `zcrypto vintage
+# verify --custody` every cycle, so a roll back to an image built before `1dac40132` logs
+# `vintages verify failed` at ERROR on every pass and leaves the custody copy unverified until the
+# pin moves; the raw rsync keeps landing ticks.
+nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:164b135f398ad2b04f1c7a3b9101f5d7657db88a39d0f3059c61c5555bad6c7f
 nas_alloy_image: grafana/alloy@sha256:89a5a320168387336b9ac3c850609c3ba7757eadd4ae5f1d819deb35e9854b18
 
 # Spec 00102 D7: `full` re-hashes every segment each cycle, `incremental` hashes rsync's transfers

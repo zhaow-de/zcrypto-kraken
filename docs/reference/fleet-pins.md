@@ -28,8 +28,8 @@ Reading rules:
 | alloy | zcrypto-valkey2 | `89a5a3201683` — v1.21.2 | 2026-11-06 15:09:53 | `2aa2099af76c` — v1.20.1 |
 | valkey + sentinel | zcrypto-valkey3 | `418652cfb58e` — Valkey 9.1.2, upstream `valkey/valkey` | 2026-09-26 21:28:18 | first pin |
 | alloy | zcrypto-valkey3 | `89a5a3201683` — v1.21.2 | 2026-11-06 15:11:19 | `2aa2099af76c` — v1.20.1 |
-| ops (timers + liquidations) | zcrypto-ops | `1931596fd60b` — revision `9040ca59` | 2026-11-07 16:38:27 | `335e768da985` |
-| archive-pull | nas | `c365dae0afee` — revision `9040ca59`, the `-compat` build | 2026-11-07 19:46:42 | `41cd06b47528` |
+| ops (timers + liquidations) | zcrypto-ops | `b4ba7a72d367` — revision `1dac4013` | 2026-11-12 13:41:39 | `1931596fd60b` |
+| archive-pull | nas | `164b135f398a` — revision `1dac4013`, the `-compat` build | 2026-11-12 13:53:41 | `c365dae0afee` |
 
 **Non-image pins.** `zaccess`'s `caddy` is an apt package the access role installs unversioned, clearing a `dpkg` hold, so it has no row and no rollback operand here; read its installed version off the host: `dpkg-query -W caddy`. Alloy on the hosts that run it as a package is installed at `alloy_deb_version` in `infra/ansible/group_vars/observed/alloy.yml`, held and pinned, and takes an `alloy` row in the table below: its version the host's `dpkg-query -W alloy` read after the converge that installs it, its notes `dpkg hold; pinned at 1001`; the word `held` in the notes, its reason after it, marks a host a wave left behind.
 
@@ -45,22 +45,23 @@ Every host's Alloy runs the fleet's version outside a wave (set: the hosts of th
 
 ## Standing constraints
 
-A constraint lives where it is enforced or executed: the NAS `-compat` rule, the capture canary gate and the engine's preflight gate in `.claude/rules/fleet-deploys.md`; `--pull never` on the ops runners, the liquidations roll after an ops re-pin and the NAS gate-export replay on a container recreate in `.claude/skills/zcrypto-rollout-image/SKILL.md`. Three hold here because no other page states them:
+A constraint lives where it is enforced or executed: the NAS `-compat` rule, the capture canary gate and the engine's preflight gate in `.claude/rules/fleet-deploys.md`; `--pull never` on the ops runners, the liquidations roll after an ops re-pin and the NAS gate-export replay on a container recreate in `.claude/skills/zcrypto-rollout-image/SKILL.md`. These hold here because no other page states them:
 
 - A NAS converge that recreates the archive-pull container replays the whole gate export, and its window is sized from the live figures, not a remembered rate: cycles = `zcrypto_gate_cache_hits + zcrypto_gate_cache_replayed`; seconds per cycle = the last cold export's `zcrypto_gate_export_duration_seconds` over its `zcrypto_gate_cache_replayed` (a cold export is one whose replayed count equals the cycle count); `infra/scripts/grafana-query.py` reads the series. The rate drifts as the journal grows.
 - The engine's TradeVolume re-pin bar is LIFTED. From `2.0.0rc6.dev20260915` a credentialed load resolved fees through an authenticated `POST /0/private/TradeVolume`, which the venue denies INTERMITTENTLY (`EGeneral:Permission denied`), and one denial aborted the whole listing. `nautechsystems/nautilus_trader#5005` falls back to public fees on that denial from `2.0.0rc6.dev20260918` on, and each wheel's page under `docs/reference/adapter-verification/` says whether it still carries the fallback. **The bar returns for a digest whose wheel makes that call without the fallback.**
 - Never restart both capture hosts close together. A single-host re-pin costs ~zero data while the other host is healthy — its gap is healed by splicing the other host, and a healed hour books what the splice leaves unfilled — while a pair restarted together books `both_streams_silent` outright; the splice is why an exit bar reads the full hours after a restart, never the restart hour (set: the capture restarts `deploy-log.jsonl` records since the last refine round closed — a successful row limited to a capture host or to the `capture_host` group, tagged capture or un-tagged — paired across hosts within an hour; count: `infra/scripts/count-list.sh capture-hosts-converged-within-an-hour`).
+- No image built before `1dac40132` carries `zcrypto vintage`. Rolling ops back to one renders the recorder's runner on an image without the command, so its ticks fail, and a UTC day without a tick is a permanent hole in the record (`zcrypto-ops-vintage-not-recorded` at 25 h, the `zcrypto-vintage-record` dead-man); rolling the NAS back to one leaves the custody copy unverified (`host_vars/nas/vars.yml`'s comment on its pin). Such a roll back is weighed against those days, the owner's call.
 
 ## Full digests
 
 The current pins and their operands; older digests are in this file's git log.
 
-- `1931596fd60b` = `sha256:1931596fd60b12c9a208d9def21d4949464440b6a3880e93941cebf588bf10a7` — revision `9040ca59`, AVX; capture on both hosts and ops, and the engine's operand
+- `1931596fd60b` = `sha256:1931596fd60b12c9a208d9def21d4949464440b6a3880e93941cebf588bf10a7` — revision `9040ca59`, AVX; capture on both hosts, and the engine's and the ops' operand
 - `81a8d6c7df63` = `sha256:81a8d6c7df632d133e11e49bc7b14fc19fdd12ba97179131378b8ff3adc499fd` — revision `ff0d3422`, AVX; the engine
 - `f102ca375382` = `sha256:f102ca3753826c6aac0af4a3c98e0c7c5f5faca0b1906ca104ed99715bdefb62` — revision `7ab4fc1a`, AVX; the capture pair's operand
-- `335e768da985` = `sha256:335e768da985e25496a1f15d431f968a34a8d5544bfca351ed8269b05d26e644` — revision `02b74a13`, AVX; the ops' operand
-- `c365dae0afee` = `sha256:c365dae0afee6d83b7f5569ae4d5bc9cc3b36f99c447ae38166ea81e381e83be` — revision `9040ca59`, the `-compat` build; the NAS archive-pull
-- `41cd06b47528` = `sha256:41cd06b47528a4b8b1dc8d5866bc96004971b61856e9e6dcd87a30d4cec705e4` — revision `c2515308`, the `-compat` build; the NAS archive-pull's operand
+- `b4ba7a72d367` = `sha256:b4ba7a72d36774fccf553f52c02c21b2e3ed1c74f871349b4332e9758f2513e6` — revision `1dac4013`, AVX; ops
+- `164b135f398a` = `sha256:164b135f398ad2b04f1c7a3b9101f5d7657db88a39d0f3059c61c5555bad6c7f` — revision `1dac4013`, the `-compat` build; the NAS archive-pull
+- `c365dae0afee` = `sha256:c365dae0afee6d83b7f5569ae4d5bc9cc3b36f99c447ae38166ea81e381e83be` — revision `9040ca59`, the `-compat` build; the NAS archive-pull's operand
 - `418652cfb58e` = `sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd` — Valkey 9.1.2; the cache nodes
 - `76928c0d6b39` = `sha256:76928c0d6b39bdd5f1c15d519cf48c47a6aa18c1dc552f7af1c146d2aa003c14` — HAProxy 3.4.5; the engine host's cache proxy
 - `89a5a3201683` = `sha256:89a5a320168387336b9ac3c850609c3ba7757eadd4ae5f1d819deb35e9854b18` — Alloy v1.21.2; the ops, capture and cache hosts and the NAS
