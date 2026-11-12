@@ -407,19 +407,24 @@ def test_last_seen_and_a_later_fact_wait_for_their_ticks_knowable_time(step):
 
 @pytest.mark.parametrize("step", ["at-the-third", "a-microsecond-before-the-second", "at-the-second"])
 def test_last_seen_stops_at_the_next_version_across_a_clock_regression(step):
-    """Tick 1 ran under a clock ahead, knowable after tick 2: until it is, tick 0's value stands, and tick 2's row,
-    which held tick 1's value, is no last-seen time for it."""
+    """Tick 1 ran under a clock ahead, knowable after tick 2: until it is, tick 0's value stands, tick 2's row, which
+    held tick 1's value, is no last-seen time for it, and tick 1's fact about tick 0 is not shown though a later
+    position is knowable. Tick 2's fact about tick 1 shows with tick 1's value."""
     knowable = (HAND_T0 + HOUR, HAND_T0 + 24 * HOUR, HAND_T0 + 12 * HOUR)
+    regression = {"tick": _stamp(1), "fact": "regression-predecessor", "taught_by": _stamp(2), "taught_position": 2}
     derived = frames(
         [_hand_version(0, "7", knowable[0]), _hand_version(1, "8", knowable[1])],
         [_hand_coverage(position, at) for position, at in enumerate(knowable)],
-        [],
+        [_link_error(about=0, taught_by=1), regression],
     )
     t = {"at-the-third": knowable[2], "a-microsecond-before-the-second": knowable[1] - MICROSECOND, "at-the-second": knowable[1]}[
         step
     ]
-    seen = as_of(*derived, t).select("token", "position", "last_seen_at").rows()
-    assert seen == ([("8", 1, knowable[2])] if step == "at-the-second" else [("7", 0, knowable[0])])
+    seen = as_of(*derived, t).select("token", "position", "last_seen_at", "flags").rows()
+    if step == "at-the-second":
+        assert seen == [("8", 1, knowable[2], "regression-predecessor")]
+    else:
+        assert seen == [("7", 0, knowable[0], "")]
 
 
 def test_every_versions_token_is_its_ticks_body_token(tmp_path):

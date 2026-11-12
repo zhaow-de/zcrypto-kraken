@@ -43,11 +43,12 @@ def as_of(versions: pl.DataFrame, coverage: pl.DataFrame, later_facts: pl.DataFr
     for row in seen.filter(known).sort("position", descending=True, maintain_order=True).iter_rows(named=True):
         holders.setdefault(row["series"], []).append(row)
 
-    known_position = coverage.filter(pl.col("knowable_at") <= t)["position"].max()
+    # A fact is known from its teaching tick's own knowable time, the earliest of that tick's coverage rows, as a
+    # version is from its own: never from a later chain position, which a tick under a clock running ahead can hold.
+    known_ticks = set(coverage.filter(pl.col("knowable_at") <= t)["tick"])
     facts: dict[str, set[str]] = {}
-    if known_position is not None:
-        for fact in later_facts.filter(pl.col("taught_position") <= known_position).iter_rows(named=True):
-            facts.setdefault(fact["tick"], set()).add(fact["fact"])
+    for fact in later_facts.filter(pl.col("taught_by").is_in(known_ticks)).iter_rows(named=True):
+        facts.setdefault(fact["tick"], set()).add(fact["fact"])
 
     rows = []
     for version in current.iter_rows(named=True):
