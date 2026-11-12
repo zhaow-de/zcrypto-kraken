@@ -67,13 +67,14 @@ def verify(
     newest: int | None = None,
     slice_: int | None = None,
     slices: int | None = None,
-    acknowledgments: Sequence[LinkAcknowledgment] = LINK_ACKNOWLEDGMENTS,
+    acknowledgments: Sequence[LinkAcknowledgment] | None = None,
     forks: Sequence[ForkAcknowledgment] | None = None,
     custody: bool = False,
 ) -> VerifyResult:
     """With `newest`, the bodies re-hashed are those of the newest `newest` ticks along the chain and of the slice,
-    which then takes `slice_` and `slices`; without, every body. `forks` None reads `FORK_ACKNOWLEDGMENTS` at call
-    time. `custody` reads the copy as the only custody of a fork's tick off the chain."""
+    which then takes `slice_` and `slices`; without, every body. `acknowledgments` None reads `LINK_ACKNOWLEDGMENTS`
+    and `forks` None reads `FORK_ACKNOWLEDGMENTS`, each at call time. `custody` reads the copy as the only custody of
+    a fork's tick off the chain."""
     if not root.is_dir():
         return VerifyResult(
             [Finding(MISSING_ROOT, str(root), "no such directory")],
@@ -92,7 +93,7 @@ def verify(
     notes: list[Finding] = []
 
     link_entries: dict[str, LinkAcknowledgment] = {}
-    for entry in acknowledgments:
+    for entry in LINK_ACKNOWLEDGMENTS if acknowledgments is None else acknowledgments:
         if entry.successor not in held:
             continue
         link_entries[entry.successor] = entry

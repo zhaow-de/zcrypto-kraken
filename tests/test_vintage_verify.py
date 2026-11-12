@@ -264,7 +264,7 @@ def test_a_link_carrying_the_chaining_error_is_named_and_exits_0(tmp_path):
     assert (_kinds(found.breaks), _kinds(found.notes)) == ([], ["link carries the chaining error"])
 
 
-def test_an_acknowledged_link_exits_0_and_its_mismatch_exits_1(tmp_path):
+def test_an_acknowledged_link_exits_0_and_its_mismatch_exits_1(tmp_path, monkeypatch):
     first, second, predecessor = build_record(tmp_path, [(T0, {}), (T0 + 3 * HOUR, {}), (T0 + 6 * HOUR, {})])
     tick_json = predecessor.dir / "tick.json"
     witnessed = tick_json.read_bytes()
@@ -275,16 +275,24 @@ def test_an_acknowledged_link_exits_0_and_its_mismatch_exits_1(tmp_path):
     root = tmp_path / "record"
     entry = LinkAcknowledgment(successor.stamp, _sha(recorded), _sha(witnessed))
 
+    assert _cli(root).exit_code == 1
     assert _kinds(verify(root).breaks) == ["broken link"]
+    monkeypatch.setattr(verify_module, "LINK_ACKNOWLEDGMENTS", (entry,))
+    result = _cli(root)
+    assert result.exit_code == 0, result.output
+    named = [line for line in _lines(result, "INFO") if "vintage verify acknowledged link " in line]
+    assert len(named) == 1 and str(successor.dir) in named[0], result.output
     found = verify(root, acknowledgments=(entry,))
     assert (_kinds(found.breaks), _kinds(found.notes)) == ([], ["acknowledged link"])
     assert successor.stamp in found.notes[0].path
 
     _replace(tick_json, _edited(predecessor.dir, "other bytes again"))
+    assert _cli(root).exit_code == 1
     assert _kinds(verify(root, acknowledgments=(entry,)).breaks) == ["acknowledged link mismatch"]
 
     _replace(tick_json, witnessed)
     _removed(successor.dir)
+    assert _cli(root).exit_code == 0
     before = verify(root, acknowledgments=(entry,))
     assert (before.breaks, before.notes, before.head) == ([], [], predecessor.stamp)
 
