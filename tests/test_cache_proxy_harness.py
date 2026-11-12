@@ -149,11 +149,11 @@ def test_the_harness_timers_are_the_rendered_templates():
     inter, fastinter, downinter = (_seconds(vote[word]) for word in ("inter", "fastinter", "downinter"))
     check = _seconds(defaults["check"])
     budget = max(min(_seconds(defaults["connect"]), inter), check)
-    fall = int(vote["fall"])
+    fall, rise = int(vote["fall"]), int(vote["rise"])
     assert (harness.INTER, harness.FASTINTER, harness.TIMEOUT_CHECK) == (inter, fastinter, check)
     assert harness.ROUTE_FALL == _seconds(route["inter"]) * int(route["fall"])
     assert harness.ROUTE_RISE == _seconds(route["inter"]) * int(route["rise"])
-    assert harness.SWITCHED_VOTE_RISE == check + downinter + fastinter
+    assert harness.SWITCHED_VOTE_RISE == check + downinter + (rise - 1) * fastinter
     assert harness.VOTE_FALL == inter + fall * budget + (fall - 1) * fastinter
 
 
