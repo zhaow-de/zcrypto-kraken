@@ -78,6 +78,13 @@ def head_sha256(entry: dict) -> str:
     return _sha256(canonical(entry))
 
 
+def _utc_iso(moment: datetime) -> str:
+    """The instant as UTC with microseconds and `Z`; a naive datetime names no instant, so it is refused."""
+    if moment.tzinfo is None or moment.utcoffset() is None:
+        raise ValueError(f"a naive datetime names no instant: {moment.isoformat()}")
+    return moment.astimezone(UTC).strftime(_ISO)
+
+
 def _render_v1(value: object) -> str:
     if value is None:
         return "null"
@@ -86,7 +93,7 @@ def _render_v1(value: object) -> str:
     if isinstance(value, int):
         return str(value)
     if isinstance(value, datetime):
-        return '"' + value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ") + '"'
+        return '"' + _utc_iso(value) + '"'
     if isinstance(value, date):
         return '"' + value.isoformat() + '"'
     if isinstance(value, str):
@@ -403,9 +410,7 @@ def _part(
             "versions": {"hash": frame_hash(versions, FRAME_HASH_VERSION), "rows": versions.height},
         },
         "generation": generation,
-        "later_facts": [
-            {"fact": fact["fact"], "taught_at": fact["taught_at"].strftime(_ISO), "tick": fact["tick"]} for fact in facts
-        ],
+        "later_facts": [{"fact": fact["fact"], "taught_at": _utc_iso(fact["taught_at"]), "tick": fact["tick"]} for fact in facts],
         "position": position,
         "tick": tick.stamp,
         "tick_json_sha256": tick.sha256,

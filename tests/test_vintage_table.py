@@ -14,6 +14,7 @@ import shutil
 import stat
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import polars as pl
 import pytest
@@ -25,7 +26,7 @@ from cli.capture.command import LOCKFILE_NAME
 from cli.config import load_config
 from cli.vintage.asof import as_of
 from cli.vintage.chain import TickFile, chain, scan
-from cli.vintage.derive import DERIVE_GENERATION, HEAD_PINS, DeriveState, derive_record, derive_tick
+from cli.vintage.derive import DERIVE_GENERATION, HEAD_PINS, DeriveState, derive_record, derive_tick, frames
 from cli.vintage.record import Published
 from cli.vintage.sources import SOURCE_BY_ID, LinkAcknowledgment
 from cli.vintage.storage import refuse_table_root
@@ -340,6 +341,28 @@ def test_the_frame_hash(standard, tmp_path, monkeypatch):
     assert expected.head["hash_version"] == 1
     monkeypatch.setattr(table_module, "FRAME_HASH_VERSION", 2)
     assert _read_equal(read_table(table, 1, stamp), expected)
+
+
+def test_the_frame_hash_reads_an_instant_and_refuses_a_naive_datetime():
+    utc = pl.DataFrame({"at": [datetime(2026, 11, 12, 7, 37, 0, 120034, tzinfo=UTC)]}, schema={"at": pl.Datetime("us", "UTC")})
+    tokyo = utc.with_columns(pl.col("at").dt.convert_time_zone("Asia/Tokyo"))
+    assert tokyo["at"][0].utcoffset() == timedelta(hours=9)
+    assert frame_hash(tokyo, 1) == frame_hash(utc, 1)
+    naive = utc.with_columns(pl.col("at").dt.replace_time_zone(None))
+    assert naive["at"][0].tzinfo is None
+    with pytest.raises(ValueError):
+        frame_hash(naive, 1)
+
+
+def test_a_later_facts_taught_at_is_written_in_utc_and_never_naive():
+    tick = TickFile("20261112T073700Z", Path("unused"), None, "0" * 64, None, None)
+    versions, coverage, _ = frames([], [], [])
+    taught = datetime(2026, 11, 12, 16, 40, 0, 5, tzinfo=ZoneInfo("Asia/Tokyo"))
+    fact = {"fact": "link-error", "tick": "20261111T193700Z", "taught_at": taught}
+    part = table_module._part(tick, 1, 1, versions, coverage, [fact])
+    assert part["later_facts"] == [{"fact": "link-error", "taught_at": "2026-11-12T07:40:00.000005Z", "tick": "20261111T193700Z"}]
+    with pytest.raises(ValueError):
+        table_module._part(tick, 1, 1, versions, coverage, [fact | {"taught_at": taught.replace(tzinfo=None)}])
 
 
 def _later_fact_record(data_root: Path) -> list[Published]:
