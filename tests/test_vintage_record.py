@@ -1141,10 +1141,125 @@ VINTAGE_IMPORTS = frozenset(
         "zlib",
     }
 )
+# What cli/vintage/ takes from each module it imports, read from its syntax tree and exact both ways: a name the tree
+# stops taking fails as one it starts to take does, so the pin never admits more than the tree uses.
+VINTAGE_NAMES = {
+    "__future__": frozenset({"annotations"}),
+    "base64": frozenset({"b64encode"}),
+    "cli.capture.command": frozenset({"LOCKFILE_NAME", "single_instance_lock"}),
+    "cli.capture.errors": frozenset({"CaptureError"}),
+    "cli.config": frozenset({"load_config"}),
+    "cli.logging": frozenset({"get_logger"}),
+    "cli.vintage": frozenset({"chain", "derive", "verify"}),
+    "cli.vintage.chain": frozenset({"Chain", "STAMP_RE", "TICK_JSON", "TickFile", "chain", "check_head", "listed", "scan"}),
+    "cli.vintage.credential": frozenset({"ApiKey", "decode_for_scan", "holds_key", "key_forms", "read_key"}),
+    "cli.vintage.derive": frozenset(
+        {
+            "DERIVE_GENERATION",
+            "DeriveError",
+            "DeriveState",
+            "GENERATION_ENTRIES",
+            "KINDS",
+            "LATER_FACTS_SCHEMA",
+            "changed_values",
+            "derive_tick",
+            "frames",
+            "parse_series",
+        }
+    ),
+    "cli.vintage.fetch": frozenset({"Attempt", "Clock", "Exchange", "SystemClock", "build_openers", "fetch_all", "header"}),
+    "cli.vintage.gauges": frozenset({"render_prom"}),
+    "cli.vintage.record": frozenset({"Published", "RECORD_SUBDIR", "RecordRefused", "record_tick"}),
+    "cli.vintage.sources": frozenset(
+        {
+            "BodySummary",
+            "FORK_ACKNOWLEDGMENTS",
+            "ForkAcknowledgment",
+            "LINK_ACKNOWLEDGMENTS",
+            "LinkAcknowledgment",
+            "SOURCES",
+            "SOURCE_BY_ID",
+            "Source",
+            "as_object",
+            "check_block",
+            "check_body",
+            "date_day",
+            "epoch_day",
+            "iso_day",
+            "rows",
+            "summarise",
+        }
+    ),
+    "cli.vintage.storage": frozenset(
+        {
+            "AFTER_RENAME",
+            "create_exclusive",
+            "fsync_dir",
+            "gzip_bytes",
+            "publish_prom",
+            "publish_table_dir",
+            "publish_tick",
+            "refuse_table_root",
+        }
+    ),
+    "cli.vintage.table": frozenset({"DeriveOutcome", "derive_table"}),
+    "collections": frozenset({"Counter"}),
+    "collections.abc": frozenset({"Iterator", "Sequence"}),
+    "compression.zstd": frozenset({"ZstdDecompressor", "ZstdError"}),
+    "contextlib": frozenset({"AbstractContextManager", "ExitStack", "contextmanager", "suppress"}),
+    "dataclasses": frozenset({"asdict", "dataclass", "field"}),
+    "datetime": frozenset({"UTC", "date", "datetime", "time", "timedelta"}),
+    "email.utils": frozenset({"parsedate_to_datetime"}),
+    "errno": frozenset({"EEXIST"}),
+    "gzip": frozenset({"compress", "decompress"}),
+    "hashlib": frozenset({"sha256"}),
+    "http.client": frozenset({"HTTPException"}),
+    "importlib.metadata": frozenset({"version"}),
+    "io": frozenset({"BytesIO"}),
+    "json": frozenset({"JSONDecodeError", "dumps", "loads"}),
+    "logging": frozenset({"ERROR", "INFO"}),
+    "math": frozenset({"inf", "isfinite"}),
+    "os": frozenset(
+        {
+            "O_CREAT",
+            "O_EXCL",
+            "O_RDONLY",
+            "O_WRONLY",
+            "chmod",
+            "close",
+            "environ",
+            "fsync",
+            "mkdir",
+            "open",
+            "rename",
+            "replace",
+            "stat",
+            "write",
+        }
+    ),
+    "pathlib": frozenset({"Path"}),
+    "polars": frozenset(
+        {"Boolean", "DataFrame", "DataType", "Date", "Datetime", "Int64", "String", "col", "concat", "exceptions", "read_parquet"}
+    ),
+    "re": frozenset({"Pattern", "compile"}),
+    "secrets": frozenset({"token_hex"}),
+    "signal": frozenset({"ITIMER_REAL", "SIGALRM", "setitimer", "signal"}),
+    "stat": frozenset({"S_IMODE", "S_ISDIR"}),
+    "sys": frozenset({"stdin"}),
+    "tempfile": frozenset({"mkstemp"}),
+    "time": frozenset({"monotonic", "sleep"}),
+    "traceback": frozenset({"extract_tb"}),
+    "typer": frozenset({"BadParameter", "Exit", "Option", "Typer"}),
+    "typing": frozenset({"BinaryIO", "Optional", "Protocol"}),
+    "urllib.error": frozenset({"HTTPError"}),
+    "urllib.parse": frozenset({"quote", "urlsplit"}),
+    "urllib.request": frozenset({"BaseHandler", "HTTPRedirectHandler", "OpenerDirector", "Request", "build_opener"}),
+    "zlib": frozenset({"MAX_WBITS", "decompressobj", "error"}),
+}
 _FILE_HANDLERS = frozenset(
     {"FileHandler", "BaseRotatingHandler", "RotatingFileHandler", "TimedRotatingFileHandler", "WatchedFileHandler"}
 )
-_RULES = ("rename", "os_open", "mkstemp", "write_parquet", "opening", "fs", "imports", "logging_file")
+_RULES = ("rename", "os_open", "mkstemp", "write_parquet", "opening", "fs", "imports", "logging_file", "names")
 # Each helper is its module's path under the walked root and its function's name: a function of that name elsewhere,
 # a nested package's `storage.py` among them, is no helper.
 _RENAME_HELPERS = frozenset({("storage.py", "publish_tick"), ("storage.py", "publish_prom"), ("storage.py", "publish_table_dir")})
@@ -1167,8 +1282,13 @@ _FORBIDDEN_METHODS = frozenset(
         "copy_into",
         "move",
         "move_into",
+        "save_to_file",
+        "show_graph",
     }
 )
+# Refused with any argument, and when named rather than called: `dict.copy()` and `DataFrame.serialize()` return
+# their bytes, `Path.copy(target)` and `DataFrame.serialize(file)` write a path.
+_ARGUMENT_WRITERS = frozenset({"copy", "serialize"})
 
 
 def _bindings(tree: ast.Module) -> dict[str, set[str]]:
@@ -1253,6 +1373,9 @@ def _is_dial(call: ast.Call, module: str, function: str | None) -> bool:
 
 
 def _opening_breaks(call: ast.Call, names: set[str], module: str, function: str | None) -> bool:
+    if any(name.startswith("typer.") for name in names):
+        given = [keyword.value for keyword in call.keywords if keyword.arg == "mode"]
+        return bool(given) and (not _is_string(given[0]) or bool(set(given[0].value) & set("wax+")))
     if not names and isinstance(call.func, ast.Name) and call.func.id == "open":
         return _mode_breaks(call, 1)
     if names & _OPENERS:
@@ -1271,7 +1394,7 @@ def _fs_breaks(call: ast.Call, names: set[str]) -> bool:
         return True
     if not isinstance(call.func, ast.Attribute):
         return False
-    return _forbidden_name(call.func.attr) or (call.func.attr == "copy" and bool(call.args or call.keywords))
+    return _forbidden_name(call.func.attr) or (call.func.attr in _ARGUMENT_WRITERS and bool(call.args or call.keywords))
 
 
 def _forbidden_name(attr: str) -> bool:
@@ -1292,7 +1415,7 @@ def _past_breaches(expr: ast.expr, module: str, function: str | None):
         yield "write_parquet"
     if "open" in passed:
         yield "opening"
-    if any(_forbidden_name(attr) or attr == "copy" for attr in passed):
+    if any(_forbidden_name(attr) or attr in _ARGUMENT_WRITERS for attr in passed):
         yield "fs"
 
 
@@ -1347,7 +1470,7 @@ def _reference_breaches(expr: ast.Name | ast.Attribute, bound: dict[str, set[str
     builtin_open = not names and isinstance(expr, ast.Name) and expr.id == "open"
     if builtin_open or names & _OPENERS or (attr == "open" and "os.open" not in names):
         yield "opening"
-    by_name = attr is not None and (_forbidden_name(attr) or attr == "copy")
+    by_name = attr is not None and (_forbidden_name(attr) or attr in _ARGUMENT_WRITERS)
     if by_name or any(_in_fs(name) and not _fs_allowed(name) and not _inert(name) for name in names):
         yield "fs"
 
@@ -1370,6 +1493,26 @@ def _imported(node: ast.Import | ast.ImportFrom) -> list[str]:
     if isinstance(node, ast.Import):
         return [alias.name for alias in node.names]
     return ["." * node.level + (node.module or "")]
+
+
+def _taken(tree: ast.Module, bound: dict[str, set[str]]) -> list[tuple[str, str, ast.AST]]:
+    """Each (module, name) the module takes and the node taking it: an `ImportFrom`'s names, and on every outermost
+    dotted chain the first name past the longest imported module it starts with."""
+    modules = VINTAGE_IMPORTS | {
+        name for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom)) for name in _imported(node)
+    }
+    inner = {id(node.value) for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
+    taken = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            taken += [(_imported(node)[0], alias.name, node) for alias in node.names]
+        elif isinstance(node, (ast.Name, ast.Attribute)) and id(node) not in inner:
+            for qualified in sorted(_qualified(node, bound)):
+                starts = [module for module in modules if qualified.startswith(f"{module}.")]
+                if starts:
+                    module = max(starts, key=len)
+                    taken.append((module, qualified.removeprefix(f"{module}.").split(".")[0], node))
+    return sorted(taken, key=lambda item: item[2].lineno)
 
 
 def _breaches(node: ast.AST, bound: dict[str, set[str]], module: str, function: str | None, scope: str | None = None):
@@ -1429,6 +1572,10 @@ def _write_guard(paths, root: Path) -> dict[str, list[str]]:
             if (rule, id(node)) not in seen:
                 seen.add((rule, id(node)))
                 found[rule].append(f"{path}:{node.lineno}")
+        for module, name, node in _taken(tree, _bindings(tree)):
+            if name not in VINTAGE_NAMES.get(module, ()) and ("names", id(node)) not in seen:
+                seen.add(("names", id(node)))
+                found["names"].append(f"{path}:{node.lineno}")
     return found
 
 
@@ -1603,6 +1750,10 @@ def test_every_other_opening_call_reads(tmp_path):
             ("def f(): return gzip.open", True),
             ("def f(p): return p.open", True),
             ("def f(p): p.open.__call__('w')", True),
+            ("import typer", False),
+            ("def f(): return typer.Option(None, mode='rb')", False),
+            ("def f(): return typer.Option(None, mode='w')", True),
+            ("def f(m): return typer.Argument(None, mode=m)", True),
         ],
     )
     assert found["opening"] == expected
@@ -1683,6 +1834,11 @@ def test_no_copy_move_truncate_or_delete(tmp_path):
             ("def f(s, p): s.callback(p.unlink.__call__)", True),
             ("def f(p): p.write_text.__call__('x')", True),
             ("def f(p, q): p.unlink.unlink(q)", True),
+            ("def f(df, p): df.serialize(p)", True),
+            ("def f(df): return df.serialize()", False),
+            ("def f(s, df): s.callback(df.serialize)", True),
+            ("def f(config, p): config.save_to_file(p)", True),
+            ("def f(lf, p): lf.show_graph(output_path=p)", True),
             ("def f(): return shutil", True),
             ("def f(): return os.environ", False),
             ("def f(): return fsync", False),
@@ -1701,6 +1857,14 @@ def test_no_copy_move_truncate_or_delete(tmp_path):
 
 def test_cli_vintage_imports_only_the_pinned_modules(tmp_path):
     assert _real()["imports"] == []
+    imported = {
+        name
+        for path in _modules(VINTAGE_DIR)
+        for node in ast.walk(ast.parse(path.read_text(), filename=str(path)))
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        for name in _imported(node)
+    }
+    assert imported == VINTAGE_IMPORTS
     assert not VINTAGE_IMPORTS & {"subprocess", "zipfile", "bz2", "lzma", "tarfile", "sqlite3", "shelve", "dbm"}
     expected, found = _planted(
         tmp_path,
@@ -1746,6 +1910,50 @@ def test_no_logging_handler_writes_a_file(tmp_path):
     assert found["logging_file"] == expected
 
 
+def test_cli_vintage_takes_only_the_pinned_names(tmp_path):
+    assert _real()["names"] == []
+    taken = defaultdict(set)
+    for path in _modules(VINTAGE_DIR):
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for module, name, _ in _taken(tree, _bindings(tree)):
+            taken[module].add(name)
+    assert {module: frozenset(names) for module, names in taken.items()} == VINTAGE_NAMES
+    writers = {
+        ("cli.capture.command", "SegmentWriter"),
+        ("cli.capture.command", "os"),
+        ("cli.logging", "configure"),
+        ("compression.zstd", "ZstdFile"),
+        ("compression.zstd", "open"),
+        ("polars", "Config"),
+        ("typer", "FileBinaryWrite"),
+        ("typer", "FileTextWrite"),
+        ("urllib.request", "urlretrieve"),
+    }
+    assert {(module, name) for module, name in writers if name in VINTAGE_NAMES.get(module, ())} == set()
+    expected, found = _planted(
+        tmp_path,
+        "verify.py",
+        [
+            ("import compression.zstd, os, polars as pl, typer, urllib.request", False),
+            ("from urllib.request import Request, urlretrieve", True),
+            ("from compression.zstd import ZstdFile", True),
+            ("from cli.logging import configure, get_logger", True),
+            ("from cli.capture.command import SegmentWriter", True),
+            ("from cli.capture.command import os as o", True),
+            ("def f(u, p): urllib.request.urlretrieve(u, p)", True),
+            ("def f(p): compression.zstd.open(p, 'wb')", True),
+            ("def f(p): pl.Config.save_to_file(p)", True),
+            ("def f(p: typer.FileTextWrite): return p", True),
+            ("def f(p: typer.FileBinaryWrite): return p", True),
+            ("def f(p): os.open(p, os.O_RDONLY)", False),
+            ("def f(u): return urllib.request.Request(u)", False),
+            ("def f(): return pl.DataFrame()", False),
+            ("def f(): return typer.Option(None)", False),
+        ],
+    )
+    assert found["names"] == expected
+
+
 def test_the_guard_admits_the_allowed_forms(tmp_path):
     assert _real() == {rule: [] for rule in _RULES}
     _, found = _planted(
@@ -1766,4 +1974,4 @@ def test_the_guard_admits_the_allowed_forms(tmp_path):
             ("def synced(fd): fsync(fd)", False),
         ],
     )
-    assert found == {rule: [] for rule in _RULES}
+    assert {rule: lines for rule, lines in found.items() if rule != "names"} == {rule: [] for rule in _RULES if rule != "names"}
