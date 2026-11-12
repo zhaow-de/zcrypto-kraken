@@ -81,6 +81,8 @@ class DeriveOutcome:
     reason: str | None
     # The sha256 of the head's file bytes as read or written; None with no head.
     head_sha256: str | None = None
+    # Whether the run listed the generation's heads, so `head` is the table's head, or None for an empty table.
+    read: bool = False
 
 
 def canonical(value: object) -> bytes:
@@ -461,9 +463,9 @@ def _rows(previous: dict | None, versions: list[dict], coverage: list[dict]) -> 
 
 
 def _outcome(
-    complete: bool, last: dict | None, last_raw: bytes | None, added: int, at: str | None, reason: str | None
+    complete: bool, read: bool, last: dict | None, last_raw: bytes | None, added: int, at: str | None, reason: str | None
 ) -> DeriveOutcome:
-    return DeriveOutcome(complete, last, added, at, reason, None if last_raw is None else _sha256(last_raw))
+    return DeriveOutcome(complete, last, added, at, reason, None if last_raw is None else _sha256(last_raw), read)
 
 
 def derive_table(
@@ -497,6 +499,7 @@ def derive_table(
     staging = table_root / STAGING_SUBDIR
     last: dict | None = None
     prev_raw: bytes | None = None
+    read = False
     added = 0
     at: str | None = None
     try:
@@ -508,12 +511,13 @@ def derive_table(
         if not gen_dir.exists():
             _open_generation(gen_dir, staging, generation, entries, opened_by, run_second, walls)
         current = _current(gen_dir)
+        read = True
         if current is not None:
             _, prev_raw, last = current
         opened = _loads(_read_bytes(gen_dir / GENERATION_JSON, None), gen_dir / GENERATION_JSON, None)
         if opened.get("entries") != _entries_list(entries):
             reason = f"{GENERATION_JSON}'s entries differ from those the code pins for generation {generation}"
-            return _outcome(False, last, prev_raw, 0, None, reason)
+            return _outcome(False, read, last, prev_raw, 0, None, reason)
         heads: list[dict] = []
         state = DeriveState.empty()
         if current is not None:
@@ -522,7 +526,7 @@ def derive_table(
         order = _record_order(record_root, through)
         taken_off = _taken_off(heads, order)
         if taken_off is not None:
-            return _outcome(False, last, prev_raw, 0, *taken_off)
+            return _outcome(False, read, last, prev_raw, 0, *taken_off)
         entries_sha256 = _sha256(canonical(_entries_list(entries)))
         parts_sha256 = _GENESIS_PARTS if last is None else last["parts_sha256"]
         for position in range(len(heads), len(order)):
@@ -531,10 +535,10 @@ def derive_table(
             predecessor_sha256 = None if position == 0 else order[position - 1].sha256
             link = _link_refusal(tick, predecessor_sha256, entries)
             if link is not None:
-                return _outcome(False, last, prev_raw, added, at, link)
+                return _outcome(False, read, last, prev_raw, added, at, link)
             damage = check_head(tick)
             if damage is not None:
-                return _outcome(False, last, prev_raw, added, at, f"the tick's files do not re-hash: {damage}")
+                return _outcome(False, read, last, prev_raw, added, at, f"the tick's files do not re-hash: {damage}")
             regression = position > 0 and tick.stamp <= order[position - 1].stamp
             found = derive_tick(state, tick, position, tick_dir=tick.dir, regression=regression, entries=entries)
             versions, coverage, _ = frames(*found)
@@ -574,7 +578,7 @@ def derive_table(
             prev_raw, last = head_raw, entry
             added += 1
     except TableError as exc:
-        return _outcome(False, last, prev_raw, added, exc.tick, str(exc))
+        return _outcome(False, read, last, prev_raw, added, exc.tick, str(exc))
     except Exception as exc:
-        return _outcome(False, last, prev_raw, added, at, f"{type(exc).__name__}: {exc}")
-    return _outcome(True, last, prev_raw, added, None, None)
+        return _outcome(False, read, last, prev_raw, added, at, f"{type(exc).__name__}: {exc}")
+    return _outcome(True, read, last, prev_raw, added, None, None)

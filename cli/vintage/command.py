@@ -277,7 +277,7 @@ def run_derive(
     except Exception as exc:
         return _derive_stopped(generation, None, None, _failure(exc))
     written = True
-    if textfile is not None:
+    if textfile is not None and outcome.read:
         seconds = 0 if outcome.head is None else _stamp_seconds(outcome.head["tick"])
         try:
             publish_prom(

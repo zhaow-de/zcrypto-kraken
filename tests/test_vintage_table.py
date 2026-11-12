@@ -794,6 +794,34 @@ def _prom_value(textfile: Path) -> str:
     return value
 
 
+def _through_into_a_held_root(record_root: Path, table: Path, monkeypatch) -> dict:
+    return {"through": _stamps(record_root)[0]}
+
+
+def _no_pinned_entries(record_root: Path, table: Path, monkeypatch) -> dict:
+    monkeypatch.delitem(derive_module.GENERATION_ENTRIES, DERIVE_GENERATION)
+    return {}
+
+
+def _an_unreadable_newest_head(record_root: Path, table: Path, monkeypatch) -> dict:
+    _a_head_not_canonical(table, _stamps(record_root))
+    return {}
+
+
+@pytest.mark.parametrize(
+    "unread", [_through_into_a_held_root, _no_pinned_entries, _an_unreadable_newest_head], ids=lambda f: f.__name__[1:]
+)
+def test_the_gauge_is_left_alone_by_a_run_that_did_not_read_its_table(standard, tmp_path, monkeypatch, unread):
+    _no_config(monkeypatch, tmp_path)
+    textfile, table = tmp_path / "vintage-derive.prom", tmp_path / "versions"
+    assert _run(standard, table, textfile=textfile) == 0
+    written = textfile.read_bytes()
+    assert _prom_value(textfile) != "0"
+    kwargs = unread(standard, table, monkeypatch)
+    assert _run(standard, table, textfile=textfile, **kwargs) == 1
+    assert textfile.read_bytes() == written
+
+
 def test_the_summary_lines_and_the_prom(standard, tmp_path, monkeypatch, caplog):
     _no_config(monkeypatch, tmp_path)
     textfile = tmp_path / "vintage-derive.prom"
