@@ -233,8 +233,8 @@ def record_tick(
     revision: str | None = None,
     only: frozenset[str] | None = None,
 ) -> Published:
-    """Fetches, stores and publishes one tick; raises `RecordRefused`, or whatever else stops it, before the publishing
-    rename returns, and returns once the tick is published."""
+    """Fetches, stores and publishes one tick; `RecordRefused`, and any exception raised before `publish_tick` is
+    called, means nothing was published."""
     clock = SystemClock() if clock is None else clock
     version = importlib.metadata.version("zcrypto") if version is None else version
     revision = os.environ.get("ZCRYPTO_BUILD_REVISION", "") if revision is None else revision
