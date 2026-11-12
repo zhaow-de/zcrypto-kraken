@@ -16,7 +16,7 @@ Reading rules:
 | --- | --- | --- | --- | --- |
 | capture | zcrypto | `1931596fd60b` — revision `9040ca59` | 2026-11-07 16:20:10 | `f102ca375382` |
 | capture | zcrypto-red | `1931596fd60b` — revision `9040ca59` | 2026-11-07 12:51:44 | `f102ca375382` |
-| engine | zcrypto | `1931596fd60b` — revision `9040ca59` | 2026-11-07 16:21:08 | `8c45dcb12041` |
+| engine | zcrypto | `81a8d6c7df63` — revision `ff0d3422` | 2026-11-12 12:12:00 | `1931596fd60b` |
 | cache-proxy | zcrypto | `76928c0d6b39` — HAProxy 3.4.5, upstream `haproxy` | 2026-09-30 18:22:02 | first pin |
 | alloy | zcrypto | `89a5a3201683` — v1.21.2 | 2026-11-06 15:18:54 | `2aa2099af76c` — v1.20.1 |
 | alloy | zcrypto-red | `89a5a3201683` — v1.21.2 | 2026-11-06 15:15:40 | `2aa2099af76c` — v1.20.1 |
@@ -55,8 +55,8 @@ A constraint lives where it is enforced or executed: the NAS `-compat` rule, the
 
 The current pins and their operands; older digests are in this file's git log.
 
-- `1931596fd60b` = `sha256:1931596fd60b12c9a208d9def21d4949464440b6a3880e93941cebf588bf10a7` — revision `9040ca59`, AVX; capture on both hosts, the engine and ops
-- `8c45dcb12041` = `sha256:8c45dcb12041fb2b660d7cc8f1652fdb6c7af68d2f98c9c11171359530d914a9` — revision `8e4a6da6`, AVX; the engine's operand
+- `1931596fd60b` = `sha256:1931596fd60b12c9a208d9def21d4949464440b6a3880e93941cebf588bf10a7` — revision `9040ca59`, AVX; capture on both hosts and ops, and the engine's operand
+- `81a8d6c7df63` = `sha256:81a8d6c7df632d133e11e49bc7b14fc19fdd12ba97179131378b8ff3adc499fd` — revision `ff0d3422`, AVX; the engine
 - `f102ca375382` = `sha256:f102ca3753826c6aac0af4a3c98e0c7c5f5faca0b1906ca104ed99715bdefb62` — revision `7ab4fc1a`, AVX; the capture pair's operand
 - `335e768da985` = `sha256:335e768da985e25496a1f15d431f968a34a8d5544bfca351ed8269b05d26e644` — revision `02b74a13`, AVX; the ops' operand
 - `c365dae0afee` = `sha256:c365dae0afee6d83b7f5569ae4d5bc9cc3b36f99c447ae38166ea81e381e83be` — revision `9040ca59`, the `-compat` build; the NAS archive-pull
