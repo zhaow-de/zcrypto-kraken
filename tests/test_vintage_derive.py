@@ -294,6 +294,34 @@ def test_q3s_lower_end_passes_over_an_observation_that_names_the_series(tmp_path
     assert first["appeared_after"].item() == _ended(published[0], "cm-btc")
 
 
+def test_q3s_lower_end_for_a_restatement_is_the_last_observation_that_held_the_old_token(tmp_path):
+    """`cm-btc-frozen` names the frozen metric, so its absences are no evidence, but the old token it still holds is."""
+    rows = _rows(body("cm-btc"))
+    carrying = _carrying(rows, FROZEN_METRIC)
+    restated = rows[carrying[len(carrying) // 2]]
+    restated[FROZEN_METRIC] += "1"
+    published, (versions, _, _) = _record(tmp_path, [{}, {"cm-btc": _second("cm-btc-frozen")}, {"cm-btc": _stream(rows)}])
+    series, day = f"cm/btc/{FROZEN_METRIC}", date.fromisoformat(restated["time"][:10])
+    assert day in parse_series(CM_BTC, _second("cm-btc-frozen"))[series]
+    restatement = _day(versions, series, day).filter(pl.col("kind") == "restatement")
+    assert restatement["position"].to_list() == [2]
+    assert restatement["appeared_after"].item() == _ended(published[1], "cm-btc")
+
+
+def test_q3s_lower_end_is_null_for_a_day_before_every_earlier_observations_range(tmp_path):
+    """A series' history extended backwards: no earlier observation's range reached the new day, so none is evidence
+    that it was not yet held."""
+    rows = _rows(body("cm-btc"))
+    earlier = rows[_carrying(rows, GONE_METRIC)[0] - 1]
+    earlier[GONE_METRIC] = "1.5"
+    published, (versions, _, _) = _record(tmp_path, [{}, {"cm-btc": _stream(rows)}])
+    assert _fetch(published[1], "cm-btc")["check"]["outcome"] == 0
+    extended = _at(versions, 1)
+    assert extended.select("series", "kind").rows() == [(f"cm/btc/{GONE_METRIC}", "backfill")]
+    assert extended["ts"].item().date() == date.fromisoformat(earlier["time"][:10])
+    assert extended["appeared_after"].to_list() == [None]
+
+
 def test_a_change_of_time_format_keeps_every_key(tmp_path):
     _, (versions, _, _) = _record(tmp_path, [{}, {"cm-btc": _second("cm-btc-time-format")}])
     assert set(versions["position"]) == {0}

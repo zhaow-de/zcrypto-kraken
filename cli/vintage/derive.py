@@ -186,14 +186,31 @@ def flags(manifest: dict, fetch: dict) -> tuple[str, ...]:
 class SeriesState:
     high_water: date | None = None
     carried: bool = False
-    # The newest observation whose absences are evidence for the series: Q3's lower end for whatever it next shows.
-    evidence_ended_at: datetime | None = None
+    # The observations whose absences are evidence for the series, as (ended_at, first day held), oldest first, each
+    # kept only while no later one's range starts at or before its own: the newest whose range starts at or before a
+    # day is the last that was evidence the day was not yet held, there or after its newest day.
+    evidence: list[tuple[datetime, date]] = field(default_factory=list)
 
 
 @dataclass
 class Held:
     token: str
     retracted: bool = False
+    # The `ended_at` of the last observation that held the day, whatever its check: the values a body holds are
+    # evidence even where its absences are not.
+    seen_at: datetime | None = None
+
+
+def _with_evidence(evidence: list[tuple[datetime, date]], ended_at: datetime, first_day: date) -> list[tuple[datetime, date]]:
+    return [entry for entry in evidence if entry[1] < first_day] + [(ended_at, first_day)]
+
+
+def _lower_end(series_state: SeriesState, last: Held | None, day: date) -> datetime | None:
+    """Q3's lower end for a version of (series, day) first seen now: the last earlier observation that held the day,
+    or that was evidence the day was not yet held, whichever is later."""
+    held = None if last is None else last.seen_at
+    absent = next((ended for ended, first in reversed(series_state.evidence) if first <= day), None)
+    return max((moment for moment in (held, absent) if moment is not None), default=None)
 
 
 @dataclass
@@ -297,26 +314,31 @@ def _observe(
         held = state.days.setdefault(series, {})
         is_evidence = _evidence(check, series.rsplit("/", 1)[-1])
         first_day, last_day = min(tokens), max(tokens)
-        appeared_after = series_state.evidence_ended_at
         if not series_state.carried:
             for day, token in sorted(tokens.items()):
                 versions.append(_version(observed, series, day, "inherited", token, None))
-                held[day] = Held(token)
+                held[day] = Held(token, seen_at=observed.ended_at)
         else:
             high = series_state.high_water
             for day, token in sorted(tokens.items()):
-                kind = _kind(held.get(day), token, day, high)
+                last = held.get(day)
+                kind = _kind(last, token, day, high)
                 if kind is not None:
+                    appeared_after = _lower_end(series_state, last, day)
                     versions.append(_version(observed, series, day, kind, token, appeared_after))
                     held[day] = Held(token)
+                held[day].seen_at = observed.ended_at
             if is_evidence:
                 for day, last in sorted(held.items()):
                     if not last.retracted and day not in tokens and first_day <= day <= last_day:
+                        appeared_after = _lower_end(series_state, last, day)
                         versions.append(_version(observed, series, day, "retraction", None, appeared_after))
-                        held[day] = Held(last.token, retracted=True)
+                        held[day] = Held(last.token, retracted=True, seen_at=last.seen_at)
         series_state.carried = True
         series_state.high_water = max(last_day, series_state.high_water or last_day)
-        series_state.evidence_ended_at = observed.ended_at if is_evidence else series_state.evidence_ended_at
+        series_state.evidence = (
+            _with_evidence(series_state.evidence, observed.ended_at, first_day) if is_evidence else series_state.evidence
+        )
         coverage.append(_coverage(observed, series, first_day, last_day, len(tokens), is_evidence))
     return versions, coverage
 
