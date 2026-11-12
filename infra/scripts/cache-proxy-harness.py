@@ -983,12 +983,16 @@ def process_tree(pid: int, proc: Path = Path("/proc")) -> list[int]:
 
 
 def foreign_code(pid: int, root: str, proc: Path = Path("/proc")) -> list[str]:
-    """`foreign_mappings` over `pid` and every process under it. A master whose own maps cannot be read is refused,
-    so the check never passes on nothing read; a process under it gone before its read is left out."""
+    """`foreign_mappings` over `pid` and every process under it. A master whose own maps cannot be read, or read
+    empty, as an exited and unreaped master's do, is refused, so the check never passes on nothing read; a process
+    under it gone before its read is left out."""
     try:
-        foreign = foreign_mappings((proc / str(pid) / "maps").read_text(), root)
+        maps = (proc / str(pid) / "maps").read_text()
     except OSError as exc:
         raise Refused(f"the maps of the once-per-run HAProxy's master, PID {pid}, could not be read: {exc}") from exc
+    if not maps.strip():
+        raise Refused(f"the maps of the once-per-run HAProxy's master, PID {pid}, read empty: it has exited")
+    foreign = foreign_mappings(maps, root)
     for child in process_tree(pid, proc)[1:]:
         with contextlib.suppress(OSError):
             maps = (proc / str(child) / "maps").read_text()
@@ -1008,7 +1012,10 @@ def _mapping_read(run: Run, rootfs: Path) -> list[str]:
         if not _listening(process, time.monotonic() + START):
             print(f"the once-per-run HAProxy did not listen within {START:.2f} s: no mapping read", file=sys.stderr)
             return []
-        return foreign_code(process.pid, str(rootfs))
+        foreign = foreign_code(process.pid, str(rootfs))
+        if process.poll() is not None:
+            raise Refused(f"the once-per-run HAProxy's master, PID {process.pid}, exited during its mapping read")
+        return foreign
     finally:
         procs.stop_all()
 

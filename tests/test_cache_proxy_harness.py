@@ -541,6 +541,10 @@ def test_the_mapping_read_refuses_a_master_whose_maps_it_cannot_read(tmp_path):
     (tmp_path / "21/maps").write_text("7f00-7f10 r-xp 00000000 fd:01 12 /usr/lib/libnss_files.so.2\n")
     with pytest.raises(harness.Refused, match="PID 20"):
         harness.foreign_code(20, "/x/root", proc=tmp_path)
+    # A master that exited after listening is an unreaped zombie, whose maps read empty without an error.
+    (tmp_path / "20/maps").write_text("")
+    with pytest.raises(harness.Refused, match="PID 20"):
+        harness.foreign_code(20, "/x/root", proc=tmp_path)
     (tmp_path / "20/maps").write_text("55d0-55e0 r-xp 00000000 fd:01 11 /x/root/usr/local/sbin/haproxy\n")
     assert harness.foreign_code(20, "/x/root", proc=tmp_path) == ["/usr/lib/libnss_files.so.2"]
 
