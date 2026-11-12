@@ -1258,8 +1258,12 @@ def _planted(tmp_path: Path, name: str, lines: list[tuple[str, bool]]) -> tuple[
     return [f"{path}:{number}" for number, (_, breach) in enumerate(lines, 1) if breach], _write_guard([path])
 
 
+def _modules(root: Path) -> list[Path]:
+    return sorted(root.rglob("*.py"))
+
+
 def _real() -> dict[str, list[str]]:
-    return _write_guard(sorted(VINTAGE_DIR.glob("*.py")))
+    return _write_guard(_modules(VINTAGE_DIR))
 
 
 def test_a_rename_lives_only_in_the_three_helpers(tmp_path):
@@ -1438,6 +1442,10 @@ def test_no_copy_move_truncate_or_delete(tmp_path):
         ],
     )
     assert found["fs"] == expected
+    nested = tmp_path / "tree" / "sub"
+    nested.mkdir(parents=True)
+    (nested / "verify.py").write_text("import os\ndef f(p): os.remove(p)\n")
+    assert _write_guard(_modules(tmp_path / "tree"))["fs"] == [f"{nested / 'verify.py'}:2"]
 
 
 def test_the_guard_admits_the_allowed_forms(tmp_path):
