@@ -125,10 +125,12 @@ def test_a_retry_after_in_the_past_or_unparseable_falls_back(value):
 
 
 @pytest.mark.parametrize(
-    ("source_id", "status", "fixture"), [("cm-btc", 403, "second/cm-btc-403"), ("bg-sopr", 404, "second/bg-sopr-404")]
+    ("source_id", "status", "fixture"),
+    [("cm-btc", 403, "second/cm-btc-403"), ("bg-sopr", 404, "second/bg-sopr-404"), ("fng", 404, None)],
+    ids=["cm-btc-403", "bg-sopr-404", "fng-404"],
 )
 def test_a_403_or_404_is_never_retried(source_id, status, fixture):
-    served = body(fixture)
+    served = body(fixture) if fixture is not None else b"404 page not found"
     exchanges, https, _ = _run({source_id: [Reply(status, served, reason="Refused")]}, sources=[SOURCE_BY_ID[source_id]])
     exchange = exchanges[source_id]
     assert len(exchange.attempts) == 1
