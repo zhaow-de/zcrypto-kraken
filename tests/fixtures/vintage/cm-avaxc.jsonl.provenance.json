@@ -1,0 +1,19 @@
+{
+  "attribution": "Coin Metrics Community Network Data",
+  "committed": "synthesised",
+  "file": "cm-avaxc.jsonl",
+  "how": {
+    "generator": "tests/vintage_fixtures.py",
+    "seed": 158003,
+    "shape": "shapes/cm-avaxc.shape.json"
+  },
+  "licence": "CC BY-NC 4.0",
+  "real": {
+    "bytes": 1295591,
+    "fetched_at": "2026-11-11T16:56:43Z",
+    "file": "cm-avaxc.jsonl",
+    "sha256": "7b3763fcebeb68a8f5459a7ed7d53ad1646deb268764ea45d5a957952d52e5ed",
+    "url": "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics?assets=avaxc&metrics=AdrActCnt,AdrBalCnt,AssetCompletionTime,AssetEODCompletionTime,BlkCnt,CapMVRVCur,CapMrktCurUSD,FeeTotNtv,IssTotNtv,IssTotUSD,PriceBTC,PriceUSD,ROI1yr,ROI30d,SplyCur,TxCnt,TxTfrCnt&frequency=1d&format=json_stream&ignore_forbidden_errors=true&ignore_unsupported_errors=true"
+  },
+  "source": "cm-avaxc"
+}

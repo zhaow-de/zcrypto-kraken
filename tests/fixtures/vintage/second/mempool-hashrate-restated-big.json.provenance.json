@@ -1,0 +1,22 @@
+{
+  "attribution": "mempool.space",
+  "committed": "synthesised",
+  "edit": "one avgHashrate integer past 2^53 changed in its last digit",
+  "file": "second/mempool-hashrate-restated-big.json",
+  "from": "mempool-hashrate.json",
+  "how": {
+    "generator": "tests/vintage_fixtures.py",
+    "seed": 159012,
+    "shape": "shapes/mempool-hashrate.shape.json"
+  },
+  "licence": "none granted",
+  "real": {
+    "bytes": 431799,
+    "fetched_at": "2026-11-11T16:56:50Z",
+    "file": "mempool-hashrate.json",
+    "sha256": "68480a74862c5e28aa5a1fd1b2adfd204f939efe4f3d0ac2087bf06fa0b17d37",
+    "url": "https://mempool.space/api/v1/mining/hashrate/all"
+  },
+  "source": "mempool-hashrate",
+  "synthetic_second_tick": true
+}
