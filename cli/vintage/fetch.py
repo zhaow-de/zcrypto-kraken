@@ -280,7 +280,7 @@ class _Tick:
         response = answer.response if answer is not None and answer.failure is None else None
         return Exchange(
             source=source,
-            request_headers=_request_headers(source, self._user_agent),
+            request_headers=_request_headers(source, self._user_agent) if attempts else [],
             attempts=attempts,
             final_url=None if response is None else (source.url if source.keyed else response.url),
             http_version=None if response is None else response.http_version,

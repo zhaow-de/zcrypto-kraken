@@ -355,11 +355,13 @@ def test_the_tick_deadline():
     for source in SOURCES[5:]:
         assert exchanges[source.id].not_fetched == "tick deadline"
         assert exchanges[source.id].attempts == []
+        assert exchanges[source.id].request_headers == []
 
     busy = [Reply(503, b"busy", [("Retry-After", "300")]) for _ in range(3)]
     exchanges, https, clock = _run({"fng": busy}, sources=SOURCES[4:], tick_deadline=400.0)
     assert exchanges["fng"].not_fetched == "tick deadline"
     assert len(exchanges["fng"].attempts) == 2
+    assert exchanges["fng"].request_headers == [("Accept-Encoding", "identity"), ("User-Agent", USER_AGENT)]
     assert clock.monotonic() == 400.0
     assert _urls(https) == [_url("fng")] * 2
     assert all(exchanges[source.id].not_fetched == "tick deadline" for source in SOURCES[5:])
