@@ -517,7 +517,7 @@ def test_the_run_refuses_when_no_unprivileged_namespace_can_be_made(monkeypatch,
     monkeypatch.setattr(harness.subprocess, "run", unshare)
     monkeypatch.setattr(harness.os, "execv", execv)
     assert harness.run(tmp_path, tmp_path / "scratch", ["parse"]) == 2
-    # Every process a run starts carries its scratch, so a read by command line finds it.
+    # The probe carries the scratch, so a read by command line finds it.
     assert [str((tmp_path / "scratch").resolve()) in argv for argv in asked] == [True]
 
 

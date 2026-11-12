@@ -5,8 +5,7 @@
 global
     log stdout format raw local0 info
     # Without a bound HAProxy sizes itself off the container's file-descriptor limit and its worker is
-    # killed under the 32m cap; the engine's sessions, twelve checks and the route checks' requests
-    # need a handful.
+    # killed under the 32m cap; the engine's sessions and the checks need a handful.
     maxconn 256
     # The container starts as root so this 0600 file is readable, then chroots into the image's empty
     # /var/lib/haproxy and drops to the image's user.
@@ -34,7 +33,6 @@ frontend metrics
     no log
     http-request use-service prometheus-exporter if { path /metrics }
 
-# A new session goes to a node two Sentinels name, and only while that node's route server is up.
 frontend cache
     bind 0.0.0.0:6379
     # The one frontend that logs takes the connection format; set in defaults, `metrics`, which logs nothing,
@@ -44,8 +42,8 @@ frontend cache
     use_backend {{ node.name }} if { nbsrv(votes-{{ node.name }}) ge 2 } { nbsrv({{ node.name }}) ge 1 }
 {% endfor %}
 
-# Each route server's check: 503 while the votes contradict its node -- two for another node, or none
-# for this one -- else 200, so a session is cut on a contradiction and never on one Sentinel's reach.
+# The route servers' checks read this frontend: a session is cut when the votes contradict its node, and
+# never on one Sentinel's reach.
 frontend quorum
     mode http
     bind 127.0.0.1:9105
@@ -75,8 +73,7 @@ backend votes-{{ node.name }}
     server via-{{ sentinel.name }} {{ sentinel.address }}:26379 check inter 2s fastinter 1s downinter 1s fall 2 rise 2 init-state fully-down
 {% endfor %}
 
-# The engine's sessions ride this one server; it falls, and cuts them, after two non-200 answers in a
-# row from the quorum frontend, so one stray loopback failure costs no write.
+# The engine's sessions ride this one server, its `fall 2` so one stray loopback failure costs no write.
 backend {{ node.name }}
     option httpchk GET /{{ node.name }}
     http-check expect status 200

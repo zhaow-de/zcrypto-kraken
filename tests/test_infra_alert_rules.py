@@ -917,11 +917,9 @@ def test_the_cache_proxy_rules_read_the_primary_and_the_write_rule_reads_the_lib
     assert (backend["for"], backend["labels"]["severity"]) == ("2m", "critical")
     expr = backend["data"][0]["model"]["expr"]
     haproxy_cfg = (REPO / "infra/ansible/roles/engine/templates/haproxy.cfg.j2").read_text()
-    # The expression's `>= 1` is the cache frontend's route clause: a node routes only while its route is up.
     route = {int(n) for n in re.findall(r"nbsrv\(\{\{ node\.name \}\}\) ge (\d+)", haproxy_cfg)}
     read = {int(n) for n in re.findall(r'proxy=~"node\[0-9\]\+"\}\) >= (\d+)\)', expr)}
     assert route == read == {1}, (route, read)
-    # The threshold is the cache frontend's votes bound: a node below `nbsrv(votes-...) ge N` routes nothing new.
     bound = {int(n) for n in re.findall(r"nbsrv\(votes-\{\{ node\.name \}\}\) ge (\d+)", haproxy_cfg)}
     assert bound == {2}, bound
     assert backend["data"][1]["model"]["conditions"] == [{"evaluator": {"type": "lt", "params": [bound.pop()]}}]

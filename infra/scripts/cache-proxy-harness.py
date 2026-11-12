@@ -7,24 +7,18 @@ runs on, and the run of the one on the other.
 
 fetch  a network read: pulls `library/haproxy` anonymously from Docker Hub by its index digest, checks the index,
        the linux/amd64 manifest and every layer against their sha256, and applies the layers in order, whiteouts
-       included, into <dir>, which must be absent or empty; no member, hard link or whiteout acts outside it.
-       `.harness-image-digest` is written last, so a tree without it is a fetch that did not finish. The tree is
-       read as a filesystem image only: nothing Python is ever run from inside it.
+       included, into <dir>, which must be absent or empty. `.harness-image-digest` is written last, so a tree
+       without it is a fetch that did not finish.
 run    re-runs itself under `unshare -rn`, an unprivileged user and network namespace, which must list `lo` alone,
        and there runs the tree's HAProxy through the tree's own loader and libraries on the role's render, against
-       scripted Sentinels and Valkeys, case by case: each `--case`, or all nine in order when none is named. Each
+       scripted Sentinels and Valkeys, case by case: each `--case`, or every case in order when none is named. Each
        case prints one PASS or FAIL line with its figures beside their bounds; the last line counts them and names
        `haproxy -vv`'s first line and the image digest's first 12 hex. Each case's render and HAProxy's stdout and
        stderr stay in <dir>/run-<UTC stamp>-<pid>/<case>/, <dir> made when absent; every process the run starts is
-       stopped by its own PID before it exits. `peer` is the run's own scripted Sentinel or Valkey.
+       stopped by its own PID before it exits.
 
-Exit, fetch: 0 fetched, 2 refused (a digest that does not match, a member reaching outside the tree, a whiteout
-naming the directory that holds it, a non-empty <dir>), 1 any other error, printed.
-Exit, run: 0 every case passing; 1 a case failing, or an error outside the cases, the summary then counting the cases
-run; 2 refused (a tree without `.harness-image-digest`; no /usr/bin/unshare, /usr/bin/ip or /usr/sbin/nft; no
-namespace `unshare -rn` can make; an interface besides lo; `ip link set lo up` failing or not returning within
-1.0 s; an entrypoint giving haproxy no flags; a binary not printing PINNED_VERSION; code mapped from outside the
-tree, or a listening master whose maps cannot be read). Never 5, which mutate-probe.sh reads as no test run.
+Exit: 0 fetched, or every case passing; 1 a case failing or any other error, printed, a run's summary still counting
+the cases run; 2 refused, the reason printed; never 5, which mutate-probe.sh reads as no test run.
 """
 
 from __future__ import annotations
@@ -186,11 +180,8 @@ def _apply(blob: bytes, into: Path) -> None:
             written.add(existing)
             if member.isdir():
                 modes[existing] = member.mode & TAR_FILTER_MODE
-        # A directory's mode waits for its members, as `extractall` defers it: one without owner-write would
-        # refuse them. Deepest first, so a parent without owner-search still lets its children be set. A later
-        # member may have replaced the directory or an ancestor with a link, an absolute one included: the mode is
-        # set only where the path still resolves to itself, a directory, and is skipped otherwise, the later member
-        # having removed the directory it was for.
+        # Modes are set after the layer's members, deepest first, as `extractall` defers them, and only on a path a
+        # later member has not replaced with a link.
         for path, mode in sorted(modes.items(), key=lambda item: len(item[0].parts), reverse=True):
             if os.path.realpath(path) == str(path) and path.is_dir(follow_symlinks=False):
                 path.chmod(mode)
@@ -403,9 +394,6 @@ class Procs:
         return _nft(*args)
 
     def stop_all(self) -> None:
-        """Every process stopped on its own, one that will not stop, or a signal's SystemExit during one stop, sparing
-        the rest, then the table deleted, its own failure collected beside theirs; the first failure is raised once all
-        that is done, a SystemExit first."""
         failures: list[BaseException] = []
         try:
             for process in reversed(self.processes):
@@ -989,9 +977,7 @@ def process_tree(pid: int, proc: Path = Path("/proc")) -> list[int]:
 
 
 def foreign_code(pid: int, root: str, proc: Path = Path("/proc")) -> list[str]:
-    """`foreign_mappings` over `pid` and every process under it. A master whose own maps cannot be read, or read
-    empty, as an exited and unreaped master's do, is refused, so the check never passes on nothing read; a process
-    under it gone before its read is left out."""
+    """`foreign_mappings` over `pid` and every process under it; a master whose maps read nothing is refused."""
     try:
         maps = (proc / str(pid) / "maps").read_text()
     except OSError as exc:
@@ -1007,8 +993,7 @@ def foreign_code(pid: int, root: str, proc: Path = Path("/proc")) -> list[str]:
 
 
 def _mapping_read(run: Run, rootfs: Path) -> list[str]:
-    """The code the once-per-run HAProxy maps from outside the tree, over the master and every process under it, the
-    worker that parses the render among them; none read when it exits before it listens."""
+    """The code the once-per-run HAProxy maps from outside the tree; none read when it does not listen in time."""
     directory = run.directory / "maps"
     directory.mkdir()
     (directory / "haproxy.cfg").write_text(run.render)
@@ -1153,9 +1138,9 @@ def peer_command(
 
 
 def peer(role: str, address: str, directory: Path) -> int:
-    """A scripted Sentinel or Valkey on `address`, taking one command per stdin line and answering `ok`: `name <node>`,
-    `refuse` (its listener closed) and `hold <from> <to> <seconds>` (the master reply held on the connections it
-    accepts in that monotonic window). Each connection's open, master reply and close go to its events file."""
+    """A scripted Sentinel or Valkey on `address`, taking `peer_command`'s commands one per stdin line; `hold <from> <to>
+    <seconds>` holds the master reply on connections accepted in that monotonic window. Each connection's open, master
+    reply and close go to its events file."""
     lock = threading.Lock()
     named, held = ["node2"], [(0.0, 0.0, 0.0)]
     refuse, refused = threading.Event(), threading.Event()
