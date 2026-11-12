@@ -1022,3 +1022,21 @@ def test_an_unreadable_tick_json_logs_an_error_and_counts_no_ok_fetch(tmp_path, 
     prom = _prom(result.textfile)
     assert prom[LAST_OK]["fng"] == last_ok_value(_ended(a.dir, "fng"))
     assert prom[LAST_OK]["cm-btc"] == last_ok_value(_ended(_tick_dir(tmp_path, T0 + 3 * HOUR), "cm-btc"))
+
+
+def test_an_outcome_the_manifest_does_not_hold_is_written_as_not_fetched(tmp_path, caplog):
+    published = run_tick(_vintages(tmp_path), T0)
+    record_root = _vintages(tmp_path) / "record"
+    fetches = [fetch for fetch in published.manifest["fetches"] if fetch["source"] != "fng"]
+    for fetch in fetches:
+        if fetch["source"] == "cm-btc":
+            fetch["check"] = {**fetch["check"], "outcome": "0"}
+    published.manifest = {**published.manifest, "fetches": fetches}
+    caplog.set_level(logging.DEBUG)
+    text = gauges_module.render_prom(record_root, chain(scan(record_root).ticks), published, today=T0.date())
+    assert "None" not in text
+    outcomes = {match[2]: match[3] for line in text.splitlines() if (match := SAMPLE.match(line)) and match[1] == OUTCOME}
+    assert (outcomes["fng"], outcomes["cm-btc"], outcomes["cm-eth"]) == ("1", "1", "0")
+    warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+    assert len(warnings) == 2
+    assert [sum(source_id in warning for warning in warnings) for source_id in ("fng", "cm-btc")] == [1, 1]

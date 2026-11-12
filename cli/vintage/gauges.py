@@ -140,7 +140,11 @@ def render_prom(record_root: Path, chain: Chain, published: Published, *, today:
         fetch = fetches.get(source.id)
         ended = _last_ok_ended(chain.order, source.id)
         lines[LAST_OK].append(_sample(LAST_OK, source, 0 if ended is None else last_ok_value(ended)))
-        lines[OUTCOME].append(_sample(OUTCOME, source, _outcome(fetch)))
+        outcome = _outcome(fetch)
+        if outcome is None:
+            log.warning("vintage outcome not in the published tick, written as not fetched source=%s", source.id)
+            outcome = 1
+        lines[OUTCOME].append(_sample(OUTCOME, source, outcome))
         stored = fetch.get("body") if isinstance(fetch, dict) else None
         lines[BODY_BYTES].append(_sample(BODY_BYTES, source, stored["bytes"] if isinstance(stored, dict) else 0))
         lines[DAYS_MISSING].append(_sample(DAYS_MISSING, source, _days_missing(chain.order, source.id, today)))
