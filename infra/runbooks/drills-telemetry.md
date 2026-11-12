@@ -583,7 +583,7 @@ Legs 1 to 3 are their own restore: the store comes back, and a rule in error ret
 
 ### Record
 
-Entry `W1`, its *host* clause opening with `zcrypto-mon`, with each leg's reading: the three Prometheus restarts and the Loki one, each with its duration, whether it spanned an evaluation, and which rules paged or none; the ordered restart paging nothing; leg 4's page times against ≈10 and ≈16 min and their order, the six beside `zcrypto-mon-ingest-dark` named rule by rule; both checks' down and up times from the dead-man service; the shipper-loss page; the textfile rule's clear and re-fire, and whether `Ops · ERROR logs` fired.
+Entry `W1`, its *host* clause opening with `zcrypto-mon`, with each leg's reading: the three Prometheus restarts and the Loki one, each with its duration, whether it spanned an evaluation, and which rules paged or none; the ordered restart paging nothing; leg 4's page times against ≈10 and ≈16 min and their order, the seven beside `zcrypto-mon-ingest-dark` named rule by rule; both checks' down and up times from the dead-man service; the shipper-loss page; the textfile rule's clear and re-fire, and whether `Ops · ERROR logs` fired.
 
 The Prometheus leg decides the blacklist: three silent restarts keep it empty, the entry saying so; one page puts `prometheus$` back into `host_vars/zcrypto-mon/vars.yml` in a pull request of its own, named in the entry's *follow-ups*, the entry naming the rule that paged and the comment beside the variable re-trued in the same change. A page in leg 3 is `fail`: the ordered restart is what `mon-store-restart` and the role's handlers rest on.
 
