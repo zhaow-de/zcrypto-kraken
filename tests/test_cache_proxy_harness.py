@@ -311,6 +311,18 @@ def test_a_deferred_mode_never_follows_a_link_a_later_member_made(tmp_path):
     assert (tree / harness.IMAGE_DIGEST_FILE).read_text().strip() == digest
 
 
+def test_a_recorded_mode_under_a_link_out_of_the_tree_is_never_set(tmp_path):
+    outside = tmp_path / "outside"
+    (outside / "sub").mkdir(parents=True)
+    (outside / "sub").chmod(0o755)
+    tree = tmp_path / "tree"
+    (tree / "own").mkdir(parents=True)
+    (tree / "link").symlink_to(outside)
+    harness._set_modes({tree / "link/sub": 0o700, tree / "own": 0o700})
+    assert stat.S_IMODE((outside / "sub").stat().st_mode) == 0o755
+    assert stat.S_IMODE((tree / "own").stat().st_mode) == 0o700
+
+
 def test_the_fetch_refuses_a_layer_whose_bytes_are_not_its_digest(tmp_path):
     digest, get, _ = _registry(
         _layer({"usr/local/sbin/haproxy": b"pinned"}),
