@@ -322,6 +322,28 @@ def test_a_late_alarm_still_restores_the_handler(monkeypatch):
         signal.signal(signal.SIGALRM, previous)
 
 
+class _CreepingClock(FakeClock):
+    def monotonic(self) -> float:
+        now = super().monotonic()
+        self.advance(1.0)
+        return now
+
+
+def test_the_watchdog_is_armed_with_the_tick_left_its_dial_was_checked_against():
+    clock = _CreepingClock(START)
+    https = FakeHTTPS({_url("fng"): [Reply(200, b"ok")]}, clock)
+    fetch_all(
+        [SOURCE_BY_ID["fng"]],
+        key=None,
+        key_reason=None,
+        openers=build_openers(https),
+        clock=clock,
+        tick_deadline=1.5,
+        user_agent=USER_AGENT,
+    )
+    assert clock.armed == [1.5]
+
+
 def test_the_tick_deadline():
     slow = Reply(200, b"ok", chunk_seconds=5)
     exchanges, https, clock = _run({"fng": [slow]}, tick_deadline=8.0)

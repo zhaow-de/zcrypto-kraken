@@ -300,11 +300,11 @@ class _Tick:
                 return (cut, len(received))
         return None
 
-    def _attempt(self, source: Source, opener: urllib.request.OpenerDirector) -> _Answer:
+    def _attempt(self, source: Source, opener: urllib.request.OpenerDirector, tick_left: float) -> _Answer:
+        """`tick_left` is the value the dial was checked against, so the watchdog is never armed at or below 0."""
         request = _request(source, self._key, self._user_agent)
         started_at = self._clock.now()
         start = self._clock.monotonic()
-        tick_left = self._tick_left()
         limit_seconds = min(BODY_DEADLINE_SECONDS, tick_left)
         cut = "tick deadline" if tick_left <= BODY_DEADLINE_SECONDS else "body deadline"
         received = bytearray()
@@ -388,9 +388,10 @@ class _Tick:
         wait = 0.0
         for number in range(1, MAX_ATTEMPTS + 1):
             self._wait(max(wait, self._spacing(source.host)))
-            if self._tick_left() <= 0:
+            tick_left = self._tick_left()
+            if tick_left <= 0:
                 return self._exchange(source, attempts, None, "tick deadline")
-            answer = self._attempt(source, self._plain_opener)
+            answer = self._attempt(source, self._plain_opener, tick_left)
             attempts.append(answer.attempt)
             if self._final_cut(answer) or not _retryable(answer.status):
                 return self._exchange(source, attempts, answer, self._reading(answer, number, exhausted=False))
@@ -414,9 +415,10 @@ class _Tick:
         wait = 0.0
         while True:
             self._wait(max(wait, self._spacing(source.host)))
-            if self._tick_left() <= 0:
+            tick_left = self._tick_left()
+            if tick_left <= 0:
                 return self._exchange(source, attempts, None, "tick deadline")
-            answer = self._attempt(source, self._keyed_opener)
+            answer = self._attempt(source, self._keyed_opener, tick_left)
             attempts.append(answer.attempt)
             if answer.response is not None and _budget_spent(answer.raw_headers):
                 self._keyed_stop = "budget exhausted"
