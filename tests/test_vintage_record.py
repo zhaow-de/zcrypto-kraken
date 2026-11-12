@@ -6,6 +6,7 @@ import errno
 import fcntl
 import gzip
 import hashlib
+import importlib
 import io
 import itertools
 import json
@@ -18,7 +19,7 @@ from collections import defaultdict
 from contextlib import contextmanager
 from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
@@ -1230,6 +1231,52 @@ def _call_breaches(call: ast.Call, bound: dict[str, set[str]], module: str, func
         yield "fs"
 
 
+_MISSING = object()
+
+
+def _inert(name: str) -> bool:
+    """Whether the FS-module name is a constant, a mapping or an exception class, which writes nothing when named."""
+    value: object = importlib.import_module(name.split(".")[0])
+    for part in name.split(".")[1:]:
+        value = getattr(value, part, _MISSING)
+    if value is _MISSING or isinstance(value, ModuleType):
+        return False
+    return not callable(value) or (isinstance(value, type) and issubclass(value, BaseException))
+
+
+def _reference_breaches(expr: ast.Name | ast.Attribute, bound: dict[str, set[str]], module: str, function: str | None):
+    """A guarded callable named but not called: the call its receiver makes is not in the tree, so it breaks the rule
+    that holds those calls unless it sits where that rule admits every call."""
+    names = _qualified(expr, bound)
+    attr = expr.attr if isinstance(expr, ast.Attribute) else None
+    place = (module, function)
+    if (names & _RENAMES or attr in ("replace", "rename")) and place not in _RENAME_HELPERS:
+        yield "rename"
+    if "os.open" in names:
+        yield "os_open"
+    if "tempfile.mkstemp" in names and place != _MKSTEMP_HELPER:
+        yield "mkstemp"
+    if (attr == "write_parquet" or any(name.endswith(".write_parquet") for name in names)) and place != _PART_WRITER:
+        yield "write_parquet"
+    builtin_open = not names and isinstance(expr, ast.Name) and expr.id == "open"
+    if builtin_open or names & _OPENERS or (attr == "open" and "os.open" not in names):
+        yield "opening"
+    by_name = attr is not None and (
+        attr in _FORBIDDEN_METHODS or attr == "copy" or (attr.startswith(("write_", "sink_")) and attr != "write_parquet")
+    )
+    if by_name or any(_in_fs(name) and not _fs_allowed(name) and not _inert(name) for name in names):
+        yield "fs"
+
+
+def _chain_root_breaches(expr: ast.expr, bound: dict[str, set[str]], module: str, function: str | None, owner: str | None):
+    """The breaches beneath a dotted name, which is resolved whole: those of whatever its chain of attributes starts
+    from when that is not a bare name."""
+    while isinstance(expr, ast.Attribute):
+        expr = expr.value
+    if not isinstance(expr, ast.Name):
+        yield from _breaches(expr, bound, module, function, owner)
+
+
 def _breaches(node: ast.AST, bound: dict[str, set[str]], module: str, function: str | None, owner: str | None = None):
     """Each (rule, node) breach under `node`, a call's place being the innermost function whose body holds it; a class
     body is no function's, and a method is named `<class>.<name>`, so neither is a helper."""
@@ -1251,6 +1298,15 @@ def _breaches(node: ast.AST, bound: dict[str, set[str]], module: str, function: 
     if isinstance(node, ast.Call):
         for rule in _call_breaches(node, bound, module, function):
             yield rule, node
+        yield from _chain_root_breaches(node.func, bound, module, function, owner)
+        for child in (*node.args, *node.keywords):
+            yield from _breaches(child, bound, module, function, owner)
+        return
+    if isinstance(node, (ast.Name, ast.Attribute)) and isinstance(node.ctx, ast.Load):
+        for rule in _reference_breaches(node, bound, module, function):
+            yield rule, node
+        yield from _chain_root_breaches(node, bound, module, function, owner)
+        return
     for child in ast.iter_child_nodes(node):
         yield from _breaches(child, bound, module, function, owner)
 
@@ -1307,6 +1363,10 @@ def test_a_rename_lives_only_in_the_three_helpers(tmp_path):
             ("def f(s): s.replace('a', 'b')", False),
             ("def f(b): b.replace(b'/', b'\\\\/')", False),
             ("def f(t): t.replace(microsecond=0)", False),
+            ("def publish_tick(s, a): s.callback(os.rename, a, a)", False),
+            ("def f(s, a): s.callback(os.rename, a, a)", True),
+            ("def f(): return swap", True),
+            ("def f(s, p, q): s.callback(p.replace, q)", True),
         ],
     )
     assert found["rename"] == expected
@@ -1337,6 +1397,9 @@ def test_every_os_open_is_an_exclusive_create_or_a_read(tmp_path):
             ("def f(p): os.open(p)", True),
             ("def f(p): o.open(p, o.O_WRONLY)", True),
             ("def f(p): raw(p, os.O_RDWR)", True),
+            ("def f(s, p): s.callback(os.open, p, os.O_RDWR)", True),
+            ("def f(): return raw", True),
+            ("def f(): return os.O_RDONLY", False),
         ],
     )
     assert found["os_open"] == expected
@@ -1353,6 +1416,8 @@ def test_mkstemp_lives_only_in_the_prom_helper(tmp_path):
             ("def publish_prom(p): tempfile.mkstemp(dir=p)", False),
             ("def publish_tick(p): tempfile.mkstemp(dir=p)", True),
             ("def f(): mkstemp()", True),
+            ("def publish_prom(s): s.callback(mkstemp)", False),
+            ("def f(s): s.callback(tempfile.mkstemp)", True),
         ],
     )
     assert found["mkstemp"] == expected
@@ -1372,6 +1437,8 @@ def test_write_parquet_lives_only_in_the_part_writer(tmp_path):
             ("def write_part(df, b): df.write_parquet(b)", False),
             ("def f(df, p): df.write_parquet(p)", True),
             ("def f(df, p): DataFrame.write_parquet(df, p)", True),
+            ("def write_part(s, df, b): s.callback(df.write_parquet, b)", False),
+            ("def f(s, df, p): s.callback(df.write_parquet, p)", True),
         ],
     )
     assert found["write_parquet"] == expected
@@ -1409,6 +1476,9 @@ def test_every_other_opening_call_reads(tmp_path):
             ("def f(o, r): o.open(r, timeout=30)", True),
             ("def _dial(p): return p.open('w')", True),
             ("def _dial(p): return p.open(mode='wb')", True),
+            ("def f(ps): return map(open, ps)", True),
+            ("def f(): return gzip.open", True),
+            ("def f(p): return p.open", True),
         ],
     )
     assert found["opening"] == expected
@@ -1437,7 +1507,7 @@ def test_no_copy_move_truncate_or_delete(tmp_path):
         tmp_path,
         "verify.py",
         [
-            ("import io, os, pathlib, shutil, tempfile", False),
+            ("import contextlib, gzip, io, os, pathlib, shutil, tempfile", False),
             ("import os as o", False),
             ("from os import fsync", False),
             ("from os.path import join", False),
@@ -1474,6 +1544,19 @@ def test_no_copy_move_truncate_or_delete(tmp_path):
             ("def f(p, q): p.move_into(q)", True),
             ("def f(df, p): df.write_csv(p)", True),
             ("def f(df, p): df.sink_parquet(p)", True),
+            ("def f(p): contextlib.ExitStack().callback(os.unlink, p)", True),
+            ("def f(ps): return map(os.remove, ps)", True),
+            ("m = shutil.move", True),
+            ("def f(s, p): s.callback(p.unlink)", True),
+            ("def f(s, d): s.callback(d.copy)", True),
+            ("def f(df): return df.write_csv", True),
+            ("def f(): return shutil", True),
+            ("def f(): return os.environ", False),
+            ("def f(): return fsync", False),
+            ("def f(): return Path", False),
+            ("def f(b):", False),
+            ("    try: return b()", False),
+            ("    except (EOFError, gzip.BadGzipFile): return None", False),
         ],
     )
     assert found["fs"] == expected
