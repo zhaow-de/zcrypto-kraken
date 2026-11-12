@@ -20,7 +20,7 @@ from pathlib import Path
 from cli.logging import get_logger
 from cli.vintage.chain import TICK_JSON, TickFile, chain, check_head, scan
 from cli.vintage.credential import ApiKey
-from cli.vintage.fetch import Attempt, Clock, Exchange, SystemClock, _header, build_openers, fetch_all
+from cli.vintage.fetch import Attempt, Clock, Exchange, SystemClock, build_openers, fetch_all, header
 from cli.vintage.sources import SOURCES, BodySummary, Source, check_block, check_body, summarise
 from cli.vintage.storage import create_exclusive, fsync_dir, gzip_bytes, publish_tick
 
@@ -150,7 +150,7 @@ def _check(exchange: Exchange, stamp: str, order: tuple[TickFile, ...]) -> dict:
     check = check_body(
         exchange.source,
         exchange.body,
-        content_encoding=_header(exchange.headers, "Content-Encoding"),
+        content_encoding=header(exchange.headers, "Content-Encoding"),
         tick=stamp,
         last_ok=None if last_ok is None else last_ok[1],
         last_ok_tick=None if last_ok is None else last_ok[0],

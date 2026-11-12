@@ -19,7 +19,7 @@ from urllib.error import URLError
 import pytest
 
 from cli.vintage.credential import ApiKey, decode_for_scan, holds_key, key_forms, read_key
-from cli.vintage.fetch import REDACTED_AUTHORIZATION, Deadline, SystemClock, build_openers, fetch_all
+from cli.vintage.fetch import REDACTED_AUTHORIZATION, Deadline, SystemClock, build_openers, fetch_all, header
 from cli.vintage.sources import SOURCE_BY_ID, SOURCES
 from tests.vintage_fixtures import SENTINEL_FORMS, SENTINEL_KEY, body
 from tests.vintage_stub import FakeClock, FakeHTTPS, Reply
@@ -507,6 +507,12 @@ def test_a_remaining_header_at_zero_stops_a_keyed_retry():
     for source_id in KEYED_IDS[1:]:
         assert exchanges[source_id].not_fetched == "budget exhausted"
     assert _urls(https) == [_url("bg-sopr")]
+
+
+def test_header_joins_every_field_line_of_a_name_in_any_case():
+    pairs = [("Content-Encoding", "gzip"), ("Date", "Thu, 12 Nov 2026 07:37:03 GMT"), ("content-encoding", "br")]
+    assert header(pairs, "CONTENT-ENCODING") == "gzip, br"
+    assert header(pairs, "Retry-After") is None
 
 
 def test_a_repeated_remaining_header_is_read_whole():

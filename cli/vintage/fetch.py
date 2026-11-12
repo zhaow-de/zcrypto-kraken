@@ -158,7 +158,7 @@ def _open(opener: urllib.request.OpenerDirector, request: urllib.request.Request
     return _Response(response.status, response.reason, _pairs(response.headers), version, response.geturl(), response)
 
 
-def _header(headers: list[tuple[str, str]], name: str) -> str | None:
+def header(headers: list[tuple[str, str]], name: str) -> str | None:
     """Every field line of `name`, in any case, joined in order with a comma, as RFC 9110 combines repeated lines."""
     wanted = name.lower()
     values = [value for key, value in headers if key.lower() == wanted]
@@ -226,7 +226,7 @@ def _retry_after(value: str | None, now: datetime) -> float | None:
 
 def _budget_spent(headers: list[tuple[str, str]]) -> bool:
     for name in _REMAINING:
-        value = _header(headers, name)
+        value = header(headers, name)
         if value is not None and any(_header_int(part) == 0 for part in value.split(",")):
             return True
     return False
@@ -351,7 +351,7 @@ class _Tick:
     def _scan(self, answer: _Answer) -> None:
         """Every field the server's text fills, read for the key before anything of the answer is kept."""
         response = answer.response
-        encoding = _header(answer.raw_headers, "Content-Encoding")
+        encoding = header(answer.raw_headers, "Content-Encoding")
         response.reason = _redacted(response.reason, self._forms)
         response.headers = [(_redacted(name, self._forms), _redacted(value, self._forms)) for name, value in response.headers]
         if answer.body is None:
@@ -409,7 +409,7 @@ class _Tick:
         return self._exchange(source, attempts, answer, self._reading(answer, len(attempts), exhausted=True))
 
     def _retry_wait(self, answer: _Answer, number: int) -> float:
-        after = _retry_after(_header(answer.raw_headers, "Retry-After"), self._clock.now())
+        after = _retry_after(header(answer.raw_headers, "Retry-After"), self._clock.now())
         return after if after is not None else BACKOFF_SECONDS[number - 1]
 
     def keyed(self, source: Source) -> Exchange:
