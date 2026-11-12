@@ -358,6 +358,20 @@ def test_read_table_refuses_what_does_not_hash(standard, tmp_path, damage):
         read_table(table, 1, _head_file(table, stamps[-1]))
 
 
+def test_a_head_its_successor_does_not_name_is_refused_as_a_broken_link(standard, tmp_path):
+    table = tmp_path / "versions"
+    assert _derive(standard, table).complete
+    stamps = _stamps(standard)
+    path = _head_file(table, stamps[2])
+    entry = json.loads(path.read_bytes())
+    entry["prev"] = _sha(entry["prev"].encode())
+    _rewrite(path, _canonical(entry))
+    with pytest.raises(TableError) as refused:
+        read_table(table, 1, stamps[-1])
+    assert refused.value.tick == stamps[2]
+    assert "does not hash to the prev its successor records" in str(refused.value)
+
+
 @pytest.mark.parametrize("damage", [_a_head_missing_field, _a_head_not_canonical, _a_head_rows], ids=lambda f: f.__name__[3:])
 def test_a_derive_extends_only_a_head_that_is_its_own_bytes(standard, tmp_path, damage):
     stamps = _stamps(standard)
