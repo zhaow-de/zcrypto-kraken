@@ -51,6 +51,11 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 # `NAS · archive-pull ERROR logs` inside 15 min, `zcrypto-gate-exporter-stale` at 2 h, and the
 # `zcrypto-gate-verify` dead-man stops pinging; the gate metrics freeze and the re-verification
 # rotation is STOPPED until the pin moves.
+# The pinned image MUST carry `zcrypto vintage` (spec 00158): the entrypoint's vintages block runs
+# `zcrypto vintage verify --custody` every cycle, so a roll back to an image built before
+# `1dac40132` -- the archive-pull row's operand `c365dae0afee` among them -- logs `vintages verify
+# failed` at ERROR on every pass and leaves the custody copy unverified until the pin moves; the
+# raw rsync keeps landing ticks.
 nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:164b135f398ad2b04f1c7a3b9101f5d7657db88a39d0f3059c61c5555bad6c7f
 nas_alloy_image: grafana/alloy@sha256:89a5a320168387336b9ac3c850609c3ba7757eadd4ae5f1d819deb35e9854b18
 
