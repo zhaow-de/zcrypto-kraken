@@ -260,6 +260,20 @@ def test_echoes_in_every_form_are_not_stored(tmp_path, caplog, capsys, served, h
     assert fetch["attempts"][0]["withheld"] == {"reason": reading, "bytes": len(served)}
 
 
+@pytest.mark.parametrize(
+    ("served", "encoding", "raised"),
+    [
+        (zlib.compress(BG_SOPR) + zlib.compress(_echo(SENTINEL_FORMS[0])), "deflate", AssertionError),
+        (_raw_deflate(BG_SOPR) + _echo(SENTINEL_FORMS[0]), "deflate", AssertionError),
+        (_echo(SENTINEL_FORMS[0]), "br", KeyError),
+    ],
+    ids=["deflate-two-streams", "deflate-raw-trailing", "br"],
+)
+def test_the_walk_refuses_a_stored_body_it_cannot_decode_whole(served, encoding, raised):
+    with pytest.raises(raised):
+        _decoded(served, encoding)
+
+
 def test_an_unscannable_body_is_not_stored(tmp_path, caplog, capsys):
     caplog.set_level(logging.DEBUG)
     served = _echo(SENTINEL_FORMS[0])
