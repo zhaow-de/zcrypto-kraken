@@ -615,6 +615,17 @@ class Bench:
                 return None
             time.sleep(STEP)
 
+    def votes_up(self) -> None:
+        """Waits for node2's three votes, so a fault lands on a vote at full health."""
+        votes = [f"votes-node2/via-{node['name']}" for node in NODES]
+
+        def all_up() -> bool:
+            metrics = _scrape()
+            return all(_state(metrics, "haproxy_server_status", vote) == "UP" for vote in votes)
+
+        if _wait(all_up, self.started + START) is None:
+            raise CaseFailed(f"node2's three votes not UP within {START:.2f} s of the start")
+
     def two_sessions(self) -> list[socket.socket]:
         for _ in range(2):
             if self.routed(time.monotonic() + START) is None:
@@ -728,6 +739,7 @@ def _case_no_early_route(bench: Bench) -> str:
 def _case_vote_down_cuts_nothing(bench: Bench) -> str:
     bench.peers()
     bench.start_haproxy()
+    bench.votes_up()
     sessions = bench.two_sessions()
     silenced = bench.silence("node3")
     fell = routed = None
@@ -755,6 +767,7 @@ def _case_vote_down_cuts_nothing(bench: Bench) -> str:
 def _case_one_vote_cuts_nothing(bench: Bench) -> str:
     bench.peers()
     bench.start_haproxy()
+    bench.votes_up()
     sessions = bench.two_sessions()
     bench.tell("node1", "refuse")
     faulted = bench.silence("node3")
@@ -792,6 +805,7 @@ def _case_one_vote_cuts_nothing(bench: Bench) -> str:
 def _case_no_vote_cuts(bench: Bench) -> str:
     bench.peers()
     bench.start_haproxy()
+    bench.votes_up()
     sessions = bench.two_sessions()
     silenced = [bench.silence(node["name"]) for node in NODES][-1]
     bound = VOTE_FALL + ROUTE_FALL + MARGIN
@@ -808,6 +822,7 @@ def _case_no_vote_cuts(bench: Bench) -> str:
 def _case_contradiction_cuts_both(bench: Bench) -> str:
     bench.peers()
     bench.start_haproxy()
+    bench.votes_up()
     sessions = bench.two_sessions()
     first = bench.tell("node1", "name node1")
     time.sleep(max(first + 1.0 - time.monotonic(), 0))
@@ -838,8 +853,7 @@ def _case_contradiction_cuts_both(bench: Bench) -> str:
 def _case_lost_syn_inside_budget(bench: Bench) -> str:
     bench.peers()
     bench.start_haproxy()
-    if _wait(_up(VOTE_VIA_NODE3), bench.started + START) is None:
-        raise CaseFailed(f"{VOTE_VIA_NODE3} not UP within {START:.2f} s of the start")
+    bench.votes_up()
     failures = "haproxy_server_check_failures_total"
     before = _number(_scrape(), failures, VOTE_VIA_NODE3)
     table = bench.procs.table
@@ -855,6 +869,8 @@ def _case_lost_syn_inside_budget(bench: Bench) -> str:
             not_up = now - began
         longest = max(longest, _number(metrics, "haproxy_server_check_duration_seconds", VOTE_VIA_NODE3))
         time.sleep(STEP)
+    # Sentinel 3's SYNs pass the rule from here, so its counter and its set are read at one count.
+    bench.procs.nft("insert", "rule", "inet", table, "first_syn", f"ip daddr {_address('node3')} accept")
     chain = json.loads(bench.procs.nft("-j", "list", "chain", "inet", table, "first_syn"))["nftables"]
     dropped = next(e["counter"]["packets"] for item in chain if "rule" in item for e in item["rule"]["expr"] if "counter" in e)
     listed = json.loads(bench.procs.nft("-j", "list", "set", "inet", table, "seen"))["nftables"]
@@ -875,8 +891,7 @@ def _case_lost_syn_inside_budget(bench: Bench) -> str:
 def _case_stalled_exchange(bench: Bench) -> str:
     bench.peers()
     bench.start_haproxy()
-    if _wait(_up(VOTE_VIA_NODE3), bench.started + START) is None:
-        raise CaseFailed(f"{VOTE_VIA_NODE3} not UP within {START:.2f} s of the start")
+    bench.votes_up()
     failures, status = "haproxy_server_check_failures_total", "haproxy_server_check_status"
     for attempt in range(1, 4):
         before = _number(_scrape(), failures, VOTE_VIA_NODE3)
