@@ -41,7 +41,6 @@ _REMAINING = ("X-RateLimit-Remaining-Day", "X-RateLimit-Remaining-Hour")
 # A server's integer header is read only up to this many digits: past Python's 4,300-digit limit `int()` raises.
 _MAX_DIGITS = 18
 _DECIMAL = re.compile(rf"[0-9]{{1,{_MAX_DIGITS}}}")
-_DELTA_SECONDS = re.compile(rf"-?[0-9]{{1,{_MAX_DIGITS}}}")
 _HTTP_VERSIONS = {10: "HTTP/1.0", 11: "HTTP/1.1"}
 _UNCOUNTED = frozenset({"tick deadline", "credential echoed", "credential unscannable"})
 _SCAN = frozenset({"credential echoed", "credential unscannable"})
@@ -200,14 +199,21 @@ def _failure_kind(exc: BaseException) -> str:
     return "transport error"
 
 
+def _header_int(text: str) -> int | None:
+    """A server header's text as an integer, None unless its stripped text is all digits; the stripped text is the
+    one converted, since `strip()` removes characters `int()` refuses."""
+    digits = text.strip()
+    return int(digits) if _DECIMAL.fullmatch(digits) else None
+
+
 def _retry_after(value: str | None, now: datetime) -> float | None:
     """The seconds a `Retry-After` asks for, capped; None where it is absent, unreadable, zero or past."""
     if value is None:
         return None
-    text = value.strip()
-    if _DELTA_SECONDS.fullmatch(text):
-        delta = int(text)
+    delta = _header_int(value)
+    if delta is not None:
         return min(delta, RETRY_AFTER_CAP_SECONDS) if delta > 0 else None
+    text = value.strip()
     try:
         when = parsedate_to_datetime(text)
     except TypeError, ValueError, IndexError, OverflowError:
@@ -221,7 +227,7 @@ def _retry_after(value: str | None, now: datetime) -> float | None:
 def _budget_spent(headers: list[tuple[str, str]]) -> bool:
     for name in _REMAINING:
         value = _header(headers, name)
-        if value is not None and any(_DECIMAL.fullmatch(part.strip()) and int(part) == 0 for part in value.split(",")):
+        if value is not None and any(_header_int(part) == 0 for part in value.split(",")):
             return True
     return False
 
