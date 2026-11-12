@@ -34,6 +34,8 @@ class Chain:
     other_heads: tuple[TickFile, ...]
     off_chain: tuple[TickFile, ...]
     unreadable: tuple[TickFile, ...]
+    # Every tick named by another's `prev`, which only a hand edit closes: the head is then the newest stamp.
+    cycle: bool = False
 
 
 def _children(path: Path, pattern: re.Pattern) -> list[Path]:
@@ -104,14 +106,14 @@ def chain(ticks: list[TickFile]) -> Chain:
     named = {stamp for tick in ticks if tick.manifest is not None and (stamp := _prev_stamp(tick)) is not None}
     continued = {found.stamp for t in unreadable if (found := _continuation(t, ticks, named)) is not None}
     candidates = [tick for tick in ticks if tick.stamp not in named and tick.stamp not in continued]
-    if not candidates:
-        return Chain((), None, (), tuple(ticks), unreadable)
-    head = max(candidates, key=lambda tick: tick.stamp)
+    if not ticks:
+        return Chain((), None, (), (), ())
+    head = max(candidates, key=lambda tick: tick.stamp) if candidates else ticks[-1]
     other_heads = tuple(tick for tick in candidates if tick is not head)
     order = tuple(_walk(head, ticks, named))
     placed = {tick.stamp for tick in order + other_heads}
     off_chain = tuple(tick for tick in ticks if tick.stamp not in placed)
-    return Chain(order, head, other_heads, off_chain, unreadable)
+    return Chain(order, head, other_heads, off_chain, unreadable, cycle=not candidates)
 
 
 def _listed(manifest: dict) -> dict[str, str]:

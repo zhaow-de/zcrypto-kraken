@@ -247,6 +247,8 @@ def record_tick(
     ticks = scan(data_dir / RECORD_SUBDIR)
     found = chain(ticks)
     head = found.head
+    if found.cycle:
+        log.error("vintage chain has no head: every tick's stamp is named by a prev, a cycle; took the newest head=%s", head.stamp)
     if found.other_heads:
         others = " ".join(tick.stamp for tick in found.other_heads)
         log.error("vintage chain has several heads: took head=%s; the others: %s", head.stamp, others)

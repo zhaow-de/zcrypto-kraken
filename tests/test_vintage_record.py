@@ -449,6 +449,22 @@ def test_an_unreadable_middle_tick_json_keeps_the_chain_whole(tmp_path):
     assert [tick.stamp for tick in found.unreadable] == [b.stamp]
 
 
+def test_a_cycle_of_prev_links_chains_to_the_newest_tick_with_an_error(tmp_path):
+    a, b = build_record(tmp_path, [(T0, {}), (T0 + HOUR, {})])
+    _opened(a.dir)
+    closed = _manifest(a) | {"prev": {"tick": b.stamp, "tick_json_sha256": b.tick_json_sha256, "error": None}}
+    _replace(a.dir / "tick.json", json.dumps(closed, sort_keys=True, separators=(",", ":")).encode() + b"\n")
+    found = chain(scan(tmp_path / "record"))
+    assert (found.head.stamp, [tick.stamp for tick in found.order], found.other_heads) == (b.stamp, [a.stamp, b.stamp], ())
+    with _logged() as records:
+        following = run_tick(tmp_path, T0 + 2 * HOUR)
+    manifest = _manifest(following)
+    assert manifest["prev"] == {"tick": b.stamp, "tick_json_sha256": b.tick_json_sha256, "error": None}
+    assert manifest["genesis_reason"] is None
+    errors = _at(records, logging.ERROR)
+    assert len(errors) == 1 and "cycle" in errors[0] and b.stamp in errors[0]
+
+
 def _later(source_id: str) -> list[str]:
     ids = [source.id for source in SOURCES]
     return ids[ids.index(source_id) + 1 :]
