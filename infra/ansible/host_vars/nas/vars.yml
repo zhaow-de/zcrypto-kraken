@@ -67,7 +67,7 @@ nas_capture_source: "zcrypto-data@zcrypto.zhaow.me:"
 nas_archive_ssh_port: 10022
 nas_journal_source: "zcrypto-data@zcrypto.zhaow.me:"
 nas_capture_red_source: "zcrypto-data@zcrypto-red.zhaow.me:"
-# The four ops channels below address the host by FQDN. The pull loop runs StrictHostKeyChecking=yes
+# The ops channels below address the host by FQDN. The pull loop runs StrictHostKeyChecking=yes
 # with CheckHostIP=no against a pre-seeded known_hosts, so it matches on the HOSTNAME STRING alone
 # and an unseeded name fails the pull CLOSED. Both names are pinned there, with key material copied
 # from the trusted IP lines rather than re-scanned, so either spelling works and a revert needs no
@@ -82,6 +82,9 @@ nas_reconciled_ssh_port: 22
 # least-privilege read-only key (sync_hot).
 nas_hot_source: "zcrypto-data@z-home-zcrypto.zhaow.pro:"
 nas_hot_ssh_port: 22
+# The ops recorder's vintages, a custody copy pulled over its own read-only key (sync_vintages).
+nas_vintages_source: "zcrypto-data@z-home-zcrypto.zhaow.pro:"
+nas_vintages_ssh_port: 22
 # The dead-man node's nightly backups, over their own read-only key (sync_hc_backup) and nas_archive_ssh_port.
 nas_hc_backup_source: "zcrypto-data@zcrypto-hc.zhaow.me:"
 

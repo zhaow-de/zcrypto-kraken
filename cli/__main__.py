@@ -17,6 +17,7 @@ from cli.research.command import research_app
 from cli.snapshot.command import snapshot_app
 from cli.tax.command import tax_app
 from cli.tick.command import tick_app
+from cli.vintage.command import vintage_app
 
 app = typer.Typer(
     add_completion=False,
@@ -34,6 +35,7 @@ app.add_typer(research_app, name="research")
 app.add_typer(snapshot_app, name="snapshot")
 app.add_typer(tax_app, name="tax")
 app.add_typer(tick_app, name="tick")
+app.add_typer(vintage_app, name="vintage")
 
 _VALID_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR"}
 _LOKI_ENV_NAMES = (

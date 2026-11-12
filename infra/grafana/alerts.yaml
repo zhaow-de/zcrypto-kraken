@@ -2003,6 +2003,52 @@ rules:
     notification_settings:
       receiver: metrics
 
+  - uid: zcrypto-ops-vintage-not-recorded
+    title: "Ops · vintage source not recorded"
+    ruleGroup: zcrypto-ops
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # One instance per source. The gauge is capped at 19:57 UTC of its fetch's day, so a late hand
+      # start still lets the next day page before that day's midnight.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: time() - zcrypto_vintage_last_ok_timestamp_seconds
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [90000]}  # 25h -- one failed tick never crosses it
+    # No series at all = the textfile, Alloy or the host is gone. That IS the alarm, so this rule is
+    # pushed only once every source's series exists and reads under the bar.
+    noDataState: Alerting
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "A recorded free source has had no good fetch for 25 hours, a fetch that ended after 19:57 UTC counted from 19:57, or the ops node publishes no recorder gauge at all. Unless a good fetch lands before 00:00 UTC, today's snapshot of that source is lost for good. The condition books absence, not fault: a provider outage lands here exactly like a stopped recorder, so read the source's outcome in the newest tick before acting. Runbook: infra/runbooks/ops-node.md#zcrypto-ops-vintage-not-recorded"
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "701"
+      unit: "seconds since the source's last good fetch, capped at 19:57 UTC of its day"
+    labels:
+      # Critical by the owner's ruling: a missed day is truth lost, not freshness -- no later tick can
+      # record it, whoever caused the miss. No repeat_interval of its own: a standing page re-notifies
+      # at the default 4h until triage sets a per-source silence.
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
   - uid: zcrypto-ops-verified-replay-exit-nonzero
     title: "Ops · verified-replay non-zero exit"
     ruleGroup: zcrypto-ops

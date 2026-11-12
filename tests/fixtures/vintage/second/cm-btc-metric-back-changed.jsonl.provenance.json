@@ -1,0 +1,22 @@
+{
+  "attribution": "Coin Metrics Community Network Data",
+  "committed": "synthesised",
+  "edit": "CapMVRVCur back after cm-btc-metric-gone, one of its tokens changed",
+  "file": "second/cm-btc-metric-back-changed.jsonl",
+  "from": "cm-btc.jsonl",
+  "how": {
+    "generator": "tests/vintage_fixtures.py",
+    "seed": 159004,
+    "shape": "shapes/cm-btc.shape.json"
+  },
+  "licence": "CC BY-NC 4.0",
+  "real": {
+    "bytes": 8342808,
+    "fetched_at": "2026-11-11T16:56:17Z",
+    "file": "cm-btc.jsonl",
+    "sha256": "e04186503e9464271e33a84f8a54bf1ac836a76d658a750822c029f8cea5e14d",
+    "url": "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics?assets=btc&metrics=AdrActCnt,AdrBalCnt,AssetCompletionTime,AssetEODCompletionTime,BlkCnt,CapMVRVCur,CapMrktCurUSD,CapMrktEstUSD,FeeTotNtv,FlowInExNtv,FlowInExUSD,FlowOutExNtv,FlowOutExUSD,HashRate,IssTotNtv,IssTotUSD,PriceBTC,PriceUSD,ROI1yr,ROI30d,ReferenceRate,ReferenceRateETH,ReferenceRateEUR,ReferenceRateUSD,SplyCur,SplyExNtv,SplyExUSD,SplyExpFut10yr,TxCnt,TxTfrCnt,volume_reported_spot_usd_1d&frequency=1d&format=json_stream&ignore_forbidden_errors=true&ignore_unsupported_errors=true"
+  },
+  "source": "cm-btc",
+  "synthetic_second_tick": true
+}

@@ -2695,3 +2695,18 @@ def test_the_backup_rule_pages_a_gauge_older_than_26_hours_or_none_at_all():
     assert _prom_exprs(rule) == ['time() - max(zcrypto_sqlite_backup_last_success_timestamp_seconds{host="zcrypto-hc"})']
     assert _evaluator(rule) == {"type": "gt", "params": [26 * 3600]}
     assert rule["noDataState"] == "Alerting", "a node whose backup never succeeded publishes no gauge at all"
+
+
+def test_a_vintage_source_not_recorded_in_25_hours_pages_critical():
+    rule = _rule("zcrypto-ops-vintage-not-recorded")
+    assert _prom_exprs(rule) == ["time() - zcrypto_vintage_last_ok_timestamp_seconds"]
+    assert _evaluator(rule) == {"type": "gt", "params": [90000]}
+    assert rule["for"] == "5m"
+    assert (rule["noDataState"], rule["execErrState"]) == ("Alerting", "Alerting")
+    assert rule["labels"]["severity"] == "critical"
+    assert (rule["notification_settings"]["receiver"], rule["ruleGroup"]) == ("metrics", "zcrypto-ops")
+    assert "repeat_interval" not in rule["notification_settings"]
+    summary = rule["annotations"]["summary"]
+    assert "{{" not in summary, "a summary naming its source drops out of a message carrying several"
+    assert summary.endswith("Runbook: infra/runbooks/ops-node.md#zcrypto-ops-vintage-not-recorded")
+    assert rule["annotations"]["__panelId__"] == "701"

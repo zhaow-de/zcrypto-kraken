@@ -201,6 +201,24 @@ while true; do
 		fi
 	fi
 
+	# The ops recorder's vintages, a custody copy of a record nothing can backfill. A RAW rsync over the hot
+	# block's pinned ssh options: a tick carries tick.json rather than the sidecars `zcrypto archive pull`
+	# verifies, and --ignore-existing keeps the first bytes to land, so `zcrypto vintage verify --custody`
+	# re-hashes the newest ticks and this loop's slice instead, after a failed pull too. An unset source is
+	# an ERROR: unwired custody of unbackfillable data is an anomaly.
+	if [ -n "${VINTAGES_SOURCE:-}" ]; then
+		if ! rsync --archive --ignore-existing --chmod=D0775,F0664 \
+				-e "ssh -i $VINTAGES_SSH_KEY -p ${VINTAGES_SSH_PORT:-22} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o CheckHostIP=no -o AddressFamily=inet -o UserKnownHostsFile=$ARCHIVE_SSH_KNOWN_HOSTS" \
+				"$VINTAGES_SOURCE" "$VINTAGES_DEST"; then
+			log ERROR "vintages pull failed (source=$VINTAGES_SOURCE dest=$VINTAGES_DEST), continuing"
+		fi
+		if ! zcrypto vintage verify --root "$VINTAGES_DEST" --custody --newest 4 --slice "$slice" --slices 24; then
+			log ERROR "vintages verify failed (dest=$VINTAGES_DEST), continuing"
+		fi
+	else
+		log ERROR "vintages channel unwired (VINTAGES_SOURCE unset): custody is not acquiring the recorder's ticks"
+	fi
+
 	# The dead-man node's nightly backups: a raw rsync over the hot block's pinned ssh options, since a database file
 	# carries no sidecar to verify. Never --delete: a rebuilt node's directory holds only its first backup. Never
 	# --inplace or --partial: rsync's own temporary name, renamed into place, keeps a partial file from reading as a

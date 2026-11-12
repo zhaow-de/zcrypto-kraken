@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Rendered by the `ops` Ansible role at /usr/local/sbin/zcrypto-vintage-derive — do not hand-edit on
+# the host, edit infra/ansible/roles/ops/templates/vintage-derive.sh.j2 and re-converge instead.
+#
+# The versions table's refresh after each recorder run: `zcrypto vintage derive` in the digest-pinned
+# image, reading the record read-only and appending to the table. It holds no secret and takes no
+# stdin; its unit is pulled in by the recorder's.
+set -u
+
+# The line shape the ops Alloy parse stage levels (archive-pull.sh.j2's log()).
+log() {
+    _ts=$(date -u +'%Y-%m-%d %H:%M:%S,%N')
+    printf '%s %s zcrypto.vintage-derive [vintage-derive.sh] - %s\n' "${_ts%??????}" "$1" "$2" >&2
+}
+
+# The record is mounted read-only at /vintages/record and the table at /versions, the pair the CLI's
+# refusal of a table root beside the record admits; the run has no network. Captured, then replayed
+# with `cat`, because the script has no pipefail.
+out="$(mktemp)"
+docker run --rm --pull never \
+    --name zcrypto-vintage-derive \
+    --user "{{ ops_uid }}:{{ ops_gid }}" \
+    --network none \
+    -v "{{ ops_data_dir }}/{{ ops_vintages_subdir }}/record:/vintages/record:ro" \
+    -v "{{ ops_data_dir }}/{{ ops_vintage_versions_subdir }}:/versions" \
+    -v "{{ ops_textfile_dir }}:/textfile" \
+    --entrypoint zcrypto \
+    "{{ ops_image }}@{{ ops_image_digest }}" \
+    vintage derive --record /vintages/record --table /versions --textfile /textfile/vintage-derive.prom \
+    > "$out" 2>&1
+rc=$?
+cat "$out"
+
+# Exits 0 and 1 are the CLI's own, each with its summary line; any other exit, or no summary (a
+# failed mktemp leaves the count empty), is a run that did not refresh the table.
+summary=$(grep -cE ' - vintage derive (complete|stopped) generation=' "$out")
+summary=${summary:-0}
+rm -f "$out"
+if { [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; } || [ "$summary" -eq 0 ]; then
+    log ERROR "the versions table refresh ended with exit $rc and $summary summary line(s); the record is untouched"
+fi
+exit "$rc"

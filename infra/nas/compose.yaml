@@ -67,6 +67,11 @@ services:
       HOT_DEST: ${HOT_DEST:-/archive/hot}
       HOT_SSH_KEY: /keys/sync_hot
       HOT_SSH_PORT: ${HOT_SSH_PORT:-22}
+      # The ops recorder's vintages, a custody copy pulled over its own read-only key.
+      VINTAGES_SOURCE: ${VINTAGES_SOURCE:-}
+      VINTAGES_DEST: ${VINTAGES_DEST:-/archive/vintages}
+      VINTAGES_SSH_KEY: /keys/sync_vintages
+      VINTAGES_SSH_PORT: ${VINTAGES_SSH_PORT:-22}
       HC_BACKUP_SOURCE: ${HC_BACKUP_SOURCE:-}
       HC_BACKUP_DEST: /hc-backups
       HC_BACKUP_SSH_KEY: /keys/sync_hc_backup

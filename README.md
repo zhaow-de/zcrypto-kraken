@@ -23,6 +23,7 @@ Learning-for-Fun quant-trading research project for Kraken (spot + spot-margin).
   - [`zcrypto tick`](#zcrypto-tick)
   - [`zcrypto snapshot`](#zcrypto-snapshot)
   - [`zcrypto tax`](#zcrypto-tax)
+  - [`zcrypto vintage`](#zcrypto-vintage)
 - [Configuration](#configuration)
   - [`[zcrypto]`: dataset paths](#zcrypto-dataset-paths)
   - [`[zcrypto.engine]`: shadow-engine settings](#zcryptoengine-shadow-engine-settings)
@@ -511,6 +512,22 @@ zcrypto tax blockpit --ledgers <PATH> --trades <PATH> --out <PATH> [--after <PAT
 | `--after <PATH>` | The window before's provenance file: this window's opening balances must equal its closing ones, and this ledger must start after it. Absent, every opening balance must be zero — the first window. |
 
 A row it cannot map, a balance that does not chain, a movement the output does not carry, or a window that does not follow the one before refuses the run: each refusal is printed, nothing is written, and the exit is `1`, as it is for an input it cannot read. Exit `0` prints the rows per label and the closing balances; a usage error, such as an option missing, exits `2`. The provenance carries the sha256 of both inputs and of the output, the per-label sums, the opening and closing balances, each margin position's ledger rows and the previous window's provenance hash. Read-only on its inputs, offline, and holding no key.
+
+### `zcrypto vintage`<a name="zcrypto-vintage"></a>
+
+The vintage record: every byte the free on-chain and sentiment sources serve (Coin Metrics Community, alternative.me's Fear & Greed, mempool.space and BGeometrics' SOPR family), recorded twice a day so each later restatement is a measured diff, and the versions table derived from it. On the ops node the `zcrypto-vintage-record` timer runs `record` at 07:37 and 19:37 UTC, and `derive` follows each run.
+
+```bash
+zcrypto vintage record --data-dir <PATH> --textfile <PATH> --clock-prom <PATH> [--bgeometrics-key-stdin] [--source <ID> ...]
+zcrypto vintage verify --root <PATH> [--custody] [--newest <N> --slice <K> --slices <M>]
+zcrypto vintage derive --record <PATH> --table <PATH> [--textfile <PATH>] [--through <STAMP>]
+```
+
+| Command | What it does |
+| -- | -- |
+| `record` | Fetches every source in the pinned fetch table (or only the `--source` ids named, the rest recorded as not selected), publishes the tick as one immutable directory under `<data-dir>/record/` by one rename, writes the gauges to `--textfile` and re-verifies the record. `--bgeometrics-key-stdin` reads the BGeometrics key from stdin; without it the keyed sources read `no credential`. Exits **0** when every source is ok, the gauges written and the re-verify clean, **1** when a tick was published with any of those not, **2** when nothing was published. |
+| `verify` | Reads a copy of the record: its `prev` chain, each body against its tick's `tick.json`, and the files the ticks hold. `--newest`, `--slice` and `--slices`, given together, re-hash the bodies of the newest N ticks and of one slice of the rest; `--custody` reads the copy as the only custody of an acknowledged fork's tick off the chain, so such a tick missing from it is a `missing tick` break (a tick marked lost, a note), where a read without it passes over the tick; every read of the NAS copy takes it. Logs each break, then one `vintage verify complete …` line naming the head tick and its `tick.json` sha256. Read-only. Exits **0** clean, **1** on any break, **2** on a usage error, such as `--newest`, `--slice` and `--slices` not given together. |
+| `derive` | Builds the versions table from a copy of the record, read-only: one part and one head per tick on its chain after the table's head, under the table's lock. `--through <STAMP>` rebuilds along the chain ending at that tick into a table root holding nothing but the lockfile. Exits **0** when the table reaches the record's head, **1** otherwise. |
 
 ## Configuration<a name="configuration"></a>
 

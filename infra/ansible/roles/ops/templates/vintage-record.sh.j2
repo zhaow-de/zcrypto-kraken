@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Rendered by the `ops` Ansible role at /usr/local/sbin/zcrypto-vintage-record — do not hand-edit on
+# the host, edit infra/ansible/roles/ops/templates/vintage-record.sh.j2 and re-converge instead.
+#
+# One recorder tick: `zcrypto vintage record` in the digest-pinned image, the BGeometrics key on its
+# stdin, and the dead-man pinged only when the CLI says it published a tick. The arguments this script
+# is given pass through to the CLI: the unit gives none, a hand start of named sources gives
+# `--source <id>` each.
+set -u
+
+# The line shape the ops Alloy parse stage levels (archive-pull.sh.j2's log()): a bare echo ships
+# with no level and reaches no ERROR query.
+log() {
+    _ts=$(date -u +'%Y-%m-%d %H:%M:%S,%N')
+    printf '%s %s zcrypto.vintage-record [vintage-record.sh] - %s\n' "${_ts%??????}" "$1" "$2" >&2
+}
+
+URL="{{ ops_vintage_record_healthcheck_url }}"
+TOKEN="{{ ops_compose_dir }}/vintage-bgeometrics.token"
+
+# The key file is opened on descriptor 3 here, so the run's only input redirection below duplicates
+# a descriptor already open and cannot fail before docker starts. Kept only if what opened is a
+# regular file: an absent, unreadable or directory path costs the keyed sources alone, which
+# read `no credential`, and the line names the path, never a byte of the file.
+if ! { exec 3<"$TOKEN"; } 2>/dev/null || ! [ -f /dev/fd/3 ]; then
+    exec 3</dev/null
+    log ERROR "the BGeometrics key file $TOKEN is absent, unreadable or not a regular file: its four sources record no credential this tick"
+fi
+
+# Captured, then replayed with `cat`, because the script has no pipefail: a pipe would report the
+# last command's status. No -e, no --env-file, no network flag, no NAS mount: the key reaches the
+# CLI on stdin alone.
+out="$(mktemp)"
+docker run --rm -i --pull never \
+    --name zcrypto-vintage-record \
+    --user "{{ ops_uid }}:{{ ops_gid }}" \
+    -v "{{ ops_data_dir }}/{{ ops_vintages_subdir }}:/data" \
+    -v "{{ ops_textfile_dir }}:/textfile" \
+    --entrypoint zcrypto \
+    "{{ ops_image }}@{{ ops_image_digest }}" \
+    vintage record --data-dir /data --textfile /textfile/vintage.prom --clock-prom /textfile/clock-offset.prom --bgeometrics-key-stdin "$@" \
+    <&3 > "$out" 2>&1
+rc=$?
+exec 3<&-
+cat "$out"
+
+# The witness is the line the CLI logs only once its publishing rename has returned, matched whole.
+# The exit code alone is no proof: bash sets 1 itself when the output redirect fails before docker
+# starts, and an empty count (a failed mktemp) reads as none.
+witness=$(grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2},[0-9]{3} INFO zcrypto\.vintage\.[a-z_.]+ \[[a-z_]+\.py:[0-9]+\] - vintage tick published tick=[0-9]{8}T[0-9]{6}Z tick_json_sha256=[0-9a-f]{64}$' "$out")
+witness=${witness:-0}
+rm -f "$out"
+
+# A run that published nothing, or ended in docker or a kill, pages at warning in its own tick.
+if [ "$rc" -ge 2 ] || [ "$witness" -eq 0 ]; then
+    log ERROR "the recorder run ended with exit $rc and $witness published-tick line(s), so the dead-man was not pinged"
+fi
+# Exits 0 and 1 are the CLI's for a published tick; an empty URL skips the ping.
+if { [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ]; } && [ "$witness" -ge 1 ] && [ -n "$URL" ]; then
+    curl -fsS -m 10 -o /dev/null "$URL" 2>/dev/null || log WARNING "the dead-man ping did not reach its check"
+fi
+exit "$rc"

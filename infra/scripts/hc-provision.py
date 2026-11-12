@@ -159,12 +159,12 @@ def _by_name(rows: list[dict], names: set[str], where: str) -> dict[str, dict]:
 
 
 def _on_service(fleet: set[str], listing: list[dict]) -> list[tuple[str, dict | None]]:
-    twelve = fleet | {ZCRYPTO_HC["name"]}
-    service = _by_name(listing, twelve, SERVICE_LISTING)
-    return [(name, service.get(name)) for name in sorted(twelve)]
+    checks = fleet | {ZCRYPTO_HC["name"]}
+    service = _by_name(listing, checks, SERVICE_LISTING)
+    return [(name, service.get(name)) for name in sorted(checks)]
 
 
-def _twelve(where: str) -> list[dict]:
+def _checks(where: str) -> list[dict]:
     rows = _on_disk()
     found = _by_name(rows, {row["name"] for row in rows} - {ZCRYPTO_HC["name"]}, where)
     return sorted([*(_definition(row, where) for row in found.values()), ZCRYPTO_HC], key=lambda d: d["name"])
@@ -230,7 +230,7 @@ def _own_check(listing: list[dict]) -> str | None:
 
 def apply() -> None:
     source = "the fixture"
-    definitions = _twelve(source)
+    definitions = _checks(source)
     key = _key(SERVICE_WRITE)
     channel = _slack(key)
     written = []
@@ -282,7 +282,7 @@ def status() -> None:
 
 
 VERBS = {
-    "apply": (apply, "write the twelve checks from the fixture, then read each one back"),
+    "apply": (apply, "write every check from the fixture, then read each one back"),
     "fixture": (fixture, "rewrite the fixture from the service's listing"),
     "status": (status, "per check, its status, ping count and last ping, `moved` once pinged and up"),
 }

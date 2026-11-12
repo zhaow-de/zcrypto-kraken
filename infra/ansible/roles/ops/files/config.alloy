@@ -155,28 +155,14 @@ prometheus.remote_write "grafana" {
 }
 
 // ---- Logs: the host journal -- the zcrypto systemd jobs AND Alloy's own container -------------
-// Two unrelated sources share this one journal reader (00068 D6, the docker-socket residual
-// retired): the zcrypto-*.service units (archive-pull half-hourly since T0058,
-// panel-materialize + tape-bars hourly, verify-replay + verified-replay daily) run their work as an ephemeral
-// `docker run --rm` ATTACHED to the unit (T0060) -- so all container stdout/stderr flows through
-// the script into the unit's journal, alongside the orchestration script's OWN lines (including
-// the load-bearing gate warning "writer cycle SKIPPED (fail-closed gate): ...",
-// archive-pull.sh.j2), which are host-side echoes that exist in NO container log and so have no
-// other transport; and Alloy's OWN container logs, via the journald logging driver
-// (alloy-compose.yaml.j2) -- there is no docker-socket path left on this host to carry them
-// instead, so the journal is their only transport too now. "Lossless" for the attached-container
-// case is bounded upstream by journald's own per-service rate limit (Debian default
-// RateLimitBurst=10000 per RateLimitIntervalSec=30s), which drops lines before Alloy ever sees
-// them. All of these units now emit orders of magnitude less than that. The verify-replay sweep
-// used to be the exception -- it replayed the WHOLE archive and logged a line per hour, which
-// put it on course to cross the burst around 2026-08-14 and drop the tail of a (pair, hour)-
-// SORTED stream: the last pairs in sort order, all of their hours, plus both summary lines.
-// That never happened. Spec 00078 made the sweep incremental (2026-08-01), so a steady-state
-// run reports the day's ~288 new hours in four lines rather than the archive in thousands,
-// and T0114's two dated cliffs were dissolved rather than pushed out. Alerting was never
-// affected either way (the runner parses its own temp file, not the journal). The
-// host keeps a persistent journal (/var/log/journal, verified live), mounted read-only at
-// /host/journal by alloy-compose.yaml.j2.
+// Two sources share this one journal reader: the zcrypto-*.service units the regex below names run
+// their work as an ephemeral `docker run --rm` ATTACHED to the unit, so container output and the
+// orchestration script's OWN lines (host-side echoes, such as archive-pull.sh.j2's gate warning, with
+// no other transport) land in the unit's journal; and Alloy's OWN container logs, via the journald
+// logging driver (alloy-compose.yaml.j2), with no docker-socket path left to carry them. Delivery is
+// bounded upstream by journald's per-service rate limit (Debian default RateLimitBurst=10000 per
+// RateLimitIntervalSec=30s), which drops lines before Alloy sees them. The host keeps a persistent
+// journal, mounted read-only at /host/journal by alloy-compose.yaml.j2.
 //
 // The liquidations poller (compose service `liquidations`) is deliberately NOT kept here: it now
 // ships its OWN logs straight to the node's Loki (--ship-logs, spec 00068 D3/T6) rather than through
@@ -193,7 +179,7 @@ loki.relabel "journal_units" {
   rule {
     source_labels = ["__journal__systemd_unit", "__journal_container_name"]
     separator     = ";"
-    regex         = "zcrypto-(archive-pull|verify-replay|verified-replay|panel-materialize|tape-bars)\\.service;.*|.*;grafana-alloy"
+    regex         = "zcrypto-(archive-pull|verify-replay|verified-replay|panel-materialize|tape-bars|vintage-record|vintage-derive)\\.service;.*|.*;grafana-alloy"
     action        = "keep"
   }
 

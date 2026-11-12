@@ -21,6 +21,7 @@ case "$q" in
   *tapebars_exit*)    printf '%s\\n' "$TB_EXIT_OUT" ;;
   *tapebars_days_gap*) printf '%s\\n' "$TB_GAP_OUT" ;;
   *tapebars_last_publish*) printf '%s\\n' "$TB_PUBLISH_OUT" ;;
+  *vintage_last_ok*) printf '%s\\n' "$VINTAGE_OUT" ;;
   *) echo "unexpected query: $q" >&2; exit 9 ;;
 esac
 """
@@ -37,6 +38,7 @@ GOOD = {
     "TB_EXIT_OUT": "zcrypto_tapebars_exit_code\n  {host=ops} = 0",
     "TB_GAP_OUT": "zcrypto_tapebars_days_gap\n  {host=ops} = 0",
     "TB_PUBLISH_OUT": "query\n  {host=ops} = 3600",
+    "VINTAGE_OUT": "query\n  {} = 1000",
 }
 
 
@@ -56,7 +58,7 @@ def check_lines(out, kind):
 def test_all_green_passes(tmp_path):
     r = run_postverify(tmp_path, {})
     assert r.returncode == 0
-    assert check_lines(r.stdout, "PASS") == 10 and check_lines(r.stdout, "FAIL") == 0
+    assert check_lines(r.stdout, "PASS") == 11 and check_lines(r.stdout, "FAIL") == 0
 
 
 def test_nonzero_exit_code_fails(tmp_path):
@@ -102,7 +104,7 @@ def test_query_error_is_a_fail(tmp_path):
     env = {**os.environ, "ZCRYPTO_GRAFANA_QUERY": str(stub)}
     r = subprocess.run([str(SCRIPT)], capture_output=True, text=True, env=env)
     assert r.returncode == 1
-    assert check_lines(r.stdout, "FAIL") == 10
+    assert check_lines(r.stdout, "FAIL") == 11
 
 
 def test_tape_bars_nonzero_exit_fails(tmp_path):
@@ -138,6 +140,20 @@ def test_a_never_published_tape_bars_fails_rather_than_reading_as_fresh(tmp_path
     r = run_postverify(tmp_path, {"TB_PUBLISH_OUT": "query\n  {host=ops} = 1786000000"})
     assert r.returncode == 1
     assert "publish freshness" in r.stdout
+
+
+def test_the_vintage_recorders_liveness_is_one_series_under_25_hours(tmp_path):
+    fresh = run_postverify(tmp_path, {"VINTAGE_OUT": "query\n  {} = 1000"})
+    assert fresh.returncode == 0
+    assert "PASS vintage recorder liveness (s) (1000)" in fresh.stdout
+
+    stale = run_postverify(tmp_path, {"VINTAGE_OUT": "query\n  {} = 90000"})
+    assert stale.returncode == 1
+    assert "FAIL vintage recorder liveness (s) — 1 series out of bounds (90000)" in stale.stdout
+
+    absent = run_postverify(tmp_path, {"VINTAGE_OUT": "query\n  (no series)"})
+    assert absent.returncode == 1
+    assert "FAIL vintage recorder liveness (s) — no series" in absent.stdout
 
 
 def test_header_containing_comparison_cannot_mint_a_value(tmp_path):
