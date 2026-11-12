@@ -442,3 +442,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #841 | 2026-11-08 | docs(topics): T0227, the gate level published before the holds fold | — | — | — |
 | #850 | 2026-11-11 | docs(topics): T0016's C3 data-source findings, and T0228 registered | — | — | T0016 |
 | #854 | 2026-11-12 | fix(engine): one Sentinel blip no longer cuts the cache proxy sessions | — | 00159 | — |
+| #855 | 2026-11-12 | docs: the cache proxy quorum route rollout records | — | 00159 | — |
