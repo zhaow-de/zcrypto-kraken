@@ -278,11 +278,15 @@ def _check_part(entry: dict, loaded: _Part, parts_sha256: str, entries_sha256: s
     part = loaded.part
     if (part["tick"], part["position"], part["tick_json_sha256"]) != (tick, entry["position"], entry["tick_json_sha256"]):
         raise TableError(tick, "part.json names another tick than its head")
-    for name, frame in (("versions", loaded.versions), ("coverage", loaded.coverage)):
-        recorded = part["frames"][name]
-        if frame.height != recorded["rows"] or frame_hash(frame, entry["hash_version"]) != recorded["hash"]:
-            raise TableError(tick, f"the {name} frame does not hash to its part.json")
+    _check_frames(tick, loaded, entry["hash_version"])
     return through
+
+
+def _check_frames(tick: str, loaded: _Part, version: int) -> None:
+    for name, frame in (("versions", loaded.versions), ("coverage", loaded.coverage)):
+        recorded = loaded.part["frames"][name]
+        if frame.height != recorded["rows"] or frame_hash(frame, version) != recorded["hash"]:
+            raise TableError(tick, f"the {name} frame does not hash to its part.json")
 
 
 def _facts(part: dict) -> list[dict]:
@@ -546,10 +550,11 @@ def derive_table(
             part_raw = canonical(part)
             part_dir = _dated(gen_dir / "parts", tick.stamp)
             if part_dir.exists():
-                if _read_bytes(part_dir / PART_JSON, at) != part_raw:
-                    return _outcome(
-                        False, last, prev_raw, added, at, "a published part without its head differs from the part derived"
-                    )
+                orphan = _load_part(part_dir)
+                if orphan.raw != part_raw:
+                    reason = "a published part without its head differs from the part derived"
+                    return _outcome(False, read, last, prev_raw, added, at, reason)
+                _check_frames(at, orphan, FRAME_HASH_VERSION)
             else:
                 staged = write_part(staging, _staging_name(tick.stamp, run_second, ".part"), versions, coverage, part)
                 publish_table_dir(staged, part_dir, **walls)

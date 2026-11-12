@@ -275,7 +275,10 @@ def _a_part_json(table: Path, stamps: list[str]) -> None:
 
 
 def _a_frame(table: Path, stamps: list[str]) -> None:
-    path = _part_dir(table, stamps[3]) / "versions.parquet"
+    _change_versions(_part_dir(table, stamps[3]) / "versions.parquet")
+
+
+def _change_versions(path: Path) -> None:
     frame = pl.read_parquet(path)
     changed = frame.with_columns(pl.when(pl.int_range(pl.len()) == 0).then(pl.lit("9")).otherwise(pl.col("token")).alias("token"))
     assert not changed.equals(frame)
@@ -612,7 +615,7 @@ def test_a_published_directory_left_0755_is_set_0555(standard, tmp_path):
     assert [stat.S_IMODE(directory.stat().st_mode) for directory in left] == [0o555] * 3
 
 
-@pytest.mark.parametrize("part", ["byte-equal", "differing"])
+@pytest.mark.parametrize("part", ["byte-equal", "differing", "damaged-frame"])
 def test_a_part_without_its_head_is_adopted_or_refused(standard, tmp_path, monkeypatch, part):
     table = tmp_path / "versions"
     assert _derive(standard, table).complete
@@ -622,6 +625,8 @@ def test_a_part_without_its_head_is_adopted_or_refused(standard, tmp_path, monke
     if part == "differing":
         path = _part_dir(table, stamp) / "part.json"
         _rewrite(path, path.read_bytes().replace(b'"generation":1', b'"generation":1 '))
+    if part == "damaged-frame":
+        _change_versions(_part_dir(table, stamp) / "versions.parquet")
     staged = []
     write_part = table_module.write_part
     monkeypatch.setattr(
@@ -634,6 +639,8 @@ def test_a_part_without_its_head_is_adopted_or_refused(standard, tmp_path, monke
         assert _head_file(table, stamp).read_bytes() == published_head
     else:
         assert (outcome.complete, outcome.at, outcome.parts_added) == (False, stamp, 0)
+        reason = {"differing": "differs from the part derived", "damaged-frame": "versions frame does not hash"}[part]
+        assert reason in outcome.reason
         assert not _head_file(table, stamp).exists()
     assert list((table / "staging").iterdir()) == []
 
