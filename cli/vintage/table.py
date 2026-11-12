@@ -317,8 +317,12 @@ def _read_through(gen_dir: Path, head_path: Path, generation: int) -> tuple[Tabl
         parts_sha256 = _check_part(entry, loaded[index], parts_sha256, entries_sha256, generation)
         coverage_rows += loaded[index].coverage.height
         kinds.update(loaded[index].versions["kind"].to_list())
+        if not kinds.keys() <= set(KINDS):
+            raise TableError(
+                entry["tick"], f"the versions through the head hold kinds no derive writes: {sorted(kinds.keys() - set(KINDS))}"
+            )
         counted = {"coverage": coverage_rows, "versions": {kind: kinds[kind] for kind in KINDS}}
-        if entry["rows"] != counted or not kinds.keys() <= set(KINDS):
+        if entry["rows"] != counted:
             raise TableError(entry["tick"], "the head's rows differ from the counts of the frames through it")
     versions = pl.concat([part.versions for part in loaded], how="vertical")
     coverage = pl.concat([part.coverage for part in loaded], how="vertical")
