@@ -1,33 +1,53 @@
 #!/usr/bin/env python3
-"""The engine role's cache proxy configuration, rendered for an unprivileged namespace, and the pinned HAProxy
-image it runs on.
+"""The engine role's cache proxy configuration, rendered for an unprivileged namespace, the pinned HAProxy image it
+runs on, and the run of the one on the other.
 
     uv run python infra/scripts/cache-proxy-harness.py fetch --digest sha256:<64 hex> --into <dir>
+    uv run python infra/scripts/cache-proxy-harness.py run --rootfs <tree> --scratch <dir> [--case <name>]...
 
 fetch  a network read: pulls `library/haproxy` anonymously from Docker Hub by its index digest, checks the index,
        the linux/amd64 manifest and every layer against their sha256, and applies the layers in order, whiteouts
        included, into <dir>, which must be absent or empty; no member, hard link or whiteout acts outside it.
        `.harness-image-digest` is written last, so a tree without it is a fetch that did not finish. The tree is
        read as a filesystem image only: nothing Python is ever run from inside it.
+run    re-runs itself under `unshare -rn`, an unprivileged user and network namespace, which must list `lo` alone,
+       and there runs the tree's HAProxy through the tree's own loader and libraries on the role's render, against
+       scripted Sentinels and Valkeys, case by case: each `--case`, or all nine in order when none is named. Each
+       case prints one PASS or FAIL line with its figures beside their bounds; the last line counts them and names
+       `haproxy -vv`'s first line and the image digest's first 12 hex. Each case's render and HAProxy's stdout and
+       stderr stay in <dir>/run-<UTC stamp>-<pid>/<case>/, <dir> made when absent; every process the run starts is
+       stopped by its own PID before it exits. `peer` is the run's own scripted Sentinel or Valkey.
 
-Exit: 0 fetched, 2 refused (a digest that does not match, a member reaching outside the tree, a whiteout naming
-the directory that holds it, a non-empty <dir>), 1 any other error, printed.
+Exit, fetch: 0 fetched, 2 refused (a digest that does not match, a member reaching outside the tree, a whiteout
+naming the directory that holds it, a non-empty <dir>), 1 any other error, printed.
+Exit, run: 0 every case passing, 1 a case failing, 2 refused (a tree without `.harness-image-digest`; no
+/usr/bin/unshare, /usr/bin/ip or /usr/sbin/nft; an interface besides lo; `ip link set lo up` failing or not
+returning within 1.0 s; a binary not printing PINNED_VERSION; code mapped from outside the tree). Never 5, which
+mutate-probe.sh reads as no test run.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
+import functools
 import hashlib
 import io
 import json
 import os
 import re
+import select
 import shutil
+import socket
+import subprocess
 import sys
 import tarfile
+import threading
+import time
 import urllib.request
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
+from typing import Any, NamedTuple
 
 import jinja2
 
@@ -199,6 +219,888 @@ def fetch(digest: str, into: Path, get: Callable[[str, Mapping[str, str]], bytes
     (into / IMAGE_DIGEST_FILE).write_text(digest + "\n")
 
 
+CASES = (
+    "parse",
+    "start",
+    "no-early-route",
+    "vote-down-cuts-nothing",
+    "one-vote-cuts-nothing",
+    "no-vote-cuts",
+    "contradiction-cuts-both",
+    "lost-syn-inside-budget",
+    "stalled-exchange",
+)
+# A proxy re-pin moves this to the candidate's version in its own change, before its run.
+PINNED_VERSION = "3.4.5"
+UNSHARE = "/usr/bin/unshare"
+IP = "/usr/bin/ip"
+NFT = "/usr/sbin/nft"
+LOADER = "/lib64/ld-linux-x86-64.so.2"
+BINARY = "/usr/local/sbin/haproxy"
+ENTRYPOINT = "/usr/local/bin/docker-entrypoint.sh"
+LD_SO_CONF = "/etc/ld.so.conf"
+FRONTEND = ("127.0.0.1", 6379)
+METRICS = ("127.0.0.1", 9104)
+METRICS_URL = "http://127.0.0.1:9104/metrics?scope=server"
+SENTINEL_PORT = 26379
+VALKEY_PORT = 6379
+VOTE_VIA_NODE3 = "votes-node2/via-node3"
+# The reads' cadence, finer than the 0.1 s the bounds' margin allows for.
+STEP = 0.05
+# Each bound is the source's worst case plus this: wake-ups, the reads' cadence and a shared host's scheduling.
+MARGIN = 1.0
+# The engine's retry budget, which a cold start's route opens inside; also every wait on a start.
+START = 3.40
+WINDOW = 10.0
+# The source's worst cases: a vote rising after its Sentinel's silence ends or after its Sentinel turns to name the
+# vote's node, a vote at full health falling, a route falling after its path turns to 503 and rising after a 200.
+SILENT_VOTE_RISE = 3.0
+SWITCHED_VOTE_RISE = 4.0
+VOTE_FALL = 7.0
+ROUTE_FALL = 0.5
+ROUTE_RISE = 0.25
+# The vote's `inter`, `fastinter` and `timeout check`.
+INTER = 2.0
+FASTINTER = 1.0
+TIMEOUT_CHECK = 2.0
+# A stalled reply's hold, past `timeout check`, and the half-width of the window it is aimed at.
+HOLD = 2.5
+AIM = 0.3
+
+
+class Refused(Exception):
+    pass
+
+
+class CaseFailed(Exception):
+    """The read that failed, with the case's figures."""
+
+
+def version_ok(first_line: str) -> bool:
+    words = first_line.split()
+    if "version" not in words[:-1]:
+        return False
+    word = words[words.index("version") + 1]
+    return word == PINNED_VERSION or word.startswith(PINNED_VERSION + "-")
+
+
+def tree_whole(root: Path) -> bool:
+    return (root / IMAGE_DIGEST_FILE).is_file()
+
+
+def loopback_only(names: Iterable[str]) -> bool:
+    return set(names) == {"lo"}
+
+
+def foreign_mappings(maps: str, root: str) -> list[str]:
+    foreign = []
+    for line in maps.splitlines():
+        fields = line.split(None, 5)
+        if len(fields) < 6:
+            continue
+        path = fields[5].strip()
+        if "x" in fields[1] and path.startswith("/") and not path.startswith(root + "/"):
+            foreign.append(path)
+    return foreign
+
+
+def in_tree(root: Path, path: str) -> Path:
+    """`path` resolved inside `root`: a link's absolute target is re-rooted there, never followed on the host, and `..`
+    stops at `root`."""
+    pending = [part for part in path.split("/") if part not in ("", ".")]
+    done: list[str] = []
+    links = 0
+    while pending:
+        part = pending.pop(0)
+        if part == "..":
+            if done:
+                done.pop()
+            continue
+        here = root.joinpath(*done, part)
+        if not here.is_symlink():
+            done.append(part)
+            continue
+        links += 1
+        if links > 40:
+            raise Refused(f"{path} does not resolve inside {root}: more than 40 links")
+        target = os.readlink(here)
+        if target.startswith("/"):
+            done = []
+        pending = [p for p in target.split("/") if p not in ("", ".")] + pending
+    return root.joinpath(*done)
+
+
+def _library_path(root: Path, conf: str = LD_SO_CONF, found: list[Path] | None = None) -> list[Path]:
+    found = [] if found is None else found
+    for raw in in_tree(root, conf).read_text().splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if line.startswith("include "):
+            pattern = line.split(None, 1)[1]
+            for match in sorted(in_tree(root, os.path.dirname(pattern)).glob(os.path.basename(pattern))):
+                _library_path(root, os.path.join(os.path.dirname(pattern), match.name), found)
+        elif line and in_tree(root, line).is_dir() and in_tree(root, line) not in found:
+            found.append(in_tree(root, line))
+    return found
+
+
+def haproxy_argv(root: Path) -> list[str]:
+    """The tree's binary through the tree's loader and libraries, with the flags the image's entrypoint gives a bare
+    `haproxy`."""
+    loader, binary = in_tree(root, LOADER), in_tree(root, BINARY)
+    for path in (loader, binary):
+        if not path.is_file():
+            raise Refused(f"{path} is not a file of the tree")
+    script = in_tree(root, ENTRYPOINT).read_text()
+    flags = [flag for match in re.finditer(r'^\s*set -- haproxy((?:\s+-\S+)*)\s+"\$@"', script, re.M) for flag in match[1].split()]
+    libraries = ":".join(str(path) for path in _library_path(root))
+    return [str(loader), "--library-path", libraries, str(binary), *flags]
+
+
+def _nft(*args: str) -> str:
+    result = subprocess.run([NFT, *args], capture_output=True, text=True, timeout=MARGIN)
+    if result.returncode != 0:
+        raise RuntimeError(f"nft {' '.join(args)} exited {result.returncode}: {result.stderr.strip()}")
+    return result.stdout
+
+
+class Procs:
+    """A case's processes and its own `nft` table, so that nothing of a case outlives it in a run's one namespace."""
+
+    def __init__(self, name: str) -> None:
+        self.table = name.replace("-", "_")
+        self.processes: list[subprocess.Popen] = []
+        self.table_made = False
+
+    def start(self, argv: list[str], **popen: Any) -> subprocess.Popen:
+        process = subprocess.Popen(argv, **popen)
+        self.processes.append(process)
+        return process
+
+    def nft(self, *args: str) -> str:
+        if not self.table_made:
+            _nft("add", "table", "inet", self.table)
+            self.table_made = True
+        return _nft(*args)
+
+    def stop_all(self) -> None:
+        for process in reversed(self.processes):
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=MARGIN)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=MARGIN)
+            for stream in (process.stdin, process.stdout, process.stderr):
+                if stream is not None:
+                    stream.close()
+        self.processes.clear()
+        if self.table_made:
+            self.table_made = False
+            _nft("delete", "table", "inet", self.table)
+
+
+def _described(exc: BaseException) -> str:
+    text = str(exc) if isinstance(exc, CaseFailed) else f"{type(exc).__name__}: {exc}"
+    if exc.__context__ is not None and not exc.__suppress_context__:
+        text += f"; raised while handling {_described(exc.__context__)}"
+    return text
+
+
+def run_case(name: str, body: Callable[[Procs], tuple[bool, str]]) -> str:
+    procs = Procs(name)
+    try:
+        try:
+            passed, text = body(procs)
+        finally:
+            procs.stop_all()
+    except Exception as exc:
+        return f"FAIL {name}: {_described(exc)}"
+    return f"{'PASS' if passed else 'FAIL'} {name}: {text}"
+
+
+def _wait(check: Callable[[], bool], deadline: float) -> float | None:
+    """The time `check` first holds, read every STEP, or None at the deadline."""
+    while True:
+        now = time.monotonic()
+        if check():
+            return now
+        if now >= deadline:
+            return None
+        time.sleep(STEP)
+
+
+def _line(process: subprocess.Popen, deadline: float) -> str | None:
+    received = b""
+    while not received.endswith(b"\n"):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not select.select([process.stdout], [], [], remaining)[0]:
+            return None
+        chunk = os.read(process.stdout.fileno(), 256)
+        if not chunk:
+            return None
+        received += chunk
+    return received.decode().strip()
+
+
+def _ping(session: socket.socket, deadline: float) -> bool:
+    try:
+        session.settimeout(max(deadline - time.monotonic(), 0.001))
+        session.sendall(b"PING\r\n")
+        reply = b""
+        while not reply.endswith(b"\r\n"):
+            session.settimeout(max(deadline - time.monotonic(), 0.001))
+            chunk = session.recv(64)
+            if not chunk:
+                return False
+            reply += chunk
+        return reply == b"+PONG\r\n"
+    except OSError:
+        return False
+
+
+def _attempt(deadline: float) -> socket.socket | None:
+    """A new session through the frontend, when it gets its PONG by the deadline."""
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return None
+    try:
+        session = socket.create_connection(FRONTEND, timeout=remaining)
+    except OSError:
+        return None
+    if _ping(session, deadline):
+        return session
+    session.close()
+    return None
+
+
+def _ended(session: socket.socket) -> bool:
+    try:
+        return bool(select.select([session], [], [], 0)[0]) and session.recv(64, socket.MSG_PEEK) == b""
+    except OSError:
+        return True
+
+
+def _ends(sessions: Sequence[socket.socket], deadline: float) -> list[float] | None:
+    ended: dict[int, float] = {}
+    while True:
+        now = time.monotonic()
+        for index, session in enumerate(sessions):
+            if index not in ended and _ended(session):
+                ended[index] = now
+        if len(ended) == len(sessions):
+            return [ended[index] for index in range(len(sessions))]
+        if now >= deadline:
+            return None
+        time.sleep(STEP)
+
+
+Metrics = dict[tuple[str, str, str], dict[str, float]]
+SERIES = re.compile(r"^(haproxy_server_\w+)\{([^}]*)\} (\S+)$", re.M)
+LABEL = re.compile(r'(\w+)="([^"]*)"')
+
+
+def _scrape() -> Metrics:
+    with urllib.request.urlopen(METRICS_URL, timeout=MARGIN) as response:
+        body = response.read().decode()
+    metrics: Metrics = {}
+    for name, labels, value in SERIES.findall(body):
+        label = dict(LABEL.findall(labels))
+        key = (name, label.get("proxy", ""), label.get("server", ""))
+        metrics.setdefault(key, {})[label.get("state", "")] = float(value)
+    return metrics
+
+
+def _state(metrics: Metrics, name: str, server: str) -> str | None:
+    """The `state` label whose series reads 1, for `<backend>/<server>`."""
+    states = metrics.get((name, *server.split("/")), {})
+    return next((state for state, value in states.items() if value == 1), None)
+
+
+def _number(metrics: Metrics, name: str, server: str) -> float:
+    return metrics[(name, *server.split("/"))][""]
+
+
+def _up(server: str) -> Callable[[], bool]:
+    return lambda: _state(_scrape(), "haproxy_server_status", server) == "UP"
+
+
+def _address(node: str) -> str:
+    return next(entry["address"] for entry in NODES if entry["name"] == node)
+
+
+def _start_haproxy(procs: Procs, directory: Path, haproxy: list[str]) -> tuple[subprocess.Popen, float]:
+    with (directory / "haproxy.out").open("wb") as out, (directory / "haproxy.err").open("wb") as err:
+        started = time.monotonic()
+        process = procs.start([*haproxy, "-f", str(directory / "haproxy.cfg")], stdout=out, stderr=err, cwd=directory)
+    return process, started
+
+
+def _listening(process: subprocess.Popen, deadline: float) -> bool:
+    while process.poll() is None:
+        try:
+            socket.create_connection(METRICS, timeout=STEP).close()
+            return True
+        except OSError:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(STEP)
+    return False
+
+
+class Run(NamedTuple):
+    directory: Path
+    haproxy: list[str]
+    render: str
+
+
+class Bench:
+    """One case's directory, scripted peers, HAProxy and client sessions."""
+
+    def __init__(self, run: Run, procs: Procs, name: str) -> None:
+        self.procs = procs
+        self.haproxy = run.haproxy
+        self.directory = run.directory / name
+        self.directory.mkdir()
+        (self.directory / "haproxy.cfg").write_text(run.render)
+        self.sentinels: dict[str, subprocess.Popen] = {}
+        self.sessions: list[socket.socket] = []
+        self.started = 0.0
+
+    def peers(self) -> None:
+        peers = []
+        with (self.directory / "peers.err").open("wb") as err:
+            for node in NODES:
+                for role in ("sentinel", "valkey"):
+                    argv = [sys.executable, str(Path(__file__).resolve()), "peer", role, node["address"], str(self.directory)]
+                    process = self.procs.start(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err, bufsize=0)
+                    peers.append((role, node, process))
+                    if role == "sentinel":
+                        self.sentinels[node["name"]] = process
+        deadline = time.monotonic() + START
+        for role, node, process in peers:
+            if _line(process, deadline) != "listening":
+                raise CaseFailed(f"the scripted {role} on {node['address']} was not listening by {START:.2f} s")
+
+    def start_haproxy(self) -> None:
+        process, self.started = _start_haproxy(self.procs, self.directory, self.haproxy)
+        if not _listening(process, self.started + START):
+            raise CaseFailed(f"HAProxy not listening within {START:.2f} s, exit {process.poll()}")
+
+    def tell(self, node: str, command: str) -> float:
+        sentinel = self.sentinels[node]
+        sentinel.stdin.write(f"{command}\n".encode())
+        if _line(sentinel, time.monotonic() + MARGIN) != "ok":
+            raise CaseFailed(f"the scripted Sentinel on {_address(node)} did not take {command!r} within {MARGIN:.1f} s")
+        return time.monotonic()
+
+    def silence(self, node: str) -> float:
+        table = self.procs.table
+        self.procs.nft("add", "chain", "inet", table, f"silent_{node}", "{ type filter hook input priority 0; }")
+        self.procs.nft("add", "rule", "inet", table, f"silent_{node}", f"ip daddr {_address(node)} tcp dport {SENTINEL_PORT} drop")
+        return time.monotonic()
+
+    def answer(self, node: str) -> float:
+        self.procs.nft("flush", "chain", "inet", self.procs.table, f"silent_{node}")
+        return time.monotonic()
+
+    def routed(self, deadline: float) -> float | None:
+        """The time a new session gets its PONG, tried every STEP until the deadline."""
+        while True:
+            session = _attempt(deadline)
+            if session is not None:
+                self.sessions.append(session)
+                return time.monotonic()
+            if time.monotonic() >= deadline:
+                return None
+            time.sleep(STEP)
+
+    def two_sessions(self) -> list[socket.socket]:
+        for _ in range(2):
+            if self.routed(time.monotonic() + START) is None:
+                raise CaseFailed(f"no route for a session within {START:.2f} s")
+        return self.sessions[-2:]
+
+    def out(self) -> str:
+        return (self.directory / "haproxy.out").read_text(errors="replace")
+
+    def has_line(self, pattern: str) -> bool:
+        return re.search(pattern, self.out(), re.M) is not None
+
+    def terminations(self, sessions: Sequence[socket.socket]) -> list[str]:
+        """Each session's connection-log termination state, read until the margin."""
+        ports = [f"127.0.0.1:{session.getsockname()[1]}" for session in sessions]
+        found: dict[str, str] = {}
+
+        def read() -> bool:
+            for line in self.out().splitlines():
+                fields = line.split()
+                if len(fields) > 6 and fields[0] in ports and fields[2] == "cache":
+                    found[fields[0]] = fields[6]
+            return len(found) == len(ports)
+
+        if _wait(read, time.monotonic() + MARGIN) is None:
+            raise CaseFailed(f"no connection line for {', '.join(p for p in ports if p not in found)} within {MARGIN:.1f} s")
+        return [found[port] for port in ports]
+
+    def events(self, role: str, node: str) -> list[tuple[float, str, str]]:
+        """A peer's `<stamp> <open|reply|close> <client port>` lines, a line still being written left out."""
+        lines = (self.directory / f"{role}-{_address(node)}.events").read_text().split("\n")[:-1]
+        return [(float(stamp), event, port) for stamp, event, port in (line.split() for line in lines)]
+
+    def opens(self, role: str, node: str) -> list[float]:
+        return [stamp for stamp, event, _ in self.events(role, node) if event == "open"]
+
+    def prompt_close(self, since: float) -> float | None:
+        """The first close after `since` of a Sentinel 3 connection the client closed as soon as its master reply
+        landed: votes-node2/via-node3's check, the two DOWN votes waiting out `timeout check` on theirs."""
+        replied: dict[str, float] = {}
+        for stamp, event, port in self.events("sentinel", "node3"):
+            if event == "open":
+                replied.pop(port, None)
+            elif event == "reply":
+                replied[port] = stamp
+            elif event == "close" and port in replied and since < stamp < replied[port] + TIMEOUT_CHECK / 2:
+                return stamp
+        return None
+
+    def close(self) -> None:
+        for session in self.sessions:
+            session.close()
+
+
+def _case_parse(bench: Bench) -> str:
+    directory = bench.directory
+    with (directory / "haproxy.out").open("wb") as out, (directory / "haproxy.err").open("wb") as err:
+        result = subprocess.run(
+            [*bench.haproxy, "-c", "-V", "-f", str(directory / "haproxy.cfg")], stdout=out, stderr=err, timeout=START
+        )
+    printed = (directory / "haproxy.out").read_text() + (directory / "haproxy.err").read_text()
+    noise = [line for line in printed.splitlines() if re.search(r"Warnings were found\.|\[WARNING\]|\[ALERT\]", line)]
+    if result.returncode != 0 or "Configuration file is valid" not in printed or noise:
+        raise CaseFailed(f"haproxy -c exited {result.returncode}: {' | '.join(noise or printed.splitlines()[:3])}")
+    return "Configuration file is valid, no warning or alert"
+
+
+def _case_start(bench: Bench) -> str:
+    bench.peers()
+    bench.start_haproxy()
+    routed = bench.routed(bench.started + START)
+    if routed is None:
+        raise CaseFailed(f"no PONG through the frontend within {START:.2f} s of the start")
+    figure = f"route {routed - bench.started:.2f} s (bound {START:.2f} s)"
+    votes = len(re.findall(r"^Server votes-node2/via-node\d is UP", bench.out(), re.M))
+    if votes < 2:
+        raise CaseFailed(f"a session routed after {votes} votes-node2 UP line(s); {figure}")
+    metrics = _scrape()
+    reads = [(server, _state(metrics, "haproxy_server_check_status", server)) for server in ("node1/valkey", "node3/valkey")]
+    figures = "; ".join([figure, *(f"{server} {state}" for server, state in reads)])
+    rose = [server for server, _ in reads if bench.has_line(rf"^Server {server} is UP")]
+    if rose or any(state != "L7STS" for _, state in reads):
+        raise CaseFailed(f"{', '.join(rose) or 'a route'} read UP or a status other than L7STS; {figures}")
+    return figures
+
+
+def _case_no_early_route(bench: Bench) -> str:
+    bench.peers()
+    bench.silence("node1")
+    bench.silence("node3")
+    bench.start_haproxy()
+    if _wait(_up("node2/valkey"), bench.started + START) is None:
+        raise CaseFailed(f"node2/valkey not UP within {START:.2f} s on one vote")
+    opened = time.monotonic()
+    while (now := time.monotonic()) < opened + WINDOW:
+        if not _up("node2/valkey")():
+            raise CaseFailed(f"node2/valkey not UP {now - opened:.2f} s into the {WINDOW:.0f} s on one vote")
+        session = _attempt(opened + WINDOW)
+        if session is not None:
+            session.close()
+            raise CaseFailed(f"a session got its PONG on one vote, {now - opened:.2f} s into the {WINDOW:.0f} s")
+        time.sleep(STEP)
+    answered = bench.answer("node1")
+    bound = SILENT_VOTE_RISE + MARGIN
+    routed = bench.routed(answered + bound)
+    if routed is None:
+        raise CaseFailed(f"no route within {bound:.2f} s of a second Sentinel answering")
+    return f"route {routed - answered:.2f} s after a second Sentinel answered (bound {bound:.2f} s); no PONG on one vote"
+
+
+def _case_vote_down_cuts_nothing(bench: Bench) -> str:
+    bench.peers()
+    bench.start_haproxy()
+    sessions = bench.two_sessions()
+    silenced = bench.silence("node3")
+    fell = routed = None
+    while (now := time.monotonic()) < silenced + WINDOW:
+        for index, session in enumerate(sessions, 1):
+            if not _ping(session, silenced + WINDOW):
+                raise CaseFailed(f"session {index} got no PONG {now - silenced:.2f} s into Sentinel 3's silence")
+        if fell is None:
+            fell = now if bench.has_line(rf"^Server {VOTE_VIA_NODE3} is DOWN") else None
+        elif routed is None and (session := _attempt(silenced + WINDOW)) is not None:
+            routed = now
+            session.close()
+        time.sleep(STEP)
+    if fell is None or routed is None:
+        missing = f"no {VOTE_VIA_NODE3} DOWN line" if fell is None else "no new session routed after the DOWN line"
+        raise CaseFailed(f"{missing} in Sentinel 3's {WINDOW:.0f} s of silence")
+    answered = bench.answer("node3")
+    bound = SILENT_VOTE_RISE + MARGIN
+    rose = _wait(_up(VOTE_VIA_NODE3), answered + bound)
+    if rose is None:
+        raise CaseFailed(f"{VOTE_VIA_NODE3} not UP within {bound:.2f} s of Sentinel 3 answering")
+    return f"vote UP again {rose - answered:.2f} s (bound {bound:.2f} s); DOWN at {fell - silenced:.2f} s, both sessions answering"
+
+
+def _case_one_vote_cuts_nothing(bench: Bench) -> str:
+    bench.peers()
+    bench.start_haproxy()
+    sessions = bench.two_sessions()
+    bench.tell("node1", "refuse")
+    faulted = bench.silence("node3")
+    votes = ("votes-node2/via-node1", VOTE_VIA_NODE3)
+    deadline = faulted + VOTE_FALL + MARGIN
+
+    def both_down() -> bool:
+        metrics = _scrape()
+        return all(_state(metrics, "haproxy_server_status", vote) == "DOWN" for vote in votes)
+
+    if _wait(both_down, deadline) is None:
+        raise CaseFailed(f"{' and '.join(votes)} not both DOWN within {deadline - faulted:.2f} s")
+    metrics = _scrape()
+    states = [_state(metrics, "haproxy_server_check_status", vote) for vote in votes]
+    reads = f"{votes[0]} {states[0]}; {votes[1]} {states[1]}"
+    if states != ["L4CON", "L4TOUT"]:
+        raise CaseFailed(f"the two DOWN votes read other than L4CON and L4TOUT; {reads}")
+    opened = time.monotonic()
+    while (now := time.monotonic()) < opened + WINDOW:
+        for index, session in enumerate(sessions, 1):
+            if not _ping(session, opened + WINDOW):
+                raise CaseFailed(f"session {index} got no PONG {now - opened:.2f} s into the {WINDOW:.0f} s at one vote; {reads}")
+        if (session := _attempt(opened + WINDOW)) is not None:
+            session.close()
+            raise CaseFailed(f"a new session routed at one vote, {now - opened:.2f} s into the {WINDOW:.0f} s; {reads}")
+        time.sleep(STEP)
+    answered = bench.answer("node3")
+    bound = SILENT_VOTE_RISE + MARGIN
+    routed = bench.routed(answered + bound)
+    if routed is None:
+        raise CaseFailed(f"no new route within {bound:.2f} s of Sentinel 3 answering; {reads}")
+    return f"route {routed - answered:.2f} s after Sentinel 3 answered (bound {bound:.2f} s); {reads}"
+
+
+def _case_no_vote_cuts(bench: Bench) -> str:
+    bench.peers()
+    bench.start_haproxy()
+    sessions = bench.two_sessions()
+    silenced = [bench.silence(node["name"]) for node in NODES][-1]
+    bound = VOTE_FALL + ROUTE_FALL + MARGIN
+    ends = _ends(sessions, silenced + bound)
+    if ends is None:
+        raise CaseFailed(f"the sessions not both ended within {bound:.2f} s of every Sentinel's silence")
+    figure = f"both sessions cut {max(ends) - silenced:.2f} s (bound {bound:.2f} s)"
+    terminations = bench.terminations(sessions)
+    if any(not state.startswith("D") for state in terminations):
+        raise CaseFailed(f"terminations {', '.join(terminations)}, not each opening with D; {figure}")
+    return f"{figure}; terminations {', '.join(terminations)}"
+
+
+def _case_contradiction_cuts_both(bench: Bench) -> str:
+    bench.peers()
+    bench.start_haproxy()
+    sessions = bench.two_sessions()
+    first = bench.tell("node1", "name node1")
+    time.sleep(max(first + 1.0 - time.monotonic(), 0))
+    switched = bench.tell("node3", "name node1")
+    cut_bound = SWITCHED_VOTE_RISE + ROUTE_FALL + MARGIN
+    ends = _ends(sessions, switched + cut_bound)
+    if ends is None:
+        raise CaseFailed(f"the sessions on node2 not both ended within {cut_bound:.2f} s of the second switch")
+    cut = max(ends)
+    figures = f"cut {cut - switched:.2f} s (bound {cut_bound:.2f} s)"
+    terminations = bench.terminations(sessions)
+    state = _state(_scrape(), "haproxy_server_check_status", "node2/valkey")
+    figures += f"; terminations {', '.join(terminations)}; node2/valkey {state}"
+    if any(not t.startswith("D") for t in terminations) or state != "L7STS":
+        raise CaseFailed(f"a termination not opening with D or node2/valkey not L7STS; {figures}")
+    route_bound = VOTE_FALL + ROUTE_RISE + MARGIN
+    routed = bench.routed(switched + route_bound)
+    if routed is None:
+        raise CaseFailed(f"no new session routed within {route_bound:.2f} s of the second switch; {figures}")
+    figures += f"; route to node1 {routed - switched:.2f} s (bound {route_bound:.2f} s)"
+    on_node2 = [t for t in bench.opens("valkey", "node2") if t > cut]
+    on_node1 = [t for t in bench.opens("valkey", "node1") if t > cut]
+    if on_node2 or not on_node1:
+        raise CaseFailed(f"{len(on_node2)} session(s) reached node2 and {len(on_node1)} node1 after the cut; {figures}")
+    return figures
+
+
+def _case_lost_syn_inside_budget(bench: Bench) -> str:
+    bench.peers()
+    bench.start_haproxy()
+    if _wait(_up(VOTE_VIA_NODE3), bench.started + START) is None:
+        raise CaseFailed(f"{VOTE_VIA_NODE3} not UP within {START:.2f} s of the start")
+    failures = "haproxy_server_check_failures_total"
+    before = _number(_scrape(), failures, VOTE_VIA_NODE3)
+    table = bench.procs.table
+    bench.procs.nft("add", "set", "inet", table, "seen", "{ type inet_service; flags dynamic; }")
+    bench.procs.nft("add", "chain", "inet", table, "first_syn", "{ type filter hook input priority 0; }")
+    rule = f"ip daddr {_address('node3')} tcp dport {SENTINEL_PORT} tcp flags & (syn | ack) == syn"
+    bench.procs.nft("add", "rule", "inet", table, "first_syn", f"{rule} tcp sport != @seen add @seen {{ tcp sport }} counter drop")
+    began = time.monotonic()
+    longest, not_up = 0.0, None
+    while (now := time.monotonic()) < began + WINDOW:
+        metrics = _scrape()
+        if not_up is None and _state(metrics, "haproxy_server_status", VOTE_VIA_NODE3) != "UP":
+            not_up = now - began
+        longest = max(longest, _number(metrics, "haproxy_server_check_duration_seconds", VOTE_VIA_NODE3))
+        time.sleep(STEP)
+    chain = json.loads(bench.procs.nft("-j", "list", "chain", "inet", table, "first_syn"))["nftables"]
+    dropped = next(e["counter"]["packets"] for item in chain if "rule" in item for e in item["rule"]["expr"] if "counter" in e)
+    listed = json.loads(bench.procs.nft("-j", "list", "set", "inet", table, "seen"))["nftables"]
+    ports = len(next(item["set"] for item in listed if "set" in item).get("elem", []))
+    bench.procs.nft("flush", "chain", "inet", table, "first_syn")
+    after = _number(_scrape(), failures, VOTE_VIA_NODE3)
+    if dropped != ports:
+        raise CaseFailed(f"the rule dropped {dropped} SYNs for {ports} connections")
+    judged = f"{dropped} first SYNs dropped for {ports} connections; failures {before:.0f} -> {after:.0f}"
+    if not_up is not None or after != before or bench.has_line(rf"^Server {VOTE_VIA_NODE3} is DOWN"):
+        down = "" if not_up is None else f"not UP at {not_up:.2f} s; "
+        raise CaseFailed(f"{VOTE_VIA_NODE3} failed a check or fell in the {WINDOW:.0f} s: {down}{judged}")
+    if longest < 1.0:
+        raise CaseFailed(f"no check of {VOTE_VIA_NODE3} lasted 1.0 s or more, the longest {longest:.3f} s; {judged}")
+    return f"longest check {longest:.3f} s (at least 1.000 s); {judged}"
+
+
+def _case_stalled_exchange(bench: Bench) -> str:
+    bench.peers()
+    bench.start_haproxy()
+    if _wait(_up(VOTE_VIA_NODE3), bench.started + START) is None:
+        raise CaseFailed(f"{VOTE_VIA_NODE3} not UP within {START:.2f} s of the start")
+    failures, status = "haproxy_server_check_failures_total", "haproxy_server_check_status"
+    for attempt in range(1, 4):
+        before = _number(_scrape(), failures, VOTE_VIA_NODE3)
+        since = time.monotonic()
+        if _wait(lambda: bench.prompt_close(since) is not None, since + INTER + MARGIN) is None:
+            raise CaseFailed(f"no check of {VOTE_VIA_NODE3} closed within {INTER + MARGIN:.1f} s, try {attempt}")
+        closed = bench.prompt_close(since)
+        aimed = closed + INTER
+        bench.tell("node3", f"hold {aimed - AIM:.6f} {aimed + AIM:.6f} {HOLD}")
+
+        def landed() -> bool:
+            metrics = _scrape()
+            return _number(metrics, failures, VOTE_VIA_NODE3) == before + 1 and _state(metrics, status, VOTE_VIA_NODE3) == "L7TOUT"
+
+        failed = _wait(landed, aimed + AIM + TIMEOUT_CHECK + MARGIN)
+        if failed is not None:
+            break
+    else:
+        raise CaseFailed("the stall did not land in three tries")
+    bound = FASTINTER + MARGIN
+    passed = _wait(lambda: _state(_scrape(), status, VOTE_VIA_NODE3) == "L7OK", failed + bound)
+    if passed is None or bench.has_line(rf"^Server {VOTE_VIA_NODE3} is DOWN"):
+        what = "a DOWN line" if passed is not None else f"no L7OK within {bound:.2f} s"
+        raise CaseFailed(f"{VOTE_VIA_NODE3} after one stalled exchange: {what}")
+    return f"L7OK {passed - failed:.2f} s after the stalled check failed (bound {bound:.2f} s); landed on try {attempt}, no DOWN"
+
+
+CASE_BODIES: dict[str, Callable[[Bench], str]] = {
+    "parse": _case_parse,
+    "start": _case_start,
+    "no-early-route": _case_no_early_route,
+    "vote-down-cuts-nothing": _case_vote_down_cuts_nothing,
+    "one-vote-cuts-nothing": _case_one_vote_cuts_nothing,
+    "no-vote-cuts": _case_no_vote_cuts,
+    "contradiction-cuts-both": _case_contradiction_cuts_both,
+    "lost-syn-inside-budget": _case_lost_syn_inside_budget,
+    "stalled-exchange": _case_stalled_exchange,
+}
+
+
+def _bench_body(run: Run, name: str, procs: Procs) -> tuple[bool, str]:
+    bench = Bench(run, procs, name)
+    try:
+        return True, CASE_BODIES[name](bench)
+    finally:
+        bench.close()
+
+
+def _mapping_read(run: Run, rootfs: Path) -> list[str]:
+    """The code the once-per-run HAProxy maps from outside the tree; none read when it exits before it listens."""
+    directory = run.directory / "maps"
+    directory.mkdir()
+    (directory / "haproxy.cfg").write_text(run.render)
+    procs = Procs("maps")
+    try:
+        process, _ = _start_haproxy(procs, directory, run.haproxy)
+        if not _listening(process, time.monotonic() + START):
+            print(f"the once-per-run HAProxy did not listen within {START:.2f} s: no mapping read", file=sys.stderr)
+            return []
+        return foreign_mappings(Path(f"/proc/{process.pid}/maps").read_text(), str(rootfs))
+    finally:
+        procs.stop_all()
+
+
+def _refused(reason: str) -> int:
+    print(f"refused: {reason}", file=sys.stderr)
+    return 2
+
+
+def run_inside(rootfs: Path, scratch: Path, cases: Sequence[str]) -> int:
+    names = [name for _, name in socket.if_nameindex()]
+    if not loopback_only(names):
+        return _refused(f"the namespace lists {', '.join(names) or 'no interface'}, not lo alone")
+    try:
+        subprocess.run([IP, "link", "set", "lo", "up"], check=True, timeout=MARGIN)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        return _refused(f"{IP} link set lo up: {exc}")
+    try:
+        haproxy = haproxy_argv(rootfs)
+        printed = subprocess.run([*haproxy, "-vv"], capture_output=True, text=True, timeout=START).stdout
+    except (Refused, OSError, subprocess.TimeoutExpired) as exc:
+        return _refused(str(exc))
+    first = (printed.splitlines() or [""])[0]
+    if not version_ok(first):
+        return _refused(
+            f"the binary printed {first!r}, not {PINNED_VERSION}, PINNED_VERSION in infra/scripts/cache-proxy-harness.py"
+        )
+    directory = scratch / f"run-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{os.getpid()}"
+    directory.mkdir(parents=True)
+    run = Run(directory, haproxy, render(TEMPLATE.read_text()))
+    foreign = _mapping_read(run, rootfs)
+    if foreign:
+        return _refused(f"HAProxy maps code from outside the tree: {', '.join(foreign)}")
+    passed = 0
+    for name in cases:
+        line = run_case(name, functools.partial(_bench_body, run, name))
+        print(line, flush=True)
+        passed += line.startswith("PASS ")
+    digest = (rootfs / IMAGE_DIGEST_FILE).read_text().strip().removeprefix("sha256:")
+    print(f"{passed} passed, {len(cases) - passed} failed -- {first} -- image {digest[:12]}", flush=True)
+    return 0 if passed == len(cases) else 1
+
+
+def run(rootfs: Path, scratch: Path, cases: Sequence[str]) -> int:
+    """Refuses outside the namespace what it can, then re-runs itself inside one; nothing of the tree runs here."""
+    rootfs, scratch = rootfs.resolve(), scratch.resolve()
+    if not tree_whole(rootfs):
+        return _refused(f"{rootfs} holds no {IMAGE_DIGEST_FILE}: its fetch did not finish")
+    missing = [tool for tool in (UNSHARE, IP, NFT) if not os.access(tool, os.X_OK)]
+    if missing:
+        return _refused(f"no {', '.join(missing)}")
+    scratch.mkdir(parents=True, exist_ok=True)
+    argv = [UNSHARE, "-rn", sys.executable, str(Path(__file__).resolve()), "run", "--inside"]
+    argv += ["--rootfs", str(rootfs), "--scratch", str(scratch), *(word for case in cases for word in ("--case", case))]
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.execv(UNSHARE, argv)
+
+
+def _master_reply(address: str) -> bytes:
+    fields = {
+        "name": MASTER_NAME,
+        "ip": address,
+        "port": str(VALKEY_PORT),
+        "runid": "0" * 40,
+        "flags": "master",
+        "link-pending-commands": "0",
+        "link-refcount": "1",
+        "last-ping-sent": "0",
+        "last-ok-ping-reply": "100",
+        "last-ping-reply": "100",
+        "down-after-milliseconds": "5000",
+        "info-refresh": "1000",
+        "role-reported": "master",
+        "role-reported-time": "100000",
+        "config-epoch": "1",
+        "num-slaves": "2",
+        "num-other-sentinels": "2",
+        "quorum": "2",
+        "failover-timeout": "60000",
+        "parallel-syncs": "1",
+    }
+    items = [word for pair in fields.items() for word in pair]
+    return f"*{len(items)}\r\n".encode() + b"".join(f"${len(word)}\r\n{word}\r\n".encode() for word in items)
+
+
+def peer(role: str, address: str, directory: Path) -> int:
+    """A scripted Sentinel or Valkey on `address`, taking one command per stdin line and answering `ok`: `name <node>`,
+    `refuse` (its listener closed) and `hold <from> <to> <seconds>` (the master reply held on the connections it
+    accepts in that monotonic window). Each connection's open, master reply and close go to its events file."""
+    lock = threading.Lock()
+    named, held = ["node2"], [(0.0, 0.0, 0.0)]
+    refuse, refused = threading.Event(), threading.Event()
+    events = (directory / f"{role}-{address}.events").open("a", buffering=1)
+
+    def record(event: str, port: int, stamp: float | None = None) -> None:
+        with lock:
+            events.write(f"{time.monotonic() if stamp is None else stamp:.6f} {event} {port}\n")
+
+    def answer(word: bytes, opened: float) -> bytes:
+        if role == "valkey" or word in (b"AUTH", b"PING"):
+            return {b"AUTH": b"+OK\r\n", b"PING": b"+PONG\r\n"}.get(word, b"-ERR unknown command\r\n")
+        if word != b"SENTINEL":
+            return b"-ERR unknown command\r\n"
+        start, end, seconds = held[0]
+        if start <= opened <= end:
+            time.sleep(seconds)
+        return _master_reply(_address(named[0]))
+
+    def serve(connection: socket.socket, port: int, opened: float) -> None:
+        record("open", port, opened)
+        received = b""
+        with connection:
+            while True:
+                try:
+                    chunk = connection.recv(4096)
+                except OSError:
+                    chunk = b""
+                if not chunk:
+                    record("close", port)
+                    return
+                received += chunk
+                while b"\r\n" in received:
+                    line, received = received.split(b"\r\n", 1)
+                    word = line.split(b" ", 1)[0].upper()
+                    with contextlib.suppress(OSError):
+                        connection.sendall(answer(word, opened))
+                    if word == b"SENTINEL" and role == "sentinel":
+                        record("reply", port)
+
+    def commands() -> None:
+        for line in sys.stdin:
+            word, *args = line.split()
+            if word == "name":
+                named[0] = args[0]
+            elif word == "hold":
+                held[0] = (float(args[0]), float(args[1]), float(args[2]))
+            elif word == "refuse":
+                refuse.set()
+                refused.wait(MARGIN)
+            print("ok", flush=True)
+        os._exit(0)
+
+    listener = socket.socket()
+    # A connection this side closed first leaves TIME_WAIT on this fixed address, which would refuse the next case's bind.
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind((address, SENTINEL_PORT if role == "sentinel" else VALKEY_PORT))
+    listener.listen(64)
+    listener.settimeout(STEP)
+    threading.Thread(target=commands, daemon=True).start()
+    print("listening", flush=True)
+    while not refuse.is_set():
+        try:
+            connection, (_, port) = listener.accept()
+        except TimeoutError:
+            continue
+        connection.setblocking(True)
+        threading.Thread(target=serve, args=(connection, port, time.monotonic()), daemon=True).start()
+    listener.close()
+    refused.set()
+    threading.Event().wait()
+    return 0
+
+
 def _digest(value: str) -> str:
     if not DIGEST.fullmatch(value):
         raise argparse.ArgumentTypeError("expected sha256:<64 lowercase hex>")
@@ -211,7 +1113,21 @@ def main(argv: list[str] | None = None) -> int:
     fetch_command = commands.add_parser("fetch", help="pull the pinned image's layers into an empty directory")
     fetch_command.add_argument("--digest", required=True, type=_digest)
     fetch_command.add_argument("--into", required=True, type=Path)
+    run_command = commands.add_parser("run", help="run the role's render on the tree's HAProxy against scripted peers")
+    run_command.add_argument("--rootfs", required=True, type=Path)
+    run_command.add_argument("--scratch", required=True, type=Path)
+    run_command.add_argument("--case", action="append", choices=CASES, dest="cases")
+    run_command.add_argument("--inside", action="store_true", help=argparse.SUPPRESS)
+    peer_command = commands.add_parser("peer", help="the run's own scripted Sentinel or Valkey")
+    peer_command.add_argument("role", choices=("sentinel", "valkey"))
+    peer_command.add_argument("address")
+    peer_command.add_argument("directory", type=Path)
     args = parser.parse_args(argv)
+    if args.command == "run":
+        cases = args.cases or list(CASES)
+        return run_inside(args.rootfs, args.scratch, cases) if args.inside else run(args.rootfs, args.scratch, cases)
+    if args.command == "peer":
+        return peer(args.role, args.address, args.directory)
     try:
         fetch(args.digest, args.into)
     except FetchRefused as exc:

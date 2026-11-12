@@ -1,5 +1,7 @@
-"""`infra/scripts/cache-proxy-harness.py`'s render and fetch. No case reaches the registry: every `fetch` passes `get=`."""
+"""`infra/scripts/cache-proxy-harness.py`'s render, fetch and the run's refusals and teardown. No case reaches the
+registry: every `fetch` passes `get=`; none enters a namespace or starts HAProxy."""
 
+import contextlib
 import difflib
 import hashlib
 import importlib.util
@@ -7,6 +9,8 @@ import io
 import json
 import os
 import stat
+import subprocess
+import sys
 import tarfile
 from collections.abc import Callable
 from pathlib import Path
@@ -258,3 +262,84 @@ def test_the_fetch_refuses_a_tree_already_holding_a_file(tmp_path):
         harness.fetch(digest, tree, get=get)
     assert os.listdir(tree) == ["left"]
     assert (tree / "left").read_text() == "partial"
+
+
+def test_the_run_refuses_a_namespace_with_any_interface_but_lo():
+    assert harness.loopback_only(["lo"])
+    assert not harness.loopback_only(["lo", "eth0"]) and not harness.loopback_only(["eth0"]) and not harness.loopback_only([])
+
+
+def test_the_inner_run_starts_nothing_in_a_namespace_with_any_interface_but_lo(monkeypatch, tmp_path):
+    started = []
+
+    class Started(Exception):
+        pass
+
+    def record(argv, *args, **kwargs):
+        started.append(argv)
+        raise Started(argv)
+
+    rootfs = tmp_path / "rootfs"
+    rootfs.mkdir()
+    (rootfs / harness.IMAGE_DIGEST_FILE).write_text("sha256:" + "0" * 64 + "\n")
+    monkeypatch.setattr(harness.subprocess, "Popen", record)
+    monkeypatch.setattr(harness.subprocess, "run", record)
+    monkeypatch.setattr(harness.socket, "if_nameindex", lambda: [(1, "lo"), (2, "eth0")])
+    assert harness.run_inside(rootfs, tmp_path / "scratch", list(harness.CASES)) == 2
+    assert started == []
+    monkeypatch.setattr(harness.socket, "if_nameindex", lambda: [(1, "lo")])
+    with contextlib.suppress(Started):
+        harness.run_inside(rootfs, tmp_path / "scratch", list(harness.CASES))
+    assert started[:1] == [["/usr/bin/ip", "link", "set", "lo", "up"]], started
+
+
+def test_the_run_refuses_a_binary_that_does_not_print_the_pinned_version():
+    pin = harness.PINNED_VERSION
+    assert harness.version_ok(f"HAProxy version {pin} 2026/10/01 - https://haproxy.org/")
+    assert harness.version_ok(f"HAProxy version {pin}-1a2b3c4 2026/10/01 - https://haproxy.org/")
+    assert not harness.version_ok("HAProxy version 0.0.1 2026/10/01 - https://haproxy.org/")
+    assert not harness.version_ok(f"HAProxy version {pin}0 2026/10/01 - https://haproxy.org/")
+
+
+def test_the_run_refuses_a_tree_the_fetch_did_not_finish(tmp_path):
+    assert not harness.tree_whole(tmp_path)
+    (tmp_path / harness.IMAGE_DIGEST_FILE).write_text("sha256:" + "0" * 64 + "\n")
+    assert harness.tree_whole(tmp_path)
+
+
+def test_a_case_that_raises_prints_fail_and_stops_every_process_it_started(tmp_path):
+    argv = [sys.executable, "-c", "import time; time.sleep(30)", str(tmp_path)]
+    twin = subprocess.Popen(argv)
+    started = []
+
+    def body(procs):
+        started.append(procs.start(argv))
+        raise RuntimeError("the case broke")
+
+    try:
+        line = harness.run_case("start", body)
+        assert line.startswith("FAIL start") and "the case broke" in line, line
+        assert started and started[0].poll() is not None
+        with pytest.raises(subprocess.TimeoutExpired):  # a process the case did not start, on the same command line, lives on
+            twin.wait(timeout=0.5)
+    finally:
+        for process in [twin, *started]:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+
+
+def test_a_mapping_outside_the_tree_is_foreign():
+    maps = "\n".join(
+        [
+            "55d0-55e0 r--p 00000000 fd:01 11 /x/root/usr/local/sbin/haproxy",
+            "55e0-55f0 rw-p 00000000 00:00 0 [heap]",
+            "7f00-7f10 r-xp 00000000 fd:01 12 /x/root/usr/lib/x86_64-linux-gnu/libc.so.6",
+            "7f10-7f20 r-xp 00000000 fd:01 13                          /usr/lib/x86_64-linux-gnu/libssl.so.3",
+            "7f20-7f30 rw-p 00000000 00:00 0 ",
+            "7ffd-7ffe r-xp 00000000 00:00 0 [vdso]",
+            "7f30-7f40 r-xp 00000000 fd:01 14                          /x/rootfs/lib/libz.so.1",
+            "7f40-7f50 rw-s 00000000 00:01 15 /dev/zero (deleted)",
+        ]
+    )
+    assert harness.foreign_mappings(maps, "/x/root") == ["/usr/lib/x86_64-linux-gnu/libssl.so.3", "/x/rootfs/lib/libz.so.1"]
