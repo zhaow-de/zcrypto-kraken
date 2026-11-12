@@ -244,13 +244,15 @@ def test_an_echoing_reason_phrase_or_header_name_is_redacted(tmp_path, caplog, c
             [("Content-Encoding", "gzip")],
             "credential unscannable",
         ),
-        (zstd.compress(_echo(SENTINEL_FORMS[0])), [("Content-Encoding", "zstd")], "credential echoed"),
+        (zstd.compress(BG_SOPR + _echo(SENTINEL_FORMS[0])), [("Content-Encoding", "zstd")], "credential echoed"),
         (zlib.compress(_echo(SENTINEL_FORMS[0])), [("Content-Encoding", "deflate")], "credential echoed"),
         (_raw_deflate(_echo(SENTINEL_FORMS[0])), [("Content-Encoding", "deflate")], "credential echoed"),
     ],
     ids=["json-escaped", "percent-upper", "percent-lower", "gzip", "gzip-two-members", "zstd", "deflate", "deflate-raw"],
 )
 def test_echoes_in_every_form_are_not_stored(tmp_path, caplog, capsys, served, headers, reading):
+    # An encoded echo holds no form as served, so only the decode before the scan finds it.
+    assert _holds(served) is not bool(headers)
     caplog.set_level(logging.DEBUG)
     run = _run(tmp_path, {"bg-sopr": [Reply(200, served, headers)]})
     assert run.code == 1
