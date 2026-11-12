@@ -1078,7 +1078,65 @@ FS_ALLOWED = frozenset(
         "tempfile.mkstemp",
     }
 )
-_RULES = ("rename", "os_open", "mkstemp", "write_parquet", "opening", "fs")
+# Every module cli/vintage/ may import: the walk sees only what these modules name, so a module added here widens what
+# the guard must hold, a reviewed edit. `logging` is the log levels' (`log.log`); no handler of it writes a file.
+VINTAGE_IMPORTS = frozenset(
+    {
+        "__future__",
+        "base64",
+        "cli.capture.command",
+        "cli.capture.errors",
+        "cli.config",
+        "cli.logging",
+        "cli.vintage",
+        "cli.vintage.chain",
+        "cli.vintage.credential",
+        "cli.vintage.derive",
+        "cli.vintage.fetch",
+        "cli.vintage.gauges",
+        "cli.vintage.record",
+        "cli.vintage.sources",
+        "cli.vintage.storage",
+        "cli.vintage.table",
+        "collections",
+        "collections.abc",
+        "compression.zstd",
+        "contextlib",
+        "dataclasses",
+        "datetime",
+        "email.utils",
+        "errno",
+        "gzip",
+        "hashlib",
+        "http.client",
+        "importlib.metadata",
+        "io",
+        "json",
+        "logging",
+        "math",
+        "os",
+        "pathlib",
+        "polars",
+        "re",
+        "secrets",
+        "signal",
+        "stat",
+        "sys",
+        "tempfile",
+        "time",
+        "traceback",
+        "typer",
+        "typing",
+        "urllib.error",
+        "urllib.parse",
+        "urllib.request",
+        "zlib",
+    }
+)
+_FILE_HANDLERS = frozenset(
+    {"FileHandler", "BaseRotatingHandler", "RotatingFileHandler", "TimedRotatingFileHandler", "WatchedFileHandler"}
+)
+_RULES = ("rename", "os_open", "mkstemp", "write_parquet", "opening", "fs", "imports", "logging_file")
 # Each helper is its module's file name and its function's name: a function of that name elsewhere is no helper.
 _RENAME_HELPERS = frozenset({("storage.py", "publish_tick"), ("storage.py", "publish_prom"), ("storage.py", "publish_table_dir")})
 _MKSTEMP_HELPER = ("storage.py", "publish_prom")
@@ -1277,6 +1335,17 @@ def _chain_root_breaches(expr: ast.expr, bound: dict[str, set[str]], module: str
         yield from _breaches(expr, bound, module, function, owner)
 
 
+def _names_a_file_handler(expr: ast.expr, bound: dict[str, set[str]]) -> bool:
+    last = expr.attr if isinstance(expr, ast.Attribute) else expr.id if isinstance(expr, ast.Name) else None
+    return last in _FILE_HANDLERS or any(name.rsplit(".", 1)[-1] in _FILE_HANDLERS for name in _qualified(expr, bound))
+
+
+def _imported(node: ast.Import | ast.ImportFrom) -> list[str]:
+    if isinstance(node, ast.Import):
+        return [alias.name for alias in node.names]
+    return ["." * node.level + (node.module or "")]
+
+
 def _breaches(node: ast.AST, bound: dict[str, set[str]], module: str, function: str | None, owner: str | None = None):
     """Each (rule, node) breach under `node`, a call's place being the innermost function whose body holds it; a class
     body is no function's, and a method is named `<class>.<name>`, so neither is a helper."""
@@ -1295,9 +1364,18 @@ def _breaches(node: ast.AST, bound: dict[str, set[str]], module: str, function: 
     if isinstance(node, ast.ImportFrom) and node.level == 0 and _in_fs(node.module):
         if any(not _fs_allowed(f"{node.module}.{alias.name}") for alias in node.names):
             yield "fs", node
+    if isinstance(node, (ast.Import, ast.ImportFrom)):
+        if any(name not in VINTAGE_IMPORTS for name in _imported(node)):
+            yield "imports", node
+        if any(alias.name.rsplit(".", 1)[-1] in _FILE_HANDLERS for alias in node.names):
+            yield "logging_file", node
     if isinstance(node, ast.Call):
         for rule in _call_breaches(node, bound, module, function):
             yield rule, node
+        names = _qualified(node.func, bound)
+        to_a_file = "logging.basicConfig" in names and any(keyword.arg == "filename" for keyword in node.keywords)
+        if to_a_file or _names_a_file_handler(node.func, bound):
+            yield "logging_file", node
         yield from _chain_root_breaches(node.func, bound, module, function, owner)
         for child in (*node.args, *node.keywords):
             yield from _breaches(child, bound, module, function, owner)
@@ -1305,6 +1383,8 @@ def _breaches(node: ast.AST, bound: dict[str, set[str]], module: str, function: 
     if isinstance(node, (ast.Name, ast.Attribute)) and isinstance(node.ctx, ast.Load):
         for rule in _reference_breaches(node, bound, module, function):
             yield rule, node
+        if _names_a_file_handler(node, bound):
+            yield "logging_file", node
         yield from _chain_root_breaches(node, bound, module, function, owner)
         return
     for child in ast.iter_child_nodes(node):
@@ -1564,6 +1644,53 @@ def test_no_copy_move_truncate_or_delete(tmp_path):
     nested.mkdir(parents=True)
     (nested / "verify.py").write_text("import os\ndef f(p): os.remove(p)\n")
     assert _write_guard(_modules(tmp_path / "tree"))["fs"] == [f"{nested / 'verify.py'}:2"]
+
+
+def test_cli_vintage_imports_only_the_pinned_modules(tmp_path):
+    assert _real()["imports"] == []
+    assert not VINTAGE_IMPORTS & {"subprocess", "zipfile", "bz2", "lzma", "tarfile", "sqlite3", "shelve", "dbm"}
+    expected, found = _planted(
+        tmp_path,
+        "verify.py",
+        [
+            ("import os", False),
+            ("import polars as pl", False),
+            ("import cli.vintage.storage", False),
+            ("from pathlib import Path", False),
+            ("from cli.vintage.chain import scan", False),
+            ("import subprocess", True),
+            ("from zipfile import ZipFile", True),
+            ("import os.path", True),
+            ("import gzip, tarfile", True),
+            ("from . import storage", True),
+            ("def f():", False),
+            ("    import bz2", True),
+        ],
+    )
+    assert found["imports"] == expected
+
+
+def test_no_logging_handler_writes_a_file(tmp_path):
+    assert _real()["logging_file"] == []
+    expected, found = _planted(
+        tmp_path,
+        "verify.py",
+        [
+            ("import logging", False),
+            ("import logging.handlers", False),
+            ("from logging.handlers import RotatingFileHandler as Rotating", True),
+            ("def f(): return logging.getLogger('vintage')", False),
+            ("def f(log): log.log(logging.ERROR, 'x')", False),
+            ("def f(): logging.basicConfig(level=logging.INFO)", False),
+            ("def f(p): logging.FileHandler(p)", True),
+            ("def f(p): logging.handlers.TimedRotatingFileHandler(p)", True),
+            ("def f(p): Rotating(p)", True),
+            ("def f(p): logging.basicConfig(filename=p)", True),
+            ("def f(s, p): s.callback(logging.handlers.WatchedFileHandler, p)", True),
+            ("class Handler(logging.FileHandler): pass", True),
+        ],
+    )
+    assert found["logging_file"] == expected
 
 
 def test_the_guard_admits_the_allowed_forms(tmp_path):
