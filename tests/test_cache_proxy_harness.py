@@ -198,9 +198,15 @@ def test_a_later_layers_whiteouts_remove_what_they_name(tmp_path):
 def test_a_directory_without_owner_write_takes_its_mode_after_its_members(tmp_path):
     digest, get, _ = _registry(_layer({"ro": 0o555, "ro/sub": 0o555, "ro/sub/f": b"f"}))
     tree = tmp_path / "tree"
-    harness.fetch(digest, tree, get=get)
-    assert (tree / "ro/sub/f").read_bytes() == b"f"
-    assert [stat.S_IMODE((tree / name).stat().st_mode) for name in ("ro", "ro/sub")] == [0o555, 0o555]
+    try:
+        harness.fetch(digest, tree, get=get)
+        assert (tree / "ro/sub/f").read_bytes() == b"f"
+        assert [stat.S_IMODE((tree / name).stat().st_mode) for name in ("ro", "ro/sub")] == [0o555, 0o555]
+    finally:
+        # The scratch is removable only once both directories take owner-write back.
+        for name in ("ro", "ro/sub"):
+            if (tree / name).is_dir(follow_symlinks=False):
+                (tree / name).chmod(stat.S_IMODE((tree / name).stat().st_mode) | stat.S_IWUSR)
 
 
 def test_a_directory_without_owner_search_takes_its_mode_after_the_directory_beneath_it(tmp_path):
