@@ -34,7 +34,8 @@ class Chain:
     other_heads: tuple[TickFile, ...]
     off_chain: tuple[TickFile, ...]
     unreadable: tuple[TickFile, ...]
-    # Every tick named by another's `prev`, which only a hand edit closes: the head is then the newest stamp.
+    # No tick is a head candidate, as under a cycle of `prev` links or a regression over an unreadable predecessor:
+    # the head is then the newest stamp.
     cycle: bool = False
 
 

@@ -531,7 +531,7 @@ def test_a_cycle_of_prev_links_chains_to_the_newest_tick_with_an_error(tmp_path)
     assert manifest["prev"] == {"tick": b.stamp, "tick_json_sha256": b.tick_json_sha256, "error": None}
     assert manifest["genesis_reason"] is None
     errors = _at(records, logging.ERROR)
-    assert len(errors) == 1 and "cycle" in errors[0] and b.stamp in errors[0]
+    assert len(errors) == 1 and "no tick is a head candidate" in errors[0] and b.stamp in errors[0]
 
 
 def _later(source_id: str) -> list[str]:
