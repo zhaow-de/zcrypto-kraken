@@ -1271,15 +1271,33 @@ def _fs_breaks(call: ast.Call, names: set[str]) -> bool:
         return True
     if not isinstance(call.func, ast.Attribute):
         return False
-    attr = call.func.attr
-    return (
-        attr in _FORBIDDEN_METHODS
-        or (attr == "copy" and bool(call.args or call.keywords))
-        or (attr.startswith(("write_", "sink_")) and attr != "write_parquet")
-    )
+    return _forbidden_name(call.func.attr) or (call.func.attr == "copy" and bool(call.args or call.keywords))
+
+
+def _forbidden_name(attr: str) -> bool:
+    return attr in _FORBIDDEN_METHODS or (attr.startswith(("write_", "sink_")) and attr != "write_parquet")
+
+
+def _past_breaches(expr: ast.expr, module: str, function: str | None):
+    """The by-name rules over the attributes a chain passes before its last, whose call or use the tree does not show:
+    `p.unlink.__call__()` is an unlink."""
+    passed = []
+    while isinstance(expr, ast.Attribute):
+        expr = expr.value
+        if isinstance(expr, ast.Attribute):
+            passed.append(expr.attr)
+    if {"replace", "rename"} & set(passed) and (module, function) not in _RENAME_HELPERS:
+        yield "rename"
+    if "write_parquet" in passed and (module, function) != _PART_WRITER:
+        yield "write_parquet"
+    if "open" in passed:
+        yield "opening"
+    if any(_forbidden_name(attr) or attr == "copy" for attr in passed):
+        yield "fs"
 
 
 def _call_breaches(call: ast.Call, bound: dict[str, set[str]], module: str, function: str | None):
+    yield from _past_breaches(call.func, module, function)
     names = _qualified(call.func, bound)
     if _is_rename(call, names) and (module, function) not in _RENAME_HELPERS:
         yield "rename"
@@ -1314,6 +1332,7 @@ def _inert(name: str) -> bool:
 def _reference_breaches(expr: ast.Name | ast.Attribute, bound: dict[str, set[str]], module: str, function: str | None):
     """A guarded callable named but not called: the call its receiver makes is not in the tree, so it breaks the rule
     that holds those calls unless it sits where that rule admits every call."""
+    yield from _past_breaches(expr, module, function)
     names = _qualified(expr, bound)
     attr = expr.attr if isinstance(expr, ast.Attribute) else None
     place = (module, function)
@@ -1328,9 +1347,7 @@ def _reference_breaches(expr: ast.Name | ast.Attribute, bound: dict[str, set[str
     builtin_open = not names and isinstance(expr, ast.Name) and expr.id == "open"
     if builtin_open or names & _OPENERS or (attr == "open" and "os.open" not in names):
         yield "opening"
-    by_name = attr is not None and (
-        attr in _FORBIDDEN_METHODS or attr == "copy" or (attr.startswith(("write_", "sink_")) and attr != "write_parquet")
-    )
+    by_name = attr is not None and (_forbidden_name(attr) or attr == "copy")
     if by_name or any(_in_fs(name) and not _fs_allowed(name) and not _inert(name) for name in names):
         yield "fs"
 
@@ -1407,8 +1424,11 @@ def _write_guard(paths, root: Path) -> dict[str, list[str]]:
     found: dict[str, list[str]] = {rule: [] for rule in _RULES}
     for path in paths:
         tree = ast.parse(path.read_text(), filename=str(path))
+        seen: set[tuple[str, int]] = set()
         for rule, node in _breaches(tree, _bindings(tree), path.relative_to(root).as_posix(), None):
-            found[rule].append(f"{path}:{node.lineno}")
+            if (rule, id(node)) not in seen:
+                seen.add((rule, id(node)))
+                found[rule].append(f"{path}:{node.lineno}")
     return found
 
 
@@ -1463,6 +1483,7 @@ def test_a_rename_lives_only_in_the_three_helpers(tmp_path):
             ("def f(s, a): s.callback(os.rename, a, a)", True),
             ("def f(): return swap", True),
             ("def f(s, p, q): s.callback(p.replace, q)", True),
+            ("def f(p, q): p.rename.__call__(q)", True),
         ],
     )
     assert found["rename"] == expected
@@ -1540,6 +1561,7 @@ def test_write_parquet_lives_only_in_the_part_writer(tmp_path):
             ("def f(df, p): DataFrame.write_parquet(df, p)", True),
             ("def write_part(s, df, b): s.callback(df.write_parquet, b)", False),
             ("def f(s, df, p): s.callback(df.write_parquet, p)", True),
+            ("def f(df, p): df.write_parquet.__call__(p)", True),
         ],
     )
     assert found["write_parquet"] == expected
@@ -1580,6 +1602,7 @@ def test_every_other_opening_call_reads(tmp_path):
             ("def f(ps): return map(open, ps)", True),
             ("def f(): return gzip.open", True),
             ("def f(p): return p.open", True),
+            ("def f(p): p.open.__call__('w')", True),
         ],
     )
     assert found["opening"] == expected
@@ -1656,6 +1679,10 @@ def test_no_copy_move_truncate_or_delete(tmp_path):
             ("def f(s, p): s.callback(p.unlink)", True),
             ("def f(s, d): s.callback(d.copy)", True),
             ("def f(df): return df.write_csv", True),
+            ("def f(p): p.unlink.__call__()", True),
+            ("def f(s, p): s.callback(p.unlink.__call__)", True),
+            ("def f(p): p.write_text.__call__('x')", True),
+            ("def f(p, q): p.unlink.unlink(q)", True),
             ("def f(): return shutil", True),
             ("def f(): return os.environ", False),
             ("def f(): return fsync", False),
