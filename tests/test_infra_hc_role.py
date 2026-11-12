@@ -922,6 +922,7 @@ PING_RENDERS = {
     ("ops", "install the archive-pull runner script"),
     ("ops", "install the replay + panel + tape-bars runner scripts"),
     ("ops", "install the grafana-watchdog runner script"),
+    ("ops", "install the vintage recorder runner script"),
     ("node_common", "render the self-check's ping URL, read by systemd alone"),
 }
 PAIR_LIST_PROBES = {

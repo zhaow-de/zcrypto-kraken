@@ -715,6 +715,52 @@
       # runs are never gated) but the preview under-reports in a wider window than "first install".
       when: not (ansible_check_mode and ops_unit_install is changed)
 
+# Its own block rather than the loops above, whose task names other guards pin. Digest-gated: the
+# runners name the pinned image, and a converge without the digest leaves the timer as it was.
+- name: install the vintage recorder and its versions-table refresh (needs the pinned image digest)
+  when: ops_image_digest is defined
+  block:
+    # The script carries the dead-man ping URL, and its unit runs as root.
+    - name: install the vintage recorder runner script
+      ansible.builtin.template:
+        src: vintage-record.sh.j2
+        dest: /usr/local/sbin/zcrypto-vintage-record
+        owner: root
+        group: root
+        mode: "0700"
+      no_log: true
+      diff: false
+
+    # No secret and no ping URL, so it renders with its diff.
+    - name: install the versions-table refresh runner script
+      ansible.builtin.template:
+        src: vintage-derive.sh.j2
+        dest: /usr/local/sbin/zcrypto-vintage-derive
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: render the vintage recorder and refresh units and the recorder timer
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "/etc/systemd/system/zcrypto-{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: [vintage-record.service, vintage-record.timer, vintage-derive.service]
+      register: ops_vintage_unit_install
+
+    # Only the timer is enabled: the record service is the oneshot it fires, and the derive unit has
+    # no [Install] and is pulled in by the record unit. The guard lets a first install's --check
+    # preview pass, where the never-written timer would not resolve.
+    - name: enable + start the vintage recorder timer
+      ansible.builtin.systemd_service:
+        name: zcrypto-vintage-record.timer
+        daemon_reload: true
+        enabled: true
+        state: started
+      when: not (ansible_check_mode and ops_vintage_unit_install is changed)
+
 # Deliberately OUTSIDE the digest gate above: this script consumes no image reference (it drives
 # systemd and rm), and the operator needs it on the host regardless of whether the converge that
 # put it there re-pinned anything -- a digestless config-only converge must still land it.

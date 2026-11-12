@@ -1,0 +1,18 @@
+# Rendered by the `ops` Ansible role at /etc/systemd/system/zcrypto-vintage-record.service — do not
+# hand-edit on the host, edit infra/ansible/roles/ops/templates/vintage-record.service.j2 instead.
+#
+# network-online.target: the timer's Persistent=true catch-up at boot dials out, so it waits for the
+# uplink. No RequiresMountsFor: a NAS outage never blocks a tick. The Wants= on the derive unit pulls
+# in the versions table's refresh, which its own After= orders after this unit's run has ended.
+# UMask=0022: the record's 0444 files and 0555/0755 directories are created under it.
+[Unit]
+Description=Twice-daily recording of free data sources' whole responses
+Requires=docker.service
+Wants=network-online.target
+Wants=zcrypto-vintage-derive.service
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/zcrypto-vintage-record
+UMask=0022

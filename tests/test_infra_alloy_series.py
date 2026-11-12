@@ -77,13 +77,16 @@ def _journal_units_kept() -> set[str]:
 
 def _installed_units() -> set[str]:
     """Both install idioms: `templates/*.timer.j2` rendered, and `files/*.timer` copied, which is how the capture
-    and engine roles install theirs. A timer added the other way was invisible to this guard."""
+    and engine roles install theirs. A timer added the other way was invisible to this guard. Every rendered service
+    too: a oneshot with no timer of its own, pulled in by another unit, is installed and logs as well."""
     # The two idioms name their files differently: a template is `archive-pull.timer.j2` and takes the prefix,
     # a copied file is already `zcrypto-capture-prune.timer` and must not. Prefixing both produced
     # `zcrypto-zcrypto-…`, which matched no regex entry, so the guard went green with a phantom unit kept and the
     # real unit's journal dropped.
     units = {f"zcrypto-{p.name.removesuffix('.timer.j2')}" for p in (_OPS_ROLE / "templates").glob("*.timer.j2")}
     units |= {p.name.removesuffix(".timer") for p in (_OPS_ROLE / "files").glob("*.timer")}
+    services = (p.name.removesuffix(".service.j2") for p in (_OPS_ROLE / "templates").glob("*.service.j2"))
+    units |= {n if n.startswith("zcrypto-") else f"zcrypto-{n}" for n in services}
     assert all(not u.startswith("zcrypto-zcrypto-") for u in units), f"double-prefixed unit name: {sorted(units)}"
     return units
 

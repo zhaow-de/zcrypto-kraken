@@ -157,7 +157,8 @@ prometheus.remote_write "grafana" {
 // ---- Logs: the host journal -- the zcrypto systemd jobs AND Alloy's own container -------------
 // Two unrelated sources share this one journal reader (00068 D6, the docker-socket residual
 // retired): the zcrypto-*.service units (archive-pull half-hourly since T0058,
-// panel-materialize + tape-bars hourly, verify-replay + verified-replay daily) run their work as an ephemeral
+// panel-materialize + tape-bars hourly, verify-replay + verified-replay daily, vintage-record twice
+// daily and vintage-derive after each of its runs) run their work as an ephemeral
 // `docker run --rm` ATTACHED to the unit (T0060) -- so all container stdout/stderr flows through
 // the script into the unit's journal, alongside the orchestration script's OWN lines (including
 // the load-bearing gate warning "writer cycle SKIPPED (fail-closed gate): ...",
@@ -193,7 +194,7 @@ loki.relabel "journal_units" {
   rule {
     source_labels = ["__journal__systemd_unit", "__journal_container_name"]
     separator     = ";"
-    regex         = "zcrypto-(archive-pull|verify-replay|verified-replay|panel-materialize|tape-bars)\\.service;.*|.*;grafana-alloy"
+    regex         = "zcrypto-(archive-pull|verify-replay|verified-replay|panel-materialize|tape-bars|vintage-record|vintage-derive)\\.service;.*|.*;grafana-alloy"
     action        = "keep"
   }
 

@@ -1,0 +1,14 @@
+# Rendered by the `ops` Ansible role at /etc/systemd/system/zcrypto-vintage-derive.service — do not
+# hand-edit on the host, edit infra/ansible/roles/ops/templates/vintage-derive.service.j2 instead.
+#
+# No [Install] section: the unit is never enabled, the recorder's unit pulls it in.
+# UMask=0022: the table's 0444 files and 0555/0755 directories are created under it.
+[Unit]
+Description=Refresh of the derived versions table after each recording of free data sources
+Requires=docker.service
+After=docker.service zcrypto-vintage-record.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/zcrypto-vintage-derive
+UMask=0022

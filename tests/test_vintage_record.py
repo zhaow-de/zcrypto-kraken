@@ -949,6 +949,14 @@ def test_last_ok_is_capped_at_1957_utc():
     assert last_ok_value(early) == early.timestamp()
 
 
+def test_the_last_ok_cap_is_the_evening_slot_plus_the_tick_deadline():
+    timer = (Path(__file__).resolve().parents[1] / "infra/ansible/roles/ops/templates/vintage-record.timer.j2").read_text()
+    slots = re.findall(r"^OnCalendar=\*-\*-\* (\d{2}):(\d{2}):(\d{2})$", timer, re.M)
+    evening = datetime.combine(T0.date(), time(*map(int, slots[1])), UTC)
+    deadline = timedelta(seconds=record_module.TICK_DEADLINE_SECONDS)
+    assert (evening + deadline).time() == gauges_module.LAST_OK_CAP
+
+
 def _mempool_503() -> list[Reply]:
     return BUSY
 
