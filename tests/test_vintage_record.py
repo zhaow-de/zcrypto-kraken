@@ -4,9 +4,11 @@ import ast
 import base64
 import errno
 import fcntl
+import functools
 import gzip
 import hashlib
 import importlib
+import importlib.util
 import io
 import itertools
 import json
@@ -1203,6 +1205,7 @@ VINTAGE_NAMES = {
         }
     ),
     "cli.vintage.table": frozenset({"DeriveOutcome", "derive_table"}),
+    "cli.vintage.verify": frozenset({"verify"}),
     "collections": frozenset({"Counter"}),
     "collections.abc": frozenset({"Iterator", "Sequence"}),
     "compression.zstd": frozenset({"ZstdDecompressor", "ZstdError"}),
@@ -1239,8 +1242,9 @@ VINTAGE_NAMES = {
     ),
     "pathlib": frozenset({"Path"}),
     "polars": frozenset(
-        {"Boolean", "DataFrame", "DataType", "Date", "Datetime", "Int64", "String", "col", "concat", "exceptions", "read_parquet"}
+        {"Boolean", "DataFrame", "DataType", "Date", "Datetime", "Int64", "String", "col", "concat", "read_parquet"}
     ),
+    "polars.exceptions": frozenset({"PolarsError"}),
     "re": frozenset({"Pattern", "compile"}),
     "secrets": frozenset({"token_hex"}),
     "signal": frozenset({"ITIMER_REAL", "SIGALRM", "setitimer", "signal"}),
@@ -1284,11 +1288,13 @@ _FORBIDDEN_METHODS = frozenset(
         "move_into",
         "save_to_file",
         "show_graph",
+        "tofile",
     }
 )
-# Refused with any argument, and when named rather than called: `dict.copy()` and `DataFrame.serialize()` return
-# their bytes, `Path.copy(target)` and `DataFrame.serialize(file)` write a path.
-_ARGUMENT_WRITERS = frozenset({"copy", "serialize"})
+# Refused with any argument, and when named rather than called: `dict.copy()`, `DataFrame.serialize()` and
+# `ndarray.dump` without a file have no target, `Path.copy(target)`, `DataFrame.serialize(file)` and
+# `ndarray.dump(file)` write a path.
+_ARGUMENT_WRITERS = frozenset({"copy", "dump", "serialize"})
 
 
 def _bindings(tree: ast.Module) -> dict[str, set[str]]:
@@ -1495,9 +1501,18 @@ def _imported(node: ast.Import | ast.ImportFrom) -> list[str]:
     return ["." * node.level + (node.module or "")]
 
 
+@functools.cache
+def _is_module(name: str) -> bool:
+    try:
+        return importlib.util.find_spec(name) is not None
+    except ImportError, ValueError:
+        return False
+
+
 def _taken(tree: ast.Module, bound: dict[str, set[str]]) -> list[tuple[str, str, ast.AST]]:
     """Each (module, name) the module takes and the node taking it: an `ImportFrom`'s names, and on every outermost
-    dotted chain the first name past the longest imported module it starts with."""
+    dotted chain the first name past the longest module it starts with, an imported one or a name taken that is itself
+    a module (`from cli.vintage import verify` takes `cli.vintage.verify`'s names through it)."""
     modules = VINTAGE_IMPORTS | {
         name for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom)) for name in _imported(node)
     }
@@ -1508,7 +1523,9 @@ def _taken(tree: ast.Module, bound: dict[str, set[str]]) -> list[tuple[str, str,
             taken += [(_imported(node)[0], alias.name, node) for alias in node.names]
         elif isinstance(node, (ast.Name, ast.Attribute)) and id(node) not in inner:
             for qualified in sorted(_qualified(node, bound)):
-                starts = [module for module in modules if qualified.startswith(f"{module}.")]
+                parts = qualified.split(".")
+                prefixes = [".".join(parts[:end]) for end in range(1, len(parts))]
+                starts = [prefix for prefix in prefixes if prefix in modules or _is_module(prefix)]
                 if starts:
                     module = max(starts, key=len)
                     taken.append((module, qualified.removeprefix(f"{module}.").split(".")[0], node))
@@ -1839,6 +1856,10 @@ def test_no_copy_move_truncate_or_delete(tmp_path):
             ("def f(s, df): s.callback(df.serialize)", True),
             ("def f(config, p): config.save_to_file(p)", True),
             ("def f(lf, p): lf.show_graph(output_path=p)", True),
+            ("def f(df, p): df.to_numpy().tofile(p)", True),
+            ("def f(df, p): df.to_numpy().dump(p)", True),
+            ("def f(s, a): s.callback(a.dump)", True),
+            ("def f(a): return a.dumps()", False),
             ("def f(): return shutil", True),
             ("def f(): return os.environ", False),
             ("def f(): return fsync", False),
@@ -1949,6 +1970,12 @@ def test_cli_vintage_takes_only_the_pinned_names(tmp_path):
             ("def f(u): return urllib.request.Request(u)", False),
             ("def f(): return pl.DataFrame()", False),
             ("def f(): return typer.Option(None)", False),
+            ("import cli.vintage", False),
+            ("from cli.vintage import verify as verify_mod", False),
+            ("def f(root): return verify_mod.verify(root)", False),
+            ("def f(p): verify_mod.gzip.GzipFile(p, 'wb')", True),
+            ("def f(): verify_mod.gzip.open('out.gz', 'wb')", True),
+            ("def f(): cli.vintage.verify.gzip.open('out.gz', 'ab')", True),
         ],
     )
     assert found["names"] == expected
