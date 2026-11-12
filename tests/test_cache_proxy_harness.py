@@ -532,3 +532,28 @@ def test_a_held_window_runs_its_length_and_starts_no_read_in_its_last_step():
     reads = list(harness._window(end))
     assert time.monotonic() >= end
     assert reads and all(end - read >= harness.STEP for read in reads), [end - read for read in reads]
+
+
+def test_the_mapping_read_refuses_a_master_whose_maps_it_cannot_read(tmp_path):
+    for pid, children in {20: "21 22 ", 21: "", 22: ""}.items():
+        (tmp_path / f"{pid}/task/{pid}").mkdir(parents=True)
+        (tmp_path / f"{pid}/task/{pid}/children").write_text(children)
+    (tmp_path / "21/maps").write_text("7f00-7f10 r-xp 00000000 fd:01 12 /usr/lib/libnss_files.so.2\n")
+    with pytest.raises(harness.Refused, match="PID 20"):
+        harness.foreign_code(20, "/x/root", proc=tmp_path)
+    (tmp_path / "20/maps").write_text("55d0-55e0 r-xp 00000000 fd:01 11 /x/root/usr/local/sbin/haproxy\n")
+    assert harness.foreign_code(20, "/x/root", proc=tmp_path) == ["/usr/lib/libnss_files.so.2"]
+
+
+def test_a_mapping_read_refused_exits_2(monkeypatch, tmp_path):
+    (tmp_path / harness.IMAGE_DIGEST_FILE).write_text("sha256:" + "0" * 64 + "\n")
+    first = f"HAProxy version {harness.PINNED_VERSION} 2026/10/01 - https://haproxy.org/"
+
+    def unread(run, rootfs):
+        raise harness.Refused("the maps of the once-per-run HAProxy's master, PID 20, could not be read")
+
+    monkeypatch.setattr(harness.socket, "if_nameindex", lambda: [(1, "lo")])
+    monkeypatch.setattr(harness.subprocess, "run", lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, first + "\n", ""))
+    monkeypatch.setattr(harness, "haproxy_argv", lambda root: ["haproxy"])
+    monkeypatch.setattr(harness, "_mapping_read", unread)
+    assert harness.run_inside(tmp_path, tmp_path / "scratch", list(harness.CASES)) == 2

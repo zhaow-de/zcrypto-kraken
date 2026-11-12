@@ -24,7 +24,7 @@ Exit, run: 0 every case passing; 1 a case failing, or an error outside the cases
 run; 2 refused (a tree without `.harness-image-digest`; no /usr/bin/unshare, /usr/bin/ip or /usr/sbin/nft; no
 namespace `unshare -rn` can make; an interface besides lo; `ip link set lo up` failing or not returning within
 1.0 s; an entrypoint giving haproxy no flags; a binary not printing PINNED_VERSION; code mapped from outside the
-tree). Never 5, which mutate-probe.sh reads as no test run.
+tree, or a listening master whose maps cannot be read). Never 5, which mutate-probe.sh reads as no test run.
 """
 
 from __future__ import annotations
@@ -982,6 +982,20 @@ def process_tree(pid: int, proc: Path = Path("/proc")) -> list[int]:
     return found
 
 
+def foreign_code(pid: int, root: str, proc: Path = Path("/proc")) -> list[str]:
+    """`foreign_mappings` over `pid` and every process under it. A master whose own maps cannot be read is refused,
+    so the check never passes on nothing read; a process under it gone before its read is left out."""
+    try:
+        foreign = foreign_mappings((proc / str(pid) / "maps").read_text(), root)
+    except OSError as exc:
+        raise Refused(f"the maps of the once-per-run HAProxy's master, PID {pid}, could not be read: {exc}") from exc
+    for child in process_tree(pid, proc)[1:]:
+        with contextlib.suppress(OSError):
+            maps = (proc / str(child) / "maps").read_text()
+            foreign += [path for path in foreign_mappings(maps, root) if path not in foreign]
+    return foreign
+
+
 def _mapping_read(run: Run, rootfs: Path) -> list[str]:
     """The code the once-per-run HAProxy maps from outside the tree, over the master and every process under it, the
     worker that parses the render among them; none read when it exits before it listens."""
@@ -994,12 +1008,7 @@ def _mapping_read(run: Run, rootfs: Path) -> list[str]:
         if not _listening(process, time.monotonic() + START):
             print(f"the once-per-run HAProxy did not listen within {START:.2f} s: no mapping read", file=sys.stderr)
             return []
-        foreign: list[str] = []
-        for pid in process_tree(process.pid):
-            with contextlib.suppress(OSError):
-                maps = Path(f"/proc/{pid}/maps").read_text()
-                foreign += [path for path in foreign_mappings(maps, str(rootfs)) if path not in foreign]
-        return foreign
+        return foreign_code(process.pid, str(rootfs))
     finally:
         procs.stop_all()
 
@@ -1044,7 +1053,10 @@ def run_inside(rootfs: Path, scratch: Path, cases: Sequence[str]) -> int:
         directory = scratch / f"run-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{os.getpid()}"
         directory.mkdir(parents=True)
         run = Run(directory, haproxy, render(TEMPLATE.read_text()))
-        foreign = _mapping_read(run, rootfs)
+        try:
+            foreign = _mapping_read(run, rootfs)
+        except Refused as exc:
+            return _refused(str(exc))
         if foreign:
             return _refused(f"HAProxy maps code from outside the tree: {', '.join(foreign)}")
         for name in cases:
