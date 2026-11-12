@@ -872,7 +872,7 @@ def test_a_failed_source_logs_a_warning_and_a_refusal_an_error(tmp_path, caplog)
     failed = _recorded(tmp_path, replies={"fng": BUSY})
     assert failed.code == 1
     warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
-    assert len(warnings) == 1 and "fng" in warnings[0] and "1" in warnings[0] and "HTTP 503 after 3 attempts" in warnings[0]
+    assert len(warnings) == 1 and "fng" in warnings[0] and "outcome=1" in warnings[0] and "HTTP 503 after 3 attempts" in warnings[0]
     assert [record for record in caplog.records if record.levelno >= logging.ERROR] == []
 
     caplog.clear()
