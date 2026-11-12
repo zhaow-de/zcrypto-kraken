@@ -114,22 +114,29 @@ def _store(path: Path, body: bytes) -> str:
     return digest
 
 
-def _ok_entry(manifest: dict, source: Source) -> bool:
+def _ok_sha256(manifest: dict, source: Source) -> str | None:
+    """The sha256 the manifest records for the source's body when its fetch was ok, else None."""
     for fetch in manifest.get("fetches") or []:
         if isinstance(fetch, dict) and fetch.get("source") == source.id:
             check, body = fetch.get("check"), fetch.get("body")
-            return isinstance(check, dict) and check.get("outcome") == 0 and isinstance(body, dict)
-    return False
+            if isinstance(check, dict) and check.get("outcome") == 0 and isinstance(body, dict):
+                return body.get("sha256")
+            return None
+    return None
 
 
 def _last_ok(order: tuple[TickFile, ...], source: Source) -> tuple[str, BodySummary] | None:
-    """The source's newest ok body along the chain, summarised from its stored file; a file that no longer reads is
-    passed over for the one before it."""
+    """The source's newest ok body along the chain, summarised from its stored file; a file that no longer reads, or
+    no longer re-hashes to its manifest entry, is passed over for the one before it."""
     for tick in reversed(order):
-        if tick.manifest is None or not _ok_entry(tick.manifest, source):
+        recorded = None if tick.manifest is None else _ok_sha256(tick.manifest, source)
+        if recorded is None:
             continue
         try:
-            return tick.stamp, summarise(source, gzip.decompress((tick.dir / source.file).read_bytes()))
+            data = gzip.decompress((tick.dir / source.file).read_bytes())
+            if hashlib.sha256(data).hexdigest() != recorded:
+                continue
+            return tick.stamp, summarise(source, data)
         except OSError, EOFError, zlib.error, ValueError:
             continue
     return None

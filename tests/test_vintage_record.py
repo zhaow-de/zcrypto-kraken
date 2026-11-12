@@ -246,6 +246,15 @@ def test_an_exclusive_create_never_truncates(tmp_path):
     assert path.read_bytes() == b"the bytes already there"
 
 
+def test_a_last_ok_body_that_does_not_re_hash_is_passed_over(tmp_path):
+    collapsed = body("second/cm-btc-collapse")
+    second = build_record(tmp_path, [(T0, {}), (T0 + HOUR, {})])[-1]
+    _opened(second.dir)
+    _replace(second.dir / "cm-btc.jsonl.gz", gzip.compress(collapsed, compresslevel=9, mtime=0))
+    check = _fetches(run_tick(tmp_path, T0 + 2 * HOUR, {"cm-btc": collapsed}))["cm-btc"]["check"]
+    assert check["outcome"] == 2 and ["*", "collapse"] in check["metrics_failed"]
+
+
 def test_a_non_2xx_body_is_stored_as_its_file(tmp_path):
     served = body("second/cm-btc-403")
     published = run_tick(tmp_path, T0, {"cm-btc": Reply(403, served, reason="Forbidden")})
