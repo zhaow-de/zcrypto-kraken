@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import time
 import tomllib
+from collections.abc import Mapping
 from itertools import chain
 from pathlib import Path
 
@@ -3007,15 +3008,21 @@ sys.exit(int(os.environ["RSYNC_STUB_RC"]))
 
 
 def _entrypoint_block(
-    tmp_path: Path, block_re: re.Pattern[str], env: dict[str, str], rc: int = 0
+    tmp_path: Path,
+    block_re: re.Pattern[str],
+    env: dict[str, str],
+    rc: int = 0,
+    *,
+    extra_stubs: Mapping[str, str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], list]:
     text = NAS_PULL_ENTRYPOINT.read_text()
     (block,) = block_re.findall(text)
     log_fn = text[text.index("log() {") : text.index("\n}", text.index("log() {")) + 2]
     stub = tmp_path / "bin" / "rsync"
     stub.parent.mkdir()
-    stub.write_text(RSYNC_STUB)
-    stub.chmod(0o755)
+    for name, body in {"rsync": RSYNC_STUB, **(extra_stubs or {})}.items():
+        (stub.parent / name).write_text(body)
+        (stub.parent / name).chmod(0o755)
     calls = tmp_path / "rsync.log"
     env = {
         "PATH": f"{stub.parent}{os.pathsep}{os.environ['PATH']}",
@@ -3127,9 +3134,117 @@ def test_every_ssh_transport_the_nas_pull_container_builds_connects_over_ipv4_on
         for line in NAS_PULL_ENTRYPOINT.read_text().splitlines()
         if _SSH_COMMAND_WORD.search(line) and not line.lstrip().startswith("#")
     ]
-    walked = [key for key in ("$HOT_SSH_KEY", "$HC_BACKUP_SSH_KEY") if any(key in line for line in entrypoint)]
-    assert (flag, walked) == ("-e", ["$HOT_SSH_KEY", "$HC_BACKUP_SSH_KEY"]), entrypoint
+    keys = ("$HOT_SSH_KEY", "$HC_BACKUP_SSH_KEY", "$VINTAGES_SSH_KEY")
+    walked = [key for key in keys if any(key in line for line in entrypoint)]
+    assert (flag, walked) == ("-e", ["$HOT_SSH_KEY", "$HC_BACKUP_SSH_KEY", "$VINTAGES_SSH_KEY"]), entrypoint
     assert [transport for transport in (wrapper, *entrypoint) if not _IPV4_ONLY.search(transport)] == []
+
+
+# --- The ops recorder's vintages, pulled into custody and verified there.
+VINTAGES_BLOCK = re.compile(r"^\tif [^\n]*\bVINTAGES_SOURCE\b[^\n]*; then\n.*?^\tfi\n", re.M | re.S)
+VINTAGES_SOURCE = "zcrypto-data@zcrypto-ops.invalid:"
+ZCRYPTO_STUB = """#!/usr/bin/env python3
+import json, os, sys
+
+with open(os.environ["ZCRYPTO_STUB_LOG"], "a") as log:
+    print(json.dumps(sys.argv[1:]), file=log)
+sys.exit(int(os.environ["ZCRYPTO_STUB_RC"]))
+"""
+VINTAGES_VERIFY = [
+    "vintage",
+    "verify",
+    "--root",
+    "/archive/vintages",
+    "--custody",
+    "--newest",
+    "4",
+    "--slice",
+    "7",
+    "--slices",
+    "24",
+]
+
+
+def _vintages_pull(
+    tmp_path: Path, *, source: str | None, rc: int = 0, verify_rc: int = 0
+) -> tuple[subprocess.CompletedProcess[str], list]:
+    env = {
+        "VINTAGES_DEST": "/archive/vintages",
+        "VINTAGES_SSH_KEY": "/keys/sync_vintages",
+        "VINTAGES_SSH_PORT": "22",
+        "slice": "7",
+        # `_entrypoint_block`'s own rsync log: one file for both stubs records the order they ran in.
+        "ZCRYPTO_STUB_LOG": str(tmp_path / "rsync.log"),
+        "ZCRYPTO_STUB_RC": str(verify_rc),
+    } | ({"VINTAGES_SOURCE": source} if source is not None else {})
+    return _entrypoint_block(tmp_path, VINTAGES_BLOCK, env, rc, extra_stubs={"zcrypto": ZCRYPTO_STUB})
+
+
+def _entrypoint_error(message: str) -> re.Pattern[str]:
+    return re.compile(
+        r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} ERROR zcrypto\.pull-entrypoint \[pull-entrypoint\.sh\] - " + re.escape(message)
+    )
+
+
+def test_the_vintages_pull_copies_record_over_the_pinned_ssh_and_overwrites_nothing(tmp_path):
+    run, calls = _vintages_pull(tmp_path, source=VINTAGES_SOURCE)
+    assert (run.returncode, run.stderr) == (0, "")
+    ((*options, transport, source, dest), _verify) = calls
+    assert (source, dest) == (VINTAGES_SOURCE, "/archive/vintages")
+    assert options == ["--archive", "--ignore-existing", "--chmod=D0775,F0664", "-e"], options
+    assert transport == (
+        "ssh -i /keys/sync_vintages -p 22 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o CheckHostIP=no"
+        " -o AddressFamily=inet -o UserKnownHostsFile=/keys/known_hosts"
+    )
+    assert not [arg for arg in calls[0] if arg.startswith(("--delete", "--remove-source-files"))]
+
+
+@pytest.mark.parametrize("rc", [0, 23], ids=["after a pull", "after a failed pull"])
+def test_the_vintages_verify_runs_after_the_pull_on_the_loops_slice(tmp_path, rc):
+    run, calls = _vintages_pull(tmp_path, source=VINTAGES_SOURCE, rc=rc)
+    assert run.returncode == 0, run.stderr
+    assert [call[-2:] for call in calls[:1]] == [[VINTAGES_SOURCE, "/archive/vintages"]], calls
+    assert calls[1:] == [VINTAGES_VERIFY], calls
+
+
+def test_a_failed_vintages_pull_logs_an_error_and_the_loop_goes_on(tmp_path):
+    run, calls = _vintages_pull(tmp_path, source=VINTAGES_SOURCE, rc=23)
+    assert run.returncode == 0 and len(calls) == 2, run.stderr
+    (line,) = run.stderr.splitlines()
+    message = f"vintages pull failed (source={VINTAGES_SOURCE} dest=/archive/vintages), continuing"
+    assert _entrypoint_error(message).fullmatch(line), line
+
+
+def test_a_vintages_verify_finding_logs_an_error(tmp_path):
+    run, calls = _vintages_pull(tmp_path, source=VINTAGES_SOURCE, verify_rc=1)
+    assert run.returncode == 0 and calls[1:] == [VINTAGES_VERIFY], run.stderr
+    (line,) = run.stderr.splitlines()
+    assert _entrypoint_error("vintages verify failed (dest=/archive/vintages), continuing").fullmatch(line), line
+
+
+@pytest.mark.parametrize("source", [None, ""], ids=["unset", "empty, as compose passes it"])
+def test_an_unset_vintages_source_logs_an_error(tmp_path, source):
+    run, calls = _vintages_pull(tmp_path, source=source)
+    assert (run.returncode, calls) == (0, [])
+    (line,) = run.stderr.splitlines()
+    message = "vintages channel unwired (VINTAGES_SOURCE unset): custody is not acquiring the recorder's ticks"
+    assert _entrypoint_error(message).fullmatch(line), line
+
+
+def test_the_vintages_source_the_env_renders_reaches_the_pull_through_compose(tmp_path):
+    rendered = [line for line in _render_nas_env("incremental").splitlines() if line.startswith("VINTAGES_SOURCE=")]
+    assert rendered == ["VINTAGES_SOURCE=<nas_vintages_source>"], rendered
+    value = rendered[0].partition("=")[2]
+    passed = yaml.safe_load(NAS_COMPOSE.read_text())["services"]["archive-pull"]["environment"].get("VINTAGES_SOURCE", "")
+    seen = subprocess.run(
+        ["bash", "-c", f'echo "{passed}"'],
+        capture_output=True,
+        text=True,
+        env={"VINTAGES_SOURCE": value, "PATH": os.environ["PATH"]},
+    ).stdout.strip()
+    assert seen == value, f"compose passes {passed!r}, which the container reads as {seen!r}"
+    run, calls = _vintages_pull(tmp_path, source=seen)
+    assert [call[-2] for call in calls[:1]] == [value], run.stderr
 
 
 # --- A6: the echo's negated clause and the assert's first disjunct must stay the same expression;
