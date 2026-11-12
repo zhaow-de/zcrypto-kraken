@@ -301,6 +301,27 @@ def test_the_system_watchdog_ends_a_trickled_framing_read(prefix, byte):
         thread.join(timeout=10)
 
 
+def test_a_late_alarm_still_restores_the_handler(monkeypatch):
+    previous = signal.getsignal(signal.SIGALRM)
+    setitimer = signal.setitimer
+
+    def alarm_at_the_disarm(which, seconds, *interval):
+        result = setitimer(which, seconds, *interval)
+        if seconds == 0:
+            raise Deadline
+        return result
+
+    monkeypatch.setattr(signal, "setitimer", alarm_at_the_disarm)
+    try:
+        with pytest.raises(Deadline):
+            with SystemClock().watchdog(5):
+                pass
+        assert signal.getsignal(signal.SIGALRM) == previous
+    finally:
+        setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
 def test_the_tick_deadline():
     slow = Reply(200, b"ok", chunk_seconds=5)
     exchanges, https, clock = _run({"fng": [slow]}, tick_deadline=8.0)

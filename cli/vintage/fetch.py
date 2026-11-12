@@ -84,9 +84,12 @@ class SystemClock:
             signal.setitimer(signal.ITIMER_REAL, seconds)
             yield
         finally:
-            # Disarmed before the handler is restored, so a late alarm never meets the default action, which ends the process.
-            signal.setitimer(signal.ITIMER_REAL, 0)
-            signal.signal(signal.SIGALRM, previous)
+            # Disarmed before the handler is restored, so a late alarm never meets the default action, which ends the process;
+            # the restore in its own finally, so an alarm landing at the disarm still restores it.
+            try:
+                signal.setitimer(signal.ITIMER_REAL, 0)
+            finally:
+                signal.signal(signal.SIGALRM, previous)
 
 
 @dataclass
