@@ -352,6 +352,9 @@ def haproxy_argv(root: Path) -> list[str]:
             raise Refused(f"{path} is not a file of the tree")
     script = in_tree(root, ENTRYPOINT).read_text()
     flags = [flag for match in re.finditer(r'^\s*set -- haproxy((?:\s+-\S+)*)\s+"\$@"', script, re.M) for flag in match[1].split()]
+    # Without them the binary would run as no container runs it: a re-pin's entrypoint is read again by hand.
+    if not flags:
+        raise Refused(f'{ENTRYPOINT} in the tree gives a bare haproxy no flags in a `set -- haproxy <flags> "$@"` line')
     libraries = ":".join(str(path) for path in _library_path(root))
     return [str(loader), "--library-path", libraries, str(binary), *flags]
 

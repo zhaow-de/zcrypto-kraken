@@ -352,3 +352,23 @@ def test_the_mapping_read_covers_every_descendant_of_the_process(tmp_path):
             (tmp_path / f"{pid}/task/{tid}").mkdir(parents=True)
             (tmp_path / f"{pid}/task/{tid}/children").write_text(children)
     assert sorted(harness.process_tree(10, proc=tmp_path)) == [10, 11, 12, 14, 15]
+
+
+def _image_tree(root: Path, entrypoint: str) -> Path:
+    for path in ("usr/lib64/ld-linux-x86-64.so.2", "usr/local/sbin/haproxy"):
+        (root / path).parent.mkdir(parents=True, exist_ok=True)
+        (root / path).write_bytes(b"")
+    (root / "lib64").symlink_to("usr/lib64")
+    (root / "etc").mkdir()
+    (root / "etc/ld.so.conf").write_text("/usr/lib64\n")
+    (root / "usr/local/bin").mkdir(parents=True)
+    (root / "usr/local/bin/docker-entrypoint.sh").write_text(entrypoint)
+    return root
+
+
+def test_the_run_refuses_an_entrypoint_whose_haproxy_flags_it_cannot_read(tmp_path):
+    flags = '#!/bin/sh\nset -- haproxy "$@"\nset -- haproxy -W -db "$@"\nexec "$@"\n'
+    assert harness.haproxy_argv(_image_tree(tmp_path / "flags", flags))[-2:] == ["-W", "-db"]
+    for name, script in {"bare": '#!/bin/sh\nset -- haproxy "$@"\nexec "$@"\n', "none": '#!/bin/sh\nexec haproxy "$@"\n'}.items():
+        with pytest.raises(harness.Refused, match="docker-entrypoint.sh"):
+            harness.haproxy_argv(_image_tree(tmp_path / name, script))
