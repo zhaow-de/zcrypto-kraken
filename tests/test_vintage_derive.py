@@ -321,50 +321,57 @@ def test_a_bg_day_leaving_the_window_is_no_retraction(tmp_path):
     assert _at(versions, 1).select("series", "kind").rows() == [("bg/sopr", "first_publication")]
 
 
-def _hand_frames(second_evidence: bool, second_days: int) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
-    """One version of (S, D) at position 0, and coverage at positions 0 and 1 each holding D in a 10-day range, the
-    second graded 2 with `second_evidence` and holding `second_days` of its 10 days."""
-    ts = datetime(2026, 11, 5, tzinfo=UTC)
-    first, last = date(2026, 11, 1), date(2026, 11, 10)
-    stamps = ("20261112T003700Z", "20261112T033700Z")
-    ended = (datetime(2026, 11, 12, 0, 38, tzinfo=UTC), datetime(2026, 11, 12, 3, 38, tzinfo=UTC))
-    version = {
-        "ts": ts,
+# Hand frames: one (S, D), each tick's fetch knowable at its `ended_at` (no Date), every coverage row holding D in a
+# 10-day range.
+HAND_T0 = datetime(2026, 11, 12, 0, 37, tzinfo=UTC)
+MICROSECOND = timedelta(microseconds=1)
+
+
+def _stamp(position: int) -> str:
+    return f"202611{12 + position:02d}T003700Z"
+
+
+def _hand_version(position: int, token: str, knowable: datetime) -> dict:
+    return {
+        "ts": datetime(2026, 11, 5, tzinfo=UTC),
         "provider": "coinmetrics",
         "source": "cm-btc",
         "series": "cm/btc/TxCnt",
-        "kind": "inherited",
-        "token": "7",
-        "tick": stamps[0],
-        "position": 0,
-        "ended_at": ended[0],
-        "knowable_at": ended[0],
+        "kind": "inherited" if position == 0 else "restatement",
+        "token": token,
+        "tick": _stamp(position),
+        "position": position,
+        "ended_at": knowable,
+        "knowable_at": knowable,
         "appeared_after": None,
         "outcome": 0,
         "flags": "",
     }
-    coverage = [
-        {
-            "ts": ended[i] - timedelta(minutes=1),
-            "provider": "coinmetrics",
-            "tick": stamps[i],
-            "position": i,
-            "tick_json_sha256": "0" * 64,
-            "source": "cm-btc",
-            "series": "cm/btc/TxCnt",
-            "outcome": (0, 2)[i],
-            "reason": (None, "TxCnt top")[i],
-            "ended_at": ended[i],
-            "knowable_at": ended[i],
-            "first_day": first,
-            "last_day": last,
-            "days": (10, second_days)[i],
-            "evidence": (True, second_evidence)[i],
-            "flags": "",
-        }
-        for i in range(2)
-    ]
-    return frames([version], coverage, [])
+
+
+def _hand_coverage(position: int, knowable: datetime, *, evidence: bool = True, days: int = 10) -> dict:
+    return {
+        "ts": knowable - timedelta(minutes=1),
+        "provider": "coinmetrics",
+        "tick": _stamp(position),
+        "position": position,
+        "tick_json_sha256": "0" * 64,
+        "source": "cm-btc",
+        "series": "cm/btc/TxCnt",
+        "outcome": 0 if evidence else 2,
+        "reason": None if evidence else "TxCnt top",
+        "ended_at": knowable,
+        "knowable_at": knowable,
+        "first_day": date(2026, 11, 1),
+        "last_day": date(2026, 11, 10),
+        "days": days,
+        "evidence": evidence,
+        "flags": "",
+    }
+
+
+def _link_error(about: int, taught_by: int) -> dict:
+    return {"tick": _stamp(about), "fact": "link-error", "taught_by": _stamp(taught_by), "taught_position": taught_by}
 
 
 @pytest.mark.parametrize(
@@ -373,9 +380,46 @@ def _hand_frames(second_evidence: bool, second_days: int) -> tuple[pl.DataFrame,
     ids=["a-hole-and-no-evidence-skipped", "evidence-counts", "unbroken-days-count"],
 )
 def test_last_seen_reads_only_rows_known_to_have_held_the_day(second_evidence, second_days, seen):
-    derived = _hand_frames(second_evidence, second_days)
-    t = datetime(2026, 11, 13, tzinfo=UTC)
-    assert as_of(*derived, t)["last_seen_at"].to_list() == [derived[1]["ended_at"][seen]]
+    knowable = (HAND_T0 + HOUR, HAND_T0 + 4 * HOUR)
+    coverage = [_hand_coverage(0, knowable[0]), _hand_coverage(1, knowable[1], evidence=second_evidence, days=second_days)]
+    derived = frames([_hand_version(0, "7", knowable[0])], coverage, [])
+    assert as_of(*derived, HAND_T0 + 24 * HOUR)["last_seen_at"].to_list() == [knowable[seen]]
+
+
+@pytest.mark.parametrize("step", ["at-the-first", "between", "a-microsecond-before-the-second", "at-the-second"])
+def test_last_seen_and_a_later_fact_wait_for_their_ticks_knowable_time(step):
+    """Tick 1 holds the day again and teaches a fact about tick 0: neither shows before tick 1 is knowable."""
+    knowable = (HAND_T0 + HOUR, HAND_T0 + 4 * HOUR)
+    derived = frames(
+        [_hand_version(0, "7", knowable[0])],
+        [_hand_coverage(0, knowable[0]), _hand_coverage(1, knowable[1])],
+        [_link_error(about=0, taught_by=1)],
+    )
+    t = {
+        "at-the-first": knowable[0],
+        "between": knowable[0] + HOUR,
+        "a-microsecond-before-the-second": knowable[1] - MICROSECOND,
+        "at-the-second": knowable[1],
+    }[step]
+    seen = as_of(*derived, t).select("token", "last_seen_at", "flags").rows()
+    assert seen == ([("7", knowable[1], "link-error")] if step == "at-the-second" else [("7", knowable[0], "")])
+
+
+@pytest.mark.parametrize("step", ["at-the-third", "a-microsecond-before-the-second", "at-the-second"])
+def test_last_seen_stops_at_the_next_version_across_a_clock_regression(step):
+    """Tick 1 ran under a clock ahead, knowable after tick 2: until it is, tick 0's value stands, and tick 2's row,
+    which held tick 1's value, is no last-seen time for it."""
+    knowable = (HAND_T0 + HOUR, HAND_T0 + 24 * HOUR, HAND_T0 + 12 * HOUR)
+    derived = frames(
+        [_hand_version(0, "7", knowable[0]), _hand_version(1, "8", knowable[1])],
+        [_hand_coverage(position, at) for position, at in enumerate(knowable)],
+        [],
+    )
+    t = {"at-the-third": knowable[2], "a-microsecond-before-the-second": knowable[1] - MICROSECOND, "at-the-second": knowable[1]}[
+        step
+    ]
+    seen = as_of(*derived, t).select("token", "position", "last_seen_at").rows()
+    assert seen == ([("8", 1, knowable[2])] if step == "at-the-second" else [("7", 0, knowable[0])])
 
 
 def test_every_versions_token_is_its_ticks_body_token(tmp_path):
