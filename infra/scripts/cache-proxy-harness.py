@@ -519,8 +519,11 @@ SERIES = re.compile(r"^(haproxy_server_\w+)\{([^}]*)\} (\S+)$", re.M)
 LABEL = re.compile(r'(\w+)="([^"]*)"')
 
 
-def _scrape() -> Metrics:
-    with urllib.request.urlopen(METRICS_URL, timeout=MARGIN) as response:
+def _scrape(deadline: float | None = None) -> Metrics:
+    """The exporter's server series, read within the margin, or by `deadline` when that comes sooner: a read inside a
+    held window ends with the window."""
+    timeout = MARGIN if deadline is None else max(min(MARGIN, deadline - time.monotonic()), 0.001)
+    with urllib.request.urlopen(METRICS_URL, timeout=timeout) as response:
         body = response.read().decode()
     metrics: Metrics = {}
     for name, labels, value in SERIES.findall(body):
@@ -540,8 +543,8 @@ def _number(metrics: Metrics, name: str, server: str) -> float:
     return metrics[(name, *server.split("/"))][""]
 
 
-def _up(server: str) -> Callable[[], bool]:
-    return lambda: _state(_scrape(), "haproxy_server_status", server) == "UP"
+def _up(server: str, deadline: float | None = None) -> Callable[[], bool]:
+    return lambda: _state(_scrape(deadline), "haproxy_server_status", server) == "UP"
 
 
 def _address(node: str) -> str:
@@ -740,7 +743,7 @@ def _case_no_early_route(bench: Bench) -> str:
         raise CaseFailed(f"node2/valkey not UP within {START:.2f} s on one vote")
     opened = time.monotonic()
     while (now := time.monotonic()) < opened + WINDOW:
-        if not _up("node2/valkey")():
+        if not _up("node2/valkey", opened + WINDOW)():
             raise CaseFailed(f"node2/valkey not UP {now - opened:.2f} s into the {WINDOW:.0f} s on one vote")
         session = _attempt(opened + WINDOW)
         if session is not None:
@@ -883,7 +886,7 @@ def _case_lost_syn_inside_budget(bench: Bench) -> str:
     began = time.monotonic()
     longest, not_up = 0.0, None
     while (now := time.monotonic()) < began + WINDOW:
-        metrics = _scrape()
+        metrics = _scrape(began + WINDOW)
         if not_up is None and _state(metrics, "haproxy_server_status", VOTE_VIA_NODE3) != "UP":
             not_up = now - began
         longest = max(longest, _number(metrics, "haproxy_server_check_duration_seconds", VOTE_VIA_NODE3))

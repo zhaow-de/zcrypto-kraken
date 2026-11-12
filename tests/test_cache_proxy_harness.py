@@ -12,6 +12,7 @@ import stat
 import subprocess
 import sys
 import tarfile
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -416,3 +417,16 @@ def test_a_process_that_will_not_stop_leaves_the_rest_of_the_teardown_to_run(mon
     with pytest.raises(SystemExit):
         signalled.stop_all()
     assert deleted[1:] == [("delete", "table", "inet", "start")]
+
+
+def test_a_read_inside_a_window_ends_at_the_windows_end(monkeypatch):
+    asked = []
+
+    def urlopen(url, timeout):
+        asked.append(timeout)
+        return io.BytesIO(b"")
+
+    monkeypatch.setattr(harness.urllib.request, "urlopen", urlopen)
+    harness._scrape()
+    harness._scrape(time.monotonic() + 0.25)
+    assert asked[0] == harness.MARGIN and 0 < asked[1] <= 0.25, asked
