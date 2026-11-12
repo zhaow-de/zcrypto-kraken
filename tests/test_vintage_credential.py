@@ -44,6 +44,11 @@ def _echo(form: bytes) -> bytes:
     return b'[{"d":"2026-11-10","note":"' + form + b'"}]'
 
 
+def _raw_deflate(data: bytes) -> bytes:
+    compressor = zlib.compressobj(wbits=-zlib.MAX_WBITS)
+    return compressor.compress(data) + compressor.flush()
+
+
 def _quoting(form: bytes) -> ValueError:
     """Built as `http.client.putheader` builds the error an invalid header value raises."""
     return ValueError("Invalid header value %r" % (b"Bearer " + form + b"\n",))
@@ -239,8 +244,11 @@ def test_an_echoing_reason_phrase_or_header_name_is_redacted(tmp_path, caplog, c
             [("Content-Encoding", "gzip")],
             "credential unscannable",
         ),
+        (zstd.compress(_echo(SENTINEL_FORMS[0])), [("Content-Encoding", "zstd")], "credential echoed"),
+        (zlib.compress(_echo(SENTINEL_FORMS[0])), [("Content-Encoding", "deflate")], "credential echoed"),
+        (_raw_deflate(_echo(SENTINEL_FORMS[0])), [("Content-Encoding", "deflate")], "credential echoed"),
     ],
-    ids=["json-escaped", "percent-upper", "percent-lower", "gzip", "gzip-two-members"],
+    ids=["json-escaped", "percent-upper", "percent-lower", "gzip", "gzip-two-members", "zstd", "deflate", "deflate-raw"],
 )
 def test_echoes_in_every_form_are_not_stored(tmp_path, caplog, capsys, served, headers, reading):
     caplog.set_level(logging.DEBUG)
