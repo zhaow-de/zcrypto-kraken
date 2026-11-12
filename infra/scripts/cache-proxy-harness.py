@@ -614,8 +614,9 @@ class Bench:
     def tell(self, node: str, command: str) -> float:
         sentinel = self.sentinels[node]
         sentinel.stdin.write(f"{command}\n".encode())
-        if _line(sentinel, time.monotonic() + MARGIN) != "ok":
-            raise CaseFailed(f"the scripted Sentinel on {_address(node)} did not take {command!r} within {MARGIN:.1f} s")
+        answer = _line(sentinel, time.monotonic() + MARGIN)
+        if answer != "ok":
+            raise CaseFailed(f"the scripted Sentinel on {_address(node)} answered {command!r} with {answer!r} in {MARGIN:.1f} s")
         return time.monotonic()
 
     def silence(self, node: str) -> float:
@@ -1101,6 +1102,23 @@ def _master_reply(address: str) -> bytes:
     return f"*{len(items)}\r\n".encode() + b"".join(f"${len(word)}\r\n{word}\r\n".encode() for word in items)
 
 
+def peer_command(
+    line: str, named: list[str], held: list[tuple[float, float, float]], refuse: threading.Event, refused: threading.Event
+) -> str:
+    """Applies one command line to a peer and returns its answer: `ok`, or why the command has not taken effect."""
+    word, *args = line.split()
+    if word == "name":
+        named[0] = args[0]
+    elif word == "hold":
+        held[0] = (float(args[0]), float(args[1]), float(args[2]))
+    elif word == "refuse":
+        refuse.set()
+        # Half the margin, so the answer reaches the harness inside its own read's.
+        if not refused.wait(MARGIN / 2):
+            return f"refuse not taken: the listener still open after {MARGIN / 2:.1f} s"
+    return "ok"
+
+
 def peer(role: str, address: str, directory: Path) -> int:
     """A scripted Sentinel or Valkey on `address`, taking one command per stdin line and answering `ok`: `name <node>`,
     `refuse` (its listener closed) and `hold <from> <to> <seconds>` (the master reply held on the connections it
@@ -1147,15 +1165,7 @@ def peer(role: str, address: str, directory: Path) -> int:
 
     def commands() -> None:
         for line in sys.stdin:
-            word, *args = line.split()
-            if word == "name":
-                named[0] = args[0]
-            elif word == "hold":
-                held[0] = (float(args[0]), float(args[1]), float(args[2]))
-            elif word == "refuse":
-                refuse.set()
-                refused.wait(MARGIN)
-            print("ok", flush=True)
+            print(peer_command(line, named, held, refuse, refused), flush=True)
         os._exit(0)
 
     listener = socket.socket()

@@ -13,6 +13,7 @@ import stat
 import subprocess
 import sys
 import tarfile
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -503,3 +504,12 @@ def test_a_run_that_breaks_outside_its_cases_still_prints_its_summary(monkeypatc
     printed = capsys.readouterr()
     assert printed.out.splitlines()[-1] == f"0 passed, 0 failed -- {first} -- image {'0' * 12}"
     assert "the worker's maps vanished" in printed.err
+
+
+def test_a_refuse_is_acknowledged_only_once_the_listener_closed():
+    named, held = ["node2"], [(0.0, 0.0, 0.0)]
+    closed, still_open = (threading.Event(), threading.Event()), (threading.Event(), threading.Event())
+    closed[1].set()
+    assert harness.peer_command("refuse\n", named, held, *closed) == "ok"
+    assert harness.peer_command("refuse\n", named, held, *still_open) != "ok"
+    assert harness.peer_command("name node1\n", named, held, *still_open) == "ok" and named == ["node1"]
