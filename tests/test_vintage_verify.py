@@ -224,6 +224,30 @@ def test_each_break_exits_1_naming_its_path(tmp_path, damage):
     assert kind in _kinds(verify(root).breaks)
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses directory permissions")
+@pytest.mark.parametrize("mode", [0o111, 0o000], ids=["listing-refused", "no-access"])
+def test_an_unreadable_tick_directory_is_a_break_naming_it(tmp_path, request, mode):
+    tick_dir = _four(tmp_path)[1].dir
+    request.addfinalizer(lambda: os.chmod(tick_dir, 0o555))
+    os.chmod(tick_dir, mode)
+    result = _cli(tmp_path / "record")
+    assert result.exit_code == 1, result.output
+    named = [line for line in _lines(result, "ERROR") if "vintage verify unreadable manifest " in line]
+    assert any(str(tick_dir) in line for line in named), result.output
+    assert _summary(result)[0] == "ERROR"
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses file permissions")
+def test_an_unreadable_body_is_named_unreadable(tmp_path, request):
+    path = _four(tmp_path)[1].dir / "cm-btc.jsonl.gz"
+    request.addfinalizer(lambda: os.chmod(path, 0o444))
+    os.chmod(path, 0o000)
+    found = verify(tmp_path / "record")
+    assert [(finding.kind, finding.path, finding.detail) for finding in found.breaks] == [
+        ("tampered body", str(path), "unreadable: PermissionError")
+    ]
+
+
 def test_a_chain_with_no_head_candidate_is_a_broken_link(tmp_path):
     first, second = build_record(tmp_path, [(T0, {}), (T0 + 3 * HOUR, {})])
     manifest = json.loads((first.dir / "tick.json").read_bytes())

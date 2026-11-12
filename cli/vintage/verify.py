@@ -53,7 +53,11 @@ def _tick_dir(root: Path, stamp: str) -> Path:
 def _rehash(path: Path, digest: str) -> str | None:
     """Why the body does not re-hash to its entry, None when it does."""
     try:
-        data = gzip.decompress(path.read_bytes())
+        raw = path.read_bytes()
+    except OSError as exc:
+        return f"unreadable: {type(exc).__name__}"
+    try:
+        data = gzip.decompress(raw)
     except OSError, EOFError, zlib.error:
         return "does not decompress"
     if hashlib.sha256(data).hexdigest() != digest:
@@ -184,7 +188,11 @@ def verify(
         except TypeError, AttributeError:
             breaks.append(Finding(UNREADABLE_MANIFEST, str(tick.dir / TICK_JSON), "tick.json fetches unreadable"))
             continue
-        present = {entry.name for entry in tick.dir.iterdir() if entry.name != TICK_JSON}
+        try:
+            present = {entry.name for entry in tick.dir.iterdir() if entry.name != TICK_JSON}
+        except OSError as exc:
+            breaks.append(Finding(UNREADABLE_MANIFEST, str(tick.dir), f"tick directory unreadable: {type(exc).__name__}"))
+            continue
         for name in sorted(present - listed.keys()):
             breaks.append(Finding(UNLISTED_FILE, str(tick.dir / name), "a file its tick.json does not list"))
         for name in sorted(listed.keys() - present):
