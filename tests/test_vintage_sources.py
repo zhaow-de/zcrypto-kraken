@@ -131,7 +131,8 @@ def test_every_synthesised_fixture_regenerates_byte_for_byte():
 def _json_value_tokens(skeleton: str) -> list[tuple[str | None, str]]:
     """Each value token of a JSON skeleton with the key it sits under, a string's without its quotes."""
     tokens: list[tuple[str | None, str]] = []
-    key: str | None = None
+    # One frame per open container: an object's the key last read in it, an array's None.
+    stack: list[str | None] = []
     i = 0
     while i < len(skeleton):
         ch = skeleton[i]
@@ -142,21 +143,30 @@ def _json_value_tokens(skeleton: str) -> list[tuple[str | None, str]]:
             text = skeleton[i + 1 : end]
             rest = skeleton[end + 1 :].lstrip()
             if rest.startswith(":"):
-                key = text
+                stack[-1] = text
             else:
-                tokens.append((key, text))
+                tokens.append((stack[-1] if stack else None, text))
             i = end + 1
-        elif ch in "{}[],: \t\r\n":
-            if ch == "[":
-                key = None
+        elif ch in "{[":
+            stack.append(None)
+            i += 1
+        elif ch in "}]":
+            stack.pop()
+            i += 1
+        elif ch in ",: \t\r\n":
             i += 1
         else:
             end = i
             while end < len(skeleton) and skeleton[end] not in '{}[],: \t\r\n"':
                 end += 1
-            tokens.append((key, skeleton[i:end]))
+            tokens.append((stack[-1] if stack else None, skeleton[i:end]))
             i = end
     return tokens
+
+
+def test_a_scalar_after_an_object_in_an_array_sits_under_no_key():
+    tokens = _json_value_tokens('{"rows":[{"time":"#"},"~~",##],"n":#}')
+    assert tokens == [("time", "#"), (None, "~~"), (None, "##"), ("n", "#")]
 
 
 def _atom_value_tokens(skeleton: str) -> list[str]:
