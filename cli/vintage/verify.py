@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from cli.vintage.chain import TICK_JSON, TickFile, _listed, chain, scan
+from cli.vintage.chain import TICK_JSON, TickFile, chain, listed, scan
 from cli.vintage.sources import FORK_ACKNOWLEDGMENTS, LINK_ACKNOWLEDGMENTS, ForkAcknowledgment, LinkAcknowledgment
 
 MISSING_ROOT = "missing root"
@@ -184,7 +184,7 @@ def verify(
         if tick.manifest is None:
             continue
         try:
-            listed = _listed(tick.manifest)
+            bodies = listed(tick.manifest)
         except TypeError, AttributeError:
             breaks.append(Finding(UNREADABLE_MANIFEST, str(tick.dir / TICK_JSON), "tick.json fetches unreadable"))
             continue
@@ -193,15 +193,15 @@ def verify(
         except OSError as exc:
             breaks.append(Finding(UNREADABLE_MANIFEST, str(tick.dir), f"tick directory unreadable: {type(exc).__name__}"))
             continue
-        for name in sorted(present - listed.keys()):
+        for name in sorted(present - bodies.keys()):
             breaks.append(Finding(UNLISTED_FILE, str(tick.dir / name), "a file its tick.json does not list"))
-        for name in sorted(listed.keys() - present):
+        for name in sorted(bodies.keys() - present):
             breaks.append(Finding(MISSING_BODY, str(tick.dir / name), "a body its tick.json lists"))
         if tick.stamp not in chosen:
             continue
-        for name in sorted(listed.keys() & present):
+        for name in sorted(bodies.keys() & present):
             hashed += 1
-            failure = _rehash(tick.dir / name, listed[name])
+            failure = _rehash(tick.dir / name, bodies[name])
             if failure is not None:
                 breaks.append(Finding(TAMPERED_BODY, str(tick.dir / name), failure))
 

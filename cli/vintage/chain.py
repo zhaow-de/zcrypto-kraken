@@ -117,9 +117,9 @@ def chain(ticks: list[TickFile]) -> Chain:
     return Chain(order, head, other_heads, off_chain, unreadable, cycle=not candidates)
 
 
-def _listed(manifest: dict) -> dict[str, str]:
+def listed(manifest: dict) -> dict[str, str]:
     """Each body file `fetches` names, with its sha256; TypeError where the block is not in that shape."""
-    listed: dict[str, str] = {}
+    bodies: dict[str, str] = {}
     fetches = manifest.get("fetches")
     if not isinstance(fetches, list):
         raise TypeError("fetches is not a list")
@@ -130,8 +130,8 @@ def _listed(manifest: dict) -> dict[str, str]:
         name, digest = entry.get("file"), entry.get("sha256")
         if not (isinstance(name, str) and isinstance(digest, str)):
             raise TypeError("a body entry is not a file and a sha256")
-        listed[name] = digest
-    return listed
+        bodies[name] = digest
+    return bodies
 
 
 def check_head(head: TickFile) -> str | None:
@@ -140,18 +140,18 @@ def check_head(head: TickFile) -> str | None:
     if head.manifest is None:
         return head.error
     try:
-        listed = _listed(head.manifest)
+        bodies = listed(head.manifest)
     except TypeError, AttributeError:
         return "tick.json fetches unreadable"
     try:
         present = {entry.name for entry in head.dir.iterdir() if entry.name != TICK_JSON}
     except OSError as exc:
         return f"tick directory unreadable: {type(exc).__name__}"
-    missing, unlisted = sorted(listed.keys() - present), sorted(present - listed.keys())
+    missing, unlisted = sorted(bodies.keys() - present), sorted(present - bodies.keys())
     if missing or unlisted:
         parts = ([f"missing {' '.join(missing)}"] if missing else []) + ([f"unlisted {' '.join(unlisted)}"] if unlisted else [])
         return f"body files differ: {'; '.join(parts)}"
-    for name, digest in sorted(listed.items()):
+    for name, digest in sorted(bodies.items()):
         try:
             data = gzip.decompress((head.dir / name).read_bytes())
         except OSError, EOFError, zlib.error:
