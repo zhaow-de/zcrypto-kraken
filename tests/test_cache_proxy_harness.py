@@ -520,3 +520,10 @@ def test_a_refuse_is_acknowledged_only_once_the_listener_closed():
     assert harness.peer_command("refuse\n", named, held, *closed) == "ok"
     assert harness.peer_command("refuse\n", named, held, *still_open) != "ok"
     assert harness.peer_command("name node1\n", named, held, *still_open) == "ok" and named == ["node1"]
+
+
+def test_a_held_window_runs_its_length_and_starts_no_read_in_its_last_step():
+    end = time.monotonic() + 0.3
+    reads = list(harness._window(end))
+    assert time.monotonic() >= end
+    assert reads and all(end - read >= harness.STEP for read in reads), [end - read for read in reads]

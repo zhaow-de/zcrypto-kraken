@@ -47,7 +47,7 @@ import tarfile
 import threading
 import time
 import urllib.request
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -451,6 +451,15 @@ def _wait(check: Callable[[], bool], deadline: float) -> float | None:
         time.sleep(STEP)
 
 
+def _window(end: float) -> Iterator[float]:
+    """The read times of a window held until `end`, every STEP; none starts with less than STEP left, where a read's
+    deadline would be too near to answer, and the window still runs its full length."""
+    while (now := time.monotonic()) < end:
+        if end - now >= STEP:
+            yield now
+        time.sleep(max(min(STEP, end - time.monotonic()), 0))
+
+
 def _line(process: subprocess.Popen, deadline: float) -> str | None:
     received = b""
     while not received.endswith(b"\n"):
@@ -745,14 +754,13 @@ def _case_no_early_route(bench: Bench) -> str:
     if _wait(_up("node2/valkey"), bench.started + START) is None:
         raise CaseFailed(f"node2/valkey not UP within {START:.2f} s on one vote")
     opened = time.monotonic()
-    while (now := time.monotonic()) < opened + WINDOW:
+    for now in _window(opened + WINDOW):
         if not _up("node2/valkey", opened + WINDOW)():
             raise CaseFailed(f"node2/valkey not UP {now - opened:.2f} s into the {WINDOW:.0f} s on one vote")
         session = _attempt(opened + WINDOW)
         if session is not None:
             session.close()
             raise CaseFailed(f"a session got its PONG on one vote, {now - opened:.2f} s into the {WINDOW:.0f} s")
-        time.sleep(STEP)
     answered = bench.answer("node1")
     bound = SILENT_VOTE_RISE + MARGIN
     routed = bench.routed(answered + bound)
@@ -768,7 +776,7 @@ def _case_vote_down_cuts_nothing(bench: Bench) -> str:
     sessions = bench.two_sessions()
     silenced = bench.silence("node3")
     fell = routed = None
-    while (now := time.monotonic()) < silenced + WINDOW:
+    for now in _window(silenced + WINDOW):
         for index, session in enumerate(sessions, 1):
             if not _ping(session, silenced + WINDOW):
                 raise CaseFailed(f"session {index} got no PONG {now - silenced:.2f} s into Sentinel 3's silence")
@@ -777,7 +785,6 @@ def _case_vote_down_cuts_nothing(bench: Bench) -> str:
         elif routed is None and (session := _attempt(silenced + WINDOW)) is not None:
             routed = now
             session.close()
-        time.sleep(STEP)
     if fell is None or routed is None:
         missing = f"no {VOTE_VIA_NODE3} DOWN line" if fell is None else "no new session routed after the DOWN line"
         raise CaseFailed(f"{missing} in Sentinel 3's {WINDOW:.0f} s of silence")
@@ -811,14 +818,13 @@ def _case_one_vote_cuts_nothing(bench: Bench) -> str:
     if states != ["L4CON", "L4TOUT"]:
         raise CaseFailed(f"the two DOWN votes read other than L4CON and L4TOUT; {reads}")
     opened = time.monotonic()
-    while (now := time.monotonic()) < opened + WINDOW:
+    for now in _window(opened + WINDOW):
         for index, session in enumerate(sessions, 1):
             if not _ping(session, opened + WINDOW):
                 raise CaseFailed(f"session {index} got no PONG {now - opened:.2f} s into the {WINDOW:.0f} s at one vote; {reads}")
         if (session := _attempt(opened + WINDOW)) is not None:
             session.close()
             raise CaseFailed(f"a new session routed at one vote, {now - opened:.2f} s into the {WINDOW:.0f} s; {reads}")
-        time.sleep(STEP)
     answered = bench.answer("node3")
     bound = SILENT_VOTE_RISE + MARGIN
     routed = bench.routed(answered + bound)
@@ -888,12 +894,11 @@ def _case_lost_syn_inside_budget(bench: Bench) -> str:
     bench.procs.nft("add", "rule", "inet", table, "first_syn", f"{rule} tcp sport != @seen add @seen {{ tcp sport }} counter drop")
     began = time.monotonic()
     longest, not_up = 0.0, None
-    while (now := time.monotonic()) < began + WINDOW:
+    for now in _window(began + WINDOW):
         metrics = _scrape(began + WINDOW)
         if not_up is None and _state(metrics, "haproxy_server_status", VOTE_VIA_NODE3) != "UP":
             not_up = now - began
         longest = max(longest, _number(metrics, "haproxy_server_check_duration_seconds", VOTE_VIA_NODE3))
-        time.sleep(STEP)
     # Sentinel 3's SYNs pass the rule from here, so its counter and its set are read at one count.
     bench.procs.nft("insert", "rule", "inet", table, "first_syn", f"ip daddr {_address('node3')} accept")
     chain = json.loads(bench.procs.nft("-j", "list", "chain", "inet", table, "first_syn"))["nftables"]
