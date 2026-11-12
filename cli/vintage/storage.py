@@ -39,16 +39,21 @@ def fsync_dir(path: Path) -> None:
         os.close(fd)
 
 
+def _make_parents(target: Path) -> None:
+    """Every missing directory above the target, each 0755."""
+    for directory in reversed(target.parents):
+        if not directory.exists():
+            directory.mkdir(mode=0o755)
+            os.chmod(directory, 0o755)
+
+
 def publish_tick(staged: Path, target: Path) -> None:
     """Moves the assembled tick to its target by one rename; `os.rename` replaces an empty directory, so the target's
     absence is checked here, under the caller's lock. An OSError raised after the rename carries a note naming the
     step, the tick being published by then."""
     if target.exists():
         raise FileExistsError(errno.EEXIST, "the tick's target exists", str(target))
-    for directory in reversed(target.parents):
-        if not directory.exists():
-            directory.mkdir(mode=0o755)
-            os.chmod(directory, 0o755)
+    _make_parents(target)
     os.rename(staged, target)
     step = "the parent's fsync"
     try:
@@ -78,10 +83,7 @@ def publish_table_dir(staged: Path, target: Path, *, table_root: Path, record_ro
         raise PermissionError(refusal)
     if target.exists():
         raise FileExistsError(errno.EEXIST, "the table directory's target exists", str(target))
-    for directory in reversed(target.parents):
-        if not directory.exists():
-            directory.mkdir(mode=0o755)
-            os.chmod(directory, 0o755)
+    _make_parents(target)
     os.rename(staged, target)
     fsync_dir(target.parent)
     os.chmod(target, 0o555)
