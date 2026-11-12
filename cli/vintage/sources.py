@@ -1,5 +1,6 @@
 """The vintage recorder's fetch table, pinned for ever per source id, and the lenient check that grades each body it
-fetches: 0 ok, 2 a body stored but failing its check; a check never raises and never gates storage."""
+fetches: 0 ok, 2 a body stored but failing its check; a body never makes the check raise, and the check never
+gates storage."""
 
 from __future__ import annotations
 
