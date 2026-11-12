@@ -28,7 +28,7 @@ from cli.vintage.gauges import render_prom
 from cli.vintage.record import RECORD_SUBDIR, Published, RecordRefused, record_tick
 from cli.vintage.sources import SOURCE_BY_ID
 from cli.vintage.storage import publish_prom, refuse_table_root
-from cli.vintage.table import DeriveOutcome, derive_table, head_sha256
+from cli.vintage.table import DeriveOutcome, derive_table
 
 # The ops re-verify after each tick: the newest ticks along the chain, and the slice the count of published ticks names.
 OPS_VERIFY_NEWEST = 4
@@ -294,7 +294,7 @@ def run_derive(
         "vintage derive complete generation=%d head=%s head_sha256=%s parts_added=%d",
         generation,
         "none" if outcome.head is None else outcome.head["tick"],
-        "none" if outcome.head is None else head_sha256(outcome.head),
+        outcome.head_sha256 or "none",
         outcome.parts_added,
     )
     return 0

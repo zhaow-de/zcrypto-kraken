@@ -291,7 +291,32 @@ def _a_parts_sha256(table: Path, stamps: list[str]) -> None:
     _rewrite(path, _canonical(entry))
 
 
-@pytest.mark.parametrize("damage", [_a_head_byte, _a_part_json, _a_frame, _a_parts_sha256], ids=lambda f: f.__name__[3:])
+def _newest_head(table: Path, stamps: list[str], edit) -> None:
+    path = _head_file(table, stamps[-1])
+    entry = json.loads(path.read_bytes())
+    _rewrite(path, edit(entry))
+
+
+def _a_head_missing_field(table: Path, stamps: list[str]) -> None:
+    _newest_head(table, stamps, lambda entry: _canonical({key: value for key, value in entry.items() if key != "rows"}))
+
+
+def _a_head_not_canonical(table: Path, stamps: list[str]) -> None:
+    _newest_head(table, stamps, lambda entry: json.dumps(entry, sort_keys=True, indent=1).encode() + b"\n")
+
+
+def _a_head_rows(table: Path, stamps: list[str]) -> None:
+    def edit(entry: dict) -> bytes:
+        entry["rows"]["versions"]["inherited"] += 1
+        return _canonical(entry)
+
+    _newest_head(table, stamps, edit)
+
+
+DAMAGE = [_a_head_byte, _a_part_json, _a_frame, _a_parts_sha256, _a_head_missing_field, _a_head_not_canonical, _a_head_rows]
+
+
+@pytest.mark.parametrize("damage", DAMAGE, ids=lambda f: f.__name__[3:])
 def test_read_table_refuses_what_does_not_hash(standard, tmp_path, damage):
     table = tmp_path / "versions"
     assert _derive(standard, table).complete
@@ -300,6 +325,19 @@ def test_read_table_refuses_what_does_not_hash(standard, tmp_path, damage):
     damage(table, stamps)
     with pytest.raises(TableError):
         read_table(table, 1, _head_file(table, stamps[-1]))
+
+
+@pytest.mark.parametrize("damage", [_a_head_missing_field, _a_head_not_canonical, _a_head_rows], ids=lambda f: f.__name__[3:])
+def test_a_derive_extends_only_a_head_that_is_its_own_bytes(standard, tmp_path, damage):
+    stamps = _stamps(standard)
+    record_root, table = tmp_path / "vintages" / "record", tmp_path / "versions"
+    _grow(standard, record_root, len(stamps) - 1)
+    assert _derive(record_root, table).complete
+    damage(table, stamps[:-1])
+    _grow(standard, record_root, len(stamps))
+    outcome = _derive(record_root, table)
+    assert (outcome.complete, outcome.at, outcome.parts_added) == (False, stamps[-2], 0)
+    assert list(_heads(table)) == stamps[:-1]
 
 
 def test_head_names_the_highest_position_after_a_clock_regression(tmp_path):

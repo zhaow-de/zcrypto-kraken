@@ -36,6 +36,22 @@ COVERAGE_FILE = "coverage.parquet"
 _GENESIS_PARTS = "0" * 64
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _ISO = "%Y-%m-%dT%H:%M:%S.%fZ"
+_HEAD_KEYS = frozenset(
+    {
+        "entries_sha256",
+        "generation",
+        "hash_version",
+        "part",
+        "part_json_sha256",
+        "parts_sha256",
+        "position",
+        "prev",
+        "prev_tick",
+        "rows",
+        "tick",
+        "tick_json_sha256",
+    }
+)
 
 log = get_logger("vintage.table")
 
@@ -63,6 +79,8 @@ class DeriveOutcome:
     parts_added: int
     at: str | None
     reason: str | None
+    # The sha256 of the head's file bytes as read or written; None with no head.
+    head_sha256: str | None = None
 
 
 def canonical(value: object) -> bytes:
@@ -71,11 +89,6 @@ def canonical(value: object) -> bytes:
 
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
-
-
-def head_sha256(entry: dict) -> str:
-    """The sha256 of a head's file, whose bytes are its dict's canonical line."""
-    return _sha256(canonical(entry))
 
 
 def _utc_iso(moment: datetime) -> str:
@@ -174,17 +187,31 @@ def _listed_heads(gen_dir: Path) -> list[Path]:
     return sorted((gen_dir / "heads").glob(f"*/*/*/*/{HEAD_JSON}"))
 
 
-def _current(gen_dir: Path) -> tuple[Path, dict] | None:
+def _checked_head(raw: bytes, path: Path) -> dict:
+    """The head the bytes hold, refused unless they are a head's keys and its own canonical line."""
+    tick = path.parent.name
+    entry = _loads(raw, path, tick)
+    if set(entry) != _HEAD_KEYS:
+        raise TableError(tick, f"head {path} does not hold a head's keys")
+    if canonical(entry) != raw:
+        raise TableError(tick, f"head {path} is not its own canonical line")
+    return entry
+
+
+def _current(gen_dir: Path) -> tuple[Path, bytes, dict] | None:
     """The generation's head at the highest chain position, which a published clock regression cannot displace."""
-    found = [(path, _loads(_read_bytes(path, path.parent.name), path, path.parent.name)) for path in _listed_heads(gen_dir)]
+    found = []
+    for path in _listed_heads(gen_dir):
+        raw = _read_bytes(path, path.parent.name)
+        found.append((path, raw, _checked_head(raw, path)))
     if not found:
         return None
-    return max(found, key=lambda item: item[1]["position"])
+    return max(found, key=lambda item: item[2]["position"])
 
 
 def head(table_root: Path, generation: int) -> dict | None:
     current = _current(generation_dir(table_root, generation))
-    return None if current is None else current[1]
+    return None if current is None else current[2]
 
 
 def _resolve(gen_dir: Path, named: str | Path) -> Path:
@@ -221,7 +248,7 @@ def _load_part(part_dir: Path) -> _Part:
 def _head_chain(gen_dir: Path, head_path: Path) -> list[dict]:
     """The heads from genesis to the one at `head_path`, each predecessor's bytes checked against its successor's
     `prev`, found by its `prev_tick`."""
-    newest = _loads(_read_bytes(head_path, head_path.parent.name), head_path, head_path.parent.name)
+    newest = _checked_head(_read_bytes(head_path, head_path.parent.name), head_path)
     walked = [newest]
     entry = newest
     while entry["prev_tick"] is not None:
@@ -229,7 +256,7 @@ def _head_chain(gen_dir: Path, head_path: Path) -> list[dict]:
         prev_raw = _read_bytes(prev_path, entry["prev_tick"])
         if _sha256(prev_raw) != entry["prev"]:
             raise TableError(entry["prev_tick"], f"head {prev_path} does not hash to the prev its successor records")
-        entry = _loads(prev_raw, prev_path, entry["prev_tick"])
+        entry = _checked_head(prev_raw, prev_path)
         walked.append(entry)
     if entry["prev"] is not None:
         raise TableError(entry["tick"], "the genesis head names a prev")
@@ -276,10 +303,17 @@ def _read_through(gen_dir: Path, head_path: Path, generation: int) -> tuple[Tabl
     heads = _head_chain(gen_dir, head_path)
     loaded = [_load_part(gen_dir / entry["part"]) for entry in heads]
     parts_sha256 = _GENESIS_PARTS
+    coverage_rows = 0
+    kinds: Counter[str] = Counter()
     for index, entry in enumerate(heads):
         if entry["position"] != index:
             raise TableError(entry["tick"], f"the head's position {entry['position']} is not its place {index} on the head log")
         parts_sha256 = _check_part(entry, loaded[index], parts_sha256, entries_sha256, generation)
+        coverage_rows += loaded[index].coverage.height
+        kinds.update(loaded[index].versions["kind"].to_list())
+        counted = {"coverage": coverage_rows, "versions": {kind: kinds[kind] for kind in KINDS}}
+        if entry["rows"] != counted or not kinds.keys() <= set(KINDS):
+            raise TableError(entry["tick"], "the head's rows differ from the counts of the frames through it")
     versions = pl.concat([part.versions for part in loaded], how="vertical")
     coverage = pl.concat([part.coverage for part in loaded], how="vertical")
     later_facts = pl.DataFrame([fact for part in loaded for fact in _facts(part.part)], schema=LATER_FACTS_SCHEMA)
@@ -426,6 +460,12 @@ def _rows(previous: dict | None, versions: list[dict], coverage: list[dict]) -> 
     }
 
 
+def _outcome(
+    complete: bool, last: dict | None, last_raw: bytes | None, added: int, at: str | None, reason: str | None
+) -> DeriveOutcome:
+    return DeriveOutcome(complete, last, added, at, reason, None if last_raw is None else _sha256(last_raw))
+
+
 def derive_table(
     record_root: Path,
     table_root: Path,
@@ -456,6 +496,7 @@ def derive_table(
     gen_dir = generation_dir(table_root, generation)
     staging = table_root / STAGING_SUBDIR
     last: dict | None = None
+    prev_raw: bytes | None = None
     added = 0
     at: str | None = None
     try:
@@ -467,12 +508,12 @@ def derive_table(
         if not gen_dir.exists():
             _open_generation(gen_dir, staging, generation, entries, opened_by, run_second, walls)
         current = _current(gen_dir)
-        last = None if current is None else current[1]
+        if current is not None:
+            _, prev_raw, last = current
         opened = _loads(_read_bytes(gen_dir / GENERATION_JSON, None), gen_dir / GENERATION_JSON, None)
         if opened.get("entries") != _entries_list(entries):
-            return DeriveOutcome(
-                False, last, 0, None, f"{GENERATION_JSON}'s entries differ from those the code pins for generation {generation}"
-            )
+            reason = f"{GENERATION_JSON}'s entries differ from those the code pins for generation {generation}"
+            return _outcome(False, last, prev_raw, 0, None, reason)
         heads: list[dict] = []
         state = DeriveState.empty()
         if current is not None:
@@ -481,20 +522,19 @@ def derive_table(
         order = _record_order(record_root, through)
         taken_off = _taken_off(heads, order)
         if taken_off is not None:
-            return DeriveOutcome(False, last, 0, *taken_off)
+            return _outcome(False, last, prev_raw, 0, *taken_off)
         entries_sha256 = _sha256(canonical(_entries_list(entries)))
         parts_sha256 = _GENESIS_PARTS if last is None else last["parts_sha256"]
-        prev_raw = None if last is None else canonical(last)
         for position in range(len(heads), len(order)):
             tick = order[position]
             at = tick.stamp
             predecessor_sha256 = None if position == 0 else order[position - 1].sha256
             link = _link_refusal(tick, predecessor_sha256, entries)
             if link is not None:
-                return DeriveOutcome(False, last, added, at, link)
+                return _outcome(False, last, prev_raw, added, at, link)
             damage = check_head(tick)
             if damage is not None:
-                return DeriveOutcome(False, last, added, at, f"the tick's files do not re-hash: {damage}")
+                return _outcome(False, last, prev_raw, added, at, f"the tick's files do not re-hash: {damage}")
             regression = position > 0 and tick.stamp <= order[position - 1].stamp
             found = derive_tick(state, tick, position, tick_dir=tick.dir, regression=regression, entries=entries)
             versions, coverage, _ = frames(*found)
@@ -503,7 +543,9 @@ def derive_table(
             part_dir = _dated(gen_dir / "parts", tick.stamp)
             if part_dir.exists():
                 if _read_bytes(part_dir / PART_JSON, at) != part_raw:
-                    return DeriveOutcome(False, last, added, at, "a published part without its head differs from the part derived")
+                    return _outcome(
+                        False, last, prev_raw, added, at, "a published part without its head differs from the part derived"
+                    )
             else:
                 staged = write_part(staging, _staging_name(tick.stamp, run_second, ".part"), versions, coverage, part)
                 publish_table_dir(staged, part_dir, **walls)
@@ -532,7 +574,7 @@ def derive_table(
             prev_raw, last = head_raw, entry
             added += 1
     except TableError as exc:
-        return DeriveOutcome(False, last, added, exc.tick, str(exc))
+        return _outcome(False, last, prev_raw, added, exc.tick, str(exc))
     except Exception as exc:
-        return DeriveOutcome(False, last, added, at, f"{type(exc).__name__}: {exc}")
-    return DeriveOutcome(True, last, added, None, None)
+        return _outcome(False, last, prev_raw, added, at, f"{type(exc).__name__}: {exc}")
+    return _outcome(True, last, prev_raw, added, None, None)
