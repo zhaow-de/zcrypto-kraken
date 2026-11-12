@@ -31,6 +31,30 @@ class Acknowledgment:
     since: str
 
 
+@dataclass(frozen=True)
+class LinkAcknowledgment:
+    """A link whose successor's `prev` records `recorded_prev_sha256` while its restored predecessor hashes to
+    `witnessed_sha256`."""
+
+    successor: str
+    recorded_prev_sha256: str
+    witnessed_sha256: str
+
+
+@dataclass(frozen=True)
+class ForkAcknowledgment:
+    """A fork's tick off the chain, by its stamp and the sha256 pinned for its `tick.json`; `lost` marks that no copy
+    holds that tick any more."""
+
+    off_chain: str
+    tick_json_sha256: str
+    lost: bool = False
+
+
+# A new link entry ships with a new derive generation; a fork entry ships with none, since no derive reads it.
+LINK_ACKNOWLEDGMENTS: tuple[LinkAcknowledgment, ...] = ()
+FORK_ACKNOWLEDGMENTS: tuple[ForkAcknowledgment, ...] = ()
+
 COMPARISON_RULES = frozenset({"collapse", "top", "bottom"})
 
 # Every daily metric the community catalog listed per asset, in the catalog's ASCII order.
