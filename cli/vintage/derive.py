@@ -240,6 +240,11 @@ class _Observed:
     flags: str
 
 
+def _metric(series: str) -> str:
+    """The metric a check names for a series: a `<metric>-status` or `<metric>-status-time` companion takes its own."""
+    return series.rsplit("/", 1)[-1].removesuffix("-status-time").removesuffix("-status")
+
+
 def _evidence(check: dict, metric: str) -> bool:
     """Whether a body's absences are evidence for a series: not where its check names the metric, or `*`."""
     named = set(check["metrics_absent"])
@@ -312,7 +317,7 @@ def _observe(
     for series, tokens in sorted(parsed.items()):
         series_state = state.series.setdefault(series, SeriesState())
         held = state.days.setdefault(series, {})
-        is_evidence = _evidence(check, series.rsplit("/", 1)[-1])
+        is_evidence = _evidence(check, _metric(series))
         first_day, last_day = min(tokens), max(tokens)
         if not series_state.carried:
             for day, token in sorted(tokens.items()):

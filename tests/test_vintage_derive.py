@@ -187,6 +187,22 @@ def test_an_outcome_2_bodys_absences_are_evidence_only_for_the_series_it_does_no
     assert second["ts"].item().date() == date.fromisoformat(withdrawn["time"][:10])
 
 
+def test_a_status_companion_takes_its_metrics_evidence_rule(tmp_path):
+    """FlowInExNtv loses its newest days, so the check names it; its -status companion, which the check never reads,
+    loses a day inside its range, and that absence is no more evidence than its metric's."""
+    rows = _rows(body("cm-btc"))
+    for i in _carrying(rows, "FlowInExNtv")[-5:]:
+        del rows[i]["FlowInExNtv"]
+    companion = _carrying(rows, "FlowInExNtv-status")
+    del rows[companion[len(companion) // 2]]["FlowInExNtv-status"]
+    published, (versions, coverage, _) = _record(tmp_path, [{}, {"cm-btc": _stream(rows)}])
+    assert {failure[0] for failure in _fetch(published[1], "cm-btc")["check"]["metrics_failed"]} == {"FlowInExNtv"}
+    assert _at(versions, 1).is_empty()
+    family = ["cm/btc/FlowInExNtv", "cm/btc/FlowInExNtv-status", "cm/btc/FlowInExNtv-status-time"]
+    second = _at(coverage, 1).filter(pl.col("series").is_in(family))
+    assert second.select("series", "evidence").rows() == [(series, False) for series in family]
+
+
 def test_a_source_level_outcome_2_bodys_absences_are_no_evidence_for_any_series(tmp_path):
     published, derived = _record(tmp_path, [{}, {"cm-btc": _second("cm-btc-collapse")}])
     assert _fetch(published[1], "cm-btc")["check"]["metrics_failed"] == [["*", "collapse"]]
