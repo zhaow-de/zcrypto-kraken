@@ -2222,6 +2222,64 @@ def test_the_rolling_staging_dir_is_the_outboxs_sibling_with_its_owner_group_and
     assert "/" not in staging_subdir and staging_subdir != defaults["ops_hot_out_subdir"]
 
 
+OPS_VINTAGE_DIRS_TASK = "ensure the vintage record, staging and versions-table directories exist"
+OPS_VINTAGES_PULL_KEY_TASK = "install the vintages pull key (rrsync -ro) on zcrypto-data"
+OPS_HOST_VARS = ANSIBLE / "host_vars" / "zcrypto-ops" / "vars.yml"
+
+
+def test_the_vintage_directories():
+    from cli.vintage.record import RECORD_SUBDIR, STAGING_SUBDIR
+
+    tasks = load_tasks(OPS_TASKS)
+    task = tasks[task_index(tasks, OPS_VINTAGE_DIRS_TASK)]
+    assert "when" not in task, "ungated: a converge without a digest still leaves the record's directories in place"
+    assert task["ansible.builtin.file"] == {
+        "path": "{{ item.path }}",
+        "state": "directory",
+        "owner": "{{ ops_data_user }}",
+        "group": "{{ ops_data_user }}",
+        "mode": "{{ item.mode }}",
+    }
+    root = "{{ ops_data_dir }}/{{ ops_vintages_subdir }}"
+    versions = "{{ ops_data_dir }}/{{ ops_vintage_versions_subdir }}"
+    assert task["loop"] == [
+        {"path": root, "mode": "0755"},
+        {"path": f"{root}/{RECORD_SUBDIR}", "mode": "0755"},
+        {"path": f"{root}/{STAGING_SUBDIR}", "mode": "0750"},
+        {"path": versions, "mode": "0755"},
+    ]
+    defaults = yaml.safe_load(OPS_DEFAULTS.read_text())
+    vintages, record, staging, table = (Path(_render(item["path"], defaults)) for item in task["loop"])
+    assert record.parent == staging.parent == vintages and record != staging
+    assert not table.is_relative_to(vintages)
+
+
+def test_the_vintages_pull_key_serves_record_alone():
+    from cli.vintage.record import RECORD_SUBDIR
+
+    tasks = load_tasks(OPS_TASKS)
+    index = task_index(tasks, OPS_VINTAGES_PULL_KEY_TASK)
+    task = tasks[index]
+    assert "when" not in task
+    pull_keys = [i for i, t in enumerate(tasks) if "ansible.posix.authorized_key" in t]
+    assert len(pull_keys) == 5 and pull_keys == list(range(pull_keys[0], pull_keys[0] + 5)) and index in pull_keys
+    assert task["ansible.posix.authorized_key"] == {
+        "user": "{{ ops_data_user }}",
+        "exclusive": False,
+        "key": "{{ ops_sync_vintages_authorized_key }}",
+        "key_options": 'command="/usr/bin/rrsync -ro {{ ops_data_dir }}/{{ ops_vintages_subdir }}/record",restrict',
+    }
+    defaults = yaml.safe_load(OPS_DEFAULTS.read_text())
+    options = _render(task["ansible.posix.authorized_key"]["key_options"], defaults)
+    served = Path(re.fullmatch(r'command="/usr/bin/rrsync -ro (\S+)",restrict', options)[1])
+    assert served.name == RECORD_SUBDIR
+    assert served.parent == Path(defaults["ops_data_dir"]) / defaults["ops_vintages_subdir"]
+    host_vars = yaml.safe_load(OPS_HOST_VARS.read_text())
+    assert host_vars["ops_sync_vintages_authorized_key"] == (
+        "{{ lookup('file', playbook_dir ~ '/files/sync_vintages_ed25519.pub') }}"
+    )
+
+
 def test_the_outbox_groups_gid_is_derived_beside_the_data_users():
     tasks = load_tasks(OPS_TASKS)
     (lookup,) = [i for i, t in enumerate(tasks) if t.get("ansible.builtin.getent", {}).get("key") == "{{ ops_hot_group }}"]

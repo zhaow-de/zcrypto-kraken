@@ -3,6 +3,7 @@
 The runners are read rendered and run by bash against `docker` and `curl` stubs, never re-implemented here.
 """
 
+import io
 import logging
 import os
 import re
@@ -18,12 +19,15 @@ from typer.main import get_command
 
 from cli.__main__ import app
 from cli.logging.formatters import PlainTextFormatter
+from cli.vintage.credential import read_key
+from tests.role_render import render, resolve
 from tests.test_infra_archive_pull_template import _ops_parse_regex
 from tests.vintage_fixtures import BASE_TICK_START, SENTINEL_KEY
 from tests.vintage_stub import run_tick
 
 REPO = Path(__file__).resolve().parents[1]
-TEMPLATES = REPO / "infra/ansible/roles/ops/templates"
+ROLE = REPO / "infra/ansible/roles/ops"
+TEMPLATES = ROLE / "templates"
 RECORD_RUNNER = TEMPLATES / "vintage-record.sh.j2"
 DERIVE_RUNNER = TEMPLATES / "vintage-derive.sh.j2"
 RECORD_UNIT = TEMPLATES / "vintage-record.service.j2"
@@ -348,6 +352,48 @@ def test_the_block_is_gated_on_the_digest_and_enables_the_timer_alone():
         if _SYSTEMD_OR_SHELL & set(t) and re.search(r"vintage-(record|derive)\.service", yaml.safe_dump(t))
     ]
     assert starters == []
+
+
+# --- the key file -------------------------------------------------------------------------------------------------------
+_KEY_FILE = "render the BGeometrics key file (root-only; never logged, never diffed)"
+_KEY_TEMPLATE = "vintage-bgeometrics.token.j2"
+
+
+def test_the_key_file_renders_root_only_outside_every_mount():
+    tasks = yaml.safe_load(TASKS.read_text())
+    names = [t.get("name") for t in tasks]
+    index = names.index(_KEY_FILE)
+    first_gated_block = next(i for i, t in enumerate(tasks) if "block" in t and "digest is defined" in str(t.get("when", "")))
+    assert names.index("ensure the ops compose project directory exists") < index < first_gated_block
+    task = tasks[index]
+    assert "when" not in task
+    assert task["ansible.builtin.template"] == {
+        "src": _KEY_TEMPLATE,
+        "dest": "{{ ops_compose_dir }}/vintage-bgeometrics.token",
+        "owner": "root",
+        "group": "root",
+        "mode": "0600",
+    }
+    assert (task.get("no_log"), task.get("diff")) == (True, False)
+
+    dest = Path(resolve(ROLE, task["ansible.builtin.template"]["dest"], {}))
+    options = [
+        resolve(ROLE, t["ansible.posix.authorized_key"]["key_options"], {})
+        for t in _leaves(tasks)
+        if "ansible.posix.authorized_key" in t
+    ]
+    roots = [Path(re.fullmatch(r'command="/usr/bin/rrsync -ro (\S+)",restrict', o)[1]) for o in options]
+    assert roots
+    for root in (Path(resolve(ROLE, "{{ ops_data_dir }}", {})), *roots):
+        assert not dest.is_relative_to(root), root
+
+    unset = render(ROLE, _KEY_TEMPLATE, {})
+    assert unset == "\n"
+    assert read_key(io.BytesIO(unset.encode())) == (None, "no credential")
+    rendered = render(ROLE, _KEY_TEMPLATE, {"bgeometrics_api_key": SENTINEL_KEY})
+    assert rendered == f"{SENTINEL_KEY}\n"
+    key, reason = read_key(io.BytesIO(rendered.encode()))
+    assert (key.reveal(), reason) == (SENTINEL_KEY, None)
 
 
 # --- the record runner run by bash: the dead-man, the runner's own lines, the token -------------------------------------
