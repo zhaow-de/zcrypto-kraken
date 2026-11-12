@@ -732,6 +732,11 @@ def test_a_broken_body_grades_2(case):
     assert check.reason and check.summary is None
 
 
+@pytest.mark.parametrize("edit", [lambda d: d.pop("metadata"), lambda d: d.update(metadata=None)], ids=["missing", "null"])
+def test_an_fng_metadata_missing_or_null_carries_no_error(edit):
+    assert _graded(_check("fng", _fng_edited(edit))) == (0, (), ())
+
+
 WRONG_SHAPE = {
     "bg-object": ("bg-sopr", lambda: b'{"d":"2026-11-04","unixTs":1793750400,"sopr":1.5}'),
     "cm-line-array": ("cm-btc", lambda: _cm_line_replaced(b"[]")),
