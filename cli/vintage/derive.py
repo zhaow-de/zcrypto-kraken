@@ -186,31 +186,59 @@ def flags(manifest: dict, fetch: dict) -> tuple[str, ...]:
 class SeriesState:
     high_water: date | None = None
     carried: bool = False
-    # The observations whose absences are evidence for the series, as (ended_at, first day held), oldest first, each
-    # kept only while no later one's range starts at or before its own: the newest whose range starts at or before a
-    # day is the last that was evidence the day was not yet held, there or after its newest day.
-    evidence: list[tuple[datetime, date]] = field(default_factory=list)
+    # The observations known to have shown each day's then-current version, as (ended_at, first day, last day), oldest
+    # first. One whose absences are evidence covers every day from its first, held or not yet held, and carries no last
+    # day; one whose days run unbroken covers its range alone. Each is kept only while no later one covers all it does.
+    # Coverage holds every field, so a run resumed from its table rebuilds the same list.
+    known: list[tuple[datetime, date, date | None]] = field(default_factory=list)
 
 
 @dataclass
 class Held:
     token: str
     retracted: bool = False
-    # The `ended_at` of the last observation that held the day, whatever its check: the values a body holds are
-    # evidence even where its absences are not.
-    seen_at: datetime | None = None
 
 
-def _with_evidence(evidence: list[tuple[datetime, date]], ended_at: datetime, first_day: date) -> list[tuple[datetime, date]]:
-    return [entry for entry in evidence if entry[1] < first_day] + [(ended_at, first_day)]
+def _covers(entry: tuple[datetime, date, date | None], day: date) -> bool:
+    _, first, last = entry
+    return first <= day and (last is None or day <= last)
 
 
-def _lower_end(series_state: SeriesState, last: Held | None, day: date) -> datetime | None:
-    """Q3's lower end for a version of (series, day) first seen now: the last earlier observation that held the day,
-    or that was evidence the day was not yet held, whichever is later."""
-    held = None if last is None else last.seen_at
-    absent = next((ended for ended, first in reversed(series_state.evidence) if first <= day), None)
-    return max((moment for moment in (held, absent) if moment is not None), default=None)
+def _with_known(
+    known: list[tuple[datetime, date, date | None]],
+    ended_at: datetime,
+    first_day: date,
+    last_day: date,
+    *,
+    evidence: bool,
+    unbroken: bool,
+) -> list[tuple[datetime, date, date | None]]:
+    if evidence:
+        entry = (ended_at, first_day, None)
+    elif unbroken:
+        entry = (ended_at, first_day, last_day)
+    else:
+        return known
+    kept = [old for old in known if not (first_day <= old[1] and (entry[2] is None or (old[2] is not None and old[2] <= last_day)))]
+    return [*kept, entry]
+
+
+def _lower_end(series_state: SeriesState, day: date) -> datetime | None:
+    """Q3's lower end for a version of (series, day) first seen now: the last earlier observation known to have shown
+    the day's then-current version, or to have been evidence the day was not yet held. An observation that names the
+    series and holds its days with a hole is passed over even where it held the day, as coverage cannot say it did."""
+    return next((entry[0] for entry in reversed(series_state.known) if _covers(entry, day)), None)
+
+
+def _move_past(series_state: SeriesState, row: dict) -> None:
+    """The series' state past one of its coverage rows, read from the row alone, so a run that reads its rows back from
+    its table moves the same way."""
+    unbroken = row["days"] == (row["last_day"] - row["first_day"]).days + 1
+    series_state.carried = True
+    series_state.high_water = max(row["last_day"], series_state.high_water or row["last_day"])
+    series_state.known = _with_known(
+        series_state.known, row["ended_at"], row["first_day"], row["last_day"], evidence=row["evidence"], unbroken=unbroken
+    )
 
 
 @dataclass
@@ -222,6 +250,18 @@ class DeriveState:
     @classmethod
     def empty(cls) -> DeriveState:
         return cls()
+
+    @classmethod
+    def from_frames(cls, versions: pl.DataFrame, coverage: pl.DataFrame) -> DeriveState:
+        """The state after the ticks the frames hold, read from them alone, as a run resumes from its table."""
+        state = cls()
+        for row in coverage.filter(pl.col("series") != "*").sort("position", maintain_order=True).iter_rows(named=True):
+            _move_past(state.series.setdefault(row["series"], SeriesState()), row)
+        for row in versions.sort("position", maintain_order=True).iter_rows(named=True):
+            held = state.days.setdefault(row["series"], {})
+            day = row["ts"].date()
+            held[day] = Held(held[day].token, retracted=True) if row["kind"] == "retraction" else Held(row["token"])
+        return state
 
 
 @dataclass(frozen=True)
@@ -322,29 +362,24 @@ def _observe(
         if not series_state.carried:
             for day, token in sorted(tokens.items()):
                 versions.append(_version(observed, series, day, "inherited", token, None))
-                held[day] = Held(token, seen_at=observed.ended_at)
+                held[day] = Held(token)
         else:
             high = series_state.high_water
             for day, token in sorted(tokens.items()):
-                last = held.get(day)
-                kind = _kind(last, token, day, high)
+                kind = _kind(held.get(day), token, day, high)
                 if kind is not None:
-                    appeared_after = _lower_end(series_state, last, day)
+                    appeared_after = _lower_end(series_state, day)
                     versions.append(_version(observed, series, day, kind, token, appeared_after))
                     held[day] = Held(token)
-                held[day].seen_at = observed.ended_at
             if is_evidence:
                 for day, last in sorted(held.items()):
                     if not last.retracted and day not in tokens and first_day <= day <= last_day:
-                        appeared_after = _lower_end(series_state, last, day)
+                        appeared_after = _lower_end(series_state, day)
                         versions.append(_version(observed, series, day, "retraction", None, appeared_after))
-                        held[day] = Held(last.token, retracted=True, seen_at=last.seen_at)
-        series_state.carried = True
-        series_state.high_water = max(last_day, series_state.high_water or last_day)
-        series_state.evidence = (
-            _with_evidence(series_state.evidence, observed.ended_at, first_day) if is_evidence else series_state.evidence
-        )
-        coverage.append(_coverage(observed, series, first_day, last_day, len(tokens), is_evidence))
+                        held[day] = Held(last.token, retracted=True)
+        row = _coverage(observed, series, first_day, last_day, len(tokens), is_evidence)
+        _move_past(series_state, row)
+        coverage.append(row)
     return versions, coverage
 
 

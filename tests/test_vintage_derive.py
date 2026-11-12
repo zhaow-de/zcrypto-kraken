@@ -9,13 +9,16 @@ import polars as pl
 import pytest
 
 from cli.vintage.asof import as_of
+from cli.vintage.chain import chain, scan
 from cli.vintage.derive import (
     COVERAGE_SCHEMA,
     LATER_FACTS_SCHEMA,
     SERIES_KINDS,
     VERSIONS_SCHEMA,
+    DeriveState,
     changed_values,
     derive_record,
+    derive_tick,
     flags,
     frames,
     parse_series,
@@ -319,18 +322,77 @@ def test_q3s_lower_end_passes_over_an_observation_that_names_the_series(tmp_path
     assert first["appeared_after"].item() == _ended(published[0], "cm-btc")
 
 
-def test_q3s_lower_end_for_a_restatement_is_the_last_observation_that_held_the_old_token(tmp_path):
-    """`cm-btc-frozen` names the frozen metric, so its absences are no evidence, but the old token it still holds is."""
-    rows = _rows(body("cm-btc"))
-    carrying = _carrying(rows, FROZEN_METRIC)
-    restated = rows[carrying[len(carrying) // 2]]
-    restated[FROZEN_METRIC] += "1"
-    published, (versions, _, _) = _record(tmp_path, [{}, {"cm-btc": _second("cm-btc-frozen")}, {"cm-btc": _stream(rows)}])
-    series, day = f"cm/btc/{FROZEN_METRIC}", date.fromisoformat(restated["time"][:10])
-    assert day in parse_series(CM_BTC, _second("cm-btc-frozen"))[series]
-    restatement = _day(versions, series, day).filter(pl.col("kind") == "restatement")
-    assert restatement["position"].to_list() == [2]
-    assert restatement["appeared_after"].item() == _ended(published[1], "cm-btc")
+HOLDER = "ReferenceRate"
+
+
+def _named_holders() -> tuple[list[dict], dict[str, date]]:
+    """Three cm-btc bodies: the base; `cm-btc-frozen` with `ReferenceRate`'s newest day also gone, so its check names
+    both metrics, the frozen one's days holed and `ReferenceRate`'s unbroken; then the base with a day each of the
+    two restated, a day the second body still held. Every other source its default body."""
+    second = _rows(_second("cm-btc-frozen"))
+    del second[_carrying(second, HOLDER)[-1]][HOLDER]
+    third = _rows(body("cm-btc"))
+    restated = {}
+    for metric in (FROZEN_METRIC, HOLDER):
+        carrying = _carrying(third, metric)
+        row = third[carrying[len(carrying) // 2]]
+        row[metric] += "1"
+        restated[f"cm/btc/{metric}"] = date.fromisoformat(row["time"][:10])
+    return [{}, {"cm-btc": _stream(second)}, {"cm-btc": _stream(third)}], restated
+
+
+def test_q3s_lower_end_for_a_restatement_is_the_last_observation_known_to_have_held_the_day(tmp_path):
+    """The second body's check names both metrics, so neither's absences are evidence. Its `ReferenceRate` days run
+    unbroken, so it is known to have held the restated day with the old token: the tighter lower end. Its frozen
+    metric's days have holes, so coverage cannot say it held its day, and the lower end passes over it to the base."""
+    ticks, restated = _named_holders()
+    published, (versions, coverage, _) = _record(tmp_path, ticks)
+    assert {failure[0] for failure in _fetch(published[1], "cm-btc")["check"]["metrics_failed"]} == {FROZEN_METRIC, HOLDER}
+    second = _at(coverage, 1).filter(pl.col("series").is_in(list(restated)))
+    unbroken = (pl.col("days") == (pl.col("last_day") - pl.col("first_day")).dt.total_days() + 1).alias("unbroken")
+    assert second.select("series", "evidence", unbroken).sort("series").rows() == [
+        ("cm/btc/AdrActCnt", False, False),
+        ("cm/btc/ReferenceRate", False, True),
+    ]
+    lower_ends = {}
+    for series, day in restated.items():
+        assert day in parse_series(CM_BTC, _stored(published[1], "cm-btc"))[series]
+        restatement = _day(versions, series, day).filter(pl.col("kind") == "restatement")
+        assert restatement["position"].to_list() == [2]
+        lower_ends[series] = restatement["appeared_after"].item()
+    assert lower_ends == {
+        f"cm/btc/{HOLDER}": _ended(published[1], "cm-btc"),
+        f"cm/btc/{FROZEN_METRIC}": _ended(published[0], "cm-btc"),
+    }
+
+
+def _resumed(record_root: Path, split: int) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+    """The record derived through `split` ticks, then resumed from those ticks' frames alone, as a run resumes from
+    its table."""
+    order = chain(scan(record_root).ticks).order
+    state = DeriveState.empty()
+    found: tuple[list, list, list] = ([], [], [])
+    for position, tick in enumerate(order):
+        if position == split:
+            state = DeriveState.from_frames(*frames(*found)[:2])
+        regression = position > 0 and tick.stamp <= order[position - 1].stamp
+        for into, rows in zip(found, derive_tick(state, tick, position, tick_dir=tick.dir, regression=regression), strict=True):
+            into += rows
+    return frames(*found)
+
+
+@pytest.mark.parametrize("record", ["named-holders", "standard"])
+def test_a_derive_resumed_from_its_frames_equals_one_run_tick_by_tick(tmp_path, record):
+    if record == "standard":
+        standard_record(tmp_path)
+    else:
+        _record(tmp_path, _named_holders()[0])
+    whole = derive_record(tmp_path / "record")
+    ticks = len(chain(scan(tmp_path / "record").ticks).order)
+    for split in range(1, ticks):
+        resumed = _resumed(tmp_path / "record", split)
+        assert resumed[0].equals(whole[0]), split
+        assert resumed[1].equals(whole[1]), split
 
 
 def test_q3s_lower_end_is_null_for_a_day_before_every_earlier_observations_range(tmp_path):
