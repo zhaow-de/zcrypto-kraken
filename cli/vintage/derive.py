@@ -22,6 +22,7 @@ from cli.vintage.sources import SOURCE_BY_ID, LinkAcknowledgment, Source, as_obj
 
 DERIVE_GENERATION = 1
 KINDS = ("inherited", "first_publication", "backfill", "restatement", "retraction", "restoration")
+_FIRST_APPEARANCES = frozenset({"first_publication", "backfill"})
 CLOCK_OFFSET_BAR_SECONDS = 10
 CLOCK_FILE_STALE_SECONDS = 600
 DATE_SKEW_SECONDS = 300
@@ -72,6 +73,7 @@ LATER_FACTS_SCHEMA: dict[str, pl.DataType] = {
     "fact": pl.String(),
     "taught_by": pl.String(),
     "taught_position": pl.Int64(),
+    "taught_at": _TIME,
 }
 
 
@@ -186,11 +188,12 @@ def flags(manifest: dict, fetch: dict) -> tuple[str, ...]:
 class SeriesState:
     high_water: date | None = None
     carried: bool = False
-    # The observations known to have shown each day's then-current version, as (ended_at, first day, last day), oldest
-    # first. One whose absences are evidence covers every day from its first, held or not yet held, and carries no last
-    # day; one whose days run unbroken covers its range alone. Each is kept only while no later one covers all it does.
-    # Coverage holds every field, so a run resumed from its table rebuilds the same list.
-    known: list[tuple[datetime, date, date | None]] = field(default_factory=list)
+    # The observations whose absences are evidence or whose days run unbroken, as (ended_at, first day, last day,
+    # evidence), oldest first, each kept only while no later one covers all it does. Within its range each is known to
+    # have shown a day's then-current version. Past its last day an evidence entry is evidence only that a day was not
+    # yet held, so it covers there for a first appearance alone. Coverage holds every field, so a run resumed from its
+    # table rebuilds the same list.
+    known: list[tuple[datetime, date, date, bool]] = field(default_factory=list)
 
 
 @dataclass
@@ -199,35 +202,33 @@ class Held:
     retracted: bool = False
 
 
-def _covers(entry: tuple[datetime, date, date | None], day: date) -> bool:
-    _, first, last = entry
-    return first <= day and (last is None or day <= last)
+def _covers(entry: tuple[datetime, date, date, bool], day: date, *, first_appearance: bool) -> bool:
+    _, first, last, evidence = entry
+    return first <= day and (day <= last or (evidence and first_appearance))
 
 
 def _with_known(
-    known: list[tuple[datetime, date, date | None]],
+    known: list[tuple[datetime, date, date, bool]],
     ended_at: datetime,
     first_day: date,
     last_day: date,
     *,
     evidence: bool,
     unbroken: bool,
-) -> list[tuple[datetime, date, date | None]]:
-    if evidence:
-        entry = (ended_at, first_day, None)
-    elif unbroken:
-        entry = (ended_at, first_day, last_day)
-    else:
+) -> list[tuple[datetime, date, date, bool]]:
+    if not (evidence or unbroken):
         return known
-    kept = [old for old in known if not (first_day <= old[1] and (entry[2] is None or (old[2] is not None and old[2] <= last_day)))]
-    return [*kept, entry]
+    kept = [old for old in known if not (first_day <= old[1] and old[2] <= last_day and (evidence or not old[3]))]
+    return [*kept, (ended_at, first_day, last_day, evidence)]
 
 
-def _lower_end(series_state: SeriesState, day: date) -> datetime | None:
+def _lower_end(series_state: SeriesState, day: date, *, first_appearance: bool) -> datetime | None:
     """Q3's lower end for a version of (series, day) first seen now: the last earlier observation known to have shown
-    the day's then-current version, or to have been evidence the day was not yet held. An observation that names the
-    series and holds its days with a hole is passed over even where it held the day, as coverage cannot say it did."""
-    return next((entry[0] for entry in reversed(series_state.known) if _covers(entry, day)), None)
+    the day's then-current version, or, for a first appearance, to have been evidence the day was not yet held. An
+    observation that names the series and holds its days with a hole is passed over even where it held the day, as
+    coverage cannot say it did."""
+    covering = (entry[0] for entry in reversed(series_state.known) if _covers(entry, day, first_appearance=first_appearance))
+    return next(covering, None)
 
 
 def _move_past(series_state: SeriesState, row: dict) -> None:
@@ -368,13 +369,13 @@ def _observe(
             for day, token in sorted(tokens.items()):
                 kind = _kind(held.get(day), token, day, high)
                 if kind is not None:
-                    appeared_after = _lower_end(series_state, day)
+                    appeared_after = _lower_end(series_state, day, first_appearance=kind in _FIRST_APPEARANCES)
                     versions.append(_version(observed, series, day, kind, token, appeared_after))
                     held[day] = Held(token)
             if is_evidence:
                 for day, last in sorted(held.items()):
                     if not last.retracted and day not in tokens and first_day <= day <= last_day:
-                        appeared_after = _lower_end(series_state, day)
+                        appeared_after = _lower_end(series_state, day, first_appearance=False)
                         versions.append(_version(observed, series, day, "retraction", None, appeared_after))
                         held[day] = Held(last.token, retracted=True)
         row = _coverage(observed, series, first_day, last_day, len(tokens), is_evidence)
@@ -407,7 +408,20 @@ def _parse(source: Source, fetch: dict, data: bytes) -> dict[str, dict[date, str
     return parse_series(source, data)
 
 
-def _facts(stamp: str, position: int, prev: object, regression: bool, entries: tuple[LinkAcknowledgment, ...]) -> list[dict]:
+def _tick_knowable_at(manifest: dict) -> datetime:
+    """When what a tick teaches is knowable: its own end, or a later fetch's knowable time, as a Date runs ahead."""
+    fetches = [(ended, fetch) for fetch in manifest["fetches"] if (ended := _ended_at(fetch)) is not None]
+    return max(
+        [
+            datetime.fromisoformat(manifest["ended_at"]),
+            *(knowable_at(ended, fetch.get("headers") or []) for ended, fetch in fetches),
+        ]
+    )
+
+
+def _facts(
+    stamp: str, position: int, taught_at: datetime, prev: object, regression: bool, entries: tuple[LinkAcknowledgment, ...]
+) -> list[dict]:
     if not isinstance(prev, dict):
         return []
     taught = []
@@ -417,7 +431,10 @@ def _facts(stamp: str, position: int, prev: object, regression: bool, entries: t
         taught.append("link-error")
     if any(entry.successor == stamp for entry in entries):
         taught.append("link-acknowledged")
-    return [{"tick": prev["tick"], "fact": fact, "taught_by": stamp, "taught_position": position} for fact in taught]
+    return [
+        {"tick": prev["tick"], "fact": fact, "taught_by": stamp, "taught_position": position, "taught_at": taught_at}
+        for fact in taught
+    ]
 
 
 def derive_tick(
@@ -469,7 +486,7 @@ def derive_tick(
         found_versions, found_coverage = _observe(state, observed, parsed, fetch["check"])
         versions += found_versions
         coverage += found_coverage
-    return versions, coverage, _facts(tick.stamp, position, prev, regression, entries)
+    return versions, coverage, _facts(tick.stamp, position, _tick_knowable_at(manifest), prev, regression, entries)
 
 
 def frames(versions: list[dict], coverage: list[dict], facts: list[dict]) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:

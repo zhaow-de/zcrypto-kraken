@@ -381,10 +381,13 @@ def _resumed(record_root: Path, split: int) -> tuple[pl.DataFrame, pl.DataFrame,
     return frames(*found)
 
 
-@pytest.mark.parametrize("record", ["named-holders", "standard"])
+@pytest.mark.parametrize("record", ["named-holders", "standard", "newest-back"])
 def test_a_derive_resumed_from_its_frames_equals_one_run_tick_by_tick(tmp_path, record):
     if record == "standard":
         standard_record(tmp_path)
+    elif record == "newest-back":
+        back, withdrawn = _mempool(_newest_back), _mempool(_newest_withdrawn)
+        _record(tmp_path, [{}, {}, {"mempool-hashrate": back}, {"mempool-hashrate": withdrawn}])
     else:
         _record(tmp_path, _named_holders()[0])
     whole = derive_record(tmp_path / "record")
@@ -393,6 +396,46 @@ def test_a_derive_resumed_from_its_frames_equals_one_run_tick_by_tick(tmp_path, 
         resumed = _resumed(tmp_path / "record", split)
         assert resumed[0].equals(whole[0]), split
         assert resumed[1].equals(whole[1]), split
+
+
+MEMPOOL = SOURCE_BY_ID["mempool-hashrate"]
+
+
+def _mempool(edit) -> bytes:
+    doc = loads_tokens(body("mempool-hashrate"))
+    edit(doc["hashrates"])
+    return dumps_compact(doc)
+
+
+def _newest_back(hashrates: list[dict]) -> None:
+    del hashrates[-1]
+
+
+def _newest_withdrawn(hashrates: list[dict]) -> None:
+    """The newest day gone and the day after it added, so the gone day lies inside the body's range."""
+    newest = hashrates.pop()
+    hashrates.append(
+        {"timestamp": type(newest["timestamp"])(int(newest["timestamp"]) + 86400), "avgHashrate": newest["avgHashrate"]}
+    )
+
+
+def _newest_restated(hashrates: list[dict]) -> None:
+    hashrates[-1]["avgHashrate"] = type(hashrates[-1]["avgHashrate"])(hashrates[-1]["avgHashrate"] + "1")
+
+
+@pytest.mark.parametrize(("third", "kind"), [(_newest_withdrawn, "retraction"), (_newest_restated, "restatement")])
+def test_q3s_lower_end_for_a_held_day_passes_over_a_body_whose_newest_day_went_back(tmp_path, third, kind):
+    """The third body's newest day goes back, an ok body whose absences are evidence: it shows the base's newest day
+    absent past its range, which says nothing of the version the fourth body brings for that day. The lower end is the
+    second body, the last to show the old value."""
+    ticks = [{}, {}, {"mempool-hashrate": _mempool(_newest_back)}, {"mempool-hashrate": _mempool(third)}]
+    published, (versions, coverage, _) = _record(tmp_path, ticks)
+    assert [_fetch(tick, "mempool-hashrate")["check"]["outcome"] for tick in published] == [0, 0, 0, 0]
+    assert _at(coverage, 2).filter(pl.col("source") == "mempool-hashrate")["evidence"].to_list() == [True]
+    newest = max(parse_series(MEMPOOL, body("mempool-hashrate"))["mempool/avgHashrate"])
+    (version,) = _day(versions, "mempool/avgHashrate", newest).filter(pl.col("position") == 3).iter_rows(named=True)
+    assert version["kind"] == kind
+    assert version["appeared_after"] == _ended(published[1], "mempool-hashrate")
 
 
 def test_q3s_lower_end_is_null_for_a_day_before_every_earlier_observations_range(tmp_path):
@@ -485,8 +528,14 @@ def _hand_coverage(position: int, knowable: datetime, *, evidence: bool = True, 
     }
 
 
-def _link_error(about: int, taught_by: int) -> dict:
-    return {"tick": _stamp(about), "fact": "link-error", "taught_by": _stamp(taught_by), "taught_position": taught_by}
+def _link_error(about: int, taught_by: int, taught_at: datetime) -> dict:
+    return {
+        "tick": _stamp(about),
+        "fact": "link-error",
+        "taught_by": _stamp(taught_by),
+        "taught_position": taught_by,
+        "taught_at": taught_at,
+    }
 
 
 @pytest.mark.parametrize(
@@ -508,7 +557,7 @@ def test_last_seen_and_a_later_fact_wait_for_their_ticks_knowable_time(step):
     derived = frames(
         [_hand_version(0, "7", knowable[0])],
         [_hand_coverage(0, knowable[0]), _hand_coverage(1, knowable[1])],
-        [_link_error(about=0, taught_by=1)],
+        [_link_error(about=0, taught_by=1, taught_at=knowable[1])],
     )
     t = {
         "at-the-first": knowable[0],
@@ -520,17 +569,37 @@ def test_last_seen_and_a_later_fact_wait_for_their_ticks_knowable_time(step):
     assert seen == ([("7", knowable[1], "link-error")] if step == "at-the-second" else [("7", knowable[0], "")])
 
 
+@pytest.mark.parametrize("step", ["a-microsecond-before", "at"])
+def test_a_fact_from_a_tick_with_no_knowable_coverage_row_shows_from_its_ticks_knowable_time(step):
+    """Tick 1 fetched no series, so it has no coverage row: its fact about tick 0 shows from tick 1's own knowable
+    time, never before."""
+    knowable = (HAND_T0 + HOUR, HAND_T0 + 4 * HOUR)
+    derived = frames(
+        [_hand_version(0, "7", knowable[0])],
+        [_hand_coverage(0, knowable[0])],
+        [_link_error(about=0, taught_by=1, taught_at=knowable[1])],
+    )
+    t = knowable[1] - MICROSECOND if step == "a-microsecond-before" else knowable[1]
+    assert as_of(*derived, t)["flags"].to_list() == ["" if step == "a-microsecond-before" else "link-error"]
+
+
 @pytest.mark.parametrize("step", ["at-the-third", "a-microsecond-before-the-second", "at-the-second"])
 def test_last_seen_stops_at_the_next_version_across_a_clock_regression(step):
     """Tick 1 ran under a clock ahead, knowable after tick 2: until it is, tick 0's value stands, tick 2's row, which
     held tick 1's value, is no last-seen time for it, and tick 1's fact about tick 0 is not shown though a later
     position is knowable. Tick 2's fact about tick 1 shows with tick 1's value."""
     knowable = (HAND_T0 + HOUR, HAND_T0 + 24 * HOUR, HAND_T0 + 12 * HOUR)
-    regression = {"tick": _stamp(1), "fact": "regression-predecessor", "taught_by": _stamp(2), "taught_position": 2}
+    regression = {
+        "tick": _stamp(1),
+        "fact": "regression-predecessor",
+        "taught_by": _stamp(2),
+        "taught_position": 2,
+        "taught_at": knowable[2],
+    }
     derived = frames(
         [_hand_version(0, "7", knowable[0]), _hand_version(1, "8", knowable[1])],
         [_hand_coverage(position, at) for position, at in enumerate(knowable)],
-        [_link_error(about=0, taught_by=1), regression],
+        [_link_error(about=0, taught_by=1, taught_at=knowable[1]), regression],
     )
     t = {"at-the-third": knowable[2], "a-microsecond-before-the-second": knowable[1] - MICROSECOND, "at-the-second": knowable[1]}[
         step
@@ -608,7 +677,13 @@ def test_the_flags(tmp_path):
     assert set(regressed.filter(pl.col("position") == 2)["regressed"]) == {True}
     assert set(regressed.filter(pl.col("position") < 2)["regressed"]) == {False}
     assert facts.rows(named=True) == [
-        {"tick": published[1].stamp, "fact": "regression-predecessor", "taught_by": published[2].stamp, "taught_position": 2}
+        {
+            "tick": published[1].stamp,
+            "fact": "regression-predecessor",
+            "taught_by": published[2].stamp,
+            "taught_position": 2,
+            "taught_at": _after(published[2]),
+        }
     ]
 
 
@@ -622,5 +697,5 @@ def test_the_frames_carry_the_specs_columns_in_order():
         "ts", "provider", "tick", "position", "tick_json_sha256", "source", "series", "outcome", "reason",
         "ended_at", "knowable_at", "first_day", "last_day", "days", "evidence", "flags",
     ]  # fmt: skip
-    assert facts.columns == list(LATER_FACTS_SCHEMA) == ["tick", "fact", "taught_by", "taught_position"]
+    assert facts.columns == list(LATER_FACTS_SCHEMA) == ["tick", "fact", "taught_by", "taught_position", "taught_at"]
     assert versions.schema["knowable_at"] == coverage.schema["knowable_at"] == pl.Datetime("us", "UTC")
