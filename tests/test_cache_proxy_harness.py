@@ -216,6 +216,16 @@ def test_a_directory_without_owner_write_takes_its_mode_after_its_members(tmp_pa
                 (tree / name).chmod(stat.S_IMODE((tree / name).stat().st_mode) | stat.S_IWUSR)
 
 
+def test_a_whiteout_removes_a_lower_layers_entry_and_never_its_own_layers(tmp_path):
+    digest, get, _ = _registry(
+        _layer({"etc/gone": b"g"}), _layer({"etc/": None, "etc/keep": b"k", "etc/.wh.keep": b"", "etc/.wh.gone": b""})
+    )
+    tree = tmp_path / "tree"
+    harness.fetch(digest, tree, get=get)
+    assert os.listdir(tree / "etc") == ["keep"]
+    assert (tree / "etc/keep").read_bytes() == b"k"
+
+
 def test_a_later_layer_writes_into_a_directory_a_lower_layer_left_without_owner_write(tmp_path):
     digest, get, _ = _registry(
         _layer({"ro": 0o555, "ro/gone": b"g", "ro/sub": 0o555, "ro/sub/old": b"o", "wide": 0o555}),

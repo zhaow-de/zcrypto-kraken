@@ -168,8 +168,10 @@ def _apply(blob: bytes, into: Path, modes: dict[Path, int]) -> None:
             if base == OPAQUE:
                 _empty(directory, written, modes)
                 continue
+            # A whiteout acts on lower layers only, never on what its own layer wrote.
             if whiteout is not None:
-                _remove(directory / whiteout, modes)
+                if directory / whiteout not in written:
+                    _remove(directory / whiteout, modes)
                 continue
             existing = directory / base
             if not (member.isdir() and existing.is_dir(follow_symlinks=False)):
