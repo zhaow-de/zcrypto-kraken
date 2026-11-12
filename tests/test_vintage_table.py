@@ -515,6 +515,7 @@ def test_a_body_that_does_not_rehash_stops_the_run_at_its_tick(tmp_path, monkeyp
     assert _run(tmp_path / "vintages" / "record", table) == 1
     (stopped,) = _messages(caplog, logging.ERROR)
     assert stopped.startswith(f"vintage derive stopped generation=1 head={published[2].stamp} at={published[3].stamp} reason=")
+    assert "the tick's files do not re-hash" in stopped
     assert _parts(table) == list(_heads(table)) == [tick.stamp for tick in published[:3]]
 
 
@@ -571,7 +572,7 @@ def test_a_moved_tick_stops_before_deriving(tmp_path):
     assert list(_heads(table)) == [tick.stamp for tick in published]
 
 
-def test_through_rebuilds_the_old_branch_and_refuses_a_non_empty_root(tmp_path, monkeypatch):
+def test_through_rebuilds_the_old_branch_and_refuses_a_non_empty_root(tmp_path, monkeypatch, caplog):
     _no_config(monkeypatch, tmp_path)
     table = tmp_path / "versions"
     data_root = tmp_path / "vintages"
@@ -598,7 +599,10 @@ def test_through_rebuilds_the_old_branch_and_refuses_a_non_empty_root(tmp_path, 
     outcome = _derive(nas_record, held, through=published[2].stamp)
     assert (outcome.complete, outcome.at, outcome.head) == (False, None, None)
     assert sorted(entry.name for entry in held.iterdir()) == ["notes"]
+    caplog.set_level(logging.DEBUG)
     assert _run(nas_record, held, through=published[2].stamp) == 1
+    (stopped,) = _messages(caplog, logging.ERROR)
+    assert re.fullmatch(r"vintage derive stopped generation=1 head=none at=none reason=--through takes .* it holds notes", stopped)
     assert not _gen(held).exists()
 
 
@@ -794,7 +798,7 @@ def test_a_missing_record_root_refuses_before_reading(standard, tmp_path):
     assert "record root" in outcome.reason and "fork" not in outcome.reason
 
 
-def test_the_table_root_refusal(tmp_path, monkeypatch):
+def test_the_table_root_refusal(tmp_path, monkeypatch, caplog):
     record_root = tmp_path / "vintages" / "record"
     for refused in (record_root / "versions", tmp_path / "vintages" / "versions", NAS / "versions"):
         assert refuse_table_root(refused, record_root, NAS) is not None
@@ -806,7 +810,11 @@ def test_the_table_root_refusal(tmp_path, monkeypatch):
     nas = _no_config(monkeypatch, tmp_path)
     _small(tmp_path / "vintages", 1)
     under_nas = nas / "versions"
+    caplog.set_level(logging.DEBUG)
     assert _run(record_root, under_nas) == 1
+    (stopped,) = _messages(caplog, logging.ERROR)
+    assert stopped.startswith("vintage derive stopped generation=1 head=none at=none reason=table root refused: ")
+    assert f"lies in the NAS mount {nas}" in stopped
     assert not under_nas.exists()
 
 
@@ -883,17 +891,27 @@ def _an_unreadable_newest_head(record_root: Path, table: Path, monkeypatch) -> d
     return {}
 
 
+UNREAD_REASONS = {
+    "_through_into_a_held_root": "reason=--through takes a table root holding only",
+    "_no_pinned_entries": "reason=no link entries are pinned for generation 1",
+    "_an_unreadable_newest_head": "is not its own canonical line",
+}
+
+
 @pytest.mark.parametrize(
     "unread", [_through_into_a_held_root, _no_pinned_entries, _an_unreadable_newest_head], ids=lambda f: f.__name__[1:]
 )
-def test_the_gauge_is_left_alone_by_a_run_that_did_not_read_its_table(standard, tmp_path, monkeypatch, unread):
+def test_the_gauge_is_left_alone_by_a_run_that_did_not_read_its_table(standard, tmp_path, monkeypatch, caplog, unread):
     _no_config(monkeypatch, tmp_path)
     textfile, table = tmp_path / "vintage-derive.prom", tmp_path / "versions"
     assert _run(standard, table, textfile=textfile) == 0
     written = textfile.read_bytes()
     assert _prom_value(textfile) != "0"
     kwargs = unread(standard, table, monkeypatch)
+    caplog.set_level(logging.DEBUG)
     assert _run(standard, table, textfile=textfile, **kwargs) == 1
+    (stopped,) = _messages(caplog, logging.ERROR)
+    assert UNREAD_REASONS[unread.__name__] in stopped
     assert textfile.read_bytes() == written
 
 
@@ -928,6 +946,7 @@ def test_the_summary_lines_and_the_prom(standard, tmp_path, monkeypatch, caplog)
     assert _run(record_root, table, textfile=textfile) == 1
     (stopped,) = _messages(caplog, logging.ERROR)
     assert stopped.startswith(f"vintage derive stopped generation=1 head={stamp} at={later.stamp} reason=")
+    assert "the tick's files do not re-hash" in stopped
     assert _prom_value(textfile) == str(expected)
 
     monkeypatch.setenv("ZCRYPTO_BUILD_REVISION", "0123456789abcdef0123")

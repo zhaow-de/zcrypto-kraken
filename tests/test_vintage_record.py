@@ -998,10 +998,13 @@ def test_a_body_that_does_not_parse_leaves_no_changed_values_line(tmp_path, monk
     assert len(warnings) == 1 and "cm-btc" in warnings[0]
 
 
-def test_a_refusal_writes_no_prom(tmp_path):
+def test_a_refusal_writes_no_prom(tmp_path, caplog):
     _tick_dir(tmp_path, T0).mkdir(parents=True)
+    caplog.set_level(logging.DEBUG)
     result = _recorded(tmp_path)
     assert result.code == 2
+    errors = [record.getMessage() for record in caplog.records if record.levelno == logging.ERROR]
+    assert errors == [f"vintage tick refused: its target exists tick={T0.strftime('%Y%m%dT%H%M%SZ')}; nothing published"]
     assert result.https.seen == []
     assert list(result.textfile.parent.iterdir()) == []
 
