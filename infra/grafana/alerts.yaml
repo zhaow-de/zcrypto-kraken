@@ -5645,8 +5645,8 @@ rules:
             - evaluator: {type: lt, params: [2]}
     noDataState: OK
     execErrState: Alerting
-    # A failover leaves no route for the seconds until fewer than two Sentinels still name the old
-    # primary, up to about nine after the first Sentinel switches; 2m clears one.
+    # A failover leaves no route until up to about nine seconds after the first Sentinel switches;
+    # 2m clears one.
     for: 2m
     annotations:
       summary: "For 2+ minutes the engine's cache proxy has had no node to route a new session to: no node held two Sentinel votes while a route was up -- the set has no primary its quorum names, the proxy reaches fewer than two Sentinels over the mesh, its own route checks fail, or the proxy container is down. A session already open may still be writing; a new one, and so any engine start, has no route. A write the engine cannot deliver is not replayed, so once one has failed the store is behind and the engine's next restart is taken flat. Runbook: infra/runbooks/cache.md#zcrypto-cache-proxy-no-backend"
