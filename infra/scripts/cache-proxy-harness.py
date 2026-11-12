@@ -1000,8 +1000,8 @@ def foreign_code(pid: int, root: str, proc: Path = Path("/proc")) -> list[str]:
     return foreign
 
 
-def _mapping_read(run: Run, rootfs: Path) -> list[str]:
-    """The code the once-per-run HAProxy maps from outside the tree; none read when it does not listen in time."""
+def _mapping_read(run: Run, rootfs: Path) -> list[str] | None:
+    """The code the once-per-run HAProxy maps from outside the tree; None, no read, when it does not listen in time."""
     directory = run.directory / "maps"
     directory.mkdir()
     (directory / "haproxy.cfg").write_text(run.render)
@@ -1009,8 +1009,7 @@ def _mapping_read(run: Run, rootfs: Path) -> list[str]:
     try:
         process, _ = _start_haproxy(procs, directory, run.haproxy)
         if not _listening(process, time.monotonic() + START):
-            print(f"the once-per-run HAProxy did not listen within {START:.2f} s: no mapping read", file=sys.stderr)
-            return []
+            return None
         foreign = foreign_code(process.pid, str(rootfs))
         if process.poll() is not None:
             raise Refused(f"the once-per-run HAProxy's master, PID {process.pid}, exited during its mapping read")
@@ -1065,6 +1064,9 @@ def run_inside(rootfs: Path, scratch: Path, cases: Sequence[str]) -> int:
             return _refused(str(exc))
         if foreign:
             return _refused(f"HAProxy maps code from outside the tree: {', '.join(foreign)}")
+        if foreign is None:
+            lines.append(f"FAIL maps: the once-per-run HAProxy did not listen within {START:.2f} s, so no mapping read happened")
+            print(lines[-1], flush=True)
         for name in cases:
             lines.append(run_case(name, functools.partial(_bench_body, run, name)))
             print(lines[-1], flush=True)
@@ -1073,7 +1075,7 @@ def run_inside(rootfs: Path, scratch: Path, cases: Sequence[str]) -> int:
         broken = True
     passed = sum(line.startswith("PASS ") for line in lines)
     print(f"{passed} passed, {len(lines) - passed} failed -- {first} -- image {digest[:12]}", flush=True)
-    return 0 if passed == len(cases) and not broken else 1
+    return 0 if passed == len(lines) == len(cases) and not broken else 1
 
 
 def run(rootfs: Path, scratch: Path, cases: Sequence[str]) -> int:

@@ -624,6 +624,37 @@ def test_a_mapping_read_refused_exits_2(monkeypatch, tmp_path):
     assert harness.run_inside(tmp_path, tmp_path / "scratch", list(harness.CASES)) == 2
 
 
+def test_a_run_whose_mapping_read_did_not_happen_fails_even_on_parse(monkeypatch, tmp_path, capsys):
+    (tmp_path / harness.IMAGE_DIGEST_FILE).write_text("sha256:" + "0" * 64 + "\n")
+    first = f"HAProxy version {harness.PINNED_VERSION} 2026/10/01 - https://haproxy.org/"
+
+    class Master:
+        pid = 20
+
+        def poll(self):
+            return None
+
+    def run(argv, stdout=None, **kwargs):
+        if "-c" in argv:
+            stdout.write(b"Configuration file is valid\n")
+        return subprocess.CompletedProcess(argv, 0, first + "\n", "")
+
+    monkeypatch.setattr(harness.socket, "if_nameindex", lambda: [(1, "lo")])
+    monkeypatch.setattr(harness.subprocess, "run", run)
+    monkeypatch.setattr(harness, "haproxy_argv", lambda root: ["haproxy"])
+    monkeypatch.setattr(harness, "_start_haproxy", lambda procs, directory, haproxy: (Master(), 0.0))
+    monkeypatch.setattr(harness, "foreign_code", lambda pid, root: [])
+    monkeypatch.setattr(harness, "_listening", lambda process, deadline: True)
+    assert harness.run_inside(tmp_path, tmp_path / "listened", ["parse"]) == 0
+    capsys.readouterr()
+    monkeypatch.setattr(harness, "_listening", lambda process, deadline: False)
+    assert harness.run_inside(tmp_path, tmp_path / "unheard", ["parse"]) == 1
+    printed = capsys.readouterr().out.splitlines()
+    assert [line for line in printed if line.startswith("FAIL ")] == [
+        f"FAIL maps: the once-per-run HAProxy did not listen within {harness.START:.2f} s, so no mapping read happened"
+    ], printed
+
+
 def test_a_mapping_read_refuses_a_master_that_exits_before_its_workers_are_read(monkeypatch, tmp_path):
     class Master:
         pid = 20
