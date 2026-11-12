@@ -31,9 +31,6 @@ CLASS_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 WITNESS = (logging.INFO, re.compile(r"vintage tick published tick=\S+ tick_json_sha256=[0-9a-f]{64}"))
 BG_SOPR = default_bodies()["bg-sopr"]
 FORM_IDS = ["raw", "json-escaped", "percent-upper", "percent-lower"]
-# `%r` doubles the JSON-escaped form's backslash, so an error built as `http.client`'s never carries that form.
-QUOTED_FORMS = (SENTINEL_FORMS[0], SENTINEL_FORMS[2], SENTINEL_FORMS[3])
-QUOTED_IDS = ["raw", "percent-upper", "percent-lower"]
 
 
 def _warned(source_id: str, reason: str) -> tuple[int, re.Pattern]:
@@ -54,8 +51,13 @@ def _quoting(form: bytes) -> ValueError:
     return ValueError("Invalid header value %r" % (b"Bearer " + form + b"\n",))
 
 
+# The scan's four forms and `repr()`'s spelling of the JSON-escaped one, its backslash doubled, which an exception's
+# `%r` text carries; spelt as a literal, never built from the forms.
+SEARCHED_FORMS = (*SENTINEL_FORMS, b"vintage.Sentinel-key_0~9+\\\\/x==")
+
+
 def _holds(data: bytes, echoes: tuple[bytes, ...] = ()) -> bool:
-    return any(form in data for form in (*SENTINEL_FORMS, *echoes))
+    return any(form in data for form in (*SEARCHED_FORMS, *echoes))
 
 
 def _holds_text(text: str, echoes: tuple[bytes, ...] = ()) -> bool:
@@ -292,7 +294,7 @@ def test_a_transport_error_holds_no_key(tmp_path, caplog, capsys, form):
     assert [attempt["error"] for attempt in fetch["attempts"]] == ["URLError", "URLError"]
 
 
-@pytest.mark.parametrize("form", QUOTED_FORMS, ids=QUOTED_IDS)
+@pytest.mark.parametrize("form", SENTINEL_FORMS, ids=FORM_IDS)
 def test_an_exception_quoting_the_key_is_recorded_by_its_class(tmp_path, caplog, capsys, form):
     assert _holds_text(str(_quoting(form)))
     caplog.set_level(logging.DEBUG)
@@ -309,7 +311,7 @@ def _raising(form: bytes):
     return _raises_the_quoting_error
 
 
-@pytest.mark.parametrize("form", QUOTED_FORMS, ids=QUOTED_IDS)
+@pytest.mark.parametrize("form", SENTINEL_FORMS, ids=FORM_IDS)
 def test_an_exception_reaching_the_top_holds_no_key(tmp_path, caplog, capsys, monkeypatch, form):
     assert _holds_text(str(_quoting(form)))
     raising = _raising(form)
