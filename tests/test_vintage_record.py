@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import base64
 import errno
 import fcntl
@@ -13,6 +14,7 @@ import os
 import re
 import shutil
 import stat
+from collections import defaultdict
 from contextlib import contextmanager
 from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
@@ -1043,3 +1045,419 @@ def test_an_outcome_the_manifest_does_not_hold_is_written_as_not_fetched(tmp_pat
     warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
     assert len(warnings) == 2
     assert [sum(source_id in warning for warning in warnings) for source_id in ("fng", "cm-btc")] == [1, 1]
+
+
+VINTAGE_DIR = Path(__file__).resolve().parents[1] / "cli" / "vintage"
+FS_MODULES = ("os", "os.path", "shutil", "pathlib", "io", "codecs", "gzip", "tempfile")
+# A name added here reads or creates without replacing; nothing that writes over, moves, truncates or removes a path.
+FS_ALLOWED = frozenset(
+    {
+        "codecs.open",
+        "gzip.GzipFile",
+        "gzip.compress",
+        "gzip.decompress",
+        "gzip.open",
+        "io.BytesIO",
+        "io.open",
+        "os.chmod",
+        "os.close",
+        "os.environ.get",
+        "os.fstat",
+        "os.fsync",
+        "os.listdir",
+        "os.mkdir",
+        "os.open",
+        "os.read",
+        "os.rename",
+        "os.replace",
+        "os.scandir",
+        "os.stat",
+        "os.write",
+        "pathlib.Path",
+        "tempfile.mkstemp",
+    }
+)
+_RULES = ("rename", "os_open", "mkstemp", "write_parquet", "opening", "fs")
+# Each helper is its module's file name and its function's name: a function of that name elsewhere is no helper.
+_RENAME_HELPERS = frozenset({("storage.py", "publish_tick"), ("storage.py", "publish_prom"), ("storage.py", "publish_table_dir")})
+_MKSTEMP_HELPER = ("storage.py", "publish_prom")
+_PART_WRITER = ("table.py", "write_part")
+_RENAMES = frozenset({"os.replace", "os.rename", "os.renames"})
+_WRITE_FLAGS = frozenset({"O_WRONLY", "O_RDWR", "O_TRUNC", "O_APPEND"})
+_OPENERS = frozenset({"io.open", "codecs.open", "gzip.open", "gzip.GzipFile"})
+_FORBIDDEN_METHODS = frozenset(
+    {
+        "unlink",
+        "rmdir",
+        "truncate",
+        "write_bytes",
+        "write_text",
+        "touch",
+        "symlink_to",
+        "hardlink_to",
+        "copy_into",
+        "move",
+        "move_into",
+    }
+)
+
+
+def _bindings(tree: ast.Module) -> dict[str, set[str]]:
+    """Each name an import anywhere in the module binds, to the qualified names it may hold."""
+    bound: dict[str, set[str]] = defaultdict(set)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                head = alias.name.split(".")[0]
+                bound[alias.asname or head].add(alias.name if alias.asname else head)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0:
+            for alias in node.names:
+                bound[alias.asname or alias.name].add(f"{node.module}.{alias.name}")
+    return bound
+
+
+def _qualified(expr: ast.expr, bound: dict[str, set[str]]) -> set[str]:
+    if isinstance(expr, ast.Name):
+        return set(bound.get(expr.id, ()))
+    if isinstance(expr, ast.Attribute):
+        return {f"{base}.{expr.attr}" for base in _qualified(expr.value, bound)}
+    return set()
+
+
+def _in_fs(name: str) -> bool:
+    return any(name == module or name.startswith(f"{module}.") for module in FS_MODULES)
+
+
+def _fs_allowed(name: str) -> bool:
+    return name in FS_ALLOWED or name == "os.path" or name.startswith("os.path.")
+
+
+def _is_rename(call: ast.Call, names: set[str]) -> bool:
+    if names & _RENAMES:
+        return True
+    if not (isinstance(call.func, ast.Attribute) and call.func.attr in ("replace", "rename")):
+        return False
+    keywords = [keyword.arg for keyword in call.keywords]
+    return (len(call.args) == 1 and not keywords) or (not call.args and keywords == ["target"])
+
+
+def _flags(expr: ast.expr, bound: dict[str, set[str]]) -> set[str] | None:
+    """The `O_*` names of `os` joined by `|`; None for any other spelling."""
+    if isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.BitOr):
+        left, right = _flags(expr.left, bound), _flags(expr.right, bound)
+        return None if left is None or right is None else left | right
+    names = _qualified(expr, bound)
+    if len(names) == 1 and (name := next(iter(names))).startswith("os.O_"):
+        return {name.removeprefix("os.")}
+    return None
+
+
+def _os_open_breaks(call: ast.Call, bound: dict[str, set[str]]) -> bool:
+    given = [keyword.value for keyword in call.keywords if keyword.arg == "flags"] or call.args[1:2]
+    flags = _flags(given[0], bound) if given else None
+    return flags is None or not ({"O_CREAT", "O_EXCL"} <= flags or not flags & _WRITE_FLAGS)
+
+
+def _is_string(expr: ast.expr) -> bool:
+    return isinstance(expr, ast.Constant) and isinstance(expr.value, str)
+
+
+def _mode_breaks(call: ast.Call, slot: int) -> bool:
+    """Whether the mode, from `mode=` or the positional slot, writes or cannot be read; no mode is the read default."""
+    if any(isinstance(arg, ast.Starred) for arg in call.args) or any(keyword.arg is None for keyword in call.keywords):
+        return True
+    given = [keyword.value for keyword in call.keywords if keyword.arg == "mode"] or call.args[slot : slot + 1]
+    if not given:
+        return False
+    return not _is_string(given[0]) or bool(set(given[0].value) & set("wax+"))
+
+
+def _opening_breaks(call: ast.Call, names: set[str], function: str | None) -> bool:
+    if not names and isinstance(call.func, ast.Name) and call.func.id == "open":
+        return _mode_breaks(call, 1)
+    if names & _OPENERS:
+        onto_fileobj = any(
+            keyword.arg == "fileobj" and not (isinstance(keyword.value, ast.Constant) and keyword.value.value is None)
+            for keyword in call.keywords
+        )
+        return not ("gzip.GzipFile" in names and onto_fileobj) and _mode_breaks(call, 1)
+    if isinstance(call.func, ast.Attribute) and call.func.attr == "open" and "os.open" not in names:
+        dial = (
+            function == "_dial"
+            and not any(_is_string(arg) for arg in call.args)
+            and not any(keyword.arg == "mode" for keyword in call.keywords)
+        )
+        return not dial and _mode_breaks(call, 0)
+    return False
+
+
+def _fs_breaks(call: ast.Call, names: set[str]) -> bool:
+    if any(_in_fs(name) and not _fs_allowed(name) for name in names):
+        return True
+    if not isinstance(call.func, ast.Attribute):
+        return False
+    attr = call.func.attr
+    return (
+        attr in _FORBIDDEN_METHODS
+        or (attr == "copy" and bool(call.args or call.keywords))
+        or (attr.startswith(("write_", "sink_")) and attr != "write_parquet")
+    )
+
+
+def _call_breaches(call: ast.Call, bound: dict[str, set[str]], module: str, function: str | None):
+    names = _qualified(call.func, bound)
+    if _is_rename(call, names) and (module, function) not in _RENAME_HELPERS:
+        yield "rename"
+    if "os.open" in names and _os_open_breaks(call, bound):
+        yield "os_open"
+    if "tempfile.mkstemp" in names and (module, function) != _MKSTEMP_HELPER:
+        yield "mkstemp"
+    parquet = (isinstance(call.func, ast.Attribute) and call.func.attr == "write_parquet") or any(
+        name.endswith(".write_parquet") for name in names
+    )
+    if parquet and (module, function) != _PART_WRITER:
+        yield "write_parquet"
+    if _opening_breaks(call, names, function):
+        yield "opening"
+    if _fs_breaks(call, names):
+        yield "fs"
+
+
+def _breaches(node: ast.AST, bound: dict[str, set[str]], module: str, function: str | None):
+    """Each (rule, node) breach under `node`, a call's place being the innermost function whose body holds it."""
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        for outside in (*node.decorator_list, *node.type_params, node.args, *([node.returns] if node.returns else [])):
+            yield from _breaches(outside, bound, module, function)
+        for statement in node.body:
+            yield from _breaches(statement, bound, module, node.name)
+        return
+    if isinstance(node, ast.ImportFrom) and node.level == 0 and _in_fs(node.module):
+        if any(not _fs_allowed(f"{node.module}.{alias.name}") for alias in node.names):
+            yield "fs", node
+    if isinstance(node, ast.Call):
+        for rule in _call_breaches(node, bound, module, function):
+            yield rule, node
+    for child in ast.iter_child_nodes(node):
+        yield from _breaches(child, bound, module, function)
+
+
+def _write_guard(paths) -> dict[str, list[str]]:
+    """Each rule's breaches over the modules at `paths`, as `path:line`; a module that does not parse raises."""
+    found: dict[str, list[str]] = {rule: [] for rule in _RULES}
+    for path in paths:
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for rule, node in _breaches(tree, _bindings(tree), path.name, None):
+            found[rule].append(f"{path}:{node.lineno}")
+    return found
+
+
+def _planted(tmp_path: Path, name: str, lines: list[tuple[str, bool]]) -> tuple[list[str], dict[str, list[str]]]:
+    """The module of the lines written under `tmp_path`, and the `path:line` of each line marked as a breach."""
+    path = tmp_path / name
+    path.write_text("".join(f"{line}\n" for line, _ in lines))
+    return [f"{path}:{number}" for number, (_, breach) in enumerate(lines, 1) if breach], _write_guard([path])
+
+
+def _real() -> dict[str, list[str]]:
+    return _write_guard(sorted(VINTAGE_DIR.glob("*.py")))
+
+
+def test_a_rename_lives_only_in_the_three_helpers(tmp_path):
+    assert _real()["rename"] == []
+    expected, found = _planted(
+        tmp_path,
+        "storage.py",
+        [
+            ("import os", False),
+            ("from os import replace as swap", False),
+            ("def publish_tick(a, b): os.rename(a, b)", False),
+            ("def publish_prom(a, b): os.replace(a, b)", False),
+            ("def publish_table_dir(a, b): os.rename(a, b)", False),
+            ("def publish_tick_later(a, b): os.rename(a, b)", True),
+            ("def f(a, b): swap(a, b)", True),
+            ("def f(a): os.renames(a, a)", True),
+            ("def f(p, q): p.replace(q)", True),
+            ("def f(p, q): p.rename(q)", True),
+            ("def f(p, q): p.replace(target=q)", True),
+            ("def f(p, q): p.rename(target=q)", True),
+            ("def publish_tick(a, b):", False),
+            ("    def inner(): os.rename(a, b)", True),
+            ("def f(s): s.replace('a', 'b')", False),
+            ("def f(b): b.replace(b'/', b'\\\\/')", False),
+            ("def f(t): t.replace(microsecond=0)", False),
+        ],
+    )
+    assert found["rename"] == expected
+    elsewhere, found = _planted(tmp_path, "verify.py", [("import os", False), ("def publish_tick(a, b): os.rename(a, b)", True)])
+    assert found["rename"] == elsewhere
+
+
+def test_every_os_open_is_an_exclusive_create_or_a_read(tmp_path):
+    assert _real()["os_open"] == []
+    expected, found = _planted(
+        tmp_path,
+        "verify.py",
+        [
+            ("import os", False),
+            ("import os as o", False),
+            ("from os import open as raw", False),
+            ("def f(p): os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o444)", False),
+            ("def f(p): os.open(p, os.O_RDONLY)", False),
+            ("def f(p): os.open(p, flags=os.O_RDONLY | os.O_DIRECTORY)", False),
+            ("def f(p): o.open(p, o.O_RDWR | o.O_CREAT | o.O_EXCL)", False),
+            ("def f(p): os.open(p, os.O_WRONLY | os.O_CREAT)", True),
+            ("def f(p): os.open(p, os.O_RDWR)", True),
+            ("def f(p): os.open(p, os.O_RDONLY | os.O_TRUNC)", True),
+            ("def f(p): os.open(p, os.O_WRONLY | os.O_APPEND | os.O_EXCL)", True),
+            ("def f(p, flags): os.open(p, flags)", True),
+            ("def f(p): os.open(p, 0)", True),
+            ("def f(p): os.open(p, os.O_RDONLY + os.O_EXCL)", True),
+            ("def f(p): os.open(p)", True),
+            ("def f(p): o.open(p, o.O_WRONLY)", True),
+            ("def f(p): raw(p, os.O_RDWR)", True),
+        ],
+    )
+    assert found["os_open"] == expected
+
+
+def test_mkstemp_lives_only_in_the_prom_helper(tmp_path):
+    assert _real()["mkstemp"] == []
+    expected, found = _planted(
+        tmp_path,
+        "storage.py",
+        [
+            ("import tempfile", False),
+            ("from tempfile import mkstemp", False),
+            ("def publish_prom(p): tempfile.mkstemp(dir=p)", False),
+            ("def publish_tick(p): tempfile.mkstemp(dir=p)", True),
+            ("def f(): mkstemp()", True),
+        ],
+    )
+    assert found["mkstemp"] == expected
+    elsewhere, found = _planted(
+        tmp_path, "verify.py", [("import tempfile", False), ("def publish_prom(p): tempfile.mkstemp(dir=p)", True)]
+    )
+    assert found["mkstemp"] == elsewhere
+
+
+def test_write_parquet_lives_only_in_the_part_writer(tmp_path):
+    assert _real()["write_parquet"] == []
+    expected, found = _planted(
+        tmp_path,
+        "table.py",
+        [
+            ("from polars import DataFrame", False),
+            ("def write_part(df, b): df.write_parquet(b)", False),
+            ("def f(df, p): df.write_parquet(p)", True),
+            ("def f(df, p): DataFrame.write_parquet(df, p)", True),
+        ],
+    )
+    assert found["write_parquet"] == expected
+    elsewhere, found = _planted(tmp_path, "derive.py", [("def write_part(df, b): df.write_parquet(b)", True)])
+    assert found["write_parquet"] == elsewhere
+
+
+def test_every_other_opening_call_reads(tmp_path):
+    assert _real()["opening"] == []
+    expected, found = _planted(
+        tmp_path,
+        "verify.py",
+        [
+            ("import codecs, gzip, io", False),
+            ("from gzip import open as gz", False),
+            ("def f(p): open(p)", False),
+            ("def f(p): open(p, 'rb')", False),
+            ("def f(p): io.open(p, mode='r')", False),
+            ("def f(p): p.open('rb')", False),
+            ("def f(b): gzip.GzipFile(fileobj=b, mode='wb')", False),
+            ("def _dial(o, r): return o.open(r, timeout=30)", False),
+            ("def _dial(p): return p.open('rb')", False),
+            ("def f(p): open(p, 'w')", True),
+            ("def f(p): open(p, mode='a')", True),
+            ("def f(p, m): open(p, m)", True),
+            ("def f(p): open(p, b'r')", True),
+            ("def f(p): io.open(p, 'r+')", True),
+            ("def f(p): codecs.open(p, 'x')", True),
+            ("def f(p): gzip.open(p, 'wb')", True),
+            ("def f(p): gz(p, 'ab')", True),
+            ("def f(p): gzip.GzipFile(p, 'wb')", True),
+            ("def f(p): gzip.GzipFile(p, 'wb', fileobj=None)", True),
+            ("def f(p): p.open('w')", True),
+            ("def f(p): p.open(mode='a')", True),
+            ("def f(o, r): o.open(r, timeout=30)", True),
+            ("def _dial(p): return p.open('w')", True),
+            ("def _dial(p): return p.open(mode='wb')", True),
+        ],
+    )
+    assert found["opening"] == expected
+
+
+def test_no_copy_move_truncate_or_delete(tmp_path):
+    assert _real()["fs"] == []
+    expected, found = _planted(
+        tmp_path,
+        "verify.py",
+        [
+            ("import io, os, pathlib, shutil, tempfile", False),
+            ("import os as o", False),
+            ("from os import fsync", False),
+            ("from os.path import join", False),
+            ("from pathlib import Path", False),
+            ("from os import remove", True),
+            ("from shutil import copyfile as c", True),
+            ("def f(fd): fsync(fd)", False),
+            ("def f(p): os.path.exists(p)", False),
+            ("def f(): os.environ.get('X')", False),
+            ("def f(p): Path(p)", False),
+            ("def f(d): d.copy()", False),
+            ("def f(df, b): df.write_parquet(b)", False),
+            ("def f(a, b): shutil.copyfile(a, b)", True),
+            ("def f(a, b): shutil.move(a, b)", True),
+            ("def f(a): shutil.rmtree(a)", True),
+            ("def f(a, b): c(a, b)", True),
+            ("def f(p): os.remove(p)", True),
+            ("def f(p): o.unlink(p)", True),
+            ("def f(fd): os.ftruncate(fd, 0)", True),
+            ("def f(p): io.FileIO(p, 'w')", True),
+            ("def f(): tempfile.mkdtemp()", True),
+            ("def f(a): os.renames(a, a)", True),
+            ("def f(p): Path(p).unlink()", True),
+            ("def f(p): pathlib.Path(p).rmdir()", True),
+            ("def f(p): p.truncate()", True),
+            ("def f(p): p.write_bytes(b'')", True),
+            ("def f(p): p.write_text('')", True),
+            ("def f(p): p.touch()", True),
+            ("def f(p, q): p.symlink_to(q)", True),
+            ("def f(p, q): p.hardlink_to(q)", True),
+            ("def f(p, q): p.copy(q)", True),
+            ("def f(p, q): p.copy_into(q)", True),
+            ("def f(p, q): p.move(q)", True),
+            ("def f(p, q): p.move_into(q)", True),
+            ("def f(df, p): df.write_csv(p)", True),
+            ("def f(df, p): df.sink_parquet(p)", True),
+        ],
+    )
+    assert found["fs"] == expected
+
+
+def test_the_guard_admits_the_allowed_forms(tmp_path):
+    assert _real() == {rule: [] for rule in _RULES}
+    _, found = _planted(
+        tmp_path,
+        "verify.py",
+        [
+            ("import gzip, os", False),
+            ("from os import fsync", False),
+            ("def exclusive(p): return os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o444)", False),
+            ("def read_only(p): return os.open(p, os.O_RDONLY)", False),
+            ("def read(p): return open(p, 'rb')", False),
+            ("def read_path(p): return p.open('rb')", False),
+            ("def compress_onto(f): return gzip.GzipFile(fileobj=f, mode='wb')", False),
+            ("def _dial(o, r): return o.open(r, timeout=30)", False),
+            ("def escaped(): return b'/'.replace(b'/', b'\\\\/')", False),
+            ("def floored(now): return now.replace(microsecond=0)", False),
+            ("def copied(d): return d.copy()", False),
+            ("def synced(fd): fsync(fd)", False),
+        ],
+    )
+    assert found == {rule: [] for rule in _RULES}
