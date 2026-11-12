@@ -661,6 +661,11 @@ def test_a_panels_red_line_agrees_with_the_rule_it_charts():
     assert not bad, "a panel's red line disagrees with the rule that points at it:\n  " + "\n  ".join(bad)
 
 
+def test_the_proxy_page_panel_charts_the_rules_own_expression():
+    pairs = {(uid, panel["id"], target["refId"]) for uid, panel, target, *_ in _rule_panel_pairs()}
+    assert ("zcrypto-cache-proxy-no-backend", 402, "A") in pairs
+
+
 def test_the_venue_tiles_read_failure_shows_its_firing_value_red_and_not_as_online():
     # A target with no override of its own inherits the tile's `1` -> ONLINE mapping, which the red-line
     # test above accepts as covering the rule's firing value, so the firing read would show a green ONLINE.

@@ -475,12 +475,12 @@ NOT_A_FAULT_SIGNAL = {
     #   audit_mismatches: a discriminator, not a signal -- nonzero withholds the summary, so run-broken
     #   pages and its runbook reads this first to tell a cache disagreement from a crash.
     "ops_verify_replay_audit_mismatches",
-    # The engine's cache proxy: the alerted families are the most-agreed backend's active servers and
-    # the sessions; these four are the detail the Cache board's proxy row draws once one has paged.
-    # backend_status reads UP at one server, which routes nothing, so it cannot stand for the alert;
-    # server_status and server_check_status are per-Sentinel views of the same checks, and the
-    # failures counter rises on every failover by design, so a threshold on it pages on a healthy
-    # set moving its primary.
+    # The engine's cache proxy: the alerted families are the routed node's votes and the sessions; these
+    # four are the detail the Cache board's proxy row draws once one has paged. backend_status reads a
+    # route UP at one vote, which routes nothing new, so it cannot stand for the alert; server_status
+    # and server_check_status are per-server views of the votes and the routes, and the failures
+    # counter rises on every failover and every loss burst by design, so a threshold on it pages on a
+    # healthy set.
     "haproxy_backend_status",
     "haproxy_server_status",
     "haproxy_server_check_status",
@@ -915,12 +915,19 @@ def test_the_cache_proxy_rules_read_the_primary_and_the_write_rule_reads_the_lib
         exprs = [q["model"]["expr"] for q in rule["data"] if "expr" in q.get("model", {})]
         assert exprs and all('host="zcrypto"' in e for e in exprs), (rule["uid"], exprs)
     assert (backend["for"], backend["labels"]["severity"]) == ("2m", "critical")
-    assert 'max(haproxy_backend_active_servers{host="zcrypto"})' in backend["data"][0]["model"]["expr"]
-    # The threshold is the frontend's own routing bound: a backend below `nbsrv ... ge N` routes nothing.
+    expr = backend["data"][0]["model"]["expr"]
     haproxy_cfg = (REPO / "infra/ansible/roles/engine/templates/haproxy.cfg.j2").read_text()
-    bound = {int(n) for n in re.findall(r"nbsrv\(\{\{ node\.name \}\}\) ge (\d+)", haproxy_cfg)}
+    route = {int(n) for n in re.findall(r"nbsrv\(\{\{ node\.name \}\}\) ge (\d+)", haproxy_cfg)}
+    read = {int(n) for n in re.findall(r'proxy=~"node\[0-9\]\+"\}\) >= (\d+)\)', expr)}
+    assert route == read == {1}, (route, read)
+    bound = {int(n) for n in re.findall(r"nbsrv\(votes-\{\{ node\.name \}\}\) ge (\d+)", haproxy_cfg)}
     assert bound == {2}, bound
     assert backend["data"][1]["model"]["conditions"] == [{"evaluator": {"type": "lt", "params": [bound.pop()]}}]
+    # With both pairings read, the literal pins the rest of the expression.
+    assert expr == (
+        '(max(haproxy_backend_active_servers{host="zcrypto", proxy=~"votes-node[0-9]+"}) and on() '
+        '(max(haproxy_backend_active_servers{host="zcrypto", proxy=~"node[0-9]+"}) >= 1)) or on() vector(0)'
+    )
     assert (session["for"], session["labels"]["severity"], session["condition"]) == ("15m", "warning", "D")
     assert session["data"][2]["model"]["expression"] == "$A < 1 && $B > 0"
     assert 'up{job="engine_app",host="zcrypto"}' in session["data"][1]["model"]["expr"]

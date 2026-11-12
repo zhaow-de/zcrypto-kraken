@@ -1,10 +1,11 @@
 # Rendered by the `engine` Ansible role at /opt/zcrypto-engine/haproxy.cfg (0600 root-only, bind-mounted
 # read-only into zcrypto-cache-proxy) -- do not hand-edit on the host, it is overwritten on the next
-# converge. It carries the Sentinel requirepass.
+# converge. It carries the Sentinel requirepass. A change here ships only once
+# `infra/scripts/cache-proxy-harness.py run` passes on it against the pinned image, its lines in the PR body.
 global
     log stdout format raw local0 info
     # Without a bound HAProxy sizes itself off the container's file-descriptor limit and its worker is
-    # killed under the 32m cap; the engine's sessions and nine checks need a handful.
+    # killed under the 32m cap; the engine's sessions and the checks need a handful.
     maxconn 256
     # The container starts as root so this 0600 file is readable, then chroots into the image's empty
     # /var/lib/haproxy and drops to the image's user.
@@ -15,6 +16,8 @@ global
 defaults
     mode tcp
     log global
+    # Also a Sentinel vote's connect budget, the smaller of this and the vote's `inter`: under 2s one
+    # lost SYN fails a check, the kernel retransmitting it a second on.
     timeout connect 2s
     # The library's session idles for hours between writes and reconnects only on the next write, which
     # it drops, so an idle cut would cost a write per idle period: the parser's longest value, which a
@@ -36,13 +39,28 @@ frontend cache
     # would inherit a format it warns about at each start.
     option tcplog
 {% for node in engine_cache_proxy_nodes %}
-    use_backend {{ node.name }} if { nbsrv({{ node.name }}) ge 2 }
+    use_backend {{ node.name }} if { nbsrv(votes-{{ node.name }}) ge 2 } { nbsrv({{ node.name }}) ge 1 }
 {% endfor %}
 
+# The route servers' checks read this frontend: a session is cut when the votes contradict its node, and
+# never on one Sentinel's reach.
+frontend quorum
+    mode http
+    bind 127.0.0.1:9105
+    no log
 {% for node in engine_cache_proxy_nodes %}
-# {{ node.name }} routes to {{ node.address }} while two of the three Sentinels name it the primary: one
-# server line per Sentinel, each checking that Sentinel and passing only when its answer names this node.
-backend {{ node.name }}
+    http-request return status 503 if { path /{{ node.name }} } { nbsrv(votes-{{ node.name }}) eq 0 }
+{% for other in engine_cache_proxy_nodes if other.name != node.name %}
+    http-request return status 503 if { path /{{ node.name }} } { nbsrv(votes-{{ other.name }}) ge 2 }
+{% endfor %}
+    http-request return status 200 if { path /{{ node.name }} }
+{% endfor %}
+    http-request return status 404
+
+{% for node in engine_cache_proxy_nodes %}
+# One server per Sentinel, passing while that Sentinel names {{ node.name }} the primary; the two
+# frontends count them, and no session rides them.
+backend votes-{{ node.name }}
     option tcp-check
     tcp-check connect
     tcp-check send "AUTH {{ cache_sentinel_requirepass }}\r\n"
@@ -52,7 +70,13 @@ backend {{ node.name }}
     tcp-check send "SENTINEL master {{ engine_cache_proxy_master_name }}\r\n"
     tcp-check expect string "\$2\r\nip\r\n\${{ node.address | length }}\r\n{{ node.address }}\r\n"
 {% for sentinel in engine_cache_proxy_nodes %}
-    server via-{{ sentinel.name }} {{ node.address }}:6379 check addr {{ sentinel.address }} port 26379 inter 1s fall 2 rise 2 init-state fully-down on-marked-down shutdown-sessions
+    server via-{{ sentinel.name }} {{ sentinel.address }}:26379 check inter 2s fastinter 1s downinter 1s fall 2 rise 2 init-state fully-down
 {% endfor %}
+
+# The engine's sessions ride this one server, its `fall 2` so one stray loopback failure costs no write.
+backend {{ node.name }}
+    option httpchk GET /{{ node.name }}
+    http-check expect status 200
+    server valkey {{ node.address }}:6379 check addr 127.0.0.1 port 9105 inter 250ms fall 2 rise 1 init-state fully-down on-marked-down shutdown-sessions
 
 {% endfor %}

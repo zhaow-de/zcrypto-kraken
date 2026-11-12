@@ -1032,14 +1032,14 @@
     {
       "id": 401,
       "type": "stat",
-      "title": "Backend status per node",
-      "description": "Whether each backend of the engine's cache proxy is UP, its `state=\"UP\"` series -- HAProxy publishes one 0/1 series per state: a backend is a cache node, and its servers are the three Sentinels' checks of that node. Exactly one backend UP is the healthy reading. A backend reads UP with one server UP, which the frontend routes nothing to, so the alert reads the checks-passing panel below, not this one.",
+      "title": "Route per node",
+      "description": "Each node's route, the one server the engine's sessions ride, UP while the Sentinels' votes do not contradict that node — two for another node, or none for it. Exactly one UP is the healthy reading. A route's fall is what cuts the engine's sessions; a new session also needs that node's two votes, on the panel below.",
       "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
       "gridPos": {"h": 5, "w": 8, "x": 0, "y": 74},
       "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
-          "expr": "haproxy_backend_status{host=\"zcrypto\", state=\"UP\"}",
+          "expr": "haproxy_backend_status{host=\"zcrypto\", proxy=~\"node[0-9]+\", state=\"UP\"}",
           "refId": "A",
           "legendFormat": "{{proxy}}",
           "instant": true
@@ -1075,14 +1075,14 @@
     {
       "id": 404,
       "type": "stat",
-      "title": "Server status per backend and Sentinel",
-      "description": "Each backend's three servers, one per Sentinel, their `state=\"UP\"` series: UP while that Sentinel names the backend's node the primary, DOWN otherwise. The frontend routes to a backend with two or more UP.",
+      "title": "Sentinel votes per node",
+      "description": "Each node's three votes, one per Sentinel, UP while that Sentinel names the node the primary. No session rides a vote: one going DOWN cuts nothing.",
       "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
       "gridPos": {"h": 5, "w": 16, "x": 8, "y": 74},
       "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
-          "expr": "haproxy_server_status{host=\"zcrypto\", state=\"UP\"}",
+          "expr": "haproxy_server_status{host=\"zcrypto\", proxy=~\"votes-node[0-9]+\", state=\"UP\"}",
           "refId": "A",
           "legendFormat": "{{proxy}}/{{server}}",
           "instant": true
@@ -1118,20 +1118,20 @@
     {
       "id": 402,
       "type": "timeseries",
-      "title": "Sentinel checks passing on the most-agreed backend \u2014 the page's value",
-      "description": "The most Sentinels agreeing on any one backend, and each backend's own count. 2 or 3 is a primary the quorum names and the frontend routes to; 1 is one Sentinel alone, a backend the frontend routes nothing to; 0 is no backend at all, or the proxy down, since the scrape target is static and a stopped proxy takes its series away. The red line, at the frontend's own bound of 2, is where the alert fires, after `for: 2m`. Runbook: infra/runbooks/cache.md#zcrypto-cache-proxy-no-backend",
+      "title": "Sentinel votes on the routed node \u2014 the page's value",
+      "description": "The most Sentinel votes any node holds while a route of the proxy's is up \u2014 the cache frontend's own rule, which sends a new session to a node with two or more votes and its route up. 3 is healthy; 2 is one Sentinel down or unreachable, still routing; 1 is a node one Sentinel alone still names, its open sessions kept but nothing new routed; 0 is no route up, or the proxy down, since the scrape target is static and a stopped proxy takes its series away. The per-node lines are each node's votes. The red line, at 2, is where the alert fires, after `for: 2m`. Runbook: infra/runbooks/cache.md#zcrypto-cache-proxy-no-backend",
       "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
       "gridPos": {"h": 7, "w": 8, "x": 0, "y": 79},
       "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
-          "expr": "max(haproxy_backend_active_servers{host=\"zcrypto\"}) or on() vector(0)",
+          "expr": "(max(haproxy_backend_active_servers{host=\"zcrypto\", proxy=~\"votes-node[0-9]+\"}) and on() (max(haproxy_backend_active_servers{host=\"zcrypto\", proxy=~\"node[0-9]+\"}) >= 1)) or on() vector(0)",
           "refId": "A",
-          "legendFormat": "most-agreed backend"
+          "legendFormat": "routed node's votes"
         },
         {
           "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
-          "expr": "haproxy_backend_active_servers{host=\"zcrypto\"}",
+          "expr": "haproxy_backend_active_servers{host=\"zcrypto\", proxy=~\"votes-node[0-9]+\"}",
           "refId": "B",
           "legendFormat": "{{proxy}}"
         }
@@ -1156,7 +1156,7 @@
       "id": 403,
       "type": "timeseries",
       "title": "Sessions through the proxy \u2014 the page's value",
-      "description": "Sessions the proxy carries to the cache set, summed over its backends: 2 from a never-cut engine, the load's, idle after the start, and the writer's. A cut drops the engine's next write and the writer's session returns at the write after it; the load's never returns, so 1 or 2 is healthy after a cut and 0 is a cut of both not yet re-made. Below the red line while the engine reports for `for: 15m` is the alert. Runbook: infra/runbooks/cache.md#zcrypto-cache-proxy-no-engine-session",
+      "description": "Sessions the proxy carries to the cache set, summed over its routes: 2 from a never-cut engine, the load's, idle after the start, and the writer's. Both ride one route, so every cut takes both; the engine's next write is dropped and the writer's session returns at the write after it, the load's never, so 1 is healthy after a cut and 0 is a cut not yet re-made. Below the red line while the engine reports for `for: 15m` is the alert. Runbook: infra/runbooks/cache.md#zcrypto-cache-proxy-no-engine-session",
       "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
       "gridPos": {"h": 7, "w": 8, "x": 8, "y": 79},
       "targets": [
@@ -1186,8 +1186,8 @@
     {
       "id": 405,
       "type": "timeseries",
-      "title": "Sentinel check failures per server",
-      "description": "The rate at which each server's Sentinel check fails: a Sentinel not naming that backend's node the primary, or unreachable over the mesh. Two of three servers of the routed backend failing for two checks in a row moves the route.",
+      "title": "Check failures per server",
+      "description": "The rate at which each server's check fails. A vote fails on a Sentinel naming another node, a Sentinel unreachable, a loss burst that outlasts its 2 s connect budget, or an exchange stalled past `timeout check`; one failure downs nothing, two in a row down that vote. A route's failures are its quorum frontend answering 503, two at each cut.",
       "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
       "gridPos": {"h": 7, "w": 8, "x": 16, "y": 79},
       "targets": [
@@ -1215,7 +1215,7 @@
       "id": 406,
       "type": "timeseries",
       "title": "Sentinel check status code per server",
-      "description": "HAProxy's own code for each server's last check, the `haproxy_server_check_status` series at 1 -- one 0/1 series per code, so the one at 1 is the code: read beside the failures panel to tell a Sentinel that answered with another node (L7RSP, L7TOUT) from one that did not answer at all (L4CON, L4TOUT).",
+      "description": "HAProxy's own code for each server's last check, the `haproxy_server_check_status` series at 1 -- one 0/1 series per code, so the one at 1 is the code: a vote reads L7TOUT for a Sentinel that names another node and L4CON or L4TOUT for one that did not answer; a route reads L7STS while its node is contradicted.",
       "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
       "gridPos": {"h": 6, "w": 24, "x": 0, "y": 86},
       "targets": [

@@ -5669,10 +5669,13 @@ rules:
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
           # `or on() vector(0)` reads a stopped proxy, whose static target then carries no series, as 0
-          # rather than NoData. The threshold is the frontend's own routing bound, `nbsrv(nodeN) ge 2` in
-          # roles/engine/templates/haproxy.cfg.j2, which tests/test_infra_alert_rules.py holds equal.
+          # rather than NoData. The value is the cache frontend's routing rule in
+          # roles/engine/templates/haproxy.cfg.j2 -- a node's Sentinel votes, counted while a route server
+          # is up -- and the threshold its `nbsrv(votes-nodeN) ge 2`, which tests/test_infra_alert_rules.py
+          # holds equal. A node with two votes contradicts every other node's route, so the two maxima
+          # pair as the rule's per-node conjunction does.
           expr: >-
-            max(haproxy_backend_active_servers{host="zcrypto"}) or on() vector(0)
+            (max(haproxy_backend_active_servers{host="zcrypto", proxy=~"votes-node[0-9]+"}) and on() (max(haproxy_backend_active_servers{host="zcrypto", proxy=~"node[0-9]+"}) >= 1)) or on() vector(0)
           instant: true
           refId: A
       - refId: C
@@ -5688,14 +5691,14 @@ rules:
             - evaluator: {type: lt, params: [2]}
     noDataState: OK
     execErrState: Alerting
-    # A failover leaves the frontend without a backend for the seconds the Sentinels take to name the
-    # new primary and the checks to pass twice; 2m clears one.
+    # A failover leaves no route until up to about nine seconds after the first Sentinel switches;
+    # 2m clears one.
     for: 2m
     annotations:
-      summary: "For 2+ minutes no backend of the engine's cache proxy has two Sentinel checks passing, the frontend's routing bound, so the engine's cache writes have nowhere to land: the set has no primary its quorum names, the proxy cannot reach two Sentinels over the mesh, or the proxy container is down. Nothing is replayed once the link returns, so the store is behind from the first dropped write and the engine's next restart is taken flat. Runbook: infra/runbooks/cache.md#zcrypto-cache-proxy-no-backend"
+      summary: "For 2+ minutes the engine's cache proxy has had no node to route a new session to: no node held two Sentinel votes while a route was up -- the set has no primary its quorum names, the proxy reaches fewer than two Sentinels over the mesh, its own route checks fail, or the proxy container is down. A session already open may still be writing; a new one, and so any engine start, has no route. A write the engine cannot deliver is not replayed, so once one has failed the store is behind and the engine's next restart is taken flat. Runbook: infra/runbooks/cache.md#zcrypto-cache-proxy-no-backend"
       __dashboardUid__: "zcrypto-cache"
       __panelId__: "402"
-      unit: "Sentinel checks passing on the most-agreed backend"
+      unit: "Sentinel votes on the node the proxy routes to"
     labels:
       severity: critical
     notification_settings:
