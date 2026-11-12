@@ -115,11 +115,11 @@ The project holds three keys, each minted in the service's UI, on the project's 
 
 ### What to do
 
-1. **The ping key's sitting**: announce it in the main channel, read the Kraken feed whole at planning (`.claude/rules/fleet-deploys.md`), and read `uv run python infra/scripts/hc-provision.py status`, each of the twelve checks `up`.
+1. **The ping key's sitting**: announce it in the main channel, read the Kraken feed whole at planning (`.claude/rules/fleet-deploys.md`), and read `uv run python infra/scripts/hc-provision.py status`, each of the thirteen checks `up`.
 
 2. **Revoke the ping key**, on the project's Settings page, and note the time: `date -u +%FT%TZ`. From here each ping answers `404`.
 
-3. **Pause the twelve checks** in the service's UI, the last pause within nine minutes of the Revoke: the shortest `timeout` + `grace` among the checks is 1200 s, and `zcrypto-liquidations`' poller leaves a little over 600 s between two pings when one of its polls fails, so a check still unpaused past nine minutes can go down and page. No ping resumes a paused check while the key is revoked.
+3. **Pause the thirteen checks** in the service's UI, the last pause within nine minutes of the Revoke: the shortest `timeout` + `grace` among the checks is 1200 s, and `zcrypto-liquidations`' poller leaves a little over 600 s between two pings when one of its polls fails, so a check still unpaused past nine minutes can go down and page. No ping resumes a paused check while the key is revoked.
 
 4. **Create the new ping key** on the same page and vault it at once, from the repo root: `(cd infra/ansible && ../scripts/vault-append-secret.sh group_vars/observed/vault.yml hc_ping_key '[A-Za-z0-9_-]{16,}' --replace)` prints `hc_ping_key: replaced`. A key of another shape is refused there: the shape the roles' preflights hold each ping URL to is re-trued first, in one commit.
 
@@ -141,7 +141,7 @@ The project holds three keys, each minted in the service's UI, on the project's 
 
 7. **The read-write key**: revoke it and create it again on the same page, then `(cd infra/ansible && ../scripts/vault-append-secret.sh group_vars/all/vault.yml hc_readwrite_api_key 'hcw_[A-Za-z0-9]{28}' --replace)`. No converge is owed.
 
-8. **Close the rotation by value.** No check is unpaused by hand: each resumes at its first ping under the new key, and a check whose host has not yet converged stays paused and unwatched until it does, the two daily replay checks until their next ticks, 03:41 and 05:23 UTC. `uv run python infra/scripts/hc-provision.py status` reads each of the twelve with a `last_ping` later than step 2's time, which also proves the read-write key; `uv run python infra/scripts/grafana-query.py 'count(hc_check_up)'` reads 12, which proves the scrape's key; `uv run python infra/scripts/ops-daily.py report --since 24h` names no `the dead-man service could not be read directly`. No check is deleted and no history is lost.
+8. **Close the rotation by value.** No check is unpaused by hand: each resumes at its first ping under the new key, and a check whose host has not yet converged stays paused and unwatched until it does, the two daily replay checks until their next ticks, 03:41 and 05:23 UTC, and the vintage recorder's until its next published tick, 07:37 or 19:37 UTC. `uv run python infra/scripts/hc-provision.py status` reads each of the thirteen with a `last_ping` later than step 2's time, which also proves the read-write key; `uv run python infra/scripts/grafana-query.py 'count(hc_check_up)'` reads 13, which proves the scrape's key; `uv run python infra/scripts/ops-daily.py report --since 24h` names no `the dead-man service could not be read directly`. No check is deleted and no history is lost.
 
 ### Retire when
 
@@ -214,7 +214,7 @@ A restored database brings back the superuser, the project, its three keys, its 
      | ssh hc 'sudo docker run --rm -i --network none --env-file /opt/zcrypto-hc/hc.env -v /tmp/hc-restore/read:/data ghcr.io/zhaow-de/healthchecks:<tag> ./manage.py shell --no-imports -c "import sys; from django.test import Client; r = Client().get(\"/api/v3/checks/\", HTTP_X_API_KEY=sys.stdin.read().strip(), HTTP_HOST=\"zcrypto-hc.zhaow.me\"); print(r.status_code, len(r.json()[\"checks\"]) if r.status_code == 200 else \"\")"'
    ```
 
-   It prints `200 12`, the twelve checks. A `401` is a file older than the vaulted read-only key: the swap still restores it, and `hc-keys` step 6 re-mints the key after. Another status, or a traceback, is a file the service cannot read: stage an older one.
+   It prints `200 13`, the thirteen checks. A `401` is a file older than the vaulted read-only key: the swap still restores it, and `hc-keys` step 6 re-mints the key after. Another status, or a traceback, is a file the service cannot read: stage an older one.
 
 3. **Swap it in**, on the node, the volume's name read first: `sudo docker volume ls --format '{{.Name}}' | grep hc-data` prints one name, `zcrypto-hc_hc-data`, Compose naming the volume for its directory. A name that is absent from the list is not mounted below, since Docker would create it empty. Then, with that name and `<tag>` the pinned one:
 
@@ -248,7 +248,7 @@ Nothing fired. The service's database is gone and no backup file survives it —
 
 ### What it means
 
-The project, its uuid, its three keys and its Slack integration live in the database alone, and no API sets a key or a check's uuid; the project's ping key is a field the service's `/admin/` sets. The secret key is the vault's. So a database lost with its backups costs, in this order: the node's converge, which creates the superuser again; the project and its Slack integration added again by hand; the ping key set back to the vault's, so each pinger's URL stays valid and no pinging host's converge is owed; the two API keys minted again and the project's new uuid written, which the ops node's scrape reads, so ops' Alloy is recreated; the twelve checks created again from the tree's fixture, with new uuids and the same names, slugs and periods, their history gone; and a backup run. Until the checks exist, the pingers' pings answer `404` and no check is evaluated: the fleet's dead-man domain is dark, as in `hc-dark`.
+The project, its uuid, its three keys and its Slack integration live in the database alone, and no API sets a key or a check's uuid; the project's ping key is a field the service's `/admin/` sets. The secret key is the vault's. So a database lost with its backups costs, in this order: the node's converge, which creates the superuser again; the project and its Slack integration added again by hand; the ping key set back to the vault's, so each pinger's URL stays valid and no pinging host's converge is owed; the two API keys minted again and the project's new uuid written, which the ops node's scrape reads, so ops' Alloy is recreated; the thirteen checks created again from the tree's fixture, with new uuids and the same names, slugs and periods, their history gone; and a backup run. Until the checks exist, the pingers' pings answer `404` and no check is evaluated: the fleet's dead-man domain is dark, as in `hc-dark`.
 
 ### What to do
 
@@ -267,7 +267,7 @@ The project, its uuid, its three keys and its Slack integration live in the data
 
    Write the project's uuid, read off the same page, over `hc_project_uuid` in `infra/ansible/group_vars/observed/vars.yml`. Then ops' Alloy converge with its recreate, `hc-keys` step 6's converge, which takes the new key and the new project's metrics path to the scrape.
 
-5. **Create the checks again**: `uv run python infra/scripts/hc-provision.py apply` writes the twelve checks from the fixture, each on the Slack integration alone, and reads each back. Grafana's series keep each check's `name` label; its uuid is new.
+5. **Create the checks again**: `uv run python infra/scripts/hc-provision.py apply` writes the thirteen checks from the fixture, each on the Slack integration alone, and reads each back. Grafana's series keep each check's `name` label; its uuid is new.
 
 6. **Run a backup**: `hc-restore` step 4.
 
