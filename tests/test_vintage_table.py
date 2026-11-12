@@ -798,6 +798,18 @@ def test_a_missing_record_root_refuses_before_reading(standard, tmp_path):
     assert "record root" in outcome.reason and "fork" not in outcome.reason
 
 
+def test_an_empty_record_root_under_a_table_with_heads_refuses_before_any_tick(standard, tmp_path):
+    table = tmp_path / "versions"
+    assert _derive(standard, table).complete
+    taken = _snapshot(_gen(table))
+    unmounted = tmp_path / "unmounted" / "record"
+    unmounted.mkdir(parents=True)
+    outcome = _derive(unmounted, table)
+    assert (outcome.complete, outcome.at, outcome.parts_added) == (False, None, 0)
+    assert "holds no tick" in outcome.reason and "fork" not in outcome.reason
+    assert _snapshot(_gen(table)) == taken
+
+
 def test_the_table_root_refusal(tmp_path, monkeypatch, caplog):
     record_root = tmp_path / "vintages" / "record"
     for refused in (record_root / "versions", tmp_path / "vintages" / "versions", NAS / "versions"):

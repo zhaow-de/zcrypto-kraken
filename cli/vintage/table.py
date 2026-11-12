@@ -497,7 +497,7 @@ def derive_table(
     if refusal is not None:
         return DeriveOutcome(False, None, 0, None, f"table root refused: {refusal}")
     if not record_root.is_dir():
-        return DeriveOutcome(False, None, 0, None, f"the record root {record_root} is no directory the run can read")
+        return DeriveOutcome(False, None, 0, None, f"the record root {record_root} is no directory")
     if through is not None and _not_lock(table_root):
         held = " ".join(_not_lock(table_root))
         return DeriveOutcome(False, None, 0, None, f"--through takes a table root holding only {LOCKFILE_NAME}; it holds {held}")
@@ -534,6 +534,11 @@ def derive_table(
             through_head, heads = _read_through(gen_dir, current[0], generation)
             state = DeriveState.from_frames(through_head.versions, through_head.coverage)
         order = _record_order(record_root, through)
+        if heads and not order:
+            reason = (
+                f"the record root {record_root} holds no tick while the table holds {len(heads)} heads, as an unmounted copy does"
+            )
+            return _outcome(False, read, last, prev_raw, 0, None, reason)
         taken_off = _taken_off(heads, order)
         if taken_off is not None:
             return _outcome(False, read, last, prev_raw, 0, *taken_off)
