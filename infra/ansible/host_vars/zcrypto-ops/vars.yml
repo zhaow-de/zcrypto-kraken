@@ -35,7 +35,7 @@ ops_vintage_record_healthcheck_url: "{{ hc_ping_base }}/zcrypto-vintage-record"
 # a key rotation edits the .pub once. The bootstrap play installs it for zcrypto-deploy.
 deploy_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/deploy_zcrypto-ops_ed25519.pub') }}"
 
-# The five NAS pull-channel public keys the ops role installs on zcrypto-data as `rrsync -ro` forced
+# The NAS pull-channel public keys the ops role installs on zcrypto-data as `rrsync -ro` forced
 # commands (spec 00057). Public material only — the private halves live on the NAS under
 # /volume1/docker/zcrypto-archive/keys. The forced-command roots are in roles/ops/tasks/main.yml.
 ops_sync_liquidations_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/sync_liquidations_ed25519.pub') }}"

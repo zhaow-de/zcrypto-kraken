@@ -205,8 +205,7 @@ while true; do
 	# block's pinned ssh options: a tick carries tick.json rather than the sidecars `zcrypto archive pull`
 	# verifies, and --ignore-existing keeps the first bytes to land, so `zcrypto vintage verify --custody`
 	# re-hashes the newest ticks and this loop's slice instead, after a failed pull too. An unset source is
-	# an ERROR, not the reconciled channel's WARNING nor hot's silence: unwired custody of unbackfillable
-	# data is an anomaly.
+	# an ERROR: unwired custody of unbackfillable data is an anomaly.
 	if [ -n "${VINTAGES_SOURCE:-}" ]; then
 		if ! rsync --archive --ignore-existing --chmod=D0775,F0664 \
 				-e "ssh -i $VINTAGES_SSH_KEY -p ${VINTAGES_SSH_PORT:-22} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o CheckHostIP=no -o AddressFamily=inet -o UserKnownHostsFile=$ARCHIVE_SSH_KNOWN_HOSTS" \

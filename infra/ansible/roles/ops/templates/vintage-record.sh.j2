@@ -20,7 +20,7 @@ TOKEN="{{ ops_compose_dir }}/vintage-bgeometrics.token"
 
 # The key file is opened on descriptor 3 here, so the run's only input redirection below duplicates
 # a descriptor already open and cannot fail before docker starts. Kept only if what opened is a
-# regular file: an absent, unreadable or directory path costs the four keyed sources alone, which
+# regular file: an absent, unreadable or directory path costs the keyed sources alone, which
 # read `no credential`, and the line names the path, never a byte of the file.
 if ! { exec 3<"$TOKEN"; } 2>/dev/null || ! [ -f /dev/fd/3 ]; then
     exec 3</dev/null

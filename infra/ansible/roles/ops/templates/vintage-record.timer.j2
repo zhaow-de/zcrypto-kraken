@@ -1,13 +1,10 @@
 # Rendered by the `ops` Ansible role at /etc/systemd/system/zcrypto-vintage-record.timer — do not
 # hand-edit on the host, edit infra/ansible/roles/ops/templates/vintage-record.timer.j2 instead.
 #
-# 07:37 and 19:37 UTC, each 23 minutes before an engine cycle. Slot clearance, which nothing checks:
-# minute 37 is clear of archive-pull's :12 and :42, panel's :22 and tape-bars' :52; 37 mod 5 is 2,
-# clear of grafana-watchdog's minutes ≡ 0 mod 5 and zaccess-probe's ≡ 4 mod 5; the hours are clear
-# of 02:25 (ops reboot), 02:30 (data-gated tests), 03:41 (verify-replay) and 05:23 (verified-replay).
-# Persistent=true runs one missed slot at boot; no RandomizedDelaySec, since fixed slots are the
-# only collision control, and no TimeoutStartSec, since the recorder's own deadlines end every tick.
-# The [Install] section is what keeps the enable armed across a reboot.
+# 07:37 and 19:37 UTC, each 23 minutes before an engine cycle, a slot clear of every other ops timer's,
+# which nothing checks. Persistent=true runs one missed slot at boot; no RandomizedDelaySec, since fixed
+# slots are the only collision control, and no TimeoutStartSec, since the recorder's own deadlines end
+# every tick. The [Install] section is what keeps the enable armed across a reboot.
 [Timer]
 OnCalendar=*-*-* 07:37:00
 OnCalendar=*-*-* 19:37:00

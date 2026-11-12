@@ -152,7 +152,7 @@ def _cm(asset: str) -> Source:
 
 
 # Tick order: the keyed host first, then the hosts serving one request each, then community-api.coinmetrics.io, whose
-# eleven requests can together reach the tick deadline; on that host the assets before the catalog.
+# requests can together reach the tick deadline; on that host the assets before the catalog.
 SOURCES: tuple[Source, ...] = (
     _bg("sopr", "sopr"),
     _bg("asopr", "asopr"),

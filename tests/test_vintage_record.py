@@ -1060,7 +1060,7 @@ def test_an_outcome_the_manifest_does_not_hold_is_written_as_not_fetched(tmp_pat
 
 VINTAGE_DIR = Path(__file__).resolve().parents[1] / "cli" / "vintage"
 FS_MODULES = ("os", "os.path", "shutil", "pathlib", "io", "codecs", "gzip", "tempfile")
-# A name added here reads or creates without replacing; nothing that writes over, moves, truncates or removes a path.
+# Names the fs rule admits; the renames, os.open, mkstemp and the openers are each held by a rule of their own.
 FS_ALLOWED = frozenset(
     {
         "codecs.open",
@@ -1088,8 +1088,7 @@ FS_ALLOWED = frozenset(
         "tempfile.mkstemp",
     }
 )
-# Every module cli/vintage/ may import: the walk sees only what these modules name, so a module added here widens what
-# the guard must hold, a reviewed edit. `logging` is the log levels' (`log.log`); no handler of it writes a file.
+# Every module cli/vintage/ imports, exact both ways: a module added here is a reviewed widening of what the guard holds.
 VINTAGE_IMPORTS = frozenset(
     {
         "__future__",
@@ -1143,8 +1142,7 @@ VINTAGE_IMPORTS = frozenset(
         "zlib",
     }
 )
-# What cli/vintage/ takes from each module it imports, read from its syntax tree and exact both ways: a name the tree
-# stops taking fails as one it starts to take does, so the pin never admits more than the tree uses.
+# What cli/vintage/ takes from each module it reaches, by `_taken`; exact both ways.
 VINTAGE_NAMES = {
     "__future__": frozenset({"annotations"}),
     "base64": frozenset({"b64encode"}),
@@ -1264,8 +1262,7 @@ _FILE_HANDLERS = frozenset(
     {"FileHandler", "BaseRotatingHandler", "RotatingFileHandler", "TimedRotatingFileHandler", "WatchedFileHandler"}
 )
 _RULES = ("rename", "os_open", "mkstemp", "write_parquet", "opening", "fs", "imports", "logging_file", "names")
-# Each helper is its module's path under the walked root and its function's name: a function of that name elsewhere,
-# a nested package's `storage.py` among them, is no helper.
+# Each helper is (path under the walked root, dotted def path): a same-named def elsewhere is no helper.
 _RENAME_HELPERS = frozenset({("storage.py", "publish_tick"), ("storage.py", "publish_prom"), ("storage.py", "publish_table_dir")})
 _MKSTEMP_HELPER = ("storage.py", "publish_prom")
 _PART_WRITER = ("table.py", "write_part")
@@ -1291,9 +1288,7 @@ _FORBIDDEN_METHODS = frozenset(
         "tofile",
     }
 )
-# Refused with any argument, and when named rather than called: `dict.copy()`, `DataFrame.serialize()` and
-# `ndarray.dump` without a file have no target, `Path.copy(target)`, `DataFrame.serialize(file)` and
-# `ndarray.dump(file)` write a path.
+# Refused called with an argument or named; called bare, `dict.copy()` and `DataFrame.serialize()` write nothing.
 _ARGUMENT_WRITERS = frozenset({"copy", "dump", "serialize"})
 
 
@@ -1408,8 +1403,7 @@ def _forbidden_name(attr: str) -> bool:
 
 
 def _past_breaches(expr: ast.expr, module: str, function: str | None):
-    """The by-name rules over the attributes a chain passes before its last, whose call or use the tree does not show:
-    `p.unlink.__call__()` is an unlink."""
+    """The by-name rules over the attributes a chain passes before its last, whose call or use the tree does not show."""
     passed = []
     while isinstance(expr, ast.Attribute):
         expr = expr.value
@@ -1510,9 +1504,7 @@ def _is_module(name: str) -> bool:
 
 
 def _taken(tree: ast.Module, bound: dict[str, set[str]]) -> list[tuple[str, str, ast.AST]]:
-    """Each (module, name) the module takes and the node taking it: an `ImportFrom`'s names, and on every outermost
-    dotted chain the first name past the longest module it starts with, an imported one or a name taken that is itself
-    a module (`from cli.vintage import verify` takes `cli.vintage.verify`'s names through it)."""
+    """Each (module, name, node) taken: an ImportFrom's names, and each outermost chain's name past its longest module prefix."""
     modules = VINTAGE_IMPORTS | {
         name for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom)) for name in _imported(node)
     }
@@ -1533,9 +1525,7 @@ def _taken(tree: ast.Module, bound: dict[str, set[str]]) -> list[tuple[str, str,
 
 
 def _breaches(node: ast.AST, bound: dict[str, set[str]], module: str, function: str | None, scope: str | None = None):
-    """Each (rule, node) breach under `node`, a call's place being the innermost function whose body holds it, named
-    by its dotted path from the module (`outer.inner`, `Class.method`), so only a module-level def is a helper; a class
-    body is no function's."""
+    """Each (rule, node) breach under `node`, placed by the dotted path of its innermost def; a class body is no def's."""
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
         qualified = node.name if scope is None else f"{scope}.{node.name}"
         if isinstance(node, ast.ClassDef):
@@ -1579,8 +1569,7 @@ def _breaches(node: ast.AST, bound: dict[str, set[str]], module: str, function: 
 
 
 def _write_guard(paths, root: Path) -> dict[str, list[str]]:
-    """Each rule's breaches over the modules at `paths` under `root`, as `path:line`; a module that does not parse
-    raises."""
+    """Each rule's breaches over the modules at `paths` under `root`, as `path:line`; a module that does not parse raises."""
     found: dict[str, list[str]] = {rule: [] for rule in _RULES}
     for path in paths:
         tree = ast.parse(path.read_text(), filename=str(path))
