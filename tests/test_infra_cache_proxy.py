@@ -95,7 +95,7 @@ def test_each_node_has_one_route_server_checked_against_the_quorum_frontend():
 
 
 def test_only_the_route_servers_cut_sessions():
-    cutters = [ln for ln in _lines(_render()) if "shutdown-sessions" in ln]
+    cutters = [ln for ln in _lines(_render()) if any(word == "shutdown-sessions" for word in ln.split())]
     assert len(cutters) == 3 and all(ln.startswith("server valkey ") for ln in cutters), cutters
 
 
