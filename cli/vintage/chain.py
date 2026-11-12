@@ -6,7 +6,9 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import os
 import re
+import stat
 import zlib
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,10 +41,32 @@ class Chain:
     cycle: bool = False
 
 
-def _children(path: Path, pattern: re.Pattern) -> list[Path]:
-    if not path.is_dir():
+@dataclass(frozen=True)
+class Scan:
+    ticks: list[TickFile]
+    # Each path under the root whose listing or stat failed, with the error's type: what it holds is unknown, so the
+    # record is read as damaged, never as holding nothing there.
+    unreadable: tuple[tuple[Path, str], ...]
+
+
+def _children(path: Path, pattern: re.Pattern, unreadable: list[tuple[Path, str]]) -> list[Path]:
+    """The directories under `path` whose names match, each decided by its stat; `Path.is_dir` would read a failed
+    stat as no directory and drop what lies under it."""
+    try:
+        entries = sorted(entry for entry in path.iterdir() if pattern.fullmatch(entry.name))
+    except OSError as exc:
+        unreadable.append((path, type(exc).__name__))
         return []
-    return sorted(entry for entry in path.iterdir() if pattern.fullmatch(entry.name) and entry.is_dir())
+    found = []
+    for entry in entries:
+        try:
+            mode = os.stat(entry).st_mode
+        except OSError as exc:
+            unreadable.append((entry, type(exc).__name__))
+            continue
+        if stat.S_ISDIR(mode):
+            found.append(entry)
+    return found
 
 
 def _read(directory: Path) -> TickFile:
@@ -60,16 +84,21 @@ def _read(directory: Path) -> TickFile:
     return TickFile(directory.name, directory, raw, sha256, manifest, None)
 
 
-def scan(record_root: Path) -> list[TickFile]:
-    """Every `<YYYY>/<MM>/<DD>/<stamp>/` directory under the root, oldest stamp first; any other name is no tick."""
+def scan(record_root: Path) -> Scan:
+    """Every `<YYYY>/<MM>/<DD>/<stamp>/` directory under the root, oldest stamp first, any other name no tick, and
+    every path the walk could not list or stat; a root that does not exist is an empty record."""
+    try:
+        os.stat(record_root)
+    except FileNotFoundError:
+        return Scan([], ())
     ticks = []
-    for year in _children(record_root, _YEAR):
-        for month in _children(year, _TWO_DIGITS):
-            for day in _children(month, _TWO_DIGITS):
-                for entry in sorted(day.iterdir()):
-                    if STAMP_RE.fullmatch(entry.name) and entry.is_dir():
-                        ticks.append(_read(entry))
-    return sorted(ticks, key=lambda tick: tick.stamp)
+    unreadable: list[tuple[Path, str]] = []
+    for year in _children(record_root, _YEAR, unreadable):
+        for month in _children(year, _TWO_DIGITS, unreadable):
+            for day in _children(month, _TWO_DIGITS, unreadable):
+                for entry in _children(day, STAMP_RE, unreadable):
+                    ticks.append(_read(entry))
+    return Scan(sorted(ticks, key=lambda tick: tick.stamp), tuple(unreadable))
 
 
 def _prev_stamp(tick: TickFile) -> str | None:

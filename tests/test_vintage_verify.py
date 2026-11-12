@@ -237,6 +237,21 @@ def test_an_unreadable_tick_directory_is_a_break_naming_it(tmp_path, request, mo
     assert _summary(result)[0] == "ERROR"
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses directory permissions")
+@pytest.mark.parametrize("mode", [0o000, 0o444], ids=["no-access", "listing-only"])
+def test_an_unreadable_date_directory_holding_the_newest_ticks_never_reads_clean(tmp_path, request, mode):
+    published = build_record(tmp_path, [(T0, {}), (T0 + 3 * HOUR, {}), (T0 + 24 * HOUR, {}), (T0 + 27 * HOUR, {})])
+    day = published[-1].dir.parent
+    assert published[-2].dir.parent == day != published[1].dir.parent
+    request.addfinalizer(lambda: os.chmod(day, 0o755))
+    os.chmod(day, mode)
+    result = _cli(tmp_path / "record")
+    assert result.exit_code == 1, result.output
+    named = [line for line in _lines(result, "ERROR") if "vintage verify unreadable manifest " in line]
+    assert any(str(day) in line for line in named), result.output
+    assert _summary(result)[0] == "ERROR"
+
+
 @pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses file permissions")
 def test_an_unreadable_body_is_named_unreadable(tmp_path, request):
     path = _four(tmp_path)[1].dir / "cm-btc.jsonl.gz"

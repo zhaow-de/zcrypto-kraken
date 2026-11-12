@@ -20,7 +20,7 @@ import pytest
 
 import cli.vintage.record as record_module
 import cli.vintage.storage as storage_module
-from cli.vintage.chain import chain, scan
+from cli.vintage.chain import Scan, chain, scan
 from cli.vintage.credential import ApiKey
 from cli.vintage.record import RecordRefused, record_tick
 from cli.vintage.sources import SOURCE_BY_ID, SOURCES
@@ -238,7 +238,7 @@ def _remove_tick(tick_dir: Path) -> None:
 def test_a_broken_link_with_several_heads_takes_the_newest_and_names_the_others(tmp_path):
     a, b, c = build_record(tmp_path, [(T0, {}), (T0 + HOUR, {}), (T0 + 2 * HOUR, {})])
     _remove_tick(b.dir)
-    found = chain(scan(tmp_path / "record"))
+    found = chain(scan(tmp_path / "record").ticks)
     assert found.head.stamp == c.stamp
     assert [tick.stamp for tick in found.other_heads] == [a.stamp]
     with _logged() as records:
@@ -301,7 +301,7 @@ def test_a_read_back_mismatch_refuses_and_publishes_nothing(tmp_path, monkeypatc
     monkeypatch.setattr(record_module, "_read_back", lambda path: b"other bytes")
     with pytest.raises(RecordRefused):
         run_tick(tmp_path, T0)
-    assert scan(tmp_path / "record") == []
+    assert scan(tmp_path / "record") == Scan([], ())
     assert (tmp_path / "staging" / "20261111T003700Z").is_dir()
 
 
@@ -426,6 +426,33 @@ def test_a_damaged_head_is_named_at_chaining(tmp_path, damage, named):
     assert len(errors) == 1 and head.stamp in errors[0] and named in errors[0]
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses directory permissions")
+@pytest.mark.parametrize("mode", [0o000, 0o444], ids=["no-access", "listing-only"])
+def test_an_unreadable_date_directory_is_named_and_the_record_read_as_damaged(tmp_path, request, mode):
+    older, newest = build_record(tmp_path / "a", [(T0, {}), (T0 + 24 * HOUR, {})])
+    (only,) = build_record(tmp_path / "b", [(T0 + 24 * HOUR, {})])
+    days = [newest.dir.parent, only.dir.parent]
+    for day in days:
+        request.addfinalizer(lambda day=day: os.chmod(day, 0o755))
+        os.chmod(day, mode)
+
+    with _logged() as records:
+        following = run_tick(tmp_path / "a", T0 + 48 * HOUR)
+    errors = _at(records, logging.ERROR)
+    assert len(errors) == 1 and "vintage record path unreadable" in errors[0] and str(days[0]) in errors[0]
+    manifest = _manifest(following)
+    assert manifest["prev"]["tick"] == older.stamp
+    assert "record paths unreadable: 2026/11/12" in manifest["prev"]["error"]
+
+    with _logged() as records:
+        genesis = run_tick(tmp_path / "b", T0 + 48 * HOUR)
+    errors = _at(records, logging.ERROR)
+    assert len(errors) == 1 and "vintage record path unreadable" in errors[0] and str(days[1]) in errors[0]
+    manifest = _manifest(genesis)
+    assert manifest["prev"] is None
+    assert manifest["genesis_reason"].startswith("record paths unreadable: 2026/11/12")
+
+
 def test_the_clock_block(tmp_path):
     prom = tmp_path / "clock-offset.prom"
     prom.write_text(
@@ -494,7 +521,7 @@ def test_a_tick_that_cannot_be_sealed_is_named_and_the_tick_still_runs(tmp_path,
 def test_the_scan_skips_what_is_not_a_tick(tmp_path):
     first, head = build_record(tmp_path, [(T0, {}), (T0 + 7 * HOUR, {})])
     root = tmp_path / "record"
-    before = chain(scan(root))
+    before = chain(scan(root).ticks)
     day = head.dir.parent
     (day / "20261111T080000Z").write_bytes(b"a stray file\n")
     partial = day / ".20261111T093700Z.rsync-tmp"
@@ -502,7 +529,7 @@ def test_the_scan_skips_what_is_not_a_tick(tmp_path):
     (partial / "tick.json").write_bytes((head.dir / "tick.json").read_bytes())
     (root / ".rsync-tmp").mkdir()
     (root / "2026" / "11" / "12").mkdir()
-    assert chain(scan(root)) == before
+    assert chain(scan(root).ticks) == before
     following = run_tick(tmp_path, T0 + 8 * HOUR)
     assert _manifest(following)["prev"] == {"tick": head.stamp, "tick_json_sha256": head.tick_json_sha256, "error": None}
 
@@ -511,7 +538,7 @@ def test_an_unreadable_middle_tick_json_keeps_the_chain_whole(tmp_path):
     a, b, c = build_record(tmp_path, [(T0, {}), (T0 + HOUR, {}), (T0 + 2 * HOUR, {})])
     _opened(b.dir)
     _unparseable(b.dir)
-    found = chain(scan(tmp_path / "record"))
+    found = chain(scan(tmp_path / "record").ticks)
     assert [tick.stamp for tick in found.order] == [a.stamp, b.stamp, c.stamp]
     assert found.head.stamp == c.stamp
     assert found.other_heads == ()
@@ -523,7 +550,7 @@ def test_a_cycle_of_prev_links_chains_to_the_newest_tick_with_an_error(tmp_path)
     _opened(a.dir)
     closed = _manifest(a) | {"prev": {"tick": b.stamp, "tick_json_sha256": b.tick_json_sha256, "error": None}}
     _replace(a.dir / "tick.json", json.dumps(closed, sort_keys=True, separators=(",", ":")).encode() + b"\n")
-    found = chain(scan(tmp_path / "record"))
+    found = chain(scan(tmp_path / "record").ticks)
     assert (found.head.stamp, [tick.stamp for tick in found.order], found.other_heads) == (b.stamp, [a.stamp, b.stamp], ())
     with _logged() as records:
         following = run_tick(tmp_path, T0 + 2 * HOUR)

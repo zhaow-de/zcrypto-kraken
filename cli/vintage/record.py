@@ -216,12 +216,24 @@ def _name_leftovers(staging: Path) -> None:
         log.warning("vintage staging holds crashed ticks never published; read, then delete by hand: %s", leftovers)
 
 
-def _prev(head: TickFile | None) -> tuple[dict | None, str | None]:
+def _unread(record_root: Path, unreadable: tuple[tuple[Path, str], ...]) -> str | None:
+    """Each path the scan could not read logged at ERROR, and named for `tick.json`: a tick may lie under one, so the
+    head this tick chains to is never taken as the record's own without saying so."""
+    for path, reason in unreadable:
+        log.error("vintage record path unreadable, the record read as damaged path=%s: %s", path, reason)
+    if not unreadable:
+        return None
+    return "record paths unreadable: " + " ".join(f"{path.relative_to(record_root)} ({reason})" for path, reason in unreadable)
+
+
+def _prev(head: TickFile | None, unread: str | None) -> tuple[dict | None, str | None]:
     if head is None:
-        return None, EMPTY_RECORD
+        return None, unread or EMPTY_RECORD
     error = check_head(head)
     if error is not None:
         log.error("vintage head fails the chaining check head=%s: %s", head.stamp, error)
+    if unread is not None:
+        error = unread if error is None else f"{error}; {unread}"
     return {"tick": head.stamp, "tick_json_sha256": head.sha256, "error": error}, None
 
 
@@ -258,7 +270,8 @@ def record_tick(
     if target.exists():
         raise RecordRefused(f"vintage tick refused: its target exists tick={stamp}")
 
-    ticks = scan(data_dir / RECORD_SUBDIR)
+    scanned = scan(data_dir / RECORD_SUBDIR)
+    ticks = scanned.ticks
     found = chain(ticks)
     head = found.head
     if found.cycle:
@@ -271,7 +284,7 @@ def record_tick(
         log.error("vintage chain has several heads: took head=%s; the others: %s", head.stamp, others)
     _seal(ticks)
     _name_leftovers(data_dir / STAGING_SUBDIR)
-    prev, genesis_reason = _prev(head)
+    prev, genesis_reason = _prev(head, _unread(data_dir / RECORD_SUBDIR, scanned.unreadable))
     clock_evidence = clock_block(clock_prom, started)
 
     deadline = clock.monotonic() + TICK_DEADLINE_SECONDS

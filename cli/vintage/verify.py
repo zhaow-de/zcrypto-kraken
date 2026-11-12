@@ -88,12 +88,13 @@ def verify(
             head_tick_json_sha256=None,
             bodies_hashed=0,
         )
-    ticks = scan(root)
+    scanned = scan(root)
+    ticks = scanned.ticks
+    breaks = [Finding(UNREADABLE_MANIFEST, str(path), f"listing or stat failed: {reason}") for path, reason in scanned.unreadable]
     if not ticks:
-        return VerifyResult([], [], ticks=0, head=None, head_tick_json_sha256=None, bodies_hashed=0)
+        return VerifyResult(breaks, [], ticks=0, head=None, head_tick_json_sha256=None, bodies_hashed=0)
     found = chain(ticks)
     held = {tick.stamp: tick for tick in ticks}
-    breaks: list[Finding] = []
     notes: list[Finding] = []
 
     link_entries: dict[str, LinkAcknowledgment] = {}
