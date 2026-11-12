@@ -383,7 +383,10 @@ def _check_cm_catalog_paginated(base, nxt):
 def _check_cm_btc_403(base, nxt):
     (doc,) = nxt
     assert list(doc) == ["error"] and list(doc["error"]) == ["type", "message"]
-    assert doc["error"]["type"] == "forbidden" and doc["error"]["message"]
+    assert doc["error"]["type"] == "forbidden"
+    measured = r"Requested metric '(\w+)' with frequency '1d' for asset 'btc' is not available with supplied credentials\."
+    match = re.fullmatch(measured, doc["error"]["message"])
+    assert match and match[1] in PINNED
 
 
 def _check_mempool_hashrate_restated_big(base, nxt):

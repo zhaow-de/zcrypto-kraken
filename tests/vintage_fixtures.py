@@ -224,7 +224,10 @@ def _cm_catalog_paginated(data: bytes, rng: random.Random) -> bytes:
 
 
 def _cm_403(data: bytes, rng: random.Random) -> bytes:
-    return dumps_compact({"error": {"type": "forbidden", "message": "Requested resource is not available."}})
+    asset = _stream_rows(data)[0]["asset"]
+    metric = rng.choice(_pinned(asset))
+    message = f"Requested metric '{metric}' with frequency '1d' for asset '{asset}' is not available with supplied credentials."
+    return dumps_compact({"error": {"type": "forbidden", "message": message}})
 
 
 def _mempool_restated_big(data: bytes, rng: random.Random) -> bytes:
@@ -333,7 +336,7 @@ VARIANTS: dict[str, Variant] = {
     "cm-btc-lost-newest": Variant("cm-btc", "every pinned metric's two newest days removed", _cm_lost_newest),
     "cm-btc-frozen": Variant("cm-btc", f"{FROZEN_METRIC}'s five newest days removed", _cm_frozen),
     "cm-catalog-paginated": Variant("cm-catalog", "a next_page_url added", _cm_catalog_paginated),
-    "cm-btc-403": Variant("cm-btc", "the forbidden error body", _cm_403),
+    "cm-btc-403": Variant("cm-btc", "the measured forbidden error body for one of its pinned metrics", _cm_403),
     "mempool-hashrate-restated-big": Variant(
         "mempool-hashrate", "one avgHashrate integer past 2^53 changed in its last digit", _mempool_restated_big
     ),
