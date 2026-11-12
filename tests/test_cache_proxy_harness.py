@@ -563,3 +563,27 @@ def test_a_mapping_read_refused_exits_2(monkeypatch, tmp_path):
     monkeypatch.setattr(harness, "haproxy_argv", lambda root: ["haproxy"])
     monkeypatch.setattr(harness, "_mapping_read", unread)
     assert harness.run_inside(tmp_path, tmp_path / "scratch", list(harness.CASES)) == 2
+
+
+def test_a_mapping_read_refuses_a_master_that_exits_before_its_workers_are_read(monkeypatch, tmp_path):
+    class Master:
+        pid = 20
+
+        def __init__(self, exit_code):
+            self.exit_code = exit_code
+
+        def poll(self):
+            return self.exit_code
+
+    masters = []
+    monkeypatch.setattr(harness, "_start_haproxy", lambda procs, directory, haproxy: (masters[-1], 0.0))
+    monkeypatch.setattr(harness, "_listening", lambda process, deadline: True)
+    # An exited master's `children` reads empty without an error, so the walk finds no worker and reads nothing foreign.
+    monkeypatch.setattr(harness, "foreign_code", lambda pid, root: [])
+    (tmp_path / "live").mkdir()
+    (tmp_path / "exited").mkdir()
+    masters.append(Master(None))
+    assert harness._mapping_read(harness.Run(tmp_path / "live", ["haproxy"], "global\n"), tmp_path) == []
+    masters.append(Master(0))
+    with pytest.raises(harness.Refused, match="PID 20"):
+        harness._mapping_read(harness.Run(tmp_path / "exited", ["haproxy"], "global\n"), tmp_path)
