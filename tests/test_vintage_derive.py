@@ -24,7 +24,7 @@ from cli.vintage.derive import (
     parse_series,
 )
 from cli.vintage.record import Published
-from cli.vintage.sources import SOURCE_BY_ID
+from cli.vintage.sources import SOURCE_BY_ID, LinkAcknowledgment
 from tests.vintage_fixtures import BASE_TICK_START, FROZEN_METRIC, GAP_METRIC, GONE_METRIC, body, dumps_compact, loads_tokens
 from tests.vintage_stub import Reply, build_record, standard_record
 
@@ -600,6 +600,37 @@ def test_a_fact_from_a_tick_with_no_knowable_coverage_row_shows_from_its_ticks_k
     )
     t = knowable[1] - MICROSECOND if step == "a-microsecond-before" else knowable[1]
     assert as_of(*derived, t)["flags"].to_list() == ["" if step == "a-microsecond-before" else "link-error"]
+
+
+def test_a_fact_shows_from_its_teaching_ticks_server_date_when_that_runs_past_the_ticks_end(tmp_path):
+    restated = _second("cm-btc-restatement")
+    plan = [{}, {"cm-btc": restated}]
+    probe = build_record(tmp_path / "probe", [(T0 + 3 * i * HOUR, replies) for i, replies in enumerate([*plan, plan[1]])])
+    server = _after(probe[2]).replace(microsecond=0) + timedelta(seconds=5)
+    served = Reply(200, restated, headers=[("Date", format_datetime(server, usegmt=True))])
+    published = build_record(
+        tmp_path / "real", [(T0 + 3 * i * HOUR, replies) for i, replies in enumerate([*plan, {"cm-btc": served}])]
+    )
+    assert _after(published[2]) == _after(probe[2]) < server
+    entry = LinkAcknowledgment(published[2].stamp, "0" * 64, "0" * 64)
+    derived = derive_record(tmp_path / "real" / "record", entries=(entry,))
+    taught_at = server + timedelta(seconds=1)
+    assert derived[2].rows(named=True) == [
+        {
+            "tick": published[1].stamp,
+            "fact": "link-acknowledged",
+            "taught_by": published[2].stamp,
+            "taught_position": 2,
+            "taught_at": taught_at,
+        }
+    ]
+    (restatement,) = derived[0].filter(pl.col("kind") == "restatement").iter_rows(named=True)
+
+    def flags_at(t: datetime) -> str:
+        return _day(as_of(*derived, t), restatement["series"], restatement["ts"].date())["flags"].item()
+
+    assert "link-acknowledged" not in flags_at(taught_at - MICROSECOND).split(",")
+    assert "link-acknowledged" in flags_at(taught_at).split(",")
 
 
 @pytest.mark.parametrize("step", ["at-the-third", "a-microsecond-before-the-second", "at-the-second"])
