@@ -75,18 +75,13 @@ def _inflated(data: bytes) -> bytes:
     return out
 
 
+_DECODERS = {"gzip": gzip.decompress, "zstd": zstd.decompress, "deflate": _inflated}
+
+
 def _decoded(data: bytes, encoding: str) -> bytes:
+    """A coding outside `_DECODERS` raises `KeyError`, failing the case: a stored body that does not decode."""
     for coding in reversed([coding.strip().lower() for coding in encoding.split(",")]):
-        if coding in ("", "identity"):
-            continue
-        if coding == "gzip":
-            data = gzip.decompress(data)
-        elif coding == "zstd":
-            data = zstd.decompress(data)
-        elif coding == "deflate":
-            data = _inflated(data)
-        else:
-            pytest.fail(f"a stored body in {coding!r} does not decode")
+        data = _DECODERS[coding](data)
     return data
 
 
@@ -251,8 +246,10 @@ def test_an_echoing_reason_phrase_or_header_name_is_redacted(tmp_path, caplog, c
     ids=["json-escaped", "percent-upper", "percent-lower", "gzip", "gzip-two-members", "zstd", "deflate", "deflate-raw"],
 )
 def test_echoes_in_every_form_are_not_stored(tmp_path, caplog, capsys, served, headers, reading):
-    # An encoded echo holds no form as served, so only the decode before the scan finds it.
+    # An encoded echo holds no form as served, so only the decode before the scan finds it; the walk's own decode does.
     assert _holds(served) is not bool(headers)
+    if headers:
+        assert _holds(_decoded(served, _header(headers, "Content-Encoding")))
     caplog.set_level(logging.DEBUG)
     run = _run(tmp_path, {"bg-sopr": [Reply(200, served, headers)]})
     assert run.code == 1
