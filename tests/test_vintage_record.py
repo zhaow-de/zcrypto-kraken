@@ -1145,7 +1145,8 @@ _FILE_HANDLERS = frozenset(
     {"FileHandler", "BaseRotatingHandler", "RotatingFileHandler", "TimedRotatingFileHandler", "WatchedFileHandler"}
 )
 _RULES = ("rename", "os_open", "mkstemp", "write_parquet", "opening", "fs", "imports", "logging_file")
-# Each helper is its module's file name and its function's name: a function of that name elsewhere is no helper.
+# Each helper is its module's path under the walked root and its function's name: a function of that name elsewhere,
+# a nested package's `storage.py` among them, is no helper.
 _RENAME_HELPERS = frozenset({("storage.py", "publish_tick"), ("storage.py", "publish_prom"), ("storage.py", "publish_table_dir")})
 _MKSTEMP_HELPER = ("storage.py", "publish_prom")
 _PART_WRITER = ("table.py", "write_part")
@@ -1399,12 +1400,13 @@ def _breaches(node: ast.AST, bound: dict[str, set[str]], module: str, function: 
         yield from _breaches(child, bound, module, function, owner)
 
 
-def _write_guard(paths) -> dict[str, list[str]]:
-    """Each rule's breaches over the modules at `paths`, as `path:line`; a module that does not parse raises."""
+def _write_guard(paths, root: Path) -> dict[str, list[str]]:
+    """Each rule's breaches over the modules at `paths` under `root`, as `path:line`; a module that does not parse
+    raises."""
     found: dict[str, list[str]] = {rule: [] for rule in _RULES}
     for path in paths:
         tree = ast.parse(path.read_text(), filename=str(path))
-        for rule, node in _breaches(tree, _bindings(tree), path.name, None):
+        for rule, node in _breaches(tree, _bindings(tree), path.relative_to(root).as_posix(), None):
             found[rule].append(f"{path}:{node.lineno}")
     return found
 
@@ -1413,7 +1415,7 @@ def _planted(tmp_path: Path, name: str, lines: list[tuple[str, bool]]) -> tuple[
     """The module of the lines written under `tmp_path`, and the `path:line` of each line marked as a breach."""
     path = tmp_path / name
     path.write_text("".join(f"{line}\n" for line, _ in lines))
-    return [f"{path}:{number}" for number, (_, breach) in enumerate(lines, 1) if breach], _write_guard([path])
+    return [f"{path}:{number}" for number, (_, breach) in enumerate(lines, 1) if breach], _write_guard([path], tmp_path)
 
 
 def _modules(root: Path) -> list[Path]:
@@ -1421,7 +1423,7 @@ def _modules(root: Path) -> list[Path]:
 
 
 def _real() -> dict[str, list[str]]:
-    return _write_guard(_modules(VINTAGE_DIR))
+    return _write_guard(_modules(VINTAGE_DIR), VINTAGE_DIR)
 
 
 def test_a_rename_lives_only_in_the_three_helpers(tmp_path):
@@ -1460,6 +1462,11 @@ def test_a_rename_lives_only_in_the_three_helpers(tmp_path):
     assert found["rename"] == expected
     elsewhere, found = _planted(tmp_path, "verify.py", [("import os", False), ("def publish_tick(a, b): os.rename(a, b)", True)])
     assert found["rename"] == elsewhere
+    nested = tmp_path / "tree" / "pkg"
+    nested.mkdir(parents=True)
+    for directory in (tmp_path / "tree", nested):
+        (directory / "storage.py").write_text("import os\ndef publish_tick(a, b): os.rename(a, b)\n")
+    assert _write_guard(_modules(tmp_path / "tree"), tmp_path / "tree")["rename"] == [f"{nested / 'storage.py'}:2"]
 
 
 def test_every_os_open_is_an_exclusive_create_or_a_read(tmp_path):
@@ -1587,6 +1594,11 @@ def test_every_other_opening_call_reads(tmp_path):
         ],
     )
     assert found["opening"] == dial
+    nested = tmp_path / "tree" / "pkg"
+    nested.mkdir(parents=True)
+    for directory in (tmp_path / "tree", nested):
+        (directory / "fetch.py").write_text("def _dial(o, r): return o.open(r, timeout=30)\n")
+    assert _write_guard(_modules(tmp_path / "tree"), tmp_path / "tree")["opening"] == [f"{nested / 'fetch.py'}:1"]
 
 
 def test_no_copy_move_truncate_or_delete(tmp_path):
@@ -1651,7 +1663,7 @@ def test_no_copy_move_truncate_or_delete(tmp_path):
     nested = tmp_path / "tree" / "sub"
     nested.mkdir(parents=True)
     (nested / "verify.py").write_text("import os\ndef f(p): os.remove(p)\n")
-    assert _write_guard(_modules(tmp_path / "tree"))["fs"] == [f"{nested / 'verify.py'}:2"]
+    assert _write_guard(_modules(tmp_path / "tree"), tmp_path / "tree")["fs"] == [f"{nested / 'verify.py'}:2"]
 
 
 def test_cli_vintage_imports_only_the_pinned_modules(tmp_path):
