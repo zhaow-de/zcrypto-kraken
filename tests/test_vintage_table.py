@@ -373,6 +373,84 @@ def test_a_head_its_successor_does_not_name_is_refused_as_a_broken_link(standard
     assert "does not hash to the prev its successor records" in str(refused.value)
 
 
+def _forge(table: Path, stamps: list[str], index: int, *, part=None, versions=None, head=None) -> None:
+    """The index-th part or head damaged, then every hash the damage moved re-sealed: its part_json_sha256, the
+    parts_sha256 chain and each later head's prev, so only the check under test can refuse it."""
+    parts_sha256 = "0" * 64 if index == 0 else json.loads(_head_file(table, stamps[index - 1]).read_bytes())["parts_sha256"]
+    prev_raw = None
+    for position in range(index, len(stamps)):
+        part_dir, head_path = _part_dir(table, stamps[position]), _head_file(table, stamps[position])
+        entry = json.loads(head_path.read_bytes())
+        if position == index:
+            recorded = json.loads((part_dir / "part.json").read_bytes())
+            if versions is not None:
+                frame = versions(pl.read_parquet(part_dir / "versions.parquet"), entry)
+                buffer = io.BytesIO()
+                frame.write_parquet(buffer)
+                _rewrite(part_dir / "versions.parquet", buffer.getvalue())
+                recorded["frames"]["versions"] = {"hash": frame_hash(frame, 1), "rows": frame.height}
+            if part is not None:
+                part(recorded)
+            _rewrite(part_dir / "part.json", _canonical(recorded))
+        entry["part_json_sha256"] = _sha((part_dir / "part.json").read_bytes())
+        parts_sha256 = entry["parts_sha256"] = _sha((parts_sha256 + entry["part_json_sha256"]).encode("ascii"))
+        if prev_raw is not None:
+            entry["prev"] = _sha(prev_raw)
+        if position == index and head is not None:
+            head(entry)
+        prev_raw = _canonical(entry)
+        _rewrite(head_path, prev_raw)
+
+
+def _a_genesis_prev(table: Path, stamps: list[str]) -> tuple[int, str]:
+    _forge(table, stamps, 0, head=lambda entry: entry.update(prev=_sha(b"elsewhere")))
+    return 0, "the genesis head names a prev"
+
+
+def _other_entries(table: Path, stamps: list[str]) -> tuple[int, str]:
+    _forge(table, stamps, len(stamps) - 1, head=lambda entry: entry.update(entries_sha256=_sha(b"other entries")))
+    return len(stamps) - 1, "the head names another generation or other entries than its generation.json"
+
+
+def _a_part_naming_another_tick(table: Path, stamps: list[str]) -> tuple[int, str]:
+    _forge(table, stamps, len(stamps) - 1, part=lambda part: part.update(tick_json_sha256="0" * 64))
+    return len(stamps) - 1, "part.json names another tick than its head"
+
+
+def _a_position_off_its_place(table: Path, stamps: list[str]) -> tuple[int, str]:
+    def moved(record: dict) -> None:
+        record["position"] += 1
+
+    _forge(table, stamps, len(stamps) - 1, part=moved, head=moved)
+    return len(stamps) - 1, f"the head's position {len(stamps)} is not its place {len(stamps) - 1} on the head log"
+
+
+def _a_kind_no_derive_writes(table: Path, stamps: list[str]) -> tuple[int, str]:
+    def renamed(frame: pl.DataFrame, entry: dict) -> pl.DataFrame:
+        entry["rows"]["versions"][frame["kind"][0]] -= 1
+        return frame.with_columns(
+            pl.when(pl.int_range(pl.len()) == 0).then(pl.lit("bogus")).otherwise(pl.col("kind")).alias("kind")
+        )
+
+    _forge(table, stamps, len(stamps) - 1, versions=renamed)
+    return len(stamps) - 1, "the versions through the head hold kinds no derive writes: ['bogus']"
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [_a_genesis_prev, _other_entries, _a_part_naming_another_tick, _a_position_off_its_place, _a_kind_no_derive_writes],
+    ids=lambda f: f.__name__.removeprefix("_a_").removeprefix("_"),
+)
+def test_each_check_of_the_walk_refuses_its_own_damage(compact, tmp_path, damage):
+    table = tmp_path / "versions"
+    assert _derive(compact, table).complete
+    stamps = _stamps(compact)
+    position, reason = damage(table, stamps)
+    with pytest.raises(TableError) as refused:
+        read_table(table, 1, _head_file(table, stamps[-1]))
+    assert (refused.value.tick, str(refused.value)) == (stamps[position], reason)
+
+
 @pytest.mark.parametrize("damage", [_a_head_missing_field, _a_head_not_canonical, _a_head_rows], ids=lambda f: f.__name__[3:])
 def test_a_derive_extends_only_a_head_that_is_its_own_bytes(standard, tmp_path, damage):
     stamps = _stamps(standard)
