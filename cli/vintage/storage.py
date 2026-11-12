@@ -9,6 +9,8 @@ import os
 import tempfile
 from pathlib import Path
 
+AFTER_RENAME = "after the rename: "
+
 
 def _write_all(fd: int, data: bytes) -> None:
     view = memoryview(data)
@@ -54,7 +56,7 @@ def publish_tick(staged: Path, target: Path) -> None:
         step = "the chmod to 0555"
         os.chmod(target, 0o555)
     except OSError as exc:
-        exc.add_note(f"after the rename: {step}")
+        exc.add_note(f"{AFTER_RENAME}{step}")
         raise
 
 

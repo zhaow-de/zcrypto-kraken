@@ -22,7 +22,7 @@ from cli.vintage.chain import TICK_JSON, TickFile, chain, check_head, scan
 from cli.vintage.credential import ApiKey
 from cli.vintage.fetch import Attempt, Clock, Exchange, SystemClock, build_openers, fetch_all, header
 from cli.vintage.sources import SOURCES, BodySummary, Source, check_block, check_body, summarise
-from cli.vintage.storage import create_exclusive, fsync_dir, gzip_bytes, publish_tick
+from cli.vintage.storage import AFTER_RENAME, create_exclusive, fsync_dir, gzip_bytes, publish_tick
 
 RECORD_SUBDIR = "record"
 STAGING_SUBDIR = "staging"
@@ -47,6 +47,8 @@ class Published:
     manifest: dict
     exchanges: list[Exchange]
     regression: bool
+    # The step that failed after the publishing rename, the tick being published all the same; None on a clean publish.
+    after_rename: str | None = None
 
 
 def tick_json_bytes(manifest: dict) -> bytes:
@@ -245,7 +247,8 @@ def record_tick(
     only: frozenset[str] | None = None,
 ) -> Published:
     """Fetches, stores and publishes one tick; `RecordRefused`, and any exception raised, means nothing was published.
-    An OSError from `publish_tick` after its rename is logged as an ERROR and the published tick returned."""
+    An OSError from `publish_tick` after its rename is logged as an ERROR and the published tick returned, its
+    `after_rename` naming the step."""
     clock = SystemClock() if clock is None else clock
     version = importlib.metadata.version("zcrypto") if version is None else version
     revision = os.environ.get("ZCRYPTO_BUILD_REVISION", "") if revision is None else revision
@@ -305,11 +308,11 @@ def record_tick(
     except OSError as exc:
         if not target.is_dir() or staged.exists():
             raise
-        after_rename = exc
+        notes = "; ".join(note.removeprefix(AFTER_RENAME) for note in getattr(exc, "__notes__", ()))
+        failed_step = f"{notes or 'a step after the rename'} ({type(exc).__name__})"
     else:
-        after_rename = None
+        failed_step = None
     log.info("vintage tick published tick=%s tick_json_sha256=%s", stamp, witness)
-    if after_rename is not None:
-        notes = "; ".join(getattr(after_rename, "__notes__", ()))
-        log.error("vintage tick published, then a step failed tick=%s: %s %s", stamp, type(after_rename).__name__, notes)
-    return Published(stamp, target, witness, manifest, exchanges, _regressed(stamp, head))
+    if failed_step is not None:
+        log.error("vintage tick published, then a step after its rename failed tick=%s: %s", stamp, failed_step)
+    return Published(stamp, target, witness, manifest, exchanges, _regressed(stamp, head), after_rename=failed_step)

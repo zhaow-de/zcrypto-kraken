@@ -336,6 +336,7 @@ def test_a_failure_after_the_rename_returns_the_published_tick_with_an_error(tmp
     assert _at(records, logging.INFO).count(f"vintage tick published tick={published.stamp} tick_json_sha256={witness}") == 1
     errors = _at(records, logging.ERROR)
     assert len(errors) == 1 and published.stamp in errors[0] and step in errors[0]
+    assert step in published.after_rename
 
 
 def test_an_existing_target_refuses_before_any_request(tmp_path):
@@ -464,6 +465,7 @@ def test_the_witness_line_is_the_published_tick_jsons_sha256(tmp_path):
     line = f"vintage tick published tick={published.stamp} tick_json_sha256={witness}"
     assert _at(records, logging.INFO).count(line) == 1
     assert published.tick_json_sha256 == witness
+    assert published.after_rename is None
 
 
 def test_crash_leftovers_are_named_and_a_0755_tick_is_set_0555(tmp_path):
