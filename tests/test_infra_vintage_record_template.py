@@ -30,6 +30,7 @@ RECORD_UNIT = TEMPLATES / "vintage-record.service.j2"
 RECORD_TIMER = TEMPLATES / "vintage-record.timer.j2"
 DERIVE_UNIT = TEMPLATES / "vintage-derive.service.j2"
 TASKS = REPO / "infra/ansible/roles/ops/tasks/main.yml"
+HANDLERS = REPO / "infra/ansible/roles/ops/handlers/main.yml"
 
 _ENV = jinja2.Environment(trim_blocks=True, lstrip_blocks=False, undefined=jinja2.StrictUndefined)
 
@@ -331,6 +332,9 @@ def test_the_block_is_gated_on_the_digest_and_enables_the_timer_alone():
         "group": "root",
         "mode": "0700",
     }
+    units = inner["render the vintage recorder and refresh units and the recorder timer"]
+    assert set(units["loop"]) == {"vintage-record.service", "vintage-record.timer", "vintage-derive.service"}
+    assert units["ansible.builtin.template"]["mode"] == "0644"
 
     enables = [t for t in block["block"] if "ansible.builtin.systemd_service" in t]
     assert len(enables) == 1
@@ -340,7 +344,7 @@ def test_the_block_is_gated_on_the_digest_and_enables_the_timer_alone():
 
     starters = [
         t.get("name")
-        for t in _leaves(tasks)
+        for t in _leaves(tasks + yaml.safe_load(HANDLERS.read_text()))
         if _SYSTEMD_OR_SHELL & set(t) and re.search(r"vintage-(record|derive)\.service", yaml.safe_dump(t))
     ]
     assert starters == []
