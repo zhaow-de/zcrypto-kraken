@@ -198,7 +198,19 @@ def _gzip(data: bytes) -> bytes:
     return gzip.compress(data, compresslevel=9, mtime=0)
 
 
+NESTED = "cm/btc/FlowInExNtv-status"
+
+
+def _nested_status() -> bytes:
+    """`cm-btc` with an object under `FlowInExNtv-status` in its newest row carrying the key: a body the check passes,
+    one key of which is no series."""
+    rows = _rows(body("cm-btc"))
+    [row for row in rows if "FlowInExNtv-status" in row][-1]["FlowInExNtv-status"] = {"state": "flash"}
+    return _stream(rows)
+
+
 UNPARSEABLE = {
+    "cm-btc-nested-status": ("cm-btc", _nested_status()),
     "cm-btc-gzip": ("cm-btc", Reply(200, _gzip(body("cm-btc")), headers=[("Content-Encoding", "gzip")])),
     "cm-btc-html": ("cm-btc", b"<!DOCTYPE html><html><body>Service moved</body></html>"),
     "fng-empty": ("fng", b""),
@@ -226,19 +238,16 @@ def test_an_unparseable_observation_adds_no_version_and_never_stops_the_derive(t
     versions, coverage, _ = derived
     assert _at(versions, 1).filter(pl.col("source") == source_id).is_empty()
     rows = _at(coverage, 1).filter(pl.col("source") == source_id)
-    assert rows.select("series", "outcome", "evidence").rows() == [("*", 2, False)]
+    if case == "cm-btc-nested-status":
+        base = parse_series(CM_BTC, body("cm-btc"))
+        assert NESTED in base
+        assert parse_series(CM_BTC, served) == {series: days for series, days in base.items() if series != NESTED}
+        assert sorted(rows["series"]) == sorted(set(base) - {NESTED})
+        assert set(rows.select("outcome", "evidence").rows()) == {(0, True)}
+    else:
+        assert rows.select("series", "outcome", "evidence").rows() == [("*", 2, False)]
     assert _view(derived, _after(published[1])).equals(_view(derived, _after(published[0])))
     assert _at(versions, 2).filter(pl.col("source") == source_id).is_empty()
-
-
-def test_a_key_holding_an_object_in_any_row_is_no_series_of_that_body():
-    rows = _rows(body("cm-btc"))
-    (row,) = [row for row in rows if "FlowInExNtv-status" in row][-1:]
-    row["FlowInExNtv-status"] = {"state": "flash"}
-    parsed = parse_series(CM_BTC, _stream(rows))
-    base = parse_series(CM_BTC, body("cm-btc"))
-    assert "cm/btc/FlowInExNtv-status" in base
-    assert parsed == {series: days for series, days in base.items() if series != "cm/btc/FlowInExNtv-status"}
 
 
 def test_the_coverage_rows_by_value(tmp_path):
