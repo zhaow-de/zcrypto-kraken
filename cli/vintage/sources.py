@@ -214,13 +214,13 @@ def _json(data: bytes) -> object:
         raise _Unreadable("not JSON") from None
 
 
-def _object(doc: object) -> dict:
+def as_object(doc: object) -> dict:
     if not isinstance(doc, dict):
         raise _Unreadable("not a JSON object")
     return doc
 
 
-def _rows(value: object, what: str, keys: tuple[str, ...]) -> list[dict]:
+def rows(value: object, what: str, keys: tuple[str, ...]) -> list[dict]:
     if not isinstance(value, list):
         raise _Unreadable(f"{what} is not a list")
     for row in value:
@@ -232,7 +232,7 @@ def _rows(value: object, what: str, keys: tuple[str, ...]) -> list[dict]:
     return value
 
 
-def _iso_day(token: object) -> date:
+def iso_day(token: object) -> date:
     if not isinstance(token, str):
         raise _Unreadable("a time is not a string")
     try:
@@ -242,7 +242,7 @@ def _iso_day(token: object) -> date:
     return (moment.astimezone(UTC) if moment.tzinfo else moment).date()
 
 
-def _epoch_day(token: object) -> date:
+def epoch_day(token: object) -> date:
     if not (isinstance(token, str) and token.isascii() and token.isdigit()):
         raise _Unreadable("a timestamp is not epoch seconds")
     try:
@@ -251,7 +251,7 @@ def _epoch_day(token: object) -> date:
         raise _Unreadable("a timestamp is out of range") from None
 
 
-def _date_day(token: object) -> date:
+def date_day(token: object) -> date:
     if not isinstance(token, str):
         raise _Unreadable("a d is not a string")
     try:
@@ -277,17 +277,17 @@ def _read(source: Source, body: bytes) -> tuple[BodySummary, bool]:
 def _read_kind(source: Source, body: bytes) -> tuple[BodySummary, bool]:
     match source.kind:
         case "fng":
-            doc = _object(_json(body))
+            doc = as_object(_json(body))
             metadata = doc.get("metadata")
-            metadata = _object({} if metadata is None else metadata)
+            metadata = as_object({} if metadata is None else metadata)
             if metadata.get("error") is not None:
                 raise _Unreadable("metadata.error is set")
-            rows = _rows(doc.get("data"), "data", ("value", "timestamp"))
-            return BodySummary(len(rows), max((_epoch_day(r["timestamp"]) for r in rows), default=None), {}, {}), False
+            records = rows(doc.get("data"), "data", ("value", "timestamp"))
+            return BodySummary(len(records), max((epoch_day(r["timestamp"]) for r in records), default=None), {}, {}), False
         case "cm-asset":
             return _read_cm_asset(ASSET_METRICS[source.asset], body), False
         case "cm-catalog":
-            doc = _object(_json(body))
+            doc = as_object(_json(body))
             data = doc.get("data")
             if not isinstance(data, list) or not data:
                 raise _Unreadable("data is not a non-empty list")
@@ -300,17 +300,17 @@ def _read_kind(source: Source, body: bytes) -> tuple[BodySummary, bool]:
                 raise _Unreadable("no entry")
             return BodySummary(entries, None, {}, {}), False
         case "mempool-hashrate":
-            rows = _rows(_object(_json(body)).get("hashrates"), "hashrates", ("timestamp",))
-            if not rows:
+            records = rows(as_object(_json(body)).get("hashrates"), "hashrates", ("timestamp",))
+            if not records:
                 raise _Unreadable("hashrates is empty")
-            return BodySummary(len(rows), max(_epoch_day(r["timestamp"]) for r in rows), {}, {}), False
+            return BodySummary(len(records), max(epoch_day(r["timestamp"]) for r in records), {}, {}), False
         case "bg":
-            rows = _rows(_json(body), "body", ("d", "unixTs", source.value_key))
-            if not rows:
+            records = rows(_json(body), "body", ("d", "unixTs", source.value_key))
+            if not records:
                 raise _Unreadable("the body is empty")
-            days = [_date_day(r["d"]) for r in rows]
+            days = [date_day(r["d"]) for r in records]
             # One series per body, so its days are the source's own: its failures are source-level.
-            return BodySummary(len(rows), max(days), {"*": max(days)}, {"*": min(days)}), False
+            return BodySummary(len(records), max(days), {"*": max(days)}, {"*": min(days)}), False
     raise _Unreadable(f"no reader for kind {source.kind}")
 
 
@@ -324,7 +324,7 @@ def _read_cm_asset(pinned: tuple[str, ...], body: bytes) -> BodySummary:
         row = _json(line)
         if not isinstance(row, dict) or "asset" not in row or "time" not in row:
             raise _Unreadable("a line is not an object with asset and time")
-        day = _iso_day(row["time"])
+        day = iso_day(row["time"])
         rows += 1
         newest = day if newest is None else max(newest, day)
         for metric in pinned:

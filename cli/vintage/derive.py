@@ -18,7 +18,7 @@ import polars as pl
 
 from cli.vintage.chain import TickFile, chain, scan
 from cli.vintage.fetch import header
-from cli.vintage.sources import SOURCE_BY_ID, LinkAcknowledgment, Source, _date_day, _epoch_day, _iso_day, _object, _rows
+from cli.vintage.sources import SOURCE_BY_ID, LinkAcknowledgment, Source, as_object, date_day, epoch_day, iso_day, rows
 
 DERIVE_GENERATION = 1
 KINDS = ("inherited", "first_publication", "backfill", "restatement", "retraction", "restoration")
@@ -105,22 +105,22 @@ def _cells(source: Source, text: str) -> Iterator[tuple[str, date, object]]:
                 row = _loads(line)
                 if not isinstance(row, dict) or "asset" not in row or "time" not in row:
                     raise ValueError("a line is not an object with asset and time")
-                day = _iso_day(row["time"])
+                day = iso_day(row["time"])
                 for key, value in row.items():
                     if key in _ROW_KEYS:
                         continue
                     yield _series(source, key), day, value
         case "fng":
-            for row in _rows(_object(_loads(text)).get("data"), "data", ("value", "timestamp")):
-                day = _epoch_day(row["timestamp"])
+            for row in rows(as_object(_loads(text)).get("data"), "data", ("value", "timestamp")):
+                day = epoch_day(row["timestamp"])
                 for key in _FNG_KEYS:
                     yield _series(source, key), day, row.get(key)
         case "mempool-hashrate":
-            for row in _rows(_object(_loads(text)).get("hashrates"), "hashrates", ("timestamp",)):
-                yield _series(source, "avgHashrate"), _epoch_day(row["timestamp"]), row.get("avgHashrate")
+            for row in rows(as_object(_loads(text)).get("hashrates"), "hashrates", ("timestamp",)):
+                yield _series(source, "avgHashrate"), epoch_day(row["timestamp"]), row.get("avgHashrate")
         case "bg":
-            for row in _rows(_loads(text), "body", ("d", "unixTs", source.value_key)):
-                yield _series(source, source.value_key), _date_day(row["d"]), row[source.value_key]
+            for row in rows(_loads(text), "body", ("d", "unixTs", source.value_key)):
+                yield _series(source, source.value_key), date_day(row["d"]), row[source.value_key]
         case _:
             raise ValueError(f"{source.id} carries no series")
 
