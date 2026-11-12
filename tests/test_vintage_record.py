@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import errno
 import gzip
 import hashlib
 import itertools
@@ -18,6 +19,7 @@ from types import SimpleNamespace
 import pytest
 
 import cli.vintage.record as record_module
+import cli.vintage.storage as storage_module
 from cli.vintage.chain import chain, scan
 from cli.vintage.credential import ApiKey
 from cli.vintage.record import RecordRefused, record_tick
@@ -90,6 +92,20 @@ def _record(data_dir: Path, https, clock, clock_prom=None):
         clock=clock,
         version="0.0.0",
     )
+
+
+class _Os:
+    """`os` with the named calls replaced, for a module that imports `os` whole."""
+
+    def __init__(self, **replaced) -> None:
+        self.__dict__.update(replaced)
+
+    def __getattr__(self, name: str):
+        return getattr(os, name)
+
+
+def _eio(*args) -> None:
+    raise OSError(errno.EIO, "input/output error")
 
 
 def _tree(root: Path) -> dict[str, tuple[int, bytes | None]]:
@@ -281,6 +297,26 @@ def test_a_crash_before_the_rename_leaves_record_untouched(tmp_path, monkeypatch
     with pytest.raises(OSError, match="a crash before the rename"):
         run_tick(tmp_path, T0 + 12 * HOUR)
     assert _tree(tmp_path / "record") == before
+
+
+def _fsync_fails(monkeypatch) -> None:
+    monkeypatch.setattr(storage_module, "fsync_dir", _eio)
+
+
+def _seal_fails(monkeypatch) -> None:
+    monkeypatch.setattr(storage_module, "os", _Os(chmod=lambda path, mode: _eio() if mode == 0o555 else os.chmod(path, mode)))
+
+
+@pytest.mark.parametrize(("fail", "step"), [(_fsync_fails, "fsync"), (_seal_fails, "chmod")], ids=["fsync", "chmod"])
+def test_a_failure_after_the_rename_returns_the_published_tick_with_an_error(tmp_path, monkeypatch, fail, step):
+    fail(monkeypatch)
+    with _logged() as records:
+        published = run_tick(tmp_path, T0)
+    assert published.dir.is_dir() and not (tmp_path / "staging" / published.stamp).exists()
+    witness = _sha((published.dir / "tick.json").read_bytes())
+    assert _at(records, logging.INFO).count(f"vintage tick published tick={published.stamp} tick_json_sha256={witness}") == 1
+    errors = _at(records, logging.ERROR)
+    assert len(errors) == 1 and published.stamp in errors[0] and step in errors[0]
 
 
 def test_an_existing_target_refuses_before_any_request(tmp_path):

@@ -39,7 +39,8 @@ def fsync_dir(path: Path) -> None:
 
 def publish_tick(staged: Path, target: Path) -> None:
     """Moves the assembled tick to its target by one rename; `os.rename` replaces an empty directory, so the target's
-    absence is checked here, under the caller's lock."""
+    absence is checked here, under the caller's lock. An OSError raised after the rename carries a note naming the
+    step, the tick being published by then."""
     if target.exists():
         raise FileExistsError(errno.EEXIST, "the tick's target exists", str(target))
     for directory in reversed(target.parents):
@@ -47,8 +48,14 @@ def publish_tick(staged: Path, target: Path) -> None:
             directory.mkdir(mode=0o755)
             os.chmod(directory, 0o755)
     os.rename(staged, target)
-    fsync_dir(target.parent)
-    os.chmod(target, 0o555)
+    step = "the parent's fsync"
+    try:
+        fsync_dir(target.parent)
+        step = "the chmod to 0555"
+        os.chmod(target, 0o555)
+    except OSError as exc:
+        exc.add_note(f"after the rename: {step}")
+        raise
 
 
 def publish_prom(path: Path, text: str) -> None:

@@ -233,8 +233,8 @@ def record_tick(
     revision: str | None = None,
     only: frozenset[str] | None = None,
 ) -> Published:
-    """Fetches, stores and publishes one tick; `RecordRefused`, and any exception raised before `publish_tick` is
-    called, means nothing was published."""
+    """Fetches, stores and publishes one tick; `RecordRefused`, and any exception raised, means nothing was published.
+    An OSError from `publish_tick` after its rename is logged as an ERROR and the published tick returned."""
     clock = SystemClock() if clock is None else clock
     version = importlib.metadata.version("zcrypto") if version is None else version
     revision = os.environ.get("ZCRYPTO_BUILD_REVISION", "") if revision is None else revision
@@ -289,6 +289,16 @@ def record_tick(
     fsync_dir(staged)
     if target.exists():
         raise RecordRefused(f"vintage tick refused: its target exists tick={stamp}")
-    publish_tick(staged, target)
+    try:
+        publish_tick(staged, target)
+    except OSError as exc:
+        if not target.is_dir() or staged.exists():
+            raise
+        after_rename = exc
+    else:
+        after_rename = None
     log.info("vintage tick published tick=%s tick_json_sha256=%s", stamp, witness)
+    if after_rename is not None:
+        notes = "; ".join(getattr(after_rename, "__notes__", ()))
+        log.error("vintage tick published, then a step failed tick=%s: %s %s", stamp, type(after_rename).__name__, notes)
     return Published(stamp, target, witness, manifest, exchanges, _regressed(stamp, head))
