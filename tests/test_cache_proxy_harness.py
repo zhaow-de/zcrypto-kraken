@@ -372,3 +372,47 @@ def test_the_run_refuses_an_entrypoint_whose_haproxy_flags_it_cannot_read(tmp_pa
     for name, script in {"bare": '#!/bin/sh\nset -- haproxy "$@"\nexec "$@"\n', "none": '#!/bin/sh\nexec haproxy "$@"\n'}.items():
         with pytest.raises(harness.Refused, match="docker-entrypoint.sh"):
             harness.haproxy_argv(_image_tree(tmp_path / name, script))
+
+
+class _Stuck:
+    """A process whose wait outlasts its timeout, killed or not."""
+
+    stdin = stdout = stderr = None
+    args = ["stuck"]
+
+    def poll(self):
+        return None
+
+    def terminate(self):
+        pass
+
+    def kill(self):
+        pass
+
+    def wait(self, timeout=None):
+        raise subprocess.TimeoutExpired(self.args, timeout)
+
+
+def test_a_process_that_will_not_stop_leaves_the_rest_of_the_teardown_to_run(monkeypatch, tmp_path):
+    deleted = []
+    monkeypatch.setattr(harness, "_nft", lambda *args: deleted.append(args) or "")
+    procs = harness.Procs("start")
+    sleeper = procs.start([sys.executable, "-c", "import time; time.sleep(30)", str(tmp_path)])
+    procs.processes.append(_Stuck())
+    procs.table_made = True
+    try:
+        with pytest.raises(subprocess.TimeoutExpired):
+            procs.stop_all()
+        assert sleeper.poll() is not None
+        assert deleted == [("delete", "table", "inet", "start")]
+    finally:
+        if sleeper.poll() is None:
+            sleeper.kill()
+            sleeper.wait()
+    signalled = harness.Procs("start")
+    signalled.processes.append(_Stuck())
+    signalled.processes[0].wait = lambda timeout=None: sys.exit(143)
+    signalled.table_made = True
+    with pytest.raises(SystemExit):
+        signalled.stop_all()
+    assert deleted[1:] == [("delete", "table", "inet", "start")]

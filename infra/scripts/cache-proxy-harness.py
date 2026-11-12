@@ -366,6 +366,21 @@ def _nft(*args: str) -> str:
     return result.stdout
 
 
+def _stop(process: subprocess.Popen) -> None:
+    try:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=MARGIN)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=MARGIN)
+    finally:
+        for stream in (process.stdin, process.stdout, process.stderr):
+            if stream is not None:
+                stream.close()
+
+
 class Procs:
     """A case's processes and its own `nft` table, so that nothing of a case outlives it in a run's one namespace."""
 
@@ -386,21 +401,22 @@ class Procs:
         return _nft(*args)
 
     def stop_all(self) -> None:
-        for process in reversed(self.processes):
-            if process.poll() is None:
-                process.terminate()
+        """Every process stopped on its own, one that will not stop sparing the rest, then the table deleted whatever
+        was raised; the first failure is raised once all that is done."""
+        failures: list[Exception] = []
+        try:
+            for process in reversed(self.processes):
                 try:
-                    process.wait(timeout=MARGIN)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=MARGIN)
-            for stream in (process.stdin, process.stdout, process.stderr):
-                if stream is not None:
-                    stream.close()
-        self.processes.clear()
-        if self.table_made:
-            self.table_made = False
-            _nft("delete", "table", "inet", self.table)
+                    _stop(process)
+                except Exception as exc:
+                    failures.append(exc)
+            self.processes.clear()
+        finally:
+            if self.table_made:
+                self.table_made = False
+                _nft("delete", "table", "inet", self.table)
+        if failures:
+            raise failures[0]
 
 
 def _described(exc: BaseException) -> str:
