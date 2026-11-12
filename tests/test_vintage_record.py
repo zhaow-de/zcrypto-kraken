@@ -1082,6 +1082,7 @@ _RULES = ("rename", "os_open", "mkstemp", "write_parquet", "opening", "fs")
 _RENAME_HELPERS = frozenset({("storage.py", "publish_tick"), ("storage.py", "publish_prom"), ("storage.py", "publish_table_dir")})
 _MKSTEMP_HELPER = ("storage.py", "publish_prom")
 _PART_WRITER = ("table.py", "write_part")
+_DIAL = ("fetch.py", "_dial")
 _RENAMES = frozenset({"os.replace", "os.rename", "os.renames"})
 _WRITE_FLAGS = frozenset({"O_WRONLY", "O_RDWR", "O_TRUNC", "O_APPEND"})
 _OPENERS = frozenset({"io.open", "codecs.open", "gzip.open", "gzip.GzipFile"})
@@ -1172,7 +1173,18 @@ def _mode_breaks(call: ast.Call, slot: int) -> bool:
     return not _is_string(given[0]) or bool(set(given[0].value) & set("wax+"))
 
 
-def _opening_breaks(call: ast.Call, names: set[str], function: str | None) -> bool:
+def _is_dial(call: ast.Call, module: str, function: str | None) -> bool:
+    """The opener's call in fetch.py's `_dial`: one positional name, the request, and `timeout=` alone, which no
+    `Path.open` takes; any other `.open` there is read for its mode."""
+    return (
+        (module, function) == _DIAL
+        and len(call.args) == 1
+        and isinstance(call.args[0], ast.Name)
+        and [keyword.arg for keyword in call.keywords] == ["timeout"]
+    )
+
+
+def _opening_breaks(call: ast.Call, names: set[str], module: str, function: str | None) -> bool:
     if not names and isinstance(call.func, ast.Name) and call.func.id == "open":
         return _mode_breaks(call, 1)
     if names & _OPENERS:
@@ -1182,12 +1194,7 @@ def _opening_breaks(call: ast.Call, names: set[str], function: str | None) -> bo
         )
         return not ("gzip.GzipFile" in names and onto_fileobj) and _mode_breaks(call, 1)
     if isinstance(call.func, ast.Attribute) and call.func.attr == "open" and "os.open" not in names:
-        dial = (
-            function == "_dial"
-            and not any(_is_string(arg) for arg in call.args)
-            and not any(keyword.arg == "mode" for keyword in call.keywords)
-        )
-        return not dial and _mode_breaks(call, 0)
+        return not _is_dial(call, module, function) and _mode_breaks(call, 0)
     return False
 
 
@@ -1217,7 +1224,7 @@ def _call_breaches(call: ast.Call, bound: dict[str, set[str]], module: str, func
     )
     if parquet and (module, function) != _PART_WRITER:
         yield "write_parquet"
-    if _opening_breaks(call, names, function):
+    if _opening_breaks(call, names, module, function):
         yield "opening"
     if _fs_breaks(call, names):
         yield "fs"
@@ -1385,8 +1392,8 @@ def test_every_other_opening_call_reads(tmp_path):
             ("def f(p): io.open(p, mode='r')", False),
             ("def f(p): p.open('rb')", False),
             ("def f(b): gzip.GzipFile(fileobj=b, mode='wb')", False),
-            ("def _dial(o, r): return o.open(r, timeout=30)", False),
             ("def _dial(p): return p.open('rb')", False),
+            ("def _dial(o, r): return o.open(r, timeout=30)", True),
             ("def f(p): open(p, 'w')", True),
             ("def f(p): open(p, mode='a')", True),
             ("def f(p, m): open(p, m)", True),
@@ -1405,6 +1412,23 @@ def test_every_other_opening_call_reads(tmp_path):
         ],
     )
     assert found["opening"] == expected
+    dial, found = _planted(
+        tmp_path,
+        "fetch.py",
+        [
+            ("def _dial(o, r): return o.open(r, timeout=30)", False),
+            ("def _dial(p): return p.open('rb')", False),
+            ("def _dial(p, m): return p.open(m)", True),
+            ("def _dial(p, m): return p.open(mode=m)", True),
+            ("def _dial(p): return p.open('w')", True),
+            ("def _dial(o, r, m): return o.open(r, m, timeout=30)", True),
+            ("def _dial(o, r): return o.open(r, timeout=30, mode='w')", True),
+            ("def f(o, r): return o.open(r, timeout=30)", True),
+            ("class Dialer:", False),
+            ("    def _dial(self, o, r): return o.open(r, timeout=30)", True),
+        ],
+    )
+    assert found["opening"] == dial
 
 
 def test_no_copy_move_truncate_or_delete(tmp_path):
@@ -1463,7 +1487,7 @@ def test_the_guard_admits_the_allowed_forms(tmp_path):
     assert _real() == {rule: [] for rule in _RULES}
     _, found = _planted(
         tmp_path,
-        "verify.py",
+        "fetch.py",
         [
             ("import gzip, os", False),
             ("from os import fsync", False),
