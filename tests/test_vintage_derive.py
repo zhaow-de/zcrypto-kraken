@@ -206,7 +206,17 @@ UNPARSEABLE = {
     "cm-btc-array-line": ("cm-btc", body("cm-btc") + b"\n[]"),
     "fng-data-object": ("fng", b'{"name":"Fear and Greed Index","data":{"value":"29"},"metadata":{"error":null}}'),
     "cm-btc-not-utf-8": ("cm-btc", b"\xff\xfe" + body("cm-btc")),
+    # Readable JSON with values the base does not hold, refused for shape by its check: it must add none of them.
+    "fng-metadata-error": ("fng", _second("fng-next").replace(b'"error": null', b'"error": "Rate limit exceeded"')),
 }
+
+
+@pytest.mark.parametrize("stamp", ["+1794355200", " 1794355200", "-86400"])
+def test_parse_series_refuses_the_epoch_forms_the_check_refuses(stamp):
+    fng = body("fng").replace(b'"timestamp": "1794355200"', b'"timestamp": "%s"' % stamp.encode(), 1)
+    assert fng != body("fng")
+    with pytest.raises(ValueError):
+        parse_series(SOURCE_BY_ID["fng"], fng)
 
 
 @pytest.mark.parametrize("case", list(UNPARSEABLE))

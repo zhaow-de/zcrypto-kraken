@@ -18,7 +18,7 @@ import polars as pl
 
 from cli.vintage.chain import TickFile, chain, scan
 from cli.vintage.fetch import header
-from cli.vintage.sources import SOURCE_BY_ID, LinkAcknowledgment, Source
+from cli.vintage.sources import SOURCE_BY_ID, LinkAcknowledgment, Source, _date_day, _epoch_day, _iso_day, _object, _rows
 
 DERIVE_GENERATION = 1
 KINDS = ("inherited", "first_publication", "backfill", "restatement", "retraction", "restoration")
@@ -30,6 +30,8 @@ SERIES_KINDS = frozenset({"fng", "cm-asset", "mempool-hashrate", "bg"})
 _ROW_KEYS = ("asset", "time")
 _FNG_KEYS = ("value", "value_classification")
 _IDENTITY_ENCODINGS = frozenset({"", "identity"})
+# A body its check could not read, or read under a non-identity encoding, yields no value.
+_CHECK_REFUSALS = frozenset({("*", "shape"), ("*", "encoding")})
 
 _TIME = pl.Datetime("us", "UTC")
 VERSIONS_SCHEMA: dict[str, pl.DataType] = {
@@ -81,21 +83,6 @@ def _loads(text: str) -> object:
     return json.loads(text, parse_int=str, parse_float=str)
 
 
-def _objects(value: object, what: str) -> list[dict]:
-    if not isinstance(value, list) or not all(isinstance(row, dict) for row in value):
-        raise ValueError(f"{what} is not a list of objects")
-    return value
-
-
-def _epoch_day(token: object) -> date:
-    return datetime.fromtimestamp(int(token), UTC).date()
-
-
-def _iso_day(token: object) -> date:
-    moment = datetime.fromisoformat(token)
-    return (moment.astimezone(UTC) if moment.tzinfo else moment).date()
-
-
 def _series(source: Source, key: str) -> str:
     match source.kind:
         case "cm-asset":
@@ -110,7 +97,8 @@ def _series(source: Source, key: str) -> str:
 
 
 def _cells(source: Source, text: str) -> Iterator[tuple[str, date, object]]:
-    """Each (series, day, value) the body holds, the day read from the row's own time key, never from token text."""
+    """Each (series, day, value) the body holds, the day read from the row's own time key, never from token text. The
+    rows and days are read by the check's own readers, so this refuses every row the check refuses."""
     match source.kind:
         case "cm-asset":
             for line in [line for line in text.split("\n") if line.strip()]:
@@ -123,18 +111,16 @@ def _cells(source: Source, text: str) -> Iterator[tuple[str, date, object]]:
                         continue
                     yield _series(source, key), day, value
         case "fng":
-            doc = _loads(text)
-            for row in _objects(doc.get("data") if isinstance(doc, dict) else None, "data"):
+            for row in _rows(_object(_loads(text)).get("data"), "data", ("value", "timestamp")):
                 day = _epoch_day(row["timestamp"])
                 for key in _FNG_KEYS:
                     yield _series(source, key), day, row.get(key)
         case "mempool-hashrate":
-            doc = _loads(text)
-            for row in _objects(doc.get("hashrates") if isinstance(doc, dict) else None, "hashrates"):
+            for row in _rows(_object(_loads(text)).get("hashrates"), "hashrates", ("timestamp",)):
                 yield _series(source, "avgHashrate"), _epoch_day(row["timestamp"]), row.get("avgHashrate")
         case "bg":
-            for row in _objects(_loads(text), "the body"):
-                yield _series(source, source.value_key), date.fromisoformat(row["d"]), row.get(source.value_key)
+            for row in _rows(_loads(text), "body", ("d", "unixTs", source.value_key)):
+                yield _series(source, source.value_key), _date_day(row["d"]), row[source.value_key]
         case _:
             raise ValueError(f"{source.id} carries no series")
 
@@ -351,6 +337,8 @@ def _body(tick_dir: Path, fetch: dict) -> bytes:
 
 
 def _parse(source: Source, fetch: dict, data: bytes) -> dict[str, dict[date, str]]:
+    if _CHECK_REFUSALS & {tuple(failure) for failure in fetch["check"]["metrics_failed"]}:
+        raise ValueError(f"{source.id} body refused by its check")
     encoding = header(fetch.get("headers") or [], "Content-Encoding")
     if encoding is not None and encoding.strip().lower() not in _IDENTITY_ENCODINGS:
         raise ValueError(f"{source.id} body not in identity encoding")
