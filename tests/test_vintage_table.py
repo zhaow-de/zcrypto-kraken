@@ -258,6 +258,7 @@ def test_ticks_after_a_head_change_nothing_read_through_it(standard, tmp_path):
     _grow(standard, record_root, len(stamps))
     outcome = _derive(record_root, table)
     assert outcome.complete and outcome.parts_added == 3
+    assert outcome.read is True
     after = read_table(table, 1, stamps[2])
     assert _read_equal(before, after)
     assert read_table(table, 1, stamps[-1]).versions.height > after.versions.height

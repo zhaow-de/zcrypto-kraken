@@ -531,8 +531,8 @@ def derive_table(
         heads: list[dict] = []
         state = DeriveState.empty()
         if current is not None:
-            read, heads = _read_through(gen_dir, current[0], generation)
-            state = DeriveState.from_frames(read.versions, read.coverage)
+            through_head, heads = _read_through(gen_dir, current[0], generation)
+            state = DeriveState.from_frames(through_head.versions, through_head.coverage)
         order = _record_order(record_root, through)
         taken_off = _taken_off(heads, order)
         if taken_off is not None:
