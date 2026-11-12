@@ -29,11 +29,11 @@ from cli.vintage.asof import as_of
 from cli.vintage.chain import TickFile, chain, scan
 from cli.vintage.derive import DERIVE_GENERATION, HEAD_PINS, DeriveState, derive_record, derive_tick, frames
 from cli.vintage.record import Published
-from cli.vintage.sources import SOURCE_BY_ID, LinkAcknowledgment
+from cli.vintage.sources import SOURCE_BY_ID, SOURCES, LinkAcknowledgment
 from cli.vintage.storage import refuse_table_root
 from cli.vintage.table import TableError, derive_table, frame_hash, head, read_table
-from tests.vintage_fixtures import BASE_TICK_START
-from tests.vintage_stub import FakeClock, build_record, run_tick, standard_record
+from tests.vintage_fixtures import BASE_TICK_START, body
+from tests.vintage_stub import FakeClock, Reply, build_record, run_tick, standard_record
 
 T0 = BASE_TICK_START
 HOUR = timedelta(hours=1)
@@ -102,6 +102,35 @@ def standard(tmp_path_factory) -> Path:
     """The standard record's data root, built once; a test copies it before it changes anything."""
     root = tmp_path_factory.mktemp("standard")
     standard_record(root)
+    return root / "record"
+
+
+# cm-btc along a restatement, a retraction, its restoration under a clock regression, and new days; mempool restated
+# once; every other cm-* source and fng answering 404, so the record keeps its kinds and a later fact at a fifth of the
+# standard record's rows.
+_COMPACT_LEGS = (
+    ("cm-btc", 0),
+    ("second/cm-btc-restatement", 3),
+    ("second/cm-btc-retraction", 7),
+    ("cm-btc", 6),
+    ("second/cm-btc-next", 10),
+)
+
+
+@pytest.fixture(scope="module")
+def compact(tmp_path_factory) -> Path:
+    gone = Reply(404, b"not found", reason="Not Found")
+    unserved = {
+        source.id: gone for source in SOURCES if source.id == "fng" or (source.kind == "cm-asset" and source.id != "cm-btc")
+    }
+    plan = []
+    for name, hours in _COMPACT_LEGS:
+        replies = {**unserved, "cm-btc": body(name)}
+        if name == "second/cm-btc-restatement":
+            replies["mempool-hashrate"] = body("second/mempool-hashrate-restated-big")
+        plan.append((T0 + hours * HOUR, replies))
+    root = tmp_path_factory.mktemp("compact")
+    build_record(root, plan)
     return root / "record"
 
 
@@ -234,19 +263,17 @@ def test_ticks_after_a_head_change_nothing_read_through_it(standard, tmp_path):
     assert read_table(table, 1, stamps[-1]).versions.height > after.versions.height
 
 
-def test_read_table_takes_a_path_a_stamp_or_a_sha256(standard, tmp_path):
+def test_read_table_takes_a_path_a_stamp_or_a_sha256(compact, tmp_path):
     table = tmp_path / "versions"
-    assert _derive(standard, table).complete
-    versions, coverage, _ = derive_record(standard)
-    stamps = _stamps(standard)
+    assert _derive(compact, table).complete
+    versions, coverage, _ = derive_record(compact)
+    stamps = _stamps(compact)
     gaps = {(datetime.strptime(b, "%Y%m%dT%H%M%SZ") - datetime.strptime(a, "%Y%m%dT%H%M%SZ")) for a, b in zip(stamps, stamps[1:])}
     assert len(gaps) > 1
     for position, stamp in enumerate(stamps):
         path = _head_file(table, stamp)
-        reads = [read_table(table, 1, stamp)]
-        if position in (2, len(stamps) - 1):
-            ways = (str(path.relative_to(_gen(table))), path, _sha(path.read_bytes()))
-            reads += [read_table(table, 1, way) for way in ways]
+        ways = (stamp, str(path.relative_to(_gen(table))), path, _sha(path.read_bytes()))
+        reads = [read_table(table, 1, way) for way in ways]
         for other in reads[1:]:
             assert _read_equal(reads[0], other)
         assert reads[0].head == json.loads(path.read_bytes())
@@ -802,13 +829,15 @@ def test_provider_leaves_out_bgeometrics_alone(standard, tmp_path):
         assert frame.filter(pl.col("provider") != "bgeometrics").equals(frame.filter(~bg))
 
 
-def test_as_of_through_a_head_equals_the_derivation_in_memory(standard, tmp_path):
+def test_as_of_through_a_head_equals_the_derivation_in_memory(compact, tmp_path):
     table = tmp_path / "versions"
-    assert _derive(standard, table).complete
-    read = read_table(table, 1, _stamps(standard)[-1])
-    derived = derive_record(standard)
+    assert _derive(compact, table).complete
+    read = read_table(table, 1, _stamps(compact)[-1])
+    derived = derive_record(compact)
+    assert {"restatement", "retraction", "restoration", "first_publication"} <= set(read.versions["kind"])
+    assert read.later_facts["fact"].to_list() == ["regression-predecessor"]
     second = timedelta(seconds=1)
-    for tick in _order(standard):
+    for tick in _order(compact):
         ended = datetime.fromisoformat(tick.manifest["ended_at"])
         for t in (ended - second, ended, ended + second):
             assert as_of(read.versions, read.coverage, read.later_facts, t).equals(as_of(*derived, t)), (tick.stamp, t)
