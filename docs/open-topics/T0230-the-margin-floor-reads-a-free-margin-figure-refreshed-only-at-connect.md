@@ -1,0 +1,29 @@
+---
+status: open
+ripe_when: 'a milestone: rung 3''s first attended week closes; check: `git log --oneline origin/develop --merges --grep=records/rung3-week-1` prints a line'
+---
+
+# The margin floor reads a free-margin figure refreshed only at connect
+
+## Context — what
+
+The engine refuses a plan whose margin floor exceeds `free_zeur` (`cli/engine/probeplan.py:223`). It reads `free_zeur` from the venue state's `balances` (`cli/engine/command.py:2192`, `cli/engine/executor.py:2772`). That `EUR` row is Kraken's TradeBalance account summary in EUR, which is free margin with the coins counted as collateral. It comes from the MARGIN account with `margin_balance_asset="ZEUR"` (`cli/engine/node.py:561-562`), filled at `cli/engine/venuestate.py:126`. Under rung 3 it stood still across rung 3's fills and stepped by 1.4656 EUR at drill G's restart, from 1419.6371 to 1421.1027. So it is refreshed only when the engine connects. The figures are in `docs/reference/rung3/days.md`'s entry for 2026-11-12, which reaches `develop` with the week's records.
+
+## Why this matters
+
+There are two gaps:
+
+1. **The figure goes stale between connects.** The floor is checked against free margin as it stood at the last connect, so a plan can pass on margin Kraken no longer has, or be refused on margin it does have.
+2. **The code and the spec use different bases.** Spec 00090 measures the floor as `sum(notional_i / leverage_i) × 2.5 ≤ free ZEUR balance` (`docs/specs/00090-rung-1-order-path-design.md:68`), while the code measures it against free margin, which counts the coins. Which basis the 250 % floor uses is the owner's decision, and no test pins either one.
+
+Rung 3's loop is spot-only, so neither gap has bitten yet. Both matter the first time a plan carries a margin intent.
+
+## Findings so far
+
+- The 2026-11-12 entry in `days.md` records this as "not Kraken's free EUR". It compares the figure with Kraken's spot free EUR, which is the wrong basis for a free-margin figure. The step at the restart is the reading that stands.
+
+## Suggested next steps
+
+- Put the basis to the owner: free margin, which is Kraken's own basis for margin, or spot free EUR, which is spec 00090's wording. Then amend whichever of the spec and the code disagrees with the choice.
+- Read the chosen figure at the check rather than at connect. Add a test in which a fill between connects moves the figure the check sees.
+- Ship the fix on the image that carries T0226's, T0227's and T0229's fixes.
