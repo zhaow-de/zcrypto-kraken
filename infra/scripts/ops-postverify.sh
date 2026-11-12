@@ -46,6 +46,12 @@ check "healthchecks down" 'hc_checks_down_total' zero
 check "tape-bars exit code" 'zcrypto_tapebars_exit_code' zero
 check "tape-bars permanent gaps" 'zcrypto_tapebars_days_gap' zero
 check "tape-bars publish freshness (s)" 'time() - zcrypto_tapebars_last_publish_timestamp_seconds' under 172800
+# Vintage recorder: max() over the per-source gauges, one series, says whether the recorder ticks at
+# all. One source's age is never read here: a single source's outage, or a check failure awaiting its
+# acknowledgment, says nothing about a converge, the converge that ships the acknowledgment included;
+# the per-source age is the zcrypto-ops-vintage-not-recorded rule's. The series exists only from the
+# recorder's first tick, so a converge before it reads this check FAIL … — no series.
+check "vintage recorder liveness (s)" 'time() - max(zcrypto_vintage_last_ok_timestamp_seconds)' under 90000
 
 if [ "$fails" -eq 0 ]; then echo "ops-postverify: ALL PASS"; else echo "ops-postverify: $fails FAIL"; fi
 [ "$fails" -eq 0 ]
