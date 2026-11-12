@@ -20,10 +20,11 @@ run    re-runs itself under `unshare -rn`, an unprivileged user and network name
 
 Exit, fetch: 0 fetched, 2 refused (a digest that does not match, a member reaching outside the tree, a whiteout
 naming the directory that holds it, a non-empty <dir>), 1 any other error, printed.
-Exit, run: 0 every case passing, 1 a case failing, 2 refused (a tree without `.harness-image-digest`; no
-/usr/bin/unshare, /usr/bin/ip or /usr/sbin/nft; an interface besides lo; `ip link set lo up` failing or not
-returning within 1.0 s; a binary not printing PINNED_VERSION; code mapped from outside the tree). Never 5, which
-mutate-probe.sh reads as no test run.
+Exit, run: 0 every case passing; 1 a case failing, or an error outside the cases, the summary then counting the cases
+run; 2 refused (a tree without `.harness-image-digest`; no /usr/bin/unshare, /usr/bin/ip or /usr/sbin/nft; no
+namespace `unshare -rn` can make; an interface besides lo; `ip link set lo up` failing or not returning within
+1.0 s; an entrypoint giving haproxy no flags; a binary not printing PINNED_VERSION; code mapped from outside the
+tree). Never 5, which mutate-probe.sh reads as no test run.
 """
 
 from __future__ import annotations
@@ -1030,20 +1031,25 @@ def run_inside(rootfs: Path, scratch: Path, cases: Sequence[str]) -> int:
         return _refused(
             f"the binary printed {first!r}, not {PINNED_VERSION}, PINNED_VERSION in infra/scripts/cache-proxy-harness.py"
         )
-    directory = scratch / f"run-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{os.getpid()}"
-    directory.mkdir(parents=True)
-    run = Run(directory, haproxy, render(TEMPLATE.read_text()))
-    foreign = _mapping_read(run, rootfs)
-    if foreign:
-        return _refused(f"HAProxy maps code from outside the tree: {', '.join(foreign)}")
-    passed = 0
-    for name in cases:
-        line = run_case(name, functools.partial(_bench_body, run, name))
-        print(line, flush=True)
-        passed += line.startswith("PASS ")
     digest = (rootfs / IMAGE_DIGEST_FILE).read_text().strip().removeprefix("sha256:")
-    print(f"{passed} passed, {len(cases) - passed} failed -- {first} -- image {digest[:12]}", flush=True)
-    return 0 if passed == len(cases) else 1
+    lines: list[str] = []
+    broken = False
+    try:
+        directory = scratch / f"run-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{os.getpid()}"
+        directory.mkdir(parents=True)
+        run = Run(directory, haproxy, render(TEMPLATE.read_text()))
+        foreign = _mapping_read(run, rootfs)
+        if foreign:
+            return _refused(f"HAProxy maps code from outside the tree: {', '.join(foreign)}")
+        for name in cases:
+            lines.append(run_case(name, functools.partial(_bench_body, run, name)))
+            print(lines[-1], flush=True)
+    except Exception as exc:
+        print(f"error outside the cases: {_described(exc)}", file=sys.stderr)
+        broken = True
+    passed = sum(line.startswith("PASS ") for line in lines)
+    print(f"{passed} passed, {len(lines) - passed} failed -- {first} -- image {digest[:12]}", flush=True)
+    return 0 if passed == len(cases) and not broken else 1
 
 
 def run(rootfs: Path, scratch: Path, cases: Sequence[str]) -> int:
@@ -1054,6 +1060,12 @@ def run(rootfs: Path, scratch: Path, cases: Sequence[str]) -> int:
     missing = [tool for tool in (UNSHARE, IP, NFT) if not os.access(tool, os.X_OK)]
     if missing:
         return _refused(f"no {', '.join(missing)}")
+    try:
+        made = subprocess.run([UNSHARE, "-rn", sys.executable, "-c", ""], capture_output=True, text=True, timeout=START)
+    except subprocess.TimeoutExpired:
+        return _refused(f"{UNSHARE} -rn did not return within {START:.2f} s")
+    if made.returncode != 0:
+        return _refused(f"{UNSHARE} -rn cannot make a user and network namespace here: {made.stderr.strip()}")
     scratch.mkdir(parents=True, exist_ok=True)
     argv = [UNSHARE, "-rn", sys.executable, str(Path(__file__).resolve()), "run", "--inside"]
     argv += ["--rootfs", str(rootfs), "--scratch", str(scratch), *(word for case in cases for word in ("--case", case))]

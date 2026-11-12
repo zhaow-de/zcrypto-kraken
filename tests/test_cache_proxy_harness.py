@@ -471,3 +471,35 @@ def test_the_run_command_unwinds_on_sigterm_and_sighup(monkeypatch):
         for signum, handler in before.items():
             signal.signal(signum, handler)
     assert list(seen.values()) == [harness._exit_on_signal] * 2
+
+
+def test_the_run_refuses_when_no_unprivileged_namespace_can_be_made(monkeypatch, tmp_path):
+    (tmp_path / harness.IMAGE_DIGEST_FILE).write_text("sha256:" + "0" * 64 + "\n")
+
+    def unshare(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 1, "", "unshare: unshare failed: Operation not permitted\n")
+
+    def execv(*args):
+        raise AssertionError(f"re-ran under unshare: {args}")
+
+    monkeypatch.setattr(harness.os, "access", lambda path, mode: True)
+    monkeypatch.setattr(harness.subprocess, "run", unshare)
+    monkeypatch.setattr(harness.os, "execv", execv)
+    assert harness.run(tmp_path, tmp_path / "scratch", ["parse"]) == 2
+
+
+def test_a_run_that_breaks_outside_its_cases_still_prints_its_summary(monkeypatch, tmp_path, capsys):
+    (tmp_path / harness.IMAGE_DIGEST_FILE).write_text("sha256:" + "0" * 64 + "\n")
+    first = f"HAProxy version {harness.PINNED_VERSION}-1a2b3c4 2026/10/01 - https://haproxy.org/"
+
+    def broken(run, rootfs):
+        raise RuntimeError("the worker's maps vanished")
+
+    monkeypatch.setattr(harness.socket, "if_nameindex", lambda: [(1, "lo")])
+    monkeypatch.setattr(harness.subprocess, "run", lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, first + "\n", ""))
+    monkeypatch.setattr(harness, "haproxy_argv", lambda root: ["haproxy"])
+    monkeypatch.setattr(harness, "_mapping_read", broken)
+    assert harness.run_inside(tmp_path, tmp_path / "scratch", list(harness.CASES)) == 1
+    printed = capsys.readouterr()
+    assert printed.out.splitlines()[-1] == f"0 passed, 0 failed -- {first} -- image {'0' * 12}"
+    assert "the worker's maps vanished" in printed.err
