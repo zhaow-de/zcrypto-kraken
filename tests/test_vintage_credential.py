@@ -30,6 +30,10 @@ ELSEWHERE = "https://elsewhere.example/v1/sopr"
 CLASS_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 WITNESS = (logging.INFO, re.compile(r"vintage tick published tick=\S+ tick_json_sha256=[0-9a-f]{64}"))
 BG_SOPR = default_bodies()["bg-sopr"]
+FORM_IDS = ["raw", "json-escaped", "percent-upper", "percent-lower"]
+# `%r` doubles the JSON-escaped form's backslash, so an error built as `http.client`'s never carries that form.
+QUOTED_FORMS = (SENTINEL_FORMS[0], SENTINEL_FORMS[2], SENTINEL_FORMS[3])
+QUOTED_IDS = ["raw", "percent-upper", "percent-lower"]
 
 
 def _warned(source_id: str, reason: str) -> tuple[int, re.Pattern]:
@@ -40,9 +44,9 @@ def _echo(form: bytes) -> bytes:
     return b'[{"d":"2026-11-10","note":"' + form + b'"}]'
 
 
-def _quoting() -> ValueError:
+def _quoting(form: bytes) -> ValueError:
     """Built as `http.client.putheader` builds the error an invalid header value raises."""
-    return ValueError("Invalid header value %r" % (f"Bearer {SENTINEL_KEY}\n".encode("latin-1"),))
+    return ValueError("Invalid header value %r" % (b"Bearer " + form + b"\n",))
 
 
 def _holds(data: bytes, echoes: tuple[bytes, ...] = ()) -> bool:
@@ -190,9 +194,10 @@ def test_an_echoing_401_body_is_not_stored(tmp_path, caplog, capsys):
     assert fetch["attempts"][0]["withheld"] == {"reason": "credential echoed", "bytes": len(echo)}
 
 
-def test_an_echoing_header_is_redacted(tmp_path, caplog, capsys):
+@pytest.mark.parametrize("form", SENTINEL_FORMS, ids=FORM_IDS)
+def test_an_echoing_header_is_redacted(tmp_path, caplog, capsys, form):
     caplog.set_level(logging.DEBUG)
-    challenge = f'Bearer error="invalid_token" token="{SENTINEL_FORMS[0].decode()}"'
+    challenge = f'Bearer error="invalid_token" token="{form.decode()}"'
     run = _run(tmp_path, {"bg-sopr": [Reply(401, b"{}", [("WWW-Authenticate", challenge)], reason="Unauthorized")]})
     assert run.code == 1
     fetch = _assert_holds_no_key(run, caplog, capsys, _warned("bg-sopr", "HTTP 401 (no retry)"))["bg-sopr"]
@@ -202,10 +207,13 @@ def test_an_echoing_header_is_redacted(tmp_path, caplog, capsys):
 @pytest.mark.parametrize(
     ("reply", "code", "control", "field", "redacted"),
     [
-        (Reply(401, b"{}", reason=f"bad {SENTINEL_KEY}"), 1, _warned("bg-sopr", "HTTP 401 (no retry)"), "reason", "<redacted>"),
+        *[
+            (Reply(401, b"{}", reason=f"bad {form.decode()}"), 1, _warned("bg-sopr", "HTTP 401 (no retry)"), "reason", "<redacted>")
+            for form in SENTINEL_FORMS
+        ],
         (Reply(200, BG_SOPR, [(SENTINEL_KEY, "1")]), 0, WITNESS, "headers", [["<redacted>", "1"]]),
     ],
-    ids=["reason-phrase", "header-name"],
+    ids=[*(f"reason-phrase-{name}" for name in FORM_IDS), "header-name"],
 )
 def test_an_echoing_reason_phrase_or_header_name_is_redacted(tmp_path, caplog, capsys, reply, code, control, field, redacted):
     caplog.set_level(logging.DEBUG)
@@ -259,36 +267,46 @@ def test_a_redirect_is_not_followed_and_holds_no_key(tmp_path, caplog, capsys):
     assert ELSEWHERE not in [seen.url for seen in run.https.seen]
 
 
-def _reset() -> urllib.error.URLError:
-    return urllib.error.URLError(ConnectionResetError(104, f"reset after {SENTINEL_FORMS[0].decode()}"))
+def _reset(form: bytes) -> urllib.error.URLError:
+    return urllib.error.URLError(ConnectionResetError(104, f"reset after {form.decode()}"))
 
 
-def test_a_transport_error_holds_no_key(tmp_path, caplog, capsys):
+@pytest.mark.parametrize("form", SENTINEL_FORMS, ids=FORM_IDS)
+def test_a_transport_error_holds_no_key(tmp_path, caplog, capsys, form):
+    assert _holds_text(str(_reset(form)))
     caplog.set_level(logging.DEBUG)
-    run = _run(tmp_path, {"bg-sopr": [_reset(), _reset()]})
+    run = _run(tmp_path, {"bg-sopr": [_reset(form), _reset(form)]})
     assert run.code == 1
     fetch = _assert_holds_no_key(run, caplog, capsys, _warned("bg-sopr", "transport error after 2 attempts"))["bg-sopr"]
     assert [attempt["error"] for attempt in fetch["attempts"]] == ["URLError", "URLError"]
 
 
-def test_an_exception_quoting_the_key_is_recorded_by_its_class(tmp_path, caplog, capsys):
+@pytest.mark.parametrize("form", QUOTED_FORMS, ids=QUOTED_IDS)
+def test_an_exception_quoting_the_key_is_recorded_by_its_class(tmp_path, caplog, capsys, form):
+    assert _holds_text(str(_quoting(form)))
     caplog.set_level(logging.DEBUG)
-    run = _run(tmp_path, {"bg-sopr": [_quoting(), Reply(200, BG_SOPR)]})
+    run = _run(tmp_path, {"bg-sopr": [_quoting(form), Reply(200, BG_SOPR)]})
     assert run.code == 0
     fetch = _assert_holds_no_key(run, caplog, capsys, WITNESS)["bg-sopr"]
     assert [attempt["error"] for attempt in fetch["attempts"]] == ["ValueError", None]
 
 
-def _raises_the_quoting_error(*args, **kwargs):
-    raise _quoting()
+def _raising(form: bytes):
+    def _raises_the_quoting_error(*args, **kwargs):
+        raise _quoting(form)
+
+    return _raises_the_quoting_error
 
 
-def test_an_exception_reaching_the_top_holds_no_key(tmp_path, caplog, capsys, monkeypatch):
-    monkeypatch.setattr(record_module, "fetch_all", _raises_the_quoting_error)
+@pytest.mark.parametrize("form", QUOTED_FORMS, ids=QUOTED_IDS)
+def test_an_exception_reaching_the_top_holds_no_key(tmp_path, caplog, capsys, monkeypatch, form):
+    assert _holds_text(str(_quoting(form)))
+    raising = _raising(form)
+    monkeypatch.setattr(record_module, "fetch_all", raising)
     caplog.set_level(logging.DEBUG)
     run = _run(tmp_path)
     assert run.code == 2
-    frame = rf"ValueError at {re.escape(__file__)}:\d+ in {_raises_the_quoting_error.__name__}"
+    frame = rf"ValueError at {re.escape(__file__)}:\d+ in {raising.__name__}"
     control = (logging.ERROR, re.compile(f"vintage record failed, nothing published: {frame}"))
     assert _assert_holds_no_key(run, caplog, capsys, control) == {}
     assert len([record for record in caplog.records if record.levelno == logging.ERROR]) == 1
