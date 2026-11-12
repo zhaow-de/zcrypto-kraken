@@ -12,7 +12,7 @@ fetch  a network read: pulls `library/haproxy` anonymously from Docker Hub by it
 run    re-runs itself under `unshare -rn`, an unprivileged user and network namespace, which must list `lo` alone,
        and there runs the tree's HAProxy through the tree's own loader and libraries on the role's render, against
        scripted Sentinels and Valkeys, case by case: each `--case`, or every case in order when none is named. Each
-       case prints one PASS or FAIL line with its figures beside their bounds; the last line counts them and names
+       case prints one PASS or FAIL line; the last line counts every PASS and FAIL line printed and names
        `haproxy -vv`'s first line and the image digest's first 12 hex. Each case's render and HAProxy's stdout and
        stderr stay in <dir>/run-<UTC stamp>-<pid>/<case>/, <dir> made when absent; every process the run starts is
        stopped by its own PID before it exits.
@@ -168,7 +168,6 @@ def _apply(blob: bytes, into: Path, modes: dict[Path, int]) -> None:
             if base == OPAQUE:
                 _empty(directory, written, modes)
                 continue
-            # A whiteout acts on lower layers only, never on what its own layer wrote.
             if whiteout is not None:
                 if directory / whiteout not in written:
                     _remove(directory / whiteout, modes)
