@@ -444,6 +444,8 @@ def derive_table(
     refusal = refuse_table_root(table_root, record_root, nas_mount)
     if refusal is not None:
         return DeriveOutcome(False, None, 0, None, f"table root refused: {refusal}")
+    if not record_root.is_dir():
+        return DeriveOutcome(False, None, 0, None, f"the record root {record_root} is no directory the run can read")
     if through is not None and _not_lock(table_root):
         held = " ".join(_not_lock(table_root))
         return DeriveOutcome(False, None, 0, None, f"--through takes a table root holding only {LOCKFILE_NAME}; it holds {held}")

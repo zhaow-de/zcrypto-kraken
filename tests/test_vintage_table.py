@@ -670,6 +670,19 @@ def test_a_held_lock_stops_with_the_derives_own_message(standard, tmp_path, monk
     assert sorted(entry.name for entry in table.iterdir()) == [LOCKFILE_NAME]
 
 
+def test_a_missing_record_root_refuses_before_reading(standard, tmp_path):
+    absent = tmp_path / "vintages" / "record"
+    outcome = _derive(absent, tmp_path / "empty")
+    assert (outcome.complete, outcome.at, outcome.head) == (False, None, None)
+    assert "record root" in outcome.reason
+    assert not (tmp_path / "empty").exists()
+    table = tmp_path / "versions"
+    assert _derive(standard, table).complete
+    outcome = _derive(absent, table)
+    assert (outcome.complete, outcome.at, outcome.parts_added) == (False, None, 0)
+    assert "record root" in outcome.reason and "fork" not in outcome.reason
+
+
 def test_the_table_root_refusal(tmp_path, monkeypatch):
     record_root = tmp_path / "vintages" / "record"
     for refused in (record_root / "versions", tmp_path / "vintages" / "versions", NAS / "versions"):
@@ -747,6 +760,7 @@ def test_the_summary_lines_and_the_prom(standard, tmp_path, monkeypatch, caplog)
     _no_config(monkeypatch, tmp_path)
     textfile = tmp_path / "vintage-derive.prom"
     caplog.set_level(logging.DEBUG)
+    (tmp_path / "vintages" / "record").mkdir(parents=True)
     assert _run(tmp_path / "vintages" / "record", tmp_path / "empty", textfile=textfile) == 0
     assert _messages(caplog, logging.INFO)[-1] == "vintage derive complete generation=1 head=none head_sha256=none parts_added=0"
     assert _prom_value(textfile) == "0"
