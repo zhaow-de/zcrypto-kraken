@@ -404,7 +404,8 @@ class Procs:
 
     def stop_all(self) -> None:
         """Every process stopped on its own, one that will not stop, or a signal's SystemExit during one stop, sparing
-        the rest, then the table deleted; the first failure is raised once all that is done, a SystemExit first."""
+        the rest, then the table deleted, its own failure collected beside theirs; the first failure is raised once all
+        that is done, a SystemExit first."""
         failures: list[BaseException] = []
         try:
             for process in reversed(self.processes):
@@ -416,8 +417,11 @@ class Procs:
         finally:
             if self.table_made:
                 self.table_made = False
-                _nft("delete", "table", "inet", self.table)
-        # A signal's SystemExit outranks an earlier stop's failure, so the run unwinds rather than reading a FAIL.
+                try:
+                    _nft("delete", "table", "inet", self.table)
+                except BaseException as exc:
+                    failures.append(exc)
+        # A signal's SystemExit outranks a stop's or the table's failure, so the run unwinds rather than reading a FAIL.
         unwinding = [failure for failure in failures if not isinstance(failure, Exception)]
         if failures:
             raise (unwinding or failures)[0]

@@ -430,6 +430,24 @@ def test_a_process_that_will_not_stop_leaves_the_rest_of_the_teardown_to_run(mon
             second.wait()
 
 
+@pytest.mark.parametrize("failure", [RuntimeError("nft delete table inet start exited 1"), subprocess.TimeoutExpired(["nft"], 1.0)])
+def test_a_signal_during_a_stop_still_unwinds_when_the_table_will_not_delete(monkeypatch, failure):
+    deleted = []
+
+    def refuse(*args):
+        deleted.append(args)
+        raise failure
+
+    monkeypatch.setattr(harness, "_nft", refuse)
+    procs = harness.Procs("start")
+    procs.processes.append(_Stuck())
+    procs.processes[0].wait = lambda timeout=None: sys.exit(143)
+    procs.table_made = True
+    with pytest.raises(SystemExit):
+        procs.stop_all()
+    assert deleted == [("delete", "table", "inet", "start")]
+
+
 def test_a_read_inside_a_window_ends_at_the_windows_end(monkeypatch):
     asked = []
 
