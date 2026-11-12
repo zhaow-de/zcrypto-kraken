@@ -283,6 +283,21 @@ def test_a_directory_a_later_layer_removes_keeps_no_mode_of_the_lower_one(tmp_pa
             (tree / "ro").chmod(stat.S_IMODE((tree / "ro").stat().st_mode) | stat.S_IWUSR)
 
 
+def test_a_directory_a_later_layer_recreates_under_a_removed_one_keeps_no_mode_of_the_lower_one(tmp_path):
+    digest, get, _ = _registry(
+        _layer({"ro": 0o555, "ro/sub": 0o555, "ro/sub/old": b"o"}), _layer({".wh.ro": b"", "ro/sub/f": b"f"})
+    )
+    tree = tmp_path / "tree"
+    try:
+        harness.fetch(digest, tree, get=get)
+        assert os.listdir(tree / "ro/sub") == ["f"]
+        assert stat.S_IMODE((tree / "ro/sub").stat().st_mode) != 0o555
+    finally:
+        for name in ("ro", "ro/sub"):
+            if (tree / name).is_dir(follow_symlinks=False):
+                (tree / name).chmod(stat.S_IMODE((tree / name).stat().st_mode) | stat.S_IWUSR)
+
+
 def test_a_directory_without_owner_search_takes_its_mode_after_the_directory_beneath_it(tmp_path):
     digest, get, _ = _registry(_layer({"ro": 0o644, "ro/sub": 0o555}))
     tree = tmp_path / "tree"
