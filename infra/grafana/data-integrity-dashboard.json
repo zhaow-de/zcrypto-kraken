@@ -4726,7 +4726,7 @@
           },
           "expr": "time() - zcrypto_vintage_derive_head_timestamp_seconds",
           "refId": "A",
-          "legendFormat": "{{source}}"
+          "legendFormat": "versions table head age"
         }
       ],
       "fieldConfig": {
