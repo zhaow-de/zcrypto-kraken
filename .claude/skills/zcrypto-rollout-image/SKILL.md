@@ -129,7 +129,7 @@ Compute tier (reconcile/backfill, panel, verify-replay, liquidations) — no can
 
 - **Record the running digest in `fleet-pins.md` before converging** — the pins assert refuses otherwise; that row is the only rollback operand (`ops_image_digest` has no repo default).
 - **`ops_image_digest` also repins the liquidations compose, which the role never restarts** — the role refuses the repin without `-e liquidations_decision=roll-after|defer`. Prefer `roll-after`: the poller re-fetches a **30 h** window every cycle, so a converge-length restart self-heals; a container down longer than that window loses data.
-- Rollback = re-converge to the recorded digest. Expect `zcrypto_reconcile_healable_gap_seconds_total` to fall, which suppresses the degrading-primary rule for 24 h via its own `resets()` guard.
+- Rollback = re-converge to the recorded digest. A digest built before `1dac40132` carries no `zcrypto vintage`, so rolling back to one stops the vintage recorder: `docs/reference/fleet-pins.md`'s standing constraints say what that costs, and the owner weighs it before the roll. Expect `zcrypto_reconcile_healable_gap_seconds_total` to fall, which suppresses the degrading-primary rule for 24 h via its own `resets()` guard.
 
 ### Panel generation changes
 
