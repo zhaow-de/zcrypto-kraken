@@ -423,6 +423,25 @@ def _newest_restated(hashrates: list[dict]) -> None:
     hashrates[-1]["avgHashrate"] = type(hashrates[-1]["avgHashrate"])(hashrates[-1]["avgHashrate"] + "1")
 
 
+def test_q3s_lower_end_for_a_new_day_outlives_a_later_unbroken_body_its_check_names(tmp_path):
+    """Four days on, a repeat of the base is stale, so its check names every series at source level, yet its
+    `ReferenceRate` days still run unbroken over the base's range. It shows those days but is no evidence that a later
+    day was not yet held, so the base still bounds that day's first appearance."""
+    rows = _rows(body("cm-btc"))
+    newest = rows[_carrying(rows, HOLDER)[-1]]
+    day = date.fromisoformat(newest["time"][:10]) + timedelta(days=1)
+    rows.append({"asset": "btc", "time": f"{day.isoformat()}T00:00:00.000000000Z", HOLDER: newest[HOLDER]})
+    published = build_record(tmp_path, [(T0, {}), (T0 + 96 * HOUR, {}), (T0 + 99 * HOUR, {"cm-btc": _stream(rows)})])
+    versions, coverage, _ = derive_record(tmp_path / "record")
+    assert ["*", "newest"] in _fetch(published[1], "cm-btc")["check"]["metrics_failed"]
+    first, second = (_at(coverage, i).filter(pl.col("series") == f"cm/btc/{HOLDER}") for i in (0, 1))
+    assert second.select("evidence", "first_day", "last_day", "days").rows() == [
+        (False, first["first_day"].item(), first["last_day"].item(), first["days"].item())
+    ]
+    (version,) = _day(versions, f"cm/btc/{HOLDER}", day).iter_rows(named=True)
+    assert (version["kind"], version["appeared_after"]) == ("first_publication", _ended(published[0], "cm-btc"))
+
+
 @pytest.mark.parametrize(("third", "kind"), [(_newest_withdrawn, "retraction"), (_newest_restated, "restatement")])
 def test_q3s_lower_end_for_a_held_day_passes_over_a_body_whose_newest_day_went_back(tmp_path, third, kind):
     """The third body's newest day goes back, an ok body whose absences are evidence: it shows the base's newest day
