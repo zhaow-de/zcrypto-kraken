@@ -403,14 +403,14 @@ class Procs:
         return _nft(*args)
 
     def stop_all(self) -> None:
-        """Every process stopped on its own, one that will not stop sparing the rest, then the table deleted whatever
-        was raised; the first failure is raised once all that is done."""
-        failures: list[Exception] = []
+        """Every process stopped on its own, one that will not stop, or a signal's SystemExit during one stop, sparing
+        the rest, then the table deleted; the first failure is raised once all that is done."""
+        failures: list[BaseException] = []
         try:
             for process in reversed(self.processes):
                 try:
                     _stop(process)
-                except Exception as exc:
+                except BaseException as exc:
                     failures.append(exc)
             self.processes.clear()
         finally:

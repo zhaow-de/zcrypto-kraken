@@ -413,12 +413,19 @@ def test_a_process_that_will_not_stop_leaves_the_rest_of_the_teardown_to_run(mon
             sleeper.kill()
             sleeper.wait()
     signalled = harness.Procs("start")
+    second = signalled.start([sys.executable, "-c", "import time; time.sleep(30)", str(tmp_path)])
     signalled.processes.append(_Stuck())
-    signalled.processes[0].wait = lambda timeout=None: sys.exit(143)
+    signalled.processes[1].wait = lambda timeout=None: sys.exit(143)
     signalled.table_made = True
-    with pytest.raises(SystemExit):
-        signalled.stop_all()
-    assert deleted[1:] == [("delete", "table", "inet", "start")]
+    try:
+        with pytest.raises(SystemExit):
+            signalled.stop_all()
+        assert second.poll() is not None
+        assert deleted[1:] == [("delete", "table", "inet", "start")]
+    finally:
+        if second.poll() is None:
+            second.kill()
+            second.wait()
 
 
 def test_a_read_inside_a_window_ends_at_the_windows_end(monkeypatch):
