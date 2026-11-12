@@ -42,7 +42,7 @@ _TREE = [
 NAMES = sorted(row["name"] for row in _TREE)
 CRON = "zcrypto-verify-replay"
 SELF = "zcrypto-hc"
-TWELVE = sorted([*NAMES, SELF])
+CHECKS = sorted([*NAMES, SELF])
 _SECRET_FIELDS = ("uuid", "ping_url", "update_url", "pause_url", "resume_url", "channels")
 _DEFINITION = ("name", "tags", "desc", "grace", "manual_resume", "timeout", "schedule", "tz")
 
@@ -191,7 +191,7 @@ class _Fleet:
         return set(KEYS.values()) | self.clone.secrets()
 
     def moved(self, *names: str) -> None:
-        for name in names or TWELVE:
+        for name in names or CHECKS:
             self.clone.by_name(name).update(status="up", n_pings=12, last_ping="2026-11-08T09:59:00+00:00")
 
 
@@ -210,7 +210,7 @@ def _expected(fleet: _Fleet, definitions: list[dict]) -> list[dict]:
     return bodies
 
 
-def _the_twelve(fleet: _Fleet) -> list[dict]:
+def _the_checks(fleet: _Fleet) -> list[dict]:
     return _expected(fleet, [*_definitions(), hp.ZCRYPTO_HC])
 
 
@@ -221,7 +221,7 @@ def fleet(monkeypatch, tmp_path) -> _Fleet:
 
 @pytest.fixture
 def provisioned(fleet, capsys) -> _Fleet:
-    """Twelve checks on the service, each pinged and up, the fixture fetched from it."""
+    """Every check on the service, each pinged and up, the fixture fetched from it."""
     assert _run(capsys, "apply")[0] == 0
     fleet.moved()
     assert _run(capsys, "fixture")[0] == 0
@@ -239,11 +239,11 @@ def test_the_service_own_check_is_defined_here_with_its_runbook():
     assert "Runbook: infra/runbooks/hc.md#hc-dark" in hp.ZCRYPTO_HC["desc"]
 
 
-def test_apply_writes_the_eleven_the_fixture_defines_and_the_service_own_check(fleet, capsys):
+def test_apply_writes_the_checks_the_fixture_defines_and_the_service_own_check(fleet, capsys):
     rc, out, err = _run(capsys, "apply")
     assert rc == 0, err
-    assert fleet.creates() == _the_twelve(fleet)
-    assert sorted(c["name"] for c in fleet.clone.checks.values()) == TWELVE
+    assert fleet.creates() == _the_checks(fleet)
+    assert sorted(c["name"] for c in fleet.clone.checks.values()) == CHECKS
 
 
 def test_a_fleet_name_the_fixture_carries_twice_ends_the_run_naming_it(monkeypatch, tmp_path, capsys):
@@ -255,9 +255,9 @@ def test_a_fleet_name_the_fixture_carries_twice_ends_the_run_naming_it(monkeypat
 
 def test_every_create_asks_for_its_name_to_be_unique(fleet, capsys):
     assert _run(capsys, "apply")[0] == 0
-    assert [body.get("unique") for body in fleet.creates()] == [["name"]] * 12
+    assert [body.get("unique") for body in fleet.creates()] == [["name"]] * 13
     assert _run(capsys, "apply")[0] == 0
-    assert len(fleet.clone.checks) == 12, "a second run updates and never duplicates"
+    assert len(fleet.clone.checks) == 13, "a second run updates and never duplicates"
 
 
 def test_every_create_resumes_on_its_next_ping_whatever_the_fixture_holds(monkeypatch, tmp_path, capsys):
@@ -265,7 +265,7 @@ def test_every_create_resumes_on_its_next_ping_whatever_the_fixture_holds(monkey
     definitions[0]["manual_resume"] = True
     fleet = _Fleet(monkeypatch, tmp_path, definitions=definitions)
     assert _run(capsys, "apply")[0] == 0
-    assert [body.get("manual_resume") for body in fleet.creates()] == [False] * 12
+    assert [body.get("manual_resume") for body in fleet.creates()] == [False] * 13
 
 
 def test_every_create_carries_the_one_slack_integration_and_no_other(fleet, capsys):
@@ -299,10 +299,10 @@ def test_a_read_back_differing_from_its_definition_ends_the_run_naming_the_check
     assert rc == 2
     (line,) = [line for line in err.splitlines() if name in line]
     assert field in line
-    assert not [n for n in TWELVE if n != name and n in err], err
+    assert not [n for n in CHECKS if n != name and n in err], err
 
 
-def test_a_fixture_fetched_from_the_service_writes_the_same_twelve_again(fleet, capsys):
+def test_a_fixture_fetched_from_the_service_writes_the_same_checks_again(fleet, capsys):
     assert _run(capsys, "apply")[0] == 0
     assert _run(capsys, "fixture")[0] == 0
     first = fleet.creates()
@@ -310,11 +310,11 @@ def test_a_fixture_fetched_from_the_service_writes_the_same_twelve_again(fleet, 
     fleet.clone.checks.clear()
     rc, out, err = _run(capsys, "apply")
     assert rc == 0, err
-    assert fleet.creates() == first == _the_twelve(fleet)
+    assert fleet.creates() == first == _the_checks(fleet)
 
 
-def test_the_committed_fixture_reads_as_the_twelve_definitions_apply_writes():
-    assert [definition["name"] for definition in hp._twelve("the fixture")] == TWELVE
+def test_the_committed_fixture_reads_as_the_definitions_apply_writes():
+    assert [definition["name"] for definition in hp._checks("the fixture")] == CHECKS
 
 
 def test_two_slack_integrations_are_refused_before_any_write(fleet, capsys):
@@ -337,7 +337,7 @@ def test_an_integrations_listing_without_the_disabled_flag_stops_apply_and_statu
     for verb in ("apply", "status"):
         rc, out, err = _run(capsys, verb)
         assert rc == 2 and "v6.2.0" in err and fleet.slack[:8] in err and fleet.slack not in err + out, (verb, err)
-        assert not [name for name in TWELVE if name in out], (verb, out)
+        assert not [name for name in CHECKS if name in out], (verb, out)
     assert fleet.creates() == []
 
 
@@ -349,7 +349,7 @@ def test_a_disabled_slack_integration_stops_apply_and_status_naming_its_kind_and
         rc, out, err = _run(capsys, verb)
         assert rc == 2, verb
         assert "slack" in err and fleet.slack[:8] in err and fleet.slack not in err + out, (verb, err)
-        assert not [name for name in TWELVE if name in out], (verb, out)
+        assert not [name for name in CHECKS if name in out], (verb, out)
     assert fleet.creates() == []
 
 
@@ -362,7 +362,7 @@ def test_the_fixture_is_the_definitions_sorted_by_name_none_resuming_by_hand(mon
     rc, out, err = _run(capsys, "fixture")
     assert rc == 0, err
     rows = json.loads(fleet.fixture.read_text())
-    assert [row["name"] for row in rows] == TWELVE
+    assert [row["name"] for row in rows] == CHECKS
     for row in rows:
         period = ("timeout",) if row["name"] != CRON else ("schedule", "tz")
         assert set(row) == {"name", "tags", "desc", "grace", "manual_resume", *period}, row
@@ -389,8 +389,8 @@ def test_status_reads_a_new_check_unmoved_and_a_pinged_up_one_moved(fleet, capsy
     fleet.moved("zcrypto-capture")
     rc, out, err = _run(capsys, "status")
     assert rc == 0, err
-    lines = {line.split()[0]: line for line in out.splitlines() if line.split() and line.split()[0] in TWELVE}
-    assert sorted(lines) == TWELVE
+    lines = {line.split()[0]: line for line in out.splitlines() if line.split() and line.split()[0] in CHECKS}
+    assert sorted(lines) == CHECKS
     assert lines["zcrypto-capture"].endswith("moved") and " up " in lines["zcrypto-capture"]
     assert not lines["zcrypto-panel"].endswith("moved") and " new " in lines["zcrypto-panel"]
 

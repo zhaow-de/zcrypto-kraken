@@ -29,6 +29,7 @@ ops_verified_replay_healthcheck_url: "{{ hc_ping_base }}/zcrypto-verified-replay
 ops_archive_pull_healthcheck_url: "{{ hc_ping_base }}/zcrypto-archive-pull"
 ops_panel_healthcheck_url: "{{ hc_ping_base }}/zcrypto-panel"
 ops_grafana_watchdog_healthcheck_url: "{{ hc_ping_base }}/zcrypto-grafana-watchdog"
+ops_vintage_record_healthcheck_url: "{{ hc_ping_base }}/zcrypto-vintage-record"
 
 # The operator's fleet-wide deploy pubkey, from the same files/ dir group_vars/capture_host reads —
 # a key rotation edits the .pub once. The bootstrap play installs it for zcrypto-deploy.
