@@ -75,7 +75,7 @@ The `.env` next to `compose.yaml` is **rendered in full by the `nas` role** (`ro
 
 Every pull channel shares one shape, so each row below says only what is particular to it:
 
-- Its `*_SOURCE` is an rsync source spec `zcrypto-data@<host>:` — the m2m data user, never the admin `zcrypto-deploy` (spec 00057) — whose `rrsync -ro` forced command pins the remote subtree, so the client-side path is ignored. The ops-node channels (liquidations, panel, reconciled, hot, vintages) are set up in `infra/ops/README.md`.
+- Its `*_SOURCE` is an rsync source spec `zcrypto-data@<host>:` — the m2m data user, never the admin `zcrypto-deploy` (spec 00057) — whose `rrsync -ro` forced command pins the remote subtree, so the client-side path is ignored. The ops-node channels (liquidations, panel, reconciled, hot) are set up in `infra/ops/README.md`; the vintages channel's ops side is the ops role's task `install the vintages pull key (rrsync -ro) on zcrypto-data`, and its NAS key is placed by bootstrap step 3.
 - Its `*_SSH_KEY` is that channel's own least-privilege keypair under `keys/`, so a leaked key exposes one channel. `cli/archive/command.py` reads a single `ARCHIVE_SSH_KEY` from the environment and the entrypoint sets it per subprocess call, which is why each channel needs its own variable here. Every source's host key is pinned in the one shared `keys/known_hosts` (bootstrap step 4).
 - Its `*_SSH_PORT` is scoped to that pull the same way: the ops node is a home-LAN box on port **22**, while the VPS channels take `ARCHIVE_SSH_PORT`, 10022.
 - Its ssh is pinned to IPv4 (`AddressFamily=inet`), the NAS having no IPv6 route.
