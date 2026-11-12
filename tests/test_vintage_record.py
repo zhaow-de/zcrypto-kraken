@@ -140,6 +140,16 @@ def test_a_tick_publishes_every_body_as_served(tmp_path):
     assert [_mode(tick_dir.parents[n]) for n in range(3)] == [0o755] * 3
 
 
+def test_the_date_directories_are_0755_under_a_narrow_umask(tmp_path):
+    previous = os.umask(0o027)
+    try:
+        published = run_tick(tmp_path, T0)
+    finally:
+        os.umask(previous)
+    assert [_mode(published.dir.parents[n]) for n in range(4)] == [0o755] * 4
+    assert _mode(published.dir) == 0o555
+
+
 def test_tick_json_is_compact_sorted_with_a_trailing_newline(tmp_path):
     first = run_tick(tmp_path, T0)
     retried = [Reply(503, b"busy", reason="Service Unavailable"), Reply(200, body("fng"))]
