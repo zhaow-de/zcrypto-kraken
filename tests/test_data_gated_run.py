@@ -635,8 +635,13 @@ def test_a_real_directory_under_the_worktrees_data_is_left_by_the_unlink_and_rep
     _no_worktree_left(repo)
 
 
-def test_the_runner_takes_cli_from_its_own_checkout_under_an_interpreter_with_no_site_packages():
-    proc = subprocess.run([sys.executable, "-S", str(_SCRIPT), "--help"], capture_output=True, text=True)
+def test_the_runner_takes_cli_from_its_own_checkout_under_an_interpreter_with_no_site_packages(tmp_path):
+    decoy = tmp_path / "another-checkout" / "cli"
+    decoy.mkdir(parents=True)
+    (decoy / "__init__.py").write_text("")
+    (decoy / "sealed.py").write_text("raise ImportError('cli taken from another checkout')\n")
+    env = {**os.environ, "PYTHONPATH": str(decoy.parent)}
+    proc = subprocess.run([sys.executable, "-S", str(_SCRIPT), "--help"], capture_output=True, text=True, env=env)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert proc.stdout.startswith("usage: data-gated-run.py")
 
