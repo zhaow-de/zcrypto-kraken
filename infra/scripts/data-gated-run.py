@@ -5,14 +5,12 @@ CI deselects the `retired` cases and skips every `skipif(not <data>.exists())` t
 `infra/systemd/zcrypto-data-gated-tests.timer` fires nightly, is the one with the whole suite in scope and so the one
 coverage report. The suite runs in a detached worktree at the checkout's HEAD as the run started, under
 `<repo>/.tmp/data-gated-run/`, every entry of the checkout's `data/` symlinked into the worktree's: a pull or merge into
-the checkout while the suite runs moves nothing under it, and `sha` names what ran. The worktree goes whatever happened;
-one a night left behind is swept at the next start.
+the checkout while the suite runs moves nothing under it, and `sha` names what ran.
 It writes `.local/data-gated-runs/<UTC stamp>.json` plus `latest.json` in the checkout. A run in which the whole family
-skipped for want of data is exactly the night this exists to catch, so such a skip is a failure, and a checkout with no
-dataset under `data/` is refused before pytest starts. A run whose summary cannot be parsed -- a usage error, a timeout,
-an interrupted session -- still writes a result, because `zcrypto-daily-ops` has to tell an absent file from a failed
-run. `-rfE` rather than the bare `-rf`: an error at setup is a test that did not run, and its id is as much a finding as
-a failure's.
+skipped for want of data is exactly the night this exists to catch, so such a skip is a failure. A run whose summary
+cannot be parsed -- a usage error, a timeout, an interrupted session -- still writes a result, because
+`zcrypto-daily-ops` has to tell an absent file from a failed run. `-rfE` rather than the bare `-rf`: an error at setup
+is a test that did not run, and its id is as much a finding as a failure's.
 
 The coverage upload is cut off after UPLOAD_TIMEOUT_S: the unit is a oneshot, and a run that never ends writes no result
 and holds off the next night's.
@@ -39,6 +37,10 @@ import sys
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+# A shebang run may have no venv, and a venv's `.pth` names whichever checkout installed it.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from cli.sealed import open_sealed_directories  # noqa: E402
 
 # Eight xdist workers: serial, the suite outgrew the three-hour bound. `worksteal`, never the default `load`, which
 # sends a block of consecutive ids to one worker and never takes it back, so the replay cases run back to back there
@@ -272,6 +274,7 @@ def remove_worktree(repo: Path, worktree: Path) -> dict:
                 unlinked.append(entry.name)
             except OSError as exc:
                 faults.append(f"unlink {entry.name}: {exc}")
+    faults.extend(open_sealed_directories(worktree))
     removed = _git(repo, "worktree", "remove", "--force", str(worktree))
     if removed.returncode != 0:
         faults.append(f"git worktree remove exited {removed.returncode}: {removed.stderr.strip()}")

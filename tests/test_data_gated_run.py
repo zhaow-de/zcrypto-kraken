@@ -1,13 +1,14 @@
 """The nightly runner's parser and result shape: pytest's own summary lines, then the runner driven
 end to end over a synthetic checkout under `tmp_path` -- never this repo's suite or its `.local/` --
 through a `uv` shim that records what it was handed and runs the suite with this test's interpreter.
-The coverage upload is faked in this process; a run of the script goes through `_run`, which passes `--no-coverage`."""
+The coverage upload is faked in this process; every run of the script passes `--no-coverage` or `--help`."""
 
 from __future__ import annotations
 
 import importlib.util
 import json
 import os
+import stat
 import subprocess
 import sys
 import textwrap
@@ -632,6 +633,51 @@ def test_a_real_directory_under_the_worktrees_data_is_left_by_the_unlink_and_rep
     assert (repo / "data" / "ohlc-full" / "manifest.json").read_text() == "{}\n", "the dataset behind the link is whole"
     assert latest["data_listing_intact"] is True and latest["ok"] is True
     _no_worktree_left(repo)
+
+
+def test_the_runner_takes_cli_from_its_own_checkout_under_an_interpreter_with_no_site_packages(tmp_path):
+    decoy = tmp_path / "another-checkout" / "cli"
+    decoy.mkdir(parents=True)
+    (decoy / "__init__.py").write_text("")
+    (decoy / "sealed.py").write_text("raise ImportError('cli taken from another checkout')\n")
+    env = {**os.environ, "PYTHONPATH": str(decoy.parent)}
+    proc = subprocess.run([sys.executable, "-S", str(_SCRIPT), "--help"], capture_output=True, text=True, env=env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert proc.stdout.startswith("usage: data-gated-run.py")
+
+
+def test_a_tree_the_suite_sealed_is_removed_and_a_sealed_directory_behind_a_link_keeps_its_mode(tmp_path):
+    outside = tmp_path / "outside-sealed"
+    (outside / "inner").mkdir(parents=True)
+    outside.chmod(0o555)
+    try:
+        repo = _checkout(
+            tmp_path,
+            f"""\
+            import os
+            def test_seals_its_own_output():
+                os.makedirs(".tmp/gen-1/part/head")
+                open(".tmp/gen-1/part/head/rows", "w").write("x")
+                os.chmod(".tmp/gen-1/part/head", 0o555)
+                os.chmod(".tmp/gen-1/part", 0o555)
+                os.chmod(".tmp/gen-1", 0o555)
+                os.makedirs(".tmp/closed")
+                os.chmod(".tmp/closed", 0o000)
+                os.makedirs(".tmp/no-search")
+                open(".tmp/no-search/rows", "w").write("x")
+                os.chmod(".tmp/no-search", 0o600)
+                os.symlink({str(outside)!r}, ".tmp/link-to-outside")
+            """,
+        )
+        proc = _run(tmp_path, repo)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        latest = _latest(repo)
+        assert latest["teardown"]["removed"] is True and latest["teardown"]["error"] is None
+        assert latest["ok"] is True
+        assert stat.S_IMODE(outside.stat().st_mode) == 0o555 and (outside / "inner").is_dir()
+        _no_worktree_left(repo)
+    finally:
+        outside.chmod(0o755)
 
 
 def test_a_stale_worktree_from_a_night_that_never_tore_down_is_swept_at_start_and_recorded(tmp_path):

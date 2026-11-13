@@ -18,6 +18,7 @@ os.environ["GIT_CEILING_DIRECTORIES"] = str(TMP_ROOT)
 
 import cli.engine.cycle as cycle
 from cli.registry import attempts
+from cli.sealed import open_sealed_directories
 from tests.retired_subjects import names_a_retired_subject
 
 _REAL_LOG_PATH, _REAL_ALLOWED_LOG_IDS = attempts.log_path, attempts.allowed_log_ids
@@ -230,6 +231,13 @@ def pytest_testnodedown(node, error):
     # Under xdist only the workers collect, and each deselects the same cases: one worker's count is the run's.
     count = getattr(node, "workeroutput", {}).get("slow_deselected", 0)
     node.config.stash[_SLOW_DESELECTED] = max(count, node.config.stash.get(_SLOW_DESELECTED, 0))
+
+
+def pytest_sessionfinish(session):
+    # A test may seal what it writes; left sealed under a checkout's `.tmp/`, it stops `git worktree remove` on every
+    # reader's and the nightly's worktree.
+    if (basetemp := getattr(getattr(session.config, "_tmp_path_factory", None), "_basetemp", None)) is not None:
+        open_sealed_directories(basetemp)
 
 
 def pytest_terminal_summary(terminalreporter, config):
