@@ -256,6 +256,27 @@ def link_datasets(repo: Path, worktree: Path, deadline: datetime) -> list[str]:
     return linked
 
 
+def _open_sealed_directories(worktree: Path) -> list[str]:
+    """Owner rwx on every directory under the worktree, so `git worktree remove` can empty one a test sealed (the vintage
+    generations are 0o555 by design). A symlink is never followed: a link into `data/` or out of the tree keeps its target's
+    mode."""
+    faults: list[str] = []
+    stack = [worktree]
+    while stack:
+        directory = stack.pop()
+        try:
+            mode = directory.lstat().st_mode
+            if not stat.S_ISDIR(mode):
+                continue
+            if mode & 0o700 != 0o700:
+                os.chmod(directory, stat.S_IMODE(mode) | 0o700)
+            with os.scandir(directory) as entries:
+                stack.extend(Path(e.path) for e in entries if e.is_dir(follow_symlinks=False))
+        except OSError as exc:
+            faults.append(f"chmod {directory}: {exc}")
+    return faults
+
+
 def remove_worktree(repo: Path, worktree: Path) -> dict:
     """Each symlink in the worktree's `data/` unlinked, another entry named in `left`, then the worktree removed; never a raise."""
     unlinked: list[str] = []
@@ -272,6 +293,7 @@ def remove_worktree(repo: Path, worktree: Path) -> dict:
                 unlinked.append(entry.name)
             except OSError as exc:
                 faults.append(f"unlink {entry.name}: {exc}")
+    faults.extend(_open_sealed_directories(worktree))
     removed = _git(repo, "worktree", "remove", "--force", str(worktree))
     if removed.returncode != 0:
         faults.append(f"git worktree remove exited {removed.returncode}: {removed.stderr.strip()}")
