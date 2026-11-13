@@ -250,8 +250,8 @@ def _open_sealed_directories(root: Path) -> None:
 
 
 def pytest_sessionfinish(session):
-    # A test may seal what it writes (the vintage generations are 0o555 by design); left sealed under a checkout's
-    # `.tmp/`, it stops `git worktree remove` on every reader's and the nightly's worktree.
+    # A test may seal what it writes; left sealed under a checkout's `.tmp/`, it stops `git worktree remove` on every
+    # reader's and the nightly's worktree.
     if (basetemp := getattr(getattr(session.config, "_tmp_path_factory", None), "_basetemp", None)) is not None:
         _open_sealed_directories(basetemp)
 
