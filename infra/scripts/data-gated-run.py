@@ -38,6 +38,8 @@ import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from cli.sealed import open_sealed_directories
+
 # Eight xdist workers: serial, the suite outgrew the three-hour bound. `worksteal`, never the default `load`, which
 # sends a block of consecutive ids to one worker and never takes it back, so the replay cases run back to back there
 # while the other workers idle. `--durations` feeds `parse_slowest`.
@@ -254,26 +256,6 @@ def link_datasets(repo: Path, worktree: Path, deadline: datetime) -> list[str]:
     return linked
 
 
-def _open_sealed_directories(worktree: Path) -> list[str]:
-    """Owner rwx on every directory under the worktree, so `git worktree remove` can empty one a test sealed (the vintage
-    generations are 0o555 by design)."""
-    faults: list[str] = []
-    stack = [worktree]
-    while stack:
-        directory = stack.pop()
-        try:
-            mode = directory.lstat().st_mode
-            if not stat.S_ISDIR(mode):
-                continue
-            if mode & 0o700 != 0o700:
-                os.chmod(directory, stat.S_IMODE(mode) | 0o700)
-            with os.scandir(directory) as entries:
-                stack.extend(Path(e.path) for e in entries if e.is_dir(follow_symlinks=False))
-        except OSError as exc:
-            faults.append(f"open {directory}: {exc}")
-    return faults
-
-
 def remove_worktree(repo: Path, worktree: Path) -> dict:
     """Each symlink in the worktree's `data/` unlinked, another entry named in `left`, then the worktree removed; never a raise."""
     unlinked: list[str] = []
@@ -290,7 +272,7 @@ def remove_worktree(repo: Path, worktree: Path) -> dict:
                 unlinked.append(entry.name)
             except OSError as exc:
                 faults.append(f"unlink {entry.name}: {exc}")
-    faults.extend(_open_sealed_directories(worktree))
+    faults.extend(open_sealed_directories(worktree))
     removed = _git(repo, "worktree", "remove", "--force", str(worktree))
     if removed.returncode != 0:
         faults.append(f"git worktree remove exited {removed.returncode}: {removed.stderr.strip()}")
