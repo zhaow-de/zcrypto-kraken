@@ -38,8 +38,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-# The script's own checkout supplies `cli` whatever launched it: a shebang run has no venv, and a venv's `.pth` names
-# whichever checkout installed it.
+# A shebang run may have no venv, and a venv's `.pth` names whichever checkout installed it.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from cli.sealed import open_sealed_directories  # noqa: E402
 

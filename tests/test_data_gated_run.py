@@ -1,7 +1,7 @@
 """The nightly runner's parser and result shape: pytest's own summary lines, then the runner driven
 end to end over a synthetic checkout under `tmp_path` -- never this repo's suite or its `.local/` --
 through a `uv` shim that records what it was handed and runs the suite with this test's interpreter.
-The coverage upload is faked in this process; a run of the script goes through `_run`, which passes `--no-coverage`."""
+The coverage upload is faked in this process; every run of the script passes `--no-coverage` or `--help`."""
 
 from __future__ import annotations
 
