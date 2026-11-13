@@ -6,8 +6,8 @@ from pathlib import Path
 
 
 def open_sealed_directories(root: Path) -> list[str]:
-    """Owner rwx on every directory under `root`, never through a symlink, so a tree a test sealed can be deleted: the
-    data-gated runner's worktree, a pytest session's basetemp. One fault string per directory it could not open."""
+    """Owner rwx on every directory under `root`, so a tree a test sealed can be deleted; one fault string per directory
+    it could not open."""
     faults: list[str] = []
     stack = [root]
     while stack:
