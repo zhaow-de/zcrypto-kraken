@@ -652,6 +652,9 @@ def test_a_tree_the_suite_sealed_is_removed_and_a_sealed_directory_behind_a_link
                 os.chmod(".tmp/gen-1", 0o555)
                 os.makedirs(".tmp/closed")
                 os.chmod(".tmp/closed", 0o000)
+                os.makedirs(".tmp/no-search")
+                open(".tmp/no-search/rows", "w").write("x")
+                os.chmod(".tmp/no-search", 0o600)
                 os.symlink({str(outside)!r}, ".tmp/link-to-outside")
             """,
         )
