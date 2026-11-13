@@ -32,32 +32,32 @@ def test_seals_what_it_writes(tmp_path):
 
 
 @pytest.mark.parametrize("workers", [["-p", "no:xdist"], ["-n", "2"]], ids=["serial", "xdist"])
-def test_a_session_leaves_no_sealed_directory_under_its_basetemp_and_a_linked_one_keeps_its_mode(tmp_path, workers):
+def test_a_session_leaves_no_sealed_directory_under_its_default_basetemp_and_a_linked_one_keeps_its_mode(tmp_path, workers):
     tree = tmp_path / "tree"
     (tree / "tests").mkdir(parents=True)
     (tree / "tests" / "conftest.py").write_text(CONFTEST.read_text())
     outside = tmp_path / "outside-sealed"
     (outside / "inner").mkdir(parents=True)
     (tree / "tests" / "test_seal.py").write_text(_sealing_test(outside))
-    basetemp = tmp_path / "basetemp"
     outside.chmod(0o555)
     try:
         proc = subprocess.run(
             [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *workers, "--rootdir", str(tree)]
-            + ["--basetemp", str(basetemp), "tests/test_seal.py"],
+            + ["tests/test_seal.py"],
             cwd=tree,
             capture_output=True,
             text=True,
         )
         assert proc.returncode == 0, proc.stdout + proc.stderr
+        temp_root = tree / ".tmp"
         sealed = [
             Path(top) / name
-            for top, dirs, _ in os.walk(basetemp)
+            for top, dirs, _ in os.walk(temp_root)
             for name in dirs
             if not (Path(top) / name).is_symlink() and stat.S_IMODE((Path(top) / name).stat().st_mode) & 0o700 != 0o700
         ]
         assert sealed == []
-        assert any(p.name == "no-search" for p in basetemp.rglob("no-search")), "the sealing test ran under this basetemp"
+        assert list(temp_root.glob("pytest-of-*/pytest-*/**/no-search")), "the sealing test ran under the default basetemp"
         assert stat.S_IMODE(outside.stat().st_mode) == 0o555 and (outside / "inner").is_dir()
     finally:
         outside.chmod(0o755)
