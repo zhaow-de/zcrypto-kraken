@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -230,6 +231,29 @@ def pytest_testnodedown(node, error):
     # Under xdist only the workers collect, and each deselects the same cases: one worker's count is the run's.
     count = getattr(node, "workeroutput", {}).get("slow_deselected", 0)
     node.config.stash[_SLOW_DESELECTED] = max(count, node.config.stash.get(_SLOW_DESELECTED, 0))
+
+
+def _open_sealed_directories(root: Path) -> None:
+    stack = [root]
+    while stack:
+        directory = stack.pop()
+        try:
+            mode = directory.lstat().st_mode
+            if not stat.S_ISDIR(mode):
+                continue
+            if mode & 0o700 != 0o700:
+                os.chmod(directory, stat.S_IMODE(mode) | 0o700)
+            with os.scandir(directory) as entries:
+                stack.extend(Path(e.path) for e in entries if e.is_dir(follow_symlinks=False))
+        except OSError:
+            continue
+
+
+def pytest_sessionfinish(session):
+    # A test may seal what it writes (the vintage generations are 0o555 by design); left sealed under a checkout's
+    # `.tmp/`, it stops `git worktree remove` on every reader's and the nightly's worktree.
+    if (basetemp := getattr(getattr(session.config, "_tmp_path_factory", None), "_basetemp", None)) is not None:
+        _open_sealed_directories(basetemp)
 
 
 def pytest_terminal_summary(terminalreporter, config):
