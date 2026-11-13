@@ -38,7 +38,10 @@ import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from cli.sealed import open_sealed_directories
+# The script's own checkout supplies `cli` whatever launched it: a shebang run has no venv, and a venv's `.pth` names
+# whichever checkout installed it.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from cli.sealed import open_sealed_directories  # noqa: E402
 
 # Eight xdist workers: serial, the suite outgrew the three-hour bound. `worksteal`, never the default `load`, which
 # sends a block of consecutive ids to one worker and never takes it back, so the replay cases run back to back there

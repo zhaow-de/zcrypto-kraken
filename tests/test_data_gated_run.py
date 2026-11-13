@@ -635,6 +635,12 @@ def test_a_real_directory_under_the_worktrees_data_is_left_by_the_unlink_and_rep
     _no_worktree_left(repo)
 
 
+def test_the_runner_takes_cli_from_its_own_checkout_under_an_interpreter_with_no_site_packages():
+    proc = subprocess.run([sys.executable, "-S", str(_SCRIPT), "--help"], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert proc.stdout.startswith("usage: data-gated-run.py")
+
+
 def test_a_tree_the_suite_sealed_is_removed_and_a_sealed_directory_behind_a_link_keeps_its_mode(tmp_path):
     outside = tmp_path / "outside-sealed"
     (outside / "inner").mkdir(parents=True)
