@@ -113,3 +113,15 @@ The book equals the summed sleeve gross ÷ 6 on both sides, to within one ulp. T
 | **final book gross** (Σ\|target weight\|, governed) | **0.0512631254923007** | **0.013727824636507742** |
 
 The book equals the summed sleeve gross ÷ 6 on both sides, to within one ulp. The band in force (`docs/research/14.phase6-decisions.md`, rung 3's gate read 6) was derived over the box's window, which carries no stretch with B flat, so it does not carry this composition: `infra/runbooks/engine.md`'s `zcrypto-engine-sleeve-count-changed` step 3 re-derives it, and the expected order notionals, before the next go-live decision reads them.
+
+### 2026-11-13 — A2 goes flat; the book runs on A1 alone
+
+| | last pre-transition cycle<br>2026-11-13 00Z | first post-transition cycle<br>2026-11-13 04Z |
+| --- | --- | --- |
+| `zcrypto_engine_active_sleeves` | 2 | **1** |
+| `sleeve_gross{sleeve="B"}` | 0 | 0 |
+| `sleeve_gross{sleeve="A1"}` | 0.057346588290275925 | 0.057346588290275925 |
+| `sleeve_gross{sleeve="A2"}` | 0.008051960364055574 | 0 |
+| **final book gross** (Σ\|target weight\|, governed) | **0.01089975810905525** | **0.009557764715045988** |
+
+The book equals the summed sleeve gross ÷ 6 on both sides, to within one ulp. A1 did not move at the step, so A2's is the book's whole fall, and the only target it moved was AVAX/EUR's. This is the first composition on A1 alone the ledger records. The band in force (`docs/research/14.phase6-decisions.md`, rung 3's gate read 6) was derived over the box's window, which carries no stretch with B flat, so it does not carry this composition either: `infra/runbooks/engine.md`'s `zcrypto-engine-sleeve-count-changed` step 3 re-derives it, and the expected order notionals, before the next go-live decision reads them — on the owner's word of 2026-11-14, at the weekly read of 2026-11-16.
