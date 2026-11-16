@@ -846,7 +846,7 @@ def _open_order(client_order_id, *, is_reduce_only=False, filled_qty=0.0, venue_
     )
 
 
-def _report(txid, status, *, filled_qty="0", quantity="0.001"):
+def _report(txid, status, *, filled_qty="0", quantity="0.001", cancel_reason=None):
     """A REAL `OrderStatusReport` in the shape the adapter builds from Kraken's order rows -- which
     carries no client order id, ever: the txid is the only name the venue's answer has."""
     return OrderStatusReport(
@@ -863,13 +863,12 @@ def _report(txid, status, *, filled_qty="0", quantity="0.001"):
         ts_last=0,
         ts_init=0,
         client_order_id=None,
+        cancel_reason=cancel_reason,
     )
 
 
 class _VenueOrders:
-    """The executor's `venue_orders` reader: answers `reports`, or raises `raises`, and records the
-    `since` of every call -- the startup pass reads once, and the re-read pass once more per arm
-    over the rows it minted terminal; any other second call is a finding."""
+    """The executor's `venue_orders` reader: answers `reports`, or raises `raises`, and records the `since` of every call."""
 
     def __init__(self, *reports, raises=None):
         self.reports = list(reports)
@@ -3521,9 +3520,12 @@ def test_a_fill_pair_that_sums_an_ulp_short_still_terminates_the_intent(tmp_path
 
 
 def test_a_cancel_rejection_parks_the_intent_ambiguous_and_halts_the_plan(tmp_path):
-    """The venue positively says the cancel failed, so the order may still rest. Nothing may be
-    submitted against a position this process can no longer describe."""
-    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)])
+    """The venue positively says the cancel failed, and Kraken's order read does not return the order, so it may
+    still rest. Nothing may be submitted against a position this process can no longer describe."""
+    venue = _VenueOrders()
+    ex, client, clock = _resting_executor(
+        tmp_path, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)], venue_orders=venue
+    )
     ex.on_order_event(_accepted(client.last_order_id))
     (exec_dir(tmp_path) / KILL_FILE).touch()
     clock.now = NOW + timedelta(seconds=5)
@@ -3533,7 +3535,7 @@ def test_a_cancel_rejection_parks_the_intent_ambiguous_and_halts_the_plan(tmp_pa
 
     ex.on_order_event(_event(OrderCancelRejected, client_order_id=client.last_order_id, reason="EOrder:Unknown order"))
 
-    assert len(client.submitted) == 1
+    assert len(client.submitted) == 1 and venue.calls == [_boundary(NOW) - timedelta(hours=1)]
     assert _intent_outcome(tmp_path) == "ambiguous"
     # The order may still rest, so the row stays OPEN for re-attach -- never a terminal state.
     assert _record(tmp_path)["submitted"][0]["state"] == "accepted"
@@ -3565,6 +3567,458 @@ def test_a_cancel_the_client_denied_before_sending_parks_the_intent_ambiguous_at
     assert _intent_entry(tmp_path, 1)["reasons"] == [
         "not run -- intent 0 ended ambiguous, so the venue state this plan was authorized against is unknown"
     ]
+
+
+def test_an_order_whose_cancel_the_venue_refused_is_open_and_not_in_flight():
+    order = _resting_limit_order("O-1")
+    order.apply(_fill("O-1", 0.4))
+    order.apply(_event(OrderPendingCancel, client_order_id="O-1"))
+    assert order.is_inflight
+    order.apply(_event(OrderCancelRejected, client_order_id="O-1", reason="EOrder:Unknown order"))
+
+    assert (order.status, order.is_inflight, order.is_open) == (OrderStatus.PARTIALLY_FILLED, False, True)
+
+
+# Three lot steps short of the 0.001 ordered.
+_SHORT = 0.00099997
+_INSIGNIFICANT = "Insignificant volume remaining"
+
+
+def _refused_after_a_short_fill(tmp_path, *, raises=None, filled=_SHORT):
+    """A plan of two intents whose first order, filled `filled` of its 0.001 with no terminal event, has its box's
+    cancel out; the venue's orders raise `raises` when given. The refusal is the caller's to deliver."""
+    venue = _VenueOrders(raises=raises)
+    clock = _Clock()
+    client = StubClient()
+    ex = _executor(tmp_path, client=client, clock=clock, venue_orders=venue)
+    _drop_plan(tmp_path, _plan_dict(intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)]))
+    ex.on_timer(clock.now)
+    ex.on_quote(_quote())
+    cid = client.last_order_id
+    ex.on_order_event(_accepted(cid))
+    if filled:
+        _deliver_fill(ex, client, cid, filled)
+    _advance_with_quotes(ex, client, clock, minutes=16)
+    assert client.canceled == [cid] and ex._active.phase == "cancelling"
+    return ex, client, clock, venue, cid
+
+
+def _closed_short(cid, *, filled_qty=str(_SHORT), status=OrderStatus.FILLED):
+    return _report(f"V-{cid}", status, filled_qty=filled_qty, quantity="0.00100000", cancel_reason=_INSIGNIFICANT)
+
+
+def _refuse(ex, cid):
+    ex.on_order_event(_event(OrderCancelRejected, client_order_id=cid, reason="EOrder:Unknown order"))
+
+
+def test_a_refused_cancel_kraken_reports_closed_with_the_recorded_fill_ends_filled_and_the_plan_goes_on(tmp_path):
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    ex, client, clock, venue, cid = _refused_after_a_short_fill(tmp_path)
+    venue.reports = [_closed_short(cid)]
+
+    with _executor_errors(logging.WARNING) as records:
+        _refuse(ex, cid)
+
+    assert [(r.levelno, r.getMessage()) for r in records] == [
+        (
+            logging.WARNING,
+            f"cancel of {cid} was refused by the venue (EOrder:Unknown order), and Kraken reports order V-{cid} closed with "
+            f"0.00099997 of 0.001 filled ({_INSIGNIFICANT}) -- its row reads filled, intent 0 ends filled and the plan goes on; "
+            "the read took 0.0 s",
+        )
+    ]
+    assert venue.calls == [_boundary(NOW) - timedelta(hours=1)]
+    row = _record(tmp_path)["submitted"][0]
+    assert (row["state"], row["filled_qty"]) == ("filled", pytest.approx(_SHORT))
+    assert row["events"][-2]["type"] == "OrderCancelRejected"
+    assert row["events"][-1] == {
+        "event": "venue_closed",
+        "at": clock.now.isoformat(),
+        "venue_order_id": f"V-{cid}",
+        "venue_filled_qty": _SHORT,
+        "venue_qty": 0.001,
+        "reason": _INSIGNIFICANT,
+    }
+    intent = _intent_entry(tmp_path, 0)
+    assert (intent["outcome"], intent["reasons"], intent["filled_qty"]) == ("filled", [], pytest.approx(_SHORT))
+    assert metrics.orders.count("filled") == 1 and "ambiguous" not in metrics.orders
+    assert ex._active is None and client.unsubscribed == ["BTC/EUR.KRAKEN"]
+
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+    ex.on_quote(_quote("ETH/EUR.KRAKEN", bid=2000.0, ask=2000.1))
+    assert [str(order.instrument_id) for order, _ in client.submitted] == ["BTC/EUR.KRAKEN", "ETH/EUR.KRAKEN"]
+    assert _intent_entry(tmp_path, 1)["outcome"] == "pending"
+
+
+@pytest.mark.parametrize("reason", ["EOrder:Unknown order", "EService:Unavailable"])
+def test_a_refused_cancel_settles_whatever_reason_the_venue_gives_for_refusing_it(tmp_path, reason):
+    ex, client, clock, venue, cid = _refused_after_a_short_fill(tmp_path)
+    venue.reports = [_closed_short(cid)]
+
+    ex.on_order_event(_event(OrderCancelRejected, client_order_id=cid, reason=reason))
+
+    assert _intent_entry(tmp_path, 0)["outcome"] == "filled"
+    assert _record(tmp_path)["submitted"][0]["state"] == "filled"
+
+
+def test_a_refused_cancel_of_a_replacement_kraken_reports_closed_ends_its_intent_filled_with_both_orders_fills(tmp_path):
+    venue = _VenueOrders()
+    ex, client, clock = _resting_executor(
+        tmp_path, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)], venue_orders=venue
+    )
+    first = client.last_order_id
+    ex.on_order_event(_accepted(first))
+    _deliver_fill(ex, client, first, 0.0004)
+    ex.on_order_event(_canceled(first))
+    ex.on_quote(_quote())
+    second = client.last_order_id
+    assert second != first
+    ex.on_order_event(_accepted(second))
+    _deliver_fill(ex, client, second, 0.00059997)
+    _advance_with_quotes(ex, client, clock, minutes=16)
+    assert client.canceled == [second]
+    venue.reports = [_report(f"V-{second}", OrderStatus.FILLED, filled_qty="0.00059997", quantity="0.0006")]
+
+    _refuse(ex, second)
+
+    intent = _intent_entry(tmp_path, 0)
+    assert (intent["outcome"], intent["filled_qty"]) == ("filled", pytest.approx(0.00099997))
+
+
+@pytest.mark.parametrize("status", [s for s in OrderStatus.variants() if s != OrderStatus.FILLED], ids=lambda s: s.name)
+def test_a_refused_cancel_kraken_reports_in_any_status_but_filled_stays_ambiguous(tmp_path, status):
+    """Every status but FILLED, enumerated over the library's own `OrderStatus`, each with the fill this engine recorded."""
+    ex, client, clock, venue, cid = _refused_after_a_short_fill(tmp_path)
+    venue.reports = [_closed_short(cid, status=status)]
+
+    with _executor_errors(logging.CRITICAL) as records:
+        _refuse(ex, cid)
+
+    assert records[0].getMessage() == (
+        f"cancel of {cid} was REJECTED by the venue (EOrder:Unknown order), and Kraken reports order V-{cid} {status.name}, "
+        "0.00099997 of 0.001 filled, against the 0.00099997 this engine recorded -- its intent ends ambiguous and the plan "
+        "stops here"
+    )
+    _assert_ambiguous_and_dropped(tmp_path, client)
+
+
+@pytest.mark.parametrize("filled_qty", ["0.00099996", "0.00099998"], ids=["below-the-ledger", "above-the-ledger"])
+def test_a_refused_cancel_kraken_reports_filled_with_another_figure_stays_ambiguous(tmp_path, filled_qty):
+    ex, client, clock, venue, cid = _refused_after_a_short_fill(tmp_path)
+    venue.reports = [_closed_short(cid, filled_qty=filled_qty)]
+
+    with _executor_errors(logging.CRITICAL) as records:
+        _refuse(ex, cid)
+
+    assert records[0].getMessage() == (
+        f"cancel of {cid} was REJECTED by the venue (EOrder:Unknown order), and Kraken reports order V-{cid} FILLED, "
+        f"{float(filled_qty):.12g} of 0.001 filled, against the 0.00099997 this engine recorded -- its intent ends ambiguous "
+        "and the plan stops here"
+    )
+    _assert_ambiguous_and_dropped(tmp_path, client)
+
+
+def test_a_refused_cancel_of_an_unfilled_order_kraken_reports_closed_with_nothing_filled_stays_ambiguous(tmp_path):
+    ex, client, clock, venue, cid = _refused_after_a_short_fill(tmp_path, filled=0.0)
+    venue.reports = [_closed_short(cid, filled_qty="0")]
+
+    with _executor_errors(logging.CRITICAL) as records:
+        _refuse(ex, cid)
+
+    assert records[0].getMessage() == (
+        f"cancel of {cid} was REJECTED by the venue (EOrder:Unknown order), and Kraken reports order V-{cid} FILLED, "
+        "0 of 0.001 filled, against the 0 this engine recorded -- its intent ends ambiguous and the plan stops here"
+    )
+    _assert_ambiguous_and_dropped(tmp_path, client)
+
+
+def _assert_ambiguous_and_dropped(tmp_path, client, *, reason="EOrder:Unknown order"):
+    intent = _intent_entry(tmp_path, 0)
+    assert (intent["outcome"], intent["reasons"]) == ("ambiguous", [f"cancel rejected: {reason}"])
+    row = _record(tmp_path)["submitted"][0]
+    assert (row["state"], row["events"][-1]["type"]) == ("accepted", "OrderCancelRejected")
+    assert _intent_entry(tmp_path, 1)["reasons"] == [
+        "not run -- intent 0 ended ambiguous, so the venue state this plan was authorized against is unknown"
+    ]
+    assert len(client.submitted) == 1
+
+
+def test_a_refused_cancel_kraken_does_not_return_stays_ambiguous(tmp_path):
+    ex, client, clock, venue, cid = _refused_after_a_short_fill(tmp_path)
+    venue.reports = [_report("OOTHER-AAAAA-BBBBBB", OrderStatus.FILLED, filled_qty=str(_SHORT))]
+
+    with _executor_errors(logging.CRITICAL) as records:
+        _refuse(ex, cid)
+
+    assert records[0].getMessage() == (
+        f"cancel of {cid} was REJECTED by the venue (EOrder:Unknown order), and Kraken's order read does not return order "
+        f"V-{cid} -- its intent ends ambiguous and the plan stops here"
+    )
+    _assert_ambiguous_and_dropped(tmp_path, client)
+
+
+def test_a_refused_cancel_whose_read_raises_stays_ambiguous(tmp_path):
+    ex, client, clock, venue, cid = _refused_after_a_short_fill(tmp_path, raises=TimeoutError())
+
+    with _executor_errors(logging.CRITICAL) as records:
+        _refuse(ex, cid)
+
+    assert venue.calls == [_boundary(NOW) - timedelta(hours=1)]
+    assert records[0].getMessage() == (
+        f"cancel of {cid} was REJECTED by the venue (EOrder:Unknown order), and Kraken's orders could not be read "
+        "(TimeoutError) -- its intent ends ambiguous and the plan stops here"
+    )
+    _assert_ambiguous_and_dropped(tmp_path, client)
+
+
+def test_a_refused_cancel_with_no_acceptance_reads_nothing_and_stays_ambiguous(tmp_path):
+    venue = _VenueOrders()
+    ex, client, clock = _resting_executor(
+        tmp_path, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)], venue_orders=venue
+    )
+    cid = client.last_order_id
+    _advance_with_quotes(ex, client, clock, minutes=16)
+
+    with _executor_errors(logging.CRITICAL) as records:
+        _refuse(ex, cid)
+
+    assert venue.calls == []
+    assert records[0].getMessage() == (
+        f"cancel of {cid} was REJECTED by the venue (EOrder:Unknown order), and no Kraken order id reached this engine for "
+        "it, so its record was not read -- its intent ends ambiguous and the plan stops here"
+    )
+    intent = _intent_entry(tmp_path, 0)
+    assert (intent["outcome"], intent["reasons"]) == ("ambiguous", ["cancel rejected: EOrder:Unknown order"])
+
+
+def test_a_refused_cancel_of_a_replacement_not_yet_accepted_reads_nothing(tmp_path):
+    venue = _VenueOrders()
+    ex, client, clock = _resting_executor(
+        tmp_path, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)], venue_orders=venue
+    )
+    first = client.last_order_id
+    ex.on_order_event(_accepted(first))
+    ex.on_order_event(_canceled(first))
+    ex.on_quote(_quote())
+    second = client.last_order_id
+    assert second != first
+    _advance_with_quotes(ex, client, clock, minutes=16)
+    assert client.canceled == [second]
+
+    _refuse(ex, second)
+
+    assert venue.calls == []
+    intent = _intent_entry(tmp_path, 0)
+    assert (intent["outcome"], intent["reasons"]) == ("ambiguous", ["cancel rejected: EOrder:Unknown order"])
+
+
+def test_a_refused_cancel_on_a_disarmed_engine_reads_nothing_and_stays_ambiguous(tmp_path):
+    venue = _VenueOrders()
+    ex, client, clock = _resting_executor(
+        tmp_path, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)], venue_orders=venue
+    )
+    cid = client.last_order_id
+    ex.on_order_event(_accepted(cid))
+    _deliver_fill(ex, client, cid, _SHORT)
+    (exec_dir(tmp_path) / ARM_FILE).unlink()
+    clock.now += timedelta(seconds=5)
+    ex.on_quote(_quote())
+    ex.on_timer(clock.now)
+    assert client.canceled == [cid]
+    venue.reports = [_closed_short(cid)]
+
+    with _executor_errors(logging.CRITICAL) as records:
+        _refuse(ex, cid)
+
+    assert venue.calls == []
+    assert records[0].getMessage() == (
+        f"cancel of {cid} was REJECTED by the venue (EOrder:Unknown order), and the engine reads disarmed, so Kraken's "
+        "record of the order was not read -- its intent ends ambiguous and the plan stops here"
+    )
+    _assert_ambiguous_and_dropped(tmp_path, client)
+
+
+def test_a_refused_cancel_with_an_order_in_flight_reads_nothing_and_stays_ambiguous(tmp_path):
+    ex, client, clock, venue, cid = _refused_after_a_short_fill(tmp_path)
+    venue.reports = [_closed_short(cid)]
+    client.cache._open_orders.append(_left_pending_cancel())
+
+    with _executor_errors(logging.CRITICAL) as records:
+        _refuse(ex, cid)
+
+    assert venue.calls == []
+    assert records[0].getMessage() == (
+        f"cancel of {cid} was REJECTED by the venue (EOrder:Unknown order), and order O-left-by-the-last-process of this "
+        "engine is in flight, so Kraken's record of the order was not read -- its intent ends ambiguous and the plan stops here"
+    )
+    _assert_ambiguous_and_dropped(tmp_path, client)
+
+
+def test_a_refused_cancel_whose_cache_cannot_say_what_is_in_flight_reads_nothing_and_stays_ambiguous(tmp_path, monkeypatch):
+    ex, client, clock, venue, cid = _refused_after_a_short_fill(tmp_path)
+    venue.reports = [_closed_short(cid)]
+
+    def _unreadable(**kwargs):
+        raise RuntimeError("cache read failed")
+
+    monkeypatch.setattr(client.cache, "orders_inflight", _unreadable)
+    with _executor_errors(logging.CRITICAL) as records:
+        _refuse(ex, cid)
+
+    assert venue.calls == []
+    assert records[0].getMessage() == (
+        f"cancel of {cid} was REJECTED by the venue (EOrder:Unknown order), and the Cache's in-flight orders could not be "
+        "read, so Kraken's record of the order was not read -- its intent ends ambiguous and the plan stops here"
+    )
+    _assert_ambiguous_and_dropped(tmp_path, client)
+
+
+def test_a_refused_cancel_whose_settled_row_cannot_be_written_stays_ambiguous(tmp_path, monkeypatch):
+    ex, client, clock, venue, cid = _refused_after_a_short_fill(tmp_path)
+    venue.reports = [_closed_short(cid)]
+    write = executor_module.update_submitted_row
+
+    def _refuse_the_settle(*args, state=None, **kwargs):
+        if state == "filled":
+            raise EngineError("the journal is read-only")
+        return write(*args, state=state, **kwargs)
+
+    monkeypatch.setattr(executor_module, "update_submitted_row", _refuse_the_settle)
+    with _executor_errors(logging.CRITICAL) as records:
+        _refuse(ex, cid)
+
+    assert [r.getMessage() for r in records][:2] == [
+        f"the row of {cid} could not be written filled from Kraken's record",
+        f"cancel of {cid} was REJECTED by the venue (EOrder:Unknown order), and Kraken reports order V-{cid} closed, but "
+        "its row could not be written filled -- its intent ends ambiguous and the plan stops here",
+    ]
+    _assert_ambiguous_and_dropped(tmp_path, client)
+
+
+def test_a_cancel_the_client_denied_reads_nothing(tmp_path):
+    ex, client, clock, venue, cid = _refused_after_a_short_fill(tmp_path)
+    venue.reports = [_closed_short(cid)]
+
+    ex.on_order_event(_event(OrderCancelDenied, client_order_id=cid, reason="NoExecutionClient"))
+
+    assert venue.calls == [] and _intent_entry(tmp_path, 0)["outcome"] == "ambiguous"
+
+
+def test_a_settled_refusal_leaves_no_open_row_to_carry_its_leg_or_hold_the_freeze(tmp_path):
+    ex, client, clock, venue, cid = _refused_after_a_short_fill(tmp_path)
+    venue.reports = [_closed_short(cid)]
+    assert [r["client_order_id"] for _, r in open_submitted_rows(tmp_path / "journal", clock.now)] == [cid]
+
+    _refuse(ex, cid)
+
+    assert open_submitted_rows(tmp_path / "journal", clock.now) == [] and ex._stranded_rows() == ""
+
+
+def test_a_settled_refusal_whose_fill_the_caches_position_contradicts_trips_the_kill_switch(tmp_path, kill_trip_expected):
+    ex, client, clock, venue, cid = _refused_after_a_short_fill(tmp_path)
+    venue.reports = [_closed_short(cid)]
+    client.cache.set_position("BTC/EUR", _SHORT / 2)
+
+    _refuse(ex, cid)
+
+    assert "not the 0.00099997" in _kill_file(tmp_path).read_text()
+    assert _intent_entry(tmp_path, 0)["outcome"] == "filled"
+    assert _intent_entry(tmp_path, 1)["outcome"] == "refused"
+
+
+def test_a_refused_cancel_that_settles_past_the_windows_close_carries_the_next_intent(tmp_path):
+    venue = _VenueOrders()
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=_rung2_record(tmp_path, final_targets=_only("BTC/EUR", "ETH/EUR")),
+        holdings={},
+        eur_total=1500.0,
+        eur_free=1500.0,
+        now=_RUNG2_12Z + timedelta(hours=3, minutes=20),
+        venue_orders=venue,
+    )
+    ex.on_boundary(_RUNG2_12Z)
+    ex.on_timer(clock.now)
+    ex.on_quote(_quote(bid=98250.0, ask=98250.1))
+    order = client.submitted[-1][0]
+    cid, qty = str(order.client_order_id), float(order.quantity)
+    short = round(qty - 0.00000003, 8)
+    ex.on_order_event(_accepted(cid))
+    _deliver_fill(ex, client, cid, short, px=98250.0)
+    _advance_with_quotes(ex, client, clock, minutes=16, bid=98250.0, ask=98250.1)
+    assert client.canceled == [cid] and clock.now > _RUNG2_12Z + timedelta(hours=3, minutes=30)
+    venue.reports = [_report(f"V-{cid}", OrderStatus.FILLED, filled_qty=f"{short:.8f}", quantity=f"{qty:.8f}")]
+
+    _refuse(ex, cid)
+    ex.on_timer(clock.now)
+
+    assert _intent_entry(tmp_path, 0, when=_RUNG2_12Z)["outcome"] == "filled"
+    second = _intent_entry(tmp_path, 1, when=_RUNG2_12Z)
+    assert (second["outcome"], second["reasons"]) == ("carried", ["the submission window closed"])
+    assert client.subscribed == ["BTC/EUR.KRAKEN"]
+
+
+def test_a_refused_cancel_after_a_kill_file_settles_and_the_later_intents_are_refused_by_the_gate(tmp_path):
+    ex, client, clock, venue, cid = _refused_after_a_short_fill(tmp_path)
+    venue.reports = [_closed_short(cid)]
+    (exec_dir(tmp_path) / KILL_FILE).touch()
+
+    _refuse(ex, cid)
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+
+    assert _intent_entry(tmp_path, 0)["outcome"] == "filled"
+    second = _intent_entry(tmp_path, 1)
+    assert (second["outcome"], second["reasons"]) == ("refused", ["kill_switch"])
+    assert len(client.submitted) == 1
+
+
+def test_a_refused_cancel_of_a_kill_files_revoke_settles_and_the_later_intents_are_refused_by_the_gate(tmp_path):
+    """The cancel is the kill file's own revoke, `falling_back` off; `after_a_kill_file`'s is the box's, the file placed after it."""
+    venue = _VenueOrders()
+    ex, client, clock = _resting_executor(
+        tmp_path, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)], venue_orders=venue
+    )
+    cid = client.last_order_id
+    ex.on_order_event(_accepted(cid))
+    _deliver_fill(ex, client, cid, _SHORT)
+    (exec_dir(tmp_path) / KILL_FILE).touch()
+    clock.now += timedelta(seconds=5)
+    ex.on_quote(_quote())
+    ex.on_timer(clock.now)
+    assert client.canceled == [cid] and not ex._active.falling_back
+    venue.reports = [_closed_short(cid)]
+
+    _refuse(ex, cid)
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+
+    assert _intent_entry(tmp_path, 0)["outcome"] == "filled"
+    assert _intent_entry(tmp_path, 1)["reasons"] == ["kill_switch"]
+    assert len(client.submitted) == 1
+
+
+def test_a_refused_cancel_of_a_rest_hold_intents_order_settles_like_an_execute_one(tmp_path):
+    venue = _VenueOrders()
+    ex, client, clock = _resting_executor(
+        tmp_path, intents=[_intent(mode="rest-hold", offset_pct=5.0, hold_minutes=1)], venue_orders=venue
+    )
+    order = client.submitted[0][0]
+    cid, qty = str(order.client_order_id), float(order.quantity)
+    short = round(qty - 0.00000003, 8)
+    ex.on_order_event(_accepted(cid))
+    _deliver_fill(ex, client, cid, short)
+    _advance_with_quotes(ex, client, clock, minutes=3)
+    assert client.canceled == [cid] and ex._active.phase == "cancelling"
+    venue.reports = [_report(f"V-{cid}", OrderStatus.FILLED, filled_qty=f"{short:.8f}", quantity=f"{qty:.8f}")]
+
+    _refuse(ex, cid)
+
+    intent = _intent_entry(tmp_path, 0)
+    assert (intent["outcome"], intent["filled_qty"]) == ("filled", pytest.approx(short))
+    assert len(client.submitted) == 1
 
 
 def test_a_cancel_the_venue_never_answers_ends_ambiguous_and_frees_the_engine(tmp_path):
@@ -7456,6 +7910,23 @@ def test_read_venue_orders_returns_open_and_closed_orders_by_txid_with_no_client
     assert venue.closed_order_forms[0]["start"] == str(int(since.timestamp()))
 
 
+def test_read_venue_orders_reads_an_order_kraken_closed_short_as_filled_at_its_executed_volume(_loopback_credentials):
+    row = kraken_loopback.closed_order(
+        "XBTEUR", price="30000.0", volume="0.00100003", side="sell", status="closed", vol_exec="0.00100000"
+    )
+    row["reason"] = "Insignificant volume remaining"
+    with kraken_loopback.serve() as venue:
+        venue.closed_orders[_TXID] = row
+        [report] = read_venue_orders(NOW - timedelta(hours=9), base_url=venue.base_url)
+
+    assert (report.order_status, float(report.filled_qty), float(report.quantity), report.cancel_reason) == (
+        OrderStatus.FILLED,
+        0.001,
+        0.00100003,
+        "Insignificant volume remaining",
+    )
+
+
 def test_read_venue_orders_answers_past_a_closed_order_on_a_pair_the_listing_lacks(_loopback_credentials):
     with kraken_loopback.serve() as venue:
         venue.open_orders["OOPENA-XBT00-000001"] = kraken_loopback.open_order("XBTEUR", price="30000.0", volume="0.00100000")
@@ -11303,6 +11774,7 @@ def _boundary_executor(
     plan_cap=1000.0,
     cache_ordermin=None,
     listed_floors=None,
+    venue_orders=None,
     **settings,
 ):
     """An executor at a boundary whose cycle record is `record_path`'s, journaled under its own day: the venue truth
@@ -11343,6 +11815,7 @@ def _boundary_executor(
             ordermin=listed_floors,
         ),
         instrument_statuses=lambda: dict(listed),
+        venue_orders=venue_orders,
     )
     return ex, client, clock
 

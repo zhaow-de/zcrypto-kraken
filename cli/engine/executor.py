@@ -219,9 +219,10 @@ _SYMBOL_BY_INSTRUMENT_ID = {instrument_id: symbol for symbol, instrument_id in I
 # The one symbol a traded coin's spot balance is counted under by the venue's holdings read, its EUR pair, so a base
 # with two pairs is counted once.
 _SPOT_SYMBOL_BY_BASE = {symbol.split("/")[0]: symbol for symbol in INSTRUMENT_IDS if symbol.endswith("/EUR")}
-# The startup pass's one read of the venue's orders runs on the node's main thread, so this bound is
-# also the longest the pass can hold that thread. The client's own request timeout is no bound: it
-# retries with backoff underneath it.
+# The startup pass's and the re-read pass's reads of the venue's orders run on the node's main thread,
+# on the tick, and the refused cancel's settle's on an order event inside a running plan, so this bound
+# is also the longest any of them can hold that thread. The client's own request timeout is no bound:
+# it retries with backoff underneath it.
 _VENUE_READ_TIMEOUT_SECONDS = 30.0
 # How far before the earliest row's boundary that read reaches. A row's order is submitted after the
 # boundary it is filed under; the margin covers clock skew against the venue, not a real gap.
@@ -586,17 +587,18 @@ def read_venue_orders(since: datetime, *, base_url: str | None = None) -> list:
     has sent anything -- before its own cancels, and no plan is picked up before the pass has run --
     and never retries it; the re-read pass reads again on a tick with no intent live and no order
     of this process in flight in the Cache's terms (`_nothing_in_flight`), and `cancel_venue_order`
-    follows it on the same terms. What that gate cannot see is the execution client's own signed
-    token request while its socket is still reconnecting: a collision there costs the library one
-    reconnect attempt or this pass one try, and the library's retry of an `Invalid nonce` is
-    unmeasured.
+    follows it on the same terms; the refused cancel's settle (`_settle_refused_cancel`) reads once at
+    the refusal, its intent live, with the engine armed and no order of this process in flight on
+    those terms. What those gates cannot see is the execution client's own signed token request while
+    its socket is still reconnecting: a collision there costs the library one reconnect attempt or the
+    reader one try, and the library's retry of an `Invalid nonce` is unmeasured.
 
     The listing is cached into the client first because the order read resolves every row through
     that cache and its altname index: an open order it cannot resolve fails the whole read, and a
     closed one it cannot resolve is skipped. `asyncio.run` needs no event loop running on the calling
-    thread: the node runs the strategy's timer callbacks on its main thread, with no asyncio loop
-    running there. If that ever changes, this raises and the caller fails closed. Anything short of a
-    complete answer inside `_VENUE_READ_TIMEOUT_SECONDS` raises."""
+    thread: the node runs the strategy's timer callbacks and order events on its main thread, with
+    no asyncio loop running there. If that ever changes, this raises and the caller fails closed.
+    Anything short of a complete answer inside `_VENUE_READ_TIMEOUT_SECONDS` raises."""
     # Imported here rather than at the top: node.py imports this module.
     from cli.engine.node import _ACCOUNT_ID
 
@@ -1108,6 +1110,9 @@ class _ActiveIntent:
     # one that priced it.
     quote_seq: int = 0
     priced_seq: int = 0
+    # The live order's Kraken txid, from its acceptance: the name the refused-cancel arm reads Kraken's record of the
+    # order by (`_settle_refused_cancel`). None until the acceptance lands, and again for each new order.
+    venue_order_id: str | None = None
 
 
 class ProbeExecutor:
@@ -3145,6 +3150,7 @@ class ProbeExecutor:
         active.order = order
         active.order_qty = sized.qty
         active.order_filled = 0.0
+        active.venue_order_id = None
         # A new order carries none of the previous one's in-flight state: a cancel ack arriving for
         # THIS order must not be read as the ack of the cancel that ended the last one.
         active.cancel_requested = False
@@ -4211,6 +4217,8 @@ class ProbeExecutor:
         ambiguous intent is not caught here, and the next intent's `position_before` baselines it
         away. What covers it instead is that an ambiguous outcome already stops the whole plan and
         leaves an open row for the attended operator, which is the state that path exists to produce.
+        A refused cancel Kraken's record settles (`_settle_refused_cancel`) is none of them: the
+        venue answered, so it reaches this as any terminal does.
         """
         own_delta = active.filled if active.intent.side == "buy" else -active.filled
         expected = active.own_position_before + own_delta + active.foreign_filled
@@ -4318,7 +4326,8 @@ class ProbeExecutor:
             # The venue order id is recorded here because nothing else can find this order after a
             # restart: the adapter's order reports carry no client order id, so reconciliation names
             # the order by its Kraken txid and this engine's own id no longer resolves it.
-            payload["venue_order_id"] = str(event.venue_order_id)
+            active.venue_order_id = str(event.venue_order_id)
+            payload["venue_order_id"] = active.venue_order_id
             self._update_row(active, state="accepted", event=payload)
             _inc_order("accepted")
             if active.intent.mode == "rest-cancel":
@@ -4350,17 +4359,30 @@ class ProbeExecutor:
         if name in ("OrderCancelRejected", "OrderCancelDenied"):
             # The venue positively says the cancel did NOT take (`OrderCancelRejected`), or the
             # client refused it before sending (`OrderCancelDenied`) and the venue never saw it.
-            # Either way the order may still rest -- while whatever asked for the cancel (a kill
-            # file, the time-box) says it must not. Nothing further may be submitted against a
-            # position this process can no longer describe. The row keeps its OPEN state; only the
-            # intent is journaled.
+            # A refusal Kraken's own record settles -- the order closed with exactly the fill this
+            # process recorded -- ends the intent `filled` and the plan goes on
+            # (`_settle_refused_cancel`). Otherwise the order may still rest while whatever asked for
+            # the cancel (a kill file, the time-box) says it must not, and nothing further may be
+            # submitted against a position this process can no longer describe: the row keeps its
+            # OPEN state, and only the intent is journaled.
             denied = name == "OrderCancelDenied"
-            logger.critical(
-                "cancel of %s was %s -- the order may still rest; the plan stops here",
-                active.client_order_id,
-                f"DENIED before it was sent ({reason})" if denied else "REJECTED by the venue",
-            )
+            if denied:
+                logger.critical(
+                    "cancel of %s was DENIED before it was sent (%s) -- the order may still rest; the plan stops here",
+                    active.client_order_id,
+                    reason,
+                )
             self._update_row(active, event=payload)
+            if not denied:
+                answer = self._settle_refused_cancel(active, reason)
+                if answer is None:
+                    return
+                logger.critical(
+                    "cancel of %s was REJECTED by the venue (%s), and %s -- its intent ends ambiguous and the plan stops here",
+                    active.client_order_id,
+                    reason,
+                    answer,
+                )
             refusal = "cancel denied before it was sent" if denied else "cancel rejected"
             self._journal_intent(active.index, "ambiguous", (f"{refusal}: {reason}",), active.filled)
             _inc_order("ambiguous")
@@ -4368,6 +4390,82 @@ class ProbeExecutor:
             return
 
         self._update_row(active, event=payload)  # recorded as evidence, no state claim
+
+    def _settle_refused_cancel(self, active: _ActiveIntent, reason) -> str | None:
+        """Kraken's own record of the order whose cancel the venue just refused, read at the refusal and
+        settled from: an order Kraken reports closed -- FILLED, whatever its reason -- with a fill above
+        `_OVERFILL_TOLERANCE` and within it of the one this process recorded for it, has its row written
+        `filled` with a `venue_closed` event, counts `filled`, ends its intent `filled` and returns None, the
+        plan's next intent starting on the next tick under that tick's own window, gate and box. Every other
+        answer returns what the refused-cancel arm's CRITICAL line names, the row and the intent left to it:
+        any other status, a figure that disagrees or is nothing, an order the read does not return, a read that
+        raises, a row write that fails, and a read not made -- no txid recorded, the engine disarmed, or an
+        order of this process in flight or a Cache that cannot say, the terms `read_venue_orders` reads on.
+
+        The read holds the node's main thread for its duration, up to `_VENUE_READ_TIMEOUT_SECONDS`. A figure
+        that disagrees is left to a restart's startup pass, which repairs or trips on it: a repair here would
+        put the row ahead of the Cache's position, which `_reconcile_terminal` holds the fill to."""
+        txid = active.venue_order_id
+        if txid is None:
+            return "no Kraken order id reached this engine for it, so its record was not read"
+        if not self._gate_armed:
+            return "the engine reads disarmed, so Kraken's record of the order was not read"
+        try:
+            in_flight = [str(order.client_order_id) for order in self._cache.orders_inflight(venue=_VENUE)]
+        except Exception:
+            logger.warning("the Cache's in-flight orders could not be read at the refused cancel", exc_info=True)
+            return "the Cache's in-flight orders could not be read, so Kraken's record of the order was not read"
+        if in_flight:
+            return f"order {', '.join(in_flight)} of this engine is in flight, so Kraken's record of the order was not read"
+        started = self._now()
+        try:
+            reports = list((self._venue_orders or read_venue_orders)(self._plan_cycle_ts - _VENUE_READ_MARGIN))
+        except Exception as exc:
+            logger.warning("Kraken's orders could not be read at the refused cancel of %s", active.client_order_id, exc_info=True)
+            return f"Kraken's orders could not be read ({type(exc).__name__})"
+        seconds = (self._now() - started).total_seconds()
+        report = next((r for r in reports if str(r.venue_order_id) == txid), None)
+        if report is None:
+            return f"Kraken's order read does not return order {txid}"
+        venue_filled = float(report.filled_qty)
+        if not (
+            report.order_status == OrderStatus.FILLED
+            and venue_filled > _OVERFILL_TOLERANCE
+            and abs(venue_filled - active.order_filled) <= _OVERFILL_TOLERANCE
+        ):
+            return (
+                f"Kraken reports order {txid} {report.order_status.name}, {venue_filled:.12g} of "
+                f"{float(report.quantity):.12g} filled, against the {active.order_filled:.12g} this engine recorded"
+            )
+        why = None if report.cancel_reason is None else str(report.cancel_reason)
+        event = {
+            "event": "venue_closed",
+            "at": self._now().isoformat(),
+            "venue_order_id": txid,
+            "venue_filled_qty": venue_filled,
+            "venue_qty": float(report.quantity),
+            "reason": why,
+        }
+        try:
+            self._update_row(active, state="filled", event=event)
+        except Exception:
+            logger.critical("the row of %s could not be written filled from Kraken's record", active.client_order_id, exc_info=True)
+            return f"Kraken reports order {txid} closed, but its row could not be written filled"
+        _inc_order("filled")
+        logger.warning(
+            "cancel of %s was refused by the venue (%s), and Kraken reports order %s closed with %.12g of %.12g filled (%s) "
+            "-- its row reads filled, intent %d ends filled and the plan goes on; the read took %.1f s",
+            active.client_order_id,
+            reason,
+            txid,
+            venue_filled,
+            float(report.quantity),
+            why or "no reason given",
+            active.index,
+            seconds,
+        )
+        self._finish_active("filled", (), active.filled)
+        return None
 
     def _on_rejected(self, active: _ActiveIntent, reason: str, payload: dict, *, due_post_only: bool) -> None:
         """Three verdicts, and telling them apart is the whole safety of this branch.
