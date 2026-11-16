@@ -3584,10 +3584,10 @@ _SHORT = 0.00099997
 _INSIGNIFICANT = "Insignificant volume remaining"
 
 
-def _refused_after_a_short_fill(tmp_path, *reports, raises=None, filled=_SHORT):
+def _refused_after_a_short_fill(tmp_path, *, raises=None, filled=_SHORT):
     """A plan of two intents whose first order, filled `filled` of its 0.001 with no terminal event, has its box's
-    cancel out; the venue's orders answer `reports`, or raise `raises`. The refusal is the caller's to deliver."""
-    venue = _VenueOrders(*reports, raises=raises)
+    cancel out; the venue's orders raise `raises` when given. The refusal is the caller's to deliver."""
+    venue = _VenueOrders(raises=raises)
     clock = _Clock()
     client = StubClient()
     ex = _executor(tmp_path, client=client, clock=clock, venue_orders=venue)
@@ -3650,6 +3650,41 @@ def test_a_refused_cancel_kraken_reports_closed_with_the_recorded_fill_ends_fill
     ex.on_quote(_quote("ETH/EUR.KRAKEN", bid=2000.0, ask=2000.1))
     assert [str(order.instrument_id) for order, _ in client.submitted] == ["BTC/EUR.KRAKEN", "ETH/EUR.KRAKEN"]
     assert _intent_entry(tmp_path, 1)["outcome"] == "pending"
+
+
+@pytest.mark.parametrize("reason", ["EOrder:Unknown order", "EService:Unavailable"])
+def test_a_refused_cancel_settles_whatever_reason_the_venue_gives_for_refusing_it(tmp_path, reason):
+    ex, client, clock, venue, cid = _refused_after_a_short_fill(tmp_path)
+    venue.reports = [_closed_short(cid)]
+
+    ex.on_order_event(_event(OrderCancelRejected, client_order_id=cid, reason=reason))
+
+    assert _intent_entry(tmp_path, 0)["outcome"] == "filled"
+    assert _record(tmp_path)["submitted"][0]["state"] == "filled"
+
+
+def test_a_refused_cancel_of_a_replacement_kraken_reports_closed_ends_its_intent_filled_with_both_orders_fills(tmp_path):
+    venue = _VenueOrders()
+    ex, client, clock = _resting_executor(
+        tmp_path, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)], venue_orders=venue
+    )
+    first = client.last_order_id
+    ex.on_order_event(_accepted(first))
+    _deliver_fill(ex, client, first, 0.0004)
+    ex.on_order_event(_canceled(first))
+    ex.on_quote(_quote())
+    second = client.last_order_id
+    assert second != first
+    ex.on_order_event(_accepted(second))
+    _deliver_fill(ex, client, second, 0.00059997)
+    _advance_with_quotes(ex, client, clock, minutes=16)
+    assert client.canceled == [second]
+    venue.reports = [_report(f"V-{second}", OrderStatus.FILLED, filled_qty="0.00059997", quantity="0.0006")]
+
+    _refuse(ex, second)
+
+    intent = _intent_entry(tmp_path, 0)
+    assert (intent["outcome"], intent["filled_qty"]) == ("filled", pytest.approx(0.00099997))
 
 
 @pytest.mark.parametrize("status", [s for s in OrderStatus.variants() if s != OrderStatus.FILLED], ids=lambda s: s.name)
@@ -3881,6 +3916,18 @@ def test_a_settled_refusal_leaves_no_open_row_to_carry_its_leg_or_hold_the_freez
     assert open_submitted_rows(tmp_path / "journal", clock.now) == [] and ex._stranded_rows() == ""
 
 
+def test_a_settled_refusal_whose_fill_the_caches_position_contradicts_trips_the_kill_switch(tmp_path, kill_trip_expected):
+    ex, client, clock, venue, cid = _refused_after_a_short_fill(tmp_path)
+    venue.reports = [_closed_short(cid)]
+    client.cache.set_position("BTC/EUR", _SHORT / 2)
+
+    _refuse(ex, cid)
+
+    assert "not the 0.00099997" in _kill_file(tmp_path).read_text()
+    assert _intent_entry(tmp_path, 0)["outcome"] == "filled"
+    assert _intent_entry(tmp_path, 1)["outcome"] == "refused"
+
+
 def test_a_refused_cancel_that_settles_past_the_windows_close_carries_the_next_intent(tmp_path):
     venue = _VenueOrders()
     ex, client, clock = _boundary_executor(
@@ -3925,6 +3972,52 @@ def test_a_refused_cancel_after_a_kill_file_settles_and_the_later_intents_are_re
     assert _intent_entry(tmp_path, 0)["outcome"] == "filled"
     second = _intent_entry(tmp_path, 1)
     assert (second["outcome"], second["reasons"]) == ("refused", ["kill_switch"])
+    assert len(client.submitted) == 1
+
+
+def test_a_refused_cancel_of_a_kill_files_revoke_settles_and_the_later_intents_are_refused_by_the_gate(tmp_path):
+    """The cancel is the kill file's own revoke, `falling_back` off; `after_a_kill_file`'s is the box's, the file placed after it."""
+    venue = _VenueOrders()
+    ex, client, clock = _resting_executor(
+        tmp_path, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)], venue_orders=venue
+    )
+    cid = client.last_order_id
+    ex.on_order_event(_accepted(cid))
+    _deliver_fill(ex, client, cid, _SHORT)
+    (exec_dir(tmp_path) / KILL_FILE).touch()
+    clock.now += timedelta(seconds=5)
+    ex.on_quote(_quote())
+    ex.on_timer(clock.now)
+    assert client.canceled == [cid] and not ex._active.falling_back
+    venue.reports = [_closed_short(cid)]
+
+    _refuse(ex, cid)
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+
+    assert _intent_entry(tmp_path, 0)["outcome"] == "filled"
+    assert _intent_entry(tmp_path, 1)["reasons"] == ["kill_switch"]
+    assert len(client.submitted) == 1
+
+
+def test_a_refused_cancel_of_a_rest_hold_intents_order_settles_like_an_execute_one(tmp_path):
+    venue = _VenueOrders()
+    ex, client, clock = _resting_executor(
+        tmp_path, intents=[_intent(mode="rest-hold", offset_pct=5.0, hold_minutes=1)], venue_orders=venue
+    )
+    order = client.submitted[0][0]
+    cid, qty = str(order.client_order_id), float(order.quantity)
+    short = round(qty - 0.00000003, 8)
+    ex.on_order_event(_accepted(cid))
+    _deliver_fill(ex, client, cid, short)
+    _advance_with_quotes(ex, client, clock, minutes=3)
+    assert client.canceled == [cid] and ex._active.phase == "cancelling"
+    venue.reports = [_report(f"V-{cid}", OrderStatus.FILLED, filled_qty=f"{short:.8f}", quantity=f"{qty:.8f}")]
+
+    _refuse(ex, cid)
+
+    intent = _intent_entry(tmp_path, 0)
+    assert (intent["outcome"], intent["filled_qty"]) == ("filled", pytest.approx(short))
     assert len(client.submitted) == 1
 
 
