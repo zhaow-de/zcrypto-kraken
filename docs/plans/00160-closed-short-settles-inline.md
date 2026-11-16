@@ -4,7 +4,7 @@
 
 **Goal:** At a cancel the venue refuses, the executor reads Kraken's record of the order, and an order Kraken reports closed with exactly the fill the engine recorded ends its row and its intent `filled` and the plan runs its next intent; every other answer stays `ambiguous` with the remainder dropped, its CRITICAL line naming the answer.
 
-**Architecture:** The active intent keeps its live order's Kraken txid from the order's acceptance (D3). The refused-cancel arm of `_on_order_event` calls one new method, `_settle_refused_cancel`, which reads `read_venue_orders` on its own terms — armed, nothing in flight, the txid known — and settles row 1 of the spec's answers or returns the phrase the arm's CRITICAL line names (D2–D6). The resume is the tick's ordinary `_start_intent`, unchanged (D5). Two cases pin the adapter's and the state machine's premises (D9); the error-logs runbook and the rung-3 daily read say what each line means (D6); the decisions log takes the ruling and the author's three calls, and T0229 closes.
+**Architecture:** The active intent keeps its live order's Kraken txid from the order's acceptance (D3). The refused-cancel arm of `_on_order_event` calls one new method, `_settle_refused_cancel`, which reads `read_venue_orders` on its own terms — armed, nothing in flight, the txid known — and settles row 1 of the spec's answers or returns the phrase the arm's CRITICAL line names (D2–D6). The resume is the tick's ordinary `_start_intent`, unchanged (D5). Two cases pin the adapter's and the state machine's premises (D9); the error-logs runbook and the rung-3 daily read say what each line means (D6); the decisions log takes the owner's two rulings and the author's three calls, and T0229 closes.
 
 **Tech Stack:** Python 3.14, pytest, `nautilus-trader` 2.0.0rc9.dev20261106, `tests/kraken_loopback.py`, `infra/scripts/mutate-probe.sh`.
 
@@ -18,15 +18,16 @@ full cli/engine/executor.py — under cli/engine/, read as a non-prose change
 full tests/test_engine_executor.py — a test importing cli.config, read as a non-prose change
 ```
 
-Every fence below was run against `ac3064f6b` in a detached scratch worktree before this plan was committed: the tasks' cases pass with the code applied, 29 of Task 2's Step 3 selection fail without it, and each probe arm listed reads `KILLED (control proven, tree restored byte-identically)`.
+Every fence below was run against `ac3064f6b` in a detached scratch worktree: the tasks' cases pass with the code applied, and 29 of Task 2's Step 3 selection fail without it. Of the probe arms, 20 of Task 2's read `KILLED (control proven, tree restored byte-identically)` in the author's run (`.tmp/t0229/measure/probes.out`); the other five take their first verdict in their task's probe step — Task 2's `level` and `txid`, added after that run, and `window`, whose `-k` was narrowed after it, and Task 1's two, which that run refused under a `1,$d` control that collects nothing.
 
 ## Global Constraints
 
-- The spec is the authority; where it is silent this plan rules, in *Rulings* below.
+- The spec, `docs/specs/00160-closed-short-settles-inline-design.md`, is the authority, and a task that names one of its sections reads it there; where it is silent this plan rules, in *Rulings where the spec is silent* of `docs/plans/00160-closed-short-settles-inline.md`.
 - No task hands the adapter defect upstream or converges anything: the hand-off is the coordinator's (spec D8), and the change ships on the engine image spec D10 names, the converge the fleet's concern.
 - The worktree is `/home/zhaow/Projects/zcrypto-kraken/.claude/worktrees/t0229` (branch `feat/t0229-closed-short-settles-inline`); every command runs with it as the working directory, and git takes `-C` that path. The main checkout is live.
 - No converge, image build, push, network call or `grafana-query.py` read in a task. Every venue read in a test goes to `tests/kraken_loopback.py` or a stub; the autouse `_no_production_venue_read` fixture fails a case that reaches the production reader, so a case that delivers `OrderCancelRejected` on the own path hands the executor a `venue_orders` reader.
-- Tests per commit: `mkdir -p .tmp/implementer .local/closed-short-settles-inline` first, its own call; then `infra/scripts/consumers.sh --tests --direct <the commit's changed paths> 2>.tmp/implementer/cons.err >.tmp/implementer/cons.list`, its own call, exit 2 meaning no reader; `cat .tmp/implementer/cons.err`, its own call; then `T="$(sort -u .tmp/implementer/cons.list | tr '\n' ' ') <the task's test files>"; uv run pytest $T -m "not slow" -q -p no:cacheprovider --basetemp=.tmp/implementer/pt -rs`. Never the full suite. A step's own run names `-k` cases.
+- Before a task's first command, `mkdir -p .tmp/implementer .local/closed-short-settles-inline`, its own call: every pytest run here takes `--basetemp=.tmp/implementer/pt`, and pytest makes no parent of its basetemp.
+- Tests per commit: `infra/scripts/consumers.sh --tests --direct <the commit's changed paths> 2>.tmp/implementer/cons.err >.tmp/implementer/cons.list`, its own call, exit 2 meaning no reader; `cat .tmp/implementer/cons.err`, its own call; then `T="$(sort -u .tmp/implementer/cons.list | tr '\n' ' ') <the task's test files>"; uv run pytest $T -m "not slow" -q -p no:cacheprovider --basetemp=.tmp/implementer/pt -rs`. Never the full suite. A step's own run names `-k` cases.
 - The gate is `uv run pre-commit run -a`, re-run until clean, its rewrites staged.
 - A comment or docstring stays only where a reader would act differently without it, and is correct; state and decisions stay, an event goes to the PR body. A runbook page and an engine string literal carry no `spec <NNNNN>`, `D<N>`, `T<NNNN>`, `iter-<N>`, `Phase <N>` or `WP<N>` token (`tests/test_internal_terms_not_operator_visible.py`).
 - Commits: Conventional Commits, one subject per change, after a `git -C <the worktree> add <every path the commit changes>` of its own, through `git -C <the worktree> commit -F - <<'EOF'`; the message says what changed and pastes the result line of the test command it names, run over the commit's own tree; one state-changing git command per Bash call; never an amend, `--no-verify` or `git stash`; every message ends with `Co-Authored-By: Claude <actual executing model> <noreply@anthropic.com>`, the implementer's own model in place of the placeholder, and `Claude-Session: https://claude.ai/code/session_018eFiE9ZzjweN7A4N9yBCTV`.
@@ -40,14 +41,15 @@ Every fence below was run against `ac3064f6b` in a detached scratch worktree bef
 - **The read's seconds come from the executor's own clock** (`self._now()` before and after), so a case's fixed clock reads `0.0 s` and the line is pinned whole.
 - **The mirror row in `_attached` takes no `filled` state.** Its `state` is read for a restored row (`_on_detached_event`) and an adopted one (`_on_external_event`), and a running intent's own row is neither.
 - **The two lines that carry a traceback** — the in-flight read's and the venue read's failures — log it at WARNING with `exc_info=True`; the CRITICAL line names the exception's class alone, so the page's 200-character hoist reads the answer.
-- **`_reconcile_terminal`'s docstring gains one sentence**, after "which is the state that path exists to produce.": "A refused cancel Kraken's record settles (`_settle_refused_cancel`) is none of them: the venue answered, so it reaches this as any terminal does." The refused-cancel arm's comment says the settle comes first. `_drop_remainder_after_ambiguity`'s "Five callers" stays true and is left.
+- **A new line's level is held where it decides a page.** The settled WARNING is the one line that must page nothing, so row 1's case reads its level beside its text; the arm's CRITICAL and the row write's are read through a CRITICAL capture, from which a lower level drops them; the two traceback WARNINGs sit beside a CRITICAL that pages either way, so their level is not held.
+- **`_reconcile_terminal`'s docstring gains one sentence** (Task 2 Step 4), naming the settle as none of its ambiguous exits. The refused-cancel arm's comment says the settle comes first. `_drop_remainder_after_ambiguity`'s "Five callers" stays true and is left.
 - **The premise cases sit beside their kin:** the loopback case directly before `test_read_venue_orders_answers_past_a_closed_order_on_a_pair_the_listing_lacks`, the state-machine case directly after `test_a_cancel_the_client_denied_before_sending_parks_the_intent_ambiguous_at_once_and_halts_the_plan`, and Task 2's block directly after the state-machine case.
 - **The runbook texts are the spec's *Runbook texts*, verbatim**, and the decisions-log entry is Task 4's fence, verbatim.
 
 ## File structure
 
-- Modify `cli/engine/executor.py`: `_ActiveIntent.venue_order_id`; `_place`; the `OrderAccepted` arm; the refused-cancel arm; `_settle_refused_cancel`; `_reconcile_terminal`'s docstring.
-- Modify `tests/test_engine_executor.py`: `_report`, `_boundary_executor`, `test_a_cancel_rejection_parks_the_intent_ambiguous_and_halts_the_plan`, and the new cases.
+- Modify `cli/engine/executor.py`: `_ActiveIntent.venue_order_id`; `_place`; the `OrderAccepted` arm; the refused-cancel arm; `_settle_refused_cancel`; `_reconcile_terminal`'s docstring; `_VENUE_READ_TIMEOUT_SECONDS`' comment and `read_venue_orders`' docstring.
+- Modify `tests/test_engine_executor.py`: `_report`, `_VenueOrders`' docstring, `_boundary_executor`, `test_a_cancel_rejection_parks_the_intent_ambiguous_and_halts_the_plan`, and the new cases.
 - Modify `infra/runbooks/engine.md`, `infra/runbooks/engine-procedures.md`, `docs/research/14.phase6-decisions.md`; move `docs/open-topics/T0229-an-order-kraken-closes-short-of-its-size-ends-its-intent-ambiguous.md` to `docs/open-topics/archive/`; re-render `docs/open-topics/README.md`.
 
 ## Review Focus
@@ -74,8 +76,6 @@ Every fence below was run against `ac3064f6b` in a detached scratch worktree bef
 
 ```python
 def test_read_venue_orders_reads_an_order_kraken_closed_short_as_filled_at_its_executed_volume(_loopback_credentials):
-    """What the refused cancel's settle reads: Kraken's `closed` with `vol_exec` under `vol` reads FILLED at `vol_exec`,
-    its reason carried as `cancel_reason` -- the 2026-11-11 DOT sell's shape, three lot steps short."""
     row = kraken_loopback.closed_order(
         "XBTEUR", price="30000.0", volume="0.00100003", side="sell", status="closed", vol_exec="0.00100000"
     )
@@ -96,8 +96,6 @@ Directly after `test_a_cancel_the_client_denied_before_sending_parks_the_intent_
 
 ```python
 def test_an_order_whose_cancel_the_venue_refused_is_open_and_not_in_flight():
-    """The library's own state machine: a refused cancel returns the order to its status before the cancel, so the
-    Cache's in-flight set the settle's read waits on no longer holds it."""
     order = _resting_limit_order("O-1")
     order.apply(_fill("O-1", 0.4))
     order.apply(_event(OrderPendingCancel, client_order_id="O-1"))
@@ -127,7 +125,7 @@ def test_an_order_whose_cancel_the_venue_refused_is_open_and_not_in_flight():
 - Consumes: `read_venue_orders(since) -> list[OrderStatusReport]` through `self._venue_orders or read_venue_orders`; `_finish_active(outcome, reasons, filled_qty)`; `_update_row(active, *, state, event)`; `_inc_order(outcome)`.
 - Produces: `_ActiveIntent.venue_order_id: str | None`; `ProbeExecutor._settle_refused_cancel(active, reason) -> str | None`; the row event `{"event": "venue_closed", "at", "venue_order_id", "venue_filled_qty", "venue_qty", "reason"}`; `_report(..., cancel_reason=None)` and `_boundary_executor(..., venue_orders=None)` in the tests.
 
-- [ ] **Step 1: The helpers and the existing case.** In `tests/test_engine_executor.py`: `_report` takes `cancel_reason=None` after `quantity` and passes `cancel_reason=cancel_reason` to `OrderStatusReport` after `client_order_id=None`; `_boundary_executor` takes `venue_orders=None` after `listed_floors=None` and passes `venue_orders=venue_orders` to `_executor` after `instrument_statuses=...`. `test_a_cancel_rejection_parks_the_intent_ambiguous_and_halts_the_plan` reads Kraken's empty answer, its docstring and its first and fourth statements becoming:
+- [ ] **Step 1: The helpers and the existing case.** In `tests/test_engine_executor.py`: `_report` takes `cancel_reason=None` after `quantity` and passes `cancel_reason=cancel_reason` to `OrderStatusReport` after `client_order_id=None`; `_boundary_executor` takes `venue_orders=None` after `listed_floors=None` and passes `venue_orders=venue_orders` to `_executor` after `instrument_statuses=...`. `test_a_cancel_rejection_parks_the_intent_ambiguous_and_halts_the_plan` reads Kraken's empty answer, its docstring, its first statement and its `assert len(client.submitted) == 1` becoming:
 
 ```python
     """The venue positively says the cancel failed, and Kraken's order read does not return the order, so it may
@@ -142,10 +140,16 @@ def test_an_order_whose_cancel_the_venue_refused_is_open_and_not_in_flight():
     assert len(client.submitted) == 1 and venue.calls == [_boundary(NOW) - timedelta(hours=1)]
 ```
 
+`_VenueOrders`' docstring, whose list of the executor's callers the refused cancel's read would leave short, becomes:
+
+```python
+    """The executor's `venue_orders` reader: answers `reports`, or raises `raises`, and records the `since` of every call."""
+```
+
 - [ ] **Step 2: Write the failing cases**, directly after Task 1's `test_an_order_whose_cancel_the_venue_refused_is_open_and_not_in_flight`. One case per row of the spec's *The answers*, and three for the resume:
 
 ```python
-# The order's 0.001 closed three lot steps short: the 2026-11-11 DOT sell's 5.18909575 of 5.18909578.
+# Three lot steps short of the 0.001 ordered.
 _SHORT = 0.00099997
 _INSIGNIFICANT = "Insignificant volume remaining"
 
@@ -186,10 +190,13 @@ def test_a_refused_cancel_kraken_reports_closed_with_the_recorded_fill_ends_fill
     with _executor_errors(logging.WARNING) as records:
         _refuse(ex, cid)
 
-    assert [r.getMessage() for r in records] == [
-        f"cancel of {cid} was refused by the venue (EOrder:Unknown order), and Kraken reports order V-{cid} closed with "
-        f"0.00099997 of 0.001 filled ({_INSIGNIFICANT}) -- its row reads filled, intent 0 ends filled and the plan goes on; "
-        "the read took 0.0 s"
+    assert [(r.levelno, r.getMessage()) for r in records] == [
+        (
+            logging.WARNING,
+            f"cancel of {cid} was refused by the venue (EOrder:Unknown order), and Kraken reports order V-{cid} closed with "
+            f"0.00099997 of 0.001 filled ({_INSIGNIFICANT}) -- its row reads filled, intent 0 ends filled and the plan goes on; "
+            "the read took 0.0 s",
+        )
     ]
     assert venue.calls == [_boundary(NOW) - timedelta(hours=1)]
     row = _record(tmp_path)["submitted"][0]
@@ -217,9 +224,7 @@ def test_a_refused_cancel_kraken_reports_closed_with_the_recorded_fill_ends_fill
 
 @pytest.mark.parametrize("status", [s for s in OrderStatus.variants() if s != OrderStatus.FILLED], ids=lambda s: s.name)
 def test_a_refused_cancel_kraken_reports_in_any_status_but_filled_stays_ambiguous(tmp_path, status):
-    """The status dimension of the answers, enumerated over the library's own `OrderStatus`: Kraken's `open`,
-    `canceled` and `expired` read ACCEPTED, CANCELED and EXPIRED on the pinned adapter, and the rest no Kraken
-    order reads, each with the fill this engine recorded."""
+    """Every status but FILLED, enumerated over the library's own `OrderStatus`, each with the fill this engine recorded."""
     ex, client, clock, venue, cid = _refused_after_a_short_fill(tmp_path)
     venue.reports = [_closed_short(cid, status=status)]
 
@@ -236,7 +241,6 @@ def test_a_refused_cancel_kraken_reports_in_any_status_but_filled_stays_ambiguou
 
 @pytest.mark.parametrize("filled_qty", ["0.00099996", "0.00099998"], ids=["below-the-ledger", "above-the-ledger"])
 def test_a_refused_cancel_kraken_reports_filled_with_another_figure_stays_ambiguous(tmp_path, filled_qty):
-    """A figure that disagrees is left to a restart's startup pass, which repairs or trips on it."""
     ex, client, clock, venue, cid = _refused_after_a_short_fill(tmp_path)
     venue.reports = [_closed_short(cid, filled_qty=filled_qty)]
 
@@ -252,8 +256,6 @@ def test_a_refused_cancel_kraken_reports_filled_with_another_figure_stays_ambigu
 
 
 def test_a_refused_cancel_of_an_unfilled_order_kraken_reports_closed_with_nothing_filled_stays_ambiguous(tmp_path):
-    """Closed with a fill is the settle's whole premise: an order that filled nothing settles nothing, whatever the
-    two figures read."""
     ex, client, clock, venue, cid = _refused_after_a_short_fill(tmp_path, filled=0.0)
     venue.reports = [_closed_short(cid, filled_qty="0")]
 
@@ -327,14 +329,13 @@ def test_a_refused_cancel_with_no_acceptance_reads_nothing_and_stays_ambiguous(t
 
 
 def test_a_refused_cancel_of_a_replacement_not_yet_accepted_reads_nothing(tmp_path):
-    """The txid is the live order's: a replacement whose acceptance has not landed reads no earlier order's record."""
     venue = _VenueOrders()
     ex, client, clock = _resting_executor(
         tmp_path, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)], venue_orders=venue
     )
     first = client.last_order_id
     ex.on_order_event(_accepted(first))
-    ex.on_order_event(_canceled(first))  # the venue's own cancel of the resting maker: a reprice
+    ex.on_order_event(_canceled(first))
     ex.on_quote(_quote())
     second = client.last_order_id
     assert second != first
@@ -349,7 +350,6 @@ def test_a_refused_cancel_of_a_replacement_not_yet_accepted_reads_nothing(tmp_pa
 
 
 def test_a_refused_cancel_on_a_disarmed_engine_reads_nothing_and_stays_ambiguous(tmp_path):
-    """The disarm's own revoke: the attended passes that sign on the engine's key run with it disarmed."""
     venue = _VenueOrders()
     ex, client, clock = _resting_executor(
         tmp_path, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)], venue_orders=venue
@@ -376,8 +376,6 @@ def test_a_refused_cancel_on_a_disarmed_engine_reads_nothing_and_stays_ambiguous
 
 
 def test_a_refused_cancel_with_an_order_in_flight_reads_nothing_and_stays_ambiguous(tmp_path):
-    """A cancel of this engine's still unanswered -- a trip's, or the startup pass's of an adopted order -- shares the
-    key the read signs on."""
     ex, client, clock, venue, cid = _refused_after_a_short_fill(tmp_path)
     venue.reports = [_closed_short(cid)]
     client.cache._open_orders.append(_left_pending_cancel())
@@ -444,8 +442,6 @@ def test_a_cancel_the_client_denied_reads_nothing(tmp_path):
 
 
 def test_a_settled_refusal_leaves_no_open_row_to_carry_its_leg_or_hold_the_freeze(tmp_path):
-    """The same-day carry (`_draft_table`'s open rows) and the watchdog's strand (`_stranded_rows`) both read the
-    window's open rows; the settled row is not one of them."""
     ex, client, clock, venue, cid = _refused_after_a_short_fill(tmp_path)
     venue.reports = [_closed_short(cid)]
     assert [r["client_order_id"] for _, r in open_submitted_rows(tmp_path / "journal", clock.now)] == [cid]
@@ -456,8 +452,6 @@ def test_a_settled_refusal_leaves_no_open_row_to_carry_its_leg_or_hold_the_freez
 
 
 def test_a_refused_cancel_that_settles_past_the_windows_close_carries_the_next_intent(tmp_path):
-    """The box's cancel of a cycle plan's intent started at B+3h20 goes out at B+3h35, past the window's close: the
-    settle ends the intent, and the next one is carried, never started."""
     venue = _VenueOrders()
     ex, client, clock = _boundary_executor(
         tmp_path,
@@ -551,19 +545,18 @@ its statements from `refusal = …` through `return` unchanged. Directly above `
 ```python
     def _settle_refused_cancel(self, active: _ActiveIntent, reason) -> str | None:
         """Kraken's own record of the order whose cancel the venue just refused, read at the refusal and
-        settled from: an order Kraken reports closed -- FILLED, whatever its reason -- with a fill equal to the
-        one this process recorded for it, within `_OVERFILL_TOLERANCE`, has its row written `filled` with a
-        `venue_closed` event, counts `filled`, ends its intent `filled` and returns None, the plan's next intent
-        starting on the next tick under that tick's own window, gate and box. Every other answer returns what
-        the refused-cancel arm's CRITICAL line names, the row and the intent left to it: any other status, a
-        figure that disagrees, an order the read does not return, a read that raises, a row write that fails,
-        and a read not made -- no txid recorded, the engine disarmed, or an order of this process in flight or
-        a Cache that cannot say, the terms `read_venue_orders` reads on.
+        settled from: an order Kraken reports closed -- FILLED, whatever its reason -- with a fill above
+        `_OVERFILL_TOLERANCE` and within it of the one this process recorded for it, has its row written
+        `filled` with a `venue_closed` event, counts `filled`, ends its intent `filled` and returns None, the
+        plan's next intent starting on the next tick under that tick's own window, gate and box. Every other
+        answer returns what the refused-cancel arm's CRITICAL line names, the row and the intent left to it:
+        any other status, a figure that disagrees or is nothing, an order the read does not return, a read that
+        raises, a row write that fails, and a read not made -- no txid recorded, the engine disarmed, or an
+        order of this process in flight or a Cache that cannot say, the terms `read_venue_orders` reads on.
 
-        The read holds the node's main thread for its duration, up to `_VENUE_READ_TIMEOUT_SECONDS`: the order
-        events, quotes and timer firings that land meanwhile are delivered after it, in order. A figure that
-        disagrees is left to a restart's startup pass, which repairs or trips on it: a repair here would put the
-        row ahead of the Cache's position, which `_reconcile_terminal` holds the fill to."""
+        The read holds the node's main thread for its duration, up to `_VENUE_READ_TIMEOUT_SECONDS`. A figure
+        that disagrees is left to a restart's startup pass, which repairs or trips on it: a repair here would
+        put the row ahead of the Cache's position, which `_reconcile_terminal` holds the fill to."""
         txid = active.venue_order_id
         if txid is None:
             return "no Kraken order id reached this engine for it, so its record was not read"
@@ -627,7 +620,31 @@ its statements from `refusal = …` through `return` unchanged. Directly above `
         return None
 ```
 
-And `_reconcile_terminal`'s docstring takes its one sentence (*Rulings*).
+`_reconcile_terminal`'s docstring takes one sentence after "which is the state that path exists to produce.", wrapped to its paragraph's width: "A refused cancel Kraken's record settles (`_settle_refused_cancel`) is none of them: the venue answered, so it reaches this as any terminal does."
+
+The two texts that name `read_venue_orders`' callers name the settle's read too. The comment above `_VENUE_READ_TIMEOUT_SECONDS` becomes:
+
+```python
+# The startup pass's one read of the venue's orders runs on the node's main thread, and so does the
+# refused cancel's settle's, inside a running plan, so this bound is also the longest either can hold
+# that thread. The client's own request timeout is no bound: it retries with backoff underneath it.
+```
+
+In `read_venue_orders`' docstring, the paragraph that opens `A second client on one key is a nonce hazard` becomes the block below, and in the paragraph after it `timer callbacks on its main thread` becomes `timer callbacks and order events on its main thread`:
+
+```text
+    A second client on one key is a nonce hazard: the adapter serialises signed requests per client,
+    so this client's can reach the venue out of order against the execution client's, and one of them
+    is answered `Invalid nonce`. The startup pass therefore makes this read once, before this process
+    has sent anything -- before its own cancels, and no plan is picked up before the pass has run --
+    and never retries it; the re-read pass reads again on a tick with no intent live and no order
+    of this process in flight in the Cache's terms (`_nothing_in_flight`), and `cancel_venue_order`
+    follows it on the same terms; the refused cancel's settle (`_settle_refused_cancel`) reads once at
+    the refusal, its intent live, with the engine armed and no order of this process in flight on
+    those terms. What those gates cannot see is the execution client's own signed token request while
+    its socket is still reconnecting: a collision there costs the library one reconnect attempt or the
+    reader one try, and the library's retry of an `Invalid nonce` is unmeasured.
+```
 
 - [ ] **Step 5: Run them, expect pass**, with Step 3's command, then the whole file: `uv run pytest tests/test_engine_executor.py -m "not slow" -q -p no:cacheprovider --basetemp=.tmp/implementer/pt -rs` — `test_every_read_of_a_rows_txid_or_its_cache_copy_goes_through_the_one_door_and_every_intent_writer_is_listed` among them, which refuses the acceptance arm's payload read (*Rulings*).
 
@@ -647,16 +664,18 @@ And `_reconcile_terminal`'s docstring takes its one sentence (*Rulings*).
   - `row-state`: mutation `s/state="filled", event=event/event=event/`, `-k 'leaves_no_open_row'`.
   - `counter`: mutation `R` + `s/_inc_order("filled")/_inc_order("ambiguous")/`, `-k 'closed_with_the_recorded_fill'`.
   - `warning`: mutation `R` + `s/^        logger.warning($/        logger.info(/`, `-k 'closed_with_the_recorded_fill'`.
+  - `level`: mutation `R` + `s/^        logger.warning($/        logger.error(/`, `-k 'closed_with_the_recorded_fill'`.
   - `since`: mutation `s/(self._plan_cycle_ts - _VENUE_READ_MARGIN)/(self._plan_cycle_ts)/`, `-k 'closed_with_the_recorded_fill'`.
   - `resumes`: mutation `R` + `s/        self._finish_active("filled", (), active.filled)/        self._journal_intent(active.index, "filled", (), active.filled)/`, `-k 'closed_with_the_recorded_fill'`.
   - `read-fails`: mutation `R` + `s/            return f"Kraken.s orders could not be read ({type(exc).__name__})"/            reports = []/`, `-k 'read_raises'`.
   - `not-returned`: mutation `R` + `s/        if report is None:/        if False:/`, `-k 'does_not_return'`.
+  - `txid`: mutation `R` + `s/if str(r.venue_order_id) == txid/if True/`, `-k 'does_not_return'`.
   - `critical`: mutation `s/its intent ends ambiguous and the plan stops here/the plan stops here/`, `-k 'does_not_return'`.
   - `row-unwritten`: mutation `R` + `s/            return f"Kraken reports order {txid} closed, but its row could not be written filled"/            pass/`, `-k 'settled_row_cannot_be_written'`.
   - `kill-file`: mutation `/def _start_intent/,/def _classify_close/s/if not _level_permits(verdict.level, intent):/if False:/`, `-k 'after_a_kill_file'`.
-  - `window`: mutation `s/if self._plan_window_close is not None and now > self._plan_window_close:/if False:/`, `-k 'past_the_windows_close'`.
+  - `window`: mutation `s/if self._plan_window_close is not None and now > self._plan_window_close:/if False:/`, `-k 'refused_cancel_that_settles_past_the_windows_close'`.
 
-  An apostrophe in a pattern is spelled `.`, as above, so the mutation stays one single-quoted word. Then the empty commit, `test(engine): the refused cancel's settle proven by infra/scripts/mutate-probe.sh`.
+  An apostrophe in a pattern is spelled `.`, as above, so the mutation stays one single-quoted word. Two selections also take cases that predate this plan, `read_raises` one and `does_not_return` three; their arms mutate the settle or its new CRITICAL string, which those cases never reach, so a kill there is the new case's. `window`'s mutation reaches `_start_intent`, which `test_an_intent_does_not_start_past_the_windows_close_and_is_journaled_carried[3h31]` fails on by itself, so its selection names the new case whole. Then the empty commit, `test(engine): the refused cancel's settle proven by infra/scripts/mutate-probe.sh`.
 
 ### Task 3: The runbook texts (spec D6)
 
@@ -673,7 +692,7 @@ And `_reconcile_terminal`'s docstring takes its one sentence (*Rulings*).
 
 - [ ] **Step 3: The daily read.** In `infra/runbooks/engine-procedures.md`'s rung-3 daily read, item 3, the sentence "An `ambiguous` intent halts its plan: on the workstation, read `kraken open-orders -o json` and establish what reached the venue; the re-read pass settles its row, and one Kraken's orders do not explain is an unreconciled state for [the go/no-go](#rung-3-go-no-go)." is replaced by the spec's *Runbook texts* second fence, verbatim.
 
-- [ ] **Step 4: Commit** `docs(runbooks): the refused cancel's line says what Kraken's record answered, and the daily read reads the settled row`, the per-commit test run's result line in the body — `consumers.sh` names `tests/test_cache_restart.py tests/test_engine_draftplan.py tests/test_engine_executor.py tests/test_guidance_guard.py tests/test_merge_gate.py tests/test_ops_daily.py` for the two pages, and the task adds `tests/test_internal_terms_not_operator_visible.py` — after the gate, whose `guidance growth is stated, universals are counted` hook reads both pages.
+- [ ] **Step 4: Commit** `docs(runbooks): the refused cancel's line says what Kraken's record answered, and the daily read reads the settled row`, the per-commit test run's result line in the body — `consumers.sh` names `tests/test_cache_restart.py tests/test_engine_draftplan.py tests/test_engine_executor.py tests/test_guidance_guard.py tests/test_merge_gate.py tests/test_ops_daily.py` for the two pages, and the task adds `tests/test_internal_terms_not_operator_visible.py` — after the gate. The gate does not run the hook `guidance growth is stated, universals are counted`: it runs at the commit's `commit-msg` stage, reading both pages; `uv run python infra/scripts/guidance-guard.py --uncounted infra/runbooks/engine.md infra/runbooks/engine-procedures.md` printing nothing is that read before it.
 
 ### Task 4: The decisions-log entry and T0229's close
 
@@ -683,7 +702,7 @@ And `_reconcile_terminal`'s docstring takes its one sentence (*Rulings*).
 
 - [ ] **Step 1: Load `iteration-closeout`** before the decisions-log entry and **`topic-ops`** before the topic.
 
-- [ ] **Step 2: The decisions-log entry**, appended to `docs/research/14.phase6-decisions.md` after its last line, keyed `[00160]`, verbatim as written here; an owner's ruling on the spec's open question that lands before this task is entered the same way, its ask and answer verbatim:
+- [ ] **Step 2: The decisions-log entry**, appended to `docs/research/14.phase6-decisions.md` after its last line, keyed `[00160]`, verbatim as written here:
 
 ```markdown
 
@@ -699,7 +718,7 @@ And `_reconcile_terminal`'s docstring takes its one sentence (*Rulings*).
   Decided by the spec's author: the other two buy nothing the refused intent's plan can use, its next intent waiting on this one either way.
 
 [00160] Which of Kraken's answers settle the refused cancel? (Decision: 1)
-  1. **FILLED — Kraken's `closed`, whatever its reason — with a fill above zero equal to the one the engine recorded for the order, within 1e-12** — the startup pass already writes `filled` from any FILLED report, and a figure apart stays the startup pass's to repair or trip on.
+  1. **FILLED — Kraken's `closed`, whatever its reason — with a fill above 1e-12, and within 1e-12 of the one the engine recorded for the order** — the startup pass already writes `filled` from any FILLED report, and a figure apart stays the startup pass's to repair or trip on.
   2. **The same, under the reason `Insignificant volume remaining` alone** — a string written for people decides a state.
   3. **Closed with any fill, the row repaired to Kraken's figure** — the repair puts the row ahead of the Cache's position, and the terminal's reconciliation trips the kill switch on that gap.
   Decided by the spec's author.
@@ -723,8 +742,10 @@ And `_reconcile_terminal`'s docstring takes its one sentence (*Rulings*).
 Delivered by the pull request from `feat/t0229-closed-short-settles-inline` (spec 00160, plan 00160), on the owner's ruling of 2026-11-16, verbatim "Inline, and the plan resumes": at a cancel the venue refuses, the engine reads Kraken's record of the order at once. An order Kraken reports closed with exactly the fill the engine recorded ends its intent `filled` and its row `filled`, with a `venue_closed` event, and the plan runs its next intent; every other answer, or a read not made or failed, stays `ambiguous` with the remainder dropped, its CRITICAL line naming the answer.
 
 - The 2026-11-11 DOT case, closed 3e-08 short, is `test_a_refused_cancel_kraken_reports_closed_with_the_recorded_fill_ends_filled_and_the_plan_goes_on`; the adapter reading such an order as filled at its executed volume, `test_read_venue_orders_reads_an_order_kraken_closed_short_as_filled_at_its_executed_volume`; a read that fails, `test_a_refused_cancel_whose_read_raises_stays_ambiguous`; all in `tests/test_engine_executor.py`.
-- The settled row no longer carries its symbol's leg in the drafts or holds the watchdog's freeze; the Cache's stale open copy of the order stays, as the startup pass leaves it (spec 00160 D7).
-- The missing terminal event is the adapter's, the `nautilus` peer's to raise upstream; spec 00160 D8 names the coordinator's hand-off and the record it carries.
+- The settled row no longer carries its symbol's leg in the drafts or holds the watchdog's freeze.
+- Dropped, the Cache's stale open copy of the order, which stays as the startup pass leaves it: nothing in this process can close it, and it moves no figure — the Cache's position and the draft's `engine_held` read the same with it open (spec 00160 D7).
+- Dropped here, the missing terminal event: the adapter's, the `nautilus` peer's to raise upstream, handed over by the coordinator with the record spec 00160 D8 names; this change stands whether or not upstream fixes it.
+- Dropped, a measurement of Kraken's own latency for the read: its 30 s bound fails closed, and the first real settle's WARNING line carries the read's seconds (spec 00160 D2).
 - It ships on the engine image that carries [[T0226]]'s and [[T0227]]'s fixes, one converge, the fleet's concern (spec 00160 D10).
 ```
 
