@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: 'a milestone: rung 3''s first attended week closes; check: `git log --oneline origin/develop --merges --grep=records/rung3-week-1` prints a line'
+status: resolved
 ---
 
 # An order Kraken closes short of its size ends its intent ambiguous
@@ -20,9 +19,13 @@ Each occurrence costs the boundary its remaining legs, which wait for the next b
 - Drill F2's ambiguous DOT order was a whole fill under the drill's own disconnect, a different cause.
 - Registered on the owner's word of 2026-11-11, "register the topic as recommended", ripe beside [[T0226]] and [[T0227]].
 
-## Suggested next steps
+## Resolution
 
-- At a cancel refused `EOrder:Unknown order`, read Kraken's own record of the order, as the startup pass does, and settle the row and the intent from it: an order closed with a fill ends `filled` at that quantity and the plan goes on; any other answer, or a failed read, stays `ambiguous`.
-- Prove it with a case whose order the venue closes short with no terminal event, and a case whose venue read fails.
-- Hand the missing terminal event to the `nautilus` peer as an adapter defect, with the order's record.
-- Ship it on the image that carries [[T0226]]'s and [[T0227]]'s fixes, so one engine converge takes the three.
+Delivered by the pull request from `feat/t0229-closed-short-settles-inline` (spec 00160, plan 00160), on the owner's ruling of 2026-11-16, verbatim "Inline, and the plan resumes": at a cancel the venue refuses, the engine reads Kraken's record of the order at once. An order Kraken reports closed with exactly the fill the engine recorded ends its intent `filled` and its row `filled`, with a `venue_closed` event, and the plan runs its next intent; every other answer, or a read not made or failed, stays `ambiguous` with the remainder dropped, its CRITICAL line naming the answer.
+
+- The 2026-11-11 DOT case, closed 3e-08 short, is `test_a_refused_cancel_kraken_reports_closed_with_the_recorded_fill_ends_filled_and_the_plan_goes_on`; the adapter reading such an order as filled at its executed volume, `test_read_venue_orders_reads_an_order_kraken_closed_short_as_filled_at_its_executed_volume`; a read that fails, `test_a_refused_cancel_whose_read_raises_stays_ambiguous`; all in `tests/test_engine_executor.py`.
+- The settled row no longer carries its symbol's leg in the drafts or holds the watchdog's freeze.
+- Dropped, the Cache's stale open copy of the order, which stays as the startup pass leaves it: nothing in this process can close it, and it moves no figure — the Cache's position and the draft's `engine_held` read the same with it open (spec 00160 D7).
+- Handed over, the missing terminal event: an adapter defect outside this repository, which the coordinator handed the `nautilus` peer on 2026-11-16 with the order's record, as spec 00160 D8 says; this change stands whether or not upstream fixes it.
+- Dropped, a measurement of Kraken's own latency for the read: its 30 s bound fails closed, and the first real settle's WARNING line carries the read's seconds (spec 00160 D2).
+- It ships on the engine image that carries [[T0226]]'s and [[T0227]]'s fixes, one converge, the fleet's concern (spec 00160 D10).

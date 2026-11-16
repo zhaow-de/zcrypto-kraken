@@ -9,7 +9,6 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 - [T0226 — A restored order the Cache reads filled keeps its remainder resting at Kraken](T0226-a-restored-order-the-cache-reads-filled-keeps-its-remainder-resting.md) — ripe when: a milestone: rung 3's first attended week closes; check: `git log --oneline origin/develop --merges --grep=records/rung3-week-1` prints a line
 - [T0227 — The engine publishes the gate's bare level before the boundary folds its holds](T0227-the-engine-publishes-the-gate-s-bare-level-before-the-boundary-folds-its-holds.md) — ripe when: a milestone: rung 3's first attended week closes; check: `git log --oneline origin/develop --merges --grep=records/rung3-week-1` prints a line
 - [T0228 — BTC on-chain metrics computed from chain data — C3's first step](T0228-btc-on-chain-metrics-computed-from-chain-data.md) — ripe when: an activity — rung 3's entry recorded, `docs/reference/rung3/days.md` reaching `develop` with week 1's records pull request, its first entry the birth; check: `test -f docs/reference/rung3/days.md` exits 0
-- [T0229 — An order Kraken closes short of its size ends its intent ambiguous](T0229-an-order-kraken-closes-short-of-its-size-ends-its-intent-ambiguous.md) — ripe when: a milestone: rung 3's first attended week closes; check: `git log --oneline origin/develop --merges --grep=records/rung3-week-1` prints a line
 - [T0230 — The margin floor reads a free-margin figure refreshed only at connect](T0230-the-margin-floor-reads-a-free-margin-figure-refreshed-only-at-connect.md) — ripe when: a milestone: rung 3's first attended week closes; check: `git log --oneline origin/develop --merges --grep=records/rung3-week-1` prints a line
 
 ## Partially done
@@ -237,3 +236,4 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 - [T0222 — A trial run on a branch that never merges spends uncounted](archive/T0222-a-trial-on-an-unmerged-branch-spends-uncounted.md)
 - [T0223 — Records 45 and 46 rebuilt as a B1 subject](archive/T0223-records-45-and-46-rebuilt-as-a-b1-subject.md)
 - [T0224 — The engine and the helper read Kraken's live ordermin](archive/T0224-the-engine-and-the-helper-read-krakens-live-ordermin.md)
+- [T0229 — An order Kraken closes short of its size ends its intent ambiguous](archive/T0229-an-order-kraken-closes-short-of-its-size-ends-its-intent-ambiguous.md)
