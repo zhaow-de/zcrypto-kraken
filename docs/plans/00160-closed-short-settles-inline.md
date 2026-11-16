@@ -708,6 +708,11 @@ And `_reconcile_terminal`'s docstring takes its one sentence (*Rulings*).
   1. **Every `OrderCancelRejected`, whatever its reason, with the engine armed, nothing of it in flight and the order's txid known; never `OrderCancelDenied`** — Kraken's answer decides, not its error text; a denied cancel never reached Kraken; the disarmed engine is the attended passes', whose nonce the read would race.
   2. **`EOrder:Unknown order` alone, on the same terms** — one read fewer on other refusals, keyed on a venue's string.
   Decided by the spec's author.
+
+[00160] When the refused cancel's read finds the order CANCELED or EXPIRED with exactly the recorded fill, does the read write the row's state at once? (Decision: 1)
+  Asked 2026-11-16T17:21:44.212Z, verbatim: "Spec 00160 (T0229): when the refused cancel's read finds the order CANCELED or EXPIRED at Kraken with exactly the fill the engine recorded, the intent stays ambiguous and the plan's later legs are dropped, per your ruling (only a closed-with-fill resumes). Should the read also write the row's state from Kraken's record at once?". Answered 2026-11-16T17:24:37.023Z, verbatim: "Leave it to a restart (Recommended)".
+  1. **Leave it to a restart (Recommended).** As today: the row stays open until a restart's startup pass writes it. Neither answer has been seen on the live path, and the restart already settles them. **Taken** (owner, 2026-11-16).
+  2. **Write it now.** The read writes `canceled`/`venue_canceled` from Kraken's record at once. That removes the same-day carried leg and the watchdog strand for those answers too, at the cost of one more write path.
 ```
 
 - [ ] **Step 3: Close the topic.** `git mv` it to `docs/open-topics/archive/`; `status: resolved`, `ripe_when:` deleted; `## Suggested next steps` and everything under it replaced by this section, verbatim; then `uv run python infra/scripts/topics-index.py`, and the heading set read before and after with `grep '^#'`:
