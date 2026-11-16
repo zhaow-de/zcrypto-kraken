@@ -18,8 +18,8 @@ Reading rules:
 | capture | zcrypto-red | `1931596fd60b` — revision `9040ca59` | 2026-11-15 19:57:43 | `f102ca375382` |
 | engine | zcrypto | `81a8d6c7df63` — revision `ff0d3422` | 2026-11-15 16:21:05 | `1931596fd60b` |
 | cache-proxy | zcrypto | `76928c0d6b39` — HAProxy 3.4.5, upstream `haproxy` | 2026-11-15 16:21:05 | first pin |
-| alloy | zcrypto | `89a5a3201683` — v1.21.2 | 2026-11-06 15:18:54 | `2aa2099af76c` — v1.20.1 |
-| alloy | zcrypto-red | `89a5a3201683` — v1.21.2 | 2026-11-06 15:15:40 | `2aa2099af76c` — v1.20.1 |
+| alloy | zcrypto | `89a5a3201683` — v1.21.2 | 2026-11-15 14:28:13 | `2aa2099af76c` — v1.20.1 |
+| alloy | zcrypto-red | `89a5a3201683` — v1.21.2 | 2026-11-15 19:57:41 | `2aa2099af76c` — v1.20.1 |
 | alloy | zcrypto-ops | `89a5a3201683` — v1.21.2 | 2026-11-06 15:02:46 | `2aa2099af76c` — v1.20.1 |
 | alloy | nas | `89a5a3201683` — v1.21.2, upstream `grafana/alloy`, no `-compat` variant | 2026-11-07 19:46:44 | `2aa2099af76c` — v1.20.1 |
 | valkey + sentinel | zcrypto-valkey1 | `418652cfb58e` — Valkey 9.1.2, upstream `valkey/valkey` | 2026-09-26 21:20:54 | first pin |
