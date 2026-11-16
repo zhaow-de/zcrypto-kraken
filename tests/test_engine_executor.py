@@ -3567,6 +3567,16 @@ def test_a_cancel_the_client_denied_before_sending_parks_the_intent_ambiguous_at
     ]
 
 
+def test_an_order_whose_cancel_the_venue_refused_is_open_and_not_in_flight():
+    order = _resting_limit_order("O-1")
+    order.apply(_fill("O-1", 0.4))
+    order.apply(_event(OrderPendingCancel, client_order_id="O-1"))
+    assert order.is_inflight
+    order.apply(_event(OrderCancelRejected, client_order_id="O-1", reason="EOrder:Unknown order"))
+
+    assert (order.status, order.is_inflight, order.is_open) == (OrderStatus.PARTIALLY_FILLED, False, True)
+
+
 def test_a_cancel_the_venue_never_answers_ends_ambiguous_and_frees_the_engine(tmp_path):
     """Without a bound on our own bookkeeping the intent parks forever -- and the plan pointer stays
     non-None, so the executor silently ignores EVERY later plan file until a process restart: a dead
@@ -7454,6 +7464,23 @@ def test_read_venue_orders_returns_open_and_closed_orders_by_txid_with_no_client
     assert str(reports[_TXID].instrument_id) == "BTC/EUR.KRAKEN"
     assert reports["OCANCL-SOL00-000003"].order_status == OrderStatus.CANCELED
     assert venue.closed_order_forms[0]["start"] == str(int(since.timestamp()))
+
+
+def test_read_venue_orders_reads_an_order_kraken_closed_short_as_filled_at_its_executed_volume(_loopback_credentials):
+    row = kraken_loopback.closed_order(
+        "XBTEUR", price="30000.0", volume="0.00100003", side="sell", status="closed", vol_exec="0.00100000"
+    )
+    row["reason"] = "Insignificant volume remaining"
+    with kraken_loopback.serve() as venue:
+        venue.closed_orders[_TXID] = row
+        [report] = read_venue_orders(NOW - timedelta(hours=9), base_url=venue.base_url)
+
+    assert (report.order_status, float(report.filled_qty), float(report.quantity), report.cancel_reason) == (
+        OrderStatus.FILLED,
+        0.001,
+        0.00100003,
+        "Insignificant volume remaining",
+    )
 
 
 def test_read_venue_orders_answers_past_a_closed_order_on_a_pair_the_listing_lacks(_loopback_credentials):
