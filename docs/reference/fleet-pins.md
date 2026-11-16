@@ -14,10 +14,10 @@ Reading rules:
 
 | service | host | digest (sha256, first 12) | since (UTC) | rollback operand (resident on the host at the re-pin) |
 | --- | --- | --- | --- | --- |
-| capture | zcrypto | `1931596fd60b` — revision `9040ca59` | 2026-11-07 16:20:10 | `f102ca375382` |
-| capture | zcrypto-red | `1931596fd60b` — revision `9040ca59` | 2026-11-07 12:51:44 | `f102ca375382` |
-| engine | zcrypto | `81a8d6c7df63` — revision `ff0d3422` | 2026-11-12 12:12:00 | `1931596fd60b` |
-| cache-proxy | zcrypto | `76928c0d6b39` — HAProxy 3.4.5, upstream `haproxy` | 2026-09-30 18:22:02 | first pin |
+| capture | zcrypto | `1931596fd60b` — revision `9040ca59` | 2026-11-15 14:28:15 | `f102ca375382` |
+| capture | zcrypto-red | `1931596fd60b` — revision `9040ca59` | 2026-11-15 19:57:43 | `f102ca375382` |
+| engine | zcrypto | `81a8d6c7df63` — revision `ff0d3422` | 2026-11-15 16:21:05 | `1931596fd60b` |
+| cache-proxy | zcrypto | `76928c0d6b39` — HAProxy 3.4.5, upstream `haproxy` | 2026-11-15 16:21:05 | first pin |
 | alloy | zcrypto | `89a5a3201683` — v1.21.2 | 2026-11-06 15:18:54 | `2aa2099af76c` — v1.20.1 |
 | alloy | zcrypto-red | `89a5a3201683` — v1.21.2 | 2026-11-06 15:15:40 | `2aa2099af76c` — v1.20.1 |
 | alloy | zcrypto-ops | `89a5a3201683` — v1.21.2 | 2026-11-06 15:02:46 | `2aa2099af76c` — v1.20.1 |
