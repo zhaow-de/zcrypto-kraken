@@ -18,7 +18,7 @@ full cli/engine/executor.py — under cli/engine/, read as a non-prose change
 full tests/test_engine_executor.py — a test importing cli.config, read as a non-prose change
 ```
 
-Every fence below was run against `ac3064f6b` in a detached scratch worktree: the tasks' cases pass with the code applied, and 29 of Task 2's Step 3 selection fail without it. Of the probe arms, 20 of Task 2's read `KILLED (control proven, tree restored byte-identically)` in the author's run (`.tmp/t0229/measure/probes.out`); the other five take their first verdict in their task's probe step — Task 2's `level` and `txid`, added after that run, and `window`, whose `-k` was narrowed after it, and Task 1's two, which that run refused under a `1,$d` control that collects nothing.
+Every fence below was run against `ac3064f6b` in a detached scratch worktree: the tasks' cases pass with the code applied, and 29 of Task 2's Step 3 selection fail without it. Which probe arms read `KILLED` in the author's run and which take their recorded verdict in their task's probe step is the spec's *Tests and guards*, under its table.
 
 ## Global Constraints
 
@@ -31,7 +31,7 @@ Every fence below was run against `ac3064f6b` in a detached scratch worktree: th
 - The gate is `uv run pre-commit run -a`, re-run until clean, its rewrites staged.
 - A comment or docstring stays only where a reader would act differently without it, and is correct; state and decisions stay, an event goes to the PR body. A runbook page and an engine string literal carry no `spec <NNNNN>`, `D<N>`, `T<NNNN>`, `iter-<N>`, `Phase <N>` or `WP<N>` token (`tests/test_internal_terms_not_operator_visible.py`).
 - Commits: Conventional Commits, one subject per change, after a `git -C <the worktree> add <every path the commit changes>` of its own, through `git -C <the worktree> commit -F - <<'EOF'`; the message says what changed and pastes the result line of the test command it names, run over the commit's own tree; one state-changing git command per Bash call; never an amend, `--no-verify` or `git stash`; every message ends with `Co-Authored-By: Claude <actual executing model> <noreply@anthropic.com>`, the implementer's own model in place of the placeholder, and `Claude-Session: https://claude.ai/code/session_018eFiE9ZzjweN7A4N9yBCTV`.
-- Probes (this plan's tier is `full`): each arm a task lists runs as its own call on the committed tree, `infra/scripts/mutate-probe.sh --file <file> --control '<control>' --mutation '<mutation>' -- uv run pytest tests/test_engine_executor.py -k '<selection>' -q -p no:cacheprovider --basetemp=.tmp/implementer/pt`, the control `1,$d` unless the arm names another. Before each arm its pattern's count reads `1`: `grep -c '<pattern>' <file>`, or, for an arm whose mutation opens with the settle's range `/def _settle_refused_cancel/,/def _on_rejected/`, `awk '/def _settle_refused_cancel/,/def _on_rejected/' cli/engine/executor.py | grep -c '<pattern>'`. `: > .local/closed-short-settles-inline/probes-task-<N>.txt` before a task's arms; after each arm its id and the script's last line are appended, its own call. A task's verdicts ride an empty commit, `git commit --allow-empty -F <message file>`, subject `test(engine): <task> proven by infra/scripts/mutate-probe.sh`, its body the probes file whole and the trailers.
+- Probes (this plan's tier is `full`): each arm a task lists runs as its own call on the committed tree, `infra/scripts/mutate-probe.sh --file <file> --control '<control>' --mutation '<mutation>' -- uv run pytest tests/test_engine_executor.py -k '<selection>' -q -p no:cacheprovider --basetemp=.tmp/implementer/pt`, the control `1,$d` unless the arm names another. Before each arm its pattern's count reads `1`: `grep -c '<pattern>' <file>`, or, for an arm whose mutation opens with the settle's range `/def _settle_refused_cancel/,/def _on_rejected/`, `awk '/def _settle_refused_cancel/,/def _on_rejected/' cli/engine/executor.py | grep -c '<pattern>'`. `: > .local/closed-short-settles-inline/probes-task-<N>.txt` before a task's arms; after each arm its id and the script's last line are appended, its own call. A task's verdicts ride an empty commit through `git -C <the worktree> commit --allow-empty -F - <<'EOF'`, subject `test(engine): <task> proven by infra/scripts/mutate-probe.sh`, its body the probes file pasted whole, then the trailers; it names no test run, the verdicts being its result.
 - A helper this plan names in a test (`_executor`, `_resting_executor`, `_boundary_executor`, `_VenueOrders`, `_report`, `_resting_limit_order`, `_left_pending_cancel`, `_fill`, `_deliver_fill`, `_event`, `_accepted`, `_canceled`, `_quote`, `_intent`, `_plan_dict`, `_drop_plan`, `_Clock`, `_advance_with_quotes`, `_record`, `_intent_entry`, `_intent_outcome`, `_boundary`, `_executor_errors`, `_rung2_record`, `_only`, `_loopback_credentials`, `RecordingMetrics`, `StubClient`, `NOW`, `_RUNG2_12Z`, `_TXID`) exists in `tests/test_engine_executor.py` at `ac3064f6b`; where a fence's call does not fit its real signature, the case's intent and assertions bind, not the spelling, and the report says what changed.
 
 ## Rulings where the spec is silent
@@ -40,7 +40,7 @@ Every fence below was run against `ac3064f6b` in a detached scratch worktree: th
 - **The acceptance sets the txid before the payload reads it.** `active.venue_order_id = str(event.venue_order_id)` then `payload["venue_order_id"] = active.venue_order_id`: a `payload["venue_order_id"]` read inside `_on_order_event` is a read of the ledger's txid key, which `test_every_read_of_a_rows_txid_or_its_cache_copy_goes_through_the_one_door_and_every_intent_writer_is_listed` refuses outside `_read_id`.
 - **The read's seconds come from the executor's own clock** (`self._now()` before and after), so a case's fixed clock reads `0.0 s` and the line is pinned whole.
 - **The mirror row in `_attached` takes no `filled` state.** Its `state` is read for a restored row (`_on_detached_event`) and an adopted one (`_on_external_event`), and a running intent's own row is neither.
-- **The two lines that carry a traceback** — the in-flight read's and the venue read's failures — log it at WARNING with `exc_info=True`; the CRITICAL line names the exception's class alone, so the page's 200-character hoist reads the answer.
+- **Three lines carry a traceback.** The in-flight read's and the venue read's failures log it at WARNING with `exc_info=True`, beside the arm's CRITICAL, which carries none — the venue read's names the exception's class alone — so the page's 200-character hoist reads the answer; the row write's failure logs its own CRITICAL with the traceback, before the arm's.
 - **A new line's level is held where it decides a page.** The settled WARNING is the one line that must page nothing, so row 1's case reads its level beside its text; the arm's CRITICAL and the row write's are read through a CRITICAL capture, from which a lower level drops them; the two traceback WARNINGs sit beside a CRITICAL that pages either way, so their level is not held.
 - **`_reconcile_terminal`'s docstring gains one sentence** (Task 2 Step 4), naming the settle as none of its ambiguous exits. The refused-cancel arm's comment says the settle comes first. `_drop_remainder_after_ambiguity`'s "Five callers" stays true and is left.
 - **The premise cases sit beside their kin:** the loopback case directly before `test_read_venue_orders_answers_past_a_closed_order_on_a_pair_the_listing_lacks`, the state-machine case directly after `test_a_cancel_the_client_denied_before_sending_parks_the_intent_ambiguous_at_once_and_halts_the_plan`, and Task 2's block directly after the state-machine case.
@@ -249,7 +249,7 @@ def test_a_refused_cancel_kraken_reports_filled_with_another_figure_stays_ambigu
 
     assert records[0].getMessage() == (
         f"cancel of {cid} was REJECTED by the venue (EOrder:Unknown order), and Kraken reports order V-{cid} FILLED, "
-        f"{float(filled_qty):.10g} of 0.001 filled, against the 0.00099997 this engine recorded -- its intent ends ambiguous "
+        f"{float(filled_qty):.12g} of 0.001 filled, against the 0.00099997 this engine recorded -- its intent ends ambiguous "
         "and the plan stops here"
     )
     _assert_ambiguous_and_dropped(tmp_path, client)
@@ -586,8 +586,8 @@ its statements from `refusal = …` through `return` unchanged. Directly above `
             and abs(venue_filled - active.order_filled) <= _OVERFILL_TOLERANCE
         ):
             return (
-                f"Kraken reports order {txid} {report.order_status.name}, {venue_filled:.10g} of "
-                f"{float(report.quantity):.10g} filled, against the {active.order_filled:.10g} this engine recorded"
+                f"Kraken reports order {txid} {report.order_status.name}, {venue_filled:.12g} of "
+                f"{float(report.quantity):.12g} filled, against the {active.order_filled:.12g} this engine recorded"
             )
         why = None if report.cancel_reason is None else str(report.cancel_reason)
         event = {
@@ -605,7 +605,7 @@ its statements from `refusal = …` through `return` unchanged. Directly above `
             return f"Kraken reports order {txid} closed, but its row could not be written filled"
         _inc_order("filled")
         logger.warning(
-            "cancel of %s was refused by the venue (%s), and Kraken reports order %s closed with %.10g of %.10g filled (%s) "
+            "cancel of %s was refused by the venue (%s), and Kraken reports order %s closed with %.12g of %.12g filled (%s) "
             "-- its row reads filled, intent %d ends filled and the plan goes on; the read took %.1f s",
             active.client_order_id,
             reason,
@@ -625,9 +625,10 @@ its statements from `refusal = …` through `return` unchanged. Directly above `
 The two texts that name `read_venue_orders`' callers name the settle's read too. The comment above `_VENUE_READ_TIMEOUT_SECONDS` becomes:
 
 ```python
-# The startup pass's one read of the venue's orders runs on the node's main thread, and so does the
-# refused cancel's settle's, inside a running plan, so this bound is also the longest either can hold
-# that thread. The client's own request timeout is no bound: it retries with backoff underneath it.
+# The startup pass's and the re-read pass's reads of the venue's orders run on the node's main thread,
+# on the tick, and the refused cancel's settle's on an order event inside a running plan, so this bound
+# is also the longest any of them can hold that thread. The client's own request timeout is no bound:
+# it retries with backoff underneath it.
 ```
 
 In `read_venue_orders`' docstring, the paragraph that opens `A second client on one key is a nonce hazard` becomes the block below, and in the paragraph after it `timer callbacks on its main thread` becomes `timer callbacks and order events on its main thread`:
@@ -666,6 +667,7 @@ In `read_venue_orders`' docstring, the paragraph that opens `A second client on 
   - `warning`: mutation `R` + `s/^        logger.warning($/        logger.info(/`, `-k 'closed_with_the_recorded_fill'`.
   - `level`: mutation `R` + `s/^        logger.warning($/        logger.error(/`, `-k 'closed_with_the_recorded_fill'`.
   - `since`: mutation `s/(self._plan_cycle_ts - _VENUE_READ_MARGIN)/(self._plan_cycle_ts)/`, `-k 'closed_with_the_recorded_fill'`.
+  - `parks`: mutation `s/(self._plan_cycle_ts - _VENUE_READ_MARGIN)/(self._plan_cycle_ts)/`, `-k 'cancel_rejection_parks'`.
   - `resumes`: mutation `R` + `s/        self._finish_active("filled", (), active.filled)/        self._journal_intent(active.index, "filled", (), active.filled)/`, `-k 'closed_with_the_recorded_fill'`.
   - `read-fails`: mutation `R` + `s/            return f"Kraken.s orders could not be read ({type(exc).__name__})"/            reports = []/`, `-k 'read_raises'`.
   - `not-returned`: mutation `R` + `s/        if report is None:/        if False:/`, `-k 'does_not_return'`.
@@ -675,7 +677,7 @@ In `read_venue_orders`' docstring, the paragraph that opens `A second client on 
   - `kill-file`: mutation `/def _start_intent/,/def _classify_close/s/if not _level_permits(verdict.level, intent):/if False:/`, `-k 'after_a_kill_file'`.
   - `window`: mutation `s/if self._plan_window_close is not None and now > self._plan_window_close:/if False:/`, `-k 'refused_cancel_that_settles_past_the_windows_close'`.
 
-  An apostrophe in a pattern is spelled `.`, as above, so the mutation stays one single-quoted word. Two selections also take cases that predate this plan, `read_raises` one and `does_not_return` three; their arms mutate the settle or its new CRITICAL string, which those cases never reach, so a kill there is the new case's. `window`'s mutation reaches `_start_intent`, which `test_an_intent_does_not_start_past_the_windows_close_and_is_journaled_carried[3h31]` fails on by itself, so its selection names the new case whole. Then the empty commit, `test(engine): the refused cancel's settle proven by infra/scripts/mutate-probe.sh`.
+  An apostrophe in a pattern is spelled `.`, as above, so the mutation stays one single-quoted word. Two selections also take cases that predate this plan, `read_raises` one and `does_not_return` three; their arms mutate the settle or its new CRITICAL string, which those cases never reach, so a kill there is the new case's; `parks` selects the existing case Step 1 changes, alone. `window`'s mutation reaches `_start_intent`, which `test_an_intent_does_not_start_past_the_windows_close_and_is_journaled_carried[3h31]` fails on by itself, so its selection names the new case whole. Then the empty commit, `test(engine): the refused cancel's settle proven by infra/scripts/mutate-probe.sh`.
 
 ### Task 3: The runbook texts (spec D6)
 
@@ -734,7 +736,7 @@ In `read_venue_orders`' docstring, the paragraph that opens `A second client on 
   2. **Write it now.** The read writes `canceled`/`venue_canceled` from Kraken's record at once. That removes the same-day carried leg and the watchdog strand for those answers too, at the cost of one more write path.
 ```
 
-- [ ] **Step 3: Close the topic.** `git mv` it to `docs/open-topics/archive/`; `status: resolved`, `ripe_when:` deleted; `## Suggested next steps` and everything under it replaced by this section, verbatim; then `uv run python infra/scripts/topics-index.py`, and the heading set read before and after with `grep '^#'`:
+- [ ] **Step 3: Close the topic.** `git -C <the worktree> mv` it to `docs/open-topics/archive/`; `status: resolved`, `ripe_when:` deleted; `## Suggested next steps` and everything under it replaced by this section, verbatim; then `uv run python infra/scripts/topics-index.py`, and the heading set read before and after with `grep '^#'`:
 
 ```markdown
 ## Resolution
@@ -744,7 +746,7 @@ Delivered by the pull request from `feat/t0229-closed-short-settles-inline` (spe
 - The 2026-11-11 DOT case, closed 3e-08 short, is `test_a_refused_cancel_kraken_reports_closed_with_the_recorded_fill_ends_filled_and_the_plan_goes_on`; the adapter reading such an order as filled at its executed volume, `test_read_venue_orders_reads_an_order_kraken_closed_short_as_filled_at_its_executed_volume`; a read that fails, `test_a_refused_cancel_whose_read_raises_stays_ambiguous`; all in `tests/test_engine_executor.py`.
 - The settled row no longer carries its symbol's leg in the drafts or holds the watchdog's freeze.
 - Dropped, the Cache's stale open copy of the order, which stays as the startup pass leaves it: nothing in this process can close it, and it moves no figure — the Cache's position and the draft's `engine_held` read the same with it open (spec 00160 D7).
-- Dropped here, the missing terminal event: the adapter's, the `nautilus` peer's to raise upstream, handed over by the coordinator with the record spec 00160 D8 names; this change stands whether or not upstream fixes it.
+- Dropped here, the missing terminal event: an adapter defect outside this repository, which spec 00160 D8 leaves to the coordinator to hand the `nautilus` peer; this change stands whether or not upstream fixes it.
 - Dropped, a measurement of Kraken's own latency for the read: its 30 s bound fails closed, and the first real settle's WARNING line carries the read's seconds (spec 00160 D2).
 - It ships on the engine image that carries [[T0226]]'s and [[T0227]]'s fixes, one converge, the fleet's concern (spec 00160 D10).
 ```
