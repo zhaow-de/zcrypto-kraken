@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: 'any one arm: the first hand act on a basket coin under rung 3 — check: `uv run python infra/scripts/grafana-query.py ''increase(zcrypto_exec_external_events_total{host="zcrypto",disposition="unmatched"}[7d])''` reads above 0 over a week after rung 3''s entry — a coarse proxy, which a cancel, a non-basket coin or an attended pass moves too, read against the engine''s log line `external order event ignored: OrderFilled for … on <basket>/EUR.KRAKEN`; or `zcrypto-engine-cycle-stale` stops covering darkness on its own — `grep -c "uid: zcrypto-engine-cycle-stale" infra/grafana/alerts.yaml` reads 0, its `severity:` is no longer `critical`, or it gains a `zcrypto_exec_position` reference'
+ripe_when: 'any one arm: the first hand act on a basket coin under rung 3 with the engine armed — check: `uv run python infra/scripts/grafana-query.py ''increase(zcrypto_exec_external_events_total{host="zcrypto",disposition="unmatched"}[7d])''` reads above 0 over a week after rung 3''s entry — a coarse proxy, which a cancel, a non-basket coin or an attended pass moves too, read against the engine''s log line `external order event ignored: OrderFilled for … on <basket>/EUR.KRAKEN`; or `zcrypto-engine-cycle-stale` stops covering darkness on its own — `grep -c "uid: zcrypto-engine-cycle-stale" infra/grafana/alerts.yaml` reads 0, its `severity:` is no longer `critical`, or it gains a `zcrypto_exec_position` reference'
 ---
 
 # The position gauge lags a hand act until the next venue read
@@ -18,6 +18,7 @@ It is the quiet direction of the gauge's error: a hand-opened position the engin
 - Split out of `T0187` at its resolution: this span is the staleness its acceptance of 2026-09-09 priced.
 - The acceptance's other grounds: a hand act during an armed window is the owner's attended act; and the alert-layer alternative, a presence-aware node A, pages on a book the engine reported flat (`T0187`'s replay, `tests/test_infra_alert_rules.py`).
 - The WARNING `the venue holds <qty> <symbol> where the Cache reads <qty>` marks each read that moved the gauge, spot dust on a leg the Cache reads flat excepted.
+- Drill B's flatten of 2026-11-15 sold AVAX/EUR with the engine stopped, so it did not ripen the topic: the startup pass read Kraken's figure at the restart, and `zcrypto_exec_external_events_total` read matched 0 and unmatched 0 after it (`docs/reference/drill-log.md`).
 
 ## Done so far
 
