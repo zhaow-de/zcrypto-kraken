@@ -445,3 +445,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #855 | 2026-11-12 | docs: the cache proxy quorum route rollout records | — | 00159 | — |
 | #856 | 2026-11-12 | docs(open-topics): T0230, the margin floor's free margin read at connect | — | — | T0230 |
 | #857 | 2026-11-12 | feat(vintage): the C3 forward recorder, its custody and versions table | — | 00158 | — |
+| #862 | 2026-11-16 | docs(reference): rung 3's rollout records — pins, drills and rulings | — | 00092 | — |
