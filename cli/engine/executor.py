@@ -558,9 +558,9 @@ def _row_label(row: dict, venue_order_id: str | None) -> str:
 def _log_resting_outside_the_cache(label: str, report) -> None:
     """A venue report stands in for a Cache order only when the Cache holds none under the row's
     ids, so a report that is not terminal names an order resting at Kraken that startup
-    reconciliation dropped (`_cancel_resting` says how). Every cancel this process can issue goes
-    through the Cache, so neither the startup pass nor a kill trip reaches it, and the operator is
-    the only one who can."""
+    reconciliation dropped (`_cancel_resting` says how). The startup pass cancels what the Cache holds
+    -- through it, or by txid a restored copy the library closed (`_cancel_closed_copy`) -- and a kill
+    trip what the Cache holds open, so neither reaches it, and the operator is the only one who can."""
     if report.order_status in _ADOPTED_TERMINAL_STATES:
         return
     logger.critical(
@@ -587,11 +587,15 @@ def read_venue_orders(since: datetime, *, base_url: str | None = None) -> list:
     has sent anything -- before its own cancels, and no plan is picked up before the pass has run --
     and never retries it; the re-read pass reads again on a tick with no intent live and no order
     of this process in flight in the Cache's terms (`_nothing_in_flight`), and `cancel_venue_order`
-    follows it on the same terms; the refused cancel's settle (`_settle_refused_cancel`) reads once at
+    follows it on the same terms -- at startup, after this read and before the classification's cancels
+    through the strategy handle; the refused cancel's settle (`_settle_refused_cancel`) reads once at
     the refusal, its intent live, with the engine armed and no order of this process in flight on
     those terms. What those gates cannot see is the execution client's own signed token request while
-    its socket is still reconnecting: a collision there costs the library one reconnect attempt or the
-    reader one try, and the library's retry of an `Invalid nonce` is unmeasured.
+    its socket is still reconnecting, or at startup the cancels a kill trip earlier in the same sweep
+    has sent through the strategy handle: a collision there costs the library one reconnect attempt,
+    the trip one of its cancels, the startup's cancel by txid its one send, refused with the CRITICAL
+    that names the hand cancel, or the reader one try, and the library's retry of an `Invalid nonce`
+    is unmeasured.
 
     The listing is cached into the client first because the order read resolves every row through
     that cache and its altname index: an open order it cannot resolve fails the whole read, and a
@@ -633,7 +637,8 @@ def read_venue_fills(since: datetime, *, base_url: str | None = None) -> list:
 def cancel_venue_order(venue_order_id: str, instrument_id: str, *, base_url: str | None = None) -> None:
     """Cancel one order at the venue by its txid, on a client of its own (`_bare_client`) and on
     `read_venue_orders`' terms: the re-read pass's cancel of an order the Cache holds closed by a
-    terminal this engine minted, which the strategy handle refuses to cancel
+    terminal this engine minted, and the startup pass's of a restored order whose copy the library
+    closed while Kraken lists it open, both of which the strategy handle refuses to cancel
     (`Cannot cancel order: state is ...`, sent nowhere). The listing is cached first because the client
     resolves the pair through it. Returns on the venue's answer without reading its `count` --
     `{"count": 0}` and `{"count": 1}` return alike, which the loopback cases pin -- and raises on a
@@ -1264,8 +1269,9 @@ class ProbeExecutor:
         self._marked: set[tuple[str, str]] = set()
         # Restored rows a report of this process vouched for since their last fill or mint: the only ones whose intent is written.
         self._answered: set[str] = set()
-        # The restored rows a fill reached and the re-read pass has not repaired since: the credit is
-        # nothing (`_fill_credit`) and the pass repairs the row from the venue's cumulative figure.
+        # The restored rows a fill reached, or the startup pass cancelled by its txid (`_cancel_closed_copy`), and
+        # the re-read pass has not repaired since: a fill's credit is nothing (`_fill_credit`) and the pass repairs
+        # the row from the venue's cumulative figure.
         self._restored_fills: set[str] = set()
         # The realized PnL the Cache held per instrument at construction, what a restored position
         # carried in from a previous run, subtracted from the gauge so it reads this process's own.
@@ -1746,7 +1752,10 @@ class ProbeExecutor:
         previous process (spec 00120 D6, D7): the sweep takes the venue's report over the Cache's copy for
         every order of the restored set (`_venue_answers`); one the venue reports closed has its row
         written from the report and is sent no cancel, its stale open copy left in the Cache, and one it
-        reports open is classified as an adopted one is -- cancelled unless its row is a ledgered reducer.
+        reports open is cancelled by txid in the sweep when the library closed its copy, whatever its row's
+        `reduce_only` (`_cancel_closed_copy`; a copy a minted terminal closed `_cached_order` withholds, and
+        the sweep's tail names its hand cancel), and otherwise classified as an adopted one is -- cancelled
+        unless its row is a ledgered reducer.
 
         LAST, the window's `pending` intents are settled (`_settle_pending_intents` names the ones it leaves `pending`).
         """
@@ -1961,8 +1970,9 @@ class ProbeExecutor:
                 if (self._minted_closed(row) or row["client_order_id"] in self._restored_fills) and not self._marked_here(row)
             }
             # A restored row a fill reached and a terminal then closed before this pass -- the venue's
-            # cancel ack, an expiry -- is in the window's closed rows: its credit-0 fill is repaired
-            # here all the same (spec 00120 D8), and its intent waits for that repair.
+            # cancel ack, an expiry -- or one the startup pass cancelled by its txid (`_cancel_closed_copy`)
+            # is in the window's closed rows: its fill, credited nothing (spec 00120 D8) or dropped by the
+            # library against the closed copy, is repaired here all the same, and its intent waits for that repair.
             rows.update(
                 {
                     row["client_order_id"]: (boundary, row)
@@ -2064,7 +2074,9 @@ class ProbeExecutor:
         is an order reconciliation dropped, which `_log_resting_outside_the_cache` logs CRITICAL at
         startup; the re-read pass cancels it instead (`_recancel`), by txid on the bare client, since
         the row is this engine's own record of an order it placed or adopted and the Cache's closed
-        copy is why no cancel through the strategy handle reaches it.
+        copy is why no cancel through the strategy handle reaches it. At startup a restored row whose
+        copy the library closed while its report reads open is cancelled the same way
+        (`_cancel_closed_copy`), after the pass's one read and before the classification.
 
         A row neither answers is never given a venue truth nobody read: `_mark_unmatched` marks it by
         its ledger state unless the venue read it needed failed, which `_read_venue_orders` has already
@@ -2092,10 +2104,26 @@ class ProbeExecutor:
                     order = self._cached_order(row, venue_order_id)
                     report = None if venue_orders is None or venue_order_id is None else venue_orders.get(venue_order_id)
                     restored = order is not None and self._venue_answers(row, finished=False)
+                    if (
+                        restored
+                        and report is not None
+                        and not recancel
+                        and order.status in _ADOPTED_TERMINAL_STATES
+                        and report.order_status not in _ADOPTED_TERMINAL_STATES
+                    ):
+                        self._cancel_closed_copy(
+                            boundary,
+                            row,
+                            venue_order_id,
+                            report,
+                            order_id=str(order.client_order_id),
+                            cache_status=order.status.name,
+                        )
+                        continue
                     if restored and report is not None:
                         # A restored order the venue answered for: the report over the Cache's copy, the
                         # previous process's view (spec 00120 D6), and no re-cancel -- a restored order is
-                        # cancelled or kept by the startup's classification.
+                        # cancelled or kept by the startup's classification, or above where its copy reads closed.
                         answered = self._reconcile_adopted_row(
                             boundary,
                             row,
@@ -2166,25 +2194,51 @@ class ProbeExecutor:
         except Exception:
             logger.critical("the startup reconciliation sweep raised -- classifying resting orders anyway", exc_info=True)
 
-    def _recancel(self, boundary: datetime, row: dict, venue_order_id: str, report, *, order_id: str | None = None) -> bool:
-        """The re-read pass's cancel of an order the venue still reports open: the report's fills
+    def _cancel_closed_copy(
+        self, boundary: datetime, row: dict, venue_order_id: str, report, *, order_id: str, cache_status: str
+    ) -> None:
+        """The startup pass's cancel of a restored order Kraken reports open while its Cache copy reads closed
+        (`cache_status`): a `trade` frame with no `order_qty` rewrites a restored copy to its filled quantity and
+        FILLED, and a double booking can carry one to FILLED ahead of Kraken's figure. The strategy handle sends
+        nothing for a closed order and the classification reads the open orders alone, so the cancel goes by txid
+        (`_recancel`). A fill racing it is one the library drops against the closed copy, so the row then waits for
+        the re-read pass's read, which books it and writes the intent -- whether the cancel went, raised or could
+        not be journaled: a remainder that fills whole before the cancel arrives leaves Kraken nothing open to
+        cancel, and only that read books it in this process."""
+        self._recancel(boundary, row, venue_order_id, report, order_id=order_id, cache_status=cache_status)
+        self._restored_fills.add(row["client_order_id"])
+        self._arm_reread_after_mint()
+
+    def _recancel(
+        self,
+        boundary: datetime,
+        row: dict,
+        venue_order_id: str,
+        report,
+        *,
+        order_id: str | None = None,
+        cache_status: str | None = None,
+    ) -> bool:
+        """The re-read pass's cancel of an order the venue still reports open, and the startup pass's of a
+        restored copy that reads `cache_status` (`_cancel_closed_copy`), whose lines name it: the report's fills
         repair the row first, through the arms and trips a startup's repair takes, the row re-attached
         under the Cache order's own id (`order_id`) so a later fill reads this row, then the cancel
         goes out by txid on the bare client, and its return writes the row `canceled` with a
         `recancelled` event -- the client reads no `count` from the venue's answer and the library
         drops the stream's later event for an order it already holds closed, so `canceled` says the
-        pass read the order open and its cancel returned; a fill landing between the two is in the
-        row once the stream delivers it, `_fill_credit` crediting what the Cache's order holds beyond
-        the repair -- the fill whole where the Cache had the report's fills, only what exceeds the
-        Cache's lag where the stream never delivered them -- and on the adopted path completes it
+        pass read the order open and its cancel returned; on the re-read pass's, a fill landing between
+        the two is in the row once the stream delivers it, `_fill_credit` crediting what the Cache's order
+        holds beyond the repair -- the fill whole where the Cache had the report's fills, only what exceeds
+        the Cache's lag where the stream never delivered them -- and on the adopted path completes it
         `filled` off this pass's own mirror, and one the stream never delivers is on Kraken's closed
-        orders alone, which the page has the operator read. A cancel
+        orders alone, which the page has the operator read; on the startup pass's, the library drops that
+        fill against the closed copy, and the re-read pass `_cancel_closed_copy` arms books it. A cancel
         that raises -- the cut not over for REST, or a refusal the venue phrases as an error --
         leaves the row and names the hand cancel, the refused-cancel arm's precedent. No counter
-        moves for the re-cancel and no intent is written here -- a restored row's the caller writes
-        once the row reads `canceled` (`_settle_restored_intent`), from the repair's answer, which this returns; a
-        closed report that completes the row counts `filled` through `_reconcile_adopted_row`'s arm, the startup's
-        rule."""
+        moves for the re-cancel and no intent is written here -- a restored row's the re-read pass writes
+        (`_settle_restored_intent`), after its own re-cancel once the row reads `canceled`, from the repair's
+        answer, which this returns, and after the startup pass's from its own read of the row; a closed report
+        that completes the row counts `filled` through `_reconcile_adopted_row`'s arm, the startup's rule."""
         label = _row_label(row, venue_order_id)
         answered = self._reconcile_adopted_row(
             boundary, row, float(report.filled_qty), report.order_status, order_id=order_id, venue_order_id=venue_order_id
@@ -2192,12 +2246,21 @@ class ProbeExecutor:
         try:
             (self._venue_cancel or cancel_venue_order)(venue_order_id, str(report.instrument_id))
         except Exception:
-            logger.critical(
-                "the re-read pass's cancel of %s raised or was refused -- the order may still rest at Kraken: cancel it "
-                "by hand on Kraken's open-orders page",
-                label,
-                exc_info=True,
-            )
+            if cache_status is None:
+                logger.critical(
+                    "the re-read pass's cancel of %s raised or was refused -- the order may still rest at Kraken: cancel it "
+                    "by hand on Kraken's open-orders page",
+                    label,
+                    exc_info=True,
+                )
+            else:
+                logger.critical(
+                    "the startup pass's cancel of %s raised or was refused -- Kraken lists it open while the Cache reads it "
+                    "%s, so it may still rest at Kraken: cancel it by hand on Kraken's open-orders page",
+                    label,
+                    cache_status,
+                    exc_info=True,
+                )
             return answered
         event = {"event": "recancelled", "at": self._now().isoformat(), "venue_order_id": venue_order_id}
         try:
@@ -2206,11 +2269,22 @@ class ProbeExecutor:
             logger.critical("the re-cancel of %s could not be journaled -- its row keeps the state it has", label, exc_info=True)
             return answered
         row["state"] = "canceled"
-        logger.warning(
-            "re-cancelled %s -- it rested at Kraken (%s) after a terminal this engine minted; its row reads canceled",
-            label,
-            report.order_status.name,
-        )
+        if cache_status is None:
+            logger.warning(
+                "re-cancelled %s -- it rested at Kraken (%s) after a terminal this engine minted; its row reads canceled",
+                label,
+                report.order_status.name,
+            )
+        else:
+            logger.warning(
+                "cancelled %s at Kraken by its txid -- Kraken listed it open (%s, %.10g of %.10g filled) while the Cache "
+                "reads it %s, which no cancel through the Cache reaches; its row reads canceled",
+                label,
+                report.order_status.name,
+                float(report.filled_qty),
+                float(report.quantity),
+                cache_status,
+            )
         return answered
 
     def _mark_unmatched(self, boundary: datetime, row: dict, venue_order_id: str | None) -> None:
