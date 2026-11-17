@@ -274,11 +274,12 @@ New cases in `tests/test_archive_settle.py` (`classify_halt`), `tests/test_archi
 | 2f | Its line is a WARNING | `venue_halt_books_its_seconds` | `(logger.warning if halted else logger.error)(` to `logger.error(` |
 | 2g | The totals sum it | `totals_book_a_halt` | `totals["venue_halt_seconds"] += float(record.get("halt_seconds") or 0.0)` to `… += 0.0` |
 | 2h | The tape is read | `venue_halt_books_its_seconds` | `_tape`'s `return list(zip(…))` to `return []` |
+| 2j | An unreadable tape is no evidence, not a crash | `unreadable_trades_segment` | `_tape`'s `except Exception as exc:  # noqa: BLE001 -- …` to `except ZeroDivisionError as exc:  # noqa: BLE001` |
 | 2i | A decided hour is not re-decided | `booked_before_the_halt_verdict` | `if windows and not _decided("*", "book", hour, "both_streams_silent"):` to `if windows:` together with `_ledger`'s `if key in seen:` to `if False:` |
 | 3a | The page names the halt counter | `names_the_halt_counter` | `infra/grafana/alerts.yaml`, `it books to zcrypto_reconcile_venue_halt_seconds_total, which pages nothing` to `it books elsewhere, which pages nothing` |
 | 3b | … which the reconciler publishes | `names_the_halt_counter` | `cli/archive/command.py`, the `_emit`'s `"venue_halt_seconds_total",` to `"venue_halt_total",` |
 
-Arm 2i read `SURVIVED` with the `_decided` mutation alone: `_ledger`'s `seen` refuses the second append on its own, so the two guards are probed together. Red readings, each task's test file on the tree before that task: Task 1's reads `ImportError: cannot import name 'RESUME_MARGIN_SECONDS'`; Task 2's twelve new and changed cases read `10 failed, 2 passed`, the two that pass being the hand-built totals, which an extra key does not break; Task 3's case reads `1 failed`.
+Arm 2i read `SURVIVED` with the `_decided` mutation alone: `_ledger`'s `seen` refuses the second append on its own, so the two guards are probed together. Red readings, each task's test file on the tree before that task: Task 1's reads `ImportError: cannot import name 'RESUME_MARGIN_SECONDS'`; Task 2's thirteen new and changed cases read `11 failed, 2 passed`, the two that pass being the hand-built totals, which an extra key does not break; Task 3's case reads `1 failed`.
 
 ## Change list
 
