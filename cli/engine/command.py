@@ -549,9 +549,11 @@ class _CycleGauges:
 
 class _ExecGauges:
     """The execution envelope's published state, updated at every gate evaluation: the boundary sink's, the executor's on its
-    tick while a plan runs, and its idle refresh once a minute, so a control file moved by hand reaches the board within that
-    minute; the heartbeat, `last_evaluation`, moves at all of those but the refresh, so it stays the boundary path's;
-    `gate_level` moves at all of those but the sink's, whose verdict is the gate's bare one (`update`'s `level`).
+    tick while a plan runs, at `on_boundary`, and its idle refresh once a minute, so a control file moved by hand reaches the
+    board within that minute; the heartbeat, `last_evaluation`, moves at all of those but the refresh and `on_boundary`, so it
+    stays the boundary path's; `gate_level` moves at all of those but the sink's (`update`'s `level`), a boundary's level being
+    `on_boundary`'s with the executor's holds folded in, and at `run()`'s startup evaluation, whose bare level the restart
+    hold keeps at reduce-only or below until the executor's first evaluation.
     `gate_level` and the presence gauges
     are eager and seeded at 0 -- "nothing may be submitted" is true before anything is evaluated -- and `run()` evaluates once at
     startup so none sits at that default: a `kill_tripped` reading 0 beside an existing kill file is a false statement.
@@ -594,8 +596,8 @@ class _ExecGauges:
         """`heartbeat` False publishes the six readings and leaves `last_evaluation` where it was: the executor's idle
         refresh and its boundary re-journal, neither of them the sink's, so the staleness rule keeps watching the sink and
         the exec record it writes before it. `level` False leaves `gate_level` where it was: the boundary sink's call, whose
-        verdict is the gate's bare one, while the level the board and the disarmed-boundary rule read is the executor's,
-        its own holds folded in (`_fold_holds`)."""
+        verdict is the gate's bare one, the boundary's level being `on_boundary`'s, with the executor's own holds folded in
+        (`_fold_holds`)."""
         i = verdict.inputs
         if level:
             self.gate_level.set(LEVEL_CODE[verdict.level])
