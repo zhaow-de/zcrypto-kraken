@@ -11984,12 +11984,9 @@ def test_the_mixed_inventory_check_reads_no_venue_position_for_a_plan_of_closes_
     assert (_plan_entry(tmp_path, index=1)["disposition"], positions.calls) == ("accepted", 0)
 
 
-@pytest.mark.parametrize("enabled", [True, False])
-def test_a_plan_with_an_opening_intent_waits_for_a_tick_with_nothing_in_flight_before_the_mixed_inventory_read(tmp_path, enabled):
-    """The startup pass's cancel of an adopted order is PENDING_CANCEL on the tick it goes out, and the
-    mixed-inventory check's positions read is a signed read on the same key: with the cache enabled
-    the plan waits in its file for a tick with nothing in flight, and is picked up on the next one;
-    without the cache no venue read is made and the plan is picked up on the first tick."""
+def _pending_cancel_client():
+    """A client whose startup cancel of its one adopted order leaves the order PENDING_CANCEL, in flight until a case
+    applies `OrderCanceled`; and that order's id."""
 
     class _PendingCancel(StubClient):
         def cancel_order(self, client_order_id):
@@ -12002,6 +11999,17 @@ def test_a_plan_with_an_opening_intent_waits_for_a_tick_with_nothing_in_flight_b
     client = _PendingCancel(
         StubCache(open_orders=[_resting_limit_order(adopted, venue_order_id=adopted, strategy_id=StrategyId("EXTERNAL"))])
     )
+    return client, adopted
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_a_plan_with_an_opening_intent_waits_for_a_tick_with_nothing_in_flight_before_the_mixed_inventory_read(tmp_path, enabled):
+    """The startup pass's cancel of an adopted order is PENDING_CANCEL on the tick it goes out, and the
+    mixed-inventory check's positions read is a signed read on the same key: with the cache enabled
+    the plan waits in its file for a tick with nothing in flight, and is picked up on the next one;
+    without the cache no venue read is made and the plan is picked up on the first tick."""
+
+    client, adopted = _pending_cancel_client()
     positions = _VenuePositions()
     ex = _executor(tmp_path, client=client, config=_cache_config(tmp_path, enabled), venue_positions=positions)
     _drop_plan(tmp_path, _plan_dict())
@@ -12036,17 +12044,7 @@ def test_a_margin_open_waits_for_a_tick_with_nothing_in_flight_before_the_free_m
     in its file while the startup pass's cancel is PENDING_CANCEL, and is read and picked up on the next tick; a
     margin close extends no margin, so its plan reads nothing and is picked up on the first."""
 
-    class _PendingCancel(StubClient):
-        def cancel_order(self, client_order_id):
-            super().cancel_order(client_order_id)
-            self.cache.order(client_order_id).apply(
-                _event(OrderPendingCancel, client_order_id=str(client_order_id), strategy_id=StrategyId("EXTERNAL"))
-            )
-
-    adopted = "OADOPT-AAAAA-BBBBBB"
-    client = _PendingCancel(
-        StubCache(open_orders=[_resting_limit_order(adopted, venue_order_id=adopted, strategy_id=StrategyId("EXTERNAL"))])
-    )
+    client, adopted = _pending_cancel_client()
     free = _VenueFreeMargin()
     ex = _executor(tmp_path, client=client, config=_cache_config(tmp_path, False), venue_free_margin=free)
     _drop_plan(tmp_path, _plan_dict(intents=[intent]))
