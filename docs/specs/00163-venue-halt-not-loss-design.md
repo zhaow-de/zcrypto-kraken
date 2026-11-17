@@ -243,7 +243,9 @@ The ladder is not in the reconciler's inputs (*The measured basis*), and reading
 
 **D14. Shipping: merge, then the ops converge, then the Grafana push.** The app change rides the ops image built from `develop` after the merge; the converge is the owner's (*Deployment*). The push carries `alerts.yaml`'s rule comment and summary and the integrity board's panel 206, and follows the converge: the panel's new query and the summary's sentence describe a series and a behaviour only the new image publishes, and the push's verification reads the new series by value (`zcrypto-grafana-push` Step 3), which is `(no series)` before the converge.
 
-**D15. The decisions log carries the ruling and two of this spec's calls.** The booking of a dark episode is the subject `[iter-141]` logged in `docs/research/14.phase6-decisions.md`, so the `[00163]` entries go there: D1's ruling, D2's evidence and D6's ledger shape.
+**D15. The decisions log carries the owner's two rulings and two of this spec's calls.** The booking of a dark episode is the subject `[iter-141]` logged in `docs/research/14.phase6-decisions.md`, so the `[00163]` entries go there: D1's ruling, D2's evidence, D6's ledger shape and D16's ruling.
+
+**D16. The hours already booked stay booked; the hygiene map says each was a halt.** The owner's ruling, asked 2026-11-17T20:58:17.617Z, answered 20:59:43.800Z, verbatim: "Leave them (Recommended)". The question: hour 08 of 2026-11-17's 5,432.534453 s and the three earlier proven halts' 8,469.908675 s stay in `zcrypto_reconcile_residual_gap_seconds_total`, since the ledger is append-only. The options were leaving them, the hygiene map recording each hour complete; appending a note record per hour with no counter field; and correcting the records so the seconds leave the counter, which Prometheus reads as a reset. Taken: leave them, as D9 has it — the counter's lifetime level keeps 13,902.443128 s that were not loss, and the map explains each.
 
 ## Tests and guards
 
@@ -411,15 +413,12 @@ Rollback is the re-converge to the recorded digest: the older image reads each `
 
 ## Open questions for the owner
 
-1. **Hour 08 of 2026-11-17's 5,432.534453 s, and the three earlier halts' 8,469.908675 s, stay in `zcrypto_reconcile_residual_gap_seconds_total`.** The code cannot settle it: the ledger is append-only, and a change to what it holds is a deliberate ledger edit only you approve.
-   - (a) **Leave them booked, the hygiene map recording each hour complete** — recommended. Costs nothing; the counter's lifetime level keeps 13,902.443128 s that were not loss, which the map explains.
-   - (b) **Append a note record per hour beside its booking, carrying no counter field**, the shape of the 2026-07-29 `correction` record already in the ledger: the ledger itself then says the hour was a halt. Costs a hand-written append to the live ledger on `zcrypto-ops`, and moves no counter.
-   - (c) **Correct the records so the seconds leave the residual counter.** The counter falls, Prometheus reads a reset, and the page's `resets()` guard blinds it for 24 h; the healthy series' history steps down.
+None open: the one the code could not settle, the hours already booked, is D16, on the owner's ruling.
 
 ## Out of scope
 
 - The ladder in the archive, or any venue status read by the reconciler (D2): dropped, the evidence class the ruling asks for is the data's, and an archived frame would be stamped at local receipt.
-- Re-booking any hour already decided (D9): the open question.
+- Re-booking any hour already decided (D9): dropped on the owner's ruling, D16.
 - A horizon after the resume in place of the hour's end (D3): dropped, a knob with a cliff 120.3–138.3 s from the one real case.
 - A halt straddling an hour boundary proven across both hours (*Failure modes*): dropped; it needs the neighbouring hours' files on every dark hour, and the one recorded straddle, 2026-10-30 02Z–03Z, reconnected on both hosts in its second hour, so no proof was there to read.
 - `continuity.py`'s exit bar: spec 00096's *Out of scope* stands.
