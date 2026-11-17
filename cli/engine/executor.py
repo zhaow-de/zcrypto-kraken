@@ -3420,8 +3420,11 @@ class ProbeExecutor:
         Its first act journals the folded verdict (`_fold_holds`) into the boundary's exec record, over
         the gate's bare one the boundary sink wrote there: the merge replaces the verdict fields alone,
         so the record's `level` is the one `held_back` reads, and a boundary whose cycle raised and
-        wrote no record gets one. Its publish leaves the heartbeat to the sink, so a failing sink write
-        still starves the staleness rule.
+        wrote no record gets one. Its publish is the boundary's first folded write of the gate level,
+        the sink leaving it, and leaves the heartbeat to the sink, so a failing sink write still starves
+        the staleness rule; a raise before it leaves the level the last publish set: the executor's
+        folded one, or in its first minute `run()`'s startup one, which the restart hold keeps at
+        reduce-only or below.
 
         Its second act scores the most recently closed week (`_evaluate_tracking`), and this is THE
         call site of that trip: the alert chain fires once per boundary, after the cycle has
