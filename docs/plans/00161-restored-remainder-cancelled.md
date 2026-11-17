@@ -19,7 +19,7 @@ full tests/test_engine_executor.py — a test importing cli.config, read as a no
 full tests/test_cache_restart.py — a test importing cli.engine.execgate, read as a non-prose change
 ```
 
-Every fence below was run against `9d08c6818` in detached scratch worktrees under `.tmp/t0226/` — `base`, the tree as it stands, and `wt`, with the plan's code applied and committed there — never pushed: Task 1's cases read `20 passed` on `wt` and `14 failed, 6 passed` on `base`; Task 2's read `5 passed` on `wt` and `2 failed, 3 passed` on `base`; every probe arm the tasks list read `KILLED (control proven, tree restored byte-identically)` on `wt`; the runbook texts, the decisions-log entries and the topic's edit went through the repository's commit hooks there, and `tests/test_open_topics_frontmatter.py`, `tests/test_topics_index.py`, `tests/test_decisions_log_shape.py`, `tests/test_decisions_log_ties.py` and `tests/test_internal_terms_not_operator_visible.py` passed over them. The spec's *The measured basis* pastes each reading. The fences the plan review's first round rewrote — Task 1 Step 3's `_cancel_closed_copy` and `_recancel` branches and docstring lines, Task 2 Step 1's `REREAD_WINDOW` and docstrings, the spec's item-4 text — were applied from this file and the spec to a detached scratch worktree at `ee5376441` under `.tmp/plan-review/00161/`: Task 1's cases read `14 failed, 6 passed, 808 deselected` before the code and `20 passed, 808 deselected` and `828 passed` after it, its eleven arms each `KILLED (control proven, tree restored byte-identically)`; Task 2's selection read `5 passed, 17 deselected`, the whole harness file under `ZCRYPTO_RERUN_SLOW=1` `22 passed` and `tests/test_slow_cases.py` `2 passed`; the hooks left both runbook pages unchanged, and `tests/test_internal_terms_not_operator_visible.py` read `1113 passed` and the decisions-log tests `50 passed` over the texts. The item-4 text as the spec now holds it was applied the same way at `158ea666f`: `pre-commit run --files` over both pages left them unchanged, `infra/scripts/guidance-guard.py --uncounted` printed nothing for either, and the pages' direct test readers with `tests/test_internal_terms_not_operator_visible.py` read `2893 passed`.
+Every fence below was run against `9d08c6818` in detached scratch worktrees under `.tmp/t0226/` — `base`, the tree as it stands, and `wt`, with the plan's code applied and committed there — never pushed: Task 1's cases read `20 passed` on `wt` and `14 failed, 6 passed` on `base`; Task 2's read `5 passed` on `wt` and `2 failed, 3 passed` on `base`; every probe arm the tasks then listed read `KILLED (control proven, tree restored byte-identically)` on `wt`; the runbook texts, the decisions-log entries and the topic's edit went through the repository's commit hooks there, and `tests/test_open_topics_frontmatter.py`, `tests/test_topics_index.py`, `tests/test_decisions_log_shape.py`, `tests/test_decisions_log_ties.py` and `tests/test_internal_terms_not_operator_visible.py` passed over them. The spec's *The measured basis* pastes each reading. The fences the plan review's first round rewrote — Task 1 Step 3's `_cancel_closed_copy` and `_recancel` branches and docstring lines, Task 2 Step 1's `REREAD_WINDOW` and docstrings, the spec's item-4 text — were applied from this file and the spec to a detached scratch worktree at `ee5376441` under `.tmp/plan-review/00161/`: Task 1's cases read `14 failed, 6 passed, 808 deselected` before the code and `20 passed, 808 deselected` and `828 passed` after it, its eleven arms each `KILLED (control proven, tree restored byte-identically)`; Task 2's selection read `5 passed, 17 deselected`, the whole harness file under `ZCRYPTO_RERUN_SLOW=1` `22 passed` and `tests/test_slow_cases.py` `2 passed`; the hooks left both runbook pages unchanged, and `tests/test_internal_terms_not_operator_visible.py` read `1113 passed` and the decisions-log tests `50 passed` over the texts. Task 1's fences and the spec's three runbook texts as the pair now holds them were applied the same way at `09fcfdacd`: Task 1's cases read `14 failed, 6 passed, 808 deselected` before the code and `20 passed, 808 deselected` and `828 passed` after it, its eleven arms each `KILLED (control proven, tree restored byte-identically)`; `pre-commit run --files` over both pages left them unchanged, `infra/scripts/guidance-guard.py --uncounted` printed nothing for either, and the pages' direct test readers with `tests/test_internal_terms_not_operator_visible.py` read `2912 passed`, Task 1's nineteen new ids among them.
 
 ## Global Constraints
 
@@ -46,7 +46,7 @@ Every fence below was run against `9d08c6818` in detached scratch worktrees unde
 
 ## File structure
 
-- Modify `cli/engine/executor.py`: the sweep's arm; `_cancel_closed_copy`; `_recancel`'s `cache_status` and lines; the restored arm's comment; four docstrings; the `_restored_fills` comment.
+- Modify `cli/engine/executor.py`: the sweep's arm; `_cancel_closed_copy`; `_recancel`'s `cache_status` and lines; the restored arm's comment; five docstrings; the `_restored_fills` comment and `_reread_pass`' closed-row comment.
 - Modify `tests/test_engine_executor.py`: `_ONE_DOOR_CALLERS`' `copy.status` reason; `test_a_restored_order_the_cache_holds_closed_is_read_at_the_venue_and_the_report_wins`; `_closed_copy_executor` and four cases.
 - Modify `tests/kraken_loopback.py`: `exec_trade`'s `with_order_qty`.
 - Modify `tests/test_cache_restart.py`: `REREAD_WINDOW` and its import of `_GATE_REFRESH`; the racing sibling over both shapes; `_seed_restored_opener`, `_part_fill`, `_before_the_pass` and two cases.
@@ -57,7 +57,7 @@ Every fence below was run against `9d08c6818` in detached scratch worktrees unde
 1. A closed copy whose order Kraken reports in any status the library knows: only the nine statuses outside the closed map cancel, the six inside it write the row from the report as today. Pinned by Task 1's `test_a_restored_copy_the_library_closed_is_cancelled_by_its_txid_only_while_kraken_reports_the_order_open`, one case per `OrderStatus.variants()` member.
 2. A ledgered reducer whose copy reads closed is cancelled, not kept, whatever the gate's level. Pinned by `[kept-reducer]` of Task 1's settle case and the changed `test_a_restored_order_the_cache_holds_closed_is_read_at_the_venue_and_the_report_wins`.
 3. A copy the Cache holds open is cancelled through the strategy handle as before, never by txid. Pinned by the existing `test_a_restored_opener_the_venue_reports_open_is_cancelled_by_the_pass_and_a_kept_reducer_is_not`, whose executor has no canceller, and Task 1's `closed-copy-only` arm.
-4. Kraken refuses the cancel: the row stays open at the report's figure, the CRITICAL names the hand cancel, and nothing is armed. Pinned by `test_a_startup_cancel_by_txid_kraken_refuses_leaves_the_row_open_names_the_hand_cancel_and_arms_no_re_read`.
+4. Kraken refuses the cancel: the row stays open at the report's figure, the CRITICAL names the hand cancel, and the re-read pass is armed all the same, whose read books an order that filled whole before the cancel arrived and sends no second cancel. Pinned by `test_a_startup_cancel_by_txid_kraken_refuses_names_the_hand_cancel_and_the_re_read_pass_books_krakens_record`.
 5. Kraken answers the cancel and still lists the order open: the re-read pass reads it and sends no second cancel. Pinned by `test_the_re_read_pass_sends_no_second_cancel_for_a_closed_copy_kraken_still_lists_open`. A copy a minted terminal closed keeps today's startup, pinned by the one-door matrix's `reconnect` and `minted-external` rows, unedited.
 
 ---
@@ -65,7 +65,7 @@ Every fence below was run against `9d08c6818` in detached scratch worktrees unde
 ### Task 1: The startup pass cancels a closed copy by its txid (spec D3–D7, D13)
 
 **Files:**
-- Modify: `cli/engine/executor.py` (`_reconcile_adopted_rows`, `_recancel`, the docstrings of `read_venue_orders`, `cancel_venue_order`, `_adopt_resting_orders`, the `_restored_fills` comment)
+- Modify: `cli/engine/executor.py` (`_reconcile_adopted_rows`, `_recancel`, the docstrings of `read_venue_orders`, `cancel_venue_order`, `_adopt_resting_orders`, `_log_resting_outside_the_cache`, the `_restored_fills` comment, `_reread_pass`' closed-row comment)
 - Test: `tests/test_engine_executor.py`
 
 **Interfaces:**
@@ -188,7 +188,9 @@ def test_a_restored_copy_the_library_closed_is_cancelled_by_its_txid_only_while_
     assert client.canceled == []
 
 
-def test_a_startup_cancel_by_txid_kraken_refuses_leaves_the_row_open_names_the_hand_cancel_and_arms_no_re_read(tmp_path):
+def test_a_startup_cancel_by_txid_kraken_refuses_names_the_hand_cancel_and_the_re_read_pass_books_krakens_record(tmp_path):
+    """The remainder filled whole between the startup's read and its cancel, which Kraken then refuses: the
+    row stays open at the read's figure until the re-read pass reads Kraken's closed record."""
     ex, client, venue, cancel, earlier = _closed_copy_executor(
         tmp_path, cancel=_VenueCancel(raises=RuntimeError("EOrder:Unknown order"))
     )
@@ -202,11 +204,15 @@ def test_a_startup_cancel_by_txid_kraken_refuses_leaves_the_row_open_names_the_h
         f"the startup pass's cancel of O-restored (Kraken {_TXID}) raised or was refused -- Kraken lists it open while the "
         "Cache reads it FILLED, so it may still rest at Kraken: cancel it by hand on Kraken's open-orders page"
     ]
-    assert ex._reread_tries == 0 and "O-restored" not in ex._restored_fills
-    ex._evaluate(NOW)
+
+    venue.reports = [_report(_TXID, OrderStatus.FILLED, filled_qty="0.001")]
+    ex._evaluate(NOW)  # the gate read armed, as the idle refresh reads it
     ex.on_timer(NOW + timedelta(seconds=5))
-    assert len(venue.calls) == 1 and len(cancel.calls) == 1
-    assert _intent_entry(tmp_path, 0, earlier)["outcome"] == "pending"
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert (row["state"], row["filled_qty"]) == ("filled", pytest.approx(0.001))
+    assert len(venue.calls) == 2 and len(cancel.calls) == 1
+    assert _intent_entry(tmp_path, 0, earlier)["outcome"] == "filled"
 
 
 def test_the_re_read_pass_sends_no_second_cancel_for_a_closed_copy_kraken_still_lists_open(tmp_path):
@@ -225,7 +231,7 @@ def test_the_re_read_pass_sends_no_second_cancel_for_a_closed_copy_kraken_still_
     assert _intent_entry(tmp_path, 0, earlier)["outcome"] == "revoked"
 ```
 
-- [ ] **Step 2: Run them, expect FAIL.** `uv run pytest tests/test_engine_executor.py -k 'cancelled_by_its_txid or arms_no_re_read or no_second_cancel or cache_holds_closed_is_read' -q -p no:cacheprovider --basetemp=.tmp/implementer/pt -rs` reads `14 failed, 6 passed, 808 deselected`: the nine open statuses of the enumeration, both settle cases, the refusal, the second-cancel case and the changed case fail; the six closed statuses pass.
+- [ ] **Step 2: Run them, expect FAIL.** `uv run pytest tests/test_engine_executor.py -k 'cancelled_by_its_txid or kraken_refuses or no_second_cancel or cache_holds_closed_is_read' -q -p no:cacheprovider --basetemp=.tmp/implementer/pt -rs` reads `14 failed, 6 passed, 808 deselected`: the nine open statuses of the enumeration, both settle cases, the refusal, the second-cancel case and the changed case fail; the six closed statuses pass.
 
 - [ ] **Step 3: Implement.** In `cli/engine/executor.py`:
   - In `_reconcile_adopted_rows`, directly above `if restored and report is not None:`:
@@ -261,10 +267,10 @@ def test_the_re_read_pass_sends_no_second_cancel_for_a_closed_copy_kraken_still_
         FILLED, and a double booking can carry one to FILLED ahead of Kraken's figure. The strategy handle sends
         nothing for a closed order and the classification reads the open orders alone, so the cancel goes by txid
         (`_recancel`). A fill racing it is one the library drops against the closed copy, so the row then waits for
-        the re-read pass's read, which books it and writes the intent."""
+        the re-read pass's read, which books it and writes the intent -- whether the cancel went, raised or could
+        not be journaled: a remainder that fills whole before the cancel arrives leaves Kraken nothing open to
+        cancel, and only that read books it in this process."""
         self._recancel(boundary, row, venue_order_id, report, order_id=order_id, cache_status=cache_status)
-        if row.get("state") != "canceled":
-            return
         self._restored_fills.add(row["client_order_id"])
         self._arm_reread_after_mint()
 ```
@@ -312,8 +318,9 @@ def test_the_re_read_pass_sends_no_second_cancel_for_a_closed_copy_kraken_still_
         return answered
 ```
 
-  - The `_restored_fills` comment in `__init__`, "The restored rows a fill reached and the re-read pass has not repaired since: the credit is nothing (`_fill_credit`) and the pass repairs the row from the venue's cumulative figure.", reads "The restored rows a fill reached, or the startup pass cancelled by its txid (`_cancel_closed_copy`), and the re-read pass has not repaired since: a fill's credit is nothing (`_fill_credit`) and the pass repairs the row from the venue's cumulative figure."
-  - `read_venue_orders`' docstring: "and `cancel_venue_order` follows it on the same terms;" reads "and `cancel_venue_order` follows it on the same terms -- at startup, after this read and before the classification's cancels through the strategy handle;", and "What those gates cannot see is the execution client's own signed token request while its socket is still reconnecting: a collision there costs the library one reconnect attempt or the reader one try," reads "What those gates cannot see is the execution client's own signed token request while its socket is still reconnecting, or at startup the cancels a kill trip earlier in the same sweep has sent through the strategy handle: a collision there costs the library one reconnect attempt, the trip one of its cancels, or the reader one try,". `cancel_venue_order`'s: "the re-read pass's cancel of an order the Cache holds closed by a terminal this engine minted, which the strategy handle refuses to cancel" reads "the re-read pass's cancel of an order the Cache holds closed by a terminal this engine minted, and the startup pass's of a restored order whose copy the library closed while Kraken lists it open, both of which the strategy handle refuses to cancel". `_adopt_resting_orders`': "and one it reports open is classified as an adopted one is -- cancelled unless its row is a ledgered reducer." reads "and one it reports open is cancelled by txid in the sweep when its copy reads closed, whatever its row (`_cancel_closed_copy`), and otherwise classified as an adopted one is -- cancelled unless its row is a ledgered reducer."
+  - The `_restored_fills` comment in `__init__`, "The restored rows a fill reached and the re-read pass has not repaired since: the credit is nothing (`_fill_credit`) and the pass repairs the row from the venue's cumulative figure.", reads "The restored rows a fill reached, or the startup pass cancelled by its txid (`_cancel_closed_copy`), and the re-read pass has not repaired since: a fill's credit is nothing (`_fill_credit`) and the pass repairs the row from the venue's cumulative figure." `_reread_pass`' comment on its closed-row read, "A restored row a fill reached and a terminal then closed before this pass -- the venue's cancel ack, an expiry -- is in the window's closed rows: its credit-0 fill is repaired here all the same (spec 00120 D8), and its intent waits for that repair.", reads "A restored row a fill reached and a terminal then closed before this pass -- the venue's cancel ack, an expiry -- or one the startup pass cancelled by its txid (`_cancel_closed_copy`) is in the window's closed rows: its fill, credited nothing (spec 00120 D8) or dropped by the library against the closed copy, is repaired here all the same, and its intent waits for that repair."
+  - `_log_resting_outside_the_cache`'s docstring: "Every cancel this process can issue goes through the Cache, so neither the startup pass nor a kill trip reaches it," reads "The startup pass and a kill trip cancel what the Cache holds -- through it, or by txid a restored copy the library closed (`_cancel_closed_copy`) -- so neither reaches it,".
+  - `read_venue_orders`' docstring: "and `cancel_venue_order` follows it on the same terms;" reads "and `cancel_venue_order` follows it on the same terms -- at startup, after this read and before the classification's cancels through the strategy handle;", and "What those gates cannot see is the execution client's own signed token request while its socket is still reconnecting: a collision there costs the library one reconnect attempt or the reader one try," reads "What those gates cannot see is the execution client's own signed token request while its socket is still reconnecting, or at startup the cancels a kill trip earlier in the same sweep has sent through the strategy handle: a collision there costs the library one reconnect attempt, the trip one of its cancels, the startup's cancel by txid its one send, refused with the CRITICAL that names the hand cancel, or the reader one try,". `cancel_venue_order`'s: "the re-read pass's cancel of an order the Cache holds closed by a terminal this engine minted, which the strategy handle refuses to cancel" reads "the re-read pass's cancel of an order the Cache holds closed by a terminal this engine minted, and the startup pass's of a restored order whose copy the library closed while Kraken lists it open, both of which the strategy handle refuses to cancel". `_adopt_resting_orders`': "and one it reports open is classified as an adopted one is -- cancelled unless its row is a ledgered reducer." reads "and one it reports open is cancelled by txid in the sweep when the library closed its copy, whatever its row's `reduce_only` (`_cancel_closed_copy`; a copy a minted terminal closed `_cached_order` withholds, and the sweep's tail names its hand cancel), and otherwise classified as an adopted one is -- cancelled unless its row is a ledgered reducer."
 
 - [ ] **Step 4: Run them, expect PASS.** Step 2's command reads `20 passed, 808 deselected`; `uv run pytest tests/test_engine_executor.py -m "not slow" -q -p no:cacheprovider --basetemp=.tmp/implementer/pt -rs` reads `828 passed`, the one-door matrix and its walk unedited but for the reason.
 
@@ -326,10 +333,10 @@ def test_the_re_read_pass_sends_no_second_cancel_for_a_closed_copy_kraken_still_
   - `startup-only`: `-k 'no_second_cancel'`, mutation `/def _reconcile_adopted_rows/,/def _cancel_closed_copy/s/and not recancel$/and True/`.
   - `race-read-armed`: `-k 'cancelled_by_its_txid_and_the_re_read_pass_settles_it'`, mutation `/def _cancel_closed_copy/,/def _recancel/{/self._arm_reread_after_mint()/d}`.
   - `race-row-joins`: `-k 'cancelled_by_its_txid_and_the_re_read_pass_settles_it'`, mutation `/def _cancel_closed_copy/,/def _recancel/{/self._restored_fills.add(row\["client_order_id"\])/d}`.
-  - `refused-arms-nothing`: `-k 'arms_no_re_read'`, mutation `/def _cancel_closed_copy/,/def _recancel/s/if row.get("state") != "canceled":/if False:/`.
+  - `refused-arms-too`: `-k 'kraken_refuses'`, mutation `/def _cancel_closed_copy/,/def _recancel/s/self._arm_reread_after_mint()/row.get("state") == "canceled" and self._arm_reread_after_mint()/`.
   - `warning-level`: `-k 'cancelled_by_its_txid_and_the_re_read_pass_settles_it'`, mutation `/def _recancel/,/def _mark_unmatched/s/logger.warning(/logger.info(/` — its pattern counts `2` in the range, the re-read pass's line and the startup's, and the selected case reads the startup's.
   - `warning-text`: `-k 'cancelled_by_its_txid_and_the_re_read_pass_settles_it'`, mutation `s/which no cancel through the Cache reaches; its row reads canceled/its row reads canceled/`.
-  - `critical-text`: `-k 'arms_no_re_read'`, mutation `s/%s, so it may still rest at Kraken: cancel it by hand/%s, so it may still rest at Kraken/`.
+  - `critical-text`: `-k 'kraken_refuses'`, mutation `s/%s, so it may still rest at Kraken: cancel it by hand/%s, so it may still rest at Kraken/`.
   - `kept-reducer`: `-k '(settles_it and kept) or cache_holds_closed_is_read'`, mutation `/def _reconcile_adopted_rows/,/def _cancel_closed_copy/s/and not recancel$/and not recancel and row["order"].get("reduce_only") is not True/`.
 
   Then the empty commit, `test(engine): the startup pass's cancel by txid proven by infra/scripts/mutate-probe.sh`.
@@ -465,8 +472,9 @@ def test_a_part_fill_racing_the_startup_passs_cancel_by_txid_is_dropped_by_the_l
 ):
     """The rewrite's second part-fill (last 0.3, cumulative 0.9) lands inside the pass's cancel by txid. The
     library rejects it against the closed copy, so no event reaches the row, which reads 0.6 at the cancel;
-    the re-read pass, armed by the cancel and run once the gate's first idle refresh has read the engine
-    armed, reads Kraken's closed record, repairs the row to 0.9 and writes the intent."""
+    the re-read pass, armed by the rewrite's inferred fill on the event path (and again by the cancel) and
+    run once the gate's first idle refresh has read the engine armed, reads Kraken's closed record, repairs
+    the row to 0.9 and writes the intent."""
     valkey, node, wire, _ = phase_one
     with _venue() as (venue, data, exec_):
         _seed_restored_opener(venue, wire)
@@ -508,18 +516,11 @@ tests/test_cache_restart.py::test_a_trade_frame_on_a_restored_opener_racing_the_
 tests/test_cache_restart.py::test_a_trade_frame_on_a_restored_opener_racing_the_passs_cancel_is_booked_twice_and_the_row_settles_at_the_venues_figure[without-order_qty]
 ```
 
-- [ ] **Step 2: Run them, expect PASS on Task 1's tree.** `uv run pytest tests/test_cache_restart.py -k 'part_fill or racing_the_passs_cancel' -q -p no:cacheprovider --basetemp=.tmp/implementer/pt -rs` reads `5 passed`; `ZCRYPTO_RERUN_SLOW=1 uv run pytest tests/test_cache_restart.py -n 12 -q -p no:cacheprovider --basetemp=.tmp/implementer/pt -rs` reads `22 passed`, the harness's other cases on Task 1's tree; `uv run pytest tests/test_slow_cases.py -q -p no:cacheprovider --basetemp=.tmp/implementer/pt -rs` reads `2 passed`. On the tree before Task 1 the first selection reads `2 failed, 3 passed`, the `[without-order_qty]` case finding no `CancelOrder` and the race case no closed order (the spec's measured basis); this task's probes are what prove each case can fail on the branch.
+- [ ] **Step 2: Run them, expect PASS on Task 1's tree.** `uv run pytest tests/test_cache_restart.py -k 'part_fill or racing_the_passs_cancel' -q -p no:cacheprovider --basetemp=.tmp/implementer/pt -rs` reads `5 passed`; `ZCRYPTO_RERUN_SLOW=1 uv run pytest tests/test_cache_restart.py -n 12 -q -p no:cacheprovider --basetemp=.tmp/implementer/pt -rs` reads `22 passed`, the harness's other cases on Task 1's tree; `uv run pytest tests/test_slow_cases.py -q -p no:cacheprovider --basetemp=.tmp/implementer/pt -rs` reads `2 passed`. On the tree before Task 1 the first selection reads `2 failed, 3 passed`, the `[without-order_qty]` case finding no `CancelOrder` and the race case no closed order (the spec's measured basis), the reading that shows the two cases this change moves can fail; the three that pass there pin the cells it leaves to the pass's cancel through the Cache.
 
-- [ ] **Step 3: Commit** `test(engine): the restart harness proves both trade-frame shapes before and inside the startup pass's cancel, and a fill racing the cancel by txid`, after the gate, the per-commit run's result line and Step 2's two lines in the body.
+- [ ] **Step 3: Commit** `test(engine): the restart harness proves both trade-frame shapes before and inside the startup pass's cancel, and a fill racing the cancel by txid`, after the gate, the per-commit run's result line, Step 2's three result lines and Step 4's `probe skipped: slow case` line in the body.
 
-- [ ] **Step 4: Probes**, each `-- uv run pytest tests/test_cache_restart.py -k '<selection>' …`; "in the sweep" as in Task 1, "in the pass" `/def _adopt_resting_orders/,/def _settle_pending_intents/`:
-  - `harness-arm-fires`: `--file cli/engine/executor.py`, `-k 'part_fill_landing_before_the_startup_pass and without'`, mutation `/def _reconcile_adopted_rows/,/def _cancel_closed_copy/s/and not recancel$/and False/`.
-  - `harness-race-arm-fires`: `--file cli/engine/executor.py`, `-k 'part_fill_racing_the_startup'`, the same mutation.
-  - `before-with-handle`: `--file cli/engine/executor.py`, `-k 'part_fill_landing_before_the_startup_pass and not without'`, mutation `/def _adopt_resting_orders/,/def _settle_pending_intents/s/self._client.cancel_order(order.client_order_id)/pass/`.
-  - `race-sibling-without`: `--file cli/engine/executor.py`, `-k 'racing_the_passs_cancel and without'`, the same mutation.
-  - `loopback-switch`: `--file tests/kraken_loopback.py`, `-k 'part_fill_landing_before_the_startup_pass and without'`, mutation `s/^        del data\["order_qty"\]$/        pass/`.
-
-  Not an arm: Task 1's `race-read-armed` against the harness's race case reads `SURVIVED`, since there the rewrite's inferred fill arms the pass first on the event path (the spec's *Tests and guards*); Task 1's unit case holds it. Then the empty commit, `test(engine): the harness's frame shapes and orderings proven by infra/scripts/mutate-probe.sh`.
+- [ ] **Step 4: No probe runs.** The five harness rows of the spec's *Tests and guards* select `slow` cases, which the implementer contract (*The probes*) never probes: Step 3's body records them `probe skipped: slow case`, and the spec records each one's reading in its scratch worktree. Two of them carry Task 1's `arm-fires` mutation, which Task 1's non-slow case kills; two the classification's cancel through the handle, which Review Focus 3's existing case pins; the frame switch's has no non-slow case. Task 1's `race-read-armed` is no harness row: against the race case it reads `SURVIVED`, since there the rewrite's inferred fill arms the pass first on the event path; Task 1's unit case holds it. No empty commit follows.
 
 ### Task 3: The operator's read (spec D13)
 
@@ -624,7 +625,13 @@ ripe_when: 'an activity: the owner''s attended session on a key the owner mints,
 - Spec 00120 D7's measurement, re-taken on a frame without `order_qty` (spec 00161's measured basis): the pass's cancel still bounds a frame inside it, booked twice on either shape; on a kept reducer the frame rewrites the copy instead, its remainder cancelled at a next start inside the row's two UTC days.
 ```
 
-  - In `## Suggested next steps`, the first bullet's opening `- Record a real `trade` frame at the next funded fill, with` reads `- Both reads below are one attended session, on the owner's ruling of 2026-11-17. Record a real `trade` frame at the session's fill, with`; in the second, `and record the txids in `docs/reference/rung3/days.md`. Its frames` reads `and record the txids in `docs/reference/rung3/days.md` under an entry that names the triggered fill. Its frames`; the third bullet, `- Spec the fix: …`, goes whole.
+  - In `## Suggested next steps`, the first bullet's opening `- Record a real `trade` frame at the next funded fill, with` reads `- Both reads below are one attended session, on the owner's ruling of 2026-11-17. Record a real `trade` frame at the session's fill, with`; in the second, `and record the txids in `docs/reference/rung3/days.md`. Its frames` reads `and record the txids in `docs/reference/rung3/days.md` under an entry that names the triggered fill. Its frames`; the third bullet, `- Spec the fix: …`, goes whole, and in its place, the section's last bullet:
+
+```markdown
+- Apart from that session, a loopback reading: whether a private-socket reconnect between an order's placement and its `trade` frame leaves the adapter without the order's quantity, as a restart does — a cell beside the reads archive's `test_live_control` (`.local/reads-archive/feat/engine-arm-2.0.0rc9.dev20261106/step3/resting/test_rest.py`) that drops and restores the execution socket between the acknowledgement and a frame without `order_qty`. A copy rewritten there is one the running process placed, which spec 00161's startup pass never reaches.
+```
+
+  - In `## Findings so far`, the second bullet, opening `- `test_a_trade_frame_on_a_restored_open_order_is_booked_twice_by_the_library`, its racing sibling`, goes whole: `## Done so far` supersedes it, the racing sibling running both shapes through `exec_trade`'s `with_order_qty`.
 
 - [ ] **Step 3: Re-render the index**, its own call: `uv run python infra/scripts/topics-index.py`; T0226's line leaves `## Open` for `## Partially done` with the new trigger. Read the heading set again (Step 1's command): Step 1's five and `## Done so far`, six, the new one between `## Findings so far` and `## Suggested next steps`.
 
