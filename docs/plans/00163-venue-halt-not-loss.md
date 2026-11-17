@@ -885,7 +885,7 @@ EOF
 **Files:**
 - Modify: `docs/research/14.phase6-decisions.md` (append)
 
-- [ ] **Step 1: Append** to the end of `docs/research/14.phase6-decisions.md`, after its last line, the three entries below, the first line blank:
+- [ ] **Step 1: Append** to the end of `docs/research/14.phase6-decisions.md`, after its last line, the four entries below, the first line blank:
 
 ```markdown
 
@@ -906,6 +906,12 @@ EOF
   2. **A ledger state of its own** — an older image would not see the hour decided and would re-book it as `both_streams_silent`, paging on a rollback; `_booked_dark` would read a second state.
   3. **A fourth label on `dark_episode_seconds_total`** — that series would stop partitioning the residual counter's share.
   Decided by the spec's author.
+
+[00163] What becomes of the hours already booked as loss that the rule proves were halts? (Decision: 1)
+  Asked 2026-11-17T20:58:17.617Z, verbatim: "The reconciler fix (spec 00163) stops booking a proven venue halt as permanent loss from now on. Already booked are today's 08Z hour (5,432.5 s) and three earlier hours the rule also proves were halts (10-15, 10-29, 10-30 08Z; 8,469.9 s). Together, 13,902.4 s of the residual counter's lifetime total were not loss. The code can't change records already written; only a hand edit of the live ledger on zcrypto-ops can. What should happen to them?" The owner's answer, 20:59:43.800Z, verbatim: "Leave them (Recommended)".
+  1. **Leave them (Recommended)** — the counter keeps the 13,902.4 s and the hygiene map records each of the four hours as complete, a halt not a loss; nothing touches a live file.
+  2. **Append a note record per hour** — one hand-written append per hour to the live ledger on `zcrypto-ops`, saying it was a halt, with no counter field, like the 2026-07-29 `correction` record.
+  3. **Correct them out of the counter** — the records rewritten so the seconds leave the residual counter; Prometheus reads the drop as a reset, the page's `resets()` guard blind for 24 h.
 ```
 
-- [ ] **Step 2: Commit** `docs(research): the [00163] entries, the owner's ruling on booking a venue halt and the spec's two calls`, after the gate; `consumers.sh` lists no reader for the log, so the run is `uv run pytest tests/test_decisions_log_shape.py tests/test_decisions_log_ties.py -q -p no:cacheprovider --basetemp=.tmp/implementer/pt` (expected `50 passed`), its result line in the body.
+- [ ] **Step 2: Commit** `docs(research): the [00163] entries, the owner's two rulings on booking a venue halt and the spec's two calls`, after the gate; `consumers.sh` lists no reader for the log, so the run is `uv run pytest tests/test_decisions_log_shape.py tests/test_decisions_log_ties.py -q -p no:cacheprovider --basetemp=.tmp/implementer/pt` (expected `50 passed`), its result line in the body.
