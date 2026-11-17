@@ -481,7 +481,7 @@ tests/test_cache_restart.py::test_a_trade_frame_on_a_restored_opener_racing_the_
 
 - [ ] **Step 3: Commit** `docs(runbooks): the rung-3 restart read and the error-logs page name the startup pass's cancel by txid and its refusal`, the per-commit run's result line in the body.
 
-### Task 4: The decisions-log entries (spec D1, D2, D4–D7)
+### Task 4: The decisions-log entries (spec D1, D2, D4–D7, D15)
 
 **Files:**
 - Modify: `docs/research/14.phase6-decisions.md`
@@ -524,6 +524,11 @@ tests/test_cache_restart.py::test_a_trade_frame_on_a_restored_opener_racing_the_
   2. **Nothing until a restart** — the row and its intent short of the fill until a start inside the window repairs them.
   3. **A second read inline after the cancel** — one more synchronous signed read at startup, with failure handling of its own.
   Decided by the spec's author.
+
+[00161] Does the startup pass also cancel by txid a restored copy a minted terminal closed, which Kraken still lists open at a restart? (Decision: 1)
+  Asked 2026-11-17T02:52:54.552Z, verbatim: "Spec 00161 (T0226): at startup the engine will cancel by txid any order it placed that Kraken still lists open while its restored Cache copy reads closed. One neighbouring shape is different: an order whose restored copy a minted terminal closed (the engine itself recorded the cancel or fill, which Kraken never confirmed). Today a restart pages CRITICAL for that one and you cancel it by hand. Should the startup pass cancel it automatically too?". Answered 2026-11-17T06:39:31.375Z, verbatim: "Leave it as today (Recommended)".
+  1. **Leave it as today (Recommended).** The startup CRITICAL still pages and you cancel by hand; the re-read pass re-cancels it when a mint in the same process arms it. It needs a restart between a mint and the re-read pass, and it isn't the silent remainder T0226 is about. Cost: one page and one hand cancel. **Taken** (owner, 2026-11-17).
+  2. **Cancel it at startup too.** The paged hand cancel becomes an unpaged automatic one. Cost: 28 measured cases of the one-door test matrix change their expected values, so its reconnect and minted-external rows must be re-derived.
 ```
 
 - [ ] **Step 2: Run** `uv run pytest tests/test_decisions_log_shape.py tests/test_decisions_log_ties.py -q -p no:cacheprovider --basetemp=.tmp/implementer/pt -rs`, which reads `50 passed`; the per-commit lister finds no reader (exit 2).
