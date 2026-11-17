@@ -863,6 +863,12 @@ def test_a_part_fill_landing_before_the_startup_pass_leaves_no_remainder_resting
     assert (row["state"], row["filled_qty"]) == ("canceled", pytest.approx(0.6))
     [order] = record["at_end"]["orders"]
     if with_order_qty:
+        assert [(e["type"], e["reconciliation"]) for e in record["own"]] == [
+            ("OrderFilled", True),
+            ("OrderFilled", True),
+            ("OrderPendingCancel", False),
+            ("OrderCanceled", True),
+        ], record["own"]
         assert (order["status"], order["quantity"], order["filled_qty"]) == ("CANCELED", "1.00000000", "0.80000000")
         assert f"canceling restored order {cid}, partial -- the ledger does not carry it as a resting reducer" in record["log"]
         assert "at Kraken by its txid" not in record["log"]
