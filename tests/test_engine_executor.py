@@ -10899,7 +10899,10 @@ _ONE_DOOR_CALLERS = {
     ): "a row outside the restored set is reconciled from it, and its presence routes a mint",
     ("_reconcile_adopted_rows", "_cache_lookup"): "the Cache order's own id, re-attaching a row a report repaired",
     ("_reconcile_adopted_rows", "copy.filled_qty"): "a row outside the restored set is repaired from its Cache order's figure",
-    ("_reconcile_adopted_rows", "copy.status"): "a row outside the restored set takes its Cache order's status",
+    ("_reconcile_adopted_rows", "copy.status"): (
+        "a row outside the restored set takes its Cache order's status; a restored copy's closed status routes its row to "
+        "the cancel by txid and names it in the line"
+    ),
     (
         "_reconcile_finished_rows",
         "_cached_order",
@@ -11137,14 +11140,21 @@ def test_a_restored_order_the_cache_holds_closed_is_read_at_the_venue_and_the_re
     """The restored set takes the Cache's closed copies too: a kept reducer's double-booked copy reads
     FILLED where the venue says partial (spec 00120 D7), and a set read from the open orders alone would
     trust exactly that copy. The row, repaired to 0.0007 by the previous process, stays there: the venue
-    is read and its partial report is the figure."""
+    is read and its partial report is the figure, and the order Kraken still lists open is cancelled by
+    its txid, the copy reading closed."""
     earlier = NOW - timedelta(hours=4)
     _submitted_row(tmp_path, "O-reducer", reduce_only=True, when=earlier, venue_order_id=_TXID)
     update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-reducer", add_filled_qty=0.0007)
     client = StubClient(StubCache(closed_orders=[_restored_order("O-reducer", filled=0.001)]))
     venue = _VenueOrders(_report(_TXID, OrderStatus.PARTIALLY_FILLED, filled_qty="0.0007"))
+    cancel = _VenueCancel()
     ex = _executor(
-        tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue, config=_cache_config(tmp_path)
+        tmp_path,
+        client=client,
+        gate=_gate(tmp_path, GateLevel.REDUCE_ONLY),
+        venue_orders=venue,
+        venue_cancel=cancel,
+        config=_cache_config(tmp_path),
     )
     assert client.cache.order(ClientOrderId("O-reducer")).status == OrderStatus.FILLED
 
@@ -11152,8 +11162,197 @@ def test_a_restored_order_the_cache_holds_closed_is_read_at_the_venue_and_the_re
 
     assert ex._restored == {"O-reducer": _TXID} and venue.calls == [_boundary(earlier) - timedelta(hours=1)]
     row = _record(tmp_path, earlier)["submitted"][0]
-    assert (row["state"], row["filled_qty"], [e.get("event") for e in row["events"] if e.get("event")]) == ("accepted", 0.0007, [])
+    assert (row["state"], row["filled_qty"], [e.get("event") for e in row["events"] if e.get("event")]) == (
+        "canceled",
+        0.0007,
+        ["recancelled"],
+    )
+    assert cancel.calls == [(_TXID, "BTC/EUR.KRAKEN")] and client.canceled == []
     assert not _kill_file(tmp_path).exists() and "O-reducer" in ex._attached
+
+
+def _closed_copy_executor(tmp_path, *, reduce_only=False, status=OrderStatus.ACCEPTED, cancel=None, level=GateLevel.REDUCE_ONLY):
+    """A restored row, 0 filled, whose Cache copy a `trade` frame with no `order_qty` rewrote to its 0.0004
+    filled, FILLED, and whose order Kraken reports in `status` at 0.0004 of 0.001."""
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-restored", reduce_only=reduce_only, when=earlier, venue_order_id=_TXID)
+    copy = _restored_order("O-restored", filled=0.0004, quantity="0.0004")
+    assert copy.status == OrderStatus.FILLED
+    client = StubClient(StubCache(closed_orders=[copy]))
+    venue = _VenueOrders(_report(_TXID, status, filled_qty="0.0004"))
+    cancel = cancel if cancel is not None else _VenueCancel()
+    ex = _executor(
+        tmp_path,
+        client=client,
+        gate=_gate(tmp_path, level),
+        venue_orders=venue,
+        venue_cancel=cancel,
+        config=_cache_config(tmp_path),
+    )
+    return ex, client, venue, cancel, earlier
+
+
+@pytest.mark.parametrize("reduce_only, kind", [(False, "restored opener"), (True, "kept reducer")], ids=["opener", "kept-reducer"])
+def test_a_restored_copy_the_library_closed_while_kraken_lists_the_order_open_is_cancelled_by_its_txid_and_the_re_read_pass_settles_it(
+    tmp_path, reduce_only, kind
+):
+    ex, client, venue, cancel, earlier = _closed_copy_executor(tmp_path, reduce_only=reduce_only)
+
+    with _executor_errors(level=logging.WARNING) as records:
+        ex.on_timer(NOW)
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert (row["state"], row["filled_qty"]) == ("canceled", 0.0004)
+    assert [e.get("event") for e in row["events"] if e.get("event")] == ["reconciled", "recancelled"]
+    assert cancel.calls == [(_TXID, "BTC/EUR.KRAKEN")] and client.canceled == []
+    assert [r.getMessage() for r in records if "by its txid" in r.getMessage()] == [
+        f"cancelled O-restored (Kraken {_TXID}) at Kraken by its txid -- Kraken listed it open (ACCEPTED, 0.0004 of 0.001 "
+        "filled) while the Cache reads it FILLED, which no cancel through the Cache reaches; its row reads canceled"
+    ]
+    assert [r.levelname for r in records if "by its txid" in r.getMessage()] == ["WARNING"]
+    assert _intent_entry(tmp_path, 0, earlier)["outcome"] == "pending"
+
+    venue.reports = [_report(_TXID, OrderStatus.CANCELED, filled_qty="0.0007")]
+    ex._evaluate(NOW)  # the gate read armed, as the idle refresh reads it
+    ex.on_timer(NOW + timedelta(seconds=5))
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert (row["state"], row["filled_qty"]) == ("canceled", pytest.approx(0.0007))
+    assert [e.get("qty") for e in row["events"] if e.get("event") == "reconciled"] == [0.0004, pytest.approx(0.0003)]
+    assert len(cancel.calls) == 1 and len(venue.calls) == 2
+    entry = _intent_entry(tmp_path, 0, earlier)
+    assert (entry["outcome"], entry["filled_qty"], entry["reasons"]) == (
+        "revoked",
+        pytest.approx(0.0007),
+        [f"the {kind} ended partly filled"],
+    )
+
+
+@pytest.mark.parametrize("status", list(OrderStatus.variants()), ids=lambda s: s.name)
+def test_a_restored_copy_the_library_closed_is_cancelled_by_its_txid_only_while_kraken_reports_the_order_open(tmp_path, status):
+    ex, client, venue, cancel, earlier = _closed_copy_executor(tmp_path, status=status)
+
+    with _executor_errors(level=logging.WARNING):
+        ex.on_timer(NOW)
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    ended = status in executor_module._ADOPTED_TERMINAL_STATES
+    assert cancel.calls == ([] if ended else [(_TXID, "BTC/EUR.KRAKEN")])
+    assert row["state"] == (executor_module._ADOPTED_TERMINAL_STATES[status] if ended else "canceled")
+    assert client.canceled == []
+
+
+def test_a_startup_cancel_by_txid_kraken_refuses_names_the_hand_cancel_and_the_re_read_pass_books_krakens_record(tmp_path):
+    """The remainder filled whole between the startup's read and its cancel, which Kraken then refuses: the
+    row stays open at the read's figure until the re-read pass reads Kraken's closed record."""
+    ex, client, venue, cancel, earlier = _closed_copy_executor(
+        tmp_path, cancel=_VenueCancel(raises=RuntimeError("EOrder:Unknown order"))
+    )
+
+    with _executor_errors(level=logging.CRITICAL) as records:
+        ex.on_timer(NOW)
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert (row["state"], row["filled_qty"]) == ("accepted", 0.0004)
+    assert [r.getMessage() for r in records] == [
+        f"the startup pass's cancel of O-restored (Kraken {_TXID}) raised or was refused -- Kraken lists it open while the "
+        "Cache reads it FILLED, so it may still rest at Kraken: cancel it by hand on Kraken's open-orders page"
+    ]
+
+    venue.reports = [_report(_TXID, OrderStatus.FILLED, filled_qty="0.001")]
+    ex._evaluate(NOW)  # the gate read armed, as the idle refresh reads it
+    ex.on_timer(NOW + timedelta(seconds=5))
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert (row["state"], row["filled_qty"]) == ("filled", pytest.approx(0.001))
+    assert len(venue.calls) == 2 and len(cancel.calls) == 1
+    assert _intent_entry(tmp_path, 0, earlier)["outcome"] == "filled"
+
+
+def test_the_re_read_pass_sends_no_second_cancel_for_a_closed_copy_kraken_still_lists_open(tmp_path):
+    """The startup's cancel returned and Kraken still lists the order open, `{"count": 0}`'s shape: the
+    re-read pass reads it and settles the row's intent, and sends no cancel of its own."""
+    ex, client, venue, cancel, earlier = _closed_copy_executor(tmp_path)
+    with _executor_errors(level=logging.WARNING):
+        ex.on_timer(NOW)
+
+    ex._evaluate(NOW)
+    ex.on_timer(NOW + timedelta(seconds=5))
+
+    assert len(cancel.calls) == 1 and len(venue.calls) == 2
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert (row["state"], row["filled_qty"]) == ("canceled", 0.0004)
+    assert _intent_entry(tmp_path, 0, earlier)["outcome"] == "revoked"
+
+
+@pytest.mark.parametrize("level", [GateLevel.NONE, GateLevel.REDUCE_ONLY, GateLevel.FULL])
+def test_the_startup_pass_cancels_a_closed_copys_order_by_its_txid_whatever_the_gates_level(tmp_path, level):
+    ex, client, venue, cancel, earlier = _closed_copy_executor(tmp_path, level=level)
+
+    with _executor_errors(level=logging.WARNING):
+        ex.on_timer(NOW)
+
+    assert cancel.calls == [(_TXID, "BTC/EUR.KRAKEN")] and client.canceled == []
+    assert _record(tmp_path, earlier)["submitted"][0]["state"] == "canceled"
+
+
+def test_a_startup_cancel_by_txid_whose_row_cannot_be_journaled_arms_the_re_read_pass_all_the_same(tmp_path, monkeypatch):
+    ex, client, venue, cancel, earlier = _closed_copy_executor(tmp_path)
+    write = executor_module.update_submitted_row
+
+    def _refuse_the_cancel(*args, state=None, **kwargs):
+        if state == "canceled":
+            raise OSError("read-only file system")
+        return write(*args, state=state, **kwargs)
+
+    monkeypatch.setattr(executor_module, "update_submitted_row", _refuse_the_cancel)
+    with _executor_errors(level=logging.CRITICAL) as records:
+        ex.on_timer(NOW)
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert (row["state"], row["filled_qty"]) == ("accepted", 0.0004)
+    assert [r.getMessage() for r in records] == [
+        f"the re-cancel of O-restored (Kraken {_TXID}) could not be journaled -- its row keeps the state it has"
+    ]
+    assert cancel.calls == [(_TXID, "BTC/EUR.KRAKEN")] and "O-restored" in ex._restored_fills
+
+    monkeypatch.setattr(executor_module, "update_submitted_row", write)
+    venue.reports = [_report(_TXID, OrderStatus.CANCELED, filled_qty="0.0007")]
+    ex._evaluate(NOW)  # the gate read armed, as the idle refresh reads it
+    ex.on_timer(NOW + timedelta(seconds=5))
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert (row["state"], row["filled_qty"]) == ("canceled", pytest.approx(0.0007))
+    assert len(cancel.calls) == 1 and len(venue.calls) == 2
+    assert _intent_entry(tmp_path, 0, earlier)["outcome"] == "revoked"
+
+
+def test_a_closed_cache_order_kraken_lists_open_is_not_cancelled_by_its_txid_with_the_cache_disabled(tmp_path):
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-closed", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    # A row the Cache does not hold, so the venue is read and the closed order's open report reaches the sweep:
+    # without the cache a row the Cache answers for is never read at the venue.
+    _submitted_row(tmp_path, "O-uncached", reduce_only=False, when=earlier, index=1, venue_order_id=_OTHER_TXID)
+    copy = _restored_order("O-closed", filled=0.0004, quantity="0.0004")
+    assert copy.status == OrderStatus.FILLED
+    client = StubClient(StubCache(closed_orders=[copy]))
+    venue = _VenueOrders(_report(_TXID, OrderStatus.ACCEPTED, filled_qty="0.0004"), _report(_OTHER_TXID, OrderStatus.CANCELED))
+    cancel = _VenueCancel()
+    ex = _executor(
+        tmp_path,
+        client=client,
+        gate=_gate(tmp_path, GateLevel.REDUCE_ONLY),
+        venue_orders=venue,
+        venue_cancel=cancel,
+        config=_cache_config(tmp_path, enabled=False),
+    )
+
+    with _executor_errors(level=logging.WARNING):
+        ex.on_timer(NOW)
+
+    assert ex._restored == {} and len(venue.calls) == 1
+    assert cancel.calls == [] and client.canceled == []
 
 
 def test_a_restored_external_copy_of_a_kept_reducer_credits_its_fills_nothing_and_the_pass_repairs_the_row(tmp_path):
