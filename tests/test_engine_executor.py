@@ -7741,6 +7741,21 @@ def test_the_boundary_sink_leaves_the_gate_level_to_the_executors_folded_verdict
     assert read_exec_record(exec_record_path(ex._journal_dir, _boundary(NOW)))["level"] == "none"
 
 
+def test_on_boundary_publishes_a_hold_that_appeared_between_plans_over_the_full_level_the_gauge_held(tmp_path):
+    registry = CollectorRegistry()
+    gauges = _ExecGauges(registry)
+    set_executor_hooks(publish_verdict=gauges.update)
+    ex = _executor(tmp_path)
+    ex._evaluate(NOW)
+    assert registry.get_sample_value("zcrypto_exec_gate_level") == 2
+
+    ex._frozen = True
+    ex.on_boundary(_boundary(NOW))
+
+    assert registry.get_sample_value("zcrypto_exec_gate_level") == 0
+    assert read_exec_record(exec_record_path(ex._journal_dir, _boundary(NOW)))["level"] == "none"
+
+
 def test_a_day_loss_hold_on_a_level_already_none_leaves_it_none(tmp_path):
     ex = _unreconciled_executor(tmp_path)
     ex._day_loss_hold = True
