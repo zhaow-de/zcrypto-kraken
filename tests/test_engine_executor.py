@@ -678,6 +678,7 @@ def _executor(
     venue_holdings=None,
     venue_fills=None,
     venue_positions=None,
+    venue_free_margin=None,
     instrument_statuses=None,
 ) -> ProbeExecutor:
     client = client if client is not None else StubClient()
@@ -696,6 +697,8 @@ def _executor(
         venue_holdings=venue_holdings if venue_holdings is not None else _VenueHoldings(),
         # No margin position unless a case hands one in: the mixed-inventory check then refuses nothing.
         venue_positions=venue_positions if venue_positions is not None else _VenuePositions(),
+        # 1000 EUR of free margin unless a case hands in its own: a margin open's floor then passes.
+        venue_free_margin=venue_free_margin if venue_free_margin is not None else _VenueFreeMargin(),
         # Every leg listed TRADING unless a case hands in its own: a case that drafts reaches no status read.
         instrument_statuses=instrument_statuses if instrument_statuses is not None else _all_trading,
     )
@@ -713,7 +716,7 @@ def _no_production_venue_read(monkeypatch):
     hands every case an empty holdings answer and every leg `TRADING`; reaching a default fails the
     test through every `except Exception` on the way, because `pytest.fail` raises a BaseException. The
     cancel's wrap, the two holdings reads' -- `read_venue_book`, the seam's default, and
-    `read_venue_holdings`, which answers through it -- and the status read's let a call with a
+    `read_venue_holdings`, which answers through it -- the status read's and the free-margin read's let a call with a
     `base_url` through, the loopback cases' own, since those reach the real client on purpose."""
 
     def _refuse(since, **kwargs):
@@ -753,6 +756,13 @@ def _no_production_venue_read(monkeypatch):
     def _refuse_positions(**kwargs):
         pytest.fail("a test reached the production venue positions read -- pass venue_positions")
 
+    free_margin = executor_module.read_free_margin
+
+    def _refuse_free_margin(*, base_url=None):
+        if base_url is None:
+            pytest.fail("a test reached the production free-margin read -- pass venue_free_margin")
+        return free_margin(base_url=base_url)
+
     monkeypatch.setattr(executor_module, "read_venue_orders", _refuse)
     monkeypatch.setattr(executor_module, "cancel_venue_order", _refuse_cancel)
     monkeypatch.setattr(executor_module, "read_venue_holdings", _refuse_holdings)
@@ -761,6 +771,7 @@ def _no_production_venue_read(monkeypatch):
     # `raising=False`: the two reads land with their source fence, and the cases fail on their own terms before it.
     monkeypatch.setattr(executor_module, "read_venue_fills", _refuse_fills, raising=False)
     monkeypatch.setattr(executor_module, "read_venue_positions", _refuse_positions, raising=False)
+    monkeypatch.setattr(executor_module, "read_free_margin", _refuse_free_margin)
 
 
 def _intent(**overrides):
@@ -981,6 +992,22 @@ class _VenuePositions:
         if self._raises is not None:
             raise self._raises
         return dict(self.held)
+
+
+class _VenueFreeMargin:
+    """The executor's `venue_free_margin` reader: answers `free`, Kraken's free margin in EUR, or raises
+    `raises` while a case leaves it set, and counts its calls."""
+
+    def __init__(self, free=1000.0, *, raises=None):
+        self.free = free
+        self.calls = 0
+        self.raises = raises
+
+    def __call__(self):
+        self.calls += 1
+        if self.raises is not None:
+            raise self.raises
+        return self.free
 
 
 def _read_venue_holdings(**kwargs):
@@ -1817,36 +1844,197 @@ def test_an_over_cap_plan_is_refused_naming_the_cap(tmp_path):
 
 
 def test_a_margin_floor_violating_plan_is_refused_naming_the_floor(tmp_path):
-    """Free ZEUR 50 against 90 EUR at 3x: 30 EUR of margin needs 75 EUR of collateral at the 250%
-    floor. Reads the live balance the executor pulled from venue truth, not from config."""
-    client = StubClient(StubCache(balances={"ZEUR": 50.0}))
-    ex = _executor(tmp_path, client=client)
+    """Free margin 50 against 90 EUR at 3x: 30 EUR of margin needs 75 EUR at the 250% floor."""
+    client = StubClient()
+    ex = _executor(tmp_path, client=client, venue_free_margin=_VenueFreeMargin(50.0))
     _drop_plan(tmp_path, _plan_dict(intents=[_intent(notional_eur=90.0, leverage=3)]))
 
     ex.on_timer(NOW)
 
     assert client.subscribed == [] and client.submitted == []
     entry = _plan_entry(tmp_path)
-    assert entry["disposition"] == "refused"
-    assert any("margin floor" in r for r in entry["reasons"])
+    assert (entry["disposition"], entry["reasons"]) == (
+        "refused",
+        ["margin floor: 75.00 EUR required exceeds free margin 50.00 EUR"],
+    )
 
 
-def test_an_eur_only_balance_is_the_free_cash_figure_the_margin_floor_is_measured_against(tmp_path):
-    """The LIVE spelling: production's free-cash read resolves on the `ZEUR`-then-`EUR` fallback's
-    SECOND arm, which every other fixture here leaves unpinned -- deleting that arm would leave this
-    suite green while production sized every plan against 0.00 free EUR. The assertion is the figure
-    inside the reason, not the words 'margin floor': dropping the arm still refuses, so only the
-    VALUE separates the two worlds."""
-    client = StubClient(StubCache(balances={"EUR": 99.84}))
-    ex = _executor(tmp_path, client=client)
+@pytest.mark.parametrize(
+    ("cache_eur", "kraken_free", "disposition", "reasons"),
+    [
+        (1_000_000.0, 99.84, "refused", ["margin floor: 112.50 EUR required exceeds free margin 99.84 EUR"]),
+        (0.0, 1000.0, "accepted", []),
+    ],
+    ids=["cache-rich-kraken-short", "cache-empty-kraken-rich"],
+)
+def test_the_margin_floor_reads_krakens_free_margin_at_the_pickup_and_never_the_caches_account(
+    tmp_path, cache_eur, kraken_free, disposition, reasons
+):
+    """The basis, the owner's of 2026-09-23: free margin, read from Kraken when the plan is picked up. The
+    Cache's account summary is set against Kraken's in both directions, so a check reading the Cache flips
+    both cases."""
+    client = StubClient(StubCache(balances={"EUR": cache_eur, "ZEUR": cache_eur}))
+    free = _VenueFreeMargin(kraken_free)
+    ex = _executor(tmp_path, client=client, venue_free_margin=free)
     _drop_plan(tmp_path, _plan_dict(intents=[_intent(notional_eur=90.0, leverage=2)]))
 
     ex.on_timer(NOW)
 
-    assert client.subscribed == [] and client.submitted == []
     entry = _plan_entry(tmp_path)
-    assert entry["disposition"] == "refused"
-    assert any("free_zeur 99.84 EUR" in r for r in entry["reasons"])
+    assert (entry["disposition"], entry["reasons"], free.calls) == (disposition, reasons, 1)
+
+
+def test_a_fill_between_connects_moves_the_free_margin_the_next_plans_floor_is_measured_against(tmp_path, _loopback_credentials):
+    """One process, one connect: the Cache's account reads the 50 EUR it read then, while the loopback moves
+    Kraken's free margin to 1000 EUR between two pickups. The first plan is refused on 50, the second accepted
+    on 1000, each read from Kraken's TradeBalance on the real client."""
+    client = StubClient(StubCache(balances={"EUR": 50.0}))
+    with kraken_loopback.serve() as venue:
+        venue.trade_balance |= {"e": "50.0", "mf": "50.0"}
+        ex = _executor(tmp_path, client=client, venue_free_margin=lambda: executor_module.read_free_margin(base_url=venue.base_url))
+        _drop_plan(tmp_path, _plan_dict(plan_id="p-1", intents=[_intent(notional_eur=90.0, leverage=2)]))
+        ex.on_timer(NOW)
+        venue.trade_balance |= {"e": "1000.0", "mf": "1000.0"}
+        _drop_plan(tmp_path, _plan_dict(plan_id="p-2", intents=[_intent(notional_eur=90.0, leverage=2)]))
+        ex.on_timer(NOW + timedelta(seconds=5))
+        calls = list(venue.private_calls)
+
+    first, second = _plan_entry(tmp_path, index=0), _plan_entry(tmp_path, index=1)
+    assert (first["plan_id"], first["disposition"], first["reasons"]) == (
+        "p-1",
+        "refused",
+        ["margin floor: 112.50 EUR required exceeds free margin 50.00 EUR"],
+    )
+    assert (second["plan_id"], second["disposition"], second["reasons"]) == ("p-2", "accepted", [])
+    assert calls.count("TradeBalance") == 2
+
+
+@pytest.mark.parametrize(
+    ("beside", "subscribed"),
+    [
+        (_intent(side="sell", action="close", notional_eur=30.0, leverage=2), "BTC/EUR.KRAKEN"),
+        (_intent(symbol="SOL/EUR", notional_eur=20.0), "SOL/EUR.KRAKEN"),
+    ],
+    ids=["margin-close", "spot-open"],
+)
+def test_a_free_margin_read_that_fails_refuses_the_margin_opens_naming_the_read_and_runs_a_close_or_a_spot_open(
+    tmp_path, beside, subscribed
+):
+    """No fallback to the Cache's account summary, however much it reads, and nothing but the margin open
+    refused by the read's failure, the cache off: the open is refused at its start, and the intent beside it, a
+    margin close on a live position or a spot open, starts."""
+    client = StubClient(StubCache(balances={"EUR": 1_000_000.0}, positions=_held(**{"BTC/EUR": 0.001})))
+    free = _VenueFreeMargin(raises=RuntimeError("API error: EGeneral:Permission denied"))
+    ex = _executor(tmp_path, client=client, venue_free_margin=free)
+    path = _drop_plan(tmp_path, _plan_dict(intents=[_intent(symbol="ETH/EUR", notional_eur=30.0, leverage=2), beside]))
+
+    with _executor_errors(level=logging.WARNING) as records:
+        ex.on_timer(NOW)
+
+    reason = "Kraken's free margin could not be read for the margin floor -- RuntimeError: API error: EGeneral:Permission denied"
+    entry, opened = _plan_entry(tmp_path), _intent_entry(tmp_path, 0)
+    assert (entry["disposition"], entry["reasons"], free.calls, path.exists()) == ("accepted", [], 1, False)
+    assert (opened["outcome"], opened["reasons"]) == ("refused", [reason])
+    assert (_intent_entry(tmp_path, 1)["outcome"], client.subscribed) == ("pending", [subscribed])
+    assert [(r.levelname, r.getMessage()) for r in records] == [
+        ("WARNING", f"probe plan p-1: {reason}"),
+        ("WARNING", f"intent 0 of plan p-1 refused: {reason}"),
+    ]
+
+
+def test_a_failed_free_margin_read_is_held_for_its_plan_alone(tmp_path):
+    """The read's failure refuses the margin opens of the plan it was read for, never a later plan's: the next
+    plan's read answers, and its margin open starts."""
+    client = StubClient()
+    free = _VenueFreeMargin(raises=RuntimeError("API error: EService:Unavailable"))
+    ex = _executor(tmp_path, client=client, venue_free_margin=free)
+    _drop_plan(tmp_path, _plan_dict(plan_id="p-1", intents=[_intent(notional_eur=30.0, leverage=2)]))
+    ex.on_timer(NOW)
+    free.raises = None
+    _drop_plan(tmp_path, _plan_dict(plan_id="p-2", intents=[_intent(notional_eur=30.0, leverage=2)]))
+    ex.on_timer(NOW + timedelta(seconds=5))
+
+    first, second = _plan_entry(tmp_path, index=0), _plan_entry(tmp_path, index=1)
+    assert (first["plan_id"], first["intents"][0]["outcome"], free.calls) == ("p-1", "refused", 2)
+    assert (second["plan_id"], second["disposition"], second["intents"][0]["outcome"]) == ("p-2", "accepted", "pending")
+    assert client.subscribed == ["BTC/EUR.KRAKEN"]
+
+
+@pytest.mark.parametrize(("hold", "reason"), [(True, "restart_hold"), (False, "arm_file_absent")], ids=["restart-hold", "disarmed"])
+def test_a_margin_open_the_gate_refuses_keeps_the_gates_reason_over_a_failed_free_margin_read(tmp_path, hold, reason):
+    gate = _gate(tmp_path, GateLevel.REDUCE_ONLY if hold else GateLevel.FULL)
+    if not hold:
+        (exec_dir(tmp_path) / ARM_FILE).unlink()
+    free = _VenueFreeMargin(raises=RuntimeError("API error: EService:Unavailable"))
+    ex = _executor(tmp_path, gate=gate, venue_free_margin=free)
+    _drop_plan(tmp_path, _plan_dict(intents=[_intent(notional_eur=30.0, leverage=2)]))
+
+    ex.on_timer(NOW)
+
+    opened = _intent_entry(tmp_path, 0)
+    assert (_plan_entry(tmp_path)["disposition"], free.calls, opened["outcome"], opened["reasons"]) == (
+        "accepted",
+        1,
+        "refused",
+        [reason],
+    )
+
+
+def test_a_failed_free_margin_read_still_takes_the_mixed_inventory_check_under_the_cache(tmp_path):
+    free = _VenueFreeMargin(raises=RuntimeError("API error: EService:Unavailable"))
+    positions = _VenuePositions({"BTC/EUR": 0.001})
+    ex = _executor(tmp_path, config=_cache_config(tmp_path), venue_positions=positions, venue_free_margin=free)
+    _drop_plan(tmp_path, _plan_dict(intents=[_intent(symbol="ETH/EUR", notional_eur=30.0, leverage=2), _intent(notional_eur=20.0)]))
+
+    ex.on_timer(NOW)
+
+    entry = _plan_entry(tmp_path)
+    assert (entry["disposition"], entry["reasons"], free.calls, positions.calls) == (
+        "refused",
+        [
+            "intent 1: a spot open on BTC/EUR beside a margin position of 0.001 there -- the cache's restore does not distinguish them"
+        ],
+        1,
+        1,
+    )
+
+
+@pytest.mark.parametrize("enabled", [True, False], ids=["cache-on", "cache-off"])
+def test_a_spot_only_plan_reads_no_free_margin(tmp_path, enabled):
+    """The floor gates margin opens only: a read that would refuse is never made, the cache on or off."""
+    free = _VenueFreeMargin(raises=RuntimeError("must not be read"))
+    ex = _executor(tmp_path, config=_cache_config(tmp_path, enabled), venue_free_margin=free)
+    _drop_plan(tmp_path, _plan_dict(intents=[_intent(notional_eur=30.0)]))
+
+    ex.on_timer(NOW)
+
+    assert (_plan_entry(tmp_path)["disposition"], free.calls) == ("accepted", 0)
+
+
+def test_a_leveraged_plan_the_walls_refuse_reads_no_free_margin(tmp_path):
+    free = _VenueFreeMargin(raises=RuntimeError("must not be read"))
+    ex = _executor(tmp_path, venue_free_margin=free)
+    created_at = NOW - timedelta(minutes=61)
+    _drop_plan(tmp_path, _plan_dict(created_at=created_at, intents=[_intent(notional_eur=30.0, leverage=2)]))
+
+    ex.on_timer(NOW)
+
+    entry = _plan_entry(tmp_path)
+    assert (entry["disposition"], entry["reasons"], free.calls) == (
+        "refused",
+        [f"plan expired: created_at {created_at.isoformat()} is over 60 minutes old"],
+        0,
+    )
+
+
+def test_the_free_margin_read_logs_the_figure_it_measured_against(tmp_path):
+    ex = _executor(tmp_path, venue_free_margin=_VenueFreeMargin(812.5))
+    _drop_plan(tmp_path, _plan_dict(intents=[_intent(notional_eur=30.0, leverage=2)]))
+
+    with _executor_errors(level=logging.INFO) as records:
+        ex.on_timer(NOW)
+
+    assert "probe plan p-1: Kraken's free margin reads 812.50 EUR at its pickup" in [r.getMessage() for r in records]
 
 
 def test_an_unparseable_plan_is_journaled_and_deleted(tmp_path):
@@ -7984,6 +8172,42 @@ def test_read_venue_orders_raises_past_its_bound(_loopback_credentials, monkeypa
         assert time.monotonic() - started < 2.5
 
 
+def test_read_free_margin_reads_tradebalances_mf_on_the_real_client(_loopback_credentials):
+    """`mf`, never the equity `e` or the trade balance `tb`, each set apart here, in one private call."""
+    with kraken_loopback.serve() as venue:
+        venue.trade_balance |= {"eb": "1500.1", "tb": "1400.2", "m": "12.3", "e": "1399.6", "mf": "1387.3"}
+        free = executor_module.read_free_margin(base_url=venue.base_url)
+        calls = list(venue.private_calls)
+
+    assert (free, calls) == (1387.3, ["TradeBalance"])
+
+
+@pytest.mark.parametrize(
+    ("staging", "raised", "match"),
+    [
+        ({"errors": {"TradeBalance": "EGeneral:Permission denied"}}, RuntimeError, "EGeneral:Permission denied"),
+        ({"stalls": {"TradeBalance": 3.0}}, TimeoutError, None),
+    ],
+    ids=["kraken-error", "past-its-bound"],
+)
+def test_read_free_margin_raises_on_a_kraken_error_and_past_its_bound(_loopback_credentials, monkeypatch, staging, raised, match):
+    monkeypatch.setattr(executor_module, "_VENUE_READ_TIMEOUT_SECONDS", 0.5)
+    with kraken_loopback.serve() as venue:
+        for name, value in staging.items():
+            setattr(venue, name, value)
+        with pytest.raises(raised, match=match):
+            executor_module.read_free_margin(base_url=venue.base_url)
+
+
+def test_read_free_margin_refuses_an_answer_labelled_other_than_eur(_loopback_credentials, monkeypatch):
+    """The client labels the answer by the asset asked: a read asked in another one is refused, never compared
+    in EUR."""
+    monkeypatch.setattr("cli.engine.node._MARGIN_BALANCE_ASSET", "XXBT")
+    with kraken_loopback.serve() as venue:
+        with pytest.raises(EngineError, match="answered in 'BTC', not EUR"):
+            executor_module.read_free_margin(base_url=venue.base_url)
+
+
 def test_read_venue_orders_refuses_without_credentials_before_building_a_client(monkeypatch):
     monkeypatch.delenv("KRAKEN_SPOT_API_KEY", raising=False)
     monkeypatch.delenv("KRAKEN_SPOT_API_SECRET", raising=False)
@@ -11786,7 +12010,7 @@ def test_a_plan_with_an_opening_intent_waits_for_a_tick_with_nothing_in_flight_b
         ex.on_timer(NOW)
 
     assert [str(cid) for cid in client.canceled] == [adopted] and client.cache.order(ClientOrderId(adopted)).is_inflight
-    held = "probe plan p-1 waits for a tick with nothing in flight -- its opening intents take a venue read"
+    held = "probe plan p-1 waits for a tick with nothing in flight -- it takes a signed venue read"
     if enabled:
         assert _plan_path(tmp_path).exists() and positions.calls == 0
         assert held in [r.getMessage() for r in records]
@@ -11798,6 +12022,46 @@ def test_a_plan_with_an_opening_intent_waits_for_a_tick_with_nothing_in_flight_b
         assert held not in [r.getMessage() for r in records]
     assert not _plan_path(tmp_path).exists()
     assert (_plan_entry(tmp_path)["disposition"], positions.calls) == ("accepted", 1 if enabled else 0)
+
+
+@pytest.mark.parametrize(
+    ("intent", "reads"),
+    [(_intent(leverage=2), 1), (_intent(side="sell", action="close", leverage=2), 0)],
+    ids=["margin-open", "margin-close"],
+)
+def test_a_margin_open_waits_for_a_tick_with_nothing_in_flight_before_the_free_margin_read_and_a_close_never_does(
+    tmp_path, intent, reads
+):
+    """The free-margin read is signed on the trade key, so without the cache too a plan opening on margin waits
+    in its file while the startup pass's cancel is PENDING_CANCEL, and is read and picked up on the next tick; a
+    margin close extends no margin, so its plan reads nothing and is picked up on the first."""
+
+    class _PendingCancel(StubClient):
+        def cancel_order(self, client_order_id):
+            super().cancel_order(client_order_id)
+            self.cache.order(client_order_id).apply(
+                _event(OrderPendingCancel, client_order_id=str(client_order_id), strategy_id=StrategyId("EXTERNAL"))
+            )
+
+    adopted = "OADOPT-AAAAA-BBBBBB"
+    client = _PendingCancel(
+        StubCache(open_orders=[_resting_limit_order(adopted, venue_order_id=adopted, strategy_id=StrategyId("EXTERNAL"))])
+    )
+    free = _VenueFreeMargin()
+    ex = _executor(tmp_path, client=client, config=_cache_config(tmp_path, False), venue_free_margin=free)
+    _drop_plan(tmp_path, _plan_dict(intents=[intent]))
+
+    ex.on_timer(NOW)
+
+    assert client.cache.order(ClientOrderId(adopted)).is_inflight
+    if reads:
+        assert _plan_path(tmp_path).exists() and free.calls == 0
+        client.cache.order(ClientOrderId(adopted)).apply(
+            _event(OrderCanceled, client_order_id=adopted, strategy_id=StrategyId("EXTERNAL"))
+        )
+        ex.on_timer(NOW + timedelta(seconds=5))
+    assert not _plan_path(tmp_path).exists()
+    assert (_plan_entry(tmp_path)["disposition"], free.calls) == ("accepted", reads)
 
 
 def test_a_margin_position_read_that_fails_refuses_the_opening_intents_by_name(tmp_path):
