@@ -550,7 +550,8 @@ class _CycleGauges:
 class _ExecGauges:
     """The execution envelope's published state, updated at every gate evaluation: the boundary sink's, the executor's on its
     tick while a plan runs, and its idle refresh once a minute, so a control file moved by hand reaches the board within that
-    minute; the heartbeat, `last_evaluation`, moves at all of those but the refresh, so it stays the boundary path's.
+    minute; the heartbeat, `last_evaluation`, moves at all of those but the refresh, so it stays the boundary path's;
+    `gate_level` moves at all of those but the sink's, whose verdict is the gate's bare one (`update`'s `level`).
     `gate_level` and the presence gauges
     are eager and seeded at 0 -- "nothing may be submitted" is true before anything is evaluated -- and `run()` evaluates once at
     startup so none sits at that default: a `kill_tripped` reading 0 beside an existing kill file is a false statement.
@@ -589,12 +590,15 @@ class _ExecGauges:
         # snapshot bound is 30 s, so every one re-reads and the age would publish ~0 forever -- a constant in measurement's clothes.
         self.last_evaluation: Gauge | None = None
 
-    def update(self, verdict: GateVerdict, *, evaluated_at: datetime, heartbeat: bool = True) -> None:
+    def update(self, verdict: GateVerdict, *, evaluated_at: datetime, heartbeat: bool = True, level: bool = True) -> None:
         """`heartbeat` False publishes the six readings and leaves `last_evaluation` where it was: the executor's idle
         refresh and its boundary re-journal, neither of them the sink's, so the staleness rule keeps watching the sink and
-        the exec record it writes before it."""
+        the exec record it writes before it. `level` False leaves `gate_level` where it was: the boundary sink's call, whose
+        verdict is the gate's bare one, while the level the board and the disarmed-boundary rule read is the executor's,
+        its own holds folded in (`_fold_holds`)."""
         i = verdict.inputs
-        self.gate_level.set(LEVEL_CODE[verdict.level])
+        if level:
+            self.gate_level.set(LEVEL_CODE[verdict.level])
         self.armed.set(1 if verdict.armed else 0)
         self.kill_tripped.set(1 if i["kill_file"] else 0)
         self.restart_hold.set(1 if i["restart_hold"] else 0)
@@ -939,7 +943,7 @@ def _make_exec_sink(gate, journal_dir: Path, cycle_gauges, exec_gauges, venue_ga
         if cycle_gauges is not None:
             cycle_gauges.update(result, completed_at, duration_seconds)
         if exec_gauges is not None:
-            exec_gauges.update(verdict, evaluated_at=completed_at)
+            exec_gauges.update(verdict, evaluated_at=completed_at, level=False)
         if venue_gauges is not None:
             venue_gauges.update(result.venue)
 

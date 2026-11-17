@@ -7719,6 +7719,28 @@ def test_the_boundary_re_journal_publishes_the_readings_and_leaves_the_heartbeat
     assert registry.get_sample_value("zcrypto_exec_last_evaluation_timestamp_seconds") == earlier.timestamp()
 
 
+def test_the_boundary_sink_leaves_the_gate_level_to_the_executors_folded_verdict(tmp_path):
+    registry = CollectorRegistry()
+    gauges = _ExecGauges(registry)
+    set_executor_hooks(publish_verdict=gauges.update)
+    ex = _unreconciled_executor(tmp_path)
+    ex._evaluate(NOW)
+    assert ex._gate.evaluate(NOW).level == GateLevel.FULL
+    assert registry.get_sample_value("zcrypto_exec_gate_level") == 0
+
+    sink = _make_exec_sink(ex._gate, ex._journal_dir, None, gauges, None)
+    later = NOW + timedelta(seconds=5)
+    sink(SimpleNamespace(cycle_ts=_boundary(NOW)), later, 1.0)
+
+    assert registry.get_sample_value("zcrypto_exec_gate_level") == 0
+    assert registry.get_sample_value("zcrypto_exec_armed") == 1
+    assert registry.get_sample_value("zcrypto_exec_last_evaluation_timestamp_seconds") == later.timestamp()
+    assert read_exec_record(exec_record_path(ex._journal_dir, _boundary(NOW)))["level"] == "full"
+    ex.on_boundary(_boundary(NOW))
+    assert registry.get_sample_value("zcrypto_exec_gate_level") == 0
+    assert read_exec_record(exec_record_path(ex._journal_dir, _boundary(NOW)))["level"] == "none"
+
+
 def test_a_day_loss_hold_on_a_level_already_none_leaves_it_none(tmp_path):
     ex = _unreconciled_executor(tmp_path)
     ex._day_loss_hold = True
