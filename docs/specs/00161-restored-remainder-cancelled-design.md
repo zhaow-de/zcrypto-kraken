@@ -288,7 +288,7 @@ One arm read `SURVIVED` and is not in the table: the race read's arming, deleted
 In `infra/runbooks/engine-procedures.md`'s rung-3 restart section, item 3's read gains `by its txid` after `fill on restored order`:
 
 ```
-   sudo docker logs --since 30m zcrypto-engine 2>&1 | grep -E 'cache restore|Received [0-9]|Reconciliation complete|the venue holds|Unresolved positions|Failed to get mass status|could not be read|fill on restored order|by its txid|instrument not in cache|order event ignored|Failed to load account|Error on cache insert|bounded fill|CRITICAL'
+   sudo docker logs --since 30m zcrypto-engine 2>&1 | grep -E 'cache restore|Received [0-9]|Reconciliation complete|the venue holds|Unresolved positions|Failed to get mass status|could not be read|fill on restored order|by its txid|instrument not in cache|order event ignored|Failed to load account|Error on cache insert|bounded fill|ledgered reducer|CRITICAL'
 ```
 
 Item 4's three sentences from "Read Kraken's open orders too:" to its end read as below; its hand cancel is keyed on the open-orders read of an order opened before the start, which holds on the image running before the converge as after it and leaves to its own box a sell a boundary places under the hold:
