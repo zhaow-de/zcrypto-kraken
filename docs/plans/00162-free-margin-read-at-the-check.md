@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A plan carrying a margin open — a leveraged `open`, the one intent that extends margin — has its margin floor, summed over its margin opens, measured against Kraken's free margin read from Kraken at its pickup, a read that fails refuses the plan's margin opens alone while its closes and spot intents run, a plan with none — spot, or margin closes alone — reads nothing and has no floor, a plan of margin closes waiting for nothing, and spec 00090 and the probe window's funding step say free margin.
+**Goal:** A plan carrying a margin open — a leveraged `open`, the one intent that extends margin — has its margin floor, summed over its margin opens, measured against Kraken's free margin read from Kraken at its pickup, a read that fails refuses the plan's margin opens alone and none of its closes or spot intents, a plan with none — spot, or margin closes alone — reads nothing and has no floor, a plan of margin closes waiting for nothing, and spec 00090 and the probe window's funding step say free margin.
 
 **Architecture:** `cli/engine/probeplan.py` splits the floor out of `plan_refusals` into `margin_floor_refusals(plan, *, free_margin_eur)`, which answers nothing for a plan `extends_margin` says carries no margin open and sums the margin opens alone (spec D3, D8). The executor gains `read_free_margin`, TradeBalance's `mf` for `ZEUR` on the bare client beside `read_venue_positions` (D4), and `_accept_plan` calls it through `_margin_floor_refusals` once the other walls pass, a failure held for the running plan as `_free_margin_unread`, by which `_start_intent` refuses each margin open (D5), the wait for nothing in flight widened to a margin open (D3); `probe-plan --check` measures the floor against the venue record's figure through the same function (D6). The docs tasks amend spec 00090 (D8), re-true the funding step (D9), log the `[00162]` entries and resolve T0230.
 
@@ -25,7 +25,7 @@ full tests/test_engine_executor.py — a test importing cli.config, read as a no
 full tests/test_engine_command.py — a test importing cli.config, read as a non-prose change
 ```
 
-Every fence below was run in a detached scratch worktree, never pushed: by the author against `6795cd513`, and as it now stands at the plan review's second fix against `cce5d0337`, whose code is the same, Task 1's fences applied to that tree by a script that read them from this file. Every count a step below expects is that scratch reading, which the step re-runs on the branch. Task 1's cases read `831 deselected, 17 errors` (executor), `1 error` (probeplan) and `1 failed, 72 deselected` (command) with its test files alone, and `17 passed, 831 deselected`, `64 passed` and `1 passed, 72 deselected` with its code; its twenty-four probe arms each read `mutate-probe: KILLED (control proven, tree restored byte-identically)` in one pass on the scratch commit; `tests/test_cache_restart.py` read `22 passed` there. Tasks 2–5's texts went through the repository's commit hooks on the scratch tree — `mdformat` left the runbook page unchanged, `guidance-guard.py --uncounted` printed no line for it before or after — and `tests/test_decisions_log_shape.py`, `tests/test_decisions_log_ties.py`, `tests/test_open_topics_frontmatter.py`, `tests/test_topics_index.py`, `tests/test_internal_terms_not_operator_visible.py` and `tests/test_trial_registry_provenance.py` passed over them; Task 5's fence ran with the scratch commit's hash in place of each `<sha …>`. The spec's *The measured basis* pastes each reading.
+Every fence below was run in a detached scratch worktree, never pushed: by the author against `6795cd513`, and as it now stands at the plan review's third fix against `6d0941296`, whose code is the same, Task 1's fences applied to that tree by a script that read them from this file. Every count a step below expects is that scratch reading, which the step re-runs on the branch. Task 1's cases read `831 deselected, 19 errors` (executor), `1 error` (probeplan) and `1 failed, 72 deselected` (command) with its test files alone, and `19 passed, 831 deselected`, `64 passed` and `1 passed, 72 deselected` with its code; its twenty-seven probe arms each read `mutate-probe: KILLED (control proven, tree restored byte-identically)` in one pass on the scratch commit; `tests/test_cache_restart.py` read `22 passed` there. Tasks 2–5's texts went through the repository's commit hooks on the scratch tree — `mdformat` left the runbook page unchanged, `guidance-guard.py --uncounted` printed no line for it before or after — and `tests/test_decisions_log_shape.py`, `tests/test_decisions_log_ties.py`, `tests/test_open_topics_frontmatter.py`, `tests/test_topics_index.py`, `tests/test_internal_terms_not_operator_visible.py` and `tests/test_trial_registry_provenance.py` passed over them; Task 5's fence ran with the scratch commit's hash in place of each `<sha …>`. The spec's *The measured basis* pastes each reading.
 
 ## Global Constraints
 
@@ -37,14 +37,14 @@ Every fence below was run in a detached scratch worktree, never pushed: by the a
 - The restart harness's slow cases (18 of its 22), which `-m "not slow"` deselects: Task 1 changes the harness's child and loopback, so it runs the whole harness file once in its own step.
 - The gate is `uv run pre-commit run -a`, re-run until clean, its rewrites staged.
 - A comment or docstring stays only where a reader would act differently without it, and is correct; state and decisions stay, an event goes to the PR body. A runbook page and an engine string literal carry no `spec <NNNNN>`, `D<N>`, `T<NNNN>`, `iter-<N>`, `Phase <N>` or `WP<N>` token (`tests/test_internal_terms_not_operator_visible.py`).
-- Commits: Conventional Commits, one subject per change, after a `git -C <the worktree> add <every path the commit changes>` of its own, through `git -C <the worktree> commit -F - <<'EOF'`; the message says what changed and pastes the result line of the test command it names, run over the commit's own tree; one state-changing git command per Bash call; never an amend, `--no-verify` or `git stash`; every message ends with `Co-Authored-By: Claude <actual executing model> <noreply@anthropic.com>`, the implementer's own model in place of the placeholder, and `Claude-Session: https://claude.ai/code/session_018eFiE9ZzjweN7A4N9yBCTV`.
+- Commits: Conventional Commits, one subject per change, after a `git -C <the worktree> add <every path the commit changes, a git mv source aside, which the move stages>` of its own, through `git -C <the worktree> commit -F - <<'EOF'`; the message says what changed and pastes the result line of the test command it names, run over the commit's own tree; one state-changing git command per Bash call; never an amend, `--no-verify` or `git stash`; every message ends with `Co-Authored-By: Claude <actual executing model> <noreply@anthropic.com>`, the implementer's own model in place of the placeholder, and `Claude-Session: https://claude.ai/code/session_018eFiE9ZzjweN7A4N9yBCTV`.
 - Probes (this plan's tier is `full`): each arm Task 1 lists runs as its own call on the committed tree, `infra/scripts/mutate-probe.sh --file <file> --control '1,$d' --mutation '<mutation>' -- uv run pytest <test file> -k '<selection>' -q -p no:cacheprovider --basetemp=.tmp/implementer/pt`. Before each arm its pattern's count reads `1`, its own call: `sed -n '<range>p' <file> | grep -c -F '<pattern>'` for the arm whose mutation opens with a range, `grep -c -F '<pattern>' <file>` otherwise, the pattern the mutation's search text with its sed escapes removed. `: > .local/free-margin-read-at-the-check/probes-task-1.txt` before the arms; after each arm its id and the script's last line are appended, its own call. The verdicts ride an empty commit through `git -C <the worktree> commit --allow-empty -F - <<'EOF'`, subject `test(engine): the margin floor's read at the pickup proven by infra/scripts/mutate-probe.sh`, its body the probes file pasted whole, then the trailers; it names no test run, the verdicts being its result.
 - A helper this plan names in a test (`_executor`, `_plan_entry`, `_plan_dict`, `_intent`, `_drop_plan`, `_plan_path`, `_executor_errors`, `_event`, `_resting_limit_order`, `_cache_config`, `_loopback_credentials`, `_intent_entry`, `_held`, `_quote`, `StubClient`, `StubCache`, `NOW`, `executor_module`, `kraken_loopback` in `tests/test_engine_executor.py`; `_plan`, `_intent`, `_margin_plan`, `NOW` in `tests/test_engine_probeplan.py`) exists at `6795cd513`; where a fence's call does not fit its real signature, the case's intent and assertions bind, not the spelling, and the report says what changed.
 
 ## Rulings where the spec is silent
 
 - **Names:** `extends_margin` and its per-intent `_extends_margin`, `margin_floor_refusals`, `read_free_margin`, `_margin_floor_refusals`, the constructor keyword `venue_free_margin` and its attribute `_venue_free_margin`, the running plan's `_free_margin_unread`, `_MARGIN_BALANCE_ASSET`, the test reader `_VenueFreeMargin`, the loopback field `trade_balance`.
-- **Placement:** `_extends_margin` then `extends_margin` directly above `plan_refusals`, and `margin_floor_refusals` directly below it; `read_free_margin` directly after `read_venue_positions`; `_margin_floor_refusals` directly above `_mixed_inventory_refusals`; `venue_free_margin` directly after `venue_positions` in the constructor's signature and body; `_free_margin_unread` directly after `_plan_window_close` in the constructor, set directly after `self._resolved_notional = {}` in `_accept_plan`, and read in `_start_intent` directly after the submitted-row belt; `_MARGIN_BALANCE_ASSET` directly after `_ACCOUNT_ID`; `_VenueFreeMargin` directly after `_VenuePositions`; `trade_balance` directly after `balances` in `KrakenLoopback`. The executor's floor cases replace `test_a_margin_floor_violating_plan_is_refused_naming_the_floor` and `test_an_eur_only_balance_is_the_free_cash_figure_the_margin_floor_is_measured_against` where they stand; the loopback read cases go directly before `test_read_venue_orders_refuses_without_credentials_before_building_a_client`; the wait case directly before `test_a_margin_position_read_that_fails_refuses_the_opening_intents_by_name`; the probeplan floor cases replace the five `plan_refusals` floor cases where they stand.
+- **Placement:** `_extends_margin` then `extends_margin` directly above `plan_refusals`, and `margin_floor_refusals` directly below it; `read_free_margin` directly after `read_venue_positions`; `_margin_floor_refusals` directly above `_mixed_inventory_refusals`; `venue_free_margin` directly after `venue_positions` in the constructor's signature and body; `_free_margin_unread` directly after `_plan_window_close` in the constructor, set directly after `self._resolved_notional = {}` in `_accept_plan`, and read in `_start_intent` directly after the gate's refusal; `_MARGIN_BALANCE_ASSET` directly after `_ACCOUNT_ID`; `_VenueFreeMargin` directly after `_VenuePositions`; `trade_balance` directly after `balances` in `KrakenLoopback`. The executor's floor cases replace `test_a_margin_floor_violating_plan_is_refused_naming_the_floor` and `test_an_eur_only_balance_is_the_free_cash_figure_the_margin_floor_is_measured_against` where they stand; the loopback read cases go directly before `test_read_venue_orders_refuses_without_credentials_before_building_a_client`; the wait case directly before `test_a_margin_position_read_that_fails_refuses_the_opening_intents_by_name`; the probeplan floor cases replace the five `plan_refusals` floor cases where they stand.
 - **`probe-plan --check` keeps its `ZEUR`-then-`EUR` keys and prints no new line** (D6): its floor case's venue record writes `EUR`, the spelling the engine writes, the other `tests/test_engine_command.py` fixtures `ZEUR`, and the funding step names the check's figure (D9).
 - **What a task writes is in the task, verbatim, or printed by its own first command; nothing is written from a description.** The runbook text is the spec's *Runbook texts* fence, which Task 3 prints from the spec and pastes byte for byte, so the spec's copy is the one copy.
 
@@ -63,7 +63,7 @@ Every fence below was run in a detached scratch worktree, never pushed: by the a
 3. A margin close, a reducer, extends no margin: its plan reads no free margin and is picked up on a tick an order of this process is in flight, where a margin open waits for nothing in flight, both with the cache off. Pinned by `[margin-close]` and `[margin-open]` of Task 1's `test_a_margin_open_waits_for_a_tick_with_nothing_in_flight_before_the_free_margin_read_and_a_close_never_does`.
 4. A read answering in another asset, or past the 30 s bound, refuses rather than compares. Pinned by Task 1's `test_read_free_margin_refuses_an_answer_labelled_other_than_eur` and `test_read_free_margin_raises_on_a_kraken_error_and_past_its_bound[past-its-bound]`.
 5. The restart harness's margin opens read the loopback's TradeBalance, never a production client. Pinned by the harness's 22 cases over the child's redirect, Task 1 Step 5.
-6. A read that fails refuses the plan's margin opens alone, each at its start, and a margin close in the same plan runs. Pinned by Task 1's `test_a_free_margin_read_that_fails_refuses_the_margin_opens_naming_the_read_and_runs_the_close`.
+6. A read that fails refuses the plan's margin opens alone, each at its start, and a margin close or a spot open in the same plan starts, the cache off; the failure refuses no later plan's margin opens. Pinned by Task 1's `test_a_free_margin_read_that_fails_refuses_the_margin_opens_naming_the_read_and_runs_the_close[margin-close|spot-open]` and `test_a_failed_free_margin_read_is_held_for_its_plan_alone`.
 
 ---
 
@@ -75,7 +75,7 @@ Every fence below was run in a detached scratch worktree, never pushed: by the a
 
 **Interfaces:**
 - Consumes: `_bare_client`, `_VENUE_READ_TIMEOUT_SECONDS`, `_nothing_in_flight`, `_refuse_intent`, `ledgered_plan_ids`, `KrakenSpotHttpClient.request_margin_metrics(asset=…)`.
-- Produces: `extends_margin(plan: ProbePlan) -> bool`; `plan_refusals(plan, *, now, ledgered, max_plan_notional_eur) -> tuple[str, ...]`; `margin_floor_refusals(plan: ProbePlan, *, free_margin_eur: float) -> tuple[str, ...]`; `read_free_margin(*, base_url: str | None = None) -> float`; `ProbeExecutor(..., venue_free_margin=None, ...)`; `_MARGIN_BALANCE_ASSET = "ZEUR"`; the INFO line `probe plan <id>: Kraken's free margin reads <x.xx> EUR at its pickup`, the wait's `probe plan <id> waits for a tick with nothing in flight -- it takes a signed venue read`, and the reason `Kraken's free margin could not be read for the margin floor -- <class>: <message>`, each margin open's at its start, spec D5 and D7's.
+- Produces: `extends_margin(plan: ProbePlan) -> bool`; `plan_refusals(plan, *, now, ledgered, max_plan_notional_eur) -> tuple[str, ...]`; `margin_floor_refusals(plan: ProbePlan, *, free_margin_eur: float) -> tuple[str, ...]`; `read_free_margin(*, base_url: str | None = None) -> float`; `ProbeExecutor(..., venue_free_margin=None, ...)`; `_MARGIN_BALANCE_ASSET = "ZEUR"`; the INFO line `probe plan <id>: Kraken's free margin reads <x.xx> EUR at its pickup`, a failed read's WARNING `probe plan <id>: Kraken's free margin could not be read for the margin floor -- <class>: <message>`, the wait's `probe plan <id> waits for a tick with nothing in flight -- it takes a signed venue read`, and the reason `Kraken's free margin could not be read for the margin floor -- <class>: <message>`, each margin open's at its start, spec D5 and D7's.
 
 - [ ] **Step 1: Write the failing cases and their fixtures.**
 
@@ -174,7 +174,7 @@ In `tests/test_engine_executor.py`: `_executor` takes `venue_free_margin=None` a
         venue_free_margin=venue_free_margin if venue_free_margin is not None else _VenueFreeMargin(),
 ```
 
-`_no_production_venue_read` gains, after `_refuse_positions`, and its last `setattr` after the positions one:
+`_no_production_venue_read`'s docstring reads `-- the status read's and the free-margin read's let a call with a` where it read `-- and the status read's let a call with a`, and the fixture gains, after `_refuse_positions`, and its last `setattr` after the positions one:
 
 ```python
     free_margin = executor_module.read_free_margin
@@ -194,17 +194,17 @@ After `_VenuePositions`:
 ```python
 class _VenueFreeMargin:
     """The executor's `venue_free_margin` reader: answers `free`, Kraken's free margin in EUR, or raises
-    `raises`, and counts its calls."""
+    `raises` while a case leaves it set, and counts its calls."""
 
     def __init__(self, free=1000.0, *, raises=None):
         self.free = free
         self.calls = 0
-        self._raises = raises
+        self.raises = raises
 
     def __call__(self):
         self.calls += 1
-        if self._raises is not None:
-            raise self._raises
+        if self.raises is not None:
+            raise self.raises
         return self.free
 ```
 
@@ -253,9 +253,9 @@ def test_the_margin_floor_reads_krakens_free_margin_at_the_pickup_and_never_the_
 
 
 def test_a_fill_between_connects_moves_the_free_margin_the_next_plans_floor_is_measured_against(tmp_path, _loopback_credentials):
-    """One process, one connect: the Cache's account reads the 50 EUR it read then, while Kraken's free margin
-    moves to 1000 EUR between two pickups, as a fill moves it. The first plan is refused on 50, the second
-    accepted on 1000, each read from Kraken's TradeBalance on the real client."""
+    """One process, one connect: the Cache's account reads the 50 EUR it read then, while the loopback moves
+    Kraken's free margin to 1000 EUR between two pickups. The first plan is refused on 50, the second accepted
+    on 1000, each read from Kraken's TradeBalance on the real client."""
     client = StubClient(StubCache(balances={"EUR": 50.0}))
     with kraken_loopback.serve() as venue:
         venue.trade_balance |= {"e": "50.0", "mf": "50.0"}
@@ -277,27 +277,53 @@ def test_a_fill_between_connects_moves_the_free_margin_the_next_plans_floor_is_m
     assert calls.count("TradeBalance") == 2
 
 
-def test_a_free_margin_read_that_fails_refuses_the_margin_opens_naming_the_read_and_runs_the_close(tmp_path):
-    """No fallback to the Cache's account summary, however much it reads, and no margin close refused with the
-    open: the open is refused at its start by the read's failure, and the close beside it is submitted, sized
-    from the live position."""
+@pytest.mark.parametrize(
+    ("beside", "subscribed"),
+    [
+        (_intent(side="sell", action="close", notional_eur=30.0, leverage=2), "BTC/EUR.KRAKEN"),
+        (_intent(symbol="SOL/EUR", notional_eur=20.0), "SOL/EUR.KRAKEN"),
+    ],
+    ids=["margin-close", "spot-open"],
+)
+def test_a_free_margin_read_that_fails_refuses_the_margin_opens_naming_the_read_and_runs_the_close(tmp_path, beside, subscribed):
+    """No fallback to the Cache's account summary, however much it reads, and nothing but the margin open
+    refused by the read's failure, the cache off: the open is refused at its start, and the intent beside it, a
+    margin close on a live position or a spot open, starts."""
     client = StubClient(StubCache(balances={"EUR": 1_000_000.0}, positions=_held(**{"BTC/EUR": 0.001})))
     free = _VenueFreeMargin(raises=RuntimeError("API error: EGeneral:Permission denied"))
     ex = _executor(tmp_path, client=client, venue_free_margin=free)
-    close = _intent(side="sell", action="close", notional_eur=30.0, leverage=2)
-    path = _drop_plan(tmp_path, _plan_dict(intents=[_intent(symbol="ETH/EUR", notional_eur=30.0, leverage=2), close]))
+    path = _drop_plan(tmp_path, _plan_dict(intents=[_intent(symbol="ETH/EUR", notional_eur=30.0, leverage=2), beside]))
 
     with _executor_errors(level=logging.WARNING) as records:
         ex.on_timer(NOW)
-        ex.on_quote(_quote())
 
     reason = "Kraken's free margin could not be read for the margin floor -- RuntimeError: API error: EGeneral:Permission denied"
     entry, opened = _plan_entry(tmp_path), _intent_entry(tmp_path, 0)
     assert (entry["disposition"], entry["reasons"], free.calls, path.exists()) == ("accepted", [], 1, False)
     assert (opened["outcome"], opened["reasons"]) == ("refused", [reason])
-    [(order, _)] = client.submitted
-    assert (order.quantity, order.reduce_only) == (0.001, True)
-    assert [(r.levelname, r.getMessage()) for r in records] == [("WARNING", f"intent 0 of plan p-1 refused: {reason}")]
+    assert (_intent_entry(tmp_path, 1)["outcome"], client.subscribed) == ("pending", [subscribed])
+    assert [(r.levelname, r.getMessage()) for r in records] == [
+        ("WARNING", f"probe plan p-1: {reason}"),
+        ("WARNING", f"intent 0 of plan p-1 refused: {reason}"),
+    ]
+
+
+def test_a_failed_free_margin_read_is_held_for_its_plan_alone(tmp_path):
+    """The read's failure refuses the margin opens of the plan it was read for, never a later plan's: the next
+    plan's read answers, and its margin open starts."""
+    client = StubClient()
+    free = _VenueFreeMargin(raises=RuntimeError("API error: EService:Unavailable"))
+    ex = _executor(tmp_path, client=client, venue_free_margin=free)
+    _drop_plan(tmp_path, _plan_dict(plan_id="p-1", intents=[_intent(notional_eur=30.0, leverage=2)]))
+    ex.on_timer(NOW)
+    free.raises = None
+    _drop_plan(tmp_path, _plan_dict(plan_id="p-2", intents=[_intent(notional_eur=30.0, leverage=2)]))
+    ex.on_timer(NOW + timedelta(seconds=5))
+
+    first, second = _plan_entry(tmp_path, index=0), _plan_entry(tmp_path, index=1)
+    assert (first["plan_id"], first["intents"][0]["outcome"], free.calls) == ("p-1", "refused", 2)
+    assert (second["plan_id"], second["disposition"], second["intents"][0]["outcome"]) == ("p-2", "accepted", "pending")
+    assert client.subscribed == ["BTC/EUR.KRAKEN"]
 
 
 @pytest.mark.parametrize("enabled", [True, False], ids=["cache-on", "cache-off"])
@@ -420,7 +446,7 @@ def test_a_margin_open_waits_for_a_tick_with_nothing_in_flight_before_the_free_m
     assert (_plan_entry(tmp_path)["disposition"], free.calls) == ("accepted", reads)
 ```
 
-- [ ] **Step 2: Run them, expect FAIL.** `uv run pytest tests/test_engine_executor.py -k 'margin_floor_violating or never_the_caches_account or fill_between_connects or free_margin_read_that_fails or spot_only_plan_reads_no_free_margin or walls_refuse_reads_no_free_margin or logs_the_figure or margin_open_waits or read_free_margin or opening_intent_waits' -q -p no:cacheprovider --basetemp=.tmp/implementer/pt` reads `831 deselected, 17 errors`, each `AttributeError: module 'cli.engine.executor' has no attribute 'read_free_margin'`; `uv run pytest tests/test_engine_probeplan.py -q -p no:cacheprovider --basetemp=.tmp/implementer/pt` reads `1 error`, the import of `extends_margin`; `uv run pytest tests/test_engine_command.py -k margin_intent_over_the_free_balance -q -p no:cacheprovider --basetemp=.tmp/implementer/pt` reads `1 failed, 72 deselected`.
+- [ ] **Step 2: Run them, expect FAIL.** `uv run pytest tests/test_engine_executor.py -k 'margin_floor_violating or never_the_caches_account or fill_between_connects or free_margin_read_that_fails or held_for_its_plan_alone or spot_only_plan_reads_no_free_margin or walls_refuse_reads_no_free_margin or logs_the_figure or margin_open_waits or read_free_margin or opening_intent_waits' -q -p no:cacheprovider --basetemp=.tmp/implementer/pt` reads `831 deselected, 19 errors`, each `AttributeError: module 'cli.engine.executor' has no attribute 'read_free_margin'`; `uv run pytest tests/test_engine_probeplan.py -q -p no:cacheprovider --basetemp=.tmp/implementer/pt` reads `1 error`, the import of `extends_margin`; `uv run pytest tests/test_engine_command.py -k margin_intent_over_the_free_balance -q -p no:cacheprovider --basetemp=.tmp/implementer/pt` reads `1 failed, 72 deselected`.
 
 - [ ] **Step 3: Implement.**
 
@@ -550,17 +576,19 @@ and directly after `self._resolved_notional = {}`, further down `_accept_plan`, 
 ```python
     def _margin_floor_refusals(self, plan) -> tuple[list[str], str | None]:
         """The margin floor against Kraken's free margin read now (`read_free_margin`), never the Cache's account
-        summary: the floor's refusals of the plan, and the read's failure or None. A read that fails refuses no plan:
-        `_start_intent` refuses each margin open by it, and the plan's closes and spot intents run."""
+        summary: the floor's refusals of the plan, and the read's failure or None. A read that fails is logged and
+        refuses nothing here: `_start_intent` refuses each of the plan's margin opens by it, and no other intent."""
         try:
             free = (self._venue_free_margin or read_free_margin)()
         except Exception as exc:
-            return [], f"Kraken's free margin could not be read for the margin floor -- {type(exc).__name__}: {exc}"
+            unread = f"Kraken's free margin could not be read for the margin floor -- {type(exc).__name__}: {exc}"
+            logger.warning("probe plan %s: %s", plan.plan_id, unread)
+            return [], unread
         logger.info("probe plan %s: Kraken's free margin reads %.2f EUR at its pickup", plan.plan_id, free)
         return list(margin_floor_refusals(plan, free_margin_eur=free)), None
 ```
 
-In `_start_intent`, directly after the submitted-row belt's `return` and its blank line, ahead of `verdict = self._evaluate(now)`, and followed by one blank line:
+In `_start_intent`, directly after the gate's refusal — `if not _level_permits(verdict.level, intent):`, its `self._refuse_intent(index, verdict.reasons)` and `return` — and its blank line, ahead of the venue-truth read's `try:`, and followed by one blank line, so an intent the gate refuses keeps the gate's reason:
 
 ```python
         if self._free_margin_unread is not None and _extends_margin(intent):
@@ -596,11 +624,11 @@ In `cli/engine/venuestate.py`, `VenueState`'s docstring reads:
 
 In `cli/engine/flatten.py`, `QUOTE_CURRENCY`'s comment's second line reads ``# Money. Kraken's own `ZEUR` reaches the venue raw only as TradeBalance's `asset`, `_MARGIN_BALANCE_ASSET` ``, its third line as it stands.
 
-- [ ] **Step 4: Run them, expect PASS.** Step 2's three commands read `17 passed, 831 deselected`, `64 passed` and `1 passed, 72 deselected`; `uv run pytest tests/test_engine_executor.py -m "not slow" -q -p no:cacheprovider --basetemp=.tmp/implementer/pt` reads `848 passed`; `uv run pytest tests/test_engine_stub_fidelity.py -q -p no:cacheprovider --basetemp=.tmp/implementer/pt` reads `64 passed`.
+- [ ] **Step 4: Run them, expect PASS.** Step 2's three commands read `19 passed, 831 deselected`, `64 passed` and `1 passed, 72 deselected`; `uv run pytest tests/test_engine_executor.py -m "not slow" -q -p no:cacheprovider --basetemp=.tmp/implementer/pt` reads `850 passed`; `uv run pytest tests/test_engine_stub_fidelity.py -q -p no:cacheprovider --basetemp=.tmp/implementer/pt` reads `64 passed`.
 
 - [ ] **Step 5: The restart harness, slow cases included.** `uv run pytest tests/test_cache_restart.py -n 8 -q -p no:cacheprovider --basetemp=.tmp/implementer/pt` reads `22 passed` (277 s on the scratch tree): the child's redirect carries the harness's margin opens to the loopback's TradeBalance.
 
-- [ ] **Step 6: Commit** `fix(engine): the margin floor reads Kraken's free margin when a plan opening on margin is picked up`, after the gate, the per-commit run's result line in the body — on the scratch tree the union of the changed files' direct readers and `tests/test_engine_probeplan.py` read `3511 passed, 14 skipped, 20 deselected` — and Step 5's line beside it.
+- [ ] **Step 6: Commit** `fix(engine): the margin floor reads Kraken's free margin when a plan opening on margin is picked up`, after the gate, the per-commit run's result line in the body — on the scratch tree the union of the changed files' direct readers and `tests/test_engine_probeplan.py` read `3513 passed, 14 skipped, 20 deselected` — and Step 5's line beside it.
 
 - [ ] **Step 7: Probes**, on the committed tree, each `-- uv run pytest <test file> -k '<selection>' …`:
   - `floor-refuses`: `cli/engine/probeplan.py`, `tests/test_engine_probeplan.py`, `-k 'refuses_at_free_margin_50'`, mutation `s/    if margin_required > free_margin_eur:/    if False:/`.
@@ -617,6 +645,9 @@ In `cli/engine/flatten.py`, `QUOTE_CURRENCY`'s comment's second line reads ``# M
   - `failed-read-caught`: `-k 'free_margin_read_that_fails'`, mutation `/def _margin_floor_refusals/,/def _mixed_inventory_refusals/s/except Exception as exc:/except ZeroDivisionError as exc:/`.
   - `failed-read-refuses-the-opens`: `-k 'free_margin_read_that_fails'`, mutation `s/if self._free_margin_unread is not None and _extends_margin(intent):/if False:/`.
   - `failed-read-runs-the-close`: `-k 'free_margin_read_that_fails'`, mutation `s/if self._free_margin_unread is not None and _extends_margin(intent):/if self._free_margin_unread is not None:/`.
+  - `failed-read-runs-the-spot-intents`: `-k 'free_margin_read_that_fails'`, mutation `s/if self._free_margin_unread is not None and _extends_margin(intent):/if self._free_margin_unread is not None and intent.action == "open":/`.
+  - `failed-read-logged`: `-k 'free_margin_read_that_fails'`, mutation `/logger.warning("probe plan %s: %s", plan.plan_id, unread)/d`.
+  - `failed-read-held-for-its-plan-alone`: `-k 'held_for_its_plan_alone'`, mutation `s/self._free_margin_unread = unread/self._free_margin_unread = unread or self._free_margin_unread/`.
   - `read-at-each-pickup`: `-k 'fill_between_connects'`, mutation `s/free = (self._venue_free_margin or read_free_margin)()/free = self.__dict__.setdefault("_free_once", (self._venue_free_margin or read_free_margin)())/`.
   - `reads-mf`: `-k 'reads_tradebalances_mf'`, mutation `s/return float(metrics\["free_margin"\])/return float(metrics["equity"])/`.
   - `asks-zeur`: `-k 'reads_tradebalances_mf'`, mutation `s/request_margin_metrics(asset=_MARGIN_BALANCE_ASSET)/request_margin_metrics()/`.
@@ -628,9 +659,9 @@ In `cli/engine/flatten.py`, `QUOTE_CURRENCY`'s comment's second line reads ``# M
   - `check-measures-floor`: `cli/engine/command.py`, `tests/test_engine_command.py`, `-k 'margin_intent_over_the_free_balance'`, mutation `/\*margin_floor_refusals(plan, free_margin_eur=float(free_margin)),/d`.
   - `check-reads-eur`: the same file and case, mutation `s/ or balances.get("EUR", 0.0)//`.
 
-  Then the empty commit the Global Constraints name. No arm selects a `slow` case.
+  Then the empty commit the Global Constraints name. No arm selects a `slow` case, and the two backstops Step 1 adds take none, an explicit drop whose reason is the spec's *Tests and guards*.
 
-### Task 2: Spec 00090's floor line reads free margin (spec D8)
+### Task 2: Spec 00090's floor lines read free margin (spec D8)
 
 **Files:**
 - Modify: `docs/specs/00090-rung-1-order-path-design.md` (D8)
@@ -640,10 +671,10 @@ In `cli/engine/flatten.py`, `QUOTE_CURRENCY`'s comment's second line reads ``# M
 
 - [ ] **Step 1: Read the pin first**, its own call: `sha256sum docs/specs/00090-rung-1-order-path-design.md` prints `425e724bc60134e175f57cd05fed509be7521eee4db0fb5e4b6947868c6e0104`, and `grep -c 425e724bc60134e175f57cd05fed509be7521eee4db0fb5e4b6947868c6e0104 docs/reference/trial-registry.jsonl docs/reference/reading-ledger.jsonl` reads `0` for each; a hash or a count that differs stops the task and goes in the report.
 
-- [ ] **Step 2: Edit.** ``grep -c -F '`sum(notional_i / leverage_i) × 2.5 ≤ free ZEUR balance`' docs/specs/00090-rung-1-order-path-design.md`` reads `1`, inside `### D8 — Sizing at the call site`; that code span becomes `` `sum(notional_i / leverage_i) × 2.5 ≤ free margin` ``. Directly before the line `### D9 — [[T0140]] ruled: the venue record (and the exec record with it) gets a schema-aware validator — option (a)`, after one blank line, the paragraph:
+- [ ] **Step 2: Edit.** ``grep -c -F '`sum(notional_i / leverage_i) × 2.5 ≤ free ZEUR balance`' docs/specs/00090-rung-1-order-path-design.md`` reads `1`, inside `### D8 — Sizing at the call site`; that code span becomes `` `sum(notional_i / leverage_i) × 2.5 ≤ free margin` ``. `grep -c -F "confirm free EUR balance covers the plan per D8's floor" docs/specs/00090-rung-1-order-path-design.md` reads `1`, inside `### D13 — The probe checklist is an operating surface, landed in this change`; that text becomes `confirm Kraken's free margin covers the plan per D8's floor`. The spec's two statements of the floor's basis are those two; G1's "the account balance covers the plan under D8's margin-floor check" defers to D8 and stands. Directly before the line `### D9 — [[T0140]] ruled: the venue record (and the exec record with it) gets a schema-aware validator — option (a)`, after one blank line, the paragraph:
 
 ```markdown
-**Amended 2026-11-17 (spec 00162 D3 and D8, the owner's decision of 2026-09-23):** the margin floor's right-hand side is Kraken's free margin, TradeBalance's `mf` in EUR, read from Kraken when the plan is picked up, never the account summary the Cache holds from the execution client's connect; its sum runs over the plan's margin opens, a leveraged `open` being the one intent that extends margin, so a plan carrying none — spot, or margin closes alone — reads no free margin and has no floor. The decision is `[T0160]` in `docs/research/14.phase6-decisions.md`. This line read "free ZEUR balance", the spot wallet's free EUR; the code summed every leveraged intent, closes included, against the Cache's `EUR`, which on the pinned wheel is TradeBalance's free margin as the execution client read it at its connect (spec 00162's measured basis).
+**Amended 2026-11-17 (spec 00162 D3 and D8, the owner's decision of 2026-09-23):** the margin floor's right-hand side is Kraken's free margin, TradeBalance's `mf` in EUR, read from Kraken when the plan is picked up, never the account summary the Cache holds from the execution client's connect; its sum runs over the plan's margin opens, a leveraged `open` being the one intent that extends margin, so a plan carrying none — spot, or margin closes alone — reads no free margin and has no floor. The decision is `[T0160]` in `docs/research/14.phase6-decisions.md`. This line read "free ZEUR balance", and D13's pre-probe line "free EUR balance", the spot wallet's free EUR; the code summed every leveraged intent, closes included, against the Cache's `EUR`, which on the pinned wheel is TradeBalance's free margin as the execution client read it at its connect (spec 00162's measured basis).
 ```
 
   followed by one blank line, as the spec's paragraphs stand.
@@ -674,7 +705,7 @@ In `cli/engine/flatten.py`, `QUOTE_CURRENCY`'s comment's second line reads ``# M
 **Interfaces:**
 - Consumes: nothing. Produces: nothing a later task calls.
 
-- [ ] **Step 1: Append, verbatim, after the file's last line**, one blank line between entries as the log holds them; the asks and answers are `.tmp/t0230/inputs/asked.md`'s, word for word:
+- [ ] **Step 1: Append, verbatim, after the file's last line**, one blank line between entries as the log holds them; the asks and answers are those the spec's D1 quotes, word for word:
 
 ```markdown
 [00162] Is the venue record's EUR finding registered as a topic? (Decision: 1)
@@ -699,10 +730,15 @@ In `cli/engine/flatten.py`, `QUOTE_CURRENCY`'s comment's second line reads ``# M
   Decided by the spec's author.
 
 [00162] What does a free-margin read that fails do to the plan? (Decision: 1)
-  1. **Refuses the plan's margin opens alone, each journaled `refused` at its start with the read's failure as its reason, and runs the plan's closes and spot intents** — no margin open's order goes, and a margin close riding with an open is not refused for a figure the close does not use; the operator drops the margin opens again under a new `plan_id` after reading Kraken.
+  1. **Refuses the plan's margin opens alone, each journaled `refused` at its start with the read's failure as its reason, and none of the plan's closes or spot intents** — no margin open's order goes, and a margin close riding with an open is not refused for a figure the close does not use; the operator drops the margin opens again under a new `plan_id` after reading Kraken.
   2. **Falls back to the connect-time figure** — the stale figure T0230 is about, used exactly when Kraken cannot be read.
   3. **Refuses the plan whole, the read's failure its reason** — the mixed-inventory read's terms; a margin close in the plan is refused with it, its position left open.
   Decided by the session running the plan's review, verbatim: "a failed free-margin read never refuses a close: what it refuses is the plan's margin opens alone, each journaled `refused` with the read's reason, while the plan's closes and spot intents run — whether by reading at the first margin open's submission or by refusing those intents at the pickup is the fixer's call by the code, the shape that adds the least; the Failure modes' "drop the plan again" is re-trued to it (spec :237)". The shape, the read at the pickup and its failure held for the running plan's margin opens, is the plan review's fix's.
+
+[00162] What does the pickup refuse of a plan carrying a margin close when the read answers and the floor does not fit, or, under the cache, when the mixed-inventory check refuses? (Decision: 1)
+  1. **The plan whole, its closes with it, as before this change** — the floor is the plan's, now summed over its margin opens alone, so it refuses less than before; the mixed-inventory check refuses a plan whole today; a close that must run goes in a plan of its own.
+  2. **The plan's margin opens alone, its closes running, as a failed free-margin read refuses them** — a partial plan from two refusals this change does not otherwise touch.
+  Decided by the session running the plan's review, verbatim: "the fixer's two questions are ruled as today, each under Out of scope with its reason — a floor refusal (the read answered, the opens over free margin) refuses the plan whole, a close in it included, D3's "the floor is the plan's", now on a sum of opens alone so refusing less than before; and a failed mixed-inventory read refuses the plan whole, as it does today — neither is behaviour this change introduces, and rung 3's plans carry no leverage; the owner is told, theirs to overturn".
 
 [00162] Which plans read free margin, and where? (Decision: 1)
   1. **A plan carrying a margin open, a leveraged `open`, once the pickup's other walls pass, ahead of the mixed-inventory read, its floor summed over its margin opens** — the decision of 2026-09-23 gates leveraged intents only, and a close, spot or leveraged, extends no margin, so a plan of margin closes reads nothing and waits for nothing; rung 3's drafted plans are spot and read nothing.
@@ -720,7 +756,7 @@ In `cli/engine/flatten.py`, `QUOTE_CURRENCY`'s comment's second line reads ``# M
 
 - [ ] **Step 2: Run** the per-commit tests with `tests/test_decisions_log_shape.py` and `tests/test_decisions_log_ties.py` as the task's test files (`consumers.sh` exits 2 for this path).
 
-- [ ] **Step 3: Commit** `docs(research): the [00162] entries, the owner's three words on T0230 and the free-margin read's four calls`, the run's result line in the body.
+- [ ] **Step 3: Commit** `docs(research): the [00162] entries, the owner's three words on T0230 and the free-margin read's five calls`, the run's result line in the body.
 
 ### Task 5: T0230 resolved (the `topic-ops` skill)
 
@@ -744,7 +780,7 @@ In `cli/engine/flatten.py`, `QUOTE_CURRENCY`'s comment's second line reads ``# M
 ```markdown
 ## Resolution
 
-- Fixed by `<sha task 1 fix>`: the pickup of a plan carrying a margin open, a leveraged `open`, reads Kraken's free margin, TradeBalance's `mf` for `ZEUR`, on the engine's bare client (`read_free_margin`, `cli/engine/executor.py`), and measures the margin floor, summed over its margin opens, against it (`margin_floor_refusals`, `cli/engine/probeplan.py`), never the Cache's account summary from the execution client's connect; a read that fails refuses the plan's margin opens alone, its closes and spot intents running, and a plan with none — spot, or margin closes alone — reads nothing and has no floor, the owner's basis of 2026-09-23 taken to the intents that extend margin. `probe-plan --check` measures the floor against the venue record's figure, advisory as before.
+- Fixed by `<sha task 1 fix>`: the pickup of a plan carrying a margin open, a leveraged `open`, reads Kraken's free margin, TradeBalance's `mf` for `ZEUR`, on the engine's bare client (`read_free_margin`, `cli/engine/executor.py`), and measures the margin floor, summed over its margin opens, against it (`margin_floor_refusals`, `cli/engine/probeplan.py`), never the Cache's account summary from the execution client's connect; a read that fails refuses the plan's margin opens alone, none of its closes or spot intents, and a plan with none — spot, or margin closes alone — reads nothing and has no floor, the owner's basis of 2026-09-23 taken to the intents that extend margin. `probe-plan --check` measures the floor against the venue record's figure, advisory as before.
 - Held by `tests/test_engine_executor.py::test_a_fill_between_connects_moves_the_free_margin_the_next_plans_floor_is_measured_against` (Kraken's figure moved between two pickups in one process and the Cache's not, the second plan judged on the moved one), `::test_the_margin_floor_reads_krakens_free_margin_at_the_pickup_and_never_the_caches_account` (the basis, both directions), `::test_a_free_margin_read_that_fails_refuses_the_margin_opens_naming_the_read_and_runs_the_close` and `::test_a_spot_only_plan_reads_no_free_margin`, proven by `infra/scripts/mutate-probe.sh` in `<sha task 1 probes>`.
 - The wording: spec `00090`'s margin floor reads free margin, amended in `<sha task 2>`; `infra/runbooks/engine-procedures.md`'s probe-window funding step names Kraken's free margin and the figure `probe-plan --check` reads, in `<sha task 3>`.
 - The change ships on the engine image with T0229's, T0226's and T0227's fixes, one engine converge, the fleet's concern (`.claude/rules/fleet-deploys.md`).
@@ -754,4 +790,4 @@ In `cli/engine/flatten.py`, `QUOTE_CURRENCY`'s comment's second line reads ``# M
 
 - [ ] **Step 4: Run** the per-commit tests (`tests/test_merge_gate.py`, `tests/test_open_topics_frontmatter.py`, `tests/test_topics_index.py`).
 
-- [ ] **Step 5: Commit** `docs(open-topics): T0230 resolved, the margin floor reads Kraken's free margin at the pickup`, the run's result line in the body. Decisions log: Task 4's entries; the converge is the fleet's concern, never the topic's.
+- [ ] **Step 5: Commit** `docs(open-topics): T0230 resolved, the margin floor reads Kraken's free margin at the pickup`, the run's result line in the body, staged by `git -C <the worktree> add docs/open-topics/archive/T0230-the-margin-floor-reads-a-free-margin-figure-refreshed-only-at-connect.md docs/open-topics/README.md`, its own call: Step 3's `git mv` has staged the old path's removal, and an `add` naming that path aborts with nothing staged. Decisions log: Task 4's entries; the converge is the fleet's concern, never the topic's.
