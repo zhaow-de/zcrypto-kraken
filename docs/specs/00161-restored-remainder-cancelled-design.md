@@ -179,6 +179,8 @@ The first `wt` run came before the plan's code lost one redundant line, an `_ans
 
 **D14. The merge ships nothing; the change rides one engine image with T0229's fix (merged as #863) and T0227's, one converge, the fleet's concern.** The owner's ruling names it (D2). *Deployment* says how.
 
+**D15. A restored copy a minted terminal closed, which Kraken still lists open at a restart, is left as today: the startup pass's CRITICAL pages and the operator cancels it by hand.** The owner's ruling, on an ask the coordinator put on 2026-11-17, verbatim from `.tmp/t0226/inputs/asked.md`: asked at 2026-11-17T02:52:54.552Z, "Spec 00161 (T0226): at startup the engine will cancel by txid any order it placed that Kraken still lists open while its restored Cache copy reads closed. One neighbouring shape is different: an order whose restored copy a minted terminal closed (the engine itself recorded the cancel or fill, which Kraken never confirmed). Today a restart pages CRITICAL for that one and you cancel it by hand. Should the startup pass cancel it automatically too?", with two options — "Leave it as today (Recommended)": "The startup CRITICAL still pages and you cancel by hand; the re-read pass re-cancels it when a mint in the same process arms it. It needs a restart between a mint and the re-read pass, and it isn't the silent remainder T0226 is about. Cost: one page and one hand cancel." — and "Cancel it at startup too": "The paged hand cancel becomes an unpaged automatic one. Cost: 28 measured cases of the one-door test matrix change their expected values, so its reconnect and minted-external rows must be re-derived." Answered at 2026-11-17T06:39:31.375Z: "Leave it as today (Recommended)". The startup pass's comparison (D3) reads a copy the Cache restored closed by the library's own events; a copy a minted terminal closed stays the sweep tail's hand cancel.
+
 ## The answers
 
 What the startup pass does with a restored row the ledger holds open, by the Cache's copy and Kraken's report; one row changes.
@@ -271,10 +273,7 @@ The converge's own restart is the first start on the new image; nothing rests at
 
 ## Open questions for the owner
 
-**Q1. A restored copy a minted terminal closed, which Kraken still lists open at a restart: cancel it by txid at the startup pass too, or leave it as today?** The ask's words, "cancel at Kraken any ledgered order Kraken still lists open while the Cache reads it closed", reach it: the previous process minted the copy `CANCELED` after its cancel went unanswered (drill F2's shape) and stopped before its re-read pass re-cancelled. The code can take either way; the choice is the owner's because it departs from the ask's literal reach.
-
-- **Leave it as today (recommended).** The startup pass logs the CRITICAL `ledgered order … rests at Kraken (…) but this process's Cache does not hold it … cancel it by hand on Kraken's open-orders page`, which pages, and the operator cancels; the re-read pass re-cancels it in process when a mint arms it. Cost: one page and one hand cancel, in a shape that needs a restart between a mint and the re-read pass's next quiet tick. It is not the silent remainder T0226 is about.
-- **Cancel it at the startup pass too.** The sweep's tail gains the same test over the copy `_cache_lookup` finds. Cost: the paged hand act becomes an unpaged cancel; 28 cases of the one-door matrix change their expectation (measured), its `reconnect` and `minted-external` rows to be re-derived; and a second arm in the sweep's tail, where today's lines are the hand cancel's.
+None open: the one the code could not settle, whether the startup pass also cancels a copy a minted terminal closed, is D15, on the owner's ruling.
 
 ## Out of scope
 
