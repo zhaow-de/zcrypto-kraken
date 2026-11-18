@@ -449,3 +449,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #863 | 2026-11-16 | feat(engine): a refused cancel settles an order Kraken closed short | — | 00160 | T0229 |
 | #865 | 2026-11-17 | fix(engine): the startup pass cancels a restored remainder by its txid | — | 00161 | T0226 |
 | #866 | 2026-11-17 | fix(engine): the boundary sink leaves the gate level to the executor | — | — | T0227 |
+| #867 | 2026-11-18 | fix(engine): the margin floor reads Kraken's free margin at the pickup | — | 00162 | T0230 |
