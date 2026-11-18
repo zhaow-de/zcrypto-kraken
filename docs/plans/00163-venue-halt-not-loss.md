@@ -1160,14 +1160,14 @@ EOF
 [00163] Does the reconciler keep booking a venue halt like 2026-11-17 08Z's as permanent loss? (Decision: 2)
   Asked by `zcrypto-zebra` on 2026-11-17, whether the reconciler should stop booking such a halt as residual; the owner's ruling, 2026-11-17T19:47:55.448Z, verbatim: "for the reconciler change, fix it right aways in a branch without deferring it to a new T-topic".
   1. **Keep booking it as loss, as `[iter-141]`'s first entry ruled** — the counter books absence and the hygiene map says whose it was; every halt the venue announces pages "Permanent L2 loss" and `Ops · ERROR logs` for an hour that lost nothing.
-  2. **Book a halt the two mirrors prove lost nothing to its own counter, never as loss, on this branch** — taken, on the ruling; it supersedes `[iter-141]`'s first entry for that evidence alone, and every silence it cannot prove books and pages as before.
+  2. **Book a halt the two mirrors prove lost nothing to its own counter, never as loss, on this branch** — it supersedes `[iter-141]`'s first entry for that evidence alone, and every silence it cannot prove books and pages as before. **Taken** (owner, 2026-11-17).
   3. **Park it in a topic** — refused by the ruling.
 
 [00163] What evidence books a fleet-dark hour as a venue halt rather than loss? (Decision: 1)
   1. **The mirrors alone: the book carried through, nothing traded, and the market stood still** — every booked stream is held by both hosts, each coming back on an update at least 300 s before the hour's end, one of them with no resync snapshot from its first window to that end; every booked pair has a trades final on at least one host, every trades segment reads with no null, mistyped or unconvertible stamp or id, no pair prints inside its own booked silence, each window is straddled by adjacent trade ids with none skipping, and no pair prints for at least 240 s around each window. It reads only what the reconciler already reads; over the ledger's 14 dark hours it holds on 2026-10-15, 2026-10-29, 2026-10-30 08Z and 2026-11-17 08Z, and refuses 2026-07-13's capture defect and 2026-10-13's silence, in which spot traded.
   2. **Archive Kraken's `status` ladder for the reconciler** — a schema change on the unbackfillable capture stream, its rows stamped at local receipt; it says the venue announced a halt, not that nothing was lost.
   3. **Read Kraken's scheduled-maintenance feed at booking time** — a third-party call inside the booking path, which `[iter-141]` refused; an announcement is not proof either.
-  Decided by the spec's author for the rule, by the orchestrator's floor ruling for the quiet proof, and by the controller's build ruling for a booked pair with no trades final on either host.
+  Decided by the spec's author for the rule; by the plan review's orchestrator rulings for the both-mirror carry rule, the fail-closed unreadable trades tape and the unusable readable one, and the count of prints inside each pair's own booked windows, and by its floor ruling for the quiet proof; and by the controller's build rulings for a book final whose rows have no Python value and for a booked pair with no trades final on either host.
 
 [00163] Where does a halt live on the ledger and in the counters? (Decision: 1)
   1. **A fourth `verdict`, `venue_halt`, on the `both_streams_silent` record, its `residual_seconds` 0.0 and its seconds in `halt_seconds`, summed into a new `zcrypto_reconcile_venue_halt_seconds_total`** — decided once with the record; an image that predates the verdict buckets it as undetermined at 0.0, so a rollback books and pages nothing.
@@ -1177,7 +1177,7 @@ EOF
 
 [00163] What becomes of the hours already booked as loss that the rule proves were halts? (Decision: 1)
   Asked 2026-11-17T20:58:17.617Z, verbatim: "The reconciler fix (spec 00163) stops booking a proven venue halt as permanent loss from now on. Already booked are today's 08Z hour (5,432.5 s) and three earlier hours the rule also proves were halts (10-15, 10-29, 10-30 08Z; 8,469.9 s). Together, 13,902.4 s of the residual counter's lifetime total were not loss. The code can't change records already written; only a hand edit of the live ledger on zcrypto-ops can. What should happen to them?" The owner's answer, 20:59:43.800Z, verbatim: "Leave them (Recommended)".
-  1. **Leave them (Recommended)** — the counter keeps the 13,902.4 s and the hygiene map records each of the four hours as complete, a halt not a loss; nothing touches a live file.
+  1. **Leave them (Recommended)** — the counter keeps the 13,902.4 s and the hygiene map records each of the four hours as complete, a halt not a loss; nothing touches a live file. **Taken** (owner, 2026-11-17).
   2. **Append a note record per hour** — one hand-written append per hour to the live ledger on `zcrypto-ops`, saying it was a halt, with no counter field, like the 2026-07-29 `correction` record.
   3. **Correct them out of the counter** — the records rewritten so the seconds leave the residual counter; Prometheus reads the drop as a reset, the page's `resets()` guard blind for 24 h.
 ```
