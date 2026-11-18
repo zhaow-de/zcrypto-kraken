@@ -177,6 +177,9 @@ TABLE: dict[str, dict[str, Standin]] = {
         "_VenuePositions": Standin(
             OURS, "cli.engine.executor.read_venue_positions, the venue_positions ProbeExecutor is built with", ()
         ),
+        "_VenueFreeMargin": Standin(
+            OURS, "cli.engine.executor.read_free_margin, the venue_free_margin ProbeExecutor is built with", ()
+        ),
     },
     "test_engine_command.py": {
         "_FakeNode": Standin(LIBRARY, "nautilus_trader.live.LiveNode", (_NODE_SURFACE, _NODE_OFFERS)),

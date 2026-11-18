@@ -61,7 +61,7 @@ CONFIRM_WORD = "FLATTEN"
 CLIENT_ORDER_ID_PREFIX = "FLT"
 BOOK_DEPTH = 1
 # The euro as the pinned adapter spells it on every engine-side surface -- instrument quotes, balances,
-# Money. Kraken's own `ZEUR` reaches the venue raw only through the exec client's `margin_balance_asset`
+# Money. Kraken's own `ZEUR` reaches the venue raw only as TradeBalance's `asset`, `_MARGIN_BALANCE_ASSET`
 # (`cli/engine/node.py`), and this wheel does not resolve it as a currency.
 QUOTE_CURRENCY = "EUR"
 # The rung-1 leverage, and the only value ever accepted live from this repo (probes 4c/4d in

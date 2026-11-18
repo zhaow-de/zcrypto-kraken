@@ -98,6 +98,7 @@ executor_module.read_venue_holdings = partial(executor_module.read_venue_holding
 executor_module.read_venue_book = partial(executor_module.read_venue_book, base_url=CONFIG["base_url"])
 executor_module.read_venue_fills = partial(executor_module.read_venue_fills, base_url=CONFIG["base_url"])
 executor_module.read_venue_positions = partial(executor_module.read_venue_positions, base_url=CONFIG["base_url"])
+executor_module.read_free_margin = partial(executor_module.read_free_margin, base_url=CONFIG["base_url"])
 executor_module.read_instrument_statuses = partial(executor_module.read_instrument_statuses, base_url=CONFIG["base_url"])
 _production_bare_client = executor_module._bare_client
 
@@ -133,6 +134,7 @@ def _refuse_production_defaults() -> None:
             executor_module.read_venue_book,
             executor_module.read_venue_fills,
             executor_module.read_venue_positions,
+            executor_module.read_free_margin,
             executor_module.read_instrument_statuses,
         )
     )

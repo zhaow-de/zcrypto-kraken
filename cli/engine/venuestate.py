@@ -54,8 +54,9 @@ class InstrumentConstraints:
 @dataclass(frozen=True)
 class VenueState:
     """A frozen, single-instant read of the Cache, with each `ordermin` as `held_ordermin` holds it:
-    what the venue said we could trade, held, and had free to spend at `snapshot_at`. Plain data --
-    no Nautilus type reachable from here."""
+    what the venue said we could trade and held at `snapshot_at`, and `balances` as the execution
+    client read the account at its connect, which no fill moves -- the `EUR` row Kraken's free margin
+    then. Plain data -- no Nautilus type reachable from here."""
 
     snapshot_at: datetime
     instruments: dict[str, InstrumentConstraints]
