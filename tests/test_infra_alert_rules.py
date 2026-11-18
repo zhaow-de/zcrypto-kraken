@@ -610,6 +610,12 @@ def test_the_permanent_loss_page_outlives_a_single_evaluation_hour():
     assert "[24h]" in expr, "the increase() window must match the query range"
 
 
+def test_the_permanent_loss_page_names_the_halt_counter_the_reconciler_publishes():
+    halt = "zcrypto_reconcile_venue_halt_seconds_total"
+    assert halt in _rule("zcrypto-reconcile-residual-gap")["annotations"]["summary"]
+    assert halt in published_app_families()
+
+
 def test_the_new_breakage_window_matches_its_relative_time_range():
     """Same coupling as the residual-gap test above, for the rule guarding NEW breakage in
     unbackfillable canonical data: `relativeTimeRange.from` and the `delta()` window must agree, or a
