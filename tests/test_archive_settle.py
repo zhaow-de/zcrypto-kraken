@@ -624,6 +624,23 @@ def test_a_snapshot_from_the_window_on_on_every_mirror_leaves_the_stream_not_car
     assert not evidence.holds
 
 
+def test_a_snapshot_between_two_windows_on_every_mirror_leaves_the_stream_not_carried():
+    first, second = (
+        DarkWindow(start=_at(600), end=_at(900), seconds=300.0),
+        DarkWindow(start=_at(1500), end=_at(1800), seconds=300.0),
+    )
+    rows = [(_at(s), "update") for s in range(0, 3600, 10) if not (600 < s < 900 or 1500 < s < 1800)]
+    resynced = sorted([*rows, (_at(1000), "snapshot")])
+    tape = [(_at(590), 7), (_at(910), 8), (_at(1490), 9), (_at(1810), 10)]
+    evidence = _halt_evidence(
+        {"BTC/EUR": {"primary": resynced, "secondary": list(resynced)}, "ETH/EUR": {"primary": rows, "secondary": list(rows)}},
+        {"BTC/EUR": {"primary": tape, "secondary": tape}},
+        windows=(first, second),
+    )
+    assert (evidence.streams_carried, evidence.windows_bracketed) == (1, 2)
+    assert not evidence.holds
+
+
 def test_a_snapshot_before_the_window_leaves_the_stream_carried():
     rows = sorted([*_carried_rows(), (_at(300), "snapshot")])
     book = {

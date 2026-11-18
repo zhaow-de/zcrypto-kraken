@@ -1145,14 +1145,14 @@ def reconcile(
                 frame = union.frame
                 try:
                     span = (frame["ts"].min(), frame["ts"].max())
-                except (OverflowError, pl.exceptions.PanicException) as exc:
+                except (Exception, pl.exceptions.PanicException) as err:  # noqa: BLE001 -- that mint fails, never the cycle
                     # A stamp with no Python value fails this hour's mint, never the cycle. Never a within-hour
                     # check here: a trade's own stamp can precede the hour it was received in.
                     raw = frame["ts"].cast(pl.Int64)
                     raise CaptureError(
                         f"the union's ts spans {raw.min()} to {raw.max()} {frame['ts'].dtype.time_unit} since the epoch, "
-                        f"beyond a Python stamp: {exc}"
-                    ) from exc
+                        f"beyond a Python stamp: {err}"
+                    ) from err
                 block = [Block("union", frame, *span)]
                 mint_hour(
                     reconciled_root,

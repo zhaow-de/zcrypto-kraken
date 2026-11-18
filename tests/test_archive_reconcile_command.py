@@ -1519,7 +1519,9 @@ def test_a_book_final_whose_rows_have_no_python_value_reads_as_that_mirror_absen
     assert "verdict=undetermined" in next(m for m in errors if "both_streams_silent" in m)
 
 
-@pytest.mark.parametrize("stamp", [9 * 10**17, 2**63 - 1], ids=["out-of-range", "one-polars-panics-on"])
+@pytest.mark.parametrize(
+    "stamp", [9 * 10**17, 2**63 - 1, -9 * 10**17], ids=["out-of-range", "one-polars-panics-on", "before-year-one"]
+)
 def test_a_book_stamp_with_no_python_value_fails_that_heal_and_the_cycle_lives(tmp_path, monkeypatch, stamp):
     pri, sec, rec = _roots(tmp_path)
     _plant_halt(pri, sec)
@@ -1548,7 +1550,9 @@ def test_a_book_stamp_with_no_python_value_fails_that_heal_and_the_cycle_lives(t
     assert "verdict=undetermined" in next(m for m in errors if "both_streams_silent" in m)
 
 
-@pytest.mark.parametrize("stamp", [9 * 10**17, 2**63 - 1], ids=["out-of-range", "one-polars-panics-on"])
+@pytest.mark.parametrize(
+    "stamp", [9 * 10**17, 2**63 - 1, -9 * 10**17], ids=["out-of-range", "one-polars-panics-on", "before-year-one"]
+)
 def test_a_trades_stamp_with_no_python_value_fails_that_mint_and_the_cycle_lives(tmp_path, monkeypatch, stamp):
     pri, sec, rec = _roots(tmp_path)
     _healthy(pri, sec, H)
@@ -1563,7 +1567,7 @@ def test_a_trades_stamp_with_no_python_value_fails_that_mint_and_the_cycle_lives
     assert isinstance(result.exception, SystemExit) and result.exit_code == 1
     [failed] = [r for r in _ledger(rec) if r["state"] == "failed"]
     assert (failed["pair"], failed["kind"], failed["hour"]) == ("BTC/EUR", "trades", H.isoformat())
-    assert f"{stamp} us since the epoch" in failed["reason"]
+    assert f"{stamp} " in failed["reason"] and "us since the epoch" in failed["reason"]
 
 
 def test_a_pair_with_no_trades_final_on_either_mirror_leaves_the_hour_unproven(tmp_path, monkeypatch):
@@ -1590,6 +1594,21 @@ def test_a_pair_with_no_trades_final_on_either_mirror_leaves_the_hour_unproven(t
     assert _series(textfile)["zcrypto_reconcile_residual_gap_seconds_total"] == pytest.approx(1220.0)
     assert [m for m in warnings if "no trades segment on either mirror pair=ETH/EUR" in m]
     assert "verdict=undetermined" in next(m for m in errors if "both_streams_silent" in m)
+
+
+def test_a_trades_final_on_one_mirror_is_enough_for_a_halt(tmp_path, monkeypatch):
+    pri, sec, rec = _roots(tmp_path)
+    _plant_halt(pri, sec)
+    _seg_path(sec, "BTC/EUR", "trades", H).unlink()
+    _, warnings = _capture_logs(monkeypatch)
+
+    result = _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+
+    assert result.exit_code == 0
+    [record] = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"]
+    assert record["verdict"] == "venue_halt"
+    assert record["halt_seconds"] == pytest.approx(1220.0)
+    assert not [m for m in warnings if "no trades segment" in m]
 
 
 def test_the_heal_still_subtracts_a_venue_halts_stream_windows():
