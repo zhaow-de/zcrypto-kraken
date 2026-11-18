@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A `both_streams_silent` hour whose two mirrors prove the venue halted its books — every booked stream back on both hosts without a reconnect and carried through on one with no resync snapshot after the silence, and nothing traded across it — books `verdict` `venue_halt` and its seconds to a new `zcrypto_reconcile_venue_halt_seconds_total`, none to the residual counter, logs a WARNING, and pages nothing; every other silence books and pages as today.
+**Goal:** A `both_streams_silent` hour whose two mirrors prove the venue halted its books — every booked stream back on both hosts without a reconnect and carried through on one with no resync snapshot after the silence, nothing traded across it, and no pair printing for at least 240 s around each window — books `verdict` `venue_halt` and its seconds to a new `zcrypto_reconcile_venue_halt_seconds_total`, none to the residual counter, logs a WARNING, and pages nothing; every other silence books and pages as today.
 
-**Architecture:** A pure `classify_halt` in `cli/archive/settle.py` returns a `HaltEvidence` from the fleet windows, the stream windows, both mirrors' `(ts, type)` book rows and both mirrors' `(ts, trade_id)` trade tapes (spec D2–D4). The booking block in `cli/archive/command.py` reads the hour's trade tapes through a new `_tape`, sets the verdict to `venue_halt` when the evidence holds, every trades segment read, and the mirrors do not diverge (D4, D5), writes `residual_seconds` 0.0 and `halt_seconds` with four evidence fields on the record (D6), logs a WARNING for a halt (D8), and `_totals` sums `halt_seconds` into the new counter, which panel 206 charts (D7). The page's summary, the runbooks, the README and the hygiene map are re-trued from the spec's *Runbook and alert texts*; the decisions log takes four `[00163]` entries.
+**Architecture:** A pure `classify_halt` in `cli/archive/settle.py` returns a `HaltEvidence` from the fleet windows, the stream windows, both mirrors' `(ts, type)` book rows and both mirrors' `(ts, trade_id)` trade tapes (spec D2–D4). The booking block in `cli/archive/command.py` reads the hour's trade tapes through a new `_tape`, sets the verdict to `venue_halt` when the evidence holds, every trades segment read, and the mirrors do not diverge (D4, D5), writes `residual_seconds` 0.0 and `halt_seconds` with five evidence fields on the record (D6), logs a WARNING for a halt (D8), and `_totals` sums `halt_seconds` into the new counter, which panel 206 charts (D7). The page's summary, the runbooks, the README and the hygiene map are re-trued from the spec's *Runbook and alert texts*; the decisions log takes four `[00163]` entries.
 
 **Tech Stack:** Python 3.14, polars, pytest, `infra/scripts/mutate-probe.sh`.
 
@@ -21,7 +21,9 @@ full infra/grafana/alerts.yaml — under infra/grafana/alerts.yaml, read as a no
 full tests/test_infra_alert_rules.py — a test importing cli.engine.store, read as a non-prose change
 ```
 
-Every fence below was run against `6795cd513` in the detached scratch worktree `.tmp/r00163/inputs/scripts/wt`, the plan's code applied and committed there, never pushed. Each task's per-commit run read green in that nested tree: Task 1 `258 passed`, Task 2 `1089 passed, 44 warnings`, Task 3 `2034 passed, 2 skipped`, Task 4 `4805 passed, 1 deselected`, Task 5 `1113 passed`, Task 6 `50 passed`. In this worktree `tests/test_ops_daily.py::test_the_deploy_log_is_the_main_checkouts_where_a_worktree_runs_the_pass`, a reader in Task 3's and Task 4's sets, fails under the in-repository `--basetemp` on `6795cd513` as on the branch, hence those tasks' expected `1 failed, 2033 passed, 2 skipped` and `1 failed, 4804 passed, 1 deselected`. The red readings: Task 1's test file on `6795cd513` reads `ImportError: cannot import name 'RESUME_MARGIN_SECONDS'`, Task 2's twenty-one cases on Task 1's tree `18 failed, 3 passed`, Task 3's case on Task 2's tree `1 failed`. Every probe arm the tasks list read `KILLED (control proven, tree restored byte-identically)`. Task 3's, 4's and 5's text fences, run in that tree with the committed spec beside them, passed the repository's commit hooks with no rewrite, `mdformat` and `yamllint` among them, and `guidance-guard --uncounted` printed nothing for either runbook page.
+Every fence below was run against `6795cd513`'s code in a detached scratch worktree of this branch, `.tmp/r3fix/wt` at `fca07df6d`, the plan's code applied and committed there task by task, never pushed. Each task's per-commit run read green in that nested tree: Task 1 `258 passed`, Task 2 `1092 passed, 44 warnings`, Task 3 `2034 passed, 2 skipped`, Task 4 `4805 passed, 1 deselected`, Task 5 `1113 passed`, Task 6 `50 passed`. The red readings: Task 1's test file on `6795cd513` reads `ImportError: cannot import name 'RESUME_MARGIN_SECONDS'`, Task 2's twenty-four cases on Task 1's tree `21 failed, 3 passed`, Task 3's case on Task 2's tree `1 failed`. Every probe arm the tasks list read `KILLED (control proven, tree restored byte-identically)`. Task 3's, 4's and 5's text fences, run in that tree with the committed spec beside them, passed the repository's commit hooks with no rewrite, `mdformat` and `yamllint` among them, and `guidance-guard --uncounted` printed nothing for either runbook page.
+
+Before Task 1, the orchestrator, never an implementer, re-runs `.tmp/r00163/measure/m_impl_backtest.py` read-only from a scratch worktree carrying this plan's `cli/archive/settle.py`: it must read `holds=True` on exactly 2026-10-15T07, 2026-10-29T08, 2026-10-30T08 and 2026-11-17T08, the spec's *The measured basis* having run it before the quiet proof.
 
 ## Global Constraints
 
@@ -29,7 +31,7 @@ Every fence below was run against `6795cd513` in the detached scratch worktree `
 - No task converges, builds an image, pushes or calls an endpoint; no task runs `infra/scripts/grafana-push.sh` or `tests/test_grafana_push_sh.py`, which drives that script — a reader of `infra/grafana/alerts.yaml` left out of Task 3's run, the PR body naming it as not run. No task reads the NAS mirrors or the ops ledger: the spec's *The measured basis* is the real-data reading, the cases below the proof. No task touches `.claude/`.
 - The worktree is `/home/zhaow/Projects/zcrypto-kraken/.claude/worktrees/reconciler-halt` (branch `fix/00163-reconciler-venue-halt-not-loss`); every command runs with it as the working directory, and git takes `-C` that path. The main checkout is live.
 - Before Task 1's first command, `mkdir -p .tmp/implementer .local/venue-halt-not-loss`, its own call: every pytest run takes `--basetemp=.tmp/implementer/pt`.
-- Tests per commit: `infra/scripts/consumers.sh --tests --direct <the commit's changed paths> 2>.tmp/implementer/cons.err >.tmp/implementer/cons.list`, its own call, exit 2 meaning no reader; `cat .tmp/implementer/cons.err`, its own call; then `T="$(sort -u .tmp/implementer/cons.list | grep -v '^tests/test_grafana_push_sh.py$' | tr '\n' ' ') <the task's test files>"; uv run pytest $T -m "not slow" -q -p no:cacheprovider --basetemp=.tmp/implementer/pt -rf`. Never the full suite. `tests/test_ops_daily.py::test_the_deploy_log_is_the_main_checkouts_where_a_worktree_runs_the_pass` reads the repository enclosing its temporary directory and fails under an in-repository `--basetemp` on `6795cd513` as on the branch; a commit whose run holds it names it beside its result line.
+- Tests per commit: `infra/scripts/consumers.sh --tests --direct <the commit's changed paths> 2>.tmp/implementer/cons.err >.tmp/implementer/cons.list`, its own call, exit 2 meaning no reader; `cat .tmp/implementer/cons.err`, its own call; then `T="$(sort -u .tmp/implementer/cons.list | grep -v '^tests/test_grafana_push_sh.py$' | tr '\n' ' ') <the task's test files>"; uv run pytest $T -m "not slow" -q -p no:cacheprovider --basetemp=.tmp/implementer/pt -rf`. Never the full suite.
 - The gate is `uv run pre-commit run -a`, re-run until clean, its rewrites staged; stage a new file before the gate, which reads tracked files only.
 - A comment or docstring stays only where a reader would act differently without it, and is correct. The alert texts, the runbook pages, the README and every string literal under `cli/` carry no `spec <NNNNN>`, `D<N>`, `T<NNNN>`, `iter-<N>`, `Phase <N>` or `WP<N>` token (`tests/test_internal_terms_not_operator_visible.py`); the fences below carry none.
 - Commits: Conventional Commits, after a `git -C <the worktree> add <every path the commit changes>` of its own, through `git -C <the worktree> commit -F - <<'EOF'`; the message says what changed and pastes the result line of the test command it names, run over the commit's own tree; one state-changing git command per Bash call; never an amend, `--no-verify` or `git stash`; every message ends with `Co-Authored-By: Claude <actual executing model> <noreply@anthropic.com>`, the implementer's own model in place of the placeholder, and `Claude-Session: https://claude.ai/code/session_018eFiE9ZzjweN7A4N9yBCTV`.
@@ -44,7 +46,7 @@ Every fence below was run against `6795cd513` in the detached scratch worktree `
 
 ## File structure
 
-- Modify `cli/archive/settle.py`: the module docstring's and `fleet_dark_windows`' docstring's halt sentence; `EpisodeVerdict`'s docstring; `VENUE_HALT`, `RESUME_MARGIN_SECONDS`, `HaltEvidence`, `classify_halt`.
+- Modify `cli/archive/settle.py`: the module docstring's and `fleet_dark_windows`' docstring's halt sentence; `EpisodeVerdict`'s docstring; `VENUE_HALT`, `RESUME_MARGIN_SECONDS`, `QUIET_SPAN_SECONDS`, `HaltEvidence`, `classify_halt`.
 - Modify `cli/archive/command.py`: the settle imports; `_MINT_FAMILY`'s comment and `_booked_dark`'s docstring line; `_totals`; the residual and dark-episode help texts and the `venue_halt_seconds_total` emit; `_tape`; the booking block.
 - Modify `cli/archive/reconcile.py`: `overlap_seconds`' docstring.
 - Modify `infra/grafana/data-integrity-dashboard.json`: panel 206's description and target `D`.
@@ -57,10 +59,11 @@ Every fence below was run against `6795cd513` in the detached scratch worktree `
 1. Prints sharing one Kraken stamp on either side of a window — one taker order against several makers — must bracket it by their ids, not read as a hole. Pinned by Task 1's `test_prints_sharing_a_stamp_bracket_a_window_by_their_ids` (the real hour's DOGE/EUR shape, spec *The measured basis*).
 2. A host that reconnects later in the same hour, after the halt — 2026-11-17's secondary — leaves the other host to carry every stream. Pinned by Task 1's `test_one_mirror_carrying_the_stream_is_enough`, both parametrisations.
 3. A halt that resumes near the hour's end: at exactly 300 s before it the stream is carried, at 299 s it is not, and with no resume in the hour it is not. Pinned by Task 1's `test_a_resume_inside_the_hours_last_margin_is_not_carried` and `test_a_window_running_to_the_hours_end_is_not_carried`.
-4. An unreadable trades segment leaves the hour unproven whether its twin is unreadable, absent or readable, and whatever another pair's ids bracket: the hour books as loss, the cycle still decides it, and the WARNING names the mirror. Pinned by Task 2's `test_an_unreadable_trades_segment_leaves_the_hour_unproven_whatever_another_pair_brackets`, its three parametrisations; a segment that reads but holds a null `trade_id` or `ts`, a `ts` without a zone or a string `trade_id` is unread too, never a crash of the cycle, pinned by `test_a_readable_trades_segment_the_proof_cannot_use_leaves_the_hour_unproven`, its four.
+4. An unreadable trades segment leaves the hour unproven whether its twin is unreadable, absent or readable, and whatever another pair's ids bracket: the hour books as loss, the cycle still decides it, and the WARNING names the mirror. Pinned by Task 2's `test_an_unreadable_trades_segment_leaves_the_hour_unproven_whatever_another_pair_brackets`, its three parametrisations; a segment that reads but holds a null `trade_id` or `ts`, a `ts` without a zone, a string `trade_id`, a `ts` out of Python's range or one polars panics on converting is unread too, never a crash of the cycle, pinned by `test_a_readable_trades_segment_the_proof_cannot_use_leaves_the_hour_unproven`, its six.
 5. A ledger written before the change, and an image that predates the verdict reading one written after it: the decided hour stays booked, and a `venue_halt` record books 0.0 as residual. Pinned by Task 2's `test_an_hour_booked_before_the_halt_verdict_stays_booked_as_it_was`, `test_the_totals_book_a_halt_beside_the_loss_and_never_inside_it` and `test_a_venue_halt_books_its_seconds_to_the_halt_counter_and_none_as_loss`'s `residual_seconds == 0.0`, beside the existing `test_an_unrecognized_verdict_string_counts_as_undetermined_not_a_crash`; and a healed hour still subtracts a halt's stream windows, pinned by `test_the_heal_still_subtracts_a_venue_halts_stream_windows`.
 6. A host that holds no file for the hour, never resumes in it, or comes back on a snapshot takes the stream out, however cleanly the other host carried it: a host's checksum vouches for what it received, not what it wrote, so one host's dropped writes must never read as a halt. Pinned by Task 1's `test_a_stream_is_not_carried_unless_both_mirrors_resume_on_an_update`, its six parametrisations, each shape on each mirror, and `test_a_mirror_back_on_a_snapshot_after_any_window_takes_the_stream_out`, its four, a snapshot resume after the first or the second of two windows on either mirror.
 7. A pair that prints inside its own booked silence, outside every fleet window, refuses the halt: the record books that stream's whole window as halt seconds, and the print is the venue matching a pair neither host holds book rows for. Pinned by Task 1's `test_a_print_inside_a_pairs_own_booked_window_refuses_outside_every_fleet_window`.
+8. A writer that dropped every pair's rows on both hosts inside a market quiet shorter than 240 s, every other proof holding, books as loss and pages: the mirrors it leaves are a halt's. Pinned by Task 2's `test_a_writer_fault_inside_a_quiet_too_brief_for_a_halt_books_as_loss`, whose BTC/EUR prints lie 305 s apart around the window and ETH/EUR's 220 s, so a quiet read from BTC/EUR's prints alone would pass it. Each case that proves one conjunct of `holds` refuses — `test_no_stream_booked_is_no_halt`, `test_a_stream_no_mirror_holds_is_not_carried`, `test_every_window_needs_its_own_bracket`, `test_a_print_inside_a_window_refuses_beside_a_bracketing_pair`, `test_a_skipped_id_refuses_beside_a_bracketing_pair` and that case — holds the other five, the quiet span among them, so its arm can move.
 
 ---
 
@@ -72,7 +75,7 @@ Every fence below was run against `6795cd513` in the detached scratch worktree `
 
 **Interfaces:**
 - Consumes: `DarkWindow` (`cli/archive/settle.py:158-164`).
-- Produces: `VENUE_HALT: str = "venue_halt"`; `RESUME_MARGIN_SECONDS: float = 300.0`; `HaltEvidence(streams: int, streams_carried: int, windows: int, windows_bracketed: int, trades_inside: int, id_holes: int)`, frozen, with the property `holds -> bool`; `classify_halt(windows: Sequence[DarkWindow], stream_windows: Mapping[str, Sequence[DarkWindow]], book_rows: Mapping[str, Mapping[str, list[tuple[datetime, str]] | None]], trade_rows: Mapping[str, Mapping[str, list[tuple[datetime, int]] | None]], *, hour_end: datetime) -> HaltEvidence`.
+- Produces: `VENUE_HALT: str = "venue_halt"`; `RESUME_MARGIN_SECONDS: float = 300.0`; `QUIET_SPAN_SECONDS: float = 240.0`; `HaltEvidence(streams: int, streams_carried: int, windows: int, windows_bracketed: int, trades_inside: int, id_holes: int, quiet_seconds: float)`, frozen, with the property `holds -> bool`; `classify_halt(windows: Sequence[DarkWindow], stream_windows: Mapping[str, Sequence[DarkWindow]], book_rows: Mapping[str, Mapping[str, list[tuple[datetime, str]] | None]], trade_rows: Mapping[str, Mapping[str, list[tuple[datetime, int]] | None]], *, hour_end: datetime) -> HaltEvidence`.
 
 - [ ] **Step 1: Write the failing tests.** In the import block from `cli.archive.settle`, add `RESUME_MARGIN_SECONDS,` after `LATE_MINT_HOURS,`, `HaltEvidence,` after `EpisodeVerdict,`, and `classify_halt,` after `classify_dark_episode,`. Then, directly before the `# --- the int64-microsecond derivation (spec 00097 D3)` banner:
 
@@ -108,7 +111,9 @@ def _halt_evidence(book=None, trades=None, *, windows=(_HALT,)) -> HaltEvidence:
 
 def test_a_book_carried_through_a_window_no_pair_traded_across_is_a_halt():
     evidence = _halt_evidence()
-    assert evidence == HaltEvidence(streams=2, streams_carried=2, windows=1, windows_bracketed=1, trades_inside=0, id_holes=0)
+    assert evidence == HaltEvidence(
+        streams=2, streams_carried=2, windows=1, windows_bracketed=1, trades_inside=0, id_holes=0, quiet_seconds=620.0
+    )
     assert evidence.holds
 
 
@@ -296,9 +301,12 @@ def test_every_window_needs_its_own_bracket():
     )
     rows = [(_at(s), "update") for s in range(0, 3600, 10) if not (600 < s < 900 or 1500 < s < 1800)]
     book = {p: {"primary": rows, "secondary": list(rows)} for p in _PAIRS}
-    tape = [(_at(590), 7), (_at(910), 8)]
-    evidence = _halt_evidence(book, {"BTC/EUR": {"primary": tape, "secondary": tape}}, windows=(first, second))
-    assert (evidence.windows, evidence.windows_bracketed) == (2, 1)
+    tape, after = [(_at(590), 7), (_at(910), 8)], [(_at(1810), 50)]
+    trades = {"BTC/EUR": {"primary": tape, "secondary": tape}, "ETH/EUR": {"primary": after, "secondary": after}}
+    evidence = _halt_evidence(book, trades, windows=(first, second))
+    assert evidence == HaltEvidence(
+        streams=2, streams_carried=2, windows=2, windows_bracketed=1, trades_inside=0, id_holes=0, quiet_seconds=320.0
+    )
     assert not evidence.holds
 ```
 
@@ -342,6 +350,11 @@ VENUE_HALT = "venue_halt"
 # which no examination of this hour reads.
 RESUME_MARGIN_SECONDS = 300.0
 
+# The shortest all-pairs quiet around a window that a halt must span. A halt stops every pair's matching for
+# minutes; inside a shorter quiet, the market's own, a writer that dropped every pair's rows on both hosts leaves
+# the same mirrors a halt does.
+QUIET_SPAN_SECONDS = 240.0
+
 
 @dataclass(frozen=True)
 class HaltEvidence:
@@ -357,6 +370,7 @@ class HaltEvidence:
     windows_bracketed: int
     trades_inside: int
     id_holes: int
+    quiet_seconds: float
 
     @property
     def holds(self) -> bool:
@@ -366,6 +380,7 @@ class HaltEvidence:
             and self.windows_bracketed == self.windows
             and self.trades_inside == 0
             and self.id_holes == 0
+            and self.quiet_seconds >= QUIET_SPAN_SECONDS
         )
 
 
@@ -379,7 +394,7 @@ def classify_halt(
 ) -> HaltEvidence:
     """Did the venue halt its books across `windows`, losing nothing, or is the silence unproven?
 
-    Two proofs, both from the mirrors alone, and both must hold:
+    Three proofs, all from the mirrors alone, and all must hold:
 
       * **The book carried through.** Every booked stream is held by both mirrors, each resuming after each
         window on an update no later than `RESUME_MARGIN_SECONDS` before the hour's end, and on at least one
@@ -395,7 +410,11 @@ def classify_halt(
         (`stream_windows[pair]`, each containing a fleet window, or the fleet windows where it has none);
         every pair's trade ids step by exactly one across each fleet window they bracket, and some pair
         brackets every window. A writer that dropped rows while capture kept reading leaves the CRC
-        whole, and this is what sees it.
+        whole, and this is what sees it wherever the venue matched across the drop.
+      * **The market stood still.** Around each fleet window, the last print on any pair at or before its
+        start and the first at or after its end, both in the hour's tapes, lie `QUIET_SPAN_SECONDS` or more
+        apart: a writer that dropped every pair's rows on both hosts across a stretch no pair printed in
+        passes the other two proofs, and only a quiet longer than the market's own tells a halt from it.
 
     A stream is `book_rows[pair]`'s two mirrors; `trade_rows[pair]`'s two tapes are unioned by trade id.
     """
@@ -419,12 +438,14 @@ def classify_halt(
 
     bracketed: set[int] = set()
     inside = holes = 0
+    prints: list[datetime] = []
     for pair in sorted(trade_rows):
         first_seen: dict[int, datetime] = {}
         for rows in trade_rows[pair].values():
             for ts, trade_id in rows or ():
                 first_seen.setdefault(trade_id, ts)
         tape = sorted((ts, trade_id) for trade_id, ts in first_seen.items())
+        prints.extend(ts for ts, _ in tape)
         inside += sum(1 for ts, _ in tape for w in (stream_windows.get(pair) or windows) if w.start < ts < w.end)
         for i, w in enumerate(windows):
             before = [t for t in tape if t[0] <= w.start]
@@ -434,6 +455,12 @@ def classify_halt(
                     bracketed.add(i)
                 else:
                     holes += 1
+
+    def quiet(w: DarkWindow) -> float:
+        last = max((ts for ts in prints if ts <= w.start), default=None)
+        first = min((ts for ts in prints if ts >= w.end), default=None)
+        return 0.0 if last is None or first is None else (first - last).total_seconds()
+
     return HaltEvidence(
         streams=len(stream_windows),
         streams_carried=carried_streams,
@@ -441,6 +468,7 @@ def classify_halt(
         windows_bracketed=len(bracketed),
         trades_inside=inside,
         id_holes=holes,
+        quiet_seconds=min((quiet(w) for w in windows), default=0.0),
     )
 ```
 
@@ -497,6 +525,7 @@ def classify_halt(
         "windows_bracketed",
         "trades_inside",
         "trade_id_holes",
+        "quiet_seconds",
 ```
 
 Then, directly before the `# --- the settled-hour skip cache (spec 00097 D4/D5)` banner:
@@ -557,7 +586,7 @@ def test_a_venue_halt_books_its_seconds_to_the_halt_counter_and_none_as_loss(tmp
     line = next(m for m in warnings if "both_streams_silent" in m)
     assert "verdict=venue_halt" in line
     assert "residual_s=0.0" in line
-    assert "halt_s=1220.0 carried=2/2 bracketed=1/1 trades_inside=0 id_holes=0" in line
+    assert "halt_s=1220.0 carried=2/2 bracketed=1/1 trades_inside=0 id_holes=0 quiet_s=620.0" in line
 
 
 @pytest.mark.parametrize(
@@ -588,6 +617,40 @@ def test_a_halt_shaped_window_the_mirrors_do_not_prove_books_as_loss(tmp_path, m
     assert series["zcrypto_reconcile_residual_gap_seconds_total"] == pytest.approx(1220.0)
     assert series["zcrypto_reconcile_venue_halt_seconds_total"] == 0.0
     assert "verdict=undetermined" in next(m for m in errors if "both_streams_silent" in m)
+
+
+# Every pair on both hosts silent from 1190 s to 1400 s; BTC/EUR's prints either side lie 305 s apart and ETH/EUR's
+# 220 s, so the market's quiet around the window is ETH/EUR's.
+_BRIEF = [(float(s), "update") for s in range(0, 3600, 10) if not 1200 <= s < 1400]
+
+
+def test_a_writer_fault_inside_a_quiet_too_brief_for_a_halt_books_as_loss(tmp_path, monkeypatch):
+    pri, sec, rec = _roots(tmp_path)
+    _plant_halt(pri, sec, btc_book=_BRIEF, btc_prints=((1100.0, 7), (1405.0, 8)))
+    for root in (pri, sec):
+        _write(root, "ETH/EUR", "book", H, _book("ETH/EUR", H, _BRIEF))
+        _write(root, "ETH/EUR", "trades", H, _prints("ETH/EUR", H, [(1185.0, 50), (1405.0, 51)]))
+    errors, _ = _capture_logs(monkeypatch)
+    textfile = tmp_path / "reconcile.prom"
+
+    result = _run([str(pri), str(sec), str(rec), "--mint", "--textfile", str(textfile)], now=SETTLED, monkeypatch=monkeypatch)
+
+    assert result.exit_code == 0
+    [record] = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"]
+    assert (record["streams_carried"], record["windows_bracketed"], record["trades_inside"], record["trade_id_holes"]) == (
+        2,
+        1,
+        0,
+        0,
+    )
+    assert record["quiet_seconds"] == pytest.approx(220.0)
+    assert record["verdict"] == "undetermined"
+    assert record["residual_seconds"] == pytest.approx(420.0)
+    assert record["halt_seconds"] == 0.0
+    series = _series(textfile)
+    assert series["zcrypto_reconcile_residual_gap_seconds_total"] == pytest.approx(420.0)
+    assert series["zcrypto_reconcile_venue_halt_seconds_total"] == 0.0
+    assert "quiet_s=220.0" in next(m for m in errors if "both_streams_silent" in m)
 
 
 @pytest.mark.parametrize("twin", ["unreadable", "absent", "readable"])
@@ -625,8 +688,17 @@ def test_an_unreadable_trades_segment_leaves_the_hour_unproven_whatever_another_
         pl.Series("ts", [H + timedelta(seconds=1185), None], dtype=TRADE_SCHEMA["ts"]),
         pl.Series("ts", [(H + timedelta(seconds=o)).replace(tzinfo=None) for o in (1185, 1805)], dtype=pl.Datetime("us")),
         pl.Series("trade_id", ["7", "8"], dtype=pl.String),
+        pl.Series("ts", [int((H + timedelta(seconds=1185)).timestamp()) * 10**6, 9 * 10**17]).cast(TRADE_SCHEMA["ts"]),
+        pl.Series("ts", [int((H + timedelta(seconds=1185)).timestamp()) * 10**6, 2**63 - 1]).cast(TRADE_SCHEMA["ts"]),
     ],
-    ids=["a-null-trade-id", "a-null-stamp", "a-stamp-without-a-zone", "a-string-trade-id"],
+    ids=[
+        "a-null-trade-id",
+        "a-null-stamp",
+        "a-stamp-without-a-zone",
+        "a-string-trade-id",
+        "a-stamp-out-of-range",
+        "a-stamp-polars-panics-on",
+    ],
 )
 def test_a_readable_trades_segment_the_proof_cannot_use_leaves_the_hour_unproven(tmp_path, monkeypatch, column):
     pri, sec, rec = _roots(tmp_path)
@@ -750,7 +822,7 @@ def test_the_totals_book_a_halt_beside_the_loss_and_never_inside_it():
     )
 ```
 
-- [ ] **Step 2: Run them red.** `uv run pytest tests/test_archive_reconcile_command.py -q -p no:cacheprovider --basetemp=.tmp/implementer/pt -k "venue_halt or halt_shaped or divergence_keeps or outranks_a_venue_silent or booked_before_the_halt or totals_book_a_halt or unreadable_trades_segment or proof_cannot_use or every_series or infinite_source_lag or ledger_record_count or verdict_is_recorded"`. Expected: `18 failed, 3 passed, 56 deselected`, the three that pass being the hand-built totals and `test_the_heal_still_subtracts_a_venue_halts_stream_windows`, whose property holds before the change.
+- [ ] **Step 2: Run them red.** `uv run pytest tests/test_archive_reconcile_command.py -q -p no:cacheprovider --basetemp=.tmp/implementer/pt -k "venue_halt or halt_shaped or quiet_too_brief or divergence_keeps or outranks_a_venue_silent or booked_before_the_halt or totals_book_a_halt or unreadable_trades_segment or proof_cannot_use or every_series or infinite_source_lag or ledger_record_count or verdict_is_recorded"`. Expected: `21 failed, 3 passed, 56 deselected`, the three that pass being the hand-built totals and `test_the_heal_still_subtracts_a_venue_halts_stream_windows`, whose property holds before the change.
 
 - [ ] **Step 3: Implement in `cli/archive/command.py`.** The settle import gains, in its sorted place, `CAPTURE_DIVERGENT,` and `VENUE_HALT,` before `classify_dark_episode,` and `classify_halt,` after it. `_MINT_FAMILY`'s comment's last line, `# correlated-loss states are permanent loss and are never minted from.`, reads `# correlated-loss states are never minted from, and book as permanent loss but a venue halt.`; `_booked_dark`'s docstring's first line reads `"""The fleet-dark windows the ledger has ALREADY booked, as loss or as a venue halt, for \`pair\`'s stream in \`hour\`.`. In `cli/archive/reconcile.py`'s `overlap_seconds` docstring, after the line `    attributed exactly once regardless of which side decided first.`, the line `    A venue halt's record books to its own counter instead, and the healed side subtracts it all the same.`.
 
@@ -780,7 +852,8 @@ In `_write_textfile`, the residual help's second string line, `"healed hour's sp
         "counter",
         "Fleet-dark seconds across a venue halt: every booked book stream came back on both mirrors with no "
         "reconnect, on at least one with no resync after the window -- capture's live checksum accepted the "
-        "book it carried through -- and no pair traded across it. NOT loss, and never in "
+        "book it carried through -- no pair traded across it, and no pair printed for at least four minutes "
+        "around it. NOT loss, and never in "
         "residual_gap_seconds_total; the both_streams_silent records with verdict venue_halt are its ledger.",
         [("", totals["venue_halt_seconds"])],
     )
@@ -796,17 +869,18 @@ Inside `reconcile`, directly above `def _fail(`:
             return None
         try:
             frame = _read(root, pair, "trades", hour, ["ts", "trade_id"])
-            # `classify_halt` compares the stamps and subtracts the ids outside any `try`, so a null or a
-            # foreign dtype in either column is a segment the proof cannot read, never a crash of the cycle.
+            # A null or a foreign dtype in either column, or a value with no Python stamp or id, is a segment the
+            # proof cannot use: unread, so the hour books as loss, never a crash of the cycle.
             if any(frame[c].dtype != TRADE_SCHEMA[c] or frame[c].null_count() for c in ("ts", "trade_id")):
                 raise ValueError("a null or mistyped ts or trade_id")
-        except Exception as exc:  # noqa: BLE001 -- an unread tape leaves the hour unproven, never a crash
+            tape = list(zip(frame["ts"].to_list(), frame["trade_id"].to_list(), strict=True))
+        except (Exception, pl.exceptions.PanicException) as exc:  # noqa: BLE001 -- unread, never a crash
             logger.warning(
                 "archive reconcile: unreadable %s trades segment pair=%s hour=%s: %s", source, pair, hour.isoformat(), exc
             )
             unread.append(f"{source} {pair}")
             return None
-        return list(zip(frame["ts"].to_list(), frame["trade_id"].to_list(), strict=True))
+        return tape
 
 ```
 
@@ -847,7 +921,7 @@ In the booking block, everything from `# TRIAGE ONLY -- never an input to \`resi
                 # WARNING for a halt: `Ops · ERROR logs` pages on this line, and a halt is not loss.
                 (logger.warning if halted else logger.error)(
                     "archive reconcile: both_streams_silent hour=%s windows=%d residual_s=%.1f verdict=%s updates=%d snapshots=%d divergent=%s"
-                    " halt_s=%.1f carried=%d/%d bracketed=%d/%d trades_inside=%d id_holes=%d",
+                    " halt_s=%.1f carried=%d/%d bracketed=%d/%d trades_inside=%d id_holes=%d quiet_s=%.1f",
                     hour.isoformat(),
                     len(windows),
                     0.0 if halted else residual,
@@ -862,6 +936,7 @@ In the booking block, everything from `# TRIAGE ONLY -- never an input to \`resi
                     halt.windows,
                     halt.trades_inside,
                     halt.id_holes,
+                    halt.quiet_seconds,
                 )
                 _ledger(
                     state="both_streams_silent",
@@ -889,10 +964,11 @@ In the booking block, everything from `# TRIAGE ONLY -- never an input to \`resi
                     windows_bracketed=halt.windows_bracketed,
                     trades_inside=halt.trades_inside,
                     trade_id_holes=halt.id_holes,
+                    quiet_seconds=halt.quiet_seconds,
                 )
 ```
 
-- [ ] **Step 4: Chart the series.** In `infra/grafana/data-integrity-dashboard.json`, panel 206's `description`, the sentence `... and the sum of the three never exceeds the residual total beside it.` is followed by ` venue_halt is the fourth line and sits OUTSIDE that total: episodes the mirrors prove lost nothing -- every book stream came back on both capture hosts with no reconnect, on one with no resync, and no pair traded across the silence -- booked as a halt and never as loss.` before ` Read during triage`; and after the target with `"refId": "C"`:
+- [ ] **Step 4: Chart the series.** In `infra/grafana/data-integrity-dashboard.json`, panel 206's `description`, the sentence `... and the sum of the three never exceeds the residual total beside it.` is followed by ` venue_halt is the fourth line and sits OUTSIDE that total: episodes the mirrors prove lost nothing -- every book stream came back on both capture hosts with no reconnect, on one with no resync, no pair traded across the silence, and no pair printed for at least four minutes around it -- booked as a halt and never as loss.` before ` Read during triage`; and after the target with `"refId": "C"`:
 
 ```json
         {
@@ -906,11 +982,11 @@ In the booking block, everything from `# TRIAGE ONLY -- never an input to \`resi
         }
 ```
 
-- [ ] **Step 5: Run them green.** The Step 2 command. Expected: `21 passed, 56 deselected`.
+- [ ] **Step 5: Run them green.** The Step 2 command. Expected: `24 passed, 56 deselected`.
 
-- [ ] **Step 6: Commit** `fix(archive): a venue halt the mirrors prove books to venue_halt_seconds_total, never as loss`, after the per-commit run over `cli/archive/command.py cli/archive/reconcile.py tests/test_archive_reconcile_command.py tests/test_archive_reconcile.py infra/grafana/data-integrity-dashboard.json` (expected `1089 passed, 44 warnings`; its readers include `tests/test_dashboards_cover_metrics.py`, which fails without Step 4) and the gate, the run's result line in the body.
+- [ ] **Step 6: Commit** `fix(archive): a venue halt the mirrors prove books to venue_halt_seconds_total, never as loss`, after the per-commit run over `cli/archive/command.py cli/archive/reconcile.py tests/test_archive_reconcile_command.py tests/test_archive_reconcile.py infra/grafana/data-integrity-dashboard.json` (expected `1092 passed, 44 warnings`; its readers include `tests/test_dashboards_cover_metrics.py`, which fails without Step 4) and the gate, the run's result line in the body.
 
-- [ ] **Step 7: Probe, then commit the verdicts** under `test(archive): the halt's booking proven by infra/scripts/mutate-probe.sh`. File `cli/archive/command.py`, test file `tests/test_archive_reconcile_command.py`:
+- [ ] **Step 7: Probe, then commit the verdicts** under `test(archive): the halt's booking proven by infra/scripts/mutate-probe.sh`. File `cli/archive/command.py` (arm 2o's `cli/archive/settle.py`), test file `tests/test_archive_reconcile_command.py`:
 
 | Id | Selection (`-k`) | Mutation |
 |---|---|---|
@@ -921,13 +997,16 @@ In the booking block, everything from `# TRIAGE ONLY -- never an input to \`resi
 | 2e | `venue_halt_books_its_seconds` | `s/halt_seconds=residual if halted else 0.0,/halt_seconds=0.0,/` |
 | 2f | `venue_halt_books_its_seconds` | `s/(logger.warning if halted else logger.error)(/logger.error(/` |
 | 2g | `totals_book_a_halt` | `s/totals\["venue_halt_seconds"\] += float(record.get("halt_seconds") or 0.0)/totals["venue_halt_seconds"] += 0.0/` |
-| 2h | `venue_halt_books_its_seconds` | `s/        return list(zip(frame\["ts"\].to_list(), frame\["trade_id"\].to_list(), strict=True))/        return []/` |
+| 2h | `venue_halt_books_its_seconds` | `s/            tape = list(zip(frame\["ts"\].to_list(), frame\["trade_id"\].to_list(), strict=True))/            tape = []/` |
 | 2i | `booked_before_the_halt_verdict` | `s/if windows and not _decided("\*", "book", hour, "both_streams_silent"):/if windows:/;s/if key in seen:  # already decided/if False:  # already decided/` |
-| 2j | `unreadable_trades_segment` | `s/except Exception as exc:  # noqa: BLE001 -- an unread tape leaves the hour unproven, never a crash/except ZeroDivisionError as exc:  # noqa: BLE001/` |
+| 2j | `unreadable_trades_segment` | `s/except (Exception, pl.exceptions.PanicException) as exc:  # noqa: BLE001 -- unread, never a crash/except ZeroDivisionError as exc:  # noqa: BLE001/` |
 | 2k | `unreadable_trades_segment` | `s/ and not unread and / and /` |
 | 2l | `outranks_a_venue_silent` | `s/ and episode.verdict != CAPTURE_DIVERGENT else/ and episode.verdict not in (CAPTURE_DIVERGENT, "venue_silent") else/` |
 | 2m | `proof_cannot_use` | `s/            if any(frame\[c\].dtype != TRADE_SCHEMA\[c\] or frame\[c\].null_count() for c in ("ts", "trade_id")):/            if False:/` |
 | 2n | `subtracts_a_venue_halts` | `s/if record.get("state") != "both_streams_silent" or record.get("hour") != stamp:/if record.get("state") != "both_streams_silent" or record.get("hour") != stamp or record.get("verdict") == "venue_halt":/` |
+| 2o | `quiet_too_brief` | `s/and self.quiet_seconds >= QUIET_SPAN_SECONDS$/and True/` |
+| 2p | `a-stamp-out-of-range` | `s/except (Exception, pl.exceptions.PanicException) as exc:  # noqa: BLE001 -- unread, never a crash/except ZeroDivisionError as exc:  # noqa: BLE001/` |
+| 2q | `a-stamp-polars-panics-on` | `s/except (Exception, pl.exceptions.PanicException) as exc:/except Exception as exc:/` |
 
 Arm 2i carries two expressions, each pattern counted before it: `_ledger`'s `seen` refuses a second append on its own, so the `_decided` mutation alone reads `SURVIVED`.
 
@@ -972,7 +1051,7 @@ EOF
 
 - [ ] **Step 4: Run it green.** The Step 2 command. Expected: `1 passed, 173 deselected`.
 
-- [ ] **Step 5: Commit** `fix(grafana): the permanent-loss and all-streams-silent pages say a proven venue halt is not loss`, after the per-commit run over `infra/grafana/alerts.yaml tests/test_infra_alert_rules.py` (without `tests/test_grafana_push_sh.py`; expected `1 failed, 2033 passed, 2 skipped`, the failure the in-repository-basetemp case Global Constraints names) and the gate, the run's result line and that case's name in the body, and a line that the change is `zcrypto-reconcile-residual-gap`'s comment and summary and `zcrypto-capture-all-streams-silent`'s summary alone — no expression, threshold or uid — so the push after the merge is an annotation upsert under each uid with no prune owed.
+- [ ] **Step 5: Commit** `fix(grafana): the permanent-loss and all-streams-silent pages say a proven venue halt is not loss`, after the per-commit run over `infra/grafana/alerts.yaml tests/test_infra_alert_rules.py` (without `tests/test_grafana_push_sh.py`; expected `2034 passed, 2 skipped`) and the gate, the run's result line in the body, and a line that the change is `zcrypto-reconcile-residual-gap`'s comment and summary and `zcrypto-capture-all-streams-silent`'s summary alone — no expression, threshold or uid — so the push after the merge is an annotation upsert under each uid with no prune owed.
 
 - [ ] **Step 6: Probe, then commit the verdicts** under `test(grafana): the page's halt pointer proven by infra/scripts/mutate-probe.sh`. Test file `tests/test_infra_alert_rules.py`, selection `names_the_halt_counter`:
 
@@ -1029,7 +1108,7 @@ whole_line("README.md", "Two **correlated-loss** detectors run regardless of the
 EOF
 ```
 
-- [ ] **Step 3: Commit** `docs(runbooks): the residual-gap, venue-status and silence sections and the README say a proven halt books as a halt`, after the per-commit run over `infra/runbooks/ops.md infra/runbooks/capture.md README.md` (expected `1 failed, 4804 passed, 1 deselected`, the failure the case Global Constraints names) and the gate, the run's result line and that case's name in the body.
+- [ ] **Step 3: Commit** `docs(runbooks): the residual-gap, venue-status and silence sections and the README say a proven halt books as a halt`, after the per-commit run over `infra/runbooks/ops.md infra/runbooks/capture.md README.md` (expected `4805 passed, 1 deselected`) and the gate, the run's result line in the body.
 
 ### Task 5: The hygiene map's 2026-11-17 08Z row, a complete halt, what a halt hour is, and the three earlier halts re-trued
 
@@ -1085,7 +1164,7 @@ EOF
   3. **Park it in a topic** — refused by the ruling.
 
 [00163] What evidence books a fleet-dark hour as a venue halt rather than loss? (Decision: 1)
-  1. **The mirrors alone: the book carried through and nothing traded** — every booked stream is held by both hosts, each coming back on an update at least 300 s before the hour's end, one of them with no resync snapshot from its first window to that end; every trades segment reads with no null or mistyped stamp or id, no pair prints inside its own booked silence, and each window is straddled by adjacent trade ids with none skipping. It reads only what the reconciler already reads; over the ledger's 14 dark hours it holds on 2026-10-15, 2026-10-29, 2026-10-30 08Z and 2026-11-17 08Z, and refuses 2026-07-13's capture defect and 2026-10-13's silence, in which spot traded.
+  1. **The mirrors alone: the book carried through and nothing traded** — every booked stream is held by both hosts, each coming back on an update at least 300 s before the hour's end, one of them with no resync snapshot from its first window to that end; every trades segment reads with no null, mistyped or unconvertible stamp or id, no pair prints inside its own booked silence, each window is straddled by adjacent trade ids with none skipping, and no pair prints for at least 240 s around each window. It reads only what the reconciler already reads; over the ledger's 14 dark hours it holds on 2026-10-15, 2026-10-29, 2026-10-30 08Z and 2026-11-17 08Z, and refuses 2026-07-13's capture defect and 2026-10-13's silence, in which spot traded.
   2. **Archive Kraken's `status` ladder for the reconciler** — a schema change on the unbackfillable capture stream, its rows stamped at local receipt; it says the venue announced a halt, not that nothing was lost.
   3. **Read Kraken's scheduled-maintenance feed at booking time** — a third-party call inside the booking path, which `[iter-141]` refused; an announcement is not proof either.
   Decided by the spec's author.
