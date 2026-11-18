@@ -45,7 +45,10 @@ from cli.archive.reconcile import (
     union_trades,
 )
 from cli.archive.settle import (
+    CAPTURE_DIVERGENT,
+    VENUE_HALT,
     classify_dark_episode,
+    classify_halt,
     containing_dark_window,
     fleet_dark_windows,
     hour_path,
@@ -72,7 +75,7 @@ KINDS = ("book", "trades")
 
 # Every ledger state. `would_mint` is detect-only's ONLY output; `trade_deficit` records a deficit on
 # the SECONDARY (a QA signal about the witness's own health, never a reason to mint); the two
-# correlated-loss states are permanent loss and are never minted from.
+# correlated-loss states are never minted from, and book as permanent loss but a venue halt.
 _MINT_FAMILY = ("minted", "would_mint", "trade_deficit")
 
 
@@ -286,7 +289,7 @@ def _spans(items: list[dict]) -> list[tuple[datetime, datetime]]:
 
 
 def _booked_dark(records: list[dict], pair: str, hour: datetime) -> list[tuple[datetime, datetime]]:
-    """The fleet-dark windows the ledger has ALREADY booked as loss for `pair`'s stream in `hour`.
+    """The fleet-dark windows the ledger has ALREADY booked, as loss or as a venue halt, for `pair`'s stream in `hour`.
 
     Read from the ledger, never recomputed. `both_streams_silent` is decided ONCE, for the pairs
     present on that cycle, and a later cycle's inputs differ: a mirror file arriving late adds a pair
@@ -391,6 +394,7 @@ def _totals(records: list[dict]) -> dict[str, float]:
             "dark_venue_silent",
             "dark_capture_divergent",
             "dark_undetermined",
+            "venue_halt_seconds",
         ),
         0.0,
     )
@@ -408,13 +412,18 @@ def _totals(records: list[dict]) -> dict[str, float]:
             # A record written before the discriminator existed carries no verdict, and the counter
             # must not claim knowledge the system did not have (spec 00096 D4a).
             verdict = record.get("verdict") or "undetermined"
-            if verdict not in ("venue_silent", "capture_divergent", "undetermined"):
-                # The ledger is append-only and outlives any single image version: widen the verdict
-                # vocabulary later, then roll back to THIS code (a normal operation), and it must not
-                # crash-loop indexing a key that does not exist -- an unrecognized verdict is bucketed
-                # as undetermined, same as no verdict at all, rather than raising KeyError.
-                verdict = "undetermined"
-            totals[f"dark_{verdict}"] += float(record.get("residual_seconds") or 0.0)
+            if verdict == VENUE_HALT:
+                # Its `residual_seconds` is 0.0 and its seconds are `halt_seconds`, so an image that
+                # predates the verdict buckets it as undetermined at 0.0 and books none of it as loss.
+                totals["venue_halt_seconds"] += float(record.get("halt_seconds") or 0.0)
+            else:
+                if verdict not in ("venue_silent", "capture_divergent", "undetermined"):
+                    # The ledger is append-only and outlives any single image version: widen the verdict
+                    # vocabulary later, then roll back to THIS code (a normal operation), and it must not
+                    # crash-loop indexing a key that does not exist -- an unrecognized verdict is bucketed
+                    # as undetermined, same as no verdict at all, rather than raising KeyError.
+                    verdict = "undetermined"
+                totals[f"dark_{verdict}"] += float(record.get("residual_seconds") or 0.0)
         if state == "minted":
             totals["healed_seconds"] += float(record.get("healed_seconds") or 0.0)
             totals["spliced_hours" if record.get("kind") == "book" else "union_hours"] += 1
@@ -540,7 +549,8 @@ def _write_textfile(
         "residual_gap_seconds_total",
         "counter",
         "Silence NO mirror covered: permanent loss (both_streams_silent / total_loss, plus whatever a "
-        "healed hour's splice left unfilled and no fleet-wide record already booked). A FLOOR, not the "
+        "healed hour's splice left unfilled and no fleet-wide record already booked) -- but a venue halt "
+        "the book carried through, which books to venue_halt_seconds_total instead. A FLOOR, not the "
         "whole: the `unwitnessed` state -- one pair silent on both mirrors, indistinguishable from a thin "
         "market -- is deliberately not counted and reaches no counter at all, living in the ledger and the "
         "WARNING log only.",
@@ -554,12 +564,23 @@ def _write_textfile(
         "episode, so the silence was upstream of both. capture_divergent: one host missed what the "
         "other received. undetermined: no evidence either way -- including every record written "
         "before this split existed. A PARALLEL VIEW of residual_gap_seconds_total, never subtracted "
-        "from it; the three add up to the both_streams_silent share of it.",
+        "from it; the three add up to the both_streams_silent share of it. A venue_halt record books no "
+        "residual, so it reaches venue_halt_seconds_total and none of these.",
         [
             ('{verdict="venue_silent"}', totals["dark_venue_silent"]),
             ('{verdict="capture_divergent"}', totals["dark_capture_divergent"]),
             ('{verdict="undetermined"}', totals["dark_undetermined"]),
         ],
+    )
+    _emit(
+        "venue_halt_seconds_total",
+        "counter",
+        "Fleet-dark seconds across a venue halt: every booked book stream came back on both mirrors with no "
+        "reconnect, on at least one with no resync after the window -- capture's live checksum accepted the "
+        "book it carried through -- no pair traded across it, and no pair printed for at least four minutes "
+        "around it. NOT loss, and never in "
+        "residual_gap_seconds_total; the both_streams_silent records with verdict venue_halt are its ledger.",
+        [("", totals["venue_halt_seconds"])],
     )
     _emit(
         "trade_deficit_rows_total",
@@ -726,6 +747,38 @@ def reconcile(
     def _decided(pair: str, kind: str, hour: datetime, state: str) -> bool:
         return (pair, kind, hour.isoformat(), state) in seen
 
+    def _book_rows(frame: pl.DataFrame | None, source: str, pair: str, hour: datetime) -> list[tuple[datetime, str]] | None:
+        """`frame`'s rows as (ts, type); None where that mirror has no frame, or has one whose rows have no Python
+        value: that mirror then reads as absent, so the hour books as loss, never a crash of the cycle."""
+        if frame is None:
+            return None
+        try:
+            # Zipped explicitly rather than `.rows()`, which would depend on the column order `_read` happened to return.
+            return list(zip(frame["ts"].to_list(), frame["type"].to_list(), strict=True))
+        except (Exception, pl.exceptions.PanicException) as err:  # noqa: BLE001 -- that mirror absent, never a crash
+            logger.warning("archive reconcile: unreadable %s book rows pair=%s hour=%s: %s", source, pair, hour.isoformat(), err)
+            return None
+
+    def _tape(root: Path, source: str, pair: str, hour: datetime, unread: list[str]) -> list[tuple[datetime, int]] | None:
+        """`pair`'s trades in `hour` on one mirror as (ts, trade_id); None where that mirror has none, or has
+        one it cannot read, which it then names in `unread`."""
+        if hour not in scans[source]["trades"].get(pair, set()):
+            return None
+        try:
+            frame = _read(root, pair, "trades", hour, ["ts", "trade_id"])
+            # A null or a foreign dtype in either column, or a value with no Python stamp or id, is a segment the
+            # proof cannot use: unread, so the hour books as loss, never a crash of the cycle.
+            if any(frame[c].dtype != TRADE_SCHEMA[c] or frame[c].null_count() for c in ("ts", "trade_id")):
+                raise ValueError("a null or mistyped ts or trade_id")
+            tape = list(zip(frame["ts"].to_list(), frame["trade_id"].to_list(), strict=True))
+        except (Exception, pl.exceptions.PanicException) as exc:  # noqa: BLE001 -- unread, never a crash
+            logger.warning(
+                "archive reconcile: unreadable %s trades segment pair=%s hour=%s: %s", source, pair, hour.isoformat(), exc
+            )
+            unread.append(f"{source} {pair}")
+            return None
+        return tape
+
     def _fail(pair: str, kind: str, hour: datetime, reason: str) -> None:
         nonlocal failures
         failures += 1
@@ -847,29 +900,55 @@ def reconcile(
                     - overlap_seconds(_booked_residual(records, p, hour), [(c.start, c.end) for c in own])
                     for p, own in stream_windows.items()
                 )
-                # TRIAGE ONLY -- never an input to `residual` above (spec 00096 D1). Both mirrors'
-                # frames are already in hand from the read above, so this costs no I/O.
-                episode = classify_dark_episode(
+                # (ts, type) pairs, from the frames already in hand.
+                book_rows = {p: {src: _book_rows(f, src, p, hour) for src, f in books[p].items()} for p in present}
+                # Triage, and one veto on the booking below: a `capture_divergent` episode keeps its loss and
+                # its page whatever the halt evidence reads.
+                episode = classify_dark_episode(windows, book_rows)
+                # The booking's one input beside the timeline: a halt the book carried through books
+                # its seconds to the halt counter, never as loss. A trades segment that cannot be read
+                # leaves the hour unproven, whatever the other pairs' ids show.
+                unread: list[str] = []
+                halt = classify_halt(
                     windows,
+                    stream_windows,
+                    book_rows,
                     {
                         p: {
-                            # (ts, type) pairs. Zipped explicitly rather than `.rows()`, which would
-                            # depend on the column order `_read` happened to return.
-                            src: (None if f is None else list(zip(f["ts"].to_list(), f["type"].to_list(), strict=True)))
-                            for src, f in books[p].items()
+                            src: _tape(root, src, p, hour, unread)
+                            for src, root in (("primary", primary_root), ("secondary", secondary_root))
                         }
                         for p in present
                     },
+                    hour_end=hour_end,
                 )
-                logger.error(
-                    "archive reconcile: both_streams_silent hour=%s windows=%d residual_s=%.1f verdict=%s updates=%d snapshots=%d divergent=%s",
+                # So does a pair with no trades final on either mirror: a writer fault both hosts share
+                # removes exactly the prints the proof reads.
+                for p in present:
+                    if all(hour not in scans[src]["trades"].get(p, set()) for src in ("primary", "secondary")):
+                        logger.warning("archive reconcile: no trades segment on either mirror pair=%s hour=%s", p, hour.isoformat())
+                        unread.append(p)
+                verdict = VENUE_HALT if halt.holds and not unread and episode.verdict != CAPTURE_DIVERGENT else episode.verdict
+                halted = verdict == VENUE_HALT
+                # WARNING for a halt: `Ops · ERROR logs` pages on this line, and a halt is not loss.
+                (logger.warning if halted else logger.error)(
+                    "archive reconcile: both_streams_silent hour=%s windows=%d residual_s=%.1f verdict=%s updates=%d snapshots=%d divergent=%s"
+                    " halt_s=%.1f carried=%d/%d bracketed=%d/%d trades_inside=%d id_holes=%d quiet_s=%.3f",
                     hour.isoformat(),
                     len(windows),
-                    residual,
-                    episode.verdict,
+                    0.0 if halted else residual,
+                    verdict,
                     episode.interior_updates,
                     episode.interior_snapshots,
                     ",".join(episode.divergent_pairs) or "-",
+                    residual if halted else 0.0,
+                    halt.streams_carried,
+                    halt.streams,
+                    halt.windows_bracketed,
+                    halt.windows,
+                    halt.trades_inside,
+                    halt.id_holes,
+                    halt.quiet_seconds,
                 )
                 _ledger(
                     state="both_streams_silent",
@@ -884,14 +963,20 @@ def reconcile(
                         p: [{"start": c.start, "end": c.end, "seconds": c.seconds} for c in own]
                         for p, own in stream_windows.items()
                     },
-                    residual_seconds=residual,
-                    verdict=episode.verdict,
+                    residual_seconds=0.0 if halted else residual,
+                    halt_seconds=residual if halted else 0.0,
+                    verdict=verdict,
                     interior_updates=episode.interior_updates,
                     interior_snapshots=episode.interior_snapshots,
                     interior_seconds=episode.interior_seconds,
                     pairs_agreeing=episode.pairs_agreeing,
                     pairs_skipped=episode.pairs_skipped,
                     divergent_pairs=list(episode.divergent_pairs),
+                    streams_carried=halt.streams_carried,
+                    windows_bracketed=halt.windows_bracketed,
+                    trades_inside=halt.trades_inside,
+                    trade_id_holes=halt.id_holes,
+                    quiet_seconds=halt.quiet_seconds,
                 )
 
         # --- the witness-based heal: books ------------------------------------------------------
@@ -1058,7 +1143,17 @@ def reconcile(
                 # so trades are the one stream the reconciler may union ROW-level. "union" is the
                 # honest provenance source -- the rows come from both mirrors, interleaved by id.
                 frame = union.frame
-                block = [Block("union", frame, frame["ts"].min(), frame["ts"].max())]
+                try:
+                    span = (frame["ts"].min(), frame["ts"].max())
+                except (Exception, pl.exceptions.PanicException) as err:  # noqa: BLE001 -- that mint fails, never the cycle
+                    # A stamp with no Python value fails this hour's mint, never the cycle. Never a within-hour
+                    # check here: a trade's own stamp can precede the hour it was received in.
+                    raw = frame["ts"].cast(pl.Int64)
+                    raise CaptureError(
+                        f"the union's ts spans {raw.min()} to {raw.max()} {frame['ts'].dtype.time_unit} since the epoch, "
+                        f"beyond a Python stamp: {err}"
+                    ) from err
+                block = [Block("union", frame, *span)]
                 mint_hour(
                     reconciled_root,
                     pair,

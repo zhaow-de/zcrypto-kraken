@@ -1614,7 +1614,8 @@ rules:
       # PERMANENT LOSS. Residual seconds are silence that NEITHER mirror covered -- both_streams_silent
       # (the fleet went dark together) or total_loss (the hour is on neither host). No later cycle can
       # heal it: there is no witness, and L2 is unbackfillable. Any increase at all is worth waking up
-      # for, hence `> 0` rather than a tolerance.
+      # for, hence `> 0` rather than a tolerance. A venue halt the mirrors prove lost nothing books to
+      # zcrypto_reconcile_venue_halt_seconds_total instead, which no rule reads: it is not loss.
       #
       # The counter is derived by SUMMING an append-only ledger, so it normally only grows. The one
       # thing that DECREASES it is a deliberate ledger correction. Prometheus reads that decrease as a
@@ -1650,7 +1651,7 @@ rules:
     execErrState: Alerting
     for: 0s
     annotations:
-      summary: "Permanent L2 loss: silence NEITHER capture host covered -- unhealable, the data is gone. The counter books ABSENCE of data, not fault: a venue outage lands here exactly like a capture failure. TRIAGE FIRST -- read the verdict on the hour's both_streams_silent ledger record, or zcrypto_reconcile_dark_episode_seconds_total by verdict: venue_silent = the silence was upstream of both hosts; capture_divergent = one host missed what the other got, investigate the fleet; undetermined = treat as loss. Full steps, including the venue-status cross-check: Runbook: infra/runbooks/ops.md#zcrypto-reconcile-residual-gap"
+      summary: "Permanent L2 loss: silence NEITHER capture host covered -- unhealable, the data is gone. A venue halt the reconciler proves lost nothing -- every book stream came back on both capture hosts with no reconnect, on one with no resync, no pair traded across it, and no pair printed for at least four minutes around it -- never lands here: it books to zcrypto_reconcile_venue_halt_seconds_total, which pages nothing. Any other venue outage lands here exactly like a capture failure: the counter books ABSENCE of data, not fault. TRIAGE FIRST -- read the verdict on the hour's both_streams_silent ledger record, or zcrypto_reconcile_dark_episode_seconds_total by verdict: venue_silent = the silence was upstream of both hosts; capture_divergent = one host missed what the other got, investigate the fleet; undetermined = treat as loss. Full steps, including the venue-status cross-check: Runbook: infra/runbooks/ops.md#zcrypto-reconcile-residual-gap"
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "202"
       unit: "seconds of unrecoverable silence"
@@ -3548,8 +3549,7 @@ rules:
         EVERY book stream on this capture host has been silent for minutes — not one message on
         any pair, so this is the whole feed rather than one quiet leg. The socket stays connected, the
         keepalive keeps completing round trips and the dead-man keeps pinging right through this —
-        none of them can see it. L2 is unbackfillable and every
-        second here is permanent loss. Check the venue's published maintenance calendar FIRST — every
+        none of them can see it. L2 is unbackfillable, and every second here is permanent loss unless the reconciler later proves it a venue halt that lost nothing, which books as a halt and pages nothing. Check the venue's published maintenance calendar FIRST — every
         firing of this rule so far has been one — then the capture container on the named host. The
         reconciler cannot say what was lost for about two hours; until then the capture log's gap start
         and gap end lines are the sharpest bound available, and both hosts showing the same window is

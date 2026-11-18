@@ -563,6 +563,7 @@ def test_measure_residual_never_exceeds_the_gap_it_measures():
 # window x stream count. Once a per-pair record books its OWN measured residual, the fleet-dark
 # portion of that gap would land in the same counter twice -- correcting a heal over-count by
 # manufacturing a loss over-count. `overlap_seconds` is what the caller subtracts.
+# A venue halt books its windows to its own counter instead, and the heal subtracts them all the same.
 
 
 def _span(a: int, b: int) -> tuple[datetime, datetime]:

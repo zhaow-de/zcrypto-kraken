@@ -154,10 +154,12 @@ def _validate_rows_within_hour(df: pl.DataFrame, name: str, hour_start: datetime
         return
     outside = df.filter((pl.col("ts") < hour_start) | (pl.col("ts") >= hour_end))
     if outside.height:
-        bad_ts = outside["ts"][0]
-        raise CaptureError(
-            f"{name} row with ts {bad_ts.isoformat()} falls outside the hour [{hour_start.isoformat()}, {hour_end.isoformat()})"
-        )
+        try:
+            stamp = outside["ts"][0].isoformat()
+        except Exception, pl.exceptions.PanicException:  # noqa: BLE001 -- no Python stamp: named by its raw value
+            # Out of range, or one polars panics on: converting it would crash the cycle this error fails one hour of.
+            stamp = f"{outside['ts'].cast(pl.Int64)[0]} {outside['ts'].dtype.time_unit} since the epoch"
+        raise CaptureError(f"{name} row with ts {stamp} falls outside the hour [{hour_start.isoformat()}, {hour_end.isoformat()})")
 
 
 def find_book_gaps(
@@ -354,6 +356,7 @@ def overlap_seconds(spans: Iterable[tuple[datetime, datetime]], windows: Iterabl
     twice — correcting a heal over-count by manufacturing a loss over-count in the same counter. Each
     side subtracts what the LEDGER shows the other already booked, so every second of loss is
     attributed exactly once regardless of which side decided first.
+    A venue halt's record books to its own counter instead, and the healed side subtracts it all the same.
 
     Windows are merged before intersecting: two overlapping windows must not subtract the same second
     twice, which would under-book a loss that really is unbooked.

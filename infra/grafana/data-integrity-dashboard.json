@@ -1614,7 +1614,7 @@
       "id": 206,
       "type": "timeseries",
       "title": "Dark-episode verdict split — cumulative since ledger genesis",
-      "description": "The both_streams_silent seconds from the panel above, split by what the evidence weighs toward: venue_silent (both capture hosts recorded the same venue message timestamps inside the episode -- the silence was upstream of both), capture_divergent (one host missed what the other received), and undetermined (no evidence either way, including every episode recorded before this split existed). A parallel view, not an alternative count -- it never pages: venue silence is not an actionable fault, and the sum of the three never exceeds the residual total beside it. Read during triage of the residual-gap page, to see whether the silence was upstream or a capture-side miss. Published only by the ops machine.",
+      "description": "The both_streams_silent seconds from the panel above, split by what the evidence weighs toward: venue_silent (both capture hosts recorded the same venue message timestamps inside the episode -- the silence was upstream of both), capture_divergent (one host missed what the other received), and undetermined (no evidence either way, including every episode recorded before this split existed). A parallel view, not an alternative count -- it never pages: venue silence is not an actionable fault, and the sum of the three never exceeds the residual total beside it. venue_halt is the fourth line and sits OUTSIDE that total: episodes the mirrors prove lost nothing -- every book stream came back on both capture hosts with no reconnect, on one with no resync, no pair traded across the silence, and no pair printed for at least four minutes around it -- booked as a halt and never as loss. Read during triage of the residual-gap page, to see whether the silence was upstream or a capture-side miss. Published only by the ops machine.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1652,6 +1652,15 @@
           "expr": "zcrypto_reconcile_dark_episode_seconds_total{host=\"ops\",verdict=\"undetermined\"}",
           "refId": "C",
           "legendFormat": "undetermined"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_reconcile_venue_halt_seconds_total{host=\"ops\"}",
+          "refId": "D",
+          "legendFormat": "venue_halt (not loss)"
         }
       ],
       "fieldConfig": {

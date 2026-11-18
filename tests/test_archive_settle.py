@@ -12,12 +12,16 @@ from cli.archive.settle import (
     CAPTURE_DIVERGENT,
     INTERIOR_MAX_SECONDS,
     LATE_MINT_HOURS,
+    QUIET_SPAN_SECONDS,
+    RESUME_MARGIN_SECONDS,
     SETTLE_HOURS,
     UNDETERMINED,
     VENUE_SILENT,
     DarkWindow,
     EpisodeVerdict,
+    HaltEvidence,
     classify_dark_episode,
+    classify_halt,
     containing_dark_window,
     fleet_dark_windows,
     hour_path,
@@ -569,6 +573,274 @@ def test_a_healthy_hour_with_no_windows_is_undetermined_and_never_classifies():
     )
     assert verdict.verdict == UNDETERMINED
     assert verdict.interior_updates == 0
+
+
+# --- the venue halt: the book carried through, nothing traded, and the market stood still --------
+
+_HALT = DarkWindow(start=_at(600), end=_at(1200), seconds=600.0)
+_PAIRS = ("BTC/EUR", "ETH/EUR")
+
+
+def _carried_rows() -> list[tuple[datetime, str]]:
+    """A stream silent from 600 s to 1200 s and updating every 10 s either side of it."""
+    return [(_at(s), "update") for s in range(0, 3600, 10) if not 600 < s < 1200]
+
+
+def _bracketing_tape() -> list[tuple[datetime, int]]:
+    """BTC/EUR's last print before the window and its first after it, adjacent ids."""
+    return [(_at(590), 7), (_at(1210), 8)]
+
+
+def _halt_evidence(book=None, trades=None, *, windows=(_HALT,)) -> HaltEvidence:
+    book = book if book is not None else {p: {"primary": _carried_rows(), "secondary": _carried_rows()} for p in _PAIRS}
+    trades = (
+        trades
+        if trades is not None
+        else {
+            "BTC/EUR": {"primary": _bracketing_tape(), "secondary": _bracketing_tape()},
+            "ETH/EUR": {"primary": [], "secondary": []},
+        }
+    )
+    return classify_halt(list(windows), {p: list(windows) for p in book}, book, trades, hour_end=HOUR_END)
+
+
+def test_a_book_carried_through_a_window_no_pair_traded_across_is_a_halt():
+    evidence = _halt_evidence()
+    assert evidence == HaltEvidence(
+        streams=2, streams_carried=2, windows=1, windows_bracketed=1, trades_inside=0, id_holes=0, quiet_seconds=620.0
+    )
+    assert evidence.holds
+
+
+@pytest.mark.parametrize("at", [600, 1200, 3000], ids=["at-the-windows-start", "at-the-resume", "later-in-the-hour"])
+def test_a_snapshot_from_the_window_on_on_every_mirror_leaves_the_stream_not_carried(at):
+    rows = sorted([*_carried_rows(), (_at(at), "snapshot")])
+    book = {
+        "BTC/EUR": {"primary": rows, "secondary": list(rows)},
+        "ETH/EUR": {"primary": _carried_rows(), "secondary": _carried_rows()},
+    }
+    evidence = _halt_evidence(book)
+    assert evidence.streams_carried == 1
+    assert not evidence.holds
+
+
+def test_a_snapshot_between_two_windows_on_every_mirror_leaves_the_stream_not_carried():
+    first, second = (
+        DarkWindow(start=_at(600), end=_at(900), seconds=300.0),
+        DarkWindow(start=_at(1500), end=_at(1800), seconds=300.0),
+    )
+    rows = [(_at(s), "update") for s in range(0, 3600, 10) if not (600 < s < 900 or 1500 < s < 1800)]
+    resynced = sorted([*rows, (_at(1000), "snapshot")])
+    tape = [(_at(590), 7), (_at(910), 8), (_at(1490), 9), (_at(1810), 10)]
+    evidence = _halt_evidence(
+        {"BTC/EUR": {"primary": resynced, "secondary": list(resynced)}, "ETH/EUR": {"primary": rows, "secondary": list(rows)}},
+        {"BTC/EUR": {"primary": tape, "secondary": tape}},
+        windows=(first, second),
+    )
+    assert (evidence.streams_carried, evidence.windows_bracketed) == (1, 2)
+    assert not evidence.holds
+
+
+def test_a_snapshot_before_the_window_leaves_the_stream_carried():
+    rows = sorted([*_carried_rows(), (_at(300), "snapshot")])
+    book = {
+        "BTC/EUR": {"primary": rows, "secondary": list(rows)},
+        "ETH/EUR": {"primary": _carried_rows(), "secondary": _carried_rows()},
+    }
+    assert _halt_evidence(book).holds
+
+
+@pytest.mark.parametrize("snapshotted", ["primary", "secondary"])
+def test_one_mirror_carrying_the_stream_is_enough(snapshotted):
+    rows = {"primary": _carried_rows(), "secondary": _carried_rows()}
+    rows[snapshotted] = sorted([*rows[snapshotted], (_at(3000), "snapshot")])
+    evidence = _halt_evidence({"BTC/EUR": rows, "ETH/EUR": {"primary": _carried_rows(), "secondary": _carried_rows()}})
+    assert evidence.streams_carried == 2
+    assert evidence.holds
+
+
+@pytest.mark.parametrize(("resume", "carried"), [(3600 - RESUME_MARGIN_SECONDS, True), (3600 - RESUME_MARGIN_SECONDS + 1, False)])
+def test_a_resume_inside_the_hours_last_margin_is_not_carried(resume, carried):
+    late = DarkWindow(start=_at(3000), end=_at(resume), seconds=resume - 3000.0)
+    rows = [*[(_at(s), "update") for s in range(0, 3001, 10)], (_at(resume), "update"), (_at(3590), "update")]
+    book = {p: {"primary": rows, "secondary": list(rows)} for p in _PAIRS}
+    tape = [(_at(2990), 7), (_at(3595), 8)]
+    evidence = _halt_evidence(book, {"BTC/EUR": {"primary": tape, "secondary": tape}}, windows=(late,))
+    assert evidence.holds is carried
+    assert evidence.streams_carried == (2 if carried else 0)
+
+
+def test_a_window_running_to_the_hours_end_is_not_carried():
+    tail = DarkWindow(start=_at(3000), end=HOUR_END, seconds=600.0)
+    rows = [(_at(s), "update") for s in range(0, 3001, 10)]
+    book = {p: {"primary": rows, "secondary": list(rows)} for p in _PAIRS}
+    evidence = _halt_evidence(book, windows=(tail,))
+    assert evidence.streams_carried == 0
+    assert not evidence.holds
+
+
+def test_a_stream_no_mirror_holds_is_not_carried():
+    book = {"BTC/EUR": {"primary": None, "secondary": None}, "ETH/EUR": {"primary": _carried_rows(), "secondary": _carried_rows()}}
+    evidence = _halt_evidence(book)
+    assert evidence.streams_carried == 1
+    assert not evidence.holds
+
+
+@pytest.mark.parametrize("faulty", ["primary", "secondary"])
+@pytest.mark.parametrize(
+    "rows",
+    [
+        None,
+        [(ts, "snapshot" if ts == _at(1200) else kind) for ts, kind in _carried_rows()],
+        [(_at(s), "update") for s in range(0, 601, 10)],
+    ],
+    ids=["absent", "resumes-on-a-snapshot", "never-resumes"],
+)
+def test_a_stream_is_not_carried_unless_both_mirrors_resume_on_an_update(rows, faulty):
+    btc = {"primary": _carried_rows(), "secondary": _carried_rows()}
+    btc[faulty] = rows
+    evidence = _halt_evidence({"BTC/EUR": btc, "ETH/EUR": {"primary": _carried_rows(), "secondary": _carried_rows()}})
+    assert evidence.streams_carried == 1
+    assert not evidence.holds
+
+
+@pytest.mark.parametrize("faulty", ["primary", "secondary"])
+@pytest.mark.parametrize("snapshot", [900, 1800], ids=["after-the-first", "after-the-second"])
+def test_a_mirror_back_on_a_snapshot_after_any_window_takes_the_stream_out(snapshot, faulty):
+    first, second = (
+        DarkWindow(start=_at(600), end=_at(900), seconds=300.0),
+        DarkWindow(start=_at(1500), end=_at(1800), seconds=300.0),
+    )
+    rows = [(_at(s), "update") for s in range(0, 3600, 10) if not (600 < s < 900 or 1500 < s < 1800)]
+    btc = {"primary": rows, "secondary": list(rows)}
+    btc[faulty] = [(ts, "snapshot" if ts == _at(snapshot) else kind) for ts, kind in rows]
+    tape = [(_at(590), 7), (_at(910), 8), (_at(1490), 9), (_at(1810), 10)]
+    evidence = _halt_evidence(
+        {"BTC/EUR": btc, "ETH/EUR": {"primary": rows, "secondary": list(rows)}},
+        {"BTC/EUR": {"primary": tape, "secondary": tape}},
+        windows=(first, second),
+    )
+    assert (evidence.streams_carried, evidence.windows_bracketed) == (1, 2)
+    assert not evidence.holds
+
+
+def test_no_stream_booked_is_no_halt():
+    evidence = classify_halt(
+        [_HALT], {}, {}, {"BTC/EUR": {"primary": _bracketing_tape(), "secondary": _bracketing_tape()}}, hour_end=HOUR_END
+    )
+    assert (evidence.streams, evidence.windows_bracketed) == (0, 1)
+    assert not evidence.holds
+
+
+def test_a_trade_inside_a_window_is_not_a_halt():
+    tape = [(_at(590), 7), (_at(900), 8), (_at(1210), 9)]
+    evidence = _halt_evidence(trades={"BTC/EUR": {"primary": tape, "secondary": tape}})
+    assert evidence.trades_inside == 1
+    assert not evidence.holds
+
+
+def test_a_print_inside_a_pairs_own_booked_window_refuses_outside_every_fleet_window():
+    own = DarkWindow(start=_at(500), end=_at(1200), seconds=700.0)
+    btc = [(_at(s), "update") for s in range(0, 3600, 10) if not 500 < s < 1200]
+    book = {
+        "BTC/EUR": {"primary": btc, "secondary": list(btc)},
+        "ETH/EUR": {"primary": _carried_rows(), "secondary": _carried_rows()},
+    }
+    tape = [(_at(490), 7), (_at(550), 8), (_at(1210), 9)]
+    trades = {"BTC/EUR": {"primary": tape, "secondary": tape}}
+    evidence = classify_halt([_HALT], {"BTC/EUR": [own], "ETH/EUR": [_HALT]}, book, trades, hour_end=HOUR_END)
+    assert (evidence.streams_carried, evidence.windows_bracketed, evidence.trades_inside, evidence.id_holes) == (2, 1, 1, 0)
+    assert not evidence.holds
+
+
+def test_a_trade_id_neither_mirror_holds_across_a_window_is_not_a_halt():
+    tape = [(_at(590), 7), (_at(1210), 9)]
+    evidence = _halt_evidence(trades={"BTC/EUR": {"primary": tape, "secondary": tape}})
+    assert (evidence.trades_inside, evidence.id_holes, evidence.windows_bracketed) == (0, 1, 0)
+    assert not evidence.holds
+
+
+def test_a_print_inside_a_window_refuses_beside_a_bracketing_pair():
+    inside = [(_at(900), 50)]
+    trades = {
+        "BTC/EUR": {"primary": _bracketing_tape(), "secondary": _bracketing_tape()},
+        "ETH/EUR": {"primary": inside, "secondary": inside},
+    }
+    evidence = _halt_evidence(trades=trades)
+    assert (evidence.windows_bracketed, evidence.trades_inside, evidence.id_holes) == (1, 1, 0)
+    assert not evidence.holds
+
+
+def test_a_skipped_id_refuses_beside_a_bracketing_pair():
+    skipped = [(_at(590), 50), (_at(1210), 52)]
+    trades = {
+        "BTC/EUR": {"primary": _bracketing_tape(), "secondary": _bracketing_tape()},
+        "ETH/EUR": {"primary": skipped, "secondary": skipped},
+    }
+    evidence = _halt_evidence(trades=trades)
+    assert (evidence.windows_bracketed, evidence.trades_inside, evidence.id_holes) == (1, 0, 1)
+    assert not evidence.holds
+
+
+def test_the_two_mirrors_trade_tapes_are_read_as_one():
+    evidence = _halt_evidence(trades={"BTC/EUR": {"primary": [(_at(590), 7), (_at(1210), 9)], "secondary": [(_at(595), 8)]}})
+    assert (evidence.id_holes, evidence.windows_bracketed) == (0, 1)
+    assert evidence.holds
+
+
+def test_prints_sharing_a_stamp_bracket_a_window_by_their_ids():
+    tape = [(_at(590), 6), (_at(590), 7), (_at(1210), 8), (_at(1210), 9)]
+    evidence = _halt_evidence(trades={"BTC/EUR": {"primary": tape, "secondary": tape}})
+    assert (evidence.id_holes, evidence.windows_bracketed) == (0, 1)
+    assert evidence.holds
+
+
+def test_prints_on_the_windows_own_bounds_bracket_it_from_outside():
+    tape = [(_at(600), 7), (_at(1200), 8)]
+    evidence = _halt_evidence(trades={"BTC/EUR": {"primary": tape, "secondary": tape}})
+    assert evidence == HaltEvidence(
+        streams=2, streams_carried=2, windows=1, windows_bracketed=1, trades_inside=0, id_holes=0, quiet_seconds=600.0
+    )
+    assert evidence.holds
+
+
+@pytest.mark.parametrize(
+    ("btc", "eth", "quiet"),
+    [([], [], 0.0), ([(_at(590), 7)], [(_at(1210), 50)], 620.0), ([(_at(1210), 8)], [(_at(590), 50)], 620.0)],
+    ids=["no-trade", "a-print-before-only", "a-print-after-only"],
+)
+def test_a_window_no_pair_brackets_is_not_a_halt(btc, eth, quiet):
+    evidence = _halt_evidence(trades={"BTC/EUR": {"primary": btc, "secondary": btc}, "ETH/EUR": {"primary": eth, "secondary": eth}})
+    assert (evidence.windows_bracketed, evidence.quiet_seconds) == (0, quiet)
+    assert not evidence.holds
+
+
+def test_every_window_needs_its_own_bracket():
+    first, second = (
+        DarkWindow(start=_at(600), end=_at(900), seconds=300.0),
+        DarkWindow(start=_at(1500), end=_at(1800), seconds=300.0),
+    )
+    rows = [(_at(s), "update") for s in range(0, 3600, 10) if not (600 < s < 900 or 1500 < s < 1800)]
+    book = {p: {"primary": rows, "secondary": list(rows)} for p in _PAIRS}
+    tape, after = [(_at(590), 7), (_at(910), 8)], [(_at(1810), 50)]
+    trades = {"BTC/EUR": {"primary": tape, "secondary": tape}, "ETH/EUR": {"primary": after, "secondary": after}}
+    evidence = _halt_evidence(book, trades, windows=(first, second))
+    assert evidence == HaltEvidence(
+        streams=2, streams_carried=2, windows=2, windows_bracketed=1, trades_inside=0, id_holes=0, quiet_seconds=320.0
+    )
+    assert not evidence.holds
+
+
+def test_a_quiet_of_exactly_the_span_is_a_halt():
+    brief = DarkWindow(start=_at(600), end=_at(780), seconds=180.0)
+    rows = [(_at(s), "update") for s in range(0, 3600, 10) if not 600 < s < 780]
+    book = {p: {"primary": rows, "secondary": list(rows)} for p in _PAIRS}
+    tape = [(_at(570), 7), (_at(810), 8)]
+    evidence = _halt_evidence(book, {"BTC/EUR": {"primary": tape, "secondary": tape}}, windows=(brief,))
+    assert evidence == HaltEvidence(
+        streams=2, streams_carried=2, windows=1, windows_bracketed=1, trades_inside=0, id_holes=0, quiet_seconds=QUIET_SPAN_SECONDS
+    )
+    assert evidence.holds
 
 
 # --- the int64-microsecond derivation (spec 00097 D3) ---------------------------------------------
