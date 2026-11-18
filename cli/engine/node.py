@@ -53,6 +53,9 @@ _NODE_NAME = "zcrypto-shadow"
 # The account the exec client reports under. The issuer half must be the venue -- the Cache indexes
 # accounts by it, and `venue_state_from_cache` looks the account up by Venue("KRAKEN").
 _ACCOUNT_ID = "KRAKEN-001"
+# TradeBalance's `asset`: the execution client's account summary is denominated in it, and the margin floor's
+# read asks for the same one.
+_MARGIN_BALANCE_ASSET = "ZEUR"
 # The two variables carrying the trade credentials, rendered onto the engine host. Named here so
 # the refusal below can say WHICH is missing without ever touching a value.
 _API_KEY_VAR = "KRAKEN_SPOT_API_KEY"
@@ -559,7 +562,7 @@ def _exec_client_config(credentials: tuple[str, str]) -> KrakenExecutionClientCo
         api_key=api_key,
         api_secret=api_secret,
         spot_account_type=AccountType.MARGIN,
-        margin_balance_asset="ZEUR",
+        margin_balance_asset=_MARGIN_BALANCE_ASSET,
         # `margin_balance_asset`, above, goes to Kraken raw as TradeBalance's `asset`; the adapter
         # normalizes it, so the account summary reads `EUR` whichever spelling is set there.
         # NOT a tradeability constraint (T0137's survey). `margin_balance_asset` has exactly ONE call site,

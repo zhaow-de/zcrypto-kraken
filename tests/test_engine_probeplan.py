@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from cli.engine import probeplan
-from cli.engine.probeplan import PLAN_TTL, ProbePlanError, parse_plan, plan_refusals
+from cli.engine.probeplan import PLAN_TTL, ProbePlanError, extends_margin, margin_floor_refusals, parse_plan, plan_refusals
 
 NOW = datetime(2026, 8, 18, 12, 0, tzinfo=timezone.utc)
 
@@ -315,54 +315,54 @@ def test_a_well_formed_rest_hold_intent_parses():
 def test_plan_refusals_an_expired_plan_refuses():
     created_at = NOW - PLAN_TTL - timedelta(minutes=1)
     plan = _plan(created_at=created_at.isoformat())
-    reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=100.0, free_zeur=1000.0)
+    reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=100.0)
     assert reasons == (f"plan expired: created_at {created_at.isoformat()} is over 60 minutes old",)
 
 
 def test_plan_refusals_age_exactly_at_the_ttl_passes():
     created_at = NOW - PLAN_TTL
     plan = _plan(created_at=created_at.isoformat())
-    reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=100.0, free_zeur=1000.0)
+    reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=100.0)
     assert reasons == ()
 
 
 def test_plan_refusals_a_future_created_at_refuses():
     created_at = NOW + timedelta(minutes=5)
     plan = _plan(created_at=created_at.isoformat())
-    reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=100.0, free_zeur=1000.0)
+    reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=100.0)
     assert reasons == ("created_at is in the future",)
 
 
 def test_plan_refusals_a_ledgered_plan_id_refuses():
     plan = _plan(plan_id="p-dup")
-    reasons = plan_refusals(plan, now=NOW, ledgered=frozenset({"p-dup"}), max_plan_notional_eur=100.0, free_zeur=1000.0)
+    reasons = plan_refusals(plan, now=NOW, ledgered=frozenset({"p-dup"}), max_plan_notional_eur=100.0)
     assert reasons == ("plan_id already ledgered",)
 
 
 def test_plan_refusals_over_cap_notional_refuses():
     plan = _plan(intents=[_intent(notional_eur=120.0)])
-    reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=100.0, free_zeur=1000.0)
+    reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=100.0)
     assert reasons == ("plan notional 120.00 EUR exceeds the cap 100.00 EUR",)
 
 
 def test_plan_refusals_notional_exactly_at_the_cap_passes():
     # The boundary itself must NOT refuse, or a '>' -> '>=' regression is invisible.
     plan = _plan(intents=[_intent(notional_eur=100.0)])
-    reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=100.0, free_zeur=1000.0)
+    reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=100.0)
     assert reasons == ()
 
 
 def test_plan_refusals_a_nan_cap_refuses():
     # nan defeats "total > nan" (always False) -- must be refused explicitly, not silently pass.
     plan = _plan()
-    reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=float("nan"), free_zeur=1000.0)
+    reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=float("nan"))
     assert reasons == ("max_plan_notional_eur is not finite: nan",)
 
 
 def test_plan_refusals_an_inf_cap_refuses():
     # inf defeats "total > inf" (always False) -- disables the blast-radius bound entirely.
     plan = _plan()
-    reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=float("inf"), free_zeur=1000.0)
+    reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=float("inf"))
     assert reasons == ("max_plan_notional_eur is not finite: inf",)
 
 
@@ -371,50 +371,56 @@ def _margin_plan():
     return _plan(intents=intents)
 
 
-def test_plan_refusals_margin_floor_passes_at_free_zeur_100():
+def test_the_margin_floor_passes_at_free_margin_100():
     # sum(notional/leverage) = 15 + 15 = 30; 30 x 2.5 = 75 <= 100.
-    plan = _margin_plan()
-    reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=100.0, free_zeur=100.0)
-    assert reasons == ()
+    assert margin_floor_refusals(_margin_plan(), free_margin_eur=100.0) == ()
 
 
-def test_plan_refusals_margin_floor_refuses_at_free_zeur_50():
-    plan = _margin_plan()
-    reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=100.0, free_zeur=50.0)
-    assert reasons == ("margin floor: 75.00 EUR required exceeds free_zeur 50.00 EUR",)
+def test_the_margin_floor_refuses_at_free_margin_50_naming_free_margin():
+    reasons = margin_floor_refusals(_margin_plan(), free_margin_eur=50.0)
+    assert reasons == ("margin floor: 75.00 EUR required exceeds free margin 50.00 EUR",)
 
 
-def test_plan_refusals_margin_required_exactly_at_free_zeur_passes():
+def test_the_margin_floor_exactly_at_free_margin_passes():
     # margin_required == 75.0 exactly; the boundary itself must NOT refuse.
-    plan = _margin_plan()
-    reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=100.0, free_zeur=75.0)
-    assert reasons == ()
+    assert margin_floor_refusals(_margin_plan(), free_margin_eur=75.0) == ()
 
 
-def test_plan_refusals_a_nan_free_zeur_refuses():
-    # The executor passes free_zeur from a live venue balance -- validated at the point of use, not
-    # only at config-parse time.
-    plan = _plan()
-    reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=100.0, free_zeur=float("nan"))
-    assert reasons == ("free_zeur is not finite: nan",)
+@pytest.mark.parametrize("free", [float("nan"), float("inf")], ids=["nan", "inf"])
+def test_a_non_finite_free_margin_refuses_a_plan_opening_on_margin(free):
+    assert margin_floor_refusals(_margin_plan(), free_margin_eur=free) == (f"free margin is not finite: {free!r}",)
 
 
-def test_plan_refusals_an_inf_free_zeur_refuses():
-    plan = _plan()
-    reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=100.0, free_zeur=float("inf"))
-    assert reasons == ("free_zeur is not finite: inf",)
+def test_the_margin_floor_sums_the_margin_opens_alone():
+    # 30 / 2 = 15; 15 x 2.5 = 37.5 > 37, the spot buy's 90 and the margin close's 30 counting for nothing.
+    plan = _plan(
+        intents=[
+            _intent(notional_eur=90.0),
+            _intent(notional_eur=30.0, leverage=2),
+            _intent(side="sell", action="close", notional_eur=30.0, leverage=2),
+        ]
+    )
+    assert margin_floor_refusals(plan, free_margin_eur=37.0) == ("margin floor: 37.50 EUR required exceeds free margin 37.00 EUR",)
+
+
+def test_a_plan_that_extends_no_margin_has_no_margin_floor():
+    spot = _plan(intents=[_intent(), _intent(side="sell", action="close", notional_eur=None, qty=0.001)])
+    closes = _plan(intents=[_intent(side="sell", action="close", notional_eur=30.0, leverage=2)])
+    for plan in (spot, closes):
+        assert (extends_margin(plan), margin_floor_refusals(plan, free_margin_eur=float("nan"))) == (False, ())
+    assert extends_margin(_plan(intents=[_intent(), _intent(notional_eur=30.0, leverage=2)])) is True
 
 
 def test_plan_refusals_a_valid_plan_returns_empty():
     plan = _plan()
-    reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=100.0, free_zeur=1000.0)
+    reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=100.0)
     assert reasons == ()
 
 
 def test_plan_refusals_multi_condition_returns_both_reasons_in_declaration_order():
     created_at = NOW - PLAN_TTL - timedelta(minutes=1)
     plan = _plan(created_at=created_at.isoformat(), intents=[_intent(notional_eur=120.0)])
-    reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=100.0, free_zeur=1000.0)
+    reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=100.0)
     assert reasons == (
         f"plan expired: created_at {created_at.isoformat()} is over 60 minutes old",
         "plan notional 120.00 EUR exceeds the cap 100.00 EUR",

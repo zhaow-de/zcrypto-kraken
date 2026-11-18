@@ -1376,13 +1376,13 @@ def test_probe_plan_check_refuses_an_unreadable_plan_file(tmp_path, monkeypatch)
 
 
 def test_probe_plan_check_refuses_a_margin_intent_over_the_free_balance(tmp_path, monkeypatch):
-    _probe_plan_env(tmp_path, monkeypatch, instruments={"BTC/EUR": _instrument("BTC/EUR")}, balances={"ZEUR": 5.0})
+    _probe_plan_env(tmp_path, monkeypatch, instruments={"BTC/EUR": _instrument("BTC/EUR")}, balances={"EUR": 5.0})
     plan = _write_plan(tmp_path, [_intent(notional_eur=40.0, leverage=2)])
 
     result = runner.invoke(app, ["engine", "probe-plan", str(plan), "--check"])
 
     assert result.exit_code == 1
-    assert "margin floor" in _output(result)
+    assert "margin floor: 50.00 EUR required exceeds free margin 5.00 EUR" in _output(result)
 
 
 def test_probe_plan_check_mutates_nothing(tmp_path, monkeypatch):

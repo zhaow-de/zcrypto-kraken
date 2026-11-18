@@ -205,6 +205,20 @@ class KrakenLoopback:
     books: dict[str, dict[str, Any]] = field(default_factory=dict)
     # BalanceEx rows by the venue's own asset code (`ZEUR`, `SOL`).
     balances: dict[str, dict[str, str]] = field(default_factory=dict)
+    # The TradeBalance answer, whatever `asset` a request names: `mf` is the free margin, `e` the equity.
+    trade_balance: dict[str, str] = field(
+        default_factory=lambda: {
+            "eb": "1000.0",
+            "tb": "1000.0",
+            "m": "0.0",
+            "uv": "0.0",
+            "n": "0.0",
+            "c": "0.0",
+            "v": "0.0",
+            "e": "1000.0",
+            "mf": "1000.0",
+        }
+    )
     # Endpoint name -> the Kraken error string it answers with instead of a result.
     errors: dict[str, str] = field(default_factory=dict)
     # Endpoint name -> seconds its answer waits, for a caller's own bound to fire first.
@@ -272,17 +286,7 @@ class KrakenLoopback:
         if path == "/0/private/GetWebSocketsToken":
             return {"token": "loopback-ws-token", "expires": 900}, []
         if path == "/0/private/TradeBalance":
-            return {
-                "eb": "1000.0",
-                "tb": "1000.0",
-                "m": "0.0",
-                "uv": "0.0",
-                "n": "0.0",
-                "c": "0.0",
-                "v": "0.0",
-                "e": "1000.0",
-                "mf": "1000.0",
-            }, []
+            return dict(self.trade_balance), []
         if path == "/0/private/TradesHistory":
             trades = self._since(self.trades, form, "time")
             offset = int(form.get("ofs", "0"))

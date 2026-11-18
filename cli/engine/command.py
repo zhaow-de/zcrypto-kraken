@@ -55,7 +55,7 @@ from cli.engine.gate_cache import (
 from cli.engine.instruments import INSTRUMENT_IDS, _floor_to_step
 from cli.engine.journal import CycleRecord, SnapshotEntry, from_json, validate_record
 from cli.engine.preflight import run_preflight
-from cli.engine.probeplan import ProbePlanError, parse_plan, plan_refusals
+from cli.engine.probeplan import ProbePlanError, margin_floor_refusals, parse_plan, plan_refusals
 from cli.engine.soak import soak_report
 from cli.engine.store import _HOST_REDELIVERY, BASKET, GRID_INTERVALS, PAIR_KEYS, _store_path, seed_store
 from cli.engine.tracking import (
@@ -2192,19 +2192,18 @@ def probe_plan(
     _echo_gate_verdict(gate.evaluate(now))
     typer.echo(f"venue snapshot: {record['state']['snapshot_at']}")
 
-    # The venue record's balances carry the free cash as `EUR`, the code the adapter reports every euro
-    # under, so this resolves on its SECOND arm; the `ZEUR` arm reads nothing on this wheel. Both absent
-    # reads 0.0, which refuses any margin intent.
-    free_zeur = balances.get("ZEUR", 0.0) or balances.get("EUR", 0.0)
-    refusals = list(
-        plan_refusals(
+    # The venue record's balances carry the engine's free margin as `EUR` (`VenueState`), so this resolves on its
+    # SECOND arm; the `ZEUR` arm reads nothing on this wheel. Both absent read 0.0, which refuses any margin open.
+    free_margin = balances.get("ZEUR", 0.0) or balances.get("EUR", 0.0)
+    refusals = [
+        *plan_refusals(
             plan,
             now=now,
             ledgered=ledgered_plan_ids(config.journal_dir, now),
             max_plan_notional_eur=config.exec_max_plan_notional_eur,
-            free_zeur=float(free_zeur),
-        )
-    )
+        ),
+        *margin_floor_refusals(plan, free_margin_eur=float(free_margin)),
+    ]
     for index, intent in enumerate(plan.intents):
         entry = instruments.get(intent.symbol)
         if entry is None:

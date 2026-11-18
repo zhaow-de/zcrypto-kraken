@@ -85,7 +85,17 @@ from cli.engine.execledger import (
 from cli.engine.feeders import CycleStages
 from cli.engine.instruments import EUR_CODES, INSTRUMENT_IDS, BelowMinimum, SizedOrder, size_order
 from cli.engine.journal import CycleRecord, from_json, require_comparable_cycle_ts, validate_record
-from cli.engine.probeplan import MODES, PLAN_FILENAME, ProbeIntent, ProbePlanError, parse_plan, plan_refusals
+from cli.engine.probeplan import (
+    MODES,
+    PLAN_FILENAME,
+    ProbeIntent,
+    ProbePlanError,
+    _extends_margin,
+    extends_margin,
+    margin_floor_refusals,
+    parse_plan,
+    plan_refusals,
+)
 from cli.engine.store import BASKET
 from cli.engine.tracking import extract_fills, realized_drift
 from cli.engine.venuestate import (
@@ -872,6 +882,26 @@ def read_venue_positions(*, base_url: str | None = None) -> dict[str, float]:
     return _margin_positions(asyncio.run(asyncio.wait_for(_read(), timeout=_VENUE_READ_TIMEOUT_SECONDS)))
 
 
+def read_free_margin(*, base_url: str | None = None) -> float:
+    """Kraken's free margin in EUR, TradeBalance's `mf` for `_MARGIN_BALANCE_ASSET`, on a client of its own
+    (`_bare_client`) and on `read_venue_holdings`' terms: the margin floor's figure (`_margin_floor_refusals`). One
+    private call. An answer labelled other than EUR raises -- the client labels it by the asset asked, an omitted one
+    reading USD -- and so do a Kraken error, an `mf` missing or unparseable, and anything short of an answer inside
+    `_VENUE_READ_TIMEOUT_SECONDS`."""
+    from cli.engine.node import _MARGIN_BALANCE_ASSET
+
+    client = _bare_client(base_url)
+
+    async def _read():
+        return await client.request_margin_metrics(asset=_MARGIN_BALANCE_ASSET)
+
+    metrics = asyncio.run(asyncio.wait_for(_read(), timeout=_VENUE_READ_TIMEOUT_SECONDS))
+    asset = None if metrics is None else metrics.get("asset")
+    if asset != "EUR":
+        raise EngineError(f"the venue's trade balance answered in {asset!r}, not EUR -- the margin floor is measured in EUR")
+    return float(metrics["free_margin"])
+
+
 def read_instrument_statuses(*, base_url: str | None = None) -> dict[str, str]:
     """Each `INSTRUMENT_IDS` symbol's status as the venue lists it, on a client of its own (`_bare_client`): the name of
     the `MarketStatusAction` the client reads Kraken's per-pair `status` as -- `TRADING` for `online`, `HALT` for
@@ -1128,7 +1158,8 @@ class ProbeExecutor:
     `.subscribe_quotes(id)`, `.unsubscribe_quotes(id)`.
 
     `venue_orders` is `read_venue_orders`' signature, `venue_cancel` is `cancel_venue_order`'s,
-    `venue_holdings` is `read_venue_book`' and `instrument_statuses` is `read_instrument_statuses`'.
+    `venue_holdings` is `read_venue_book`', `venue_free_margin` is `read_free_margin`'s and
+    `instrument_statuses` is `read_instrument_statuses`'.
     None, the engine's construction, reads the module's own at call time, so a test can replace it
     before any executor exists.
     """
@@ -1145,6 +1176,7 @@ class ProbeExecutor:
         venue_holdings=None,
         venue_fills=None,
         venue_positions=None,
+        venue_free_margin=None,
         instrument_statuses=None,
     ) -> None:
         self._client = client
@@ -1165,6 +1197,7 @@ class ProbeExecutor:
         self._venue_holdings = venue_holdings
         self._venue_fills = venue_fills
         self._venue_positions = venue_positions
+        self._venue_free_margin = venue_free_margin
         self._instrument_statuses = instrument_statuses
         # The pass's trade-history read (`_trades_cover`), reset at each pass by `_reset_fills_read`.
         self._venue_fills_read: dict[str, float] | None = None
@@ -1223,6 +1256,9 @@ class ProbeExecutor:
         self._plan_cycle_ts: datetime | None = None
         # The running plan's submission window, None for a drill plan: `_start_intent` carries an intent past its close.
         self._plan_window_close: datetime | None = None
+        # The running plan's failed free-margin read, its reason, or None: `_start_intent` refuses each of the
+        # plan's margin opens by it.
+        self._free_margin_unread: str | None = None
         # The boundary's cycle plan armed and not yet drafted (`_arm_cycle_draft`), and whether the first tick after the
         # startup pass has looked for one a previous process armed and never recorded (`_rearm_cycle_draft`).
         self._pending_draft: _PendingDraft | None = None
@@ -1921,8 +1957,9 @@ class ProbeExecutor:
         `orders_inflight`, the set the library's in-flight check queries -- so the pass's signed
         requests race nothing of the execution client's: `_active` None alone leaves the startup
         pass's cancels of adopted orders, and a trip's, PENDING_CANCEL with no intent live. A Cache
-        that cannot be read holds the pass, and under the cache the pickup of a plan with an opening
-        intent (`_accept_plan`) until the read answers, when its expiry refuses the file; never a plan otherwise."""
+        that cannot be read holds the pass, and the pickup of a plan with a margin open (`extends_margin`), or under the
+        cache an opening intent (`_accept_plan`), until the read answers, when its expiry refuses the file; never a plan
+        otherwise."""
         try:
             return self._active is None and not list(self._cache.orders_inflight(venue=_VENUE))
         except Exception:
@@ -2837,25 +2874,23 @@ class ProbeExecutor:
                 self._delete(path)
             return "refused"
 
-        if self._cache_enabled and any(intent.action == "open" for intent in plan.intents) and not self._nothing_in_flight():
-            # The mixed-inventory check's venue read (`_mixed_inventory_refusals`) is a signed read on
-            # the trade key, on the passes' nonce terms: on the first tick the startup pass's cancels
-            # are still PENDING_CANCEL, so the plan waits in its file for a tick with nothing in flight.
-            logger.info(
-                "probe plan %s waits for a tick with nothing in flight -- its opening intents take a venue read", plan.plan_id
-            )
+        reads_venue = extends_margin(plan) or (self._cache_enabled and any(intent.action == "open" for intent in plan.intents))
+        if reads_venue and not self._nothing_in_flight():
+            # The free-margin read (`_margin_floor_refusals`) and the mixed-inventory check's
+            # (`_mixed_inventory_refusals`) are signed reads on the trade key, on the passes' nonce terms: on
+            # the first tick the startup pass's cancels are still PENDING_CANCEL, so the plan waits in its
+            # file for a tick with nothing in flight.
+            logger.info("probe plan %s waits for a tick with nothing in flight -- it takes a signed venue read", plan.plan_id)
             return "waiting"
-        # The adapter reports the free cash, as every euro, as `EUR`, so this resolves on its SECOND
-        # arm; the `ZEUR` arm reads nothing on this wheel. Both absent reads 0.0, which refuses any
-        # margin intent.
-        free_zeur = state.balances.get("ZEUR", 0.0) or state.balances.get("EUR", 0.0)
         reasons = plan_refusals(
             plan,
             now=now,
             ledgered=ledgered_plan_ids(self._journal_dir, now),
             max_plan_notional_eur=self._config.exec_max_plan_notional_eur,
-            free_zeur=free_zeur,
         )
+        unread = None
+        if not reasons and extends_margin(plan):
+            reasons, unread = self._margin_floor_refusals(plan)
         if self._cache_enabled and not reasons:
             reasons = [*reasons, *self._mixed_inventory_refusals(plan, state)]
         intents = [
@@ -2886,7 +2921,21 @@ class ProbeExecutor:
             self._plan_window_close = None
         self._index = 0
         self._resolved_notional = {}
+        self._free_margin_unread = unread
         return "accepted"
+
+    def _margin_floor_refusals(self, plan) -> tuple[list[str], str | None]:
+        """The margin floor against Kraken's free margin read now (`read_free_margin`), never the Cache's account
+        summary: the floor's refusals of the plan, and the read's failure or None. A read that fails is logged and
+        refuses nothing here: `_start_intent` refuses each of the plan's margin opens by it, and no other intent."""
+        try:
+            free = (self._venue_free_margin or read_free_margin)()
+        except Exception as exc:
+            unread = f"Kraken's free margin could not be read for the margin floor -- {type(exc).__name__}: {exc}"
+            logger.warning("probe plan %s: %s", plan.plan_id, unread)
+            return [], unread
+        logger.info("probe plan %s: Kraken's free margin reads %.2f EUR at its pickup", plan.plan_id, free)
+        return list(margin_floor_refusals(plan, free_margin_eur=free)), None
 
     def _mixed_inventory_refusals(self, plan, state) -> list[str]:
         """Spec 00120 D12's refusal of an opening intent that would put a spot lot beside a margin lot on
@@ -3044,6 +3093,10 @@ class ProbeExecutor:
         verdict = self._evaluate(now)
         if not _level_permits(verdict.level, intent):
             self._refuse_intent(index, verdict.reasons)
+            return
+
+        if self._free_margin_unread is not None and _extends_margin(intent):
+            self._refuse_intent(index, (self._free_margin_unread,))
             return
 
         try:

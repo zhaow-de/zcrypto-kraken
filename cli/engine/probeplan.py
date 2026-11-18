@@ -27,8 +27,8 @@ _MAX_LEVERAGE = 10
 _PLAN_KEYS = frozenset({"plan_id", "created_at", "intents"})
 _INTENT_KEYS = frozenset({"symbol", "side", "action", "mode", "notional_eur", "qty", "leverage", "offset_pct", "hold_minutes"})
 _MAX_HOLD_MINUTES = 60
-# Master-plan §10's 250% floor at rung scale: required margin (notional / leverage, summed over margin
-# intents) times this multiplier must fit under the account's free collateral.
+# Master-plan §10's 250% floor at rung scale: required margin (notional / leverage, summed over the
+# margin opens) times this multiplier must fit under Kraken's free margin.
 _MARGIN_FLOOR_MULTIPLIER = 2.5
 
 
@@ -187,18 +187,25 @@ def parse_plan(text: str) -> ProbePlan:
     return ProbePlan(plan_id=plan_id, created_at=created_at, intents=intents, raw=doc)
 
 
+def _extends_margin(intent: ProbeIntent) -> bool:
+    return intent.leverage is not None and intent.action == "open"
+
+
+def extends_margin(plan: ProbePlan) -> bool:
+    return any(_extends_margin(intent) for intent in plan.intents)
+
+
 def plan_refusals(
     plan: ProbePlan,
     *,
     now: datetime,
     ledgered: frozenset[str],
     max_plan_notional_eur: float,
-    free_zeur: float,
 ) -> tuple[str, ...]:
-    """Every applicable refusal reason for `plan`, in declaration order -- plural by design: the operator sees every condition
-    between them and submission, not just the first. A `qty` intent contributes 0.0 to the notional sum, no price yet to convert it
-    -- deferred, never exempt: the executor's `_over_cap_reason` cumulates its real notional at sizing time. The qty intent is
-    absent from the margin sum by design: `parse_plan` refuses qty with leverage, so it is a spot close, which extends no margin."""
+    """Every applicable refusal reason for `plan` but the margin floor's, in declaration order -- plural by design: the
+    operator sees every condition between them and submission, not just the first. A `qty` intent contributes 0.0 to the
+    notional sum, no price yet to convert it -- deferred, never exempt: the executor's `_over_cap_reason` cumulates its
+    real notional at sizing time."""
     reasons: list[str] = []
 
     ttl_minutes = int(PLAN_TTL.total_seconds() // 60)
@@ -209,18 +216,27 @@ def plan_refusals(
     if plan.plan_id in ledgered:
         reasons.append("plan_id already ledgered")
 
-    # Both bounds are checked finite at the point of use -- a NaN or +inf bound compares False against any total and fails its
-    # check open, and `free_zeur` is a live venue balance, outside `cli/config.py`'s own finiteness check.
+    # The cap is checked finite at the point of use: a NaN or +inf bound compares False against any total and fails
+    # its check open.
     total_notional = sum(i.notional_eur or 0.0 for i in plan.intents)
     if not math.isfinite(max_plan_notional_eur):
         reasons.append(f"max_plan_notional_eur is not finite: {max_plan_notional_eur!r}")
     elif total_notional > max_plan_notional_eur:
         reasons.append(f"plan notional {total_notional:.2f} EUR exceeds the cap {max_plan_notional_eur:.2f} EUR")
 
-    margin_required = sum(i.notional_eur / i.leverage for i in plan.intents if i.leverage is not None) * _MARGIN_FLOOR_MULTIPLIER
-    if not math.isfinite(free_zeur):
-        reasons.append(f"free_zeur is not finite: {free_zeur!r}")
-    elif margin_required > free_zeur:
-        reasons.append(f"margin floor: {margin_required:.2f} EUR required exceeds free_zeur {free_zeur:.2f} EUR")
-
     return tuple(reasons)
+
+
+def margin_floor_refusals(plan: ProbePlan, *, free_margin_eur: float) -> tuple[str, ...]:
+    """The margin floor's refusal of `plan` against Kraken's free margin, or none. A margin open, a leveraged `open`, is
+    the one intent that extends margin; a close, spot or leveraged, extends none. So a plan with no margin open has no
+    floor and a caller reads no free margin for one, and the sum counts the margin opens alone. `free_margin_eur` is a
+    venue figure, outside `cli/config.py`'s finiteness check, and a NaN or +inf compares False against any requirement."""
+    if not extends_margin(plan):
+        return ()
+    margin_required = sum(i.notional_eur / i.leverage for i in plan.intents if _extends_margin(i)) * _MARGIN_FLOOR_MULTIPLIER
+    if not math.isfinite(free_margin_eur):
+        return (f"free margin is not finite: {free_margin_eur!r}",)
+    if margin_required > free_margin_eur:
+        return (f"margin floor: {margin_required:.2f} EUR required exceeds free margin {free_margin_eur:.2f} EUR",)
+    return ()
