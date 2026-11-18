@@ -10,7 +10,8 @@ its witness is dark too:
 Both detectors are **unconditional**: they require no secondary activity, which is exactly why they
 are the only ones that can see a correlated outage (spec 00050 constraint 4 — a correlated event hits
 every host at the same exchange event, so redundancy buys nothing against it). Neither is ever
-spliced: the data is gone. They are ledgered, booked into `residual_gap_seconds_total`, and paged.
+spliced: there is no witness. They are ledgered, booked into `residual_gap_seconds_total`, and paged,
+but for a venue halt `classify_halt` proves the book carried through, which books to its own counter.
 
 No I/O policy and no Typer here — the tree scan is filename-only (it never opens a parquet), and
 `command.py` owns the reading, the minting and the exporter.
@@ -176,8 +177,8 @@ def fleet_dark_windows(
     That distinction is the detector. Ten pairs each going quiet for 40 s at ten *different* moments
     of the hour is an ordinary thin market. Ten pairs going quiet for 40 s at the *same* moment, on
     two independent hosts holding two independent WS connections, is not a market — at depth 100 it
-    has no benign explanation, and it is loss. A per-pair silence *count* carries no window and cannot
-    tell the two apart, so it would page on the benign one.
+    is loss or the venue halting its books, which `classify_halt` tells apart. A per-pair silence *count*
+    carries no window and cannot tell the two apart, so it would page on the benign one.
 
     The hour's own bounds are edges, for the same reason `find_book_gaps` requires them: a fleet that
     dies at :10 has no "next message" to pair with, and that crash shape is the whole point. Stamps
@@ -274,11 +275,13 @@ INTERIOR_MAX_SECONDS = 300.0
 
 @dataclass(frozen=True)
 class EpisodeVerdict:
-    """Why the fleet went dark — TRIAGE ONLY, and deliberately not an input to any booking.
+    """Why the fleet went dark — TRIAGE, and an input to the booking only as a veto on a halt.
 
     `residual_gap_seconds_total` books ABSENCE of data; this says what the reconciler believes
     CAUSED the absence. Fusing the two would make a monotonic, unwalkbackable ledger depend on an
-    inference, so the verdict reaches the log line and the record and nothing else.
+    inference, so the verdict reaches the log line and the record, and the booking reads it in the one
+    direction that cannot lower that counter: `capture_divergent` keeps an hour's seconds as loss even
+    where `classify_halt` proves a halt.
     """
 
     verdict: str
@@ -358,6 +361,136 @@ def classify_dark_episode(
     else:
         verdict = VENUE_SILENT
     return EpisodeVerdict(verdict, updates, snapshots, interior_seconds, agreeing, skipped, tuple(divergent))
+
+
+VENUE_HALT = "venue_halt"
+
+# A resync's snapshot follows the update that tripped it within the desync ladder's span -- to its reconnect
+# rung plus one recovery tick (`cli/capture/desync_recovery.py`) -- and that update can reach capture late.
+# A stream that resumes later than this before the hour's end could carry its snapshot into the next hour,
+# which no examination of this hour reads.
+RESUME_MARGIN_SECONDS = 300.0
+
+# The shortest all-pairs quiet around a window that a halt must span. A halt stops every pair's matching for
+# minutes; inside a shorter quiet, the market's own, a writer that dropped every pair's rows on both hosts leaves
+# the same mirrors a halt does.
+QUIET_SPAN_SECONDS = 240.0
+
+
+@dataclass(frozen=True)
+class HaltEvidence:
+    """Whether a fleet-dark hour was the venue halting its books, and the counts that say why.
+
+    The booking's evidence for a halt: it books the hour's seconds to the halt counter, and none to
+    `residual_gap_seconds_total`, only when this holds.
+    """
+
+    streams: int
+    streams_carried: int
+    windows: int
+    windows_bracketed: int
+    trades_inside: int
+    id_holes: int
+    quiet_seconds: float
+
+    @property
+    def holds(self) -> bool:
+        return (
+            self.streams > 0
+            and self.streams_carried == self.streams
+            and self.windows_bracketed == self.windows
+            and self.trades_inside == 0
+            and self.id_holes == 0
+            and self.quiet_seconds >= QUIET_SPAN_SECONDS
+        )
+
+
+def classify_halt(
+    windows: Sequence[DarkWindow],
+    stream_windows: Mapping[str, Sequence[DarkWindow]],
+    book_rows: Mapping[str, Mapping[str, list[tuple[datetime, str]] | None]],
+    trade_rows: Mapping[str, Mapping[str, list[tuple[datetime, int]] | None]],
+    *,
+    hour_end: datetime,
+) -> HaltEvidence:
+    """Did the venue halt its books across `windows`, losing nothing, or is the silence unproven?
+
+    Three proofs, all from the mirrors alone, and all must hold:
+
+      * **The book carried through.** Every booked stream is held by both mirrors, each resuming after each
+        window on an update no later than `RESUME_MARGIN_SECONDS` before the hour's end, and on at least one
+        of them no `snapshot` row lands from the stream's first window's start to that end. Capture checks
+        every update's CRC against the book it carries and resubscribes on a mismatch, and a resubscribe or
+        a reconnect writes a snapshot, so a resume with none after it is Kraken's own checksum accepting the
+        book carried across the silence. That is the archive's standing ranks-1-10 attestation, no more: a
+        change below rank 10 is outside it. The checksum vouches for what a host received, never for what it
+        wrote, so the other host must come back on an update too: one that holds no file, never resumes, or
+        comes back on a snapshot went dark by its own outage, and the window would be one host's dropped
+        writes.
+      * **Nothing traded.** No pair prints, on either mirror, inside its own booked silence
+        (`stream_windows[pair]`, each containing a fleet window, or the fleet windows where it has none);
+        every pair's trade ids step by exactly one across each fleet window they bracket, and some pair
+        brackets every window. A writer that dropped rows while capture kept reading leaves the CRC
+        whole, and this is what sees it wherever the venue matched across the drop.
+      * **The market stood still.** Around each fleet window, the last print on any pair at or before its
+        start and the first at or after its end, both in the hour's tapes, lie `QUIET_SPAN_SECONDS` or more
+        apart: a writer that dropped every pair's rows on both hosts across a stretch no pair printed in
+        passes the other two proofs, and only a quiet longer than the market's own tells a halt from it.
+
+    A stream is `book_rows[pair]`'s two mirrors; `trade_rows[pair]`'s two tapes are unioned by trade id.
+    """
+    margin = timedelta(seconds=RESUME_MARGIN_SECONDS)
+
+    def carried(mirrors: Mapping[str, list[tuple[datetime, str]] | None], own: Sequence[DarkWindow]) -> bool:
+        both = [rows for rows in (mirrors.get("primary"), mirrors.get("secondary")) if rows is not None]
+        if len(both) < 2 or not own:
+            return False
+        for rows in both:
+            for w in own:
+                at = min((ts for ts, _ in rows if ts >= w.end), default=None)
+                if at is None or at > hour_end - margin:
+                    return False
+                if any(kind != "update" for ts, kind in rows if ts == at):
+                    return False
+        first = min(w.start for w in own)
+        return any(all(kind == "update" for ts, kind in rows if ts >= first) for rows in both)
+
+    carried_streams = sum(1 for pair, own in stream_windows.items() if carried(book_rows.get(pair) or {}, own))
+
+    bracketed: set[int] = set()
+    inside = holes = 0
+    prints: list[datetime] = []
+    for pair in sorted(trade_rows):
+        first_seen: dict[int, datetime] = {}
+        for rows in trade_rows[pair].values():
+            for ts, trade_id in rows or ():
+                first_seen.setdefault(trade_id, ts)
+        tape = sorted((ts, trade_id) for trade_id, ts in first_seen.items())
+        prints.extend(ts for ts, _ in tape)
+        inside += sum(1 for ts, _ in tape for w in (stream_windows.get(pair) or windows) if w.start < ts < w.end)
+        for i, w in enumerate(windows):
+            before = [t for t in tape if t[0] <= w.start]
+            after = [t for t in tape if t[0] >= w.end]
+            if before and after:
+                if after[0][1] - before[-1][1] == 1:
+                    bracketed.add(i)
+                else:
+                    holes += 1
+
+    def quiet(w: DarkWindow) -> float:
+        last = max((ts for ts in prints if ts <= w.start), default=None)
+        first = min((ts for ts in prints if ts >= w.end), default=None)
+        return 0.0 if last is None or first is None else (first - last).total_seconds()
+
+    return HaltEvidence(
+        streams=len(stream_windows),
+        streams_carried=carried_streams,
+        windows=len(windows),
+        windows_bracketed=len(bracketed),
+        trades_inside=inside,
+        id_holes=holes,
+        quiet_seconds=min((quiet(w) for w in windows), default=0.0),
+    )
 
 
 def is_total_loss(
