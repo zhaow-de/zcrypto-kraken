@@ -12,6 +12,7 @@ from cli.archive.settle import (
     CAPTURE_DIVERGENT,
     INTERIOR_MAX_SECONDS,
     LATE_MINT_HOURS,
+    QUIET_SPAN_SECONDS,
     RESUME_MARGIN_SECONDS,
     SETTLE_HOURS,
     UNDETERMINED,
@@ -777,14 +778,23 @@ def test_prints_sharing_a_stamp_bracket_a_window_by_their_ids():
     assert evidence.holds
 
 
+def test_prints_on_the_windows_own_bounds_bracket_it_from_outside():
+    tape = [(_at(600), 7), (_at(1200), 8)]
+    evidence = _halt_evidence(trades={"BTC/EUR": {"primary": tape, "secondary": tape}})
+    assert evidence == HaltEvidence(
+        streams=2, streams_carried=2, windows=1, windows_bracketed=1, trades_inside=0, id_holes=0, quiet_seconds=600.0
+    )
+    assert evidence.holds
+
+
 @pytest.mark.parametrize(
-    "tape",
-    [[], [(_at(590), 7)], [(_at(1210), 8)]],
+    ("btc", "eth", "quiet"),
+    [([], [], 0.0), ([(_at(590), 7)], [(_at(1210), 50)], 620.0), ([(_at(1210), 8)], [(_at(590), 50)], 620.0)],
     ids=["no-trade", "a-print-before-only", "a-print-after-only"],
 )
-def test_a_window_no_pair_brackets_is_not_a_halt(tape):
-    evidence = _halt_evidence(trades={"BTC/EUR": {"primary": tape, "secondary": tape}})
-    assert evidence.windows_bracketed == 0
+def test_a_window_no_pair_brackets_is_not_a_halt(btc, eth, quiet):
+    evidence = _halt_evidence(trades={"BTC/EUR": {"primary": btc, "secondary": btc}, "ETH/EUR": {"primary": eth, "secondary": eth}})
+    assert (evidence.windows_bracketed, evidence.quiet_seconds) == (0, quiet)
     assert not evidence.holds
 
 
@@ -802,6 +812,18 @@ def test_every_window_needs_its_own_bracket():
         streams=2, streams_carried=2, windows=2, windows_bracketed=1, trades_inside=0, id_holes=0, quiet_seconds=320.0
     )
     assert not evidence.holds
+
+
+def test_a_quiet_of_exactly_the_span_is_a_halt():
+    brief = DarkWindow(start=_at(600), end=_at(780), seconds=180.0)
+    rows = [(_at(s), "update") for s in range(0, 3600, 10) if not 600 < s < 780]
+    book = {p: {"primary": rows, "secondary": list(rows)} for p in _PAIRS}
+    tape = [(_at(570), 7), (_at(810), 8)]
+    evidence = _halt_evidence(book, {"BTC/EUR": {"primary": tape, "secondary": tape}}, windows=(brief,))
+    assert evidence == HaltEvidence(
+        streams=2, streams_carried=2, windows=1, windows_bracketed=1, trades_inside=0, id_holes=0, quiet_seconds=QUIET_SPAN_SECONDS
+    )
+    assert evidence.holds
 
 
 # --- the int64-microsecond derivation (spec 00097 D3) ---------------------------------------------

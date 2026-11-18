@@ -11,7 +11,8 @@ Both detectors are **unconditional**: they require no secondary activity, which 
 are the only ones that can see a correlated outage (spec 00050 constraint 4 — a correlated event hits
 every host at the same exchange event, so redundancy buys nothing against it). Neither is ever
 spliced: there is no witness. They are ledgered, booked into `residual_gap_seconds_total`, and paged,
-but for a venue halt `classify_halt` proves the book carried through, which books to its own counter.
+but a `both_streams_silent` hour that `classify_halt` proves a venue halt — the book carried through,
+nothing traded, the market quiet — is ledgered and booked into `venue_halt_seconds_total` instead, unpaged.
 
 No I/O policy and no Typer here — the tree scan is filename-only (it never opens a parquet), and
 `command.py` owns the reading, the minting and the exporter.
@@ -178,7 +179,8 @@ def fleet_dark_windows(
     of the hour is an ordinary thin market. Ten pairs going quiet for 40 s at the *same* moment, on
     two independent hosts holding two independent WS connections, is not a market — at depth 100 it
     is loss or the venue halting its books, which `classify_halt` tells apart. A per-pair silence *count*
-    carries no window and cannot tell the two apart, so it would page on the benign one.
+    carries no window and cannot tell the thin market from the simultaneous silence, so it would page on
+    the thin market.
 
     The hour's own bounds are edges, for the same reason `find_book_gaps` requires them: a fleet that
     dies at :10 has no "next message" to pair with, and that crash shape is the whole point. Stamps
@@ -366,7 +368,8 @@ def classify_dark_episode(
 VENUE_HALT = "venue_halt"
 
 # A resync's snapshot follows the update that tripped it within the desync ladder's span -- to its reconnect
-# rung plus one recovery tick (`cli/capture/desync_recovery.py`) -- and that update can reach capture late.
+# rung (`cli/capture/desync_recovery.py`) plus one recovery tick (`DESYNC_RECOVERY_INTERVAL_SECONDS` in
+# `cli/capture/command.py`) -- and that update can reach capture late.
 # A stream that resumes later than this before the hour's end could carry its snapshot into the next hour,
 # which no examination of this hour reads.
 RESUME_MARGIN_SECONDS = 300.0
