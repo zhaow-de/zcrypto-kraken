@@ -119,27 +119,27 @@ XRP/EUR   primary snapshot_rows=0 first_after=update/update/update | secondary s
 
 `-` is a pair with no print in the hour before the first window. The first reading ordered the tape by stamp alone and read DOGE/EUR's step as 2: two of its prints share one stamp after the windows, and a tie broken against the ids reads a hole that is not there. The rule orders by stamp then id (D4), and a case pins it.
 
-**The rule over every dark hour the ledger holds.** `classify_halt` as the plan wrote it before its third proof, the quiet (D2), over each `both_streams_silent` record's own `windows` and `stream_windows` (a record that predates `stream_windows` reads its `windows`), on the mirrors' files for that hour (`.tmp/r00163/measure/m_impl_backtest.py`, run on `branch`):
+**The rule over every dark hour the ledger holds.** `classify_halt` as the plan writes it, over each `both_streams_silent` record's own `windows` and `stream_windows` (a record that predates `stream_windows` reads its `windows`), on the mirrors' files for that hour (`.tmp/r00163/measure/m_impl_backtest.py`, its print line carrying `quiet_s`, run by the orchestrator on 2026-11-18 from a scratch worktree at `3ca813e40` carrying the plan's `cli/archive/settle.py`):
 
 ```
-cd .tmp/r00163/inputs/scripts/wt && uv run -q python ../../../measure/m_impl_backtest.py
-2026-07-13T07 booked=None windows=1 carried=0/10 bracketed=0/1 trades_inside=120 id_holes=0 holds=False residual_s=2661.788740 classify_s=0.00
-2026-07-27T07 booked=None windows=1 carried=0/12 bracketed=1/1 trades_inside=0 id_holes=0 holds=False residual_s=2385.847992 classify_s=0.28
-2026-08-06T07 booked=None windows=2 carried=0/12 bracketed=2/2 trades_inside=0 id_holes=0 holds=False residual_s=10588.382751 classify_s=0.19
-2026-08-20T07 booked=None windows=2 carried=0/12 bracketed=2/2 trades_inside=0 id_holes=0 holds=False residual_s=6251.349974 classify_s=0.47
-2026-09-03T07 booked=undetermined windows=1 carried=0/12 bracketed=1/1 trades_inside=0 id_holes=0 holds=False residual_s=2134.703242 classify_s=0.42
-2026-09-17T07 booked=undetermined windows=1 carried=0/12 bracketed=1/1 trades_inside=0 id_holes=0 holds=False residual_s=2208.788413 classify_s=0.29
-2026-10-01T07 booked=undetermined windows=1 carried=0/12 bracketed=1/1 trades_inside=0 id_holes=0 holds=False residual_s=2407.083528 classify_s=0.72
-2026-10-13T14 booked=undetermined windows=1 carried=0/12 bracketed=1/1 trades_inside=37 id_holes=9 holds=False residual_s=748.267788 classify_s=0.90
-2026-10-15T07 booked=venue_silent windows=2 carried=12/12 bracketed=2/2 trades_inside=0 id_holes=0 holds=True residual_s=2849.043767 classify_s=2.74
-2026-10-29T08 booked=venue_silent windows=2 carried=12/12 bracketed=2/2 trades_inside=0 id_holes=0 holds=True residual_s=3276.446273 classify_s=1.98
-2026-10-30T02 booked=undetermined windows=1 carried=0/12 bracketed=0/1 trades_inside=0 id_holes=0 holds=False residual_s=26831.390459 classify_s=0.28
-2026-10-30T03 booked=undetermined windows=3 carried=0/12 bracketed=0/3 trades_inside=0 id_holes=0 holds=False residual_s=7425.849728 classify_s=1.75
-2026-10-30T08 booked=venue_silent windows=2 carried=12/12 bracketed=2/2 trades_inside=0 id_holes=0 holds=True residual_s=2344.418635 classify_s=2.29
-2026-11-17T08 booked=undetermined windows=3 carried=12/12 bracketed=3/3 trades_inside=0 id_holes=0 holds=True residual_s=5432.534453 classify_s=2.87
+cd .tmp/r3fix/wt && uv run -q python ../../r00163/measure/m_impl_backtest.py
+2026-07-13T07 booked=None windows=1 carried=0/10 bracketed=0/1 trades_inside=120 id_holes=0 quiet_s=0.0 holds=False residual_s=2661.788740 classify_s=0.00
+2026-07-27T07 booked=None windows=1 carried=0/12 bracketed=1/1 trades_inside=0 id_holes=0 quiet_s=321.8 holds=False residual_s=2385.847992 classify_s=0.29
+2026-08-06T07 booked=None windows=2 carried=0/12 bracketed=2/2 trades_inside=0 id_holes=0 quiet_s=1036.3 holds=False residual_s=10588.382751 classify_s=0.18
+2026-08-20T07 booked=None windows=2 carried=0/12 bracketed=2/2 trades_inside=0 id_holes=0 quiet_s=779.7 holds=False residual_s=6251.349974 classify_s=0.48
+2026-09-03T07 booked=undetermined windows=1 carried=0/12 bracketed=1/1 trades_inside=0 id_holes=0 quiet_s=305.2 holds=False residual_s=2134.703242 classify_s=0.42
+2026-09-17T07 booked=undetermined windows=1 carried=0/12 bracketed=1/1 trades_inside=0 id_holes=0 quiet_s=331.8 holds=False residual_s=2208.788413 classify_s=0.30
+2026-10-01T07 booked=undetermined windows=1 carried=0/12 bracketed=1/1 trades_inside=0 id_holes=0 quiet_s=304.9 holds=False residual_s=2407.083528 classify_s=0.74
+2026-10-13T14 booked=undetermined windows=1 carried=0/12 bracketed=1/1 trades_inside=37 id_holes=9 quiet_s=67.1 holds=False residual_s=748.267788 classify_s=0.92
+2026-10-15T07 booked=venue_silent windows=2 carried=12/12 bracketed=2/2 trades_inside=0 id_holes=0 quiet_s=303.0 holds=True residual_s=2849.043767 classify_s=2.77
+2026-10-29T08 booked=venue_silent windows=2 carried=12/12 bracketed=2/2 trades_inside=0 id_holes=0 quiet_s=406.6 holds=True residual_s=3276.446273 classify_s=1.96
+2026-10-30T02 booked=undetermined windows=1 carried=0/12 bracketed=0/1 trades_inside=0 id_holes=0 quiet_s=0.0 holds=False residual_s=26831.390459 classify_s=0.29
+2026-10-30T03 booked=undetermined windows=3 carried=0/12 bracketed=0/3 trades_inside=0 id_holes=0 quiet_s=0.0 holds=False residual_s=7425.849728 classify_s=1.82
+2026-10-30T08 booked=venue_silent windows=2 carried=12/12 bracketed=2/2 trades_inside=0 id_holes=0 quiet_s=318.0 holds=True residual_s=2344.418635 classify_s=2.51
+2026-11-17T08 booked=undetermined windows=3 carried=12/12 bracketed=3/3 trades_inside=0 id_holes=0 quiet_s=557.0 holds=True residual_s=5432.534453 classify_s=3.00
 ```
 
-Four of the fourteen hold. The capture defect of 2026-07-13 (spec 00096's true negative) is refused on its snapshots and its 120 prints inside the window; 2026-10-13, a derivatives maintenance in which spot traded on, on its snapshots, 37 prints inside and 9 id holes; 2026-10-30 02Z on a window that runs to the hour's end. On the rest every stream carries a snapshot on both mirrors at or after its first window's start — at its resume, between its windows, or after its last — reconnects, which leave unread whether anything changed in the silence. The classification took 0.00–2.87 s a dark hour on this run; the timing varies by run (other runs read 0.00–2.86 s and 0.00–2.96 s) and is not a bound. Where each stream's first such snapshot sits (`.tmp/r00163/measure/m_snapshot_ranges.py`):
+Four of the fourteen hold. The capture defect of 2026-07-13 (spec 00096's true negative) is refused on its snapshots and its 120 prints inside the window; 2026-10-13, a derivatives maintenance in which spot traded on, on its snapshots, 37 prints inside and 9 id holes; 2026-10-30 02Z on a window that runs to the hour's end. On the rest every stream carries a snapshot on both mirrors at or after its first window's start — at its resume, between its windows, or after its last — reconnects, which leave unread whether anything changed in the silence. The classification took 0.00–3.00 s a dark hour on this run; the timing varies by run (runs before the quiet proof read 0.00–2.87 s, 0.00–2.86 s and 0.00–2.96 s) and is not a bound. Where each stream's first such snapshot sits (`.tmp/r00163/measure/m_snapshot_ranges.py`):
 
 ```
 cd .tmp/r00163/inputs/scripts/wt && uv run -q python ../../../measure/m_snapshot_ranges.py
@@ -250,7 +250,7 @@ cat .tmp/r00163/measure/m_quiet2.out
   XRP/EUR   last before 2026-10-08 14:59:49.438412+00:00 id 28638357 | first after 2026-10-08 15:21:01.207835+00:00 id 28638965 | id step 608 | primary: updates=159083 other=200; secondary: updates=157841 other=200
 ```
 
-Each of the four halts' spans opens and closes inside its hour, so the rule, which reads the hour's files alone, reads the same: 302.965471 s on 2026-10-15 the shortest, 557.017323 s on 2026-11-17 the longest. The 2026-10-08 stretch is not a quiet market: every pair's ids step 46 to 1,083 across it while each mirror holds 36,129 to 183,003 book updates a pair inside it, the trades missing from the mirrors, and the 121.3 s gap after it ends before 11 of the 12 pairs print again, ETH/BTC first at 15:20:41. Outside the ledger's dark hours, the market's own all-pairs quiet from 2026-07-14 on runs to 108.4 s. The quiet proof only adds a refusal, so the ten hours the run above refuses stay refused, and each of the four it holds on clears 240 s.
+Each of the four halts' spans opens and closes inside its hour, so the rule, which reads the hour's files alone, reads the same: 302.965471 s on 2026-10-15 the shortest, 557.017323 s on 2026-11-17 the longest. The 2026-10-08 stretch is not a quiet market: every pair's ids step 46 to 1,083 across it while each mirror holds 36,129 to 183,003 book updates a pair inside it, the trades missing from the mirrors, and the 121.3 s gap after it ends before 11 of the 12 pairs print again, ETH/BTC first at 15:20:41. Outside the ledger's dark hours, the market's own all-pairs quiet from 2026-07-14 on runs to 108.4 s. The rule over every dark hour, run with the quiet proof, holds on the same four, their `quiet_s` 303.0, 406.6, 318.0 and 557.0, the spans above rounded, and refuses the other ten, every column but `quiet_s` and `classify_s` as the run before the quiet proof read.
 
 **The reconciler end to end.** Develop's and the branch's `zcrypto archive reconcile`, detect-only, over the same mirrors into empty scratch overlays under `.tmp/r00163/golden/`, both started 23:36Z with `--window-hours 14`, so both examined 08Z–21Z:
 
