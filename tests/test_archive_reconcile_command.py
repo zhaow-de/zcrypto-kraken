@@ -1517,6 +1517,34 @@ def test_a_book_final_whose_rows_have_no_python_value_reads_as_that_mirror_absen
     assert "verdict=undetermined" in next(m for m in errors if "both_streams_silent" in m)
 
 
+def test_a_book_stamp_with_no_python_value_fails_that_heal_and_the_cycle_lives(tmp_path, monkeypatch):
+    pri, sec, rec = _roots(tmp_path)
+    _plant_halt(pri, sec)
+    stamps = [int((H + timedelta(seconds=o)).timestamp()) * 10**6 for o, _ in _DARK[:-1]] + [9 * 10**17]
+    _write(sec, "BTC/EUR", "book", H, _book("BTC/EUR", H, _DARK).with_columns(pl.Series("ts", stamps).cast(BOOK_SCHEMA["ts"])))
+    errors, warnings = _capture_logs(monkeypatch)
+
+    result = _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+
+    # Exit 1 is the cycle's own close on a failed hour, raised after every hour ran; a crash carries the OverflowError.
+    assert isinstance(result.exception, SystemExit) and result.exit_code == 1
+    [failed] = [r for r in _ledger(rec) if r["state"] == "failed"]
+    assert (failed["pair"], failed["kind"], failed["hour"]) == ("BTC/EUR", "book", H.isoformat())
+    assert "secondary row with ts 900000000000000000 us since the epoch falls outside the hour" in failed["reason"]
+    assert [(r["pair"], r["hour"]) for r in _ledger(rec) if r["state"] == "unwitnessed"] == [("ETH/EUR", H.isoformat())]
+    [record] = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"]
+    assert (record["streams_carried"], record["windows_bracketed"], record["trades_inside"], record["trade_id_holes"]) == (
+        1,
+        1,
+        0,
+        0,
+    )
+    assert record["verdict"] == "undetermined"
+    assert record["residual_seconds"] == pytest.approx(1220.0)
+    assert [m for m in warnings if "unreadable secondary book rows pair=BTC/EUR" in m]
+    assert "verdict=undetermined" in next(m for m in errors if "both_streams_silent" in m)
+
+
 def test_a_pair_with_no_trades_final_on_either_mirror_leaves_the_hour_unproven(tmp_path, monkeypatch):
     pri, sec, rec = _roots(tmp_path)
     _plant_halt(pri, sec)

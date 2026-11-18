@@ -154,10 +154,12 @@ def _validate_rows_within_hour(df: pl.DataFrame, name: str, hour_start: datetime
         return
     outside = df.filter((pl.col("ts") < hour_start) | (pl.col("ts") >= hour_end))
     if outside.height:
-        bad_ts = outside["ts"][0]
-        raise CaptureError(
-            f"{name} row with ts {bad_ts.isoformat()} falls outside the hour [{hour_start.isoformat()}, {hour_end.isoformat()})"
-        )
+        try:
+            stamp = outside["ts"][0].isoformat()
+        except Exception, pl.exceptions.PanicException:  # noqa: BLE001 -- no Python stamp: named by its raw value
+            # Out of range, or one polars panics on: converting it would crash the cycle this error fails one hour of.
+            stamp = f"{outside['ts'].cast(pl.Int64)[0]} {outside['ts'].dtype.time_unit} since the epoch"
+        raise CaptureError(f"{name} row with ts {stamp} falls outside the hour [{hour_start.isoformat()}, {hour_end.isoformat()})")
 
 
 def find_book_gaps(
