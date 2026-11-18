@@ -1909,6 +1909,7 @@ def test_a_fill_between_connects_moves_the_free_margin_the_next_plans_floor_is_m
     assert calls.count("TradeBalance") == 2
 
 
+@pytest.mark.parametrize("enabled", [False, True], ids=["cache-off", "cache-on"])
 @pytest.mark.parametrize(
     ("beside", "subscribed"),
     [
@@ -1918,14 +1919,18 @@ def test_a_fill_between_connects_moves_the_free_margin_the_next_plans_floor_is_m
     ids=["margin-close", "spot-open"],
 )
 def test_a_free_margin_read_that_fails_refuses_the_margin_opens_naming_the_read_and_runs_a_close_or_a_spot_open(
-    tmp_path, beside, subscribed
+    tmp_path, beside, subscribed, enabled
 ):
     """No fallback to the Cache's account summary, however much it reads, and nothing but the margin open
-    refused by the read's failure, the cache off: the open is refused at its start, and the intent beside it, a
-    margin close on a live position or a spot open, starts."""
+    refused by the read's failure: the open is refused at its start, and the intent beside it, a margin close on
+    a live position or a spot open, starts -- under the cache past the mixed-inventory check, which reads an empty
+    margin book and passes."""
     client = StubClient(StubCache(balances={"EUR": 1_000_000.0}, positions=_held(**{"BTC/EUR": 0.001})))
     free = _VenueFreeMargin(raises=RuntimeError("API error: EGeneral:Permission denied"))
-    ex = _executor(tmp_path, client=client, venue_free_margin=free)
+    positions = _VenuePositions()
+    ex = _executor(
+        tmp_path, client=client, config=_cache_config(tmp_path, enabled), venue_positions=positions, venue_free_margin=free
+    )
     path = _drop_plan(tmp_path, _plan_dict(intents=[_intent(symbol="ETH/EUR", notional_eur=30.0, leverage=2), beside]))
 
     with _executor_errors(level=logging.WARNING) as records:
@@ -1933,7 +1938,13 @@ def test_a_free_margin_read_that_fails_refuses_the_margin_opens_naming_the_read_
 
     reason = "Kraken's free margin could not be read for the margin floor -- RuntimeError: API error: EGeneral:Permission denied"
     entry, opened = _plan_entry(tmp_path), _intent_entry(tmp_path, 0)
-    assert (entry["disposition"], entry["reasons"], free.calls, path.exists()) == ("accepted", [], 1, False)
+    assert (entry["disposition"], entry["reasons"], free.calls, positions.calls, path.exists()) == (
+        "accepted",
+        [],
+        1,
+        1 if enabled else 0,
+        False,
+    )
     assert (opened["outcome"], opened["reasons"]) == ("refused", [reason])
     assert (_intent_entry(tmp_path, 1)["outcome"], client.subscribed) == ("pending", [subscribed])
     assert [(r.levelname, r.getMessage()) for r in records] == [
@@ -2034,7 +2045,8 @@ def test_the_free_margin_read_logs_the_figure_it_measured_against(tmp_path):
     with _executor_errors(level=logging.INFO) as records:
         ex.on_timer(NOW)
 
-    assert "probe plan p-1: Kraken's free margin reads 812.50 EUR at its pickup" in [r.getMessage() for r in records]
+    figure = ("INFO", "probe plan p-1: Kraken's free margin reads 812.50 EUR at its pickup")
+    assert figure in [(r.levelname, r.getMessage()) for r in records]
 
 
 def test_an_unparseable_plan_is_journaled_and_deleted(tmp_path):
@@ -12018,16 +12030,16 @@ def test_a_plan_with_an_opening_intent_waits_for_a_tick_with_nothing_in_flight_b
         ex.on_timer(NOW)
 
     assert [str(cid) for cid in client.canceled] == [adopted] and client.cache.order(ClientOrderId(adopted)).is_inflight
-    held = "probe plan p-1 waits for a tick with nothing in flight -- it takes a signed venue read"
+    held = ("INFO", "probe plan p-1 waits for a tick with nothing in flight -- it takes a signed venue read")
     if enabled:
         assert _plan_path(tmp_path).exists() and positions.calls == 0
-        assert held in [r.getMessage() for r in records]
+        assert held in [(r.levelname, r.getMessage()) for r in records]
         client.cache.order(ClientOrderId(adopted)).apply(
             _event(OrderCanceled, client_order_id=adopted, strategy_id=StrategyId("EXTERNAL"))
         )
         ex.on_timer(NOW + timedelta(seconds=5))
     else:
-        assert held not in [r.getMessage() for r in records]
+        assert held[1] not in [r.getMessage() for r in records]
     assert not _plan_path(tmp_path).exists()
     assert (_plan_entry(tmp_path)["disposition"], positions.calls) == ("accepted", 1 if enabled else 0)
 
