@@ -616,6 +616,14 @@ def test_the_permanent_loss_page_names_the_halt_counter_the_reconciler_publishes
     assert halt in published_app_families()
 
 
+def test_the_all_streams_silent_page_says_a_halt_the_reconciler_proves_pages_nothing():
+    clause = (
+        "L2 is unbackfillable, and every second here is permanent loss unless the reconciler later proves it a venue halt "
+        "that lost nothing, which books as a halt and pages nothing."
+    )
+    assert clause in _rule("zcrypto-capture-all-streams-silent")["annotations"]["summary"]
+
+
 def test_the_new_breakage_window_matches_its_relative_time_range():
     """Same coupling as the residual-gap test above, for the rule guarding NEW breakage in
     unbackfillable canonical data: `relativeTimeRange.from` and the `delta()` window must agree, or a
