@@ -1436,8 +1436,9 @@ def test_an_unreadable_trades_segment_leaves_the_hour_unproven_whatever_another_
         _seg_path(sec, "BTC/EUR", "trades", H).unlink()
     errors, warnings = _capture_logs(monkeypatch)
 
-    _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+    result = _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
 
+    assert result.exception is None or isinstance(result.exception, SystemExit), result.exception
     [record] = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"]
     assert (record["streams_carried"], record["windows_bracketed"], record["trades_inside"], record["trade_id_holes"]) == (
         2,
@@ -1476,8 +1477,9 @@ def test_a_readable_trades_segment_the_proof_cannot_use_leaves_the_hour_unproven
     _write(pri, "BTC/EUR", "trades", H, _prints("BTC/EUR", H, [(1185.0, 7), (1805.0, 8)]).with_columns(column))
     errors, warnings = _capture_logs(monkeypatch)
 
-    _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+    result = _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
 
+    assert result.exception is None or isinstance(result.exception, SystemExit), result.exception
     [record] = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"]
     assert (record["streams_carried"], record["windows_bracketed"], record["trades_inside"], record["trade_id_holes"]) == (
         2,
@@ -1517,20 +1519,21 @@ def test_a_book_final_whose_rows_have_no_python_value_reads_as_that_mirror_absen
     assert "verdict=undetermined" in next(m for m in errors if "both_streams_silent" in m)
 
 
-def test_a_book_stamp_with_no_python_value_fails_that_heal_and_the_cycle_lives(tmp_path, monkeypatch):
+@pytest.mark.parametrize("stamp", [9 * 10**17, 2**63 - 1], ids=["out-of-range", "one-polars-panics-on"])
+def test_a_book_stamp_with_no_python_value_fails_that_heal_and_the_cycle_lives(tmp_path, monkeypatch, stamp):
     pri, sec, rec = _roots(tmp_path)
     _plant_halt(pri, sec)
-    stamps = [int((H + timedelta(seconds=o)).timestamp()) * 10**6 for o, _ in _DARK[:-1]] + [9 * 10**17]
+    stamps = [int((H + timedelta(seconds=o)).timestamp()) * 10**6 for o, _ in _DARK[:-1]] + [stamp]
     _write(sec, "BTC/EUR", "book", H, _book("BTC/EUR", H, _DARK).with_columns(pl.Series("ts", stamps).cast(BOOK_SCHEMA["ts"])))
     errors, warnings = _capture_logs(monkeypatch)
 
     result = _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
 
-    # Exit 1 is the cycle's own close on a failed hour, raised after every hour ran; a crash carries the OverflowError.
+    # Exit 1 is the cycle's own close on a failed hour, raised after every hour ran; a crash carries its own exception.
     assert isinstance(result.exception, SystemExit) and result.exit_code == 1
     [failed] = [r for r in _ledger(rec) if r["state"] == "failed"]
     assert (failed["pair"], failed["kind"], failed["hour"]) == ("BTC/EUR", "book", H.isoformat())
-    assert "secondary row with ts 900000000000000000 us since the epoch falls outside the hour" in failed["reason"]
+    assert f"secondary row with ts {stamp} us since the epoch falls outside the hour" in failed["reason"]
     assert [(r["pair"], r["hour"]) for r in _ledger(rec) if r["state"] == "unwitnessed"] == [("ETH/EUR", H.isoformat())]
     [record] = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"]
     assert (record["streams_carried"], record["windows_bracketed"], record["trades_inside"], record["trade_id_holes"]) == (
@@ -1543,6 +1546,24 @@ def test_a_book_stamp_with_no_python_value_fails_that_heal_and_the_cycle_lives(t
     assert record["residual_seconds"] == pytest.approx(1220.0)
     assert [m for m in warnings if "unreadable secondary book rows pair=BTC/EUR" in m]
     assert "verdict=undetermined" in next(m for m in errors if "both_streams_silent" in m)
+
+
+@pytest.mark.parametrize("stamp", [9 * 10**17, 2**63 - 1], ids=["out-of-range", "one-polars-panics-on"])
+def test_a_trades_stamp_with_no_python_value_fails_that_mint_and_the_cycle_lives(tmp_path, monkeypatch, stamp):
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    stamps = [int((H + timedelta(seconds=i)).timestamp()) * 10**6 for i in (1, 2)] + [stamp]
+    _write(
+        pri, "BTC/EUR", "trades", H, _trades("BTC/EUR", H, [1, 2, 5]).with_columns(pl.Series("ts", stamps).cast(TRADE_SCHEMA["ts"]))
+    )
+    _write(sec, "BTC/EUR", "trades", H, _trades("BTC/EUR", H, [1, 2, 3, 4, 5]))
+
+    result = _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+
+    assert isinstance(result.exception, SystemExit) and result.exit_code == 1
+    [failed] = [r for r in _ledger(rec) if r["state"] == "failed"]
+    assert (failed["pair"], failed["kind"], failed["hour"]) == ("BTC/EUR", "trades", H.isoformat())
+    assert f"{stamp} us since the epoch" in failed["reason"]
 
 
 def test_a_pair_with_no_trades_final_on_either_mirror_leaves_the_hour_unproven(tmp_path, monkeypatch):

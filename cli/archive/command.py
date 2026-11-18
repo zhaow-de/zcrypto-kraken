@@ -1143,7 +1143,17 @@ def reconcile(
                 # so trades are the one stream the reconciler may union ROW-level. "union" is the
                 # honest provenance source -- the rows come from both mirrors, interleaved by id.
                 frame = union.frame
-                block = [Block("union", frame, frame["ts"].min(), frame["ts"].max())]
+                try:
+                    span = (frame["ts"].min(), frame["ts"].max())
+                except (OverflowError, pl.exceptions.PanicException) as exc:
+                    # A stamp with no Python value fails this hour's mint, never the cycle. Never a within-hour
+                    # check here: a trade's own stamp can precede the hour it was received in.
+                    raw = frame["ts"].cast(pl.Int64)
+                    raise CaptureError(
+                        f"the union's ts spans {raw.min()} to {raw.max()} {frame['ts'].dtype.time_unit} since the epoch, "
+                        f"beyond a Python stamp: {exc}"
+                    ) from exc
+                block = [Block("union", frame, *span)]
                 mint_hour(
                     reconciled_root,
                     pair,
