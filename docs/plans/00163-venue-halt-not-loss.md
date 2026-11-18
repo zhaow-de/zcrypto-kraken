@@ -4,7 +4,7 @@
 
 **Goal:** A `both_streams_silent` hour whose two mirrors prove the venue halted its books — every booked stream back on both hosts without a reconnect and carried through on one with no resync snapshot after the silence, nothing traded across it, and no pair printing for at least 240 s around each window — books `verdict` `venue_halt` and its seconds to a new `zcrypto_reconcile_venue_halt_seconds_total`, none to the residual counter, logs a WARNING, and pages nothing; every other silence books and pages as today.
 
-**Architecture:** A pure `classify_halt` in `cli/archive/settle.py` returns a `HaltEvidence` from the fleet windows, the stream windows, both mirrors' `(ts, type)` book rows and both mirrors' `(ts, trade_id)` trade tapes (spec D2–D4). The booking block in `cli/archive/command.py` reads the hour's trade tapes through a new `_tape`, sets the verdict to `venue_halt` when the evidence holds, every trades segment read, and the mirrors do not diverge (D4, D5), writes `residual_seconds` 0.0 and `halt_seconds` with five evidence fields on the record (D6), logs a WARNING for a halt (D8), and `_totals` sums `halt_seconds` into the new counter, which panel 206 charts (D7). The page's summary, the runbooks, the README and the hygiene map are re-trued from the spec's *Runbook and alert texts*; the decisions log takes four `[00163]` entries.
+**Architecture:** A pure `classify_halt` in `cli/archive/settle.py` returns a `HaltEvidence` from the fleet windows, the stream windows, both mirrors' `(ts, type)` book rows and both mirrors' `(ts, trade_id)` trade tapes (spec D2–D4). The booking block in `cli/archive/command.py` reads the hour's trade tapes through a new `_tape`, sets the verdict to `venue_halt` when the evidence holds, every trades segment read, and the triage reads no divergence (D4, D5), writes `residual_seconds` 0.0 and `halt_seconds` with five evidence fields on the record (D6), logs a WARNING for a halt (D8), and `_totals` sums `halt_seconds` into the new counter, which panel 206 charts (D7). The page's summary, the runbooks, the README and the hygiene map are re-trued from the spec's *Runbook and alert texts*; the decisions log takes four `[00163]` entries.
 
 **Tech Stack:** Python 3.14, polars, pytest, `infra/scripts/mutate-probe.sh`.
 
@@ -23,7 +23,7 @@ full tests/test_infra_alert_rules.py — a test importing cli.engine.store, read
 
 Every fence below was run against `6795cd513`'s code in a detached scratch worktree of this branch, `.tmp/r3fix/wt` at `fca07df6d`, the plan's code applied and committed there task by task, never pushed. Each task's per-commit run read green in that nested tree: Task 1 `258 passed`, Task 2 `1092 passed, 44 warnings`, Task 3 `2034 passed, 2 skipped`, Task 4 `4805 passed, 1 deselected`, Task 5 `1113 passed`, Task 6 `50 passed`. The red readings: Task 1's test file on `6795cd513` reads `ImportError: cannot import name 'RESUME_MARGIN_SECONDS'`, Task 2's twenty-four cases on Task 1's tree `21 failed, 3 passed`, Task 3's case on Task 2's tree `1 failed`. Every probe arm the tasks list read `KILLED (control proven, tree restored byte-identically)`. Task 3's, 4's and 5's text fences, run in that tree with the committed spec beside them, passed the repository's commit hooks with no rewrite, `mdformat` and `yamllint` among them, and `guidance-guard --uncounted` printed nothing for either runbook page.
 
-Before Task 1, the orchestrator, never an implementer, re-runs `.tmp/r00163/measure/m_impl_backtest.py` read-only from a scratch worktree carrying this plan's `cli/archive/settle.py`: it must read `holds=True` on exactly 2026-10-15T07, 2026-10-29T08, 2026-10-30T08 and 2026-11-17T08, the spec's *The measured basis* having run it before the quiet proof.
+The orchestrator re-ran `.tmp/r00163/measure/m_impl_backtest.py` with this plan's `cli/archive/settle.py` on 2026-11-18, 01:55:19–01:56:13Z, and the spec's *The measured basis* pastes it.
 
 ## Global Constraints
 
@@ -40,7 +40,7 @@ Before Task 1, the orchestrator, never an implementer, re-runs `.tmp/r00163/meas
 ## Rulings where the spec is silent
 
 - **What a task writes is in the task verbatim or in the spec's *Runbook and alert texts*, which Tasks 3–5 apply with their own fences, so the spec's copy is the one copy.** The code below is the code the scratch tree ran; a fence's layout is `ruff format`'s.
-- **Placement.** `VENUE_HALT`, `RESUME_MARGIN_SECONDS`, `HaltEvidence` and `classify_halt` directly after `classify_dark_episode` in `cli/archive/settle.py`; `_tape` directly above `_fail` inside `reconcile`; Task 1's cases directly before the `# --- the int64-microsecond derivation` banner of `tests/test_archive_settle.py`; Task 2's helpers and cases directly before the `# --- the settled-hour skip cache` banner of `tests/test_archive_reconcile_command.py`; Task 3's case directly after `test_the_permanent_loss_page_outlives_a_single_evaluation_hour`.
+- **Placement.** `VENUE_HALT`, `RESUME_MARGIN_SECONDS`, `QUIET_SPAN_SECONDS`, `HaltEvidence` and `classify_halt` directly after `classify_dark_episode` in `cli/archive/settle.py`; `_tape` directly above `_fail` inside `reconcile`; Task 1's cases directly before the `# --- the int64-microsecond derivation` banner of `tests/test_archive_settle.py`; Task 2's helpers and cases directly before the `# --- the settled-hour skip cache` banner of `tests/test_archive_reconcile_command.py`; Task 3's case directly after `test_the_permanent_loss_page_outlives_a_single_evaluation_hour`.
 - **The verdict string is `"venue_halt"` in `settle.py` alone**; `command.py` imports `VENUE_HALT` and `CAPTURE_DIVERGENT` from it.
 - **`ALGO_VERSION` stays `1`** (spec D13).
 
@@ -80,7 +80,7 @@ Before Task 1, the orchestrator, never an implementer, re-runs `.tmp/r00163/meas
 - [ ] **Step 1: Write the failing tests.** In the import block from `cli.archive.settle`, add `RESUME_MARGIN_SECONDS,` after `LATE_MINT_HOURS,`, `HaltEvidence,` after `EpisodeVerdict,`, and `classify_halt,` after `classify_dark_episode,`. Then, directly before the `# --- the int64-microsecond derivation (spec 00097 D3)` banner:
 
 ```python
-# --- the venue halt: the book carried through, and nothing traded --------------------------------
+# --- the venue halt: the book carried through, nothing traded, and the market stood still --------
 
 _HALT = DarkWindow(start=_at(600), end=_at(1200), seconds=600.0)
 _PAIRS = ("BTC/EUR", "ETH/EUR")
@@ -515,7 +515,7 @@ def classify_halt(
 
 **Interfaces:**
 - Consumes: `VENUE_HALT`, `CAPTURE_DIVERGENT`, `classify_halt`, `HaltEvidence.holds` and its fields (Task 1).
-- Produces: the record keys `halt_seconds`, `streams_carried`, `windows_bracketed`, `trades_inside`, `trade_id_holes`; `_totals(...)["venue_halt_seconds"]`; the series `zcrypto_reconcile_venue_halt_seconds_total` (Task 3's case reads it through `published_app_families()`).
+- Produces: the record keys `halt_seconds`, `streams_carried`, `windows_bracketed`, `trades_inside`, `trade_id_holes`, `quiet_seconds`; `_totals(...)["venue_halt_seconds"]`; the series `zcrypto_reconcile_venue_halt_seconds_total` (Task 3's case reads it through `published_app_families()`).
 
 - [ ] **Step 1: Write the failing tests.** In `test_the_textfile_carries_every_series_and_is_written_atomically`'s set, add `"zcrypto_reconcile_venue_halt_seconds_total",` after the `verdict="undetermined"` member; in the hand-built totals of `test_infinite_source_lag_is_emitted_as_prometheus_plus_inf` and `test_textfile_publishes_the_ledger_record_count`, add `"venue_halt_seconds",` after `"dark_undetermined",`; in `test_the_dark_episode_counter_partitions_the_booked_seconds`' docstring, `` `both_streams_silent` seconds, so a classification bug`` reads `` `both_streams_silent` seconds booked as residual, so a classification bug`` and `residual_gap still books every second,` reads `residual_gap books every one of them -- a venue halt books none --`; in `tests/test_archive_reconcile.py`, after the line ``# manufacturing a loss over-count. `overlap_seconds` is what the caller subtracts.``, the line `# A venue halt books its windows to its own counter instead, and the heal subtracts them all the same.`; in `test_the_verdict_is_recorded_and_counted_while_the_booking_is_untouched`'s docstring, `The verdict rides ALONGSIDE` reads `The triage verdict rides ALONGSIDE`, and in its pinned key set, add after `"divergent_pairs",`:
 
@@ -586,7 +586,7 @@ def test_a_venue_halt_books_its_seconds_to_the_halt_counter_and_none_as_loss(tmp
     line = next(m for m in warnings if "both_streams_silent" in m)
     assert "verdict=venue_halt" in line
     assert "residual_s=0.0" in line
-    assert "halt_s=1220.0 carried=2/2 bracketed=1/1 trades_inside=0 id_holes=0 quiet_s=620.0" in line
+    assert "halt_s=1220.0 carried=2/2 bracketed=1/1 trades_inside=0 id_holes=0 quiet_s=620.000" in line
 
 
 @pytest.mark.parametrize(
@@ -650,7 +650,7 @@ def test_a_writer_fault_inside_a_quiet_too_brief_for_a_halt_books_as_loss(tmp_pa
     series = _series(textfile)
     assert series["zcrypto_reconcile_residual_gap_seconds_total"] == pytest.approx(420.0)
     assert series["zcrypto_reconcile_venue_halt_seconds_total"] == 0.0
-    assert "quiet_s=220.0" in next(m for m in errors if "both_streams_silent" in m)
+    assert "quiet_s=220.000" in next(m for m in errors if "both_streams_silent" in m)
 
 
 @pytest.mark.parametrize("twin", ["unreadable", "absent", "readable"])
@@ -896,8 +896,8 @@ In the booking block, everything from `# TRIAGE ONLY -- never an input to \`resi
                     }
                     for p in present
                 }
-                # Triage, and one veto on the booking below: a divergence keeps its loss and its page
-                # whatever the halt evidence reads.
+                # Triage, and one veto on the booking below: a `capture_divergent` episode keeps its loss and
+                # its page whatever the halt evidence reads.
                 episode = classify_dark_episode(windows, book_rows)
                 # The booking's one input beside the timeline: a halt the book carried through books
                 # its seconds to the halt counter, never as loss. A trades segment that cannot be read
@@ -921,7 +921,7 @@ In the booking block, everything from `# TRIAGE ONLY -- never an input to \`resi
                 # WARNING for a halt: `Ops · ERROR logs` pages on this line, and a halt is not loss.
                 (logger.warning if halted else logger.error)(
                     "archive reconcile: both_streams_silent hour=%s windows=%d residual_s=%.1f verdict=%s updates=%d snapshots=%d divergent=%s"
-                    " halt_s=%.1f carried=%d/%d bracketed=%d/%d trades_inside=%d id_holes=%d quiet_s=%.1f",
+                    " halt_s=%.1f carried=%d/%d bracketed=%d/%d trades_inside=%d id_holes=%d quiet_s=%.3f",
                     hour.isoformat(),
                     len(windows),
                     0.0 if halted else residual,
@@ -1164,7 +1164,7 @@ EOF
   3. **Park it in a topic** — refused by the ruling.
 
 [00163] What evidence books a fleet-dark hour as a venue halt rather than loss? (Decision: 1)
-  1. **The mirrors alone: the book carried through and nothing traded** — every booked stream is held by both hosts, each coming back on an update at least 300 s before the hour's end, one of them with no resync snapshot from its first window to that end; every trades segment reads with no null, mistyped or unconvertible stamp or id, no pair prints inside its own booked silence, each window is straddled by adjacent trade ids with none skipping, and no pair prints for at least 240 s around each window. It reads only what the reconciler already reads; over the ledger's 14 dark hours it holds on 2026-10-15, 2026-10-29, 2026-10-30 08Z and 2026-11-17 08Z, and refuses 2026-07-13's capture defect and 2026-10-13's silence, in which spot traded.
+  1. **The mirrors alone: the book carried through, nothing traded, and the market stood still** — every booked stream is held by both hosts, each coming back on an update at least 300 s before the hour's end, one of them with no resync snapshot from its first window to that end; every trades segment reads with no null, mistyped or unconvertible stamp or id, no pair prints inside its own booked silence, each window is straddled by adjacent trade ids with none skipping, and no pair prints for at least 240 s around each window. It reads only what the reconciler already reads; over the ledger's 14 dark hours it holds on 2026-10-15, 2026-10-29, 2026-10-30 08Z and 2026-11-17 08Z, and refuses 2026-07-13's capture defect and 2026-10-13's silence, in which spot traded.
   2. **Archive Kraken's `status` ladder for the reconciler** — a schema change on the unbackfillable capture stream, its rows stamped at local receipt; it says the venue announced a halt, not that nothing was lost.
   3. **Read Kraken's scheduled-maintenance feed at booking time** — a third-party call inside the booking path, which `[iter-141]` refused; an announcement is not proof either.
   Decided by the spec's author.
