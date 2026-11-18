@@ -354,6 +354,7 @@ def overlap_seconds(spans: Iterable[tuple[datetime, datetime]], windows: Iterabl
     twice — correcting a heal over-count by manufacturing a loss over-count in the same counter. Each
     side subtracts what the LEDGER shows the other already booked, so every second of loss is
     attributed exactly once regardless of which side decided first.
+    A venue halt's record books to its own counter instead, and the healed side subtracts it all the same.
 
     Windows are merged before intersecting: two overlapping windows must not subtract the same second
     twice, which would under-book a loss that really is unbooked.

@@ -367,6 +367,7 @@ def test_the_textfile_carries_every_series_and_is_written_atomically(tmp_path, m
         'zcrypto_reconcile_dark_episode_seconds_total{verdict="venue_silent"}',
         'zcrypto_reconcile_dark_episode_seconds_total{verdict="capture_divergent"}',
         'zcrypto_reconcile_dark_episode_seconds_total{verdict="undetermined"}',
+        "zcrypto_reconcile_venue_halt_seconds_total",
         'zcrypto_reconcile_trade_deficit_rows_total{host="primary"}',
         'zcrypto_reconcile_trade_deficit_rows_total{host="secondary"}',
         "zcrypto_reconcile_trade_dedup_rows_total",
@@ -609,6 +610,7 @@ def test_infinite_source_lag_is_emitted_as_prometheus_plus_inf(tmp_path):
                 "dark_venue_silent",
                 "dark_capture_divergent",
                 "dark_undetermined",
+                "venue_halt_seconds",
             ),
             0.0,
         ),
@@ -643,6 +645,7 @@ def test_textfile_publishes_the_ledger_record_count(tmp_path):
             "dark_venue_silent",
             "dark_capture_divergent",
             "dark_undetermined",
+            "venue_halt_seconds",
         ),
         0.0,
     )
@@ -1135,7 +1138,7 @@ def test_the_verdict_is_recorded_and_counted_while_the_booking_is_untouched(tmp_
     """Spec 00096 D1/D4 -- the load-bearing regression, because the booking is a CONTRACT.
 
     Splitting an episode into two windows must not move `residual_seconds` by a single second: the
-    counter derived from it is monotonic and unwalkbackable. The verdict rides ALONGSIDE, on the
+    counter derived from it is monotonic and unwalkbackable. The triage verdict rides ALONGSIDE, on the
     record and in its own partitioned counter, and never subtracts from residual.
     """
     pri, sec, rec = _roots(tmp_path)
@@ -1192,6 +1195,12 @@ def test_the_verdict_is_recorded_and_counted_while_the_booking_is_untouched(tmp_
         "pairs_agreeing",
         "pairs_skipped",
         "divergent_pairs",
+        "halt_seconds",
+        "streams_carried",
+        "windows_bracketed",
+        "trades_inside",
+        "trade_id_holes",
+        "quiet_seconds",
     }
 
     # (d) the operator's log line carries it too -- that is the 3am path
@@ -1201,9 +1210,9 @@ def test_the_verdict_is_recorded_and_counted_while_the_booking_is_untouched(tmp_
 
 def test_the_dark_episode_counter_partitions_the_booked_seconds(tmp_path, monkeypatch):
     """D4 -- the metric checks itself: the three label values sum to exactly the
-    `both_streams_silent` seconds, so a classification bug cannot quietly lose or duplicate time.
+    `both_streams_silent` seconds booked as residual, so a classification bug cannot quietly lose or duplicate time.
 
-    And it is a PARALLEL VIEW: residual_gap still books every second, so venue_silent <= residual.
+    And it is a PARALLEL VIEW: residual_gap books every one of them -- a venue halt books none --, so venue_silent <= residual.
     """
     pri, sec, rec = _roots(tmp_path)
     dark = [(float(s), "update") for s in range(0, 3600, 10) if not 1200 <= s < 1800]
@@ -1289,6 +1298,351 @@ def test_an_unrecognized_verdict_string_counts_as_undetermined_not_a_crash(tmp_p
     assert series['zcrypto_reconcile_dark_episode_seconds_total{verdict="undetermined"}'] == pytest.approx(1036.0)
     assert series['zcrypto_reconcile_dark_episode_seconds_total{verdict="venue_silent"}'] == pytest.approx(0.0)
     assert series['zcrypto_reconcile_dark_episode_seconds_total{verdict="capture_divergent"}'] == pytest.approx(0.0)
+
+
+# --- the venue halt: booked as a halt, never as loss --------------------------------------------
+
+# Every pair on both hosts silent from 1190 s to 1800 s: one fleet-dark window, 610 s a stream, 1220 s booked.
+_DARK = [(float(s), "update") for s in range(0, 3600, 10) if not 1200 <= s < 1800]
+
+
+def _prints(pair: str, hour: datetime, prints: list[tuple[float, int]]) -> pl.DataFrame:
+    """`prints` is [(offset_seconds, trade_id)]."""
+    frame = _trades(pair, hour, [trade_id for _, trade_id in prints])
+    return frame.with_columns(pl.Series("ts", [hour + timedelta(seconds=o) for o, _ in prints], dtype=TRADE_SCHEMA["ts"]))
+
+
+def _plant_halt(pri: Path, sec: Path, *, btc_book=_DARK, btc_prints=((1185.0, 7), (1805.0, 8))) -> None:
+    """Both pairs dark on both hosts; BTC/EUR's book and prints as given, ETH/EUR's prints all before the silence."""
+    for root in (pri, sec):
+        _write(root, "ETH/EUR", "book", H, _book("ETH/EUR", H, _DARK))
+        _write(root, "ETH/EUR", "trades", H, _prints("ETH/EUR", H, [(600.0, 40), (900.0, 41)]))
+        _write(root, "BTC/EUR", "book", H, _book("BTC/EUR", H, list(btc_book)))
+        _write(root, "BTC/EUR", "trades", H, _prints("BTC/EUR", H, list(btc_prints)))
+
+
+def _capture_logs(monkeypatch) -> tuple[list[str], list[str]]:
+    errors: list[str] = []
+    warnings: list[str] = []
+    monkeypatch.setattr(command.logger, "error", lambda fmt, *a, **k: errors.append(fmt % a))
+    monkeypatch.setattr(command.logger, "warning", lambda fmt, *a, **k: warnings.append(fmt % a))
+    return errors, warnings
+
+
+def test_a_venue_halt_books_its_seconds_to_the_halt_counter_and_none_as_loss(tmp_path, monkeypatch):
+    pri, sec, rec = _roots(tmp_path)
+    _plant_halt(pri, sec)
+    errors, warnings = _capture_logs(monkeypatch)
+    textfile = tmp_path / "reconcile.prom"
+
+    result = _run([str(pri), str(sec), str(rec), "--mint", "--textfile", str(textfile)], now=SETTLED, monkeypatch=monkeypatch)
+
+    assert result.exit_code == 0
+    [record] = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"]
+    assert record["verdict"] == "venue_halt"
+    assert record["residual_seconds"] == 0.0
+    assert record["halt_seconds"] == pytest.approx(1220.0)
+    assert (record["streams_carried"], record["windows_bracketed"], record["trades_inside"], record["trade_id_holes"]) == (
+        2,
+        1,
+        0,
+        0,
+    )
+    series = _series(textfile)
+    assert series["zcrypto_reconcile_residual_gap_seconds_total"] == 0.0
+    assert series["zcrypto_reconcile_venue_halt_seconds_total"] == pytest.approx(1220.0)
+    assert sum(v for k, v in series.items() if k.startswith("zcrypto_reconcile_dark_episode_seconds_total{")) == 0.0
+    assert not [m for m in errors if "both_streams_silent" in m]
+    line = next(m for m in warnings if "both_streams_silent" in m)
+    assert "verdict=venue_halt" in line
+    assert "residual_s=0.0" in line
+    assert "halt_s=1220.0 carried=2/2 bracketed=1/1 trades_inside=0 id_holes=0 quiet_s=620.000" in line
+
+
+@pytest.mark.parametrize(
+    ("btc_book", "btc_prints", "evidence"),
+    [
+        (sorted([*_DARK, (1800.0, "snapshot")]), ((1185.0, 7), (1805.0, 8)), (1, 1, 0, 0)),
+        (_DARK, ((1185.0, 7), (1500.0, 8), (1805.0, 9)), (2, 0, 1, 1)),
+        (_DARK, ((1185.0, 7), (1805.0, 9)), (2, 0, 0, 1)),
+        (_DARK, ((1185.0, 7),), (2, 0, 0, 0)),
+    ],
+    ids=["a-reconnect-on-both-hosts", "a-trade-inside", "a-trade-id-neither-host-holds", "no-pair-brackets-the-window"],
+)
+def test_a_halt_shaped_window_the_mirrors_do_not_prove_books_as_loss(tmp_path, monkeypatch, btc_book, btc_prints, evidence):
+    pri, sec, rec = _roots(tmp_path)
+    _plant_halt(pri, sec, btc_book=btc_book, btc_prints=btc_prints)
+    errors, _ = _capture_logs(monkeypatch)
+    textfile = tmp_path / "reconcile.prom"
+
+    result = _run([str(pri), str(sec), str(rec), "--mint", "--textfile", str(textfile)], now=SETTLED, monkeypatch=monkeypatch)
+
+    assert result.exit_code == 0
+    [record] = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"]
+    assert record["verdict"] == "undetermined"
+    assert record["residual_seconds"] == pytest.approx(1220.0)
+    assert record["halt_seconds"] == 0.0
+    assert (record["streams_carried"], record["windows_bracketed"], record["trades_inside"], record["trade_id_holes"]) == evidence
+    series = _series(textfile)
+    assert series["zcrypto_reconcile_residual_gap_seconds_total"] == pytest.approx(1220.0)
+    assert series["zcrypto_reconcile_venue_halt_seconds_total"] == 0.0
+    assert "verdict=undetermined" in next(m for m in errors if "both_streams_silent" in m)
+
+
+# Every pair on both hosts silent from 1190 s to 1400 s; BTC/EUR's prints either side lie 305 s apart and ETH/EUR's
+# 220 s, so the market's quiet around the window is ETH/EUR's.
+_BRIEF = [(float(s), "update") for s in range(0, 3600, 10) if not 1200 <= s < 1400]
+
+
+def test_a_writer_fault_inside_a_quiet_too_brief_for_a_halt_books_as_loss(tmp_path, monkeypatch):
+    pri, sec, rec = _roots(tmp_path)
+    _plant_halt(pri, sec, btc_book=_BRIEF, btc_prints=((1100.0, 7), (1405.0, 8)))
+    for root in (pri, sec):
+        _write(root, "ETH/EUR", "book", H, _book("ETH/EUR", H, _BRIEF))
+        _write(root, "ETH/EUR", "trades", H, _prints("ETH/EUR", H, [(1185.0, 50), (1405.0, 51)]))
+    errors, _ = _capture_logs(monkeypatch)
+    textfile = tmp_path / "reconcile.prom"
+
+    result = _run([str(pri), str(sec), str(rec), "--mint", "--textfile", str(textfile)], now=SETTLED, monkeypatch=monkeypatch)
+
+    assert result.exit_code == 0
+    [record] = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"]
+    assert (record["streams_carried"], record["windows_bracketed"], record["trades_inside"], record["trade_id_holes"]) == (
+        2,
+        1,
+        0,
+        0,
+    )
+    assert record["quiet_seconds"] == pytest.approx(220.0)
+    assert record["verdict"] == "undetermined"
+    assert record["residual_seconds"] == pytest.approx(420.0)
+    assert record["halt_seconds"] == 0.0
+    series = _series(textfile)
+    assert series["zcrypto_reconcile_residual_gap_seconds_total"] == pytest.approx(420.0)
+    assert series["zcrypto_reconcile_venue_halt_seconds_total"] == 0.0
+    assert "quiet_s=220.000" in next(m for m in errors if "both_streams_silent" in m)
+
+
+@pytest.mark.parametrize("twin", ["unreadable", "absent", "readable"])
+def test_an_unreadable_trades_segment_leaves_the_hour_unproven_whatever_another_pair_brackets(tmp_path, monkeypatch, twin):
+    pri, sec, rec = _roots(tmp_path)
+    _plant_halt(pri, sec)
+    for root in (pri, sec):
+        _write(root, "ETH/EUR", "trades", H, _prints("ETH/EUR", H, [(1185.0, 50), (1805.0, 51)]))
+    _seg_path(pri, "BTC/EUR", "trades", H).write_bytes(b"not a parquet")
+    if twin == "unreadable":
+        _seg_path(sec, "BTC/EUR", "trades", H).write_bytes(b"not a parquet")
+    elif twin == "absent":
+        _seg_path(sec, "BTC/EUR", "trades", H).unlink()
+    errors, warnings = _capture_logs(monkeypatch)
+
+    _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+
+    [record] = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"]
+    assert (record["streams_carried"], record["windows_bracketed"], record["trades_inside"], record["trade_id_holes"]) == (
+        2,
+        1,
+        0,
+        0,
+    )
+    assert record["verdict"] == "undetermined"
+    assert record["residual_seconds"] == pytest.approx(1220.0)
+    assert [m for m in warnings if "unreadable primary trades segment pair=BTC/EUR" in m]
+    assert "verdict=undetermined" in next(m for m in errors if "both_streams_silent" in m)
+
+
+@pytest.mark.parametrize(
+    "column",
+    [
+        pl.Series("trade_id", [7, None], dtype=TRADE_SCHEMA["trade_id"]),
+        pl.Series("ts", [H + timedelta(seconds=1185), None], dtype=TRADE_SCHEMA["ts"]),
+        pl.Series("ts", [(H + timedelta(seconds=o)).replace(tzinfo=None) for o in (1185, 1805)], dtype=pl.Datetime("us")),
+        pl.Series("trade_id", ["7", "8"], dtype=pl.String),
+        pl.Series("ts", [int((H + timedelta(seconds=1185)).timestamp()) * 10**6, 9 * 10**17]).cast(TRADE_SCHEMA["ts"]),
+        pl.Series("ts", [int((H + timedelta(seconds=1185)).timestamp()) * 10**6, 2**63 - 1]).cast(TRADE_SCHEMA["ts"]),
+    ],
+    ids=[
+        "a-null-trade-id",
+        "a-null-stamp",
+        "a-stamp-without-a-zone",
+        "a-string-trade-id",
+        "a-stamp-out-of-range",
+        "a-stamp-polars-panics-on",
+    ],
+)
+def test_a_readable_trades_segment_the_proof_cannot_use_leaves_the_hour_unproven(tmp_path, monkeypatch, column):
+    pri, sec, rec = _roots(tmp_path)
+    _plant_halt(pri, sec)
+    _write(pri, "BTC/EUR", "trades", H, _prints("BTC/EUR", H, [(1185.0, 7), (1805.0, 8)]).with_columns(column))
+    errors, warnings = _capture_logs(monkeypatch)
+
+    _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+
+    [record] = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"]
+    assert (record["streams_carried"], record["windows_bracketed"], record["trades_inside"], record["trade_id_holes"]) == (
+        2,
+        1,
+        0,
+        0,
+    )
+    assert record["verdict"] == "undetermined"
+    assert [m for m in warnings if "unreadable primary trades segment pair=BTC/EUR" in m]
+    assert "verdict=undetermined" in next(m for m in errors if "both_streams_silent" in m)
+
+
+def test_a_book_final_whose_rows_have_no_python_value_reads_as_that_mirror_absent(tmp_path, monkeypatch):
+    pri, sec, rec = _roots(tmp_path)
+    _plant_halt(pri, sec)
+    stamps = [int((H + timedelta(seconds=o)).timestamp()) * 10**6 for o, _ in _DARK[:-1]] + [9 * 10**17]
+    _write(pri, "BTC/EUR", "book", H, _book("BTC/EUR", H, _DARK).with_columns(pl.Series("ts", stamps).cast(BOOK_SCHEMA["ts"])))
+    # The secondary's final not pulled yet: the heal leaves the pair-hour alone, so the booking is the one reader of these rows.
+    _seg_path(sec, "BTC/EUR", "book", H).unlink()
+    errors, warnings = _capture_logs(monkeypatch)
+    textfile = tmp_path / "reconcile.prom"
+
+    result = _run([str(pri), str(sec), str(rec), "--mint", "--textfile", str(textfile)], now=SETTLED, monkeypatch=monkeypatch)
+
+    assert result.exit_code == 0
+    [record] = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"]
+    assert (record["streams_carried"], record["windows_bracketed"], record["trades_inside"], record["trade_id_holes"]) == (
+        1,
+        1,
+        0,
+        0,
+    )
+    assert record["verdict"] == "undetermined"
+    assert record["residual_seconds"] == pytest.approx(1220.0)
+    assert _series(textfile)["zcrypto_reconcile_residual_gap_seconds_total"] == pytest.approx(1220.0)
+    assert [m for m in warnings if "unreadable primary book rows pair=BTC/EUR" in m]
+    assert "verdict=undetermined" in next(m for m in errors if "both_streams_silent" in m)
+
+
+def test_a_pair_with_no_trades_final_on_either_mirror_leaves_the_hour_unproven(tmp_path, monkeypatch):
+    pri, sec, rec = _roots(tmp_path)
+    _plant_halt(pri, sec)
+    for root in (pri, sec):
+        _seg_path(root, "ETH/EUR", "trades", H).unlink()
+    errors, warnings = _capture_logs(monkeypatch)
+    textfile = tmp_path / "reconcile.prom"
+
+    result = _run([str(pri), str(sec), str(rec), "--mint", "--textfile", str(textfile)], now=SETTLED, monkeypatch=monkeypatch)
+
+    assert result.exit_code == 0
+    [record] = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"]
+    assert (record["streams_carried"], record["windows_bracketed"], record["trades_inside"], record["trade_id_holes"]) == (
+        2,
+        1,
+        0,
+        0,
+    )
+    assert record["quiet_seconds"] == pytest.approx(620.0)
+    assert record["verdict"] == "undetermined"
+    assert record["residual_seconds"] == pytest.approx(1220.0)
+    assert _series(textfile)["zcrypto_reconcile_residual_gap_seconds_total"] == pytest.approx(1220.0)
+    assert [m for m in warnings if "no trades segment on either mirror pair=ETH/EUR" in m]
+    assert "verdict=undetermined" in next(m for m in errors if "both_streams_silent" in m)
+
+
+def test_the_heal_still_subtracts_a_venue_halts_stream_windows():
+    halt = {
+        "state": "both_streams_silent",
+        "hour": H.isoformat(),
+        "pairs": ["BTC/EUR"],
+        "windows": [{"start": H + timedelta(seconds=1200), "end": H + timedelta(seconds=1800), "seconds": 600.0}],
+        "stream_windows": {
+            "BTC/EUR": [{"start": H + timedelta(seconds=1190), "end": H + timedelta(seconds=1800), "seconds": 610.0}]
+        },
+        "residual_seconds": 0.0,
+        "halt_seconds": 610.0,
+        "verdict": "venue_halt",
+    }
+    assert command._booked_dark([halt], "BTC/EUR", H) == [(H + timedelta(seconds=1190), H + timedelta(seconds=1800))]
+
+
+def test_a_divergence_keeps_its_loss_and_its_page_when_the_book_carried_through(tmp_path, monkeypatch):
+    pri, sec, rec = _roots(tmp_path)
+    _plant_halt(pri, sec)
+    _write(pri, "BTC/EUR", "book", H, _book("BTC/EUR", H, sorted([*_DARK, (1500.0, "update")])))
+    errors, _ = _capture_logs(monkeypatch)
+
+    result = _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+
+    assert result.exit_code == 0
+    [record] = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"]
+    assert (record["streams_carried"], record["windows_bracketed"]) == (2, 2)
+    assert record["verdict"] == "capture_divergent"
+    assert record["residual_seconds"] == pytest.approx(1220.0)
+    assert record["halt_seconds"] == 0.0
+    assert "verdict=capture_divergent" in next(m for m in errors if "both_streams_silent" in m)
+
+
+def test_a_halt_outranks_a_venue_silent_triage(tmp_path, monkeypatch):
+    pri, sec, rec = _roots(tmp_path)
+    _plant_halt(pri, sec, btc_book=sorted([*_DARK, (1500.0, "update")]))
+    _, warnings = _capture_logs(monkeypatch)
+
+    result = _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+
+    assert result.exit_code == 0
+    [record] = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"]
+    assert (len(record["windows"]), record["pairs_agreeing"], record["interior_updates"]) == (2, 1, 1)
+    assert record["verdict"] == "venue_halt"
+    assert record["residual_seconds"] == 0.0
+    assert record["halt_seconds"] == pytest.approx(1220.0)
+    assert "verdict=venue_halt" in next(m for m in warnings if "both_streams_silent" in m)
+
+
+def test_an_hour_booked_before_the_halt_verdict_stays_booked_as_it_was(tmp_path, monkeypatch):
+    pri, sec, rec = _roots(tmp_path)
+    _plant_halt(pri, sec)
+    rec.mkdir(parents=True, exist_ok=True)
+    booked = {
+        "at": "2026-07-16T11:12:42+00:00",
+        "state": "both_streams_silent",
+        "pair": "*",
+        "kind": "book",
+        "hour": H.isoformat(),
+        "pairs": list(PAIRS),
+        "windows": [
+            {"start": (H + timedelta(seconds=1190)).isoformat(), "end": (H + timedelta(seconds=1800)).isoformat(), "seconds": 610.0}
+        ],
+        "residual_seconds": 5432.534453,
+        "verdict": "undetermined",
+    }
+    (rec / "reconcile-ledger.jsonl").write_text(json.dumps(booked) + "\n")
+    textfile = tmp_path / "reconcile.prom"
+
+    result = _run([str(pri), str(sec), str(rec), "--mint", "--textfile", str(textfile)], now=SETTLED, monkeypatch=monkeypatch)
+
+    assert result.exit_code == 0
+    assert [r for r in _ledger(rec) if r["state"] == "both_streams_silent"] == [booked]
+    series = _series(textfile)
+    assert series["zcrypto_reconcile_residual_gap_seconds_total"] == pytest.approx(5432.534453)
+    assert series['zcrypto_reconcile_dark_episode_seconds_total{verdict="undetermined"}'] == pytest.approx(5432.534453)
+    assert series["zcrypto_reconcile_venue_halt_seconds_total"] == 0.0
+
+
+def test_the_totals_book_a_halt_beside_the_loss_and_never_inside_it():
+    loss = {
+        "state": "both_streams_silent",
+        "hour": "2026-11-17T08:00:00+00:00",
+        "residual_seconds": 5432.534453,
+        "verdict": "undetermined",
+    }
+    halt = {
+        "state": "both_streams_silent",
+        "hour": "2026-11-18T08:00:00+00:00",
+        "residual_seconds": 0.0,
+        "halt_seconds": 1220.0,
+        "verdict": "venue_halt",
+    }
+    totals = command._totals([loss, halt])
+    assert totals["residual_seconds"] == pytest.approx(5432.534453)
+    assert totals["dark_undetermined"] == pytest.approx(5432.534453)
+    assert totals["venue_halt_seconds"] == pytest.approx(1220.0)
+    assert totals["dark_venue_silent"] + totals["dark_capture_divergent"] + totals["dark_undetermined"] == pytest.approx(
+        totals["residual_seconds"]
+    )
 
 
 # --- the settled-hour skip cache (spec 00097 D4/D5) ------------------------------------------------
