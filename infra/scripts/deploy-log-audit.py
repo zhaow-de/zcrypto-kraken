@@ -70,11 +70,20 @@ def _update_bodies(entry: dict) -> list[str]:
 
 
 # The feed's entries the owner ruled not a window, by the entry's own `id`: an announcement filed as a
-# scheduled maintenance, its span no outage. `maintenance_conflicts` in `cli/engine/draftplan.py`, rung 2's
-# planner, does not carry this set.
+# scheduled maintenance, its span no outage. Each holds the span and the update count it was ruled on: an
+# entry whose span or updates have changed since is a window again until it is ruled anew. Every key is named
+# in a decisions-log entry. `maintenance_conflicts` in `cli/engine/draftplan.py`, rung 2's planner, does not
+# carry this set.
 NOT_A_WINDOW = {
-    "3zrrdvpscrx8": "Unified WebSocket API now available for Derivatives, 2026-11-19T11:00Z to 2027-03-01T23:59Z",
+    # "Unified WebSocket API now available for Derivatives"
+    "3zrrdvpscrx8": ("2026-11-19T11:00:00.000Z", "2027-03-01T23:59:00.000Z", 2),
 }
+
+
+def ruled_not_a_window(entry: dict) -> bool:
+    """An entry in `NOT_A_WINDOW` whose span and update count are still those it was ruled on."""
+    ruled = NOT_A_WINDOW.get(entry.get("id"))
+    return ruled == (entry.get("scheduled_for"), entry.get("scheduled_until"), len(_update_bodies(entry)))
 
 
 def api_impacting(maintenances: list[dict]) -> list[dict]:
@@ -90,7 +99,7 @@ def api_impacting(maintenances: list[dict]) -> list[dict]:
     """
     out = []
     for entry in maintenances:
-        if entry.get("id") in NOT_A_WINDOW:
+        if ruled_not_a_window(entry):
             continue
         texts = [c.get("name", "") for c in entry.get("components", [])] + [entry.get("name", "")] + _update_bodies(entry)
         if any(_NAMES_AN_API.search(text) for text in texts):

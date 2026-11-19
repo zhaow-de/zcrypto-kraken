@@ -47,16 +47,38 @@ def test_api_impacting_reads_a_component_name_and_the_entrys_own_name():
     ]
 
 
+_RULED = {
+    "id": "3zrrdvpscrx8",
+    "name": "Unified WebSocket API now available for Derivatives",
+    "components": [{"name": "Websocket API"}, {"name": "Unified WebSocket"}],
+    "scheduled_for": "2026-11-19T11:00:00.000Z",
+    "scheduled_until": "2027-03-01T23:59:00.000Z",
+    "incident_updates": [{"body": "announced"}, {"body": "announced, the SDKs named"}],
+}
+
+
 def test_api_impacting_skips_an_entry_the_owner_ruled_not_a_window():
-    ruled = {
-        "id": "3zrrdvpscrx8",
-        "name": "Unified WebSocket API now available for Derivatives",
-        "components": [{"name": "Websocket API"}, {"name": "Unified WebSocket"}],
-        "scheduled_for": "2026-11-19T11:00:00.000Z",
-        "scheduled_until": "2027-03-01T23:59:00.000Z",
-    }
-    unruled = {**ruled, "id": "0000unruled0"}
-    assert audit.api_impacting([ruled, unruled]) == [unruled]
+    unruled = {**_RULED, "id": "0000unruled0"}
+    assert audit.api_impacting([_RULED, unruled]) == [unruled]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"scheduled_until": "2027-03-08T23:59:00.000Z"},
+        {"scheduled_for": "2026-12-01T08:00:00.000Z"},
+        {"incident_updates": _RULED["incident_updates"] + [{"body": "Spot moves to the Unified WebSocket on Monday."}]},
+    ],
+    ids=["span-end-moved", "span-start-moved", "an-update-added"],
+)
+def test_api_impacting_reads_a_ruled_entry_changed_since_its_ruling_as_a_window(change):
+    changed = {**_RULED, **change}
+    assert audit.api_impacting([changed]) == [changed]
+
+
+def test_every_entry_ruled_not_a_window_is_named_in_a_decisions_log():
+    logs = "".join(path.read_text() for path in sorted((_ROOT / "docs" / "research").glob("*decisions*.md")))
+    assert [key for key in audit.NOT_A_WINDOW if key not in logs] == []
 
 
 def test_api_impacting_matches_the_venues_other_spelling_of_websocket():
