@@ -41,8 +41,9 @@ else refuse "$usage"; fi
 file=$1; key=$2; shape=$3
 [[ -n $shape ]] || refuse "the shape is empty; $usage"
 shape_rc=0
-# shellcheck disable=SC2319  # the status wanted is the regex test's own, 2 for a shape that does not compile
-[[ "" =~ ^($shape)$ ]] || shape_rc=$?
+# shellcheck disable=SC2319  # the status wanted is the regex test's own, 2 for a shape that does not compile;
+# its stderr is dropped, since CI's ubuntu-26.04 bash prints its own `[[: invalid regular expression` line there
+[[ "" =~ ^($shape)$ ]] 2>/dev/null || shape_rc=$?
 [[ $shape_rc -ne 2 ]] || refuse "the shape '$shape' is not a regular expression"
 [[ $key =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || refuse "the key '$key' is not a variable name"
 [[ -f $file ]] || refuse "$file does not exist"
