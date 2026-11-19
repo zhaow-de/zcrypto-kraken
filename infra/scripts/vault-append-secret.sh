@@ -17,9 +17,11 @@
 # under it for the new block and leaves every other line of the file as it was; the file keeps its mode.
 # Prints `<key>: appended` or `<key>: replaced` and nothing else.
 # An inherited xtrace or allexport (`bash -x`, an exported SHELLOPTS), or an inherited export of `value` or `block`,
-# which an assignment keeps, would print the value or put it in every child's environment.
+# which an assignment keeps, would print the value or put it in every child's environment; an inherited nocasematch
+# (an exported BASHOPTS) would admit a value off the shape by its case.
 set +xa
 set -euo pipefail
+shopt -u nocasematch
 unset value block
 
 value=""; tmp=""
@@ -41,8 +43,9 @@ else refuse "$usage"; fi
 file=$1; key=$2; shape=$3
 [[ -n $shape ]] || refuse "the shape is empty; $usage"
 shape_rc=0
-# shellcheck disable=SC2319  # the status wanted is the regex test's own, 2 for a shape that does not compile
-[[ "" =~ ^($shape)$ ]] || shape_rc=$?
+# shellcheck disable=SC2319  # the status wanted is the regex test's own, 2 for a shape that does not compile;
+# its stderr is dropped, since bash 5.3 prints its own `[[: invalid regular expression` line there
+[[ "" =~ ^($shape)$ ]] 2>/dev/null || shape_rc=$?
 [[ $shape_rc -ne 2 ]] || refuse "the shape '$shape' is not a regular expression"
 [[ $key =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || refuse "the key '$key' is not a variable name"
 [[ -f $file ]] || refuse "$file does not exist"
