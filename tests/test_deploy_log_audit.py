@@ -47,6 +47,18 @@ def test_api_impacting_reads_a_component_name_and_the_entrys_own_name():
     ]
 
 
+def test_api_impacting_skips_an_entry_the_owner_ruled_not_a_window():
+    ruled = {
+        "id": "3zrrdvpscrx8",
+        "name": "Unified WebSocket API now available for Derivatives",
+        "components": [{"name": "Websocket API"}, {"name": "Unified WebSocket"}],
+        "scheduled_for": "2026-11-19T11:00:00.000Z",
+        "scheduled_until": "2027-03-01T23:59:00.000Z",
+    }
+    unruled = {**ruled, "id": "0000unruled0"}
+    assert audit.api_impacting([ruled, unruled]) == [unruled]
+
+
 def test_api_impacting_matches_the_venues_other_spelling_of_websocket():
     """The venue spells it `WebSocket` on one entry and `Websocket` on another, so the match folds case."""
     entry = {"name": "x", "components": [{"name": "Websocket API"}]}

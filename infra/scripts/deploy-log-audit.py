@@ -69,11 +69,19 @@ def _update_bodies(entry: dict) -> list[str]:
     return [str(u.get("body") or "") for u in updates if isinstance(u, dict)] if isinstance(updates, list) else []
 
 
+# The feed's entries the owner ruled not a window, by the entry's own `id`: an announcement filed as a
+# scheduled maintenance, its span no outage. `maintenance_conflicts` in `cli/engine/draftplan.py`, rung 2's
+# planner, does not carry this set.
+NOT_A_WINDOW = {
+    "3zrrdvpscrx8": "Unified WebSocket API now available for Derivatives, 2026-11-19T11:00Z to 2027-03-01T23:59Z",
+}
+
+
 def api_impacting(maintenances: list[dict]) -> list[dict]:
-    """The entries naming WebSocket or REST in a component, in their own name or in an update's body -- an empty
-    `components` under a plain name is not an absent impact: the venue has named WebSocket API clients in an
-    entry's `incident_updates[].body` alone. The pair of this reader is `maintenance_conflicts` in
-    `cli/engine/draftplan.py`.
+    """The entries naming WebSocket or REST in a component, in their own name or in an update's body, less those
+    in `NOT_A_WINDOW` -- an empty `components` under a plain name is not an absent impact: the venue has named
+    WebSocket API clients in an entry's `incident_updates[].body` alone. The pair of this reader is
+    `maintenance_conflicts` in `cli/engine/draftplan.py`.
 
     Case-folded because the venue spells the same component `WebSocket` and `Websocket` across
     entries, and word-bounded because `REST` is an API: a substring test reads `restart`,
@@ -82,6 +90,8 @@ def api_impacting(maintenances: list[dict]) -> list[dict]:
     """
     out = []
     for entry in maintenances:
+        if entry.get("id") in NOT_A_WINDOW:
+            continue
         texts = [c.get("name", "") for c in entry.get("components", [])] + [entry.get("name", "")] + _update_bodies(entry)
         if any(_NAMES_AN_API.search(text) for text in texts):
             out.append(entry)
