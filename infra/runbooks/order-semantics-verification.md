@@ -34,16 +34,19 @@ Do all of these before the first credentialed run.
 
 #### 1.1 Kraken maintenance window
 
-On the workstation, both of Kraken's feeds read whole. `START` and `END` are the act's window in UTC — this run's, or the stop, start or restart another page sends you here for. `START` as written is the minute you run it, a planning-time read types a time in `END`'s form in its place, and `END` is the act's end, typed over the example:
+On the workstation, from the repo root, both of Kraken's feeds read whole. `START` and `END` are the act's window in UTC — this run's, or the stop, start or restart another page sends you here for. `START` as written is the minute you run it, a planning-time read types a time in `END`'s form in its place, and `END` is the act's end, typed over the example:
 
 ```
 START=$(date -u +%Y-%m-%dT%H:%MZ) END=2026-10-05T15:05Z python3 - <<'PY'
-import json, os, re, urllib.request
+import importlib.util, json, os, re, urllib.request
 from datetime import datetime
 t = lambda s: datetime.fromisoformat(s.replace("Z", "+00:00"))
 start, end = t(os.environ["START"]), t(os.environ["END"])
 assert start < end, "END is not later than START"
 word = re.compile(r"\b(websocket|rest)\b", re.I)
+spec = importlib.util.spec_from_file_location("audit", "infra/scripts/deploy-log-audit.py")
+audit = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(audit)
 for feed in ("scheduled-maintenances", "scheduled-maintenances/upcoming"):
     d = json.load(urllib.request.urlopen(f"https://status.kraken.com/api/v2/{feed}.json", timeout=30))
     ms = d["scheduled_maintenances"]
@@ -53,12 +56,13 @@ for feed in ("scheduled-maintenances", "scheduled-maintenances/upcoming"):
         updates = m.get("incident_updates")
         bodies = [u.get("body") or "" for u in updates if isinstance(u, dict)] if isinstance(updates, list) else []
         venue = any(word.search(t) for t in names + bodies)
-        hit = venue and t(m["scheduled_for"]) < end and t(m["scheduled_until"]) > start
-        print("STOP " if hit else "venue" if venue else "-    ", m["status"], m["scheduled_for"], m["scheduled_until"], m["name"], names[1:])
+        ruled = venue and audit.ruled_not_a_window(m)
+        hit = venue and not ruled and t(m["scheduled_for"]) < end and t(m["scheduled_until"]) > start
+        print("ruled" if ruled else "STOP " if hit else "venue" if venue else "-    ", m["status"], m["scheduled_for"], m["scheduled_until"], m["name"], names[1:])
 PY
 ```
 
-A `STOP` line stops the act, the test being the converge bullet's in `.claude/rules/fleet-deploys.md`; `venue` marks an entry carrying the word outside the window, and an empty `components` array printed as `[]` is not an absent impact. A failed fetch, a traceback, `END is not later than START` or `0 entries` on the first feed, the 50 most recent entries, is never evidence the window is clear: fetch again, and check again immediately before the run (§5). `0 entries` on the second feed, the upcoming ones, beside a first feed that printed its entries, is nothing upcoming.
+A `STOP` line stops the act, the test being the converge bullet's in `.claude/rules/fleet-deploys.md`; `venue` marks an entry carrying the word outside the window, `ruled` one the owner ruled not a window, its `id` in `infra/scripts/deploy-log-audit.py`'s `NOT_A_WINDOW`, and an empty `components` array printed as `[]` is not an absent impact. A failed fetch, a traceback, `END is not later than START` or `0 entries` on the first feed, the 50 most recent entries, is never evidence the window is clear: fetch again, and check again immediately before the run (§5). `0 entries` on the second feed, the upcoming ones, beside a first feed that printed its entries, is nothing upcoming.
 
 #### 1.2 The engine's 4-hour boundary
 
