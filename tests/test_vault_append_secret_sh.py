@@ -174,6 +174,18 @@ def test_a_value_off_the_shape_is_refused_before_the_encryption_runs(tmp_path, o
     assert vault.read_text(encoding="utf-8") == _BEFORE
 
 
+def test_an_inherited_nocasematch_does_not_admit_a_value_off_the_shape_by_case(tmp_path):
+    vault = _vault(tmp_path, _BEFORE)
+    value = _value().upper()
+    done = _run(tmp_path, value, str(vault), _KEY, _SHAPE, extra={"BASHOPTS": "nocasematch"})
+    leaked = _leaks(value, stdout=done.stdout, stderr=done.stderr)
+    assert leaked == []
+    assert done.returncode == 2 and done.stdout == ""
+    assert _KEY in done.stderr and _SHAPE in done.stderr
+    assert not (tmp_path / "uv-record").exists()
+    assert vault.read_text(encoding="utf-8") == _BEFORE
+
+
 @pytest.mark.parametrize(("typed", "stderr_lines"), [("", 1), (None, 2)], ids=["empty-line", "no-terminal"])
 def test_an_empty_value_is_refused_under_a_shape_that_admits_it(tmp_path, typed, stderr_lines):
     vault = _vault(tmp_path, _BEFORE)

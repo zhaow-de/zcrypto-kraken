@@ -17,9 +17,11 @@
 # under it for the new block and leaves every other line of the file as it was; the file keeps its mode.
 # Prints `<key>: appended` or `<key>: replaced` and nothing else.
 # An inherited xtrace or allexport (`bash -x`, an exported SHELLOPTS), or an inherited export of `value` or `block`,
-# which an assignment keeps, would print the value or put it in every child's environment.
+# which an assignment keeps, would print the value or put it in every child's environment; an inherited nocasematch
+# (an exported BASHOPTS) would admit a value off the shape by its case.
 set +xa
 set -euo pipefail
+shopt -u nocasematch
 unset value block
 
 value=""; tmp=""
