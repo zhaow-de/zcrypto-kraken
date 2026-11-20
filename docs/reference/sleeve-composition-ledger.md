@@ -125,3 +125,15 @@ The book equals the summed sleeve gross ÷ 6 on both sides, to within one ulp. T
 | **final book gross** (Σ\|target weight\|, governed) | **0.01089975810905525** | **0.009557764715045988** |
 
 The book equals the summed sleeve gross ÷ 6 on both sides, to within one ulp. A1 did not move at the step, so A2's is the book's whole fall, and the only target it moved was AVAX/EUR's. This is the first composition on A1 alone the ledger records. The band in force (`docs/research/14.phase6-decisions.md`, rung 3's gate read 6) was derived over the box's window, which carries no stretch with B flat, so it does not carry this composition either: `infra/runbooks/engine.md`'s `zcrypto-engine-sleeve-count-changed` step 3 re-derives it, and the expected order notionals, before the next go-live decision reads them. On the owner's word of 2026-11-14 that work starts at the weekly read of 2026-11-16; a band the gate can rest on needs at least three complete ISO weeks in this composition (step 3), and A1 alone began inside 2026-W46, so none exists before Sunday 2026-12-06 closes W49.
+
+### 2026-11-20 — A1 goes flat; no sleeve carries the book
+
+| | last pre-transition cycle<br>2026-11-19 20Z | first post-transition cycle<br>2026-11-20 00Z |
+| --- | --- | --- |
+| `zcrypto_engine_active_sleeves` | 1 | **0** |
+| `sleeve_gross{sleeve="B"}` | 0 | 0 |
+| `sleeve_gross{sleeve="A1"}` | 0.005152859177003625 | 0 |
+| `sleeve_gross{sleeve="A2"}` | 0 | 0 |
+| **final book gross** (Σ\|target weight\|, governed) | **0.0008588098628339375** | **0** |
+
+At the pre-transition cycle the book is A1's gross ÷ 6 exactly, its one target AVAX/EUR's; after it the book holds no target. This is the first composition with no sleeve active that the ledger records. A1 had fallen at every 00Z step since 2026-11-14: 0.05355545345548742, 0.03661956074485083, 0.031921492866306515, 0.01472858401850735, 0.010257245406077716, 0.005152859177003625, then 0. The 00Z boundary sold the AVAX/EUR leg whole, 0.59949627 at a limit of 6.393 as a maker, fee EUR 0.01533 (Kraken `ONFPU6-PGW2A-RSRAZU`, trade `TU7L3S-VLQZF-W6MJ7G`). A flat book is a legitimate state, not an emergency (`infra/runbooks/engine.md`'s `zcrypto-engine-sleeve-count-changed` step 5), and each sleeve re-arms on its own signal.
