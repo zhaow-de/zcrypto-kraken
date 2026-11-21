@@ -467,6 +467,14 @@ def _program(path):
 def t(tmp_path):
     assert "ok" in _program(tmp_path / "log")
 """,
+    "a helper reading its own fixed file, handed an infra path for another use": """
+STATIC = REPO / "tests/fixtures/lint.cfg"
+ROLE = REPO / "infra/roles/x"
+def _lint(path):
+    return run(STATIC.read_text(), path)
+def t():
+    assert "ok" in _lint(ROLE / "t.j2")
+""",
 }
 
 
