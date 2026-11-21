@@ -34,58 +34,112 @@ def _path_consts(tree: ast.Module, src: str) -> set[str]:
     }
 
 
-def _reads_infra(node: ast.AST, src: str, consts: set[str]) -> bool:
-    """A read of an infra file, whether the path is spelled out or held in a constant."""
-    seg = ast.get_source_segment(src, node) or ""
-    return ".read_text()" in seg and (_HAZARD in seg or any(c in seg for c in consts))
+def _reads_infra(node: ast.AST, src: str, consts: set[str], generic: frozenset[str] = frozenset()) -> bool:
+    """A read of an infra file, whether the path is spelled out or held in a constant, read inline or
+    by a `generic` helper handed an infra path as an argument (`_program(ROLE / "x")`)."""
+
+    def names_infra(node: ast.AST) -> bool:
+        seg = ast.get_source_segment(src, node) or ""
+        return _HAZARD in seg or any(c in seg for c in consts)
+
+    if ".read_text()" in (ast.get_source_segment(src, node) or "") and names_infra(node):
+        return True
+    return any(
+        isinstance(c, ast.Call) and _callee(c) in generic and any(names_infra(a) for a in [*c.args, *(k.value for k in c.keywords)])
+        for c in ast.walk(node)
+    )
+
+
+def _callee(call: ast.Call) -> str | None:
+    """The called name: `_unit()` is `_unit`, and `self._src(n)` or `Cls._src(n)` is `_src`."""
+    f = call.func
+    return f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else None
+
+
+def _chain_calls(node: ast.AST) -> set[str]:
+    """The names called along an expression's chain: `self._src(n).splitlines()` calls `splitlines` and `_src`."""
+    names: set[str] = set()
+    while True:
+        if isinstance(node, ast.Call):
+            names.add(_callee(node) or "")
+            node = node.func
+        elif isinstance(node, ast.Attribute):
+            node = node.value
+        else:
+            return names
+
+
+def _functions(tree: ast.Module) -> list[tuple[str, set[str], list[ast.expr]]]:
+    """Every function or method, as its name, its parameters and the values it returns. A list, not a
+    dict: two functions sharing a name both count."""
+    out = []
+    for f in ast.walk(tree):
+        if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            a = f.args
+            params = {p.arg for p in [*a.posonlyargs, *a.args, *a.kwonlyargs, a.vararg, a.kwarg] if p}
+            out.append((f.name, params, [r.value for r in ast.walk(f) if isinstance(r, ast.Return) and r.value is not None]))
+    return out
+
+
+def _generic_readers(functions) -> frozenset[str]:
+    """Functions that return a `.read_text()` of a path built from a parameter: `return path.read_text()`."""
+    names = set()
+    for name, params, values in functions:
+        for c in (c for v in values for c in ast.walk(v)):
+            if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr == "read_text":
+                if any(isinstance(x, ast.Name) and x.id in params for x in ast.walk(c.func.value)):
+                    names.add(name)
+    return frozenset(names)
 
 
 def _infra_text_vars(tree: ast.Module, src: str) -> set[str]:
     """Names bound to the TEXT of a file under infra/, directly or through a path const."""
     consts = _path_consts(tree, src)
+    functions = _functions(tree)
+    generic = _generic_readers(functions)
     out: set[str] = set()
     for n in ast.walk(tree):
-        if not isinstance(n, ast.Assign):
-            continue
-        seg = ast.get_source_segment(src, n.value) or ""
-        if ".read_text()" not in seg:
-            continue
-        if _HAZARD in seg or any(c in seg for c in consts):
+        if isinstance(n, ast.Assign) and _reads_infra(n.value, src, consts, generic):
             out |= {t.id for t in n.targets if isinstance(t, ast.Name)}
-    # A loop variable over `<haystack>.splitlines()` IS the haystack, one line at a time. Without
-    # this, `any("x" in line for line in text.splitlines())` slips through -- and that is precisely
-    # the form someone reaches for to satisfy this guard.
-    # Functions whose body returns an infra read, inline or through a haystack, are haystacks by name:
-    # `_unit()` called inline, and `unit = _unit()`.
-    returns = {
-        f.name: [r for r in ast.walk(f) if isinstance(r, ast.Return) and r.value is not None]
-        for f in ast.walk(tree)
-        if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
-    readers = {name for name, rs in returns.items() if any(_reads_infra(r, src, consts) for r in rs)}
+    # A function returning an infra read, inline or through a haystack, is a haystack by name:
+    # `_unit()` and `self._src(n)` called inline, and `unit = _unit()`. A name it was handed is not
+    # its haystack, so `def _norm(line): return line.strip()` is no reader.
+    readers = {name for name, _, values in functions if any(_reads_infra(v, src, consts, generic) for v in values)}
     # Anything DERIVED from a haystack is a haystack: aliases, `next(... for l in h.splitlines())`,
-    # `h.splitlines()`. Iterate to a fixed point -- a chain can be two hops.
-    for _ in range(4):
+    # `h.splitlines()`. Iterate to a fixed point -- a chain can be any number of hops, and the sets
+    # only grow, so it ends.
+    while True:
         before = set(out)
-        readers |= {name for name, rs in returns.items() if any(_root_name(r.value) in out for r in rs)}
+        readers |= {
+            name
+            for name, params, values in functions
+            if any(_root_name(v) in out - params or _chain_calls(v) & (out - params) for v in values)
+        }
         out |= readers
         for n in ast.walk(tree):
             if isinstance(n, ast.Assign):
                 v = n.value
-                derived = _root_name(v) in out or (
-                    # `rw = next(l for l in unit.splitlines() if ...)` -- one line OF a haystack
-                    isinstance(v, ast.Call)
-                    and _root_name(v.func) == "next"
-                    and any(
-                        ".splitlines()" in (ast.get_source_segment(src, g.iter) or "")
-                        and any(h in (ast.get_source_segment(src, g.iter) or "") for h in out)
-                        for a in v.args
-                        for g in getattr(a, "generators", [])
+                derived = (
+                    _root_name(v) in out
+                    or bool(_chain_calls(v) & readers)
+                    or (
+                        # `rw = next(l for l in unit.splitlines() if ...)` -- one line OF a haystack
+                        isinstance(v, ast.Call)
+                        and _root_name(v.func) == "next"
+                        and any(
+                            ".splitlines()" in (ast.get_source_segment(src, g.iter) or "")
+                            and any(h in (ast.get_source_segment(src, g.iter) or "") for h in out)
+                            for a in v.args
+                            for g in getattr(a, "generators", [])
+                        )
                     )
                 )
                 if derived:
                     out |= {t.id for t in n.targets if isinstance(t, ast.Name)}
-            # both comprehension generators and plain `for` statements
+            # A loop variable over `<haystack>.splitlines()` IS the haystack, one line at a time. Without
+            # this, `any("x" in line for line in text.splitlines())` slips through -- and that is precisely
+            # the form someone reaches for to satisfy this guard. Both comprehension generators and plain
+            # `for` statements.
             gens = list(getattr(n, "generators", []))
             if isinstance(n, ast.For):
                 gens.append(n)
@@ -181,6 +235,7 @@ def _violations(src: str, name: str = "<src>") -> list[str]:
     """Every substring selector over an infra file's text in `src`."""
     tree = ast.parse(src)
     consts = _path_consts(tree, src)
+    generic = _generic_readers(_functions(tree))
     haystacks = _infra_text_vars(tree, src)
     src_lines = src.splitlines()
     anchored = _prefix_anchored(tree, src, _line_vars(tree, src, haystacks))
@@ -192,7 +247,11 @@ def _violations(src: str, name: str = "<src>") -> list[str]:
         and isinstance(n.ops[0], ast.In)
         and id(n) not in anchored
         and not any(_MARKER in l for l in src_lines[max(0, n.lineno - 2) : (n.end_lineno or n.lineno)])
-        and (_root_name(n.comparators[0]) in haystacks or _reads_infra(n.comparators[0], src, consts))
+        and (
+            _root_name(n.comparators[0]) in haystacks
+            or bool(_chain_calls(n.comparators[0]) & haystacks)
+            or _reads_infra(n.comparators[0], src, consts, generic)
+        )
     ]
 
 
@@ -266,6 +325,66 @@ def _unit():
 def t():
     assert "ProtectSystem=strict" in _unit()
 """,
+    "a method reader via self": """
+class TestUnit:
+    def _src(self, name):
+        return (REPO / "infra" / "scripts" / name).read_text()
+    def test_it(self):
+        assert "ProtectSystem=strict" in self._src("u.service")
+""",
+    "a method reader bound to a local": """
+class TestUnit:
+    def _src(self, name):
+        return (REPO / "infra" / "scripts" / name).read_text()
+    def test_it(self):
+        unit = self._src("u.service")
+        assert "ProtectSystem=strict" in unit
+""",
+    "a static reader via its class": """
+class Units:
+    @staticmethod
+    def src(name):
+        return (REPO / "infra" / name).read_text()
+def t():
+    assert "ProtectSystem=strict" in Units.src("u.service")
+""",
+    "a generic reader handed an infra path": """
+def _program(path):
+    return path.read_text()
+def t():
+    assert "ProtectSystem=strict" in _program(REPO / "infra/u.service")
+""",
+    "a generic reader handed a path constant": """
+ROLE = REPO / "infra/roles/x"
+def _program(path):
+    return path.read_text()
+def t():
+    unit = _program(ROLE / "u.service")
+    assert "ProtectSystem=strict" in unit
+""",
+    "a reader five helpers deep": """
+def _unit():
+    return (REPO / "infra/u.service").read_text()
+def _a():
+    return _unit()
+def _b():
+    return _a()
+def _c():
+    return _b()
+def _d():
+    return _c()
+def t():
+    assert "ProtectSystem=strict" in _d()
+""",
+    "a reader sharing its name with a later function": """
+def _unit():
+    return (REPO / "infra/u.service").read_text()
+class Other:
+    def _unit(self):
+        return "literal"
+def t():
+    assert "ProtectSystem=strict" in _unit()
+""",
     "one line pulled out with next()": """
 def t():
     unit = (REPO / "infra/u.service").read_text()
@@ -319,6 +438,41 @@ def t():
     assert any(line.startswith("ReadWritePaths=") and "/var/lib/x" in line for line in _unit().splitlines())
 """
     assert not _violations(src)
+
+
+_MUST_STAY_CLEAN = {
+    "a helper whose parameter shares a line variable's name": """
+def _unit():
+    return (REPO / "infra/u.service").read_text()
+def _norm(line):
+    return line.strip()
+def t(out):
+    for line in _unit().splitlines():
+        assert line.startswith("ExecStart=") and "x" in line
+    assert "Usage" in _norm(out)
+""",
+    "a helper whose parameter shares a haystack's name": """
+def _unit():
+    return (REPO / "infra/u.service").read_text()
+def _first(rendered):
+    return rendered.strip()
+def t(tmp_path):
+    rendered = _unit()
+    assert rendered
+    assert "ok" in _first(tmp_path.joinpath("log").read_text())
+""",
+    "a generic reader handed a file the test wrote": """
+def _program(path):
+    return path.read_text()
+def t(tmp_path):
+    assert "ok" in _program(tmp_path / "log")
+""",
+}
+
+
+@pytest.mark.parametrize("label", sorted(_MUST_STAY_CLEAN), ids=list(sorted(_MUST_STAY_CLEAN)))
+def test_the_guard_leaves_a_text_that_is_no_infra_read_alone(label: str) -> None:
+    assert not _violations(_MUST_STAY_CLEAN[label]), f"the guard now flags: {label}"
 
 
 def test_the_guard_accepts_a_declared_exception() -> None:
