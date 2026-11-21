@@ -20,7 +20,7 @@ Reading rules:
 | cache-proxy | zcrypto | `76928c0d6b39` — HAProxy 3.4.5, upstream `haproxy` | 2026-11-18 10:08:17 | first pin |
 | alloy | zcrypto | `89a5a3201683` — v1.21.2 | 2026-11-15 14:28:13 | `2aa2099af76c` — v1.20.1 |
 | alloy | zcrypto-red | `89a5a3201683` — v1.21.2 | 2026-11-15 19:57:41 | `2aa2099af76c` — v1.20.1 |
-| alloy | zcrypto-ops | `89a5a3201683` — v1.21.2 | 2026-11-06 15:02:46 | `2aa2099af76c` — v1.20.1 |
+| alloy | zcrypto-ops | `89a5a3201683` — v1.21.2 | 2026-11-15 22:35:35 | `2aa2099af76c` — v1.20.1 |
 | alloy | nas | `89a5a3201683` — v1.21.2, upstream `grafana/alloy`, no `-compat` variant | 2026-11-07 19:46:44 | `2aa2099af76c` — v1.20.1 |
 | valkey + sentinel | zcrypto-valkey1 | `418652cfb58e` — Valkey 9.1.2, upstream `valkey/valkey` | 2026-09-26 21:20:54 | first pin |
 | alloy | zcrypto-valkey1 | `89a5a3201683` — v1.21.2 | 2026-11-06 15:08:16 | `2aa2099af76c` — v1.20.1 |
