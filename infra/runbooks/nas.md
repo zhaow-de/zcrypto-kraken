@@ -253,19 +253,19 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-DSM reports an update, or the NAS rebooted with no one at it: DSM installing an update itself at the slot the owner set.
+DSM reports an update, or the NAS rebooted with no one at it.
 
 ### What it means
 
-**The owner's ruling of 2026-11-21 is that DSM installs updates itself on a schedule** (its entry of that date in `docs/research/14.phase6-decisions.md`). DSM owns the OS (`docs/reference/fleet.md`'s hosts table), so the schedule lives in DSM's own update settings, which the owner enters, not in this repo. Until those settings show the automatic install at the slot (step 1 below), DSM only notifies, and an update waits for a hand install as on 2026-11-20.
+**The owner's ruling of 2026-11-21 is that DSM installs updates itself on a schedule** (its entry of that date in `docs/research/14.phase6-decisions.md`). DSM owns the OS (`docs/reference/fleet.md`'s hosts table), so the schedule lives in DSM's own update settings, which the owner enters, not in this repo. On 2026-11-21 the owner read them as installing automatically, weekly, at DSM's default of Saturday 04:05 in the NAS's local time; the 2026-11-20 update was installed by hand, at 17:22Z.
 
-**The slot this page sets out is 14:25Z daily**, the controller's proposal for the fixed time the owner's ruling leaves to the owner. It sits at least 1 h from the 12Z and 16Z boundaries and off the hour. It starts between ops' NAS readers, the :22 panel and the :42 archive pull; an update still running at 14:42Z meets the archive pull, which then skips its writer cycle, logging `writer cycle SKIPPED (fail-closed gate)` at WARNING with rc 0, and runs again at :12. It is clear of the gate export's late-mirror window after 20:30Z (`gate.md`). Read the NAS's time zone in DSM's Regional Options and enter the local time that is 14:25Z. If that zone observes daylight saving, a local time fixed in winter lands at 13:25Z in summer, which is also clear. One fixed in summer would land at 15:25Z in winter, inside the hour before 16Z, so fix it in winter's terms.
+**The slot this page sets out is Saturday 14:25Z, weekly**, the controller's proposal for the fixed time the owner's ruling leaves to the owner; the opening paragraph of What to do moves DSM's default there. That default, Saturday 04:05 local, is 03:05Z on a NAS keeping Central European Time: 55 minutes before the 04Z boundary, across ops' 03:12 archive pull and 03:22 panel, and at night for a page. 14:25Z sits at least 1 h from the 12Z and 16Z boundaries and off the hour, and a page during it lands in daytime. It starts between ops' NAS readers, the :22 panel and the :42 archive pull; an update still running at 14:42Z meets the archive pull, which then skips its writer cycle, logging `writer cycle SKIPPED (fail-closed gate)` at WARNING with rc 0, and runs again at :12. It is clear of the gate export's late-mirror window after 20:30Z (`gate.md`). Read the NAS's time zone in DSM's Regional Options and enter the local time that is 14:25Z. If that zone observes daylight saving, a local time fixed in winter lands at 13:25Z in summer, which is also clear. One fixed in summer would land at 15:25Z in winter, inside the hour before 16Z, so fix it in winter's terms.
 
 **An update takes 10–20 minutes and can reboot twice.** On 2026-11-20 the NAS was down 17:25–17:28Z, then again 17:36–17:42Z for a newer update. While it is down:
 
 - `NAS · /volume1 free space low` and `NAS · load high` warn about 10 minutes in: the series go stale after about 5 minutes, and from there no data counts as alerting for the rules' 5-minute hold.
 - `Fleet · Alloy dark — NAS` pages critical about 15 minutes in, its own comment in `infra/grafana/alerts.yaml` reading staleness at about 5 minutes on top of its 10-minute hold.
-- `zcrypto-fleet-daemon-restarted` fires on the NAS when its processes come back.
+- `zcrypto-fleet-daemon-restarted` fires on the NAS when its Alloy restarts: there the rule reads Alloy's own process, `integrations/self`, alone.
 
 The outages of 2026-11-20, 3 and 6 minutes long, fired only the last; the other NAS rules went Pending and back (`zcrypto-zebra`'s daily-pass reading of 2026-11-21).
 
@@ -275,14 +275,14 @@ The outages of 2026-11-20, 3 and 6 minutes long, fired only the last; the other 
 
 ### What to do
 
-1. **The schedule is set, once.** The owner sets DSM's update settings to install updates automatically, daily at the local time that is 14:25Z, and reads them back; until then this section's slot is a proposal, and DSM notifies without installing.
+**Once, move the schedule to the slot.** The owner sets DSM's update settings to Saturday at the local time that is 14:25Z and reads them back; until then DSM installs at its default.
 
 After an update, read it back by outcome:
 
 1. **The NAS is back by value.** `up{host="nas"}` reads 1, and the three NAS rules above are Normal again.
 2. **The containers came back on their own.** On the NAS: `ssh nas 'uptime; sudo /usr/local/bin/docker ps --format "{{.Names}} {{.Status}}"; for c in zcrypto-archive-pull grafana-alloy; do sudo /usr/local/bin/docker inspect --format "$c {{.State.StartedAt}} restarts={{.RestartCount}}" $c; done; sudo /usr/local/bin/docker exec zcrypto-archive-pull ls -l /tmp/gate-cache.json'` — both Up, the gate cache still on disk.
 3. **The pulls and the export resumed.** The next archive-pull cycle logs `pull complete … failed=0` for each verified channel, and `zcrypto_gate_export_timestamp_seconds` advances.
-4. **Ops' next writer cycle ran.** A unit result of `success` also covers a skipped cycle, so read the log: `uv run python infra/scripts/grafana-query.py --loki 'sum by (level) (count_over_time({host="ops"} |~ "reconcile complete|writer cycle SKIPPED" [40m]))'` shows an INFO line, a `reconcile complete … failures=0` from the `:12` or `:42` run after the reboot, and a WARNING where a cycle was skipped while the NAS was down.
+4. **Ops' next writer cycle ran clean.** A unit result of `success` also covers a skipped cycle, and a failed cycle logs `reconcile complete` too, so count the clean line over the minutes since the reboot, `<M>`: `uv run python infra/scripts/grafana-query.py --loki 'sum(count_over_time({host="ops"} |= "reconcile complete" |= "failures=0 " [<M>m]))'` reads at least 1 once a `:12` or `:42` run after the reboot has completed clean. A `writer cycle SKIPPED` WARNING in the same window is a cycle skipped while the NAS was down.
 5. **A change to the slot or the policy is the owner's word**, and this section changes with it.
 
 ### Retire when
