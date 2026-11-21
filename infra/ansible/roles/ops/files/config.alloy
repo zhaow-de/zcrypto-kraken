@@ -56,6 +56,14 @@ prometheus.exporter.unix "host" {
     device_exclude = "^(veth|br-)"
   }
 
+  // The NAS custody mount (/mnt/zhao-crypto, a soft NFS mount) is left unstat'd: while the NAS is
+  // down its statfs outlives the scrape's 10 s and takes every collector of this host's scrape with
+  // it; the NAS's own /volume1 series carries that capacity. Setting the attribute replaces Alloy's
+  // Linux default, so the default list is restated here with nfs4? added.
+  filesystem {
+    fs_types_exclude = "^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nfs4?|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs)$"
+  }
+
   procfs_path = "/host/proc"
   sysfs_path  = "/host/sys"
   rootfs_path = "/host/root"

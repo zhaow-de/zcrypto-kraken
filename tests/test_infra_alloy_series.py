@@ -91,6 +91,28 @@ def _installed_units() -> set[str]:
     return units
 
 
+# grafana/alloy v1.21.2's Linux default for the unix exporter's `fs_types_exclude`
+# (internal/static/integrations/node_exporter/config.go), which a set attribute replaces whole;
+# an Alloy bump re-reads it there before this list and ops' restatement move with the version.
+_ALLOY_VERSION_OF_THE_DEFAULT = "1.21.2"
+_ALLOY_LINUX_FS_TYPES_EXCLUDED = (
+    "autofs binfmt_misc bpf cgroup cgroup2 configfs debugfs devpts devtmpfs fusectl hugetlbfs iso9660 mqueue nsfs "
+    "overlay proc procfs pstore rpc_pipefs securityfs selinuxfs squashfs sysfs tracefs"
+).split()
+
+
+def test_the_ops_filesystem_collector_skips_nfs_and_keeps_alloys_linux_defaults():
+    found = re.search(r'filesystem\s*\{[^}]*?fs_types_exclude\s*=\s*"([^"]*)"', OPS_ALLOY.read_text())
+    assert found, "ops' unix exporter sets no filesystem fs_types_exclude"
+    # `search`, as the collector's Go `MatchString` applies the pattern: unanchored.
+    excluded = re.compile(found.group(1))
+    assert [t for t in ("nfs", "nfs4") if not excluded.search(t)] == []
+    assert [t for t in _ALLOY_LINUX_FS_TYPES_EXCLUDED if not excluded.search(t)] == []
+    assert [t for t in ("ext4", "vfat", "tmpfs", "nfsd", "fuse.sshfs", "fuse.squashfs") if excluded.search(t)] == []
+    version = re.search(r'^alloy_version:\s*"([^"]+)"', (REPO / "infra/ansible/group_vars/observed/alloy.yml").read_text(), re.M)
+    assert version and version.group(1) == _ALLOY_VERSION_OF_THE_DEFAULT, "re-read Alloy's Linux fs_types_exclude default"
+
+
 def test_the_ops_journal_keep_regex_accounts_for_every_unit_the_role_installs():
     """Adding a timer fails here until it is named in the regex or excluded with a reason."""
     kept = _journal_units_kept()
