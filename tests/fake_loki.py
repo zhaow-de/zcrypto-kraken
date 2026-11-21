@@ -22,6 +22,7 @@ def handler_factory(status_code: int = 200, location: str | None = None) -> type
         def _record_and_respond(self) -> None:
             length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(length)
+            # Before the reply: the backoff test pairs each retry wait with this count.
             _RecordingHandler.requests.append((self.path, dict(self.headers), body))
             self.send_response(_RecordingHandler.status_code)
             if location is not None:

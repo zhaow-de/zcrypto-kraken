@@ -138,7 +138,8 @@ def test_drain_caps_the_first_batch_at_batch_max(handler_factory):
 def test_retryable_status_retries_the_same_batch_with_backoff(status_code, handler_factory):
     handler_cls = handler_factory(status_code=status_code)
     with FakeLoki(handler_cls) as url:
-        handler = _make_handler(url, batch_max=1, ring_capacity=16)
+        # A POST timing out before FakeLoki records it would pair its wait with a count one short; 3 s is the wait below.
+        handler = _make_handler(url, batch_max=1, ring_capacity=16, timeout_s=3.0)
         # The backoffs the handler asks for, each beside the requests made before it (one POST per wait),
         # not the measured gaps, which carry the flush interval, the POST and a loaded run's jitter.
         waits, stop_wait = [], handler._stop.wait
