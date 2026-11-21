@@ -82,19 +82,6 @@ def _wait_until(predicate, timeout: float = 1.0, interval: float = 0.005) -> boo
     return predicate()
 
 
-def _assert_monotone_doubling_then_capped(gaps: list[float], backoff_min_s: float, backoff_max_s: float) -> None:
-    """Checks the shape of the retry gaps against each other, never against an absolute bound: each
-    measured gap carries flush_interval_s plus the POST round-trip on top of the backoff itself, so
-    pinning to backoff_min_s/backoff_max_s exactly flakes under CI scheduling jitter."""
-    assert len(gaps) >= 3
-    assert gaps[1] > gaps[0] * 1.3  # genuinely grows early on, not a flat retry interval
-    slack = backoff_min_s  # generous relative to the min/max spread used by these tests
-    for a, b in zip(gaps, gaps[1:]):
-        assert b >= a - slack  # never decreases
-    assert gaps[-1] <= gaps[-2] * 1.3  # stopped growing -- the doubling has capped
-    assert gaps[-1] <= backoff_max_s * 3  # loose ceiling; not pinned to an exact absolute value
-
-
 def test_emit_ships_batch_with_correct_line_and_timestamp(fake_loki):
     url, requests = fake_loki
     handler = _make_handler(url)
@@ -152,6 +139,15 @@ def test_retryable_status_retries_the_same_batch_with_backoff(status_code, handl
     handler_cls = handler_factory(status_code=status_code)
     with FakeLoki(handler_cls) as url:
         handler = _make_handler(url, batch_max=1, ring_capacity=16)
+        # The backoffs the handler asks for, not the measured gaps between requests, which carry the
+        # flush interval, the POST and the scheduler's jitter under a loaded run.
+        waits, stop_wait = [], handler._stop.wait
+
+        def recording_wait(timeout=None):
+            waits.append(timeout)
+            return stop_wait(timeout)
+
+        handler._stop.wait = recording_wait
         try:
             record = _make_record("retry-me")
             handler.emit(record)
@@ -160,9 +156,8 @@ def test_retryable_status_retries_the_same_batch_with_backoff(status_code, handl
             bodies = {r[2] for r in handler_cls.requests[:6]}
             assert len(bodies) == 1  # identical body every attempt -- the same batch, not a new one
 
-            times = handler_cls.request_times[:6]
-            gaps = [b - a for a, b in zip(times, times[1:])]
-            _assert_monotone_doubling_then_capped(gaps, _TIGHT["backoff_min_s"], _TIGHT["backoff_max_s"])
+            low, high = _TIGHT["backoff_min_s"], _TIGHT["backoff_max_s"]
+            assert waits[:5] == pytest.approx([low, low * 2, high, high, high])  # doubling, then capped
         finally:
             handler.close()
 
