@@ -453,3 +453,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #868 | 2026-11-18 | fix(archive): a proven venue halt books as a halt, never as L2 loss | — | 00163 | — |
 | #870 | 2026-11-18 | docs: T0226 resolved by its attended session and its triggered fill | — | — | T0226 |
 | #871 | 2026-11-19 | fix(scripts): iter-201 — a feed announcement ruled not a Kraken window | iter-201 | — | — |
+| #875 | 2026-11-21 | fix(ops): iter-202 — DSM updates on a schedule, ops' scrape off the NFS | iter-202 | — | — |
