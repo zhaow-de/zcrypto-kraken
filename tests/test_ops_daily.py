@@ -776,12 +776,13 @@ _OPS_NODE_CENSUSES = (
 
 @pytest.mark.parametrize("cmd", _OPS_NODE_CENSUSES)
 def test_ops_node_md_s_own_censuses_are_autonomous_on_ops(cmd):
-    assert f"`{cmd}`" in (Path(__file__).resolve().parents[1] / "infra/runbooks/ops-node.md").read_text()
+    # config-selector-ok: exact membership in the page's parsed inline-code spans, not a substring of its text
+    assert cmd in set(re.findall(r"`([^`\n]+)`", (_RUNBOOKS / "ops-node.md").read_text()))
     assert ops_daily.classify_action(f"`{cmd}`", host="ops", resolve=_identity) is ops_daily.Tier.AUTONOMOUS
 
 
 @pytest.mark.parametrize("cmd", ["sudo du -d 2 --delete /tmp", "sudo du -d x /tmp", "sudo du --inodes=1 /tmp"])
-def test_the_du_shape_still_prepares_an_unknown_flag_or_a_depth_that_is_no_integer(cmd):
+def test_the_du_shape_still_prepares_an_unknown_flag_a_non_integer_depth_or_a_valued_inodes(cmd):
     assert ops_daily.classify_action(f"`{cmd}`", host="ops", resolve=_identity) is ops_daily.Tier.PREPARED
 
 
