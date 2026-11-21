@@ -1791,6 +1791,11 @@ def _resolves_only_safe_paths(tokens: list[str], operands: list[str], *, host: s
 # Stripped before matching: they change who runs a command, never what it does. `ssh <host>` also
 # RETARGETS it, so the host it names replaces the caller's for the telemetry gate.
 _PREFIXES = (("sudo",), ("sudo", "-n"), ("uv", "run"), ("time",))
+# A head's directory is part of which program runs: `/tmp/du` is not `du`. A head under one of these
+# is peeled to its bare name; under any other it keeps its path, which no shape names, so it is
+# PREPARED. The NAS spells docker `/usr/local/bin/docker` (off its non-interactive ssh PATH), and the
+# repo's own scripts run from `infra/scripts`.
+_HEAD_DIRS = frozenset({"/usr/bin", "/bin", "/usr/sbin", "/sbin", "/usr/local/bin", "infra/scripts"})
 _DOCKER_EXEC_VALUE_FLAGS = frozenset({"-u", "--user", "-w", "--workdir", "-e", "--env"})
 
 _CMD_SPAN = re.compile(r"`([^`\n]+)`")
@@ -1989,8 +1994,10 @@ def _strip_prefixes(tokens: list[str]) -> tuple[list[str], str | None]:
         changed = False
         if target and len(tokens) == 1 and any(c.isspace() for c in tokens[0]):
             break  # the peel below would rsplit a quoted command line to its last path component
-        # The NAS spells it `/usr/local/bin/docker`: docker is off the non-interactive ssh PATH there.
-        tokens = [tokens[0].rsplit("/", 1)[-1], *tokens[1:]]
+        head_dir, slash, base = tokens[0].rpartition("/")
+        if slash and head_dir not in _HEAD_DIRS:
+            break
+        tokens = [base, *tokens[1:]]
         for prefix in _PREFIXES:
             if tuple(tokens[: len(prefix)]) == prefix:
                 tokens, changed = tokens[len(prefix) :], True
