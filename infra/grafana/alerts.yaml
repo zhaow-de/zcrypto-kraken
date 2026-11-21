@@ -5755,7 +5755,8 @@ rules:
     execErrState: Alerting
     # The library reconnects lazily, on the engine's next write, and the engine writes only around an order
     # and at its start: after a cut the page stands until its next order or restart, boundaries that place
-    # nothing included. 15m only rides out a check that cuts and recovers within it.
+    # nothing included. A check recovering re-makes no session; 15m rides out a cut that an order's writes
+    # or a restart re-make within it.
     for: 15m
     annotations:
       summary: "The engine has been reporting for 15+ minutes while the cache proxy carries no session from it: the link was cut -- a failover's shutdown of sessions, a proxy restart, the mesh interface restarted -- and the library reconnects only on the engine's next write, which it drops. The writer's session returns at the write after that; the store is behind by what the cut cost, nothing replays it, and the engine's next restart is taken flat. Runbook: infra/runbooks/cache.md#zcrypto-cache-proxy-no-engine-session"
