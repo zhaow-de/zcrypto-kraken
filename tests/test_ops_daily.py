@@ -786,6 +786,71 @@ def test_the_du_shape_still_prepares_an_unknown_flag_a_non_integer_depth_or_a_va
     assert ops_daily.classify_action(f"`{cmd}`", host="ops", resolve=_identity) is ops_daily.Tier.PREPARED
 
 
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "sudo /tmp/du -xh -d 2 /",
+        "sudo /home/zhaow/du -xh -d 2 /",
+        "./du -sh /tmp",
+        "/du -sh /tmp",
+        "sudo infra/scripts/../../tmp/du -sh /tmp",
+        "/tmp/sudo du -sh /tmp",
+        "uv run python /tmp/grafana-query.py 'up'",
+        "python3 /tmp/grafana-query.py 'up'",
+        "bash /tmp/ops-postverify.sh",
+        "ssh nas /tmp/docker ps",
+        "sudo infra/scripts/du -xh -d 2 /",
+        "ssh nas infra/scripts/docker ps",
+        "docker exec zcrypto-engine infra/scripts/du -sh /tmp",
+    ],
+)
+def test_a_head_under_another_directory_is_not_the_program_it_names(cmd):
+    assert ops_daily.classify_action(f"`{cmd}`", host="ops", resolve=_identity) is ops_daily.Tier.PREPARED
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "grafana-query.py 'up'",
+        "python3 grafana-query.py 'up'",
+        "bash ops-postverify.sh",
+        "sh ops-postverify.sh",
+        "uv run grafana-query.py 'up'",
+        "ssh zcrypto sudo python3 continuity.py",
+        "/usr/local/bin/grafana-query.py 'up'",
+        "/usr/bin/ops-postverify.sh",
+        "ssh nas python3 infra/scripts/grafana-query.py 'up'",
+        "ssh nas 'uv run python infra/scripts/grafana-query.py up'",
+        "docker exec zcrypto-engine python3 infra/scripts/continuity.py",
+    ],
+)
+def test_a_repo_script_runs_only_from_its_repo_path_on_ops(cmd):
+    assert ops_daily.classify_action(f"`{cmd}`", host="ops", resolve=_identity) is ops_daily.Tier.PREPARED
+
+
+def test_a_file_in_infra_scripts_named_like_a_system_command_changes_no_verdict(monkeypatch, tmp_path):
+    (tmp_path / "du").write_text("")
+    monkeypatch.setattr(ops_daily, "_REPO_SCRIPTS", tmp_path)
+    assert ops_daily.classify_action("`du -sh /tmp`", host="ops", resolve=_identity) is ops_daily.Tier.AUTONOMOUS
+    assert ops_daily.classify_action("`infra/scripts/du -sh /tmp`", host="ops", resolve=_identity) is ops_daily.Tier.PREPARED
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "/usr/bin/du -sh /tmp",
+        "sudo /usr/local/bin/docker logs zcrypto-archive-pull --since 4h",
+        "ssh nas /usr/local/bin/docker ps",
+        "ssh nas 'sudo /usr/local/bin/docker ps'",
+        "uv run python infra/scripts/grafana-query.py 'up'",
+        "uv run python infra/scripts/continuity.py",
+        "bash infra/scripts/ops-postverify.sh",
+    ],
+)
+def test_a_head_under_a_system_or_repo_script_directory_is_its_bare_name(cmd):
+    assert ops_daily.classify_action(f"`{cmd}`", host="ops", resolve=_identity) is ops_daily.Tier.AUTONOMOUS
+
+
 def test_an_unrecognised_action_is_prepared_never_autonomous():
     assert ops_daily.classify_action("Frobnicate the widget.", host="ops", resolve=_identity) is ops_daily.Tier.PREPARED
 

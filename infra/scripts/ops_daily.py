@@ -1791,6 +1791,16 @@ def _resolves_only_safe_paths(tokens: list[str], operands: list[str], *, host: s
 # Stripped before matching: they change who runs a command, never what it does. `ssh <host>` also
 # RETARGETS it, so the host it names replaces the caller's for the telemetry gate.
 _PREFIXES = (("sudo",), ("sudo", "-n"), ("uv", "run"), ("time",))
+# A head's directory is part of which program runs: `/tmp/du` is not `du`. Under a system binary
+# directory a head is peeled to its bare name; the NAS spells docker `/usr/local/bin/docker`, off its
+# non-interactive ssh PATH. The repo's own scripts run from `infra/scripts`, relative to the checkout
+# on ops: a head there is peeled only when it is a `.py` or `.sh` file in the checkout's
+# `infra/scripts`, so a file there named like a system command peels nothing, and only when no
+# `ssh <host>` or `docker exec` has moved the command off ops. A repo script named bare, or under a
+# system directory, is refused: an interpreter runs a bare script from the working directory, never
+# PATH. Every refusal is PREPARED.
+_SYSTEM_DIRS = frozenset({"/usr/bin", "/bin", "/usr/sbin", "/sbin", "/usr/local/bin"})
+_REPO_SCRIPTS = Path(__file__).resolve().parent
 _DOCKER_EXEC_VALUE_FLAGS = frozenset({"-u", "--user", "-w", "--workdir", "-e", "--env"})
 
 _CMD_SPAN = re.compile(r"`([^`\n]+)`")
@@ -1976,7 +1986,7 @@ def _matches(shapes, tokens: list[str], *, first_stage: bool, host: str | None, 
     return None
 
 
-def _strip_prefixes(tokens: list[str]) -> tuple[list[str], str | None]:
+def _strip_prefixes(tokens: list[str], *, retargeted: bool = False) -> tuple[list[str], str | None]:
     """Peel what changes WHO runs a command, never what it does; report the host an ssh retargets to.
 
     `docker exec <container>` is peeled for the same reason: its payload is the real command, and only
@@ -1988,9 +1998,15 @@ def _strip_prefixes(tokens: list[str]) -> tuple[list[str], str | None]:
     while changed and tokens:
         changed = False
         if target and len(tokens) == 1 and any(c.isspace() for c in tokens[0]):
-            break  # the peel below would rsplit a quoted command line to its last path component
-        # The NAS spells it `/usr/local/bin/docker`: docker is off the non-interactive ssh PATH there.
-        tokens = [tokens[0].rsplit("/", 1)[-1], *tokens[1:]]
+            break  # a quoted command line after `ssh <host>`: the caller classifies it whole, on that host
+        head_dir, slash, base = tokens[0].rpartition("/")
+        repo_script = base.endswith((".py", ".sh")) and (_REPO_SCRIPTS / base).is_file()
+        if slash and head_dir == "infra/scripts":
+            if retargeted or not repo_script:
+                return [], target
+        elif repo_script or (slash and head_dir not in _SYSTEM_DIRS):
+            return [], target
+        tokens = [base, *tokens[1:]]
         for prefix in _PREFIXES:
             if tuple(tokens[: len(prefix)]) == prefix:
                 tokens, changed = tokens[len(prefix) :], True
@@ -1998,7 +2014,7 @@ def _strip_prefixes(tokens: list[str]) -> tuple[list[str], str | None]:
         if changed:
             continue
         if len(tokens) > 2 and tokens[0] == "ssh" and re.fullmatch(_NAME, tokens[1]):
-            target, tokens, changed = tokens[1], tokens[2:], True
+            target, tokens, changed, retargeted = tokens[1], tokens[2:], True, True
         elif len(tokens) > 1 and tokens[0] in ("python", "python3") and tokens[1].endswith(".py"):
             tokens, changed = tokens[1:], True
         elif len(tokens) > 1 and tokens[0] in ("bash", "sh") and tokens[1].endswith(".sh"):
@@ -2008,7 +2024,7 @@ def _strip_prefixes(tokens: list[str]) -> tuple[list[str], str | None]:
             while rest and rest[0].startswith("-"):
                 rest = rest[2:] if rest[0] in _DOCKER_EXEC_VALUE_FLAGS else rest[1:]
             if len(rest) > 1 and re.fullmatch(_NAME, rest[0]):
-                tokens, changed = rest[1:], True
+                tokens, changed, retargeted = rest[1:], True, True
     return tokens, target
 
 
@@ -2029,7 +2045,7 @@ def classify_action(text: str, *, host: str | None = None, resolve) -> Tier:
     return Tier.PREPARED
 
 
-def _classify_one(command: str, host: str | None, *, resolve, text: str | None = None) -> Tier:
+def _classify_one(command: str, host: str | None, *, resolve, text: str | None = None, retargeted: bool = False) -> Tier:
     stages = _scan(_strip_noise(command))
     if not stages or not all(stages):
         return Tier.PREPARED
@@ -2037,12 +2053,12 @@ def _classify_one(command: str, host: str | None, *, resolve, text: str | None =
     alias = ssh_alias(host) if host else None
     if not all(_matches(_FILTER_SHAPES, stage, first_stage=False, host=alias, resolve=resolve) is not None for stage in filters):
         return Tier.PREPARED
-    tokens, target = _strip_prefixes(first)
+    tokens, target = _strip_prefixes(first, retargeted=retargeted)
     if not tokens:
         return Tier.PREPARED
     if target and len(tokens) == 1 and any(c.isspace() for c in tokens[0]):
         # A token holding a space can only be a quoted span; after `ssh <host>` it is a command line.
-        return _classify_one(tokens[0], target, resolve=resolve, text=text or command)
+        return _classify_one(tokens[0], target, resolve=resolve, text=text or command, retargeted=True)
     # `target or host` is where the command really runs, so it is also the filesystem its operands
     # resolve on -- the same host the telemetry gate below reads.
     lands_on = target or host
