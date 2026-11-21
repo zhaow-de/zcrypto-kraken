@@ -820,7 +820,7 @@ Read once three complete ISO weeks are decided, counted from the second rung-3 w
 
 1. **Inside the band**: the weekly reads' `within` column reads `yes` for three consecutive complete ISO weeks the report decided, the second rung-3 week the first it decides. The report's own `Verdict:` line reads `pass` once at least three weeks are decided and each decided week is inside.
 2. **Zero unreconciled order or position states**, from the engine's three reconciliations — the startup pass, the re-read pass and the boundary's book read — as the journal records them: each `ambiguous` row settled, each `reconciled` or `withdrawn` event and each leg whose `cache_net` differs from its `held_qty` explained in `docs/reference/rung3/days.md`, each unmatched ledger row explained at the weekly reads, and each position `zcrypto_exec_reconciliation_positions` counted explained in `docs/reference/rung3/days.md`.
-3. **The drills passed**: the first attended week's entries in `docs/reference/drill-log.md` — E, G, F2, D, H and B in their rung-3 forms — each `pass`.
+3. **The drills passed**: the first attended week's entries in `docs/reference/drill-log.md` — E, G, D, H and B in their rung-3 forms — and F2's re-run, its first-week entry `partial`, rested on the owner's `rest-hold` plan in an attended probe window on the owner's ruling of 2026-11-21, each `pass`.
 4. **The decision is the owner's**, the master plan's human decision, recorded beside the readings.
 
 ### Retire when
