@@ -244,3 +244,43 @@ Nothing fired. You are putting a file onto the NAS (`ssh nas`) — or a copy tha
 ### Retire when
 
 `infra/ansible/roles/nas/tasks/main.yml` no longer installs the hot-push key with `-no-overwrite` pinned at `/volume1/ZhaoCrypto/hot`, or `nas` is no longer the DSM box whose sftp chroot `infra/nas/README.md` records — either one removes the asymmetry every step above exists for.
+
+______________________________________________________________________
+
+<a name="nas-dsm-update"></a>
+
+## NAS DSM updates — PROCEDURE
+
+### What you are seeing
+
+DSM reports an update, or the NAS rebooted with no one at it: DSM installs its own updates, unattended, at a fixed slot.
+
+### What it means
+
+**The owner's ruling of 2026-11-20 is that DSM installs updates itself on a schedule** (its entry of that date in `docs/research/14.phase6-decisions.md`). DSM owns the OS (`docs/reference/fleet.md`'s hosts table), so the schedule lives in DSM's own update settings, set by the owner, not in this repo.
+
+**The slot is 14:25Z daily.** It sits at least 1 h from the 12Z and 16Z boundaries and off the hour. It falls between ops' NAS readers, the :22 panel and the :42 archive pull. It is clear of the gate export's late-mirror window after 20:30Z (`gate.md`). Read the NAS's time zone in DSM's Regional Options and enter the local time that is 14:25Z. If that zone observes daylight saving, a local time fixed in winter lands at 13:25Z in summer, which is also clear. One fixed in summer would land at 15:25Z in winter, inside the hour before 16Z, so fix it in winter's terms.
+
+**An update takes 10–20 minutes and can reboot twice.** On 2026-11-20 the NAS was down 17:25–17:28Z, then again 17:36–17:42Z for a newer update. While it is down:
+
+- `NAS · /volume1 free space low` and `NAS · load high` warn after 5 minutes, since no data counts as alerting.
+- `Fleet · Alloy dark — NAS` pages critical past 10 minutes.
+- `zcrypto-fleet-daemon-restarted` fires on the NAS when its containers come back.
+
+**Both containers restart themselves** (`restart: unless-stopped`). A reboot restarts the same container and does not recreate it, so the pull container's `/tmp/gate-cache.json` survives and the next gate export runs warm: 432 s on 2026-11-20, not the cold replay a recreate costs.
+
+**Ops reads the NAS through a soft NFS mount.** Its :12/:42 archive pull, :22 panel and :52 tape bars either ride out a short outage on the mount's retries or fail once and run again at their next tick. Ops' own node scrape leaves the mount unstat'd: `fs_types_exclude` in `infra/ansible/roles/ops/files/config.alloy` keeps a down NAS from timing out the whole scrape.
+
+### What to do
+
+After an update, read it back by outcome:
+
+1. **The NAS is back by value.** `up{host="nas"}` reads 1, and the three NAS rules above are Normal again.
+2. **The containers came back on their own.** On the NAS: `ssh nas 'uptime; sudo /usr/local/bin/docker ps --format "{{.Names}} {{.Status}}"; for c in zcrypto-archive-pull grafana-alloy; do sudo /usr/local/bin/docker inspect --format "$c {{.State.StartedAt}} restarts={{.RestartCount}}" $c; done; sudo /usr/local/bin/docker exec zcrypto-archive-pull ls -l /tmp/gate-cache.json'` — both Up, the gate cache still on disk.
+3. **The pulls and the export resumed.** The next archive-pull cycle logs `pull complete … failed=0` for each verified channel, and `zcrypto_gate_export_timestamp_seconds` advances.
+4. **Ops' next archive pull succeeded.** On ops: `systemctl show zcrypto-archive-pull.service -p Result -p ExecMainExitTimestamp`, the `:12` or `:42` run after the reboot reading `success`.
+5. **A change to the slot or the policy is the owner's word**, and this section changes with it.
+
+### Retire when
+
+The owner sets DSM back to notify-only, or `nas` is no longer the DSM box `docs/reference/fleet.md`'s hosts table names.
