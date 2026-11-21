@@ -828,6 +828,13 @@ def test_a_repo_script_runs_only_from_its_repo_path_on_ops(cmd):
     assert ops_daily.classify_action(f"`{cmd}`", host="ops", resolve=_identity) is ops_daily.Tier.PREPARED
 
 
+def test_a_file_in_infra_scripts_named_like_a_system_command_changes_no_verdict(monkeypatch, tmp_path):
+    (tmp_path / "du").write_text("")
+    monkeypatch.setattr(ops_daily, "_REPO_SCRIPTS", tmp_path)
+    assert ops_daily.classify_action("`du -sh /tmp`", host="ops", resolve=_identity) is ops_daily.Tier.AUTONOMOUS
+    assert ops_daily.classify_action("`infra/scripts/du -sh /tmp`", host="ops", resolve=_identity) is ops_daily.Tier.PREPARED
+
+
 @pytest.mark.parametrize(
     "cmd",
     [

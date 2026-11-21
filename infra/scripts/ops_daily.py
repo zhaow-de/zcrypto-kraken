@@ -1794,10 +1794,11 @@ _PREFIXES = (("sudo",), ("sudo", "-n"), ("uv", "run"), ("time",))
 # A head's directory is part of which program runs: `/tmp/du` is not `du`. Under a system binary
 # directory a head is peeled to its bare name; the NAS spells docker `/usr/local/bin/docker`, off its
 # non-interactive ssh PATH. The repo's own scripts run from `infra/scripts`, relative to the checkout
-# on ops: a head there is peeled only when the repo ships that file and no `ssh <host>` or
-# `docker exec` has moved the command off ops. A repo script named bare, or under a system
-# directory, is refused: an interpreter runs a bare script from the working directory, never PATH.
-# Every refusal is PREPARED.
+# on ops: a head there is peeled only when it is a `.py` or `.sh` file in the checkout's
+# `infra/scripts`, so a file there named like a system command peels nothing, and only when no
+# `ssh <host>` or `docker exec` has moved the command off ops. A repo script named bare, or under a
+# system directory, is refused: an interpreter runs a bare script from the working directory, never
+# PATH. Every refusal is PREPARED.
 _SYSTEM_DIRS = frozenset({"/usr/bin", "/bin", "/usr/sbin", "/sbin", "/usr/local/bin"})
 _REPO_SCRIPTS = Path(__file__).resolve().parent
 _DOCKER_EXEC_VALUE_FLAGS = frozenset({"-u", "--user", "-w", "--workdir", "-e", "--env"})
@@ -1999,7 +2000,7 @@ def _strip_prefixes(tokens: list[str], *, retargeted: bool = False) -> tuple[lis
         if target and len(tokens) == 1 and any(c.isspace() for c in tokens[0]):
             break  # a quoted command line after `ssh <host>`: the caller classifies it whole, on that host
         head_dir, slash, base = tokens[0].rpartition("/")
-        repo_script = bool(base) and (_REPO_SCRIPTS / base).is_file()
+        repo_script = base.endswith((".py", ".sh")) and (_REPO_SCRIPTS / base).is_file()
         if slash and head_dir == "infra/scripts":
             if retargeted or not repo_script:
                 return [], target
