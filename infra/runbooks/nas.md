@@ -257,7 +257,7 @@ DSM reports an update, or the NAS rebooted with no one at it: DSM installs its o
 
 ### What it means
 
-**The owner's ruling of 2026-11-20 is that DSM installs updates itself on a schedule** (its entry of that date in `docs/research/14.phase6-decisions.md`). DSM owns the OS (`docs/reference/fleet.md`'s hosts table), so the schedule lives in DSM's own update settings, set by the owner, not in this repo.
+**The owner's ruling of 2026-11-21 is that DSM installs updates itself on a schedule** (its entry of that date in `docs/research/14.phase6-decisions.md`). DSM owns the OS (`docs/reference/fleet.md`'s hosts table), so the schedule lives in DSM's own update settings, set by the owner, not in this repo.
 
 **The slot is 14:25Z daily.** It sits at least 1 h from the 12Z and 16Z boundaries and off the hour. It falls between ops' NAS readers, the :22 panel and the :42 archive pull. It is clear of the gate export's late-mirror window after 20:30Z (`gate.md`). Read the NAS's time zone in DSM's Regional Options and enter the local time that is 14:25Z. If that zone observes daylight saving, a local time fixed in winter lands at 13:25Z in summer, which is also clear. One fixed in summer would land at 15:25Z in winter, inside the hour before 16Z, so fix it in winter's terms.
 
