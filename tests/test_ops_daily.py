@@ -768,6 +768,24 @@ def test_a_bare_command_with_no_backticks_is_judged_as_one_command():
     )
 
 
+_OPS_NODE_CENSUSES = (
+    "sudo du -xh -d 2 / 2>/dev/null | sort -h | tail -25",
+    "sudo du --inodes -x -d 2 /tmp 2>/dev/null | sort -n | tail -20",
+)
+
+
+@pytest.mark.parametrize("cmd", _OPS_NODE_CENSUSES)
+def test_ops_node_md_s_own_censuses_are_autonomous_on_ops(cmd):
+    # config-selector-ok: exact membership in the page's parsed inline-code spans, not a substring of its text
+    assert cmd in set(re.findall(r"`([^`\n]+)`", (_RUNBOOKS / "ops-node.md").read_text()))
+    assert ops_daily.classify_action(f"`{cmd}`", host="ops", resolve=_identity) is ops_daily.Tier.AUTONOMOUS
+
+
+@pytest.mark.parametrize("cmd", ["sudo du -d 2 --delete /tmp", "sudo du -d x /tmp", "sudo du --inodes=1 /tmp"])
+def test_the_du_shape_still_prepares_an_unknown_flag_a_non_integer_depth_or_a_valued_inodes(cmd):
+    assert ops_daily.classify_action(f"`{cmd}`", host="ops", resolve=_identity) is ops_daily.Tier.PREPARED
+
+
 def test_an_unrecognised_action_is_prepared_never_autonomous():
     assert ops_daily.classify_action("Frobnicate the widget.", host="ops", resolve=_identity) is ops_daily.Tier.PREPARED
 
