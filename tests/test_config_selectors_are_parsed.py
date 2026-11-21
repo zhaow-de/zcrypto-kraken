@@ -56,35 +56,51 @@ def _callee(call: ast.Call) -> str | None:
     return f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else None
 
 
-def _chain_calls(node: ast.AST) -> set[str]:
-    """The names called along an expression's chain: `self._src(n).splitlines()` calls `splitlines` and `_src`."""
+def _owners(tree: ast.Module) -> frozenset[str]:
+    """The names a method is reached through: `self`, `cls` and the file's own classes."""
+    return frozenset({"self", "cls"} | {c.name for c in ast.walk(tree) if isinstance(c, ast.ClassDef)})
+
+
+def _chain_calls(node: ast.AST, owners: frozenset[str]) -> set[str]:
+    """The functions called along an expression's chain, bare or through an `owners` name:
+    `self._src(n).splitlines()` calls `_src`; `page.text()` and `proc.stdout.read()` call none of them."""
     names: set[str] = set()
     while True:
         if isinstance(node, ast.Call):
-            names.add(_callee(node) or "")
-            node = node.func
+            f = node.func
+            if isinstance(f, ast.Name):
+                names.add(f.id)
+            elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id in owners:
+                names.add(f.attr)
+            node = f
         elif isinstance(node, ast.Attribute):
             node = node.value
         else:
             return names
 
 
-def _functions(tree: ast.Module) -> list[tuple[str, set[str], list[ast.expr]]]:
-    """Every function or method, as its name, its parameters and the values it returns. A list, not a
-    dict: two functions sharing a name both count."""
+def _functions(tree: ast.Module) -> list[tuple[str, set[str], list[ast.expr], dict[str, list[ast.expr]]]]:
+    """Every function or method, as its name, its parameters, the values it returns and what each of
+    its own names is bound to. A list, not a dict: two functions sharing a name both count."""
     out = []
     for f in ast.walk(tree):
         if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef)):
             a = f.args
             params = {p.arg for p in [*a.posonlyargs, *a.args, *a.kwonlyargs, a.vararg, a.kwarg] if p}
-            out.append((f.name, params, [r.value for r in ast.walk(f) if isinstance(r, ast.Return) and r.value is not None]))
+            bound: dict[str, list[ast.expr]] = {}
+            for n in ast.walk(f):
+                if isinstance(n, ast.Assign):
+                    for target in n.targets:
+                        if isinstance(target, ast.Name):
+                            bound.setdefault(target.id, []).append(n.value)
+            out.append((f.name, params, [r.value for r in ast.walk(f) if isinstance(r, ast.Return) and r.value is not None], bound))
     return out
 
 
 def _generic_readers(functions) -> frozenset[str]:
     """Functions that return a `.read_text()` of a path built from a parameter: `return path.read_text()`."""
     names = set()
-    for name, params, values in functions:
+    for name, params, values, _ in functions:
         for c in (c for v in values for c in ast.walk(v)):
             if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr == "read_text":
                 if any(isinstance(x, ast.Name) and x.id in params for x in ast.walk(c.func.value)):
@@ -92,9 +108,11 @@ def _generic_readers(functions) -> frozenset[str]:
     return frozenset(names)
 
 
-def _infra_text_vars(tree: ast.Module, src: str) -> set[str]:
-    """Names bound to the TEXT of a file under infra/, directly or through a path const."""
+def _infra_text_vars(tree: ast.Module, src: str) -> tuple[set[str], set[str]]:
+    """Names bound to the TEXT of a file under infra/, directly or through a path const, and the
+    functions returning such text."""
     consts = _path_consts(tree, src)
+    owners = _owners(tree)
     functions = _functions(tree)
     generic = _generic_readers(functions)
     out: set[str] = set()
@@ -103,25 +121,35 @@ def _infra_text_vars(tree: ast.Module, src: str) -> set[str]:
             out |= {t.id for t in n.targets if isinstance(t, ast.Name)}
     # A function returning an infra read, inline or through a haystack, is a haystack by name:
     # `_unit()` and `self._src(n)` called inline, and `unit = _unit()`. A name it was handed is not
-    # its haystack, so `def _norm(line): return line.strip()` is no reader.
-    readers = {name for name, _, values in functions if any(_reads_infra(v, src, consts, generic) for v in values)}
+    # its haystack, so `def _norm(line): return line.strip()` is no reader, and a name it binds itself
+    # is one only when it binds it to a haystack.
+    readers = {name for name, _, values, _ in functions if any(_reads_infra(v, src, consts, generic) for v in values)}
+
+    def returns_a_haystack(v: ast.expr, params: set[str], bound: dict[str, list[ast.expr]]) -> bool:
+        root = _root_name(v)
+        if root in bound and root not in params:
+            if any(
+                _root_name(x) in out or _reads_infra(x, src, consts, generic) or _chain_calls(x, owners) & readers
+                for x in bound[root]
+            ):
+                return True
+        elif root not in params and root in out:
+            return True
+        return bool(_chain_calls(v, owners) & (readers - params))
+
     # Anything DERIVED from a haystack is a haystack: aliases, `next(... for l in h.splitlines())`,
     # `h.splitlines()`. Iterate to a fixed point -- a chain can be any number of hops, and the sets
     # only grow, so it ends.
     while True:
         before = set(out)
-        readers |= {
-            name
-            for name, params, values in functions
-            if any(_root_name(v) in out - params or _chain_calls(v) & (out - params) for v in values)
-        }
+        readers |= {name for name, params, values, bound in functions if any(returns_a_haystack(v, params, bound) for v in values)}
         out |= readers
         for n in ast.walk(tree):
             if isinstance(n, ast.Assign):
                 v = n.value
                 derived = (
                     _root_name(v) in out
-                    or bool(_chain_calls(v) & readers)
+                    or bool(_chain_calls(v, owners) & readers)
                     or (
                         # `rw = next(l for l in unit.splitlines() if ...)` -- one line OF a haystack
                         isinstance(v, ast.Call)
@@ -149,7 +177,7 @@ def _infra_text_vars(tree: ast.Module, src: str) -> set[str]:
                     out |= {t.id for t in ast.walk(gen.target) if isinstance(t, ast.Name)}
         if out == before:
             break
-    return out
+    return out, readers
 
 
 def _line_vars(tree: ast.Module, src: str, haystacks: set[str]) -> set[str]:
@@ -236,7 +264,8 @@ def _violations(src: str, name: str = "<src>") -> list[str]:
     tree = ast.parse(src)
     consts = _path_consts(tree, src)
     generic = _generic_readers(_functions(tree))
-    haystacks = _infra_text_vars(tree, src)
+    owners = _owners(tree)
+    haystacks, readers = _infra_text_vars(tree, src)
     src_lines = src.splitlines()
     anchored = _prefix_anchored(tree, src, _line_vars(tree, src, haystacks))
     return [
@@ -249,7 +278,7 @@ def _violations(src: str, name: str = "<src>") -> list[str]:
         and not any(_MARKER in l for l in src_lines[max(0, n.lineno - 2) : (n.end_lineno or n.lineno)])
         and (
             _root_name(n.comparators[0]) in haystacks
-            or bool(_chain_calls(n.comparators[0]) & haystacks)
+            or bool(_chain_calls(n.comparators[0], owners) & readers)
             or _reads_infra(n.comparators[0], src, consts, generic)
         )
     ]
@@ -474,6 +503,30 @@ def _lint(path):
     return run(STATIC.read_text(), path)
 def t():
     assert "ok" in _lint(ROLE / "t.j2")
+""",
+    "a method on another object named like a haystack": """
+def t1():
+    text = (REPO / "infra/u.service").read_text()
+    assert text
+def t2(page):
+    assert "ok" in page.text()
+""",
+    "another object's method named like a method reader": """
+class Units:
+    def read(self):
+        return (REPO / "infra/u.service").read_text()
+def t(proc):
+    assert "ok" in proc.stdout.read()
+""",
+    "a helper's own name bound to something else": """
+def t1():
+    text = (REPO / "infra/u.service").read_text()
+    assert text
+def _out(run):
+    text = run().stdout
+    return text
+def t2(run):
+    assert "ok" in _out(run)
 """,
 }
 
