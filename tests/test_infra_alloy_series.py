@@ -108,7 +108,7 @@ def test_the_ops_filesystem_collector_skips_nfs_and_keeps_alloys_linux_defaults(
     excluded = re.compile(found.group(1))
     assert [t for t in ("nfs", "nfs4") if not excluded.search(t)] == []
     assert [t for t in _ALLOY_LINUX_FS_TYPES_EXCLUDED if not excluded.search(t)] == []
-    assert [t for t in ("ext4", "vfat", "tmpfs", "nfsd", "fuse.sshfs") if excluded.search(t)] == []
+    assert [t for t in ("ext4", "vfat", "tmpfs", "nfsd", "fuse.sshfs", "fuse.squashfs") if excluded.search(t)] == []
     version = re.search(r'^alloy_version:\s*"([^"]+)"', (REPO / "infra/ansible/group_vars/observed/alloy.yml").read_text(), re.M)
     assert version and version.group(1) == _ALLOY_VERSION_OF_THE_DEFAULT, "re-read Alloy's Linux fs_types_exclude default"
 
