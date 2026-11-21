@@ -257,9 +257,9 @@ DSM reports an update, or the NAS rebooted with no one at it.
 
 ### What it means
 
-**The owner's ruling of 2026-11-21 is that DSM installs updates itself on a schedule** (its entry of that date in `docs/research/14.phase6-decisions.md`). DSM owns the OS (`docs/reference/fleet.md`'s hosts table), so the schedule lives in DSM's own update settings, which the owner enters, not in this repo. On 2026-11-21 the owner read them as installing automatically, weekly, at DSM's default of Saturday 04:05 in the NAS's local time; the 2026-11-20 update was installed by hand, at 17:22Z.
+**The owner's ruling of 2026-11-21 is that DSM installs updates itself on a schedule** (its entry of that date in `docs/research/14.phase6-decisions.md`). DSM owns the OS (`docs/reference/fleet.md`'s hosts table), so the schedule lives in DSM's own update settings, which the owner enters, not in this repo. On 2026-11-21 the owner read them as installing automatically, weekly, at DSM's default of Saturday 04:05, and moved the time to the slot below; the 2026-11-20 update was installed by hand, at 17:22Z.
 
-**The slot this page sets out is Saturday 14:25Z, weekly**, the controller's proposal for the fixed time the owner's ruling leaves to the owner; the opening paragraph of What to do moves DSM's default there. That default, Saturday 04:05 local, is 03:05Z on a NAS keeping Central European Time: 55 minutes before the 04Z boundary, across ops' 03:12 archive pull and 03:22 panel, and at night for a page. 14:25Z sits at least 1 h from the 12Z and 16Z boundaries and off the hour, and a page during it lands in daytime. It starts between ops' NAS readers, the :22 panel and the :42 archive pull; an update still running at 14:42Z meets the archive pull, which then skips its writer cycle, logging `writer cycle SKIPPED (fail-closed gate)` at WARNING with rc 0, and runs again at :12. It is clear of the gate export's late-mirror window after 20:30Z (`gate.md`). Read the NAS's time zone in DSM's Regional Options and enter the local time that is 14:25Z. If that zone observes daylight saving, a local time fixed in winter lands at 13:25Z in summer, which is also clear. One fixed in summer would land at 15:25Z in winter, inside the hour before 16Z, so fix it in winter's terms.
+**The slot is Saturday 14:25Z, weekly**, set by the owner in DSM on 2026-11-21 as "Saturday, 14:25". The NAS keeps UTC: the nas role's first task refuses to converge a NAS whose `date +%z` is not `+0000` (`infra/ansible/roles/nas/tasks/main.yml`), and DSM's Regional Options read "(GMT+00:00) Greenwich Mean Time", so DSM's times are UTC. DSM's default, Saturday 04:05, ran at 04:05Z: five minutes after the 04Z boundary, across ops' 04:12 archive pull and 04:22 panel, and at night for a page. 14:25Z sits at least 1 h from the 12Z and 16Z boundaries and off the hour, and a page during it lands in daytime. It starts between ops' NAS readers, the :22 panel and the :42 archive pull; an update still running at 14:42Z meets the archive pull, which then skips its writer cycle, logging `writer cycle SKIPPED (fail-closed gate)` at WARNING with rc 0, and runs again at :12. It is clear of the gate export's late-mirror window after 20:30Z (`gate.md`).
 
 **An update takes 10–20 minutes and can reboot twice.** On 2026-11-20 the NAS was down 17:25–17:28Z, then again 17:36–17:42Z for a newer update. While it is down:
 
@@ -275,7 +275,7 @@ The outages of 2026-11-20, 3 and 6 minutes long, fired only the last; the other 
 
 ### What to do
 
-**Once, move the schedule to the slot.** The owner sets DSM's update settings to Saturday at the local time that is 14:25Z and reads them back; until then DSM installs at its default.
+**The schedule is DSM's, at the slot.** DSM's update settings read "Saturday, 14:25"; after any change to DSM's settings or its time zone, read them back against the slot.
 
 After an update, read it back by outcome:
 
@@ -287,4 +287,4 @@ After an update, read it back by outcome:
 
 ### Retire when
 
-The owner sets DSM back to notify-only, or `nas` is no longer the DSM box `docs/reference/fleet.md`'s hosts table names.
+The owner sets DSM to notify-only, or `nas` is no longer the DSM box `docs/reference/fleet.md`'s hosts table names.
