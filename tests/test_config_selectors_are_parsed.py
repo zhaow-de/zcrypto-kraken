@@ -511,6 +511,16 @@ def t1():
 def t2(page):
     assert "ok" in page.text()
 """,
+    "a method of the test's own class named like a haystack": """
+def t1():
+    text = (REPO / "infra/u.service").read_text()
+    assert text
+class TestPage:
+    def text(self):
+        return "<html>"
+    def test_it(self):
+        assert "ok" in self.text()
+""",
     "another object's method named like a method reader": """
 class Units:
     def read(self):
