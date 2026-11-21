@@ -233,7 +233,7 @@ def test_the_unit_reader_reads_a_backslash_terminated_comment_as_a_comment():
     """A comment ending in a backslash opens no continuation, so the reader passes it — as it passes the rendered unit."""
     _refuse_continuations("# a comment ending in a backslash \\\n[Service]\nRestart=always\n", "commented.service")
     # The production-shaped input: the template this role ships, rendered. An always-refusing guard fails here.
-    assert "ExecStart=" in _rendered_unit()
+    assert any(line.startswith("ExecStart=") for line in _rendered_unit().splitlines())
 
 
 def test_the_unit_runs_the_installed_script_with_the_expected_arguments():

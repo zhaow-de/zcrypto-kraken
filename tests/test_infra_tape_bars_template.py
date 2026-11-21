@@ -135,7 +135,7 @@ def test_the_gauge_parse_matches_what_the_cli_actually_prints():
 
     # The grep anchors the summary to its own first field so a per-day ERROR line on stderr — which
     # carries an arbitrary exception message — can never be parsed as counters.
-    assert "grep -E '^days_written='" in _rendered()
+    assert any(line.startswith("summary=$(grep -E '^days_written=' ") for line in _rendered().splitlines())
 
 
 def _run_block(tmp_path, *, rc: int, summary: str, now: int, seed: str) -> str:

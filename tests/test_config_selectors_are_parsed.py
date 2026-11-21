@@ -55,27 +55,24 @@ def _infra_text_vars(tree: ast.Module, src: str) -> set[str]:
     # A loop variable over `<haystack>.splitlines()` IS the haystack, one line at a time. Without
     # this, `any("x" in line for line in text.splitlines())` slips through -- and that is precisely
     # the form someone reaches for to satisfy this guard.
-    readers: set[str] = set()
-    # Functions whose body returns an infra read: `unit = _rendered_unit()` is a haystack too.
-    for n in ast.walk(tree):
-        if isinstance(n, ast.FunctionDef) and any(
-            isinstance(r, ast.Return)
-            and ".read_text()" in (ast.get_source_segment(src, r) or "")
-            and (
-                _HAZARD in (ast.get_source_segment(src, r) or "")
-                or any(c in (ast.get_source_segment(src, r) or "") for c in consts)
-            )
-            for r in ast.walk(n)
-        ):
-            readers.add(n.name)
+    # Functions whose body returns an infra read, inline or through a haystack, are haystacks by name:
+    # `_unit()` called inline, and `unit = _unit()`.
+    returns = {
+        f.name: [r for r in ast.walk(f) if isinstance(r, ast.Return) and r.value is not None]
+        for f in ast.walk(tree)
+        if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    readers = {name for name, rs in returns.items() if any(_reads_infra(r, src, consts) for r in rs)}
     # Anything DERIVED from a haystack is a haystack: aliases, `next(... for l in h.splitlines())`,
     # `h.splitlines()`. Iterate to a fixed point -- a chain can be two hops.
     for _ in range(4):
         before = set(out)
+        readers |= {name for name, rs in returns.items() if any(_root_name(r.value) in out for r in rs)}
+        out |= readers
         for n in ast.walk(tree):
             if isinstance(n, ast.Assign):
                 v = n.value
-                derived = _root_name(v) in out | readers or (
+                derived = _root_name(v) in out or (
                     # `rw = next(l for l in unit.splitlines() if ...)` -- one line OF a haystack
                     isinstance(v, ast.Call)
                     and _root_name(v.func) == "next"
@@ -229,6 +226,46 @@ def t():
     unit = _unit()
     assert "ProtectSystem=strict" in unit
 """,
+    "a reader helper called inline": """
+def _unit():
+    return (REPO / "infra/u.service").read_text()
+def t():
+    assert "ProtectSystem=strict" in _unit()
+""",
+    "a reader helper's lines, inline": """
+def _unit():
+    return (REPO / "infra/u.service").read_text()
+def t():
+    assert "ProtectSystem=strict" in _unit().splitlines()
+""",
+    "a loop over a reader helper's lines": """
+def _unit():
+    return (REPO / "infra/u.service").read_text()
+def t():
+    for line in _unit().splitlines():
+        assert "ProtectSystem=strict" in line
+""",
+    "any over a reader helper's lines": """
+def _unit():
+    return (REPO / "infra/u.service").read_text()
+def t():
+    assert any("ProtectSystem=strict" in l for l in _unit().splitlines())
+""",
+    "a helper returning a haystack local": """
+def _unit():
+    text = (REPO / "infra/u.service").read_text()
+    return text
+def t():
+    unit = _unit()
+    assert "ProtectSystem=strict" in unit
+""",
+    "a helper returning a haystack local, called inline": """
+def _unit():
+    text = (REPO / "infra/u.service").read_text()
+    return text
+def t():
+    assert "ProtectSystem=strict" in _unit()
+""",
     "one line pulled out with next()": """
 def t():
     unit = (REPO / "infra/u.service").read_text()
@@ -270,6 +307,16 @@ def test_the_guard_accepts_a_real_prefix_anchor() -> None:
 def t():
     unit = (REPO / "infra/u.service").read_text()
     assert any(line.startswith("ReadWritePaths=") and "/var/lib/x" in line for line in unit.splitlines())
+"""
+    assert not _violations(src)
+
+
+def test_the_guard_accepts_a_real_prefix_anchor_over_a_reader_helpers_lines() -> None:
+    src = """
+def _unit():
+    return (REPO / "infra/u.service").read_text()
+def t():
+    assert any(line.startswith("ReadWritePaths=") and "/var/lib/x" in line for line in _unit().splitlines())
 """
     assert not _violations(src)
 
