@@ -139,12 +139,12 @@ def test_retryable_status_retries_the_same_batch_with_backoff(status_code, handl
     handler_cls = handler_factory(status_code=status_code)
     with FakeLoki(handler_cls) as url:
         handler = _make_handler(url, batch_max=1, ring_capacity=16)
-        # The backoffs the handler asks for, not the measured gaps between requests, which carry the
-        # flush interval, the POST and the scheduler's jitter under a loaded run.
+        # The backoffs the handler asks for, each beside the requests made before it (one POST per wait),
+        # not the measured gaps, which carry the flush interval, the POST and a loaded run's jitter.
         waits, stop_wait = [], handler._stop.wait
 
         def recording_wait(timeout=None):
-            waits.append(timeout)
+            waits.append((timeout, len(handler_cls.requests)))
             return stop_wait(timeout)
 
         handler._stop.wait = recording_wait
@@ -157,7 +157,7 @@ def test_retryable_status_retries_the_same_batch_with_backoff(status_code, handl
             assert len(bodies) == 1  # identical body every attempt -- the same batch, not a new one
 
             low, high = _TIGHT["backoff_min_s"], _TIGHT["backoff_max_s"]
-            assert waits[:5] == pytest.approx([low, low * 2, high, high, high])  # doubling, then capped
+            assert waits[:5] == [(low, 1), (low * 2, 2), (high, 3), (high, 4), (high, 5)]  # doubling, then capped
         finally:
             handler.close()
 

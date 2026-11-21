@@ -4,28 +4,24 @@ from __future__ import annotations
 
 import socket
 import threading
-import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 
 def handler_factory(status_code: int = 200, location: str | None = None) -> type[BaseHTTPRequestHandler]:
-    """Build a fresh request-handler class recording each POST/GET on its own `.requests`, with
-    `.request_times` monotonic stamps beside it for measuring retry gaps. `.status_code` is a mutable
+    """Build a fresh request-handler class recording each POST/GET on its own `.requests`. `.status_code` is a mutable
     CLASS attribute a test flips mid-run to script a server that fails then recovers; a closure would
     freeze the reply for the server's lifetime, and one shared class would leak `.requests`."""
     initial_status = status_code
 
     class _RecordingHandler(BaseHTTPRequestHandler):
         requests: list[tuple[str, dict, bytes]] = []
-        request_times: list[float] = []
         status_code = initial_status
 
         def _record_and_respond(self) -> None:
             length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(length)
-            _RecordingHandler.request_times.append(time.monotonic())
             _RecordingHandler.requests.append((self.path, dict(self.headers), body))
             self.send_response(_RecordingHandler.status_code)
             if location is not None:
