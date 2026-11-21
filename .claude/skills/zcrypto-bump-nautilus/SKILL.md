@@ -60,6 +60,6 @@ Then the premises: each spec whose decisions rest on the library's startup or re
 
 ## Closeout
 
-- The engine restart rule's lift, when this build carries #5065: `docs/open-topics/T0158-go-live-drill-program-execution.md`'s trigger names it.
+- The engine restart rule's lift: on a build carrying #5065 the rule waits on the live read its version record's *When the operating rule lifts* names, a bullet the new pin's record carries forward.
 - Rung 3's precondition, when this build carries the adapter's fix of the spot-lot restore: the two reads `docs/research/00.master-plan.md` §12 names, together — Step 3's spot-lot case red at its restore assertion, and one spot lot restored live across an engine restart at Kraken's quantity with no `EXTERNAL` line beside it.
 - `.local/memo.md`'s upstream watch list re-trued to what the next bump waits on.
