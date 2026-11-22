@@ -162,12 +162,13 @@ def _fsync_directory(directory: Path) -> None:
 
 
 def _place(root: Path, relpath: str, data: bytes) -> None:
-    """`data` at `root / relpath`, written whole to an exclusive temporary under `staging/`, fsynced and renamed in. A
-    present target is refused: past `write_base`'s and `write_day`'s refusals, only a writer that died between a file's
-    rename and its line's leaves one."""
+    """`data` at `root / relpath`, written whole to an exclusive temporary under `staging/`, fsynced and linked into
+    place, so a target another process places meanwhile is refused and never replaced. A target present before the
+    write is refused first: past `write_base`'s and `write_day`'s refusals, only a writer that died between a file's
+    place and its line's leaves one."""
     target = root / relpath
     if os.path.lexists(target):
-        raise ChainError(f"{root}: no line names {relpath}, and it is present: a writer stopped between its rename and its line's")
+        raise ChainError(f"{root}: no line names {relpath}, and it is present: a writer stopped between placing it and its line")
     staging = root / _STAGING
     staging.mkdir(parents=True, exist_ok=True)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -178,10 +179,14 @@ def _place(root: Path, relpath: str, data: bytes) -> None:
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
-        os.rename(temporary, target)
-    except BaseException:
+        try:
+            os.link(temporary, target)
+        except FileExistsError as exc:
+            raise ChainError(
+                f"{root}: {relpath} was placed by another process while this write staged it; it is left as it is"
+            ) from exc
+    finally:
         temporary.unlink(missing_ok=True)
-        raise
     _fsync_directory(target.parent)
 
 

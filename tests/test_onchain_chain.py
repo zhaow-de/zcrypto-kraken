@@ -157,6 +157,28 @@ def test_a_file_no_line_names_is_refused_and_left_as_it_is(tmp_path):
     assert line_days(tmp_path) == [D0]
 
 
+def test_a_file_placed_while_its_write_stages_it_is_refused_and_left_as_it_is(tmp_path, monkeypatch):
+    _chain(tmp_path, 0)
+    planted = tmp_path / "days/2025/12/31.parquet"
+    fsync = os.fsync
+
+    def plant_then_fsync(fd: int) -> None:
+        if not planted.exists():
+            planted.write_bytes(b"another process's file")
+        fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", plant_then_fsync)
+    with pytest.raises(
+        ChainError, match=re.escape("days/2025/12/31.parquet was placed by another process while this write staged it")
+    ):
+        write_day(tmp_path, _frame([_day(1)]), _vintage(_day(1)))
+    monkeypatch.undo()
+
+    assert planted.read_bytes() == b"another process's file"
+    assert staging_leftovers(tmp_path) == []
+    assert line_days(tmp_path) == [D0]
+
+
 @pytest.mark.parametrize(
     ("through", "offset", "refusal"),
     [(0, 2, f"{_day(2)} is not the next day; its head is {D0}"), (None, 0, "holds no base line")],
