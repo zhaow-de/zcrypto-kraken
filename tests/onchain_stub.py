@@ -153,4 +153,4 @@ class FakeBrk(urllib.request.HTTPHandler):
 
 
 def fake_client(fake: FakeBrk) -> BrkClient:
-    return BrkClient(BITVIEW_URL, opener=urllib.request.build_opener(fake))
+    return BrkClient(BITVIEW_URL, opener=urllib.request.build_opener(urllib.request.ProxyHandler({}), fake))
