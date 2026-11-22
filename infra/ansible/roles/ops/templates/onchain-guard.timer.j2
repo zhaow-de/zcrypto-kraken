@@ -1,0 +1,12 @@
+# Rendered by the `ops` Ansible role at /etc/systemd/system/zcrypto-onchain-guard.timer — do not
+# hand-edit on the host, edit infra/ansible/roles/ops/templates/onchain-guard.timer.j2 instead.
+#
+# Every five minutes from two after boot, the clock-offset timer's form. The [Install] section is what keeps the
+# enable armed across a reboot.
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Unit=zcrypto-onchain-guard.service
+
+[Install]
+WantedBy=timers.target

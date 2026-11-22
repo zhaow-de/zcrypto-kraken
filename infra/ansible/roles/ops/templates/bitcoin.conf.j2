@@ -1,0 +1,12 @@
+# Rendered by the `ops` Ansible role — do not hand-edit on the host, it is overwritten on the next
+# converge. Edit infra/ansible/roles/ops/templates/bitcoin.conf.j2 instead.
+#
+# BRK reads every block, so no `prune`; it needs no `txindex`. No `rpccookiefile`: the node writes its
+# cookie to its data directory, /bitcoin, where bitviewd reads it.
+server=1
+listen=0
+dbcache={{ ops_bitcoind_dbcache_mib }}
+# RPC on the project network alone: the container's only interfaces are its loopback and that network, and
+# no port is published. An `rpcbind` without an `rpcallowip` is ignored.
+rpcbind=0.0.0.0
+rpcallowip=0.0.0.0/0

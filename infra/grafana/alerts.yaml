@@ -2552,7 +2552,7 @@ rules:
     execErrState: Alerting
     for: 30m
     annotations:
-      summary: "The ops node's root filesystem has been below 15% free for 30+ minutes. It holds the ops timers' images and state, the reconcile ledger among it, and the operator's checkouts with their datasets; on a full disk the timers' writes fail. Removing anything is the operator's decision. Runbook: infra/runbooks/ops-node.md#zcrypto-ops-disk-low"
+      summary: "The ops node's root filesystem has been below 15% free for 30+ minutes. It holds the ops timers' images and state, the reconcile ledger among it, the on-chain node's blocks, index and chain, none of them to remove (infra/runbooks/ops-node.md#onchain-node), and the operator's checkouts with their datasets; on a full disk the timers' writes fail. Removing anything is the operator's decision. Runbook: infra/runbooks/ops-node.md#zcrypto-ops-disk-low"
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "301"
       unit: "of the root filesystem still free (a fraction, not a percent)"
@@ -3054,7 +3054,7 @@ rules:
     # no gap between 15-minute publishes to ride out.
     for: 15m
     annotations:
-      summary: "A host that does not reboot itself -- a capture host or the ops node -- has a pending reboot (/run/reboot-required). A capture host: schedule it -- secondary first, verify it boots and captures, then the primary; off any 4h engine-cycle boundary, in the traffic trough, hosts >= 1h apart; expect a ~83s capture gap, containers self-restart. The ops node: no capture gap; reboot it by hand in its 02:25 UTC slot, then check its containers came back resolving names. Guidance in docs/reference/fleet.md. Runbook: infra/runbooks/hosts.md#zcrypto-capture-reboot-pending"
+      summary: "A host that does not reboot itself -- a capture host or the ops node -- has a pending reboot (/run/reboot-required). A capture host: schedule it -- secondary first, verify it boots and captures, then the primary; off any 4h engine-cycle boundary, in the traffic trough, hosts >= 1h apart; expect a ~83s capture gap, containers self-restart. The ops node: no capture gap; in its 02:25 UTC slot stop the on-chain containers that run, reboot it by hand, then start the ones you stopped, zcrypto-onchain-bitcoind before zcrypto-onchain-bitview, and read that the on-chain containers running are exactly those, any other state waiting for the owner's word (infra/runbooks/ops-node.md#onchain-node), and check its containers came back resolving names. Guidance in docs/reference/fleet.md. Runbook: infra/runbooks/hosts.md#zcrypto-capture-reboot-pending"
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "503"
     labels:

@@ -1457,6 +1457,7 @@ _LIMITED_JOBS: dict[str, tuple[tuple[str, str], ...]] = {
         ("zcrypto-valkey3", "valkey"),
         ("zcrypto-valkey3", "sentinel"),
     ),
+    "infra/ansible/roles/ops/templates/onchain-compose.yaml.j2": (("ops", "bitcoind"), ("ops", "bitview")),
 }
 # A cap is a cap wherever it is written. Compose `memory:` is not the only shape: a systemd unit can
 # carry `MemoryMax=`, and the first one in this tree -- agentboard's -- was invisible here while the
@@ -1465,6 +1466,10 @@ _LIMITED_UNITS: dict[str, tuple[tuple[str, str], ...]] = {
     "infra/ansible/roles/access_ops/templates/zaccess-agentboard.service.j2": (("ops", "zaccess-agentboard"),),
 }
 _CACHE_SENTINEL_UNLEGGED = "Sentinel's `INFO` carries no memory section, so its exporter publishes no memory family to divide"
+_ONCHAIN_UNSCRAPED = (
+    "Neither on-chain container publishes a memory family and nothing scrapes either, so no headroom leg can divide one; "
+    "the cap is the bound, and the owner reads each peak at the first sync (spec 00164 D11)"
+)
 # (host, job) with a limit and no headroom leg, each with the reason it is left out.
 _HEADROOM_DELIBERATELY_ABSENT: dict[tuple[str, str], str] = {
     ("ops", "zaccess-agentboard"): (
@@ -1478,6 +1483,8 @@ _HEADROOM_DELIBERATELY_ABSENT: dict[tuple[str, str], str] = {
     ("zcrypto-valkey1", "sentinel"): _CACHE_SENTINEL_UNLEGGED,
     ("zcrypto-valkey2", "sentinel"): _CACHE_SENTINEL_UNLEGGED,
     ("zcrypto-valkey3", "sentinel"): _CACHE_SENTINEL_UNLEGGED,
+    ("ops", "bitcoind"): _ONCHAIN_UNSCRAPED,
+    ("ops", "bitview"): _ONCHAIN_UNSCRAPED,
 }
 
 _ALLOY_HEADROOM = "zcrypto-fleet-alloy-memory-headroom"

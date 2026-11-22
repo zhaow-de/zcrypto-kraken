@@ -456,3 +456,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #875 | 2026-11-21 | fix(ops): iter-202 — DSM updates on a schedule, ops' scrape off the NFS | iter-202 | — | — |
 | #879 | 2026-11-21 | docs(runbooks): iter-203 — the no-session page waits on the next order | iter-203 | — | — |
 | #881 | 2026-11-21 | docs(runbooks): T0158 — A2 re-cut for a spot fill, restart rule re-trued | — | — | T0158 |
+| #882 | 2026-11-22 | feat(onchain): iter-204 — BTC's on-chain series and its A1-gate reading | iter-204 | 00164 | T0228 |

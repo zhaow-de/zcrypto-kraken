@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# Rendered by the `ops` Ansible role at /usr/local/sbin/zcrypto-onchain-guard — do not hand-edit on
+# the host, edit infra/ansible/roles/ops/templates/onchain-guard.sh.j2 and re-converge instead.
+#
+# The on-chain node's stop rule (spec 00164 D11): while either on-chain container runs, four ages read on this host,
+# each against its bar. A read age past its bar stops both containers, which stay stopped until the owner starts them;
+# an age it cannot read warns and stops nothing, since the guard acts only on a value it read. No -e: neither an
+# unreadable source nor a refused stop ends a run early.
+set -u
+
+# The line shape the ops Alloy parse stage levels (archive-pull.sh.j2's log()).
+log() {
+    _ts=$(date -u +'%Y-%m-%d %H:%M:%S,%N')
+    printf '%s %s zcrypto.onchain-guard [onchain-guard.sh] - %s\n' "${_ts%??????}" "$1" "$2" >&2
+}
+
+TEXTFILE="{{ ops_textfile_dir }}"
+ARCHIVE_PULL_BAR={{ ops_onchain_guard_archive_pull_bar }}
+PANEL_BAR={{ ops_onchain_guard_panel_bar }}
+POLLER_BAR={{ ops_onchain_guard_poller_bar }}
+RECORDER_BAR={{ ops_onchain_guard_recorder_bar }}
+# A decimal, a float or prometheus_client's exponent form; awk would read any other text as 0, a gauge never set.
+NUMBER='^[-+]?([0-9]+[.]?[0-9]*|[.][0-9]+)([eE][-+]?[0-9]+)?$'
+
+# docker's own error text joins the line that names its exit, so none of it reaches the journal without a level.
+exited() {
+    local said=${2//$'\n'/ }
+    printf 'exited %s%s' "$1" "${said:+ ($said)}"
+}
+
+# docker ps's stdout is read for its emptiness, so its stderr goes to a file of its own; without one, the line names
+# the exit alone.
+err=$(mktemp 2>/dev/null) || err=""
+trap '[ -z "$err" ] || rm -f "$err"' EXIT
+
+# Only the exit and the emptiness are read: a state docker could not report is no value to act on.
+running=$(docker ps -q --filter name='^zcrypto-onchain-(bitcoind|bitview)$' 2>"${err:-/dev/null}")
+ps_rc=$?
+if [ "$ps_rc" -ne 0 ]; then
+    said=""
+    if [ -n "$err" ]; then
+        said=$(cat "$err")
+    fi
+    log WARNING "docker ps $(exited "$ps_rc" "$said"), so whether an on-chain container runs is unread; nothing read, nothing stopped"
+    exit 0
+fi
+if [ -z "$running" ]; then
+    exit 0
+fi
+
+now=$(date -u +%s)
+
+# Each age is computed in awk, which reads the float text the shell's arithmetic refuses. A single-sample read is
+# unread unless exactly one line matched, so a duplicated sample is never half-read. The textfiles' success gauges
+# are read, never the _last_run_ ones beside them, which every run stamps, clean or not; their 0 is a run never clean.
+archive_pull=$(awk -v now="$now" -v num="$NUMBER" '
+    $1 == "ops_archive_pull_last_success_timestamp" { n++; v = $2 }
+    END { if (n == 1 && v ~ num && v + 0 > 0) print int(now - v) }' "$TEXTFILE/ops-archive-pull.prom" 2>/dev/null)
+panel=$(awk -v now="$now" -v num="$NUMBER" '
+    $1 == "ops_panel_last_success_timestamp" { n++; v = $2 }
+    END { if (n == 1 && v ~ num && v + 0 > 0) print int(now - v) }' "$TEXTFILE/ops-panel-materialize.prom" 2>/dev/null)
+
+# The poller's gauge reads 0 from each start of its process until its first good cycle, so its age is then its
+# process's; a gauge that is not a number is unread, never its process's age.
+poller=""
+if body=$(curl -fsS -m 5 http://127.0.0.1:9103/metrics 2>/dev/null); then
+    poller=$(awk -v now="$now" -v num="$NUMBER" '
+        $1 == "zcrypto_liquidations_last_success_timestamp_seconds" { g++; gv = $2 }
+        $1 == "process_start_time_seconds" { p++; pv = $2 }
+        END {
+            if (g != 1 || gv !~ num) exit
+            if (gv + 0 > 0) print int(now - gv)
+            else if (p == 1 && pv ~ num && pv + 0 > 0) print int(now - pv)
+        }' <<<"$body")
+fi
+
+# One sample a source: a source with no good fetch reads 0 and is passed over, and the oldest of the rest is the read.
+# A sample that is not a number leaves the file unread.
+recorder=$(awk -v now="$now" -v num="$NUMBER" '
+    $1 ~ /^zcrypto_vintage_last_ok_timestamp_seconds\{/ {
+        if ($2 !~ num) bad = 1
+        else if ($2 + 0 > 0 && (oldest == "" || $2 + 0 < oldest + 0)) oldest = $2
+    }
+    END { if (!bad && oldest != "") print int(now - oldest) }' "$TEXTFILE/vintage.prom" 2>/dev/null)
+
+# Every run that reads names every age, so a silent journal while a container runs is a fault, never a clean guard.
+log INFO "ages in seconds: archive-pull=${archive_pull:-unread} bar=$ARCHIVE_PULL_BAR, panel=${panel:-unread} bar=$PANEL_BAR, poller=${poller:-unread} bar=$POLLER_BAR, recorder=${recorder:-unread} bar=$RECORDER_BAR"
+
+slipped=0
+judge() {
+    local name=$1 age=$2 bar=$3 source=$4
+    if [ -z "$age" ]; then
+        log WARNING "the $name age is unread from $source, so it stops nothing"
+    elif [ "$age" -gt "$bar" ]; then
+        log ERROR "the $name age ${age}s is past its bar ${bar}s: stopping zcrypto-onchain-bitview and zcrypto-onchain-bitcoind"
+        slipped=1
+    fi
+}
+judge archive-pull "$archive_pull" "$ARCHIVE_PULL_BAR" "$TEXTFILE/ops-archive-pull.prom"
+judge panel "$panel" "$PANEL_BAR" "$TEXTFILE/ops-panel-materialize.prom"
+judge poller "$poller" "$POLLER_BAR" http://127.0.0.1:9103/metrics
+judge recorder "$recorder" "$RECORDER_BAR" "$TEXTFILE/vintage.prom"
+
+refused() {
+    log WARNING "docker stop of $1 $(exited "$2" "$3")"
+}
+
+# Each container by name with the stop grace its compose service carries, and each whatever the other's stop answered,
+# so nothing rests on what docker says of a container not yet started or already stopped. A stop's stdout, the
+# container's name, is dropped; its stderr is kept for the WARNING a refusal logs.
+if [ "$slipped" -eq 1 ]; then
+    said=$(docker stop -t {{ ops_onchain_stop_grace }} zcrypto-onchain-bitview 2>&1 > /dev/null) || refused zcrypto-onchain-bitview $? "$said"
+    said=$(docker stop -t {{ ops_onchain_stop_grace }} zcrypto-onchain-bitcoind 2>&1 > /dev/null) || refused zcrypto-onchain-bitcoind $? "$said"
+    exit 1
+fi
+exit 0

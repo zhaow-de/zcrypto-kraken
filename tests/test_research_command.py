@@ -77,11 +77,14 @@ from cli.backtest.errors import BacktestError
 from cli.benchmark.errors import BenchmarkError
 from cli.costs.margin import margin_rate
 from cli.data import sync
+from cli.data.manifest import build_manifest, series_entry
 from cli.derivatives.funding import PERP_SYMBOLS
 from cli.features import trend_agreement
 from cli.features.derivatives import coverage_by_year, funding_zscore
 from cli.features.errors import FeatureError
 from cli.ohlc.dataset import to_frame, write_parquet
+from cli.onchain.freeze import SNAPSHOT_RELPATH
+from cli.onchain.series import COLUMNS, SCHEMA
 from cli.portfolio.builder import CombinedSystemConfig, build_combined_system
 from cli.portfolio.crossfreq_system import CrossfreqSystemConfig, _ffill_btc
 from cli.portfolio.errors import PortfolioError
@@ -8407,6 +8410,32 @@ def _c2_dataset(tmp_path: Path, subject: subjects.Subject) -> tuple[Path, dateti
     return root, datetime.fromtimestamp(_EPOCH_2020, UTC)
 
 
+def _c3_dataset(tmp_path: Path, subject: subjects.Subject) -> tuple[Path, datetime]:
+    """A two-year snapshot under `ohlc-test`, from a year before the first day of the ten `ohlc-full` legs it reads by name."""
+    root = _daily_dataset(tmp_path, dataset="ohlc-full")
+    n = 731
+    columns = {column: [1.0 + 0.5 * math.sin(j / 11.0 + i) for j in range(n)] for i, column in enumerate(COLUMNS[3:])}
+    columns["price"] = [5000.0 + 10.0 * j for j in range(n)]
+    snapshot = pl.DataFrame(
+        {
+            "ts": [datetime(2019, 1, 1, tzinfo=UTC) + timedelta(days=j) for j in range(n)],
+            "last_height": list(range(n)),
+            "last_hash": [f"{j:064x}" for j in range(n)],
+        }
+        | columns,
+        schema=SCHEMA,
+    )
+    (root / "ohlc-test" / "BTC").mkdir(parents=True)
+    snapshot.write_parquet(root / "ohlc-test" / SNAPSHOT_RELPATH)
+    manifest = build_manifest(
+        {SNAPSHOT_RELPATH: series_entry(snapshot, SNAPSHOT_RELPATH)},
+        written_at="2021-01-01T00:00:00+00:00",
+        provenance={"producer": "zcrypto onchain freeze", "as_of_line": {"relpath": "index/2020/12/31.json", "sha256": "5" * 64}},
+    )
+    (root / "ohlc-test" / "manifest.json").write_text(json.dumps(manifest))
+    return root, datetime.fromtimestamp(_EPOCH_2020, UTC)
+
+
 # A subject whose build reads a dataset it does not declare brings its own fixture here, and b1-window-only shares
 # b1-conditioning's; the ruled B1 subjects and their pre-flights bring theirs, shorter than their declared series —
 # `_B1_BARS` 4h bars against `_declared_series`' 600 days — because each row that evaluates them runs arm A's kill bar,
@@ -8456,6 +8485,7 @@ _CONTRACT_DATASETS = {
     "c1-maker-fill-reading": lambda tmp_path, subject: (tmp_path / "data", write_l2_fills_set(tmp_path / "data", "ohlc-test")),
     "p1-revalidation": lambda tmp_path, subject: (_p1_revalidation_dataset(tmp_path), datetime(2025, 1, 1, tzinfo=UTC)),
     "engine-cost-reading": lambda tmp_path, subject: (tmp_path / "data", write_l2_ladder_set(tmp_path / "data", "ohlc-test")),
+    "c3-onchain-reading": _c3_dataset,
 }
 
 

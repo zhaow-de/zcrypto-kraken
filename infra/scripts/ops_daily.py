@@ -369,9 +369,15 @@ PATCH_PASSES = (
     ("zcrypto-mon", "infra/runbooks/mon.md#mon-patch-pass"),
     ("zcrypto-hc", "infra/runbooks/hc.md#hc-patch-pass"),
 )
+# (reminder, host, the extra var whose converge restarts the month, runbook)
+RELEASE_READS = (
+    ("onchain-node release read", "zcrypto-ops", "ops_bitcoind_image_id", "infra/runbooks/ops-node.md#onchain-node-release"),
+)
 
 
-def last_full_converge(log: Path, host: str) -> date | None:
+def last_converge(log: Path, host: str, naming: str | None = None) -> date | None:
+    """The day of `host`'s last `rc` 0 converge that handed the extra var `naming`, or, `naming` None, of its last
+    un-tagged `site.yml` one, the node's full converge."""
     if not log.exists():
         return None
     found = None
@@ -380,8 +386,11 @@ def last_full_converge(log: Path, host: str) -> date | None:
             row = json.loads(line)
         except ValueError:
             continue
-        whole = row.get("playbook") == "site.yml" and not row.get("tags") and not row.get("skip_tags")
-        if whole and row.get("limit") == host and row.get("rc") == 0:
+        if naming is None:
+            counts = row.get("playbook") == "site.yml" and not row.get("tags") and not row.get("skip_tags")
+        else:
+            counts = naming in (row.get("extra_vars") or {})
+        if counts and row.get("limit") == host and row.get("rc") == 0:
             found = date.fromisoformat(row["ts"][:10])
     return found
 
@@ -462,21 +471,22 @@ def read_reminders(
             )
 
     log_failures = set()
-    for host, runbook in PATCH_PASSES:
+    monthly = [(f"{ssh_alias(host)} patch pass", host, None, runbook) for host, runbook in PATCH_PASSES] + list(RELEASE_READS)
+    for name, host, naming, runbook in monthly:
         try:
-            patched = last_full_converge(deploy_log, host)
+            converged = last_converge(deploy_log, host, naming)
         except _UNREACHABLE as exc:
             failure = f"the deploy log could not be read: {exc}"
             if failure not in log_failures:
                 log_failures.add(failure)
                 note(failure)
             continue
-        # No full converge on record is a node that is not built: nothing is owed on it.
-        if patched is not None:
-            days = (_a_month_after(patched) - now.date()).days
+        # No such converge on record is a node that is not built: nothing is owed on it.
+        if converged is not None:
+            days = (_a_month_after(converged) - now.date()).days
             status = _due_status(days)
-            last_pass = f"{status} (last full converge {patched.isoformat()})"
-            read.reminders.append(Reminder(f"{ssh_alias(host)} patch pass", last_pass, owed=days <= 0, runbook=runbook))
+            since = "last full converge" if naming is None else f"last converge naming {naming}"
+            read.reminders.append(Reminder(name, f"{status} ({since} {converged.isoformat()})", owed=days <= 0, runbook=runbook))
 
     try:
         end = newest_window_end(statements or STATEMENTS)

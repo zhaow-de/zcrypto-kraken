@@ -415,12 +415,24 @@ def _drive_ladder(tmp_path):
     return tmp_path / "l2-ladder-test" / "manifest.json"
 
 
+def _drive_freeze(tmp_path):
+    from cli.onchain.chain import write_base, write_day
+    from cli.onchain.freeze import freeze
+    from tests.test_onchain_freeze import BASE_DAYS, LINE_DAYS, _frame, _vintage
+
+    chain = tmp_path / "chain"
+    write_base(chain, _frame(BASE_DAYS[-1:]), _vintage(BASE_DAYS[-1], 0))
+    write_day(chain, _frame(LINE_DAYS[:1]), _vintage(LINE_DAYS[0], 1))
+    return freeze(chain, LINE_DAYS[0], tmp_path / "onchain", written_at=WRITTEN_AT)
+
+
 _PRODUCERS = {
     "cli/backfill/backfill.py": _drive_backfill,
     "cli/data/manifest.py": _drive_convert,
     "cli/derivatives/funding.py": _drive_funding,
     "cli/derivatives/oi.py": _drive_oi,
     "cli/ohlc/ingest.py": _drive_ingest,
+    "cli/onchain/freeze.py": _drive_freeze,
     "cli/panel/fills.py": _drive_fills,
     "cli/panel/ladder.py": _drive_ladder,
 }

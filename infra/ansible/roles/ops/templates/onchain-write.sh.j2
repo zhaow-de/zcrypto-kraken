@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Rendered by the `ops` Ansible role at /usr/local/sbin/zcrypto-onchain-write — do not hand-edit on
+# the host, edit infra/ansible/roles/ops/templates/onchain-write.sh.j2 and re-converge instead.
+#
+# One writer run: `zcrypto onchain write` in the digest-pinned image on the on-chain project's network, the chain
+# root mounted at /data. The arguments this script is given pass through to the CLI: the unit hands it the two image
+# ids, so this script names neither and renders without them.
+set -u
+
+# The line shape the ops Alloy parse stage levels (archive-pull.sh.j2's log()).
+log() {
+    _ts=$(date -u +'%Y-%m-%d %H:%M:%S,%N')
+    printf '%s %s zcrypto.onchain-write [onchain-write.sh] - %s\n' "${_ts%??????}" "$1" "$2" >&2
+}
+
+# The chain's directory, named for BRK's pinned commit and the writer's CHAIN_GENERATION (cli/onchain/chain.py),
+# which `onchain write` takes no option for.
+CHAIN="{{ ops_data_dir }}/{{ ops_onchain_subdir }}/btc-brk{{ ops_bitview_commit[:12] }}-g1/"
+
+# The project's network exists from the node's first start on. A chain holding no line is the state from the
+# converge to that start; a chain holding one has lost the project it was written from. Only docker's not-found
+# answer, the daemon's or its client's, reads as the network absent.
+said=$(docker network inspect zcrypto-onchain 2>&1 > /dev/null)
+inspect_rc=$?
+if [ "$inspect_rc" -ne 0 ]; then
+    said=${said//$'\n'/ }
+    case "$said" in
+        *"network zcrypto-onchain not found"* | *"No such network: zcrypto-onchain"*) ;;
+        *)
+            log ERROR "docker network inspect zcrypto-onchain exited ${inspect_rc}${said:+ ($said)}, a fault in docker and not an absent project; nothing written"
+            exit 1
+            ;;
+    esac
+    if compgen -G "${CHAIN}index/*/*/*.json" > /dev/null; then
+        log ERROR "the zcrypto-onchain compose project is absent, its network with it, while ${CHAIN} holds a line; nothing written"
+        exit 1
+    fi
+    log INFO "the zcrypto-onchain compose project is absent and ${CHAIN} holds no line, so the node has not started; nothing written"
+    exit 0
+fi
+
+# Captured, then replayed with `cat`, because the script has no pipefail. No -i, no -e, no --env-file: the run holds
+# no secret.
+out="$(mktemp)"
+docker run --rm --pull never \
+    --name zcrypto-onchain-write \
+    --user "{{ ops_uid }}:{{ ops_gid }}" \
+    --network zcrypto-onchain \
+    -v "{{ ops_data_dir }}/{{ ops_onchain_subdir }}:/data" \
+    --entrypoint zcrypto \
+    "{{ ops_image }}@{{ ops_image_digest }}" \
+    onchain write --chain-root /data --bitview "{{ ops_bitview_url }}" --brk-commit "{{ ops_bitview_commit }}" "$@" \
+    > "$out" 2>&1
+rc=$?
+cat "$out"
+
+# Exits 0 and 1 are the CLI's own, each with its summary line, the lock-held stop's included; any other exit, or no
+# summary (a failed mktemp leaves the count empty), is a run the CLI did not end.
+summary=$(grep -cE ' - onchain write (complete|stopped) chain=' "$out")
+summary=${summary:-0}
+rm -f "$out"
+if { [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; } || [ "$summary" -eq 0 ]; then
+    log ERROR "the on-chain writer ended with exit $rc and $summary summary line(s)"
+fi
+exit "$rc"
