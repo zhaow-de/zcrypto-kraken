@@ -41,7 +41,7 @@ def _day(n: int) -> date:
 
 
 def _fake(n_days: int) -> FakeBrk:
-    """`n_days` days from FIRST, `PER_DAY` blocks each, every pinned series served for every day above 0."""
+    """`n_days` days from FIRST, `PER_DAY` blocks each, every pinned series served for every day, each value above 0."""
     rng = random.Random(42)
     days = [_day(n) for n in range(n_days) for _ in range(PER_DAY)]
     series = {series_id: {_day(n): rng.uniform(1e9, 1e12) for n in range(n_days)} for series_id in BRK_SERIES.values()}
@@ -267,6 +267,7 @@ def test_a_stale_index_after_the_base_is_an_error(tmp_path, caplog, index, after
         assert len(errors) == 1
         assert errors[0].startswith(f"onchain write stopped chain={NAME} head={head} reason=")
         assert str(_day(5)) in errors[0] and f"height {height}" in errors[0]
+        assert ("/api/block-height/" in errors[0]) == (index == "unreachable")
         assert _messages(caplog, logging.WARNING) == []
 
 
@@ -360,8 +361,10 @@ def test_mvrv_z_of_a_day_line_equals_the_rebuilds(tmp_path):
 
 def test_a_held_lock_exits_1_with_the_writers_own_message(tmp_path, caplog):
     fake = _fake(8)
+    build_chain(tmp_path, fake, [_day(3)])
+    _confirm(fake, _day(4))
+    fake.seen.clear()
     root = tmp_path / NAME
-    root.mkdir()
     fd = os.open(root / LOCKFILE_NAME, os.O_CREAT | os.O_RDWR, 0o644)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -373,9 +376,64 @@ def test_a_held_lock_exits_1_with_the_writers_own_message(tmp_path, caplog):
     assert code == 1
     assert _messages(caplog, logging.ERROR) == [
         f"another onchain writer holds {root}; refusing. Read the zcrypto-onchain-write.service journal",
-        f"onchain write stopped chain={NAME} head=none reason=lock held",
+        f"onchain write stopped chain={NAME} head={_day(3)} reason=lock held",
     ]
     assert fake.seen == []
+    assert line_days(root) == [_day(3)]
+
+
+@pytest.mark.parametrize("based", [False, True], ids=["before-the-base", "after-the-base"])
+def test_a_day_the_index_serves_no_value_for_stops_the_run_naming_the_series_and_the_day(tmp_path, based):
+    fake = _fake(8)
+    if based:
+        build_chain(tmp_path, fake, [_day(3)])
+    _confirm(fake, _day(5))
+    # The answer ends at day 4, so day 5 is absent from it, not served null.
+    series_id = BRK_SERIES["sth_mvrv"]
+    for n in (5, 6, 7):
+        del fake.series[series_id][_day(n)]
+    days = line_days(tmp_path / NAME)
+
+    outcome = _run(tmp_path, fake, day_end(_day(5)) + timedelta(hours=2))
+
+    assert outcome == WriteOutcome((), False, f"the index serves no value of {series_id} for {_day(5)}; nothing written")
+    assert line_days(tmp_path / NAME) == days
+
+
+@pytest.mark.parametrize(
+    "commit", [COMMIT[:12], COMMIT.upper(), COMMIT + "0"], ids=["12-character-prefix", "uppercase", "41-characters"]
+)
+def test_a_brk_commit_not_of_40_lowercase_hex_characters_is_refused_before_a_chain_is_opened(tmp_path, caplog, commit):
+    fake = _fake(8)
+    _confirm(fake, _day(4))
+    caplog.set_level(logging.INFO)
+
+    code = run_onchain_write(
+        tmp_path,
+        fake_client(fake),
+        brk_commit=commit,
+        bitview_image=BITVIEW_IMAGE,
+        bitcoind_image=BITCOIND_IMAGE,
+        now=day_end(_day(4)),
+    )
+
+    assert code == 1
+    reason = f"the BRK commit {commit!r} is not 40 lowercase hex characters; no chain is opened"
+    assert _messages(caplog, logging.ERROR) == [f"onchain write stopped chain={chain_name(commit)} head=none reason={reason}"]
+    assert list(tmp_path.iterdir()) == [] and fake.seen == []
+
+
+def test_an_absent_chain_root_is_refused_and_never_made(tmp_path, caplog):
+    fake = _fake(8)
+    _confirm(fake, _day(4))
+    absent = tmp_path / "absent"
+    caplog.set_level(logging.INFO)
+
+    assert _command(absent, fake, day_end(_day(4))) == 1
+
+    reason = f"{absent} is not a directory; the writer never makes the chain root"
+    assert _messages(caplog, logging.ERROR) == [f"onchain write stopped chain={NAME} head=none reason={reason}"]
+    assert not absent.exists() and fake.seen == []
 
 
 def test_the_vintage_carries_its_keys(tmp_path):

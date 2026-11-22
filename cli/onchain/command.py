@@ -53,7 +53,7 @@ def run_onchain_write(
         )
     except CaptureError:
         log.error("another onchain writer holds %s; refusing. Read the zcrypto-onchain-write.service journal", root)
-        return _stopped(name, "none", "lock held")
+        return _stopped(name, _head(root), "lock held")
     except Exception as exc:
         return _stopped(name, _head(root), _failure(exc))
     if outcome.stopped is not None:
@@ -65,7 +65,7 @@ def run_onchain_write(
 @onchain_app.command("write")
 def write_cmd(
     chain_root: Path = typer.Option(
-        ..., "--chain-root", help="The directory holding the chain's own, which a run makes there when absent."
+        ..., "--chain-root", help="An existing directory; a run makes the chain's own directory in it when absent."
     ),
     bitview: str = typer.Option(
         ..., "--bitview", metavar="URL", help="The pinned BRK's address on the on-chain project's network."
