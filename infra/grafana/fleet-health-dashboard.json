@@ -840,7 +840,7 @@
       "id": 301,
       "type": "timeseries",
       "title": "Filesystem free % by mountpoint",
-      "description": "Which mountpoint on which machine is filling, and how fast. Four alerts watch four different mountpoints at two different bars, so each is drawn against its own line: the capture spool (the root filesystem, which holds unbackfillable order-book data) pages below 10% free after `for: 5m`; the NAS archive volume pages below 10% free after `for: 5m`; the edge machine pages below 15% free after `for: 30m`; the ops root filesystem, which holds the ops timers' state and the operator's checkouts, pages below 15% free after `for: 30m`. The archive-volume series carries no machine matcher because that mountpoint name exists on the NAS only — that is the alert's own expression, unchanged.",
+      "description": "Which mountpoint on which machine is filling, and how fast. Four alerts watch four different mountpoints at two different bars, so each is drawn against its own line: the capture spool (the root filesystem, which holds unbackfillable order-book data) pages below 10% free after `for: 5m`; the NAS archive volume pages below 10% free after `for: 5m`; the edge machine pages below 15% free after `for: 30m`; the ops root filesystem, which holds the ops timers' state, the on-chain node and the operator's checkouts, pages below 15% free after `for: 30m`. The archive-volume series carries no machine matcher because that mountpoint name exists on the NAS only — that is the alert's own expression, unchanged.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"

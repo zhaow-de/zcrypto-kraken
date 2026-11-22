@@ -669,6 +669,22 @@ PUBLISHED = [
             "ops_bitview_image_id": DIGEST,
         },
     ),
+    # The on-chain node's release read re-hands the running poller's digest, so it carries no liquidations decision.
+    (
+        [
+            "--limit",
+            "zcrypto-ops",
+            "-e",
+            f"ops_image_digest={DIGEST}",
+            "-e",
+            f"ops_bitcoind_image_id={DIGEST}",
+            "-e",
+            f"ops_bitview_image_id={DIGEST}",
+        ],
+        "zcrypto-ops",
+        "",
+        {"ops_image_digest": DIGEST, "ops_bitcoind_image_id": DIGEST, "ops_bitview_image_id": DIGEST},
+    ),
 ]
 
 

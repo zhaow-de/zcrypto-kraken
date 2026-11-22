@@ -24,6 +24,7 @@ Learning-for-Fun quant-trading research project for Kraken (spot + spot-margin).
   - [`zcrypto snapshot`](#zcrypto-snapshot)
   - [`zcrypto tax`](#zcrypto-tax)
   - [`zcrypto vintage`](#zcrypto-vintage)
+  - [`zcrypto onchain`](#zcrypto-onchain)
 - [Configuration](#configuration)
   - [`[zcrypto]`: dataset paths](#zcrypto-dataset-paths)
   - [`[zcrypto.engine]`: shadow-engine settings](#zcryptoengine-shadow-engine-settings)
@@ -528,6 +529,37 @@ zcrypto vintage derive --record <PATH> --table <PATH> [--textfile <PATH>] [--thr
 | `record` | Fetches every source in the pinned fetch table (or only the `--source` ids named, the rest recorded as not selected), publishes the tick as one immutable directory under `<data-dir>/record/` by one rename, writes the gauges to `--textfile` and re-verifies the record. `--bgeometrics-key-stdin` reads the BGeometrics key from stdin; without it the keyed sources read `no credential`. Exits **0** when every source is ok, the gauges written and the re-verify clean, **1** when a tick was published with any of those not, **2** when nothing was published. |
 | `verify` | Reads a copy of the record: its `prev` chain, each body against its tick's `tick.json`, and the files the ticks hold. `--newest`, `--slice` and `--slices`, given together, re-hash the bodies of the newest N ticks and of one slice of the rest; `--custody` reads the copy as the only custody of an acknowledged fork's tick off the chain, so such a tick missing from it is a `missing tick` break (a tick marked lost, a note), where a read without it passes over the tick; every read of the NAS copy takes it. Logs each break, then one `vintage verify complete …` line naming the head tick and its `tick.json` sha256. Read-only. Exits **0** clean, **1** on any break, **2** on a usage error, such as `--newest`, `--slice` and `--slices` not given together. |
 | `derive` | Builds the versions table from a copy of the record, read-only: one part and one head per tick on its chain after the table's head, under the table's lock. `--through <STAMP>` rebuilds along the chain ending at that tick into a table root holding nothing but the lockfile. Exits **0** when the table reaches the record's head, **1** otherwise. |
+
+### `zcrypto onchain`<a name="zcrypto-onchain"></a>
+
+BTC's on-chain valuation series, computed by a pinned, unmodified BRK beside our own Bitcoin Core node and written once per UTC day into a vintage chain: a base through its first day, then one day file and one index line per day, each line the sha256 of the one before it, nothing rewritten. On the ops node the `zcrypto-onchain-write` timer runs `write` hourly at `:17`; `freeze` cuts a snapshot from the chain for a reading, and `crosscheck` compares that snapshot with Coin Metrics.
+
+```bash
+zcrypto onchain write --chain-root <PATH> --bitview <URL> --brk-commit <SHA> --bitview-image <ID> --bitcoind-image <ID>
+zcrypto onchain verify --chain <PATH> [--as-of <YYYY-MM-DD>]
+zcrypto onchain freeze --chain <PATH> --as-of <YYYY-MM-DD> --out <PATH>
+zcrypto onchain crosscheck --snapshot <PATH> --versions <PATH> --generation <N> --head <SHA256>
+```
+
+| Command | What it does |
+| -- | -- |
+| `write` | Writes the base when the chain is empty and the index has reached the node's tip, else each UTC day closed by a later day's block and 12 blocks deep since the chain's head, under the chain's lock; each run first re-reads the newest 30 days' lines and files and the block hash each records, and a block that hashes otherwise stops it, a reorg past the depth. Ends with `onchain write complete …` or `onchain write stopped … reason=…`. Exits **0** complete, **1** stopped. |
+| `verify` | Walks the chain from its base to the as-of line, re-hashes every file each line lists, and names that line, its sha256 and the days the chain holds through it. Read-only. Exits **0** verified, **1** refused. |
+| `freeze` | Verifies the chain through the as-of line, then writes every day it holds through that line as one parquet, `BTC/onchain.parquet`, and, last, a manifest naming the line, its BRK commit and its image ids, into a directory it makes. Exits **0** written, **1** refused. |
+| `crosscheck` | Compares the snapshot with Coin Metrics day by day, read from the vintage versions table through the given head: the snapshot's MVRV at Coin Metrics' price against `CapMVRVCur`, its price against `PriceUSD` and its supply against `SplyCur`. Logs each year's, all days' and the tolerance span's distributions. Exits **1** where the span holds no day the MVRV ratio compares, breaches the tolerance or holds a day the snapshot leaves out, each reason its own ERROR line, else **0**. |
+
+| Option | Description |
+| -- | -- |
+| `--chain-root <PATH>` | `write`: an existing directory; a run makes the chain's own directory in it when absent. |
+| `--bitview <URL>` | `write`: the pinned BRK's address on the on-chain project's network. |
+| `--brk-commit <SHA>` | `write`: the pinned BRK commit, 40 lowercase hex; the chain's directory is named for its first 12 characters, `btc-brk<12 hex>-g<generation>`. |
+| `--bitview-image <ID>`, `--bitcoind-image <ID>` | `write`: the local image ids of the running BRK container and Bitcoin Core node, recorded in each line written. |
+| `--chain <PATH>` | `verify`, `freeze`: the chain's own directory under the chain root. |
+| `--as-of <YYYY-MM-DD>` | `verify`: the day of the line to verify the chain through, its head's when omitted. `freeze`: the day of the line to freeze the chain at; a day after its head is refused. |
+| `--out <PATH>` | `freeze`: the snapshot's directory, which the run makes; one that exists is refused. |
+| `--snapshot <PATH>` | `crosscheck`: the frozen snapshot's directory, read as any frozen set. |
+| `--versions <PATH>`, `--generation <N>` | `crosscheck`: the vintage versions table's root and its generation. |
+| `--head <SHA256>` | `crosscheck`: the sha256 of the head the versions are read through, as of its latest row: 64 lowercase hex characters. |
 
 ## Configuration<a name="configuration"></a>
 

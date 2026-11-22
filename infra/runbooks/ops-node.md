@@ -1,8 +1,8 @@
 # Ops node — its timers and units
 
-You are here because **an alert fired in Slack**, or because **a guard in the code pointed you here**. Find the section whose anchor matches the alert `uid` or the anchor in the comment that sent you. Each section is written to be actioned without opening any other document.
+You are here because **an alert fired in Slack**, or because **a guard in the code pointed you here**, or because the daily pass's reminders name the on-chain node's release read. Find the section whose anchor matches the alert `uid` or the anchor in the comment that sent you. Each section is written to be actioned without opening any other document.
 
-Everything below is produced on one host, `zcrypto-ops`, reached as `ssh hp`. Its project timers are this role's, each firing a `Type=oneshot` unit — rendered from `infra/ansible/roles/ops/templates/*.timer.j2`, plus `zcrypto-clock-offset.timer` from its `files/` — beside `zaccess-probe-ops.timer`, which the `access_ops` role owns. `grafana-watchdog`, which probes both nodes, and `zcrypto-clock-offset` are plain scripts; the rest run the repo CLI as an ephemeral, digest-pinned `docker run --rm --pull never`. All but `grafana-watchdog` publish a node-exporter textfile under `/var/lib/zcrypto-ops/textfile/`; the host's Alloy scrapes those files and ships their series to the observability node, and ships the units' journal lines to its Loki. Every rule in this file reads one of those textfile series, or those log lines, or the host's own load average and filesystems. The host has **no `uv`** — it runs containers, not the repo CLI.
+Everything below is produced on one host, `zcrypto-ops`, reached as `ssh hp`. Its project timers are this role's, each firing a `Type=oneshot` unit — rendered from `infra/ansible/roles/ops/templates/*.timer.j2`, plus `zcrypto-clock-offset.timer` from its `files/` — beside `zaccess-probe-ops.timer`, which the `access_ops` role owns. `grafana-watchdog`, which probes both nodes, `zcrypto-clock-offset` and `zcrypto-onchain-guard`, which may stop the on-chain node, are plain scripts; the rest run the repo CLI as an ephemeral, digest-pinned `docker run --rm --pull never`. All but `grafana-watchdog`, `zcrypto-onchain-write` and `zcrypto-onchain-guard` publish a node-exporter textfile under `/var/lib/zcrypto-ops/textfile/`; the host's Alloy scrapes those files and ships their series to the observability node, and ships the units' journal lines to its Loki. Every rule in this file reads one of those textfile series, or those log lines, or the host's own load average and filesystems. The host's units run containers, not the repo CLI; the research workstation's checkout on this host runs the `uv run` lines, such as the on-chain section's.
 
 `README.md` beside this file states what belongs in a runbook at all; an alert or a guard names a section by file and anchor, and a procedure is found by its file and heading.
 
@@ -261,9 +261,9 @@ A **warning** Grafana alert (`Ops · node load high`): `node_load1{host="ops"} >
 
 Sustained saturation, not a transient burst. Nothing is lost by load alone — the cost is that timers overrun their ticks, and one of them has a cliff: a writer cycle past 1800 s means the next `:12`/`:42` trigger fires against a still-activating unit and is **dropped**, halving the booking cadence (`infra/runbooks/ops.md#zcrypto-reconcile-cycle-duration` owns that, and its own rule warns at 1500 s).
 
-The load is Alloy plus the timers under `infra/ansible/roles/ops/`; the overlay writer is one of them, not a service beside them. Read the schedules from those templates, or from `systemctl list-timers 'zcrypto-*'` on the host; no list written here is the authority. The bar is 20 whatever the box has. If you are going to reason about the ratio, read the thread count from `nproc` on the host rather than from any figure written here or in a spec.
+The load is Alloy, the timers under `infra/ansible/roles/ops/` and the on-chain node's two capped containers, `zcrypto-onchain-bitcoind` and `zcrypto-onchain-bitview`, at a lower CPU weight than the timers and stopped by their guard when a timer falls behind its bar ([`onchain-node`](#onchain-node)); the overlay writer is one of the timers, not a service beside them. Read the schedules from those templates, or from `systemctl list-timers 'zcrypto-*'` on the host; no list written here is the authority. The bar is 20 whatever the box has. If you are going to reason about the ratio, read the thread count from `nproc` on the host rather than from any figure written here or in a spec.
 
-**Known, accepted overlaps and bursts, none of them findings on their own**: the writer's `:42` slot collides with the 03:41 verify-replay run once a day (both are read-only NFS readers); the host reboots by hand, in its 02:25 UTC slot ([`hosts.md#zcrypto-capture-reboot-pending`](hosts.md#zcrypto-capture-reboot-pending)), and the role's `Persistent=true` timers (`grep -l 'Persistent=true' infra/ansible/roles/ops/templates/*.timer.j2`) run their missed ticks after it, so a post-boot burst is expected; and this host also carries the liquidations poller, Alloy, and the agentboard web terminal with its tmux sessions, so not every load spike is pipeline work.
+**Known, accepted overlaps and bursts, none of them findings on their own**: the writer's `:42` slot collides with the 03:41 verify-replay run once a day (both are read-only NFS readers); the host reboots by hand, in its 02:25 UTC slot ([`hosts.md#zcrypto-capture-reboot-pending`](hosts.md#zcrypto-capture-reboot-pending)), and the role's `Persistent=true` timers (`grep -l 'Persistent=true' infra/ansible/roles/ops/templates/*.timer.j2`) run their missed ticks after it, so a post-boot burst is expected; and this host also carries the liquidations poller, Alloy, the on-chain node and its index ([`onchain-node`](#onchain-node)), and the agentboard web terminal with its tmux sessions, so not every load spike is pipeline work.
 
 ### What to do
 
@@ -290,7 +290,7 @@ A **warning** Grafana alert (`Ops · root filesystem low`): `node_filesystem_ava
 
 ### What it means
 
-The root filesystem holds `/home` as well as the system. On it sit the Docker images the ops timers run from, under `/var/lib/docker`; the timers' own state under `/var/lib/zcrypto-ops`, the reconcile ledger among it; the journal; and the operator's checkouts of this repository with their worktrees and their gitignored `data/`. A full disk fails the timers' textfile and ledger writes and the next image pull. `/mnt/zhao-crypto` is the NAS's export on a filesystem of its own, which `zcrypto-nas-disk-low` watches, and `/tmp` is a tmpfs whose inodes `zcrypto-ops-inodes-low` below watches.
+The root filesystem holds `/home` as well as the system. On it sit the Docker images the ops timers run from, under `/var/lib/docker`; the timers' own state under `/var/lib/zcrypto-ops`, the reconcile ledger among it; the on-chain node's blocks and BRK's index under `/var/lib/zcrypto-onchain/`, and its vintage chain under `/var/lib/zcrypto-ops/onchain/`, none of them space to reclaim — the blocks re-download and the index rebuilds from them, each a sync of its own, and the chain is the one copy of its vintages ([`onchain-node`](#onchain-node)); the journal; and the operator's checkouts of this repository with their worktrees and their gitignored `data/`. A full disk fails the timers' textfile and ledger writes and the next image pull. `/mnt/zhao-crypto` is the NAS's export on a filesystem of its own, which `zcrypto-nas-disk-low` watches, and `/tmp` is a tmpfs whose inodes `zcrypto-ops-inodes-low` below watches.
 
 ### What to do
 
@@ -351,6 +351,8 @@ The `container` label names the source, and that is your routing:
 - **`zcrypto-panel-materialize`** — a per-hour panel failure (`panel hour failed pair=… hour=…`); the panel section above.
 - **`zcrypto-verify-replay`** / **`zcrypto-verified-replay`** — that sweep's CLI; `infra/runbooks/ops.md#zcrypto-ops-verify-replay-new-breakage` and the verified-replay section above.
 - **`zcrypto-tape-bars`** — the tape-bars sweep; its sections are in `infra/runbooks/ops.md`.
+- **`zcrypto-onchain-write`** — the on-chain writer stopped, most often `onchain write stopped chain=… head=… reason=…`; the on-chain section's writer part, [`onchain-node`](#onchain-node).
+- **`zcrypto-onchain-guard`** — the on-chain guard stopped the node and its index on an ops timer's slip, its line naming the age and its bar; the on-chain section's guard part, [`onchain-node`](#onchain-node).
 - **`alloy`** — Alloy's own logfmt `level=error`, typically a remote-write or Loki-push failure. The telemetry plane is complaining about itself. A line carrying `component_id=loki.write.mon` (`final error sending batch, no retries left, dropping data`) or `remote_name=mon` (`non-recoverable error`) is the node's ingest failing — the node's Loki or its edge down past about seven minutes, or a 401 from an ingest password changed on the node and not yet on ops: `mon.md#mon-dark`, and `mon.md#mon-secrets` step 4 for the 401. Such a line reaches this rule by a later batch that delivers, after the fault has cleared.
 - **`liquidations`** — the poller. **This rule is the only channel its ERROR lines have**: it is a long-lived daemon that flips no exit-code metric, and it direct-ships its own lines to Loki without passing through Alloy at all (no count command: `alerts.yaml` selects its ERROR lines in `zcrypto-ops-error-logs` alone).
 
@@ -369,6 +371,119 @@ The scope is the journal keep-regex in `infra/ansible/roles/ops/files/config.all
 ### Retire when
 
 `zcrypto-ops-error-logs` is absent from `infra/grafana/alerts.yaml`.
+
+______________________________________________________________________
+
+<a name="onchain-node"></a>
+
+## onchain-node — PROCEDURE
+
+### What you are seeing
+
+Nothing fired, or the on-chain guard or writer logged an ERROR. You are starting BTC's on-chain node or its index, triaging a stop of either, clearing a writer's stop, or rebooting the host while they run. Its parts on this host:
+
+- **`zcrypto-onchain-bitcoind`**, a Bitcoin Core node, and **`zcrypto-onchain-bitview`**, BRK's `bitviewd` indexing that node's blocks: two long-running containers in their own compose project, `/etc/zcrypto-ops/onchain/compose.yaml`, apart from the liquidations poller's, each `restart: unless-stopped`, capped in CPU, memory and disk IO, and at a lower CPU weight than the ops timers. The node's blocks are under `/var/lib/zcrypto-onchain/bitcoin/`, BRK's index under `/var/lib/zcrypto-onchain/bitview/`. A converge renders the project and starts, stops or recreates neither container: each start below is the owner's.
+- **`zcrypto-onchain-write.timer`**, hourly at `:17`: one `zcrypto onchain write` in the digest-pinned ops image, which writes each closed UTC day of the index's series into the vintage chain under `/var/lib/zcrypto-ops/onchain/`, a day file and an index line per day, each written once. Its lines reach Loki as `container="zcrypto-onchain-write"`, its ERROR paging through `Ops · ERROR logs`.
+- **`zcrypto-onchain-guard.timer`**, at 5-minute intervals from 2 minutes after boot: while either container runs, it reads four ages on this host — archive-pull's and the panel's last success from their textfiles, the liquidations poller's from its `/metrics`, and the vintage recorder's oldest source from `vintage.prom` — and logs one INFO line naming each with its bar, 5400 s, 10800 s, 900 s and 46800 s. An age past its bar stops both containers, each with a 600 s grace, and logs an ERROR naming the read; they stay stopped until the owner starts them. An age it fails to read is a WARNING and stops nothing. Its lines reach Loki as `container="zcrypto-onchain-guard"`.
+
+### What it means
+
+The node and its index are a heavy load on a host whose own timers come first: the guard stops both when one of those timers falls behind its bar. A stop costs freshness and no stored value. While the index is down the writer writes nothing: before the chain's first line, the base, it logs an unreachable index at INFO; after it, at WARNING, until a day is 48 hours past its end unwritten, when it stops with an ERROR, `stale index: …`. The guard has no silence: a source silenced on `zcrypto-ops-vintage-not-recorded` still stops the node, and a source that stays down keeps it stopped.
+
+The two containers page through nothing of their own. Their logs stay in docker's `json-file` driver on this host, read with `docker logs`, and their health reaches the pager through the writer, whose ERROR names an index that stopped advancing. The node's blocks are public and re-downloadable and the index rebuilds from them, each a sync of its own; the chain is the one copy of its vintages, and a snapshot frozen from it is what reaches the NAS.
+
+A host shutdown gives the docker daemon 90 s to stop its containers, not their 600 s grace, so a reboot stops them first, by the reboot part below. `bitviewd` exits at start while the node's cookie, `/bitcoin/.cookie`, is absent, so wherever this section starts the pair, the node starts before the index. The `uv run` line below runs from the research workstation's checkout on this host.
+
+### The first start
+
+The owner's, attended, once the converge that renders the project has passed and the alert summaries and the panel description naming the node's stop have been pushed (`.claude/skills/zcrypto-grafana-push/SKILL.md`), so the reboot page names the stop before a node runs; a push held or not run holds the start.
+
+1. **Start the node**: the root's free bytes first, `df -h /`, then `sudo docker compose -f /etc/zcrypto-ops/onchain/compose.yaml up -d bitcoind`, its time recorded as the initial sync's start.
+2. **Read its stop timeout**: `sudo docker inspect --format '{{.Config.StopTimeout}}' zcrypto-onchain-bitcoind` prints `600`, the compose file's grace; another print holds the procedure for the owner's word. The guard's own stops pass the grace whatever it prints.
+3. **Read its IO cap by value.** Its id, `sudo docker inspect --format '{{.Id}}' zcrypto-onchain-bitcoind`, names its cgroup: `cat /sys/fs/cgroup/system.slice/docker-<id>.scope/io.max` prints one line, the disk `/dev/nvme0n1`'s `<major>:<minor>` with the read and write caps the compose file sets. `/var/lib` is LVM on the disk's third partition, so the node's IO reaches the disk through device-mapper: read `cat /sys/fs/cgroup/system.slice/docker-<id>.scope/io.stat` for that `<major>:<minor>`, and `docker stats --no-stream zcrypto-onchain-bitcoind`, the BLOCK I/O column's written bytes, twice each, minutes apart. The `wbytes` on that line grows as the written bytes do, and the written bytes' growth over the minutes between is the write rate, at or under 200 MB/s. That line absent or still while the node writes, or a rate above the cap, is a cap that does not bind: it goes to the owner, whose ruling on the device decides.
+4. **Read the guard's filter once the node runs**: `sudo docker ps --filter name='^zcrypto-onchain-(bitcoind|bitview)$' --format '{{.Names}}'` prints `zcrypto-onchain-bitcoind`. Another print: `sudo docker compose -f /etc/zcrypto-ops/onchain/compose.yaml stop bitcoind`, and the start waits for the owner's word, so no node syncs unseen by its guard.
+5. **Read the guard**: `sudo journalctl -u zcrypto-onchain-guard.service -n 100 --no-pager` (an unprivileged `journalctl -u` prints `-- No entries --`, a permissions artifact and not an idle unit) shows its INFO line `ages in seconds: archive-pull=… bar=5400, panel=… bar=10800, poller=… bar=900, recorder=… bar=46800` at each run. Read the four ages at the start and at each attended read after; a journal holding no INFO line while a container runs is a fault in the guard, not a clean read.
+6. **Record the sync's end**, the node caught up to the network's tip as its log, `docker logs --tail 100 zcrypto-onchain-bitcoind`, reads it, and the root's free bytes again.
+
+### The index's first start, once the node has synced
+
+1. **The node running first**: step 4's filter read prints `zcrypto-onchain-bitcoind`. Then `sudo docker compose -f /etc/zcrypto-ops/onchain/compose.yaml up -d bitview`, and record the time: BRK's first index's start.
+2. **Read its stop timeout** as at the node's: `sudo docker inspect --format '{{.Config.StopTimeout}}' zcrypto-onchain-bitview` prints `600`; another print holds the procedure for the owner's word.
+3. **Read its log by value**, twice, minutes apart: `docker logs --tail 100 zcrypto-onchain-bitview` shows `bitviewd` connected to the node's RPC at `zcrypto-onchain-bitcoind` and its index advancing, the container name resolving on the project's network. Another reading holds the procedure for the owner's word. Its IO reads as step 3's, with `sudo docker inspect --format '{{.Id}}' zcrypto-onchain-bitview` and `docker stats --no-stream zcrypto-onchain-bitview`.
+4. **Record the first index's end**, the index at the node's tip, which the writer's journal reads at each run until it is (`the index is at height … and the node's tip at …`); then the root's free bytes, `df -h /`, and each container's peak memory, `cat /sys/fs/cgroup/system.slice/docker-<id>.scope/memory.peak` with each container's id. The first sync's figures go into the chain's entry in `docs/reference/data-catalog-full.md`.
+
+### The guard stopped the node
+
+`Ops · ERROR logs` quotes `container="zcrypto-onchain-guard"`: `the <read> age <N>s is past its bar <bar>s: stopping zcrypto-onchain-bitview and zcrypto-onchain-bitcoind`.
+
+1. **Read which read slipped**: `sudo journalctl -u zcrypto-onchain-guard.service -n 100 --no-pager`, its ERROR and the INFO line before it. Once both containers are stopped the guard reads nothing and logs nothing.
+2. **Then that read's own section**: archive-pull's [`zcrypto-ops-archive-pull-stalled`](#zcrypto-ops-archive-pull-stalled) and the panel's [`zcrypto-ops-panel-exit-nonzero`](#zcrypto-ops-panel-exit-nonzero) on this page, the poller's [`observability.md#zcrypto-ops-poller-log-dead`](observability.md#zcrypto-ops-poller-log-dead), and the recorder's [`zcrypto-ops-vintage-not-recorded`](#zcrypto-ops-vintage-not-recorded) on this page, whose per-source silence the guard does not honour.
+3. **The restart is the owner's**, once that source is fresh again by its own section's reads: `zcrypto-onchain-bitcoind` first, `sudo docker compose -f /etc/zcrypto-ops/onchain/compose.yaml start bitcoind`, then `zcrypto-onchain-bitview`, `sudo docker compose -f /etc/zcrypto-ops/onchain/compose.yaml start bitview`, where its first start has been taken. Then step 4's filter read of the first start prints what was started, and the guard's next INFO line, within five minutes, reads each age under its bar; an age past it stops both again.
+
+### A writer ERROR
+
+`Ops · ERROR logs` quotes `container="zcrypto-onchain-write"`, most often `onchain write stopped chain=… head=… reason=…`.
+
+1. **Read the run and the containers**: `systemctl status zcrypto-onchain-write.service`, `docker ps -a --filter name=zcrypto-onchain`, and `docker logs --tail 100 zcrypto-onchain-bitview`.
+2. **`stale index: …`**: the index stopped advancing. A container the read lists as exited is the guard's stop (the part above) or the owner's hold; a running index whose log does not advance goes to the owner.
+3. **`the index serves no series …` or `the index serves no value of …`**: the pinned instance lacks what the writer pins, which the writer refuses at each run until the owner's word.
+4. **`… hashes to …, not the … its line records: a reorg past the depth; nothing written`**: the owner's ruling on a new chain. A line, or a file a line names, is not edited by hand (no count command: a hand edit leaves no record in the tree).
+5. **`… no line names <relpath>, and it is present …`**: a writer that died between its file's rename and its line's, the orphan part below.
+6. **`the on-chain writer ended with exit … and … summary line(s)`**, the runner's own: a run the CLI did not end. A leftover `zcrypto-onchain-write` container in step 1's list fails the next run on the name conflict: `sudo docker rm zcrypto-onchain-write`.
+7. **A listed file whose verify failed** — `… does not hash to its listing` or `… is listed and absent from …`, each run re-reading the newest 30 days' lines and files — goes to the owner, and that file is not deleted (no count command: a deletion by hand leaves no record in the tree).
+
+### Leftovers and the chain's integrity read
+
+1. **A staging leftover**, which each later run names in a WARNING, `…: a temporary file left by a writer that died, which no line names; read it and delete it by hand`: `ls /var/lib/zcrypto-ops/onchain/btc-brk1a19c5e96976-g1/staging/`, the first generation's root (a later one's is named by `ls /var/lib/zcrypto-ops/onchain/`). Read it, then, with the writer's unit inactive in `systemctl status zcrypto-onchain-write.service` (a running write's temporary is its write in flight), delete it by hand, `sudo rm /var/lib/zcrypto-ops/onchain/btc-brk1a19c5e96976-g1/staging/NAME`.
+2. **A day or base file the writer's ERROR names as one `no line names`**: `grep -rlF 'days/2026/11/22.parquet' /var/lib/zcrypto-ops/onchain/btc-brk1a19c5e96976-g1/index/`, with the relpath the ERROR names in the example's place, prints nothing for such a file; then read it and delete it by hand the same way, `sudo rm /var/lib/zcrypto-ops/onchain/btc-brk1a19c5e96976-g1/days/2026/11/22.parquet`. A print names the line that lists the file: it is a listed day file, the writer ERROR's step 7, and stays. No vintage is rewritten, and the next run writes that day.
+3. **The chain's integrity read**, from the research checkout: `uv run zcrypto onchain verify --chain /var/lib/zcrypto-ops/onchain/<chain>` ends with `onchain verify complete chain=… head=… head_sha256=… days=…` and exit 0, or `onchain verify refused chain=… reason=…` and exit 1.
+
+### A reboot
+
+The ops reboot, [`hosts.md#zcrypto-capture-reboot-pending`](hosts.md#zcrypto-capture-reboot-pending) step 4, takes these steps around `sudo systemctl reboot`.
+
+1. **Read what runs, first**: `sudo docker ps --filter name='^zcrypto-onchain-(bitcoind|bitview)$' --format '{{.Names}}'`. Keep its print off the host, since the reboot ends the sessions on it; a print lost holds the after-boot start for the owner's word.
+2. **Stop each container it printed**, `zcrypto-onchain-bitview` first, `sudo docker compose -f /etc/zcrypto-ops/onchain/compose.yaml stop bitview`, then `zcrypto-onchain-bitcoind`, `sudo docker compose -f /etc/zcrypto-ops/onchain/compose.yaml stop bitcoind`, so each exits within its own stop timeout rather than the 90 s the daemon has at the host's shutdown.
+3. **The same read again prints nothing** before the reboot; another print holds the reboot for the owner's word.
+4. **Stops taken and the reboot then not taken**, for that hold or another reason, a Kraken window found at the read immediately before it among them: the containers the first print named stay stopped for the owner's word.
+5. **After the boot, start each container the first print named, and no other**: `zcrypto-onchain-bitcoind` first, `sudo docker compose -f /etc/zcrypto-ops/onchain/compose.yaml start bitcoind`, then `zcrypto-onchain-bitview`, `sudo docker compose -f /etc/zcrypto-ops/onchain/compose.yaml start bitview`, whatever docker restored at the boot and whatever each start answers; the read after the starts decides. Meanwhile the writer reads an absent index as INFO before the base and as WARNING after it, so nothing pages. A container the first print did not name — one the guard stopped, one the owner holds, or `bitview` before its first start — is left as it is, waiting for the owner's word.
+6. **Then the same read again**: printing what the first printed, the reboot is done. Another print — a container running that the first print did not name, or one it named that is absent — holds for the owner's word.
+
+______________________________________________________________________
+
+<a name="onchain-node-release"></a>
+
+## onchain-node-release — SCHEDULED REMINDER: the monthly Bitcoin Core release read
+
+### What you are seeing
+
+The daily pass's reminders read `OWED onchain-node release read`: a month has gone by since the last converge of this host that named `ops_bitcoind_image_id`. Or, between reminders, a release on Bitcoin Core's v32 line newer than the one `infra/docker/bitcoind/Dockerfile` pins has been read on the project's release page. It is not an alert, and nothing is wrong on the node.
+
+### What it means
+
+The node runs one release, pinned by that file's tarball name and sha256 and by the image id its converge hands, `ops_bitcoind_image_id`. A security release on the line is taken the day it is read; a release on the line that fixes no vulnerability, or one off the line, waits for the owner's word. The vintage chain goes on through a node image change, block data being identical across versions: no new chain root, and the lines the writer writes after the restart name the new image as their `bitcoind_image`.
+
+The reminder counts the month from the last converge with `rc` 0 in `docs/reference/deploy-log.jsonl` that names `ops_bitcoind_image_id`, which step 7 runs whether or not a release is taken. The log does not say why a converge was run, so one naming it for another reason restarts the month too, and such a run is followed by step 1 in the same sitting.
+
+### What to do
+
+01. **Read the release line**: the project's release page, for a release on the v32 line newer than the one the Dockerfile pins. With none, or with one the owner's word holds: at the root of a checkout of `develop` on the host, which stands for step 4's checkout in steps 5 and 7, step 5, then step 7 with `<image id>` step 5's `zcrypto-onchain-bitcoind` id, nothing stopped, since the writer's unit the converge renders hands the ids it already hands; then step 10's deploy-log line alone, no row re-trued — the line the reminder counts the next month from. With one to take: its notes read for a security fix, and its checksums list and that list's signatures read from the release page and verified against the release's signing keys.
+02. **Move the pin**, on a branch cut from `develop`: the release the Dockerfile pins — its tarball's file name, its sha256 and the URL it fetches it from, with the version in the URL's directory and in the tar member — and the file name and sha256 `tests/test_infra_onchain_templates.py` spells, moved to the new release's x86_64 Linux tarball, pasted from step 1's verification; merged by pull request.
+03. **Read what runs on-chain**: `sudo docker ps --filter name='^zcrypto-onchain-(bitcoind|bitview)$' --format '{{.Names}}'`, its print kept. A print without `zcrypto-onchain-bitcoind` — the guard's stop or the owner's hold — waits for the owner's word, no node then running the release to be replaced.
+04. **Build the image**, at the root of a checkout of the merged `develop` on the host: `sudo docker build --pull -q -f infra/docker/bitcoind/Dockerfile infra/docker/bitcoind`, which prints the new image's id, `--pull` taking a newer `debian:bookworm-slim` too when one is published. Then `sudo docker run --rm <image id> -help`, read whole for each option `infra/ansible/roles/ops/templates/bitcoin.conf.j2` sets; a name it lacks waits for the owner's word, nothing on the host yet changed.
+05. **Read the three images the host runs**, before anything on it is stopped, each by value, the first 12 hex of its id or digest checked against the digest cell of its `zcrypto-ops` row in step 4's checkout's `docs/reference/fleet-pins.md`, the operand that file prescribes. Another print, or no such row, holds for the owner's word, as before the rollout's pins pull request has merged, when neither on-chain row exists.
+    - `sudo docker inspect --format '{{.Config.Image}}' zcrypto-onchain-bitcoind` against the `bitcoind` row: the id the node runs, kept as the rollback, so a procedure resumed after step 8 has recreated the node, its row not yet re-trued, holds rather than record the new id as its own rollback.
+    - The poller's `sudo docker inspect zcrypto-ops-liquidations --format 'img={{.Config.Image}} restarts={{.RestartCount}} started={{.State.StartedAt}}'` against the `ops (timers + liquidations)` row, its `img=`'s `sha256:…` step 7's `<digest>`.
+    - `sudo docker inspect --format '{{.Config.Image}}' zcrypto-onchain-bitview` against the `bitview` row, its id step 7's `<bitview id>`.
+06. **Stop the index** where step 3's print named `zcrypto-onchain-bitview`: `sudo docker compose -f /etc/zcrypto-ops/onchain/compose.yaml stop bitview`, so the writer, which reads its values from the index alone, writes no line while the converge's unit hands the new id and the node still runs the old release.
+07. **Converge**, outside a published Kraken maintenance window (`.claude/rules/fleet-deploys.md` carries the feed), from step 4's checkout: `infra/ansible/scripts/converge.sh site.yml --limit zcrypto-ops -e ops_image_digest=<digest> -e ops_bitcoind_image_id=<image id> -e ops_bitview_image_id=<bitview id>`, `<digest>` and `<bitview id>` step 5's, so the converge re-hands what the host runs. It names all three because the writer's unit, which hands each run the image ids, renders when a run is handed all three. An `rc` other than 0, a preview the role's asserts refuse among them, holds for the owner's word, and a `zcrypto-onchain-bitview` step 6 stopped stays stopped, since a pass that fails after rendering the writer's unit may leave it handing the new id while the node runs the old.
+08. **The owner's restart of the node**: `sudo docker compose -f /etc/zcrypto-ops/onchain/compose.yaml up -d bitcoind`, then read by value, since whether compose recreates a container whose image changed is read here, not assumed: step 5's `zcrypto-onchain-bitcoind` read prints the id step 4 printed, and `docker logs --tail 100 zcrypto-onchain-bitcoind`, read twice, minutes apart, shows the node started and still running. Another reading: `sudo docker compose -f /etc/zcrypto-ops/onchain/compose.yaml stop bitcoind` and the owner's word. Its stop timeout is read as at the first start, `sudo docker inspect --format '{{.Config.StopTimeout}}' zcrypto-onchain-bitcoind` printing `600`.
+09. **Start the index again** where step 3's print named it: `sudo docker compose -f /etc/zcrypto-ops/onchain/compose.yaml start bitview`, and `docker logs --tail 100 zcrypto-onchain-bitview` read twice as at its first start. Then step 3's read again prints what step 3 printed; another print holds for the owner's word.
+10. **Record it**: the converge's deploy-log line committed, and the `bitcoind` row of `docs/reference/fleet-pins.md` re-trued on a branch by that file's rules — the new id's first 12 hex and its release, its rollback step 5's id, the digest the row named before, which a rollback takes back by steps 5 to 9 with that id in the new one's place.
+
+### Retire when
+
+The ops role no longer renders the on-chain compose project, or `infra/docker/bitcoind/Dockerfile` pins no release by its sha256.
 
 ______________________________________________________________________
 
