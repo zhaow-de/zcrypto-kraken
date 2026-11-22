@@ -1,6 +1,6 @@
 """The vintage chain in `ohlc-rolling`'s form (spec D8): `base/history.parquet` through the base day, one
 `days/<YYYY>/<MM>/<DD>.parquet` for each day after it, and one canonical index line per day, each `prev` the sha256 of
-the line before it. Every file is created exclusive under `staging/`, renamed in once and never written again."""
+the line before it. Every file is created exclusive under `staging/`, linked into place once and never written again."""
 
 from __future__ import annotations
 
@@ -15,6 +15,9 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import polars as pl
+
+from cli.data.rolling import RollingError, _sha256, line_relpath
+from cli.data.rolling import line_days as _rolling_line_days
 
 CHAIN_GENERATION = 1
 VINTAGE_KEYS = frozenset(
@@ -44,10 +47,6 @@ def chain_name(brk_commit: str, generation: int = CHAIN_GENERATION) -> str:
     return f"btc-brk{brk_commit[:12]}-g{generation}"
 
 
-def line_relpath(day: date) -> str:
-    return f"index/{day:%Y}/{day:%m}/{day:%d}.json"
-
-
 def _day_relpath(day: date) -> str:
     return f"days/{day:%Y}/{day:%m}/{day:%d}.parquet"
 
@@ -56,41 +55,13 @@ def canonical(obj: dict) -> bytes:
     return (json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n").encode()
 
 
-def _sha256(path: Path) -> str:
-    with path.open("rb") as f:
-        return hashlib.file_digest(f, "sha256").hexdigest()
-
-
-def _refuse(exc: OSError) -> None:
-    """`os.walk`'s `onerror`: a directory the walk cannot list raises, where by default it is skipped as if empty."""
-    raise exc
-
-
 def line_days(root: Path) -> list[date]:
-    """The days of `root`'s index lines, sorted; none when `root` has no `index/`. The index is walked, never globbed: a
-    directory under it this reader cannot list raises its `OSError`, where a glob skips it and reads an older line as
-    the newest."""
-    index = root / "index"
+    """`ohlc-rolling`'s walk of `root`'s index, whose lines share its relpaths; a name not of a day is the chain's
+    refusal."""
     try:
-        index.stat()
-    except FileNotFoundError:
-        return []
-    days = []
-    for directory, subdirs, names in os.walk(index, onerror=_refuse, followlinks=True):
-        if len(Path(directory).relative_to(index).parts) < 2:
-            continue
-        entries = [*subdirs, *names]
-        subdirs.clear()
-        for path in (Path(directory) / name for name in entries if name.endswith(".json")):
-            relpath = path.relative_to(root).as_posix()
-            try:
-                day = date(int(path.parent.parent.name), int(path.parent.name), int(path.stem))
-            except ValueError as exc:
-                raise ChainError(f"{root}: {relpath} is not named for a day") from exc
-            if line_relpath(day) != relpath:
-                raise ChainError(f"{root}: {relpath} is not named for a day")
-            days.append(day)
-    return sorted(days)
+        return _rolling_line_days(root)
+    except RollingError as exc:
+        raise ChainError(str(exc)) from exc
 
 
 def read_line(root: Path, day: date) -> Line:
