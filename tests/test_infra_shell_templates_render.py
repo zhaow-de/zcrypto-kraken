@@ -38,6 +38,8 @@ RUNTIME_FACTS = {
 REGISTERED = {
     "archive-pull.sh.j2",
     "grafana-watchdog.sh.j2",
+    "onchain-guard.sh.j2",
+    "onchain-write.sh.j2",
     "panel-materialize.sh.j2",
     "panel-regenerate.sh.j2",
     "tape-bars.sh.j2",

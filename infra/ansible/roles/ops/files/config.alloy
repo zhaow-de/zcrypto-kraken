@@ -187,7 +187,7 @@ loki.relabel "journal_units" {
   rule {
     source_labels = ["__journal__systemd_unit", "__journal_container_name"]
     separator     = ";"
-    regex         = "zcrypto-(archive-pull|verify-replay|verified-replay|panel-materialize|tape-bars|vintage-record|vintage-derive)\\.service;.*|.*;grafana-alloy"
+    regex         = "zcrypto-(archive-pull|verify-replay|verified-replay|panel-materialize|tape-bars|vintage-record|vintage-derive|onchain-write|onchain-guard)\\.service;.*|.*;grafana-alloy"
     action        = "keep"
   }
 

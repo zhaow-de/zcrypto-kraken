@@ -1,0 +1,13 @@
+# Rendered by the `ops` Ansible role at /etc/systemd/system/zcrypto-onchain-write.service — do not
+# hand-edit on the host, edit infra/ansible/roles/ops/templates/onchain-write.service.j2 instead.
+#
+# The two image ids are options `onchain write` itself parses and records in each line it writes; the runner passes
+# them through, so no argument order binds this unit to it.
+[Unit]
+Description=Hourly write of BTC's closed on-chain days into their vintage chain
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/zcrypto-onchain-write --bitview-image {{ ops_bitview_image_id }} --bitcoind-image {{ ops_bitcoind_image_id }}

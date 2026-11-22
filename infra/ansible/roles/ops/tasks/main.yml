@@ -163,6 +163,35 @@
     state: started
   when: not (ansible_check_mode and ops_clock_timer_install is changed)
 
+# The on-chain node's stop rule. Ungated: it runs no image, reads ages on this host and stops containers by name, so
+# it is armed from the first converge on, before either container first starts.
+- name: install the on-chain guard runner script
+  ansible.builtin.template:
+    src: onchain-guard.sh.j2
+    dest: /usr/local/sbin/zcrypto-onchain-guard
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: render the on-chain guard systemd service + timer
+  ansible.builtin.template:
+    src: "onchain-guard.{{ item }}.j2"
+    dest: "/etc/systemd/system/zcrypto-onchain-guard.{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: [service, timer]
+  register: ops_onchain_guard_unit_install
+
+# A first-install preview never wrote the timer, so systemd cannot find it there.
+- name: enable + start the on-chain guard timer
+  ansible.builtin.systemd_service:
+    name: zcrypto-onchain-guard.timer
+    daemon_reload: true
+    enabled: true
+    state: started
+  when: not (ansible_check_mode and ops_onchain_guard_unit_install is changed)
+
 - name: install the reboot-check script
   ansible.builtin.copy:
     src: zcrypto-reboot-check.sh
@@ -841,6 +870,41 @@
         owner: root
         group: "{{ ops_data_user }}"
         mode: "0640"
+
+# Gated on the digest alone, as the vintage recorder's runner is, so a routine ops roll, which hands the digest and no
+# image id, moves it to the new digest with every other ops runner. No secret and no ping URL, so it renders with its
+# diff.
+- name: install the on-chain writer runner script (needs the pinned image digest)
+  ansible.builtin.template:
+    src: onchain-write.sh.j2
+    dest: /usr/local/sbin/zcrypto-onchain-write
+    owner: root
+    group: root
+    mode: "0700"
+  when: ops_image_digest is defined
+
+# The unit hands the runner the two image ids, so it renders with the node, under the digest and both ids.
+- name: install the on-chain writer's unit and hourly timer (needs the pinned image digest and both image ids)
+  when: ops_image_digest is defined and ops_bitcoind_image_id is defined and ops_bitview_image_id is defined
+  block:
+    - name: render the on-chain writer systemd service + timer
+      ansible.builtin.template:
+        src: "onchain-write.{{ item }}.j2"
+        dest: "/etc/systemd/system/zcrypto-onchain-write.{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: [service, timer]
+      register: ops_onchain_write_unit_install
+
+    # A first-install preview never wrote the timer, so systemd cannot find it there.
+    - name: enable + start the on-chain writer timer
+      ansible.builtin.systemd_service:
+        name: zcrypto-onchain-write.timer
+        daemon_reload: true
+        enabled: true
+        state: started
+      when: not (ansible_check_mode and ops_onchain_write_unit_install is changed)
 
 # Deliberately OUTSIDE the vintage recorder block's digest gate: this script consumes no image reference
 # (it drives systemd and rm), and the operator needs it on the host regardless of whether the converge that
