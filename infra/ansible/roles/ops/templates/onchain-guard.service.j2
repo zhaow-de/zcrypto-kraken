@@ -1,7 +1,8 @@
 # Rendered by the `ops` Ansible role at /etc/systemd/system/zcrypto-onchain-guard.service — do not
 # hand-edit on the host, edit infra/ansible/roles/ops/templates/onchain-guard.service.j2 instead.
 #
-# No Requires= on docker.service, so a guard run never starts a docker an operator stopped. No TimeoutStartSec=:
+# No Requires= on docker.service, so a guard run never pulls docker into its own start transaction; docker.socket may
+# still start docker when the guard calls it, as it may for every docker-calling ops timer. No TimeoutStartSec=:
 # systemd leaves a oneshot's start timeout disabled, and a run that stops both containers waits up to twice their
 # stop grace.
 [Unit]

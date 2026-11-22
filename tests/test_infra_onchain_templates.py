@@ -4,11 +4,14 @@ The writer's and the guard's runners are read rendered and run by bash against `
 re-implemented here.
 """
 
+import fcntl
+import logging
 import os
 import re
 import shlex
 import shutil
 import subprocess
+from datetime import timedelta
 from pathlib import Path
 
 import jinja2
@@ -18,11 +21,18 @@ from prometheus_client import CollectorRegistry, Gauge, generate_latest
 from typer.main import get_command
 
 from cli.__main__ import app
+from cli.capture.command import LOCKFILE_NAME
+from cli.logging.formatters import PlainTextFormatter
 from cli.onchain.brk import BITVIEW_URL
 from cli.onchain.chain import chain_name
+from cli.onchain.command import run_onchain_write
+from cli.onchain.write import DEPTH
 from cli.vintage.gauges import HELP, LAST_OK, _sample
 from cli.vintage.sources import SOURCES
+from tests.onchain_stub import BITCOIND_IMAGE, BITVIEW_IMAGE, COMMIT, day_end, fake_client, last_height
 from tests.test_infra_archive_pull_template import _ops_parse_regex
+from tests.test_infra_node_common import DATE_STUB
+from tests.test_onchain_write import _day, _fake
 
 REPO = Path(__file__).resolve().parents[1]
 NODE_DOCKERFILE = REPO / "infra/docker/bitcoind/Dockerfile"
@@ -216,8 +226,19 @@ printf '\\n' >> "$STUB_DIR/docker"
 case "$1" in
     network) exit "${NETWORK_RC:-0}" ;;
     run) printf '%s' "${RUN_OUT-}"; exit "${RUN_RC:-0}" ;;
-    ps) printf '%s' "${PS_OUT-0123456789ab}"; exit "${PS_RC:-0}" ;;
-    stop) if [ "${!#}" = zcrypto-onchain-bitview ]; then exit "${BITVIEW_STOP_RC:-0}"; fi ;;
+    ps) printf '%s' "${PS_OUT-0123456789ab}"; printf '%s' "${PS_ERR-}" >&2; exit "${PS_RC:-0}" ;;
+    stop)
+        rc=0
+        case "${!#}" in
+            zcrypto-onchain-bitview) rc="${BITVIEW_STOP_RC:-0}" ;;
+            zcrypto-onchain-bitcoind) rc="${BITCOIND_STOP_RC:-0}" ;;
+        esac
+        if [ "$rc" -ne 0 ]; then
+            printf 'Error response from daemon: cannot stop container: %s\n' "${!#}" >&2
+        else
+            printf '%s\n' "${!#}"
+        fi
+        exit "$rc" ;;
 esac
 exit 0
 """
@@ -226,15 +247,9 @@ printf '%s\\n' "$*" >> "$STUB_DIR/curl"
 if [ -f "$CURL_BODY" ]; then cat "$CURL_BODY"; fi
 exit "${CURL_RC:-0}"
 """
-# Answers the guard's one clock read, `date -u +%s`, with DATE_STUB_NOW; every other call reaches the real date.
-DATE_STUB = """#!/usr/bin/env bash
-if [ "$*" = "-u +%s" ]; then
-  echo "$DATE_STUB_NOW"
-else
-  exec REAL_DATE "$@"
-fi
-"""
-_KNOBS = {"NETWORK_RC", "RUN_OUT", "RUN_RC", "PS_OUT", "PS_RC", "BITVIEW_STOP_RC", "CURL_RC"}
+_KNOBS = {"NETWORK_RC", "RUN_OUT", "RUN_RC", "PS_OUT", "PS_ERR", "PS_RC", "BITVIEW_STOP_RC", "BITCOIND_STOP_RC", "CURL_RC"}
+# What docker itself prints on stderr where its daemon is down.
+DOCKER_DOWN = "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?"
 _NO_TMPDIR = None
 
 
@@ -481,6 +496,44 @@ def test_the_runner_names_the_writers_chain():
     assert _render(WRITE_RUNNER).count(chain) == 1
 
 
+def test_the_runners_summary_pattern_matches_the_lines_the_writer_logs(tmp_path, caplog):
+    pattern = re.search(r"""^summary=\$\(grep -cE '([^']*)' "\$out"\)$""", _render(WRITE_RUNNER), re.M).group(1)
+    fake = _fake(8)
+    fake.indexed_height = fake.tip_height = last_height(fake, _day(3)) + DEPTH
+
+    def printed(chain_root: Path) -> tuple[int, list[str]]:
+        """The run's exit and every line it logs, as the CLI's console prints them."""
+        caplog.clear()
+        code = run_onchain_write(
+            chain_root,
+            fake_client(fake),
+            brk_commit=COMMIT,
+            bitview_image=BITVIEW_IMAGE,
+            bitcoind_image=BITCOIND_IMAGE,
+            now=day_end(_day(3)) + timedelta(hours=2),
+        )
+        return code, [PlainTextFormatter().format(r) for r in caplog.records if r.name.startswith("zcrypto.onchain")]
+
+    caplog.set_level(logging.INFO)
+    (tmp_path / "complete").mkdir()
+    complete = printed(tmp_path / "complete")
+    held_root = tmp_path / "held"
+    (held_root / chain_name(COMMIT)).mkdir(parents=True)
+    fd = os.open(held_root / chain_name(COMMIT) / LOCKFILE_NAME, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        held = printed(held_root)
+    finally:
+        os.close(fd)
+
+    for (code, lines), expected, summary in ((complete, 0, "onchain write complete "), (held, 1, "onchain write stopped ")):
+        assert code == expected, lines
+        proc = subprocess.run(["grep", "-E", pattern], input="\n".join(lines) + "\n", capture_output=True, text=True)
+        (matched,) = proc.stdout.splitlines()
+        assert f" - {summary}" in matched, lines
+    assert held[1][-1].endswith("reason=lock held"), held
+
+
 # --- the guard's runner -------------------------------------------------------------------------------------------------
 def _slipping(case: str, past: bool) -> dict:
     """Every source fresh but the one `case` names, one second past its bar when `past`, else at it."""
@@ -499,25 +552,27 @@ def _slipping(case: str, past: bool) -> dict:
 
 
 @pytest.mark.parametrize(
-    ("case", "past", "bitview_stop_rc"),
+    ("case", "past", "refused"),
     [
-        pytest.param("archive-pull", True, 0, id="archive-pull-past"),
-        pytest.param("archive-pull", False, 0, id="archive-pull-at"),
-        pytest.param("panel", True, 0, id="panel-past"),
-        pytest.param("panel", False, 0, id="panel-at"),
-        pytest.param("poller", True, 0, id="poller-past"),
-        pytest.param("poller", False, 0, id="poller-at"),
-        pytest.param("poller-unset", True, 0, id="poller-unset-process-past"),
-        pytest.param("poller-unset", False, 0, id="poller-unset-process-at"),
-        pytest.param("recorder", True, 0, id="recorder-past"),
-        pytest.param("recorder", False, 0, id="recorder-at"),
-        pytest.param("archive-pull", True, 1, id="archive-pull-past-bitview-stop-refused"),
+        pytest.param("archive-pull", True, None, id="archive-pull-past"),
+        pytest.param("archive-pull", False, None, id="archive-pull-at"),
+        pytest.param("panel", True, None, id="panel-past"),
+        pytest.param("panel", False, None, id="panel-at"),
+        pytest.param("poller", True, None, id="poller-past"),
+        pytest.param("poller", False, None, id="poller-at"),
+        pytest.param("poller-unset", True, None, id="poller-unset-process-past"),
+        pytest.param("poller-unset", False, None, id="poller-unset-process-at"),
+        pytest.param("recorder", True, None, id="recorder-past"),
+        pytest.param("recorder", False, None, id="recorder-at"),
+        pytest.param("archive-pull", True, "zcrypto-onchain-bitview", id="archive-pull-past-bitview-stop-refused"),
+        pytest.param("archive-pull", True, "zcrypto-onchain-bitcoind", id="archive-pull-past-bitcoind-stop-refused"),
     ],
 )
-def test_the_guard_stops_both_containers_on_a_slip(tmp_path, case, past, bitview_stop_rc):
+def test_the_guard_stops_both_containers_on_a_slip(tmp_path, case, past, refused):
     h = _Harness(tmp_path, GUARD_RUNNER)
     _lay(h, **_slipping(case, past))
-    result = h.run(BITVIEW_STOP_RC=bitview_stop_rc)
+    knob = {"zcrypto-onchain-bitview": "BITVIEW_STOP_RC", "zcrypto-onchain-bitcoind": "BITCOIND_STOP_RC"}
+    result = h.run(**({knob[refused]: 1} if refused else {}))
     read = case.removesuffix("-unset")
     bar = BARS[read]
     age = bar + int(past)
@@ -529,12 +584,15 @@ def test_the_guard_stops_both_containers_on_a_slip(tmp_path, case, past, bitview
                 f"the {read} age {age}s is past its bar {bar}s: stopping zcrypto-onchain-bitview and zcrypto-onchain-bitcoind",
             )
         )
-    if bitview_stop_rc:
-        expected.append(("WARNING", "docker stop of zcrypto-onchain-bitview exited 1"))
+    if refused:
+        said = f"Error response from daemon: cannot stop container: {refused}"
+        expected.append(("WARNING", f"docker stop of {refused} exited 1 ({said})"))
     assert result.logged(GUARD_TAG) == expected
+    assert result.stdout == ""
     assert result.curl == [f"-fsS -m 5 {POLLER_URL}"]
     assert result.stops == ([STOP_BITVIEW, STOP_BITCOIND] if past else [])
     assert result.rc == (1 if past else 0)
+    assert list(h.tmp.iterdir()) == []
 
 
 _UNREADABLE = {
@@ -571,11 +629,15 @@ def test_an_unreadable_age_warns_and_stops_nothing(tmp_path, variant):
     h = _Harness(tmp_path, GUARD_RUNNER)
     if variant == "docker-ps-fails":
         _lay(h)
-        result = h.run(PS_RC=1, PS_OUT="")
+        result = h.run(PS_RC=1, PS_OUT="", PS_ERR=DOCKER_DOWN + "\n")
         assert result.logged(GUARD_TAG) == [
-            ("WARNING", "docker ps exited 1, so whether an on-chain container runs is unread; nothing read, nothing stopped")
+            (
+                "WARNING",
+                f"docker ps exited 1 ({DOCKER_DOWN}), so whether an on-chain container runs is unread; nothing read, nothing stopped",
+            )
         ]
         assert result.curl == []
+        assert list(h.tmp.iterdir()) == []
     else:
         read, sources, knobs = _UNREADABLE[variant]
         _lay(h, **sources())
@@ -615,7 +677,7 @@ def test_every_line_the_runners_print_is_parse_shaped(tmp_path):
     after = writer.run(*_exec_start()[1:], NETWORK_RC=1)
     odd = writer.run(*_exec_start()[1:], RUN_RC=125, RUN_OUT="")
     for result, tag, levels in (
-        (guard.run(BITVIEW_STOP_RC=1), GUARD_TAG, ["INFO", "ERROR", "WARNING", "WARNING"]),
+        (guard.run(BITVIEW_STOP_RC=1, BITCOIND_STOP_RC=1), GUARD_TAG, ["INFO", "ERROR", "WARNING", "WARNING", "WARNING"]),
         (before, WRITE_TAG, ["INFO"]),
         (after, WRITE_TAG, ["ERROR"]),
         (odd, WRITE_TAG, ["ERROR"]),

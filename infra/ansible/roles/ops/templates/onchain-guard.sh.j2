@@ -22,11 +22,26 @@ RECORDER_BAR={{ ops_onchain_guard_recorder_bar }}
 # A decimal, a float or prometheus_client's exponent form; awk would read any other text as 0, a gauge never set.
 NUMBER='^[-+]?([0-9]+[.]?[0-9]*|[.][0-9]+)([eE][-+]?[0-9]+)?$'
 
+# docker's own error text joins the line that names its exit, so none of it reaches the journal without a level.
+exited() {
+    local said=${2//$'\n'/ }
+    printf 'exited %s%s' "$1" "${said:+ ($said)}"
+}
+
+# docker ps's stdout is read for its emptiness, so its stderr goes to a file of its own; without one, the line names
+# the exit alone.
+err=$(mktemp 2>/dev/null) || err=""
+trap '[ -z "$err" ] || rm -f "$err"' EXIT
+
 # Only the exit and the emptiness are read: a state docker could not report is no value to act on.
-running=$(docker ps -q --filter name='^zcrypto-onchain-(bitcoind|bitview)$')
+running=$(docker ps -q --filter name='^zcrypto-onchain-(bitcoind|bitview)$' 2>"${err:-/dev/null}")
 ps_rc=$?
 if [ "$ps_rc" -ne 0 ]; then
-    log WARNING "docker ps exited $ps_rc, so whether an on-chain container runs is unread; nothing read, nothing stopped"
+    said=""
+    if [ -n "$err" ]; then
+        said=$(cat "$err")
+    fi
+    log WARNING "docker ps $(exited "$ps_rc" "$said"), so whether an on-chain container runs is unread; nothing read, nothing stopped"
     exit 0
 fi
 if [ -z "$running" ]; then
@@ -87,14 +102,15 @@ judge poller "$poller" "$POLLER_BAR" http://127.0.0.1:9103/metrics
 judge recorder "$recorder" "$RECORDER_BAR" "$TEXTFILE/vintage.prom"
 
 refused() {
-    log WARNING "docker stop of $1 exited $2"
+    log WARNING "docker stop of $1 $(exited "$2" "$3")"
 }
 
 # Each container by name with the stop grace its compose service carries, and each whatever the other's stop answered,
-# so nothing rests on what docker says of a container not yet started or already stopped.
+# so nothing rests on what docker says of a container not yet started or already stopped. A stop's stdout, the
+# container's name, is dropped; its stderr is kept for the WARNING a refusal logs.
 if [ "$slipped" -eq 1 ]; then
-    docker stop -t {{ ops_onchain_stop_grace }} zcrypto-onchain-bitview > /dev/null || refused zcrypto-onchain-bitview $?
-    docker stop -t {{ ops_onchain_stop_grace }} zcrypto-onchain-bitcoind > /dev/null || refused zcrypto-onchain-bitcoind $?
+    said=$(docker stop -t {{ ops_onchain_stop_grace }} zcrypto-onchain-bitview 2>&1 > /dev/null) || refused zcrypto-onchain-bitview $? "$said"
+    said=$(docker stop -t {{ ops_onchain_stop_grace }} zcrypto-onchain-bitcoind 2>&1 > /dev/null) || refused zcrypto-onchain-bitcoind $? "$said"
     exit 1
 fi
 exit 0
