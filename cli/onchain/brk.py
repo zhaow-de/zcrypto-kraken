@@ -85,6 +85,8 @@ class BrkClient:
             ids.update(names)
             if not _field(body, "has_more", route, bool):
                 return frozenset(ids)
+            if not names:
+                raise BrkError(f"{route}: page {page} holds no series and has_more is true")
             page += 1
 
     def read_days(self, series_id: str, first: date, last: date) -> dict[date, float | None]:

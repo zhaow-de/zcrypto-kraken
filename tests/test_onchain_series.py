@@ -140,6 +140,23 @@ def test_the_series_list_is_read_over_every_page():
     assert len(got) == 2500 and got == frozenset(ids) and pinned in got
 
 
+class _BoundedBrk(FakeBrk):
+    """Fails a sixth request, so a list read that never stops fails the case rather than hangs it."""
+
+    def http_open(self, req):
+        if len(self.seen) >= 5:
+            raise AssertionError("the series list read did not stop")
+        return super().http_open(req)
+
+
+def test_an_empty_series_page_that_has_more_is_a_brk_error():
+    fake = _BoundedBrk()
+    fake.planted["/api/series/list"] = Answer(200, b'{"has_more": true, "series": []}')
+    with pytest.raises(BrkError) as caught:
+        fake_client(fake).series_ids()
+    assert "/api/series/list" in str(caught.value)
+
+
 def test_the_height_reads_page_under_brks_weight_cap():
     days = [date(2009, 1, 3) + timedelta(days=height // 144) for height in range(200_000)]
     client = fake_client(FakeBrk(days=days))
