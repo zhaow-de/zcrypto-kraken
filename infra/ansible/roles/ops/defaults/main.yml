@@ -65,6 +65,12 @@ ops_onchain_read_bps: 400mb
 ops_onchain_write_bps: 200mb
 # Seconds: both services' stop_grace_period and the guard's `docker stop -t`.
 ops_onchain_stop_grace: 600
+# The guard's bars in seconds (spec 00164 D11): archive-pull's and the panel's last success, the poller's last good
+# cycle and the vintage recorder's oldest source's last good fetch; an age past its bar stops the node and its index.
+ops_onchain_guard_archive_pull_bar: 5400
+ops_onchain_guard_panel_bar: 10800
+ops_onchain_guard_poller_bar: 900
+ops_onchain_guard_recorder_bar: 46800
 # `ops_bitcoind_image_id`, the node image's local id from its build on this host (spec 00164 D10), deliberately
 # has NO default and is passed per run: a converge without it leaves the on-chain project as it stands, as a
 # converge without `ops_image_digest` leaves the image-rendering installs.

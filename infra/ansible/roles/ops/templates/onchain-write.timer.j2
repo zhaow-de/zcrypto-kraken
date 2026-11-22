@@ -1,0 +1,12 @@
+# Rendered by the `ops` Ansible role at /etc/systemd/system/zcrypto-onchain-write.timer — do not
+# hand-edit on the host, edit infra/ansible/roles/ops/templates/onchain-write.timer.j2 instead.
+#
+# Hourly at :17, a slot clear of every other ops timer's, which nothing checks. Persistent=true runs one missed slot
+# at boot. The [Install] section is what keeps the enable armed across a reboot.
+[Timer]
+OnCalendar=*-*-* *:17:00
+Persistent=true
+Unit=zcrypto-onchain-write.service
+
+[Install]
+WantedBy=timers.target

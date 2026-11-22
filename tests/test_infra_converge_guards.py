@@ -12,6 +12,7 @@ import subprocess
 import time
 import tomllib
 from collections.abc import Mapping
+from fnmatch import fnmatch
 from itertools import chain
 from pathlib import Path
 
@@ -2380,6 +2381,110 @@ def test_the_onchain_block_renders_only_under_both_image_ids_and_starts_nothing(
     assert [set(t) for t in leaves] == [{"name", key} for key, _ in modules]
     arguments = yaml.safe_dump([args for _, args in modules])
     assert "docker_compose" not in arguments and not re.search(r"\bcompose\b.*\bup\b", arguments)
+
+
+OPS_GUARD_RUNNER_TASK = "install the on-chain guard runner script"
+OPS_GUARD_UNITS_TASK = "render the on-chain guard systemd service + timer"
+OPS_GUARD_ENABLE_TASK = "enable + start the on-chain guard timer"
+OPS_WRITER_RUNNER_TASK = "install the on-chain writer runner script (needs the pinned image digest)"
+OPS_WRITER_UNITS_BLOCK = "install the on-chain writer's unit and hourly timer (needs the pinned image digest and both image ids)"
+_OPS_IMAGES = {
+    "ops_image_digest": "sha256:" + "ab" * 32,
+    "ops_bitcoind_image_id": "sha256:" + "b1" * 32,
+    "ops_bitview_image_id": "sha256:" + "f7" * 32,
+}
+
+
+def test_the_guard_is_ungated_the_writers_runner_needs_the_digest_and_its_units_all_three_images():
+    tasks = load_tasks(OPS_TASKS)
+    uid = next(i for i, t in enumerate(tasks) if "ops_uid" in t.get("ansible.builtin.set_fact", {}))
+
+    runner = tasks[task_index(tasks, OPS_GUARD_RUNNER_TASK)]
+    assert "when" not in runner
+    assert runner["ansible.builtin.template"] == {
+        "src": "onchain-guard.sh.j2",
+        "dest": "/usr/local/sbin/zcrypto-onchain-guard",
+        "owner": "root",
+        "group": "root",
+        "mode": "0700",
+    }
+    units = tasks[task_index(tasks, OPS_GUARD_UNITS_TASK)]
+    assert "when" not in units
+    assert units["ansible.builtin.template"]["src"] == "onchain-guard.{{ item }}.j2"
+    assert units["ansible.builtin.template"]["dest"] == "/etc/systemd/system/zcrypto-onchain-guard.{{ item }}"
+    assert units["loop"] == ["service", "timer"]
+    enable = tasks[task_index(tasks, OPS_GUARD_ENABLE_TASK)]
+    assert enable["ansible.builtin.systemd_service"]["name"] == "zcrypto-onchain-guard.timer"
+    assert enable["when"] == f"not (ansible_check_mode and {units['register']} is changed)"
+    assert truthy(when_conditions(enable), {"ansible_check_mode": False, units["register"]: {"changed": True}})
+
+    index = task_index(tasks, OPS_WRITER_RUNNER_TASK)
+    writer = tasks[index]
+    assert writer["ansible.builtin.template"] == {
+        "src": "onchain-write.sh.j2",
+        "dest": "/usr/local/sbin/zcrypto-onchain-write",
+        "owner": "root",
+        "group": "root",
+        "mode": "0700",
+    }
+    assert not {"no_log", "diff"} & set(writer), "no secret: it renders with its diff"
+    digest = {"ops_image_digest": _OPS_IMAGES["ops_image_digest"]}
+    assert truthy(when_conditions(writer), digest), "a routine roll hands the digest and no image id"
+    assert not truthy(when_conditions(writer), {k: v for k, v in _OPS_IMAGES.items() if k not in digest})
+
+    block_index = task_index(tasks, OPS_WRITER_UNITS_BLOCK)
+    block = tasks[block_index]
+    assert truthy(when_conditions(block), _OPS_IMAGES)
+    for left_out in _OPS_IMAGES:
+        assert not truthy(when_conditions(block), {k: v for k, v in _OPS_IMAGES.items() if k != left_out}), left_out
+    inner = {t["name"]: t for t in block["block"]}
+    (render,) = [t for t in inner.values() if "ansible.builtin.template" in t]
+    assert render["ansible.builtin.template"]["src"] == "onchain-write.{{ item }}.j2"
+    assert render["ansible.builtin.template"]["dest"] == "/etc/systemd/system/zcrypto-onchain-write.{{ item }}"
+    assert render["loop"] == ["service", "timer"]
+    (timer,) = [t for t in inner.values() if "ansible.builtin.systemd_service" in t]
+    assert timer["ansible.builtin.systemd_service"]["name"] == "zcrypto-onchain-write.timer"
+    assert timer["when"] == f"not (ansible_check_mode and {render['register']} is changed)"
+
+    assert index > uid and block_index > uid, "the runner renders --user from ops_uid and ops_gid"
+    assert block_index > index
+
+
+# spec 00164's census, its pathspecs verbatim: each positive, and none reaching a vaulted file.
+_CENSUS_PATHSPECS = (
+    "cli/",
+    "infra/README.md",
+    "infra/docker/",
+    "infra/grafana/",
+    "infra/nas/",
+    "infra/ops/",
+    "infra/runbooks/",
+    "infra/scripts/",
+    "infra/systemd/",
+    "infra/ansible/roles/",
+    "infra/ansible/scripts/",
+    "infra/ansible/inventory",
+    "infra/ansible/site.yml",
+    "infra/ansible/bootstrap.yml",
+    "infra/ansible/group_vars/*/vars.yml",
+    "infra/ansible/host_vars/*/vars.yml",
+)
+# The vaulted shapes, infra/scripts/consumers.sh's VAULT_EXCLUDES.
+_VAULTED = ("*vault.yml", "*.vault", "*.sops.*", "*vault-password*", "infra/ansible/files/*_ed25519")
+
+
+def test_the_chain_root_has_one_writer():
+    assert [p for p in _CENSUS_PATHSPECS if p.startswith(":")] == []
+    listed = subprocess.run(
+        ["git", "ls-files", "-z", "--", *_CENSUS_PATHSPECS], cwd=REPO, capture_output=True, text=True, check=True
+    ).stdout.split("\0")
+    assert not any(fnmatch(name, shape) for name in listed for shape in _VAULTED)
+    census = subprocess.run(
+        ["git", "grep", "-l", "ops_onchain_subdir", "--", *_CENSUS_PATHSPECS], cwd=REPO, capture_output=True, text=True, check=True
+    ).stdout.splitlines()
+    assert "infra/ansible/roles/ops/defaults/main.yml" in census, census
+    templates = [path for path in census if path.startswith("infra/ansible/roles/ops/templates/")]
+    assert templates == ["infra/ansible/roles/ops/templates/onchain-write.sh.j2"], census
 
 
 ACCESS_TASKS = ANSIBLE / "roles" / "access" / "tasks" / "main.yml"
