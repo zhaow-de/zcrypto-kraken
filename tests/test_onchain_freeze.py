@@ -11,7 +11,7 @@ from typer.testing import CliRunner
 
 from cli.__main__ import app
 from cli.data.manifest import read_manifest, series_entry
-from cli.onchain.chain import ChainError, Line, chain_name, line_relpath, write_base, write_day
+from cli.onchain.chain import ChainError, Line, canonical, chain_name, line_relpath, write_base, write_day
 from cli.onchain.freeze import SNAPSHOT_RELPATH, freeze
 from cli.onchain.series import COLUMNS, SCHEMA
 from cli.registry.observed import ObservedReader
@@ -66,6 +66,33 @@ def _change_a_listed_file(root: Path) -> None:
     changed = pl.read_parquet(root / CHANGED).with_columns(pl.col("price") + 1.0)
     (root / CHANGED).unlink()
     changed.write_parquet(root / CHANGED)
+
+
+def _unreadable_base(root: Path) -> None:
+    """A chain of a base line alone whose file hashes to its listing and is no parquet: it verifies, and its rows
+    cannot be read."""
+    data = b"not a parquet"
+    (root / "base").mkdir(parents=True)
+    (root / "base/history.parquet").write_bytes(data)
+    line = {
+        "day": BASE_DAYS[-1].isoformat(),
+        "prev": None,
+        "files": {"base/history.parquet": hashlib.sha256(data).hexdigest()},
+        "vintage": _vintage(BASE_DAYS[-1], 0),
+    }
+    (root / line_relpath(BASE_DAYS[-1])).parent.mkdir(parents=True)
+    (root / line_relpath(BASE_DAYS[-1])).write_bytes(canonical(line))
+
+
+def _a_head_vintage_without_bitcoind_image(root: Path) -> None:
+    """`_chain` with its head line rewritten, canonical, without `bitcoind_image`: no later line's `prev` covers the
+    head, so it verifies."""
+    _chain(root)
+    path = root / line_relpath(LINE_DAYS[-1])
+    line = json.loads(path.read_bytes())
+    del line["vintage"]["bitcoind_image"]
+    path.unlink()
+    path.write_bytes(canonical(line))
 
 
 def _tree(root: Path) -> dict[str, bytes | None]:
@@ -131,6 +158,8 @@ def test_an_as_of_past_the_head_is_refused(tmp_path):
 
 def test_an_existing_out_is_refused(tmp_path):
     _chain(tmp_path / NAME)
+    # A chain that does not verify too, so the case reads which refusal comes first.
+    _change_a_listed_file(tmp_path / NAME)
     out = tmp_path / SET
     out.mkdir()
     (out / "notes.txt").write_bytes(b"a set begun by hand")
@@ -152,9 +181,41 @@ def test_a_chain_that_does_not_verify_is_refused_and_no_manifest_is_written(tmp_
     assert not (tmp_path / SET).exists()
 
 
+def test_rows_off_the_day_files_schema_are_refused_and_no_out_is_made(tmp_path):
+    chain = tmp_path / NAME
+    write_base(chain, _frame(BASE_DAYS).with_columns(pl.col("price").cast(pl.Float32)), _vintage(BASE_DAYS[-1], 0))
+
+    with pytest.raises(ChainError, match="the rows through 2009-01-12 are not of the day file's schema"):
+        freeze(chain, BASE_DAYS[-1], tmp_path / SET, written_at=WRITTEN_AT)
+
+    assert not (tmp_path / SET).exists()
+
+
+def test_a_snapshot_at_the_base_line_is_the_base_alone(tmp_path):
+    chain = tmp_path / NAME
+    _chain(chain)
+    out = tmp_path / SET
+
+    freeze(chain, BASE_DAYS[-1], out, written_at=WRITTEN_AT)
+
+    assert_frame_equal(pl.read_parquet(out / SNAPSHOT_RELPATH), _frame(BASE_DAYS))
+    provenance = read_manifest(out / "manifest.json").provenance
+    assert provenance["as_of_line"]["relpath"] == "index/2009/01/12.json"
+    assert (provenance["bitview_image"], provenance["bitcoind_image"]) == (f"sha256:{0:064x}", f"sha256:{16:064x}")
+
+
+def test_the_provenance_names_a_chain_given_as_the_working_directory(tmp_path, monkeypatch):
+    _chain(tmp_path / NAME)
+    monkeypatch.chdir(tmp_path / NAME)
+
+    freeze(Path("."), AS_OF, tmp_path / SET, written_at=WRITTEN_AT)
+
+    assert read_manifest(tmp_path / SET / "manifest.json").provenance["chain"] == NAME
+
+
 @pytest.mark.parametrize(
     ("chain", "as_of", "day", "days"),
-    [(None, None, LINE_DAYS[-1], 4), (None, AS_OF, AS_OF, 3), (".", None, LINE_DAYS[-1], 4)],
+    [(None, None, LINE_DAYS[-1], 8), (None, AS_OF, AS_OF, 7), (".", None, LINE_DAYS[-1], 8)],
     ids=["the-head", "an-as-of", "the-chain-as-the-working-directory"],
 )
 def test_the_verify_summary_names_the_head_and_its_sha256(tmp_path, monkeypatch, chain, as_of, day, days):
@@ -194,3 +255,35 @@ def test_a_verify_of_a_chain_with_no_line_is_refused(tmp_path):
 
     assert code == 1
     assert lines == [("ERROR", f"onchain verify refused chain={NAME} reason={tmp_path / NAME} holds no line")]
+
+
+def test_an_out_whose_parent_is_absent_is_made_with_it(tmp_path):
+    _chain(tmp_path / NAME)
+    out = tmp_path / "data" / SET
+
+    code, lines = _cli(["freeze", "--chain", str(tmp_path / NAME), "--as-of", "2009-01-14", "--out", str(out)])
+
+    assert code == 0
+    assert lines == [("INFO", f"onchain freeze complete chain={NAME} as_of=2009-01-14 manifest={out / 'manifest.json'}")]
+    assert read_manifest(out / "manifest.json").series.keys() == {SNAPSHOT_RELPATH}
+
+
+@pytest.mark.parametrize(
+    ("damage", "argv", "failure"),
+    [
+        (_unreadable_base, ["verify"], "ComputeError"),
+        (_unreadable_base, ["freeze", "--as-of", "2009-01-12", "--out", SET], "ComputeError"),
+        (_a_head_vintage_without_bitcoind_image, ["freeze", "--as-of", "2009-01-15", "--out", SET], "KeyError"),
+    ],
+    ids=["verify-an-unreadable-base", "freeze-an-unreadable-base", "freeze-a-head-vintage-without-a-key"],
+)
+def test_an_unexpected_failure_is_one_error_line_naming_its_class_and_exit_1(tmp_path, monkeypatch, damage, argv, failure):
+    damage(tmp_path / NAME)
+    monkeypatch.chdir(tmp_path)
+
+    code, lines = _cli([*argv, "--chain", str(tmp_path / NAME)])
+
+    assert code == 1
+    assert [level for level, _ in lines] == ["ERROR"]
+    assert lines[0][1].startswith(f"onchain {argv[0]} refused chain={NAME} reason={failure} at ")
+    assert not (tmp_path / SET).exists()

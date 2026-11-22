@@ -6,12 +6,13 @@ import traceback
 from datetime import UTC, date, datetime
 from pathlib import Path
 
+import polars as pl
 import typer
 
 from cli.capture.errors import CaptureError
 from cli.logging import get_logger
 from cli.onchain.brk import BrkClient
-from cli.onchain.chain import ChainError, chain_name, line_days, verify, walk
+from cli.onchain.chain import ChainError, Line, chain_name, line_days, verify, walk
 from cli.onchain.freeze import freeze
 from cli.onchain.write import run_write
 
@@ -109,6 +110,13 @@ def _as_of(chain: Path, text: str | None) -> date:
     return days[-1]
 
 
+def _held_days(chain: Path, lines: list[Line]) -> int:
+    """The days `lines` hold: the base file's rows, counted from its parquet metadata, and one for each day line. A
+    count of the lines alone would read a base of thousands of days as one."""
+    (base,) = lines[0].files
+    return pl.scan_parquet(chain / base).select(pl.len()).collect().item() + len(lines) - 1
+
+
 _CHAIN_HELP = "The chain's own directory under the chain root, named for its BRK commit and generation."
 
 
@@ -128,6 +136,9 @@ def freeze_cmd(
     except (ChainError, OSError) as exc:
         log.error("onchain freeze refused chain=%s reason=%s", chain.name, exc)
         raise typer.Exit(code=1) from exc
+    except Exception as exc:
+        log.error("onchain freeze refused chain=%s reason=%s", chain.name, _failure(exc))
+        raise typer.Exit(code=1) from exc
     log.info("onchain freeze complete chain=%s as_of=%s manifest=%s", chain.name, day, path)
 
 
@@ -139,11 +150,14 @@ def verify_cmd(
     ),
 ) -> None:
     """Walk the chain from its base to the as-of line, re-hash every file each line lists, and name that line, its
-    sha256 and the number of days whose lines were read; exit 0 verified, 1 refused."""
+    sha256 and the number of days the chain holds through it; exit 0 verified, 1 refused."""
     try:
         line = verify(chain, _as_of(chain, as_of))
-        days = len(walk(chain, line.day))
+        days = _held_days(chain, walk(chain, line.day))
     except (ChainError, OSError) as exc:
         log.error("onchain verify refused chain=%s reason=%s", chain.name, exc)
+        raise typer.Exit(code=1) from exc
+    except Exception as exc:
+        log.error("onchain verify refused chain=%s reason=%s", chain.name, _failure(exc))
         raise typer.Exit(code=1) from exc
     log.info("onchain verify complete chain=%s head=%s head_sha256=%s days=%d", chain.name, line.day, line.sha256, days)
