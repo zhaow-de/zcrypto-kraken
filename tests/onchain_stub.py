@@ -11,11 +11,18 @@ import urllib.request
 import urllib.response
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from http import HTTPStatus
+from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from cli.onchain.brk import BITVIEW_URL, DAY1_EPOCH, BrkClient
+from cli.onchain.chain import Line, chain_name, walk
+from cli.onchain.write import DEPTH, run_write
+
+COMMIT = "1a19c5e969761a0ce446483767da8c765e4aa895"
+BITVIEW_IMAGE = "sha256:" + "b" * 64
+BITCOIND_IMAGE = "sha256:" + "c" * 64
 
 # BRK's default `--maxweight`: a read whose rows times its value's bytes pass it is answered 400.
 MAX_WEIGHT = 320_000
@@ -58,16 +65,16 @@ def _day1(day: date) -> int:
 
 
 class FakeBrk(urllib.request.HTTPHandler):
-    """Every attribute may be changed between calls. `days[h]` and `hashes[h]` are height h's monotonic UTC day and
-    block hash; `series` maps a series id to its value by day, a planted `None` served `null`; `ids` is the series
-    list, the series' own ids when `None`; `planted` maps a path to the answer served in place of the route's; with
-    `unreachable`, every request fails as a refused connection does."""
+    """Every attribute may be changed between calls. `days[h]` is height h's monotonic UTC day, and its block hash is
+    `hashes[h]` where one is planted, else `f"{h:064x}"`; `series` maps a series id to its value by day, a planted
+    `None` served `null`; `ids` is the series list, the series' own ids when `None`; `planted` maps a path to the
+    answer served in place of the route's; with `unreachable`, every request fails as a refused connection does."""
 
     def __init__(
         self,
         *,
         days: Sequence[date] = (),
-        hashes: Sequence[str] | None = None,
+        hashes: Mapping[int, str] | None = None,
         series: Mapping[str, Mapping[date, float | None]] | None = None,
         ids: Sequence[str] | None = None,
         indexed_height: int = 0,
@@ -75,7 +82,7 @@ class FakeBrk(urllib.request.HTTPHandler):
     ) -> None:
         super().__init__()
         self.days = list(days)
-        self.hashes = [f"{height:064x}" for height in range(len(self.days))] if hashes is None else list(hashes)
+        self.hashes = dict(hashes or {})
         self.series = {series_id: dict(values) for series_id, values in (series or {}).items()}
         self.ids = None if ids is None else list(ids)
         self.indexed_height = indexed_height
@@ -106,8 +113,8 @@ class FakeBrk(urllib.request.HTTPHandler):
                 return self._height_days(query)
             case ["api", "series", series_id, "day1"] if series_id in self.series:
                 return self._series_days(self.series[series_id], query)
-            case ["api", "block-height", height] if height.isdigit() and int(height) < len(self.hashes):
-                return Answer(200, self.hashes[int(height)].encode(), "text/plain")
+            case ["api", "block-height", height] if height.isdigit() and int(height) < len(self.days):
+                return Answer(200, self.hashes.get(int(height), f"{int(height):064x}").encode(), "text/plain")
             case ["api", "server", "sync"]:
                 return _json({"indexed_height": self.indexed_height, "tip_height": self.tip_height})
         return _error(404, f"not found: {path}")
@@ -154,3 +161,26 @@ class FakeBrk(urllib.request.HTTPHandler):
 
 def fake_client(fake: FakeBrk) -> BrkClient:
     return BrkClient(BITVIEW_URL, opener=urllib.request.build_opener(urllib.request.ProxyHandler({}), fake))
+
+
+def day_end(day: date) -> datetime:
+    return datetime.combine(day + timedelta(days=1), time(), UTC)
+
+
+def last_height(fake: FakeBrk, day: date) -> int:
+    return max(height for height, each in enumerate(fake.days) if each == day)
+
+
+def build_chain(root: Path, fake: FakeBrk, days: Sequence[date]) -> list[Line]:
+    """The chain `run_write` writes under `root` over `fake`, one run for each of `days` in order, at 02:17Z the day
+    after it, each run's index and tip set to the height that confirms that day's last block and no later day's: on an
+    empty chain the base through the first, then one line a run. `fake.days` holds at least `DEPTH` blocks after each
+    day's last, the first of a later day. The chain's lines through the last of `days`."""
+    for day in days:
+        fake.indexed_height = fake.tip_height = last_height(fake, day) + DEPTH
+        client = fake_client(fake)
+        now = day_end(day) + timedelta(hours=2, minutes=17)
+        outcome = run_write(root, client, brk_commit=COMMIT, bitview_image=BITVIEW_IMAGE, bitcoind_image=BITCOIND_IMAGE, now=now)
+        if outcome.stopped is not None or outcome.wrote != (day,):
+            raise AssertionError(f"the run for {day} wrote {outcome.wrote} and stopped on {outcome.stopped!r}")
+    return walk(root / chain_name(COMMIT), days[-1])

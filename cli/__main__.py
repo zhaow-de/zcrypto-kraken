@@ -12,6 +12,7 @@ from cli.engine.command import engine_app
 from cli.liquidations.coinalyze import liquidations_backfill, liquidations_poll
 from cli.liquidations.command import liquidations
 from cli.logging import ShipConfig, configure, get_logger
+from cli.onchain.command import onchain_app
 from cli.panel.command import panel_app
 from cli.research.command import research_app
 from cli.snapshot.command import snapshot_app
@@ -30,6 +31,7 @@ app.command(name="liquidations-backfill")(liquidations_backfill)
 app.add_typer(engine_app, name="engine")
 app.add_typer(archive_app, name="archive")
 app.add_typer(data_app, name="data")
+app.add_typer(onchain_app, name="onchain")
 app.add_typer(panel_app, name="panel")
 app.add_typer(research_app, name="research")
 app.add_typer(snapshot_app, name="snapshot")
