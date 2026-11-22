@@ -186,6 +186,8 @@ def _place(root: Path, relpath: str, data: bytes) -> None:
 
 
 def _write(root: Path, day: date, prev: str | None, relpath: str, frame: pl.DataFrame, vintage: dict) -> Line:
+    if vintage.keys() != VINTAGE_KEYS:
+        raise ChainError(f"{root}: a vintage's keys are {sorted(vintage)}, not {sorted(VINTAGE_KEYS)}")
     buffer = io.BytesIO()
     frame.write_parquet(buffer)
     data = buffer.getvalue()

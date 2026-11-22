@@ -182,6 +182,21 @@ def test_a_frame_of_other_than_one_day_is_refused(tmp_path, offsets):
     assert _tree(tmp_path) == before
 
 
+@pytest.mark.parametrize("base", [True, False], ids=["a-base-without-a-key", "a-day-with-a-key-more"])
+def test_a_vintage_off_its_keys_is_refused_and_nothing_written(tmp_path, base):
+    if not base:
+        _chain(tmp_path, 0)
+    before = _tree(tmp_path)
+
+    with pytest.raises(ChainError, match="a vintage's keys are"):
+        if base:
+            write_base(tmp_path, _frame([D0]), {key: value for key, value in _vintage(D0).items() if key != "chain"})
+        else:
+            write_day(tmp_path, _frame([_day(1)]), _vintage(_day(1)) | {"note": "x"})
+
+    assert _tree(tmp_path) == before
+
+
 def test_a_base_of_no_day_is_refused(tmp_path):
     with pytest.raises(ChainError, match="holds 0 rows"):
         write_base(tmp_path, _frame([]), _vintage(D0))
