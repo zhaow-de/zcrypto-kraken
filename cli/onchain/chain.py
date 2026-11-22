@@ -199,6 +199,8 @@ def _write(root: Path, day: date, prev: str | None, relpath: str, frame: pl.Data
 
 def write_base(root: Path, frame: pl.DataFrame, vintage: dict) -> Line:
     """`frame`, every day from the first through the base day, as the base file, and the base day's line."""
+    if frame.height == 0:
+        raise ChainError(f"{root}: a base line is written from a frame of its days, and this one holds 0 rows")
     days = line_days(root)
     if days:
         raise ChainError(f"{root} holds lines through {days[-1]}; a base is written only into a chain with none")

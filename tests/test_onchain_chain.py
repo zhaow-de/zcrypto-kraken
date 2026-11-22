@@ -182,6 +182,13 @@ def test_a_frame_of_other_than_one_day_is_refused(tmp_path, offsets):
     assert _tree(tmp_path) == before
 
 
+def test_a_base_of_no_day_is_refused(tmp_path):
+    with pytest.raises(ChainError, match="holds 0 rows"):
+        write_base(tmp_path, _frame([]), _vintage(D0))
+
+    assert _tree(tmp_path) == {}
+
+
 def test_a_base_over_a_chain_is_refused(tmp_path):
     _chain(tmp_path, 1)
     before = _tree(tmp_path)
