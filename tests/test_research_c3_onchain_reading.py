@@ -24,7 +24,7 @@ UNION_START = datetime(2020, 10, 1, tzinfo=UTC)
 N_DAYS = 320
 LEAD = 400
 # Every asset falls 5 % over the 7 closes from each index divisible by CYCLE and rises 15 % on the eighth, so the A1
-# sleeve, gated on BTC's 200-day average, holds every asset long over the union's last hundred-odd indices.
+# sleeve, gated on BTC's 200-day average, holds each asset listed on the first day long from index 200 on.
 CYCLE = 8
 FALL, RISE = 0.95 ** (1 / 7), 1.15
 SOL_LISTED = 280
