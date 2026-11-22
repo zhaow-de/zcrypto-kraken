@@ -203,6 +203,20 @@ def test_every_cell_is_contrasted_at_the_bonferroni_far_bounds(tmp_path, monkeyp
     assert len(fars) == 32 and all(far == alpha_c3.FAR for far in fars)
 
 
+def test_one_draw_at_the_readings_constants_serves_every_cell(tmp_path, monkeypatch, resamples):
+    real, draws = subjects.stationary_bootstrap_blocks, []
+
+    def recording(*args, **kwargs):
+        draws.append((args, kwargs))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(subjects, "stationary_bootstrap_blocks", recording)
+    _build(_reader(tmp_path))
+
+    constants = {"mean_block": alpha_c3.MEAN_BLOCK, "n_resamples": alpha_c3.N_RESAMPLES, "seed": alpha_c3.SEED}
+    assert draws == [((N_DAYS,), constants)]
+
+
 def test_the_floors_years_count_the_pooled_events(tmp_path, resamples):
     reader = _reader(tmp_path)
     out = _build(reader)
@@ -359,6 +373,13 @@ def test_a_snapshot_with_no_priced_day_is_refused(tmp_path):
 def test_an_unreadable_file_names_its_relpath(tmp_path, broken, error):
     with pytest.raises(subjects.SubjectError, match=re.escape(f"{'/'.join(broken)}: cannot read {broken[1]}")):
         _build(_reader(tmp_path, broken=broken, error=error))
+
+
+@pytest.mark.parametrize("column", ["price", "asopr"])
+def test_a_snapshot_without_a_column_it_reads_is_refused_naming_its_relpath(tmp_path, column):
+    with pytest.raises(subjects.SubjectError) as refused:
+        _build(_reader(tmp_path, snapshot=_snapshot().drop(column)))
+    assert str(refused.value).startswith(f"{DATASET}/{SNAPSHOT_RELPATH}: ") and f'"{column}"' in str(refused.value)
 
 
 @pytest.mark.parametrize("spoil", ["absent", "unparseable"])
