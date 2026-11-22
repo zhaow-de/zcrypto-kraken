@@ -18,6 +18,7 @@ import polars as pl
 
 from cli.alpha import A2Config, a2_book_returns
 from cli.alpha import c1 as alpha_c1
+from cli.alpha import c3 as alpha_c3
 from cli.alpha.a1 import _asset_returns, _inverse_vol_weights
 from cli.alpha.a2 import _asset_directions_a2
 from cli.alpha.b1 import (
@@ -126,6 +127,8 @@ from cli.data.manifest import ManifestError, read_manifest
 from cli.derivatives.funding import PERP_SYMBOLS
 from cli.features.derivatives import coverage_by_year, funding_zscore
 from cli.features.errors import FeatureError
+from cli.onchain.freeze import SNAPSHOT_RELPATH
+from cli.onchain.series import priced as onchain_priced
 from cli.panel import ladder as panel_ladder
 from cli.portfolio.builder import CombinedSystemConfig, build_combined_system
 from cli.portfolio.crossfreq_system import (
@@ -5159,6 +5162,162 @@ def _build_engine_cost_reading(
         raise SubjectError(f"{_b2_over(subject, window)}: {exc}") from exc
 
 
+# docs/specs/00164-t0228-btc-onchain-design.md D6, D7, D12: C3's on-chain reading, four valuation features' tails against
+# the A1 sleeve's state; no rule, no slot.
+class _C3ReadingInputs(NamedTuple):
+    grid: list[datetime]
+    years: list[int]
+    arm: dict[str, dict[str, int]]
+    positions: dict[str, list[float]]
+    states: dict[str, list[str | None]]
+    features: dict[str, dict]
+    bands: dict[str, list[str | None]]
+    counts: dict[str, dict[str, dict[str, int]]]
+
+
+def _c3_reads(
+    reader: ObservedReader, dataset: str, subject: str
+) -> tuple[dict, pl.DataFrame, list[datetime], dict[str, list[float | None]]]:
+    """The snapshot's days are held consecutive from its first priced day alone: a day before it may hold no block
+    (docs/specs/00164 D12)."""
+    over = _b2_over(subject, None)
+    try:
+        manifest = read_manifest(reader._root / dataset / "manifest.json")
+    except (ManifestError, OSError) as exc:
+        raise SubjectError(f"{over}: {dataset}/manifest.json cannot be read: {exc}") from exc
+    line = manifest.provenance.get("as_of_line")
+    if not isinstance(line, dict) or not isinstance(line.get("sha256"), str):
+        raise SubjectError(f"{over}: {dataset}/manifest.json's provenance names no as-of line's sha256")
+    try:
+        snapshot = reader.read_series(dataset, SNAPSHOT_RELPATH).select("ts", "price", *alpha_c3.FEATURES)
+    except (pl.exceptions.PolarsError, OSError) as exc:
+        raise SubjectError(f"{dataset}/{SNAPSHOT_RELPATH}: {exc}") from exc
+    ts, price = snapshot["ts"].to_list(), snapshot["price"].to_list()
+    first = next((i for i, value in enumerate(price) if onchain_priced(value)), None)
+    if first is None:
+        raise SubjectError(f"{over}: {dataset}/{SNAPSHOT_RELPATH}: no day's price is finite and above 0")
+    for before, after in zip(ts[first:], ts[first + 1 :]):
+        if after - before != timedelta(days=1):
+            raise SubjectError(
+                f"{over}: {dataset}/{SNAPSHOT_RELPATH}: its days are not consecutive from its first priced day "
+                f"{ts[first].date()}: {before.date()} is followed by {after.date()}"
+            )
+    daily_ts, daily_prices = _capturing_union(reader, "ohlc-full", 1440, None, None, False)
+    return manifest.provenance, snapshot, daily_ts, daily_prices
+
+
+def _c3_flags(band: list[str | None], states: dict[str, list[str | None]], tail: str, state: str) -> dict[str, list[bool | None]]:
+    return {asset: alpha_c3.flags(band, held, tail=tail, in_state=state) for asset, held in states.items()}
+
+
+def _c3_reading_inputs(
+    snapshot: pl.DataFrame, daily_ts: list[datetime], daily_prices: dict[str, list[float | None]]
+) -> _C3ReadingInputs:
+    """The half the data-gated case runs over the real sets before the spec's hash, so it computes no forward return
+    (docs/specs/00164 D12)."""
+    grid, years = daily_ts, [stamp.year for stamp in daily_ts]
+    positions = alpha_c3.a1_daily_positions(daily_prices)
+    states = alpha_c3.states(positions, _ffill_btc(daily_prices))
+    arm = {asset: {state: held.count(state) for state in alpha_c3.STATES} for asset, held in states.items()}
+    days, price = [stamp.date() for stamp in snapshot["ts"].to_list()], snapshot["price"].to_list()
+    features: dict[str, dict] = {}
+    bands: dict[str, list[str | None]] = {}
+    for feature in alpha_c3.FEATURES:
+        column = snapshot[feature].to_list()
+        if feature in ("mvrv", "mvrv_z", "asopr"):
+            column = [value if onchain_priced(p) else None for value, p in zip(column, price, strict=True)]
+        # Ranked over the snapshot's whole history, years before the union's first index, then read at the lag.
+        bands[feature] = alpha_c3.lagged(dict(zip(days, alpha_c3.bands(column), strict=True)), grid)
+        read: list = []
+        band_days: dict[str, dict[str, int]] = {}
+        for k, band in enumerate(bands[feature]):
+            if band is not None:
+                read.append(grid[k].date() - timedelta(days=alpha_c3.LAG_DAYS))
+                band_days.setdefault(str(read[-1].year), dict.fromkeys(("low", "mid", "high"), 0))[band] += 1
+        span = {"first": int(read[0].strftime("%Y%m%d")), "last": int(read[-1].strftime("%Y%m%d"))} if read else {}
+        values = alpha_c3.lagged(dict(zip(days, column, strict=True)), grid)
+        features[feature] = {"values": values, **span, "band_days": band_days}
+    counts = {
+        f"{feature}|{tail}|{state}": {
+            asset: {"events": flag.count(True), "others": flag.count(False)}
+            for asset, flag in _c3_flags(bands[feature], states, tail, state).items()
+        }
+        for feature in alpha_c3.FEATURES
+        for tail in alpha_c3.TAILS
+        for state in alpha_c3.STATES
+    }
+    return _C3ReadingInputs(grid, years, arm, positions, states, features, bands, counts)
+
+
+def _c3_reading_metrics(inputs: _C3ReadingInputs, daily_prices: dict[str, list[float | None]]) -> dict:
+    prices = _ffill_btc(daily_prices)
+    forwards = {
+        horizon: {asset: alpha_c3.forwards(closes, horizon) for asset, closes in prices.items()} for horizon in alpha_c3.HORIZONS
+    }
+    # One draw over every union index serves every cell; the last index, decided at the last close, has no forward.
+    blocks = stationary_bootstrap_blocks(
+        len(inputs.grid), mean_block=alpha_c3.MEAN_BLOCK, n_resamples=alpha_c3.N_RESAMPLES, seed=alpha_c3.SEED
+    )
+    cells: dict[str, dict] = {}
+    event_years: dict[str, dict[str, int]] = {}
+    for feature in alpha_c3.FEATURES:
+        for tail in alpha_c3.TAILS:
+            for state in alpha_c3.STATES:
+                flags = _c3_flags(inputs.bands[feature], inputs.states, tail, state)
+                for horizon in alpha_c3.HORIZONS:
+                    log = {asset: forwards[horizon][asset][0] for asset in flags}
+                    summed = {asset: forwards[horizon][asset][1] for asset in flags}
+                    name = alpha_c3.cell_name(feature, tail, state, horizon)
+                    cells[name] = event_contrast_blocks(flags, {"log": log, "summed": summed}, blocks, far=alpha_c3.FAR)
+                    event_years[name] = alpha_c3.event_years(flags, log, inputs.years)
+    return {
+        "cells": cells,
+        "event_years": event_years,
+        "counts": inputs.counts,
+        "features": {feature: {k: v for k, v in block.items() if k != "values"} for feature, block in inputs.features.items()},
+        "arm": inputs.arm,
+        "constants": {
+            "low": alpha_c3.LOW,
+            "high": alpha_c3.HIGH,
+            "min_history": alpha_c3.MIN_HISTORY,
+            "lag_days": alpha_c3.LAG_DAYS,
+            "horizons": list(alpha_c3.HORIZONS),
+            "mean_block": alpha_c3.MEAN_BLOCK,
+            "n_resamples": alpha_c3.N_RESAMPLES,
+            "seed": alpha_c3.SEED,
+            "far": list(alpha_c3.FAR),
+            "cost_round_trip": alpha_c3.COST_ROUND_TRIP,
+            "min_event_years": alpha_c3.MIN_EVENT_YEARS,
+        },
+    }
+
+
+def _build_c3_onchain_reading(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    subject = "c3-onchain-reading"
+    if as_of is not None:
+        raise SubjectError(f"{subject} evaluates a frozen snapshot whole, never the rolling dataset as of a day: drop --as-of")
+    if window is not None:
+        raise SubjectError(
+            f"{_b2_over(subject, window)}: it reads its frozen sets whole, and the bands' history reaches back past any "
+            "window's first day; drop --window"
+        )
+    try:
+        _, snapshot, daily_ts, daily_prices = _c3_reads(reader, dataset, subject)
+        return _c3_reading_metrics(_c3_reading_inputs(snapshot, daily_ts, daily_prices), daily_prices)
+    except (AlphaError, PortfolioError, ValidationError) as exc:
+        raise SubjectError(f"{_b2_over(subject, window)}: {exc}") from exc
+
+
+# docs/specs/00164 D12's keys.
+_C3_READING_KEYS = frozenset({"cells", "event_years", "counts", "features", "arm", "constants"})
+
+
 SUBJECTS: dict[str, Subject] = {
     "record44-crossfreq": Subject(
         "record44-crossfreq",
@@ -5707,6 +5866,16 @@ SUBJECTS: dict[str, Subject] = {
         spec="docs/specs/00153-engine-execution-cost-design.md",
         metric_keys=_ENGINE_COST_KEYS,
         seeds=(costs_ladder.SEED,),
+    ),
+    # No assets: the snapshot is the one file of its set, and the `ohlc-full` legs are read by name.
+    "c3-onchain-reading": Subject(
+        "c3-onchain-reading",
+        (1440,),
+        (),
+        _build_c3_onchain_reading,
+        spec="docs/specs/00164-t0228-btc-onchain-design.md",
+        metric_keys=_C3_READING_KEYS,
+        seeds=(alpha_c3.SEED,),
     ),
 }
 
