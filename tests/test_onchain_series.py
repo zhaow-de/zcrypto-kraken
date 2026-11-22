@@ -103,6 +103,16 @@ def test_mvrv_z_skips_a_missing_market_cap_in_its_count():
     assert z[367] == (market[367] - realized[367]) / statistics.stdev(counted)
 
 
+def test_mvrv_z_is_none_where_the_market_cap_is_not_priced():
+    market, realized = _caps(400)
+    market[390] = 0.0
+    assert mvrv_z(market, realized)[390] is None
+    market[391], market[392] = None, math.nan
+    z = mvrv_z(market, realized)
+    assert (z[390], z[391], z[392]) == (None, None, None)
+    assert z[389] is not None and z[393] is not None
+
+
 def test_mvrv_z_is_none_where_the_realized_cap_is_not_finite():
     market, realized = _caps(400)
     realized[380], realized[381] = math.nan, None
