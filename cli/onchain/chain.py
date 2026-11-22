@@ -145,8 +145,8 @@ def head(root: Path) -> Line | None:
 
 
 def staging_leftovers(root: Path) -> list[Path]:
-    """Every name under `<root>/staging`, each a temporary a writer that died left: a live write renames its own or
-    removes it."""
+    """Every name under `<root>/staging`, each a temporary a writer that died left: a live write links its own into
+    place and always removes it."""
     try:
         return sorted((root / _STAGING).iterdir())
     except FileNotFoundError:

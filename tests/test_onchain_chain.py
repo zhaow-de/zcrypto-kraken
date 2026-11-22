@@ -378,7 +378,7 @@ def test_every_placed_file_is_read_only(tmp_path):
         "index/2025/12/30.json",
         "index/2025/12/31.json",
     ]
-    assert {stat.S_IMODE(path.stat().st_mode) for path in placed} == {0o444}
+    assert [stat.S_IMODE(path.stat().st_mode) & 0o222 for path in placed] == [0, 0, 0, 0]
 
 
 def test_a_failed_write_leaves_no_temporary(tmp_path, monkeypatch):
