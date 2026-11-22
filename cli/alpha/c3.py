@@ -8,7 +8,7 @@ import statistics
 from datetime import date, datetime, timedelta
 
 from cli.alpha.a1 import A1Config, a1_book_returns
-from cli.portfolio.crossfreq_system import _A1_CADENCE, _block_start, _dummy_close, _ffill_btc
+from cli.portfolio.crossfreq_system import _A1_CADENCE, CrossfreqSystemConfig, _block_start, _dummy_close, _ffill_btc
 
 FEATURES = ("mvrv", "mvrv_z", "asopr", "sth_supply_share")
 TAILS = ("low", "high")
@@ -52,8 +52,11 @@ def lagged[T](by_day: dict[date, T], grid: list[datetime]) -> list[T | None]:
 
 
 def a1_daily_positions(daily_prices: dict[str, list[float | None]]) -> dict[str, list[float]]:
-    """`build_crossfreq_system`'s A1 rows before their expansion, `daily_prices` in its `config.assets` order:
-    `a1_book_returns` sums over the assets in the dict's order."""
+    """`build_crossfreq_system`'s A1 rows before their expansion. The order is refused unless it is the builder's
+    `config.assets`, since `a1_book_returns` sums over the assets in the dict's order."""
+    order = CrossfreqSystemConfig().assets
+    if tuple(daily_prices) != order:
+        raise ValueError(f"daily_prices must be in the order {order}, got {tuple(daily_prices)}")
     d_pf = _ffill_btc({a: list(closes) + [_dummy_close(closes)] for a, closes in daily_prices.items()})
     n_rows_d = len(d_pf["BTC"]) - 1
     ap_a1 = a1_book_returns(

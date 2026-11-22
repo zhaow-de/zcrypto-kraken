@@ -1,6 +1,8 @@
 import math
 from datetime import UTC, date, datetime, timedelta
 
+import pytest
+
 from cli.alpha.b2 import event_contrast_blocks, stationary_bootstrap_blocks
 from cli.alpha.c3 import (
     COST_ROUND_TRIP,
@@ -115,6 +117,14 @@ def test_the_arm_expands_to_the_builders_a1_sleeve():
     expanded = expand_daily_positions(arm, [t + timedelta(days=1) for t in d_ts], [t + timedelta(hours=4) for t in h_ts])
     config = CrossfreqSystemConfig(fee_per_side=0.0040, spread_per_side=0.0020)
     assert expanded == build_crossfreq_system(daily, daily_ts, h4, h4_ts, config=config).sleeve_positions["A1"]
+
+
+def test_the_arm_refuses_an_order_other_than_the_builders():
+    daily = _union()[0]
+    reordered = {"BTC": daily["BTC"], **{a: closes for a, closes in daily.items() if a != "BTC"}}
+    with pytest.raises(ValueError) as refused:
+        a1_daily_positions(reordered)
+    assert str(CrossfreqSystemConfig().assets) in str(refused.value) and str(tuple(reordered)) in str(refused.value)
 
 
 def test_states_and_flags():
