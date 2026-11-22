@@ -284,6 +284,22 @@
     - { path: "{{ ops_data_dir }}/{{ ops_vintages_subdir }}/staging", mode: "0750" }
     - { path: "{{ ops_data_dir }}/{{ ops_vintage_versions_subdir }}", mode: "0755" }
 
+# The node's and the index's roots lie outside ops_data_dir, so none of the ops containers that mount it
+# read-write reaches them; the chain root lies inside it, the writer's. Ungated, so the node's configuration
+# renders into a root that exists.
+- name: ensure the on-chain node, index and chain directories exist
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ ops_data_user }}"
+    group: "{{ ops_data_user }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ ops_onchain_root }}", mode: "0755" }
+    - { path: "{{ ops_onchain_root }}/bitcoin", mode: "0750" }
+    - { path: "{{ ops_onchain_root }}/bitview", mode: "0750" }
+    - { path: "{{ ops_data_dir }}/{{ ops_onchain_subdir }}", mode: "0755" }
+
 # --- Fleet users/groups (spec 00057, ops phase): the zcrypto-data m2m identity + the hot-out
 # authoring bridge. Created in the unconditional preamble (no digest gate) -- these accounts must
 # exist before any data ownership or container-user change.
@@ -794,6 +810,37 @@
         enabled: true
         state: started
       when: not (ansible_check_mode and ops_vintage_unit_install is changed)
+
+# Renders only: the node and its index start, stop and restart by the owner's hand, never as a converge's side
+# effect. Gated on both local image ids, which a routine ops roll does not hand, so a converge without them
+# leaves the project as it stands.
+- name: install the on-chain node and index project (needs both pinned image ids)
+  when: ops_bitcoind_image_id is defined and ops_bitview_image_id is defined
+  block:
+    - name: ensure the on-chain compose project directory exists
+      ansible.builtin.file:
+        path: "{{ ops_onchain_compose_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: render the on-chain compose file
+      ansible.builtin.template:
+        src: onchain-compose.yaml.j2
+        dest: "{{ ops_onchain_compose_dir }}/compose.yaml"
+        owner: root
+        group: root
+        mode: "0644"
+
+    # Group-readable by the node, which runs as zcrypto-data's uid and gid.
+    - name: render the on-chain node's configuration
+      ansible.builtin.template:
+        src: bitcoin.conf.j2
+        dest: "{{ ops_onchain_root }}/bitcoin/bitcoin.conf"
+        owner: root
+        group: "{{ ops_data_user }}"
+        mode: "0640"
 
 # Deliberately OUTSIDE the digest gate above: this script consumes no image reference (it drives
 # systemd and rm), and the operator needs it on the host regardless of whether the converge that

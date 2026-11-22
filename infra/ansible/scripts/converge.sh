@@ -39,13 +39,15 @@ TAGNAMES="base hardening firewall fail2ban chrony docker capture alloy engine op
 # 00120's two: the engine host's cache proxy digest, and the cache table's switch, the way back;
 # spec 00121's one: the observability node's deliberate re-mint of its tools' Grafana token (D7);
 # spec 00122's one: the dead-man node's image tag, which every converge running its role names (D3);
-# spec 00123's one: an apt host's previous Alloy version in its one-host rollback (D16).
+# spec 00123's one: an apt host's previous Alloy version in its one-host rollback (D16);
+# spec 00164's two: the on-chain node's and its index's local image ids, which the ops converge that
+# installs them carries (D9, D10).
 EVKEYS="capture_image_digest capture_alloy_digest engine_image_digest converge_primary \
 ops_image_digest ops_alloy_digest ops_panel_timer_hold ops_grafana_watchdog_probe_url \
 ops_reconcile_mint liquidations_decision nas_apply_compose daemon_json_ack \
 docker_apt_distribution access_ops_agentboard_live cache_image_digest cache_alloy_digest \
 cache_config_reset cache_proxy_image_digest engine_cache_enabled mon_grafana_token_rotate \
-hc_image_tag alloy_deb_version"
+hc_image_tag alloy_deb_version ops_bitcoind_image_id ops_bitview_image_id"
 # A reason is prose, and `k=v` truncates it at the first space, so an override travels as JSON alone.
 OVERRIDES="canary_override pins_override engine_window_override arming_override alloy_override engine_preflight_override"
 OWNKEY="zcrypto_window_record"
