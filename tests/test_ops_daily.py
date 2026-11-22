@@ -2191,8 +2191,8 @@ def test_the_real_register_yields_a_refdata_reminder():
     giving it a `tmp_path` fixture would move it off the path `main` takes."""
     read = ops_daily.read_reminders(now=NOW)
     assert read.unreadable is None, read.unreadable
-    # The deploy log decides which nodes' patch passes join them.
-    assert {r.name for r in read.reminders} - set(_PATCH_PASS_NAMES.values()) == {
+    # The deploy log decides which nodes' patch passes and release reads join them.
+    assert {r.name for r in read.reminders} - set(_PATCH_PASS_NAMES.values()) - {name for name, *_ in ops_daily.RELEASE_READS} == {
         "refdata sweep",
         "kraken bookkeeping",
     }
@@ -2293,8 +2293,16 @@ def test_both_nodes_owe_a_monthly_patch_pass():
     )
 
 
-def _converge(ts: str, *, limit, tags="", skip_tags="", rc=0, playbook="site.yml") -> dict:
-    return {"ts": ts, "limit": limit, "tags": tags, "skip_tags": skip_tags, "rc": rc, "playbook": playbook}
+def _converge(ts: str, *, limit, tags="", skip_tags="", rc=0, playbook="site.yml", extra_vars=None) -> dict:
+    return {
+        "ts": ts,
+        "limit": limit,
+        "tags": tags,
+        "skip_tags": skip_tags,
+        "rc": rc,
+        "playbook": playbook,
+        "extra_vars": extra_vars or {},
+    }
 
 
 def _deploy_log(tmp_path, *rows):
@@ -2379,12 +2387,60 @@ def test_a_deploy_log_that_cannot_be_opened_is_noted_once_however_many_hosts_rea
     assert not [r for r in read.reminders if r.name.endswith("patch pass")]
 
 
-@pytest.mark.parametrize(("host", "runbook"), ops_daily.PATCH_PASSES, ids=_PATCH_PASS_HOSTS)
-def test_each_patch_pass_is_named_as_its_runbook_section_reads(host, runbook):
+def test_the_onchain_node_owes_a_monthly_release_read():
+    assert ops_daily.RELEASE_READS == (
+        ("onchain-node release read", "zcrypto-ops", "ops_bitcoind_image_id", "infra/runbooks/ops-node.md#onchain-node-release"),
+    )
+
+
+_NODE_IMAGE = {"ops_bitcoind_image_id": "sha256:" + "ab" * 32}
+
+
+def _release_log() -> tuple[dict, ...]:
+    return (
+        _converge("2026-10-06T09:00:00Z", limit="zcrypto-ops", extra_vars=_NODE_IMAGE),  # the node's first install
+        _converge("2026-11-03T10:00:00Z", limit="zcrypto-ops", extra_vars=_NODE_IMAGE),  # a release read's converge
+        # a routine ops roll, which hands no image id
+        _converge("2026-11-20T10:00:00Z", limit="zcrypto-ops", tags="ops", extra_vars={"ops_image_digest": "sha256:" + "cd" * 32}),
+        _converge("2026-11-21T10:00:00Z", limit="zcrypto-ops", rc=2, extra_vars=_NODE_IMAGE),  # a converge that failed
+        _converge("2026-11-22T10:00:00Z", limit="zcrypto-mon", extra_vars=_NODE_IMAGE),  # another host's
+        _converge("2026-11-23T10:00:00Z", limit="zcrypto-ops"),  # a full converge naming no image id
+    )
+
+
+@pytest.mark.parametrize(
+    "now,status,owed",
+    [
+        (datetime(2026, 11, 28, 3, 0, tzinfo=timezone.utc), "due in 5 days", False),
+        (datetime(2026, 12, 3, 3, 0, tzinfo=timezone.utc), "due in 0 days", True),
+        (datetime(2026, 12, 9, 3, 0, tzinfo=timezone.utc), "OVERDUE by 6 days", True),
+    ],
+)
+def test_the_release_read_is_due_a_month_after_the_last_converge_naming_the_nodes_image(tmp_path, now, status, owed):
+    read = ops_daily.read_reminders(
+        now=now,
+        register=_register(tmp_path, *_TWO_SWEEPS),
+        deploy_log=_deploy_log(tmp_path, *_release_log()),
+    )
+    ((name, _, naming, runbook),) = ops_daily.RELEASE_READS
+    release = _reminder(read, name)
+    assert release.status == f"{status} (last converge naming {naming} 2026-11-03)", release.status
+    assert release.owed is owed
+    assert release.runbook == runbook
+    assert read.unreadable is None
+
+
+_MONTHLY_RUNBOOKS = [(_PATCH_PASS_NAMES[host], runbook) for host, runbook in ops_daily.PATCH_PASSES] + [
+    (name, runbook) for name, _, _, runbook in ops_daily.RELEASE_READS
+]
+
+
+@pytest.mark.parametrize(("name", "runbook"), _MONTHLY_RUNBOOKS, ids=[runbook.split("#")[1] for _, runbook in _MONTHLY_RUNBOOKS])
+def test_each_monthly_reminder_is_named_as_its_runbook_section_reads(name, runbook):
     path, anchor = runbook.split("#")
     _, section = (Path(__file__).resolve().parents[1] / path).read_text().split(f'<a name="{anchor}"></a>')
     section = section.split('\n<a name="')[0]
-    assert f"`OWED {_PATCH_PASS_NAMES[host]}`" in section, f"{runbook} does not read the reminder's name"
+    assert f"`OWED {name}`" in section, f"{runbook} does not read the reminder's name"
 
 
 def test_every_runbook_citation_the_instrument_itself_prints_resolves():
