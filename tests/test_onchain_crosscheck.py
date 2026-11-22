@@ -11,7 +11,7 @@ from typer.testing import CliRunner
 
 from cli.__main__ import app
 from cli.data.manifest import build_manifest, series_entry
-from cli.onchain.crosscheck import CM_SERIES, crosscheck, ratios, summary
+from cli.onchain.crosscheck import CM_SERIES, SPAN, crosscheck, ratios, summary
 from cli.onchain.freeze import SNAPSHOT_RELPATH
 from cli.onchain.series import COLUMNS, SCHEMA
 from cli.vintage.table import derive_table
@@ -286,6 +286,14 @@ def test_each_year_line_reads_its_own_year_alone():
     assert list(report) == ["2010", "2020", "2026", "all", "span"]
     assert [report[year]["r_mvrv"]["n"] for year in ("2010", "2020", "2026")] == [0, 27, 2]
     assert report["2010"]["r_mvrv"]["left_out"] == {"snapshot": 2, "vendor": 0}
+
+
+@pytest.mark.parametrize(("missing", "held"), [(FIRST, LAST), (LAST, FIRST)], ids=["first", "last"])
+def test_the_span_s_calendar_reaches_both_its_ends(missing, held):
+    _, left_out = ratios(_snapshot(_ours([held], {})), {}, SPAN)
+
+    assert left_out["r_mvrv"].get(missing) == "snapshot"
+    assert (min(left_out["r_mvrv"]), max(left_out["r_mvrv"])) == (FIRST, LAST)
 
 
 def test_a_day_inside_the_span_neither_side_holds_is_the_snapshot_s_and_named(tmp_path, vendor_table, caplog):

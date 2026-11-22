@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import traceback
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -13,7 +12,7 @@ import typer
 from cli.capture.errors import CaptureError
 from cli.logging import get_logger
 from cli.onchain.brk import BrkClient
-from cli.onchain.chain import ChainError, Line, chain_name, line_days, verify, walk
+from cli.onchain.chain import _SHA256, ChainError, Line, chain_name, line_days, verify, walk
 from cli.onchain.crosscheck import crosscheck
 from cli.onchain.freeze import freeze
 from cli.onchain.write import run_write
@@ -165,9 +164,6 @@ def verify_cmd(
         log.error("onchain verify refused chain=%s reason=%s", chain.name, _failure(exc))
         raise typer.Exit(code=1) from exc
     log.info("onchain verify complete chain=%s head=%s head_sha256=%s days=%d", chain.name, line.day, line.sha256, days)
-
-
-_SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
 @onchain_app.command("crosscheck")
