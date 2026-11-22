@@ -235,6 +235,14 @@ def test_verify_of_the_newest_lines_reads_their_files_and_their_links_alone(tmp_
             verify(tmp_path, _day(3), newest=2)
 
 
+@pytest.mark.parametrize("newest", [0, -1])
+def test_verify_refuses_a_newest_below_1(tmp_path, newest):
+    _chain(tmp_path, 1)
+
+    with pytest.raises(ChainError, match=f"newest is {newest}; a verify reads at least the newest line"):
+        verify(tmp_path, _day(1), newest=newest)
+
+
 def _sha256_of_the_first_file(line: dict) -> str:
     return next(iter(line["files"].values()))
 

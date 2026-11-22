@@ -124,6 +124,8 @@ def walk(root: Path, as_of: date) -> list[Line]:
 def verify(root: Path, as_of: date, newest: int | None = None) -> Line:
     """`walk`, then every listed file's bytes against its sha256; `as_of`'s line returned. Given `newest`, only the
     newest that many lines through `as_of` are read: their links to each other and their files."""
+    if newest is not None and newest < 1:
+        raise ChainError(f"{root}: newest is {newest}; a verify reads at least the newest line")
     lines = _walk(root, as_of, newest)
     for line in lines:
         for relpath, digest in sorted(line.files.items()):
