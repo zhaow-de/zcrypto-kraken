@@ -224,7 +224,10 @@ DOCKER_STUB = """#!/usr/bin/env bash
 printf '%s\\0' "$@" >> "$STUB_DIR/docker"
 printf '\\n' >> "$STUB_DIR/docker"
 case "$1" in
-    network) exit "${NETWORK_RC:-0}" ;;
+    network)
+        if [ "${NETWORK_RC:-0}" -ne 0 ]; then printf '[]\\n'; fi
+        printf '%s' "${NETWORK_ERR-}" >&2
+        exit "${NETWORK_RC:-0}" ;;
     run) printf '%s' "${RUN_OUT-}"; exit "${RUN_RC:-0}" ;;
     ps) printf '%s' "${PS_OUT-0123456789ab}"; printf '%s' "${PS_ERR-}" >&2; exit "${PS_RC:-0}" ;;
     stop)
@@ -247,9 +250,27 @@ printf '%s\\n' "$*" >> "$STUB_DIR/curl"
 if [ -f "$CURL_BODY" ]; then cat "$CURL_BODY"; fi
 exit "${CURL_RC:-0}"
 """
-_KNOBS = {"NETWORK_RC", "RUN_OUT", "RUN_RC", "PS_OUT", "PS_ERR", "PS_RC", "BITVIEW_STOP_RC", "BITCOIND_STOP_RC", "CURL_RC"}
+_KNOBS = {
+    "NETWORK_RC",
+    "NETWORK_ERR",
+    "RUN_OUT",
+    "RUN_RC",
+    "PS_OUT",
+    "PS_ERR",
+    "PS_RC",
+    "BITVIEW_STOP_RC",
+    "BITCOIND_STOP_RC",
+    "CURL_RC",
+}
 # What docker itself prints on stderr where its daemon is down.
 DOCKER_DOWN = "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?"
+# docker's not-found answer for the on-chain network, in the daemon's text its client carries and in the client's own
+# form, and a daemon refusal that names the network without saying it is absent.
+NETWORK_ABSENT = {
+    "daemon-text": "Error response from daemon: network zcrypto-onchain not found",
+    "client-text": "Error: No such network: zcrypto-onchain",
+}
+NETWORK_AMBIGUOUS = "Error response from daemon: network zcrypto-onchain is ambiguous (2 matches found based on name)"
 _NO_TMPDIR = None
 
 
@@ -440,26 +461,58 @@ def test_the_writer_runners_argv(tmp_path):
     assert [t for t in cli_args if t.startswith("--") and t not in options] == []
 
 
-@pytest.mark.parametrize(
-    ("layout", "level", "rc"),
-    [("absent", "INFO", 0), ("empty-index", "INFO", 0), ("a-line", "ERROR", 1)],
-    ids=["chain-absent", "chain-with-an-empty-index", "chain-holding-a-line"],
-)
-def test_the_writer_runner_before_and_after_the_base(tmp_path, layout, level, rc):
-    h = _Harness(tmp_path, WRITE_RUNNER)
+def _lay_chain(h: _Harness, layout: str) -> None:
     if layout != "absent":
         (h.chain / "index").mkdir(parents=True)
     if layout == "a-line":
         line = h.chain / "index/2026/11/20.json"
         line.parent.mkdir(parents=True)
         line.write_text("{}\n")
-    result = h.run(*_exec_start()[1:], NETWORK_RC=1)
+
+
+@pytest.mark.parametrize("absent", NETWORK_ABSENT)
+@pytest.mark.parametrize(
+    ("layout", "level", "rc"),
+    [("absent", "INFO", 0), ("empty-index", "INFO", 0), ("a-line", "ERROR", 1)],
+    ids=["chain-absent", "chain-with-an-empty-index", "chain-holding-a-line"],
+)
+def test_the_writer_runner_before_and_after_the_base(tmp_path, layout, level, rc, absent):
+    h = _Harness(tmp_path, WRITE_RUNNER)
+    _lay_chain(h, layout)
+    result = h.run(*_exec_start()[1:], NETWORK_RC=1, NETWORK_ERR=NETWORK_ABSENT[absent] + "\n")
     assert result.rc == rc
     assert [call[0] for call in result.docker] == ["network"]
     ((logged_level, message),) = result.logged(WRITE_TAG)
     assert logged_level == level
-    if level == "ERROR":
-        assert "zcrypto-onchain" in message
+    assert message.startswith("the zcrypto-onchain compose project is absent"), message
+
+
+@pytest.mark.parametrize(
+    ("layout", "said"),
+    [
+        ("absent", DOCKER_DOWN + "\n"),
+        ("a-line", DOCKER_DOWN + "\n"),
+        ("a-line", NETWORK_AMBIGUOUS + "\n"),
+        ("absent", f"{NETWORK_AMBIGUOUS}\n{DOCKER_DOWN}\n"),
+        ("a-line", ""),
+    ],
+    ids=["daemon-down-before-the-base", "daemon-down-holding-a-line", "ambiguous", "two-lines", "nothing-said"],
+)
+def test_the_writer_runner_names_a_docker_fault_as_one(tmp_path, layout, said):
+    h = _Harness(tmp_path, WRITE_RUNNER)
+    _lay_chain(h, layout)
+    result = h.run(*_exec_start()[1:], NETWORK_RC=1, NETWORK_ERR=said)
+    assert result.rc == 1
+    assert [call[0] for call in result.docker] == ["network"]
+    joined = said.rstrip("\n").replace("\n", " ")
+    assert result.logged(WRITE_TAG) == [
+        (
+            "ERROR",
+            f"docker network inspect zcrypto-onchain exited 1{f' ({joined})' if joined else ''}, "
+            "a fault in docker and not an absent project; nothing written",
+        )
+    ]
+    assert result.stdout == ""
 
 
 @pytest.mark.parametrize(
@@ -671,15 +724,18 @@ def test_every_line_the_runners_print_is_parse_shaped(tmp_path):
     guard = _Harness(tmp_path / "guard", GUARD_RUNNER)
     _lay(guard, archive_pull=_textfile(ARCHIVE_PULL_RUNNER, NOW - 5401), panel=None)
     writer = _Harness(tmp_path / "writer", WRITE_RUNNER)
-    before = writer.run(*_exec_start()[1:], NETWORK_RC=1)
+    absent = NETWORK_ABSENT["daemon-text"] + "\n"
+    before = writer.run(*_exec_start()[1:], NETWORK_RC=1, NETWORK_ERR=absent)
     (writer.chain / "index/2026/11").mkdir(parents=True)
     (writer.chain / "index/2026/11/20.json").write_text("{}\n")
-    after = writer.run(*_exec_start()[1:], NETWORK_RC=1)
+    after = writer.run(*_exec_start()[1:], NETWORK_RC=1, NETWORK_ERR=absent)
+    fault = writer.run(*_exec_start()[1:], NETWORK_RC=1, NETWORK_ERR=f"{NETWORK_AMBIGUOUS}\n{DOCKER_DOWN}\n")
     odd = writer.run(*_exec_start()[1:], RUN_RC=125, RUN_OUT="")
     for result, tag, levels in (
         (guard.run(BITVIEW_STOP_RC=1, BITCOIND_STOP_RC=1), GUARD_TAG, ["INFO", "ERROR", "WARNING", "WARNING", "WARNING"]),
         (before, WRITE_TAG, ["INFO"]),
         (after, WRITE_TAG, ["ERROR"]),
+        (fault, WRITE_TAG, ["ERROR"]),
         (odd, WRITE_TAG, ["ERROR"]),
     ):
         seen = []

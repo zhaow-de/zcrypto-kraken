@@ -18,8 +18,20 @@ log() {
 CHAIN="{{ ops_data_dir }}/{{ ops_onchain_subdir }}/btc-brk{{ ops_bitview_commit[:12] }}-g1/"
 
 # The project's network exists from the node's first start on. A chain holding no line is the state from the
-# converge to that start; a chain holding one has lost the project it was written from.
-if ! docker network inspect zcrypto-onchain > /dev/null 2>&1; then
+# converge to that start; a chain holding one has lost the project it was written from. Only docker's not-found
+# answer, the daemon's text or its client's, reads as the network absent; any other failure is docker's own, its
+# stderr joined into the line, the inspect's stdout dropped.
+said=$(docker network inspect zcrypto-onchain 2>&1 > /dev/null)
+inspect_rc=$?
+if [ "$inspect_rc" -ne 0 ]; then
+    said=${said//$'\n'/ }
+    case "$said" in
+        *"network zcrypto-onchain not found"* | *"No such network: zcrypto-onchain"*) ;;
+        *)
+            log ERROR "docker network inspect zcrypto-onchain exited ${inspect_rc}${said:+ ($said)}, a fault in docker and not an absent project; nothing written"
+            exit 1
+            ;;
+    esac
     if compgen -G "${CHAIN}index/*/*/*.json" > /dev/null; then
         log ERROR "the zcrypto-onchain compose project is absent, its network with it, while ${CHAIN} holds a line; nothing written"
         exit 1
