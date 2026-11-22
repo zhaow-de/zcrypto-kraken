@@ -1,8 +1,10 @@
+import errno
 import hashlib
 import itertools
 import json
 import os
 import re
+import stat
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
@@ -341,6 +343,35 @@ def test_an_unlistable_index_month_raises_never_reads_an_older_line_as_the_newes
         os.chmod(month, 0o755)
 
     assert raised.value.filename == str(month)
+
+
+def test_every_placed_file_is_read_only(tmp_path):
+    _chain(tmp_path, 1)
+    placed = sorted(path for path in tmp_path.rglob("*") if path.is_file())
+
+    assert [path.relative_to(tmp_path).as_posix() for path in placed] == [
+        "base/history.parquet",
+        "days/2025/12/31.parquet",
+        "index/2025/12/30.json",
+        "index/2025/12/31.json",
+    ]
+    assert {stat.S_IMODE(path.stat().st_mode) for path in placed} == {0o444}
+
+
+def test_a_failed_write_leaves_no_temporary(tmp_path, monkeypatch):
+    _chain(tmp_path, 0)
+
+    def failing_fsync(fd: int) -> None:
+        raise OSError(errno.EIO, "Input/output error")
+
+    monkeypatch.setattr(os, "fsync", failing_fsync)
+    with pytest.raises(OSError, match="Input/output error"):
+        write_day(tmp_path, _frame([_day(1)]), _vintage(_day(1)))
+    monkeypatch.undo()
+
+    assert staging_leftovers(tmp_path) == []
+    assert not (tmp_path / "days/2025/12/31.parquet").exists()
+    assert line_days(tmp_path) == [D0]
 
 
 def test_a_staging_leftover_is_listed_and_never_a_line(tmp_path):
