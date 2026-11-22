@@ -12,6 +12,7 @@ import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
 
+from cli.onchain import chain
 from cli.onchain.chain import (
     CHAIN_GENERATION,
     ChainError,
@@ -394,6 +395,22 @@ def test_a_failed_write_leaves_no_temporary(tmp_path, monkeypatch):
     assert staging_leftovers(tmp_path) == []
     assert not (tmp_path / "days/2025/12/31.parquet").exists()
     assert line_days(tmp_path) == [D0]
+
+
+def test_each_directory_a_write_makes_is_fsynced_into_its_parent(tmp_path, monkeypatch):
+    _chain(tmp_path, 1)
+    fsynced: list[Path] = []
+    fsync_directory = chain._fsync_directory
+
+    def record(directory: Path) -> None:
+        fsynced.append(directory)
+        fsync_directory(directory)
+
+    monkeypatch.setattr(chain, "_fsync_directory", record)
+    write_day(tmp_path, _frame([_day(2)]), _vintage(_day(2)))
+
+    made = ("days/2026", "days/2026/01", "index/2026", "index/2026/01")
+    assert set(fsynced) == {tmp_path / "days", tmp_path / "index"} | {tmp_path / directory for directory in made}
 
 
 def test_a_staging_leftover_is_listed_and_never_a_line(tmp_path):

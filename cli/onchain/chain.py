@@ -161,6 +161,18 @@ def _fsync_directory(directory: Path) -> None:
         os.close(fd)
 
 
+def _make_directories(directory: Path) -> list[Path]:
+    """`directory` and its missing ancestors, made from the top down; the ones made, each fsynced into its parent once
+    the file is placed."""
+    missing = []
+    while not directory.is_dir():
+        missing.append(directory)
+        directory = directory.parent
+    for each in reversed(missing):
+        os.mkdir(each)
+    return missing
+
+
 def _place(root: Path, relpath: str, data: bytes) -> None:
     """`data` at `root / relpath`, written whole to an exclusive temporary under `staging/`, fsynced and linked into
     place, so a target another process places meanwhile is refused and never replaced. A target present before the
@@ -170,8 +182,7 @@ def _place(root: Path, relpath: str, data: bytes) -> None:
     if os.path.lexists(target):
         raise ChainError(f"{root}: no line names {relpath}, and it is present: a writer stopped between placing it and its line")
     staging = root / _STAGING
-    staging.mkdir(parents=True, exist_ok=True)
-    target.parent.mkdir(parents=True, exist_ok=True)
+    made = [*_make_directories(staging), *_make_directories(target.parent)]
     temporary = staging / f"{target.name}.{os.getpid()}.{secrets.token_hex(4)}"
     fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o444)
     try:
@@ -187,7 +198,8 @@ def _place(root: Path, relpath: str, data: bytes) -> None:
             ) from exc
     finally:
         temporary.unlink(missing_ok=True)
-    _fsync_directory(target.parent)
+    for directory in sorted({target.parent, *(each.parent for each in made)}):
+        _fsync_directory(directory)
 
 
 def _write(root: Path, day: date, prev: str | None, relpath: str, frame: pl.DataFrame, vintage: dict) -> Line:
