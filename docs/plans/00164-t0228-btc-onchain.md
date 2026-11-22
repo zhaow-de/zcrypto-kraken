@@ -1,0 +1,378 @@
+# C3 step 1 — BTC's on-chain valuation series and the A1-gate reading Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** On `zcrypto-ops`, run Bitcoin Core and an unmodified BRK at a pinned commit under caps and a stop rule, write BTC's daily on-chain valuation series once per UTC day into a chained, write-once index, freeze a snapshot of it for research, cross-check it against Coin Metrics, and read it inside the A1 gate as a no-slot reading whose criterion spec 00164 fixes before the run.
+
+**Architecture:** `cli/onchain/` is `zcrypto onchain {write,verify,freeze,crosscheck}`: `series.py` pins the columns, their BRK ids and our two derived series (D3, D7); `brk.py` reads BRK's HTTP API; `chain.py` is the chained per-day index in `ohlc-rolling`'s form (D8); `write.py` the hourly writer — the cut, the depth, the reorg re-read (D6, D8); `freeze.py` the frozen snapshot with its manifest (D8); `crosscheck.py` the diff against Coin Metrics through spec 00158's versions table (D13). `cli/alpha/c3.py` holds the reading's pure functions and `cli/research/subjects.py` the subject `c3-onchain-reading` (D12). The ops role renders a compose project of two capped services, the node's configuration, and two oneshot units on timers, the writer and the guard (D4, D10, D11); `infra/docker/bitcoind/Dockerfile` builds the node's image from a release whose sha256 it pins (D10). This branch ships the code, the role and the docs; the owner's rollout installs it; the reading runs on its own branch after the first full index (*The reading's branch*).
+
+**Tech Stack:** Python 3.14 stdlib (`urllib`, `json`, `hashlib`, `statistics`), polars, typer, pytest, Ansible templates, bash, Docker compose, `infra/scripts/mutate-probe.sh`; `cli.alpha.b2`'s `stationary_bootstrap_blocks` and `event_contrast_blocks`, `cli.portfolio.crossfreq_system`, `cli.data.manifest`, `cli.vintage.table` and `cli.vintage.asof`.
+
+**Spec:** `docs/specs/00164-t0228-btc-onchain-design.md`.
+
+**Tier:** `tier: full`, pasted from `uv run python infra/scripts/tier.py --paths <every path the File structure below names>`. No Fable-floor path: `uv run python infra/scripts/merge-gate.py --fable-paths` printed `CLAUDE.md`, `.claude/`, `cli/engine/`, `cli/capture/`, `infra/ansible/roles/capture/`, `infra/ansible/roles/engine/`, and no task edits one (`cli.capture.command.single_instance_lock` is imported, never edited; `.claude/skills/zcrypto-rollout-image/SKILL.md` is left as it stands, since the writer's runner holds no secret and renders with its diff, so the skill's source-diff read is not owed for it).
+
+## Entry condition
+
+The plan review starts only once the owner has ruled on spec 00164's D6–D13 and each ruling is folded into its decision, quoted verbatim at its head. Met 2026-11-22: the owner ruled all eight as recommended, by 00:20:16Z, so no task is amended. Task 1 starts only once the plan review has closed (`zcrypto-plan-review`).
+
+## The plan session's reads
+
+Read-only, 2026-11-21, at `94bab4a9f`; the spec's measured basis holds the rest.
+- `RATIO` (Global Constraints) printed `400 566` at `94bab4a9f`: at the base, `(400 + A) / (566 + A + P) ≥ 0.70` admits five reads that are not autonomous with no autonomous one beside them.
+- Measured with `ops_daily.classify_action(…, host="ops")` at the base: `systemctl status zcrypto-onchain-write.service`, `journalctl -u zcrypto-onchain-guard.service -n 100`, `docker ps -a --filter name=zcrypto-onchain`, `sudo systemctl start zcrypto-onchain-write.service`, `ls /var/lib/zcrypto-ops/onchain/` and `docker logs --tail 100 zcrypto-onchain-bitcoind` classify AUTONOMOUS; `sudo docker compose -f /etc/zcrypto-ops/onchain/compose.yaml stop bitcoind` and `uv run zcrypto onchain verify --chain /var/lib/zcrypto-ops/onchain/<chain>` PREPARED; `sudo docker compose -f /etc/zcrypto-ops/onchain/compose.yaml up -d bitcoind` carries a destructive token and is not counted.
+- `docs/reference/fleet.md`'s *ops timers* cell is 181 characters against `CELL_MAX = 200` (`tests/test_fleet_contracts.py:26`; `awk -F'|' '/^\| ops timers \|/{print length($4)}'` printed `181`).
+- No subject name opens with `c3`, and no file under `cli/`, `infra/ansible/roles/ops/` or `zcrypto.toml` names `onchain` (`git grep`, nothing printed).
+
+## Spec deviations
+
+None at writing. Each one the plan review or a fold adds is recorded here, in the branch ledger the `review` reads and in the PR body, so the review weighs it against the spec.
+
+## Global Constraints
+
+- The spec is the authority; where it is silent this plan rules, in the task the ruling binds. Every constant below is the spec's, verbatim, as ruled.
+- The worktree is `/home/zhaow/Projects/zcrypto-kraken/.claude/worktrees/t0228` (branch `feat/iter-204-t0228-btc-onchain`); every command runs there.
+- No network call, no `ssh`, no `docker`, no `ansible-playbook` run that executes tasks or connects to a host, no converge, no Grafana or Kraken call, no `grafana-query.py`, no vault-shaped read. Searches are `git grep -l <pattern> -- <paths>` over paths that hold no vault-shaped file. A role is proven through renders (`tests/role_render.py`, jinja2 with `StrictUndefined`), never a play.
+- Scratch is `.tmp/00164/task<N>/` (`R` below), pytest's `--basetemp="$R/pt"`; a chain directory a test leaves is 0555 with 0444 files only where a case sets them, so the removal is `chmod -R u+w "$R"` and then `rm -rf "$R"`, each its own call; a process started is stopped by its PID.
+- The task's run, over the commit's changed paths and the task's test files, never the full suite, never `tests/test_grafana_push_sh.py`; its result line read in its own call before the commit message quotes it:
+
+```bash
+R=.tmp/00164/task<N>; mkdir -p "$R"
+T="$(infra/scripts/consumers.sh --tests --direct <each changed path> 2>"$R/consumers.err")" || true
+uv run pytest $T <the task's test files> -m "not slow and not data and not retired" -q -p no:cacheprovider --basetemp="$R/pt"
+```
+
+- A task that edits a page under `infra/runbooks/` loads `zcrypto-refine-rules` first and runs plan 00158's `WALKERS` and `RATIO` (its Global Constraints, adopted by reference), `RATIO` read before and after, the 0.70 floor kept, the allowlist never widened.
+- The gate is `uv run pre-commit run -a`, re-run until clean, its rewrites staged by path.
+- A comment or docstring stays only where a reader would act differently without it, and is correct; a spec citation names the D-section. A new Markdown file is one line per paragraph; an existing one keeps its shape.
+- Operator surfaces carry no `Phase <N>`, `T<NNNN>`, `iter-<N>`, `spec <NNNNN>`, `D<N>` or `WP<N>` token: CLI help and every non-docstring string literal under `cli/`, every non-comment line of `*.sh.j2`, compose files, unit `Description=` lines, Ansible task names, runbook pages and `README.md` (`tests/test_internal_terms_not_operator_visible.py`).
+- Every line an `onchain` subcommand prints goes through `cli.logging` (`get_logger("onchain.<module>")`), the parse-stage shape, never `typer.echo`; every line a runner prints goes through its `log()` helper, the vintage runner's form (plan 00158 Task 12).
+- `cli/portfolio/`, `cli/registry/`, `cli/data/`, `cli/vintage/`, `cli/engine/` and `cli/capture/` are imported where named and never edited; `pyproject.toml`, `uv.lock` and every vault file are untouched.
+- Commits: Conventional Commits, one subject per change, `git add <every path>` new files first, one state-changing git command per call, never an amend, `--no-verify` or `git stash`. Every message says what changed, quotes the task's run with its result line, and ends with these two lines, the first naming the executing model:
+
+```
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_018eFiE9ZzjweN7A4N9yBCTV
+```
+
+- Probes (tier `full`): each arm a task lists is its own call on the committed tree, `infra/scripts/mutate-probe.sh --file <f> --control '<control>' --mutation '<sed>' -- uv run pytest <its test file> -k '<its case>' -q -p no:cacheprovider --basetemp="$R/pt"`, its verdict line and command recorded in an empty commit `test(onchain): Task <N> probes through infra/scripts/mutate-probe.sh`. Where this plan pins the line an arm mutates it gives the `sed`; where the implementer writes the line, the arm names the mutation and the implementer writes the `sed` that reaches that one site, checked first by `sed -e '<mutation>' <f> | diff - <f> | grep -c '^<'` printing 1. The control is `1,$d` unless the arm names its own; an arm on a test file, on a module an AST walk reads, or on a template whose case asserts valid bash names a control its case reads (plan 00158's rule).
+- **The hash rule** (spec D12): until spec 00164's sha256 is taken on the reading's branch, no program computes or reads any forward return conditioned on an on-chain band, any cell's means, difference or bounds over real data; the computes half runs over synthetic inputs alone.
+- **The constants, verbatim** (as ruled; the fold amends any the owner changes): the depth `12` blocks; the reorg re-read over the newest `30` written days; the stale bar `48` hours past a day's end; MVRV-Z's minimum `365` values, σ the sample standard deviation; the chain's name `btc-brk<first 12 of the commit>-g<N>`, `CHAIN_GENERATION = 1`; the BRK commit `1a19c5e969761a0ce446483767da8c765e4aa895`; the writer hourly at `*-*-* *:17:00`; the guard `OnBootSec=2min`, `OnUnitActiveSec=5min`; the guard's bars archive-pull `3600` s, panel `7200` s, poller `900` s; the caps `bitcoind` `"4"` CPUs, `8g`, `dbcache` `4096`, `bitview` `"8"` CPUs, `16g`, `cpu_shares` `256`, reads `400mb`, writes `200mb` per second; `stop_grace_period` `600s` on `bitcoind`; the reading's features `("mvrv", "mvrv_z", "asopr", "sth_supply_share")`, tails `("low", "high")` at `0.10` and `0.90` after `365` values, states `("long", "flat")`, horizons `(7, 30)`, lag `1` day, `mean_block` `102`, `n_resamples` `10_000`, `seed` `42`, far `(0.078125, 99.921875)`, cost `0.012`, `min_event_years` `4`; the cross-check's bars median `0.02` and 99th percentile `0.10` over `2013-09-09` → `2026-03-30`.
+
+## File structure
+
+- Create, the CLI: `cli/onchain/__init__.py`, `cli/onchain/series.py`, `cli/onchain/brk.py`, `cli/onchain/chain.py`, `cli/onchain/write.py`, `cli/onchain/freeze.py`, `cli/onchain/crosscheck.py`, `cli/onchain/command.py`, `cli/alpha/c3.py`. Modify `cli/__main__.py`, `cli/research/subjects.py`.
+- Create, the tests: `tests/onchain_stub.py` (a fake BRK behind a stub opener, a clock, a chain builder), `tests/test_onchain_series.py`, `tests/test_onchain_chain.py`, `tests/test_onchain_write.py`, `tests/test_onchain_freeze.py`, `tests/test_onchain_crosscheck.py`, `tests/test_alpha_c3.py`, `tests/test_research_c3_onchain_reading.py`, `tests/test_infra_onchain_templates.py`. Modify `tests/test_research_command.py`, `tests/test_infra_shell_templates_render.py`, `tests/test_infra_converge_guards.py`.
+- Create, the images and the role: `infra/docker/bitcoind/Dockerfile`; under `infra/ansible/roles/ops/templates/`, `onchain-compose.yaml.j2`, `bitcoin.conf.j2`, `onchain-write.sh.j2`, `onchain-write.service.j2`, `onchain-write.timer.j2`, `onchain-guard.sh.j2`, `onchain-guard.service.j2`, `onchain-guard.timer.j2`. Modify `infra/ansible/roles/ops/tasks/main.yml`, `infra/ansible/roles/ops/defaults/main.yml`, `infra/ansible/roles/ops/files/config.alloy`.
+- Modify, docs: `infra/runbooks/ops-node.md`, `infra/ops/README.md`, `README.md`, `docs/reference/fleet.md`, `docs/reference/data-catalog-full.md`, `docs/open-topics/T0228-btc-on-chain-metrics-computed-from-chain-data.md`, `docs/open-topics/T0016-bucket-b-c-alpha-families.md`, `docs/open-topics/README.md`, `docs/research/10.phase4-decisions.md`; `docs/reference/change-index.md` through `open-pr`.
+
+## Review Focus
+
+1. **The lag** — at union index k the reading reads the feature of day `ts[k] − 1 day`, never `ts[k]`'s, which is not closed when bar k closes (spec D6). Pinned in Task 6's `test_index_k_reads_the_day_before_its_bar`.
+2. **A band reads no later day** — a feature's expanding percentile at day D is unchanged when every value after D is replaced. Pinned in Task 6's `test_a_band_reads_no_later_day` and, for MVRV-Z's σ, Task 1's `test_mvrv_z_never_reads_a_later_day`.
+3. **The arm is the records'** — the reading's daily A1 positions, expanded as the builder expands them, equal `build_crossfreq_system_fast(…).sleeve_positions["A1"]` on a fixture. Pinned in Task 6's `test_the_arm_expands_to_the_builders_a1_sleeve`.
+4. **A day is closed in the chain's terms** — day D is written only once a block whose monotonic day is after D exists and D's last block has 12 confirmations; a block mined after 00:00Z with a timestamp in D still belongs to D. Pinned in Task 3's `test_a_day_is_closed_only_once_a_later_monotonic_day_has_a_block` and `test_a_day_is_written_only_at_12_confirmations`.
+5. **A written vintage is never rewritten** — a reorg past the depth stops the writer, naming the day, and writes nothing; a day already written is refused at the chain. Pinned in Task 3's `test_a_changed_hash_at_a_recorded_height_stops_the_run_and_writes_nothing` and Task 2's `test_a_day_is_written_once`.
+6. **Served values only** — the cross-check fills no day either side lacks, counts it apart, and parses a Coin Metrics token as served. Pinned in Task 5's `test_a_day_either_side_lacks_is_counted_and_never_filled`.
+7. **The guard acts only on a value it read** — an unreadable age is a WARNING and no stop; a read past its bar stops both containers by name. Pinned in Task 10's `test_the_guard_stops_both_containers_on_a_slip` and `test_an_unreadable_age_warns_and_stops_nothing`.
+8. **An unstarted project is no page** — before the first start the writer's runner meets no network and logs INFO, and after the base exists the same is an ERROR. Pinned in Task 10's `test_the_writer_runner_before_and_after_the_base`.
+
+---
+
+### Task 1: The series and BRK's client (spec D3, D7, D8)
+
+Prerequisite: O2.
+
+**Files:** Create `cli/onchain/__init__.py` (empty), `cli/onchain/series.py`, `cli/onchain/brk.py`, `tests/onchain_stub.py`, `tests/test_onchain_series.py`.
+
+**Interfaces:**
+- `cli/onchain/series.py`: `COLUMNS: tuple[str, ...]`, spec D8's file schema in order — `ts`, `last_height`, `last_hash`, `price`, `supply`, `market_cap`, `realized_cap`, `mvrv`, `nupl`, `sopr`, `asopr`, `sth_sopr`, `sth_asopr`, `lth_sopr`, `sth_supply`, `lth_supply`, `sth_mvrv`, `lth_mvrv`, `sth_nupl`, `lth_nupl`, `mvrv_z`, `sth_supply_share`; `SCHEMA: dict[str, pl.DataType]` (`ts` `pl.Datetime("us", "UTC")`, `last_height` `pl.Int64`, `last_hash` `pl.String`, every other `pl.Float64`); `BRK_SERIES: dict[str, str]`, each BRK-read column mapped to the series id O2 pinned (the basis's inferred names where it gives one — `realized_cap`, `sopr_24h`, `adjusted_sopr_24h`, `sth_sopr_24h`, `sth_adjusted_sopr_24h`, `lth_sopr_24h`, `nupl`, `sth_nupl`, `lth_nupl` — and O2's read for the rest); `MVRV_Z_MIN_VALUES = 365`; `mvrv_z(market_cap: list[float | None], realized_cap: list[float | None]) -> list[float | None]`, at index i `(market_cap[i] − realized_cap[i]) / statistics.stdev(present market caps at indices ≤ i)`, `None` while fewer than `MVRV_Z_MIN_VALUES` market caps are present or where either operand at i is `None`; `sth_supply_share(sth: list[float | None], supply: list[float | None]) -> list[float | None]`.
+- `cli/onchain/brk.py`: `class BrkError(Exception)`; `@dataclass(frozen=True) class BrkClient: base_url: str; opener: urllib.request.OpenerDirector | None = None; timeout: float = 30.0`, with `series_ids() -> frozenset[str]`, `read_days(series_id: str, first: date, last: date) -> dict[date, float | None]`, `height_days(first: int, last: int) -> list[date]` (each height's monotonic UTC day), `block_hash(height: int) -> str`, `indexed_height() -> int` and `node_tip() -> int`, each through the route O2 pinned; a non-200 answer, an unparseable body or a missing key is a `BrkError` naming the route, never a traceback; `BITVIEW_URL = "http://zcrypto-onchain-bitview:<the port O2 read>"`, the one base URL the runner passes.
+- `tests/onchain_stub.py`: `FakeBrk`, a stub `urllib.request.BaseHandler` serving a scripted chain — heights with monotonic days and hashes, series values by day, an indexed height and a node tip, each changeable between calls — and `fake_client(fake) -> BrkClient`.
+
+- [ ] **Step 1: The failing tests,** in `tests/test_onchain_series.py`:
+  - `test_every_column_has_its_dtype_and_every_brk_column_its_id`: `COLUMNS` in the order above; `SCHEMA` keyed by exactly `COLUMNS`; `set(BRK_SERIES)` is `COLUMNS` less `ts`, `last_height`, `last_hash`, `mvrv_z` and `sth_supply_share`, each id spelt in the test as O2 pinned it.
+  - `test_mvrv_z_is_the_expanding_sample_std_and_null_before_365`: on 400 planted days, index 363 `None`, index 364 equal to `(mc[364] − rc[364]) / statistics.stdev(mc[:365])`, index 399 to `stdev(mc[:400])`'s.
+  - `test_mvrv_z_never_reads_a_later_day`: the output's first 380 values unchanged when every market cap after index 379 is multiplied by 10.
+  - `test_mvrv_z_skips_a_missing_market_cap_in_its_count`: a `None` at index 10 leaves index 364 `None` and index 365 a value.
+  - `test_the_sth_share`: `[1.0, None, 3.0]` over `[4.0, 5.0, None]` is `[0.25, None, None]`.
+  - `test_the_client_reads_a_series_by_day`: through `FakeBrk`, `read_days("realized_cap", d0, d2)` returns the planted three days.
+  - `test_a_series_the_instance_lacks_is_a_brk_error_naming_it` and `test_a_non_200_or_unparseable_answer_is_a_brk_error_naming_its_route`.
+  - `test_no_url_the_module_builds_names_a_kraken_host`: every URL `FakeBrk` saw across the cases above has the host of `BITVIEW_URL`, and neither `BITVIEW_URL` nor any URL holds `kraken` in any case (`tests/test_vintage_sources.py::test_no_bg_url_carries_a_query_and_no_url_names_a_kraken_host`'s form).
+- [ ] **Step 2: Run them and read them fail.**
+- [ ] **Step 3: The modules.**
+- [ ] **Step 4: The task's run, the gate, commit** `feat(onchain): the pinned series, MVRV-Z's expanding σ and BRK's client`.
+- [ ] **Step 5: Probes,** `--file cli/onchain/series.py`, each KILLED: `s/^MVRV_Z_MIN_VALUES = 365$/MVRV_Z_MIN_VALUES = 364/`; the σ taken over every market cap rather than those at indices ≤ i (`test_mvrv_z_never_reads_a_later_day`); `statistics.stdev` written `statistics.pstdev` (`test_mvrv_z_is_the_expanding_sample_std_and_null_before_365`); the missing value counted (`test_mvrv_z_skips_a_missing_market_cap_in_its_count`). `--file cli/onchain/brk.py`: the non-200 test removed (`test_a_non_200_or_unparseable_answer_is_a_brk_error_naming_its_route`); the series-list check removed (`test_a_series_the_instance_lacks_is_a_brk_error_naming_it`).
+
+### Task 2: The chain (spec D8)
+
+**Files:** Create `cli/onchain/chain.py`, `tests/test_onchain_chain.py`.
+
+**Interfaces:**
+- `CHAIN_GENERATION = 1`; `chain_name(brk_commit: str, generation: int = CHAIN_GENERATION) -> str` (`f"btc-brk{brk_commit[:12]}-g{generation}"`); `class ChainError(Exception)`.
+- `@dataclass(frozen=True) class Line: day: date; prev: str | None; files: dict[str, str]; vintage: dict; relpath: str; sha256: str`; `line_relpath(day) -> str` (`index/<YYYY>/<MM>/<DD>.json`); `canonical(obj: dict) -> bytes`, one line, `json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n"`, `ohlc-rolling`'s `_canonical`.
+- `line_days(root) -> list[date]` (walked with an `onerror` that raises, `rolling.line_days`'s rule); `read_line(root, day) -> Line` (canonical bytes, keys exactly `day`, `prev`, `files`, `vintage`, every file mapped to a sha256, a base line's file `base/history.parquet`, a day line's `days/<YYYY>/<MM>/<DD>.parquet` of its own day); `walk(root, as_of) -> list[Line]` (base first, each later line the day after the one before, its `prev` the sha256 of that line's bytes); `verify(root, as_of) -> Line` (`walk`, then every listed file's bytes against its sha256); `head(root) -> Line | None`.
+- `VINTAGE_KEYS = frozenset({"written_at", "last_height", "last_hash", "tip_height", "depth", "brk_commit", "bitview_image", "bitcoind_image", "chain"})`.
+- `write_base(root, frame, vintage) -> Line` and `write_day(root, frame, vintage) -> Line`: the file first, then the line, each written whole into `<root>/staging/<name>.<pid>.<8 hex>` with `os.open(…, O_WRONLY | O_CREAT | O_EXCL, 0o444)`, fsynced, renamed into place after a check that the target is absent, the parent fsynced; `write_base` refuses a root holding any line, `write_day` refuses a frame of other than one day, a day that is not the head's next, and a day already written. A frame is written through `frame.write_parquet` to bytes first, so a file's sha256 is of the bytes renamed in.
+- `staging_leftovers(root) -> list[Path]`.
+
+- [ ] **Step 1: The failing tests,** in `tests/test_onchain_chain.py`, over synthetic frames of `SCHEMA`:
+  - `test_a_line_is_canonical_and_its_sha256_is_of_its_bytes`.
+  - `test_the_base_then_days_walk_to_the_as_of`: a base through D0 and lines for D0+1 and D0+2: `walk(root, D0+2)` returns three lines, each `prev` the sha256 of the line before.
+  - `test_a_day_is_written_once`: a second `write_day` of D0+1 raises `ChainError` and leaves every byte under the root unchanged.
+  - `test_a_day_that_is_not_the_heads_next_is_refused` and `test_a_base_over_a_chain_is_refused`.
+  - `test_verify_refuses_a_changed_file_a_broken_link_and_a_missing_day`, parametrised: a day file's byte changed (`does not hash to its listing`), a line replaced by other canonical bytes (`its prev is not the sha256 of`), a middle line removed (`no line for`).
+  - `test_read_line_refuses_a_line_off_its_shape`, parametrised: a key added, a key missing, non-canonical bytes, a file not of its day.
+  - `test_a_staging_leftover_is_listed_and_never_a_line`.
+  - `test_chain_name`: `chain_name("1a19c5e969761a0ce446483767da8c765e4aa895") == "btc-brk1a19c5e96976-g1"`.
+- [ ] **Step 2: Run them and read them fail.**
+- [ ] **Step 3: `chain.py`.**
+- [ ] **Step 4: The task's run, the gate, commit** `feat(onchain): the chained per-day index, written once and verified by its links`.
+- [ ] **Step 5: Probes,** `--file cli/onchain/chain.py`, each KILLED: the target-absent check before the rename removed (`test_a_day_is_written_once`); the `prev` comparison in `walk` removed (`test_verify_refuses_a_changed_file_a_broken_link_and_a_missing_day`); the day-after comparison removed (the same case, the missing day); the file hash comparison in `verify` removed (the same case, the changed file); `sort_keys=True` written `sort_keys=False` (`test_a_line_is_canonical_and_its_sha256_is_of_its_bytes`); the next-day check in `write_day` removed (`test_a_day_that_is_not_the_heads_next_is_refused`).
+
+### Task 3: The writer and `zcrypto onchain write` (spec D6, D8)
+
+**Files:** Create `cli/onchain/write.py`, `cli/onchain/command.py`, `tests/test_onchain_write.py`; modify `cli/__main__.py`, `tests/onchain_stub.py`.
+
+**Interfaces:**
+- `cli/onchain/write.py`: `DEPTH = 12`; `REORG_REREAD_DAYS = 30`; `STALE_HOURS = 48`; `@dataclass(frozen=True) class WriteOutcome: wrote: tuple[date, ...]; base: bool; stopped: str | None`; `closed_days(height_days: list[date], first_height: int, tip: int) -> list[tuple[date, int]]`, each day whose block range is followed by a block of a later monotonic day, with its last height; `run_write(chain_root: Path, client: BrkClient, *, brk_commit: str, bitview_image: str, bitcoind_image: str, now: datetime) -> WriteOutcome`, the chain's directory `chain_root / chain_name(brk_commit)` created when absent and held under `single_instance_lock` (imported from `cli.capture.command`, never edited) for the run, in spec D8's order: the newest `REORG_REREAD_DAYS` lines verified; for each, `client.block_hash(line.vintage["last_height"])` against `last_hash`, a mismatch stopping the run before any write with `stopped` naming the day, the height and both hashes; every id of `BRK_SERIES` in `client.series_ids()`, a missing one stopping the run naming it; an empty chain with `client.indexed_height() < client.node_tip()`, or `BrkError`, an INFO and nothing written; an empty chain with the index at the tip, the base through the newest closed day whose last height is at least `DEPTH` below the tip; otherwise each closed, confirmed day after the head, in order, one `write_day` each; after the base, a newest written day more than `STALE_HOURS` before `now` with no day due, or a `BrkError`, `stopped` naming the index's height. `mvrv_z` for a day line is computed over the market caps `walk` returns through the head plus the new day, never a state file.
+- `cli/onchain/command.py`: `onchain_app = typer.Typer(help=…)` and `write --chain-root PATH --bitview URL --brk-commit SHA --bitview-image ID --bitcoind-image ID`, which runs `run_write` and ends with one line, INFO `onchain write complete chain=<name> head=<day or none> wrote=<n> base=<0|1>` and exit 0, or ERROR `onchain write stopped chain=<name> head=<day or none> reason=<text>` and exit 1, every exception caught; a held lock is ERROR `another onchain writer holds <root>; refusing. Read the zcrypto-onchain-write.service journal` and exit 1. `cli/__main__.py` gains `app.add_typer(onchain_app, name="onchain")`.
+- `tests/onchain_stub.py` gains `build_chain(root, fake, days) -> list[Line]`.
+
+- [ ] **Step 1: The failing tests,** in `tests/test_onchain_write.py`, through `FakeBrk`:
+  - `test_a_day_is_closed_only_once_a_later_monotonic_day_has_a_block`: heights whose monotonic days run D, D, D, D+1: D closed at the third height; with the fourth height's day still D, D open.
+  - `test_a_block_after_midnight_with_a_timestamp_in_the_day_belongs_to_it`: a block whose monotonic day is D found after a block of D: D's last height is it.
+  - `test_a_day_is_written_only_at_12_confirmations`: D's last height h, the tip at h + 11 writes nothing for D; at h + 12 writes it.
+  - `test_the_base_holds_every_closed_confirmed_day_and_each_later_day_is_written_once_in_order`: two runs; the second writes D+1 and D+2 as two lines in order; a third with no new block writes nothing.
+  - `test_a_changed_hash_at_a_recorded_height_stops_the_run_and_writes_nothing`: after the base, the fake's hash at a recorded height changed and new days due: `stopped` names the day and both hashes; the root's bytes unchanged.
+  - `test_an_unready_index_before_the_base_is_info_and_exit_0` and `test_an_unreachable_index_before_the_base_is_info_and_exit_0`, through the command: exit 0, one INFO, no line.
+  - `test_a_stale_index_after_the_base_is_an_error`: the head's day more than 48 hours before `now` and nothing due: exit 1, the stop line naming the index's height.
+  - `test_a_series_the_instance_lacks_refuses_the_run_naming_it`.
+  - `test_mvrv_z_of_a_day_line_equals_the_rebuilds`: the chain built over three runs and a chain built in one run over the same fake: every day file byte-equal and every line equal but for `vintage.written_at` and `vintage.tip_height`.
+  - `test_a_held_lock_exits_1_with_the_writers_own_message`.
+  - `test_the_vintage_carries_its_keys`: each line's `vintage` keys are `VINTAGE_KEYS`, `depth` 12, `chain` the root's name.
+- [ ] **Step 2: Run them and read them fail.**
+- [ ] **Step 3: `write.py`, `command.py`'s `write`, `cli/__main__.py`.** Help text free of internal tokens.
+- [ ] **Step 4: The task's run with `tests/test_cli_help_hygiene.py` and `tests/test_internal_terms_not_operator_visible.py`, the gate, commit** `feat(onchain): the hourly writer — the chain's cut, its depth and the reorg re-read`.
+- [ ] **Step 5: Probes,** `--file cli/onchain/write.py`, each KILLED: `s/^DEPTH = 12$/DEPTH = 11/`; `s/^STALE_HOURS = 48$/STALE_HOURS = 480/`; the reorg re-read removed; a day closed by the wall clock rather than by a later monotonic day (`test_a_block_after_midnight_with_a_timestamp_in_the_day_belongs_to_it`); the unready-index branch writing the base (`test_an_unready_index_before_the_base_is_info_and_exit_0`); `mvrv_z` computed over the new day alone (`test_mvrv_z_of_a_day_line_equals_the_rebuilds`). `--file cli/onchain/command.py`: the held lock's catch re-raising (`test_a_held_lock_exits_1_with_the_writers_own_message`).
+
+### Task 4: The snapshot and `zcrypto onchain freeze` and `verify` (spec D8)
+
+**Files:** Create `cli/onchain/freeze.py`, `tests/test_onchain_freeze.py`; modify `cli/onchain/command.py`.
+
+**Interfaces:**
+- `SNAPSHOT_RELPATH = "BTC/onchain.parquet"`; `freeze(chain_root: Path, as_of: date, out: Path, *, written_at: str) -> Path`: refuses an `out` that exists and an `as_of` after the head; `verify(chain_root, as_of)`; the base's rows through `as_of` and every line's day file through it, in day order, as one frame of `SCHEMA`, written to `out/BTC/onchain.parquet` and `build_manifest({SNAPSHOT_RELPATH: series_entry(frame, SNAPSHOT_RELPATH)}, written_at=written_at, identity="set", provenance={"producer": "zcrypto onchain freeze", "chain": <name>, "as_of_line": {"relpath": …, "sha256": …}, "brk_commit": …, "bitview_image": …, "bitcoind_image": …})` to `out/manifest.json`, last.
+- Commands: `freeze --chain PATH --as-of YYYY-MM-DD --out PATH`; `verify --chain PATH [--as-of YYYY-MM-DD]`, ending `onchain verify complete chain=<name> head=<day> head_sha256=<sha256> days=<n>` at INFO and exit 0, or the refusal at ERROR and exit 1.
+
+- [ ] **Step 1: The failing tests:** `test_the_snapshot_is_one_file_and_a_conformant_manifest_naming_the_as_of_line`; `test_observed_reader_reads_the_snapshot` (`ObservedReader(tmp_path).read_series(<set>, SNAPSHOT_RELPATH)` returns the rows); `test_an_as_of_past_the_head_is_refused`; `test_an_existing_out_is_refused`; `test_a_chain_that_does_not_verify_is_refused_and_no_manifest_is_written`; `test_the_verify_summary_names_the_head_and_its_sha256`.
+- [ ] **Step 2: Run them and read them fail.**  **Step 3: `freeze.py` and the commands.**
+- [ ] **Step 4: The task's run, the gate, commit** `feat(onchain): a frozen snapshot of the chain at an as-of line, read as any frozen set`.
+- [ ] **Step 5: Probes,** `--file cli/onchain/freeze.py`, each KILLED: the as-of line's sha256 left out of the provenance; the `out`-exists check removed; the `verify` call before the copy removed.
+
+### Task 5: The cross-check and `zcrypto onchain crosscheck` (spec D13)
+
+**Files:** Create `cli/onchain/crosscheck.py`, `tests/test_onchain_crosscheck.py`; modify `cli/onchain/command.py`.
+
+**Interfaces:**
+- `MEDIAN_BAR = 0.02`; `P99_BAR = 0.10`; `SPAN = (date(2013, 9, 9), date(2026, 3, 30))`; `CM_SERIES = ("cm/btc/CapMVRVCur", "cm/btc/PriceUSD", "cm/btc/SplyCur")`; `ratios(snapshot: pl.DataFrame, cm: dict[str, dict[date, str]]) -> dict[str, dict[date, float]]` (`r_mvrv`, `r_price`, `r_supply` as spec D13 defines them, each token parsed by `float` of its served text, a day either side lacks absent from every ratio); `summary(ratios, span) -> dict` (per calendar year and over all days: `n`, the median, 95th, 99th percentile and maximum of each ratio's absolute value, and `left_out`); `crosscheck(snapshot_dir: Path, versions_root: Path, *, generation: int, head: str) -> int`: the snapshot through `ObservedReader`, the Coin Metrics rows through `cli.vintage.table.read_table(versions_root, generation, head)` and `cli.vintage.asof.as_of(…, t)` at the head's tick's `ended_at`, `provider == "coinmetrics"`; the summary printed one line per year and one for all days; exit 1 when the span's median of `|r_mvrv|` is above `MEDIAN_BAR` or its 99th percentile above `P99_BAR`, else 0.
+- Command: `crosscheck --snapshot PATH --versions PATH --generation N --head SHA256`.
+
+- [ ] **Step 1: The failing tests:** `test_the_three_ratios_on_a_known_answer`; `test_a_day_either_side_lacks_is_counted_and_never_filled`; `test_a_token_is_parsed_as_served`; `test_the_tolerance_exits_1_on_a_breach_and_0_within`, parametrised on a median above 0.02 and a 99th percentile above 0.10; `test_the_span_bounds_the_tolerance`, a breach outside the span exiting 0; `test_the_versions_are_read_through_the_head_named`, over a versions table built by `tests/vintage_stub.py`'s `standard_record` and `cli.vintage.table.derive_table`.
+- [ ] **Step 2: Run them and read them fail.**  **Step 3: `crosscheck.py` and the command.**
+- [ ] **Step 4: The task's run, the gate, commit** `feat(onchain): the cross-check against Coin Metrics at its own price`.
+- [ ] **Step 5: Probes,** `--file cli/onchain/crosscheck.py`, each KILLED: `s/^MEDIAN_BAR = 0\.02$/MEDIAN_BAR = 0.2/`; `s/^P99_BAR = 0\.10$/P99_BAR = 1.0/`; a missing day filled with the previous day's token; `r_mvrv` computed at the snapshot's own price.
+
+### Task 6: The reading's pure functions, `cli/alpha/c3.py` (spec D12)
+
+**Files:** Create `cli/alpha/c3.py`, `tests/test_alpha_c3.py`.
+
+**Interfaces:**
+- The constants of the Global Constraints under the names `FEATURES`, `TAILS`, `STATES`, `HORIZONS`, `LOW`, `HIGH`, `MIN_HISTORY`, `LAG_DAYS`, `MEAN_BLOCK`, `N_RESAMPLES`, `SEED`, `FAR`, `COST_ROUND_TRIP`, `MIN_EVENT_YEARS`.
+- `bands(values: list[float | None]) -> list[str | None]` — `"low"`, `"high"` or `"mid"` by spec D12's expanding percentile, `None` where unread.
+- `lagged(by_day: dict[date, float | None], grid: list[datetime]) -> list[float | None]` — index k reads `by_day[grid[k].date() − timedelta(days=LAG_DAYS)]`.
+- `a1_daily_positions(daily_prices: dict[str, list[float | None]]) -> dict[str, list[float]]` — `crossfreq_system.py:317-322`'s expression over `_ffill_btc(daily_prices)`, importing `A1Config`, `a1_book_returns`, `_ffill_btc`, `_block_start` and `_A1_CADENCE` and editing none.
+- `states(positions: dict[str, list[float]]) -> dict[str, list[str | None]]` — `"long"` above 0, `"flat"` at 0.
+- `flags(band: list[str | None], state: list[str | None], *, tail: str, in_state: str) -> list[bool | None]` — spec D12's event, other and `None`.
+- `forwards(prices: list[float | None], horizon: int) -> tuple[list[float | None], list[float | None]]` — the log forward and the summed simple returns, spec 00140 D5's two families on the daily grid.
+- `cell_name(feature, tail, state, horizon) -> str` — `f"{feature}|{tail}|{state}|H{horizon}"`; `event_years(flag_by_asset: dict[str, list[bool | None]], years: list[int]) -> dict[str, int]`.
+
+- [ ] **Step 1: The failing tests:**
+  - `test_the_constants_are_the_specs`, each against a literal.
+  - `test_bands_on_a_known_answer`: 400 planted values, the band of each of five chosen days against a literal; days before the 365th value `None`.
+  - `test_a_band_reads_no_later_day`: every value after index 380 multiplied by 100: bands through 380 unchanged.
+  - `test_index_k_reads_the_day_before_its_bar`: a grid stamped D0, D0+1, D0+2 reads the values of D0−1, D0, D0+1.
+  - `test_the_arm_expands_to_the_builders_a1_sleeve`: over a synthetic ten-asset daily and 4h union of 500 days, `a1_daily_positions` expanded by `cli.portfolio.crossfreq.expand_daily_positions` (`crossfreq.py:21`) with the builder's close-shifted boundaries (`crossfreq_system.py:339-342`) equals `build_crossfreq_system_fast(…, config=CrossfreqSystemConfig(fee_per_side=0.0040, spread_per_side=0.0020)).sleeve_positions["A1"]` to the bit.
+  - `test_states_and_flags`: a long, a flat and a `None` position; an event, another and a `None` flag at each combination of band and state.
+  - `test_forwards_on_a_known_answer_and_none_past_the_end`.
+  - `test_cell_name_and_event_years`.
+- [ ] **Step 2: Run them and read them fail.**  **Step 3: `c3.py`.**
+- [ ] **Step 4: The task's run, the gate, commit** `feat(alpha): c3's pure functions — the lag, the expanding-percentile bands, the A1 sleeve's states and the forwards`.
+- [ ] **Step 5: Probes,** `--file cli/alpha/c3.py`, each KILLED: `s/^LAG_DAYS = 1$/LAG_DAYS = 0/`; the percentile's rank taken over every value rather than those at or before D (`test_a_band_reads_no_later_day`); `s/^LOW = 0\.10$/LOW = 0.20/` (`test_bands_on_a_known_answer`); `_block_start`'s offsets averaged over 6 in place of `_A1_CADENCE` (`test_the_arm_expands_to_the_builders_a1_sleeve`); the summed family counting a missing return as `None` (`test_forwards_on_a_known_answer_and_none_past_the_end`); `s/^FAR = (0\.078125, 99\.921875)$/FAR = (0.05, 99.95)/` (`test_the_constants_are_the_specs`).
+
+### Task 7: The subject `c3-onchain-reading` (spec D12)
+
+**Files:** Modify `cli/research/subjects.py` (one block before `SUBJECTS` — `_C3ReadingInputs`, `_c3_reads`, `_c3_reading_inputs`, `_c3_reading_metrics`, `_build_c3_onchain_reading`, `_C3_READING_KEYS` — one `SUBJECTS` entry, one import line `from cli.alpha import c3 as alpha_c3`), `README.md` (the `--subject` row), `tests/test_research_command.py` (the subject's `_CONTRACT_DATASETS` entry over a fixture writing a two-year snapshot and the ten EUR legs' 1440 series under `ohlc-full`); create `tests/test_research_c3_onchain_reading.py`.
+
+**Interfaces:**
+- `_c3_reads(reader, dataset, subject) -> tuple[dict, pl.DataFrame, list[datetime], dict[str, list[float | None]]]`: the snapshot's manifest (`read_manifest(reader._root / dataset / "manifest.json")`, `_c1_reads`' form), its provenance's `as_of_line` required; the snapshot frame through `reader.read_series(dataset, SNAPSHOT_RELPATH)`, imported from `cli.onchain.freeze`, its days consecutive; `_capturing_union(reader, "ohlc-full", 1440, None, None, False)`; each refusal a `SubjectError` naming what it refuses.
+- `_c3_reading_inputs(snapshot, daily_ts, daily_prices) -> _C3ReadingInputs` — fields `grid`, `years`, `arm` (per asset, per state, the index count), `positions`, `states`, `features` (per feature, the lagged values, first and last read day, band days per year), `bands`, `counts` (events and others per feature, tail, state and asset); no forward.
+- `_c3_reading_metrics(inputs, daily_prices) -> dict` — the forwards, one `stationary_bootstrap_blocks(len(grid) − 1, mean_block=MEAN_BLOCK, n_resamples=N_RESAMPLES, seed=SEED)` draw, per cell `event_contrast_blocks(flags, {"log": …, "summed": …}, blocks, far=FAR)`, `event_years`, and the constants.
+- `_build_c3_onchain_reading(reader, dataset, window, as_of=None, accept_holes=False)` — `--as-of` refused `"c3-onchain-reading evaluates a frozen snapshot whole, never the rolling dataset as of a day: drop --as-of"` and `--window` refused `"c3-onchain-reading reads its frozen sets whole; the bands' history reaches back past any window's first day: drop --window"`, before any read; `AlphaError`, `ValidationError` and `PortfolioError` raised as a `SubjectError` opening `c3-onchain-reading over the full history: `.
+- `_C3_READING_KEYS = frozenset({"cells", "event_years", "counts", "features", "arm", "constants"})`; `SUBJECTS["c3-onchain-reading"] = Subject("c3-onchain-reading", (1440,), (), _build_c3_onchain_reading, spec="docs/specs/00164-t0228-btc-onchain-design.md", metric_keys=_C3_READING_KEYS, seeds=(alpha_c3.SEED,))`.
+
+- [ ] **Step 1: The failing tests,** in `tests/test_research_c3_onchain_reading.py`, a synthetic reader serving a planted snapshot and ten EUR legs, `N_RESAMPLES` monkeypatched to 200 where a case needs bounds:
+  - `test_the_build_returns_exactly_the_declared_keys_and_32_cells`.
+  - `test_the_inputs_half_reads_no_forward`: `_C3ReadingInputs._fields` exactly the list above, and no field holds a list the length of the grid less a horizon.
+  - `test_a_planted_long_state_veto_reads_bounds_excluding_zero`: a feature whose high tail precedes a fall of 5 % in every asset over 7 closes in the long state: that cell's pooled log difference below 0 and its far bounds excluding 0; a feature planted flat: its cells' bounds include 0.
+  - `test_the_counts_precede_any_forward` (the counts equal those the inputs half returns).
+  - `test_the_metrics_hold_only_leaves_the_registry_stores` (`validate_metrics`).
+  - `test_as_of_and_window_are_refused_before_any_read`; `test_a_snapshot_without_its_as_of_line_is_refused`; `test_a_snapshot_with_a_missing_day_is_refused`; `test_an_unreadable_file_names_its_relpath`.
+  - `test_the_subject_is_registered_as_a_reading`.
+- [ ] **Step 2: Run them and read them fail.**  **Step 3: The block, the entry, the README row, the contract fixture.**
+- [ ] **Step 4: The task's run with `tests/test_research_command.py -k c3-onchain-reading` and `tests/test_internal_terms_not_operator_visible.py`, the gate, commit** `feat(research): the reading subject c3-onchain-reading — spec 00164's 32 cells, no rule, no slot`.
+- [ ] **Step 5: Probes,** `--file cli/research/subjects.py`, each arm addressed to its own function's range, each KILLED: the `--as-of` condition made `False`; the as-of line's requirement removed; the far bounds passed as `(2.5, 97.5)`; the `long` state read as above or at 0; the declared assets given `_ASSETS`.
+
+### Task 8: The node's image (spec D10)
+
+Prerequisite: O1.
+
+**Files:** Create `infra/docker/bitcoind/Dockerfile`; create `tests/test_infra_onchain_templates.py` with its first case.
+
+**Interfaces:** `FROM debian:bookworm-slim`; `ARG` lines pinning the tarball's file name and its sha256 as O1 pasted them; one `RUN` that fetches the tarball from the project's release URL O1 read, checks it with `echo "<sha256>  <file>" | sha256sum -c -`, extracts `bitcoind` alone to `/usr/local/bin/` and removes the tarball; `ENTRYPOINT ["bitcoind"]`; no other package installed beyond what the fetch needs, named by O1's read.
+
+- [ ] **Step 1: The failing test** `test_the_node_image_checks_its_pinned_sha256_before_it_extracts`: the Dockerfile's `FROM` is `debian:bookworm-slim`; its pinned file name and sha256 are O1's, spelt in the test; the `sha256sum -c` precedes the extraction in the one `RUN`.
+- [ ] **Step 2: Run it and read it fail.**  **Step 3: The Dockerfile.**
+- [ ] **Step 4: The task's run, the gate, commit** `feat(docker): the Bitcoin Core image, its release pinned by sha256`.
+- [ ] **Step 5: Probe,** `--file infra/docker/bitcoind/Dockerfile`, KILLED: the `sha256sum -c` clause removed.
+
+### Task 9: The ops role — the compose project, the node's configuration and the roots (spec D4, D10, D11)
+
+Prerequisite: O1, O2.
+
+**Files:** Create `infra/ansible/roles/ops/templates/onchain-compose.yaml.j2`, `infra/ansible/roles/ops/templates/bitcoin.conf.j2`; modify `infra/ansible/roles/ops/tasks/main.yml`, `infra/ansible/roles/ops/defaults/main.yml`, `tests/test_infra_onchain_templates.py`, `tests/test_infra_converge_guards.py`.
+
+**Interfaces:**
+- Defaults: `ops_onchain_root: /var/lib/zcrypto-onchain`; `ops_onchain_subdir: onchain`; `ops_onchain_compose_dir: "{{ ops_compose_dir }}/onchain"`; `ops_bitview_commit: 1a19c5e969761a0ce446483767da8c765e4aa895`; `ops_bitview_url`, the value of `cli.onchain.brk.BITVIEW_URL`; `ops_bitcoind_cpus: "4"`, `ops_bitcoind_memory: 8g`, `ops_bitcoind_dbcache_mib: 4096`, `ops_bitview_cpus: "8"`, `ops_bitview_memory: 16g`, `ops_onchain_cpu_shares: 256`, `ops_onchain_io_device: /dev/nvme0n1`, `ops_onchain_read_bps: 400mb`, `ops_onchain_write_bps: 200mb`; `ops_bitcoind_image_id` and `ops_bitview_image_id` with no default, each comment saying why (a converge without them leaves the project as it stands, as `ops_image_digest`'s comment says of the images).
+- The compose file, spec D4's: project `name: zcrypto-onchain`, its network `name: zcrypto-onchain`; services `bitcoind` (`container_name: zcrypto-onchain-bitcoind`, `image: "{{ ops_bitcoind_image_id }}"`, `user: "{{ ops_uid }}:{{ ops_gid }}"`, `command: ["-datadir=/bitcoin", "-conf=/bitcoin/bitcoin.conf"]`, `volumes: ["{{ ops_onchain_root }}/bitcoin:/bitcoin"]`, `stop_grace_period: 600s`) and `bitview` (`container_name: zcrypto-onchain-bitview`, `image: "{{ ops_bitview_image_id }}"`, the user, BRK's own arguments as O2 read them with `--blocksdir /bitcoin/blocks`, `volumes: ["{{ ops_onchain_root }}/bitcoin:/bitcoin:ro", "{{ ops_onchain_root }}/bitview:<the data path O2 read>"]`); each `restart: unless-stopped`, `deploy.resources.limits` `cpus` and `memory` from its variables, `cpu_shares`, `blkio_config` with `device_read_bps` and `device_write_bps` on `ops_onchain_io_device`, the `json-file` logging block of `compose.yaml.j2`, no `ports:`, no `environment:`, no `env_file:`.
+- `bitcoin.conf.j2`, spec D4's options under the names O1 read from the pinned binary's help, `dbcache={{ ops_bitcoind_dbcache_mib }}`.
+- Tasks: in the ungated preamble after the vintage directories, `ensure the on-chain node, index and chain directories exist` (`{{ ops_onchain_root }}` 0755, `…/bitcoin` 0750, `…/bitview` 0750, `{{ ops_data_dir }}/{{ ops_onchain_subdir }}` 0755, owner and group `{{ ops_data_user }}`); a block `install the on-chain node and index project (needs both pinned image ids)` gated on `ops_bitcoind_image_id is defined and ops_bitview_image_id is defined`, after the getent facts, rendering the compose file to `{{ ops_onchain_compose_dir }}/compose.yaml` (root 0644) and `bitcoin.conf` to `{{ ops_onchain_root }}/bitcoin/bitcoin.conf` (root, group `{{ ops_data_user }}`, 0640); no task starts, stops or recreates either service.
+
+- [ ] **Step 1: The failing tests,** in `tests/test_infra_onchain_templates.py`, rendering with `StrictUndefined` and a context of real shapes: `test_the_compose_project_has_two_capped_services_and_no_port_or_secret`; `test_the_node_mount_is_read_only_into_bitview`; `test_the_node_stops_with_a_600s_grace`; `test_both_images_are_named_by_their_ids`; `test_the_node_configuration_lines` (each line against a literal, `prune` and `txindex` absent); `test_the_bitview_url_default_is_the_clients` (`ops_bitview_url` equal to `cli.onchain.brk.BITVIEW_URL`); in `tests/test_infra_converge_guards.py`, `test_the_onchain_roots_lie_outside_the_ops_data_root_but_the_chain` and `test_the_onchain_block_renders_only_under_both_image_ids_and_starts_nothing`, the latter holding that no task in the role names `docker compose up` or a `docker_compose_v2` state for the project.
+- [ ] **Step 2: Run them and read them fail.**  **Step 3: The templates, the defaults, the tasks.**
+- [ ] **Step 4: The task's run with `tests/test_infra_compose_templates.py`, the gate, commit** `feat(ops): the on-chain node and index as a capped compose project, rendered and never started by a converge`.
+- [ ] **Step 5: Probes,** each KILLED: `--file infra/ansible/roles/ops/templates/onchain-compose.yaml.j2`, the `:ro` of the node's mount into `bitview` removed; `cpus` dropped from `bitview`'s limits; `stop_grace_period: 600s` written `10s`. `--file infra/ansible/roles/ops/tasks/main.yml`, the block's `when` removed.
+
+### Task 10: The writer's and the guard's runners, units and timers, and the keep-regex (spec D8, D11)
+
+**Files:** Create `infra/ansible/roles/ops/templates/onchain-write.sh.j2`, `onchain-write.service.j2`, `onchain-write.timer.j2`, `onchain-guard.sh.j2`, `onchain-guard.service.j2`, `onchain-guard.timer.j2`; modify `infra/ansible/roles/ops/tasks/main.yml`, `infra/ansible/roles/ops/files/config.alloy`, `tests/test_infra_onchain_templates.py`, `tests/test_infra_shell_templates_render.py`, `tests/test_infra_converge_guards.py`.
+
+**Interfaces:**
+- The writer's runner, root 0700 at `/usr/local/sbin/zcrypto-onchain-write`, its `log()` the vintage runner's as `zcrypto.onchain-write [onchain-write.sh]`: if `docker network inspect zcrypto-onchain` fails, it logs INFO and exits 0 when no `index/` holds a line under `{{ ops_data_dir }}/{{ ops_onchain_subdir }}/btc-brk{{ ops_bitview_commit[:12] }}-g1/`, and ERROR naming the absent project and exits 1 otherwise; else one attached `docker run --rm --pull never --name zcrypto-onchain-write --user "{{ ops_uid }}:{{ ops_gid }}" --network zcrypto-onchain -v "{{ ops_data_dir }}/{{ ops_onchain_subdir }}:/data" --entrypoint zcrypto "{{ ops_image }}@{{ ops_image_digest }}" onchain write --chain-root /data --bitview "{{ ops_bitview_url }}" --brk-commit "{{ ops_bitview_commit }}" --bitview-image "{{ ops_bitview_image_id }}" --bitcoind-image "{{ ops_bitcoind_image_id }}"`, its output to a `mktemp` file replayed with `cat`, and one runner ERROR naming the exit when the container exits other than 0 or 1 or prints neither summary line (the derive runner's form, plan 00158 Task 12); exit the container's code.
+- The guard's runner, root 0700 at `/usr/local/sbin/zcrypto-onchain-guard`, the same `log()` as `zcrypto.onchain-guard [onchain-guard.sh]`: `running=$(docker ps --filter name='^zcrypto-onchain-(bitcoind|bitview)$' --format '{{ '{{' }}.Names{{ '}}' }}')`; empty, exit 0 with no line; else the three ages read as spec D11 states them — `awk` over `{{ ops_textfile_dir }}/ops-archive-pull.prom` and `ops-panel-materialize.prom`, `curl -fsS -m 5 http://127.0.0.1:9103/metrics` for the poller — each unreadable age one WARNING naming it and no stop; each read age past its bar one ERROR naming it, its value and its bar; on any ERROR, `docker stop zcrypto-onchain-bitview` and `docker stop zcrypto-onchain-bitcoind`, each by name, and exit 1; the three bars rendered from `ops_onchain_guard_archive_pull_bar: 3600`, `ops_onchain_guard_panel_bar: 7200`, `ops_onchain_guard_poller_bar: 900` (defaults added here).
+- Units: `zcrypto-onchain-write.service` (oneshot, `Requires=docker.service`, `After=docker.service`, `ExecStart=/usr/local/sbin/zcrypto-onchain-write`) and its timer (`OnCalendar=*-*-* *:17:00`, `Persistent=true`, `[Install] WantedBy=timers.target`, its comment the slot clearance against archive-pull's :12 and :42, the panel's :22, tape-bars' :52, the vintage recorder's :37, grafana-watchdog's minutes ≡ 0 mod 5 and zaccess-probe's ≡ 4 mod 5); `zcrypto-onchain-guard.service` and its timer (`OnBootSec=2min`, `OnUnitActiveSec=5min`, `[Install] WantedBy=timers.target`).
+- Tasks: the guard's runner, unit and timer in the ungated preamble beside the clock-offset timer's, enabled and started under the register-based check-mode guard (spec 00158 D17's form); the writer's runner (root 0700, with its diff, no secret), unit and timer in a block gated on `ops_image_digest is defined and ops_bitcoind_image_id is defined and ops_bitview_image_id is defined`, the timer enabled and started under the same guard. `config.alloy`'s keep-regex alternation gains `|onchain-write|onchain-guard` at its end.
+
+- [ ] **Step 1: The failing tests,** in `tests/test_infra_onchain_templates.py`, through a harness after `tests/test_infra_verify_replay_template.py`'s `_bash_harness` (`:331`) with `docker` and `curl` stubs recording their argv, and `_ops_parse_regex()` from `tests/test_infra_archive_pull_template.py:225`:
+  - `test_the_writer_runners_argv`: exactly the line above, no `-i`, no `-e`, no `--env-file`, no `/mnt/` mount; each option one `onchain write` takes (`typer.main.get_command(app)`).
+  - `test_the_writer_runner_before_and_after_the_base`: the network stub failing and no line under the chain root: one INFO, exit 0, no `docker run`; the same with a line present: one ERROR, exit 1.
+  - `test_the_writer_runner_names_an_odd_exit_or_a_missing_summary`, parametrised as plan 00158's derive case.
+  - `test_the_guard_stops_both_containers_on_a_slip`, parametrised on each of the three ages one second past its bar: one ERROR naming that read, then `docker stop zcrypto-onchain-bitview` and `docker stop zcrypto-onchain-bitcoind` in the stub's argv, exit 1; at its bar exactly: no line, no stop, exit 0.
+  - `test_an_unreadable_age_warns_and_stops_nothing`, parametrised: a textfile absent, the curl stub failing.
+  - `test_the_guard_reads_nothing_when_neither_container_runs`.
+  - `test_every_line_the_runners_print_is_parse_shaped`.
+  - `test_the_units_and_timers`: the writer's `OnCalendar`, `Persistent=true` and `[Install]`; the guard's two intervals and `[Install]`.
+  - In `tests/test_infra_converge_guards.py`, `test_the_guard_is_ungated_and_the_writer_gated_on_all_three_images`, and `test_the_chain_root_has_one_writer`, the census spec 00164's *Closed-world claims* names, run through `subprocess` with `git grep -l ops_onchain_subdir -- <those pathspecs>`, whose files under `infra/ansible/roles/ops/templates/` are `onchain-write.sh.j2` alone.
+- [ ] **Step 2: Run them and read them fail.**
+- [ ] **Step 3: The six templates, the tasks, the defaults, the keep-regex**, and in the same commit `REGISTERED` in `tests/test_infra_shell_templates_render.py` gains `onchain-guard.sh.j2` and `onchain-write.sh.j2`.
+- [ ] **Step 4: The task's run with `tests/test_infra_alloy_series.py`, `tests/test_infra_shell_templates_render.py` and `tests/test_internal_terms_not_operator_visible.py`, the gate, commit** `feat(ops): the on-chain writer's hourly timer and the guard that stops the node on a slip`.
+- [ ] **Step 5: Probes,** each KILLED. `--file infra/ansible/roles/ops/templates/onchain-guard.sh.j2`: the archive-pull bar's comparison made `-gt 360000`; the `docker stop zcrypto-onchain-bitcoind` line removed; an unreadable age read as 0 (`test_an_unreadable_age_warns_and_stops_nothing`); the line shape broken (`test_every_line_the_runners_print_is_parse_shaped`). `--file infra/ansible/roles/ops/templates/onchain-write.sh.j2`: the network check removed (`test_the_writer_runner_before_and_after_the_base`); `--pull never` removed (`test_the_writer_runners_argv`). `--file infra/ansible/roles/ops/files/config.alloy`, `tests/test_infra_alloy_series.py -k test_the_ops_journal_keep_regex_accounts_for_every_unit_the_role_installs`: `s/|onchain-guard)/)/`. `tests/test_infra_shell_templates_render.py -k 'test_shell_template_renders_to_valid_bash and onchain-guard.sh.j2'`, control `$a if`: `$a fi`.
+
+### Task 11: The runbook section and the pages around it (spec D4, D11, the deployment)
+
+**Files:** Modify `infra/runbooks/ops-node.md`, `infra/ops/README.md`, `README.md`, `docs/reference/fleet.md`.
+
+- [ ] **Step 1: Load `zcrypto-refine-rules`** and read its *Before you write guidance*; read `RATIO` (`400 566` at the base).
+- [ ] **Step 2: `infra/runbooks/ops-node.md`** gains `<a name="onchain-node"></a>` above `## onchain-node — PROCEDURE` after `zcrypto-ops-error-logs`' section: what the two containers, the writer and the guard are; the first start and the start of `bitview` after the node has synced (spec's deployment steps 7 and 8, spelt once each); the guard's stop and its triage — read `journalctl -u zcrypto-onchain-guard.service -n 100` for the read that slipped, the slipped unit's own section of this page, then the owner's restart; a writer ERROR's triage — `systemctl status zcrypto-onchain-write.service`, `docker ps -a --filter name=zcrypto-onchain`, `docker logs --tail 100 zcrypto-onchain-bitview`, and a reorg stop is the owner's ruling on a new chain, never a hand edit under the chain root; a reboot — stop `bitcoind` first, `sudo docker compose -f /etc/zcrypto-ops/onchain/compose.yaml stop bitcoind`; a staging leftover read and deleted by hand; `uv run zcrypto onchain verify --chain /var/lib/zcrypto-ops/onchain/<chain>` as the chain's integrity read. `zcrypto-ops-error-logs`' section names the two new units' lines and points here. Every universal word carries its `(set: …; count: …)` or `(no count command: …)`. The commands' classes are the plan session's read: the `up -d` lines carry a destructive token and count nothing; the `stop` and `verify` lines spend two of `RATIO`'s five; every other read is AUTONOMOUS.
+- [ ] **Step 3: The pages outside `infra/runbooks/`:** `infra/ops/README.md` — the compose project, its two containers, the roots outside `ops_data_dir`, the chain root, the writer's and the guard's units and their `container` labels; `README.md` — an `onchain` section naming `write`, `verify`, `freeze` and `crosscheck`, its usage lines and option tables; `docs/reference/fleet.md` — a service row for the on-chain node and index on `zcrypto-ops`, the *ops timers* cell gaining `onchain-write` within `CELL_MAX`, the guard in the *ops node timers* row, and the storage topology naming `/var/lib/zcrypto-onchain/` and `/var/lib/zcrypto-ops/onchain/` as not replicated.
+- [ ] **Step 4: `WALKERS`, `RATIO` again (at least 0.70), `tests/test_fleet_contracts.py`, the gate, commit** `docs(runbooks): the on-chain node's procedure — the first start, the guard's stop, the writer's stops and a reboot`.
+
+### Task 12: The data catalog — the chain's entry and ruling 4a amended (spec D5, D8)
+
+**Files:** Modify `docs/reference/data-catalog-full.md`.
+
+- [ ] **Step 1:** Under `## custody`, after the versions table's entry, ``### BTC on-chain valuation series (`onchain/btc-brk<sha12>-g<N>/` on the ops node; one vintage per UTC day)``, in the versions table entry's shape: **Producer** (`zcrypto onchain write`, hourly, the unmodified BRK at `1a19c5e969761a0ce446483767da8c765e4aa895` over our own Bitcoin Core v32.1 node — the version as ruled); **Layout** (spec D8's three trees and the line keys); **Schema** (spec D8's columns, units USD at BRK's price, `mvrv_z` and `sth_supply_share` ours); **The cut, the depth and the vintages** (spec D6, the history's days under the base line's vintage); **Identity** (an as-of line's sha256); **Consumption convention** (`zcrypto onchain freeze` to a frozen `btc-onchain-<stamp>` set, read through `ObservedReader`; the live chain read only through the writer and `onchain verify`); **Caveats** (the price before height 340,000 baked exchange data and after it an oracle whose worst day is 33.8 %; the 150-day split and aSOPR's one-hour exclusion BRK's; the live chain on ops alone, rebuilt from public blocks and the pinned code, its live `written_at` the only thing a loss costs; a pin change a new chain); **Consumers** (`c3-onchain-reading`, spec 00164 D12; none yet). Its heading carries no date: the rollout's pins pull request adds `since <the base's day>` and the first sync's figures.
+- [ ] **Step 2: Ruling 4a amended.** At line 215 (the vintages entry's Coin Metrics bullet) and line 240 (the versions table's caveat), each sentence that gates on written permission is replaced by spec D5's three passages, verbatim with the stamp — "the call is enough"; "cm-* values feeding the live engine. it was clearly mentioned that the use of the data are for my own trading algorithms with my own funding"; Talos's terms, no support, no SLA, no quality or availability guarantee, and "real values only, no estimation" — and the licence named at `https://docs.coinmetrics.io/packages/coin-metrics-community-data`; the ruling of open question 4a stays quoted above it as the ruling the word amends.
+- [ ] **Step 3: The task's run (`consumers.sh --tests --direct docs/reference/data-catalog-full.md`), the gate, commit** `docs(reference): the BTC on-chain chain cataloged, and Coin Metrics' licence ruling amended by the owner's word of 2026-11-15`.
+
+### Task 13: T0228, T0016 and the topics index (spec D3, D1, D2)
+
+**Files:** Modify `docs/open-topics/T0228-btc-on-chain-metrics-computed-from-chain-data.md`, `docs/open-topics/T0016-bucket-b-c-alpha-families.md`, `docs/open-topics/README.md`.
+
+- [ ] **Step 1: T0228, by `topic-ops`' edit mechanics** (each anchor's `grep -c` read first, the heading set compared before and after): `status: partial`; `ripe_when:` rewritten for the remainder — ``'an activity — the on-chain writer''s first full run recorded, the chain''s catalog heading carrying its date in the rollout''s pins pull request; check: `grep -c -E ''^### BTC on-chain valuation series .*since [0-9]{4}-[0-9]{2}-[0-9]{2}'' docs/reference/data-catalog-full.md` prints at least 1'`` — every `'` inside the frontmatter's single quotes doubled as written here; `## Context — what` re-cut for BTC first, the route (USD at BRK's price, BRK's 150-day split, MVRV-Z ours), LTC and DOGE only on a BTC signal worth sharpening; a `## Findings so far` bullet for the owner's rulings of 2026-11-21 and 2026-11-15, naming spec 00164 D1–D5; `## Done so far`, between Findings and next steps: spec/plan 00164, the code, the role and the catalog entry, iter-204; `## Suggested next steps` re-cut: the rollout (spec 00164's deployment, the owner's), the reading's branch (plan 00164's *The reading's branch*), then, on a cell with potential, the trial's spec under a `C3` key and T0016's Glassnode step, and only then LTC and DOGE; every `gitbook-docs.coinmetrics.io` link the topic carries moved to the `docs.coinmetrics.io` address (spec D5).
+- [ ] **Step 2: T0016:** a `## Done so far` bullet "**C3 opened (iter-204, spec/plan `00164`)** on the owner's family pick of 2026-11-21, its first step T0228's BTC computation from chain data; no slot spent, bucket C's 10 untouched."; `ripe_when:`'s C3 clause, discharged by the opening, rewritten to wait on T0228's reading — ``C3: an activity, C3''s next step after the on-chain reading is picked, recorded in the decisions log, check: `grep -c -E ''^\[iter-[0-9]+\] C3.s next step after the on-chain reading'' docs/research/10.phase4-decisions.md` prints at least 1`` — and `## Suggested next steps`' C3 lines re-cut to name T0228's reading.
+- [ ] **Step 3:** `uv run python infra/scripts/topics-index.py`; then `uv run pytest tests/test_open_topics_frontmatter.py tests/test_topics_index.py -q -p no:cacheprovider`, all pass; the gate; commit `docs(topics): T0228 re-cut for BTC first on the stock-BRK route, partial; C3 opened in T0016; the index re-rendered`.
+
+### Task 14: The decisions log (spec D1–D13)
+
+**Files:** Modify `docs/research/10.phase4-decisions.md`.
+
+- [ ] **Step 1: Load `iteration-closeout`.** Append, verbatim, the five entries the owner ruled:
+
+```
+[iter-204] Which family opens next, C1 or C3? (Decision: 2)
+  1. **C1** — the short-term reversal family reopened; reading 8 found no cell with potential and the family was closed on the owner's word of 2026-10-29.
+  2. **C3, its first step T0228's BTC computation from chain data** — bucket C's last family, its trigger fired with rung 3's entry; point-in-time on-chain values by construction, no vendor's restated history.
+  Human: "then we open C1, and start resolving T0228"; then, asked C1 or C3, the pick "C3 (Recommended)" (2026-11-21, by 20:35:39Z).
+
+[iter-204] Which coins does C3's on-chain computation start with? (Decision: 1)
+  1. **BTC first** — one node and one index; a BTC regime can gate every coin; LTC and DOGE only if BTC's on-chain regime adds something inside the A1 gate.
+  2. **BTC, LTC and DOGE together** — three nodes before any reading says one is worth it, and LTC's MWEB amounts one opaque bucket.
+  Human: "BTC first (Recommended)" (2026-11-21).
+
+[iter-204] By what route are BTC's on-chain series computed? (Decision: 1)
+  1. **Stock BRK, native USD** — BRK unmodified, its USD series and 150-day split; MVRV-Z ours from its caps; no custom code; T0228's EUR and 155-day text amended.
+  2. **A custom BRK composition valuing outputs at our Kraken EUR closes, with a 155-day split** — T0228's text as written; custom plugin code against an API BRK calls experimental, and a price series to choose for outputs before 2013-09-10.
+  Human: "Stock BRK, native USD (Recommended)", whose option text read: "Run BRK unmodified: its USD series and 150-day split; we compute MVRV-Z (expanding σ) from its caps. MVRV, NUPL and SOPR are ratios, so the currency moves them modestly (inferred, roughly the EUR/USD path since coins were created). Still point-in-time: its price is derived from the chain and pinned code. The Coin Metrics cross-check measures the oracle's error. No custom code; T0228's EUR and 155-day text amended in the spec." (2026-11-21, by 21:00:24Z).
+
+[iter-204] Where do the node and the index run? (Decision: 1)
+  1. **Ops, resource-capped** — containers under the ops role with CPU and IO limits, the first sync measured against ops' own timers with a stop rule; no new fleet member; ops is venue-facing, so its converges are the owner's and outside Kraken windows.
+  2. **A new dedicated host** — isolates the venue-facing node; a new fleet member with its role, Alloy, dead-man, custody channel and pins, and about 1.2 TB of disk.
+  Human: "Ops, resource-capped (Recommended)", whose option text read: "Containers under the ops role with CPU and IO limits, the first sync measured against ops' own timers with a stop rule if they slip; converges stay yours and outside Kraken windows. No new fleet member." (2026-11-21, by 21:00:24Z).
+
+[iter-204] On what terms may C3 and the engine rely on Coin Metrics Community rows? (Decision: 1)
+  1. **The call with Talos is enough** — ruling 4a's written permission replaced by the call; its scope cm-* values feeding the live engine for the owner's own trading with the owner's own funding; on Talos's terms: no support, no SLA, no quality or availability guarantee, real values only.
+  2. **Wait for written permission** — ruling 4a as it stood; no C3 trial relies on a cm-* row until a letter arrives.
+  Human: "the call is enough"; its scope: "cm-* values feeding the live engine. it was clearly mentioned that the use of the data are for my own trading algorithms with my own funding"; on Talos's terms, "real values only, no estimation" (2026-11-15, by 15:35Z).
+```
+
+- [ ] **Step 2:** Append the eight entries for D6–D13, one each, keyed `[iter-204]`, each its decision's question, its options as the spec gives them, `(Decision: N)` the option the owner ruled, and a `Human:` line quoting the ruling verbatim as the spec's decision quotes it at its head; a ruling the owner gave as the recommendation is logged as that pick.
+- [ ] **Step 3: `uv run pytest tests/test_decisions_log_shape.py tests/test_decisions_log_ties.py -q -p no:cacheprovider`, the gate, commit** `docs(research): C3's opening, BTC first, the route, the host, Coin Metrics' licence and spec 00164's rulings`.
+
+---
+
+## Outside the implementer's tasks
+
+**O1, the controller's, before Task 8 and Task 9.** Read Bitcoin Core v32.1's release page, its checksums list and the list's signatures; verify the signatures against the release's signing keys; paste the x86_64 Linux tarball's file name and sha256, and the verification's own output, into this plan's Task 8 *Interfaces* and the branch ledger; read the release notes of v32.1, v31.3 and v30.5 for a fix v32.1 lacks, and put any to the owner before Task 8 (spec D10); read the pinned binary's option names for spec D4's configuration from the release's own documentation, pasted into Task 9 *Interfaces*. Each read is shown to the owner with its source before Task 8 is dispatched.
+
+**O2, the controller's, before Task 1 and Task 9.** At `1a19c5e969761a0ce446483767da8c765e4aa895`, read whole and record in this plan, each with its source path: `docker/Dockerfile` (any `RUSTFLAGS` it sets; its runtime user and BRK's data path in the image); `crates/bitviewd/README.md` and the daemon's argument parser (its RPC address, port and authentication options; whether it reads the node's cookie file); the HTTP routes and series ids for a series by day, each height's monotonic day, a block hash by height, the indexed height and the node's tip (from `showcases/llms-full.txt` and the Python client's templates); the port `bitviewd` serves; and the price plugin's and the holders plugin's code for any read of a block after the one being priced (spec D3's premise). A finding against spec 00164 — a host-bound target, no cookie authentication, a read past the priced block, no route for a height's day — goes to the owner with the decision it touches before Task 1 or Task 9 is dispatched.
+
+**At the branch's end, the controller.** Every *Spec deviations* entry into the branch ledger and the PR body; the `pre-review` and `review` over `develop..HEAD` and the `re-review` over each fix range, on Opus, model named; the read before push named in the body; `.tmp/research/draft-brief.md` and `.tmp/research/measured-basis.md` copied to the main checkout's `.local/reads-archive/research/iter-204-t0228-btc-onchain/` before the merge, since spec 00164 quotes the first and cites the second; `open-pr`, whose Step 4 writes the change-index row `| #<n> | <date> | <title> | iter-204 | 00164 | T0228 |`; `merge-pr`.
+
+**After merge, the owner, in spec 00164's deployment order,** from merged `develop`, outside published Kraken maintenance windows, the feed read whole at planning time and again immediately before each converge, `converge.sh` never wrapped in `timeout`, each converge's deploy-log line committed as it ends on the pins branch cut before the Alloy converge. Each step reads back by value: the pulled digest; the Alloy converge's `rc` 0; both image ids from `docker image inspect --format '{{.Id}}'`; the three ages' 7-day maxima against their bars (the controller's, through `infra/scripts/grafana-query.py`); the ops converge's `rc` 0, `systemctl list-timers zcrypto-onchain-write.timer zcrypto-onchain-guard.timer` naming both, `docker ps -a --filter name=zcrypto-onchain` empty, the poller's `.Config.Image` the new digest; at the first start, each container's cgroup `io.max` and write rate (spec D11's IO clause); the node's sync start and end, the index's, the root's free bytes and each container's peak memory; `GET /api/series/list` holding every pinned id; the base's INFO line and `zcrypto onchain verify` by value; the guard's journal clean of ERROR through the sync; the pins pull request's rows, lines and the catalog heading's date.
+
+## The reading's branch
+
+After the rollout's pins pull request merges, a branch cut from `develop`, its iteration minted from the change index then; its tasks run by the controller in this order, plan 00150's Tasks 4–6 and plan 00151's Tasks 5–8 adopted by reference with these substitutions: `c2-lead-lag-reading` and `c1-maker-fill-reading` → `c3-onchain-reading`; `ohlc-15m` and `l2-fills-<stamp>` → `btc-onchain-<stamp>`, with `ohlc-full` linked beside it wherever the run or a replay reads; `00150` and `00151` → `00164`; `spec D7` and `spec D6` → spec 00164 D12; `T0016`'s reading bullet → T0228's; `reading 7` and `reading 8` → `reading <N>`, the ledger's next.
+- **R1 — the snapshot.** `uv run zcrypto onchain freeze --chain /var/lib/zcrypto-ops/onchain/<chain> --as-of <the chain's head day> --out /home/zhaow/Projects/zcrypto-kraken/data/btc-onchain-<stamp>`, the stamp `date -u +%Y%m%dT%H%M%SZ` read once; its catalog entry ``### `btc-onchain-<stamp>` `` in `l2-fills-20261029T000157Z`'s shape, naming the chain, the as-of line's sha256 and the producer's code ref; `zcrypto.toml`'s `authored_sets` gaining it; `uv run zcrypto data push`.
+- **R2 — the cross-check.** `uv run zcrypto onchain crosscheck --snapshot data/btc-onchain-<stamp> --versions /var/lib/zcrypto-ops/vintage-versions --generation 1 --head <the versions table's newest head's sha256, read by value>`, its whole output kept for the entry; exit 1 is the stop (spec D13), quoted to the owner and in T0228.
+- **R3 — the data-gated basis case**, `tests/test_research_c3_onchain_reading_basis.py`, in `tests/test_research_c1_maker_fill_reading_basis.py`'s form (`pytestmark = pytest.mark.data`, the literal-rooted `_DATA_ROOT`, a `nothing_found_under` gate naming `btc-onchain-*/BTC/onchain.parquet`, the `_DATA_ROOT` assertion first), its literals read by a scratch program from the snapshot and `ohlc-full` apart from `cli/research/subjects.py`: each feature's first and last read day and band days per year, the arm's index counts per asset and state, the events and others per cell, `nupl == 1 − 1/mvrv` and `mvrv == market_cap / realized_cap` to BRK's storage precision; a failing identity is the stop of spec D12's NUPL clause, put to the owner.
+- **R4 — the reads**, the trio over the branch, the `drive` carrying the hash rule in one sentence.
+- **R5 — the gate and the hash**, `sha256sum docs/specs/00164-t0228-btc-onchain-design.md`, pasted; the spec never edited after.
+- **R6 — the run, the line's checks and the table**: `uv run zcrypto research eval --subject c3-onchain-reading --dataset btc-onchain-<stamp> --reading --iteration <its iter> --spec-hash <H> --notes "<the notes line below, its placeholders replaced, never typed>"`, in the background, acted on at its completion; then a scratch program extracted from this plan, in plan 00150 Task 4 Step 7's form, printing the line's checks against R3's literals and the table spec 00164 D12's criterion is read off — every cell the floor admits, its four legs' values and whether each holds, and the counts.
+
+```text
+subject c3-onchain-reading over btc-onchain-<stamp> with ohlc-full beside it, both read whole, no window and no as-of; descriptive: no hypothesis, no bar, no verdict and no C slot; the arm the A1 sleeve as records 44 and 47 build it, long where its daily position is above 0 and flat at 0; four features read one day late, mvrv, mvrv_z, asopr and sth_supply_share, each banded low or high at its expanding 10th and 90th percentile after 365 values; 32 cells, feature by tail by state by horizon (7 or 30 daily closes), each contrasting the log forward after the events with the other closes of its state, per asset and pooled, over one stationary-bootstrap draw at mean block 102, 10000 resamples and seed 42, the far bounds at 0.078125 and 99.921875 percent; the potential criterion pre-registered by spec 00164's sha256 <H>: a floor of events in at least four calendar years, then four legs, the far bounds excluding 0, the difference at least 0.012 in size, its sign a veto in the long state or a re-entry in the flat state, and the summed returns after the events clearing 0.012 in that direction; read off a printed table, never by the subject's code.
+```
+
+- **R7 — the entry, the replay and the commit**: `docs/research/10.phase4-decisions.md`'s `[iter-<its>] BTC's on-chain regime read inside the A1 gate on btc-onchain-<stamp> (reading <N>)`, the cross-check's summary and the table in it, and what the criterion leaves for C3's next step — a cell with potential naming the trial a new spec registers under `C3`, none the owner's family call and, by T0228, no purchase; the slow-cases line; the replay on the tree the commit holds and on the tip pushed, `1 passed`, never a skip; the commit.
+- **R8 — T0228, T0016, the retirement, the index and the PR**: T0228's findings bullet copying the entry's headline and its `ripe_when` rewritten to wait on C3's next step; T0016's C3 findings bullet; `tests/retired_subjects.py` gaining `c3-onchain-reading`; `pytestmark = pytest.mark.retired` on `tests/test_research_c3_onchain_reading.py`; the index re-rendered; the change-index row; `open-pr`; `merge-pr`.
