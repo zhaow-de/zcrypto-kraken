@@ -13,8 +13,11 @@ from cli.capture.errors import CaptureError
 from cli.logging import get_logger
 from cli.onchain.brk import BrkClient
 from cli.onchain.chain import ChainError, Line, chain_name, line_days, verify, walk
+from cli.onchain.crosscheck import crosscheck
 from cli.onchain.freeze import freeze
 from cli.onchain.write import run_write
+from cli.registry.errors import RegistryError
+from cli.vintage.table import TableError
 
 log = get_logger("onchain.command")
 
@@ -161,3 +164,29 @@ def verify_cmd(
         log.error("onchain verify refused chain=%s reason=%s", chain.name, _failure(exc))
         raise typer.Exit(code=1) from exc
     log.info("onchain verify complete chain=%s head=%s head_sha256=%s days=%d", chain.name, line.day, line.sha256, days)
+
+
+@onchain_app.command("crosscheck")
+def crosscheck_cmd(
+    snapshot: Path = typer.Option(
+        ..., "--snapshot", resolve_path=True, help="The frozen snapshot's directory, read as any frozen set."
+    ),
+    versions: Path = typer.Option(..., "--versions", help="The vintage versions table's root."),
+    generation: int = typer.Option(..., "--generation", metavar="N", help="The versions table's generation."),
+    head: str = typer.Option(
+        ..., "--head", metavar="SHA256", help="The sha256 of the head the versions are read through, as of its latest row."
+    ),
+) -> None:
+    """Compare the snapshot with Coin Metrics day by day: our MVRV at its PriceUSD against its CapMVRVCur, our price
+    against its PriceUSD and our supply against its SplyCur. Log each year's, all days' and the tolerance span's
+    distributions; exit 1 where the span breaches the tolerance or the snapshot leaves out a day inside it, each
+    reason its own ERROR line, else 0."""
+    try:
+        code = crosscheck(snapshot, versions, generation=generation, head=head)
+    except (RegistryError, TableError, OSError) as exc:
+        log.error("onchain crosscheck refused snapshot=%s reason=%s", snapshot.name, exc)
+        raise typer.Exit(code=1) from exc
+    except Exception as exc:
+        log.error("onchain crosscheck refused snapshot=%s reason=%s", snapshot.name, _failure(exc))
+        raise typer.Exit(code=1) from exc
+    raise typer.Exit(code=code)
