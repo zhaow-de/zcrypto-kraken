@@ -1,6 +1,4 @@
-"""The writer of the vintage chain (spec D6, D8): under the chain's lock, the newest lines verified and their recorded
-block hashes re-read, then the base when the chain is empty and the index is at the node's tip, else each UTC day
-after the head that a block of a later monotonic day has closed and whose last block is `DEPTH` deep, in order."""
+"""The writer of the vintage chain (spec 00164 D6, D8): `run_write`, one run under the chain's lock."""
 
 from __future__ import annotations
 

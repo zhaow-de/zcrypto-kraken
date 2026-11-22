@@ -1,5 +1,5 @@
-"""The frozen snapshot of the vintage chain at an as-of line (spec D8): every row the base and the day files hold through
-that line, in day order, as one parquet, and a conformant manifest naming the line, written last."""
+"""The frozen snapshot of the vintage chain at an as-of line (spec 00164 D8): every row the base and the day files hold
+through that line, in day order, as one parquet, and a manifest naming the line, written last."""
 
 from __future__ import annotations
 

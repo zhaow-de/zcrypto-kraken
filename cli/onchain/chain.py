@@ -1,6 +1,6 @@
-"""The vintage chain in `ohlc-rolling`'s form (spec D8): `base/history.parquet` through the base day, one
+"""The vintage chain in `ohlc-rolling`'s form (spec 00164 D8): `base/history.parquet` through the base day, one
 `days/<YYYY>/<MM>/<DD>.parquet` for each day after it, and one canonical index line per day, each `prev` the sha256 of
-the line before it. Every file is created exclusive under `staging/`, linked into place once and never written again."""
+the line before it. Every file is written once."""
 
 from __future__ import annotations
 
@@ -145,8 +145,7 @@ def head(root: Path) -> Line | None:
 
 
 def staging_leftovers(root: Path) -> list[Path]:
-    """Every name under `<root>/staging`, each a temporary a writer that died left: a live write links its own into
-    place and always removes it."""
+    """Every name under `<root>/staging`: a live write always removes its temporary, so each is a dead writer's."""
     try:
         return sorted((root / _STAGING).iterdir())
     except FileNotFoundError:
@@ -174,10 +173,7 @@ def _make_directories(directory: Path) -> list[Path]:
 
 
 def _place(root: Path, relpath: str, data: bytes) -> None:
-    """`data` at `root / relpath`, written whole to an exclusive temporary under `staging/`, fsynced and linked into
-    place, so a target another process places meanwhile is refused and never replaced. A target present before the
-    write is refused first: past `write_base`'s and `write_day`'s refusals, only a writer that died between a file's
-    place and its line's leaves one."""
+    """`data` linked to `root / relpath` from a fsynced temporary under `staging/`; a present target is refused."""
     target = root / relpath
     if os.path.lexists(target):
         raise ChainError(f"{root}: no line names {relpath}, and it is present: a writer stopped between placing it and its line")

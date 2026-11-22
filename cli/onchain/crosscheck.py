@@ -1,4 +1,4 @@
-"""The cross-check of the snapshot against Coin Metrics at Coin Metrics' own price (spec D13): three ratios a day, their
+"""The cross-check of the snapshot against Coin Metrics at its own price (spec 00164 D13): three ratios a day, their
 distributions per year, over all days and over the span, and the tolerance over the span that stops a reading."""
 
 from __future__ import annotations
@@ -42,11 +42,9 @@ def _side(ours: bool, theirs: bool) -> str | None:
 def ratios(
     snapshot: pl.DataFrame, cm: dict[str, dict[date, str | None]], span: tuple[date, date] | None = None
 ) -> tuple[dict[str, dict[date, float]], dict[str, dict[date, str]]]:
-    """Over every day the snapshot or the vendor holds, and every calendar day of `span` where one is given,
-    `r_mvrv = (PriceUSD × supply / realized_cap) / CapMVRVCur − 1`, `r_price = price / PriceUSD − 1` and
-    `r_supply = supply / SplyCur − 1`; beside them each ratio's left-out days, a day the snapshot's where any operand
-    of ours is absent or unusable, a day neither side holds included, else the vendor's. Nothing is filled. Our price
-    counts only where `priced`: BRK serves a day it has not priced at 0."""
+    """Each ratio's values and left-out days over every day either side holds and every calendar day of `span`: a day is
+    the snapshot's left out where an operand of ours is absent or unusable, a day neither side holds among them, else
+    the vendor's. Nothing is filled; our price counts only where `priced`, since BRK serves a day it has not priced at 0."""
     ours = {row[0].date(): row[1:] for row in snapshot.select("ts", "price", "supply", "realized_cap").iter_rows()}
     mvrv_days, price_days, supply_days = (cm.get(series, {}) for series in CM_SERIES)
     calendar = [] if span is None else [span[0] + timedelta(days=n) for n in range((span[1] - span[0]).days + 1)]
@@ -147,9 +145,8 @@ def _failures(compared: dict, left_out: dict[date, str]) -> list[str]:
 
 
 def crosscheck(snapshot_dir: Path, versions_root: Path, *, generation: int, head: str) -> int:
-    """The snapshot read as a frozen set and Coin Metrics' three series read through `head` as of its latest row, the
-    summary logged a line each; 1 where the span holds no day `r_mvrv` compares, breaches a bar or holds a day the
-    snapshot leaves out of `r_mvrv`, each reason its own ERROR line, else 0."""
+    """The snapshot read as a frozen set and Coin Metrics' three series through `head` as of its latest row, the summary
+    logged a line each; returns `crosscheck_cmd`'s exit."""
     snapshot = ObservedReader(snapshot_dir.parent).read_series(snapshot_dir.name, SNAPSHOT_RELPATH)
     read = read_table(versions_root, generation, head)
     # A head's tick stamp is the tick's start, and its own rows are knowable after it: `t` at the stamp would leave out

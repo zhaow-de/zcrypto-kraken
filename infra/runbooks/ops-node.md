@@ -388,7 +388,7 @@ Nothing fired, or the on-chain guard or writer logged an ERROR. You are starting
 
 ### What it means
 
-The node and its index are a heavy load on a host whose own jobs come first: the guard stops both when one of the four ages it reads passes its bar — archive-pull's and the panel's, two timers, the liquidations poller's, a long-running container, or the vintage recorder's, a timer. A stop costs freshness and no stored value. While the index is down the writer writes nothing: before the chain's first line, the base, it logs an unreachable index at INFO; after it, at WARNING, until a day is 48 hours past its end unwritten, when it stops with an ERROR, `stale index: …`. The guard has no silence: a source silenced on `zcrypto-ops-vintage-not-recorded` still stops the node, and a source that stays down keeps it stopped.
+The node and its index are a heavy load on a host whose own jobs come first, so the guard stops both when one of its four ages passes its bar. A stop costs freshness and no stored value. While the index is down the writer writes nothing: before the chain's first line, the base, it logs an unreachable index at INFO; after it, at WARNING, until a day is 48 hours past its end unwritten, when it stops with an ERROR, `stale index: …`. The guard has no silence: a source silenced on `zcrypto-ops-vintage-not-recorded` still stops the node, and a source that stays down keeps it stopped.
 
 The two containers page through nothing of their own. Their logs stay in docker's `json-file` driver on this host, read with `docker logs`, and their health reaches the pager through the writer, whose ERROR names an index that stopped advancing. The node's blocks are public and re-downloadable and the index rebuilds from them, each a sync of its own; the chain is the one copy of its vintages, and a snapshot frozen from it is what reaches the NAS.
 
@@ -396,7 +396,7 @@ A host shutdown gives the docker daemon 90 s to stop its containers, not their 6
 
 ### The first start
 
-The owner's, attended, once the converge that renders the project has passed and the alert summaries and the panel description naming the node's stop have been pushed (`.claude/skills/zcrypto-grafana-push/SKILL.md`), so the reboot page names the stop before a node runs; a push held or not run holds the start.
+The owner's, attended, once the converge rendering the project has passed, the alert summaries and panel description naming the node's stop are pushed (`.claude/skills/zcrypto-grafana-push/SKILL.md`), and each guard age's 7-day maximum has passed the first-start read; a push or read held holds the start.
 
 1. **Start the node**: the root's free bytes first, `df -h /`, then `sudo docker compose -f /etc/zcrypto-ops/onchain/compose.yaml up -d bitcoind`, its time recorded as the initial sync's start.
 2. **Read its stop timeout**: `sudo docker inspect --format '{{.Config.StopTimeout}}' zcrypto-onchain-bitcoind` prints `600`, the compose file's grace; another print holds the procedure for the owner's word. The guard's own stops pass the grace whatever it prints.
@@ -428,7 +428,7 @@ The owner's, attended, once the converge that renders the project has passed and
 2. **`stale index: …`**: the index stopped advancing. A container the read lists as exited is the guard's stop (the part above) or the owner's hold; a running index whose log does not advance goes to the owner.
 3. **`the index serves no series …` or `the index serves no value of …`**: the pinned instance lacks what the writer pins, which the writer refuses at each run until the owner's word.
 4. **`… hashes to …, not the … its line records: a reorg past the depth; nothing written`**: the owner's ruling on a new chain. A line, or a file a line names, is not edited by hand (no count command: a hand edit leaves no record in the tree).
-5. **`… no line names <relpath>, and it is present …`**: a writer that died between its file's rename and its line's, the orphan part below.
+5. **`… no line names <relpath>, and it is present …`**: a writer that died between placing its file and its line, the orphan part below.
 6. **`the on-chain writer ended with exit … and … summary line(s)`**, the runner's own: a run the CLI did not end. An exited leftover `zcrypto-onchain-write` container in step 1's list fails the next run on the name conflict: `sudo docker rm zcrypto-onchain-write`; a running one is a run still in flight, and docker refuses its removal.
 7. **A listed file whose verify failed** — `… does not hash to its listing` or `… is listed and absent from …`, each run re-reading the newest 30 days' lines and files — goes to the owner, and that file is not deleted (no count command: a deletion by hand leaves no record in the tree).
 8. **A reason steps 2 to 7 do not name** — the runner's `the zcrypto-onchain compose project is absent, its network with it, while … holds a line; nothing written`, `reason=lock held`, `… is not a directory; the writer never makes the chain root`, `the BRK commit … is not 40 lowercase hex characters; no chain is opened`, or a failure named as `<Exception> at <file>:<line> in <function>` — goes to the owner with step 1's reads.

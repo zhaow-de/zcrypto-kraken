@@ -1,5 +1,5 @@
-"""The on-chain day file's columns, each BRK series id pinned beside its column, and the two series computed outside
-BRK, MVRV-Z and the STH supply share (spec D3, D7, D8)."""
+"""The on-chain day file's columns, each pinned to its BRK series id, and the two series computed outside BRK, MVRV-Z
+and the STH supply share (spec 00164 D3, D7, D8)."""
 
 from __future__ import annotations
 
