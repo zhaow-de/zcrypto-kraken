@@ -38,3 +38,11 @@ def test_the_node_image_checks_its_pinned_sha256_before_it_extracts():
     extracts = [i for i, step in enumerate(steps) if step[0] == "tar" and NODE_TARBALL in step]
     assert extracts, steps
     assert steps.index(check) < min(extracts), steps
+    purges = [
+        i
+        for i, step in enumerate(steps)
+        if step[:2] == ["apt-get", "purge"] and {"--auto-remove", "curl", "ca-certificates"} <= set(step)
+    ]
+    assert purges and min(purges) > max(extracts), steps
+    # The exec form makes `bitcoind` PID 1, so the containers' stop grace reaches the node as SIGTERM.
+    assert [a for k, a in instructions if k == "ENTRYPOINT"] == ['["bitcoind"]']
