@@ -21,7 +21,8 @@ _BLOCK_HASH = re.compile(r"[0-9a-f]{64}")
 
 
 class BrkError(Exception):
-    """An index unreachable, an answer not 200, unparseable or missing a key; its text names the route."""
+    """A route read that returns no value: the index unreached, or an answer the client refuses; its text names the
+    route and the cause."""
 
 
 def _field(body: object, key: str, route: str, kind: type) -> object:
