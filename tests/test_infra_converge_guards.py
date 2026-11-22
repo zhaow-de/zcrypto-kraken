@@ -2373,9 +2373,11 @@ def test_the_onchain_block_renders_only_under_both_image_ids_and_starts_nothing(
     }
 
     # Module keys and their arguments alone: a refusal's message elsewhere in the role names `docker compose up`.
+    # Each leaf is its name and its module and nothing beside them, so no `notify:` can hand a render to a handler.
     leaves = [t for t, _ in iter_tasks(inner)]
     modules = [(key, args) for t in leaves for key, args in t.items() if "." in key]
     assert [key for key, _ in modules] == ["ansible.builtin.file", "ansible.builtin.template", "ansible.builtin.template"]
+    assert [set(t) for t in leaves] == [{"name", key} for key, _ in modules]
     arguments = yaml.safe_dump([args for _, args in modules])
     assert "docker_compose" not in arguments and not re.search(r"\bcompose\b.*\bup\b", arguments)
 

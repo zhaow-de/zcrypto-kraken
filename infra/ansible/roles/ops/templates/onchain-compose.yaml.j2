@@ -52,7 +52,10 @@ services:
       - "{{ ops_onchain_root }}/bitcoin:/bitcoin:ro"
       - "{{ ops_onchain_root }}/bitview:/bitview"
     networks: [onchain]
-    # Long enough for bitviewd to finish a write before docker kills it.
+    # The node's grace, so a stop leaves bitviewd's write in flight that long before docker kills it: on the
+    # first SIGINT or SIGTERM a background thread takes the write lock, waiting only for that write, then
+    # exits (BRK at 1a19c5e969761a0ce446483767da8c765e4aa895: crates/bitview/src/lib.rs:63-64,
+    # crates/brk_exit/src/lib.rs:15 and :30-41).
     stop_grace_period: "{{ ops_onchain_stop_grace }}s"
     deploy:
       resources:

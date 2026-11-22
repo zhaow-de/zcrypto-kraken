@@ -842,8 +842,8 @@
         group: "{{ ops_data_user }}"
         mode: "0640"
 
-# Deliberately OUTSIDE the digest gate above: this script consumes no image reference (it drives
-# systemd and rm), and the operator needs it on the host regardless of whether the converge that
+# Deliberately OUTSIDE the vintage recorder block's digest gate: this script consumes no image reference
+# (it drives systemd and rm), and the operator needs it on the host regardless of whether the converge that
 # put it there re-pinned anything -- a digestless config-only converge must still land it.
 - name: install the panel regenerate flow (delete-and-rebuild with its refusals)
   ansible.builtin.template:
