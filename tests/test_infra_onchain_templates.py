@@ -264,8 +264,7 @@ _KNOBS = {
 }
 # What docker itself prints on stderr where its daemon is down.
 DOCKER_DOWN = "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?"
-# docker's not-found answer for the on-chain network, in the daemon's text its client carries and in the client's own
-# form, and a daemon refusal that names the network without saying it is absent.
+# docker's two not-found answers for the network, and a refusal that names it without saying it is absent.
 NETWORK_ABSENT = {
     "daemon-text": "Error response from daemon: network zcrypto-onchain not found",
     "client-text": "Error: No such network: zcrypto-onchain",
