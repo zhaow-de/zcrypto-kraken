@@ -2295,6 +2295,91 @@ def test_the_outbox_groups_gid_is_derived_beside_the_data_users():
     assert set_facts(tasks[derive], variables)["ops_hot_gid"] == "1002"
 
 
+OPS_ONCHAIN_DIRS_TASK = "ensure the on-chain node, index and chain directories exist"
+OPS_ONCHAIN_BLOCK = "install the on-chain node and index project (needs both pinned image ids)"
+OPS_ONCHAIN_COMPOSE_DIR_TASK = "ensure the on-chain compose project directory exists"
+
+
+def test_the_onchain_roots_lie_outside_the_ops_data_root_but_the_chain():
+    tasks = load_tasks(OPS_TASKS)
+    index = task_index(tasks, OPS_ONCHAIN_DIRS_TASK)
+    task = tasks[index]
+    assert "when" not in task, "ungated: a converge without either image id still leaves the roots in place"
+    assert index > task_index(tasks, OPS_VINTAGE_DIRS_TASK)
+    assert task["ansible.builtin.file"] == {
+        "path": "{{ item.path }}",
+        "state": "directory",
+        "owner": "{{ ops_data_user }}",
+        "group": "{{ ops_data_user }}",
+        "mode": "{{ item.mode }}",
+    }
+    assert task["loop"] == [
+        {"path": "{{ ops_onchain_root }}", "mode": "0755"},
+        {"path": "{{ ops_onchain_root }}/bitcoin", "mode": "0750"},
+        {"path": "{{ ops_onchain_root }}/bitview", "mode": "0750"},
+        {"path": "{{ ops_data_dir }}/{{ ops_onchain_subdir }}", "mode": "0755"},
+    ]
+    defaults = yaml.safe_load(OPS_DEFAULTS.read_text())
+    root, node, index_root, chain = (Path(_render(item["path"], defaults)) for item in task["loop"])
+    data = Path(defaults["ops_data_dir"])
+    assert node.parent == index_root.parent == root and node != index_root
+    assert not root.is_relative_to(data) and not data.is_relative_to(root)
+    assert chain.parent == data
+
+
+def test_the_onchain_block_renders_only_under_both_image_ids_and_starts_nothing():
+    tasks = load_tasks(OPS_TASKS)
+    index = task_index(tasks, OPS_ONCHAIN_BLOCK)
+    block = tasks[index]
+    ids = {"ops_bitcoind_image_id": "sha256:" + "b1" * 32, "ops_bitview_image_id": "sha256:" + "f7" * 32}
+    when = when_conditions(block)
+    assert truthy(when, ids)
+    for absent in ({}, *({k: v} for k, v in ids.items())):
+        assert not truthy(when, absent), absent
+    uid = next(i for i, t in enumerate(tasks) if "ops_uid" in t.get("ansible.builtin.set_fact", {}))
+    assert index > uid, "the compose file renders `user:` from ops_uid and ops_gid"
+    assert index > task_index(tasks, OPS_ONCHAIN_DIRS_TASK), "the node's configuration renders into a root the preamble makes"
+
+    inner = block["block"]
+    names = [t["name"] for t in inner]
+    assert names[0] == OPS_ONCHAIN_COMPOSE_DIR_TASK
+    assert inner[0]["ansible.builtin.file"] == {
+        "path": "{{ ops_onchain_compose_dir }}",
+        "state": "directory",
+        "owner": "root",
+        "group": "root",
+        "mode": "0755",
+    }
+    renders = {
+        t["ansible.builtin.template"]["src"]: (i, t["ansible.builtin.template"])
+        for i, t in enumerate(inner)
+        if "ansible.builtin.template" in t
+    }
+    compose_at, compose = renders["onchain-compose.yaml.j2"]
+    assert compose_at > 0
+    assert compose == {
+        "src": "onchain-compose.yaml.j2",
+        "dest": "{{ ops_onchain_compose_dir }}/compose.yaml",
+        "owner": "root",
+        "group": "root",
+        "mode": "0644",
+    }
+    assert renders["bitcoin.conf.j2"][1] == {
+        "src": "bitcoin.conf.j2",
+        "dest": "{{ ops_onchain_root }}/bitcoin/bitcoin.conf",
+        "owner": "root",
+        "group": "{{ ops_data_user }}",
+        "mode": "0640",
+    }
+
+    # Module keys and their arguments alone: a refusal's message elsewhere in the role names `docker compose up`.
+    leaves = [t for t, _ in iter_tasks(inner)]
+    modules = [(key, args) for t in leaves for key, args in t.items() if "." in key]
+    assert [key for key, _ in modules] == ["ansible.builtin.file", "ansible.builtin.template", "ansible.builtin.template"]
+    arguments = yaml.safe_dump([args for _, args in modules])
+    assert "docker_compose" not in arguments and not re.search(r"\bcompose\b.*\bup\b", arguments)
+
+
 ACCESS_TASKS = ANSIBLE / "roles" / "access" / "tasks" / "main.yml"
 _RELAY_GATE = "the ssh relay is running the target this play renders"
 _RELAY_FLUSH = "apply pending handlers before the relay drift gate"

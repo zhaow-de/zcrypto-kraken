@@ -1,0 +1,76 @@
+# Rendered by the `ops` Ansible role — do not hand-edit on the host, it is overwritten on the next
+# converge. Edit infra/ansible/roles/ops/templates/onchain-compose.yaml.j2 instead.
+#
+# Its own project, apart from the liquidations poller's, so an attended `docker compose up -d` of either
+# never touches the other. No converge starts, stops or recreates either service. Start bitcoind before
+# bitview: bitviewd exits at start while the node's cookie, /bitcoin/.cookie, is absent.
+#
+# Neither service publishes a port or carries an environment: RPC and the index's API stay on this
+# project's network, and the node's cookie authenticates.
+name: zcrypto-onchain
+services:
+  bitcoind:
+    container_name: zcrypto-onchain-bitcoind
+    image: "{{ ops_bitcoind_image_id }}"
+    restart: unless-stopped
+    user: "{{ ops_uid }}:{{ ops_gid }}"
+    command: ["-datadir=/bitcoin", "-conf=/bitcoin/bitcoin.conf"]
+    volumes:
+      - "{{ ops_onchain_root }}/bitcoin:/bitcoin"
+    networks: [onchain]
+    # Long enough for the node to flush its cache before docker kills it.
+    stop_grace_period: "{{ ops_onchain_stop_grace }}s"
+    deploy:
+      resources:
+        limits:
+          cpus: "{{ ops_bitcoind_cpus }}"
+          memory: "{{ ops_bitcoind_memory }}"
+    # A lower CPU weight than the ops containers', which set none, so the ops timers win contention under the caps.
+    cpu_shares: {{ ops_onchain_cpu_shares }}
+    blkio_config:
+      device_read_bps: [{path: "{{ ops_onchain_io_device }}", rate: "{{ ops_onchain_read_bps }}"}]
+      device_write_bps: [{path: "{{ ops_onchain_io_device }}", rate: "{{ ops_onchain_write_bps }}"}]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  bitview:
+    container_name: zcrypto-onchain-bitview
+    image: "{{ ops_bitview_image_id }}"
+    restart: unless-stopped
+    # zcrypto-data's uid, not the image's, so BRK's data and working directory are /bitview, outside the
+    # image's home.
+    user: "{{ ops_uid }}:{{ ops_gid }}"
+    working_dir: /bitview
+    # No `entrypoint:`: the image's own, `bitviewd --serverbind 0.0.0.0`, runs these arguments after its
+    # bind, which an `entrypoint:` would drop for bitviewd's own loopback bind. --rpcconnect names the node
+    # on this network at RPC's default port; the cookie is read from --bitcoindir.
+    command: ["--bitcoindir", "/bitcoin", "--blocksdir", "/bitcoin/blocks", "--bitviewdir", "/bitview", "--rpcconnect", "zcrypto-onchain-bitcoind"]
+    volumes:
+      - "{{ ops_onchain_root }}/bitcoin:/bitcoin:ro"
+      - "{{ ops_onchain_root }}/bitview:/bitview"
+    networks: [onchain]
+    # Long enough for bitviewd to finish a write before docker kills it.
+    stop_grace_period: "{{ ops_onchain_stop_grace }}s"
+    deploy:
+      resources:
+        limits:
+          cpus: "{{ ops_bitview_cpus }}"
+          memory: "{{ ops_bitview_memory }}"
+    cpu_shares: {{ ops_onchain_cpu_shares }}
+    blkio_config:
+      device_read_bps: [{path: "{{ ops_onchain_io_device }}", rate: "{{ ops_onchain_read_bps }}"}]
+      device_write_bps: [{path: "{{ ops_onchain_io_device }}", rate: "{{ ops_onchain_write_bps }}"}]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# Named outright rather than by compose's project prefix, so a container outside this project joins it by
+# that name.
+networks:
+  onchain:
+    name: zcrypto-onchain
