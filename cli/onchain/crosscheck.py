@@ -3,15 +3,15 @@ distributions per year, over all days and over the span, and the tolerance over 
 
 from __future__ import annotations
 
-import math
 from collections.abc import Callable
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import polars as pl
 
 from cli.logging import get_logger
 from cli.onchain.freeze import SNAPSHOT_RELPATH
+from cli.onchain.series import _finite, priced
 from cli.registry.observed import ObservedReader
 from cli.vintage.asof import as_of
 from cli.vintage.table import TableRead, read_table
@@ -24,14 +24,6 @@ RATIOS = ("r_mvrv", "r_price", "r_supply")
 SIDES = ("snapshot", "vendor")
 
 log = get_logger("onchain.crosscheck")
-
-
-def _number(value: float | None) -> bool:
-    return value is not None and math.isfinite(value)
-
-
-def _divisor(value: float | None) -> bool:
-    return value is not None and math.isfinite(value) and value > 0
 
 
 def _served(days: dict[date, str | None], day: date) -> float | None:
@@ -48,22 +40,25 @@ def _side(ours: bool, theirs: bool) -> str | None:
 
 
 def ratios(
-    snapshot: pl.DataFrame, cm: dict[str, dict[date, str | None]]
+    snapshot: pl.DataFrame, cm: dict[str, dict[date, str | None]], span: tuple[date, date] | None = None
 ) -> tuple[dict[str, dict[date, float]], dict[str, dict[date, str]]]:
-    """Over every day the snapshot or the vendor holds, `r_mvrv = (PriceUSD × supply / realized_cap) / CapMVRVCur − 1`,
-    `r_price = price / PriceUSD − 1` and `r_supply = supply / SplyCur − 1`; beside them each ratio's left-out days, a
-    day the snapshot's where any operand of ours is absent or unusable, else the vendor's. Nothing is filled."""
+    """Over every day the snapshot or the vendor holds, and every calendar day of `span` where one is given,
+    `r_mvrv = (PriceUSD × supply / realized_cap) / CapMVRVCur − 1`, `r_price = price / PriceUSD − 1` and
+    `r_supply = supply / SplyCur − 1`; beside them each ratio's left-out days, a day the snapshot's where any operand
+    of ours is absent or unusable, a day neither side holds included, else the vendor's. Nothing is filled. Our price
+    counts only where `priced`: BRK serves a day it has not priced at 0."""
     ours = {row[0].date(): row[1:] for row in snapshot.select("ts", "price", "supply", "realized_cap").iter_rows()}
     mvrv_days, price_days, supply_days = (cm.get(series, {}) for series in CM_SERIES)
+    calendar = [] if span is None else [span[0] + timedelta(days=n) for n in range((span[1] - span[0]).days + 1)]
     values: dict[str, dict[date, float]] = {name: {} for name in RATIOS}
     left_out: dict[str, dict[date, str]] = {name: {} for name in RATIOS}
-    for day in sorted({*ours, *mvrv_days, *price_days, *supply_days}):
+    for day in sorted({*ours, *mvrv_days, *price_days, *supply_days, *calendar}):
         price, supply, realized = ours.get(day, (None, None, None))
         their_mvrv, their_price, their_supply = (_served(days, day) for days in (mvrv_days, price_days, supply_days))
         sides = {
-            "r_mvrv": _side(_number(supply) and _divisor(realized), _number(their_price) and _divisor(their_mvrv)),
-            "r_price": _side(_number(price), _divisor(their_price)),
-            "r_supply": _side(_number(supply), _divisor(their_supply)),
+            "r_mvrv": _side(_finite(supply) and priced(realized), _finite(their_price) and priced(their_mvrv)),
+            "r_price": _side(priced(price), priced(their_price)),
+            "r_supply": _side(_finite(supply), priced(their_supply)),
         }
         for name, side in sides.items():
             if side is not None:
@@ -153,13 +148,14 @@ def _failures(compared: dict, left_out: dict[date, str]) -> list[str]:
 
 def crosscheck(snapshot_dir: Path, versions_root: Path, *, generation: int, head: str) -> int:
     """The snapshot read as a frozen set and Coin Metrics' three series read through `head` as of its latest row, the
-    summary logged a line each; 1 where the span fails the tolerance, each reason its own ERROR line, else 0."""
+    summary logged a line each; 1 where the span holds no day `r_mvrv` compares, breaches a bar or holds a day the
+    snapshot leaves out of `r_mvrv`, each reason its own ERROR line, else 0."""
     snapshot = ObservedReader(snapshot_dir.parent).read_series(snapshot_dir.name, SNAPSHOT_RELPATH)
     read = read_table(versions_root, generation, head)
     # A head's tick stamp is the tick's start, and its own rows are knowable after it: `t` at the stamp would leave out
     # the head's own tick.
     t = pl.concat([read.versions["knowable_at"], read.coverage["knowable_at"]]).max()
-    values, left_out = ratios(snapshot, _vendor(read, t))
+    values, left_out = ratios(snapshot, _vendor(read, t), SPAN)
     report = summary(values, left_out, SPAN)
     first, last = SPAN
     for label, line in report.items():

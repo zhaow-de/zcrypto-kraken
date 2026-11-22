@@ -31,14 +31,15 @@ JANUARY = [date(2020, 1, 1) + timedelta(days=n) for n in range(28)]
 GAP = date(2020, 1, 15)
 CAP_MVRV, PRICE_USD, SPLY_CUR = 2.5, 40000.0, 18000000.0
 TOKENS = {"CapMVRVCur": "2.5", "PriceUSD": "40000", "SplyCur": "18000000"}
-# Served on every day but GAP, on which Coin Metrics serves no CapMVRVCur.
-VENDOR = {
-    day: {metric: token for metric, token in TOKENS.items() if (day, metric) != (GAP, "CapMVRVCur")}
-    for day in [PRE, FIRST, *JANUARY, LAST, POST]
-}
+SPAN_DAYS = [FIRST, *JANUARY, LAST]
+SERVED = [PRE, *SPAN_DAYS, POST]
+# Served on every day of SERVED but GAP, on which Coin Metrics serves no CapMVRVCur.
+VENDOR = {day: {metric: token for metric, token in TOKENS.items() if (day, metric) != (GAP, "CapMVRVCur")} for day in SERVED}
 # Served before and after the span alone.
 UNSPANNED = {day: dict(TOKENS) for day in (PRE, POST)}
-SPAN_DAYS = [FIRST, *JANUARY, LAST]
+# A run's snapshot holds every calendar day of the span and the day either side of it.
+CALENDAR = [FIRST + timedelta(days=n) for n in range((LAST - FIRST).days + 1)]
+HELD = [PRE, *CALENDAR, POST]
 
 
 def _snapshot(rows: dict[date, tuple[float | None, float | None, float | None]]) -> pl.DataFrame:
@@ -154,7 +155,7 @@ def test_the_three_ratios_on_a_known_answer():
 
 
 def test_a_day_either_side_lacks_is_counted_and_never_filled():
-    both, vendor_only, snapshot_only, zero_realized, nan_price, retracted = (date(2021, 6, d) for d in range(1, 7))
+    both, vendor_only, snapshot_only, zero_realized, nan_price, retracted, zero_price = (date(2021, 6, d) for d in range(1, 8))
     ours = (55.0, 1010.0, 25000.0)
     snapshot = _snapshot(
         {
@@ -163,11 +164,12 @@ def test_a_day_either_side_lacks_is_counted_and_never_filled():
             zero_realized: (55.0, 1010.0, 0.0),
             nan_price: (float("nan"), 1010.0, 25000.0),
             retracted: ours,
+            zero_price: (0.0, 1010.0, 25000.0),
         }
     )
     # The vendor serves every day but `snapshot_only`, the day after one it serves; `retracted`'s CapMVRVCur is a
-    # retraction, its current token null.
-    served = [both, vendor_only, zero_realized, nan_price, retracted]
+    # retraction, its current token null. `zero_price` is a day BRK has not priced, which it serves at 0.
+    served = [both, vendor_only, zero_realized, nan_price, retracted, zero_price]
     cm = {
         MVRV: {day: None if day == retracted else "2" for day in served},
         PRICE: dict.fromkeys(served, "50"),
@@ -178,12 +180,12 @@ def test_a_day_either_side_lacks_is_counted_and_never_filled():
 
     assert left_out == {
         "r_mvrv": {vendor_only: "snapshot", snapshot_only: "vendor", zero_realized: "snapshot", retracted: "vendor"},
-        "r_price": {vendor_only: "snapshot", snapshot_only: "vendor", nan_price: "snapshot"},
+        "r_price": {vendor_only: "snapshot", snapshot_only: "vendor", nan_price: "snapshot", zero_price: "snapshot"},
         "r_supply": {vendor_only: "snapshot", snapshot_only: "vendor"},
     }
-    assert values["r_mvrv"] == {both: pytest.approx(0.01), nan_price: pytest.approx(0.01)}
+    assert values["r_mvrv"] == dict.fromkeys([both, nan_price, zero_price], pytest.approx(0.01))
     assert values["r_price"] == {both: pytest.approx(0.1), zero_realized: pytest.approx(0.1), retracted: pytest.approx(0.1)}
-    assert values["r_supply"] == dict.fromkeys([both, zero_realized, nan_price, retracted], pytest.approx(0.01))
+    assert values["r_supply"] == dict.fromkeys([both, zero_realized, nan_price, retracted, zero_price], pytest.approx(0.01))
     assert summary(values, left_out, (both, retracted))["all"]["r_mvrv"]["left_out"] == {"snapshot": 2, "vendor": 2}
 
 
@@ -219,16 +221,15 @@ def test_a_token_is_parsed_as_served():
 def test_the_tolerance_exits_1_on_a_breach_and_0_within(tmp_path, vendor_table, unspanned_table, caplog, case, code, reason):
     """Every case's span holds no day the snapshot leaves out; `median` has every compared day at 0.03 and `p99` two
     of its 29 at -0.2 and the rest at 0.01, so each breaches its bar alone."""
-    days = [PRE, *SPAN_DAYS, POST]
     r_mvrv = {
         "within": {day: -0.015 for day in JANUARY[::2]},
-        "median": dict.fromkeys(days, 0.03),
+        "median": dict.fromkeys(HELD, 0.03),
         "p99": {JANUARY[3]: -0.2, JANUARY[20]: -0.2},
         "no-span-day": {},
     }[case]
     table = unspanned_table if case == "no-span-day" else vendor_table
 
-    got, infos, errors = _run(tmp_path, table, _snapshot(_ours(days, r_mvrv)), caplog)
+    got, infos, errors = _run(tmp_path, table, _snapshot(_ours(HELD, r_mvrv)), caplog)
 
     assert got == code
     assert _reasons(errors) == ([] if reason is None else [reason])
@@ -239,18 +240,16 @@ def test_the_tolerance_exits_1_on_a_breach_and_0_within(tmp_path, vendor_table, 
 def test_the_span_bounds_the_tolerance(tmp_path, vendor_table, caplog):
     """A breach the day before the span and the day after it, at 5.0 each: counted with the span's 29, they would put
     its 99th percentile at 5.0."""
-    days = [PRE, *SPAN_DAYS, POST]
-
-    code, infos, errors = _run(tmp_path, vendor_table, _snapshot(_ours(days, {PRE: 5.0, POST: 5.0})), caplog)
+    code, infos, errors = _run(tmp_path, vendor_table, _snapshot(_ours(HELD, {PRE: 5.0, POST: 5.0})), caplog)
 
     assert (code, errors) == (0, [])
     assert re.search(r" r_mvrv n=31 .* max=5 ", next(line for line in infos if line.startswith("onchain crosscheck all ")))
 
 
-def _planted(restored: bool) -> pl.DataFrame:
-    """The vendor's days, each within both bars but FIRST, whose realized cap is null unless `restored`, and PRE, whose
-    realized cap is 0.0; GAP, on which the vendor serves no CapMVRVCur, held as any other day."""
-    rows = _ours([PRE, *SPAN_DAYS, POST], {})
+def _planted(restored: bool, days: list[date] = HELD) -> pl.DataFrame:
+    """`days`, each within both bars but FIRST, whose realized cap is null unless `restored`, and PRE, whose realized
+    cap is 0.0; GAP, on which the vendor serves no CapMVRVCur, held as any other day."""
+    rows = _ours(days, {})
     if not restored:
         rows[FIRST] = (rows[FIRST][0], rows[FIRST][1], None)
     rows[PRE] = (rows[PRE][0], rows[PRE][1], 0.0)
@@ -270,13 +269,32 @@ def test_a_day_the_snapshot_leaves_out_inside_the_span_exits_1_naming_it(tmp_pat
 
 
 def test_the_span_line_counts_left_out_days_per_side():
-    values, left_out = ratios(_planted(restored=False), _cm(VENDOR))
+    values, left_out = ratios(_planted(restored=False, days=SERVED), _cm(VENDOR))
 
     report = summary(values, left_out, (FIRST, LAST))
 
     assert report["span"]["r_mvrv"]["left_out"] == {"snapshot": 1, "vendor": 1}
     assert report["all"]["r_mvrv"]["left_out"] == {"snapshot": 2, "vendor": 1}
     assert (report["span"]["r_mvrv"]["n"], report["all"]["r_mvrv"]["n"]) == (28, 29)
+
+
+def test_each_year_line_reads_its_own_year_alone():
+    values, left_out = ratios(_planted(restored=False, days=SERVED), _cm(VENDOR))
+
+    report = summary(values, left_out, (FIRST, LAST))
+
+    assert list(report) == ["2010", "2020", "2026", "all", "span"]
+    assert [report[year]["r_mvrv"]["n"] for year in ("2010", "2020", "2026")] == [0, 27, 2]
+    assert report["2010"]["r_mvrv"]["left_out"] == {"snapshot": 2, "vendor": 0}
+
+
+def test_a_day_inside_the_span_neither_side_holds_is_the_snapshot_s_and_named(tmp_path, vendor_table, caplog):
+    hole = date(2015, 5, 5)
+
+    code, _, errors = _run(tmp_path, vendor_table, _snapshot(_ours([day for day in HELD if day != hole], {})), caplog)
+
+    assert code == 1
+    assert _reasons(errors) == ["2015-05-05 is inside the span and the snapshot leaves it out of r_mvrv"]
 
 
 def _served_days(data: bytes) -> dict[date, dict[str, str]]:
@@ -288,16 +306,16 @@ def _served_days(data: bytes) -> dict[date, dict[str, str]]:
 
 def test_the_versions_are_read_through_the_head_named(tmp_path, standard_table, caplog):
     """The standard record's last tick is the first to serve 2026-11-11's three tokens; the snapshot agrees with every
-    day that tick's body serves all three on and holds each day it serves any, so through the head before, that day
-    alone moves from compared to the vendor's left-out."""
+    day that tick's body serves all three on and holds each day of the span and each day it serves any, so through
+    the head before, that day alone moves from compared to the vendor's left-out."""
     versions, heads = standard_table
     served = _served_days(body("second/cm-btc-next"))
     full = [day for day, tokens in served.items() if len(tokens) == 3]
-    rows = {day: (1.0, 1.0, 1.0) for day in served}
+    rows = {day: (1.0, 1.0, 1.0) for day in [*CALENDAR, *served]}
     for day in full:
         price, supply, mvrv = (float(served[day][m]) for m in ("PriceUSD", "SplyCur", "CapMVRVCur"))
         rows[day] = (price, supply, price * supply / mvrv)
-    unpaired = len(served) - len(full)
+    unpaired = len(rows) - len(full)
     assert date(2026, 11, 11) in full and date(2026, 11, 11) not in _served_days(body("cm-btc"))
 
     for head, n, vendor in ((heads[-2], len(full) - 1, unpaired + 1), (heads[-1], len(full), unpaired)):
@@ -319,6 +337,22 @@ def test_the_command_reads_a_snapshot_given_as_the_working_directory(tmp_path, v
     assert code == 0
     assert lines[-1] == ("INFO", f"onchain crosscheck passed snapshot={SET} head={head} span=2010-08-16..2026-03-30")
     assert [label for label, _ in lines] == ["INFO"] * len(lines)
+
+
+@pytest.mark.parametrize("form", ["stamp", "upper", "short"])
+def test_a_head_named_by_anything_but_its_sha256_is_refused_in_one_line(tmp_path, vendor_table, form):
+    """`stamp` is the head's own tick stamp, which the table would resolve."""
+    versions, head = vendor_table
+    named = {"stamp": next((versions / "gen-1" / "heads").glob("*/*/*/*")).name, "upper": head.upper(), "short": head[:63]}
+    snapshot = _snapshot_dir(tmp_path, _planted(restored=True))
+
+    code, lines = _cli(
+        ["crosscheck", "--snapshot", str(snapshot), "--versions", str(versions), "--generation", "1", "--head", named[form]]
+    )
+
+    assert code == 1
+    reason = f"--head {named[form]!r} is not a sha256 of 64 lowercase hex characters"
+    assert lines == [("ERROR", f"onchain crosscheck refused snapshot={SET} reason={reason}")]
 
 
 def test_a_head_the_table_lacks_is_refused_in_one_line(tmp_path, vendor_table):

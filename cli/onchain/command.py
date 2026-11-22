@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import traceback
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -166,6 +167,9 @@ def verify_cmd(
     log.info("onchain verify complete chain=%s head=%s head_sha256=%s days=%d", chain.name, line.day, line.sha256, days)
 
 
+_SHA256 = re.compile(r"[0-9a-f]{64}")
+
+
 @onchain_app.command("crosscheck")
 def crosscheck_cmd(
     snapshot: Path = typer.Option(
@@ -174,13 +178,23 @@ def crosscheck_cmd(
     versions: Path = typer.Option(..., "--versions", help="The vintage versions table's root."),
     generation: int = typer.Option(..., "--generation", metavar="N", help="The versions table's generation."),
     head: str = typer.Option(
-        ..., "--head", metavar="SHA256", help="The sha256 of the head the versions are read through, as of its latest row."
+        ...,
+        "--head",
+        metavar="SHA256",
+        help="The sha256 of the head the versions are read through, as of its latest row: 64 lowercase hex characters.",
     ),
 ) -> None:
     """Compare the snapshot with Coin Metrics day by day: our MVRV at its PriceUSD against its CapMVRVCur, our price
     against its PriceUSD and our supply against its SplyCur. Log each year's, all days' and the tolerance span's
-    distributions; exit 1 where the span breaches the tolerance or the snapshot leaves out a day inside it, each
-    reason its own ERROR line, else 0."""
+    distributions; exit 1 where the span holds no day the MVRV ratio compares, breaches the tolerance or holds a day
+    the snapshot leaves out, each reason its own ERROR line, else 0."""
+    if not _SHA256.fullmatch(head):
+        log.error(
+            "onchain crosscheck refused snapshot=%s reason=--head %r is not a sha256 of 64 lowercase hex characters",
+            snapshot.name,
+            head,
+        )
+        raise typer.Exit(code=1)
     try:
         code = crosscheck(snapshot, versions, generation=generation, head=head)
     except (RegistryError, TableError, OSError) as exc:
