@@ -226,9 +226,8 @@ def _iso_label(key: tuple[int, int]) -> str:
 def drift_bps(final: dict[str, float], closes: dict[str, float], held: dict[str, float], nav: float) -> float:
     """One cycle's drift, in bps of NAV, from plain dicts.
 
-    Plain dicts because the engine host carries no refdata snapshot for minimums; one implementation, so a cycle's number
-    cannot drift apart between the week a human bands (`weekly_tracking`, over its cycles with an active sleeve) and the week
-    the engine trips on (`executor`, over all its cycles)."""
+    Plain dicts because the engine host carries no refdata snapshot for minimums; one implementation, so a cycle's drift
+    cannot differ between what a human bands (`weekly_tracking`) and what the engine trips on (`executor`)."""
     drift_eur = 0.0
     for a, weight in final.items():
         close = closes[a]
