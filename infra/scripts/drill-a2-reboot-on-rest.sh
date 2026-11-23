@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Drill A2's reboot-on-rest, run as infra/runbooks/drills-order-path.md#drill-a2 says: $1 the plan id or its prefix,
-# $2 the deadline in seconds, $3 = live to reboot, anything else only prints the decision. JOURNAL overrides the
-# journal root for a dry test.
+# Drill A2's reboot-on-rest, run as infra/runbooks/drills-order-path.md#drill-a2 says: $1 the plan id, $2 the
+# deadline in seconds, $3 = live to reboot, anything else only prints the decision. JOURNAL overrides the journal
+# root for a test.
 set -u
 prefix="$1"; deadline=$(( $(date +%s) + ${2:-900} )); mode="${3:-dry}"
 journal="${JOURNAL:-/var/lib/zcrypto-engine/journal}"
@@ -12,7 +12,6 @@ prefix, root = sys.argv[1], pathlib.Path(sys.argv[2])
 paths = sorted(root.glob("*/exec-*.json"), key=lambda q: q.stat().st_mtime, reverse=True)
 if not paths:
     print("WAIT no execution record"); sys.exit()
-# The newest of the last three records that holds the plan: a boundary's record written mid-watch is newer.
 for path in paths[:3]:
     d = json.loads(path.read_text())
     plans = [e for e in d.get("plans", []) if e["plan_id"].startswith(prefix)]
