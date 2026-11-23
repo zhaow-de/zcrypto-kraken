@@ -624,6 +624,7 @@ def test_a_wholly_flat_week_is_measured_not_decided_and_counts_toward_no_verdict
     out = weekly_tracking(stages, fills, _MINIMUMS, 1000.0, rung_by_week=_RUNGS, books=books)
     flat = out["weeks"][2]
     assert (flat["iso_week"], flat["cycles"], flat["flat"], flat["within_band"]) == ("2026-W38", 42, 42, None)
+    assert [w["flat"] for w in out["weeks"]] == [0, 0, 42]
     assert flat["realized_mean_bps"] is None and math.isnan(flat["floor_p95_bps"])
     assert _tracking_note(flat) == "no cycle with an active sleeve -- measured, not decided"
     assert out["complete_gate_eligible_weeks"] == 2 and out["verdict"] == "insufficient-data"
