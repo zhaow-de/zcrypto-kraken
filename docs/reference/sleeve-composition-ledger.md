@@ -137,3 +137,15 @@ The book equals the summed sleeve gross ÷ 6 on both sides, to within one ulp. A
 | **final book gross** (Σ\|target weight\|, governed) | **0.0008588098628339375** | **0** |
 
 At the pre-transition cycle the book is A1's gross ÷ 6 exactly, its one target AVAX/EUR's; after it the book holds no target. This is the first composition with no sleeve active that the ledger records. A1 had fallen at every 00Z step since 2026-11-14: 0.05355545345548742, 0.03661956074485083, 0.031921492866306515, 0.01472858401850735, 0.010257245406077716, 0.005152859177003625, then 0. The 00Z boundary sold the AVAX/EUR leg, 0.59949627 of the venue's 0.59949628, at a limit of 6.393 as a maker, fee EUR 0.01533 (Kraken `ONFPU6-PGW2A-RSRAZU`, trade `TU7L3S-VLQZF-W6MJ7G`); the 1e-08 left is under the pair's `ordermin`. A flat book is a legitimate state, not an emergency (`infra/runbooks/engine.md`'s `zcrypto-engine-sleeve-count-changed` step 5), and each sleeve re-arms on its own signal. The A1-alone composition ran from 2026-11-13 04Z (ISO week 46) to 2026-11-19 20Z (week 47) and closed with no complete ISO week, so the band step 3 would derive in it, which the 2026-11-13 row dates to W49's close, cannot be derived. What step 3 owes a flat book went to the owner at the weekly read of 2026-11-23: `[iter-206]` in `docs/research/14.phase6-decisions.md` rules that a cycle with no active sleeve does not score.
+
+### 2026-11-23 — A2 re-arms; the book runs on A2 alone
+
+| | last pre-transition cycle<br>2026-11-23 12Z | first post-transition cycle<br>2026-11-23 16Z |
+| --- | --- | --- |
+| `zcrypto_engine_active_sleeves` | 0 | **1** |
+| `sleeve_gross{sleeve="B"}` | 0 | 0 |
+| `sleeve_gross{sleeve="A1"}` | 0 | 0 |
+| `sleeve_gross{sleeve="A2"}` | 0 | 0.031380129843995276 |
+| **final book gross** (Σ\|target weight\|, governed) | **0** | **0.005230021640665879** |
+
+The book equals A2's gross ÷ 6 exactly, in three targets: ADA/EUR 0.0016923530788816353, LINK/EUR 0.0016402290818273888 and SOL/EUR 0.001897439479956855, at the 1,000 EUR NAV 1.6923530788816354, 1.6402290818273888 and 1.897439479956855 EUR. Each was `carried`, under its buy floor of 2.9664, 3.1237 and 3.6435 EUR, so the 16Z boundary placed nothing and the account still holds the dust the 2026-11-20 row left. This is the first composition on A2 alone the ledger records, and it ends the flat book that began at 2026-11-20 00Z. It begins inside ISO week 48, so step 3's three complete ISO weeks in one composition are W49 to W51 at the earliest, closing Sun 2026-12-20; the 2026-12-07 weekly read finds one. Under `tracking-report`'s rule since #885, the cycles of this composition score.
