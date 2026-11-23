@@ -5,6 +5,7 @@
 set -u
 plan_id="$1"; deadline=$(( $(date +%s) + ${2:-900} )); mode="${3:-dry}"
 journal="${JOURNAL:-/var/lib/zcrypto-engine/journal}"
+verdict="WAIT nothing read"
 while [ "$(date +%s)" -lt "$deadline" ]; do
   verdict=$(python3 - "$plan_id" "$journal" <<'PY'
 import json, pathlib, sys

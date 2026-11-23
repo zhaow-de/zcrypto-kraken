@@ -34,7 +34,7 @@ def _run(tmp_path, *records, mode="dry"):
         path = day / f"exec-{i}.json"
         path.write_text(json.dumps(record))
         os.utime(path, (1_000_000 + i, 1_000_000 + i))
-    # PATH holds the fake systemctl and the three tools the script runs, so no real systemctl is reachable.
+    # PATH holds the fake systemctl and the three tools the script runs: its bare `systemctl` resolves to the fake.
     marker, bin_ = tmp_path / "rebooted", tmp_path / "bin"
     bin_.mkdir()
     for tool in ("date", "python3", "sleep"):
@@ -43,13 +43,21 @@ def _run(tmp_path, *records, mode="dry"):
     (bin_ / "systemctl").chmod(0o755)
     env = {**os.environ, "JOURNAL": str(tmp_path / "journal"), "PATH": str(bin_)}
     run = subprocess.run(
-        [shutil.which("bash"), str(SCRIPT), "a2-x", "1", mode], env=env, capture_output=True, text=True, timeout=60
+        [shutil.which("bash"), str(SCRIPT), "a2-x", "2", mode], env=env, capture_output=True, text=True, timeout=60
     )
     return run, marker.read_text().strip() if marker.exists() else None
 
 
 def test_live_reboots_the_moment_the_order_rests(tmp_path):
     run, reboot = _run(tmp_path, _record(), mode="live")
+    assert run.returncode == 0 and " REST a2-x O-1 OABC" in run.stdout
+    assert reboot == "reboot"
+
+
+def test_another_plans_row_in_the_record_does_not_decide(tmp_path):
+    record = _record()
+    record["submitted"].append({**record["submitted"][0], "plan_id": "r3-20261123-20", "state": "filled", "filled_qty": 0.5})
+    run, reboot = _run(tmp_path, record, mode="live")
     assert run.returncode == 0 and " REST a2-x O-1 OABC" in run.stdout
     assert reboot == "reboot"
 
