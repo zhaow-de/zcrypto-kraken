@@ -237,9 +237,8 @@ _MINIMUMS = {"BTC": (0.00005, 0.45)}
 
 
 def _stage(ts, *, weight=1.0, close=50000.0, held=None):
-    # CycleStages is a frozen dataclass with NINE required fields (plus `nav` and `held`, which default); supplying
-    # three raises TypeError at construction, before any assertion is reached. `held` is the BTC the boundary's book holds.
-    # A1 alone carries the book, so `weight=0.0` is a cycle with no active sleeve.
+    # `held` is the BTC the boundary's book holds; A1 alone carries the book, so `weight=0.0` is a cycle with no
+    # active sleeve.
     return CycleStages(
         cycle_ts=datetime.fromisoformat(ts),
         sleeve_positions={"B": {"BTC": 0.0}, "A1": {"BTC": weight}, "A2": {"BTC": 0.0}},

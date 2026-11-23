@@ -285,7 +285,7 @@ def weekly_tracking(
     books: dict[datetime, dict[str, float] | None] | None = None,
 ) -> dict:
     """That week's floor p95 against its realized MEAN drift (`realized_drift`) over its cycles with an active sleeve, from
-    `opening`'s birth when given; a week with none is measured, never decided."""
+    `opening`'s birth when given."""
     rung_by_week = rung_by_week or {}
     ordered = sorted(stages, key=lambda s: s.cycle_ts)
     if opening is not None:
@@ -299,8 +299,8 @@ def weekly_tracking(
     real = realized_drift(ordered, nav, books=books)
     scored = {datetime.fromisoformat(row["cycle_ts"]): row["drift_bps"] for row in real["cycles"]}
     floor_weeks = {(w["iso_year"], w["iso_week"]): w for w in _weekly_drift(ordered, floor["cycles"])}
-    # A flat cycle -- no sleeve carries a position, `zcrypto_engine_active_sleeves` at 0 -- scores in neither half of its
-    # week; both halves still run over every cycle, since each chains a book or a placement into the next.
+    # Flat is `zcrypto_engine_active_sleeves` at 0; the floor and realized drift above still run over every cycle, since each
+    # chains a book or a placement into the next.
     flat = {s.cycle_ts for s in ordered if not any(gross > 0.0 for gross in stage_grosses(s.sleeve_positions).values())}
     floor_cycles: dict[tuple[int, int], list[float]] = {}
     for stage, row in zip(ordered, floor["cycles"], strict=True):
