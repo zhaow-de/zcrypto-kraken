@@ -25,6 +25,7 @@ from typer.testing import CliRunner
 import cli.engine.tracking as tracking_module
 from cli.__main__ import app
 from cli.config import load_config
+from cli.engine.command import _tracking_note, _tracking_row
 from cli.engine.errors import EngineError
 from cli.engine.feeders import CycleStages
 from cli.engine.journal import to_json
@@ -238,9 +239,10 @@ _MINIMUMS = {"BTC": (0.00005, 0.45)}
 def _stage(ts, *, weight=1.0, close=50000.0, held=None):
     # CycleStages is a frozen dataclass with NINE required fields (plus `nav` and `held`, which default); supplying
     # three raises TypeError at construction, before any assertion is reached. `held` is the BTC the boundary's book holds.
+    # A1 alone carries the book, so `weight=0.0` is a cycle with no active sleeve.
     return CycleStages(
         cycle_ts=datetime.fromisoformat(ts),
-        sleeve_positions={},
+        sleeve_positions={"B": {"BTC": 0.0}, "A1": {"BTC": weight}, "A2": {"BTC": 0.0}},
         combined={},
         capped={},
         limited={},
@@ -573,6 +575,76 @@ def test_a_rung_2_week_is_measured_but_not_gate_eligible():
     assert wk["rung"] == 2 and wk["gate_eligible"] is False
     assert wk["floor_p95_bps"] is not None
     assert out["complete_gate_eligible_weeks"] == 0
+
+
+def _a1_then_flat(monday):
+    # Monday to Thursday on A1, flat from Friday 00Z: the 24 active cycles' floor is 0.1 bps but for two at 1.0, a p95 of
+    # 1.0 over them and of 0.1 over all 42, whose 18 flat cycles' floor is 0.
+    week = _full_week(monday, weight=1e-5)
+    return (
+        week[:22]
+        + [_stage(s.cycle_ts.isoformat(), weight=1e-4) for s in week[22:24]]
+        + [_stage(s.cycle_ts.isoformat(), weight=0.0) for s in week[24:]]
+    )
+
+
+def _a1_then_flat_books(stages):
+    # 1e-9 BTC after each active cycle and 2e-5 after each flat one, EUR 1 of dust against a zero target: the active
+    # cycles' mean is 0.1745 bps, inside the 1.0 floor, and over all 42 it would be 4.385, outside it.
+    return _after(stages, [1e-9] * 24 + [2e-5] * 18)
+
+
+def test_a_week_mixing_active_and_flat_cycles_scores_the_active_ones_alone():
+    stages = _a1_then_flat("2026-08-31")
+    fills = [_mk("2026-08-31T00:00:00+00:00", 1e-9)]
+    out = weekly_tracking(stages, fills, _MINIMUMS, 1000.0, rung_by_week=_RUNGS, books=_a1_then_flat_books(stages))
+    (wk,) = out["weeks"]
+    assert (wk["cycles"], wk["flat"]) == (42, 18)
+    assert wk["floor_p95_bps"] == pytest.approx(1.0)
+    assert wk["realized_mean_bps"] == pytest.approx(0.1745)
+    assert wk["within_band"] is True and out["complete_gate_eligible_weeks"] == 1
+    assert _tracking_row(wk).split()[:3] == ["2026-W36", "42", "18"]
+
+
+def test_a_flat_cycle_with_no_book_after_it_withholds_nothing():
+    stages = _a1_then_flat("2026-08-31")
+    books = _a1_then_flat_books(stages)
+    books[stages[30].cycle_ts + timedelta(hours=4)] = None
+    out = weekly_tracking(stages, [_mk("2026-08-31T00:00:00+00:00", 1e-9)], _MINIMUMS, 1000.0, rung_by_week=_RUNGS, books=books)
+    (wk,) = out["weeks"]
+    assert wk["unscored_from"] is None
+    assert wk["realized_mean_bps"] == pytest.approx(0.1745)
+
+
+def test_a_wholly_flat_week_is_measured_not_decided_and_counts_toward_no_verdict():
+    # Scored, the third week's dust, 10 bps against its zero floor, would make it the third decided week and the verdict `fail`.
+    stages = _full_week("2026-08-31") + _full_week("2026-09-07") + _full_week("2026-09-14", weight=0.0)
+    fills, books = _on_target(stages)
+    books.update(_after(stages[84:], 2e-5))
+    out = weekly_tracking(stages, fills, _MINIMUMS, 1000.0, rung_by_week=_RUNGS, books=books)
+    flat = out["weeks"][2]
+    assert (flat["iso_week"], flat["cycles"], flat["flat"], flat["within_band"]) == ("2026-W38", 42, 42, None)
+    assert flat["realized_mean_bps"] is None and math.isnan(flat["floor_p95_bps"])
+    assert _tracking_note(flat) == "no cycle with an active sleeve -- measured, not decided"
+    assert out["complete_gate_eligible_weeks"] == 2 and out["verdict"] == "insufficient-data"
+
+
+def test_a_week_with_no_flat_cycle_is_scored_as_before():
+    # Each cycle's one active sleeve is B, A1 and A2 in turn: no cycle is flat, so the week reads the figures
+    # `test_the_bands_edge_is_the_floors_p95_not_its_median` pins.
+    names = ("B", "A1", "A2")
+    stages = [
+        replace(s, sleeve_positions={name: {"BTC": s.final["BTC"] if name == names[i % 3] else 0.0} for name in names})
+        for i, s in enumerate(_uneven_week("2026-08-31"))
+    ]
+    out = weekly_tracking(
+        stages, [_mk("2026-08-31T00:00:00+00:00", 1e-9)], _MINIMUMS, 1000.0, rung_by_week=_RUNGS, books=_after(stages, 1e-9)
+    )
+    (wk,) = out["weeks"]
+    assert wk["flat"] == 0
+    assert wk["floor_p95_bps"] == pytest.approx(1.0)
+    assert wk["realized_mean_bps"] == pytest.approx(0.1637857142857143)
+    assert wk["within_band"] is True
 
 
 def _cf(liquidity="MAKER", qty=1.0, px=100.0, fee=0.1, base="BTC"):
