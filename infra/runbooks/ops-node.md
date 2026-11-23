@@ -418,7 +418,7 @@ A memory or `dbcache` value changed in the role's defaults reaches the node by a
 
 1. **The two ids the converge is handed** are the rendered project's own, the two `image:` lines of `/etc/zcrypto-ops/onchain/compose.yaml`, the node's first.
 2. **The running node's peak memory, before the converge**: `cat /sys/fs/cgroup/system.slice/docker-<id>.scope/memory.peak` with its id read as at the first start's step 3, recorded beside the sync's start, since the recreate ends that container and its count.
-3. **The converge, the owner's**; then at once **the recreate**, `sudo docker compose -f /etc/zcrypto-ops/onchain/compose.yaml up -d bitcoind`, which stops the old container within its 600 s grace and starts one under the new limit. A guard stop or a reboot between the converge and the recreate takes the recreate for its start, not `compose start`.
+3. **The converge, the owner's**; then at once **the recreate**, `sudo docker compose -f /etc/zcrypto-ops/onchain/compose.yaml up -d --force-recreate bitcoind`, forced since a `dbcache` alone changes no compose line; the old container stops within its 600 s grace. A guard stop or a reboot between the two takes the recreate for its start.
 4. **Read the new caps by value**: `sudo docker inspect --format '{{.HostConfig.Memory}}' zcrypto-onchain-bitcoind` prints the limit in bytes, `17179869184` for `16g`, and `docker logs --tail 100 zcrypto-onchain-bitcoind` shows the sync resumed. Another print holds for the owner's word.
 
 ### The guard stopped the node
