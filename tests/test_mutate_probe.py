@@ -236,6 +236,40 @@ def test_a_control_or_mutation_run_that_ran_no_test_is_refused_not_scored(tmp_pa
     assert target.read_text() == "VALUE = 1\n"
 
 
+def _run_a_probe_exiting(tmp_path, control_rc, mutation_rc):
+    target = make_repo(tmp_path)
+    (tmp_path / "probe.sh").write_text(
+        f"#!/bin/sh\ngrep -q 'VALUE = 1' mod.py && exit 0\ngrep -q 'VALUE = 9' mod.py && exit {control_rc}\nexit {mutation_rc}\n"
+    )
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qam", "rc probe"], check=True)
+    args = ["--file", "mod.py", "--control", "s/VALUE = 1/VALUE = 9/", "--mutation", "s/VALUE = 1/VALUE = 2/", "--", "./probe.sh"]
+    return target, run(args, tmp_path)
+
+
+@pytest.mark.parametrize("rc", [pytest.param(2, id="collection-error"), pytest.param(3, id="internal-error")])
+def test_a_mutation_run_that_errored_is_refused_not_scored(tmp_path, rc):
+    target, r = _run_a_probe_exiting(tmp_path, control_rc=1, mutation_rc=rc)
+    assert r.returncode == 2, f"{r.returncode} {r.stdout}{r.stderr}"
+    assert f"the mutation run exited {rc}" in r.stderr and "errored" in r.stderr
+    assert "KILLED" not in r.stdout and "SURVIVED" not in r.stdout
+    assert target.read_bytes() == b"VALUE = 1\n"
+    status = subprocess.run(["git", "-C", str(tmp_path), "status", "--porcelain"], capture_output=True, text=True).stdout
+    assert status == "", f"worktree left dirty by the refusal: {status!r}"
+
+
+@pytest.mark.parametrize("rc", [pytest.param(1, id="a-test-failed"), pytest.param(124, id="timeout-ended-a-hang")])
+def test_a_mutation_run_that_failed_a_test_or_timed_out_is_killed(tmp_path, rc):
+    target, r = _run_a_probe_exiting(tmp_path, control_rc=1, mutation_rc=rc)
+    assert r.returncode == 0 and "mutate-probe: KILLED (control proven" in r.stdout, f"{r.returncode} {r.stdout}{r.stderr}"
+    assert target.read_bytes() == b"VALUE = 1\n"
+
+
+def test_a_control_run_that_errored_still_proves_the_control(tmp_path):
+    target, r = _run_a_probe_exiting(tmp_path, control_rc=2, mutation_rc=1)
+    assert r.returncode == 0 and "mutate-probe: KILLED (control proven" in r.stdout, f"{r.returncode} {r.stdout}{r.stderr}"
+    assert target.read_bytes() == b"VALUE = 1\n"
+
+
 def test_purge_removes_a_pre_existing_pycache(tmp_path):
     repo = tmp_path / "repo"
     make_repo(repo)

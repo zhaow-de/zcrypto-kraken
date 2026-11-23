@@ -4,10 +4,14 @@
 # under `--sandbox`, because the editable install's .pth resolves cli and tests back to the repo so
 # every verdict would measure unmutated code; requires the probe to PASS unmutated first, since an
 # always-failing probe scores every mutation KILLED with "control proven" attached to the lie;
-# requires the CONTROL mutation to FAIL, which is the guard-proving rule as code; and refuses a control
-# or mutation run that exits 5, pytest's "no tests ran", because a run that selected nothing is no kill.
+# requires the CONTROL mutation to FAIL, which is the guard-proving rule as code; refuses a control
+# or mutation run that exits 5, pytest's "no tests ran", because a run that selected nothing is no kill; and
+# scores the mutation KILLED only on rc 1, a test failing, or rc 124, `timeout`'s end of a hang: any other rc is
+# a run that errored (a collection error, a crash), which no assertion judged. Any control rc but 0 and 5 proves
+# the control, so a control deleting the file (`1,$d`), which ends at collection with rc 2, still counts.
 # Usage: mutate-probe.sh [--sandbox] --file <path> --control <sed-expr> --mutation <sed-expr> -- <probe-cmd...>
-# Exit: rc 2 usage, or a control or mutation run that exited 5 | rc 3 refused (dirty tree, pytest in --sandbox, a second run in this checkout) | rc 4 restore failed | rc 5 control did not fail | rc 6 no-op sed
+# Exit: rc 2 usage, a control or mutation run that exited 5, or a mutation run that exited other than 0, 1 or 124
+#     | rc 3 refused (dirty tree, pytest in --sandbox, a second run in this checkout) | rc 4 restore failed | rc 5 control did not fail | rc 6 no-op sed
 #     | rc 7 baseline failed | rc 8 seeding failed | rc 9 cleanup restore failed (pristine kept)
 set -euo pipefail
 
@@ -130,6 +134,10 @@ apply "$mutation" "mutation sed"
 rc=0; "$@" 9>&- >/dev/null 2>&1 || rc=$?
 restore; purge
 if [[ $rc -eq 5 ]]; then no_test_ran mutation; fi
+if [[ $rc -ne 0 && $rc -ne 1 && $rc -ne 124 ]]; then
+  echo "mutate-probe: REFUSING — the mutation run exited $rc: it errored rather than failed a test (a collection or import error, a crash), so no assertion judged the mutation and it is no kill. Mutate so the code still loads." >&2
+  exit 2
+fi
 if [[ $rc -eq 0 ]]; then verdict=SURVIVED; else verdict=KILLED; fi
 echo "mutate-probe: $verdict (control proven, tree restored byte-identically)"
 [[ "$verdict" == KILLED || "$verdict" == SURVIVED ]]
