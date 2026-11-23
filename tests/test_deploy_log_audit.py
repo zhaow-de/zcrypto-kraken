@@ -58,7 +58,6 @@ _RULED = {
 
 @pytest.mark.parametrize("ruled_id", ["3zrrdvpscrx8", "5v1dygshcn34"])
 def test_api_impacting_skips_an_entry_the_owner_ruled_not_a_window(ruled_id):
-    """The venue re-posted the ruled announcement under a new id, with its components emptied."""
     ruled = {**_RULED, "id": ruled_id}
     reposted = {**ruled, "components": []}
     unruled = {**_RULED, "id": "0000unruled0"}
