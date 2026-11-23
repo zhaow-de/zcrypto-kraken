@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Drill A2's reboot-on-rest. Every 0.2 s, reads the newest execution record for the plan whose id starts with $1:
-# reboots the moment its intent 0 reads pending and its order row reads accepted with a Kraken txid and nothing
-# filled; stands down without a reboot once the intent or the row reads anything else; gives up after $2 seconds.
-# $3 = live reboots, anything else only prints the decision. JOURNAL overrides the journal root for a dry test.
+# Drill A2's reboot-on-rest, run as infra/runbooks/drills-order-path.md#drill-a2 says: $1 the plan id or its prefix,
+# $2 the deadline in seconds, $3 = live to reboot, anything else only prints the decision. JOURNAL overrides the
+# journal root for a dry test.
 set -u
 prefix="$1"; deadline=$(( $(date +%s) + ${2:-900} )); mode="${3:-dry}"
 journal="${JOURNAL:-/var/lib/zcrypto-engine/journal}"
