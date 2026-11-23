@@ -6,11 +6,10 @@
 # always-failing probe scores every mutation KILLED with "control proven" attached to the lie;
 # requires the CONTROL mutation to FAIL, which is the guard-proving rule as code; refuses a control
 # or mutation run that exits 5, pytest's "no tests ran", because a run that selected nothing is no kill; and
-# scores the mutation KILLED only on rc 1, a test failing, or rc 124, `timeout`'s end of a hang: any other rc is
-# a run no assertion judged. A control's rc 2 still proves it, since the `1,$d` control ends at collection.
+# refuses a mutation that does not parse -- a .py file by ast.parse, a .sh or .bash file or a bash or sh shebang
+# script by `bash -n`, any other file unchecked -- because the probe's failure is then the syntax's, not the guard's.
 # Usage: mutate-probe.sh [--sandbox] --file <path> --control <sed-expr> --mutation <sed-expr> -- <probe-cmd...>
-# Exit: rc 2 usage, a control or mutation run that exited 5, or a mutation run that exited other than 0, 1 or 124
-#     | rc 3 refused (dirty tree, pytest in --sandbox, a second run in this checkout) | rc 4 restore failed | rc 5 control did not fail | rc 6 no-op sed
+# Exit: rc 2 usage, a control or mutation run that exited 5, or a mutation that does not parse | rc 3 refused (dirty tree, pytest in --sandbox, a second run in this checkout) | rc 4 restore failed | rc 5 control did not fail | rc 6 no-op sed
 #     | rc 7 baseline failed | rc 8 seeding failed | rc 9 cleanup restore failed (pristine kept)
 set -euo pipefail
 
@@ -27,12 +26,12 @@ while [[ $# -gt 0 ]]; do
 done
 [[ -n "$file" && -n "$control" && -n "$mutation" && $# -gt 0 ]] || { echo "usage: mutate-probe.sh [--sandbox] --file F --control SED --mutation SED -- CMD..." >&2; exit 2; }
 
-# ONE handler for both temporaries: a second `trap ... EXIT` would REPLACE this one rather than add
+# ONE handler for every temporary: a second `trap ... EXIT` would REPLACE this one rather than add
 # to it, leaking whichever it displaced. It restores BEFORE it cleans and runs on INT/TERM as well
 # as EXIT, because a signal delivered while the probe runs lands with the mutation applied, and
 # cleaning first would delete the only way back; INT/TERM inside it are ignored, so the restore's
 # exit code stands.
-work=""; pristine=""; mutated=0; cleaned=0
+work=""; pristine=""; uvtmp=""; mutated=0; cleaned=0
 cleanup() {
   trap '' INT TERM
   if [[ $cleaned -eq 1 ]]; then return 0; fi   # INT/TERM handlers are followed by EXIT — run once
@@ -42,10 +41,12 @@ cleanup() {
       # KEEP the pristine copy — it is the only way back to the unmutated content.
       echo "mutate-probe: cleanup restore FAILED — $file may still carry the mutation; pristine copy KEPT at $pristine" >&2
       if [[ -n "$work" ]]; then rm -rf "$work"; fi
+      if [[ -n "$uvtmp" ]]; then rm -rf "$uvtmp"; fi
       exit 9
     fi
   fi
   if [[ -n "$work" ]]; then rm -rf "$work"; fi
+  if [[ -n "$uvtmp" ]]; then rm -rf "$uvtmp"; fi
   if [[ -n "$pristine" ]]; then rm -f "$pristine"; fi
 }
 trap cleanup EXIT
@@ -84,6 +85,7 @@ purge() { find . -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
 # I6a: restore must work in BOTH modes — the sandbox has no .git, so keep a pristine copy and
 # restore from it; in-repo, git is authoritative and the byte-identity check is the proof.
 pristine="$(mktemp)"; cp "$file" "$pristine"
+uvtmp="$(mktemp -d)"   # the parse check's TMPDIR: uv leaves an environment lock file in the one it runs under
 restore() {
   if [[ $sandbox -eq 0 ]]; then
     git checkout -q -- "$file"
@@ -105,6 +107,24 @@ apply() {   # apply <sed-expr> <phase: "control sed"|"mutation sed">
     exit 6
   fi
   purge
+}
+
+# The kind is read from the pristine copy, so a mutation that deletes the shebang is still checked.
+SHEBANG='^#!.*[/[:space:]](ba)?sh([[:space:]]|$)'
+parses() {   # 0 when the mutated $file parses or is of no kind checked; else 1, the parser's first error line printed
+  local out="" rc=0
+  case "$file" in
+    *.py) out="$(TMPDIR="$uvtmp" uv run --no-sync python -I -c '
+import ast, sys
+try:
+    ast.parse(open(sys.argv[1], "rb").read(), sys.argv[1])
+except SyntaxError as e:
+    print(f"line {e.lineno}: {e.msg}")
+    sys.exit(1)' "$file" 9>&-)" || rc=$? ;;
+    *.sh | *.bash) out="$(bash -n "$file" 2>&1)" || rc=$? ;;
+    *) if [[ "$(head -n1 "$pristine")" =~ $SHEBANG ]]; then out="$(bash -n "$file" 2>&1)" || rc=$?; fi ;;
+  esac
+  [[ $rc -eq 0 ]] || { printf '%s\n' "${out%%$'\n'*}"; return 1; }
 }
 
 # 0. baseline: the probe must PASS on UNMUTATED code, or the control's failure says nothing about the
@@ -130,13 +150,14 @@ if [[ $rc -eq 5 ]]; then no_test_ran control; fi
 
 # 2. the real mutation
 apply "$mutation" "mutation sed"
+if ! err="$(parses)"; then
+  restore; purge
+  echo "mutate-probe: REFUSING — the mutation leaves $file unparseable ($err): a mutation that does not parse is no kill. Mutate so the file still parses." >&2
+  exit 2
+fi
 rc=0; "$@" 9>&- >/dev/null 2>&1 || rc=$?
 restore; purge
 if [[ $rc -eq 5 ]]; then no_test_ran mutation; fi
-if [[ $rc -ne 0 && $rc -ne 1 && $rc -ne 124 ]]; then
-  echo "mutate-probe: REFUSING — the mutation run exited $rc: it errored rather than failed a test, so it is no kill. Mutate so the code still loads." >&2
-  exit 2
-fi
 if [[ $rc -eq 0 ]]; then verdict=SURVIVED; else verdict=KILLED; fi
 echo "mutate-probe: $verdict (control proven, tree restored byte-identically)"
 [[ "$verdict" == KILLED || "$verdict" == SURVIVED ]]

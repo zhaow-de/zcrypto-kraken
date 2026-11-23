@@ -246,22 +246,56 @@ def _run_a_probe_exiting(tmp_path, control_rc, mutation_rc):
     return target, run(args, tmp_path)
 
 
-@pytest.mark.parametrize("rc", [pytest.param(2, id="collection-error"), pytest.param(3, id="internal-error")])
-def test_a_mutation_run_that_errored_is_refused_not_scored(tmp_path, rc):
+@pytest.mark.parametrize(
+    ("rc", "verdict"),
+    [
+        pytest.param(0, "SURVIVED", id="passed"),
+        pytest.param(1, "KILLED", id="a-test-failed"),
+        pytest.param(2, "KILLED", id="an-import-time-guard-fired"),
+        pytest.param(3, "KILLED", id="a-checker-detected"),
+        pytest.param(124, "KILLED", id="timeout-ended-a-hang"),
+    ],
+)
+def test_a_parseable_mutation_is_scored_by_its_runs_rc(tmp_path, rc, verdict):
     target, r = _run_a_probe_exiting(tmp_path, control_rc=1, mutation_rc=rc)
-    assert r.returncode == 2, f"{r.returncode} {r.stdout}{r.stderr}"
-    assert f"the mutation run exited {rc}" in r.stderr and "errored" in r.stderr
-    assert "KILLED" not in r.stdout and "SURVIVED" not in r.stdout
+    assert r.returncode == 0 and f"mutate-probe: {verdict} (control proven" in r.stdout, f"{r.returncode} {r.stdout}{r.stderr}"
     assert target.read_bytes() == b"VALUE = 1\n"
+
+
+def _run_on_a_target(tmp_path, name, text, line, mutation):
+    make_repo(tmp_path)
+    target = tmp_path / name
+    target.write_text(text)
+    (tmp_path / "probe.sh").write_text(f"#!/bin/sh\ngrep -qxF '{line}' {name}\n")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "target"], check=True)
+    return target, run(["--file", name, "--control", "1,$d", "--mutation", mutation, "--", "./probe.sh"], tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("name", "text", "line", "mutation", "error"),
+    [
+        pytest.param("mod.py", "VALUE = 1\n", "VALUE = 1", "s/VALUE = 1/VALUE = = 1/", "line 1: invalid syntax", id="python"),
+        pytest.param("mod.sh", "VALUE=1\n", "VALUE=1", "s/VALUE=1/if VALUE=1/", "syntax error", id="dot-sh"),
+        pytest.param("mod.bash", "VALUE=1\n", "VALUE=1", "s/VALUE=1/if VALUE=1/", "syntax error", id="dot-bash"),
+        pytest.param("mod", "#!/bin/sh\nVALUE=1\n", "VALUE=1", "s/VALUE=1/if VALUE=1/", "syntax error", id="sh-shebang"),
+    ],
+)
+def test_a_mutation_that_does_not_parse_is_refused_not_scored(tmp_path, name, text, line, mutation, error):
+    target, r = _run_on_a_target(tmp_path, name, text, line, mutation)
+    assert r.returncode == 2, f"{r.returncode} {r.stdout}{r.stderr}"
+    assert f"leaves {name} unparseable" in r.stderr and error in r.stderr and "does not parse is no kill" in r.stderr
+    assert "KILLED" not in r.stdout and "SURVIVED" not in r.stdout
+    assert target.read_text() == text
     status = subprocess.run(["git", "-C", str(tmp_path), "status", "--porcelain"], capture_output=True, text=True).stdout
     assert status == "", f"worktree left dirty by the refusal: {status!r}"
 
 
-@pytest.mark.parametrize("rc", [pytest.param(1, id="a-test-failed"), pytest.param(124, id="timeout-ended-a-hang")])
-def test_a_mutation_run_that_failed_a_test_or_timed_out_is_killed(tmp_path, rc):
-    target, r = _run_a_probe_exiting(tmp_path, control_rc=1, mutation_rc=rc)
+def test_a_file_of_another_kind_takes_no_parse_check(tmp_path):
+    # `VALUE = (2)` fails `bash -n`, so a shell check reaching a python-shebang script would refuse this mutation
+    target, r = _run_on_a_target(tmp_path, "tool", "#!/usr/bin/env python3\nVALUE = (1)\n", "VALUE = (1)", "s/(1)/(2)/")
     assert r.returncode == 0 and "mutate-probe: KILLED (control proven" in r.stdout, f"{r.returncode} {r.stdout}{r.stderr}"
-    assert target.read_bytes() == b"VALUE = 1\n"
+    assert target.read_text() == "#!/usr/bin/env python3\nVALUE = (1)\n"
 
 
 def test_a_control_run_that_errored_still_proves_the_control(tmp_path):
