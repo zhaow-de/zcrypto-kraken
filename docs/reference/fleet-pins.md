@@ -15,11 +15,11 @@ Reading rules:
 | service | host | digest (sha256, first 12) | since (UTC) | rollback operand (resident on the host at the re-pin) |
 | --- | --- | --- | --- | --- |
 | capture | zcrypto | `1931596fd60b` — revision `9040ca59` | 2026-11-15 14:28:15 | `f102ca375382` |
-| capture | zcrypto-red | `1931596fd60b` — revision `9040ca59` | 2026-11-15 19:57:43 | `f102ca375382` |
+| capture | zcrypto-red | `1931596fd60b` — revision `9040ca59` | 2026-11-23 13:14:14 | `f102ca375382` |
 | engine | zcrypto | `512ba1a02ea9` — revision `bc217e61` | 2026-11-18 10:08:17 | `81a8d6c7df63` |
 | cache-proxy | zcrypto | `76928c0d6b39` — HAProxy 3.4.5, upstream `haproxy` | 2026-11-18 10:08:17 | first pin |
 | alloy | zcrypto | `89a5a3201683` — v1.21.2 | 2026-11-15 14:28:13 | `2aa2099af76c` — v1.20.1 |
-| alloy | zcrypto-red | `89a5a3201683` — v1.21.2 | 2026-11-15 19:57:41 | `2aa2099af76c` — v1.20.1 |
+| alloy | zcrypto-red | `89a5a3201683` — v1.21.2 | 2026-11-23 13:14:12 | `2aa2099af76c` — v1.20.1 |
 | alloy | zcrypto-ops | `89a5a3201683` — v1.21.2 | 2026-11-15 22:35:35 | `2aa2099af76c` — v1.20.1 |
 | alloy | nas | `89a5a3201683` — v1.21.2, upstream `grafana/alloy`, no `-compat` variant | 2026-11-07 19:46:44 | `2aa2099af76c` — v1.20.1 |
 | valkey + sentinel | zcrypto-valkey1 | `418652cfb58e` — Valkey 9.1.2, upstream `valkey/valkey` | 2026-09-26 21:20:54 | first pin |
