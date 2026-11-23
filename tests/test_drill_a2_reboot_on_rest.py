@@ -78,8 +78,14 @@ def test_an_order_that_fills_or_ends_stands_down_without_a_reboot(tmp_path, reco
 
 @pytest.mark.parametrize(
     "records",
-    [(_record(txid=None),), (_record(state="submitting", txid=None),), (_record(plan_id="r3-20261123-20"),), ()],
-    ids=["accepted-no-txid", "submitting", "no-plan", "no-record"],
+    [
+        (_record(txid=None),),
+        (_record(state="submitting", txid=None),),
+        (_record(plan_id="r3-20261123-20"),),
+        (_record(plan_id="a2-x-earlier", state="venue_canceled"),),
+        (),
+    ],
+    ids=["accepted-no-txid", "submitting", "no-plan", "an-earlier-plan-the-id-begins", "no-record"],
 )
 def test_an_order_not_yet_resting_waits_out_the_deadline(tmp_path, records):
     run, reboot = _run(tmp_path, *records, mode="live")

@@ -3,18 +3,18 @@
 # deadline in seconds, $3 = live to reboot, anything else only prints the decision. JOURNAL overrides the journal
 # root for a test.
 set -u
-prefix="$1"; deadline=$(( $(date +%s) + ${2:-900} )); mode="${3:-dry}"
+plan_id="$1"; deadline=$(( $(date +%s) + ${2:-900} )); mode="${3:-dry}"
 journal="${JOURNAL:-/var/lib/zcrypto-engine/journal}"
 while [ "$(date +%s)" -lt "$deadline" ]; do
-  verdict=$(python3 - "$prefix" "$journal" <<'PY'
+  verdict=$(python3 - "$plan_id" "$journal" <<'PY'
 import json, pathlib, sys
-prefix, root = sys.argv[1], pathlib.Path(sys.argv[2])
+plan_id, root = sys.argv[1], pathlib.Path(sys.argv[2])
 paths = sorted(root.glob("*/exec-*.json"), key=lambda q: q.stat().st_mtime, reverse=True)
 if not paths:
     print("WAIT no execution record"); sys.exit()
 for path in paths[:3]:
     d = json.loads(path.read_text())
-    plans = [e for e in d.get("plans", []) if e["plan_id"].startswith(prefix)]
+    plans = [e for e in d.get("plans", []) if e["plan_id"] == plan_id]
     if plans:
         break
 else:
