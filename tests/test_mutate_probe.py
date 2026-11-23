@@ -279,6 +279,14 @@ def _run_on_a_target(tmp_path, name, text, line, mutation):
         pytest.param("mod.sh", "VALUE=1\n", "VALUE=1", "s/VALUE=1/if VALUE=1/", "syntax error", id="dot-sh"),
         pytest.param("mod.bash", "VALUE=1\n", "VALUE=1", "s/VALUE=1/if VALUE=1/", "syntax error", id="dot-bash"),
         pytest.param("mod", "#!/bin/sh\nVALUE=1\n", "VALUE=1", "s/VALUE=1/if VALUE=1/", "syntax error", id="sh-shebang"),
+        pytest.param(
+            "mod.sh",
+            "shopt -s extglob\nVALUE=1\ncase $1 in +(a)) ;; esac\n",
+            "VALUE=1",
+            "s/VALUE=1/if VALUE=1/",
+            "syntax error",
+            id="extglob",
+        ),
     ],
 )
 def test_a_mutation_that_does_not_parse_is_refused_not_scored(tmp_path, name, text, line, mutation, error):
@@ -308,8 +316,7 @@ def test_a_template_takes_no_parse_check_whatever_its_shebang(tmp_path):
 
 
 def test_a_file_that_does_not_parse_unmutated_takes_no_parse_check(tmp_path):
-    # `bash -n` never runs the shopt, so the extglob case pattern fails it before any mutation
-    text = "shopt -s extglob\nVALUE=1\ncase $1 in +(a)) ;; esac\n"
+    text = "VALUE=1\nfi\n"
     target, r = _run_on_a_target(tmp_path, "mod.sh", text, "VALUE=1", "s/VALUE=1/VALUE=2/")
     assert r.returncode == 0 and "mutate-probe: KILLED (control proven" in r.stdout, f"{r.returncode} {r.stdout}{r.stderr}"
     assert "mod.sh does not parse unmutated" in r.stderr and "takes no parse check" in r.stderr
@@ -337,6 +344,8 @@ def test_a_parse_check_that_could_not_run_stops_with_no_verdict(tmp_path, calls_
     assert "the parse check could not run on mod.py" in r.stderr and "uv stub: no interpreter" in r.stderr
     assert "unparseable" not in r.stderr and "does not parse" not in r.stderr
     assert "KILLED" not in r.stdout and "SURVIVED" not in r.stdout
+    # the first failing call stopped the run: a stop that missed it would reach the next check, one call later
+    assert calls.read_text().strip() == str(calls_before_failing + 1)
     assert target.read_text() == "VALUE = 1\n"
     status = subprocess.run(["git", "-C", str(repo), "status", "--porcelain"], capture_output=True, text=True).stdout
     assert status == "", f"worktree left dirty by the stop: {status!r}"

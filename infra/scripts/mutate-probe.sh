@@ -128,7 +128,7 @@ except SyntaxError as e:
     print(f"line {e.lineno}: {e.msg}")
     sys.exit(3)' "$file" 2>"$uvtmp/stderr" 9>&-)" || rc=$?
       if [[ $rc -ne 0 && $rc -ne 3 ]]; then return 2; fi ;;
-    bash) out="$(bash -n "$file" 2>&1)" || rc=$? ;;
+    bash) out="$(bash -O extglob -n "$file" 2>&1)" || rc=$? ;;   # -n never runs the file's own `shopt -s extglob`
   esac
   [[ $rc -eq 0 ]] || { printf '%s\n' "${out%%$'\n'*}"; return 1; }
 }
@@ -137,7 +137,7 @@ could_not_run() {
   cat "$uvtmp/stderr" >&2
   exit 2
 }
-# A file that does not parse unmutated (an extglob script under `bash -n`) has no parse for a mutation to break.
+# A file that does not parse unmutated has no parse for a mutation to break.
 prc=0; err="$(check_parse)" || prc=$?
 if [[ $prc -eq 2 ]]; then could_not_run; fi
 if [[ $prc -eq 1 ]]; then echo "mutate-probe: $file does not parse unmutated ($err), so its mutation takes no parse check." >&2; parser=""; fi
