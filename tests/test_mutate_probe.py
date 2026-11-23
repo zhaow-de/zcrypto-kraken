@@ -292,10 +292,54 @@ def test_a_mutation_that_does_not_parse_is_refused_not_scored(tmp_path, name, te
 
 
 def test_a_file_of_another_kind_takes_no_parse_check(tmp_path):
-    # `VALUE = (2)` fails `bash -n`, so a shell check reaching a python-shebang script would refuse this mutation
-    target, r = _run_on_a_target(tmp_path, "tool", "#!/usr/bin/env python3\nVALUE = (1)\n", "VALUE = (1)", "s/(1)/(2)/")
+    # `VALUE = 1` passes `bash -n` and `VALUE = (1)` fails it, so a shell check reaching a python-shebang script would
+    # refuse this mutation
+    target, r = _run_on_a_target(tmp_path, "tool", "#!/usr/bin/env python3\nVALUE = 1\n", "VALUE = 1", "s/VALUE = 1/VALUE = (1)/")
     assert r.returncode == 0 and "mutate-probe: KILLED (control proven" in r.stdout, f"{r.returncode} {r.stdout}{r.stderr}"
-    assert target.read_text() == "#!/usr/bin/env python3\nVALUE = (1)\n"
+    assert target.read_text() == "#!/usr/bin/env python3\nVALUE = 1\n"
+
+
+def test_a_template_takes_no_parse_check_whatever_its_shebang(tmp_path):
+    # it passes `bash -n` unmutated, so only the template's exclusion keeps the filter call from failing it
+    text = "#!/bin/bash\nVALUE=1\n"
+    target, r = _run_on_a_target(tmp_path, "mod.sh.j2", text, "VALUE=1", "s/VALUE=1/VALUE={{ v | default(1) }}/")
+    assert r.returncode == 0 and "mutate-probe: KILLED (control proven" in r.stdout, f"{r.returncode} {r.stdout}{r.stderr}"
+    assert target.read_text() == text
+
+
+def test_a_file_that_does_not_parse_unmutated_takes_no_parse_check(tmp_path):
+    # `bash -n` never runs the shopt, so the extglob case pattern fails it before any mutation
+    text = "shopt -s extglob\nVALUE=1\ncase $1 in +(a)) ;; esac\n"
+    target, r = _run_on_a_target(tmp_path, "mod.sh", text, "VALUE=1", "s/VALUE=1/VALUE=2/")
+    assert r.returncode == 0 and "mutate-probe: KILLED (control proven" in r.stdout, f"{r.returncode} {r.stdout}{r.stderr}"
+    assert "mod.sh does not parse unmutated" in r.stderr and "takes no parse check" in r.stderr
+    assert target.read_text() == text
+
+
+@pytest.mark.parametrize("calls_before_failing", [pytest.param(0, id="unmutated"), pytest.param(1, id="mutated")])
+def test_a_parse_check_that_could_not_run_stops_with_no_verdict(tmp_path, calls_before_failing):
+    # The repo is nested so the stub and its call count live outside it, where they leave the worktree clean.
+    repo = tmp_path / "repo"
+    target = make_repo(repo)
+    stubs = tmp_path / "bin"
+    stubs.mkdir()
+    calls = tmp_path / "uv-calls"
+    uv_stub = stubs / "uv"
+    uv_stub.write_text(
+        f"#!/bin/sh\nn=$(cat {calls} 2>/dev/null || echo 0)\necho $((n + 1)) > {calls}\n"
+        f'if [ "$n" -ge {calls_before_failing} ]; then echo "uv stub: no interpreter" >&2; exit 2; fi\n'
+        f'exec {shutil.which("uv")} "$@"\n'
+    )
+    uv_stub.chmod(0o755)
+    args = ["--file", "mod.py", "--control", "s/VALUE = 1/VALUE = 9/", "--mutation", "s/VALUE = 1/VALUE = 2/", "--", "./probe.sh"]
+    r = run(args, repo, env_extra={"PATH": f"{stubs}:{os.environ['PATH']}"})
+    assert r.returncode == 2, f"{r.returncode} {r.stdout}{r.stderr}"
+    assert "the parse check could not run on mod.py" in r.stderr and "uv stub: no interpreter" in r.stderr
+    assert "unparseable" not in r.stderr and "does not parse" not in r.stderr
+    assert "KILLED" not in r.stdout and "SURVIVED" not in r.stdout
+    assert target.read_text() == "VALUE = 1\n"
+    status = subprocess.run(["git", "-C", str(repo), "status", "--porcelain"], capture_output=True, text=True).stdout
+    assert status == "", f"worktree left dirty by the stop: {status!r}"
 
 
 def test_a_control_run_that_errored_still_proves_the_control(tmp_path):

@@ -6,10 +6,9 @@
 # always-failing probe scores every mutation KILLED with "control proven" attached to the lie;
 # requires the CONTROL mutation to FAIL, which is the guard-proving rule as code; refuses a control
 # or mutation run that exits 5, pytest's "no tests ran", because a run that selected nothing is no kill; and
-# refuses a mutation that does not parse -- a .py file by ast.parse, a .sh or .bash file or a bash or sh shebang
-# script by `bash -n`, any other file unchecked -- because the probe's failure is then the syntax's, not the guard's.
+# refuses a mutation of a Python or shell file (not a .j2 template) that no longer parses, because the probe's failure is then the syntax's, not the guard's.
 # Usage: mutate-probe.sh [--sandbox] --file <path> --control <sed-expr> --mutation <sed-expr> -- <probe-cmd...>
-# Exit: rc 2 usage, a control or mutation run that exited 5, or a mutation that does not parse | rc 3 refused (dirty tree, pytest in --sandbox, a second run in this checkout) | rc 4 restore failed | rc 5 control did not fail | rc 6 no-op sed
+# Exit: rc 2 usage, a control or mutation run that exited 5, a mutation that no longer parses, or a parse check that could not run | rc 3 refused (dirty tree, pytest in --sandbox, a second run in this checkout) | rc 4 restore failed | rc 5 control did not fail | rc 6 no-op sed
 #     | rc 7 baseline failed | rc 8 seeding failed | rc 9 cleanup restore failed (pristine kept)
 set -euo pipefail
 
@@ -109,23 +108,39 @@ apply() {   # apply <sed-expr> <phase: "control sed"|"mutation sed">
   purge
 }
 
-# The kind is read from the pristine copy, so a mutation that deletes the shebang is still checked.
+# The parser is chosen before any mutation, so a mutation that deletes the shebang is still checked.
 SHEBANG='^#!.*[/[:space:]](ba)?sh([[:space:]]|$)'
-parses() {   # 0 when the mutated $file parses or is of no kind checked; else 1, the parser's first error line printed
+parser=""
+case "$file" in
+  *.j2) ;;   # a template is Jinja until rendered, whatever its shebang
+  *.py) parser=python ;;
+  *.sh | *.bash) parser=bash ;;
+  *) if [[ "$(head -n1 "$file")" =~ $SHEBANG ]]; then parser=bash; fi ;;
+esac
+check_parse() {   # 0 when $file parses or has no parser; 1, the parser's first error line printed, when it does not; 2 when the check could not run
   local out="" rc=0
-  case "$file" in
-    *.py) out="$(TMPDIR="$uvtmp" uv run --no-sync python -I -c '
+  case "$parser" in
+    python) out="$(TMPDIR="$uvtmp" uv run --no-sync python -I -c '
 import ast, sys
 try:
     ast.parse(open(sys.argv[1], "rb").read(), sys.argv[1])
 except SyntaxError as e:
     print(f"line {e.lineno}: {e.msg}")
-    sys.exit(1)' "$file" 9>&-)" || rc=$? ;;
-    *.sh | *.bash) out="$(bash -n "$file" 2>&1)" || rc=$? ;;
-    *) if [[ "$(head -n1 "$pristine")" =~ $SHEBANG ]]; then out="$(bash -n "$file" 2>&1)" || rc=$?; fi ;;
+    sys.exit(3)' "$file" 2>"$uvtmp/stderr" 9>&-)" || rc=$?
+      if [[ $rc -ne 0 && $rc -ne 3 ]]; then return 2; fi ;;
+    bash) out="$(bash -n "$file" 2>&1)" || rc=$? ;;
   esac
   [[ $rc -eq 0 ]] || { printf '%s\n' "${out%%$'\n'*}"; return 1; }
 }
+could_not_run() {
+  echo "mutate-probe: REFUSING — the parse check could not run on $file, so there is no verdict; its error:" >&2
+  cat "$uvtmp/stderr" >&2
+  exit 2
+}
+# A file that does not parse unmutated (an extglob script under `bash -n`) has no parse for a mutation to break.
+prc=0; err="$(check_parse)" || prc=$?
+if [[ $prc -eq 2 ]]; then could_not_run; fi
+if [[ $prc -eq 1 ]]; then echo "mutate-probe: $file does not parse unmutated ($err), so its mutation takes no parse check." >&2; parser=""; fi
 
 # 0. baseline: the probe must PASS on UNMUTATED code, or the control's failure says nothing about the
 # control. Run it under the SAME conditions as the real probes -- bytecode export set, caches purged --
@@ -150,8 +165,10 @@ if [[ $rc -eq 5 ]]; then no_test_ran control; fi
 
 # 2. the real mutation
 apply "$mutation" "mutation sed"
-if ! err="$(parses)"; then
+prc=0; err="$(check_parse)" || prc=$?
+if [[ $prc -ne 0 ]]; then
   restore; purge
+  if [[ $prc -eq 2 ]]; then could_not_run; fi
   echo "mutate-probe: REFUSING — the mutation leaves $file unparseable ($err): a mutation that does not parse is no kill. Mutate so the file still parses." >&2
   exit 2
 fi
