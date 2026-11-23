@@ -603,6 +603,7 @@ def test_a_week_mixing_active_and_flat_cycles_scores_the_active_ones_alone():
     assert wk["realized_mean_bps"] == pytest.approx(0.1745)
     assert wk["within_band"] is True and out["complete_gate_eligible_weeks"] == 1
     assert _tracking_row(wk).split()[:3] == ["2026-W36", "42", "18"]
+    assert _tracking_note(wk) == ""
 
 
 def test_a_flat_cycle_with_no_book_after_it_withholds_nothing():
