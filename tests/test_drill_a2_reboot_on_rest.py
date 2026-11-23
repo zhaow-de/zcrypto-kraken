@@ -34,7 +34,7 @@ def _run(tmp_path, *records, mode="dry"):
         path = day / f"exec-{i}.json"
         path.write_text(json.dumps(record))
         os.utime(path, (1_000_000 + i, 1_000_000 + i))
-    # PATH holds the fake systemctl and the three tools the script runs: its bare `systemctl` resolves to the fake.
+    # PATH holds the fake systemctl and the tools the script runs, so its bare `systemctl` resolves to the fake.
     marker, bin_ = tmp_path / "rebooted", tmp_path / "bin"
     bin_.mkdir()
     for tool in ("date", "python3", "sleep"):
