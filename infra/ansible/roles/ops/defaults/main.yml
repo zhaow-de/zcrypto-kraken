@@ -52,9 +52,9 @@ ops_onchain_compose_dir: "{{ ops_compose_dir }}/onchain"
 # BRK's pinned commit (spec 00164 D9), and the URL the writer reads it at: cli.onchain.brk.BITVIEW_URL's value.
 ops_bitview_commit: 1a19c5e969761a0ce446483767da8c765e4aa895
 ops_bitview_url: http://zcrypto-onchain-bitview:3110
-# The caps (spec 00164 D11): each container's CPUs and memory, the node's database cache in MiB, one CPU
-# weight below the ops containers' unset one, and per-second read and write limits on the disk under the root.
-# The node's memory and cache are twice D11's, on the owner's word of 2026-11-23 (`[iter-208]`, the phase-4 decisions log).
+# The caps (spec 00164 D11; the node's memory and cache `[iter-208]`): each container's CPUs and memory, the node's
+# database cache in MiB, one CPU weight below the ops containers' unset one, and per-second read and write limits on
+# the disk under the root.
 ops_bitcoind_cpus: "4"
 ops_bitcoind_memory: 16g
 ops_bitcoind_dbcache_mib: 8192
