@@ -9,12 +9,16 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
   verdict=$(python3 - "$prefix" "$journal" <<'PY'
 import json, pathlib, sys
 prefix, root = sys.argv[1], pathlib.Path(sys.argv[2])
-paths = list(root.glob("*/exec-*.json"))
+paths = sorted(root.glob("*/exec-*.json"), key=lambda q: q.stat().st_mtime, reverse=True)
 if not paths:
     print("WAIT no execution record"); sys.exit()
-d = json.loads(max(paths, key=lambda q: q.stat().st_mtime).read_text())
-plans = [e for e in d.get("plans", []) if e["plan_id"].startswith(prefix)]
-if not plans:
+# The newest of the last three records that holds the plan: a boundary's record written mid-watch is newer.
+for path in paths[:3]:
+    d = json.loads(path.read_text())
+    plans = [e for e in d.get("plans", []) if e["plan_id"].startswith(prefix)]
+    if plans:
+        break
+else:
     print("WAIT no plan"); sys.exit()
 plan = plans[-1]
 intent = plan["intents"][0] if plan["intents"] else None
@@ -25,7 +29,7 @@ row = rows[-1] if rows else None
 txid = next((ev.get("venue_order_id") for ev in (row or {}).get("events", []) if ev.get("venue_order_id")), None)
 if intent["outcome"] == "pending" and row and row["state"] == "accepted" and row["filled_qty"] == 0 and txid:
     print(f"REST {plan['plan_id']} {row['client_order_id']} {txid}")
-elif intent["outcome"] != "pending" or intent["filled_qty"] or (row and (row["filled_qty"] or row["state"] not in ("initialized", "submitted", "accepted"))):
+elif intent["outcome"] != "pending" or intent["filled_qty"] or (row and (row["filled_qty"] or row["state"] not in ("submitting", "accepted"))):
     print(f"STOP {plan['plan_id']} intent={intent['outcome']} filled={intent['filled_qty']} row={row and row['state']}")
 else:
     print(f"WAIT {plan['plan_id']} intent={intent['outcome']} row={row and row['state']}")
