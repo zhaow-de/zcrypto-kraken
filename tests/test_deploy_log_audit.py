@@ -56,9 +56,12 @@ _RULED = {
 }
 
 
-def test_api_impacting_skips_an_entry_the_owner_ruled_not_a_window():
+@pytest.mark.parametrize("ruled_id", ["3zrrdvpscrx8", "5v1dygshcn34"])
+def test_api_impacting_skips_an_entry_the_owner_ruled_not_a_window(ruled_id):
+    ruled = {**_RULED, "id": ruled_id}
+    reposted = {**ruled, "components": []}
     unruled = {**_RULED, "id": "0000unruled0"}
-    assert audit.api_impacting([_RULED, unruled]) == [unruled]
+    assert audit.api_impacting([ruled, reposted, unruled]) == [unruled]
 
 
 def test_every_entry_ruled_not_a_window_is_named_in_a_decisions_log():

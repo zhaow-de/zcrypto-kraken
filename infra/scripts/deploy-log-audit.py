@@ -70,10 +70,11 @@ def _update_bodies(entry: dict) -> list[str]:
 
 
 # The feed's entries the owner ruled not a window, by the entry's own `id`: an announcement filed as a
-# scheduled maintenance, its span no outage. Every key is named in a decisions-log entry.
+# scheduled maintenance, its span no outage.
 # `maintenance_conflicts` in `cli/engine/draftplan.py`, rung 2's planner, does not carry this set.
 NOT_A_WINDOW = {
     "3zrrdvpscrx8": "Unified WebSocket API now available for Derivatives, 2026-11-19T11:00Z to 2027-03-01T23:59Z",
+    "5v1dygshcn34": "Unified WebSocket API now available for Derivatives, re-posted, 2026-11-23T09:30Z to 2027-03-01T23:59Z",
 }
 
 
