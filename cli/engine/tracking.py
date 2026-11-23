@@ -14,7 +14,7 @@ from typing import NamedTuple
 
 from cli.engine.errors import EngineError
 from cli.engine.execledger import credited_qty
-from cli.engine.feeders import CycleStages, _median, _p95, _weekly_drift, accumulation_payload
+from cli.engine.feeders import CycleStages, _median, _p95, _weekly_drift, accumulation_payload, stage_grosses
 from cli.engine.instruments import EUR_CODES
 from cli.engine.store import BASKET
 from cli.logging import get_logger
@@ -226,8 +226,8 @@ def _iso_label(key: tuple[int, int]) -> str:
 def drift_bps(final: dict[str, float], closes: dict[str, float], held: dict[str, float], nav: float) -> float:
     """One cycle's drift, in bps of NAV, from plain dicts.
 
-    Plain dicts because the engine host carries no refdata snapshot for minimums; one implementation,
-    so the number a human bands (`weekly_tracking`) and the number the engine trips on (`executor`) cannot drift apart."""
+    Plain dicts because the engine host carries no refdata snapshot for minimums; one implementation, so a cycle's drift
+    cannot differ between what a human bands (`weekly_tracking`) and what the engine trips on (`executor`)."""
     drift_eur = 0.0
     for a, weight in final.items():
         close = closes[a]
@@ -284,7 +284,8 @@ def weekly_tracking(
     opening: OpeningHoldings | None = None,
     books: dict[datetime, dict[str, float] | None] | None = None,
 ) -> dict:
-    """That week's floor p95 against its realized MEAN drift (`realized_drift`), from `opening`'s birth when given."""
+    """That week's floor p95 against its realized MEAN drift (`realized_drift`) over its cycles with an active sleeve, from
+    `opening`'s birth when given."""
     rung_by_week = rung_by_week or {}
     ordered = sorted(stages, key=lambda s: s.cycle_ts)
     if opening is not None:
@@ -298,9 +299,13 @@ def weekly_tracking(
     real = realized_drift(ordered, nav, books=books)
     scored = {datetime.fromisoformat(row["cycle_ts"]): row["drift_bps"] for row in real["cycles"]}
     floor_weeks = {(w["iso_year"], w["iso_week"]): w for w in _weekly_drift(ordered, floor["cycles"])}
+    # Flat is `zcrypto_engine_active_sleeves` at 0; the floor and realized drift above still run over every cycle, since each
+    # chains a book or a placement into the next.
+    flat = {s.cycle_ts for s in ordered if not any(gross > 0.0 for gross in stage_grosses(s.sleeve_positions).values())}
     floor_cycles: dict[tuple[int, int], list[float]] = {}
     for stage, row in zip(ordered, floor["cycles"], strict=True):
-        floor_cycles.setdefault(_iso_key(stage.cycle_ts), []).append(row["drift_bps"])
+        if stage.cycle_ts not in flat:
+            floor_cycles.setdefault(_iso_key(stage.cycle_ts), []).append(row["drift_bps"])
     first_fill = min((f.boundary for f in fills if f.base is not None), default=None)
 
     weeks: list[dict] = []
@@ -319,16 +324,18 @@ def weekly_tracking(
         straddles = started and any(t < first_fill for t in week_cycles)
         # `rung == 3`, never `rung != 2`: an absent rung must read INELIGIBLE, and the inverted form
         # is a false `pass` on a live-trading gate. `rung_by_week` fails closed -- a caller that
-        # supplies nothing decides nothing, while every week still carries its floor p95 and mean.
+        # supplies nothing decides nothing, while every week is still measured.
         gate_eligible = complete and rung == 3 and not straddles
-        unscored = [t for t in week_cycles if t not in scored]
-        realized_mean = sum(scored[t] for t in week_cycles) / len(week_cycles) if started and not unscored else None
+        active = [t for t in week_cycles if t not in flat]
+        unscored = [t for t in active if t not in scored]
+        realized_mean = sum(scored[t] for t in active) / len(active) if started and active and not unscored else None
         # p95, not a median: the edge was pinned by the T0116 amendment (spec 00091), not chosen here.
-        floor_p95 = _p95(floor_cycles[key])
+        floor_p95 = _p95(floor_cycles.get(key, []))
         weeks.append(
             {
                 "iso_week": label,
                 "cycles": fw["n_cycles"],
+                "flat": len(week_cycles) - len(active),
                 "complete": complete,
                 "rung": rung,
                 "gate_eligible": gate_eligible,
