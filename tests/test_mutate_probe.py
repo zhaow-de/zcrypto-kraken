@@ -344,7 +344,7 @@ def test_a_parse_check_that_could_not_run_stops_with_no_verdict(tmp_path, calls_
     assert "the parse check could not run on mod.py" in r.stderr and "uv stub: no interpreter" in r.stderr
     assert "unparseable" not in r.stderr and "does not parse" not in r.stderr
     assert "KILLED" not in r.stdout and "SURVIVED" not in r.stdout
-    # the first failing call stopped the run: a stop that missed it would reach the next check, one call later
+    # a stop missed at the unmutated check would reach the mutated one, one call later
     assert calls.read_text().strip() == str(calls_before_failing + 1)
     assert target.read_text() == "VALUE = 1\n"
     status = subprocess.run(["git", "-C", str(repo), "status", "--porcelain"], capture_output=True, text=True).stdout
