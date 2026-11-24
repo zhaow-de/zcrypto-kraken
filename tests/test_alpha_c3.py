@@ -8,6 +8,7 @@ from cli.alpha.c3 import (
     COST_ROUND_TRIP,
     FAR,
     FEATURES,
+    FIRST_DAY,
     HIGH,
     HORIZONS,
     LAG_DAYS,
@@ -25,6 +26,7 @@ from cli.alpha.c3 import (
     event_years,
     flags,
     forwards,
+    from_first_day,
     lagged,
     states,
 )
@@ -47,6 +49,12 @@ def test_the_constants_are_the_specs():
     assert FAR == (0.078125, 99.921875)
     assert COST_ROUND_TRIP == 0.012
     assert MIN_EVENT_YEARS == 4
+    assert FIRST_DAY == date(2011, 1, 1)
+
+
+def test_a_day_before_the_first_day_is_no_value():
+    days = [FIRST_DAY - timedelta(days=2), FIRST_DAY - timedelta(days=1), FIRST_DAY, FIRST_DAY + timedelta(days=1)]
+    assert from_first_day(days, [1.0, 2.0, 3.0, None]) == [None, None, 3.0, None]
 
 
 def _planted():
