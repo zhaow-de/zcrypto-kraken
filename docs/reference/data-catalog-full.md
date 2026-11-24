@@ -267,7 +267,7 @@ Unlike the frozen `hot` baskets (pinned at the file level), the accruing operati
 - **Layout:** `BTC/onchain.parquet`, the days from 2009-01-03 through 2026-11-23 in day order, 6,529 rows of 22 columns; `manifest.json` (identity `set`, `set_sha256` `cd0cf027e4717af3be8a900b4523c1f3adae8f83247786c299e99f1eb3554520`), its `provenance` naming the chain, the as-of line and the pins its `vintage` carries.
 - **Schema:** the *BTC on-chain valuation series* entry's.
 - **Consumption convention:** read through `ObservedReader`, which attests it against the manifest, as `zcrypto research eval --dataset btc-onchain-20261124T162656Z` reads it; frozen and never rewritten. In `zcrypto.toml`'s `authored_sets`: pushed once to the hub's `hot/`, where `data fetch` carries it to each research node.
-- **Caveats:** the chain's.
+- **Caveats:** the chain's; its `mvrv_z` column, σ from BRK's first priced day, is unread by `c3-onchain-reading`, which computes its own with σ from 2011-01-01 and reads no day before it, BRK's 2010 days standing outside spec `00164` D13's tolerance (`[iter-209]`).
 - **Consumers:** `c3-onchain-reading` (spec `00164` D12).
 
 ## private
