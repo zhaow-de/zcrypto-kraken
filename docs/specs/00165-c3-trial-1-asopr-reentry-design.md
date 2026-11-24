@@ -524,8 +524,9 @@ The statement is written at the recommended options of D5–D8, and a pick of an
 - **No stored figure anchors its returns.** Record 34's 1.3798 is the offsets' mean of net series, another object, and records 44 and 47 store nothing of the sleeve alone (the basis). Arm A is therefore anchored by what it holds — reading 10's `arm` and `counts` blocks, the engagement's literals — and its bar is read at the pre-flight, after the hash (D15).
 - No change to `cli/alpha/a1.py`, `cli/alpha/c3.py`, `cli/portfolio/*` or any adopted artifact.
 
-## D5 — the instrument (open)
+## D5 — the instrument (the owner's)
 
+**The owner's pick, 2026-11-24 (by 20:14:37Z), verbatim:** "Reading 10's sets (Recommended)". The option marked Recommended below is taken.
 Which closes the trial's returns come from decides whether any of them lies outside the history the cell was found on.
 
 1. **The two sets reading 10 read, both whole: the frozen snapshot `btc-onchain-20261124T162656Z` and frozen `ohlc-full`** — **Recommended**.
@@ -540,8 +541,9 @@ Which closes the trial's returns come from decides whether any of them lies outs
 
 `ohlc-holdout-2026-07-10` is no option under any of the three: its one look was spent on 2026-07-10 (`00.master-plan.md:323`), and `[iter-176]` admits its window only through `ohlc-rolling`.
 
-## D6 — the grid and the bar's instrument (open)
+## D6 — the grid and the bar's instrument (the owner's)
 
+**The owner's pick, 2026-11-24 (by 20:14:37Z), verbatim:** "Daily, record 34's bar (Recommended)". The option marked Recommended below is taken.
 Spec 00164 D12 fixes the test — `a1_kill_bar` and a head-to-head against the sleeve — and not the grid its returns are counted on.
 
 1. **The daily union, the bar record 34's** — **Recommended**.
@@ -557,8 +559,9 @@ Spec 00164 D12 fixes the test — `a1_kill_bar` and a head-to-head against the s
 
 On either grid the DSR leg asks the same: an annualised net Sharpe above 0.4644 daily, 0.4656 at 4h (measured).
 
-## D7 — the re-entry's size (open)
+## D7 — the re-entry's size (the owner's)
 
+**The owner's pick, 2026-11-24 (by 20:14:37Z), verbatim:** "All-long size, weekly (Recommended)". The option marked Recommended below is taken.
 The sleeve is flat where the re-entry acts, so it holds no position to copy: the size is a choice, and it is made here on weights, scales and turnover alone.
 
 1. **The all-long size at the sleeve's cadence** — **Recommended**.
@@ -572,8 +575,9 @@ The sleeve is flat where the re-entry acts, so it holds no position to copy: the
 3. **The all-long size, daily** — option 1 without the cadence: `weights[k] × scale[k]` at each close.
    - No averaging function; the same 4,899 asset-closes and 367 entries. **Cost**: it trades the size's daily drift, 24.41083926495517 of added turnover against 23.113244304879004, a break-even of 0.102569 % against 0.096962 %, and sizes a weekly sleeve's re-entry on a clock the sleeve does not keep.
 
-## D8 — the hold (open)
+## D8 — the hold (the owner's)
 
+**The owner's pick, 2026-11-24 (by 20:14:37Z), verbatim:** "Spec 00139's rule (Recommended)". The option marked Recommended below is taken.
 The cell fixes 7 closes; what it leaves open is what the position does when events overlap and when the sleeve itself turns long inside a hold.
 
 1. **`reentry_positions(arm_a, size, fires, hold=7)`, spec 00139 D3's rule, unchanged** — **Recommended**.
@@ -603,8 +607,9 @@ Under either option each entry and exit is a trade charged on the position's cha
 - **The DSR counts C3's true trials**: `n_trials` 1 (D2); how the 32 looks enter the bar is D11.
 - **The holdout is untouched** under D5's recommended option: `ohlc-full` ends 2026-03-31, and neither `ohlc-rolling` nor `ohlc-holdout-*` is read.
 
-## D11 — how the reading's 32 looks enter the bar (open)
+## D11 — how the reading's 32 looks enter the bar (the owner's)
 
+**The owner's pick, 2026-11-24 (by 20:15:32Z), verbatim:** "n_trials 1, looks stated (Recommended)". The option marked Recommended below is taken.
 Spec 00164 D12 says a trial the reading names "counts C3's true trials in its DSR with these 32 looks in its design". At `var_trials` 0.0, which `[iter-176]` binds, the count moves no number — the expected maximum Sharpe is 0.0 at any count (measured) — so the sentence can be met in two ways.
 
 1. **`n_trials` 1, `var_trials` 0.0, the bar's legs as ratified; the 32 looks stated, in D10 and in the record's notes** — **Recommended**.
@@ -624,8 +629,9 @@ Not offered: a declared count of 33, which spec 00133 D4 admits and which would 
 - **The drawdown pair**, from the same start: `max_drawdown(net_b[first:])`, `max_drawdown(net_a[first:])` and `max_drawdown_reduction_pct = 100 × (A − B) / A`, spec 00138 D8's pair; a negative reduction is arm B's drawdown above arm A's.
 - **Refused before any bar**: fewer than 2 return indices from the first engagement, and an arm A that never draws down from it — each a `ValidationError`, and so a refused build.
 
-## D13 — the matrix and its drawdown bound (open)
+## D13 — the matrix and its drawdown bound (the owner's)
 
+**The owner's pick, 2026-11-24 (by 20:15:32Z), verbatim:** "Max DD ≤ 1.2× arm A (Recommended)". The option marked Recommended below is taken.
 The rows are spec 00149 D8's, the dead knob read off the re-entry's own engagement; what is open is whether an adopt also answers for the drawdown the re-entry adds.
 
 1. **Spec 00139 D5's bound: an adopt needs arm B's maximum drawdown from the head-to-head's start at most 1.2 × arm A's** — **Recommended**.
@@ -686,8 +692,9 @@ At option 2 the rule loses `bounded`; at D11's option 2 its `0.05` is `0.05 / 32
 - **The notes, written before the run** (spec 00137 D10's): the subject over the snapshot with `ohlc-full` beside it, both whole; arm A and arm B, the trigger and its constants, the size, the hold and the costing; the hypothesis; the count 1 and `var_trials` 0.0; the read from arm B's first engagement deciding, the full-window read and the drawdown pair beside it; the contamination D10 states, naming reading 10, its 32 cells and its `record_hash`; the pre-flight's figures, quoted — arm A's anchors and its bar's `dsr` and SPA p; the park row naming no variant; the matrix pre-registered by this spec's sha256.
 - **A refusal from the count, a refused build, a stop by the rule under `--register`**: spec 00137 D10's handling — a refusal from the count or a refused build keeps no record and is T0228's with its line quoted, a stop by the rule a reading carrying its attempt, which counts 0; none spends a trial.
 
-## D16 — what a verdict changes (open)
+## D16 — what a verdict changes (the owner's)
 
+**The owner's pick, 2026-11-24 (by 20:15:32Z), verbatim:** "Recorded; next step yours (Recommended)". The option marked Recommended below is taken.
 The owner's pick names this trial and nothing after it; the master plan ties the first paid data dollar to C3 — "Glassnode … if C3 survives its kill bar" (`00.master-plan.md:241`) — while T0016's next step and the `[iter-210]` entry let the Glassnode step, `_pit` diff first, stand beside the trial on reading 10's cell alone. This spec changes neither text; it has to say what its own verdict does.
 
 1. **The verdict is recorded and C3's next step is the owner's pick** — **Recommended**.
@@ -735,12 +742,6 @@ The plan reviews at tier `full` (measured); each guard is proven with `infra/scr
 - LTC and DOGE, the Glassnode step and any purchase (T0228's, T0016's).
 - Any change to the chain, the writer, the node, the ops role or a host; any change to an existing function, subject, record, reading or spec.
 
-## The decisions left for the owner
+## The owner's picks
 
-- **D5 — the instrument**: reading 10's two frozen sets (Recommended), `ohlc-rolling` as of a named day with the unseen months beside the matrix, or the unseen days alone.
-- **D6 — the grid and the bar's instrument**: the daily union and record 34's bar (Recommended), or the 4h union and the B families' bar.
-- **D7 — the re-entry's size**: the all-long size at the sleeve's cadence (Recommended), the sleeve's own vol-target scale, or the all-long size daily.
-- **D8 — the hold**: `reentry_positions` unchanged, closed where the sleeve turns long (Recommended), or held through the sleeve's own entry.
-- **D11 — the reading's 32 looks**: stated, the bar's legs as ratified at `n_trials` 1 (Recommended), or the head-to-head's adopt threshold at 0.05 / 32.
-- **D13 — the matrix's drawdown bound**: arm B's drawdown at most 1.2 × arm A's for an adopt (Recommended), or no drawdown leg.
-- **D16 — what a verdict changes**: recorded, the family's next step the owner's pick (Recommended), or the verdict sequencing the family in this branch.
+Each open decision's option marked Recommended, the owner's picks of 2026-11-24 quoted at D5, D6, D7, D8, D11, D13 and D16, and in the phase-4 decisions log's `[iter-210]` entries.
