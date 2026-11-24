@@ -110,7 +110,7 @@ def test_the_compose_project_has_two_capped_services_and_no_port_or_secret():
         "bitcoind": "zcrypto-onchain-bitcoind",
         "bitview": "zcrypto-onchain-bitview",
     }
-    limits = {"bitcoind": {"cpus": "4", "memory": "8g"}, "bitview": {"cpus": "8", "memory": "16g"}}
+    limits = {"bitcoind": {"cpus": "4", "memory": "16g"}, "bitview": {"cpus": "8", "memory": "16g"}}
     for name, service in services.items():
         assert service["user"] == f"{CONTEXT['ops_uid']}:{CONTEXT['ops_gid']}", name
         assert service["restart"] == "unless-stopped", name
@@ -180,7 +180,7 @@ def test_both_images_are_named_by_their_ids():
 def test_the_node_configuration_lines():
     rendered = _ENV.from_string((OPS_ROLE / "templates/bitcoin.conf.j2").read_text()).render(**CONTEXT)
     lines = [line for line in rendered.splitlines() if line.strip() and not line.lstrip().startswith("#")]
-    assert lines == ["server=1", "listen=0", "dbcache=4096", "rpcbind=0.0.0.0", "rpcallowip=0.0.0.0/0"]
+    assert lines == ["server=1", "listen=0", "dbcache=8192", "rpcbind=0.0.0.0", "rpcallowip=0.0.0.0/0"]
 
 
 def test_the_bitview_url_default_is_the_clients():

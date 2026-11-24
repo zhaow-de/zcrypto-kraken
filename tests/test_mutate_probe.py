@@ -236,6 +236,127 @@ def test_a_control_or_mutation_run_that_ran_no_test_is_refused_not_scored(tmp_pa
     assert target.read_text() == "VALUE = 1\n"
 
 
+def _run_a_probe_exiting(tmp_path, control_rc, mutation_rc):
+    target = make_repo(tmp_path)
+    (tmp_path / "probe.sh").write_text(
+        f"#!/bin/sh\ngrep -q 'VALUE = 1' mod.py && exit 0\ngrep -q 'VALUE = 9' mod.py && exit {control_rc}\nexit {mutation_rc}\n"
+    )
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qam", "rc probe"], check=True)
+    args = ["--file", "mod.py", "--control", "s/VALUE = 1/VALUE = 9/", "--mutation", "s/VALUE = 1/VALUE = 2/", "--", "./probe.sh"]
+    return target, run(args, tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("rc", "verdict"),
+    [
+        pytest.param(0, "SURVIVED", id="passed"),
+        pytest.param(1, "KILLED", id="a-test-failed"),
+        pytest.param(2, "KILLED", id="an-import-time-guard-fired"),
+        pytest.param(3, "KILLED", id="a-checker-detected"),
+        pytest.param(124, "KILLED", id="timeout-ended-a-hang"),
+    ],
+)
+def test_a_parseable_mutation_is_scored_by_its_runs_rc(tmp_path, rc, verdict):
+    target, r = _run_a_probe_exiting(tmp_path, control_rc=1, mutation_rc=rc)
+    assert r.returncode == 0 and f"mutate-probe: {verdict} (control proven" in r.stdout, f"{r.returncode} {r.stdout}{r.stderr}"
+    assert target.read_bytes() == b"VALUE = 1\n"
+
+
+def _run_on_a_target(tmp_path, name, text, line, mutation):
+    make_repo(tmp_path)
+    target = tmp_path / name
+    target.write_text(text)
+    (tmp_path / "probe.sh").write_text(f"#!/bin/sh\ngrep -qxF '{line}' {name}\n")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "target"], check=True)
+    return target, run(["--file", name, "--control", "1,$d", "--mutation", mutation, "--", "./probe.sh"], tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("name", "text", "line", "mutation", "error"),
+    [
+        pytest.param("mod.py", "VALUE = 1\n", "VALUE = 1", "s/VALUE = 1/VALUE = = 1/", "line 1: invalid syntax", id="python"),
+        pytest.param("mod.sh", "VALUE=1\n", "VALUE=1", "s/VALUE=1/if VALUE=1/", "syntax error", id="dot-sh"),
+        pytest.param("mod.bash", "VALUE=1\n", "VALUE=1", "s/VALUE=1/if VALUE=1/", "syntax error", id="dot-bash"),
+        pytest.param("mod", "#!/bin/sh\nVALUE=1\n", "VALUE=1", "s/VALUE=1/if VALUE=1/", "syntax error", id="sh-shebang"),
+        pytest.param(
+            "mod.sh",
+            "shopt -s extglob\nVALUE=1\ncase $1 in +(a)) ;; esac\n",
+            "VALUE=1",
+            "s/VALUE=1/if VALUE=1/",
+            "syntax error",
+            id="extglob",
+        ),
+    ],
+)
+def test_a_mutation_that_does_not_parse_is_refused_not_scored(tmp_path, name, text, line, mutation, error):
+    target, r = _run_on_a_target(tmp_path, name, text, line, mutation)
+    assert r.returncode == 2, f"{r.returncode} {r.stdout}{r.stderr}"
+    assert f"leaves {name} unparseable" in r.stderr and error in r.stderr and "does not parse is no kill" in r.stderr
+    assert "KILLED" not in r.stdout and "SURVIVED" not in r.stdout
+    assert target.read_text() == text
+    status = subprocess.run(["git", "-C", str(tmp_path), "status", "--porcelain"], capture_output=True, text=True).stdout
+    assert status == "", f"worktree left dirty by the refusal: {status!r}"
+
+
+def test_a_file_of_another_kind_takes_no_parse_check(tmp_path):
+    # `VALUE = 1` passes `bash -n` and `VALUE = (1)` fails it, so a shell check reaching a python-shebang script would
+    # refuse this mutation
+    target, r = _run_on_a_target(tmp_path, "tool", "#!/usr/bin/env python3\nVALUE = 1\n", "VALUE = 1", "s/VALUE = 1/VALUE = (1)/")
+    assert r.returncode == 0 and "mutate-probe: KILLED (control proven" in r.stdout, f"{r.returncode} {r.stdout}{r.stderr}"
+    assert target.read_text() == "#!/usr/bin/env python3\nVALUE = 1\n"
+
+
+def test_a_template_takes_no_parse_check_whatever_its_shebang(tmp_path):
+    # it passes `bash -n` unmutated, so only the template's exclusion keeps the filter call from failing it
+    text = "#!/bin/bash\nVALUE=1\n"
+    target, r = _run_on_a_target(tmp_path, "mod.sh.j2", text, "VALUE=1", "s/VALUE=1/VALUE={{ v | default(1) }}/")
+    assert r.returncode == 0 and "mutate-probe: KILLED (control proven" in r.stdout, f"{r.returncode} {r.stdout}{r.stderr}"
+    assert target.read_text() == text
+
+
+def test_a_file_that_does_not_parse_unmutated_takes_no_parse_check(tmp_path):
+    text = "VALUE=1\nfi\n"
+    target, r = _run_on_a_target(tmp_path, "mod.sh", text, "VALUE=1", "s/VALUE=1/VALUE=2/")
+    assert r.returncode == 0 and "mutate-probe: KILLED (control proven" in r.stdout, f"{r.returncode} {r.stdout}{r.stderr}"
+    assert "mod.sh does not parse unmutated" in r.stderr and "takes no parse check" in r.stderr
+    assert target.read_text() == text
+
+
+@pytest.mark.parametrize("calls_before_failing", [pytest.param(0, id="unmutated"), pytest.param(1, id="mutated")])
+def test_a_parse_check_that_could_not_run_stops_with_no_verdict(tmp_path, calls_before_failing):
+    # The repo is nested so the stub and its call count live outside it, where they leave the worktree clean.
+    repo = tmp_path / "repo"
+    target = make_repo(repo)
+    stubs = tmp_path / "bin"
+    stubs.mkdir()
+    calls = tmp_path / "uv-calls"
+    uv_stub = stubs / "uv"
+    uv_stub.write_text(
+        f"#!/bin/sh\nn=$(cat {calls} 2>/dev/null || echo 0)\necho $((n + 1)) > {calls}\n"
+        f'if [ "$n" -ge {calls_before_failing} ]; then echo "uv stub: no interpreter" >&2; exit 2; fi\n'
+        f'exec {shutil.which("uv")} "$@"\n'
+    )
+    uv_stub.chmod(0o755)
+    args = ["--file", "mod.py", "--control", "s/VALUE = 1/VALUE = 9/", "--mutation", "s/VALUE = 1/VALUE = 2/", "--", "./probe.sh"]
+    r = run(args, repo, env_extra={"PATH": f"{stubs}:{os.environ['PATH']}"})
+    assert r.returncode == 2, f"{r.returncode} {r.stdout}{r.stderr}"
+    assert "the parse check could not run on mod.py" in r.stderr and "uv stub: no interpreter" in r.stderr
+    assert "unparseable" not in r.stderr and "does not parse" not in r.stderr
+    assert "KILLED" not in r.stdout and "SURVIVED" not in r.stdout
+    # a stop missed at the unmutated check would reach the mutated one, one call later
+    assert calls.read_text().strip() == str(calls_before_failing + 1)
+    assert target.read_text() == "VALUE = 1\n"
+    status = subprocess.run(["git", "-C", str(repo), "status", "--porcelain"], capture_output=True, text=True).stdout
+    assert status == "", f"worktree left dirty by the stop: {status!r}"
+
+
+def test_a_control_run_that_errored_still_proves_the_control(tmp_path):
+    target, r = _run_a_probe_exiting(tmp_path, control_rc=2, mutation_rc=1)
+    assert r.returncode == 0 and "mutate-probe: KILLED (control proven" in r.stdout, f"{r.returncode} {r.stdout}{r.stderr}"
+    assert target.read_bytes() == b"VALUE = 1\n"
+
+
 def test_purge_removes_a_pre_existing_pycache(tmp_path):
     repo = tmp_path / "repo"
     make_repo(repo)

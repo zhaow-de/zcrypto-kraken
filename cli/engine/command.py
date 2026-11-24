@@ -1720,7 +1720,7 @@ def _cost_over(fills: list[Fill], reconciliation: dict | None) -> dict:
 
 
 def _tracking_cell(value: float | None) -> str:
-    """A drift cell: `no data` for a week whose realized series never started, `n/a` for a NaN."""
+    """A drift cell: `no data` for a week with no realized mean, `n/a` for a NaN."""
     if value is None:
         return f"{'no data':>11}"
     return f"{'n/a':>11}" if math.isnan(value) else f"{value:11.1f}"
@@ -1739,11 +1739,21 @@ def _tracking_note(week: dict) -> str:
         return "before the gate boundary"
     if not week["gate_eligible"]:
         return "straddles the first fill"
+    if week["flat"] == week["cycles"]:
+        return "no cycle with an active sleeve -- measured, not decided"
     if week["unscored_from"] is not None:
         return f"no journaled book after {week['unscored_from']}"
     if week["realized_mean_bps"] is None:
         return "no realized data yet"
     return ""
+
+
+def _tracking_row(week: dict) -> str:
+    within = "-" if week["within_band"] is None else ("yes" if week["within_band"] else "NO")
+    return (
+        f"{week['iso_week']:<10} {week['cycles']:>7} {week['flat']:>5} {_tracking_cell(week['floor_p95_bps'])} "
+        f"{_tracking_cell(week['realized_mean_bps'])} {within:>7}  {_tracking_note(week)}"
+    )
 
 
 def _render_tracking(payload: dict) -> str:
@@ -1772,26 +1782,22 @@ def _render_tracking(payload: dict) -> str:
             "comparison below is in one key space -- but a week spanning the change mixes two recording regimes.",
         ]
 
-    header = f"{'week':<10} {'cycles':>7} {'floor_p95':>11} {'real_mean':>11} {'within':>7}  note"
+    header = f"{'week':<10} {'cycles':>7} {'flat':>5} {'floor_p95':>11} {'real_mean':>11} {'within':>7}  note"
     lines += [
         "",
-        "Per ISO week (bps of NAV): the floor's p95 over that week's cycles against the realized mean.",
+        "Per ISO week (bps of NAV): the floor's p95 against the realized mean, both over that week's cycles with an active "
+        "sleeve; flat counts the cycles at which no sleeve held a position, left out of both.",
         "",
         header,
         "-" * len(header),
     ]
-    for week in tracking["weeks"]:
-        within = "-" if week["within_band"] is None else ("yes" if week["within_band"] else "NO")
-        lines.append(
-            f"{week['iso_week']:<10} {week['cycles']:>7} {_tracking_cell(week['floor_p95_bps'])} "
-            f"{_tracking_cell(week['realized_mean_bps'])} {within:>7}  {_tracking_note(week)}"
-        )
+    lines += [_tracking_row(week) for week in tracking["weeks"]]
     lines += [
         "-" * len(header),
         f"Verdict: {tracking['verdict']} at {payload['nav']:,.0f} EUR -- "
         f"{tracking['complete_gate_eligible_weeks']} decided week(s); a verdict needs at least 3, and a week is "
-        "decided only when it is complete, sits on or after the gate boundary, does not straddle the first fill, and has a "
-        "journaled book after every cycle.",
+        "decided only when it is complete, sits on or after the gate boundary, does not straddle the first fill, holds a "
+        "cycle with an active sleeve, and has a journaled book after every such cycle.",
     ]
     if payload["gate_from"] is None:
         lines.append(

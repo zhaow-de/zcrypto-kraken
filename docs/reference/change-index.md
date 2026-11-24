@@ -458,3 +458,7 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #881 | 2026-11-21 | docs(runbooks): T0158 — A2 re-cut for a spot fill, restart rule re-trued | — | — | T0158 |
 | #882 | 2026-11-22 | feat(onchain): iter-204 — BTC's on-chain series and its A1-gate reading | iter-204 | 00164 | T0228 |
 | #883 | 2026-11-23 | fix(scripts): iter-205 — Kraken's re-posted notice ruled not a window | iter-205 | — | — |
+| #885 | 2026-11-23 | fix(engine): iter-206 — the weekly tracking report scores no flat cycle | iter-206 | — | — |
+| #886 | 2026-11-23 | fix(scripts): iter-207 — mutate-probe refuses an unparseable mutation | iter-207 | — | — |
+| #889 | 2026-11-23 | docs(reference): T0158 — the drill day, F2's re-run and A2 pass | — | — | T0158 |
+| #890 | 2026-11-24 | fix(ops): iter-208 — the on-chain node's memory 16g and dbcache 8192 MiB | iter-208 | 00164 | — |

@@ -48,6 +48,7 @@
       "Bash(git worktree add:*)",
       "Bash(sed -i 's/^engine_exec_armed: false$/engine_exec_armed: true/' infra/ansible/host_vars/zcrypto/vars.yml)",
       "Bash(sed -i 's/^engine_exec_armed: true$/engine_exec_armed: false/' infra/ansible/host_vars/zcrypto/vars.yml)",
+      "Bash(ssh -o BatchMode=yes *)",
       "Bash(git reset --hard:*)",
       "Bash(git commit --amend -F:*)",
       "Bash(git cherry-pick:*)",
