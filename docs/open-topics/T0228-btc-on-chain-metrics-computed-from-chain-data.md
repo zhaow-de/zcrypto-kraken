@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: 'an activity — the owner''s pick on C3''s trial 1, the cell reading 10 names, recorded in the phase-4 decisions log; check: `grep -c -E ''^\[iter-[0-9]{3}\] .*C3.*trial 1'' docs/research/10.phase4-decisions.md` prints at least 1'
+ripe_when: 'an activity — C3''s next step after the on-chain reading is picked, its trial 1 the cell reading 10 names, recorded in the phase-4 decisions log; check: `grep -c -E ''^\[iter-[0-9]+\] C3.s next step after the on-chain reading'' docs/research/10.phase4-decisions.md` prints at least 1'
 ---
 
 # BTC on-chain metrics computed from chain data — C3's first step
