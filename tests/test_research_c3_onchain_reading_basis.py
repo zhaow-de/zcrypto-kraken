@@ -17,8 +17,7 @@ _DATA_ROOT = Path(__file__).resolve().parents[1] / "data"
 SUBJECT = "c3-onchain-reading"
 DATASET = "btc-onchain-20261124T162656Z"
 
-# Read by a scratch program from the snapshot and ohlc-full by plan 00164's Task 6 and Task 7 rules, never through
-# subjects.py; the reading's line is checked against these three whole.
+# Read from the snapshot and ohlc-full by plan 00164's Task 6 and Task 7 rules, never through subjects.py.
 FEATURE_BASIS = {
     "mvrv": {
         "first": 20130909,
@@ -308,7 +307,6 @@ COUNT_BASIS = {
     },
 }
 
-# The days the cells read, 2013-09-09 -> 2026-03-30, whose mvrv and realized_cap are priced.
 IDENTITY_DAYS = 4582
 # docs/specs/00164 D12's bound: BRK's realized price held to the cent, mvrv stored in parts per million, and nupl
 # rounded to them.

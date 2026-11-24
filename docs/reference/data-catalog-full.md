@@ -264,7 +264,7 @@ Unlike the frozen `hot` baskets (pinned at the file level), the accruing operati
 ### `btc-onchain-20261124T162656Z` (the BTC on-chain chain frozen as of 2026-11-23; written once)
 
 - **Producer:** `zcrypto onchain freeze` at code `046b1548d`, 2026-11-24T16:27:00Z, over the chain `btc-brk1a19c5e96976-g1` as of its line `index/2026/11/23.json`, sha256 `2d9b2f4529042094111751c8b1f22ec5cd04577be507e2a8911a2e1a228bb5e2`, which names the BRK commit `1a19c5e969761a0ce446483767da8c765e4aa895` and the images `bitcoind` `987f63d5e223` and `bitview` `2dbc2962c54c`.
-- **Layout:** `BTC/onchain.parquet`, every day from 2009-01-03 through 2026-11-23 in day order, 6,529 rows of 22 columns; `manifest.json` (identity `set`, `set_sha256` `cd0cf027e4717af3be8a900b4523c1f3adae8f83247786c299e99f1eb3554520`), its `provenance` naming the chain, the as-of line and the pins its `vintage` carries.
+- **Layout:** `BTC/onchain.parquet`, the days from 2009-01-03 through 2026-11-23 in day order, 6,529 rows of 22 columns; `manifest.json` (identity `set`, `set_sha256` `cd0cf027e4717af3be8a900b4523c1f3adae8f83247786c299e99f1eb3554520`), its `provenance` naming the chain, the as-of line and the pins its `vintage` carries.
 - **Schema:** the *BTC on-chain valuation series* entry's.
 - **Consumption convention:** read through `ObservedReader`, which attests it against the manifest, as `zcrypto research eval --dataset btc-onchain-20261124T162656Z` reads it; frozen and never rewritten. In `zcrypto.toml`'s `authored_sets`: pushed once to the hub's `hot/`, where `data fetch` carries it to each research node.
 - **Caveats:** the chain's.

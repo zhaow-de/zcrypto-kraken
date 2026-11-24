@@ -25,7 +25,7 @@ NAS = Path("/mnt/zhao-crypto")
 RUN_AT = BASE_TICK_START + timedelta(days=30, seconds=17)
 _LOG_LINE = re.compile(r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3} (INFO|WARNING|ERROR) zcrypto\.onchain\.\w+ \[[^\]]*\] - (.*)")
 
-# The span's two ends and the day either side of it, the owner's picks spelt here.
+# The span's two ends and the day either side of it, spelt here.
 PRE, FIRST = date(2010, 12, 31), date(2011, 1, 1)
 LAST, POST = date(2026, 3, 30), date(2026, 3, 31)
 JANUARY = [date(2020, 1, 1) + timedelta(days=n) for n in range(28)]

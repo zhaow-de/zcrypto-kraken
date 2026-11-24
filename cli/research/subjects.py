@@ -5225,14 +5225,12 @@ def _c3_reading_inputs(
     days, price = [stamp.date() for stamp in snapshot["ts"].to_list()], snapshot["price"].to_list()
     features: dict[str, dict] = {}
     bands: dict[str, list[str | None]] = {}
-    # The reading's own MVRV-Z, its σ from FIRST_DAY; the snapshot's `mvrv_z` counts from BRK's first priced day
-    # (docs/specs/00164 D7).
+    # Not the snapshot's `mvrv_z`, whose σ counts from BRK's first priced day (docs/specs/00164 D7).
     own_z = onchain_mvrv_z(alpha_c3.from_first_day(days, snapshot["market_cap"].to_list()), snapshot["realized_cap"].to_list())
     for feature in alpha_c3.FEATURES:
         column = alpha_c3.from_first_day(days, own_z if feature == "mvrv_z" else snapshot[feature].to_list())
         if feature in ("mvrv", "mvrv_z", "asopr"):
             column = [value if onchain_priced(p) else None for value, p in zip(column, price, strict=True)]
-        # Ranked over the history from FIRST_DAY, years before the union's first index, then read at the lag.
         bands[feature] = alpha_c3.lagged(dict(zip(days, alpha_c3.bands(column), strict=True)), grid)
         read: list = []
         band_days: dict[str, dict[str, int]] = {}
