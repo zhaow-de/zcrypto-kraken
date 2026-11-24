@@ -93,6 +93,8 @@ def test_the_real_pins_file_parses_into_exactly_the_service_host_pairs_the_fleet
         ("alloy", ("zcrypto-ops",)),
         ("alloy", ("nas",)),
         ("ops (timers + liquidations)", ("zcrypto-ops",)),
+        ("bitcoind", ("zcrypto-ops",)),
+        ("bitview", ("zcrypto-ops",)),
         ("archive-pull", ("nas",)),
         ("valkey + sentinel", ("zcrypto-valkey1",)),
         ("alloy", ("zcrypto-valkey1",)),
@@ -107,7 +109,11 @@ def test_the_real_pins_file_parses_into_exactly_the_service_host_pairs_the_fleet
         first_pin = (
             row.hosts in {("zcrypto-valkey1",), ("zcrypto-valkey2",), ("zcrypto-valkey3",)}
             and (row.service, row.current) in {("valkey + sentinel", "418652cfb58e"), ("alloy", "b8ec653c4423")}
-        ) or (row.hosts, row.service, row.current) == (("zcrypto",), "cache-proxy", "76928c0d6b39")
+        ) or (row.hosts, row.service, row.current) in {
+            (("zcrypto",), "cache-proxy", "76928c0d6b39"),
+            (("zcrypto-ops",), "bitcoind", "987f63d5e223"),
+            (("zcrypto-ops",), "bitview", "2dbc2962c54c"),
+        }
         assert len(row.operand) == 12 or first_pin, row
 
 
