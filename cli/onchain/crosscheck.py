@@ -18,7 +18,7 @@ from cli.vintage.table import TableRead, read_table
 
 MEDIAN_BAR = 0.02
 P99_BAR = 0.10
-SPAN = (date(2010, 8, 16), date(2026, 3, 30))
+SPAN = (date(2011, 1, 1), date(2026, 3, 30))
 CM_SERIES = ("cm/btc/CapMVRVCur", "cm/btc/PriceUSD", "cm/btc/SplyCur")
 RATIOS = ("r_mvrv", "r_price", "r_supply")
 SIDES = ("snapshot", "vendor")

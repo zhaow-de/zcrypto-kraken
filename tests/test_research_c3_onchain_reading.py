@@ -9,6 +9,7 @@ import pytest
 from cli.alpha import c3 as alpha_c3
 from cli.alpha.errors import AlphaError
 from cli.data.manifest import build_manifest, series_entry
+from cli.onchain import series as onchain_series
 from cli.onchain.freeze import SNAPSHOT_RELPATH
 from cli.onchain.series import COLUMNS, SCHEMA
 from cli.portfolio.crossfreq_system import CrossfreqSystemConfig
@@ -17,12 +18,14 @@ from cli.registry.record import validate_metrics
 from cli.research import subjects
 from cli.validation import ValidationError
 
+pytestmark = pytest.mark.retired
+
 SUBJECT = "c3-onchain-reading"
 DATASET = "btc-onchain-test"
 ASSETS = CrossfreqSystemConfig().assets
 UNION_START = datetime(2020, 10, 1, tzinfo=UTC)
 N_DAYS = 320
-LEAD = 400
+LEAD = 800
 # Every asset falls 5 % over the 7 closes from each index divisible by CYCLE and rises 15 % on the eighth, so the A1
 # sleeve, gated on BTC's 200-day average, holds each asset listed on the first day long from index 200 on.
 CYCLE = 8
@@ -52,15 +55,18 @@ def _legs() -> dict[str, pl.DataFrame]:
 def _snapshot(*, lead: int = LEAD, unpriced: int = 0, dropped: int | None = None) -> pl.DataFrame:
     """Day j of the snapshot lies `lead` days before the union's first day. `mvrv` is planted: a new high on the day before
     each index divisible by CYCLE, and below every high on the others, which are 7 in 8, so no other day reaches the high
-    tail; `asopr` is flat, its tails on an 11-day cycle that the 8-day price cycle does not share."""
+    tail; `asopr` is flat, its tails on an 11-day cycle that the 8-day price cycle does not share; `market_cap` swings
+    about `price`, so the reading's own `mvrv_z` reaches both tails, and the snapshot's `mvrv_z` is NaN."""
     n = lead + N_DAYS
     columns = {column: [1.0] * n for column in COLUMNS[3:]}
     columns["price"] = [10_000.0 + j for j in range(n)]
     columns["mvrv"] = [2.0 + 0.001 * j if (j - lead + 1) % CYCLE == 0 else (j * 0.6180339887) % 1 for j in range(n)]
-    columns["mvrv_z"] = [float(j % 13) for j in range(n)]
+    columns["market_cap"] = [(10_000.0 + j) * (1 + 0.5 * ((j * 0.4142135624) % 1)) for j in range(n)]
+    columns["realized_cap"] = [9_000.0] * n
+    columns["mvrv_z"] = [math.nan] * n
     columns["asopr"] = [float(j % 11) for j in range(n)]
     columns["sth_supply_share"] = [(j * 0.7548776662) % 1 for j in range(n)]
-    for column in ("price", "mvrv", "mvrv_z", "asopr"):
+    for column in ("price", "market_cap", "mvrv", "asopr"):
         columns[column][:unpriced] = [0.0] * unpriced
     frame = pl.DataFrame(
         {
@@ -109,6 +115,14 @@ def _build(reader):
 def _inputs(reader):
     _, snapshot, grid, prices = subjects._c3_reads(reader, DATASET, SUBJECT)
     return subjects._c3_reading_inputs(snapshot, grid, prices)
+
+
+def _column(snapshot: pl.DataFrame, feature: str) -> list[float | None]:
+    days = [stamp.date() for stamp in snapshot["ts"].to_list()]
+    if feature != "mvrv_z":
+        return alpha_c3.from_first_day(days, snapshot[feature].to_list())
+    caps = alpha_c3.from_first_day(days, snapshot["market_cap"].to_list())
+    return alpha_c3.from_first_day(days, onchain_series.mvrv_z(caps, snapshot["realized_cap"].to_list()))
 
 
 def _yyyymmdd(day: date) -> int:
@@ -163,17 +177,37 @@ def test_the_bands_rank_the_snapshots_whole_history(tmp_path):
     read = days.index(UNION_START.date() - timedelta(days=1))
     assert read == LEAD - 1 and inputs.grid[0] == UNION_START
     for feature in FEATURES:
-        whole = alpha_c3.bands(snapshot[feature].to_list())
+        whole = alpha_c3.bands(_column(snapshot, feature))
         assert inputs.bands[feature][0] is not None and inputs.bands[feature][0] == whole[read], feature
+        assert inputs.bands[feature] == alpha_c3.lagged(dict(zip(days, whole, strict=True)), inputs.grid), feature
 
 
 def test_a_valuation_on_an_unpriced_day_is_unread(tmp_path):
     snapshot = _snapshot(lead=300, unpriced=30)
     inputs = _inputs(_reader(tmp_path, snapshot=snapshot))
     days = [stamp.date() for stamp in snapshot["ts"].to_list()]
-    for feature in ("mvrv", "mvrv_z", "asopr"):
+    for feature in ("mvrv", "asopr"):
         assert inputs.features[feature]["first"] == _yyyymmdd(days[30 + 364]), feature
     assert inputs.features["sth_supply_share"]["first"] == _yyyymmdd(days[364])
+    # mvrv_z's σ counts priced market caps alone, its band 365 values after its first.
+    snapshot = _snapshot(lead=500, unpriced=30)
+    inputs = _inputs(_reader(tmp_path / "z", snapshot=snapshot))
+    days = [stamp.date() for stamp in snapshot["ts"].to_list()]
+    assert inputs.features["mvrv_z"]["first"] == _yyyymmdd(days[30 + 364 + 364])
+
+
+@pytest.mark.parametrize(
+    ("offset", "features", "first"),
+    [((500, ("mvrv", "asopr", "sth_supply_share"), 500 + 364)), (100, ("mvrv_z",), 100 + 364 + 364)],
+    ids=["the-snapshots-features", "the-readings-mvrv-z"],
+)
+def test_a_day_before_the_first_day_holds_no_value(tmp_path, monkeypatch, offset, features, first):
+    snapshot = _snapshot()
+    days = [stamp.date() for stamp in snapshot["ts"].to_list()]
+    monkeypatch.setattr(alpha_c3, "FIRST_DAY", days[offset])
+    inputs = _inputs(_reader(tmp_path, snapshot=snapshot))
+    for feature in features:
+        assert inputs.features[feature]["first"] == _yyyymmdd(days[first]), feature
 
 
 def test_a_planted_long_state_veto_reads_bounds_excluding_zero(tmp_path, resamples):
@@ -260,7 +294,7 @@ def test_the_features_arm_and_counts_blocks_take_their_literal_shape(tmp_path, r
 
     features, band = {}, {}
     for feature in FEATURES:
-        band[feature] = alpha_c3.lagged(dict(zip(days, alpha_c3.bands(snapshot[feature].to_list()), strict=True)), grid)
+        band[feature] = alpha_c3.lagged(dict(zip(days, alpha_c3.bands(_column(snapshot, feature)), strict=True)), grid)
         assert band[feature][new_year] is not None, feature
         read = [(stamp.date() - timedelta(days=1), b) for stamp, b in zip(grid, band[feature], strict=True) if b is not None]
         band_days: dict[str, dict[str, int]] = {}
@@ -375,7 +409,7 @@ def test_an_unreadable_file_names_its_relpath(tmp_path, broken, error):
         _build(_reader(tmp_path, broken=broken, error=error))
 
 
-@pytest.mark.parametrize("column", ["price", "asopr"])
+@pytest.mark.parametrize("column", ["price", "market_cap", "realized_cap", "asopr"])
 def test_a_snapshot_without_a_column_it_reads_is_refused_naming_its_relpath(tmp_path, column):
     with pytest.raises(subjects.SubjectError) as refused:
         _build(_reader(tmp_path, snapshot=_snapshot().drop(column)))

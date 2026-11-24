@@ -462,3 +462,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #886 | 2026-11-23 | fix(scripts): iter-207 — mutate-probe refuses an unparseable mutation | iter-207 | — | — |
 | #889 | 2026-11-23 | docs(reference): T0158 — the drill day, F2's re-run and A2 pass | — | — | T0158 |
 | #890 | 2026-11-24 | fix(ops): iter-208 — the on-chain node's memory 16g and dbcache 8192 MiB | iter-208 | 00164 | — |
+| #894 | 2026-11-24 | feat(research): iter-209 — C3 BTC on-chain regime read (reading 10) | iter-209 | 00164 | T0228 |

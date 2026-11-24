@@ -128,6 +128,7 @@ from cli.derivatives.funding import PERP_SYMBOLS
 from cli.features.derivatives import coverage_by_year, funding_zscore
 from cli.features.errors import FeatureError
 from cli.onchain.freeze import SNAPSHOT_RELPATH
+from cli.onchain.series import mvrv_z as onchain_mvrv_z
 from cli.onchain.series import priced as onchain_priced
 from cli.panel import ladder as panel_ladder
 from cli.portfolio.builder import CombinedSystemConfig, build_combined_system
@@ -5189,7 +5190,9 @@ def _c3_reads(
     if not isinstance(line, dict) or not isinstance(line.get("sha256"), str):
         raise SubjectError(f"{over}: {dataset}/manifest.json's provenance names no as-of line's sha256")
     try:
-        snapshot = reader.read_series(dataset, SNAPSHOT_RELPATH).select("ts", "price", *alpha_c3.FEATURES)
+        snapshot = reader.read_series(dataset, SNAPSHOT_RELPATH).select(
+            "ts", "price", "market_cap", "realized_cap", *(feature for feature in alpha_c3.FEATURES if feature != "mvrv_z")
+        )
     except (pl.exceptions.PolarsError, OSError) as exc:
         raise SubjectError(f"{dataset}/{SNAPSHOT_RELPATH}: {exc}") from exc
     ts, price = snapshot["ts"].to_list(), snapshot["price"].to_list()
@@ -5222,11 +5225,12 @@ def _c3_reading_inputs(
     days, price = [stamp.date() for stamp in snapshot["ts"].to_list()], snapshot["price"].to_list()
     features: dict[str, dict] = {}
     bands: dict[str, list[str | None]] = {}
+    # Not the snapshot's `mvrv_z`, whose σ counts from BRK's first priced day (docs/specs/00164 D7).
+    own_z = onchain_mvrv_z(alpha_c3.from_first_day(days, snapshot["market_cap"].to_list()), snapshot["realized_cap"].to_list())
     for feature in alpha_c3.FEATURES:
-        column = snapshot[feature].to_list()
+        column = alpha_c3.from_first_day(days, own_z if feature == "mvrv_z" else snapshot[feature].to_list())
         if feature in ("mvrv", "mvrv_z", "asopr"):
             column = [value if onchain_priced(p) else None for value, p in zip(column, price, strict=True)]
-        # Ranked over the snapshot's whole history, years before the union's first index, then read at the lag.
         bands[feature] = alpha_c3.lagged(dict(zip(days, alpha_c3.bands(column), strict=True)), grid)
         read: list = []
         band_days: dict[str, dict[str, int]] = {}

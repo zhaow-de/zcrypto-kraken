@@ -261,6 +261,15 @@ Unlike the frozen `hot` baskets (pinned at the file level), the accruing operati
 - **Consumers:** `c3-onchain-reading` (spec `00164` D12), through a frozen snapshot; none yet.
 - **Sizing a rebuild**, from generation 1's first run: the node's initial sync took 14 h 30 min (2026-11-23 11:47:46Z to 2026-11-24 02:18:13Z), its memory cap raised from 8g to 16g and its `dbcache` from 4096 to 8192 MiB at 01:18:17Z inside it; BRK's first index took 4 h 8 min (11:09:02Z to the writer's run that found it at the node's tip, 15:17:26Z). The root's used space went from 102G before the node's first start to 950G at the sync's end and 1.3T after the index; the containers' peak memory, page cache counted, read 8622858240 under the node's first 8g, 17210974208 under its 16g, and 17181786112 for BRK under its 16g.
 
+### `btc-onchain-20261124T162656Z` (the BTC on-chain chain frozen as of 2026-11-23; written once)
+
+- **Producer:** `zcrypto onchain freeze` at code `046b1548d`, 2026-11-24T16:27:00Z, over the chain `btc-brk1a19c5e96976-g1` as of its line `index/2026/11/23.json`, sha256 `2d9b2f4529042094111751c8b1f22ec5cd04577be507e2a8911a2e1a228bb5e2`, which names the BRK commit `1a19c5e969761a0ce446483767da8c765e4aa895` and the images `bitcoind` `987f63d5e223` and `bitview` `2dbc2962c54c`.
+- **Layout:** `BTC/onchain.parquet`, the days from 2009-01-03 through 2026-11-23 in day order, 6,529 rows of 22 columns; `manifest.json` (identity `set`, `set_sha256` `cd0cf027e4717af3be8a900b4523c1f3adae8f83247786c299e99f1eb3554520`), its `provenance` naming the chain, the as-of line and the pins its `vintage` carries.
+- **Schema:** the *BTC on-chain valuation series* entry's.
+- **Consumption convention:** read through `ObservedReader`, which attests it against the manifest, as `zcrypto research eval --dataset btc-onchain-20261124T162656Z` reads it; frozen and never rewritten. In `zcrypto.toml`'s `authored_sets`: pushed once to the hub's `hot/`, where `data fetch` carries it to each research node.
+- **Caveats:** the chain's; its `mvrv_z` column's σ counts BRK's 2010 days, which stand outside spec `00164` D13's tolerance, so `c3-onchain-reading` computes its own from 2011-01-01 (D7, `[iter-209]`).
+- **Consumers:** `c3-onchain-reading` (spec `00164` D12).
+
 ## private
 
 This machine's own state; never synced by `zcrypto data` or any other channel.

@@ -10,6 +10,7 @@ import pytest
 from typer.testing import CliRunner
 
 from cli.__main__ import app
+from cli.alpha.c3 import FIRST_DAY
 from cli.data.manifest import build_manifest, series_entry
 from cli.onchain.crosscheck import CM_SERIES, SPAN, crosscheck, ratios, summary
 from cli.onchain.freeze import SNAPSHOT_RELPATH
@@ -24,8 +25,8 @@ NAS = Path("/mnt/zhao-crypto")
 RUN_AT = BASE_TICK_START + timedelta(days=30, seconds=17)
 _LOG_LINE = re.compile(r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3} (INFO|WARNING|ERROR) zcrypto\.onchain\.\w+ \[[^\]]*\] - (.*)")
 
-# The span's two ends and the day either side of it, the owner's picks spelt here.
-PRE, FIRST = date(2010, 8, 15), date(2010, 8, 16)
+# The span's two ends and the day either side of it, spelt here.
+PRE, FIRST = date(2010, 12, 31), date(2011, 1, 1)
 LAST, POST = date(2026, 3, 30), date(2026, 3, 31)
 JANUARY = [date(2020, 1, 1) + timedelta(days=n) for n in range(28)]
 GAP = date(2020, 1, 15)
@@ -214,7 +215,7 @@ def test_a_token_is_parsed_as_served():
         ("within", 0, None),
         ("median", 1, "the span's median |r_mvrv| 0.03 is above 0.02"),
         ("p99", 1, "the span's 99th percentile of |r_mvrv| 0.2 is above 0.1"),
-        ("no-span-day", 1, "the span 2010-08-16..2026-03-30 holds no day r_mvrv compares"),
+        ("no-span-day", 1, "the span 2011-01-01..2026-03-30 holds no day r_mvrv compares"),
     ],
     ids=["within", "median", "p99", "no-span-day"],
 )
@@ -234,7 +235,7 @@ def test_the_tolerance_exits_1_on_a_breach_and_0_within(tmp_path, vendor_table, 
     assert got == code
     assert _reasons(errors) == ([] if reason is None else [reason])
     if code == 0:
-        assert infos[-1] == f"onchain crosscheck passed snapshot={SET} head={table[1]} span=2010-08-16..2026-03-30"
+        assert infos[-1] == f"onchain crosscheck passed snapshot={SET} head={table[1]} span=2011-01-01..2026-03-30"
 
 
 def test_the_span_bounds_the_tolerance(tmp_path, vendor_table, caplog):
@@ -264,7 +265,7 @@ def test_a_day_the_snapshot_leaves_out_inside_the_span_exits_1_naming_it(tmp_pat
         assert (code, errors) == (0, [])
     else:
         assert code == 1
-        assert _reasons(errors) == ["2010-08-16 is inside the span and the snapshot leaves it out of r_mvrv"]
+        assert _reasons(errors) == ["2011-01-01 is inside the span and the snapshot leaves it out of r_mvrv"]
         assert not [error for error in errors if str(PRE) in error or str(GAP) in error]
 
 
@@ -283,9 +284,9 @@ def test_each_year_line_reads_its_own_year_alone():
 
     report = summary(values, left_out, (FIRST, LAST))
 
-    assert list(report) == ["2010", "2020", "2026", "all", "span"]
-    assert [report[year]["r_mvrv"]["n"] for year in ("2010", "2020", "2026")] == [0, 27, 2]
-    assert report["2010"]["r_mvrv"]["left_out"] == {"snapshot": 2, "vendor": 0}
+    assert list(report) == ["2010", "2011", "2020", "2026", "all", "span"]
+    assert [report[year]["r_mvrv"]["n"] for year in ("2010", "2011", "2020", "2026")] == [0, 0, 27, 2]
+    assert [report[year]["r_mvrv"]["left_out"] for year in ("2010", "2011")] == [{"snapshot": 1, "vendor": 0}] * 2
 
 
 @pytest.mark.parametrize(("missing", "held"), [(FIRST, LAST), (LAST, FIRST)], ids=["first", "last"])
@@ -343,7 +344,7 @@ def test_the_command_reads_a_snapshot_given_as_the_working_directory(tmp_path, v
     code, lines = _cli(["crosscheck", "--snapshot", ".", "--versions", str(versions), "--generation", "1", "--head", head])
 
     assert code == 0
-    assert lines[-1] == ("INFO", f"onchain crosscheck passed snapshot={SET} head={head} span=2010-08-16..2026-03-30")
+    assert lines[-1] == ("INFO", f"onchain crosscheck passed snapshot={SET} head={head} span=2011-01-01..2026-03-30")
     assert [label for label, _ in lines] == ["INFO"] * len(lines)
 
 
@@ -376,3 +377,7 @@ def test_a_head_the_table_lacks_is_refused_in_one_line(tmp_path, vendor_table):
     assert lines == [
         ("ERROR", f"onchain crosscheck refused snapshot={SET} reason=no head in {versions / 'gen-1'} hashes to {absent}")
     ]
+
+
+def test_the_span_opens_on_the_readings_first_day():
+    assert SPAN[0] == FIRST_DAY

@@ -24,6 +24,7 @@ SEED = 42
 FAR = (0.078125, 99.921875)
 COST_ROUND_TRIP = 0.012
 MIN_EVENT_YEARS = 4
+FIRST_DAY = date(2011, 1, 1)
 
 
 def bands(values: list[float | None]) -> list[str | None]:
@@ -45,6 +46,10 @@ def bands(values: list[float | None]) -> list[str | None]:
         else:
             out.append("mid")
     return out
+
+
+def from_first_day[T](days: list[date], values: list[T | None]) -> list[T | None]:
+    return [value if day >= FIRST_DAY else None for day, value in zip(days, values, strict=True)]
 
 
 def lagged[T](by_day: dict[date, T], grid: list[datetime]) -> list[T | None]:
