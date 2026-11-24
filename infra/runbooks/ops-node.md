@@ -412,6 +412,15 @@ The owner's, attended, once the converge rendering the project has passed, the a
 3. **Read its log by value**, twice, minutes apart: `docker logs --tail 100 zcrypto-onchain-bitview` shows `bitviewd` connected to the node's RPC at `zcrypto-onchain-bitcoind` and its index advancing, the container name resolving on the project's network. Another reading holds the procedure for the owner's word. Its IO reads as step 3's, with `sudo docker inspect --format '{{.Id}}' zcrypto-onchain-bitview` and `docker stats --no-stream zcrypto-onchain-bitview`.
 4. **Record the first index's end**, the index at the node's tip, which the writer's journal reads at each run until it is (`the index is at height … and the node's tip at …`); then the root's free bytes, `df -h /`, and each container's peak memory, `cat /sys/fs/cgroup/system.slice/docker-<id>.scope/memory.peak` with each container's id, each naming the start it covers, `sudo docker inspect --format '{{.State.StartedAt}}' zcrypto-onchain-bitcoind` or `sudo docker inspect --format '{{.State.StartedAt}}' zcrypto-onchain-bitview`. The first sync's figures go into the chain's entry in `docs/reference/data-catalog-full.md`.
 
+### A cap change
+
+A memory or `dbcache` value changed in the role's defaults reaches the node by an ops converge handed `ops_bitcoind_image_id` and `ops_bitview_image_id`, then a recreate. The converge renders `bitcoin.conf` into the bind-mounted data directory, which the node reads at its next start, while the memory limit stays the running container's own until it is recreated: a `compose start` between the two starts the old limit on the new cache.
+
+1. **The two ids the converge is handed** are the rendered project's own, the two `image:` lines of `/etc/zcrypto-ops/onchain/compose.yaml`, the node's first.
+2. **The running node's peak memory, before the converge**: `cat /sys/fs/cgroup/system.slice/docker-<id>.scope/memory.peak` with its id read as at the first start's step 3, recorded beside the sync's start, since the recreate ends that container and its count.
+3. **The converge, the owner's**; then at once **the recreate**, `sudo docker compose -f /etc/zcrypto-ops/onchain/compose.yaml up -d --force-recreate bitcoind`, forced since a `dbcache` alone changes no compose line; the old container stops within its 600 s grace. A guard stop or a reboot between the two takes the recreate for its start.
+4. **Read the new caps by value**: `sudo docker inspect --format '{{.HostConfig.Memory}}' zcrypto-onchain-bitcoind` prints the limit in bytes, `17179869184` for `16g`, and `docker logs --tail 100 zcrypto-onchain-bitcoind` shows the sync resumed. Another print holds for the owner's word.
+
 ### The guard stopped the node
 
 `Ops · ERROR logs` quotes `container="zcrypto-onchain-guard"`: `the <read> age <N>s is past its bar <bar>s: stopping zcrypto-onchain-bitview and zcrypto-onchain-bitcoind`.
