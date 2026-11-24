@@ -650,7 +650,7 @@ The rows are spec 00149 D8's, the dead knob read off the re-entry's own engageme
 | arm A passes, the re-entry engaged | pass | mean outperformance > 0, and SPA p ≥ 0.05 or B's maximum drawdown above 1.2 × A's | **park** |
 | arm A passes, the re-entry engaged | pass | mean outperformance ≤ 0 | **reject** |
 
-Every quantity the matrix reads is a stored key read unrounded: `arm_a_passes`, `reentered_per_year`, `passes`, `head_to_head_mean_outperf_primary`, `head_to_head_spa_p_primary` and `max_drawdown_reduction_pct`. The park row names no variant: what follows a verdict is D16's. The subject declares the rule (spec 00129 D4), `_b2_reentry_verdict`'s form with the re-entry's own dead-knob read:
+Every quantity the matrix reads is a stored key read unrounded: `arm_a_passes`, `reentered_per_year`, `passes`, `head_to_head_mean_outperf_primary`, `head_to_head_spa_p_primary` and `max_drawdown_reduction_pct`; the adopt and park rows' bound, B's maximum drawdown at most 1.2 × A's, is read as `max_drawdown_reduction_pct` ≥ −20.0, D12's form, never as a ratio of the two stored drawdowns, which can fall on the other side of it in the last bit. The park row names no variant: what follows a verdict is D16's. The subject declares the rule (spec 00129 D4), `_b2_reentry_verdict`'s form with the re-entry's own dead-knob read:
 
 ```python
 def _c3_asopr_reentry_verdict(m: dict) -> str | None:
