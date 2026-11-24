@@ -177,6 +177,7 @@ def test_the_bands_rank_the_snapshots_whole_history(tmp_path):
     for feature in FEATURES:
         whole = alpha_c3.bands(_column(snapshot, feature))
         assert inputs.bands[feature][0] is not None and inputs.bands[feature][0] == whole[read], feature
+        assert inputs.bands[feature] == alpha_c3.lagged(dict(zip(days, whole, strict=True)), inputs.grid), feature
 
 
 def test_a_valuation_on_an_unpriced_day_is_unread(tmp_path):
