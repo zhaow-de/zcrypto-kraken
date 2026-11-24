@@ -18,6 +18,8 @@ from cli.registry.record import validate_metrics
 from cli.research import subjects
 from cli.validation import ValidationError
 
+pytestmark = pytest.mark.retired
+
 SUBJECT = "c3-onchain-reading"
 DATASET = "btc-onchain-test"
 ASSETS = CrossfreqSystemConfig().assets

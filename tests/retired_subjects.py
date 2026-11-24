@@ -55,6 +55,8 @@ RETIRED_SUBJECTS = frozenset(
         "c2-lead-lag-reading",
         # C1's reading.
         "c1-maker-fill-reading",
+        # C3's reading.
+        "c3-onchain-reading",
         # The engine's execution-cost reading.
         "engine-cost-reading",
         # The deployable's re-pricing.
