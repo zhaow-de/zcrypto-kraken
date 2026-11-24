@@ -109,6 +109,8 @@ The startup pass compares each preserved row against the quantity the venue repo
 
 The same attended reboot as A1, with the `rest-hold` buy resting one tick under the bid when the host goes down.
 
+A reboot pasted by hand after a resting read comes too late: an order one tick under the bid can fill within seconds. The reboot is fired on the host by `infra/scripts/drill-a2-reboot-on-rest.sh`, started as root once the plan is staged and before it is placed, with the plan id, a deadline in seconds and `live`; it reboots the moment the plan's order rests at Kraken unfilled, and any other line it logs means no reboot. Its copy to the host is a foreground call of its own, the copy's sha256 compared with the tree's before the start: a copy backgrounded with the start reads an empty stdin and writes an empty script. It is started detached, its output to a log; after the boot the log's `REST` line gives the reboot's start and the order, and the script and its log are removed from the host.
+
 ### Must fire
 
 A1's set, unchanged: `zcrypto-fleet-daemon-restarted` and nothing else on an ~83 s reboot.
