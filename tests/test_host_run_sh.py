@@ -733,6 +733,59 @@ CAPTURE_DOORS = [
     ("killall-dockerd", "zcrypto", "sudo killall dockerd", "capture-primary"),
 ]
 
+# This workstation taken down another way: the units behind reboot, any writer of the kernel's trigger files, a signal
+# to PID 1, logind's and systemd's D-Bus methods, sleep, and the runners that carry them. Each row is on hp.
+_LD = "org.freedesktop.login1"
+WORKSTATION_DOORS = [
+    ("ctrl-alt-del-target", "sudo systemctl start ctrl-alt-del.target", "workstation"),
+    ("systemd-reboot-service", "sudo systemctl start systemd-reboot.service", "workstation"),
+    ("systemd-reboot-no-suffix", "sudo systemctl start systemd-reboot", "workstation"),
+    ("systemd-poweroff-service", "sudo systemctl start systemd-poweroff.service", "workstation"),
+    ("systemd-halt-service", "sudo systemctl restart systemd-halt.service", "workstation"),
+    ("systemd-kexec-service", "sudo systemctl start systemd-kexec.service", "workstation"),
+    ("systemd-soft-reboot-service", "sudo systemctl start systemd-soft-reboot.service", "workstation"),
+    ("systemd-suspend-service", "sudo systemctl start systemd-suspend.service", "workstation"),
+    ("final-target", "sudo systemctl start final.target", "workstation"),
+    ("job-mode-isolate", "sudo systemctl start --job-mode=isolate multi-user.target", "workstation"),
+    ("systemctl-kill-init-scope", "sudo systemctl kill --signal=SIGINT init.scope", "workstation"),
+    ("sysrq-dd", "echo b | sudo dd of=/proc/sysrq-trigger", "workstation"),
+    ("sysrq-cp", "sudo cp /tmp/b /proc/sysrq-trigger", "workstation"),
+    ("sysrq-tee-append", "echo b | sudo tee -a /proc/sysrq-trigger", "workstation"),
+    ("sysrq-python", "sudo python3 -c \"open('/proc/sysrq-trigger', 'w').write('b')\"", "workstation"),
+    ("sys-power-state", "echo mem | sudo tee /sys/power/state", "workstation"),
+    ("kill-int-pid-1", "sudo kill -INT 1", "workstation"),
+    ("kill-signal-pid-1", "sudo kill -s SIGRTMIN+5 1", "workstation"),
+    ("kill-every-process", "sudo kill -9 -1", "workstation"),
+    ("kill-computed-pid", "sudo kill -INT $(pidof systemd)", "workstation"),
+    ("pkill-systemd", "sudo pkill -INT -x systemd", "workstation"),
+    ("pkill-f-init", "sudo pkill -INT -f /sbin/init", "workstation"),
+    ("pkill-by-owner", "sudo pkill -INT -u root", "workstation"),
+    ("killall-systemd", "sudo killall -INT systemd", "workstation"),
+    ("busctl-login1-reboot", f"sudo busctl call {_LD} /org/freedesktop/login1 {_LD}.Manager Reboot b false", "workstation"),
+    ("busctl-systemd1-reboot", f"sudo busctl call {_SD} /org/freedesktop/systemd1 {_SD}.Manager Reboot", "workstation"),
+    (
+        "busctl-start-reboot-target",
+        f"sudo busctl call {_SD} /org/freedesktop/systemd1 {_SD}.Manager StartUnit ss reboot.target replace-irreversibly",
+        "workstation",
+    ),
+    (
+        "dbus-send-login1-poweroff",
+        f"sudo dbus-send --system --print-reply --dest={_LD} /org/freedesktop/login1 {_LD}.Manager.PowerOff boolean:false",
+        "workstation",
+    ),
+    (
+        "gdbus-login1-suspend",
+        f"sudo gdbus call --system --dest {_LD} --object-path /org/freedesktop/login1 --method {_LD}.Manager.Suspend false",
+        "workstation",
+    ),
+    ("script-c-reboot", "sudo script -qc reboot /dev/null", "workstation"),
+    ("systemd-run-reboot", "sudo systemd-run reboot", "workstation"),
+    ("at-reboot", "sudo at now <<< reboot", "workstation"),
+    ("rtcwake-off", "sudo rtcwake -m off -s 60", "workstation"),
+    ("rtcwake-mem", "sudo rtcwake --mode=mem -s 60", "workstation"),
+    ("pm-suspend", "sudo pm-suspend", "workstation"),
+]
+
 # The see-through spellings: each hides a gate-opening write behind a different layer of shell.
 SEE_THROUGH = [
     ("quoted", "sudo touch '/var/lib/zcrypto-engine/exec/'\"armed\""),
@@ -989,6 +1042,11 @@ ADMITTED = [
     ),
     ("secondary-reboot", "red", "sudo reboot"),
     ("ops-image-prune", "hp", "sudo docker image prune -af"),
+    ("ops-start-a-service", "hp", "sudo systemctl start zcrypto-panel-materialize.service"),
+    ("ops-kill-a-literal-pid", "hp", "sudo kill -HUP 1234"),
+    ("ops-pkill-a-name", "hp", "sudo pkill -x sleep"),
+    ("ops-rtcwake-show", "hp", "sudo rtcwake -m show"),
+    ("secondary-kill-pid-1", "red", "sudo kill -INT 1"),
     (
         "ops-liquidations-poll",
         "hp",
@@ -1077,6 +1135,12 @@ def test_a_gate_opening_write_is_seen_through_its_spelling(door, block):
 )
 def test_the_primarys_capture_stopped_another_way_is_refused(door, alias, block, rule):
     done = door.judge(alias, block)
+    assert done.returncode == 65 and _rule(done) == rule, done.stderr.decode()
+
+
+@pytest.mark.parametrize(("block", "rule"), [pytest.param(b, r, id=f"workstation-side-door-{i}") for i, b, r in WORKSTATION_DOORS])
+def test_this_workstation_taken_down_another_way_is_refused(door, block, rule):
+    done = door.judge("hp", block)
     assert done.returncode == 65 and _rule(done) == rule, done.stderr.decode()
 
 

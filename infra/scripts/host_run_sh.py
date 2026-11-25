@@ -2771,8 +2771,8 @@ def rule_capture_primary(cmd: Cmd, j: Judge) -> Refusal | None:
             return no(f"{name} calls systemd to stop, kill or starve a unit that could be capture or its Alloy")
     if name == "fuser" and any(a == "--kill" or re.fullmatch(r"-[A-Za-z]*k[A-Za-z]*", a) for a in cmd.args):
         return no("fuser -k on the primary signals whatever holds its target, capture or its Alloy with it")
-    if name in ("pkill", "killall"):
-        return _signals_capture(cmd, no)
+    if name in ("pkill", "killall") and (reason := _signals_any(cmd, _CAPTURE_PROCS)):
+        return no(f"{reason}, on the primary: capture, its Alloy or their container runtime")
     if name == "kill":
         if any(a in ("-0", "-s0", "--signal=0") for a in cmd.args):
             return None
@@ -2780,25 +2780,44 @@ def rule_capture_primary(cmd: Cmd, j: Judge) -> Refusal | None:
     return None
 
 
-def _signals_capture(cmd: Cmd, no) -> Refusal | None:
-    """pkill's patterns are regular expressions, killall's exact names unless -r; one that could match a process of
-    capture, its Alloy or the container runtime under them, or a pkill that selects by owner alone, is refused."""
+def _signals_any(cmd: Cmd, specimens: tuple[str, ...]) -> str | None:
+    """Why a pkill or killall could signal a process named or run as one of `specimens`, or None. pkill's patterns are
+    regular expressions, killall's exact names unless -r; a pkill that selects by owner or group alone signals them
+    all."""
     pkill = cmd.name == "pkill"
     opts, pats = _opts(cmd.args, "uUgGPstFL" if pkill else "usoyZn", _KILL_VALUE)
     keys = {k for k, _ in opts}
     if not pats:
-        return no(f"{cmd.name} with no pattern signals every process its options select, capture with them")
+        return f"{cmd.name} with no pattern signals every process its options select"
     for p in pats:
         if any(c in p for c in WILD):
-            return no(f"{cmd.name}'s pattern is computed at run time")
+            return f"{cmd.name}'s pattern is computed at run time"
         try:
             rx = re.compile(p if pkill or "-r" in keys else re.escape(p), re.I if keys & {"-i", "-I"} else 0)
         except re.error:
-            return no(f"{cmd.name}'s pattern {p} is not one the judge can read")
+            return f"{cmd.name}'s pattern {p} is not one the judge can read"
         exact = "-x" in keys or not pkill and "-r" not in keys
-        if any((rx.fullmatch if exact else rx.search)(spec) for spec in _CAPTURE_PROCS):
-            return no(f"{cmd.name} {p} on the primary could signal capture, its Alloy or their container runtime")
+        if hit := next((spec for spec in specimens if (rx.fullmatch if exact else rx.search)(spec)), None):
+            return f"{cmd.name} {p} could signal {hit}"
     return None
+
+
+_DOWN_UNITS = tuple(
+    u + ".target"
+    for u in _w(
+        "reboot poweroff halt kexec ctrl-alt-del rescue emergency shutdown final umount suspend hibernate hybrid-sleep "
+        "suspend-then-hibernate sleep soft-reboot exit"
+    )
+) + tuple(
+    "systemd-" + u + ".service"
+    for u in _w("reboot poweroff halt kexec soft-reboot suspend hibernate hybrid-sleep suspend-then-hibernate exit")
+)
+_DOWN_METHODS = re.compile(
+    r"\b(?:Reboot|PowerOff|Halt|KExec|SoftReboot|Suspend|Hibernate|HybridSleep|SuspendThenHibernate|Sleep|Exit)"
+    r"(?:WithFlags)?\b|\bScheduleShutdown\b|\bisolate\b"
+)
+_KERNEL_TRIGGERS = ("/proc/sysrq-trigger", "/sys/power/state", "/sys/power/disk")
+_PID_1_PROCS = ("systemd", "init", "/sbin/init", "/lib/systemd/systemd", "/usr/lib/systemd/systemd")
 
 
 def rule_workstation(cmd: Cmd, j: Judge) -> Refusal | None:
@@ -2809,7 +2828,7 @@ def rule_workstation(cmd: Cmd, j: Judge) -> Refusal | None:
         return Refusal("workstation", reason, "the owner's line, at this machine")
 
     name = cmd.name
-    if name in ("reboot", "shutdown", "poweroff", "halt"):
+    if name in ("reboot", "shutdown", "poweroff", "halt", "pm-suspend", "pm-hibernate", "pm-suspend-hybrid", "zzz", "s2ram"):
         return no(f"{name} on {cmd.alias}, the machine this session runs on")
     if name in ("init", "telinit") and any(a in ("0", "6", "1", "s", "S") for a in cmd.args):
         return no(f"{name} changes this machine's runlevel")
@@ -2823,16 +2842,47 @@ def rule_workstation(cmd: Cmd, j: Judge) -> Refusal | None:
             "suspend-then-hibernate soft-reboot default exit"
         ):
             return no(f"{name} {verb} on the machine this session runs on")
-        if verb in ("start", "restart") and any(
-            could(u, t + ".target")
-            for u in ops[1:]
-            for t in _w("reboot poweroff halt kexec rescue emergency shutdown suspend hibernate soft-reboot")
+        if any(a in ("--job-mode=isolate",) for a in cmd.args) or "--job-mode" in cmd.args and "isolate" in ops:
+            return no(f"{name} with job mode isolate stops every unit its target does not pull")
+        if verb in _w("start restart try-restart reload-or-restart try-reload-or-restart") and any(
+            could(u if "." in u else u + ".service", t) for u in ops[1:] for t in _DOWN_UNITS
         ):
-            return no(f"{name} {verb} of a target that takes this machine down")
-    if any(could(p, "/proc/sysrq-trigger") for op, p in cmd.redirs if op != "<") or (
-        name == "tee" and any(could(cmd.path(a), "/proc/sysrq-trigger") for a in cmd.args)
-    ):
-        return no("a write to /proc/sysrq-trigger")
+            return no(f"{name} {verb} of a unit that takes this machine down")
+        if verb == "kill" and any(could(u, "init.scope") or could(u, "-.slice") for u in ops[1:]):
+            return no(f"{name} kill of {_show(ops[1])} signals PID 1, which reboots on SIGINT")
+    for effect, p in _gate_effects(cmd):
+        for trigger in _KERNEL_TRIGGERS:
+            if effect in ("create", "linkdest") and could(p, trigger) or effect == "unknown" and does(p, trigger):
+                return no(f"a write to {trigger} takes this machine down")
+    if cmd.code is not None and any(t in cmd.code for t in _KERNEL_TRIGGERS):
+        return no("its code names a kernel trigger file that takes this machine down")
+    if name == "kill" and (reason := _kills_pid_1(cmd.args)):
+        return no(reason)
+    if name in ("pkill", "killall") and (reason := _signals_any(cmd, _PID_1_PROCS)):
+        return no(reason)
+    if name in ("busctl", "dbus-send", "gdbus", "varlinkctl") or name.startswith("qdbus"):
+        text = " ".join(cmd.args)
+        if _DOWN_METHODS.search(text) or any(could(w.split(":", 1)[-1], u) for w in cmd.args for u in _DOWN_UNITS):
+            return no(f"{name} calls logind or systemd to reboot, power off, sleep or isolate this machine")
+    if name == "rtcwake":
+        modes = _values(_opts(cmd.args, "mdstAa", {"--mode", "--device", "--seconds", "--time", "--adjfile"})[0], "-m", "--mode")
+        if any(m in ("off", "disk", "mem", "freeze", "standby") or any(c in m for c in WILD) for m in modes):
+            return no("rtcwake -m powers this machine off or puts it to sleep")
+    return None
+
+
+def _kills_pid_1(args: list[str]) -> str | None:
+    """kill's pids, its signal spec read off first: one that is or could be 1 or -1 is the reason, else None."""
+    rest = list(args)
+    if rest and rest[0] in ("-s", "-n", "--signal"):
+        rest = rest[2:]
+    elif rest and (re.fullmatch(r"-[A-Za-z0-9+_-]+", rest[0]) or rest[0].startswith("--signal=")) and rest[0] != "--":
+        rest = rest[1:]
+    if rest[:1] == ["--"]:
+        rest = rest[1:]
+    for pid in rest:
+        if could(pid, "1") or could(pid, "-1"):
+            return f"kill {_show(pid)} could signal PID 1, which reboots on SIGINT, or every process"
     return None
 
 
