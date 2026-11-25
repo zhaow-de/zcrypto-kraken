@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# The one door through which a session runs a command on a fleet host. The block comes on stdin, is judged by
-# host_run_sh.py beside this script before anything runs, is recorded in the main checkout's
+# The prescribed route for a session's command on a fleet host; a raw ssh is not refused here. The block comes on
+# stdin, is judged by host_run_sh.py beside this script before anything runs, is recorded in the main checkout's
 # .local/host-commands.jsonl, and runs as the alias's own ssh user: `bash -l -c` on the host, its stdin /dev/null.
 # Usage: host-run.sh [--judge] [--timeout <seconds, 1-570, default 120>] <alias>  < block
 # rc 64 usage: no alias, a bad timeout, an empty block, a terminal on stdin, a block that is not text
 # | rc 65 refused, the rule named on stderr | rc 66 nothing could record the run, so nothing ran
-# | rc 124 the run outlived --timeout and the local ssh was killed | else the block's own rc (255: ssh's own failure)
+# | rc 124 the run outlived --timeout and the local ssh was killed, said on stderr | else the block's own rc (255: ssh's own failure)
 set -uo pipefail
 
 SD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -87,8 +87,10 @@ start="${EPOCHREALTIME/./}"
 timeout --kill-after=5 "$secs" ssh -o BatchMode=yes -o ConnectTimeout=10 -n -T -a -x -- "$alias" "$remote"
 rc=$?
 spent=$(( ${EPOCHREALTIME/./} - start ))
-if [ "$rc" -eq 137 ] && [ "$spent" -ge $(( secs * 1000000 )) ]; then rc=124; fi
-[ "$rc" -ne 124 ] || echo "host-run: the run outlived --timeout $secs s; the local ssh was killed" >&2
+if { [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; } && [ "$spent" -ge $(( secs * 1000000 )) ]; then
+  rc=124
+  echo "host-run: the run outlived --timeout $secs s; the local ssh was killed" >&2
+fi
 duration="$(printf '%d.%06d' $(( spent / 1000000 )) $(( spent % 1000000 )))"
 record "{\"kind\":\"end\",\"ts\":\"$(stamp)\",\"alias\":\"$alias\",\"sha256\":\"$sha\",\"rc\":$rc,\"duration_s\":$duration}" \
   || echo "host-run: the end line could not be appended to $log" >&2

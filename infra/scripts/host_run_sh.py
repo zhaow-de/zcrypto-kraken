@@ -1,4 +1,4 @@
-"""The judge behind infra/scripts/host-run.sh, the one door through which a session runs a block on a fleet host.
+"""The judge behind infra/scripts/host-run.sh, the prescribed route for a session's block on a fleet host.
 
 The block is read as shell text: quoting, variables, command substitutions, the wrappers that change who runs a
 command (`sudo`, `env`, `nohup`, `bash -c`, `xargs`, `docker exec`, the runners `unwrap` names), pipes, chains and

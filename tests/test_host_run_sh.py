@@ -1,9 +1,9 @@
-"""`infra/scripts/host-run.sh` and its judge `infra/scripts/host_run_sh.py`: the one door through which a session runs
-a block on a fleet host.
+"""`infra/scripts/host-run.sh` and its judge `infra/scripts/host_run_sh.py`: the prescribed route for a session's block
+on a fleet host.
 
-Every case drives the real script, copied into a scratch checkout whose `ssh` is a fake first on PATH that records
-its argv and stdin and plays back a canned rc and stdout, or runs the remote command locally; no case reaches a host,
-and none writes the real checkout's `.local/host-commands.jsonl`."""
+Every case but the alias table's parse drives the real script, copied into a scratch checkout whose `ssh` is a fake
+first on PATH that records its argv and stdin and plays back a canned rc and stdout, or runs the remote command
+locally; no case reaches a host, and none writes the real checkout's `.local/host-commands.jsonl`."""
 
 from __future__ import annotations
 
@@ -1422,6 +1422,14 @@ def test_the_timeout_bounds_the_run_and_kills_the_local_ssh(fresh):
         pytest.fail(f"the fake ssh {call['pid']} outlived the timeout")
     begin, end = fresh.lines()
     assert begin["timeout_s"] == 1 and end["rc"] == 124
+    assert b"outlived --timeout" in done.stderr
+
+
+@pytest.mark.parametrize("rc", [124, 137])
+def test_a_blocks_own_timeout_rc_is_passed_through_and_not_reported_as_the_doors(fresh, rc):
+    done = fresh.run("red", "timeout 5 sleep 10\n", FAKE_SSH_RC=str(rc))
+    assert done.returncode == rc and b"outlived --timeout" not in done.stderr, done.stderr
+    assert fresh.lines()[-1]["rc"] == rc
 
 
 # ---------------------------------------------------------------- the record
