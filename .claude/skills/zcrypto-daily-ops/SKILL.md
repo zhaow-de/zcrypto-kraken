@@ -105,15 +105,13 @@ At a month change: open the finished month's PR, merge it on CI green, delete th
 
 The entry's paragraph, to `#zcrypto`. If no Slack tool is reachable, say so in the entry rather than dropping it.
 
-## 9. Re-arm tomorrow
+## 9. Schedule tomorrow's reminder
 
-A scheduled message fires once. Schedule tomorrow's trigger before finishing, the way `refdata-sweep-due` does. **The Slack message is the convenience; the named hand-off is the trigger** — the pass is re-armed only when something that outlives this session carries tomorrow's.
+A scheduled message fires once. Schedule tomorrow's Slack reminder before finishing, the way `refdata-sweep-due` does. **The owner starts the pass by hand; the Slack message is only a reminder.** A day with no pass is recorded in the next entry as a gap; neither the gap nor the re-arm is routed to `zcrypto-marco` or the memo.
 
 **Before an entry routes a converge as owed or counts a topic's arms, it reads the sources**, never memory: the topic's file — `ripe_when` and body — and the memo item its serial heads, where the owner's converge rulings are quoted; a converge the owner ruled not to run is recorded as ruled, never routed, and a dependency bump's image is owed no converge of its own (`dependabot`'s Phase 3).
 
-**With no Slack tool, the entry says so AND the re-trigger goes to a carrier that outlives the session**: hand it to `zcrypto-marco` for the memo queue, the way 5b hands a fired trigger, or schedule a routine through `/schedule`; the entry names which. A session-local scheduler is not a substitute: it dies with the session, and this reminder has to outlive it.
-
-**The recovery, because this is not terminal**: MCP tools bind at session start, and a plugin reload (`/reload-plugins`) re-binds them into the running session — try that before deferring the Slack half. Failing that, the Slack half is safely run late: post the entry's paragraph and schedule the trigger from the next session, then re-true the entry.
+**With no Slack tool, the recovery**: MCP tools bind at session start, and a plugin reload (`/reload-plugins`) re-binds them into the running session — try that before deferring the Slack half. Failing that, the Slack half is safely run late: post the entry's paragraph and schedule the reminder from the next session, then re-true the entry.
 
 ## Failure modes — catch yourself
 
