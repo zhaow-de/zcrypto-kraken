@@ -238,7 +238,7 @@ Nothing fired. You are putting a file onto the NAS (`ssh nas`) — or a copy tha
 
 1. **Transfer without the prefix**: `scp <file> nas:/ZhaoCrypto/...`, never `nas:/volume1/ZhaoCrypto/...` (no count command: a transfer is an operator act; the chroot is DSM's, recorded in `infra/nas/README.md`). Commands you then run inside an `ssh nas` session keep it — the same file is `/volume1/ZhaoCrypto/...` there.
 2. **Into `hot/`, use the sanctioned program**: `uv run zcrypto data push` from the workstation, which sends that node's authored sets to the configured `push_dest`. Never write through the NFS mount, where a soft-mounted write can corrupt on a timeout (no count command: a write through the mount leaves no record in the tree).
-3. **A published file is replaced by minting a sibling, never by pushing over it** (no count command: `-no-overwrite` in `infra/ansible/roles/nas/tasks/main.yml` turns a push over it into a skip) — a second push of the same name is one of the silent skips above.
+3. **A published file is replaced by minting a sibling, never by pushing over it** (no count command: `-no-overwrite` in `infra/ansible/roles/nas/tasks/main.yml` turns a push over it into a skip) — a second push of the same name is one of the silent skips above. A bare `uv run zcrypto data rebuild <SET>` keeps the sibling local: `--push` publishes it as it is minted, or step 2's `data push` sends it once its own name is in `authored_sets`.
 4. **Confirm by listing the destination, not by the copy's exit status**: `ssh nas ls -l /volume1/ZhaoCrypto/<path>` — over the shell, so with the prefix.
 
 ### Retire when
