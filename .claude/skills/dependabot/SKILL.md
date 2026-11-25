@@ -59,15 +59,16 @@ If the rebase produces conflicts:
 
 #### 2b. Local validation
 
-Run in this order; stop on the first failure (so the auto-fix step in 2c knows what to attack). **This local full run stays** — a lockfile change reaches every test, including the data-gated ones CI cannot run at all:
+Run in this order; stop on the first failure (so the auto-fix step in 2c knows what to attack):
 
 ```bash
 uv run ruff check
 uv run ruff format --check
-uv run pytest -q
 ```
 
-(We do not have a separate type-checker; lint + format-check + tests is the full local gate.)
+(We do not have a separate type-checker.)
+
+**The full suite does not run per PR**: each PR merges on its own CI green (§2d). After the last merge, one local full run — at most two — goes on `develop`'s tip, from a scratch worktree with the main checkout's `data/` linked in and `TMPDIR` off `/tmp`: a lockfile change reaches the data-gated tests CI cannot run.
 
 #### 2c. Auto-fix (if validation fails)
 
