@@ -1,4 +1,4 @@
-# C3 trial 2 — aSOPR's low tail as a veto on the A1 sleeve's long state, the gate's one action trial 1 left unread, pre-registered on the sets reading 10 read; the days after that history hold no event of it
+# C3 trial 2 — aSOPR's low tail as a veto on the A1 sleeve's long state, the gate's one action trial 1 left unread; the days after that history hold no event of it
 
 Iteration `iter-211`, branch `feat/iter-211-c3-trial-2`, cut from `develop` at `1a4abc4f5` (the merge of #895); bucket C family C3 (`docs/research/00.master-plan.md` §5), topics [T0228](../open-topics/T0228-btc-on-chain-metrics-computed-from-chain-data.md) and [T0016](../open-topics/T0016-bucket-b-c-alpha-families.md).
 **Ruled: D1's option 4, no trial** — the owner's pick after `[iter-211] C3's next step after trial 1`, quoted at D1's head: no trial registers under this spec and its sha256 is never taken. The measured basis is what the decision rests on, the hypothesis what D1's option 1 would have tested, and C3's next step the owner's second pick under `## The owner's picks`; the design past D1, for option 1, stands at `ed09c0fed`.
