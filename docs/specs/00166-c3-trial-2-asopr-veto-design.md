@@ -283,12 +283,14 @@ zeros = [0.0] * n
 slices = calendar_year_slices(zeros, r_ts)
 print("STUB_YEARS", STUB_YEARS, "; calendar_year_slices over the rolling grid keeps years", sorted(slices), "; over the new return indices alone:", calendar_year_slices([0.0] * len(new), r_ts[first_new:]))
 
+
 def bound(n_obs, n_trials, var_trials):
     lo, hi = 0.0, 2.0
     for _ in range(200):
         mid = (lo + hi) / 2
         lo, hi = (mid, hi) if deflated_sharpe_ratio(mid, n_obs, n_trials, var_trials) <= 0.95 else (lo, mid)
     return hi
+
 
 print("expected max Sharpe at n_trials 2, var_trials 0.0:", expected_max_sharpe(2, 0.0), "; the DSR at counts 1 and 2 is one value at var_trials 0.0:", all(deflated_sharpe_ratio(x / 1000, 4581, 1, 0.0) == deflated_sharpe_ratio(x / 1000, 4581, 2, 0.0) for x in range(1, 200)))
 normal = NormalDist()
@@ -379,12 +381,14 @@ fires = {a: f[:n] for a, f in fires_all.items()}
 arm_a = {a: p[:n] for a, p in inputs.positions.items()}
 close = daily_ts[1:]
 
+
 def years(flags):
     out = {}
     for k, flag in enumerate(flags):
         if flag:
             out[str(close[k].year)] = out.get(str(close[k].year), 0) + 1
     return dict(sorted(out.items()))
+
 
 event = [any(fires[a][k] for a in assets) for k in range(n)]
 low = [b == "low" for b in inputs.bands["asopr"][:n]]
@@ -417,9 +421,11 @@ gross_a = [math.fsum(arm_a[a][k] for a in assets) for k in range(n)]
 print(f"  the sleeve's position in a firing asset: median {statistics.median(held):.6f}, mean {statistics.fmean(held):.6f}, max {max(held):.6f}; its gross at an event close: median {statistics.median(g for g, e in zip(gross_a, event) if e):.6f}, mean {statistics.fmean(g for g, e in zip(gross_a, event) if e):.6f}, max {max(g for g, e in zip(gross_a, event) if e):.6f}")
 print("  events before return index 199:", sum(fires[a][k] for a in assets for k in range(199)), "; before 230:", sum(fires[a][k] for a in assets for k in range(230)))
 
+
 def window_scales(depth):
     """Vetoed through 7 closes counted from the last event close, whatever the sleeve then does."""
     return {a: [depth if any(fires[a][max(0, k - HOLD + 1) : k + 1]) else 1.0 for k in range(n)] for a in assets}
+
 
 def closed_scales(depth):
     """The same, closed where the sleeve itself turns flat: reentry_positions' rule mirrored."""
@@ -436,6 +442,7 @@ def closed_scales(depth):
                 left -= 1
         out[a] = row
     return out
+
 
 turnover_a = book_turnover(arm_a)
 print(f"arm A: turnover {turnover_a!r}; largest gross {max(gross_a):.6f}; asset-closes long {sum(arm_a[a][k] > 0 for a in assets for k in range(n))}; exposure held {math.fsum(arm_a[a][k] for a in assets for k in range(n)):.6f} asset-closes of NAV")
