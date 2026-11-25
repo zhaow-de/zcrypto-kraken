@@ -12,8 +12,8 @@ order-semantics probes before the engine trades on the new version" —
 pin, and it may need deciding days before anything else here.
 
 **This places real orders on a live Kraken account.** Every step below runs in the attending session's main loop, by
-hand, in order. Nothing here belongs in a subagent: host- and credential-touching steps die at the
-permission gate there.
+hand, in order. Nothing here belongs in a subagent: the fleet's host commands are the coordinator's
+(`docs/reference/multi-agent-protocol.md`), and the probe's `--apply` is the owner's.
 
 The harness is committed because the obligation recurs and the probes are only comparable across versions if they are the *same* probes.
 
