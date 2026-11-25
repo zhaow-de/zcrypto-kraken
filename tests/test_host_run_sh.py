@@ -605,6 +605,62 @@ CHANNELS = [
     ("ssh-rc", "zcrypto", "echo 'touch /tmp/x' > ~/.ssh/rc", "unresolvable"),
 ]
 
+# The secrets rule's side doors: a process's environment printed by another tool or another path, the WireGuard keys
+# printed by wg's own verbs, and a credential reached through a link, a bind or a move the block makes.
+SECRET_DOORS = [
+    ("ps-bsd-e", "zcrypto", "sudo ps auxeww", "secrets"),
+    ("ps-e-word", "zcrypto", "sudo ps e -p 1", "secrets"),
+    ("ps-axe", "zcrypto", "sudo ps axe", "secrets"),
+    ("ps-trailing-e", "zcrypto", "sudo ps -p 1 -o pid,cmd e", "secrets"),
+    ("docker-exec-env-unset", "zcrypto", "sudo docker exec zcrypto-engine env -u X", "secrets"),
+    ("docker-exec-env-assign", "zcrypto", "sudo docker exec zcrypto-engine env A=1", "secrets"),
+    ("docker-exec-env-null", "zcrypto", "sudo docker exec zcrypto-engine env -0", "secrets"),
+    ("docker-exec-busybox-env", "zcrypto", "sudo docker exec zcrypto-engine busybox env", "secrets"),
+    ("docker-exec-workdir-environ", "zcrypto", "sudo docker exec -w /proc/1 zcrypto-engine cat environ", "secrets"),
+    (
+        "docker-exec-indirect-expansion",
+        "zcrypto",
+        "sudo docker exec zcrypto-engine sh -c 'x=KRAKEN_API_KEY; echo ${!x}'",
+        "secrets",
+    ),
+    ("docker-commit", "zcrypto", "sudo docker commit zcrypto-engine snap", "secrets"),
+    ("docker-container-commit", "zcrypto", "sudo docker container commit zcrypto-engine snap", "secrets"),
+    ("compose-convert", "zcrypto", "sudo docker compose -f /opt/zcrypto-engine/compose.yaml convert", "secrets"),
+    ("wg-dump", "zcrypto", "sudo wg show zcache0 dump", "secrets"),
+    ("wg-all-dump", "zcrypto", "sudo wg show all dump", "secrets"),
+    ("wg-quick-strip", "zcrypto", "sudo wg-quick strip zcache0", "secrets"),
+    ("proc-self-root-wireguard", "zcrypto", "sudo cat /proc/self/root/etc/wireguard/zcache0.conf", "secrets"),
+    ("proc-root-alloy-env", "zcrypto", "sudo cat /proc/1/root/etc/default/alloy", "secrets"),
+    ("proc-cwd-env-file", "zcrypto", "cd /opt/zcrypto-engine && sudo cat /proc/self/cwd/engine.env", "secrets"),
+    ("symlink-dir-then-read", "zcrypto", "sudo ln -s /etc/wireguard /tmp/w\nsudo cat /tmp/w/zcache0.conf", "secrets"),
+    ("symlink-file", "zcrypto", "sudo ln -s /opt/zcrypto-engine/engine.env /tmp/e.txt", "secrets"),
+    ("hardlink-file", "zcrypto", "sudo ln /opt/zcrypto-engine/engine.env /tmp/e.txt", "secrets"),
+    ("symlink-parent", "zcrypto", "sudo ln -s /etc /tmp/e", "secrets"),
+    ("mv-secret-out", "zcrypto", "sudo mv /opt/zcrypto-engine/engine.env /tmp/e.txt", "secrets"),
+    ("mv-secret-dir-out", "zcrypto", "sudo mv /etc/wireguard /tmp/w", "secrets"),
+    ("bind-mount-secret", "zcrypto", "sudo mount --bind /etc/wireguard /mnt/w", "secrets"),
+    ("bindfs-secret", "zcrypto", "sudo bindfs /opt/zcrypto-engine /mnt/o", "secrets"),
+    ("docker-bind-secret", "zcrypto", "sudo docker run --rm -v /etc/wireguard:/w alpine cat /w/zcache0.conf", "secrets"),
+    (
+        "docker-mount-secret",
+        "zcrypto",
+        "sudo docker run --rm --mount type=bind,src=/opt/zcrypto-engine,dst=/o alpine cat /o/engine.env",
+        "secrets",
+    ),
+    (
+        "docker-identity-bind-read",
+        "zcrypto",
+        "sudo docker run --rm -v /etc/wireguard:/etc/wireguard alpine cat /etc/wireguard/zcache0.conf",
+        "secrets",
+    ),
+    (
+        "docker-socket-inspect",
+        "zcrypto",
+        "sudo curl -s --unix-socket /var/run/docker.sock http://x/containers/zcrypto-engine/json",
+        "unresolvable",
+    ),
+]
+
 # The see-through spellings: each hides a gate-opening write behind a different layer of shell.
 SEE_THROUGH = [
     ("quoted", "sudo touch '/var/lib/zcrypto-engine/exec/'\"armed\""),
@@ -666,7 +722,7 @@ SIDE_DOORS = [
         "sudo docker run --rm --mount type=bind,src=/var/lib/zcrypto-engine,dst=/x alpine rm /x/exec/kill",
         "money-path",
     ),
-    ("docker-run-root-bind", f"sudo docker run --rm -v /:/host alpine touch /host{_EXEC}/armed", "money-path"),
+    ("docker-run-root-bind", f"sudo docker run --rm -v /:/host alpine touch /host{_EXEC}/armed", "secrets"),
     ("docker-run-bind-via-workdir", f"sudo docker run --rm -v {_EXEC}:/x -w /x alpine touch armed", "money-path"),
     ("docker-create-bind-for-volumes-from", f"sudo docker create --name c -v {_EXEC}:/x alpine", "money-path"),
     (
@@ -937,6 +993,14 @@ def test_what_runs_another_command_is_seen_through_or_refused_as_unresolvable(do
 def test_a_gate_opening_write_is_seen_through_its_spelling(door, block):
     done = door.judge("zcrypto", block)
     assert done.returncode == 65 and _rule(done) == "money-path", done.stderr.decode()
+
+
+@pytest.mark.parametrize(
+    ("alias", "block", "rule"), [pytest.param(a, b, r, id=f"secrets-side-door-{i}") for i, a, b, r in SECRET_DOORS]
+)
+def test_a_credential_reached_another_way_is_refused(door, alias, block, rule):
+    done = door.judge(alias, block)
+    assert done.returncode == 65 and _rule(done) == rule, done.stderr.decode()
 
 
 @pytest.mark.parametrize(("block", "rule"), [pytest.param(b, r, id=f"money-path-side-door-{i}") for i, b, r in SIDE_DOORS])

@@ -1054,6 +1054,8 @@ class Judge:
                         and not re.fullmatch(r"[0-9@*#?$!-]", part.name)
                     ):
                         reads.append(part.name)
+                    if reads is not None and part.name == "!" and part.inner:
+                        reads.append("!" + part.inner)
             elif isinstance(part, Sub):
                 vals = self.substitution(part.script, ctx, scope)
             elif isinstance(part, Proc):
@@ -2148,6 +2150,7 @@ _LONG_VALUES = _w(
     "--password-file --temp-dir --data --data-binary --data-raw --data-urlencode --form --upload-file --config "
     "--header --user --post-file --input-file --output-document --slurpfile --rawfile --arg --argjson --expression"
 )
+_PS_VALUE = _w("--pid --ppid --sort --format --cols --columns --rows --lines --user --group --tty --sid --pid")
 _PATTERN_FIRST = _w("grep egrep fgrep zgrep zegrep zfgrep rg ag ack awk gawk mawk nawk sed jq yq")
 
 
@@ -2211,7 +2214,25 @@ def _file_operands(cmd: Cmd) -> tuple[list[str], bool]:
         or bool(keys & {"-r", "-R", "--recursive", "--dereference-recursive", "-a", "--archive"})
         or "recurse" in _values(opts, "-d", "--directories")
     )
-    return [norm(f, base) for f in files], recursive
+    return [_mapped(norm(f, base), cmd.binds) for f in files], recursive
+
+
+def _ps_prints_environment(args: list[str]) -> bool:
+    """Whether ps is given BSD's e option, a word of letters without a dash, or a format naming env; the word after a
+    BSD option that takes a value (o, O, p, t, U, k) is that value."""
+    opts, words = _opts(args, "pCoOuUgGtsqkN", _PS_VALUE)
+    if any("env" in v for v in _values(opts, "-o", "-O", "--format")):
+        return True
+    value_next = False
+    for w in words:
+        if value_next:
+            value_next = False
+            continue
+        if re.fullmatch(r"[A-Za-z]+", w):
+            if "e" in w:
+                return True
+            value_next = bool(set(w) & set("oOptUk"))
+    return False
 
 
 def rule_secrets(cmd: Cmd, j: Judge) -> Refusal | None:
@@ -2229,6 +2250,12 @@ def rule_secrets(cmd: Cmd, j: Judge) -> Refusal | None:
             return no(f"it feeds {_show(p)} into a command, {_maybe(p)}a credential file ({hit})")
         if re.search(r"/proc/.*/environ", p):
             return no(f"it redirects a process's environment ({_show(p)})")
+    for effect, p in _gate_effects(cmd):
+        if effect == "link" or effect == "remove" and name == "mv":
+            root = next((r for r in SECRET_ROOTS if could_tree(p, r)), None)
+            if hit := _secret(p) or root and _show(root):
+                act = "moving" if effect == "remove" else "a link or bind onto"
+                return no(f"{act} {_show(p)}, which could be or hold a credential file ({hit}), lets a later read print it")
     if cmd.layer == "wrapper":
         return None
     if any(re.search(r"/proc/[^/]+/environ", a.replace(ANY, "x").replace(SEG, "x")) for a in cmd.args):
@@ -2238,7 +2265,7 @@ def rule_secrets(cmd: Cmd, j: Judge) -> Refusal | None:
         if (
             name == "printenv"
             or name == "env"
-            and not bare
+            and cmd.layer == "command"
             or name == "export"
             and (not cmd.args or cmd.args == ["-p"])
             and not cmd.env_reads
@@ -2252,8 +2279,12 @@ def rule_secrets(cmd: Cmd, j: Judge) -> Refusal | None:
             return no("its code reads the container's environment")
     if cmd.code is not None and (m := _SECRET_CODE.search(cmd.code)):
         return no(f"its {cmd.lang} code names a credential file ({m.group(0)})")
-    if name == "wg" and cmd.args and (cmd.args[0] == "showconf" or {"private-key", "preshared-keys"} & set(cmd.args)):
+    if name == "wg" and cmd.args and (cmd.args[0] == "showconf" or {"private-key", "preshared-keys", "dump"} & set(cmd.args)):
         return no("wg prints the interface's private key")
+    if name == "wg-quick" and cmd.args[:1] == ["strip"]:
+        return no("wg-quick strip prints the interface's config, its private key with it")
+    if name == "ps" and _ps_prints_environment(cmd.args):
+        return no("ps's BSD e option prints every process's environment, the engine container's with it")
     if name in ("docker", "docker-compose"):
         d = docker_parse(cmd)
         if d.verb == "inspect" and d.group in ("", "container", "image"):
@@ -2267,8 +2298,10 @@ def rule_secrets(cmd: Cmd, j: Judge) -> Refusal | None:
                     return no(f"docker inspect --format {f} prints the whole object")
                 if re.search(r"\.Config(?![.\w])|\.Config\.Env|[\s{(|]\.(?=[\s})|])|\{\{\s*\.\s*\}\}|\$(?![\w.])", f):
                     return no(f"docker inspect's template {f} reaches .Config.Env or prints the whole object")
-        if d.compose and d.verb == "config":
-            return no("compose's config verb prints the stack with its environment interpolated")
+        if d.compose and d.verb in ("config", "convert"):
+            return no(f"compose's {d.verb} verb prints the stack with its environment interpolated")
+        if d.verb == "commit":
+            return no("docker commit bakes the container's environment into an image a later read prints")
         if d.verb == "cp":
             for a in d.args:
                 path = a.split(":", 1)[1] if ":" in a and "/" not in a.split(":", 1)[0] else a
