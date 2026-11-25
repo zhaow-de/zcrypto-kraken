@@ -5,7 +5,6 @@ Iteration `iter-210`, branch `feat/iter-210-c3-trial-1`, cut from `develop` at `
 Settled by that pick, by spec 00164 D12 and by reading 10: the cell (`asopr|low|flat|H7`), the family key `C3`, the test (`a1_kill_bar` at C3's count and a head-to-head against the sleeve as records 44 and 47 build it, net of 0.006 a side on its own turnover) and the contamination clause — D1–D4, D9, D10, D12.
 Seven decisions were open — D5 (the instrument), D6 (the grid and the bar's instrument), D7 (the re-entry's size), D8 (the hold), D11 (how the reading's 32 looks enter the bar), D13 (the matrix's drawdown bound) and D16 (what a verdict changes): each states its options and their costs and marks one **Recommended**. The owner ruled all seven on 2026-11-24, each the option marked Recommended, and each pick is quoted verbatim at its decision's head.
 The hypothesis below is written at those options; the plan review closes, and only then is this file's sha256 taken — before any return of arm B is computed (D15's hash rule).
-The landed record spends one of bucket C's 10 trials: 10 remain today, 9 after.
 
 ## Intent
 
@@ -514,7 +513,7 @@ The statement is written at the options of D5–D8 that the owner's picks took.
 
 - **An event** is an asset-close at which the cell's flag is set: at union return index `k` for asset `a`, `alpha_c3.flags(bands["asopr"], states[a], tail="low", in_state="flat")[k] is True` — the sleeve's position in `a` at `k` is 0, `a` has a close at `k`, and the snapshot's `asopr` of day `ts[k] − 1 day` is in its low band.
 - **The band** is reading 10's: the day's expanding-percentile rank among its own history from 2011-01-01 at or below 0.10, read once 365 values exist, a day holding a value only where its aSOPR is finite and BRK's price that day is finite and above 0 (`cli/alpha/c3.py`'s `LOW`, `MIN_HISTORY`, `LAG_DAYS`, `FIRST_DAY`, `bands`, `from_first_day`, `lagged`; spec 00164 D6, D7, D12). The lag is one day: the decision at bar `k`'s close, the 00:00Z that ends day `ts[k]`, reads day `ts[k] − 1 day`, closed and confirmed for most of a day.
-- **The code is reading 10's, unchanged**: the trial's inputs call `_c3_reads` and `_c3_reading_inputs` (`cli/research/subjects.py:5180`, `:5217`) and take `inputs.bands["asopr"]`, `inputs.states` and `inputs.positions` from them — the inputs half `tests/test_research_c3_onchain_reading.py::test_the_inputs_half_reads_no_forward` holds free of any forward. A state of `None` — an asset with no close at `k` — fires nothing. Measured: 1,549 events at 309 closes.
+- **The code is reading 10's, unchanged**: the trial's inputs call `_c3_reads` and `_c3_reading_inputs` (`cli/research/subjects.py`) and take `inputs.bands["asopr"]`, `inputs.states` and `inputs.positions` from them — the inputs half `tests/test_research_c3_onchain_reading.py::test_the_inputs_half_reads_no_forward` holds free of any forward. A state of `None` — an asset with no close at `k` — fires nothing. Measured: 1,549 events at 309 closes.
 - **The action and the horizon** are the cell's: a long re-entry (spec 00164 D12's leg 3, "positive in the flat state → a re-entry"), held 7 daily closes (`H7`).
 - A band, a lag, a first day, a history length or a horizon changed after a result is a new trial.
 
@@ -650,7 +649,7 @@ The rows are spec 00149 D8's, the dead knob read off the re-entry's own engageme
 | arm A passes, the re-entry engaged | pass | mean outperformance > 0, and SPA p ≥ 0.05 or B's maximum drawdown above 1.2 × A's | **park** |
 | arm A passes, the re-entry engaged | pass | mean outperformance ≤ 0 | **reject** |
 
-The first row's dead knob never reaches the rule on the trial's own build: with no asset-close re-entered the first engagement leaves no return index, which D12 refuses before any bar — the same outcome, no verdict and the slot unspent — and the pre-flight's (c) names it first (D15).
+The first row's dead knob never reaches the rule on the trial's own build: with no asset-close re-entered the first engagement leaves no return index, which D12 refuses before any bar — a refused build, no verdict and the slot unspent — and the pre-flight's (c) names it first (D15).
 Every quantity the matrix reads is a stored key read unrounded: `arm_a_passes`, `reentered_per_year`, `passes`, `head_to_head_mean_outperf_primary`, `head_to_head_spa_p_primary` and `max_drawdown_reduction_pct`; the adopt and park rows' bound, B's maximum drawdown at most 1.2 × A's, is read as `max_drawdown_reduction_pct` ≥ −20.0, D12's form, never as a ratio of the two stored drawdowns, which can fall on the other side of it in the last bit. The park row names no variant: what follows a verdict is D16's. The subject declares the rule (spec 00129 D4), `_b2_reentry_verdict`'s form with the re-entry's own dead-knob read:
 
 ```python
