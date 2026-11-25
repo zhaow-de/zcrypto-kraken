@@ -71,7 +71,7 @@ The boundary schedule and the gap's edges are [`engine.md#zcrypto-engine-cycle-s
 - Run the probes inside the inter-cycle gap: no earlier than 5 min past the `completed_at` in the boundary's `cycle-<HH>.json`, and finishing well before the next boundary. A full `--probes all --apply` run takes roughly 3–5 minutes.
 - Confirm the last boundary journaled (from the workstation):
   ```
-  ssh zcrypto 'ls -l /var/lib/zcrypto-engine/journal/$(date -u +%F)/'
+  ssh zcrypto 'sudo ls -l /var/lib/zcrypto-engine/journal/$(date -u +%F)/'
   ```
   You want a `cycle-<HH>.json` for the boundary just past. A `failed-cycle-<HH>.json`, or a missing artifact, means the engine has a problem of its own: stop and deal with that first. Probing the same account while the engine is misbehaving makes both readings unreadable.
 - Confirm no reboot is pending, which would restart the engine mid-run:
@@ -334,7 +334,7 @@ Then re-arm what §1.8 paused, on the owner's word: the resume of [`engine-proce
 Then confirm the engine's next boundary cycle journals normally:
 
 ```
-ssh zcrypto 'ls -l /var/lib/zcrypto-engine/journal/$(date -u +%F)/'
+ssh zcrypto 'sudo ls -l /var/lib/zcrypto-engine/journal/$(date -u +%F)/'
 ```
 
 A `cycle-<HH>.json` with `completed_at` inside `[B, B+30 min]` for the first boundary after the run is the outcome that says the probes cost the engine nothing.
