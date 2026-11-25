@@ -92,9 +92,13 @@ def _local_hub(tmp_path: Path, monkeypatch) -> Path:
     from cli.data import rebuild as rebuild_module
 
     monkeypatch.setitem(rebuild_module.REBUILDABLE, "ohlc-full", lambda ctx, out: (out / "ok").write_text("x"))
+    # The node authors a set it holds, so a push of the authored sets lands on the hub as surely as one of the sibling.
+    authored = tmp_path / "data" / "ohlc-full"
+    authored.mkdir(parents=True)
+    (authored / "a.json").write_text("A")
     dest = tmp_path / "dest"
     dest.mkdir()
-    _write_config(tmp_path, nfs_mount_dir=tmp_path, push_dest=str(dest) + "/", authored_sets=[])
+    _write_config(tmp_path, nfs_mount_dir=tmp_path, push_dest=str(dest) + "/", authored_sets=["ohlc-full"])
     monkeypatch.chdir(tmp_path)
     return dest
 
