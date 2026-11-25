@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: "per sub-item — the arm64 build's verification: the first `Capture image` run on develop that builds the re-enable — check: `git merge-base --is-ancestor 740060b4e $(gh run list -w capture-image.yml -b develop -L 1 --json headSha -q '.[0].headSha')` exits 0; final reference-data sweep: immediately before the go/no-go; credential rotation: after every other pre-live change has landed"
+ripe_when: "per sub-item — final reference-data sweep: immediately before the go/no-go; credential rotation: after every other pre-live change has landed"
 ---
 
 # Final pre-go-live steps — arm64 re-enable, the OS upgrade + reboot round, the final reference-data sweep, and the credential rotation round
@@ -58,11 +58,10 @@ Three of them are silent until the moment they are not. A disabled build lane is
 ## Done so far
 
 - **The OS/apt upgrade + reboot round is done on all four Debian hosts, 2026-09-27.** The capture pair went first, on 2026-09-26 (`docs/reference/drill-log.md`, A1 and the two reboot paragraphs behind it). The ops boot found docker starting its containers before dhcpcd had written a nameserver; the `ops` role's docker drop-in (`infra/ansible/roles/ops/files/docker-wait-for-resolver.conf`) waits for one, bounded and failing open, from the first boot after the ops converge that installs it.
-- **arm64 re-enabled** (branch `ci/t0085-arm64-reenable`): `capture-image.yml`'s `default` variant builds `linux/amd64,linux/arm64` again, its QEMU binfmt step back.
+- **arm64 re-enabled and its build verified** (branch `ci/t0085-arm64-reenable`): `capture-image.yml`'s `default` variant builds `linux/amd64,linux/arm64` again, its QEMU binfmt step back. Run 45649091341, a `workflow_dispatch` on the branch at `292590124`, published the `default` index `sha256:a770d9b7f6626b13126856ed09423e72b2684ea8aeb5f68bd5d044e49febe304`, read with `docker buildx imagetools inspect --format '{{json .Image}}'`: `linux/amd64` and `linux/arm64`, each image's `org.opencontainers.image.revision` `29259012495a2e2ac2488a4e2da2320c904281d7` and `de.zhaow.zcrypto.polars-runtime` `default`; its `default` job ran 15:50:20Z to 15:53:15Z. A converge handed an index digest is the fleet's: the capture, engine and ops roles assert their `docker image inspect <image>@<digest>`.
 
 ## Suggested next steps
 
-- **(arm64 — the first multi-arch build and the first converge onto it)** At the first `Capture image` run that builds the re-enable, read its job summary's `default` digest with `docker buildx imagetools inspect --format '{{json .Image}}' ghcr.io/zhaow-de/zcrypto-capture@<digest>`: two platforms, `linux/amd64` and `linux/arm64`, each carrying `org.opencontainers.image.revision` and `de.zhaow.zcrypto.polars-runtime`. At the first converge handed that index digest, the capture, engine and ops roles' `docker image inspect <image>@<digest>` succeeds on the pulled image.
 - **(the final reference-data sweep — ripe immediately before the go/no-go, ahead of the rotation)** Run **`/zcrypto-refdata-sweep`** one last time and read its verdict *into* the decision, not after it (owner, 2026-08-04, moving this here from [[T0113]], now resolved — the monthly cadence is a runbook routine, but **this** run is a precondition of the go/no-go and belongs where the decision is taken). The skill carries the whole procedure; three things make this run differ from a monthly one:
   - **Both halves are mandatory here.** The tier and the 30-day volume come from authenticated `kraken volume` in step 6, so what may be logged as *not re-read* on a monthly sweep is the attended remainder — the ladder's shape and the AoP qualification ladder — and on this one it may not: by go-live the account has real volume, so the tier genuinely can have moved, and `cli/costs/fees.py` encodes the ladder it selects from.
   - **The human-only facts come due with it**, and the skill does not cover them because no endpoint does: **MiCA status, tax rules, market-data pricing**. They are re-reads, and this is the run that owes them.
