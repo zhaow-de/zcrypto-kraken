@@ -1,6 +1,6 @@
 ---
 name: zcrypto-bump-nautilus
-description: Bump the nautilus-trader pin end to end — the candidate build, the guards, the attended order-semantics pass, its record, the PR and the engine rollout, on one branch. Human-run only.
+description: Bump the nautilus-trader pin end to end, on one branch. Human-run only.
 disable-model-invocation: true
 ---
 

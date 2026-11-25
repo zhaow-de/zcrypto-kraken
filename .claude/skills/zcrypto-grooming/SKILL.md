@@ -1,6 +1,6 @@
 ---
 name: zcrypto-grooming
-description: Drain and groom .local/memo.md with the user; an argument ("T9999 is done", "T9999 registered — insert into queue", "iter-290 (PR #1332) has been merged") applies one queue procedure.
+description: Drain and groom .local/memo.md with the user; an argument applies one queue procedure.
 disable-model-invocation: true
 allowed-tools: Read, Edit, Write, Grep, Glob, AskUserQuestion, Skill, Bash(git log:*), Bash(git show:*), Bash(git diff:*), Bash(git add:*), Bash(git commit:*), Bash(gh pr list:*), Bash(gh pr view:*), Bash(date:*), Bash(uv run pre-commit:*)
 ---

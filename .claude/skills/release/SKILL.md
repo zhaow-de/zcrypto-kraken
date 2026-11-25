@@ -1,6 +1,6 @@
 ---
 name: release
-description: Cut a release — bump the version on develop, open a PR into main, merge it, push the v<version> tag, create the GitHub Release, and back-merge main into develop
+description: Cut a release — version bump, PR into main, v<version> tag, GitHub Release, back-merge into develop
 allowed-tools: Bash(git add:*), Bash(git checkout:*), Bash(git tag:*), Bash(git status:*), Bash(git commit:*), Bash(git push:*), Bash(git pull:*), Bash(git fetch:*), Bash(git merge:*), Bash(git log:*), Bash(git branch:*), Bash(git show:*), Bash(gh pr:*), Bash(gh release:*), Bash(gh auth:*), Bash(gh api:*), Bash(git rev-parse:*), Bash(cz:*), Bash(uv:*), Bash(python3:*), Bash(sleep:*), Bash(timeout:*), Bash(which:*), Bash(awk:*), Bash(sed:*), Bash(grep:*), Bash(echo:*), Read, Edit, Write, AskUserQuestion
 ---
 

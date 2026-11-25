@@ -1,6 +1,6 @@
 export const meta = {
   name: 'review',
-  description: 'The wide review of a whole branch: two lenses, one skeptic per Critical or Important',
+  description: 'The wide review of a whole branch',
   whenToUse: 'The wide review a branch owes once it is complete; again only when a fix adds a door, a guard or files outside the first read’s range. args: {repo, range, tip, reportDir, ledger, lenses?, drive?, model?}',
   phases: [
     { title: 'Read', detail: 'one read-only reader per lens, in parallel' },

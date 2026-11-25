@@ -1,6 +1,6 @@
 ---
 name: zcrypto-auto-exec
-description: Use when the user asks for the unattended autonomous loop — /zcrypto-auto-exec, "work the queue overnight": the memo's WORK-ITEMS QUEUE and the open T-topics, no human interaction.
+description: The unattended autonomous loop over the memo's WORK-ITEMS QUEUE and the open T-topics, no human interaction.
 disable-model-invocation: true
 ---
 

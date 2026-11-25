@@ -1,6 +1,6 @@
 ---
 name: dependabot
-description: Manage Dependabot dependency-update PRs — list, check out, rebase onto develop, run ruff, auto-fix lint/format, push, wait for CI, merge with squash
+description: Manage Dependabot dependency-update PRs
 disable-model-invocation: true
 allowed-tools: Bash(git fetch:*), Bash(git checkout:*), Bash(git rebase:*), Bash(git status:*), Bash(git stash:*), Bash(git push:*), Bash(git add:*), Bash(git commit:*), Bash(git log:*), Bash(git branch:*), Bash(git rev-parse:*), Bash(git merge-base:*), Bash(gh pr:*), Bash(gh api:*), Bash(timeout:*), Bash(uv:*), Bash(python3:*), Bash(sleep:*), Bash(date:*), Bash(echo:*), Bash(grep:*), Bash(head:*), Bash(cut:*), Read, Glob, Grep, Edit, Write, AskUserQuestion
 ---

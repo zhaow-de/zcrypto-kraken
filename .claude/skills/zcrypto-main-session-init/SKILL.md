@@ -1,6 +1,6 @@
 ---
 name: zcrypto-main-session-init
-description: Start or resume the coordinator session — load the multi-agent protocol, rebuild the coordination table, install the hourly tick when the owner asks for it
+description: Start or resume the coordinator session
 disable-model-invocation: true
 ---
 

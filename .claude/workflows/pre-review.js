@@ -1,7 +1,7 @@
 export const meta = {
   name: 'pre-review',
   description: 'The author’s prose and message claims graded by a different agent before any review',
-  whenToUse: 'Before every review or re-review: a grader reads the range’s prose, its message claims (grep, citation), each probe mutation parsed, each fix’s class walk; no test run. args: {repo, range, tip, reportDir, worktree?, ranges?, rulings?, model?}',
+  whenToUse: 'Before every review or re-review. args: {repo, range, tip, reportDir, worktree?, ranges?, rulings?, model?}',
   phases: [
     { title: 'Pre-review', detail: 'a read-only grader per slice over the range’s prose and message claims' },
     { title: 'Ledger', detail: 'the row appended to ledger.jsonl by the read itself' },
