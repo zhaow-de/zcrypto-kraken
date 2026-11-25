@@ -622,3 +622,77 @@ def test_the_lock_is_released_after_a_run_so_the_next_run_proceeds(tmp_path):
     second = run(args, tmp_path)
     assert first.returncode == 0 and second.returncode == 0
     assert "KILLED" in second.stdout
+
+
+_PROBE_ARGS = ["--file", "mod.py", "--control", "s/VALUE = 1/VALUE = 9/", "--mutation", "s/VALUE = 1/VALUE = 2/", "--"]
+
+
+def _commit_a_basetemp_probe(repo):
+    # pytest makes its --basetemp with a plain mkdir, so this probe fails as pytest does when the parent is absent
+    probe = repo / "bt-probe.sh"
+    probe.write_text(
+        "#!/bin/sh\n"
+        'while [ $# -gt 0 ]; do case "$1" in --basetemp=*) bt="${1#--basetemp=}" ;; --basetemp) shift; bt="$1" ;; esac; shift; done\n'
+        'mkdir "$bt" && rmdir "$bt" && grep -q \'VALUE = 1\' mod.py\n'
+    )
+    probe.chmod(0o755)
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "basetemp probe"], check=True)
+
+
+def _tree(root):
+    return sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if p.relative_to(root).parts[0] != ".git")
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    [
+        pytest.param(["--basetemp=.tmp/x/pt"], id="one-word"),
+        pytest.param(["--basetemp", ".tmp/x/pt"], id="two-word"),
+        pytest.param(["--basetemp={repo}/.tmp/x/pt"], id="absolute-inside"),
+    ],
+)
+def test_the_parent_of_a_basetemp_inside_the_tree_is_created_before_the_baseline(tmp_path, spelling):
+    repo = tmp_path / "repo"
+    make_repo(repo)
+    _commit_a_basetemp_probe(repo)
+    before = _tree(repo)
+    r = run([*_PROBE_ARGS, "./bt-probe.sh", *(w.format(repo=repo) for w in spelling)], repo)
+    assert r.returncode == 0 and "mutate-probe: KILLED (control proven" in r.stdout, f"{r.returncode} {r.stdout}{r.stderr}"
+    assert _tree(repo) == sorted([*before, ".tmp", ".tmp/x"])
+
+
+def test_under_sandbox_the_basetemp_parent_is_created_in_the_sandbox_not_the_checkout(tmp_path):
+    repo = tmp_path / "repo"
+    make_repo(repo)
+    _commit_a_basetemp_probe(repo)
+    tmpdir = tmp_path / "tmp"
+    tmpdir.mkdir()
+    before = _tree(repo)
+    r = run(["--sandbox", *_PROBE_ARGS, "./bt-probe.sh", "--basetemp=.tmp/x/pt"], repo, env_extra={"TMPDIR": str(tmpdir)})
+    assert r.returncode == 0 and "mutate-probe: KILLED (control proven" in r.stdout, f"{r.returncode} {r.stdout}{r.stderr}"
+    assert _tree(repo) == before
+    assert not list(tmpdir.iterdir())
+
+
+@pytest.mark.parametrize(
+    "basetemp",
+    [pytest.param("{outside}/x/pt", id="absolute"), pytest.param("../outside/x/pt", id="dot-dot")],
+)
+def test_a_basetemp_outside_the_tree_is_left_alone(tmp_path, basetemp):
+    repo = tmp_path / "repo"
+    make_repo(repo)
+    _commit_a_basetemp_probe(repo)
+    outside = tmp_path / "outside"
+    r = run([*_PROBE_ARGS, "./bt-probe.sh", f"--basetemp={basetemp.format(outside=outside)}"], repo)
+    assert r.returncode == 7 and "baseline failed" in r.stderr, f"{r.returncode} {r.stdout}{r.stderr}"
+    assert not outside.exists()
+
+
+def test_a_probe_without_a_basetemp_leaves_the_tree_as_it_was(tmp_path):
+    repo = tmp_path / "repo"
+    make_repo(repo)
+    before = _tree(repo)
+    r = run([*_PROBE_ARGS, "./probe.sh", ".tmp/x/pt"], repo)
+    assert r.returncode == 0 and "mutate-probe: KILLED (control proven" in r.stdout, f"{r.returncode} {r.stdout}{r.stderr}"
+    assert _tree(repo) == before
