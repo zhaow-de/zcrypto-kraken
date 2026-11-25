@@ -632,6 +632,111 @@ SEE_THROUGH = [
     ("systemd-run", "sudo systemd-run --wait touch /var/lib/zcrypto-engine/exec/armed"),
 ]
 
+# The money path's side doors: a container's working directory and binds, a tool that replaces, removes or creates
+# files as a side effect of its own job, find's -execdir and its start points, and every way to alias the gate
+# directory under another path. Each row is on the primary; the rule is what it ends on.
+SIDE_DOORS = [
+    ("docker-exec-workdir-touch", f"sudo docker exec -w {_EXEC} zcrypto-engine touch armed", "money-path"),
+    (
+        "docker-exec-workdir-plan",
+        f"sudo docker exec -w {_EXEC} zcrypto-engine mv probe-plan.staging.json probe-plan.json",
+        "money-path",
+    ),
+    ("docker-exec-workdir-rm-kill", f"sudo docker exec -w {_EXEC} zcrypto-engine rm kill", "money-path"),
+    ("docker-exec-workdir-long", f"sudo docker exec --workdir {_EXEC} zcrypto-engine touch armed", "money-path"),
+    ("docker-exec-workdir-equals", f"sudo docker exec --workdir={_EXEC} zcrypto-engine rm restart-hold", "money-path"),
+    ("docker-exec-image-workdir", "sudo docker exec zcrypto-engine touch armed", "money-path"),
+    ("docker-exec-sh-c-workdir", f"sudo docker exec -w {_EXEC} zcrypto-engine sh -c 'touch armed'", "money-path"),
+    (
+        "compose-exec-workdir",
+        f"sudo docker compose -f /opt/zcrypto-engine/compose.yaml exec -w {_EXEC} engine touch armed",
+        "money-path",
+    ),
+    (
+        "docker-run-workdir",
+        f"sudo docker run --rm -w {_EXEC} -v /var/lib/zcrypto-engine:/var/lib/zcrypto-engine alpine touch armed",
+        "money-path",
+    ),
+    ("docker-run-volume", f"sudo docker run --rm -v {_EXEC}:/x alpine touch /x/armed", "money-path"),
+    ("docker-run-volume-parent", "sudo docker run --rm -v /var/lib/zcrypto-engine:/e alpine rm /e/exec/kill", "money-path"),
+    ("docker-run-volume-long", f"sudo docker run --rm --volume={_EXEC}:/x:rw alpine touch /x/armed", "money-path"),
+    ("docker-run-mount", f"sudo docker run --rm --mount type=bind,source={_EXEC},target=/x alpine touch /x/armed", "money-path"),
+    (
+        "docker-run-mount-short-keys",
+        "sudo docker run --rm --mount type=bind,src=/var/lib/zcrypto-engine,dst=/x alpine rm /x/exec/kill",
+        "money-path",
+    ),
+    ("docker-run-root-bind", f"sudo docker run --rm -v /:/host alpine touch /host{_EXEC}/armed", "money-path"),
+    ("docker-run-bind-via-workdir", f"sudo docker run --rm -v {_EXEC}:/x -w /x alpine touch armed", "money-path"),
+    ("docker-create-bind-for-volumes-from", f"sudo docker create --name c -v {_EXEC}:/x alpine", "money-path"),
+    (
+        "docker-run-bind-runs-a-written-script",
+        "printf 'x' > /tmp/s.sh\nsudo docker run --rm -v /tmp:/w alpine sh /w/s.sh",
+        "unresolvable",
+    ),
+    ("gzip-kill", f"sudo gzip {_EXEC}/kill", "money-path"),
+    ("gzip-hold", f"sudo gzip {_EXEC}/restart-hold", "money-path"),
+    ("bzip2-kill", f"sudo bzip2 {_EXEC}/kill", "money-path"),
+    ("xz-hold", f"sudo xz {_EXEC}/restart-hold", "money-path"),
+    ("lzma-kill", f"sudo lzma {_EXEC}/kill", "money-path"),
+    ("pigz-kill", f"sudo pigz {_EXEC}/kill", "money-path"),
+    ("zstd-rm-kill", f"sudo zstd --rm {_EXEC}/kill", "money-path"),
+    ("lz4-rm-kill", f"sudo lz4 --rm {_EXEC}/kill", "money-path"),
+    ("gzip-recursive-dir", f"sudo gzip -r {_EXEC}", "money-path"),
+    ("gzip-decompress-armed", f"sudo gzip -d {_EXEC}/armed.gz", "money-path"),
+    ("gunzip-armed", f"sudo gunzip {_EXEC}/armed.gz", "money-path"),
+    ("bunzip2-armed", f"sudo bunzip2 {_EXEC}/armed.bz2", "money-path"),
+    ("unxz-armed", f"sudo unxz {_EXEC}/armed.xz", "money-path"),
+    ("zstd-decompress-armed", f"sudo zstd -d {_EXEC}/armed.zst", "money-path"),
+    ("zstd-output-armed", f"sudo zstd -d /tmp/a.zst -o {_EXEC}/armed", "money-path"),
+    ("gzip-custom-suffix", f"sudo gzip -d -S .tmp {_EXEC}/armed.tmp", "money-path"),
+    ("tar-remove-files", f"sudo tar --remove-files -cf /tmp/k.tar {_EXEC}/restart-hold", "money-path"),
+    ("tar-archive-at-armed", f"sudo tar -cf {_EXEC}/armed /etc/hostname", "money-path"),
+    ("rsync-remove-source-files", f"sudo rsync --remove-source-files {_EXEC}/kill /tmp/", "money-path"),
+    ("rsync-delete", f"sudo rsync -a --delete /tmp/empty/ {_EXEC}/", "money-path"),
+    ("zip-move", f"sudo zip -m /tmp/k.zip {_EXEC}/kill", "money-path"),
+    ("unzip-into-exec", f"sudo unzip /tmp/x.zip -d {_EXEC}", "money-path"),
+    ("unzip-in-exec", f"cd {_EXEC} && sudo unzip /tmp/x.zip", "money-path"),
+    ("cpio-extract", f"cd {_EXEC} && sudo cpio -id < /tmp/x.cpio", "money-path"),
+    ("7z-extract", f"sudo 7z x /tmp/x.7z -o{_EXEC}", "money-path"),
+    ("ar-extract", f"cd {_EXEC} && sudo ar x /tmp/x.a", "money-path"),
+    ("patch-in-exec", f"cd {_EXEC} && sudo patch -p0 < /tmp/p.diff", "money-path"),
+    ("wget-directory-prefix", f"sudo wget -P {_EXEC} http://x.invalid/armed", "money-path"),
+    ("wget-default-name", f"cd {_EXEC} && sudo wget http://x.invalid/armed", "money-path"),
+    ("curl-remote-name", f"cd {_EXEC} && sudo curl -O http://x.invalid/armed", "money-path"),
+    ("curl-dump-header", f"sudo curl -D {_EXEC}/armed http://x.invalid/", "money-path"),
+    ("uniq-output", f"sudo uniq /dev/null {_EXEC}/armed", "money-path"),
+    ("xxd-output", f"sudo xxd /dev/null {_EXEC}/armed", "money-path"),
+    ("iconv-output", f"sudo iconv -f utf8 -t utf8 -o {_EXEC}/armed /dev/null", "money-path"),
+    ("openssl-out", f"sudo openssl rand -out {_EXEC}/armed 1", "money-path"),
+    ("gpg-output", f"sudo gpg -o {_EXEC}/armed -d /tmp/x.gpg", "money-path"),
+    ("split-prefix", f"sudo split -b1 /tmp/x {_EXEC}/arm", "money-path"),
+    ("socat-create", f"echo | sudo socat - CREATE:{_EXEC}/armed", "money-path"),
+    ("rename-perl", f"sudo rename 's/\\.tmp$//' {_EXEC}/armed.tmp", "money-path"),
+    ("rename-util-linux", f"sudo rename .tmp '' {_EXEC}/armed.tmp", "money-path"),
+    ("prename", f"sudo prename 's/x/armed/' {_EXEC}/x", "money-path"),
+    ("file-rename", f"sudo file-rename 's/x/armed/' {_EXEC}/x", "money-path"),
+    ("rename-ul", f"sudo rename.ul x armed {_EXEC}/x", "money-path"),
+    ("find-execdir-rm-kill", f"sudo find {_EXEC} -name kill -execdir rm kill \\;", "money-path"),
+    ("find-execdir-touch", f"sudo find {_EXEC} -maxdepth 0 -execdir touch exec/armed \\;", "money-path"),
+    ("find-execdir-braces", f"sudo find {_EXEC} -name kill -execdir rm {{}} \\;", "money-path"),
+    ("find-start-itself-delete", f"sudo find {_EXEC}/kill -delete", "money-path"),
+    ("find-start-itself-exec", f"sudo find {_EXEC}/kill -exec rm {{}} \\;", "money-path"),
+    ("cp-hardlink-tree", f"sudo cp -al {_EXEC} /tmp/e", "money-path"),
+    ("cp-symlink", f"sudo cp -s {_EXEC} /tmp/e", "money-path"),
+    ("ln-dangling-onto-kill", f"sudo ln -sf /nonexistent {_EXEC}/kill", "money-path"),
+    ("ln-onto-hold", f"sudo ln -sfn /nonexistent {_EXEC}/restart-hold", "money-path"),
+    ("mount-move", f"sudo mount --move {_EXEC} /mnt/e", "money-path"),
+    ("bindfs", f"sudo bindfs {_EXEC} /mnt/e", "money-path"),
+    ("device-mount", f"sudo mount /dev/sda1 /mnt && sudo touch /mnt{_EXEC}/armed", "unresolvable"),
+    ("overlay-mount", f"sudo mount -t overlay overlay -o lowerdir={_EXEC},upperdir=/u,workdir=/w /mnt", "unresolvable"),
+    ("proc-root", f"sudo touch /proc/1/root{_EXEC}/armed", "money-path"),
+    ("proc-self-root-rm", f"sudo rm /proc/self/root{_EXEC}/kill", "money-path"),
+    ("proc-root-dotdot", f"sudo touch /proc/1/root/../..{_EXEC}/armed", "money-path"),
+    ("proc-task-root", f"sudo touch /proc/1/task/1/root{_EXEC}/armed", "money-path"),
+    ("proc-cwd", "sudo touch /proc/self/cwd/armed", "money-path"),
+]
+
 # Allowed forms: gate-closing acts, reads of the gate files, and runbook rows of class R and S.
 ADMITTED = [
     ("rm-armed-pause", "zcrypto", "sudo rm /var/lib/zcrypto-engine/exec/armed"),
@@ -832,6 +937,12 @@ def test_what_runs_another_command_is_seen_through_or_refused_as_unresolvable(do
 def test_a_gate_opening_write_is_seen_through_its_spelling(door, block):
     done = door.judge("zcrypto", block)
     assert done.returncode == 65 and _rule(done) == "money-path", done.stderr.decode()
+
+
+@pytest.mark.parametrize(("block", "rule"), [pytest.param(b, r, id=f"money-path-side-door-{i}") for i, b, r in SIDE_DOORS])
+def test_a_gate_opening_side_effect_is_refused(door, block, rule):
+    done = door.judge("zcrypto", block)
+    assert done.returncode == 65 and _rule(done) == rule, done.stderr.decode()
 
 
 @pytest.mark.parametrize(("alias", "block"), [pytest.param(a, b, id=f"admitted-{i}") for i, a, b in ADMITTED])

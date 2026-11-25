@@ -151,9 +151,22 @@ def norm(path: str, cwd: str) -> str:
                 out = [ANY]
             continue
         out.append(seg)
+        if not lead and out[0] == "proc" and out[-1] in ("root", "cwd") and (len(out) == 3 or len(out) == 5 and out[2] == "task"):
+            out = [] if out[-1] == "root" else [ANY]
     if lead and not out:
         return lead
     return lead + "/" + "/".join(out)
+
+
+def _mapped(path: str, binds: tuple[tuple[str, str], ...]) -> str:
+    """A path inside a container as the host's: through the bind whose mount point holds it; a path with wildcards
+    that could fall under a bind is any path."""
+    for dst, src in sorted(binds, key=lambda b: -len(b[0])):
+        if path == dst or path.startswith(dst.rstrip("/") + "/"):
+            return norm(src + "/" + path[len(dst) :], "/")
+        if any(c in path for c in WILD) and (could(path, dst) or could(path, dst.rstrip("/") + "/" + ANY)):
+            return "/" + ANY
+    return path
 
 
 # ---------------------------------------------------------------- the shell lexer
@@ -760,6 +773,7 @@ class Ctx:
     alias: str
     container: str | None = None
     depth: int = 0
+    binds: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass
@@ -775,6 +789,7 @@ class Cmd:
     env_reads: tuple[str, ...] = ()
     rest: list[str] = field(default_factory=list)
     flags: frozenset[str] = frozenset()
+    binds: tuple[tuple[str, str], ...] = ()
 
     @property
     def name(self) -> str:
@@ -785,7 +800,8 @@ class Cmd:
         return self.argv[1:]
 
     def path(self, s: str) -> str:
-        return norm(s, self.cwd)
+        """`s` as a host path: made absolute against the cwd, through a container's binds."""
+        return _mapped(norm(s, self.cwd), self.binds)
 
 
 _LINE_FILTERS = {"head", "tail", "sort", "uniq", "grep"}
@@ -1119,10 +1135,10 @@ class Judge:
             self.bind(name, vals, None if node.words else scope, prefix=bool(node.words))
         redirs, stdin = self.redirections(node, ctx, scope, reads)
         if redirs:
-            self.apply(Cmd([], ctx.alias, scope.cwd, ctx.container, redirs=redirs))
+            self.apply(Cmd([], ctx.alias, scope.cwd, ctx.container, redirs=redirs, binds=ctx.binds))
         if not node.words:
             if ctx.container and reads:
-                self.apply(Cmd(["export"], ctx.alias, scope.cwd, ctx.container, env_reads=tuple(reads)))
+                self.apply(Cmd(["export"], ctx.alias, scope.cwd, ctx.container, env_reads=tuple(reads), binds=ctx.binds))
             return
         alts = self.argvs(node.words, ctx, scope, reads)
         for argv in alts:
@@ -1148,7 +1164,7 @@ class Judge:
             if r.op in (">&", "<&") and all(re.fullmatch(r"\d+-?|-", v) for v in vals):
                 continue
             for v in vals:
-                p = norm(v, scope.cwd)
+                p = _mapped(norm(v, scope.cwd), ctx.binds)
                 op = ">" if r.op == ">&" else r.op
                 out.append((op, p))
                 if op in ("<", "<>") and r.fd in ("", "0"):
@@ -1160,6 +1176,9 @@ class Judge:
             for d in v.split(":"):
                 if any(could(c, norm(d, "/") + "/" + ANY) for c in self.created):
                     raise _unresolvable(f"a search path goes through {_show(d)}, where this block wrote a file it may then run")
+
+    def where(self, path: str, ctx: Ctx, scope: Scope) -> str:
+        return _mapped(norm(path, scope.cwd), ctx.binds)
 
     def executes(self, path: str, what: str) -> None:
         if any(could(path, c) for c in self.created):
@@ -1258,10 +1277,10 @@ class Judge:
         if any(c in first for c in WILD):
             raise _unresolvable(f"the command's name is computed at run time ({_show(first)})")
         if "/" in first:
-            self.executes(norm(first, scope.cwd), "it runs")
+            self.executes(self.where(first, ctx, scope), "it runs")
         name = first.rsplit("/", 1)[-1]
         args = argv[1:]
-        base = Cmd(argv, ctx.alias, scope.cwd, ctx.container, env_reads=reads if ctx.container else ())
+        base = Cmd(argv, ctx.alias, scope.cwd, ctx.container, env_reads=reads if ctx.container else (), binds=ctx.binds)
 
         if name == "eval":
             raise _unresolvable("eval runs text the block computes at run time")
@@ -1354,7 +1373,7 @@ class Judge:
             self.apply(replace(base, code="\n".join(code) or None, lang="sed"))
             return
         if name in (".", "source"):
-            target = norm(args[0], scope.cwd) if args else ANY
+            target = self.where(args[0], ctx, scope) if args else ANY
             if not args or target.startswith("/dev/fd/") or target in ("/dev/stdin", "/proc/self/fd/0"):
                 raise _unresolvable("it sources a script that is not in the block")
             self.executes(target, "it sources")
@@ -1382,7 +1401,7 @@ class Judge:
             opts, _ = _opts(args, "qfmMt")
             files = _values(opts, "-f")
             if files:
-                self.executes(norm(files[0], scope.cwd), "it schedules")
+                self.executes(self.where(files[0], ctx, scope), "it schedules")
             elif stdin and stdin[0] in ("heredoc", "herestring") and stdin[1] is not None:
                 self.nested(stdin[1], ctx, scope.child())
             elif stdin is not None:
@@ -1393,6 +1412,8 @@ class Judge:
             raise _unresolvable("a crontab installed from a file or a pipe runs what the block does not show")
         if name == "chroot":
             raise _unresolvable("paths inside a chroot cannot be matched to the host's")
+        if name in ("mount", "systemd-mount") and _device_mount(args):
+            raise _unresolvable(f"{name} of a device or a layered filesystem makes its paths aliases the judge cannot follow")
         if name in ("docker", "docker-compose"):
             self.docker(base, ctx, scope)
             return
@@ -1553,7 +1574,7 @@ class Judge:
             self.nested(operands[0], ctx, scope.child())
             return
         if operands and operands[0] != "-":
-            script = norm(operands[0], scope.cwd)
+            script = self.where(operands[0], ctx, scope)
             if script.startswith("/dev/fd/"):
                 raise _unresolvable("a shell reads its script from another command's output")
             if script not in ("/dev/stdin", "/proc/self/fd/0"):
@@ -1599,7 +1620,7 @@ class Judge:
         if operands and operands[0] != "-":
             if norm(operands[0], scope.cwd).startswith("/dev/fd/"):
                 raise _unresolvable(f"{name} reads its script from another command's output")
-            self.executes(norm(operands[0], scope.cwd), "it runs")
+            self.executes(self.where(operands[0], ctx, scope), "it runs")
             self.apply(replace(cmd, rest=operands))
             return
         if stdin is None:
@@ -1631,11 +1652,7 @@ class Judge:
             starts.append(norm(args[i], scope.cwd))
             i += 1
         starts = starts or [scope.cwd]
-        names = [args[k + 1] for k in range(i, len(args) - 1) if args[k] in ("-name", "-iname")]
-        if len(names) == 1 and not {"-o", "-or"} & set(args[i:]):
-            found = [s + ANY + "/" + re.sub(r"\[[^]/]+\]|[*?]", SEG, names[0]) for s in starts]
-        else:
-            found = [s + "/" + ANY for s in starts]
+        found = _found(starts, args[i:])
         writes: list[tuple[str, str]] = []
         while i < len(args):
             a = args[i]
@@ -1646,14 +1663,20 @@ class Judge:
                 inner = args[i + 1 : j]
                 if not inner:
                     raise _unresolvable("find's -exec names no command")
-                for f in found:
-                    self.command([x.replace("{}", f) for x in inner], None, ctx, scope)
+                for start, f in found:
+                    if a in ("-exec", "-ok"):
+                        self.command([x.replace("{}", f) for x in inner], None, ctx, scope)
+                        continue
+                    here = scope.child()
+                    here.cwd = start.rsplit("/", 1)[0] + ANY
+                    leaf = f.rsplit("/", 1)[-1]
+                    self.command([x.replace("{}", "./" + (SEG if ANY in leaf else leaf)) for x in inner], None, ctx, here)
                 i = j + 1
                 continue
             if a == "-delete":
-                writes.extend(("rm", f) for f in found)
+                writes.extend(("rm", _mapped(f, ctx.binds)) for _, f in found)
             if a in ("-fprint", "-fprint0", "-fprintf", "-fls") and i + 1 < len(args):
-                writes.append((">", norm(args[i + 1], scope.cwd)))
+                writes.append((">", self.where(args[i + 1], ctx, scope)))
             i += 1
         self.apply(replace(base, redirs=[(">", p) for op, p in writes if op == ">"], rest=[p for op, p in writes if op == "rm"]))
 
@@ -1663,7 +1686,57 @@ class Judge:
         if d.verb in ("exec", "run", "create") and d.inner:
             if ctx.container is not None:
                 raise _unresolvable("a docker call inside a container")
-            self.command(d.inner, None, replace(ctx, container=d.target or ANY), scope.child())
+            inner = scope.child()
+            workdir = d.values.get("-w", []) + d.values.get("--workdir", [])
+            inner.cwd = norm(workdir[-1], "/") if workdir else ANY
+            self.command(d.inner, None, replace(ctx, container=d.target or ANY, binds=_docker_binds(d, base)), inner)
+
+
+def _found(starts: list[str], expr: list[str]) -> list[tuple[str, str]]:
+    """What find reaches from each start point, as (start, path) pairs: the start itself at depth 0 and what lies
+    under it, narrowed to the one -name pattern when the expression has one and no -o."""
+    names = [expr[k + 1] for k in range(len(expr) - 1) if expr[k] in ("-name", "-iname")]
+    out: list[tuple[str, str]] = []
+    for s in starts:
+        if len(names) == 1 and not {"-o", "-or"} & set(expr):
+            pattern = re.sub(r"\[[^]/]+\]|[*?]", SEG, names[0])
+            out.append((s, s + ANY + "/" + pattern))
+            if could(s.rsplit("/", 1)[-1], pattern):
+                out.append((s, s))
+        else:
+            out += [(s, s), (s, s + "/" + ANY)]
+    return out
+
+
+def _docker_binds(d: DockerCall, cmd: Cmd) -> tuple[tuple[str, str], ...]:
+    """A docker run's binds, as (mount point in the container, host path) pairs; a named volume is none."""
+    out = []
+    for v in d.values.get("-v", []) + d.values.get("--volume", []):
+        src, _, rest = v.partition(":")
+        if rest and (src[:1] in ("/", ".", ANY) or SEG in src):
+            out.append((norm(rest.split(":", 1)[0], "/"), cmd.path(src)))
+    for v in d.values.get("--mount", []):
+        kv = dict(x.split("=", 1) for x in v.split(",") if "=" in x)
+        src = kv.get("source") or kv.get("src")
+        dst = kv.get("target") or kv.get("destination") or kv.get("dst")
+        if src and dst and (kv.get("type") == "bind" or src[:1] in ("/", ".", ANY)):
+            out.append((norm(dst, "/"), cmd.path(src)))
+    return tuple(out)
+
+
+def _device_mount(args: list[str]) -> bool:
+    opts, ops = _opts(args, "tOoLUNTB", {"--types", "--options", "--test-opts", "--label", "--uuid", "--source", "--target"})
+    if {"--bind", "--rbind", "-B", "-R", "--move", "-M"} & {k for k, _ in opts} or "bind" in ",".join(
+        _values(opts, "-o", "--options")
+    ):
+        return False
+    types = ",".join(_values(opts, "-t", "--types"))
+    sources = ops[:1] + _values(opts, "--source", "-L", "--label", "-U", "--uuid")
+    return bool(
+        re.search(r"overlay|ext\d|xfs|btrfs|vfat|ntfs|zfs|squashfs|iso9660|fuse", types)
+        or any(re.match(r"/dev/|(LABEL|UUID|PARTUUID|PARTLABEL)=", x) for x in sources)
+        or _has(opts, "-L", "--label", "-U", "--uuid")
+    )
 
 
 def _runnable(word: str) -> bool:
@@ -2271,6 +2344,10 @@ def _gate_effects(cmd: Cmd) -> list[tuple[str, str]]:
         return out
     if name == "find":
         return out + [("remove", p) for p in cmd.rest]
+    if name in _TRANSFORMS or name in _UNTRANSFORMS:
+        return out + _transform_effects(cmd)
+    if (more := _side_effects(cmd)) is not None:
+        return out + more
     opts, ops = _opts(cmd.args, _READER_VALUES.get(name, "") + ("t" if name in ("cp", "mv", "ln", "install") else ""), _LONG_VALUES)
     keys = {k for k, _ in opts}
     paths = [cmd.path(o) for o in ops]
@@ -2287,10 +2364,14 @@ def _gate_effects(cmd: Cmd) -> list[tuple[str, str]]:
             out += [("create", dest + "/" + s.rsplit("/", 1)[-1]) for s in srcs]
             if keys & {"-r", "-R", "-a", "--recursive", "--archive"}:
                 out.append(("create", dest + "/" + ANY))
-        if name == "mv":
+            if name == "rsync" and any(k.startswith("--del") for k in keys):
+                out.append(("remove", dest + "/" + ANY))
+        if name == "mv" or name == "rsync" and "--remove-source-files" in keys:
             out += [("remove", s) for s in srcs]
-        if name == "ln":
+        if name == "ln" or name == "cp" and keys & {"-l", "--link", "-s", "--symbolic-link"}:
             out += [("link", s) for s in srcs]
+        if name == "ln" and dest:
+            out += [("linkdest", dest)] + [("linkdest", dest + "/" + s.rsplit("/", 1)[-1]) for s in srcs]
     elif name in ("rm", "unlink", "shred", "rmdir"):
         out += [("remove", p) for p in paths]
     elif name == "dd":
@@ -2301,22 +2382,160 @@ def _gate_effects(cmd: Cmd) -> list[tuple[str, str]]:
         out += [("create", cmd.path((m.group(1) or m.group(3)).strip())) for m in _SED_WRITE.finditer(cmd.code)]
     elif cmd.code is not None and cmd.lang not in ("sed", "awk") and _WRITE_CODE.search(cmd.code):
         out += [("unknown", cmd.path(a)) for a in cmd.rest if a and not a.startswith("-")]
-    elif name == "tar" and (any("x" in k for k in keys) or (cmd.args and "x" in cmd.args[0] and not cmd.args[0].startswith("-"))):
-        dirs = _values(opts, "-C", "--directory")
-        out.append(("create", (cmd.path(dirs[-1]) if dirs else cmd.cwd) + "/" + ANY))
-    elif name in ("curl", "wget"):
-        o = _opts(cmd.args, _READER_VALUES[name], _LONG_VALUES)[0]
-        out += [("create", cmd.path(v)) for v in _values(o, "-o", "--output", "-O", "--output-document") if v != "-"]
     elif name == "sort":
         out += [("create", cmd.path(v)) for v in _values(opts, "-o", "--output")]
-    elif name == "docker" and (d := docker_parse(cmd)).verb == "cp" and d.args:
+    elif name in ("docker", "docker-compose") and (d := docker_parse(cmd)).verb == "cp" and d.args:
         dst = d.args[-1]
         out.append(("create", cmd.path(dst.split(":", 1)[1] if ":" in dst.split("/", 1)[0] else dst)))
-    elif name == "mount" and keys & {"--bind", "--rbind", "-B"} | ({"-o"} if "bind" in ",".join(_values(opts, "-o")) else set()):
-        out += [("link", p) for p in paths]
+    elif name in ("docker", "docker-compose") and d.verb in ("run", "create"):
+        out += [("link", src) for dst, src in _docker_binds(d, cmd) if dst != src]
+    elif name == "mount" and keys & {"--bind", "--rbind", "-B", "-R", "--move", "-M"} | (
+        {"-o"} if "bind" in ",".join(_values(opts, "-o")) else set()
+    ):
+        out += [("link", p) for p in paths[:1]]
+    elif name == "bindfs":
+        out += [("link", p) for p in [cmd.path(o) for o in ops if not o.startswith("-")][:1]]
     elif name not in READERS and name not in METADATA:
         out += [("unknown", cmd.path(a)) for a in cmd.args if a and not a.startswith("-")]
     return out
+
+
+_TRANSFORMS = {"gzip": ".gz", "pigz": ".gz", "bzip2": ".bz2", "pbzip2": ".bz2", "xz": ".xz", "lzma": ".lzma"}
+_TRANSFORMS |= {"zstd": ".zst", "pzstd": ".zst", "lz4": ".lz4", "lzip": ".lz", "lzop": ".lzo", "compress": ".Z", "brotli": ".br"}
+_UNTRANSFORMS = {"gunzip": ".gz", "bunzip2": ".bz2", "unxz": ".xz", "unlzma": ".lzma", "unzstd": ".zst", "unlz4": ".lz4"}
+_UNTRANSFORMS |= {"uncompress": ".Z", "lunzip": ".lz"}
+_KEEPS_SOURCE = {"zstd", "pzstd", "unzstd", "lz4", "unlz4", "lzop", "brotli"}
+
+
+def _transform_effects(cmd: Cmd) -> list[tuple[str, str]]:
+    """An in-place compressor or decompressor: each operand replaced by its transform, unless it writes to stdout or
+    keeps its source."""
+    name = cmd.name
+    opts, ops = _opts(cmd.args, "SobTMLBF", {"--suffix", "--output", "--format", "--threads", "--memlimit", "--block-size"})
+    keys = {k for k, _ in opts}
+    out = [("create", cmd.path(v)) for v in _values(opts, "-o", "--output") if v != "-"]
+    if keys & {"-c", "--stdout", "--to-stdout", "-t", "--test", "-l", "--list"} or _values(opts, "-o", "--output"):
+        return out
+    undo = name in _UNTRANSFORMS or bool(keys & {"-d", "--decompress", "--uncompress"})
+    ext = (_values(opts, "-S", "--suffix") or [_TRANSFORMS.get(name) or _UNTRANSFORMS.get(name)])[0]
+    keep = bool(keys & {"-k", "--keep"}) or name in _KEEPS_SOURCE and "--rm" not in keys
+    deep = bool(keys & {"-r", "--recursive"})
+    for p in [cmd.path(o) for o in ops]:
+        for q in [p, p + "/" + ANY] if deep else [p]:
+            if undo:
+                out.append(("create", q[: -len(ext)] if q.endswith(ext) else q.rsplit("/", 1)[0] + "/" + SEG))
+            else:
+                out.append(("create", q + ext))
+            if not keep:
+                out.append(("remove", q))
+    return out
+
+
+def _side_effects(cmd: Cmd) -> list[tuple[str, str]] | None:
+    """What an archiver, an extractor, a fetcher, a renamer or a converter writes beside its own job; None for a
+    command it does not know."""
+    name, args = cmd.name, cmd.args
+    here = cmd.path(".")
+    if name in ("tar", "bsdtar", "gtar"):
+        if args and re.fullmatch(r"[A-Za-z]+", args[0]):
+            args = ["-" + args[0], *args[1:]]
+        opts, ops = _opts(args, "CfTXbHKLNVIF", _TAR_VALUE)
+        keys = {k for k, _ in opts}
+        mode = "".join(k[1:] for k in keys if len(k) == 2)
+        mode += "x" if keys & {"--extract", "--get"} else ""
+        mode += "c" if keys & {"--create", "--append", "--update", "--concatenate", "--catenate"} else ""
+        base = cmd.path((_values(opts, "-C", "--directory") or ["."])[-1])
+        out = []
+        if "x" in mode:
+            out.append(("create", base + "/" + ANY))
+        if set("cruA") & set(mode):
+            out += [("create", cmd.path(f)) for f in _values(opts, "-f", "--file") if f != "-"]
+            if "--remove-files" in keys:
+                out += [("remove", norm(o, base)) for o in ops]
+        return out
+    if name == "zip":
+        opts, ops = _opts(args, "xbntO", {"--exclude", "--temp-path", "--suffixes", "--output-file"})
+        if not ops:
+            return []
+        archive = cmd.path(ops[0])
+        out = [("create", archive), ("create", archive + ".zip")]
+        if _has(opts, "-m", "--move"):
+            out += [("remove", cmd.path(o)) for o in ops[1:]]
+        return out
+    if name == "unzip":
+        opts, ops = _opts(args, "dP", set())
+        if _has(opts, "-l", "-t", "-p", "-c", "-Z", "-v", "-z"):
+            return []
+        return [("create", cmd.path((_values(opts, "-d") or ["."])[-1]) + "/" + ANY)]
+    if name == "cpio":
+        opts, ops = _opts(args, "DFOIHEMR", {"--directory", "--file", "--format", "--pattern-file", "--owner"})
+        out = [("create", cmd.path(f)) for f in _values(opts, "-F", "--file", "-O")]
+        if _has(opts, "-i", "--extract"):
+            out.append(("create", cmd.path((_values(opts, "-D", "--directory") or ["."])[-1]) + "/" + ANY))
+        if _has(opts, "-p", "--pass-through") and ops:
+            out.append(("create", cmd.path(ops[-1]) + "/" + ANY))
+        return out
+    if name in ("7z", "7za", "7zr"):
+        if not args or args[0] not in ("x", "e"):
+            return []
+        dirs = [a[2:] for a in args if a.startswith("-o") and len(a) > 2]
+        return [("create", cmd.path((dirs or ["."])[-1]) + "/" + ANY)]
+    if name == "ar":
+        letters = args[0].lstrip("-") if args else ""
+        return [("create", here + "/" + ANY)] if "x" in letters else []
+    if name == "pax":
+        return [("create", here + "/" + ANY)] if "-r" in args or any(re.fullmatch(r"-\w*r\w*", a) for a in args) else []
+    if name == "patch":
+        opts, _ = _opts(args, "pdoiBrzVDFY", {"--directory", "--output", "--input", "--reject-file", "--strip"})
+        if _has(opts, "--dry-run"):
+            return []
+        return [("create", cmd.path((_values(opts, "-d", "--directory") or ["."])[-1]) + "/" + ANY)] + [
+            ("create", cmd.path(f)) for f in _values(opts, "-o", "--output") if f != "-"
+        ]
+    if name == "wget":
+        opts, _ = _opts(args, "OoaPiTtUeBY", _LONG_VALUES | _w("--directory-prefix --output-file --append-output --user-agent"))
+        doc = _values(opts, "-O", "--output-document")
+        out = [("create", cmd.path(f)) for f in _values(opts, "-o", "--output-file", "-a", "--append-output") + doc if f != "-"]
+        if not doc and not _has(opts, "--spider"):
+            out.append(("create", cmd.path((_values(opts, "-P", "--directory-prefix") or ["."])[-1]) + "/" + SEG))
+        return out
+    if name == "curl":
+        named = _w("--dump-header --cookie-jar --trace --trace-ascii --stderr --etag-save --libcurl --hsts --alt-svc --output-dir")
+        opts, _ = _opts(args, "oTdFKHAeuxXrwmEbcyYD", _LONG_VALUES | named)
+        files = _values(opts, "-o", "--output", "-D", "--dump-header", "-c", "--cookie-jar", "--trace", "--trace-ascii")
+        files += _values(opts, "--stderr", "--etag-save", "--libcurl", "--hsts", "--alt-svc")
+        out = [("create", cmd.path(f)) for f in files if f != "-"]
+        if _has(opts, "-O", "--remote-name", "--remote-name-all", "-J", "--remote-header-name"):
+            out.append(("create", cmd.path((_values(opts, "--output-dir") or ["."])[-1]) + "/" + SEG))
+        return out
+    if name in ("uniq", "xxd"):
+        _, ops = _opts(args, _READER_VALUES.get(name, ""), _LONG_VALUES)
+        return [("create", cmd.path(ops[1]))] if len(ops) > 1 and ops[1] != "-" else []
+    if name == "iconv":
+        opts, _ = _opts(args, "fto", {"--from-code", "--to-code", "--output"})
+        return [("create", cmd.path(f)) for f in _values(opts, "-o", "--output")]
+    if name in ("openssl", "gpg", "gpg2", "age"):
+        flags = ("-out", "-keyout", "-certout") if name == "openssl" else ("-o", "--output")
+        files = [args[i + 1] for i, a in enumerate(args[:-1]) if a in flags]
+        files += [a.split("=", 1)[1] for a in args if a.startswith("--output=")]
+        return [("create", cmd.path(f)) for f in files if f != "-"]
+    if name == "split":
+        _, ops = _opts(args, "lbnaCtd", _LONG_VALUES | {"--filter", "--additional-suffix", "--suffix-length"})
+        return [("create", cmd.path(ops[1] if len(ops) > 1 else "x") + SEG)]
+    if name == "socat":
+        out = []
+        for a in args:
+            m = re.match(r"(?i)(?:create|open|gopen|pipe):([^,]+)", a) or re.match(r"([/.][^,]*)", a)
+            if m:
+                out.append(("create", cmd.path(m.group(1))))
+        return out
+    if name in ("rename", "prename", "file-rename", "perl-rename", "rename.ul"):
+        out = []
+        for o in [a for a in args if not a.startswith("-")]:
+            p = cmd.path(o)
+            out += [("remove", p), ("create", p.rsplit("/", 1)[0] + "/" + SEG)]
+        return out
+    return None
 
 
 def rule_money_path(cmd: Cmd, j: Judge) -> Refusal | None:
@@ -2349,6 +2568,8 @@ def rule_money_path(cmd: Cmd, j: Judge) -> Refusal | None:
                 return no(f"removing {which(target)} {why}")
         if effect == "link" and could_tree(p, ENGINE_EXEC):
             return no(f"a link onto {ENGINE_EXEC} hides a later write to the gate files")
+        if effect == "linkdest" and (could(p, KILL) or could(p, HOLD)):
+            return no(f"a link in place of {_show(p)} may point at nothing, which clears the latch")
     return None
 
 
