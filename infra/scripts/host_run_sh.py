@@ -2666,6 +2666,36 @@ def rule_terminal(cmd: Cmd, j: Judge) -> Refusal | None:
     return None
 
 
+_CAPTURE_UNITS = ("zcrypto-capture", "grafana-alloy", "alloy", "docker", "docker.socket", "containerd")
+_STOPPING_VERBS = _w(
+    "stop restart kill disable mask try-restart reload-or-restart try-reload-or-restart condrestart force-reload freeze "
+    "set-property reload clean"
+)
+_STOP_METHODS = re.compile(
+    r"\b(?:Stop|Restart|TryRestart|ReloadOrRestart|ReloadOrTryRestart|Kill|QueueSignal|Freeze|Clean|Reload|Mask|Disable)"
+    r"(?:Unit|Units|UnitFiles|UnitFilesWithFlags)?\b|SetUnitProperties|SetProperties|\bisolate\b"
+)
+# Process names and command lines under capture and its Alloy, and the container runtime they run in.
+_CAPTURE_PROCS = (
+    "zcrypto-capture",
+    "zcrypto capture",
+    "zcrypto",
+    "python",
+    "python3",
+    "alloy",
+    "grafana-alloy",
+    "/bin/alloy",
+    "dockerd",
+    "containerd",
+    "containerd-shim-runc-v2",
+    "docker-proxy",
+)
+_KILL_VALUE = _w(
+    "--signal --euid --uid --pgroup --group --parent --session --terminal --pidfile --ns --nslist --cgroup --runstates "
+    "--user --older-than --younger-than --context"
+)
+
+
 def rule_capture_primary(cmd: Cmd, j: Judge) -> Refusal | None:
     on_primary = cmd.alias == j.primary
     capture_hosts = {j.primary, j.secondary} - {None}
@@ -2708,28 +2738,66 @@ def rule_capture_primary(cmd: Cmd, j: Judge) -> Refusal | None:
         if any(could(cmd.container, c) for c in capture):
             return no("a kill inside the primary's capture or Alloy container")
         return None
+
+    def unit_verb(how: str, verb: str, units: list[str]) -> Refusal | None:
+        if verb in _STOPPING_VERBS:
+            for u in units or [ANY]:
+                if any(could(u.removesuffix(".service"), c) for c in _CAPTURE_UNITS):
+                    return no(f"{how} {verb} {_show(u)} on the primary stops capture or its Alloy")
+        return None
+
+    ops = [a for a in cmd.args if not a.startswith("-")]
     if name == "systemctl":
         _, operands = _opts(
             cmd.args,
             "pPtsnoHM",
-            _w("--property --type --signal --lines --output --host --machine --state --job-mode --kill-whom"),
+            _w("--property --type --signal --lines --output --host --machine --state --job-mode --kill-whom --what"),
         )
         verb, units = (operands[0], operands[1:]) if operands else ("", [])
         if verb == "isolate":
             return no("systemctl isolate on the primary stops every unit its target does not pull, capture with it")
-        if verb in _w(
-            "stop restart kill disable mask try-restart reload-or-restart try-reload-or-restart condrestart force-reload freeze"
-        ):
-            for u in units or [ANY]:
-                base_unit = u.removesuffix(".service")
-                if any(could(base_unit, c) for c in (*capture, "docker", "docker.socket", "containerd")):
-                    return no(f"systemctl {verb} {_show(u)} on the primary stops capture or its Alloy")
-    if name in ("pkill", "killall", "kill"):
-        if name == "kill" and any(a in ("-0", "-s0", "--signal=0") for a in cmd.args):
+        return unit_verb("systemctl", verb, units)
+    if name in ("service", "invoke-rc.d") and len(ops) > 1:
+        return unit_verb(name, ops[1], ops[:1])
+    if cmd.argv and cmd.argv[0].startswith("/etc/init.d/") and ops:
+        return unit_verb(cmd.argv[0], ops[0], [name])
+    if name == "deb-systemd-invoke" and ops:
+        return unit_verb(name, ops[0], ops[1:])
+    if name == "update-rc.d" and len(ops) > 1 and ops[1] in ("disable", "remove", "stop"):
+        return unit_verb(name, "disable", ops[:1])
+    if name in ("busctl", "dbus-send", "gdbus", "varlinkctl") or name.startswith("qdbus"):
+        text = " ".join(cmd.args)
+        if _STOP_METHODS.search(text) and (re.search(r"(?i)capture|alloy|docker|containerd", text) or ANY in text):
+            return no(f"{name} calls systemd to stop, kill or starve a unit that could be capture or its Alloy")
+    if name == "fuser" and any(a == "--kill" or re.fullmatch(r"-[A-Za-z]*k[A-Za-z]*", a) for a in cmd.args):
+        return no("fuser -k on the primary signals whatever holds its target, capture or its Alloy with it")
+    if name in ("pkill", "killall"):
+        return _signals_capture(cmd, no)
+    if name == "kill":
+        if any(a in ("-0", "-s0", "--signal=0") for a in cmd.args):
             return None
-        pats = [a for a in cmd.args if not a.startswith("-")]
-        if name == "kill" or not pats or any(could(p.lower(), ANY + c + ANY) for p in pats for c in ("capture", "alloy")):
-            return no(f"{name} on the primary could signal capture or its Alloy")
+        return no(f"{name} on the primary could signal capture or its Alloy")
+    return None
+
+
+def _signals_capture(cmd: Cmd, no) -> Refusal | None:
+    """pkill's patterns are regular expressions, killall's exact names unless -r; one that could match a process of
+    capture, its Alloy or the container runtime under them, or a pkill that selects by owner alone, is refused."""
+    pkill = cmd.name == "pkill"
+    opts, pats = _opts(cmd.args, "uUgGPstFL" if pkill else "usoyZn", _KILL_VALUE)
+    keys = {k for k, _ in opts}
+    if not pats:
+        return no(f"{cmd.name} with no pattern signals every process its options select, capture with them")
+    for p in pats:
+        if any(c in p for c in WILD):
+            return no(f"{cmd.name}'s pattern is computed at run time")
+        try:
+            rx = re.compile(p if pkill or "-r" in keys else re.escape(p), re.I if keys & {"-i", "-I"} else 0)
+        except re.error:
+            return no(f"{cmd.name}'s pattern {p} is not one the judge can read")
+        exact = "-x" in keys or not pkill and "-r" not in keys
+        if any((rx.fullmatch if exact else rx.search)(spec) for spec in _CAPTURE_PROCS):
+            return no(f"{cmd.name} {p} on the primary could signal capture, its Alloy or their container runtime")
     return None
 
 

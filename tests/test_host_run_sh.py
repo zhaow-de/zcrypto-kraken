@@ -661,6 +661,78 @@ SECRET_DOORS = [
     ),
 ]
 
+# The primary's capture and its Alloy stopped another way: the SysV and Debian service front ends, systemd's D-Bus
+# methods, systemctl verbs that starve or wipe a unit, a signal aimed by pattern, and the runners that carry them.
+_SD = "org.freedesktop.systemd1"
+CAPTURE_DOORS = [
+    ("service-stop", "zcrypto", "sudo service zcrypto-capture stop", "capture-primary"),
+    ("service-restart", "zcrypto", "sudo service zcrypto-capture restart", "capture-primary"),
+    ("service-alloy-stop", "zcrypto", "sudo service alloy stop", "capture-primary"),
+    ("init-d-stop", "zcrypto", "sudo /etc/init.d/zcrypto-capture stop", "capture-primary"),
+    ("invoke-rc-d-stop", "zcrypto", "sudo invoke-rc.d zcrypto-capture stop", "capture-primary"),
+    ("deb-systemd-invoke-stop", "zcrypto", "sudo deb-systemd-invoke stop zcrypto-capture.service", "capture-primary"),
+    ("update-rc-d-disable", "zcrypto", "sudo update-rc.d zcrypto-capture disable", "capture-primary"),
+    (
+        "busctl-stop-unit",
+        "zcrypto",
+        f"sudo busctl call {_SD} /org/freedesktop/systemd1 {_SD}.Manager StopUnit ss zcrypto-capture.service replace",
+        "capture-primary",
+    ),
+    (
+        "busctl-restart-unit",
+        "zcrypto",
+        f"sudo busctl call {_SD} /org/freedesktop/systemd1 {_SD}.Manager RestartUnit ss zcrypto-capture.service replace",
+        "capture-primary",
+    ),
+    (
+        "busctl-kill-unit",
+        "zcrypto",
+        f"sudo busctl call {_SD} /org/freedesktop/systemd1 {_SD}.Manager KillUnit ssi zcrypto-capture.service all 9",
+        "capture-primary",
+    ),
+    (
+        "busctl-unit-object-stop",
+        "zcrypto",
+        f"sudo busctl call {_SD} /org/freedesktop/systemd1/unit/zcrypto_2dcapture_2eservice {_SD}.Unit Stop s replace",
+        "capture-primary",
+    ),
+    (
+        "dbus-send-stop-unit",
+        "zcrypto",
+        f"sudo dbus-send --system --print-reply --dest={_SD} /org/freedesktop/systemd1 {_SD}.Manager.StopUnit "
+        "string:zcrypto-capture.service string:replace",
+        "capture-primary",
+    ),
+    (
+        "gdbus-stop-unit",
+        "zcrypto",
+        f"sudo gdbus call --system --dest {_SD} --object-path /org/freedesktop/systemd1 --method {_SD}.Manager.StopUnit "
+        "zcrypto-capture.service replace",
+        "capture-primary",
+    ),
+    (
+        "docker-socket-stop",
+        "zcrypto",
+        "sudo curl -s --unix-socket /var/run/docker.sock -X POST http://x/containers/grafana-alloy/stop",
+        "unresolvable",
+    ),
+    ("script-c-stop", "zcrypto", "sudo script -qc 'systemctl stop zcrypto-capture' /dev/null", "capture-primary"),
+    ("prlimit-sh-c-stop", "zcrypto", "sudo prlimit sh -c 'systemctl stop zcrypto-capture'", "capture-primary"),
+    ("systemd-run-stop", "zcrypto", "sudo systemd-run systemctl stop zcrypto-capture", "capture-primary"),
+    ("at-herestring-stop", "zcrypto", "sudo at now <<< 'systemctl stop zcrypto-capture'", "capture-primary"),
+    ("systemctl-set-property", "zcrypto", "sudo systemctl set-property zcrypto-capture CPUQuota=1%", "capture-primary"),
+    ("systemctl-reload", "zcrypto", "sudo systemctl reload zcrypto-capture", "capture-primary"),
+    ("systemctl-clean", "zcrypto", "sudo systemctl clean --what=state zcrypto-capture", "capture-primary"),
+    ("fuser-kill", "zcrypto", "sudo fuser -k /var/lib/zcrypto-capture", "capture-primary"),
+    ("pkill-f-zcrypto", "zcrypto", "sudo pkill -f zcrypto", "capture-primary"),
+    ("pkill-f-any", "zcrypto", "sudo pkill -f .", "capture-primary"),
+    ("pkill-python", "zcrypto", "sudo pkill python3", "capture-primary"),
+    ("pkill-user-selector", "zcrypto", "sudo pkill -u root", "capture-primary"),
+    ("pkill-containerd-shim", "zcrypto", "sudo pkill containerd-shim", "capture-primary"),
+    ("killall-regex", "zcrypto", "sudo killall -r 'zc.*'", "capture-primary"),
+    ("killall-dockerd", "zcrypto", "sudo killall dockerd", "capture-primary"),
+]
+
 # The see-through spellings: each hides a gate-opening write behind a different layer of shell.
 SEE_THROUGH = [
     ("quoted", "sudo touch '/var/lib/zcrypto-engine/exec/'\"armed\""),
@@ -903,6 +975,11 @@ ADMITTED = [
     ("capture-prune-timer", "zcrypto", "sudo systemctl restart zcrypto-capture-prune.timer"),
     ("engine-restart-in-container", "zcrypto", "sudo docker restart zcrypto-engine"),
     ("secondary-capture-stop", "red", "sudo systemctl stop zcrypto-capture"),
+    ("secondary-service-stop", "red", "sudo service zcrypto-capture stop"),
+    ("service-status-capture", "zcrypto", "sudo service zcrypto-capture status"),
+    ("busctl-status-primary", "zcrypto", "sudo busctl status zcrypto-capture.service"),
+    ("pkill-unrelated-primary", "zcrypto", "sudo pkill -x sleep"),
+    ("pkill-f-unrelated-primary", "zcrypto", "sudo pkill -f zcrypto-panel-materialize"),
     ("secondary-alloy-stop", "red", "sudo docker stop grafana-alloy"),
     ("secondary-alloy-restart", "red", "sudo docker restart grafana-alloy"),
     (
@@ -993,6 +1070,14 @@ def test_what_runs_another_command_is_seen_through_or_refused_as_unresolvable(do
 def test_a_gate_opening_write_is_seen_through_its_spelling(door, block):
     done = door.judge("zcrypto", block)
     assert done.returncode == 65 and _rule(done) == "money-path", done.stderr.decode()
+
+
+@pytest.mark.parametrize(
+    ("alias", "block", "rule"), [pytest.param(a, b, r, id=f"capture-primary-side-door-{i}") for i, a, b, r in CAPTURE_DOORS]
+)
+def test_the_primarys_capture_stopped_another_way_is_refused(door, alias, block, rule):
+    done = door.judge(alias, block)
+    assert done.returncode == 65 and _rule(done) == rule, done.stderr.decode()
 
 
 @pytest.mark.parametrize(
