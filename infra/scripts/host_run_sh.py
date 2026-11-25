@@ -1,11 +1,13 @@
 """The judge behind infra/scripts/host-run.sh, the one door through which a session runs a block on a fleet host.
 
 The block is read as shell text: quoting, variables, command substitutions, the wrappers that change who runs a
-command (`sudo`, `env`, `nohup`, `bash -c`, `xargs`, `docker exec`), pipes, chains and here-documents are seen
-through to the commands that would run, and every command is put to each rule in `RULES`. What the judge cannot
-resolve -- code computed at run time, a script piped into a shell -- it refuses as unresolvable: the door fails
-closed. `fleet_ssh_aliases` is the one parse of docs/reference/fleet.md's host table; tests/test_ops_daily.py
-reads the table through it too.
+command (`sudo`, `env`, `nohup`, `bash -c`, `xargs`, `docker exec`, the runners `unwrap` names), pipes, chains and
+here-documents are seen through to the commands that would run, and every command is put to each rule in `RULES`.
+What the judge cannot resolve it refuses as unresolvable: code computed at run time, a script piped into a shell,
+interpreter code that builds what it touches, shell state that changes what a later word means, a daemon reached
+over its own channel, and a command the judge has no model of handed a command name or a script. A command the judge
+has no model of and that is handed neither is admitted on its own name. `fleet_ssh_aliases` is the one parse of
+docs/reference/fleet.md's host table; tests/test_ops_daily.py reads the table through it too.
 
 Usage: host_run_sh.py judge --repo <checkout> --alias <alias> [--record --ts <stamp> --timeout <s>]  < block
 rc 0 admitted | rc 65 refused | rc 64 a block that is not text.
@@ -568,6 +570,11 @@ class Group:
     opens: bool
 
 
+@dataclass
+class FuncDef:
+    name: str
+
+
 _SKIP = {"if", "then", "elif", "else", "fi", "do", "done", "while", "until", "{", "}", "!", "coproc"}
 _SEPARATORS = {"\n", ";", "&", "&&", "||", "|", "|&", ";;", ";&", ";;&"}
 
@@ -631,6 +638,7 @@ def parse(text: str) -> list:
                     i += 1
                     continue
                 if len(cur.words) == 1 and not cur.assigns and i + 1 < len(tokens) and tokens[i + 1] == ("op", ")"):
+                    nodes.append(FuncDef(cur.words[0].literal() or ""))
                     cur = None
                     i += 2
                     continue
@@ -704,6 +712,7 @@ def parse(text: str) -> list:
                 pattern = True
                 continue
             if lit == "function":
+                nodes.append(FuncDef(word_at(i + 1) or ""))
                 i += 2
                 if i + 1 < len(tokens) and tokens[i] == ("op", "(") and tokens[i + 1] == ("op", ")"):
                     i += 2
@@ -788,12 +797,93 @@ _SHELLS = {"bash", "sh", "dash", "zsh", "ksh", "mksh", "ash"}
 _PY = re.compile(r"(python[0-9.]*|pypy[0-9.]*)$")
 _INTERPRETERS = {"perl": "-e", "ruby": "-e", "node": "-e", "nodejs": "-e", "php": "-r"}
 _AWKS = {"awk", "gawk", "mawk", "nawk"}
-_COPIERS = {"cp", "mv", "install", "ln", "tee", "touch", "dd", "rsync", "curl", "wget"}
 _CODE_DIRS = _w(
-    "/etc/systemd /lib/systemd /usr/lib/systemd /etc/cron.d /etc/cron.daily /etc/cron.hourly /etc/crontab "
-    "/var/spool/cron /etc/init.d /etc/rc.local /etc/profile.d /etc/profile /etc/bash.bashrc /etc/sudoers "
-    "/etc/sudoers.d /usr/local/bin /usr/local/sbin /etc/udev/rules.d /etc/ld.so.preload /root/.bashrc /root/.profile "
-    f"{HOME}/.bashrc {HOME}/.profile"
+    "/etc/systemd /lib/systemd /usr/lib/systemd /run/systemd /etc/cron.d /etc/cron.daily /etc/cron.hourly /etc/cron.weekly "
+    "/etc/cron.monthly /etc/crontab /etc/anacrontab /var/spool/cron /etc/init.d /etc/rc.local /etc/profile.d /etc/profile "
+    "/etc/bash.bashrc /etc/environment /etc/sudoers /etc/sudoers.d /etc/sudo.conf /etc/pam.d /etc/security "
+    "/etc/update-motd.d /etc/apt/apt.conf.d /etc/logrotate.d /etc/logrotate.conf /etc/tmpfiles.d /usr/lib/tmpfiles.d "
+    "/etc/modprobe.d /etc/ld.so.conf /etc/ld.so.conf.d /etc/ld.so.preload /etc/udev/rules.d /lib/udev/rules.d "
+    "/usr/lib/udev/rules.d /etc/ssh/sshrc /etc/ssh/sshd_config /etc/ssh/sshd_config.d /etc/network /etc/NetworkManager "
+    "/etc/dhcp /etc/docker /etc/containerd /usr/local/bin /usr/local/sbin /usr/bin /usr/sbin /bin /sbin /usr/lib/python3 "
+    f"/usr/lib/python3.{SEG} /usr/local/lib/python3.{SEG} /root/.bashrc /root/.profile /root/.bash_profile "
+    f"/root/.bash_login /root/.ssh /root/.config/systemd {HOME}/.bashrc {HOME}/.profile {HOME}/.bash_profile "
+    f"{HOME}/.bash_login {HOME}/.ssh/rc {HOME}/.ssh/authorized_keys {HOME}/.config/systemd {HOME}/.local/bin"
+)
+DEFAULT_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# Runners that run their operands as a command, unchanged.
+_PLAIN_RUNNERS = _w("nohup builtin unbuffer chronic catchsegv caffeinate eatmydata tsocks fakeroot")
+# Runners whose commands come from somewhere the judge does not read, or run under another root.
+_OPAQUE_RUNNERS = _w(
+    "parallel sem run-parts expect firejail bwrap systemd-nspawn fakechroot proot entr start-stop-daemon daemonize"
+)
+_SYSTEMD_RUN_VALUE = _w(
+    "--unit --property --setenv --machine --host --uid --gid --nice --working-directory --slice --description "
+    "--service-type --on-active --on-boot --on-startup --on-unit-active --on-unit-inactive --on-calendar "
+    "--on-clock-change --on-timezone-change --timer-property --path-property --socket-property --expand-environment "
+    "--slice-inherit"
+)
+_SCRIPT_VALUE = _w("--command --log-timing --log-in --log-out --log-io --echo --output-limit --logging-format")
+_SETPRIV_VALUE = _w(
+    "--reuid --regid --ruid --rgid --euid --egid --groups --inh-caps --ambient-caps --bounding-set --securebits "
+    "--selinux-label --apparmor-profile --landlock-access --landlock-rule --pdeathsig --ptracer"
+)
+_TRACE_VALUE = _w(
+    "--output --attach --trace --string-limit --user --env --columns --summary-sort-by --trace-path --signal --status "
+    "--decode-fds --detach-on --library --config --align"
+)
+_RUN0_VALUE = _w(
+    "--user --group --chdir --unit --property --description --slice --nice --setenv --machine --background --shell-prompt-prefix"
+)
+_NUMACTL_VALUE = _w(
+    "--interleave --preferred --preferred-many --membind --cpunodebind --physcpubind --weighted-interleave --offset "
+    "--length --strict --shm --file --huge --touch"
+)
+_UV_GLOBAL = _w("--directory --project --cache-dir --config-file --color --python-preference --allow-insecure-host")
+_UV_RUN_VALUE = _w(
+    "--with --with-editable --with-requirements --python --directory --project --package --extra --group --only-group "
+    "--no-group --env-file --index --default-index --index-url --extra-index-url --find-links --config-file --cache-dir "
+    "--color --refresh-package --upgrade-package --reinstall-package --no-binary-package --no-build-package --resolution "
+    "--prerelease --exclude-newer --link-mode --index-strategy --keyring-provider --python-platform --config-setting "
+    "--from"
+)
+_TAR_VALUE = _w(
+    "--file --directory --to-command --use-compress-program --rsh-command --info-script --new-volume-script "
+    "--checkpoint-action --exclude --files-from --exclude-from --transform --owner --group --mode --mtime --label "
+    "--suffix --index-file --newer --after-date --format --blocking-factor --record-size --tape-length"
+)
+_SCRIPT_SYNTAX = re.compile(r"[;\n`]|&&|\|\||\||\$\(|>")
+_BUILTINS = _w(
+    "cd pushd popd dirs echo printf read mapfile readarray export declare typeset local readonly unset alias unalias set "
+    "shopt source . exec eval command builtin enable type hash trap test [ true false : let kill wait jobs fg bg disown "
+    "umask ulimit getopts shift return exit break continue times caller compgen complete help history logout suspend"
+)
+# A variable whose value changes what a later word of the block means or runs: refused wherever the block binds it.
+_STATE_VARS = _w(
+    "CDPATH IFS BASH_ENV ENV PS4 PROMPT_COMMAND LD_PRELOAD LD_AUDIT GCONV_PATH PERL5OPT RUBYOPT NODE_OPTIONS PYTHONSTARTUP "
+    "BASH_ALIASES BASH_CMDS BASH_LOADABLES_PATH"
+)
+# A search path: refused when it reaches a directory this block wrote into.
+_SEARCH_VARS = _w("PATH PYTHONPATH PYTHONHOME PERL5LIB PERLLIB RUBYLIB NODE_PATH LD_LIBRARY_PATH")
+# Commands that run another command handed to them, and the names a rule keys on: an argument naming one, handed to a
+# command the judge has no model of, may be run by it.
+_RUNNABLE = _w(
+    "bash sh dash zsh ksh mksh ash python python3 pypy3 perl ruby node nodejs php awk gawk mawk nawk sed sudo doas run0 "
+    "pkexec su runuser sg env nohup exec command builtin eval xargs find busybox toybox timeout nice ionice stdbuf "
+    "setsid flock chrt taskset watch systemd-run nsenter unshare script prlimit setpriv uv uvx pipx poetry strace ltrace "
+    "chroot docker docker-compose ctr nerdctl runc podman busctl dbus-send gdbus systemctl service invoke-rc.d kill "
+    "pkill killall fuser reboot shutdown poweroff halt telinit kexec rtcwake converge.sh ansible ansible-playbook "
+    "ansible-vault zcrypto-flatten apt apt-get wg wg-quick kraken rm dd wipefs ps printenv mount ssh scp touch tee mv cp "
+    "ln truncate"
+)
+# Escapes by which a client runs a shell command from inside its own language.
+_SHELL_ESCAPES = _w(".shell .system \\! ! shell system")
+# Commands the judge has no rule of its own for that never run an argument as a command.
+_LEAVES = _w(
+    "systemctl journalctl loginctl hostnamectl timedatectl networkctl resolvectl localectl ps pgrep pidof which whereis "
+    "type hash apt apt-get apt-cache aptitude dpkg dpkg-query update-alternatives man whatis apropos ldd zcrypto ss ip df "
+    "free uptime id getent groups hostname uname date lsblk blkid findmnt lsof netstat dig host nslookup ping traceroute "
+    "mtr wg wg-quick sysctl uv pip pip3 git usermod useradd userdel groupadd groupdel gpasswd chage service kill pkill "
+    "killall reboot shutdown poweroff halt"
 )
 
 
@@ -883,9 +973,26 @@ class Judge:
                     scope.cwd = scope.saved.pop()
             elif isinstance(node, ForBind):
                 vals = [v for w in node.words for v in self.expand(w, ctx, scope)] if node.words is not None else [ANY]
-                scope.vars[node.name] = vals[:_ALT_CAP] if len(vals) <= _ALT_CAP else [ANY]
+                self.bind(node.name, vals if len(vals) <= _ALT_CAP else [ANY], scope)
+            elif isinstance(node, FuncDef):
+                if not node.name or any(node.name in names for names in (_BUILTINS, _RUNNABLE, READERS, METADATA, _LEAVES)):
+                    raise _unresolvable(f"a function named {node.name or '…'} changes what a later {node.name or 'word'} runs")
             else:
                 self.simple(node, ctx, scope)
+
+    def bind(self, name: str, vals: list[str], scope: Scope | None, prefix: bool = False) -> None:
+        """Set `name` in `scope` (None: an assignment that prefixes a command); refuse a variable that changes what a
+        later word means, and a search path through a directory this block wrote into."""
+        if name in _STATE_VARS and not (prefix and name == "IFS"):
+            raise _unresolvable(f"it sets {name}, which changes what a later word of the block means or runs")
+        if name in _SEARCH_VARS:
+            self.path_check(vals)
+        if scope is not None:
+            scope.vars[name] = vals
+
+    def home(self, scope: Scope) -> str:
+        vals = scope.vars.get("HOME", [HOME])
+        return vals[0] if len(vals) == 1 else ANY
 
     def nested(self, text: str, ctx: Ctx, scope: Scope) -> None:
         if ANY in text:
@@ -902,7 +1009,8 @@ class Judge:
                 if not part.quoted:
                     if k == 0 and text.startswith("~"):
                         user, slash, rest = text[1:].partition("/")
-                        text = (HOME if not user else "/root" if user == "root" else "/home/" + user) + slash + rest
+                        text = (self.home(scope) if not user else "/root" if user == "root" else "/home/" + user) + slash + rest
+                    text = re.sub(r"\*\*+", ANY, text)
                     text = re.sub(r"\[[^]/]+\]|[*?]", SEG, text)
                     text = text.replace("{", "\x02").replace("}", "\x03").replace(",", "\x04")
                 vals = [text]
@@ -911,10 +1019,14 @@ class Judge:
                     for p in heredoc_parts(part.inner):
                         if isinstance(p, Sub):
                             self.nested(p.script, ctx, scope.child())
+                if re.match(r":?=", part.inner):
+                    self.bind(part.name, [ANY], None)
                 if part.name in scope.vars and not part.inner.startswith(("#", "%", "/", "^", ",")):
                     vals = scope.vars[part.name]
                 elif part.name == "HOME":
                     vals = [HOME]
+                elif part.name == "PATH":
+                    vals = [DEFAULT_PATH]
                 elif part.name == "PWD":
                     vals = [scope.cwd]
                 else:
@@ -1002,13 +1114,9 @@ class Judge:
         reads: list[str] = []
         for name, value, append in node.assigns:
             vals = self.expand(value, ctx, scope, reads)
-            if node.words:
-                continue
             if append:
                 vals = [p + v for p in scope.vars.get(name, [""]) for v in vals][:_ALT_CAP]
-            scope.vars[name] = vals
-            if name == "PATH":
-                self.path_check(vals)
+            self.bind(name, vals, None if node.words else scope, prefix=bool(node.words))
         redirs, stdin = self.redirections(node, ctx, scope, reads)
         if redirs:
             self.apply(Cmd([], ctx.alias, scope.cwd, ctx.container, redirs=redirs))
@@ -1050,22 +1158,25 @@ class Judge:
     def path_check(self, vals: list[str]) -> None:
         for v in vals:
             for d in v.split(":"):
-                if any(could(c, norm(d, "/") + "/" + SEG) for c in self.created):
-                    raise _unresolvable(f"PATH goes through {_show(d)}, where this block wrote a file it may then run")
+                if any(could(c, norm(d, "/") + "/" + ANY) for c in self.created):
+                    raise _unresolvable(f"a search path goes through {_show(d)}, where this block wrote a file it may then run")
 
     def executes(self, path: str, what: str) -> None:
         if any(could(path, c) for c in self.created):
             raise _unresolvable(f"{what} {_show(path)}, a file this block wrote: what it runs is not in the block")
 
     def builtin(self, alts: list[list[str]], ctx: Ctx, scope: Scope) -> None:
+        alts = [_unprefixed(a) for a in alts]
         argv = alts[0]
+        if not argv:
+            return
         name = argv[0]
         args = argv[1:]
         if name in ("cd", "pushd"):
             dests = set()
             for alt in alts:
                 o = [a for a in alt[1:] if not a.startswith("-") or a == "-"]
-                dest = o[0] if o else (HOME if name == "cd" else ANY)
+                dest = o[0] if o else (self.home(scope) if name == "cd" else ANY)
                 dests.add(ANY if dest == "-" else norm(dest, scope.cwd))
             if name == "pushd":
                 scope.saved.append(scope.cwd)
@@ -1073,40 +1184,72 @@ class Judge:
         elif name == "popd":
             scope.cwd = scope.saved.pop() if scope.saved else ANY
         elif name in ("export", "declare", "typeset", "local", "readonly"):
+            if any(a.startswith("-") and "n" in a[1:] for a in args if not a.startswith("--")) and name != "export":
+                raise _unresolvable(f"{name} -n makes a name that sets another variable")
             for a in args:
                 if "=" in a and _NAME.fullmatch(a.split("=", 1)[0].rstrip("+")):
                     k, _, v = a.partition("=")
-                    scope.vars[k.rstrip("+")] = [v]
-                    if k == "PATH":
-                        self.path_check([v])
+                    self.bind(k.rstrip("+"), [v], scope)
         elif name in ("read", "mapfile", "readarray"):
-            _, operands = _opts(args, "dpntua" if name == "read" else "dnOsuC")
-            for a in operands or ["REPLY"]:
+            opts, operands = _opts(args, "dpntua" if name == "read" else "dnOsuC")
+            for a in (operands or ["REPLY"]) + _values(opts, "-a"):
                 if _NAME.fullmatch(a):
-                    scope.vars[a] = [ANY]
+                    self.bind(a, [ANY], scope)
+        elif name == "printf":
+            for a in _values(_opts(args, "v", stop_at_operand=True)[0], "-v"):
+                self.bind(a.split("[", 1)[0], [ANY], scope)
+        elif name == "getopts" and len(args) > 1:
+            self.bind(args[1], [ANY], scope)
         elif name == "unset":
             for a in args:
                 scope.vars.pop(a, None)
-        elif name == "alias":
-            for a in args:
-                if "=" in a:
-                    self.nested(a.split("=", 1)[1], ctx, scope.child())
+        elif name == "shopt" and "-s" in args and {"cdable_vars", "expand_aliases"} & set(args):
+            raise _unresolvable("shopt -s cdable_vars or expand_aliases changes what a later word of the block means")
+        elif name == "alias" and any("=" in a for a in args):
+            raise _unresolvable("an alias changes what a later command name of the block runs")
+        elif name == "hash" and any(a.startswith("-") and "p" in a for a in args):
+            raise _unresolvable("hash -p changes what a later command name of the block runs")
+        elif name == "enable" and any(a not in ("-a", "-p", "-s") for a in args):
+            raise _unresolvable("enable loads or switches off a builtin, which changes what a later word runs")
         elif name == "trap" and args and not args[0].startswith("-"):
             self.nested(args[0], ctx, scope.child())
 
-    def apply(self, cmd: Cmd) -> None:
-        """Put one command to every rule; record what it writes, for a later command that would run it."""
+    def apply(self, cmd: Cmd, unmodelled: bool = False) -> None:
+        """Put one command to every rule, then refuse what reaches past the judge's sight: a daemon's own channel, or,
+        for a command the judge has no model of, an argument it may run. Record what it writes, for a later command
+        that would run it."""
         for rule in RULES:
             refusal = rule(cmd, self)
             if refusal is not None:
                 raise Refused(refusal)
-        writes = [p for op, p in cmd.redirs if op != "<"]
-        if cmd.layer != "wrapper" and cmd.name in _COPIERS:
-            writes += [p for effect, p in _gate_effects(cmd) if effect == "create"]
+        if cmd.layer != "wrapper" and (reason := _channel(cmd)):
+            raise _unresolvable(reason)
+        if unmodelled and cmd.layer != "wrapper":
+            self.runner_check(cmd)
+        writes = [p for effect, p in _gate_effects(cmd) if effect == "create"]
         for p in writes:
             if any(could_tree(p, d) for d in _CODE_DIRS):
                 raise _unresolvable(f"it writes {_show(p)}, code that runs later outside the block")
             self.created.append(p)
+
+    def runner_check(self, cmd: Cmd) -> None:
+        name = cmd.name
+        if name in _LEAVES or name in READERS or name in METADATA or name in _BUILTINS:
+            return
+        for a in cmd.args:
+            words = a.split()
+            first = words[0].rsplit("/", 1)[-1] if words else ""
+            if len(words) > 1 and (_runnable(first) or first in _SHELL_ESCAPES) or _SCRIPT_SYNTAX.search(a):
+                raise _unresolvable(
+                    f"{name} is handed what reads as a script ({_show(a)[:60]}), and the judge has no model of {name}"
+                )
+            tail = a.rsplit("/", 1)[-1]
+            if _runnable(a) or a in _SHELL_ESCAPES or "/" in a and _runnable(tail) and tail not in _BUILTINS:
+                raise _unresolvable(f"{name} is handed {_show(a)}, a command it may run, and the judge has no model of {name}")
+            if any(c in a for c in WILD) or a.startswith("-"):
+                continue
+            if any(could(cmd.path(a), c) for c in self.created):
+                raise _unresolvable(f"{name} is handed {_show(a)}, a file this block wrote, which {name} may run")
 
     # -- what a command is, through its wrappers
 
@@ -1133,6 +1276,7 @@ class Judge:
             longs = {"--login": "-i", "--shell": "-s", "--stdin": "-S", "--edit": "-e"}
             flags |= {longs[k] for k in flags if k in longs}
             while rest and _ASSIGN.match(rest[0]):
+                self.bind(rest[0].split("=", 1)[0].rstrip("+"), [rest[0].split("=", 1)[1]], None, prefix=True)
                 rest = rest[1:]
             self.apply(replace(base, layer="wrapper", rest=rest, flags=frozenset(flags)))
             if not rest or "-e" in flags:
@@ -1148,6 +1292,7 @@ class Judge:
             opts, rest = _opts(args, "uCS", {"--unset", "--chdir", "--split-string"}, stop_at_operand=True)
             split = _values(opts, "-S", "--split-string")
             while rest and _ASSIGN.match(rest[0]):
+                self.bind(rest[0].split("=", 1)[0].rstrip("+"), [rest[0].split("=", 1)[1]], None, prefix=True)
                 rest = rest[1:]
             if split:
                 rest = split[0].split() + rest
@@ -1158,18 +1303,32 @@ class Judge:
                     inner.cwd = norm(d, scope.cwd)
                 self.command(rest, stdin, ctx, inner)
             return
+        if name in _OPAQUE_RUNNERS and not (name == "run-parts" and {"--test", "--list"} & set(args)):
+            raise _unresolvable(f"{name} runs commands or paths the judge cannot read from the block")
         wrapped = self.unwrap(name, args)
         if wrapped is not None:
-            rest, script = wrapped
+            rest, script, cwd = wrapped
             self.apply(replace(base, layer="wrapper", rest=rest))
+            inner = scope
+            if cwd is not None:
+                inner = scope.child()
+                inner.cwd = norm(cwd, scope.cwd)
             if script is not None:
-                self.nested(script, ctx, scope.child())
+                self.nested(script, ctx, inner.child())
             if rest:
-                self.command(rest, stdin, ctx, scope)
+                self.command(rest, stdin, ctx, inner)
             return
-        if name == "busybox" and args:
+        if name in ("pee", "mispipe"):
+            self.apply(replace(base, layer="wrapper"))
+            for a in args:
+                if not a.startswith("-"):
+                    self.nested(a, ctx, scope.child())
+            return
+        if name in ("busybox", "toybox") and args:
             self.command(args, stdin, ctx, scope)
             return
+        for text in _embedded_scripts(name, args):
+            self.nested(text, ctx, scope.child())
         if name in _SHELLS:
             self.shell(base, stdin, ctx, scope)
             return
@@ -1182,6 +1341,8 @@ class Judge:
                 _no_spawn(name, operands[0])
                 base = replace(base, code=operands[0], lang="awk")
             self.apply(base)
+            if base.code is not None:
+                _code_check(name, base.code)
             return
         if name == "sed":
             opts, operands = _opts(args, "eflsS", {"--expression", "--file", "--line-length"})
@@ -1235,39 +1396,40 @@ class Judge:
         if name in ("docker", "docker-compose"):
             self.docker(base, ctx, scope)
             return
-        self.apply(base)
+        self.apply(base, unmodelled=True)
 
-    def unwrap(self, name: str, args: list[str]) -> tuple[list[str], str | None] | None:
-        """A wrapper that runs another command as itself: the command, and a script it takes as a string."""
-        if name in ("nohup", "builtin", "unbuffer", "chronic", "catchsegv", "caffeinate"):
-            return args, None
+    def unwrap(self, name: str, args: list[str]) -> tuple[list[str], str | None, str | None] | None:
+        """A wrapper that runs another command as itself: the command, a script it takes as a string, and the
+        directory it runs them in when that is not the caller's."""
+        if name in _PLAIN_RUNNERS:
+            return args, None, None
         if name == "command":
-            return ([] if any(a in ("-v", "-V") for a in args) else [a for a in args if a != "-p"]), None
+            return ([] if any(a in ("-v", "-V") for a in args) else [a for a in args if a != "-p"]), None, None
         if name == "exec":
-            return _opts(args, "a", stop_at_operand=True)[1], None
-        if name == "setsid":
-            return _opts(args, "", stop_at_operand=True)[1], None
+            return _opts(args, "a", stop_at_operand=True)[1], None, None
+        if name in ("setsid", "valgrind", "linux32", "linux64", "ifne", "zrun", "torsocks", "nocache"):
+            return _opts(args, "", stop_at_operand=True)[1], None, None
         if name == "nice":
-            return _opts([a for a in args if not re.fullmatch(r"-\d+", a)], "n", {"--adjustment"}, True)[1], None
+            return _opts([a for a in args if not re.fullmatch(r"-\d+", a)], "n", {"--adjustment"}, True)[1], None, None
         if name == "ionice":
             opts, rest = _opts(args, "cnp", {"--class", "--classdata", "--pid"}, True)
-            return ([] if _has(opts, "-p", "--pid") else rest), None
+            return ([] if _has(opts, "-p", "--pid") else rest), None, None
         if name == "stdbuf":
-            return _opts(args, "ioe", {"--input", "--output", "--error"}, True)[1], None
+            return _opts(args, "ioe", {"--input", "--output", "--error"}, True)[1], None, None
         if name == "time":
-            return _opts(args, "fo", {"--format", "--output"}, True)[1], None
+            return _opts(args, "fo", {"--format", "--output"}, True)[1], None, None
         if name == "timeout":
             rest = _opts(args, "sk", {"--signal", "--kill-after"}, True)[1]
-            return rest[1:], None
+            return rest[1:], None, None
         if name in ("chrt", "taskset"):
             _, rest = _opts(args, "cT" if name == "chrt" else "", {"--cpu-list"}, True)
-            return rest[1:], None
+            return rest[1:], None, None
         if name == "flock":
             _, rest = _opts(args, "Ew", {"--conflict-exit-code", "--timeout", "--wait"}, True)
             rest = rest[1:]
             if rest[:1] in (["-c"], ["--command"]):
-                return [], rest[1] if len(rest) > 1 else ""
-            return rest, None
+                return [], rest[1] if len(rest) > 1 else "", None
+            return rest, None, None
         if name in ("su", "sg"):
             opts, rest = _opts(
                 ["-l" if a == "-" else a for a in args],
@@ -1276,35 +1438,108 @@ class Judge:
             )
             script = (_values(opts, "-c", "--command", "--session-command") or [None])[0]
             if name == "sg" and script is None:
-                return rest[1:], None
-            return [], script
+                return rest[1:], None, None
+            return [], script, None
         if name == "runuser":
             opts, rest = _opts(
                 args, "ugGsc", {"--user", "--group", "--supp-group", "--shell", "--command", "--session-command"}, True
             )
             script = (_values(opts, "-c", "--command", "--session-command") or [None])[0]
-            return (rest if _has(opts, "-u", "--user") else []), script
+            return (rest if _has(opts, "-u", "--user") else []), script, None
         if name == "systemd-run":
-            opts, rest = _opts(
-                args,
-                "upEMHG",
-                _w(
-                    "--unit --property --setenv --machine --host --uid --gid --nice --working-directory --slice "
-                    "--description --service-type --on-active --on-boot --on-startup --on-unit-active "
-                    "--on-unit-inactive --on-calendar --on-clock-change --on-timezone-change --timer-property "
-                    "--path-property --socket-property --expand-environment --slice-inherit"
-                ),
-                True,
-            )
-            return rest, None
+            opts, rest = _opts(args, "upEMHGd", _SYSTEMD_RUN_VALUE, True)
+            for e in _values(opts, "-E", "--setenv"):
+                self.bind(e.split("=", 1)[0], [e.partition("=")[2]], None, prefix=True)
+            props = _values(opts, "-p", "--property")
+            if any(re.match(r"Exec[A-Za-z]*=", p) for p in props):
+                raise _unresolvable("systemd-run's Exec property runs a command the judge does not read")
+            cwd = "/"
+            if _has(opts, "-d", "--same-dir"):
+                cwd = None
+            for v in _values(opts, "--working-directory") + [
+                p.split("=", 1)[1] for p in props if p.startswith("WorkingDirectory=")
+            ]:
+                cwd = v.lstrip("-") if v != "~" else HOME
+            return rest, None, cwd
         if name == "nsenter":
-            return _opts(args, "tSGrwW", {"--target", "--setuid", "--setgid", "--root", "--wd"}, True)[1], None
+            _, rest = _opts(args, "tSG", {"--target", "--setuid", "--setgid"}, True)
+            cwd = None
+            for a in args[: len(args) - len(rest)]:
+                if a in ("-r", "--root") or a.startswith(("-r", "--root=")) and not a.startswith("--root-"):
+                    raise _unresolvable("nsenter --root runs the command under another root, whose paths are not the host's")
+                if a in ("-w", "--wd"):
+                    cwd = ANY
+                elif a.startswith("--wd="):
+                    cwd = a[5:]
+                elif a.startswith("-w") and len(a) > 2:
+                    cwd = a[2:]
+            return rest, None, cwd
         if name == "unshare":
-            return _opts(args, "S", {"--setuid", "--setgid", "--map-user", "--map-group"}, True)[1], None
+            opts, rest = _opts(args, "SRw", {"--setuid", "--setgid", "--map-user", "--map-group", "--root", "--wd"}, True)
+            if _has(opts, "-R", "--root"):
+                raise _unresolvable("unshare --root runs the command under another root, whose paths are not the host's")
+            return rest, None, (_values(opts, "-w", "--wd") or [None])[-1]
         if name == "ip" and args[:2] == ["netns", "exec"]:
-            return args[3:], None
+            return args[3:], None, None
         if name == "watch":
-            return _opts(args, "nd", {"--interval", "--differences"}, True)[1], None
+            return _opts(args, "nd", {"--interval", "--differences"}, True)[1], None, None
+        if name == "script":
+            opts, _ = _opts(args, "cTIOBEom", _SCRIPT_VALUE)
+            return [], (_values(opts, "-c", "--command") or [None])[0], None
+        if name == "prlimit":
+            opts, rest = _opts(args, "po", {"--pid", "--output"}, True)
+            return ([] if _has(opts, "-p", "--pid") else rest), None, None
+        if name == "setpriv":
+            opts, rest = _opts(args, "", _SETPRIV_VALUE, True)
+            return ([] if _has(opts, "-d", "--dump") else rest), None, None
+        if name in ("uv", "uvx"):
+            return _uv(name, args)
+        if name in ("pipx", "poetry", "pipenv", "pdm", "rye") and args:
+            opts, ops = _opts(args, "CP", {"--directory", "--project"}, True)
+            if ops[:1] != ["run"]:
+                return None
+            _, rest = _opts(ops[1:], "", {"--spec", "--python", "--pip-args", "--index-url", "--project", "-p"}, True)
+            return rest, None, (_values(opts, "-C", "--directory") or [None])[-1]
+        if name in ("strace", "ltrace"):
+            opts, rest = _opts(args, "eopsuEabIOSXPUlnFAw", _TRACE_VALUE, True)
+            return ([] if _has(opts, "-p", "--attach") else rest), None, None
+        if name == "run0":
+            opts, rest = _opts(args, "ugD", _RUN0_VALUE, True)
+            return rest, None, (_values(opts, "-D", "--chdir") or [None])[-1]
+        if name == "pkexec":
+            return _opts(args, "", {"--user"}, True)[1], None, None
+        if name == "capsh":
+            return (["bash", *args[args.index("--") + 1 :]] if "--" in args else []), None, None
+        if name == "chpst":
+            opts, rest = _opts(args, "uUbe/nlLmdofpct", set(), True)
+            if _has(opts, "-/"):
+                raise _unresolvable("chpst -/ runs the command under another root, whose paths are not the host's")
+            return rest, None, None
+        if name == "numactl":
+            opts, rest = _opts(args, "ipmNCPw", _NUMACTL_VALUE, True)
+            return rest, None, None
+        if name == "cgexec":
+            return _opts(args, "g", set(), True)[1], None, None
+        if name == "faketime":
+            return _opts(args, "p", {"--date-prog"}, True)[1][1:], None, None
+        if name == "setarch":
+            return _opts(args, "", set(), True)[1][1:], None, None
+        if name == "dbus-run-session":
+            return _opts(args, "", {"--config-file", "--dbus-daemon"}, True)[1], None, None
+        if name == "systemd-inhibit":
+            return _opts(args, "", {"--what", "--who", "--why", "--mode"}, True)[1], None, None
+        if name == "systemd-cat":
+            return (
+                _opts(args, "tp", {"--identifier", "--priority", "--stderr-priority", "--level-prefix", "--namespace"}, True)[1],
+                None,
+                None,
+            )
+        if name in ("proxychains", "proxychains4"):
+            return _opts(args, "f", set(), True)[1], None, None
+        if name == "xvfb-run":
+            return _opts(args, "nsfepw", set(), True)[1], None, None
+        if name == "ssh-agent":
+            return _opts(args, "aEOPt", set(), True)[1], None, None
         return None
 
     def shell(self, base: Cmd, stdin, ctx: Ctx, scope: Scope) -> None:
@@ -1356,9 +1591,10 @@ class Judge:
         if code:
             _no_spawn(name, code[0])
             self.apply(replace(cmd, code=code[0], rest=operands))
+            _code_check(name, code[0])
             return
         if _has(opts, "-m"):
-            self.apply(replace(cmd, rest=operands))
+            self.apply(replace(cmd, rest=_values(opts, "-m") + operands))
             return
         if operands and operands[0] != "-":
             if norm(operands[0], scope.cwd).startswith("/dev/fd/"):
@@ -1375,6 +1611,7 @@ class Judge:
                 raise _unresolvable(f"{name}'s code is built from a value the block does not hold")
             _no_spawn(name, text)
             self.apply(replace(cmd, code=text, rest=operands[1:]))
+            _code_check(name, text)
             return
         if kind == "file":
             self.executes(text, "it reads its script from")
@@ -1427,6 +1664,89 @@ class Judge:
             if ctx.container is not None:
                 raise _unresolvable("a docker call inside a container")
             self.command(d.inner, None, replace(ctx, container=d.target or ANY), scope.child())
+
+
+def _runnable(word: str) -> bool:
+    return word in _RUNNABLE or bool(_PY.fullmatch(word))
+
+
+def _unprefixed(argv: list[str]) -> list[str]:
+    """`argv` without the `builtin` and `command` words that only choose how its name is looked up."""
+    while len(argv) > 1 and argv[0] in ("builtin", "command") and not argv[1].startswith("-"):
+        argv = argv[1:]
+    return argv
+
+
+def _uv(name: str, args: list[str]) -> tuple[list[str], None, str | None] | None:
+    cwd = None
+    if name == "uv":
+        opts, ops = _opts(args, "", _UV_GLOBAL, True)
+        cwd = (_values(opts, "--directory") or [None])[-1]
+        if ops[:1] == ["run"]:
+            args = ops[1:]
+        elif ops[:2] == ["tool", "run"]:
+            args = ops[2:]
+        else:
+            return None
+    opts, rest = _opts(args, "pfCP", _UV_RUN_VALUE, True)
+    cwd = (_values(opts, "--directory") or [cwd])[-1]
+    if _has(opts, "-m", "--module"):
+        rest = ["python", "-m", *rest]
+    return rest, None, cwd
+
+
+def _embedded_scripts(name: str, args: list[str]) -> list[str]:
+    """The command lines a reader or a relay is handed to run, each read as shell text."""
+    if name == "tar":
+        opts, _ = _opts(args, "CfTXbHKLNVIF", _TAR_VALUE)
+        out = _values(opts, "--to-command", "-I", "--use-compress-program", "--rsh-command", "--info-script")
+        out += _values(opts, "--new-volume-script", "-F")
+        return out + [v.split("=", 1)[1] for v in _values(opts, "--checkpoint-action") if v.startswith("exec=")]
+    if name in ("sort", "split"):
+        opts, _ = _opts(args, "ktSTolbnaC", _LONG_VALUES | {"--compress-program", "--filter"})
+        return _values(opts, "--compress-program", "--filter")
+    out: list[str] = []
+    for i, a in enumerate(args):
+        key, eq, val = a.partition("=")
+        nxt = val if eq else (args[i + 1] if i + 1 < len(args) else "")
+        if name == "zip" and key in ("-TT", "--unzip-command"):
+            out.append(nxt)
+        elif name in ("nc", "netcat", "ncat") and key in ("-e", "-c", "--exec", "--sh-exec"):
+            out.append(nxt)
+        elif name in ("nc", "netcat", "ncat") and key == "--lua-exec":
+            raise _unresolvable("ncat --lua-exec runs a script the judge does not read")
+        elif name == "socat" and (m := re.match(r"(?i)(?:system|exec):(.*)", a)):
+            out.append(m.group(1).split(",", 1)[0])
+    return out
+
+
+def _channel(cmd: Cmd) -> str | None:
+    """Why a command acts through a daemon's own channel -- D-Bus, a Unix socket, a container runtime -- that the
+    judge does not read, or None."""
+    name, args = cmd.name, cmd.args
+    ops = [a for a in args if not a.startswith("-")]
+    if name == "busctl" and {"call", "emit", "set-property"} & set(ops):
+        return "a busctl call acts through a D-Bus service the judge does not read"
+    if (
+        name == "dbus-send"
+        or name in ("gdbus", "varlinkctl")
+        and {"call", "emit"} & set(ops)
+        or name.startswith("qdbus")
+        and len(ops) > 2
+    ):
+        return f"{name} calls a method on a daemon the judge does not read"
+    if name in ("curl", "wget") and any(a.startswith(("--unix-socket", "--abstract-unix-socket")) for a in args):
+        return f"{name} talks to a daemon over its Unix socket, which the judge does not read"
+    if name == "socat" and any(
+        re.match(r"(?i)(unix|abstract)(-connect|-client|-sendto|-recvfrom)?:", a) or re.search(r"\.sock\b|/run/dbus", a)
+        for a in args
+    ):
+        return "socat talks to a daemon over its Unix socket, which the judge does not read"
+    if name in ("nc", "netcat", "ncat") and any(a in ("-U", "--unixsock") or re.fullmatch(r"-\w*U\w*", a) for a in args):
+        return f"{name} talks to a daemon over its Unix socket, which the judge does not read"
+    if name in ("ctr", "nerdctl", "crictl", "runc", "podman", "containerd-ctr"):
+        return f"{name} drives containers past the judge's model of docker"
+    return None
 
 
 def _no_spawn(name: str, code: str) -> None:
@@ -1638,9 +1958,60 @@ _SPAWN_CODE = re.compile(
 _SED_EXEC = re.compile(r"(^|[;\n{}]\s*)e(\s|$|;)|(^|[;\n{}]\s*)s(.)(?:\\.|(?!\4).)*\4(?:\\.|(?!\4).)*\4[gpIiMm0-9w]*e")
 _GATE_CODE = re.compile(r"zcrypto-engine/exec|[\"'/](armed|restart-hold|kill|probe-plan\.json)[\"']")
 _WRITE_CODE = re.compile(
-    r"open\s*\([^)]*,\s*['\"][^'\"]*[wax+]|O_CREAT|O_WRONLY|O_RDWR|\.write|write_text|write_bytes"
-    r"|touch|rename|replace|unlink|remove|rmtree|symlink|link\s*\(|copy|move|mknod|truncate"
+    r"open\s*\([^)]*,\s*['\"][^'\"]*[wax+>]|O_CREAT|O_WRONLY|O_RDWR|O_TRUNC|O_APPEND|\.write|write_text|write_bytes"
+    r"|touch|rename|replace|unlink|remove|rmtree|symlink|link\s*\(|copy|move|mknod|mkfifo|mkdir|makedirs|truncate"
+    r"|os\.open|sysopen|chmod|chown|utime|writeFile|appendFile"
 )
+# Interpreter code that reaches a name it computes at run time: an attribute, a module or a string the text does not
+# spell.
+_DYNAMIC_CODE = re.compile(
+    r"getattr|setattr|delattr|__dict__|__getattribute__|__class__|__subclasses__|__globals__|__builtins__|\bbuiltins\b"
+    r"|\bvars\s*\(|\bglobals\s*\(|\blocals\s*\(|importlib|\bcompile\s*\(|\bchr\s*\(|codecs|base64|b64decode"
+    r"|fromhex|unhexlify|\.decode\s*\(|\[\s*:\s*:\s*-\s*1\s*\]|\\x[0-9a-fA-F]{2}|\\[0-7]{3}|\\u[0-9a-fA-F]{4}"
+    r"|\\U[0-9a-fA-F]{8}|\\N\{|chdir|pickle|marshal|\bsend\s*\(|public_send|const_get|instance_eval|class_eval"
+    r"|instance_variable_get|\bFunction\s*\(|Reflect\.|fromCharCode|\batob\s*\(|Buffer\.from|\bpack\s*\("
+    r"|\bunpack\s*\(|\bsprintf\b|\bdo\s+[\"'$]|\brequire\s*\(\s*[^'\"\s)]"
+)
+# A string assembled from pieces: concatenation, formatting, joining, interpolation, a path division.
+_BUILT_CODE = re.compile(
+    r"['\"]\s*\+|\+\s*['\"]|['\"]\s*\.\s*[\"'$]|['\"]\s+['\"]|\bf['\"]|\.format\s*\(|['\"]\s+%\s*[(\w'\"]"
+    r"|\.join\s*\(|\.replace\s*\(|\s/\s|#\{|\.concat\s*\("
+)
+# What a built string reaches: a file, a directory or the environment.
+_SINK_CODE = re.compile(
+    r"\bopen\b|Path\b|read_text|read_bytes|write|environ|getenv|\bENV\b|process\.env|%ENV|rename|replace|unlink"
+    r"|remove|rmtree|link|copy|move|mknod|truncate|touch|mkdir|chmod|chown|utime|listdir|scandir|glob|exists|stat\b"
+    r"|File\.|IO\.|Dir\.|\bfs\.|readFile|sysopen|opendir|fopen|file_get_contents|file_put_contents"
+)
+# Code that acts on processes, daemons or the kernel: what it reaches is not a path the rules can match.
+_OPAQUE_CODE = re.compile(
+    r"os\.kill|\bkill\s*\(|\bkill\s+[\"'$\w-]|Process\.kill|process\.kill|posix_kill|killpg|signal\.(?:SIG|raise|pthread)"
+    r"|\bdbus\b|pystemd|(?:from|import)\s+systemd\b|docker\.sock|containerd\.sock|/run/dbus|\bimport\s+docker\b"
+    r"|\bfrom\s+docker\b|AF_UNIX|socket\.socket|ctypes|cffi|\bmmap\b|ptrace|\bioctl\b|\bsetns\b|\bunshare\b"
+    r"|\bmount\s*\(|\breboot\s*\("
+)
+# awk output to a file it names at run time, input from one, or an ARGV it rewrites.
+_AWK_DYNAMIC = re.compile(r"\bprintf?\b[^;{}\n]*?>>?\s*[^\s\"=]|getline\s*<\s*[^\s\"]|\bARGV\s*\[[^]]*\]\s*=(?!=)")
+# sed's w and W commands, and the s command's w flag: each writes the file named to the end of its line.
+_SED_WRITE = re.compile(
+    r"(?:^|[;\n{}])\s*(?:\d+|\$|/(?:\\.|[^/])*/)?\s*(?:,\s*(?:\d+|\$|/(?:\\.|[^/])*/))?\s*!?\s*[wW]\s+([^\n]+)"
+    r"|(?:^|[;\n{}])\s*[^;\n{}]*?s(.)(?:\\.|(?!\2).)*\2(?:\\.|(?!\2).)*\2[gpIiMme0-9]*w\s+([^\n]+)"
+)
+
+
+def _code_check(lang: str, code: str) -> None:
+    """Refuse interpreter code whose effect the judge cannot read from its text."""
+    if lang in ("awk", "gawk", "mawk", "nawk"):
+        if m := _AWK_DYNAMIC.search(code):
+            raise _unresolvable(f"its awk code names a file at run time ({m.group(0).strip()[:40]})")
+        return
+    if m := _DYNAMIC_CODE.search(code):
+        raise _unresolvable(f"its {lang} code reaches a name it builds at run time ({m.group(0)})")
+    if m := _OPAQUE_CODE.search(code):
+        raise _unresolvable(f"its {lang} code acts through {m.group(0).strip()}, which no rule can aim")
+    if (b := _BUILT_CODE.search(code)) and (k := _SINK_CODE.search(code)):
+        raise _unresolvable(f"its {lang} code builds a string at run time ({b.group(0).strip()}) and hands it to {k.group(0)}")
+
 
 READERS = _w(
     "cat tac nl less more most head tail od hexdump xxd strings base64 base32 basenc uuencode grep egrep fgrep zgrep "
@@ -1885,6 +2256,18 @@ def _gate_effects(cmd: Cmd) -> list[tuple[str, str]]:
         if name == "flock":
             ops = _opts(cmd.args, "Ew", {"--conflict-exit-code", "--timeout", "--wait"}, True)[1]
             out += [("create", cmd.path(ops[0]))] if ops and not ops[0].isdigit() else []
+        elif name == "script":
+            opts, ops = _opts(cmd.args, "cTIOBEom", _SCRIPT_VALUE)
+            files = ops[:1] + _values(opts, "-T", "-I", "-O", "-B", "--log-timing", "--log-in", "--log-out", "--log-io")
+            out += [("create", cmd.path(f)) for f in files]
+        elif name in ("strace", "ltrace"):
+            opts, _ = _opts(cmd.args, "eopsuEabIOSXPUlnFAw", _TRACE_VALUE, True)
+            out += [("create", cmd.path(f)) for f in _values(opts, "-o", "--output")]
+        elif name == "systemd-run":
+            opts, _ = _opts(cmd.args, "upEMHGd", _SYSTEMD_RUN_VALUE, True)
+            for prop in _values(opts, "-p", "--property"):
+                if m := re.match(r"Standard(?:Output|Error)=(?:file|append|truncate):(.+)", prop):
+                    out.append(("create", cmd.path(m.group(1))))
         return out
     if name == "find":
         return out + [("remove", p) for p in cmd.rest]
@@ -1914,6 +2297,10 @@ def _gate_effects(cmd: Cmd) -> list[tuple[str, str]]:
         out += [("create", cmd.path(a[3:])) for a in cmd.args if a.startswith("of=")]
     elif name in ("sed", "perl") and any(k == "-i" or k.startswith("--in-place") for k in keys):
         out += [("create", p) for p in paths[0 if _values(opts, "-e", "--expression") else 1 :]]
+    elif name == "sed" and cmd.code:
+        out += [("create", cmd.path((m.group(1) or m.group(3)).strip())) for m in _SED_WRITE.finditer(cmd.code)]
+    elif cmd.code is not None and cmd.lang not in ("sed", "awk") and _WRITE_CODE.search(cmd.code):
+        out += [("unknown", cmd.path(a)) for a in cmd.rest if a and not a.startswith("-")]
     elif name == "tar" and (any("x" in k for k in keys) or (cmd.args and "x" in cmd.args[0] and not cmd.args[0].startswith("-"))):
         dirs = _values(opts, "-C", "--directory")
         out.append(("create", (cmd.path(dirs[-1]) if dirs else cmd.cwd) + "/" + ANY))
@@ -1928,7 +2315,7 @@ def _gate_effects(cmd: Cmd) -> list[tuple[str, str]]:
     elif name == "mount" and keys & {"--bind", "--rbind", "-B"} | ({"-o"} if "bind" in ",".join(_values(opts, "-o")) else set()):
         out += [("link", p) for p in paths]
     elif name not in READERS and name not in METADATA:
-        out += [("unknown", cmd.path(a)) for a in cmd.args if a.startswith("/")]
+        out += [("unknown", cmd.path(a)) for a in cmd.args if a and not a.startswith("-")]
     return out
 
 

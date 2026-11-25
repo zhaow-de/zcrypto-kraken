@@ -359,6 +359,252 @@ REFUSED = [
     ("unresolvable", "unclosed-quote", "zcrypto", "echo 'unclosed"),
 ]
 
+# The fail-closed family: a command that runs another (a runner the judge unwraps, or one it has no model of), code
+# that builds what it touches at run time, shell state that changes what a later word means, a daemon reached over
+# its own channel, and a write that is code run later. Each row is the rule it ends on: a runner the judge unwraps
+# lands on the rule its inner command breaks, the rest on unresolvable.
+_EXEC = "/var/lib/zcrypto-engine/exec"
+GATE_SH = f"cd {_EXEC} && touch armed"
+RUNNERS = [
+    ("script-c", "zcrypto", f"sudo script -qc 'touch {_EXEC}/armed' /dev/null", "money-path"),
+    ("script-command-long", "zcrypto", f"sudo script --quiet --command 'touch {_EXEC}/armed' /dev/null", "money-path"),
+    ("script-typescript-file", "zcrypto", f"sudo script -qc true {_EXEC}/armed", "money-path"),
+    ("prlimit", "zcrypto", f"sudo prlimit --nofile=1024 sh -c '{GATE_SH}'", "money-path"),
+    ("setpriv", "zcrypto", f"sudo setpriv sh -c 'cd {_EXEC} && rm restart-hold'", "money-path"),
+    ("setpriv-reuid", "zcrypto", f"sudo setpriv --reuid=0 --regid 0 sh -c '{GATE_SH}'", "money-path"),
+    ("uv-run", "zcrypto", f"uv run sh -c 'cd {_EXEC} && sudo touch armed'", "money-path"),
+    ("uv-run-directory", "zcrypto", f"sudo uv run --directory {_EXEC} touch armed", "money-path"),
+    ("uv-tool-run", "zcrypto", f"uv tool run --from x sh -c 'cd {_EXEC} && sudo touch armed'", "money-path"),
+    ("uvx", "zcrypto", f"uvx --with x sh -c 'cd {_EXEC} && sudo touch armed'", "money-path"),
+    ("pipx-run", "zcrypto", f"pipx run --spec x sh -c 'cd {_EXEC} && sudo touch armed'", "money-path"),
+    ("poetry-run", "zcrypto", f"poetry run sh -c 'cd {_EXEC} && sudo touch armed'", "money-path"),
+    ("strace", "zcrypto", f"sudo strace -f -o /tmp/t touch {_EXEC}/armed", "money-path"),
+    ("strace-output-file", "zcrypto", f"sudo strace -o {_EXEC}/armed true", "money-path"),
+    ("ltrace", "zcrypto", f"sudo ltrace -o /tmp/t sh -c '{GATE_SH}'", "money-path"),
+    ("systemd-run-working-directory", "zcrypto", f"sudo systemd-run --wait --working-directory={_EXEC} touch armed", "money-path"),
+    ("systemd-run-property-workdir", "zcrypto", f"sudo systemd-run -p WorkingDirectory={_EXEC} touch armed", "money-path"),
+    ("systemd-run-stdout-file", "zcrypto", f"sudo systemd-run -p StandardOutput=file:{_EXEC}/armed true", "money-path"),
+    ("systemd-run-exec-property", "zcrypto", "sudo systemd-run -p ExecStartPre=/bin/true true", "unresolvable"),
+    ("nsenter-wd", "zcrypto", f"sudo nsenter -t 1 -m --wd={_EXEC} touch armed", "money-path"),
+    ("run0", "zcrypto", f"run0 touch {_EXEC}/armed", "money-path"),
+    ("run0-chdir", "zcrypto", f"run0 --chdir={_EXEC} touch armed", "money-path"),
+    ("pkexec", "zcrypto", f"pkexec sh -c '{GATE_SH}'", "money-path"),
+    ("capsh", "zcrypto", f"sudo capsh -- -c '{GATE_SH}'", "money-path"),
+    ("chpst", "zcrypto", f"sudo chpst -u root sh -c '{GATE_SH}'", "money-path"),
+    ("numactl", "zcrypto", f"sudo numactl --interleave=all sh -c '{GATE_SH}'", "money-path"),
+    ("faketime", "zcrypto", f"sudo faketime '2026-01-01 00:00:00' sh -c '{GATE_SH}'", "money-path"),
+    ("setarch", "zcrypto", f"sudo setarch x86_64 sh -c '{GATE_SH}'", "money-path"),
+    ("eatmydata", "zcrypto", f"sudo eatmydata sh -c '{GATE_SH}'", "money-path"),
+    ("systemd-inhibit", "zcrypto", f"sudo systemd-inhibit --why=x sh -c '{GATE_SH}'", "money-path"),
+    ("dbus-run-session", "zcrypto", f"dbus-run-session -- sh -c 'cd {_EXEC} && sudo touch armed'", "money-path"),
+    ("ifne", "zcrypto", f"echo x | sudo ifne sh -c '{GATE_SH}'", "money-path"),
+    ("pee", "zcrypto", f"echo x | sudo pee 'touch {_EXEC}/armed' cat", "money-path"),
+    ("mispipe", "zcrypto", f"sudo mispipe 'touch {_EXEC}/armed' cat", "money-path"),
+    ("unknown-runner-shell", "zcrypto", f"sudo somerunner --opt sh -c '{GATE_SH}'", "unresolvable"),
+    ("unknown-runner-script-string", "zcrypto", f"sudo somerunner --opt '{GATE_SH}'", "unresolvable"),
+    ("unknown-runner-command-name", "zcrypto", f"cd {_EXEC} && sudo somerunner touch armed", "money-path"),
+    ("unknown-runner-written-file", "zcrypto", "printf 'touch armed\\n' > /tmp/s\nsudo somerunner /tmp/s", "unresolvable"),
+    ("unknown-runner-sqlite-shell", "hc", f"sqlite3 /tmp/x.db '.shell touch {_EXEC}/armed'", "unresolvable"),
+    ("run-parts", "zcrypto", "sudo run-parts /tmp/d", "unresolvable"),
+    ("parallel", "zcrypto", "sudo parallel touch ::: /tmp/a", "unresolvable"),
+    ("expect", "zcrypto", "expect -c 'spawn sh'", "unresolvable"),
+    ("firejail", "zcrypto", f"sudo firejail sh -c '{GATE_SH}'", "unresolvable"),
+    ("bwrap", "zcrypto", "sudo bwrap --bind / / sh -c true", "unresolvable"),
+    ("systemd-nspawn", "zcrypto", "sudo systemd-nspawn -D /srv/x true", "unresolvable"),
+    ("unshare-root", "zcrypto", "sudo unshare --root=/srv/x true", "unresolvable"),
+    ("tar-to-command", "zcrypto", f"sudo tar -xf /tmp/x.tar --to-command='touch {_EXEC}/armed'", "money-path"),
+    ("tar-compress-program", "zcrypto", f"sudo tar -I 'touch {_EXEC}/armed' -cf /tmp/x.tar /etc/hostname", "money-path"),
+    (
+        "tar-checkpoint-exec",
+        "zcrypto",
+        f"sudo tar --checkpoint=1 --checkpoint-action=exec='touch {_EXEC}/armed' -cf /tmp/x.tar /etc/hostname",
+        "money-path",
+    ),
+    ("sort-compress-program", "zcrypto", f"sudo sort --compress-program='touch {_EXEC}/armed' /etc/hostname", "money-path"),
+    ("split-filter", "zcrypto", f"sudo split --filter='touch {_EXEC}/armed' /etc/hostname", "money-path"),
+    ("zip-test-command", "zcrypto", f"sudo zip -T -TT 'touch {_EXEC}/armed' /tmp/x.zip /etc/hostname", "money-path"),
+    ("nc-c", "zcrypto", f"sudo nc -c 'touch {_EXEC}/armed' -l 9999", "money-path"),
+    ("ncat-sh-exec", "zcrypto", f"sudo ncat --sh-exec 'touch {_EXEC}/armed' -l 9999", "money-path"),
+    ("socat-system", "zcrypto", f"sudo socat - SYSTEM:'touch {_EXEC}/armed'", "money-path"),
+    ("socat-exec", "zcrypto", f"sudo socat - 'EXEC:touch {_EXEC}/armed'", "money-path"),
+]
+INTERPRETER_CODE = [
+    (
+        "python-os-open-concat",
+        "zcrypto",
+        "sudo python3 -c \"import os; os.close(os.open('/var/lib/zcrypto-'+'engine/ex'+'ec/ar'+'med', 0o101))\"",
+        "unresolvable",
+    ),
+    (
+        "python-read-concat",
+        "zcrypto",
+        "sudo python3 -c \"print(open('/opt/zcrypto-engine/engine.e'+'nv').read())\"",
+        "unresolvable",
+    ),
+    (
+        "python-environ-by-dict",
+        "zcrypto",
+        "sudo docker exec zcrypto-engine python -c \"import os; print(os.__dict__['envir'+'on'])\"",
+        "unresolvable",
+    ),
+    (
+        "python-getattr-adjacent",
+        "zcrypto",
+        "sudo docker exec zcrypto-engine python -c \"import os; print(getattr(os, 'envir' 'on'))\"",
+        "unresolvable",
+    ),
+    ("python-hex-escape", "zcrypto", "sudo python3 -c \"open('/var/lib/zcrypto-engine/ex\\x65c/\\x61rmed', 'w')\"", "unresolvable"),
+    (
+        "python-format",
+        "zcrypto",
+        "sudo python3 -c \"open('/var/lib/zcrypto-{}/ex{}c/ar{}'.format('engine', 'e', 'med'), 'w')\"",
+        "unresolvable",
+    ),
+    (
+        "python-fstring",
+        "zcrypto",
+        "sudo python3 - <<'PY'\nn = 'med'\nopen(f'/var/lib/zcrypto-{\"engine\"}/ex{\"ec\"}/ar{n}', 'w')\nPY\n",
+        "unresolvable",
+    ),
+    (
+        "python-join-hidden",
+        "zcrypto",
+        "sudo python3 -c \"open('/'.join(['/var/lib/zcrypto-engine', 'exec', 'arm' 'ed']), 'w')\"",
+        "unresolvable",
+    ),
+    (
+        "python-join-spelled",
+        "zcrypto",
+        "sudo python3 -c \"import os; open(os.path.join('/var/lib/zcrypto-engine', 'exec', 'armed'), 'w')\"",
+        "money-path",
+    ),
+    (
+        "python-path-division",
+        "zcrypto",
+        "sudo python3 -c \"import pathlib; (pathlib.Path('/var/lib/zcrypto-engine') / 'exec' / 'armed').touch()\"",
+        "money-path",
+    ),
+    ("python-mkdir-gate", "zcrypto", "sudo python3 -c \"import os; os.mkdir('/var/lib/zcrypto-engine/exec/armed')\"", "money-path"),
+    (
+        "python-chdir",
+        "zcrypto",
+        "sudo python3 -c \"import os; os.chdir('/var/lib/zcrypto-engine'); open('exec/arm' 'ed', 'w')\"",
+        "unresolvable",
+    ),
+    ("python-kill-pid-1", "zcrypto", 'sudo python3 -c "import os, signal; os.kill(1, signal.SIGINT)"', "unresolvable"),
+    (
+        "python-docker-sdk",
+        "zcrypto",
+        "sudo python3 -c \"import docker; print(docker.from_env().containers.get('zcrypto-engine').attrs)\"",
+        "unresolvable",
+    ),
+    (
+        "python-unix-socket",
+        "zcrypto",
+        "sudo python3 -c \"import socket; s = socket.socket(socket.AF_UNIX); s.connect('/run/docker.sock')\"",
+        "unresolvable",
+    ),
+    (
+        "python-heredoc-concat",
+        "zcrypto",
+        "sudo python3 - <<'PY'\np = '/var/lib/zcrypto-' + 'engine/ex' + 'ec/ar' + 'med'\nopen(p, 'w')\nPY\n",
+        "unresolvable",
+    ),
+    ("python-operand-written", "zcrypto", f"sudo python3 -c \"import sys; open(sys.argv[1], 'w')\" {_EXEC}/armed", "money-path"),
+    ("perl-concat", "zcrypto", 'sudo perl -e \'open(my $f, ">", "/var/lib/zcrypto-engine/ex" . "ec/ar" . "med")\'', "unresolvable"),
+    ("perl-operand-written", "zcrypto", f"sudo perl -e 'open(F, \">\", $ARGV[0])' {_EXEC}/armed", "money-path"),
+    ("perl-kill", "zcrypto", "sudo perl -e 'kill \"INT\", 1'", "unresolvable"),
+    ("ruby-concat", "zcrypto", 'sudo ruby -e \'File.write("/var/lib/zcrypto-engine/" + "exec/ar" + "med", "")\'', "unresolvable"),
+    (
+        "node-concat",
+        "zcrypto",
+        'sudo node -e \'require("fs").writeFileSync("/var/lib/zcrypto-engine/" + "exec/ar" + "med", "")\'',
+        "unresolvable",
+    ),
+    (
+        "awk-computed-redirect",
+        "zcrypto",
+        'sudo awk \'BEGIN { d = "/var/lib/zcrypto-"; print "" > (d "engine/exec/a" "rmed") }\'',
+        "unresolvable",
+    ),
+    ("sed-w-relative", "zcrypto", f"cd {_EXEC} && sudo sed -n 'w armed' /dev/null", "money-path"),
+    ("sed-s-w-flag", "zcrypto", f"cd {_EXEC} && sudo sed -n 's/x/y/w armed' /dev/null", "money-path"),
+]
+SHELL_STATE = [
+    ("cdpath", "zcrypto", "CDPATH=/var/lib/zcrypto-engine\ncd exec && sudo touch armed", "unresolvable"),
+    ("cdpath-prefix", "zcrypto", "CDPATH=/var/lib/zcrypto-engine cd exec && sudo touch armed", "unresolvable"),
+    ("cdpath-export", "zcrypto", "export CDPATH=/var/lib/zcrypto-engine; cd exec; sudo touch armed", "unresolvable"),
+    ("cdpath-read", "zcrypto", "read -r CDPATH <<< /var/lib/zcrypto-engine; cd exec && sudo touch armed", "unresolvable"),
+    ("cdpath-printf-v", "zcrypto", "printf -v CDPATH %s /var/lib/zcrypto-engine; cd exec && sudo touch armed", "unresolvable"),
+    ("cdpath-for", "zcrypto", "for CDPATH in /var/lib/zcrypto-engine; do cd exec && sudo touch armed; done", "unresolvable"),
+    ("cdpath-default-expansion", "zcrypto", ': "${CDPATH:=/var/lib/zcrypto-engine}"; cd exec && sudo touch armed', "unresolvable"),
+    ("nameref", "zcrypto", "declare -n r=CDPATH; r=/var/lib/zcrypto-engine; cd exec && sudo touch armed", "unresolvable"),
+    ("cdable-vars", "zcrypto", "shopt -s cdable_vars; e=/var/lib/zcrypto-engine/exec; cd e && sudo touch armed", "unresolvable"),
+    (
+        "alias-expansion",
+        "zcrypto",
+        "shopt -s expand_aliases\nalias s='sudo ' t=touch\ncd /var/lib/zcrypto-engine/exec\ns t armed",
+        "unresolvable",
+    ),
+    ("alias-definition", "zcrypto", "alias t='sudo touch'", "unresolvable"),
+    ("bash-aliases-array", "zcrypto", "BASH_ALIASES[t]='sudo touch'", "unresolvable"),
+    ("hash-p", "zcrypto", "hash -p /tmp/x ls", "unresolvable"),
+    ("bash-cmds-array", "zcrypto", "BASH_CMDS[ls]=/tmp/x", "unresolvable"),
+    ("ifs", "zcrypto", "IFS=.; c=touch.armed; cd /var/lib/zcrypto-engine/exec; sudo $c", "unresolvable"),
+    ("bash-env", "zcrypto", "BASH_ENV=/tmp/x bash -c true", "unresolvable"),
+    ("ps4", "zcrypto", "PS4='$(touch /var/lib/zcrypto-engine/exec/armed)'; set -x; true", "unresolvable"),
+    ("ld-preload", "zcrypto", "LD_PRELOAD=/tmp/x.so ls", "unresolvable"),
+    ("home-then-cd", "zcrypto", "HOME=/var/lib/zcrypto-engine/exec; cd; sudo touch armed", "money-path"),
+    ("home-then-tilde", "zcrypto", "HOME=/var/lib/zcrypto-engine/exec; sudo touch ~/armed", "money-path"),
+    ("builtin-cd", "zcrypto", "builtin cd /var/lib/zcrypto-engine/exec; sudo touch armed", "money-path"),
+    ("command-cd", "zcrypto", "command cd /var/lib/zcrypto-engine/exec; sudo touch armed", "money-path"),
+    (
+        "function-shadows-cd",
+        "zcrypto",
+        "cd() { builtin cd /var/lib/zcrypto-engine/exec; }; cd /tmp; sudo touch armed",
+        "unresolvable",
+    ),
+    ("function-keyword-shadows-ls", "zcrypto", "function ls { :; }", "unresolvable"),
+    ("enable-f", "zcrypto", "enable -f /tmp/x.so cd", "unresolvable"),
+    ("globstar", "zcrypto", "shopt -s globstar; sudo rm /var/**/kill", "money-path"),
+    ("prefix-path-to-a-written-file", "zcrypto", "mkdir -p /tmp/b && printf x > /tmp/b/ls\nPATH=/tmp/b:$PATH ls", "unresolvable"),
+    (
+        "pythonpath-to-a-written-module",
+        "zcrypto",
+        "printf 'import os' > /tmp/m/x.py\nPYTHONPATH=/tmp/m python3 -c 'import x'",
+        "unresolvable",
+    ),
+]
+CHANNELS = [
+    (
+        "busctl-transient-unit",
+        "red",
+        "sudo busctl call org.freedesktop.systemd1 /org/freedesktop/systemd1 org.freedesktop.systemd1.Manager "
+        "StartTransientUnit 'ssa(sv)a(sa(sv))' x.service fail 0 0",
+        "unresolvable",
+    ),
+    (
+        "dbus-send",
+        "red",
+        "sudo dbus-send --system --print-reply --dest=org.freedesktop.systemd1 /org/freedesktop/systemd1 "
+        "org.freedesktop.systemd1.Manager.StopUnit string:zcrypto-engine.service string:replace",
+        "unresolvable",
+    ),
+    ("gdbus", "red", "sudo gdbus call --system --dest org.freedesktop.systemd1 --object-path /x --method x.Y", "unresolvable"),
+    ("docker-socket-curl", "red", "sudo curl -s --unix-socket /var/run/docker.sock http://x/containers/x/json", "unresolvable"),
+    ("docker-socket-socat", "red", "sudo socat - UNIX-CONNECT:/var/run/docker.sock", "unresolvable"),
+    ("docker-socket-nc", "red", "sudo nc -U /run/docker.sock", "unresolvable"),
+    ("containerd-ctr", "zcrypto", "sudo ctr -n moby containers info zcrypto-engine", "unresolvable"),
+    ("nerdctl", "zcrypto", "sudo nerdctl exec zcrypto-engine true", "unresolvable"),
+    ("runc", "zcrypto", "sudo runc --root /run/docker/runtime-runc/moby exec x true", "unresolvable"),
+    ("bash-profile", "zcrypto", "echo 'touch /tmp/x' >> ~/.bash_profile", "unresolvable"),
+    ("apt-hook", "zcrypto", "echo x | sudo tee /etc/apt/apt.conf.d/99x", "unresolvable"),
+    ("sed-in-place-on-cron", "zcrypto", "sudo sed -i 's/a/b/' /etc/cron.d/x", "unresolvable"),
+    ("sitecustomize", "zcrypto", "echo 'import os' | sudo tee /usr/lib/python3/dist-packages/sitecustomize.py", "unresolvable"),
+    ("logrotate-postrotate", "zcrypto", "sudo cp /tmp/x /etc/logrotate.d/x", "unresolvable"),
+    ("ssh-rc", "zcrypto", "echo 'touch /tmp/x' > ~/.ssh/rc", "unresolvable"),
+]
+
 # The see-through spellings: each hides a gate-opening write behind a different layer of shell.
 SEE_THROUGH = [
     ("quoted", "sudo touch '/var/lib/zcrypto-engine/exec/'\"armed\""),
@@ -567,6 +813,19 @@ def test_a_refused_form_names_its_rule(door, rule, alias, block):
     done = door.judge(alias, block)
     assert done.returncode == 65, (done.returncode, done.stdout, done.stderr)
     assert _rule(done) == rule, done.stderr.decode()
+
+
+@pytest.mark.parametrize(
+    ("alias", "block", "rule"),
+    [
+        pytest.param(a, b, r, id=f"unresolvable-{table}-{i}")
+        for table, rows in (("runner", RUNNERS), ("code", INTERPRETER_CODE), ("state", SHELL_STATE), ("channel", CHANNELS))
+        for i, a, b, r in rows
+    ],
+)
+def test_what_runs_another_command_is_seen_through_or_refused_as_unresolvable(door, alias, block, rule):
+    done = door.judge(alias, block)
+    assert done.returncode == 65 and _rule(done) == rule, done.stderr.decode()
 
 
 @pytest.mark.parametrize("block", [pytest.param(b, id=f"money-path-see-through-{i}") for i, b in SEE_THROUGH])
