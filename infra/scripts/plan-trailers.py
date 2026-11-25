@@ -1,9 +1,9 @@
 """The pre-commit guard over a plan's commit trailers: a line the staged diff adds to a plan under `docs/plans/` that
-is a `Co-Authored-By:` trailer naming a literal model -- `Claude` and a capitalised word or a version after it -- is
-refused, because the implementer that commits the fence may run on another model. The placeholder, a human's trailer
-and a mention inside a prose line are admitted, and a line the diff does not add is not judged. A plan with no
-readable staged content -- outside the index, unmerged, an index or a staged diff git cannot read, or no git to run --
-is refused. Paths are read from the repository root, where pre-commit runs its hooks."""
+is a `Co-Authored-By:` trailer naming a model, as `names_a_model` reads one, is refused, because the implementer that
+commits the fence may run on another model. The placeholder, a human's trailer and a mention inside a prose line are
+admitted, and a line the diff does not add is not judged. A plan with no readable staged content -- outside the index,
+unmerged, an index or a staged diff git cannot read, or no git to run -- is refused. Paths are read from the repository
+root, where pre-commit runs its hooks."""
 
 from __future__ import annotations
 
@@ -13,9 +13,32 @@ import sys
 
 PLAN = re.compile(r"^docs/plans/.*\.md$")
 TRAILER = re.compile(r"(?i)^\s*co-authored-by\s*:\s*(?P<who>.*)$")
-LITERAL = re.compile(r"^Claude\s+[A-Z0-9]")
+FAMILY = re.compile(r"(?i)(?<![a-z])(?:opus|sonnet|haiku|fable)(?![a-z])")
+SLOT = re.compile(r"<(?![^>]*claude)[a-z][a-z' -]*>")
+ADDRESS = re.compile(r"<(?P<local>[^<>@]*)@(?P<domain>[^<>@]*)>")
+MORE = re.compile(r"(?i)claude[^a-z0-9]*[a-z0-9]")
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 PLACEHOLDER = "Co-Authored-By: <actual executing model> <noreply@anthropic.com>"
+
+
+def names_a_model(line: str) -> bool:
+    """A `Co-Authored-By:` line names a model when its value carries a family's name in any case, or carries `Claude`
+    and a letter or digit after it -- outside its address, or in the address's local part -- with its address at
+    anthropic.com or no address at all. A lowercase `<...>` slot is a placeholder and names nothing."""
+    trailer = TRAILER.match(line)
+    if trailer is None:
+        return False
+    if FAMILY.search(trailer["who"]):
+        return True
+    value = SLOT.sub(" ", trailer["who"])
+    address = ADDRESS.search(value)
+    if address is None:
+        return MORE.search(value) is not None
+    domain = address["domain"].strip().lower()
+    if domain != "anthropic.com" and not domain.endswith(".anthropic.com"):
+        return False
+    rest = value[: address.start()] + " " + value[address.end() :]
+    return MORE.search(rest) is not None or MORE.search(address["local"]) is not None
 
 
 class Unreadable(Exception):
@@ -78,8 +101,7 @@ def judge(paths: list[str]) -> tuple[list[str], list[str]]:
             unreadable.append(f"{path}: cannot read its staged diff ({exc})")
             continue
         for number, line in added(diff):
-            trailer = TRAILER.match(line)
-            if trailer and LITERAL.match(trailer.group("who")):
+            if names_a_model(line):
                 literals.append(f"{path}:{number}: {line.strip()}")
     return literals, unreadable
 
@@ -92,10 +114,7 @@ def main(argv: list[str]) -> int:
     for item in literals + unreadable:
         print(f"  - {item}")
     if literals:
-        print(
-            f"  a plan's commit trailer names no model: write `{PLACEHOLDER}`, and the implementer puts its own model"
-            " in its place at the commit"
-        )
+        print(f"  write the trailer as `{PLACEHOLDER}`; the implementer puts its own model in its place at the commit")
     return 1
 
 

@@ -105,6 +105,88 @@ def test_the_placeholder_a_human_and_a_mention_in_prose_are_admitted_silently(tm
     assert (proc.returncode, proc.stdout, proc.stderr) == (0, "", "")
 
 
+# Every spelling of a model in a trailer line, grouped by the way it differs from `Claude Opus 5.5 <noreply@...>`.
+REFUSED = {
+    "as the old plans wrote it": LITERAL,
+    "a lowercase key": "Co-authored-by: Claude Sonnet 4.5 <noreply@anthropic.com>",
+    "indented": "   Co-Authored-By: Claude Fable <noreply@anthropic.com>",
+    "a version before the family": "Co-Authored-By: Claude 3.5 Haiku <noreply@anthropic.com>",
+    # the case
+    "all capitals": "Co-Authored-By: CLAUDE OPUS 5.5 <noreply@anthropic.com>",
+    "all lowercase": "Co-Authored-By: claude opus 5.5 <noreply@anthropic.com>",
+    "a lowercase family": "Co-Authored-By: Claude opus 5.5 <noreply@anthropic.com>",
+    "an unknown family in capitals": "Co-Authored-By: CLAUDE MYTHOS <noreply@anthropic.com>",
+    "an address in capitals": "Co-Authored-By: Claude Mythos <NOREPLY@ANTHROPIC.COM>",
+    # the separator, and where the model sits
+    "quoted": 'Co-Authored-By: "Claude Opus 5.5" <noreply@anthropic.com>',
+    "hyphens": "Co-Authored-By: Claude-Opus-5.5 <noreply@anthropic.com>",
+    "underscores": "Co-Authored-By: Claude_Opus_5.5 <noreply@anthropic.com>",
+    "a slash": "Co-Authored-By: Claude/Opus 5.5 <noreply@anthropic.com>",
+    "parentheses": "Co-Authored-By: Claude (Opus 5.5) <noreply@anthropic.com>",
+    "no separator": "Co-Authored-By: ClaudeMythos1 <noreply@anthropic.com>",
+    "punctuation": "Co-Authored-By: Claude: Mythos 1 <noreply@anthropic.com>",
+    "a family in angle brackets": "Co-Authored-By: Claude <Opus 5.5> <noreply@anthropic.com>",
+    "a lowercase family in angle brackets": "Co-Authored-By: Claude <opus> <noreply@anthropic.com>",
+    "an unknown family in angle brackets": "Co-Authored-By: Claude <Mythos> <noreply@anthropic.com>",
+    "a model id in angle brackets": "Co-Authored-By: Claude <claude-mythos> <noreply@anthropic.com>",
+    "a name after the address": "Co-Authored-By: Claude <noreply@anthropic.com> Mythos",
+    # no `Claude` before the family, or the model in the address
+    "the family alone": "Co-Authored-By: Opus 5.5 <noreply@anthropic.com>",
+    "the family under another address": "Co-Authored-By: Haiku 4.5 <bot@example.com>",
+    "a model id": "Co-Authored-By: claude-opus-5-5 <noreply@anthropic.com>",
+    "a model id in the address": "Co-Authored-By: Claude <claude-opus-5-5@anthropic.com>",
+    "an unknown model id in the address": "Co-Authored-By: Claude <claude-mythos-1@anthropic.com>",
+    # a word after `Claude` at an anthropic.com address or none
+    "an unknown family": "Co-Authored-By: Claude Mythos <noreply@anthropic.com>",
+    "a version alone": "Co-Authored-By: Claude 4 <noreply@anthropic.com>",
+    "a product name": "Co-Authored-By: Claude Code <noreply@anthropic.com>",
+    "a subdomain": "Co-Authored-By: Claude Mythos <bot@mail.anthropic.com>",
+    "no address": "Co-Authored-By: Claude Mythos",
+    # a value the shell fills in at the commit
+    "a braced variable": "Co-Authored-By: Claude ${MODEL} <noreply@anthropic.com>",
+    "a variable": "Co-Authored-By: Claude $MODEL <noreply@anthropic.com>",
+    "a command substitution": "Co-Authored-By: Claude $(model) <noreply@anthropic.com>",
+    # a sentence opening with the key, which git takes for a trailer at a message's end
+    "a sentence": "Co-Authored-By: Claude Opus 5.5 is what the old plans wrote; this one writes the placeholder.",
+}
+
+ADMITTED = {
+    "the placeholder": PLACEHOLDER,
+    "Claude and the placeholder": "Co-Authored-By: Claude <actual executing model> <noreply@anthropic.com>",
+    "Claude and a short slot": "Co-Authored-By: Claude <model> <noreply@anthropic.com>",
+    "another slot": "Co-Authored-By: <its own actual model> <noreply@anthropic.com>",
+    "a slot closing a quoted message": 'Co-Authored-By: <your actual model> <noreply@anthropic.com>"',
+    "Claude alone": "Co-Authored-By: Claude <noreply@anthropic.com>",
+    "Claude alone closing a quoted message": 'Co-Authored-By: Claude <noreply@anthropic.com>"',
+    "Claude at its own address": "Co-Authored-By: Claude <claude@anthropic.com>",
+    "a human": "Co-Authored-By: Jane Doe <jane@example.com>",
+    "a human named Claude": "Co-Authored-By: Claude Shannon <claude.shannon@example.com>",
+    "a family inside another word": "Co-Authored-By: Octopus Bot <bot@example.com>",
+    "a mention in prose": f"- every commit fence ends with `{LITERAL}`, and an implementer on another model names its own",
+    "a quote": f"> {LITERAL}",
+    "a list item, which git takes for no trailer": f"- {LITERAL}",
+}
+
+
+@pytest.mark.parametrize("line", REFUSED.values(), ids=REFUSED.keys())
+def test_a_trailer_naming_a_model_is_refused_however_it_is_spelled(line: str):
+    assert guard.names_a_model(line)
+
+
+@pytest.mark.parametrize("line", ADMITTED.values(), ids=ADMITTED.keys())
+def test_a_slot_a_bare_claude_a_human_and_a_line_git_takes_for_no_trailer_are_admitted(line: str):
+    assert not guard.names_a_model(line)
+
+
+def test_the_script_names_every_refused_spelling_a_plan_adds_and_no_admitted_one(tmp_path):
+    text = _plan(*ADMITTED.values(), *REFUSED.values())
+    repo = _repo(tmp_path)
+    _stage(repo, {PLAN_A: text})
+    proc = _run(repo, PLAN_A)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert _named(proc) == [f"{PLAN_A}:{_line(text, line)}: {line.strip()}" for line in REFUSED.values()]
+
+
 def test_an_untouched_old_literal_is_admitted(tmp_path):
     old = _plan(LITERAL)
     repo = _repo(tmp_path, {PLAN_A: old})
