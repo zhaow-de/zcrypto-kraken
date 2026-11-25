@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: 'C3: a date, 2027-09-01, when the days after C3''s history can carry a bar''s DSR leg at even odds (spec 00166) — check: date -u +%F reads 2027-09-01 or later'
+ripe_when: 'C3: a date, 2027-12-13, when the days after C3''s history, counted after the spent holdout''s window, can carry a bar''s DSR leg at even odds (spec 00166) — check: date -u +%F reads 2027-12-13 or later'
 ---
 
 # Bucket-B/C alpha families — the un-started remainder of the §5 queue
@@ -105,6 +105,6 @@ Buckets B (intraday band) and C (long shots) are where the master plan's residua
 
 ## Suggested next steps
 
-- C3 is bucket C's last family, held to 2027-09-01 (`[iter-211] C3's next step after spec 00166's no-trial pick`); then [[T0228]]'s days after the history are read under their own spec, beside the Glassnode step below, LTC and DOGE, or the family's close.
+- C3 is bucket C's last family, held to 2027-12-13 (`[iter-211] C3's hold date, corrected after the branch review`); then [[T0228]]'s days after the history are read under their own spec, beside the Glassnode step below, LTC and DOGE, or the family's close.
 - A Glassnode purchase only if BTC earns it in [[T0228]]'s reading, a cell with potential, and only after the owner revises §8's $200/month cap and its "skip the ~$799 professional tier": first ask Glassnode for a trial key, whether one is offered not being established; then, for each coin it serves, diff the `_pit` series against the standard series from 2025-06-27 to the diff's day for MVRV and SOPR, which measures how far restatement moved them and so how far the revised history before 2025-06-27 can be trusted; then sign only an order form granting trading use, retention after termination and two IPs, at the Professional prices under Costs above.
 - The extension's Tardis.dev purchase only after §8's line "Skip tick/order-book vendors entirely (Kaiko, CoinAPI, Amberdata, Tardis)" is revised on the owner's word. Then the free check, the owner's (3), runs first: for each of the 12 pairs, the first-of-month `incremental_book_L2` file, path shape https://datasets.tardis.dev/v1/kraken/incremental_book_L2/2019/07/01/XBT-EUR.csv.gz, read across the 2026-07-10 symbol switch (https://api.tardis.dev/v1/exchanges/kraken) and against our own depth-100 capture on an overlapping day; then a Business plan, Spot or All Exchanges (the extension's answer above).
