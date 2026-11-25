@@ -6184,7 +6184,7 @@ SUBJECTS: dict[str, Subject] = {
         metric_keys=_C3_READING_KEYS,
         seeds=(alpha_c3.SEED,),
     ),
-    # No assets, as `c3-onchain-reading`: `--dataset` is the snapshot, and the `ohlc-full` legs are read by name.
+    # No assets, as `c3-onchain-reading`.
     "c3-asopr-reentry": Subject(
         "c3-asopr-reentry",
         (1440,),

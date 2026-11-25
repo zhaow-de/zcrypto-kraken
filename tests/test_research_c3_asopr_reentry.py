@@ -130,8 +130,8 @@ def _union() -> tuple[list[datetime], dict[str, list[float | None]]]:
 
 
 def _snapshot() -> pl.DataFrame:
-    """Day j lies LEAD days before the union's first day; `asopr` is 0.5 on the day before each index of LOW and 1.0 on
-    every other, so those days alone sit in its low band."""
+    """Day LEAD is the union's first day; `asopr` is 0.5 on the day before each index of LOW and 1.0 on every other, so
+    those days alone sit in its low band."""
     n = LEAD + N_DAYS
     columns = {column: [1.0] * n for column in COLUMNS[3:]}
     columns["price"] = [10_000.0 + j for j in range(n)]

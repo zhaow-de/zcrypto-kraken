@@ -30,8 +30,7 @@ def _prices(n: int = N) -> dict[str, list[float | None]]:
 
 
 def _own_daily(weight: float) -> list[float]:
-    """The size before the cadence, by hand: no weight and no basket return before row 30, the vol target on the 30
-    basket returns before the row, capped at 1."""
+    """The size before the cadence, by hand."""
     target = 0.12 / math.sqrt(365)
     basket = [0.0 if t < 30 else 4 / 3 * _move(t) for t in range(N)]
     daily = []

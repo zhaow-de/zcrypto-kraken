@@ -25,7 +25,7 @@ def reentry_fires(band: list[str | None], states: dict[str, list[str | None]]) -
 def full_long_positions(daily_prices: dict[str, list[float | None]]) -> dict[str, list[float]]:
     """Per asset and row, the position the sleeve's constants give a book long in every weighted asset: its inverse-vol
     weight times the vol target of the equal-risk basket itself, through the sleeve's weekly 7-offset mean. One row per
-    close, the last the forming one; the order is refused unless it is the builder's."""
+    close, the last the forming one."""
     order = CrossfreqSystemConfig().assets
     if tuple(daily_prices) != order:
         raise ValueError(f"daily_prices must be in the order {order}, got {tuple(daily_prices)}")
