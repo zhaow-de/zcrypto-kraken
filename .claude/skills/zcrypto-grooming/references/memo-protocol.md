@@ -26,6 +26,8 @@ The human gates below attach to the operations themselves, not to whichever skil
 - **The Edit and Write tools, under the hook.** `.claude/hooks/memo-guard.sh` (wired in `.claude/settings.json`) refuses a write without a fresh read, instructs the read-back after, and invalidates after each write, so a multi-edit pass re-reads before each further edit. A shell write bypasses the hook and is never used (no count command: the memo is unversioned, and a touch leaves no record in the tree).
 - **Anchored edits** — the hook refuses a `Write` of the existing file.
 - **Deletion is licensed only at the purge gate** (human-gated, below); outside it, condense or relocate prose (no count command: the memo is unversioned, and a touch leaves no record in the tree).
+- **A block that moves is inserted at its new home before it is removed from its old one** — the owner may read the memo between the two edits.
+- **An item's state is replaced when it changes, never appended to** (no count command: the memo is unversioned, and a touch leaves no record in the tree).
 - **Privacy.** The memo is the user's private journal: never paste its content into a subagent prompt, never run a subagent on this file in any role, and memo text never lands verbatim in a git-tracked file — a new or revised topic paraphrases (no count command: a prompt leaves no record in the tree). `WP<N>` labels stay out of git-tracked files: `tests/test_internal_terms_not_operator_visible.py` enforces it, its `_WP_CARRIERS` naming the exceptions.
 - **Git-tracked files this machinery produces** (new or revised topics, the `docs/open-topics/README.md` index) land through the repo's normal conventions — gate, review, branch, PR — not as a side effect of memo work.
 
