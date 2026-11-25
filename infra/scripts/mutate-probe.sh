@@ -143,7 +143,9 @@ prc=0; err="$(check_parse)" || prc=$?
 if [[ $prc -eq 2 ]]; then could_not_run; fi
 if [[ $prc -eq 1 ]]; then echo "mutate-probe: $file does not parse unmutated ($err), so its mutation takes no parse check." >&2; parser=""; fi
 
-# pytest makes its basetemp with a plain mkdir, and a fresh tree has no `.tmp/<x>/`.
+# pytest makes its basetemp with a plain mkdir, and a fresh tree has no `.tmp/<x>/`. The parent is taken from the
+# lexical absolute path, as pytest's os.path.abspath takes it, so a `..` after a symlink or a last `.` or `..` names
+# pytest's parent; it is then resolved physically, so an in-tree symlink out of the tree is outside it.
 if [[ $sandbox -eq 1 ]]; then tree="$(pwd -P)"; else tree="$(git rev-parse --show-toplevel)"; fi
 prev=""
 for w in "$@"; do
@@ -154,7 +156,7 @@ for w in "$@"; do
   esac
   prev="$w"
   [[ -n "$basetemp" ]] || continue
-  parent="$(realpath -m -- "$(dirname -- "$basetemp")")"
+  parent="$(realpath -m -- "$(dirname -- "$(realpath -s -m -- "$basetemp")")")"
   [[ "$parent" == "$tree" || "$parent" == "$tree"/* ]] || continue
   mkdir -p -- "$parent" || true   # a parent that cannot be made fails the baseline below, after mkdir's own error line
 done

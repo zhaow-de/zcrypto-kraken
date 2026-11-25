@@ -628,38 +628,48 @@ _PROBE_ARGS = ["--file", "mod.py", "--control", "s/VALUE = 1/VALUE = 9/", "--mut
 
 
 def _commit_a_basetemp_probe(repo):
-    # pytest makes its --basetemp with a plain mkdir, so this probe fails as pytest does when the parent is absent
+    # pytest makes its --basetemp with a plain mkdir at os.path.abspath(<path>), a lexical path, so this probe fails as
+    # pytest does when that path's parent is absent; `in` is a committed symlink to sub/deep, two levels down
     probe = repo / "bt-probe.sh"
     probe.write_text(
         "#!/bin/sh\n"
         'while [ $# -gt 0 ]; do case "$1" in --basetemp=*) bt="${1#--basetemp=}" ;; --basetemp) shift; bt="$1" ;; esac; shift; done\n'
+        'bt="$(realpath -s -m -- "$bt")"\n'
         'mkdir "$bt" && rmdir "$bt" && grep -q \'VALUE = 1\' mod.py\n'
     )
     probe.chmod(0o755)
+    (repo / "sub" / "deep").mkdir(parents=True)
+    (repo / "sub" / "deep" / ".keep").touch()
+    (repo / "in").symlink_to("sub/deep")
     subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "basetemp probe"], check=True)
 
 
 def _tree(root):
-    return sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if p.relative_to(root).parts[0] != ".git")
+    return sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if ".git" not in p.relative_to(root).parts)
 
 
 @pytest.mark.parametrize(
-    "spelling",
+    ("spelling", "made"),
     [
-        pytest.param(["--basetemp=.tmp/x/pt"], id="one-word"),
-        pytest.param(["--basetemp", ".tmp/x/pt"], id="two-word"),
-        pytest.param(["--basetemp={repo}/.tmp/x/pt"], id="absolute-inside"),
+        pytest.param(["--basetemp=.tmp/x/pt"], [".tmp", ".tmp/x"], id="one-word"),
+        pytest.param(["--basetemp", ".tmp/x/pt"], [".tmp", ".tmp/x"], id="two-word"),
+        pytest.param(["--basetemp={repo}/.tmp/x/pt"], [".tmp", ".tmp/x"], id="absolute-inside"),
+        # the path is pytest's lexical one, so a `.` or `..` last component and a `..` after a symlink are read as
+        # pytest reads them
+        pytest.param(["--basetemp=.tmp/x/pt/."], [".tmp", ".tmp/x"], id="a-trailing-dot"),
+        pytest.param(["--basetemp=.tmp/x/pt/.."], [".tmp"], id="a-trailing-dot-dot"),
+        pytest.param(["--basetemp=in/../.tmp/x/pt"], [".tmp", ".tmp/x"], id="a-symlink-then-dot-dot"),
     ],
 )
-def test_the_parent_of_a_basetemp_inside_the_tree_is_created_before_the_baseline(tmp_path, spelling):
+def test_the_parent_of_a_basetemp_inside_the_tree_is_created_before_the_baseline(tmp_path, spelling, made):
     repo = tmp_path / "repo"
     make_repo(repo)
     _commit_a_basetemp_probe(repo)
     before = _tree(repo)
     r = run([*_PROBE_ARGS, "./bt-probe.sh", *(w.format(repo=repo) for w in spelling)], repo)
     assert r.returncode == 0 and "mutate-probe: KILLED (control proven" in r.stdout, f"{r.returncode} {r.stdout}{r.stderr}"
-    assert _tree(repo) == sorted([*before, ".tmp", ".tmp/x"])
+    assert _tree(repo) == sorted([*before, *made])
 
 
 def test_under_sandbox_the_basetemp_parent_is_created_in_the_sandbox_not_the_checkout(tmp_path):
@@ -677,16 +687,20 @@ def test_under_sandbox_the_basetemp_parent_is_created_in_the_sandbox_not_the_che
 
 @pytest.mark.parametrize(
     "basetemp",
-    [pytest.param("{outside}/x/pt", id="absolute"), pytest.param("../outside/x/pt", id="dot-dot")],
+    [
+        pytest.param("{outside}/x/pt", id="absolute"),
+        pytest.param("../outside/x/pt", id="dot-dot"),
+        pytest.param("in/../../outside/x/pt", id="a-symlink-then-dot-dot"),
+    ],
 )
 def test_a_basetemp_outside_the_tree_is_left_alone(tmp_path, basetemp):
     repo = tmp_path / "repo"
     make_repo(repo)
     _commit_a_basetemp_probe(repo)
-    outside = tmp_path / "outside"
-    r = run([*_PROBE_ARGS, "./bt-probe.sh", f"--basetemp={basetemp.format(outside=outside)}"], repo)
+    before = _tree(tmp_path)
+    r = run([*_PROBE_ARGS, "./bt-probe.sh", f"--basetemp={basetemp.format(outside=tmp_path / 'outside')}"], repo)
     assert r.returncode == 7 and "baseline failed" in r.stderr, f"{r.returncode} {r.stdout}{r.stderr}"
-    assert not outside.exists()
+    assert _tree(tmp_path) == before
 
 
 def test_a_probe_without_a_basetemp_leaves_the_tree_as_it_was(tmp_path):
