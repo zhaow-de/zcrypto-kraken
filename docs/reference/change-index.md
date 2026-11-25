@@ -464,3 +464,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #890 | 2026-11-24 | fix(ops): iter-208 — the on-chain node's memory 16g and dbcache 8192 MiB | iter-208 | 00164 | — |
 | #894 | 2026-11-24 | feat(research): iter-209 — C3 BTC on-chain regime read (reading 10) | iter-209 | 00164 | T0228 |
 | #895 | 2026-11-25 | feat(research): iter-210 — C3 trial 1: aSOPR's low tail as a re-entry | iter-210 | 00165 | T0228 |
+| #896 | 2026-11-25 | docs(research): iter-211 — C3 trial 2 not run, C3 held to 2027-12-13 | iter-211 | 00166 | T0228 |
