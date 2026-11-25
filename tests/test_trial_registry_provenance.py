@@ -53,6 +53,7 @@ LANDED_N_TRIALS: dict[str, int] = {
     "b3-rank-tilt": 1,
     "b3-tilt-slow": 2,
     "b3-btc-overlay": 3,
+    "c3-asopr-reentry": 1,
     "p1-revalidation": 6,
     "p1-reprice": 7,
 }
@@ -991,6 +992,7 @@ def test_each_landed_subjects_n_trials_is_frozen_at_its_literal():
         "b3-rank-tilt": 1,
         "b3-tilt-slow": 2,
         "b3-btc-overlay": 3,
+        "c3-asopr-reentry": 1,
         "p1-revalidation": 6,
         "p1-reprice": 7,
     }, growth
