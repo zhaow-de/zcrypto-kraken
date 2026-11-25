@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: 'an activity — C3''s next step after trial 1 is picked; check: `grep -c -E ''^\[iter-[0-9]+\] C3.s next step after trial 1'' docs/research/10.phase4-decisions.md` prints at least 1'
+ripe_when: 'a date: 2027-09-01, when the returns past ohlc-full''s last close reach the 519 spec 00166 measures for the DSR leg at even odds — check: date -u +%F reads 2027-09-01 or later'
 ---
 
 # BTC on-chain metrics computed from chain data — C3's first step
@@ -20,6 +20,7 @@ Every vendor's multi-year on-chain history is restated in place and keeps no vin
 - **MVRV-Z's σ is ours, expanding, each day's over data to that day only (spec 00164 D7)** — Glassnode computes its σ "to the present day" (https://docs.glassnode.com/further-information/metric-guides/mvrv/mvrv-z-score.md), and Coin Metrics does not state its window; the day cut and the cross-check are spec 00164 D6 and D13.
 - **Reading 10 (iter-209, spec 00164): one cell has potential, `asopr|low|flat|H7`** — the figures in `10.phase4-decisions.md` `[iter-209] BTC's on-chain regime read inside the A1 gate on btc-onchain-20261124T162656Z (reading 10)`; the reading and the cross-check read from 2011-01-01 (spec 00164 D7, D12, D13).
 - **C3 trial 1 REJECT (iter-210, spec 00165, registry trial 65).** Matrix row 5 fired: arm A passed its bar and arm B, the A1 sleeve with a long re-entry in each asset it holds flat under aSOPR's low tail, passed the kill bar, but its head-to-head against arm A from the re-entry's first engagement was negative, its drawdown past the adopt bound beside it — the figures in `10.phase4-decisions.md` `[iter-210] Verdict — C3 trial 1 REJECT`.
+- **C3 trial 2 not run (iter-211, spec 00166).** The days after the history cannot carry a trial yet — `ohlc-rolling` here adds 210 daily returns past `ohlc-full`'s last close, every one in 2026, a stub year the kill bar cannot slice — and the one in-sample trial left, aSOPR's low tail as a veto on the sleeve's long state, missed reading 10's own leg 1; the owner picked no trial, and C3 held to 2027-09-01 — the figures in spec 00166's measured basis and the two `[iter-211]` entries after `C3's next step after trial 1`.
 
 ## Done so far
 
@@ -30,8 +31,9 @@ Every vendor's multi-year on-chain history is restated in place and keeps no vin
 - **The rollout**: spec 00164's deployment steps 1–11, the node's caps raised inside its first sync (#890); its figures are the catalog entry's *Sizing a rebuild*.
 - **The reading's branch, iter-209**: the snapshot `btc-onchain-20261124T162656Z`, the cross-check, the basis case, the reads, spec 00164's hash and reading 10, its `[iter-209]` entry; spec 00164's D7, D12 and D13 amended before the hash.
 - **C3's trial 1, iter-210 (spec/plan `00165`)**: the family key `C3` in `cli/registry/budget.py`, the module `cli/alpha/c3_reentry.py`, the subjects `c3-asopr-reentry` and `c3-asopr-reentry-preflight` in `cli/research/subjects.py` and the data-gated basis test `tests/test_research_c3_asopr_reentry_basis.py`; registry trial 65, REJECT.
+- **C3's trial 2, iter-211 (spec `00166`)**: designed and not run — its D1 ruled no trial, the slot unspent, C3 held to 2027-09-01.
 
 ## Suggested next steps
 
-- **(owner) C3's next step after trial 1**: a further trial from bucket C's remaining slots, [[T0016]]'s Glassnode step, `_pit` diff first, LTC and DOGE below, or the family's close — asked of the owner with trial 1's verdict entry and recorded in `docs/research/10.phase4-decisions.md` as `[iter-<N>] C3's next step after trial 1`, this topic's trigger (spec 00165 D16).
+- **From 2027-09-01, the days after the history**: by then the returns past `ohlc-full`'s last close number 519, the count spec 00166's measured basis gives the DSR leg at even odds at the sleeve's Sharpe; a later `ohlc-rolling` head and a later snapshot freeze, both the owner's host actions, come first, then a spec of their own reads them, what it tests the owner's pick then; [[T0016]]'s Glassnode step, `_pit` diff first, LTC and DOGE below, or C3's close stay beside it.
 - **Only then LTC and DOGE**: the same computation, exact on UTXO chains apart from LTC's MWEB amounts, one opaque bucket since 2022 (https://github.com/litecoin-project/lips/blob/master/lip-0003.mediawiki); inputs from our own nodes or Blockchair's daily dumps (https://gz.blockchair.com/dogecoin/, licence not read), Google's supported-datasets page no longer listing crypto_dogecoin or crypto_litecoin (https://docs.cloud.google.com/blockchain-analytics/docs/supported-datasets).
