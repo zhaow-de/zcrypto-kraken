@@ -1001,6 +1001,8 @@ class Judge:
         later word means, and a search path through a directory this block wrote into."""
         if name in _STATE_VARS and not (prefix and name == "IFS"):
             raise _unresolvable(f"it sets {name}, which changes what a later word of the block means or runs")
+        if name in ("DOCKER_HOST", "DOCKER_CONTEXT", "CONTAINER_HOST") and any(v not in _LOCAL_DOCKER for v in vals):
+            raise Refused(Refusal("terminal", f"{name} points docker at another daemon than this host's", OWNER_TERMINAL))
         if name in _SEARCH_VARS:
             self.path_check(vals)
         if scope is not None:
@@ -2614,13 +2616,26 @@ def rule_money_path(cmd: Cmd, j: Judge) -> Refusal | None:
     return None
 
 
+_ANSIBLE_TOOLS = _w("ansible ansible-playbook ansible-vault ansible-console ansible-pull ansible-inventory ansible-connection")
+_SYSTEMD_REMOTE = _w("systemctl busctl loginctl hostnamectl timedatectl localectl machinectl systemd-run systemd-analyze")
+_LOCAL_DOCKER = ("unix:///var/run/docker.sock", "unix:///run/docker.sock", "default")
+
+
 def rule_terminal(cmd: Cmd, j: Judge) -> Refusal | None:
     def no(reason: str) -> Refusal:
         return Refusal("terminal", reason, OWNER_TERMINAL)
 
     name = cmd.name
-    if name in ("converge.sh", "ansible-playbook", "ansible-vault", "vault-append-secret.sh"):
-        return no(f"{name} takes a typed confirm or a passphrase")
+    runs = {name}
+    if cmd.layer == "script" and cmd.code is None and cmd.rest:
+        runs.add(cmd.rest[0].rsplit("/", 1)[-1])
+    if name in ("source", ".") and cmd.args:
+        runs.add(cmd.args[0].rsplit("/", 1)[-1])
+    for tool in runs:
+        if tool in ("converge.sh", "vault-append-secret.sh") or tool.split(".", 1)[0] in _ANSIBLE_TOOLS:
+            return no(f"{tool} takes a typed confirm or a passphrase, or reaches further hosts")
+    if name in _SYSTEMD_REMOTE and any(a == "-H" or a.startswith("--host") or a.startswith("-H") and len(a) > 2 for a in cmd.args):
+        return no(f"{name} -H reaches a further host from the remote side")
     if name in _w("vi vim nvim view vimdiff nano pico emacs emacsclient joe mcedit micro sudoedit visudo vipw vigr"):
         return no(f"{name} is an editor")
     if name in ("ssh-add", "passwd", "chsh", "chfn", "zcrypto-panel-regenerate", "watch", "top", "htop", "login"):
@@ -2665,6 +2680,10 @@ def rule_terminal(cmd: Cmd, j: Judge) -> Refusal | None:
     if name == "screen" and not set(cmd.args) & {"-ls", "-list"}:
         return no("screen attaches or opens a terminal session")
     if name in ("docker", "docker-compose"):
+        _, where, _ = _split_known(cmd.args, _DOCKER_GLOBAL)
+        for v in where.get("-H", []) + where.get("--host", []) + where.get("-c", []) + where.get("--context", []):
+            if v not in _LOCAL_DOCKER:
+                return no(f"docker's {_show(v)} reaches another daemon than this host's")
         d = docker_parse(cmd)
         tty = {"-i", "-t", "--interactive", "--tty"}
         if d.verb in ("run", "exec", "create") and not d.compose and d.flags & tty:

@@ -816,6 +816,39 @@ HAZARD_DOORS = [
     ("tar-remove-files-relative", "sudo tar -C /var/lib --remove-files -czf /tmp/c.tgz zcrypto-capture", "hazards"),
 ]
 
+# The terminal tools run another way: as a shell's or an interpreter's script operand, sourced, through a runner, or
+# as a module; and the further-host reach of docker's and systemd's own remote options.
+_CONVERGE = "infra/ansible/scripts/converge.sh"
+TERMINAL_DOORS = [
+    ("bash-converge", "zcrypto", f"bash {_CONVERGE} site.yml --limit zcrypto --tags capture", "terminal"),
+    ("sh-converge", "zcrypto", f"sh ./{_CONVERGE} site.yml", "terminal"),
+    ("bash-x-converge", "zcrypto", f"bash -x {_CONVERGE} site.yml", "terminal"),
+    ("source-converge", "hp", f"source {_CONVERGE}", "terminal"),
+    ("dot-converge", "hp", f". {_CONVERGE}", "terminal"),
+    ("exec-converge", "hp", f"exec {_CONVERGE} site.yml", "terminal"),
+    ("xargs-converge", "hp", f"echo site.yml | xargs {_CONVERGE}", "terminal"),
+    ("uv-run-ansible-playbook", "zcrypto", "uv run ansible-playbook site.yml", "terminal"),
+    ("uvx-ansible-playbook", "hp", "uvx --from ansible-core ansible-playbook site.yml", "terminal"),
+    ("pipx-run-ansible-playbook", "hp", "pipx run --spec ansible-core ansible-playbook site.yml", "terminal"),
+    ("poetry-run-ansible-playbook", "hp", "poetry run ansible-playbook site.yml", "terminal"),
+    ("python-module-ansible", "hp", "python3 -m ansible playbook site.yml", "terminal"),
+    ("ansible-adhoc", "hp", "ansible all -m ping", "terminal"),
+    ("ansible-pull", "hp", "ansible-pull -U https://x.invalid/r.git", "terminal"),
+    ("ansible-console", "hp", "ansible-console all", "terminal"),
+    ("ansible-inventory", "hp", "ansible-inventory --graph", "terminal"),
+    ("docker-remote-host", "red", "sudo docker -H ssh://zcrypto stop zcrypto-capture", "terminal"),
+    ("docker-remote-host-long", "red", "sudo docker --host=tcp://zcrypto:2375 ps", "terminal"),
+    ("docker-context", "red", "sudo docker --context prod ps", "terminal"),
+    ("docker-host-variable", "red", "DOCKER_HOST=ssh://zcrypto docker stop zcrypto-capture", "terminal"),
+    ("docker-host-exported", "red", "export DOCKER_HOST=ssh://zcrypto; docker ps", "terminal"),
+    ("docker-context-variable", "red", "sudo DOCKER_CONTEXT=prod docker ps", "terminal"),
+    ("systemctl-remote-host", "red", "sudo systemctl -H zcrypto stop zcrypto-capture", "terminal"),
+    ("systemctl-remote-host-long", "red", "sudo systemctl --host=zcrypto status zcrypto-capture", "terminal"),
+    ("busctl-remote-host", "red", "busctl -H zcrypto status", "terminal"),
+    ("loginctl-remote-host", "red", "loginctl -H zcrypto list-sessions", "terminal"),
+    ("systemd-run-remote-host", "red", "sudo systemd-run -H zcrypto true", "terminal"),
+]
+
 # The see-through spellings: each hides a gate-opening write behind a different layer of shell.
 SEE_THROUGH = [
     ("quoted", "sudo touch '/var/lib/zcrypto-engine/exec/'\"armed\""),
@@ -1079,6 +1112,9 @@ ADMITTED = [
     ("ops-kill-a-literal-pid", "hp", "sudo kill -HUP 1234"),
     ("ops-pkill-a-name", "hp", "sudo pkill -x sleep"),
     ("ops-rtcwake-show", "hp", "sudo rtcwake -m show"),
+    ("ops-python-script-named-like-ansible", "hp", "python3 ansible_report.py"),
+    ("docker-local-socket", "zcrypto", "sudo docker -H unix:///var/run/docker.sock ps"),
+    ("systemctl-machine-status", "zcrypto", "sudo systemctl status zcrypto-engine --no-pager"),
     ("secondary-kill-pid-1", "red", "sudo kill -INT 1"),
     (
         "ops-liquidations-poll",
@@ -1180,6 +1216,14 @@ def test_this_workstation_taken_down_another_way_is_refused(door, block, rule):
 @pytest.mark.parametrize(("block", "rule"), [pytest.param(b, r, id=f"hazards-side-door-{i}") for i, b, r in HAZARD_DOORS])
 def test_a_recursive_removal_of_a_data_root_is_refused_whatever_its_flags(door, block, rule):
     done = door.judge("zcrypto", block)
+    assert done.returncode == 65 and _rule(done) == rule, done.stderr.decode()
+
+
+@pytest.mark.parametrize(
+    ("alias", "block", "rule"), [pytest.param(a, b, r, id=f"terminal-side-door-{i}") for i, a, b, r in TERMINAL_DOORS]
+)
+def test_a_terminal_tool_run_another_way_is_refused(door, alias, block, rule):
+    done = door.judge(alias, block)
     assert done.returncode == 65 and _rule(done) == rule, done.stderr.decode()
 
 
