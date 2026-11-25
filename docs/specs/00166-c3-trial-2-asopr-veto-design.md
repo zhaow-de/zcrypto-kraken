@@ -3,9 +3,7 @@
 Iteration `iter-211`, branch `feat/iter-211-c3-trial-2`, cut from `develop` at `1a4abc4f5` (the merge of #895), written 2026-11-25 on `zcrypto-ops`; bucket C family C3 (`docs/research/00.master-plan.md` §5), topics [T0228](../open-topics/T0228-btc-on-chain-metrics-computed-from-chain-data.md) and [T0016](../open-topics/T0016-bucket-b-c-alpha-families.md).
 **The owner's pick**, verbatim, as the decisions log holds it in `[iter-211] C3's next step after trial 1 — the owner's pick after registry trial 65 (Decision: 1)`: "merge it once CI is green, then take a slot in C-budget for one more trial" (received by 2026-11-25T10:20:39Z); and on who writes this spec and its plan: "for the trial 2 spec and plan, we use the trial agent strategy. i.e. take Fable for authoring the two docs, and all the rest, incl. reviewers and fixers stay with Opus." (received by 2026-11-25T10:24:34Z).
 Settled by that pick, by spec 00133 and by trial 1's branch: the family key `C3` in bucket C, the count 2 and the slot rule — D2.
-Seven decisions are open — D1 (what trial 2 tests and on which days), D5 (the veto's depth), D6 (the hold), D7 (the grid and the bar's instrument), D9 (how reading 10's looks and trial 1's result enter the bar), D11 (the matrix's drawdown leg) and D14 (what a verdict changes): each states its options and their costs and marks one **Recommended**, and none carries a ruling.
-D2–D4, D8, D10, D12 and D13 and the hypothesis are written at D1's option 1 and at the options marked Recommended; D1's other options say what each replaces.
-The owner's picks are quoted at each decision's head once given, the plan review closes, and only then is this file's sha256 taken — before any return of arm B is computed (D13's hash rule).
+**Ruled: D1's option 4, no trial.** D1 was put to the owner first, and their pick, quoted at D1's head, leaves the slot unspent: no trial registers under this spec, its sha256 is never taken, and D5, D6, D7, D9, D11 and D14 are moot and were not asked. D2–D4, D8, D10, D12, D13 and the hypothesis stand as written at D1's option 1 — the record of what the trial would have been; the measured basis is what the decision rests on, and C3's next step is the owner's second pick under `## The owner's picks`.
 
 ## Intent
 
@@ -718,6 +716,8 @@ The statement is written at D1's option 1 and at the options of D5, D6 and D7 ma
 
 ## D1 — what trial 2 tests, and on which days (the owner's)
 
+**The owner's pick, 2026-11-25 (by 12:41:29Z), verbatim:** "No trial now (Recommended)". Option 4 below is taken. The question put option 4 first as the controller's recommendation, against this spec's, on option 1's cost lines: its cell missed reading 10's own leg 1, it was chosen after trial 65's verdict was read, and an adopt could not be confirmed forward.
+
 The owner's word takes a slot; what the slot buys is this decision. Three facts frame every option (measured): the 2013–2026 history has been searched by reading 10's 32 cells and read again by trial 65; the days after it are 210 returns on this workstation, on which only trial 1's own triple and the STH supply share's low band, held nine days in ten, have any event; and the ratified bar cannot be called on those days alone. **No option reads a clean day under a bar. The spec recommends spending the slot, on option 1, and lays out option 4 for the owner who reads option 1's cost lines as not worth a branch.**
 
 1. **The veto on reading 10's two frozen sets, whole** — **Recommended**.
@@ -954,4 +954,6 @@ The plan reviews at tier `full` (measured); each guard is proven with `infra/scr
 
 ## The owner's picks
 
-Pending. Seven are asked — D1, D5, D6, D7, D9, D11 and D14 — each with its option marked Recommended; the picks are quoted verbatim at each decision's head and entered in the phase-4 decisions log as `[iter-211]` entries before the plan review, and this file's sha256 is taken only after them.
+- **D1**, 2026-11-25 (by 12:41:29Z), verbatim: "No trial now (Recommended)" — option 4; the other six decisions moot, not asked.
+- **C3's next step after it**, asked as option 4 says, 2026-11-25 (by 12:43:16Z), verbatim: "Hold, dated trigger (Recommended)" — C3 stays open and spends no slot; T0228's and T0016's trigger becomes the date 2027-09-01, when the returns past `ohlc-full`'s last close reach the 519 the measured basis gives the DSR leg at even odds, and the days after the history are read then under their own spec; the on-chain writer runs on as deployed. The options beside it were C3's close, T0016's Glassnode step and LTC and DOGE.
+- Both are entered in the phase-4 decisions log as `[iter-211]` entries.
