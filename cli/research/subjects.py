@@ -118,6 +118,7 @@ from cli.alpha.c2 import (
     signals,
     trailing_std,
 )
+from cli.alpha.c3_reentry import full_long_positions, reentry_fires
 from cli.alpha.errors import AlphaError
 from cli.alpha.killbar import a1_kill_bar, net_of_cost_verdict
 from cli.backtest.errors import BacktestError
@@ -5322,6 +5323,308 @@ def _build_c3_onchain_reading(
 _C3_READING_KEYS = frozenset({"cells", "event_years", "counts", "features", "arm", "constants"})
 
 
+# docs/specs/00165-c3-trial-1-asopr-reentry-design.md D2-D14: C3's trial 1, a long re-entry in each asset the A1 sleeve
+# holds flat at a close under aSOPR's low band, on the two sets reading 10 read; a changed constant is a new trial.
+_C3_ASOPR_REENTRY_N_TRIALS = 1  # docs/specs/00165 D2: fixed by the spec's hash; a different count is a new subject
+_C3_REENTRY_HOLD = 7
+_C3_REENTRY_DECISIVE_START = 230
+_C3_REENTRY_BLOCKS = (17, 102)
+_C3_REENTRY_SEEDS = (42, 7, 1234)
+
+
+class _C3ReentryInputs(NamedTuple):
+    daily_ts: list[datetime]
+    daily_prices: dict[str, list[float | None]]
+    close: list[datetime]
+    returns: dict[str, list[float | None]]
+    arm_a: dict[str, list[float]]
+    arm_b: dict[str, list[float]]
+    fires: dict[str, list[bool]]
+    size: dict[str, list[float]]
+
+
+def _c3_reentry_inputs(
+    snapshot: pl.DataFrame, daily_ts: list[datetime], daily_prices: dict[str, list[float | None]]
+) -> _C3ReentryInputs:
+    """Both arms' positions and the returns they are costed on, and no return of a book: the half the data-gated case runs
+    over the real sets before the spec's hash (docs/specs/00165 D15). The forming row has no return and is dropped."""
+    reading = _c3_reading_inputs(snapshot, daily_ts, daily_prices)
+    n = len(daily_ts) - 1
+    arm_a = {asset: held[:n] for asset, held in reading.positions.items()}
+    fires = {asset: fired[:n] for asset, fired in reentry_fires(reading.bands["asopr"], reading.states).items()}
+    size = {asset: sized[:n] for asset, sized in full_long_positions(daily_prices).items()}
+    arm_b = reentry_positions(arm_a, size, fires, hold=_C3_REENTRY_HOLD)
+    fed = _ffill_btc(daily_prices)
+    returns = {asset: _asset_returns(fed[asset]) for asset in arm_a}
+    return _C3ReentryInputs(daily_ts, daily_prices, daily_ts[1:], returns, arm_a, arm_b, fires, size)
+
+
+def _c3_reentry_first_engaged(inputs: _C3ReentryInputs) -> int:
+    """The first return index at which arm B's positions differ from arm A's, the length when none does."""
+    n = len(inputs.close)
+    return next((k for k in range(n) if any(inputs.arm_b[a][k] != inputs.arm_a[a][k] for a in inputs.arm_a)), n)
+
+
+def _c3_reentry_engagement(inputs: _C3ReentryInputs) -> dict:
+    close, arm_a, arm_b, fires, size = inputs.close, inputs.arm_a, inputs.arm_b, inputs.fires, inputs.size
+    n, start = len(close), _c3_reentry_first_engaged(inputs)
+    differ = per_year_positions_differ(arm_a, arm_b, close)
+    fired = [per_year_counts(flags, close) for flags in fires.values()]
+    reentered = {asset: [arm_a[asset][k] == 0 and arm_b[asset][k] > 0 for k in range(n)] for asset in arm_a}
+    return {
+        "reentry_first_engaged": start,
+        "primary_returns": n - start,
+        "stamps_positions_differ": sum(differ.values()),
+        "positions_differ_per_year": differ,
+        "events_per_year": {year: sum(counts[year] for counts in fired) for year in fired[0]},
+        "reentered_per_year": reentry_counts_per_year(arm_a, arm_b, close),
+        "reentry_entries": sum(held[k] and not (k and held[k - 1]) for held in reentered.values() for k in range(n)),
+        "events_without_size": sum(fires[asset][k] and size[asset][k] == 0 for asset in fires for k in range(n)),
+        "turnover_b": book_turnover(arm_b),
+        "turnover_b_per_year": per_year_turnover(arm_b, close),
+        "gross_max": max(math.fsum(held[k] for held in arm_b.values()) for k in range(n)),
+    }
+
+
+def _c3_reentry_net(positions: dict[str, list[float]], inputs: _C3ReentryInputs, *, stress: float) -> list[float]:
+    return net_of_cost(positions, inputs.returns, cost_per_side=stress * _B2_COST_PER_SIDE)
+
+
+def _c3_reentry_bar(
+    net: list[float], stressed: list[float], bench: list[float], inputs: _C3ReentryInputs, *, n_trials: int, block: int, seed: int
+) -> dict:
+    """Record 34's call of the ratified bar on the daily grid (docs/specs/00165 D6, D12)."""
+    return a1_kill_bar(
+        net,
+        bench,
+        n_trials=n_trials,
+        var_trials=0.0,
+        mean_block=block,
+        seed=seed,
+        cost_stressed_returns=stressed,
+        regime_slices=calendar_year_slices(net, inputs.daily_ts),
+        benchmark_slices=calendar_year_slices(bench, inputs.daily_ts),
+        decisive_start=_C3_REENTRY_DECISIVE_START,
+        n_resamples=_N_RESAMPLES,
+    )
+
+
+def _c3_reentry_benchmark(inputs: _C3ReentryInputs) -> list[float]:
+    """Record 33's frozen daily benchmark on the raw union closes, the series record 34's bar read."""
+    return build_combined_system(inputs.daily_prices, config=_RECORD33_CONFIG).benchmark_net_of_cost
+
+
+def _c3_reentry_arm_a_bar(inputs: _C3ReentryInputs, net_a: list[float], bench: list[float], *, n_trials: int) -> dict:
+    stressed = _c3_reentry_net(inputs.arm_a, inputs, stress=1.5)
+    block, seed = _C3_REENTRY_BLOCKS[0], _C3_REENTRY_SEEDS[0]
+    return _c3_reentry_bar(net_a, stressed, bench, inputs, n_trials=n_trials, block=block, seed=seed)
+
+
+def _c3_reentry_metrics(inputs: _C3ReentryInputs, *, n_trials: int) -> dict:
+    close, start = inputs.close, _c3_reentry_first_engaged(inputs)
+    if len(close) - start < 2:
+        raise ValidationError(
+            f"{len(close) - start} of its return indices follow the re-entry's first engagement, and the head-to-head from it "
+            "needs 2"
+        )
+    net_a = _c3_reentry_net(inputs.arm_a, inputs, stress=1.0)
+    net_b = _c3_reentry_net(inputs.arm_b, inputs, stress=1.0)
+    drawdown_a, drawdown_b = max_drawdown(net_a[start:]), max_drawdown(net_b[start:])
+    if drawdown_a == 0:
+        raise ValidationError(
+            "arm A never draws down from the re-entry's first engagement, so max_drawdown_reduction_pct divides by zero"
+        )
+    bench = _c3_reentry_benchmark(inputs)
+    bar_a = _c3_reentry_arm_a_bar(inputs, net_a, bench, n_trials=n_trials)
+    net_b_x15 = _c3_reentry_net(inputs.arm_b, inputs, stress=1.5)
+    grid = {
+        (block, seed): _c3_reentry_bar(net_b, net_b_x15, bench, inputs, n_trials=n_trials, block=block, seed=seed)
+        for block in _C3_REENTRY_BLOCKS
+        for seed in _C3_REENTRY_SEEDS
+    }
+    headline = grid[(_C3_REENTRY_BLOCKS[0], _C3_REENTRY_SEEDS[0])]
+    head_to_head = {}
+    for label, first in (("full", 0), ("primary", start)):
+        verdict = net_of_cost_verdict(
+            net_b[first:], net_a[first:], mean_block=_C3_REENTRY_BLOCKS[0], seed=_C3_REENTRY_SEEDS[0], n_resamples=_N_RESAMPLES
+        )
+        head_to_head[f"head_to_head_mean_outperf_{label}"] = verdict["mean_outperformance"]
+        head_to_head[f"head_to_head_spa_p_{label}"] = verdict["spa_p_value"]
+    return {
+        "ann_sharpe_noc": sharpe(net_b, periods_per_year=PPY_DAILY),
+        "ann_sharpe_noc_decisive": sharpe(net_b[_C3_REENTRY_DECISIVE_START:], periods_per_year=PPY_DAILY),
+        "per_period_sharpe": sharpe(net_b),
+        "arm_a_ann_sharpe_noc": sharpe(net_a, periods_per_year=PPY_DAILY),
+        "arm_a_ann_sharpe_noc_decisive": sharpe(net_a[_C3_REENTRY_DECISIVE_START:], periods_per_year=PPY_DAILY),
+        "benchmark_ann_sharpe_noc": sharpe(bench, periods_per_year=PPY_DAILY),
+        "benchmark_ann_sharpe_noc_decisive": sharpe(bench[_C3_REENTRY_DECISIVE_START:], periods_per_year=PPY_DAILY),
+        "dsr_corrected": headline["dsr"],
+        "dsr_pass": int(headline["dsr_pass"]),
+        "spa_pass": int(headline["spa_pass"]),
+        "spa_p_full": headline["spa_p_value_full"],
+        "cost_stress_pass": int(headline["cost_stress_pass"]),
+        "worst_slice_relative_pass": int(headline["worst_slice_pass"]),
+        "passes": int(headline["passes"]),
+        "decisive_start": _C3_REENTRY_DECISIVE_START,
+        "n_resamples": _N_RESAMPLES,
+        "arm_a_passes": int(bar_a["passes"]),
+        **{f"spa_p_decisive_b{block}_s{seed}": result["spa_p_value"] for (block, seed), result in grid.items()},
+        **head_to_head,
+        "max_drawdown": max_drawdown(net_b),
+        "arm_a_max_drawdown": max_drawdown(net_a),
+        "max_drawdown_per_year": per_year_max_drawdown(net_b, close),
+        "arm_a_max_drawdown_per_year": per_year_max_drawdown(net_a, close),
+        "turnover_a": book_turnover(inputs.arm_a),
+        "turnover_a_per_year": per_year_turnover(inputs.arm_a, close),
+        "max_drawdown_primary": drawdown_b,
+        "arm_a_max_drawdown_primary": drawdown_a,
+        "max_drawdown_reduction_pct": 100 * (drawdown_a - drawdown_b) / drawdown_a,
+        **_c3_reentry_engagement(inputs),
+    }
+
+
+def _c3_reentry_preflight_metrics(inputs: _C3ReentryInputs, *, n_trials: int) -> dict:
+    """Arm A's anchors and bar and the engagement: no return of arm B."""
+    net_a = _c3_reentry_net(inputs.arm_a, inputs, stress=1.0)
+    bench = _c3_reentry_benchmark(inputs)
+    bar = _c3_reentry_arm_a_bar(inputs, net_a, bench, n_trials=n_trials)
+    turnover_a = book_turnover(inputs.arm_a)
+    return {
+        "arm_a_ann_sharpe_noc": sharpe(net_a, periods_per_year=PPY_DAILY),
+        "arm_a_ann_sharpe_noc_decisive": sharpe(net_a[_C3_REENTRY_DECISIVE_START:], periods_per_year=PPY_DAILY),
+        "arm_a_max_drawdown_full": max_drawdown(net_a),
+        "turnover_a": turnover_a,
+        "arm_a_spot_drag_pct_yr": turnover_a / len(inputs.close) * _B2_COST_PER_SIDE * PPY_DAILY,
+        "benchmark_ann_sharpe_noc": sharpe(bench, periods_per_year=PPY_DAILY),
+        "benchmark_ann_sharpe_noc_decisive": sharpe(bench[_C3_REENTRY_DECISIVE_START:], periods_per_year=PPY_DAILY),
+        **{key: int(bar[key]) if key in _B2_ARM_A_BAR_FLAGS else bar[key] for key in sorted(_B2_ARM_A_BAR_KEYS)},
+        **_c3_reentry_engagement(inputs),
+    }
+
+
+def _c3_reentry_build(
+    subject: str,
+    compute: Callable[..., dict],
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None,
+) -> dict:
+    if as_of is not None:
+        raise SubjectError(f"{subject} evaluates a frozen snapshot whole, never the rolling dataset as of a day: drop --as-of")
+    if window is not None:
+        raise SubjectError(
+            f"{_b2_over(subject, window)}: it reads its frozen sets whole, and the bands' history reaches back past any "
+            "window's first day; drop --window"
+        )
+    try:
+        _, snapshot, daily_ts, daily_prices = _c3_reads(reader, dataset, subject)
+        return compute(_c3_reentry_inputs(snapshot, daily_ts, daily_prices), n_trials=_C3_ASOPR_REENTRY_N_TRIALS)
+    except EVALUATION_ERRORS as exc:
+        raise SubjectError(f"{_b2_over(subject, window)}: {exc}") from exc
+
+
+def _build_c3_asopr_reentry(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    return _c3_reentry_build("c3-asopr-reentry", _c3_reentry_metrics, reader, dataset, window, as_of)
+
+
+def _build_c3_asopr_reentry_preflight(
+    reader: ObservedReader,
+    dataset: str,
+    window: tuple[str, str] | None,
+    as_of: str | None = None,
+    accept_holes: bool = False,
+) -> dict:
+    return _c3_reentry_build("c3-asopr-reentry-preflight", _c3_reentry_preflight_metrics, reader, dataset, window, as_of)
+
+
+# docs/specs/00165 D13's matrix: a change to it is a new spec and a new trial, never an edit here.
+def _c3_asopr_reentry_verdict(m: dict) -> str | None:
+    if not m["arm_a_passes"] or not any(m["reentered_per_year"].values()):
+        return None
+    if not m["passes"]:
+        return "reject"
+    if m["head_to_head_mean_outperf_primary"] > 0:
+        bounded = m["max_drawdown_reduction_pct"] >= -20.0
+        return "adopt" if m["head_to_head_spa_p_primary"] < 0.05 and bounded else "park"
+    return "reject"
+
+
+# docs/specs/00165 D14's keys.
+_C3_REENTRY_ENGAGEMENT_KEYS = frozenset(
+    {
+        "reentry_first_engaged",
+        "primary_returns",
+        "stamps_positions_differ",
+        "positions_differ_per_year",
+        "events_per_year",
+        "reentered_per_year",
+        "reentry_entries",
+        "events_without_size",
+        "turnover_b",
+        "turnover_b_per_year",
+        "gross_max",
+    }
+)
+_C3_REENTRY_METRIC_KEYS = _C3_REENTRY_ENGAGEMENT_KEYS | {
+    "ann_sharpe_noc",
+    "ann_sharpe_noc_decisive",
+    "per_period_sharpe",
+    "arm_a_ann_sharpe_noc",
+    "arm_a_ann_sharpe_noc_decisive",
+    "benchmark_ann_sharpe_noc",
+    "benchmark_ann_sharpe_noc_decisive",
+    "dsr_corrected",
+    "dsr_pass",
+    "spa_pass",
+    "spa_p_full",
+    "cost_stress_pass",
+    "worst_slice_relative_pass",
+    "passes",
+    "decisive_start",
+    "n_resamples",
+    "arm_a_passes",
+    "spa_p_decisive_b17_s42",
+    "spa_p_decisive_b17_s7",
+    "spa_p_decisive_b17_s1234",
+    "spa_p_decisive_b102_s42",
+    "spa_p_decisive_b102_s7",
+    "spa_p_decisive_b102_s1234",
+    "head_to_head_mean_outperf_full",
+    "head_to_head_spa_p_full",
+    "head_to_head_mean_outperf_primary",
+    "head_to_head_spa_p_primary",
+    "max_drawdown",
+    "arm_a_max_drawdown",
+    "max_drawdown_per_year",
+    "arm_a_max_drawdown_per_year",
+    "turnover_a",
+    "turnover_a_per_year",
+    "max_drawdown_primary",
+    "arm_a_max_drawdown_primary",
+    "max_drawdown_reduction_pct",
+}
+_C3_REENTRY_PREFLIGHT_KEYS = (
+    _B2_ARM_A_BAR_KEYS
+    | _C3_REENTRY_ENGAGEMENT_KEYS
+    | {
+        "arm_a_ann_sharpe_noc",
+        "arm_a_ann_sharpe_noc_decisive",
+        "arm_a_max_drawdown_full",
+        "turnover_a",
+        "arm_a_spot_drag_pct_yr",
+        "benchmark_ann_sharpe_noc",
+        "benchmark_ann_sharpe_noc_decisive",
+    }
+)
+
+
 SUBJECTS: dict[str, Subject] = {
     "record44-crossfreq": Subject(
         "record44-crossfreq",
@@ -5880,6 +6183,32 @@ SUBJECTS: dict[str, Subject] = {
         spec="docs/specs/00164-t0228-btc-onchain-design.md",
         metric_keys=_C3_READING_KEYS,
         seeds=(alpha_c3.SEED,),
+    ),
+    # No assets, as `c3-onchain-reading`.
+    "c3-asopr-reentry": Subject(
+        "c3-asopr-reentry",
+        (1440,),
+        (),
+        _build_c3_asopr_reentry,
+        spec="docs/specs/00165-c3-trial-1-asopr-reentry-design.md",
+        metric_keys=_C3_REENTRY_METRIC_KEYS,
+        seeds=(42, 7, 1234),
+        verdict=_c3_asopr_reentry_verdict,
+        no_verdict=(
+            "instrument finding: arm A fails the bar this window sets, or the re-entry holds no asset at any close; no "
+            "verdict, the trial unspent"
+        ),
+        family="C3",
+        n_trials=_C3_ASOPR_REENTRY_N_TRIALS,
+    ),
+    "c3-asopr-reentry-preflight": Subject(
+        "c3-asopr-reentry-preflight",
+        (1440,),
+        (),
+        _build_c3_asopr_reentry_preflight,
+        spec="docs/specs/00165-c3-trial-1-asopr-reentry-design.md",
+        metric_keys=_C3_REENTRY_PREFLIGHT_KEYS,
+        seeds=(42,),
     ),
 }
 

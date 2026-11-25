@@ -53,6 +53,7 @@ LANDED_N_TRIALS: dict[str, int] = {
     "b3-rank-tilt": 1,
     "b3-tilt-slow": 2,
     "b3-btc-overlay": 3,
+    "c3-asopr-reentry": 1,
     "p1-revalidation": 6,
     "p1-reprice": 7,
 }
@@ -573,7 +574,7 @@ def test_the_budgets_and_buckets_are_the_master_plans_literals():
         "changes this literal and quotes the ruling"
     )
     assert budget.BUDGET == {"A": 40, "B": 25, "C": 10}, growth
-    assert budget.BUCKET_OF == {"A1": "A", "B1": "B", "B2": "B", "B3": "B", "B4": "B", "P1": None}, growth
+    assert budget.BUCKET_OF == {"A1": "A", "B1": "B", "B2": "B", "B3": "B", "B4": "B", "C3": "C", "P1": None}, growth
     assert {bucket for bucket in budget.BUCKET_OF.values() if bucket is not None} <= set(budget.BUDGET), growth
 
 
@@ -991,6 +992,7 @@ def test_each_landed_subjects_n_trials_is_frozen_at_its_literal():
         "b3-rank-tilt": 1,
         "b3-tilt-slow": 2,
         "b3-btc-overlay": 3,
+        "c3-asopr-reentry": 1,
         "p1-revalidation": 6,
         "p1-reprice": 7,
     }, growth
