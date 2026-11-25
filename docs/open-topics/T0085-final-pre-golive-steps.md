@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: "per sub-item — arm64 re-enable: before the final go-live, never on go-live day; final reference-data sweep: immediately before the go/no-go; credential rotation: after every other pre-live change has landed"
+ripe_when: "per sub-item — final reference-data sweep: immediately before the go/no-go; credential rotation: after every other pre-live change has landed"
 ---
 
 # Final pre-go-live steps — arm64 re-enable, the OS upgrade + reboot round, the final reference-data sweep, and the credential rotation round
@@ -15,7 +15,7 @@ Three of them are silent until the moment they are not. A disabled build lane is
 
 ## Findings so far
 
-- **arm64**: the workflow builds `default` and `-compat` variants for `linux/amd64` today; arm64 is **commented out, not removed** — `.github/workflows/capture-image.yml` carries the owner's 2026-07-15 note and the exact restore line (`platforms: linux/amd64,linux/arm64`), and the QEMU binfmt step is what makes the cross-build work on the amd64 runner. Re-enabling is uncommenting plus verifying, not re-engineering.
+- **arm64**: a `default` pin, the digest the build job's summary prints, is the index of its two platform images; the NAS pins `-compat`, amd64-only, so its pins stay single-manifest (`infra/nas/README.md`'s *Image pins — three identifiers for one object*).
 - **Rotation scope.** The list is checked against `infra/ansible/files/` **and** every `vault.yml`. The sops-encrypted vault password (a **PGP** recipient, not age) plus: `kraken_trade_api_key` + `kraken_trade_api_secret`, **both** of the dead-man service's API keys, `hc_readwrite_api_key` (`group_vars/all/vault.yml`) and `hc_readonly_api_key` (`group_vars/observed/vault.yml`), `coinalyze_api_key`, `coveralls_repo_token` (rendered onto `zcrypto-ops`), the `cache_*` secrets (`group_vars/all/vault.yml`, `group_vars/cache_host/vault.yml`), the dead-man service's project ping key `hc_ping_key` (`group_vars/observed/vault.yml`), which every ping URL renders from (rotated in one sitting, see the next-steps), every per-machine Ansible deploy key, `infra/ansible/files/deploy_*_ed25519`, and the mTLS client leaves pinned on the access edge.
 
   **Four further classes** (each sits in the same vault-password blast radius that motivated [[T0126]]'s acceptance, so none can be silently out of scope):
@@ -58,10 +58,10 @@ Three of them are silent until the moment they are not. A disabled build lane is
 ## Done so far
 
 - **The OS/apt upgrade + reboot round is done on all four Debian hosts, 2026-09-27.** The capture pair went first, on 2026-09-26 (`docs/reference/drill-log.md`, A1 and the two reboot paragraphs behind it). The ops boot found docker starting its containers before dhcpcd had written a nameserver; the `ops` role's docker drop-in (`infra/ansible/roles/ops/files/docker-wait-for-resolver.conf`) waits for one, bounded and failing open, from the first boot after the ops converge that installs it.
+- **arm64 re-enabled and its build verified** (branch `ci/t0085-arm64-reenable`): `capture-image.yml`'s `default` variant builds `linux/amd64,linux/arm64` again, its QEMU binfmt step back. Run 45649091341, a `workflow_dispatch` on the branch at `292590124`, published the `default` index `sha256:a770d9b7f6626b13126856ed09423e72b2684ea8aeb5f68bd5d044e49febe304`: `linux/amd64` and `linux/arm64`, each carrying `org.opencontainers.image.revision` and `de.zhaow.zcrypto.polars-runtime`.
 
 ## Suggested next steps
 
-- **(arm64 — ripe ahead of go-live, deliberately not on the day)** Re-enable the arm64 platform in `capture-image.yml`; verify one full multi-arch build publishes and both digests carry the expected labels (`revision`, `polars-runtime`). Confirm no consumer pins assume single-arch manifest digests (the NAS pin comment's "ONE IMAGE, THREE IDENTIFIERS" note covers the manifest-list case).
 - **(the final reference-data sweep — ripe immediately before the go/no-go, ahead of the rotation)** Run **`/zcrypto-refdata-sweep`** one last time and read its verdict *into* the decision, not after it (owner, 2026-08-04, moving this here from [[T0113]], now resolved — the monthly cadence is a runbook routine, but **this** run is a precondition of the go/no-go and belongs where the decision is taken). The skill carries the whole procedure; three things make this run differ from a monthly one:
   - **Both halves are mandatory here.** The tier and the 30-day volume come from authenticated `kraken volume` in step 6, so what may be logged as *not re-read* on a monthly sweep is the attended remainder — the ladder's shape and the AoP qualification ladder — and on this one it may not: by go-live the account has real volume, so the tier genuinely can have moved, and `cli/costs/fees.py` encodes the ladder it selects from.
   - **The human-only facts come due with it**, and the skill does not cover them because no endpoint does: **MiCA status, tax rules, market-data pricing**. They are re-reads, and this is the run that owes them.
