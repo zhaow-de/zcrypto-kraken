@@ -28,8 +28,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # default: the AVX-optimized polars-runtime-32 (the VPS, AMD EPYC); multi-arch. arm64 is built though
-          # every fleet host is x86_64, so an arm64 host can take any pin without a rebuild.
+          # default: the AVX-optimized polars-runtime-32 (the VPS, AMD EPYC). arm64 is built though every fleet host
+          # is x86_64, so an arm64 host can take a default pin without a rebuild.
           - runtime: default
             platforms: linux/amd64,linux/arm64
             suffix: ""
