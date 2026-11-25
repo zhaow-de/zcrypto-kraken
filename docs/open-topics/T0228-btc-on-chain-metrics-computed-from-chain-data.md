@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: 'an activity — C3''s next step after the on-chain reading is picked; check: `grep -c -E ''^\[iter-[0-9]+\] C3.s next step after the on-chain reading'' docs/research/10.phase4-decisions.md` prints at least 1'
+ripe_when: 'an activity — C3''s next step after trial 1 is picked; check: `grep -c -E ''^\[iter-[0-9]+\] C3.s next step after trial 1'' docs/research/10.phase4-decisions.md` prints at least 1'
 ---
 
 # BTC on-chain metrics computed from chain data — C3's first step
@@ -19,6 +19,7 @@ Every vendor's multi-year on-chain history is restated in place and keeps no vin
 - **The owner's rulings of 2026-11-21 and 2026-11-15, spec 00164 D1–D5.** On 2026-11-21: C3 opened, this topic its first step — "then we open C1, and start resolving T0228"; then, asked C1 or C3, the pick "C3 (Recommended)" (D1, by 20:35:39Z); BTC first, LTC and DOGE only if BTC's on-chain regime adds something inside the A1 gate — "BTC first (Recommended)" (D2); the route above, amending this topic's EUR valuation and 155-day split — "Stock BRK, native USD (Recommended)" (D3, by 21:00:24Z); and the host, the node and the index in containers on `zcrypto-ops` under CPU and IO limits, stopped by a rule if ops' own timers slip — "Ops, resource-capped (Recommended)" (D4, by 21:00:24Z). On 2026-11-15 (by 15:35Z), Coin Metrics' licence — "the call is enough": a call with Talos stands in place of written permission, ruling 4a in `docs/reference/data-catalog-full.md` amended; its scope, "cm-* values feeding the live engine. it was clearly mentioned that the use of the data are for my own trading algorithms with my own funding"; on Talos's terms, "real values only, no estimation" (D5).
 - **MVRV-Z's σ is ours, expanding, each day's over data to that day only (spec 00164 D7)** — Glassnode computes its σ "to the present day" (https://docs.glassnode.com/further-information/metric-guides/mvrv/mvrv-z-score.md), and Coin Metrics does not state its window; the day cut and the cross-check are spec 00164 D6 and D13.
 - **Reading 10 (iter-209, spec 00164): one cell has potential, `asopr|low|flat|H7`** — the figures in `10.phase4-decisions.md` `[iter-209] BTC's on-chain regime read inside the A1 gate on btc-onchain-20261124T162656Z (reading 10)`; the reading and the cross-check read from 2011-01-01 (spec 00164 D7, D12, D13).
+- **C3 trial 1 REJECT (iter-210, spec 00165, registry trial 65).** Matrix row 5 fired: arm A passed its bar and arm B, the A1 sleeve with a long re-entry in each asset it holds flat under aSOPR's low tail, passed the kill bar, but its head-to-head against arm A from the re-entry's first engagement was negative, its drawdown past the adopt bound beside it; the re-entry engaged from return index 97 (close 2013-12-21) and re-entered 4899 asset-closes in 367 entries — the figures in `10.phase4-decisions.md` `[iter-210] Verdict — C3 trial 1 REJECT`.
 
 ## Done so far
 
@@ -28,8 +29,9 @@ Every vendor's multi-year on-chain history is restated in place and keeps no vin
 - **The catalog entry**: `docs/reference/data-catalog-full.md`'s *BTC on-chain valuation series* — the chain's producer, layout, schema, identity and consumption convention — beside ruling 4a amended by D5.
 - **The rollout**: spec 00164's deployment steps 1–11, the node's caps raised inside its first sync (#890); its figures are the catalog entry's *Sizing a rebuild*.
 - **The reading's branch, iter-209**: the snapshot `btc-onchain-20261124T162656Z`, the cross-check, the basis case, the reads, spec 00164's hash and reading 10, its `[iter-209]` entry; spec 00164's D7, D12 and D13 amended before the hash.
+- **C3's trial 1, iter-210 (spec/plan `00165`)**: the family key `C3` in `cli/registry/budget.py`, the module `cli/alpha/c3_reentry.py`, the subjects `c3-asopr-reentry` and `c3-asopr-reentry-preflight` in `cli/research/subjects.py` and the data-gated basis test `tests/test_research_c3_asopr_reentry_basis.py`; registry trial 65, REJECT.
 
 ## Suggested next steps
 
-- **C3's trial 1, on the owner's pick**: `asopr|low|flat|H7`, aSOPR's low tail as a re-entry for the A1 sleeve's flat state, the cell reading 10 names, under its own spec, which adds the family key `C3` to `BUCKET_OF` (spec 00164 D12), and [[T0016]]'s Glassnode step, `_pit` diff first.
+- **(owner) C3's next step after trial 1**: a further trial from bucket C's remaining slots, [[T0016]]'s Glassnode step, `_pit` diff first, LTC and DOGE below, or the family's close — asked of the owner with trial 1's verdict entry and recorded in `docs/research/10.phase4-decisions.md` as `[iter-<N>] C3's next step after trial 1`, this topic's trigger (spec 00165 D16).
 - **Only then LTC and DOGE**: the same computation, exact on UTXO chains apart from LTC's MWEB amounts, one opaque bucket since 2022 (https://github.com/litecoin-project/lips/blob/master/lip-0003.mediawiki); inputs from our own nodes or Blockchair's daily dumps (https://gz.blockchair.com/dogecoin/, licence not read), Google's supported-datasets page no longer listing crypto_dogecoin or crypto_litecoin (https://docs.cloud.google.com/blockchain-analytics/docs/supported-datasets).
