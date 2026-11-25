@@ -397,7 +397,7 @@ That the **one log class no Alloy pipeline sees** is caught, and in how long: a 
 uv run python infra/scripts/grafana-query.py 'up{job="capture_app",host="zcrypto"}' 'min(zcrypto_capture_seconds_since_last_book_message{host="zcrypto"})' 'hc_checks_down_total'
 ```
 
-**The cadence, every 60 s from the stop until the restore: two queries, and never the third:**
+**The cadence, the coordinator's, every 60 s from the stop until the restore: two queries, and never the third:**
 
 ```
 uv run python infra/scripts/grafana-query.py 'up{job="capture_app",host="zcrypto"}' 'min(zcrypto_capture_seconds_since_last_book_message{host="zcrypto"})'
@@ -539,7 +539,7 @@ Three things about the observability node, `zcrypto-mon`, one leg each. Whether 
 
 ### Induce
 
-On the node (`ssh mon`), four legs in this order, each read before the next starts, and `date -u` beside each command: no rule carries the moment.
+On the node (`ssh mon`), the coordinator's four legs in this order, each read before the next starts, and `date -u` beside each command: no rule carries the moment.
 
 **Leg 1, Prometheus bare, three times, Grafana running.** Two restarts at any moment; the third timed to start one second before the next evaluation of `zcrypto-reconciler`, a group holding `for: 0s` Prometheus rules, so that an evaluation falls inside it; the group's next evaluation is its `lastEvaluation` on the rules endpoint plus its 60 s interval:
 
