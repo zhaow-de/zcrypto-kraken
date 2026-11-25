@@ -1,6 +1,6 @@
 ---
 name: zcrypto-bump-alloy
-description: Human-run only — invoke when `infra/scripts/alloy-version.py gate` prints a target for every Alloy on the fleet, container and apt, or one host's Alloy must roll back.
+description: User-invoked only — when `infra/scripts/alloy-version.py gate` prints a target for every Alloy on the fleet, container and apt, or one host's Alloy must roll back.
 disable-model-invocation: true
 ---
 
@@ -20,6 +20,7 @@ A `config.alloy` edit outside a bump ships by the same converge, the host's `--t
 
 ## Standing cautions
 
+- Each `ssh <alias> …` line here is the coordinator's, run in the main loop as `infra/scripts/host-run.sh <alias>` with what follows the alias, its outer quotes dropped, on stdin as a quoted here-document — a loop over hosts one run per host; a line the wrapper refuses is the owner's, as its refusal names. Each `converge.sh` line is the owner's to type; the coordinator takes the reads and its `--check` before it and Step 3 after it.
 - Timeout-guard each network read; an empty filtered query is not an absent event — verify by positive trace.
 - NAS docker is `/usr/local/bin/docker`, not on sudo's PATH: `sudo /usr/local/bin/docker`.
 - A `docker inspect` here names its fields, `.Config.Image`, `.State.StartedAt`, `.Created`, `.RestartCount` or `.Name`, and not `.Config.Env`: a container's environment, the Alloy secrets files and the NAS's `.env` carry credentials and stay unprinted.
@@ -65,7 +66,7 @@ One commit writes the gate's `target:` values into `infra/ansible/group_vars/obs
 
 The order: `zcrypto-ops`, the stop point; `zcrypto-mon`, then `zaccess`, then `zcrypto-hc`; `nas`; `zcrypto-valkey1`, `zcrypto-valkey2`, `zcrypto-valkey3`, one per run; `zcrypto-red`; `zcrypto`, attended and last. Telemetry-only, so the order serves verification, not blast radius: ops first, for its fast independent detectors — `zcrypto-hcio-watchdog` and the 6 h `container="alloy"` log canary — and as the wave's first run of the role's recreate and image read; the apt hosts next, holding nothing unbackfillable, the observability node before the edge so the hold, the pin and the install are proven away from the bridgehead's revocation path first; the NAS, whose pull loop is read untouched; the cache nodes, whose set holds nothing unbackfillable; the capture hosts, the primary last. The next host follows as soon as the previous host's Step 3 reads green; no timed bake is owed beyond it. Before the first converge, `date -u +%Y-%m-%dT%H:%M:%SZ` prints the instant the wave's close counts its venue-facing rows from: keep it.
 
-`converge.sh` previews each wave form (`--check --diff`), then asks for the typed `--limit` — read the preview before typing it, or add `--check` for the preview alone. Every converge runs from merged `develop`, and `<alloy_image_digest>` is that key's full `sha256:<64 hex>` in `infra/ansible/group_vars/observed/alloy.yml` there. A held host takes no wave converge (*Held hosts*).
+`converge.sh` previews each wave form (`--check --diff`), then asks for the typed `--limit` — the coordinator runs the form with `--check` for the preview alone and reads it, and the owner reads the preview again before typing the `--limit`. Every converge runs from merged `develop`, and `<alloy_image_digest>` is that key's full `sha256:<64 hex>` in `infra/ansible/group_vars/observed/alloy.yml` there. A held host takes no wave converge (*Held hosts*).
 
 **One wave at a time.** The wave opens when the change that moves the fleet file merges; a change that moves the fleet file again does not merge while it is open, the fleet's rollback aside (*Rollback*). From the merge until a host's own wave converge, no other converge lands Alloy there: any converge of an apt host or of the NAS whose tags reach its role — `--tags mon`, `--tags access` and `--tags hc` among them — lands the new version out of the wave's order, as a container role's run with the fleet's digest does; the observability node's monthly patch pass waits by `infra/runbooks/mon.md`'s `mon-patch-pass` step 1, and the dead-man node's by `infra/runbooks/hc.md`'s `hc-patch-pass` step 1.
 

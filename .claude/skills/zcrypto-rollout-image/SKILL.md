@@ -10,7 +10,7 @@ The executable form of the app-image canary rollout: the one image serves captur
 
 ## Ground rules
 
-- **Every host-touching command runs in the main loop as a plain command — never inside a dispatched subagent or background workflow.** The permission gate blocks ssh-sudo there and the step dies where nobody sees the prompt; the user grants access live, at the command.
+- **Every command on a host runs in the main loop through `infra/scripts/host-run.sh <alias>` — never inside a dispatched subagent or background workflow.** The wrapper logs each run, and a dispatched agent's standing lines forbid `ssh`; a `converge.sh` line is the owner's to type, the coordinator taking the reads and its `--check` before it and the verification after.
 - **Every irreversible action** — converge, re-pin, restart — takes the user's explicit word at that step, with the blocker sweep (open-topics index + memo) presented alongside.
 - Rollout order: **secondary first, primary last.**
 - Converges via `infra/ansible/scripts/converge.sh`: the invariants are `.claude/rules/fleet-deploys.md`'s, the mechanics this file's *Converge mechanics*.
