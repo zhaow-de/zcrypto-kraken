@@ -4,6 +4,7 @@ import importlib.util
 import os
 import pathlib
 import re
+import shlex
 import subprocess
 import sys
 
@@ -302,3 +303,48 @@ def test_the_hook_is_wired_at_the_commit_stage_over_the_plans():
     assert hook["files"] == guard.PLAN.pattern
     assert hook.get("stages", ["pre-commit"]) == ["pre-commit"] and hook.get("pass_filenames", True) is True
     assert "always_run" not in hook
+
+
+# Each way `git commit` hands its pre-commit hook an index: (case, the arguments after `-m x`, whether the plan is added first).
+COMMITS = [
+    ("add-then-commit", [], True),
+    ("commit-all", ["-a"], False),
+    ("commit-only", ["--", PLAN_A], False),
+    ("commit-include", ["-i", PLAN_A], False),
+]
+
+
+def _hooked(tmp_path: pathlib.Path) -> tuple[pathlib.Path, dict[str, str]]:
+    repo = _repo(tmp_path, {PLAN_A: _plan(PLACEHOLDER)})
+    hook = {**_hook(), "entry": f"{shlex.quote(sys.executable)} {shlex.quote(str(_SCRIPT))}"}
+    _stage(repo, {".pre-commit-config.yaml": yaml.safe_dump({"repos": [{"repo": "local", "hooks": [hook]}]})})
+    _git(repo, "commit", "-q", "-m", "hook")
+    env = {**os.environ, "PRE_COMMIT_HOME": str(tmp_path / "pre-commit-home")}
+    subprocess.run([sys.executable, "-m", "pre_commit", "install"], cwd=repo, env=env, capture_output=True, check=True)
+    return repo, env
+
+
+def _commit(repo: pathlib.Path, env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["git", "-C", str(repo), "commit", "-m", "x", *args], env=env, capture_output=True, text=True)
+
+
+@pytest.mark.parametrize(("args", "add"), [case[1:] for case in COMMITS], ids=[case[0] for case in COMMITS])
+def test_the_hook_refuses_a_literal_through_git_commit_whichever_index_git_hands_it(tmp_path, args, add):
+    repo, env = _hooked(tmp_path)
+    _write(repo, {PLAN_A: _plan(LITERAL)})
+    if add:
+        _git(repo, "add", "--", PLAN_A)
+    head = _git(repo, "rev-parse", "HEAD").stdout
+    proc = _commit(repo, env, *args)
+    out = proc.stdout + proc.stderr
+    assert proc.returncode != 0 and f"{PLAN_A}:{_line(_plan(LITERAL), LITERAL)}: {LITERAL}" in out, out
+    assert _git(repo, "rev-parse", "HEAD").stdout == head, "the refused commit landed"
+
+
+def test_the_hook_admits_a_staged_placeholder_beside_a_literal_left_in_the_working_tree(tmp_path):
+    repo, env = _hooked(tmp_path)
+    _stage(repo, {PLAN_A: _plan(PLACEHOLDER, PLACEHOLDER)})
+    _write(repo, {PLAN_A: _plan(PLACEHOLDER, LITERAL)})
+    proc = _commit(repo, env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert _git(repo, "show", f"HEAD:{PLAN_A}").stdout == _plan(PLACEHOLDER, PLACEHOLDER)
