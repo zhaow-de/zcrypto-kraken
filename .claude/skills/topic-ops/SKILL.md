@@ -24,6 +24,8 @@ The file mechanics for `docs/open-topics/` — the HOW, loaded at the moment of 
 
 ## Required file shape
 
+Write a topic by hand in one pass, its findings stated as conclusions; verification depth is the spec's and plan's.
+
 ```yaml
 ---
 status: open   # one of: open | partial | resolved
