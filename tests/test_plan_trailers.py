@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import pathlib
 import re
 import subprocess
 import sys
 
+import pytest
 import yaml
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -64,8 +66,8 @@ def _stage(repo: pathlib.Path, files: dict[str, str]) -> None:
     _git(repo, "add", "--", *files)
 
 
-def _run(repo: pathlib.Path, *paths: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run([sys.executable, str(_SCRIPT), *paths], cwd=repo, capture_output=True, text=True)
+def _run(repo: pathlib.Path, *paths: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run([sys.executable, str(_SCRIPT), *paths], cwd=repo, capture_output=True, text=True, env=env)
 
 
 def _named(proc: subprocess.CompletedProcess[str]) -> list[str]:
@@ -148,22 +150,56 @@ def test_the_staged_content_is_judged_not_the_working_tree(tmp_path):
     assert proc.returncode == 1 and _named(proc) == [f"{PLAN_A}:{_line(_plan(LITERAL), LITERAL)}: {LITERAL}"], proc.stdout
 
 
-def test_a_plan_outside_the_index_is_refused_not_passed(tmp_path):
-    repo = _repo(tmp_path)
-    _write(repo, {PLAN_A: _plan(PLACEHOLDER)})
-    proc = _run(repo, PLAN_A)
-    assert proc.returncode == 1, proc.stdout + proc.stderr
-    assert _named(proc) == [f"{PLAN_A}: not in the index, so its staged content cannot be read: stage it, then run again"]
+def _outside_the_index(repo: pathlib.Path, plans: list[str]) -> None:
+    _write(repo, dict.fromkeys(plans, _plan(PLACEHOLDER)))
 
 
-def test_a_plan_whose_index_cannot_be_read_is_refused_not_passed(tmp_path):
-    repo = _repo(tmp_path)
-    _stage(repo, {PLAN_A: _plan(PLACEHOLDER), PLAN_B: _plan(PLACEHOLDER)})
+def _unmerged(repo: pathlib.Path, plans: list[str]) -> None:
+    _stage(repo, dict.fromkeys(plans, "base\n"))
+    _git(repo, "commit", "-q", "-m", "base")
+    _git(repo, "checkout", "-q", "-b", "side")
+    _stage(repo, dict.fromkeys(plans, "side\n"))
+    _git(repo, "commit", "-q", "-m", "side")
+    _git(repo, "checkout", "-q", "develop")
+    _stage(repo, dict.fromkeys(plans, "develop\n"))
+    _git(repo, "commit", "-q", "-m", "develop")
+    merge = subprocess.run(["git", "-C", str(repo), "merge", "-q", "side"], capture_output=True, text=True)
+    assert merge.returncode == 1, merge.stdout + merge.stderr
+
+
+def _index_unreadable(repo: pathlib.Path, plans: list[str]) -> None:
+    _stage(repo, dict.fromkeys(plans, _plan(PLACEHOLDER)))
     (repo / ".git" / "index").write_bytes(b"not an index")
-    proc = _run(repo, PLAN_A, PLAN_B)
+
+
+def _diff_unreadable(repo: pathlib.Path, plans: list[str]) -> None:
+    for plan in plans:
+        _git(repo, "update-index", "--add", "--info-only", "--cacheinfo", f"100644,{'1234567890abcdef' * 2}12345678,{plan}")
+
+
+def _git_not_found(repo: pathlib.Path, plans: list[str]) -> dict[str, str]:
+    _stage(repo, dict.fromkeys(plans, _plan(PLACEHOLDER)))
+    return {**os.environ, "PATH": str(repo / "no-git-here")}
+
+
+# Every way a plan's staged content goes unread: (case, its setup, what each plan is named with).
+UNREADABLE = [
+    ("outside-the-index", _outside_the_index, "not in the index, so its staged content cannot be read: stage it, then run again"),
+    ("unmerged", _unmerged, "unmerged, so its staged content cannot be read: resolve it and stage it, then run again"),
+    ("index-unreadable", _index_unreadable, "cannot read the index ("),
+    ("diff-unreadable", _diff_unreadable, "cannot read its staged diff ("),
+    ("git-not-found", _git_not_found, "cannot read the index ("),
+]
+
+
+@pytest.mark.parametrize(("setup", "named"), [case[1:] for case in UNREADABLE], ids=[case[0] for case in UNREADABLE])
+def test_a_plan_whose_staged_content_cannot_be_read_is_refused_not_passed(tmp_path, setup, named):
+    repo = _repo(tmp_path)
+    env = setup(repo, [PLAN_A, PLAN_B])
+    proc = _run(repo, PLAN_A, PLAN_B, env=env)
     assert proc.returncode == 1 and "Traceback" not in proc.stderr, proc.stdout + proc.stderr
-    named = _named(proc)
-    assert [n.split(": ", 1)[0] for n in named] == [PLAN_A, PLAN_B] and all("cannot read the index" in n for n in named), named
+    names = _named(proc)
+    assert len(names) == 2 and all(n.startswith(f"{p}: {named}") for n, p in zip(names, (PLAN_A, PLAN_B))), names
 
 
 def test_no_plan_named_is_nothing_to_judge(tmp_path):

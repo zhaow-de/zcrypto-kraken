@@ -2,8 +2,8 @@
 is a `Co-Authored-By:` trailer naming a literal model -- `Claude` and a capitalised word or a version after it -- is
 refused, because the implementer that commits the fence may run on another model. The placeholder, a human's trailer
 and a mention inside a prose line are admitted, and a line the diff does not add is not judged. A plan with no
-readable staged content -- outside the index, unmerged, or an index git cannot read -- is refused. Paths are read
-from the repository root, where pre-commit runs its hooks."""
+readable staged content -- outside the index, unmerged, an index or a staged diff git cannot read, or no git to run --
+is refused. Paths are read from the repository root, where pre-commit runs its hooks."""
 
 from __future__ import annotations
 
@@ -58,12 +58,17 @@ def judge(paths: list[str]) -> tuple[list[str], list[str]]:
         entries = _git("ls-files", "--stage", "-z", "--", *plans).split("\0")
     except Unreadable as exc:
         return [], [f"{p}: cannot read the index ({exc})" for p in plans]
-    staged = {path for meta, _, path in (e.partition("\t") for e in entries if e) if meta.endswith(" 0")}
+    listed = [e.partition("\t") for e in entries if e]
+    indexed = {path for _, _, path in listed}
+    staged = {path for meta, _, path in listed if meta.endswith(" 0")}
     literals: list[str] = []
     unreadable: list[str] = []
     for path in plans:
-        if path not in staged:
+        if path not in indexed:
             unreadable.append(f"{path}: not in the index, so its staged content cannot be read: stage it, then run again")
+            continue
+        if path not in staged:
+            unreadable.append(f"{path}: unmerged, so its staged content cannot be read: resolve it and stage it, then run again")
             continue
         try:
             diff = _git(
