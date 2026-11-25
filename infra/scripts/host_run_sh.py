@@ -1643,19 +1643,12 @@ class Judge:
         raise _unresolvable(f"{name} reads its script from another command's output")
 
     def find(self, base: Cmd, ctx: Ctx, scope: Scope) -> None:
-        args = base.args
-        i = 0
-        while i < len(args) and (args[i] in ("-H", "-L", "-P") or args[i].startswith("-O")):
-            i += 1
-        if i < len(args) and args[i] == "-D":
-            i += 2
-        starts = []
-        while i < len(args) and not args[i].startswith(("-", "(", "!", ")")):
-            starts.append(norm(args[i], scope.cwd))
-            i += 1
-        starts = starts or [scope.cwd]
-        found = _found(starts, args[i:])
+        raw, args = _find_split(base.args)
+        starts = [norm(a, scope.cwd) for a in raw] or [scope.cwd]
+        found = _found(starts, args)
         writes: list[tuple[str, str]] = []
+        execs: list[tuple[list[str], Scope]] = []
+        i = 0
         while i < len(args):
             a = args[i]
             if a in ("-exec", "-execdir", "-ok", "-okdir"):
@@ -1667,12 +1660,12 @@ class Judge:
                     raise _unresolvable("find's -exec names no command")
                 for start, f in found:
                     if a in ("-exec", "-ok"):
-                        self.command([x.replace("{}", f) for x in inner], None, ctx, scope)
+                        execs.append(([x.replace("{}", f) for x in inner], scope))
                         continue
                     here = scope.child()
                     here.cwd = start.rsplit("/", 1)[0] + ANY
                     leaf = f.rsplit("/", 1)[-1]
-                    self.command([x.replace("{}", "./" + (SEG if ANY in leaf else leaf)) for x in inner], None, ctx, here)
+                    execs.append(([x.replace("{}", "./" + (SEG if ANY in leaf else leaf)) for x in inner], here))
                 i = j + 1
                 continue
             if a == "-delete":
@@ -1681,6 +1674,8 @@ class Judge:
                 writes.append((">", self.where(args[i + 1], ctx, scope)))
             i += 1
         self.apply(replace(base, redirs=[(">", p) for op, p in writes if op == ">"], rest=[p for op, p in writes if op == "rm"]))
+        for argv, here in execs:
+            self.command(argv, None, ctx, here)
 
     def docker(self, base: Cmd, ctx: Ctx, scope: Scope) -> None:
         self.apply(base)
@@ -1692,6 +1687,19 @@ class Judge:
             workdir = d.values.get("-w", []) + d.values.get("--workdir", [])
             inner.cwd = norm(workdir[-1], "/") if workdir else ANY
             self.command(d.inner, None, replace(ctx, container=d.target or ANY, binds=_docker_binds(d, base)), inner)
+
+
+def _find_split(args: list[str]) -> tuple[list[str], list[str]]:
+    """find's start points and its expression."""
+    i = 0
+    while i < len(args) and (args[i] in ("-H", "-L", "-P") or args[i].startswith("-O")):
+        i += 1
+    if i < len(args) and args[i] == "-D":
+        i += 2
+    j = i
+    while j < len(args) and not args[j].startswith(("-", "(", "!", ")")):
+        j += 1
+    return args[i:j], args[j:]
 
 
 def _found(starts: list[str], expr: list[str]) -> list[tuple[str, str]]:
@@ -2886,6 +2894,12 @@ def _kills_pid_1(args: list[str]) -> str | None:
     return None
 
 
+DATA_ROOTS = "/var/lib/zcrypto-" + SEG
+# The engine's own store set aside before a rebuild, by its exact stamped name: the one tree directly under a data
+# root a recursive removal may take.
+_ASIDE = re.compile(r"/var/lib/zcrypto-engine/store\.aside-\d{8}T\d{4}Z")
+
+
 def rule_hazards(cmd: Cmd, j: Judge) -> Refusal | None:
     def no(reason: str, whose: str) -> Refusal:
         return Refusal("hazards", reason, whose)
@@ -2901,22 +2915,30 @@ def rule_hazards(cmd: Cmd, j: Judge) -> Refusal | None:
         )
         if operands and operands[0] in ("upgrade", "dist-upgrade", "full-upgrade", "install") and not yes:
             return no(f"{name} {operands[0]} without -y stops at a prompt", f"yours to respell: {name} -y {operands[0]}")
+    wiped: list[tuple[str, str]] = []
     if name == "rm":
         opts, operands = _opts(cmd.args)
         keys = {k for k, _ in opts}
-        if keys & {"-r", "-R", "--recursive"} and keys & {"-f", "--force"}:
-            for o in operands:
-                p = cmd.path(o)
-                if not re.sub(r"[\x00\x01/*.]", "", o):
-                    return no(f"rm -rf {_show(o)}: the operand is / or a bare variable", "yours to respell with the path")
-                if (
-                    could(p, "/")
-                    or could(p, "/var/lib/zcrypto-" + SEG)
-                    or could(p, "/var/lib/zcrypto-" + SEG + "/" + SEG)
-                    or could(p, "/var")
-                    or could(p, "/var/lib")
-                ):
-                    return no(f"rm -rf {_show(o)} removes a data root or a directory directly under one", "the owner's line")
+        if keys & {"-r", "-R"} or any(k.startswith("--r") and "--recursive".startswith(k) for k in keys):
+            wiped = [(o, cmd.path(o)) for o in operands]
+    elif name == "find":
+        starts, expr = _find_split(cmd.args)
+        runs = {expr[k + 1].rsplit("/", 1)[-1] for k in range(len(expr) - 1) if expr[k] in ("-exec", "-execdir", "-ok", "-okdir")}
+        if "-delete" in expr or runs & {"rm", "unlink", "shred", "rmdir", "srm"}:
+            wiped = [(f, f) for _, f in _found([cmd.path(s) for s in starts or ["."]], expr)]
+    elif name in ("tar", "bsdtar", "gtar", "rsync"):
+        keys = {k for k, _ in _opts(cmd.args, _READER_VALUES.get(name, ""), _LONG_VALUES)[0]}
+        if name != "rsync" or any(k.startswith("--del") for k in keys) or keys & {"-r", "-a", "--recursive", "--archive"}:
+            wiped = [(p, p) for effect, p in _gate_effects(cmd) if effect == "remove"]
+    for o, p in wiped:
+        if not re.sub(r"[\x00\x01/*.]", "", o):
+            return no(
+                f"{name} removes {_show(o)} recursively: the operand is / or a bare variable", "yours to respell with the path"
+            )
+        if _ASIDE.fullmatch(p):
+            continue
+        if any(could(p, t) for t in ("/", "/var", "/var/lib", DATA_ROOTS, DATA_ROOTS + "/" + SEG)):
+            return no(f"{name} removes {_show(o)} recursively, a data root or a directory directly under one", "the owner's line")
     if name.startswith("mkfs") or name == "wipefs" or name == "dd" and any(a.startswith("of=/dev/") for a in cmd.args):
         return no(f"{name} overwrites a device", "the owner's line")
     return None

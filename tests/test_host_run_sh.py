@@ -250,7 +250,8 @@ REFUSED = [
     ("money-path", "rename-kill", "zcrypto", "sudo mv /var/lib/zcrypto-engine/exec/kill /var/lib/zcrypto-engine/exec/kill.old"),
     ("money-path", "unlink-kill", "zcrypto", "sudo unlink /var/lib/zcrypto-engine/exec/kill"),
     ("money-path", "find-delete-kill", "zcrypto", "sudo find /var/lib/zcrypto-engine/exec -name kill -delete"),
-    ("money-path", "rm-exec-dir", "zcrypto", "sudo rm -r /var/lib/zcrypto-engine/exec"),
+    ("hazards", "rm-r-exec-dir", "zcrypto", "sudo rm -r /var/lib/zcrypto-engine/exec"),
+    ("money-path", "mv-exec-dir-away", "zcrypto", "sudo mv /var/lib/zcrypto-engine/exec /tmp/e"),
     (
         "money-path",
         "plan-placement-mv",
@@ -786,6 +787,35 @@ WORKSTATION_DOORS = [
     ("pm-suspend", "sudo pm-suspend", "workstation"),
 ]
 
+# A recursive removal of a data root, of a directory directly under one, of / or of a bare variable, keyed on the
+# act whatever its flags: rm's spellings of recursion, find's -delete and -exec rm, and the tools that remove a tree
+# as a side effect. Each row is on the primary.
+HAZARD_DOORS = [
+    ("rm-r-data-root", "sudo rm -r /var/lib/zcrypto-capture", "hazards"),
+    ("rm-capital-r", "sudo rm -R /var/lib/zcrypto-capture/BTC", "hazards"),
+    ("rm-recursive-long", "sudo rm --recursive /var/lib/zcrypto-capture", "hazards"),
+    ("rm-r-interactive-never", "sudo rm -r --interactive=never /var/lib/zcrypto-capture/BTC", "hazards"),
+    ("rm-abbreviated", "sudo rm --rec --for /var/lib/zcrypto-capture", "hazards"),
+    ("rm-shortest-abbreviation", "sudo rm --r /var/lib/zcrypto-capture", "hazards"),
+    ("rm-r-cluster", "sudo rm -vr /var/lib/zcrypto-engine/journal", "hazards"),
+    ("rm-r-bare-variable", 'sudo rm -r "$DIR"', "hazards"),
+    ("rm-r-root", "sudo rm -r --no-preserve-root /", "hazards"),
+    ("rm-r-var-lib", "sudo rm -r /var/lib", "hazards"),
+    ("rm-r-store-aside-glob", "sudo rm -r /var/lib/zcrypto-engine/store.aside-*", "hazards"),
+    ("find-mindepth-delete", "sudo find /var/lib/zcrypto-capture -mindepth 1 -delete", "hazards"),
+    ("find-delete-root-child", "sudo find /var/lib/zcrypto-capture/BTC -delete", "hazards"),
+    ("find-delete-by-name", "sudo find /var/lib/zcrypto-capture -name '*.parquet' -delete", "hazards"),
+    ("find-exec-rm-r", "sudo find /var/lib/zcrypto-capture -maxdepth 1 -exec rm -r {} +", "hazards"),
+    ("find-exec-rm-files", "sudo find /var/lib/zcrypto-capture -type f -exec rm {} +", "hazards"),
+    ("find-execdir-rm", "sudo find /var/lib/zcrypto-capture -type f -execdir rm {} \\;", "hazards"),
+    ("find-delete-bare-variable", 'sudo find "$DIR" -delete', "hazards"),
+    ("xargs-rm-r", "ls /var/lib/zcrypto-capture | sudo xargs rm -r", "hazards"),
+    ("rsync-delete-into-data-root", "sudo rsync -a --delete /tmp/empty/ /var/lib/zcrypto-capture/", "hazards"),
+    ("rsync-move-data-root", "sudo rsync -a --remove-source-files /var/lib/zcrypto-capture /tmp/c", "hazards"),
+    ("tar-remove-files-data-root", "sudo tar --remove-files -czf /tmp/c.tgz /var/lib/zcrypto-capture", "hazards"),
+    ("tar-remove-files-relative", "sudo tar -C /var/lib --remove-files -czf /tmp/c.tgz zcrypto-capture", "hazards"),
+]
+
 # The see-through spellings: each hides a gate-opening write behind a different layer of shell.
 SEE_THROUGH = [
     ("quoted", "sudo touch '/var/lib/zcrypto-engine/exec/'\"armed\""),
@@ -1009,6 +1039,9 @@ ADMITTED = [
         "sudo mv /var/lib/zcrypto-engine/store /var/lib/zcrypto-engine/store.aside-$(date -u +%Y%m%dT%H%MZ)",
     ),
     ("store-aside-removed", "zcrypto", "sudo rm -r /var/lib/zcrypto-engine/store.aside-20261125T1200Z"),
+    ("store-aside-removed-forced", "zcrypto", "sudo rm -rf /var/lib/zcrypto-engine/store.aside-20261125T1200Z/"),
+    ("find-delete-deep", "zcrypto", "sudo find /var/lib/zcrypto-capture/BTC/EUR/book/2026/01 -name '*.tmp' -delete"),
+    ("rm-r-deep-capture-day", "zcrypto", "sudo rm -r /var/lib/zcrypto-capture/BTC/EUR/book/2026/01/02"),
     ("compose-proxy-up", "zcrypto", "sudo docker compose -f /opt/zcrypto-engine/compose.yaml up -d cache-proxy"),
     ("compose-engine-down", "zcrypto", "sudo docker compose -f /opt/zcrypto-engine/compose.yaml down"),
     ("engine-restart", "zcrypto", "sudo systemctl restart zcrypto-engine && sudo systemctl status zcrypto-engine --no-pager"),
@@ -1141,6 +1174,12 @@ def test_the_primarys_capture_stopped_another_way_is_refused(door, alias, block,
 @pytest.mark.parametrize(("block", "rule"), [pytest.param(b, r, id=f"workstation-side-door-{i}") for i, b, r in WORKSTATION_DOORS])
 def test_this_workstation_taken_down_another_way_is_refused(door, block, rule):
     done = door.judge("hp", block)
+    assert done.returncode == 65 and _rule(done) == rule, done.stderr.decode()
+
+
+@pytest.mark.parametrize(("block", "rule"), [pytest.param(b, r, id=f"hazards-side-door-{i}") for i, b, r in HAZARD_DOORS])
+def test_a_recursive_removal_of_a_data_root_is_refused_whatever_its_flags(door, block, rule):
+    done = door.judge("zcrypto", block)
     assert done.returncode == 65 and _rule(done) == rule, done.stderr.decode()
 
 
