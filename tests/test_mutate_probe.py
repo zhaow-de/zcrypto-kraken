@@ -629,7 +629,8 @@ _PROBE_ARGS = ["--file", "mod.py", "--control", "s/VALUE = 1/VALUE = 9/", "--mut
 
 def _commit_a_basetemp_probe(repo):
     # pytest makes its --basetemp with a plain mkdir at os.path.abspath(<path>), a lexical path, so this probe fails as
-    # pytest does when that path's parent is absent; `in` is a committed symlink to sub/deep, two levels down
+    # pytest does when that path's parent is absent; `in` is a committed symlink to sub/deep, two levels down, and `out`
+    # one to ../outside, beside the tree
     probe = repo / "bt-probe.sh"
     probe.write_text(
         "#!/bin/sh\n"
@@ -641,6 +642,7 @@ def _commit_a_basetemp_probe(repo):
     (repo / "sub" / "deep").mkdir(parents=True)
     (repo / "sub" / "deep" / ".keep").touch()
     (repo / "in").symlink_to("sub/deep")
+    (repo / "out").symlink_to("../outside")
     subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "basetemp probe"], check=True)
 
@@ -685,20 +687,34 @@ def test_under_sandbox_the_basetemp_parent_is_created_in_the_sandbox_not_the_che
     assert not list(tmpdir.iterdir())
 
 
+# Every way out of the tree the containment check must see: a path beside it, a name that extends the tree's own, an
+# in-tree symlink out, a `..` after an in-tree symlink, and under --sandbox a path out of the sandbox or into the
+# checkout. A sandbox row is relative: an absolute path under pytest's default basetemp names pytest and is refused.
 @pytest.mark.parametrize(
-    "basetemp",
+    ("mode", "basetemp"),
     [
-        pytest.param("{outside}/x/pt", id="absolute"),
-        pytest.param("../outside/x/pt", id="dot-dot"),
-        pytest.param("in/../../outside/x/pt", id="a-symlink-then-dot-dot"),
+        pytest.param([], "{outside}/x/pt", id="absolute"),
+        pytest.param([], "../outside/x/pt", id="dot-dot"),
+        pytest.param([], "../repo-sibling/x/pt", id="a-name-extending-the-trees"),
+        pytest.param([], "out/x/pt", id="an-in-tree-symlink-out"),
+        pytest.param([], "in/../../outside/x/pt", id="a-symlink-then-dot-dot"),
+        pytest.param(["--sandbox"], "../../outside/x/pt", id="sandbox-dot-dot"),
+        pytest.param(["--sandbox"], "../../repo/.tmp/x/pt", id="sandbox-into-the-checkout"),
     ],
 )
-def test_a_basetemp_outside_the_tree_is_left_alone(tmp_path, basetemp):
+def test_a_basetemp_outside_the_tree_is_left_alone(tmp_path, mode, basetemp):
     repo = tmp_path / "repo"
     make_repo(repo)
     _commit_a_basetemp_probe(repo)
+    (tmp_path / "outside").mkdir()
+    tmpdir = tmp_path / "tmp"
+    tmpdir.mkdir()
     before = _tree(tmp_path)
-    r = run([*_PROBE_ARGS, "./bt-probe.sh", f"--basetemp={basetemp.format(outside=tmp_path / 'outside')}"], repo)
+    r = run(
+        [*mode, *_PROBE_ARGS, "./bt-probe.sh", f"--basetemp={basetemp.format(outside=tmp_path / 'outside')}"],
+        repo,
+        env_extra={"TMPDIR": str(tmpdir)},
+    )
     assert r.returncode == 7 and "baseline failed" in r.stderr, f"{r.returncode} {r.stdout}{r.stderr}"
     assert _tree(tmp_path) == before
 
