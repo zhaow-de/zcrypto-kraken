@@ -1,6 +1,6 @@
 ---
 name: dependabot
-description: Manage Dependabot dependency-update PRs — list, check out, rebase onto develop, run uv tests + ruff, auto-fix lint/format, push, wait for CI, merge with squash
+description: Manage Dependabot dependency-update PRs — list, check out, rebase onto develop, run ruff, auto-fix lint/format, push, wait for CI, merge with squash
 disable-model-invocation: true
 allowed-tools: Bash(git fetch:*), Bash(git checkout:*), Bash(git rebase:*), Bash(git status:*), Bash(git stash:*), Bash(git push:*), Bash(git add:*), Bash(git commit:*), Bash(git log:*), Bash(git branch:*), Bash(git rev-parse:*), Bash(git merge-base:*), Bash(gh pr:*), Bash(gh api:*), Bash(timeout:*), Bash(uv:*), Bash(python3:*), Bash(sleep:*), Bash(date:*), Bash(echo:*), Bash(grep:*), Bash(head:*), Bash(cut:*), Read, Glob, Grep, Edit, Write, AskUserQuestion
 ---
@@ -68,7 +68,7 @@ uv run ruff format --check
 
 (We do not have a separate type-checker.)
 
-**The full suite does not run per PR**: each PR merges on its own CI green (§2d). After the last merge, one local full run — at most two — goes on `develop`'s tip, from a scratch worktree with the main checkout's `data/` linked in and `TMPDIR` off `/tmp`: a lockfile change reaches the data-gated tests CI cannot run.
+**The full suite does not run per PR**: each PR merges on its own CI green (§2d). After the last merge and Phase 3's sync, one local full run — at most two — goes on `develop`'s tip, from a scratch worktree with the main checkout's `data/` linked in and `TMPDIR` off `/tmp`: a lockfile change reaches the data-gated tests CI cannot run.
 
 #### 2c. Auto-fix (if validation fails)
 
@@ -76,7 +76,7 @@ uv run ruff format --check
 |---|---|---|
 | Lint (`ruff check` exits non-zero) | `uv run ruff check --fix` then re-run `ruff check`; analyze any remaining errors and patch manually if obvious. | 3 |
 | Format (`ruff format --check` exits non-zero) | `uv run ruff format` (rewrites in place). | 1 |
-| Tests fail | Read the traceback; if it is an obvious upgrade-shaped issue (renamed import, changed signature, deprecated kwarg), patch it. Re-run `pytest`. | 3 |
+| Tests fail (§2d's `Full test suite` red on the bump's own change) | Read the failing job's log; if it is an obvious upgrade-shaped issue (renamed import, changed signature, deprecated kwarg), patch it. Re-run only the failing tests locally (`uv run pytest <their node ids>`). | 3 |
 
 After the cap: **stop and ask** the user. Don't silently keep retrying.
 
@@ -154,9 +154,9 @@ git merge-base --is-ancestor origin/develop HEAD; echo "rc $?"
 # Squash so each dependency bump is a single commit on develop (the deliberate exception to
 # merge-pr's merge-commit rule); also deletes the dependabot/ head branch.
 gh pr merge <number> --squash --delete-branch    # the number step 4 planned, not a variable
-# Anything other than `success` stops the merge: a red check is escalation trigger #4, and a check
-# still pending 30 minutes after the push is reported as stalled. Never merge on a state you did
-# not read.
+# Anything other than `success` stops the merge: a red check on the bump's own change goes to §2c's
+# test row, any other red is escalation trigger #4, and a check still pending 30 minutes after the
+# push is reported as stalled. Never merge on a state you did not read.
 ```
 
 ### Phase 3 — Cleanup

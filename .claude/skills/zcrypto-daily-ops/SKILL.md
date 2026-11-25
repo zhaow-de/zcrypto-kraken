@@ -107,7 +107,7 @@ The entry's paragraph, to `#zcrypto`. If no Slack tool is reachable, say so in t
 
 ## 9. Schedule tomorrow's reminder
 
-A scheduled message fires once. Schedule tomorrow's Slack reminder before finishing, the way `refdata-sweep-due` does. **The owner starts the pass by hand; the Slack message is only a reminder.** A day with no pass is recorded in the next entry as a gap; neither the gap nor the re-arm is routed to `zcrypto-marco` or the memo.
+A scheduled message fires once. Schedule tomorrow's Slack reminder before finishing, the way `refdata-sweep-due` does. **The owner starts the pass by hand; the Slack message is only a reminder.** A day with no pass is recorded in the next entry as a gap, never backfilled; neither the gap nor the re-arm is routed to `zcrypto-marco` or the memo.
 
 **Before an entry routes a converge as owed or counts a topic's arms, it reads the sources**, never memory: the topic's file — `ripe_when` and body — and the memo item its serial heads, where the owner's converge rulings are quoted; a converge the owner ruled not to run is recorded as ruled, never routed, and a dependency bump's image is owed no converge of its own (`dependabot`'s Phase 3).
 

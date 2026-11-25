@@ -15,7 +15,7 @@ Grooming is a **joint conversation**: this skill structures it, the user decides
 
 ## Invariants — every invocation, both modes
 
-- **The protocol governs every touch of the file** — `references/memo-protocol.md`: re-read first, Edit/Write tools only under the read-guard, anchored edits, deletion only at the purge gate, privacy, formats.
+- **The protocol governs every touch of the file** — `references/memo-protocol.md`: re-read first, Edit/Write tools only under the read-guard, anchored edits, deletion only where the protocol names it, privacy, formats.
 - **The user's explicit agreement closes each item; undecided is the default state, not a failure.** A point nobody has ruled on simply stays in `NEW IDEAS` — under time pressure, for lack of consensus, or for any reason at all. Deciding solo is never the shortcut.
 
 ## With an argument — single-item update, nothing else
