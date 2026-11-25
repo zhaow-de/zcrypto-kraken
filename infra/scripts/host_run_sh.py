@@ -826,6 +826,7 @@ _CODE_DIRS = _w(
     f"{HOME}/.bash_login {HOME}/.ssh/rc {HOME}/.ssh/authorized_keys {HOME}/.config/systemd {HOME}/.local/bin"
 )
 DEFAULT_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+_SUDO_VALUE = _w("--user --group --chdir --host --prompt --close-from --chroot --command-timeout --other-user --role --type")
 # Runners that run their operands as a command, unchanged.
 _PLAIN_RUNNERS = _w("nohup builtin unbuffer chronic catchsegv caffeinate eatmydata tsocks fakeroot")
 # Runners whose commands come from somewhere the judge does not read, or run under another root.
@@ -1091,10 +1092,13 @@ class Judge:
             return [ANY]
         argv = [a[0] for a in (self.expand(w, ctx, inner.child()) for w in nodes[0].words)]
         while argv and argv[0].rsplit("/", 1)[-1] in ("sudo", "command", "nohup"):
-            argv = [a for a in argv[1:] if not a.startswith("-")] if argv[0].endswith("sudo") else argv[1:]
+            argv = _opts(argv[1:], "ugCDhpRTUrt", _SUDO_VALUE, stop_at_operand=True)[1] if argv[0].endswith("sudo") else argv[1:]
         if not argv:
             return [ANY]
         name, args = argv[0].rsplit("/", 1)[-1], [a for a in argv[1:] if not a.startswith("-")]
+        if name == "find":
+            starts, expr = _find_split(argv[1:])
+            return [f for _, f in _found([norm(s, inner.cwd) for s in starts or ["."]], expr)][:_ALT_CAP]
         if name == "pwd":
             return [inner.cwd]
         if name == "echo" and args:
@@ -1103,8 +1107,6 @@ class Judge:
             return [SEG]
         if name in ("ls", "realpath", "readlink") and args and all(SEG in a for a in args):
             return [norm(a, inner.cwd) for a in args][:_ALT_CAP]
-        if name == "find" and args:
-            return [norm(a, inner.cwd) + "/" + ANY for a in args[:1]]
         if name == "dirname" and args:
             return [norm(args[0], inner.cwd).rsplit("/", 1)[0] or "/"]
         return [ANY]
@@ -1289,12 +1291,7 @@ class Judge:
         if name == "eval":
             raise _unresolvable("eval runs text the block computes at run time")
         if name in ("sudo", "doas"):
-            opts, rest = _opts(
-                args,
-                "ugCDhpRTUrt",
-                _w("--user --group --chdir --host --prompt --close-from --chroot --command-timeout --other-user --role --type"),
-                stop_at_operand=True,
-            )
+            opts, rest = _opts(args, "ugCDhpRTUrt", _SUDO_VALUE, stop_at_operand=True)
             flags = {k for k, _ in opts}
             longs = {"--login": "-i", "--shell": "-s", "--stdin": "-S", "--edit": "-e"}
             flags |= {longs[k] for k in flags if k in longs}
@@ -2005,10 +2002,11 @@ HOLD = ENGINE_EXEC + "/restart-hold"
 KILL = ENGINE_EXEC + "/kill"
 PLAN = ENGINE_EXEC + "/probe-plan.json"
 
+# Each pattern ends in a literal, so a glob whose own literal suffix differs (`*.log`) cannot match it.
 SECRET_FILES = (
     ANY + ".env",
     ANY + "_ed25519",
-    ANY + "/id_" + SEG,
+    *(ANY + "/id_" + k for k in ("rsa", "dsa", "ecdsa", "ed25519", "ecdsa_sk", "ed25519_sk", "xmss")),
     ANY + "/ssh_host_" + SEG + "_key",
     ANY + ".vault",
     ANY + "vault.yml",
@@ -2016,9 +2014,10 @@ SECRET_FILES = (
     ANY + ".pem",
     ANY + ".key",
     ANY + "/haproxy.cfg",
-    ANY + "/hc.sqlite" + SEG,
-    ANY + "/hc-" + SEG + ".sqlite" + SEG,
-    ANY + "/config.v2.json",
+    *(ANY + "/hc.sqlite" + k for k in ("", "-wal", "-shm", "-journal")),
+    *(ANY + "/hc-" + SEG + ".sqlite" + k for k in ("", "-wal", "-shm", "-journal")),
+    "/var/backups/zcrypto-hc/" + ANY,
+    "/volume1/docker/zcrypto-archive/hc-backups/" + ANY,
     "/etc/wireguard/" + ANY,
     "/etc/default/alloy",
     "/etc/default/" + SEG + "selfcheck",
@@ -2164,12 +2163,20 @@ _PS_VALUE = _w("--pid --ppid --sort --format --cols --columns --rows --lines --u
 _PATTERN_FIRST = _w("grep egrep fgrep zgrep zegrep zfgrep rg ag ack awk gawk mawk nawk sed jq yq")
 
 
+# A glob over a directory's files by an ordinary extension (`*.yml`) does not name a credential whose own name only
+# shares that extension, outside an Ansible vars directory, where vault.yml lives among the *.yml.
+_ORDINARY_GLOB = re.compile(
+    SEG + r"+\.(?:log|json|jsonl|ya?ml|timer|service|target|socket|path|mount|txt|csv|parquet|md|rules|prom|gz|out|err)"
+)
+_NAMED_ONLY = {ANY + "vault.yml"}
+_ANSIBLE_VARS = tuple(ANY + "/" + d + "/" + ANY for d in ("group_vars", "host_vars", "vars", "defaults"))
+
+
 def _secret(w: str, match=could) -> str | None:
     """The credential pattern `w` could name, or None."""
+    ordinary = bool(_ORDINARY_GLOB.fullmatch(w.rsplit("/", 1)[-1])) and not any(could(w, v) for v in _ANSIBLE_VARS)
     for pat in SECRET_FILES:
-        if match(w, pat):
-            if pat.endswith("/id_" + SEG) and w.endswith(".pub") and not any(c in w[-5:] for c in WILD):
-                continue
+        if (does if ordinary and pat in _NAMED_ONLY else match)(w, pat):
             return _show(pat)
     return None
 
