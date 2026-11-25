@@ -172,7 +172,7 @@ Both ends of the tunnel run a probe timer that writes `zaccess_wireguard_handsha
 ### What to do
 
 1. On the bridgehead and on the ops host: `wg show zaccess0` on **both** ends and compare `latest handshake`.
-2. Check the `Endpoint` the ops-side client conf resolves to (`/etc/wireguard/zaccess0.conf` on `zcrypto-ops`) against the bridgehead's actual public address — a home-ISP IP change on the ops side is the routine cause of a stuck endpoint, not a config error.
+2. Check the `Endpoint` the ops-side client conf resolves to (`/etc/wireguard/zaccess0.conf` on `zcrypto-ops`, which also renders the tunnel's `PrivateKey` and `PresharedKey`, so its read is the owner's) against the bridgehead's actual public address — a home-ISP IP change on the ops side is the routine cause of a stuck endpoint, not a config error.
 3. Confirm UDP `51820` is still open on the Linode Cloud Firewall and the bridgehead's own nftables rules (`firewall_extra_udp_ports` in `group_vars/access_host/vars.yml`) — the two layers are maintained separately.
 4. `systemctl restart wg-quick@zaccess0` on the ops node is the usual fix — it re-initiates the handshake against the configured endpoint without touching the bridgehead's own service; agentboard and the ops-side NAS relay restart with it through `Requires=`.
 5. Confirm recovery by value: `wg show zaccess0` on both ends shows a handshake under a few minutes old, and `uv run python infra/scripts/grafana-query.py 'zaccess_wireguard_handshake_age_seconds'` returns a low value for **both** hosts — a missing host is the silent case above, not recovery.
