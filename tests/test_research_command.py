@@ -6330,6 +6330,23 @@ def test_the_b3_overlay_trial_refuses_a_plain_eval_and_another_count_before_any_
     assert refused in result.output
 
 
+@pytest.mark.parametrize("name", ["c3-asopr-reentry"])
+@pytest.mark.parametrize("plain", [True, False], ids=["plain-eval", "another-count"])
+def test_the_c3_reentry_trial_refuses_a_plain_eval_and_another_count_before_any_read(tmp_path, monkeypatch, name, plain):
+    _anchor(monkeypatch, tmp_path / "no-data", tmp_path / "registry.jsonl")
+    flags = [] if plain else ["--register", "--iteration", "iter-210", "--family", "C3", "--n-trials", "2"]
+    refused = (
+        f"{name} declares a verdict rule, so every run of it is a trial: run it with --register"
+        if plain
+        else f"--n-trials 2 is not 1, the count {name} declares and deflates at: pass --n-trials 1"
+    )
+
+    result = runner.invoke(app, ["research", "eval", "--subject", name, "--dataset", "btc-onchain-test", *flags])
+
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit), result.output
+    assert refused in result.output
+
+
 def _ruled_signal(held: list[float | None], flat: list[float]) -> tuple[dict, dict]:
     """BTC's signal at its long stamps `held` and at its flat ones `flat`, every other asset's flat and unread."""
     n = len(held) + len(flat)
@@ -6814,6 +6831,7 @@ _RULED_FIXTURES = {
     "b3-btc-overlay": _b2_dataset,
     "b4-ratio-legs": _b4_dataset,
     "b4-sol-noborrow-rolling": _b4_sol_dataset,
+    "c3-asopr-reentry": lambda tmp_path: _c3_dataset(tmp_path, subjects.SUBJECTS["c3-asopr-reentry"])[0],
     "p1-revalidation": _p1_revalidation_dataset,
     "p1-reprice": lambda tmp_path: _declared_series(tmp_path, subjects.SUBJECTS["p1-reprice"])[0],
 }
@@ -6835,6 +6853,7 @@ _DECLARED_COUNT = {
     "b3-btc-overlay": "_B3_OVERLAY_N_TRIALS",
     "b4-ratio-legs": "_B4_N_TRIALS",
     "b4-sol-noborrow-rolling": "_B4_SOL_N_TRIALS",
+    "c3-asopr-reentry": "_C3_ASOPR_REENTRY_N_TRIALS",
     "p1-revalidation": "_P1_REVALIDATION_N_TRIALS",
     "p1-reprice": "_P1_REPRICE_N_TRIALS",
 }
@@ -6859,6 +6878,7 @@ def test_the_ruled_subjects_declare_their_families_and_trial_counts():
         "b3-btc-overlay": ("B3", 3),
         "b4-ratio-legs": ("B4", 1),
         "b4-sol-noborrow-rolling": ("B4", 2),
+        "c3-asopr-reentry": ("C3", 1),
         "p1-revalidation": ("P1", 6),
         "p1-reprice": ("P1", 7),
     }
@@ -8486,6 +8506,8 @@ _CONTRACT_DATASETS = {
     "p1-revalidation": lambda tmp_path, subject: (_p1_revalidation_dataset(tmp_path), datetime(2025, 1, 1, tzinfo=UTC)),
     "engine-cost-reading": lambda tmp_path, subject: (tmp_path / "data", write_l2_ladder_set(tmp_path / "data", "ohlc-test")),
     "c3-onchain-reading": _c3_dataset,
+    "c3-asopr-reentry": _c3_dataset,
+    "c3-asopr-reentry-preflight": _c3_dataset,
 }
 
 
