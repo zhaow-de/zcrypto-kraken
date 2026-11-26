@@ -24,11 +24,14 @@
 # a substitution or an encoding, a cap first in its pipeline, which truncates what it opened rather than what the
 # command computed (`head -1 VERSION`), a truncation that is neither head nor tail, and a vaulted file read by a
 # program no family names (`grep` without `-c`, `diff`, `git log -p`, a Python script) or reached through a copy of
-# its whole directory -- none is an argv this guard judges; nor is a vaulted file the command makes before it reads it
-# (`ln -s <vaulted file> x && cat x`), since a file's existence is read before anything runs. Of `xargs` and
-# `find -exec`, two shapes are judged: a stage whose command word is `xargs` with `grep` or `rg` as its first operand,
-# or `find` carrying `-exec grep|rg`, in a pipeline any stage of which names `infra` as a word or a path component --
-# the word `grep_pattern_at` takes for the grep's pattern excepted; every other `xargs` or `-exec` is outside. A vault
+# its whole directory, and a vaulted blob printed by `git show` or `cat-file` through anything but a literal
+# `<rev>:<path>` word that resolves from the stage's directory -- a blob's id, `cat-file --batch`'s input, a
+# `--git-dir` or `GIT_DIR`, a revision through a variable or a substitution -- none is an argv this guard judges; nor is
+# a vaulted file the command makes before it reads it (`ln -s <vaulted file> x && cat x`), since a file's existence is
+# read before anything runs. Of `xargs` and `find -exec`, two shapes are judged: a stage whose command word is `xargs`
+# with `grep` or `rg` as its first operand, or `find` carrying `-exec grep|rg`, in a pipeline any stage of which names
+# `infra` as a word or a path component -- the word `grep_pattern_at` takes for the grep's pattern excepted; every
+# other `xargs` or `-exec` is outside, one handed a vaulted file outside `infra` among them. A vault
 # tool's writing verb is admitted over a vaulted file: a key rotation runs `ansible-vault encrypt|rekey`. The vaulted
 # set is `VAULT_EXCLUDES` of infra/scripts/consumers.sh beside this file, what that script's searches exclude; a set
 # that cannot be had refuses every command judged against it.
@@ -162,7 +165,8 @@ PRINTERS = {"cat", "head", "tail", "less", "more", "sed", "awk", "cut", "strings
 COPIERS = {"cp", "scp", "rsync"}
 INTERPRETER = re.compile(r"^python(\d+(\.\d+)?)?$")
 VAULT_DEFINITION = "infra/scripts/consumers.sh"
-VAULT_LINE = re.compile(r"^VAULT_EXCLUDES=\(((?:[ \t]*'[^'\n]*')+)[ \t]*\)[ \t]*$", re.M)
+VAULT_LINE = re.compile(r"^VAULT_EXCLUDES=\([ \t]*('[^'\n]*'(?:[ \t]+'[^'\n]*')*)[ \t]*\)[ \t]*$", re.M)
+VAULT_NAMED = re.compile(r"\bVAULT_EXCLUDES\b(?!\[@\]\})")  # the name, but in a `${VAULT_EXCLUDES[@]}` read
 VAULT_ENTRY = re.compile(r":!(?![:/!^(])[^\\\[\n]+")
 WILD = re.compile(r"[*?[]")
 BRACE = re.compile(r"\{([^{}]*)\}")
@@ -773,7 +777,7 @@ def judge_handed_grep(pipe, raw):
     if any("infra" in w.split("/") for w in judged):
         for stage, h in zip(pipe, handed):
             if h:
-                refuse_vault(stage, "greps the files it is handed in a pipeline naming infra, where the vaulted files sit", raw)
+                refuse_vault(stage, "greps the files it is handed in a pipeline naming infra, which holds vaulted files", raw)
 
 
 def is_git(w):
@@ -785,9 +789,10 @@ class VaultSetUnread(Exception):
 
 
 def vault_set():
-    # The vaulted set's patterns, `VAULT_EXCLUDES` of the consumers.sh beside this file -- one line of single-quoted
-    # `:!<pattern>` words, which bash and this parse read alike, with no other assignment -- or None and why not. A
-    # pattern takes `*` and `?` alone: a class or an escape is read by Python's fnmatch otherwise than by git.
+    # The vaulted set's patterns, `VAULT_EXCLUDES` of the consumers.sh beside this file, or None and why not. The
+    # file names the array on one line of single-quoted `:!<pattern>` words parted by blanks, the words bash builds of
+    # it, and nowhere else but in `${VAULT_EXCLUDES[@]}` reads, so no other line writes it. A pattern takes `*` and
+    # `?` alone: a class or an escape is read by Python's fnmatch otherwise than by git.
     path = posixpath.normpath(posixpath.join(HOOK_DIR, "..", "..", VAULT_DEFINITION))
     try:
         with open(path, encoding="utf-8") as f:
@@ -795,8 +800,11 @@ def vault_set():
     except (OSError, ValueError) as exc:
         return None, f"`{VAULT_DEFINITION}` beside this hook could not be read ({type(exc).__name__})"
     lines = VAULT_LINE.findall(text)
-    if len(lines) != 1 or len(re.findall(r"VAULT_EXCLUDES\+?=", text)) != 1:
-        return None, f"`{VAULT_DEFINITION}` beside this hook holds no one-line `VAULT_EXCLUDES=('…' …)` and no other assignment"
+    if len(lines) != 1 or len(VAULT_NAMED.findall(text)) != 1:
+        return None, (
+            f"`{VAULT_DEFINITION}` beside this hook holds no one-line `VAULT_EXCLUDES=('…' …)` and no other assignment, "
+            f"naming the array nowhere else but in `${{VAULT_EXCLUDES[@]}}` reads"
+        )
     words = re.findall(r"'([^']*)'", lines[0])
     bad = next((w for w in words if not VAULT_ENTRY.fullmatch(w)), None)
     if bad is not None:
