@@ -1634,6 +1634,13 @@ FLEET_REACHED = [
     # an rsync `-e` naming ssh behind a wrapper or a path
     ("rsync -e 'sudo ssh -o HostName=nas' f example.org:/x", "nas"),
     ("rsync --rsh='/usr/bin/env ssh -o HostName=nas' f example.org:/x", "nas"),
+    # `-o HostName` in each spelling ssh's config parser reads: a leading `=` or space, a quote closing the keyword,
+    # a quoted value
+    ("ssh -o=HostName=zcrypto-red example.org", "red"),
+    ("ssh -o '=HostName nas' example.org", "nas"),
+    ("ssh -o 'Host\"Name\" nas' example.org", "nas"),
+    ("ssh -o 'HostName \"red\"' example.org", "red"),
+    ("rsync -e 'ssh -o=HostName=nas' f example.org:/x", "nas"),
 ]
 
 # A host only run time knows.
@@ -1711,6 +1718,27 @@ FLEET_HOPS = [
     ("rsync -e 'sudo ssh -J deploy@jump.example' f example.org:/x", "ProxyJump"),
     ("rsync -e 'env ssh -o ProxyCommand=x' f example.org:/x", "ProxyCommand"),
     ("rsync --rsh='timeout 5 /usr/bin/ssh -o LocalCommand=id' f example.org:/x", "LocalCommand"),
+    # each spelling ssh's config parser reads a keyword in: after one `=` that opens the value, after spaces and an `=`,
+    # with a quote closing it mid-word
+    ("ssh -o=ProxyCommand=x example.org", "ProxyCommand"),
+    ("ssh '-o=ProxyCommand nc %h %p' example.org", "ProxyCommand"),
+    ("ssh -o '= ProxyCommand x' example.org", "ProxyCommand"),
+    ("ssh -o ' =ProxyCommand x' example.org", "ProxyCommand"),
+    ("ssh -o 'Proxy\"Command\" x' example.org", "ProxyCommand"),
+    ("ssh -o 'P\"roxyCommand\"=x' example.org", "ProxyCommand"),
+    ("ssh -o=LocalCommand=id example.org", "LocalCommand"),
+    ("ssh -o=ProxyJump=deploy@jump.example example.org", "ProxyJump"),
+    ("ssh -o 'ProxyJump access,jump.example' example.org", "ProxyJump"),
+    ("scp -o=ProxyCommand=x f example.org:", "ProxyCommand"),
+    ("sftp '-o =ProxyCommand x' example.org", "ProxyCommand"),
+    ("rsync -e 'ssh -o=ProxyCommand=x' f example.org:/x", "ProxyCommand"),
+    # a keyword, or an rsync remote shell, only run time knows
+    ('ssh -o "$OPT" example.org', "option"),
+    ('ssh -o"${K}=x" example.org', "option"),
+    ("ssh -o 'Proxy$X=y' example.org", "option"),
+    ('rsync -e "$RSH" f example.org:/x', "command line"),
+    ("rsync -e 'ssh $OPTS' f example.org:/x", "command line"),
+    ("rsync -e 'sudo $X' f example.org:/x", "command line"),
 ]
 
 FLEET_ADMITTED = [
@@ -1772,6 +1800,11 @@ FLEET_ADMITTED = [
     "env --split-string='grep -c ssh access.log'",
     "fish -c 'ssh example.org uptime'",
     "rsync -e 'sudo ssh' dir/ /mnt/backup/",
+    # an option ssh's config parser reads as harmless, a value only run time knows beside a known keyword
+    "ssh -o=BatchMode=yes example.org true",
+    "ssh -o 'ProxyJump \"access\"' example.org",
+    'ssh -o ConnectTimeout="$T" example.org true',
+    'rsync -e "ssh -p $PORT" f example.org:/x',
     # an ssh-family word a reader takes as data: a grep's, an rg's, journalctl's, systemctl's or a git read's operand,
     # that reader the stage's program or what `xargs` or a find `-exec` runs, up to the `-exec`'s `+`
     "git grep -n ssh -- '*.md'",
