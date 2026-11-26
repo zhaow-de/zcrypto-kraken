@@ -75,6 +75,7 @@ def _update_bodies(entry: dict) -> list[str]:
 NOT_A_WINDOW = {
     "3zrrdvpscrx8": "Unified WebSocket API now available for Derivatives, 2026-11-19T11:00Z to 2027-03-01T23:59Z",
     "5v1dygshcn34": "Unified WebSocket API now available for Derivatives, re-posted, 2026-11-23T09:30Z to 2027-03-01T23:59Z",
+    "71qyw00snp22": "Upcoming change to count on ClosedOrders, TradesHistory and Ledgers REST API endpoints, 2026-11-26T09:00Z to 2026-11-27T09:00Z",
 }
 
 

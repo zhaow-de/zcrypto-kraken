@@ -56,7 +56,7 @@ _RULED = {
 }
 
 
-@pytest.mark.parametrize("ruled_id", ["3zrrdvpscrx8", "5v1dygshcn34"])
+@pytest.mark.parametrize("ruled_id", ["3zrrdvpscrx8", "5v1dygshcn34", "71qyw00snp22"])
 def test_api_impacting_skips_an_entry_the_owner_ruled_not_a_window(ruled_id):
     ruled = {**_RULED, "id": ruled_id}
     reposted = {**ruled, "components": []}
