@@ -87,7 +87,7 @@
     - not alloy_apt_previewed
     - alloy_apt_aptitude.stat.exists
 
-# aptitude writes its own state over dpkg's selections whenever it runs, clearing a hold its state does not carry.
+# aptitude's next run can write its own state over dpkg's selections, clearing a hold its state does not carry.
 - name: hold alloy in aptitude's own state too
   ansible.builtin.command: aptitude hold alloy
   changed_when: true
