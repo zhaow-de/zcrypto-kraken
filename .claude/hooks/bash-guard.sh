@@ -77,25 +77,22 @@
 # verb the family does not name.
 #
 # The fleet family refuses an `ssh`, `scp`, `sftp` or `rsync` word -- a bare one wherever it stands, a path only where it
-# stands as a command (`command_words`), so `ls /usr/bin/ssh` is none -- in a stage and inside a shell's `-c` string,
-# an `eval` line or an `env -S` line, whose host -- a destination, `host:path`, `host::module`, a `scheme://` URI,
-# `-o HostName=` -- is a host or an alias of docs/reference/fleet.md's table, or a name whose first label is one; whose
-# host only run time knows; or, to any host, that carries an ssh option that runs or loads local code (SSH_RUNS, `-I`
-# among them), a ProxyJump or `-J` that is no bare alias, or an `-o` keyword or a word of rsync's `-e` that only
-# run time knows. A fleet host is reached through infra/scripts/host-run.sh, whose stdin block
-# is that wrapper's to judge. The table is read from the checkout of the payload's `cwd` by `fleet_ssh_aliases` of
-# infra/scripts/host_run_sh.py beside this file, its one parse; a table that cannot be had refuses every such word that
-# names a host. `ssh -V`, `-G`, `-Q` and `-O check|exit|stop` connect nowhere. A word a reader takes as data -- an operand
-# of a grep, rg, journalctl, systemctl or git read that is the stage's program or what `xargs` or a find `-exec` runs --
-# is no ssh-family call; behind any other wrapper (`sudo grep ssh f`) it is judged as one. Outside: an IP address, a
-# name ~/.ssh/config maps to a fleet host, `-F` and the config's own commands, `scp -S`, `RSYNC_RSH`, a program that
-# runs ssh itself (`mosh`, `autossh`, `ssh-copy-id`, `parallel -S`, `systemctl -H`, `rg --pre`, a link to `ssh-argv0`
-# named for a host, git's `GIT_SSH_COMMAND`), and a script fed to a shell on stdin or handed as a string to any other
-# program (`watch`, `su -c`). Outside too: a host a handler (`xargs`, `parallel`) appends, a `%h` template in
-# `HostName`, a command bash cannot tokenise at the top level, a here-document delimiter bash reads otherwise, a function
-# named after a reader, an abbreviated long option, a program word that is a glob or a brace, `trap`'s action and a
-# `-c` string's `$0`, `sftp -D` and `scp -D`, `env -a`, a jump host with a loopback destination, a multiplexing master,
-# git's ssh transport, and a path behind a runner RUNNERS does not name or past a long option's separate value.
+# stands as a command (`command_words`) -- in a stage and inside a shell's `-c` string, an `eval` line or an `env -S`
+# line, whose host is a host or an alias of docs/reference/fleet.md's table, or a name whose first label is one; whose
+# host only run time knows; or, to any host, that carries an option SSH_RUNS names, a ProxyJump or `-J` that is no bare
+# alias, or an `-o` keyword or a word of rsync's `-e` that only run time knows. A fleet host is reached through
+# infra/scripts/host-run.sh, whose stdin block is that wrapper's to judge. The table is read from the checkout of the
+# payload's `cwd` by `fleet_ssh_aliases` of infra/scripts/host_run_sh.py beside this file, its one parse; a table that
+# cannot be had refuses every such word that names a host. A word a reader takes as data (`data_words`) is no call;
+# behind any other wrapper (`sudo grep ssh f`) it is judged as one. Outside: an IP address, a name ~/.ssh/config maps
+# to a fleet host, `-F` and the config's own commands, `scp -S`, `RSYNC_RSH`, a program that runs ssh itself (`mosh`,
+# `autossh`, `ssh-copy-id`, `parallel -S`, `systemctl -H`, `rg --pre`, a link to `ssh-argv0` named for a host, git's
+# `GIT_SSH_COMMAND`), a script fed to a shell on stdin or handed as a string to any other program (`watch`, `su -c`), a
+# host a handler (`xargs`, `parallel`) appends, a `%h` template in `HostName`, a command bash cannot tokenise at the
+# top level, a here-document delimiter bash reads otherwise, a function named after a reader, an abbreviated long
+# option, a program word that is a glob or a brace, `trap`'s action and a `-c` string's `$0`, `sftp -D` and `scp -D`,
+# `env -a`, a jump host with a loopback destination, a multiplexing master, git's ssh transport, and a path behind a
+# runner RUNNERS does not name or past a long option's separate value.
 #
 # A failure of the hook's own -- stdin that is not the tool call's JSON, a command `shlex` cannot tokenise --
 # admits with a note on stderr, never blocks: exit 2 would refuse every Bash call in the session. That second
@@ -1025,7 +1022,7 @@ def exclude_spec(spec):
 def scoped_grep(rest, where):
     # git does the selecting, never a hand matcher: `git ls-files` from the payload's cwd lists the positives -- none
     # lists that directory, which git grep then searches -- and, apart, `:/` beside the excludes; the searched files
-    # are those of the first listing the second keeps. Apart, since git 2.47's ls-files misreads an exclude beside
+    # are those of the first listing the second keeps. Apart, since git's ls-files misreads an exclude beside
     # positives sharing a leading directory: it keeps a file the exclude drops, or lists nothing. A commit's tree is
     # overlaid on the index, a superset that can only refuse more; any other object refuses.
     if any(a[:2] == "--" and among(a, {"--no-index", "--untracked"}) for a in rest):
