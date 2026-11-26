@@ -3382,16 +3382,22 @@ def rule_workstation(cmd: Cmd, j: Judge) -> Refusal | None:
     return None
 
 
+# The words a down command may be handed alone and take nothing down: its help, shutdown's cancel and its show.
+_DOWN_INERT = {"reboot": {"--help"}, "poweroff": {"--help"}, "halt": {"--help"}, "shutdown": {"--help", "-c", "--show"}}
+
+
 def _takes_down(cmd: Cmd) -> str | None:
     """Why `cmd` could reboot, power off, sleep or isolate the machine it runs on, for the refusal to quote; else None."""
     name = cmd.name
     if name in ("reboot", "shutdown", "poweroff", "halt", "pm-suspend", "pm-hibernate", "pm-suspend-hybrid", "zzz", "s2ram"):
+        if cmd.args and set(cmd.args) <= _DOWN_INERT.get(name, set()):
+            return None
         return f"{name} takes the machine down"
     if name in ("init", "telinit") and (level := next((a for a in cmd.args if a in ("0", "6", "1", "s", "S")), None)):
         return f"{name} {level} takes the machine down"
     if name == "kexec" and any(a in ("-e", "--exec") for a in cmd.args):
         return "kexec -e takes the machine down"
-    if name in ("systemctl", "loginctl"):
+    if name in ("systemctl", "loginctl") and [a for a in cmd.args if a.startswith("-")] != ["--help"]:
         ops = [a for a in cmd.args if not a.startswith("-")]
         verb = ops[0] if ops else ""
         if verb in _w(

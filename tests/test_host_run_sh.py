@@ -1375,6 +1375,28 @@ def test_a_reboot_or_shutdown_is_refused_on_the_primary_and_admitted_on_the_seco
     assert done.returncode == (65 if red else 0) and _rule(done) == red, done.stderr.decode()
 
 
+# A down command's form that takes nothing down, beside the nearest spelling that does.
+DOWN_READS = [
+    ("shutdown-cancel", "sudo shutdown -c", "sudo shutdown -c -r now"),
+    ("shutdown-show", "sudo shutdown --show", "sudo shutdown -h +5"),
+    ("shutdown-help", "shutdown --help", "sudo shutdown"),
+    ("reboot-help", "reboot --help", "sudo reboot"),
+    ("poweroff-help", "poweroff --help", "sudo poweroff"),
+    ("halt-help", "halt --help", "sudo halt"),
+    ("systemctl-reboot-help", "systemctl reboot --help", "sudo systemctl reboot"),
+    ("rtcwake-list-modes", "rtcwake --list-modes", "sudo rtcwake -m off -s 60"),
+]
+
+
+@pytest.mark.parametrize(("alias", "rule"), [("zcrypto", "capture-primary"), ("hp", "workstation")])
+@pytest.mark.parametrize(("read", "down"), [pytest.param(r, d, id=i) for i, r, d in DOWN_READS])
+def test_a_down_commands_form_that_takes_nothing_down_is_admitted_beside_one_that_does(door, read, down, alias, rule):
+    done = door.judge(alias, read)
+    assert done.returncode == 0 and done.stdout.decode() == "ADMITTED\n", done.stderr.decode()
+    done = door.judge(alias, down)
+    assert done.returncode == 65 and _rule(done) == rule, done.stderr.decode()
+
+
 @pytest.mark.parametrize(("block", "rule"), [pytest.param(b, r, id=f"hazards-side-door-{i}") for i, b, r in HAZARD_DOORS])
 def test_a_recursive_removal_of_a_data_root_is_refused_whatever_its_flags(door, block, rule):
     done = door.judge("zcrypto", block)
