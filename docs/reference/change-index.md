@@ -466,3 +466,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #895 | 2026-11-25 | feat(research): iter-210 — C3 trial 1: aSOPR's low tail as a re-entry | iter-210 | 00165 | T0228 |
 | #896 | 2026-11-25 | docs(research): iter-211 — C3 trial 2 not run, C3 held to 2027-12-13 | iter-211 | 00166 | T0228 |
 | #898 | 2026-11-25 | ci: T0085 — the capture image builds linux/arm64 again | — | — | T0085 |
+| #899 | 2026-11-26 | fix(scripts): iter-212 — Kraken's count-change notice ruled not a window | iter-212 | — | — |
