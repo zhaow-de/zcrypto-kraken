@@ -18,16 +18,16 @@ Reading rules:
 | capture | zcrypto-red | `1931596fd60b` — revision `9040ca59` | 2026-11-23 13:14:14 | `f102ca375382` |
 | engine | zcrypto | `512ba1a02ea9` — revision `bc217e61` | 2026-11-23 22:04:16 | `81a8d6c7df63` |
 | cache-proxy | zcrypto | `76928c0d6b39` — HAProxy 3.4.5, upstream `haproxy` | 2026-11-23 22:04:15 | first pin |
-| alloy | zcrypto | `89a5a3201683` — v1.21.2 | 2026-11-23 22:04:10 | `2aa2099af76c` — v1.20.1 |
-| alloy | zcrypto-red | `89a5a3201683` — v1.21.2 | 2026-11-23 13:14:12 | `2aa2099af76c` — v1.20.1 |
-| alloy | zcrypto-ops | `89a5a3201683` — v1.21.2 | 2026-11-15 22:35:35 | `2aa2099af76c` — v1.20.1 |
-| alloy | nas | `89a5a3201683` — v1.21.2, upstream `grafana/alloy`, no `-compat` variant | 2026-11-07 19:46:44 | `2aa2099af76c` — v1.20.1 |
+| alloy | zcrypto | `9acc2529bc1e` — v1.22.0 | 2026-11-26 20:09:38 | `89a5a3201683` — v1.21.2 |
+| alloy | zcrypto-red | `9acc2529bc1e` — v1.22.0 | 2026-11-26 20:02:00 | `89a5a3201683` — v1.21.2 |
+| alloy | zcrypto-ops | `9acc2529bc1e` — v1.22.0 | 2026-11-26 17:18:49 | `89a5a3201683` — v1.21.2 |
+| alloy | nas | `9acc2529bc1e` — v1.22.0, upstream `grafana/alloy`, no `-compat` variant | 2026-11-26 18:27:00 | `89a5a3201683` — v1.21.2 |
 | valkey + sentinel | zcrypto-valkey1 | `418652cfb58e` — Valkey 9.1.2, upstream `valkey/valkey` | 2026-09-26 21:20:54 | first pin |
-| alloy | zcrypto-valkey1 | `89a5a3201683` — v1.21.2 | 2026-11-06 15:08:16 | `2aa2099af76c` — v1.20.1 |
+| alloy | zcrypto-valkey1 | `9acc2529bc1e` — v1.22.0 | 2026-11-26 18:46:45 | `89a5a3201683` — v1.21.2 |
 | valkey + sentinel | zcrypto-valkey2 | `418652cfb58e` — Valkey 9.1.2, upstream `valkey/valkey` | 2026-09-26 21:24:03 | first pin |
-| alloy | zcrypto-valkey2 | `89a5a3201683` — v1.21.2 | 2026-11-06 15:09:53 | `2aa2099af76c` — v1.20.1 |
+| alloy | zcrypto-valkey2 | `9acc2529bc1e` — v1.22.0 | 2026-11-26 19:48:16 | `89a5a3201683` — v1.21.2 |
 | valkey + sentinel | zcrypto-valkey3 | `418652cfb58e` — Valkey 9.1.2, upstream `valkey/valkey` | 2026-09-26 21:28:18 | first pin |
-| alloy | zcrypto-valkey3 | `89a5a3201683` — v1.21.2 | 2026-11-06 15:11:19 | `2aa2099af76c` — v1.20.1 |
+| alloy | zcrypto-valkey3 | `9acc2529bc1e` — v1.22.0 | 2026-11-26 19:53:49 | `89a5a3201683` — v1.21.2 |
 | ops (timers + liquidations) | zcrypto-ops | `98cfad6c97cf` — revision `3818d749` | 2026-11-23 11:46:52 | `512ba1a02ea9` |
 | bitcoind | zcrypto-ops | `987f63d5e223` — Bitcoin Core v32.1, the local build of `infra/docker/bitcoind/Dockerfile` | 2026-11-24 01:18:17 | first pin |
 | bitview | zcrypto-ops | `2dbc2962c54c` — BRK at `1a19c5e96976`, the local build of its `docker/Dockerfile` | 2026-11-24 11:09:02 | first pin |
@@ -40,9 +40,9 @@ Every host's Alloy runs the fleet's version outside a wave (set: the hosts of th
 | package | host | version | since (UTC) | notes |
 | --- | --- | --- | --- | --- |
 | agentboard | zcrypto-ops | `0.5.3` (`@gbasin/agentboard`, npm global as `zhaow`) | 2026-09-17 | restarted by a tunnel-conf converge (`Requires=wg-quick@zaccess0`), not by a role task; re-pins attended, no bake; read-back and upgrade: `infra/runbooks/ops-node.md`'s `agentboard-node-upgrade` |
-| alloy | zaccess | `1.21.2-1` | 2026-11-06 | dpkg hold; pinned at 1001 |
-| alloy | zcrypto-mon | `1.21.2-1` | 2026-10-26 | dpkg hold; pinned at 1001 |
-| alloy | zcrypto-hc | `1.21.2-1` | 2026-11-08 | dpkg hold; pinned at 1001 |
+| alloy | zaccess | `1.22.0-1` | 2026-11-26 | dpkg hold; pinned at 1001 |
+| alloy | zcrypto-mon | `1.22.0-1` | 2026-11-26 | dpkg hold; pinned at 1001 |
+| alloy | zcrypto-hc | `1.22.0-1` | 2026-11-26 | dpkg hold; pinned at 1001 |
 | hc (the healthchecks clone, `ghcr.io/zhaow-de/healthchecks`, by tag) | zcrypto-hc | `v6.3.1` | 2026-11-08 10:29:13 | rollback `v6.2.0`, pulled from the registry first, the node rebuilt 2026-11-08 holding `v6.3.1` alone: `infra/runbooks/hc.md` `hc-patch-pass` step 6 |
 
 ## Standing constraints
@@ -69,5 +69,5 @@ The current pins and their operands; older digests are in this file's git log.
 - `c365dae0afee` = `sha256:c365dae0afee6d83b7f5569ae4d5bc9cc3b36f99c447ae38166ea81e381e83be` — revision `9040ca59`, the `-compat` build; the NAS archive-pull's operand
 - `418652cfb58e` = `sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd` — Valkey 9.1.2; the cache nodes
 - `76928c0d6b39` = `sha256:76928c0d6b39bdd5f1c15d519cf48c47a6aa18c1dc552f7af1c146d2aa003c14` — HAProxy 3.4.5; the engine host's cache proxy
-- `89a5a3201683` = `sha256:89a5a320168387336b9ac3c850609c3ba7757eadd4ae5f1d819deb35e9854b18` — Alloy v1.21.2; the ops, capture and cache hosts and the NAS
-- `2aa2099af76c` = `sha256:2aa2099af76c0098d4af7a4d6e48f86cb66dc1a000222ad927a1c67c6542d13f` — Alloy v1.20.1; the ops', the capture and cache hosts' and the NAS's operand
+- `89a5a3201683` = `sha256:89a5a320168387336b9ac3c850609c3ba7757eadd4ae5f1d819deb35e9854b18` — Alloy v1.21.2; the container Alloy rows' operand
+- `9acc2529bc1e` = `sha256:9acc2529bc1edb7f5b2bd801dd8334ebc80c158e3a9e5526ecd7c9a273d43189` — Alloy v1.22.0; Alloy's containers
