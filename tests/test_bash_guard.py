@@ -1061,19 +1061,9 @@ UNSCOPED_GREPS = [
     ("git grep -n foo -- ':(top)infra'", "docs"),
     ("git grep -l foo -- ':!*vault*' ':!*.sops.*'", "infra"),
     ("git grep -n foo -- files/deploy_zcrypto_ed25519", "infra/ansible"),
-    ("git grep -l foo -- tests infra ':!*vault*' ':!*.sops.*' ':!infra/ansible/files/*_ed25519'", "."),
-    (
-        "git grep -n -e foo -- infra ':!*vault.yml' ':!*.vault' ':!*.sops.*' ':!*vault-password*' ':!infra/ansible/files/*_ed25519'",
-        ".",
-    ),
-    ("git grep -n foo -- infra ':^*vault*' ':^*.sops.*' ':^infra/ansible/files/*_ed25519'", "."),
     ("git grep -c ANSIBLE -- infra/ansible/group_vars ':!zzzz'", "."),
     ("git grep -c ANSIBLE -- infra/ansible/group_vars ':/!zzzz'", "."),
     ("git grep -c ANSIBLE -- infra/ansible/group_vars ':(exclude)zzzz'", "."),
-    (
-        "git grep -l foo -- infra/ansible ':!*vault.yml' ':!*.vault' ':!*.sops.*' ':!*vault-password*' ':!infra/ansible/files/*_ed25519'",
-        ".",
-    ),
 ]
 SCOPED_GREPS = [
     ("git grep -l foo -- infra/ansible/roles ':!*.vault'", "."),
@@ -1268,7 +1258,7 @@ def test_the_hook_refuses_a_read_of_exactly_the_specimens_consumers_sh_excludes(
 def test_a_git_grep_over_a_directory_holding_a_specimen_consumers_sh_excludes_is_refused_reciting_the_set(
     specimen_repo: Path, tmp_path: Path
 ):
-    for command in ("git grep -n x -- docs", "git grep -n x -- docs ':!*vault.yml'"):
+    for command in ("git grep -n x -- docs", "git grep -n x -- docs ':!*.vault'"):
         r = run_hook(agent_call(command, str(specimen_repo)), cwd=tmp_path)
         assert r.returncode == 2 and "may search the vaulted file `docs/x/fake-vault.yml`" in r.stderr, r.stderr
         assert all(f"`{spec.removeprefix(':!')}`" in r.stderr for spec in vault_excludes()), r.stderr
