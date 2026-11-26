@@ -1416,6 +1416,13 @@ def judge_fleet(words, raw, cwd, replaced=()):
             try:
                 inner = pipelines(code)
             except ValueError:
+                # unlike the top level's, this failure can refuse: it costs one call, never the session's every call
+                if re.search(r"(?<![\w.-])(?:ssh|scp|sftp|rsync)(?![\w.-])", code):
+                    refuse(
+                        f"`{spelled(words)}` hands `{p}` a string the guard cannot split into words, and it names an "
+                        f"ssh-family program; in `{raw}`. Run it as simpler calls; a fleet host is reached as "
+                        f"`{HOST_RUN.format('<alias>')}`."
+                    )
                 continue
             for pipe in inner:
                 for stage in pipe:
