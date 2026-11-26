@@ -91,7 +91,11 @@
 # name ~/.ssh/config maps to a fleet host, `-F` and the config's own commands, `scp -S`, `RSYNC_RSH`, a program that
 # runs ssh itself (`mosh`, `autossh`, `ssh-copy-id`, `parallel -S`, `systemctl -H`, `rg --pre`, a link to `ssh-argv0`
 # named for a host, git's `GIT_SSH_COMMAND`), and a script fed to a shell on stdin or handed as a string to any other
-# program (`watch`, `su -c`).
+# program (`watch`, `su -c`). Outside too: a host a handler (`xargs`, `parallel`) appends, a `%h` template in
+# `HostName`, a command bash cannot tokenise at the top level, a here-document delimiter bash reads otherwise, a function
+# named after a reader, an abbreviated long option, a program word that is a glob or a brace, `trap`'s action and a
+# `-c` string's `$0`, `sftp -D` and `scp -D`, `env -a`, a jump host with a loopback destination, a multiplexing master,
+# git's ssh transport, and a path behind a runner RUNNERS does not name or past a long option's separate value.
 #
 # A failure of the hook's own -- stdin that is not the tool call's JSON, a command `shlex` cannot tokenise --
 # admits with a note on stderr, never blocks: exit 2 would refuse every Bash call in the session. That second
@@ -294,6 +298,7 @@ SSH_FLAGS = {"J": "proxyjump", "I": "pkcs11provider"}  # ssh's short options rea
 BARE_ALIAS = re.compile(r"[A-Za-z0-9_-]+")
 UNRESOLVED = re.compile(r"[$`*?[\]{}]")
 REMOTE_URI = re.compile(r"(?i)(?:ssh|scp|sftp|rsync)://(?:[^@/]*@)?(\[[^\]]*\]|[^:/]*)")
+# A named list, not every shell: the fleet family reads the `-c` string of these alone.
 SHELLS = {"ash", "bash", "csh", "dash", "elvish", "fish", "ksh", "ksh93", "mksh", "nu", "posh", "pwsh", "rbash", "sh", "tcsh",
           "xonsh", "yash", "zsh"}
 ENV_VALUE = ("--split-string", "--unset", "--chdir")  # env's long options that take a value, `S`, `u` and `C` its short ones
