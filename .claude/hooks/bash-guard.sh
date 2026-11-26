@@ -989,9 +989,11 @@ def exclude_spec(spec):
 
 
 def scoped_grep(rest, where):
-    # git does the selecting, never a hand matcher: `git ls-files` from the payload's cwd over the positives if any,
-    # since git 2.47's ls-files can list nothing for a positive beside an exclude. A commit's tree is overlaid on the
-    # index, a superset that can only refuse more; any other object refuses.
+    # git does the selecting, never a hand matcher: `git ls-files` from the payload's cwd lists the positives -- none
+    # lists that directory, which git grep then searches -- and, apart, `:/` beside the excludes; the searched files
+    # are those of the first listing the second keeps. Apart, since git 2.47's ls-files misreads an exclude beside
+    # positives sharing a leading directory: it keeps a file the exclude drops, or lists nothing. A commit's tree is
+    # overlaid on the index, a superset that can only refuse more; any other object refuses.
     if any(a[:2] == "--" and among(a, {"--no-index", "--untracked"}) for a in rest):
         return "searches past the index -- drop `--no-index` or `--untracked`"
     bare, specs = grep_pathspecs(rest)
@@ -1005,22 +1007,26 @@ def scoped_grep(rest, where):
         else:
             specs.append(x)
     positives = [x for x in specs if not exclude_spec(x)]
-    listed = positives or specs
+    excludes = [x for x in specs if exclude_spec(x)]
     for tree in commits or [None]:
         with_tree = [f"--with-tree={tree}"] if tree else []
-        done = subprocess.run(
-            ["git", "-C", where, "ls-files", "-z", "--full-name", *with_tree, "--", *listed],
-            capture_output=True,
-            text=True,
-        )
-        if done.returncode:
-            return "carries a pathspec git cannot read -- spell it as git ls-files accepts it"
-        hit = next((f for f in done.stdout.split("\0") if f and vault_path("/" + f)), None)
+        listings = []
+        for listed in [positives] + ([[":/", *excludes]] if excludes else []):
+            done = subprocess.run(
+                ["git", "-C", where, "ls-files", "-z", "--full-name", *with_tree, "--", *listed],
+                capture_output=True,
+                text=True,
+            )
+            if done.returncode:
+                return "carries a pathspec git cannot read -- spell it as git ls-files accepts it"
+            listings.append([f for f in done.stdout.split("\0") if f])
+        kept = set(listings[-1])
+        hit = next((f for f in listings[0] if f in kept and vault_path("/" + f)), None)
         if hit:
             shown = ", ".join(f"`{p}`" for p in VAULT_SET)
             return (
-                f"may search the vaulted file `{hit}` -- name directories or files outside the vaulted set "
-                f"({VAULT_DEFINITION}'s `VAULT_EXCLUDES`: {shown}); excludes count alone"
+                f"may search the vaulted file `{hit}` -- name directories or files outside the vaulted set, or carry "
+                f"its excludes ({VAULT_DEFINITION}'s `VAULT_EXCLUDES`: {shown}, each as `:!<pattern>`)"
             )
     return None
 
