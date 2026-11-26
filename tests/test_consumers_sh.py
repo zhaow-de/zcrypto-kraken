@@ -122,6 +122,50 @@ def test_direct_readers_are_listed_and_the_vault_file_is_not(tmp_path):
     assert "infra/scripts/thing.sh" not in lines  # the file itself is not its own reader
 
 
+# (a path under a repository's top, whether `VAULT_EXCLUDES` drops it as vault-shaped)
+VAULT_SPECIMENS = [
+    ("vault.yml", True),
+    ("group_vars/x/vault.yml", True),
+    ("docs/x/fake-vault.yml", True),
+    ("a.sops.yaml", True),
+    ("vault-password.sops.yaml", True),
+    ("vault-password.txt", True),
+    ("x.vault", True),
+    ("infra/ansible/files/deploy_x_ed25519", True),
+    ("vaulted.md", False),
+    ("tests/test_vault_pass_guard.py", False),
+    ("default.yml", False),
+    ("vault.yml.j2", False),
+    ("infra/ansible/files/deploy_x_ed25519.pub", False),
+]
+
+
+def vault_excludes() -> list[str]:
+    # The array as bash builds it from the script's own assignment.
+    done = subprocess.run(
+        ["bash", "-c", 'eval "$(grep -E "^VAULT_EXCLUDES=" "$1")"; printf "%s\\n" "${VAULT_EXCLUDES[@]}"', "_", str(SCRIPT)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return done.stdout.splitlines()
+
+
+def test_git_ls_files_under_the_vault_excludes_drops_exactly_the_vault_shaped_specimens(tmp_path):
+    repo = tmp_path / "repo"
+    for path, _ in VAULT_SPECIMENS:
+        (repo / path).parent.mkdir(parents=True, exist_ok=True)
+        (repo / path).write_text("x\n")
+    _commit(repo)
+
+    def listed(*specs: str) -> set[str]:
+        done = subprocess.run(["git", "-C", str(repo), "ls-files", "-z", "--", *specs], capture_output=True, text=True, check=True)
+        return set(done.stdout.split("\0")) - {""}
+
+    assert listed() == {path for path, _ in VAULT_SPECIMENS}
+    assert listed(*vault_excludes()) == {path for path, vaulted in VAULT_SPECIMENS if not vaulted}
+
+
 def test_a_walker_follows_only_when_it_names_the_changed_files_top_level_directory(tmp_path):
     repo = _repo(tmp_path)
     r = _run(repo, "infra/scripts/thing.sh")
