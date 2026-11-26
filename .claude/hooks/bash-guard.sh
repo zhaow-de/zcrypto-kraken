@@ -65,8 +65,8 @@
 # The fleet family refuses an `ssh`, `scp`, `sftp` or `rsync` word, wherever it stands and inside a shell's `-c` string,
 # an `eval` line or an `env -S` line, whose host -- a destination, `host:path`, `host::module`, a `scheme://` URI,
 # `-o HostName=` -- is a host or an alias of docs/reference/fleet.md's table, or a name whose first label is one; whose
-# host only run time knows; or, to any host, that carries ssh's ProxyCommand, LocalCommand, PermitLocalCommand or
-# KnownHostsCommand, a ProxyJump or `-J` that is no bare alias, or an `-o` keyword or a word of rsync's `-e` that only
+# host only run time knows; or, to any host, that carries an ssh option that runs or loads local code (SSH_RUNS, `-I`
+# among them), a ProxyJump or `-J` that is no bare alias, or an `-o` keyword or a word of rsync's `-e` that only
 # run time knows. A fleet host is reached through infra/scripts/host-run.sh, whose stdin block
 # is that wrapper's to judge. The table is read from the checkout of the payload's `cwd` by `fleet_ssh_aliases` of
 # infra/scripts/host_run_sh.py beside this file, its one parse; a table that cannot be had refuses every such word that
@@ -249,9 +249,12 @@ SSH_RUNS = {
     "localcommand": ("LocalCommand", "runs a local command once connected"),
     "permitlocalcommand": ("PermitLocalCommand", "lets a LocalCommand run"),
     "knownhostscommand": ("KnownHostsCommand", "runs a local command to read the host's keys"),
+    "pkcs11provider": ("PKCS11Provider", "loads a local library into ssh's helper"),
+    "securitykeyprovider": ("SecurityKeyProvider", "loads a local library into ssh's helper"),
+    "xauthlocation": ("XAuthLocation", "names the local program ssh runs for X11 forwarding"),
 }
 SSH_SPACE = " \t\r\n"  # the WHITESPACE of OpenSSH's misc.c, which its strdelim splits a config line at
-SSH_FLAGS = {"J": "proxyjump"}  # ssh's short options read as the config keyword each sets
+SSH_FLAGS = {"J": "proxyjump", "I": "pkcs11provider"}  # ssh's short options read as the config keyword each sets
 BARE_ALIAS = re.compile(r"[A-Za-z0-9_-]+")
 UNRESOLVED = re.compile(r"[$`*?[\]{}]")
 REMOTE_URI = re.compile(r"(?i)(?:ssh|scp|sftp|rsync)://(?:[^@/]*@)?(\[[^\]]*\]|[^:/]*)")
