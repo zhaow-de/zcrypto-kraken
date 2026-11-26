@@ -731,6 +731,7 @@ def test_the_same_step_is_routine_on_ops_and_attended_on_the_capture_pair(host, 
         "Read the engine's gate: `sudo docker exec zcrypto-engine zcrypto engine exec-status`.",
         "`sudo docker logs zcrypto-capture --since 1h 2>&1 | tail -50`",
         "`df -h /` then `sudo du -xsh /var/lib/zcrypto-capture/* | sort -h`",
+        "`df --output=target /var/lib/zcrypto-capture | tail -n 1`",
     ],
 )
 def test_a_read_only_step_is_autonomous_even_naming_a_protected_object(text):
