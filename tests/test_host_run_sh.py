@@ -775,6 +775,10 @@ CAPTURE_DOORS = [
     ("pkill-containerd-shim", "zcrypto", "sudo pkill containerd-shim", "capture-primary"),
     ("killall-regex", "zcrypto", "sudo killall -r 'zc.*'", "capture-primary"),
     ("killall-dockerd", "zcrypto", "sudo killall dockerd", "capture-primary"),
+    ("kill-plain", "zcrypto", "sudo kill 1234", "capture-primary"),
+    ("kill-s-term", "zcrypto", "sudo kill -s TERM $(pidof dockerd)", "capture-primary"),
+    ("kill-n-9", "zcrypto", "sudo kill -n 9 1234", "capture-primary"),
+    ("kill-signal-long-hup", "zcrypto", "sudo kill --signal HUP $(pidof alloy)", "capture-primary"),
 ]
 
 # This workstation taken down another way: the units behind reboot, any writer of the kernel's trigger files, a signal
@@ -1214,6 +1218,9 @@ ADMITTED = [
     ("secondary-service-stop", "red", "sudo service zcrypto-capture stop"),
     ("service-status-capture", "zcrypto", "sudo service zcrypto-capture status"),
     ("busctl-status-primary", "zcrypto", "sudo busctl status zcrypto-capture.service"),
+    ("kill-signal-zero-on-the-primary", "zcrypto", "sudo kill -s 0 $(pidof dockerd) && echo up"),
+    ("kill-0-on-the-primary", "zcrypto", "kill -0 1234"),
+    ("kill-n-0-on-the-primary", "zcrypto", "sudo kill -n 0 1234"),
     ("pkill-unrelated-primary", "zcrypto", "sudo pkill -x sleep"),
     ("pkill-f-unrelated-primary", "zcrypto", "sudo pkill -f zcrypto-panel-materialize"),
     ("secondary-alloy-stop", "red", "sudo docker stop grafana-alloy"),

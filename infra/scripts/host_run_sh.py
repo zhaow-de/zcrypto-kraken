@@ -3317,7 +3317,7 @@ def rule_capture_primary(cmd: Cmd, j: Judge) -> Refusal | None:
     if name in ("pkill", "killall") and (reason := _signals_any(cmd, _CAPTURE_PROCS)):
         return no(f"{reason}, on the primary: capture, its Alloy or their container runtime")
     if name == "kill":
-        if any(a in ("-0", "-s0", "--signal=0") for a in cmd.args):
+        if _kill_signal(cmd.args)[0] == "0":
             return None
         return no(f"{name} on the primary could signal capture or its Alloy")
     return None
@@ -3414,16 +3414,24 @@ def rule_workstation(cmd: Cmd, j: Judge) -> Refusal | None:
     return None
 
 
-def _kills_pid_1(args: list[str]) -> str | None:
-    """kill's pids, its signal spec read off first: one that is or could be 1 or -1 is the reason, else None."""
+def _kill_signal(args: list[str]) -> tuple[str | None, list[str]]:
+    """kill's signal spec as its first words spell it (`-s X`, `-n X`, `--signal X`, `--signal=X`, `-sX`, `-nX`,
+    `-X`; None for the default), and its pids."""
     rest = list(args)
+    sig = None
     if rest and rest[0] in ("-s", "-n", "--signal"):
-        rest = rest[2:]
+        sig, rest = (rest[1] if len(rest) > 1 else ""), rest[2:]
     elif rest and (re.fullmatch(r"-[A-Za-z0-9+_-]+", rest[0]) or rest[0].startswith("--signal=")) and rest[0] != "--":
-        rest = rest[1:]
+        a = rest.pop(0)
+        sig = a.partition("=")[2] if a.startswith("--") else a[2:] if re.fullmatch(r"-[sn]\d+", a) else a[1:]
     if rest[:1] == ["--"]:
         rest = rest[1:]
-    for pid in rest:
+    return sig, rest
+
+
+def _kills_pid_1(args: list[str]) -> str | None:
+    """kill's pids, its signal spec read off first: one that is or could be 1 or -1 is the reason, else None."""
+    for pid in _kill_signal(args)[1]:
         if could(pid, "1") or could(pid, "-1"):
             return f"kill {_show(pid)} could signal PID 1, which reboots on SIGINT, or every process"
     return None
