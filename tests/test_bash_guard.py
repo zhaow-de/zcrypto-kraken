@@ -1584,6 +1584,9 @@ FLEET_REACHED = [
     ('grep -q ok <<< "$status"\nssh red uptime', "red"),
     ("read -r a <<< 'x'\nssh nas df", "nas"),
     ("cat <<< x\nscp f red:/tmp/", "red"),
+    # a handler with the host spelled out
+    ("echo uptime | xargs ssh red", "red"),
+    ("parallel ssh nas cat ::: a b", "nas"),
 ]
 
 # A host only run time knows.
@@ -1602,6 +1605,33 @@ FLEET_UNRESOLVED = [
     "ssh {red,nas} uptime",
     "printf 'red\\n' | xargs -I{} ssh {} uptime",
     "echo red | xargs ssh",
+    # a replace string a handler fills in at run time, in each spelling the handler takes, wherever the host carries it
+    "echo red | xargs -I% ssh % uptime",
+    "echo red | xargs -I HOST ssh HOST uptime",
+    "printf 'red\\nnas\\n' | xargs -n1 -I@ ssh @ uptime",
+    "echo red | xargs -0I% ssh % uptime",
+    "echo red | xargs --replace=H ssh H uptime",
+    "echo red | xargs --replace ssh {}.example uptime",
+    "echo red | xargs -iH ssh H uptime",
+    "echo red | xargs -J % ssh % uptime",  # BSD xargs' own replace option
+    "echo red | xargs -I% ssh deploy@% uptime",
+    "echo red | xargs -I% ssh zcrypto-% uptime",
+    "echo ple | xargs -I e ssh example.org uptime",  # xargs replaces the string wherever it stands
+    "echo red | xargs -I% ssh -o HostName=% example.org",
+    "echo red | xargs -I H ssh -J H example.org",
+    "echo red | xargs -I% ssh -o % example.org",
+    "echo red | xargs -I% scp f %:/tmp/",
+    "echo red | xargs -I% sftp %",
+    "echo red | xargs -I% rsync -a f %:/tmp/",
+    "echo red | xargs -I% sudo ssh % uptime",
+    "echo red | xargs -I% sh -c 'ssh % uptime'",
+    "find hosts -type f -exec ssh {} uptime \\;",
+    "find hosts -type f -ok scp f {}:/tmp/ \\;",
+    "parallel ssh ::: red nas",
+    "parallel ssh :::: hosts.txt",
+    "parallel ssh {} uptime ::: red",
+    "parallel -I% ssh % uptime ::: red",
+    "printf 'red\\n' | parallel ssh",
 ]
 
 # (command, the ssh option the message must name) -- to a host outside the fleet
@@ -1652,6 +1682,11 @@ FLEET_ADMITTED = [
     "cat <<< 'ssh red uptime'",
     'wc -c <<< "ssh nas df"',
     "cat <<< x; cat <<'EOF'\nssh red uptime\nEOF",
+    # a handler running a command on a host outside the fleet, what it reads filling the remote command alone
+    "echo a | xargs -I% ssh example.org cat %",
+    "echo uptime | xargs ssh example.org",
+    "find . -name '*.log' -exec ssh example.org cat {} \\;",
+    "parallel ssh example.org cat ::: a b",
     # what connects nowhere, or to no fleet host
     "ssh -V",
     "ssh -G red",
