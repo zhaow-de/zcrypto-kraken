@@ -1437,6 +1437,16 @@ UNREAD_SETS = [
     ("a second assignment", "VAULT_EXCLUDES=(':!*vault.yml')\nVAULT_EXCLUDES+=(':!*.vault')\n", NO_LINE),
     ("a long-form exclude", "VAULT_EXCLUDES=(':!*vault.yml' ':(exclude)*.vault')\n", "`:(exclude)*.vault` in"),
     ("a character class", "VAULT_EXCLUDES=(':!*vault.yml' ':!infra/[a-z]*_ed25519')\n", "`:!infra/[a-z]*_ed25519` in"),
+    # every other bash writer of the array, which a parse of the one line would miss, and words bash joins into one
+    ("an indexed element", "VAULT_EXCLUDES=(':!*vault.yml')\nVAULT_EXCLUDES[1]=':!*.vault'\n", NO_LINE),
+    ("an indexed append", "VAULT_EXCLUDES=(':!*vault.yml')\nVAULT_EXCLUDES[0]+='x'\n", NO_LINE),
+    ("a declare", "VAULT_EXCLUDES=(':!*vault.yml')\ndeclare -a VAULT_EXCLUDES=(':!*.vault')\n", NO_LINE),
+    ("a mapfile", "VAULT_EXCLUDES=(':!*vault.yml')\nmapfile -t VAULT_EXCLUDES < x\n", NO_LINE),
+    ("a read", "VAULT_EXCLUDES=(':!*vault.yml')\nread -ra VAULT_EXCLUDES <<< x\n", NO_LINE),
+    ("an unset element", "VAULT_EXCLUDES=(':!*vault.yml' ':!*.vault')\nunset 'VAULT_EXCLUDES[1]'\n", NO_LINE),
+    ("a printf -v", "VAULT_EXCLUDES=(':!*vault.yml')\nprintf -v 'VAULT_EXCLUDES[1]' %s ':!*.vault'\n", NO_LINE),
+    ("a nameref", "VAULT_EXCLUDES=(':!*vault.yml')\ndeclare -n v=VAULT_EXCLUDES\nv+=(':!*.vault')\n", NO_LINE),
+    ("adjacent quoted words", "VAULT_EXCLUDES=(':!*vault.yml'':!*.vault')\n", NO_LINE),
 ]
 UNREAD_SET_READS = ["cat README.md", "git grep -n x -- README.md", "git show HEAD:README.md", "cp README.md .tmp/x"]
 
@@ -1475,10 +1485,15 @@ def test_a_pattern_with_no_wildcard_names_the_files_under_a_directory_as_gits_ex
         assert r.returncode == (2 if vaulted else 0) and ("prints the vaulted file" in r.stderr) == vaulted, r.stderr
 
 
-@pytest.mark.parametrize("command", UNREAD_SET_READS)
-def test_a_copy_of_the_hook_beside_the_trees_consumers_sh_judges_as_the_hook_does(tmp_path: Path, command: str):
-    r = run_hook(call(command), cwd=tmp_path, hook=hook_beside(tmp_path, (REPO / "infra/scripts/consumers.sh").read_text()))
-    assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
+@pytest.mark.parametrize(("path", "vaulted"), VAULT_SPECIMENS, ids=[p for p, _ in VAULT_SPECIMENS])
+def test_a_copy_of_the_hook_beside_the_trees_consumers_sh_judges_as_the_hook_does(
+    specimen_repo: Path, tmp_path: Path, path: str, vaulted: bool
+):
+    copy = hook_beside(tmp_path, (REPO / "infra/scripts/consumers.sh").read_text())
+    for read, _ in SPECIMEN_READS:
+        payload = agent_call(read.format(path), str(specimen_repo))
+        theirs, ours = run_hook(payload, cwd=tmp_path, hook=copy), run_hook(payload, cwd=tmp_path)
+        assert theirs.returncode == ours.returncode == (2 if vaulted else 0) and theirs.stderr == ours.stderr, theirs.stderr
 
 
 @pytest.mark.parametrize("command", ADMITTED)
