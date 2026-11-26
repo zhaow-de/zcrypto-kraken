@@ -1587,6 +1587,14 @@ FLEET_REACHED = [
     # a handler with the host spelled out
     ("echo uptime | xargs ssh red", "red"),
     ("parallel ssh nas cat ::: a b", "nas"),
+    # beside a reader, past its operands, behind a git that is no read, or an `-O` that carries traffic to the host
+    ("grep -q x f && ssh red uptime", "red"),
+    ("grep -l x $(ssh red ls)", "red"),
+    ("find . -exec grep -l ssh {} + -exec ssh red uptime \\;", "red"),
+    ("git bisect run ssh red uptime", "red"),
+    ("ssh -O forward -L 8080:localhost:80 red", "red"),
+    ("ssh -O proxy red", "red"),
+    ("ssh -O check -O forward red", "red"),
 ]
 
 # A host only run time knows.
@@ -1691,6 +1699,11 @@ FLEET_ADMITTED = [
     "ssh -V",
     "ssh -G red",
     "ssh -G -p 22 zcrypto",
+    "ssh -Q cipher",
+    "ssh -Q key red",
+    "ssh -O check red",
+    "ssh -O exit red",
+    "ssh -O stop nas",
     "ssh -T git@github.com",
     "ssh -o BatchMode=yes -o ConnectTimeout=5 example.org true",
     "ssh -J access example.org",
@@ -1709,6 +1722,25 @@ FLEET_ADMITTED = [
     "which ssh scp sftp rsync",
     "man ssh",
     "pgrep -a ssh",
+    # an ssh-family word a reader takes as data: a grep's, an rg's, journalctl's, systemctl's or a git read's operand,
+    # that reader the stage's program or what `xargs` or a find `-exec` runs, up to the `-exec`'s `+`
+    "git grep -n ssh -- '*.md'",
+    "rg -n ssh -g '*.md'",
+    "grep -rn ssh --include '*.yml' infra/ansible/roles/",
+    "git log --oneline -S ssh -- '*.sh'",
+    "git -C docs log --grep ssh -- '*.md'",
+    "grep -l ssh *.md",
+    "grep -c ssh access.log",
+    'grep -c "ssh" access.log',
+    "grep -e ssh -e scp nas.log",
+    "grep -rn ssh -o ProxyCommand=x docs/",
+    "egrep -l rsync red*.md",
+    "journalctl -t ssh -g nas",
+    "systemctl status ssh nas.mount",
+    "git ls-files docs | xargs grep -ln ssh",
+    "git ls-files -z docs | xargs -0 -n 20 rg -l ssh",
+    "find docs -name '*.md' -exec grep -l ssh {} +",
+    "find docs -name '*.md' -exec grep -l ssh {} \\;",
 ]
 
 HOST_RUN_REMEDY = "infra/scripts/host-run.sh {} <<'EOF' … EOF"
