@@ -47,13 +47,16 @@
 # `cat consumers.sh | bash`), a target through a variable, a group's `} 2>/dev/null`, `2>&-`.
 #
 # Outside the memo family: every writer its corpus does not refuse -- a wrapper (`sudo tee`), a glob or a brace, a
-# path a variable holds whole, an interpreter, `awk -i inplace`, `rsync`, `ln`, `dd`, `rm`.
+# path a variable holds whole, an interpreter, `awk -i inplace`, `rsync`, `ln`, `dd`, `rm`, and `1<> f`, read as an
+# input since a redirect's descriptor is dropped.
 #
-# The stamp family judges a pipeline before the memo family judges its stages, so a memo write's stamp is named before
-# its shell route is refused, and the text it reads is the text as written, before bash expands it. A redirect's
-# descriptor is not read: `2> f` is taken as the file the text lands in, which refuses more. Outside: a text another
-# program passes on (`sed`, `awk`), a substitution's output or a variable's value, a group's or a loop's redirect,
-# `exec >`, a wrapper (`sudo tee`), and a file an interpreter, a shell or git writes from the here-document it reads.
+# The stamp family judges a pipeline before the memo family judges its stages, so a memo write's stamp is named, with
+# the memo's Edit route, before its shell route is refused; the text it reads is the text as written, before bash
+# expands it, so printf's format and `echo -e`'s escapes are not run. A redirect's descriptor is not read: `2> f` is
+# taken, and shown, as `> f`, which refuses more, and `1<> f` as an input, which refuses less. Outside: a text another
+# program passes on (`sed`, `awk`), a substitution's output or a variable's value, a target a process substitution
+# opens (`> >(tee f)`), a ledger a variable names (`>> "$f"`), a group's or a loop's redirect, `exec >`, a wrapper
+# (`sudo tee`), and a file an interpreter, a shell or git writes from the here-document it reads.
 #
 # A state-changing git command (`changes_state`; `tag` deliberately not) stamps `zcrypto-git-state-stamp` in the
 # checkout's own git directory -- a worktree's, not the common dir worktrees share -- once per call at admission; a
@@ -144,7 +147,7 @@ GREPS = {"grep", "egrep", "fgrep", "rg"}
 COUNT_FLAGS = {"--count", "--count-matches"}  # --count-matches is ripgrep's own: another number, capped the same
 TESTS = {"[", "[[", "test"}
 COMPARE = {"=", "==", "!="}
-KEYWORDS = {"if", "elif", "else", "while", "until", "then", "do", "!", "{"}
+KEYWORDS = {"if", "elif", "else", "while", "until", "then", "do", "!", "{", "time"}
 TERMINATORS = {"]", "]]"} | COMPARE  # the test's own words an unquoted `$( .. )` inside it leaves glued to the last stage
 OPS = ["&>>", ";;&", "<<<", "&&", "||", "|&", ";;", ";&", "<<", "<>", "<&", ">&", "&>", ">>", ">|", "|", "&", ";", "\n", "<", ">", "(", ")"]
 SEP = {"&&", "||", "|&", ";;", ";&", ";;&", "|", "&", ";", "\n"}
@@ -181,10 +184,12 @@ MEMO_REMEDY = (
 PLACEHOLDER = re.compile(r"(?i)[0-9x?]{2}:[0-9x?]{2}(?![0-9a-f])")
 UNREAD_DIGIT = re.compile(r"(?i)[x?]")
 STAMP_EXEMPT = ("*/tests/*.py", "*/.claude/hooks/*")
-APPROXIMATE = re.compile(r"~[ \t]*(?:[0-9]{4}-[0-9]{2}-[0-9]{2}[T ])?[0-9]{2}:[0-9]{2}(?![0-9])")
+# A tilde after a digit or beside another is a range (`19:30~19:45`) or Markdown's strikethrough (`~~19:45Z~~`).
+APPROXIMATE = re.compile(r"(?<![0-9~])~(?!~)[ \t]*(?:[0-9]{4}-[0-9]{2}-[0-9]{2}[T ])?[0-9]{1,2}:[0-9]{2}(?![0-9])")
 LEDGERS = (MEMO, [".local", "coordination.md"])
 SAYERS = {"echo", "printf"}
 PASSERS = {"cat", "tee"}  # what reaches their stdin is what they write
+STDIN = {"-", "/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"}  # a cat operand that is its stdin
 STAMP_REMEDY = "Paste the printed value of `date -u` or of the record (an mtime, a reflog, a PR's createdAt)."
 HEREDOC_MARK = "heredoc-"  # the word a here-document's `<<` hands the tokeniser in place of its delimiter
 SED_VALUE = ("efl", "i", {"expression", "file", "line-length"})
@@ -639,10 +644,10 @@ def judge_config(rest, words):
 
 
 def argv_of(words):
-    # A stage's program and its arguments: leading NAME=value assignments and shell keywords stepped over, the
-    # program path-stripped. A word in any other position is never the program.
+    # A stage's program and its arguments: leading NAME=value assignments, shell keywords and `time`'s `-p` stepped
+    # over, the program path-stripped. A word in any other position is never the program.
     i = 0
-    while i < len(words) and (ASSIGN.match(words[i]) or words[i] in KEYWORDS):
+    while i < len(words) and (ASSIGN.match(words[i]) or words[i] in KEYWORDS or (i and words[i - 1 : i + 1] == ["time", "-p"])):
         i += 1
     if i == len(words):
         return "", []
@@ -1071,22 +1076,22 @@ def judge_memo(words, raw, where):
 def written_texts(pipe):
     # Each (stage shown, file, text) the pipeline writes: what echo or printf says, or what a here-document or a
     # here-string feeds cat or tee, or the stage before pipes them, into an output redirect's file -- no descriptor
-    # (`>&2`) and no /dev/ path -- or tee's. A cat naming only files it reads, and every other program, writes no text.
+    # (`>&2`) -- or tee's. A cat naming only files it reads, and every other program, writes no text.
     out, flowing = [], None
     for stage in pipe:
         p, rest = argv_of(stage)
         text = None
         if p in SAYERS:
             text = " ".join(rest)
-        elif p in PASSERS and (p == "tee" or not operands(rest) or "-" in operands(rest)):
+        elif p in PASSERS and (p == "tee" or not operands(rest) or STDIN & {posixpath.normpath(o) for o in operands(rest)}):
             fed = stage.fed or ([flowing] if flowing is not None else [])
             text = "\n".join(fed) if fed else None
         if text is not None:
             for op, target in stage.outputs:
-                if not (op == ">&" and (target.isdigit() or target == "-")) and not target.startswith("/dev/"):
+                if not (op == ">&" and (target.isdigit() or target == "-")):
                     out.append((" ".join(filter(None, (spelled(stage), op, shlex.quote(target)))), target, text))
             if p == "tee":
-                out += [(spelled(stage), target, text) for target in operands(rest) if not target.startswith("/dev/")]
+                out += [(spelled(stage), target, text) for target in operands(rest)]
         flowing = text
     return out
 
@@ -1094,14 +1099,17 @@ def written_texts(pipe):
 def judge_stamps(pipe, raw, where):
     for shown, target, text in written_texts(pipe):
         path = posixpath.normpath(posixpath.join(where, target))
+        if path.startswith("/dev/"):
+            continue  # /dev/null, a terminal, a descriptor
+        remedy = f"{STAMP_REMEDY} {MEMO_REMEDY}" if names_memo(target, where) else STAMP_REMEDY
         hit = next((m[0] for m in PLACEHOLDER.finditer(text) if UNREAD_DIGIT.search(m[0])), None)
         if hit and not any(fnmatch.fnmatchcase(path, x) for x in STAMP_EXEMPT):
-            refuse(f"`{shown}` writes the placeholder stamp `{hit}` into `{target}`; in `{raw}`. {STAMP_REMEDY}")
+            refuse(f"`{shown}` writes the placeholder stamp `{hit}` into `{target}`; in `{raw}`. {remedy}")
         clock = APPROXIMATE.search(text)
         if clock and any(names_memo(target, where, name) for name in LEDGERS):
             refuse(
                 f"`{shown}` writes the approximate clock `{clock[0]}` into `{target}`, a ledger whose stamps are "
-                f"pasted, never estimated; in `{raw}`. {STAMP_REMEDY}"
+                f"pasted, never estimated; in `{raw}`. {remedy}"
             )
 
 
