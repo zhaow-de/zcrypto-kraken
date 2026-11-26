@@ -4,9 +4,11 @@ The block is read as shell text: quoting, variables, command substitutions, the 
 command (`sudo`, `env`, `nohup`, `bash -c`, `xargs`, `docker exec`, the runners `unwrap` names), pipes, chains and
 here-documents are seen through to the commands that would run, and every command is put to each rule in `RULES`.
 What the judge cannot resolve it refuses as unresolvable: code computed at run time, a script piped into a shell,
-interpreter code that builds what it touches, shell state that changes what a later word means, a daemon reached
-over its own channel, and a command the judge has no model of handed a command name or a script. A command the judge
-has no model of and that is handed neither is admitted on its own name. `fleet_ssh_aliases` is the one parse of
+python code that hands a file, process or network call a path it does not spell out (other interpreters' code that
+builds a string beside such a call), shell state that changes what a later word means, a daemon reached over its own
+channel, and a command the judge has no model of handed a command name or a script. A path python code does spell out
+meets the rules as the operand of the shell command doing the same. A command the judge has no model of and that is
+handed neither is admitted on its own name. `fleet_ssh_aliases` is the one parse of
 docs/reference/fleet.md's host table; tests/test_ops_daily.py reads the table through it too.
 
 Usage: host_run_sh.py judge --repo <checkout> --alias <alias> [--record --ts <stamp> --timeout <s>]  < block
@@ -16,12 +18,14 @@ rc 0 admitted | rc 65 refused | rc 64 a block that is not text.
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import itertools
 import json
 import os
 import re
 import sys
+import warnings
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -1029,8 +1033,7 @@ class Judge:
                     if k == 0 and text.startswith("~"):
                         user, slash, rest = text[1:].partition("/")
                         text = (self.home(scope) if not user else "/root" if user == "root" else "/home/" + user) + slash + rest
-                    text = re.sub(r"\*\*+", ANY, text)
-                    text = re.sub(r"\[[^]/]+\]|[*?]", SEG, text)
+                    text = glob_pattern(text)
                     text = text.replace("{", "\x02").replace("}", "\x03").replace(",", "\x04")
                 vals = [text]
             elif isinstance(part, Var):
@@ -1613,7 +1616,7 @@ class Judge:
         if code:
             _no_spawn(name, code[0])
             self.apply(replace(cmd, code=code[0], rest=operands))
-            _code_check(name, code[0])
+            self.code(cmd, code[0], operands)
             return
         if _has(opts, "-m"):
             self.apply(replace(cmd, rest=_values(opts, "-m") + operands))
@@ -1633,13 +1636,29 @@ class Judge:
                 raise _unresolvable(f"{name}'s code is built from a value the block does not hold")
             _no_spawn(name, text)
             self.apply(replace(cmd, code=text, rest=operands[1:]))
-            _code_check(name, text)
+            self.code(cmd, text, operands[1:])
             return
         if kind == "file":
             self.executes(text, "it reads its script from")
             self.apply(cmd)
             return
         raise _unresolvable(f"{name} reads its script from another command's output")
+
+    def code(self, cmd: Cmd, code: str, operands: list[str]) -> None:
+        """Refuse interpreter code whose effect the judge cannot read; python code that parses has each path its calls
+        reach put to the rules as the operand of the shell command that does the same."""
+        tree = py_tree(code) if _PY.fullmatch(cmd.name) else None
+        _code_check(cmd.name, code, parsed=tree is not None)
+        if tree is None:
+            return
+        for what, argv in PyReach(code, tree, operands).events:
+            if argv is None:
+                raise _unresolvable(f"its {cmd.name} code {what}")
+            try:
+                self.apply(Cmd(list(argv), cmd.alias, cmd.cwd, cmd.container, binds=cmd.binds))
+            except Refused as r:
+                shown = _show(" ".join(argv))[:100]
+                raise Refused(replace(r.refusal, reason=f"its {cmd.name} code's {what} is `{shown}`: {r.refusal.reason}")) from None
 
     def find(self, base: Cmd, ctx: Ctx, scope: Scope) -> None:
         raw, args = _find_split(base.args)
@@ -2083,8 +2102,9 @@ _SED_WRITE = re.compile(
 )
 
 
-def _code_check(lang: str, code: str) -> None:
-    """Refuse interpreter code whose effect the judge cannot read from its text."""
+def _code_check(lang: str, code: str, parsed: bool = False) -> None:
+    """Refuse interpreter code whose effect the judge cannot read from its text; python code that `parsed` has its
+    built strings judged from its syntax instead, by `PyReach`."""
     if lang in ("awk", "gawk", "mawk", "nawk"):
         if m := _AWK_DYNAMIC.search(code):
             raise _unresolvable(f"its awk code names a file at run time ({m.group(0).strip()[:40]})")
@@ -2093,8 +2113,497 @@ def _code_check(lang: str, code: str) -> None:
         raise _unresolvable(f"its {lang} code reaches a name it builds at run time ({m.group(0)})")
     if m := _OPAQUE_CODE.search(code):
         raise _unresolvable(f"its {lang} code acts through {m.group(0).strip()}, which no rule can aim")
+    if parsed:
+        return
     if (b := _BUILT_CODE.search(code)) and (k := _SINK_CODE.search(code)):
         raise _unresolvable(f"its {lang} code builds a string at run time ({b.group(0).strip()}) and hands it to {k.group(0)}")
+
+
+# ---------------------------------------------------------------- python code, read as its syntax
+
+
+def py_tree(code: str) -> ast.Module | None:
+    """`code` parsed as python, or None when it does not parse."""
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return ast.parse(code)
+    except SyntaxError:
+        return None
+    except ValueError:
+        return None
+
+
+def glob_pattern(text: str) -> str:
+    """A glob pattern's text with its wildcards as the judge's: `**` any string, `*`, `?` and `[...]` one segment's."""
+    return re.sub(r"\[[^]/]+\]|[*?]", SEG, re.sub(r"\*\*+", ANY, text))
+
+
+def _joined(heads: tuple[str, ...], tails: tuple[str, ...]) -> tuple[str, ...]:
+    out = tuple(t if t.startswith(("/", ANY)) or not h else h.rstrip("/") + "/" + t for h in heads for t in tails)
+    return out if len(out) <= _ALT_CAP else (ANY,)
+
+
+def _parent(text: str) -> str:
+    head = text.rstrip("/").rpartition("/")[0]
+    return head or ("/" if text.startswith("/") else ".")
+
+
+@dataclass(frozen=True)
+class PyVal:
+    """A python value as the judge reads it: a `path` object, a `str`, or a `lit` that is neither, with the texts a
+    path or string could be, wildcards included."""
+
+    kind: str
+    texts: tuple[str, ...] = ()
+
+
+_LIT = PyVal("lit")
+_PY_CTORS = _w("pathlib.Path pathlib.PurePath pathlib.PosixPath pathlib.PurePosixPath")
+_PY_TEXTS = {"os.sep": "/", "os.path.sep": "/", "os.devnull": "/dev/null", "os.curdir": ".", "os.pardir": ".."}
+# os functions handed no path: file descriptors, numbers, the process.
+_PY_NO_PATH = {
+    "os." + f
+    for f in _w(
+        "close closerange read write fstat fsync fdatasync lseek dup dup2 isatty pread pwrite readv writev ftruncate "
+        "fchmod fchown set_blocking get_blocking set_inheritable get_inheritable get_terminal_size waitpid nice "
+        "strerror umask urandom sched_getaffinity"
+    )
+} | _w("shutil.copyfileobj shutil.get_terminal_size")
+_PY_ENV = _w("os.getenv os.getenvb os.putenv os.unsetenv shutil.which")
+_PY_PURE = {"os.path." + f for f in _w("join basename dirname split splitext normpath abspath relpath commonpath isabs")}
+_PY_PURE |= _w("os.fspath os.fsdecode os.fsencode")
+_PY_META = {"os." + f for f in _w("listdir scandir walk fwalk stat lstat access readlink statvfs chmod lchmod chown lchown utime")}
+_PY_META |= {
+    "os.path." + f
+    for f in _w("exists lexists isfile isdir islink ismount isjunction getsize getmtime getatime getctime realpath samefile")
+}
+_PY_META |= _w("shutil.disk_usage shutil.chown")
+# A module function as the shell command that does the same to its leading path arguments, and how many those are.
+_PY_VERBS: dict[str, tuple[tuple[str, ...], int]] = {
+    **dict.fromkeys(("os.remove", "os.unlink"), (("rm",), 1)),
+    **dict.fromkeys(("os.rmdir", "os.removedirs"), (("rmdir",), 1)),
+    "shutil.rmtree": (("rm", "-r"), 1),
+    **dict.fromkeys(("os.rename", "os.renames", "os.replace", "shutil.move"), (("mv",), 2)),
+    **dict.fromkeys(("shutil.copy", "shutil.copy2", "shutil.copyfile", "shutil.copymode", "shutil.copystat"), (("cp",), 2)),
+    **dict.fromkeys(("shutil.copytree", "shutil.unpack_archive"), (("cp", "-r"), 2)),
+    "os.symlink": (("ln", "-s"), 2),
+    "os.link": (("ln",), 2),
+    **dict.fromkeys(("os.mkdir", "os.makedirs"), (("mkdir",), 1)),
+}
+# A path object's methods, as the shell command that does the same to it.
+_PATH_VERBS: dict[str, tuple[str, ...]] = {
+    **dict.fromkeys(("read_text", "read_bytes"), ("cat",)),
+    **dict.fromkeys(("write_text", "write_bytes", "touch"), ("touch",)),
+    "mkdir": ("mkdir",),
+    "unlink": ("rm",),
+    "rmdir": ("rmdir",),
+    **dict.fromkeys(("rename", "replace", "move", "move_into"), ("mv",)),
+    **dict.fromkeys(("copy", "copy_into"), ("cp", "-r")),
+    "symlink_to": ("ln", "-s"),
+    "hardlink_to": ("ln",),
+}
+_PATH_META = _w(
+    "stat lstat exists is_file is_dir is_symlink is_mount is_socket is_fifo is_block_device is_char_device iterdir owner "
+    "group readlink resolve samefile walk glob rglob chmod lchmod absolute expanduser"
+)
+_PATH_PURE = _w("joinpath with_name with_suffix with_stem relative_to is_relative_to match full_match")
+# Methods only a path object has: called on a value the judge cannot resolve, the path they act on is unknown.
+_PATH_ONLY = _w(
+    "read_text read_bytes write_text write_bytes iterdir rglob symlink_to hardlink_to unlink touch joinpath with_name "
+    "with_suffix with_stem mkdir rmdir exists is_file is_dir"
+)
+
+
+def _py_call(f: str) -> tuple[str, tuple[str, ...], int] | None:
+    """What a call to the python function dotted `f` reaches: (kind, the shell command doing the same, how many
+    leading arguments are paths), or None for a call that reaches no file, process or network."""
+    if f in _PY_CTORS:
+        return "ctor", (), 0
+    if f in ("exec", "eval", "compile", "__import__") or f.startswith(("subprocess.", "socket.", "pathlib.")):
+        return "process", (), 0
+    if f == "open" or f.endswith(".open") and f != "os.open":
+        return "open", (), 1
+    if f in ("glob.glob", "glob.iglob"):
+        return "glob", ("stat",), 1
+    if f.startswith("os.environ.") or f in _PY_ENV:
+        return "env", (), 1
+    if f in _PY_NO_PATH or f in _PY_PURE or f.startswith(("glob.", "os.path.")) and f not in _PY_META:
+        return None
+    if f in _PY_VERBS:
+        return "verb", *_PY_VERBS[f]
+    if f in _PY_META:
+        return "verb", ("stat",), 1
+    if f.startswith(("os.", "shutil.")):
+        return "verb", ("touch",), 1
+    return None
+
+
+class PyReach:
+    """Python code's calls that reach a file, a process or the network, read from its syntax. Each path such a call
+    is handed resolves to literal text only as a constant, a join of constants (`os.path.join`, a path object's
+    constructor and its `/`), a name bound once to one, a glob of a literal pattern, a loop variable over such a glob,
+    or an operand through `sys.argv`. `events` holds, in source order, what each such call says: (its source, the
+    shell command doing the same) for one that resolves, (why, None) for one that does not."""
+
+    def __init__(self, code: str, tree: ast.Module, operands: list[str]):
+        self.code = code
+        self.argv = ["-c", *operands]
+        self.binds: dict[str, list[tuple]] = {}
+        self.events: list[tuple[str, tuple[str, ...] | None]] = []
+        for node in ast.walk(tree):
+            self._collect(node)
+        self._walk(tree, None)
+
+    # -- the names the code binds
+
+    def _bind(self, target: ast.AST, how: tuple) -> None:
+        if isinstance(target, ast.Name):
+            self.binds.setdefault(target.id, []).append(how)
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            for t in target.elts:
+                self._bind(t, ("unknown", None, None))
+        elif isinstance(target, ast.Starred):
+            self._bind(target.value, ("unknown", None, None))
+
+    def _collect(self, node: ast.AST) -> None:
+        unknown = ("unknown", None, None)
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                self._bind(t, ("value", node.value, None))
+        elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)) and node.value is not None:
+            self._bind(node.target, ("value", node.value, None))
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            self._bind(node.target, ("iter", node.iter, None))
+        elif isinstance(node, ast.AugAssign):
+            self._bind(node.target, unknown)
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                if item.optional_vars is not None:
+                    self._bind(item.optional_vars, unknown)
+        elif isinstance(node, ast.Import):
+            for a in node.names:
+                top = a.name.split(".", 1)[0]
+                self.binds.setdefault(a.asname or top, []).append(("import", a.name if a.asname else top, None))
+        elif isinstance(node, ast.ImportFrom):
+            for a in node.names:
+                how = ("import", f"{node.module}.{a.name}", None) if node.module and not node.level else unknown
+                self.binds.setdefault(a.asname or a.name, []).append(how)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            self.binds.setdefault(node.name, []).append(unknown)
+            if not isinstance(node, ast.ClassDef):
+                for a in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs, node.args.vararg, node.args.kwarg):
+                    if a is not None:
+                        self.binds.setdefault(a.arg, []).append(unknown)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            self.binds.setdefault(node.name, []).append(unknown)
+        elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
+            self.binds.setdefault(node.name, []).append(unknown)
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            self.binds.setdefault(node.rest, []).append(unknown)
+
+    def _lookup(self, name: str, scope) -> tuple | None:
+        while scope is not None:
+            names, scope = scope
+            if name in names:
+                return names[name]
+        hows = self.binds.get(name)
+        if not hows:
+            return None
+        return hows[0] if len(hows) == 1 else ("unknown", None, None)
+
+    def _comp_scope(self, node, scope):
+        names: dict[str, tuple] = {}
+        inner = (names, scope)
+        for k, gen in enumerate(node.generators):
+            if isinstance(gen.target, ast.Name):
+                names[gen.target.id] = ("iter", gen.iter, scope if k == 0 else inner)
+            else:
+                for t in ast.walk(gen.target):
+                    if isinstance(t, ast.Name):
+                        names[t.id] = ("unknown", None, None)
+        return inner
+
+    def _dotted(self, node: ast.AST, scope, depth: int = 0) -> str | None:
+        """The dotted name a callable is reached by through the code's imports, or None for a value."""
+        if depth > 16:
+            return None
+        if isinstance(node, ast.Name):
+            how = self._lookup(node.id, scope)
+            if how is None:
+                return node.id
+            if how[0] == "import":
+                return how[1]
+            if how[0] == "value" and isinstance(how[1], (ast.Name, ast.Attribute)):
+                return self._dotted(how[1], how[2], depth + 1)
+            return None
+        if isinstance(node, ast.Attribute):
+            base = self._dotted(node.value, scope, depth)
+            return base and f"{base}.{node.attr}"
+        return None
+
+    # -- what a value resolves to
+
+    def resolve(self, node: ast.AST, scope, depth: int = 0) -> PyVal | None:
+        if depth > 48:
+            return None
+        if isinstance(node, ast.Constant):
+            if isinstance(node.value, str):
+                return PyVal("str", (node.value,))
+            if isinstance(node.value, bytes):
+                return PyVal("str", (node.value.decode("latin-1"),))
+            return _LIT
+        if isinstance(node, ast.JoinedStr) and all(isinstance(v, ast.Constant) for v in node.values):
+            return PyVal("str", ("".join(v.value for v in node.values),))
+        if isinstance(node, ast.Name):
+            how = self._lookup(node.id, scope)
+            if how is not None and how[0] == "value":
+                return self.resolve(how[1], how[2], depth + 1)
+            if how is not None and how[0] == "iter":
+                return self.elements(how[1], how[2], depth + 1)
+            return None
+        if isinstance(node, ast.Attribute):
+            dotted = self._dotted(node, scope)
+            if dotted in _PY_TEXTS:
+                return PyVal("str", (_PY_TEXTS[dotted],))
+            if dotted is not None and node.attr.isupper():
+                return _LIT
+            base = self.resolve(node.value, scope, depth + 1)
+            if base is not None and base.kind == "path":
+                if node.attr == "parent":
+                    return PyVal("path", tuple(_parent(t) for t in base.texts))
+                if node.attr == "name":
+                    return PyVal("str", tuple(t.rstrip("/").rpartition("/")[2] for t in base.texts))
+                if node.attr == "path":
+                    return PyVal("str", base.texts)
+            return None
+        if isinstance(node, ast.Subscript):
+            k = node.slice
+            if not isinstance(k, ast.Constant) or type(k.value) is not int:
+                return None
+            if self._dotted(node.value, scope) == "sys.argv":
+                return PyVal("str", (self.argv[k.value],)) if 0 < k.value < len(self.argv) else None
+            return self.elements(node.value, scope, depth + 1)
+        if isinstance(node, ast.BinOp):
+            left, right = self.resolve(node.left, scope, depth + 1), self.resolve(node.right, scope, depth + 1)
+            if isinstance(node.op, ast.Div) and any(v is not None and v.kind == "path" for v in (left, right)):
+                if left is None or right is None or _LIT in (left, right):
+                    return None
+                return PyVal("path", _joined(left.texts, right.texts))
+            return _LIT if left == right == _LIT else None
+        if isinstance(node, ast.UnaryOp):
+            return _LIT if self.resolve(node.operand, scope, depth + 1) == _LIT else None
+        if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+            vals = [self.resolve(e, scope, depth + 1) for e in node.elts]
+            if None in vals:
+                return None
+            texts = tuple(t for v in vals for t in v.texts)
+            return PyVal("str", texts if len(texts) <= _ALT_CAP else (ANY,)) if texts else _LIT
+        if isinstance(node, ast.Call):
+            return self._call_value(node, scope, depth)
+        return None
+
+    def _call_value(self, node: ast.Call, scope, depth: int) -> PyVal | None:
+        f = self._dotted(node.func, scope)
+        args = [self.resolve(a, scope, depth + 1) for a in node.args]
+        texts = None if any(a is None or a.kind == "lit" for a in args) else [a.texts for a in args]
+        if f in _PY_CTORS or f == "os.path.join":
+            if texts is None:
+                return None
+            joined: tuple[str, ...] = (".",) if f in _PY_CTORS else ("",)
+            for t in texts:
+                joined = _joined(joined, t)
+            return PyVal("path" if f in _PY_CTORS else "str", joined)
+        if f in ("str", "os.fspath", "os.fsdecode", "os.path.normpath", "os.path.abspath", "os.path.realpath") and texts:
+            return PyVal("str", texts[0])
+        if f == "os.path.dirname" and texts:
+            return PyVal("str", tuple(_parent(t) for t in texts[0]))
+        if f == "os.path.basename" and texts:
+            return PyVal("str", tuple(t.rpartition("/")[2] for t in texts[0]))
+        if f in ("next", "max", "min") and node.args:
+            return self.elements(node.args[0], scope, depth + 1)
+        if isinstance(node.func, ast.Attribute):
+            recv = self.resolve(node.func.value, scope, depth + 1)
+            m = node.func.attr
+            if recv is None or recv.kind != "path":
+                return None
+            if m in ("resolve", "absolute", "expanduser"):
+                return recv
+            if m == "joinpath" and texts is not None:
+                joined = recv.texts
+                for t in texts:
+                    joined = _joined(joined, t)
+                return PyVal("path", joined)
+            if m == "with_name" and texts:
+                return PyVal("path", _joined(tuple(_parent(t) for t in recv.texts), texts[0]))
+        return None
+
+    def elements(self, node: ast.AST, scope, depth: int = 0) -> PyVal | None:
+        """What each item of an iterable resolves to."""
+        if depth > 48:
+            return None
+        if isinstance(node, ast.Name):
+            how = self._lookup(node.id, scope)
+            return self.elements(how[1], how[2], depth + 1) if how is not None and how[0] == "value" else None
+        if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
+            return self.resolve(node.elt, self._comp_scope(node, scope), depth + 1)
+        if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+            return self.resolve(node, scope, depth + 1)
+        if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Slice):
+            k = node.slice
+            if self._dotted(node.value, scope) != "sys.argv":
+                return self.elements(node.value, scope, depth + 1)
+            if all(b is None or isinstance(b, ast.Constant) for b in (k.lower, k.upper, k.step)):
+                items = self.argv[slice(*(b.value if b is not None else None for b in (k.lower, k.upper, k.step)))]
+                return PyVal("str", tuple(items)) if items else None
+            return None
+        if not isinstance(node, ast.Call):
+            return None
+        f = self._dotted(node.func, scope)
+        a = node.args
+        if f in ("glob.glob", "glob.iglob") and a:
+            pattern = self.resolve(a[0], scope, depth + 1)
+            return PyVal("str", tuple(glob_pattern(t) for t in pattern.texts)) if pattern and pattern.kind == "str" else None
+        if f in ("sorted", "list", "tuple", "set", "frozenset", "reversed", "iter") and a:
+            return self.elements(a[0], scope, depth + 1)
+        if f == "filter" and len(a) == 2:
+            return self.elements(a[1], scope, depth + 1)
+        if f == "map" and len(a) == 2 and self._dotted(a[0], scope) in _PY_CTORS:
+            items = self.elements(a[1], scope, depth + 1)
+            return PyVal("path", items.texts) if items is not None and items.kind != "lit" else None
+        if f in ("os.listdir", "os.scandir") and a:
+            where = self.resolve(a[0], scope, depth + 1)
+            if f == "os.listdir":
+                return PyVal("str", (SEG,))
+            return PyVal("path", _joined(where.texts, (SEG,))) if where is not None and where.kind != "lit" else None
+        if isinstance(node.func, ast.Attribute):
+            recv = self.resolve(node.func.value, scope, depth + 1)
+            m = node.func.attr
+            if recv is None or recv.kind != "path":
+                return None
+            if m == "iterdir":
+                return PyVal("path", _joined(recv.texts, (SEG,)))
+            if m in ("glob", "rglob") and a:
+                pattern = self.resolve(a[0], scope, depth + 1)
+                if pattern is None or pattern.kind != "str":
+                    return None
+                globbed = tuple(glob_pattern(t) for t in pattern.texts)
+                return PyVal("path", _joined(recv.texts, globbed if m == "glob" else tuple(ANY + "/" + g for g in globbed)))
+        return None
+
+    # -- the calls that reach a file, a process or the network
+
+    def _src(self, node: ast.AST) -> str:
+        src = (ast.get_source_segment(self.code, node) or ast.unparse(node)).replace("\n", " ")
+        return src if len(src) <= 80 else src[:79] + "…"
+
+    def _need(self, node: ast.AST, scope, how: str) -> PyVal | None:
+        """`node`'s value, or None with what `how` does with it recorded as unresolved."""
+        v = self.resolve(node, scope)
+        if v is None:
+            self.events.append((f"{how} {self._src(node)}, which does not resolve to literal text the rules can judge", None))
+        return v
+
+    def _act(self, node: ast.AST, argv: tuple[str, ...], *vals: PyVal | None) -> None:
+        texts = [t for v in vals if v is not None for t in v.texts]
+        if texts:
+            self.events.append((self._src(node), argv + tuple(texts)))
+
+    def _opened(self, node: ast.Call, texts: PyVal, mode: ast.AST | None, scope) -> None:
+        m = self.resolve(mode, scope) if mode is not None else PyVal("str", ("r",))
+        writes = m is None or m.kind != "str" or any(c in t for t in m.texts for c in "wax+")
+        if writes:
+            self._act(node, ("touch",), texts)
+        if not writes or m is not None and any("+" in t for t in m.texts):
+            self._act(node, ("cat",), texts)
+
+    def _walk(self, node: ast.AST, scope) -> None:
+        if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)):
+            inner = self._comp_scope(node, scope)
+            for k, gen in enumerate(node.generators):
+                self._walk(gen.iter, scope if k == 0 else inner)
+                for cond in gen.ifs:
+                    self._walk(cond, inner)
+            for part in (node.key, node.value) if isinstance(node, ast.DictComp) else (node.elt,):
+                self._walk(part, inner)
+            return
+        if isinstance(node, ast.Lambda):
+            a = node.args
+            names = {x.arg: ("unknown", None, None) for x in (*a.posonlyargs, *a.args, *a.kwonlyargs, a.vararg, a.kwarg) if x}
+            for d in (*a.defaults, *(d for d in a.kw_defaults if d is not None)):
+                self._walk(d, scope)
+            self._walk(node.body, (names, scope))
+            return
+        if isinstance(node, ast.Call):
+            self._call(node, scope)
+        elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            left, right = self.resolve(node.left, scope), self.resolve(node.right, scope)
+            if any(v is not None and v.kind == "path" for v in (left, right)):
+                for side, v in ((node.left, left), (node.right, right)):
+                    if v is None:
+                        self._need(side, scope, "joins onto a path")
+        elif isinstance(node, ast.Subscript) and self._dotted(node.value, scope) == "os.environ":
+            self._need(node.slice, scope, "reads os.environ at")
+        for child in ast.iter_child_nodes(node):
+            self._walk(child, scope)
+
+    def _call(self, node: ast.Call, scope) -> None:
+        f = self._dotted(node.func, scope)
+        spec = _py_call(f) if f is not None else None
+        if spec is None:
+            if isinstance(node.func, ast.Attribute):
+                recv = self.resolve(node.func.value, scope)
+                if recv is not None and recv.kind == "path":
+                    self._method(node, recv, node.func.attr, scope)
+                elif recv is None and node.func.attr in _PATH_ONLY:
+                    self._need(node.func.value, scope, f"calls .{node.func.attr}() on")
+            return
+        kind, verb, n = spec
+        kw = {k.arg: k.value for k in node.keywords if k.arg}
+        if kind in ("process", "ctor"):
+            for a in node.args:
+                self._need(a, scope, f"hands {f}")
+            return
+        named = ("file", "filename", "name", "path", "pathname", "src", "dst", "top", "key", "varname")
+        paths = list(node.args[:n]) + [kw[k] for k in named if k in kw][: max(0, n - len(node.args))]
+        vals = [self._need(p, scope, f"hands {f}") for p in paths]
+        if kind == "env" or not vals or None in vals:
+            return
+        if kind == "open":
+            self._opened(node, vals[0], node.args[1] if len(node.args) > 1 else kw.get("mode"), scope)
+        elif kind == "glob":
+            self._act(node, verb, *(PyVal("str", tuple(glob_pattern(t) for t in v.texts)) for v in vals))
+        elif n == 2 and len(vals) == 2:
+            for dest in vals[1].texts:
+                self._act(node, verb, vals[0], PyVal("str", (dest,)))
+        else:
+            self._act(node, verb, *vals)
+
+    def _method(self, node: ast.Call, recv: PyVal, m: str, scope) -> None:
+        a = node.args
+        kw = {k.arg: k.value for k in node.keywords if k.arg}
+        if m in ("read_text", "read_bytes", "write_text", "write_bytes", "touch", "mkdir", "unlink", "rmdir"):
+            self._act(node, _PATH_VERBS[m], recv)
+        elif m == "open":
+            self._opened(node, recv, a[0] if a else kw.get("mode"), scope)
+        elif m in _PATH_VERBS:
+            target = a[0] if a else kw.get("target")
+            other = self._need(target, scope, f"hands .{m}()") if target is not None else None
+            if other is None:
+                return
+            first, second = (other, recv) if m in ("symlink_to", "hardlink_to") else (recv, other)
+            for dest in second.texts:
+                self._act(node, _PATH_VERBS[m], first, PyVal("str", (dest,)))
+        elif m in ("glob", "rglob"):
+            if a and (pattern := self._need(a[0], scope, f"hands .{m}()")) is not None:
+                self._act(node, ("stat",), self.elements(node, scope) or pattern)
+        elif m in _PATH_META:
+            for x in a[:1] if m == "samefile" else ():
+                self._act(node, ("stat",), self._need(x, scope, f"hands .{m}()"))
+            self._act(node, ("stat",), recv)
+        elif m in _PATH_PURE:
+            for x in a:
+                self._need(x, scope, f"hands .{m}()")
 
 
 READERS = _w(

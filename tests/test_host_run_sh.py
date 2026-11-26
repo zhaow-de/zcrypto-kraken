@@ -537,6 +537,42 @@ INTERPRETER_CODE = [
     ),
     ("sed-w-relative", "zcrypto", f"cd {_EXEC} && sudo sed -n 'w armed' /dev/null", "money-path"),
     ("sed-s-w-flag", "zcrypto", f"cd {_EXEC} && sudo sed -n 's/x/y/w armed' /dev/null", "money-path"),
+    (
+        "python-path-join-opened-for-writing",
+        "zcrypto",
+        f"sudo python3 -c \"import pathlib; (pathlib.Path('{_EXEC}') / 'armed').open('w').close()\"",
+        "money-path",
+    ),
+    (
+        "python-path-join-to-a-credential",
+        "zcrypto",
+        "sudo python3 -c \"import pathlib; print((pathlib.Path('/etc') / 'wireguard' / 'zcache0.conf').read_text())\"",
+        "secrets",
+    ),
+    (
+        "python-glob-unlink-in-the-gate-dir",
+        "zcrypto",
+        "sudo python3 -c \"import pathlib; [p.unlink() for p in (pathlib.Path('/var/lib/zcrypto-engine') / 'exec').glob('*')]\"",
+        "money-path",
+    ),
+    (
+        "python-rmtree-of-a-data-root",
+        "zcrypto",
+        "sudo python3 -c \"import shutil; shutil.rmtree('/var/lib/zcrypto-capture')\"",
+        "hazards",
+    ),
+    (
+        "python-path-from-a-record",
+        "zcrypto",
+        "sudo python3 -c \"import json, pathlib; [pathlib.Path(x).unlink() for x in json.load(open('/tmp/l.json'))]\"",
+        "unresolvable",
+    ),
+    (
+        "python-join-onto-a-read-name",
+        "zcrypto",
+        "sudo python3 - <<'PY'\nimport pathlib\nn = input()\n(pathlib.Path('/tmp') / n).touch()\nPY\n",
+        "unresolvable",
+    ),
 ]
 SHELL_STATE = [
     ("cdpath", "zcrypto", "CDPATH=/var/lib/zcrypto-engine\ncd exec && sudo touch armed", "unresolvable"),
@@ -988,6 +1024,39 @@ SIDE_DOORS = [
     ("proc-cwd", "sudo touch /proc/self/cwd/armed", "money-path"),
 ]
 
+# infra/runbooks/engine-procedures.md's read of the execution ledger: built strings go to print, every path it reads is
+# a constant or a loop variable over a glob of one.
+LEDGER_READ = """sudo python3 - <<'PY'
+import json, pathlib, time
+root = pathlib.Path("/var/lib/zcrypto-engine/journal")
+HOURS = 24
+cutoff = time.time() - HOURS * 3600
+paths = sorted(q for q in root.glob("*/exec-*.json") if q.stat().st_mtime >= cutoff)
+print(f"{len(paths)} execution record(s) in the last {HOURS}h")
+if not paths:
+    print("  NOTHING MATCHED -- widen HOURS; an empty read is not a clean window")
+for p in paths:
+    d = json.loads(p.read_text())
+    print(p, "level=", d["level"], "reasons=", d["reasons"])
+    for e in d.get("plans", []):
+        print(" plan", e["plan_id"], e["disposition"], e["reasons"])
+        for i in e["intents"]:
+            print("   intent", i["index"], i["outcome"], i["reasons"], "filled_qty", i["filled_qty"])
+    for r in d["submitted"]:
+        txids = sorted({ev["venue_order_id"] for ev in r["events"] if ev.get("venue_order_id")})
+        print(" order", r["client_order_id"], r["state"], "filled_qty", r["filled_qty"], "kraken", ",".join(txids) or "-")
+        for ev in r["events"]:
+            if ev.get("event") == "fill":
+                print("     fill", ev["at"], ev["qty"], "@", ev["px"], "fee", ev["fee"], ev["fee_currency"], ev["liquidity"], ev["trade_id"], "credited", ev.get("credited", "whole"))
+            elif ev.get("event") in ("reconciled", "recancelled"):
+                print("    ", ev["event"], ev["at"], ev.get("venue_filled_qty", ""), ev.get("venue_order_id", ""))
+            elif ev.get("type") == "ambiguous":
+                print("     ambiguous", ev["at"], ev["what"])
+            elif ev.get("reconciliation"):
+                print("    ", ev["type"], ev["at"], "reconciliation: true, minted by this engine")
+PY
+"""
+
 # Allowed forms: gate-closing acts, reads of the gate files, and runbook rows of class R and S.
 ADMITTED = [
     ("rm-armed-pause", "zcrypto", "sudo rm /var/lib/zcrypto-engine/exec/armed"),
@@ -1063,6 +1132,47 @@ ADMITTED = [
         "zcrypto",
         "for f in $(ls /var/lib/zcrypto-engine/journal/*/accum-*.json | tail -2); do "
         'python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d[\'status\'])" "$f"; done',
+    ),
+    ("ledger-read-last-day", "zcrypto", LEDGER_READ),
+    (
+        "series-start-read-printed-by-an-fstring",
+        "zcrypto",
+        "sudo python3 - <<'PY'\nimport json, pathlib\np = pathlib.Path('/var/lib/zcrypto-engine/exec/series-start')\n"
+        "print(f'series start: {p.read_text().strip()}')\nPY\n",
+    ),
+    (
+        "journal-day-listing-by-a-path-join",
+        "zcrypto",
+        'sudo python3 -c \'import pathlib; r = pathlib.Path("/var/lib/zcrypto-engine/journal"); '
+        'print(sorted(p.name for p in (r / "2026-11-25").iterdir()))\'',
+    ),
+    (
+        "accum-record-fields-joined-for-print",
+        "zcrypto",
+        'sudo python3 -c \'import json; d=json.load(open("/var/lib/zcrypto-engine/journal/2026-11-25/accum-08.json")); '
+        'print(d["status"] + " " + d.get("at", "-"))\'',
+    ),
+    (
+        "exec-levels-over-a-glob",
+        "zcrypto",
+        "sudo python3 -c \"import glob,json;[print(json.load(open(f))['level']) for f in "
+        "sorted(glob.glob('/var/lib/zcrypto-engine/journal/2026-11-25/exec-*.json'))]\"",
+    ),
+    (
+        "accum-last-two-by-a-sliced-glob",
+        "zcrypto",
+        "sudo python3 -c \"import glob,json;[print(f, d['status'], d['plan_id']) for f in "
+        "sorted(glob.glob('/var/lib/zcrypto-engine/journal/*/accum-*.json'))[-2:] for d in [json.load(open(f))]]\"",
+    ),
+    (
+        "kill-reason-read-by-python",
+        "zcrypto",
+        f"sudo python3 -c \"import pathlib; print(pathlib.Path('{_EXEC}/kill').read_text())\"",
+    ),
+    (
+        "built-content-to-a-literal-path",
+        "zcrypto",
+        "sudo python3 -c \"import pathlib; pathlib.Path('/tmp/x.txt').write_text(f'{1 + 1}')\"",
     ),
     ("failed-cycle-sh-c", "zcrypto", "sudo sh -c 'cat /var/lib/zcrypto-engine/journal/$(date -u +%F)/failed-cycle-*.json'"),
     ("grep-flatten-wrapper", "zcrypto", "sudo grep -E '^(STATE_DIR|IMAGE|OWNER)=' /usr/local/sbin/zcrypto-flatten"),
