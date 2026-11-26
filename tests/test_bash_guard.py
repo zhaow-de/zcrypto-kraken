@@ -1846,6 +1846,17 @@ def test_a_fleet_host_reached_past_host_run_is_blocked_with_the_remedy(tmp_path:
     assert r.stdout == ""
 
 
+@pytest.mark.parametrize(
+    ("command", "transfer"),
+    [("scp notes.txt nas:/tmp/", True), ("sftp deploy@nas", True), ("rsync -a d red:/x", True), ("ssh red uptime", False)],
+)
+def test_a_refused_file_transfer_says_the_wrapper_moves_no_file(tmp_path: Path, command: str, transfer: bool):
+    r = run_hook(call(command), cwd=tmp_path)
+    assert r.returncode == 2 and " reaches the fleet host `" in r.stderr, r.stderr
+    said = "a file transfer has no route through that wrapper" in r.stderr and "`nas-file-transfer`" in r.stderr
+    assert said == transfer, r.stderr
+
+
 @pytest.mark.parametrize("command", FLEET_UNRESOLVED)
 def test_an_ssh_family_host_the_guard_cannot_resolve_is_blocked_as_unresolvable(tmp_path: Path, command: str):
     r = run_hook(call(command), cwd=tmp_path)
