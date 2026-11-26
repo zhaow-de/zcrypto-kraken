@@ -10,6 +10,7 @@ import fcntl
 import json
 import os
 import re
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -1066,6 +1067,22 @@ UNSCOPED_GREPS = [
     ("git grep -c ANSIBLE -- infra/ansible/group_vars ':(exclude)zzzz'", "."),
 ]
 SCOPED_GREPS = [
+    # excludes of every vaulted file the positives reach
+    ("git grep -l foo -- tests infra ':!*vault*' ':!*.sops.*' ':!infra/ansible/files/*_ed25519'", "."),
+    (
+        "git grep -n -e foo -- infra ':!*vault.yml' ':!*.vault' ':!*.sops.*' ':!*vault-password*' ':!infra/ansible/files/*_ed25519'",
+        ".",
+    ),
+    ("git grep -n foo -- infra ':^*vault*' ':^*.sops.*' ':^infra/ansible/files/*_ed25519'", "."),
+    (
+        "git grep -l foo -- infra/ansible ':!*vault.yml' ':!*.vault' ':!*.sops.*' ':!*vault-password*' ':!infra/ansible/files/*_ed25519'",
+        ".",
+    ),
+    (
+        "git grep -n foo -- docs ':!*vault.yml' ':!*.vault' ':!*.sops.*' ':!*vault-password*' ':!infra/ansible/files/*_ed25519'",
+        ".",
+    ),
+    ("git grep -n foo -- '*.md' ':!*vault-password*'", "."),
     ("git grep -l foo -- infra/ansible/roles ':!*.vault'", "."),
     ("git grep -n foo -- ':!*vault.yml' ':!*.vault' ':!*.sops.*' ':!*vault-password*' ':!infra/ansible/files/*_ed25519'", "."),
     ("git grep -l foo -- infra/scripts infra/runbooks tests", "."),
@@ -1264,6 +1281,63 @@ def test_a_git_grep_over_a_directory_holding_a_specimen_consumers_sh_excludes_is
         assert all(f"`{spec.removeprefix(':!')}`" in r.stderr for spec in vault_excludes()), r.stderr
     r = run_hook(agent_call("git grep -n x -- tests", str(specimen_repo)), cwd=tmp_path)
     assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
+
+
+FIVE = "':!*vault.yml' ':!*.vault' ':!*.sops.*' ':!*vault-password*' ':!infra/ansible/files/*_ed25519'"
+# (a git grep over the specimens, the directory it runs from, the vaulted file its refusal names or None for an
+# admission): the excludes count, in each spelling; beside a positive naming a directory, where git 2.47's ls-files
+# reading both at once keeps the member `docs/x ':!*fake*'` drops and lists nothing for `infra/ansible/files
+# ':!*.pub'`; from a subdirectory, which an exclude without `:/` is read under; against a positive outside it; and
+# over a commit's tree. Each row's verdict is also held to the files git grep itself reads.
+SPECIMEN_GREPS = [
+    ("git grep -n x -- docs ':!*vault.yml'", ".", None),
+    (f"git grep -n x -- docs {FIVE}", ".", None),
+    (f"git grep -n x -- . {FIVE}", ".", None),
+    ("git grep -n x -- docs ':^*vault.yml'", ".", None),
+    ("git grep -n x -- docs ':(exclude)*vault.yml'", ".", None),
+    ("git grep -n x -- docs ':/!*vault.yml'", ".", None),
+    ("git grep -n x -- docs ':!docs/x'", ".", None),
+    ("git grep -n x -- docs/x ':!*fake*'", ".", None),
+    ("git grep -n x -- '*.yml' ':!*vault.yml'", ".", None),
+    ("git grep -n x -- infra ':!infra/ansible/files/*_ed25519'", ".", None),
+    ("git grep -n x HEAD -- docs ':!*vault.yml'", ".", None),
+    ("git grep -n x HEAD -- docs/x ':!*fake*'", ".", None),
+    ("git grep -n x -- ':!*vault.yml'", "docs", None),
+    ("git grep -n x -- . ':!fake-vault.yml'", "docs/x", None),
+    ("git grep -n x -- ':/docs' ':/!*vault.yml'", "tests", None),
+    ("git grep -n x -- docs", ".", "docs/x/fake-vault.yml"),
+    ("git grep -n x -- docs ':!*.vault'", ".", "docs/x/fake-vault.yml"),
+    ("git grep -n x -- docs ':!docs/y'", ".", "docs/x/fake-vault.yml"),
+    ("git grep -n x -- infra/ansible/files ':!*.pub'", ".", "infra/ansible/files/deploy_x_ed25519"),
+    ("git grep -n x -- '*.yml' ':!*fake*'", ".", "group_vars/x/vault.yml"),
+    ("git grep -n x -- . ':!*vault.yml' ':!*.vault' ':!*.sops.*' ':!infra/ansible/files/*_ed25519'", ".", "vault-password.txt"),
+    ("git grep -n x -- infra ':!infra/ansible/files/*.pub'", ".", "infra/ansible/files/deploy_x_ed25519"),
+    ("git grep -n x HEAD -- docs ':!*.vault'", ".", "docs/x/fake-vault.yml"),
+    ("git grep -n x HEAD -- infra/ansible/files ':!*.pub'", ".", "infra/ansible/files/deploy_x_ed25519"),
+    ("git grep -n x -- ':!*.vault'", "docs", "docs/x/fake-vault.yml"),
+    ("git grep -n x -- ':/' ':!*vault.yml'", "docs", "a.sops.yaml"),
+    ("git grep -n x -- ':/docs' ':!*.vault'", "tests", "docs/x/fake-vault.yml"),
+    ("git grep -n x -- ':/docs' ':!*vault.yml'", "tests", "docs/x/fake-vault.yml"),
+]
+
+
+def grep_reads(cwd: Path, command: str) -> set[str]:
+    # The files git grep itself reads under the command's pathspecs, named from the top: every specimen holds `x`.
+    done = subprocess.run(["git", "grep", "--full-name", "-l", *shlex.split(command)[2:]], cwd=cwd, capture_output=True, text=True)
+    return {line.removeprefix("HEAD:") for line in done.stdout.splitlines()}
+
+
+@pytest.mark.parametrize(("command", "sub", "hit"), SPECIMEN_GREPS, ids=[f"{c} @ {s}" for c, s, _ in SPECIMEN_GREPS])
+def test_a_git_grep_is_refused_exactly_when_git_would_search_a_specimen_consumers_sh_excludes(
+    specimen_repo: Path, tmp_path: Path, command: str, sub: str, hit: str | None
+):
+    reached = grep_reads(specimen_repo / sub, command) & {path for path, vaulted in VAULT_SPECIMENS if vaulted}
+    assert (hit is not None) == bool(reached) and (hit is None or hit in reached), reached
+    r = run_hook(agent_call(command, str(specimen_repo / sub)), cwd=tmp_path)
+    if hit is None:
+        assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
+    else:
+        assert r.returncode == 2 and f"may search the vaulted file `{hit}`" in r.stderr, r.stderr
 
 
 def hook_beside(tmp_path: Path, definition: str | None) -> Path:
