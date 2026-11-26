@@ -32,7 +32,7 @@ PLAN_A, PLAN_B, PLAN_C = "docs/plans/00001-a.md", "docs/plans/00002-b.md", "docs
 
 def _plan(*lines: str) -> str:
     body = "\n".join(lines)
-    return f"# Plan\n\n## Task 1\n\n```bash\ngit commit -F - <<'EOF'\nfeat(x): y\n\n{body}\nEOF\n```\n"
+    return f"# Plan\n\n## The first task\n\n```bash\ngit commit -F - <<'EOF'\nfeat(x): y\n\n{body}\nEOF\n```\n"
 
 
 def _line(text: str, line: str) -> int:
@@ -191,7 +191,7 @@ def test_the_script_names_every_refused_spelling_a_plan_adds_and_no_admitted_one
 def test_an_untouched_old_literal_is_admitted(tmp_path):
     old = _plan(LITERAL)
     repo = _repo(tmp_path, {PLAN_A: old})
-    _stage(repo, {PLAN_A: old + "\n## Task 2\n\n" + PLACEHOLDER + "\n"})
+    _stage(repo, {PLAN_A: old + "\n## The second task\n\n" + PLACEHOLDER + "\n"})
     proc = _run(repo, PLAN_A)
     assert (proc.returncode, proc.stdout, proc.stderr) == (0, "", "")
 
