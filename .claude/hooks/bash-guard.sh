@@ -415,7 +415,12 @@ def cut_heredocs(text):
             end = text.find("\n", i)
             i = n if end == -1 else end
             continue
-        elif ch == "<" and text.startswith("<<", i) and not text.startswith("<<<", i):
+        elif ch == "<" and text.startswith("<<<", i):
+            # a here-string, stepped over whole: its own `<<` opens no heredoc, and its word is scanned as any word
+            out.append("<<<")
+            i += 3
+            continue
+        elif ch == "<" and text.startswith("<<", i):
             m = HEREDOC.match(text, i)
             if m:
                 # A backslash anywhere in the delimiter quotes it (`<<\EOF`): no expansion, like `<<'EOF'`.
