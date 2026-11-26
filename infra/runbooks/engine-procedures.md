@@ -231,12 +231,13 @@ Three plan-file mechanics that apply to **every** plan from here on:
      ]
    }
    ```
-2. Copy it to the engine host, into the state directory the container also sees, under a **staging** name:
+2. Copy it to the engine host, into the state directory the container also sees, under a **staging** name — the `scp` from the owner's shell, the owner authoring the plan, and the wrapper run after it the coordinator's:
    ```
    scp plan.json zcrypto:/tmp/probe-plan.json
-   ssh zcrypto
+   infra/scripts/host-run.sh zcrypto <<'EOF'
    sudo install -o zcrypto-engine -g zcrypto-engine -m 0640 /tmp/probe-plan.json /var/lib/zcrypto-engine/exec/probe-plan.staging.json
    rm /tmp/probe-plan.json
+   EOF
    ```
 3. Validate it offline — read-only, mutates nothing (no count command: `tests/test_engine_command.py::test_probe_plan_check_mutates_nothing` holds it):
    ```
@@ -344,7 +345,7 @@ No `leverage` key — its absence is what makes this a spot order — and a spot
 
 #### 5. Disarm — both keys down, the second one the same day
 
-1. **The owner deletes the arm file**: `sudo rm /var/lib/zcrypto-engine/exec/armed`. This disarms immediately — no deploy, no restart, no engine downtime. Gate read → `level=none`, `reasons=arm_file_absent`.
+1. **The coordinator deletes the arm file**: `sudo rm /var/lib/zcrypto-engine/exec/armed`. This disarms immediately — no deploy, no restart, no engine downtime. Gate read → `level=none`, `reasons=arm_file_absent`.
 
 2. **Converge `exec_armed` back to `false` the same day — not "eventually".** Between deleting the arm file and that converge the deployed config still says armed, so arming is effectively **one** key rather than two: anything that recreates a file at `/var/lib/zcrypto-engine/exec/armed` re-arms the engine with no review and no deploy. Set the line back to `engine_exec_armed: false` in `infra/ansible/host_vars/zcrypto/vars.yml` and converge with the same command as the arm step (same running digest, same inter-cycle gap, and, where that digest is an image built before the preflight existed, the bypass arm step 1 names, its approval asked before the converge). A Kraken margin position still open holds this converge until it is closed, unless [the restart rule](#engine-restart-margin-position)'s test admits it; step 1 has already disarmed the engine, and the one-key exposure above lasts until then. Read the preview: exactly one line changes back. **The changed line re-renders `zcrypto.toml`, so the handler restarts the engine and the deployed digest owes one clean boundary cycle again** -- at the next 4-hourly boundary, a `cycle-<HH>.json` whose `completed_at` falls inside `[B, B+30 min]` with no `failed-cycle-<HH>.json` beside it (no count command: the proof is a journal artifact on the engine host, and the reading of it is an operator act nothing in the tree records).
 
@@ -400,7 +401,7 @@ No `leverage` key — its absence is what makes this a spot order — and a spot
 
    The last one's **zero is a reading rather than a gap**: both dispositions are registered at startup, so `matched` and `unmatched` must both be present, and `(no series)` on it means the capture host's Alloy did not ship rather than that nothing happened. Record `unmatched`'s value against the settle taken in step 4 — that is the measurement of whether a hand settle reaches this process as an order event at all.
 
-7. **Count the journaled gate level across the window's exec records**, on the engine host: `for f in /var/lib/zcrypto-engine/journal/<YYYY-MM-DD>/exec-*.json; do python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['level'])" "$f"; done | sort | uniq -c`. This is the input the weekly tracking-error trip takes its eligibility from, and it is the one reading no other step produces. Every record written outside a window reads `none` (no count command: `evaluate` in `cli/engine/execgate.py` sets `none` while either arming key is down), so what this measures is whether an ARMED window actually journals `full`. If it does not, the restart hold was left set through the window, and the trip is structurally inert even once armed: see `engine-tracking-band` below, and do not set a band until this reads `full`.
+7. **Count the journaled gate level across the window's exec records**, on the engine host: `sudo python3 -c "import glob,json;[print(json.load(open(f))['level']) for f in sorted(glob.glob('/var/lib/zcrypto-engine/journal/<YYYY-MM-DD>/exec-*.json'))]" | sort | uniq -c`. This is the input the weekly tracking-error trip takes its eligibility from, and it is the one reading no other step produces. Every record written outside a window reads `none` (no count command: `evaluate` in `cli/engine/execgate.py` sets `none` while either arming key is down), so what this measures is whether an ARMED window actually journals `full`. If it does not, the restart hold was left set through the window, and the trip is structurally inert even once armed: see `engine-tracking-band` below, and do not set a band until this reads `full`.
 
 8. **Take the week's tracking reading, and record what it produced even when that is nothing.** Nothing schedules this — there is no timer and no unit behind the command, deliberately, so this step *is* the cadence: a window that closes without it leaves no missing artifact for anyone to notice later. From the workstation, against a pulled copy of the journal:
 
@@ -453,7 +454,7 @@ Times are UTC. The owner's local clock moves an hour on 2026-10-25; the windows 
 
 ### What to do
 
-Where each command runs: the **workstation** is your machine, at the root of the checkout the helper runs from — each command that starts with kraken or uv run, and the ssh and scp that reach the host; the **host** is a shell on `zcrypto` (`ssh zcrypto`) — each command that starts with sudo. `kraken-cli` is workstation-only (CLAUDE.md `## Secrets`).
+Where each command runs: the **workstation** is your machine, at the root of the checkout the helper runs from — each command that starts with kraken or uv run, and the ssh and scp that reach the host; the **host** is `zcrypto` — each command that starts with sudo, through `infra/scripts/host-run.sh zcrypto`, and in the owner's own shell on `zcrypto` (`ssh zcrypto`) where the wrapper refuses it as the owner's line: the arm file's creation, the hold's clear and the plan's placement. `kraken-cli` is workstation-only (CLAUDE.md `## Secrets`).
 
 #### 1. Before entry — four gates by Sun 2026-10-04 20:00Z, and what the proof left owed
 
@@ -655,7 +656,7 @@ Times are UTC.
 
 ### What to do
 
-Where each command runs: the **workstation** is your machine, at the root of the checkout — each command that starts with `kraken`, `uv run`, `mkdir`, `mv` or `rm` there, and the `ssh` that reaches the host; the **host** is a shell on `zcrypto` (`ssh zcrypto`) — each command that starts with `sudo` or `printf`. `kraken-cli` is workstation-only (CLAUDE.md `## Secrets`). What the engine does not record — each day's read, a restart and its cause, a pause, an act on the account, a birth — goes in `docs/reference/rung3/days.md`, one dated heading a day; each birth's snapshot has a directory of its own, `data/rung3/<stamp>`, `<stamp>` the birth written `<YYYY-MM-DD>T<HH>Z`.
+Where each command runs: the **workstation** is your machine, at the root of the checkout — each command that starts with `kraken`, `uv run`, `mkdir`, `mv` or `rm` there, and the `ssh` that reaches the host; the **host** is `zcrypto` — each command that starts with `sudo` or `printf`, through `infra/scripts/host-run.sh zcrypto`, and in the owner's own shell on `zcrypto` (`ssh zcrypto`) where the wrapper refuses it as the owner's line: the arm file's creation, the hold's and the kill file's clear and a plan's placement. `kraken-cli` is workstation-only (CLAUDE.md `## Secrets`). What the engine does not record — each day's read, a restart and its cause, a pause, an act on the account, a birth — goes in `docs/reference/rung3/days.md`, one dated heading a day; each birth's snapshot has a directory of its own, `data/rung3/<stamp>`, `<stamp>` the birth written `<YYYY-MM-DD>T<HH>Z`.
 
 <a name="rung-3-entry"></a>
 
@@ -1068,7 +1069,7 @@ The delete is a write, and the cache admits writes from the `engine` user alone;
 
 1. **Admit the run.** On the workstation, never on a host (no count command: `infra/scripts/count-list.sh kraken-cli-on-infra-surfaces` counts the tree's own surfaces, and a command typed on a host leaves no record there): `kraken open-orders -o json` lists no order, `kraken positions -o json` prints `{}`, and the balance export, `kraken extended-balance -o json`, shows no lot held — the positions read prints `{}` with a spot lot held too, so the balance export is the one that says so. Write down each coin it shows above zero, for step 5 to convert: Kraken's small-balance conversion takes a balance worth under about 1 USD, once per 24 hours (`docs/reference/kraken-fee-schedule.md`), so a coin worth more is a lot held, which this page does not cover, and with a coin written down a conversion made less than 24 hours earlier holds the run until Kraken takes the next. On the host: the gate read prints `level=none`, and `sudo ls -l /var/lib/zcrypto-engine/exec/` lists no `armed` and no `probe-plan.json`. Then [the restart rule](#engine-restart-margin-position)'s four reads; the inter-cycle gap as step 3 of [`engine-adhoc-key-read`](#engine-adhoc-key-read) reads it off the journal; and the Kraken maintenance feed, read whole with [`order-semantics-verification.md`](order-semantics-verification.md) §1.1's command for an entry that reaches the stop or the start. The feed is read again immediately before step 7's start and before each further stop or restart this page leads to; an entry that reaches the act holds it, and an engine that is down then stays down until the entry has passed.
 
-2. **Paste the block into a shell on `zcrypto`, once per login.** It defines two variables holding the Python text and the function's text, and the function `acct`; it runs nothing.
+2. **Paste the block into the owner's shell on `zcrypto`, once per login** — its Python reads `/opt/zcrypto-engine/engine.env`, which `infra/scripts/host-run.sh` refuses as the owner's line. It defines two variables holding the Python text and the function's text, and the function `acct`; it runs nothing.
 
 ```bash
 IFS= read -r -d '' ACCT_PY <<'PY'
@@ -1329,7 +1330,7 @@ SH
 eval "$ACCT_SH"
 ```
 
-`declare -f acct >/dev/null && echo ok` prints `ok`, and `printf '%s' "$ACCT_PY$ACCT_SH" | sha256sum` prints `b8da39812c0d0697a806d31b260533de9511e5462ef33ff393a05c729e1050b5`: a paste that lost or changed a line of either text prints another digest and is pasted again. `clear` and `restore` refuse while a `zcrypto-engine` container exists, and while `acct` runs no `systemctl` line is typed in a second terminal. `drop` compares nothing: once the key exists it deletes the aside copy whatever that copy holds, so step 3's reading of the two entry lists is the check before it.
+`declare -f acct >/dev/null && echo ok` prints `ok`, and `printf '%s' "$ACCT_PY$ACCT_SH" | sha256sum` prints `b8da39812c0d0697a806d31b260533de9511e5462ef33ff393a05c729e1050b5`: a paste that lost or changed a line of either text prints another digest and is pasted again. `clear` and `restore` refuse while a `zcrypto-engine` container exists, and while `acct` runs no `systemctl` line runs beside it. `drop` compares nothing: once the key exists it deletes the aside copy whatever that copy holds, so step 3's reading of the two entry lists is the check before it.
 
 3. **Read the store while the engine runs**: `acct list`. It prints the node that answered — `role master` and two `slave` lines, each `state=online` — then the keys by group and type, then each key carrying `:accounts:` entry by entry, oldest first, with the balances each start read and the newest figure per currency, which is what the next start will replay, then the aside copies. Expect one account key, `trader-SHADOW-001:accounts:KRAKEN-001`, a list, and `0 aside copy(ies)`. A second account key, or one that is not a list: stop here. A key under another name: pass it as `key=<name>` to each call below. An aside copy is what an earlier clear left behind, and `acct clear` refuses over one that differs from the key, so it is deleted before this run goes on. Where the key's entries open with the copy's own — a clear that did not delete, or a restore — the copy holds nothing the key lacks, whatever a start since has added, and `acct drop` deletes it here. Where they do not, the copy is a finished clear's way back, and step 9 says when it is deleted.
 

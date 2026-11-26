@@ -1,6 +1,6 @@
 ---
 name: zcrypto-auto-exec
-description: Use when the user asks for the unattended autonomous loop — /zcrypto-auto-exec, "work the queue overnight": the memo's WORK-ITEMS QUEUE and the open T-topics, no human interaction.
+description: The unattended autonomous loop over the memo's WORK-ITEMS QUEUE and the open T-topics, no human interaction.
 disable-model-invocation: true
 ---
 
@@ -20,7 +20,7 @@ Two goals, by work type:
 - **AUTONOMOUS: anything reversible/discardable, however heavy** — backtests, sweeps, building tooling/harnesses on a branch, code + tests + docs for any open topic, public web research, read-only host inspection.
 - **INTERACTIVE (park the step, keep moving):**
   1. **Hard-to-reverse / production-facing** — anything touching live/paper trading, the running capture pipeline (L2 gaps are unbackfillable), host converges and image re-pins, alert-rule pushes and other vaulted-credential attended steps, publishing externally, spending money, overwriting canonical datasets (immutable — derive to new paths).
-  2. **High-stakes judgment + the pre-registered escalation triggers** (master-plan §12): strategic pivots, architecture lock-ins, "good enough to deploy?", expanding a trial budget, **any touch of the holdout** (the look budget was 1 and is spent — 0 now, master plan §12; a touch is re-evaluating the adopted system on the window 2026-04-01 → 2026-07-09, reporting a result there as holdout or out-of-sample evidence, or a research read of `data/ohlc-holdout-*` — a search reading the window through `ohlc-rolling` is none, `docs/research/10.phase4-decisions.md` `[iter-176]`), the other §12 touchpoints by name.
+  2. **High-stakes judgment + the pre-registered escalation triggers** (master-plan §12): strategic pivots, architecture lock-ins, "good enough to deploy?", expanding a trial budget, closing a research family or archiving a topic as attributed out while a candidate is untried (take the next candidate instead, its pre-registration questions parked for the owner), **any touch of the holdout** (the look budget was 1 and is spent — 0 now, master plan §12; a touch is re-evaluating the adopted system on the window 2026-04-01 → 2026-07-09, reporting a result there as holdout or out-of-sample evidence, or a research read of `data/ohlc-holdout-*` — a search reading the window through `ohlc-rolling` is none, `docs/research/10.phase4-decisions.md` `[iter-176]`), the other §12 touchpoints by name.
 
 **The queue item's `Who:` field is a hint; the boundary governs per sub-item.** An item marked `me` can still contain an attended sub-step — decompose, do the reversible parts, park exactly the attended step. Run an autonomous sub-item now iff it **feeds** the parked human decision or is **independent** of it — never if it **waits on** the decision.
 
@@ -41,7 +41,7 @@ Two goals, by work type:
 
 ## Research work — the ratified protocol still binds
 
-When the item is research-type (alpha families, validation, portfolio/risk): the master plan's §12 Decision Register is the **complete** list of human touchpoints; everything else runs on defaults. **Trial budgets are hard limits** (A=40 / B=25 / C=10; every trial registered; an intra-family variant keeps the family's registry key; a broken instrument suspends spending in that family). **The holdout is untouchable.** Follow the §5 ranked queue; never exceed a family's budget; verdicts — hypothesis, spec hash, dataset hash, result, adopt/reject/park — go to the decisions log **and** the append-only trial registry. Verdicts are read net of the explicit cost model, DSR at true trial count, SPA vs the frozen benchmark. A negative result is a valid deliverable; fabricating a positive is the only unforgivable failure.
+When the item is research-type (alpha families, validation, portfolio/risk): the master plan's §12 Decision Register and the boundary's INTERACTIVE list are the **complete** list of human touchpoints; everything else runs on defaults. **Trial budgets are hard limits** (A=40 / B=25 / C=10; every trial registered; an intra-family variant keeps the family's registry key; a broken instrument suspends spending in that family). **The holdout is untouchable.** Follow the §5 ranked queue; never exceed a family's budget; verdicts — hypothesis, spec hash, dataset hash, result, adopt/reject/park — go to the decisions log **and** the append-only trial registry. Verdicts are read net of the explicit cost model, DSR at true trial count, SPA vs the frozen benchmark. A negative result is a valid deliverable; fabricating a positive is the only unforgivable failure.
 
 ## Distrust the instrument — before any verdict, research or not
 

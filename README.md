@@ -387,7 +387,7 @@ zcrypto data fetch
 | -- | -- |
 | `--no-verify` | Skip hash verification of newly fetched files against their manifest or index. |
 
-`push` sends this node's authored sets (`[zcrypto.data].authored_sets`) to the configured `push_dest` — an ssh alias pinned by the NAS's forced rsync command, never the read-write NFS mount.
+`push` sends this node's authored sets (`[zcrypto.data].authored_sets`) to the configured `push_dest` — an ssh alias pinned by the NAS's forced rsync command, never the read-write NFS mount. A set is sent by its exact name, so a sibling `rebuild` minted is sent only once its own name is in that list.
 
 ```bash
 zcrypto data push
@@ -399,16 +399,16 @@ zcrypto data push
 zcrypto data migrate-manifests [--apply]
 ```
 
-`rebuild` re-freezes or refreshes one or more sets from their sources (the OHLCVT dumps; the funding/snapshot/universe fetchers) and mints a new sibling directory — it never writes into the live set. By convention this runs on the workstation — the authoring node; the ops node authors one set, the rolling canonical, through its outbox, which the NAS pulls, and otherwise consumes frozen baskets via `fetch`. Its dump source (`nfs_mount_dir/kraken-ohlcvt-updates`) derives from the NAS mount root.
+`rebuild` re-freezes or refreshes one or more sets from their sources (the OHLCVT dumps; the funding/snapshot/universe fetchers) and mints a new sibling directory — it never writes into the live set. By convention this runs on the workstation — the authoring node; the ops node authors one set, the rolling canonical, through its outbox, which the NAS pulls, and otherwise consumes frozen baskets via `fetch`. Its dump source (`nfs_mount_dir/kraken-ohlcvt-updates`) derives from the NAS mount root. A bare rebuild mints locally and publishes nothing; `--push` publishes the minted sibling(s) as well, and since the transport never deletes, a published sibling cannot be withdrawn.
 
 ```bash
-zcrypto data rebuild <SET>...
+zcrypto data rebuild <SET>... [--push]
 ```
 
 | Argument / Option | Description |
 | -- | -- |
 | `SETS...` | Dataset names to rebuild: `ohlc-full`, `ohlc-15m`, `derivatives-funding`, `derivatives-oi`, `snapshots`, `universe`. |
-| `--push` / `--no-push` | Push the minted sibling(s) to `push_dest` after rebuilding (default `--push`). |
+| `--push` / `--no-push` | Also push the minted sibling(s) to `push_dest` (default `--no-push`). |
 
 All three exit **1** on a configuration or sync error (a missing/unmountable hot source `nfs_mount_dir/hot`, an unlisted authored set, an unknown rebuild set, a mismatched manifest hash, a `universe` rebuild whose source, the rolling canonical at its local head, is staler than the 7-day budget, is missing any candidate leg, has an index chain that does not walk, holds a hole of a candidate pair in the 30 days its volume median reads (a pair the owner has closed is left out of the candidates), or records a mandatory pair, BTC/EUR or ETH/EUR, as closed — no artifact is then written), else **0**. The transport is always plain rsync `--archive --ignore-existing` — never `--delete` — so the append-only contract is enforced structurally: a content-changed file is simply untransmittable.
 

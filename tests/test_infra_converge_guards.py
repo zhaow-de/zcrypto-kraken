@@ -2469,7 +2469,7 @@ _CENSUS_PATHSPECS = (
     "infra/ansible/group_vars/*/vars.yml",
     "infra/ansible/host_vars/*/vars.yml",
 )
-# The vaulted shapes, infra/scripts/consumers.sh's VAULT_EXCLUDES.
+# The vaulted shapes, a superset of infra/scripts/consumers.sh's VAULT_EXCLUDES.
 _VAULTED = ("*vault.yml", "*.vault", "*.sops.*", "*vault-password*", "infra/ansible/files/*_ed25519")
 
 

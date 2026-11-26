@@ -144,6 +144,11 @@ repos:
         language: system
         stages: [commit-msg]
         always_run: true
+      - id: plan-trailers
+        name: no model named in a plan's commit trailers
+        entry: uv run python infra/scripts/plan-trailers.py
+        language: system
+        files: '^docs/plans/.*\.md$'
 
   - repo: https://github.com/hukkin/mdformat
     rev: 1.0.0

@@ -17,6 +17,7 @@ No subagents, no agent tools; everything runs as plain blocking commands, nothin
 - Stage by explicit path, new files first, then the gate: `pre-commit run -a` reads tracked files only, so an untracked test is invisible to it and a clean gate says nothing about it.
 - A commit split by file kind is checked in a scratch worktree at each piece's tree before the pieces are committed when a piece changes code or tests: a red intermediate commit is a bisect trap the next reader pays for.
 - A fixture that sits equally far from the two states the test separates is vacuous: a symmetry noticed at design time is broken before the case is written, never left for the probe to find.
+- A case for a refusal asserts the reason the refusal gives — its message or the rule it names — not the stop alone.
 
 ## The probes
 

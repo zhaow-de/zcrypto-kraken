@@ -78,9 +78,13 @@ def rebuild(
         ...,
         help=f"Dataset names to rebuild ({', '.join(REBUILDABLE)}).",
     ),
-    push_after: bool = typer.Option(True, "--push/--no-push", help="Push the minted sibling(s) to push_dest after rebuilding."),
+    push_after: bool = typer.Option(
+        False,
+        "--push/--no-push",
+        help="Also push the minted sibling(s) to push_dest. The hub never deletes, so a pushed sibling is permanent.",
+    ),
 ) -> None:
-    """Re-freeze/refresh dataset(s) by minting a new sibling dir -- never touches the live set."""
+    """Re-freeze/refresh dataset(s) by minting a new sibling dir -- never touches the live set; publishes only with --push."""
     try:
         cfg = load_config()
         data_root = resolve_data_dir(cfg)

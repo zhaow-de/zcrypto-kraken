@@ -24,13 +24,20 @@
 # a substitution or an encoding, a cap first in its pipeline, which truncates what it opened rather than what the
 # command computed (`head -1 VERSION`), a truncation that is neither head nor tail, and a vaulted file read by a
 # program no family names (`grep` without `-c`, `diff`, `git log -p`, a Python script) or reached through a copy of
-# its whole directory -- none is an argv this guard judges; nor is a vaulted file the command makes before it reads it
-# (`ln -s <vaulted file> x && cat x`), since a file's existence is read before anything runs. Of `xargs` and
-# `find -exec`, two shapes are judged: a stage whose command word is `xargs` with `grep` or `rg` as its first operand,
-# or `find` carrying `-exec grep|rg`, in a pipeline any stage of which names `infra` as a word or a path component --
-# the word `grep_pattern_at` takes for the grep's pattern excepted; every other `xargs` or `-exec` is outside. A vault
-# tool's writing verb is admitted over a vaulted file: a key rotation runs `ansible-vault encrypt|rekey`.
-# Refused deliberately, as a word is judged wherever it stands: an agent's `echo git push`, `echo cat <vaulted file>`.
+# its whole directory, and a vaulted blob printed by `git show` or `cat-file` through anything but a literal
+# `<rev>:<path>` word that resolves from the stage's directory -- a blob's id, `cat-file --batch`'s input, a
+# `--git-dir` or `GIT_DIR`, a revision through a variable or a substitution -- none is an argv this guard judges; nor is
+# a vaulted file the command makes before it reads it (`ln -s <vaulted file> x && cat x`), since a file's existence is
+# read before anything runs. Of `xargs` and `find -exec`, two shapes are judged: a stage whose command word is `xargs`
+# with `grep` or `rg` as its first operand, or `find` carrying `-exec grep|rg`, in a pipeline any stage of which names
+# `infra` as a word or a path component -- the word `grep_pattern_at` takes for the grep's pattern excepted; every
+# other `xargs` or `-exec` is outside, one handed a vaulted file outside `infra` among them. A vault
+# tool's writing verb is admitted over a vaulted file: a key rotation runs `ansible-vault encrypt|rekey`. The vaulted
+# set is `VAULT_EXCLUDES` of infra/scripts/consumers.sh beside this file, what that script's searches exclude; a set
+# that cannot be had refuses every command judged against it.
+# The fleet family alone reads a shell's `-c` string, an `eval` line and the line `env -S` splits as commands.
+# Refused deliberately, as a word is judged wherever it stands: an agent's `echo git push`, `echo cat <vaulted file>`,
+# `echo ssh red`.
 #
 # A stage's directory, for the vaulted-file, memo and dispatched-agent families, is the payload's `cwd` moved by
 # each pipeline before it that is one stage whose command word is `cd` or `pushd` with a literal first operand, or
@@ -45,7 +52,16 @@
 # `cat consumers.sh | bash`), a target through a variable, a group's `} 2>/dev/null`, `2>&-`.
 #
 # Outside the memo family: every writer its corpus does not refuse -- a wrapper (`sudo tee`), a glob or a brace, a
-# path a variable holds whole, an interpreter, `awk -i inplace`, `rsync`, `ln`, `dd`, `rm`.
+# path a variable holds whole, an interpreter, `awk -i inplace`, `rsync`, `ln`, `dd`, `rm`, and `1<> f`, read as an
+# input since a redirect's descriptor is dropped.
+#
+# The stamp family judges a pipeline before the memo family judges its stages, so a memo write's stamp is named, with
+# the memo's Edit route, before its shell route is refused; the text it reads is the text as written, before bash
+# expands it, so printf's format and `echo -e`'s escapes are not run. A redirect's descriptor is not read: `2> f` is
+# taken, and shown, as `> f`, which refuses more, and `1<> f` as an input, which refuses less. Outside: a text another
+# program passes on (`sed`, `awk`), a substitution's output or a variable's value, a target a process substitution
+# opens (`> >(tee f)`), a ledger a variable names (`>> "$f"`), a group's or a loop's redirect, `exec >`, a wrapper
+# (`sudo tee`), and a file an interpreter, a shell or git writes from the here-document it reads.
 #
 # A state-changing git command (`changes_state`; `tag` deliberately not) stamps `zcrypto-git-state-stamp` in the
 # checkout's own git directory -- a worktree's, not the common dir worktrees share -- once per call at admission; a
@@ -60,6 +76,24 @@
 # main checkout's; a `gh api` write through fields with no `-X` (its implicit POST, a GraphQL mutation) and every `gh`
 # verb the family does not name.
 #
+# The fleet family refuses an `ssh`, `scp`, `sftp` or `rsync` word -- a bare one wherever it stands, a path only where it
+# stands as a command (`command_words`) -- in a stage and inside a shell's `-c` string, an `eval` line or an `env -S`
+# line, whose host is a host or an alias of docs/reference/fleet.md's table, or a name whose first label is one; whose
+# host only run time knows; or, to any host, that carries an option SSH_RUNS names, a ProxyJump or `-J` that is no bare
+# alias, or an `-o` keyword or a word of rsync's `-e` that only run time knows. A fleet host is reached through
+# infra/scripts/host-run.sh, whose stdin block is that wrapper's to judge. The table is read from the checkout of the
+# payload's `cwd` by `fleet_ssh_aliases` of infra/scripts/host_run_sh.py beside this file, its one parse; a table that
+# cannot be had refuses every such word that names a host. A word a reader takes as data (`data_words`) is no call;
+# behind any other wrapper (`sudo grep ssh f`) it is judged as one. Outside: an IP address, a name ~/.ssh/config maps
+# to a fleet host, `-F` and the config's own commands, `scp -S`, `RSYNC_RSH`, a program that runs ssh itself (`mosh`,
+# `autossh`, `ssh-copy-id`, `parallel -S`, `systemctl -H`, `rg --pre`, a link to `ssh-argv0` named for a host, git's
+# `GIT_SSH_COMMAND`), a script fed to a shell on stdin or handed as a string to any other program (`watch`, `su -c`), a
+# host a handler (`xargs`, `parallel`) appends, a `%h` template in `HostName`, a command bash cannot tokenise at the
+# top level, a here-document delimiter bash reads otherwise, a function named after a reader, an abbreviated long
+# option, a program word that is a glob or a brace, `trap`'s action and a `-c` string's `$0`, `sftp -D` and `scp -D`,
+# `env -a`, a jump host with a loopback destination, a multiplexing master, git's ssh transport, and a path behind a
+# runner RUNNERS does not name or past a long option's separate value.
+#
 # A failure of the hook's own -- stdin that is not the tool call's JSON, a command `shlex` cannot tokenise --
 # admits with a note on stderr, never blocks: exit 2 would refuse every Bash call in the session. That second
 # class is wider than an unbalanced quote: `shlex` does not parse `$( .. )`, so a quote inside a substitution
@@ -70,8 +104,10 @@ set -euo pipefail
 input="$(cat)"
 prog="$(cat <<'PY'
 import contextlib
+import fnmatch
 import functools
 import glob
+import importlib.util
 import json
 import os
 import posixpath
@@ -88,7 +124,11 @@ ANSI = "$'"
 ANSI_SIMPLE = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v", "\\": "\\", "'": "'", '"': '"', "?": "?"}
 ASSIGN = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", re.S)
 CONFIG_KEY_ENV = re.compile(r"^GIT_CONFIG_KEY_\d+$")
-HEREDOC = re.compile(r"<<(-?)[ \t]*(?:'([^'\n]*)'|\"([^\"\n]*)\"|\\?([^\s'\"]+))")
+# A piece of a here-document's delimiter word as bash reads it: a quoted span, `$'..'` and `$".."` among them, an
+# escaped character, or an unquoted run, which a metacharacter ends (`cat <<EOF>f`); the word's pieces concatenate
+# (`<<E'OF'`), and their quote removal is the delimiter.
+DELIM_PIECE = re.compile(r"\$?'([^'\n]*)'|\$?\"([^\"\n]*)\"|\\(.)|([^\s'\"\\<>|&;()$]+|\$)")
+HEREDOC = re.compile(rf"<<(-?)[ \t]*((?:{DELIM_PIECE.pattern})+)")
 GLOBAL_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env", "--attr-source"}
 GLOBAL_TERMINAL = {"-v", "--version", "-h", "--help", "--exec-path", "--html-path", "--man-path", "--info-path", "--list-cmds"}
 # Per subcommand: short options whose value is the rest of the bundle or else the next token; short options whose
@@ -114,7 +154,7 @@ GREPS = {"grep", "egrep", "fgrep", "rg"}
 COUNT_FLAGS = {"--count", "--count-matches"}  # --count-matches is ripgrep's own: another number, capped the same
 TESTS = {"[", "[[", "test"}
 COMPARE = {"=", "==", "!="}
-KEYWORDS = {"if", "elif", "else", "while", "until", "then", "do", "!", "{"}
+KEYWORDS = {"if", "elif", "else", "while", "until", "then", "do", "!", "{", "time"}
 TERMINATORS = {"]", "]]"} | COMPARE  # the test's own words an unquoted `$( .. )` inside it leaves glued to the last stage
 OPS = ["&>>", ";;&", "<<<", "&&", "||", "|&", ";;", ";&", "<<", "<>", "<&", ">&", "&>", ">>", ">|", "|", "&", ";", "\n", "<", ">", "(", ")"]
 SEP = {"&&", "||", "|&", ";;", ";&", ";;&", "|", "&", ";", "\n"}
@@ -126,8 +166,10 @@ OUTPUT = {">", ">>", ">|", "&>", "&>>", ">&"}  # a redirect whose target is a fi
 PRINTERS = {"cat", "head", "tail", "less", "more", "sed", "awk", "cut", "strings", "xxd", "od", "base64", "tac", "nl", "hexdump", "hd"}
 COPIERS = {"cp", "scp", "rsync"}
 INTERPRETER = re.compile(r"^python(\d+(\.\d+)?)?$")
-KEYS_DIR = "/infra/ansible/files"
-SOPS_VAULT = "/infra/ansible/vault-password.sops.yaml"
+VAULT_DEFINITION = "infra/scripts/consumers.sh"
+VAULT_LINE = re.compile(r"^VAULT_EXCLUDES=\([ \t]*('[^'\n]*'(?:[ \t]+'[^'\n]*')*)[ \t]*\)[ \t]*$", re.M)
+VAULT_NAMED = re.compile(r"\bVAULT_EXCLUDES\b(?!\[@\]\})")  # the name, but in a `${VAULT_EXCLUDES[@]}` read
+VAULT_ENTRY = re.compile(r":!(?![:/!^(])[^\\\[\n]+")
 WILD = re.compile(r"[*?[]")
 BRACE = re.compile(r"\{([^{}]*)\}")
 SEQUENCE = re.compile(r"(-?\d+|[A-Za-z])\.\.(-?\d+|[A-Za-z])(?:\.\.(-?\d+))?")
@@ -145,6 +187,20 @@ MEMO_REMEDY = (
     "The memo is written through the Edit tool after a Read of it, where memo-guard checks the write against that read; "
     "a shell write bypasses the check. A read -- `cat`, `grep`, `sed -n`, `head` -- stays open."
 )
+# memo-guard.sh's placeholder stamp, a clock with an `x` or a `?` for a digit, and its exempt files, whose own cases
+# spell one; tests/test_bash_guard.py's STAMP_SPECIMENS holds the two hooks' readings alike, so a change here is one
+# there.
+PLACEHOLDER = re.compile(r"(?i)[0-9x?]{2}:[0-9x?]{2}(?![0-9a-f])")
+UNREAD_DIGIT = re.compile(r"(?i)[x?]")
+STAMP_EXEMPT = ("*/tests/*.py", "*/.claude/hooks/*")
+# A tilde after a digit or beside another is a range (`19:30~19:45`) or Markdown's strikethrough (`~~19:45Z~~`).
+APPROXIMATE = re.compile(r"(?<![0-9~])~(?!~)[ \t]*(?:[0-9]{4}-[0-9]{2}-[0-9]{2}[T ])?[0-9]{1,2}:[0-9]{2}(?![0-9])")
+LEDGERS = (MEMO, [".local", "coordination.md"])
+SAYERS = {"echo", "printf"}
+PASSERS = {"cat", "tee"}  # what reaches their stdin is what they write
+STDIN = {"-", "/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"}  # a cat operand that is its stdin
+STAMP_REMEDY = "Paste the printed value of `date -u` or of the record (an mtime, a reflog, a PR's createdAt)."
+HEREDOC_MARK = "heredoc-"  # the word a here-document's `<<` hands the tokeniser in place of its delimiter
 SED_VALUE = ("efl", "i", {"expression", "file", "line-length"})
 TRUNCATE_VALUE = ("sr", "", {"size", "reference"})
 # Per program: whose target the memo would be, and its valued options in option_walk's three kinds.
@@ -210,16 +266,67 @@ STATE_SUBS = {"commit", "merge", "rebase", "reset", "push", "pull", "fetch", "ch
 STATE_STAMP = "zcrypto-git-state-stamp"
 STATE_GAP = 3.0  # seconds since the checkout's last admitted state-changing git command
 XARGS_VALUE = {"-n", "-I", "-L", "-P", "-d", "-s"}  # xargs' short options whose value is the next word
+# Per program: the getopt letters that take a value (ssh.c, scp.c, sftp.c); rsync's, and its long options that take one,
+# matched whole -- `--partial` is no `--partial-dir`.
+SSH_VALUE = {"ssh": "BDEFIJLOPQRSWbceilmopw", "scp": "DFJPSXcilo", "sftp": "BDFJPRSXbcilos"}
+RSYNC_VALUE = (
+    "eTBfM@",
+    {"info", "debug", "stderr", "backup-dir", "suffix", "rsh", "rsync-path", "chmod", "block-size", "max-delete",
+     "max-size", "min-size", "max-alloc", "partial-dir", "timeout", "contimeout", "modify-window", "temp-dir",
+     "compare-dest", "copy-dest", "link-dest", "compress-choice", "zc", "compress-level", "zl", "skip-compress",
+     "checksum-choice", "cc", "checksum-seed", "filter", "exclude", "exclude-from", "include", "include-from",
+     "files-from", "address", "port", "sockopts", "out-format", "log-file", "log-file-format", "password-file",
+     "early-input", "bwlimit", "stop-after", "stop-at", "write-batch", "only-write-batch", "read-batch", "protocol",
+     "iconv", "outbuf", "remote-option", "usermap", "groupmap", "chown", "copy-as"},
+)
+SSH_PRINTS = {"G", "Q", "V"}  # ssh's options that print and exit before connecting
+SSH_LOCAL_CONTROLS = {"check", "exit", "stop"}  # `-O` commands the local multiplexing master answers, sending the host nothing
+SSH_RUNS = {
+    "proxycommand": ("ProxyCommand", "runs a local command to reach the host"),
+    "localcommand": ("LocalCommand", "runs a local command once connected"),
+    "permitlocalcommand": ("PermitLocalCommand", "lets a LocalCommand run"),
+    "knownhostscommand": ("KnownHostsCommand", "runs a local command to read the host's keys"),
+    "pkcs11provider": ("PKCS11Provider", "loads a local library into ssh's helper"),
+    "securitykeyprovider": ("SecurityKeyProvider", "loads a local library into ssh's helper"),
+    "xauthlocation": ("XAuthLocation", "names the local program ssh runs for X11 forwarding"),
+}
+SSH_SPACE = " \t\r\n"  # the WHITESPACE of OpenSSH's misc.c, which its strdelim splits a config line at
+SSH_FLAGS = {"J": "proxyjump", "I": "pkcs11provider"}  # ssh's short options read as the config keyword each sets
+BARE_ALIAS = re.compile(r"[A-Za-z0-9_-]+")
+UNRESOLVED = re.compile(r"[$`*?[\]{}]")
+REMOTE_URI = re.compile(r"(?i)(?:ssh|scp|sftp|rsync)://(?:[^@/]*@)?(\[[^\]]*\]|[^:/]*)")
+# A named list, not every shell: the fleet family reads the `-c` string of these alone.
+SHELLS = {"ash", "bash", "csh", "dash", "elvish", "fish", "ksh", "ksh93", "mksh", "nu", "posh", "pwsh", "rbash", "sh", "tcsh",
+          "xonsh", "yash", "zsh"}
+ENV_VALUE = ("--split-string", "--unset", "--chdir")  # env's long options that take a value, `S`, `u` and `C` its short ones
+SHELL_VALUE = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}
+FIND_RUNS = {"-exec", "-execdir", "-ok", "-okdir"}
+HANDERS = {"xargs", "parallel"} | FIND_RUNS  # a word that hands the command after it operands at run time
+# xargs' options, GNU's and BSD's, in option_walk's three kinds; of them `-I`, `-i`, `--replace` and BSD's `-J` name the
+# string xargs replaces with what it reads, `{}` where `-i` or `--replace` names none.
+XARGS_OPTIONS = ("aEILnsPdJRS", "eil", {"arg-file", "delimiter", "max-args", "max-procs", "max-chars", "process-slot-var"})
+PARALLEL_INPUTS = {":::", "::::", ":::+", "::::+"}  # where parallel's command ends and its inputs begin
+# A program that runs the command its operands name, with its short options that take a value: past it, its options,
+# their values, assignments and a duration, the next word stands as a command (`command_words`).
+RUNNERS = {
+    "sudo": "CDghpRrTtUu", "doas": "Cu", "env": "CSu", "timeout": "ks", "nice": "n", "stdbuf": "eio", "nohup": "",
+    "setsid": "", "command": "", "builtin": "", "exec": "a", "xargs": XARGS_OPTIONS[0], "parallel": "",
+}
+DURATION = re.compile(r"\d+(?:\.\d+)?[smhd]?")
+DATA_READERS = GREPS | {"journalctl", "systemctl"}  # beside a git read: programs whose operands are data, never a command
+HOST_RUN = "infra/scripts/host-run.sh {} <<'EOF' … EOF"
+HOST_RUN_JUDGE = "infra/scripts/host_run_sh.py"
 HOOK_DIR = posixpath.dirname(os.path.abspath(sys.argv[1]))
 
 
 class Stage(list):
-    # A stage's words, the files its `<` redirects feed it, and its output redirects as (operator, target): no word of
-    # its argv.
+    # A stage's words, the files its `<` redirects feed it, its output redirects as (operator, target), and the texts
+    # its here-documents and here-strings feed it: no word of its argv.
     def __init__(self):
         super().__init__()
         self.inputs = []
         self.outputs = []
+        self.fed = []
 
 
 def expansions(body):
@@ -287,9 +394,11 @@ def ansi_decode(raw):
 
 def cut_heredocs(text):
     # A scan that knows quotes and substitutions -- the heredoc inside the documented `-m "$(cat <<'EOF' ... EOF)"`
-    # is a heredoc, and its body carries whatever the message says. Returns the cut text and the substitutions it
-    # closed, each a command of its own; an unclosed one is bash's to refuse.
-    out, bodies, pending, stack, i, n, sub_close = [], [], [], [("top", 0)], 0, len(text), -1
+    # is a heredoc, and its body carries whatever the message says. Returns the cut text, the substitutions it
+    # closed, each a command of its own -- an unclosed one is bash's to refuse -- and each heredoc's body by the
+    # HEREDOC_MARK word that stands for its delimiter. A heredoc inside a double quote keeps its delimiter and no
+    # body: its `<<` is inside a word, and the substitution holding it is cut again as a command of its own.
+    out, bodies, pending, stack, i, n, sub_close, docs = [], [], [], [("top", 0)], 0, len(text), -1, {}
     while i < n:
         ch, st = text[i], stack[-1][0]
         if st == "sq":
@@ -371,19 +480,29 @@ def cut_heredocs(text):
             end = text.find("\n", i)
             i = n if end == -1 else end
             continue
-        elif ch == "<" and text.startswith("<<", i) and not text.startswith("<<<", i):
+        elif ch == "<" and text.startswith("<<<", i):
+            # a here-string, stepped over whole: its own `<<` opens no heredoc, and its word is scanned as any word
+            out.append("<<<")
+            i += 3
+            continue
+        elif ch == "<" and text.startswith("<<", i):
             m = HEREDOC.match(text, i)
             if m:
-                # A backslash anywhere in the delimiter quotes it (`<<\EOF`): no expansion, like `<<'EOF'`.
-                expands = m.group(4) is not None and "\\" not in m.group(0)
-                pending.append((m.group(2) or m.group(3) or m.group(4), bool(m.group(1)), expands))
-                out.append(m.group(0))
+                # A quote or a backslash anywhere in the delimiter quotes it (`<<\EOF`, `<<E'OF'`): no expansion.
+                word = m.group(2)
+                expands = not re.search(r"['\"\\]", word)
+                delim = "".join(next(g for g in p.groups() if g is not None) for p in DELIM_PIECE.finditer(word))
+                mark = None if any(s == "dq" for s, _ in stack) else f"{HEREDOC_MARK}{len(docs)}"
+                if mark:
+                    docs[mark] = ""
+                pending.append((delim, bool(m.group(1)), expands, mark))
+                out.append(f"<< {mark}" if mark else m.group(0))
                 i = m.end()
                 continue
         elif ch == "\n" and pending:
             out.append("\n")
             i += 1
-            for delim, dash, expands in pending:
+            for delim, dash, expands, mark in pending:
                 lines = []
                 while i < n:
                     end = text.find("\n", i)
@@ -394,17 +513,19 @@ def cut_heredocs(text):
                     lines.append(line)
                 if expands:
                     bodies.extend(expansions("\n".join(lines)))
+                if mark:
+                    docs[mark] = "\n".join(lines)
             pending = []
             continue
         out.append(ch)
         i += 1
-    return "".join(out), bodies
+    return "".join(out), bodies, docs
 
 
 def pipelines(text):
     # Each pipeline as its stages, in order: the second arm judges what one stage hands the next, and the first
     # arm reads every stage on its own.
-    cut, bodies = cut_heredocs(text)
+    cut, bodies, docs = cut_heredocs(text)
     lex = shlex.shlex(cut, posix=True, punctuation_chars="".join(sorted(PUNCT)))
     lex.commenters = ""  # bash's comments are cut above; a `#` inside a word (issue#42) is text
     lex.whitespace = " \t\r"
@@ -416,6 +537,10 @@ def pipelines(text):
                 pipes[-1][-1].inputs.append(tok)
             elif skip in OUTPUT:
                 pipes[-1][-1].outputs.append((skip, tok))
+            elif skip == "<<<":
+                pipes[-1][-1].fed.append(tok)
+            elif skip == "<<" and tok in docs:
+                pipes[-1][-1].fed.append(docs[tok])
             skip = ""
             continue
         if not tok or not set(tok) <= PUNCT:
@@ -536,10 +661,10 @@ def judge_config(rest, words):
 
 
 def argv_of(words):
-    # A stage's program and its arguments: leading NAME=value assignments and shell keywords stepped over, the
-    # program path-stripped. A word in any other position is never the program.
+    # A stage's program and its arguments: leading NAME=value assignments, shell keywords and `time`'s `-p` stepped
+    # over, the program path-stripped. A word in any other position is never the program.
     i = 0
-    while i < len(words) and (ASSIGN.match(words[i]) or words[i] in KEYWORDS):
+    while i < len(words) and (ASSIGN.match(words[i]) or words[i] in KEYWORDS or (i and words[i - 1 : i + 1] == ["time", "-p"])):
         i += 1
     if i == len(words):
         return "", []
@@ -662,19 +787,66 @@ def judge_handed_grep(pipe, raw):
     if any("infra" in w.split("/") for w in judged):
         for stage, h in zip(pipe, handed):
             if h:
-                refuse_vault(stage, "greps the files it is handed in a pipeline naming infra, where the vaulted files sit", raw)
+                refuse_vault(stage, "greps the files it is handed in a pipeline naming infra, which holds vaulted files", raw)
 
 
 def is_git(w):
     return w == "git" or (w.endswith("/git") and not ASSIGN.match(w))
 
 
+class VaultSetUnread(Exception):
+    pass
+
+
+def vault_set():
+    # The vaulted set's patterns, `VAULT_EXCLUDES` of the consumers.sh beside this file, or None and why not. The
+    # file names the array on one line of single-quoted `:!<pattern>` words parted by blanks, the words bash builds of
+    # it, and nowhere else but in `${VAULT_EXCLUDES[@]}` reads, so no other line writes it. A pattern takes `*` and
+    # `?` alone: a class or an escape is read by Python's fnmatch otherwise than by git.
+    path = posixpath.normpath(posixpath.join(HOOK_DIR, "..", "..", VAULT_DEFINITION))
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except (OSError, ValueError) as exc:
+        return None, f"`{VAULT_DEFINITION}` beside this hook could not be read ({type(exc).__name__})"
+    lines = VAULT_LINE.findall(text)
+    if len(lines) != 1 or len(VAULT_NAMED.findall(text)) != 1:
+        return None, (
+            f"`{VAULT_DEFINITION}` beside this hook holds no one-line `VAULT_EXCLUDES=('…' …)` and no other assignment, "
+            f"naming the array nowhere else but in `${{VAULT_EXCLUDES[@]}}` reads"
+        )
+    words = re.findall(r"'([^']*)'", lines[0])
+    bad = next((w for w in words if not VAULT_ENTRY.fullmatch(w)), None)
+    if bad is not None:
+        return None, f"`{bad}` in `{VAULT_DEFINITION}`'s `VAULT_EXCLUDES` is no `:!<pattern>` of `*` and `?` alone"
+    return tuple(w[2:] for w in words), None
+
+
+VAULT_SET, VAULT_UNREAD = vault_set()
+
+
+def vault_member(path):
+    # Whether a path from a repository's top is in the vaulted set. A pattern is read as git reads a pathspec without
+    # `glob` magic: `*` and `?` cross `/`, and its literal text names a file or a directory above one.
+    if VAULT_SET is None:
+        raise VaultSetUnread
+    return any(fnmatch.fnmatchcase(path, p) or path.startswith(p.rstrip("/") + "/") for p in VAULT_SET)
+
+
+@functools.cache
+def top_of(directory):
+    done = subprocess.run(["git", "-C", directory, "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    return os.path.realpath(done.stdout.strip()) if not done.returncode and done.stdout.strip() else None
+
+
 def vault_path(path):
-    # The vaulted set, read from a path whose every directory is spelled: a realpath, or `/` and a path under a
-    # repository.
-    head, _, name = path.rpartition("/")
-    keys = name.endswith("_ed25519") and head.endswith(KEYS_DIR)
-    return name == "vault.yml" or name.endswith(".vault") or keys or path.endswith(SOPS_VAULT)
+    # Whether a realpath is in the vaulted set: read from the top of the repository git finds it in, as git reads the
+    # set's pathspecs, so a directory above that top is never read; outside every repository, from each component,
+    # any of which could be a top, which refuses more, never less.
+    top = top_of(posixpath.dirname(path))
+    if top and path.startswith(top.rstrip("/") + "/"):
+        return vault_member(path[len(top.rstrip("/")) + 1 :])
+    return any(vault_member(path[i:]) for i in range(len(path)) if i == 0 or path[i - 1] == "/")
 
 
 def held(path, where):
@@ -777,7 +949,7 @@ def at_revision(where, operand):
     if path.startswith(("./", "../")):
         prefix = subprocess.run(["git", "-C", where, "rev-parse", "--show-prefix"], capture_output=True, text=True)
         path = posixpath.normpath(prefix.stdout.strip() + path)
-    return vault_path("/" + path)
+    return vault_member(path)
 
 
 def operands(args):
@@ -848,9 +1020,11 @@ def exclude_spec(spec):
 
 
 def scoped_grep(rest, where):
-    # git does the selecting, never a hand matcher: `git ls-files` from the payload's cwd over the positives if any,
-    # since git 2.47's ls-files can list nothing for a positive beside an exclude. A commit's tree is overlaid on the
-    # index, a superset that can only refuse more; any other object refuses.
+    # git does the selecting, never a hand matcher: `git ls-files` from the payload's cwd lists the positives -- none
+    # lists that directory, which git grep then searches -- and, apart, `:/` beside the excludes; the searched files
+    # are those of the first listing the second keeps. Apart, since git's ls-files misreads an exclude beside
+    # positives sharing a leading directory: it keeps a file the exclude drops, or lists nothing. A commit's tree is
+    # overlaid on the index, a superset that can only refuse more; any other object refuses.
     if any(a[:2] == "--" and among(a, {"--no-index", "--untracked"}) for a in rest):
         return "searches past the index -- drop `--no-index` or `--untracked`"
     bare, specs = grep_pathspecs(rest)
@@ -864,18 +1038,27 @@ def scoped_grep(rest, where):
         else:
             specs.append(x)
     positives = [x for x in specs if not exclude_spec(x)]
-    listed = positives or specs
+    excludes = [x for x in specs if exclude_spec(x)]
     for tree in commits or [None]:
         with_tree = [f"--with-tree={tree}"] if tree else []
-        done = subprocess.run(
-            ["git", "-C", where, "ls-files", "-z", "--full-name", *with_tree, "--", *listed],
-            capture_output=True,
-            text=True,
-        )
-        if done.returncode:
-            return "carries a pathspec git cannot read -- spell it as git ls-files accepts it"
-        if any(vault_path("/" + f) for f in done.stdout.split("\0") if f):
-            return "may search a vaulted file -- name directories or files outside the vaulted set (`vault.yml`, `*.vault`, `vault-password.sops.yaml`, `files/*_ed25519`); excludes count alone"
+        listings = []
+        for listed in [positives] + ([[":/", *excludes]] if excludes else []):
+            done = subprocess.run(
+                ["git", "-C", where, "ls-files", "-z", "--full-name", *with_tree, "--", *listed],
+                capture_output=True,
+                text=True,
+            )
+            if done.returncode:
+                return "carries a pathspec git cannot read -- spell it as git ls-files accepts it"
+            listings.append([f for f in done.stdout.split("\0") if f])
+        kept = set(listings[-1])
+        hit = next((f for f in listings[0] if f in kept and vault_member(f)), None)
+        if hit:
+            shown = ", ".join(f"`{p}`" for p in VAULT_SET)
+            return (
+                f"may search the vaulted file `{hit}` -- name directories or files outside the vaulted set, or carry "
+                f"its excludes ({VAULT_DEFINITION}'s `VAULT_EXCLUDES`: {shown}, each as `:!<pattern>`)"
+            )
     return None
 
 
@@ -888,6 +1071,17 @@ def first_vaulted(args, where):
 
 
 def judge_vault(words, raw, where):
+    try:
+        judge_vaulted(words, raw, where)
+    except VaultSetUnread:
+        refuse(
+            f"`{spelled(words)}` is judged against the vaulted set, and the vaulted set cannot be had: {VAULT_UNREAD}, so "
+            f"every command judged against it is refused until it can; in `{raw}`. The set is `VAULT_EXCLUDES` in "
+            f"{VAULT_DEFINITION}, one line of single-quoted `:!<pattern>` words."
+        )
+
+
+def judge_vaulted(words, raw, where):
     for i, w in enumerate(words):
         p, rest = w.rpartition("/")[2], words[i + 1 :]
         if p == "ansible-vault" and any(a in ("view", "decrypt") for a in rest):
@@ -923,8 +1117,8 @@ def judge_vault(words, raw, where):
             refuse_vault(words, f"prints the vaulted file `{hit.rpartition(':')[2]}` at a revision", raw)
 
 
-def names_memo(path, where):
-    return any(posixpath.normpath(p).split("/")[-2:] == MEMO for p in (path, posixpath.join(where, path)))
+def names_memo(path, where, name=MEMO):
+    return any(posixpath.normpath(p).split("/")[-2:] == name for p in (path, posixpath.join(where, path)))
 
 
 def refuse_memo(shown, hit, how, raw):
@@ -965,6 +1159,46 @@ def judge_memo(words, raw, where):
         refuse_memo(spelled(words), hit, how, raw)
 
 
+def written_texts(pipe):
+    # Each (stage shown, file, text) the pipeline writes: what echo or printf says, or what a here-document or a
+    # here-string feeds cat or tee, or the stage before pipes them, into an output redirect's file -- no descriptor
+    # (`>&2`) -- or tee's. A cat naming only files it reads, and every other program, writes no text.
+    out, flowing = [], None
+    for stage in pipe:
+        p, rest = argv_of(stage)
+        text = None
+        if p in SAYERS:
+            text = " ".join(rest)
+        elif p in PASSERS and (p == "tee" or not operands(rest) or STDIN & {posixpath.normpath(o) for o in operands(rest)}):
+            fed = stage.fed or ([flowing] if flowing is not None else [])
+            text = "\n".join(fed) if fed else None
+        if text is not None:
+            for op, target in stage.outputs:
+                if not (op == ">&" and (target.isdigit() or target == "-")):
+                    out.append((" ".join(filter(None, (spelled(stage), op, shlex.quote(target)))), target, text))
+            if p == "tee":
+                out += [(spelled(stage), target, text) for target in operands(rest)]
+        flowing = text
+    return out
+
+
+def judge_stamps(pipe, raw, where):
+    for shown, target, text in written_texts(pipe):
+        path = posixpath.normpath(posixpath.join(where, target))
+        if path.startswith("/dev/"):
+            continue  # /dev/null, a terminal, a descriptor
+        remedy = f"{STAMP_REMEDY} {MEMO_REMEDY}" if names_memo(target, where) else STAMP_REMEDY
+        hit = next((m[0] for m in PLACEHOLDER.finditer(text) if UNREAD_DIGIT.search(m[0])), None)
+        if hit and not any(fnmatch.fnmatchcase(path, x) for x in STAMP_EXEMPT):
+            refuse(f"`{shown}` writes the placeholder stamp `{hit}` into `{target}`; in `{raw}`. {remedy}")
+        clock = APPROXIMATE.search(text)
+        if clock and any(names_memo(target, where, name) for name in LEDGERS):
+            refuse(
+                f"`{shown}` writes the approximate clock `{clock[0]}` into `{target}`, a ledger whose stamps are "
+                f"pasted, never estimated; in `{raw}`. {remedy}"
+            )
+
+
 def reads_consumers(words):
     p, rest = argv_of(words)
     options = []
@@ -983,6 +1217,422 @@ def judge_consumers(words, raw):
             f"`{spelled(words)}` names {CONSUMERS} under no reader the guard knows, a stream sent to /dev/null; in `{raw}`. "
             f"{CONSUMERS_REMEDY} A read of the script takes `cat`, `grep`, `ls`, `git` or `bash -n`, or no redirect."
         )
+
+
+def ssh_walk(rest, letters, longs=frozenset(), restart=False):
+    # An ssh-family argv's options, each (letter or --name, value or None), and its operands, in any order; with
+    # `restart`, as ssh reads them, the options before its destination and after it, up to the remote command.
+    opts, ops, j, ended = [], [], 0, False
+    while j < len(rest):
+        tok = rest[j]
+        j += 1
+        if tok == "--" and not ended:
+            ended = True
+            if restart and ops:
+                break
+            continue
+        if not ended and tok[:1] == "-" and len(tok) > 1:
+            if tok[:2] == "--":
+                name, eq, value = tok.partition("=")
+                takes = name[2:] in longs
+                if takes and not eq and j < len(rest):
+                    value, j = rest[j], j + 1
+                opts.append((name, value if takes or eq else None))
+                continue
+            for k, ch in enumerate(tok[1:], 1):
+                if ch in letters:
+                    value = tok[k + 1 :]
+                    if not value and j < len(rest):
+                        value, j = rest[j], j + 1
+                    opts.append((ch, value))
+                    break
+                opts.append((ch, None))
+            continue
+        if restart and ops:
+            break
+        ops.append(tok)
+        if restart and ended:
+            break
+    return opts, ops
+
+
+def host_of(op, bare):
+    # The host an operand names -- `[user@]host:path`, `[user@]host::module`, a `scheme://[user@]host` URI, and with
+    # `bare` a word with no colon, as ssh's and sftp's destination is -- or None for a local path; a variable with no
+    # `/` after it is returned whole, since it could hold `host:`.
+    if m := REMOTE_URI.match(op):
+        return m[1].strip("[]")
+    if op.startswith("[") and "]:" in op:
+        return op[1 : op.index("]:")]
+    head, colon, _ = op.partition(":")
+    if colon and "/" not in head:
+        return head.rpartition("@")[2]
+    if bare:
+        return op.rpartition("@")[2]
+    return op if not colon and re.search("[$`]", op) and "/" not in op else None
+
+
+def fleet_alias(host, names):
+    # The alias of the fleet host a name is, or whose first label it is (`zcrypto-red.<tailnet>`); never an address's.
+    h = host.lower().rstrip(".")
+    return names.get(h) or (None if h.replace(".", "").isdigit() else names.get(h.partition(".")[0]))
+
+
+@functools.cache
+def host_run_judge():
+    path = posixpath.normpath(posixpath.join(HOOK_DIR, "..", "..", HOST_RUN_JUDGE))
+    spec = importlib.util.spec_from_file_location("host_run_sh", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["host_run_sh"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+@functools.cache
+def fleet_names(cwd):
+    # Every host and alias of the fleet table in the call's checkout, lowercased, each mapped to its alias, or None and
+    # why the table cannot be had.
+    done = subprocess.run(["git", "-C", cwd, "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    if done.returncode:
+        return None, f"no checkout holds the call's directory `{cwd}`"
+    top = done.stdout.strip()
+    try:
+        judge = host_run_judge()
+    except (OSError, ImportError, SyntaxError, AttributeError, ValueError) as exc:
+        return None, f"the table's parse, `{HOST_RUN_JUDGE}` beside this hook, could not be loaded ({type(exc).__name__})"
+    table = posixpath.join(top, str(judge.FLEET_TABLE))
+    try:
+        with open(table, encoding="utf-8") as f:
+            rows = judge.fleet_ssh_aliases(f.read())
+    except (OSError, ValueError) as exc:
+        return None, f"the fleet table `{table}` could not be read ({type(exc).__name__})"
+    if not rows:
+        return None, f"the fleet table `{table}` names no host"
+    names = {}
+    for host, alias in rows.items():
+        names[host.lower()] = names[alias.lower()] = alias
+    return names, None
+
+
+def refuse_unresolved(words, what, raw):
+    refuse(
+        f"`{spelled(words)}` takes its host from {what}, which the guard cannot resolve to a host in or out of the "
+        f"fleet; in `{raw}`. Spell the host out; a fleet host is reached as `{HOST_RUN.format('<alias>')}`."
+    )
+
+
+def replace_strings(rest, short_value, short_attached, long_value, scan=False):
+    # The strings a handler's options name for it to replace, read up to its command word -- or, with `scan`, over every
+    # word up to the ssh-family one, for a handler whose valued options are too many to walk -- and that word's index.
+    out, j = [], 0
+    while j < len(rest):
+        tok = rest[j]
+        j += 1
+        if tok == "--" or tok[:1] != "-" or len(tok) == 1:
+            if scan:
+                continue
+            j -= tok != "--"
+            break
+        if tok[:2] == "--":
+            name, eq, value = tok.partition("=")
+            if name == "--replace":
+                out.append(value if eq else "{}")
+            elif not eq and name[2:] in long_value:
+                j += 1
+            continue
+        for k, ch in enumerate(tok[1:], 1):
+            if ch in short_attached:
+                if ch == "i":
+                    out.append(tok[k + 1 :] or "{}")
+                break
+            if ch in short_value:
+                value = tok[k + 1 :]
+                if not value and j < len(rest):
+                    value, j = rest[j], j + 1
+                if ch in "IJ":
+                    out.append(value)
+                break
+    return out, j
+
+
+def replacements(words, at):
+    # Each string a handler before `at` fills in with what it reads at run time, wherever it stands in a word of the
+    # command it runs, and that handler.
+    out = []
+    for h, w in enumerate(words[:at]):
+        p = w.rpartition("/")[2]
+        if p == "xargs":
+            out += [(r, p) for r in replace_strings(words[h + 1 : at], *XARGS_OPTIONS)[0]]
+        elif p == "parallel":
+            out += [(r, p) for r in replace_strings(words[h + 1 : at], "I", "i", set(), scan=True)[0]]
+        elif p in FIND_RUNS:
+            out.append(("{}", f"find {p}"))
+    return out
+
+
+def reads_data(words, k):
+    return words[k].rpartition("/")[2] in DATA_READERS or (is_git(words[k]) and git_sub(words[k:])[0] in MAIN_READS)
+
+
+def data_words(words):
+    # The indices of the words a reader takes as data: those after a grep, rg, journalctl, systemctl or git read that is
+    # the stage's program or the command `xargs` or a find `-exec` runs, up to the `;` or `+` ending that `-exec`.
+    p, rest = argv_of(words)
+    runs = [(len(words) - len(rest) - 1, len(words))] if p else []
+    for j, w in enumerate(words):
+        if w.rpartition("/")[2] == "xargs":
+            runs.append((j + 1 + replace_strings(words[j + 1 :], *XARGS_OPTIONS)[1], len(words)))
+        elif w in FIND_RUNS:
+            runs.append((j + 1, next((e for e in range(j + 1, len(words)) if words[e] in (";", "+")), len(words))))
+    return {i for k, end in runs if k < len(words) and reads_data(words, k) for i in range(k + 1, end)}
+
+
+def runner_options(words, j, valued):
+    # The index past a runner's options from `j`: a short option's value is the rest of its word or else the next one.
+    while j < len(words):
+        flag = words[j]
+        if not ((flag[:1] == "-" and len(flag) > 1) or ASSIGN.match(flag) or DURATION.fullmatch(flag)):
+            break
+        j += 1
+        if flag[:1] == "-" and flag[:2] != "--":
+            k = next((k for k, ch in enumerate(flag[1:], 1) if ch in valued), None)
+            j += k == len(flag) - 1
+    return j
+
+
+def command_words(words):
+    # The indices of the words standing as a command: the stage's program, what a find `-exec` runs, and what a RUNNERS
+    # program among them runs.
+    p, rest = argv_of(words)
+    starts = ([len(words) - len(rest) - 1] if p else []) + [j + 1 for j, w in enumerate(words) if w in FIND_RUNS]
+    out = set()
+    for j in starts:
+        while j < len(words):
+            out.add(j)
+            valued = RUNNERS.get(words[j].rpartition("/")[2])
+            if valued is None:
+                break
+            j = runner_options(words, j + 1, valued)
+    return out
+
+
+def filled(text, replaced):
+    # The first replace string the text carries, and its handler; an empty one is in every text.
+    return next(((r, h) for r, h in replaced if r in text), None)
+
+
+def judge_hosts(words, hosts, handed, raw, cwd):
+    if handed and not hosts:
+        refuse_unresolved(words, "what `xargs`, `parallel` or `find -exec` hands it at run time", raw)
+    for host in hosts:
+        if UNRESOLVED.search(host):
+            refuse_unresolved(words, f"`{host}`", raw)
+    if not hosts:
+        return
+    names, why = fleet_names(cwd)
+    if names is None:
+        refuse(
+            f"`{spelled(words)}` names the host `{hosts[0]}`, and {why}, so the guard cannot tell a fleet host from "
+            f"another; in `{raw}`. Run it from a checkout of this repository; a fleet host is reached as "
+            f"`{HOST_RUN.format('<alias>')}`."
+        )
+    for host in hosts:
+        if alias := fleet_alias(host, names):
+            # the stage, not the one call, is read for a transfer: a remedy naming both routes is true of either
+            moves = any(w.rpartition("/")[2] in ("scp", "sftp", "rsync") for w in words)
+            how = (
+                f"Run a command there as `{HOST_RUN.format(alias)}`, the block on stdin; a file transfer has no route "
+                f"through that wrapper and is the owner's to run (infra/runbooks/nas.md's `nas-file-transfer` for the NAS)."
+                if moves
+                else f"Run it as `{HOST_RUN.format(alias)}`, the block on stdin."
+            )
+            refuse(
+                f"`{spelled(words)}` reaches the fleet host `{host}` past the prescribed route, which judges and records "
+                f"what a session runs there; in `{raw}`. {how}"
+            )
+
+
+def strdelim(line):
+    # OpenSSH's strdelim (misc.c): the token before the line's first space, quote or `=` -- a quote is dropped and the
+    # token runs to the next one -- and the rest past the spaces and the one `=` after it; None for an unclosed quote.
+    i = next((k for k, ch in enumerate(line) if ch in SSH_SPACE + '"='), None)
+    if i is None:
+        return line, ""
+    if line[i] == '"':
+        line = line[:i] + line[i + 1 :]
+        end = line.find('"', i)
+        return (None, "") if end == -1 else (line[:end], line[end + 1 :].lstrip(SSH_SPACE))
+    token, rest = line[:i], line[i + 1 :].lstrip(SSH_SPACE)
+    if line[i] != "=" and rest[:1] == "=":
+        rest = rest[1:].lstrip(SSH_SPACE)
+    return token, rest
+
+
+def ssh_option(value):
+    # An `-o` value's keyword as written and the rest, as ssh's config parser reads the line: an empty first token -- a
+    # leading space or `=` -- gives way to the next; None for a line it ignores.
+    token, rest = strdelim(value.rstrip(SSH_SPACE + "\f"))
+    if token == "":
+        token, rest = strdelim(rest)
+    return (token or None), rest
+
+
+def refuse_hop(words, flag, value, what, raw):
+    refuse(
+        f"`{spelled(words)}` carries `-{flag} {value}`: ssh's {what[0]} {what[1]} -- past what the fleet check "
+        f"follows; in `{raw}`. Drop the option: a jump host is a bare alias from ~/.ssh/config (`-J access`), and "
+        f"a fleet host is reached as `{HOST_RUN.format('<alias>')}`."
+    )
+
+
+def judge_hops(words, opts, raw):
+    for flag, value in opts:
+        if flag == "o" and value:
+            token, arg = ssh_option(value)
+            if token and UNRESOLVED.search(token):
+                why = f"`{token}` is a keyword only run time knows, which may run a local command"
+                refuse_hop(words, flag, value, ("option", why), raw)
+            name = token.lower() if token else None
+        elif flag in SSH_FLAGS and value is not None:
+            name, arg = SSH_FLAGS[flag], value
+        else:
+            continue
+        what = SSH_RUNS.get(name)
+        if name == "proxyjump" and not BARE_ALIAS.fullmatch(" ".join(shell_words(arg))):
+            what = ("ProxyJump", f"hops through `{arg}`, which is no bare alias")
+        if what:
+            refuse_hop(words, flag, value, what, raw)
+
+
+def renamed(opts):
+    # The hosts `-o HostName=` sends a call to in place of the one it names: the first word of its value.
+    out = []
+    for flag, value in opts:
+        token, arg = ssh_option(value) if flag == "o" and value else (None, "")
+        if token and token.lower() == "hostname":
+            out += shell_words(arg)[:1]
+    return out
+
+
+def judge_ssh_family(words, at, raw, cwd, replaced):
+    p, rest = words[at].rpartition("/")[2], words[at + 1 :]
+    handers = {w.rpartition("/")[2] for w in words[:at]} & HANDERS
+    if "parallel" in handers:
+        rest = rest[: next((k for k, w in enumerate(rest) if w in PARALLEL_INPUTS), len(rest))]
+    if p == "rsync":
+        opts, ops = ssh_walk(rest, *RSYNC_VALUE)
+        hosts = [host_of(op, bare=False) for op in ops]
+        steering = [v for flag, v in opts if flag in ("e", "--rsh") and v]
+        for value in steering:
+            shell = shell_words(value)
+            k = next((k for k, w in enumerate(shell) if w.rpartition("/")[2] == "ssh"), None)
+            inner, loose = ssh_walk(shell[k + 1 :], SSH_VALUE["ssh"], restart=True) if k is not None else ([], shell)
+            # a word of the remote shell that is no option's value and only run time knows can carry a hop
+            if unread := next((w for w in loose if UNRESOLVED.search(w)), None):
+                refuse_hop(words, "e", value, ("command line", f"holds `{unread}`, which only run time knows"), raw)
+            judge_hops(words, inner, raw)
+            hosts += renamed(inner)
+    else:
+        opts, ops = ssh_walk(rest, SSH_VALUE[p], restart=p == "ssh")
+        judge_hops(words, opts, raw)
+        if p == "ssh" and any(flag in SSH_PRINTS for flag, _ in opts):
+            return
+        controls = [value for flag, value in opts if flag == "O"]
+        if p == "ssh" and controls and set(controls) <= SSH_LOCAL_CONTROLS:
+            return
+        ops = ops if p == "scp" else ops[:1]
+        hosts = [host_of(op, bare=p != "scp") for op in ops] + renamed(opts)
+        steering = [v for flag, v in opts if flag in ("o", "J") and v]
+    # A replace string is read in the operand or option value as written: `xargs -I@ ssh @` hands no `user@`.
+    for w in ops + steering:
+        if r := filled(w, replaced):
+            refuse_unresolved(words, f"`{w}`, whose `{r[0]}` `{r[1]}` fills in at run time", raw)
+    judge_hosts(words, [h for h in hosts if h is not None], bool(handers), raw, cwd)
+
+
+def shell_words(line):
+    try:
+        return shlex.split(line)
+    except ValueError:
+        return line.split()
+
+
+def env_split(rest):
+    # The line `env -S` or `--split-string` splits, getopt's prefix of the long one taken, with the words after it
+    # appended; env reads `\_` outside quotes as a separator.
+    j = 0
+    while j < len(rest) and rest[j][:1] == "-" and len(rest[j]) > 1 and rest[j] != "--":
+        tok, value, j = rest[j], None, j + 1
+        if tok[:2] == "--":
+            name, eq, value = tok.partition("=")
+            long = next((o for o in ENV_VALUE if len(name) > 2 and o.startswith(name)), None)
+            if long and not eq and j < len(rest):
+                value, j = rest[j], j + 1
+            if long != ENV_VALUE[0]:
+                continue
+        else:
+            k = next((k for k, ch in enumerate(tok[1:], 1) if ch in "SuC"), None)
+            if k is None:
+                continue
+            value = tok[k + 1 :]
+            if not value and j < len(rest):
+                value, j = rest[j], j + 1
+            if tok[k] != "S":
+                continue
+        return [" ".join([value.replace("\\_", " "), shlex.join(rest[j:])])]
+    return []
+
+
+def shell_strings(p, rest):
+    # The code a shell's `-c` or `--command` runs, the line `eval` builds, or the line `env -S` splits, which this family
+    # alone reads as a command.
+    if p == "eval":
+        return [" ".join(rest)] if rest else []
+    if p == "env":
+        return env_split(rest)
+    if p not in SHELLS:
+        return []
+    j, dash_c = 0, False
+    while j < len(rest) and rest[j][:1] in ("-", "+") and len(rest[j]) > 1:
+        if rest[j] == "--":
+            j += 1
+            break
+        name, eq, value = rest[j].partition("=")
+        if name == "--command":
+            return [value] if eq else rest[j + 1 : j + 2]
+        if rest[j] in SHELL_VALUE:
+            j += 2
+            continue
+        dash_c = dash_c or (rest[j][:2] != "--" and "c" in rest[j][1:])
+        j += 1
+    return [rest[j]] if dash_c and j < len(rest) else []
+
+
+def judge_fleet(words, raw, cwd, replaced=()):
+    # `replaced`: the replace strings a handler outside a shell string fills into it.
+    data, commands = data_words(words), command_words(words)
+    for i, w in enumerate(words):
+        if ASSIGN.match(w) or i in data:
+            continue
+        p = w.rpartition("/")[2]
+        # a bare word is judged wherever it stands, a path only as a command: `ls /usr/bin/ssh` runs no ssh
+        if (p in SSH_VALUE or p == "rsync") and ("/" not in w or i in commands):
+            judge_ssh_family(words, i, raw, cwd, [*replaced, *replacements(words, i)])
+        for code in shell_strings(p, words[i + 1 :]):
+            try:
+                inner = pipelines(code)
+            except ValueError:
+                # unlike the top level's, this failure can refuse: it costs one call, never the session's every call
+                if re.search(r"(?<![\w.-])(?:ssh|scp|sftp|rsync)(?![\w.-])", code):
+                    refuse(
+                        f"`{spelled(words)}` hands `{p}` a string the guard cannot split into words, and it names an "
+                        f"ssh-family program; in `{raw}`. Run it as simpler calls; a fleet host is reached as "
+                        f"`{HOST_RUN.format('<alias>')}`."
+                    )
+                continue
+            for pipe in inner:
+                for stage in pipe:
+                    judge_fleet(stage, raw, cwd, [*replaced, *replacements(words, i)])
 
 
 def is_gh(w):
@@ -1310,11 +1960,13 @@ try:
     here = cwd
     stages = []
     for pipe in commands:
+        judge_stamps(pipe, raw, here or cwd)
         for words in pipe:
             judge(words)
             judge_vault(words, raw, here or cwd)
             judge_memo(words, raw, here or cwd)
             judge_consumers(words, raw)
+            judge_fleet(words, raw, cwd)
             if agent:
                 judge_agent(words, here, raw, call.get("session_id"))
             stages.append((words, here or cwd))

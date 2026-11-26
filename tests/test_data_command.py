@@ -88,17 +88,39 @@ def test_rebuild_mints_sibling_no_push(tmp_path, monkeypatch):
     assert (minted[0] / "ok").exists()
 
 
-def test_rebuild_pushes_minted_sibling_by_default(tmp_path, monkeypatch):
+def _local_hub(tmp_path: Path, monkeypatch) -> Path:
     from cli.data import rebuild as rebuild_module
 
     monkeypatch.setitem(rebuild_module.REBUILDABLE, "ohlc-full", lambda ctx, out: (out / "ok").write_text("x"))
+    # The node authors a set it holds, so a push of the authored sets lands on the hub as surely as one of the sibling.
+    authored = tmp_path / "data" / "ohlc-full"
+    authored.mkdir(parents=True)
+    (authored / "a.json").write_text("A")
     dest = tmp_path / "dest"
     dest.mkdir()
-    _write_config(tmp_path, nfs_mount_dir=tmp_path, push_dest=str(dest) + "/", authored_sets=[])
+    _write_config(tmp_path, nfs_mount_dir=tmp_path, push_dest=str(dest) + "/", authored_sets=["ohlc-full"])
     monkeypatch.chdir(tmp_path)
+    return dest
+
+
+def test_a_bare_rebuild_mints_locally_and_pushes_nothing(tmp_path, monkeypatch):
+    dest = _local_hub(tmp_path, monkeypatch)
 
     result = runner.invoke(app, ["data", "rebuild", "ohlc-full"])
-    assert result.exit_code == 0
+
+    assert result.exit_code == 0, result.output
+    minted = [p for p in (tmp_path / "data").iterdir() if p.name.startswith("ohlc-full-")]
+    assert len(minted) == 1
+    assert (minted[0] / "ok").exists()
+    assert list(dest.iterdir()) == []
+
+
+def test_rebuild_with_push_publishes_the_minted_sibling(tmp_path, monkeypatch):
+    dest = _local_hub(tmp_path, monkeypatch)
+
+    result = runner.invoke(app, ["data", "rebuild", "ohlc-full", "--push"])
+
+    assert result.exit_code == 0, result.output
     minted = [p for p in (tmp_path / "data").iterdir() if p.name.startswith("ohlc-full-")]
     assert (dest / minted[0].name / "ok").exists()
 

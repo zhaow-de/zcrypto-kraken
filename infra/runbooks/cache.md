@@ -4,7 +4,7 @@ You are here because **an alert fired in Slack** — find the section whose anch
 
 The set is three Linode nodes, `zcrypto-valkey1`, `zcrypto-valkey2` and `zcrypto-valkey3` (the workstation's ssh aliases `db1`, `db2` and `db3`; `Cache 1` to `Cache 3` in Slack and on the Cache board), each running Valkey on `6379`, a Sentinel on `26379` and a Grafana Alloy, in containers named `zcrypto-valkey`, `zcrypto-sentinel` and `grafana-alloy`. One node is the primary and two are replicas; the three Sentinels, quorum 2, pick the primary under the name `zcache`. The nodes and the engine host talk over the WireGuard mesh `zcache0`: the engine host is `10.98.0.1`, the nodes are `10.98.0.11` to `10.98.0.13` in order, and Valkey and Sentinel listen on loopback and the mesh address alone. Promotion prefers valkey1 and valkey2 (`replica-priority` 100) over valkey3 (250), which sits in another region as the copy that survives a regional outage.
 
-Two shell functions carry every Valkey and Sentinel command below: paste them into your shell on the node once per login. Each hands `valkey-cli` its password from a root-only env file the cache role renders, `/opt/zcrypto-cache/cli-exporter.env` or `/opt/zcrypto-cache/cli-sentinel.env`, through `docker exec --env-file`, so it reaches neither the terminal, the process list nor a shell history; `vk` runs a command on the node's Valkey as the read-only `exporter` user, `sn` on the node's Sentinel:
+Two shell functions carry every Valkey and Sentinel command below: put them at the head of each `infra/scripts/host-run.sh db<N>` block that calls them. Each hands `valkey-cli` its password from a root-only env file the cache role renders, `/opt/zcrypto-cache/cli-exporter.env` or `/opt/zcrypto-cache/cli-sentinel.env`, through `docker exec --env-file`, so it reaches neither the terminal, the process list nor a shell history; `vk` runs a command on the node's Valkey as the read-only `exporter` user, `sn` on the node's Sentinel:
 
 ```bash
 vk() { sudo docker exec --env-file /opt/zcrypto-cache/cli-exporter.env zcrypto-valkey valkey-cli --no-auth-warning --user exporter "$@"; }
@@ -137,7 +137,7 @@ A **critical** Grafana alert, one of three — `Fleet · Alloy dark — Cache 1`
 
 ### What to do
 
-1. **Is the node up at all?** Log in with its alias, `db<N>`. No answer is a node incident, not an Alloy one: read `sn SENTINEL get-master-addr-by-name zcache` on the other two nodes to learn whether the set failed over, and the Linode console for the node.
+1. **Is the node up at all?** Reach it with `infra/scripts/host-run.sh db<N>`. No answer is a node incident, not an Alloy one: read `sn SENTINEL get-master-addr-by-name zcache` on the other two nodes to learn whether the set failed over, and the Linode console for the node.
 2. **Is the container running?** `sudo docker ps --filter name=grafana-alloy` on the node.
 3. **Read the container's state through named fields** — its environment holds the credentials `alloy-secrets.env` renders, so read these fields by name and not `.Config` whole, `.Config.Env`, `docker exec … env` or `docker compose config`: `sudo docker inspect grafana-alloy --format 'img={{.Config.Image}} restarts={{.RestartCount}} started={{.State.StartedAt}} oom={{.State.OOMKilled}}'`. `oom=true` means it hit its 384 MiB cap; `fleet.md#zcrypto-fleet-alloy-memory-headroom` is the warning that precedes it.
 4. **Read its logs:** `sudo docker logs grafana-alloy --since 1h 2>&1 | tail -100`. A config parse error names the line; a remote_write auth failure names the credential; a Redis exporter error naming `NOAUTH` or `WRONGPASS` is the exporter password and the node's ACL disagreeing, which leaves `up` present and is `zcrypto-cache-daemon-down` below, not this alert.
@@ -194,7 +194,7 @@ With one replica the set holds two copies and survives no further loss. With non
 ### What to do
 
 1. **Name the missing replica:** on the primary, `vk INFO replication`; the node absent from its `slave0:`/`slave1:` lines is the one.
-2. **Is it up and meshed?** The Cache board's *Mesh handshake age per peer* panel (105) for that node's address, and a login with its alias, `db<N>`. A stale handshake is `zcrypto-cache-wg-handshake-stale` below.
+2. **Is it up and meshed?** The Cache board's *Mesh handshake age per peer* panel (105) for that node's address, and a run through `infra/scripts/host-run.sh db<N>`. A stale handshake is `zcrypto-cache-wg-handshake-stale` below.
 3. **Rejoin it** with `cache-rejoin-node` above.
 
 ### Retire when

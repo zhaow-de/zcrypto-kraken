@@ -24,6 +24,8 @@ The file mechanics for `docs/open-topics/` — the HOW, loaded at the moment of 
 
 ## Required file shape
 
+Write a topic by hand in one pass and keep it short: findings stated as conclusions, what the source did not verify marked so, only the citations that say why it matters; re-reading every citation and checker passes are the spec's and plan's.
+
 ```yaml
 ---
 status: open   # one of: open | partial | resolved

@@ -45,7 +45,7 @@ Fixes that introduce defects are what makes these loops long, and the rate does 
 - A sentence you add earns its place — a reader acts differently for it, and it is correct; what is true now belongs in the file, what happened belongs in the report. Internal terms stay off operator-read surfaces — `tests/test_internal_terms_not_operator_visible.py` walks them and names the tokens.
 - Edit with surgical, uniquely-anchored replacements and verify each landed (`grep` the new text) **inside the block you meant** — a unique anchor pins where text goes, not what encloses it; for a block-structured file (a rules YAML, a function body) assert the enclosing block, not only the count.
 - Stage by explicit path, one commit-type's file kind per commit; `.claude/**` never shares a commit with `docs/`.
-- Commit trailer: `Co-Authored-By: <your own model, exactly as your system prompt names it> <noreply@anthropic.com>`.
+- Commit trailer: `Co-Authored-By: Claude <the model the dispatch passes> <noreply@anthropic.com>`.
 - `uv run pre-commit run -a` until clean before committing; re-stage what the hooks rewrite; never `--no-verify`.
 - Do not push. Do not open a PR.
 

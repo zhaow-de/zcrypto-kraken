@@ -35,6 +35,10 @@ _spec = importlib.util.spec_from_file_location("ops_daily", _SCRIPT)
 ops_daily = importlib.util.module_from_spec(_spec)
 sys.modules["ops_daily"] = ops_daily
 _spec.loader.exec_module(ops_daily)
+_fleet_spec = importlib.util.spec_from_file_location("host_run_sh", _SCRIPT.with_name("host_run_sh.py"))
+host_run_sh = importlib.util.module_from_spec(_fleet_spec)
+sys.modules["host_run_sh"] = host_run_sh
+_fleet_spec.loader.exec_module(host_run_sh)
 
 NOW = datetime(2026, 8, 29, 12, 0, tzinfo=timezone.utc)
 DAY = timedelta(hours=24)
@@ -727,6 +731,7 @@ def test_the_same_step_is_routine_on_ops_and_attended_on_the_capture_pair(host, 
         "Read the engine's gate: `sudo docker exec zcrypto-engine zcrypto engine exec-status`.",
         "`sudo docker logs zcrypto-capture --since 1h 2>&1 | tail -50`",
         "`df -h /` then `sudo du -xsh /var/lib/zcrypto-capture/* | sort -h`",
+        "`df --output=target /var/lib/zcrypto-capture | tail -n 1`",
     ],
 )
 def test_a_read_only_step_is_autonomous_even_naming_a_protected_object(text):
@@ -3548,7 +3553,7 @@ def test_the_ssh_aliases_are_the_fleet_tables_and_the_label_is_alloys():
     changes, and the ops role's Alloy sets the `ops` label."""
     repo = Path(__file__).resolve().parents[1]
     table = (repo / "docs/reference/fleet.md").read_text()
-    rows = dict(re.findall(r"^\| `([^`]+)` \| `ssh ([a-z0-9-]+)` \|", table, re.M))
+    rows = host_run_sh.fleet_ssh_aliases(table)
     nodes = {"zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3", "zcrypto-mon", "zcrypto-hc"}
     assert set(rows) == {"zcrypto", "zcrypto-red", "zcrypto-ops", "nas", "zaccess"} | nodes, rows
     for fleet_host, destination in rows.items():
@@ -3578,7 +3583,7 @@ def _published_ssh_stanzas(repo: Path) -> dict[str, dict[str, str]]:
 
 def test_every_published_ssh_destination_has_a_stanza_and_the_linode_nodes_match_the_inventory():
     repo = Path(__file__).resolve().parents[1]
-    rows = dict(re.findall(r"^\| `([^`]+)` \| `ssh ([a-z0-9-]+)` \|", (repo / "docs/reference/fleet.md").read_text(), re.M))
+    rows = host_run_sh.fleet_ssh_aliases((repo / "docs/reference/fleet.md").read_text())
     stanzas = _published_ssh_stanzas(repo)
     for fleet_host, destination in rows.items():
         assert destination in stanzas, (fleet_host, destination, sorted(stanzas))

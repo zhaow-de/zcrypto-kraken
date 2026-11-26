@@ -12,7 +12,7 @@ The human gates below attach to the operations themselves, not to whichever skil
 |---|---|
 | `NEW IDEAS` | idea inbox, ~one paragraph per idea (points↔paragraphs are usually 1:1 but can be m:n) |
 | `WORK-ITEMS QUEUE` | the intermediate backlog; each `###` heading is a user-curated **milestone** |
-| `DONE ITEMS` | staging for finished items awaiting verified purge |
+| `DONE ITEMS` | one line per finished item a still-queued `DependsOn:` names, awaiting verified purge |
 | `ABANDONED ITEMS` | ideas decided against, each with its decision date |
 
 - Each `##` section carries a one-sentence description directly under its heading — standing text for both readers, preserved through edits.
@@ -25,7 +25,9 @@ The human gates below attach to the operations themselves, not to whichever skil
 - **Re-read the file first.** A copy already in context is stale by definition.
 - **The Edit and Write tools, under the hook.** `.claude/hooks/memo-guard.sh` (wired in `.claude/settings.json`) refuses a write without a fresh read, instructs the read-back after, and invalidates after each write, so a multi-edit pass re-reads before each further edit. A shell write bypasses the hook and is never used (no count command: the memo is unversioned, and a touch leaves no record in the tree).
 - **Anchored edits** — the hook refuses a `Write` of the existing file.
-- **Deletion is licensed only at the purge gate** (human-gated, below); outside it, condense or relocate prose (no count command: the memo is unversioned, and a touch leaves no record in the tree).
+- **Outside the purge gate (human-gated, below), deletion is what the ad-hoc procedures and grooming's Step 2 name**, and the text an item's replaced state supersedes; other prose is condensed or relocated (no count command: the memo is unversioned, and a touch leaves no record in the tree).
+- **A block that moves is inserted at its new home before it is removed from its old one** — the owner may read the memo between the two edits.
+- **An item's state is replaced when it changes, never appended to** (no count command: the memo is unversioned, and a touch leaves no record in the tree).
 - **Privacy.** The memo is the user's private journal: never paste its content into a subagent prompt, never run a subagent on this file in any role, and memo text never lands verbatim in a git-tracked file — a new or revised topic paraphrases (no count command: a prompt leaves no record in the tree). `WP<N>` labels stay out of git-tracked files: `tests/test_internal_terms_not_operator_visible.py` enforces it, its `_WP_CARRIERS` naming the exceptions.
 - **Git-tracked files this machinery produces** (new or revised topics, the `docs/open-topics/README.md` index) land through the repo's normal conventions — gate, review, branch, PR — not as a side effect of memo work.
 
@@ -34,7 +36,7 @@ The human gates below attach to the operations themselves, not to whichever skil
 - **Queue item** (short lists — no grouping): a bold `T<NNNN> — subject` line, then **sub-bullets** — `Who: … — Size: S/M/L`, `Why: …`, `DependsOn: …` (prerequisites — items, T-topics, or a named trigger/date; "—" when free). Sub-bullets, not inline fields: the memo is read by human and AI alike, and scanning beats parsing.
 - **Long lists** (rule of thumb: ~8+ active items, or natural clusters): group into work packages — a level-4 header `#### WP<N>: <name>` with the same sub-bullet fields at package level, then its items, one T-topic each.
 - **An item is its bold line AND every bullet indented under it** (no count command: the memo is unversioned, and a touch leaves no record in the tree). A rewrite that reads only the head line rewrites what it read and leaves what it did not, and each later scan re-reads that head line and confirms the same mistake; so a condensation reads the whole block.
-- **Status marker.** A queue item's line opens with ⬜ while nothing of it has landed, 🔄 once part has, ✅ when it is done; the sub-bullet that records a landing carries the marker of what it records.
+- **Status marker.** A queue item's line opens with ⬜ while nothing of it has landed, 🔄 once part has, ✅ when it is done.
 - **The list IS the schedule**: ordered as the suggested execution sequence, the next work item on top, and nothing above something it depends on.
 - **A `DependsOn:` that names an artifact states whether the artifact EXISTS.** "Read X first" and "build X first" compress to the same reference and fail differently. The work to produce a missing prerequisite is itself a queue item, sequenced above its consumer.
 - **Milestones carry no `DependsOn:` line**, their dependency being weak; milestones appear in dependency-true order, and an item is eligible for pickup when its own `DependsOn:` is satisfied.

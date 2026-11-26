@@ -858,10 +858,6 @@ REPIN = {"ts": "2026-09-24T16:30:00Z", "limit": "zcrypto", "tags": "engine", "rc
 GATED = {**REPIN, "ts": "2026-09-24T12:00:00Z", "preflight": PASSED}
 BYPASSED = {**REPIN, "extra_vars": {"engine_image_digest": DIGEST, "engine_preflight_override": "an approved hotfix"}}
 WINDOWED = {
-    "engine-rows-on-the-completion-floor": [
-        {"ts": ts, "limit": "zcrypto", "tags": "engine", "rc": 0, "extra_vars": {}}
-        for ts in ("2026-09-19T08:12:24Z", "2026-09-25T08:12:24Z")
-    ],
     "engine-preflight-overrides": [GATED, *({**BYPASSED, "ts": ts} for ts in (BEFORE, AT))],
     "canary-bypasses-on-the-primary": [
         {"ts": ts, "limit": "zcrypto", "tags": "capture", "rc": 0, "extra_vars": {"canary_override": "an approved rollback"}}
@@ -954,16 +950,6 @@ def test_the_capture_pair_count_books_no_restart_for_an_alloy_converge_on_a_capt
         {"ts": "2026-09-24T16:40:00Z", "limit": "zcrypto", "tags": primary, "rc": 0},
     ]
     assert _windowed(tmp_path, entry, git_dir, rows=rows).stdout == f"{entry}\t{pairs}\n"
-
-
-def test_the_completion_floor_count_reads_only_the_rows_that_carry_no_window_record(tmp_path):
-    git_dir = _history(tmp_path, closes_a_round=True)
-    band = {"ts": "2026-09-25T08:12:24Z", "limit": "zcrypto", "tags": "engine", "rc": 0, "extra_vars": {}}
-    window = {"at": 1790352000 + 700, "floor": 1790352000 + 408, "arm": "journal", "override": False}
-    rows = [band, {**band, "ts": "2026-09-25T12:12:24Z"}, {**band, "ts": "2026-09-25T16:12:24Z", "window": window}]
-    entry = "engine-rows-on-the-completion-floor"
-    assert _windowed(tmp_path, entry, git_dir, rows=rows).stdout == f"{entry}\t2\n"
-    assert _windowed(tmp_path, entry, git_dir, rows=[{**band, "ts": "2026-09-19T08:12:24Z"}]).stdout == f"{entry}\t0\n"
 
 
 def test_a_recorded_override_row_is_counted_as_a_bypass_and_not_as_outside_the_gap(tmp_path):

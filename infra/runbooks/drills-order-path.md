@@ -109,7 +109,7 @@ The startup pass compares each preserved row against the quantity the venue repo
 
 The same attended reboot as A1, with the `rest-hold` buy resting one tick under the bid when the host goes down.
 
-A reboot pasted by hand after a resting read comes too late: an order one tick under the bid can fill within seconds. The reboot is fired on the host by `infra/scripts/drill-a2-reboot-on-rest.sh`, started as root once the plan is staged and before it is placed, with the plan id, a deadline in seconds and `live`; it reboots the moment the plan's order rests at Kraken unfilled, and any other line it logs means no reboot. Its copy to the host is a foreground call of its own, the copy's sha256 compared with the tree's before the start: a copy backgrounded with the start reads an empty stdin and writes an empty script. It is started detached, its output to a log; after the boot the log's `REST` line gives the reboot's start and the order, and the script and its log are removed from the host.
+A reboot pasted by hand after a resting read comes too late: an order one tick under the bid can fill within seconds. The reboot is fired on the host by `infra/scripts/drill-a2-reboot-on-rest.sh`, started as root by the coordinator — the one reboot of the primary a session starts — once the plan is staged and before it is placed, with the plan id, a deadline in seconds and `live`; it reboots the moment the plan's order rests at Kraken unfilled, and any other line it logs means no reboot. Its copy to the host is an `infra/scripts/host-run.sh zcrypto` run of its own before the start, the script's text inside the block as a quoted here-document written to `/tmp/drill-a2-reboot-on-rest.sh`, and the copy's sha256 compared with the tree's before the start. It is started detached, its output to a log; after the boot the log's `REST` line gives the reboot's start and the order, and the script and its log are removed from the host.
 
 ### Must fire
 
@@ -342,7 +342,7 @@ The expected sequence, from `cli/engine/executor.py`: the first tick on which on
 
 ### Induce
 
-On the engine host, disconnect the engine container from that network:
+On the engine host, the coordinator disconnects the engine container from that network:
 
 ```
 sudo docker network disconnect <the network> zcrypto-engine
@@ -365,7 +365,7 @@ The container is bridge-networked with `127.0.0.1:9102:9102` published (`infra/a
    sudo docker logs --since 30m zcrypto-engine | grep -E 'ambiguous|no venue answer'
    ```
    and `sudo docker exec zcrypto-engine zcrypto engine exec-status`.
-2. **Reconnect**: `sudo docker network connect <the network> zcrypto-engine`, then `up{job="engine_app",host="zcrypto"}` back at 1 by value.
+2. **The coordinator reconnects**: `sudo docker network connect <the network> zcrypto-engine`, then `up{job="engine_app",host="zcrypto"}` back at 1 by value.
 3. **Read the engine log for the re-cancel, then Kraken's open orders by hand.** On its first tick after `Reconnect succeeded` with nothing in flight, the executor's re-read pass reads the venue for the row the mint closed and cancels the order by its txid on the bare client, logging `re-cancelled <id> (Kraken <txid>) -- it rested at Kraken (<status>) after a terminal this engine minted`; Kraken's open orders then no longer carry it. The row reads `canceled` with a `recancelled` event, and the intent stays `ambiguous`: it was terminal at the mint, and the row is the re-cancel's record. Read a `recancelled` row against Kraken's closed orders and the positions page: the cancel's answer is not read, so a fill landing between the pass's read and its cancel closes the row `canceled` all the same, and reaches the row — a `fill` line after the `recancelled` event, credited with what the Cache holds beyond the row, which is less than the fill where the cut's own fills did not reach the stream — when the stream delivers it, and is on Kraken's page alone when it does not. A hand-placed kill file still sweeps nothing on this path.
 4. **Clear it deliberately when the pass did not.** A CRITICAL `the re-read pass could not read the ledger or the venue on 3 ticks` or `the re-read pass's cancel of <id> raised or was refused` line means the order may still rest, and so does the pass's own line missing three ticks after `Reconnect succeeded`. A direct cancel in the Kraken web UI always works (no count command: the venue's behaviour). A restart inside the inter-cycle gap works too: its adopt pass finds the order's row by the Kraken txid the row recorded and cancels the opener, logging `canceling adopted resting order <txid>`. If the boot logs the CRITICAL `ledgered order <id> (Kraken <txid>) rests at Kraken (<status>) …` line instead, the node's startup reconciliation dropped the order and the restart did not cancel it: cancel it on Kraken's page. Read Kraken's positions page before taking that route: if the order filled, a margin position is open and the restart waits for it to close unless the restart rule's test admits it (the standing rules). Note the wall-clock time it rested, from the disconnect to the cancel.
 
@@ -405,13 +405,13 @@ Three things, in the order they can be observed, and the first is unverified in 
 
 ### Induce
 
-On the engine host, stop the unit. Engine only, no reboot and no converge:
+On the engine host, the coordinator stops the unit. Engine only, no reboot and no converge:
 
 ```
 sudo systemctl stop zcrypto-engine
 ```
 
-**Read Kraken's open orders in the web UI while the engine is down.** That reading is deliverable 1 and it is unrepeatable: once the engine is back, the adopt pass has already acted on whatever was there. Read Kraken's positions page too: the `rest-hold` plan shape carries leverage, so if the order filled while the engine was down a margin position is open, and the start waits for that position to close unless the restart rule's test admits it (the standing rules). Then start it again:
+**Read Kraken's open orders in the web UI while the engine is down.** That reading is deliverable 1 and it is unrepeatable: once the engine is back, the adopt pass has already acted on whatever was there. Read Kraken's positions page too: the `rest-hold` plan shape carries leverage, so if the order filled while the engine was down a margin position is open, and the start waits for that position to close unless the restart rule's test admits it (the standing rules). Then the coordinator starts it again:
 
 ```
 sudo systemctl start zcrypto-engine

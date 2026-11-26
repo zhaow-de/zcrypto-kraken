@@ -60,9 +60,9 @@ _RELATIVE = re.compile(r"(?<![A-Za-z0-9._/-])(references/[A-Za-z0-9._-]+\.md|scr
 _C = ".claude" + "/"
 _RULES, _SKILLS, _FLOWS, _HOOKS = _C + "rules/", _C + "skills/", _C + "workflows/", _C + "hooks/"
 
-# Paths a guard test builds to drive a refusal over a synthetic tree; they name no file and must not. Asserted
+# Paths a guard test builds to drive a verdict over a synthetic tree; they name no file and must not. Asserted
 # both ways, so an entry that stops being cited, or starts resolving, fails rather than sitting here unread.
-_SYNTHETIC = {_RULES + "new.md", _RULES + "old.md"}
+_SYNTHETIC = {_RULES + "new.md", _RULES + "old.md", _HOOKS + "x.sh"}
 
 # Walked prefixes that cite no guidance today and are kept anyway, because a citation there is a matter of course
 # rather than of kind: a code comment sending a reader to a runbook is exactly what the engine's data-client

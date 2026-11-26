@@ -1543,7 +1543,7 @@ _FIRST_STAGE_SHAPES = (
     _Shape(("ls",), {"--time-style": _NAME, "--color": _NAME}, short=r"-[laLdhtrSR1]{1,7}", arity=(0, 4), classes=(_PATH,)),
     _Shape(("cat",), short=r"-[nA]{1,2}", arity=(1, 4), classes=(_PATH,)),
     _Shape(("stat",), {"-c": _QUOTED, "--format": _QUOTED}, arity=(1, 3), classes=(_PATH,)),
-    _Shape(("df",), short=r"-[hikPT]{1,5}", arity=(0, 3), classes=(_PATH,)),
+    _Shape(("df",), {"--output": _NAME}, short=r"-[hikPT]{1,5}", arity=(0, 3), classes=(_PATH,)),
     _Shape(("du",), {"--max-depth": _INT, "-d": _INT, "--inodes": None}, short=r"-[xshcabkm]{1,6}", arity=(1, 5), classes=(_PATH,)),
     # `-exec`, `-execdir`, `-delete`, `-fprint`, `-fls` and `-ok` are absent, so find can only report.
     _Shape(
