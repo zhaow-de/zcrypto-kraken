@@ -1340,6 +1340,81 @@ def test_a_git_grep_is_refused_exactly_when_git_would_search_a_specimen_consumer
         assert r.returncode == 2 and f"may search the vaulted file `{hit}`" in r.stderr, r.stderr
 
 
+# (a checkout's place under a directory of its own, its files each with whether consumers.sh's excludes drop it there):
+# a directory above the top whose name a pattern matches -- a trailing `*` takes a whole path, `*` crosses `/` --
+# never makes a file vaulted, as git reads the pathspecs from the top.
+CHECKOUTS = {
+    "vault-password-rotation": [("README.md", False), ("cli/a.py", False), ("vault.yml", True), ("docs/fake-vault.yml", True)],
+    "notes.sops.d": [("README.md", False), ("cli/a.py", False), ("x.vault", True)],
+    "infra/ansible/files/k": [("README.md", False), ("x_ed25519", False), ("infra/ansible/files/deploy_x_ed25519", True)],
+}
+# A read of `{f}` from its checkout's top by each arm judging a path on disk: printers, a copier, an interpreter's
+# `-c`, a redirect, an absolute path, a glob, a brace group, and from a subdirectory.
+CHECKOUT_READS = [
+    "cat {f}",
+    "head -5 {f}",
+    "sed -n 1p {f}",
+    "cp {f} /dev/null",
+    "python3 -c \"open('{f}')\"",
+    "cat < {f}",
+    "cat {top}/{f}",
+    "cat {glob}",
+    "cat {{{f},none}}",
+    "cd sub && cat ../{f}",
+]
+
+
+@pytest.fixture(scope="module")
+def checkouts(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    base = tmp_path_factory.mktemp("above")
+    for top, files in CHECKOUTS.items():
+        for path, _ in files:
+            (base / top / path).parent.mkdir(parents=True, exist_ok=True)
+            (base / top / path).write_text("x\n")
+        (base / top / "sub").mkdir()
+        for args in (["init", "-q"], ["add", "-A"]):
+            subprocess.run(["git", "-C", str(base / top), *args], capture_output=True, check=True)
+    return base
+
+
+@pytest.mark.parametrize("read", CHECKOUT_READS)
+@pytest.mark.parametrize(
+    ("top", "path", "vaulted"), [(t, p, v) for t, files in CHECKOUTS.items() for p, v in files], ids=lambda x: str(x)
+)
+def test_a_file_under_a_checkouts_top_is_vaulted_exactly_when_its_pathspecs_drop_it_there(
+    checkouts: Path, tmp_path: Path, top: str, path: str, vaulted: bool, read: str
+):
+    repo = checkouts / top
+    kept = subprocess.run(["git", "-C", str(repo), "ls-files", "--", *vault_excludes()], capture_output=True, text=True)
+    assert (path not in kept.stdout.splitlines()) == vaulted, kept.stdout
+    command = read.format(f=path, top=repo, glob=path[:-1] + "?")
+    r = run_hook(agent_call(command, str(repo)), cwd=tmp_path)
+    if vaulted:
+        assert r.returncode == 2 and "the vaulted file" in r.stderr, r.stderr
+    else:
+        assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
+
+
+def test_outside_every_repository_each_directory_of_a_path_is_read_as_a_top(tmp_path: Path):
+    files = [
+        ("plain/README.md", False),
+        ("vault-password-notes/README.md", True),
+        ("plain/fake-vault.yml", True),
+        ("x/infra/ansible/files/deploy_x_ed25519", True),
+    ]
+    env = {**os.environ, "GIT_CEILING_DIRECTORIES": os.path.realpath(tmp_path)}
+    for path, vaulted in files:
+        (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / path).write_text("x\n")
+        where = (tmp_path / path).parent
+        assert subprocess.run(["git", "-C", str(where), "rev-parse"], capture_output=True, env=env).returncode
+        r = run_hook(agent_call(f"cat {path}", str(tmp_path)), cwd=tmp_path, env=env)
+        if vaulted:
+            assert r.returncode == 2 and f"prints the vaulted file `{path}`" in r.stderr, r.stderr
+        else:
+            assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
+
+
 def hook_beside(tmp_path: Path, definition: str | None) -> Path:
     # A copy of the hook in a checkout of its own, beside a consumers.sh holding `definition`, or none.
     top = tmp_path / "checkout"
