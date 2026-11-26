@@ -10,7 +10,8 @@ executor its quotes on a timer, since the data peer sends none, and to stop the 
 end; its executor, its startup pass and its ledger writes are the engine's own.
 
 argv[1] is a JSON object of what the driver passes. It writes `out` at the window's end and again after `run()`
-returns, and exits 0 whatever `run()` did: the driver reads the record.
+returns, the second write adding `after_run`, the cache read again as `at_end` read it at the stop, and exits 0
+whatever `run()` did: the driver reads the record.
 """
 
 from __future__ import annotations
@@ -53,6 +54,7 @@ LOOPBACK_HTTP = "http://127.0.0.1:"
 LOOPBACK_WS = "ws://127.0.0.1:"
 RECORD: dict = {"phase": CONFIG["phase"], "own": [], "external": [], "errors": [], "quotes": 0}
 HANDLE: list = [None]
+STOPPED_CACHE: list = [None]
 
 
 def _data_client_config() -> KrakenDataClientConfig:
@@ -319,6 +321,7 @@ class ShadowStrategy(node_module.ShadowStrategy):
     def _stop(self, event) -> None:
         try:
             RECORD["at_end"] = _dump(self.cache)
+            STOPPED_CACHE[0] = self.cache
             RECORD["venue_state_at_end"] = _venue_state(self.cache)
             executor = self._executor
             RECORD["attached"] = sorted(executor._attached) if executor is not None else None
@@ -360,6 +363,11 @@ def main() -> None:
         RECORD["errors"].append(f"run raised {type(exc).__name__}: {exc}")
     finally:
         RECORD["run_secs"] = time.monotonic() - started
+        if STOPPED_CACHE[0] is not None:
+            try:
+                RECORD["after_run"] = _dump(STOPPED_CACHE[0])
+            except BaseException as exc:
+                RECORD["errors"].append(f"the cache read after run() raised {type(exc).__name__}: {exc}")
         try:
             node.dispose()
         except BaseException as exc:

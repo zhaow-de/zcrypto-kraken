@@ -240,6 +240,13 @@ class _Node:
             f"phase {phase} wrote no record (exit {result.returncode}, {time.monotonic() - started:.1f} s):\n{log[-4000:]}"
         )
         record = json.loads(out.read_text())
+        # Every assertion on `at_end`, and every later phase reading the store, takes the window's stop as where the
+        # process ended: nothing reaches the cache after it.
+        if "at_end" in record:
+            assert record["after_run"] == record["at_end"], (
+                f"phase {phase}: the cache changed after the window's stop, before run() returned -- at the stop "
+                f"{record['at_end']}, after {record['after_run']}"
+            )
         record["log"] = log
         record["wall_secs"] = time.monotonic() - started
         self.records.append(record)
