@@ -66,7 +66,8 @@
 # an `eval` line or an `env -S` line, whose host -- a destination, `host:path`, `host::module`, a `scheme://` URI,
 # `-o HostName=` -- is a host or an alias of docs/reference/fleet.md's table, or a name whose first label is one; whose
 # host only run time knows; or, to any host, that carries ssh's ProxyCommand, LocalCommand, PermitLocalCommand or
-# KnownHostsCommand, or a ProxyJump or `-J` that is no bare alias. A fleet host is reached through infra/scripts/host-run.sh, whose stdin block
+# KnownHostsCommand, a ProxyJump or `-J` that is no bare alias, or an `-o` keyword or a word of rsync's `-e` that only
+# run time knows. A fleet host is reached through infra/scripts/host-run.sh, whose stdin block
 # is that wrapper's to judge. The table is read from the checkout of the payload's `cwd` by `fleet_ssh_aliases` of
 # infra/scripts/host_run_sh.py beside this file, its one parse; a table that cannot be had refuses every such word that
 # names a host. `ssh -V`, `-G`, `-Q` and `-O check|exit|stop` connect nowhere. A word a reader takes as data -- an operand
@@ -249,7 +250,8 @@ SSH_RUNS = {
     "permitlocalcommand": ("PermitLocalCommand", "lets a LocalCommand run"),
     "knownhostscommand": ("KnownHostsCommand", "runs a local command to read the host's keys"),
 }
-SSH_OPTION = re.compile(r'\s*"?([A-Za-z]+)"?(?:\s*=\s*|\s+|$)(.*)', re.S)  # ssh_config's keyword, then `=` or a space
+SSH_SPACE = " \t\r\n"  # the WHITESPACE of OpenSSH's misc.c, which its strdelim splits a config line at
+SSH_FLAGS = {"J": "proxyjump"}  # ssh's short options read as the config keyword each sets
 BARE_ALIAS = re.compile(r"[A-Za-z0-9_-]+")
 UNRESOLVED = re.compile(r"[$`*?[\]{}]")
 REMOTE_URI = re.compile(r"(?i)(?:ssh|scp|sftp|rsync)://(?:[^@/]*@)?(\[[^\]]*\]|[^:/]*)")
@@ -1242,32 +1244,66 @@ def judge_hosts(words, hosts, handed, raw, cwd):
             )
 
 
+def strdelim(line):
+    # OpenSSH's strdelim (misc.c): the token before the line's first space, quote or `=` -- a quote is dropped and the
+    # token runs to the next one -- and the rest past the spaces and the one `=` after it; None for an unclosed quote.
+    i = next((k for k, ch in enumerate(line) if ch in SSH_SPACE + '"='), None)
+    if i is None:
+        return line, ""
+    if line[i] == '"':
+        line = line[:i] + line[i + 1 :]
+        end = line.find('"', i)
+        return (None, "") if end == -1 else (line[:end], line[end + 1 :].lstrip(SSH_SPACE))
+    token, rest = line[:i], line[i + 1 :].lstrip(SSH_SPACE)
+    if line[i] != "=" and rest[:1] == "=":
+        rest = rest[1:].lstrip(SSH_SPACE)
+    return token, rest
+
+
+def ssh_option(value):
+    # An `-o` value's keyword as written and the rest, as ssh's config parser reads the line: an empty first token -- a
+    # leading space or `=` -- gives way to the next; None for a line it ignores.
+    token, rest = strdelim(value.rstrip(SSH_SPACE + "\f"))
+    if token == "":
+        token, rest = strdelim(rest)
+    return (token or None), rest
+
+
+def refuse_hop(words, flag, value, what, raw):
+    refuse(
+        f"`{spelled(words)}` carries `-{flag} {value}`: ssh's {what[0]} {what[1]} -- past what the fleet check "
+        f"follows; in `{raw}`. Drop the option: a jump host is a bare alias from ~/.ssh/config (`-J access`), and "
+        f"a fleet host is reached as `{HOST_RUN.format('<alias>')}`."
+    )
+
+
 def judge_hops(words, opts, raw):
     for flag, value in opts:
-        if flag == "o" and value and (m := SSH_OPTION.match(value)):
-            name, arg = m[1].lower(), m[2].strip().strip('"')
-        elif flag == "J" and value is not None:
-            name, arg = "proxyjump", value
+        if flag == "o" and value:
+            token, arg = ssh_option(value)
+            if token and UNRESOLVED.search(token):
+                why = f"`{token}` is a keyword only run time knows, which may run a local command"
+                refuse_hop(words, flag, value, ("option", why), raw)
+            name = token.lower() if token else None
+        elif flag in SSH_FLAGS and value is not None:
+            name, arg = SSH_FLAGS[flag], value
         else:
             continue
         what = SSH_RUNS.get(name)
-        if name == "proxyjump" and not BARE_ALIAS.fullmatch(arg):
+        if name == "proxyjump" and not BARE_ALIAS.fullmatch(" ".join(shell_words(arg))):
             what = ("ProxyJump", f"hops through `{arg}`, which is no bare alias")
         if what:
-            refuse(
-                f"`{spelled(words)}` carries `-{flag} {value}`: ssh's {what[0]} {what[1]} -- past what the fleet check "
-                f"follows; in `{raw}`. Drop the option: a jump host is a bare alias from ~/.ssh/config (`-J access`), and "
-                f"a fleet host is reached as `{HOST_RUN.format('<alias>')}`."
-            )
+            refuse_hop(words, flag, value, what, raw)
 
 
 def renamed(opts):
-    # The hosts `-o HostName=` sends a call to in place of the one it names.
-    return [
-        m[2].strip().strip('"')
-        for flag, value in opts
-        if flag == "o" and value and (m := SSH_OPTION.match(value)) and m[1].lower() == "hostname"
-    ]
+    # The hosts `-o HostName=` sends a call to in place of the one it names: the first word of its value.
+    out = []
+    for flag, value in opts:
+        token, arg = ssh_option(value) if flag == "o" and value else (None, "")
+        if token and token.lower() == "hostname":
+            out += shell_words(arg)[:1]
+    return out
 
 
 def judge_ssh_family(words, at, raw, cwd, replaced):
@@ -1282,10 +1318,12 @@ def judge_ssh_family(words, at, raw, cwd, replaced):
         for value in steering:
             shell = shell_words(value)
             k = next((k for k, w in enumerate(shell) if w.rpartition("/")[2] == "ssh"), None)
-            if k is not None:
-                inner = ssh_walk(shell[k + 1 :], SSH_VALUE["ssh"], restart=True)[0]
-                judge_hops(words, inner, raw)
-                hosts += renamed(inner)
+            inner, loose = ssh_walk(shell[k + 1 :], SSH_VALUE["ssh"], restart=True) if k is not None else ([], shell)
+            # a word of the remote shell that is no option's value and only run time knows can carry a hop
+            if unread := next((w for w in loose if UNRESOLVED.search(w)), None):
+                refuse_hop(words, "e", value, ("command line", f"holds `{unread}`, which only run time knows"), raw)
+            judge_hops(words, inner, raw)
+            hosts += renamed(inner)
     else:
         opts, ops = ssh_walk(rest, SSH_VALUE[p], restart=p == "ssh")
         judge_hops(words, opts, raw)
