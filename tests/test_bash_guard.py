@@ -110,6 +110,10 @@ REFUSED = [
     ('echo "`git commit -n`"', "-n"),
     ("cat <<EOF\n$(git commit -n)\nEOF", "-n"),
     ("cat <<EOF\n`git commit --no-verify`\nEOF", "--no-verify"),
+    # a here-string's word is a word, no heredoc's delimiter: its substitution runs, and the next line is a command
+    ('cat <<< "$(git commit -n -m x)"', "-n"),
+    ("cat <<<`git commit --no-verify`", "--no-verify"),
+    ("read -r x <<< y\ngit commit -n -m x", "-n"),
     # a `<<` quoted inside a backtick opens no heredoc: the next line, and the backtick's own next line, are judged
     ('echo `echo "<<EOF"`\ngit commit --no-verify -m x', "--no-verify"),
     ('echo `echo "<<EOF"\necho y` ; git commit --no-verify -m x', "--no-verify"),
@@ -1569,6 +1573,17 @@ FLEET_REACHED = [
     ("echo `ssh nas hostname`", "nas"),
     ("infra/scripts/host-run.sh red <<EOF\n$(ssh nas hostname)\nEOF", "nas"),  # runs here, before the wrapper
     ("echo ssh red", "red"),  # a word is judged wherever it stands
+    # a here-string's word, whatever its quoting or spacing, and every line after one
+    ('jq . <<< "$(ssh red cat /etc/x.json)"', "red"),
+    ('wc -l <<<"$(ssh nas ls /volume1)"', "nas"),
+    ("cat <<< $(ssh red uptime)", "red"),
+    ('cat 0<<< "`ssh nas hostname`"', "nas"),
+    ("cat <<<`ssh nas hostname`", "nas"),
+    ("cat <<< <(ssh red uptime)", "red"),
+    ('x=$(cat <<< "$(ssh red uptime)")', "red"),
+    ('grep -q ok <<< "$status"\nssh red uptime', "red"),
+    ("read -r a <<< 'x'\nssh nas df", "nas"),
+    ("cat <<< x\nscp f red:/tmp/", "red"),
 ]
 
 # A host only run time knows.
@@ -1634,6 +1649,9 @@ FLEET_ADMITTED = [
     "cat <<'EOF' > .tmp/notes.md\nssh red uptime\nrsync -a d nas:/x\nEOF",
     "ls # ssh red",
     "SSH=/usr/bin/ssh make check",
+    "cat <<< 'ssh red uptime'",
+    'wc -c <<< "ssh nas df"',
+    "cat <<< x; cat <<'EOF'\nssh red uptime\nEOF",
     # what connects nowhere, or to no fleet host
     "ssh -V",
     "ssh -G red",
