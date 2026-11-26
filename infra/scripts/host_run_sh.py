@@ -3239,6 +3239,8 @@ _KILL_VALUE = _w(
     "--signal --euid --uid --pgroup --group --parent --session --terminal --pidfile --ns --nslist --cgroup --runstates "
     "--user --older-than --younger-than --context"
 )
+# kill's signal specs that deliver nothing: 0 tests that a pid exists.
+_NO_SIGNAL = ("0",)
 
 
 def rule_capture_primary(cmd: Cmd, j: Judge) -> Refusal | None:
@@ -3284,8 +3286,8 @@ def rule_capture_primary(cmd: Cmd, j: Judge) -> Refusal | None:
             return no("a kill inside the primary's capture or Alloy container")
         return None
 
-    if what := _takes_down(cmd):
-        return no(f"{what} on the primary stops or restarts live capture and the engine")
+    if why := _takes_down(cmd):
+        return no(f"{why}: on the primary that stops or restarts live capture and the engine")
 
     def unit_verb(how: str, verb: str, units: list[str]) -> Refusal | None:
         if verb in _STOPPING_VERBS:
@@ -3322,7 +3324,7 @@ def rule_capture_primary(cmd: Cmd, j: Judge) -> Refusal | None:
     if name in ("pkill", "killall") and (reason := _signals_any(cmd, _CAPTURE_PROCS)):
         return no(f"{reason}, on the primary: capture, its Alloy or their container runtime")
     if name == "kill":
-        if _kill_signal(cmd.args)[0] == "0":
+        if _kill_signal(cmd.args)[0] in _NO_SIGNAL:
             return None
         return no(f"{name} on the primary could signal capture or its Alloy")
     return None
@@ -3375,50 +3377,21 @@ def rule_workstation(cmd: Cmd, j: Judge) -> Refusal | None:
     def no(reason: str) -> Refusal:
         return Refusal("workstation", reason, "the owner's line, at this machine")
 
-    name = cmd.name
-    if what := _takes_down(cmd):
-        return no(f"{what} on {cmd.alias}, the machine this session runs on")
-    if name in ("systemctl", "loginctl"):
-        ops = [a for a in cmd.args if not a.startswith("-")]
-        verb = ops[0] if ops else ""
-        if any(a in ("--job-mode=isolate",) for a in cmd.args) or "--job-mode" in cmd.args and "isolate" in ops:
-            return no(f"{name} with job mode isolate stops every unit its target does not pull")
-        if verb in _w("start restart try-restart reload-or-restart try-reload-or-restart") and any(
-            could(u if "." in u else u + ".service", t) for u in ops[1:] for t in _DOWN_UNITS
-        ):
-            return no(f"{name} {verb} of a unit that takes this machine down")
-        if verb == "kill" and any(could(u, "init.scope") or could(u, "-.slice") for u in ops[1:]):
-            return no(f"{name} kill of {_show(ops[1])} signals PID 1, which reboots on SIGINT")
-    for effect, p in _gate_effects(cmd):
-        for trigger in _KERNEL_TRIGGERS:
-            if effect in ("create", "linkdest") and could(p, trigger) or effect == "unknown" and does(p, trigger):
-                return no(f"a write to {trigger} takes this machine down")
-    if cmd.code is not None and any(t in cmd.code for t in _KERNEL_TRIGGERS):
-        return no("its code names a kernel trigger file that takes this machine down")
-    if name == "kill" and (reason := _kills_pid_1(cmd.args)):
-        return no(reason)
-    if name in ("pkill", "killall") and (reason := _signals_any(cmd, _PID_1_PROCS)):
-        return no(reason)
-    if name in ("busctl", "dbus-send", "gdbus", "varlinkctl") or name.startswith("qdbus"):
-        text = " ".join(cmd.args)
-        if _DOWN_METHODS.search(text) or any(could(w.split(":", 1)[-1], u) for w in cmd.args for u in _DOWN_UNITS):
-            return no(f"{name} calls logind or systemd to reboot, power off, sleep or isolate this machine")
-    if name == "rtcwake":
-        modes = _values(_opts(cmd.args, "mdstAa", {"--mode", "--device", "--seconds", "--time", "--adjfile"})[0], "-m", "--mode")
-        if any(m in ("off", "disk", "mem", "freeze", "standby") or any(c in m for c in WILD) for m in modes):
-            return no("rtcwake -m powers this machine off or puts it to sleep")
+    if why := _takes_down(cmd):
+        return no(f"{why}: {cmd.alias} is the machine this session runs on")
     return None
 
 
 def _takes_down(cmd: Cmd) -> str | None:
-    """The name of the reboot, shutdown or sleep `cmd` spells, for the refusal to quote; None for any other command."""
+    """Why `cmd` could reboot, power off, sleep or isolate the machine it runs on, for the refusal to quote; None for
+    any other command. The workstation rule and the capture-primary rule each refuse what it names."""
     name = cmd.name
     if name in ("reboot", "shutdown", "poweroff", "halt", "pm-suspend", "pm-hibernate", "pm-suspend-hybrid", "zzz", "s2ram"):
-        return name
+        return f"{name} takes the machine down"
     if name in ("init", "telinit") and (level := next((a for a in cmd.args if a in ("0", "6", "1", "s", "S")), None)):
-        return f"{name} {level}"
+        return f"{name} {level} takes the machine down"
     if name == "kexec" and any(a in ("-e", "--exec") for a in cmd.args):
-        return "kexec -e"
+        return "kexec -e takes the machine down"
     if name in ("systemctl", "loginctl"):
         ops = [a for a in cmd.args if not a.startswith("-")]
         verb = ops[0] if ops else ""
@@ -3426,7 +3399,33 @@ def _takes_down(cmd: Cmd) -> str | None:
             "reboot poweroff halt kexec isolate rescue emergency suspend hibernate hybrid-sleep "
             "suspend-then-hibernate soft-reboot default exit"
         ):
-            return f"{name} {verb}"
+            return f"{name} {verb} takes the machine down"
+        if "--job-mode=isolate" in cmd.args or "--job-mode" in cmd.args and "isolate" in ops:
+            return f"{name} with job mode isolate stops every unit its target does not pull"
+        if verb in _w("start restart try-restart reload-or-restart try-reload-or-restart") and any(
+            could(u if "." in u else u + ".service", t) for u in ops[1:] for t in _DOWN_UNITS
+        ):
+            return f"{name} {verb} of a unit that takes the machine down"
+        if verb == "kill" and any(could(u, "init.scope") or could(u, "-.slice") for u in ops[1:]):
+            return f"{name} kill of {_show(ops[1])} signals PID 1, which reboots on SIGINT"
+    for effect, p in _gate_effects(cmd):
+        for trigger in _KERNEL_TRIGGERS:
+            if effect in ("create", "linkdest") and could(p, trigger) or effect == "unknown" and does(p, trigger):
+                return f"a write to {trigger} takes the machine down"
+    if cmd.code is not None and any(t in cmd.code for t in _KERNEL_TRIGGERS):
+        return "its code names a kernel trigger file that takes the machine down"
+    if name == "kill":
+        return _kills_pid_1(cmd.args)
+    if name in ("pkill", "killall"):
+        return _signals_any(cmd, _PID_1_PROCS)
+    if name in ("busctl", "dbus-send", "gdbus", "varlinkctl") or name.startswith("qdbus"):
+        text = " ".join(cmd.args)
+        if _DOWN_METHODS.search(text) or any(could(w.split(":", 1)[-1], u) for w in cmd.args for u in _DOWN_UNITS):
+            return f"{name} calls logind or systemd to reboot, power off, sleep or isolate the machine"
+    if name == "rtcwake":
+        modes = _values(_opts(cmd.args, "mdstAa", {"--mode", "--device", "--seconds", "--time", "--adjfile"})[0], "-m", "--mode")
+        if any(m in ("off", "disk", "mem", "freeze", "standby") or any(c in m for c in WILD) for m in modes):
+            return "rtcwake -m powers the machine off or puts it to sleep"
     return None
 
 
@@ -3445,8 +3444,12 @@ def _kill_signal(args: list[str]) -> tuple[str | None, list[str]]:
 
 
 def _kills_pid_1(args: list[str]) -> str | None:
-    """kill's pids, its signal spec read off first: one that is or could be 1 or -1 is the reason, else None."""
-    for pid in _kill_signal(args)[1]:
+    """kill's pids, its signal spec read off first: one that is or could be 1 or -1 is the reason, else None, as it is
+    for a signal spec in `_NO_SIGNAL`."""
+    sig, pids = _kill_signal(args)
+    if sig in _NO_SIGNAL:
+        return None
+    for pid in pids:
         if could(pid, "1") or could(pid, "-1"):
             return f"kill {_show(pid)} could signal PID 1, which reboots on SIGINT, or every process"
     return None

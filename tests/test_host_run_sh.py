@@ -786,6 +786,9 @@ CAPTURE_DOORS = [
 _LD = "org.freedesktop.login1"
 WORKSTATION_DOORS = [
     ("ctrl-alt-del-target", "sudo systemctl start ctrl-alt-del.target", "workstation"),
+    ("reboot-target", "sudo systemctl start reboot.target", "workstation"),
+    ("poweroff-target", "sudo systemctl start poweroff.target", "workstation"),
+    ("rescue-target", "sudo systemctl start rescue.target", "workstation"),
     ("systemd-reboot-service", "sudo systemctl start systemd-reboot.service", "workstation"),
     ("systemd-reboot-no-suffix", "sudo systemctl start systemd-reboot", "workstation"),
     ("systemd-poweroff-service", "sudo systemctl start systemd-poweroff.service", "workstation"),
@@ -798,6 +801,7 @@ WORKSTATION_DOORS = [
     ("systemctl-kill-init-scope", "sudo systemctl kill --signal=SIGINT init.scope", "workstation"),
     ("sysrq-dd", "echo b | sudo dd of=/proc/sysrq-trigger", "workstation"),
     ("sysrq-cp", "sudo cp /tmp/b /proc/sysrq-trigger", "workstation"),
+    ("sysrq-tee", "echo b | sudo tee /proc/sysrq-trigger", "workstation"),
     ("sysrq-tee-append", "echo b | sudo tee -a /proc/sysrq-trigger", "workstation"),
     ("sysrq-python", "sudo python3 -c \"open('/proc/sysrq-trigger', 'w').write('b')\"", "workstation"),
     ("sys-power-state", "echo mem | sudo tee /sys/power/state", "workstation"),
@@ -1352,16 +1356,22 @@ def test_this_workstation_taken_down_another_way_is_refused(door, block, rule):
     assert done.returncode == 65 and _rule(done) == rule, done.stderr.decode()
 
 
-# The plain reboot and shutdown spellings the workstation rule refuses on this machine: on the primary, which runs
-# live capture and the engine, each is the owner's; on the secondary each is admitted.
-PRIMARY_DOWN = [(i, b) for r, i, a, b in REFUSED if r == "workstation"]
+# Every spelling the workstation rule refuses on this machine, plain or another way: on the primary, which runs live
+# capture and the engine, each is the owner's in an attended window; on the secondary each is admitted, but a D-Bus
+# call, which the judge does not read there.
+PRIMARY_DOWN = [(i, b, None) for r, i, a, b in REFUSED if r == "workstation"] + [
+    (i, b, "unresolvable" if i.startswith(("busctl-", "dbus-send-", "gdbus-")) else None) for i, b, r in WORKSTATION_DOORS
+]
 
 
-@pytest.mark.parametrize("block", [pytest.param(b, id=f"primary-down-{i}") for i, b in PRIMARY_DOWN])
-def test_a_reboot_or_shutdown_is_refused_on_the_primary_and_admitted_on_the_secondary(door, block):
-    assert _rule(door.judge("zcrypto", block)) == "capture-primary"
+@pytest.mark.parametrize(("block", "red"), [pytest.param(b, r, id=f"primary-down-{i}") for i, b, r in PRIMARY_DOWN])
+def test_a_reboot_or_shutdown_is_refused_on_the_primary_and_admitted_on_the_secondary(door, block, red):
+    done = door.judge("zcrypto", block)
+    assert _rule(done) == "capture-primary" and "the owner's line, in an attended window" in done.stderr.decode(), (
+        done.stderr.decode()
+    )
     done = door.judge("red", block)
-    assert done.returncode == 0, done.stderr.decode()
+    assert done.returncode == (65 if red else 0) and _rule(done) == red, done.stderr.decode()
 
 
 @pytest.mark.parametrize(("block", "rule"), [pytest.param(b, r, id=f"hazards-side-door-{i}") for i, b, r in HAZARD_DOORS])
