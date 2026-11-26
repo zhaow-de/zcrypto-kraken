@@ -1,5 +1,3 @@
-"""The deploy-log audit's two arms: the rows that landed inside a published API-impacting window, and the engine rows that landed outside the 4-hourly gap."""
-
 from __future__ import annotations
 
 import importlib.util
@@ -56,7 +54,7 @@ _RULED = {
 }
 
 
-@pytest.mark.parametrize("ruled_id", ["3zrrdvpscrx8", "5v1dygshcn34"])
+@pytest.mark.parametrize("ruled_id", ["3zrrdvpscrx8", "5v1dygshcn34", "71qyw00snp22"])
 def test_api_impacting_skips_an_entry_the_owner_ruled_not_a_window(ruled_id):
     ruled = {**_RULED, "id": ruled_id}
     reposted = {**ruled, "components": []}
