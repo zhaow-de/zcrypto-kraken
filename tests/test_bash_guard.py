@@ -1524,6 +1524,25 @@ def test_a_git_grep_that_selects_no_vaulted_file_is_admitted_silently(tmp_path: 
     assert r.stderr == "" and r.stdout == ""
 
 
+SHELLS_WITH_C = [
+    "ash",
+    "csh",
+    "dash",
+    "elvish",
+    "fish",
+    "ksh",
+    "ksh93",
+    "mksh",
+    "nu",
+    "posh",
+    "pwsh",
+    "rbash",
+    "tcsh",
+    "xonsh",
+    "yash",
+    "zsh",
+]
+
 # (command, the alias the remedy must name) -- a fleet host of docs/reference/fleet.md reached past host-run.sh
 FLEET_REACHED = [
     ("ssh red uptime", "red"),
@@ -1595,6 +1614,26 @@ FLEET_REACHED = [
     ("ssh -O forward -L 8080:localhost:80 red", "red"),
     ("ssh -O proxy red", "red"),
     ("ssh -O check -O forward red", "red"),
+    # a command line env splits from a string: `-S` and `--split-string` in each spelling getopt takes, its words
+    # after it appended, its `\_` a separator, env's own options inside it
+    ("env -S 'ssh red uptime'", "red"),
+    ("env -S'ssh red uptime'", "red"),
+    ("env -iS 'ssh red uptime'", "red"),
+    ("env --split-string='ssh red uptime'", "red"),
+    ("env --split-string 'ssh red uptime'", "red"),
+    ("env --split='ssh red uptime'", "red"),
+    ("env -u HOME -C /tmp -S 'ssh nas' df", "nas"),
+    ("env -S ssh red uptime", "red"),
+    ("env -S 'ssh\\_red\\_uptime'", "red"),
+    ("env -S '-i ssh red uptime'", "red"),
+    ("sudo env -S 'scp f nas:/tmp/'", "nas"),
+    # a `-c` string to any shell, and fish's `--command`
+    *[(f"{sh} -c 'ssh red uptime'", "red") for sh in SHELLS_WITH_C],
+    ("fish --command='ssh red uptime'", "red"),
+    ("fish --command 'ssh red uptime'", "red"),
+    # an rsync `-e` naming ssh behind a wrapper or a path
+    ("rsync -e 'sudo ssh -o HostName=nas' f example.org:/x", "nas"),
+    ("rsync --rsh='/usr/bin/env ssh -o HostName=nas' f example.org:/x", "nas"),
 ]
 
 # A host only run time knows.
@@ -1667,6 +1706,11 @@ FLEET_HOPS = [
     ("rsync -e 'ssh -o ProxyCommand=x' f example.org:/x", "ProxyCommand"),
     ("rsync --rsh='ssh -J deploy@jump.example' f example.org:/x", "ProxyJump"),
     ("bash -c \"ssh -o 'ProxyCommand x' example.org\"", "ProxyCommand"),
+    ("env -S 'ssh -o ProxyCommand=x example.org'", "ProxyCommand"),
+    ("fish -c 'ssh -J deploy@jump.example example.org'", "ProxyJump"),
+    ("rsync -e 'sudo ssh -J deploy@jump.example' f example.org:/x", "ProxyJump"),
+    ("rsync -e 'env ssh -o ProxyCommand=x' f example.org:/x", "ProxyCommand"),
+    ("rsync --rsh='timeout 5 /usr/bin/ssh -o LocalCommand=id' f example.org:/x", "LocalCommand"),
 ]
 
 FLEET_ADMITTED = [
@@ -1722,6 +1766,12 @@ FLEET_ADMITTED = [
     "which ssh scp sftp rsync",
     "man ssh",
     "pgrep -a ssh",
+    # a string env or a shell runs, read as a command and admitted as one
+    "env -S 'git status'",
+    "env -u FOO -S 'ssh -V'",
+    "env --split-string='grep -c ssh access.log'",
+    "fish -c 'ssh example.org uptime'",
+    "rsync -e 'sudo ssh' dir/ /mnt/backup/",
     # an ssh-family word a reader takes as data: a grep's, an rg's, journalctl's, systemctl's or a git read's operand,
     # that reader the stage's program or what `xargs` or a find `-exec` runs, up to the `-exec`'s `+`
     "git grep -n ssh -- '*.md'",
