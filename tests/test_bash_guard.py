@@ -1518,3 +1518,222 @@ def test_a_git_grep_that_selects_no_vaulted_file_is_admitted_silently(tmp_path: 
     r = run_hook(call_from(command, sub), cwd=tmp_path)
     assert r.returncode == 0, r.stderr
     assert r.stderr == "" and r.stdout == ""
+
+
+# (command, the alias the remedy must name) -- a fleet host of docs/reference/fleet.md reached past host-run.sh
+FLEET_REACHED = [
+    ("ssh red uptime", "red"),
+    ("ssh -o BatchMode=yes red 'sudo docker ps'", "red"),
+    ("ssh zcrypto", "zcrypto"),
+    ("ssh deploy@nas df -h", "nas"),
+    ("ssh -l deploy -p 22 -i .tmp/key db1 hostname", "db1"),
+    ("ssh -tt mon", "mon"),
+    ("ssh -oBatchMode=yes hc true", "hc"),
+    ("ssh -- access uptime", "access"),
+    ("ssh ssh://deploy@db2:22 uptime", "db2"),
+    ("ssh RED uptime", "red"),
+    ("ssh zcrypto-red uptime", "red"),
+    ("ssh zcrypto-ops.tailnet.example uptime", "hp"),
+    ("ssh hp -v uptime", "hp"),
+    ("ssh -o HostName=zcrypto-red example.org uptime", "red"),
+    ("scp notes.txt nas:/tmp/", "nas"),
+    ("scp deploy@db3:/etc/hostname .", "db3"),
+    ("scp -r -P 22 dir hp:", "hp"),
+    ("scp scp://red//tmp/x .", "red"),
+    ("sftp nas", "nas"),
+    ("sftp deploy@nas:/volume1", "nas"),
+    ("sftp -b batch.txt sftp://red", "red"),
+    ("rsync -a -e ssh dir/ red:/tmp/dir/", "red"),
+    ("rsync -av --rsh=ssh dir/ deploy@nas:/x", "nas"),
+    ("rsync -avze 'ssh -p 22' dir red:/x", "red"),
+    ("rsync -a --partial dir nas:/x", "nas"),  # rsync's remote shell is ssh unless -e names another
+    ("rsync -a --chown zcrypto:zcrypto red:/x .", "red"),  # an option's value is no operand
+    ("rsync -a nas::backup/x .", "nas"),
+    ("rsync -e 'ssh -o HostName=nas' dir example.org:/x", "nas"),
+    # a wrapper, a path, a quote, a shell string, a pipe, a chain, a substitution
+    ("sudo ssh red uptime", "red"),
+    ("sudo -u deploy ssh red uptime", "red"),
+    ("env FOO=1 ssh red uptime", "red"),
+    ("timeout 10 ssh red uptime", "red"),
+    ("nohup ssh red uptime &", "red"),
+    ("/usr/bin/ssh red uptime", "red"),
+    ("\\ssh red uptime", "red"),
+    ("bash -c 'ssh red uptime'", "red"),
+    ('sh -lc "ssh nas df"', "nas"),
+    ("sudo bash -c 'cd /tmp && scp f nas:/x'", "nas"),
+    ("eval 'ssh red uptime'", "red"),
+    ("echo uptime | ssh red bash", "red"),
+    ("cd /x && ssh red uptime", "red"),
+    ("true; ssh red uptime", "red"),
+    ("x=$(ssh red hostname)", "red"),
+    ("echo `ssh nas hostname`", "nas"),
+    ("infra/scripts/host-run.sh red <<EOF\n$(ssh nas hostname)\nEOF", "nas"),  # runs here, before the wrapper
+    ("echo ssh red", "red"),  # a word is judged wherever it stands
+]
+
+# A host only run time knows.
+FLEET_UNRESOLVED = [
+    'ssh "$HOST" uptime',
+    "ssh deploy@${H} uptime",
+    "ssh $(cat .tmp/host) uptime",
+    "ssh `cat .tmp/host` uptime",
+    'ssh -o HostName="$H" example.org',
+    "scp f $H:/tmp/",
+    'scp "$SRC" .',
+    "sftp $H",
+    "rsync -a dir/ $DEST",
+    'for h in red nas; do ssh "$h" uptime; done',
+    "ssh red* uptime",
+    "ssh {red,nas} uptime",
+    "printf 'red\\n' | xargs -I{} ssh {} uptime",
+    "echo red | xargs ssh",
+]
+
+# (command, the ssh option the message must name) -- to a host outside the fleet
+FLEET_HOPS = [
+    ("ssh -o ProxyCommand='nc %h %p' example.org", "ProxyCommand"),
+    ("ssh -oProxyCommand=none example.org", "ProxyCommand"),
+    ('ssh -o "ProxyCommand nc example.net 22" example.org', "ProxyCommand"),
+    ("ssh -o proxycommand=x example.org", "ProxyCommand"),
+    ("ssh -o 'PROXYCOMMAND = x' example.org", "ProxyCommand"),
+    ("ssh -o '\"ProxyCommand\" x' example.org", "ProxyCommand"),
+    ("ssh -o LocalCommand=id example.org", "LocalCommand"),
+    ("ssh -o PermitLocalCommand=yes example.org", "PermitLocalCommand"),
+    ("ssh -o KnownHostsCommand=/bin/true example.org", "KnownHostsCommand"),
+    ("ssh -o ProxyJump=deploy@jump.example:22 example.org", "ProxyJump"),
+    ("ssh -J deploy@jump.example example.org", "ProxyJump"),
+    ("ssh -Jjump.example:2222 example.org", "ProxyJump"),
+    ("ssh -J a,b example.org", "ProxyJump"),
+    ("ssh -J jump.example example.org", "ProxyJump"),
+    ('ssh -vJ "$JUMP" example.org', "ProxyJump"),
+    ("ssh example.org -o ProxyCommand=x", "ProxyCommand"),  # ssh reads options after its destination too
+    ("sudo ssh -o ProxyCommand=x example.org", "ProxyCommand"),
+    ("scp -o ProxyCommand=x f example.org:", "ProxyCommand"),
+    ("scp -J deploy@jump.example f example.org:", "ProxyJump"),
+    ("sftp -oProxyJump=deploy@jump.example example.org", "ProxyJump"),
+    ("rsync -e 'ssh -o ProxyCommand=x' f example.org:/x", "ProxyCommand"),
+    ("rsync --rsh='ssh -J deploy@jump.example' f example.org:/x", "ProxyJump"),
+    ("bash -c \"ssh -o 'ProxyCommand x' example.org\"", "ProxyCommand"),
+]
+
+FLEET_ADMITTED = [
+    # the prescribed route: its block is its own judge's
+    "infra/scripts/host-run.sh red <<'EOF'\nssh nas uptime\nscp /etc/hostname db1:/tmp/\nEOF",
+    "infra/scripts/host-run.sh --timeout 30 nas <<'EOF'\nsudo docker ps --format '{{.Names}}'\nEOF",
+    "infra/scripts/host-run.sh --judge red < .tmp/block.sh",
+    # git over its ssh remotes
+    "git push origin HEAD",
+    "git fetch origin develop",
+    "git ls-remote git@github.com:o/r.git",
+    "GIT_SSH_COMMAND='ssh -o BatchMode=yes' git fetch origin",
+    # ssh as data: a quoted pattern, an echo, a message, a heredoc written to a file, a comment, an assignment
+    "grep -rn 'ssh red' docs/",
+    "git grep -n 'ssh -o ProxyCommand' -- docs",
+    'echo "ssh red uptime"',
+    'git commit -m "docs: ssh red is refused; scp nas:/x too"',
+    "cat <<'EOF' > .tmp/notes.md\nssh red uptime\nrsync -a d nas:/x\nEOF",
+    "ls # ssh red",
+    "SSH=/usr/bin/ssh make check",
+    # what connects nowhere, or to no fleet host
+    "ssh -V",
+    "ssh -G red",
+    "ssh -G -p 22 zcrypto",
+    "ssh -T git@github.com",
+    "ssh -o BatchMode=yes -o ConnectTimeout=5 example.org true",
+    "ssh -J access example.org",
+    "ssh -o ProxyJump=access example.org",
+    "ssh -o 'ProxyJump none' example.org",
+    "ssh nasa.example.org",
+    "ssh -o HostName=example.net example.org",
+    "scp f example.org:/tmp/",
+    "scp ./red:x .",  # a slash before the colon: a local path
+    "scp red.txt nas.txt /tmp/",
+    "rsync -a dir/ /mnt/backup/",
+    "rsync -a red/ nas/",
+    "sftp example.org",
+    "ssh-keygen -lf .tmp/key.pub",
+    "ssh-add -l",
+    "which ssh scp sftp rsync",
+    "man ssh",
+    "pgrep -a ssh",
+]
+
+HOST_RUN_REMEDY = "infra/scripts/host-run.sh {} <<'EOF' … EOF"
+
+
+@pytest.mark.parametrize(("command", "alias"), FLEET_REACHED, ids=[c for c, _ in FLEET_REACHED])
+def test_a_fleet_host_reached_past_host_run_is_blocked_with_the_remedy(tmp_path: Path, command: str, alias: str):
+    r = run_hook(call(command), cwd=tmp_path)
+    assert r.returncode == 2, r.stderr
+    claim = r.stderr.partition("; in `")[0]
+    assert "BLOCKED" in claim and " reaches the fleet host `" in claim, r.stderr
+    assert f"`{HOST_RUN_REMEDY.format(alias)}`" in r.stderr, r.stderr
+    assert r.stdout == ""
+
+
+@pytest.mark.parametrize("command", FLEET_UNRESOLVED)
+def test_an_ssh_family_host_the_guard_cannot_resolve_is_blocked_as_unresolvable(tmp_path: Path, command: str):
+    r = run_hook(call(command), cwd=tmp_path)
+    assert r.returncode == 2, r.stderr
+    claim = r.stderr.partition("; in `")[0]
+    assert "BLOCKED" in claim and "which the guard cannot resolve to a host in or out of the fleet" in claim, r.stderr
+    assert f"`{HOST_RUN_REMEDY.format('<alias>')}`" in r.stderr, r.stderr
+
+
+@pytest.mark.parametrize(("command", "option"), FLEET_HOPS, ids=[c for c, _ in FLEET_HOPS])
+def test_an_ssh_option_that_hops_or_runs_a_local_command_is_blocked_to_any_host(tmp_path: Path, command: str, option: str):
+    r = run_hook(call(command), cwd=tmp_path)
+    assert r.returncode == 2, r.stderr
+    claim = r.stderr.partition("; in `")[0]
+    assert "BLOCKED" in claim and f": ssh's {option} " in claim, r.stderr
+    assert "a jump host is a bare alias" in r.stderr and f"`{HOST_RUN_REMEDY.format('<alias>')}`" in r.stderr
+
+
+@pytest.mark.parametrize("command", FLEET_ADMITTED)
+def test_host_run_git_over_ssh_ssh_as_data_and_a_host_outside_the_fleet_are_admitted(tmp_path: Path, command: str):
+    r = run_hook(call(command), cwd=tmp_path)
+    assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
+
+
+@pytest.mark.parametrize("command", ["ssh red uptime", "ssh -o ProxyCommand=x example.org"])
+def test_a_dispatched_agent_is_held_to_the_fleet_family_as_the_main_loop_is(tmp_path: Path, command: str):
+    r = run_hook(agent_call(command, str(REPO), agent_id="a1"), cwd=tmp_path, env=AGENT_ENV)
+    assert r.returncode == 2 and "BLOCKED" in r.stderr and HOST_RUN_REMEDY.split()[0] in r.stderr, r.stderr
+
+
+# (the table the call's checkout holds -- None for no checkout at all --, what the message says of it)
+UNREAD_TABLES = [
+    (None, "no checkout holds the call's directory"),
+    ("", "could not be read"),
+    ("# Fleet\n\nno host table here\n", "names no host"),
+]
+
+
+def unread_table_call(tmp_path: Path, table: str | None, command: str) -> subprocess.CompletedProcess:
+    where = tmp_path / "checkout"
+    if table is not None:
+        subprocess.run(["git", "init", "-q", str(where)], check=True)
+        if table:
+            (where / "docs" / "reference").mkdir(parents=True)
+            (where / "docs" / "reference" / "fleet.md").write_text(table)
+    return run_hook(agent_call(command, str(where)), cwd=tmp_path)
+
+
+@pytest.mark.parametrize("command", ["ssh -T git@github.com", "scp f example.org:/tmp/", "rsync -a d example.org:/x"])
+@pytest.mark.parametrize(("table", "why"), UNREAD_TABLES, ids=[w for _, w in UNREAD_TABLES])
+def test_a_fleet_table_the_calls_checkout_cannot_give_refuses_every_ssh_family_call_to_a_host(
+    tmp_path: Path, table: str | None, why: str, command: str
+):
+    r = unread_table_call(tmp_path, table, command)
+    assert r.returncode == 2, r.stderr
+    claim = r.stderr.partition("; in `")[0]
+    assert "BLOCKED" in claim and why in claim and "so the guard cannot tell a fleet host from another" in claim, r.stderr
+
+
+@pytest.mark.parametrize("command", ["ssh -V", "ssh -G example.org", "rsync -a d/ e/"])
+@pytest.mark.parametrize(("table", "why"), UNREAD_TABLES, ids=[w for _, w in UNREAD_TABLES])
+def test_a_fleet_table_the_calls_checkout_cannot_give_admits_what_reaches_no_host(
+    tmp_path: Path, table: str | None, why: str, command: str
+):
+    r = unread_table_call(tmp_path, table, command)
+    assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
