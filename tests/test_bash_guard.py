@@ -647,8 +647,7 @@ STAMP_UNWRITTEN = [
 
 # A test module's or a hook's own text, which spells the placeholders, a hex literal and the shell pattern.
 CASE_TEXT = '("received 12:1xZ", "12:1x"), r"[0-9x?]{2}:[0-9x?]{2}", "??:??", 0x1F'
-_HOOK_SPECIMEN = ".claude/hooks/" + "x.sh"  # built, so the guidance-citation walk reads no missing hook
-CASE_FILES = ["tests/test_x.py", "/home/u/Projects/zcrypto-kraken/tests/fixtures/cases.py", _HOOK_SPECIMEN]
+CASE_FILES = ["tests/test_x.py", "/home/u/Projects/zcrypto-kraken/tests/fixtures/cases.py", ".claude/hooks/x.sh"]
 NO_CASE_FILES = ["tests/notes.md", "data/tests/x.md", ".tmp/test_x.py"]
 
 # (command, the approximate clock the message names, the ledger it lands in)
@@ -705,7 +704,7 @@ STAMP_SPECIMENS = [
     ("[0-9x?]{2}:[0-9x?]{2}", None),
 ]
 # (the file a specimen is written into, whether both hooks exempt it)
-SPECIMEN_TARGETS = [("ledger.md", False), ("tests/notes.md", False), ("tests/test_x.py", True), (_HOOK_SPECIMEN, True)]
+SPECIMEN_TARGETS = [("ledger.md", False), ("tests/notes.md", False), ("tests/test_x.py", True), (".claude/hooks/x.sh", True)]
 
 # (command, the stage the message must name) -- refused from a dispatched agent in its own worktree
 AGENT_WRITES = [
