@@ -1699,6 +1699,13 @@ FLEET_HOPS = [
     ("ssh -o LocalCommand=id example.org", "LocalCommand"),
     ("ssh -o PermitLocalCommand=yes example.org", "PermitLocalCommand"),
     ("ssh -o KnownHostsCommand=/bin/true example.org", "KnownHostsCommand"),
+    # an option that loads or runs local code, by its keyword and by ssh's short option for it
+    ("ssh -I /tmp/evil.so example.org", "PKCS11Provider"),
+    ("ssh -I/tmp/evil.so example.org", "PKCS11Provider"),
+    ("ssh -o PKCS11Provider=/tmp/evil.so example.org", "PKCS11Provider"),
+    ("scp -o PKCS11Provider=/tmp/evil.so f example.org:", "PKCS11Provider"),
+    ("ssh -o SecurityKeyProvider=/tmp/evil.so example.org", "SecurityKeyProvider"),
+    ("ssh -X -o XAuthLocation=/tmp/evil example.org", "XAuthLocation"),
     ("ssh -o ProxyJump=deploy@jump.example:22 example.org", "ProxyJump"),
     ("ssh -J deploy@jump.example example.org", "ProxyJump"),
     ("ssh -Jjump.example:2222 example.org", "ProxyJump"),
