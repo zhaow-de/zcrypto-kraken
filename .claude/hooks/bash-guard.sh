@@ -807,15 +807,28 @@ def vault_set():
 VAULT_SET, VAULT_UNREAD = vault_set()
 
 
-def vault_path(path):
-    # Whether a path whose every directory is spelled -- a realpath, or `/` and a path under a repository -- is in the
-    # vaulted set. A pattern is read as git reads a pathspec without `glob` magic -- `*` and `?` cross `/`, and its
-    # literal text names a file or a directory above one -- against every tail of the path that starts a component: a
-    # tail no repository's top starts refuses more, never less.
+def vault_member(path):
+    # Whether a path from a repository's top is in the vaulted set. A pattern is read as git reads a pathspec without
+    # `glob` magic: `*` and `?` cross `/`, and its literal text names a file or a directory above one.
     if VAULT_SET is None:
         raise VaultSetUnread
-    tails = [path[i:] for i in range(len(path)) if i == 0 or path[i - 1] == "/"]
-    return any(fnmatch.fnmatchcase(t, p) or t.startswith(p.rstrip("/") + "/") for t in tails for p in VAULT_SET)
+    return any(fnmatch.fnmatchcase(path, p) or path.startswith(p.rstrip("/") + "/") for p in VAULT_SET)
+
+
+@functools.cache
+def top_of(directory):
+    done = subprocess.run(["git", "-C", directory, "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    return os.path.realpath(done.stdout.strip()) if not done.returncode and done.stdout.strip() else None
+
+
+def vault_path(path):
+    # Whether a realpath is in the vaulted set: read from the top of the repository git finds it in, as git reads the
+    # set's pathspecs, so a directory above that top is never read; outside every repository, from each component,
+    # any of which could be a top, which refuses more, never less.
+    top = top_of(posixpath.dirname(path))
+    if top and path.startswith(top.rstrip("/") + "/"):
+        return vault_member(path[len(top.rstrip("/")) + 1 :])
+    return any(vault_member(path[i:]) for i in range(len(path)) if i == 0 or path[i - 1] == "/")
 
 
 def held(path, where):
@@ -918,7 +931,7 @@ def at_revision(where, operand):
     if path.startswith(("./", "../")):
         prefix = subprocess.run(["git", "-C", where, "rev-parse", "--show-prefix"], capture_output=True, text=True)
         path = posixpath.normpath(prefix.stdout.strip() + path)
-    return vault_path("/" + path)
+    return vault_member(path)
 
 
 def operands(args):
@@ -1021,7 +1034,7 @@ def scoped_grep(rest, where):
                 return "carries a pathspec git cannot read -- spell it as git ls-files accepts it"
             listings.append([f for f in done.stdout.split("\0") if f])
         kept = set(listings[-1])
-        hit = next((f for f in listings[0] if f in kept and vault_path("/" + f)), None)
+        hit = next((f for f in listings[0] if f in kept and vault_member(f)), None)
         if hit:
             shown = ", ".join(f"`{p}`" for p in VAULT_SET)
             return (
