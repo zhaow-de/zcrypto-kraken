@@ -231,6 +231,9 @@ ALLOY_APT_VERBATIM = [
         },
     ),
     ("ansible.builtin.dpkg_selections", {"name": "alloy", "selection": "hold"}),
+    ("ansible.builtin.stat", {"path": "/usr/bin/aptitude"}),
+    ("ansible.builtin.command", "aptitude search --disable-columns -F '%a' '?exact-name(alloy)'"),
+    ("ansible.builtin.command", "aptitude hold alloy"),
     ("ansible.builtin.meta", "flush_handlers"),
     (
         "ansible.builtin.shell",
