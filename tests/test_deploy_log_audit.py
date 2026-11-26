@@ -1,5 +1,3 @@
-"""The deploy-log audit's two arms: the rows that landed inside a published API-impacting window, and the engine rows that landed outside the 4-hourly gap."""
-
 from __future__ import annotations
 
 import importlib.util
