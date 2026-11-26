@@ -778,6 +778,7 @@ CAPTURE_DOORS = [
     ("kill-plain", "zcrypto", "sudo kill 1234", "capture-primary"),
     ("kill-s-term", "zcrypto", "sudo kill -s TERM $(pidof dockerd)", "capture-primary"),
     ("kill-n-9", "zcrypto", "sudo kill -n 9 1234", "capture-primary"),
+    ("kill-1-is-hup", "zcrypto", "sudo kill -1 1234", "capture-primary"),
     ("kill-signal-long-hup", "zcrypto", "sudo kill --signal HUP $(pidof alloy)", "capture-primary"),
 ]
 
@@ -1224,6 +1225,8 @@ ADMITTED = [
     ("kill-signal-zero-on-the-primary", "zcrypto", "sudo kill -s 0 $(pidof dockerd) && echo up"),
     ("kill-0-on-the-primary", "zcrypto", "kill -0 1234"),
     ("kill-n-0-on-the-primary", "zcrypto", "sudo kill -n 0 1234"),
+    ("kill-l-on-the-primary", "zcrypto", "sudo kill -l"),
+    ("kill-L-on-the-primary", "zcrypto", "kill -L"),
     ("pkill-unrelated-primary", "zcrypto", "sudo pkill -x sleep"),
     ("pkill-f-unrelated-primary", "zcrypto", "sudo pkill -f zcrypto-panel-materialize"),
     ("secondary-alloy-stop", "red", "sudo docker stop grafana-alloy"),

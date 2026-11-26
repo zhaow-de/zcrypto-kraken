@@ -3239,8 +3239,8 @@ _KILL_VALUE = _w(
     "--signal --euid --uid --pgroup --group --parent --session --terminal --pidfile --ns --nslist --cgroup --runstates "
     "--user --older-than --younger-than --context"
 )
-# kill's signal specs that deliver nothing: 0 tests that a pid exists.
-_NO_SIGNAL = ("0",)
+# kill's signal specs that deliver nothing: 0 tests that a pid exists, l and L list the signals.
+_NO_SIGNAL = ("0", "l", "L")
 
 
 def rule_capture_primary(cmd: Cmd, j: Judge) -> Refusal | None:
