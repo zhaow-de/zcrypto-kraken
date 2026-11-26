@@ -1094,6 +1094,10 @@ SCOPED_GREPS = [
     ("git grep --max-count 1 foo pyproject.toml", "."),
     ("git grep -l -e foo -e bar -- tests", "."),
     ("git grep -n foo -- docs/reference cli", "."),
+    # docs holds a topic about the vault password, which no pattern of the set names
+    ("git grep -n -l x -- tests docs cli", "."),
+    ("git grep -n foo -- docs", "."),
+    ("git grep -n foo -- docs/open-topics", "."),
     ("git grep -n foo HEAD -- docs/reference", "."),
     ("git grep -n foo HEAD -- README.md", "."),
     ("git grep -Ofoo infra docs/reference", "."),
@@ -1283,7 +1287,7 @@ def test_a_git_grep_over_a_directory_holding_a_specimen_consumers_sh_excludes_is
     assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
 
 
-FIVE = "':!*vault.yml' ':!*.vault' ':!*.sops.*' ':!*vault-password*' ':!infra/ansible/files/*_ed25519'"
+EXCLUDES = shlex.join(vault_excludes())
 # (a git grep over the specimens, the directory it runs from, the vaulted file its refusal names or None for an
 # admission): the excludes count, in each spelling; beside a positive naming a directory, where git 2.47's ls-files
 # reading both at once keeps the member `docs/x ':!*fake*'` drops and lists nothing for `infra/ansible/files
@@ -1291,8 +1295,9 @@ FIVE = "':!*vault.yml' ':!*.vault' ':!*.sops.*' ':!*vault-password*' ':!infra/an
 # over a commit's tree. Each row's verdict is also held to the files git grep itself reads.
 SPECIMEN_GREPS = [
     ("git grep -n x -- docs ':!*vault.yml'", ".", None),
-    (f"git grep -n x -- docs {FIVE}", ".", None),
-    (f"git grep -n x -- . {FIVE}", ".", None),
+    (f"git grep -n x -- docs {EXCLUDES}", ".", None),
+    (f"git grep -n x -- . {EXCLUDES}", ".", None),
+    ("git grep -n x -- docs/open-topics", ".", None),
     ("git grep -n x -- docs ':^*vault.yml'", ".", None),
     ("git grep -n x -- docs ':(exclude)*vault.yml'", ".", None),
     ("git grep -n x -- docs ':/!*vault.yml'", ".", None),
@@ -1310,7 +1315,7 @@ SPECIMEN_GREPS = [
     ("git grep -n x -- docs ':!docs/y'", ".", "docs/x/fake-vault.yml"),
     ("git grep -n x -- infra/ansible/files ':!*.pub'", ".", "infra/ansible/files/deploy_x_ed25519"),
     ("git grep -n x -- '*.yml' ':!*fake*'", ".", "group_vars/x/vault.yml"),
-    ("git grep -n x -- . ':!*vault.yml' ':!*.vault' ':!*.sops.*' ':!infra/ansible/files/*_ed25519'", ".", "vault-password.txt"),
+    ("git grep -n x -- . ':!*vault.yml' ':!*.vault' ':!*.sops.*' ':!infra/ansible/files/*_ed25519'", ".", "vault-password"),
     ("git grep -n x -- infra ':!infra/ansible/files/*.pub'", ".", "infra/ansible/files/deploy_x_ed25519"),
     ("git grep -n x HEAD -- docs ':!*.vault'", ".", "docs/x/fake-vault.yml"),
     ("git grep -n x HEAD -- infra/ansible/files ':!*.pub'", ".", "infra/ansible/files/deploy_x_ed25519"),
@@ -1344,7 +1349,7 @@ def test_a_git_grep_is_refused_exactly_when_git_would_search_a_specimen_consumer
 # a directory above the top whose name a pattern matches -- a trailing `*` takes a whole path, `*` crosses `/` --
 # never makes a file vaulted, as git reads the pathspecs from the top.
 CHECKOUTS = {
-    "vault-password-rotation": [("README.md", False), ("cli/a.py", False), ("vault.yml", True), ("docs/fake-vault.yml", True)],
+    "vault-password.d": [("README.md", False), ("cli/a.py", False), ("vault.yml", True), ("docs/fake-vault.yml", True)],
     "notes.sops.d": [("README.md", False), ("cli/a.py", False), ("x.vault", True)],
     "infra/ansible/files/k": [("README.md", False), ("x_ed25519", False), ("infra/ansible/files/deploy_x_ed25519", True)],
 }
@@ -1398,7 +1403,7 @@ def test_a_file_under_a_checkouts_top_is_vaulted_exactly_when_its_pathspecs_drop
 def test_outside_every_repository_each_directory_of_a_path_is_read_as_a_top(tmp_path: Path):
     files = [
         ("plain/README.md", False),
-        ("vault-password-notes/README.md", True),
+        ("vault-password.d/README.md", True),
         ("plain/fake-vault.yml", True),
         ("x/infra/ansible/files/deploy_x_ed25519", True),
     ]

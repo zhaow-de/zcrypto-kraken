@@ -22,7 +22,7 @@ done
 [[ $# -gt 0 ]] || { echo "usage: infra/scripts/consumers.sh [--tests] [--direct] <path>..." >&2; exit 2; }
 root="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "consumers: not inside a git repository" >&2; exit 2; }
 cd "$root"
-VAULT_EXCLUDES=(':!*vault.yml' ':!*.vault' ':!*.sops.*' ':!*vault-password*' ':!infra/ansible/files/*_ed25519')
+VAULT_EXCLUDES=(':!*vault.yml' ':!*.vault' ':!*.sops.*' ':!*vault-password' ':!*vault-password.*' ':!infra/ansible/files/*_ed25519')
 
 # A form's edges. A path's right edge refuses a further extension, so `foo.sh` is not read in `foo.sh.j2`, and a
 # package's refuses a submodule; a module's admits an attribute, `cli.x.y._NAME` being a read of `cli/x/y.py`.
