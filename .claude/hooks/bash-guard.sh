@@ -29,7 +29,9 @@
 # `find -exec`, two shapes are judged: a stage whose command word is `xargs` with `grep` or `rg` as its first operand,
 # or `find` carrying `-exec grep|rg`, in a pipeline any stage of which names `infra` as a word or a path component --
 # the word `grep_pattern_at` takes for the grep's pattern excepted; every other `xargs` or `-exec` is outside. A vault
-# tool's writing verb is admitted over a vaulted file: a key rotation runs `ansible-vault encrypt|rekey`.
+# tool's writing verb is admitted over a vaulted file: a key rotation runs `ansible-vault encrypt|rekey`. The vaulted
+# set is `VAULT_EXCLUDES` of infra/scripts/consumers.sh beside this file, what that script's searches exclude; a set
+# that cannot be had refuses every command judged against it.
 # The fleet family alone reads a shell's `-c` string, an `eval` line and the line `env -S` splits as commands.
 # Refused deliberately, as a word is judged wherever it stands: an agent's `echo git push`, `echo cat <vaulted file>`,
 # `echo ssh red`.
@@ -159,8 +161,9 @@ OUTPUT = {">", ">>", ">|", "&>", "&>>", ">&"}  # a redirect whose target is a fi
 PRINTERS = {"cat", "head", "tail", "less", "more", "sed", "awk", "cut", "strings", "xxd", "od", "base64", "tac", "nl", "hexdump", "hd"}
 COPIERS = {"cp", "scp", "rsync"}
 INTERPRETER = re.compile(r"^python(\d+(\.\d+)?)?$")
-KEYS_DIR = "/infra/ansible/files"
-SOPS_VAULT = "/infra/ansible/vault-password.sops.yaml"
+VAULT_DEFINITION = "infra/scripts/consumers.sh"
+VAULT_LINE = re.compile(r"^VAULT_EXCLUDES=\(((?:[ \t]*'[^'\n]*')+)[ \t]*\)[ \t]*$", re.M)
+VAULT_ENTRY = re.compile(r":!(?![:/!^(])[^\\\[\n]+")
 WILD = re.compile(r"[*?[]")
 BRACE = re.compile(r"\{([^{}]*)\}")
 SEQUENCE = re.compile(r"(-?\d+|[A-Za-z])\.\.(-?\d+|[A-Za-z])(?:\.\.(-?\d+))?")
@@ -777,12 +780,42 @@ def is_git(w):
     return w == "git" or (w.endswith("/git") and not ASSIGN.match(w))
 
 
+class VaultSetUnread(Exception):
+    pass
+
+
+def vault_set():
+    # The vaulted set's patterns, `VAULT_EXCLUDES` of the consumers.sh beside this file -- one line of single-quoted
+    # `:!<pattern>` words, which bash and this parse read alike, with no other assignment -- or None and why not. A
+    # pattern takes `*` and `?` alone: a class or an escape is read by Python's fnmatch otherwise than by git.
+    path = posixpath.normpath(posixpath.join(HOOK_DIR, "..", "..", VAULT_DEFINITION))
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except (OSError, ValueError) as exc:
+        return None, f"`{VAULT_DEFINITION}` beside this hook could not be read ({type(exc).__name__})"
+    lines = VAULT_LINE.findall(text)
+    if len(lines) != 1 or len(re.findall(r"VAULT_EXCLUDES\+?=", text)) != 1:
+        return None, f"`{VAULT_DEFINITION}` beside this hook holds no one-line `VAULT_EXCLUDES=('…' …)` and no other assignment"
+    words = re.findall(r"'([^']*)'", lines[0])
+    bad = next((w for w in words if not VAULT_ENTRY.fullmatch(w)), None)
+    if bad is not None:
+        return None, f"`{bad}` in `{VAULT_DEFINITION}`'s `VAULT_EXCLUDES` is no `:!<pattern>` of `*` and `?` alone"
+    return tuple(w[2:] for w in words), None
+
+
+VAULT_SET, VAULT_UNREAD = vault_set()
+
+
 def vault_path(path):
-    # The vaulted set, read from a path whose every directory is spelled: a realpath, or `/` and a path under a
-    # repository.
-    head, _, name = path.rpartition("/")
-    keys = name.endswith("_ed25519") and head.endswith(KEYS_DIR)
-    return name == "vault.yml" or name.endswith(".vault") or keys or path.endswith(SOPS_VAULT)
+    # Whether a path whose every directory is spelled -- a realpath, or `/` and a path under a repository -- is in the
+    # vaulted set. A pattern is read as git reads a pathspec without `glob` magic -- `*` and `?` cross `/`, and its
+    # literal text names a file or a directory above one -- against every tail of the path that starts a component: a
+    # tail no repository's top starts refuses more, never less.
+    if VAULT_SET is None:
+        raise VaultSetUnread
+    tails = [path[i:] for i in range(len(path)) if i == 0 or path[i - 1] == "/"]
+    return any(fnmatch.fnmatchcase(t, p) or t.startswith(p.rstrip("/") + "/") for t in tails for p in VAULT_SET)
 
 
 def held(path, where):
@@ -982,8 +1015,13 @@ def scoped_grep(rest, where):
         )
         if done.returncode:
             return "carries a pathspec git cannot read -- spell it as git ls-files accepts it"
-        if any(vault_path("/" + f) for f in done.stdout.split("\0") if f):
-            return "may search a vaulted file -- name directories or files outside the vaulted set (`vault.yml`, `*.vault`, `vault-password.sops.yaml`, `files/*_ed25519`); excludes count alone"
+        hit = next((f for f in done.stdout.split("\0") if f and vault_path("/" + f)), None)
+        if hit:
+            shown = ", ".join(f"`{p}`" for p in VAULT_SET)
+            return (
+                f"may search the vaulted file `{hit}` -- name directories or files outside the vaulted set "
+                f"({VAULT_DEFINITION}'s `VAULT_EXCLUDES`: {shown}); excludes count alone"
+            )
     return None
 
 
@@ -996,6 +1034,17 @@ def first_vaulted(args, where):
 
 
 def judge_vault(words, raw, where):
+    try:
+        judge_vaulted(words, raw, where)
+    except VaultSetUnread:
+        refuse(
+            f"`{spelled(words)}` is judged against the vaulted set, and the vaulted set cannot be had: {VAULT_UNREAD}, so "
+            f"every command judged against it is refused until it can; in `{raw}`. The set is `VAULT_EXCLUDES` in "
+            f"{VAULT_DEFINITION}, one line of single-quoted `:!<pattern>` words."
+        )
+
+
+def judge_vaulted(words, raw, where):
     for i, w in enumerate(words):
         p, rest = w.rpartition("/")[2], words[i + 1 :]
         if p == "ansible-vault" and any(a in ("view", "decrypt") for a in rest):
