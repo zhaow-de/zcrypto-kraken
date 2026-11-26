@@ -114,7 +114,11 @@ ANSI = "$'"
 ANSI_SIMPLE = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v", "\\": "\\", "'": "'", '"': '"', "?": "?"}
 ASSIGN = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", re.S)
 CONFIG_KEY_ENV = re.compile(r"^GIT_CONFIG_KEY_\d+$")
-HEREDOC = re.compile(r"<<(-?)[ \t]*(?:'([^'\n]*)'|\"([^\"\n]*)\"|\\?([^\s'\"]+))")
+# A piece of a here-document's delimiter word as bash reads it: a quoted span, `$'..'` and `$".."` among them, an
+# escaped character, or an unquoted run, which a metacharacter ends (`cat <<EOF>f`); the word's pieces concatenate
+# (`<<E'OF'`), and their quote removal is the delimiter.
+DELIM_PIECE = re.compile(r"\$?'([^'\n]*)'|\$?\"([^\"\n]*)\"|\\(.)|([^\s'\"\\<>|&;()$]+|\$)")
+HEREDOC = re.compile(rf"<<(-?)[ \t]*((?:{DELIM_PIECE.pattern})+)")
 GLOBAL_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env", "--attr-source"}
 GLOBAL_TERMINAL = {"-v", "--version", "-h", "--help", "--exec-path", "--html-path", "--man-path", "--info-path", "--list-cmds"}
 # Per subcommand: short options whose value is the rest of the bundle or else the next token; short options whose
@@ -462,12 +466,14 @@ def cut_heredocs(text):
         elif ch == "<" and text.startswith("<<", i):
             m = HEREDOC.match(text, i)
             if m:
-                # A backslash anywhere in the delimiter quotes it (`<<\EOF`): no expansion, like `<<'EOF'`.
-                expands = m.group(4) is not None and "\\" not in m.group(0)
+                # A quote or a backslash anywhere in the delimiter quotes it (`<<\EOF`, `<<E'OF'`): no expansion.
+                word = m.group(2)
+                expands = not re.search(r"['\"\\]", word)
+                delim = "".join(next(g for g in p.groups() if g is not None) for p in DELIM_PIECE.finditer(word))
                 mark = None if any(s == "dq" for s, _ in stack) else f"{HEREDOC_MARK}{len(docs)}"
                 if mark:
                     docs[mark] = ""
-                pending.append((m.group(2) or m.group(3) or m.group(4), bool(m.group(1)), expands, mark))
+                pending.append((delim, bool(m.group(1)), expands, mark))
                 out.append(f"<< {mark}" if mark else m.group(0))
                 i = m.end()
                 continue
