@@ -7,7 +7,7 @@
 # requires the CONTROL mutation to FAIL, which is the guard-proving rule as code; refuses a control
 # or mutation run that exits 5, pytest's "no tests ran", because a run that selected nothing is no kill; and
 # refuses a mutation of a Python or shell file (not a .j2 template) that no longer parses, because the probe's failure is then the syntax's, not the guard's.
-# Before the baseline it makes the parent of the basetemp named by each word of the probe command that is `--basetemp=<path>`, or is `--basetemp` with `<path>` the next word, resolved from the directory it starts the probe command in, when that parent is inside the tree the probe runs in, and makes nothing else; a basetemp inside a longer word (`bash -c '...'`, `PYTEST_ADDOPTS=...`) is not read, and one the probe command resolves from elsewhere (`uv run --directory`, `env -C`) is still resolved from that start directory.
+# Before the baseline it makes the parent of each `--basetemp=<path>` or `--basetemp <path>` in the probe command's words, resolved from the start directory, when inside the tree the probe runs in; one inside a longer word (`bash -c`, `PYTEST_ADDOPTS=`) or resolved by the command from elsewhere (`uv run --directory`, `env -C`) is the caller's to make.
 # Usage: mutate-probe.sh [--sandbox] --file <path> --control <sed-expr> --mutation <sed-expr> -- <probe-cmd...>
 # Exit: rc 2 usage, a control or mutation run that exited 5, a mutation that no longer parses, or a parse check that could not run | rc 3 refused (dirty tree, pytest in --sandbox, a second run in this checkout) | rc 4 restore failed | rc 5 control did not fail | rc 6 no-op sed
 #     | rc 7 baseline failed | rc 8 seeding failed | rc 9 cleanup restore failed (pristine kept)
@@ -143,9 +143,7 @@ prc=0; err="$(check_parse)" || prc=$?
 if [[ $prc -eq 2 ]]; then could_not_run; fi
 if [[ $prc -eq 1 ]]; then echo "mutate-probe: $file does not parse unmutated ($err), so its mutation takes no parse check." >&2; parser=""; fi
 
-# pytest makes its basetemp with a plain mkdir, and a fresh tree has no `.tmp/<x>/`. The parent is taken from the
-# lexical absolute path, as pytest's os.path.abspath takes it, so a `..` after a symlink or a last `.` or `..` names
-# pytest's parent; it is then resolved physically, so an in-tree symlink out of the tree is outside it.
+# pytest mkdirs its basetemp, without parents, at os.path.abspath(<path>): the parent is taken from that lexical path, then resolved physically so an in-tree symlink out of the tree is outside it.
 if [[ $sandbox -eq 1 ]]; then tree="$(pwd -P)"; else tree="$(git rev-parse --show-toplevel)"; fi
 prev=""
 for w in "$@"; do

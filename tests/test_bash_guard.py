@@ -1290,10 +1290,8 @@ def test_a_git_grep_over_a_directory_holding_a_specimen_consumers_sh_excludes_is
 
 EXCLUDES = shlex.join(vault_excludes())
 # (a git grep over the specimens, the directory it runs from, the vaulted file its refusal names or None for an
-# admission): the excludes count, in each spelling; beside a positive naming a directory, where git 2.47's ls-files
-# reading both at once keeps the member `docs/x ':!*fake*'` drops and lists nothing for `infra/ansible/files
-# ':!*.pub'`; from a subdirectory, which an exclude without `:/` is read under; against a positive outside it; and
-# over a commit's tree. Each row's verdict is also held to the files git grep itself reads.
+# admission); a positive naming a directory beside an exclude is a row of its own because git's ls-files, reading
+# both at once, keeps the member `docs/x ':!*fake*'` drops and lists nothing for `infra/ansible/files ':!*.pub'`.
 SPECIMEN_GREPS = [
     ("git grep -n x -- docs ':!*vault.yml'", ".", None),
     (f"git grep -n x -- docs {EXCLUDES}", ".", None),

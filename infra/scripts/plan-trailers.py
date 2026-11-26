@@ -1,9 +1,4 @@
-"""The pre-commit guard over a plan's commit trailers: a line the staged diff adds to a plan under `docs/plans/` that
-is a `Co-Authored-By:` trailer naming a model, as `names_a_model` reads one, is refused, because the implementer that
-commits the fence may run on another model. The placeholder, a human's trailer and a mention inside a prose line are
-admitted, and a line the diff does not add is not judged. A plan with no readable staged content -- outside the index,
-unmerged, an index or a staged diff git cannot read, or no git to run -- is refused. Paths are read from the repository
-root, where pre-commit runs its hooks."""
+"""Refuses a model named in a trailer a plan's staged diff adds: the fence's implementer may run on another model."""
 
 from __future__ import annotations
 
@@ -22,9 +17,8 @@ PLACEHOLDER = "Co-Authored-By: <actual executing model> <noreply@anthropic.com>"
 
 
 def names_a_model(line: str) -> bool:
-    """A `Co-Authored-By:` line names a model when its value carries a family's name in any case, or carries `Claude`
-    and a letter or digit after it -- outside its address, or in the address's local part -- with its address at
-    anthropic.com or no address at all. A lowercase `<...>` slot is a placeholder and names nothing."""
+    """A family's name names a model anywhere; `Claude` and more does only at an anthropic.com address or subdomain, or
+    with none, since a human may be named Claude. A lowercase `<...>` slot is a placeholder."""
     trailer = TRAILER.match(line)
     if trailer is None:
         return False

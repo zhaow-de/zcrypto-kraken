@@ -900,8 +900,7 @@ _RUNNABLE = _w(
 )
 # Escapes by which a client runs a shell command from inside its own language.
 _SHELL_ESCAPES = _w(".shell .system \\! ! shell system")
-# Commands whose arguments are never read as a command they may run: a command string one takes through an option or
-# its config (git -c, apt-get -o, dpkg's hooks, wg-quick's PostUp) is outside the judge.
+# Never unwrapped: a command one of these runs from an argument, an option or its config is not judged as one.
 _LEAVES = _w(
     "systemctl journalctl loginctl hostnamectl timedatectl networkctl resolvectl localectl ps pgrep pidof which whereis "
     "type hash apt apt-get apt-cache aptitude dpkg dpkg-query update-alternatives man whatis apropos ldd zcrypto ss ip df "
@@ -3412,8 +3411,7 @@ def rule_workstation(cmd: Cmd, j: Judge) -> Refusal | None:
 
 
 def _takes_down(cmd: Cmd) -> str | None:
-    """The plain reboot and shutdown family: a reboot, shutdown or sleep command, a runlevel change, `kexec -e`, or
-    systemctl's or loginctl's verb for one, spelled as `cmd` spells it; None for any other command."""
+    """The name of the reboot, shutdown or sleep `cmd` spells, for the refusal to quote; None for any other command."""
     name = cmd.name
     if name in ("reboot", "shutdown", "poweroff", "halt", "pm-suspend", "pm-hibernate", "pm-suspend-hybrid", "zzz", "s2ram"):
         return name
@@ -3433,8 +3431,7 @@ def _takes_down(cmd: Cmd) -> str | None:
 
 
 def _kill_signal(args: list[str]) -> tuple[str | None, list[str]]:
-    """kill's signal spec as its first words spell it (`-s X`, `-n X`, `--signal X`, `--signal=X`, `-sX`, `-nX`,
-    `-X`; None for the default), and its pids."""
+    """kill's signal spec as its first words spell it, None for the default, and its pids."""
     rest = list(args)
     sig = None
     if rest and rest[0] in ("-s", "-n", "--signal"):

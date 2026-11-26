@@ -144,9 +144,6 @@ repos:
         language: system
         stages: [commit-msg]
         always_run: true
-      # An added `Co-Authored-By:` line in a plan that names a model is refused: a family's name, or `Claude` and more
-      # at an anthropic.com address or none (`names_a_model` holds the set). Only the lines the staged diff adds are
-      # judged, so a plan that already holds a literal keeps it; `files` is the script's own `PLAN`.
       - id: plan-trailers
         name: no model named in a plan's commit trailers
         entry: uv run python infra/scripts/plan-trailers.py

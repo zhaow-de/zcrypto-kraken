@@ -628,9 +628,7 @@ _PROBE_ARGS = ["--file", "mod.py", "--control", "s/VALUE = 1/VALUE = 9/", "--mut
 
 
 def _commit_a_basetemp_probe(repo):
-    # pytest makes its --basetemp with a plain mkdir at os.path.abspath(<path>), a lexical path, so this probe fails as
-    # pytest does when that path's parent is absent; `in` is a committed symlink to sub/deep, two levels down, and `out`
-    # one to ../outside, beside the tree
+    # Fails as pytest does: a plain mkdir of the basetemp at its lexical absolute path.
     probe = repo / "bt-probe.sh"
     probe.write_text(
         "#!/bin/sh\n"
@@ -657,8 +655,6 @@ def _tree(root):
         pytest.param(["--basetemp=.tmp/x/pt"], [".tmp", ".tmp/x"], id="one-word"),
         pytest.param(["--basetemp", ".tmp/x/pt"], [".tmp", ".tmp/x"], id="two-word"),
         pytest.param(["--basetemp={repo}/.tmp/x/pt"], [".tmp", ".tmp/x"], id="absolute-inside"),
-        # the path is pytest's lexical one, so a `.` or `..` last component and a `..` after a symlink are read as
-        # pytest reads them
         pytest.param(["--basetemp=.tmp/x/pt/."], [".tmp", ".tmp/x"], id="a-trailing-dot"),
         pytest.param(["--basetemp=.tmp/x/pt/.."], [".tmp"], id="a-trailing-dot-dot"),
         pytest.param(["--basetemp=in/../.tmp/x/pt"], [".tmp", ".tmp/x"], id="a-symlink-then-dot-dot"),
@@ -687,9 +683,7 @@ def test_under_sandbox_the_basetemp_parent_is_created_in_the_sandbox_not_the_che
     assert not list(tmpdir.iterdir())
 
 
-# Every way out of the tree the containment check must see: a path beside it, a name that extends the tree's own, an
-# in-tree symlink out, a `..` after an in-tree symlink, and under --sandbox a path out of the sandbox or into the
-# checkout. A sandbox row is relative: an absolute path under pytest's default basetemp names pytest and is refused.
+# A sandbox row is relative: an absolute path under pytest's default basetemp names pytest, which --sandbox refuses.
 @pytest.mark.parametrize(
     ("mode", "basetemp"),
     [

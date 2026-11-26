@@ -106,7 +106,7 @@ def test_the_placeholder_a_human_and_a_mention_in_prose_are_admitted_silently(tm
     assert (proc.returncode, proc.stdout, proc.stderr) == (0, "", "")
 
 
-# Every spelling of a model in a trailer line, grouped by the way it differs from `Claude Opus 5.5 <noreply@...>`.
+# Grouped by the way each spelling differs from `Claude Opus 5.5 <noreply@anthropic.com>`.
 REFUSED = {
     "as the old plans wrote it": LITERAL,
     "a lowercase key": "Co-authored-by: Claude Sonnet 4.5 <noreply@anthropic.com>",
