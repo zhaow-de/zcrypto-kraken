@@ -2074,6 +2074,13 @@ FLEET_REACHED = [
     ("timeout 10 ssh red uptime", "red"),
     ("nohup ssh red uptime &", "red"),
     ("/usr/bin/ssh red uptime", "red"),
+    # a path where a runner takes its command, past the runner's options, their values, assignments and a duration
+    ("sudo /usr/bin/ssh red uptime", "red"),
+    ("sudo -u deploy /usr/bin/ssh red uptime", "red"),
+    ("timeout 10 /usr/bin/ssh red uptime", "red"),
+    ("env -i FOO=1 /usr/bin/ssh red uptime", "red"),
+    ("nohup /usr/bin/scp f nas:/tmp/ &", "nas"),
+    ("echo uptime | xargs -n 1 /usr/bin/ssh red", "red"),
     ("\\ssh red uptime", "red"),
     ("bash -c 'ssh red uptime'", "red"),
     ('sh -lc "ssh nas df"', "nas"),
@@ -2174,6 +2181,7 @@ FLEET_UNRESOLVED = [
     "echo red | xargs -I% sudo ssh % uptime",
     "echo red | xargs -I% sh -c 'ssh % uptime'",
     "find hosts -type f -exec ssh {} uptime \\;",
+    "find hosts -type f -exec /usr/bin/ssh {} uptime \\;",
     "find hosts -type f -ok scp f {}:/tmp/ \\;",
     "parallel ssh ::: red nas",
     "parallel ssh :::: hosts.txt",
@@ -2295,6 +2303,15 @@ FLEET_ADMITTED = [
     "which ssh scp sftp rsync",
     "man ssh",
     "pgrep -a ssh",
+    # a path to an ssh-family program, or a directory so named, as another program's operand, behind a runner too
+    # (`/usr/bin/ssh red uptime` and `sudo /usr/bin/ssh red uptime` are calls)
+    "find /etc/ssh -name '*.pub'",
+    "[ -d /etc/ssh ] && echo present",
+    "[ -x /usr/bin/sftp ] || echo missing",
+    "ls -l /usr/bin/ssh /usr/bin/ssh-*",
+    "sudo grep -rn PermitRootLogin /etc/ssh",
+    "sudo find /etc/ssh -name '*.pub'",
+    "cat ~/.ssh/config",
     # a string env or a shell runs, read as a command and admitted as one
     "env -S 'git status'",
     "env -u FOO -S 'ssh -V'",
