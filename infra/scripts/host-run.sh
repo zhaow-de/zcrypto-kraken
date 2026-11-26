@@ -74,7 +74,17 @@ verdict="$(judge --record --ts "$(stamp)" --timeout "$secs")"
 case "$?" in
   0) ;;
   65)
-    [ -n "$verdict" ] || verdict="{\"kind\":\"refused\",\"ts\":\"$(stamp)\",\"sha256\":\"$sha\",\"rule\":\"judge-error\"}"
+    if [ -z "$verdict" ]; then
+      # The judge printed no line: the wrapper writes the one it would have, each text JSON-escaped.
+      js() {
+        local s="$1" bs="\\" q='"' c ch
+        s="${s//"$bs"/"$bs$bs"}"; s="${s//"$q"/"$bs$q"}"
+        for c in {1..31}; do printf -v ch '%b' "\\x$(printf %02x "$c")"; s="${s//"$ch"/"$(printf '\\u%04x' "$c")"}"; done
+        printf '"%s"' "$s"
+      }
+      IFS= read -r -d '' text < "$block"
+      verdict="{\"kind\":\"refused\",\"ts\":\"$(stamp)\",\"alias\":$(js "$alias"),\"session\":$(js "${ZCRYPTO_SESSION:-unknown}"),\"sha256\":\"$sha\",\"block\":$(js "$text"),\"rule\":\"judge-error\",\"reason\":\"the judge gave no verdict, so nothing ran\"}"
+    fi
     record "$verdict" || die 66 "the refusal could not be appended to $log"
     exit 65 ;;
   *) exit 64 ;;

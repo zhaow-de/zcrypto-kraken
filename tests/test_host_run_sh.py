@@ -1625,6 +1625,28 @@ def test_a_judge_that_fails_refuses_and_runs_nothing(fresh, judge_only):
     assert [(line["kind"], line["rule"]) for line in fresh.lines()] == ([] if judge_only else [("refused", "judge-error")])
 
 
+def test_a_judge_that_fails_records_what_a_refused_line_carries(fresh):
+    fresh.run("zcrypto", "sudo touch /var/lib/zcrypto-engine/exec/armed\n")
+    broken = fresh.root / "broken"
+    broken.mkdir()
+    (broken / "python3").write_text("#!/bin/sh\nexit 3\n")
+    (broken / "python3").chmod(0o755)
+    block = 'printf "%s\\n" "a\tb" \'it"s\' \\\\ \x01 & é\n'
+    done = fresh.run("red", block, PATH=f"{broken}{os.pathsep}{fresh.env()['PATH']}")
+    assert done.returncode == 65 and _rule(done) == "judge-error", done.stderr
+    own, line = fresh.lines()
+    assert list(line) == list(own), (own, line)
+    assert (line["kind"], line["alias"], line["session"], line["block"], line["rule"]) == (
+        "refused",
+        "red",
+        "door-test",
+        block,
+        "judge-error",
+    )
+    assert line["sha256"] == hashlib.sha256(block.encode()).hexdigest() and line["reason"]
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", line["ts"])
+
+
 def test_a_worktree_records_in_the_main_checkouts_log(fresh):
     tree = fresh.root / "tree"
     subprocess.run(["git", "-C", str(fresh.main), "worktree", "add", "-q", "--detach", str(tree)], check=True, capture_output=True)
