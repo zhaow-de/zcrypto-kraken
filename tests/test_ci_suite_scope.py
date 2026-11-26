@@ -75,10 +75,14 @@ def test_no_step_reaches_coveralls():
 
 
 def test_the_harness_and_the_rest_of_the_suite_are_the_two_steps_of_one_parallel_group_each_test_in_one():
-    (group,) = [step["parallel"] for step in _job()["steps"] if "parallel" in step]
+    (outer,) = [step for step in _job()["steps"] if "parallel" in step]
+    # No other key on the group or on either step: an `if:` or a `continue-on-error` there passes the job with a
+    # step unrun or red.
+    assert set(outer) == {"parallel"}, outer
+    group = outer["parallel"]
     names = [step.get("name") for step in group]
     assert len(names) == 2 and all(names) and len(set(names)) == 2, group
-    assert not [step for step in group if step.get("continue-on-error")], group
+    assert all(set(step) <= {"name", "run"} for step in group), group
     argvs = [shlex.split(step["run"]) for step in group]
     assert sorted(_pytest_argvs()) == sorted(argvs), _pytest_argvs()
     split = sorted((_paths(argv), _ignored(argv)) for argv in argvs)
