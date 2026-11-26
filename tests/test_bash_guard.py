@@ -1876,6 +1876,28 @@ def test_a_dispatched_agent_is_held_to_the_fleet_family_as_the_main_loop_is(tmp_
     assert r.returncode == 2 and "BLOCKED" in r.stderr and HOST_RUN_REMEDY.split()[0] in r.stderr, r.stderr
 
 
+# A string a shell, eval or env -S runs whose quotes shlex cannot pair -- a quote inside a quoted `$( .. )` -- and
+# whether it names an ssh-family program.
+UNSPLIT_STRINGS = [
+    ('bash -c \'ssh red uptime; echo "$(printf %s "\'"\'"\'")"\'', True),
+    ('eval \'scp f nas:/x; echo "$(printf %s "\'"\'"\'")"\'', True),
+    ('sh -c \'/usr/bin/rsync -a d nas:/x; echo "$(printf %s "\'"\'"\'")"\'', True),
+    ('bash -c \'echo "$(printf %s "\'"\'"\'")"\'', False),
+    ('bash -c \'ssh-keygen -l; echo "$(printf %s "\'"\'"\'")"\'', False),
+]
+
+
+@pytest.mark.parametrize(("command", "names_ssh"), UNSPLIT_STRINGS, ids=[c for c, _ in UNSPLIT_STRINGS])
+def test_a_string_the_guard_cannot_split_is_refused_when_it_names_an_ssh_family_program(
+    tmp_path: Path, command: str, names_ssh: bool
+):
+    r = run_hook(call(command), cwd=tmp_path)
+    if names_ssh:
+        assert r.returncode == 2 and "BLOCKED" in r.stderr and "cannot split into words" in r.stderr, r.stderr
+    else:
+        assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
+
+
 # (the table the call's checkout holds -- None for no checkout at all --, what the message says of it)
 UNREAD_TABLES = [
     (None, "no checkout holds the call's directory"),
