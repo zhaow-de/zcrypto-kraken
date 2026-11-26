@@ -1,13 +1,14 @@
 """One engine-shaped node in its own interpreter, for tests/test_cache_restart.py.
 
-The node is the engine's own `build_shadow_node`, with the cache backing attached through the config
-and every venue default redirected to the loopback the driver runs: the two client configs' URLs,
-the gate's venue reader, and the bare-client reads' `base_url`. Before anything is built the child
-asserts that no production default remains, the autouse `_no_production_venue_read` fixture's rule
-for a node that runs, and the bare client itself refuses a `base_url` off the loopback, the refusal
-landing in the record's `errors`. The strategy the engine registers is subclassed to hand the
-executor its quotes on a timer, since the data peer sends none, and to stop the node at the window's
-end; its executor, its startup pass and its ledger writes are the engine's own.
+The node is the engine's own `build_shadow_node`, its builder's post-stop wait set to 0, with the cache
+backing attached through the config and every venue default redirected to the loopback the driver
+runs: the two client configs' URLs, the gate's venue reader, and the bare-client reads' `base_url`.
+Before anything is built the child asserts that no production default remains, the autouse
+`_no_production_venue_read` fixture's rule for a node that runs, and the bare client itself refuses
+a `base_url` off the loopback, the refusal landing in the record's `errors`. The strategy the engine
+registers is subclassed to hand the executor its quotes on a timer, since the data peer sends none,
+and to stop the node at the window's end; its executor, its startup pass and its ledger writes are
+the engine's own.
 
 argv[1] is a JSON object of what the driver passes. It writes `out` at the window's end and again after `run()`
 returns, the second write adding `after_run`, the cache read again as `at_end` read it at the stop, and exits 0
@@ -91,6 +92,16 @@ def _venue_online(*, now, opener=None) -> VenueStatus:
     return VenueStatus(status="online", ok=True, observed_at=now)
 
 
+_production_node_builder = node_module._node_builder
+
+
+def _node_builder(config: EngineConfig):
+    # The library's 10 s post-stop wait for residual events, at 0: the driver holds the cache unchanged from the
+    # window's stop to run()'s return.
+    return _production_node_builder(config).with_delay_post_stop_secs(0)
+
+
+node_module._node_builder = _node_builder
 node_module._data_client_config = _data_client_config
 node_module._exec_client_config = _exec_client_config
 node_module.read_system_status = _venue_online

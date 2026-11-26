@@ -46,8 +46,9 @@ ENGINE_USER, ENGINE_PASSWORD = "engine", "engine-harness-password"
 ADMIN_USER, ADMIN_PASSWORD = "admin", "admin-harness-password"
 # Phase windows: the executor's startup pass runs on its first tick at 5 s and the plan is picked up on
 # the same tick; the first quote after that lands at 6 s and the fill frames within a second of the
-# submission; phase 2's re-read pass runs on the tick after the pass's cancel. Each node adds the
-# library's ten-second residual wait at stop.
+# submission; phase 2's re-read pass runs on the tick after the pass's cancel. The child's node waits
+# nothing for residual events at its stop, so a frame a test scripts lands inside the window: one past
+# it is not waited for, and `_Node.run` fails a record whose cache changed after the stop.
 PHASE1_WINDOW = 14
 PHASE2_WINDOW = 20
 # A restart's window past the gate's first idle refresh, `_GATE_REFRESH` after the executor's construction:
