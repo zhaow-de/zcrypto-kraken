@@ -49,6 +49,12 @@
 # Outside the memo family: every writer its corpus does not refuse -- a wrapper (`sudo tee`), a glob or a brace, a
 # path a variable holds whole, an interpreter, `awk -i inplace`, `rsync`, `ln`, `dd`, `rm`.
 #
+# The stamp family judges a pipeline before the memo family judges its stages, so a memo write's stamp is named before
+# its shell route is refused, and the text it reads is the text as written, before bash expands it. A redirect's
+# descriptor is not read: `2> f` is taken as the file the text lands in, which refuses more. Outside: a text another
+# program passes on (`sed`, `awk`), a substitution's output or a variable's value, a group's or a loop's redirect,
+# `exec >`, a wrapper (`sudo tee`), and a file an interpreter, a shell or git writes from the here-document it reads.
+#
 # A state-changing git command (`changes_state`; `tag` deliberately not) stamps `zcrypto-git-state-stamp` in the
 # checkout's own git directory -- a worktree's, not the common dir worktrees share -- once per call at admission; a
 # second one under 3 s after is refused, since a hook sees one Bash call and nothing of its siblings: time is the
@@ -88,6 +94,7 @@ set -euo pipefail
 input="$(cat)"
 prog="$(cat <<'PY'
 import contextlib
+import fnmatch
 import functools
 import glob
 import importlib.util
@@ -164,6 +171,18 @@ MEMO_REMEDY = (
     "The memo is written through the Edit tool after a Read of it, where memo-guard checks the write against that read; "
     "a shell write bypasses the check. A read -- `cat`, `grep`, `sed -n`, `head` -- stays open."
 )
+# memo-guard.sh's placeholder stamp, a clock with an `x` or a `?` for a digit, and its exempt files, whose own cases
+# spell one; tests/test_bash_guard.py's STAMP_SPECIMENS holds the two hooks' readings alike, so a change here is one
+# there.
+PLACEHOLDER = re.compile(r"(?i)[0-9x?]{2}:[0-9x?]{2}(?![0-9a-f])")
+UNREAD_DIGIT = re.compile(r"(?i)[x?]")
+STAMP_EXEMPT = ("*/tests/*.py", "*/.claude/hooks/*")
+APPROXIMATE = re.compile(r"~[ \t]*(?:[0-9]{4}-[0-9]{2}-[0-9]{2}[T ])?[0-9]{2}:[0-9]{2}(?![0-9])")
+LEDGERS = (MEMO, [".local", "coordination.md"])
+SAYERS = {"echo", "printf"}
+PASSERS = {"cat", "tee"}  # what reaches their stdin is what they write
+STAMP_REMEDY = "Paste the printed value of `date -u` or of the record (an mtime, a reflog, a PR's createdAt)."
+HEREDOC_MARK = "heredoc-"  # the word a here-document's `<<` hands the tokeniser in place of its delimiter
 SED_VALUE = ("efl", "i", {"expression", "file", "line-length"})
 TRUNCATE_VALUE = ("sr", "", {"size", "reference"})
 # Per program: whose target the memo would be, and its valued options in option_walk's three kinds.
@@ -275,12 +294,13 @@ HOOK_DIR = posixpath.dirname(os.path.abspath(sys.argv[1]))
 
 
 class Stage(list):
-    # A stage's words, the files its `<` redirects feed it, and its output redirects as (operator, target): no word of
-    # its argv.
+    # A stage's words, the files its `<` redirects feed it, its output redirects as (operator, target), and the texts
+    # its here-documents and here-strings feed it: no word of its argv.
     def __init__(self):
         super().__init__()
         self.inputs = []
         self.outputs = []
+        self.fed = []
 
 
 def expansions(body):
@@ -348,9 +368,11 @@ def ansi_decode(raw):
 
 def cut_heredocs(text):
     # A scan that knows quotes and substitutions -- the heredoc inside the documented `-m "$(cat <<'EOF' ... EOF)"`
-    # is a heredoc, and its body carries whatever the message says. Returns the cut text and the substitutions it
-    # closed, each a command of its own; an unclosed one is bash's to refuse.
-    out, bodies, pending, stack, i, n, sub_close = [], [], [], [("top", 0)], 0, len(text), -1
+    # is a heredoc, and its body carries whatever the message says. Returns the cut text, the substitutions it
+    # closed, each a command of its own -- an unclosed one is bash's to refuse -- and each heredoc's body by the
+    # HEREDOC_MARK word that stands for its delimiter. A heredoc inside a double quote keeps its delimiter and no
+    # body: its `<<` is inside a word, and the substitution holding it is cut again as a command of its own.
+    out, bodies, pending, stack, i, n, sub_close, docs = [], [], [], [("top", 0)], 0, len(text), -1, {}
     while i < n:
         ch, st = text[i], stack[-1][0]
         if st == "sq":
@@ -442,14 +464,17 @@ def cut_heredocs(text):
             if m:
                 # A backslash anywhere in the delimiter quotes it (`<<\EOF`): no expansion, like `<<'EOF'`.
                 expands = m.group(4) is not None and "\\" not in m.group(0)
-                pending.append((m.group(2) or m.group(3) or m.group(4), bool(m.group(1)), expands))
-                out.append(m.group(0))
+                mark = None if any(s == "dq" for s, _ in stack) else f"{HEREDOC_MARK}{len(docs)}"
+                if mark:
+                    docs[mark] = ""
+                pending.append((m.group(2) or m.group(3) or m.group(4), bool(m.group(1)), expands, mark))
+                out.append(f"<< {mark}" if mark else m.group(0))
                 i = m.end()
                 continue
         elif ch == "\n" and pending:
             out.append("\n")
             i += 1
-            for delim, dash, expands in pending:
+            for delim, dash, expands, mark in pending:
                 lines = []
                 while i < n:
                     end = text.find("\n", i)
@@ -460,17 +485,19 @@ def cut_heredocs(text):
                     lines.append(line)
                 if expands:
                     bodies.extend(expansions("\n".join(lines)))
+                if mark:
+                    docs[mark] = "\n".join(lines)
             pending = []
             continue
         out.append(ch)
         i += 1
-    return "".join(out), bodies
+    return "".join(out), bodies, docs
 
 
 def pipelines(text):
     # Each pipeline as its stages, in order: the second arm judges what one stage hands the next, and the first
     # arm reads every stage on its own.
-    cut, bodies = cut_heredocs(text)
+    cut, bodies, docs = cut_heredocs(text)
     lex = shlex.shlex(cut, posix=True, punctuation_chars="".join(sorted(PUNCT)))
     lex.commenters = ""  # bash's comments are cut above; a `#` inside a word (issue#42) is text
     lex.whitespace = " \t\r"
@@ -482,6 +509,10 @@ def pipelines(text):
                 pipes[-1][-1].inputs.append(tok)
             elif skip in OUTPUT:
                 pipes[-1][-1].outputs.append((skip, tok))
+            elif skip == "<<<":
+                pipes[-1][-1].fed.append(tok)
+            elif skip == "<<" and tok in docs:
+                pipes[-1][-1].fed.append(docs[tok])
             skip = ""
             continue
         if not tok or not set(tok) <= PUNCT:
@@ -989,8 +1020,8 @@ def judge_vault(words, raw, where):
             refuse_vault(words, f"prints the vaulted file `{hit.rpartition(':')[2]}` at a revision", raw)
 
 
-def names_memo(path, where):
-    return any(posixpath.normpath(p).split("/")[-2:] == MEMO for p in (path, posixpath.join(where, path)))
+def names_memo(path, where, name=MEMO):
+    return any(posixpath.normpath(p).split("/")[-2:] == name for p in (path, posixpath.join(where, path)))
 
 
 def refuse_memo(shown, hit, how, raw):
@@ -1029,6 +1060,43 @@ def judge_memo(words, raw, where):
     hit = next((w for w in written if names_memo(w, where)), None)
     if hit:
         refuse_memo(spelled(words), hit, how, raw)
+
+
+def written_texts(pipe):
+    # Each (stage shown, file, text) the pipeline writes: what echo or printf says, or what a here-document or a
+    # here-string feeds cat or tee, or the stage before pipes them, into an output redirect's file -- no descriptor
+    # (`>&2`) and no /dev/ path -- or tee's. A cat naming only files it reads, and every other program, writes no text.
+    out, flowing = [], None
+    for stage in pipe:
+        p, rest = argv_of(stage)
+        text = None
+        if p in SAYERS:
+            text = " ".join(rest)
+        elif p in PASSERS and (p == "tee" or not operands(rest) or "-" in operands(rest)):
+            fed = stage.fed or ([flowing] if flowing is not None else [])
+            text = "\n".join(fed) if fed else None
+        if text is not None:
+            for op, target in stage.outputs:
+                if not (op == ">&" and (target.isdigit() or target == "-")) and not target.startswith("/dev/"):
+                    out.append((" ".join(filter(None, (spelled(stage), op, shlex.quote(target)))), target, text))
+            if p == "tee":
+                out += [(spelled(stage), target, text) for target in operands(rest) if not target.startswith("/dev/")]
+        flowing = text
+    return out
+
+
+def judge_stamps(pipe, raw, where):
+    for shown, target, text in written_texts(pipe):
+        path = posixpath.normpath(posixpath.join(where, target))
+        hit = next((m[0] for m in PLACEHOLDER.finditer(text) if UNREAD_DIGIT.search(m[0])), None)
+        if hit and not any(fnmatch.fnmatchcase(path, x) for x in STAMP_EXEMPT):
+            refuse(f"`{shown}` writes the placeholder stamp `{hit}` into `{target}`; in `{raw}`. {STAMP_REMEDY}")
+        clock = APPROXIMATE.search(text)
+        if clock and any(names_memo(target, where, name) for name in LEDGERS):
+            refuse(
+                f"`{shown}` writes the approximate clock `{clock[0]}` into `{target}`, a ledger whose stamps are "
+                f"pasted, never estimated; in `{raw}`. {STAMP_REMEDY}"
+            )
 
 
 def reads_consumers(words):
@@ -1762,6 +1830,7 @@ try:
     here = cwd
     stages = []
     for pipe in commands:
+        judge_stamps(pipe, raw, here or cwd)
         for words in pipe:
             judge(words)
             judge_vault(words, raw, here or cwd)
