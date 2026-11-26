@@ -356,15 +356,6 @@ c_engine_window_overrides() {
   uv run python infra/scripts/deploy-log-audit.py engine-window --log "${COUNT_LIST_DEPLOY_LOG:-docs/reference/deploy-log.jsonl}" "${window[@]}" | sed -n 's/^engine rows .* overridden \([0-9][0-9]*\) inferred .*/\1/p'
 }
 
-# A watch number, not a gate: the band's successful rows that carry no well-formed `window`, whose admission can only be inferred.
-# retire when: every engine row since the floor carries a well-formed window — infra/ansible/scripts/converge.sh writes it on each engine run, nothing left to infer
-c_engine_rows_on_the_completion_floor() {
-  local since window=()
-  since="$(round_closed_at)" || return 2
-  if [ -n "$since" ]; then window=(--since "$since"); fi
-  uv run python infra/scripts/deploy-log-audit.py engine-window --log "${COUNT_LIST_DEPLOY_LOG:-docs/reference/deploy-log.jsonl}" "${window[@]}" | sed -n 's/^engine rows .*of which on the completion floor \([0-9][0-9]*\)$/\1/p'
-}
-
 # The window opens at the log's first row carrying a `preflight`, the rows before it gated by the capture bake. An empty
 # `tags` stays out: `site.yml` admits one on the primary only beside `--skip-tags engine`, a run of no engine-role task.
 # shellcheck disable=SC2016  # $first and $since are jq's, bound by the program and by --arg
@@ -571,7 +562,6 @@ main() {
   emit "un-tagged-primary-runs" c_un_tagged_primary_runs
   emit "engine-rows-outside-the-gap" c_engine_rows_outside_the_gap
   emit "engine-window-overrides" c_engine_window_overrides
-  emit "engine-rows-on-the-completion-floor" c_engine_rows_on_the_completion_floor
   emit "engine-preflight-overrides" c_engine_preflight_overrides
   emit "nas-rows-without-compat" c_nas_rows_without_compat
   emit "image-removals-outside-the-pruner" c_image_removals_outside_the_pruner
