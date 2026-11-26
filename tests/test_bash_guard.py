@@ -15,6 +15,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.test_consumers_sh import VAULT_SPECIMENS, vault_excludes
+
 REPO = Path(__file__).resolve().parents[1]
 HOOK = REPO / ".claude" / "hooks" / "bash-guard.sh"
 # Judged as text but for a worktree remove's operand, whose ancestors the hook reads for a worktree of this
@@ -198,6 +200,7 @@ VAULTED = [
     ("hexdump -C infra/ansible/files/deploy_zcrypto-valkey1_ed25519", "infra/ansible/files/deploy_zcrypto-valkey1_ed25519"),
     ("nl -ba infra/ansible/files/deploy_zaccess_ed25519", "infra/ansible/files/deploy_zaccess_ed25519"),
     ("hd infra/ansible/group_vars/all/vault.yml", "infra/ansible/group_vars/all/vault.yml"),
+    ("cat infra/ansible/.sops.yaml", "infra/ansible/.sops.yaml"),
     ("cd infra/ansible && cat files/deploy_zcrypto_ed25519", "files/deploy_zcrypto_ed25519"),
     ("cd infra/ansible/files && cat deploy_zcrypto_ed25519", "deploy_zcrypto_ed25519"),
     ("cd infra/ansible && cat group_vars/all/vault.yml", "group_vars/all/vault.yml"),
@@ -1229,6 +1232,114 @@ def test_a_star_read_for_a_brace_group_matches_a_leading_dot(tmp_path: Path):
     (tmp_path / ".hidden" / "vault.yml").write_text("")
     r = run_hook(agent_call("cat {.,x}hidden/vault.yml{,}{,}{,}{,}{,}{,}{,}{,}", str(tmp_path)), cwd=tmp_path)
     assert r.returncode == 2 and "prints the vaulted file `*hidden/vault.yml********`;" in r.stderr, r.stderr
+
+
+@pytest.fixture(scope="module")
+def specimen_repo(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    repo = tmp_path_factory.mktemp("specimens")
+    for path, _ in VAULT_SPECIMENS:
+        (repo / path).parent.mkdir(parents=True, exist_ok=True)
+        (repo / path).write_text("x\n")
+    for args in (["init", "-q"], ["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "s"]):
+        subprocess.run(["git", "-C", str(repo), *args], capture_output=True, check=True)
+    return repo
+
+
+# (a read of a specimen, what its refusal says) -- the arms that judge a path on disk, a pathspec and a revision's path
+SPECIMEN_READS = [
+    ("cat {}", "prints the vaulted file `{}`;"),
+    ("git grep -n x -- {}", "may search the vaulted file `{}`"),
+    ("git show HEAD:{}", "prints the vaulted file `{}` at a revision"),
+]
+
+
+@pytest.mark.parametrize(("path", "vaulted"), VAULT_SPECIMENS, ids=[p for p, _ in VAULT_SPECIMENS])
+@pytest.mark.parametrize(("read", "refusal"), SPECIMEN_READS, ids=[r.format("<path>") for r, _ in SPECIMEN_READS])
+def test_the_hook_refuses_a_read_of_exactly_the_specimens_consumers_sh_excludes(
+    specimen_repo: Path, tmp_path: Path, path: str, vaulted: bool, read: str, refusal: str
+):
+    r = run_hook(agent_call(read.format(path), str(specimen_repo)), cwd=tmp_path)
+    if vaulted:
+        assert r.returncode == 2 and refusal.format(path) in r.stderr, r.stderr
+    else:
+        assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
+
+
+def test_a_git_grep_over_a_directory_holding_a_specimen_consumers_sh_excludes_is_refused_reciting_the_set(
+    specimen_repo: Path, tmp_path: Path
+):
+    for command in ("git grep -n x -- docs", "git grep -n x -- docs ':!*vault.yml'"):
+        r = run_hook(agent_call(command, str(specimen_repo)), cwd=tmp_path)
+        assert r.returncode == 2 and "may search the vaulted file `docs/x/fake-vault.yml`" in r.stderr, r.stderr
+        assert all(f"`{spec.removeprefix(':!')}`" in r.stderr for spec in vault_excludes()), r.stderr
+    r = run_hook(agent_call("git grep -n x -- tests", str(specimen_repo)), cwd=tmp_path)
+    assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
+
+
+def hook_beside(tmp_path: Path, definition: str | None) -> Path:
+    # A copy of the hook in a checkout of its own, beside a consumers.sh holding `definition`, or none.
+    top = tmp_path / "checkout"
+    (top / ".claude" / "hooks").mkdir(parents=True)
+    hook = top / ".claude" / "hooks" / "bash-guard.sh"
+    hook.write_bytes(HOOK.read_bytes())
+    if definition is not None:
+        (top / "infra" / "scripts").mkdir(parents=True)
+        (top / "infra" / "scripts" / "consumers.sh").write_text(definition)
+    return hook
+
+
+# (the case, what the consumers.sh beside the hook holds or None for no file, what the refusal says of it)
+NO_LINE = "holds no one-line `VAULT_EXCLUDES=("
+UNREAD_SETS = [
+    ("no file", None, "could not be read"),
+    ("no assignment", "set -euo pipefail\n", NO_LINE),
+    ("an array over lines", "VAULT_EXCLUDES=(\n  ':!*vault.yml'\n)\n", NO_LINE),
+    ("a double-quoted word", 'VAULT_EXCLUDES=(":!*vault.yml")\n', NO_LINE),
+    ("a second assignment", "VAULT_EXCLUDES=(':!*vault.yml')\nVAULT_EXCLUDES+=(':!*.vault')\n", NO_LINE),
+    ("a long-form exclude", "VAULT_EXCLUDES=(':!*vault.yml' ':(exclude)*.vault')\n", "`:(exclude)*.vault` in"),
+    ("a character class", "VAULT_EXCLUDES=(':!*vault.yml' ':!infra/[a-z]*_ed25519')\n", "`:!infra/[a-z]*_ed25519` in"),
+]
+UNREAD_SET_READS = ["cat README.md", "git grep -n x -- README.md", "git show HEAD:README.md", "cp README.md .tmp/x"]
+
+
+@pytest.mark.parametrize("command", UNREAD_SET_READS)
+@pytest.mark.parametrize(("definition", "why"), [s[1:] for s in UNREAD_SETS], ids=[s[0] for s in UNREAD_SETS])
+def test_a_vaulted_set_the_hook_cannot_read_refuses_every_command_judged_against_it(
+    tmp_path: Path, definition: str | None, why: str, command: str
+):
+    r = run_hook(call(command), cwd=tmp_path, hook=hook_beside(tmp_path, definition))
+    claim = r.stderr.partition("; in `")[0]
+    assert r.returncode == 2 and "the vaulted set cannot be had" in claim and why in claim, r.stderr
+
+
+@pytest.mark.parametrize("command", ["git status", "ls -la infra/ansible/files", "grep -c x README.md"])
+@pytest.mark.parametrize(("definition", "why"), [s[1:] for s in UNREAD_SETS], ids=[s[0] for s in UNREAD_SETS])
+def test_a_vaulted_set_the_hook_cannot_read_admits_what_is_judged_against_no_set(
+    tmp_path: Path, definition: str | None, why: str, command: str
+):
+    r = run_hook(call(command), cwd=tmp_path, hook=hook_beside(tmp_path, definition))
+    assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
+
+
+def test_a_pattern_with_no_wildcard_names_the_files_under_a_directory_as_gits_exclude_does(tmp_path: Path):
+    hook = hook_beside(tmp_path, "VAULT_EXCLUDES=(':!keys')\n")
+    repo = tmp_path / "repo"
+    for path in ("keys/a", "keysake/b", "c"):
+        (repo / path).parent.mkdir(parents=True, exist_ok=True)
+        (repo / path).write_text("x\n")
+    for args in (["init", "-q"], ["add", "-A"]):
+        subprocess.run(["git", "-C", str(repo), *args], capture_output=True, check=True)
+    kept = subprocess.run(["git", "-C", str(repo), "ls-files", "--", ":!keys"], capture_output=True, text=True, check=True)
+    assert kept.stdout.splitlines() == ["c", "keysake/b"]
+    for path, vaulted in (("keys/a", True), ("keysake/b", False), ("c", False)):
+        r = run_hook(agent_call(f"cat {path}", str(repo)), cwd=tmp_path, hook=hook)
+        assert r.returncode == (2 if vaulted else 0) and ("prints the vaulted file" in r.stderr) == vaulted, r.stderr
+
+
+@pytest.mark.parametrize("command", UNREAD_SET_READS)
+def test_a_copy_of_the_hook_beside_the_trees_consumers_sh_judges_as_the_hook_does(tmp_path: Path, command: str):
+    r = run_hook(call(command), cwd=tmp_path, hook=hook_beside(tmp_path, (REPO / "infra/scripts/consumers.sh").read_text()))
+    assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
 
 
 @pytest.mark.parametrize("command", ADMITTED)

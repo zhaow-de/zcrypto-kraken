@@ -122,7 +122,8 @@ def test_direct_readers_are_listed_and_the_vault_file_is_not(tmp_path):
     assert "infra/scripts/thing.sh" not in lines  # the file itself is not its own reader
 
 
-# (a path under a repository's top, whether `VAULT_EXCLUDES` drops it as vault-shaped)
+# (a path under a repository's top, whether it is vault-shaped): `VAULT_EXCLUDES` is the one definition, which
+# .claude/hooks/bash-guard.sh reads for its refusals, and tests/test_bash_guard.py holds the hook to this table.
 VAULT_SPECIMENS = [
     ("vault.yml", True),
     ("group_vars/x/vault.yml", True),
