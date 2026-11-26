@@ -1359,9 +1359,7 @@ def test_this_workstation_taken_down_another_way_is_refused(door, block, rule):
     assert done.returncode == 65 and _rule(done) == rule, done.stderr.decode()
 
 
-# Every spelling the workstation rule refuses on this machine, plain or another way: on the primary, which runs live
-# capture and the engine, each is the owner's in an attended window; on the secondary each is admitted, but a D-Bus
-# call, which the judge does not read there.
+# Every spelling the workstation tables refuse; on the secondary a D-Bus call is refused as one the judge does not read.
 PRIMARY_DOWN = [(i, b, None) for r, i, a, b in REFUSED if r == "workstation"] + [
     (i, b, "unresolvable" if i.startswith(("busctl-", "dbus-send-", "gdbus-")) else None) for i, b, r in WORKSTATION_DOORS
 ]

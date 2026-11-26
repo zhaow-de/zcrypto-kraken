@@ -3383,8 +3383,7 @@ def rule_workstation(cmd: Cmd, j: Judge) -> Refusal | None:
 
 
 def _takes_down(cmd: Cmd) -> str | None:
-    """Why `cmd` could reboot, power off, sleep or isolate the machine it runs on, for the refusal to quote; None for
-    any other command. The workstation rule and the capture-primary rule each refuse what it names."""
+    """Why `cmd` could reboot, power off, sleep or isolate the machine it runs on, for the refusal to quote; else None."""
     name = cmd.name
     if name in ("reboot", "shutdown", "poweroff", "halt", "pm-suspend", "pm-hibernate", "pm-suspend-hybrid", "zzz", "s2ram"):
         return f"{name} takes the machine down"
@@ -3444,8 +3443,7 @@ def _kill_signal(args: list[str]) -> tuple[str | None, list[str]]:
 
 
 def _kills_pid_1(args: list[str]) -> str | None:
-    """kill's pids, its signal spec read off first: one that is or could be 1 or -1 is the reason, else None, as it is
-    for a signal spec in `_NO_SIGNAL`."""
+    """kill's pids, its signal spec read off first: one that is or could be 1 or -1 is the reason, else None."""
     sig, pids = _kill_signal(args)
     if sig in _NO_SIGNAL:
         return None
