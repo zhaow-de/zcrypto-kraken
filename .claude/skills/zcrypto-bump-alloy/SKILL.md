@@ -185,9 +185,9 @@ ssh nas "sudo /usr/local/bin/docker inspect grafana-alloy --format 'img={{.Confi
 An apt host, as the deploy user:
 
 ```bash
-ssh <mon|access|hc> 'dpkg-query -W alloy; apt-mark showhold; apt-cache policy alloy'
+ssh <mon|access|hc> 'dpkg-query -W alloy; apt-mark showhold; aptitude search --disable-columns -F "%a" "?exact-name(alloy)"; apt-cache policy alloy'
 ssh <mon|access|hc> 'sudo readlink "/proc/$(systemctl show -p MainPID --value alloy)/exe"; echo rc=$?'
-# alloy <alloy_deb_version>; showhold lists alloy; policy: Installed and Candidate that version, its line at 1001
+# alloy <alloy_deb_version>; showhold lists alloy; aptitude prints h; policy: Installed and Candidate that version, its line at 1001
 # /usr/bin/alloy with no " (deleted)", rc=0 — under sudo, since the deb's unit runs Alloy as the alloy user
 ```
 

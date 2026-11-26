@@ -25,11 +25,14 @@ PIN = "pin alloy at the version committed for this host, above every other candi
 INSTALL = "install alloy at the version committed for this host, moving a newer or held one"
 PREVIEWED = "note a preview that runs before alloy is installed and pinned at the version committed for this host"
 HOLD = "hold alloy, so no apt upgrade moves it"
+APTITUDE = "read whether aptitude is installed"
+APTITUDE_READ = "read aptitude's own state for alloy"
+APTITUDE_HOLD = "hold alloy in aptitude's own state too"
 FLUSH = "apply the pending alloy restart before reading what the process runs"
 READ = "read whether the running alloy process runs the installed binary"
 RESTART = "restart alloy when its process predates the installed binary or none runs"
 
-ALLOY_APT_MAIN = [REFUSAL, ECHO, REPOSITORY, PIN, INSTALL, PREVIEWED, HOLD]
+ALLOY_APT_MAIN = [REFUSAL, ECHO, REPOSITORY, PIN, INSTALL, PREVIEWED, HOLD, APTITUDE, APTITUDE_READ, APTITUDE_HOLD]
 ALLOY_APT_POSTCONDITION = [FLUSH, READ, RESTART]
 
 
@@ -74,10 +77,70 @@ def _render(text: str, variables: dict) -> str:
     return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(text))
 
 
-def test_the_install_runs_the_refusal_its_echo_the_repository_the_pin_the_install_the_fact_and_the_hold_in_order():
+def test_the_install_runs_the_refusal_its_echo_the_repository_the_pin_the_install_the_fact_and_the_holds_in_order():
     tasks = load_tasks(MAIN)
     assert [task["name"] for task in tasks] == ALLOY_APT_MAIN
-    assert module_entry(tasks[-1]) == ("ansible.builtin.dpkg_selections", {"name": "alloy", "selection": "hold"})
+    assert [module_entry(task) for task in tasks[-4:]] == [
+        ("ansible.builtin.dpkg_selections", {"name": "alloy", "selection": "hold"}),
+        ("ansible.builtin.stat", {"path": "/usr/bin/aptitude"}),
+        ("ansible.builtin.command", "aptitude search --disable-columns -F '%a' '?exact-name(alloy)'"),
+        ("ansible.builtin.command", "aptitude hold alloy"),
+    ]
+
+
+def test_aptitudes_read_runs_in_a_preview_too_and_reports_no_change_and_its_hold_reports_one():
+    tasks = load_tasks(MAIN)
+    read, hold = find_task(tasks, APTITUDE_READ), find_task(tasks, APTITUDE_HOLD)
+    assert (read["check_mode"], read["changed_when"]) == (False, False)
+    assert hold["changed_when"] is True
+
+
+@pytest.mark.parametrize(
+    ("stdout", "rc", "refused_by"),
+    [
+        pytest.param("h", 0, set(), id="held"),
+        pytest.param(" ", 0, set(), id="not-held"),
+        pytest.param("", 0, {"output"}, id="an-empty-read"),
+        pytest.param("i", 0, {"output"}, id="an-install-scheduled"),
+        pytest.param("h\n ", 0, {"output"}, id="two-lines"),
+        pytest.param("h", 1, {"rc"}, id="a-failed-read"),
+        pytest.param("", 1, {"rc", "output"}, id="alloy-unknown-to-aptitude"),
+    ],
+)
+def test_aptitudes_read_refuses_a_failed_read_and_any_output_but_held_or_not_held(stdout, rc, refused_by):
+    read = find_task(load_tasks(MAIN), APTITUDE_READ)
+
+    def refused(out: str, code: int) -> bool:
+        return truthy(read["failed_when"], {read["register"]: {"stdout": out, "rc": code}})
+
+    assert refused(stdout, rc) is bool(refused_by)
+    assert refused(stdout, 0) is ("output" in refused_by)
+    assert refused("h", rc) is ("rc" in refused_by)
+
+
+@pytest.mark.parametrize(
+    ("previewed", "installed", "state", "holds"),
+    [
+        pytest.param(False, True, " ", True, id="the-dead-man-nodes-shape-aptitude-not-holding"),
+        pytest.param(False, True, "h", False, id="the-observability-nodes-shape-aptitude-holding"),
+        pytest.param(False, False, None, False, id="no-aptitude"),
+        pytest.param(True, True, None, False, id="a-preview-before-alloy-is-installed"),
+        pytest.param(True, False, None, False, id="a-preview-with-no-aptitude"),
+    ],
+)
+def test_aptitude_is_read_where_the_dpkg_hold_runs_and_aptitude_is_installed_and_holds_only_on_a_read_of_not_held(
+    previewed, installed, state, holds
+):
+    tasks = load_tasks(MAIN)
+    stat, read = find_task(tasks, APTITUDE), find_task(tasks, APTITUDE_READ)
+    variables = {
+        "alloy_apt_previewed": previewed,
+        stat["register"]: {"changed": False, "stat": {"exists": installed}},
+        read["register"]: _register(False, skipped=True) if state is None else {"changed": False, "rc": 0, "stdout": state},
+    }
+    dpkg_hold_runs = truthy(when_conditions(find_task(tasks, HOLD)), variables)
+    assert truthy(when_conditions(read), variables) is (dpkg_hold_runs and installed)
+    assert truthy(when_conditions(find_task(tasks, APTITUDE_HOLD)), variables) is holds
 
 
 @pytest.mark.parametrize(

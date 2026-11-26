@@ -71,3 +71,27 @@
     name: alloy
     selection: hold
   when: not alloy_apt_previewed
+
+- name: read whether aptitude is installed
+  ansible.builtin.stat:
+    path: /usr/bin/aptitude
+  register: alloy_apt_aptitude
+
+- name: read aptitude's own state for alloy
+  ansible.builtin.command: aptitude search --disable-columns -F '%a' '?exact-name(alloy)'
+  register: alloy_apt_aptitude_state
+  changed_when: false
+  check_mode: false
+  failed_when: alloy_apt_aptitude_state.rc != 0 or alloy_apt_aptitude_state.stdout not in ['h', ' ']
+  when:
+    - not alloy_apt_previewed
+    - alloy_apt_aptitude.stat.exists
+
+# aptitude's next run can write its own state over dpkg's selections, clearing a hold its state does not carry.
+- name: hold alloy in aptitude's own state too
+  ansible.builtin.command: aptitude hold alloy
+  changed_when: true
+  when:
+    - not alloy_apt_previewed
+    - alloy_apt_aptitude.stat.exists
+    - alloy_apt_aptitude_state.stdout != 'h'

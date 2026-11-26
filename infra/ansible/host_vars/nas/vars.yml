@@ -54,7 +54,7 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 # `vintages verify failed` at ERROR on every pass and leaves the custody copy unverified until the
 # pin moves; the raw rsync keeps landing ticks.
 nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:164b135f398ad2b04f1c7a3b9101f5d7657db88a39d0f3059c61c5555bad6c7f
-nas_alloy_image: grafana/alloy@sha256:89a5a320168387336b9ac3c850609c3ba7757eadd4ae5f1d819deb35e9854b18
+nas_alloy_image: grafana/alloy@sha256:9acc2529bc1edb7f5b2bd801dd8334ebc80c158e3a9e5526ecd7c9a273d43189
 
 # Spec 00102 D7: `full` re-hashes every segment each cycle, `incremental` hashes rsync's transfers
 # plus a rotating 1/24 slice. Flipping it is a config-only converge on the running digest, and so is the
