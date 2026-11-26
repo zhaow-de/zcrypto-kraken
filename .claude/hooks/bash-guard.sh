@@ -30,7 +30,9 @@
 # or `find` carrying `-exec grep|rg`, in a pipeline any stage of which names `infra` as a word or a path component --
 # the word `grep_pattern_at` takes for the grep's pattern excepted; every other `xargs` or `-exec` is outside. A vault
 # tool's writing verb is admitted over a vaulted file: a key rotation runs `ansible-vault encrypt|rekey`.
-# Refused deliberately, as a word is judged wherever it stands: an agent's `echo git push`, `echo cat <vaulted file>`.
+# The fleet family alone reads a `sh -c` string and an `eval` line as commands.
+# Refused deliberately, as a word is judged wherever it stands: an agent's `echo git push`, `echo cat <vaulted file>`,
+# `echo ssh red`.
 #
 # A stage's directory, for the vaulted-file, memo and dispatched-agent families, is the payload's `cwd` moved by
 # each pipeline before it that is one stage whose command word is `cd` or `pushd` with a literal first operand, or
@@ -60,6 +62,18 @@
 # main checkout's; a `gh api` write through fields with no `-X` (its implicit POST, a GraphQL mutation) and every `gh`
 # verb the family does not name.
 #
+# The fleet family refuses an `ssh`, `scp`, `sftp` or `rsync` word, wherever it stands and inside a `sh -c` string or an
+# `eval` line, whose host -- a destination, `host:path`, `host::module`, a `scheme://` URI, `-o HostName=` -- is a host
+# or an alias of docs/reference/fleet.md's table, or a name whose first label is one; whose host only run time knows;
+# or, to any host, that carries ssh's ProxyCommand, LocalCommand, PermitLocalCommand or KnownHostsCommand, or a
+# ProxyJump or `-J` that is no bare alias. A fleet host is reached through infra/scripts/host-run.sh, whose stdin block
+# is that wrapper's to judge. The table is read from the checkout of the payload's `cwd` by `fleet_ssh_aliases` of
+# infra/scripts/host_run_sh.py beside this file, its one parse; a table that cannot be had refuses every such word that
+# names a host. `ssh -V` and `ssh -G` connect nowhere. Outside: an IP address, a name ~/.ssh/config maps to a fleet
+# host, `-F` and the config's own commands, `scp -S`, `RSYNC_RSH`, a program that runs ssh itself (`mosh`, `autossh`,
+# `ssh-copy-id`, git's `GIT_SSH_COMMAND`), and a script fed to a shell on stdin or handed as a string to any other
+# program (`watch`, `su -c`).
+#
 # A failure of the hook's own -- stdin that is not the tool call's JSON, a command `shlex` cannot tokenise --
 # admits with a note on stderr, never blocks: exit 2 would refuse every Bash call in the session. That second
 # class is wider than an unbalanced quote: `shlex` does not parse `$( .. )`, so a quote inside a substitution
@@ -72,6 +86,7 @@ prog="$(cat <<'PY'
 import contextlib
 import functools
 import glob
+import importlib.util
 import json
 import os
 import posixpath
@@ -210,6 +225,35 @@ STATE_SUBS = {"commit", "merge", "rebase", "reset", "push", "pull", "fetch", "ch
 STATE_STAMP = "zcrypto-git-state-stamp"
 STATE_GAP = 3.0  # seconds since the checkout's last admitted state-changing git command
 XARGS_VALUE = {"-n", "-I", "-L", "-P", "-d", "-s"}  # xargs' short options whose value is the next word
+# Per program: the getopt letters that take a value (ssh.c, scp.c, sftp.c); rsync's, and its long options that take one,
+# matched whole -- `--partial` is no `--partial-dir`.
+SSH_VALUE = {"ssh": "BDEFIJLOPQRSWbceilmopw", "scp": "DFJPSXcilo", "sftp": "BDFJPRSXbcilos"}
+RSYNC_VALUE = (
+    "eTBfM@",
+    {"info", "debug", "stderr", "backup-dir", "suffix", "rsh", "rsync-path", "chmod", "block-size", "max-delete",
+     "max-size", "min-size", "max-alloc", "partial-dir", "timeout", "contimeout", "modify-window", "temp-dir",
+     "compare-dest", "copy-dest", "link-dest", "compress-choice", "zc", "compress-level", "zl", "skip-compress",
+     "checksum-choice", "cc", "checksum-seed", "filter", "exclude", "exclude-from", "include", "include-from",
+     "files-from", "address", "port", "sockopts", "out-format", "log-file", "log-file-format", "password-file",
+     "early-input", "bwlimit", "stop-after", "stop-at", "write-batch", "only-write-batch", "read-batch", "protocol",
+     "iconv", "outbuf", "remote-option", "usermap", "groupmap", "chown", "copy-as"},
+)
+SSH_PRINTS = {"G", "V"}  # ssh's options that print and exit before connecting
+SSH_RUNS = {
+    "proxycommand": ("ProxyCommand", "runs a local command to reach the host"),
+    "localcommand": ("LocalCommand", "runs a local command once connected"),
+    "permitlocalcommand": ("PermitLocalCommand", "lets a LocalCommand run"),
+    "knownhostscommand": ("KnownHostsCommand", "runs a local command to read the host's keys"),
+}
+SSH_OPTION = re.compile(r'\s*"?([A-Za-z]+)"?(?:\s*=\s*|\s+|$)(.*)', re.S)  # ssh_config's keyword, then `=` or a space
+BARE_ALIAS = re.compile(r"[A-Za-z0-9_-]+")
+UNRESOLVED = re.compile(r"[$`*?[\]{}]")
+REMOTE_URI = re.compile(r"(?i)(?:ssh|scp|sftp|rsync)://(?:[^@/]*@)?(\[[^\]]*\]|[^:/]*)")
+SHELLS = {"sh", "bash", "dash", "zsh", "ksh"}
+SHELL_VALUE = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}
+HANDERS = {"xargs", "-exec", "-execdir", "-ok", "-okdir"}  # a word that hands the command after it operands at run time
+HOST_RUN = "infra/scripts/host-run.sh {} <<'EOF' … EOF"
+HOST_RUN_JUDGE = "infra/scripts/host_run_sh.py"
 HOOK_DIR = posixpath.dirname(os.path.abspath(sys.argv[1]))
 
 
@@ -985,6 +1029,224 @@ def judge_consumers(words, raw):
         )
 
 
+def ssh_walk(rest, letters, longs=frozenset(), restart=False):
+    # An ssh-family argv's options, each (letter or --name, value or None), and its operands, in any order; with
+    # `restart`, as ssh reads them, the options before its destination and after it, up to the remote command.
+    opts, ops, j, ended = [], [], 0, False
+    while j < len(rest):
+        tok = rest[j]
+        j += 1
+        if tok == "--" and not ended:
+            ended = True
+            if restart and ops:
+                break
+            continue
+        if not ended and tok[:1] == "-" and len(tok) > 1:
+            if tok[:2] == "--":
+                name, eq, value = tok.partition("=")
+                takes = name[2:] in longs
+                if takes and not eq and j < len(rest):
+                    value, j = rest[j], j + 1
+                opts.append((name, value if takes or eq else None))
+                continue
+            for k, ch in enumerate(tok[1:], 1):
+                if ch in letters:
+                    value = tok[k + 1 :]
+                    if not value and j < len(rest):
+                        value, j = rest[j], j + 1
+                    opts.append((ch, value))
+                    break
+                opts.append((ch, None))
+            continue
+        if restart and ops:
+            break
+        ops.append(tok)
+        if restart and ended:
+            break
+    return opts, ops
+
+
+def host_of(op, bare):
+    # The host an operand names -- `[user@]host:path`, `[user@]host::module`, a `scheme://[user@]host` URI, and with
+    # `bare` a word with no colon, as ssh's and sftp's destination is -- or None for a local path; a variable with no
+    # `/` after it is returned whole, since it could hold `host:`.
+    if m := REMOTE_URI.match(op):
+        return m[1].strip("[]")
+    if op.startswith("[") and "]:" in op:
+        return op[1 : op.index("]:")]
+    head, colon, _ = op.partition(":")
+    if colon and "/" not in head:
+        return head.rpartition("@")[2]
+    if bare:
+        return op.rpartition("@")[2]
+    return op if not colon and re.search("[$`]", op) and "/" not in op else None
+
+
+def fleet_alias(host, names):
+    # The alias of the fleet host a name is, or whose first label it is (`zcrypto-red.<tailnet>`); never an address's.
+    h = host.lower().rstrip(".")
+    return names.get(h) or (None if h.replace(".", "").isdigit() else names.get(h.partition(".")[0]))
+
+
+@functools.cache
+def host_run_judge():
+    path = posixpath.normpath(posixpath.join(HOOK_DIR, "..", "..", HOST_RUN_JUDGE))
+    spec = importlib.util.spec_from_file_location("host_run_sh", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["host_run_sh"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+@functools.cache
+def fleet_names(cwd):
+    # Every host and alias of the fleet table in the call's checkout, lowercased, each mapped to its alias, or None and
+    # why the table cannot be had.
+    done = subprocess.run(["git", "-C", cwd, "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    if done.returncode:
+        return None, f"no checkout holds the call's directory `{cwd}`"
+    top = done.stdout.strip()
+    try:
+        judge = host_run_judge()
+    except (OSError, ImportError, SyntaxError, AttributeError, ValueError) as exc:
+        return None, f"the table's parse, `{HOST_RUN_JUDGE}` beside this hook, could not be loaded ({type(exc).__name__})"
+    table = posixpath.join(top, str(judge.FLEET_TABLE))
+    try:
+        with open(table, encoding="utf-8") as f:
+            rows = judge.fleet_ssh_aliases(f.read())
+    except (OSError, ValueError) as exc:
+        return None, f"the fleet table `{table}` could not be read ({type(exc).__name__})"
+    if not rows:
+        return None, f"the fleet table `{table}` names no host"
+    names = {}
+    for host, alias in rows.items():
+        names[host.lower()] = names[alias.lower()] = alias
+    return names, None
+
+
+def refuse_unresolved(words, what, raw):
+    refuse(
+        f"`{spelled(words)}` takes its host from {what}, which the guard cannot resolve to a host in or out of the "
+        f"fleet; in `{raw}`. Spell the host out; a fleet host is reached as `{HOST_RUN.format('<alias>')}`."
+    )
+
+
+def judge_hosts(words, hosts, handed, raw, cwd):
+    if handed and not hosts:
+        refuse_unresolved(words, "what `xargs` or `find -exec` hands it at run time", raw)
+    for host in hosts:
+        if UNRESOLVED.search(host):
+            refuse_unresolved(words, f"`{host}`", raw)
+    if not hosts:
+        return
+    names, why = fleet_names(cwd)
+    if names is None:
+        refuse(
+            f"`{spelled(words)}` names the host `{hosts[0]}`, and {why}, so the guard cannot tell a fleet host from "
+            f"another; in `{raw}`. Run it from a checkout of this repository; a fleet host is reached as "
+            f"`{HOST_RUN.format('<alias>')}`."
+        )
+    for host in hosts:
+        if alias := fleet_alias(host, names):
+            refuse(
+                f"`{spelled(words)}` reaches the fleet host `{host}` past the prescribed route, which judges and records "
+                f"what a session runs there; in `{raw}`. Run it as `{HOST_RUN.format(alias)}`, the block on stdin."
+            )
+
+
+def judge_hops(words, opts, raw):
+    for flag, value in opts:
+        if flag == "o" and value and (m := SSH_OPTION.match(value)):
+            name, arg = m[1].lower(), m[2].strip().strip('"')
+        elif flag == "J" and value is not None:
+            name, arg = "proxyjump", value
+        else:
+            continue
+        what = SSH_RUNS.get(name)
+        if name == "proxyjump" and not BARE_ALIAS.fullmatch(arg):
+            what = ("ProxyJump", f"hops through `{arg}`, which is no bare alias")
+        if what:
+            refuse(
+                f"`{spelled(words)}` carries `-{flag} {value}`: ssh's {what[0]} {what[1]} -- past what the fleet check "
+                f"follows; in `{raw}`. Drop the option: a jump host is a bare alias from ~/.ssh/config (`-J access`), and "
+                f"a fleet host is reached as `{HOST_RUN.format('<alias>')}`."
+            )
+
+
+def renamed(opts):
+    # The hosts `-o HostName=` sends a call to in place of the one it names.
+    return [
+        m[2].strip().strip('"')
+        for flag, value in opts
+        if flag == "o" and value and (m := SSH_OPTION.match(value)) and m[1].lower() == "hostname"
+    ]
+
+
+def judge_ssh_family(words, at, raw, cwd):
+    p, rest = words[at].rpartition("/")[2], words[at + 1 :]
+    if p == "rsync":
+        opts, ops = ssh_walk(rest, *RSYNC_VALUE)
+        hosts = [host_of(op, bare=False) for op in ops]
+        for flag, value in opts:
+            shell = shell_words(value) if flag in ("e", "--rsh") and value else []
+            if shell and shell[0].rpartition("/")[2] == "ssh":
+                inner = ssh_walk(shell[1:], SSH_VALUE["ssh"], restart=True)[0]
+                judge_hops(words, inner, raw)
+                hosts += renamed(inner)
+    else:
+        opts, ops = ssh_walk(rest, SSH_VALUE[p], restart=p == "ssh")
+        judge_hops(words, opts, raw)
+        if p == "ssh" and any(flag in SSH_PRINTS for flag, _ in opts):
+            return
+        hosts = [host_of(op, bare=False) for op in ops] if p == "scp" else [host_of(op, bare=True) for op in ops[:1]]
+        hosts += renamed(opts)
+    handed = any(w.rpartition("/")[2] in HANDERS for w in words[:at])
+    judge_hosts(words, [h for h in hosts if h is not None], handed, raw, cwd)
+
+
+def shell_words(line):
+    try:
+        return shlex.split(line)
+    except ValueError:
+        return line.split()
+
+
+def shell_strings(p, rest):
+    # The code a shell's `-c` runs or the line `eval` builds, which this family alone reads as a command.
+    if p == "eval":
+        return [" ".join(rest)] if rest else []
+    if p not in SHELLS:
+        return []
+    j, dash_c = 0, False
+    while j < len(rest) and rest[j][:1] in ("-", "+") and len(rest[j]) > 1:
+        if rest[j] == "--":
+            j += 1
+            break
+        if rest[j] in SHELL_VALUE:
+            j += 2
+            continue
+        dash_c = dash_c or (rest[j][:2] != "--" and "c" in rest[j][1:])
+        j += 1
+    return [rest[j]] if dash_c and j < len(rest) else []
+
+
+def judge_fleet(words, raw, cwd):
+    for i, w in enumerate(words):
+        if ASSIGN.match(w):
+            continue
+        p = w.rpartition("/")[2]
+        if p in SSH_VALUE or p == "rsync":
+            judge_ssh_family(words, i, raw, cwd)
+        for code in shell_strings(p, words[i + 1 :]):
+            try:
+                inner = pipelines(code)
+            except ValueError:
+                continue
+            for pipe in inner:
+                for stage in pipe:
+                    judge_fleet(stage, raw, cwd)
+
+
 def is_gh(w):
     return w == "gh" or (w.endswith("/gh") and not ASSIGN.match(w))
 
@@ -1315,6 +1577,7 @@ try:
             judge_vault(words, raw, here or cwd)
             judge_memo(words, raw, here or cwd)
             judge_consumers(words, raw)
+            judge_fleet(words, raw, cwd)
             if agent:
                 judge_agent(words, here, raw, call.get("session_id"))
             stages.append((words, here or cwd))
