@@ -117,6 +117,12 @@ REFUSED = [
     # a `<<` quoted inside a backtick opens no heredoc: the next line, and the backtick's own next line, are judged
     ('echo `echo "<<EOF"`\ngit commit --no-verify -m x', "--no-verify"),
     ('echo `echo "<<EOF"\necho y` ; git commit --no-verify -m x', "--no-verify"),
+    # a command after a heredoc's delimiter word, which a metacharacter ends and quoted pieces build
+    ("cat <<EOF;git commit -n\nx\nEOF", "-n"),
+    ("cat <<EOF&&git commit --no-verify\nx\nEOF", "--no-verify"),
+    ("cat > .tmp/x <<E\\OF\nx\nEOF\ngit commit -n", "-n"),
+    ("cat > .tmp/x <<E'OF'\nx\nEOF\ngit commit -n", "-n"),
+    ("cat > .tmp/x <<$'EOF'\nx\nEOF\ngit commit --no-verify", "--no-verify"),
     # merge, rebase, am; -n is --no-verify on am
     ("git merge --no-verify feature", "--no-verify"),
     ("git merge --no-veri feature", "--no-veri"),
@@ -367,6 +373,8 @@ ADMITTED = [
     "git commit -m 'see `git commit -n`'",
     'git commit -m "see \\`git commit -n\\`"',  # an escaped backtick is text
     "cat <<'EOF'\n$(git commit -n)\nEOF",  # a quoted delimiter expands nothing
+    "cat <<E'OF'\n$(git commit -n)\nEOF",  # nor does one quoted in part
+    "cat <<$'EOF'\n$(git commit -n)\nEOF",
     'echo "$(git rev-parse HEAD)"',
     # -n and --no-verify where they mean something else, and outside git
     "git merge -n feature",
@@ -511,6 +519,9 @@ MEMO_WRITES = [
     ("git log -1 --format=%H &>> .local/memo.md", ".local/memo.md"),
     ("> .local/memo.md", ".local/memo.md"),
     ("cat <<'EOF' >> .local/memo.md\n- item\nEOF", ".local/memo.md"),
+    ("cat <<EOF>>.local/memo.md\n- item\nEOF", ".local/memo.md"),
+    ("cat <<EOF|tee .local/memo.md\n- item\nEOF", ".local/memo.md"),
+    ("cat > .tmp/x <<E\\OF\n- item\nEOF\necho x >> .local/memo.md", ".local/memo.md"),
     ("{ echo a; echo b; } >> .local/memo.md", ".local/memo.md"),
     ('echo x >> "$CLAUDE_PROJECT_DIR/.local/memo.md"', "$CLAUDE_PROJECT_DIR/.local/memo.md"),
     ("echo x | tee .local/memo.md", ".local/memo.md"),
@@ -581,6 +592,22 @@ STAMP_WRITERS = [
     "git status && cat >> {target} <<'EOF'\n- landed {text}\nEOF",
     "x=$(cat <<'EOF' > {target}\n- landed {text}\nEOF\n)",
     "python - <<'PY' && cat >> {target} <<'EOF'\nprint(1)\nPY\n- landed {text}\nEOF",
+    # a delimiter word a metacharacter ends, a command after one on its line, a delimiter built of quoted pieces
+    "cat <<EOF>{target}\n- landed {text}\nEOF",
+    "cat<<EOF>>{target}\n- landed {text}\nEOF",
+    "cat <<EOF>|{target}\n- landed {text}\nEOF",
+    "cat <<EOF&>{target}\n- landed {text}\nEOF",
+    "cat <<-EOF>{target}\n\t- landed {text}\n\tEOF",
+    "cat <<EOF|tee {target}\n- landed {text}\nEOF",
+    "cat <<EOF|&tee -a {target}\n- landed {text}\nEOF",
+    "cat <<EOF;echo '- landed {text}' >> {target}\nhi\nEOF",
+    "cat <<EOF&&echo '- landed {text}' >> {target}\nhi\nEOF",
+    "cat > {target} <<E'OF'\n- landed {text}\nEOF",
+    "cat > {target} <<'E'OF\n- landed {text}\nEOF",
+    'cat > {target} <<"E"OF\n- landed {text}\nEOF',
+    "cat > {target} <<$'EOF'\n- landed {text}\nEOF",
+    'cat > {target} <<$"EOF"\n- landed {text}\nEOF',
+    "cat > .tmp/x <<E\\OF\nhi\nEOF\necho '- landed {text}' >> {target}",
 ]
 # (the stamp written, the placeholder the message names)
 PLACEHOLDERS = [("19:4xZ", "19:4x"), ("??:??", "??:??")]
@@ -613,6 +640,8 @@ APPROXIMATE_CLOCKS = [
     ("cat >> .local/coordination.md <<'EOF'\n| zcrypto-alex | read ~19:45Z |\nEOF", "~19:45", ".local/coordination.md"),
     ("echo '| zcrypto-alex | ~19:45 |' >> ./.local/coordination.md", "~19:45", "./.local/coordination.md"),
     ("tee -a /home/u/x/.local/coordination.md <<< 'at ~ 19:45Z'", "~ 19:45", "/home/u/x/.local/coordination.md"),
+    ("cat <<EOF>>.local/coordination.md\n| zcrypto-alex | read ~19:45Z |\nEOF", "~19:45", ".local/coordination.md"),
+    ("cat >> .local/coordination.md <<E'OF'\n| zcrypto-alex | read ~19:45Z |\nEOF", "~19:45", ".local/coordination.md"),
     ("cd .local && printf '%s\\n' 'at ~2026-11-26T19:45Z' >> coordination.md", "~2026-11-26T19:45", "coordination.md"),
     ("echo '- landed ~19:45Z' >> .local/memo.md", "~19:45", ".local/memo.md"),
     (
