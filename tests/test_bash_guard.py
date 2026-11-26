@@ -540,6 +540,7 @@ MEMO_WRITES = [
         "/home/u/Projects/zcrypto-kraken/.local/memo.md",
     ),
     ("truncate -s 0 .local/memo.md", ".local/memo.md"),
+    ("time -p sed -i 's/a/b/' .local/memo.md", ".local/memo.md"),
     ("cd .local && sed -i 's/a/b/' memo.md", "memo.md"),
 ]
 
@@ -608,13 +609,22 @@ STAMP_WRITERS = [
     "cat > {target} <<$'EOF'\n- landed {text}\nEOF",
     'cat > {target} <<$"EOF"\n- landed {text}\nEOF',
     "cat > .tmp/x <<E\\OF\nhi\nEOF\necho '- landed {text}' >> {target}",
+    # a cat naming its stdin by a path, and a writer `time` runs
+    "cat /dev/stdin > {target} <<'EOF'\n- landed {text}\nEOF",
+    "cat /dev/fd/0 >> {target} <<'EOF'\n- landed {text}\nEOF",
+    "cat /proc/self/fd/0 > {target} <<< '- landed {text}'",
+    "cat - /dev/./stdin > {target} <<'EOF'\n- landed {text}\nEOF",
+    "time echo '- landed {text}' > {target}",
+    "time -p printf '%s\\n' '- landed {text}' >> {target}",
 ]
+# The file the writers land in: as written, and through a path that opens under /dev/ and climbs out of it.
+STAMP_TARGETS = [".tmp/notes.md", f"/dev/..{REPO}/.tmp/notes.md"]
 # (the stamp written, the placeholder the message names)
 PLACEHOLDERS = [("19:4xZ", "19:4x"), ("??:??", "??:??")]
 PASTED = ["19:45Z", "2026-11-26T19:45:02Z", "mask 0x1F:0x20 of buf[16:0x20]"]
 
-# A text no shell writer puts in a file: a here-document an interpreter or git reads, a text printed or discarded, a
-# here-document beside a file that cat reads instead.
+# A text the family does not judge: a here-document an interpreter, a shell or git reads, whatever it then writes; a
+# text printed, discarded, sent to a device or piped to another program; a here-document beside a file cat reads.
 STAMP_UNWRITTEN = [
     "python - <<'PY'\nprint('19:4xZ')\nPY",
     "uv run python - <<'PY' > .tmp/out.txt\nprint('19:4xZ')\nPY",
@@ -625,6 +635,8 @@ STAMP_UNWRITTEN = [
     "echo '- landed 19:4xZ'",
     "echo '- landed 19:4xZ' >&2",
     "echo '- landed 19:4xZ' > /dev/null",
+    "echo '- landed 19:4xZ' > /dev/./stderr",
+    "echo '- landed 19:4xZ' | tee /dev/tty",
     "echo '- landed 19:4xZ' | grep -c landed > .tmp/count",
     "cat .tmp/draft.md > .tmp/notes.md <<'EOF'\n- landed 19:4xZ\nEOF",
     "python - <<'PY' && cat >> .tmp/notes.md <<'EOF'\nprint('19:4xZ')\nPY\n- landed 19:45Z\nEOF",
@@ -643,6 +655,13 @@ APPROXIMATE_CLOCKS = [
     ("cat <<EOF>>.local/coordination.md\n| zcrypto-alex | read ~19:45Z |\nEOF", "~19:45", ".local/coordination.md"),
     ("cat >> .local/coordination.md <<E'OF'\n| zcrypto-alex | read ~19:45Z |\nEOF", "~19:45", ".local/coordination.md"),
     ("cd .local && printf '%s\\n' 'at ~2026-11-26T19:45Z' >> coordination.md", "~2026-11-26T19:45", "coordination.md"),
+    ("echo '| zcrypto-alex | back ~9:45Z |' >> .local/coordination.md", "~9:45", ".local/coordination.md"),
+    ("cat /dev/stdin >> .local/coordination.md <<'EOF'\n| a | ~19:45Z |\nEOF", "~19:45", ".local/coordination.md"),
+    (
+        f"echo '| zcrypto-alex | ~19:45 |' >> /dev/..{REPO}/.local/coordination.md",
+        "~19:45",
+        f"/dev/..{REPO}/.local/coordination.md",
+    ),
     ("echo '- landed ~19:45Z' >> .local/memo.md", "~19:45", ".local/memo.md"),
     (
         "cat <<'EOF' >> /home/u/Projects/zcrypto-kraken/.local/memo.md\n- read ~01:40Z\nEOF",
@@ -650,12 +669,14 @@ APPROXIMATE_CLOCKS = [
         "/home/u/Projects/zcrypto-kraken/.local/memo.md",
     ),
 ]
-# A tilde before a clock in any other file, and a pasted stamp in the coordination table.
+# A tilde before a clock in any other file, and in the coordination table a pasted stamp, a range and a strikethrough.
 APPROXIMATE_ELSEWHERE = [
     "echo '- landed ~19:45Z' >> .tmp/notes.md",
     "cat >> docs/coordination.md <<'EOF'\n| x | ~19:45Z |\nEOF",
     "echo '~19:45' > .local/notes.md",
     "echo '| zcrypto-alex | read 19:45Z |' >> .local/coordination.md",
+    "echo '| zcrypto-alex | window 19:30~19:45Z |' >> .local/coordination.md",
+    "echo '| zcrypto-alex | ~~19:45Z~~ 19:52:03Z |' >> .local/coordination.md",
 ]
 
 # (text, the placeholder memo-guard.sh and bash-guard.sh both name, or None where both admit it): memo-guard's own cases,
@@ -679,6 +700,8 @@ STAMP_SPECIMENS = [
     ("x1:2x0 and 0x10:0x20", None),
     ("[0-9x?]{2}:[0-9x?]{2}", None),
 ]
+# (the file a specimen is written into, whether both hooks exempt it)
+SPECIMEN_TARGETS = [("ledger.md", False), ("tests/notes.md", False), ("tests/test_x.py", True), (".claude/hooks/x.sh", True)]
 
 # (command, the stage the message must name) -- refused from a dispatched agent in its own worktree
 AGENT_WRITES = [
@@ -1244,13 +1267,22 @@ def refused_stamp(r: subprocess.CompletedProcess, what: str, stamp: str, target:
     return r.returncode == 2 and named and "the printed value of `date -u` or of the record" in r.stderr
 
 
+@pytest.mark.parametrize("target", STAMP_TARGETS, ids=["as written", "past /dev/"])
 @pytest.mark.parametrize(("text", "stamp"), PLACEHOLDERS, ids=[t for t, _ in PLACEHOLDERS])
 @pytest.mark.parametrize("writer", STAMP_WRITERS)
 def test_a_placeholder_stamp_a_shell_writer_puts_in_a_file_is_blocked_with_the_remedy(
-    tmp_path: Path, writer: str, text: str, stamp: str
+    tmp_path: Path, writer: str, text: str, stamp: str, target: str
 ):
-    r = run_hook(call(writer.format(target=".tmp/notes.md", text=text)), cwd=tmp_path)
-    assert refused_stamp(r, "placeholder stamp", stamp, ".tmp/notes.md"), r.stderr
+    r = run_hook(call(writer.format(target=target, text=text)), cwd=tmp_path)
+    assert refused_stamp(r, "placeholder stamp", stamp, target), r.stderr
+    assert "through the Edit tool" not in r.stderr
+
+
+@pytest.mark.parametrize("writer", STAMP_WRITERS)
+def test_a_placeholder_on_its_way_into_the_memo_names_the_memos_edit_route_too(tmp_path: Path, writer: str):
+    r = run_hook(call(writer.format(target=".local/memo.md", text="19:4xZ")), cwd=tmp_path)
+    assert refused_stamp(r, "placeholder stamp", "19:4x", ".local/memo.md"), r.stderr
+    assert "through the Edit tool after a Read" in r.stderr
 
 
 @pytest.mark.parametrize("text", PASTED)
@@ -1284,6 +1316,7 @@ def test_an_approximate_clock_written_into_the_memo_or_the_coordination_table_is
 ):
     r = run_hook(call(command), cwd=tmp_path)
     assert refused_stamp(r, "approximate clock", clock, target), r.stderr
+    assert ("through the Edit tool after a Read" in r.stderr) == target.endswith("memo.md"), r.stderr
 
 
 @pytest.mark.parametrize("command", APPROXIMATE_ELSEWHERE)
@@ -1292,9 +1325,11 @@ def test_an_approximate_clock_elsewhere_and_a_pasted_one_in_the_table_are_admitt
     assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
 
 
+@pytest.mark.parametrize(("name", "exempt"), SPECIMEN_TARGETS, ids=[n for n, _ in SPECIMEN_TARGETS])
 @pytest.mark.parametrize(("text", "stamp"), STAMP_SPECIMENS, ids=[t for t, _ in STAMP_SPECIMENS])
-def test_memo_guard_and_bash_guard_read_a_stamp_alike(tmp_path: Path, text: str, stamp: str | None):
-    target = tmp_path / "ledger.md"
+def test_memo_guard_and_bash_guard_read_a_stamp_alike(tmp_path: Path, text: str, stamp: str | None, name: str, exempt: bool):
+    target = tmp_path / name
+    stamp = None if exempt else stamp
     edit = subprocess.run(
         ["bash", str(MEMO_HOOK), "pre-write"],
         input=json.dumps({"tool_name": "Edit", "tool_input": {"file_path": str(target), "new_string": text}}),
