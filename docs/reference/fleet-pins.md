@@ -21,7 +21,7 @@ Reading rules:
 | alloy | zcrypto | `89a5a3201683` — v1.21.2 | 2026-11-23 22:04:10 | `2aa2099af76c` — v1.20.1 |
 | alloy | zcrypto-red | `89a5a3201683` — v1.21.2 | 2026-11-23 13:14:12 | `2aa2099af76c` — v1.20.1 |
 | alloy | zcrypto-ops | `9acc2529bc1e` — v1.22.0 | 2026-11-26 17:18:49 | `89a5a3201683` — v1.21.2 |
-| alloy | nas | `89a5a3201683` — v1.21.2, upstream `grafana/alloy`, no `-compat` variant | 2026-11-07 19:46:44 | `2aa2099af76c` — v1.20.1 |
+| alloy | nas | `9acc2529bc1e` — v1.22.0, upstream `grafana/alloy`, no `-compat` variant | 2026-11-26 18:27:00 | `89a5a3201683` — v1.21.2 |
 | valkey + sentinel | zcrypto-valkey1 | `418652cfb58e` — Valkey 9.1.2, upstream `valkey/valkey` | 2026-09-26 21:20:54 | first pin |
 | alloy | zcrypto-valkey1 | `89a5a3201683` — v1.21.2 | 2026-11-06 15:08:16 | `2aa2099af76c` — v1.20.1 |
 | valkey + sentinel | zcrypto-valkey2 | `418652cfb58e` — Valkey 9.1.2, upstream `valkey/valkey` | 2026-09-26 21:24:03 | first pin |
@@ -69,6 +69,6 @@ The current pins and their operands; older digests are in this file's git log.
 - `c365dae0afee` = `sha256:c365dae0afee6d83b7f5569ae4d5bc9cc3b36f99c447ae38166ea81e381e83be` — revision `9040ca59`, the `-compat` build; the NAS archive-pull's operand
 - `418652cfb58e` = `sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd` — Valkey 9.1.2; the cache nodes
 - `76928c0d6b39` = `sha256:76928c0d6b39bdd5f1c15d519cf48c47a6aa18c1dc552f7af1c146d2aa003c14` — HAProxy 3.4.5; the engine host's cache proxy
-- `89a5a3201683` = `sha256:89a5a320168387336b9ac3c850609c3ba7757eadd4ae5f1d819deb35e9854b18` — Alloy v1.21.2; the capture and cache hosts and the NAS, and ops' operand
-- `2aa2099af76c` = `sha256:2aa2099af76c0098d4af7a4d6e48f86cb66dc1a000222ad927a1c67c6542d13f` — Alloy v1.20.1; the capture and cache hosts' and the NAS's operand
-- `9acc2529bc1e` = `sha256:9acc2529bc1edb7f5b2bd801dd8334ebc80c158e3a9e5526ecd7c9a273d43189` — Alloy v1.22.0; ops
+- `89a5a3201683` = `sha256:89a5a320168387336b9ac3c850609c3ba7757eadd4ae5f1d819deb35e9854b18` — Alloy v1.21.2; the capture and cache hosts, and ops' and the NAS's operand
+- `2aa2099af76c` = `sha256:2aa2099af76c0098d4af7a4d6e48f86cb66dc1a000222ad927a1c67c6542d13f` — Alloy v1.20.1; the capture and cache hosts' operand
+- `9acc2529bc1e` = `sha256:9acc2529bc1edb7f5b2bd801dd8334ebc80c158e3a9e5526ecd7c9a273d43189` — Alloy v1.22.0; ops and the NAS
