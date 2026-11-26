@@ -8,8 +8,10 @@ python code that hands a file, process or network call a path it does not spell 
 builds a string beside such a call), shell state that changes what a later word means, a daemon reached over its own
 channel, and a command the judge has no model of handed a command name or a script. A path python code does spell out
 meets the rules as the operand of the shell command doing the same. A command the judge has no model of and that is
-handed neither is admitted on its own name. `fleet_ssh_aliases` is the one parse of
-docs/reference/fleet.md's host table; tests/test_ops_daily.py reads the table through it too.
+handed neither is admitted on its own name. The judge guards against a session's mistake in a runbook block and is not
+a sandbox: a deliberately evasive spelling is outside it, and the session's rules, not this file, forbid one.
+`fleet_ssh_aliases` is the one parse of docs/reference/fleet.md's host table; tests/test_ops_daily.py reads the table
+through it too.
 
 Usage: host_run_sh.py judge --repo <checkout> --alias <alias> [--record --ts <stamp> --timeout <s>]  < block
 rc 0 admitted | rc 65 refused | rc 64 a block that is not text.
@@ -898,7 +900,8 @@ _RUNNABLE = _w(
 )
 # Escapes by which a client runs a shell command from inside its own language.
 _SHELL_ESCAPES = _w(".shell .system \\! ! shell system")
-# Commands the judge has no rule of its own for that never run an argument as a command.
+# Commands whose arguments are never read as a command they may run: a command string one takes through an option or
+# its config (git -c, apt-get -o, dpkg's hooks, wg-quick's PostUp) is outside the judge.
 _LEAVES = _w(
     "systemctl journalctl loginctl hostnamectl timedatectl networkctl resolvectl localectl ps pgrep pidof which whereis "
     "type hash apt apt-get apt-cache aptitude dpkg dpkg-query update-alternatives man whatis apropos ldd zcrypto ss ip df "
