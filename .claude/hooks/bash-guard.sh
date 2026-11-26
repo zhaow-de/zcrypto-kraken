@@ -30,7 +30,7 @@
 # or `find` carrying `-exec grep|rg`, in a pipeline any stage of which names `infra` as a word or a path component --
 # the word `grep_pattern_at` takes for the grep's pattern excepted; every other `xargs` or `-exec` is outside. A vault
 # tool's writing verb is admitted over a vaulted file: a key rotation runs `ansible-vault encrypt|rekey`.
-# The fleet family alone reads a `sh -c` string and an `eval` line as commands.
+# The fleet family alone reads a shell's `-c` string, an `eval` line and the line `env -S` splits as commands.
 # Refused deliberately, as a word is judged wherever it stands: an agent's `echo git push`, `echo cat <vaulted file>`,
 # `echo ssh red`.
 #
@@ -62,11 +62,11 @@
 # main checkout's; a `gh api` write through fields with no `-X` (its implicit POST, a GraphQL mutation) and every `gh`
 # verb the family does not name.
 #
-# The fleet family refuses an `ssh`, `scp`, `sftp` or `rsync` word, wherever it stands and inside a `sh -c` string or an
-# `eval` line, whose host -- a destination, `host:path`, `host::module`, a `scheme://` URI, `-o HostName=` -- is a host
-# or an alias of docs/reference/fleet.md's table, or a name whose first label is one; whose host only run time knows;
-# or, to any host, that carries ssh's ProxyCommand, LocalCommand, PermitLocalCommand or KnownHostsCommand, or a
-# ProxyJump or `-J` that is no bare alias. A fleet host is reached through infra/scripts/host-run.sh, whose stdin block
+# The fleet family refuses an `ssh`, `scp`, `sftp` or `rsync` word, wherever it stands and inside a shell's `-c` string,
+# an `eval` line or an `env -S` line, whose host -- a destination, `host:path`, `host::module`, a `scheme://` URI,
+# `-o HostName=` -- is a host or an alias of docs/reference/fleet.md's table, or a name whose first label is one; whose
+# host only run time knows; or, to any host, that carries ssh's ProxyCommand, LocalCommand, PermitLocalCommand or
+# KnownHostsCommand, or a ProxyJump or `-J` that is no bare alias. A fleet host is reached through infra/scripts/host-run.sh, whose stdin block
 # is that wrapper's to judge. The table is read from the checkout of the payload's `cwd` by `fleet_ssh_aliases` of
 # infra/scripts/host_run_sh.py beside this file, its one parse; a table that cannot be had refuses every such word that
 # names a host. `ssh -V`, `-G`, `-Q` and `-O check|exit|stop` connect nowhere. A word a reader takes as data -- an operand
@@ -253,7 +253,9 @@ SSH_OPTION = re.compile(r'\s*"?([A-Za-z]+)"?(?:\s*=\s*|\s+|$)(.*)', re.S)  # ssh
 BARE_ALIAS = re.compile(r"[A-Za-z0-9_-]+")
 UNRESOLVED = re.compile(r"[$`*?[\]{}]")
 REMOTE_URI = re.compile(r"(?i)(?:ssh|scp|sftp|rsync)://(?:[^@/]*@)?(\[[^\]]*\]|[^:/]*)")
-SHELLS = {"sh", "bash", "dash", "zsh", "ksh"}
+SHELLS = {"ash", "bash", "csh", "dash", "elvish", "fish", "ksh", "ksh93", "mksh", "nu", "posh", "pwsh", "rbash", "sh", "tcsh",
+          "xonsh", "yash", "zsh"}
+ENV_VALUE = ("--split-string", "--unset", "--chdir")  # env's long options that take a value, `S`, `u` and `C` its short ones
 SHELL_VALUE = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}
 FIND_RUNS = {"-exec", "-execdir", "-ok", "-okdir"}
 HANDERS = {"xargs", "parallel"} | FIND_RUNS  # a word that hands the command after it operands at run time
@@ -1279,8 +1281,9 @@ def judge_ssh_family(words, at, raw, cwd, replaced):
         steering = [v for flag, v in opts if flag in ("e", "--rsh") and v]
         for value in steering:
             shell = shell_words(value)
-            if shell and shell[0].rpartition("/")[2] == "ssh":
-                inner = ssh_walk(shell[1:], SSH_VALUE["ssh"], restart=True)[0]
+            k = next((k for k, w in enumerate(shell) if w.rpartition("/")[2] == "ssh"), None)
+            if k is not None:
+                inner = ssh_walk(shell[k + 1 :], SSH_VALUE["ssh"], restart=True)[0]
                 judge_hops(words, inner, raw)
                 hosts += renamed(inner)
     else:
@@ -1308,10 +1311,39 @@ def shell_words(line):
         return line.split()
 
 
+def env_split(rest):
+    # The line `env -S` or `--split-string` splits, getopt's prefix of the long one taken, with the words after it
+    # appended; env reads `\_` outside quotes as a separator.
+    j = 0
+    while j < len(rest) and rest[j][:1] == "-" and len(rest[j]) > 1 and rest[j] != "--":
+        tok, value, j = rest[j], None, j + 1
+        if tok[:2] == "--":
+            name, eq, value = tok.partition("=")
+            long = next((o for o in ENV_VALUE if len(name) > 2 and o.startswith(name)), None)
+            if long and not eq and j < len(rest):
+                value, j = rest[j], j + 1
+            if long != ENV_VALUE[0]:
+                continue
+        else:
+            k = next((k for k, ch in enumerate(tok[1:], 1) if ch in "SuC"), None)
+            if k is None:
+                continue
+            value = tok[k + 1 :]
+            if not value and j < len(rest):
+                value, j = rest[j], j + 1
+            if tok[k] != "S":
+                continue
+        return [" ".join([value.replace("\\_", " "), shlex.join(rest[j:])])]
+    return []
+
+
 def shell_strings(p, rest):
-    # The code a shell's `-c` runs or the line `eval` builds, which this family alone reads as a command.
+    # The code a shell's `-c` or `--command` runs, the line `eval` builds, or the line `env -S` splits, which this family
+    # alone reads as a command.
     if p == "eval":
         return [" ".join(rest)] if rest else []
+    if p == "env":
+        return env_split(rest)
     if p not in SHELLS:
         return []
     j, dash_c = 0, False
@@ -1319,6 +1351,9 @@ def shell_strings(p, rest):
         if rest[j] == "--":
             j += 1
             break
+        name, eq, value = rest[j].partition("=")
+        if name == "--command":
+            return [value] if eq else rest[j + 1 : j + 2]
         if rest[j] in SHELL_VALUE:
             j += 2
             continue
