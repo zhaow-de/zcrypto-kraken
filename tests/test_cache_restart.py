@@ -47,14 +47,16 @@ ADMIN_USER, ADMIN_PASSWORD = "admin", "admin-harness-password"
 # Phase windows: the executor's startup pass runs on its first tick at 5 s and the plan is picked up on
 # the same tick; the first quote after that lands at 6 s and the fill frames within a second of the
 # submission; phase 2's re-read pass runs on the tick after the pass's cancel. The child's node waits
-# nothing for residual events at its stop, so a frame a test scripts lands inside the window: one past
-# it is not waited for, and `_Node.run` fails a record whose cache changed after the stop.
+# nothing for residual events at its stop, so every frame a test scripts lands inside the window:
+# `_Node.run` fails a run in which the venue sent anything after the stop.
 PHASE1_WINDOW = 14
 PHASE2_WINDOW = 20
 # A restart's window past the gate's first idle refresh, `_GATE_REFRESH` after the executor's construction:
 # where nothing rests, the re-read pass waits for that refresh to read the engine armed.
 REREAD_WINDOW = int(_GATE_REFRESH.total_seconds()) + 20
 CHILD_TIMEOUT = 150
+# How long `_Node.run` waits on a run's scripting threads once its child has exited.
+SCRIPT_JOIN = 30
 
 
 def _valkey_binary() -> str:
@@ -169,6 +171,24 @@ class _Valkey:
                 self.process.kill()
 
 
+# The threads a test starts to script the venue's frames, each beside the execution peer it sends on: `_Node.run`
+# joins a run's before it reads what the venue sent, so a thread started past `_script` escapes that read.
+_SCRIPTED: list[tuple[lb.WsPeer, threading.Thread]] = []
+
+
+def _script(exec_: lb.WsPeer, target) -> threading.Thread:
+    thread = threading.Thread(target=target, daemon=True)
+    _SCRIPTED.append((exec_, thread))
+    thread.start()
+    return thread
+
+
+def _sent_at(line: str) -> float | None:
+    """A peer's log line's time, when the line is one the peer sent."""
+    stamp, _, arrow, _ = line.split(" ", 3)
+    return float(stamp) if arrow == "->" else None
+
+
 class _Node:
     def __init__(self, root: Path, valkey_port: int, *, max_plan_notional_eur: float = 200.0):
         self.root = root
@@ -230,10 +250,24 @@ class _Node:
             "max_plan_notional_eur": self.max_plan_notional_eur,
         }
         env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "PYTHONDONTWRITEBYTECODE": "1", "HOME": str(self.root)}
+        answered: list[tuple[float, str]] = []
+        answer = venue.answer
+
+        def timed(method, path, query, form):
+            try:
+                return answer(method, path, query, form)
+            finally:
+                answered.append((time.time(), path))
+
+        venue.answer = timed
+        argv = [sys.executable, str(CHILD), json.dumps(args)]
         started = time.monotonic()
-        result = subprocess.run(
-            [sys.executable, str(CHILD), json.dumps(args)], capture_output=True, text=True, timeout=CHILD_TIMEOUT, cwd=REPO, env=env
-        )
+        try:
+            result = subprocess.run(argv, capture_output=True, text=True, timeout=CHILD_TIMEOUT, cwd=REPO, env=env)
+        finally:
+            del venue.answer
+        scripted = [thread for peer, thread in _SCRIPTED if peer is exec_]
+        _SCRIPTED[:] = [(peer, thread) for peer, thread in _SCRIPTED if peer is not exec_]
         log = result.stdout + result.stderr
         (self.root / f"phase{phase}.log").write_text(log)
         self.logs.append(log)
@@ -242,8 +276,22 @@ class _Node:
         )
         record = json.loads(out.read_text())
         # Every assertion on `at_end`, and every later phase reading the store, takes the window's stop as where the
-        # process ended: nothing reaches the cache after it.
+        # process ended. The child's node waits nothing for residual events, so a frame or an answer the venue gives
+        # after the stop reaches no cache and leaves no trace: a run that sent one fails, its scripting threads joined
+        # first, since one still sleeping when the child exits sends after the stop. The cache's orders and positions
+        # read again after run() returns catch what was sent before the stop and booked after the `at_end` read.
         if "at_end" in record:
+            deadline = time.monotonic() + SCRIPT_JOIN
+            for thread in scripted:
+                thread.join(max(0.0, deadline - time.monotonic()))
+            stopped = record["stopped_at"]
+            late = [line[:200] for peer in (data, exec_) for line in peer.log if (_sent_at(line) or 0.0) > stopped]
+            late += [f"{at:.3f} answered {path}" for at, path in answered if at > stopped]
+            pending = [thread.name for thread in scripted if thread.is_alive()]
+            assert not late and not pending, (
+                f"phase {phase}: the venue sent after the window's stop at {stopped:.3f}, which the child's node drops -- "
+                f"sent {late}, still scripting {pending}"
+            )
             assert record["after_run"] == record["at_end"], (
                 f"phase {phase}: the cache changed after the window's stop, before run() returned -- at the stop "
                 f"{record['at_end']}, after {record['after_run']}"
@@ -315,7 +363,7 @@ def _script_first_fill(venue: lb.KrakenLoopback, exec_: lb.WsPeer, *, last_qty: 
                 cost=f"{last_qty * PRICE:.5f}",
             )
 
-        threading.Thread(target=frames, daemon=True).start()
+        _script(exec_, frames)
 
     venue.on_add_order = on_add_order
 
@@ -341,7 +389,7 @@ def _script_cancel_ack(venue: lb.KrakenLoopback, exec_: lb.WsPeer, wire: dict) -
             time.sleep(0.3)
             exec_.send_execution(lb.exec_canceled(txid, wire["cl_ord_id"], symbol=SYMBOL, qty=QTY, price=PRICE, cum_qty=cum))
 
-        threading.Thread(target=frame, daemon=True).start()
+        _script(exec_, frame)
 
     venue.on_cancel_order = on_cancel_order
 
@@ -386,7 +434,7 @@ def _script_spot_fills(venue: lb.KrakenLoopback, exec_: lb.WsPeer, *, pair: str,
             else:
                 venue.balances.pop(coin, None)
 
-        threading.Thread(target=frames, daemon=True).start()
+        _script(exec_, frames)
 
     venue.on_add_order = on_add_order
 
@@ -700,7 +748,7 @@ def test_a_trade_frame_on_a_restored_open_order_is_booked_twice_by_the_library(p
                 wire["txid"], PAIR, vol="0.20000000", price="150.00", trade_id=1003, time=time.time()
             )
 
-        threading.Thread(target=later, daemon=True).start()
+        _script(exec_, later)
         record = node.run(2, venue, data, exec_, window=PHASE2_WINDOW)
         cancels = list(venue.cancel_forms)
 
@@ -844,7 +892,7 @@ def _before_the_pass(exec_: lb.WsPeer, then) -> None:
             time.sleep(1)
             then()
 
-    threading.Thread(target=later, daemon=True).start()
+    _script(exec_, later)
 
 
 @pytest.mark.parametrize("with_order_qty", [False, True], ids=["without-order_qty", "with-order_qty"])
@@ -1303,8 +1351,7 @@ def test_the_cache_killed_mid_run_leaves_the_engine_trading_and_the_store_behind
                             return
                         valkey.start()
 
-                threads.append(threading.Thread(target=frames, daemon=True))
-                threads[-1].start()
+                threads.append(_script(exec_, frames))
 
             venue.on_add_order = on_add_order
             record = node.run(1, venue, data, exec_, window=32)
@@ -1415,7 +1462,7 @@ def _script_hand_buy(venue: lb.KrakenLoopback, exec_: lb.WsPeer) -> None:
         )
         venue.balances["SOL"] = lb.balance("0.50000000")
 
-    threading.Thread(target=later, daemon=True).start()
+    _script(exec_, later)
 
 
 def test_a_position_the_library_booked_is_counted_and_a_hand_orders_is_not(tmp_path):
@@ -1512,7 +1559,7 @@ def _script_resting_reducer(venue: lb.KrakenLoopback, exec_: lb.WsPeer, reducer:
                     lb.exec_new(txid, form.get("cl_ord_id"), symbol=SYMBOL, qty=QTY, price=float(form["price"]), side="sell")
                 )
 
-        threading.Thread(target=frame, daemon=True).start()
+        _script(exec_, frame)
 
     venue.on_add_order = on_add_order
 

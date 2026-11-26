@@ -10,9 +10,9 @@ registers is subclassed to hand the executor its quotes on a timer, since the da
 and to stop the node at the window's end; its executor, its startup pass and its ledger writes are
 the engine's own.
 
-argv[1] is a JSON object of what the driver passes. It writes `out` at the window's end and again after `run()`
-returns, the second write adding `after_run`, the cache read again as `at_end` read it at the stop, and exits 0
-whatever `run()` did: the driver reads the record.
+argv[1] is a JSON object of what the driver passes. It writes `out` at the window's end, `stopped_at` the stop's
+wall-clock time, and again after `run()` returns, the second write adding `after_run`, the cache read again as
+`at_end` read it at the stop, and exits 0 whatever `run()` did: the driver reads the record.
 """
 
 from __future__ import annotations
@@ -96,8 +96,8 @@ _production_node_builder = node_module._node_builder
 
 
 def _node_builder(config: EngineConfig):
-    # The library's 10 s post-stop wait for residual events, at 0: the driver holds the cache unchanged from the
-    # window's stop to run()'s return.
+    # The library's 10 s post-stop wait for residual events, at 0: a frame or an answer reaching the node after the
+    # window's stop is dropped without trace, so the driver fails a run in which the venue sent one after `stopped_at`.
     return _production_node_builder(config).with_delay_post_stop_secs(0)
 
 
@@ -330,6 +330,7 @@ class ShadowStrategy(node_module.ShadowStrategy):
         self.on_quote(tick)
 
     def _stop(self, event) -> None:
+        RECORD["stopped_at"] = time.time()
         try:
             RECORD["at_end"] = _dump(self.cache)
             STOPPED_CACHE[0] = self.cache
