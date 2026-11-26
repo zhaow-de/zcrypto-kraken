@@ -71,8 +71,8 @@
 # infra/scripts/host_run_sh.py beside this file, its one parse; a table that cannot be had refuses every such word that
 # names a host. `ssh -V` and `ssh -G` connect nowhere. Outside: an IP address, a name ~/.ssh/config maps to a fleet
 # host, `-F` and the config's own commands, `scp -S`, `RSYNC_RSH`, a program that runs ssh itself (`mosh`, `autossh`,
-# `ssh-copy-id`, git's `GIT_SSH_COMMAND`), and a script fed to a shell on stdin or handed as a string to any other
-# program (`watch`, `su -c`).
+# `ssh-copy-id`, `parallel -S`, a link to `ssh-argv0` named for a host, git's `GIT_SSH_COMMAND`), and a script fed to a
+# shell on stdin or handed as a string to any other program (`watch`, `su -c`).
 #
 # A failure of the hook's own -- stdin that is not the tool call's JSON, a command `shlex` cannot tokenise --
 # admits with a note on stderr, never blocks: exit 2 would refuse every Bash call in the session. That second
@@ -251,7 +251,11 @@ UNRESOLVED = re.compile(r"[$`*?[\]{}]")
 REMOTE_URI = re.compile(r"(?i)(?:ssh|scp|sftp|rsync)://(?:[^@/]*@)?(\[[^\]]*\]|[^:/]*)")
 SHELLS = {"sh", "bash", "dash", "zsh", "ksh"}
 SHELL_VALUE = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}
-HANDERS = {"xargs", "-exec", "-execdir", "-ok", "-okdir"}  # a word that hands the command after it operands at run time
+HANDERS = {"xargs", "parallel", "-exec", "-execdir", "-ok", "-okdir"}  # a word that hands the command after it operands at run time
+# xargs' options, GNU's and BSD's, in option_walk's three kinds; of them `-I`, `-i`, `--replace` and BSD's `-J` name the
+# string xargs replaces with what it reads, `{}` where `-i` or `--replace` names none.
+XARGS_OPTIONS = ("aEILnsPdJRS", "eil", {"arg-file", "delimiter", "max-args", "max-procs", "max-chars", "process-slot-var"})
+PARALLEL_INPUTS = {":::", "::::", ":::+", "::::+"}  # where parallel's command ends and its inputs begin
 HOST_RUN = "infra/scripts/host-run.sh {} <<'EOF' … EOF"
 HOST_RUN_JUDGE = "infra/scripts/host_run_sh.py"
 HOOK_DIR = posixpath.dirname(os.path.abspath(sys.argv[1]))
@@ -1136,9 +1140,62 @@ def refuse_unresolved(words, what, raw):
     )
 
 
+def replace_strings(rest, short_value, short_attached, long_value, scan=False):
+    # The strings a handler's options name for it to replace, read up to its command word -- or, with `scan`, over every
+    # word up to the ssh-family one, for a handler whose valued options are too many to walk.
+    out, j = [], 0
+    while j < len(rest):
+        tok = rest[j]
+        j += 1
+        if tok == "--" or tok[:1] != "-" or len(tok) == 1:
+            if scan:
+                continue
+            break
+        if tok[:2] == "--":
+            name, eq, value = tok.partition("=")
+            if name == "--replace":
+                out.append(value if eq else "{}")
+            elif not eq and name[2:] in long_value:
+                j += 1
+            continue
+        for k, ch in enumerate(tok[1:], 1):
+            if ch in short_attached:
+                if ch == "i":
+                    out.append(tok[k + 1 :] or "{}")
+                break
+            if ch in short_value:
+                value = tok[k + 1 :]
+                if not value and j < len(rest):
+                    value, j = rest[j], j + 1
+                if ch in "IJ":
+                    out.append(value)
+                break
+    return out
+
+
+def replacements(words, at):
+    # Each string a handler before `at` fills in with what it reads at run time, wherever it stands in a word of the
+    # command it runs, and that handler.
+    out = []
+    for h, w in enumerate(words[:at]):
+        p = w.rpartition("/")[2]
+        if p == "xargs":
+            out += [(r, p) for r in replace_strings(words[h + 1 : at], *XARGS_OPTIONS)]
+        elif p == "parallel":
+            out += [(r, p) for r in replace_strings(words[h + 1 : at], "I", "i", set(), scan=True)]
+        elif p in HANDERS:
+            out.append(("{}", f"find {p}"))
+    return out
+
+
+def filled(text, replaced):
+    # The first replace string the text carries, and its handler; an empty one is in every text.
+    return next(((r, h) for r, h in replaced if r in text), None)
+
+
 def judge_hosts(words, hosts, handed, raw, cwd):
     if handed and not hosts:
-        refuse_unresolved(words, "what `xargs` or `find -exec` hands it at run time", raw)
+        refuse_unresolved(words, "what `xargs`, `parallel` or `find -exec` hands it at run time", raw)
     for host in hosts:
         if UNRESOLVED.search(host):
             refuse_unresolved(words, f"`{host}`", raw)
@@ -1187,13 +1244,17 @@ def renamed(opts):
     ]
 
 
-def judge_ssh_family(words, at, raw, cwd):
+def judge_ssh_family(words, at, raw, cwd, replaced):
     p, rest = words[at].rpartition("/")[2], words[at + 1 :]
+    handers = {w.rpartition("/")[2] for w in words[:at]} & HANDERS
+    if "parallel" in handers:
+        rest = rest[: next((k for k, w in enumerate(rest) if w in PARALLEL_INPUTS), len(rest))]
     if p == "rsync":
         opts, ops = ssh_walk(rest, *RSYNC_VALUE)
         hosts = [host_of(op, bare=False) for op in ops]
-        for flag, value in opts:
-            shell = shell_words(value) if flag in ("e", "--rsh") and value else []
+        steering = [v for flag, v in opts if flag in ("e", "--rsh") and v]
+        for value in steering:
+            shell = shell_words(value)
             if shell and shell[0].rpartition("/")[2] == "ssh":
                 inner = ssh_walk(shell[1:], SSH_VALUE["ssh"], restart=True)[0]
                 judge_hops(words, inner, raw)
@@ -1203,10 +1264,14 @@ def judge_ssh_family(words, at, raw, cwd):
         judge_hops(words, opts, raw)
         if p == "ssh" and any(flag in SSH_PRINTS for flag, _ in opts):
             return
-        hosts = [host_of(op, bare=False) for op in ops] if p == "scp" else [host_of(op, bare=True) for op in ops[:1]]
-        hosts += renamed(opts)
-    handed = any(w.rpartition("/")[2] in HANDERS for w in words[:at])
-    judge_hosts(words, [h for h in hosts if h is not None], handed, raw, cwd)
+        ops = ops if p == "scp" else ops[:1]
+        hosts = [host_of(op, bare=p != "scp") for op in ops] + renamed(opts)
+        steering = [v for flag, v in opts if flag in ("o", "J") and v]
+    # A replace string is read in the operand or option value as written: `xargs -I@ ssh @` hands no `user@`.
+    for w in ops + steering:
+        if r := filled(w, replaced):
+            refuse_unresolved(words, f"`{w}`, whose `{r[0]}` `{r[1]}` fills in at run time", raw)
+    judge_hosts(words, [h for h in hosts if h is not None], bool(handers), raw, cwd)
 
 
 def shell_words(line):
@@ -1235,13 +1300,14 @@ def shell_strings(p, rest):
     return [rest[j]] if dash_c and j < len(rest) else []
 
 
-def judge_fleet(words, raw, cwd):
+def judge_fleet(words, raw, cwd, replaced=()):
+    # `replaced`: the replace strings a handler outside a shell string fills into it.
     for i, w in enumerate(words):
         if ASSIGN.match(w):
             continue
         p = w.rpartition("/")[2]
         if p in SSH_VALUE or p == "rsync":
-            judge_ssh_family(words, i, raw, cwd)
+            judge_ssh_family(words, i, raw, cwd, [*replaced, *replacements(words, i)])
         for code in shell_strings(p, words[i + 1 :]):
             try:
                 inner = pipelines(code)
@@ -1249,7 +1315,7 @@ def judge_fleet(words, raw, cwd):
                 continue
             for pipe in inner:
                 for stage in pipe:
-                    judge_fleet(stage, raw, cwd)
+                    judge_fleet(stage, raw, cwd, [*replaced, *replacements(words, i)])
 
 
 def is_gh(w):
