@@ -3459,7 +3459,7 @@ def _kills_pid_1(args: list[str]) -> str | None:
     return None
 
 
-DATA_ROOTS = "/var/lib/zcrypto-" + SEG
+DATA_ROOTS = ("/var/lib/zcrypto-" + SEG, "/volume1/ZhaoCrypto")
 # The engine's own store set aside before a rebuild, by its exact stamped name: the one tree directly under a data
 # root a recursive removal may take.
 _ASIDE = re.compile(r"/var/lib/zcrypto-engine/store\.aside-\d{8}T\d{4}Z")
@@ -3502,7 +3502,7 @@ def rule_hazards(cmd: Cmd, j: Judge) -> Refusal | None:
             )
         if _ASIDE.fullmatch(p):
             continue
-        if any(could(p, t) for t in ("/", "/var", "/var/lib", DATA_ROOTS, DATA_ROOTS + "/" + SEG)):
+        if any(could_cover(p, r) or could(p, r + "/" + SEG) for r in DATA_ROOTS):
             return no(f"{name} removes {_show(o)} recursively, a data root or a directory directly under one", "the owner's line")
     if name.startswith("mkfs") or name == "wipefs" or name == "dd" and any(a.startswith("of=/dev/") for a in cmd.args):
         return no(f"{name} overwrites a device", "the owner's line")
