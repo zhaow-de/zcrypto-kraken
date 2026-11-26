@@ -906,7 +906,7 @@ _LEAVES = _w(
     "type hash apt apt-get apt-cache aptitude dpkg dpkg-query update-alternatives man whatis apropos ldd zcrypto ss ip df "
     "free uptime id getent groups hostname uname date lsblk blkid findmnt lsof netstat dig host nslookup ping traceroute "
     "mtr wg wg-quick sysctl uv pip pip3 git usermod useradd userdel groupadd groupdel gpasswd chage service kill pkill "
-    "killall reboot shutdown poweroff halt"
+    "killall reboot shutdown poweroff halt last lastb lastlog"
 )
 
 

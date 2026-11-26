@@ -1397,6 +1397,15 @@ def test_a_down_commands_form_that_takes_nothing_down_is_admitted_beside_one_tha
     assert done.returncode == 65 and _rule(done) == rule, done.stderr.decode()
 
 
+@pytest.mark.parametrize("args", ["-x reboot | head", "-x shutdown"], ids=["last-x-reboot", "last-x-shutdown"])
+def test_last_reads_a_command_name_as_data_where_a_command_with_no_model_is_refused(door, args):
+    done = door.judge("zcrypto", f"last {args}")
+    assert done.returncode == 0 and done.stdout.decode() == "ADMITTED\n", done.stderr.decode()
+    done = door.judge("zcrypto", f"somereader {args}")
+    assert done.returncode == 65 and _rule(done) == "unresolvable", done.stderr.decode()
+    assert "the judge has no model of somereader" in done.stderr.decode()
+
+
 @pytest.mark.parametrize(("block", "rule"), [pytest.param(b, r, id=f"hazards-side-door-{i}") for i, b, r in HAZARD_DOORS])
 def test_a_recursive_removal_of_a_data_root_is_refused_whatever_its_flags(door, block, rule):
     done = door.judge("zcrypto", block)
