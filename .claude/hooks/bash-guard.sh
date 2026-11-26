@@ -69,10 +69,13 @@
 # ProxyJump or `-J` that is no bare alias. A fleet host is reached through infra/scripts/host-run.sh, whose stdin block
 # is that wrapper's to judge. The table is read from the checkout of the payload's `cwd` by `fleet_ssh_aliases` of
 # infra/scripts/host_run_sh.py beside this file, its one parse; a table that cannot be had refuses every such word that
-# names a host. `ssh -V` and `ssh -G` connect nowhere. Outside: an IP address, a name ~/.ssh/config maps to a fleet
-# host, `-F` and the config's own commands, `scp -S`, `RSYNC_RSH`, a program that runs ssh itself (`mosh`, `autossh`,
-# `ssh-copy-id`, `parallel -S`, a link to `ssh-argv0` named for a host, git's `GIT_SSH_COMMAND`), and a script fed to a
-# shell on stdin or handed as a string to any other program (`watch`, `su -c`).
+# names a host. `ssh -V`, `-G`, `-Q` and `-O check|exit|stop` connect nowhere. A word a reader takes as data -- an operand
+# of a grep, rg, journalctl, systemctl or git read that is the stage's program or what `xargs` or a find `-exec` runs --
+# is no ssh-family call; behind any other wrapper (`sudo grep ssh f`) it is judged as one. Outside: an IP address, a
+# name ~/.ssh/config maps to a fleet host, `-F` and the config's own commands, `scp -S`, `RSYNC_RSH`, a program that
+# runs ssh itself (`mosh`, `autossh`, `ssh-copy-id`, `parallel -S`, `systemctl -H`, `rg --pre`, a link to `ssh-argv0`
+# named for a host, git's `GIT_SSH_COMMAND`), and a script fed to a shell on stdin or handed as a string to any other
+# program (`watch`, `su -c`).
 #
 # A failure of the hook's own -- stdin that is not the tool call's JSON, a command `shlex` cannot tokenise --
 # admits with a note on stderr, never blocks: exit 2 would refuse every Bash call in the session. That second
@@ -238,7 +241,8 @@ RSYNC_VALUE = (
      "early-input", "bwlimit", "stop-after", "stop-at", "write-batch", "only-write-batch", "read-batch", "protocol",
      "iconv", "outbuf", "remote-option", "usermap", "groupmap", "chown", "copy-as"},
 )
-SSH_PRINTS = {"G", "V"}  # ssh's options that print and exit before connecting
+SSH_PRINTS = {"G", "Q", "V"}  # ssh's options that print and exit before connecting
+SSH_LOCAL_CONTROLS = {"check", "exit", "stop"}  # `-O` commands the local multiplexing master answers, sending the host nothing
 SSH_RUNS = {
     "proxycommand": ("ProxyCommand", "runs a local command to reach the host"),
     "localcommand": ("LocalCommand", "runs a local command once connected"),
@@ -251,11 +255,13 @@ UNRESOLVED = re.compile(r"[$`*?[\]{}]")
 REMOTE_URI = re.compile(r"(?i)(?:ssh|scp|sftp|rsync)://(?:[^@/]*@)?(\[[^\]]*\]|[^:/]*)")
 SHELLS = {"sh", "bash", "dash", "zsh", "ksh"}
 SHELL_VALUE = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}
-HANDERS = {"xargs", "parallel", "-exec", "-execdir", "-ok", "-okdir"}  # a word that hands the command after it operands at run time
+FIND_RUNS = {"-exec", "-execdir", "-ok", "-okdir"}
+HANDERS = {"xargs", "parallel"} | FIND_RUNS  # a word that hands the command after it operands at run time
 # xargs' options, GNU's and BSD's, in option_walk's three kinds; of them `-I`, `-i`, `--replace` and BSD's `-J` name the
 # string xargs replaces with what it reads, `{}` where `-i` or `--replace` names none.
 XARGS_OPTIONS = ("aEILnsPdJRS", "eil", {"arg-file", "delimiter", "max-args", "max-procs", "max-chars", "process-slot-var"})
 PARALLEL_INPUTS = {":::", "::::", ":::+", "::::+"}  # where parallel's command ends and its inputs begin
+DATA_READERS = GREPS | {"journalctl", "systemctl"}  # beside a git read: programs whose operands are data, never a command
 HOST_RUN = "infra/scripts/host-run.sh {} <<'EOF' … EOF"
 HOST_RUN_JUDGE = "infra/scripts/host_run_sh.py"
 HOOK_DIR = posixpath.dirname(os.path.abspath(sys.argv[1]))
@@ -1142,7 +1148,7 @@ def refuse_unresolved(words, what, raw):
 
 def replace_strings(rest, short_value, short_attached, long_value, scan=False):
     # The strings a handler's options name for it to replace, read up to its command word -- or, with `scan`, over every
-    # word up to the ssh-family one, for a handler whose valued options are too many to walk.
+    # word up to the ssh-family one, for a handler whose valued options are too many to walk -- and that word's index.
     out, j = [], 0
     while j < len(rest):
         tok = rest[j]
@@ -1150,6 +1156,7 @@ def replace_strings(rest, short_value, short_attached, long_value, scan=False):
         if tok == "--" or tok[:1] != "-" or len(tok) == 1:
             if scan:
                 continue
+            j -= tok != "--"
             break
         if tok[:2] == "--":
             name, eq, value = tok.partition("=")
@@ -1170,7 +1177,7 @@ def replace_strings(rest, short_value, short_attached, long_value, scan=False):
                 if ch in "IJ":
                     out.append(value)
                 break
-    return out
+    return out, j
 
 
 def replacements(words, at):
@@ -1180,12 +1187,29 @@ def replacements(words, at):
     for h, w in enumerate(words[:at]):
         p = w.rpartition("/")[2]
         if p == "xargs":
-            out += [(r, p) for r in replace_strings(words[h + 1 : at], *XARGS_OPTIONS)]
+            out += [(r, p) for r in replace_strings(words[h + 1 : at], *XARGS_OPTIONS)[0]]
         elif p == "parallel":
-            out += [(r, p) for r in replace_strings(words[h + 1 : at], "I", "i", set(), scan=True)]
-        elif p in HANDERS:
+            out += [(r, p) for r in replace_strings(words[h + 1 : at], "I", "i", set(), scan=True)[0]]
+        elif p in FIND_RUNS:
             out.append(("{}", f"find {p}"))
     return out
+
+
+def reads_data(words, k):
+    return words[k].rpartition("/")[2] in DATA_READERS or (is_git(words[k]) and git_sub(words[k:])[0] in MAIN_READS)
+
+
+def data_words(words):
+    # The indices of the words a reader takes as data: those after a grep, rg, journalctl, systemctl or git read that is
+    # the stage's program or the command `xargs` or a find `-exec` runs, up to the `;` or `+` ending that `-exec`.
+    p, rest = argv_of(words)
+    runs = [(len(words) - len(rest) - 1, len(words))] if p else []
+    for j, w in enumerate(words):
+        if w.rpartition("/")[2] == "xargs":
+            runs.append((j + 1 + replace_strings(words[j + 1 :], *XARGS_OPTIONS)[1], len(words)))
+        elif w in FIND_RUNS:
+            runs.append((j + 1, next((e for e in range(j + 1, len(words)) if words[e] in (";", "+")), len(words))))
+    return {i for k, end in runs if k < len(words) and reads_data(words, k) for i in range(k + 1, end)}
 
 
 def filled(text, replaced):
@@ -1264,6 +1288,9 @@ def judge_ssh_family(words, at, raw, cwd, replaced):
         judge_hops(words, opts, raw)
         if p == "ssh" and any(flag in SSH_PRINTS for flag, _ in opts):
             return
+        controls = [value for flag, value in opts if flag == "O"]
+        if p == "ssh" and controls and set(controls) <= SSH_LOCAL_CONTROLS:
+            return
         ops = ops if p == "scp" else ops[:1]
         hosts = [host_of(op, bare=p != "scp") for op in ops] + renamed(opts)
         steering = [v for flag, v in opts if flag in ("o", "J") and v]
@@ -1302,8 +1329,9 @@ def shell_strings(p, rest):
 
 def judge_fleet(words, raw, cwd, replaced=()):
     # `replaced`: the replace strings a handler outside a shell string fills into it.
+    data = data_words(words)
     for i, w in enumerate(words):
-        if ASSIGN.match(w):
+        if ASSIGN.match(w) or i in data:
             continue
         p = w.rpartition("/")[2]
         if p in SSH_VALUE or p == "rsync":
