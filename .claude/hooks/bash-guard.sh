@@ -76,7 +76,8 @@
 # main checkout's; a `gh api` write through fields with no `-X` (its implicit POST, a GraphQL mutation) and every `gh`
 # verb the family does not name.
 #
-# The fleet family refuses an `ssh`, `scp`, `sftp` or `rsync` word, wherever it stands and inside a shell's `-c` string,
+# The fleet family refuses an `ssh`, `scp`, `sftp` or `rsync` word -- a bare one wherever it stands, a path only where it
+# stands as a command (`command_words`), so `ls /usr/bin/ssh` is none -- in a stage and inside a shell's `-c` string,
 # an `eval` line or an `env -S` line, whose host -- a destination, `host:path`, `host::module`, a `scheme://` URI,
 # `-o HostName=` -- is a host or an alias of docs/reference/fleet.md's table, or a name whose first label is one; whose
 # host only run time knows; or, to any host, that carries an ssh option that runs or loads local code (SSH_RUNS, `-I`
@@ -303,6 +304,13 @@ HANDERS = {"xargs", "parallel"} | FIND_RUNS  # a word that hands the command aft
 # string xargs replaces with what it reads, `{}` where `-i` or `--replace` names none.
 XARGS_OPTIONS = ("aEILnsPdJRS", "eil", {"arg-file", "delimiter", "max-args", "max-procs", "max-chars", "process-slot-var"})
 PARALLEL_INPUTS = {":::", "::::", ":::+", "::::+"}  # where parallel's command ends and its inputs begin
+# A program that runs the command its operands name, with its short options that take a value: past it, its options,
+# their values, assignments and a duration, the next word stands as a command (`command_words`).
+RUNNERS = {
+    "sudo": "CDghpRrTtUu", "doas": "Cu", "env": "CSu", "timeout": "ks", "nice": "n", "stdbuf": "eio", "nohup": "",
+    "setsid": "", "command": "", "builtin": "", "exec": "a", "xargs": XARGS_OPTIONS[0], "parallel": "",
+}
+DURATION = re.compile(r"\d+(?:\.\d+)?[smhd]?")
 DATA_READERS = GREPS | {"journalctl", "systemctl"}  # beside a git read: programs whose operands are data, never a command
 HOST_RUN = "infra/scripts/host-run.sh {} <<'EOF' … EOF"
 HOST_RUN_JUDGE = "infra/scripts/host_run_sh.py"
@@ -1377,6 +1385,35 @@ def data_words(words):
     return {i for k, end in runs if k < len(words) and reads_data(words, k) for i in range(k + 1, end)}
 
 
+def runner_options(words, j, valued):
+    # The index past a runner's options from `j`: a short option's value is the rest of its word or else the next one.
+    while j < len(words):
+        flag = words[j]
+        if not ((flag[:1] == "-" and len(flag) > 1) or ASSIGN.match(flag) or DURATION.fullmatch(flag)):
+            break
+        j += 1
+        if flag[:1] == "-" and flag[:2] != "--":
+            k = next((k for k, ch in enumerate(flag[1:], 1) if ch in valued), None)
+            j += k == len(flag) - 1
+    return j
+
+
+def command_words(words):
+    # The indices of the words standing as a command: the stage's program, what a find `-exec` runs, and what a RUNNERS
+    # program among them runs.
+    p, rest = argv_of(words)
+    starts = ([len(words) - len(rest) - 1] if p else []) + [j + 1 for j, w in enumerate(words) if w in FIND_RUNS]
+    out = set()
+    for j in starts:
+        while j < len(words):
+            out.add(j)
+            valued = RUNNERS.get(words[j].rpartition("/")[2])
+            if valued is None:
+                break
+            j = runner_options(words, j + 1, valued)
+    return out
+
+
 def filled(text, replaced):
     # The first replace string the text carries, and its handler; an empty one is in every text.
     return next(((r, h) for r, h in replaced if r in text), None)
@@ -1571,12 +1608,13 @@ def shell_strings(p, rest):
 
 def judge_fleet(words, raw, cwd, replaced=()):
     # `replaced`: the replace strings a handler outside a shell string fills into it.
-    data = data_words(words)
+    data, commands = data_words(words), command_words(words)
     for i, w in enumerate(words):
         if ASSIGN.match(w) or i in data:
             continue
         p = w.rpartition("/")[2]
-        if p in SSH_VALUE or p == "rsync":
+        # a bare word is judged wherever it stands, a path only as a command: `ls /usr/bin/ssh` runs no ssh
+        if (p in SSH_VALUE or p == "rsync") and ("/" not in w or i in commands):
             judge_ssh_family(words, i, raw, cwd, [*replaced, *replacements(words, i)])
         for code in shell_strings(p, words[i + 1 :]):
             try:
