@@ -1211,7 +1211,6 @@ ADMITTED = [
         "sudo tar -C /var/lib/zcrypto-engine/journal/2026-11-25 -cf - cycle-12.json venue-12.json",
     ),
     ("journalctl-since", "zcrypto", "sudo journalctl -u zcrypto-engine --since -2h | grep -i reconnect"),
-    ("primary-reboot", "zcrypto", "sudo systemctl reboot"),
     ("capture-prune-timer", "zcrypto", "sudo systemctl restart zcrypto-capture-prune.timer"),
     ("engine-restart-in-container", "zcrypto", "sudo docker restart zcrypto-engine"),
     ("secondary-capture-stop", "red", "sudo systemctl stop zcrypto-capture"),
@@ -1353,6 +1352,18 @@ def test_this_workstation_taken_down_another_way_is_refused(door, block, rule):
     assert done.returncode == 65 and _rule(done) == rule, done.stderr.decode()
 
 
+# The plain reboot and shutdown spellings the workstation rule refuses on this machine: on the primary, which runs
+# live capture and the engine, each is the owner's; on the secondary each is admitted.
+PRIMARY_DOWN = [(i, b) for r, i, a, b in REFUSED if r == "workstation"]
+
+
+@pytest.mark.parametrize("block", [pytest.param(b, id=f"primary-down-{i}") for i, b in PRIMARY_DOWN])
+def test_a_reboot_or_shutdown_is_refused_on_the_primary_and_admitted_on_the_secondary(door, block):
+    assert _rule(door.judge("zcrypto", block)) == "capture-primary"
+    done = door.judge("red", block)
+    assert done.returncode == 0, done.stderr.decode()
+
+
 @pytest.mark.parametrize(("block", "rule"), [pytest.param(b, r, id=f"hazards-side-door-{i}") for i, b, r in HAZARD_DOORS])
 def test_a_recursive_removal_of_a_data_root_is_refused_whatever_its_flags(door, block, rule):
     done = door.judge("zcrypto", block)
@@ -1425,7 +1436,7 @@ def test_the_primary_and_the_workstation_are_found_by_host_name_through_the_tabl
     table.write_text(table.read_text().replace("`ssh zcrypto` |", "`ssh prime` |").replace("`ssh hp` |", "`ssh here` |"))
     assert _rule(fresh.judge("prime", "sudo systemctl stop zcrypto-capture\n")) == "capture-primary"
     assert _rule(fresh.judge("here", "sudo reboot\n")) == "workstation"
-    assert fresh.judge("prime", "sudo reboot\n").returncode == 0
+    assert _rule(fresh.judge("prime", "sudo reboot\n")) == "capture-primary"
 
 
 # ---------------------------------------------------------------- usage

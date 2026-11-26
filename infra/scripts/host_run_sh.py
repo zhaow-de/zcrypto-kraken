@@ -3282,6 +3282,9 @@ def rule_capture_primary(cmd: Cmd, j: Judge) -> Refusal | None:
             return no("a kill inside the primary's capture or Alloy container")
         return None
 
+    if what := _takes_down(cmd):
+        return no(f"{what} on the primary stops or restarts live capture and the engine")
+
     def unit_verb(how: str, verb: str, units: list[str]) -> Refusal | None:
         if verb in _STOPPING_VERBS:
             for u in units or [ANY]:
@@ -3371,20 +3374,11 @@ def rule_workstation(cmd: Cmd, j: Judge) -> Refusal | None:
         return Refusal("workstation", reason, "the owner's line, at this machine")
 
     name = cmd.name
-    if name in ("reboot", "shutdown", "poweroff", "halt", "pm-suspend", "pm-hibernate", "pm-suspend-hybrid", "zzz", "s2ram"):
-        return no(f"{name} on {cmd.alias}, the machine this session runs on")
-    if name in ("init", "telinit") and any(a in ("0", "6", "1", "s", "S") for a in cmd.args):
-        return no(f"{name} changes this machine's runlevel")
-    if name == "kexec" and any(a in ("-e", "--exec") for a in cmd.args):
-        return no("kexec reboots this machine")
+    if what := _takes_down(cmd):
+        return no(f"{what} on {cmd.alias}, the machine this session runs on")
     if name in ("systemctl", "loginctl"):
         ops = [a for a in cmd.args if not a.startswith("-")]
         verb = ops[0] if ops else ""
-        if verb in _w(
-            "reboot poweroff halt kexec isolate rescue emergency suspend hibernate hybrid-sleep "
-            "suspend-then-hibernate soft-reboot default exit"
-        ):
-            return no(f"{name} {verb} on the machine this session runs on")
         if any(a in ("--job-mode=isolate",) for a in cmd.args) or "--job-mode" in cmd.args and "isolate" in ops:
             return no(f"{name} with job mode isolate stops every unit its target does not pull")
         if verb in _w("start restart try-restart reload-or-restart try-reload-or-restart") and any(
@@ -3411,6 +3405,27 @@ def rule_workstation(cmd: Cmd, j: Judge) -> Refusal | None:
         modes = _values(_opts(cmd.args, "mdstAa", {"--mode", "--device", "--seconds", "--time", "--adjfile"})[0], "-m", "--mode")
         if any(m in ("off", "disk", "mem", "freeze", "standby") or any(c in m for c in WILD) for m in modes):
             return no("rtcwake -m powers this machine off or puts it to sleep")
+    return None
+
+
+def _takes_down(cmd: Cmd) -> str | None:
+    """The plain reboot and shutdown family: a reboot, shutdown or sleep command, a runlevel change, `kexec -e`, or
+    systemctl's or loginctl's verb for one, spelled as `cmd` spells it; None for any other command."""
+    name = cmd.name
+    if name in ("reboot", "shutdown", "poweroff", "halt", "pm-suspend", "pm-hibernate", "pm-suspend-hybrid", "zzz", "s2ram"):
+        return name
+    if name in ("init", "telinit") and (level := next((a for a in cmd.args if a in ("0", "6", "1", "s", "S")), None)):
+        return f"{name} {level}"
+    if name == "kexec" and any(a in ("-e", "--exec") for a in cmd.args):
+        return "kexec -e"
+    if name in ("systemctl", "loginctl"):
+        ops = [a for a in cmd.args if not a.startswith("-")]
+        verb = ops[0] if ops else ""
+        if verb in _w(
+            "reboot poweroff halt kexec isolate rescue emergency suspend hibernate hybrid-sleep "
+            "suspend-then-hibernate soft-reboot default exit"
+        ):
+            return f"{name} {verb}"
     return None
 
 
