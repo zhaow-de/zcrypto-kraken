@@ -27,7 +27,7 @@ Reading rules:
 | valkey + sentinel | zcrypto-valkey2 | `418652cfb58e` — Valkey 9.1.2, upstream `valkey/valkey` | 2026-09-26 21:24:03 | first pin |
 | alloy | zcrypto-valkey2 | `9acc2529bc1e` — v1.22.0 | 2026-11-26 19:48:16 | `89a5a3201683` — v1.21.2 |
 | valkey + sentinel | zcrypto-valkey3 | `418652cfb58e` — Valkey 9.1.2, upstream `valkey/valkey` | 2026-09-26 21:28:18 | first pin |
-| alloy | zcrypto-valkey3 | `89a5a3201683` — v1.21.2 | 2026-11-06 15:11:19 | `2aa2099af76c` — v1.20.1 |
+| alloy | zcrypto-valkey3 | `9acc2529bc1e` — v1.22.0 | 2026-11-26 19:53:49 | `89a5a3201683` — v1.21.2 |
 | ops (timers + liquidations) | zcrypto-ops | `98cfad6c97cf` — revision `3818d749` | 2026-11-23 11:46:52 | `512ba1a02ea9` |
 | bitcoind | zcrypto-ops | `987f63d5e223` — Bitcoin Core v32.1, the local build of `infra/docker/bitcoind/Dockerfile` | 2026-11-24 01:18:17 | first pin |
 | bitview | zcrypto-ops | `2dbc2962c54c` — BRK at `1a19c5e96976`, the local build of its `docker/Dockerfile` | 2026-11-24 11:09:02 | first pin |
