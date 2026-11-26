@@ -4,7 +4,7 @@ Sessions talk through `SendMessage`, addressed by name. Session identity is not 
 
 ## Roles and authorities
 
-- `zcrypto-marco` — the coordinator: assigns work, keeps `.local/coordination.md`, and holds the PR word, topic registration, the memo, and the fleet's host commands (`.claude/rules/fleet-deploys.md`'s host-command line; the daily pass runs its own two tiers the same way).
+- `zcrypto-marco` — the coordinator: assigns work, keeps `.local/coordination.md`, and holds the PR word, topic registration, the memo, and the fleet's host commands (`.claude/rules/fleet-deploys.md`'s host-command line).
 - `zcrypto-alex`, `zcrypto-bravo` — payload sessions: one assignment at a time, in the worktree the brief names; they report by message.
 - `zcrypto-zebra` — the owner's own session; marco assigns it a subject when the owner names it in (set: the zebra row of the table; count: `awk -F'|' '/^\| *zcrypto-zebra/ {gsub(/ /,"",$5); print $5!="—"}' .local/coordination.md`).
 - Subagents belong to the dispatching session; a brief inlines the task's context and pastes neither memo nor table (set: the briefs in `.local/dispatch/`, subagent and payload alike — the files there named for the session they address, or for the brief or arm they are; count: `ls .local/dispatch/*.md | grep -Ei -- '-zcrypto-|brief|prompt|drafter|arm' | xargs -r grep -lE '^\| *zcrypto-(alex|bravo|zebra) *\||^#+ (WORK-ITEMS QUEUE|NEW IDEAS|DONE ITEMS|ABANDONED ITEMS)' | wc -l` — run from the main checkout, which is where the directory lives — briefs carrying a table row or a memo section heading; the directory's remaining files are worklists and read reports, which quote both by design).
