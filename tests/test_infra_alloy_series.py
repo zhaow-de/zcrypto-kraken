@@ -91,7 +91,7 @@ def _installed_units() -> set[str]:
     return units
 
 
-# grafana/alloy v1.22.0's Linux default for the unix exporter's `fs_types_exclude`
+# grafana/alloy's Linux default for the unix exporter's `fs_types_exclude`
 # (internal/static/integrations/node_exporter/config.go), which a set attribute replaces whole;
 # an Alloy bump re-reads it there before this list and ops' restatement move with the version.
 _ALLOY_VERSION_OF_THE_DEFAULT = "1.22.0"
