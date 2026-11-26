@@ -1241,9 +1241,17 @@ def judge_hosts(words, hosts, handed, raw, cwd):
         )
     for host in hosts:
         if alias := fleet_alias(host, names):
+            # the stage, not the one call, is read for a transfer: a remedy naming both routes is true of either
+            moves = any(w.rpartition("/")[2] in ("scp", "sftp", "rsync") for w in words)
+            how = (
+                f"Run a command there as `{HOST_RUN.format(alias)}`, the block on stdin; a file transfer has no route "
+                f"through that wrapper and is the owner's to run (infra/runbooks/nas.md's `nas-file-transfer` for the NAS)."
+                if moves
+                else f"Run it as `{HOST_RUN.format(alias)}`, the block on stdin."
+            )
             refuse(
                 f"`{spelled(words)}` reaches the fleet host `{host}` past the prescribed route, which judges and records "
-                f"what a session runs there; in `{raw}`. Run it as `{HOST_RUN.format(alias)}`, the block on stdin."
+                f"what a session runs there; in `{raw}`. {how}"
             )
 
 
