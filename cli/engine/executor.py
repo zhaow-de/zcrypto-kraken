@@ -2412,12 +2412,10 @@ class ProbeExecutor:
 
     def _trades_cover(self, boundary: datetime, venue_order_id: str | None, ledgered: float) -> bool | None:
         """Whether the venue's trade history holds fills for `venue_order_id` summing to at least
-        `ledgered`, the withdrawal check's second source (spec 00120 D19): an order's figure falls short of
-        the ledger without a withdrawal when it is the Cache's copy the library created from the venue's
-        report with none of its fills applied, a cold start's shape, or when it is Kraken's own order report
-        reading below Kraken's own trade history, an inconsistency at the venue and no library artifact --
-        the caller's WARNING names which. None -- the check then trips on the order's figure
-        -- for a row with no txid and, for the rest of the pass, once the history's one read
+        `ledgered`, the withdrawal check's second source (spec 00120 D19): an order's figure -- the Cache's
+        copy the library created with none of its fills applied, a cold start's shape, or Kraken's own order
+        report -- can fall short of the ledger without a withdrawal. None -- the check then trips on the
+        order's figure -- for a row with no txid and, for the rest of the pass, once the history's one read
         (`_reset_fills_read`) has failed, since an unread history is no evidence either way."""
         if venue_order_id is None or self._venue_fills_failed:
             return None

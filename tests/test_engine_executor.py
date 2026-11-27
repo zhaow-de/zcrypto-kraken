@@ -12152,10 +12152,7 @@ _BY_THE_COPY = "the figure is the library's copy without its fills applied, no w
     ids=["restored-report", "restored-closed-copy", "report-without-a-copy", "copy"],
 )
 def test_the_cover_warning_names_the_figure_that_fell_short_of_the_trade_history(tmp_path, figure, cache, said, unsaid):
-    """Where a venue report answers the row -- a restored row's with the cache on, at the sweep or through the
-    cancel of a copy the library closed, and a row's whose order the Cache does not hold -- the short figure is
-    Kraken's listing below Kraken's own trade history; only the Cache's copy is the library's. The restored
-    copies read at or above the ledger's 0.4, so a line reading 0 there was read off the report."""
+    """The restored copies read at or above the ledger's 0.4, so a line reading 0 in those cases was read off the report."""
     earlier = _cold_start_row(tmp_path)
     copy = _resting_limit_order(_TXID, venue_order_id=_TXID, strategy_id=_EXTERNAL)
     if figure.startswith("restored"):
