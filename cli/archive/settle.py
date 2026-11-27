@@ -31,8 +31,8 @@ import polars as pl
 
 from cli.capture.errors import CaptureError
 
-# An hour is finalized at H+1h and carried to the NAS by the pull cycle that follows; H+2h gives both
-# a full cycle to land, so a settled hour is complete on both mirrors or genuinely missing from them.
+# An hour's book finals close at H+1h and are carried to the NAS by the pull cycle that follows; H+2h gives
+# both a full cycle to land.
 SETTLE_HOURS = 2
 
 # Past this, a complete secondary hour is minted even with the primary's still absent: an hour that
@@ -47,10 +47,10 @@ FINAL_NAME = re.compile(r"^(\d{2})\.parquet$")
 
 
 def settled_hours(*, now: datetime, window_hours: int) -> list[datetime]:
-    """The trailing window of hours old enough to be complete on both mirrors, OLDEST first.
+    """The trailing window of hours at least `SETTLE_HOURS` old, OLDEST first.
 
     Re-scanned every cycle: a residual hour may be healable in the next, and the LEDGER — not this list —
-    stops a decided hour being re-decided. Every hour inherits `now`'s offset, so a non-UTC `now` is refused here.
+    stops a decided hour being re-decided.
     """
     if now.tzinfo is None:
         raise CaptureError(f"refusing to settle hours from {now!r}: a naive `now`, with no offset to check against UTC")

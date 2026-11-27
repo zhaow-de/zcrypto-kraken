@@ -46,6 +46,7 @@ from cli.archive.reconcile import (
 )
 from cli.archive.settle import (
     CAPTURE_DIVERGENT,
+    LATE_MINT_HOURS,
     VENUE_HALT,
     classify_dark_episode,
     classify_halt,
@@ -315,10 +316,11 @@ def _booked_residual(records: list[dict], pair: str, hour: datetime) -> list[tup
     """The residual windows `pair`'s own book record already booked as loss for `hour`.
 
     The mirror image of `_booked_dark`, and the reason the attribution is order-independent: an
-    unreadable segment suppresses the fleet detector for a cycle, so a pair that mints in the
-    meantime books its residual first and the fleet record must then book only the rest. Records
-    written before residual was measured carry no `residual_gaps` and booked nothing, so they
-    correctly subtract nothing.
+    unreadable segment suppresses the fleet detector for a cycle, and on one at or past the late
+    deadline the book heal no longer waits for it, so a pair that mints in the meantime books its
+    residual first and the fleet record must then book only the rest. Records written before
+    residual was measured carry no `residual_gaps` and booked nothing, so they correctly subtract
+    nothing.
     """
     stamp = hour.isoformat()
     for record in records:
@@ -857,6 +859,7 @@ def reconcile(
         # no book file exists at all (the hour is total_loss territory -- booking it here as well
         # would double-count the same seconds into a counter that can never be walked back).
         present = [pair for pair, frames in books.items() if any(f is not None for f in frames.values())]
+        deferred = broken and not late
         if present and not broken:
             windows = fleet_dark_windows(stamps, hour_start=hour, hour_end=hour_end, min_seconds=min_gap_seconds)
             if windows and not _decided("*", "book", hour, "both_streams_silent"):
@@ -892,9 +895,8 @@ def reconcile(
                         if c is not None and c not in own:
                             own.append(c)
                     stream_windows[p] = own
-                # Minus whatever that stream's own book record already booked for the same seconds:
-                # normally none exists yet, but after a cycle in which an unreadable segment
-                # suppressed this detector, a pair that minted meanwhile booked its residual first.
+                # Minus whatever that stream's own book record already booked for the same seconds: normally none,
+                # `_booked_residual` says when one exists.
                 residual = sum(
                     sum(c.seconds for c in own)
                     - overlap_seconds(_booked_residual(records, p, hour), [(c.start, c.end) for c in own])
@@ -922,65 +924,84 @@ def reconcile(
                     },
                     hour_end=hour_end,
                 )
-                # So does a pair with no trades final on either mirror: a writer fault both hosts share
-                # removes exactly the prints the proof reads.
-                for p in present:
-                    if all(hour not in scans[src]["trades"].get(p, set()) for src in ("primary", "secondary")):
+                # `cli/capture/segment_writer.py`'s trades writer closes a pair's hour only at its next print, so a quiet
+                # pair's final can reach the NAS after the hour settles, and a trades read can fail on one cycle and
+                # succeed on the next: until the late deadline the hour waits for both.
+                missing = [
+                    p for p in present if all(hour not in scans[src]["trades"].get(p, set()) for src in ("primary", "secondary"))
+                ]
+                deferred = bool(missing or unread) and not late
+                if deferred:
+                    logger.warning(
+                        "archive reconcile: booking deferred hour=%s until=%s missing=%s unreadable=%s -- a fleet-dark hour"
+                        " waits for these trades segments, then books whatever arrived",
+                        hour.isoformat(),
+                        (hour + timedelta(hours=LATE_MINT_HOURS)).isoformat(),
+                        ",".join(missing) or "-",
+                        ",".join(unread) or "-",
+                    )
+                else:
+                    # At the late deadline, so does a pair still with no trades final on either mirror: a writer
+                    # fault both hosts share removes exactly the prints the proof reads.
+                    for p in missing:
                         logger.warning("archive reconcile: no trades segment on either mirror pair=%s hour=%s", p, hour.isoformat())
                         unread.append(p)
-                verdict = VENUE_HALT if halt.holds and not unread and episode.verdict != CAPTURE_DIVERGENT else episode.verdict
-                halted = verdict == VENUE_HALT
-                # WARNING for a halt: `Ops · ERROR logs` pages on this line, and a halt is not loss.
-                (logger.warning if halted else logger.error)(
-                    "archive reconcile: both_streams_silent hour=%s windows=%d residual_s=%.1f verdict=%s updates=%d snapshots=%d divergent=%s"
-                    " halt_s=%.1f carried=%d/%d bracketed=%d/%d trades_inside=%d id_holes=%d quiet_s=%.3f",
-                    hour.isoformat(),
-                    len(windows),
-                    0.0 if halted else residual,
-                    verdict,
-                    episode.interior_updates,
-                    episode.interior_snapshots,
-                    ",".join(episode.divergent_pairs) or "-",
-                    residual if halted else 0.0,
-                    halt.streams_carried,
-                    halt.streams,
-                    halt.windows_bracketed,
-                    halt.windows,
-                    halt.trades_inside,
-                    halt.id_holes,
-                    halt.quiet_seconds,
-                )
-                _ledger(
-                    state="both_streams_silent",
-                    pair="*",  # fleet-wide by construction: it is the intersection across every pair
-                    kind="book",
-                    hour=hour.isoformat(),
-                    pairs=present,
-                    windows=[{"start": w.start, "end": w.end, "seconds": w.seconds} for w in windows],
-                    # What was ACTUALLY booked, per stream. `_booked_dark` reads this so the healed
-                    # path subtracts the same seconds; `windows` stays as the intersection provenance.
-                    stream_windows={
-                        p: [{"start": c.start, "end": c.end, "seconds": c.seconds} for c in own]
-                        for p, own in stream_windows.items()
-                    },
-                    residual_seconds=0.0 if halted else residual,
-                    halt_seconds=residual if halted else 0.0,
-                    verdict=verdict,
-                    interior_updates=episode.interior_updates,
-                    interior_snapshots=episode.interior_snapshots,
-                    interior_seconds=episode.interior_seconds,
-                    pairs_agreeing=episode.pairs_agreeing,
-                    pairs_skipped=episode.pairs_skipped,
-                    divergent_pairs=list(episode.divergent_pairs),
-                    streams_carried=halt.streams_carried,
-                    windows_bracketed=halt.windows_bracketed,
-                    trades_inside=halt.trades_inside,
-                    trade_id_holes=halt.id_holes,
-                    quiet_seconds=halt.quiet_seconds,
-                )
+                    verdict = VENUE_HALT if halt.holds and not unread and episode.verdict != CAPTURE_DIVERGENT else episode.verdict
+                    halted = verdict == VENUE_HALT
+                    # WARNING for a halt: `Ops · ERROR logs` pages on this line, and a halt is not loss.
+                    (logger.warning if halted else logger.error)(
+                        "archive reconcile: both_streams_silent hour=%s windows=%d residual_s=%.1f verdict=%s updates=%d snapshots=%d"
+                        " divergent=%s halt_s=%.1f carried=%d/%d bracketed=%d/%d trades_inside=%d id_holes=%d quiet_s=%.3f",
+                        hour.isoformat(),
+                        len(windows),
+                        0.0 if halted else residual,
+                        verdict,
+                        episode.interior_updates,
+                        episode.interior_snapshots,
+                        ",".join(episode.divergent_pairs) or "-",
+                        residual if halted else 0.0,
+                        halt.streams_carried,
+                        halt.streams,
+                        halt.windows_bracketed,
+                        halt.windows,
+                        halt.trades_inside,
+                        halt.id_holes,
+                        halt.quiet_seconds,
+                    )
+                    _ledger(
+                        state="both_streams_silent",
+                        pair="*",  # fleet-wide by construction: it is the intersection across every pair
+                        kind="book",
+                        hour=hour.isoformat(),
+                        pairs=present,
+                        windows=[{"start": w.start, "end": w.end, "seconds": w.seconds} for w in windows],
+                        # What was ACTUALLY booked, per stream. `_booked_dark` reads this so the healed
+                        # path subtracts the same seconds; `windows` stays as the intersection provenance.
+                        stream_windows={
+                            p: [{"start": c.start, "end": c.end, "seconds": c.seconds} for c in own]
+                            for p, own in stream_windows.items()
+                        },
+                        residual_seconds=0.0 if halted else residual,
+                        halt_seconds=residual if halted else 0.0,
+                        verdict=verdict,
+                        interior_updates=episode.interior_updates,
+                        interior_snapshots=episode.interior_snapshots,
+                        interior_seconds=episode.interior_seconds,
+                        pairs_agreeing=episode.pairs_agreeing,
+                        pairs_skipped=episode.pairs_skipped,
+                        divergent_pairs=list(episode.divergent_pairs),
+                        streams_carried=halt.streams_carried,
+                        windows_bracketed=halt.windows_bracketed,
+                        trades_inside=halt.trades_inside,
+                        trade_id_holes=halt.id_holes,
+                        quiet_seconds=halt.quiet_seconds,
+                    )
 
         # --- the witness-based heal: books ------------------------------------------------------
-        for pair in book_pairs:
+        # Waits while the fleet record cannot yet be decided -- a deferred hour, or a cycle before the late deadline
+        # with an unreadable book segment: `_book_entry` subtracts only the seconds that record has booked, so a pair
+        # minted first would book its share of the silence as loss.
+        for pair in () if deferred else book_pairs:
             frames = books[pair]
             secondary = frames["secondary"]
             if secondary is None or _decided(pair, "book", hour, "minted"):
