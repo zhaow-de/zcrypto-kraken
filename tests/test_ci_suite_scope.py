@@ -13,13 +13,13 @@ REPO = Path(__file__).resolve().parents[1]
 SUITE = REPO / ".github" / "workflows" / "test-suite.yml"
 HARNESS = "tests/test_cache_restart.py"
 # Each test runs in one of the two steps as far as the steps' command lines, PYTEST_ADDOPTS in the workflow's env and
-# the ini file pytest reads decide it, each held by a case below; a conftest hook's deselection (tests/conftest.py's
-# slow cases off CI) is held by its own tests, tests/test_slow_ledger.py, not here.
+# the ini file pytest reads decide it, each held by a case below; tests/conftest.py's slow-case deselection is held by
+# tests/test_slow_ledger.py, not here.
 # The dests of the options that select no test. Any other option a step gives but the split case's expected `-m` and
 # `--ignore` fails that case, until a reader who has judged it selects nothing adds its dest here.
 _SELECTS_NOTHING = {"numprocesses", "dist", "maxschedchunk", "maxfail", "durations"}
 # The ini keys that select no test. Any other key but `addopts`, which the ini case holds whole, fails that case
-# (`testpaths`, `python_files` and `norecursedirs` change what a step collects), until a reader adds it here.
+# until a reader who has judged it selects nothing adds it here.
 _INI_SELECTS_NOTHING = {"markers"}
 
 
@@ -122,8 +122,7 @@ def test_the_harness_and_the_rest_of_the_suite_are_the_two_steps_of_one_parallel
 
 
 def test_the_workflow_sets_no_pytest_addopts_on_itself_its_job_or_any_step():
-    # pytest puts PYTEST_ADDOPTS ahead of a step's argv: on the workflow or the job it reaches both steps, on a step
-    # that step, and written to `$GITHUB_ENV` every step after it.
+    # A string naming it counts too: a `run` that writes it to `$GITHUB_ENV` sets it for every later step.
     found = _naming(yaml.safe_load(SUITE.read_text(encoding="utf-8")), "PYTEST_ADDOPTS")
     assert not found, f"PYTEST_ADDOPTS gives a step's pytest options the split case never reads, at {found}"
 
@@ -136,8 +135,7 @@ def test_each_step_reads_its_ini_from_pyproject_whose_addopts_is_strict_markers_
             inifile=None, override_ini=None, args=[str(REPO / path) for path in paths], rootdir_cmd_arg=None, invocation_dir=REPO
         )
         assert inipath == REPO / "pyproject.toml", (
-            f"{argv}: pytest reads its ini from {inipath}, the first config file it finds from the step's paths upward, "
-            "so pyproject.toml's addopts and keys held here no longer reach that step"
+            f"{argv}: pytest reads its ini from {inipath}, so pyproject.toml's addopts and keys held here no longer reach that step"
         )
         held = {key: value.value for key, value in inicfg.items() if key not in _INI_SELECTS_NOTHING}
         assert held == {"addopts": ["--strict-markers"]}, (
