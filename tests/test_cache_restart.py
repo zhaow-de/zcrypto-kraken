@@ -712,9 +712,15 @@ def test_an_order_cancelled_while_the_engine_was_down_is_closed_by_the_librarys_
     assert (row["state"], row["filled_qty"], intent["outcome"]) == ("canceled", 0.4, "revoked")
 
 
-def test_a_trade_frame_on_a_restored_open_order_is_booked_twice_by_the_library(phase_one):
+@pytest.mark.parametrize("with_order_qty", [True, False], ids=["with-order_qty", "without-order_qty"])
+def test_a_trade_frame_on_a_restored_open_order_is_booked_twice_by_the_library(phase_one, with_order_qty):
     """The row is the previous process's reducer, which the startup pass keeps, so the order is still
-    open when the `trade` frame lands."""
+    open when the `trade` frame (last 0.2, cumulative 0.6) lands. With `order_qty` the library books it
+    twice, 0.8 on a copy that stays open. Without it, the shape of Kraken's live `trade` frames (T0226's
+    resolution), the library rewrites the copy to its filled 0.6, `FILLED`, and rejects the frame's own
+    fill; no cancel goes in that process, and the next start's pass cancels the remainder at Kraken by
+    its txid. Either way both fills credit the row nothing and the re-read pass repairs it to the venue's
+    0.6, its intent left `pending`."""
     valkey, node, wire, _ = phase_one
     node.mark_row_reducer(wire["client_order_id"])
     with _venue() as (venue, data, exec_):
@@ -740,31 +746,44 @@ def test_a_trade_frame_on_a_restored_open_order_is_booked_twice_by_the_library(p
             exec_.send_execution(
                 lb.exec_trade(
                     wire["txid"], wire["cl_ord_id"], symbol=SYMBOL, qty=QTY, price=PRICE, last_qty=0.2, cum_qty=0.6,
-                    exec_id="TLOOP3-AAAAA-AAAAAA", trade_id=1003,
+                    exec_id="TLOOP3-AAAAA-AAAAAA", trade_id=1003, with_order_qty=with_order_qty,
                 )
             )  # fmt: skip
             venue.open_orders[wire["txid"]].update(vol_exec="0.60000000", cost="90.00000")
             venue.trades["TLOOP3-AAAAA-AAAAAA"] = lb.trade_row(
                 wire["txid"], PAIR, vol="0.20000000", price="150.00", trade_id=1003, time=time.time()
             )
+            venue.positions["TPOSLP-AAAAA-BBBBBB"].update(vol="0.60000000", cost="90.00000")
 
         _script(exec_, later)
         record = node.run(2, venue, data, exec_, window=PHASE2_WINDOW)
         cancels = list(venue.cancel_forms)
+        holdings = venue.holdings()
 
     assert record["errors"] == [], record["errors"]
     assert cancels == [], cancels  # the pass kept the reducer
     assert "Generated inferred fill" in record["log"]
-    fills = [e for e in record["own"] if e["type"] == "OrderFilled"]
-    assert [(e["last_qty"], e["reconciliation"]) for e in fills] == [("0.20000000", True), ("0.20000000", True)], fills
     [order] = record["at_end"]["orders"]
-    assert order["filled_qty"] == "0.80000000"  # the venue's cumulative figure is 0.6
+    if with_order_qty:
+        fills = [e for e in record["own"] if e["type"] == "OrderFilled"]
+        assert [(e["last_qty"], e["reconciliation"]) for e in fills] == [("0.20000000", True), ("0.20000000", True)], fills
+        assert (order["status"], order["filled_qty"]) == ("PARTIALLY_FILLED", "0.80000000")  # the venue's cumulative figure is 0.6
+    else:
+        assert [(e["type"], e["reconciliation"], e.get("last_qty")) for e in record["own"]] == [
+            ("OrderUpdated", True, None),
+            ("OrderFilled", True, "0.20000000"),
+        ], record["own"]
+        assert (order["status"], order["quantity"], order["filled_qty"]) == ("FILLED", "0.60000000", "0.60000000")
+        assert (
+            f"Rejecting fill that would cause overfill for {wire['client_order_id']}: order.quantity=0.60000000, "
+            "order.filled_qty=0.60000000, fill.last_qty=0.20000000, would result in filled_qty=0.80000000"
+        ) in record["log"]
     # The executor: both fills credit the row nothing, the re-read pass repairs it to the venue's 0.6,
     # and the kept reducer's intent stays pending on its open row.
     assert record["restored"] == [wire["client_order_id"]]
     [row] = node.rows()
     fills = [e for e in row["events"] if e.get("event") == "fill"]
-    assert [(e["qty"], e.get("credited")) for e in fills] == [(0.4, None), (0.2, 0.0), (0.2, 0.0)]
+    assert [(e["qty"], e.get("credited")) for e in fills] == [(0.4, None), (0.2, 0.0)] + [(0.2, 0.0)] * with_order_qty
     assert "the re-read pass reads 1 restored row(s) with a fill since its last read against the venue" in record["log"]
     assert (row["filled_qty"], row["state"]) == (pytest.approx(0.6), "accepted")
     [intent] = node.intents()
@@ -772,6 +791,35 @@ def test_a_trade_frame_on_a_restored_open_order_is_booked_twice_by_the_library(p
     # The realized baseline over a real restored position: each fill's publish reads this process's own
     # realizations, the previous run's left in the baseline.
     assert record["metrics"]["realized"] and set(record["metrics"]["realized"]) == {0.0}, record["metrics"]["realized"]
+    if with_order_qty:
+        return
+
+    # The next start: the copy comes back FILLED, which the library's reconciliation cannot move back to the
+    # venue's open order, and the pass cancels the remainder at Kraken by its txid.
+    with _venue() as (venue, data, exec_):
+        venue.hold(holdings)
+        _script_cancel_ack(venue, exec_, wire)
+        record = node.run(3, venue, data, exec_, window=PHASE2_WINDOW)
+        cancels = list(venue.cancel_forms)
+        resting = dict(venue.open_orders)
+        closed = dict(venue.closed_orders)
+
+    assert record["errors"] == [], record["errors"]
+    [order] = record["at_start"]["orders"]
+    assert (order["status"], order["filled_qty"]) == ("FILLED", "0.60000000")
+    assert f"Cannot project reconciliation fill for {wire['client_order_id']}: Invalid order state transition" in record["log"]
+    assert [form.get("txid") for form in cancels] == [wire["txid"]]
+    assert (resting, closed[wire["txid"]]["status"], closed[wire["txid"]]["vol_exec"]) == ({}, "canceled", "0.60000000")
+    assert (
+        f"cancelled {wire['client_order_id']} (Kraken {wire['txid']}) at Kraken by its txid -- Kraken listed it open (ACCEPTED, "
+        "0.6 of 1 filled) while the Cache reads it FILLED, which no cancel through the Cache reaches; its row reads canceled"
+    ) in record["log"]
+    [row] = node.rows()
+    assert (row["state"], row["filled_qty"], row["events"][-1].get("event")) == ("canceled", pytest.approx(0.6), "recancelled")
+    # The intent is the re-read pass's, which the cancel armed and which waits past this window for the gate's first
+    # idle refresh, where nothing rests.
+    [intent] = node.intents()
+    assert intent["outcome"] == "pending"
 
 
 @pytest.mark.parametrize("with_order_qty", [True, False], ids=["with-order_qty", "without-order_qty"])
