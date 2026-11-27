@@ -895,10 +895,8 @@ def reconcile(
                         if c is not None and c not in own:
                             own.append(c)
                     stream_windows[p] = own
-                # Minus whatever that stream's own book record already booked for the same seconds:
-                # normally none exists yet, but after a cycle at or past the late deadline in which an
-                # unreadable segment suppressed this detector, a pair that minted meanwhile booked its
-                # residual first.
+                # Minus whatever that stream's own book record already booked for the same seconds: normally none,
+                # `_booked_residual` says when one exists.
                 residual = sum(
                     sum(c.seconds for c in own)
                     - overlap_seconds(_booked_residual(records, p, hour), [(c.start, c.end) for c in own])
@@ -928,8 +926,7 @@ def reconcile(
                 )
                 # `cli/capture/segment_writer.py`'s trades writer closes a pair's hour only at its next print, so a quiet
                 # pair's final can reach the NAS after the hour settles, and a trades read can fail on one cycle and
-                # succeed on the next: until the late deadline the hour waits for both, with no fleet record and no
-                # book heal, then books with whatever arrived.
+                # succeed on the next: until the late deadline the hour waits for both.
                 missing = [
                     p for p in present if all(hour not in scans[src]["trades"].get(p, set()) for src in ("primary", "secondary"))
                 ]

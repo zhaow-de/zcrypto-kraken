@@ -98,7 +98,6 @@ def _plant_primary_gap(pri: Path, sec: Path, hour: datetime, pair: str = "BTC/EU
 
 
 def _tapes(pri: Path, hour: datetime, *, pairs: tuple[str, ...] = PAIRS) -> None:
-    """Each pair's trades final on the primary, its one print in the hour's first second."""
     for pair in pairs:
         _write(pri, pair, "trades", hour, _trades(pair, hour, [1]))
 
