@@ -47,7 +47,7 @@ FINAL_NAME = re.compile(r"^(\d{2})\.parquet$")
 
 
 def settled_hours(*, now: datetime, window_hours: int) -> list[datetime]:
-    """The trailing window of hours old enough to be complete on both mirrors, OLDEST first.
+    """The trailing window of hours old enough that their book finals have landed on both mirrors, OLDEST first.
 
     Re-scanned every cycle: a residual hour may be healable in the next, and the LEDGER — not this list —
     stops a decided hour being re-decided. Every hour inherits `now`'s offset, so a non-UTC `now` is refused here.
