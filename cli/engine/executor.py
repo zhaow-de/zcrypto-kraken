@@ -2654,8 +2654,8 @@ class ProbeExecutor:
             logger.warning(
                 (
                     "adopted order %s reads %.10g filled on its order figure against the %.10g recorded here, and the venue's "
-                    "trade history covers the ledger -- the figure is Kraken's own order report reading below Kraken's own "
-                    "trade history, an inconsistency at the venue to look into and not a library artifact, no withdrawal"
+                    "trade history covers the ledger -- the figure is Kraken's order report as this engine read it, below the "
+                    "trade history it read: compare the order's executed volume with its trades at Kraken, no withdrawal"
                 )
                 if from_report
                 else (
