@@ -47,7 +47,7 @@ def _at(seconds: float) -> datetime:
 
 
 def test_an_hour_younger_than_the_settle_delay_is_never_offered():
-    # 09:00 finalizes at 10:00 and is pulled by ~11:00; at 11:30 it is settled, 10:00 is not.
+    # 09:00's book finals close at 10:00 and are pulled by ~11:00; at 11:30 it is settled, 10:00 is not.
     hours = settled_hours(now=datetime(2026, 7, 16, 11, 30, tzinfo=UTC), window_hours=48)
     assert hours[-1] == H
     assert H + timedelta(hours=1) not in hours

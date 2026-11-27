@@ -31,8 +31,9 @@ import polars as pl
 
 from cli.capture.errors import CaptureError
 
-# An hour is finalized at H+1h and carried to the NAS by the pull cycle that follows; H+2h gives both
-# a full cycle to land, so a settled hour is complete on both mirrors or genuinely missing from them.
+# An hour's book finals close at H+1h and are carried to the NAS by the pull cycle that follows; H+2h gives
+# both a full cycle to land. `cli/capture/segment_writer.py`'s trades writer closes a pair's hour only at its
+# next print, so a quiet pair's trades final can land later than that.
 SETTLE_HOURS = 2
 
 # Past this, a complete secondary hour is minted even with the primary's still absent: an hour that

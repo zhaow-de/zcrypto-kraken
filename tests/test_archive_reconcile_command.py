@@ -97,6 +97,12 @@ def _plant_primary_gap(pri: Path, sec: Path, hour: datetime, pair: str = "BTC/EU
     _write(sec, pair, "book", hour, _book(pair, hour, _dense(range(3, 3600, 10))))
 
 
+def _tapes(pri: Path, hour: datetime, *, pairs: tuple[str, ...] = PAIRS) -> None:
+    """Each pair's trades final on the primary, its one print in the hour's first second."""
+    for pair in pairs:
+        _write(pri, pair, "trades", hour, _trades(pair, hour, [1]))
+
+
 def _run(args: list[str], *, now: datetime, monkeypatch) -> object:
     monkeypatch.setattr(command, "_utc_now", lambda: now)
     return CliRunner().invoke(app, ["archive", "reconcile", *args])
@@ -253,6 +259,7 @@ def test_both_streams_silent_is_ledgered_paged_and_never_minted(tmp_path, monkey
     for pair in PAIRS:
         _write(pri, pair, "book", H, _book(pair, H, dark))
         _write(sec, pair, "book", H, _book(pair, H, dark))
+    _tapes(pri, H)
 
     result = _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
 
@@ -707,6 +714,7 @@ def test_a_fleet_dark_window_is_never_booked_as_loss_twice(tmp_path, monkeypatch
     pri, sec, rec = _roots(tmp_path)
     for pair in PAIRS:
         _outage(pri, sec, H, pair, secondary_dark=True)
+    _tapes(pri, H)
 
     result = _run(
         [str(pri), str(sec), str(rec), "--mint", "--textfile", str(tmp_path / "r.prom")], now=SETTLED, monkeypatch=monkeypatch
@@ -798,6 +806,7 @@ def test_a_pair_whose_mirror_arrives_after_the_fleet_decision_still_books_its_ow
     its residual would delete a real loss from a total nobody ever added it to."""
     pri, sec, rec = _roots(tmp_path)
     _outage(pri, sec, H, "BTC/EUR", secondary_dark=True)
+    _tapes(pri, H, pairs=("BTC/EUR",))
 
     _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
     fleet = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"]
@@ -812,21 +821,25 @@ def test_a_pair_whose_mirror_arrives_after_the_fleet_decision_still_books_its_ow
 
 
 def test_a_pair_that_minted_before_the_fleet_detector_ran_is_not_booked_twice(tmp_path, monkeypatch):
-    """The mirror image: an unreadable segment suppresses the fleet detector for a cycle (an honest
-    timeline cannot be built from it), so a pair that mints meanwhile books its residual FIRST. The
-    fleet record must then book only the streams that have not already booked their own."""
+    """The mirror image: an unreadable segment suppresses the fleet detector for a cycle, and the hour's book heal waits
+    with it until the late deadline. Past it the heal no longer waits, so a pair that mints on such a cycle books its
+    residual FIRST, and the fleet record must then book only the streams that have not already booked their own."""
     pri, sec, rec = _roots(tmp_path)
     for pair in PAIRS:
         _outage(pri, sec, H, pair, secondary_dark=True)
+    _tapes(pri, H)
     _seg_path(sec, "ETH/EUR", "book", H).write_bytes(b"not a parquet")
 
     _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+    assert [(r["state"], r["pair"]) for r in _ledger(rec)] == [("failed", "ETH/EUR")], "the heal waits before the deadline"
+
+    _run([str(pri), str(sec), str(rec), "--mint"], now=LATE, monkeypatch=monkeypatch)
     btc = [r for r in _ledger(rec) if r["state"] == "minted" and r["pair"] == "BTC/EUR"][0]
     assert btc["residual_seconds"] == pytest.approx(590.0), "nothing had booked it yet"
     assert "both_streams_silent" not in _states(rec)
 
     _outage(pri, sec, H, "ETH/EUR", secondary_dark=True)  # the segment is re-pulled intact
-    _run([str(pri), str(sec), str(rec), "--mint", "--textfile", str(tmp_path / "r.prom")], now=SETTLED, monkeypatch=monkeypatch)
+    _run([str(pri), str(sec), str(rec), "--mint", "--textfile", str(tmp_path / "r.prom")], now=LATE, monkeypatch=monkeypatch)
 
     fleet = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"][0]
     assert fleet["residual_seconds"] == pytest.approx(590.0), "BTC/EUR's 590 s was already on its own record"
@@ -980,6 +993,7 @@ def test_each_stream_is_booked_its_own_window_not_the_intersection(tmp_path, mon
     pri, sec, rec = _roots(tmp_path)
     _dark_from(pri, sec, H, "BTC/EUR", quiet_from=600, quiet_to=1200)
     _dark_from(pri, sec, H, "ETH/EUR", quiet_from=600, quiet_to=1400)
+    _tapes(pri, H)
 
     result = _run([str(pri), str(sec), str(rec), "--textfile", str(tmp_path / "r.prom")], now=SETTLED, monkeypatch=monkeypatch)
     assert result.exit_code == 0, result.output
@@ -1001,6 +1015,7 @@ def test_a_streams_window_spanning_two_fleet_windows_is_booked_once(tmp_path, mo
     _write(pri, "BTC/EUR", "book", H, _book("BTC/EUR", H, [(s, "update") for s in sorted(btc)]))
     _write(sec, "BTC/EUR", "book", H, _book("BTC/EUR", H, [(s, "update") for s in sorted(btc)]))
     _dark_from(pri, sec, H, "ETH/EUR", quiet_from=600, quiet_to=1500)  # silent across both windows
+    _tapes(pri, H)
 
     _run([str(pri), str(sec), str(rec)], now=SETTLED, monkeypatch=monkeypatch)
 
@@ -1017,6 +1032,7 @@ def test_the_healed_path_subtracts_the_stream_window_the_fleet_record_actually_b
     pri, sec, rec = _roots(tmp_path)
     _dark_from(pri, sec, H, "BTC/EUR", quiet_from=600, quiet_to=1200)
     _dark_from(pri, sec, H, "ETH/EUR", quiet_from=600, quiet_to=1400)
+    _tapes(pri, H)
 
     _run([str(pri), str(sec), str(rec), "--mint", "--textfile", str(tmp_path / "r.prom")], now=SETTLED, monkeypatch=monkeypatch)
 
@@ -1075,6 +1091,7 @@ def test_a_stream_missing_a_mirror_is_booked_the_intersection_not_its_own_window
     _dark_from(pri, sec, H, "BTC/EUR", quiet_from=600, quiet_to=1200)
     _dark_from(pri, sec, H, "ETH/EUR", quiet_from=600, quiet_to=1400)
     _write(pri, "ADA/EUR", "book", H, _book("ADA/EUR", H, [(float(s), "update") for s in range(0, 600, 10)]))
+    _tapes(pri, H, pairs=("BTC/EUR", "ETH/EUR", "ADA/EUR"))
 
     result = _run([str(pri), str(sec), str(rec)], now=SETTLED, monkeypatch=monkeypatch)
     assert result.exit_code == 0, result.output
@@ -1098,6 +1115,7 @@ def test_a_present_but_empty_final_is_booked_the_intersection_not_the_whole_hour
     _dark_from(pri, sec, H, "ETH/EUR", quiet_from=600, quiet_to=1400)
     for root in (pri, sec):
         _write(root, "ADA/EUR", "book", H, _book("ADA/EUR", H, []))
+    _tapes(pri, H, pairs=("BTC/EUR", "ETH/EUR", "ADA/EUR"))
 
     _run([str(pri), str(sec), str(rec)], now=SETTLED, monkeypatch=monkeypatch)
 
@@ -1152,6 +1170,7 @@ def test_the_verdict_is_recorded_and_counted_while_the_booking_is_untouched(tmp_
     split = sorted(dark + [(1500.0, "update")])
     _write(pri, "BTC/EUR", "book", H, _book("BTC/EUR", H, split))
     _write(sec, "BTC/EUR", "book", H, _book("BTC/EUR", H, split))
+    _tapes(pri, H)
 
     # NOT caplog: cli/logging/config.py sets `propagate = False` on the `zcrypto` logger and
     # cli/__main__.py calls configure() on every CliRunner invocation, so records never reach
@@ -1222,6 +1241,7 @@ def test_the_dark_episode_counter_partitions_the_booked_seconds(tmp_path, monkey
     split = sorted(dark + [(1500.0, "update")])
     _write(pri, "BTC/EUR", "book", H, _book("BTC/EUR", H, split))
     _write(sec, "BTC/EUR", "book", H, _book("BTC/EUR", H, split))
+    _tapes(pri, H)
 
     textfile = tmp_path / "reconcile.prom"
     result = _run(
@@ -1436,7 +1456,7 @@ def test_an_unreadable_trades_segment_leaves_the_hour_unproven_whatever_another_
         _seg_path(sec, "BTC/EUR", "trades", H).unlink()
     errors, warnings = _capture_logs(monkeypatch)
 
-    result = _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+    result = _run([str(pri), str(sec), str(rec), "--mint"], now=LATE, monkeypatch=monkeypatch)
 
     assert result.exception is None or isinstance(result.exception, SystemExit), result.exception
     [record] = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"]
@@ -1477,7 +1497,7 @@ def test_a_readable_trades_segment_the_proof_cannot_use_leaves_the_hour_unproven
     _write(pri, "BTC/EUR", "trades", H, _prints("BTC/EUR", H, [(1185.0, 7), (1805.0, 8)]).with_columns(column))
     errors, warnings = _capture_logs(monkeypatch)
 
-    result = _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+    result = _run([str(pri), str(sec), str(rec), "--mint"], now=LATE, monkeypatch=monkeypatch)
 
     assert result.exception is None or isinstance(result.exception, SystemExit), result.exception
     [record] = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"]
@@ -1571,14 +1591,21 @@ def test_a_trades_stamp_with_no_python_value_fails_that_mint_and_the_cycle_lives
 
 
 def test_a_pair_with_no_trades_final_on_either_mirror_leaves_the_hour_unproven(tmp_path, monkeypatch):
+    """Waited for until the late deadline, then booked with what arrived: a pair still without one leaves it unproven."""
     pri, sec, rec = _roots(tmp_path)
     _plant_halt(pri, sec)
     for root in (pri, sec):
         _seg_path(root, "ETH/EUR", "trades", H).unlink()
     errors, warnings = _capture_logs(monkeypatch)
     textfile = tmp_path / "reconcile.prom"
+    args = [str(pri), str(sec), str(rec), "--mint", "--textfile", str(textfile)]
 
-    result = _run([str(pri), str(sec), str(rec), "--mint", "--textfile", str(textfile)], now=SETTLED, monkeypatch=monkeypatch)
+    for waiting in (SETTLED, LATE - timedelta(microseconds=1)):
+        assert _run(args, now=waiting, monkeypatch=monkeypatch).exit_code == 0
+        assert _ledger(rec) == []
+    assert not errors and not [m for m in warnings if "no trades segment" in m]
+
+    result = _run(args, now=LATE, monkeypatch=monkeypatch)
 
     assert result.exit_code == 0
     [record] = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"]
@@ -1609,6 +1636,127 @@ def test_a_trades_final_on_one_mirror_is_enough_for_a_halt(tmp_path, monkeypatch
     assert record["verdict"] == "venue_halt"
     assert record["halt_seconds"] == pytest.approx(1220.0)
     assert not [m for m in warnings if "no trades segment" in m]
+
+
+def test_a_dark_hour_missing_a_trades_final_waits_for_it_and_books_a_halt_once_it_lands(tmp_path, monkeypatch):
+    pri, sec, rec = _roots(tmp_path)
+    _plant_halt(pri, sec)
+    for root in (pri, sec):
+        _seg_path(root, "ETH/EUR", "trades", H).unlink()
+    errors, warnings = _capture_logs(monkeypatch)
+    textfile = tmp_path / "reconcile.prom"
+    args = [str(pri), str(sec), str(rec), "--mint", "--textfile", str(textfile)]
+
+    assert _run(args, now=SETTLED, monkeypatch=monkeypatch).exit_code == 0
+
+    assert _ledger(rec) == []
+    assert _series(textfile)["zcrypto_reconcile_residual_gap_seconds_total"] == 0.0
+    assert [m for m in warnings if "booking deferred" in m] == [
+        "archive reconcile: booking deferred hour=2026-07-16T09:00:00+00:00 until=2026-07-16T15:00:00+00:00 missing=ETH/EUR"
+        " unreadable=- -- a fleet-dark hour waits for these trades segments, then books whatever arrived"
+    ]
+    assert not errors and not [m for m in warnings if "no trades segment" in m]
+
+    _write(pri, "ETH/EUR", "trades", H, _prints("ETH/EUR", H, [(600.0, 40), (900.0, 41)]))
+    assert _run(args, now=SETTLED + timedelta(minutes=30), monkeypatch=monkeypatch).exit_code == 0
+
+    [record] = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"]
+    assert (record["verdict"], record["residual_seconds"], record["halt_seconds"]) == ("venue_halt", 0.0, pytest.approx(1220.0))
+    assert _series(textfile)["zcrypto_reconcile_residual_gap_seconds_total"] == 0.0
+    assert not errors
+
+
+def test_a_pair_that_mints_inside_a_deferred_dark_hour_waits_for_the_fleet_record(tmp_path, monkeypatch):
+    """BTC/EUR's primary resumes 30 s after its secondary, so the heal has seconds to mint inside the halt."""
+    pri, sec, rec = _roots(tmp_path)
+    _plant_halt(pri, sec)
+    _write(
+        pri, "BTC/EUR", "book", H, _book("BTC/EUR", H, [(float(s), "update") for s in range(0, 3600, 10) if not 1200 <= s < 1830])
+    )
+    for root in (pri, sec):
+        _seg_path(root, "ETH/EUR", "trades", H).unlink()
+    textfile = tmp_path / "reconcile.prom"
+    args = [str(pri), str(sec), str(rec), "--mint", "--textfile", str(textfile)]
+
+    assert _run(args, now=SETTLED, monkeypatch=monkeypatch).exit_code == 0
+
+    assert _ledger(rec) == []
+    assert not _seg_path(rec, "BTC/EUR", "book", H).exists()
+
+    _write(pri, "ETH/EUR", "trades", H, _prints("ETH/EUR", H, [(600.0, 40), (900.0, 41)]))
+    assert _run(args, now=SETTLED + timedelta(minutes=30), monkeypatch=monkeypatch).exit_code == 0
+
+    [fleet] = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"]
+    [minted] = [r for r in _ledger(rec) if r["state"] == "minted" and r["pair"] == "BTC/EUR"]
+    assert (fleet["verdict"], fleet["halt_seconds"]) == ("venue_halt", pytest.approx(1220.0))
+    assert minted["residual_seconds"] == pytest.approx(0.0)
+    assert _series(textfile)["zcrypto_reconcile_residual_gap_seconds_total"] == pytest.approx(0.0)
+
+
+def test_a_failed_book_read_on_a_waiting_cycle_mints_nothing_before_the_fleet_record(tmp_path, monkeypatch):
+    pri, sec, rec = _roots(tmp_path)
+    _plant_halt(pri, sec)
+    _write(
+        pri, "BTC/EUR", "book", H, _book("BTC/EUR", H, [(float(s), "update") for s in range(0, 3600, 10) if not 1200 <= s < 1830])
+    )
+    for root in (pri, sec):
+        _seg_path(root, "ETH/EUR", "trades", H).unlink()
+    book = _seg_path(sec, "ETH/EUR", "book", H)
+    intact = book.read_bytes()
+    textfile = tmp_path / "reconcile.prom"
+    args = [str(pri), str(sec), str(rec), "--mint", "--textfile", str(textfile)]
+
+    book.write_bytes(b"not a parquet")
+    assert _run(args, now=SETTLED, monkeypatch=monkeypatch).exit_code == 1
+
+    assert [(r["state"], r["pair"]) for r in _ledger(rec)] == [("failed", "ETH/EUR")]
+    assert not _seg_path(rec, "BTC/EUR", "book", H).exists()
+
+    book.write_bytes(intact)
+    _write(pri, "ETH/EUR", "trades", H, _prints("ETH/EUR", H, [(600.0, 40), (900.0, 41)]))
+    assert _run(args, now=SETTLED + timedelta(minutes=30), monkeypatch=monkeypatch).exit_code == 0
+
+    [fleet] = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"]
+    [minted] = [r for r in _ledger(rec) if r["state"] == "minted" and r["pair"] == "BTC/EUR"]
+    assert (fleet["verdict"], fleet["halt_seconds"]) == ("venue_halt", pytest.approx(1220.0))
+    assert minted["residual_seconds"] == pytest.approx(0.0)
+    assert _series(textfile)["zcrypto_reconcile_residual_gap_seconds_total"] == pytest.approx(0.0)
+
+
+def test_a_trades_segment_unreadable_on_one_cycle_is_read_again_on_the_next(tmp_path, monkeypatch):
+    pri, sec, rec = _roots(tmp_path)
+    _plant_halt(pri, sec)
+    _seg_path(sec, "BTC/EUR", "trades", H).unlink()
+    _seg_path(pri, "BTC/EUR", "trades", H).write_bytes(b"not a parquet")
+    errors, warnings = _capture_logs(monkeypatch)
+    args = [str(pri), str(sec), str(rec), "--mint"]
+
+    assert _run(args, now=SETTLED, monkeypatch=monkeypatch).exit_code == 0
+
+    assert _ledger(rec) == []
+    assert [m for m in warnings if "booking deferred" in m and " missing=- unreadable=primary BTC/EUR -- " in m]
+
+    _write(pri, "BTC/EUR", "trades", H, _prints("BTC/EUR", H, [(1185.0, 7), (1805.0, 8)]))
+    assert _run(args, now=SETTLED + timedelta(minutes=30), monkeypatch=monkeypatch).exit_code == 0
+
+    [record] = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"]
+    assert (record["verdict"], record["halt_seconds"]) == ("venue_halt", pytest.approx(1220.0))
+    assert not errors
+
+
+def test_a_trades_final_on_the_secondary_alone_is_enough_for_a_halt(tmp_path, monkeypatch):
+    pri, sec, rec = _roots(tmp_path)
+    _plant_halt(pri, sec)
+    _seg_path(pri, "BTC/EUR", "trades", H).unlink()
+    _, warnings = _capture_logs(monkeypatch)
+
+    result = _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+
+    assert result.exit_code == 0
+    [record] = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"]
+    assert record["verdict"] == "venue_halt"
+    assert record["halt_seconds"] == pytest.approx(1220.0)
+    assert not [m for m in warnings if "booking deferred" in m or "no trades segment" in m]
 
 
 def test_the_heal_still_subtracts_a_venue_halts_stream_windows():
