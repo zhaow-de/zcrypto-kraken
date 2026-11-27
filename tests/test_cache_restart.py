@@ -1428,6 +1428,47 @@ def test_a_start_imports_a_history_fill_from_719_minutes_before_it_and_nothing_o
     )
 
 
+def test_a_start_reads_the_account_the_engines_own_client_configs_name(tmp_path):
+    """The child replaces only the venue endpoints of node.py's two client configs, so a start asks the venue for the
+    engine's own account: the margin account's balance in the asset `margin_balance_asset` names and its open
+    positions, `spot_account_type`'s MARGIN branch, beside the private socket's token and the mass status's reads."""
+    asked: list[tuple[str, dict]] = []
+    valkey = _Valkey(tmp_path / "valkey")
+    try:
+        valkey.start()
+        node = _Node(tmp_path / "node", valkey.port)
+        with _venue() as (venue, data, exec_):
+            venue.balances = {"ZEUR": lb.balance("1000.00000000")}
+            answer = venue.answer
+
+            def recorded(method, path, query, form):
+                asked.append((path, form))
+                return answer(method, path, query, form)
+
+            venue.answer = recorded
+            record = node.run(1, venue, data, exec_, window=IMPORT_WINDOW)
+    finally:
+        valkey.stop()
+
+    assert record["errors"] == [], record["errors"]
+    assert "at_start" in record
+    # The nonce signs each read, and `start` is the reconciliation lookback, the 719/721-minute case's.
+    reads = sorted(
+        (path.removeprefix("/0/private/"), sorted((k, v) for k, v in form.items() if k not in ("nonce", "start")))
+        for path, form in asked
+        if path.startswith("/0/private/")
+    )
+    assert reads == [
+        ("BalanceEx", []),
+        ("ClosedOrders", [("ofs", "0"), ("trades", "true")]),
+        ("GetWebSocketsToken", []),
+        ("OpenOrders", [("trades", "true")]),
+        ("OpenPositions", []),
+        ("TradeBalance", [("asset", "ZEUR")]),
+        ("TradesHistory", [("ofs", "0"), ("trades", "true")]),
+    ], f"a start no longer asks the venue for the account node.py's client configs name, or {_BUMP}: {reads}"
+
+
 HAND_TXID, HAND_TRADE = "OHAND1-AAAAA-BBBBBB", "THAND1-AAAAA-AAAAAA"
 
 

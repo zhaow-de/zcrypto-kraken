@@ -2,7 +2,8 @@
 
 The node is the engine's own `build_shadow_node`, its builder's post-stop wait set to 0, with the cache
 backing attached through the config and every venue default redirected to the loopback the driver
-runs: the two client configs' URLs, the gate's venue reader, and the bare-client reads' `base_url`.
+runs: the two client configs' endpoints, node.py's own configs otherwise, the gate's venue reader,
+and the bare-client reads' `base_url`.
 Before anything is built the child asserts that no production default remains, the autouse
 `_no_production_venue_read` fixture's rule for a node that runs, and the bare client itself refuses
 a `base_url` off the loopback, the refusal landing in the record's `errors`. The strategy the engine
@@ -31,13 +32,8 @@ os.environ["KRAKEN_SPOT_API_KEY"] = CONFIG["api_key"]
 os.environ["KRAKEN_SPOT_API_SECRET"] = CONFIG["api_secret"]
 os.environ["ZCRYPTO_CACHE_PASSWORD"] = CONFIG["password"]
 
-from nautilus_trader.adapters.kraken import (  # noqa: E402
-    KrakenDataClientConfig,
-    KrakenEnvironment,
-    KrakenExecutionClientConfig,
-    KrakenProductType,
-)
-from nautilus_trader.model import AccountId, AccountType, InstrumentId, Price, Quantity, QuoteTick  # noqa: E402
+from nautilus_trader.adapters.kraken import KrakenDataClientConfig, KrakenExecutionClientConfig  # noqa: E402
+from nautilus_trader.model import InstrumentId, Price, Quantity, QuoteTick  # noqa: E402
 
 from cli.config import CacheSettings, EngineConfig  # noqa: E402
 from cli.engine import execgate as execgate_module  # noqa: E402
@@ -58,34 +54,28 @@ HANDLE: list = [None]
 STOPPED_CACHE: list = [None]
 
 
-def _data_client_config() -> KrakenDataClientConfig:
-    return KrakenDataClientConfig(
-        product_type=KrakenProductType.SPOT,
-        environment=KrakenEnvironment.LIVE,
-        ws_idle_timeout_ms=0,
-        base_url=CONFIG["base_url"],
-        ws_public_url=CONFIG["ws_public"],
-        ws_private_url=CONFIG["ws_public"],
-        ws_l3_url=CONFIG["ws_public"],
-    )
+# The venue endpoints each client config takes from the loopback in place of whatever node.py passes: `base_url`, the
+# REST server; the data client's public socket, the data peer, with its private and L3 sockets pointed there too, so
+# none of its sockets keeps a default past the loopback; and the execution client's private socket, the exec peer.
+# Every other field is node.py's own.
+_DATA_ENDPOINTS = {
+    "base_url": CONFIG["base_url"],
+    "ws_public_url": CONFIG["ws_public"],
+    "ws_private_url": CONFIG["ws_public"],
+    "ws_l3_url": CONFIG["ws_public"],
+}
+_EXEC_ENDPOINTS = {"base_url": CONFIG["base_url"], "ws_url": CONFIG["ws_private"]}
 
 
-def _exec_client_config(credentials: tuple[str, str]) -> KrakenExecutionClientConfig:
-    # The engine's own fields, plus the two URLs the loopback answers on.
-    api_key, api_secret = credentials
-    return KrakenExecutionClientConfig(
-        account_id=AccountId(node_module._ACCOUNT_ID),
-        product_type=KrakenProductType.SPOT,
-        environment=KrakenEnvironment.LIVE,
-        api_key=api_key,
-        api_secret=api_secret,
-        spot_account_type=AccountType.MARGIN,
-        margin_balance_asset="ZEUR",
-        spot_positions_quote_currency="ZEUR",
-        use_ws_trade=False,
-        base_url=CONFIG["base_url"],
-        ws_url=CONFIG["ws_private"],
-    )
+def _on_the_loopback(config_class, endpoints: dict):
+    def build(**fields):
+        return config_class(**(fields | endpoints))
+
+    return build
+
+
+_loopback_data_config = _on_the_loopback(KrakenDataClientConfig, _DATA_ENDPOINTS)
+_loopback_exec_config = _on_the_loopback(KrakenExecutionClientConfig, _EXEC_ENDPOINTS)
 
 
 def _venue_online(*, now, opener=None) -> VenueStatus:
@@ -102,8 +92,9 @@ def _node_builder(config: EngineConfig):
 
 
 node_module._node_builder = _node_builder
-node_module._data_client_config = _data_client_config
-node_module._exec_client_config = _exec_client_config
+# node.py's `_data_client_config` and `_exec_client_config` build the node's two configs, through these.
+node_module.KrakenDataClientConfig = _loopback_data_config
+node_module.KrakenExecutionClientConfig = _loopback_exec_config
 node_module.read_system_status = _venue_online
 executor_module.read_venue_orders = partial(executor_module.read_venue_orders, base_url=CONFIG["base_url"])
 executor_module.cancel_venue_order = partial(executor_module.cancel_venue_order, base_url=CONFIG["base_url"])
@@ -133,8 +124,8 @@ execgate_module._verified_nautilus_versions = lambda: _recorded_versions() | {ex
 
 def _refuse_production_defaults() -> None:
     """Exit 3 before the build if any venue default still points past the loopback."""
-    data = _data_client_config()
-    exec_ = _exec_client_config(("k", "s"))
+    data = node_module._data_client_config()
+    exec_ = node_module._exec_client_config(("k", "s"))
     urls = [data.base_url, exec_.base_url]
     sockets = [data.ws_public_url, data.ws_private_url, data.ws_l3_url, exec_.ws_url]
     redirected = all(url.startswith(LOOPBACK_HTTP) for url in urls) and all(url.startswith(LOOPBACK_WS) for url in sockets)
@@ -156,8 +147,8 @@ def _refuse_production_defaults() -> None:
         and bare
         and executor_module._bare_client is _loopback_bare_client
         and node_module.read_system_status is _venue_online
-        and node_module._data_client_config is _data_client_config
-        and node_module._exec_client_config is _exec_client_config
+        and node_module.KrakenDataClientConfig is _loopback_data_config
+        and node_module.KrakenExecutionClientConfig is _loopback_exec_config
     ):
         sys.stderr.write("cache_restart_child: a venue default still points past the loopback; refusing to build\n")
         os._exit(3)
