@@ -265,7 +265,7 @@ class _Node:
         try:
             result = subprocess.run(argv, capture_output=True, text=True, timeout=CHILD_TIMEOUT, cwd=REPO, env=env)
         finally:
-            del venue.answer
+            venue.answer = answer
         scripted = [thread for peer, thread in _SCRIPTED if peer is exec_]
         _SCRIPTED[:] = [(peer, thread) for peer, thread in _SCRIPTED if peer is not exec_]
         log = result.stdout + result.stderr
