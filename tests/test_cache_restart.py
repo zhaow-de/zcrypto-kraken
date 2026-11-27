@@ -1025,13 +1025,12 @@ def test_a_part_fill_racing_the_startup_passs_cancel_by_txid_is_dropped_by_the_l
     )  # fmt: skip
 
 
-def test_an_empty_cache_beside_open_ledger_rows_is_a_cold_start_the_pass_reconciles_as_today(tmp_path):
-    """The owner's ruling: an empty namespace is a cold start, never a refusal. The order is a spot
-    one, so the venue has no margin position for the start to fail on, and it filled 0.4 before the
-    stop: the library creates the EXTERNAL copy from the venue's report with that fill applied,
-    PARTIALLY_FILLED and no position -- no trip. The restarted node reads zero, reconciliation names
-    the order by its txid under EXTERNAL, the pass cancels it as an order the ledger carries as no
-    reducer, and the cancel's ack infers no second fill."""
+def _cold_start(tmp_path: Path, *, fill_minutes_ago: int | None = None) -> tuple[_Node, dict, dict, list, list]:
+    """A node that placed a spot buy, filled 0.4 of 1.0, and stopped with it resting; the store lost, a fresh
+    server on the same port; and a start over a venue still listing the order open at 0.4, its fill in the
+    trade history -- stamped `fill_minutes_ago` before the start and the order a minute before that, where
+    given. The order is a spot one, so the venue has no margin position for the start to fail on. Returns
+    the node, the venue's stamps, the start's record, the cancels it sent and its private reads."""
     valkey = _Valkey(tmp_path / "valkey")
     try:
         valkey.start()
@@ -1047,10 +1046,12 @@ def test_an_empty_cache_beside_open_ledger_rows_is_a_cold_start_the_pass_reconci
         assert (row["state"], row["filled_qty"], row["order"]["leverage"]) == ("accepted", 0.4, None)
         wire["client_order_id"] = row["client_order_id"]
         assert len(_keys(valkey.port)) > 0
-        # The store lost: a fresh server on the same port, the venue still listing the order open.
         valkey.kill()
         valkey.start()
         assert _keys(valkey.port) == []
+        if fill_minutes_ago is not None:
+            wire["filled_at"] = time.time() - fill_minutes_ago * 60
+            wire["opened_at"] = wire["filled_at"] - 60
         with _venue() as (venue, data, exec_):
             venue.balances = {"ZEUR": lb.balance("1000.00000000"), "SOL": lb.balance("0.40000000")}
             venue.open_orders[wire["txid"]] = dict(
@@ -1066,34 +1067,44 @@ def test_an_empty_cache_beside_open_ledger_rows_is_a_cold_start_the_pass_reconci
             _script_cancel_ack(venue, exec_, wire)
             record = node.run(2, venue, data, exec_, window=PHASE2_WINDOW)
             cancels = list(venue.cancel_forms)
+            calls = list(venue.private_calls)
     finally:
         valkey.stop()
+    return node, wire, record, cancels, calls
+
+
+def _history_read_by_the_pass(calls: list[str]) -> list[str]:
+    """The trade-history reads between the start's mass status, which ends at its OpenPositions read, and the
+    pass's first cancel: the withdrawal check's own read (`_trades_cover`) is the only one there."""
+    return [name for name in calls[calls.index("OpenPositions") + 1 : calls.index("CancelOrder")] if name == "TradesHistory"]
+
+
+def _external_copy(record: dict) -> tuple:
+    [external] = record["at_start"]["orders"]
+    return tuple(external[key] for key in ("client_order_id", "strategy_id", "venue_order_id", "status", "filled_qty", "is_open"))
+
+
+def test_an_empty_cache_beside_open_ledger_rows_is_a_cold_start_the_pass_reconciles_as_today(tmp_path):
+    """The owner's ruling: an empty namespace is a cold start, never a refusal. The order filled 0.4
+    before the stop: the library creates the EXTERNAL copy from the venue's report with that fill applied,
+    PARTIALLY_FILLED and no position, and the pass reads the venue's report for it at the ledger's 0.4, so
+    no trip and no trade-history read -- on this pin D19's cover is held by `tests/test_engine_executor.py`'s
+    `test_a_cold_starts_order_figure_short_of_the_ledger_is_no_withdrawal_when_the_trade_history_covers_it`.
+    The restarted node reads zero, reconciliation names the order by its txid under EXTERNAL, the pass
+    cancels it as an order the ledger carries as no reducer, and the cancel's ack infers no second fill."""
+    node, wire, record, cancels, calls = _cold_start(tmp_path)
 
     assert record["errors"] == [], record["errors"]
     assert _restore_lines(record["log"]) == ["0 order(s), 0 position(s) restored"]
     assert record["restored"] == [wire["txid"]]  # the EXTERNAL copy reconciliation created, in the set under its txid
     assert f"Created external order {wire['txid']}" in record["log"]
-    [external] = record["at_start"]["orders"]
-    assert (
-        external["client_order_id"],
-        external["strategy_id"],
-        external["venue_order_id"],
-        external["status"],
-        external["filled_qty"],
-        external["is_open"],
-    ) == (
-        wire["txid"],
-        "EXTERNAL",
-        wire["txid"],
-        "PARTIALLY_FILLED",
-        "0.40000000",
-        True,
-    )
+    assert _external_copy(record) == (wire["txid"], "EXTERNAL", wire["txid"], "PARTIALLY_FILLED", "0.40000000", True)
     assert record["at_start"]["positions"] == []
     assert "execution kill switch tripped" not in record["log"]
-    # The EXTERNAL copy reads the venue's 0.4, so the withdrawal check reads no shortfall and the trade
-    # history is not consulted.
+    # The restored copy is read at the venue (spec 00120 D6), whose report reads the ledger's 0.4, so the
+    # withdrawal check reads no shortfall and the trade history is not consulted.
     assert "reads 0 filled on its order figure" not in record["log"]
+    assert _history_read_by_the_pass(calls) == [], calls
     assert f"canceling adopted resting order {wire['txid']} -- the ledger does not carry it as a resting reducer" in record["log"]
     assert [form.get("txid") for form in cancels] == [wire["txid"]]
     assert [e["client_order_id"] for e in record["external"]][:1] == [wire["txid"]]
@@ -1101,6 +1112,41 @@ def test_an_empty_cache_beside_open_ledger_rows_is_a_cold_start_the_pass_reconci
     [row] = node.rows()
     fills = [e for e in row["events"] if e.get("event") == "fill"]
     assert [(e["qty"], e.get("credited")) for e in fills] == [(0.4, None)], fills
+    assert (row["filled_qty"], row["state"]) == (0.4, "canceled")
+    [intent] = node.intents()
+    assert intent["outcome"] == "revoked"
+
+
+def test_a_cold_start_whose_lookback_misses_the_fill_trips_nothing_on_the_librarys_copy_at_zero(tmp_path):
+    """The fill landed 721 minutes before the start, past the reconciliation lookback's 720, as on an opener
+    that part-filled more than twelve hours before a restart that found the store empty. The library creates
+    the EXTERNAL copy at ACCEPTED with nothing filled, below the ledger's 0.4: the copy spec 00120 D19 was
+    ruled on, there with the fill read and not applied. The pass reads the restored copy at the venue (D6),
+    whose report reads the ledger's 0.4, so the check never reads the copy's 0: no kill trip and no
+    trade-history read, which a check on the copy's figure would make. The cancel's ack then infers the
+    copy's missing 0.4, which credits the row nothing."""
+    node, wire, record, cancels, calls = _cold_start(tmp_path, fill_minutes_ago=721)
+
+    assert record["errors"] == [], record["errors"]
+    assert _restore_lines(record["log"]) == ["0 order(s), 0 position(s) restored"]
+    assert "Received 1 order(s), 0 fill(s), 0 position(s)" in record["log"]
+    assert f"Created external order {wire['txid']} ({wire['txid']}) for {INSTRUMENT} [ACCEPTED]" in record["log"]
+    assert _external_copy(record) == (wire["txid"], "EXTERNAL", wire["txid"], "ACCEPTED", "0.00000000", True)
+    assert record["restored"] == [wire["txid"]]
+    assert "execution kill switch tripped" not in record["log"]
+    assert "reads 0 filled on its order figure" not in record["log"]
+    assert _history_read_by_the_pass(calls) == [], calls
+    assert f"canceling adopted resting order {wire['txid']} -- the ledger does not carry it as a resting reducer" in record["log"]
+    assert [form.get("txid") for form in cancels] == [wire["txid"]]
+    assert f"Generated inferred fill for {wire['txid']}: qty=0.40000000" in record["log"]
+    assert [(e["type"], e.get("last_qty"), e["reconciliation"]) for e in record["external"]] == [
+        ("OrderPendingCancel", None, False),
+        ("OrderFilled", "0.40000000", True),
+        ("OrderCanceled", None, True),
+    ], record["external"]
+    [row] = node.rows()
+    fills = [e for e in row["events"] if e.get("event") == "fill"]
+    assert [(e["qty"], e.get("credited")) for e in fills] == [(0.4, None), (0.4, 0.0)], fills
     assert (row["filled_qty"], row["state"]) == (0.4, "canceled")
     [intent] = node.intents()
     assert intent["outcome"] == "revoked"
