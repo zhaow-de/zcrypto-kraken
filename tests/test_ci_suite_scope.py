@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import copy
 import json
 import shlex
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPO = Path(__file__).resolve().parents[1]
 SUITE = REPO / ".github" / "workflows" / "test-suite.yml"
 HARNESS = "tests/test_cache_restart.py"
-# The options these lines give a separate value, so the value is not read as a path to collect.
-_VALUED = {"-n", "-m", "--markexpr", "--dist", "--maxschedchunk", "--durations", "-k", "-p", "--ignore", "--deselect"}
+# The dests of the options a step may give pytest that select no test. Any other option a step gives (`-k`, `--deselect`,
+# `--ignore-glob`, `-o`, `-p`, a plugin's) fails the split case until a reader who has judged it selects nothing adds it here.
+_SELECTS_NOTHING = {"numprocesses", "dist", "maxschedchunk", "maxfail", "durations"}
 
 
 def _job() -> dict:
@@ -40,21 +43,23 @@ def _markexpr(argv: list[str]) -> str | None:
     return found
 
 
-def _paths(argv: list[str]) -> list[str]:
-    """What pytest is pointed at; none is the whole suite."""
-    paths, words = [], iter(argv[3:])
-    for arg in words:
-        if arg in _VALUED:
-            next(words)
-        elif not arg.startswith("-"):
-            paths.append(arg)
-    return paths
+def _selections(pytestconfig: pytest.Config, argv: list[str]) -> list[tuple[str, object]]:
+    """What pytest's own parser takes from a step's argv: each option as (dest, value), but those `_SELECTS_NOTHING`
+    names, and the step's paths as `file_or_dir`, sorted. The parse is pytest's, so a spelling it admits is read as it
+    reads it (`-kEXPR`, `-k=EXPR`, `-xk EXPR`, `--ignore-glob=`, an `@file`) and one it does not raises its UsageError;
+    a copy of the parser records each option as it takes it, so an `-m` that a later one overrides is still seen."""
+    taken: list[tuple[str, object]] = []
+    parser = copy.copy(pytestconfig._parser.optparser)
+    convert = parser._get_values
 
+    def take(action, strings):
+        value = convert(action, strings)
+        taken.append((action.dest, value))
+        return value
 
-def _ignored(argv: list[str]) -> list[str]:
-    return [arg.split("=", 1)[1] for arg in argv if arg.startswith("--ignore=")] + [
-        argv[i + 1] for i, arg in enumerate(argv) if arg == "--ignore"
-    ]
+    parser._get_values = take
+    parser.parse_intermixed_args(argv[3:])
+    return sorted(((dest, value) for dest, value in taken if dest not in _SELECTS_NOTHING), key=repr)
 
 
 def test_each_pytest_step_deselects_the_retired_cases():
@@ -74,7 +79,7 @@ def test_no_step_reaches_coveralls():
     assert not [step for step in _steps() if "coveralls" in json.dumps(step).lower()]
 
 
-def test_the_harness_and_the_rest_of_the_suite_are_the_two_steps_of_one_parallel_group_each_test_in_one():
+def test_the_harness_and_the_rest_of_the_suite_are_the_two_steps_of_one_parallel_group_each_test_in_one(pytestconfig):
     (outer,) = [step for step in _job()["steps"] if "parallel" in step]
     # No other key on the group or on either step: an `if:` or a `continue-on-error` there passes the job with a
     # step unrun or red.
@@ -85,6 +90,9 @@ def test_the_harness_and_the_rest_of_the_suite_are_the_two_steps_of_one_parallel
     assert all(set(step) <= {"name", "run"} for step in group), group
     argvs = [shlex.split(step["run"]) for step in group]
     assert sorted(_pytest_argvs()) == sorted(argvs), _pytest_argvs()
-    split = sorted((_paths(argv), _ignored(argv)) for argv in argvs)
-    assert split == [([], [HARNESS]), ([HARNESS], [])], argvs
+    split = sorted((_selections(pytestconfig, argv) for argv in argvs), key=repr)
+    assert split == [
+        [("file_or_dir", [HARNESS]), ("markexpr", "not retired")],
+        [("file_or_dir", []), ("ignore", HARNESS), ("markexpr", "not retired")],
+    ], argvs
     assert (REPO / HARNESS).is_file()
