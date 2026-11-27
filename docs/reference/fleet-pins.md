@@ -28,7 +28,7 @@ Reading rules:
 | alloy | zcrypto-valkey2 | `9acc2529bc1e` — v1.22.0 | 2026-11-26 19:48:16 | `89a5a3201683` — v1.21.2 |
 | valkey + sentinel | zcrypto-valkey3 | `418652cfb58e` — Valkey 9.1.2, upstream `valkey/valkey` | 2026-09-26 21:28:18 | first pin |
 | alloy | zcrypto-valkey3 | `9acc2529bc1e` — v1.22.0 | 2026-11-26 19:53:49 | `89a5a3201683` — v1.21.2 |
-| ops (timers + liquidations) | zcrypto-ops | `98cfad6c97cf` — revision `3818d749` | 2026-11-23 11:46:52 | `512ba1a02ea9` |
+| ops (timers + liquidations) | zcrypto-ops | `6c760995ea6c` — revision `355c01b0` | 2026-11-27 21:55:20 | `98cfad6c97cf` |
 | bitcoind | zcrypto-ops | `987f63d5e223` — Bitcoin Core v32.1, the local build of `infra/docker/bitcoind/Dockerfile` | 2026-11-24 01:18:17 | first pin |
 | bitview | zcrypto-ops | `2dbc2962c54c` — BRK at `1a19c5e96976`, the local build of its `docker/Dockerfile` | 2026-11-24 11:09:02 | first pin |
 | archive-pull | nas | `164b135f398a` — revision `1dac4013`, the `-compat` build | 2026-11-12 13:53:41 | `c365dae0afee` |
@@ -59,8 +59,9 @@ A constraint lives where it is enforced or executed: the NAS `-compat` rule, the
 The current pins and their operands; older digests are in this file's git log.
 
 - `1931596fd60b` = `sha256:1931596fd60b12c9a208d9def21d4949464440b6a3880e93941cebf588bf10a7` — revision `9040ca59`, AVX; capture on both hosts
-- `512ba1a02ea9` = `sha256:512ba1a02ea9524ea52ee2496c64bd6d9a31cedf64d1b6c771de9c4d6ccd3c44` — revision `bc217e61`, AVX; the engine, and the ops' operand
-- `98cfad6c97cf` = `sha256:98cfad6c97cff51f406062eecf118a7d0f511bde97d7ac502ec0cf1134f7c78e` — revision `3818d749`, AVX; ops
+- `512ba1a02ea9` = `sha256:512ba1a02ea9524ea52ee2496c64bd6d9a31cedf64d1b6c771de9c4d6ccd3c44` — revision `bc217e61`, AVX; the engine
+- `6c760995ea6c` = `sha256:6c760995ea6cc062f20b405cdab877ea9101a9341595d19b6339fa6d04acb389` — revision `355c01b0`, AVX; ops
+- `98cfad6c97cf` = `sha256:98cfad6c97cff51f406062eecf118a7d0f511bde97d7ac502ec0cf1134f7c78e` — revision `3818d749`, AVX; the ops' operand
 - `987f63d5e223` = `sha256:987f63d5e2239038dfc40218aa29966f27aee83b045e47863e01756406fad9b4` — Bitcoin Core v32.1, a local image id; the on-chain node
 - `2dbc2962c54c` = `sha256:2dbc2962c54c6a7bbd9ce8e2d27fecd8469be1e6cf89245b939935edd1545d61` — BRK at `1a19c5e96976`, a local image id; the on-chain index
 - `81a8d6c7df63` = `sha256:81a8d6c7df632d133e11e49bc7b14fc19fdd12ba97179131378b8ff3adc499fd` — revision `ff0d3422`, AVX; the engine's operand
