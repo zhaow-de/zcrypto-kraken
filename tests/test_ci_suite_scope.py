@@ -11,8 +11,8 @@ import yaml
 REPO = Path(__file__).resolve().parents[1]
 SUITE = REPO / ".github" / "workflows" / "test-suite.yml"
 HARNESS = "tests/test_cache_restart.py"
-# The dests of the options a step may give pytest that select no test. Any other option a step gives (`-k`, `--deselect`,
-# `--ignore-glob`, `-o`, `-p`, a plugin's) fails the split case until a reader who has judged it selects nothing adds it here.
+# The dests of the options that select no test. Any other option a step gives but the split case's expected `-m` and
+# `--ignore` fails that case, until a reader who has judged it selects nothing adds its dest here.
 _SELECTS_NOTHING = {"numprocesses", "dist", "maxschedchunk", "maxfail", "durations"}
 
 
@@ -45,9 +45,9 @@ def _markexpr(argv: list[str]) -> str | None:
 
 def _selections(pytestconfig: pytest.Config, argv: list[str]) -> list[tuple[str, object]]:
     """What pytest's own parser takes from a step's argv: each option as (dest, value), but those `_SELECTS_NOTHING`
-    names, and the step's paths as `file_or_dir`, sorted. The parse is pytest's, so a spelling it admits is read as it
-    reads it (`-kEXPR`, `-k=EXPR`, `-xk EXPR`, `--ignore-glob=`, an `@file`) and one it does not raises its UsageError;
-    a copy of the parser records each option as it takes it, so an `-m` that a later one overrides is still seen."""
+    names, and the step's paths as `file_or_dir`, sorted. The parse is pytest's, so a spelling is read as pytest reads
+    it and an option pytest does not define raises its UsageError; a copy of the parser records each option as it
+    takes it, so an `-m` that a later one overrides is still seen."""
     taken: list[tuple[str, object]] = []
     parser = copy.copy(pytestconfig._parser.optparser)
     convert = parser._get_values
