@@ -54,8 +54,16 @@ jobs:
       # tests/test_cache_restart.py starts a real valkey-server per scenario and fails without the binary.
       - run: sudo apt-get update && sudo apt-get install -y valkey-server
       - run: uv sync
-      # Four workers for the public runner's four vCPUs. --maxschedchunk 4 hands tests out four at a time, so the
-      # slow harness tests spread over the workers; a worker's queue still refills toward a sixteenth of the tests
-      # left, and after -x the other workers drain theirs. worksteal deals every test up front, so they drain
-      # whole shares. --durations=30: the only per-test timing a CI run leaves.
-      - run: uv run pytest -n 4 --dist load --maxschedchunk 4 -x -m "not retired" --durations=30
+      # The cache restart harness runs as its own step beside the rest of the suite: its tests wait on their
+      # valkey-server and engine children, a block --dist load deals to one worker and never takes back. The two
+      # steps share the loopback port space, and a failure in either fails the job, but -x does not stop the
+      # harness step, so a red run still waits for it. Each step runs four workers for the public runner's four
+      # vCPUs, which the harness mostly leaves idle. --maxschedchunk 4 caps each send at four tests, and a worker's
+      # queue refills toward a sixteenth of the tests left, which after -x the other workers drain; worksteal
+      # deals every test up front, so they would drain whole shares. --durations=30: the only per-test timing a CI
+      # run leaves.
+      - parallel:
+          - name: Run the cache restart harness
+            run: uv run pytest tests/test_cache_restart.py -n 4 -m "not retired" --durations=30
+          - name: Run the rest of the suite
+            run: uv run pytest -n 4 --dist load --maxschedchunk 4 -x -m "not retired" --durations=30 --ignore=tests/test_cache_restart.py

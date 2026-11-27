@@ -46,14 +46,17 @@ ENGINE_USER, ENGINE_PASSWORD = "engine", "engine-harness-password"
 ADMIN_USER, ADMIN_PASSWORD = "admin", "admin-harness-password"
 # Phase windows: the executor's startup pass runs on its first tick at 5 s and the plan is picked up on
 # the same tick; the first quote after that lands at 6 s and the fill frames within a second of the
-# submission; phase 2's re-read pass runs on the tick after the pass's cancel. Each node adds the
-# library's ten-second residual wait at stop.
+# submission; phase 2's re-read pass runs on the tick after the pass's cancel. The child's node waits
+# nothing for residual events at its stop, so every frame a test scripts lands inside the window:
+# `_Node.run` fails a run in which the venue sent anything after the stop.
 PHASE1_WINDOW = 14
 PHASE2_WINDOW = 20
 # A restart's window past the gate's first idle refresh, `_GATE_REFRESH` after the executor's construction:
 # where nothing rests, the re-read pass waits for that refresh to read the engine armed.
 REREAD_WINDOW = int(_GATE_REFRESH.total_seconds()) + 20
 CHILD_TIMEOUT = 150
+# How long `_Node.run` waits on a run's scripting threads once its child has exited.
+SCRIPT_JOIN = 30
 
 
 def _valkey_binary() -> str:
@@ -168,6 +171,24 @@ class _Valkey:
                 self.process.kill()
 
 
+# The threads a test starts to script the venue's frames, each beside the execution peer it sends on: `_Node.run`
+# joins a run's before it reads what the venue sent, so a thread started past `_script` escapes that read.
+_SCRIPTED: list[tuple[lb.WsPeer, threading.Thread]] = []
+
+
+def _script(exec_: lb.WsPeer, target) -> threading.Thread:
+    thread = threading.Thread(target=target, daemon=True)
+    _SCRIPTED.append((exec_, thread))
+    thread.start()
+    return thread
+
+
+def _sent_at(line: str) -> float | None:
+    """A peer's log line's time, when the line is one the peer sent."""
+    stamp, _, arrow, _ = line.split(" ", 3)
+    return float(stamp) if arrow == "->" else None
+
+
 class _Node:
     def __init__(self, root: Path, valkey_port: int, *, max_plan_notional_eur: float = 200.0):
         self.root = root
@@ -229,10 +250,24 @@ class _Node:
             "max_plan_notional_eur": self.max_plan_notional_eur,
         }
         env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "PYTHONDONTWRITEBYTECODE": "1", "HOME": str(self.root)}
+        answered: list[tuple[float, str]] = []
+        answer = venue.answer
+
+        def timed(method, path, query, form):
+            try:
+                return answer(method, path, query, form)
+            finally:
+                answered.append((time.time(), path))
+
+        venue.answer = timed
+        argv = [sys.executable, str(CHILD), json.dumps(args)]
         started = time.monotonic()
-        result = subprocess.run(
-            [sys.executable, str(CHILD), json.dumps(args)], capture_output=True, text=True, timeout=CHILD_TIMEOUT, cwd=REPO, env=env
-        )
+        try:
+            result = subprocess.run(argv, capture_output=True, text=True, timeout=CHILD_TIMEOUT, cwd=REPO, env=env)
+        finally:
+            venue.answer = answer
+        scripted = [thread for peer, thread in _SCRIPTED if peer is exec_]
+        _SCRIPTED[:] = [(peer, thread) for peer, thread in _SCRIPTED if peer is not exec_]
         log = result.stdout + result.stderr
         (self.root / f"phase{phase}.log").write_text(log)
         self.logs.append(log)
@@ -240,6 +275,27 @@ class _Node:
             f"phase {phase} wrote no record (exit {result.returncode}, {time.monotonic() - started:.1f} s):\n{log[-4000:]}"
         )
         record = json.loads(out.read_text())
+        # Every assertion on `at_end`, and every later phase reading the store, takes the window's stop as where the
+        # process ended. The child's node waits nothing for residual events, so a frame or an answer the venue gives
+        # after the stop reaches no cache and leaves no trace: a run that sent one fails, its scripting threads joined
+        # first, since one still sleeping when the child exits sends after the stop. The cache's orders and positions
+        # read again after run() returns catch what was sent before the stop and booked after the `at_end` read.
+        if "at_end" in record:
+            deadline = time.monotonic() + SCRIPT_JOIN
+            for thread in scripted:
+                thread.join(max(0.0, deadline - time.monotonic()))
+            stopped = record["stopped_at"]
+            late = [line[:200] for peer in (data, exec_) for line in peer.log if (_sent_at(line) or 0.0) > stopped]
+            late += [f"{at:.3f} answered {path}" for at, path in answered if at > stopped]
+            pending = [thread.name for thread in scripted if thread.is_alive()]
+            assert not late and not pending, (
+                f"phase {phase}: the venue sent after the window's stop at {stopped:.3f}, which the child's node drops -- "
+                f"sent {late}, still scripting {pending}"
+            )
+            assert record["after_run"] == record["at_end"], (
+                f"phase {phase}: the cache changed after the window's stop, before run() returned -- at the stop "
+                f"{record['at_end']}, after {record['after_run']}"
+            )
         record["log"] = log
         record["wall_secs"] = time.monotonic() - started
         self.records.append(record)
@@ -307,7 +363,7 @@ def _script_first_fill(venue: lb.KrakenLoopback, exec_: lb.WsPeer, *, last_qty: 
                 cost=f"{last_qty * PRICE:.5f}",
             )
 
-        threading.Thread(target=frames, daemon=True).start()
+        _script(exec_, frames)
 
     venue.on_add_order = on_add_order
 
@@ -333,7 +389,7 @@ def _script_cancel_ack(venue: lb.KrakenLoopback, exec_: lb.WsPeer, wire: dict) -
             time.sleep(0.3)
             exec_.send_execution(lb.exec_canceled(txid, wire["cl_ord_id"], symbol=SYMBOL, qty=QTY, price=PRICE, cum_qty=cum))
 
-        threading.Thread(target=frame, daemon=True).start()
+        _script(exec_, frame)
 
     venue.on_cancel_order = on_cancel_order
 
@@ -378,7 +434,7 @@ def _script_spot_fills(venue: lb.KrakenLoopback, exec_: lb.WsPeer, *, pair: str,
             else:
                 venue.balances.pop(coin, None)
 
-        threading.Thread(target=frames, daemon=True).start()
+        _script(exec_, frames)
 
     venue.on_add_order = on_add_order
 
@@ -656,9 +712,12 @@ def test_an_order_cancelled_while_the_engine_was_down_is_closed_by_the_librarys_
     assert (row["state"], row["filled_qty"], intent["outcome"]) == ("canceled", 0.4, "revoked")
 
 
-def test_a_trade_frame_on_a_restored_open_order_is_booked_twice_by_the_library(phase_one):
+@pytest.mark.parametrize("with_order_qty", [True, False], ids=["with-order_qty", "without-order_qty"])
+def test_a_trade_frame_on_a_restored_open_order_is_booked_twice_by_the_library(phase_one, with_order_qty):
     """The row is the previous process's reducer, which the startup pass keeps, so the order is still
-    open when the `trade` frame lands."""
+    open when the `trade` frame (last 0.2, cumulative 0.6) lands. The name holds for the frame with
+    `order_qty`; without it, the shape of Kraken's live `trade` frames (T0226's resolution), the library
+    rewrites the copy `FILLED` instead, and the case follows that copy to the next start's cancel by txid."""
     valkey, node, wire, _ = phase_one
     node.mark_row_reducer(wire["client_order_id"])
     with _venue() as (venue, data, exec_):
@@ -684,31 +743,44 @@ def test_a_trade_frame_on_a_restored_open_order_is_booked_twice_by_the_library(p
             exec_.send_execution(
                 lb.exec_trade(
                     wire["txid"], wire["cl_ord_id"], symbol=SYMBOL, qty=QTY, price=PRICE, last_qty=0.2, cum_qty=0.6,
-                    exec_id="TLOOP3-AAAAA-AAAAAA", trade_id=1003,
+                    exec_id="TLOOP3-AAAAA-AAAAAA", trade_id=1003, with_order_qty=with_order_qty,
                 )
             )  # fmt: skip
             venue.open_orders[wire["txid"]].update(vol_exec="0.60000000", cost="90.00000")
             venue.trades["TLOOP3-AAAAA-AAAAAA"] = lb.trade_row(
                 wire["txid"], PAIR, vol="0.20000000", price="150.00", trade_id=1003, time=time.time()
             )
+            venue.positions["TPOSLP-AAAAA-BBBBBB"].update(vol="0.60000000", cost="90.00000")
 
-        threading.Thread(target=later, daemon=True).start()
+        _script(exec_, later)
         record = node.run(2, venue, data, exec_, window=PHASE2_WINDOW)
         cancels = list(venue.cancel_forms)
+        holdings = venue.holdings()
 
     assert record["errors"] == [], record["errors"]
     assert cancels == [], cancels  # the pass kept the reducer
     assert "Generated inferred fill" in record["log"]
-    fills = [e for e in record["own"] if e["type"] == "OrderFilled"]
-    assert [(e["last_qty"], e["reconciliation"]) for e in fills] == [("0.20000000", True), ("0.20000000", True)], fills
     [order] = record["at_end"]["orders"]
-    assert order["filled_qty"] == "0.80000000"  # the venue's cumulative figure is 0.6
-    # The executor: both fills credit the row nothing, the re-read pass repairs it to the venue's 0.6,
+    if with_order_qty:
+        fills = [e for e in record["own"] if e["type"] == "OrderFilled"]
+        assert [(e["last_qty"], e["reconciliation"]) for e in fills] == [("0.20000000", True), ("0.20000000", True)], fills
+        assert (order["status"], order["filled_qty"]) == ("PARTIALLY_FILLED", "0.80000000")  # the venue's cumulative figure is 0.6
+    else:
+        assert [(e["type"], e["reconciliation"], e.get("last_qty")) for e in record["own"]] == [
+            ("OrderUpdated", True, None),
+            ("OrderFilled", True, "0.20000000"),
+        ], record["own"]
+        assert (order["status"], order["quantity"], order["filled_qty"]) == ("FILLED", "0.60000000", "0.60000000")
+        assert (
+            f"Rejecting fill that would cause overfill for {wire['client_order_id']}: order.quantity=0.60000000, "
+            "order.filled_qty=0.60000000, fill.last_qty=0.20000000, would result in filled_qty=0.80000000"
+        ) in record["log"]
+    # The executor: new fills credit the row nothing, the re-read pass repairs it to the venue's 0.6,
     # and the kept reducer's intent stays pending on its open row.
     assert record["restored"] == [wire["client_order_id"]]
     [row] = node.rows()
     fills = [e for e in row["events"] if e.get("event") == "fill"]
-    assert [(e["qty"], e.get("credited")) for e in fills] == [(0.4, None), (0.2, 0.0), (0.2, 0.0)]
+    assert [(e["qty"], e.get("credited")) for e in fills] == [(0.4, None), (0.2, 0.0)] + [(0.2, 0.0)] * with_order_qty
     assert "the re-read pass reads 1 restored row(s) with a fill since its last read against the venue" in record["log"]
     assert (row["filled_qty"], row["state"]) == (pytest.approx(0.6), "accepted")
     [intent] = node.intents()
@@ -716,6 +788,35 @@ def test_a_trade_frame_on_a_restored_open_order_is_booked_twice_by_the_library(p
     # The realized baseline over a real restored position: each fill's publish reads this process's own
     # realizations, the previous run's left in the baseline.
     assert record["metrics"]["realized"] and set(record["metrics"]["realized"]) == {0.0}, record["metrics"]["realized"]
+    if with_order_qty:
+        return
+
+    # The next start: the copy comes back FILLED, which the library's reconciliation cannot move back to the
+    # venue's open order, and the pass cancels the remainder at Kraken by its txid.
+    with _venue() as (venue, data, exec_):
+        venue.hold(holdings)
+        _script_cancel_ack(venue, exec_, wire)
+        record = node.run(3, venue, data, exec_, window=PHASE2_WINDOW)
+        cancels = list(venue.cancel_forms)
+        resting = dict(venue.open_orders)
+        closed = dict(venue.closed_orders)
+
+    assert record["errors"] == [], record["errors"]
+    [order] = record["at_start"]["orders"]
+    assert (order["status"], order["filled_qty"]) == ("FILLED", "0.60000000")
+    assert f"Cannot project reconciliation fill for {wire['client_order_id']}: Invalid order state transition" in record["log"]
+    assert [form.get("txid") for form in cancels] == [wire["txid"]]
+    assert (resting, closed[wire["txid"]]["status"], closed[wire["txid"]]["vol_exec"]) == ({}, "canceled", "0.60000000")
+    assert (
+        f"cancelled {wire['client_order_id']} (Kraken {wire['txid']}) at Kraken by its txid -- Kraken listed it open (ACCEPTED, "
+        "0.6 of 1 filled) while the Cache reads it FILLED, which no cancel through the Cache reaches; its row reads canceled"
+    ) in record["log"]
+    [row] = node.rows()
+    assert (row["state"], row["filled_qty"], row["events"][-1].get("event")) == ("canceled", pytest.approx(0.6), "recancelled")
+    # The intent is the re-read pass's, which the cancel armed and which waits past this window for the gate's first
+    # idle refresh, where nothing rests.
+    [intent] = node.intents()
+    assert intent["outcome"] == "pending"
 
 
 @pytest.mark.parametrize("with_order_qty", [True, False], ids=["with-order_qty", "without-order_qty"])
@@ -836,7 +937,7 @@ def _before_the_pass(exec_: lb.WsPeer, then) -> None:
             time.sleep(1)
             then()
 
-    threading.Thread(target=later, daemon=True).start()
+    _script(exec_, later)
 
 
 @pytest.mark.parametrize("with_order_qty", [False, True], ids=["without-order_qty", "with-order_qty"])
@@ -921,13 +1022,12 @@ def test_a_part_fill_racing_the_startup_passs_cancel_by_txid_is_dropped_by_the_l
     )  # fmt: skip
 
 
-def test_an_empty_cache_beside_open_ledger_rows_is_a_cold_start_the_pass_reconciles_as_today(tmp_path):
-    """The owner's ruling: an empty namespace is a cold start, never a refusal. The order is a spot
-    one, so the venue has no margin position for the start to fail on, and it filled 0.4 before the
-    stop: the library creates the EXTERNAL copy from the venue's report with that fill applied,
-    PARTIALLY_FILLED and no position -- no trip. The restarted node reads zero, reconciliation names
-    the order by its txid under EXTERNAL, the pass cancels it as an order the ledger carries as no
-    reducer, and the cancel's ack infers no second fill."""
+def _cold_start(tmp_path: Path, *, fill_minutes_ago: int | None = None) -> tuple[_Node, dict, dict, list, list]:
+    """A node that placed a spot buy, filled 0.4 of 1.0, and stopped with it resting; the store lost, a fresh
+    server on the same port; and a start over a venue still listing the order open at 0.4, its fill in the
+    trade history -- stamped `fill_minutes_ago` before the start and the order a minute before that, where
+    given. The order is a spot one, so the venue has no margin position for the start to fail on. Returns
+    the node, the venue's stamps, the start's record, the cancels it sent and its private reads."""
     valkey = _Valkey(tmp_path / "valkey")
     try:
         valkey.start()
@@ -943,10 +1043,12 @@ def test_an_empty_cache_beside_open_ledger_rows_is_a_cold_start_the_pass_reconci
         assert (row["state"], row["filled_qty"], row["order"]["leverage"]) == ("accepted", 0.4, None)
         wire["client_order_id"] = row["client_order_id"]
         assert len(_keys(valkey.port)) > 0
-        # The store lost: a fresh server on the same port, the venue still listing the order open.
         valkey.kill()
         valkey.start()
         assert _keys(valkey.port) == []
+        if fill_minutes_ago is not None:
+            wire["filled_at"] = time.time() - fill_minutes_ago * 60
+            wire["opened_at"] = wire["filled_at"] - 60
         with _venue() as (venue, data, exec_):
             venue.balances = {"ZEUR": lb.balance("1000.00000000"), "SOL": lb.balance("0.40000000")}
             venue.open_orders[wire["txid"]] = dict(
@@ -962,34 +1064,40 @@ def test_an_empty_cache_beside_open_ledger_rows_is_a_cold_start_the_pass_reconci
             _script_cancel_ack(venue, exec_, wire)
             record = node.run(2, venue, data, exec_, window=PHASE2_WINDOW)
             cancels = list(venue.cancel_forms)
+            calls = list(venue.private_calls)
     finally:
         valkey.stop()
+    return node, wire, record, cancels, calls
+
+
+def _history_read_by_the_pass(calls: list[str]) -> list[str]:
+    """The trade-history reads between the start's mass status, which ends at its OpenPositions read, and the
+    pass's first cancel: the withdrawal check's own read (`_trades_cover`) is the only one there."""
+    return [name for name in calls[calls.index("OpenPositions") + 1 : calls.index("CancelOrder")] if name == "TradesHistory"]
+
+
+def _external_copy(record: dict) -> tuple:
+    [external] = record["at_start"]["orders"]
+    return tuple(external[key] for key in ("client_order_id", "strategy_id", "venue_order_id", "status", "filled_qty", "is_open"))
+
+
+def test_an_empty_cache_beside_open_ledger_rows_is_a_cold_start_the_pass_reconciles_as_today(tmp_path):
+    """An empty namespace is a cold start, never a refusal. The order filled 0.4 before the stop: the
+    library creates the EXTERNAL copy from the venue's report with that fill applied, PARTIALLY_FILLED and
+    no position, and the pass reads the venue's report for it at the ledger's 0.4, so no trip and no
+    trade-history read -- on this pin D19's cover is held by `tests/test_engine_executor.py`'s
+    `test_a_cold_starts_order_figure_short_of_the_ledger_is_no_withdrawal_when_the_trade_history_covers_it`."""
+    node, wire, record, cancels, calls = _cold_start(tmp_path)
 
     assert record["errors"] == [], record["errors"]
     assert _restore_lines(record["log"]) == ["0 order(s), 0 position(s) restored"]
     assert record["restored"] == [wire["txid"]]  # the EXTERNAL copy reconciliation created, in the set under its txid
     assert f"Created external order {wire['txid']}" in record["log"]
-    [external] = record["at_start"]["orders"]
-    assert (
-        external["client_order_id"],
-        external["strategy_id"],
-        external["venue_order_id"],
-        external["status"],
-        external["filled_qty"],
-        external["is_open"],
-    ) == (
-        wire["txid"],
-        "EXTERNAL",
-        wire["txid"],
-        "PARTIALLY_FILLED",
-        "0.40000000",
-        True,
-    )
+    assert _external_copy(record) == (wire["txid"], "EXTERNAL", wire["txid"], "PARTIALLY_FILLED", "0.40000000", True)
     assert record["at_start"]["positions"] == []
     assert "execution kill switch tripped" not in record["log"]
-    # The EXTERNAL copy reads the venue's 0.4, so the withdrawal check reads no shortfall and the trade
-    # history is not consulted.
     assert "reads 0 filled on its order figure" not in record["log"]
+    assert _history_read_by_the_pass(calls) == [], calls
     assert f"canceling adopted resting order {wire['txid']} -- the ledger does not carry it as a resting reducer" in record["log"]
     assert [form.get("txid") for form in cancels] == [wire["txid"]]
     assert [e["client_order_id"] for e in record["external"]][:1] == [wire["txid"]]
@@ -997,6 +1105,40 @@ def test_an_empty_cache_beside_open_ledger_rows_is_a_cold_start_the_pass_reconci
     [row] = node.rows()
     fills = [e for e in row["events"] if e.get("event") == "fill"]
     assert [(e["qty"], e.get("credited")) for e in fills] == [(0.4, None)], fills
+    assert (row["filled_qty"], row["state"]) == (0.4, "canceled")
+    [intent] = node.intents()
+    assert intent["outcome"] == "revoked"
+
+
+def test_a_cold_start_whose_lookback_misses_the_fill_trips_nothing_on_the_librarys_copy_at_zero(tmp_path):
+    """The fill landed 721 minutes before the start, past the reconciliation lookback's 720, as on an opener
+    that part-filled more than twelve hours before a restart that found the store empty. The library creates
+    the EXTERNAL copy at ACCEPTED with nothing filled, below the ledger's 0.4: the copy spec 00120 D19 was
+    ruled on, there with the fill read and not applied. The pass reads the restored copy at the venue (D6),
+    whose report reads the ledger's 0.4, so the check never reads the copy's 0: no kill trip and no
+    trade-history read, which a check on the copy's figure would make."""
+    node, wire, record, cancels, calls = _cold_start(tmp_path, fill_minutes_ago=721)
+
+    assert record["errors"] == [], record["errors"]
+    assert _restore_lines(record["log"]) == ["0 order(s), 0 position(s) restored"]
+    assert "Received 1 order(s), 0 fill(s), 0 position(s)" in record["log"]
+    assert f"Created external order {wire['txid']} ({wire['txid']}) for {INSTRUMENT} [ACCEPTED]" in record["log"]
+    assert _external_copy(record) == (wire["txid"], "EXTERNAL", wire["txid"], "ACCEPTED", "0.00000000", True)
+    assert record["restored"] == [wire["txid"]]
+    assert "execution kill switch tripped" not in record["log"]
+    assert "reads 0 filled on its order figure" not in record["log"]
+    assert _history_read_by_the_pass(calls) == [], calls
+    assert f"canceling adopted resting order {wire['txid']} -- the ledger does not carry it as a resting reducer" in record["log"]
+    assert [form.get("txid") for form in cancels] == [wire["txid"]]
+    assert f"Generated inferred fill for {wire['txid']}: qty=0.40000000" in record["log"]
+    assert [(e["type"], e.get("last_qty"), e["reconciliation"]) for e in record["external"]] == [
+        ("OrderPendingCancel", None, False),
+        ("OrderFilled", "0.40000000", True),
+        ("OrderCanceled", None, True),
+    ], record["external"]
+    [row] = node.rows()
+    fills = [e for e in row["events"] if e.get("event") == "fill"]
+    assert [(e["qty"], e.get("credited")) for e in fills] == [(0.4, None), (0.4, 0.0)], fills
     assert (row["filled_qty"], row["state"]) == (0.4, "canceled")
     [intent] = node.intents()
     assert intent["outcome"] == "revoked"
@@ -1295,8 +1437,7 @@ def test_the_cache_killed_mid_run_leaves_the_engine_trading_and_the_store_behind
                             return
                         valkey.start()
 
-                threads.append(threading.Thread(target=frames, daemon=True))
-                threads[-1].start()
+                threads.append(_script(exec_, frames))
 
             venue.on_add_order = on_add_order
             record = node.run(1, venue, data, exec_, window=32)
@@ -1373,6 +1514,47 @@ def test_a_start_imports_a_history_fill_from_719_minutes_before_it_and_nothing_o
     )
 
 
+def test_a_start_reads_the_account_the_engines_own_client_configs_name(tmp_path):
+    """The child replaces only the venue endpoints of node.py's two client configs, so a start asks the venue for the
+    engine's own account: the margin account's balance in the asset `margin_balance_asset` names and its open
+    positions, `spot_account_type`'s MARGIN branch, beside the private socket's token and the mass status's reads."""
+    asked: list[tuple[str, dict]] = []
+    valkey = _Valkey(tmp_path / "valkey")
+    try:
+        valkey.start()
+        node = _Node(tmp_path / "node", valkey.port)
+        with _venue() as (venue, data, exec_):
+            venue.balances = {"ZEUR": lb.balance("1000.00000000")}
+            answer = venue.answer
+
+            def recorded(method, path, query, form):
+                asked.append((path, form))
+                return answer(method, path, query, form)
+
+            venue.answer = recorded
+            record = node.run(1, venue, data, exec_, window=IMPORT_WINDOW)
+    finally:
+        valkey.stop()
+
+    assert record["errors"] == [], record["errors"]
+    assert "at_start" in record
+    # The nonce signs each read, and `start` is the reconciliation lookback, the 719/721-minute case's.
+    reads = sorted(
+        (path.removeprefix("/0/private/"), sorted((k, v) for k, v in form.items() if k not in ("nonce", "start")))
+        for path, form in asked
+        if path.startswith("/0/private/")
+    )
+    assert reads == [
+        ("BalanceEx", []),
+        ("ClosedOrders", [("ofs", "0"), ("trades", "true")]),
+        ("GetWebSocketsToken", []),
+        ("OpenOrders", [("trades", "true")]),
+        ("OpenPositions", []),
+        ("TradeBalance", [("asset", "ZEUR")]),
+        ("TradesHistory", [("ofs", "0"), ("trades", "true")]),
+    ], f"a start no longer asks the venue for the account node.py's client configs name, or {_BUMP}: {reads}"
+
+
 HAND_TXID, HAND_TRADE = "OHAND1-AAAAA-BBBBBB", "THAND1-AAAAA-AAAAAA"
 
 
@@ -1407,7 +1589,7 @@ def _script_hand_buy(venue: lb.KrakenLoopback, exec_: lb.WsPeer) -> None:
         )
         venue.balances["SOL"] = lb.balance("0.50000000")
 
-    threading.Thread(target=later, daemon=True).start()
+    _script(exec_, later)
 
 
 def test_a_position_the_library_booked_is_counted_and_a_hand_orders_is_not(tmp_path):
@@ -1504,7 +1686,7 @@ def _script_resting_reducer(venue: lb.KrakenLoopback, exec_: lb.WsPeer, reducer:
                     lb.exec_new(txid, form.get("cl_ord_id"), symbol=SYMBOL, qty=QTY, price=float(form["price"]), side="sell")
                 )
 
-        threading.Thread(target=frame, daemon=True).start()
+        _script(exec_, frame)
 
     venue.on_add_order = on_add_order
 

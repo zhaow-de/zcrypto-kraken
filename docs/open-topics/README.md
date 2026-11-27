@@ -6,7 +6,6 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 
 - [T0221 — engine-procedures.md without the one-time rungs](T0221-engine-procedures-without-the-rungs.md) — ripe when: a milestone: rung 3's go/no-go decided, `engine-rung-3` step 9; check: `grep -c -i -E "rung 3.s go/no-go.*\(Decision:" docs/research/14.phase6-decisions.md` prints at least 1
 - [T0225 — Python 3.15 once ansible 15 ships](T0225-python-3-15-once-ansible-15-ships.md) — ripe when: an activity: a bump of `ansible` to 15; check: `uv.lock`'s `ansible` package reads version 15 or later, or `gh pr list --state all --search "in:title Bump ansible from"` names a bump to 15
-- [T0231 — The CI full suite stall near its end](T0231-the-ci-full-suite-stall-near-its-end.md) — ripe when: a date: 2026-12-02, a week of pull requests run under the `--durations=30` the CI pytest step gained — check: date -u +%F reads 2026-12-02 or later
 
 ## Partially done
 
@@ -238,3 +237,4 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 - [T0227 — The engine publishes the gate's bare level before the boundary folds its holds](archive/T0227-the-engine-publishes-the-gate-s-bare-level-before-the-boundary-folds-its-holds.md)
 - [T0229 — An order Kraken closes short of its size ends its intent ambiguous](archive/T0229-an-order-kraken-closes-short-of-its-size-ends-its-intent-ambiguous.md)
 - [T0230 — The margin floor reads a free-margin figure refreshed only at connect](archive/T0230-the-margin-floor-reads-a-free-margin-figure-refreshed-only-at-connect.md)
+- [T0231 — The CI full suite stall near its end](archive/T0231-the-ci-full-suite-stall-near-its-end.md)

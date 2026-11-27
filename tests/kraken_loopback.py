@@ -489,13 +489,12 @@ def exec_trade(
     exec_id: str,
     trade_id: int,
     side: str = "buy",
-    with_order_qty: bool = True,
+    with_order_qty: bool = False,
 ) -> dict[str, Any]:
     """The `trade` execution frame for one fill of `last_qty`, carrying both halves upstream parses: the
-    status half (`order_status`, `cum_qty`) and the fill half (`exec_id`, `last_qty`). `with_order_qty`
-    False leaves `order_qty` out, as Kraken's one documented `trade` example does. On `2.0.0rc9.dev20261106`,
-    on an order an earlier process placed, the frame with it is booked twice, and the frame without it
-    rewrites the order to its filled quantity unless a cancel is pending on it, when it is booked twice too."""
+    status half (`order_status`, `cum_qty`) and the fill half (`exec_id`, `last_qty`). It carries no
+    `order_qty`, as neither Kraken's one documented `trade` example nor its live `trade` frames do (T0226's
+    resolution); `with_order_qty` True adds it."""
     data = {
         "exec_type": "trade",
         "order_id": txid,
