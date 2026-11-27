@@ -12134,6 +12134,62 @@ def test_a_cold_starts_order_figure_short_of_the_ledger_is_no_withdrawal_when_th
         assert "O-cold" in ex._rows_the_pass_repaired  # a fill the library infers at the ack credits nothing beyond the Cache
 
 
+_BY_THE_REPORT = (
+    "the figure is Kraken's own order report reading below Kraken's own trade history, an inconsistency at the venue to "
+    "look into and not a library artifact, no withdrawal"
+)
+_BY_THE_COPY = "the figure is the library's copy without its fills applied, no withdrawal"
+
+
+@pytest.mark.parametrize(
+    "figure, cache, said, unsaid",
+    [
+        ("restored-report", True, _BY_THE_REPORT, _BY_THE_COPY),
+        ("restored-closed-copy", True, _BY_THE_REPORT, _BY_THE_COPY),
+        ("report-without-a-copy", False, _BY_THE_REPORT, _BY_THE_COPY),
+        ("copy", False, _BY_THE_COPY, _BY_THE_REPORT),
+    ],
+    ids=["restored-report", "restored-closed-copy", "report-without-a-copy", "copy"],
+)
+def test_the_cover_warning_names_the_figure_that_fell_short_of_the_trade_history(tmp_path, figure, cache, said, unsaid):
+    """Where a venue report answers the row -- a restored row's with the cache on, at the sweep or through the
+    cancel of a copy the library closed, and a row's whose order the Cache does not hold -- the short figure is
+    Kraken's listing below Kraken's own trade history; only the Cache's copy is the library's. The restored
+    copies read at or above the ledger's 0.4, so a line reading 0 there was read off the report."""
+    earlier = _cold_start_row(tmp_path)
+    copy = _resting_limit_order(_TXID, venue_order_id=_TXID, strategy_id=_EXTERNAL)
+    if figure.startswith("restored"):
+        qty = 1.0 if figure == "restored-closed-copy" else 0.4
+        copy.apply(_fill(_TXID, qty, venue_order_id=VenueOrderId(_TXID), trade_id="T-before", strategy_id=_EXTERNAL))
+    held = {"report-without-a-copy": StubCache(), "restored-closed-copy": StubCache(closed_orders=[copy])}
+    venue = _VenueOrders(_report(_TXID, OrderStatus.ACCEPTED, filled_qty="0", quantity="1.0"))
+    if figure == "report-without-a-copy":
+        venue = _VenueOrders(_report(_TXID, OrderStatus.CANCELED, filled_qty="0", quantity="1.0"))
+    fills = _VenueFills(_fill_report(_TXID, "0.4"))
+    ex = _executor(
+        tmp_path,
+        client=StubClient(held.get(figure, StubCache(open_orders=[copy]))),
+        gate=_gate(tmp_path, GateLevel.REDUCE_ONLY),
+        venue_orders=venue,
+        venue_cancel=_VenueCancel(),
+        venue_fills=fills,
+        config=_cache_config(tmp_path, cache),
+    )
+
+    with _executor_errors(level=logging.WARNING) as records:
+        ex.on_timer(NOW)
+
+    messages = [r.getMessage() for r in records]
+    head = (
+        f"adopted order O-cold (Kraken {_TXID}) reads 0 filled on its order figure against the 0.4 recorded here, "
+        "and the venue's trade history covers the ledger -- "
+    )
+    assert head + said in messages, messages
+    assert not any(unsaid in m for m in messages)
+    assert not _kill_file(tmp_path).exists()
+    assert fills.calls == [_boundary(earlier) - timedelta(hours=1)]
+
+
 @pytest.mark.parametrize(
     "history",
     [(), (("0.2", _TXID), ("0.4", f"{_TXID}-other"))],
